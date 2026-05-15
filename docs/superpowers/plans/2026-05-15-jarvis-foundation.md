@@ -55,34 +55,40 @@ app/
 ├── pyproject.toml                              # app packaging
 ├── README.md                                   # one-paragraph stub
 ├── license.txt                                 # MIT
-└── jarvis/                                     # the python module (== Frappe app name)
+└── jarvis/                                     # the python package (== Frappe app name)
     ├── __init__.py                             # __version__
     ├── hooks.py                                # Frappe app registration
-    ├── modules.txt                             # module list
+    ├── modules.txt                             # contains: Jarvis
     ├── patches.txt                             # empty, but required
     ├── api.py                                  # whitelisted call_tool endpoint
     ├── exceptions.py                           # JarvisError, PermissionDeniedError, etc.
-    ├── tools/
+    ├── tools/                                  # general utilities (package-root, not module-bound)
     │   ├── __init__.py
     │   ├── registry.py                         # tool name -> callable map + dispatcher
-    │   ├── get_schema.py                       # tool: return DocType meta
-    │   ├── get_doc.py                          # tool: return a single doc
-    │   ├── get_list.py                         # tool: list/filter docs
-    │   └── run_report.py                       # tool: execute a saved Report
-    ├── doctype/
-    │   └── jarvis_settings/
-    │       ├── __init__.py
-    │       ├── jarvis_settings.json            # Single DocType definition
-    │       └── jarvis_settings.py              # Controller (empty class)
-    └── tests/
-        ├── __init__.py
-        ├── test_get_schema.py
-        ├── test_get_doc.py
-        ├── test_get_list.py
-        ├── test_run_report.py
-        ├── test_registry.py
-        └── test_api.py
+    │   ├── get_schema.py
+    │   ├── get_doc.py
+    │   ├── get_list.py
+    │   └── run_report.py
+    ├── tests/                                  # package-root tests
+    │   ├── __init__.py
+    │   ├── test_settings.py
+    │   ├── test_exceptions.py
+    │   ├── test_get_schema.py
+    │   ├── test_get_doc.py
+    │   ├── test_get_list.py
+    │   ├── test_run_report.py
+    │   ├── test_registry.py
+    │   └── test_api.py
+    └── jarvis/                                 # the "Jarvis" MODULE (per modules.txt)
+        ├── __init__.py                         # empty marker
+        └── doctype/
+            └── jarvis_settings/
+                ├── __init__.py
+                ├── jarvis_settings.json        # Single DocType definition (module = "Jarvis")
+                └── jarvis_settings.py          # Controller
 ```
+
+**Why the `app/jarvis/jarvis/` nesting:** Frappe loads DocTypes via `<app>.<module_lowercased>.doctype.<doctype>.<controller>`. Our `modules.txt` lists `Jarvis`, so Frappe imports `jarvis.jarvis.doctype.jarvis_settings.jarvis_settings`. The inner `jarvis/` directory is the module's package — this matches ERPNext's pattern where modules like `Accounts` live at `apps/erpnext/erpnext/accounts/`. Only DocTypes (and other module-bound resources like Reports, Print Formats, Workflows) need to live under the module dir. General utilities (`tools/`, `api.py`, `exceptions.py`, `tests/`) live at the package root for cleaner imports.
 
 Boundary notes:
 - **Tools are pure functions** in their own files. One file = one tool. Easy to test, easy to grow the library.
@@ -96,12 +102,13 @@ Boundary notes:
 
 **Files:**
 - Create: `app/pyproject.toml`
-- Create: `jarvis/README.md`
-- Create: `jarvis/license.txt`
+- Create: `app/README.md`
+- Create: `app/license.txt`
 - Create: `app/jarvis/__init__.py`
 - Create: `app/jarvis/hooks.py`
 - Create: `app/jarvis/modules.txt`
 - Create: `app/jarvis/patches.txt`
+- Create: `app/jarvis/jarvis/__init__.py` (empty — Jarvis module marker; required by Frappe's `<app>.<module>` import path)
 
 - [ ] **Step 1: Write `pyproject.toml`**
 
@@ -167,6 +174,12 @@ Jarvis
 
 `app/jarvis/patches.txt`: empty file (touch it).
 
+Also create `app/jarvis/jarvis/__init__.py` as an empty file:
+```bash
+mkdir -p app/jarvis/jarvis && touch app/jarvis/jarvis/__init__.py
+```
+This is the package directory for the `Jarvis` module — Frappe's DocType import path requires it.
+
 - [ ] **Step 6: Install the app on the test site**
 
 Run from `/Users/venkatesh/bench/develop/jarvis/bench`:
@@ -179,7 +192,7 @@ Expected: command completes without error. `bench --site jarvis.localhost list-a
 
 ```bash
 cd /Users/venkatesh/bench/develop/jarvis
-git add app/pyproject.toml app/README.md app/license.txt app/jarvis/__init__.py app/jarvis/hooks.py app/jarvis/modules.txt app/jarvis/patches.txt
+git add app/pyproject.toml app/README.md app/license.txt app/jarvis/__init__.py app/jarvis/hooks.py app/jarvis/modules.txt app/jarvis/patches.txt app/jarvis/jarvis/__init__.py
 git commit -m "feat: scaffold jarvis frappe app"
 ```
 
@@ -188,9 +201,9 @@ git commit -m "feat: scaffold jarvis frappe app"
 ### Task 2: `Jarvis Settings` single DocType
 
 **Files:**
-- Create: `app/jarvis/doctype/jarvis_settings/__init__.py`
-- Create: `app/jarvis/doctype/jarvis_settings/jarvis_settings.json`
-- Create: `app/jarvis/doctype/jarvis_settings/jarvis_settings.py`
+- Create: `app/jarvis/jarvis/doctype/jarvis_settings/__init__.py`
+- Create: `app/jarvis/jarvis/doctype/jarvis_settings/jarvis_settings.json`
+- Create: `app/jarvis/jarvis/doctype/jarvis_settings/jarvis_settings.py`
 - Create: `app/jarvis/tests/__init__.py`
 - Create: `app/jarvis/tests/test_settings.py`
 
@@ -229,9 +242,9 @@ Expected: FAIL — "DocType Jarvis Settings not found" or similar.
 
 - [ ] **Step 3: Write the DocType JSON**
 
-`app/jarvis/doctype/jarvis_settings/__init__.py`: empty file.
+`app/jarvis/jarvis/doctype/jarvis_settings/__init__.py`: empty file.
 
-`app/jarvis/doctype/jarvis_settings/jarvis_settings.json`:
+`app/jarvis/jarvis/doctype/jarvis_settings/jarvis_settings.json`:
 
 ```json
 {
@@ -297,7 +310,7 @@ Expected: FAIL — "DocType Jarvis Settings not found" or similar.
 
 - [ ] **Step 4: Write the empty controller**
 
-`app/jarvis/doctype/jarvis_settings/jarvis_settings.py`:
+`app/jarvis/jarvis/doctype/jarvis_settings/jarvis_settings.py`:
 
 ```python
 from frappe.model.document import Document
@@ -318,7 +331,7 @@ Expected: PASS (all three tests).
 - [ ] **Step 6: Commit**
 
 ```bash
-git add app/jarvis/doctype/jarvis_settings/ app/jarvis/tests/__init__.py app/jarvis/tests/test_settings.py
+git add app/jarvis/jarvis/doctype/jarvis_settings/ app/jarvis/tests/__init__.py app/jarvis/tests/test_settings.py
 git commit -m "feat: add Jarvis Settings single DocType"
 ```
 
