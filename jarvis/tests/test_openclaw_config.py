@@ -93,9 +93,36 @@ class TestRenderConfig(FrappeTestCase):
             "http://host.docker.internal:11434/v1",
         )
 
-    def test_base_url_omitted_when_empty(self):
+    def test_base_url_falls_back_to_provider_default_when_setting_empty(self):
+        # openclaw's schema requires baseUrl on every provider entry — we always emit it.
+        # When the customer hasn't set llm_base_url, we use the bundled-provider default.
         result, _ = self._render(llm_provider="Anthropic", llm_model="claude-sonnet-4-6")
-        self.assertNotIn("baseUrl", result["models"]["providers"]["anthropic"])
+        self.assertEqual(
+            result["models"]["providers"]["anthropic"]["baseUrl"],
+            "https://api.anthropic.com",
+        )
+
+    def test_models_array_includes_configured_model(self):
+        # openclaw's schema requires each entry in `models` to have both `id` and `name`
+        # (z.string().min(1) on each, .strict() rejects extras).
+        result, _ = self._render(llm_provider="Moonshot (Kimi)", llm_model="kimi-k2.6")
+        models = result["models"]["providers"]["moonshot"]["models"]
+        self.assertEqual(models, [{"id": "kimi-k2.6", "name": "kimi-k2.6"}])
+
+    def test_vllm_without_base_url_raises(self):
+        # vLLM has no default baseUrl in our PROVIDER_DEFAULT_BASE_URLS; customer must supply one.
+        with self.assertRaises(InvalidArgumentError):
+            render_config(
+                _FakeSettings(llm_provider="vLLM (local)", llm_model="llama-3"),
+                gateway_token="t",
+            )
+
+    def test_openai_compatible_without_base_url_raises(self):
+        with self.assertRaises(InvalidArgumentError):
+            render_config(
+                _FakeSettings(llm_provider="OpenAI-Compatible", llm_model="any"),
+                gateway_token="t",
+            )
 
     def test_secrets_block_registers_singlevalue_file_provider(self):
         result, _ = self._render(llm_provider="Anthropic", llm_model="claude-sonnet-4-6")
@@ -138,10 +165,19 @@ class TestRenderConfig(FrappeTestCase):
             "vLLM (local)": "vllm",
             "OpenAI-Compatible": "openai_compat",
         }
+        # Providers without a bundled default base URL need one explicitly supplied
+        providers_needing_base_url = {"vLLM (local)", "OpenAI-Compatible"}
         for human, openclaw_id in cases.items():
-            result, _ = self._render(llm_provider=human, llm_model="some-model")
+            base_url = "http://explicit:8000/v1" if human in providers_needing_base_url else None
+            result, _ = self._render(
+                llm_provider=human,
+                llm_model="some-model",
+                llm_base_url=base_url,
+            )
             self.assertIn(openclaw_id, result["models"]["providers"], f"{human} -> {openclaw_id}")
             self.assertEqual(
                 result["agents"]["defaults"]["model"]["primary"],
                 f"{openclaw_id}/some-model",
             )
+            # All providers must have baseUrl emitted (schema requirement)
+            self.assertIn("baseUrl", result["models"]["providers"][openclaw_id])

@@ -23,6 +23,11 @@ HEALTHZ_INTERVAL_SECONDS = 1
 PULL_TIMEOUT_SECONDS = 600   # first-run image pull can be slow
 COMPOSE_TIMEOUT_SECONDS = 60
 
+# Placeholder written to llm.key on first bootstrap so openclaw can boot.
+# Openclaw's SecretRef resolver fails-fast on empty values; the customer's
+# first save in Jarvis Settings overwrites this file with a real key.
+LLM_KEY_PLACEHOLDER = "PLACEHOLDER-set-llm_api_key-in-Jarvis-Settings"
+
 
 def _workspace_root() -> Path:
     """Workspace root: the parent of the Frappe bench directory."""
@@ -109,9 +114,13 @@ def start() -> None:
 
     paths["state_dir"].mkdir(parents=True, exist_ok=True)
 
-    # Create empty llm.key only if missing — preserve any real key written by on_update
+    # Create a placeholder llm.key only if missing — preserve any real key written
+    # by on_update. The placeholder must be non-empty: openclaw's SecretRef resolver
+    # treats empty values as "unresolved" and refuses to boot. The customer's first
+    # save of Jarvis Settings with a real LLM API key overwrites this file via the
+    # on_update hook.
     if not paths["llm_key_path"].exists():
-        paths["llm_key_path"].write_text("")
+        paths["llm_key_path"].write_text(LLM_KEY_PLACEHOLDER)
         os.chmod(paths["llm_key_path"], 0o600)
 
     rendered = render_config(settings, token)

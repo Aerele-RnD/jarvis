@@ -22,12 +22,15 @@
   "models": {
     "providers": {
       "{{ provider_id }}": {
-        {% if base_url %}"baseUrl": "{{ base_url }}",
-        {% endif %}"apiKey": {
+        "baseUrl": "{{ base_url }}",
+        "apiKey": {
           "source": "file",
           "provider": "llm_key",
           "id": "value"
-        }
+        },
+        "models": [
+          { "id": "{{ model }}", "name": "{{ model }}" }
+        ]
       }
     }
   },
