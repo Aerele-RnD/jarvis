@@ -1,0 +1,6 @@
+app_name = "jarvis"
+app_title = "Jarvis"
+app_publisher = "Aerele"
+app_description = "AI superpowers for Frappe/ERPNext"
+app_email = "navin@aerele.in"
+app_license = "MIT"
