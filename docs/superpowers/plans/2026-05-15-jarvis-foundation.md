@@ -16,61 +16,72 @@
 
 ---
 
-## Prerequisites
+## Prerequisites — Isolated Workspace
 
-Actual bench layout on this workstation:
-- **Bench root:** `/Users/venkatesh/bench/develop/frappe-bench`
-- **Apps dir:** `/Users/venkatesh/bench/develop/frappe-bench/apps/`
-- **Test site:** `dev.alfred` (Frappe + ERPNext + HRMS installed, `developer_mode = 1`)
-- **Frappe version:** 17-dev (originally planned against v15, but the APIs we use — `FrappeTestCase`, `frappe.has_permission`, `frappe.get_meta`, `frappe.get_list`, `frappe.desk.query_report.run`, DocType JSON, `hooks.py` — are stable across v15→v17).
+The whole project lives under `/Users/venkatesh/bench/develop/jarvis/`. Inside it, each concern has its own directory so this work is fully isolated from the workstation's other benches and projects.
 
-Before Task 1, symlink the jarvis source into the bench's `apps/`:
-```bash
-ln -s /Users/venkatesh/bench/develop/jarvis /Users/venkatesh/bench/develop/frappe-bench/apps/jarvis
+```
+/Users/venkatesh/bench/develop/jarvis/
+├── docs/                       # specs and plans (this file lives here)
+├── discuss/                    # ad-hoc working notes
+├── bench/                      # isolated Frappe bench (Frappe develop branch + ERPNext)
+│   ├── apps/jarvis -> ../../app   # symlink to the app source below
+│   └── sites/jarvis.localhost     # the test site this plan uses
+├── openclaw/                   # openclaw repo clone (https://github.com/openclaw/openclaw)
+└── app/                        # the jarvis Frappe app source (pyproject.toml here)
 ```
 
-All `bench` commands below assume the working directory is `/Users/venkatesh/bench/develop/frappe-bench` unless otherwise stated. The `bench` CLI is on `PATH` at `/Users/venkatesh/.local/bin/bench`.
+Before Task 1, Task 0 (provisioning, performed by the controller) creates this structure:
+- `bench init bench --frappe-branch develop`
+- `cd bench && bench get-app erpnext --branch develop`
+- `cd bench && bench new-site jarvis.localhost --install-app erpnext --admin-password admin --mariadb-root-password <local>`
+- `git clone https://github.com/openclaw/openclaw openclaw`
+- `mkdir app && ln -s /Users/venkatesh/bench/develop/jarvis/app /Users/venkatesh/bench/develop/jarvis/bench/apps/jarvis`
 
-Wherever this plan says `<your-test-site>`, use `dev.alfred`.
+All `bench` commands in this plan assume the working directory is `/Users/venkatesh/bench/develop/jarvis/bench`. The `bench` CLI is on `PATH` at `/Users/venkatesh/.local/bin/bench`.
+
+Wherever this plan says `jarvis.localhost`, use `jarvis.localhost`.
+
+**Frappe version note:** Bench is initialized on the `develop` branch (Frappe 17-dev / ERPNext 17-dev) to match the workstation's main bench. The APIs used in this plan (`FrappeTestCase`, `frappe.has_permission`, `frappe.get_meta`, `frappe.get_list`, `frappe.desk.query_report.run`, DocType JSON, `hooks.py`) are stable across recent Frappe versions; no version-specific code is anticipated.
 
 ---
 
 ## File Structure
 
-Files this plan will create:
+All files below live under `app/` (the Frappe app source root, symlinked into `bench/apps/jarvis`):
 
 ```
-jarvis/
+app/
 ├── pyproject.toml                              # app packaging
 ├── README.md                                   # one-paragraph stub
 ├── license.txt                                 # MIT
-├── jarvis/
-│   ├── __init__.py                             # __version__
-│   ├── hooks.py                                # Frappe app registration
-│   ├── modules.txt                             # module list
-│   ├── patches.txt                             # empty, but required
-│   ├── api.py                                  # whitelisted call_tool endpoint
-│   ├── exceptions.py                           # JarvisError, PermissionDeniedError, etc.
-│   ├── tools/
-│   │   ├── __init__.py
-│   │   ├── registry.py                         # tool name -> callable map + dispatcher
-│   │   ├── get_schema.py                       # tool: return DocType meta
-│   │   ├── get_doc.py                          # tool: return a single doc
-│   │   ├── get_list.py                         # tool: list/filter docs
-│   │   └── run_report.py                       # tool: execute a saved Report
-│   ├── doctype/
-│   │   └── jarvis_settings/
-│   │       ├── __init__.py
-│   │       ├── jarvis_settings.json            # Single DocType definition
-│   │       └── jarvis_settings.py              # Controller (empty class)
-│   └── tests/
-│       ├── __init__.py
-│       ├── test_get_schema.py
-│       ├── test_get_doc.py
-│       ├── test_get_list.py
-│       ├── test_run_report.py
-│       ├── test_registry.py
-│       └── test_api.py
+└── jarvis/                                     # the python module (== Frappe app name)
+    ├── __init__.py                             # __version__
+    ├── hooks.py                                # Frappe app registration
+    ├── modules.txt                             # module list
+    ├── patches.txt                             # empty, but required
+    ├── api.py                                  # whitelisted call_tool endpoint
+    ├── exceptions.py                           # JarvisError, PermissionDeniedError, etc.
+    ├── tools/
+    │   ├── __init__.py
+    │   ├── registry.py                         # tool name -> callable map + dispatcher
+    │   ├── get_schema.py                       # tool: return DocType meta
+    │   ├── get_doc.py                          # tool: return a single doc
+    │   ├── get_list.py                         # tool: list/filter docs
+    │   └── run_report.py                       # tool: execute a saved Report
+    ├── doctype/
+    │   └── jarvis_settings/
+    │       ├── __init__.py
+    │       ├── jarvis_settings.json            # Single DocType definition
+    │       └── jarvis_settings.py              # Controller (empty class)
+    └── tests/
+        ├── __init__.py
+        ├── test_get_schema.py
+        ├── test_get_doc.py
+        ├── test_get_list.py
+        ├── test_run_report.py
+        ├── test_registry.py
+        └── test_api.py
 ```
 
 Boundary notes:
@@ -84,17 +95,17 @@ Boundary notes:
 ### Task 1: App scaffolding
 
 **Files:**
-- Create: `jarvis/pyproject.toml`
+- Create: `app/pyproject.toml`
 - Create: `jarvis/README.md`
 - Create: `jarvis/license.txt`
-- Create: `jarvis/jarvis/__init__.py`
-- Create: `jarvis/jarvis/hooks.py`
-- Create: `jarvis/jarvis/modules.txt`
-- Create: `jarvis/jarvis/patches.txt`
+- Create: `app/jarvis/__init__.py`
+- Create: `app/jarvis/hooks.py`
+- Create: `app/jarvis/modules.txt`
+- Create: `app/jarvis/patches.txt`
 
 - [ ] **Step 1: Write `pyproject.toml`**
 
-Create `jarvis/pyproject.toml`:
+Create `app/pyproject.toml`:
 
 ```toml
 [project]
@@ -116,7 +127,7 @@ name = "jarvis"
 
 - [ ] **Step 2: Write `README.md` and `license.txt`**
 
-`jarvis/README.md`:
+`app/README.md`:
 ```markdown
 # Jarvis
 
@@ -125,7 +136,7 @@ AI superpowers for Frappe/ERPNext, powered by openclaw.
 See `docs/superpowers/specs/2026-05-15-jarvis-design.md` for the design.
 ```
 
-`jarvis/license.txt`:
+`app/license.txt`:
 ```
 MIT License
 ```
@@ -149,26 +160,26 @@ app_license = "MIT"
 
 - [ ] **Step 5: Write `modules.txt` and `patches.txt`**
 
-`jarvis/jarvis/modules.txt`:
+`app/jarvis/modules.txt`:
 ```
 Jarvis
 ```
 
-`jarvis/jarvis/patches.txt`: empty file (touch it).
+`app/jarvis/patches.txt`: empty file (touch it).
 
-- [ ] **Step 6: Install the app on a test site**
+- [ ] **Step 6: Install the app on the test site**
 
-Run from `/Users/venkatesh/bench/develop`:
+Run from `/Users/venkatesh/bench/develop/jarvis/bench`:
 ```bash
-bench --site <your-test-site> install-app jarvis
+bench --site jarvis.localhost install-app jarvis
 ```
-Expected: command completes without error. `bench --site <your-test-site> list-apps` shows `jarvis`.
+Expected: command completes without error. `bench --site jarvis.localhost list-apps` shows `jarvis`.
 
 - [ ] **Step 7: Commit**
 
 ```bash
 cd /Users/venkatesh/bench/develop/jarvis
-git add pyproject.toml README.md license.txt jarvis/__init__.py jarvis/hooks.py jarvis/modules.txt jarvis/patches.txt
+git add app/pyproject.toml app/README.md app/license.txt app/jarvis/__init__.py app/jarvis/hooks.py app/jarvis/modules.txt app/jarvis/patches.txt
 git commit -m "feat: scaffold jarvis frappe app"
 ```
 
@@ -177,15 +188,15 @@ git commit -m "feat: scaffold jarvis frappe app"
 ### Task 2: `Jarvis Settings` single DocType
 
 **Files:**
-- Create: `jarvis/jarvis/doctype/jarvis_settings/__init__.py`
-- Create: `jarvis/jarvis/doctype/jarvis_settings/jarvis_settings.json`
-- Create: `jarvis/jarvis/doctype/jarvis_settings/jarvis_settings.py`
-- Create: `jarvis/jarvis/tests/__init__.py`
-- Create: `jarvis/jarvis/tests/test_settings.py`
+- Create: `app/jarvis/doctype/jarvis_settings/__init__.py`
+- Create: `app/jarvis/doctype/jarvis_settings/jarvis_settings.json`
+- Create: `app/jarvis/doctype/jarvis_settings/jarvis_settings.py`
+- Create: `app/jarvis/tests/__init__.py`
+- Create: `app/jarvis/tests/test_settings.py`
 
 - [ ] **Step 1: Write the failing test**
 
-`jarvis/jarvis/tests/test_settings.py`:
+`app/jarvis/tests/test_settings.py`:
 
 ```python
 import frappe
@@ -212,15 +223,15 @@ class TestJarvisSettings(FrappeTestCase):
 - [ ] **Step 2: Run test to verify it fails**
 
 ```bash
-bench --site <your-test-site> run-tests --app jarvis --module jarvis.tests.test_settings
+bench --site jarvis.localhost run-tests --app jarvis --module jarvis.tests.test_settings
 ```
 Expected: FAIL — "DocType Jarvis Settings not found" or similar.
 
 - [ ] **Step 3: Write the DocType JSON**
 
-`jarvis/jarvis/doctype/jarvis_settings/__init__.py`: empty file.
+`app/jarvis/doctype/jarvis_settings/__init__.py`: empty file.
 
-`jarvis/jarvis/doctype/jarvis_settings/jarvis_settings.json`:
+`app/jarvis/doctype/jarvis_settings/jarvis_settings.json`:
 
 ```json
 {
@@ -286,7 +297,7 @@ Expected: FAIL — "DocType Jarvis Settings not found" or similar.
 
 - [ ] **Step 4: Write the empty controller**
 
-`jarvis/jarvis/doctype/jarvis_settings/jarvis_settings.py`:
+`app/jarvis/doctype/jarvis_settings/jarvis_settings.py`:
 
 ```python
 from frappe.model.document import Document
@@ -299,15 +310,15 @@ class JarvisSettings(Document):
 - [ ] **Step 5: Migrate the site and re-run the test**
 
 ```bash
-bench --site <your-test-site> migrate
-bench --site <your-test-site> run-tests --app jarvis --module jarvis.tests.test_settings
+bench --site jarvis.localhost migrate
+bench --site jarvis.localhost run-tests --app jarvis --module jarvis.tests.test_settings
 ```
 Expected: PASS (all three tests).
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add jarvis/jarvis/doctype/jarvis_settings/ jarvis/jarvis/tests/__init__.py jarvis/jarvis/tests/test_settings.py
+git add app/jarvis/doctype/jarvis_settings/ app/jarvis/tests/__init__.py app/jarvis/tests/test_settings.py
 git commit -m "feat: add Jarvis Settings single DocType"
 ```
 
@@ -316,12 +327,12 @@ git commit -m "feat: add Jarvis Settings single DocType"
 ### Task 3: Exceptions module
 
 **Files:**
-- Create: `jarvis/jarvis/exceptions.py`
-- Create: `jarvis/jarvis/tests/test_exceptions.py`
+- Create: `app/jarvis/exceptions.py`
+- Create: `app/jarvis/tests/test_exceptions.py`
 
 - [ ] **Step 1: Write the failing test**
 
-`jarvis/jarvis/tests/test_exceptions.py`:
+`app/jarvis/tests/test_exceptions.py`:
 
 ```python
 from frappe.tests.utils import FrappeTestCase
@@ -347,13 +358,13 @@ class TestExceptions(FrappeTestCase):
 - [ ] **Step 2: Run test to verify it fails**
 
 ```bash
-bench --site <your-test-site> run-tests --app jarvis --module jarvis.tests.test_exceptions
+bench --site jarvis.localhost run-tests --app jarvis --module jarvis.tests.test_exceptions
 ```
 Expected: FAIL — `ModuleNotFoundError: No module named 'jarvis.exceptions'`.
 
 - [ ] **Step 3: Write `exceptions.py`**
 
-`jarvis/jarvis/exceptions.py`:
+`app/jarvis/exceptions.py`:
 
 ```python
 class JarvisError(Exception):
@@ -375,14 +386,14 @@ class InvalidArgumentError(JarvisError):
 - [ ] **Step 4: Run tests to verify pass**
 
 ```bash
-bench --site <your-test-site> run-tests --app jarvis --module jarvis.tests.test_exceptions
+bench --site jarvis.localhost run-tests --app jarvis --module jarvis.tests.test_exceptions
 ```
 Expected: PASS (both tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add jarvis/jarvis/exceptions.py jarvis/jarvis/tests/test_exceptions.py
+git add app/jarvis/exceptions.py app/jarvis/tests/test_exceptions.py
 git commit -m "feat: add Jarvis exception hierarchy"
 ```
 
@@ -393,15 +404,15 @@ git commit -m "feat: add Jarvis exception hierarchy"
 **Purpose:** Return a DocType's meta (field list with names, types, labels, options) so the agent knows the shape of a DocType before querying it. Read permission required on the DocType.
 
 **Files:**
-- Create: `jarvis/jarvis/tools/__init__.py`
-- Create: `jarvis/jarvis/tools/get_schema.py`
-- Create: `jarvis/jarvis/tests/test_get_schema.py`
+- Create: `app/jarvis/tools/__init__.py`
+- Create: `app/jarvis/tools/get_schema.py`
+- Create: `app/jarvis/tests/test_get_schema.py`
 
 - [ ] **Step 1: Write the failing test**
 
-`jarvis/jarvis/tools/__init__.py`: empty file.
+`app/jarvis/tools/__init__.py`: empty file.
 
-`jarvis/jarvis/tests/test_get_schema.py`:
+`app/jarvis/tests/test_get_schema.py`:
 
 ```python
 import frappe
@@ -455,13 +466,13 @@ class TestGetSchema(FrappeTestCase):
 - [ ] **Step 2: Run test to verify it fails**
 
 ```bash
-bench --site <your-test-site> run-tests --app jarvis --module jarvis.tests.test_get_schema
+bench --site jarvis.localhost run-tests --app jarvis --module jarvis.tests.test_get_schema
 ```
 Expected: FAIL — `ModuleNotFoundError: No module named 'jarvis.tools.get_schema'`.
 
 - [ ] **Step 3: Implement `get_schema`**
 
-`jarvis/jarvis/tools/get_schema.py`:
+`app/jarvis/tools/get_schema.py`:
 
 ```python
 import frappe
@@ -500,14 +511,14 @@ def get_schema(doctype: str) -> dict:
 - [ ] **Step 4: Run tests to verify pass**
 
 ```bash
-bench --site <your-test-site> run-tests --app jarvis --module jarvis.tests.test_get_schema
+bench --site jarvis.localhost run-tests --app jarvis --module jarvis.tests.test_get_schema
 ```
 Expected: PASS (all five tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add jarvis/jarvis/tools/__init__.py jarvis/jarvis/tools/get_schema.py jarvis/jarvis/tests/test_get_schema.py
+git add app/jarvis/tools/__init__.py app/jarvis/tools/get_schema.py app/jarvis/tests/test_get_schema.py
 git commit -m "feat: add get_schema tool"
 ```
 
@@ -518,12 +529,12 @@ git commit -m "feat: add get_schema tool"
 **Purpose:** Return a single document by DocType and name. Read permission required on the document (Frappe enforces both DocType-level and record-level permissions via `has_permission`).
 
 **Files:**
-- Create: `jarvis/jarvis/tools/get_doc.py`
-- Create: `jarvis/jarvis/tests/test_get_doc.py`
+- Create: `app/jarvis/tools/get_doc.py`
+- Create: `app/jarvis/tests/test_get_doc.py`
 
 - [ ] **Step 1: Write the failing test**
 
-`jarvis/jarvis/tests/test_get_doc.py`:
+`app/jarvis/tests/test_get_doc.py`:
 
 ```python
 import frappe
@@ -583,13 +594,13 @@ class TestGetDoc(FrappeTestCase):
 - [ ] **Step 2: Run test to verify it fails**
 
 ```bash
-bench --site <your-test-site> run-tests --app jarvis --module jarvis.tests.test_get_doc
+bench --site jarvis.localhost run-tests --app jarvis --module jarvis.tests.test_get_doc
 ```
 Expected: FAIL — `ModuleNotFoundError: No module named 'jarvis.tools.get_doc'`.
 
 - [ ] **Step 3: Implement `get_doc`**
 
-`jarvis/jarvis/tools/get_doc.py`:
+`app/jarvis/tools/get_doc.py`:
 
 ```python
 import frappe
@@ -620,14 +631,14 @@ def get_doc(doctype: str, name: str) -> dict:
 - [ ] **Step 4: Run tests to verify pass**
 
 ```bash
-bench --site <your-test-site> run-tests --app jarvis --module jarvis.tests.test_get_doc
+bench --site jarvis.localhost run-tests --app jarvis --module jarvis.tests.test_get_doc
 ```
 Expected: PASS (all five tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add jarvis/jarvis/tools/get_doc.py jarvis/jarvis/tests/test_get_doc.py
+git add app/jarvis/tools/get_doc.py app/jarvis/tests/test_get_doc.py
 git commit -m "feat: add get_doc tool"
 ```
 
@@ -638,12 +649,12 @@ git commit -m "feat: add get_doc tool"
 **Purpose:** Filtered list of documents. Frappe's `get_list` already applies the user's permissions (it filters out records they cannot see). Tool enforces DocType read permission up front and caps `limit` to 1000 to prevent runaway agent queries.
 
 **Files:**
-- Create: `jarvis/jarvis/tools/get_list.py`
-- Create: `jarvis/jarvis/tests/test_get_list.py`
+- Create: `app/jarvis/tools/get_list.py`
+- Create: `app/jarvis/tests/test_get_list.py`
 
 - [ ] **Step 1: Write the failing test**
 
-`jarvis/jarvis/tests/test_get_list.py`:
+`app/jarvis/tests/test_get_list.py`:
 
 ```python
 import frappe
@@ -713,13 +724,13 @@ class TestGetList(FrappeTestCase):
 - [ ] **Step 2: Run test to verify it fails**
 
 ```bash
-bench --site <your-test-site> run-tests --app jarvis --module jarvis.tests.test_get_list
+bench --site jarvis.localhost run-tests --app jarvis --module jarvis.tests.test_get_list
 ```
 Expected: FAIL — `ModuleNotFoundError`.
 
 - [ ] **Step 3: Implement `get_list`**
 
-`jarvis/jarvis/tools/get_list.py`:
+`app/jarvis/tools/get_list.py`:
 
 ```python
 import frappe
@@ -761,14 +772,14 @@ def get_list(
 - [ ] **Step 4: Run tests to verify pass**
 
 ```bash
-bench --site <your-test-site> run-tests --app jarvis --module jarvis.tests.test_get_list
+bench --site jarvis.localhost run-tests --app jarvis --module jarvis.tests.test_get_list
 ```
 Expected: PASS (all five tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add jarvis/jarvis/tools/get_list.py jarvis/jarvis/tests/test_get_list.py
+git add app/jarvis/tools/get_list.py app/jarvis/tests/test_get_list.py
 git commit -m "feat: add get_list tool"
 ```
 
@@ -779,12 +790,12 @@ git commit -m "feat: add get_list tool"
 **Purpose:** Execute a saved ERPNext Report Builder / Query / Script report by name. Frappe ships `frappe.desk.query_report.run`, which already enforces report-level permissions. Tool wraps it and surfaces a clean result.
 
 **Files:**
-- Create: `jarvis/jarvis/tools/run_report.py`
-- Create: `jarvis/jarvis/tests/test_run_report.py`
+- Create: `app/jarvis/tools/run_report.py`
+- Create: `app/jarvis/tests/test_run_report.py`
 
 - [ ] **Step 1: Write the failing test**
 
-`jarvis/jarvis/tests/test_run_report.py`:
+`app/jarvis/tests/test_run_report.py`:
 
 ```python
 import unittest
@@ -836,13 +847,13 @@ class TestRunReport(FrappeTestCase):
 - [ ] **Step 2: Run test to verify it fails**
 
 ```bash
-bench --site <your-test-site> run-tests --app jarvis --module jarvis.tests.test_run_report
+bench --site jarvis.localhost run-tests --app jarvis --module jarvis.tests.test_run_report
 ```
 Expected: FAIL — `ModuleNotFoundError`.
 
 - [ ] **Step 3: Implement `run_report`**
 
-`jarvis/jarvis/tools/run_report.py`:
+`app/jarvis/tools/run_report.py`:
 
 ```python
 import frappe
@@ -873,7 +884,7 @@ def run_report(report_name: str, filters: dict | None = None) -> dict:
 - [ ] **Step 4: Run tests to verify pass**
 
 ```bash
-bench --site <your-test-site> run-tests --app jarvis --module jarvis.tests.test_run_report
+bench --site jarvis.localhost run-tests --app jarvis --module jarvis.tests.test_run_report
 ```
 Expected: PASS (all three tests).
 
@@ -882,7 +893,7 @@ Note: If the test bench does not have any Sales Invoice records for the date ran
 - [ ] **Step 5: Commit**
 
 ```bash
-git add jarvis/jarvis/tools/run_report.py jarvis/jarvis/tests/test_run_report.py
+git add app/jarvis/tools/run_report.py app/jarvis/tests/test_run_report.py
 git commit -m "feat: add run_report tool"
 ```
 
@@ -893,12 +904,12 @@ git commit -m "feat: add run_report tool"
 **Purpose:** A single place that knows every tool. The (future) socket layer and the (current) HTTP API will both go through this.
 
 **Files:**
-- Create: `jarvis/jarvis/tools/registry.py`
-- Create: `jarvis/jarvis/tests/test_registry.py`
+- Create: `app/jarvis/tools/registry.py`
+- Create: `app/jarvis/tests/test_registry.py`
 
 - [ ] **Step 1: Write the failing test**
 
-`jarvis/jarvis/tests/test_registry.py`:
+`app/jarvis/tests/test_registry.py`:
 
 ```python
 from frappe.tests.utils import FrappeTestCase
@@ -933,13 +944,13 @@ class TestRegistry(FrappeTestCase):
 - [ ] **Step 2: Run test to verify it fails**
 
 ```bash
-bench --site <your-test-site> run-tests --app jarvis --module jarvis.tests.test_registry
+bench --site jarvis.localhost run-tests --app jarvis --module jarvis.tests.test_registry
 ```
 Expected: FAIL — `ModuleNotFoundError`.
 
 - [ ] **Step 3: Implement the registry**
 
-`jarvis/jarvis/tools/registry.py`:
+`app/jarvis/tools/registry.py`:
 
 ```python
 from typing import Callable
@@ -973,14 +984,14 @@ def dispatch(tool_name: str, args: dict):
 - [ ] **Step 4: Run tests to verify pass**
 
 ```bash
-bench --site <your-test-site> run-tests --app jarvis --module jarvis.tests.test_registry
+bench --site jarvis.localhost run-tests --app jarvis --module jarvis.tests.test_registry
 ```
 Expected: PASS (all five tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add jarvis/jarvis/tools/registry.py jarvis/jarvis/tests/test_registry.py
+git add app/jarvis/tools/registry.py app/jarvis/tests/test_registry.py
 git commit -m "feat: add tool registry and dispatcher"
 ```
 
@@ -991,12 +1002,12 @@ git commit -m "feat: add tool registry and dispatcher"
 **Purpose:** Expose the dispatcher over Frappe's HTTP layer for smoke-testing before the socket transport (Plan 2) exists. This is a temporary developer-facing entry point; the socket gateway will replace it as the production path, but the endpoint stays available for ops/debug.
 
 **Files:**
-- Create: `jarvis/jarvis/api.py`
-- Create: `jarvis/jarvis/tests/test_api.py`
+- Create: `app/jarvis/api.py`
+- Create: `app/jarvis/tests/test_api.py`
 
 - [ ] **Step 1: Write the failing test**
 
-`jarvis/jarvis/tests/test_api.py`:
+`app/jarvis/tests/test_api.py`:
 
 ```python
 import frappe
@@ -1030,13 +1041,13 @@ class TestCallTool(FrappeTestCase):
 - [ ] **Step 2: Run test to verify it fails**
 
 ```bash
-bench --site <your-test-site> run-tests --app jarvis --module jarvis.tests.test_api
+bench --site jarvis.localhost run-tests --app jarvis --module jarvis.tests.test_api
 ```
 Expected: FAIL — `ModuleNotFoundError`.
 
 - [ ] **Step 3: Implement the endpoint**
 
-`jarvis/jarvis/api.py`:
+`app/jarvis/api.py`:
 
 ```python
 import json
@@ -1079,14 +1090,14 @@ def _error(code: str, message: str) -> dict:
 - [ ] **Step 4: Run tests to verify pass**
 
 ```bash
-bench --site <your-test-site> run-tests --app jarvis --module jarvis.tests.test_api
+bench --site jarvis.localhost run-tests --app jarvis --module jarvis.tests.test_api
 ```
 Expected: PASS (all four tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add jarvis/jarvis/api.py jarvis/jarvis/tests/test_api.py
+git add app/jarvis/api.py app/jarvis/tests/test_api.py
 git commit -m "feat: add whitelisted call_tool endpoint"
 ```
 
@@ -1099,7 +1110,7 @@ git commit -m "feat: add whitelisted call_tool endpoint"
 - [ ] **Step 1: Start the bench**
 
 ```bash
-cd /Users/venkatesh/bench/develop
+cd /Users/venkatesh/bench/develop/jarvis/bench
 bench start
 ```
 Expected: bench runs, no errors related to jarvis on startup.
@@ -1108,17 +1119,17 @@ Expected: bench runs, no errors related to jarvis on startup.
 
 In another terminal:
 ```bash
-cd /Users/venkatesh/bench/develop
-bench --site <your-test-site> run-tests --app jarvis
+cd /Users/venkatesh/bench/develop/jarvis/bench
+bench --site jarvis.localhost run-tests --app jarvis
 ```
 Expected: all tests from Tasks 2–9 PASS.
 
 - [ ] **Step 3: Call `call_tool` over HTTP as Administrator**
 
-Use `bench --site <your-test-site> execute` to grab an API key/secret for Administrator, or generate one in the user profile UI. Then:
+Use `bench --site jarvis.localhost execute` to grab an API key/secret for Administrator, or generate one in the user profile UI. Then:
 
 ```bash
-curl -X POST "http://<your-test-site>:8000/api/method/jarvis.api.call_tool" \
+curl -X POST "http://jarvis.localhost:8000/api/method/jarvis.api.call_tool" \
   -H "Authorization: token <api_key>:<api_secret>" \
   -H "Content-Type: application/json" \
   -d '{"tool": "get_schema", "args": {"doctype": "Customer"}}'
