@@ -1,0 +1,59 @@
+{
+  "doctype": "DocType",
+  "name": "Jarvis Settings",
+  "module": "Jarvis",
+  "issingle": 1,
+  "custom": 0,
+  "engine": "InnoDB",
+  "field_order": [
+    "openclaw_section",
+    "openclaw_endpoint",
+    "openclaw_api_key",
+    "column_break_1",
+    "token_budget_monthly",
+    "enabled"
+  ],
+  "fields": [
+    {
+      "fieldname": "openclaw_section",
+      "fieldtype": "Section Break",
+      "label": "Openclaw Connection"
+    },
+    {
+      "fieldname": "openclaw_endpoint",
+      "fieldtype": "Data",
+      "label": "Openclaw Endpoint",
+      "description": "WebSocket URL of the openclaw cloud (e.g. wss://api.jarvis.example.com/agent)"
+    },
+    {
+      "fieldname": "openclaw_api_key",
+      "fieldtype": "Password",
+      "label": "Openclaw API Key"
+    },
+    {
+      "fieldname": "column_break_1",
+      "fieldtype": "Column Break"
+    },
+    {
+      "fieldname": "token_budget_monthly",
+      "fieldtype": "Int",
+      "label": "Monthly Token Budget",
+      "default": "0",
+      "description": "0 = unlimited. Otherwise hard cap before overage billing kicks in."
+    },
+    {
+      "fieldname": "enabled",
+      "fieldtype": "Check",
+      "label": "Enabled",
+      "default": "1"
+    }
+  ],
+  "permissions": [
+    {
+      "role": "System Manager",
+      "read": 1,
+      "write": 1,
+      "create": 1
+    }
+  ]
+}
