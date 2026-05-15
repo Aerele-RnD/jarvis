@@ -1,0 +1,44 @@
+{
+  "gateway": {
+    "mode": "local",
+    "port": 18789,
+    "bind": "lan",
+    "auth": {
+      "mode": "token",
+      "token": "{{ gateway_token }}"
+    },
+    "http": {
+      "endpoints": {
+        "chatCompletions": { "enabled": true },
+        "responses": { "enabled": true }
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": { "primary": "{{ provider_id }}/{{ model }}" }
+    }
+  },
+  "models": {
+    "providers": {
+      "{{ provider_id }}": {
+        {% if base_url %}"baseUrl": "{{ base_url }}",
+        {% endif %}"apiKey": {
+          "source": "file",
+          "provider": "llm_key",
+          "id": "value"
+        }
+      }
+    }
+  },
+  "channels": {},
+  "secrets": {
+    "providers": {
+      "llm_key": {
+        "source": "file",
+        "path": "/home/node/.openclaw/llm.key",
+        "mode": "singleValue"
+      }
+    }
+  }
+}
