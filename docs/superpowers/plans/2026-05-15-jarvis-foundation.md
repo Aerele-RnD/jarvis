@@ -18,15 +18,20 @@
 
 ## Prerequisites
 
-The engineer must have:
-- A working Frappe v15 bench at `/Users/venkatesh/bench/develop` with at least one site that has ERPNext v15 installed.
-- The `jarvis` directory at `/Users/venkatesh/bench/develop/jarvis` (where this plan lives) accessible from the bench. Before Task 1, symlink it into the bench's `apps/` directory:
-  ```bash
-  ln -s /Users/venkatesh/bench/develop/jarvis /Users/venkatesh/bench/develop/apps/jarvis
-  ```
-- Use the bench's existing virtualenv (`/Users/venkatesh/bench/develop/env/bin/python`) when running tests and `bench` commands.
+Actual bench layout on this workstation:
+- **Bench root:** `/Users/venkatesh/bench/develop/frappe-bench`
+- **Apps dir:** `/Users/venkatesh/bench/develop/frappe-bench/apps/`
+- **Test site:** `dev.alfred` (Frappe + ERPNext + HRMS installed, `developer_mode = 1`)
+- **Frappe version:** 17-dev (originally planned against v15, but the APIs we use — `FrappeTestCase`, `frappe.has_permission`, `frappe.get_meta`, `frappe.get_list`, `frappe.desk.query_report.run`, DocType JSON, `hooks.py` — are stable across v15→v17).
 
-All `bench` commands below assume the working directory is `/Users/venkatesh/bench/develop` unless otherwise stated.
+Before Task 1, symlink the jarvis source into the bench's `apps/`:
+```bash
+ln -s /Users/venkatesh/bench/develop/jarvis /Users/venkatesh/bench/develop/frappe-bench/apps/jarvis
+```
+
+All `bench` commands below assume the working directory is `/Users/venkatesh/bench/develop/frappe-bench` unless otherwise stated. The `bench` CLI is on `PATH` at `/Users/venkatesh/.local/bin/bench`.
+
+Wherever this plan says `<your-test-site>`, use `dev.alfred`.
 
 ---
 
