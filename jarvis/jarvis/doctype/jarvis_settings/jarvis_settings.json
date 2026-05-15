@@ -20,7 +20,17 @@
     "llm_base_url",
     "llm_advanced_section",
     "llm_temperature",
-    "llm_max_output_tokens"
+    "llm_max_output_tokens",
+    "operator_tab",
+    "operator_section",
+    "openclaw_gateway_url",
+    "openclaw_gateway_token",
+    "openclaw_llm_key_path",
+    "openclaw_config_path",
+    "openclaw_compose_dir",
+    "last_sync_section",
+    "last_sync_at",
+    "last_sync_status"
   ],
   "fields": [
     {
@@ -108,6 +118,65 @@
       "fieldtype": "Int",
       "label": "Max Output Tokens",
       "default": "4096"
+    },
+    {
+      "fieldname": "operator_tab",
+      "fieldtype": "Tab Break",
+      "label": "Operator"
+    },
+    {
+      "fieldname": "operator_section",
+      "fieldtype": "Section Break",
+      "label": "Openclaw Connection (operator)",
+      "description": "Operator config — will move to the Jarvis Admin app in a future version. Do not show to end users in production."
+    },
+    {
+      "fieldname": "openclaw_gateway_url",
+      "fieldtype": "Data",
+      "label": "Gateway URL",
+      "description": "WebSocket URL for the openclaw gateway, e.g. ws://127.0.0.1:18789"
+    },
+    {
+      "fieldname": "openclaw_gateway_token",
+      "fieldtype": "Password",
+      "label": "Gateway Token",
+      "description": "Bearer token used to authenticate the secrets.reload RPC"
+    },
+    {
+      "fieldname": "openclaw_llm_key_path",
+      "fieldtype": "Data",
+      "label": "LLM Key File Path",
+      "description": "Absolute host path to the SecretRef'd LLM key file (auto-populated by openclaw_bootstrap.start)"
+    },
+    {
+      "fieldname": "openclaw_config_path",
+      "fieldtype": "Data",
+      "label": "Openclaw Config Path",
+      "description": "Absolute host path to the rendered openclaw.json (auto-populated by openclaw_bootstrap.start)"
+    },
+    {
+      "fieldname": "openclaw_compose_dir",
+      "fieldtype": "Data",
+      "label": "Docker Compose Dir",
+      "description": "Directory containing docker-compose.yml (auto-populated by openclaw_bootstrap.start)"
+    },
+    {
+      "fieldname": "last_sync_section",
+      "fieldtype": "Section Break",
+      "label": "Last Sync",
+      "collapsible": 1
+    },
+    {
+      "fieldname": "last_sync_at",
+      "fieldtype": "Datetime",
+      "label": "Last Sync At",
+      "read_only": 1
+    },
+    {
+      "fieldname": "last_sync_status",
+      "fieldtype": "Long Text",
+      "label": "Last Sync Status",
+      "read_only": 1
     }
   ],
   "permissions": [
