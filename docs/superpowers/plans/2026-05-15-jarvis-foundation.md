@@ -1059,7 +1059,12 @@ def dispatch(tool_name: str, args: dict):
         raise ToolNotFoundError(f"no such tool: {tool_name}")
     if not isinstance(args, dict):
         raise InvalidArgumentError("args must be a dict")
-    return _TOOLS[tool_name](**args)
+    try:
+        return _TOOLS[tool_name](**args)
+    except TypeError as e:
+        # Missing/unexpected kwargs from the agent surface as Python TypeError;
+        # translate so the wire-level error code is consistent.
+        raise InvalidArgumentError(str(e))
 ```
 
 - [ ] **Step 4: Run tests to verify pass**
