@@ -2,6 +2,22 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 
 
+EXPECTED_PROVIDERS = {
+    "Anthropic",
+    "OpenAI",
+    "Google Gemini",
+    "Mistral",
+    "Groq",
+    "Together AI",
+    "DeepSeek",
+    "Moonshot (Kimi)",
+    "OpenRouter",
+    "Ollama (local)",
+    "vLLM (local)",
+    "OpenAI-Compatible",
+}
+
+
 class TestJarvisSettings(FrappeTestCase):
     def test_settings_is_single(self):
         meta = frappe.get_meta("Jarvis Settings")
@@ -10,10 +26,30 @@ class TestJarvisSettings(FrappeTestCase):
     def test_settings_has_expected_fields(self):
         meta = frappe.get_meta("Jarvis Settings")
         fieldnames = {f.fieldname for f in meta.fields}
-        for required in ("openclaw_api_key", "openclaw_endpoint", "token_budget_monthly"):
-            self.assertIn(required, fieldnames, f"missing field: {required}")
+        required = (
+            "openclaw_api_key",
+            "openclaw_endpoint",
+            "token_budget_monthly",
+            "llm_provider",
+            "llm_model",
+            "llm_api_key",
+            "llm_base_url",
+            "llm_temperature",
+            "llm_max_output_tokens",
+        )
+        for fieldname in required:
+            self.assertIn(fieldname, fieldnames, f"missing field: {fieldname}")
 
-    def test_api_key_is_password_field(self):
+    def test_api_keys_are_password_fields(self):
         meta = frappe.get_meta("Jarvis Settings")
-        api_key_field = next(f for f in meta.fields if f.fieldname == "openclaw_api_key")
-        self.assertEqual(api_key_field.fieldtype, "Password")
+        for fieldname in ("openclaw_api_key", "llm_api_key"):
+            field = next(f for f in meta.fields if f.fieldname == fieldname)
+            self.assertEqual(field.fieldtype, "Password", f"{fieldname} must be Password")
+
+    def test_llm_provider_options_cover_paid_and_open_weight(self):
+        meta = frappe.get_meta("Jarvis Settings")
+        provider_field = next(f for f in meta.fields if f.fieldname == "llm_provider")
+        self.assertEqual(provider_field.fieldtype, "Select")
+        options = {line.strip() for line in (provider_field.options or "").splitlines() if line.strip()}
+        missing = EXPECTED_PROVIDERS - options
+        self.assertFalse(missing, f"llm_provider missing options: {missing}")
