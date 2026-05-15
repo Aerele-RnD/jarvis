@@ -62,11 +62,11 @@ End-to-end: a save in Jarvis Settings detects the change (key only vs provider/m
 
 | Document | What it covers |
 |---|---|
-| [`docs/architecture.md`](docs/architecture.md) | Product vision, component map, data flow, trust boundaries |
-| [`docs/configuration.md`](docs/configuration.md) | Every Jarvis Settings field, what it does, how it gets populated |
-| [`docs/tools-api.md`](docs/tools-api.md) | The four data tools, the registry/dispatcher, the whitelisted `call_tool` HTTP API |
-| [`docs/operations.md`](docs/operations.md) | Bench commands (`openclaw_bootstrap.*`), credentials update flow, troubleshooting |
-| [`docs/development.md`](docs/development.md) | Dev setup, running tests, project structure, recipes for adding tools/providers |
+| [`jarvis/docs/architecture.md`](jarvis/docs/architecture.md) | Product vision, component map, data flow, trust boundaries |
+| [`jarvis/docs/configuration.md`](jarvis/docs/configuration.md) | Every Jarvis Settings field, what it does, how it gets populated |
+| [`jarvis/docs/tools-api.md`](jarvis/docs/tools-api.md) | The four data tools, the registry/dispatcher, the whitelisted `call_tool` HTTP API |
+| [`jarvis/docs/operations.md`](jarvis/docs/operations.md) | Bench commands (`openclaw_bootstrap.*`), credentials update flow, troubleshooting |
+| [`jarvis/docs/development.md`](jarvis/docs/development.md) | Dev setup, running tests, project structure, recipes for adding tools/providers |
 
 ## Contributing
 
@@ -84,7 +84,7 @@ Pre-commit is configured to use the following tools for checking and formatting 
 - prettier
 - pyupgrade
 
-See [`docs/development.md`](docs/development.md) for the full dev workflow, recipes, and project layout.
+See [`jarvis/docs/development.md`](jarvis/docs/development.md) for the full dev workflow, recipes, and project layout.
 
 ## License
 

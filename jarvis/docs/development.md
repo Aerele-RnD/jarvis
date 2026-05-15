@@ -81,7 +81,6 @@ app/
 ├── README.md
 ├── license.txt
 ├── .editorconfig, .eslintrc, .pre-commit-config.yaml, .gitignore
-├── docs/                                     # this directory
 └── jarvis/                                   # the Python package
     ├── __init__.py
     ├── hooks.py                              # Frappe app metadata
@@ -93,6 +92,7 @@ app/
     ├── openclaw_push.py                      # write_key_file, reload_secrets, restart_gateway, push_creds_*
     ├── openclaw_bootstrap.py                 # start, stop, status, restart bench commands
     ├── openclaw_templates/openclaw.json.j2   # Jinja template for openclaw config
+    ├── docs/                                 # this directory
     ├── tools/
     │   ├── __init__.py
     │   ├── registry.py                       # dispatch + list_tools
