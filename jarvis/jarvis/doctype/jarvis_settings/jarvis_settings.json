@@ -42,12 +42,13 @@
       "fieldname": "openclaw_endpoint",
       "fieldtype": "Data",
       "label": "Openclaw Endpoint",
-      "description": "WebSocket URL of the openclaw cloud (e.g. wss://api.jarvis.example.com/agent)"
+      "description": "WebSocket URL of the openclaw cloud (e.g. wss://api.jarvis.example.com/agent). Currently unused; reserved for the Phase 2.2 agent-loop transport."
     },
     {
       "fieldname": "openclaw_api_key",
       "fieldtype": "Password",
-      "label": "Openclaw API Key"
+      "label": "Openclaw API Key",
+      "description": "Per-tenant token authorising the agent-loop session. Currently unused; reserved for the Phase 2.2 agent-loop transport."
     },
     {
       "fieldname": "column_break_1",
