@@ -42,7 +42,7 @@ Now `bench start` and visit `http://jarvis.localhost:8000/app/jarvis-settings`.
 ## Running tests
 
 ```bash
-# Full app suite (~88 tests)
+# Full app suite (~90 tests)
 bench --site jarvis.localhost run-tests --app jarvis
 
 # Single test module

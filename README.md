@@ -4,7 +4,7 @@ AI superpowers for Frappe/ERPNext, powered by [openclaw](https://github.com/open
 
 Jarvis lets ERPNext users — especially business owners and execs — ask plain-English questions over their ERP data and get correct, permission-aware answers grounded in the actual records. It pairs an in-bench Frappe app (settings, MCP-style tool layer, HTTP API, on-save credentials propagation) with an openclaw agent runtime hosted per-tenant on Aerele's infrastructure. Data stays on the customer's bench; the agent brain lives in openclaw; permissions inherit from Frappe's own per-user checks.
 
-**Status:** Phase 1 (foundation: settings, four permission-aware tools, HTTP API) and Phase 2.1 (credentials update stack: Operator tab + openclaw bootstrap + on_update hook → openclaw secrets.reload / restart) are implemented. 87 unit tests passing. Phase 2.2 (chat UI + agent loop end-to-end) is next.
+**Status:** Phase 1 (foundation: settings, four permission-aware tools, HTTP API) and Phase 2.1 (credentials update stack: Operator tab + openclaw bootstrap + on_update hook → openclaw secrets.reload / restart) are implemented and end-to-end verified against a real openclaw container. 90 unit tests passing. Phase 2.2 (chat UI + agent loop end-to-end) is next.
 
 ## Installation
 

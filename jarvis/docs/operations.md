@@ -30,8 +30,8 @@ What it does, in order:
 3. Populate `Jarvis Settings` operator-tab fields with those defaults via `db_set` if they're empty. Existing values are preserved.
 4. Generate a gateway token via `secrets.token_urlsafe(32)` if `openclaw_gateway_token` is empty. Persist via `db_set`. Re-runs preserve the existing token.
 5. Create `<workspace>/openclaw_state/` if missing.
-6. Create an empty `llm.key` (mode 0600) if it doesn't exist. **Existing keys are not overwritten** — preserves any key written by a prior `on_update` push.
-7. Render `openclaw.json` from current Jarvis Settings values via `openclaw_config.render_config`. If Settings have no provider/model yet, the renderer uses `STUB_DEFAULTS` (Moonshot/`kimi-k2.6` with the empty key file) so openclaw still boots — LLM calls will fail until creds are filled, but the rest of the pipeline is exercisable.
+6. Create a placeholder `llm.key` (mode 0600) if it doesn't exist. The file contains a non-empty placeholder string (`PLACEHOLDER-set-llm_api_key-in-Jarvis-Settings`) because openclaw's SecretRef resolver fails-fast on empty values and refuses to boot. The customer's first save of Jarvis Settings with a real LLM API key overwrites this via the `on_update` hook. **Existing keys are not overwritten** — once a real key has been written, re-running `start` preserves it.
+7. Render `openclaw.json` from current Jarvis Settings values via `openclaw_config.render_config`. If Settings have no provider/model yet, the renderer uses `STUB_DEFAULTS` (Moonshot/`kimi-k2.6` against Moonshot's default base URL with the placeholder key file) so openclaw still boots — LLM calls will fail until creds are filled, but the rest of the pipeline (`secrets.reload`, restart) is exercisable.
 8. Write `<workspace>/openclaw_state/.env` with `OPENCLAW_CONFIG_DIR`, `OPENCLAW_IMAGE=ghcr.io/openclaw/openclaw:latest`, `OPENCLAW_GATEWAY_PORT=18789`, `OPENCLAW_GATEWAY_BIND=lan`.
 9. `docker compose pull openclaw-gateway` (separate from `up` so first-run image pulls are visible; 600s timeout).
 10. `docker compose up -d openclaw-gateway` (60s timeout).
