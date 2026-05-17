@@ -250,6 +250,11 @@ def ask_one(user: str, message: str, timeout: int = DEFAULT_TIMEOUT) -> dict:
 				stream = payload.get("stream")
 				data = payload.get("data") or {}
 
+				# Debug: enable with JARVIS_DEMO_DEBUG=1 to dump every event raw.
+				import os as _os
+				if _os.environ.get("JARVIS_DEMO_DEBUG"):
+					print(f"[raw event] stream={stream!r} payload={json.dumps(payload)}")
+
 				if stream == "lifecycle":
 					phase = data.get("phase")
 					if phase == "start":
@@ -293,11 +298,17 @@ def ask_one(user: str, message: str, timeout: int = DEFAULT_TIMEOUT) -> dict:
 						print(f"[item/{kind}/{phase}] {summary}")
 
 				elif stream == "assistant":
-					phase = data.get("phase")
+					# openclaw streams assistant deltas as {text: <cumulative>, delta: <incremental>}
+					# with no phase field. Print each delta inline; keep the latest
+					# cumulative `text` as the canonical final reply.
 					delta = data.get("delta") or ""
-					if phase in ("text", "delivery") and delta:
+					full_text = data.get("text")
+					if delta:
 						print(delta, end="", flush=True)
-						final_text_parts.append(delta)
+					if isinstance(full_text, str):
+						# Replace, not append — `text` is cumulative across deltas.
+						final_text_parts.clear()
+						final_text_parts.append(full_text)
 
 				elif stream is None:
 					# Empty / heartbeat frames — silent.
