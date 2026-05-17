@@ -66,6 +66,7 @@ End-to-end: a save in Jarvis Settings detects the change (key only vs provider/m
 | [`jarvis/docs/tools-api.md`](jarvis/docs/tools-api.md) | The four data tools, the registry/dispatcher, the whitelisted `call_tool` HTTP API |
 | [`jarvis/docs/operations.md`](jarvis/docs/operations.md) | Bench commands (`openclaw_bootstrap.*`), credentials update flow, troubleshooting |
 | [`jarvis/docs/development.md`](jarvis/docs/development.md) | Dev setup, running tests, project structure, recipes for adding tools/providers |
+| [`jarvis/docs/decisions/`](jarvis/docs/decisions/) | Architectural decision records. See [identity propagation](jarvis/docs/decisions/2026-05-17-identity-propagation.md) for why Path A (registered plugin tools) replaced the original MCP+hook design. |
 
 ## Contributing
 

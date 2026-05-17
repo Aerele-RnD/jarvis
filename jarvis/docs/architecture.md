@@ -135,8 +135,10 @@ Jarvis initially shipped on the MCP path. It hit hard walls — the MCP-routed
 before_tool_call invocation in openclaw passes no session context to plugin
 hooks, and several alternative session-discovery mechanisms are gated to bundled
 plugins. We pivoted to the **factory path**, the same path the chat channels
-use. See `docs/superpowers/decisions/2026-05-17-identity-propagation.md` for the
-full investigation and the four MCP+hook variants we tried before pivoting.
+use. See [`decisions/2026-05-17-identity-propagation.md`](decisions/2026-05-17-identity-propagation.md)
+for the full investigation — the four MCP+hook variants we tried, why each
+was structurally blocked, and the trade-offs we accepted by moving to the
+factory path.
 
 **The Path A mechanism (Phase 2.2.a)** works as follows:
 
