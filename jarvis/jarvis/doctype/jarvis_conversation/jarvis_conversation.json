@@ -1,0 +1,61 @@
+{
+  "doctype": "DocType",
+  "name": "Jarvis Conversation",
+  "module": "Jarvis",
+  "issingle": 0,
+  "custom": 0,
+  "engine": "InnoDB",
+  "autoname": "format:JCONV-{#####}",
+  "field_order": [
+    "title",
+    "session_key",
+    "status",
+    "last_active_at"
+  ],
+  "fields": [
+    {
+      "fieldname": "title",
+      "fieldtype": "Data",
+      "label": "Title",
+      "in_list_view": 1,
+      "description": "Auto-generated from the first user message; editable."
+    },
+    {
+      "fieldname": "session_key",
+      "fieldtype": "Data",
+      "label": "Openclaw Session Key",
+      "unique": 1,
+      "in_standard_filter": 1,
+      "description": "Populated on first agent turn; reused for subsequent turns in this conversation."
+    },
+    {
+      "fieldname": "status",
+      "fieldtype": "Select",
+      "label": "Status",
+      "options": "active\narchived",
+      "default": "active",
+      "in_list_view": 1,
+      "in_standard_filter": 1
+    },
+    {
+      "fieldname": "last_active_at",
+      "fieldtype": "Datetime",
+      "label": "Last Active At",
+      "in_list_view": 1,
+      "in_standard_filter": 1
+    }
+  ],
+  "permissions": [
+    {
+      "role": "All",
+      "read": 1,
+      "write": 1,
+      "create": 1,
+      "delete": 1,
+      "if_owner": 1
+    }
+  ],
+  "sort_field": "last_active_at",
+  "sort_order": "DESC",
+  "track_changes": 1
+}
