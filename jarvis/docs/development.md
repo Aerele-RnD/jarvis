@@ -42,7 +42,7 @@ Now `bench start` and visit `http://jarvis.localhost:8000/app/jarvis-settings`.
 ## Running tests
 
 ```bash
-# Full app suite (~123 tests)
+# Full app suite (~183 tests)
 bench --site jarvis.localhost run-tests --app jarvis
 
 # Single test module
@@ -72,6 +72,15 @@ What each test module covers:
 | `tests.test_openclaw_push` | File writes (0600), WebSocket frame contents, error translation, docker subprocess args |
 | `tests.test_openclaw_bootstrap` | Path defaults, token generation, idempotency, env file contents, subprocess ordering |
 | `tests.test_settings_on_update` | Change classification, operator gate, status recording, failure handling, key persistence on failure |
+| `tests.test_jarvis_conversation` | Jarvis Conversation DocType — schema, owner-only perms, before_insert default for last_active_at |
+| `tests.test_jarvis_chat_message` | Jarvis Chat Message DocType — schema, parent link, tool fields, owner-only perms |
+| `tests.test_chat_policy` | `policy.validate_can_send` accept/reject (stub today; Phase 3 fills in) |
+| `tests.test_chat_events` | openclaw event parsing (lifecycle/tool/assistant); `publish_to_user` wrapper |
+| `tests.test_chat_openclaw_client` | Python WS client — connect handshake, sessions.create, stream_agent_turn (with mocked socket) |
+| `tests.test_chat_api` | list/get/create/archive/send_message endpoints — validation, persistence, enqueue |
+| `tests.test_chat_worker` | `run_agent_turn` — happy path, tool events, error paths (with mocked OpenclawSession) |
+| `tests.test_chat_stale_scan` | stale-streaming scan job |
+| `tests.test_api_chat_session_header` | `call_tool` X-Jarvis-Session header behaviour |
 
 Tests run against the live `jarvis.localhost` site (Frappe's `FrappeTestCase` requires a real site for DB access). Bench Redis must be running on ports 11000 / 13000 — if you see `Should not fail silently in tests`, that's a missing Redis instance; `bench start` brings them up.
 

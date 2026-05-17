@@ -195,6 +195,41 @@ tool entry point for both external Phase 1 callers and the openclaw plugin.
 already live on the factory path, where openclaw's plugin SDK was designed to
 flow session context to tool factories. Path A puts Jarvis on the same path.
 
+## Chat UI (Phase 2.2.b)
+
+The `/app/jarvis-chat` Desk page is a thin client over the Path A agent loop.
+Three Frappe-side pieces:
+
+1. **`jarvis.chat.api`** — whitelisted endpoints for `list_conversations`,
+   `get_conversation`, `create_conversation`, `send_message`, and
+   `archive_conversation`. `send_message` validates via
+   `policy.validate_can_send` (stub), persists the user message, ensures the
+   conversation has an openclaw `session_key` (creating one on first turn),
+   and enqueues `jarvis.chat.worker.run_agent_turn` via `frappe.enqueue`.
+   Returns `{ok, run_id, message_id}` in ~10ms.
+
+2. **`jarvis.chat.worker.run_agent_turn`** — RQ job that holds the Python
+   WebSocket to openclaw for the duration of the turn (typically 10-30s).
+   Streams events through `OpenclawSession.stream_agent_turn`, persists
+   deltas to `Jarvis Chat Message` (overwriting the cumulative `content` for
+   the active assistant turn), and republishes each event via
+   `frappe.publish_realtime("jarvis:event", payload, user=...)`.
+
+3. **`jarvis.chat.stale_scan`** — scheduler job (every 5 minutes) that marks
+   abandoned streaming messages errored. Recovers cleanly if a worker is
+   killed mid-stream.
+
+The browser subscribes to `frappe.realtime.on("jarvis:event", ...)` once and
+routes events by `kind` (`assistant:delta`, `tool:start`, `tool:end`,
+`tool:result`, `run:end`, `run:error`). Per-token latency from openclaw →
+browser is ~10ms.
+
+Tool args + results reach the chat UI through a separate path: when the
+plugin calls `jarvis.api.call_tool` for a session that belongs to a chat
+conversation, `call_tool` itself persists a tool-role `Jarvis Chat Message`
+and publishes a `tool:result` event. The header is `X-Jarvis-Session`
+(sourced from `ctx.sessionKey` in the plugin's factory).
+
 ## Trust boundaries
 
 - **Per-user permission inheritance.** Every tool calls `frappe.has_permission(...)` with the calling user. The agent never sees DocTypes or records the user can't see. A salesperson asking about Purchase Invoices gets `PermissionDeniedError`, not data leakage.

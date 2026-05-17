@@ -200,3 +200,55 @@ The openclaw container log will show the agent rendering a reply that includes r
 | Tests fail with `Should not fail silently in tests` | Bench Redis isn't running on port 13000 | `bench start` (which spins up Redis via Procfile) |
 | Tests fail with `ModuleNotFoundError: No module named 'jarvis'` | Bench worker started before app was installed (stale `sys.path`) | `pkill -f "bench serve"` then `bench start` fresh |
 | `bench setup requirements` errors with `InvalidGitRepositoryError` for jarvis | App is symlinked to a non-git-root directory | The app source needs to be its own git repo (it is, after the Phase 1 restructure). Make sure `apps/jarvis/.git` exists. |
+
+## Chat operations (Phase 2.2.b)
+
+### Open the chat page
+
+`http://<site>:8000/app/jarvis-chat` — accessible to any signed-in user. Each user sees only their own conversations.
+
+### Restart chat workers
+
+Workers are standard Frappe RQ workers. Inspect them:
+
+```bash
+cd ~/bench/develop/jarvis/bench
+bench --site jarvis.localhost rq-list
+```
+
+Restart all (in dev `bench start` already runs them; in production: `supervisorctl restart all`).
+
+### Inspect a stuck streaming message
+
+```bash
+bench --site jarvis.localhost console
+>>> import frappe
+>>> frappe.get_all("Jarvis Chat Message",
+...     filters={"streaming": 1},
+...     fields=["name", "conversation", "creation"])
+```
+
+Messages older than ~5 minutes are auto-cleaned by the `stale_scan` scheduler job. Force a manual scan:
+
+```bash
+bench --site jarvis.localhost execute jarvis.chat.stale_scan.scan_and_mark_errored
+```
+
+### Debug a chat turn
+
+The plugin logs each tool call with args + result preview to the openclaw container's stdout:
+
+```bash
+cd ~/bench/develop/jarvis/openclaw
+docker compose logs openclaw-gateway --since=120s | grep jarvis-openclaw-plugin
+```
+
+For a Frappe-side perspective:
+
+```bash
+bench --site jarvis.localhost console
+>>> conv = frappe.get_doc("Jarvis Conversation", "JCONV-00001")
+>>> for m in frappe.get_all("Jarvis Chat Message", filters={"conversation": conv.name},
+...     fields=["seq","role","tool_name","tool_status","streaming","content"], order_by="seq"):
+...     print(m)
+```
