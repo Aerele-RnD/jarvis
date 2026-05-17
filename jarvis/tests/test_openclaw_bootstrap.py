@@ -19,6 +19,12 @@ def _make_fake_plugin(workspace: Path) -> Path:
     dist_dir = plugin_dir / "dist"
     dist_dir.mkdir(exist_ok=True)
     (dist_dir / "index.js").write_text("// stub\n")
+    # Stub the runtime deps that _install_plugin copies (production deps listed
+    # in the plugin's package.json). Keep this in sync with openclaw_bootstrap's
+    # runtime_deps tuple.
+    typebox_dir = plugin_dir / "node_modules" / "typebox"
+    typebox_dir.mkdir(parents=True, exist_ok=True)
+    (typebox_dir / "package.json").write_text('{"name": "typebox", "version": "1.1.38"}\n')
     return plugin_dir
 
 
@@ -312,17 +318,24 @@ class TestInstallPlugin(FrappeTestCase):
         finally:
             tmp.cleanup()
 
-    def test_node_modules_not_copied(self):
+    def test_only_listed_runtime_deps_are_copied(self):
+        """_install_plugin copies only the explicit runtime_deps (typebox today),
+        not arbitrary contents of source node_modules. This protects against
+        pnpm's symlink farm (which would otherwise pull in the entire openclaw
+        source via the link: dep)."""
         from jarvis.openclaw_bootstrap import _install_plugin
         tmp, workspace, state_dir = self._make_workspace()
         try:
             plugin_dir = _make_fake_plugin(workspace)
-            (plugin_dir / "node_modules").mkdir()
-            (plugin_dir / "node_modules" / "some-dep.js").write_text("// dep\n")
+            # _make_fake_plugin already creates node_modules/typebox; add a
+            # non-runtime dep that should be excluded.
+            (plugin_dir / "node_modules" / "some-dep").mkdir()
+            (plugin_dir / "node_modules" / "some-dep" / "index.js").write_text("// dep\n")
             _install_plugin(workspace, state_dir)
 
             target = state_dir / "extensions" / "jarvis-openclaw-plugin"
-            self.assertFalse((target / "node_modules").exists())
+            self.assertTrue((target / "node_modules" / "typebox").exists())
+            self.assertFalse((target / "node_modules" / "some-dep").exists())
         finally:
             tmp.cleanup()
 
