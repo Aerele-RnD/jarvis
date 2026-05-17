@@ -76,9 +76,96 @@ def _dispatch_as_user(user: str, tool: str, args: dict | str | None) -> dict:
 		args_parsed = _parse_args(args)
 		if not isinstance(args_parsed, dict):
 			return args_parsed  # already an error envelope
-		return _dispatch_safe(tool, args_parsed)
+		result = _dispatch_safe(tool, args_parsed)
+
+		# If the plugin signalled a chat session, surface the tool call
+		# (args + result + status) to the chat UI.
+		session_key = _get_header("X-Jarvis-Session")
+		if session_key:
+			_persist_and_publish_tool_call(
+				session_key=session_key,
+				tool=tool,
+				args=args_parsed,
+				result=result,
+			)
+		return result
 	finally:
 		frappe.set_user(original)
+
+
+def _persist_and_publish_tool_call(
+	*,
+	session_key: str,
+	tool: str,
+	args: dict,
+	result: dict,
+) -> None:
+	"""Persist a Jarvis Chat Message (role=tool) and publish a realtime event.
+
+	Best-effort: if no conversation owns this session_key, return silently.
+	"""
+	conv_name = frappe.db.get_value("Jarvis Conversation", {"session_key": session_key}, "name")
+	if not conv_name:
+		return
+	status = "completed" if result.get("ok") else "error"
+
+	# Run as the conversation owner so DocType perms allow it
+	conv_owner = frappe.db.get_value("Jarvis Conversation", conv_name, "owner")
+	original = frappe.session.user
+	frappe.set_user(conv_owner)
+	try:
+		from jarvis.chat.api import _next_seq
+		seq = _next_seq(conv_name)
+		doc = frappe.get_doc({
+			"doctype": "Jarvis Chat Message",
+			"conversation": conv_name,
+			"seq": seq,
+			"role": "tool",
+			"tool_name": tool,
+			"tool_args": frappe.as_json(args),
+			"tool_result": frappe.as_json(result),
+			"tool_status": status,
+			"content": f"{tool} → {status}",
+		})
+		doc.insert(ignore_permissions=True)
+		frappe.db.commit()
+		publish_realtime_tool_result(
+			user=conv_owner,
+			conversation_id=conv_name,
+			tool_message_id=doc.name,
+			tool_name=tool,
+			args=args,
+			result=result,
+			status=status,
+		)
+	finally:
+		frappe.set_user(original)
+
+
+def publish_realtime_tool_result(
+	*,
+	user: str,
+	conversation_id: str,
+	tool_message_id: str,
+	tool_name: str,
+	args: dict,
+	result: dict,
+	status: str,
+) -> None:
+	"""Wrapper around frappe.publish_realtime so tests can mock at this seam."""
+	frappe.publish_realtime(
+		"jarvis:event",
+		{
+			"kind": "tool:result",
+			"conversation_id": conversation_id,
+			"tool_message_id": tool_message_id,
+			"tool_name": tool_name,
+			"args": args,
+			"result": result,
+			"status": status,
+		},
+		user=user,
+	)
 
 
 def _parse_args(args: dict | str | None) -> dict:
