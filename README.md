@@ -2,9 +2,9 @@
 
 AI superpowers for Frappe/ERPNext, powered by [openclaw](https://github.com/openclaw/openclaw).
 
-Jarvis lets ERPNext users — especially business owners and execs — ask plain-English questions over their ERP data and get correct, permission-aware answers grounded in the actual records. It pairs an in-bench Frappe app (settings, MCP-style tool layer, HTTP API, on-save credentials propagation) with an openclaw agent runtime hosted per-tenant on Aerele's infrastructure. Data stays on the customer's bench; the agent brain lives in openclaw; permissions inherit from Frappe's own per-user checks.
+Jarvis lets ERPNext users — especially business owners and execs — ask plain-English questions over their ERP data and get correct, permission-aware answers grounded in the actual records. It pairs an in-bench Frappe app (settings, permission-aware tool layer, HTTP API, on-save credentials propagation) with an openclaw agent runtime hosted per-tenant on Aerele's infrastructure. Data stays on the customer's bench; the agent brain lives in openclaw; permissions inherit from Frappe's own per-user checks.
 
-**Status:** Phase 1 (foundation: settings, four permission-aware tools, HTTP API) and Phase 2.1 (credentials update stack: Operator tab + openclaw bootstrap + on_update hook → openclaw secrets.reload / restart) are implemented and end-to-end verified against a real openclaw container. 90 unit tests passing. Phase 2.2 (chat UI + agent loop end-to-end) is next.
+**Status:** End-to-end agent loop is live. Phase 1 (foundation), Phase 2.1 (credentials update stack), and Phase 2.2.a (Path A agent loop — Jarvis tools registered as openclaw plugin tools, identity propagated via sessionKey lookup → `frappe.set_user`) are implemented and verified against a real openclaw container. The `jarvis.demo.ask_one` bench command runs a full chat turn through openclaw, returning real ERPNext data. 123 Frappe-side unit tests + 20 plugin-side unit tests passing. Phase 2.2.b (chat UI inside Desk) is next.
 
 ## Installation
 
@@ -30,12 +30,11 @@ bench --site <your-site> execute jarvis.openclaw_bootstrap.start
 #    Fill the Language Model section: provider, model, API key. Save.
 
 # 4. Confirm the push worked: Operator tab -> Last Sync Status reads "ok (restart)"
-#    Then make a real LLM call through openclaw:
-curl http://127.0.0.1:18789/v1/chat/completions \
-  -H "Authorization: Bearer $(grep -oP '"token":\s*"\K[^"]+' \
-       /Users/$USER/bench/develop/jarvis/openclaw_state/openclaw.json)" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"openclaw/default","messages":[{"role":"user","content":"hi"}]}'
+
+# 5. Run an end-to-end agent turn (Path A) — agent invokes jarvis__get_list
+#    under the named Frappe user's permissions and returns real customer rows:
+bench --site <your-site> execute jarvis.demo.ask_one \
+  --kwargs '{"user":"Administrator","message":"use the jarvis__get_list tool to list 3 customers, show me just the names"}'
 ```
 
 ## Architecture at a glance

@@ -150,7 +150,7 @@ Alternatively, for a clean re-render:
 bench --site jarvis.localhost execute jarvis.openclaw_bootstrap.restart
 ```
 
-### Make a real LLM call (smoke test the pipeline)
+### Make a real LLM call (smoke test the LLM pipeline)
 
 ```bash
 TOKEN=$(python3 -c "import json; print(json.load(open('/Users/<you>/bench/develop/jarvis/openclaw_state/openclaw.json'))['gateway']['auth']['token'])")
@@ -162,6 +162,28 @@ curl http://127.0.0.1:18789/v1/chat/completions \
 ```
 
 Note: `"model": "openclaw/default"` selects the *agent* default, which in turn uses the provider/model configured in `agents.defaults.model.primary` (rendered from Jarvis Settings). Backend model overrides via `x-openclaw-model` header are available but not needed.
+
+### Run a full agent turn (Phase 2.2.a Path A end-to-end)
+
+`jarvis.demo.ask_one` opens an openclaw session as a named Frappe user, sends a chat message, waits for the agent loop to complete, and prints a structured trace. This is the canonical smoke test that the agent + plugin + identity propagation pipeline is healthy.
+
+```bash
+bench --site jarvis.localhost execute jarvis.demo.ask_one \
+  --kwargs '{"user":"Administrator","message":"use the jarvis__get_list tool to list 3 customers, show me just the names"}'
+```
+
+Expected trace:
+```
+[session created] key=agent:main:dashboard:<uuid>
+[chat session row created] sessionKey=... user='Administrator'
+[run accepted] runId=...
+[lifecycle] run started
+[tool→start] jarvis__get_list({})
+[tool→ok] jarvis__get_list status=completed
+[lifecycle] run ended cleanly
+```
+
+The openclaw container log will show the agent rendering a reply that includes real customer names from the Frappe DB. If the demo's `tool_calls: []` stays empty, the most likely cause is a plugin load failure — check `docker compose logs openclaw-gateway | grep jarvis-openclaw-plugin`. The workspace doc `docs/superpowers/verification/2026-05-17-phase-2-2-a-path-a-agent-loop.md` has the full runbook.
 
 ## Troubleshooting
 

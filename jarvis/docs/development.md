@@ -42,7 +42,7 @@ Now `bench start` and visit `http://jarvis.localhost:8000/app/jarvis-settings`.
 ## Running tests
 
 ```bash
-# Full app suite (~90 tests)
+# Full app suite (~123 tests)
 bench --site jarvis.localhost run-tests --app jarvis
 
 # Single test module
@@ -65,8 +65,10 @@ What each test module covers:
 | `tests.test_get_list` | `get_list` returns rows, limit cap, missing DocType, permission denial |
 | `tests.test_run_report` | `run_report` permission denial, unknown report, missing arg; happy path skipped when no default company |
 | `tests.test_registry` | `dispatch` happy path, unknown tool, non-dict args, missing kwargs translation |
-| `tests.test_api` | `call_tool` HTTP envelope, JSON-string args, error codes |
-| `tests.test_openclaw_config` | Provider mapping, JSON validity, SecretRef shape, stub fallback, all 12 providers render |
+| `tests.test_api` | `call_tool` HTTP envelope (standard Frappe-auth path + Phase 2.2.a plugin-auth path with X-Jarvis-Token + X-Jarvis-User → frappe.set_user) |
+| `tests.test_chat_session` | Jarvis Chat Session DocType structure + sessionKey-uniqueness |
+| `tests.test_lookup` | `lookup_user_by_session` endpoint — token auth, session resolution, missing/unknown cases |
+| `tests.test_openclaw_config` | Provider mapping, JSON validity, SecretRef shape, stub fallback, all 12 providers render, Path A plugin entry present, no MCP block |
 | `tests.test_openclaw_push` | File writes (0600), WebSocket frame contents, error translation, docker subprocess args |
 | `tests.test_openclaw_bootstrap` | Path defaults, token generation, idempotency, env file contents, subprocess ordering |
 | `tests.test_settings_on_update` | Change classification, operator gate, status recording, failure handling, key persistence on failure |

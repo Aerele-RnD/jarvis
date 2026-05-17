@@ -6,7 +6,7 @@ Jarvis is structured as four layers, each building on the previous. Only Layer 1
 
 | Layer | What it does | Status |
 |---|---|---|
-| 1. Read & Understand | Permission-aware Q&A over ERPNext data. Tables, charts, saved views. | Foundation implemented (Phase 1 + Phase 2.1) |
+| 1. Read & Understand | Permission-aware Q&A over ERPNext data. Tables, charts, saved views. | Agent loop live (Phase 1 + 2.1 + 2.2.a). Chat UI in Desk (2.2.b) is next. |
 | 2. Proactive | Scheduled alerts, anomaly detection, digests pushed to the user | Future |
 | 3. Reasoning | Forecasts, what-ifs, recommendations | Future |
 | 4. Action | Agent writes back into ERPNext (drafts POs, posts entries) behind approvals | Future |
