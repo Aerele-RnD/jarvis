@@ -1,0 +1,80 @@
+.jarvis-chat-page .jarvis-chat-layout {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 16px;
+  height: calc(100vh - 200px);
+}
+
+.jarvis-chat-sidebar {
+  border-right: 1px solid var(--border-color);
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.jarvis-new-chat-btn {
+  width: 100%;
+  margin-bottom: 12px;
+}
+
+.jarvis-conversation-list .jarvis-conv-item {
+  padding: 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.jarvis-conversation-list .jarvis-conv-item:hover {
+  background: var(--bg-light-gray);
+}
+
+.jarvis-conversation-list .jarvis-conv-item.active {
+  background: var(--bg-color);
+  font-weight: 600;
+}
+
+.jarvis-chat-main {
+  display: flex;
+  flex-direction: column;
+}
+
+.jarvis-message-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.jarvis-message {
+  margin-bottom: 12px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  max-width: 80%;
+  word-wrap: break-word;
+}
+
+.jarvis-message.user {
+  background: var(--bg-color);
+  margin-left: auto;
+}
+
+.jarvis-message.assistant {
+  background: var(--bg-light-gray);
+  margin-right: auto;
+}
+
+.jarvis-message.tool {
+  background: var(--alert-bg-info);
+  font-family: monospace;
+  font-size: 12px;
+  margin-right: auto;
+  border-left: 3px solid var(--border-color);
+}
+
+.jarvis-input-row {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid var(--border-color);
+}
+
+.jarvis-input {
+  flex: 1;
+}
