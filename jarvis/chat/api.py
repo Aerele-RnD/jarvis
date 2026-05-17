@@ -164,9 +164,12 @@ def _ensure_session_key(user: str) -> str:
 	if not gateway_url or not gateway_token:
 		frappe.throw(_("openclaw is not configured"))
 
+	import time
 	sess = OpenclawSession.connect(gateway_url, gateway_token)
 	try:
-		session_key = sess.create_session(label=f"jarvis-chat-{user}")
+		# Label includes a timestamp because openclaw deduplicates sessions
+		# by label and rejects collisions.
+		session_key = sess.create_session(label=f"jarvis-chat-{user}-{int(time.time() * 1000)}")
 	finally:
 		sess.close()
 

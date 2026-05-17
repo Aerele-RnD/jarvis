@@ -5,7 +5,7 @@
   "issingle": 0,
   "custom": 0,
   "engine": "InnoDB",
-  "autoname": "format:JMSG-{########}",
+  "autoname": "hash",
   "field_order": [
     "conversation",
     "seq",

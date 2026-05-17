@@ -5,7 +5,7 @@
   "issingle": 0,
   "custom": 0,
   "engine": "InnoDB",
-  "autoname": "format:JCONV-{#####}",
+  "autoname": "hash",
   "field_order": [
     "title",
     "session_key",

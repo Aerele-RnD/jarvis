@@ -171,10 +171,19 @@ def publish_realtime_tool_result(
 def _parse_args(args: dict | str | None) -> dict:
 	if isinstance(args, str):
 		try:
-			return json.loads(args)
+			args = json.loads(args)
 		except json.JSONDecodeError as e:
 			return _error("InvalidArgumentError", f"args is not valid JSON: {e}")
-	return args or {}
+	args = args or {}
+	# Defensive: strip LLM-hallucinated "_user" / "_session" fields. The
+	# old MCP design used them as in-band identity carriers; Path A moved
+	# identity to HTTPS headers. If the LLM has been trained on the older
+	# convention it may emit these even though our tool schemas don't list
+	# them — dropping them silently keeps such calls dispatching cleanly.
+	if isinstance(args, dict):
+		for legacy in ("_user", "_session", "_session_key"):
+			args.pop(legacy, None)
+	return args
 
 
 def _dispatch_safe(tool: str, args: dict) -> dict:
