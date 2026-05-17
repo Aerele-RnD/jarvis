@@ -131,7 +131,12 @@ dispatch("get_schema", {"doctype": "Customer"})
 
 Module: `jarvis.api`
 
-A single whitelisted Frappe endpoint that exposes the dispatcher over HTTP.
+A single whitelisted Frappe endpoint that exposes the dispatcher over HTTP. As
+of Phase 2.2.a this is also **the entry point used by `jarvis-openclaw-plugin`**
+when openclaw's agent invokes a `jarvis__*` tool. The plugin authenticates with
+the gateway token (`X-Jarvis-Token`) and identifies the calling user via an
+`X-Jarvis-User` header that it resolves from `ctx.sessionKey` at tool-execution
+time (see `architecture.md` for the full identity-propagation flow).
 
 ```
 POST /api/method/jarvis.api.call_tool
@@ -191,7 +196,17 @@ The `error.code` field is always one of these (the exception's `__name__`):
 
 ### Authentication
 
-Uses Frappe's standard auth — the calling user's session cookie or `Authorization: token <api_key>:<api_secret>` header. The user's permissions are exactly what the tools see. No additional Jarvis-specific auth in Phase 1.
+Two supported auth modes:
+
+1. **External clients (Phase 1 + general use):** Frappe's standard auth — the
+   calling user's session cookie or `Authorization: token <api_key>:<api_secret>`
+   header. The user's permissions are exactly what the tools see.
+2. **`jarvis-openclaw-plugin` (Phase 2.2.a):** `X-Jarvis-Token` shared secret +
+   `X-Jarvis-User` header. The token is validated against the
+   `openclaw_gateway_token` field on Jarvis Settings; if valid, `call_tool`
+   calls `frappe.set_user(X-Jarvis-User)` for the duration of the dispatch.
+   The user is resolved by the plugin from `ctx.sessionKey` via
+   `jarvis.api.lookup_user_by_session` — the LLM never sees or controls it.
 
 ### Example: Administrator call
 

@@ -35,22 +35,9 @@
       }
     }
   },
-  "mcp": {
-    "servers": {
-      "jarvis": {
-        "url": "http://host.docker.internal:8000/api/method/jarvis.mcp.serve",
-        "transport": "streamable-http",
-        "headers": {
-          "Authorization": "Bearer {{ gateway_token }}"
-        }
-      }
-    }
-  },
   "plugins": {
     "entries": {
-      "jarvis-openclaw-plugin": {
-        "hooks": { "allowConversationAccess": true }
-      }
+      "jarvis-openclaw-plugin": {}
     }
   },
   "channels": {},

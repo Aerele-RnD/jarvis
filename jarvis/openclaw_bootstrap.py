@@ -105,7 +105,10 @@ def _install_plugin(workspace: Path, state_dir: Path) -> None:
     target = state_dir / "extensions" / PLUGIN_INSTALL_DIR_NAME
     target.mkdir(parents=True, exist_ok=True)
 
-    # Copy only what openclaw needs: package.json, openclaw.plugin.json, dist/
+    # Copy what openclaw needs: package.json, openclaw.plugin.json, dist/, and
+    # the runtime dependencies the plugin imports at load time (e.g. typebox
+    # for tool schemas). node_modules is copied fresh to track the host's
+    # pnpm-installed versions.
     for fname in ("package.json", "openclaw.plugin.json"):
         src_file = source / fname
         if src_file.exists():
@@ -116,15 +119,63 @@ def _install_plugin(workspace: Path, state_dir: Path) -> None:
         shutil.rmtree(target_dist)
     shutil.copytree(dist, target_dist)
 
+    # Copy production runtime dependencies into the install target's
+    # node_modules/. Listed explicitly because pnpm uses a symlink farm that
+    # naive copying would either dereference (pulling in the entire openclaw
+    # source via the link: dep) or preserve broken (the symlink targets don't
+    # exist inside the container). Keep this list in sync with the "dependencies"
+    # block in jarvis-openclaw-plugin/package.json.
+    runtime_deps = ("typebox",)
+    src_node_modules = source / "node_modules"
+    target_node_modules = target / "node_modules"
+    if target_node_modules.exists():
+        shutil.rmtree(target_node_modules)
+    target_node_modules.mkdir(parents=True, exist_ok=True)
+    for dep in runtime_deps:
+        dep_src = (src_node_modules / dep).resolve()
+        if not dep_src.exists():
+            raise OpenclawRestartFailedError(
+                f"plugin runtime dep '{dep}' not installed; "
+                f"run `pnpm install` in {source} before bootstrap.start"
+            )
+        shutil.copytree(dep_src, target_node_modules / dep, symlinks=False)
 
-def _write_env_file(env_path: Path, state_dir: Path) -> None:
+
+def _write_env_file(env_path: Path, state_dir: Path, gateway_token: str = "", site_name: str = "jarvis.localhost") -> None:
+    """Write the .env file used by docker compose for variable interpolation.
+
+    Also writes plugin callback env vars to the compose dir's .env so they are
+    injected into the container process via docker-compose.yml's `env_file: path: .env`.
+    """
+    # Primary .env — used for docker compose variable substitution (${VAR} in yml).
     content = (
         f"OPENCLAW_CONFIG_DIR={state_dir.resolve()}\n"
         f"OPENCLAW_IMAGE={DEFAULT_IMAGE}\n"
         f"OPENCLAW_GATEWAY_PORT={DEFAULT_GATEWAY_PORT}\n"
         f"OPENCLAW_GATEWAY_BIND={DEFAULT_GATEWAY_BIND}\n"
+        # Plugin env vars: allow the jarvis-openclaw-plugin to call back into Frappe
+        # to resolve sessionKey → user via the lookup_user_by_session endpoint.
+        f"JARVIS_FRAPPE_URL=http://host.docker.internal:8000\n"
+        f"JARVIS_GATEWAY_TOKEN={gateway_token}\n"
+        f"JARVIS_SITE_NAME={site_name}\n"
     )
     env_path.write_text(content)
+
+
+def _write_plugin_env(compose_env_path: Path, gateway_token: str = "", site_name: str = "jarvis.localhost") -> None:
+    """Write JARVIS_* env vars to the compose directory's .env file.
+
+    docker-compose.yml has `env_file: path: .env` which injects all vars from
+    this file directly into the container process. This is how JARVIS_FRAPPE_URL,
+    JARVIS_GATEWAY_TOKEN, and JARVIS_SITE_NAME become available to the plugin
+    at runtime inside the container.
+    """
+    content = (
+        f"JARVIS_FRAPPE_URL=http://host.docker.internal:8000\n"
+        f"JARVIS_GATEWAY_TOKEN={gateway_token}\n"
+        f"JARVIS_SITE_NAME={site_name}\n"
+    )
+    compose_env_path.write_text(content)
 
 
 def _poll_healthz() -> None:
@@ -169,7 +220,15 @@ def start() -> None:
     rendered = render_config(settings, token)
     paths["config_path"].write_text(rendered)
 
-    _write_env_file(paths["env_path"], paths["state_dir"])
+    # Write env file with plugin callback vars so jarvis-openclaw-plugin can
+    # call back to Frappe's lookup_user_by_session endpoint to resolve identities.
+    _write_env_file(paths["env_path"], paths["state_dir"], gateway_token=token)
+
+    # Also write a .env in the compose dir so docker-compose.yml's
+    # `env_file: path: .env` injects JARVIS_* vars into the container process.
+    # The compose dir's .env is what the container actually reads at startup.
+    compose_env_path = paths["compose_dir"] / ".env"
+    _write_plugin_env(compose_env_path, gateway_token=token)
 
     # docker compose pull
     pull_cmd = [

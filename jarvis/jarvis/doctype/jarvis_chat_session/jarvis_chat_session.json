@@ -1,0 +1,62 @@
+{
+  "doctype": "DocType",
+  "name": "Jarvis Chat Session",
+  "module": "Jarvis",
+  "issingle": 0,
+  "custom": 0,
+  "engine": "InnoDB",
+  "autoname": "hash",
+  "field_order": [
+    "session_key",
+    "user",
+    "created_at",
+    "last_seen_at"
+  ],
+  "fields": [
+    {
+      "fieldname": "session_key",
+      "fieldtype": "Data",
+      "label": "Session Key",
+      "reqd": 1,
+      "unique": 1,
+      "in_list_view": 1,
+      "in_standard_filter": 1,
+      "description": "Openclaw session key returned by sessions.create"
+    },
+    {
+      "fieldname": "user",
+      "fieldtype": "Link",
+      "label": "User",
+      "options": "User",
+      "reqd": 1,
+      "in_list_view": 1,
+      "description": "Frappe user who owns this openclaw session"
+    },
+    {
+      "fieldname": "created_at",
+      "fieldtype": "Datetime",
+      "label": "Created At",
+      "default": "Now",
+      "read_only": 1
+    },
+    {
+      "fieldname": "last_seen_at",
+      "fieldtype": "Datetime",
+      "label": "Last Seen At",
+      "read_only": 1,
+      "description": "Updated when the hook looks up this session (future use)"
+    }
+  ],
+  "permissions": [
+    {
+      "role": "System Manager",
+      "read": 1,
+      "write": 1,
+      "create": 1,
+      "delete": 1
+    }
+  ],
+  "sort_field": "modified",
+  "sort_order": "DESC",
+  "track_changes": 0
+}

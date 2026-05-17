@@ -124,7 +124,11 @@ class TestReloadSecrets(FrappeTestCase):
 		self.assertEqual(connect_frame["params"]["auth"]["token"], "test-token")
 		self.assertEqual(connect_frame["params"]["minProtocol"], 3)
 		self.assertEqual(connect_frame["params"]["maxProtocol"], 4)
-		self.assertEqual(connect_frame["params"]["client"]["mode"], "backend")
+		client = connect_frame["params"]["client"]
+		self.assertEqual(client["id"], "gateway-client")
+		self.assertEqual(client["mode"], "backend")
+		self.assertIn("version", client)
+		self.assertIn("platform", client)
 
 		reload_frame = sent[1]
 		self.assertEqual(reload_frame["method"], "secrets.reload")

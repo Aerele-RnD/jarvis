@@ -49,7 +49,13 @@ def reload_secrets(gateway_url: str, gateway_token: str) -> None:
 				"minProtocol": 3,
 				"maxProtocol": 4,
 				"role": "operator",
-				"client": {"mode": "backend", "id": "jarvis-pusher"},
+				"client": {
+					"id": "gateway-client",
+					"version": "0.1.0",
+					"platform": "linux",
+					"mode": "backend",
+				},
+				"scopes": ["operator.admin"],
 				"auth": {"token": gateway_token},
 			},
 		}))
