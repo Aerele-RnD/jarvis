@@ -149,23 +149,13 @@ app_license = "MIT"
 # Scheduled Tasks
 # ---------------
 
-# scheduler_events = {
-# 	"all": [
-# 		"jarvis.tasks.all"
-# 	],
-# 	"daily": [
-# 		"jarvis.tasks.daily"
-# 	],
-# 	"hourly": [
-# 		"jarvis.tasks.hourly"
-# 	],
-# 	"weekly": [
-# 		"jarvis.tasks.weekly"
-# 	],
-# 	"monthly": [
-# 		"jarvis.tasks.monthly"
-# 	],
-# }
+scheduler_events = {
+	"cron": {
+		"*/5 * * * *": [
+			"jarvis.chat.stale_scan.scan_and_mark_errored",
+		],
+	},
+}
 
 # Testing
 # -------
