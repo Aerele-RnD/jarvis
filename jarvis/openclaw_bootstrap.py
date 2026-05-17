@@ -11,6 +11,9 @@ import frappe
 from jarvis.exceptions import OpenclawRestartFailedError
 from jarvis.openclaw_config import render_config
 
+PLUGIN_SOURCE_REL = "jarvis-openclaw-plugin"
+PLUGIN_INSTALL_DIR_NAME = "jarvis-openclaw-plugin"
+
 DEFAULT_GATEWAY_URL = "ws://127.0.0.1:18789"
 DEFAULT_IMAGE = "ghcr.io/openclaw/openclaw:latest"
 DEFAULT_GATEWAY_PORT = 18789
@@ -78,6 +81,42 @@ def _ensure_gateway_token(settings) -> str:
     return token
 
 
+def _install_plugin(workspace: Path, state_dir: Path) -> None:
+    """Copy the built plugin into openclaw's extensions directory.
+
+    Reads from <workspace>/jarvis-openclaw-plugin/{package.json, openclaw.plugin.json, dist/}
+    and writes to <state_dir>/extensions/<plugin>/. Skips node_modules, tests, src, .git.
+    Raises OpenclawRestartFailedError if the plugin's dist/ hasn't been built yet.
+    """
+    import shutil
+
+    source = workspace / PLUGIN_SOURCE_REL
+    if not source.exists():
+        raise OpenclawRestartFailedError(
+            f"plugin source not found at {source}; "
+            f"is the jarvis-openclaw-plugin repo cloned alongside app/?"
+        )
+    dist = source / "dist"
+    if not dist.exists() or not (dist / "index.js").exists():
+        raise OpenclawRestartFailedError(
+            f"plugin not built; run `pnpm install && pnpm build` in {source} first"
+        )
+
+    target = state_dir / "extensions" / PLUGIN_INSTALL_DIR_NAME
+    target.mkdir(parents=True, exist_ok=True)
+
+    # Copy only what openclaw needs: package.json, openclaw.plugin.json, dist/
+    for fname in ("package.json", "openclaw.plugin.json"):
+        src_file = source / fname
+        if src_file.exists():
+            shutil.copyfile(src_file, target / fname)
+
+    target_dist = target / "dist"
+    if target_dist.exists():
+        shutil.rmtree(target_dist)
+    shutil.copytree(dist, target_dist)
+
+
 def _write_env_file(env_path: Path, state_dir: Path) -> None:
     content = (
         f"OPENCLAW_CONFIG_DIR={state_dir.resolve()}\n"
@@ -122,6 +161,10 @@ def start() -> None:
     if not paths["llm_key_path"].exists():
         paths["llm_key_path"].write_text(LLM_KEY_PLACEHOLDER)
         os.chmod(paths["llm_key_path"], 0o600)
+
+    # Install the plugin into openclaw's extensions directory before rendering config
+    # (the config references the plugin by id). Idempotent: overwrites on every start().
+    _install_plugin(paths["workspace"], paths["state_dir"])
 
     rendered = render_config(settings, token)
     paths["config_path"].write_text(rendered)

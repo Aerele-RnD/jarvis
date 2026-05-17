@@ -10,14 +10,30 @@ from frappe.tests.utils import FrappeTestCase
 from jarvis.exceptions import OpenclawRestartFailedError
 
 
+def _make_fake_plugin(workspace: Path) -> Path:
+    """Create a minimal fake plugin tree at <workspace>/jarvis-openclaw-plugin/."""
+    plugin_dir = workspace / "jarvis-openclaw-plugin"
+    plugin_dir.mkdir(parents=True, exist_ok=True)
+    (plugin_dir / "package.json").write_text('{"name": "jarvis-openclaw-plugin", "version": "0.0.1"}\n')
+    (plugin_dir / "openclaw.plugin.json").write_text('{"id": "jarvis-openclaw-plugin"}\n')
+    dist_dir = plugin_dir / "dist"
+    dist_dir.mkdir(exist_ok=True)
+    (dist_dir / "index.js").write_text("// stub\n")
+    return plugin_dir
+
+
 class _PatchedPaths:
-    """Helper that patches openclaw_bootstrap's workspace_root() to a tempdir."""
+    """Helper that patches openclaw_bootstrap's workspace_root() to a tempdir.
+
+    Also creates a minimal fake plugin source so _install_plugin() doesn't fail.
+    """
 
     def __init__(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.workspace = Path(self.tmp.name)
         (self.workspace / "openclaw").mkdir()
         (self.workspace / "openclaw" / "docker-compose.yml").write_text("# stub\n")
+        _make_fake_plugin(self.workspace)
 
     def __enter__(self):
         self._patch = patch("jarvis.openclaw_bootstrap._workspace_root", return_value=self.workspace)
@@ -208,3 +224,120 @@ class TestBootstrapStatus(FrappeTestCase):
             self.assertIn("gateway_url", result)
             self.assertEqual(result["container"], "running")
             self.assertEqual(result["health"], "healthy")
+
+
+class TestInstallPlugin(FrappeTestCase):
+    """Unit tests for _install_plugin() — uses tempdir with a fake plugin source."""
+
+    def _make_workspace(self):
+        """Return a TemporaryDirectory; caller must clean it up."""
+        import tempfile
+        tmp = tempfile.TemporaryDirectory()
+        workspace = Path(tmp.name)
+        state_dir = workspace / "openclaw_state"
+        state_dir.mkdir()
+        return tmp, workspace, state_dir
+
+    def test_missing_plugin_source_raises(self):
+        from jarvis.openclaw_bootstrap import _install_plugin
+        tmp, workspace, state_dir = self._make_workspace()
+        try:
+            # No plugin source directory created
+            with self.assertRaises(OpenclawRestartFailedError) as cm:
+                _install_plugin(workspace, state_dir)
+            self.assertIn("plugin source not found", str(cm.exception))
+            self.assertIn("jarvis-openclaw-plugin", str(cm.exception))
+        finally:
+            tmp.cleanup()
+
+    def test_plugin_not_built_raises(self):
+        from jarvis.openclaw_bootstrap import _install_plugin
+        tmp, workspace, state_dir = self._make_workspace()
+        try:
+            # Create plugin source directory but no dist/
+            plugin_dir = workspace / "jarvis-openclaw-plugin"
+            plugin_dir.mkdir()
+            (plugin_dir / "package.json").write_text('{"name": "jarvis-openclaw-plugin"}\n')
+            with self.assertRaises(OpenclawRestartFailedError) as cm:
+                _install_plugin(workspace, state_dir)
+            self.assertIn("pnpm", str(cm.exception))
+        finally:
+            tmp.cleanup()
+
+    def test_plugin_dist_exists_but_no_index_js_raises(self):
+        from jarvis.openclaw_bootstrap import _install_plugin
+        tmp, workspace, state_dir = self._make_workspace()
+        try:
+            plugin_dir = workspace / "jarvis-openclaw-plugin"
+            plugin_dir.mkdir()
+            (plugin_dir / "package.json").write_text('{"name": "jarvis-openclaw-plugin"}\n')
+            (plugin_dir / "dist").mkdir()
+            # dist/ exists but index.js is absent
+            with self.assertRaises(OpenclawRestartFailedError) as cm:
+                _install_plugin(workspace, state_dir)
+            self.assertIn("pnpm", str(cm.exception))
+        finally:
+            tmp.cleanup()
+
+    def test_happy_path_copies_files_to_extensions(self):
+        from jarvis.openclaw_bootstrap import _install_plugin
+        tmp, workspace, state_dir = self._make_workspace()
+        try:
+            _make_fake_plugin(workspace)
+            _install_plugin(workspace, state_dir)
+
+            target = state_dir / "extensions" / "jarvis-openclaw-plugin"
+            self.assertTrue((target / "package.json").exists())
+            self.assertTrue((target / "openclaw.plugin.json").exists())
+            self.assertTrue((target / "dist" / "index.js").exists())
+        finally:
+            tmp.cleanup()
+
+    def test_idempotent_second_run_succeeds_and_updates(self):
+        from jarvis.openclaw_bootstrap import _install_plugin
+        tmp, workspace, state_dir = self._make_workspace()
+        try:
+            _make_fake_plugin(workspace)
+            _install_plugin(workspace, state_dir)
+
+            # Modify the built dist — simulate a rebuild
+            plugin_dir = workspace / "jarvis-openclaw-plugin"
+            (plugin_dir / "dist" / "index.js").write_text("// updated build\n")
+
+            # Second run should succeed
+            _install_plugin(workspace, state_dir)
+
+            target = state_dir / "extensions" / "jarvis-openclaw-plugin"
+            self.assertEqual((target / "dist" / "index.js").read_text(), "// updated build\n")
+        finally:
+            tmp.cleanup()
+
+    def test_node_modules_not_copied(self):
+        from jarvis.openclaw_bootstrap import _install_plugin
+        tmp, workspace, state_dir = self._make_workspace()
+        try:
+            plugin_dir = _make_fake_plugin(workspace)
+            (plugin_dir / "node_modules").mkdir()
+            (plugin_dir / "node_modules" / "some-dep.js").write_text("// dep\n")
+            _install_plugin(workspace, state_dir)
+
+            target = state_dir / "extensions" / "jarvis-openclaw-plugin"
+            self.assertFalse((target / "node_modules").exists())
+        finally:
+            tmp.cleanup()
+
+    def test_start_installs_plugin_before_docker_commands(self):
+        """Integration check: start() installs the plugin into the state dir."""
+        _reset_settings()
+        with _PatchedPaths() as workspace:
+            with patch("jarvis.openclaw_bootstrap.subprocess.run") as mock_run, \
+                 patch("jarvis.openclaw_bootstrap._poll_healthz", return_value=None):
+                mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+                from jarvis.openclaw_bootstrap import start
+                start()
+
+            state = workspace / "openclaw_state"
+            target = state / "extensions" / "jarvis-openclaw-plugin"
+            self.assertTrue(target.exists(), "plugin directory must exist after start()")
+            self.assertTrue((target / "package.json").exists())
+            self.assertTrue((target / "dist" / "index.js").exists())

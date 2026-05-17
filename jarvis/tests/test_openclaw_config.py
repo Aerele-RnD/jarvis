@@ -181,3 +181,71 @@ class TestRenderConfig(FrappeTestCase):
             )
             # All providers must have baseUrl emitted (schema requirement)
             self.assertIn("baseUrl", result["models"]["providers"][openclaw_id])
+
+    # --- New tests for agentRuntime, mcp.servers, and plugins.entries ---
+
+    def test_agent_runtime_is_pi_for_active_provider(self):
+        result, _ = self._render(llm_provider="Moonshot (Kimi)", llm_model="kimi-k2.6")
+        provider_entry = result["models"]["providers"]["moonshot"]
+        self.assertEqual(provider_entry["agentRuntime"], {"id": "pi"})
+
+    def test_agent_runtime_is_pi_for_all_providers(self):
+        providers_needing_base_url = {"vLLM (local)", "OpenAI-Compatible"}
+        for human, openclaw_id in PROVIDER_MAP.items():
+            base_url = "http://explicit:8000/v1" if human in providers_needing_base_url else None
+            result, _ = self._render(
+                llm_provider=human,
+                llm_model="some-model",
+                llm_base_url=base_url,
+            )
+            provider_entry = result["models"]["providers"][openclaw_id]
+            self.assertEqual(
+                provider_entry.get("agentRuntime"),
+                {"id": "pi"},
+                f"{human} -> {openclaw_id} missing agentRuntime.id='pi'",
+            )
+
+    def test_mcp_servers_jarvis_url_present(self):
+        result, _ = self._render(llm_provider="Moonshot (Kimi)", llm_model="kimi-k2.6")
+        jarvis_server = result["mcp"]["servers"]["jarvis"]
+        self.assertEqual(
+            jarvis_server["url"],
+            "http://host.docker.internal:8000/api/method/jarvis.mcp.serve",
+        )
+
+    def test_mcp_servers_jarvis_transport_streamable_http(self):
+        result, _ = self._render(llm_provider="Moonshot (Kimi)", llm_model="kimi-k2.6")
+        jarvis_server = result["mcp"]["servers"]["jarvis"]
+        self.assertEqual(jarvis_server["transport"], "streamable-http")
+
+    def test_mcp_servers_jarvis_authorization_header_present(self):
+        result, token = self._render(llm_provider="Moonshot (Kimi)", llm_model="kimi-k2.6")
+        jarvis_server = result["mcp"]["servers"]["jarvis"]
+        self.assertIn("Authorization", jarvis_server["headers"])
+        self.assertEqual(jarvis_server["headers"]["Authorization"], f"Bearer {token}")
+
+    def test_mcp_bearer_token_matches_gateway_token(self):
+        # The bearer reuses the same gateway_token passed to render_config (shared-tenant trust model)
+        result, token = self._render(llm_provider="Anthropic", llm_model="claude-sonnet-4-6")
+        gateway_auth_token = result["gateway"]["auth"]["token"]
+        mcp_auth_header = result["mcp"]["servers"]["jarvis"]["headers"]["Authorization"]
+        self.assertEqual(mcp_auth_header, f"Bearer {gateway_auth_token}")
+        self.assertEqual(mcp_auth_header, f"Bearer {token}")
+
+    def test_plugins_jarvis_openclaw_plugin_allow_conversation_access(self):
+        result, _ = self._render(llm_provider="Moonshot (Kimi)", llm_model="kimi-k2.6")
+        plugin_entry = result["plugins"]["entries"]["jarvis-openclaw-plugin"]
+        self.assertTrue(plugin_entry["hooks"]["allowConversationAccess"])
+
+    def test_mcp_block_present_for_stub_fallback(self):
+        # Even in stub mode (no provider configured), the mcp block must be present
+        result, _ = self._render(llm_provider=None, llm_model=None)
+        self.assertIn("mcp", result)
+        self.assertIn("servers", result["mcp"])
+        self.assertIn("jarvis", result["mcp"]["servers"])
+
+    def test_plugins_block_present_for_stub_fallback(self):
+        # Even in stub mode, the plugins block must be present
+        result, _ = self._render(llm_provider=None, llm_model=None)
+        self.assertIn("plugins", result)
+        self.assertTrue(result["plugins"]["entries"]["jarvis-openclaw-plugin"]["hooks"]["allowConversationAccess"])
