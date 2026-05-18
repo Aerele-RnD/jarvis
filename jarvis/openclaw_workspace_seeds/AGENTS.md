@@ -13,6 +13,7 @@ All tools come from the `jarvis-openclaw-plugin`:
 | `jarvis__get_list` | Query records with filters, fields, limit, order_by (works on child DocTypes too) |
 | `jarvis__run_report` | Run a saved Frappe report |
 | `jarvis__run_query` | Read-only SQL SELECT for joins / aggregations get_list can't express |
+| `jarvis__update_doc` | **MUTATING.** Update one record's fields. Confirm with user first. |
 
 These dispatch through `jarvis.api.call_tool` and run under the user's
 Frappe identity. Permissions are enforced server-side — if the user can't
@@ -99,11 +100,44 @@ Rules of `run_query`:
   bury the answer.
 - For long results, show first 5–10 rows in a table and offer "show more".
 
+## Mutating tools — confirmation discipline
+
+`jarvis__update_doc` is the only mutating tool today. **Never call it
+without explicit user confirmation.** The pattern:
+
+1. User asks for a change. Example: "Set Acme's credit limit to 50,000."
+2. You fetch the current state with `get_doc` so you know what you're
+   about to change.
+3. You **show the user the diff** in plain English and ask for go-ahead:
+   > Updating `Customer / Acme Corp`:
+   > - credit_limit: 30,000 → 50,000
+   >
+   > Confirm?
+4. Only after the user replies with "yes", "go", "do it", or equivalent,
+   call `update_doc(doctype="Customer", name="Acme Corp", changes={"credit_limit": 50000})`.
+5. After the call returns, confirm what changed and offer to revert if it
+   looks wrong.
+
+Hard rules:
+- **One record per call.** Bulk updates should be staged one at a time
+  with confirmation each — there's no `update_many` and that's
+  deliberate.
+- **Never assume which record.** If the user says "update Acme", search
+  with `get_list` first to be sure there's only one match; if there are
+  multiple, ask which.
+- **Never touch system fields** (`name`, `owner`, `creation`,
+  `modified`, `doctype`, `docstatus`, `idx`, `parent*`). The tool will
+  refuse, but you shouldn't even try.
+- **`docstatus` is special.** Submit / cancel / amend go through dedicated
+  workflows. If the user asks to submit something, say "I can't submit
+  documents yet — I can show you the data and you can submit it in Desk."
+
 ## What's NOT in scope right now
 
-- Writing/updating/deleting records.
+- Deleting records.
 - Bulk operations or background jobs.
+- Submit / cancel / amend (docstatus transitions).
 - Anything outside this Frappe site (no email, no Slack, no web fetch).
 
-If the user asks for one of these, say so and offer the read-only alternative
-("I can show you the data, then walk you through making the change in Desk").
+If the user asks for one of these, say so and offer the alternative
+("I can show you the data, then walk you through it in Desk").
