@@ -563,6 +563,66 @@
 	cursor: help;
 }
 
+/* ---- Errored assistant turn --------------------------------- */
+/* Rendered inside the assistant bubble when the agent run errored
+ * (rate limit, transport failure, etc.). The user clicks Retry to
+ * re-enqueue the worker for the preceding user turn. */
+
+.jarvis-bubble-errored {
+	background: var(--alert-bg-danger, #fbe5e5);
+	border: 1px solid var(--red-300, #f0a8a8);
+}
+
+.jarvis-error-block {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	margin-top: 2px;
+}
+
+.jarvis-error-row {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	font-size: 13px;
+	line-height: 1.4;
+}
+
+.jarvis-error-icon {
+	color: var(--red-600, #dc3545);
+	font-size: 16px;
+	line-height: 1.2;
+	flex-shrink: 0;
+}
+
+.jarvis-error-text {
+	color: var(--text-color);
+	word-break: break-word;
+}
+
+.jarvis-error-foot {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+}
+
+.jarvis-error-when {
+	font-size: 11px;
+	color: var(--text-muted);
+}
+
+.jarvis-retry-btn {
+	font-size: 11px;
+	line-height: 1;
+	padding: 4px 10px;
+}
+
+.jarvis-retry-btn:disabled {
+	opacity: 0.6;
+	cursor: wait;
+}
+
 /* ---- Streaming cursor --------------------------------------- */
 
 .jarvis-cursor {

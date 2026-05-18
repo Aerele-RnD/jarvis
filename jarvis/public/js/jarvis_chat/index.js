@@ -269,6 +269,35 @@ export function init(wrapper) {
 		sendMessage(prompt);
 	});
 
+	root.on("click", ".jarvis-retry-btn", async function () {
+		const $btn = $(this);
+		if ($btn.prop("disabled")) return;
+		const msgId = $btn.data("msg");
+		const originalLabel = $btn.text();
+		$btn.prop("disabled", true).text(__("Retrying…"));
+		try {
+			const result = await api.retryMessage(msgId);
+			if (!result.ok) {
+				frappe.show_alert({
+					message: result.reason || __("Retry failed"),
+					indicator: "red",
+				});
+				$btn.prop("disabled", false).text(originalLabel);
+				return;
+			}
+			showThinking($thinking);
+			await loadConversation(state.current_conversation, {
+				keepWelcomeHidden: true,
+			});
+		} catch (err) {
+			frappe.show_alert({
+				message: __("Retry failed: ") + (err.message || err),
+				indicator: "red",
+			});
+			$btn.prop("disabled", false).text(originalLabel);
+		}
+	});
+
 	attachRealtime({ $list, $thinking, scrollToBottom, loadConversation });
 
 	// ---- Bootstrap ------------------------------------------------------

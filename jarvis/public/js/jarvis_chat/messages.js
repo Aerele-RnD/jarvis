@@ -124,9 +124,16 @@ export function updateMessage($el, msg) {
 		bindToolToggles($el);
 	} else if (msg.role === "assistant") {
 		const html = renderMarkdown(msg.content || "");
+		const errorBlock = msg.error ? renderAssistantError(msg) : "";
+		const cursor = msg.streaming
+			? '<span class="jarvis-cursor"></span>'
+			: "";
+		const bubbleClass = msg.error
+			? "jarvis-bubble jarvis-bubble-errored"
+			: "jarvis-bubble";
 		$el.html(`
-			<div class="jarvis-bubble">
-				${html}${msg.streaming ? '<span class="jarvis-cursor"></span>' : ""}
+			<div class="${bubbleClass}">
+				${html}${cursor}${errorBlock}
 			</div>
 			${timestampHtml($el, msg)}
 		`);
@@ -136,6 +143,36 @@ export function updateMessage($el, msg) {
 			${timestampHtml($el, msg)}
 		`);
 	}
+}
+
+// ---- Errored assistant turn ------------------------------------------
+//
+// When an agent run fails (rate limit, transport error, etc.) the worker
+// marks the assistant message with `error` and stops streaming. We render
+// an inline error block with the failure reason, a relative timestamp
+// (auto-refreshing via frappe-timestamp), and a Retry button bound to
+// the message id so the click handler in index.js can re-enqueue the
+// worker for the preceding user turn.
+
+function renderAssistantError(msg) {
+	const errored = msg.creation
+		? frappe.datetime.comment_when(msg.creation)
+		: "just now";
+	return `
+		<div class="jarvis-error-block">
+			<div class="jarvis-error-row">
+				<span class="jarvis-error-icon">⚠</span>
+				<span class="jarvis-error-text">${frappe.utils.escape_html(msg.error)}</span>
+			</div>
+			<div class="jarvis-error-foot">
+				<span class="jarvis-error-when">Failed ${errored}</span>
+				<button class="btn btn-xs btn-default jarvis-retry-btn"
+				        data-msg="${frappe.utils.escape_html(msg.name)}">
+					Retry
+				</button>
+			</div>
+		</div>
+	`;
 }
 
 function timestampHtml($el, msg) {

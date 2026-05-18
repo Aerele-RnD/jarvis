@@ -38,3 +38,11 @@ export async function sendMessage(conversation, message) {
 	});
 	return r.message;
 }
+
+export async function retryMessage(messageId) {
+	const r = await frappe.call({
+		method: "jarvis.chat.api.retry_message",
+		args: { message: messageId },
+	});
+	return r.message;
+}
