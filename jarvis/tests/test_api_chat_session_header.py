@@ -71,7 +71,6 @@ class TestCallToolWithSessionHeader(FrappeTestCase):
 	def test_session_header_persists_tool_message(self):
 		req = _FakeRequest({
 			"X-Jarvis-Token": PLUGIN_TOKEN,
-			"X-Jarvis-User": "Administrator",
 			"X-Jarvis-Session": self.session_key,
 		})
 		with patch.object(frappe, "request", req, create=True):
@@ -91,7 +90,6 @@ class TestCallToolWithSessionHeader(FrappeTestCase):
 	def test_session_header_publishes_realtime_tool_result(self):
 		req = _FakeRequest({
 			"X-Jarvis-Token": PLUGIN_TOKEN,
-			"X-Jarvis-User": "Administrator",
 			"X-Jarvis-Session": self.session_key,
 		})
 		with patch.object(frappe, "request", req, create=True):
@@ -102,25 +100,25 @@ class TestCallToolWithSessionHeader(FrappeTestCase):
 		self.assertEqual(kwargs["tool_name"], "get_schema")
 		self.assertEqual(kwargs["status"], "completed")
 
-	def test_no_session_header_does_not_publish(self):
-		req = _FakeRequest({
-			"X-Jarvis-Token": PLUGIN_TOKEN,
-			"X-Jarvis-User": "Administrator",
-		})
+	def test_missing_session_header_now_rejected(self):
+		"""Path A v2 requires X-Jarvis-Session — there is no user header any
+		more, so without a session we cannot resolve identity."""
+		req = _FakeRequest({"X-Jarvis-Token": PLUGIN_TOKEN})
 		with patch.object(frappe, "request", req, create=True):
-			with patch("jarvis.api.publish_realtime_tool_result") as pub:
-				call_tool("get_schema", args={"doctype": "Customer"})
-		pub.assert_not_called()
-		tools = frappe.get_all(MSG, filters={"conversation": self.conv_name, "role": "tool"})
-		self.assertEqual(len(tools), 0)
+			result = call_tool("get_schema", args={"doctype": "Customer"})
+		self.assertFalse(result["ok"])
+		self.assertEqual(result["error"]["code"], "InvalidArgumentError")
+		self.assertIn("X-Jarvis-Session", result["error"]["message"])
 
-	def test_unknown_session_does_not_break_dispatch(self):
+	def test_unknown_session_now_rejected(self):
+		"""Without a Chat Session row we have no user to dispatch as — fail
+		fast rather than silently fall back to a different identity."""
 		req = _FakeRequest({
 			"X-Jarvis-Token": PLUGIN_TOKEN,
-			"X-Jarvis-User": "Administrator",
 			"X-Jarvis-Session": "agent:nonexistent",
 		})
 		with patch.object(frappe, "request", req, create=True):
 			result = call_tool("get_schema", args={"doctype": "Customer"})
-		# Dispatch still succeeds; session-side persistence is best-effort
-		self.assertTrue(result["ok"])
+		self.assertFalse(result["ok"])
+		self.assertEqual(result["error"]["code"], "InvalidArgumentError")
+		self.assertIn("unknown session", result["error"]["message"])

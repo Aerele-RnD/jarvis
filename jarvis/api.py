@@ -2,7 +2,6 @@ import json
 
 import frappe
 
-from jarvis._http import raw_json_response as _raw_json_response
 from jarvis._http import validate_bearer as _validate_bearer
 from jarvis.exceptions import JarvisError
 from jarvis.tools.registry import dispatch
@@ -23,12 +22,13 @@ def call_tool(tool: str, args: dict | str | None = None) -> dict:
 	   are presented together:
 
 	   - ``X-Jarvis-Token`` — the shared ``openclaw_gateway_token`` secret
-	   - ``X-Jarvis-User`` — the Frappe user to dispatch as
+	     (proves the request originated inside the openclaw container)
+	   - ``X-Jarvis-Session`` — the openclaw sessionKey for this conversation
 
-	   When both headers are present the token is validated, the user is
-	   verified to exist, and dispatch runs under that user via
-	   ``frappe.set_user``. The original session user is restored after
-	   dispatch.
+	   The token is validated, then the user is resolved from
+	   ``Jarvis Chat Session`` (the row inserted at session-create time maps
+	   sessionKey → Frappe user). Dispatch runs under that user via
+	   ``frappe.set_user``. The original session user is restored after.
 
 	Returns ``{ok: True, data: ...}`` on success or
 	``{ok: False, error: {code, message}}`` on tool-level error. Auth
@@ -40,18 +40,32 @@ def call_tool(tool: str, args: dict | str | None = None) -> dict:
 			frappe.local.response.http_status_code = 401
 			return _error("AuthenticationError", "invalid X-Jarvis-Token")
 
-		plugin_user = _get_header("X-Jarvis-User")
+		session_key = _get_header("X-Jarvis-Session")
+		if not session_key:
+			frappe.local.response.http_status_code = 400
+			return _error(
+				"InvalidArgumentError",
+				"X-Jarvis-Session header required when using X-Jarvis-Token",
+			)
+		plugin_user = frappe.db.get_value(
+			"Jarvis Chat Session",
+			{"session_key": session_key},
+			"user",
+		)
 		if not plugin_user:
 			frappe.local.response.http_status_code = 400
 			return _error(
 				"InvalidArgumentError",
-				"X-Jarvis-User header required when using X-Jarvis-Token",
+				f"unknown session: {session_key}",
 			)
 		if not frappe.db.exists("User", plugin_user):
 			frappe.local.response.http_status_code = 400
-			return _error("InvalidArgumentError", f"unknown user: {plugin_user}")
+			return _error(
+				"InvalidArgumentError",
+				f"session references unknown user: {plugin_user}",
+			)
 
-		return _dispatch_as_user(plugin_user, tool, args)
+		return _dispatch_from_session(plugin_user, session_key, tool, args)
 
 	# Standard Frappe auth path — Guest is rejected; everything else dispatches
 	# under the current Frappe session user.
@@ -69,7 +83,15 @@ def _dispatch_current_user(tool: str, args: dict | str | None) -> dict:
 	return args  # already an error envelope
 
 
-def _dispatch_as_user(user: str, tool: str, args: dict | str | None) -> dict:
+def _dispatch_from_session(
+	user: str,
+	session_key: str,
+	tool: str,
+	args: dict | str | None,
+) -> dict:
+	"""Run the dispatch under ``user``, then attribute the tool call to the
+	chat session so the UI sees it.
+	"""
 	original = frappe.session.user
 	frappe.set_user(user)
 	try:
@@ -77,17 +99,12 @@ def _dispatch_as_user(user: str, tool: str, args: dict | str | None) -> dict:
 		if not isinstance(args_parsed, dict):
 			return args_parsed  # already an error envelope
 		result = _dispatch_safe(tool, args_parsed)
-
-		# If the plugin signalled a chat session, surface the tool call
-		# (args + result + status) to the chat UI.
-		session_key = _get_header("X-Jarvis-Session")
-		if session_key:
-			_persist_and_publish_tool_call(
-				session_key=session_key,
-				tool=tool,
-				args=args_parsed,
-				result=result,
-			)
+		_persist_and_publish_tool_call(
+			session_key=session_key,
+			tool=tool,
+			args=args_parsed,
+			result=result,
+		)
 		return result
 	finally:
 		frappe.set_user(original)
@@ -214,33 +231,3 @@ def _get_header(name: str) -> str:
 	return (value or "").strip()
 
 
-@frappe.whitelist(allow_guest=True, methods=["POST"])
-def lookup_user_by_session():
-	"""Map an openclaw sessionKey to its owning Frappe user.
-
-	Called by ``jarvis-openclaw-plugin`` from each tool factory's execute
-	function to discover which user a tool call should run as. Auth via the
-	shared ``X-Jarvis-Token`` bearer secret.
-
-	Request body (JSON): ``{"session_key": "<key>"}``
-	Response (200):      ``{"user": "<frappe_user_email>"}``
-	Error responses:     ``{"error": "<reason>"}`` with the appropriate HTTP
-	status code.
-	"""
-	if not _validate_bearer():
-		return _raw_json_response({"error": "unauthorized"}, status_code=401)
-
-	try:
-		body = frappe.request.get_json(force=True)
-	except Exception:
-		return _raw_json_response({"error": "invalid json"}, status_code=400)
-
-	session_key = body.get("session_key") if isinstance(body, dict) else None
-	if not session_key:
-		return _raw_json_response({"error": "session_key required"}, status_code=400)
-
-	user = frappe.db.get_value("Jarvis Chat Session", {"session_key": session_key}, "user")
-	if not user:
-		return _raw_json_response({"error": "unknown session"}, status_code=404)
-
-	return _raw_json_response({"user": user})
