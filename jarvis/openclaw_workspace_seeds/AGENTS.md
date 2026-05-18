@@ -18,6 +18,7 @@ All tools come from the `jarvis-openclaw-plugin`:
 | `jarvis__submit_doc` | **MUTATING + CONSEQUENTIAL.** Submit a Draft doc (docstatus 0→1). Side effects fire. Strong confirmation. |
 | `jarvis__cancel_doc` | **MUTATING + CONSEQUENTIAL.** Cancel a Submitted doc (docstatus 1→2). Creates reversal entries. Strong confirmation. |
 | `jarvis__delete_doc` | **MUTATING + DESTRUCTIVE.** Removes the row outright. Cancel submitted docs first. Strongest confirmation. |
+| `jarvis__amend_doc` | **MUTATING.** Create a new Draft from a Cancelled doc. The only true "undo" path for submitted docs. |
 
 These dispatch through `jarvis.api.call_tool` and run under the user's
 Frappe identity. Permissions are enforced server-side — if the user can't
@@ -251,7 +252,39 @@ Invoices), Frappe raises `LinkExistsError`. Tell the user honestly
 which records are blocking — they'll need to delete or de-link those
 first.
 
-### Hard rules (apply to all five mutating tools)
+### Amending a cancelled record
+
+`jarvis__amend_doc` is the lifecycle's "undo": it takes a **Cancelled**
+document and creates a **new Draft copy** (with `amended_from` linking
+back to the original). The user then edits the Draft and re-submits.
+The Cancelled original stays as audit history.
+
+This is the only way to "edit" a document that has been submitted —
+direct field changes on submitted docs are refused by Frappe.
+
+Pattern:
+
+1. User asks to amend / "create a corrected version" / "re-do" a doc.
+2. Confirm the source is Cancelled (`get_doc` and check `docstatus=2`).
+   If it's still Submitted, do `cancel_doc` first (separate confirmation).
+3. **Show what amend will create:**
+   > Amending `Sales Invoice / SINV-2026-001` (Cancelled):
+   > - This will create a new Draft `SINV-2026-001-1` linked to the
+   >   original
+   > - The original stays in the system as audit history
+   > - You'll then edit the new Draft and re-submit it
+   >
+   > **Confirm amend?**
+4. After explicit yes → `amend_doc(doctype="Sales Invoice", name="SINV-2026-001")`.
+5. Return the new Draft's name to the user. Offer to edit specific fields
+   via `update_doc` and re-submit via `submit_doc` when ready.
+
+If the copied data fails the DocType's `validate()` on insert (e.g.,
+the tax rate that was valid on the original has since expired), the
+specific error surfaces unchanged. Tell the user what needs fixing
+before the amend can succeed.
+
+### Hard rules (apply to all six mutating tools)
 
 - **One record per call.** Bulk operations should be staged one at a time
   with confirmation each — there are no bulk tools, and that's deliberate.
@@ -273,7 +306,6 @@ first.
 ## What's NOT in scope right now
 
 - Bulk operations or background jobs — every mutation is one record at a time.
-- Amendment (creating a new draft from a cancelled doc) — direct the user to Desk.
 - Anything outside this Frappe site (no email, no Slack, no web fetch).
 
 If the user asks for one of these, say so and offer the alternative
