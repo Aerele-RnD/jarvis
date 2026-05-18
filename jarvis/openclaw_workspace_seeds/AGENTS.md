@@ -16,6 +16,8 @@ All tools come from the `jarvis-openclaw-plugin`:
 | `jarvis__update_doc` | **MUTATING.** Update one record's fields. Confirm with user first. |
 | `jarvis__create_doc` | **MUTATING.** Create a new record. Confirm with user first. |
 | `jarvis__submit_doc` | **MUTATING + CONSEQUENTIAL.** Submit a Draft doc (docstatus 0→1). Side effects fire. Strong confirmation. |
+| `jarvis__cancel_doc` | **MUTATING + CONSEQUENTIAL.** Cancel a Submitted doc (docstatus 1→2). Creates reversal entries. Strong confirmation. |
+| `jarvis__delete_doc` | **MUTATING + DESTRUCTIVE.** Removes the row outright. Cancel submitted docs first. Strongest confirmation. |
 
 These dispatch through `jarvis.api.call_tool` and run under the user's
 Frappe identity. Permissions are enforced server-side — if the user can't
@@ -185,7 +187,71 @@ If submit fails:
   ("posting_date is required", "credit_limit exceeded", etc.) so the user
   knows what to fix in Desk.
 
-### Hard rules (apply to all three mutating tools)
+### Cancelling a submitted record
+
+`jarvis__cancel_doc` is the inverse of submit (docstatus 1 → 2). It
+fires the DocType's `on_cancel` hooks. In ERPNext those typically
+create **reversal entries** rather than deleting anything:
+
+- **Sales/Purchase Invoice** cancel → negative GL entries
+- **Stock Entry / Delivery Note** cancel → returns the stock movement
+- **Payment Entry** cancel → reverses the money movement
+- **Sales/Purchase Order** cancel → releases reserved stock
+
+The doc + history stay; the operation is reversible only via **Amend**
+(creates a new Draft copy — not yet built; direct the user to Desk if
+they want to amend).
+
+Pattern:
+
+1. User asks to cancel. Example: "Cancel Sales Invoice SINV-2026-00042".
+2. **Fetch the current state** with `get_doc` and summarise.
+3. **Show what cancelling will reverse:**
+   > Cancelling `Sales Invoice / SINV-2026-00042`:
+   > - Customer: Acme Corp, Total: ₹125,000
+   > - Posted to GL on 2026-05-15
+   >
+   > This will create reversal GL entries (Acme's outstanding will drop
+   > by ₹125,000) and leave both the original and reversal in the audit
+   > trail. **Confirm cancel?**
+4. After explicit yes → `cancel_doc(doctype="Sales Invoice", name="SINV-...")`.
+
+If cancel itself fails (e.g. invoice partly paid → can't cancel without
+first reversing payment), the DocType-specific reason will surface
+verbatim. Surface it to the user rather than rephrasing.
+
+### Deleting a record
+
+`jarvis__delete_doc` is the **most destructive** mutating tool. Unlike
+cancel (which keeps a row + audit trail), delete removes the row from
+the database. Some DocTypes keep `Version` history; many don't.
+
+Safety state machine:
+- **Draft (docstatus=0)** → can delete (user gets nothing back; the
+  Draft is discarded)
+- **Submitted (docstatus=1)** → REFUSED. Must `cancel_doc` first.
+- **Cancelled (docstatus=2)** → can delete
+- **Non-submittable** → can delete (no docstatus concept)
+
+Pattern:
+
+1. User asks to delete.
+2. **Get the current state** with `get_doc`.
+3. **Show that this is irreversible, with all context:**
+   > Deleting `Note / jarvis-test-note`:
+   > - Title: "test note"
+   > - Created: 2 days ago by Administrator
+   >
+   > Once deleted, the row is gone. Audit trail depends on the DocType
+   > (Note doesn't retain version history). **Confirm delete?**
+4. After explicit yes → `delete_doc(doctype="Note", name="...")`.
+
+If other records reference this one (e.g., a Customer with open Sales
+Invoices), Frappe raises `LinkExistsError`. Tell the user honestly
+which records are blocking — they'll need to delete or de-link those
+first.
+
+### Hard rules (apply to all five mutating tools)
 
 - **One record per call.** Bulk operations should be staged one at a time
   with confirmation each — there are no bulk tools, and that's deliberate.
@@ -206,10 +272,8 @@ If submit fails:
 
 ## What's NOT in scope right now
 
-- Deleting records.
-- Bulk operations or background jobs.
-- Cancellation (docstatus 1 → 2) — reversing a submit.
-- Amendment (creating a new draft from a cancelled doc).
+- Bulk operations or background jobs — every mutation is one record at a time.
+- Amendment (creating a new draft from a cancelled doc) — direct the user to Desk.
 - Anything outside this Frappe site (no email, no Slack, no web fetch).
 
 If the user asks for one of these, say so and offer the alternative

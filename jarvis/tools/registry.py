@@ -1,7 +1,9 @@
 from typing import Callable
 
 from jarvis.exceptions import InvalidArgumentError, ToolNotFoundError
+from jarvis.tools.cancel_doc import cancel_doc
 from jarvis.tools.create_doc import create_doc
+from jarvis.tools.delete_doc import delete_doc
 from jarvis.tools.get_doc import get_doc
 from jarvis.tools.get_list import get_list
 from jarvis.tools.get_schema import get_schema
@@ -19,6 +21,8 @@ _TOOLS: dict[str, Callable] = {
     "update_doc": update_doc,
     "create_doc": create_doc,
     "submit_doc": submit_doc,
+    "cancel_doc": cancel_doc,
+    "delete_doc": delete_doc,
 }
 
 

@@ -18,6 +18,8 @@ class TestRegistry(FrappeTestCase):
                 "update_doc",
                 "create_doc",
                 "submit_doc",
+                "cancel_doc",
+                "delete_doc",
             },
         )
 
