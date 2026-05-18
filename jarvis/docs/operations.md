@@ -163,7 +163,7 @@ curl http://127.0.0.1:18789/v1/chat/completions \
 
 Note: `"model": "openclaw/default"` selects the *agent* default, which in turn uses the provider/model configured in `agents.defaults.model.primary` (rendered from Jarvis Settings). Backend model overrides via `x-openclaw-model` header are available but not needed.
 
-### Run a full agent turn (Phase 2.2.a Path A end-to-end)
+### Run a full agent turn (Path A v2 end-to-end)
 
 `jarvis.demo.ask_one` opens an openclaw session as a named Frappe user, sends a chat message, waits for the agent loop to complete, and prints a structured trace. This is the canonical smoke test that the agent + plugin + identity propagation pipeline is healthy.
 
