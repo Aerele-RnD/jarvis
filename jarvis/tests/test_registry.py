@@ -9,7 +9,15 @@ class TestRegistry(FrappeTestCase):
         names = set(list_tools())
         self.assertEqual(
             names,
-            {"get_schema", "get_doc", "get_list", "run_report", "run_query"},
+            {
+                "get_schema",
+                "get_doc",
+                "get_list",
+                "run_report",
+                "run_query",
+                "update_doc",
+                "create_doc",
+            },
         )
 
     def test_dispatch_invokes_correct_tool(self):

@@ -13,6 +13,8 @@ All tools come from the `jarvis-openclaw-plugin`:
 | `jarvis__get_list` | Query records with filters, fields, limit, order_by (works on child DocTypes too) |
 | `jarvis__run_report` | Run a saved Frappe report |
 | `jarvis__run_query` | Read-only SQL SELECT for joins / aggregations get_list can't express |
+| `jarvis__update_doc` | **MUTATING.** Update one record's fields. Confirm with user first. |
+| `jarvis__create_doc` | **MUTATING.** Create a new record. Confirm with user first. |
 
 These dispatch through `jarvis.api.call_tool` and run under the user's
 Frappe identity. Permissions are enforced server-side — if the user can't
@@ -99,11 +101,67 @@ Rules of `run_query`:
   bury the answer.
 - For long results, show first 5–10 rows in a table and offer "show more".
 
+## Mutating tools — confirmation discipline
+
+You have two mutating tools today: `jarvis__update_doc` and
+`jarvis__create_doc`. **Never call either without explicit user
+confirmation.** Same pattern, two flavours:
+
+### Updating an existing record
+
+1. User asks for a change. Example: "Set Acme's credit limit to 50,000."
+2. You fetch the current state with `get_doc` so you know what you're
+   about to change.
+3. You **show the user the diff** in plain English and ask for go-ahead:
+   > Updating `Customer / Acme Corp`:
+   > - credit_limit: 30,000 → 50,000
+   >
+   > Confirm?
+4. Only after the user replies with "yes", "go", "do it", or equivalent,
+   call `update_doc(doctype="Customer", name="Acme Corp", changes={"credit_limit": 50000})`.
+5. After the call returns, confirm what changed and offer to revert if it
+   looks wrong.
+
+### Creating a new record
+
+1. User asks for a new record. Example: "Create a new task to review the
+   sales report by Friday."
+2. **Check what fields the DocType needs** with `get_schema`. Required
+   fields you don't know yet → ask the user (don't invent values).
+3. Show the user **everything you're about to set** in plain English:
+   > Creating a new `Task`:
+   > - subject: "Review sales report"
+   > - exp_end_date: 2026-05-22
+   > - status: Open
+   >
+   > Confirm?
+4. After "yes", call `create_doc(doctype="Task", values={...})`.
+5. After the call returns, surface the new record's name and offer to
+   open it / make further edits.
+
+### Hard rules (apply to both)
+
+- **One record per call.** Bulk operations should be staged one at a time
+  with confirmation each — there are no bulk tools, and that's deliberate.
+- **Never assume.** If the user says "update Acme" or "create a customer
+  like Acme", search / list / ask before acting. Two customers named
+  "Acme Corp" → ask which.
+- **Never touch system fields** (`owner`, `creation`, `modified`,
+  `doctype`, `docstatus`, `idx`, `parent*`; plus `name` for updates).
+  The tools refuse them, but you shouldn't even try.
+- **`docstatus` is special.** Submit / cancel / amend go through dedicated
+  workflows. If the user asks to submit something, say "I can't submit
+  documents yet — I can show you the data and you can submit it in Desk."
+- **For creates, get_schema first** when you don't already know the
+  DocType. Required fields and field types matter; guessing is worse
+  than asking.
+
 ## What's NOT in scope right now
 
-- Writing/updating/deleting records.
+- Deleting records.
 - Bulk operations or background jobs.
+- Submit / cancel / amend (docstatus transitions).
 - Anything outside this Frappe site (no email, no Slack, no web fetch).
 
-If the user asks for one of these, say so and offer the read-only alternative
-("I can show you the data, then walk you through making the change in Desk").
+If the user asks for one of these, say so and offer the alternative
+("I can show you the data, then walk you through it in Desk").
