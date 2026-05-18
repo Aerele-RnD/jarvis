@@ -1,4 +1,8 @@
-"""Tests for jarvis.chat.stale_scan.scan_and_mark_errored."""
+"""Tests for jarvis.chat.stale_scan.scan_and_mark_errored.
+
+Runs as the fixture user ``TEST_USER`` so it never wipes Administrator's
+chat history on a dev site.
+"""
 
 from datetime import timedelta
 from unittest.mock import patch
@@ -9,26 +13,27 @@ from frappe.utils import now_datetime
 
 from jarvis.chat.api import create_conversation
 from jarvis.chat.stale_scan import scan_and_mark_errored
+from jarvis.tests.test_chat_api import (
+	TEST_USER,
+	_cleanup_user_conversations,
+	_ensure_test_user,
+)
 
 CONV = "Jarvis Conversation"
 MSG = "Jarvis Chat Message"
 
 
-def _cleanup_admin():
-	for c in frappe.get_all(CONV, filters={"owner": "Administrator"}, pluck="name"):
-		for m in frappe.get_all(MSG, filters={"conversation": c}, pluck="name"):
-			frappe.delete_doc(MSG, m, ignore_permissions=True, force=True)
-		frappe.delete_doc(CONV, c, ignore_permissions=True, force=True)
-	frappe.db.commit()
-
-
 class TestScanAndMarkErrored(FrappeTestCase):
 	def setUp(self):
-		_cleanup_admin()
+		_ensure_test_user()
+		self._orig_user = frappe.session.user
+		frappe.set_user(TEST_USER)
+		_cleanup_user_conversations()
 		self.conv = create_conversation()
 
 	def tearDown(self):
-		_cleanup_admin()
+		_cleanup_user_conversations()
+		frappe.set_user(self._orig_user)
 
 	def _insert_stale_streaming_message(self, age_seconds: int) -> str:
 		"""Insert an assistant message with streaming=1 and the given age."""

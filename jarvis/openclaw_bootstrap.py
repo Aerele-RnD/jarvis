@@ -14,6 +14,12 @@ from jarvis.openclaw_config import render_config
 PLUGIN_SOURCE_REL = "jarvis-openclaw-plugin"
 PLUGIN_INSTALL_DIR_NAME = "jarvis-openclaw-plugin"
 
+# Workspace persona seeds — shipped with the app at openclaw_workspace_seeds/.
+# Copied into the agent workspace on bootstrap so a fresh container boots as
+# "Jarvis" instead of the openclaw default identity ritual.
+WORKSPACE_SEED_DIR = Path(__file__).parent / "openclaw_workspace_seeds"
+WORKSPACE_SEED_FILES = ("IDENTITY.md", "SOUL.md", "AGENTS.md", "USER.md")
+
 DEFAULT_GATEWAY_URL = "ws://127.0.0.1:18789"
 DEFAULT_IMAGE = "ghcr.io/openclaw/openclaw:latest"
 DEFAULT_GATEWAY_PORT = 18789
@@ -67,8 +73,35 @@ def _set_default_paths(settings) -> dict:
         "compose_dir": Path(settings.openclaw_compose_dir),
         "config_path": Path(settings.openclaw_config_path),
         "llm_key_path": Path(settings.openclaw_llm_key_path),
+        "agent_workspace_dir": state_dir / "workspace",
         "env_path": state_dir / ".env",
     }
+
+
+def _seed_workspace(agent_workspace_dir: Path) -> None:
+    """Copy Jarvis persona seeds (IDENTITY/SOUL/AGENTS/USER) into the agent
+    workspace, but only files that don't already exist.
+
+    Why "only if missing": openclaw and the agent itself write back to these
+    files (memory, learned preferences). Overwriting would erase that. The
+    seeds are a first-run identity, not a config to be re-applied.
+
+    Also removes a stale ``BOOTSTRAP.md`` if our seeds are present — the
+    bootstrap ritual is only meaningful for a workspace with no identity,
+    and we've already provided one.
+    """
+    import shutil
+
+    agent_workspace_dir.mkdir(parents=True, exist_ok=True)
+    for fname in WORKSPACE_SEED_FILES:
+        src = WORKSPACE_SEED_DIR / fname
+        dst = agent_workspace_dir / fname
+        if src.exists() and not dst.exists():
+            shutil.copyfile(src, dst)
+
+    bootstrap = agent_workspace_dir / "BOOTSTRAP.md"
+    if bootstrap.exists() and (agent_workspace_dir / "IDENTITY.md").exists():
+        bootstrap.unlink()
 
 
 def _ensure_gateway_token(settings) -> str:
@@ -141,20 +174,31 @@ def _install_plugin(workspace: Path, state_dir: Path) -> None:
         shutil.copytree(dep_src, target_node_modules / dep, symlinks=False)
 
 
-def _write_env_file(env_path: Path, state_dir: Path, gateway_token: str = "", site_name: str = "jarvis.localhost") -> None:
+def _write_env_file(
+    env_path: Path,
+    state_dir: Path,
+    agent_workspace_dir: Path,
+    gateway_token: str = "",
+    site_name: str = "jarvis.localhost",
+) -> None:
     """Write the .env file used by docker compose for variable interpolation.
 
     Also writes plugin callback env vars to the compose dir's .env so they are
     injected into the container process via docker-compose.yml's `env_file: path: .env`.
+
+    ``OPENCLAW_WORKSPACE_DIR`` overrides the default ``~/.openclaw/workspace``
+    so the agent's persona files (seeded under ``openclaw_state/workspace/``)
+    are what the container sees on boot.
     """
     # Primary .env — used for docker compose variable substitution (${VAR} in yml).
     content = (
         f"OPENCLAW_CONFIG_DIR={state_dir.resolve()}\n"
+        f"OPENCLAW_WORKSPACE_DIR={agent_workspace_dir.resolve()}\n"
         f"OPENCLAW_IMAGE={DEFAULT_IMAGE}\n"
         f"OPENCLAW_GATEWAY_PORT={DEFAULT_GATEWAY_PORT}\n"
         f"OPENCLAW_GATEWAY_BIND={DEFAULT_GATEWAY_BIND}\n"
-        # Plugin env vars: allow the jarvis-openclaw-plugin to call back into Frappe
-        # to resolve sessionKey → user via the lookup_user_by_session endpoint.
+        # Plugin env vars: allow the jarvis-openclaw-plugin to call into Frappe's
+        # jarvis.api.call_tool, authenticated by JARVIS_GATEWAY_TOKEN.
         f"JARVIS_FRAPPE_URL=http://host.docker.internal:8000\n"
         f"JARVIS_GATEWAY_TOKEN={gateway_token}\n"
         f"JARVIS_SITE_NAME={site_name}\n"
@@ -217,12 +261,21 @@ def start() -> None:
     # (the config references the plugin by id). Idempotent: overwrites on every start().
     _install_plugin(paths["workspace"], paths["state_dir"])
 
+    # Seed the agent workspace with Jarvis persona files so the container boots
+    # already knowing who it is. Idempotent: only writes missing files.
+    _seed_workspace(paths["agent_workspace_dir"])
+
     rendered = render_config(settings, token)
     paths["config_path"].write_text(rendered)
 
     # Write env file with plugin callback vars so jarvis-openclaw-plugin can
-    # call back to Frappe's lookup_user_by_session endpoint to resolve identities.
-    _write_env_file(paths["env_path"], paths["state_dir"], gateway_token=token)
+    # reach Frappe's jarvis.api.call_tool, authenticated by the gateway token.
+    _write_env_file(
+        paths["env_path"],
+        paths["state_dir"],
+        paths["agent_workspace_dir"],
+        gateway_token=token,
+    )
 
     # Also write a .env in the compose dir so docker-compose.yml's
     # `env_file: path: .env` injects JARVIS_* vars into the container process.

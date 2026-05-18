@@ -1,4 +1,10 @@
-"""Tests for jarvis.chat.api — whitelisted endpoints."""
+"""Tests for jarvis.chat.api — whitelisted endpoints.
+
+These tests run as a **dedicated test user** (``TEST_USER``) so they never
+touch Administrator's data. Running the suite against a dev site that has
+real chat history previously wiped that history; the fixture user keeps
+test cleanups scoped to disposable rows.
+"""
 
 from unittest.mock import patch
 
@@ -8,16 +14,41 @@ from frappe.tests.utils import FrappeTestCase
 from jarvis.chat.api import (
 	archive_conversation,
 	create_conversation,
+	create_or_focus_empty,
 	get_conversation,
 	list_conversations,
 )
 
 CONV = "Jarvis Conversation"
 MSG = "Jarvis Chat Message"
+TEST_USER = "jarvis-test@example.com"
 
 
-def _cleanup_user_conversations(user: str):
-	"""Delete all conversations owned by user (and their messages)."""
+def _ensure_test_user(user: str = TEST_USER) -> None:
+	"""Create the fixture user if missing; idempotent."""
+	if frappe.db.exists("User", user):
+		return
+	doc = frappe.get_doc({
+		"doctype": "User",
+		"email": user,
+		"first_name": "Jarvis",
+		"last_name": "Test",
+		"enabled": 1,
+		"send_welcome_email": 0,
+		"user_type": "System User",
+	})
+	doc.insert(ignore_permissions=True)
+	# Grant System Manager so the test user can dispatch every tool path.
+	doc.add_roles("System Manager")
+	frappe.db.commit()
+
+
+def _cleanup_user_conversations(user: str = TEST_USER) -> None:
+	"""Delete all conversations owned by `user` (and their messages).
+
+	Defaults to the test fixture user — callers should NOT pass
+	``Administrator`` here; doing so wipes real chat history on the dev site.
+	"""
 	names = frappe.get_all(CONV, filters={"owner": user}, pluck="name")
 	for name in names:
 		for child in frappe.get_all(MSG, filters={"conversation": name}, pluck="name"):
@@ -26,17 +57,27 @@ def _cleanup_user_conversations(user: str):
 	frappe.db.commit()
 
 
-class TestCreateConversation(FrappeTestCase):
+class _ChatTestCase(FrappeTestCase):
+	"""Base class that switches to the fixture user for the test lifetime
+	and restores the original session user on teardown.
+	"""
+
 	def setUp(self):
-		_cleanup_user_conversations("Administrator")
+		_ensure_test_user()
+		self._orig_user = frappe.session.user
+		frappe.set_user(TEST_USER)
+		_cleanup_user_conversations()
 
 	def tearDown(self):
-		_cleanup_user_conversations("Administrator")
+		_cleanup_user_conversations()
+		frappe.set_user(self._orig_user)
 
+
+class TestCreateConversation(_ChatTestCase):
 	def test_creates_a_row_owned_by_current_user(self):
 		name = create_conversation()
 		doc = frappe.get_doc(CONV, name)
-		self.assertEqual(doc.owner, "Administrator")
+		self.assertEqual(doc.owner, TEST_USER)
 		self.assertEqual(doc.status, "active")
 		self.assertIsNotNone(doc.last_active_at)
 
@@ -46,13 +87,7 @@ class TestCreateConversation(FrappeTestCase):
 		self.assertEqual(doc.title, "New chat")
 
 
-class TestListConversations(FrappeTestCase):
-	def setUp(self):
-		_cleanup_user_conversations("Administrator")
-
-	def tearDown(self):
-		_cleanup_user_conversations("Administrator")
-
+class TestListConversations(_ChatTestCase):
 	def test_returns_empty_when_no_conversations(self):
 		result = list_conversations()
 		self.assertEqual(result, [])
@@ -72,14 +107,65 @@ class TestListConversations(FrappeTestCase):
 		names = {c["name"] for c in result}
 		self.assertNotIn(a, names)
 
+	def test_includes_message_count(self):
+		a = create_conversation()
+		b = create_conversation()
+		# Add one message to `a` only
+		frappe.get_doc({
+			"doctype": MSG,
+			"conversation": a,
+			"seq": 1,
+			"role": "user",
+			"content": "hi",
+		}).insert(ignore_permissions=True)
+		frappe.db.commit()
 
-class TestGetConversation(FrappeTestCase):
-	def setUp(self):
-		_cleanup_user_conversations("Administrator")
+		result = {c["name"]: c for c in list_conversations()}
+		self.assertEqual(result[a]["message_count"], 1)
+		self.assertEqual(result[b]["message_count"], 0)
 
-	def tearDown(self):
-		_cleanup_user_conversations("Administrator")
 
+class TestCreateOrFocusEmpty(_ChatTestCase):
+	def test_creates_when_no_conversations_exist(self):
+		name = create_or_focus_empty()
+		self.assertTrue(frappe.db.exists(CONV, name))
+		self.assertEqual(frappe.db.get_value(CONV, name, "owner"), TEST_USER)
+
+	def test_returns_existing_empty_instead_of_creating(self):
+		existing = create_conversation()
+		returned = create_or_focus_empty()
+		self.assertEqual(returned, existing)
+		# Only one conversation total
+		self.assertEqual(len(list_conversations()), 1)
+
+	def test_creates_new_when_only_non_empty_exist(self):
+		filled = create_conversation()
+		frappe.get_doc({
+			"doctype": MSG,
+			"conversation": filled,
+			"seq": 1,
+			"role": "user",
+			"content": "hi",
+		}).insert(ignore_permissions=True)
+		frappe.db.commit()
+
+		returned = create_or_focus_empty()
+		self.assertNotEqual(returned, filled)
+		# A second conversation now exists, and it's empty
+		all_names = {c["name"] for c in list_conversations()}
+		self.assertIn(filled, all_names)
+		self.assertIn(returned, all_names)
+
+	def test_prefers_most_recent_empty(self):
+		older = create_conversation()
+		# Force older to have an earlier last_active_at
+		frappe.db.set_value(CONV, older, "last_active_at", "2020-01-01 00:00:00")
+		newer = create_conversation()
+		returned = create_or_focus_empty()
+		self.assertEqual(returned, newer)
+
+
+class TestGetConversation(_ChatTestCase):
 	def test_returns_conversation_with_empty_messages(self):
 		name = create_conversation()
 		result = get_conversation(name)
@@ -107,13 +193,7 @@ class TestGetConversation(FrappeTestCase):
 			get_conversation("JCONV-99999")
 
 
-class TestArchiveConversation(FrappeTestCase):
-	def setUp(self):
-		_cleanup_user_conversations("Administrator")
-
-	def tearDown(self):
-		_cleanup_user_conversations("Administrator")
-
+class TestArchiveConversation(_ChatTestCase):
 	def test_sets_status_to_archived(self):
 		name = create_conversation()
 		archive_conversation(name)
@@ -124,13 +204,10 @@ class TestArchiveConversation(FrappeTestCase):
 from jarvis.chat.api import send_message
 
 
-class TestSendMessage(FrappeTestCase):
+class TestSendMessage(_ChatTestCase):
 	def setUp(self):
-		_cleanup_user_conversations("Administrator")
+		super().setUp()
 		self.conv = create_conversation()
-
-	def tearDown(self):
-		_cleanup_user_conversations("Administrator")
 
 	def test_rejects_when_policy_says_no(self):
 		with patch(

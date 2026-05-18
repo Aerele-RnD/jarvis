@@ -13,15 +13,53 @@ MSG = "Jarvis Chat Message"
 
 @frappe.whitelist()
 def list_conversations() -> list[dict]:
-	"""Return active conversations owned by the current user, newest first."""
+	"""Return active conversations owned by the current user, newest first.
+
+	Each row includes ``message_count`` so the UI can identify empty
+	conversations (used by ``create_or_focus_empty``).
+	"""
 	user = frappe.session.user
-	rows = frappe.get_all(
-		CONV,
-		filters={"owner": user, "status": "active"},
-		fields=["name", "title", "last_active_at"],
-		order_by="last_active_at desc",
+	rows = frappe.db.sql(
+		"""
+		SELECT c.name, c.title, c.last_active_at,
+		       (SELECT COUNT(*) FROM `tabJarvis Chat Message` m
+		        WHERE m.conversation = c.name) AS message_count
+		FROM `tabJarvis Conversation` c
+		WHERE c.owner = %s AND c.status = 'active'
+		ORDER BY c.last_active_at DESC
+		""",
+		(user,),
+		as_dict=True,
 	)
 	return rows
+
+
+@frappe.whitelist()
+def create_or_focus_empty() -> str:
+	"""Return an empty active conversation for the current user, creating
+	one only if no empty conversation already exists.
+
+	Prevents the "click New Chat repeatedly => orphan empty rows" failure
+	mode. The most-recently-active empty conversation wins.
+	"""
+	user = frappe.session.user
+	empty = frappe.db.sql(
+		"""
+		SELECT c.name
+		FROM `tabJarvis Conversation` c
+		WHERE c.owner = %s AND c.status = 'active'
+		  AND NOT EXISTS (
+		    SELECT 1 FROM `tabJarvis Chat Message` m
+		    WHERE m.conversation = c.name
+		  )
+		ORDER BY c.last_active_at DESC
+		LIMIT 1
+		""",
+		(user,),
+	)
+	if empty:
+		return empty[0][0]
+	return create_conversation()
 
 
 @frappe.whitelist()

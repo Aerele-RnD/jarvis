@@ -1,4 +1,9 @@
-"""Tests for jarvis.chat.worker.run_agent_turn."""
+"""Tests for jarvis.chat.worker.run_agent_turn.
+
+Like test_chat_api, these run as the fixture user ``TEST_USER`` — never as
+Administrator — so the test suite cannot wipe real chat history when run
+against a dev site.
+"""
 
 from unittest.mock import MagicMock, patch
 
@@ -7,18 +12,14 @@ from frappe.tests.utils import FrappeTestCase
 
 from jarvis.chat.api import create_conversation, send_message
 from jarvis.chat.worker import run_agent_turn
+from jarvis.tests.test_chat_api import (
+	TEST_USER,
+	_cleanup_user_conversations,
+	_ensure_test_user,
+)
 
 CONV = "Jarvis Conversation"
 MSG = "Jarvis Chat Message"
-
-
-def _cleanup_user_conversations(user: str):
-	names = frappe.get_all(CONV, filters={"owner": user}, pluck="name")
-	for name in names:
-		for child in frappe.get_all(MSG, filters={"conversation": name}, pluck="name"):
-			frappe.delete_doc(MSG, child, ignore_permissions=True, force=True)
-		frappe.delete_doc(CONV, name, ignore_permissions=True, force=True)
-	frappe.db.commit()
 
 
 def _make_conversation_with_user_message(text: str = "hi") -> tuple[str, str]:
@@ -38,11 +39,15 @@ def _fake_event_stream(events: list[dict]):
 
 class TestRunAgentTurnHappyPath(FrappeTestCase):
 	def setUp(self):
-		_cleanup_user_conversations("Administrator")
+		_ensure_test_user()
+		self._orig_user = frappe.session.user
+		frappe.set_user(TEST_USER)
+		_cleanup_user_conversations()
 		self.conv, self.user_msg = _make_conversation_with_user_message()
 
 	def tearDown(self):
-		_cleanup_user_conversations("Administrator")
+		_cleanup_user_conversations()
+		frappe.set_user(self._orig_user)
 
 	def test_streams_assistant_deltas_to_db_and_realtime(self):
 		fake_sess = MagicMock()
@@ -75,11 +80,15 @@ class TestRunAgentTurnHappyPath(FrappeTestCase):
 
 class TestRunAgentTurnToolCall(FrappeTestCase):
 	def setUp(self):
-		_cleanup_user_conversations("Administrator")
+		_ensure_test_user()
+		self._orig_user = frappe.session.user
+		frappe.set_user(TEST_USER)
+		_cleanup_user_conversations()
 		self.conv, self.user_msg = _make_conversation_with_user_message()
 
 	def tearDown(self):
-		_cleanup_user_conversations("Administrator")
+		_cleanup_user_conversations()
+		frappe.set_user(self._orig_user)
 
 	def test_tool_events_persist_tool_message_rows(self):
 		fake_sess = MagicMock()
@@ -108,11 +117,15 @@ class TestRunAgentTurnToolCall(FrappeTestCase):
 
 class TestRunAgentTurnErrorPaths(FrappeTestCase):
 	def setUp(self):
-		_cleanup_user_conversations("Administrator")
+		_ensure_test_user()
+		self._orig_user = frappe.session.user
+		frappe.set_user(TEST_USER)
+		_cleanup_user_conversations()
 		self.conv, self.user_msg = _make_conversation_with_user_message()
 
 	def tearDown(self):
-		_cleanup_user_conversations("Administrator")
+		_cleanup_user_conversations()
+		frappe.set_user(self._orig_user)
 
 	def test_connect_failure_publishes_run_error_and_marks_message_errored(self):
 		from jarvis.exceptions import OpenclawUnreachableError

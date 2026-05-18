@@ -151,6 +151,22 @@ class TestStreamAgentTurn(FrappeTestCase):
 					list(sess.stream_agent_turn("agent:x", "hi", "idem"))
 
 
+class TestNodeScript(FrappeTestCase):
+	"""Guard the embedded Node script against losing critical buffering or
+	protocol behavior on future edits — these are the bits we discovered the
+	hard way and shouldn't regress.
+	"""
+
+	def test_forces_stdout_blocking_mode(self):
+		"""Without setBlocking(true), Node block-buffers piped stdout and the
+		Python side sees no events until the process exits — causing the
+		'thinking…' pill to stick through the entire turn.
+		"""
+		from jarvis.chat.openclaw_client import _NODE_SCRIPT
+		self.assertIn("setBlocking(true)", _NODE_SCRIPT)
+		self.assertIn("process.stdout._handle", _NODE_SCRIPT)
+
+
 class TestClose(FrappeTestCase):
 	def setUp(self):
 		_settings_with_compose_dir()

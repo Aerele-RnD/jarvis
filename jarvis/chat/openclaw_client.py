@@ -38,6 +38,18 @@ TURN_TIMEOUT_SECONDS = 180
 #   stdin commands:  {"cmd":"create_session","label":...} | {"cmd":"agent","sessionKey":...,"message":...,"idempotencyKey":...} | {"cmd":"close"}
 #   stdout events:   {"type":"connect","ok":bool,"error":?} | {"type":"create","ok":bool,"key":?,"error":?} | {"type":"event","payload":<openclaw frame>} | {"type":"runDone"} | {"type":"runErr","error":...}
 _NODE_SCRIPT = r"""
+// When stdout is piped (docker compose exec -T), Node block-buffers writes by
+// default — events accumulate until the buffer fills or the process exits, so
+// the Python side sees nothing until the agent turn finishes. Forcing the
+// handle to blocking mode makes every write synchronous, which lets each
+// `emit()` flush a single line through the pipe immediately.
+if (process.stdout._handle && typeof process.stdout._handle.setBlocking === 'function') {
+  process.stdout._handle.setBlocking(true);
+}
+if (process.stderr._handle && typeof process.stderr._handle.setBlocking === 'function') {
+  process.stderr._handle.setBlocking(true);
+}
+
 const readline = require('readline');
 const ws = new (require('ws'))('ws://127.0.0.1:18789');
 const args = JSON.parse(process.env.JARVIS_CHAT_ARGS);
