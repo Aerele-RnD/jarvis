@@ -3,15 +3,104 @@
 // patches existing elements via updateMessage().
 
 export function renderMarkdown(text) {
+	const prepped = autoTablify(text || "");
 	if (typeof frappe.markdown === "function") {
 		try {
-			return frappe.markdown(text || "");
+			return frappe.markdown(prepped);
 		} catch (_) {
 			// fall through to plain rendering
 		}
 	}
-	const escaped = frappe.utils.escape_html(text || "");
+	const escaped = frappe.utils.escape_html(prepped);
 	return escaped.replace(/\n/g, "<br>");
+}
+
+/**
+ * Convert whitespace-aligned tables in plain text to GFM markdown pipe
+ * tables so Showdown's table extension can render them.
+ *
+ * LLMs frequently emit tables as space-separated columns despite SOUL.md
+ * asking for pipes. This client-side fallback makes the renderer robust
+ * against that — every model, every prompt — without depending on the
+ * agent to follow instructions.
+ *
+ * Heuristic: any run of 2+ consecutive non-blank lines where each line
+ * has 2+ tokens separated by 2+ spaces (or tabs). Pipe-prefixed lines
+ * are left alone. Fenced code blocks are skipped entirely.
+ */
+function autoTablify(text) {
+	if (!text || text.indexOf("\n") < 0) return text;
+	const lines = text.split("\n");
+	const out = [];
+	let inFence = false;
+	let i = 0;
+
+	while (i < lines.length) {
+		const line = lines[i];
+
+		// Skip everything inside ``` fences.
+		if (/^\s*```/.test(line)) {
+			inFence = !inFence;
+			out.push(line);
+			i++;
+			continue;
+		}
+		if (inFence) {
+			out.push(line);
+			i++;
+			continue;
+		}
+
+		if (looksLikeTableRow(line)) {
+			const block = [];
+			let j = i;
+			while (j < lines.length && looksLikeTableRow(lines[j])) {
+				block.push(splitColumns(lines[j]));
+				j++;
+			}
+			if (block.length >= 2) {
+				const maxCols = Math.max(...block.map((r) => r.length));
+				out.push("| " + padRow(block[0], maxCols).join(" | ") + " |");
+				out.push("|" + " --- |".repeat(maxCols));
+				for (let k = 1; k < block.length; k++) {
+					out.push("| " + padRow(block[k], maxCols).join(" | ") + " |");
+				}
+				i = j;
+				continue;
+			}
+		}
+
+		out.push(line);
+		i++;
+	}
+	return out.join("\n");
+}
+
+function looksLikeTableRow(line) {
+	if (!line || !line.trim()) return false;
+	// Already pipe-formatted — let Showdown handle it directly.
+	if (/^\s*\|/.test(line)) return false;
+	// Skip markdown structures that might have multi-space gaps for
+	// stylistic reasons but aren't actually tables.
+	if (/^\s*[-*+]\s/.test(line)) return false;     // bullet list item
+	if (/^\s*\d+\.\s/.test(line)) return false;     // numbered list item
+	if (/^\s*#{1,6}\s/.test(line)) return false;    // heading
+	if (/^\s*>\s/.test(line)) return false;         // blockquote
+	// Need 2+ columns when split on runs of multi-space / tab.
+	return splitColumns(line).length >= 2;
+}
+
+function splitColumns(line) {
+	return line
+		.split(/\s{2,}|\t+/)
+		.map((s) => s.trim())
+		.filter((s) => s !== "");
+}
+
+function padRow(cols, n) {
+	const padded = cols.slice();
+	while (padded.length < n) padded.push("");
+	return padded;
 }
 
 export function buildMessageEl(msg) {
@@ -78,17 +167,7 @@ function renderToolBody(msg) {
 
 	let body = "";
 	if (msg.tool_result) {
-		const text =
-			typeof msg.tool_result === "string"
-				? msg.tool_result
-				: JSON.stringify(msg.tool_result, null, 2);
-		const collapsed = text.length > 400;
-		body = `
-			<details class="jarvis-tool-details" ${collapsed ? "" : "open"}>
-				<summary>${collapsed ? "Show result" : "Result"}</summary>
-				<pre>${frappe.utils.escape_html(text)}</pre>
-			</details>
-		`;
+		body = renderToolResultBody(msg.tool_result);
 	}
 
 	return `
@@ -98,6 +177,138 @@ function renderToolBody(msg) {
 			${statusBadge}
 		</div>
 		${body}
+	`;
+}
+
+// ---- Tool result rendering -------------------------------------------
+//
+// Tool results come back in several shapes:
+//   - call_tool envelope:  {ok: true, data: ...}
+//   - run_query envelope:  {sql: "...", rows: [...]}
+//   - get_schema envelope: {doctype, fields: [...]}
+//   - get_list envelope:   data is a bare array
+// When we can find a row array, render it as an HTML table — drastically
+// more readable than the equivalent JSON for an LLM-driven UI. Fall back
+// to <pre> JSON for unstructured shapes.
+
+function renderToolResultBody(toolResult) {
+	let parsed = toolResult;
+	if (typeof parsed === "string") {
+		try { parsed = JSON.parse(parsed); } catch (_) { /* keep as string */ }
+	}
+
+	const table = extractTable(parsed);
+	const rawText = typeof parsed === "string"
+		? parsed
+		: JSON.stringify(parsed, null, 2);
+
+	if (table) {
+		const rowCount = table.rows.length;
+		const label = `${rowCount} ${rowCount === 1 ? "row" : "rows"}`;
+		return `
+			<details class="jarvis-tool-details" open>
+				<summary>${label}</summary>
+				${renderTable(table)}
+				<details class="jarvis-tool-raw">
+					<summary>Raw JSON</summary>
+					<pre>${frappe.utils.escape_html(rawText)}</pre>
+				</details>
+			</details>
+		`;
+	}
+
+	const collapsed = rawText.length > 400;
+	return `
+		<details class="jarvis-tool-details" ${collapsed ? "" : "open"}>
+			<summary>${collapsed ? "Show result" : "Result"}</summary>
+			<pre>${frappe.utils.escape_html(rawText)}</pre>
+		</details>
+	`;
+}
+
+/**
+ * Find the most likely row array inside a tool result. Returns
+ * `{ keys: string[], rows: object[] }` when the data looks tabular,
+ * `null` otherwise.
+ */
+function extractTable(result) {
+	if (result == null) return null;
+
+	// Unwrap call_tool envelope first.
+	if (typeof result === "object" && result.ok === true && result.data !== undefined) {
+		return extractTable(result.data);
+	}
+
+	// Direct array — most get_list responses.
+	if (Array.isArray(result)) return tablify(result);
+
+	if (typeof result === "object") {
+		// run_query: {sql, rows: [...]}
+		if (Array.isArray(result.rows)) return tablify(result.rows);
+		// get_schema: {doctype, fields: [...]}
+		if (Array.isArray(result.fields)) return tablify(result.fields);
+		// Frappe Report shape: {columns: [...], result: [...]}
+		if (Array.isArray(result.result)) return tablify(result.result);
+	}
+	return null;
+}
+
+function tablify(rows) {
+	if (!Array.isArray(rows) || rows.length === 0) return null;
+	// Every row must be a plain object (not array, not primitive).
+	const allPlain = rows.every(
+		(r) => r != null && typeof r === "object" && !Array.isArray(r),
+	);
+	if (!allPlain) return null;
+
+	// Union of keys in first-seen order so column layout matches the
+	// natural order the tool returned (preserves "name first" etc).
+	const keys = [];
+	const seen = new Set();
+	for (const row of rows) {
+		for (const k of Object.keys(row)) {
+			if (!seen.has(k)) {
+				seen.add(k);
+				keys.push(k);
+			}
+		}
+	}
+	if (keys.length === 0) return null;
+	return { keys, rows };
+}
+
+function renderTable({ keys, rows }) {
+	const head = keys
+		.map((k) => `<th>${frappe.utils.escape_html(k)}</th>`)
+		.join("");
+	const body = rows
+		.map((row) => {
+			const cells = keys.map((k) => {
+				const v = row[k];
+				let cell;
+				if (v === null || v === undefined) {
+					cell = '<span class="jarvis-tool-null">—</span>';
+				} else if (typeof v === "object") {
+					// Nested objects/arrays don't fit a flat table; show their
+					// JSON in the cell with a tooltip for the full value.
+					const json = JSON.stringify(v);
+					const display = json.length > 60 ? json.slice(0, 57) + "…" : json;
+					cell = `<span title="${frappe.utils.escape_html(json)}">${frappe.utils.escape_html(display)}</span>`;
+				} else {
+					cell = frappe.utils.escape_html(String(v));
+				}
+				return `<td>${cell}</td>`;
+			}).join("");
+			return `<tr>${cells}</tr>`;
+		})
+		.join("");
+	return `
+		<div class="jarvis-tool-table-wrap">
+			<table class="jarvis-tool-table">
+				<thead><tr>${head}</tr></thead>
+				<tbody>${body}</tbody>
+			</table>
+		</div>
 	`;
 }
 
