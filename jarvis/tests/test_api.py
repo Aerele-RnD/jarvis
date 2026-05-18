@@ -37,7 +37,16 @@ class _FakeRequest:
 
 
 class TestCallToolPluginAuth(FrappeTestCase):
-	"""Plugin-auth path: X-Jarvis-Token + X-Jarvis-User → dispatch as that user."""
+	"""Plugin-auth path: X-Jarvis-Token + X-Jarvis-Session → Frappe resolves
+	the user from Jarvis Chat Session and dispatches as them.
+
+	(The earlier shape required an X-Jarvis-User header which the plugin
+	resolved via a separate HTTPS call. That round-trip was removed
+	2026-05-18 — Frappe owns the session→user mapping, so it looks the
+	user up itself. See architecture.md ‘Path A v2'.)
+	"""
+
+	SESSION_KEY = "agent:test:plugin-auth"
 
 	@classmethod
 	def setUpClass(cls):
@@ -48,20 +57,29 @@ class TestCallToolPluginAuth(FrappeTestCase):
 		# only for this test class.
 		cls._original_token = settings.get_password("openclaw_gateway_token") or ""
 		settings.db_set("openclaw_gateway_token", "plugin-auth-test-token")
+		# Seed a Jarvis Chat Session row so the user-resolution lookup has
+		# something to find. Use a sentinel key so we can clean up cleanly.
+		_cleanup_session(cls.SESSION_KEY)
+		frappe.get_doc({
+			"doctype": "Jarvis Chat Session",
+			"session_key": cls.SESSION_KEY,
+			"user": "Administrator",
+		}).insert(ignore_permissions=True)
 		frappe.db.commit()
 
 	@classmethod
 	def tearDownClass(cls):
 		settings = frappe.get_single("Jarvis Settings")
 		settings.db_set("openclaw_gateway_token", cls._original_token)
+		_cleanup_session(cls.SESSION_KEY)
 		frappe.db.commit()
 		super().tearDownClass()
 
 	def _with_headers(self, headers: dict[str, str]):
 		return patch.object(frappe, "request", _FakeRequest(headers), create=True)
 
-	def test_valid_token_and_user_dispatches_as_that_user(self):
-		"""Plugin-auth path runs frappe.set_user(X-Jarvis-User) for the dispatch."""
+	def test_valid_token_and_session_dispatches_as_session_user(self):
+		"""Frappe resolves the user from the X-Jarvis-Session header alone."""
 		seen_user: dict[str, str] = {}
 
 		def spy_dispatch(name, args):
@@ -70,10 +88,11 @@ class TestCallToolPluginAuth(FrappeTestCase):
 
 		with self._with_headers({
 			"X-Jarvis-Token": "plugin-auth-test-token",
-			"X-Jarvis-User": "Administrator",
+			"X-Jarvis-Session": self.SESSION_KEY,
 		}):
 			with patch("jarvis.api.dispatch", side_effect=spy_dispatch):
-				result = call_tool(tool="get_schema", args={"doctype": "Customer"})
+				with patch("jarvis.api._persist_and_publish_tool_call"):
+					result = call_tool(tool="get_schema", args={"doctype": "Customer"})
 
 		self.assertEqual(result["ok"], True)
 		self.assertEqual(seen_user["user"], "Administrator")
@@ -81,36 +100,50 @@ class TestCallToolPluginAuth(FrappeTestCase):
 	def test_invalid_token_returns_401(self):
 		with self._with_headers({
 			"X-Jarvis-Token": "wrong-token",
-			"X-Jarvis-User": "Administrator",
+			"X-Jarvis-Session": self.SESSION_KEY,
 		}):
 			result = call_tool(tool="get_schema", args={"doctype": "Customer"})
 		self.assertEqual(result["ok"], False)
 		self.assertEqual(result["error"]["code"], "AuthenticationError")
 		self.assertEqual(frappe.local.response.http_status_code, 401)
 
-	def test_token_without_user_header_returns_400(self):
+	def test_token_without_session_header_returns_400(self):
 		with self._with_headers({"X-Jarvis-Token": "plugin-auth-test-token"}):
 			result = call_tool(tool="get_schema", args={"doctype": "Customer"})
 		self.assertEqual(result["ok"], False)
 		self.assertEqual(result["error"]["code"], "InvalidArgumentError")
-		self.assertIn("X-Jarvis-User", result["error"]["message"])
+		self.assertIn("X-Jarvis-Session", result["error"]["message"])
 
-	def test_token_with_unknown_user_returns_400(self):
+	def test_token_with_unknown_session_returns_400(self):
 		with self._with_headers({
 			"X-Jarvis-Token": "plugin-auth-test-token",
-			"X-Jarvis-User": "nonexistent-user@example.invalid",
+			"X-Jarvis-Session": "agent:nonexistent:xyz",
 		}):
 			result = call_tool(tool="get_schema", args={"doctype": "Customer"})
 		self.assertEqual(result["ok"], False)
 		self.assertEqual(result["error"]["code"], "InvalidArgumentError")
-		self.assertIn("unknown user", result["error"]["message"])
+		self.assertIn("unknown session", result["error"]["message"])
 
 	def test_session_user_restored_after_dispatch(self):
 		"""set_user is wrapped in try/finally — the calling user is preserved."""
 		original = frappe.session.user
 		with self._with_headers({
 			"X-Jarvis-Token": "plugin-auth-test-token",
-			"X-Jarvis-User": "Administrator",
+			"X-Jarvis-Session": self.SESSION_KEY,
 		}):
-			call_tool(tool="get_schema", args={"doctype": "Customer"})
+			with patch("jarvis.api._persist_and_publish_tool_call"):
+				call_tool(tool="get_schema", args={"doctype": "Customer"})
 		self.assertEqual(frappe.session.user, original)
+
+
+def _cleanup_session(session_key: str) -> None:
+	names = frappe.get_all(
+		"Jarvis Chat Session",
+		filters={"session_key": session_key},
+		pluck="name",
+	)
+	for name in names:
+		frappe.delete_doc(
+			"Jarvis Chat Session", name, ignore_permissions=True, force=True
+		)
+	frappe.db.commit()

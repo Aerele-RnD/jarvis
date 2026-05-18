@@ -5,9 +5,12 @@ from jarvis.tools.registry import dispatch, list_tools
 
 
 class TestRegistry(FrappeTestCase):
-    def test_list_tools_contains_all_four(self):
+    def test_list_tools_contains_all_registered(self):
         names = set(list_tools())
-        self.assertEqual(names, {"get_schema", "get_doc", "get_list", "run_report"})
+        self.assertEqual(
+            names,
+            {"get_schema", "get_doc", "get_list", "run_report", "run_query"},
+        )
 
     def test_dispatch_invokes_correct_tool(self):
         result = dispatch("get_schema", {"doctype": "Customer"})

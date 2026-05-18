@@ -1,0 +1,12 @@
+{
+  "doctype": "Page",
+  "name": "jarvis-chat",
+  "page_name": "jarvis-chat",
+  "module": "Jarvis",
+  "standard": "Yes",
+  "title": "Jarvis Chat",
+  "roles": [
+    {"role": "System Manager"},
+    {"role": "All"}
+  ]
+}

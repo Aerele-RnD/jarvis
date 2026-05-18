@@ -1,0 +1,102 @@
+{
+  "doctype": "DocType",
+  "name": "Jarvis Chat Message",
+  "module": "Jarvis",
+  "issingle": 0,
+  "custom": 0,
+  "engine": "InnoDB",
+  "autoname": "hash",
+  "field_order": [
+    "conversation",
+    "seq",
+    "role",
+    "content",
+    "streaming",
+    "error",
+    "tool_name",
+    "tool_args",
+    "tool_result",
+    "tool_status"
+  ],
+  "fields": [
+    {
+      "fieldname": "conversation",
+      "fieldtype": "Link",
+      "label": "Conversation",
+      "options": "Jarvis Conversation",
+      "reqd": 1,
+      "in_list_view": 1,
+      "in_standard_filter": 1
+    },
+    {
+      "fieldname": "seq",
+      "fieldtype": "Int",
+      "label": "Sequence",
+      "reqd": 1,
+      "description": "Monotonic ordering within a conversation."
+    },
+    {
+      "fieldname": "role",
+      "fieldtype": "Select",
+      "label": "Role",
+      "options": "user\nassistant\ntool",
+      "reqd": 1,
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "content",
+      "fieldtype": "Long Text",
+      "label": "Content"
+    },
+    {
+      "fieldname": "streaming",
+      "fieldtype": "Check",
+      "label": "Streaming",
+      "default": 0,
+      "description": "True while an assistant message is mid-stream."
+    },
+    {
+      "fieldname": "error",
+      "fieldtype": "Long Text",
+      "label": "Error"
+    },
+    {
+      "fieldname": "tool_name",
+      "fieldtype": "Data",
+      "label": "Tool Name",
+      "depends_on": "eval:doc.role=='tool'"
+    },
+    {
+      "fieldname": "tool_args",
+      "fieldtype": "JSON",
+      "label": "Tool Args",
+      "depends_on": "eval:doc.role=='tool'"
+    },
+    {
+      "fieldname": "tool_result",
+      "fieldtype": "JSON",
+      "label": "Tool Result",
+      "depends_on": "eval:doc.role=='tool'"
+    },
+    {
+      "fieldname": "tool_status",
+      "fieldtype": "Select",
+      "label": "Tool Status",
+      "options": "\nrunning\ncompleted\nerror",
+      "depends_on": "eval:doc.role=='tool'"
+    }
+  ],
+  "permissions": [
+    {
+      "role": "All",
+      "read": 1,
+      "write": 1,
+      "create": 1,
+      "delete": 1,
+      "if_owner": 1
+    }
+  ],
+  "sort_field": "seq",
+  "sort_order": "ASC",
+  "track_changes": 0
+}

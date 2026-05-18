@@ -42,7 +42,7 @@ Now `bench start` and visit `http://jarvis.localhost:8000/app/jarvis-settings`.
 ## Running tests
 
 ```bash
-# Full app suite (~123 tests)
+# Full app suite (~204 tests)
 bench --site jarvis.localhost run-tests --app jarvis
 
 # Single test module
@@ -64,14 +64,23 @@ What each test module covers:
 | `tests.test_get_doc` | `get_doc` happy path, missing args, unknown doc, per-record permission isolation. Creates Customer Group/Territory fixtures because ERPNext requires non-group leaf records. |
 | `tests.test_get_list` | `get_list` returns rows, limit cap, missing DocType, permission denial |
 | `tests.test_run_report` | `run_report` permission denial, unknown report, missing arg; happy path skipped when no default company |
+| `tests.test_run_query` | `run_query` validation (SELECT-only, no comments, no DML, `tab<DocType>` tables), DocType-level perm checks, LIMIT clamping, happy path |
 | `tests.test_registry` | `dispatch` happy path, unknown tool, non-dict args, missing kwargs translation |
-| `tests.test_api` | `call_tool` HTTP envelope (standard Frappe-auth path + Phase 2.2.a plugin-auth path with X-Jarvis-Token + X-Jarvis-User → frappe.set_user) |
+| `tests.test_api` | `call_tool` HTTP envelope (standard Frappe-auth path + Path A v2 plugin-auth path with `X-Jarvis-Token` + `X-Jarvis-Session` → Frappe resolves user via Jarvis Chat Session) |
 | `tests.test_chat_session` | Jarvis Chat Session DocType structure + sessionKey-uniqueness |
-| `tests.test_lookup` | `lookup_user_by_session` endpoint — token auth, session resolution, missing/unknown cases |
 | `tests.test_openclaw_config` | Provider mapping, JSON validity, SecretRef shape, stub fallback, all 12 providers render, Path A plugin entry present, no MCP block |
 | `tests.test_openclaw_push` | File writes (0600), WebSocket frame contents, error translation, docker subprocess args |
 | `tests.test_openclaw_bootstrap` | Path defaults, token generation, idempotency, env file contents, subprocess ordering |
 | `tests.test_settings_on_update` | Change classification, operator gate, status recording, failure handling, key persistence on failure |
+| `tests.test_jarvis_conversation` | Jarvis Conversation DocType — schema, owner-only perms, before_insert default for last_active_at |
+| `tests.test_jarvis_chat_message` | Jarvis Chat Message DocType — schema, parent link, tool fields, owner-only perms |
+| `tests.test_chat_policy` | `policy.validate_can_send` accept/reject (stub today; Phase 3 fills in) |
+| `tests.test_chat_events` | openclaw event parsing (lifecycle/tool/assistant); `publish_to_user` wrapper |
+| `tests.test_chat_openclaw_client` | Python WS client — connect handshake, sessions.create, stream_agent_turn (with mocked socket) |
+| `tests.test_chat_api` | list/get/create/archive/send_message endpoints — validation, persistence, enqueue |
+| `tests.test_chat_worker` | `run_agent_turn` — happy path, tool events, error paths (with mocked OpenclawSession) |
+| `tests.test_chat_stale_scan` | stale-streaming scan job |
+| `tests.test_api_chat_session_header` | `call_tool` X-Jarvis-Session header behaviour |
 
 Tests run against the live `jarvis.localhost` site (Frappe's `FrappeTestCase` requires a real site for DB access). Bench Redis must be running on ports 11000 / 13000 — if you see `Should not fail silently in tests`, that's a missing Redis instance; `bench start` brings them up.
 
@@ -101,7 +110,8 @@ app/
     │   ├── get_schema.py
     │   ├── get_doc.py
     │   ├── get_list.py
-    │   └── run_report.py
+    │   ├── run_report.py
+    │   └── run_query.py                      # SELECT-only SQL for joins / aggregates
     ├── config/__init__.py                    # Frappe boilerplate
     ├── patches/__init__.py
     ├── templates/
@@ -137,7 +147,7 @@ General-purpose code (`tools/`, `api.py`, `exceptions.py`, `openclaw_*`, `tests/
    ```
 3. **Write tests** at `app/jarvis/tests/test_<tool_name>.py`. Cover: happy path, empty args, unknown target, permission denial. Use `FrappeTestCase`.
 4. **Update `test_registry.test_list_tools_contains_all_*`** to include the new tool name.
-5. **Document** in [`docs/tools-api.md`](tools-api.md) — add a section under "The four tools" (now five).
+5. **Document** in [`docs/tools-api.md`](tools-api.md) — add a section under "The five tools".
 
 ### Adding a new LLM provider
 

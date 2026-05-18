@@ -1,9 +1,10 @@
 """Jarvis Chat Session DocType controller.
 
-Maps a single openclaw session key to the Frappe user who initiated the session.
-Rows are inserted by demo.py (and eventually the real session-create path) at
-session-create time. The jarvis-openclaw-plugin's before_tool_call hook calls
-back to jarvis.api.lookup_user_by_session to retrieve the user from this table.
+Maps a single openclaw session key to the Frappe user who initiated the
+session. Rows are inserted at session-create time (chat UI's
+``_ensure_session_key`` or ``demo.py``). When a tool call arrives carrying
+``X-Jarvis-Session``, ``jarvis.api.call_tool`` resolves the user via this
+table and dispatches under ``frappe.set_user(user)``.
 """
 
 import frappe

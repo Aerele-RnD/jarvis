@@ -1,0 +1,570 @@
+/* =============================================================
+ * Jarvis Chat — page styles
+ * Tokens follow Frappe Desk CSS variables so dark mode "just works".
+ * ============================================================= */
+
+.jarvis-chat-page {
+	--jarvis-radius: 10px;
+	--jarvis-gap: 12px;
+	--jarvis-sidebar-w: 280px;
+	--jarvis-input-max-h: 160px;
+}
+
+/* ---- Header badge ------------------------------------------- */
+/* The badge lives in Frappe's .title-area (outside .jarvis-chat-page),
+ * so the selector doesn't nest under the page class. */
+
+.jarvis-header-badge {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	margin-right: 10px;
+	padding: 3px 9px 3px 7px;
+	border-radius: 999px;
+	background: linear-gradient(
+		135deg,
+		var(--primary, #2490ef),
+		var(--primary-dark, #1a6dbf)
+	);
+	color: #fff;
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.02em;
+	line-height: 1;
+	vertical-align: middle;
+	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.jarvis-header-badge-mark {
+	font-size: 13px;
+	line-height: 1;
+}
+
+.jarvis-header-badge-name {
+	letter-spacing: 0.04em;
+}
+
+/* ---- Layout ------------------------------------------------- */
+
+/* Use Frappe's page-body as the layout container so we fill exactly the
+ * space the Desk gave us — no magic number for navbar/header height. The
+ * 100dvh fallback handles mobile chrome (URL bar) collapsing. */
+.jarvis-chat-page {
+	position: relative;
+}
+
+.jarvis-chat-page.page-body {
+	padding: 0;
+}
+
+.jarvis-chat-page .jarvis-chat-layout {
+	display: grid;
+	grid-template-columns: var(--jarvis-sidebar-w) 1fr;
+	gap: 0;
+	height: calc(100dvh - var(--jarvis-chrome-h, 130px));
+	min-height: 480px;
+	background: var(--card-bg);
+	border: 1px solid var(--border-color);
+	border-radius: var(--jarvis-radius);
+	overflow: hidden;
+}
+
+@media (max-width: 768px) {
+	.jarvis-chat-page .jarvis-chat-layout {
+		grid-template-columns: 1fr;
+	}
+	.jarvis-chat-sidebar {
+		display: none;
+	}
+}
+
+/* ---- Sidebar ------------------------------------------------ */
+
+.jarvis-chat-sidebar {
+	border-right: 1px solid var(--border-color);
+	background: var(--bg-light-gray);
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.jarvis-sidebar-header {
+	padding: 14px 16px;
+	border-bottom: 1px solid var(--border-color);
+}
+
+.jarvis-sidebar-title {
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: var(--text-muted);
+}
+
+.jarvis-conversation-list {
+	flex: 1;
+	overflow-y: auto;
+	padding: 6px;
+}
+
+.jarvis-conv-item {
+	padding: 8px 10px;
+	border-radius: 6px;
+	cursor: pointer;
+	transition: background 0.12s;
+	margin-bottom: 2px;
+}
+
+.jarvis-conv-item:hover {
+	background: var(--fg-hover-color, rgba(0, 0, 0, 0.05));
+}
+
+.jarvis-conv-item.active {
+	background: var(--bg-color);
+	box-shadow: inset 3px 0 0 var(--primary, #2490ef);
+}
+
+.jarvis-conv-main {
+	flex: 1;
+	min-width: 0;
+}
+
+.jarvis-conv-title {
+	font-size: 13px;
+	font-weight: 500;
+	color: var(--text-color);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.jarvis-conv-meta {
+	font-size: 11px;
+	color: var(--text-muted);
+	margin-top: 2px;
+	display: flex;
+	gap: 6px;
+	align-items: center;
+}
+
+.jarvis-empty-tag {
+	background: var(--bg-color);
+	color: var(--text-muted);
+	font-size: 10px;
+	padding: 1px 5px;
+	border-radius: 3px;
+	border: 1px solid var(--border-color);
+}
+
+.jarvis-sidebar-empty {
+	padding: 24px 18px;
+	text-align: center;
+	color: var(--text-muted);
+}
+
+.jarvis-sidebar-empty-text {
+	font-weight: 500;
+	margin-bottom: 4px;
+}
+
+.jarvis-sidebar-empty-hint {
+	font-size: 12px;
+}
+
+/* ---- Main pane ---------------------------------------------- */
+
+.jarvis-chat-main {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;  /* required so flex children with overflow:auto can scroll */
+	background: var(--card-bg);
+}
+
+.jarvis-message-list {
+	flex: 1;
+	overflow-y: auto;
+	padding: 20px 24px;
+	scroll-behavior: smooth;
+}
+
+/* ---- Welcome / empty states --------------------------------- */
+
+.jarvis-welcome {
+	max-width: 560px;
+	margin: 60px auto;
+	text-align: center;
+	color: var(--text-color);
+}
+
+.jarvis-welcome-icon {
+	font-size: 36px;
+	color: var(--primary, #2490ef);
+	margin-bottom: 8px;
+}
+
+.jarvis-welcome h3 {
+	margin: 0 0 6px;
+	font-weight: 600;
+}
+
+.jarvis-welcome p {
+	color: var(--text-muted);
+	margin-bottom: 18px;
+}
+
+.jarvis-welcome-examples {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	max-width: 360px;
+	margin: 0 auto;
+}
+
+.jarvis-example {
+	background: var(--bg-light-gray);
+	border: 1px solid var(--border-color);
+	border-radius: 8px;
+	padding: 10px 14px;
+	cursor: pointer;
+	text-align: left;
+	font-size: 13px;
+	color: var(--text-color);
+	transition: background 0.12s, border-color 0.12s;
+}
+
+.jarvis-example:hover {
+	background: var(--bg-color);
+	border-color: var(--primary, #2490ef);
+}
+
+.jarvis-empty-conv {
+	text-align: center;
+	color: var(--text-muted);
+	padding: 40px 20px;
+	font-size: 13px;
+}
+
+/* ---- Messages ----------------------------------------------- */
+
+.jarvis-message {
+	margin-bottom: 16px;
+	display: flex;
+	max-width: 100%;
+}
+
+.jarvis-message .jarvis-bubble {
+	padding: 10px 14px;
+	border-radius: 12px;
+	max-width: 75%;
+	word-wrap: break-word;
+	line-height: 1.5;
+}
+
+.jarvis-message-user {
+	justify-content: flex-end;
+}
+
+.jarvis-message-user .jarvis-bubble {
+	background: var(--primary, #2490ef);
+	color: white;
+	border-bottom-right-radius: 4px;
+}
+
+.jarvis-message-assistant {
+	justify-content: flex-start;
+}
+
+.jarvis-message-assistant .jarvis-bubble {
+	background: var(--bg-light-gray);
+	color: var(--text-color);
+	border-bottom-left-radius: 4px;
+}
+
+.jarvis-message-assistant .jarvis-bubble :first-child {
+	margin-top: 0;
+}
+
+.jarvis-message-assistant .jarvis-bubble :last-child {
+	margin-bottom: 0;
+}
+
+.jarvis-message-tool {
+	justify-content: flex-start;
+	width: 100%;
+}
+
+.jarvis-message-tool {
+	display: block;
+	margin-bottom: 12px;
+}
+
+.jarvis-message-tool .jarvis-tool-head {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 10px;
+	background: var(--bg-light-gray);
+	border: 1px solid var(--border-color);
+	border-radius: 6px;
+	font-size: 12px;
+	font-family: var(--font-stack-monospace, monospace);
+	color: var(--text-color);
+}
+
+.jarvis-tool-icon {
+	display: inline-block;
+	color: var(--text-muted);
+}
+
+.jarvis-tool-name {
+	font-weight: 600;
+}
+
+.jarvis-tool-status {
+	font-size: 10px;
+	padding: 1px 6px;
+	border-radius: 3px;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+.jarvis-tool-running {
+	background: var(--alert-bg-info, #e7f3ff);
+	color: var(--blue-600, #0c63e4);
+}
+
+.jarvis-tool-completed {
+	background: var(--alert-bg-success, #e8f5e8);
+	color: var(--green-600, #198754);
+}
+
+.jarvis-tool-error {
+	background: var(--alert-bg-danger, #fbe5e5);
+	color: var(--red-600, #dc3545);
+}
+
+.jarvis-tool-details {
+	margin-top: 6px;
+	font-size: 12px;
+	font-family: var(--font-stack-monospace, monospace);
+}
+
+.jarvis-tool-details summary {
+	cursor: pointer;
+	color: var(--text-muted);
+	user-select: none;
+	font-size: 11px;
+	margin-bottom: 4px;
+}
+
+.jarvis-tool-details summary:hover {
+	color: var(--text-color);
+}
+
+.jarvis-tool-details pre {
+	background: var(--bg-light-gray);
+	border: 1px solid var(--border-color);
+	border-radius: 6px;
+	padding: 10px 12px;
+	margin: 0;
+	max-height: 280px;
+	overflow: auto;
+	font-size: 11.5px;
+	line-height: 1.45;
+}
+
+/* ---- Turn group (agent loop) -------------------------------- */
+
+.jarvis-turn {
+	margin-bottom: 8px;
+}
+
+.jarvis-tool-group {
+	margin: 4px 0 14px;
+	border: 1px solid var(--border-color);
+	border-radius: 8px;
+	background: var(--bg-light-gray);
+	overflow: hidden;
+}
+
+.jarvis-tool-group-summary {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 8px 12px;
+	cursor: pointer;
+	font-size: 12px;
+	color: var(--text-color);
+	user-select: none;
+	list-style: none;  /* hide native marker so we can use our own chevron */
+}
+
+.jarvis-tool-group-summary::-webkit-details-marker {
+	display: none;
+}
+
+.jarvis-tool-group-summary:hover {
+	background: var(--bg-color);
+}
+
+.jarvis-tool-group-chevron {
+	display: inline-block;
+	transition: transform 0.15s ease;
+	color: var(--text-muted);
+	font-size: 10px;
+	width: 10px;
+}
+
+.jarvis-tool-group[open] .jarvis-tool-group-chevron {
+	transform: rotate(90deg);
+}
+
+.jarvis-tool-group-label {
+	font-weight: 600;
+}
+
+.jarvis-tool-group-count {
+	color: var(--text-muted);
+}
+
+.jarvis-tool-group-status {
+	margin-left: auto;
+	font-size: 10px;
+	padding: 1px 6px;
+	border-radius: 3px;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+.jarvis-tool-group-body {
+	padding: 10px 12px;
+	border-top: 1px solid var(--border-color);
+	background: var(--card-bg);
+}
+
+.jarvis-tool-group-body .jarvis-message-tool {
+	margin-bottom: 8px;
+}
+
+.jarvis-tool-group-body .jarvis-message-tool:last-child {
+	margin-bottom: 0;
+}
+
+/* Inside a group, tool heads use a slightly lighter background — the group
+ * itself already conveys "this is the agent's work area". */
+.jarvis-tool-group-body .jarvis-tool-head {
+	background: var(--bg-light-gray);
+}
+
+/* ---- Streaming cursor --------------------------------------- */
+
+.jarvis-cursor {
+	display: inline-block;
+	width: 7px;
+	height: 1em;
+	background: currentColor;
+	margin-left: 2px;
+	vertical-align: text-bottom;
+	animation: jarvis-cursor-blink 1s steps(2) infinite;
+}
+
+@keyframes jarvis-cursor-blink {
+	to { visibility: hidden; }
+}
+
+/* ---- Thinking pill ------------------------------------------ */
+
+.jarvis-thinking {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 14px;
+	color: var(--text-muted);
+	font-size: 12px;
+	border-top: 1px solid var(--border-color);
+	background: var(--bg-light-gray);
+}
+
+.jarvis-thinking-dot {
+	width: 5px;
+	height: 5px;
+	background: var(--text-muted);
+	border-radius: 50%;
+	animation: jarvis-thinking-bounce 1.2s infinite ease-in-out both;
+}
+
+.jarvis-thinking-dot:nth-child(1) { animation-delay: -0.32s; }
+.jarvis-thinking-dot:nth-child(2) { animation-delay: -0.16s; }
+.jarvis-thinking-dot:nth-child(3) { animation-delay: 0s; }
+
+.jarvis-thinking-text {
+	margin-left: 4px;
+}
+
+@keyframes jarvis-thinking-bounce {
+	0%, 80%, 100% { transform: scale(0.6); opacity: 0.5; }
+	40% { transform: scale(1); opacity: 1; }
+}
+
+/* ---- Input row ---------------------------------------------- */
+
+.jarvis-input-row {
+	display: flex;
+	gap: 8px;
+	padding: 12px 16px 4px;
+	border-top: 1px solid var(--border-color);
+	align-items: flex-end;
+}
+
+.jarvis-input {
+	flex: 1;
+	resize: none;
+	min-height: 38px;
+	max-height: var(--jarvis-input-max-h);
+	overflow-y: auto;
+	line-height: 1.4;
+}
+
+.jarvis-input:focus {
+	box-shadow: 0 0 0 2px var(--primary-light, rgba(36, 144, 239, 0.2));
+}
+
+.jarvis-send-btn {
+	min-width: 80px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.jarvis-send-btn:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.jarvis-input-hint {
+	padding: 0 16px 10px;
+	font-size: 11px;
+	color: var(--text-muted);
+}
+
+.jarvis-input-hint kbd {
+	background: var(--bg-light-gray);
+	border: 1px solid var(--border-color);
+	border-radius: 3px;
+	padding: 1px 5px;
+	font-size: 10px;
+	font-family: var(--font-stack-monospace, monospace);
+}
+
+/* ---- Spinner ------------------------------------------------ */
+
+.jarvis-spin {
+	display: inline-block;
+	animation: jarvis-spin 1s linear infinite;
+}
+
+@keyframes jarvis-spin {
+	from { transform: rotate(0); }
+	to { transform: rotate(360deg); }
+}

@@ -19,6 +19,12 @@ def _make_fake_plugin(workspace: Path) -> Path:
     dist_dir = plugin_dir / "dist"
     dist_dir.mkdir(exist_ok=True)
     (dist_dir / "index.js").write_text("// stub\n")
+    # Stub the runtime deps that _install_plugin copies (production deps listed
+    # in the plugin's package.json). Keep this in sync with openclaw_bootstrap's
+    # runtime_deps tuple.
+    typebox_dir = plugin_dir / "node_modules" / "typebox"
+    typebox_dir.mkdir(parents=True, exist_ok=True)
+    (typebox_dir / "package.json").write_text('{"name": "typebox", "version": "1.1.38"}\n')
     return plugin_dir
 
 
@@ -126,6 +132,8 @@ class TestBootstrapStart(FrappeTestCase):
 
             env = (workspace / "openclaw_state" / ".env").read_text()
             self.assertIn("OPENCLAW_CONFIG_DIR=", env)
+            self.assertIn("OPENCLAW_WORKSPACE_DIR=", env)
+            self.assertIn("openclaw_state/workspace", env)
             self.assertIn("OPENCLAW_IMAGE=ghcr.io/openclaw/openclaw:latest", env)
             self.assertIn("OPENCLAW_GATEWAY_PORT=18789", env)
             self.assertIn("OPENCLAW_GATEWAY_BIND=lan", env)
@@ -312,17 +320,24 @@ class TestInstallPlugin(FrappeTestCase):
         finally:
             tmp.cleanup()
 
-    def test_node_modules_not_copied(self):
+    def test_only_listed_runtime_deps_are_copied(self):
+        """_install_plugin copies only the explicit runtime_deps (typebox today),
+        not arbitrary contents of source node_modules. This protects against
+        pnpm's symlink farm (which would otherwise pull in the entire openclaw
+        source via the link: dep)."""
         from jarvis.openclaw_bootstrap import _install_plugin
         tmp, workspace, state_dir = self._make_workspace()
         try:
             plugin_dir = _make_fake_plugin(workspace)
-            (plugin_dir / "node_modules").mkdir()
-            (plugin_dir / "node_modules" / "some-dep.js").write_text("// dep\n")
+            # _make_fake_plugin already creates node_modules/typebox; add a
+            # non-runtime dep that should be excluded.
+            (plugin_dir / "node_modules" / "some-dep").mkdir()
+            (plugin_dir / "node_modules" / "some-dep" / "index.js").write_text("// dep\n")
             _install_plugin(workspace, state_dir)
 
             target = state_dir / "extensions" / "jarvis-openclaw-plugin"
-            self.assertFalse((target / "node_modules").exists())
+            self.assertTrue((target / "node_modules" / "typebox").exists())
+            self.assertFalse((target / "node_modules" / "some-dep").exists())
         finally:
             tmp.cleanup()
 
@@ -341,3 +356,92 @@ class TestInstallPlugin(FrappeTestCase):
             self.assertTrue(target.exists(), "plugin directory must exist after start()")
             self.assertTrue((target / "package.json").exists())
             self.assertTrue((target / "dist" / "index.js").exists())
+
+
+class TestSeedWorkspace(FrappeTestCase):
+    """Exercises _seed_workspace() — the function that drops Jarvis persona
+    files into the agent workspace so a fresh container boots with identity.
+    """
+
+    def test_seeds_all_persona_files_on_first_run(self):
+        from jarvis.openclaw_bootstrap import (
+            WORKSPACE_SEED_FILES,
+            _seed_workspace,
+        )
+
+        tmp = tempfile.TemporaryDirectory()
+        try:
+            workspace = Path(tmp.name) / "workspace"
+            _seed_workspace(workspace)
+            for fname in WORKSPACE_SEED_FILES:
+                self.assertTrue(
+                    (workspace / fname).exists(),
+                    f"{fname} should be seeded into the workspace",
+                )
+        finally:
+            tmp.cleanup()
+
+    def test_does_not_overwrite_existing_files(self):
+        """If the agent has already edited IDENTITY.md, seeding must not
+        clobber it on subsequent bootstrap.start() calls.
+        """
+        from jarvis.openclaw_bootstrap import _seed_workspace
+
+        tmp = tempfile.TemporaryDirectory()
+        try:
+            workspace = Path(tmp.name) / "workspace"
+            workspace.mkdir(parents=True)
+            user_content = "# IDENTITY\n\n- Name: Custom Name\n"
+            (workspace / "IDENTITY.md").write_text(user_content)
+
+            _seed_workspace(workspace)
+
+            self.assertEqual(
+                (workspace / "IDENTITY.md").read_text(),
+                user_content,
+                "existing IDENTITY.md must be preserved",
+            )
+            # Files that didn't exist still get seeded
+            self.assertTrue((workspace / "SOUL.md").exists())
+        finally:
+            tmp.cleanup()
+
+    def test_removes_stale_bootstrap_md_when_identity_present(self):
+        """The bootstrap ritual is only meaningful for a workspace with no
+        identity. If our seeds are present, BOOTSTRAP.md should be removed
+        so the agent doesn't run the "who am I?" ritual.
+        """
+        from jarvis.openclaw_bootstrap import _seed_workspace
+
+        tmp = tempfile.TemporaryDirectory()
+        try:
+            workspace = Path(tmp.name) / "workspace"
+            workspace.mkdir(parents=True)
+            (workspace / "BOOTSTRAP.md").write_text("# Bootstrap ritual…\n")
+
+            _seed_workspace(workspace)
+
+            self.assertFalse(
+                (workspace / "BOOTSTRAP.md").exists(),
+                "BOOTSTRAP.md should be removed once identity is seeded",
+            )
+        finally:
+            tmp.cleanup()
+
+    def test_start_seeds_workspace(self):
+        """Integration check: start() creates the agent workspace with seeds."""
+        _reset_settings()
+        with _PatchedPaths() as workspace:
+            with patch("jarvis.openclaw_bootstrap.subprocess.run") as mock_run, \
+                 patch("jarvis.openclaw_bootstrap._poll_healthz", return_value=None):
+                mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+                from jarvis.openclaw_bootstrap import start
+                start()
+
+            agent_ws = workspace / "openclaw_state" / "workspace"
+            self.assertTrue((agent_ws / "IDENTITY.md").exists())
+            self.assertTrue((agent_ws / "SOUL.md").exists())
+            self.assertTrue((agent_ws / "AGENTS.md").exists())
+            self.assertTrue((agent_ws / "USER.md").exists())
+            # And the identity is actually Jarvis-flavored
+            self.assertIn("Jarvis", (agent_ws / "IDENTITY.md").read_text())

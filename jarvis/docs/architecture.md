@@ -6,7 +6,7 @@ Jarvis is structured as four layers, each building on the previous. Only Layer 1
 
 | Layer | What it does | Status |
 |---|---|---|
-| 1. Read & Understand | Permission-aware Q&A over ERPNext data. Tables, charts, saved views. | Agent loop live (Phase 1 + 2.1 + 2.2.a). Chat UI in Desk (2.2.b) is next. |
+| 1. Read & Understand | Permission-aware Q&A over ERPNext data. Tables, charts, saved views. | Agent loop + chat UI live (Phase 1 + 2.1 + 2.2.a + 2.2.b). |
 | 2. Proactive | Scheduled alerts, anomaly detection, digests pushed to the user | Future |
 | 3. Reasoning | Forecasts, what-ifs, recommendations | Future |
 | 4. Action | Agent writes back into ERPNext (drafts POs, posts entries) behind approvals | Future |
@@ -22,8 +22,9 @@ This document covers Layer 1 — everything currently in the repo.
                 │   ┌─────────────────────────┐   │
                 │   │ jarvis app (this repo)  │   │
                 │   │  - Jarvis Settings      │   │
-                │   │  - 4 data tools         │   │
+                │   │  - 5 data tools         │   │
                 │   │  - call_tool HTTP API   │   │
+                │   │  - chat UI + worker     │   │
                 │   │  - on_update hook       │   │
                 │   └─────────┬───────────────┘   │
                 └─────────────│───────────────────┘
@@ -140,51 +141,53 @@ for the full investigation — the four MCP+hook variants we tried, why each
 was structurally blocked, and the trade-offs we accepted by moving to the
 factory path.
 
-**The Path A mechanism (Phase 2.2.a)** works as follows:
+**The Path A mechanism (Phase 2.2.a, refined 2026-05-18 → "Path A v2")** works as follows:
 
 ```
-  1. demo.ask_one (or future chat-UI path) calls openclaw sessions.create
-     → receives sessionKey (e.g. "agent:abc123:main")
+  1. chat.api._ensure_session_key (or demo.ask_one) calls openclaw
+     sessions.create → receives sessionKey (e.g. "agent:abc123:main")
 
-  2. demo.ask_one immediately inserts a "Jarvis Chat Session" row:
+  2. Frappe inserts a "Jarvis Chat Session" row:
        session_key = <sessionKey>
-       user        = "Administrator"   ← the initiating Frappe user
-     and calls frappe.db.commit() so the row is visible to subsequent HTTP
-     requests.
+       user        = <current Frappe user>
+     and commits, making the mapping visible to subsequent HTTP requests.
 
-  3. openclaw runs the agent loop. The jarvis-openclaw-plugin has registered
-     four tools (jarvis__get_schema, jarvis__get_doc, jarvis__get_list,
-     jarvis__run_report) via the factory mechanism. When the agent invokes one,
-     openclaw passes a OpenClawPluginToolContext containing ctx.sessionKey
-     to the tool factory.
+  3. Openclaw runs the agent loop. The jarvis-openclaw-plugin has registered
+     FIVE tools (jarvis__get_schema, jarvis__get_doc, jarvis__get_list,
+     jarvis__run_report, jarvis__run_query) via the factory mechanism. When the
+     agent invokes one, openclaw passes an OpenClawPluginToolContext with
+     ctx.sessionKey to the tool factory.
 
-  4. The tool's execute function:
-     a. Reads ctx.sessionKey.
-     b. Checks an in-memory cache (Map<sessionKey, user>). On a cache miss it
-        POSTs to:
-          POST /api/method/jarvis.api.lookup_user_by_session
-          X-Jarvis-Token: <gateway_token>
-          X-Frappe-Site-Name: jarvis.localhost
-          {"session_key": "<sessionKey>"}
-        Frappe reads "Jarvis Chat Session" and returns {"user": "Administrator"}.
-     c. POSTs the actual tool invocation to Frappe:
-          POST /api/method/jarvis.api.call_tool
-          X-Jarvis-Token: <gateway_token>
-          X-Jarvis-User: Administrator
-          X-Frappe-Site-Name: jarvis.localhost
-          {"tool": "get_list", "args": {...}}
+  4. The tool's execute function POSTs the invocation to Frappe:
+       POST /api/method/jarvis.api.call_tool
+       X-Jarvis-Token:   <gateway_token>      ← proves request originated
+                                                 inside the openclaw container
+       X-Jarvis-Session: <sessionKey>          ← identity carrier
+       X-Frappe-Site-Name: jarvis.localhost
+       {"tool": "get_list", "args": {...}}
 
-  5. jarvis.api.call_tool reads the X-Jarvis-User header, calls
-     frappe.set_user(user), dispatches the tool through the existing Phase 1
-     tool registry, then restores the original session user.
+  5. jarvis.api.call_tool validates the token, looks up Jarvis Chat Session
+     to map sessionKey → user, runs frappe.set_user(user), dispatches the
+     tool through the Phase 1 tool registry, then restores the original
+     session user.
 
   6. The tool's response is returned through openclaw to the LLM as the tool
-     result.
+     result. call_tool also persists a tool-role Jarvis Chat Message and
+     publishes a realtime tool:result event so the chat UI sees the trace.
 ```
 
 The env vars `JARVIS_FRAPPE_URL`, `JARVIS_GATEWAY_TOKEN`, and `JARVIS_SITE_NAME`
 are baked into the container's env by `openclaw_bootstrap._write_env_file` so
 the plugin can make the callbacks without any additional configuration.
+
+**Path A v2 vs the original Path A (pre-2026-05-18):** the original design had the
+plugin make a *separate* round-trip to `jarvis.api.lookup_user_by_session`
+before each tool call, then forward both `X-Jarvis-User` and `X-Jarvis-Session`
+headers. That round-trip was redundant — Frappe already owns the session→user
+mapping. v2 drops the lookup endpoint and the `X-Jarvis-User` header
+entirely; the plugin sends only the session, Frappe resolves identity itself.
+Half the network calls per tool invocation, ~100 lines of code removed, no
+client-side cache to keep coherent.
 
 **What this replaces:** the MCP server at `jarvis.mcp.serve` and the
 `before_tool_call` hook that injected `_user` into MCP params. Both are gone.
@@ -195,6 +198,48 @@ tool entry point for both external Phase 1 callers and the openclaw plugin.
 already live on the factory path, where openclaw's plugin SDK was designed to
 flow session context to tool factories. Path A puts Jarvis on the same path.
 
+## Chat UI (Phase 2.2.b)
+
+The `/app/jarvis-chat` Desk page is a thin client over the Path A agent loop.
+Three Frappe-side pieces:
+
+1. **`jarvis.chat.api`** — whitelisted endpoints for `list_conversations`,
+   `get_conversation`, `create_conversation`, `send_message`, and
+   `archive_conversation`. `send_message` validates via
+   `policy.validate_can_send` (stub), persists the user message, ensures the
+   conversation has an openclaw `session_key` (creating one on first turn),
+   and enqueues `jarvis.chat.worker.run_agent_turn` via `frappe.enqueue`.
+   Returns `{ok, run_id, message_id}` in ~10ms.
+
+2. **`jarvis.chat.worker.run_agent_turn`** — RQ job that holds the Python
+   WebSocket to openclaw for the duration of the turn (typically 10-30s).
+   Streams events through `OpenclawSession.stream_agent_turn`, persists
+   deltas to `Jarvis Chat Message` (overwriting the cumulative `content` for
+   the active assistant turn), and republishes each event via
+   `frappe.publish_realtime("jarvis:event", payload, user=...)`.
+
+3. **`jarvis.chat.stale_scan`** — scheduler job (every 5 minutes) that marks
+   abandoned streaming messages errored. Recovers cleanly if a worker is
+   killed mid-stream.
+
+The browser subscribes to `frappe.realtime.on("jarvis:event", ...)` once and
+routes events by `kind` (`assistant:delta`, `tool:start`, `tool:end`,
+`tool:result`, `run:end`, `run:error`). Per-token latency from openclaw →
+browser is ~10ms.
+
+Tool args + results reach the chat UI directly through `call_tool` itself:
+because the plugin sends `X-Jarvis-Session`, `call_tool` knows which
+conversation the call belongs to and (a) persists a tool-role `Jarvis Chat
+Message`, (b) publishes a `tool:result` realtime event. The browser groups
+consecutive tool messages within a turn into a collapsable "Agent loop"
+trace block.
+
+The agent itself is seeded with a persona via `openclaw_workspace_seeds/`
+(`IDENTITY.md`, `SOUL.md`, `AGENTS.md`, `USER.md`). `openclaw_bootstrap`
+copies these into the openclaw workspace and sets
+`agents.defaults.skipBootstrap: true` so the "who am I?" first-run ritual
+never fires.
+
 ## Trust boundaries
 
 - **Per-user permission inheritance.** Every tool calls `frappe.has_permission(...)` with the calling user. The agent never sees DocTypes or records the user can't see. A salesperson asking about Purchase Invoices gets `PermissionDeniedError`, not data leakage.
@@ -204,12 +249,12 @@ flow session context to tool factories. Path A puts Jarvis on the same path.
 
 ## What's not in this version
 
-- Chat UI inside Desk
-- Real agent loop / streaming LLM responses to a user
+- Write/update/delete tools (current tools are all read-only)
 - Signup, payment, billing, customer DB
 - Real cross-host wire (dev does everything on localhost)
-- Real `jarvis_admin` orchestrator that runs openclaw per-tenant
+- `jarvis_admin` / `jarvis_fleet` orchestrator that runs openclaw per-tenant
+- Private `jarvis-persona` repo + RO bind mount for shipped persona/skills
 - Multi-tenant openclaw fleet management
-- Tables / charts / saved-views rendering for tool output
+- Tables / charts / saved-views rendering for tool output (markdown today)
 
 See the workspace-only design docs (`docs/superpowers/specs/`) for the broader product spec; this README + the rest of `app/docs/` cover only what's actually shipped.

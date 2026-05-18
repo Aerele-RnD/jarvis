@@ -4,7 +4,7 @@ Jarvis exposes ERPNext data to its agent runtime through a small, permission-awa
 
 Every tool inherits the calling user's ERPNext permissions. The agent can never see DocTypes or records the user themselves can't see.
 
-## The four tools
+## The five tools
 
 ### `get_schema(doctype: str) -> dict`
 
@@ -97,6 +97,42 @@ result = run_report(
 | Permission check | Delegated to `frappe.desk.query_report.run`. `frappe.PermissionError` from Frappe is translated to `PermissionDeniedError` so all tools share one exception contract. |
 | Raises | `InvalidArgumentError` (empty `report_name` or unknown Report), `PermissionDeniedError` (no permission on the underlying Report) |
 
+### `run_query(query: str, limit: int = 100) -> dict`
+
+Module: `jarvis.tools.run_query`
+
+Executes a read-only `SELECT` against Frappe DocType tables (`tab<DocType>`).
+Intended for queries `get_list` can't express: joins across DocTypes,
+aggregations (`SUM`, `COUNT`, `AVG`), `GROUP BY`, complex analytics.
+
+```python
+from jarvis.tools.run_query import run_query
+result = run_query(
+    query="""
+        SELECT sii.item_code,
+               SUM(sii.qty)    AS total_qty,
+               SUM(sii.amount) AS total_amt
+        FROM `tabSales Invoice Item` sii
+        JOIN `tabSales Invoice` si ON si.name = sii.parent
+        WHERE si.docstatus = 1
+        GROUP BY sii.item_code
+        ORDER BY total_amt DESC
+    """,
+    limit=50,
+)
+# {"sql": "...final query with enforced LIMIT...", "rows": [...]}
+```
+
+| Aspect | Detail |
+|---|---|
+| Allowed | Single `SELECT` statement. Tables must be `tab<DocType>` form (backticks optional). Explicit `AS` aliases on aggregate columns. |
+| Disallowed | Multi-statement, comments (`--`, `/* */`, `#`), DML/DDL keywords (`INSERT`, `UPDATE`, `DELETE`, `DROP`, etc.) — including in subqueries. Non-`tab*` tables (`__Auth`, `information_schema.*`). |
+| Permission check | DocType-level `frappe.has_permission(<DocType>, "read")` for every referenced table. |
+| **NOT enforced** | User Permissions / record-level share/role filters. Frappe's permission engine has no public hook for arbitrary SQL — prefer `get_list` for record-scoped users. |
+| Limit cap | `MAX_LIMIT = 1000`. The tool injects `LIMIT <n>` if missing and clamps an existing `LIMIT` to the cap. |
+| Returns | `{"sql": <executed query>, "rows": [...]}` — the executed SQL is included so the model can show the user what ran. |
+| Raises | `InvalidArgumentError` (bad SQL / forbidden keyword / non-`tab` table / no tables), `PermissionDeniedError` (no read on referenced DocType) |
+
 ## Tool registry & dispatcher
 
 Module: `jarvis.tools.registry`
@@ -107,7 +143,7 @@ Central name → callable map. Everything that calls a tool goes through `dispat
 from jarvis.tools.registry import list_tools, dispatch
 
 list_tools()
-# ['get_doc', 'get_list', 'get_schema', 'run_report']
+# ['get_doc', 'get_list', 'get_schema', 'run_query', 'run_report']
 
 dispatch("get_schema", {"doctype": "Customer"})
 # (same as calling get_schema directly)
@@ -132,11 +168,12 @@ dispatch("get_schema", {"doctype": "Customer"})
 Module: `jarvis.api`
 
 A single whitelisted Frappe endpoint that exposes the dispatcher over HTTP. As
-of Phase 2.2.a this is also **the entry point used by `jarvis-openclaw-plugin`**
-when openclaw's agent invokes a `jarvis__*` tool. The plugin authenticates with
-the gateway token (`X-Jarvis-Token`) and identifies the calling user via an
-`X-Jarvis-User` header that it resolves from `ctx.sessionKey` at tool-execution
-time (see `architecture.md` for the full identity-propagation flow).
+of Phase 2.2.a (refined 2026-05-18) this is also **the entry point used by
+`jarvis-openclaw-plugin`** when openclaw's agent invokes a `jarvis__*` tool.
+The plugin authenticates with the gateway token (`X-Jarvis-Token`) and
+identifies the conversation via `X-Jarvis-Session`; Frappe resolves the
+user from the `Jarvis Chat Session` row itself (see `architecture.md` for
+the full Path A v2 identity flow).
 
 ```
 POST /api/method/jarvis.api.call_tool
@@ -201,12 +238,16 @@ Two supported auth modes:
 1. **External clients (Phase 1 + general use):** Frappe's standard auth — the
    calling user's session cookie or `Authorization: token <api_key>:<api_secret>`
    header. The user's permissions are exactly what the tools see.
-2. **`jarvis-openclaw-plugin` (Phase 2.2.a):** `X-Jarvis-Token` shared secret +
-   `X-Jarvis-User` header. The token is validated against the
-   `openclaw_gateway_token` field on Jarvis Settings; if valid, `call_tool`
-   calls `frappe.set_user(X-Jarvis-User)` for the duration of the dispatch.
-   The user is resolved by the plugin from `ctx.sessionKey` via
-   `jarvis.api.lookup_user_by_session` — the LLM never sees or controls it.
+2. **`jarvis-openclaw-plugin` (Path A v2, 2026-05-18):** two headers —
+   `X-Jarvis-Token` (shared gateway secret, validated against the
+   `openclaw_gateway_token` field on Jarvis Settings) and `X-Jarvis-Session`
+   (openclaw `sessionKey` from `ctx.sessionKey`). `call_tool` validates the
+   token, looks up `Jarvis Chat Session` to map session → user, and runs
+   `frappe.set_user(user)` for the duration of the dispatch. The LLM never
+   sees the session key — it's carried by the plugin's HTTP layer.
+   Earlier shape (pre-2026-05-18) also required `X-Jarvis-User`; that header
+   is gone, and the `jarvis.api.lookup_user_by_session` endpoint has been
+   removed.
 
 ### Example: Administrator call
 

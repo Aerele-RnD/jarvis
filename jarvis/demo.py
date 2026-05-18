@@ -9,16 +9,12 @@ so that it connects to the gateway as a loopback client (required for the
 gateway-client scope bypass that token-mode auth needs when no device identity
 is present).
 
-Identity flow (B1):
+Identity flow (Path A v2, 2026-05-18):
   1. sessions.create → returns sessionKey
   2. Frappe inserts a Jarvis Chat Session row (sessionKey → user) here in Python
-  3. Agent run starts; the plugin's before_tool_call hook fires for jarvis__ tools
-  4. Hook reads ctx.sessionKey, POSTs to jarvis.api.lookup_user_by_session
-  5. Frappe returns the user from the Chat Session table
-  6. Plugin injects _user into tool params → MCP server runs as that user
-
-The old sessions.pluginPatch step is no longer needed — identity is now
-propagated entirely via the Frappe database + HTTP lookup.
+  3. Agent run starts; tool calls fire through the plugin's registered tools
+  4. Plugin POSTs to jarvis.api.call_tool with X-Jarvis-Token + X-Jarvis-Session
+  5. Frappe resolves the user from the Chat Session row and dispatches under it
 
 Invocation:
     bench --site <site> execute jarvis.demo.ask_one \\
@@ -156,10 +152,9 @@ ws.on('error', (err) => {
 def _insert_chat_session(session_key: str, user: str) -> None:
 	"""Insert a Jarvis Chat Session row mapping sessionKey → user.
 
-	The jarvis-openclaw-plugin's before_tool_call hook will call
-	jarvis.api.lookup_user_by_session to retrieve this mapping when the first
-	jarvis__ tool fires.  frappe.db.commit() makes the row visible to the
-	(asynchronous, next) HTTP request from the plugin.
+	jarvis.api.call_tool reads this table (keyed by X-Jarvis-Session) to
+	resolve the user a tool call should dispatch as. frappe.db.commit()
+	makes the row visible to the next HTTP request from the plugin.
 	"""
 	frappe.get_doc({
 		"doctype": "Jarvis Chat Session",

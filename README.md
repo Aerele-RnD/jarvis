@@ -4,7 +4,7 @@ AI superpowers for Frappe/ERPNext, powered by [openclaw](https://github.com/open
 
 Jarvis lets ERPNext users — especially business owners and execs — ask plain-English questions over their ERP data and get correct, permission-aware answers grounded in the actual records. It pairs an in-bench Frappe app (settings, permission-aware tool layer, HTTP API, on-save credentials propagation) with an openclaw agent runtime hosted per-tenant on Aerele's infrastructure. Data stays on the customer's bench; the agent brain lives in openclaw; permissions inherit from Frappe's own per-user checks.
 
-**Status:** End-to-end agent loop is live. Phase 1 (foundation), Phase 2.1 (credentials update stack), and Phase 2.2.a (Path A agent loop — Jarvis tools registered as openclaw plugin tools, identity propagated via sessionKey lookup → `frappe.set_user`) are implemented and verified against a real openclaw container. The `jarvis.demo.ask_one` bench command runs a full chat turn through openclaw, returning real ERPNext data. 123 Frappe-side unit tests + 20 plugin-side unit tests passing. Phase 2.2.b (chat UI inside Desk) is next.
+**Status:** End-to-end agent loop is live, with a chat UI in Desk. Phase 1 (foundation), Phase 2.1 (credentials update stack), Phase 2.2.a (Path A agent loop), and Phase 2.2.b (chat UI inside Desk) are implemented and verified against a real openclaw container. Open `/app/jarvis-chat` in your bench, ask "list 3 customers" and watch the agent stream a permission-aware reply. **Five** read-only tools (`get_schema`, `get_doc`, `get_list`, `run_report`, `run_query`), Jarvis persona seeded into the openclaw workspace, identity flowed via a single `X-Jarvis-Session` header (Path A v2). 204 Frappe-side + 12 plugin-side unit tests passing. Phase 3 (per-tenant SaaS control plane: `jarvis_admin` + `jarvis_fleet`, with a private `jarvis-persona` repo bind-mounted into the fleet) is next.
 
 ## Installation
 
@@ -63,7 +63,7 @@ End-to-end: a save in Jarvis Settings detects the change (key only vs provider/m
 |---|---|
 | [`jarvis/docs/architecture.md`](jarvis/docs/architecture.md) | Product vision, component map, data flow, trust boundaries |
 | [`jarvis/docs/configuration.md`](jarvis/docs/configuration.md) | Every Jarvis Settings field, what it does, how it gets populated |
-| [`jarvis/docs/tools-api.md`](jarvis/docs/tools-api.md) | The four data tools, the registry/dispatcher, the whitelisted `call_tool` HTTP API |
+| [`jarvis/docs/tools-api.md`](jarvis/docs/tools-api.md) | The five data tools, the registry/dispatcher, the whitelisted `call_tool` HTTP API |
 | [`jarvis/docs/operations.md`](jarvis/docs/operations.md) | Bench commands (`openclaw_bootstrap.*`), credentials update flow, troubleshooting |
 | [`jarvis/docs/development.md`](jarvis/docs/development.md) | Dev setup, running tests, project structure, recipes for adding tools/providers |
 | [`jarvis/docs/decisions/`](jarvis/docs/decisions/) | Architectural decision records. See [identity propagation](jarvis/docs/decisions/2026-05-17-identity-propagation.md) for why Path A (registered plugin tools) replaced the original MCP+hook design. |
