@@ -17,6 +17,7 @@ class TestRegistry(FrappeTestCase):
                 "run_query",
                 "update_doc",
                 "create_doc",
+                "submit_doc",
             },
         )
 

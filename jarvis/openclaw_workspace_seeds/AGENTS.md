@@ -15,6 +15,7 @@ All tools come from the `jarvis-openclaw-plugin`:
 | `jarvis__run_query` | Read-only SQL SELECT for joins / aggregations get_list can't express |
 | `jarvis__update_doc` | **MUTATING.** Update one record's fields. Confirm with user first. |
 | `jarvis__create_doc` | **MUTATING.** Create a new record. Confirm with user first. |
+| `jarvis__submit_doc` | **MUTATING + CONSEQUENTIAL.** Submit a Draft doc (docstatus 0→1). Side effects fire. Strong confirmation. |
 
 These dispatch through `jarvis.api.call_tool` and run under the user's
 Frappe identity. Permissions are enforced server-side — if the user can't
@@ -139,28 +140,76 @@ confirmation.** Same pattern, two flavours:
 5. After the call returns, surface the new record's name and offer to
    open it / make further edits.
 
-### Hard rules (apply to both)
+### Submitting an existing record
+
+`jarvis__submit_doc` moves a Draft document to Submitted state
+(docstatus 0 → 1). This is **qualitatively heavier** than update or
+create because submission fires the DocType's `on_submit` hooks, which
+in ERPNext is where business side effects live:
+
+- **Sales/Purchase Invoice** → posts entries to the General Ledger
+- **Stock Entry / Delivery Note** → updates stock balances
+- **Payment Entry** → moves money on the books
+- **Sales/Purchase Order** → reserves stock, opens fulfilment
+
+**Once submitted, the document is immutable.** Changes require
+cancellation (which creates reversal entries and leaves an audit
+trail — it's not a clean undo).
+
+Pattern:
+
+1. User asks to submit. Example: "Submit Sales Invoice SINV-2026-00042".
+2. **Fetch the current state** with `get_doc` so you can summarise what's
+   being submitted — at minimum: party (customer/supplier), total amount,
+   posting date, and item count if applicable.
+3. **Show the user, in plain English, what will happen:**
+   > Submitting `Sales Invoice / SINV-2026-00042`:
+   > - Customer: Acme Corp
+   > - Total: ₹125,000
+   > - Posting date: 2026-05-18
+   > - Items: 3 line items
+   >
+   > This will post the invoice to the General Ledger and update Acme's
+   > outstanding balance. **Confirm submit?**
+4. Only after explicit "yes" / "submit it" / "go" — call
+   `submit_doc(doctype="Sales Invoice", name="SINV-2026-00042")`.
+5. After submit, show what happened (return value, including new
+   `docstatus: 1`) and remind the user the doc is now immutable.
+
+If submit fails:
+- `InvalidArgumentError: not submittable` → tell the user this DocType
+  doesn't have a submit lifecycle (no Draft/Submitted concept).
+- `InvalidArgumentError: already submitted` → tell the user the doc is
+  already at docstatus=1; offer to show its current state.
+- `ValidationError` → DocType validate rejected. Surface the exact message
+  ("posting_date is required", "credit_limit exceeded", etc.) so the user
+  knows what to fix in Desk.
+
+### Hard rules (apply to all three mutating tools)
 
 - **One record per call.** Bulk operations should be staged one at a time
   with confirmation each — there are no bulk tools, and that's deliberate.
 - **Never assume.** If the user says "update Acme" or "create a customer
-  like Acme", search / list / ask before acting. Two customers named
-  "Acme Corp" → ask which.
+  like Acme" or "submit yesterday's invoice", search / list / ask before
+  acting. Two customers named "Acme Corp" → ask which.
 - **Never touch system fields** (`owner`, `creation`, `modified`,
   `doctype`, `docstatus`, `idx`, `parent*`; plus `name` for updates).
   The tools refuse them, but you shouldn't even try.
-- **`docstatus` is special.** Submit / cancel / amend go through dedicated
-  workflows. If the user asks to submit something, say "I can't submit
-  documents yet — I can show you the data and you can submit it in Desk."
+- **Cancellation and amendment** are not implemented yet. If the user
+  asks to cancel a submitted doc, say so plainly — "I can't cancel yet;
+  do it in Desk and I can help with anything afterward."
 - **For creates, get_schema first** when you don't already know the
   DocType. Required fields and field types matter; guessing is worse
-  than asking.
+  than asking. Same goes for submits when you don't recognise what the
+  DocType's `on_submit` does — better to say "submitting this triggers
+  workflow X — confirm?" than to surprise the user.
 
 ## What's NOT in scope right now
 
 - Deleting records.
 - Bulk operations or background jobs.
-- Submit / cancel / amend (docstatus transitions).
+- Cancellation (docstatus 1 → 2) — reversing a submit.
+- Amendment (creating a new draft from a cancelled doc).
 - Anything outside this Frappe site (no email, no Slack, no web fetch).
 
 If the user asks for one of these, say so and offer the alternative

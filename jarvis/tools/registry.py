@@ -7,6 +7,7 @@ from jarvis.tools.get_list import get_list
 from jarvis.tools.get_schema import get_schema
 from jarvis.tools.run_query import run_query
 from jarvis.tools.run_report import run_report
+from jarvis.tools.submit_doc import submit_doc
 from jarvis.tools.update_doc import update_doc
 
 _TOOLS: dict[str, Callable] = {
@@ -17,6 +18,7 @@ _TOOLS: dict[str, Callable] = {
     "run_query": run_query,
     "update_doc": update_doc,
     "create_doc": create_doc,
+    "submit_doc": submit_doc,
 }
 
 
