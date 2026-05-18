@@ -17,6 +17,7 @@ from jarvis.chat.api import (
 	create_or_focus_empty,
 	get_conversation,
 	list_conversations,
+	retry_message,
 )
 
 CONV = "Jarvis Conversation"
@@ -275,6 +276,111 @@ class TestSendMessage(_ChatTestCase):
 		with patch("jarvis.chat.api._ensure_session_key", return_value="agent:fake"):
 			with patch("frappe.enqueue"):
 				send_message(self.conv, "hi")
+		after = frappe.utils.get_datetime(frappe.get_value(
+			CONV, self.conv, "last_active_at"
+		))
+		self.assertGreaterEqual(after, before)
+
+
+class TestRetryMessage(_ChatTestCase):
+	"""retry_message re-runs the worker for the user turn that preceded an
+	errored assistant message.
+	"""
+
+	def _make_turn(self, conv: str, user_text: str = "list 3 customers", with_error: bool = False) -> tuple[str, str]:
+		"""Seed a conversation with a user message + assistant message at the
+		next two seq values. Returns (user_message_name, assistant_message_name).
+		"""
+		base_seq = frappe.db.sql(
+			"SELECT COALESCE(MAX(seq), 0) FROM `tabJarvis Chat Message` WHERE conversation = %s",
+			(conv,),
+		)[0][0]
+		user_doc = frappe.get_doc({
+			"doctype": MSG, "conversation": conv, "seq": base_seq + 1,
+			"role": "user", "content": user_text,
+		})
+		user_doc.insert()
+		asst_payload = {
+			"doctype": MSG, "conversation": conv, "seq": base_seq + 2,
+			"role": "assistant", "content": "",
+		}
+		if with_error:
+			asst_payload["error"] = "rate limit"
+		asst_doc = frappe.get_doc(asst_payload)
+		asst_doc.insert()
+		frappe.db.commit()
+		return user_doc.name, asst_doc.name
+
+	def setUp(self):
+		super().setUp()
+		self.conv = create_conversation()
+
+	def test_enqueues_worker_against_preceding_user_message(self):
+		user_id, asst_id = self._make_turn(self.conv, with_error=True)
+		with patch("frappe.enqueue") as enqueue:
+			result = retry_message(asst_id)
+		self.assertTrue(result["ok"])
+		self.assertIn("run_id", result)
+		enqueue.assert_called_once()
+		_, kwargs = enqueue.call_args
+		self.assertEqual(kwargs["method"], "jarvis.chat.worker.run_agent_turn")
+		self.assertEqual(kwargs["conversation_id"], self.conv)
+		self.assertEqual(kwargs["message_id"], user_id)
+
+	def test_rejects_non_assistant_message(self):
+		user_id, _asst_id = self._make_turn(self.conv, with_error=True)
+		result = retry_message(user_id)
+		self.assertFalse(result["ok"])
+		self.assertIn("assistant", result["reason"].lower())
+
+	def test_rejects_message_without_error(self):
+		_user_id, asst_id = self._make_turn(self.conv, with_error=False)
+		result = retry_message(asst_id)
+		self.assertFalse(result["ok"])
+		self.assertIn("error", result["reason"].lower())
+
+	def test_rejects_if_no_preceding_user_message(self):
+		"""An orphan errored assistant (somehow inserted without a user) — refuse."""
+		asst_doc = frappe.get_doc({
+			"doctype": MSG, "conversation": self.conv, "seq": 1,
+			"role": "assistant", "content": "", "error": "boom",
+		})
+		asst_doc.insert()
+		frappe.db.commit()
+		result = retry_message(asst_doc.name)
+		self.assertFalse(result["ok"])
+		self.assertIn("preceding", result["reason"].lower())
+
+	def test_picks_immediately_preceding_user_message(self):
+		"""When a conversation has multiple user turns, retry should target the
+		one right before the errored assistant, not an older one.
+		"""
+		_u1, _a1 = self._make_turn(self.conv, user_text="first turn", with_error=False)
+		u2, _a2 = self._make_turn(self.conv, user_text="second turn", with_error=False)
+		# Insert a fresh errored assistant after u2
+		seq_max = frappe.db.sql(
+			"SELECT MAX(seq) FROM `tabJarvis Chat Message` WHERE conversation = %s",
+			(self.conv,),
+		)[0][0]
+		errored = frappe.get_doc({
+			"doctype": MSG, "conversation": self.conv, "seq": seq_max + 1,
+			"role": "assistant", "content": "", "error": "rate limit",
+		})
+		errored.insert()
+		frappe.db.commit()
+
+		with patch("frappe.enqueue") as enqueue:
+			retry_message(errored.name)
+		_, kwargs = enqueue.call_args
+		self.assertEqual(kwargs["message_id"], u2)
+
+	def test_bumps_conversation_last_active_at(self):
+		_u, asst_id = self._make_turn(self.conv, with_error=True)
+		before = frappe.utils.get_datetime(frappe.get_value(
+			CONV, self.conv, "last_active_at"
+		))
+		with patch("frappe.enqueue"):
+			retry_message(asst_id)
 		after = frappe.utils.get_datetime(frappe.get_value(
 			CONV, self.conv, "last_active_at"
 		))

@@ -183,6 +183,55 @@ def send_message(conversation: str, message: str) -> dict:
 	return {"ok": True, "run_id": run_id, "message_id": msg_doc.name}
 
 
+@frappe.whitelist()
+def retry_message(message: str) -> dict:
+	"""Re-run the agent turn that produced an errored assistant message.
+
+	Finds the user message that immediately precedes ``message`` in the same
+	conversation, then enqueues ``run_agent_turn`` against it. The original
+	errored placeholder stays in the conversation as history — the new turn
+	creates its own assistant placeholder, so the chat reads "user → (errored
+	turn) → (retried turn)".
+
+	Returns ``{ok: True, run_id}`` on success or ``{ok: False, reason}`` on
+	validation failure. Raises ``frappe.DoesNotExistError`` if the caller
+	doesn't own the message.
+	"""
+	doc = frappe.get_doc(MSG, message)  # owner-only perm
+	if doc.role != "assistant":
+		return {"ok": False, "reason": _("only assistant messages can be retried")}
+	if not doc.error:
+		return {"ok": False, "reason": _("message did not error")}
+
+	# Find the most recent user message that came BEFORE this assistant in
+	# the same conversation. That's the turn we want to re-run.
+	prev_user = frappe.db.sql(
+		"""SELECT name FROM `tabJarvis Chat Message`
+		WHERE conversation = %s AND role = 'user' AND seq < %s
+		ORDER BY seq DESC LIMIT 1""",
+		(doc.conversation, doc.seq),
+	)
+	if not prev_user:
+		return {"ok": False, "reason": _("no preceding user message to retry")}
+	user_msg_id = prev_user[0][0]
+
+	# Bump the conversation's last_active_at so the sidebar surfaces it.
+	frappe.db.set_value(
+		CONV, doc.conversation, "last_active_at", frappe.utils.now()
+	)
+
+	run_id = uuid.uuid4().hex[:12]
+	frappe.enqueue(
+		method="jarvis.chat.worker.run_agent_turn",
+		queue="default",
+		timeout=200,
+		conversation_id=doc.conversation,
+		message_id=user_msg_id,
+		run_id=run_id,
+	)
+	return {"ok": True, "run_id": run_id}
+
+
 def _next_seq(conversation: str) -> int:
 	"""Return the next seq value for a conversation (max+1, or 1 if empty)."""
 	current_max = frappe.db.sql(
