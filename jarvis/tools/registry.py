@@ -1,6 +1,7 @@
 from typing import Callable
 
 from jarvis.exceptions import InvalidArgumentError, ToolNotFoundError
+from jarvis.tools.create_doc import create_doc
 from jarvis.tools.get_doc import get_doc
 from jarvis.tools.get_list import get_list
 from jarvis.tools.get_schema import get_schema
@@ -15,6 +16,7 @@ _TOOLS: dict[str, Callable] = {
     "run_report": run_report,
     "run_query": run_query,
     "update_doc": update_doc,
+    "create_doc": create_doc,
 }
 
 
