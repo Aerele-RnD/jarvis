@@ -1,3 +1,20 @@
+"""Tests for Jarvis Settings on_update classification + push behaviour.
+
+`Jarvis Settings` is a Single — there's exactly one row in the whole DB,
+shared by tests, the live UI, and bench commands like
+``openclaw_bootstrap``. To make these tests deterministic we have to
+clobber that singleton with known values; but if we leave it clobbered,
+every run of ``bench run-tests --app jarvis`` would silently wipe the
+user's real openclaw + LLM credentials.
+
+`_SettingsSingletonTestCase` snapshots the pre-test field values in
+``setUpClass`` and restores them in ``tearDownClass`` so the suite leaves
+no footprint on the singleton. Password fields are read via
+``get_password()`` (which returns the real cleartext) instead of
+``settings.get()`` (which returns ``*****``) so the restore actually puts
+the credentials back.
+"""
+
 from unittest.mock import patch
 
 import frappe
@@ -22,6 +39,26 @@ LLM_BASELINE = {
     "llm_base_url": "",
 }
 
+# Plain-text fields the tests overwrite. Snapshotted via settings.get(...).
+_SNAPSHOT_PLAIN_FIELDS = (
+    "openclaw_gateway_url",
+    "openclaw_llm_key_path",
+    "openclaw_config_path",
+    "openclaw_compose_dir",
+    "llm_provider",
+    "llm_model",
+    "llm_base_url",
+    "last_sync_status",
+    "last_sync_at",
+)
+
+# Password fields the tests overwrite. Snapshotted via get_password() because
+# settings.get(field) returns the masked "*****" string for these.
+_SNAPSHOT_PASSWORD_FIELDS = (
+    "openclaw_gateway_token",
+    "llm_api_key",
+)
+
 
 def _reset_settings():
     settings = frappe.get_single("Jarvis Settings")
@@ -31,7 +68,41 @@ def _reset_settings():
     frappe.db.commit()
 
 
-class TestOnUpdateClassification(FrappeTestCase):
+class _SettingsSingletonTestCase(FrappeTestCase):
+    """Base class for tests that mutate the Jarvis Settings singleton.
+
+    Snapshots the singleton's pre-test state in setUpClass and restores
+    it in tearDownClass so running the suite leaves no footprint on the
+    user's real openclaw / LLM credentials.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        settings = frappe.get_single("Jarvis Settings")
+        snapshot: dict[str, object] = {
+            f: settings.get(f) for f in _SNAPSHOT_PLAIN_FIELDS
+        }
+        for f in _SNAPSHOT_PASSWORD_FIELDS:
+            # get_password returns None for unset/cleared Password fields;
+            # db_set later treats "" the same as None for our purposes.
+            snapshot[f] = settings.get_password(f) or ""
+        cls._jarvis_settings_snapshot = snapshot
+
+    @classmethod
+    def tearDownClass(cls):
+        try:
+            settings = frappe.get_single("Jarvis Settings")
+            for field, value in cls._jarvis_settings_snapshot.items():
+                # db_set bypasses on_update — we don't want to re-fire the
+                # credentials push from the snapshot during restoration.
+                settings.db_set(field, value)
+            frappe.db.commit()
+        finally:
+            super().tearDownClass()
+
+
+class TestOnUpdateClassification(_SettingsSingletonTestCase):
     def setUp(self):
         super().setUp()
         _reset_settings()
@@ -111,7 +182,7 @@ class TestOnUpdateClassification(FrappeTestCase):
             self.assertFalse(restart_mock.called)
 
 
-class TestOnUpdateOperatorGate(FrappeTestCase):
+class TestOnUpdateOperatorGate(_SettingsSingletonTestCase):
     def setUp(self):
         super().setUp()
         _reset_settings()
@@ -150,7 +221,7 @@ class TestOnUpdateOperatorGate(FrappeTestCase):
             self.assertFalse(restart_mock.called)
 
 
-class TestOnUpdateStatus(FrappeTestCase):
+class TestOnUpdateStatus(_SettingsSingletonTestCase):
     def setUp(self):
         super().setUp()
         _reset_settings()
