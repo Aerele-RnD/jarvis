@@ -164,3 +164,49 @@ class TestRunAgentTurnErrorPaths(FrappeTestCase):
 			fields=["error"],
 		)
 		self.assertIn("model overloaded", assistants[0]["error"])
+
+
+class TestRunAgentTurnAugmentsMessage(FrappeTestCase):
+	"""Worker should prepend `[Context: today is ...]` to the user message
+	before sending it to openclaw, so the agent can resolve relative time
+	expressions ("last quarter") without a clarifying round-trip.
+	"""
+
+	def setUp(self):
+		_ensure_test_user()
+		self._orig_user = frappe.session.user
+		frappe.set_user(TEST_USER)
+		_cleanup_user_conversations()
+		self.conv, self.user_msg = _make_conversation_with_user_message(
+			"how many invoices last quarter?"
+		)
+
+	def tearDown(self):
+		_cleanup_user_conversations()
+		frappe.set_user(self._orig_user)
+
+	def test_prepends_today_context_to_user_message(self):
+		fake_sess = MagicMock()
+		fake_sess.stream_agent_turn.return_value = _fake_event_stream([
+			{"kind": "lifecycle", "phase": "start"},
+			{"kind": "lifecycle", "phase": "end"},
+		])
+		with patch("jarvis.chat.worker.OpenclawSession.connect", return_value=fake_sess):
+			with patch("jarvis.chat.worker.publish_to_user"):
+				run_agent_turn(self.conv, self.user_msg, run_id="r1")
+
+		# stream_agent_turn was called with (session_key, message_text, idem)
+		fake_sess.stream_agent_turn.assert_called_once()
+		_, kwargs = fake_sess.stream_agent_turn.call_args
+		# args may be either positional or keyword — handle both
+		positional = fake_sess.stream_agent_turn.call_args.args
+		message_sent = (
+			positional[1] if len(positional) >= 2
+			else kwargs.get("message")
+		)
+		self.assertIsNotNone(message_sent)
+		self.assertIn("[Context: today is ", message_sent)
+		self.assertIn("how many invoices last quarter?", message_sent)
+		# The DB-persisted user message stays untouched (no prefix)
+		original = frappe.db.get_value(MSG, self.user_msg, "content")
+		self.assertEqual(original, "how many invoices last quarter?")
