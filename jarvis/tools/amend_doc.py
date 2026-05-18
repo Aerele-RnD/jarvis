@@ -1,0 +1,85 @@
+"""Amend a cancelled Frappe document — the lifecycle's only true "undo".
+
+Amendment is Frappe's mechanism for editing a Submitted record AFTER it
+has been Cancelled. It does NOT modify the Cancelled row; it creates a
+fresh **Draft** copy with the same data + an ``amended_from`` link back
+to the original. The user then edits the new Draft and re-submits it.
+
+So the lifecycle closes:
+
+    Draft (0) → Submitted (1) → Cancelled (2) → Amend → Draft (0) → ...
+
+The Cancelled doc stays in the database as audit history; the new Draft
+gets a derived name (Frappe's autoname appends ``-1``, ``-2``, etc.).
+
+Safety bounds:
+
+- DocType must be submittable.
+- Calling user must have **amend** permission on the source record
+  (``frappe.has_permission(doctype, ptype="amend", doc=name)``). Plus
+  the implicit ``create`` perm on the DocType — Frappe's
+  ``copy_doc().insert()`` checks that for us.
+- Source doc must be Cancelled (``docstatus == 2``). Draft and Submitted
+  refuse with state-aware messages.
+- Frappe's autoname appends a suffix to derive the new name. The new
+  draft passes ``validate()`` on insert, so any business-rule violations
+  that lived in the source carry forward and need to be fixed in the
+  copy before the user can re-submit.
+
+Returns the **new Draft's dict** (not the original). The agent should
+guide the user to edit/submit the new doc.
+"""
+
+import frappe
+
+from jarvis.exceptions import InvalidArgumentError, PermissionDeniedError
+
+
+def amend_doc(doctype: str, name: str) -> dict:
+    """Create a new Draft from a Cancelled document.
+
+    Returns the inserted Draft as a dict, including its new ``name`` and
+    the ``amended_from`` link back to the source. Raises:
+      - InvalidArgumentError on empty args, non-submittable DocType, or
+        wrong source state (must be Cancelled)
+      - PermissionDeniedError when the calling user lacks amend
+      - frappe.DoesNotExistError when the source record doesn't exist
+      - frappe.ValidationError if the copied data fails the DocType's
+        validate() on insert
+    """
+    if not doctype:
+        raise InvalidArgumentError("doctype is required")
+    if not name:
+        raise InvalidArgumentError("name is required")
+
+    meta = frappe.get_meta(doctype)
+    if not meta.is_submittable:
+        raise InvalidArgumentError(
+            f"{doctype} is not submittable — amendment only applies to "
+            f"docstatus-tracked DocTypes"
+        )
+
+    if not frappe.has_permission(doctype, ptype="amend", doc=name):
+        raise PermissionDeniedError(
+            f"no amend permission on {doctype} '{name}'"
+        )
+
+    source = frappe.get_doc(doctype, name)
+    if source.docstatus == 0:
+        raise InvalidArgumentError(
+            f"{doctype} '{name}' is in Draft (docstatus=0); amend is for "
+            f"editing CANCELLED docs. Edit the Draft directly with update_doc."
+        )
+    if source.docstatus == 1:
+        raise InvalidArgumentError(
+            f"{doctype} '{name}' is Submitted (docstatus=1); amend is for "
+            f"CANCELLED docs. To amend, cancel first via cancel_doc."
+        )
+
+    # frappe.copy_doc creates a deep copy with cleared name; we set
+    # amended_from and reset docstatus to Draft, then insert.
+    new_doc = frappe.copy_doc(source)
+    new_doc.amended_from = source.name
+    new_doc.docstatus = 0
+    new_doc.insert()  # runs validate(); autoname appends suffix
+    return new_doc.as_dict()
