@@ -375,6 +375,84 @@
 	line-height: 1.45;
 }
 
+/* ---- Tool-result table -------------------------------------- */
+/* Renders tabular tool results (get_list rows, run_query rows,
+ * get_schema fields, etc.) instead of <pre> JSON. The raw JSON is
+ * still available via a nested <details> for debugging. */
+
+.jarvis-tool-table-wrap {
+	overflow: auto;
+	max-height: 320px;
+	border: 1px solid var(--border-color);
+	border-radius: 6px;
+	background: var(--card-bg);
+}
+
+.jarvis-tool-table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 12px;
+	font-family: var(--font-stack, sans-serif);
+}
+
+.jarvis-tool-table th {
+	text-align: left;
+	background: var(--bg-light-gray);
+	font-weight: 600;
+	padding: 6px 10px;
+	border-bottom: 1px solid var(--border-color);
+	position: sticky;
+	top: 0;
+	white-space: nowrap;
+	color: var(--text-color);
+}
+
+.jarvis-tool-table td {
+	padding: 6px 10px;
+	border-bottom: 1px solid var(--border-color);
+	vertical-align: top;
+	color: var(--text-color);
+	max-width: 360px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.jarvis-tool-table tr:last-child td {
+	border-bottom: none;
+}
+
+.jarvis-tool-table tr:hover td {
+	background: var(--bg-light-gray);
+}
+
+.jarvis-tool-null {
+	color: var(--text-muted);
+	font-style: italic;
+}
+
+/* Nested "Raw JSON" toggle inside the table details — smaller +
+ * de-emphasised since the table is the primary view. */
+.jarvis-tool-raw {
+	margin-top: 8px;
+}
+
+.jarvis-tool-raw > summary {
+	font-size: 10.5px;
+	color: var(--text-muted);
+	cursor: pointer;
+	user-select: none;
+	letter-spacing: 0.03em;
+}
+
+.jarvis-tool-raw > summary:hover {
+	color: var(--text-color);
+}
+
+.jarvis-tool-raw pre {
+	margin-top: 6px;
+}
+
 /* ---- Turn group (agent loop) -------------------------------- */
 
 .jarvis-turn {

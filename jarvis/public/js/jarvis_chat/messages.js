@@ -78,17 +78,7 @@ function renderToolBody(msg) {
 
 	let body = "";
 	if (msg.tool_result) {
-		const text =
-			typeof msg.tool_result === "string"
-				? msg.tool_result
-				: JSON.stringify(msg.tool_result, null, 2);
-		const collapsed = text.length > 400;
-		body = `
-			<details class="jarvis-tool-details" ${collapsed ? "" : "open"}>
-				<summary>${collapsed ? "Show result" : "Result"}</summary>
-				<pre>${frappe.utils.escape_html(text)}</pre>
-			</details>
-		`;
+		body = renderToolResultBody(msg.tool_result);
 	}
 
 	return `
@@ -98,6 +88,138 @@ function renderToolBody(msg) {
 			${statusBadge}
 		</div>
 		${body}
+	`;
+}
+
+// ---- Tool result rendering -------------------------------------------
+//
+// Tool results come back in several shapes:
+//   - call_tool envelope:  {ok: true, data: ...}
+//   - run_query envelope:  {sql: "...", rows: [...]}
+//   - get_schema envelope: {doctype, fields: [...]}
+//   - get_list envelope:   data is a bare array
+// When we can find a row array, render it as an HTML table — drastically
+// more readable than the equivalent JSON for an LLM-driven UI. Fall back
+// to <pre> JSON for unstructured shapes.
+
+function renderToolResultBody(toolResult) {
+	let parsed = toolResult;
+	if (typeof parsed === "string") {
+		try { parsed = JSON.parse(parsed); } catch (_) { /* keep as string */ }
+	}
+
+	const table = extractTable(parsed);
+	const rawText = typeof parsed === "string"
+		? parsed
+		: JSON.stringify(parsed, null, 2);
+
+	if (table) {
+		const rowCount = table.rows.length;
+		const label = `${rowCount} ${rowCount === 1 ? "row" : "rows"}`;
+		return `
+			<details class="jarvis-tool-details" open>
+				<summary>${label}</summary>
+				${renderTable(table)}
+				<details class="jarvis-tool-raw">
+					<summary>Raw JSON</summary>
+					<pre>${frappe.utils.escape_html(rawText)}</pre>
+				</details>
+			</details>
+		`;
+	}
+
+	const collapsed = rawText.length > 400;
+	return `
+		<details class="jarvis-tool-details" ${collapsed ? "" : "open"}>
+			<summary>${collapsed ? "Show result" : "Result"}</summary>
+			<pre>${frappe.utils.escape_html(rawText)}</pre>
+		</details>
+	`;
+}
+
+/**
+ * Find the most likely row array inside a tool result. Returns
+ * `{ keys: string[], rows: object[] }` when the data looks tabular,
+ * `null` otherwise.
+ */
+function extractTable(result) {
+	if (result == null) return null;
+
+	// Unwrap call_tool envelope first.
+	if (typeof result === "object" && result.ok === true && result.data !== undefined) {
+		return extractTable(result.data);
+	}
+
+	// Direct array — most get_list responses.
+	if (Array.isArray(result)) return tablify(result);
+
+	if (typeof result === "object") {
+		// run_query: {sql, rows: [...]}
+		if (Array.isArray(result.rows)) return tablify(result.rows);
+		// get_schema: {doctype, fields: [...]}
+		if (Array.isArray(result.fields)) return tablify(result.fields);
+		// Frappe Report shape: {columns: [...], result: [...]}
+		if (Array.isArray(result.result)) return tablify(result.result);
+	}
+	return null;
+}
+
+function tablify(rows) {
+	if (!Array.isArray(rows) || rows.length === 0) return null;
+	// Every row must be a plain object (not array, not primitive).
+	const allPlain = rows.every(
+		(r) => r != null && typeof r === "object" && !Array.isArray(r),
+	);
+	if (!allPlain) return null;
+
+	// Union of keys in first-seen order so column layout matches the
+	// natural order the tool returned (preserves "name first" etc).
+	const keys = [];
+	const seen = new Set();
+	for (const row of rows) {
+		for (const k of Object.keys(row)) {
+			if (!seen.has(k)) {
+				seen.add(k);
+				keys.push(k);
+			}
+		}
+	}
+	if (keys.length === 0) return null;
+	return { keys, rows };
+}
+
+function renderTable({ keys, rows }) {
+	const head = keys
+		.map((k) => `<th>${frappe.utils.escape_html(k)}</th>`)
+		.join("");
+	const body = rows
+		.map((row) => {
+			const cells = keys.map((k) => {
+				const v = row[k];
+				let cell;
+				if (v === null || v === undefined) {
+					cell = '<span class="jarvis-tool-null">—</span>';
+				} else if (typeof v === "object") {
+					// Nested objects/arrays don't fit a flat table; show their
+					// JSON in the cell with a tooltip for the full value.
+					const json = JSON.stringify(v);
+					const display = json.length > 60 ? json.slice(0, 57) + "…" : json;
+					cell = `<span title="${frappe.utils.escape_html(json)}">${frappe.utils.escape_html(display)}</span>`;
+				} else {
+					cell = frappe.utils.escape_html(String(v));
+				}
+				return `<td>${cell}</td>`;
+			}).join("");
+			return `<tr>${cells}</tr>`;
+		})
+		.join("");
+	return `
+		<div class="jarvis-tool-table-wrap">
+			<table class="jarvis-tool-table">
+				<thead><tr>${head}</tr></thead>
+				<tbody>${body}</tbody>
+			</table>
+		</div>
 	`;
 }
 
