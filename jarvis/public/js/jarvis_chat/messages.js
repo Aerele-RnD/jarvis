@@ -249,8 +249,35 @@ function extractTable(result) {
 		if (Array.isArray(result.fields)) return tablify(result.fields);
 		// Frappe Report shape: {columns: [...], result: [...]}
 		if (Array.isArray(result.result)) return tablify(result.result);
+		// Single record (e.g. get_doc) — render the doc's fields as a
+		// 2-column key/value table.
+		return tablifyObject(result);
 	}
 	return null;
+}
+
+/**
+ * Render a single plain object as `{keys: ["field", "value"], rows: [...]}`
+ * so the existing renderTable can produce a 2-column key/value view. Used
+ * for get_doc results where the agent fetched a single record.
+ *
+ * `name` is hoisted to the top if present — for Frappe docs it's the
+ * primary key and almost always the first thing a reader wants to see.
+ */
+function tablifyObject(obj) {
+	if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null;
+	const entries = Object.entries(obj);
+	if (entries.length === 0) return null;
+	const ordered = entries.slice();
+	const nameIdx = ordered.findIndex(([k]) => k === "name");
+	if (nameIdx > 0) {
+		const [nameEntry] = ordered.splice(nameIdx, 1);
+		ordered.unshift(nameEntry);
+	}
+	return {
+		keys: ["field", "value"],
+		rows: ordered.map(([k, v]) => ({ field: k, value: v })),
+	};
 }
 
 function tablify(rows) {
