@@ -9,6 +9,28 @@ import {
 	updateToolGroupCount,
 } from "./messages.js";
 
+/**
+ * Find the most recent openclaw-side tool row in a group whose tool name
+ * matches `<jarvis__>?<bareName>` and which hasn't already had a result
+ * attached. Returns a jQuery object (possibly empty).
+ *
+ * Used by tool:result to merge with the row tool:start already created
+ * instead of rendering a duplicate.
+ */
+function findMatchingOpenclawRow($group, bareToolName) {
+	if (!$group || !$group.length || !bareToolName) return $();
+	const candidates = $group.find(
+		'.jarvis-message-tool:not([data-result-attached="1"])'
+	);
+	for (let i = candidates.length - 1; i >= 0; i--) {
+		const $cand = $(candidates[i]);
+		const rowName = $cand.find(".jarvis-tool-name").text().trim();
+		const stripped = rowName.replace(/^jarvis__/, "");
+		if (stripped === bareToolName) return $cand;
+	}
+	return $();
+}
+
 function ensureCurrentTurnGroup($list) {
 	// Find the last turn container; if it has no tool group yet, insert one
 	// before the assistant message (so visual order stays user → tools →
@@ -90,8 +112,20 @@ export function attachRealtime({ $list, $thinking, scrollToBottom, loadConversat
 			}
 
 			case "tool:result": {
-				const $el = $list.find(`[data-msg="${payload.tool_message_id}"]`);
-				if ($el.length) {
+				// Two event streams fire per tool call:
+				//   - openclaw tool:start/end carry the prefixed name
+				//     (`jarvis__get_list`) but no result data
+				//   - Frappe call_tool tool:result carries the bare name
+				//     (`get_list`) + args + result
+				// Merge them into a single row so we don't double-render.
+				let $el = $list.find(`[data-msg="${payload.tool_message_id}"]`);
+				if (!$el.length) {
+					$el = findMatchingOpenclawRow(
+						ensureCurrentTurnGroup($list),
+						payload.tool_name,
+					);
+				}
+				if ($el && $el.length) {
 					updateMessage($el, {
 						name: payload.tool_message_id,
 						role: "tool",
@@ -99,11 +133,12 @@ export function attachRealtime({ $list, $thinking, scrollToBottom, loadConversat
 						tool_status: payload.status,
 						tool_result: payload.result,
 					});
+					$el.attr("data-result-attached", "1");
+					$el.attr("data-msg", payload.tool_message_id);
 					updateToolGroupCount($el.closest(".jarvis-tool-group"));
 				} else {
-					// Tool message arrived before the realtime pipe rendered it
-					// (call_tool path persists tool rows directly). Drop it into
-					// the current turn's group.
+					// No matching openclaw row — first-render path (e.g.
+					// call_tool dispatched outside an openclaw turn).
 					const $group = ensureCurrentTurnGroup($list);
 					$group.find(".jarvis-tool-group-body").append(
 						buildMessageEl({
