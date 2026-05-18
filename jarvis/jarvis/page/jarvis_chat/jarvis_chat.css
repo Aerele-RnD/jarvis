@@ -250,6 +250,7 @@
 .jarvis-message {
 	margin-bottom: 16px;
 	display: flex;
+	flex-direction: column;
 	max-width: 100%;
 }
 
@@ -262,7 +263,7 @@
 }
 
 .jarvis-message-user {
-	justify-content: flex-end;
+	align-items: flex-end;
 }
 
 .jarvis-message-user .jarvis-bubble {
@@ -272,7 +273,7 @@
 }
 
 .jarvis-message-assistant {
-	justify-content: flex-start;
+	align-items: flex-start;
 }
 
 .jarvis-message-assistant .jarvis-bubble {
@@ -455,6 +456,33 @@
  * itself already conveys "this is the agent's work area". */
 .jarvis-tool-group-body .jarvis-tool-head {
 	background: var(--bg-light-gray);
+}
+
+/* ---- Message timestamp -------------------------------------- */
+
+.jarvis-msg-time {
+	font-size: 10.5px;
+	color: var(--text-muted);
+	margin-top: 3px;
+	line-height: 1;
+	letter-spacing: 0.02em;
+}
+
+/* Align timestamp to match its bubble (user right, assistant left). */
+.jarvis-message-user .jarvis-msg-time {
+	text-align: right;
+	padding-right: 6px;
+}
+
+.jarvis-message-assistant .jarvis-msg-time {
+	text-align: left;
+	padding-left: 6px;
+}
+
+/* The frappe-timestamp span renders inline; ensure its title-on-hover
+ * tooltip behavior isn't overridden by anything. */
+.jarvis-msg-time .frappe-timestamp {
+	cursor: help;
 }
 
 /* ---- Streaming cursor --------------------------------------- */
