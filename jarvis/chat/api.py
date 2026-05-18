@@ -77,6 +77,7 @@ def get_conversation(conversation: str) -> dict:
 		fields=[
 			"name", "seq", "role", "content", "streaming", "error",
 			"tool_name", "tool_args", "tool_result", "tool_status",
+			"creation",
 		],
 		order_by="seq asc",
 	)

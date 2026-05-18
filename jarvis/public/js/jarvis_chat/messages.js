@@ -18,11 +18,18 @@ export function buildMessageEl(msg) {
 	const $m = $(
 		`<div class="jarvis-message jarvis-message-${msg.role}" data-msg="${msg.name}"></div>`
 	);
+	if (msg.creation) $m.attr("data-creation", msg.creation);
 	updateMessage($m, msg);
 	return $m;
 }
 
 export function updateMessage($el, msg) {
+	// Persist the creation timestamp on the element so subsequent realtime
+	// updates (which carry no `creation` field) can still render it.
+	if (msg.creation && !$el.attr("data-creation")) {
+		$el.attr("data-creation", msg.creation);
+	}
+
 	if (msg.role === "tool") {
 		$el.html(renderToolBody(msg));
 		bindToolToggles($el);
@@ -32,12 +39,32 @@ export function updateMessage($el, msg) {
 			<div class="jarvis-bubble">
 				${html}${msg.streaming ? '<span class="jarvis-cursor"></span>' : ""}
 			</div>
+			${timestampHtml($el, msg)}
 		`);
 	} else {
 		$el.html(`
 			<div class="jarvis-bubble">${frappe.utils.escape_html(msg.content || "")}</div>
+			${timestampHtml($el, msg)}
 		`);
 	}
+}
+
+function timestampHtml($el, msg) {
+	// Read from the data attribute first (set by buildMessageEl on initial
+	// render from the DB-backed conversation). Realtime delta payloads don't
+	// carry a creation field — fall back to "just now" so the assistant
+	// bubble has a meaningful stamp while streaming.
+	const creation = $el.attr("data-creation");
+	if (!creation) {
+		return msg.streaming
+			? '<div class="jarvis-msg-time">just now</div>'
+			: "";
+	}
+	// frappe.datetime.comment_when returns an HTML span that auto-refreshes
+	// (e.g. "just now" → "1 min ago"); the title attribute holds the
+	// absolute timestamp for hover.
+	const rendered = frappe.datetime.comment_when(creation);
+	return `<div class="jarvis-msg-time">${rendered}</div>`;
 }
 
 function renderToolBody(msg) {
