@@ -55,8 +55,8 @@ class TestCallToolPluginAuth(FrappeTestCase):
 		# Use a dedicated token for plugin-auth tests so we don't depend on
 		# real openclaw config. db_set bypasses on_update — the value persists
 		# only for this test class.
-		cls._original_token = settings.get_password("openclaw_gateway_token") or ""
-		settings.db_set("openclaw_gateway_token", "plugin-auth-test-token")
+		cls._original_token = settings.get_password("agent_token") or ""
+		settings.db_set("agent_token", "plugin-auth-test-token")
 		# Seed a Jarvis Chat Session row so the user-resolution lookup has
 		# something to find. Use a sentinel key so we can clean up cleanly.
 		_cleanup_session(cls.SESSION_KEY)
@@ -70,7 +70,7 @@ class TestCallToolPluginAuth(FrappeTestCase):
 	@classmethod
 	def tearDownClass(cls):
 		settings = frappe.get_single("Jarvis Settings")
-		settings.db_set("openclaw_gateway_token", cls._original_token)
+		settings.db_set("agent_token", cls._original_token)
 		_cleanup_session(cls.SESSION_KEY)
 		frappe.db.commit()
 		super().tearDownClass()

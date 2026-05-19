@@ -18,10 +18,10 @@ from jarvis.exceptions import OpenclawUnreachableError
 
 
 def _settings_with_compose_dir():
-	"""Ensure Jarvis Settings has openclaw_compose_dir set for connect()."""
+	"""Ensure Jarvis Settings has agent_compose_dir set for connect()."""
 	s = frappe.get_single("Jarvis Settings")
-	if not s.openclaw_compose_dir:
-		s.db_set("openclaw_compose_dir", "/tmp/fake-openclaw")
+	if not s.agent_compose_dir:
+		s.db_set("agent_compose_dir", "/tmp/fake-openclaw")
 		frappe.db.commit()
 
 

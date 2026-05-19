@@ -36,14 +36,14 @@ class TestCallToolWithSessionHeader(FrappeTestCase):
 	def setUpClass(cls):
 		super().setUpClass()
 		settings = frappe.get_single("Jarvis Settings")
-		cls._original_token = settings.get_password("openclaw_gateway_token") or ""
-		settings.db_set("openclaw_gateway_token", PLUGIN_TOKEN)
+		cls._original_token = settings.get_password("agent_token") or ""
+		settings.db_set("agent_token", PLUGIN_TOKEN)
 		frappe.db.commit()
 
 	@classmethod
 	def tearDownClass(cls):
 		settings = frappe.get_single("Jarvis Settings")
-		settings.db_set("openclaw_gateway_token", cls._original_token)
+		settings.db_set("agent_token", cls._original_token)
 		frappe.db.commit()
 		super().tearDownClass()
 
