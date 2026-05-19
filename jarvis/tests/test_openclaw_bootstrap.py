@@ -55,8 +55,8 @@ def _reset_settings():
     """Clear operator fields on Jarvis Settings before each test."""
     settings = frappe.get_single("Jarvis Settings")
     for field in (
-        "openclaw_gateway_url", "openclaw_gateway_token",
-        "openclaw_llm_key_path", "openclaw_config_path", "openclaw_compose_dir",
+        "agent_url", "agent_token",
+        "agent_llm_key_path", "agent_config_path", "agent_compose_dir",
         "last_sync_at", "last_sync_status",
         "llm_provider", "llm_model", "llm_api_key", "llm_base_url",
     ):
@@ -79,10 +79,10 @@ class TestBootstrapStart(FrappeTestCase):
                 start()
 
             settings = frappe.get_single("Jarvis Settings")
-            self.assertEqual(settings.openclaw_compose_dir, str(workspace / "openclaw"))
-            self.assertEqual(settings.openclaw_config_path, str(workspace / "openclaw_state" / "openclaw.json"))
-            self.assertEqual(settings.openclaw_llm_key_path, str(workspace / "openclaw_state" / "llm.key"))
-            self.assertEqual(settings.openclaw_gateway_url, "ws://127.0.0.1:18789")
+            self.assertEqual(settings.agent_compose_dir, str(workspace / "openclaw"))
+            self.assertEqual(settings.agent_config_path, str(workspace / "openclaw_state" / "openclaw.json"))
+            self.assertEqual(settings.agent_llm_key_path, str(workspace / "openclaw_state" / "llm.key"))
+            self.assertEqual(settings.agent_url, "ws://127.0.0.1:18789")
 
     def test_generates_gateway_token_on_first_run(self):
         with _PatchedPaths():
@@ -92,21 +92,21 @@ class TestBootstrapStart(FrappeTestCase):
                 from jarvis.openclaw_bootstrap import start
                 start()
             settings = frappe.get_single("Jarvis Settings")
-            token = settings.get_password("openclaw_gateway_token")
+            token = settings.get_password("agent_token")
             self.assertIsNotNone(token)
             self.assertGreaterEqual(len(token), 32)
 
     def test_preserves_existing_token_on_rerun(self):
         with _PatchedPaths():
             settings = frappe.get_single("Jarvis Settings")
-            settings.db_set("openclaw_gateway_token", "preexisting-token-12345")
+            settings.db_set("agent_token", "preexisting-token-12345")
             with patch("jarvis.openclaw_bootstrap.subprocess.run") as mock_run, \
                  patch("jarvis.openclaw_bootstrap._poll_healthz", return_value=None):
                 mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
                 from jarvis.openclaw_bootstrap import start
                 start()
             settings = frappe.get_single("Jarvis Settings")
-            self.assertEqual(settings.get_password("openclaw_gateway_token"), "preexisting-token-12345")
+            self.assertEqual(settings.get_password("agent_token"), "preexisting-token-12345")
 
     def test_writes_state_files(self):
         with _PatchedPaths() as workspace:
@@ -177,7 +177,7 @@ class TestBootstrapStop(FrappeTestCase):
     def test_invokes_docker_compose_down(self):
         with _PatchedPaths():
             settings = frappe.get_single("Jarvis Settings")
-            settings.db_set("openclaw_compose_dir", "/path/to/compose")
+            settings.db_set("agent_compose_dir", "/path/to/compose")
 
             with patch("jarvis.openclaw_bootstrap.subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
@@ -194,7 +194,7 @@ class TestBootstrapStop(FrappeTestCase):
     def test_failure_raises_restart_failed(self):
         with _PatchedPaths():
             settings = frappe.get_single("Jarvis Settings")
-            settings.db_set("openclaw_compose_dir", "/path/to/compose")
+            settings.db_set("agent_compose_dir", "/path/to/compose")
 
             with patch("jarvis.openclaw_bootstrap.subprocess.run") as mock_run:
                 mock_run.side_effect = subprocess.CalledProcessError(1, "docker compose down", stderr="boom")
@@ -211,7 +211,7 @@ class TestBootstrapStatus(FrappeTestCase):
     def test_returns_dict_with_required_keys(self):
         with _PatchedPaths():
             settings = frappe.get_single("Jarvis Settings")
-            settings.db_set("openclaw_compose_dir", "/path/to/compose")
+            settings.db_set("agent_compose_dir", "/path/to/compose")
 
             with patch("jarvis.openclaw_bootstrap.subprocess.run") as mock_run, \
                  patch("jarvis.openclaw_bootstrap.urllib.request.urlopen") as mock_open:
