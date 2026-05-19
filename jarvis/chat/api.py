@@ -247,8 +247,8 @@ def _ensure_session_key(user: str) -> str:
 	parent Conversation row.
 	"""
 	settings = frappe.get_single("Jarvis Settings")
-	gateway_url = (settings.openclaw_gateway_url or "").replace("http://", "ws://").replace("https://", "wss://")
-	gateway_token = settings.get_password("openclaw_gateway_token")
+	gateway_url = (settings.agent_url or "").replace("http://", "ws://").replace("https://", "wss://")
+	gateway_token = settings.get_password("agent_token")
 	if not gateway_url or not gateway_token:
 		frappe.throw(_("openclaw is not configured"))
 
