@@ -8,10 +8,16 @@ neutral `agent_*` names so customers never see "openclaw" in the UI.
 
 Module file names (openclaw_bootstrap.py, etc.) are intentionally NOT
 renamed — they're implementation detail, not customer-visible.
+
+Implementation note: Jarvis Settings is a Single DocType. Single DocTypes
+store data as key/value rows in `tabSingles` rather than columns on a
+per-doctype table. `frappe.model.rename_field` is designed for regular
+DocTypes and does not rewrite `tabSingles.field` values. So this patch
+manually updates the `field` column for each rename, plus the matching
+rows in `__Auth` for Password-type fields.
 """
 
 import frappe
-from frappe.model.utils.rename_field import rename_field
 
 
 RENAMES = [
@@ -24,20 +30,67 @@ RENAMES = [
     ("openclaw_llm_key_path", "agent_llm_key_path"),
 ]
 
+# Password fields whose values also live in __Auth and must be renamed there.
+PASSWORD_RENAMES = {
+    "openclaw_api_key": "jarvis_admin_api_key",
+    "openclaw_gateway_token": "agent_token",
+}
+
 
 def execute():
-    """Rename each field on the Jarvis Settings Single DocType."""
+    """Rename each field's row in tabSingles + matching row in __Auth."""
     doctype = "Jarvis Settings"
-    meta = frappe.get_meta(doctype)
-    existing_fields = {f.fieldname for f in meta.fields}
 
     for old_name, new_name in RENAMES:
-        if new_name in existing_fields:
-            # Already migrated — skip (patch is idempotent)
+        # Skip if no row exists under the old name (fresh install, or
+        # patch already applied).
+        existing = frappe.db.sql(
+            "SELECT 1 FROM tabSingles WHERE doctype = %s AND field = %s LIMIT 1",
+            (doctype, old_name),
+        )
+        if not existing:
             continue
-        if old_name not in existing_fields:
-            # Neither old nor new — fresh install, nothing to rename
-            continue
-        rename_field(doctype, old_name, new_name)
 
+        # If a row already exists under the new name, drop the old one
+        # to avoid a UNIQUE constraint conflict.
+        already_renamed = frappe.db.sql(
+            "SELECT 1 FROM tabSingles WHERE doctype = %s AND field = %s LIMIT 1",
+            (doctype, new_name),
+        )
+        if already_renamed:
+            frappe.db.sql(
+                "DELETE FROM tabSingles WHERE doctype = %s AND field = %s",
+                (doctype, old_name),
+            )
+        else:
+            frappe.db.sql(
+                "UPDATE tabSingles SET field = %s WHERE doctype = %s AND field = %s",
+                (new_name, doctype, old_name),
+            )
+
+    # __Auth stores encrypted password values keyed by (doctype, name, fieldname).
+    # For Single DocTypes the `name` is the DocType name itself.
+    for old_name, new_name in PASSWORD_RENAMES.items():
+        existing = frappe.db.sql(
+            "SELECT 1 FROM `__Auth` WHERE doctype = %s AND name = %s AND fieldname = %s LIMIT 1",
+            (doctype, doctype, old_name),
+        )
+        if not existing:
+            continue
+        already_renamed = frappe.db.sql(
+            "SELECT 1 FROM `__Auth` WHERE doctype = %s AND name = %s AND fieldname = %s LIMIT 1",
+            (doctype, doctype, new_name),
+        )
+        if already_renamed:
+            frappe.db.sql(
+                "DELETE FROM `__Auth` WHERE doctype = %s AND name = %s AND fieldname = %s",
+                (doctype, doctype, old_name),
+            )
+        else:
+            frappe.db.sql(
+                "UPDATE `__Auth` SET fieldname = %s WHERE doctype = %s AND name = %s AND fieldname = %s",
+                (new_name, doctype, doctype, old_name),
+            )
+
+    frappe.db.commit()
     frappe.clear_cache(doctype=doctype)
