@@ -6,10 +6,8 @@
   "custom": 0,
   "engine": "InnoDB",
   "field_order": [
-    "openclaw_section",
-    "jarvis_admin_url",
-    "jarvis_admin_api_key",
-    "column_break_1",
+    "config_tab",
+    "account_section",
     "token_budget_monthly",
     "enabled",
     "llm_section",
@@ -21,7 +19,10 @@
     "llm_advanced_section",
     "llm_temperature",
     "llm_max_output_tokens",
-    "operator_tab",
+    "system_tab",
+    "admin_connection_section",
+    "jarvis_admin_url",
+    "jarvis_admin_api_key",
     "operator_section",
     "agent_url",
     "agent_token",
@@ -34,25 +35,14 @@
   ],
   "fields": [
     {
-      "fieldname": "openclaw_section",
+      "fieldname": "config_tab",
+      "fieldtype": "Tab Break",
+      "label": "Configuration"
+    },
+    {
+      "fieldname": "account_section",
       "fieldtype": "Section Break",
-      "label": "Aerele Admin Connection"
-    },
-    {
-      "fieldname": "jarvis_admin_url",
-      "fieldtype": "Data",
-      "label": "Aerele Admin URL",
-      "description": "HTTPS URL of the Aerele Jarvis admin (e.g. https://admin.aerele.in). Used for signup, billing, subscription state."
-    },
-    {
-      "fieldname": "jarvis_admin_api_key",
-      "fieldtype": "Password",
-      "label": "Aerele Admin API Key",
-      "description": "Bearer token issued at signup; authenticates this customer's bench when calling the Aerele admin API."
-    },
-    {
-      "fieldname": "column_break_1",
-      "fieldtype": "Column Break"
+      "label": "Account"
     },
     {
       "fieldname": "token_budget_monthly",
@@ -121,44 +111,69 @@
       "default": "4096"
     },
     {
-      "fieldname": "operator_tab",
+      "fieldname": "system_tab",
       "fieldtype": "Tab Break",
-      "label": "Operator"
+      "label": "System"
+    },
+    {
+      "fieldname": "admin_connection_section",
+      "fieldtype": "Section Break",
+      "label": "Jarvis Admin Connection",
+      "description": "Populated by the signup wizard; not customer-editable."
+    },
+    {
+      "fieldname": "jarvis_admin_url",
+      "fieldtype": "Data",
+      "label": "Jarvis Admin URL",
+      "read_only": 1,
+      "description": "HTTPS URL of the Jarvis admin host. Used for signup, billing, subscription state."
+    },
+    {
+      "fieldname": "jarvis_admin_api_key",
+      "fieldtype": "Password",
+      "label": "Jarvis Admin API Key",
+      "read_only": 1,
+      "description": "Bearer token issued at signup; authenticates this customer's bench when calling the Jarvis admin API."
     },
     {
       "fieldname": "operator_section",
       "fieldtype": "Section Break",
       "label": "Agent Operator",
-      "description": "Operator config — populated by jarvis.openclaw_bootstrap.start (dev) or the Aerele admin signup response (prod). Do not show to end users in production."
+      "description": "Operator config — populated by jarvis.openclaw_bootstrap.start (dev) or the Jarvis admin signup response (prod)."
     },
     {
       "fieldname": "agent_url",
       "fieldtype": "Data",
       "label": "Agent URL",
-      "description": "WebSocket URL for the customer's openclaw agent (e.g. ws://127.0.0.1:18789 in dev; wss://<subdomain>.jarvis.aerele.in:443 in prod)"
+      "read_only": 1,
+      "description": "WebSocket URL for the customer's openclaw agent (e.g. ws://127.0.0.1:18789 in dev; wss://<subdomain>.<admin-host>:443 in prod)"
     },
     {
       "fieldname": "agent_token",
       "fieldtype": "Password",
       "label": "Agent Token",
+      "read_only": 1,
       "description": "Bearer token used to authenticate the secrets.reload RPC and the chat worker's WebSocket session"
     },
     {
       "fieldname": "agent_llm_key_path",
       "fieldtype": "Data",
       "label": "Agent LLM Key Path",
+      "read_only": 1,
       "description": "Absolute host path to the SecretRef'd LLM key file (auto-populated by jarvis.openclaw_bootstrap.start in dev; by admin signup response in prod)"
     },
     {
       "fieldname": "agent_config_path",
       "fieldtype": "Data",
       "label": "Agent Config Path",
+      "read_only": 1,
       "description": "Absolute host path to the rendered openclaw.json (auto-populated by jarvis.openclaw_bootstrap.start in dev; by admin signup response in prod)"
     },
     {
       "fieldname": "agent_compose_dir",
       "fieldtype": "Data",
       "label": "Agent Compose Directory",
+      "read_only": 1,
       "description": "Directory containing docker-compose.yml (auto-populated by jarvis.openclaw_bootstrap.start in dev; by admin signup response in prod)"
     },
     {
