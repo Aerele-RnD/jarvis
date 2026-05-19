@@ -24,3 +24,11 @@ class OpenclawReloadFailedError(JarvisError):
 
 class OpenclawRestartFailedError(JarvisError):
     """Raised when docker compose restart failed or the gateway didn't come back healthy."""
+
+
+class AdminUnreachableError(JarvisError):
+	"""HTTPS call to jarvis_admin failed (network, timeout, 5xx, non-JSON)."""
+
+
+class AdminAuthError(JarvisError):
+	"""jarvis_admin rejected the token / site (401 / 403)."""
