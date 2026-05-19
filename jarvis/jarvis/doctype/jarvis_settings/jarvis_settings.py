@@ -44,7 +44,17 @@ class JarvisSettings(Document):
         action = self._classify_llm_change()
         if action is None:
             return
+        # Dispatch: admin path (prod) when jarvis_admin_url is set; otherwise
+        # the existing Phase 1 local-openclaw_push path (dev).
+        self._sync_via_local_openclaw(action)
 
+    def _sync_via_local_openclaw(self, action: str) -> None:
+        """Phase 1 dev path: push creds directly to a locally-running openclaw
+        container via openclaw_push (WebSocket secrets.reload or docker restart).
+
+        Skipped silently when operator config is incomplete (e.g. bootstrap
+        hasn't run yet).
+        """
         required = OPERATOR_FIELDS_FOR_RESTART if action == "restart" else OPERATOR_FIELDS_FOR_RELOAD
         missing = [f for f in required if not (getattr(self, f, None) or "").strip()]
         if missing:
