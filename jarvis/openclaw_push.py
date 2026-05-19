@@ -147,8 +147,8 @@ def restart_gateway(compose_dir: str) -> None:
 def push_creds_reload(settings) -> None:
 	"""Key-only-change path: write the new key to the SecretRef file, call secrets.reload."""
 	key = settings.get_password("llm_api_key") or ""
-	write_key_file(settings.openclaw_llm_key_path, key)
-	reload_secrets(settings.openclaw_gateway_url, settings.get_password("openclaw_gateway_token"))
+	write_key_file(settings.agent_llm_key_path, key)
+	reload_secrets(settings.agent_url, settings.get_password("agent_token"))
 
 
 def push_creds_restart(settings, gateway_token: str) -> None:
@@ -156,9 +156,9 @@ def push_creds_restart(settings, gateway_token: str) -> None:
 	from jarvis.openclaw_config import render_config
 
 	rendered = render_config(settings, gateway_token)
-	Path(settings.openclaw_config_path).write_text(rendered)
+	Path(settings.agent_config_path).write_text(rendered)
 
 	key = settings.get_password("llm_api_key") or ""
-	write_key_file(settings.openclaw_llm_key_path, key)
+	write_key_file(settings.agent_llm_key_path, key)
 
-	restart_gateway(settings.openclaw_compose_dir)
+	restart_gateway(settings.agent_compose_dir)
