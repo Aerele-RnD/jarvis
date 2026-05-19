@@ -21,7 +21,7 @@ def call_tool(tool: str, args: dict | str | None = None) -> dict:
 	2. **Plugin auth** (``jarvis-openclaw-plugin`` Path A): two custom headers
 	   are presented together:
 
-	   - ``X-Jarvis-Token`` — the shared ``openclaw_gateway_token`` secret
+	   - ``X-Jarvis-Token`` — the shared ``agent_token`` secret
 	     (proves the request originated inside the openclaw container)
 	   - ``X-Jarvis-Session`` — the openclaw sessionKey for this conversation
 
