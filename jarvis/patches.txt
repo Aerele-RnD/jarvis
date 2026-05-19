@@ -4,3 +4,4 @@
 
 [post_model_sync]
 # Patches added in this section will be executed after doctypes are migrated
+jarvis.patches.v1_0_rename_openclaw_to_agent
