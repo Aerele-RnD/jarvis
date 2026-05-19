@@ -167,8 +167,8 @@ def _insert_chat_session(session_key: str, user: str) -> None:
 def ask_one(user: str, message: str, timeout: int = DEFAULT_TIMEOUT) -> dict:
 	"""Run one chat turn against openclaw as the given user. Returns a result dict."""
 	settings = frappe.get_single("Jarvis Settings")
-	gateway_token = settings.get_password("openclaw_gateway_token")
-	compose_dir = settings.openclaw_compose_dir
+	gateway_token = settings.get_password("agent_token")
+	compose_dir = settings.agent_compose_dir
 	if not gateway_token:
 		raise RuntimeError("openclaw not configured (run jarvis.openclaw_bootstrap.start first)")
 	if not compose_dir:
