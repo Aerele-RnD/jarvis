@@ -46,6 +46,16 @@ class TestJarvisSettings(FrappeTestCase):
             field = next(f for f in meta.fields if f.fieldname == fieldname)
             self.assertEqual(field.fieldtype, "Password", f"{fieldname} must be Password")
 
+    def test_jarvis_admin_fields_are_readonly(self):
+        """Populated by the signup wizard / staff; never customer-edited."""
+        meta = frappe.get_meta("Jarvis Settings")
+        for fieldname in ("jarvis_admin_url", "jarvis_admin_api_key"):
+            field = next(f for f in meta.fields if f.fieldname == fieldname)
+            self.assertTrue(
+                field.read_only,
+                f"{fieldname} must be read-only (populated by signup wizard)",
+            )
+
     def test_llm_provider_options_cover_paid_and_open_weight(self):
         meta = frappe.get_meta("Jarvis Settings")
         provider_field = next(f for f in meta.fields if f.fieldname == "llm_provider")
@@ -54,23 +64,54 @@ class TestJarvisSettings(FrappeTestCase):
         missing = EXPECTED_PROVIDERS - options
         self.assertFalse(missing, f"llm_provider missing options: {missing}")
 
-    def test_operator_tab_fields(self):
+    def test_tab_structure(self):
+        """Two tabs: Configuration (editable) and System (read-only)."""
         meta = frappe.get_meta("Jarvis Settings")
         fields_by_name = {f.fieldname: f for f in meta.fields}
 
-        # Tab break + section break
-        self.assertEqual(fields_by_name["operator_tab"].fieldtype, "Tab Break")
-        self.assertEqual(fields_by_name["operator_section"].fieldtype, "Section Break")
-        self.assertEqual(fields_by_name["last_sync_section"].fieldtype, "Section Break")
+        self.assertEqual(fields_by_name["config_tab"].fieldtype, "Tab Break")
+        self.assertEqual(fields_by_name["config_tab"].label, "Configuration")
+        self.assertEqual(fields_by_name["system_tab"].fieldtype, "Tab Break")
+        self.assertEqual(fields_by_name["system_tab"].label, "System")
 
-        # Operator fields
-        self.assertEqual(fields_by_name["agent_url"].fieldtype, "Data")
-        self.assertEqual(fields_by_name["agent_token"].fieldtype, "Password")
-        self.assertEqual(fields_by_name["agent_llm_key_path"].fieldtype, "Data")
-        self.assertEqual(fields_by_name["agent_config_path"].fieldtype, "Data")
-        self.assertEqual(fields_by_name["agent_compose_dir"].fieldtype, "Data")
+    def test_configuration_tab_sections(self):
+        """Configuration tab has Account, Language Model, Sampling sections."""
+        meta = frappe.get_meta("Jarvis Settings")
+        fields_by_name = {f.fieldname: f for f in meta.fields}
 
-        # Readonly status fields
+        for fieldname in ("account_section", "llm_section", "llm_advanced_section"):
+            self.assertEqual(fields_by_name[fieldname].fieldtype, "Section Break")
+
+    def test_system_tab_sections(self):
+        """System tab has Jarvis Admin Connection, Agent Operator, Last Sync sections."""
+        meta = frappe.get_meta("Jarvis Settings")
+        fields_by_name = {f.fieldname: f for f in meta.fields}
+
+        for fieldname in ("admin_connection_section", "operator_section", "last_sync_section"):
+            self.assertEqual(fields_by_name[fieldname].fieldtype, "Section Break")
+
+    def test_operator_fields_are_readonly(self):
+        """All 5 operator fields are system-populated and must be read-only."""
+        meta = frappe.get_meta("Jarvis Settings")
+        fields_by_name = {f.fieldname: f for f in meta.fields}
+
+        for fieldname, expected_type in (
+            ("agent_url", "Data"),
+            ("agent_token", "Password"),
+            ("agent_llm_key_path", "Data"),
+            ("agent_config_path", "Data"),
+            ("agent_compose_dir", "Data"),
+        ):
+            self.assertEqual(fields_by_name[fieldname].fieldtype, expected_type)
+            self.assertTrue(
+                fields_by_name[fieldname].read_only,
+                f"{fieldname} must be read-only (system-populated by openclaw_bootstrap / admin signup)",
+            )
+
+    def test_last_sync_fields_are_readonly(self):
+        meta = frappe.get_meta("Jarvis Settings")
+        fields_by_name = {f.fieldname: f for f in meta.fields}
+
         self.assertEqual(fields_by_name["last_sync_at"].fieldtype, "Datetime")
         self.assertTrue(fields_by_name["last_sync_at"].read_only)
         self.assertEqual(fields_by_name["last_sync_status"].fieldtype, "Long Text")
