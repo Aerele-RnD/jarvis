@@ -28,7 +28,7 @@ What it does, in order:
 1. Resolve workspace root (Frappe bench's parent dir).
 2. Compute default paths for state files (`<workspace>/openclaw_state/openclaw.json`, `.../llm.key`, `.../.env`) and for the openclaw compose dir (`<workspace>/openclaw/`).
 3. Populate `Jarvis Settings` operator-tab fields with those defaults via `db_set` if they're empty. Existing values are preserved.
-4. Generate a gateway token via `secrets.token_urlsafe(32)` if `openclaw_gateway_token` is empty. Persist via `db_set`. Re-runs preserve the existing token.
+4. Generate a gateway token via `secrets.token_urlsafe(32)` if `agent_token` is empty. Persist via `db_set`. Re-runs preserve the existing token.
 5. Create `<workspace>/openclaw_state/` if missing.
 6. Create a placeholder `llm.key` (mode 0600) if it doesn't exist. The file contains a non-empty placeholder string (`PLACEHOLDER-set-llm_api_key-in-Jarvis-Settings`) because openclaw's SecretRef resolver fails-fast on empty values and refuses to boot. The customer's first save of Jarvis Settings with a real LLM API key overwrites this via the `on_update` hook. **Existing keys are not overwritten** — once a real key has been written, re-running `start` preserves it.
 7. Render `openclaw.json` from current Jarvis Settings values via `openclaw_config.render_config`. If Settings have no provider/model yet, the renderer uses `STUB_DEFAULTS` (Moonshot/`kimi-k2.6` against Moonshot's default base URL with the placeholder key file) so openclaw still boots — LLM calls will fail until creds are filled, but the rest of the pipeline (`secrets.reload`, restart) is exercisable.
@@ -46,7 +46,7 @@ What it does, in order:
 bench --site jarvis.localhost execute jarvis.openclaw_bootstrap.stop
 ```
 
-Reads `openclaw_compose_dir` from Settings, runs `docker compose -f <dir>/docker-compose.yml down` with the `.env` file if it exists. Records `last_sync_status = "openclaw stopped"`. Raises `OpenclawRestartFailedError` if `docker compose down` fails.
+Reads `agent_compose_dir` from Settings, runs `docker compose -f <dir>/docker-compose.yml down` with the `.env` file if it exists. Records `last_sync_status = "openclaw stopped"`. Raises `OpenclawRestartFailedError` if `docker compose down` fails.
 
 ### `status`
 
@@ -92,8 +92,8 @@ When the customer saves Jarvis Settings, the `on_update` hook on the `JarvisSett
                   without an accompanying key change).
 
 3. Guard: every action requires the Operator-tab fields to be populated.
-     reload  needs: openclaw_gateway_url, openclaw_gateway_token, openclaw_llm_key_path
-     restart needs: all of the above + openclaw_config_path + openclaw_compose_dir
+     reload  needs: agent_url, agent_token, agent_llm_key_path
+     restart needs: all of the above + agent_config_path + agent_compose_dir
    Missing any → record "skipped: operator config incomplete; run
    jarvis.openclaw_bootstrap.start first" and return.
 

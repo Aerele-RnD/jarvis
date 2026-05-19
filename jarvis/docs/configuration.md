@@ -10,8 +10,8 @@ Phase 1 fields. **Currently unused — reserved for the Phase 2.2 agent-loop tra
 
 | Field | Type | Default | Purpose |
 |---|---|---|---|
-| `openclaw_endpoint` | Data | empty | WebSocket URL the customer's bench will eventually use to talk to its openclaw tenant for chat sessions (Phase 2.2) |
-| `openclaw_api_key` | Password | empty | Per-tenant token authorising those sessions (Phase 2.2) |
+| `jarvis_admin_url` | Data | empty | WebSocket URL the customer's bench will eventually use to talk to its openclaw tenant for chat sessions (Phase 2.2) |
+| `jarvis_admin_api_key` | Password | empty | Per-tenant token authorising those sessions (Phase 2.2) |
 | `token_budget_monthly` | Int | `0` | `0` = unlimited; otherwise hard cap before overage billing kicks in. Wired up by future billing layer; currently informational only |
 | `enabled` | Check | `1` | Master switch for Jarvis features on this site |
 
@@ -60,11 +60,11 @@ System-managed fields. The customer normally doesn't touch these — they're pop
 
 | Field | Type | How it gets populated | Used by |
 |---|---|---|---|
-| `openclaw_gateway_url` | Data | `bootstrap.start` defaults to `ws://127.0.0.1:18789` | `openclaw_push.reload_secrets` |
-| `openclaw_gateway_token` | Password | `bootstrap.start` generates `secrets.token_urlsafe(32)` on first run, persists with `db_set`. Preserved across re-runs. | `openclaw_push.reload_secrets`, openclaw config (baked plaintext into `openclaw.json`) |
-| `openclaw_llm_key_path` | Data | `bootstrap.start` defaults to `<workspace>/openclaw_state/llm.key` | `openclaw_push.write_key_file` |
-| `openclaw_config_path` | Data | `bootstrap.start` defaults to `<workspace>/openclaw_state/openclaw.json` | `openclaw_push.push_creds_restart` (re-renders config here) |
-| `openclaw_compose_dir` | Data | `bootstrap.start` defaults to `<workspace>/openclaw` | `openclaw_push.restart_gateway` (runs `docker compose` from here) |
+| `agent_url` | Data | `bootstrap.start` defaults to `ws://127.0.0.1:18789` | `openclaw_push.reload_secrets` |
+| `agent_token` | Password | `bootstrap.start` generates `secrets.token_urlsafe(32)` on first run, persists with `db_set`. Preserved across re-runs. | `openclaw_push.reload_secrets`, openclaw config (baked plaintext into `openclaw.json`) |
+| `agent_llm_key_path` | Data | `bootstrap.start` defaults to `<workspace>/openclaw_state/llm.key` | `openclaw_push.write_key_file` |
+| `agent_config_path` | Data | `bootstrap.start` defaults to `<workspace>/openclaw_state/openclaw.json` | `openclaw_push.push_creds_restart` (re-renders config here) |
+| `agent_compose_dir` | Data | `bootstrap.start` defaults to `<workspace>/openclaw` | `openclaw_push.restart_gateway` (runs `docker compose` from here) |
 
 ### Section: Last Sync
 
@@ -79,7 +79,7 @@ Readonly outcome of the most recent on_update push.
 
 | Value | Storage |
 |---|---|
-| Password fields (`openclaw_api_key`, `openclaw_gateway_token`, `llm_api_key`) | Encrypted at rest in Frappe's `__Auth` table. Reachable via `settings.get_password("...")` for decryption. |
+| Password fields (`jarvis_admin_api_key`, `agent_token`, `llm_api_key`) | Encrypted at rest in Frappe's `__Auth` table. Reachable via `settings.get_password("...")` for decryption. |
 | All other Single fields | `tabSingles` table in the site DB |
 | Rendered openclaw config (plaintext, including a copy of the gateway token) | `<workspace>/openclaw_state/openclaw.json`. Gitignored. Recreated by `bootstrap.start` and on any provider/model/base_url change. |
 | LLM API key (plaintext, for openclaw to read at runtime) | `<workspace>/openclaw_state/llm.key`. Mounted into the container at `/home/node/.openclaw/llm.key`. File mode `0600`. Rewritten on every `push_creds_reload` or `push_creds_restart`. |

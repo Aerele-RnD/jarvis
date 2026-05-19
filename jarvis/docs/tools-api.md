@@ -240,7 +240,7 @@ Two supported auth modes:
    header. The user's permissions are exactly what the tools see.
 2. **`jarvis-openclaw-plugin` (Path A v2, 2026-05-18):** two headers —
    `X-Jarvis-Token` (shared gateway secret, validated against the
-   `openclaw_gateway_token` field on Jarvis Settings) and `X-Jarvis-Session`
+   `agent_token` field on Jarvis Settings) and `X-Jarvis-Session`
    (openclaw `sessionKey` from `ctx.sessionKey`). `call_tool` validates the
    token, looks up `Jarvis Chat Session` to map session → user, and runs
    `frappe.set_user(user)` for the duration of the dispatch. The LLM never
