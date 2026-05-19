@@ -9,14 +9,14 @@ LLM_FIELDS_TRIGGERING_SYNC = (
 )
 
 OPERATOR_FIELDS_FOR_RELOAD = (
-    "openclaw_gateway_url",
-    "openclaw_gateway_token",
-    "openclaw_llm_key_path",
+    "agent_url",
+    "agent_token",
+    "agent_llm_key_path",
 )
 
 OPERATOR_FIELDS_FOR_RESTART = OPERATOR_FIELDS_FOR_RELOAD + (
-    "openclaw_config_path",
-    "openclaw_compose_dir",
+    "agent_config_path",
+    "agent_compose_dir",
 )
 
 
@@ -60,7 +60,7 @@ class JarvisSettings(Document):
                 openclaw_push.push_creds_reload(self)
             elif action == "restart":
                 from jarvis import openclaw_push
-                token = self.get_password("openclaw_gateway_token") or ""
+                token = self.get_password("agent_token") or ""
                 openclaw_push.push_creds_restart(self, token)
             self.db_set({
                 "last_sync_at": frappe.utils.now(),

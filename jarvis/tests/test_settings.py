@@ -27,8 +27,8 @@ class TestJarvisSettings(FrappeTestCase):
         meta = frappe.get_meta("Jarvis Settings")
         fieldnames = {f.fieldname for f in meta.fields}
         required = (
-            "openclaw_api_key",
-            "openclaw_endpoint",
+            "jarvis_admin_api_key",
+            "jarvis_admin_url",
             "token_budget_monthly",
             "llm_provider",
             "llm_model",
@@ -42,7 +42,7 @@ class TestJarvisSettings(FrappeTestCase):
 
     def test_api_keys_are_password_fields(self):
         meta = frappe.get_meta("Jarvis Settings")
-        for fieldname in ("openclaw_api_key", "llm_api_key"):
+        for fieldname in ("jarvis_admin_api_key", "llm_api_key"):
             field = next(f for f in meta.fields if f.fieldname == fieldname)
             self.assertEqual(field.fieldtype, "Password", f"{fieldname} must be Password")
 
@@ -64,11 +64,11 @@ class TestJarvisSettings(FrappeTestCase):
         self.assertEqual(fields_by_name["last_sync_section"].fieldtype, "Section Break")
 
         # Operator fields
-        self.assertEqual(fields_by_name["openclaw_gateway_url"].fieldtype, "Data")
-        self.assertEqual(fields_by_name["openclaw_gateway_token"].fieldtype, "Password")
-        self.assertEqual(fields_by_name["openclaw_llm_key_path"].fieldtype, "Data")
-        self.assertEqual(fields_by_name["openclaw_config_path"].fieldtype, "Data")
-        self.assertEqual(fields_by_name["openclaw_compose_dir"].fieldtype, "Data")
+        self.assertEqual(fields_by_name["agent_url"].fieldtype, "Data")
+        self.assertEqual(fields_by_name["agent_token"].fieldtype, "Password")
+        self.assertEqual(fields_by_name["agent_llm_key_path"].fieldtype, "Data")
+        self.assertEqual(fields_by_name["agent_config_path"].fieldtype, "Data")
+        self.assertEqual(fields_by_name["agent_compose_dir"].fieldtype, "Data")
 
         # Readonly status fields
         self.assertEqual(fields_by_name["last_sync_at"].fieldtype, "Datetime")

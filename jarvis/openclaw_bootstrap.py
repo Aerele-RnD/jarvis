@@ -56,10 +56,10 @@ def _set_default_paths(settings) -> dict:
     llm_key_path = state_dir / "llm.key"
 
     defaults = {
-        "openclaw_compose_dir": str(compose_dir),
-        "openclaw_config_path": str(config_path),
-        "openclaw_llm_key_path": str(llm_key_path),
-        "openclaw_gateway_url": DEFAULT_GATEWAY_URL,
+        "agent_compose_dir": str(compose_dir),
+        "agent_config_path": str(config_path),
+        "agent_llm_key_path": str(llm_key_path),
+        "agent_url": DEFAULT_GATEWAY_URL,
     }
     for field, value in defaults.items():
         if not getattr(settings, field, None):
@@ -70,9 +70,9 @@ def _set_default_paths(settings) -> dict:
     return {
         "workspace": workspace,
         "state_dir": state_dir,
-        "compose_dir": Path(settings.openclaw_compose_dir),
-        "config_path": Path(settings.openclaw_config_path),
-        "llm_key_path": Path(settings.openclaw_llm_key_path),
+        "compose_dir": Path(settings.agent_compose_dir),
+        "config_path": Path(settings.agent_config_path),
+        "llm_key_path": Path(settings.agent_llm_key_path),
         "agent_workspace_dir": state_dir / "workspace",
         "env_path": state_dir / ".env",
     }
@@ -105,12 +105,12 @@ def _seed_workspace(agent_workspace_dir: Path) -> None:
 
 
 def _ensure_gateway_token(settings) -> str:
-    token = settings.get_password("openclaw_gateway_token") if settings.openclaw_gateway_token else None
+    token = settings.get_password("agent_token") if settings.agent_token else None
     if not token:
         token = secrets.token_urlsafe(32)
-        settings.db_set("openclaw_gateway_token", token)
+        settings.db_set("agent_token", token)
         settings.reload()
-        token = settings.get_password("openclaw_gateway_token")
+        token = settings.get_password("agent_token")
     return token
 
 
@@ -322,8 +322,8 @@ def start() -> None:
 def stop() -> None:
     """Stop the openclaw container via docker compose down."""
     settings = _settings()
-    compose_dir = settings.openclaw_compose_dir or str(_workspace_root() / "openclaw")
-    state_dir = Path(settings.openclaw_config_path).parent if settings.openclaw_config_path else (_workspace_root() / "openclaw_state")
+    compose_dir = settings.agent_compose_dir or str(_workspace_root() / "openclaw")
+    state_dir = Path(settings.agent_config_path).parent if settings.agent_config_path else (_workspace_root() / "openclaw_state")
     env_path = state_dir / ".env"
 
     cmd = ["docker", "compose", "-f", f"{compose_dir}/docker-compose.yml"]
@@ -344,7 +344,7 @@ def stop() -> None:
 def status() -> dict:
     """Return a dict describing the openclaw container + health state."""
     settings = _settings()
-    compose_dir = settings.openclaw_compose_dir or str(_workspace_root() / "openclaw")
+    compose_dir = settings.agent_compose_dir or str(_workspace_root() / "openclaw")
 
     container_state = "not_created"
     image = None

@@ -178,9 +178,9 @@ class OpenclawSession:
 		_ = gateway_url
 
 		settings = frappe.get_single("Jarvis Settings")
-		compose_dir = settings.openclaw_compose_dir
+		compose_dir = settings.agent_compose_dir
 		if not compose_dir:
-			raise OpenclawUnreachableError("openclaw_compose_dir not set on Jarvis Settings")
+			raise OpenclawUnreachableError("agent_compose_dir not set on Jarvis Settings")
 
 		args = json.dumps({"gatewayToken": gateway_token})
 		cmd = [

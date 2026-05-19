@@ -109,7 +109,7 @@ The wire shape between the jarvis app and "the thing that controls openclaw" is 
                  - reload_secrets: WS connect handshake + secrets.reload RPC
      "restart" → openclaw_push.push_creds_restart(self, gateway_token):
                  - render_config: re-render openclaw.json from current Settings
-                 - write to openclaw_config_path
+                 - write to agent_config_path
                  - write_key_file: atomic 0600 write of llm.key
                  - restart_gateway: docker compose restart + poll /healthz
 7. Record last_sync_at + last_sync_status via db_set (bypasses on_update

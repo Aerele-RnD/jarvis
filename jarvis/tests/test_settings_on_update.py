@@ -25,11 +25,11 @@ from jarvis.exceptions import OpenclawReloadFailedError, OpenclawUnreachableErro
 
 # Field defaults that mark operator config as "complete"
 OPERATOR_COMPLETE = {
-    "openclaw_gateway_url": "ws://127.0.0.1:18789",
-    "openclaw_gateway_token": "test-token-abc",
-    "openclaw_llm_key_path": "/tmp/jarvis-test/llm.key",
-    "openclaw_config_path": "/tmp/jarvis-test/openclaw.json",
-    "openclaw_compose_dir": "/tmp/jarvis-test/openclaw",
+    "agent_url": "ws://127.0.0.1:18789",
+    "agent_token": "test-token-abc",
+    "agent_llm_key_path": "/tmp/jarvis-test/llm.key",
+    "agent_config_path": "/tmp/jarvis-test/openclaw.json",
+    "agent_compose_dir": "/tmp/jarvis-test/openclaw",
 }
 
 LLM_BASELINE = {
@@ -41,10 +41,10 @@ LLM_BASELINE = {
 
 # Plain-text fields the tests overwrite. Snapshotted via settings.get(...).
 _SNAPSHOT_PLAIN_FIELDS = (
-    "openclaw_gateway_url",
-    "openclaw_llm_key_path",
-    "openclaw_config_path",
-    "openclaw_compose_dir",
+    "agent_url",
+    "agent_llm_key_path",
+    "agent_config_path",
+    "agent_compose_dir",
     "llm_provider",
     "llm_model",
     "llm_base_url",
@@ -55,7 +55,7 @@ _SNAPSHOT_PLAIN_FIELDS = (
 # Password fields the tests overwrite. Snapshotted via get_password() because
 # settings.get(field) returns the masked "*****" string for these.
 _SNAPSHOT_PASSWORD_FIELDS = (
-    "openclaw_gateway_token",
+    "agent_token",
     "llm_api_key",
 )
 
@@ -189,7 +189,7 @@ class TestOnUpdateOperatorGate(_SettingsSingletonTestCase):
 
     def test_missing_gateway_url_skips(self):
         settings = frappe.get_single("Jarvis Settings")
-        settings.db_set("openclaw_gateway_url", "")
+        settings.db_set("agent_url", "")
         frappe.db.commit()
         settings = frappe.get_single("Jarvis Settings")
         settings.llm_api_key = "sk-new"
@@ -201,7 +201,7 @@ class TestOnUpdateOperatorGate(_SettingsSingletonTestCase):
 
     def test_missing_token_skips(self):
         settings = frappe.get_single("Jarvis Settings")
-        settings.db_set("openclaw_gateway_token", "")
+        settings.db_set("agent_token", "")
         frappe.db.commit()
         settings = frappe.get_single("Jarvis Settings")
         settings.llm_api_key = "sk-new"
@@ -211,7 +211,7 @@ class TestOnUpdateOperatorGate(_SettingsSingletonTestCase):
 
     def test_missing_compose_dir_skips_restart(self):
         settings = frappe.get_single("Jarvis Settings")
-        settings.db_set("openclaw_compose_dir", "")
+        settings.db_set("agent_compose_dir", "")
         frappe.db.commit()
         settings = frappe.get_single("Jarvis Settings")
         settings.llm_provider = "Anthropic"

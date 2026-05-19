@@ -7,8 +7,8 @@
   "engine": "InnoDB",
   "field_order": [
     "openclaw_section",
-    "openclaw_endpoint",
-    "openclaw_api_key",
+    "jarvis_admin_url",
+    "jarvis_admin_api_key",
     "column_break_1",
     "token_budget_monthly",
     "enabled",
@@ -23,11 +23,11 @@
     "llm_max_output_tokens",
     "operator_tab",
     "operator_section",
-    "openclaw_gateway_url",
-    "openclaw_gateway_token",
-    "openclaw_llm_key_path",
-    "openclaw_config_path",
-    "openclaw_compose_dir",
+    "agent_url",
+    "agent_token",
+    "agent_llm_key_path",
+    "agent_config_path",
+    "agent_compose_dir",
     "last_sync_section",
     "last_sync_at",
     "last_sync_status"
@@ -36,19 +36,19 @@
     {
       "fieldname": "openclaw_section",
       "fieldtype": "Section Break",
-      "label": "Openclaw Connection"
+      "label": "Aerele Admin Connection"
     },
     {
-      "fieldname": "openclaw_endpoint",
+      "fieldname": "jarvis_admin_url",
       "fieldtype": "Data",
-      "label": "Openclaw Endpoint",
-      "description": "WebSocket URL of the openclaw cloud (e.g. wss://api.jarvis.example.com/agent). Currently unused; reserved for the Phase 2.2 agent-loop transport."
+      "label": "Aerele Admin URL",
+      "description": "HTTPS URL of the Aerele Jarvis admin (e.g. https://admin.aerele.in). Used for signup, billing, subscription state."
     },
     {
-      "fieldname": "openclaw_api_key",
+      "fieldname": "jarvis_admin_api_key",
       "fieldtype": "Password",
-      "label": "Openclaw API Key",
-      "description": "Per-tenant token authorising the agent-loop session. Currently unused; reserved for the Phase 2.2 agent-loop transport."
+      "label": "Aerele Admin API Key",
+      "description": "Bearer token issued at signup; authenticates this customer's bench when calling the Aerele admin API."
     },
     {
       "fieldname": "column_break_1",
@@ -128,38 +128,38 @@
     {
       "fieldname": "operator_section",
       "fieldtype": "Section Break",
-      "label": "Openclaw Connection (operator)",
-      "description": "Operator config — will move to the Jarvis Admin app in a future version. Do not show to end users in production."
+      "label": "Agent Operator",
+      "description": "Operator config — populated by jarvis.openclaw_bootstrap.start (dev) or the Aerele admin signup response (prod). Do not show to end users in production."
     },
     {
-      "fieldname": "openclaw_gateway_url",
+      "fieldname": "agent_url",
       "fieldtype": "Data",
-      "label": "Gateway URL",
-      "description": "WebSocket URL for the openclaw gateway, e.g. ws://127.0.0.1:18789"
+      "label": "Agent URL",
+      "description": "WebSocket URL for the customer's openclaw agent (e.g. ws://127.0.0.1:18789 in dev; wss://<subdomain>.jarvis.aerele.in:443 in prod)"
     },
     {
-      "fieldname": "openclaw_gateway_token",
+      "fieldname": "agent_token",
       "fieldtype": "Password",
-      "label": "Gateway Token",
-      "description": "Bearer token used to authenticate the secrets.reload RPC"
+      "label": "Agent Token",
+      "description": "Bearer token used to authenticate the secrets.reload RPC and the chat worker's WebSocket session"
     },
     {
-      "fieldname": "openclaw_llm_key_path",
+      "fieldname": "agent_llm_key_path",
       "fieldtype": "Data",
-      "label": "LLM Key File Path",
-      "description": "Absolute host path to the SecretRef'd LLM key file (auto-populated by openclaw_bootstrap.start)"
+      "label": "Agent LLM Key Path",
+      "description": "Absolute host path to the SecretRef'd LLM key file (auto-populated by jarvis.openclaw_bootstrap.start in dev; by admin signup response in prod)"
     },
     {
-      "fieldname": "openclaw_config_path",
+      "fieldname": "agent_config_path",
       "fieldtype": "Data",
-      "label": "Openclaw Config Path",
-      "description": "Absolute host path to the rendered openclaw.json (auto-populated by openclaw_bootstrap.start)"
+      "label": "Agent Config Path",
+      "description": "Absolute host path to the rendered openclaw.json (auto-populated by jarvis.openclaw_bootstrap.start in dev; by admin signup response in prod)"
     },
     {
-      "fieldname": "openclaw_compose_dir",
+      "fieldname": "agent_compose_dir",
       "fieldtype": "Data",
-      "label": "Docker Compose Dir",
-      "description": "Directory containing docker-compose.yml (auto-populated by openclaw_bootstrap.start)"
+      "label": "Agent Compose Directory",
+      "description": "Directory containing docker-compose.yml (auto-populated by jarvis.openclaw_bootstrap.start in dev; by admin signup response in prod)"
     },
     {
       "fieldname": "last_sync_section",
