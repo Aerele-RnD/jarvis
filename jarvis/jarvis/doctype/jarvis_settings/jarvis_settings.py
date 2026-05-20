@@ -44,7 +44,53 @@ class JarvisSettings(Document):
         action = self._classify_llm_change()
         if action is None:
             return
+        # Dispatch: admin path (prod) when jarvis_admin_url is set; otherwise
+        # the existing Phase 1 local-openclaw_push path (dev).
+        if (self.jarvis_admin_url or "").strip():
+            self._sync_via_admin(action)
+        else:
+            self._sync_via_local_openclaw(action)
 
+    def _sync_via_admin(self, action: str) -> None:
+        """Prod path: POST new LLM creds to admin's /tenant/update-llm-creds.
+        Admin authenticates the customer, looks up the customer's Tenant,
+        and routes the change through fleet (reload or restart).
+
+        Errors land in last_sync_status so the customer's save never fails
+        because of admin issues; they can always retry.
+        """
+        from jarvis import admin_client
+        try:
+            result = admin_client.post_update_llm_creds(
+                provider=self.llm_provider or "",
+                model=self.llm_model or "",
+                base_url=self.llm_base_url or "",
+                api_key=self.get_password("llm_api_key", raise_exception=False) or "",
+            )
+            self.db_set({
+                "last_sync_at": frappe.utils.now(),
+                "last_sync_status": f"ok ({result.get('action', action)} via admin)",
+            })
+        except admin_client.AdminAuthError as e:
+            self.db_set("last_sync_status", f"failed: auth: {e}")
+            frappe.log_error(
+                title="Jarvis: admin auth failed",
+                message=frappe.get_traceback(),
+            )
+        except admin_client.AdminUnreachableError as e:
+            self.db_set("last_sync_status", f"failed: admin unreachable: {e}")
+            frappe.log_error(
+                title="Jarvis: admin unreachable",
+                message=frappe.get_traceback(),
+            )
+
+    def _sync_via_local_openclaw(self, action: str) -> None:
+        """Phase 1 dev path: push creds directly to a locally-running openclaw
+        container via openclaw_push (WebSocket secrets.reload or docker restart).
+
+        Skipped silently when operator config is incomplete (e.g. bootstrap
+        hasn't run yet).
+        """
         required = OPERATOR_FIELDS_FOR_RESTART if action == "restart" else OPERATOR_FIELDS_FOR_RELOAD
         missing = [f for f in required if not (getattr(self, f, None) or "").strip()]
         if missing:
