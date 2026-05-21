@@ -155,6 +155,9 @@ scheduler_events = {
 			"jarvis.chat.stale_scan.scan_and_mark_errored",
 		],
 	},
+	"daily": [
+		"jarvis.onboarding.sync_connection",
+	],
 }
 
 # Testing
