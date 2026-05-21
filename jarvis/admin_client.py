@@ -18,6 +18,56 @@ from jarvis.exceptions import AdminAuthError, AdminUnreachableError
 # 90s leaves 30s buffer for network round-trip + handler overhead.
 DEFAULT_TIMEOUT_S = 90
 
+# Hardcoded prod admin URL; override via Jarvis Settings.jarvis_admin_url (dev/staging).
+DEFAULT_ADMIN_URL = "https://admin.jarvis.aerele.in"
+
+
+def _admin_url(settings) -> str:
+	return ((settings.jarvis_admin_url or "").rstrip("/")) or DEFAULT_ADMIN_URL
+
+
+def signup(email: str, company_name: str, plan: str, coupon: str | None = None) -> dict:
+	"""Guest signup against admin. Returns admin's data dict
+	{api_token, razorpay_key_id, razorpay_order_id|razorpay_subscription_id, amount_inr}."""
+	settings = frappe.get_single("Jarvis Settings")
+	body = {"email": email, "company_name": company_name, "plan": plan,
+			"frappe_site_url": frappe.utils.get_url()}
+	if coupon:
+		body["coupon"] = coupon
+	return _post(path="/api/method/jarvis_admin.billing.signup.signup",
+				 body=body, admin_url=_admin_url(settings), token="")
+
+
+def dev_signup(email: str, company_name: str, plan: str) -> dict:
+	"""Razorpay-free dev signup. Returns admin's flat dict incl. api_token + connection."""
+	settings = frappe.get_single("Jarvis Settings")
+	return _post(path="/api/method/jarvis_admin.billing.signup.dev_force_signup",
+				 body={"email": email, "company_name": company_name, "plan": plan,
+					   "frappe_site_url": frappe.utils.get_url()},
+				 admin_url=_admin_url(settings), token="")
+
+
+def get_plans() -> list:
+	settings = frappe.get_single("Jarvis Settings")
+	return _post(path="/api/method/jarvis_admin.billing.signup.get_plans",
+				 body={}, admin_url=_admin_url(settings), token="")
+
+
+def confirm_payment(payload: dict) -> dict:
+	"""POST Razorpay Checkout result; returns {agent_url, agent_token, tenant_status}."""
+	settings = frappe.get_single("Jarvis Settings")
+	token = settings.get_password("jarvis_admin_api_key", raise_exception=False) or ""
+	return _post(path="/api/method/jarvis_admin.api.tenant.confirm_payment",
+				 body=payload, admin_url=_admin_url(settings), token=token)
+
+
+def get_connection() -> dict:
+	"""Fetch the assigned container connection (fallback / scheduled sync)."""
+	settings = frappe.get_single("Jarvis Settings")
+	token = settings.get_password("jarvis_admin_api_key", raise_exception=False) or ""
+	return _post(path="/api/method/jarvis_admin.api.tenant.get_connection",
+				 body={}, admin_url=_admin_url(settings), token=token)
+
 
 def post_update_llm_creds(
 	provider: str, model: str, base_url: str, api_key: str,
