@@ -10,7 +10,9 @@ import frappe
 import requests
 from frappe.tests.utils import FrappeTestCase
 
+from jarvis import admin_client
 from jarvis.admin_client import (
+	DEFAULT_ADMIN_URL,
 	DEFAULT_TIMEOUT_S,
 	AdminAuthError,
 	AdminUnreachableError,
@@ -206,3 +208,46 @@ class TestMissingConfig(FrappeTestCase):
 				post_update_llm_creds("p", "m", "b", "k")
 		finally:
 			_settings_clear_admin()
+
+
+class TestOnboardingClient(FrappeTestCase):
+	def tearDown(self):
+		_settings_clear_admin()
+
+	def test_signup_unwraps_data_and_uses_default_url_when_unset(self):
+		_settings_clear_admin()  # no jarvis_admin_url → DEFAULT_ADMIN_URL
+		captured = {}
+
+		def _fake_post(url, json=None, headers=None, timeout=None):
+			captured["url"] = url
+			captured["json"] = json
+			return _mock_response(200, json_body={"message": {"ok": True, "data": {"api_token": "tok", "razorpay_key_id": "rzp"}}})
+
+		with patch("requests.post", side_effect=_fake_post):
+			out = admin_client.signup("e@x.com", "Co", "Annual Plan")
+		self.assertEqual(out["api_token"], "tok")
+		self.assertTrue(captured["url"].startswith(DEFAULT_ADMIN_URL))
+		self.assertIn("billing.signup.signup", captured["url"])
+		self.assertEqual(captured["json"]["email"], "e@x.com")
+
+	def test_get_plans_returns_list(self):
+		_settings_for_admin()
+		with patch("requests.post", return_value=_mock_response(
+				200, json_body={"message": {"ok": True, "data": [{"name": "p1", "plan_name": "P1"}]}})):
+			out = admin_client.get_plans()
+		self.assertEqual(out[0]["name"], "p1")
+
+	def test_get_connection_unwraps_data(self):
+		_settings_for_admin()
+		with patch("requests.post", return_value=_mock_response(
+				200, json_body={"message": {"ok": True, "data": {"agent_url": "ws://localhost:19000", "tenant_status": "running"}}})):
+			out = admin_client.get_connection()
+		self.assertEqual(out["agent_url"], "ws://localhost:19000")
+
+	def test_dev_signup_returns_flat_dict(self):
+		_settings_for_admin()
+		with patch("requests.post", return_value=_mock_response(
+				200, json_body={"message": {"customer": "C1", "api_token": "tok", "agent_url": "ws://localhost:19000", "agent_token": "k"}})):
+			out = admin_client.dev_signup("e@x.com", "Co", "Annual Plan")
+		self.assertEqual(out["api_token"], "tok")
+		self.assertEqual(out["agent_url"], "ws://localhost:19000")

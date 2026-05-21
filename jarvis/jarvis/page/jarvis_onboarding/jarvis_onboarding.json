@@ -1,0 +1,10 @@
+{
+ "doctype": "Page",
+ "name": "jarvis-onboarding",
+ "page_name": "jarvis-onboarding",
+ "title": "Connect to Jarvis",
+ "module": "Jarvis",
+ "standard": "Yes",
+ "system_page": 0,
+ "roles": [{ "role": "System Manager" }]
+}
