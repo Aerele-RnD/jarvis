@@ -252,3 +252,13 @@ bench --site jarvis.localhost console
 ...     fields=["seq","role","tool_name","tool_status","streaming","content"], order_by="seq"):
 ...     print(m)
 ```
+
+## Billing & renewal (Jarvis Cloud)
+
+Billing is **pay-as-you-go** — both annual and monthly plans are one-shot
+payments; **nothing auto-charges**. Sign up + pay on **`/app/jarvis-onboarding`**
+("Sign up & pay"). When a period lapses, the container is **stopped** after a
+short grace period (your data is preserved). To continue, click **Renew / Pay**
+on the same page — it opens Razorpay Checkout for the next period and **restarts
+your container** on success. (Local/dev installs skip payment entirely via the
+dev-signup button.)
