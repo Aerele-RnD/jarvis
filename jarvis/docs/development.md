@@ -39,6 +39,12 @@ bench --site jarvis.localhost install-app jarvis
 
 Now `bench start` and visit `http://jarvis.localhost:8000/app/jarvis-settings`.
 
+**Testing the two run modes.** This bench-local setup exercises the single-bench
+dev path ([local-dev.md](local-dev.md), `openclaw_bootstrap`). To test the
+**production path** (the customer app talking to a control plane + fleet) locally,
+bring up a local `jarvis_admin` + `jarvis-fleet-agent` per the `jarvis_admin`
+app's `docs/local-dev.md`, then onboard via `/app/jarvis-onboarding`.
+
 ## Running tests
 
 ```bash
@@ -104,14 +110,13 @@ app/
     ├── openclaw_bootstrap.py                 # start, stop, status, restart bench commands
     ├── openclaw_templates/openclaw.json.j2   # Jinja template for openclaw config
     ├── docs/                                 # this directory
+    ├── admin_client.py                       # HTTPS client to jarvis_admin (prod path)
+    ├── onboarding.py                         # signup/pay/renew/sync wrappers + write_connection
     ├── tools/
     │   ├── __init__.py
-    │   ├── registry.py                       # dispatch + list_tools
-    │   ├── get_schema.py
-    │   ├── get_doc.py
-    │   ├── get_list.py
-    │   ├── run_report.py
-    │   └── run_query.py                      # SELECT-only SQL for joins / aggregates
+    │   ├── registry.py                       # dispatch + list_tools (11 tools)
+    │   ├── get_schema.py, get_doc.py, get_list.py, run_report.py, run_query.py  # read
+    │   └── update_doc.py, create_doc.py, submit_doc.py, cancel_doc.py, delete_doc.py, amend_doc.py  # write
     ├── config/__init__.py                    # Frappe boilerplate
     ├── patches/__init__.py
     ├── templates/
@@ -147,7 +152,7 @@ General-purpose code (`tools/`, `api.py`, `exceptions.py`, `openclaw_*`, `tests/
    ```
 3. **Write tests** at `app/jarvis/tests/test_<tool_name>.py`. Cover: happy path, empty args, unknown target, permission denial. Use `FrappeTestCase`.
 4. **Update `test_registry.test_list_tools_contains_all_*`** to include the new tool name.
-5. **Document** in [`docs/tools-api.md`](tools-api.md) — add a section under "The five tools".
+5. **Document** in [`docs/tools-api.md`](tools-api.md) — add an entry under "Read tools" or "Write tools (MUTATING)".
 
 ### Adding a new LLM provider
 

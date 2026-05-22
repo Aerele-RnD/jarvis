@@ -4,7 +4,7 @@ AI superpowers for Frappe/ERPNext, powered by [openclaw](https://github.com/open
 
 Jarvis lets ERPNext users — especially business owners and execs — ask plain-English questions over their ERP data and get correct, permission-aware answers grounded in the actual records. It pairs an in-bench Frappe app (settings, permission-aware tool layer, HTTP API, on-save credentials propagation) with an openclaw agent runtime hosted per-tenant on Aerele's infrastructure. Data stays on the customer's bench; the agent brain lives in openclaw; permissions inherit from Frappe's own per-user checks.
 
-**Status:** End-to-end agent loop is live, with a chat UI in Desk. Phase 1 (foundation), Phase 2.1 (credentials update stack), Phase 2.2.a (Path A agent loop), and Phase 2.2.b (chat UI inside Desk) are implemented and verified against a real openclaw container. Open `/app/jarvis-chat` in your bench, ask "list 3 customers" and watch the agent stream a permission-aware reply. **Five** read-only tools (`get_schema`, `get_doc`, `get_list`, `run_report`, `run_query`), Jarvis persona seeded into the openclaw workspace, identity flowed via a single `X-Jarvis-Session` header (Path A v2). 204 Frappe-side + 12 plugin-side unit tests passing. Phase 3 (per-tenant SaaS control plane: `jarvis_admin` + `jarvis_fleet`, with a private `jarvis-persona` repo bind-mounted into the fleet) is next.
+**Status:** The end-to-end agent loop + chat UI are live, and the **Phase 3 SaaS control plane is built**: `jarvis_admin` (signup, Razorpay billing, fleet orchestration), the per-host `jarvis-fleet-agent` + Traefik TLS edge, `jarvis-openclaw-plugin` (the agent calling back into Frappe), and a RO-mounted `jarvis-persona`. **11 tools** (5 read + 6 write), identity via a single `X-Jarvis-Session` header (Path A v2). Customers connect via **Jarvis Cloud** ([docs/getting-started.md](jarvis/docs/getting-started.md)); a single-bench dev path also exists ([docs/local-dev.md](jarvis/docs/local-dev.md)). Production bring-up is documented + operator-run (see the `jarvis_admin` app's `docs/production-deploy.md`).
 
 ## Installation
 
@@ -16,57 +16,41 @@ bench get-app https://github.com/Aerele-RnD/jarvis --branch main
 bench install-app jarvis
 ```
 
-## Quick start
+## Quick start (Jarvis Cloud — production)
 
 ```bash
 # 1. Install the app on your site
 bench --site <your-site> install-app jarvis
-
-# 2. Bring openclaw up locally (requires Docker Desktop running)
-bench --site <your-site> execute jarvis.openclaw_bootstrap.start
-
-# 3. Open Jarvis Settings in Desk
-#    http://<your-site>:8000/app/jarvis-settings
-#    Fill the Language Model section: provider, model, API key. Save.
-
-# 4. Confirm the push worked: Operator tab -> Last Sync Status reads "ok (restart)"
-
-# 5. Run an end-to-end agent turn (Path A) — agent invokes jarvis__get_list
-#    under the named Frappe user's permissions and returns real customer rows:
-bench --site <your-site> execute jarvis.demo.ask_one \
-  --kwargs '{"user":"Administrator","message":"use the jarvis__get_list tool to list 3 customers, show me just the names"}'
 ```
+Then open **`/app/jarvis-onboarding`** in Desk → sign up + pay → the control
+plane assigns you a managed openclaw container and stores its connection in
+Jarvis Settings. Set your LLM provider/model/key in **Jarvis Settings**, then
+chat at **`/app/jarvis-chat`**. Full walkthrough: [docs/getting-started.md](jarvis/docs/getting-started.md).
+
+**Local single-bench dev** (run openclaw yourself, no control plane) →
+[docs/local-dev.md](jarvis/docs/local-dev.md).
 
 ## Architecture at a glance
 
-```
-┌──────────────────────────┐         ┌──────────────────────────────┐
-│  Jarvis Settings (Desk)  │  save   │  jarvis.openclaw_push        │
-│  - LLM provider/model    │ ──────► │  - write_key_file            │
-│  - LLM API key           │         │  - reload_secrets   (WS RPC) │
-└──────────────────────────┘         │  - restart_gateway  (docker) │
-                                     └──────────────┬───────────────┘
-                                                    ▼
-                                     ┌──────────────────────────────┐
-                                     │  openclaw container          │
-                                     │  - LLM gateway, port 18789   │
-                                     │  - SecretRef -> llm.key file │
-                                     │  - HTTP /v1/chat/completions │
-                                     └──────────────────────────────┘
-```
-
-End-to-end: a save in Jarvis Settings detects the change (key only vs provider/model/base_url), pushes the right update to openclaw (hot `secrets.reload` for key changes, full container restart for provider changes), and openclaw's next LLM call uses the new credentials.
+In production the customer site never runs openclaw — saving Jarvis Settings
+POSTs to Aerele's control plane, which provisions/updates the container on the
+fleet; the agent calls back into Frappe (`call_tool`) with per-user identity.
+See [docs/architecture.md](jarvis/docs/architecture.md) for the full picture
+(production vs dev shapes, identity flow, trust boundaries).
 
 ## Documentation
 
+Start at **[`jarvis/docs/README.md`](jarvis/docs/README.md)** (docs index).
+
 | Document | What it covers |
 |---|---|
-| [`jarvis/docs/architecture.md`](jarvis/docs/architecture.md) | Product vision, component map, data flow, trust boundaries |
-| [`jarvis/docs/configuration.md`](jarvis/docs/configuration.md) | Every Jarvis Settings field, what it does, how it gets populated |
-| [`jarvis/docs/tools-api.md`](jarvis/docs/tools-api.md) | The five data tools, the registry/dispatcher, the whitelisted `call_tool` HTTP API |
-| [`jarvis/docs/operations.md`](jarvis/docs/operations.md) | Bench commands (`openclaw_bootstrap.*`), credentials update flow, troubleshooting |
-| [`jarvis/docs/development.md`](jarvis/docs/development.md) | Dev setup, running tests, project structure, recipes for adding tools/providers |
-| [`jarvis/docs/decisions/`](jarvis/docs/decisions/) | Architectural decision records. See [identity propagation](jarvis/docs/decisions/2026-05-17-identity-propagation.md) for why Path A (registered plugin tools) replaced the original MCP+hook design. |
+| [`docs/getting-started.md`](jarvis/docs/getting-started.md) | Production quick start: install → onboard → pay → chat |
+| [`docs/architecture.md`](jarvis/docs/architecture.md) | Components (app + admin + fleet + plugin + persona), dev vs prod shapes, identity flow, trust boundaries |
+| [`docs/configuration.md`](jarvis/docs/configuration.md) | Every Jarvis Settings field — customer-set vs admin-populated |
+| [`docs/tools-api.md`](jarvis/docs/tools-api.md) | The 11 tools, the registry/dispatcher, the `call_tool` HTTP API + its two auth modes |
+| [`docs/local-dev.md`](jarvis/docs/local-dev.md) | Single-bench dev: `openclaw_bootstrap`, local creds push, troubleshooting, chat ops |
+| [`docs/development.md`](jarvis/docs/development.md) | Dev setup, running tests, project structure, recipes for adding tools/providers |
+| [`docs/decisions/`](jarvis/docs/decisions/) | Architecture decision records. See [identity propagation](jarvis/docs/decisions/2026-05-17-identity-propagation.md) for why Path A (registered plugin tools) replaced the original MCP+hook design. |
 
 ## Contributing
 
