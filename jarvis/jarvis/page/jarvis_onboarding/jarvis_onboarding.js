@@ -14,9 +14,29 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		<div class="form-group"><label>Plan</label><select class="form-control" id="ob-plan"></select></div>
 		<button class="btn btn-primary" id="ob-go">${dev ? "Dev signup + connect" : "Sign up & pay"}</button>
 		<button class="btn btn-default" id="ob-sync">Sync connection</button>
+		<button class="btn btn-default" id="ob-renew">Renew / Pay</button>
 		<pre id="ob-out" class="mt-3" style="white-space:pre-wrap"></pre>`);
 
 	const out = (m) => $b.find("#ob-out").text(typeof m === "string" ? m : JSON.stringify(m, null, 2));
+
+	// Open Razorpay Checkout for a one-shot order, then confirm the payment.
+	const openCheckout = (d) => {
+		const rz = new Razorpay({
+			key: d.razorpay_key_id,
+			order_id: d.razorpay_order_id,
+			name: "Jarvis",
+			handler: (res) =>
+				frappe.call({
+					method: "jarvis.onboarding.finish_payment",
+					args: { payload: {
+						razorpay_payment_id: res.razorpay_payment_id,
+						razorpay_order_id: res.razorpay_order_id,
+						razorpay_signature: res.razorpay_signature,
+					} },
+				}).then((rr) => out(rr.message)),
+		});
+		rz.open();
+	};
 
 	frappe.call({ method: "jarvis.onboarding.list_plans" }).then((r) => {
 		const sel = $b.find("#ob-plan").empty();
@@ -27,6 +47,11 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 	$b.find("#ob-sync").on("click", () =>
 		frappe.call({ method: "jarvis.onboarding.sync_connection" }).then((r) => out(r.message)));
 
+	$b.find("#ob-renew").on("click", () =>
+		frappe.call({ method: "jarvis.onboarding.renew" })
+			.then((r) => openCheckout(r.message || {}))
+			.catch((e) => out(e.message || "renew failed")));
+
 	$b.find("#ob-go").on("click", () => {
 		const email = $b.find("#ob-email").val();
 		const company = $b.find("#ob-company").val();
@@ -36,25 +61,8 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 				.then((r) => out(r.message)).catch((e) => out(e.message || "failed"));
 			return;
 		}
-		frappe.call({ method: "jarvis.onboarding.start_signup", args: { email, company, plan } }).then((r) => {
-			const d = r.message || {};
-			const rz = new Razorpay({
-				key: d.razorpay_key_id,
-				order_id: d.razorpay_order_id,
-				subscription_id: d.razorpay_subscription_id,
-				name: "Jarvis",
-				handler: (res) =>
-					frappe.call({
-						method: "jarvis.onboarding.finish_payment",
-						args: { payload: {
-							razorpay_payment_id: res.razorpay_payment_id,
-							razorpay_order_id: res.razorpay_order_id,
-							razorpay_signature: res.razorpay_signature,
-							razorpay_subscription_id: res.razorpay_subscription_id,
-						} },
-					}).then((rr) => out(rr.message)),
-			});
-			rz.open();
-		}).catch((e) => out(e.message || "signup failed"));
+		frappe.call({ method: "jarvis.onboarding.start_signup", args: { email, company, plan } })
+			.then((r) => openCheckout(r.message || {}))
+			.catch((e) => out(e.message || "signup failed"));
 	});
 };
