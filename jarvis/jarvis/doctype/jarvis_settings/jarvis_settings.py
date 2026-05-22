@@ -44,9 +44,12 @@ class JarvisSettings(Document):
         action = self._classify_llm_change()
         if action is None:
             return
-        # Dispatch: admin path (prod) when jarvis_admin_url is set; otherwise
-        # the existing Phase 1 local-openclaw_push path (dev).
-        if (self.jarvis_admin_url or "").strip():
+        # Dispatch: admin path (prod) when the customer has an admin api token
+        # (set by onboarding); otherwise the Phase 1 local-openclaw_push path
+        # (dev). Keyed on the api token, not jarvis_admin_url — onboarding sets
+        # the token but leaves jarvis_admin_url blank (admin_client falls back to
+        # the hardcoded DEFAULT_ADMIN_URL).
+        if (self.get_password("jarvis_admin_api_key", raise_exception=False) or "").strip():
             self._sync_via_admin(action)
         else:
             self._sync_via_local_openclaw(action)
