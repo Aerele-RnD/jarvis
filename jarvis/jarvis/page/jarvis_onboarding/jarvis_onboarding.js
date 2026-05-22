@@ -235,12 +235,18 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		if (document.getElementById("jo-styles")) return;
 		const css = `
 		.jo-bg{position:fixed;inset:0;z-index:1;display:flex;align-items:center;justify-content:center;
-			overflow-y:auto;padding:48px 20px;background-color:var(--bg-color);
+			overflow:hidden auto;padding:48px 20px;background-color:var(--bg-color)}
+		.jo-bg::before{content:"";position:absolute;inset:-25%;z-index:0;will-change:transform;
+			animation:jo-aurora 26s ease-in-out infinite alternate;
 			background-image:
 			  radial-gradient(at 16% 20%, color-mix(in srgb, var(--primary,#4a47e5) 26%, transparent) 0, transparent 46%),
 			  radial-gradient(at 84% 16%, color-mix(in srgb, #7c3aed 22%, transparent) 0, transparent 46%),
 			  radial-gradient(at 78% 84%, color-mix(in srgb, #06b6d4 18%, transparent) 0, transparent 44%),
 			  radial-gradient(at 22% 82%, color-mix(in srgb, var(--primary,#4a47e5) 16%, transparent) 0, transparent 46%)}
+		@keyframes jo-aurora{0%{transform:translate3d(0,0,0) scale(1) rotate(0deg)}
+			50%{transform:translate3d(2.5%,-2%,0) scale(1.08) rotate(1.2deg)}
+			100%{transform:translate3d(-2%,2.5%,0) scale(1.05) rotate(-1.2deg)}}
+		@media(prefers-reduced-motion:reduce){.jo-bg::before{animation:none}}
 		.jo{position:relative;z-index:1;display:flex;gap:0;width:100%;max-width:980px;margin:auto;border:1px solid var(--border-color);
 			border-radius:var(--border-radius-lg,14px);overflow:hidden;box-shadow:0 20px 50px -20px rgba(20,20,50,.45),var(--shadow-md);background:var(--card-bg)}
 		.jo-brand{flex:0 0 40%;padding:36px 32px;color:#fff;
