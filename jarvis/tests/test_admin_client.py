@@ -267,3 +267,17 @@ class TestOnboardingClient(FrappeTestCase):
 		self.assertEqual(out["razorpay_order_id"], "order_R")
 		self.assertIn("jarvis_admin.api.tenant.renew", captured["url"])
 		self.assertEqual(captured["headers"]["Authorization"], "Bearer renew-tok")
+
+	def test_guest_call_omits_authorization_header(self):
+		# get_plans is a guest endpoint (no token) — must NOT send "Bearer ",
+		# which Frappe rejects with 401 before the allow_guest method runs.
+		_settings_clear_admin()
+		captured = {}
+
+		def _fake_post(url, json=None, headers=None, timeout=None):
+			captured["headers"] = headers
+			return _mock_response(200, json_body={"message": {"ok": True, "data": []}})
+
+		with patch("requests.post", side_effect=_fake_post):
+			admin_client.get_plans()
+		self.assertNotIn("Authorization", captured["headers"])
