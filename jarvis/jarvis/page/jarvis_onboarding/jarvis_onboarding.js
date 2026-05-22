@@ -32,7 +32,9 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		    <div class="jo-body"></div>
 		    <div class="jo-foot-link"></div>
 		  </div>
-		</div>`).appendTo(page.main);
+		</div>`);
+	const $bg = $(`<div class="jo-bg"><span class="jo-blob jo-blob-1"></span><span class="jo-blob jo-blob-2"></span></div>`).appendTo(page.main);
+	$root.appendTo($bg);
 
 	const $steps = $root.find(".jo-steps");
 	const $body = $root.find(".jo-body");
@@ -232,8 +234,14 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 	function injectStyles() {
 		if (document.getElementById("jo-styles")) return;
 		const css = `
-		.jo{display:flex;gap:0;max-width:980px;margin:24px auto;border:1px solid var(--border-color);
-			border-radius:var(--border-radius-lg,12px);overflow:hidden;box-shadow:var(--shadow-md);background:var(--card-bg)}
+		.jo-bg{position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden;
+			min-height:calc(100vh - 160px);margin:-15px -15px 0;padding:40px 20px;background:var(--bg-color);
+			background:radial-gradient(120% 120% at 50% 0%, color-mix(in srgb, var(--primary,#4a47e5) 8%, var(--bg-color)) 0%, var(--bg-color) 60%)}
+		.jo-blob{position:absolute;border-radius:50%;filter:blur(70px);opacity:.28;pointer-events:none;z-index:0}
+		.jo-blob-1{width:380px;height:380px;background:var(--primary,#4a47e5);top:-90px;left:-60px}
+		.jo-blob-2{width:340px;height:340px;background:#7c3aed;bottom:-110px;right:-40px}
+		.jo{position:relative;z-index:1;display:flex;gap:0;width:100%;max-width:980px;margin:0 auto;border:1px solid var(--border-color);
+			border-radius:var(--border-radius-lg,14px);overflow:hidden;box-shadow:0 20px 50px -20px rgba(20,20,50,.45),var(--shadow-md);background:var(--card-bg)}
 		.jo-brand{flex:0 0 40%;padding:36px 32px;color:#fff;
 			background:linear-gradient(160deg,var(--primary,#4a47e5) 0%,#6d28d9 100%);display:flex;flex-direction:column}
 		.jo-logo{font-size:34px;line-height:1}
@@ -297,7 +305,7 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		.jo-spin{display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,.5);border-top-color:#fff;
 			border-radius:50%;animation:jo-spin .6s linear infinite;vertical-align:-1px}
 		@keyframes jo-spin{to{transform:rotate(360deg)}}
-		@media(max-width:760px){.jo{flex-direction:column;margin:12px}.jo-brand{flex-basis:auto}.jo-panel{padding:26px 22px}}`;
+		@media(max-width:760px){.jo-bg{min-height:0;padding:20px 8px}.jo{flex-direction:column;margin:0}.jo-brand{flex-basis:auto}.jo-panel{padding:26px 22px}}`;
 		$(`<style id="jo-styles">${css}</style>`).appendTo(document.head);
 	}
 };
