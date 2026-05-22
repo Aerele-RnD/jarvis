@@ -30,8 +30,8 @@ class TestJarvisConversationDocType(FrappeTestCase):
 		f = next(f for f in meta.fields if f.fieldname == "status")
 		self.assertEqual(f.fieldtype, "Select")
 		options = (f.options or "").split("\n")
-		self.assertIn("active", options)
-		self.assertIn("archived", options)
+		self.assertIn("Active", options)
+		self.assertIn("Archived", options)
 
 	def test_owner_can_read_own_only(self):
 		"""Permissions are owner-only (no role grants global read)."""
@@ -50,7 +50,7 @@ class TestJarvisConversationDocType(FrappeTestCase):
 			doc = frappe.get_doc({
 				"doctype": DOCTYPE,
 				"title": "Test chat",
-				"status": "active",
+				"status": "Active",
 			})
 			doc.insert(ignore_permissions=True)
 			self.assertIsNotNone(doc.last_active_at)

@@ -32,8 +32,8 @@
       "fieldname": "status",
       "fieldtype": "Select",
       "label": "Status",
-      "options": "active\narchived",
-      "default": "active",
+      "options": "Active\nArchived",
+      "default": "Active",
       "in_list_view": 1,
       "in_standard_filter": 1
     },

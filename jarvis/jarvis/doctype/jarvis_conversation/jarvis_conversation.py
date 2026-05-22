@@ -14,4 +14,4 @@ class JarvisConversation(Document):
 		if not self.last_active_at:
 			self.last_active_at = frappe.utils.now()
 		if not self.status:
-			self.status = "active"
+			self.status = "Active"
