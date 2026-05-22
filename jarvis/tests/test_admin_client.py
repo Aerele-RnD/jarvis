@@ -251,3 +251,19 @@ class TestOnboardingClient(FrappeTestCase):
 			out = admin_client.dev_signup("e@x.com", "Co", "Annual Plan")
 		self.assertEqual(out["api_token"], "tok")
 		self.assertEqual(out["agent_url"], "ws://localhost:19000")
+
+	def test_renew_posts_to_renew_and_unwraps_order(self):
+		_settings_for_admin(token="renew-tok")
+		captured = {}
+
+		def _fake_post(url, json=None, headers=None, timeout=None):
+			captured["url"] = url
+			captured["headers"] = headers
+			return _mock_response(200, json_body={"message": {"ok": True, "data": {
+				"razorpay_order_id": "order_R", "razorpay_key_id": "rzp", "amount_inr": 1500}}})
+
+		with patch("requests.post", side_effect=_fake_post):
+			out = admin_client.renew()
+		self.assertEqual(out["razorpay_order_id"], "order_R")
+		self.assertIn("jarvis_admin.api.tenant.renew", captured["url"])
+		self.assertEqual(captured["headers"]["Authorization"], "Bearer renew-tok")

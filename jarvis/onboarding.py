@@ -62,6 +62,13 @@ def finish_payment(payload) -> dict:
 
 
 @frappe.whitelist()
+def renew() -> dict:
+	"""Existing customer initiates a renewal payment; returns the Razorpay handles
+	for Checkout. The page then completes Checkout and calls finish_payment."""
+	return admin_client.renew()
+
+
+@frappe.whitelist()
 def dev_onboard(email: str, company: str, plan: str) -> dict:
 	"""Local Razorpay-free onboarding: dev_force_signup → store token+connection."""
 	data = admin_client.dev_signup(email, company, plan)

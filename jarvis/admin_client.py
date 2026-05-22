@@ -28,7 +28,8 @@ def _admin_url(settings) -> str:
 
 def signup(email: str, company_name: str, plan: str, coupon: str | None = None) -> dict:
 	"""Guest signup against admin. Returns admin's data dict
-	{api_token, razorpay_key_id, razorpay_order_id|razorpay_subscription_id, amount_inr}."""
+	{api_token, razorpay_key_id, razorpay_order_id, amount_inr}. Both annual and
+	monthly are one-shot orders (manual renew — no Razorpay subscription)."""
 	settings = frappe.get_single("Jarvis Settings")
 	body = {"email": email, "company_name": company_name, "plan": plan,
 			"frappe_site_url": frappe.utils.get_url()}
@@ -66,6 +67,15 @@ def get_connection() -> dict:
 	settings = frappe.get_single("Jarvis Settings")
 	token = settings.get_password("jarvis_admin_api_key", raise_exception=False) or ""
 	return _post(path="/api/method/jarvis_admin.api.tenant.get_connection",
+				 body={}, admin_url=_admin_url(settings), token=token)
+
+
+def renew() -> dict:
+	"""Existing customer pays again to extend (manual one-shot). Returns admin's
+	data dict {razorpay_order_id, razorpay_key_id, amount_inr} for Checkout."""
+	settings = frappe.get_single("Jarvis Settings")
+	token = settings.get_password("jarvis_admin_api_key", raise_exception=False) or ""
+	return _post(path="/api/method/jarvis_admin.api.tenant.renew",
 				 body={}, admin_url=_admin_url(settings), token=token)
 
 
