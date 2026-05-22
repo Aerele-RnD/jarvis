@@ -48,7 +48,7 @@ app's `docs/local-dev.md`, then onboard via `/app/jarvis-onboarding`.
 ## Running tests
 
 ```bash
-# Full app suite (~204 tests)
+# Full app suite
 bench --site jarvis.localhost run-tests --app jarvis
 
 # Single test module
@@ -133,7 +133,7 @@ app/
     │           └── jarvis_settings.py        # validate() + on_update() controller
     └── tests/
         ├── __init__.py
-        └── test_*.py                          # 12 test modules
+        └── test_*.py                          # one module per tool/feature
 ```
 
 The double-named `jarvis/jarvis/` nesting is a Frappe convention: the outer `jarvis/` is the Python package (matches `app_name` in `hooks.py`); the inner `jarvis/` is the Frappe "module" (matches the entry in `modules.txt`). DocTypes must live under the module directory because Frappe imports them as `<app>.<module>.doctype.<doctype>.<controller>`.
