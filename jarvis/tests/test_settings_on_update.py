@@ -57,13 +57,19 @@ _SNAPSHOT_PLAIN_FIELDS = (
 _SNAPSHOT_PASSWORD_FIELDS = (
     "agent_token",
     "llm_api_key",
+    "jarvis_admin_api_key",
 )
 
 
 def _reset_settings():
     settings = frappe.get_single("Jarvis Settings")
-    # Use db_set to set up state without triggering on_update
-    for field, value in {**OPERATOR_COMPLETE, **LLM_BASELINE, "last_sync_status": "", "last_sync_at": None}.items():
+    # Use db_set to set up state without triggering on_update.
+    # jarvis_admin_url/_api_key cleared so the default fixture exercises the
+    # local-openclaw (dev) branch; the admin-branch test sets the key itself.
+    base = {**OPERATOR_COMPLETE, **LLM_BASELINE,
+            "jarvis_admin_url": "", "jarvis_admin_api_key": "",
+            "last_sync_status": "", "last_sync_at": None}
+    for field, value in base.items():
         settings.db_set(field, value)
     frappe.db.commit()
 
@@ -219,6 +225,38 @@ class TestOnUpdateOperatorGate(_SettingsSingletonTestCase):
         with patch("jarvis.openclaw_push.push_creds_restart") as restart_mock:
             settings.save()
             self.assertFalse(restart_mock.called)
+
+
+class TestOnUpdateAdminBranch(_SettingsSingletonTestCase):
+    """The admin-vs-local dispatch keys on the presence of an admin api token
+    (set by onboarding), not on jarvis_admin_url (which onboarding never sets)."""
+
+    def setUp(self):
+        super().setUp()
+        _reset_settings()
+
+    def test_admin_api_key_routes_to_admin_not_local(self):
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("jarvis_admin_api_key", "cust-token-xyz")  # as onboarding sets it
+        frappe.db.commit()
+        settings = frappe.get_single("Jarvis Settings")
+        settings.llm_api_key = "sk-new"
+        with patch("jarvis.admin_client.post_update_llm_creds",
+                   return_value={"action": "reload"}) as admin_mock, \
+             patch("jarvis.openclaw_push.push_creds_reload") as local_mock:
+            settings.save()
+        admin_mock.assert_called_once()
+        self.assertFalse(local_mock.called)
+
+    def test_no_admin_api_key_routes_to_local(self):
+        # _reset_settings cleared the key → local (dev) path.
+        settings = frappe.get_single("Jarvis Settings")
+        settings.llm_api_key = "sk-new"
+        with patch("jarvis.admin_client.post_update_llm_creds") as admin_mock, \
+             patch("jarvis.openclaw_push.push_creds_reload") as local_mock:
+            settings.save()
+        local_mock.assert_called_once()
+        self.assertFalse(admin_mock.called)
 
 
 class TestOnUpdateStatus(_SettingsSingletonTestCase):
