@@ -1,6 +1,12 @@
-# Operations
+# Local development (single bench)
 
-How to run Jarvis day-to-day: bring openclaw up, configure credentials, watch the sync, troubleshoot when something doesn't work.
+**Dev-only.** This is the self-managed single-bench path: you run openclaw
+yourself with `openclaw_bootstrap`, no control plane, no billing, no TLS. In
+**production** (Jarvis Cloud) the customer never runs any of this — the admin +
+fleet provision and manage the container; see [getting-started.md](getting-started.md).
+
+> To exercise the **fleet/admin path locally** (a local `jarvis-fleet-agent` +
+> dev signup, port mode), see the `jarvis_admin` app's `docs/local-dev.md`.
 
 ## Prerequisites
 
@@ -253,12 +259,8 @@ bench --site jarvis.localhost console
 ...     print(m)
 ```
 
-## Billing & renewal (Jarvis Cloud)
+---
 
-Billing is **pay-as-you-go** — both annual and monthly plans are one-shot
-payments; **nothing auto-charges**. Sign up + pay on **`/app/jarvis-onboarding`**
-("Sign up & pay"). When a period lapses, the container is **stopped** after a
-short grace period (your data is preserved). To continue, click **Renew / Pay**
-on the same page — it opens Razorpay Checkout for the next period and **restarts
-your container** on success. (Local/dev installs skip payment entirely via the
-dev-signup button.)
+Billing/onboarding don't apply to this single-bench dev path — see
+[getting-started.md](getting-started.md) for the production Jarvis Cloud flow
+(signup, pay-as-you-go, renew).

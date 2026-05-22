@@ -1,23 +1,21 @@
 # Configuration
 
-All Jarvis configuration lives on the **Jarvis Settings** Single DocType — accessible in Desk at `/app/jarvis-settings`. Two tabs: **Settings** (customer-facing) and **Operator** (system-managed, will move to a separate admin app in a future version).
+All Jarvis configuration lives on the **Jarvis Settings** Single DocType — accessible in Desk at `/app/jarvis-settings`. Two tabs: **Settings** (what the customer fills in) and **Operator** (the connection to your assigned container — read-only, populated for you).
 
 ## Settings tab
 
-### Section: Openclaw Connection
-
-Phase 1 fields. **Currently unused — reserved for the Phase 2.2 agent-loop transport.** Leave blank for now.
+### Section: Jarvis Cloud connection
 
 | Field | Type | Default | Purpose |
 |---|---|---|---|
-| `jarvis_admin_url` | Data | empty | WebSocket URL the customer's bench will eventually use to talk to its openclaw tenant for chat sessions (Phase 2.2) |
-| `jarvis_admin_api_key` | Password | empty | Per-tenant token authorising those sessions (Phase 2.2) |
-| `token_budget_monthly` | Int | `0` | `0` = unlimited; otherwise hard cap before overage billing kicks in. Wired up by future billing layer; currently informational only |
+| `jarvis_admin_url` | Data | empty → falls back to the hardcoded `https://admin.jarvis.aerele.in` | The control-plane URL. **When set, `on_update` routes credential changes to the admin (production); when blank, it uses the local `openclaw_bootstrap` path (dev).** Set it only to point at a staging/alternate admin. |
+| `jarvis_admin_api_key` | Password | set by onboarding | Your admin API token, returned by signup and stored automatically. Authenticates the app's calls to the control plane (`confirm_payment`, `get_connection`, `renew`, credential push). You don't set this by hand. |
+| `token_budget_monthly` | Int | `0` | `0` = unlimited; otherwise an informational cap (future billing). |
 | `enabled` | Check | `1` | Master switch for Jarvis features on this site |
 
 ### Section: Language Model
 
-The customer fills these. Changing any of them triggers the [credentials update flow](operations.md#credentials-update-flow).
+The customer fills these. Saving routes the change through `on_update` — to the control plane in production, or the local push in dev (see [architecture.md](architecture.md) and [local-dev.md](local-dev.md#credentials-update-flow)).
 
 | Field | Type | Required? | Notes |
 |---|---|---|---|
@@ -52,19 +50,26 @@ Per-request LLM parameters. **Currently informational** — they're stored but n
 | `llm_temperature` | Float | `0.2` | 0.0 (deterministic) – 1.0 (creative). 0.2 is a good default for analytical Q&A. |
 | `llm_max_output_tokens` | Int | `4096` | Provider-dependent ceiling. |
 
-## Operator tab
+## Operator tab — connection (read-only)
 
-System-managed fields. The customer normally doesn't touch these — they're populated by `bench execute jarvis.openclaw_bootstrap.start`. They'll move to a separate `jarvis_admin` Frappe app when that's built; today they live here for development convenience.
+The connection to your assigned openclaw container. **Customers don't edit these
+in production** — they're populated for you:
 
-### Section: Openclaw Connection (operator)
+- **Production (Jarvis Cloud):** onboarding (`onboarding.write_connection`) stores
+  `agent_url` (`wss://<slug>.jarvis.aerele.in`) and `agent_token` from the
+  control plane's signup/`get_connection` response. The `agent_*_path` /
+  `agent_compose_dir` fields are dev-only and stay blank — the admin + fleet own
+  the container files, not your site.
+- **Local dev:** `bench execute jarvis.openclaw_bootstrap.start` fills all of
+  them for the bench-local container (see [local-dev.md](local-dev.md)).
 
-| Field | Type | How it gets populated | Used by |
+| Field | Type | Populated by | Used by |
 |---|---|---|---|
-| `agent_url` | Data | `bootstrap.start` defaults to `ws://127.0.0.1:18789` | `openclaw_push.reload_secrets` |
-| `agent_token` | Password | `bootstrap.start` generates `secrets.token_urlsafe(32)` on first run, persists with `db_set`. Preserved across re-runs. | `openclaw_push.reload_secrets`, openclaw config (baked plaintext into `openclaw.json`) |
-| `agent_llm_key_path` | Data | `bootstrap.start` defaults to `<workspace>/openclaw_state/llm.key` | `openclaw_push.write_key_file` |
-| `agent_config_path` | Data | `bootstrap.start` defaults to `<workspace>/openclaw_state/openclaw.json` | `openclaw_push.push_creds_restart` (re-renders config here) |
-| `agent_compose_dir` | Data | `bootstrap.start` defaults to `<workspace>/openclaw` | `openclaw_push.restart_gateway` (runs `docker compose` from here) |
+| `agent_url` | Data | prod: signup response (`wss://…`); dev: `bootstrap.start` (`ws://127.0.0.1:18789`) | chat worker WS; `openclaw_push` (dev) |
+| `agent_token` | Password | prod: signup response; dev: `bootstrap.start` generates `token_urlsafe(32)` | WS auth; `openclaw_push` (dev) |
+| `agent_llm_key_path` | Data | dev only: `bootstrap.start` (`<workspace>/openclaw_state/llm.key`) | `openclaw_push.write_key_file` (dev) |
+| `agent_config_path` | Data | dev only: `bootstrap.start` (`<workspace>/openclaw_state/openclaw.json`) | `openclaw_push.push_creds_restart` (dev) |
+| `agent_compose_dir` | Data | dev only: `bootstrap.start` (`<workspace>/openclaw`) | `openclaw_push.restart_gateway` (dev) |
 
 ### Section: Last Sync
 
@@ -86,4 +91,4 @@ Readonly outcome of the most recent on_update push.
 
 ## Validation
 
-There is no field-level validation on save. The `on_update` hook will detect incomplete operator config and record `skipped: ...` in `last_sync_status` rather than rejecting the save. See [operations.md](operations.md#credentials-update-flow) for the full classification logic and which combinations of field changes trigger which actions.
+There is no field-level validation on save. In the dev (local-openclaw) path the `on_update` hook records `skipped: ...` in `last_sync_status` if the operator fields aren't populated, rather than rejecting the save. See [local-dev.md](local-dev.md#credentials-update-flow) for the full classification logic and which field changes trigger reload vs restart.
