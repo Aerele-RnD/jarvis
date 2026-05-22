@@ -112,10 +112,14 @@ def post_update_llm_creds(
 def _post(path: str, body: dict, admin_url: str, token: str,
 		  timeout_s: int = DEFAULT_TIMEOUT_S) -> dict:
 	headers = {
-		"Authorization": f"Bearer {token}",
 		"X-Jarvis-Site": frappe.utils.get_url(),
 		"Content-Type": "application/json",
 	}
+	# Guest endpoints (get_plans, signup) pass an empty token — send NO
+	# Authorization header then, since Frappe rejects an empty "Bearer " with 401
+	# before the allow_guest method runs.
+	if token:
+		headers["Authorization"] = f"Bearer {token}"
 	try:
 		resp = requests.post(
 			admin_url + path, json=body, headers=headers, timeout=timeout_s,
