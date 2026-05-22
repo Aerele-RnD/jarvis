@@ -1,10 +1,11 @@
 # Tools & API
 
-Jarvis exposes ERPNext data to its agent runtime through a small, permission-aware tool layer. The same surface is available two ways: as Python functions (used internally and by Phase 2.2's socket layer), and as a whitelisted HTTP endpoint (used by external integrations and for the current Phase 1 smoke tests).
+Jarvis exposes ERPNext data to its agent runtime through a small, permission-aware tool layer. The same surface is available two ways: as Python functions (used internally), and as a whitelisted HTTP endpoint (`call_tool`) used both by external integrations and — in production — by `jarvis-openclaw-plugin` when the agent invokes a `jarvis__*` tool.
 
-Every tool inherits the calling user's ERPNext permissions. The agent can never see DocTypes or records the user themselves can't see.
+Every tool inherits the calling user's ERPNext permissions. The agent can never see DocTypes or records the user themselves can't see. There are **11 tools**: 5 read-only and 6 MUTATING (write). The registry (`list_tools()`) is the source of truth:
+`['amend_doc', 'cancel_doc', 'create_doc', 'delete_doc', 'get_doc', 'get_list', 'get_schema', 'run_query', 'run_report', 'submit_doc', 'update_doc']`.
 
-## The five tools
+## Read tools
 
 ### `get_schema(doctype: str) -> dict`
 
@@ -133,6 +134,28 @@ result = run_query(
 | Returns | `{"sql": <executed query>, "rows": [...]}` — the executed SQL is included so the model can show the user what ran. |
 | Raises | `InvalidArgumentError` (bad SQL / forbidden keyword / non-`tab` table / no tables), `PermissionDeniedError` (no read on referenced DocType) |
 
+## Write tools (MUTATING)
+
+Six tools change data. Each enforces the calling user's Frappe write/submit/
+cancel/delete permission, runs the DocType's `validate()` hooks, and refuses
+protected fields (`name` where autoname forbids it, `owner`, `creation`,
+`modified`, `docstatus`, `parent`, etc.). They are **consequential** — the agent
+is instructed to **confirm with the user first** (show the DocType, the values,
+and the side effects) before calling. Modules: `jarvis.tools.<name>`.
+
+| Tool | Signature | What it does / refused when |
+|---|---|---|
+| `update_doc` | `update_doc(doctype, name, values: dict)` | Apply field changes to one record. Refused on protected fields; raises `ValidationError` / `PermissionDeniedError` / `DoesNotExistError`. Returns the saved doc. |
+| `create_doc` | `create_doc(doctype, values: dict)` | Insert a new document (DocType-level create permission; `validate()` runs). `name` allowed for prompt-autoname DocTypes. Returns the inserted doc incl. its `name`. |
+| `submit_doc` | `submit_doc(doctype, name)` | Submit a Draft (docstatus 0→1). Fires `on_submit` side effects (GL postings, stock moves, payments). Refused if not submittable / already submitted / cancelled / no submit permission. |
+| `cancel_doc` | `cancel_doc(doctype, name)` | Cancel a Submitted doc (1→2) — fires `on_cancel` reversal entries. Refused if Draft (use delete) / already cancelled / no cancel permission. |
+| `delete_doc` | `delete_doc(doctype, name)` | Delete a record outright (most destructive). Refused if Submitted (cancel first) or referenced elsewhere (`LinkExistsError`). |
+| `amend_doc` | `amend_doc(doctype, name)` | Create a new Draft copy of a Cancelled doc (`amended_from`). Then edit via `update_doc` + re-`submit_doc`. |
+
+These are exposed to the agent as `jarvis__update_doc` … `jarvis__amend_doc` by
+the plugin, with verbose confirm-first descriptions; the Frappe-side functions
+are the same registry entries dispatched via `call_tool`.
+
 ## Tool registry & dispatcher
 
 Module: `jarvis.tools.registry`
@@ -143,7 +166,8 @@ Central name → callable map. Everything that calls a tool goes through `dispat
 from jarvis.tools.registry import list_tools, dispatch
 
 list_tools()
-# ['get_doc', 'get_list', 'get_schema', 'run_query', 'run_report']
+# ['amend_doc', 'cancel_doc', 'create_doc', 'delete_doc', 'get_doc', 'get_list',
+#  'get_schema', 'run_query', 'run_report', 'submit_doc', 'update_doc']
 
 dispatch("get_schema", {"doctype": "Customer"})
 # (same as calling get_schema directly)
