@@ -79,7 +79,7 @@ class TestCreateConversation(_ChatTestCase):
 		name = create_conversation()
 		doc = frappe.get_doc(CONV, name)
 		self.assertEqual(doc.owner, TEST_USER)
-		self.assertEqual(doc.status, "active")
+		self.assertEqual(doc.status, "Active")
 		self.assertIsNotNone(doc.last_active_at)
 
 	def test_title_defaults_to_new_chat(self):
@@ -199,7 +199,7 @@ class TestArchiveConversation(_ChatTestCase):
 		name = create_conversation()
 		archive_conversation(name)
 		doc = frappe.get_doc(CONV, name)
-		self.assertEqual(doc.status, "archived")
+		self.assertEqual(doc.status, "Archived")
 
 
 from jarvis.chat.api import send_message

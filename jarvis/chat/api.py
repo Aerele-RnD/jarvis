@@ -25,7 +25,7 @@ def list_conversations() -> list[dict]:
 		       (SELECT COUNT(*) FROM `tabJarvis Chat Message` m
 		        WHERE m.conversation = c.name) AS message_count
 		FROM `tabJarvis Conversation` c
-		WHERE c.owner = %s AND c.status = 'active'
+		WHERE c.owner = %s AND c.status = 'Active'
 		ORDER BY c.last_active_at DESC
 		""",
 		(user,),
@@ -47,7 +47,7 @@ def create_or_focus_empty() -> str:
 		"""
 		SELECT c.name
 		FROM `tabJarvis Conversation` c
-		WHERE c.owner = %s AND c.status = 'active'
+		WHERE c.owner = %s AND c.status = 'Active'
 		  AND NOT EXISTS (
 		    SELECT 1 FROM `tabJarvis Chat Message` m
 		    WHERE m.conversation = c.name
@@ -99,7 +99,7 @@ def create_conversation() -> str:
 	doc = frappe.get_doc({
 		"doctype": CONV,
 		"title": "New chat",
-		"status": "active",
+		"status": "Active",
 	})
 	doc.insert()
 	frappe.db.commit()
@@ -110,7 +110,7 @@ def create_conversation() -> str:
 def archive_conversation(conversation: str) -> dict:
 	"""Set status to archived. The openclaw-side session is left in place."""
 	doc = frappe.get_doc(CONV, conversation)
-	doc.status = "archived"
+	doc.status = "Archived"
 	doc.save()
 	frappe.db.commit()
 	return {"ok": True}
