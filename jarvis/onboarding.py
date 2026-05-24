@@ -70,7 +70,15 @@ def renew() -> dict:
 
 @frappe.whitelist()
 def dev_onboard(email: str, company: str, plan: str) -> dict:
-	"""Local Razorpay-free onboarding: dev_force_signup → store token+connection."""
+	"""Local Razorpay-free onboarding: dev_force_signup → store token+connection.
+
+	Single-bench dev shortcut: if jarvis_admin_url isn't already set, default
+	it to this site's URL (customer site == admin site in local dev). Without
+	this, admin_client._admin_url falls back to the hardcoded prod URL and the
+	call DNS-fails immediately."""
+	settings = frappe.get_single("Jarvis Settings")
+	if not (settings.jarvis_admin_url or "").strip():
+		settings.db_set("jarvis_admin_url", frappe.utils.get_url())
 	data = admin_client.dev_signup(email, company, plan)
 	write_connection(data)
 	return data
