@@ -92,6 +92,54 @@ def reload_secrets(gateway_url: str, gateway_token: str) -> None:
 			pass
 
 
+def ping(gateway_url: str, gateway_token: str) -> None:
+	"""Open WS to openclaw and complete the connect handshake only — no
+	secrets.reload, no restart. Raises OpenclawUnreachableError if the
+	socket can't open or the handshake is rejected. Used by the
+	'Test openclaw connection' diagnostic button on Jarvis Settings."""
+	try:
+		ws = create_connection(gateway_url, timeout=RELOAD_TIMEOUT_SECONDS)
+	except (websocket.WebSocketException, OSError) as e:
+		raise OpenclawUnreachableError(f"connect failed: {e}") from e
+
+	deadline = time.monotonic() + RELOAD_TIMEOUT_SECONDS
+	try:
+		connect_id = str(uuid.uuid4())
+		ws.send(json.dumps({
+			"type": "req",
+			"id": connect_id,
+			"method": "connect",
+			"params": {
+				"minProtocol": 3,
+				"maxProtocol": 4,
+				"role": "operator",
+				"client": {
+					"id": "gateway-client",
+					"version": "0.1.0",
+					"platform": "linux",
+					"mode": "backend",
+				},
+				"scopes": ["operator.admin"],
+				"auth": {"token": gateway_token},
+			},
+		}))
+		connect_res = _await_response(ws, connect_id, deadline)
+		if not connect_res.get("ok"):
+			err = connect_res.get("error") or {}
+			raise OpenclawUnreachableError(
+				f"connect rejected: {err.get('code', '?')}: {err.get('message', '')}"
+			)
+	except (websocket.WebSocketTimeoutException, TimeoutError) as e:
+		raise OpenclawUnreachableError(f"timeout: {e}") from e
+	except websocket.WebSocketException as e:
+		raise OpenclawUnreachableError(f"ws error: {e}") from e
+	finally:
+		try:
+			ws.close()
+		except Exception:
+			pass
+
+
 def _await_response(ws, request_id: str, deadline: float) -> dict:
 	"""Read frames until a `res` frame with matching id arrives. Other frames are ignored."""
 	while True:
