@@ -1,303 +1,291 @@
-"""Openclaw gateway client — wraps the WebSocket protocol through `docker compose exec`.
+"""Openclaw gateway client — direct WebSocket with device-paired auth.
 
-Why subprocess + docker exec instead of a direct host-side WS connection:
-openclaw's gateway grants `operator.admin` to token-auth connections from
-non-loopback sources (LAN bind) but does NOT grant `operator.write`, which
-sessions.create requires. Demo.ask_one works around this by running its WS
-inside the container via `docker compose exec node -e <script>`; the
-connection then comes from container-local loopback, which gets full scopes.
+Previously this module shelled out to `docker compose exec ... node -e <script>`
+so the WS connection would appear as loopback inside the container — openclaw
+strips self-declared `operator.write` scopes from non-loopback token-only
+clients, and the chat worker needed write scope for sessions.create.
 
-We mirror that pattern here. The Python side spawns a Node WS script inside
-the container, pipes JSON commands in, reads line-delimited events out. From
-the caller's perspective the API is the same as a direct WS client.
+Now we do it the way openclaw was designed for: pair the customer bench as
+a device once (via jarvis.chat.device.ensure_paired → admin → fleet-agent),
+and present an Ed25519-signed v3 device-auth envelope at every connect.
+openclaw verifies the signature against the registered public key, grants
+the requested scopes, and the rest of the protocol (sessions.create, agent,
+event streaming) is identical to what the Node script used to do — only the
+transport changed from subprocess-pipes to direct WS frames.
 
-If openclaw later adds a non-loopback grant for operator.write (or per-device
-pairing produces a token with both scopes), this module can be reverted to a
-direct Python WS without changing the worker.
+The public surface (OpenclawSession.connect / create_session /
+stream_agent_turn / close) is unchanged. worker.py and api.py don't notice.
 """
 
 from __future__ import annotations
 
 import json
-import subprocess
 import threading
+import time
 import uuid
 from collections.abc import Iterator
 from typing import Any
 
-import frappe
+import websocket
 
+from jarvis.chat.device import (
+	ChatDeviceCredentials, build_payload_v3, ensure_paired, sign_payload,
+)
 from jarvis.chat.events import parse_event
 from jarvis.exceptions import OpenclawUnreachableError
 
 CONNECT_TIMEOUT_SECONDS = 10
 TURN_TIMEOUT_SECONDS = 180
 
-# Node script that runs inside the container. It speaks a tiny line-based JSON
-# protocol over stdin/stdout so the Python side can drive it:
-#   stdin commands:  {"cmd":"create_session","label":...} | {"cmd":"agent","sessionKey":...,"message":...,"idempotencyKey":...} | {"cmd":"close"}
-#   stdout events:   {"type":"connect","ok":bool,"error":?} | {"type":"create","ok":bool,"key":?,"error":?} | {"type":"event","payload":<openclaw frame>} | {"type":"runDone"} | {"type":"runErr","error":...}
-_NODE_SCRIPT = r"""
-// When stdout is piped (docker compose exec -T), Node block-buffers writes by
-// default — events accumulate until the buffer fills or the process exits, so
-// the Python side sees nothing until the agent turn finishes. Forcing the
-// handle to blocking mode makes every write synchronous, which lets each
-// `emit()` flush a single line through the pipe immediately.
-if (process.stdout._handle && typeof process.stdout._handle.setBlocking === 'function') {
-  process.stdout._handle.setBlocking(true);
-}
-if (process.stderr._handle && typeof process.stderr._handle.setBlocking === 'function') {
-  process.stderr._handle.setBlocking(true);
-}
-
-const readline = require('readline');
-const ws = new (require('ws'))('ws://127.0.0.1:18789');
-const args = JSON.parse(process.env.JARVIS_CHAT_ARGS);
-const { gatewayToken } = args;
-
-const pending = new Map();
-let activeRunId = null;
-
-function send(method, params) {
-  const id = Math.random().toString(36).slice(2);
-  const p = new Promise((res, rej) => pending.set(id, { res, rej }));
-  ws.send(JSON.stringify({ type: 'req', id, method, params }));
-  return p;
-}
-
-function emit(obj) {
-  process.stdout.write(JSON.stringify(obj) + '\n');
-}
-
-ws.on('open', async () => {
-  try {
-    const connectRes = await send('connect', {
-      minProtocol: 3, maxProtocol: 4, role: 'operator',
-      client: { id: 'gateway-client', version: '0.1.0', platform: 'linux', mode: 'backend' },
-      scopes: ['operator.admin'],
-      auth: { token: gatewayToken },
-    });
-    if (!connectRes.ok) {
-      emit({ type: 'connect', ok: false, error: JSON.stringify(connectRes.error) });
-      process.exit(1);
-    }
-    emit({ type: 'connect', ok: true });
-  } catch (err) {
-    emit({ type: 'connect', ok: false, error: err.message });
-    process.exit(1);
-  }
-});
-
-ws.on('message', (raw) => {
-  let frame;
-  try { frame = JSON.parse(raw); } catch { return; }
-  if (frame.type === 'res' && pending.has(frame.id)) {
-    const { res } = pending.get(frame.id);
-    pending.delete(frame.id);
-    res(frame);
-    return;
-  }
-  if (frame.type === 'event') {
-    if (activeRunId && frame.payload && frame.payload.runId === activeRunId) {
-      emit({ type: 'event', payload: frame.payload });
-      const p = frame.payload;
-      if (p.stream === 'lifecycle' && (p.data || {}).phase) {
-        const phase = p.data.phase;
-        if (phase === 'end' || phase === 'error') {
-          emit({ type: 'runDone' });
-          activeRunId = null;
-        }
-      }
-    }
-  }
-});
-
-ws.on('error', (err) => { emit({ type: 'wsError', error: err.message }); });
-ws.on('close', () => { emit({ type: 'wsClose' }); process.exit(0); });
-
-const rl = readline.createInterface({ input: process.stdin });
-rl.on('line', async (line) => {
-  let cmd;
-  try { cmd = JSON.parse(line); } catch { return; }
-  if (cmd.cmd === 'create_session') {
-    try {
-      const r = await send('sessions.create', { label: cmd.label });
-      if (r.ok) {
-        emit({ type: 'create', ok: true, key: r.payload.key });
-      } else {
-        emit({ type: 'create', ok: false, error: JSON.stringify(r.error) });
-      }
-    } catch (e) {
-      emit({ type: 'create', ok: false, error: e.message });
-    }
-  } else if (cmd.cmd === 'agent') {
-    try {
-      const r = await send('agent', {
-        message: cmd.message,
-        sessionKey: cmd.sessionKey,
-        deliver: false,
-        idempotencyKey: cmd.idempotencyKey,
-      });
-      if (r.ok) {
-        activeRunId = r.payload.runId;
-        emit({ type: 'agentAck', runId: r.payload.runId });
-      } else {
-        emit({ type: 'runErr', error: JSON.stringify(r.error) });
-      }
-    } catch (e) {
-      emit({ type: 'runErr', error: e.message });
-    }
-  } else if (cmd.cmd === 'close') {
-    try { ws.close(); } catch (_) {}
-    process.exit(0);
-  }
-});
-"""
+# Scopes the chat path needs: operator.write for sessions.create + agent;
+# operator.admin so the same connection can also read state (status snapshots,
+# etc.) without re-pairing.
+_REQUESTED_SCOPES = ["operator.write", "operator.admin"]
+_CLIENT_ID = "gateway-client"
+_CLIENT_MODE = "backend"
+_ROLE = "operator"
+_PLATFORM = "linux"  # informational; only affects the v3 signature payload
 
 
 class OpenclawSession:
-	"""Thin wrapper over a `docker compose exec` Node WS subprocess.
+	"""Direct WebSocket session to one tenant's openclaw gateway.
 
-	Public surface matches what the chat worker calls:
+	Public surface:
 	  OpenclawSession.connect(gateway_url, gateway_token) -> session
 	  session.create_session(label=...) -> session_key
 	  session.stream_agent_turn(session_key, message, idem) -> iter of parsed events
 	  session.close()
+
+	The gateway_token arg is kept for call-site compatibility but unused —
+	device pairing supersedes the shared bearer token. The chat device's
+	deviceToken from `jarvis.chat.device.ensure_paired()` is the credential.
 	"""
 
-	def __init__(self, proc: subprocess.Popen, compose_dir: str):
-		self._proc = proc
-		self._compose_dir = compose_dir
-		self._lock = threading.Lock()  # serialize stdin writes
+	def __init__(self, ws: websocket.WebSocket, creds: ChatDeviceCredentials):
+		self._ws = ws
+		self._creds = creds
+		self._lock = threading.Lock()  # serialize concurrent sends on same WS
+
+	# -- lifecycle --------------------------------------------------------
 
 	@classmethod
 	def connect(cls, gateway_url: str, gateway_token: str) -> OpenclawSession:
-		# gateway_url is ignored: we always connect to the container's
-		# loopback. Kept in the signature for backwards compat with the
-		# worker call site and tests.
-		_ = gateway_url
+		_ = gateway_token  # see class docstring
+		if not gateway_url:
+			raise OpenclawUnreachableError("agent_url not set on Jarvis Settings")
 
-		settings = frappe.get_single("Jarvis Settings")
-		compose_dir = settings.agent_compose_dir
-		if not compose_dir:
-			raise OpenclawUnreachableError("agent_compose_dir not set on Jarvis Settings")
-
-		args = json.dumps({"gatewayToken": gateway_token})
-		cmd = [
-			"docker", "compose",
-			"-f", f"{compose_dir}/docker-compose.yml",
-			"exec", "-T",  # -T: no TTY (we want clean pipes)
-			"-e", f"JARVIS_CHAT_ARGS={args}",
-			"openclaw-gateway",
-			"node", "-e", _NODE_SCRIPT,
-		]
+		creds = ensure_paired()
 		try:
-			proc = subprocess.Popen(
-				cmd,
-				stdin=subprocess.PIPE,
-				stdout=subprocess.PIPE,
-				stderr=subprocess.PIPE,
-				text=True,
-				bufsize=1,  # line-buffered
+			ws = websocket.create_connection(
+				gateway_url, timeout=CONNECT_TIMEOUT_SECONDS,
+				# Origin must be a valid http(s)://… URL; openclaw's controlUi
+				# allowedOrigins is "*" in our rendered config, but the
+				# Origin-parse path rejects empty/malformed values outright.
+				origin="http://localhost",
 			)
-		except FileNotFoundError as e:
-			raise OpenclawUnreachableError(f"docker not on PATH: {e}") from e
+		except (websocket.WebSocketException, OSError) as e:
+			raise OpenclawUnreachableError(f"WS open failed: {e}") from e
 
-		# Wait for the "connect" event
-		first = _read_event(proc, timeout=CONNECT_TIMEOUT_SECONDS)
-		if not first or first.get("type") != "connect" or not first.get("ok"):
-			err = (first or {}).get("error", "no response")
-			proc.kill()
-			raise OpenclawUnreachableError(f"connect failed: {err}")
+		try:
+			cls._handshake(ws, creds)
+		except Exception:
+			try: ws.close()
+			except Exception: pass
+			raise
+		return cls(ws, creds)
 
-		return cls(proc, compose_dir)
+	def close(self) -> None:
+		try: self._ws.close()
+		except Exception: pass
+
+	# -- protocol methods -------------------------------------------------
 
 	def create_session(self, label: str = "jarvis-chat") -> str:
-		self._send_cmd({"cmd": "create_session", "label": label})
-		ev = _read_event(self._proc, timeout=CONNECT_TIMEOUT_SECONDS)
-		if not ev or ev.get("type") != "create":
-			raise OpenclawUnreachableError(f"unexpected reply to create_session: {ev}")
-		if not ev.get("ok"):
-			raise OpenclawUnreachableError(f"sessions.create rejected: {ev.get('error')}")
-		key = ev.get("key")
+		res = self._request("sessions.create", {"label": label},
+							timeout_s=CONNECT_TIMEOUT_SECONDS)
+		key = (res.get("payload") or {}).get("key")
 		if not key:
-			raise OpenclawUnreachableError("sessions.create returned no key")
+			raise OpenclawUnreachableError(f"sessions.create returned no key: {res}")
 		return key
 
 	def stream_agent_turn(
-		self,
-		session_key: str,
-		message: str,
-		idempotency_key: str,
+		self, session_key: str, message: str, idempotency_key: str,
 	) -> Iterator[dict[str, Any]]:
-		self._send_cmd({
-			"cmd": "agent",
-			"sessionKey": session_key,
+		"""Send an `agent` request, then yield parsed events until lifecycle.end.
+
+		Yields the same parsed-event shape the worker used to consume from
+		the subprocess. Raises OpenclawUnreachableError on WS drop, agent
+		errors, or timeout — all the failure modes worker.py already maps to
+		assistant-message error rows."""
+		agent_id = self._send("agent", {
 			"message": message,
+			"sessionKey": session_key,
+			"deliver": False,
 			"idempotencyKey": idempotency_key,
 		})
-		# Expect agentAck first, then event/event/.../runDone
-		import time
 		deadline = time.monotonic() + TURN_TIMEOUT_SECONDS
+
+		# 1. Drain frames until we see the agent ack OR an error/event for our run.
+		active_run_id: str | None = None
 		got_ack = False
 		while time.monotonic() < deadline:
-			ev = _read_event(self._proc, timeout=TURN_TIMEOUT_SECONDS)
-			if ev is None:
-				break
-			t = ev.get("type")
-			if t == "agentAck":
+			frame = self._recv(deadline - time.monotonic())
+			if frame is None:
+				continue
+			ftype = frame.get("type")
+			if ftype == "res" and frame.get("id") == agent_id:
+				if not frame.get("ok"):
+					err = frame.get("error") or {}
+					raise OpenclawUnreachableError(
+						f"agent rejected: {err.get('code', '?')}: {err.get('message', '')}",
+					)
+				active_run_id = (frame.get("payload") or {}).get("runId")
 				got_ack = True
-				continue
-			if t == "runErr":
-				raise OpenclawUnreachableError(f"agent run errored: {ev.get('error')}")
-			if t == "event":
-				parsed = parse_event(ev.get("payload") or {})
-				if parsed is not None:
-					yield parsed
-				continue
-			if t == "runDone":
-				return
-			if t == "wsError" or t == "wsClose":
-				raise OpenclawUnreachableError(f"openclaw WS lost: {ev}")
+				break
+			# Pre-ack events can arrive; pass them through if they belong to us
+			# by lifecycle (no runId yet at this point, drop unrelated noise).
 		if not got_ack:
 			raise OpenclawUnreachableError("agent RPC never acknowledged")
+
+		# 2. Stream events for this run until lifecycle.end / .error.
+		while time.monotonic() < deadline:
+			frame = self._recv(deadline - time.monotonic())
+			if frame is None:
+				continue
+			ftype = frame.get("type")
+			if ftype != "event":
+				continue
+			payload = frame.get("payload") or {}
+			if active_run_id is not None and payload.get("runId") != active_run_id:
+				continue
+			parsed = parse_event(payload)
+			if parsed is not None:
+				yield parsed
+			# Same lifecycle-phase detection the Node script used.
+			if payload.get("stream") == "lifecycle":
+				phase = (payload.get("data") or {}).get("phase")
+				if phase in ("end", "error"):
+					return
 		raise OpenclawUnreachableError("agent turn timed out before lifecycle end")
 
-	def close(self) -> None:
-		try:
-			self._send_cmd({"cmd": "close"})
-		except Exception:
-			pass
-		try:
-			self._proc.terminate()
-			self._proc.wait(timeout=5)
-		except Exception:
-			try:
-				self._proc.kill()
-			except Exception:
-				pass
+	# -- internals --------------------------------------------------------
 
-	def _send_cmd(self, cmd: dict) -> None:
+	@classmethod
+	def _handshake(cls, ws: websocket.WebSocket, creds: ChatDeviceCredentials) -> None:
+		"""Receive connect.challenge → sign v3 payload → send connect → expect hello-ok."""
+		deadline = time.monotonic() + CONNECT_TIMEOUT_SECONDS
+
+		# 1. Wait for the challenge event.
+		nonce: str | None = None
+		while time.monotonic() < deadline:
+			frame = _recv_with_timeout(ws, deadline - time.monotonic())
+			if frame is None:
+				continue
+			if frame.get("type") == "event" and frame.get("event") == "connect.challenge":
+				nonce = (frame.get("payload") or {}).get("nonce")
+				break
+		if not nonce:
+			raise OpenclawUnreachableError("did not receive connect.challenge before timeout")
+
+		# 2. Sign + send the connect frame.
+		signed_at_ms = int(time.time() * 1000)
+		payload = build_payload_v3(
+			device_id=creds.device_id, client_id=_CLIENT_ID, client_mode=_CLIENT_MODE,
+			role=_ROLE, scopes=_REQUESTED_SCOPES, signed_at_ms=signed_at_ms,
+			device_token=creds.device_token, nonce=nonce,
+			platform=_PLATFORM, device_family="",
+		)
+		signature_b64u = sign_payload(creds.private_key, payload)
+		connect_id = uuid.uuid4().hex
+		ws.send(json.dumps({
+			"type": "req",
+			"id": connect_id,
+			"method": "connect",
+			"params": {
+				"minProtocol": 4,
+				"maxProtocol": 4,
+				"client": {
+					"id": _CLIENT_ID, "version": "0.1.0",
+					"platform": _PLATFORM, "mode": _CLIENT_MODE,
+				},
+				"role": _ROLE,
+				"scopes": _REQUESTED_SCOPES,
+				"auth": {"deviceToken": creds.device_token},
+				"device": {
+					"id": creds.device_id,
+					"publicKey": creds.public_key,
+					"signature": signature_b64u,
+					"signedAt": signed_at_ms,
+					"nonce": nonce,
+				},
+			},
+		}))
+
+		# 3. Wait for the connect response.
+		while time.monotonic() < deadline:
+			frame = _recv_with_timeout(ws, deadline - time.monotonic())
+			if frame is None:
+				continue
+			if frame.get("type") == "res" and frame.get("id") == connect_id:
+				if not frame.get("ok"):
+					err = frame.get("error") or {}
+					raise OpenclawUnreachableError(
+						f"connect rejected: {err.get('code', '?')}: {err.get('message', '')}",
+					)
+				return
+		raise OpenclawUnreachableError("no connect response before timeout")
+
+	def _send(self, method: str, params: dict) -> str:
+		"""Send a request frame; return the generated request id."""
+		req_id = uuid.uuid4().hex
 		with self._lock:
-			if self._proc.stdin is None or self._proc.stdin.closed:
-				raise OpenclawUnreachableError("subprocess stdin closed")
-			self._proc.stdin.write(json.dumps(cmd) + "\n")
-			self._proc.stdin.flush()
+			self._ws.send(json.dumps({
+				"type": "req", "id": req_id, "method": method, "params": params,
+			}))
+		return req_id
+
+	def _request(self, method: str, params: dict, *, timeout_s: float) -> dict:
+		"""Send a request and wait for the matching response frame.
+
+		Drops out-of-order event frames silently — the caller is RPC-style
+		and doesn't need them. stream_agent_turn handles its own framing."""
+		req_id = self._send(method, params)
+		deadline = time.monotonic() + timeout_s
+		while time.monotonic() < deadline:
+			frame = self._recv(deadline - time.monotonic())
+			if frame is None:
+				continue
+			if frame.get("type") == "res" and frame.get("id") == req_id:
+				if not frame.get("ok"):
+					err = frame.get("error") or {}
+					raise OpenclawUnreachableError(
+						f"{method} rejected: {err.get('code', '?')}: {err.get('message', '')}",
+					)
+				return frame
+		raise OpenclawUnreachableError(f"{method} timed out")
+
+	def _recv(self, timeout_s: float) -> dict | None:
+		"""Read one frame from the WS, parse JSON, or return None on a soft
+		timeout / non-JSON noise. Raises OpenclawUnreachableError on hard
+		close so the caller can wrap into an assistant-message error row."""
+		return _recv_with_timeout(self._ws, timeout_s)
 
 
-def _read_event(proc: subprocess.Popen, timeout: float) -> dict | None:
-	"""Read a single line-delimited JSON event from the subprocess stdout."""
-	import select
-	if proc.stdout is None:
+def _recv_with_timeout(ws: websocket.WebSocket, timeout_s: float) -> dict | None:
+	if timeout_s <= 0:
 		return None
-	# Wait for stdout readability
-	r, _, _ = select.select([proc.stdout], [], [], timeout)
-	if not r:
+	ws.settimeout(timeout_s)
+	try:
+		raw = ws.recv()
+	except websocket.WebSocketTimeoutException:
 		return None
-	line = proc.stdout.readline()
-	if not line:
+	except websocket.WebSocketConnectionClosedException as e:
+		raise OpenclawUnreachableError(f"openclaw WS closed: {e}") from e
+	except websocket.WebSocketException as e:
+		raise OpenclawUnreachableError(f"openclaw WS error: {e}") from e
+	if not raw:
 		return None
 	try:
-		return json.loads(line.strip())
+		return json.loads(raw)
 	except json.JSONDecodeError:
 		return None
