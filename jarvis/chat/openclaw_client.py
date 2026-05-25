@@ -29,7 +29,8 @@ from typing import Any
 import websocket
 
 from jarvis.chat.device import (
-	ChatDeviceCredentials, build_payload_v3, ensure_paired, sign_payload,
+	ChatDeviceCredentials, build_payload_v3, clear_credentials,
+	ensure_paired, sign_payload,
 )
 from jarvis.chat.events import parse_event
 from jarvis.exceptions import OpenclawUnreachableError
@@ -45,6 +46,24 @@ _CLIENT_ID = "gateway-client"
 _CLIENT_MODE = "backend"
 _ROLE = "operator"
 _PLATFORM = "linux"  # informational; only affects the v3 signature payload
+
+# Substrings in openclaw's connect-rejection error message that indicate the
+# customer's stored pairing is stale for the current container (typically
+# because admin re-provisioned the tenant and the new container has no record
+# of this deviceId). In those cases we wipe + re-pair once. Other rejection
+# reasons (signature-invalid, scope-mismatch) are programming bugs and must
+# NOT trigger a retry — that'd hide the bug behind silent re-pair attempts.
+_STALE_PAIRING_MARKERS = (
+	"device-not-paired",
+	"token-mismatch",
+	"token-revoked",
+	"device-id-mismatch",
+)
+
+
+def _is_stale_pairing(err: Exception) -> bool:
+	msg = str(err).lower()
+	return any(marker in msg for marker in _STALE_PAIRING_MARKERS)
 
 
 class OpenclawSession:
@@ -74,6 +93,16 @@ class OpenclawSession:
 		if not gateway_url:
 			raise OpenclawUnreachableError("agent_url not set on Jarvis Settings")
 
+		# Two-shot self-heal for tenant re-provisioning: on the first attempt
+		# we use whatever paired creds the customer has; if openclaw rejects
+		# with a "your pairing is stale" marker (typical when admin replaced
+		# the container under us — new container has empty pairing state),
+		# we wipe + re-pair once and try again. A second stale signal is a
+		# real failure, not a retry candidate.
+		return cls._attempt_connect(gateway_url, allow_repair=True)
+
+	@classmethod
+	def _attempt_connect(cls, gateway_url: str, *, allow_repair: bool) -> OpenclawSession:
 		creds = ensure_paired()
 		try:
 			ws = websocket.create_connection(
@@ -88,6 +117,13 @@ class OpenclawSession:
 
 		try:
 			cls._handshake(ws, creds)
+		except OpenclawUnreachableError as e:
+			try: ws.close()
+			except Exception: pass
+			if allow_repair and _is_stale_pairing(e):
+				clear_credentials()
+				return cls._attempt_connect(gateway_url, allow_repair=False)
+			raise
 		except Exception:
 			try: ws.close()
 			except Exception: pass
