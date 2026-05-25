@@ -8,7 +8,30 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 	injectStyles();
 
 	// ---- state -------------------------------------------------------------
-	const state = { step: 1, email: "", company: "", planName: null, plans: [], busy: false };
+	const state = {
+		step: 1, email: "", company: "", planName: null, plans: [], busy: false,
+		// step 4 inputs
+		llmProvider: "Anthropic", llmModel: "", llmApiKey: "", llmBaseUrl: "",
+		// passed through to step 5 (success)
+		successData: null,
+	};
+
+	// Default model + baseUrl per provider, surfaced as autofilled hints on step 4.
+	// Customers can override both in the form (and later in Jarvis Settings).
+	const PROVIDER_DEFAULTS = {
+		"Anthropic":          { model: "claude-sonnet-4-6",                 baseUrl: "https://api.anthropic.com" },
+		"OpenAI":             { model: "gpt-4o",                            baseUrl: "https://api.openai.com/v1" },
+		"Google Gemini":      { model: "gemini-1.5-pro",                    baseUrl: "https://generativelanguage.googleapis.com" },
+		"Mistral":            { model: "mistral-large-latest",              baseUrl: "https://api.mistral.ai/v1" },
+		"Groq":               { model: "llama-3.3-70b-versatile",           baseUrl: "https://api.groq.com/openai/v1" },
+		"Together AI":        { model: "meta-llama/Llama-3.3-70B-Instruct-Turbo", baseUrl: "https://api.together.xyz/v1" },
+		"DeepSeek":           { model: "deepseek-chat",                     baseUrl: "https://api.deepseek.com" },
+		"Moonshot (Kimi)":    { model: "kimi-k2.6",                         baseUrl: "https://api.moonshot.ai/v1" },
+		"OpenRouter":         { model: "anthropic/claude-sonnet-4-6",       baseUrl: "https://openrouter.ai/api/v1" },
+		"Ollama (local)":     { model: "llama3",                            baseUrl: "http://host.docker.internal:11434/v1" },
+		"vLLM (local)":       { model: "",                                  baseUrl: "" },
+		"OpenAI-Compatible":  { model: "",                                  baseUrl: "" },
+	};
 	const esc = frappe.utils.escape_html;
 	const inr = (n) => "₹" + Number(n || 0).toLocaleString("en-IN");
 	const cycleLabel = (c) => (String(c).toLowerCase() === "annual" ? "/year" : "/month");
@@ -41,9 +64,9 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 	const $footLink = $root.find(".jo-foot-link");
 
 	// ---- chrome ------------------------------------------------------------
-	const STEP_NAMES = ["Account", "Plan", "Pay"];
+	const STEP_NAMES = ["Account", "Plan", "Pay", "Connect AI"];
 	function renderSteps() {
-		if (state.step > 3) { $steps.empty(); return; }
+		if (state.step > STEP_NAMES.length) { $steps.empty(); return; }
 		$steps.html(STEP_NAMES.map((name, i) => {
 			const n = i + 1;
 			const cls = n < state.step ? "done" : n === state.step ? "active" : "";
@@ -73,6 +96,7 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		if (state.step === 1) return renderAccount();
 		if (state.step === 2) return renderPlan();
 		if (state.step === 3) return renderPay();
+		if (state.step === 4) return renderLlm();
 	}
 
 	function renderAccount() {
@@ -166,16 +190,104 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		$body.find("#jo-pay").on("click", dev ? devOnboard : startPay);
 	}
 
-	function renderSuccess(data) {
-		state.step = 4;
+	function renderLlm() {
+		// Defaults arrive lazy: only fill model/baseUrl if the customer hasn't typed.
+		const d = PROVIDER_DEFAULTS[state.llmProvider] || { model: "", baseUrl: "" };
+		if (!state.llmModel) state.llmModel = d.model;
+		if (!state.llmBaseUrl) state.llmBaseUrl = d.baseUrl;
+		const providers = Object.keys(PROVIDER_DEFAULTS).map(
+			(p) => `<option value="${esc(p)}" ${p === state.llmProvider ? "selected" : ""}>${esc(p)}</option>`
+		).join("");
+		$body.html(`
+			<h2 class="jo-h">Connect your AI</h2>
+			<p class="jo-sub">Pick which model Jarvis should use and paste your API key.
+			   You can change this anytime in Jarvis Settings.</p>
+			<div class="jo-field">
+			  <label>Provider</label>
+			  <select id="jo-llm-provider" class="jo-input">${providers}</select>
+			</div>
+			<div class="jo-field">
+			  <label>Model</label>
+			  <input id="jo-llm-model" type="text" class="jo-input" value="${esc(state.llmModel)}" placeholder="e.g. claude-sonnet-4-6"/>
+			</div>
+			<div class="jo-field">
+			  <label>API key</label>
+			  <input id="jo-llm-key" type="password" class="jo-input" value="${esc(state.llmApiKey)}" placeholder="sk-..." autocomplete="off"/>
+			  <div class="jo-hint">Stored encrypted; only your agent container ever sees the plaintext.</div>
+			</div>
+			<div class="jo-field">
+			  <label>Base URL <span class="jo-hint-inline">(advanced)</span></label>
+			  <input id="jo-llm-base" type="text" class="jo-input" value="${esc(state.llmBaseUrl)}" placeholder="${esc(d.baseUrl || "https://...")}"/>
+			</div>
+			<div class="jo-err" id="jo-llm-err"></div>
+			<div class="jo-actions jo-actions-split">
+			  <button class="jo-btn jo-btn-ghost" id="jo-llm-skip">Skip for now</button>
+			  <button class="jo-btn jo-btn-primary" id="jo-llm-save">Save &amp; finish →</button>
+			</div>`);
+
+		$body.find("#jo-llm-provider").on("change", (e) => {
+			state.llmProvider = e.target.value;
+			// Reset model/baseUrl so the new provider's defaults take effect.
+			state.llmModel = "";
+			state.llmBaseUrl = "";
+			renderLlm();
+		});
+		$body.find("#jo-llm-model").on("input", (e) => { state.llmModel = e.target.value; });
+		$body.find("#jo-llm-key").on("input", (e) => { state.llmApiKey = e.target.value; });
+		$body.find("#jo-llm-base").on("input", (e) => { state.llmBaseUrl = e.target.value; });
+		$body.find("#jo-llm-skip").on("click", () => renderSuccess(state.successData || {}));
+		$body.find("#jo-llm-save").on("click", saveLlm);
+	}
+
+	function saveLlm() {
+		const $err = $body.find("#jo-llm-err");
+		$err.text("");
+		if (!state.llmProvider || !state.llmModel.trim() || !state.llmApiKey.trim()) {
+			$err.text("Provider, model, and API key are all required.");
+			return;
+		}
+		setBusy("#jo-llm-save", true);
+		frappe.call({
+			method: "jarvis.onboarding.save_llm_creds",
+			args: {
+				provider: state.llmProvider,
+				model: state.llmModel.trim(),
+				api_key: state.llmApiKey,
+				base_url: state.llmBaseUrl.trim(),
+			},
+		}).then((r) => {
+			setBusy("#jo-llm-save", false);
+			const m = r.message || {};
+			renderSuccess(state.successData || {}, m.last_sync_status || "");
+		}).catch((e) => {
+			setBusy("#jo-llm-save", false);
+			$err.text(e.message || "Couldn't save LLM settings. Please try again.");
+		});
+	}
+
+	function renderSuccess(data, syncStatus) {
+		state.step = 5;
 		renderSteps();
 		$footLink.empty();
 		const url = (data && data.agent_url) || "";
+		const sync = (syncStatus || "").trim();
+		const syncOk = sync.startsWith("ok");
+		const syncSkippedNoCreds = !sync;  // came in via "Skip for now"
+		let agentLine;
+		if (!url) {
+			agentLine = "Your container is being prepared — it'll be ready shortly.";
+		} else if (syncOk) {
+			agentLine = "Your agent is ready.";
+		} else if (syncSkippedNoCreds) {
+			agentLine = "Your agent is ready — finish connecting your AI in Jarvis Settings to start chatting.";
+		} else {
+			agentLine = `Your agent is set up, but the AI connection didn't sync just now (<i>${esc(sync)}</i>). Open Jarvis Settings → Force Resync to retry.`;
+		}
 		$body.html(`
 			<div class="jo-success">
 			  <div class="jo-success-ring">✓</div>
 			  <h2 class="jo-h">You're connected!</h2>
-			  <p class="jo-sub">Jarvis is set up for <b>${esc(state.company)}</b>. ${url ? "Your agent is ready." : "Your container is being prepared — it'll be ready shortly."}</p>
+			  <p class="jo-sub">Jarvis is set up for <b>${esc(state.company)}</b>. ${agentLine}</p>
 			  <div class="jo-actions">
 			    <button class="jo-btn jo-btn-primary" id="jo-chat">Open Jarvis chat →</button>
 			  </div>
@@ -203,7 +315,7 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 				frappe.call({
 					method: "jarvis.onboarding.finish_payment",
 					args: { payload: { razorpay_payment_id: res.razorpay_payment_id, razorpay_order_id: res.razorpay_order_id, razorpay_signature: res.razorpay_signature } },
-				}).then((rr) => renderSuccess(rr.message)).catch((e) => payErr(e));
+				}).then((rr) => { state.successData = rr.message; go(4); }).catch((e) => payErr(e));
 			},
 			modal: { ondismiss: () => setBusy("#jo-pay", false) },
 		});
@@ -213,7 +325,7 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 	function devOnboard() {
 		setBusy("#jo-pay", true);
 		frappe.call({ method: "jarvis.onboarding.dev_onboard", args: { email: state.email, company: state.company, plan: state.planName } })
-			.then((r) => renderSuccess(r.message)).catch((e) => payErr(e));
+			.then((r) => { state.successData = r.message; setBusy("#jo-pay", false); go(4); }).catch((e) => payErr(e));
 	}
 
 	function payErr(e) {
@@ -277,6 +389,10 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		.jo-input{width:100%;padding:10px 12px;font-size:14px;border:1px solid var(--border-color);
 			border-radius:var(--border-radius,8px);background:var(--control-bg,var(--bg-color));color:var(--text-color)}
 		.jo-input:focus{outline:none;border-color:var(--primary,#4a47e5);box-shadow:0 0 0 2px rgba(74,71,229,.18)}
+		.jo-field{margin-bottom:14px}
+		.jo-field label{display:block;font-size:12.5px;font-weight:600;color:var(--text-color);margin-bottom:6px}
+		.jo-hint{font-size:11.5px;color:var(--text-muted);margin-top:4px}
+		.jo-hint-inline{font-weight:400;color:var(--text-muted);font-size:11.5px}
 		.jo-plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:8px}
 		.jo-plan{position:relative;border:1.5px solid var(--border-color);border-radius:12px;padding:16px 14px;cursor:pointer;
 			transition:border-color .15s,box-shadow .15s,transform .1s;background:var(--card-bg)}
