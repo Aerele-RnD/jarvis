@@ -28,19 +28,19 @@ frappe.ui.form.on("Jarvis Settings", {
 			});
 		}, __("Diagnostics"));
 
-		frm.add_custom_button(__("Test Openclaw Connection"), () => {
+		frm.add_custom_button(__("Test Agent Connection"), () => {
 			frappe.call({
 				method: "jarvis.diagnostics.ping_openclaw",
 			}).then((r) => {
 				const m = r.message || {};
 				if (m.ok) {
 					frappe.show_alert({
-						message: __("Openclaw Reachable at {0}", [m.agent_url || "?"]),
+						message: __("Agent Reachable at {0}", [m.agent_url || "?"]),
 						indicator: "green",
 					});
 				} else {
 					frappe.msgprint({
-						title: __("Openclaw Connection Failed ({0})", [m.kind || "error"]),
+						title: __("Agent Connection Failed ({0})", [m.kind || "error"]),
 						message: m.error || "unknown",
 						indicator: "red",
 					});

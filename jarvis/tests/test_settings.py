@@ -1,6 +1,54 @@
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
+# Fields these tests mutate on the Jarvis Settings singleton. Snapshotted in
+# setUpClass / restored in tearDownClass so a stray failure or new test that
+# forgets to clean up cannot leak fixture values into the live UI.
+_SNAPSHOT_PLAIN_FIELDS = (
+	"jarvis_admin_url",
+	"agent_url",
+	"agent_llm_key_path",
+	"agent_config_path",
+	"agent_compose_dir",
+	"llm_provider",
+	"llm_model",
+	"llm_base_url",
+	"last_sync_status",
+	"last_sync_at",
+)
+_SNAPSHOT_PASSWORD_FIELDS = (
+	"jarvis_admin_api_key",
+	"agent_token",
+	"llm_api_key",
+)
+
+
+class _SettingsSnapshotTestCase(FrappeTestCase):
+	"""Snapshot the Jarvis Settings singleton at class entry; restore at exit.
+
+	Password fields are read via get_password() (cleartext) — settings.get(...)
+	returns the masked "*****" string for those and would round-trip wrong.
+	"""
+
+	@classmethod
+	def setUpClass(cls):
+		super().setUpClass()
+		s = frappe.get_single("Jarvis Settings")
+		snapshot: dict[str, object] = {f: s.get(f) for f in _SNAPSHOT_PLAIN_FIELDS}
+		for f in _SNAPSHOT_PASSWORD_FIELDS:
+			snapshot[f] = s.get_password(f, raise_exception=False) or ""
+		cls._jarvis_settings_snapshot = snapshot
+
+	@classmethod
+	def tearDownClass(cls):
+		try:
+			s = frappe.get_single("Jarvis Settings")
+			for field, value in cls._jarvis_settings_snapshot.items():
+				s.db_set(field, value)
+			frappe.db.commit()
+		finally:
+			super().tearDownClass()
+
 
 EXPECTED_PROVIDERS = {
     "Anthropic",
@@ -118,7 +166,7 @@ class TestJarvisSettings(FrappeTestCase):
         self.assertTrue(fields_by_name["last_sync_status"].read_only)
 
 
-class TestOnUpdateAdminDispatch(FrappeTestCase):
+class TestOnUpdateAdminDispatch(_SettingsSnapshotTestCase):
 	"""Tests for the admin-path branch added in Plan 3.2.2b.
 
 	When jarvis_admin_url is set, on_update routes through
@@ -128,23 +176,12 @@ class TestOnUpdateAdminDispatch(FrappeTestCase):
 
 	def setUp(self):
 		self.settings = frappe.get_single("Jarvis Settings")
-		# Snapshot fields we'll mutate so tearDown can restore
-		self._original_admin_url = self.settings.jarvis_admin_url or ""
-		self._original_admin_key = self.settings.get_password("jarvis_admin_api_key", raise_exception=False) or ""
-		# Set the admin path "on"
 		self.settings.db_set("jarvis_admin_url", "https://admin.example.com")
 		self.settings.db_set("jarvis_admin_api_key", "test-token")
-		# Set a known llm_provider so changing api_key triggers reload
 		self.settings.db_set("llm_provider", "Anthropic")
 		self.settings.db_set("llm_model", "claude-sonnet-4-6")
 		self.settings.db_set("llm_base_url", "https://api.anthropic.com")
 		self.settings.db_set("llm_api_key", "sk-original")
-		frappe.db.commit()
-
-	def tearDown(self):
-		s = frappe.get_single("Jarvis Settings")
-		s.db_set("jarvis_admin_url", self._original_admin_url)
-		s.db_set("jarvis_admin_api_key", self._original_admin_key)
 		frappe.db.commit()
 
 	def _save_with_new_api_key(self, new_key="sk-new"):
@@ -198,15 +235,14 @@ class TestOnUpdateAdminDispatch(FrappeTestCase):
 		self.assertIn("connection refused", s.last_sync_status)
 
 
-class TestOnUpdateLocalDispatchWhenAdminUrlEmpty(FrappeTestCase):
+class TestOnUpdateLocalDispatchWhenAdminUrlEmpty(_SettingsSnapshotTestCase):
 	"""Verify the dispatcher routes to the local path when jarvis_admin_url is
 	empty (the dev / Phase 1 invariant)."""
 
 	def setUp(self):
 		s = frappe.get_single("Jarvis Settings")
-		self._original_admin_url = s.jarvis_admin_url or ""
 		s.db_set("jarvis_admin_url", "")
-		# Local path needs operator fields configured too — populate with stubs
+		s.db_set("jarvis_admin_api_key", "")
 		s.db_set("agent_url", "ws://localhost:18789")
 		s.db_set("agent_token", "stub-token")
 		s.db_set("agent_llm_key_path", "/tmp/stub-key")
@@ -216,11 +252,6 @@ class TestOnUpdateLocalDispatchWhenAdminUrlEmpty(FrappeTestCase):
 		s.db_set("llm_model", "claude-sonnet-4-6")
 		s.db_set("llm_base_url", "https://api.anthropic.com")
 		s.db_set("llm_api_key", "sk-original-local")
-		frappe.db.commit()
-
-	def tearDown(self):
-		s = frappe.get_single("Jarvis Settings")
-		s.db_set("jarvis_admin_url", self._original_admin_url)
 		frappe.db.commit()
 
 	def test_local_path_invoked_when_admin_url_empty(self):
