@@ -16,6 +16,7 @@ from jarvis.admin_client import (
 	DEFAULT_TIMEOUT_S,
 	AdminAuthError,
 	AdminUnreachableError,
+	AdminValidationError,
 	post_update_llm_creds,
 )
 
@@ -204,6 +205,57 @@ class TestAdminErrorResponses(FrappeTestCase):
 			with self.assertRaises(AdminUnreachableError) as cm:
 				post_update_llm_creds("p", "m", "b", "k")
 		self.assertIn("NoRunningTenant", str(cm.exception))
+
+	def test_frappe_validation_error_surfaces_clean_message(self):
+		"""When admin raises frappe.ValidationError inside a whitelisted endpoint
+		(e.g. dev_force_signup → _reject_duplicate_email), the response body has
+		Frappe's exc_type/_server_messages envelope, not the {ok, error} shape.
+		We extract the user-facing message and raise AdminValidationError."""
+		mock_post = MagicMock(return_value=_mock_response(
+			417,
+			json_body={
+				"exception": "frappe.exceptions.ValidationError: An active account already exists for venkat@aerele.in",
+				"exc_type": "ValidationError",
+				"_server_messages": '["{\\"message\\": \\"An active account already exists for venkat@aerele.in\\", \\"indicator\\": \\"red\\"}"]',
+				"exc": "[\"Traceback (most recent call last):\\n...\"]",
+			},
+		))
+		with patch("requests.post", mock_post):
+			with self.assertRaises(AdminValidationError) as cm:
+				post_update_llm_creds("p", "m", "b", "k")
+		self.assertEqual(str(cm.exception),
+						 "An active account already exists for venkat@aerele.in")
+		# No traceback dump should leak into the message.
+		self.assertNotIn("Traceback", str(cm.exception))
+		self.assertNotIn("frappe.exceptions.", str(cm.exception))
+
+	def test_frappe_validation_error_falls_back_to_exception_string(self):
+		"""If _server_messages is missing/empty, parse the message from the
+		`exception` field by stripping the class prefix."""
+		mock_post = MagicMock(return_value=_mock_response(
+			417,
+			json_body={
+				"exception": "frappe.exceptions.DuplicateEntryError: Customer C-001 already exists",
+				"exc_type": "DuplicateEntryError",
+			},
+		))
+		with patch("requests.post", mock_post):
+			with self.assertRaises(AdminValidationError) as cm:
+				post_update_llm_creds("p", "m", "b", "k")
+		self.assertEqual(str(cm.exception), "Customer C-001 already exists")
+
+	def test_frappe_permission_error_routes_to_auth_error(self):
+		mock_post = MagicMock(return_value=_mock_response(
+			403,
+			json_body={
+				"exception": "frappe.exceptions.PermissionError: customer status: Suspended",
+				"exc_type": "PermissionError",
+			},
+		))
+		with patch("requests.post", mock_post):
+			with self.assertRaises(AdminAuthError) as cm:
+				post_update_llm_creds("p", "m", "b", "k")
+		self.assertEqual(str(cm.exception), "customer status: Suspended")
 
 
 class TestNonJsonResponse(FrappeTestCase):

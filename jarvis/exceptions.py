@@ -32,3 +32,9 @@ class AdminUnreachableError(JarvisError):
 
 class AdminAuthError(JarvisError):
 	"""jarvis_admin rejected the token / site (401 / 403)."""
+
+
+class AdminValidationError(JarvisError):
+	"""jarvis_admin raised a Frappe ValidationError (or similar user-input
+	error) inside a whitelisted endpoint. Carries the clean operator-facing
+	message — never the traceback dump."""
