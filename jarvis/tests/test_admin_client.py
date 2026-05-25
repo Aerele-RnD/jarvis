@@ -115,6 +115,36 @@ class TestHeaders(FrappeTestCase):
 		with self.assertRaises(AdminAuthError):
 			post_update_llm_creds("p", "m", "b", "k")
 
+	def test_api_key_decrypted_via_get_password_not_attribute(self):
+		"""Regression: jarvis_admin_api_key is a Password field. Attribute
+		access on the settings doc returns Frappe's masked "*****" placeholder;
+		only get_password() decrypts the real value out of __Auth. The previous
+		bug read the attribute and shipped "*****" as the api_key, which admin
+		rejected with 401 (see signup flow last_sync_status leakage)."""
+		captured = {}
+
+		def _fake_post(url, json=None, headers=None, timeout=None):
+			captured["headers"] = headers
+			return _mock_response(200, json_body={"message": {"ok": True, "data": {"action": "reload"}}})
+
+		fake_settings = MagicMock()
+		# Mimic the production load: attribute is the masked placeholder.
+		fake_settings.jarvis_admin_api_key = "*****"
+		fake_settings.jarvis_admin_url = "https://admin.example.com"
+		# get_password returns the decrypted real value.
+		def _get_password(field, raise_exception=False):
+			return {"jarvis_admin_api_key": "real-key-xyz",
+					"jarvis_admin_api_secret": "real-secret-abc"}.get(field, "")
+		fake_settings.get_password.side_effect = _get_password
+
+		with patch("frappe.get_single", return_value=fake_settings), \
+			 patch("requests.post", side_effect=_fake_post):
+			post_update_llm_creds("p", "m", "b", "k")
+
+		self.assertEqual(captured["headers"]["Authorization"],
+						 "token real-key-xyz:real-secret-abc")
+		self.assertNotIn("*", captured["headers"]["Authorization"])
+
 
 class TestNetworkErrors(FrappeTestCase):
 	def setUp(self):
