@@ -7,6 +7,18 @@ import json
 import frappe
 
 from jarvis import admin_client
+from jarvis.exceptions import AdminValidationError
+
+
+def _surface(fn, *args, **kwargs):
+	"""Run an admin_client call; re-raise admin validation errors as
+	frappe.ValidationError so the onboarding page gets a clean operator-facing
+	message (and Frappe's standard red toast) instead of a long traceback dump
+	from AdminUnreachableError."""
+	try:
+		return fn(*args, **kwargs)
+	except AdminValidationError as e:
+		frappe.throw(str(e))
 
 
 def write_connection(data: dict) -> None:
@@ -49,7 +61,7 @@ def list_plans() -> list:
 @frappe.whitelist()
 def start_signup(email: str, company: str, plan: str) -> dict:
 	"""Guest signup → store the api_token → return the Razorpay handles for Checkout."""
-	data = admin_client.signup(email, company, plan)
+	data = _surface(admin_client.signup, email, company, plan)
 	if data.get("api_token"):
 		write_connection({"api_token": data["api_token"]})
 	return data
@@ -60,7 +72,7 @@ def finish_payment(payload) -> dict:
 	"""Confirm Checkout success → store the returned container connection."""
 	if isinstance(payload, str):
 		payload = json.loads(payload)
-	data = admin_client.confirm_payment(payload)
+	data = _surface(admin_client.confirm_payment, payload)
 	write_connection(data)
 	return data
 
@@ -69,7 +81,7 @@ def finish_payment(payload) -> dict:
 def renew() -> dict:
 	"""Existing customer initiates a renewal payment; returns the Razorpay handles
 	for Checkout. The page then completes Checkout and calls finish_payment."""
-	return admin_client.renew()
+	return _surface(admin_client.renew)
 
 
 @frappe.whitelist()
@@ -105,6 +117,6 @@ def dev_onboard(email: str, company: str, plan: str) -> dict:
 	settings = frappe.get_single("Jarvis Settings")
 	if not (settings.jarvis_admin_url or "").strip():
 		settings.db_set("jarvis_admin_url", frappe.utils.get_url())
-	data = admin_client.dev_signup(email, company, plan)
+	data = _surface(admin_client.dev_signup, email, company, plan)
 	write_connection(data)
 	return data

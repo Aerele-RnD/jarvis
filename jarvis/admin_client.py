@@ -11,7 +11,7 @@ endpoints are @frappe.whitelist(allow_guest=True).
 import frappe
 import requests
 
-from jarvis.exceptions import AdminAuthError, AdminUnreachableError
+from jarvis.exceptions import AdminAuthError, AdminUnreachableError, AdminValidationError
 
 
 # Admin's provision_healthz_timeout_s defaults to 60s for restart operations;
@@ -123,6 +123,31 @@ def _post_guest(path: str, body: dict, admin_url: str,
 	return _do_post(admin_url + path, body, headers, timeout_s, admin_url)
 
 
+def _extract_frappe_message(payload: dict) -> str:
+	"""Pull the user-facing message out of a Frappe exception envelope.
+
+	Frappe encodes user-visible alerts under `_server_messages` (a JSON-encoded
+	list of JSON-encoded dicts with a `message` key). When that's empty, fall
+	back to the `exception` string and strip the leading `module.path.ClassName: `
+	prefix so we don't leak Python internals to the operator."""
+	import json as _json
+	raw = (payload.get("_server_messages") or "").strip()
+	if raw:
+		try:
+			messages = _json.loads(raw)
+			if messages:
+				first = _json.loads(messages[0]) if isinstance(messages[0], str) else messages[0]
+				msg = (first or {}).get("message") or ""
+				if msg:
+					return msg
+		except (ValueError, TypeError):
+			pass
+	exc = (payload.get("exception") or "").strip()
+	if ":" in exc:
+		return exc.split(":", 1)[1].strip()
+	return exc or payload.get("exc_type") or "unknown admin error"
+
+
 def _do_post(url: str, body: dict, headers: dict, timeout_s: int, admin_url: str) -> dict:
 	try:
 		resp = requests.post(url, json=body, headers=headers, timeout=timeout_s)
@@ -135,6 +160,19 @@ def _do_post(url: str, body: dict, headers: dict, timeout_s: int, admin_url: str
 		raise AdminUnreachableError(
 			f"admin {admin_url} returned non-JSON (status {resp.status_code})"
 		)
+
+	# Frappe wraps any exception raised inside a whitelisted endpoint into an
+	# envelope with `exc_type`. We surface those before the generic 4xx/5xx
+	# branches so user-input errors (ValidationError, DuplicateEntryError,
+	# DoesNotExistError) reach the page as clean text instead of a traceback dump.
+	if isinstance(payload, dict) and payload.get("exc_type"):
+		clean = _extract_frappe_message(payload)
+		exc_type = payload.get("exc_type", "")
+		if exc_type in ("ValidationError", "DuplicateEntryError", "DoesNotExistError"):
+			raise AdminValidationError(clean)
+		if exc_type in ("AuthenticationError", "PermissionError"):
+			raise AdminAuthError(clean)
+		raise AdminUnreachableError(f"admin {admin_url}: {clean}")
 
 	envelope = payload.get("message", payload) if isinstance(payload, dict) else payload
 
