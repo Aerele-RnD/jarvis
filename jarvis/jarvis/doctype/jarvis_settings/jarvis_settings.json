@@ -30,6 +30,10 @@
     "agent_llm_key_path",
     "agent_config_path",
     "agent_compose_dir",
+    "chat_device_id",
+    "chat_device_public_key",
+    "chat_device_private_key",
+    "chat_device_token",
     "last_sync_section",
     "last_sync_at",
     "last_sync_status"
@@ -183,6 +187,34 @@
       "label": "Agent Compose Directory",
       "read_only": 1,
       "description": "Directory containing docker-compose.yml (auto-populated by jarvis.openclaw_bootstrap.start in dev; by admin signup response in prod)"
+    },
+    {
+      "fieldname": "chat_device_id",
+      "fieldtype": "Data",
+      "label": "Chat Device ID",
+      "read_only": 1,
+      "description": "sha256(rawPublicKey).hex — openclaw deviceId this bench was paired as. Set lazily on first chat; cleared on re-pair."
+    },
+    {
+      "fieldname": "chat_device_public_key",
+      "fieldtype": "Long Text",
+      "label": "Chat Device Public Key",
+      "read_only": 1,
+      "description": "Base64url-encoded Ed25519 public key registered with openclaw at pair time."
+    },
+    {
+      "fieldname": "chat_device_private_key",
+      "fieldtype": "Password",
+      "label": "Chat Device Private Key",
+      "read_only": 1,
+      "description": "Base64url-encoded Ed25519 private key. Never leaves this bench. Used to sign the connect challenge at every chat WS handshake."
+    },
+    {
+      "fieldname": "chat_device_token",
+      "fieldtype": "Password",
+      "label": "Chat Device Token",
+      "read_only": 1,
+      "description": "Bearer token openclaw issued at pair time. Sent in auth.deviceToken at every chat WS connect."
     },
     {
       "fieldname": "last_sync_section",

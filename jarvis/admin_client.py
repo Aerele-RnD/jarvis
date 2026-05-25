@@ -91,6 +91,18 @@ def post_update_llm_creds(
 	)
 
 
+def pair_chat_device(public_key: str, device_id: str) -> dict:
+	"""POST customer's chat device pubkey to admin; admin asks the fleet-agent
+	to write a PairedDevice record into the customer's openclaw container and
+	returns the issued bearer device-token. Customer keeps the private key."""
+	settings = frappe.get_single("Jarvis Settings")
+	return _post(
+		path="/api/method/jarvis_admin.api.tenant.pair_chat_device",
+		body={"public_key": public_key, "device_id": device_id},
+		admin_url=_admin_url(settings),
+	)
+
+
 def _post(path: str, body: dict, admin_url: str,
 		  timeout_s: int = DEFAULT_TIMEOUT_S) -> dict:
 	"""Authenticated POST. Reads native api_key + api_secret from Jarvis

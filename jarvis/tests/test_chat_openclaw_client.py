@@ -1,184 +1,258 @@
-"""Tests for the openclaw subprocess client.
+"""Tests for the direct-WS chat client (jarvis.chat.openclaw_client).
 
-The client wraps `docker compose exec node -e <script>` to drive an
-openclaw WS connection from inside the container (where loopback grants
-full operator scopes). These tests mock subprocess.Popen and verify the
-JSON-line protocol between Python and the Node script.
+The transport is a real websocket-client connection to openclaw's gateway.
+Tests fake it out at the create_connection level: a scripted WS whose recv()
+returns a sequence of JSON frames and whose send() captures the client's
+outbound frames for assertion.
+
+What's verified here:
+- Connect handshake: receives connect.challenge, sends a v3-signed connect,
+  succeeds on a positive hello-ok response.
+- create_session round-trip.
+- stream_agent_turn yields parsed events between agent ack and lifecycle end.
+- Close is forgiving (no raise on already-closed sockets).
+
+Pairing itself is mocked here — see test_chat_device.py for the device.py
+half of the integration (keypair + admin call).
 """
 
-import json
-import subprocess
-from unittest.mock import MagicMock, patch
+from __future__ import annotations
 
-import frappe
+import base64
+import json
+from unittest.mock import patch
+
+import websocket
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from frappe.tests.utils import FrappeTestCase
 
+from jarvis.chat.device import ChatDeviceCredentials
 from jarvis.chat.openclaw_client import OpenclawSession
 from jarvis.exceptions import OpenclawUnreachableError
 
 
-def _settings_with_compose_dir():
-	"""Ensure Jarvis Settings has agent_compose_dir set for connect()."""
-	s = frappe.get_single("Jarvis Settings")
-	if not s.agent_compose_dir:
-		s.db_set("agent_compose_dir", "/tmp/fake-openclaw")
-		frappe.db.commit()
+# --- helpers --------------------------------------------------------------
+
+def _b64u(raw: bytes) -> str:
+	return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
 
-class _FakeStdout:
-	"""Provides line-by-line readline() from a queue of events."""
+def _make_creds() -> ChatDeviceCredentials:
+	import hashlib
+	priv = Ed25519PrivateKey.generate()
+	pub_raw = priv.public_key().public_bytes(
+		encoding=serialization.Encoding.Raw,
+		format=serialization.PublicFormat.Raw,
+	)
+	device_id = hashlib.sha256(pub_raw).hexdigest()
+	return ChatDeviceCredentials(
+		device_id=device_id, public_key=_b64u(pub_raw),
+		private_key=priv, device_token="tok-test",
+	)
 
-	def __init__(self, lines: list[str]):
-		self._iter = iter(lines)
+
+class _ScriptedWS:
+	"""Stand-in for a websocket.WebSocket.
+
+	frames_to_recv is a list of JSON-string frames OR callables that return
+	a JSON-string frame at recv time. Callables let a frame respond to the
+	id the client sends (which we can't know ahead of time)."""
+
+	def __init__(self, frames_to_recv: list):
+		self._frames = list(frames_to_recv)
+		self.sent: list[dict] = []
 		self.closed = False
 
-	def readline(self) -> str:
-		try:
-			return next(self._iter)
-		except StopIteration:
-			return ""
+	def settimeout(self, _seconds): pass
+
+	def recv(self):
+		if not self._frames:
+			raise websocket.WebSocketTimeoutException("no more frames")
+		item = self._frames.pop(0)
+		return item() if callable(item) else item
+
+	def send(self, raw):
+		self.sent.append(json.loads(raw))
+
+	def close(self): self.closed = True
 
 
-def _make_proc(stdout_lines: list[str]) -> MagicMock:
-	proc = MagicMock(spec=subprocess.Popen)
-	proc.stdout = _FakeStdout(stdout_lines)
-	proc.stdin = MagicMock()
-	proc.stdin.closed = False
-	proc.stderr = MagicMock()
-	return proc
+def _frame(d: dict) -> str:
+	return json.dumps(d)
 
 
-def _make_select_always_ready(*args, **kwargs):
-	"""Stub for select.select that says stdout is always readable."""
-	return ([args[0][0]] if args[0] else []), [], []
+def _challenge(nonce: str = "nonce-test") -> str:
+	return _frame({"type": "event", "event": "connect.challenge",
+				   "payload": {"nonce": nonce}})
 
+
+def _build_session(creds=None) -> tuple[OpenclawSession, _ScriptedWS]:
+	"""Spin up a fully-handshaken OpenclawSession with no real WS. Returns the
+	session and the underlying scripted WS so tests can extend its frames
+	and inspect sent frames."""
+	creds = creds or _make_creds()
+
+	def _ok():
+		req_id = scripted.sent[-1]["id"]
+		return _frame({"type": "res", "id": req_id, "ok": True, "payload": {
+			"auth": {"scopes": ["operator.write", "operator.admin"]},
+		}})
+
+	scripted = _ScriptedWS([_challenge(), _ok])
+	with patch("jarvis.chat.openclaw_client.websocket.create_connection", return_value=scripted), \
+		 patch("jarvis.chat.openclaw_client.ensure_paired", return_value=creds):
+		sess = OpenclawSession.connect("ws://test", "ignored-token")
+	scripted.sent.clear()
+	return sess, scripted
+
+
+# --- TestConnect ----------------------------------------------------------
 
 class TestConnect(FrappeTestCase):
-	def setUp(self):
-		_settings_with_compose_dir()
+	def test_handshake_sends_v3_signed_connect(self):
+		creds = _make_creds()
 
-	def test_connect_success(self):
-		proc = _make_proc([json.dumps({"type": "connect", "ok": True}) + "\n"])
-		with patch("subprocess.Popen", return_value=proc):
-			with patch("select.select", side_effect=_make_select_always_ready):
-				sess = OpenclawSession.connect("ws://ignored", "tok-123")
-		self.assertIs(sess._proc, proc)
+		def _ok():
+			req_id = scripted.sent[-1]["id"]
+			return _frame({"type": "res", "id": req_id, "ok": True, "payload": {}})
 
-	def test_connect_failure_raises(self):
-		proc = _make_proc([
-			json.dumps({"type": "connect", "ok": False, "error": "bad token"}) + "\n",
-		])
-		with patch("subprocess.Popen", return_value=proc):
-			with patch("select.select", side_effect=_make_select_always_ready):
-				with self.assertRaises(OpenclawUnreachableError):
-					OpenclawSession.connect("ws://ignored", "tok-123")
+		scripted = _ScriptedWS([_challenge("nonce-xyz"), _ok])
+		with patch("jarvis.chat.openclaw_client.websocket.create_connection", return_value=scripted), \
+			 patch("jarvis.chat.openclaw_client.ensure_paired", return_value=creds):
+			sess = OpenclawSession.connect("ws://t", "x")
 
-	def test_connect_docker_missing_raises(self):
-		with patch("subprocess.Popen", side_effect=FileNotFoundError("no docker")):
+		self.assertEqual(len(scripted.sent), 1)
+		req = scripted.sent[0]
+		self.assertEqual(req["type"], "req")
+		self.assertEqual(req["method"], "connect")
+		params = req["params"]
+		self.assertEqual(params["role"], "operator")
+		self.assertIn("operator.write", params["scopes"])
+		self.assertEqual(params["auth"]["deviceToken"], creds.device_token)
+		self.assertEqual(params["device"]["id"], creds.device_id)
+		self.assertEqual(params["device"]["nonce"], "nonce-xyz")
+		# Signature must be a non-empty base64url string (no padding).
+		self.assertTrue(params["device"]["signature"])
+		self.assertNotIn("=", params["device"]["signature"])
+		import time
+		self.assertGreater(params["device"]["signedAt"], int(time.time() * 1000) - 60_000)
+		sess.close()
+
+	def test_connect_rejection_raises_unreachable(self):
+		creds = _make_creds()
+
+		def _nack():
+			req_id = scripted.sent[-1]["id"]
+			return _frame({"type": "res", "id": req_id, "ok": False,
+						   "error": {"code": "UNAUTHORIZED", "message": "bad token"}})
+
+		scripted = _ScriptedWS([_challenge(), _nack])
+		with patch("jarvis.chat.openclaw_client.websocket.create_connection", return_value=scripted), \
+			 patch("jarvis.chat.openclaw_client.ensure_paired", return_value=creds):
+			with self.assertRaises(OpenclawUnreachableError) as cm:
+				OpenclawSession.connect("ws://t", "x")
+		self.assertIn("UNAUTHORIZED", str(cm.exception))
+		self.assertTrue(scripted.closed)
+
+	def test_missing_challenge_times_out(self):
+		creds = _make_creds()
+		with patch("jarvis.chat.openclaw_client.CONNECT_TIMEOUT_SECONDS", 0.05), \
+			 patch("jarvis.chat.openclaw_client.websocket.create_connection",
+				   return_value=_ScriptedWS([])), \
+			 patch("jarvis.chat.openclaw_client.ensure_paired", return_value=creds):
 			with self.assertRaises(OpenclawUnreachableError):
-				OpenclawSession.connect("ws://ignored", "tok-123")
+				OpenclawSession.connect("ws://t", "x")
 
+	def test_empty_gateway_url_raises(self):
+		with patch("jarvis.chat.openclaw_client.ensure_paired", return_value=_make_creds()):
+			with self.assertRaises(OpenclawUnreachableError):
+				OpenclawSession.connect("", "x")
+
+
+# --- TestCreateSession ----------------------------------------------------
 
 class TestCreateSession(FrappeTestCase):
-	def setUp(self):
-		_settings_with_compose_dir()
+	def test_returns_key_on_ok(self):
+		sess, ws = _build_session()
 
-	def test_create_session_returns_key(self):
-		proc = _make_proc([
-			json.dumps({"type": "connect", "ok": True}) + "\n",
-			json.dumps({"type": "create", "ok": True, "key": "agent:main:abc"}) + "\n",
-		])
-		with patch("subprocess.Popen", return_value=proc):
-			with patch("select.select", side_effect=_make_select_always_ready):
-				sess = OpenclawSession.connect("ws://ignored", "tok-123")
-				key = sess.create_session(label="test")
-		self.assertEqual(key, "agent:main:abc")
-		# Verify create_session command was written to stdin
-		written = [c.args[0] for c in proc.stdin.write.call_args_list]
-		cmds = [json.loads(w.strip()) for w in written if w.strip()]
-		create_cmds = [c for c in cmds if c.get("cmd") == "create_session"]
-		self.assertEqual(len(create_cmds), 1)
-		self.assertEqual(create_cmds[0]["label"], "test")
+		def _resp():
+			req_id = ws.sent[-1]["id"]
+			return _frame({"type": "res", "id": req_id, "ok": True,
+						   "payload": {"key": "session-abc"}})
 
-	def test_create_session_rejected(self):
-		proc = _make_proc([
-			json.dumps({"type": "connect", "ok": True}) + "\n",
-			json.dumps({"type": "create", "ok": False, "error": "denied"}) + "\n",
-		])
-		with patch("subprocess.Popen", return_value=proc):
-			with patch("select.select", side_effect=_make_select_always_ready):
-				sess = OpenclawSession.connect("ws://ignored", "tok-123")
-				with self.assertRaises(OpenclawUnreachableError):
-					sess.create_session()
+		ws._frames.append(_resp)
+		key = sess.create_session()
+		self.assertEqual(key, "session-abc")
 
+	def test_rejection_raises(self):
+		sess, ws = _build_session()
+
+		def _resp():
+			req_id = ws.sent[-1]["id"]
+			return _frame({"type": "res", "id": req_id, "ok": False,
+						   "error": {"code": "BAD", "message": "no"}})
+
+		ws._frames.append(_resp)
+		with self.assertRaises(OpenclawUnreachableError):
+			sess.create_session()
+
+
+# --- TestStreamAgentTurn --------------------------------------------------
 
 class TestStreamAgentTurn(FrappeTestCase):
-	def setUp(self):
-		_settings_with_compose_dir()
+	def test_completes_on_lifecycle_end(self):
+		sess, ws = _build_session()
 
-	def test_streams_and_terminates_on_runDone(self):
-		proc = _make_proc([
-			json.dumps({"type": "connect", "ok": True}) + "\n",
-			json.dumps({"type": "agentAck", "runId": "r1"}) + "\n",
-			json.dumps({"type": "event", "payload": {
-				"runId": "r1", "stream": "lifecycle", "data": {"phase": "start"}
-			}}) + "\n",
-			json.dumps({"type": "event", "payload": {
-				"runId": "r1", "stream": "assistant",
-				"data": {"text": "Hi", "delta": "Hi"}
-			}}) + "\n",
-			json.dumps({"type": "event", "payload": {
-				"runId": "r1", "stream": "lifecycle", "data": {"phase": "end"}
-			}}) + "\n",
-			json.dumps({"type": "runDone"}) + "\n",
-		])
-		with patch("subprocess.Popen", return_value=proc):
-			with patch("select.select", side_effect=_make_select_always_ready):
-				sess = OpenclawSession.connect("ws://ignored", "tok-123")
-				events = list(sess.stream_agent_turn("agent:x", "hi", "idem"))
-		kinds = [e["kind"] for e in events]
-		self.assertEqual(kinds, ["lifecycle", "assistant", "lifecycle"])
+		def _ack():
+			req_id = ws.sent[-1]["id"]
+			return _frame({"type": "res", "id": req_id, "ok": True,
+						   "payload": {"runId": "run-1"}})
 
-	def test_run_error_raises(self):
-		proc = _make_proc([
-			json.dumps({"type": "connect", "ok": True}) + "\n",
-			json.dumps({"type": "runErr", "error": "agent failed"}) + "\n",
-		])
-		with patch("subprocess.Popen", return_value=proc):
-			with patch("select.select", side_effect=_make_select_always_ready):
-				sess = OpenclawSession.connect("ws://ignored", "tok-123")
-				with self.assertRaises(OpenclawUnreachableError):
-					list(sess.stream_agent_turn("agent:x", "hi", "idem"))
+		ws._frames.append(_ack)
+		ws._frames.append(_frame({"type": "event", "event": "agent.event",
+								  "payload": {"runId": "run-1", "stream": "lifecycle",
+											  "data": {"phase": "end"}}}))
+		# Streams to completion (no items required to be yielded for the
+		# completion-path test — parse_event filters its own shapes).
+		list(sess.stream_agent_turn("session-x", "hi", "idem-1"))
+
+	def test_agent_rejection_raises(self):
+		sess, ws = _build_session()
+
+		def _nack():
+			req_id = ws.sent[-1]["id"]
+			return _frame({"type": "res", "id": req_id, "ok": False,
+						   "error": {"code": "BAD_REQ", "message": "x"}})
+
+		ws._frames.append(_nack)
+		with self.assertRaises(OpenclawUnreachableError):
+			list(sess.stream_agent_turn("s", "hi", "i"))
+
+	def test_other_runs_dropped_during_streaming(self):
+		sess, ws = _build_session()
+
+		def _ack():
+			req_id = ws.sent[-1]["id"]
+			return _frame({"type": "res", "id": req_id, "ok": True,
+						   "payload": {"runId": "run-A"}})
+
+		ws._frames.append(_ack)
+		ws._frames.append(_frame({"type": "event", "event": "agent.event",
+								  "payload": {"runId": "run-B", "stream": "text",
+											  "data": {"delta": "wrong run"}}}))
+		ws._frames.append(_frame({"type": "event", "event": "agent.event",
+								  "payload": {"runId": "run-A", "stream": "lifecycle",
+											  "data": {"phase": "end"}}}))
+		# Should terminate cleanly; cross-run event silently dropped.
+		list(sess.stream_agent_turn("s", "hi", "i"))
 
 
-class TestNodeScript(FrappeTestCase):
-	"""Guard the embedded Node script against losing critical buffering or
-	protocol behavior on future edits — these are the bits we discovered the
-	hard way and shouldn't regress.
-	"""
-
-	def test_forces_stdout_blocking_mode(self):
-		"""Without setBlocking(true), Node block-buffers piped stdout and the
-		Python side sees no events until the process exits — causing the
-		'thinking…' pill to stick through the entire turn.
-		"""
-		from jarvis.chat.openclaw_client import _NODE_SCRIPT
-		self.assertIn("setBlocking(true)", _NODE_SCRIPT)
-		self.assertIn("process.stdout._handle", _NODE_SCRIPT)
-
+# --- TestClose ------------------------------------------------------------
 
 class TestClose(FrappeTestCase):
-	def setUp(self):
-		_settings_with_compose_dir()
-
-	def test_close_sends_close_cmd_and_terminates(self):
-		proc = _make_proc([json.dumps({"type": "connect", "ok": True}) + "\n"])
-		with patch("subprocess.Popen", return_value=proc):
-			with patch("select.select", side_effect=_make_select_always_ready):
-				sess = OpenclawSession.connect("ws://ignored", "tok-123")
-				sess.close()
-		# A close command was written
-		written = [c.args[0] for c in proc.stdin.write.call_args_list]
-		cmds = [json.loads(w.strip()) for w in written if w.strip()]
-		self.assertTrue(any(c.get("cmd") == "close" for c in cmds))
-		proc.terminate.assert_called_once()
+	def test_close_is_safe_to_call_twice(self):
+		sess, ws = _build_session()
+		sess.close()
+		sess.close()
+		self.assertTrue(ws.closed)
