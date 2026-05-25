@@ -8,9 +8,12 @@ from frappe.tests.utils import FrappeTestCase
 from jarvis import onboarding
 
 
-def _set_token(value):
+def _set_token(value, secret="secret"):
+	"""Set both native credentials for tests that exercise the authenticated
+	admin path. value="" clears them (simulates 'not onboarded')."""
 	s = frappe.get_single("Jarvis Settings")
 	s.db_set("jarvis_admin_api_key", value)
+	s.db_set("jarvis_admin_api_secret", secret if value else "")
 	s.db_set("agent_url", "")
 	frappe.db.commit()
 
@@ -20,7 +23,8 @@ def _set_token(value):
 # operator's actual onboarded state — Frappe Singles aren't transactionally
 # rolled back between tests.
 _SNAPSHOTTED_FIELDS = (
-	"jarvis_admin_url", "jarvis_admin_api_key", "agent_url", "agent_token",
+	"jarvis_admin_url", "jarvis_admin_api_key", "jarvis_admin_api_secret",
+	"agent_url", "agent_token",
 )
 
 
@@ -29,7 +33,7 @@ def _snapshot_settings() -> dict:
 	snap = {}
 	for f in _SNAPSHOTTED_FIELDS:
 		# Password fields → get_password; plain → attribute. Both safe.
-		v = s.get_password(f, raise_exception=False) if f.endswith(("_key", "_token")) else s.get(f)
+		v = s.get_password(f, raise_exception=False) if f.endswith(("_key", "_secret", "_token")) else s.get(f)
 		snap[f] = v or ""
 	return snap
 
@@ -71,13 +75,15 @@ class TestSyncConnection(FrappeTestCase):
 		self.assertFalse(out["synced"])
 		self.assertEqual(out["reason"], "not onboarded")
 
-	def test_dev_onboard_writes_token_and_connection(self):
+	def test_dev_onboard_writes_native_credentials_and_connection(self):
 		_set_token("")
 		with patch("jarvis.onboarding.admin_client.dev_signup",
-				   return_value={"customer": "C1", "api_token": "devtok", "agent_url": "ws://localhost:19002", "agent_token": "k"}):
+				   return_value={"customer": "C1", "api_key": "k2", "api_secret": "s2",
+								 "agent_url": "ws://localhost:19002", "agent_token": "tok"}):
 			onboarding.dev_onboard("e@x.com", "Co", "Annual Plan")
 		s = frappe.get_single("Jarvis Settings")
-		self.assertEqual(s.get_password("jarvis_admin_api_key"), "devtok")
+		self.assertEqual(s.get_password("jarvis_admin_api_key"), "k2")
+		self.assertEqual(s.get_password("jarvis_admin_api_secret"), "s2")
 		self.assertEqual(s.agent_url, "ws://localhost:19002")
 
 	def test_dev_onboard_defaults_admin_url_when_empty(self):
@@ -87,7 +93,7 @@ class TestSyncConnection(FrappeTestCase):
 		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "jarvis_admin_url", "")
 		frappe.db.commit()
 		with patch("jarvis.onboarding.admin_client.dev_signup",
-				   return_value={"api_token": "t", "agent_url": "ws://h:1", "agent_token": "k"}):
+				   return_value={"api_key": "k", "api_secret": "s", "agent_url": "ws://h:1", "agent_token": "t"}):
 			onboarding.dev_onboard("e2@x.com", "Co", "Annual Plan")
 		s = frappe.get_single("Jarvis Settings")
 		self.assertEqual(s.jarvis_admin_url, frappe.utils.get_url())
@@ -101,10 +107,19 @@ class TestSyncConnection(FrappeTestCase):
 		frappe.db.commit()
 		try:
 			with patch("jarvis.onboarding.admin_client.dev_signup",
-					   return_value={"api_token": "t", "agent_url": "ws://h:1", "agent_token": "k"}):
+					   return_value={"api_key": "k", "api_secret": "s", "agent_url": "ws://h:1", "agent_token": "t"}):
 				onboarding.dev_onboard("e3@x.com", "Co", "Annual Plan")
 			s = frappe.get_single("Jarvis Settings")
 			self.assertEqual(s.jarvis_admin_url, "http://other-admin.local")
 		finally:
 			frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "jarvis_admin_url", "")
 			frappe.db.commit()
+
+	def test_write_connection_ignores_legacy_api_token(self):
+		"""If admin returns the old api_token key, write_connection should NOT
+		write it (no accidental cross-population — that field is gone now)."""
+		_set_token("")
+		onboarding.write_connection({"api_token": "legacy", "agent_url": "ws://h:1"})
+		s = frappe.get_single("Jarvis Settings")
+		stored = s.get_password("jarvis_admin_api_key", raise_exception=False) or ""
+		self.assertEqual(stored, "")

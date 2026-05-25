@@ -20,12 +20,14 @@ from jarvis.admin_client import (
 )
 
 
-def _settings_for_admin(admin_url="https://admin.example.com", token="customer-token-123"):
+def _settings_for_admin(admin_url="https://admin.example.com",
+						api_key="customer-key-123", api_secret="customer-secret-456"):
 	"""Configure Jarvis Settings for the admin path. Uses db_set to bypass
 	read_only on the fields."""
 	settings = frappe.get_single("Jarvis Settings")
 	settings.db_set("jarvis_admin_url", admin_url)
-	settings.db_set("jarvis_admin_api_key", token)
+	settings.db_set("jarvis_admin_api_key", api_key)
+	settings.db_set("jarvis_admin_api_secret", api_secret)
 	frappe.db.commit()
 
 
@@ -33,6 +35,7 @@ def _settings_clear_admin():
 	settings = frappe.get_single("Jarvis Settings")
 	settings.db_set("jarvis_admin_url", "")
 	settings.db_set("jarvis_admin_api_key", "")
+	settings.db_set("jarvis_admin_api_secret", "")
 	frappe.db.commit()
 
 
@@ -77,12 +80,13 @@ class TestHappyPath(FrappeTestCase):
 
 class TestHeaders(FrappeTestCase):
 	def setUp(self):
-		_settings_for_admin(admin_url="https://admin.example.com", token="tkn-headers-test")
+		_settings_for_admin(admin_url="https://admin.example.com",
+							api_key="hdr-key", api_secret="hdr-secret")
 
 	def tearDown(self):
 		_settings_clear_admin()
 
-	def test_sends_bearer_and_site_headers(self):
+	def test_sends_native_token_header(self):
 		captured = {}
 
 		def _fake_post(url, json=None, headers=None, timeout=None):
@@ -95,8 +99,8 @@ class TestHeaders(FrappeTestCase):
 		with patch("requests.post", side_effect=_fake_post):
 			post_update_llm_creds("p", "m", "b", "k")
 
-		self.assertEqual(captured["headers"]["Authorization"], "Bearer tkn-headers-test")
-		self.assertIn("X-Jarvis-Site", captured["headers"])
+		self.assertEqual(captured["headers"]["Authorization"], "token hdr-key:hdr-secret")
+		self.assertNotIn("X-Jarvis-Site", captured["headers"])
 		self.assertEqual(captured["headers"]["Content-Type"], "application/json")
 		self.assertEqual(captured["timeout"], DEFAULT_TIMEOUT_S)
 		self.assertEqual(captured["json"], {
@@ -104,6 +108,12 @@ class TestHeaders(FrappeTestCase):
 		})
 		self.assertTrue(captured["url"].startswith("https://admin.example.com/api/method/"))
 		self.assertIn("jarvis_admin.api.tenant.update_llm_creds", captured["url"])
+
+	def test_raises_when_credentials_missing(self):
+		from jarvis.exceptions import AdminAuthError
+		_settings_clear_admin()
+		with self.assertRaises(AdminAuthError):
+			post_update_llm_creds("p", "m", "b", "k")
 
 
 class TestNetworkErrors(FrappeTestCase):
@@ -187,24 +197,29 @@ class TestMissingConfig(FrappeTestCase):
 	def setUp(self):
 		_settings_clear_admin()
 
-	def test_no_admin_url_raises_unreachable(self):
+	def test_no_credentials_raises_auth_error(self):
+		"""api_key + api_secret are required; missing either raises early."""
+		from jarvis.exceptions import AdminAuthError
 		settings = frappe.get_single("Jarvis Settings")
-		settings.db_set("jarvis_admin_url", "")
-		settings.db_set("jarvis_admin_api_key", "some-token")
+		settings.db_set("jarvis_admin_url", "https://admin.example.com")
+		settings.db_set("jarvis_admin_api_key", "")
+		settings.db_set("jarvis_admin_api_secret", "")
 		frappe.db.commit()
 		try:
-			with self.assertRaises(AdminUnreachableError):
+			with self.assertRaises(AdminAuthError):
 				post_update_llm_creds("p", "m", "b", "k")
 		finally:
 			_settings_clear_admin()
 
-	def test_no_token_raises_unreachable(self):
+	def test_no_secret_raises_auth_error(self):
+		from jarvis.exceptions import AdminAuthError
 		settings = frappe.get_single("Jarvis Settings")
 		settings.db_set("jarvis_admin_url", "https://admin.example.com")
-		settings.db_set("jarvis_admin_api_key", "")
+		settings.db_set("jarvis_admin_api_key", "some-key")
+		settings.db_set("jarvis_admin_api_secret", "")
 		frappe.db.commit()
 		try:
-			with self.assertRaises(AdminUnreachableError):
+			with self.assertRaises(AdminAuthError):
 				post_update_llm_creds("p", "m", "b", "k")
 		finally:
 			_settings_clear_admin()
@@ -221,11 +236,13 @@ class TestOnboardingClient(FrappeTestCase):
 		def _fake_post(url, json=None, headers=None, timeout=None):
 			captured["url"] = url
 			captured["json"] = json
-			return _mock_response(200, json_body={"message": {"ok": True, "data": {"api_token": "tok", "razorpay_key_id": "rzp"}}})
+			return _mock_response(200, json_body={"message": {"ok": True, "data": {
+				"api_key": "k", "api_secret": "s", "razorpay_key_id": "rzp"}}})
 
 		with patch("requests.post", side_effect=_fake_post):
 			out = admin_client.signup("e@x.com", "Co", "Annual Plan")
-		self.assertEqual(out["api_token"], "tok")
+		self.assertEqual(out["api_key"], "k")
+		self.assertEqual(out["api_secret"], "s")
 		self.assertTrue(captured["url"].startswith(DEFAULT_ADMIN_URL))
 		self.assertIn("billing.signup.signup", captured["url"])
 		self.assertEqual(captured["json"]["email"], "e@x.com")
@@ -247,13 +264,15 @@ class TestOnboardingClient(FrappeTestCase):
 	def test_dev_signup_returns_flat_dict(self):
 		_settings_for_admin()
 		with patch("requests.post", return_value=_mock_response(
-				200, json_body={"message": {"customer": "C1", "api_token": "tok", "agent_url": "ws://localhost:19000", "agent_token": "k"}})):
+				200, json_body={"message": {"customer": "C1", "api_key": "k", "api_secret": "s",
+				"agent_url": "ws://localhost:19000", "agent_token": "k"}})):
 			out = admin_client.dev_signup("e@x.com", "Co", "Annual Plan")
-		self.assertEqual(out["api_token"], "tok")
+		self.assertEqual(out["api_key"], "k")
+		self.assertEqual(out["api_secret"], "s")
 		self.assertEqual(out["agent_url"], "ws://localhost:19000")
 
 	def test_renew_posts_to_renew_and_unwraps_order(self):
-		_settings_for_admin(token="renew-tok")
+		_settings_for_admin(api_key="renew-key", api_secret="renew-secret")
 		captured = {}
 
 		def _fake_post(url, json=None, headers=None, timeout=None):
@@ -266,11 +285,10 @@ class TestOnboardingClient(FrappeTestCase):
 			out = admin_client.renew()
 		self.assertEqual(out["razorpay_order_id"], "order_R")
 		self.assertIn("jarvis_admin.api.tenant.renew", captured["url"])
-		self.assertEqual(captured["headers"]["Authorization"], "Bearer renew-tok")
+		self.assertEqual(captured["headers"]["Authorization"], "token renew-key:renew-secret")
 
 	def test_guest_call_omits_authorization_header(self):
-		# get_plans is a guest endpoint (no token) — must NOT send "Bearer ",
-		# which Frappe rejects with 401 before the allow_guest method runs.
+		# get_plans is a guest endpoint — no auth header is sent.
 		_settings_clear_admin()
 		captured = {}
 
