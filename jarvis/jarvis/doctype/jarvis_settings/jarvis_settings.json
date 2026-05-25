@@ -23,6 +23,7 @@
     "admin_connection_section",
     "jarvis_admin_url",
     "jarvis_admin_api_key",
+    "jarvis_admin_api_secret",
     "operator_section",
     "agent_url",
     "agent_token",
@@ -133,7 +134,14 @@
       "fieldtype": "Password",
       "label": "Jarvis Admin API Key",
       "read_only": 1,
-      "description": "Bearer token issued at signup; authenticates this customer's bench when calling the Jarvis admin API."
+      "description": "Native Frappe api_key for the customer's User on the admin site. Paired with the secret below as `Authorization: token <key>:<secret>`."
+    },
+    {
+      "fieldname": "jarvis_admin_api_secret",
+      "fieldtype": "Password",
+      "label": "Jarvis Admin API Secret",
+      "read_only": 1,
+      "description": "Native Frappe api_secret paired with the API Key. Set automatically at onboarding."
     },
     {
       "fieldname": "operator_section",
