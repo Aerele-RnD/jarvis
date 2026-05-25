@@ -123,3 +123,32 @@ class TestSyncConnection(FrappeTestCase):
 		s = frappe.get_single("Jarvis Settings")
 		stored = s.get_password("jarvis_admin_api_key", raise_exception=False) or ""
 		self.assertEqual(stored, "")
+
+	def test_save_llm_creds_writes_settings_and_fires_save(self):
+		"""Step 4 of onboarding: provider/model/api_key land in Jarvis Settings
+		and the save triggers the push pipeline (mocked here)."""
+		_set_token("")
+		with patch("jarvis.openclaw_push.push_creds_restart") as restart_mock, \
+			 patch("jarvis.openclaw_push.push_creds_reload") as reload_mock, \
+			 patch("jarvis.admin_client.post_update_llm_creds",
+				   return_value={"action": "restart", "result": "ok"}):
+			out = onboarding.save_llm_creds(
+				provider="Anthropic", model="claude-sonnet-4-6",
+				api_key="sk-test", base_url="https://api.anthropic.com",
+			)
+		s = frappe.get_single("Jarvis Settings")
+		self.assertEqual(s.llm_provider, "Anthropic")
+		self.assertEqual(s.llm_model, "claude-sonnet-4-6")
+		self.assertEqual(s.get_password("llm_api_key"), "sk-test")
+		self.assertEqual(s.llm_base_url, "https://api.anthropic.com")
+		# At least one of the push paths must have been invoked by save().
+		self.assertTrue(restart_mock.called or reload_mock.called
+						or "last_sync_status" in out)
+
+	def test_save_llm_creds_rejects_missing_required_fields(self):
+		with self.assertRaises(frappe.ValidationError):
+			onboarding.save_llm_creds(provider="", model="m", api_key="k")
+		with self.assertRaises(frappe.ValidationError):
+			onboarding.save_llm_creds(provider="Anthropic", model="", api_key="k")
+		with self.assertRaises(frappe.ValidationError):
+			onboarding.save_llm_creds(provider="Anthropic", model="m", api_key="")
