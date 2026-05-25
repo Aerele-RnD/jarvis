@@ -10,13 +10,15 @@ from jarvis import admin_client
 
 
 def write_connection(data: dict) -> None:
-	"""Persist api_token / agent_url / agent_token into Jarvis Settings via
-	db_set (no on_update creds-push retrigger during onboarding)."""
+	"""Persist native admin credentials + container connection into Jarvis
+	Settings via db_set (no on_update creds-push retrigger during onboarding)."""
 	if not isinstance(data, dict):
 		return
 	s = frappe.get_single("Jarvis Settings")
-	if data.get("api_token"):
-		s.db_set("jarvis_admin_api_key", data["api_token"])
+	if data.get("api_key"):
+		s.db_set("jarvis_admin_api_key", data["api_key"])
+	if data.get("api_secret"):
+		s.db_set("jarvis_admin_api_secret", data["api_secret"])
 	if data.get("agent_url"):
 		s.db_set("agent_url", data["agent_url"])
 	if data.get("agent_token"):
@@ -28,7 +30,9 @@ def sync_connection() -> dict:
 	"""Pull the container connection from admin and store it. Daily scheduled +
 	the page's 'Sync connection' button. No-op until onboarded/assigned."""
 	settings = frappe.get_single("Jarvis Settings")
-	if not (settings.get_password("jarvis_admin_api_key", raise_exception=False)):
+	api_key = settings.get_password("jarvis_admin_api_key", raise_exception=False) or ""
+	api_secret = settings.get_password("jarvis_admin_api_secret", raise_exception=False) or ""
+	if not (api_key and api_secret):
 		return {"synced": False, "reason": "not onboarded"}
 	data = admin_client.get_connection()
 	if data.get("agent_url"):

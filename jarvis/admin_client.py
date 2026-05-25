@@ -1,11 +1,11 @@
 """HTTPS client for the Jarvis admin (jarvis_admin) app.
 
-Used by Jarvis Settings.on_update when the customer's bench is configured
-to talk to a remote admin (jarvis_admin_url is set). 3.2.4 will grow this
-module with /signup-status, /subscription, /token/regenerate calls.
+Authenticated calls use Frappe's native api_key:api_secret. The customer's
+bench reads both from Jarvis Settings (set at signup) and sends them as
+`Authorization: token <api_key>:<api_secret>`.
 
-When jarvis_admin_url is empty (dev / Phase 1), callers route to
-openclaw_push instead and admin_client is not invoked at all.
+Guest calls (signup, get_plans) skip the header entirely; their admin
+endpoints are @frappe.whitelist(allow_guest=True).
 """
 
 import frappe
@@ -28,102 +28,99 @@ def _admin_url(settings) -> str:
 
 def signup(email: str, company_name: str, plan: str, coupon: str | None = None) -> dict:
 	"""Guest signup against admin. Returns admin's data dict
-	{api_token, razorpay_key_id, razorpay_order_id, amount_inr}. Both annual and
-	monthly are one-shot orders (manual renew — no Razorpay subscription)."""
+	{api_key, api_secret, razorpay_key_id, razorpay_order_id, amount_inr}.
+	Both annual and monthly are one-shot orders (manual renew — no Razorpay subscription)."""
 	settings = frappe.get_single("Jarvis Settings")
 	body = {"email": email, "company_name": company_name, "plan": plan,
 			"frappe_site_url": frappe.utils.get_url()}
 	if coupon:
 		body["coupon"] = coupon
-	return _post(path="/api/method/jarvis_admin.billing.signup.signup",
-				 body=body, admin_url=_admin_url(settings), token="")
+	return _post_guest(path="/api/method/jarvis_admin.billing.signup.signup",
+					   body=body, admin_url=_admin_url(settings))
 
 
 def dev_signup(email: str, company_name: str, plan: str) -> dict:
-	"""Razorpay-free dev signup. Returns admin's flat dict incl. api_token + connection."""
+	"""Razorpay-free dev signup. Returns admin's flat dict incl. api_key + api_secret + connection."""
 	settings = frappe.get_single("Jarvis Settings")
-	return _post(path="/api/method/jarvis_admin.billing.signup.dev_force_signup",
-				 body={"email": email, "company_name": company_name, "plan": plan,
-					   "frappe_site_url": frappe.utils.get_url()},
-				 admin_url=_admin_url(settings), token="")
+	return _post_guest(path="/api/method/jarvis_admin.billing.signup.dev_force_signup",
+					   body={"email": email, "company_name": company_name, "plan": plan,
+							 "frappe_site_url": frappe.utils.get_url()},
+					   admin_url=_admin_url(settings))
 
 
 def get_plans() -> list:
 	settings = frappe.get_single("Jarvis Settings")
-	return _post(path="/api/method/jarvis_admin.billing.signup.get_plans",
-				 body={}, admin_url=_admin_url(settings), token="")
+	return _post_guest(path="/api/method/jarvis_admin.billing.signup.get_plans",
+					   body={}, admin_url=_admin_url(settings))
 
 
 def confirm_payment(payload: dict) -> dict:
 	"""POST Razorpay Checkout result; returns {agent_url, agent_token, tenant_status}."""
 	settings = frappe.get_single("Jarvis Settings")
-	token = settings.get_password("jarvis_admin_api_key", raise_exception=False) or ""
 	return _post(path="/api/method/jarvis_admin.api.tenant.confirm_payment",
-				 body=payload, admin_url=_admin_url(settings), token=token)
+				 body=payload, admin_url=_admin_url(settings))
 
 
 def get_connection() -> dict:
 	"""Fetch the assigned container connection (fallback / scheduled sync)."""
 	settings = frappe.get_single("Jarvis Settings")
-	token = settings.get_password("jarvis_admin_api_key", raise_exception=False) or ""
 	return _post(path="/api/method/jarvis_admin.api.tenant.get_connection",
-				 body={}, admin_url=_admin_url(settings), token=token)
+				 body={}, admin_url=_admin_url(settings))
 
 
 def renew() -> dict:
 	"""Existing customer pays again to extend (manual one-shot). Returns admin's
 	data dict {razorpay_order_id, razorpay_key_id, amount_inr} for Checkout."""
 	settings = frappe.get_single("Jarvis Settings")
-	token = settings.get_password("jarvis_admin_api_key", raise_exception=False) or ""
 	return _post(path="/api/method/jarvis_admin.api.tenant.renew",
-				 body={}, admin_url=_admin_url(settings), token=token)
+				 body={}, admin_url=_admin_url(settings))
 
 
 def post_update_llm_creds(
 	provider: str, model: str, base_url: str, api_key: str,
 ) -> dict:
-	"""POST customer's new LLM creds to admin's /tenant/update-llm-creds.
-
-	Returns admin's unwrapped data envelope on success, e.g.
-	  {"action": "reload", "result": "ok"}
-	Raises:
-	  AdminAuthError      — 401/403 from admin
-	  AdminUnreachableError — network error, 5xx, ok:false envelope,
-	                          non-JSON response, or missing local config.
-	"""
+	"""POST customer's new LLM creds to admin's /tenant/update-llm-creds."""
 	settings = frappe.get_single("Jarvis Settings")
-	admin_url = (settings.jarvis_admin_url or "").rstrip("/")
-	token = settings.get_password("jarvis_admin_api_key", raise_exception=False) or ""
-	if not admin_url or not token:
-		raise AdminUnreachableError(
-			"jarvis_admin_url or jarvis_admin_api_key not configured"
-		)
 	return _post(
 		path="/api/method/jarvis_admin.api.tenant.update_llm_creds",
 		body={
 			"provider": provider, "model": model,
 			"base_url": base_url, "api_key": api_key,
 		},
-		admin_url=admin_url,
-		token=token,
+		admin_url=_admin_url(settings),
 	)
 
 
-def _post(path: str, body: dict, admin_url: str, token: str,
+def _post(path: str, body: dict, admin_url: str,
 		  timeout_s: int = DEFAULT_TIMEOUT_S) -> dict:
+	"""Authenticated POST. Reads native api_key + api_secret from Jarvis
+	Settings. Raises AdminAuthError early if either is empty."""
+	settings = frappe.get_single("Jarvis Settings")
+	api_key = (settings.jarvis_admin_api_key or "").strip()
+	api_secret = settings.get_password(
+		"jarvis_admin_api_secret", raise_exception=False
+	) or ""
+	if not api_key or not api_secret:
+		raise AdminAuthError(
+			"not onboarded (Jarvis Settings: admin api_key + api_secret empty)"
+		)
 	headers = {
-		"X-Jarvis-Site": frappe.utils.get_url(),
+		"Authorization": f"token {api_key}:{api_secret}",
 		"Content-Type": "application/json",
 	}
-	# Guest endpoints (get_plans, signup) pass an empty token — send NO
-	# Authorization header then, since Frappe rejects an empty "Bearer " with 401
-	# before the allow_guest method runs.
-	if token:
-		headers["Authorization"] = f"Bearer {token}"
+	return _do_post(admin_url + path, body, headers, timeout_s, admin_url)
+
+
+def _post_guest(path: str, body: dict, admin_url: str,
+				timeout_s: int = DEFAULT_TIMEOUT_S) -> dict:
+	"""Unauthenticated POST (signup, get_plans). No Authorization header."""
+	headers = {"Content-Type": "application/json"}
+	return _do_post(admin_url + path, body, headers, timeout_s, admin_url)
+
+
+def _do_post(url: str, body: dict, headers: dict, timeout_s: int, admin_url: str) -> dict:
 	try:
-		resp = requests.post(
-			admin_url + path, json=body, headers=headers, timeout=timeout_s,
-		)
+		resp = requests.post(url, json=body, headers=headers, timeout=timeout_s)
 	except (requests.ConnectionError, requests.Timeout) as e:
 		raise AdminUnreachableError(f"admin {admin_url}: {e}") from e
 
@@ -134,7 +131,6 @@ def _post(path: str, body: dict, admin_url: str, token: str,
 			f"admin {admin_url} returned non-JSON (status {resp.status_code})"
 		)
 
-	# Frappe wraps whitelisted method returns as {"message": <returned dict>}
 	envelope = payload.get("message", payload) if isinstance(payload, dict) else payload
 
 	if resp.status_code in (401, 403):
