@@ -256,3 +256,108 @@ class TestClose(FrappeTestCase):
 		sess.close()
 		sess.close()
 		self.assertTrue(ws.closed)
+
+
+# --- TestSelfHeal ---------------------------------------------------------
+
+class TestSelfHealOnStalePairing(FrappeTestCase):
+	"""When admin re-provisions a tenant, the new container has no record of
+	the customer's existing chat_device_*. The first WS connect fails with
+	one of openclaw's pairing-stale errors. openclaw_client should detect
+	that, clear local creds, re-pair via ensure_paired, and retry the WS
+	once. A second stale signal is a real failure (no infinite loop)."""
+
+	def _build_two_ws(self, first_reject_marker: str, second_ok: bool):
+		"""Return two scripted WS instances: first one rejects connect with
+		`first_reject_marker` in the error message; second one accepts."""
+		first_sent: list = []
+		second_sent: list = []
+
+		def _first_nack():
+			req_id = first.sent[-1]["id"]
+			return _frame({"type": "res", "id": req_id, "ok": False,
+						   "error": {"code": "UNAUTHORIZED", "message": first_reject_marker}})
+
+		def _second_ok():
+			req_id = second.sent[-1]["id"]
+			return _frame({"type": "res", "id": req_id, "ok": True, "payload": {}})
+
+		def _second_nack():
+			req_id = second.sent[-1]["id"]
+			return _frame({"type": "res", "id": req_id, "ok": False,
+						   "error": {"code": "UNAUTHORIZED", "message": first_reject_marker}})
+
+		first = _ScriptedWS([_challenge(), _first_nack])
+		second_response = _second_ok if second_ok else _second_nack
+		second = _ScriptedWS([_challenge(), second_response])
+		return first, second
+
+	def _connect_with_two_ws(self, first_ws, second_ws):
+		ws_iter = iter([first_ws, second_ws])
+		clear_called: list = []
+
+		def _fake_clear():
+			clear_called.append(True)
+
+		creds = _make_creds()
+		ensure_paired_calls: list = []
+
+		def _fake_ensure_paired():
+			ensure_paired_calls.append(True)
+			return creds
+
+		with patch("jarvis.chat.openclaw_client.websocket.create_connection",
+				   side_effect=lambda *a, **kw: next(ws_iter)), \
+			 patch("jarvis.chat.openclaw_client.ensure_paired",
+				   side_effect=_fake_ensure_paired), \
+			 patch("jarvis.chat.openclaw_client.clear_credentials",
+				   side_effect=_fake_clear):
+			result = OpenclawSession.connect("ws://t", "x")
+		return result, clear_called, ensure_paired_calls
+
+	def test_device_not_paired_triggers_repair_and_retry_succeeds(self):
+		first_ws, second_ws = self._build_two_ws("device-not-paired", second_ok=True)
+		sess, clears, ensure_calls = self._connect_with_two_ws(first_ws, second_ws)
+		# clear_credentials was called once between the two attempts.
+		self.assertEqual(len(clears), 1)
+		# ensure_paired was called twice (once per attempt).
+		self.assertEqual(len(ensure_calls), 2)
+		self.assertTrue(first_ws.closed)
+		self.assertFalse(second_ws.closed)
+		sess.close()
+
+	def test_token_revoked_also_triggers_repair(self):
+		first_ws, second_ws = self._build_two_ws("token-revoked", second_ok=True)
+		sess, clears, _ = self._connect_with_two_ws(first_ws, second_ws)
+		self.assertEqual(len(clears), 1)
+		sess.close()
+
+	def test_second_failure_does_not_loop(self):
+		"""After one repair attempt, a second stale-pairing signal must
+		propagate as a real failure — not a third retry."""
+		first_ws, second_ws = self._build_two_ws("device-not-paired", second_ok=False)
+		with self.assertRaises(OpenclawUnreachableError):
+			self._connect_with_two_ws(first_ws, second_ws)
+
+	def test_signature_invalid_does_not_trigger_repair(self):
+		"""A signing bug must surface, not get masked by a silent re-pair.
+		signature-invalid means our client code is broken; clearing creds
+		won't help and the operator needs to see the original error."""
+		creds = _make_creds()
+
+		def _nack():
+			req_id = first_ws.sent[-1]["id"]
+			return _frame({"type": "res", "id": req_id, "ok": False,
+						   "error": {"code": "UNAUTHORIZED", "message": "device-signature-invalid"}})
+
+		first_ws = _ScriptedWS([_challenge(), _nack])
+		clear_called: list = []
+		with patch("jarvis.chat.openclaw_client.websocket.create_connection",
+				   return_value=first_ws), \
+			 patch("jarvis.chat.openclaw_client.ensure_paired", return_value=creds), \
+			 patch("jarvis.chat.openclaw_client.clear_credentials",
+				   side_effect=lambda: clear_called.append(True)):
+			with self.assertRaises(OpenclawUnreachableError) as cm:
+				OpenclawSession.connect("ws://t", "x")
+		self.assertFalse(clear_called, "should not clear creds for signing bugs")
+		self.assertIn("signature-invalid", str(cm.exception))
