@@ -96,7 +96,12 @@ def _post(path: str, body: dict, admin_url: str,
 	"""Authenticated POST. Reads native api_key + api_secret from Jarvis
 	Settings. Raises AdminAuthError early if either is empty."""
 	settings = frappe.get_single("Jarvis Settings")
-	api_key = (settings.jarvis_admin_api_key or "").strip()
+	# Both are Password fields — attribute access would return the masked
+	# "*****" placeholder Frappe stores in the row. get_password decrypts
+	# the real value out of __Auth.
+	api_key = (settings.get_password(
+		"jarvis_admin_api_key", raise_exception=False
+	) or "").strip()
 	api_secret = settings.get_password(
 		"jarvis_admin_api_secret", raise_exception=False
 	) or ""
