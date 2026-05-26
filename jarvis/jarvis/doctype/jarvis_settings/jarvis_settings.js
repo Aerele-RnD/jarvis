@@ -48,6 +48,15 @@ frappe.ui.form.on("Jarvis Settings", {
 			});
 		}, __("Diagnostics"));
 
+		// DEV-only reset: visible when developer_mode is on AND caller is
+		// System Manager. The server re-checks both gates.
+		frappe.call({ method: "jarvis.dev.is_dev_mode_active" }).then((r) => {
+			if (!(r && r.message && r.message.data && r.message.data.active)) return;
+			frm.add_custom_button(__("Reset onboarding (DEV)"), () => {
+				confirmAndReset(frm);
+			}, __("Diagnostics"));
+		});
+
 		frm.add_custom_button(__("Force Resync"), () => {
 			const d = new frappe.ui.Dialog({
 				title: __("Force Resync"),
@@ -84,3 +93,46 @@ frappe.ui.form.on("Jarvis Settings", {
 		}, __("Diagnostics"));
 	},
 });
+
+function confirmAndReset(frm) {
+	const d = new frappe.ui.Dialog({
+		title: __("Reset onboarding (irreversible)"),
+		fields: [
+			{ fieldtype: "HTML", fieldname: "warn",
+			  options: `<p>This clears local connection + LLM credentials so the onboarding
+				wizard restarts from step 1:</p>
+				<ul>
+				  <li>Admin API key &amp; secret</li>
+				  <li>Agent URL, token, container paths</li>
+				  <li>Chat device pairing (keys + token)</li>
+				  <li>LLM model / API key / base URL (provider resets to Anthropic)</li>
+				  <li>Last sync timestamp + status</li>
+				</ul>
+				<p>Preserved: Admin URL, monthly budget, sampling settings.</p>
+				<p>Does NOT touch admin-side records — use the admin's
+				<i>Purge customer (DEV)</i> button for that.</p>
+				<p>Type <b>RESET</b> to confirm:</p>` },
+			{ fieldtype: "Data", fieldname: "confirm", label: __("Confirm"), reqd: 1 },
+		],
+		primary_action_label: __("Reset"),
+		primary_action(values) {
+			if ((values.confirm || "").trim() !== "RESET") {
+				frappe.msgprint({ message: __("Type RESET exactly to confirm."), indicator: "red" });
+				return;
+			}
+			d.disable_primary_action();
+			frappe.call({ method: "jarvis.dev.reset_onboarding" }).then((r) => {
+				d.hide();
+				const n = ((r && r.message && r.message.data && r.message.data.cleared_fields) || []).length;
+				frappe.show_alert({
+					message: __("Onboarding reset — cleared {0} field(s). Go to /app/jarvis-onboarding to start fresh.", [n]),
+					indicator: "green",
+				});
+				frm.reload_doc();
+			}).catch(() => {
+				d.enable_primary_action();
+			});
+		},
+	});
+	d.show();
+}
