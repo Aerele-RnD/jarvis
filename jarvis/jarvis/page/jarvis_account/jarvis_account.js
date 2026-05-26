@@ -170,7 +170,13 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 			<div class="ja-row2">
 				<div class="ja-field">
 					<label>API Key</label>
-					<input class="ja-input" id="ja-key" type="password" placeholder="${settingsLocal.llm_api_key ? "•••••••• (unchanged)" : "Enter your API key"}" ${dis}>
+					<div class="ja-pwd">
+						<input class="ja-input" id="ja-key" type="password" placeholder="${settingsLocal.llm_api_key ? "•••••••• (unchanged)" : "Enter your API key"}" ${dis}>
+						<button type="button" class="ja-pwd-toggle" id="ja-key-eye" aria-label="Show key" ${dis}>
+							<svg class="ja-eye-on" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+							<svg class="ja-eye-off" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 19c-7 0-10-7-10-7a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 10 7 10 7a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+						</button>
+					</div>
 				</div>
 				<div class="ja-field">
 					<label>Base URL <span class="ja-hint-inline">(optional)</span></label>
@@ -187,6 +193,13 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 
 	function bindLlm(editable) {
 		if (!editable) return;
+		$body.find("#ja-key-eye").on("click", function () {
+			const $btn = $(this);
+			$btn.toggleClass("shown");
+			const shown = $btn.hasClass("shown");
+			$body.find("#ja-key").attr("type", shown ? "text" : "password");
+			$btn.attr("aria-label", shown ? "Hide key" : "Show key");
+		});
 		const $prov = $body.find("#ja-prov");
 		$prov.on("change", () => {
 			const p = $prov.val();
@@ -480,6 +493,15 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		.ja-input{width:100%;padding:10px 12px;font-size:14px;border:1px solid var(--border-color);border-radius:var(--border-radius,8px);background:var(--control-bg,var(--bg-color));color:var(--text-color)}
 		.ja-input:focus{outline:none;border-color:var(--primary,#4a47e5);box-shadow:0 0 0 2px rgba(74,71,229,.18)}
 		.ja-input:disabled{opacity:.6;cursor:not-allowed}
+		.ja-pwd{position:relative}
+		.ja-pwd .ja-input{padding-right:38px}
+		.ja-pwd-toggle{position:absolute;top:50%;right:6px;transform:translateY(-50%);background:transparent;border:0;cursor:pointer;
+			color:var(--text-muted);padding:6px;line-height:0;border-radius:6px}
+		.ja-pwd-toggle:hover{color:var(--text-color);background:var(--bg-color)}
+		.ja-pwd-toggle:disabled{opacity:.4;cursor:not-allowed}
+		.ja-pwd-toggle .ja-eye-off{display:none}
+		.ja-pwd-toggle.shown .ja-eye-on{display:none}
+		.ja-pwd-toggle.shown .ja-eye-off{display:inline}
 		.ja-actions{margin-top:14px;display:flex;align-items:center;gap:10px}
 		.ja-btn{padding:9px 18px;font-size:14px;font-weight:600;border-radius:var(--border-radius,8px);border:1px solid transparent;cursor:pointer}
 		.ja-btn-primary{background:var(--primary,#4a47e5);color:#fff}
