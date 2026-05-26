@@ -341,7 +341,37 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 
 	// ---- boot --------------------------------------------------------------
 	footLink();
-	render();
+	bootRender();
+
+	function bootRender() {
+		// Returning customers who already finished signup get the completion
+		// card instead of the create-account form. On RPC failure (e.g. site
+		// just spun up, scheduler not running), fall back to the wizard so
+		// the page is never stuck.
+		frappe.call({ method: "jarvis.account.is_onboarded" })
+			.then((r) => {
+				if (r && r.message && r.message.onboarded) renderCompletionCard();
+				else render();
+			})
+			.catch(() => render());
+	}
+
+	function renderCompletionCard() {
+		$steps.empty();
+		$footLink.empty();
+		$body.html(`
+			<div class="jo-success">
+				<div class="jo-success-ring">✓</div>
+				<h2 class="jo-h">You're all set up</h2>
+				<p class="jo-sub">Your Jarvis account is connected. Manage your plan, billing, and LLM credentials from My Account.</p>
+				<div class="jo-actions">
+					<button class="jo-btn jo-btn-primary" id="jo-go-account">Go to My Account →</button>
+				</div>
+			</div>`);
+		$body.find("#jo-go-account").on("click", () => {
+			window.location.assign("/app/jarvis-account");
+		});
+	}
 
 	function injectStyles() {
 		if (document.getElementById("jo-styles")) return;

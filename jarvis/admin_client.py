@@ -103,6 +103,39 @@ def pair_chat_device(public_key: str, device_id: str) -> dict:
 	)
 
 
+def get_account_summary() -> dict:
+	"""Fetch the customer's plan + validity + upgrade-eligible plans. Used by
+	the /jarvis-account page to render plan summary and the upgrade picker."""
+	settings = frappe.get_single("Jarvis Settings")
+	return _post(
+		path="/api/method/jarvis_admin.api.account.get_account_summary",
+		body={}, admin_url=_admin_url(settings),
+	)
+
+
+def preview_upgrade(target_plan: str) -> dict:
+	"""Get the prorated amount for upgrading to ``target_plan`` (no order
+	created). Used by the upgrade plan picker so each plan card shows the
+	live-computed amount before the customer commits."""
+	settings = frappe.get_single("Jarvis Settings")
+	return _post(
+		path="/api/method/jarvis_admin.api.account.preview_upgrade",
+		body={"target_plan": target_plan}, admin_url=_admin_url(settings),
+	)
+
+
+def start_upgrade(target_plan: str) -> dict:
+	"""Create a prorated Razorpay order for the upgrade and return the
+	Razorpay handles ({razorpay_order_id, razorpay_key_id, amount_inr,
+	target_plan}). The order's notes carry the upgrade intent for
+	confirm_payment to pick up after Razorpay Checkout completes."""
+	settings = frappe.get_single("Jarvis Settings")
+	return _post(
+		path="/api/method/jarvis_admin.api.account.start_upgrade",
+		body={"target_plan": target_plan}, admin_url=_admin_url(settings),
+	)
+
+
 def _post(path: str, body: dict, admin_url: str,
 		  timeout_s: int = DEFAULT_TIMEOUT_S) -> dict:
 	"""Authenticated POST. Reads native api_key + api_secret from Jarvis

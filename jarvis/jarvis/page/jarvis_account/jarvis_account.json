@@ -1,0 +1,10 @@
+{
+ "doctype": "Page",
+ "name": "jarvis-account",
+ "page_name": "jarvis-account",
+ "title": "My Jarvis Account",
+ "module": "Jarvis",
+ "standard": "Yes",
+ "system_page": 0,
+ "roles": [{ "role": "System Manager" }]
+}
