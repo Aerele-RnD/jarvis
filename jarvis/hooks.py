@@ -5,6 +5,18 @@ app_description = "AI superpowers for Frappe/ERPNext"
 app_email = "navin@aerele.in"
 app_license = "MIT"
 
+# ---------------------------------------------------------------------------
+# Deployment constants
+# ---------------------------------------------------------------------------
+# Default URL of the Jarvis Cloud control plane the customer bench targets
+# for signup, billing, plan list, container connection, and account summary.
+# A per-customer override at ``Jarvis Settings.jarvis_admin_url`` wins; this
+# is the bench-wide fallback for fresh installs.
+#
+# Rebranding the deployment? Change this string + ship a new release.
+# (Re-exported by ``jarvis.admin_client`` so existing imports keep working.)
+DEFAULT_ADMIN_URL = "https://admin.jarvis.aerele.in"
+
 # Apps
 # ------------------
 

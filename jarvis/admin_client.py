@@ -18,8 +18,11 @@ from jarvis.exceptions import AdminAuthError, AdminUnreachableError, AdminValida
 # 90s leaves 30s buffer for network round-trip + handler overhead.
 DEFAULT_TIMEOUT_S = 90
 
-# Hardcoded prod admin URL; override via Jarvis Settings.jarvis_admin_url (dev/staging).
-DEFAULT_ADMIN_URL = "https://admin.jarvis.aerele.in"
+# DEFAULT_ADMIN_URL lives in hooks.py as a single source of truth for
+# deployment-level constants; re-exported here so existing
+# ``from jarvis.admin_client import DEFAULT_ADMIN_URL`` callers keep working.
+# Override per-customer via ``Jarvis Settings.jarvis_admin_url``.
+from jarvis.hooks import DEFAULT_ADMIN_URL  # noqa: E402, F401
 
 
 def _admin_url(settings) -> str:
