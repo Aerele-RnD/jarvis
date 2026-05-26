@@ -212,7 +212,13 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 			</div>
 			<div class="jo-field">
 			  <label>API key</label>
-			  <input id="jo-llm-key" type="password" class="jo-input" value="${esc(state.llmApiKey)}" placeholder="sk-..." autocomplete="off"/>
+			  <div class="jo-pwd">
+			    <input id="jo-llm-key" type="password" class="jo-input" value="${esc(state.llmApiKey)}" placeholder="sk-..." autocomplete="off"/>
+			    <button type="button" class="jo-pwd-toggle" id="jo-llm-key-eye" aria-label="Show key">
+			      <svg class="jo-eye-on" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+			      <svg class="jo-eye-off" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 19c-7 0-10-7-10-7a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 10 7 10 7a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+			    </button>
+			  </div>
 			  <div class="jo-hint">Stored encrypted; only your agent container ever sees the plaintext.</div>
 			</div>
 			<div class="jo-field">
@@ -234,6 +240,13 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		});
 		$body.find("#jo-llm-model").on("input", (e) => { state.llmModel = e.target.value; });
 		$body.find("#jo-llm-key").on("input", (e) => { state.llmApiKey = e.target.value; });
+		$body.find("#jo-llm-key-eye").on("click", function () {
+			const $btn = $(this);
+			$btn.toggleClass("shown");
+			const shown = $btn.hasClass("shown");
+			$body.find("#jo-llm-key").attr("type", shown ? "text" : "password");
+			$btn.attr("aria-label", shown ? "Hide key" : "Show key");
+		});
 		$body.find("#jo-llm-base").on("input", (e) => { state.llmBaseUrl = e.target.value; });
 		$body.find("#jo-llm-skip").on("click", () => renderSuccess(state.successData || {}));
 		$body.find("#jo-llm-save").on("click", saveLlm);
@@ -422,6 +435,14 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		.jo-field{margin-bottom:14px}
 		.jo-field label{display:block;font-size:12.5px;font-weight:600;color:var(--text-color);margin-bottom:6px}
 		.jo-hint{font-size:11.5px;color:var(--text-muted);margin-top:4px}
+		.jo-pwd{position:relative}
+		.jo-pwd .jo-input{padding-right:38px}
+		.jo-pwd-toggle{position:absolute;top:50%;right:6px;transform:translateY(-50%);background:transparent;border:0;cursor:pointer;
+			color:var(--text-muted);padding:6px;line-height:0;border-radius:6px}
+		.jo-pwd-toggle:hover{color:var(--text-color);background:var(--bg-color)}
+		.jo-pwd-toggle .jo-eye-off{display:none}
+		.jo-pwd-toggle.shown .jo-eye-on{display:none}
+		.jo-pwd-toggle.shown .jo-eye-off{display:inline}
 		.jo-hint-inline{font-weight:400;color:var(--text-muted);font-size:11.5px}
 		.jo-plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:8px}
 		.jo-plan{position:relative;border:1.5px solid var(--border-color);border-radius:12px;padding:16px 14px;cursor:pointer;
