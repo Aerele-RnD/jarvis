@@ -85,6 +85,16 @@ export function init(wrapper) {
 		$list.empty().append($welcome);
 		$welcome.show();
 		page.set_title(__("Jarvis Chat"));
+		syncUrl(null);
+	}
+
+	// Reflect the active conversation in the URL so refresh / share / back
+	// land on the same chat. Uses replaceState — we don't want every sidebar
+	// click to push a history entry.
+	function syncUrl(name) {
+		const target = name ? `/app/jarvis-chat/${encodeURIComponent(name)}` : "/app/jarvis-chat";
+		if (window.location.pathname === target) return;
+		window.history.replaceState({}, "", target);
 	}
 
 	// ---- Loading --------------------------------------------------------
@@ -106,7 +116,19 @@ export function init(wrapper) {
 			// chrome above the chat carries useful context.
 			const title = data.conversation?.title || __("Jarvis Chat");
 			page.set_title(title);
+			syncUrl(name);
 			await refreshSidebar($sidebar, $sidebarEmpty, loadConversation, archive);
+		} catch (err) {
+			// Conv missing / archived / not permitted — clean up and fall back
+			// to welcome so a stale URL doesn't trap the user.
+			state.current_conversation = null;
+			if (opts.fromUrl) {
+				frappe.show_alert({
+					message: __("Conversation not found — opened a fresh view."),
+					indicator: "orange",
+				});
+			}
+			renderWelcome();
 		} finally {
 			state.is_loading_conv = false;
 			$input.focus();
@@ -302,6 +324,15 @@ export function init(wrapper) {
 
 	// ---- Bootstrap ------------------------------------------------------
 
-	refreshSidebar($sidebar, $sidebarEmpty, loadConversation, archive);
+	// Deep-link: if the URL carries a conversation name (e.g.
+	// /app/jarvis-chat/CONV-001), open it instead of the welcome view.
+	const route = (frappe.get_route && frappe.get_route()) || [];
+	const urlConv = route[1] ? decodeURIComponent(route[1]) : null;
+
+	(async () => {
+		await refreshSidebar($sidebar, $sidebarEmpty, loadConversation, archive);
+		if (urlConv) await loadConversation(urlConv, { fromUrl: true });
+	})();
+
 	autoGrowInput();
 }
