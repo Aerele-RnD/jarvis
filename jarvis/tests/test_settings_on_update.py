@@ -90,9 +90,10 @@ class _SettingsSingletonTestCase(FrappeTestCase):
             f: settings.get(f) for f in _SNAPSHOT_PLAIN_FIELDS
         }
         for f in _SNAPSHOT_PASSWORD_FIELDS:
-            # get_password returns None for unset/cleared Password fields;
-            # db_set later treats "" the same as None for our purposes.
-            snapshot[f] = settings.get_password(f) or ""
+            # get_password returns None for unset/cleared Password fields
+            # (with raise_exception=False); db_set later treats "" the same
+            # as None for our purposes.
+            snapshot[f] = settings.get_password(f, raise_exception=False) or ""
         cls._jarvis_settings_snapshot = snapshot
 
     @classmethod
