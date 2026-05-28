@@ -194,7 +194,9 @@ class TestOnUpdateAdminDispatch(_SettingsSnapshotTestCase):
 
 	def test_admin_path_reload_success_updates_last_sync_status(self):
 		from unittest.mock import patch
-		with patch("jarvis.admin_client.post_update_llm_creds",
+		# Reload-action saves (api_key rotation) now go through the rotate
+		# endpoint per the prod-wiring spec's unified action-based dispatch.
+		with patch("jarvis.admin_client.post_rotate_llm_secret",
 				   return_value={"action": "reload", "result": "ok"}) as mock_post:
 			s = self._save_with_new_api_key("sk-after-reload-test")
 		mock_post.assert_called_once()
@@ -219,7 +221,8 @@ class TestOnUpdateAdminDispatch(_SettingsSnapshotTestCase):
 	def test_admin_path_auth_error_surfaces_in_status(self):
 		from unittest.mock import patch
 		from jarvis.exceptions import AdminAuthError
-		with patch("jarvis.admin_client.post_update_llm_creds",
+		# api_key rotation is now a reload-action → post_rotate_llm_secret
+		with patch("jarvis.admin_client.post_rotate_llm_secret",
 				   side_effect=AdminAuthError("invalid token")):
 			s = self._save_with_new_api_key("sk-auth-fail-test")
 		self.assertTrue(s.last_sync_status.startswith("failed: auth:"))
@@ -228,7 +231,7 @@ class TestOnUpdateAdminDispatch(_SettingsSnapshotTestCase):
 	def test_admin_path_unreachable_surfaces_in_status(self):
 		from unittest.mock import patch
 		from jarvis.exceptions import AdminUnreachableError
-		with patch("jarvis.admin_client.post_update_llm_creds",
+		with patch("jarvis.admin_client.post_rotate_llm_secret",
 				   side_effect=AdminUnreachableError("connection refused")):
 			s = self._save_with_new_api_key("sk-unreach-test")
 		self.assertTrue(s.last_sync_status.startswith("failed: admin unreachable:"))

@@ -63,6 +63,7 @@ _SNAPSHOT_PASSWORD_FIELDS = (
     "agent_token",
     "llm_api_key",
     "jarvis_admin_api_key",
+    "jarvis_admin_api_secret",
     "llm_oauth_refresh_token",
     "llm_oauth_access_token",
 )
