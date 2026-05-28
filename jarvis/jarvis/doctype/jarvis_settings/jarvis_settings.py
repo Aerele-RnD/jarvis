@@ -229,9 +229,12 @@ class JarvisSettings(Document):
             # Going to subscription — clear API-key residue.
             remove_encrypted_password("Jarvis Settings", "Jarvis Settings", "llm_api_key")
         elif self.llm_auth_mode == "api_key":
-            # Going to api_key — clear all OAuth state.
+            # Going to api_key — clear all OAuth state. db_set on a Password field
+            # writes plaintext to the column; remove_encrypted_password only clears
+            # __Auth. We need both for a clean wipe.
             for f in ("llm_oauth_refresh_token", "llm_oauth_access_token"):
                 remove_encrypted_password("Jarvis Settings", "Jarvis Settings", f)
+                self.db_set(f, None, update_modified=False)
             for f in ("llm_oauth_access_token_expires_at", "llm_oauth_account_email",
                       "llm_oauth_connected_at", "llm_oauth_last_refresh_at"):
                 self.db_set(f, None, update_modified=False)

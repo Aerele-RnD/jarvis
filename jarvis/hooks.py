@@ -187,6 +187,7 @@ scheduler_events = {
 	"cron": {
 		"*/5 * * * *": [
 			"jarvis.chat.stale_scan.scan_and_mark_errored",
+			"jarvis.oauth.refresh.tick",
 		],
 	},
 	"daily": [
