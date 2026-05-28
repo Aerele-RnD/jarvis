@@ -38,3 +38,14 @@ class AdminValidationError(JarvisError):
 	"""jarvis_admin raised a Frappe ValidationError (or similar user-input
 	error) inside a whitelisted endpoint. Carries the clean operator-facing
 	message — never the traceback dump."""
+
+
+class AdminRateLimitedError(JarvisError):
+	"""jarvis_admin returned HTTP 429 — caller should back off and retry later.
+
+	``retry_after_seconds`` carries the body's hint when the admin provides
+	one (0 if absent)."""
+
+	def __init__(self, message: str = "rate_limited", retry_after_seconds: int = 0):
+		super().__init__(message)
+		self.retry_after_seconds = retry_after_seconds

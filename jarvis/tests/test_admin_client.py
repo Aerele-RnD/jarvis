@@ -106,6 +106,7 @@ class TestHeaders(FrappeTestCase):
 		self.assertEqual(captured["timeout"], DEFAULT_TIMEOUT_S)
 		self.assertEqual(captured["json"], {
 			"provider": "p", "model": "m", "base_url": "b", "api_key": "k",
+			"auth_mode": "api_key",
 		})
 		self.assertTrue(captured["url"].startswith("https://admin.example.com/api/method/"))
 		self.assertIn("jarvis_admin.api.tenant.update_llm_creds", captured["url"])
@@ -381,3 +382,74 @@ class TestOnboardingClient(FrappeTestCase):
 		with patch("requests.post", side_effect=_fake_post):
 			admin_client.get_plans()
 		self.assertNotIn("Authorization", captured["headers"])
+
+
+class TestPostUpdateLlmCredsAuthMode(FrappeTestCase):
+	def setUp(self):
+		_settings_for_admin()
+
+	def tearDown(self):
+		_settings_clear_admin()
+
+	def test_default_auth_mode_is_api_key(self):
+		captured = {}
+
+		def _fake_post(url, json=None, **_kw):
+			captured["body"] = json
+			return _mock_response(200, json_body={"message": {"ok": True, "data": {"action": "restart"}}})
+
+		with patch("requests.post", side_effect=_fake_post):
+			post_update_llm_creds(provider="OpenAI", model="gpt-4o", base_url="", api_key="sk-1")
+		self.assertEqual(captured["body"]["auth_mode"], "api_key")
+
+	def test_explicit_subscription_auth_mode(self):
+		captured = {}
+
+		def _fake_post(url, json=None, **_kw):
+			captured["body"] = json
+			return _mock_response(200, json_body={"message": {"ok": True, "data": {"action": "restart"}}})
+
+		with patch("requests.post", side_effect=_fake_post):
+			post_update_llm_creds(
+				provider="OpenAI", model="", base_url="",
+				api_key="AT-1", auth_mode="subscription",
+			)
+		self.assertEqual(captured["body"]["auth_mode"], "subscription")
+		self.assertEqual(captured["body"]["api_key"], "AT-1")
+
+
+class TestPostRotateLlmSecret(FrappeTestCase):
+	def setUp(self):
+		_settings_for_admin()
+
+	def tearDown(self):
+		_settings_clear_admin()
+
+	def test_happy_path(self):
+		captured = {}
+
+		def _fake_post(url, json=None, **_kw):
+			captured["url"] = url
+			captured["body"] = json
+			return _mock_response(200, json_body={"message": {"ok": True, "data": {"action": "reload"}}})
+
+		with patch("requests.post", side_effect=_fake_post):
+			result = admin_client.post_rotate_llm_secret(secret="AT-rotated")
+		self.assertEqual(result.get("action"), "reload")
+		self.assertIn("rotate_llm_secret", captured["url"])
+		self.assertEqual(captured["body"], {"secret": "AT-rotated"})
+
+	def test_429_raises_AdminRateLimitedError(self):
+		from jarvis.exceptions import AdminRateLimitedError
+		mock_post = MagicMock(return_value=_mock_response(
+			429,
+			json_body={"message": {"ok": False, "error": {
+				"code": "RateLimitExceeded",
+				"message": "rotation rate limit hit",
+				"retry_after_seconds": 1200,
+			}}},
+		))
+		with patch("requests.post", mock_post):
+			with self.assertRaises(AdminRateLimitedError) as ctx:
+				admin_client.post_rotate_llm_secret(secret="AT-x")
+		self.assertEqual(ctx.exception.retry_after_seconds, 1200)

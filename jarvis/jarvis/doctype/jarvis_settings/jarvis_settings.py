@@ -92,6 +92,21 @@ class JarvisSettings(Document):
                     frappe.ValidationError,
                 )
 
+    def _resolve_llm_secret_for_push(self) -> str:
+        """Return the bytes to push to openclaw based on auth mode.
+
+        Subscription mode: the short-lived OAuth access token (rotated by
+        the refresh cron). API-key mode: the long-lived API key. Used by
+        both the bench's _sync_via_admin and (via openclaw_push) the local
+        push path.
+        """
+        field = (
+            "llm_oauth_access_token"
+            if (self.llm_auth_mode or "api_key") == "subscription"
+            else "llm_api_key"
+        )
+        return self.get_password(field, raise_exception=False) or ""
+
     def on_update(self):
         # Mode-switch hygiene: clear the opposite mode's credentials so we
         # don't leave stale tokens that could be misused if the user toggles
@@ -111,24 +126,38 @@ class JarvisSettings(Document):
             self._sync_via_local_openclaw(action)
 
     def _sync_via_admin(self, action: str) -> None:
-        """Prod path: POST new LLM creds to admin's /tenant/update-llm-creds.
-        Admin authenticates the customer, looks up the customer's Tenant,
-        and routes the change through fleet (reload or restart).
+        """Prod path: route LLM creds through admin → fleet → openclaw container.
+
+        ``action`` is the classifier output ("reload" / "restart"):
+        - "reload" calls post_rotate_llm_secret (hot-rotate /secrets/llm.key,
+          no container restart) — used for OAuth access-token rotation by
+          the bench-side cron and for plain api_key rotation by manual save.
+        - "restart" calls post_update_llm_creds (re-render openclaw.json
+          with auth_mode + restart container) — used for mode switches,
+          provider/model/base_url changes, refresh-token re-auth.
 
         Errors land in last_sync_status so the customer's save never fails
         because of admin issues; they can always retry.
         """
         from jarvis import admin_client
         try:
-            result = admin_client.post_update_llm_creds(
-                provider=self.llm_provider or "",
-                model=self.llm_model or "",
-                base_url=self.llm_base_url or "",
-                api_key=self.get_password("llm_api_key", raise_exception=False) or "",
-            )
+            if action == "reload":
+                secret = self._resolve_llm_secret_for_push()
+                result = admin_client.post_rotate_llm_secret(secret=secret) or {}
+                resolved_action = result.get("action", "reload")
+            else:  # "restart"
+                secret = self._resolve_llm_secret_for_push()
+                result = admin_client.post_update_llm_creds(
+                    provider=self.llm_provider or "",
+                    model=self.llm_model or "",
+                    base_url=self.llm_base_url or "",
+                    api_key=secret,
+                    auth_mode=self.llm_auth_mode or "api_key",
+                ) or {}
+                resolved_action = result.get("action", "restart")
             self.db_set({
                 "last_sync_at": frappe.utils.now(),
-                "last_sync_status": f"ok ({result.get('action', action)} via admin)",
+                "last_sync_status": f"ok ({resolved_action} via admin)",
             })
         except admin_client.AdminAuthError as e:
             self.db_set("last_sync_status", f"failed: auth: {e}")
@@ -141,6 +170,12 @@ class JarvisSettings(Document):
             frappe.log_error(
                 title="Jarvis: admin unreachable",
                 message=frappe.get_traceback(),
+            )
+        except admin_client.AdminRateLimitedError as e:
+            # Rate-limit means our cron is calling too often — bench-side bug.
+            # Don't mutate last_sync_status (creds are fine); just log + return.
+            frappe.logger().info(
+                f"admin_client: rate-limited; retry_after={e.retry_after_seconds}s"
             )
 
     def _sync_via_local_openclaw(self, action: str) -> None:
@@ -182,15 +217,18 @@ class JarvisSettings(Document):
         """Return one of: None | 'reload' | 'restart'.
 
         - None: no LLM field changed; no action needed.
-        - 'reload': credential-only rotation (api_key or oauth_access_token);
-          hot reload via secrets.reload.
-        - 'restart': structural change (mode switch, provider/model/base_url,
-          refresh-token); re-render config + restart.
+        - 'reload': credential-only rotation (api_key, oauth_access_token,
+          or oauth_refresh_token-alone); hot reload via secrets.reload.
+        - 'restart': structural change (mode switch, provider/model/base_url);
+          re-render config + restart.
+
+        Refresh-token rotation alone is treated as a reload because the
+        container never sees refresh tokens — they're bench bookkeeping.
+        When a provider rotates both refresh and access tokens together,
+        the access-token-changed flag drives the action, not refresh.
         """
         # Structural triggers — any of these means we need a full restart.
         if self.flags.get("llm_auth_mode_changed"):
-            return "restart"
-        if self.flags.get("llm_oauth_refresh_token_changed"):
             return "restart"
 
         old = self.get_doc_before_save()
@@ -216,6 +254,13 @@ class JarvisSettings(Document):
         if self.flags.get("llm_api_key_changed"):
             return "reload"
         if self.flags.get("llm_oauth_access_token_changed"):
+            return "reload"
+        # Refresh-token alone is bench bookkeeping — container doesn't see it.
+        # We still need to route through the bench's "reload" path so the
+        # last_sync_status reflects the save and the cron's fail-counter
+        # clears. Hitting the rotate endpoint is harmless (the secret being
+        # pushed is the current access token, unchanged).
+        if self.flags.get("llm_oauth_refresh_token_changed"):
             return "reload"
 
         return None

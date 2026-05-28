@@ -9,7 +9,6 @@ from datetime import datetime, timedelta
 
 import frappe
 
-from jarvis import openclaw_push
 from jarvis.exceptions import JarvisError
 from jarvis.hooks import get_oauth_client_id
 from jarvis.oauth import device_flow
@@ -57,25 +56,29 @@ def tick():
 
 
 def _apply_refresh(settings, result: dict):
+	"""Persist rotated tokens; settings.save() triggers on_update which
+	dispatches the push via the classifier — admin in prod, local in dev.
+
+	No direct openclaw_push call here. The classifier owns the routing so
+	the same code path manual saves use also handles cron rotations. Result:
+	one source of truth for "where do credentials go" + reduced duplication.
+	"""
 	new_expiry = datetime.utcnow() + timedelta(seconds=result["expires_in"])
-	settings.db_set("llm_oauth_access_token", result["access_token"], update_modified=False)
-	settings.db_set("llm_oauth_access_token_expires_at", new_expiry, update_modified=False)
-	settings.db_set("llm_oauth_last_refresh_at", datetime.utcnow(), update_modified=False)
+	settings.llm_oauth_access_token = result["access_token"]
+	settings.llm_oauth_access_token_expires_at = new_expiry
+	settings.llm_oauth_last_refresh_at = datetime.utcnow()
 	if result.get("refresh_token"):
-		settings.db_set("llm_oauth_refresh_token", result["refresh_token"], update_modified=False)
-	settings.db_set("last_sync_status", "subscription_connected", update_modified=False)
-	# Reset transient-fail counter
-	frappe.cache.delete_value(_FAIL_COUNT_KEY)
-	# Push new access token to openclaw via existing reload path
+		settings.llm_oauth_refresh_token = result["refresh_token"]
 	try:
-		openclaw_push.push_creds_reload(settings)
-	except Exception as e:
-		frappe.log_error(
-			title="Jarvis: openclaw reload after oauth refresh failed",
-			message=frappe.get_traceback(),
-		)
-		settings.db_set("last_sync_status", f"failed: openclaw reload: {e}", update_modified=False)
+		settings.save(ignore_permissions=False)
+	except frappe.ValidationError as e:
+		# Race: refresh_token nulled between read and save (e.g. customer hit
+		# Disconnect). Log + skip. Next tick re-reads consistent state.
+		frappe.logger().warning(f"oauth.refresh: save failed: {e}")
 		return
+	# Reset transient-fail counter on success. The actual push outcome lands
+	# in last_sync_status via _sync_via_admin or _sync_via_local_openclaw.
+	frappe.cache.delete_value(_FAIL_COUNT_KEY)
 	frappe.logger().info(
 		f"oauth.refresh provider={settings.llm_provider} "
 		f"email={settings.llm_oauth_account_email} status=ok "
