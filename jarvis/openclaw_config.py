@@ -75,11 +75,21 @@ def render_config(settings, gateway_token: str) -> str:
 	provider_label = getattr(settings, "llm_provider", None)
 	model = getattr(settings, "llm_model", None)
 	customer_base_url = (getattr(settings, "llm_base_url", None) or "").strip() or None
+	auth_mode = getattr(settings, "llm_auth_mode", None) or "api_key"
+
+	# Subscription mode with no access token yet → fall through to stub so the
+	# container still boots; the cron / wizard will populate the token shortly.
+	if auth_mode == "subscription":
+		access_token = getattr(settings, "llm_oauth_access_token", None)
+		if not access_token:
+			provider_label = None
+			auth_mode = "api_key"  # stub uses api_key shape
 
 	if not provider_label or not model:
 		provider_id = STUB_DEFAULTS["provider_id"]
 		model = STUB_DEFAULTS["model"]
 		base_url = STUB_DEFAULTS["base_url"]
+		auth_mode = "api_key"
 	else:
 		if provider_label not in PROVIDER_MAP:
 			raise InvalidArgumentError(f"unknown llm_provider: {provider_label!r}")
@@ -96,6 +106,7 @@ def render_config(settings, gateway_token: str) -> str:
 		provider_id=provider_id,
 		model=model,
 		base_url=base_url,
+		auth_mode=auth_mode,
 	)
 
 	try:

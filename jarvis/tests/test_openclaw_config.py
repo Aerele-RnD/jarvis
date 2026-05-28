@@ -13,6 +13,8 @@ class _FakeSettings:
         self.llm_provider = kwargs.get("llm_provider")
         self.llm_model = kwargs.get("llm_model")
         self.llm_base_url = kwargs.get("llm_base_url")
+        self.llm_auth_mode = kwargs.get("llm_auth_mode", "api_key")
+        self.llm_oauth_access_token = kwargs.get("llm_oauth_access_token")
 
 
 class TestProviderMap(FrappeTestCase):
@@ -220,3 +222,36 @@ class TestRenderConfig(FrappeTestCase):
         result, _ = self._render(llm_provider=None, llm_model=None)
         self.assertIn("plugins", result)
         self.assertIn("jarvis-openclaw-plugin", result["plugins"]["entries"])
+
+
+class TestRenderConfigSubscription(FrappeTestCase):
+    def _render(self, **kwargs):
+        return json.loads(render_config(_FakeSettings(**kwargs), gateway_token="GW-1"))
+
+    def test_api_key_mode_emits_api_key_auth(self):
+        out = self._render(llm_provider="OpenAI", llm_model="gpt-4o-mini")
+        provider_block = out["models"]["providers"]["openai"]
+        self.assertEqual(provider_block.get("authMode"), "api_key")
+
+    def test_subscription_mode_emits_subscription_auth(self):
+        out = self._render(
+            llm_provider="OpenAI",
+            llm_model="gpt-4o-mini",
+            llm_auth_mode="subscription",
+            llm_oauth_access_token="AT-1",
+        )
+        provider_block = out["models"]["providers"]["openai"]
+        self.assertEqual(provider_block.get("authMode"), "subscription")
+
+    def test_subscription_mode_empty_token_falls_back_to_stub(self):
+        out = self._render(
+            llm_provider="OpenAI",
+            llm_model="gpt-4o-mini",
+            llm_auth_mode="subscription",
+            llm_oauth_access_token=None,
+        )
+        # Falls back to STUB_DEFAULTS — moonshot per current stub
+        stub_id = STUB_DEFAULTS["provider_id"]
+        self.assertIn(stub_id, out["models"]["providers"])
+        # And the rendered mode reverts to api_key since the stub has no subscription
+        self.assertEqual(out["models"]["providers"][stub_id].get("authMode"), "api_key")

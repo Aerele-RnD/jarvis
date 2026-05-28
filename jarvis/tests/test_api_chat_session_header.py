@@ -54,7 +54,7 @@ class TestCallToolWithSessionHeader(FrappeTestCase):
 			"doctype": CONV,
 			"title": "T",
 			"session_key": self.session_key,
-			"status": "active",
+			"status": "Active",
 		})
 		conv.insert(ignore_permissions=True)
 		frappe.get_doc({

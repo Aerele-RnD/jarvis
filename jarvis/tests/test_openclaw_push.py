@@ -210,3 +210,39 @@ class TestRestartGateway(FrappeTestCase):
 			mock_run.side_effect = subprocess.CalledProcessError(1, "docker compose")
 			with self.assertRaises(OpenclawRestartFailedError):
 				restart_gateway("/path/to/compose")
+
+
+class TestResolveLlmSecret(FrappeTestCase):
+	def _settings(self, **kw):
+		from types import SimpleNamespace
+		defaults = {
+			"llm_auth_mode": "api_key",
+			"_llm_api_key": None,
+			"_llm_oauth_access_token": None,
+		}
+		defaults.update(kw)
+		s = SimpleNamespace(**defaults)
+		def fake_get_password(f, raise_exception=False):
+			return getattr(s, f"_{f}", None)
+		s.get_password = fake_get_password
+		return s
+
+	def test_api_key_mode_returns_api_key(self):
+		from jarvis.openclaw_push import _resolve_llm_secret
+		s = self._settings(llm_auth_mode="api_key", _llm_api_key="sk-xyz")
+		self.assertEqual(_resolve_llm_secret(s), "sk-xyz")
+
+	def test_subscription_mode_returns_access_token(self):
+		from jarvis.openclaw_push import _resolve_llm_secret
+		s = self._settings(llm_auth_mode="subscription", _llm_oauth_access_token="AT-1")
+		self.assertEqual(_resolve_llm_secret(s), "AT-1")
+
+	def test_subscription_mode_empty_token_returns_empty(self):
+		from jarvis.openclaw_push import _resolve_llm_secret
+		s = self._settings(llm_auth_mode="subscription")
+		self.assertEqual(_resolve_llm_secret(s), "")
+
+	def test_default_mode_treats_as_api_key(self):
+		from jarvis.openclaw_push import _resolve_llm_secret
+		s = self._settings(llm_auth_mode=None, _llm_api_key="sk-fallback")
+		self.assertEqual(_resolve_llm_secret(s), "sk-fallback")

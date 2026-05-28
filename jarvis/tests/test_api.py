@@ -55,7 +55,7 @@ class TestCallToolPluginAuth(FrappeTestCase):
 		# Use a dedicated token for plugin-auth tests so we don't depend on
 		# real openclaw config. db_set bypasses on_update — the value persists
 		# only for this test class.
-		cls._original_token = settings.get_password("agent_token") or ""
+		cls._original_token = settings.get_password("agent_token", raise_exception=False) or ""
 		settings.db_set("agent_token", "plugin-auth-test-token")
 		# Seed a Jarvis Chat Session row so the user-resolution lookup has
 		# something to find. Use a sentinel key so we can clean up cleanly.

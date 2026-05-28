@@ -17,6 +17,28 @@ app_license = "MIT"
 # (Re-exported by ``jarvis.admin_client`` so existing imports keep working.)
 DEFAULT_ADMIN_URL = "https://admin.jarvis.aerele.in"
 
+# ---------------------------------------------------------------------------
+# OAuth client IDs — one per supported chat-subscription provider
+# ---------------------------------------------------------------------------
+# These are PKCE-only public clients registered to Aerele. They're baked into
+# the Jarvis app and used by every customer bench. No `client_secret` is
+# distributed. Replace the placeholders with the real client_ids once the
+# OAuth apps are registered with each provider.
+#
+# Anthropic Claude is deliberately absent — openclaw has no compatible
+# adapter for Claude Pro/Max subscriptions.
+OAUTH_CLIENT_IDS = {
+	"OpenAI": "REPLACE_ME_OPENAI_CLIENT_ID",
+	"Google Gemini": "REPLACE_ME_GOOGLE_CLIENT_ID",
+}
+
+
+def get_oauth_client_id(provider: str) -> str:
+	"""Lookup helper for jarvis.oauth code paths."""
+	if provider not in OAUTH_CLIENT_IDS:
+		raise ValueError(f"No OAuth client registered for provider {provider!r}")
+	return OAUTH_CLIENT_IDS[provider]
+
 # Apps
 # ------------------
 
@@ -165,6 +187,7 @@ scheduler_events = {
 	"cron": {
 		"*/5 * * * *": [
 			"jarvis.chat.stale_scan.scan_and_mark_errored",
+			"jarvis.oauth.refresh.tick",
 		],
 	},
 	"daily": [

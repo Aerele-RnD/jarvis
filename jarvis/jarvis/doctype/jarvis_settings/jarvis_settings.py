@@ -40,7 +40,63 @@ class JarvisSettings(Document):
             # If the old value is also plaintext and identical, no change.
             self.flags.llm_api_key_changed = current_key != old_key
 
+        # OAuth-token change detection — same masked/plaintext logic as llm_api_key.
+        for fname in ("llm_oauth_refresh_token", "llm_oauth_access_token"):
+            self.flags[f"{fname}_changed"] = self._password_field_changed(fname)
+
+        # Plain Select field — direct change comparison via has_value_changed.
+        self.flags.llm_auth_mode_changed = bool(self.has_value_changed("llm_auth_mode"))
+
+        self._validate_auth_mode_requirements()
+
+    def _password_field_changed(self, fieldname: str) -> bool:
+        """Return True if `fieldname` (a Password field) carries a new value in this save.
+
+        Mirrors the llm_api_key detection logic: in-memory must be non-empty
+        plaintext and differ from the pre-save snapshot.
+        """
+        current = getattr(self, fieldname, None) or ""
+        if not current or self.is_dummy_password(current):
+            return False
+        old = self.get_doc_before_save()
+        old_value = (getattr(old, fieldname, None) or "") if old else ""
+        return current != old_value
+
+    def _validate_auth_mode_requirements(self):
+        """Each auth mode requires its own credential field.
+
+        For Password fields, Frappe masks the value before validate() runs on
+        an unchanged save, so we treat "already persisted in DB" as 'is set'.
+        """
+        def is_password_set(fieldname: str) -> bool:
+            in_memory = getattr(self, fieldname, None) or ""
+            # Treat a non-empty, non-masked in-memory value as set
+            if in_memory and not self.is_dummy_password(in_memory):
+                return True
+            # Or fall back to whatever is persisted in the DB
+            db_value = self.get_password(fieldname, raise_exception=False)
+            return bool(db_value)
+
+        mode = getattr(self, "llm_auth_mode", None) or "api_key"
+        if mode == "api_key":
+            if not is_password_set("llm_api_key"):
+                frappe.throw(
+                    "API-key auth mode requires llm_api_key",
+                    frappe.ValidationError,
+                )
+        elif mode == "subscription":
+            if not is_password_set("llm_oauth_refresh_token"):
+                frappe.throw(
+                    "Subscription auth mode requires an OAuth refresh token. "
+                    "Connect a chat subscription in Onboarding.",
+                    frappe.ValidationError,
+                )
+
     def on_update(self):
+        # Mode-switch hygiene: clear the opposite mode's credentials so we
+        # don't leave stale tokens that could be misused if the user toggles
+        # back later.
+        self._on_mode_switch_clear_opposite_creds()
         action = self._classify_llm_change()
         if action is None:
             return
@@ -126,9 +182,17 @@ class JarvisSettings(Document):
         """Return one of: None | 'reload' | 'restart'.
 
         - None: no LLM field changed; no action needed.
-        - 'reload': only llm_api_key changed; hot reload via secrets.reload.
-        - 'restart': provider/model/base_url changed; re-render config + restart.
+        - 'reload': credential-only rotation (api_key or oauth_access_token);
+          hot reload via secrets.reload.
+        - 'restart': structural change (mode switch, provider/model/base_url,
+          refresh-token); re-render config + restart.
         """
+        # Structural triggers — any of these means we need a full restart.
+        if self.flags.get("llm_auth_mode_changed"):
+            return "restart"
+        if self.flags.get("llm_oauth_refresh_token_changed"):
+            return "restart"
+
         old = self.get_doc_before_save()
         if old is None:
             # First-ever save: treat as restart only if at least one of provider/model is set now
@@ -147,11 +211,30 @@ class JarvisSettings(Document):
         if structural_changed:
             return "restart"
 
-        # Password field (llm_api_key): by the time on_update runs, _save_passwords() has
-        # already masked the field to '***...' on self.  A real new key would have been
-        # unmasked (non-dummy) at validate() time.  We detect the change via self.flags,
-        # which is set in validate() before the masking occurs.
+        # Credential-only rotations — Password fields detected via self.flags,
+        # which is set in validate() before _save_passwords() masks the values.
         if self.flags.get("llm_api_key_changed"):
+            return "reload"
+        if self.flags.get("llm_oauth_access_token_changed"):
             return "reload"
 
         return None
+
+    def _on_mode_switch_clear_opposite_creds(self):
+        """When llm_auth_mode flips, wipe the now-unused credential set."""
+        if not self.flags.get("llm_auth_mode_changed"):
+            return
+        from frappe.utils.password import remove_encrypted_password
+        if self.llm_auth_mode == "subscription":
+            # Going to subscription — clear API-key residue.
+            remove_encrypted_password("Jarvis Settings", "Jarvis Settings", "llm_api_key")
+        elif self.llm_auth_mode == "api_key":
+            # Going to api_key — clear all OAuth state. db_set on a Password field
+            # writes plaintext to the column; remove_encrypted_password only clears
+            # __Auth. We need both for a clean wipe.
+            for f in ("llm_oauth_refresh_token", "llm_oauth_access_token"):
+                remove_encrypted_password("Jarvis Settings", "Jarvis Settings", f)
+                self.db_set(f, None, update_modified=False)
+            for f in ("llm_oauth_access_token_expires_at", "llm_oauth_account_email",
+                      "llm_oauth_connected_at", "llm_oauth_last_refresh_at"):
+                self.db_set(f, None, update_modified=False)

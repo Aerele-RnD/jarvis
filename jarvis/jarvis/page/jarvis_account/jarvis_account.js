@@ -86,11 +86,66 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		const editable = EDITABLE_STATES.has(sub);
 		$body.html(`
 			${renderPlanSection()}
+			${renderSubscriptionCard()}
 			${renderLlmSection(editable)}
 			${renderBillingSection()}
 		`);
 		bindLlm(editable);
+		bindSubscriptionCard();
 		bindBilling();
+	}
+
+	// ---- LLM subscription card (only shown when llm_auth_mode === "subscription") --
+	function renderSubscriptionCard() {
+		if (settingsLocal.llm_auth_mode !== "subscription") return "";
+		const provider = settingsLocal.llm_provider || "—";
+		const email = settingsLocal.llm_oauth_account_email || "—";
+		const connected = settingsLocal.llm_oauth_connected_at || "—";
+		const lastRefresh = settingsLocal.llm_oauth_last_refresh_at || "—";
+		const sync = settingsLocal.last_sync_status || "";
+		const revoked = sync === "subscription_revoked";
+		const failing = sync === "subscription_refresh_failing";
+		const banner = revoked
+			? `<div class="ja-banner-bad">Disconnected by provider. Re-authorize to resume.</div>`
+			: failing
+				? `<div class="ja-banner-warn">Refreshing token is failing right now. Will retry automatically.</div>`
+				: "";
+		return `<div class="ja-card">
+			<div class="ja-card-head">
+				<h2 class="ja-h">LLM subscription</h2>
+				<span class="ja-pill ${revoked ? "ja-pill-bad" : "ja-pill-ok"}">${esc(provider)}</span>
+			</div>
+			${banner}
+			<table class="ja-kv">
+				<tr><td>Account</td><td>${esc(email)}</td></tr>
+				<tr><td>Connected</td><td>${esc(String(connected))}</td></tr>
+				<tr><td>Last refresh</td><td>${esc(String(lastRefresh))}</td></tr>
+			</table>
+			<div class="ja-actions">
+				<button class="ja-btn ja-btn-ghost" id="ja-sub-disconnect">Disconnect</button>
+				<button class="ja-btn ja-btn-primary" id="ja-sub-reauth">Re-authorize</button>
+			</div>
+		</div>`;
+	}
+
+	function bindSubscriptionCard() {
+		if (settingsLocal.llm_auth_mode !== "subscription") return;
+		$body.find("#ja-sub-disconnect").on("click", () => {
+			if (!confirm("Disconnect the LLM subscription? Jarvis chat will stop working until you reconnect.")) return;
+			frappe.call({ method: "jarvis.oauth.api.disconnect" }).then((r) => {
+				const m = r.message || {};
+				if (m.ok) {
+					frappe.show_alert({ message: "Disconnected.", indicator: "orange" });
+					loadInitial();  // refresh the page state
+				} else {
+					frappe.show_alert({ message: (m.error && m.error.message) || "Disconnect failed.", indicator: "red" });
+				}
+			});
+		});
+		$body.find("#ja-sub-reauth").on("click", () => {
+			// Send the user back to the onboarding wizard so they can re-run the device flow.
+			window.location.assign("/app/jarvis-onboarding");
+		});
 	}
 
 	// ---- plan & validity section ------------------------------------------
@@ -526,6 +581,9 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		.ja-overlay{position:fixed;inset:0;z-index:2000;background:rgba(20,20,40,.45);display:flex;align-items:center;justify-content:center}
 		.ja-overlay-card{background:var(--card-bg);padding:18px 22px;border-radius:10px;font-size:14px;color:var(--text-color);box-shadow:0 12px 40px -12px rgba(0,0,0,.4)}
 		.ja-overlay .ja-spin{border-color:var(--jarvis-primary-faint);border-top-color:var(--jarvis-primary)}
+		.ja-kv{width:100%;border-collapse:collapse;margin:8px 0 16px}
+		.ja-kv td{padding:6px 0;font-size:13.5px}
+		.ja-kv td:first-child{color:var(--text-muted);width:140px}
 		@media(max-width:760px){.ja{flex-direction:column}.ja-brand{flex-basis:auto}.ja-panel{padding:24px 22px}.ja-row2{grid-template-columns:1fr}}
 		`;
 		$(`<style id="ja-styles">${css}</style>`).appendTo(document.head);

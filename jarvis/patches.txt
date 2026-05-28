@@ -7,3 +7,4 @@
 jarvis.patches.v1_0_rename_openclaw_to_agent
 jarvis.patches.v1_1_titlecase_conversation_status
 jarvis.patches.v1_2_clear_legacy_admin_token
+jarvis.patches.v1_3_backfill_llm_auth_mode

@@ -20,6 +20,18 @@ RESTART_TIMEOUT_SECONDS = 60
 HEALTHCHECK_INTERVAL_SECONDS = 1
 
 
+def _resolve_llm_secret(settings) -> str:
+	"""Return the bytes to write into /secrets/llm.key based on auth mode.
+
+	Subscription mode: the short-lived access token (refreshed by the cron).
+	API-key mode: the long-lived API key.
+	"""
+	mode = getattr(settings, "llm_auth_mode", None) or "api_key"
+	if mode == "subscription":
+		return settings.get_password("llm_oauth_access_token", raise_exception=False) or ""
+	return settings.get_password("llm_api_key", raise_exception=False) or ""
+
+
 def write_key_file(path: str, key: str) -> None:
 	"""Write `key` to `path` with mode 0600. Creates parent dirs if missing."""
 	target = Path(path)
@@ -194,7 +206,7 @@ def restart_gateway(compose_dir: str) -> None:
 
 def push_creds_reload(settings) -> None:
 	"""Key-only-change path: write the new key to the SecretRef file, call secrets.reload."""
-	key = settings.get_password("llm_api_key") or ""
+	key = _resolve_llm_secret(settings)
 	write_key_file(settings.agent_llm_key_path, key)
 	reload_secrets(settings.agent_url, settings.get_password("agent_token"))
 
@@ -206,7 +218,7 @@ def push_creds_restart(settings, gateway_token: str) -> None:
 	rendered = render_config(settings, gateway_token)
 	Path(settings.agent_config_path).write_text(rendered)
 
-	key = settings.get_password("llm_api_key") or ""
+	key = _resolve_llm_secret(settings)
 	write_key_file(settings.agent_llm_key_path, key)
 
 	restart_gateway(settings.agent_compose_dir)

@@ -11,7 +11,7 @@ def _make_conversation(title: str = "T") -> str:
 	doc = frappe.get_doc({
 		"doctype": CONV_DOCTYPE,
 		"title": title,
-		"status": "active",
+		"status": "Active",
 	})
 	doc.insert(ignore_permissions=True)
 	frappe.db.commit()
