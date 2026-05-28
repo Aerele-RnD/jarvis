@@ -11,7 +11,12 @@ endpoints are @frappe.whitelist(allow_guest=True).
 import frappe
 import requests
 
-from jarvis.exceptions import AdminAuthError, AdminUnreachableError, AdminValidationError
+from jarvis.exceptions import (
+	AdminAuthError,
+	AdminRateLimitedError,
+	AdminUnreachableError,
+	AdminValidationError,
+)
 
 
 # Admin's provision_healthz_timeout_s defaults to 60s for restart operations;
@@ -81,15 +86,40 @@ def renew() -> dict:
 
 def post_update_llm_creds(
 	provider: str, model: str, base_url: str, api_key: str,
+	auth_mode: str = "api_key",
 ) -> dict:
-	"""POST customer's new LLM creds to admin's /tenant/update-llm-creds."""
+	"""POST customer's new LLM creds to admin's /tenant/update-llm-creds.
+
+	``auth_mode`` defaults to ``"api_key"`` to keep existing call sites
+	source-compatible. Subscription-mode callers pass ``"subscription"`` and
+	pass the OAuth access token as ``api_key``.
+	"""
 	settings = frappe.get_single("Jarvis Settings")
 	return _post(
 		path="/api/method/jarvis_admin.api.tenant.update_llm_creds",
 		body={
 			"provider": provider, "model": model,
 			"base_url": base_url, "api_key": api_key,
+			"auth_mode": auth_mode,
 		},
+		admin_url=_admin_url(settings),
+	)
+
+
+def post_rotate_llm_secret(secret: str) -> dict:
+	"""POST a rotated LLM secret to admin's /tenant/rotate-llm-secret.
+
+	Used by the bench-side OAuth refresh cron via _sync_via_admin("reload").
+	Hot-rotates /secrets/llm.key on the container without restart.
+
+	Raises:
+		AdminRateLimitedError on HTTP 429.
+		AdminAuthError, AdminUnreachableError, AdminValidationError as usual.
+	"""
+	settings = frappe.get_single("Jarvis Settings")
+	return _post(
+		path="/api/method/jarvis_admin.api.tenant.rotate_llm_secret",
+		body={"secret": secret},
 		admin_url=_admin_url(settings),
 	)
 
@@ -227,6 +257,12 @@ def _do_post(url: str, body: dict, headers: dict, timeout_s: int, admin_url: str
 	if resp.status_code in (401, 403):
 		err = (envelope or {}).get("error", {}) if isinstance(envelope, dict) else {}
 		raise AdminAuthError(err.get("message") or f"admin returned {resp.status_code}")
+	if resp.status_code == 429:
+		err = (envelope or {}).get("error", {}) if isinstance(envelope, dict) else {}
+		raise AdminRateLimitedError(
+			err.get("message") or "rate_limited",
+			retry_after_seconds=int(err.get("retry_after_seconds") or 0),
+		)
 	if resp.status_code >= 400 or (isinstance(envelope, dict) and not envelope.get("ok", True)):
 		err = (envelope or {}).get("error", {}) if isinstance(envelope, dict) else {}
 		raise AdminUnreachableError(
