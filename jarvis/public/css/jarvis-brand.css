@@ -1,0 +1,8 @@
+:root {
+	--jarvis-primary:       #7C3AED;
+	--jarvis-primary-dark:  #0F0F0F;
+	--jarvis-primary-light: #A78BFA;
+	--jarvis-gradient:      linear-gradient(135deg, #A78BFA 0%, #7C3AED 50%, #0F0F0F 100%);
+	--jarvis-primary-faint: rgba(124, 58, 237, 0.18);
+	--jarvis-primary-soft:  rgba(124, 58, 237, 0.10);
+}
