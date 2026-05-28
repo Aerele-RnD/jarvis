@@ -69,3 +69,70 @@ def start(provider: str, client_id: str) -> dict:
 		"interval": int(body.get("interval", 5)),
 		"expires_in": int(body.get("expires_in", 600)),
 	}
+
+
+def poll(provider: str, device_code: str, client_id: str):
+	"""Exchange ``device_code`` for tokens.
+
+	Returns:
+		- ``PENDING`` if provider says ``authorization_pending``
+		- ``SLOW_DOWN`` if provider asks us to extend interval
+		- ``dict`` with access_token / refresh_token / expires_in / account_email on success
+
+	Raises:
+		AccessDenied, CodeExpired, InvalidGrant: terminal failures.
+		ProviderUnavailable: 5xx / network error.
+	"""
+	entry = get_provider(provider)
+	try:
+		resp = requests.post(
+			entry["token_endpoint"],
+			data={
+				"client_id": client_id,
+				"device_code": device_code,
+				"grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+			},
+			timeout=_HTTP_TIMEOUT,
+		)
+	except requests.RequestException as e:
+		raise ProviderUnavailable(f"network error polling {provider}: {e}") from e
+
+	if resp.status_code >= 500:
+		raise ProviderUnavailable(f"{provider} returned HTTP {resp.status_code}")
+
+	body = resp.json()
+
+	if resp.ok:
+		access_token = body["access_token"]
+		email = _fetch_userinfo_email(entry, access_token)
+		return {
+			"access_token": access_token,
+			"refresh_token": body.get("refresh_token"),
+			"expires_in": int(body.get("expires_in", 3600)),
+			"account_email": email,
+		}
+
+	error_code = body.get("error", "")
+	if error_code == "authorization_pending":
+		return PENDING
+	if error_code == "slow_down":
+		return SLOW_DOWN
+	exc_cls = _TERMINAL_ERRORS.get(error_code)
+	if exc_cls:
+		raise exc_cls(body.get("error_description") or error_code)
+	raise InvalidArgumentError(f"unexpected error from {provider}: {body!r}")
+
+
+def _fetch_userinfo_email(entry: dict, access_token: str) -> str | None:
+	"""Best-effort fetch of the connected account email. Never blocks the flow."""
+	try:
+		resp = requests.get(
+			entry["userinfo_endpoint"],
+			headers={"Authorization": f"Bearer {access_token}"},
+			timeout=_HTTP_TIMEOUT,
+		)
+		if resp.ok:
+			return resp.json().get("email")
+	except requests.RequestException:
+		pass
+	return None

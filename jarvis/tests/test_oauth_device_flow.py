@@ -44,3 +44,50 @@ class TestDeviceFlowStart(unittest.TestCase):
 		mock_post.return_value = _mock_response(503)
 		with self.assertRaises(device_flow.ProviderUnavailable):
 			device_flow.start("OpenAI", client_id="x")
+
+
+class TestDeviceFlowPoll(unittest.TestCase):
+	@patch("jarvis.oauth.device_flow.requests.post")
+	def test_poll_pending_returns_pending_sentinel(self, mock_post):
+		mock_post.return_value = _mock_response(400, {"error": "authorization_pending"})
+		result = device_flow.poll("OpenAI", device_code="DC-abc", client_id="x")
+		self.assertIs(result, device_flow.PENDING)
+
+	@patch("jarvis.oauth.device_flow.requests.post")
+	def test_poll_slow_down_returns_slow_down_sentinel(self, mock_post):
+		mock_post.return_value = _mock_response(400, {"error": "slow_down"})
+		result = device_flow.poll("OpenAI", device_code="DC-abc", client_id="x")
+		self.assertIs(result, device_flow.SLOW_DOWN)
+
+	@patch("jarvis.oauth.device_flow.requests.post")
+	def test_poll_access_denied_raises(self, mock_post):
+		mock_post.return_value = _mock_response(400, {"error": "access_denied"})
+		with self.assertRaises(device_flow.AccessDenied):
+			device_flow.poll("OpenAI", device_code="DC-abc", client_id="x")
+
+	@patch("jarvis.oauth.device_flow.requests.post")
+	def test_poll_expired_raises(self, mock_post):
+		mock_post.return_value = _mock_response(400, {"error": "expired_token"})
+		with self.assertRaises(device_flow.CodeExpired):
+			device_flow.poll("OpenAI", device_code="DC-abc", client_id="x")
+
+	@patch("jarvis.oauth.device_flow.requests.post")
+	def test_poll_invalid_grant_raises(self, mock_post):
+		mock_post.return_value = _mock_response(400, {"error": "invalid_grant"})
+		with self.assertRaises(device_flow.InvalidGrant):
+			device_flow.poll("OpenAI", device_code="DC-abc", client_id="x")
+
+	@patch("jarvis.oauth.device_flow.requests.get")
+	@patch("jarvis.oauth.device_flow.requests.post")
+	def test_poll_happy_returns_tokens_plus_email(self, mock_post, mock_get):
+		mock_post.return_value = _mock_response(200, {
+			"access_token": "AT-1",
+			"refresh_token": "RT-1",
+			"expires_in": 3600,
+		})
+		mock_get.return_value = _mock_response(200, {"email": "manager@acme.com"})
+		result = device_flow.poll("OpenAI", device_code="DC-abc", client_id="x")
+		self.assertEqual(result["access_token"], "AT-1")
+		self.assertEqual(result["refresh_token"], "RT-1")
+		self.assertEqual(result["account_email"], "manager@acme.com")
+		self.assertEqual(result["expires_in"], 3600)
