@@ -432,8 +432,11 @@ class TestClassifyAuthModeSwitch(_SettingsSingletonTestCase):
 			reload_mock.assert_called_once()
 			self.assertFalse(restart_mock.called)
 
-	def test_refresh_token_change_triggers_restart(self):
-		# Re-authorize: a new refresh token comes in. Structural change.
+	def test_refresh_token_change_alone_triggers_reload(self):
+		"""Refresh-token-only change is bench bookkeeping — container never
+		sees refresh tokens. Updated from the pre-Spec-2 behavior where this
+		used to trigger a restart; the prod-wiring classifier fix demotes it
+		to reload."""
 		settings = frappe.get_single("Jarvis Settings")
 		settings.db_set("llm_auth_mode", "subscription", update_modified=False)
 		frappe.db.commit()
@@ -442,8 +445,8 @@ class TestClassifyAuthModeSwitch(_SettingsSingletonTestCase):
 		with patch("jarvis.openclaw_push.push_creds_reload") as reload_mock, \
 		     patch("jarvis.openclaw_push.push_creds_restart") as restart_mock:
 			settings.save()
-			self.assertFalse(reload_mock.called)
-			restart_mock.assert_called_once()
+			reload_mock.assert_called_once()
+			self.assertFalse(restart_mock.called)
 
 
 class TestResolveLlmSecretForPush(_SettingsSingletonTestCase):
@@ -553,3 +556,44 @@ class TestSyncViaAdminModeAware(_SettingsSingletonTestCase):
 		# last_sync_status unchanged (rate-limit is a bench-side bug, not a creds problem)
 		settings.reload()
 		self.assertEqual(settings.last_sync_status, before_status)
+
+
+class TestClassifierRefreshTokenAlone(_SettingsSingletonTestCase):
+	"""Refresh-token rotation alone is a reload — container never sees refresh tokens."""
+
+	def setUp(self):
+		from frappe.utils.password import remove_encrypted_password
+		_reset_settings()
+		for f in ("llm_api_key", "llm_oauth_access_token", "llm_oauth_refresh_token"):
+			remove_encrypted_password("Jarvis Settings", "Jarvis Settings", f)
+			frappe.db.set_single_value("Jarvis Settings", f, None)
+		settings = frappe.get_single("Jarvis Settings")
+		settings.db_set("llm_auth_mode", "subscription", update_modified=False)
+		settings.db_set("llm_oauth_refresh_token", "RT-old", update_modified=False)
+		settings.db_set("llm_oauth_access_token", "AT-old", update_modified=False)
+		settings.db_set("llm_provider", "OpenAI", update_modified=False)
+		frappe.db.commit()
+
+	def test_refresh_token_rotation_alone_triggers_reload(self):
+		"""Provider rotates both refresh and access tokens — classifier picks
+		reload (access_token_changed drives the action; refresh-token change
+		is bench bookkeeping)."""
+		settings = frappe.get_single("Jarvis Settings")
+		settings.llm_oauth_refresh_token = "RT-new"
+		settings.llm_oauth_access_token = "AT-new"
+		with patch("jarvis.openclaw_push.push_creds_reload") as mock_reload, \
+		     patch("jarvis.openclaw_push.push_creds_restart") as mock_restart:
+			settings.save()
+		mock_reload.assert_called_once()
+		mock_restart.assert_not_called()
+
+	def test_refresh_token_only_change_also_triggers_reload(self):
+		"""Even refresh-token-only change (no access-token change) goes through
+		the reload path — it's just bookkeeping; the container is unaffected."""
+		settings = frappe.get_single("Jarvis Settings")
+		settings.llm_oauth_refresh_token = "RT-new-only"
+		with patch("jarvis.openclaw_push.push_creds_reload") as mock_reload, \
+		     patch("jarvis.openclaw_push.push_creds_restart") as mock_restart:
+			settings.save()
+		mock_reload.assert_called_once()
+		mock_restart.assert_not_called()

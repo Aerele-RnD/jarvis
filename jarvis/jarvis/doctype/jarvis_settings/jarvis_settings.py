@@ -217,15 +217,18 @@ class JarvisSettings(Document):
         """Return one of: None | 'reload' | 'restart'.
 
         - None: no LLM field changed; no action needed.
-        - 'reload': credential-only rotation (api_key or oauth_access_token);
-          hot reload via secrets.reload.
-        - 'restart': structural change (mode switch, provider/model/base_url,
-          refresh-token); re-render config + restart.
+        - 'reload': credential-only rotation (api_key, oauth_access_token,
+          or oauth_refresh_token-alone); hot reload via secrets.reload.
+        - 'restart': structural change (mode switch, provider/model/base_url);
+          re-render config + restart.
+
+        Refresh-token rotation alone is treated as a reload because the
+        container never sees refresh tokens — they're bench bookkeeping.
+        When a provider rotates both refresh and access tokens together,
+        the access-token-changed flag drives the action, not refresh.
         """
         # Structural triggers — any of these means we need a full restart.
         if self.flags.get("llm_auth_mode_changed"):
-            return "restart"
-        if self.flags.get("llm_oauth_refresh_token_changed"):
             return "restart"
 
         old = self.get_doc_before_save()
@@ -251,6 +254,13 @@ class JarvisSettings(Document):
         if self.flags.get("llm_api_key_changed"):
             return "reload"
         if self.flags.get("llm_oauth_access_token_changed"):
+            return "reload"
+        # Refresh-token alone is bench bookkeeping — container doesn't see it.
+        # We still need to route through the bench's "reload" path so the
+        # last_sync_status reflects the save and the cron's fail-counter
+        # clears. Hitting the rotate endpoint is harmless (the secret being
+        # pushed is the current access token, unchanged).
+        if self.flags.get("llm_oauth_refresh_token_changed"):
             return "reload"
 
         return None
