@@ -91,3 +91,38 @@ class TestDeviceFlowPoll(unittest.TestCase):
 		self.assertEqual(result["refresh_token"], "RT-1")
 		self.assertEqual(result["account_email"], "manager@acme.com")
 		self.assertEqual(result["expires_in"], 3600)
+
+
+class TestDeviceFlowRefresh(unittest.TestCase):
+	@patch("jarvis.oauth.device_flow.requests.post")
+	def test_refresh_happy(self, mock_post):
+		mock_post.return_value = _mock_response(200, {
+			"access_token": "AT-2",
+			"expires_in": 3600,
+		})
+		out = device_flow.refresh("OpenAI", refresh_token="RT-1", client_id="x")
+		self.assertEqual(out["access_token"], "AT-2")
+		self.assertEqual(out["expires_in"], 3600)
+		self.assertIsNone(out["refresh_token"])  # provider didn't rotate
+
+	@patch("jarvis.oauth.device_flow.requests.post")
+	def test_refresh_rotates_refresh_token(self, mock_post):
+		mock_post.return_value = _mock_response(200, {
+			"access_token": "AT-2",
+			"refresh_token": "RT-2",
+			"expires_in": 3600,
+		})
+		out = device_flow.refresh("OpenAI", refresh_token="RT-1", client_id="x")
+		self.assertEqual(out["refresh_token"], "RT-2")
+
+	@patch("jarvis.oauth.device_flow.requests.post")
+	def test_refresh_invalid_grant_raises(self, mock_post):
+		mock_post.return_value = _mock_response(400, {"error": "invalid_grant"})
+		with self.assertRaises(device_flow.InvalidGrant):
+			device_flow.refresh("OpenAI", refresh_token="RT-1", client_id="x")
+
+	@patch("jarvis.oauth.device_flow.requests.post")
+	def test_refresh_5xx_raises_provider_error(self, mock_post):
+		mock_post.return_value = _mock_response(503)
+		with self.assertRaises(device_flow.ProviderUnavailable):
+			device_flow.refresh("OpenAI", refresh_token="RT-1", client_id="x")
