@@ -40,6 +40,38 @@ class JarvisSettings(Document):
             # If the old value is also plaintext and identical, no change.
             self.flags.llm_api_key_changed = current_key != old_key
 
+        self._validate_auth_mode_requirements()
+
+    def _validate_auth_mode_requirements(self):
+        """Each auth mode requires its own credential field.
+
+        For Password fields, Frappe masks the value before validate() runs on
+        an unchanged save, so we treat "already persisted in DB" as 'is set'.
+        """
+        def is_password_set(fieldname: str) -> bool:
+            in_memory = getattr(self, fieldname, None) or ""
+            # Treat a non-empty, non-masked in-memory value as set
+            if in_memory and not self.is_dummy_password(in_memory):
+                return True
+            # Or fall back to whatever is persisted in the DB
+            db_value = self.get_password(fieldname, raise_exception=False)
+            return bool(db_value)
+
+        mode = getattr(self, "llm_auth_mode", None) or "api_key"
+        if mode == "api_key":
+            if not is_password_set("llm_api_key"):
+                frappe.throw(
+                    "API-key auth mode requires llm_api_key",
+                    frappe.ValidationError,
+                )
+        elif mode == "subscription":
+            if not is_password_set("llm_oauth_refresh_token"):
+                frappe.throw(
+                    "Subscription auth mode requires an OAuth refresh token. "
+                    "Connect a chat subscription in Onboarding.",
+                    frappe.ValidationError,
+                )
+
     def on_update(self):
         action = self._classify_llm_change()
         if action is None:
