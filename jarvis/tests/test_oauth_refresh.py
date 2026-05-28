@@ -50,6 +50,15 @@ class TestRefreshTick(FrappeTestCase):
 		settings.db_set("llm_oauth_refresh_token", "RT-seed", update_modified=False)
 		settings.db_set("llm_oauth_access_token", "AT-seed", update_modified=False)
 		settings.db_set("llm_oauth_access_token_expires_at", expires_at, update_modified=False)
+		# Seed operator fields so _sync_via_local_openclaw doesn't short-circuit
+		# with "skipped: operator config incomplete". The refresh cron tests
+		# need the local path to be reachable (no admin key set in the fixture).
+		settings.db_set("agent_url", "ws://127.0.0.1:18789", update_modified=False)
+		settings.db_set("agent_token", "test-tok", update_modified=False)
+		settings.db_set("agent_llm_key_path", "/tmp/jarvis-test/llm.key", update_modified=False)
+		# Make sure admin path is OFF so the classifier picks local
+		settings.db_set("jarvis_admin_api_key", "", update_modified=False)
+		settings.db_set("jarvis_admin_api_secret", "", update_modified=False)
 		frappe.db.commit()
 
 	@patch("jarvis.oauth.refresh.device_flow.refresh")
@@ -67,10 +76,15 @@ class TestRefreshTick(FrappeTestCase):
 		refresh.tick()
 		mock_refresh.assert_not_called()
 
-	@patch("jarvis.oauth.refresh.openclaw_push.push_creds_reload")
+	@patch("jarvis.openclaw_push.push_creds_reload")
 	@patch("jarvis.oauth.refresh.get_oauth_client_id", return_value="CLIENT_ID")
 	@patch("jarvis.oauth.refresh.device_flow.refresh")
-	def test_refreshes_when_within_15min(self, mock_refresh, _mock_cid, mock_reload):
+	def test_refreshes_when_within_15min(self, mock_refresh, _mock_cid, mock_local_reload):
+		"""tick() now calls settings.save() — the classifier dispatches to the
+		local-openclaw push path in the test fixture (no admin key set). The
+		direct openclaw_push.push_creds_reload call from tick() is gone; the
+		mock here catches the dispatched call from _sync_via_local_openclaw.
+		"""
 		soon = datetime.utcnow() + timedelta(minutes=10)
 		self._set_subscription(soon)
 		mock_refresh.return_value = {
@@ -80,7 +94,10 @@ class TestRefreshTick(FrappeTestCase):
 		mock_refresh.assert_called_once()
 		settings = frappe.get_single("Jarvis Settings")
 		self.assertEqual(settings.get_password("llm_oauth_access_token"), "AT-2")
-		mock_reload.assert_called_once()
+		# Push happened via the classifier → local path. We don't deeply
+		# assert on the dispatch shape because that's covered in
+		# test_settings_on_update; we just confirm the chain fired.
+		mock_local_reload.assert_called_once()
 
 	@patch("jarvis.oauth.refresh.get_oauth_client_id", return_value="CLIENT_ID")
 	@patch("jarvis.oauth.refresh.device_flow.refresh")
