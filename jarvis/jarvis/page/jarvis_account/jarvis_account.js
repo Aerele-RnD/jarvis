@@ -455,17 +455,17 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		.ja-bg::before{content:"";position:absolute;inset:-25%;z-index:0;will-change:transform;
 			animation:ja-aurora 26s ease-in-out infinite alternate;
 			background-image:
-			  radial-gradient(at 16% 20%, color-mix(in srgb, var(--primary,#4a47e5) 26%, transparent) 0, transparent 46%),
-			  radial-gradient(at 84% 16%, color-mix(in srgb, #7c3aed 22%, transparent) 0, transparent 46%),
-			  radial-gradient(at 78% 84%, color-mix(in srgb, #06b6d4 18%, transparent) 0, transparent 44%),
-			  radial-gradient(at 22% 82%, color-mix(in srgb, var(--primary,#4a47e5) 16%, transparent) 0, transparent 46%)}
+			  radial-gradient(at 16% 20%, color-mix(in srgb, var(--jarvis-primary) 26%, transparent) 0, transparent 46%),
+			  radial-gradient(at 84% 16%, color-mix(in srgb, var(--jarvis-primary-dark) 22%, transparent) 0, transparent 46%),
+			  radial-gradient(at 78% 84%, color-mix(in srgb, var(--jarvis-primary-light) 18%, transparent) 0, transparent 44%),
+			  radial-gradient(at 22% 82%, color-mix(in srgb, var(--jarvis-primary) 16%, transparent) 0, transparent 46%)}
 		@keyframes ja-aurora{0%{transform:translate3d(0,0,0) scale(1) rotate(0deg)}
 			50%{transform:translate3d(2.5%,-2%,0) scale(1.08) rotate(1.2deg)}
 			100%{transform:translate3d(-2%,2.5%,0) scale(1.05) rotate(-1.2deg)}}
 		@media(prefers-reduced-motion:reduce){.ja-bg::before{animation:none}}
 		.ja{position:relative;z-index:1;display:flex;gap:0;width:100%;max-width:1080px;margin:auto;border:1px solid var(--border-color);
 			border-radius:var(--border-radius-lg,14px);overflow:hidden;box-shadow:0 20px 50px -20px rgba(20,20,50,.45),var(--shadow-md);background:var(--card-bg)}
-		.ja-brand{flex:0 0 34%;padding:36px 32px;color:#fff;background:linear-gradient(160deg,var(--primary,#4a47e5) 0%,#6d28d9 100%);display:flex;flex-direction:column}
+		.ja-brand{flex:0 0 34%;padding:36px 32px;color:#fff;background:linear-gradient(160deg,var(--jarvis-primary-light) 0%,var(--jarvis-primary-dark) 100%);display:flex;flex-direction:column}
 		.ja-logo{font-size:34px;line-height:1}
 		.ja-brand-name{font-size:30px;font-weight:700;margin-top:10px;letter-spacing:-.5px}
 		.ja-brand-tag{font-size:15px;opacity:.92;margin-top:6px;line-height:1.45}
@@ -491,7 +491,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		.ja-field{margin-bottom:6px}
 		.ja-field label{display:block;font-size:12.5px;font-weight:600;color:var(--text-color);margin-bottom:6px}
 		.ja-input{width:100%;padding:10px 12px;font-size:14px;border:1px solid var(--border-color);border-radius:var(--border-radius,8px);background:var(--control-bg,var(--bg-color));color:var(--text-color)}
-		.ja-input:focus{outline:none;border-color:var(--primary,#4a47e5);box-shadow:0 0 0 2px rgba(74,71,229,.18)}
+		.ja-input:focus{outline:none;border-color:var(--jarvis-primary);box-shadow:0 0 0 2px var(--jarvis-primary-faint)}
 		.ja-input:disabled{opacity:.6;cursor:not-allowed}
 		.ja-pwd{position:relative}
 		.ja-pwd .ja-input{padding-right:38px}
@@ -504,11 +504,11 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		.ja-pwd-toggle.shown .ja-eye-off{display:inline}
 		.ja-actions{margin-top:14px;display:flex;align-items:center;gap:10px}
 		.ja-btn{padding:9px 18px;font-size:14px;font-weight:600;border-radius:var(--border-radius,8px);border:1px solid transparent;cursor:pointer}
-		.ja-btn-primary{background:var(--primary,#4a47e5);color:#fff}
+		.ja-btn-primary{background:var(--jarvis-primary);color:#fff}
 		.ja-btn-primary:hover{filter:brightness(1.06)}
 		.ja-btn-primary:disabled{opacity:.5;cursor:not-allowed}
 		.ja-btn-ghost{background:transparent;border-color:var(--border-color);color:var(--text-color)}
-		.ja-btn-ghost:hover{border-color:var(--primary,#4a47e5);color:var(--primary,#4a47e5)}
+		.ja-btn-ghost:hover{border-color:var(--jarvis-primary);color:var(--jarvis-primary)}
 		.ja-err{color:var(--red-500,#e24c4c);font-size:12.5px;margin-top:8px;min-height:1px}
 		.ja-llm-status{color:var(--text-muted);font-size:12.5px;margin-left:8px}
 		.ja-spin{display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,.5);border-top-color:#fff;border-radius:50%;animation:ja-spin .6s linear infinite;vertical-align:-1px}
@@ -525,7 +525,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		.ja-up-card-prorate{font-size:13px;color:var(--text-muted);margin-bottom:10px}
 		.ja-overlay{position:fixed;inset:0;z-index:2000;background:rgba(20,20,40,.45);display:flex;align-items:center;justify-content:center}
 		.ja-overlay-card{background:var(--card-bg);padding:18px 22px;border-radius:10px;font-size:14px;color:var(--text-color);box-shadow:0 12px 40px -12px rgba(0,0,0,.4)}
-		.ja-overlay .ja-spin{border-color:rgba(74,71,229,.3);border-top-color:var(--primary,#4a47e5)}
+		.ja-overlay .ja-spin{border-color:var(--jarvis-primary-faint);border-top-color:var(--jarvis-primary)}
 		@media(max-width:760px){.ja{flex-direction:column}.ja-brand{flex-basis:auto}.ja-panel{padding:24px 22px}.ja-row2{grid-template-columns:1fr}}
 		`;
 		$(`<style id="ja-styles">${css}</style>`).appendTo(document.head);

@@ -394,10 +394,10 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		.jo-bg::before{content:"";position:absolute;inset:-25%;z-index:0;will-change:transform;
 			animation:jo-aurora 26s ease-in-out infinite alternate;
 			background-image:
-			  radial-gradient(at 16% 20%, color-mix(in srgb, var(--primary,#4a47e5) 26%, transparent) 0, transparent 46%),
-			  radial-gradient(at 84% 16%, color-mix(in srgb, #7c3aed 22%, transparent) 0, transparent 46%),
-			  radial-gradient(at 78% 84%, color-mix(in srgb, #06b6d4 18%, transparent) 0, transparent 44%),
-			  radial-gradient(at 22% 82%, color-mix(in srgb, var(--primary,#4a47e5) 16%, transparent) 0, transparent 46%)}
+			  radial-gradient(at 16% 20%, color-mix(in srgb, var(--jarvis-primary) 26%, transparent) 0, transparent 46%),
+			  radial-gradient(at 84% 16%, color-mix(in srgb, var(--jarvis-primary-dark) 22%, transparent) 0, transparent 46%),
+			  radial-gradient(at 78% 84%, color-mix(in srgb, var(--jarvis-primary-light) 18%, transparent) 0, transparent 44%),
+			  radial-gradient(at 22% 82%, color-mix(in srgb, var(--jarvis-primary) 16%, transparent) 0, transparent 46%)}
 		@keyframes jo-aurora{0%{transform:translate3d(0,0,0) scale(1) rotate(0deg)}
 			50%{transform:translate3d(2.5%,-2%,0) scale(1.08) rotate(1.2deg)}
 			100%{transform:translate3d(-2%,2.5%,0) scale(1.05) rotate(-1.2deg)}}
@@ -405,7 +405,7 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		.jo{position:relative;z-index:1;display:flex;gap:0;width:100%;max-width:980px;margin:auto;border:1px solid var(--border-color);
 			border-radius:var(--border-radius-lg,14px);overflow:hidden;box-shadow:0 20px 50px -20px rgba(20,20,50,.45),var(--shadow-md);background:var(--card-bg)}
 		.jo-brand{flex:0 0 40%;padding:36px 32px;color:#fff;
-			background:linear-gradient(160deg,var(--primary,#4a47e5) 0%,#6d28d9 100%);display:flex;flex-direction:column}
+			background:linear-gradient(160deg,var(--jarvis-primary-light) 0%,var(--jarvis-primary-dark) 100%);display:flex;flex-direction:column}
 		.jo-logo{font-size:34px;line-height:1}
 		.jo-brand-name{font-size:30px;font-weight:700;margin-top:10px;letter-spacing:-.5px}
 		.jo-brand-tag{font-size:15px;opacity:.92;margin-top:6px;line-height:1.45}
@@ -421,17 +421,17 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 			font-size:12px;font-weight:600;border:1.5px solid var(--border-color);background:var(--card-bg)}
 		.jo-step-label{font-size:12.5px;font-weight:500}
 		.jo-step.active{color:var(--text-color)}
-		.jo-step.active .jo-step-dot{border-color:var(--primary,#4a47e5);color:var(--primary,#4a47e5)}
+		.jo-step.active .jo-step-dot{border-color:var(--jarvis-primary);color:var(--jarvis-primary)}
 		.jo-step.done{color:var(--text-color)}
-		.jo-step.done .jo-step-dot{background:var(--primary,#4a47e5);border-color:var(--primary,#4a47e5);color:#fff}
+		.jo-step.done .jo-step-dot{background:var(--jarvis-primary);border-color:var(--jarvis-primary);color:#fff}
 		.jo-step-line{flex:1;height:2px;background:var(--border-color);margin:0 10px}
-		.jo-step-line.done{background:var(--primary,#4a47e5)}
+		.jo-step-line.done{background:var(--jarvis-primary)}
 		.jo-h{font-size:21px;font-weight:700;margin:0 0 4px;color:var(--text-color)}
 		.jo-sub{font-size:13.5px;color:var(--text-muted);margin:0 0 22px}
 		.jo-label{display:block;font-size:12.5px;font-weight:600;color:var(--text-color);margin:14px 0 6px}
 		.jo-input{width:100%;padding:10px 12px;font-size:14px;border:1px solid var(--border-color);
 			border-radius:var(--border-radius,8px);background:var(--control-bg,var(--bg-color));color:var(--text-color)}
-		.jo-input:focus{outline:none;border-color:var(--primary,#4a47e5);box-shadow:0 0 0 2px rgba(74,71,229,.18)}
+		.jo-input:focus{outline:none;border-color:var(--jarvis-primary);box-shadow:0 0 0 2px var(--jarvis-primary-faint)}
 		.jo-field{margin-bottom:14px}
 		.jo-field label{display:block;font-size:12.5px;font-weight:600;color:var(--text-color);margin-bottom:6px}
 		.jo-hint{font-size:11.5px;color:var(--text-muted);margin-top:4px}
@@ -447,9 +447,9 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		.jo-plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:8px}
 		.jo-plan{position:relative;border:1.5px solid var(--border-color);border-radius:12px;padding:16px 14px;cursor:pointer;
 			transition:border-color .15s,box-shadow .15s,transform .1s;background:var(--card-bg)}
-		.jo-plan:hover{border-color:var(--primary,#4a47e5);transform:translateY(-1px)}
-		.jo-plan.selected{border-color:var(--primary,#4a47e5);box-shadow:0 0 0 2px rgba(74,71,229,.18)}
-		.jo-plan-badge{position:absolute;top:12px;right:12px;width:20px;height:20px;border-radius:50%;background:var(--primary,#4a47e5);
+		.jo-plan:hover{border-color:var(--jarvis-primary);transform:translateY(-1px)}
+		.jo-plan.selected{border-color:var(--jarvis-primary);box-shadow:0 0 0 2px var(--jarvis-primary-faint)}
+		.jo-plan-badge{position:absolute;top:12px;right:12px;width:20px;height:20px;border-radius:50%;background:var(--jarvis-primary);
 			color:#fff;font-size:12px;display:none;align-items:center;justify-content:center}
 		.jo-plan.selected .jo-plan-badge{display:inline-flex}
 		.jo-plan-name{font-size:13px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.4px}
@@ -457,7 +457,7 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		.jo-plan-cycle{font-size:12px;font-weight:500;color:var(--text-muted);margin-left:2px}
 		.jo-plan-feats{list-style:none;padding:0;margin:0}
 		.jo-plan-feats li{display:flex;gap:7px;font-size:12.5px;color:var(--text-color);line-height:1.5;margin-bottom:6px}
-		.jo-plan-feats .jo-tick{color:var(--primary,#4a47e5);font-size:11px}
+		.jo-plan-feats .jo-tick{color:var(--jarvis-primary);font-size:11px}
 		.jo-muted,.jo-empty{color:var(--text-muted)} .jo-empty{padding:20px 0}
 		.jo-summary{border:1px solid var(--border-color);border-radius:10px;overflow:hidden}
 		.jo-row{display:flex;justify-content:space-between;padding:12px 16px;font-size:13.5px;color:var(--text-muted);border-bottom:1px solid var(--border-color)}
@@ -467,7 +467,7 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		.jo-actions{margin-top:24px;display:flex} .jo-actions-split{justify-content:space-between}
 		.jo-actions:not(.jo-actions-split){justify-content:flex-end}
 		.jo-btn{padding:10px 20px;font-size:14px;font-weight:600;border-radius:var(--border-radius,8px);border:1px solid transparent;cursor:pointer}
-		.jo-btn-primary{background:var(--primary,#4a47e5);color:#fff}
+		.jo-btn-primary{background:var(--jarvis-primary);color:#fff}
 		.jo-btn-primary:hover{filter:brightness(1.06)} .jo-btn-primary:disabled{opacity:.5;cursor:not-allowed}
 		.jo-btn-ghost{background:transparent;border-color:var(--border-color);color:var(--text-color)}
 		.jo-err{color:var(--red-500,#e24c4c);font-size:12.5px;margin-top:10px;min-height:1px}

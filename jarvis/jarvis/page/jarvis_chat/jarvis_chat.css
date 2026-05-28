@@ -23,8 +23,8 @@
 	border-radius: 999px;
 	background: linear-gradient(
 		135deg,
-		var(--primary, #2490ef),
-		var(--primary-dark, #1a6dbf)
+		var(--jarvis-primary),
+		var(--jarvis-primary-dark)
 	);
 	color: #fff;
 	font-size: 11px;
@@ -121,7 +121,7 @@
 
 .jarvis-conv-item.active {
 	background: var(--bg-color);
-	box-shadow: inset 3px 0 0 var(--primary, #2490ef);
+	box-shadow: inset 3px 0 0 var(--jarvis-primary);
 }
 
 .jarvis-conv-main {
@@ -199,7 +199,7 @@
 
 .jarvis-welcome-icon {
 	font-size: 36px;
-	color: var(--primary, #2490ef);
+	color: var(--jarvis-primary);
 	margin-bottom: 8px;
 }
 
@@ -235,7 +235,7 @@
 
 .jarvis-example:hover {
 	background: var(--bg-color);
-	border-color: var(--primary, #2490ef);
+	border-color: var(--jarvis-primary);
 }
 
 .jarvis-empty-conv {
@@ -267,7 +267,7 @@
 }
 
 .jarvis-message-user .jarvis-bubble {
-	background: var(--primary, #2490ef);
+	background: var(--jarvis-primary);
 	color: white;
 	border-bottom-right-radius: 4px;
 }
@@ -693,7 +693,7 @@
 }
 
 .jarvis-input:focus {
-	box-shadow: 0 0 0 2px var(--primary-light, rgba(36, 144, 239, 0.2));
+	box-shadow: 0 0 0 2px var(--jarvis-primary-faint);
 }
 
 .jarvis-send-btn {

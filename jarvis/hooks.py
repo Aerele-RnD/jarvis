@@ -37,7 +37,7 @@ DEFAULT_ADMIN_URL = "https://admin.jarvis.aerele.in"
 # ------------------
 
 # include js, css files in header of desk.html
-# app_include_css = "/assets/jarvis/css/jarvis.css"
+app_include_css = ["/assets/jarvis/css/jarvis-brand.css"]
 # app_include_js = "/assets/jarvis/js/jarvis.js"
 
 # include js, css files in header of web template

@@ -1,0 +1,21 @@
+{
+ "app": "jarvis",
+ "creation": "2026-05-27 00:00:00.000000",
+ "docstatus": 0,
+ "doctype": "Desktop Icon",
+ "hidden": 0,
+ "icon": "chat",
+ "icon_type": "Folder",
+ "idx": 1,
+ "label": "Jarvis",
+ "link_to": "",
+ "link_type": "Workspace Sidebar",
+ "modified": "2026-05-27 00:00:00.000000",
+ "modified_by": "Administrator",
+ "name": "Jarvis",
+ "owner": "Administrator",
+ "parent_icon": "",
+ "restrict_removal": 0,
+ "roles": [],
+ "standard": 1
+}
