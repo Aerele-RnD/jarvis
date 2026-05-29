@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 
 import frappe
 
+from jarvis import admin_client, onboarding
 from jarvis.exceptions import JarvisError
 from jarvis.hooks import get_oauth_client_id
 from jarvis.oauth import device_flow
@@ -126,21 +127,55 @@ def share_code(device_code: str, recipient_email: str) -> dict:
 	return _ok({})
 
 
+# Provider label → openclaw provider id for subscription mode. Matches the
+# admin-side OAUTH_PROVIDER_MAP in jarvis_admin.fleet.llm_providers.
+_PROVIDER_LABEL_TO_ID = {
+	"OpenAI": "openai-codex",
+	"Google Gemini": "google-gemini-cli",
+}
+
+# Default model per subscription provider. Customers can change the model
+# later via the AI provider card if they want a different default.
+_DEFAULT_MODEL = {
+	"OpenAI": "gpt-4o",
+	"Google Gemini": "gemini-2.0-pro",
+}
+
+
 def _persist_subscription(provider: str, tokens: dict):
-	settings = frappe.get_single("Jarvis Settings")
-	now = datetime.utcnow()
-	expires_at = now + timedelta(seconds=tokens["expires_in"])
-	settings.llm_auth_mode = "subscription"
-	settings.llm_provider = provider
-	if tokens.get("refresh_token"):
-		settings.llm_oauth_refresh_token = tokens["refresh_token"]
-	settings.llm_oauth_access_token = tokens["access_token"]
-	settings.llm_oauth_access_token_expires_at = expires_at
-	if tokens.get("account_email"):
-		settings.llm_oauth_account_email = tokens["account_email"]
-	settings.llm_oauth_connected_at = now
-	settings.llm_oauth_last_refresh_at = now
-	settings.save(ignore_permissions=False)
+	"""Push the OAuth credential blob into the customer's container via
+	admin, then save the auth_mode/provider on bench so on_update reshapes
+	the openclaw config to Branch B (oauth) + restarts the container.
+
+	openclaw owns refresh from here on (pi-ai uses the same client_id we
+	issued the refresh token against), so the bench doesn't keep any OAuth
+	state beyond provider + auth_mode.
+	"""
+	provider_id = _PROVIDER_LABEL_TO_ID.get(provider)
+	if not provider_id:
+		raise JarvisError(f"no openclaw subscription provider for {provider!r}")
+
+	now_ms = int(time.time() * 1000)
+	expires_ms = now_ms + int(tokens["expires_in"]) * 1000
+	blob = {
+		"type": "oauth",
+		"provider": provider_id,
+		"access": tokens["access_token"],
+		"refresh": tokens.get("refresh_token") or "",
+		"expires": expires_ms,
+		"email": tokens.get("account_email") or "",
+		"clientId": get_oauth_client_id(provider),
+	}
+
+	admin_client.post_push_oauth_blob(provider_id, blob)
+
+	onboarding.save_llm_creds(
+		provider=provider,
+		model=_DEFAULT_MODEL.get(provider, ""),
+		api_key="",
+		base_url="",
+		auth_mode="oauth",
+	)
 
 
 def _best_effort_revoke(settings):
