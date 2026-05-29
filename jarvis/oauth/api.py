@@ -1,9 +1,9 @@
 """Whitelisted endpoints called by the onboarding wizard."""
 import time
-from datetime import datetime, timedelta
 
 import frappe
 
+from jarvis import admin_client, onboarding
 from jarvis.exceptions import JarvisError
 from jarvis.hooks import get_oauth_client_id
 from jarvis.oauth import device_flow
@@ -75,25 +75,27 @@ def poll_signin(device_code: str) -> dict:
 
 @frappe.whitelist()
 def disconnect() -> dict:
-	"""Clear OAuth credentials. Mode stays 'subscription' until user re-saves."""
-	from frappe.utils.password import remove_encrypted_password
+	"""Clear the customer's OAuth profile on the container, then drop the
+	bench's subscription mode flag.
+
+	openclaw owns the credential state under REV-1, so the disconnect goes
+	through admin → fleet-agent and the bench just flips ``llm_auth_mode``
+	back to ``api_key``. The customer can then re-Connect any time.
+	"""
+	try:
+		admin_client.post_subscription_disconnect()
+	except (admin_client.AdminUnreachableError,
+	        admin_client.AdminAuthError,
+	        admin_client.AdminValidationError) as e:
+		# Container-side clear failed — leave bench state alone so the user
+		# can retry. Errors are operator-investigable; surface a clean code.
+		return _err("disconnect_failed", str(e))
 
 	settings = frappe.get_single("Jarvis Settings")
-
-	# Best-effort revocation at provider — silently swallow failures.
-	try:
-		_best_effort_revoke(settings)
-	except Exception:
-		pass
-
-	for f in ("llm_oauth_refresh_token", "llm_oauth_access_token"):
-		remove_encrypted_password("Jarvis Settings", "Jarvis Settings", f)
-		settings.db_set(f, None, update_modified=False)
-	for f in ("llm_oauth_access_token_expires_at", "llm_oauth_account_email",
-	          "llm_oauth_connected_at", "llm_oauth_last_refresh_at"):
-		settings.db_set(f, None, update_modified=False)
-	# Trigger openclaw re-render (will use STUB_DEFAULTS since creds gone).
-	settings.run_method("on_update")
+	settings.db_set("llm_auth_mode", "api_key", update_modified=False)
+	settings.db_set("last_sync_status", "disconnected", update_modified=False)
+	# Clear cached device-code entries so any in-flight Connect can't race.
+	frappe.cache.delete_key(_CACHE_KEY)
 	return _ok({})
 
 
@@ -126,42 +128,54 @@ def share_code(device_code: str, recipient_email: str) -> dict:
 	return _ok({})
 
 
+# Provider label → openclaw provider id for subscription mode. Matches the
+# admin-side OAUTH_PROVIDER_MAP in jarvis_admin.fleet.llm_providers.
+_PROVIDER_LABEL_TO_ID = {
+	"OpenAI": "openai-codex",
+	"Google Gemini": "google-gemini-cli",
+}
+
+# Default model per subscription provider. Customers can change the model
+# later via the AI provider card if they want a different default.
+_DEFAULT_MODEL = {
+	"OpenAI": "gpt-4o",
+	"Google Gemini": "gemini-2.0-pro",
+}
+
+
 def _persist_subscription(provider: str, tokens: dict):
-	settings = frappe.get_single("Jarvis Settings")
-	now = datetime.utcnow()
-	expires_at = now + timedelta(seconds=tokens["expires_in"])
-	settings.llm_auth_mode = "subscription"
-	settings.llm_provider = provider
-	if tokens.get("refresh_token"):
-		settings.llm_oauth_refresh_token = tokens["refresh_token"]
-	settings.llm_oauth_access_token = tokens["access_token"]
-	settings.llm_oauth_access_token_expires_at = expires_at
-	if tokens.get("account_email"):
-		settings.llm_oauth_account_email = tokens["account_email"]
-	settings.llm_oauth_connected_at = now
-	settings.llm_oauth_last_refresh_at = now
-	settings.save(ignore_permissions=False)
+	"""Push the OAuth credential blob into the customer's container via
+	admin, then save the auth_mode/provider on bench so on_update reshapes
+	the openclaw config to Branch B (oauth) + restarts the container.
+
+	openclaw owns refresh from here on (pi-ai uses the same client_id we
+	issued the refresh token against), so the bench doesn't keep any OAuth
+	state beyond provider + auth_mode.
+	"""
+	provider_id = _PROVIDER_LABEL_TO_ID.get(provider)
+	if not provider_id:
+		raise JarvisError(f"no openclaw subscription provider for {provider!r}")
+
+	now_ms = int(time.time() * 1000)
+	expires_ms = now_ms + int(tokens["expires_in"]) * 1000
+	blob = {
+		"type": "oauth",
+		"provider": provider_id,
+		"access": tokens["access_token"],
+		"refresh": tokens.get("refresh_token") or "",
+		"expires": expires_ms,
+		"email": tokens.get("account_email") or "",
+		"clientId": get_oauth_client_id(provider),
+	}
+
+	admin_client.post_push_oauth_blob(provider_id, blob)
+
+	onboarding.save_llm_creds(
+		provider=provider,
+		model=_DEFAULT_MODEL.get(provider, ""),
+		api_key="",
+		base_url="",
+		auth_mode="oauth",
+	)
 
 
-def _best_effort_revoke(settings):
-	"""POST to provider revocation endpoint. Failures ignored."""
-	import requests
-
-	from jarvis.oauth.providers import get_provider
-
-	provider = settings.llm_provider
-	token = settings.get_password("llm_oauth_refresh_token", raise_exception=False)
-	if not provider or not token:
-		return
-	try:
-		entry = get_provider(provider)
-	except JarvisError:
-		return
-	try:
-		requests.post(
-			entry["revocation_endpoint"],
-			data={"token": token, "client_id": get_oauth_client_id(provider)},
-			timeout=10,
-		)
-	except Exception:
-		pass

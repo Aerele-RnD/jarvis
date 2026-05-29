@@ -85,18 +85,29 @@ def renew() -> dict:
 
 
 @frappe.whitelist()
-def save_llm_creds(provider: str, model: str, api_key: str, base_url: str = "") -> dict:
-	"""Step 4 of onboarding: stash the customer's LLM provider/model/key into
-	Jarvis Settings and let on_update push the rendered openclaw.json to their
-	container. Returns the on_update outcome (last_sync_status) so the page can
-	tell the customer whether their agent is fully ready."""
-	if not provider or not model or not api_key:
-		raise frappe.ValidationError("provider, model, and api_key are required")
+def save_llm_creds(provider: str, model: str, api_key: str = "",
+                   base_url: str = "", auth_mode: str = "api_key") -> dict:
+	"""Save LLM provider/model/auth mode + (api_key when applicable) and let
+	on_update re-render openclaw.json. Returns the on_update outcome
+	(last_sync_status) so the page can tell the customer whether their
+	agent is fully ready.
+
+	REV-1: ``auth_mode="oauth"`` lets the OAuth poll-success path save
+	without requiring an api_key — credentials live in the container's
+	auth-profiles.json (pushed via the separate push_oauth_blob path)."""
+	if not provider or not model:
+		raise frappe.ValidationError("provider and model are required")
+	if auth_mode not in {"api_key", "oauth"}:
+		raise frappe.ValidationError(f"unsupported auth_mode: {auth_mode}")
+	if auth_mode == "api_key" and not api_key:
+		raise frappe.ValidationError("api_key is required when auth_mode=api_key")
 	s = frappe.get_single("Jarvis Settings")
 	s.llm_provider = provider
 	s.llm_model = model
-	s.llm_api_key = api_key
+	s.llm_auth_mode = auth_mode
 	s.llm_base_url = (base_url or "").strip()
+	if auth_mode == "api_key":
+		s.llm_api_key = api_key
 	s.save(ignore_permissions=True)
 	frappe.db.commit()
 	s = frappe.get_single("Jarvis Settings")

@@ -20,16 +20,33 @@ DEFAULT_ADMIN_URL = "https://admin.jarvis.aerele.in"
 # ---------------------------------------------------------------------------
 # OAuth client IDs — one per supported chat-subscription provider
 # ---------------------------------------------------------------------------
-# These are PKCE-only public clients registered to Aerele. They're baked into
-# the Jarvis app and used by every customer bench. No `client_secret` is
-# distributed. Replace the placeholders with the real client_ids once the
-# OAuth apps are registered with each provider.
+# These are openclaw's hardcoded CLI client IDs. We use them (not Aerele-owned
+# PKCE clients) so the refresh tokens our device flow issues are compatible
+# with pi-ai's refresh path inside the container — openclaw's codex provider
+# refreshes against the same client_id we used to mint.
+#
+# Source:
+#   OpenAI: openclaw/extensions/openai/openai-codex-device-code.ts:5
+#   Google Gemini: bundled with @google/gemini-cli; override via env if it drifts.
 #
 # Anthropic Claude is deliberately absent — openclaw has no compatible
 # adapter for Claude Pro/Max subscriptions.
+def _env_or_default(name: str, default: str) -> str:
+	import os
+	return (os.environ.get(name, "") or "").strip() or default
+
+
 OAUTH_CLIENT_IDS = {
-	"OpenAI": "REPLACE_ME_OPENAI_CLIENT_ID",
-	"Google Gemini": "REPLACE_ME_GOOGLE_CLIENT_ID",
+	"OpenAI": _env_or_default(
+		"JARVIS_OPENAI_CODEX_OAUTH_CLIENT_ID",
+		"app_EMoamEEZ73f0CkXaXp7hrann",
+	),
+	"Google Gemini": _env_or_default(
+		"JARVIS_GEMINI_CLI_OAUTH_CLIENT_ID",
+		# Bundled gemini-cli client_id (extract from upstream if drift detected).
+		# Operators set the env var if our embedded default goes stale.
+		"681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com",
+	),
 }
 
 
@@ -187,7 +204,6 @@ scheduler_events = {
 	"cron": {
 		"*/5 * * * *": [
 			"jarvis.chat.stale_scan.scan_and_mark_errored",
-			"jarvis.oauth.refresh.tick",
 		],
 	},
 	"daily": [

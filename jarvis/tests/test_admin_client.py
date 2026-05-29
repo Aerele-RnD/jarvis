@@ -453,3 +453,49 @@ class TestPostRotateLlmSecret(FrappeTestCase):
 			with self.assertRaises(AdminRateLimitedError) as ctx:
 				admin_client.post_rotate_llm_secret(secret="AT-x")
 		self.assertEqual(ctx.exception.retry_after_seconds, 1200)
+
+
+class TestPostPushOauthBlob(FrappeTestCase):
+	def setUp(self):
+		_settings_for_admin()
+
+	def tearDown(self):
+		_settings_clear_admin()
+
+	def test_happy_path_posts_blob(self):
+		captured = {}
+		blob = {"type": "oauth", "provider": "openai-codex",
+				"access": "AT-fresh", "refresh": "RT-fresh", "expires": 1735689600}
+
+		def _fake_post(url, json=None, **_kw):
+			captured["url"] = url
+			captured["body"] = json
+			return _mock_response(200, json_body={"message": {"ok": True, "data": {"ok": True}}})
+
+		with patch("requests.post", side_effect=_fake_post):
+			result = admin_client.post_push_oauth_blob("openai-codex", blob)
+		self.assertEqual(result, {"ok": True})
+		self.assertIn("push_oauth_blob", captured["url"])
+		self.assertEqual(captured["body"], {"provider": "openai-codex", "blob": blob})
+
+
+class TestPostSubscriptionDisconnect(FrappeTestCase):
+	def setUp(self):
+		_settings_for_admin()
+
+	def tearDown(self):
+		_settings_clear_admin()
+
+	def test_happy_path(self):
+		captured = {}
+
+		def _fake_post(url, json=None, **_kw):
+			captured["url"] = url
+			captured["body"] = json
+			return _mock_response(200, json_body={"message": {"ok": True, "data": {"ok": True}}})
+
+		with patch("requests.post", side_effect=_fake_post):
+			result = admin_client.post_subscription_disconnect()
+		self.assertEqual(result, {"ok": True})
+		self.assertIn("subscription_disconnect", captured["url"])
+		self.assertEqual(captured["body"], {})
