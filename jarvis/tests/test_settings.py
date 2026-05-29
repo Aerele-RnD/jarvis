@@ -7,9 +7,6 @@ from frappe.tests.utils import FrappeTestCase
 _SNAPSHOT_PLAIN_FIELDS = (
 	"jarvis_admin_url",
 	"agent_url",
-	"agent_llm_key_path",
-	"agent_config_path",
-	"agent_compose_dir",
 	"llm_provider",
 	"llm_model",
 	"llm_base_url",
@@ -146,14 +143,11 @@ class TestJarvisSettings(FrappeTestCase):
         for fieldname, expected_type in (
             ("agent_url", "Data"),
             ("agent_token", "Password"),
-            ("agent_llm_key_path", "Data"),
-            ("agent_config_path", "Data"),
-            ("agent_compose_dir", "Data"),
         ):
             self.assertEqual(fields_by_name[fieldname].fieldtype, expected_type)
             self.assertTrue(
                 fields_by_name[fieldname].read_only,
-                f"{fieldname} must be read-only (system-populated by openclaw_bootstrap / admin signup)",
+                f"{fieldname} must be read-only (system-populated by admin signup)",
             )
 
     def test_last_sync_fields_are_readonly(self):

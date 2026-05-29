@@ -167,13 +167,14 @@ def _insert_chat_session(session_key: str, user: str) -> None:
 def ask_one(user: str, message: str, timeout: int = DEFAULT_TIMEOUT) -> dict:
 	"""Run one chat turn against openclaw as the given user. Returns a result dict."""
 	settings = frappe.get_single("Jarvis Settings")
-	gateway_token = settings.get_password("agent_token")
-	compose_dir = settings.agent_compose_dir
+	gateway_token = settings.get_password("agent_token", raise_exception=False) or ""
 	if not gateway_token:
-		raise RuntimeError("openclaw not configured (run jarvis.openclaw_bootstrap.start first)")
-	if not compose_dir:
-		# Derive default: <bench-parent>/openclaw
-		compose_dir = str(Path(frappe.utils.get_bench_path()).parent / "openclaw")
+		raise RuntimeError(
+			"openclaw not configured. Run `bench execute "
+			"jarvis_admin.host_setup.bootstrap_host` to seed the local fleet, "
+			"start the fleet-agent uvicorn process, then `bench execute "
+			"jarvis.onboarding.dev_onboard` to assign a tenant."
+		)
 	if not frappe.db.exists("User", user):
 		raise RuntimeError(f"unknown Frappe user: {user}")
 
