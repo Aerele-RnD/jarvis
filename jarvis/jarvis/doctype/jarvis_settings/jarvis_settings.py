@@ -8,17 +8,6 @@ LLM_FIELDS_TRIGGERING_SYNC = (
     "llm_base_url",
 )
 
-OPERATOR_FIELDS_FOR_RELOAD = (
-    "agent_url",
-    "agent_token",
-    "agent_llm_key_path",
-)
-
-OPERATOR_FIELDS_FOR_RESTART = OPERATOR_FIELDS_FOR_RELOAD + (
-    "agent_config_path",
-    "agent_compose_dir",
-)
-
 
 # Subscription-mode auth modes — the container owns credentials, so the
 # bench's classifier treats a save with no structural change as a no-op.
@@ -77,12 +66,13 @@ class JarvisSettings(Document):
         action = self._classify_llm_change()
         if action is None:
             return
-        # Dispatch: admin path (prod) when the customer has an admin api token
-        # (set by onboarding); otherwise the dev local-openclaw_push path.
-        if (self.get_password("jarvis_admin_api_key", raise_exception=False) or "").strip():
-            self._sync_via_admin(action)
-        else:
-            self._sync_via_local_openclaw(action)
+        # Unified architecture (post-2026-05-29): on_update always routes
+        # through admin → fleet-agent → container. Local-dev runs admin +
+        # fleet-agent on the same machine; there is no longer a bench-
+        # local push shortcut. If admin isn't configured, _sync_via_admin
+        # fails with AdminAuthError — the right error for "this workspace
+        # isn't set up; run bootstrap_host then dev_onboard."
+        self._sync_via_admin(action)
 
     def _sync_via_admin(self, action: str) -> None:
         """Prod path: route LLM creds through admin → fleet → openclaw container.
@@ -132,39 +122,6 @@ class JarvisSettings(Document):
             frappe.logger().info(
                 f"admin_client: rate-limited; retry_after={e.retry_after_seconds}s"
             )
-
-    def _sync_via_local_openclaw(self, action: str) -> None:
-        """Dev path: push creds directly to a locally-running openclaw container.
-
-        Skipped silently when operator config is incomplete (e.g. bootstrap
-        hasn't run yet)."""
-        required = OPERATOR_FIELDS_FOR_RESTART if action == "restart" else OPERATOR_FIELDS_FOR_RELOAD
-        missing = [f for f in required if not (getattr(self, f, None) or "").strip()]
-        if missing:
-            self.db_set(
-                "last_sync_status",
-                "skipped: operator config incomplete; run jarvis.openclaw_bootstrap.start first",
-            )
-            return
-
-        try:
-            if action == "reload":
-                from jarvis import openclaw_push
-                openclaw_push.push_creds_reload(self)
-            elif action == "restart":
-                from jarvis import openclaw_push
-                token = self.get_password("agent_token") or ""
-                openclaw_push.push_creds_restart(self, token)
-            self.db_set({
-                "last_sync_at": frappe.utils.now(),
-                "last_sync_status": f"ok ({action})",
-            })
-        except Exception as e:
-            frappe.log_error(
-                title="Jarvis: openclaw push failed",
-                message=frappe.get_traceback(),
-            )
-            self.db_set("last_sync_status", f"failed: {type(e).__name__}: {e}")
 
     def _classify_llm_change(self) -> str | None:
         """Return one of: None | 'reload' | 'restart'.
