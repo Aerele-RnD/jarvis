@@ -14,30 +14,19 @@ class _OAuthApiBase(FrappeTestCase):
 	@classmethod
 	def setUpClass(cls):
 		super().setUpClass()
+		# Post-REV-1: the bench no longer stores any llm_oauth_* fields.
+		# Snapshot only the structural settings the tests touch.
 		settings = frappe.get_single("Jarvis Settings")
 		cls._snap = {
 			"llm_auth_mode": settings.llm_auth_mode,
 			"llm_provider": settings.llm_provider,
-			"llm_oauth_account_email": settings.llm_oauth_account_email,
-			"llm_oauth_refresh_token": settings.get_password(
-				"llm_oauth_refresh_token", raise_exception=False
-			) or "",
-			"llm_oauth_access_token": settings.get_password(
-				"llm_oauth_access_token", raise_exception=False
-			) or "",
 		}
 
 	@classmethod
 	def tearDownClass(cls):
-		from frappe.utils.password import remove_encrypted_password
 		settings = frappe.get_single("Jarvis Settings")
-		for f in ("llm_auth_mode", "llm_provider", "llm_oauth_account_email"):
-			settings.db_set(f, cls._snap[f], update_modified=False)
-		for f in ("llm_oauth_refresh_token", "llm_oauth_access_token"):
-			remove_encrypted_password("Jarvis Settings", "Jarvis Settings", f)
-			settings.db_set(f, None, update_modified=False)
-			if cls._snap[f]:
-				settings.db_set(f, cls._snap[f], update_modified=False)
+		for f, v in cls._snap.items():
+			settings.db_set(f, v, update_modified=False)
 		frappe.cache.delete_key("jarvis.oauth.device_codes")
 		frappe.db.commit()
 		super().tearDownClass()

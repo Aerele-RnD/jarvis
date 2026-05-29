@@ -238,33 +238,6 @@ class TestOnUpdateAdminDispatch(_SettingsSnapshotTestCase):
 		self.assertIn("connection refused", s.last_sync_status)
 
 
-class TestOnUpdateLocalDispatchWhenAdminUrlEmpty(_SettingsSnapshotTestCase):
-	"""Verify the dispatcher routes to the local path when jarvis_admin_url is
-	empty (the dev / Phase 1 invariant)."""
-
-	def setUp(self):
-		s = frappe.get_single("Jarvis Settings")
-		s.db_set("jarvis_admin_url", "")
-		s.db_set("jarvis_admin_api_key", "")
-		s.db_set("agent_url", "ws://localhost:18789")
-		s.db_set("agent_token", "stub-token")
-		s.db_set("agent_llm_key_path", "/tmp/stub-key")
-		s.db_set("agent_config_path", "/tmp/stub-config.json")
-		s.db_set("agent_compose_dir", "/tmp/stub-compose")
-		s.db_set("llm_provider", "Anthropic")
-		s.db_set("llm_model", "claude-sonnet-4-6")
-		s.db_set("llm_base_url", "https://api.anthropic.com")
-		s.db_set("llm_api_key", "sk-original-local")
-		frappe.db.commit()
-
-	def test_local_path_invoked_when_admin_url_empty(self):
-		from unittest.mock import patch
-		# Mock both possible entry points; only the local one should be called.
-		with patch("jarvis.openclaw_push.push_creds_reload") as local_mock, \
-			 patch("jarvis.admin_client.post_update_llm_creds") as admin_mock:
-			s = frappe.get_doc("Jarvis Settings", "Jarvis Settings")
-			s.llm_api_key = "sk-new-local"
-			s.save(ignore_permissions=True)
-			frappe.db.commit()
-		local_mock.assert_called_once()
-		admin_mock.assert_not_called()
+# TestOnUpdateLocalDispatchWhenAdminUrlEmpty removed: post-unification (2026-05-29)
+# on_update always routes through _sync_via_admin. The bench-local push path
+# is gone; the test exercising it is no longer meaningful.

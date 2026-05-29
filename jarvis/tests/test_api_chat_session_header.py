@@ -36,7 +36,7 @@ class TestCallToolWithSessionHeader(FrappeTestCase):
 	def setUpClass(cls):
 		super().setUpClass()
 		settings = frappe.get_single("Jarvis Settings")
-		cls._original_token = settings.get_password("agent_token") or ""
+		cls._original_token = settings.get_password("agent_token", raise_exception=False) or ""
 		settings.db_set("agent_token", PLUGIN_TOKEN)
 		frappe.db.commit()
 

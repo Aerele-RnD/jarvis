@@ -39,7 +39,7 @@ def run_agent_turn(conversation_id: str, message_id: str, run_id: str) -> None:
 	gateway_url = (settings.agent_url or "").replace(
 		"http://", "ws://"
 	).replace("https://", "wss://")
-	gateway_token = settings.get_password("agent_token")
+	gateway_token = settings.get_password("agent_token", raise_exception=False) or ""
 
 	user_message = frappe.db.get_value(MSG, message_id, "content")
 	# Prepend today's date as a context line so the agent can resolve

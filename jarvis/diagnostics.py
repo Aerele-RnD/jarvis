@@ -44,7 +44,7 @@ def ping_admin() -> dict:
 @frappe.whitelist()
 def ping_openclaw() -> dict:
 	"""Open WS to agent_url with agent_token; connect handshake only."""
-	from jarvis import openclaw_push
+	from jarvis import openclaw_ws
 	from jarvis.exceptions import OpenclawUnreachableError
 	settings = frappe.get_single("Jarvis Settings")
 	url = (settings.agent_url or "").strip()
@@ -54,7 +54,7 @@ def ping_openclaw() -> dict:
 	if not token:
 		return {"ok": False, "kind": "config", "error": "agent_token is not set."}
 	try:
-		openclaw_push.ping(url, token)
+		openclaw_ws.ping(url, token)
 		return {"ok": True, "agent_url": url}
 	except OpenclawUnreachableError as e:
 		return {"ok": False, "kind": "unreachable", "error": str(e)}
