@@ -77,14 +77,13 @@ def render_config(settings, gateway_token: str) -> str:
 	customer_base_url = (getattr(settings, "llm_base_url", None) or "").strip() or None
 	auth_mode = getattr(settings, "llm_auth_mode", None) or "api_key"
 
-	# Subscription mode with no access token yet → fall through to stub so the
-	# container still boots; the cron / wizard will populate the token shortly.
-	if auth_mode == "subscription":
-		access_token = getattr(settings, "llm_oauth_access_token", None)
-		if not access_token:
-			provider_label = None
-			auth_mode = "api_key"  # stub uses api_key shape
-
+	# Local-dev (this code path) only supports api-key mode end-to-end. The
+	# subscription / oauth modes ship credentials via the admin → fleet-agent
+	# → auth-profiles.json path (REV-1), which isn't wired up in single-bench
+	# dev. We still render whatever auth_mode the customer set so the openclaw
+	# config matches expectations; the rendered container just won't have
+	# usable credentials for oauth mode without manual auth-profiles.json
+	# seeding.
 	if not provider_label or not model:
 		provider_id = STUB_DEFAULTS["provider_id"]
 		model = STUB_DEFAULTS["model"]

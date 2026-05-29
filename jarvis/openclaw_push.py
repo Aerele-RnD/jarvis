@@ -21,14 +21,12 @@ HEALTHCHECK_INTERVAL_SECONDS = 1
 
 
 def _resolve_llm_secret(settings) -> str:
-	"""Return the bytes to write into /secrets/llm.key based on auth mode.
+	"""Return the bytes to write into /secrets/llm.key.
 
-	Subscription mode: the short-lived access token (refreshed by the cron).
-	API-key mode: the long-lived API key.
+	REV-1: only api_key mode writes a secret here. Subscription / oauth mode
+	credentials live in the container's auth-profiles.json (pushed via the
+	admin → fleet-agent path, not through this local-dev push code).
 	"""
-	mode = getattr(settings, "llm_auth_mode", None) or "api_key"
-	if mode == "subscription":
-		return settings.get_password("llm_oauth_access_token", raise_exception=False) or ""
 	return settings.get_password("llm_api_key", raise_exception=False) or ""
 
 
