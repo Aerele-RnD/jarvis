@@ -21,12 +21,6 @@
     "llm_max_output_tokens",
     "llm_auth_section",
     "llm_auth_mode",
-    "llm_oauth_refresh_token",
-    "llm_oauth_access_token",
-    "llm_oauth_access_token_expires_at",
-    "llm_oauth_account_email",
-    "llm_oauth_connected_at",
-    "llm_oauth_last_refresh_at",
     "system_tab",
     "admin_connection_section",
     "jarvis_admin_url",
@@ -132,49 +126,9 @@
       "fieldname": "llm_auth_mode",
       "fieldtype": "Select",
       "label": "Auth Mode",
-      "options": "api_key\nsubscription",
+      "options": "api_key\nsubscription\noauth",
       "default": "api_key",
       "reqd": 1
-    },
-    {
-      "fieldname": "llm_oauth_refresh_token",
-      "fieldtype": "Password",
-      "label": "OAuth Refresh Token",
-      "depends_on": "eval:doc.llm_auth_mode=='subscription'"
-    },
-    {
-      "fieldname": "llm_oauth_access_token",
-      "fieldtype": "Password",
-      "label": "OAuth Access Token",
-      "depends_on": "eval:doc.llm_auth_mode=='subscription'"
-    },
-    {
-      "fieldname": "llm_oauth_access_token_expires_at",
-      "fieldtype": "Datetime",
-      "label": "Access Token Expires At",
-      "read_only": 1,
-      "depends_on": "eval:doc.llm_auth_mode=='subscription'"
-    },
-    {
-      "fieldname": "llm_oauth_account_email",
-      "fieldtype": "Data",
-      "label": "Connected Account",
-      "read_only": 1,
-      "depends_on": "eval:doc.llm_auth_mode=='subscription'"
-    },
-    {
-      "fieldname": "llm_oauth_connected_at",
-      "fieldtype": "Datetime",
-      "label": "Connected At",
-      "read_only": 1,
-      "depends_on": "eval:doc.llm_auth_mode=='subscription'"
-    },
-    {
-      "fieldname": "llm_oauth_last_refresh_at",
-      "fieldtype": "Datetime",
-      "label": "Last Refresh At",
-      "read_only": 1,
-      "depends_on": "eval:doc.llm_auth_mode=='subscription'"
     },
     {
       "fieldname": "system_tab",
