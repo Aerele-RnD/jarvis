@@ -152,3 +152,26 @@ class TestSyncConnection(FrappeTestCase):
 			onboarding.save_llm_creds(provider="Anthropic", model="", api_key="k")
 		with self.assertRaises(frappe.ValidationError):
 			onboarding.save_llm_creds(provider="Anthropic", model="m", api_key="")
+
+	def test_save_llm_creds_oauth_mode_allows_empty_api_key(self):
+		"""REV-1: auth_mode=oauth doesn't require api_key — credentials live in
+		the container's auth-profiles.json (pushed separately)."""
+		_set_token("")
+		with patch("jarvis.openclaw_push.push_creds_restart"), \
+			 patch("jarvis.openclaw_push.push_creds_reload"), \
+			 patch("jarvis.admin_client.post_update_llm_creds",
+				   return_value={"action": "restart", "result": "ok"}):
+			out = onboarding.save_llm_creds(
+				provider="OpenAI", model="gpt-4o",
+				api_key="", base_url="", auth_mode="oauth",
+			)
+		s = frappe.get_single("Jarvis Settings")
+		self.assertEqual(s.llm_auth_mode, "oauth")
+		self.assertEqual(s.llm_provider, "OpenAI")
+		self.assertEqual(s.llm_model, "gpt-4o")
+		self.assertIn("last_sync_status", out)
+
+	def test_save_llm_creds_rejects_unknown_auth_mode(self):
+		with self.assertRaises(frappe.ValidationError):
+			onboarding.save_llm_creds(provider="OpenAI", model="gpt-4o",
+			                          api_key="", auth_mode="token")
