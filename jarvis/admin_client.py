@@ -124,6 +124,38 @@ def post_rotate_llm_secret(secret: str) -> dict:
 	)
 
 
+def post_push_oauth_blob(provider: str, blob: dict) -> dict:
+	"""POST an openclaw OAuthCredential blob to admin → fleet-agent → container.
+
+	Called after a successful device-code poll. The container's openclaw
+	codex/gemini-cli provider reads the blob from auth-profiles.json and
+	refreshes internally via pi-ai going forward.
+
+	Raises:
+		AdminAuthError, AdminUnreachableError, AdminValidationError
+		(rate-limit shares rotate-secret's 20/h bucket).
+	"""
+	settings = frappe.get_single("Jarvis Settings")
+	return _post(
+		path="/api/method/jarvis_admin.api.tenant.push_oauth_blob",
+		body={"provider": provider, "blob": blob},
+		admin_url=_admin_url(settings),
+	)
+
+
+def post_subscription_disconnect() -> dict:
+	"""POST to admin to clear the customer's OAuth profile on the container.
+
+	Idempotent — a tenant in api_key mode is a no-op success.
+	"""
+	settings = frappe.get_single("Jarvis Settings")
+	return _post(
+		path="/api/method/jarvis_admin.api.tenant.subscription_disconnect",
+		body={},
+		admin_url=_admin_url(settings),
+	)
+
+
 def pair_chat_device(public_key: str, device_id: str) -> dict:
 	"""POST customer's chat device pubkey to admin; admin asks the fleet-agent
 	to write a PairedDevice record into the customer's openclaw container and
