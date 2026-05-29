@@ -218,7 +218,6 @@ class TestResolveLlmSecret(FrappeTestCase):
 		defaults = {
 			"llm_auth_mode": "api_key",
 			"_llm_api_key": None,
-			"_llm_oauth_access_token": None,
 		}
 		defaults.update(kw)
 		s = SimpleNamespace(**defaults)
@@ -232,14 +231,18 @@ class TestResolveLlmSecret(FrappeTestCase):
 		s = self._settings(llm_auth_mode="api_key", _llm_api_key="sk-xyz")
 		self.assertEqual(_resolve_llm_secret(s), "sk-xyz")
 
-	def test_subscription_mode_returns_access_token(self):
+	def test_oauth_mode_returns_empty_string(self):
+		"""REV-1: subscription / oauth modes don't push a secret through llm.key.
+		Credentials live in auth-profiles.json on the container."""
 		from jarvis.openclaw_push import _resolve_llm_secret
-		s = self._settings(llm_auth_mode="subscription", _llm_oauth_access_token="AT-1")
-		self.assertEqual(_resolve_llm_secret(s), "AT-1")
+		s = self._settings(llm_auth_mode="oauth", _llm_api_key=None)
+		self.assertEqual(_resolve_llm_secret(s), "")
 
-	def test_subscription_mode_empty_token_returns_empty(self):
+	def test_legacy_subscription_mode_returns_empty_string(self):
+		"""Legacy 'subscription' value (pre-REV-1 migrated tenants) also drops
+		any secret push — same as 'oauth'."""
 		from jarvis.openclaw_push import _resolve_llm_secret
-		s = self._settings(llm_auth_mode="subscription")
+		s = self._settings(llm_auth_mode="subscription", _llm_api_key=None)
 		self.assertEqual(_resolve_llm_secret(s), "")
 
 	def test_default_mode_treats_as_api_key(self):
