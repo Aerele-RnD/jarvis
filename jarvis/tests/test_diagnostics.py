@@ -92,7 +92,7 @@ class TestPingOpenclaw(FrappeTestCase):
 		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "agent_url", "ws://h:1")
 		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "agent_token", "t")
 		frappe.db.commit()
-		with patch("jarvis.openclaw_push.ping") as p:
+		with patch("jarvis.openclaw_ws.ping") as p:
 			out = diagnostics.ping_openclaw()
 		p.assert_called_once_with("ws://h:1", "t")
 		self.assertTrue(out["ok"])
@@ -102,7 +102,7 @@ class TestPingOpenclaw(FrappeTestCase):
 		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "agent_url", "ws://h:1")
 		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "agent_token", "t")
 		frappe.db.commit()
-		with patch("jarvis.openclaw_push.ping", side_effect=OpenclawUnreachableError("refused")):
+		with patch("jarvis.openclaw_ws.ping", side_effect=OpenclawUnreachableError("refused")):
 			out = diagnostics.ping_openclaw()
 		self.assertFalse(out["ok"])
 		self.assertEqual(out["kind"], "unreachable")
@@ -113,27 +113,10 @@ class TestForceResync(FrappeTestCase):
 		with self.assertRaises(frappe.ValidationError):
 			diagnostics.force_resync(action="blowup")
 
-	def test_admin_path_when_admin_key_set(self):
-		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "jarvis_admin_api_key", "tok")
-		frappe.db.commit()
-		try:
-			with patch.object(
-				frappe.get_single("Jarvis Settings").__class__, "_sync_via_admin"
-			) as sa, patch.object(
-				frappe.get_single("Jarvis Settings").__class__, "_sync_via_local_openclaw"
-			) as sl:
-				diagnostics.force_resync(action="reload")
-			sa.assert_called_once_with("reload")
-			sl.assert_not_called()
-		finally:
-			frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "jarvis_admin_api_key", "")
-			frappe.db.commit()
-
-	def test_local_path_when_no_admin_key(self):
+	def test_force_resync_always_uses_admin_path(self):
+		"""Post-unification (2026-05-29): on_update always routes via admin.
+		force_resync inherits the same path."""
 		cls = frappe.get_single("Jarvis Settings").__class__
-		with patch.object(cls, "get_password", return_value=""), \
-			 patch.object(cls, "_sync_via_admin") as sa, \
-			 patch.object(cls, "_sync_via_local_openclaw") as sl:
-			diagnostics.force_resync(action="restart")
-		sl.assert_called_once_with("restart")
-		sa.assert_not_called()
+		with patch.object(cls, "_sync_via_admin") as sa:
+			diagnostics.force_resync(action="reload")
+		sa.assert_called_once_with("reload")

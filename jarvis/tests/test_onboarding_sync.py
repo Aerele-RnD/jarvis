@@ -126,11 +126,11 @@ class TestSyncConnection(FrappeTestCase):
 
 	def test_save_llm_creds_writes_settings_and_fires_save(self):
 		"""Step 4 of onboarding: provider/model/api_key land in Jarvis Settings
-		and the save triggers the push pipeline (mocked here)."""
+		and the save triggers the push pipeline (post-unification 2026-05-29:
+		always via admin; admin call mocked here, may AdminAuthError if no
+		api_key on settings — both paths set last_sync_status)."""
 		_set_token("")
-		with patch("jarvis.openclaw_push.push_creds_restart") as restart_mock, \
-			 patch("jarvis.openclaw_push.push_creds_reload") as reload_mock, \
-			 patch("jarvis.admin_client.post_update_llm_creds",
+		with patch("jarvis.admin_client.post_update_llm_creds",
 				   return_value={"action": "restart", "result": "ok"}):
 			out = onboarding.save_llm_creds(
 				provider="Anthropic", model="claude-sonnet-4-6",
@@ -141,9 +141,7 @@ class TestSyncConnection(FrappeTestCase):
 		self.assertEqual(s.llm_model, "claude-sonnet-4-6")
 		self.assertEqual(s.get_password("llm_api_key"), "sk-test")
 		self.assertEqual(s.llm_base_url, "https://api.anthropic.com")
-		# At least one of the push paths must have been invoked by save().
-		self.assertTrue(restart_mock.called or reload_mock.called
-						or "last_sync_status" in out)
+		self.assertIn("last_sync_status", out)
 
 	def test_save_llm_creds_rejects_missing_required_fields(self):
 		with self.assertRaises(frappe.ValidationError):
@@ -157,9 +155,7 @@ class TestSyncConnection(FrappeTestCase):
 		"""REV-1: auth_mode=oauth doesn't require api_key — credentials live in
 		the container's auth-profiles.json (pushed separately)."""
 		_set_token("")
-		with patch("jarvis.openclaw_push.push_creds_restart"), \
-			 patch("jarvis.openclaw_push.push_creds_reload"), \
-			 patch("jarvis.admin_client.post_update_llm_creds",
+		with patch("jarvis.admin_client.post_update_llm_creds",
 				   return_value={"action": "restart", "result": "ok"}):
 			out = onboarding.save_llm_creds(
 				provider="OpenAI", model="gpt-4o",

@@ -33,10 +33,13 @@ def _settings_for_admin(admin_url="https://admin.example.com",
 
 
 def _settings_clear_admin():
+	from frappe.utils.password import remove_encrypted_password
 	settings = frappe.get_single("Jarvis Settings")
 	settings.db_set("jarvis_admin_url", "")
-	settings.db_set("jarvis_admin_api_key", "")
-	settings.db_set("jarvis_admin_api_secret", "")
+	# Password fields need __Auth cleared too, not just the column.
+	for f in ("jarvis_admin_api_key", "jarvis_admin_api_secret"):
+		remove_encrypted_password("Jarvis Settings", "Jarvis Settings", f)
+		settings.db_set(f, "")
 	frappe.db.commit()
 
 

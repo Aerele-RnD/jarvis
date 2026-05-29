@@ -58,7 +58,6 @@ _RESET_CLEAR_FIELDS = (
 	"jarvis_admin_api_key", "jarvis_admin_api_secret",
 	# Agent / container
 	"agent_url", "agent_token",
-	"agent_llm_key_path", "agent_config_path", "agent_compose_dir",
 	# Chat device pairing
 	"chat_device_id", "chat_device_public_key",
 	"chat_device_private_key", "chat_device_token",
