@@ -1,6 +1,5 @@
 """Whitelisted endpoints called by the onboarding wizard."""
 import time
-from datetime import datetime, timedelta
 
 import frappe
 
@@ -76,25 +75,27 @@ def poll_signin(device_code: str) -> dict:
 
 @frappe.whitelist()
 def disconnect() -> dict:
-	"""Clear OAuth credentials. Mode stays 'subscription' until user re-saves."""
-	from frappe.utils.password import remove_encrypted_password
+	"""Clear the customer's OAuth profile on the container, then drop the
+	bench's subscription mode flag.
+
+	openclaw owns the credential state under REV-1, so the disconnect goes
+	through admin → fleet-agent and the bench just flips ``llm_auth_mode``
+	back to ``api_key``. The customer can then re-Connect any time.
+	"""
+	try:
+		admin_client.post_subscription_disconnect()
+	except (admin_client.AdminUnreachableError,
+	        admin_client.AdminAuthError,
+	        admin_client.AdminValidationError) as e:
+		# Container-side clear failed — leave bench state alone so the user
+		# can retry. Errors are operator-investigable; surface a clean code.
+		return _err("disconnect_failed", str(e))
 
 	settings = frappe.get_single("Jarvis Settings")
-
-	# Best-effort revocation at provider — silently swallow failures.
-	try:
-		_best_effort_revoke(settings)
-	except Exception:
-		pass
-
-	for f in ("llm_oauth_refresh_token", "llm_oauth_access_token"):
-		remove_encrypted_password("Jarvis Settings", "Jarvis Settings", f)
-		settings.db_set(f, None, update_modified=False)
-	for f in ("llm_oauth_access_token_expires_at", "llm_oauth_account_email",
-	          "llm_oauth_connected_at", "llm_oauth_last_refresh_at"):
-		settings.db_set(f, None, update_modified=False)
-	# Trigger openclaw re-render (will use STUB_DEFAULTS since creds gone).
-	settings.run_method("on_update")
+	settings.db_set("llm_auth_mode", "api_key", update_modified=False)
+	settings.db_set("last_sync_status", "disconnected", update_modified=False)
+	# Clear cached device-code entries so any in-flight Connect can't race.
+	frappe.cache.delete_key(_CACHE_KEY)
 	return _ok({})
 
 
@@ -178,25 +179,3 @@ def _persist_subscription(provider: str, tokens: dict):
 	)
 
 
-def _best_effort_revoke(settings):
-	"""POST to provider revocation endpoint. Failures ignored."""
-	import requests
-
-	from jarvis.oauth.providers import get_provider
-
-	provider = settings.llm_provider
-	token = settings.get_password("llm_oauth_refresh_token", raise_exception=False)
-	if not provider or not token:
-		return
-	try:
-		entry = get_provider(provider)
-	except JarvisError:
-		return
-	try:
-		requests.post(
-			entry["revocation_endpoint"],
-			data={"token": token, "client_id": get_oauth_client_id(provider)},
-			timeout=10,
-		)
-	except Exception:
-		pass

@@ -158,17 +158,28 @@ class TestShareCode(_OAuthApiBase):
 
 
 class TestDisconnect(_OAuthApiBase):
-	@patch("jarvis.oauth.api._best_effort_revoke")
-	@patch("jarvis.openclaw_push.push_creds_restart")
-	def test_disconnect_clears_oauth_fields(self, _mock_restart, _mock_revoke):
+	@patch("jarvis.oauth.api.admin_client.post_subscription_disconnect")
+	def test_disconnect_calls_admin_and_flips_to_api_key(self, mock_disc):
+		mock_disc.return_value = {"ok": True}
 		settings = frappe.get_single("Jarvis Settings")
-		settings.db_set("llm_auth_mode", "subscription", update_modified=False)
+		settings.db_set("llm_auth_mode", "oauth", update_modified=False)
 		settings.db_set("llm_provider", "OpenAI", update_modified=False)
-		settings.db_set("llm_oauth_refresh_token", "RT-1", update_modified=False)
-		settings.db_set("llm_oauth_account_email", "manager@acme.com", update_modified=False)
 		frappe.db.commit()
 		out = oauth_api.disconnect()
 		self.assertTrue(out["ok"])
+		mock_disc.assert_called_once()
 		settings = frappe.get_single("Jarvis Settings")
-		self.assertFalse(settings.get_password("llm_oauth_refresh_token", raise_exception=False))
-		self.assertFalse(settings.llm_oauth_account_email)
+		self.assertEqual(settings.llm_auth_mode, "api_key")
+		self.assertEqual(settings.last_sync_status, "disconnected")
+
+	@patch("jarvis.oauth.api.admin_client.post_subscription_disconnect")
+	def test_disconnect_admin_error_returns_error_envelope(self, mock_disc):
+		from jarvis.exceptions import AdminUnreachableError
+		mock_disc.side_effect = AdminUnreachableError("network is down")
+		out = oauth_api.disconnect()
+		self.assertFalse(out["ok"])
+		self.assertEqual(out["error"]["code"], "disconnect_failed")
+		# State NOT changed when admin call fails.
+		settings = frappe.get_single("Jarvis Settings")
+		# llm_auth_mode unchanged from snapshot.
+		self.assertEqual(settings.llm_auth_mode, self._snap["llm_auth_mode"])
