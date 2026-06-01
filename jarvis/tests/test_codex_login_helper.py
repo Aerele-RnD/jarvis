@@ -111,3 +111,29 @@ class TestPackBlob(unittest.TestCase):
 			expires_in=3600, email="x@y", now_ts=0,
 		)
 		self.assertEqual(blob["provider"], "google-gemini-cli")
+
+
+import json
+
+
+class TestExtractEmailFromIdToken(unittest.TestCase):
+	def test_extracts_email_from_jwt_payload(self):
+		helper = _load_helper()
+		# Forge a JWT: header.payload.signature; only middle segment matters
+		payload = base64.urlsafe_b64encode(
+			json.dumps({"email": "user@example.com", "sub": "123"}).encode()
+		).rstrip(b"=").decode()
+		jwt = f"HEADER.{payload}.SIG"
+		self.assertEqual(helper.email_from_id_token(jwt), "user@example.com")
+
+	def test_returns_empty_on_missing_email(self):
+		helper = _load_helper()
+		payload = base64.urlsafe_b64encode(
+			json.dumps({"sub": "no-email-here"}).encode()
+		).rstrip(b"=").decode()
+		self.assertEqual(helper.email_from_id_token(f"H.{payload}.S"), "")
+
+	def test_returns_empty_on_malformed_token(self):
+		helper = _load_helper()
+		self.assertEqual(helper.email_from_id_token("not-a-jwt"), "")
+		self.assertEqual(helper.email_from_id_token(""), "")

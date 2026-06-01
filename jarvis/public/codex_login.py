@@ -80,3 +80,22 @@ def pack_blob(*, provider: str, access_token: str, refresh_token: str,
 		"email": email or "",
 		"clientId": p["client_id"],
 	}
+
+
+import json as _json
+
+
+def email_from_id_token(id_token: str) -> str:
+	"""Parse the email claim from a JWT's payload. No signature check —
+	the channel we got this on (TLS to the provider's token endpoint) is
+	the trust root."""
+	if not id_token or id_token.count(".") < 2:
+		return ""
+	try:
+		_, payload, _ = id_token.split(".", 2)
+		# JWT base64url has no padding; pad to multiple of 4
+		padding = "=" * (-len(payload) % 4)
+		decoded = base64.urlsafe_b64decode(payload + padding)
+		return _json.loads(decoded).get("email", "") or ""
+	except (ValueError, _json.JSONDecodeError):
+		return ""
