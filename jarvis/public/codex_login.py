@@ -66,3 +66,17 @@ def build_authorize_url(*, provider: str, redirect_uri: str,
 	}
 	params.update(p["extra_authorize_params"])
 	return f"{p['authorize']}?{urlencode(params)}"
+
+
+def pack_blob(*, provider: str, access_token: str, refresh_token: str,
+              expires_in: int, email: str, now_ts: int) -> dict:
+	p = PROVIDERS[provider]
+	return {
+		"type": "oauth",
+		"provider": p["openclaw_provider"],
+		"access": access_token,
+		"refresh": refresh_token or "",
+		"expires": (now_ts + int(expires_in)) * 1000,
+		"email": email or "",
+		"clientId": p["client_id"],
+	}

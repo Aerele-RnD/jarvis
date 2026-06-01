@@ -82,3 +82,32 @@ class TestAuthorizeURL(unittest.TestCase):
 			helper.build_authorize_url(
 				provider="claude", redirect_uri="http://x", code_challenge="c", state="s",
 			)
+
+
+class TestPackBlob(unittest.TestCase):
+	def test_pack_blob_openai_shape(self):
+		helper = _load_helper()
+		blob = helper.pack_blob(
+			provider="openai",
+			access_token="AT",
+			refresh_token="RT",
+			expires_in=3600,
+			email="manager@acme.com",
+			now_ts=1_700_000_000,
+		)
+		self.assertEqual(blob["type"], "oauth")
+		self.assertEqual(blob["provider"], "openai-codex")
+		self.assertEqual(blob["access"], "AT")
+		self.assertEqual(blob["refresh"], "RT")
+		# expires is ms since epoch = (now + expires_in) * 1000
+		self.assertEqual(blob["expires"], (1_700_000_000 + 3600) * 1000)
+		self.assertEqual(blob["email"], "manager@acme.com")
+		self.assertEqual(blob["clientId"], "app_EMoamEEZ73f0CkXaXp7hrann")
+
+	def test_pack_blob_gemini_uses_gemini_provider_id(self):
+		helper = _load_helper()
+		blob = helper.pack_blob(
+			provider="gemini", access_token="A", refresh_token="R",
+			expires_in=3600, email="x@y", now_ts=0,
+		)
+		self.assertEqual(blob["provider"], "google-gemini-cli")
