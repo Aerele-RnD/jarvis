@@ -52,6 +52,24 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	let account = null;       // payload from get_account
 	let settingsLocal = null; // local Jarvis Settings LLM fields snapshot
 
+	// Subscription providers (chat-subscription OAuth path). Mirrors the
+	// onboarding wizard's SUBSCRIPTION_PROVIDERS — keep in sync.
+	const SUBSCRIPTION_PROVIDERS = ["OpenAI", "Google Gemini"];
+
+	// AI provider card state — which tab the user is currently looking at,
+	// plus in-flight sign-in state when they're connecting from this page.
+	// aiTab follows llm_auth_mode by default but can diverge briefly while
+	// the user is mid-flow (e.g. on api_key but exploring the subscription tab).
+	const ui = {
+		aiTab: "api_key",  // "api_key" | "subscription"
+		subProvider: "OpenAI",
+		subNonce: null,
+		subOneLiner: null,
+		subExpiresAt: null,
+		subPollTimer: null,
+		subConnectedEmail: null,  // captured by poll, before commit
+	};
+
 	// ---- boot --------------------------------------------------------------
 	loadInitial();
 
@@ -70,6 +88,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 				]).then(([acc, settings]) => {
 					account = (acc && acc.message) || {};
 					settingsLocal = settings || {};
+					ui.aiTab = settingsLocal.llm_auth_mode === "oauth" ? "subscription" : "api_key";
 					render();
 				});
 			})
@@ -86,59 +105,331 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		const editable = EDITABLE_STATES.has(sub);
 		$body.html(`
 			${renderPlanSection()}
-			${renderSubscriptionCard()}
-			${renderLlmSection(editable)}
+			${renderAiProviderCard(editable)}
 			${renderBillingSection()}
 		`);
-		bindLlm(editable);
-		bindSubscriptionCard();
+		bindAiProviderCard(editable);
 		bindBilling();
 	}
 
-	// ---- LLM subscription card (only shown when llm_auth_mode === "oauth") --
-	// REV-2: bench keeps only provider + auth_mode; the OAuth blob lives in
-	// auth-profiles.json on the container. Connected-email and refresh
-	// timestamps are not surfaced bench-side anymore.
-	function renderSubscriptionCard() {
-		if (settingsLocal.llm_auth_mode !== "oauth") return "";
+	// ---- AI provider card (tabbed: API key | Chat subscription) ----------
+	function renderAiProviderCard(editable) {
 		const provider = settingsLocal.llm_provider || "—";
-		const model = settingsLocal.llm_model || "—";
+		const inApiKeyMode = settingsLocal.llm_auth_mode !== "oauth";
+		const tabs = `
+			<div class="ja-tabs" role="tablist">
+				<button type="button" class="ja-tab ${ui.aiTab === "api_key" ? "ja-tab-active" : ""}"
+					data-tab="api_key" role="tab" aria-selected="${ui.aiTab === "api_key"}">API key</button>
+				<button type="button" class="ja-tab ${ui.aiTab === "subscription" ? "ja-tab-active" : ""}"
+					data-tab="subscription" role="tab" aria-selected="${ui.aiTab === "subscription"}">Chat subscription</button>
+			</div>`;
+		const body = ui.aiTab === "api_key"
+			? renderApiKeyPanel(editable, inApiKeyMode)
+			: renderSubscriptionPanel(editable, !inApiKeyMode);
 		return `<div class="ja-card">
-			<div class="ja-card-head">
-				<h2 class="ja-h">LLM subscription</h2>
-				<span class="ja-pill ja-pill-ok">${esc(provider)}</span>
+			<div class="ja-eyebrow">AI provider</div>
+			<div class="ja-card-head" style="margin-bottom:14px">
+				<h2 class="ja-h">How Jarvis talks to your LLM</h2>
+				${!inApiKeyMode ? `<span class="ja-pill ja-pill-ok">${esc(provider)}</span>` : ""}
 			</div>
-			<table class="ja-kv">
-				<tr><td>Provider</td><td>${esc(provider)}</td></tr>
-				<tr><td>Model</td><td>${esc(model)}</td></tr>
-			</table>
-			<p class="ja-sub">Refresh and account state live inside your Jarvis container. If chat starts failing, click Re-authorize to mint fresh tokens.</p>
-			<div class="ja-actions">
-				<button class="ja-btn ja-btn-ghost" id="ja-sub-disconnect">Disconnect</button>
-				<button class="ja-btn ja-btn-primary" id="ja-sub-reauth">Re-authorize</button>
-			</div>
+			${tabs}
+			<div class="ja-tab-body" style="margin-top:14px">${body}</div>
 		</div>`;
 	}
 
-	function bindSubscriptionCard() {
-		if (settingsLocal.llm_auth_mode !== "oauth") return;
-		$body.find("#ja-sub-disconnect").on("click", () => {
-			if (!confirm("Disconnect the LLM subscription? Jarvis chat will stop working until you reconnect.")) return;
-			frappe.call({ method: "jarvis.oauth.api.disconnect" }).then((r) => {
-				const m = r.message || {};
-				if (m.ok) {
-					frappe.show_alert({ message: "Disconnected.", indicator: "orange" });
-					loadInitial();  // refresh the page state
-				} else {
-					frappe.show_alert({ message: (m.error && m.error.message) || "Disconnect failed.", indicator: "red" });
-				}
+	function renderApiKeyPanel(editable, isActiveMode) {
+		const provider = settingsLocal.llm_provider || "Anthropic";
+		const model = settingsLocal.llm_model || (PROVIDER_DEFAULTS[provider] || {}).model || "";
+		const base = settingsLocal.llm_base_url || (PROVIDER_DEFAULTS[provider] || {}).baseUrl || "";
+		const sync = settingsLocal.last_sync_status || "";
+		const dis = editable ? "" : "disabled";
+		const sel = PROVIDERS.map((p) => `<option value="${esc(p)}" ${p === provider ? "selected" : ""}>${esc(p)}</option>`).join("");
+		const notice = !isActiveMode
+			? `<div class="ja-banner ja-banner-warn">You're currently using a chat subscription. Saving credentials here will switch you to API-key mode and disconnect the subscription.</div>`
+			: "";
+		return `
+			<p class="ja-sub">Your API key is sent directly to the provider — Jarvis only relays prompts.</p>
+			${notice}
+			<div class="ja-row2">
+				<div class="ja-field">
+					<label>Provider</label>
+					<select class="ja-input" id="ja-prov" ${dis}>${sel}</select>
+				</div>
+				<div class="ja-field">
+					<label>Model</label>
+					<input class="ja-input" id="ja-model" value="${esc(model)}" ${dis}>
+				</div>
+			</div>
+			<div class="ja-row2">
+				<div class="ja-field">
+					<label>API Key</label>
+					<div class="ja-pwd">
+						<input class="ja-input" id="ja-key" type="password" placeholder="${settingsLocal.llm_api_key ? "•••••••• (unchanged)" : "Enter your API key"}" ${dis}>
+						<button type="button" class="ja-pwd-toggle" id="ja-key-eye" aria-label="Show key" ${dis}>
+							<svg class="ja-eye-on" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+							<svg class="ja-eye-off" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 19c-7 0-10-7-10-7a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 10 7 10 7a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+						</button>
+					</div>
+				</div>
+				<div class="ja-field">
+					<label>Base URL <span class="ja-hint-inline">(optional)</span></label>
+					<input class="ja-input" id="ja-base" value="${esc(base)}" ${dis}>
+				</div>
+			</div>
+			<div class="ja-actions">
+				<button class="ja-btn ja-btn-primary" id="ja-llm-save" ${dis}>Save credentials</button>
+				<span class="ja-llm-status">${sync ? "Last sync: " + esc(sync) : ""}</span>
+			</div>
+			<div class="ja-err" id="ja-llm-err"></div>`;
+	}
+
+	function renderSubscriptionPanel(editable, isActiveMode) {
+		// Currently connected (oauth mode): show provider + Disconnect/Re-auth.
+		if (isActiveMode) {
+			const provider = settingsLocal.llm_provider || "—";
+			const model = settingsLocal.llm_model || "—";
+			return `
+				<p class="ja-sub">Refresh and account state live inside your Jarvis container. If chat starts failing, click Re-authorize to mint fresh tokens.</p>
+				<table class="ja-kv">
+					<tr><td>Provider</td><td>${esc(provider)}</td></tr>
+					<tr><td>Model</td><td>${esc(model)}</td></tr>
+				</table>
+				<div class="ja-actions">
+					<button class="ja-btn ja-btn-ghost" id="ja-sub-disconnect">Disconnect</button>
+					<button class="ja-btn ja-btn-primary" id="ja-sub-reauth">Re-authorize</button>
+				</div>`;
+		}
+		// Not yet connected: show provider picker or in-flight one-liner.
+		if (ui.subConnectedEmail) {
+			return `
+				<div class="ja-success-ring" style="margin:16px auto 12px">✓</div>
+				<p style="text-align:center">Connected as <strong>${esc(ui.subConnectedEmail)}</strong></p>
+				<p class="ja-sub" style="text-align:center">Switching to chat-subscription mode will disconnect your API key.</p>
+				<div class="ja-actions" style="justify-content:center">
+					<button class="ja-btn ja-btn-ghost" id="ja-sub-cancel">Cancel</button>
+					<button class="ja-btn ja-btn-primary" id="ja-sub-commit">Confirm switch</button>
+				</div>
+				<div class="ja-err" id="ja-sub-err"></div>`;
+		}
+		if (ui.subOneLiner) {
+			const minsLeft = Math.max(0, Math.floor((ui.subExpiresAt - Date.now()) / 60000));
+			return `
+				<div class="ja-field">
+					<label>Run this on your computer</label>
+					<pre class="ja-one-liner">${esc(ui.subOneLiner)}</pre>
+					<div class="ja-sub" style="margin-top:8px">Paste it into Terminal (or PowerShell). The script opens your browser, you sign in to ${esc(ui.subProvider)}, and Jarvis picks up the result automatically. Link valid for ~${minsLeft} minute${minsLeft === 1 ? "" : "s"}.</div>
+				</div>
+				<div class="ja-actions">
+					<button class="ja-btn ja-btn-ghost" id="ja-sub-copy">Copy command</button>
+					<button class="ja-btn ja-btn-ghost" id="ja-sub-share">Send to colleague</button>
+					<button class="ja-btn ja-btn-ghost" id="ja-sub-regen">Generate new one-liner</button>
+				</div>
+				<div class="ja-sub" style="margin-top:10px">⠹ Waiting for sign-in… <a href="#" id="ja-sub-why">Why my computer?</a></div>
+				<div class="ja-err" id="ja-sub-err"></div>`;
+		}
+		const provOptions = SUBSCRIPTION_PROVIDERS.map(
+			(p) => `<option value="${esc(p)}" ${p === ui.subProvider ? "selected" : ""}>${esc(p)}</option>`
+		).join("");
+		const dis = editable ? "" : "disabled";
+		return `
+			<p class="ja-sub">Sign in once with your existing ChatGPT Plus or Gemini Advanced account — no API key needed.</p>
+			<div class="ja-field">
+				<label>Provider</label>
+				<select id="ja-sub-provider" class="ja-input" ${dis}>${provOptions}</select>
+			</div>
+			<div class="ja-actions">
+				<button class="ja-btn ja-btn-primary" id="ja-sub-signin" ${dis}>Sign in with <span id="ja-sub-provider-label">${esc(ui.subProvider)}</span></button>
+			</div>
+			<div class="ja-err" id="ja-sub-err"></div>`;
+	}
+
+	function bindAiProviderCard(editable) {
+		$body.find(".ja-tab").on("click", function () {
+			const tab = $(this).data("tab");
+			if (tab === ui.aiTab) return;
+			handleTabSwitch(tab);
+		});
+		if (ui.aiTab === "api_key") {
+			bindLlm(editable);
+		} else {
+			bindSubscriptionPanel(editable);
+		}
+	}
+
+	function handleTabSwitch(targetTab) {
+		const currentMode = settingsLocal.llm_auth_mode === "oauth" ? "subscription" : "api_key";
+		// Switching to a tab that matches the active mode → just flip the view.
+		// Switching to a tab that diverges from the active mode → preview-only,
+		// no destructive action until the user actively confirms (Save / Confirm switch).
+		if (targetTab === "api_key" && currentMode === "subscription") {
+			// Show a confirmation modal *before* flipping, since divergence
+			// here means the user is about to abandon their oauth connection.
+			if (!confirm("Switch to API-key mode? Your chat subscription will be disconnected when you save credentials.")) return;
+		}
+		ui.aiTab = targetTab;
+		// Cancel any in-flight sign-in flow when leaving the subscription tab.
+		if (targetTab !== "subscription") cancelSubscriptionFlow();
+		render();
+	}
+
+	function bindSubscriptionPanel(editable) {
+		const isActiveMode = settingsLocal.llm_auth_mode === "oauth";
+		if (isActiveMode) {
+			$body.find("#ja-sub-disconnect").on("click", () => {
+				if (!confirm("Disconnect the LLM subscription? Jarvis chat will stop working until you reconnect.")) return;
+				frappe.call({ method: "jarvis.oauth.api.disconnect" }).then((r) => {
+					const m = r.message || {};
+					if (m.ok) {
+						frappe.show_alert({ message: "Disconnected.", indicator: "orange" });
+						loadInitial();
+					} else {
+						frappe.show_alert({ message: (m.error && m.error.message) || "Disconnect failed.", indicator: "red" });
+					}
+				});
+			});
+			$body.find("#ja-sub-reauth").on("click", () => {
+				// Stay on this page — start a fresh sign-in flow.
+				ui.subConnectedEmail = null;
+				startCodexSignin();
+			});
+			return;
+		}
+		// Not in oauth mode — handle the connect flow inline.
+		if (!editable) return;
+		$body.find("#ja-sub-provider").on("change", (e) => {
+			ui.subProvider = e.target.value;
+			render();
+		});
+		$body.find("#ja-sub-signin").on("click", startCodexSignin);
+		$body.find("#ja-sub-regen").on("click", () => { cancelSubscriptionFlow(); startCodexSignin(); });
+		$body.find("#ja-sub-copy").on("click", () => {
+			if (!ui.subOneLiner) return;
+			navigator.clipboard.writeText(ui.subOneLiner).then(() => {
+				frappe.show_alert({ message: "Copied", indicator: "green" });
 			});
 		});
-		$body.find("#ja-sub-reauth").on("click", () => {
-			// Send the user back to the onboarding wizard so they can re-run
-			// the helper-script sign-in (REV-2). Step 4 detects existing
-			// auth_mode=oauth and pre-selects the subscription path.
-			window.location.assign("/app/jarvis-onboarding");
+		$body.find("#ja-sub-share").on("click", shareSubscriptionOneLiner);
+		$body.find("#ja-sub-why").on("click", (e) => {
+			e.preventDefault();
+			frappe.msgprint({
+				title: "Why your computer?",
+				message: "Signing in to ChatGPT requires opening a browser. The script opens it on the same machine it runs on, then sends the result back to Jarvis automatically.",
+			});
+		});
+		$body.find("#ja-sub-cancel").on("click", () => {
+			cancelSubscriptionFlow();
+			render();
+		});
+		$body.find("#ja-sub-commit").on("click", commitSubscriptionSignin);
+	}
+
+	function startCodexSignin() {
+		const $err = $body.find("#ja-sub-err");
+		$err.text("");
+		setBusy("#ja-sub-signin", true);
+		frappe.call({
+			method: "jarvis.oauth.api.begin_codex_signin",
+			args: { provider: ui.subProvider },
+		}).then((r) => {
+			setBusy("#ja-sub-signin", false);
+			const m = r.message || {};
+			if (!m.ok) {
+				$err.text((m.error && m.error.message) || "Couldn't start sign-in.");
+				return;
+			}
+			const d = m.data;
+			ui.subNonce = d.nonce;
+			ui.subOneLiner = d.one_liner;
+			ui.subExpiresAt = Date.now() + 600 * 1000;
+			render();
+			schedulePoll(2);
+		}).catch((e) => {
+			setBusy("#ja-sub-signin", false);
+			$err.text(e.message || "Couldn't reach Jarvis.");
+		});
+	}
+
+	function schedulePoll(intervalSec) {
+		cancelPollTimer();
+		ui.subPollTimer = setTimeout(() => pollOnce(intervalSec), intervalSec * 1000);
+	}
+
+	function pollOnce(intervalSec) {
+		if (!ui.subNonce) return;
+		frappe.call({
+			method: "jarvis.oauth.api.poll_signin",
+			args: { nonce: ui.subNonce },
+		}).then((r) => {
+			const m = r.message || {};
+			if (!m.ok) {
+				$body.find("#ja-sub-err").text((m.error && m.error.message) || "Sign-in failed.");
+				cancelSubscriptionFlow();
+				render();
+				return;
+			}
+			const data = m.data || {};
+			if (data.status === "connected") {
+				ui.subConnectedEmail = data.account_email || "(unknown)";
+				cancelPollTimer();
+				ui.subOneLiner = null;
+				render();
+				return;
+			}
+			schedulePoll(intervalSec);
+		}).catch(() => {
+			schedulePoll(intervalSec);
+		});
+	}
+
+	function cancelPollTimer() {
+		if (ui.subPollTimer) { clearTimeout(ui.subPollTimer); ui.subPollTimer = null; }
+	}
+
+	function cancelSubscriptionFlow() {
+		cancelPollTimer();
+		ui.subNonce = null;
+		ui.subOneLiner = null;
+		ui.subExpiresAt = null;
+		ui.subConnectedEmail = null;
+	}
+
+	function commitSubscriptionSignin() {
+		setBusy("#ja-sub-commit", true);
+		frappe.call({
+			method: "jarvis.oauth.api.commit_signin",
+			args: { nonce: ui.subNonce },
+		}).then((r) => {
+			setBusy("#ja-sub-commit", false);
+			const m = r.message || {};
+			if (!m.ok) {
+				$body.find("#ja-sub-err").text((m.error && m.error.message) || "Couldn't finalize sign-in.");
+				return;
+			}
+			frappe.show_alert({ message: "Connected to chat subscription.", indicator: "green" });
+			ui.subNonce = null;
+			ui.subConnectedEmail = null;
+			loadInitial();  // re-pulls Jarvis Settings; auth_mode now "oauth"
+		}).catch((e) => {
+			setBusy("#ja-sub-commit", false);
+			$body.find("#ja-sub-err").text(e.message || "Couldn't reach Jarvis.");
+		});
+	}
+
+	function shareSubscriptionOneLiner() {
+		const recipient = prompt("Send the sign-in command to which email address?");
+		if (!recipient) return;
+		frappe.call({
+			method: "jarvis.oauth.api.share_signin",
+			args: { nonce: ui.subNonce, recipient_email: recipient },
+		}).then((r) => {
+			const m = r.message || {};
+			if (m.ok) {
+				frappe.show_alert({ message: "Sent to " + recipient, indicator: "green" });
+			} else {
+				frappe.show_alert({ message: (m.error && m.error.message) || "Couldn't send", indicator: "red" });
+			}
+		}).catch((e) => {
+			frappe.show_alert({ message: e.message || "Couldn't send", indicator: "red" });
 		});
 	}
 
@@ -193,53 +484,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		}
 	}
 
-	// ---- LLM credentials section ------------------------------------------
-	function renderLlmSection(editable) {
-		const provider = settingsLocal.llm_provider || "Anthropic";
-		const model = settingsLocal.llm_model || (PROVIDER_DEFAULTS[provider] || {}).model || "";
-		const base = settingsLocal.llm_base_url || (PROVIDER_DEFAULTS[provider] || {}).baseUrl || "";
-		const sync = settingsLocal.last_sync_status || "";
-		const dis = editable ? "" : "disabled";
-		const tip = editable ? "" : `title="Reactivate your plan to update LLM credentials"`;
-		const sel = PROVIDERS.map((p) => `<option value="${esc(p)}" ${p === provider ? "selected" : ""}>${esc(p)}</option>`).join("");
-		return `<div class="ja-card" ${tip}>
-			<div class="ja-eyebrow">AI provider</div>
-			<h2 class="ja-h">LLM Credentials</h2>
-			<p class="ja-sub">Your API key is sent directly to the provider — Jarvis only relays prompts.</p>
-			<div class="ja-row2">
-				<div class="ja-field">
-					<label>Provider</label>
-					<select class="ja-input" id="ja-prov" ${dis}>${sel}</select>
-				</div>
-				<div class="ja-field">
-					<label>Model</label>
-					<input class="ja-input" id="ja-model" value="${esc(model)}" ${dis}>
-				</div>
-			</div>
-			<div class="ja-row2">
-				<div class="ja-field">
-					<label>API Key</label>
-					<div class="ja-pwd">
-						<input class="ja-input" id="ja-key" type="password" placeholder="${settingsLocal.llm_api_key ? "•••••••• (unchanged)" : "Enter your API key"}" ${dis}>
-						<button type="button" class="ja-pwd-toggle" id="ja-key-eye" aria-label="Show key" ${dis}>
-							<svg class="ja-eye-on" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
-							<svg class="ja-eye-off" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 19c-7 0-10-7-10-7a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 10 7 10 7a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
-						</button>
-					</div>
-				</div>
-				<div class="ja-field">
-					<label>Base URL <span class="ja-hint-inline">(optional)</span></label>
-					<input class="ja-input" id="ja-base" value="${esc(base)}" ${dis}>
-				</div>
-			</div>
-			<div class="ja-actions">
-				<button class="ja-btn ja-btn-primary" id="ja-llm-save" ${dis}>Save credentials</button>
-				<span class="ja-llm-status">${sync ? "Last sync: " + esc(sync) : ""}</span>
-			</div>
-			<div class="ja-err" id="ja-llm-err"></div>
-		</div>`;
-	}
-
+	// ---- LLM credentials binding (form rendered by renderApiKeyPanel) ----
 	function bindLlm(editable) {
 		if (!editable) return;
 		$body.find("#ja-key-eye").on("click", function () {
@@ -271,18 +516,22 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 			setBusy("#ja-llm-save", true);
 			frappe.call({
 				method: "jarvis.onboarding.save_llm_creds",
-				args: { provider, model, api_key: key || "", base_url: base },
+				args: { provider, model, api_key: key || "", base_url: base, auth_mode: "api_key" },
 			}).then((r) => {
 				setBusy("#ja-llm-save", false);
 				const status = (r.message && r.message.last_sync_status) || "";
 				$body.find(".ja-llm-status").text(status ? "Last sync: " + status : "Saved.");
+				const wasOauth = settingsLocal.llm_auth_mode === "oauth";
 				settingsLocal.llm_provider = provider;
 				settingsLocal.llm_model = model;
 				settingsLocal.llm_base_url = base;
 				settingsLocal.llm_api_key = key || settingsLocal.llm_api_key;
+				settingsLocal.llm_auth_mode = "api_key";
 				settingsLocal.last_sync_status = status;
-				// Clear the entered key from the input now that it's persisted.
 				$body.find("#ja-key").val("");
+				// If we just flipped out of oauth mode, re-render so the
+				// "current mode" pill and notice banner update correctly.
+				if (wasOauth) render();
 			}).catch((e) => {
 				setBusy("#ja-llm-save", false);
 				$body.find("#ja-llm-err").text(e.message || "Save failed.");
@@ -522,6 +771,16 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		.ja-panel{flex:1;padding:34px 36px;min-width:0;display:flex;flex-direction:column;gap:18px}
 		.ja-loading,.ja-empty{color:var(--text-muted);padding:18px 0}
 		.ja-card{border:1px solid var(--border-color);border-radius:12px;padding:20px;background:var(--card-bg)}
+		.ja-tabs{display:inline-flex;padding:3px;background:var(--bg-color);border:1px solid var(--border-color);
+			border-radius:8px}
+		.ja-tab{appearance:none;background:transparent;border:0;padding:7px 16px;font-size:13px;font-weight:500;
+			color:var(--text-muted);border-radius:6px;cursor:pointer;transition:background .12s ease,color .12s ease}
+		.ja-tab:hover{color:var(--text-color)}
+		.ja-tab-active{background:var(--card-bg,#fff);color:var(--jarvis-primary);font-weight:600;
+			box-shadow:0 1px 2px rgba(0,0,0,.06)}
+		.ja-one-liner{font-family:'Menlo','Monaco',monospace;font-size:12px;line-height:1.5;white-space:pre-wrap;
+			word-break:break-all;padding:12px 14px;background:var(--bg-color);border:1px solid var(--border-color);
+			border-radius:8px;margin:0;color:var(--text-color)}
 		.ja-card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
 		.ja-eyebrow{font-size:11.5px;letter-spacing:.6px;font-weight:600;color:var(--text-muted);text-transform:uppercase}
 		.ja-h{font-size:20px;font-weight:700;margin:2px 0 4px;color:var(--text-color)}
