@@ -45,7 +45,7 @@ class TestBeginCodexSignin(_OAuthApiBase):
 		self.assertEqual(len(nonce), 48)  # 24 hex bytes
 		self.assertIn("JARVIS_NONCE=" + nonce, out["data"]["one_liner"])
 		self.assertIn("JARVIS_PROVIDER=openai", out["data"]["one_liner"])
-		self.assertIn("/codex-login", out["data"]["one_liner"])
+		self.assertIn("/assets/jarvis/codex_login.py", out["data"]["one_liner"])
 
 	def test_returns_one_liner_for_gemini(self):
 		out = oauth_api.begin_codex_signin("Google Gemini")

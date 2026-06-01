@@ -36,7 +36,7 @@ def _bench_url() -> str:
 def _build_one_liner(*, bench_url: str, nonce: str, provider_label: str) -> str:
 	helper_provider = _PROVIDER_LABEL_TO_HELPER[provider_label]
 	return (
-		f"curl -sSL {bench_url}/codex-login | "
+		f"curl -sSL {bench_url}/assets/jarvis/codex_login.py | "
 		f"JARVIS_BENCH={bench_url} "
 		f"JARVIS_NONCE={nonce} "
 		f"JARVIS_PROVIDER={helper_provider} python3"
