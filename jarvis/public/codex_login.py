@@ -24,3 +24,45 @@ def generate_pkce() -> tuple[str, str]:
 		hashlib.sha256(verifier.encode()).digest()
 	).rstrip(b"=").decode()
 	return verifier, challenge
+
+
+from urllib.parse import urlencode
+
+PROVIDERS = {
+	"openai": {
+		"authorize": "https://auth.openai.com/oauth/authorize",
+		"token":     "https://auth.openai.com/oauth/token",
+		"userinfo":  "https://api.openai.com/v1/userinfo",
+		"client_id": "app_EMoamEEZ73f0CkXaXp7hrann",
+		"scope":     "openid email profile offline_access",
+		"openclaw_provider": "openai-codex",
+		"extra_authorize_params": {},
+	},
+	"gemini": {
+		"authorize": "https://accounts.google.com/o/oauth2/v2/auth",
+		"token":     "https://oauth2.googleapis.com/token",
+		"userinfo":  None,  # email comes from the id_token JWT claim
+		"client_id": "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com",
+		"scope":     "openid email profile https://www.googleapis.com/auth/generative-language",
+		"openclaw_provider": "google-gemini-cli",
+		"extra_authorize_params": {"access_type": "offline", "prompt": "consent"},
+	},
+}
+
+
+def build_authorize_url(*, provider: str, redirect_uri: str,
+                        code_challenge: str, state: str) -> str:
+	if provider not in PROVIDERS:
+		raise ValueError(f"unknown provider {provider!r}")
+	p = PROVIDERS[provider]
+	params = {
+		"response_type": "code",
+		"client_id": p["client_id"],
+		"redirect_uri": redirect_uri,
+		"scope": p["scope"],
+		"code_challenge": code_challenge,
+		"code_challenge_method": "S256",
+		"state": state,
+	}
+	params.update(p["extra_authorize_params"])
+	return f"{p['authorize']}?{urlencode(params)}"
