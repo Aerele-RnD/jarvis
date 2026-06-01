@@ -56,6 +56,14 @@ def get_oauth_client_id(provider: str) -> str:
 		raise ValueError(f"No OAuth client registered for provider {provider!r}")
 	return OAUTH_CLIENT_IDS[provider]
 
+
+# Serve the OAuth helper at a clean URL. The actual file lives under
+# jarvis/public/ (static asset directory); www/ would try to execute it
+# as a page handler.
+website_route_rules = [
+	{"from_route": "/codex-login", "to_route": "/assets/jarvis/codex_login.py"},
+]
+
 # Apps
 # ------------------
 
