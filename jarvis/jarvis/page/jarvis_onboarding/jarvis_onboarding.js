@@ -315,11 +315,16 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 			return `
 				<div class="jo-field">
 				  <label>Run this on your computer</label>
-				  <pre class="jo-code-display" style="white-space:pre-wrap;word-break:break-all;text-align:left;font-size:12px;line-height:1.5">${esc(state.subOneLiner)}</pre>
+				  <div class="jo-one-liner-wrap">
+				    <pre class="jo-one-liner">${esc(state.subOneLiner)}</pre>
+				    <button type="button" class="jo-copy-btn" id="jo-sub-copy" aria-label="Copy" title="Copy">
+				      <svg class="jo-copy-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+				      <svg class="jo-check-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+				    </button>
+				  </div>
 				  <div class="jo-hint">Paste it into Terminal (or PowerShell). The script opens your browser, you sign in to ${esc(state.subProvider)}, and Jarvis picks up the result automatically. Link valid for ~${minsLeft} minute${minsLeft === 1 ? "" : "s"}.</div>
 				</div>
 				<div class="jo-actions jo-actions-split">
-				  <button class="jo-btn jo-btn-ghost" id="jo-sub-copy">Copy command</button>
 				  <button class="jo-btn jo-btn-ghost" id="jo-sub-share">Send to colleague</button>
 				  <button class="jo-btn jo-btn-ghost" id="jo-sub-regen">Generate new one-liner</button>
 				</div>
@@ -345,10 +350,12 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		$body.find("#jo-sub-signin").on("click", startSubscriptionSignin);
 		$body.find("#jo-sub-regen").on("click", () => { cancelSubscriptionFlow(); startSubscriptionSignin(); });
 		$body.find("#jo-sub-share").on("click", shareSubscriptionOneLiner);
-		$body.find("#jo-sub-copy").on("click", () => {
+		$body.find("#jo-sub-copy").on("click", function () {
 			if (!state.subOneLiner) return;
+			const $btn = $(this);
 			navigator.clipboard.writeText(state.subOneLiner).then(() => {
-				frappe.show_alert({ message: "Copied", indicator: "green" });
+				$btn.addClass("copied");
+				setTimeout(() => $btn.removeClass("copied"), 1400);
 			});
 		});
 		$body.find("#jo-sub-why").on("click", (e) => {
@@ -712,6 +719,18 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 			border-radius:var(--border-radius,6px);transition:border-color .12s ease,background .12s ease}
 		.jo-radio:hover{border-color:var(--jarvis-primary);background:var(--jarvis-primary-soft)}
 		.jo-radio input[type=radio]:checked + span{font-weight:600;color:var(--jarvis-primary)}
+		.jo-one-liner-wrap{position:relative}
+		.jo-one-liner{font-family:'Menlo','Monaco',monospace;font-size:12px;line-height:1.5;white-space:pre-wrap;
+			word-break:break-all;padding:12px 44px 12px 14px;background:var(--bg-color);border:1px solid var(--border-color);
+			border-radius:8px;margin:0;color:var(--text-color)}
+		.jo-copy-btn{position:absolute;top:8px;right:8px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;
+			background:transparent;border:1px solid var(--border-color);border-radius:6px;cursor:pointer;
+			color:var(--text-muted);transition:color .12s ease,background .12s ease,border-color .12s ease}
+		.jo-copy-btn:hover{color:var(--text-color);background:var(--card-bg,#fff);border-color:var(--text-muted)}
+		.jo-copy-btn .jo-check-icon{display:none}
+		.jo-copy-btn.copied{color:var(--green-600,#28a745);border-color:rgba(46,189,89,.4);background:rgba(46,189,89,.10)}
+		.jo-copy-btn.copied .jo-copy-icon{display:none}
+		.jo-copy-btn.copied .jo-check-icon{display:block}
 		.jo-code-uri{font-family:'Menlo','Monaco',monospace;font-size:13px;word-break:break-all;
 			padding:10px 12px;background:var(--bg-color);border:1px solid var(--border-color);border-radius:6px}
 		.jo-code-uri a{color:var(--jarvis-primary)}

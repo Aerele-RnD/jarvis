@@ -216,11 +216,16 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 			return `
 				<div class="ja-field">
 					<label>Run this on your computer</label>
-					<pre class="ja-one-liner">${esc(ui.subOneLiner)}</pre>
+					<div class="ja-one-liner-wrap">
+						<pre class="ja-one-liner">${esc(ui.subOneLiner)}</pre>
+						<button type="button" class="ja-copy-btn" id="ja-sub-copy" aria-label="Copy" title="Copy">
+							<svg class="ja-copy-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+							<svg class="ja-check-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+						</button>
+					</div>
 					<div class="ja-sub" style="margin-top:8px">Paste it into Terminal (or PowerShell). The script opens your browser, you sign in to ${esc(ui.subProvider)}, and Jarvis picks up the result automatically. Link valid for ~${minsLeft} minute${minsLeft === 1 ? "" : "s"}.</div>
 				</div>
 				<div class="ja-actions">
-					<button class="ja-btn ja-btn-ghost" id="ja-sub-copy">Copy command</button>
 					<button class="ja-btn ja-btn-ghost" id="ja-sub-share">Send to colleague</button>
 					<button class="ja-btn ja-btn-ghost" id="ja-sub-regen">Generate new one-liner</button>
 				</div>
@@ -302,10 +307,12 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		});
 		$body.find("#ja-sub-signin").on("click", startCodexSignin);
 		$body.find("#ja-sub-regen").on("click", () => { cancelSubscriptionFlow(); startCodexSignin(); });
-		$body.find("#ja-sub-copy").on("click", () => {
+		$body.find("#ja-sub-copy").on("click", function () {
 			if (!ui.subOneLiner) return;
+			const $btn = $(this);
 			navigator.clipboard.writeText(ui.subOneLiner).then(() => {
-				frappe.show_alert({ message: "Copied", indicator: "green" });
+				$btn.addClass("copied");
+				setTimeout(() => $btn.removeClass("copied"), 1400);
 			});
 		});
 		$body.find("#ja-sub-share").on("click", shareSubscriptionOneLiner);
@@ -778,9 +785,18 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		.ja-tab:hover{color:var(--text-color)}
 		.ja-tab-active{background:var(--card-bg,#fff);color:var(--jarvis-primary);font-weight:600;
 			box-shadow:0 1px 2px rgba(0,0,0,.06)}
+		.ja-one-liner-wrap{position:relative}
 		.ja-one-liner{font-family:'Menlo','Monaco',monospace;font-size:12px;line-height:1.5;white-space:pre-wrap;
-			word-break:break-all;padding:12px 14px;background:var(--bg-color);border:1px solid var(--border-color);
+			word-break:break-all;padding:12px 44px 12px 14px;background:var(--bg-color);border:1px solid var(--border-color);
 			border-radius:8px;margin:0;color:var(--text-color)}
+		.ja-copy-btn{position:absolute;top:8px;right:8px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;
+			background:transparent;border:1px solid var(--border-color);border-radius:6px;cursor:pointer;
+			color:var(--text-muted);transition:color .12s ease,background .12s ease,border-color .12s ease}
+		.ja-copy-btn:hover{color:var(--text-color);background:var(--card-bg,#fff);border-color:var(--text-muted)}
+		.ja-copy-btn .ja-check-icon{display:none}
+		.ja-copy-btn.copied{color:var(--green-600,#28a745);border-color:rgba(46,189,89,.4);background:rgba(46,189,89,.10)}
+		.ja-copy-btn.copied .ja-copy-icon{display:none}
+		.ja-copy-btn.copied .ja-check-icon{display:block}
 		.ja-card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
 		.ja-eyebrow{font-size:11.5px;letter-spacing:.6px;font-weight:600;color:var(--text-muted);text-transform:uppercase}
 		.ja-h{font-size:20px;font-weight:700;margin:2px 0 4px;color:var(--text-color)}
