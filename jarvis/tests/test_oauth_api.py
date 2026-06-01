@@ -63,3 +63,84 @@ class TestBeginCodexSignin(_OAuthApiBase):
 		out = oauth_api.begin_codex_signin("Anthropic")
 		self.assertFalse(out["ok"])
 		self.assertEqual(out["error"]["code"], "unknown_provider")
+
+
+class TestReceiveBlob(_OAuthApiBase):
+	def _seed(self, provider="OpenAI"):
+		nonce = "n_" + ("a" * 46)
+		frappe.cache.hset(_CACHE_KEY, nonce, {
+			"provider": provider, "status": "pending",
+			"expires_at_ts": int(time.time()) + 600,
+			"send_count": 0, "blob": None, "account_email": None,
+		})
+		return nonce
+
+	def _valid_blob(self, provider_id="openai-codex"):
+		return {
+			"type": "oauth",
+			"provider": provider_id,
+			"access": "AT", "refresh": "RT",
+			"expires": 1_700_000_000_000,
+			"email": "x@y.com",
+			"clientId": "app_EMoamEEZ73f0CkXaXp7hrann",
+		}
+
+	def test_receive_happy_path_caches_blob_and_email(self):
+		nonce = self._seed()
+		out = oauth_api.receive_blob(nonce=nonce, blob=self._valid_blob())
+		self.assertTrue(out["ok"])
+		entry = frappe.cache.hget(_CACHE_KEY, nonce)
+		self.assertEqual(entry["status"], "connected")
+		self.assertEqual(entry["account_email"], "x@y.com")
+		self.assertEqual(entry["blob"]["access"], "AT")
+
+	def test_unknown_nonce_rejected(self):
+		out = oauth_api.receive_blob(nonce="bogus", blob=self._valid_blob())
+		self.assertFalse(out["ok"])
+		self.assertEqual(out["error"]["code"], "unknown_nonce")
+
+	def test_expired_nonce_rejected(self):
+		nonce = self._seed()
+		entry = frappe.cache.hget(_CACHE_KEY, nonce)
+		entry["expires_at_ts"] = 0  # in the past
+		frappe.cache.hset(_CACHE_KEY, nonce, entry)
+		out = oauth_api.receive_blob(nonce=nonce, blob=self._valid_blob())
+		self.assertEqual(out["error"]["code"], "expired")
+
+	def test_replay_rejected_after_connect(self):
+		nonce = self._seed()
+		oauth_api.receive_blob(nonce=nonce, blob=self._valid_blob())
+		out = oauth_api.receive_blob(nonce=nonce, blob=self._valid_blob())
+		self.assertFalse(out["ok"])
+		self.assertEqual(out["error"]["code"], "not_pending")
+
+	def test_blob_type_must_be_oauth(self):
+		nonce = self._seed()
+		bad = self._valid_blob(); bad["type"] = "token"
+		out = oauth_api.receive_blob(nonce=nonce, blob=bad)
+		self.assertEqual(out["error"]["code"], "invalid_blob")
+
+	def test_blob_provider_must_match_cached_provider(self):
+		nonce = self._seed(provider="OpenAI")
+		bad = self._valid_blob(provider_id="google-gemini-cli")
+		out = oauth_api.receive_blob(nonce=nonce, blob=bad)
+		self.assertEqual(out["error"]["code"], "invalid_blob")
+
+	def test_blob_client_id_must_match_registered(self):
+		nonce = self._seed()
+		bad = self._valid_blob(); bad["clientId"] = "evil_id"
+		out = oauth_api.receive_blob(nonce=nonce, blob=bad)
+		self.assertEqual(out["error"]["code"], "invalid_blob")
+
+	def test_missing_required_keys_rejected(self):
+		nonce = self._seed()
+		for missing in ("access", "expires", "clientId", "provider"):
+			frappe.cache.hset(_CACHE_KEY, nonce, {
+				"provider": "OpenAI", "status": "pending",
+				"expires_at_ts": int(time.time()) + 600,
+				"send_count": 0, "blob": None, "account_email": None,
+			})
+			bad = self._valid_blob(); del bad[missing]
+			out = oauth_api.receive_blob(nonce=nonce, blob=bad)
+			self.assertEqual(out["error"]["code"], "invalid_blob",
+			                 msg=f"missing {missing}")

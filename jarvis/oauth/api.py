@@ -65,3 +65,49 @@ def begin_codex_signin(provider: str) -> dict:
 			bench_url=bench, nonce=nonce, provider_label=provider
 		),
 	})
+
+
+_REQUIRED_BLOB_KEYS = ("type", "provider", "access", "refresh",
+                       "expires", "clientId")
+_VALID_OPENCLAW_PROVIDERS = set(_PROVIDER_LABEL_TO_OPENCLAW.values())
+
+
+def _validate_blob(blob: dict, expected_provider_label: str) -> str | None:
+	"""Return None if valid, else an error message."""
+	if not isinstance(blob, dict):
+		return "blob must be an object"
+	for k in _REQUIRED_BLOB_KEYS:
+		if k not in blob:
+			return f"missing required key {k!r}"
+	if blob["type"] != "oauth":
+		return "type must be 'oauth'"
+	if blob["provider"] not in _VALID_OPENCLAW_PROVIDERS:
+		return f"unknown openclaw provider {blob['provider']!r}"
+	expected_openclaw = _PROVIDER_LABEL_TO_OPENCLAW[expected_provider_label]
+	if blob["provider"] != expected_openclaw:
+		return (f"provider mismatch: cached {expected_openclaw!r}, "
+		        f"got {blob['provider']!r}")
+	from jarvis.hooks import OAUTH_CLIENT_IDS
+	if blob["clientId"] not in OAUTH_CLIENT_IDS.values():
+		return f"unknown clientId {blob['clientId']!r}"
+	return None
+
+
+@frappe.whitelist(allow_guest=True)
+def receive_blob(nonce: str, blob: dict) -> dict:
+	"""Called by the laptop helper. No Frappe session — auth is via nonce."""
+	entry = frappe.cache.hget(_CACHE_KEY, nonce)
+	if not entry:
+		return _err("unknown_nonce", "nonce not recognized")
+	if entry["expires_at_ts"] < int(time.time()):
+		return _err("expired", "nonce has expired")
+	if entry["status"] != "pending":
+		return _err("not_pending", f"nonce status is {entry['status']!r}")
+	err = _validate_blob(blob, entry["provider"])
+	if err:
+		return _err("invalid_blob", err)
+	entry["status"] = "connected"
+	entry["blob"] = blob
+	entry["account_email"] = blob.get("email") or ""
+	frappe.cache.hset(_CACHE_KEY, nonce, entry)
+	return _ok({})
