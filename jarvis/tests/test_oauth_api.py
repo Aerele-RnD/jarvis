@@ -144,3 +144,42 @@ class TestReceiveBlob(_OAuthApiBase):
 			out = oauth_api.receive_blob(nonce=nonce, blob=bad)
 			self.assertEqual(out["error"]["code"], "invalid_blob",
 			                 msg=f"missing {missing}")
+
+
+class TestPollSignin(_OAuthApiBase):
+	def test_returns_pending_for_pending_nonce(self):
+		nonce = "p_" + ("b" * 46)
+		frappe.cache.hset(_CACHE_KEY, nonce, {
+			"provider": "OpenAI", "status": "pending",
+			"expires_at_ts": int(time.time()) + 600,
+			"send_count": 0, "blob": None, "account_email": None,
+		})
+		out = oauth_api.poll_signin(nonce=nonce)
+		self.assertEqual(out["data"]["status"], "pending")
+
+	def test_returns_connected_with_email(self):
+		nonce = "c_" + ("b" * 46)
+		frappe.cache.hset(_CACHE_KEY, nonce, {
+			"provider": "OpenAI", "status": "connected",
+			"expires_at_ts": int(time.time()) + 600,
+			"send_count": 0,
+			"blob": {"type": "oauth", "provider": "openai-codex"},
+			"account_email": "a@b.com",
+		})
+		out = oauth_api.poll_signin(nonce=nonce)
+		self.assertEqual(out["data"]["status"], "connected")
+		self.assertEqual(out["data"]["account_email"], "a@b.com")
+
+	def test_unknown_nonce(self):
+		out = oauth_api.poll_signin(nonce="missing")
+		self.assertEqual(out["error"]["code"], "unknown_nonce")
+
+	def test_expired_nonce(self):
+		nonce = "e_" + ("b" * 46)
+		frappe.cache.hset(_CACHE_KEY, nonce, {
+			"provider": "OpenAI", "status": "pending",
+			"expires_at_ts": 0, "send_count": 0, "blob": None,
+			"account_email": None,
+		})
+		out = oauth_api.poll_signin(nonce=nonce)
+		self.assertEqual(out["error"]["code"], "expired")

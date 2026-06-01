@@ -111,3 +111,17 @@ def receive_blob(nonce: str, blob: dict) -> dict:
 	entry["account_email"] = blob.get("email") or ""
 	frappe.cache.hset(_CACHE_KEY, nonce, entry)
 	return _ok({})
+
+
+@frappe.whitelist()
+def poll_signin(nonce: str) -> dict:
+	"""Wizard polls every 2s. Returns 'pending' or 'connected'."""
+	entry = frappe.cache.hget(_CACHE_KEY, nonce)
+	if not entry:
+		return _err("unknown_nonce", "nonce not recognized")
+	if entry["expires_at_ts"] < int(time.time()):
+		return _err("expired", "nonce has expired")
+	data = {"status": entry["status"]}
+	if entry["status"] == "connected":
+		data["account_email"] = entry.get("account_email") or ""
+	return _ok(data)
