@@ -188,11 +188,17 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		if (isActiveMode) {
 			const provider = settingsLocal.llm_provider || "—";
 			const model = settingsLocal.llm_model || "—";
+			const email = settingsLocal.llm_oauth_account_email || "—";
+			const connectedAt = settingsLocal.llm_oauth_connected_at
+				? frappe.datetime.comment_when(settingsLocal.llm_oauth_connected_at)
+				: "—";
 			return `
 				<p class="ja-sub">Refresh and account state live inside your Jarvis container. If chat starts failing, click Re-authorize to mint fresh tokens.</p>
 				<table class="ja-kv">
+					<tr><td>Account</td><td>${esc(email)}</td></tr>
 					<tr><td>Provider</td><td>${esc(provider)}</td></tr>
 					<tr><td>Model</td><td>${esc(model)}</td></tr>
+					<tr><td>Connected</td><td>${esc(connectedAt)}</td></tr>
 				</table>
 				<div class="ja-actions">
 					<button class="ja-btn ja-btn-ghost" id="ja-sub-disconnect">Disconnect</button>

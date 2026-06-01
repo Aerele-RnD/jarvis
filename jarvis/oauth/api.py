@@ -149,6 +149,16 @@ def commit_signin(nonce: str) -> dict:
 		base_url="",
 		auth_mode="oauth",
 	)
+	# Surface display-only metadata so /jarvis-account and the Desk form
+	# can answer "which account am I connected to and since when?". These
+	# fields are readonly + depends_on auth_mode == "oauth".
+	settings = frappe.get_single("Jarvis Settings")
+	settings.db_set("llm_oauth_account_email",
+	                entry.get("account_email") or blob.get("email") or "",
+	                update_modified=False)
+	settings.db_set("llm_oauth_connected_at",
+	                frappe.utils.now_datetime(),
+	                update_modified=False)
 	frappe.cache.hdel(_CACHE_KEY, nonce)
 	return _ok({})
 
@@ -165,6 +175,8 @@ def disconnect() -> dict:
 	settings = frappe.get_single("Jarvis Settings")
 	settings.db_set("llm_auth_mode", "api_key", update_modified=False)
 	settings.db_set("last_sync_status", "disconnected", update_modified=False)
+	settings.db_set("llm_oauth_account_email", "", update_modified=False)
+	settings.db_set("llm_oauth_connected_at", None, update_modified=False)
 	frappe.cache.delete_key(_CACHE_KEY)
 	return _ok({})
 

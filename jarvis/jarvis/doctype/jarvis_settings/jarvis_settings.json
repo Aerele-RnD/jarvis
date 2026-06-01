@@ -21,6 +21,8 @@
     "llm_max_output_tokens",
     "llm_auth_section",
     "llm_auth_mode",
+    "llm_oauth_account_email",
+    "llm_oauth_connected_at",
     "system_tab",
     "admin_connection_section",
     "jarvis_admin_url",
@@ -126,6 +128,21 @@
       "options": "api_key\nsubscription\noauth",
       "default": "api_key",
       "reqd": 1
+    },
+    {
+      "fieldname": "llm_oauth_account_email",
+      "fieldtype": "Data",
+      "label": "Connected Account",
+      "read_only": 1,
+      "depends_on": "eval:doc.llm_auth_mode == 'oauth'",
+      "description": "Email of the provider account whose subscription Jarvis is using. Populated on chat-subscription sign-in; cleared on Disconnect."
+    },
+    {
+      "fieldname": "llm_oauth_connected_at",
+      "fieldtype": "Datetime",
+      "label": "Connected At",
+      "read_only": 1,
+      "depends_on": "eval:doc.llm_auth_mode == 'oauth'"
     },
     {
       "fieldname": "system_tab",
