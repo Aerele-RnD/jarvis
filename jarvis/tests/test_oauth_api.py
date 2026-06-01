@@ -235,3 +235,35 @@ class TestCommitSignin(_OAuthApiBase):
 		})
 		out = oauth_api.commit_signin(nonce=nonce)
 		self.assertEqual(out["error"]["code"], "not_connected")
+
+
+from jarvis import admin_client
+
+
+class TestDisconnect(_OAuthApiBase):
+	@patch("jarvis.oauth.api.admin_client.post_subscription_disconnect")
+	def test_disconnect_flips_mode_and_clears_cache(self, mock_disc):
+		# Seed a pending nonce that should get nuked
+		frappe.cache.hset(_CACHE_KEY, "stale_nonce",
+		                  {"status": "pending", "provider": "OpenAI",
+		                   "expires_at_ts": 9999999999, "send_count": 0,
+		                   "blob": None, "account_email": None})
+		settings = frappe.get_single("Jarvis Settings")
+		settings.db_set("llm_auth_mode", "oauth", update_modified=False)
+		frappe.db.commit()
+
+		out = oauth_api.disconnect()
+		self.assertTrue(out["ok"])
+		mock_disc.assert_called_once()
+		settings = frappe.get_single("Jarvis Settings")
+		self.assertEqual(settings.llm_auth_mode, "api_key")
+		self.assertEqual(settings.last_sync_status, "disconnected")
+		# In-flight nonce cleared
+		self.assertIsNone(frappe.cache.hget(_CACHE_KEY, "stale_nonce"))
+
+	@patch("jarvis.oauth.api.admin_client.post_subscription_disconnect",
+	       side_effect=admin_client.AdminUnreachableError("net"))
+	def test_disconnect_admin_failure_returns_error(self, _):
+		out = oauth_api.disconnect()
+		self.assertFalse(out["ok"])
+		self.assertEqual(out["error"]["code"], "disconnect_failed")

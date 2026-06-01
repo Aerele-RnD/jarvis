@@ -151,3 +151,19 @@ def commit_signin(nonce: str) -> dict:
 	)
 	frappe.cache.hdel(_CACHE_KEY, nonce)
 	return _ok({})
+
+
+@frappe.whitelist()
+def disconnect() -> dict:
+	"""Clear the container's OAuth profile, flip bench back to api_key."""
+	try:
+		admin_client.post_subscription_disconnect()
+	except (admin_client.AdminUnreachableError,
+	        admin_client.AdminAuthError,
+	        admin_client.AdminValidationError) as e:
+		return _err("disconnect_failed", str(e))
+	settings = frappe.get_single("Jarvis Settings")
+	settings.db_set("llm_auth_mode", "api_key", update_modified=False)
+	settings.db_set("last_sync_status", "disconnected", update_modified=False)
+	frappe.cache.delete_key(_CACHE_KEY)
+	return _ok({})
