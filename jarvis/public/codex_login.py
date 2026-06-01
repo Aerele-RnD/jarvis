@@ -119,7 +119,12 @@ import urllib.parse
 import urllib.request
 import webbrowser
 
-_LOOPBACK_HOST = "127.0.0.1"
+# Bind on the IPv4 loopback for safety (avoid IPv6/IPv4 dual-stack quirks
+# when the OS resolves "localhost"), but advertise the redirect_uri as
+# http://localhost:<port>/auth/callback — codex registered that exact
+# string with OpenAI, and OAuth 2.0 redirect_uri matching is byte-exact.
+_LOOPBACK_BIND_HOST = "127.0.0.1"
+_LOOPBACK_REDIRECT_HOST = "localhost"
 _LOOPBACK_PORTS = (1455, 1457)
 
 
@@ -164,7 +169,7 @@ def _bind_loopback(expected_state: str):
 	for port in _LOOPBACK_PORTS:
 		try:
 			handler = type("H", (_CallbackHandler,), {"expected_state": expected_state})
-			srv = http.server.HTTPServer((_LOOPBACK_HOST, port), handler)
+			srv = http.server.HTTPServer((_LOOPBACK_BIND_HOST, port), handler)
 			srv.captured = None
 			return srv, port
 		except OSError as e:
@@ -264,7 +269,7 @@ def main():
 	state = secrets.token_urlsafe(16)
 
 	srv, port = _bind_loopback(state)
-	redirect_uri = f"http://{_LOOPBACK_HOST}:{port}/auth/callback"
+	redirect_uri = f"http://{_LOOPBACK_REDIRECT_HOST}:{port}/auth/callback"
 
 	url = build_authorize_url(
 		provider=provider, redirect_uri=redirect_uri,
