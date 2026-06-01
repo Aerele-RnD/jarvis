@@ -1,16 +1,22 @@
-"""Whitelisted endpoints called by the onboarding wizard."""
+"""REV-2 OAuth endpoints. Wizard calls these; the laptop helper POSTs
+to receive_blob. No bench-side OAuth dance — the helper does it all
+on the customer's machine."""
+import secrets
 import time
 
 import frappe
 
 from jarvis import admin_client, onboarding
-from jarvis.exceptions import JarvisError
-from jarvis.hooks import get_oauth_client_id
-from jarvis.oauth import device_flow
-from jarvis.oauth.email_templates import build_share_code_email
 
-_CACHE_KEY = "jarvis.oauth.device_codes"
+_CACHE_KEY = "jarvis.oauth.codex_signin"
+_NONCE_TTL_SECS = 600
 _SHARE_LIMIT = 5
+_VALID_PROVIDERS = ("OpenAI", "Google Gemini")
+_PROVIDER_LABEL_TO_HELPER = {"OpenAI": "openai", "Google Gemini": "gemini"}
+_PROVIDER_LABEL_TO_OPENCLAW = {
+	"OpenAI": "openai-codex", "Google Gemini": "google-gemini-cli",
+}
+_DEFAULT_MODEL = {"OpenAI": "gpt-4o", "Google Gemini": "gemini-2.0-pro"}
 
 
 def _ok(data: dict) -> dict:
@@ -21,161 +27,41 @@ def _err(code: str, message: str) -> dict:
 	return {"ok": False, "error": {"code": code, "message": message}}
 
 
-@frappe.whitelist()
-def start_signin(provider: str) -> dict:
-	"""Begin OAuth device flow. Caches device_code so poll_signin can find it."""
-	try:
-		client_id = get_oauth_client_id(provider)
-		envelope = device_flow.start(provider, client_id=client_id)
-	except Exception as e:
-		return _err("start_failed", str(e))
+def _bench_url() -> str:
+	# frappe.utils.get_url() returns the customer-facing URL (with scheme).
+	from frappe.utils import get_url
+	return get_url().rstrip("/")
 
-	frappe.cache.hset(_CACHE_KEY, envelope["device_code"], {
+
+def _build_one_liner(*, bench_url: str, nonce: str, provider_label: str) -> str:
+	helper_provider = _PROVIDER_LABEL_TO_HELPER[provider_label]
+	return (
+		f"curl -sSL {bench_url}/codex-login | "
+		f"JARVIS_BENCH={bench_url} "
+		f"JARVIS_NONCE={nonce} "
+		f"JARVIS_PROVIDER={helper_provider} python3"
+	)
+
+
+@frappe.whitelist()
+def begin_codex_signin(provider: str) -> dict:
+	"""Mint a nonce and return the one-liner the wizard renders."""
+	if provider not in _VALID_PROVIDERS:
+		return _err("unknown_provider",
+		            f"OAuth not supported for provider {provider!r}")
+	nonce = secrets.token_hex(24)
+	bench = _bench_url()
+	frappe.cache.hset(_CACHE_KEY, nonce, {
 		"provider": provider,
-		"user_code": envelope["user_code"],
-		"verification_uri": envelope["verification_uri"],
-		"expires_at_ts": int(time.time()) + envelope["expires_in"],
+		"status": "pending",
+		"expires_at_ts": int(time.time()) + _NONCE_TTL_SECS,
 		"send_count": 0,
+		"blob": None,
+		"account_email": None,
 	})
-	return _ok(envelope)
-
-
-@frappe.whitelist()
-def poll_signin(device_code: str) -> dict:
-	"""Poll once. Wizard calls this every ``interval`` seconds."""
-	cached = frappe.cache.hget(_CACHE_KEY, device_code)
-	if not cached:
-		return _err("unknown_device_code", "Device code not recognized or expired.")
-	provider = cached["provider"]
-	try:
-		client_id = get_oauth_client_id(provider)
-		result = device_flow.poll(provider, device_code=device_code, client_id=client_id)
-	except device_flow.AccessDenied:
-		frappe.cache.hdel(_CACHE_KEY, device_code)
-		return _err("access_denied", "Sign-in was cancelled.")
-	except device_flow.CodeExpired:
-		frappe.cache.hdel(_CACHE_KEY, device_code)
-		return _err("code_expired", "The code expired. Generate a new one.")
-	except JarvisError as e:
-		return _err("poll_failed", str(e))
-
-	if result is device_flow.PENDING:
-		return _ok({"status": "pending"})
-	if result is device_flow.SLOW_DOWN:
-		return _ok({"status": "pending", "slow_down": True})
-
-	# Connected — write to Jarvis Settings, kick on_update
-	_persist_subscription(provider, result)
-	frappe.cache.hdel(_CACHE_KEY, device_code)
 	return _ok({
-		"status": "connected",
-		"account_email": result.get("account_email"),
+		"nonce": nonce,
+		"one_liner": _build_one_liner(
+			bench_url=bench, nonce=nonce, provider_label=provider
+		),
 	})
-
-
-@frappe.whitelist()
-def disconnect() -> dict:
-	"""Clear the customer's OAuth profile on the container, then drop the
-	bench's subscription mode flag.
-
-	openclaw owns the credential state under REV-1, so the disconnect goes
-	through admin → fleet-agent and the bench just flips ``llm_auth_mode``
-	back to ``api_key``. The customer can then re-Connect any time.
-	"""
-	try:
-		admin_client.post_subscription_disconnect()
-	except (admin_client.AdminUnreachableError,
-	        admin_client.AdminAuthError,
-	        admin_client.AdminValidationError) as e:
-		# Container-side clear failed — leave bench state alone so the user
-		# can retry. Errors are operator-investigable; surface a clean code.
-		return _err("disconnect_failed", str(e))
-
-	settings = frappe.get_single("Jarvis Settings")
-	settings.db_set("llm_auth_mode", "api_key", update_modified=False)
-	settings.db_set("last_sync_status", "disconnected", update_modified=False)
-	# Clear cached device-code entries so any in-flight Connect can't race.
-	frappe.cache.delete_key(_CACHE_KEY)
-	return _ok({})
-
-
-@frappe.whitelist()
-def share_code(device_code: str, recipient_email: str) -> dict:
-	"""Send the code + URL to a colleague via email. Rate-limited."""
-	cached = frappe.cache.hget(_CACHE_KEY, device_code)
-	if not cached:
-		return _err("unknown_device_code", "Device code expired.")
-	if cached["send_count"] >= _SHARE_LIMIT:
-		return _err("rate_limited", f"Code already shared {_SHARE_LIMIT} times.")
-
-	minutes_left = max(0, (cached["expires_at_ts"] - int(time.time())) // 60)
-	email = build_share_code_email(
-		site=frappe.local.site,
-		provider=cached["provider"],
-		verification_uri=cached["verification_uri"],
-		user_code=cached["user_code"],
-		minutes_left=minutes_left,
-		sender_name=frappe.session.user_fullname or frappe.session.user,
-	)
-	frappe.sendmail(
-		recipients=[recipient_email],
-		subject=email["subject"],
-		message=email["body"],
-		now=True,
-	)
-	cached["send_count"] += 1
-	frappe.cache.hset(_CACHE_KEY, device_code, cached)
-	return _ok({})
-
-
-# Provider label → openclaw provider id for subscription mode. Matches the
-# admin-side OAUTH_PROVIDER_MAP in jarvis_admin.fleet.llm_providers.
-_PROVIDER_LABEL_TO_ID = {
-	"OpenAI": "openai-codex",
-	"Google Gemini": "google-gemini-cli",
-}
-
-# Default model per subscription provider. Customers can change the model
-# later via the AI provider card if they want a different default.
-_DEFAULT_MODEL = {
-	"OpenAI": "gpt-4o",
-	"Google Gemini": "gemini-2.0-pro",
-}
-
-
-def _persist_subscription(provider: str, tokens: dict):
-	"""Push the OAuth credential blob into the customer's container via
-	admin, then save the auth_mode/provider on bench so on_update reshapes
-	the openclaw config to Branch B (oauth) + restarts the container.
-
-	openclaw owns refresh from here on (pi-ai uses the same client_id we
-	issued the refresh token against), so the bench doesn't keep any OAuth
-	state beyond provider + auth_mode.
-	"""
-	provider_id = _PROVIDER_LABEL_TO_ID.get(provider)
-	if not provider_id:
-		raise JarvisError(f"no openclaw subscription provider for {provider!r}")
-
-	now_ms = int(time.time() * 1000)
-	expires_ms = now_ms + int(tokens["expires_in"]) * 1000
-	blob = {
-		"type": "oauth",
-		"provider": provider_id,
-		"access": tokens["access_token"],
-		"refresh": tokens.get("refresh_token") or "",
-		"expires": expires_ms,
-		"email": tokens.get("account_email") or "",
-		"clientId": get_oauth_client_id(provider),
-	}
-
-	admin_client.post_push_oauth_blob(provider_id, blob)
-
-	onboarding.save_llm_creds(
-		provider=provider,
-		model=_DEFAULT_MODEL.get(provider, ""),
-		api_key="",
-		base_url="",
-		auth_mode="oauth",
-	)
-
-
