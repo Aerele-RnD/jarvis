@@ -183,3 +183,55 @@ class TestPollSignin(_OAuthApiBase):
 		})
 		out = oauth_api.poll_signin(nonce=nonce)
 		self.assertEqual(out["error"]["code"], "expired")
+
+
+class TestCommitSignin(_OAuthApiBase):
+	def _seed_connected(self, provider="OpenAI"):
+		nonce = "k_" + ("d" * 46)
+		blob = {
+			"type": "oauth",
+			"provider": "openai-codex" if provider == "OpenAI"
+				else "google-gemini-cli",
+			"access": "AT", "refresh": "RT",
+			"expires": 1_700_000_000_000,
+			"email": "manager@acme.com",
+			"clientId": "app_EMoamEEZ73f0CkXaXp7hrann"
+				if provider == "OpenAI"
+				else "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com",
+		}
+		frappe.cache.hset(_CACHE_KEY, nonce, {
+			"provider": provider, "status": "connected",
+			"expires_at_ts": int(time.time()) + 600,
+			"send_count": 0, "blob": blob, "account_email": blob["email"],
+		})
+		return nonce, blob
+
+	@patch("jarvis.oauth.api.onboarding.save_llm_creds")
+	@patch("jarvis.oauth.api.admin_client.post_push_oauth_blob")
+	def test_commit_pushes_blob_and_saves_creds(self, mock_push, mock_save):
+		mock_save.return_value = {"last_sync_status": "ok", "last_sync_at": ""}
+		nonce, blob = self._seed_connected()
+		out = oauth_api.commit_signin(nonce=nonce)
+		self.assertTrue(out["ok"])
+		mock_push.assert_called_once_with("openai-codex", blob)
+		mock_save.assert_called_once()
+		kwargs = mock_save.call_args.kwargs
+		self.assertEqual(kwargs["provider"], "OpenAI")
+		self.assertEqual(kwargs["auth_mode"], "oauth")
+		self.assertEqual(kwargs["api_key"], "")
+		# nonce cleared
+		self.assertIsNone(frappe.cache.hget(_CACHE_KEY, nonce))
+
+	def test_unknown_nonce(self):
+		out = oauth_api.commit_signin(nonce="missing")
+		self.assertEqual(out["error"]["code"], "unknown_nonce")
+
+	def test_pending_nonce_cannot_commit(self):
+		nonce = "p_" + ("z" * 46)
+		frappe.cache.hset(_CACHE_KEY, nonce, {
+			"provider": "OpenAI", "status": "pending",
+			"expires_at_ts": int(time.time()) + 600,
+			"send_count": 0, "blob": None, "account_email": None,
+		})
+		out = oauth_api.commit_signin(nonce=nonce)
+		self.assertEqual(out["error"]["code"], "not_connected")

@@ -125,3 +125,29 @@ def poll_signin(nonce: str) -> dict:
 	if entry["status"] == "connected":
 		data["account_email"] = entry.get("account_email") or ""
 	return _ok(data)
+
+
+@frappe.whitelist()
+def commit_signin(nonce: str) -> dict:
+	"""Wizard calls this after `poll_signin` returns 'connected'.
+	Forwards the cached blob to admin → fleet-agent and saves bench-side
+	mode flags."""
+	entry = frappe.cache.hget(_CACHE_KEY, nonce)
+	if not entry:
+		return _err("unknown_nonce", "nonce not recognized")
+	if entry["status"] != "connected":
+		return _err("not_connected", f"nonce status is {entry['status']!r}")
+	provider_label = entry["provider"]
+	blob = entry["blob"]
+	openclaw_provider = _PROVIDER_LABEL_TO_OPENCLAW[provider_label]
+
+	admin_client.post_push_oauth_blob(openclaw_provider, blob)
+	onboarding.save_llm_creds(
+		provider=provider_label,
+		model=_DEFAULT_MODEL[provider_label],
+		api_key="",
+		base_url="",
+		auth_mode="oauth",
+	)
+	frappe.cache.hdel(_CACHE_KEY, nonce)
+	return _ok({})
