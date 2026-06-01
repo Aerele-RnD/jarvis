@@ -212,10 +212,9 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		).join("");
 		const authModeHtml = `
 			<div class="jo-field">
-			  <label>How will Jarvis talk to your LLM?</label>
-			  <div class="jo-radio-group">
-			    <label class="jo-radio"><input type="radio" name="jo-auth-mode" value="api_key" ${state.authMode === "api_key" ? "checked" : ""}/> <span>Paste an API key</span></label>
-			    <label class="jo-radio"><input type="radio" name="jo-auth-mode" value="subscription" ${state.authMode === "subscription" ? "checked" : ""}/> <span>Sign in with my chat subscription</span></label>
+			  <div class="jo-tabs" role="tablist">
+			    <button type="button" class="jo-tab ${state.authMode === "api_key" ? "jo-tab-active" : ""}" data-mode="api_key" role="tab" aria-selected="${state.authMode === "api_key"}">API key</button>
+			    <button type="button" class="jo-tab ${state.authMode === "subscription" ? "jo-tab-active" : ""}" data-mode="subscription" role="tab" aria-selected="${state.authMode === "subscription"}">Chat subscription</button>
 			  </div>
 			</div>`;
 		if (state.authMode === "subscription") {
@@ -226,7 +225,7 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 				${authModeHtml}
 				${renderSubscriptionPanel()}
 				<div class="jo-err" id="jo-llm-err"></div>`);
-			wireAuthModeRadio();
+			wireAuthModeTabs();
 			wireSubscriptionPanel();
 			return;
 		}
@@ -283,12 +282,14 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		$body.find("#jo-llm-base").on("input", (e) => { state.llmBaseUrl = e.target.value; });
 		$body.find("#jo-llm-skip").on("click", () => renderSuccess(state.successData || {}));
 		$body.find("#jo-llm-save").on("click", saveLlm);
-		wireAuthModeRadio();
+		wireAuthModeTabs();
 	}
 
-	function wireAuthModeRadio() {
-		$body.find('input[name="jo-auth-mode"]').on("change", function () {
-			state.authMode = this.value;
+	function wireAuthModeTabs() {
+		$body.find(".jo-tab").on("click", function () {
+			const mode = $(this).data("mode");
+			if (mode === state.authMode) return;
+			state.authMode = mode;
 			// Reset subscription state when switching back to api_key
 			if (state.authMode === "api_key") cancelSubscriptionFlow();
 			renderLlm();
@@ -714,11 +715,13 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		.jo-spin{display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,.5);border-top-color:#fff;
 			border-radius:50%;animation:jo-spin .6s linear infinite;vertical-align:-1px}
 		@keyframes jo-spin{to{transform:rotate(360deg)}}
-		.jo-radio-group{display:flex;flex-direction:column;gap:8px;margin-top:6px}
-		.jo-radio{display:flex;align-items:center;gap:10px;cursor:pointer;padding:10px 12px;border:1px solid var(--border-color);
-			border-radius:var(--border-radius,6px);transition:border-color .12s ease,background .12s ease}
-		.jo-radio:hover{border-color:var(--jarvis-primary);background:var(--jarvis-primary-soft)}
-		.jo-radio input[type=radio]:checked + span{font-weight:600;color:var(--jarvis-primary)}
+		.jo-tabs{display:inline-flex;padding:3px;background:var(--bg-color);border:1px solid var(--border-color);
+			border-radius:8px;margin-top:6px}
+		.jo-tab{appearance:none;background:transparent;border:0;padding:7px 16px;font-size:13px;font-weight:500;
+			color:var(--text-muted);border-radius:6px;cursor:pointer;transition:background .12s ease,color .12s ease}
+		.jo-tab:hover{color:var(--text-color)}
+		.jo-tab-active{background:var(--card-bg,#fff);color:var(--jarvis-primary);font-weight:600;
+			box-shadow:0 1px 2px rgba(0,0,0,.06)}
 		.jo-one-liner-wrap{position:relative}
 		.jo-one-liner{font-family:'Menlo','Monaco',monospace;font-size:12px;line-height:1.5;white-space:pre-wrap;
 			word-break:break-all;padding:12px 44px 12px 14px;background:var(--bg-color);border:1px solid var(--border-color);
