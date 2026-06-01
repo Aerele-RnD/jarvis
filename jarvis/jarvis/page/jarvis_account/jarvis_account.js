@@ -113,27 +113,40 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	}
 
 	// ---- AI provider card (tabbed: API key | Chat subscription) ----------
+	// Segmented-control style — full-width container, sliding thumb between
+	// the two halves, equal-width buttons. Click handler swaps only the
+	// panel body so the slide animation isn't interrupted by a full
+	// re-render of the tabs DOM.
+	const ICON_KEY = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>`;
+	const ICON_CHAT = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`;
+
 	function renderAiProviderCard(editable) {
 		const provider = settingsLocal.llm_provider || "—";
 		const inApiKeyMode = settingsLocal.llm_auth_mode !== "oauth";
 		const tabs = `
-			<div class="ja-tabs" role="tablist">
+			<label class="ja-tabs-label">Authentication mode</label>
+			<div class="ja-tabs" role="tablist" data-active="${ui.aiTab}">
+				<span class="ja-tabs-thumb" aria-hidden="true"></span>
 				<button type="button" class="ja-tab ${ui.aiTab === "api_key" ? "ja-tab-active" : ""}"
-					data-tab="api_key" role="tab" aria-selected="${ui.aiTab === "api_key"}">API key</button>
+					data-tab="api_key" role="tab" aria-selected="${ui.aiTab === "api_key"}">
+					${ICON_KEY}<span>API key</span>
+				</button>
 				<button type="button" class="ja-tab ${ui.aiTab === "subscription" ? "ja-tab-active" : ""}"
-					data-tab="subscription" role="tab" aria-selected="${ui.aiTab === "subscription"}">Chat subscription</button>
+					data-tab="subscription" role="tab" aria-selected="${ui.aiTab === "subscription"}">
+					${ICON_CHAT}<span>Chat subscription</span>
+				</button>
 			</div>`;
 		const body = ui.aiTab === "api_key"
 			? renderApiKeyPanel(editable, inApiKeyMode)
 			: renderSubscriptionPanel(editable, !inApiKeyMode);
 		return `<div class="ja-card">
 			<div class="ja-eyebrow">AI provider</div>
-			<div class="ja-card-head" style="margin-bottom:14px">
+			<div class="ja-card-head" style="margin-bottom:18px">
 				<h2 class="ja-h">How Jarvis talks to your LLM</h2>
 				${!inApiKeyMode ? `<span class="ja-pill ja-pill-ok">${esc(provider)}</span>` : ""}
 			</div>
 			${tabs}
-			<div class="ja-tab-body" style="margin-top:14px">${body}</div>
+			<div class="ja-tab-body">${body}</div>
 		</div>`;
 	}
 
@@ -269,18 +282,38 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 
 	function handleTabSwitch(targetTab) {
 		const currentMode = settingsLocal.llm_auth_mode === "oauth" ? "subscription" : "api_key";
-		// Switching to a tab that matches the active mode → just flip the view.
 		// Switching to a tab that diverges from the active mode → preview-only,
 		// no destructive action until the user actively confirms (Save / Confirm switch).
 		if (targetTab === "api_key" && currentMode === "subscription") {
-			// Show a confirmation modal *before* flipping, since divergence
-			// here means the user is about to abandon their oauth connection.
 			if (!confirm("Switch to API-key mode? Your chat subscription will be disconnected when you save credentials.")) return;
 		}
 		ui.aiTab = targetTab;
-		// Cancel any in-flight sign-in flow when leaving the subscription tab.
 		if (targetTab !== "subscription") cancelSubscriptionFlow();
-		render();
+
+		// Drive the slide animation by updating data-active on the persistent
+		// tabs node. Swap only the panel body (fade out → swap → fade in)
+		// instead of re-rendering the whole card, so the slide isn't
+		// interrupted by a DOM rebuild.
+		const sub = account.subscription_status || "none";
+		const editable = EDITABLE_STATES.has(sub);
+		const $tabs = $body.find(".ja-tabs");
+		$tabs.attr("data-active", targetTab);
+		$tabs.find(".ja-tab").each(function () {
+			const isActive = $(this).data("tab") === targetTab;
+			$(this).toggleClass("ja-tab-active", isActive).attr("aria-selected", isActive);
+		});
+		const inApiKeyMode = settingsLocal.llm_auth_mode !== "oauth";
+		const newBody = targetTab === "api_key"
+			? renderApiKeyPanel(editable, inApiKeyMode)
+			: renderSubscriptionPanel(editable, !inApiKeyMode);
+		const $panel = $body.find(".ja-tab-body");
+		$panel.addClass("ja-tab-body-swap");
+		setTimeout(() => {
+			$panel.html(newBody);
+			$panel.removeClass("ja-tab-body-swap");
+			if (targetTab === "api_key") bindLlm(editable);
+			else bindSubscriptionPanel(editable);
+		}, 160);
 	}
 
 	function bindSubscriptionPanel(editable) {
@@ -784,13 +817,28 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		.ja-panel{flex:1;padding:34px 36px;min-width:0;display:flex;flex-direction:column;gap:18px}
 		.ja-loading,.ja-empty{color:var(--text-muted);padding:18px 0}
 		.ja-card{border:1px solid var(--border-color);border-radius:12px;padding:20px;background:var(--card-bg)}
-		.ja-tabs{display:inline-flex;padding:3px;background:var(--bg-color);border:1px solid var(--border-color);
-			border-radius:8px}
-		.ja-tab{appearance:none;background:transparent;border:0;padding:7px 16px;font-size:13px;font-weight:500;
-			color:var(--text-muted);border-radius:6px;cursor:pointer;transition:background .12s ease,color .12s ease}
+		/* Segmented control — full-width two-up tab picker with sliding thumb */
+		.ja-tabs-label{display:block;font-size:11.5px;letter-spacing:.6px;font-weight:600;
+			color:var(--text-muted);text-transform:uppercase;margin-bottom:8px}
+		.ja-tabs{position:relative;display:flex;width:100%;padding:4px;margin-bottom:18px;
+			background:var(--bg-color);border:1px solid var(--border-color);border-radius:10px;
+			user-select:none}
+		.ja-tabs-thumb{position:absolute;top:4px;bottom:4px;left:4px;width:calc(50% - 4px);
+			background:var(--card-bg,#fff);border-radius:8px;
+			box-shadow:0 1px 2px rgba(0,0,0,.06), 0 0 0 1px rgba(0,0,0,.04);
+			transition:transform .28s cubic-bezier(.4,0,.2,1);pointer-events:none}
+		.ja-tabs[data-active="subscription"] .ja-tabs-thumb{transform:translateX(100%)}
+		.ja-tab{position:relative;z-index:1;flex:1;appearance:none;display:inline-flex;
+			align-items:center;justify-content:center;gap:8px;background:transparent;border:0;
+			padding:11px 12px;font-size:13.5px;font-weight:500;color:var(--text-muted);
+			border-radius:8px;cursor:pointer;transition:color .2s ease;white-space:nowrap}
+		.ja-tab svg{opacity:.7;transition:opacity .2s ease}
 		.ja-tab:hover{color:var(--text-color)}
-		.ja-tab-active{background:var(--card-bg,#fff);color:var(--jarvis-primary);font-weight:600;
-			box-shadow:0 1px 2px rgba(0,0,0,.06)}
+		.ja-tab:hover svg{opacity:.95}
+		.ja-tab-active{color:var(--jarvis-primary);font-weight:600}
+		.ja-tab-active svg{opacity:1}
+		.ja-tab-body{transition:opacity .14s ease,transform .14s ease}
+		.ja-tab-body-swap{opacity:0;transform:translateY(4px)}
 		.ja-one-liner-wrap{position:relative}
 		.ja-one-liner{font-family:'Menlo','Monaco',monospace;font-size:12px;line-height:1.5;white-space:pre-wrap;
 			word-break:break-all;padding:12px 44px 12px 14px;background:var(--bg-color);border:1px solid var(--border-color);

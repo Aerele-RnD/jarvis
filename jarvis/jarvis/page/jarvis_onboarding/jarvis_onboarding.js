@@ -210,11 +210,15 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		const providers = Object.keys(PROVIDER_DEFAULTS).map(
 			(p) => `<option value="${esc(p)}" ${p === state.llmProvider ? "selected" : ""}>${esc(p)}</option>`
 		).join("");
+		const iconKey = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>`;
+		const iconChat = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`;
 		const authModeHtml = `
 			<div class="jo-field">
-			  <div class="jo-tabs" role="tablist">
-			    <button type="button" class="jo-tab ${state.authMode === "api_key" ? "jo-tab-active" : ""}" data-mode="api_key" role="tab" aria-selected="${state.authMode === "api_key"}">API key</button>
-			    <button type="button" class="jo-tab ${state.authMode === "subscription" ? "jo-tab-active" : ""}" data-mode="subscription" role="tab" aria-selected="${state.authMode === "subscription"}">Chat subscription</button>
+			  <label class="jo-tabs-label">Authentication mode</label>
+			  <div class="jo-tabs" role="tablist" data-active="${state.authMode}">
+			    <span class="jo-tabs-thumb" aria-hidden="true"></span>
+			    <button type="button" class="jo-tab ${state.authMode === "api_key" ? "jo-tab-active" : ""}" data-mode="api_key" role="tab" aria-selected="${state.authMode === "api_key"}">${iconKey}<span>API key</span></button>
+			    <button type="button" class="jo-tab ${state.authMode === "subscription" ? "jo-tab-active" : ""}" data-mode="subscription" role="tab" aria-selected="${state.authMode === "subscription"}">${iconChat}<span>Chat subscription</span></button>
 			  </div>
 			</div>`;
 		if (state.authMode === "subscription") {
@@ -715,13 +719,25 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		.jo-spin{display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,.5);border-top-color:#fff;
 			border-radius:50%;animation:jo-spin .6s linear infinite;vertical-align:-1px}
 		@keyframes jo-spin{to{transform:rotate(360deg)}}
-		.jo-tabs{display:inline-flex;padding:3px;background:var(--bg-color);border:1px solid var(--border-color);
-			border-radius:8px;margin-top:6px}
-		.jo-tab{appearance:none;background:transparent;border:0;padding:7px 16px;font-size:13px;font-weight:500;
-			color:var(--text-muted);border-radius:6px;cursor:pointer;transition:background .12s ease,color .12s ease}
+		.jo-tabs-label{display:block;font-size:11.5px;letter-spacing:.6px;font-weight:600;
+			color:var(--text-muted);text-transform:uppercase;margin-bottom:8px}
+		.jo-tabs{position:relative;display:flex;width:100%;padding:4px;
+			background:var(--bg-color);border:1px solid var(--border-color);border-radius:10px;
+			user-select:none}
+		.jo-tabs-thumb{position:absolute;top:4px;bottom:4px;left:4px;width:calc(50% - 4px);
+			background:var(--card-bg,#fff);border-radius:8px;
+			box-shadow:0 1px 2px rgba(0,0,0,.06), 0 0 0 1px rgba(0,0,0,.04);
+			transition:transform .28s cubic-bezier(.4,0,.2,1);pointer-events:none}
+		.jo-tabs[data-active="subscription"] .jo-tabs-thumb{transform:translateX(100%)}
+		.jo-tab{position:relative;z-index:1;flex:1;appearance:none;display:inline-flex;
+			align-items:center;justify-content:center;gap:8px;background:transparent;border:0;
+			padding:11px 12px;font-size:13.5px;font-weight:500;color:var(--text-muted);
+			border-radius:8px;cursor:pointer;transition:color .2s ease;white-space:nowrap}
+		.jo-tab svg{opacity:.7;transition:opacity .2s ease}
 		.jo-tab:hover{color:var(--text-color)}
-		.jo-tab-active{background:var(--card-bg,#fff);color:var(--jarvis-primary);font-weight:600;
-			box-shadow:0 1px 2px rgba(0,0,0,.06)}
+		.jo-tab:hover svg{opacity:.95}
+		.jo-tab-active{color:var(--jarvis-primary);font-weight:600}
+		.jo-tab-active svg{opacity:1}
 		.jo-one-liner-wrap{position:relative}
 		.jo-one-liner{font-family:'Menlo','Monaco',monospace;font-size:12px;line-height:1.5;white-space:pre-wrap;
 			word-break:break-all;padding:12px 44px 12px 14px;background:var(--bg-color);border:1px solid var(--border-color);
