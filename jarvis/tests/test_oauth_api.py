@@ -267,3 +267,38 @@ class TestDisconnect(_OAuthApiBase):
 		out = oauth_api.disconnect()
 		self.assertFalse(out["ok"])
 		self.assertEqual(out["error"]["code"], "disconnect_failed")
+
+
+class TestShareSignin(_OAuthApiBase):
+	def _seed(self):
+		nonce = "s_" + ("e" * 46)
+		frappe.cache.hset(_CACHE_KEY, nonce, {
+			"provider": "OpenAI", "status": "pending",
+			"expires_at_ts": int(time.time()) + 600,
+			"send_count": 0, "blob": None, "account_email": None,
+		})
+		return nonce
+
+	@patch("jarvis.oauth.api.frappe.sendmail")
+	def test_share_sends_email_with_one_liner(self, mock_mail):
+		nonce = self._seed()
+		out = oauth_api.share_signin(nonce=nonce, recipient_email="dev@acme.com")
+		self.assertTrue(out["ok"])
+		mock_mail.assert_called_once()
+		body = mock_mail.call_args.kwargs["message"]
+		self.assertIn("JARVIS_NONCE=" + nonce, body)
+		# send_count incremented
+		entry = frappe.cache.hget(_CACHE_KEY, nonce)
+		self.assertEqual(entry["send_count"], 1)
+
+	def test_share_unknown_nonce(self):
+		out = oauth_api.share_signin(nonce="bogus", recipient_email="x@y.com")
+		self.assertEqual(out["error"]["code"], "unknown_nonce")
+
+	@patch("jarvis.oauth.api.frappe.sendmail")
+	def test_share_rate_limited_at_5(self, _):
+		nonce = self._seed()
+		for _ in range(5):
+			oauth_api.share_signin(nonce=nonce, recipient_email="x@y.com")
+		out = oauth_api.share_signin(nonce=nonce, recipient_email="x@y.com")
+		self.assertEqual(out["error"]["code"], "rate_limited")

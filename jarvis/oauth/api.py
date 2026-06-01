@@ -167,3 +167,40 @@ def disconnect() -> dict:
 	settings.db_set("last_sync_status", "disconnected", update_modified=False)
 	frappe.cache.delete_key(_CACHE_KEY)
 	return _ok({})
+
+
+@frappe.whitelist()
+def share_signin(nonce: str, recipient_email: str) -> dict:
+	"""Email the one-liner to a colleague. Rate-limited per nonce."""
+	from jarvis.oauth.email_templates import build_share_signin_email
+
+	entry = frappe.cache.hget(_CACHE_KEY, nonce)
+	if not entry:
+		return _err("unknown_nonce", "nonce not recognized")
+	if entry["expires_at_ts"] < int(time.time()):
+		return _err("expired", "nonce has expired")
+	if entry["send_count"] >= _SHARE_LIMIT:
+		return _err("rate_limited",
+		            f"Already shared {_SHARE_LIMIT} times.")
+	minutes_left = max(0, (entry["expires_at_ts"] - int(time.time())) // 60)
+	one_liner = _build_one_liner(
+		bench_url=_bench_url(), nonce=nonce,
+		provider_label=entry["provider"],
+	)
+	sender = getattr(frappe.session, "user_fullname", None) or frappe.session.user
+	email = build_share_signin_email(
+		sender_name=sender,
+		company=frappe.local.site,
+		provider=entry["provider"],
+		one_liner=one_liner,
+		minutes_left=minutes_left,
+	)
+	frappe.sendmail(
+		recipients=[recipient_email],
+		subject=email["subject"],
+		message=email["body"],
+		now=True,
+	)
+	entry["send_count"] += 1
+	frappe.cache.hset(_CACHE_KEY, nonce, entry)
+	return _ok({})
