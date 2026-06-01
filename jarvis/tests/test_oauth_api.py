@@ -1,3 +1,6 @@
+"""REV-2 OAuth API tests. The bench no longer drives OAuth itself — it
+mints nonces, accepts blobs from the laptop helper, and forwards them
+through the existing admin → fleet-agent path."""
 import time
 from unittest.mock import patch
 
@@ -5,17 +8,14 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 
 from jarvis.oauth import api as oauth_api
-from jarvis.oauth import device_flow
+
+_CACHE_KEY = "jarvis.oauth.codex_signin"
 
 
 class _OAuthApiBase(FrappeTestCase):
-	"""Snapshot+restore Jarvis Settings for OAuth API tests."""
-
 	@classmethod
 	def setUpClass(cls):
 		super().setUpClass()
-		# Post-REV-1: the bench no longer stores any llm_oauth_* fields.
-		# Snapshot only the structural settings the tests touch.
 		settings = frappe.get_single("Jarvis Settings")
 		cls._snap = {
 			"llm_auth_mode": settings.llm_auth_mode,
@@ -27,148 +27,278 @@ class _OAuthApiBase(FrappeTestCase):
 		settings = frappe.get_single("Jarvis Settings")
 		for f, v in cls._snap.items():
 			settings.db_set(f, v, update_modified=False)
-		frappe.cache.delete_key("jarvis.oauth.device_codes")
+		frappe.cache.delete_key(_CACHE_KEY)
 		frappe.db.commit()
 		super().tearDownClass()
 
 	def setUp(self):
-		# Clean cache key before each test
-		frappe.cache.delete_key("jarvis.oauth.device_codes")
+		frappe.cache.delete_key(_CACHE_KEY)
 
 
-class TestStartSignin(_OAuthApiBase):
-	@patch("jarvis.oauth.api.device_flow.start")
-	def test_start_signin_happy(self, mock_start):
-		mock_start.return_value = {
-			"device_code": "DC-1", "user_code": "JARV-9X3K",
-			"verification_uri": "https://chatgpt.com/auth/device",
-			"interval": 5, "expires_in": 600,
-		}
-		out = oauth_api.start_signin("OpenAI")
+class TestBeginCodexSignin(_OAuthApiBase):
+	def test_returns_nonce_and_one_liner_for_openai(self):
+		out = oauth_api.begin_codex_signin("OpenAI")
 		self.assertTrue(out["ok"])
-		self.assertEqual(out["data"]["user_code"], "JARV-9X3K")
-		# device_code cached for poll
-		cached = frappe.cache.hget("jarvis.oauth.device_codes", "DC-1")
-		self.assertEqual(cached["provider"], "OpenAI")
-		self.assertEqual(cached["send_count"], 0)
+		self.assertIn("nonce", out["data"])
+		self.assertIn("one_liner", out["data"])
+		nonce = out["data"]["nonce"]
+		self.assertEqual(len(nonce), 48)  # 24 hex bytes
+		self.assertIn("JARVIS_NONCE=" + nonce, out["data"]["one_liner"])
+		self.assertIn("JARVIS_PROVIDER=openai", out["data"]["one_liner"])
+		self.assertIn("/assets/jarvis/codex_login.py", out["data"]["one_liner"])
+
+	def test_returns_one_liner_for_gemini(self):
+		out = oauth_api.begin_codex_signin("Google Gemini")
+		self.assertIn("JARVIS_PROVIDER=gemini", out["data"]["one_liner"])
+
+	def test_caches_pending_entry(self):
+		out = oauth_api.begin_codex_signin("OpenAI")
+		entry = frappe.cache.hget(_CACHE_KEY, out["data"]["nonce"])
+		self.assertEqual(entry["provider"], "OpenAI")
+		self.assertEqual(entry["status"], "pending")
+		self.assertIn("expires_at_ts", entry)
+		self.assertIsNone(entry.get("blob"))
+
+	def test_unknown_provider_rejected(self):
+		out = oauth_api.begin_codex_signin("Anthropic")
+		self.assertFalse(out["ok"])
+		self.assertEqual(out["error"]["code"], "unknown_provider")
+
+
+class TestReceiveBlob(_OAuthApiBase):
+	def _seed(self, provider="OpenAI"):
+		nonce = "n_" + ("a" * 46)
+		frappe.cache.hset(_CACHE_KEY, nonce, {
+			"provider": provider, "status": "pending",
+			"expires_at_ts": int(time.time()) + 600,
+			"send_count": 0, "blob": None, "account_email": None,
+		})
+		return nonce
+
+	def _valid_blob(self, provider_id="openai-codex"):
+		return {
+			"type": "oauth",
+			"provider": provider_id,
+			"access": "AT", "refresh": "RT",
+			"expires": 1_700_000_000_000,
+			"email": "x@y.com",
+			"clientId": "app_EMoamEEZ73f0CkXaXp7hrann",
+		}
+
+	def test_receive_happy_path_caches_blob_and_email(self):
+		nonce = self._seed()
+		out = oauth_api.receive_blob(nonce=nonce, blob=self._valid_blob())
+		self.assertTrue(out["ok"])
+		entry = frappe.cache.hget(_CACHE_KEY, nonce)
+		self.assertEqual(entry["status"], "connected")
+		self.assertEqual(entry["account_email"], "x@y.com")
+		self.assertEqual(entry["blob"]["access"], "AT")
+
+	def test_unknown_nonce_rejected(self):
+		out = oauth_api.receive_blob(nonce="bogus", blob=self._valid_blob())
+		self.assertFalse(out["ok"])
+		self.assertEqual(out["error"]["code"], "unknown_nonce")
+
+	def test_expired_nonce_rejected(self):
+		nonce = self._seed()
+		entry = frappe.cache.hget(_CACHE_KEY, nonce)
+		entry["expires_at_ts"] = 0  # in the past
+		frappe.cache.hset(_CACHE_KEY, nonce, entry)
+		out = oauth_api.receive_blob(nonce=nonce, blob=self._valid_blob())
+		self.assertEqual(out["error"]["code"], "expired")
+
+	def test_replay_rejected_after_connect(self):
+		nonce = self._seed()
+		oauth_api.receive_blob(nonce=nonce, blob=self._valid_blob())
+		out = oauth_api.receive_blob(nonce=nonce, blob=self._valid_blob())
+		self.assertFalse(out["ok"])
+		self.assertEqual(out["error"]["code"], "not_pending")
+
+	def test_blob_type_must_be_oauth(self):
+		nonce = self._seed()
+		bad = self._valid_blob(); bad["type"] = "token"
+		out = oauth_api.receive_blob(nonce=nonce, blob=bad)
+		self.assertEqual(out["error"]["code"], "invalid_blob")
+
+	def test_blob_provider_must_match_cached_provider(self):
+		nonce = self._seed(provider="OpenAI")
+		bad = self._valid_blob(provider_id="google-gemini-cli")
+		out = oauth_api.receive_blob(nonce=nonce, blob=bad)
+		self.assertEqual(out["error"]["code"], "invalid_blob")
+
+	def test_blob_client_id_must_match_registered(self):
+		nonce = self._seed()
+		bad = self._valid_blob(); bad["clientId"] = "evil_id"
+		out = oauth_api.receive_blob(nonce=nonce, blob=bad)
+		self.assertEqual(out["error"]["code"], "invalid_blob")
+
+	def test_missing_required_keys_rejected(self):
+		nonce = self._seed()
+		for missing in ("access", "expires", "clientId", "provider"):
+			frappe.cache.hset(_CACHE_KEY, nonce, {
+				"provider": "OpenAI", "status": "pending",
+				"expires_at_ts": int(time.time()) + 600,
+				"send_count": 0, "blob": None, "account_email": None,
+			})
+			bad = self._valid_blob(); del bad[missing]
+			out = oauth_api.receive_blob(nonce=nonce, blob=bad)
+			self.assertEqual(out["error"]["code"], "invalid_blob",
+			                 msg=f"missing {missing}")
 
 
 class TestPollSignin(_OAuthApiBase):
-	@patch("jarvis.oauth.api.device_flow.poll")
-	def test_poll_pending(self, mock_poll):
-		mock_poll.return_value = device_flow.PENDING
-		frappe.cache.hset("jarvis.oauth.device_codes", "DC-1",
-		                  {"provider": "OpenAI", "send_count": 0})
-		out = oauth_api.poll_signin(device_code="DC-1")
+	def test_returns_pending_for_pending_nonce(self):
+		nonce = "p_" + ("b" * 46)
+		frappe.cache.hset(_CACHE_KEY, nonce, {
+			"provider": "OpenAI", "status": "pending",
+			"expires_at_ts": int(time.time()) + 600,
+			"send_count": 0, "blob": None, "account_email": None,
+		})
+		out = oauth_api.poll_signin(nonce=nonce)
 		self.assertEqual(out["data"]["status"], "pending")
 
-	@patch("jarvis.oauth.api.device_flow.poll")
-	@patch("jarvis.oauth.api.onboarding.save_llm_creds")
-	@patch("jarvis.oauth.api.admin_client.post_push_oauth_blob")
-	def test_poll_connected_pushes_blob_and_saves_creds(
-		self, mock_push, mock_save, mock_poll,
-	):
-		"""REV-1: on success, build the openclaw OAuthCredential blob, push it
-		via admin → fleet-agent → container, then save_llm_creds(auth_mode=
-		"oauth") so on_update restarts container into Branch B config."""
-		mock_poll.return_value = {
-			"access_token": "AT-1", "refresh_token": "RT-1",
-			"expires_in": 3600, "account_email": "manager@acme.com",
-		}
-		mock_save.return_value = {"last_sync_status": "ok", "last_sync_at": ""}
-		frappe.cache.hset("jarvis.oauth.device_codes", "DC-2",
-		                  {"provider": "OpenAI", "send_count": 0})
-		out = oauth_api.poll_signin(device_code="DC-2")
-		self.assertEqual(out["data"]["status"], "connected")
-		self.assertEqual(out["data"]["account_email"], "manager@acme.com")
-
-		# Blob pushed with openclaw's expected shape.
-		mock_push.assert_called_once()
-		pid, blob = mock_push.call_args.args
-		self.assertEqual(pid, "openai-codex")
-		self.assertEqual(blob["type"], "oauth")
-		self.assertEqual(blob["provider"], "openai-codex")
-		self.assertEqual(blob["access"], "AT-1")
-		self.assertEqual(blob["refresh"], "RT-1")
-		self.assertEqual(blob["email"], "manager@acme.com")
-		# expires is unix-ms, slightly in the future.
-		self.assertGreater(blob["expires"], int(time.time() * 1000))
-
-		# save_llm_creds saved the oauth-mode entry so on_update reshapes config.
-		mock_save.assert_called_once()
-		kw = mock_save.call_args.kwargs
-		self.assertEqual(kw["provider"], "OpenAI")
-		self.assertEqual(kw["auth_mode"], "oauth")
-		self.assertEqual(kw["api_key"], "")
-
-	@patch("jarvis.oauth.api.device_flow.poll")
-	@patch("jarvis.oauth.api.onboarding.save_llm_creds")
-	@patch("jarvis.oauth.api.admin_client.post_push_oauth_blob")
-	def test_poll_connected_gemini_maps_to_gemini_cli(
-		self, mock_push, mock_save, mock_poll,
-	):
-		mock_poll.return_value = {
-			"access_token": "AT-g", "refresh_token": "RT-g",
-			"expires_in": 3600, "account_email": "alice@x.com",
-		}
-		mock_save.return_value = {"last_sync_status": "ok", "last_sync_at": ""}
-		frappe.cache.hset("jarvis.oauth.device_codes", "DC-G",
-		                  {"provider": "Google Gemini", "send_count": 0})
-		oauth_api.poll_signin(device_code="DC-G")
-		pid, blob = mock_push.call_args.args
-		self.assertEqual(pid, "google-gemini-cli")
-		self.assertEqual(blob["provider"], "google-gemini-cli")
-
-
-class TestShareCode(_OAuthApiBase):
-	def setUp(self):
-		super().setUp()
-		frappe.cache.hset("jarvis.oauth.device_codes", "DC-3", {
-			"provider": "OpenAI", "send_count": 0,
-			"user_code": "JARV-9X3K",
-			"verification_uri": "https://chatgpt.com/auth/device",
-			"expires_at_ts": 9999999999,
+	def test_returns_connected_with_email(self):
+		nonce = "c_" + ("b" * 46)
+		frappe.cache.hset(_CACHE_KEY, nonce, {
+			"provider": "OpenAI", "status": "connected",
+			"expires_at_ts": int(time.time()) + 600,
+			"send_count": 0,
+			"blob": {"type": "oauth", "provider": "openai-codex"},
+			"account_email": "a@b.com",
 		})
+		out = oauth_api.poll_signin(nonce=nonce)
+		self.assertEqual(out["data"]["status"], "connected")
+		self.assertEqual(out["data"]["account_email"], "a@b.com")
 
-	@patch("jarvis.oauth.api.frappe.sendmail")
-	def test_share_code_sends_email(self, mock_sendmail):
-		out = oauth_api.share_code(device_code="DC-3", recipient_email="bob@example.com")
+	def test_unknown_nonce(self):
+		out = oauth_api.poll_signin(nonce="missing")
+		self.assertEqual(out["error"]["code"], "unknown_nonce")
+
+	def test_expired_nonce(self):
+		nonce = "e_" + ("b" * 46)
+		frappe.cache.hset(_CACHE_KEY, nonce, {
+			"provider": "OpenAI", "status": "pending",
+			"expires_at_ts": 0, "send_count": 0, "blob": None,
+			"account_email": None,
+		})
+		out = oauth_api.poll_signin(nonce=nonce)
+		self.assertEqual(out["error"]["code"], "expired")
+
+
+class TestCommitSignin(_OAuthApiBase):
+	def _seed_connected(self, provider="OpenAI"):
+		nonce = "k_" + ("d" * 46)
+		blob = {
+			"type": "oauth",
+			"provider": "openai-codex" if provider == "OpenAI"
+				else "google-gemini-cli",
+			"access": "AT", "refresh": "RT",
+			"expires": 1_700_000_000_000,
+			"email": "manager@acme.com",
+			"clientId": "app_EMoamEEZ73f0CkXaXp7hrann"
+				if provider == "OpenAI"
+				else "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com",
+		}
+		frappe.cache.hset(_CACHE_KEY, nonce, {
+			"provider": provider, "status": "connected",
+			"expires_at_ts": int(time.time()) + 600,
+			"send_count": 0, "blob": blob, "account_email": blob["email"],
+		})
+		return nonce, blob
+
+	@patch("jarvis.oauth.api.onboarding.save_llm_creds")
+	@patch("jarvis.oauth.api.admin_client.post_push_oauth_blob")
+	def test_commit_pushes_blob_and_saves_creds(self, mock_push, mock_save):
+		mock_save.return_value = {"last_sync_status": "ok", "last_sync_at": ""}
+		nonce, blob = self._seed_connected()
+		out = oauth_api.commit_signin(nonce=nonce)
 		self.assertTrue(out["ok"])
-		mock_sendmail.assert_called_once()
+		mock_push.assert_called_once_with("openai-codex", blob)
+		mock_save.assert_called_once()
+		kwargs = mock_save.call_args.kwargs
+		self.assertEqual(kwargs["provider"], "OpenAI")
+		self.assertEqual(kwargs["auth_mode"], "oauth")
+		self.assertEqual(kwargs["api_key"], "")
+		# nonce cleared
+		self.assertIsNone(frappe.cache.hget(_CACHE_KEY, nonce))
 
-	@patch("jarvis.oauth.api.frappe.sendmail")
-	def test_share_code_rate_limit_after_5(self, mock_sendmail):
-		for _ in range(5):
-			oauth_api.share_code(device_code="DC-3", recipient_email="bob@example.com")
-		out = oauth_api.share_code(device_code="DC-3", recipient_email="bob@example.com")
-		self.assertFalse(out["ok"])
-		self.assertEqual(out["error"]["code"], "rate_limited")
-		self.assertEqual(mock_sendmail.call_count, 5)
+	def test_unknown_nonce(self):
+		out = oauth_api.commit_signin(nonce="missing")
+		self.assertEqual(out["error"]["code"], "unknown_nonce")
+
+	def test_pending_nonce_cannot_commit(self):
+		nonce = "p_" + ("z" * 46)
+		frappe.cache.hset(_CACHE_KEY, nonce, {
+			"provider": "OpenAI", "status": "pending",
+			"expires_at_ts": int(time.time()) + 600,
+			"send_count": 0, "blob": None, "account_email": None,
+		})
+		out = oauth_api.commit_signin(nonce=nonce)
+		self.assertEqual(out["error"]["code"], "not_connected")
+
+
+from jarvis import admin_client
 
 
 class TestDisconnect(_OAuthApiBase):
 	@patch("jarvis.oauth.api.admin_client.post_subscription_disconnect")
-	def test_disconnect_calls_admin_and_flips_to_api_key(self, mock_disc):
-		mock_disc.return_value = {"ok": True}
+	def test_disconnect_flips_mode_and_clears_cache(self, mock_disc):
+		# Seed a pending nonce that should get nuked
+		frappe.cache.hset(_CACHE_KEY, "stale_nonce",
+		                  {"status": "pending", "provider": "OpenAI",
+		                   "expires_at_ts": 9999999999, "send_count": 0,
+		                   "blob": None, "account_email": None})
 		settings = frappe.get_single("Jarvis Settings")
 		settings.db_set("llm_auth_mode", "oauth", update_modified=False)
-		settings.db_set("llm_provider", "OpenAI", update_modified=False)
 		frappe.db.commit()
+
 		out = oauth_api.disconnect()
 		self.assertTrue(out["ok"])
 		mock_disc.assert_called_once()
 		settings = frappe.get_single("Jarvis Settings")
 		self.assertEqual(settings.llm_auth_mode, "api_key")
 		self.assertEqual(settings.last_sync_status, "disconnected")
+		# In-flight nonce cleared
+		self.assertIsNone(frappe.cache.hget(_CACHE_KEY, "stale_nonce"))
 
-	@patch("jarvis.oauth.api.admin_client.post_subscription_disconnect")
-	def test_disconnect_admin_error_returns_error_envelope(self, mock_disc):
-		from jarvis.exceptions import AdminUnreachableError
-		mock_disc.side_effect = AdminUnreachableError("network is down")
+	@patch("jarvis.oauth.api.admin_client.post_subscription_disconnect",
+	       side_effect=admin_client.AdminUnreachableError("net"))
+	def test_disconnect_admin_failure_returns_error(self, _):
 		out = oauth_api.disconnect()
 		self.assertFalse(out["ok"])
 		self.assertEqual(out["error"]["code"], "disconnect_failed")
-		# State NOT changed when admin call fails.
-		settings = frappe.get_single("Jarvis Settings")
-		# llm_auth_mode unchanged from snapshot.
-		self.assertEqual(settings.llm_auth_mode, self._snap["llm_auth_mode"])
+
+
+class TestShareSignin(_OAuthApiBase):
+	def _seed(self):
+		nonce = "s_" + ("e" * 46)
+		frappe.cache.hset(_CACHE_KEY, nonce, {
+			"provider": "OpenAI", "status": "pending",
+			"expires_at_ts": int(time.time()) + 600,
+			"send_count": 0, "blob": None, "account_email": None,
+		})
+		return nonce
+
+	@patch("jarvis.oauth.api.frappe.sendmail")
+	def test_share_sends_email_with_one_liner(self, mock_mail):
+		nonce = self._seed()
+		out = oauth_api.share_signin(nonce=nonce, recipient_email="dev@acme.com")
+		self.assertTrue(out["ok"])
+		mock_mail.assert_called_once()
+		body = mock_mail.call_args.kwargs["message"]
+		self.assertIn("JARVIS_NONCE=" + nonce, body)
+		# send_count incremented
+		entry = frappe.cache.hget(_CACHE_KEY, nonce)
+		self.assertEqual(entry["send_count"], 1)
+
+	def test_share_unknown_nonce(self):
+		out = oauth_api.share_signin(nonce="bogus", recipient_email="x@y.com")
+		self.assertEqual(out["error"]["code"], "unknown_nonce")
+
+	@patch("jarvis.oauth.api.frappe.sendmail")
+	def test_share_rate_limited_at_5(self, _):
+		nonce = self._seed()
+		for _ in range(5):
+			oauth_api.share_signin(nonce=nonce, recipient_email="x@y.com")
+		out = oauth_api.share_signin(nonce=nonce, recipient_email="x@y.com")
+		self.assertEqual(out["error"]["code"], "rate_limited")

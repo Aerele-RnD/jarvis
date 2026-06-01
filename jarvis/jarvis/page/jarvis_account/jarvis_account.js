@@ -95,32 +95,24 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		bindBilling();
 	}
 
-	// ---- LLM subscription card (only shown when llm_auth_mode === "subscription") --
+	// ---- LLM subscription card (only shown when llm_auth_mode === "oauth") --
+	// REV-2: bench keeps only provider + auth_mode; the OAuth blob lives in
+	// auth-profiles.json on the container. Connected-email and refresh
+	// timestamps are not surfaced bench-side anymore.
 	function renderSubscriptionCard() {
-		if (settingsLocal.llm_auth_mode !== "subscription") return "";
+		if (settingsLocal.llm_auth_mode !== "oauth") return "";
 		const provider = settingsLocal.llm_provider || "—";
-		const email = settingsLocal.llm_oauth_account_email || "—";
-		const connected = settingsLocal.llm_oauth_connected_at || "—";
-		const lastRefresh = settingsLocal.llm_oauth_last_refresh_at || "—";
-		const sync = settingsLocal.last_sync_status || "";
-		const revoked = sync === "subscription_revoked";
-		const failing = sync === "subscription_refresh_failing";
-		const banner = revoked
-			? `<div class="ja-banner-bad">Disconnected by provider. Re-authorize to resume.</div>`
-			: failing
-				? `<div class="ja-banner-warn">Refreshing token is failing right now. Will retry automatically.</div>`
-				: "";
+		const model = settingsLocal.llm_model || "—";
 		return `<div class="ja-card">
 			<div class="ja-card-head">
 				<h2 class="ja-h">LLM subscription</h2>
-				<span class="ja-pill ${revoked ? "ja-pill-bad" : "ja-pill-ok"}">${esc(provider)}</span>
+				<span class="ja-pill ja-pill-ok">${esc(provider)}</span>
 			</div>
-			${banner}
 			<table class="ja-kv">
-				<tr><td>Account</td><td>${esc(email)}</td></tr>
-				<tr><td>Connected</td><td>${esc(String(connected))}</td></tr>
-				<tr><td>Last refresh</td><td>${esc(String(lastRefresh))}</td></tr>
+				<tr><td>Provider</td><td>${esc(provider)}</td></tr>
+				<tr><td>Model</td><td>${esc(model)}</td></tr>
 			</table>
+			<p class="ja-sub">Refresh and account state live inside your Jarvis container. If chat starts failing, click Re-authorize to mint fresh tokens.</p>
 			<div class="ja-actions">
 				<button class="ja-btn ja-btn-ghost" id="ja-sub-disconnect">Disconnect</button>
 				<button class="ja-btn ja-btn-primary" id="ja-sub-reauth">Re-authorize</button>
@@ -129,7 +121,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	}
 
 	function bindSubscriptionCard() {
-		if (settingsLocal.llm_auth_mode !== "subscription") return;
+		if (settingsLocal.llm_auth_mode !== "oauth") return;
 		$body.find("#ja-sub-disconnect").on("click", () => {
 			if (!confirm("Disconnect the LLM subscription? Jarvis chat will stop working until you reconnect.")) return;
 			frappe.call({ method: "jarvis.oauth.api.disconnect" }).then((r) => {
@@ -143,7 +135,9 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 			});
 		});
 		$body.find("#ja-sub-reauth").on("click", () => {
-			// Send the user back to the onboarding wizard so they can re-run the device flow.
+			// Send the user back to the onboarding wizard so they can re-run
+			// the helper-script sign-in (REV-2). Step 4 detects existing
+			// auth_mode=oauth and pre-selects the subscription path.
 			window.location.assign("/app/jarvis-onboarding");
 		});
 	}

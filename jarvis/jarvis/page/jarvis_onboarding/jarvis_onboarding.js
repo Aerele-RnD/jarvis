@@ -15,10 +15,9 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		// step 4 inputs — chat subscription path
 		authMode: "api_key", // "api_key" | "subscription"
 		subProvider: "OpenAI",
-		subDeviceCode: null,
-		subUserCode: null,
-		subVerificationUri: null,
-		subExpiresAt: null,  // wall-clock ms
+		subNonce: null,
+		subOneLiner: null,
+		subExpiresAt: null,  // wall-clock ms (10 min nonce TTL)
 		subPollTimer: null,
 		subConnectedEmail: null,
 		// passed through to step 5 (success)
@@ -311,23 +310,20 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 				  </div>
 				</div>`;
 		}
-		if (state.subUserCode) {
+		if (state.subOneLiner) {
 			const minsLeft = Math.max(0, Math.floor((state.subExpiresAt - Date.now()) / 60000));
 			return `
 				<div class="jo-field">
-				  <label>1. Open this URL in any browser</label>
-				  <div class="jo-code-uri"><a href="${esc(state.subVerificationUri)}" target="_blank" rel="noopener">${esc(state.subVerificationUri)}</a></div>
-				</div>
-				<div class="jo-field">
-				  <label>2. Type this code</label>
-				  <div class="jo-code-display">${esc(state.subUserCode)}</div>
-				  <div class="jo-hint">Code expires in ~${minsLeft} minute${minsLeft === 1 ? "" : "s"}.</div>
+				  <label>Run this on your computer</label>
+				  <pre class="jo-code-display" style="white-space:pre-wrap;word-break:break-all;text-align:left;font-size:12px;line-height:1.5">${esc(state.subOneLiner)}</pre>
+				  <div class="jo-hint">Paste it into Terminal (or PowerShell). The script opens your browser, you sign in to ${esc(state.subProvider)}, and Jarvis picks up the result automatically. Link valid for ~${minsLeft} minute${minsLeft === 1 ? "" : "s"}.</div>
 				</div>
 				<div class="jo-actions jo-actions-split">
+				  <button class="jo-btn jo-btn-ghost" id="jo-sub-copy">Copy command</button>
 				  <button class="jo-btn jo-btn-ghost" id="jo-sub-share">Send to colleague</button>
-				  <button class="jo-btn jo-btn-ghost" id="jo-sub-regen">Generate new code</button>
+				  <button class="jo-btn jo-btn-ghost" id="jo-sub-regen">Generate new one-liner</button>
 				</div>
-				<div class="jo-hint" style="margin-top:14px">Waiting for you to authorize at <strong>${esc(state.subProvider)}</strong>…</div>`;
+				<div class="jo-hint" style="margin-top:14px">⠹ Waiting for sign-in… <a href="#" id="jo-sub-why">Why my computer?</a></div>`;
 		}
 		return `
 			<div class="jo-field">
@@ -348,13 +344,29 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		});
 		$body.find("#jo-sub-signin").on("click", startSubscriptionSignin);
 		$body.find("#jo-sub-regen").on("click", () => { cancelSubscriptionFlow(); startSubscriptionSignin(); });
-		$body.find("#jo-sub-share").on("click", shareSubscriptionCode);
+		$body.find("#jo-sub-share").on("click", shareSubscriptionOneLiner);
+		$body.find("#jo-sub-copy").on("click", () => {
+			if (!state.subOneLiner) return;
+			navigator.clipboard.writeText(state.subOneLiner).then(() => {
+				frappe.show_alert({ message: "Copied", indicator: "green" });
+			});
+		});
+		$body.find("#jo-sub-why").on("click", (e) => {
+			e.preventDefault();
+			frappe.msgprint({
+				title: "Why your computer?",
+				message: "Signing in to ChatGPT requires opening a browser. " +
+				         "The script opens it on the same machine it runs on, " +
+				         "then sends the result back to Jarvis automatically. " +
+				         "Run it on the computer you're using right now."
+			});
+		});
 		$body.find("#jo-sub-disconnect-local").on("click", () => {
 			cancelSubscriptionFlow();
 			state.subConnectedEmail = null;
 			renderLlm();
 		});
-		$body.find("#jo-sub-continue").on("click", () => renderSuccess(state.successData || {}, "ok (subscription)"));
+		$body.find("#jo-sub-continue").on("click", commitSubscriptionSignin);
 	}
 
 	function startSubscriptionSignin() {
@@ -362,7 +374,7 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		$err.text("");
 		setBusy("#jo-sub-signin", true);
 		frappe.call({
-			method: "jarvis.oauth.api.start_signin",
+			method: "jarvis.oauth.api.begin_codex_signin",
 			args: { provider: state.subProvider },
 		}).then((r) => {
 			setBusy("#jo-sub-signin", false);
@@ -372,12 +384,11 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 				return;
 			}
 			const d = m.data;
-			state.subDeviceCode = d.device_code;
-			state.subUserCode = d.user_code;
-			state.subVerificationUri = d.verification_uri;
-			state.subExpiresAt = Date.now() + (d.expires_in * 1000);
+			state.subNonce = d.nonce;
+			state.subOneLiner = d.one_liner;
+			state.subExpiresAt = Date.now() + 600 * 1000;  // 10-min TTL
 			renderLlm();
-			schedulePoll(d.interval || 5);
+			schedulePoll(2);  // poll every 2s
 		}).catch((e) => {
 			setBusy("#jo-sub-signin", false);
 			$err.text(e.message || "Couldn't reach Jarvis. Try again in a moment.");
@@ -390,10 +401,10 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 	}
 
 	function pollOnce(intervalSec) {
-		if (!state.subDeviceCode) return;
+		if (!state.subNonce) return;
 		frappe.call({
 			method: "jarvis.oauth.api.poll_signin",
-			args: { device_code: state.subDeviceCode },
+			args: { nonce: state.subNonce },
 		}).then((r) => {
 			const m = r.message || {};
 			if (!m.ok) {
@@ -407,17 +418,12 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 			if (data.status === "connected") {
 				state.subConnectedEmail = data.account_email || "(unknown)";
 				cancelPollTimer();
-				state.subDeviceCode = null;
-				state.subUserCode = null;
-				state.subVerificationUri = null;
+				state.subOneLiner = null;
 				renderLlm();
 				return;
 			}
-			// pending — keep waiting; slow_down doubles the interval per RFC 8628
-			const next = data.slow_down ? intervalSec * 2 : intervalSec;
-			schedulePoll(next);
+			schedulePoll(intervalSec);
 		}).catch(() => {
-			// Network blip — keep polling at the same cadence.
 			schedulePoll(intervalSec);
 		});
 	}
@@ -428,28 +434,49 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 
 	function cancelSubscriptionFlow() {
 		cancelPollTimer();
-		state.subDeviceCode = null;
-		state.subUserCode = null;
-		state.subVerificationUri = null;
+		state.subNonce = null;
+		state.subOneLiner = null;
 		state.subExpiresAt = null;
 	}
 
-	function shareSubscriptionCode() {
-		const recipient = prompt("Send the code + URL to which email address?");
+	function shareSubscriptionOneLiner() {
+		const recipient = prompt("Send the sign-in command to which email address?");
 		if (!recipient) return;
 		frappe.call({
-			method: "jarvis.oauth.api.share_code",
-			args: { device_code: state.subDeviceCode, recipient_email: recipient },
+			method: "jarvis.oauth.api.share_signin",
+			args: { nonce: state.subNonce, recipient_email: recipient },
 		}).then((r) => {
 			const m = r.message || {};
 			if (m.ok) {
-				frappe.show_alert({ message: "Code sent to " + recipient, indicator: "green" });
+				frappe.show_alert({ message: "Sent to " + recipient, indicator: "green" });
 			} else {
 				const err = m.error || {};
 				frappe.show_alert({ message: err.message || "Couldn't send", indicator: "red" });
 			}
 		}).catch((e) => {
 			frappe.show_alert({ message: e.message || "Couldn't send", indicator: "red" });
+		});
+	}
+
+	function commitSubscriptionSignin() {
+		setBusy("#jo-sub-continue", true);
+		frappe.call({
+			method: "jarvis.oauth.api.commit_signin",
+			args: { nonce: state.subNonce },
+		}).then((r) => {
+			setBusy("#jo-sub-continue", false);
+			const m = r.message || {};
+			if (!m.ok) {
+				$body.find("#jo-llm-err").text(
+					(m.error && m.error.message) || "Couldn't finalize sign-in."
+				);
+				return;
+			}
+			state.subNonce = null;
+			renderSuccess(state.successData || {}, "ok (subscription)");
+		}).catch((e) => {
+			setBusy("#jo-sub-continue", false);
+			$body.find("#jo-llm-err").text(e.message || "Couldn't reach Jarvis.");
 		});
 	}
 
