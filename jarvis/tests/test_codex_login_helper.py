@@ -62,6 +62,14 @@ class TestAuthorizeURL(unittest.TestCase):
 		self.assertEqual(q["state"], ["STATE"])
 		self.assertIn("openid", q["scope"][0])
 		self.assertIn("offline_access", q["scope"][0])
+		# codex-cli-specific authorize params — required by auth.openai.com
+		# for the codex client_id, otherwise it returns a generic
+		# "unknown_error" page mid-flow.
+		self.assertEqual(q["originator"], ["codex_cli_rs"])
+		self.assertEqual(q["id_token_add_organizations"], ["true"])
+		self.assertEqual(q["codex_cli_simplified_flow"], ["true"])
+		self.assertIn("api.connectors.read", q["scope"][0])
+		self.assertIn("api.connectors.invoke", q["scope"][0])
 
 	def test_gemini_authorize_url_has_offline_access(self):
 		helper = _load_helper()

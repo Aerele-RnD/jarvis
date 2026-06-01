@@ -34,9 +34,17 @@ PROVIDERS = {
 		"token":     "https://auth.openai.com/oauth/token",
 		"userinfo":  "https://api.openai.com/v1/userinfo",
 		"client_id": "app_EMoamEEZ73f0CkXaXp7hrann",
-		"scope":     "openid email profile offline_access",
+		"scope":     "openid profile email offline_access api.connectors.read api.connectors.invoke",
 		"openclaw_provider": "openai-codex",
-		"extra_authorize_params": {},
+		# Codex CLI sends these alongside the standard PKCE params; auth.openai.com
+		# returns a generic "unknown_error" page if any are missing. originator
+		# identifies the client to OpenAI's telemetry; the other two unlock
+		# Codex's simplified browser flow against this client_id.
+		"extra_authorize_params": {
+			"id_token_add_organizations": "true",
+			"codex_cli_simplified_flow":   "true",
+			"originator":                  "codex_cli_rs",
+		},
 	},
 	"gemini": {
 		"authorize": "https://accounts.google.com/o/oauth2/v2/auth",
