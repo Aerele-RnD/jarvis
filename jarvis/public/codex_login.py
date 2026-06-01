@@ -225,10 +225,16 @@ def _validate_bench_url(url: str):
 	parsed = urllib.parse.urlparse(url)
 	if parsed.scheme == "https":
 		return
-	if parsed.scheme == "http" and parsed.hostname in ("127.0.0.1", "localhost"):
+	# Plain HTTP is only permitted for loopback. RFC 6761 reserves
+	# .localhost (and anything ending in it) for local resolution, so
+	# bench sites like jarvis.localhost / jarvis-test.localhost qualify.
+	host = (parsed.hostname or "").lower()
+	if parsed.scheme == "http" and (
+		host == "127.0.0.1" or host == "localhost" or host.endswith(".localhost")
+	):
 		return
 	raise SystemExit(
-		f"JARVIS_BENCH must be https:// (or http://127.0.0.1 for local-dev). Got: {url}"
+		f"JARVIS_BENCH must be https:// (or http://*.localhost / 127.0.0.1 for local-dev). Got: {url}"
 	)
 
 
