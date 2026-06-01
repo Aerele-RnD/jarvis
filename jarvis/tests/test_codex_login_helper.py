@@ -62,6 +62,14 @@ class TestAuthorizeURL(unittest.TestCase):
 		self.assertEqual(q["state"], ["STATE"])
 		self.assertIn("openid", q["scope"][0])
 		self.assertIn("offline_access", q["scope"][0])
+		# codex-cli-specific authorize params — required by auth.openai.com
+		# for the codex client_id, otherwise it returns a generic
+		# "unknown_error" page mid-flow.
+		self.assertEqual(q["originator"], ["codex_cli_rs"])
+		self.assertEqual(q["id_token_add_organizations"], ["true"])
+		self.assertEqual(q["codex_cli_simplified_flow"], ["true"])
+		self.assertIn("api.connectors.read", q["scope"][0])
+		self.assertIn("api.connectors.invoke", q["scope"][0])
 
 	def test_gemini_authorize_url_has_offline_access(self):
 		helper = _load_helper()
@@ -137,3 +145,36 @@ class TestExtractEmailFromIdToken(unittest.TestCase):
 		helper = _load_helper()
 		self.assertEqual(helper.email_from_id_token("not-a-jwt"), "")
 		self.assertEqual(helper.email_from_id_token(""), "")
+
+
+class TestValidateBenchUrl(unittest.TestCase):
+	def test_https_anywhere_ok(self):
+		helper = _load_helper()
+		helper._validate_bench_url("https://acme.jarvis.aerele.in")  # no raise
+
+	def test_http_127_ok(self):
+		helper = _load_helper()
+		helper._validate_bench_url("http://127.0.0.1:8000")
+
+	def test_http_localhost_ok(self):
+		helper = _load_helper()
+		helper._validate_bench_url("http://localhost:8000")
+
+	def test_http_localhost_subdomain_ok(self):
+		"""Frappe convention: <site>.localhost. RFC 6761 reserves .localhost
+		for loopback, so any subdomain qualifies."""
+		helper = _load_helper()
+		helper._validate_bench_url("http://jarvis.localhost:8000")
+		helper._validate_bench_url("http://jarvis-test.localhost:8000")
+		helper._validate_bench_url("http://Foo.LOCALHOST")  # case-insensitive
+
+	def test_http_external_host_rejected(self):
+		helper = _load_helper()
+		with self.assertRaises(SystemExit):
+			helper._validate_bench_url("http://acme.jarvis.aerele.in")
+
+	def test_http_localhost_lookalike_rejected(self):
+		"""Domains that merely *contain* "localhost" don't qualify."""
+		helper = _load_helper()
+		with self.assertRaises(SystemExit):
+			helper._validate_bench_url("http://localhost.evil.com")
