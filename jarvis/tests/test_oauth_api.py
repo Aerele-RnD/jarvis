@@ -20,6 +20,8 @@ class _OAuthApiBase(FrappeTestCase):
 		cls._snap = {
 			"llm_auth_mode": settings.llm_auth_mode,
 			"llm_provider": settings.llm_provider,
+			"llm_oauth_account_email": settings.llm_oauth_account_email,
+			"llm_oauth_connected_at": settings.llm_oauth_connected_at,
 		}
 
 	@classmethod
@@ -221,6 +223,10 @@ class TestCommitSignin(_OAuthApiBase):
 		self.assertEqual(kwargs["api_key"], "")
 		# nonce cleared
 		self.assertIsNone(frappe.cache.hget(_CACHE_KEY, nonce))
+		# display-only metadata populated on Jarvis Settings
+		settings = frappe.get_single("Jarvis Settings")
+		self.assertEqual(settings.llm_oauth_account_email, "manager@acme.com")
+		self.assertIsNotNone(settings.llm_oauth_connected_at)
 
 	def test_unknown_nonce(self):
 		out = oauth_api.commit_signin(nonce="missing")
@@ -250,6 +256,8 @@ class TestDisconnect(_OAuthApiBase):
 		                   "blob": None, "account_email": None})
 		settings = frappe.get_single("Jarvis Settings")
 		settings.db_set("llm_auth_mode", "oauth", update_modified=False)
+		settings.db_set("llm_oauth_account_email", "manager@acme.com", update_modified=False)
+		settings.db_set("llm_oauth_connected_at", frappe.utils.now_datetime(), update_modified=False)
 		frappe.db.commit()
 
 		out = oauth_api.disconnect()
@@ -258,6 +266,9 @@ class TestDisconnect(_OAuthApiBase):
 		settings = frappe.get_single("Jarvis Settings")
 		self.assertEqual(settings.llm_auth_mode, "api_key")
 		self.assertEqual(settings.last_sync_status, "disconnected")
+		# Display-only oauth metadata also cleared
+		self.assertFalse(settings.llm_oauth_account_email)
+		self.assertIsNone(settings.llm_oauth_connected_at)
 		# In-flight nonce cleared
 		self.assertIsNone(frappe.cache.hget(_CACHE_KEY, "stale_nonce"))
 
