@@ -800,18 +800,6 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		.ja-tab-active svg{opacity:1}
 		.ja-tab-body{transition:opacity .14s ease,transform .14s ease}
 		.ja-tab-body-swap{opacity:0;transform:translateY(4px)}
-		.ja-one-liner-wrap{position:relative}
-		.ja-one-liner{font-family:'Menlo','Monaco',monospace;font-size:12px;line-height:1.5;white-space:pre-wrap;
-			word-break:break-all;padding:12px 44px 12px 14px;background:var(--bg-color);border:1px solid var(--border-color);
-			border-radius:8px;margin:0;color:var(--text-color)}
-		.ja-copy-btn{position:absolute;top:8px;right:8px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;
-			background:transparent;border:1px solid var(--border-color);border-radius:6px;cursor:pointer;
-			color:var(--text-muted);transition:color .12s ease,background .12s ease,border-color .12s ease}
-		.ja-copy-btn:hover{color:var(--text-color);background:var(--card-bg,#fff);border-color:var(--text-muted)}
-		.ja-copy-btn .ja-check-icon{display:none}
-		.ja-copy-btn.copied{color:var(--green-600,#28a745);border-color:rgba(46,189,89,.4);background:rgba(46,189,89,.10)}
-		.ja-copy-btn.copied .ja-copy-icon{display:none}
-		.ja-copy-btn.copied .ja-check-icon{display:block}
 		.ja-card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
 		.ja-eyebrow{font-size:11.5px;letter-spacing:.6px;font-weight:600;color:var(--text-muted);text-transform:uppercase}
 		.ja-h{font-size:20px;font-weight:700;margin:2px 0 4px;color:var(--text-color)}

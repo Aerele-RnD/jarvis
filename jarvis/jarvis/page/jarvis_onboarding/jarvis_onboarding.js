@@ -693,24 +693,6 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		.jo-tab:hover svg{opacity:.95}
 		.jo-tab-active{color:var(--jarvis-primary);font-weight:600}
 		.jo-tab-active svg{opacity:1}
-		.jo-one-liner-wrap{position:relative}
-		.jo-one-liner{font-family:'Menlo','Monaco',monospace;font-size:12px;line-height:1.5;white-space:pre-wrap;
-			word-break:break-all;padding:12px 44px 12px 14px;background:var(--bg-color);border:1px solid var(--border-color);
-			border-radius:8px;margin:0;color:var(--text-color)}
-		.jo-copy-btn{position:absolute;top:8px;right:8px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;
-			background:transparent;border:1px solid var(--border-color);border-radius:6px;cursor:pointer;
-			color:var(--text-muted);transition:color .12s ease,background .12s ease,border-color .12s ease}
-		.jo-copy-btn:hover{color:var(--text-color);background:var(--card-bg,#fff);border-color:var(--text-muted)}
-		.jo-copy-btn .jo-check-icon{display:none}
-		.jo-copy-btn.copied{color:var(--green-600,#28a745);border-color:rgba(46,189,89,.4);background:rgba(46,189,89,.10)}
-		.jo-copy-btn.copied .jo-copy-icon{display:none}
-		.jo-copy-btn.copied .jo-check-icon{display:block}
-		.jo-code-uri{font-family:'Menlo','Monaco',monospace;font-size:13px;word-break:break-all;
-			padding:10px 12px;background:var(--bg-color);border:1px solid var(--border-color);border-radius:6px}
-		.jo-code-uri a{color:var(--jarvis-primary)}
-		.jo-code-display{font-family:'Menlo','Monaco',monospace;font-size:28px;font-weight:700;letter-spacing:3px;text-align:center;
-			padding:18px;background:var(--bg-color);border:2px dashed var(--jarvis-primary);border-radius:8px;color:var(--jarvis-primary)}
-		.jo-sub-connected{text-align:center;padding:18px 0}
 		@media(max-width:760px){.jo-bg{padding:16px 10px}.jo{flex-direction:column;margin:auto}.jo-brand{flex-basis:auto}.jo-panel{padding:26px 22px}}`;
 		$(`<style id="jo-styles">${css}</style>`).appendTo(document.head);
 	}
