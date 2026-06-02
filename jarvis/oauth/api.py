@@ -13,10 +13,17 @@ import secrets
 import time
 
 import frappe
+import requests
 
+from jarvis import admin_client, onboarding
+from jarvis.exceptions import JarvisError
 from jarvis.oauth.providers import (
 	UnknownProviderError, build_authorize_url, get_provider,
 )
+
+
+class TokenExchangeError(JarvisError):
+	"""Provider's /oauth/token endpoint rejected the code or had an error."""
 
 _CACHE_KEY = "jarvis.oauth.codex_signin"
 _NONCE_TTL_SECS = 600
@@ -132,5 +139,112 @@ def complete_paste_signin(nonce: str, redirected_url: str) -> dict:
 		            "the `state` parameter doesn't match; "
 		            "regenerate the sign-in URL and try again")
 
-	# Token exchange + blob push come in Task 1.4.
-	return _err("not_implemented", "token exchange not yet wired")
+	provider = entry["provider"]
+	model = entry["model"]
+
+	try:
+		tokens = _exchange_code(
+			provider=provider,
+			code=parsed["code"],
+			code_verifier=entry["verifier"],
+		)
+	except TokenExchangeError as e:
+		# Nonce NOT cleared; customer can paste again if they fix the URL.
+		return _err("token_exchange_failed", str(e))
+
+	access_token = tokens.get("access_token")
+	if not access_token:
+		return _err("token_exchange_failed", "provider returned no access_token")
+
+	email = (
+		tokens.get("email")
+		or _fetch_account_email(provider, access_token, tokens.get("id_token") or "")
+	)
+
+	p = get_provider(provider)
+	now_ms = int(time.time() * 1000)
+	expires_ms = now_ms + int(tokens.get("expires_in", 3600)) * 1000
+	blob = {
+		"type": "oauth",
+		"provider": p["openclaw_provider"],
+		"access": access_token,
+		"refresh": tokens.get("refresh_token") or "",
+		"expires": expires_ms,
+		"email": email,
+		"clientId": p["client_id"],
+	}
+
+	admin_client.post_push_oauth_blob(p["openclaw_provider"], blob)
+	sync_result = onboarding.save_llm_creds(
+		provider=provider, model=model,
+		api_key="", base_url="", auth_mode="oauth",
+	)
+
+	settings = frappe.get_single("Jarvis Settings")
+	settings.db_set("llm_oauth_account_email", email, update_modified=False)
+	settings.db_set("llm_oauth_connected_at",
+	                frappe.utils.now_datetime(),
+	                update_modified=False)
+
+	frappe.cache.hdel(_CACHE_KEY, nonce)
+	return _ok({
+		"account_email": email,
+		"last_sync_status": (sync_result or {}).get("last_sync_status", ""),
+	})
+
+
+def _exchange_code(*, provider: str, code: str, code_verifier: str) -> dict:
+	"""POST to provider's token endpoint, return parsed JSON."""
+	p = get_provider(provider)
+	try:
+		resp = requests.post(
+			p["token"],
+			data={
+				"grant_type": "authorization_code",
+				"code": code,
+				"code_verifier": code_verifier,
+				"client_id": p["client_id"],
+				"redirect_uri": _REDIRECT_URI,
+			},
+			timeout=_HTTP_TIMEOUT,
+		)
+	except requests.RequestException as e:
+		raise TokenExchangeError(f"network error: {e}") from e
+
+	if not resp.ok:
+		try:
+			body = resp.json()
+			detail = body.get("error_description") or body.get("error") or resp.text
+		except ValueError:
+			detail = resp.text
+		raise TokenExchangeError(f"HTTP {resp.status_code}: {detail}")
+
+	return resp.json()
+
+
+def _fetch_account_email(provider: str, access_token: str, id_token: str) -> str:
+	"""Best-effort email lookup. OpenAI: userinfo endpoint. Gemini: id_token JWT."""
+	p = get_provider(provider)
+	if p["userinfo"]:
+		try:
+			resp = requests.get(
+				p["userinfo"],
+				headers={"Authorization": f"Bearer {access_token}"},
+				timeout=_HTTP_TIMEOUT,
+			)
+			if resp.ok:
+				return resp.json().get("email") or ""
+		except requests.RequestException:
+			pass
+		return ""
+	# Gemini path — parse JWT payload for email claim
+	if not id_token or id_token.count(".") < 2:
+		return ""
+	try:
+		import json as _json
+		_, payload, _ = id_token.split(".", 2)
+		padding = "=" * (-len(payload) % 4)
+		decoded = base64.urlsafe_b64decode(payload + padding)
+		return _json.loads(decoded).get("email", "") or ""
+	except (ValueError, Exception):
+		return ""

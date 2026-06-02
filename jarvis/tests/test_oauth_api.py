@@ -125,17 +125,118 @@ class TestCompletePasteSigninParsing(_OAuthApiBase):
 
 	def test_accepts_query_string_only(self):
 		nonce = self._seed()
-		out = oauth_api.complete_paste_signin(
-			nonce=nonce,
-			redirected_url="?code=ABC&state=test-state",
-		)
-		# Bridge: parsing succeeds; token exchange comes in Task 1.4.
-		self.assertEqual(out["error"]["code"], "not_implemented")
+		with patch("jarvis.oauth.api._exchange_code", return_value={
+			"access_token": "AT", "refresh_token": "RT", "expires_in": 3600,
+			"id_token": "", "email": "x@y.com",
+		}), patch("jarvis.oauth.api.admin_client.post_push_oauth_blob"), \
+		     patch("jarvis.oauth.api.onboarding.save_llm_creds",
+		           return_value={"last_sync_status": "ok"}):
+			out = oauth_api.complete_paste_signin(
+				nonce=nonce,
+				redirected_url="?code=ABC&state=test-state",
+			)
+		self.assertTrue(out["ok"], msg=str(out))
 
 	def test_accepts_bare_querystring_no_prefix(self):
 		nonce = self._seed()
+		with patch("jarvis.oauth.api._exchange_code", return_value={
+			"access_token": "AT", "refresh_token": "RT", "expires_in": 3600,
+			"id_token": "", "email": "x@y.com",
+		}), patch("jarvis.oauth.api.admin_client.post_push_oauth_blob"), \
+		     patch("jarvis.oauth.api.onboarding.save_llm_creds",
+		           return_value={"last_sync_status": "ok"}):
+			out = oauth_api.complete_paste_signin(
+				nonce=nonce,
+				redirected_url="code=ABC&state=test-state",
+			)
+		self.assertTrue(out["ok"], msg=str(out))
+
+
+class TestCompletePasteSigninFlow(_OAuthApiBase):
+	def _seed(self, provider="OpenAI", model="gpt-4o"):
+		nonce = "k_" + ("d" * 46)
+		frappe.cache.hset(_CACHE_KEY, nonce, {
+			"provider": provider, "model": model,
+			"status": "pending",
+			"expires_at_ts": int(time.time()) + 600,
+			"send_count": 0,
+			"verifier": "test-verifier",
+			"state": "test-state",
+			"authorize_url": "https://auth.openai.com/oauth/authorize?...",
+		})
+		return nonce
+
+	@patch("jarvis.oauth.api.onboarding.save_llm_creds")
+	@patch("jarvis.oauth.api.admin_client.post_push_oauth_blob")
+	@patch("jarvis.oauth.api._exchange_code")
+	def test_happy_path_pushes_blob_and_saves_creds(
+		self, mock_exchange, mock_push, mock_save,
+	):
+		mock_exchange.return_value = {
+			"access_token": "AT-123",
+			"refresh_token": "RT-456",
+			"expires_in": 3600,
+			"id_token": "",
+			"email": "manager@acme.com",
+		}
+		mock_save.return_value = {"last_sync_status": "ok"}
+		nonce = self._seed()
+
 		out = oauth_api.complete_paste_signin(
 			nonce=nonce,
-			redirected_url="code=ABC&state=test-state",
+			redirected_url="http://localhost:1455/auth/callback?code=ABC&state=test-state",
 		)
-		self.assertEqual(out["error"]["code"], "not_implemented")
+
+		self.assertTrue(out["ok"])
+		self.assertEqual(out["data"]["account_email"], "manager@acme.com")
+		self.assertEqual(out["data"]["last_sync_status"], "ok")
+
+		mock_exchange.assert_called_once()
+		kwargs = mock_exchange.call_args.kwargs
+		self.assertEqual(kwargs["provider"], "OpenAI")
+		self.assertEqual(kwargs["code"], "ABC")
+		self.assertEqual(kwargs["code_verifier"], "test-verifier")
+
+		mock_push.assert_called_once()
+		args = mock_push.call_args.args
+		self.assertEqual(args[0], "openai-codex")
+		blob = args[1]
+		self.assertEqual(blob["type"], "oauth")
+		self.assertEqual(blob["provider"], "openai-codex")
+		self.assertEqual(blob["access"], "AT-123")
+		self.assertEqual(blob["refresh"], "RT-456")
+		self.assertEqual(blob["email"], "manager@acme.com")
+		self.assertEqual(blob["clientId"], "app_EMoamEEZ73f0CkXaXp7hrann")
+
+		mock_save.assert_called_once()
+		sk = mock_save.call_args.kwargs
+		self.assertEqual(sk["provider"], "OpenAI")
+		self.assertEqual(sk["model"], "gpt-4o")
+		self.assertEqual(sk["api_key"], "")
+		self.assertEqual(sk["auth_mode"], "oauth")
+
+		settings = frappe.get_single("Jarvis Settings")
+		self.assertEqual(settings.llm_oauth_account_email, "manager@acme.com")
+		self.assertIsNotNone(settings.llm_oauth_connected_at)
+
+		self.assertIsNone(frappe.cache.hget(_CACHE_KEY, nonce))
+
+	@patch("jarvis.oauth.api._exchange_code",
+	       side_effect=Exception("provider 400"))
+	def test_token_exchange_failure_returns_error(self, _):
+		"""Generic exception path — actual TokenExchangeError covered by
+		the inner _exchange_code function's own tests. Here we just check
+		that the endpoint surfaces the failure cleanly."""
+		from jarvis.oauth import api as oa
+		nonce = self._seed()
+		# Override the mock to raise TokenExchangeError specifically
+		with patch("jarvis.oauth.api._exchange_code",
+		           side_effect=oa.TokenExchangeError("provider 400")):
+			out = oauth_api.complete_paste_signin(
+				nonce=nonce,
+				redirected_url="?code=ABC&state=test-state",
+			)
+		self.assertFalse(out["ok"])
+		self.assertEqual(out["error"]["code"], "token_exchange_failed")
+		# Nonce NOT cleared — customer can paste again (within TTL)
+		self.assertIsNotNone(frappe.cache.hget(_CACHE_KEY, nonce))
