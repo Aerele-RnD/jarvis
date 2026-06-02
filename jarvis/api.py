@@ -21,9 +21,9 @@ def call_tool(tool: str, args: dict | str | None = None) -> dict:
 	2. **Plugin auth** (``jarvis-openclaw-plugin`` Path A): two custom headers
 	   are presented together:
 
-	   - ``X-Jarvis-Token`` — the shared ``agent_token`` secret
+	   - ``X-Jarvis-Token`` - the shared ``agent_token`` secret
 	     (proves the request originated inside the openclaw container)
-	   - ``X-Jarvis-Session`` — the openclaw sessionKey for this conversation
+	   - ``X-Jarvis-Session`` - the openclaw sessionKey for this conversation
 
 	   The token is validated, then the user is resolved from
 	   ``Jarvis Chat Session`` (the row inserted at session-create time maps
@@ -34,7 +34,7 @@ def call_tool(tool: str, args: dict | str | None = None) -> dict:
 	``{ok: False, error: {code, message}}`` on tool-level error. Auth
 	failures are reported with the corresponding HTTP status code.
 	"""
-	# Plugin auth mode — detected by presence of X-Jarvis-Token header.
+	# Plugin auth mode - detected by presence of X-Jarvis-Token header.
 	if _get_header("X-Jarvis-Token"):
 		if not _validate_bearer():
 			frappe.local.response.http_status_code = 401
@@ -67,7 +67,7 @@ def call_tool(tool: str, args: dict | str | None = None) -> dict:
 
 		return _dispatch_from_session(plugin_user, session_key, tool, args)
 
-	# Standard Frappe auth path — Guest is rejected; everything else dispatches
+	# Standard Frappe auth path - Guest is rejected; everything else dispatches
 	# under the current Frappe session user.
 	if frappe.session.user == "Guest":
 		frappe.local.response.http_status_code = 401
@@ -196,7 +196,7 @@ def _parse_args(args: dict | str | None) -> dict:
 	# old MCP design used them as in-band identity carriers; Path A moved
 	# identity to HTTPS headers. If the LLM has been trained on the older
 	# convention it may emit these even though our tool schemas don't list
-	# them — dropping them silently keeps such calls dispatching cleanly.
+	# them - dropping them silently keeps such calls dispatching cleanly.
 	if isinstance(args, dict):
 		for legacy in ("_user", "_session", "_session_key"):
 			args.pop(legacy, None)

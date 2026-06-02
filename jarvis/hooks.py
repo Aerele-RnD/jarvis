@@ -18,18 +18,18 @@ app_license = "MIT"
 DEFAULT_ADMIN_URL = "https://admin.jarvis.aerele.in"
 
 # ---------------------------------------------------------------------------
-# OAuth client IDs — one per supported chat-subscription provider
+# OAuth client IDs - one per supported chat-subscription provider
 # ---------------------------------------------------------------------------
 # These are openclaw's hardcoded CLI client IDs. We use them (not Aerele-owned
 # PKCE clients) so the refresh tokens our device flow issues are compatible
-# with pi-ai's refresh path inside the container — openclaw's codex provider
+# with pi-ai's refresh path inside the container - openclaw's codex provider
 # refreshes against the same client_id we used to mint.
 #
 # Source:
 #   OpenAI: openclaw/extensions/openai/openai-codex-device-code.ts:5
 #   Google Gemini: bundled with @google/gemini-cli; override via env if it drifts.
 #
-# Anthropic Claude is deliberately absent — openclaw has no compatible
+# Anthropic Claude is deliberately absent - openclaw has no compatible
 # adapter for Claude Pro/Max subscriptions.
 def _env_or_default(name: str, default: str) -> str:
 	import os

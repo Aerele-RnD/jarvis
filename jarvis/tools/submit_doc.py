@@ -1,7 +1,7 @@
 """Submit a Frappe document.
 
 The third mutating tool. ``submit`` is qualitatively bigger than
-``update`` / ``create`` — it moves the doc from Draft (docstatus=0) to
+``update`` / ``create`` - it moves the doc from Draft (docstatus=0) to
 Submitted (docstatus=1), which triggers the DocType's ``on_submit``
 hooks. For ERPNext that's where the real-world side effects live:
 
@@ -10,21 +10,21 @@ hooks. For ERPNext that's where the real-world side effects live:
 - Payment Entry → moves money on the books
 - Sales Order / Purchase Order → reserves stock, opens fulfilment
 
-Submitted documents are generally **immutable** — changes require
+Submitted documents are generally **immutable** - changes require
 cancellation (which creates reversal entries, leaving an audit trail
 rather than a clean undo). The persona must emphasise that ``submit_doc``
 is one of the consequential actions and demand explicit confirmation.
 
 Safety bounds:
 
-- DocType must be submittable (``meta.is_submittable``) — otherwise
+- DocType must be submittable (``meta.is_submittable``) - otherwise
   ``submit`` is a no-op concept on that DocType and we refuse with a
   clear error instead of a confusing Frappe traceback.
 - Calling user must have ``submit`` permission on the record (record-level
   via ``frappe.has_permission(doctype, ptype="submit", doc=name)``).
 - Doc must be in Draft state (``docstatus == 0``). Already-submitted and
   cancelled docs are refused.
-- ``doc.submit()`` re-runs validate() — DocType business rules still apply,
+- ``doc.submit()`` re-runs validate() - DocType business rules still apply,
   and a missing required field or broken link will reject the submission.
 """
 
@@ -52,7 +52,7 @@ def submit_doc(doctype: str, name: str) -> dict:
     meta = frappe.get_meta(doctype)
     if not meta.is_submittable:
         raise InvalidArgumentError(
-            f"{doctype} is not submittable — submit only applies to "
+            f"{doctype} is not submittable - submit only applies to "
             f"docstatus-tracked DocTypes"
         )
 

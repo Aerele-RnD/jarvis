@@ -1,4 +1,4 @@
-"""Tests for jarvis.tools.create_doc — second mutating tool.
+"""Tests for jarvis.tools.create_doc - second mutating tool.
 
 Uses ``Note`` as the fixture DocType (same reasoning as test_update_doc):
 exists on every Frappe site, simple writeable fields, no side effects on
@@ -45,7 +45,7 @@ class TestCreateDocValidation(FrappeTestCase):
 
 	def test_rejects_protected_system_fields(self):
 		"""`owner`, `creation`, `docstatus`, etc. are Frappe-managed.
-		`name` is intentionally NOT protected — autoname=prompt DocTypes
+		`name` is intentionally NOT protected - autoname=prompt DocTypes
 		need it."""
 		for protected in ["owner", "creation", "modified", "doctype", "docstatus", "parent"]:
 			with self.assertRaises(InvalidArgumentError, msg=f"should reject {protected}"):
@@ -55,7 +55,7 @@ class TestCreateDocValidation(FrappeTestCase):
 				)
 
 	def test_does_not_reject_name(self):
-		"""autoname=prompt DocTypes pass `name` in values — don't refuse it
+		"""autoname=prompt DocTypes pass `name` in values - don't refuse it
 		at the validation layer. (Note doesn't use prompt-autoname, so this
 		ends up auto-generated, but the validation must not throw.)"""
 		def fake_perm(*a, **kw):
@@ -95,7 +95,7 @@ class TestCreateDocPermissions(FrappeTestCase):
 				)
 
 	def test_checks_create_ptype_at_doctype_level(self):
-		"""Unlike update_doc, create has no record yet — perm check is
+		"""Unlike update_doc, create has no record yet - perm check is
 		DocType-level only (no doc= arg)."""
 		called_with = {}
 
@@ -117,7 +117,7 @@ class TestCreateDocPermissions(FrappeTestCase):
 
 		self.assertEqual(called_with["doctype"], NOTE_DT)
 		self.assertEqual(called_with["ptype"], "create")
-		# Record-level doc arg is NOT passed — record doesn't exist yet
+		# Record-level doc arg is NOT passed - record doesn't exist yet
 		self.assertIsNone(called_with["doc"])
 
 
@@ -146,7 +146,7 @@ class TestCreateDocHappyPath(FrappeTestCase):
 
 	def test_validate_hooks_still_fire(self):
 		"""Required fields enforced by the DocType's validate() must still
-		reject — we don't bypass DocType rules."""
+		reject - we don't bypass DocType rules."""
 		# Note has no required fields by default, so we can't easily test
 		# a validate failure without a fixture DocType. Just confirm that
 		# doc.insert() is what we call (it's the validate path).

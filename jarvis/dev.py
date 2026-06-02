@@ -4,7 +4,7 @@ Gated by ``frappe.conf.developer_mode`` + the System Manager role. Used by
 the Jarvis Settings form to wipe local state so the operator can run the
 onboarding wizard fresh without manual DB surgery.
 
-Companion to ``jarvis_admin.api.dev.purge_customer`` on the admin side —
+Companion to ``jarvis_admin.api.dev.purge_customer`` on the admin side -
 the admin button wipes admin-side records; this clears the customer bench.
 """
 
@@ -78,9 +78,9 @@ def reset_onboarding() -> dict:
 	  - enabled, token_budget_monthly
 	  - sampling: llm_temperature, llm_max_output_tokens
 	  - llm_provider (reset to the doctype default "Anthropic" so the form
-	    stays valid — it's a Select field, can't be blank)
+	    stays valid - it's a Select field, can't be blank)
 
-	Does NOT call the admin-side purge — use
+	Does NOT call the admin-side purge - use
 	``jarvis_admin.api.dev.purge_customer`` on admin for that. Both buttons
 	together give a clean two-step reset; this one alone is enough when the
 	admin record was already removed or never created.
@@ -91,7 +91,7 @@ def reset_onboarding() -> dict:
 		s.db_set(field, "")
 		if field in _PASSWORD_FIELDS:
 			remove_encrypted_password(SETTINGS, SETTINGS, field)
-	# Select field — must hold a valid option; reset to default.
+	# Select field - must hold a valid option; reset to default.
 	s.db_set("llm_provider", "Anthropic")
 	frappe.db.commit()
 	return {"ok": True, "data": {"cleared_fields": list(_RESET_CLEAR_FIELDS) + ["llm_provider"]}}

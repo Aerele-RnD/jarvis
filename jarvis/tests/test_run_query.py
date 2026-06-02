@@ -1,4 +1,4 @@
-"""Tests for jarvis.tools.run_query — read-only SQL with safety bounds."""
+"""Tests for jarvis.tools.run_query - read-only SQL with safety bounds."""
 
 from unittest.mock import patch
 
@@ -10,7 +10,7 @@ from jarvis.tools.run_query import run_query
 
 
 class TestRunQueryValidation(FrappeTestCase):
-	"""The defensive validation layer — failures should never reach
+	"""The defensive validation layer - failures should never reach
 	``frappe.db.sql``. Each test asserts on the *type* of rejection, not the
 	wording of the message, so the error copy can evolve.
 	"""
@@ -89,7 +89,7 @@ class TestRunQueryPermissions(FrappeTestCase):
 			return True
 
 		with patch("frappe.has_permission", side_effect=fake_has_perm):
-			# Patch sql so we don't actually execute the SELECT — only care
+			# Patch sql so we don't actually execute the SELECT - only care
 			# about the perm-check side effect.
 			with patch("frappe.db.sql", return_value=[]):
 				run_query(
@@ -102,7 +102,7 @@ class TestRunQueryPermissions(FrappeTestCase):
 
 
 class TestRunQueryLimitInjection(FrappeTestCase):
-	"""LIMIT is the only bound on result size — it must always be present
+	"""LIMIT is the only bound on result size - it must always be present
 	and never exceed the cap. Test the rewriter, not the SQL execution.
 	"""
 
@@ -169,7 +169,7 @@ class TestRunQueryHappyPath(FrappeTestCase):
 
 	def test_rejects_query_returning_unnamed_columns(self):
 		# Without a column alias on the count() expression, frappe.db.sql
-		# returns the column under a generated name — we accept that.
+		# returns the column under a generated name - we accept that.
 		# This test is here as documentation: as_dict=True does give us
 		# names back, so the validation in the code is defensive only.
 		result = run_query("SELECT COUNT(*) AS n FROM tabDocType", limit=1)

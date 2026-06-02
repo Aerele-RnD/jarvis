@@ -37,7 +37,7 @@ function ensureCurrentTurnGroup($list) {
 	// assistant even when the assistant placeholder DOM-ed in first).
 	let $turn = $list.find(".jarvis-turn").last();
 	if (!$turn.length) {
-		// Realtime event arrived before any turn was rendered — fall back to
+		// Realtime event arrived before any turn was rendered - fall back to
 		// a top-level group. The next loadConversation() will reorganize.
 		$turn = $('<div class="jarvis-turn jarvis-turn-orphan"></div>');
 		$list.append($turn);
@@ -137,7 +137,7 @@ export function attachRealtime({ $list, $thinking, scrollToBottom, loadConversat
 					$el.attr("data-msg", payload.tool_message_id);
 					updateToolGroupCount($el.closest(".jarvis-tool-group"));
 				} else {
-					// No matching openclaw row — first-render path (e.g.
+					// No matching openclaw row - first-render path (e.g.
 					// call_tool dispatched outside an openclaw turn).
 					const $group = ensureCurrentTurnGroup($list);
 					$group.find(".jarvis-tool-group-body").append(

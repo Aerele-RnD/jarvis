@@ -1,4 +1,4 @@
-"""Tests for jarvis.tools.update_doc — the first mutating tool.
+"""Tests for jarvis.tools.update_doc - the first mutating tool.
 
 Uses ``Note`` as the fixture DocType because it exists on every Frappe
 site, has simple writeable fields, and modifying test rows can't break
@@ -55,7 +55,7 @@ class TestUpdateDocValidation(FrappeTestCase):
 			update_doc(doctype=NOTE_DT, name="anything", changes="not a dict")
 
 	def test_rejects_protected_system_fields(self):
-		"""Writing `name`, `owner`, `creation`, etc. is refused outright —
+		"""Writing `name`, `owner`, `creation`, etc. is refused outright -
 		Frappe maintains these and an LLM shouldn't be touching them."""
 		for protected in ["name", "owner", "creation", "modified", "doctype", "docstatus", "idx"]:
 			with self.assertRaises(InvalidArgumentError, msg=f"should reject {protected}"):
@@ -143,7 +143,7 @@ class TestUpdateDocHappyPath(FrappeTestCase):
 
 	def test_returns_full_saved_doc(self):
 		"""Caller (the agent) needs the post-save state so it can confirm
-		what happened — include all fields, not just the changed ones."""
+		what happened - include all fields, not just the changed ones."""
 		result = update_doc(
 			doctype=NOTE_DT,
 			name=self.note,

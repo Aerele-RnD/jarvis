@@ -1,4 +1,4 @@
-"""Tests for jarvis.chat.device — chat keypair + pairing + v3 signing.
+"""Tests for jarvis.chat.device - chat keypair + pairing + v3 signing.
 
 Two surface areas to cover:
 1. ensure_paired: generates a keypair if missing, calls admin to register the
@@ -6,7 +6,7 @@ Two surface areas to cover:
    present; surfaces admin failures as OpenclawUnreachableError without
    half-persisting a broken state.
 2. build_payload_v3 / sign_payload: the byte-exact mirror of openclaw's
-   device-auth.ts:36 — if openclaw rev-bumps the format, this is the test
+   device-auth.ts:36 - if openclaw rev-bumps the format, this is the test
    that catches it before chat goes live.
 """
 
@@ -88,7 +88,7 @@ class TestEnsurePaired(_SettingsSnapshotMixin, FrappeTestCase):
 		self.assertEqual(creds.device_token, "tok-from-admin")
 		self.assertEqual(creds.public_key, captured["public_key"])
 		self.assertEqual(creds.device_id, captured["device_id"])
-		# deviceId must match sha256(rawPublicKey) — same invariant openclaw enforces.
+		# deviceId must match sha256(rawPublicKey) - same invariant openclaw enforces.
 		raw = base64.urlsafe_b64decode(captured["public_key"] + "=" * (-len(captured["public_key"]) % 4))
 		self.assertEqual(creds.device_id, hashlib.sha256(raw).hexdigest())
 		# Persisted in Settings.
@@ -137,7 +137,7 @@ class TestEnsurePaired(_SettingsSnapshotMixin, FrappeTestCase):
 
 	def test_partial_state_triggers_repair(self):
 		"""If only some fields are set, treat the whole pairing as missing
-		so the next call re-pairs atomically — protects against half-failed
+		so the next call re-pairs atomically - protects against half-failed
 		writes from a previous deploy/migration."""
 		s = frappe.get_single("Jarvis Settings")
 		s.db_set("chat_device_id", "abc")

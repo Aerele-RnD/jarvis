@@ -1,7 +1,7 @@
-"""Openclaw gateway client — direct WebSocket with device-paired auth.
+"""Openclaw gateway client - direct WebSocket with device-paired auth.
 
 Previously this module shelled out to `docker compose exec ... node -e <script>`
-so the WS connection would appear as loopback inside the container — openclaw
+so the WS connection would appear as loopback inside the container - openclaw
 strips self-declared `operator.write` scopes from non-loopback token-only
 clients, and the chat worker needed write scope for sessions.create.
 
@@ -10,7 +10,7 @@ a device once (via jarvis.chat.device.ensure_paired → admin → fleet-agent),
 and present an Ed25519-signed v3 device-auth envelope at every connect.
 openclaw verifies the signature against the registered public key, grants
 the requested scopes, and the rest of the protocol (sessions.create, agent,
-event streaming) is identical to what the Node script used to do — only the
+event streaming) is identical to what the Node script used to do - only the
 transport changed from subprocess-pipes to direct WS frames.
 
 The public surface (OpenclawSession.connect / create_session /
@@ -52,7 +52,7 @@ _PLATFORM = "linux"  # informational; only affects the v3 signature payload
 # because admin re-provisioned the tenant and the new container has no record
 # of this deviceId). In those cases we wipe + re-pair once. Other rejection
 # reasons (signature-invalid, scope-mismatch) are programming bugs and must
-# NOT trigger a retry — that'd hide the bug behind silent re-pair attempts.
+# NOT trigger a retry - that'd hide the bug behind silent re-pair attempts.
 _STALE_PAIRING_MARKERS = (
 	"device-not-paired",
 	"token-mismatch",
@@ -75,7 +75,7 @@ class OpenclawSession:
 	  session.stream_agent_turn(session_key, message, idem) -> iter of parsed events
 	  session.close()
 
-	The gateway_token arg is kept for call-site compatibility but unused —
+	The gateway_token arg is kept for call-site compatibility but unused -
 	device pairing supersedes the shared bearer token. The chat device's
 	deviceToken from `jarvis.chat.device.ensure_paired()` is the credential.
 	"""
@@ -96,7 +96,7 @@ class OpenclawSession:
 		# Two-shot self-heal for tenant re-provisioning: on the first attempt
 		# we use whatever paired creds the customer has; if openclaw rejects
 		# with a "your pairing is stale" marker (typical when admin replaced
-		# the container under us — new container has empty pairing state),
+		# the container under us - new container has empty pairing state),
 		# we wipe + re-pair once and try again. A second stale signal is a
 		# real failure, not a retry candidate.
 		return cls._attempt_connect(gateway_url, allow_repair=True)
@@ -160,7 +160,7 @@ class OpenclawSession:
 
 		Yields the same parsed-event shape the worker used to consume from
 		the subprocess. Raises OpenclawUnreachableError on WS drop, agent
-		errors, or timeout — all the failure modes worker.py already maps to
+		errors, or timeout - all the failure modes worker.py already maps to
 		assistant-message error rows."""
 		params = {
 			"message": message,
@@ -297,7 +297,7 @@ class OpenclawSession:
 	def _request(self, method: str, params: dict, *, timeout_s: float) -> dict:
 		"""Send a request and wait for the matching response frame.
 
-		Drops out-of-order event frames silently — the caller is RPC-style
+		Drops out-of-order event frames silently - the caller is RPC-style
 		and doesn't need them. stream_agent_turn handles its own framing."""
 		req_id = self._send(method, params)
 		deadline = time.monotonic() + timeout_s

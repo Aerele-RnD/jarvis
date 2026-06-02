@@ -1,4 +1,4 @@
-"""Amend a cancelled Frappe document — the lifecycle's only true "undo".
+"""Amend a cancelled Frappe document - the lifecycle's only true "undo".
 
 Amendment is Frappe's mechanism for editing a Submitted record AFTER it
 has been Cancelled. It does NOT modify the Cancelled row; it creates a
@@ -17,7 +17,7 @@ Safety bounds:
 - DocType must be submittable.
 - Calling user must have **amend** permission on the source record
   (``frappe.has_permission(doctype, ptype="amend", doc=name)``). Plus
-  the implicit ``create`` perm on the DocType — Frappe's
+  the implicit ``create`` perm on the DocType - Frappe's
   ``copy_doc().insert()`` checks that for us.
 - Source doc must be Cancelled (``docstatus == 2``). Draft and Submitted
   refuse with state-aware messages.
@@ -55,7 +55,7 @@ def amend_doc(doctype: str, name: str) -> dict:
     meta = frappe.get_meta(doctype)
     if not meta.is_submittable:
         raise InvalidArgumentError(
-            f"{doctype} is not submittable — amendment only applies to "
+            f"{doctype} is not submittable - amendment only applies to "
             f"docstatus-tracked DocTypes"
         )
 

@@ -18,7 +18,7 @@ def _field_record(f) -> dict:
 def get_schema(doctype: str) -> dict:
 	"""Return meta for a DocType: name and field list.
 
-	Child tables are expanded inline — each Table / Table MultiSelect field carries
+	Child tables are expanded inline - each Table / Table MultiSelect field carries
 	a `child_fields` list with the schema of the linked child DocType, so the agent
 	gets the full hierarchy in one call. Frappe doesn't allow nested tables, so
 	expansion depth is bounded at 1.

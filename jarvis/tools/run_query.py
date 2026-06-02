@@ -1,7 +1,7 @@
 """Read-only SQL select against Frappe DocType tables.
 
-For complex requests the LLM struggles to express through ``get_list`` —
-joins, aggregations, group-by, cross-DocType analytics — this tool lets the
+For complex requests the LLM struggles to express through ``get_list`` -
+joins, aggregations, group-by, cross-DocType analytics - this tool lets the
 agent compose a SELECT and execute it. Safety is enforced through query
 parsing, not just trust:
 
@@ -32,7 +32,7 @@ from jarvis.exceptions import InvalidArgumentError, PermissionDeniedError
 MAX_LIMIT = 1000
 DEFAULT_LIMIT = 100
 
-# Identifiers we refuse outright in any token stream — covers single-line
+# Identifiers we refuse outright in any token stream - covers single-line
 # comments (--), block comments (/* */), and forbidden statement types that
 # might slip past sqlparse's get_type() in edge cases (subqueries, CTEs).
 _FORBIDDEN_TOKENS = {
@@ -119,7 +119,7 @@ def _parse_single_select(query: str):
 
 def _reject_forbidden_keywords(stmt) -> None:
 	"""Walk the token stream and refuse known dangerous keywords. sqlparse's
-	``get_type()`` only inspects the leading keyword — a SELECT containing a
+	``get_type()`` only inspects the leading keyword - a SELECT containing a
 	subquery DELETE would slip past."""
 	for token in stmt.flatten():
 		if token.ttype in (DDL, DML):
@@ -181,5 +181,5 @@ def _enforce_limit(query: str, limit: int) -> str:
 
 # sqlparse imports above are intentionally module-level so we fail fast on
 # missing dep at import time (Frappe ships with sqlparse, so this should
-# always be present — but the import is the contract).
+# always be present - but the import is the contract).
 _ = IdentifierList, Identifier  # silence "unused import" when reading

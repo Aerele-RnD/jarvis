@@ -1,4 +1,4 @@
-"""Tests for jarvis.dev — the customer-side reset_onboarding endpoint."""
+"""Tests for jarvis.dev - the customer-side reset_onboarding endpoint."""
 
 import frappe
 from frappe.tests.utils import FrappeTestCase

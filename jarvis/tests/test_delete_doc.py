@@ -1,4 +1,4 @@
-"""Tests for jarvis.tools.delete_doc — the destructive tool.
+"""Tests for jarvis.tools.delete_doc - the destructive tool.
 
 End-to-end uses ``Note`` as the fixture DocType (same as create/update):
 delete on Note works without side effects, and we get to exercise the

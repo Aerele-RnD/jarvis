@@ -222,7 +222,7 @@ class TestCompletePasteSigninFlow(_OAuthApiBase):
 	@patch("jarvis.oauth.api._exchange_code",
 	       side_effect=Exception("provider 400"))
 	def test_token_exchange_failure_returns_error(self, _):
-		"""Generic exception path — actual TokenExchangeError covered by
+		"""Generic exception path - actual TokenExchangeError covered by
 		the inner _exchange_code function's own tests. Here we just check
 		that the endpoint surfaces the failure cleanly."""
 		from jarvis.oauth import api as oa

@@ -37,11 +37,11 @@ class AdminAuthError(JarvisError):
 class AdminValidationError(JarvisError):
 	"""jarvis_admin raised a Frappe ValidationError (or similar user-input
 	error) inside a whitelisted endpoint. Carries the clean operator-facing
-	message — never the traceback dump."""
+	message - never the traceback dump."""
 
 
 class AdminRateLimitedError(JarvisError):
-	"""jarvis_admin returned HTTP 429 — caller should back off and retry later.
+	"""jarvis_admin returned HTTP 429 - caller should back off and retry later.
 
 	``retry_after_seconds`` carries the body's hint when the admin provides
 	one (0 if absent)."""

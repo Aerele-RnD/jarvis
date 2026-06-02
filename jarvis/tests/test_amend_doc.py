@@ -1,4 +1,4 @@
-"""Tests for jarvis.tools.amend_doc — closes the mutation lifecycle.
+"""Tests for jarvis.tools.amend_doc - closes the mutation lifecycle.
 
 Mock-heavy like submit/cancel: ``frappe.copy_doc`` and the ``amended_from``
 machinery are Frappe-owned. We verify our orchestration:

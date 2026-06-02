@@ -1,4 +1,4 @@
-"""Onboarding — store the admin token + container connection into Jarvis
+"""Onboarding - store the admin token + container connection into Jarvis
 Settings, and thin server wrappers the onboarding page calls (so the browser
 never holds admin creds). admin_client returns already-unwrapped admin data."""
 
@@ -93,7 +93,7 @@ def save_llm_creds(provider: str, model: str, api_key: str = "",
 	agent is fully ready.
 
 	REV-1: ``auth_mode="oauth"`` lets the OAuth poll-success path save
-	without requiring an api_key — credentials live in the container's
+	without requiring an api_key - credentials live in the container's
 	auth-profiles.json (pushed via the separate push_oauth_blob path)."""
 	if not provider or not model:
 		raise frappe.ValidationError("provider and model are required")

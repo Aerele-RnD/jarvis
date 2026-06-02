@@ -42,7 +42,7 @@ class TestCallToolPluginAuth(FrappeTestCase):
 
 	(The earlier shape required an X-Jarvis-User header which the plugin
 	resolved via a separate HTTPS call. That round-trip was removed
-	2026-05-18 — Frappe owns the session→user mapping, so it looks the
+	2026-05-18 - Frappe owns the session→user mapping, so it looks the
 	user up itself. See architecture.md ‘Path A v2'.)
 	"""
 
@@ -53,7 +53,7 @@ class TestCallToolPluginAuth(FrappeTestCase):
 		super().setUpClass()
 		settings = frappe.get_single("Jarvis Settings")
 		# Use a dedicated token for plugin-auth tests so we don't depend on
-		# real openclaw config. db_set bypasses on_update — the value persists
+		# real openclaw config. db_set bypasses on_update - the value persists
 		# only for this test class.
 		cls._original_token = settings.get_password("agent_token", raise_exception=False) or ""
 		settings.db_set("agent_token", "plugin-auth-test-token")
@@ -125,7 +125,7 @@ class TestCallToolPluginAuth(FrappeTestCase):
 		self.assertIn("unknown session", result["error"]["message"])
 
 	def test_session_user_restored_after_dispatch(self):
-		"""set_user is wrapped in try/finally — the calling user is preserved."""
+		"""set_user is wrapped in try/finally - the calling user is preserved."""
 		original = frappe.session.user
 		with self._with_headers({
 			"X-Jarvis-Token": "plugin-auth-test-token",

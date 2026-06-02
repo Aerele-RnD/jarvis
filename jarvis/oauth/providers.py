@@ -21,7 +21,7 @@ _PROVIDER_OAUTH_MAP: dict[str, dict] = {
 		"userinfo":  "https://api.openai.com/v1/userinfo",
 		"scope":     "openid profile email offline_access api.connectors.read api.connectors.invoke",
 		"openclaw_provider": "openai-codex",
-		# codex-cli-specific authorize params — auth.openai.com returns a
+		# codex-cli-specific authorize params - auth.openai.com returns a
 		# generic "unknown_error" page mid-flow without these.
 		"extra_authorize_params": {
 			"id_token_add_organizations": "true",
@@ -32,7 +32,7 @@ _PROVIDER_OAUTH_MAP: dict[str, dict] = {
 	"Google Gemini": {
 		"authorize": "https://accounts.google.com/o/oauth2/v2/auth",
 		"token":     "https://oauth2.googleapis.com/token",
-		# Gemini's id_token carries the email claim — no separate userinfo.
+		# Gemini's id_token carries the email claim - no separate userinfo.
 		"userinfo":  None,
 		"scope":     "openid email profile https://www.googleapis.com/auth/generative-language",
 		"openclaw_provider": "google-gemini-cli",

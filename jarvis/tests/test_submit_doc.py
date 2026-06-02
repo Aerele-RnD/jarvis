@@ -1,4 +1,4 @@
-"""Tests for jarvis.tools.submit_doc — third mutating tool.
+"""Tests for jarvis.tools.submit_doc - third mutating tool.
 
 Most of these are mock-based because submit's side effects (ledger
 postings, stock moves, etc.) live in DocType ``on_submit`` hooks owned

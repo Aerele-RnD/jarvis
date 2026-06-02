@@ -12,7 +12,7 @@ from frappe.model.document import Document
 
 
 class JarvisChatSession(Document):
-    # Minimal controller — all validation is handled by field constraints.
+    # Minimal controller - all validation is handled by field constraints.
     # session_key is unique+mandatory; user is a mandatory Link to User.
 
     def before_insert(self):

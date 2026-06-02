@@ -10,9 +10,9 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 	// ---- state -------------------------------------------------------------
 	const state = {
 		step: 1, email: "", company: "", planName: null, plans: [], busy: false,
-		// step 4 inputs — API key path
+		// step 4 inputs - API key path
 		llmProvider: "Anthropic", llmModel: "", llmApiKey: "", llmBaseUrl: "",
-		// step 4 inputs — chat subscription path (REV-3 paste-back)
+		// step 4 inputs - chat subscription path (REV-3 paste-back)
 		authMode: "api_key", // "api_key" | "subscription"
 		subProvider: "OpenAI",
 		subModel: "gpt-4o",
@@ -24,8 +24,8 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 	};
 
 	// Providers + models for chat-subscription. Mirrors
-	// jarvis.oauth.providers — keep in sync.
-	// Subscription-tier model IDs — these go through codex/gemini-cli's
+	// jarvis.oauth.providers - keep in sync.
+	// Subscription-tier model IDs - these go through codex/gemini-cli's
 	// auth tunnel rather than the standard API, so the valid set is
 	// CLI-specific (not OpenAI/Google's public API model names).
 	// Verified live against ChatGPT-prolite + Gemini Advanced 2026-06-02.
@@ -59,10 +59,10 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		  <div class="jo-brand">
 		    <div class="jo-logo">✦</div>
 		    <div class="jo-brand-name">Jarvis</div>
-		    <div class="jo-brand-tag">Ask your ERP anything — in plain English.</div>
+		    <div class="jo-brand-tag">Ask your ERP anything - in plain English.</div>
 		    <ul class="jo-props">
 		      <li><span class="jo-tick">✓</span> Permission-aware answers over <b>your own</b> data</li>
-		      <li><span class="jo-tick">✓</span> Reads schemas, docs, lists &amp; reports — and acts, with approval</li>
+		      <li><span class="jo-tick">✓</span> Reads schemas, docs, lists &amp; reports - and acts, with approval</li>
 		      <li><span class="jo-tick">✓</span> Your data stays on your bench; the AI runs in a managed container</li>
 		      <li><span class="jo-tick">✓</span> Set up in under a minute</li>
 		    </ul>
@@ -172,7 +172,7 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		}).join("");
 		$body.html(`
 			<h2 class="jo-h">Choose your plan</h2>
-			<p class="jo-sub">Pay as you go — no auto-renewal. Extend anytime.</p>
+			<p class="jo-sub">Pay as you go - no auto-renewal. Extend anytime.</p>
 			<div class="jo-plans">${cards}</div>
 			<div class="jo-actions jo-actions-split">
 			  <button class="jo-btn jo-btn-ghost" id="jo-back">← Back</button>
@@ -198,7 +198,7 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 			  <div class="jo-row"><span>Plan</span><b>${esc(p.plan_name || "")}</b></div>
 			  <div class="jo-row jo-row-total"><span>Due now</span><b>${inr(p.price_inr)}<span class="jo-plan-cycle">${cycleLabel(p.billing_cycle)}</span></b></div>
 			</div>
-			${dev ? `<div class="jo-devnote">Developer mode — payment is skipped (dev signup).</div>` : ""}
+			${dev ? `<div class="jo-devnote">Developer mode - payment is skipped (dev signup).</div>` : ""}
 			<div class="jo-err" id="jo-pay-err"></div>
 			<div class="jo-actions jo-actions-split">
 			  <button class="jo-btn jo-btn-ghost" id="jo-back">← Back</button>
@@ -231,7 +231,7 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 			$body.html(`
 				<h2 class="jo-h">Connect your AI</h2>
 				<p class="jo-sub">Sign in once with your existing ChatGPT Plus or Gemini Advanced
-				   account — no API key, no extra cost. Jarvis will use your subscription quota.</p>
+				   account - no API key, no extra cost. Jarvis will use your subscription quota.</p>
 				${authModeHtml}
 				${renderSubscriptionPanel()}
 				<div class="jo-err" id="jo-llm-err"></div>`);
@@ -307,11 +307,11 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 	}
 
 	function renderSubscriptionPanel() {
-		// Screen 2 — authorize URL shown, awaiting paste-back
+		// Screen 2 - authorize URL shown, awaiting paste-back
 		if (state.subAuthorizeUrl) {
 			const minsLeft = Math.max(0, Math.floor((state.subExpiresAt - Date.now()) / 60000));
 			return `
-				<p class="jo-hint" style="margin-bottom:14px"><strong>Step 1</strong> — Sign in with your ${esc(state.subProvider)} account in a new tab.</p>
+				<p class="jo-hint" style="margin-bottom:14px"><strong>Step 1</strong> - Sign in with your ${esc(state.subProvider)} account in a new tab.</p>
 				<div class="jo-actions" style="margin-bottom:10px">
 				  <button class="jo-btn jo-btn-primary" id="jo-sub-open-url">Open Sign-in URL →</button>
 				</div>
@@ -319,7 +319,7 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 				  <code class="jo-url-text" id="jo-sub-url-text" title="${esc(state.subAuthorizeUrl)}">${esc(state.subAuthorizeUrl)}</code>
 				  <button type="button" class="jo-btn jo-btn-ghost jo-btn-small" id="jo-sub-copy-url" title="Copy URL">Copy</button>
 				</div>
-				<p class="jo-hint"><strong>Step 2</strong> — After clicking Authorize, your browser will show a page saying <em>"This site can't be reached."</em> <strong>That's expected.</strong> Copy the URL from your browser's address bar (it'll start with <code>http://localhost:1455/auth/callback?code=…</code>) and paste it here:</p>
+				<p class="jo-hint"><strong>Step 2</strong> - After clicking Authorize, your browser will show a page saying <em>"This site can't be reached."</em> <strong>That's expected.</strong> Copy the URL from your browser's address bar (it'll start with <code>http://localhost:1455/auth/callback?code=…</code>) and paste it here:</p>
 				<div class="jo-field">
 				  <textarea class="jo-input" id="jo-sub-pasted-url" rows="3" placeholder="Paste the URL from the error page here"></textarea>
 				</div>
@@ -329,7 +329,7 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 				</div>
 				<div class="jo-hint" style="margin-top:14px;font-size:12px">Link valid for ~${minsLeft} minute${minsLeft === 1 ? "" : "s"}.</div>`;
 		}
-		// Screen 1 — provider + model picker (not yet started)
+		// Screen 1 - provider + model picker (not yet started)
 		const provOptions = Object.keys(SUBSCRIPTION_MODELS).map(
 			(p) => `<option value="${esc(p)}" ${p === state.subProvider ? "selected" : ""}>${esc(p)}</option>`
 		).join("");
@@ -482,11 +482,11 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		const syncSkippedNoCreds = !sync;  // came in via "Skip for now"
 		let agentLine;
 		if (!url) {
-			agentLine = "Your container is being prepared — it'll be ready shortly.";
+			agentLine = "Your container is being prepared - it'll be ready shortly.";
 		} else if (syncOk) {
 			agentLine = "Your agent is ready.";
 		} else if (syncSkippedNoCreds) {
-			agentLine = "Your agent is ready — finish connecting your AI in Jarvis Settings to start chatting.";
+			agentLine = "Your agent is ready - finish connecting your AI in Jarvis Settings to start chatting.";
 		} else {
 			agentLine = `Your agent is set up, but the AI connection didn't sync just now (<i>${esc(sync)}</i>). Open Jarvis Settings → Force Resync to retry.`;
 		}

@@ -7,13 +7,13 @@ Safety bounds (same shape as update_doc, adapted for create):
 
 - Calling user must have ``create`` permission on the target DocType
   (``frappe.has_permission(doctype, ptype="create")``). Record-level
-  perms don't apply yet — no record exists.
+  perms don't apply yet - no record exists.
 - System fields are refused: ``owner``, ``creation``, ``modified``,
   ``modified_by``, ``doctype``, ``docstatus``, ``idx``, ``parent``,
   ``parentfield``, ``parenttype``. ``name`` is **allowed** so DocTypes
-  with autoname=prompt / field-derived autoname work — Frappe's autoname
+  with autoname=prompt / field-derived autoname work - Frappe's autoname
   machinery decides whether to honour it.
-- Empty ``values`` dict is refused — agents shouldn't create blank rows.
+- Empty ``values`` dict is refused - agents shouldn't create blank rows.
 - The DocType's validate() and on_insert() hooks fire via ``doc.insert()``,
   so required fields, link integrity, and business rules apply.
 """

@@ -7,7 +7,7 @@ and closes. No secrets.reload, no restart.
 
 In production the WS endpoint is the customer's `agent_url`
 (`wss://<slug>.jarvis.aerele.in`), which the bench can reach directly
-without going through admin. In local-dev the same code paths apply —
+without going through admin. In local-dev the same code paths apply -
 the WS happens to terminate on a local container, but the bench's role
 is the same.
 """

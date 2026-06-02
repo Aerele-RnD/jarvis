@@ -9,7 +9,7 @@ LLM_FIELDS_TRIGGERING_SYNC = (
 )
 
 
-# Subscription-mode auth modes — the container owns credentials, so the
+# Subscription-mode auth modes - the container owns credentials, so the
 # bench's classifier treats a save with no structural change as a no-op.
 # We accept both "oauth" (REV-1 canonical) and the legacy "subscription"
 # value migrated tenants might still carry.
@@ -27,7 +27,7 @@ class JarvisSettings(Document):
             old_key = (getattr(old, "llm_api_key", None) or "") if old else ""
             self.flags.llm_api_key_changed = current_key != old_key
 
-        # Plain Select field — direct change comparison via has_value_changed.
+        # Plain Select field - direct change comparison via has_value_changed.
         self.flags.llm_auth_mode_changed = bool(self.has_value_changed("llm_auth_mode"))
 
         self._validate_auth_mode_requirements()
@@ -36,7 +36,7 @@ class JarvisSettings(Document):
         """Each auth mode requires its own credential field.
 
         REV-1: oauth/subscription mode has no bench-side credential
-        requirement — openclaw owns the credential blob on the container.
+        requirement - openclaw owns the credential blob on the container.
         """
         def is_password_set(fieldname: str) -> bool:
             in_memory = getattr(self, fieldname, None) or ""
@@ -57,7 +57,7 @@ class JarvisSettings(Document):
         """Return the bytes to push to openclaw's llm.key.
 
         REV-1: only api_key mode pushes a secret. Oauth mode's credentials
-        live in the container's auth-profiles.json — pushed via the separate
+        live in the container's auth-profiles.json - pushed via the separate
         push_oauth_blob path, not through this resolver.
         """
         return self.get_password("llm_api_key", raise_exception=False) or ""
@@ -70,7 +70,7 @@ class JarvisSettings(Document):
         # through admin → fleet-agent → container. Local-dev runs admin +
         # fleet-agent on the same machine; there is no longer a bench-
         # local push shortcut. If admin isn't configured, _sync_via_admin
-        # fails with AdminAuthError — the right error for "this workspace
+        # fails with AdminAuthError - the right error for "this workspace
         # isn't set up; run bootstrap_host then dev_onboard."
         self._sync_via_admin(action)
 
@@ -81,7 +81,7 @@ class JarvisSettings(Document):
         - "reload" calls post_rotate_llm_secret (hot-rotate /secrets/llm.key
           for api-key rotation; no restart).
         - "restart" calls post_update_llm_creds (re-render openclaw.json
-          and restart container) — used for mode switches and
+          and restart container) - used for mode switches and
           provider/model/base_url changes.
         """
         from jarvis import admin_client
@@ -91,7 +91,7 @@ class JarvisSettings(Document):
                 result = admin_client.post_rotate_llm_secret(secret=secret) or {}
                 resolved_action = result.get("action", "reload")
             else:  # "restart"
-                # In oauth mode the api_key body is empty — container reads
+                # In oauth mode the api_key body is empty - container reads
                 # credentials from auth-profiles.json instead.
                 secret = self._resolve_llm_secret_for_push()
                 result = admin_client.post_update_llm_creds(
@@ -127,7 +127,7 @@ class JarvisSettings(Document):
         """Return one of: None | 'reload' | 'restart'.
 
         - None: no LLM field changed; no action needed (in oauth mode this
-          is the common case — openclaw owns refresh).
+          is the common case - openclaw owns refresh).
         - 'reload': api_key rotation only; hot-reload via rotate-secret.
         - 'restart': structural change (mode switch, provider/model/base_url).
         """
@@ -153,7 +153,7 @@ class JarvisSettings(Document):
         if structural_changed:
             return "restart"
 
-        # Credential-only rotations — api_key only in REV-1. OAuth tokens
+        # Credential-only rotations - api_key only in REV-1. OAuth tokens
         # are openclaw-owned and don't trip the classifier.
         if self.flags.get("llm_api_key_changed"):
             return "reload"

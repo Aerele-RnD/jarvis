@@ -20,7 +20,7 @@ def _set_token(value, secret="secret"):
 
 # Fields these tests write to. Snapshot in setUp, restore in tearDown so
 # tests run against a real site (e.g. jarvis.localhost) don't clobber the
-# operator's actual onboarded state — Frappe Singles aren't transactionally
+# operator's actual onboarded state - Frappe Singles aren't transactionally
 # rolled back between tests.
 _SNAPSHOTTED_FIELDS = (
 	"jarvis_admin_url", "jarvis_admin_api_key", "jarvis_admin_api_secret",
@@ -117,7 +117,7 @@ class TestSyncConnection(FrappeTestCase):
 
 	def test_write_connection_ignores_legacy_api_token(self):
 		"""If admin returns the old api_token key, write_connection should NOT
-		write it (no accidental cross-population — that field is gone now)."""
+		write it (no accidental cross-population - that field is gone now)."""
 		_set_token("")
 		onboarding.write_connection({"api_token": "legacy", "agent_url": "ws://h:1"})
 		s = frappe.get_single("Jarvis Settings")
@@ -128,7 +128,7 @@ class TestSyncConnection(FrappeTestCase):
 		"""Step 4 of onboarding: provider/model/api_key land in Jarvis Settings
 		and the save triggers the push pipeline (post-unification 2026-05-29:
 		always via admin; admin call mocked here, may AdminAuthError if no
-		api_key on settings — both paths set last_sync_status)."""
+		api_key on settings - both paths set last_sync_status)."""
 		_set_token("")
 		with patch("jarvis.admin_client.post_update_llm_creds",
 				   return_value={"action": "restart", "result": "ok"}):
@@ -152,7 +152,7 @@ class TestSyncConnection(FrappeTestCase):
 			onboarding.save_llm_creds(provider="Anthropic", model="m", api_key="")
 
 	def test_save_llm_creds_oauth_mode_allows_empty_api_key(self):
-		"""REV-1: auth_mode=oauth doesn't require api_key — credentials live in
+		"""REV-1: auth_mode=oauth doesn't require api_key - credentials live in
 		the container's auth-profiles.json (pushed separately)."""
 		_set_token("")
 		with patch("jarvis.admin_client.post_update_llm_creds",

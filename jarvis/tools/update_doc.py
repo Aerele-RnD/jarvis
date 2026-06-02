@@ -2,20 +2,20 @@
 
 This is the first **mutating** tool in Jarvis. Every guarantee that the
 read tools rely on (per-user permissions, no leakage, etc.) carries over
-to writes — Frappe's permission engine checks ``write`` on the target
+to writes - Frappe's permission engine checks ``write`` on the target
 DocType + record, not just ``read``.
 
 Safety bounds enforced here (on top of Frappe's standard validation):
 
 - Calling user must have ``write`` permission on the target record
   (``frappe.has_permission(doctype, ptype="write", doc=name)``)
-- A small allow-list of mutable fields is NOT used — Frappe itself
+- A small allow-list of mutable fields is NOT used - Frappe itself
   enforces field-level permissions and DocType-level read_only flags
 - System fields (``name``, ``owner``, ``creation``, ``modified``,
   ``modified_by``, ``doctype``, ``docstatus``, ``idx``, ``parent``,
-  ``parentfield``, ``parenttype``) are refused — they're maintained by
+  ``parentfield``, ``parenttype``) are refused - they're maintained by
   Frappe, not user-editable, and an LLM shouldn't be poking at them
-- ``docstatus`` changes are refused — submit/cancel/amend go through
+- ``docstatus`` changes are refused - submit/cancel/amend go through
   dedicated workflows (future tools), not raw field writes
 - Empty ``changes`` dict is refused so the agent doesn't accidentally
   call this with no-op intent

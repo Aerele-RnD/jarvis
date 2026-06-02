@@ -1,7 +1,7 @@
 """Tests for jarvis.chat.worker.run_agent_turn.
 
-Like test_chat_api, these run as the fixture user ``TEST_USER`` — never as
-Administrator — so the test suite cannot wipe real chat history when run
+Like test_chat_api, these run as the fixture user ``TEST_USER`` - never as
+Administrator - so the test suite cannot wipe real chat history when run
 against a dev site.
 """
 
@@ -198,7 +198,7 @@ class TestRunAgentTurnAugmentsMessage(FrappeTestCase):
 		# stream_agent_turn was called with (session_key, message_text, idem)
 		fake_sess.stream_agent_turn.assert_called_once()
 		_, kwargs = fake_sess.stream_agent_turn.call_args
-		# args may be either positional or keyword — handle both
+		# args may be either positional or keyword - handle both
 		positional = fake_sess.stream_agent_turn.call_args.args
 		message_sent = (
 			positional[1] if len(positional) >= 2
@@ -280,7 +280,7 @@ class TestRunAgentTurnModelResolution(FrappeTestCase):
 
 class TestRunAgentTurnApiKeyModeOmitsProvider(FrappeTestCase):
 	"""In api_key mode (not oauth), the worker should NOT thread the
-	provider param — there's no per-tenant codex provider to override
+	provider param - there's no per-tenant codex provider to override
 	to; api-key-mode customers have one provider registered."""
 
 	@classmethod

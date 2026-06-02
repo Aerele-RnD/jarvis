@@ -37,7 +37,7 @@ def _admin_url(settings) -> str:
 def signup(email: str, company_name: str, plan: str, coupon: str | None = None) -> dict:
 	"""Guest signup against admin. Returns admin's data dict
 	{api_key, api_secret, razorpay_key_id, razorpay_order_id, amount_inr}.
-	Both annual and monthly are one-shot orders (manual renew — no Razorpay subscription)."""
+	Both annual and monthly are one-shot orders (manual renew - no Razorpay subscription)."""
 	settings = frappe.get_single("Jarvis Settings")
 	body = {"email": email, "company_name": company_name, "plan": plan,
 			"frappe_site_url": frappe.utils.get_url()}
@@ -146,7 +146,7 @@ def post_push_oauth_blob(provider: str, blob: dict) -> dict:
 def post_subscription_disconnect() -> dict:
 	"""POST to admin to clear the customer's OAuth profile on the container.
 
-	Idempotent — a tenant in api_key mode is a no-op success.
+	Idempotent - a tenant in api_key mode is a no-op success.
 	"""
 	settings = frappe.get_single("Jarvis Settings")
 	return _post(
@@ -206,7 +206,7 @@ def _post(path: str, body: dict, admin_url: str,
 	"""Authenticated POST. Reads native api_key + api_secret from Jarvis
 	Settings. Raises AdminAuthError early if either is empty."""
 	settings = frappe.get_single("Jarvis Settings")
-	# Both are Password fields — attribute access would return the masked
+	# Both are Password fields - attribute access would return the masked
 	# "*****" placeholder Frappe stores in the row. get_password decrypts
 	# the real value out of __Auth.
 	api_key = (settings.get_password(

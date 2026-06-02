@@ -50,7 +50,7 @@ def cancel_doc(doctype: str, name: str) -> dict:
     meta = frappe.get_meta(doctype)
     if not meta.is_submittable:
         raise InvalidArgumentError(
-            f"{doctype} is not submittable — cancellation only applies to "
+            f"{doctype} is not submittable - cancellation only applies to "
             f"docstatus-tracked DocTypes"
         )
 
