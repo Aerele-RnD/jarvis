@@ -97,6 +97,7 @@ def get_conversation(conversation: str) -> dict:
 			"title": doc.title,
 			"status": doc.status,
 			"session_key": doc.session_key,
+			"model_override": doc.model_override or "",
 			"last_active_at": doc.last_active_at,
 		},
 		"messages": messages,
@@ -191,6 +192,25 @@ def send_message(conversation: str, message: str) -> dict:
 	)
 
 	return {"ok": True, "run_id": run_id, "message_id": msg_doc.name}
+
+
+@frappe.whitelist()
+def get_chat_ui_settings() -> dict:
+	"""Return the bench-side LLM settings the chat UI needs to render the
+	model picker (provider label, current default model, auth mode, and the
+	allowlist of subscription-mode models per provider).
+
+	Picker is shown only when auth_mode == "oauth" — api_key customers
+	register a single model at signup and there's no multi-model UI
+	for them yet (see spec § Out of scope).
+	"""
+	settings = frappe.get_single("Jarvis Settings")
+	return {
+		"llm_auth_mode": settings.llm_auth_mode or "api_key",
+		"llm_provider": settings.llm_provider or "",
+		"llm_model": settings.llm_model or "",
+		"subscription_models": _SUBSCRIPTION_MODELS,
+	}
 
 
 @frappe.whitelist()

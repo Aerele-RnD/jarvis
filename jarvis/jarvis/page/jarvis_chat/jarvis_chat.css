@@ -734,3 +734,44 @@
 	from { transform: rotate(0); }
 	to { transform: rotate(360deg); }
 }
+
+/* ---- Conversation toolbar (model picker) -------------------- */
+
+.jarvis-conv-toolbar {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 16px;
+	border-bottom: 1px solid var(--border-color);
+	background: var(--bg-color);
+}
+
+.jarvis-model-picker-label {
+	font-size: 11.5px;
+	letter-spacing: 0.4px;
+	font-weight: 600;
+	color: var(--text-muted);
+	text-transform: uppercase;
+	margin: 0;
+}
+
+.jarvis-model-picker {
+	font-size: 12.5px;
+	padding: 4px 24px 4px 10px;
+	border: 1px solid var(--border-color);
+	border-radius: 6px;
+	background: var(--card-bg, #fff);
+	color: var(--text-color);
+	cursor: pointer;
+	min-width: 180px;
+}
+
+.jarvis-model-picker:hover {
+	border-color: var(--text-muted);
+}
+
+.jarvis-model-picker:focus {
+	outline: none;
+	border-color: var(--jarvis-primary);
+	box-shadow: 0 0 0 2px var(--jarvis-primary-faint, rgba(0, 100, 200, 0.15));
+}

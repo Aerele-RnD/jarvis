@@ -86,6 +86,10 @@ export function init(wrapper) {
 		$welcome.show();
 		page.set_title(__("Jarvis Chat"));
 		syncUrl(null);
+		// No conversation open → hide the model picker.
+		state.current_conversation = null;
+		state.current_model_override = "";
+		refreshModelPickerVisibility?.();
 	}
 
 	// Reflect the active conversation in the URL so refresh / share / back
@@ -96,6 +100,74 @@ export function init(wrapper) {
 		if (window.location.pathname === target) return;
 		window.history.replaceState({}, "", target);
 	}
+
+	// ---- Model picker ---------------------------------------------------
+
+	const $convToolbar = root.find(".jarvis-conv-toolbar");
+	const $modelPicker = root.find(".jarvis-model-picker");
+
+	function rebuildModelPickerOptions() {
+		// Source of truth for "what models can the customer pick?" is the
+		// SUBSCRIPTION_MODELS map fetched on init. First option is "Default
+		// — <settings.llm_model>" which clears the override.
+		const allowed = (state.subscription_models || {})[state.llm_provider] || [];
+		const defaultLabel =
+			__("Default") + " — " + (state.llm_model || "(unset)");
+		const opts = [
+			`<option value="">${frappe.utils.escape_html(defaultLabel)}</option>`,
+			...allowed.map(
+				(m) =>
+					`<option value="${frappe.utils.escape_html(m)}">${
+						frappe.utils.escape_html(m)
+					}</option>`,
+			),
+		];
+		$modelPicker.html(opts.join(""));
+	}
+
+	function refreshModelPickerVisibility() {
+		// Hidden in api_key mode (per spec § Out of scope).
+		// Hidden when there's no current conversation (welcome screen).
+		const show =
+			state.llm_auth_mode === "oauth" && !!state.current_conversation;
+		$convToolbar.prop("hidden", !show);
+	}
+
+	function syncModelPickerToConversation(model_override) {
+		state.current_model_override = model_override || "";
+		$modelPicker.val(state.current_model_override);
+		refreshModelPickerVisibility();
+	}
+
+	$modelPicker.on("change", async function () {
+		const conv = state.current_conversation;
+		if (!conv) return;
+		const newModel = this.value || null;
+		try {
+			const r = await api.setConversationModel(conv, newModel);
+			if (!r || !r.ok) {
+				const err = (r && r.error) || {};
+				frappe.show_alert({
+					message: err.message || __("Couldn't set model"),
+					indicator: "red",
+				});
+				// Revert dropdown to last-known good value
+				$modelPicker.val(state.current_model_override);
+				return;
+			}
+			state.current_model_override = newModel || "";
+			frappe.show_alert({
+				message: __("Model: ") + r.data.effective_model,
+				indicator: "blue",
+			});
+		} catch (err) {
+			frappe.show_alert({
+				message: __("Couldn't set model: ") + (err.message || err),
+				indicator: "red",
+			});
+			$modelPicker.val(state.current_model_override);
+		}
+	});
 
 	// ---- Loading --------------------------------------------------------
 
@@ -117,6 +189,7 @@ export function init(wrapper) {
 			const title = data.conversation?.title || __("Jarvis Chat");
 			page.set_title(title);
 			syncUrl(name);
+			syncModelPickerToConversation(data.conversation?.model_override);
 			await refreshSidebar($sidebar, $sidebarEmpty, loadConversation, archive);
 		} catch (err) {
 			// Conv missing / archived / not permitted — clean up and fall back
@@ -330,6 +403,18 @@ export function init(wrapper) {
 	const urlConv = route[1] ? decodeURIComponent(route[1]) : null;
 
 	(async () => {
+		// Load LLM settings first — picker rendering + visibility depend on them.
+		try {
+			const s = await api.getChatUiSettings();
+			state.llm_auth_mode = s.llm_auth_mode || "api_key";
+			state.llm_provider = s.llm_provider || "";
+			state.llm_model = s.llm_model || "";
+			state.subscription_models = s.subscription_models || {};
+			rebuildModelPickerOptions();
+			refreshModelPickerVisibility();
+		} catch (e) {
+			// Picker stays hidden (api_key default). Not blocking.
+		}
 		await refreshSidebar($sidebar, $sidebarEmpty, loadConversation, archive);
 		if (urlConv) await loadConversation(urlConv, { fromUrl: true });
 	})();

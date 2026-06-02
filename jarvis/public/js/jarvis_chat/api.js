@@ -46,3 +46,16 @@ export async function retryMessage(messageId) {
 	});
 	return r.message;
 }
+
+export async function getChatUiSettings() {
+	const r = await frappe.call({ method: "jarvis.chat.api.get_chat_ui_settings" });
+	return r.message || {};
+}
+
+export async function setConversationModel(conversation, model) {
+	const r = await frappe.call({
+		method: "jarvis.chat.api.set_conversation_model",
+		args: { conversation, model: model || "" },
+	});
+	return r.message;
+}
