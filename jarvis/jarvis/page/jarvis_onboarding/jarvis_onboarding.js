@@ -25,8 +25,12 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 
 	// Providers + models for chat-subscription. Mirrors
 	// jarvis.oauth.providers — keep in sync.
+	// Subscription-tier model IDs — these go through codex/gemini-cli's
+	// auth tunnel rather than the standard API, so the valid set is
+	// CLI-specific (not OpenAI/Google's public API model names).
+	// Verified live against ChatGPT-prolite + Gemini Advanced 2026-06-02.
 	const SUBSCRIPTION_MODELS = {
-		"OpenAI":        ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o1", "o1-mini"],
+		"OpenAI":        ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"],
 		"Google Gemini": ["gemini-2.0-pro", "gemini-1.5-pro", "gemini-1.5-flash"],
 	};
 
