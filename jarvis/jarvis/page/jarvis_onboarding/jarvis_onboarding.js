@@ -427,8 +427,9 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 				}
 				return;
 			}
+			const connectedEmail = (m.data && m.data.account_email) || "";
 			cancelSubscriptionFlow();
-			renderSuccess(state.successData || {}, "ok (subscription)");
+			renderSuccess(state.successData || {}, "ok (subscription)", { connectedEmail });
 		}).catch((e) => {
 			setBusy("#jo-sub-submit", false);
 			$err.text(e.message || "Couldn't reach Jarvis.");
@@ -467,7 +468,7 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		});
 	}
 
-	function renderSuccess(data, syncStatus) {
+	function renderSuccess(data, syncStatus, extra) {
 		state.step = 5;
 		renderSteps();
 		$footLink.empty();
@@ -485,11 +486,16 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		} else {
 			agentLine = `Your agent is set up, but the AI connection didn't sync just now (<i>${esc(sync)}</i>). Open Jarvis Settings → Force Resync to retry.`;
 		}
+		const connectedEmail = (extra && extra.connectedEmail) || "";
+		const connectedLine = connectedEmail
+			? `<p class="jo-sub" style="margin-top:8px">Connected as <b>${esc(connectedEmail)}</b>.</p>`
+			: "";
 		$body.html(`
 			<div class="jo-success">
 			  <div class="jo-success-ring">✓</div>
 			  <h2 class="jo-h">You're connected!</h2>
 			  <p class="jo-sub">Jarvis is set up for <b>${esc(state.company)}</b>. ${agentLine}</p>
+			  ${connectedLine}
 			  <div class="jo-actions">
 			    <button class="jo-btn jo-btn-primary" id="jo-chat">Open Jarvis chat →</button>
 			  </div>
