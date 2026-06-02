@@ -18,6 +18,32 @@ from jarvis.exceptions import OpenclawUnreachableError
 CONV = "Jarvis Conversation"
 MSG = "Jarvis Chat Message"
 
+# Provider label → openclaw provider id. Mirrors _PROVIDER_LABEL_TO_OPENCLAW
+# in jarvis.oauth.api. Only used in oauth mode — api_key mode has no
+# per-tenant codex/gemini-cli provider to override against, so we leave
+# the provider param off the WS frame and openclaw falls back to its
+# single registered models.providers.<id> entry.
+_PROVIDER_LABEL_TO_OPENCLAW_ID = {
+	"OpenAI": "openai-codex",
+	"Google Gemini": "google-gemini-cli",
+}
+
+
+def _resolve_model_and_provider(conv) -> tuple[str, str | None]:
+	"""Return (effective_model, openclaw_provider_id_or_None) for this conv.
+
+	- effective_model = conv.model_override or Jarvis Settings.llm_model
+	- provider id is set only in oauth mode (api_key mode keeps it None)
+	"""
+	settings = frappe.get_single("Jarvis Settings")
+	effective_model = (conv.model_override or settings.llm_model or "")
+	provider = (
+		_PROVIDER_LABEL_TO_OPENCLAW_ID.get(settings.llm_provider)
+		if settings.llm_auth_mode == "oauth"
+		else None
+	)
+	return effective_model, provider
+
 
 def run_agent_turn(conversation_id: str, message_id: str, run_id: str) -> None:
 	"""Drive one agent turn end to end. Called by RQ; not whitelisted."""
@@ -61,10 +87,15 @@ def run_agent_turn(conversation_id: str, message_id: str, run_id: str) -> None:
 		})
 		return
 
+	effective_model, oauth_provider_id = _resolve_model_and_provider(conv)
+
 	try:
 		idem = f"{conversation_id}:{message_id}"
 		tool_msg_by_call_id: dict[str, str] = {}
-		for event in sess.stream_agent_turn(conv.session_key, user_message, idem):
+		for event in sess.stream_agent_turn(
+			conv.session_key, user_message, idem,
+			model=effective_model, provider=oauth_provider_id,
+		):
 			_handle_event(
 				event,
 				conversation_id=conversation_id,

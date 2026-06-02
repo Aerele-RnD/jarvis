@@ -9,6 +9,7 @@
   "field_order": [
     "title",
     "session_key",
+    "model_override",
     "status",
     "last_active_at"
   ],
@@ -27,6 +28,12 @@
       "unique": 1,
       "in_standard_filter": 1,
       "description": "Populated on first agent turn; reused for subsequent turns in this conversation."
+    },
+    {
+      "fieldname": "model_override",
+      "fieldtype": "Data",
+      "label": "Model Override",
+      "description": "Bare model id (no provider prefix) used for chat turns in this conversation. Null/empty falls back to Jarvis Settings.llm_model. Validated against the SUBSCRIPTION_MODELS allowlist at write time."
     },
     {
       "fieldname": "status",

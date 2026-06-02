@@ -247,6 +247,68 @@ class TestStreamAgentTurn(FrappeTestCase):
 		# Should terminate cleanly; cross-run event silently dropped.
 		list(sess.stream_agent_turn("s", "hi", "i"))
 
+	def test_agent_payload_omits_model_by_default(self):
+		"""Backward-compat: omitting model/provider sends the same payload as before."""
+		sess, ws = _build_session()
+
+		def _ack():
+			req_id = ws.sent[-1]["id"]
+			return _frame({"type": "res", "id": req_id, "ok": True,
+						   "payload": {"runId": "r1"}})
+
+		ws._frames.append(_ack)
+		ws._frames.append(_frame({"type": "event", "event": "agent.event",
+								  "payload": {"runId": "r1", "stream": "lifecycle",
+											  "data": {"phase": "end"}}}))
+		list(sess.stream_agent_turn("sess-1", "hi", "idem-1"))
+		agent_req = [s for s in ws.sent if s.get("method") == "agent"][0]
+		params = agent_req["params"]
+		self.assertNotIn("model", params)
+		self.assertNotIn("provider", params)
+		self.assertEqual(params["message"], "hi")
+		self.assertEqual(params["sessionKey"], "sess-1")
+
+	def test_agent_payload_includes_model_and_provider_when_set(self):
+		"""Per-turn model override threads into the agent RPC params."""
+		sess, ws = _build_session()
+
+		def _ack():
+			req_id = ws.sent[-1]["id"]
+			return _frame({"type": "res", "id": req_id, "ok": True,
+						   "payload": {"runId": "r2"}})
+
+		ws._frames.append(_ack)
+		ws._frames.append(_frame({"type": "event", "event": "agent.event",
+								  "payload": {"runId": "r2", "stream": "lifecycle",
+											  "data": {"phase": "end"}}}))
+		list(sess.stream_agent_turn(
+			"sess-2", "hi", "idem-2",
+			model="gpt-5.4-mini", provider="openai-codex",
+		))
+		agent_req = [s for s in ws.sent if s.get("method") == "agent"][0]
+		params = agent_req["params"]
+		self.assertEqual(params["model"], "gpt-5.4-mini")
+		self.assertEqual(params["provider"], "openai-codex")
+
+	def test_agent_payload_includes_only_model_when_provider_omitted(self):
+		"""Either kwarg may be set independently; absent ones aren't emitted."""
+		sess, ws = _build_session()
+
+		def _ack():
+			req_id = ws.sent[-1]["id"]
+			return _frame({"type": "res", "id": req_id, "ok": True,
+						   "payload": {"runId": "r3"}})
+
+		ws._frames.append(_ack)
+		ws._frames.append(_frame({"type": "event", "event": "agent.event",
+								  "payload": {"runId": "r3", "stream": "lifecycle",
+											  "data": {"phase": "end"}}}))
+		list(sess.stream_agent_turn("sess-3", "hi", "idem-3", model="gpt-5.5"))
+		agent_req = [s for s in ws.sent if s.get("method") == "agent"][0]
+		params = agent_req["params"]
+		self.assertEqual(params["model"], "gpt-5.5")
+		self.assertNotIn("provider", params)
+
 
 # --- TestClose ------------------------------------------------------------
 

@@ -15,6 +15,10 @@ export const PAGE_HTML = `
   </aside>
 
   <main class="jarvis-chat-main">
+    <div class="jarvis-conv-toolbar" hidden>
+      <label class="jarvis-model-picker-label" for="jarvis-model-picker">Model</label>
+      <select id="jarvis-model-picker" class="jarvis-model-picker"></select>
+    </div>
     <div class="jarvis-message-list">
       <div class="jarvis-welcome">
         <div class="jarvis-welcome-icon">✦</div>

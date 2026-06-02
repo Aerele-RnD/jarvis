@@ -18,6 +18,7 @@ from jarvis.chat.api import (
 	get_conversation,
 	list_conversations,
 	retry_message,
+	set_conversation_model,
 )
 
 CONV = "Jarvis Conversation"
@@ -385,3 +386,72 @@ class TestRetryMessage(_ChatTestCase):
 			CONV, self.conv, "last_active_at"
 		))
 		self.assertGreaterEqual(after, before)
+
+
+class TestSetConversationModel(_ChatTestCase):
+	"""Per-conversation model override endpoint.
+
+	Validates against jarvis.chat.api._SUBSCRIPTION_MODELS for the
+	customer's current llm_provider. Empty/None clears the override.
+	"""
+
+	@classmethod
+	def setUpClass(cls):
+		super().setUpClass()
+		settings = frappe.get_single("Jarvis Settings")
+		cls._settings_snap = {
+			"llm_auth_mode": settings.llm_auth_mode,
+			"llm_provider": settings.llm_provider,
+			"llm_model": settings.llm_model,
+		}
+		settings.db_set("llm_auth_mode", "oauth", update_modified=False)
+		settings.db_set("llm_provider", "OpenAI", update_modified=False)
+		settings.db_set("llm_model", "gpt-5.5", update_modified=False)
+		frappe.db.commit()
+
+	@classmethod
+	def tearDownClass(cls):
+		settings = frappe.get_single("Jarvis Settings")
+		for k, v in cls._settings_snap.items():
+			settings.db_set(k, v, update_modified=False)
+		frappe.db.commit()
+		super().tearDownClass()
+
+	def test_set_known_model_succeeds(self):
+		conv = create_conversation()
+		out = set_conversation_model(conv, "gpt-5.4-mini")
+		self.assertTrue(out["ok"])
+		self.assertEqual(out["data"]["effective_model"], "gpt-5.4-mini")
+		self.assertEqual(
+			frappe.db.get_value(CONV, conv, "model_override"),
+			"gpt-5.4-mini",
+		)
+
+	def test_clear_override_reverts_to_settings(self):
+		conv = create_conversation()
+		set_conversation_model(conv, "gpt-5.4-mini")
+		out = set_conversation_model(conv, None)
+		self.assertTrue(out["ok"])
+		# Settings model is gpt-5.5 in this test class's setup
+		self.assertEqual(out["data"]["effective_model"], "gpt-5.5")
+		self.assertFalse(frappe.db.get_value(CONV, conv, "model_override"))
+
+	def test_empty_string_clears_override(self):
+		conv = create_conversation()
+		set_conversation_model(conv, "gpt-5.4-mini")
+		out = set_conversation_model(conv, "")
+		self.assertTrue(out["ok"])
+		self.assertFalse(frappe.db.get_value(CONV, conv, "model_override"))
+
+	def test_unknown_model_rejected(self):
+		conv = create_conversation()
+		out = set_conversation_model(conv, "gpt-4o")
+		self.assertFalse(out["ok"])
+		self.assertEqual(out["error"]["code"], "unknown_model")
+		# DB unchanged
+		self.assertFalse(frappe.db.get_value(CONV, conv, "model_override"))
+
+	def test_unknown_conversation_rejected(self):
+		out = set_conversation_model("missing-conv-id-xyz", "gpt-5.5")
+		self.assertFalse(out["ok"])
+		self.assertEqual(out["error"]["code"], "unknown_conversation")

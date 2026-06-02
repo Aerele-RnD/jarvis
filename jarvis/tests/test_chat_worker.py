@@ -210,3 +210,120 @@ class TestRunAgentTurnAugmentsMessage(FrappeTestCase):
 		# The DB-persisted user message stays untouched (no prefix)
 		original = frappe.db.get_value(MSG, self.user_msg, "content")
 		self.assertEqual(original, "how many invoices last quarter?")
+
+
+class TestRunAgentTurnModelResolution(FrappeTestCase):
+	"""Worker resolves the effective model from conv.model_override → settings.llm_model
+	and threads it (with the openclaw provider id) into stream_agent_turn.
+	"""
+
+	@classmethod
+	def setUpClass(cls):
+		super().setUpClass()
+		settings = frappe.get_single("Jarvis Settings")
+		cls._settings_snap = {
+			"llm_auth_mode": settings.llm_auth_mode,
+			"llm_provider": settings.llm_provider,
+			"llm_model": settings.llm_model,
+		}
+		settings.db_set("llm_auth_mode", "oauth", update_modified=False)
+		settings.db_set("llm_provider", "OpenAI", update_modified=False)
+		settings.db_set("llm_model", "gpt-5.5", update_modified=False)
+		frappe.db.commit()
+
+	@classmethod
+	def tearDownClass(cls):
+		settings = frappe.get_single("Jarvis Settings")
+		for k, v in cls._settings_snap.items():
+			settings.db_set(k, v, update_modified=False)
+		frappe.db.commit()
+		super().tearDownClass()
+
+	def setUp(self):
+		_ensure_test_user()
+		self._orig_user = frappe.session.user
+		frappe.set_user(TEST_USER)
+		_cleanup_user_conversations()
+		self.conv, self.user_msg = _make_conversation_with_user_message("hi")
+
+	def tearDown(self):
+		_cleanup_user_conversations()
+		frappe.set_user(self._orig_user)
+
+	def _run_and_capture(self):
+		fake_sess = MagicMock()
+		fake_sess.stream_agent_turn.return_value = _fake_event_stream([
+			{"kind": "lifecycle", "phase": "end"},
+		])
+		with patch("jarvis.chat.worker.OpenclawSession.connect", return_value=fake_sess):
+			with patch("jarvis.chat.worker.publish_to_user"):
+				run_agent_turn(self.conv, self.user_msg, run_id="r1")
+		return fake_sess.stream_agent_turn.call_args
+
+	def test_no_override_uses_settings_model_and_oauth_provider_id(self):
+		"""conv.model_override empty → effective_model = settings.llm_model;
+		provider id mapped from settings.llm_provider to openclaw provider id."""
+		call = self._run_and_capture()
+		kwargs = call.kwargs
+		self.assertEqual(kwargs.get("model"), "gpt-5.5")
+		self.assertEqual(kwargs.get("provider"), "openai-codex")
+
+	def test_override_used_when_set(self):
+		"""conv.model_override = gpt-5.4-mini → effective_model = gpt-5.4-mini."""
+		frappe.db.set_value(CONV, self.conv, "model_override", "gpt-5.4-mini")
+		frappe.db.commit()
+		call = self._run_and_capture()
+		kwargs = call.kwargs
+		self.assertEqual(kwargs.get("model"), "gpt-5.4-mini")
+		self.assertEqual(kwargs.get("provider"), "openai-codex")
+
+
+class TestRunAgentTurnApiKeyModeOmitsProvider(FrappeTestCase):
+	"""In api_key mode (not oauth), the worker should NOT thread the
+	provider param — there's no per-tenant codex provider to override
+	to; api-key-mode customers have one provider registered."""
+
+	@classmethod
+	def setUpClass(cls):
+		super().setUpClass()
+		settings = frappe.get_single("Jarvis Settings")
+		cls._snap = {
+			"llm_auth_mode": settings.llm_auth_mode,
+			"llm_provider": settings.llm_provider,
+			"llm_model": settings.llm_model,
+		}
+		settings.db_set("llm_auth_mode", "api_key", update_modified=False)
+		settings.db_set("llm_provider", "Anthropic", update_modified=False)
+		settings.db_set("llm_model", "claude-sonnet-4-6", update_modified=False)
+		frappe.db.commit()
+
+	@classmethod
+	def tearDownClass(cls):
+		settings = frappe.get_single("Jarvis Settings")
+		for k, v in cls._snap.items():
+			settings.db_set(k, v, update_modified=False)
+		frappe.db.commit()
+		super().tearDownClass()
+
+	def setUp(self):
+		_ensure_test_user()
+		self._orig_user = frappe.session.user
+		frappe.set_user(TEST_USER)
+		_cleanup_user_conversations()
+		self.conv, self.user_msg = _make_conversation_with_user_message("hi")
+
+	def tearDown(self):
+		_cleanup_user_conversations()
+		frappe.set_user(self._orig_user)
+
+	def test_provider_omitted_in_api_key_mode(self):
+		fake_sess = MagicMock()
+		fake_sess.stream_agent_turn.return_value = _fake_event_stream([
+			{"kind": "lifecycle", "phase": "end"},
+		])
+		with patch("jarvis.chat.worker.OpenclawSession.connect", return_value=fake_sess):
+			with patch("jarvis.chat.worker.publish_to_user"):
+				run_agent_turn(self.conv, self.user_msg, run_id="r1")
+		kwargs = fake_sess.stream_agent_turn.call_args.kwargs
+		self.assertEqual(kwargs.get("model"), "claude-sonnet-4-6")
+		self.assertIsNone(kwargs.get("provider"))
