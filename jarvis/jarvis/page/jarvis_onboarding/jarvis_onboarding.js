@@ -12,21 +12,23 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		step: 1, email: "", company: "", planName: null, plans: [], busy: false,
 		// step 4 inputs — API key path
 		llmProvider: "Anthropic", llmModel: "", llmApiKey: "", llmBaseUrl: "",
-		// step 4 inputs — chat subscription path
+		// step 4 inputs — chat subscription path (REV-3 paste-back)
 		authMode: "api_key", // "api_key" | "subscription"
 		subProvider: "OpenAI",
+		subModel: "gpt-4o",
 		subNonce: null,
-		subOneLiner: null,
-		subExpiresAt: null,  // wall-clock ms (10 min nonce TTL)
-		subPollTimer: null,
-		subConnectedEmail: null,
+		subAuthorizeUrl: null,   // shown to the customer in Screen 2
+		subExpiresAt: null,
 		// passed through to step 5 (success)
 		successData: null,
 	};
 
-	// Providers that support the chat-subscription OAuth device flow.
-	// Mirrors jarvis.oauth.providers.PROVIDER_OAUTH_MAP — keep in sync.
-	const SUBSCRIPTION_PROVIDERS = ["OpenAI", "Google Gemini"];
+	// Providers + models for chat-subscription. Mirrors
+	// jarvis.oauth.providers — keep in sync.
+	const SUBSCRIPTION_MODELS = {
+		"OpenAI":        ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o1", "o1-mini"],
+		"Google Gemini": ["gemini-2.0-pro", "gemini-1.5-pro", "gemini-1.5-flash"],
+	};
 
 	// Default model + baseUrl per provider, surfaced as autofilled hints on step 4.
 	// Customers can override both in the form (and later in Jarvis Settings).
@@ -301,84 +303,69 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 	}
 
 	function renderSubscriptionPanel() {
-		const provOptions = SUBSCRIPTION_PROVIDERS.map(
-			(p) => `<option value="${esc(p)}" ${p === state.subProvider ? "selected" : ""}>${esc(p)}</option>`
-		).join("");
-		if (state.subConnectedEmail) {
-			return `
-				<div class="jo-sub-connected">
-				  <div class="jo-success-ring">✓</div>
-				  <div>Connected as <strong>${esc(state.subConnectedEmail)}</strong></div>
-				  <div class="jo-actions jo-actions-split" style="margin-top:18px">
-				    <button class="jo-btn jo-btn-ghost" id="jo-sub-disconnect-local">Sign in as someone else</button>
-				    <button class="jo-btn jo-btn-primary" id="jo-sub-continue">Continue →</button>
-				  </div>
-				</div>`;
-		}
-		if (state.subOneLiner) {
+		// Screen 2 — authorize URL shown, awaiting paste-back
+		if (state.subAuthorizeUrl) {
 			const minsLeft = Math.max(0, Math.floor((state.subExpiresAt - Date.now()) / 60000));
 			return `
+				<p class="jo-hint" style="margin-bottom:14px"><strong>Step 1</strong> — Sign in with your ${esc(state.subProvider)} account in a new tab.</p>
+				<div class="jo-actions jo-actions-split" style="margin-bottom:18px">
+				  <button class="jo-btn jo-btn-primary" id="jo-sub-open-url">Open Sign-in URL →</button>
+				  <button class="jo-btn jo-btn-ghost" id="jo-sub-share">Send to colleague</button>
+				</div>
+				<p class="jo-hint"><strong>Step 2</strong> — After clicking Authorize, your browser will show a page saying <em>"This site can't be reached."</em> <strong>That's expected.</strong> Copy the URL from your browser's address bar (it'll start with <code>http://localhost:1455/auth/callback?code=…</code>) and paste it here:</p>
 				<div class="jo-field">
-				  <label>Run this on your computer</label>
-				  <div class="jo-one-liner-wrap">
-				    <pre class="jo-one-liner">${esc(state.subOneLiner)}</pre>
-				    <button type="button" class="jo-copy-btn" id="jo-sub-copy" aria-label="Copy" title="Copy">
-				      <svg class="jo-copy-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-				      <svg class="jo-check-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-				    </button>
-				  </div>
-				  <div class="jo-hint">Paste it into Terminal (or PowerShell). The script opens your browser, you sign in to ${esc(state.subProvider)}, and Jarvis picks up the result automatically. Link valid for ~${minsLeft} minute${minsLeft === 1 ? "" : "s"}.</div>
+				  <textarea class="jo-input" id="jo-sub-pasted-url" rows="3" placeholder="Paste the URL from the error page here"></textarea>
 				</div>
 				<div class="jo-actions jo-actions-split">
-				  <button class="jo-btn jo-btn-ghost" id="jo-sub-share">Send to colleague</button>
-				  <button class="jo-btn jo-btn-ghost" id="jo-sub-regen">Generate new one-liner</button>
+				  <button class="jo-btn jo-btn-ghost" id="jo-sub-cancel">Cancel</button>
+				  <button class="jo-btn jo-btn-primary" id="jo-sub-submit">Submit →</button>
 				</div>
-				<div class="jo-hint" style="margin-top:14px">⠹ Waiting for sign-in… <a href="#" id="jo-sub-why">Why my computer?</a></div>`;
+				<div class="jo-hint" style="margin-top:14px;font-size:12px">Link valid for ~${minsLeft} minute${minsLeft === 1 ? "" : "s"}.</div>`;
 		}
+		// Screen 1 — provider + model picker (not yet started)
+		const provOptions = Object.keys(SUBSCRIPTION_MODELS).map(
+			(p) => `<option value="${esc(p)}" ${p === state.subProvider ? "selected" : ""}>${esc(p)}</option>`
+		).join("");
+		const modelOptions = (SUBSCRIPTION_MODELS[state.subProvider] || []).map(
+			(m) => `<option value="${esc(m)}" ${m === state.subModel ? "selected" : ""}>${esc(m)}</option>`
+		).join("");
 		return `
 			<div class="jo-field">
 			  <label>Provider</label>
 			  <select id="jo-sub-provider" class="jo-input">${provOptions}</select>
 			</div>
-			<div class="jo-hint">A short code will appear; sign in with your subscription account at that URL.
-			   You can share the code with a colleague (e.g. the budget owner) if they should authorize on their device.</div>
+			<div class="jo-field">
+			  <label>Default model</label>
+			  <select id="jo-sub-model" class="jo-input">${modelOptions}</select>
+			</div>
 			<div class="jo-actions">
-			  <button class="jo-btn jo-btn-primary" id="jo-sub-signin">Sign in with <span id="jo-sub-provider-label">${esc(state.subProvider)}</span></button>
+			  <button class="jo-btn jo-btn-primary" id="jo-sub-signin">Sign in with ${esc(state.subProvider)} →</button>
 			</div>`;
 	}
 
 	function wireSubscriptionPanel() {
+		// Screen 1 wiring
 		$body.find("#jo-sub-provider").on("change", (e) => {
 			state.subProvider = e.target.value;
+			state.subModel = (SUBSCRIPTION_MODELS[state.subProvider] || [])[0] || "";
 			renderLlm();
+		});
+		$body.find("#jo-sub-model").on("change", (e) => {
+			state.subModel = e.target.value;
 		});
 		$body.find("#jo-sub-signin").on("click", startSubscriptionSignin);
-		$body.find("#jo-sub-regen").on("click", () => { cancelSubscriptionFlow(); startSubscriptionSignin(); });
-		$body.find("#jo-sub-share").on("click", shareSubscriptionOneLiner);
-		$body.find("#jo-sub-copy").on("click", function () {
-			if (!state.subOneLiner) return;
-			const $btn = $(this);
-			navigator.clipboard.writeText(state.subOneLiner).then(() => {
-				$btn.addClass("copied");
-				setTimeout(() => $btn.removeClass("copied"), 1400);
-			});
+		// Screen 2 wiring
+		$body.find("#jo-sub-open-url").on("click", () => {
+			if (state.subAuthorizeUrl) {
+				window.open(state.subAuthorizeUrl, "_blank", "noopener,noreferrer");
+			}
 		});
-		$body.find("#jo-sub-why").on("click", (e) => {
-			e.preventDefault();
-			frappe.msgprint({
-				title: "Why your computer?",
-				message: "Signing in to ChatGPT requires opening a browser. " +
-				         "The script opens it on the same machine it runs on, " +
-				         "then sends the result back to Jarvis automatically. " +
-				         "Run it on the computer you're using right now."
-			});
-		});
-		$body.find("#jo-sub-disconnect-local").on("click", () => {
+		$body.find("#jo-sub-cancel").on("click", () => {
 			cancelSubscriptionFlow();
-			state.subConnectedEmail = null;
 			renderLlm();
 		});
-		$body.find("#jo-sub-continue").on("click", commitSubscriptionSignin);
+		$body.find("#jo-sub-submit").on("click", submitPastedUrl);
+		$body.find("#jo-sub-share").on("click", shareSubscriptionUrl);
 	}
 
 	function startSubscriptionSignin() {
@@ -386,8 +373,8 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		$err.text("");
 		setBusy("#jo-sub-signin", true);
 		frappe.call({
-			method: "jarvis.oauth.api.begin_codex_signin",
-			args: { provider: state.subProvider },
+			method: "jarvis.oauth.api.begin_paste_signin",
+			args: { provider: state.subProvider, model: state.subModel },
 		}).then((r) => {
 			setBusy("#jo-sub-signin", false);
 			const m = r.message || {};
@@ -395,67 +382,59 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 				$err.text((m.error && m.error.message) || "Couldn't start sign-in. Please try again.");
 				return;
 			}
-			const d = m.data;
-			state.subNonce = d.nonce;
-			state.subOneLiner = d.one_liner;
-			state.subExpiresAt = Date.now() + 600 * 1000;  // 10-min TTL
+			state.subNonce = m.data.nonce;
+			state.subAuthorizeUrl = m.data.authorize_url;
+			state.subExpiresAt = Date.now() + m.data.expires_in * 1000;
 			renderLlm();
-			schedulePoll(2);  // poll every 2s
 		}).catch((e) => {
 			setBusy("#jo-sub-signin", false);
 			$err.text(e.message || "Couldn't reach Jarvis. Try again in a moment.");
 		});
 	}
 
-	function schedulePoll(intervalSec) {
-		cancelPollTimer();
-		state.subPollTimer = setTimeout(() => pollOnce(intervalSec), intervalSec * 1000);
-	}
-
-	function pollOnce(intervalSec) {
-		if (!state.subNonce) return;
+	function submitPastedUrl() {
+		const $err = $body.find("#jo-llm-err");
+		$err.text("");
+		const pasted = ($body.find("#jo-sub-pasted-url").val() || "").trim();
+		if (!pasted) {
+			$err.text("Paste the URL from your browser's address bar first.");
+			return;
+		}
+		setBusy("#jo-sub-submit", true);
 		frappe.call({
-			method: "jarvis.oauth.api.poll_signin",
-			args: { nonce: state.subNonce },
+			method: "jarvis.oauth.api.complete_paste_signin",
+			args: { nonce: state.subNonce, redirected_url: pasted },
 		}).then((r) => {
+			setBusy("#jo-sub-submit", false);
 			const m = r.message || {};
 			if (!m.ok) {
-				const err = m.error || {};
-				$body.find("#jo-llm-err").text(err.message || "Sign-in failed.");
-				cancelSubscriptionFlow();
-				renderLlm();
+				const errCode = (m.error && m.error.code) || "";
+				const errMsg = (m.error && m.error.message) || "Sign-in failed.";
+				$err.text(`${errCode}: ${errMsg}`);
+				if (errCode === "expired" || errCode === "unknown_nonce") {
+					setTimeout(() => { cancelSubscriptionFlow(); renderLlm(); }, 2500);
+				}
 				return;
 			}
-			const data = m.data || {};
-			if (data.status === "connected") {
-				state.subConnectedEmail = data.account_email || "(unknown)";
-				cancelPollTimer();
-				state.subOneLiner = null;
-				renderLlm();
-				return;
-			}
-			schedulePoll(intervalSec);
-		}).catch(() => {
-			schedulePoll(intervalSec);
+			cancelSubscriptionFlow();
+			renderSuccess(state.successData || {}, "ok (subscription)");
+		}).catch((e) => {
+			setBusy("#jo-sub-submit", false);
+			$err.text(e.message || "Couldn't reach Jarvis.");
 		});
 	}
 
-	function cancelPollTimer() {
-		if (state.subPollTimer) { clearTimeout(state.subPollTimer); state.subPollTimer = null; }
-	}
-
 	function cancelSubscriptionFlow() {
-		cancelPollTimer();
 		state.subNonce = null;
-		state.subOneLiner = null;
+		state.subAuthorizeUrl = null;
 		state.subExpiresAt = null;
 	}
 
-	function shareSubscriptionOneLiner() {
-		const recipient = prompt("Send the sign-in command to which email address?");
+	function shareSubscriptionUrl() {
+		const recipient = prompt("Send the sign-in URL to which email address?");
 		if (!recipient) return;
 		frappe.call({
-			method: "jarvis.oauth.api.share_signin",
+			method: "jarvis.oauth.api.share_paste_signin",
 			args: { nonce: state.subNonce, recipient_email: recipient },
 		}).then((r) => {
 			const m = r.message || {};
@@ -465,30 +444,6 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 				const err = m.error || {};
 				frappe.show_alert({ message: err.message || "Couldn't send", indicator: "red" });
 			}
-		}).catch((e) => {
-			frappe.show_alert({ message: e.message || "Couldn't send", indicator: "red" });
-		});
-	}
-
-	function commitSubscriptionSignin() {
-		setBusy("#jo-sub-continue", true);
-		frappe.call({
-			method: "jarvis.oauth.api.commit_signin",
-			args: { nonce: state.subNonce },
-		}).then((r) => {
-			setBusy("#jo-sub-continue", false);
-			const m = r.message || {};
-			if (!m.ok) {
-				$body.find("#jo-llm-err").text(
-					(m.error && m.error.message) || "Couldn't finalize sign-in."
-				);
-				return;
-			}
-			state.subNonce = null;
-			renderSuccess(state.successData || {}, "ok (subscription)");
-		}).catch((e) => {
-			setBusy("#jo-sub-continue", false);
-			$body.find("#jo-llm-err").text(e.message || "Couldn't reach Jarvis.");
 		});
 	}
 
@@ -738,24 +693,6 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		.jo-tab:hover svg{opacity:.95}
 		.jo-tab-active{color:var(--jarvis-primary);font-weight:600}
 		.jo-tab-active svg{opacity:1}
-		.jo-one-liner-wrap{position:relative}
-		.jo-one-liner{font-family:'Menlo','Monaco',monospace;font-size:12px;line-height:1.5;white-space:pre-wrap;
-			word-break:break-all;padding:12px 44px 12px 14px;background:var(--bg-color);border:1px solid var(--border-color);
-			border-radius:8px;margin:0;color:var(--text-color)}
-		.jo-copy-btn{position:absolute;top:8px;right:8px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;
-			background:transparent;border:1px solid var(--border-color);border-radius:6px;cursor:pointer;
-			color:var(--text-muted);transition:color .12s ease,background .12s ease,border-color .12s ease}
-		.jo-copy-btn:hover{color:var(--text-color);background:var(--card-bg,#fff);border-color:var(--text-muted)}
-		.jo-copy-btn .jo-check-icon{display:none}
-		.jo-copy-btn.copied{color:var(--green-600,#28a745);border-color:rgba(46,189,89,.4);background:rgba(46,189,89,.10)}
-		.jo-copy-btn.copied .jo-copy-icon{display:none}
-		.jo-copy-btn.copied .jo-check-icon{display:block}
-		.jo-code-uri{font-family:'Menlo','Monaco',monospace;font-size:13px;word-break:break-all;
-			padding:10px 12px;background:var(--bg-color);border:1px solid var(--border-color);border-radius:6px}
-		.jo-code-uri a{color:var(--jarvis-primary)}
-		.jo-code-display{font-family:'Menlo','Monaco',monospace;font-size:28px;font-weight:700;letter-spacing:3px;text-align:center;
-			padding:18px;background:var(--bg-color);border:2px dashed var(--jarvis-primary);border-radius:8px;color:var(--jarvis-primary)}
-		.jo-sub-connected{text-align:center;padding:18px 0}
 		@media(max-width:760px){.jo-bg{padding:16px 10px}.jo{flex-direction:column;margin:auto}.jo-brand{flex-basis:auto}.jo-panel{padding:26px 22px}}`;
 		$(`<style id="jo-styles">${css}</style>`).appendTo(document.head);
 	}

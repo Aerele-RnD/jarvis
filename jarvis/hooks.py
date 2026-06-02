@@ -57,11 +57,8 @@ def get_oauth_client_id(provider: str) -> str:
 	return OAUTH_CLIENT_IDS[provider]
 
 
-# The OAuth helper script is served as a static asset under
-# /assets/jarvis/codex_login.py — see jarvis/oauth/api.py _build_one_liner.
-# We don't add a website_route_rule for a prettier URL because
-# website_route_rules are for rewriting to Frappe pages, not external
-# static-asset paths.
+# OAuth flow lives entirely in jarvis/oauth/api.py + jarvis/oauth/providers.py.
+# The OAUTH_CLIENT_IDS above is the only OAuth-related state in hooks.
 
 # Apps
 # ------------------
