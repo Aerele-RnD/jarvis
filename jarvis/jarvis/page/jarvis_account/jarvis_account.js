@@ -52,22 +52,24 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	let account = null;       // payload from get_account
 	let settingsLocal = null; // local Jarvis Settings LLM fields snapshot
 
-	// Subscription providers (chat-subscription OAuth path). Mirrors the
-	// onboarding wizard's SUBSCRIPTION_PROVIDERS — keep in sync.
-	const SUBSCRIPTION_PROVIDERS = ["OpenAI", "Google Gemini"];
+	// Subscription providers + models (chat-subscription OAuth path).
+	// REV-3: server holds the verifier; UI offers a model picker at start.
+	const SUBSCRIPTION_MODELS = {
+		"OpenAI":        ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o1", "o1-mini"],
+		"Google Gemini": ["gemini-2.0-pro", "gemini-1.5-pro", "gemini-1.5-flash"],
+	};
 
-	// AI provider card state — which tab the user is currently looking at,
-	// plus in-flight sign-in state when they're connecting from this page.
-	// aiTab follows llm_auth_mode by default but can diverge briefly while
-	// the user is mid-flow (e.g. on api_key but exploring the subscription tab).
+	// AI provider card state.
+	// aiTab follows llm_auth_mode by default; can diverge briefly while
+	// the user is exploring (e.g. on api_key but previewing subscription).
+	// sub* holds in-flight paste-back state during sign-in.
 	const ui = {
-		aiTab: "api_key",  // "api_key" | "subscription"
+		aiTab: "api_key",
 		subProvider: "OpenAI",
+		subModel: "gpt-4o",
 		subNonce: null,
-		subOneLiner: null,
+		subAuthorizeUrl: null,   // shown to the customer in Screen 2
 		subExpiresAt: null,
-		subPollTimer: null,
-		subConnectedEmail: null,  // captured by poll, before commit
 	};
 
 	// ---- boot --------------------------------------------------------------
@@ -197,7 +199,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	}
 
 	function renderSubscriptionPanel(editable, isActiveMode) {
-		// Currently connected (oauth mode): show provider + Disconnect/Re-auth.
+		// Screen 3 — already connected (oauth mode)
 		if (isActiveMode) {
 			const provider = settingsLocal.llm_provider || "—";
 			const model = settingsLocal.llm_model || "—";
@@ -218,51 +220,48 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 					<button class="ja-btn ja-btn-primary" id="ja-sub-reauth">Re-authorize</button>
 				</div>`;
 		}
-		// Not yet connected: show provider picker or in-flight one-liner.
-		if (ui.subConnectedEmail) {
-			return `
-				<div class="ja-success-ring" style="margin:16px auto 12px">✓</div>
-				<p style="text-align:center">Connected as <strong>${esc(ui.subConnectedEmail)}</strong></p>
-				<p class="ja-sub" style="text-align:center">Switching to chat-subscription mode will disconnect your API key.</p>
-				<div class="ja-actions" style="justify-content:center">
-					<button class="ja-btn ja-btn-ghost" id="ja-sub-cancel">Cancel</button>
-					<button class="ja-btn ja-btn-primary" id="ja-sub-commit">Confirm switch</button>
-				</div>
-				<div class="ja-err" id="ja-sub-err"></div>`;
-		}
-		if (ui.subOneLiner) {
+		// Screen 2 — authorize URL shown, awaiting paste-back
+		if (ui.subAuthorizeUrl) {
 			const minsLeft = Math.max(0, Math.floor((ui.subExpiresAt - Date.now()) / 60000));
 			return `
+				<p class="ja-sub"><strong>Step 1</strong> — Sign in with your ${esc(ui.subProvider)} account in a new tab.</p>
+				<div class="ja-actions" style="margin-bottom:18px">
+					<button class="ja-btn ja-btn-primary" id="ja-sub-open-url">Open Sign-in URL →</button>
+					<button class="ja-btn ja-btn-ghost" id="ja-sub-share">Send to colleague</button>
+				</div>
+				<p class="ja-sub"><strong>Step 2</strong> — After clicking Authorize, your browser will show a page saying <em>"This site can't be reached."</em> <strong>That's expected.</strong> Copy the URL from your browser's address bar (it'll start with <code>http://localhost:1455/auth/callback?code=…</code>) and paste it here:</p>
 				<div class="ja-field">
-					<label>Run this on your computer</label>
-					<div class="ja-one-liner-wrap">
-						<pre class="ja-one-liner">${esc(ui.subOneLiner)}</pre>
-						<button type="button" class="ja-copy-btn" id="ja-sub-copy" aria-label="Copy" title="Copy">
-							<svg class="ja-copy-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-							<svg class="ja-check-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-						</button>
-					</div>
-					<div class="ja-sub" style="margin-top:8px">Paste it into Terminal (or PowerShell). The script opens your browser, you sign in to ${esc(ui.subProvider)}, and Jarvis picks up the result automatically. Link valid for ~${minsLeft} minute${minsLeft === 1 ? "" : "s"}.</div>
+					<textarea class="ja-input" id="ja-sub-pasted-url" rows="3" placeholder="Paste the URL from the error page here"></textarea>
 				</div>
 				<div class="ja-actions">
-					<button class="ja-btn ja-btn-ghost" id="ja-sub-share">Send to colleague</button>
-					<button class="ja-btn ja-btn-ghost" id="ja-sub-regen">Generate new one-liner</button>
+					<button class="ja-btn ja-btn-ghost" id="ja-sub-cancel">Cancel</button>
+					<button class="ja-btn ja-btn-primary" id="ja-sub-submit">Submit →</button>
 				</div>
-				<div class="ja-sub" style="margin-top:10px">⠹ Waiting for sign-in… <a href="#" id="ja-sub-why">Why my computer?</a></div>
+				<div class="ja-hint" style="margin-top:14px;font-size:12px;color:var(--text-muted)">Link valid for ~${minsLeft} minute${minsLeft === 1 ? "" : "s"}.</div>
 				<div class="ja-err" id="ja-sub-err"></div>`;
 		}
-		const provOptions = SUBSCRIPTION_PROVIDERS.map(
+		// Screen 1 — provider + model picker (not yet started)
+		const provOptions = Object.keys(SUBSCRIPTION_MODELS).map(
 			(p) => `<option value="${esc(p)}" ${p === ui.subProvider ? "selected" : ""}>${esc(p)}</option>`
+		).join("");
+		const modelOptions = (SUBSCRIPTION_MODELS[ui.subProvider] || []).map(
+			(m) => `<option value="${esc(m)}" ${m === ui.subModel ? "selected" : ""}>${esc(m)}</option>`
 		).join("");
 		const dis = editable ? "" : "disabled";
 		return `
-			<p class="ja-sub">Sign in once with your existing ChatGPT Plus or Gemini Advanced account — no API key needed.</p>
-			<div class="ja-field">
-				<label>Provider</label>
-				<select id="ja-sub-provider" class="ja-input" ${dis}>${provOptions}</select>
+			<p class="ja-sub">Sign in with your existing ChatGPT Plus / Pro or Gemini Advanced account — no developer key needed.</p>
+			<div class="ja-row2">
+				<div class="ja-field">
+					<label>Provider</label>
+					<select id="ja-sub-provider" class="ja-input" ${dis}>${provOptions}</select>
+				</div>
+				<div class="ja-field">
+					<label>Default model</label>
+					<select id="ja-sub-model" class="ja-input" ${dis}>${modelOptions}</select>
+				</div>
 			</div>
 			<div class="ja-actions">
-				<button class="ja-btn ja-btn-primary" id="ja-sub-signin" ${dis}>Sign in with <span id="ja-sub-provider-label">${esc(ui.subProvider)}</span></button>
+				<button class="ja-btn ja-btn-primary" id="ja-sub-signin" ${dis}>Sign in with ${esc(ui.subProvider)} →</button>
 			</div>
 			<div class="ja-err" id="ja-sub-err"></div>`;
 	}
@@ -332,41 +331,34 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 				});
 			});
 			$body.find("#ja-sub-reauth").on("click", () => {
-				// Stay on this page — start a fresh sign-in flow.
-				ui.subConnectedEmail = null;
+				cancelSubscriptionFlow();
 				startCodexSignin();
 			});
 			return;
 		}
-		// Not in oauth mode — handle the connect flow inline.
 		if (!editable) return;
+		// Screen 1 wiring
 		$body.find("#ja-sub-provider").on("change", (e) => {
 			ui.subProvider = e.target.value;
+			ui.subModel = (SUBSCRIPTION_MODELS[ui.subProvider] || [])[0] || "";
 			render();
 		});
-		$body.find("#ja-sub-signin").on("click", startCodexSignin);
-		$body.find("#ja-sub-regen").on("click", () => { cancelSubscriptionFlow(); startCodexSignin(); });
-		$body.find("#ja-sub-copy").on("click", function () {
-			if (!ui.subOneLiner) return;
-			const $btn = $(this);
-			navigator.clipboard.writeText(ui.subOneLiner).then(() => {
-				$btn.addClass("copied");
-				setTimeout(() => $btn.removeClass("copied"), 1400);
-			});
+		$body.find("#ja-sub-model").on("change", (e) => {
+			ui.subModel = e.target.value;
 		});
-		$body.find("#ja-sub-share").on("click", shareSubscriptionOneLiner);
-		$body.find("#ja-sub-why").on("click", (e) => {
-			e.preventDefault();
-			frappe.msgprint({
-				title: "Why your computer?",
-				message: "Signing in to ChatGPT requires opening a browser. The script opens it on the same machine it runs on, then sends the result back to Jarvis automatically.",
-			});
+		$body.find("#ja-sub-signin").on("click", startCodexSignin);
+		// Screen 2 wiring
+		$body.find("#ja-sub-open-url").on("click", () => {
+			if (ui.subAuthorizeUrl) {
+				window.open(ui.subAuthorizeUrl, "_blank", "noopener,noreferrer");
+			}
 		});
 		$body.find("#ja-sub-cancel").on("click", () => {
 			cancelSubscriptionFlow();
 			render();
 		});
-		$body.find("#ja-sub-commit").on("click", commitSubscriptionSignin);
+		$body.find("#ja-sub-submit").on("click", submitPastedUrl);
+		$body.find("#ja-sub-share").on("click", shareSubscriptionUrl);
 	}
 
 	function startCodexSignin() {
@@ -374,8 +366,8 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		$err.text("");
 		setBusy("#ja-sub-signin", true);
 		frappe.call({
-			method: "jarvis.oauth.api.begin_codex_signin",
-			args: { provider: ui.subProvider },
+			method: "jarvis.oauth.api.begin_paste_signin",
+			args: { provider: ui.subProvider, model: ui.subModel },
 		}).then((r) => {
 			setBusy("#ja-sub-signin", false);
 			const m = r.message || {};
@@ -383,89 +375,60 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 				$err.text((m.error && m.error.message) || "Couldn't start sign-in.");
 				return;
 			}
-			const d = m.data;
-			ui.subNonce = d.nonce;
-			ui.subOneLiner = d.one_liner;
-			ui.subExpiresAt = Date.now() + 600 * 1000;
+			ui.subNonce = m.data.nonce;
+			ui.subAuthorizeUrl = m.data.authorize_url;
+			ui.subExpiresAt = Date.now() + m.data.expires_in * 1000;
 			render();
-			schedulePoll(2);
 		}).catch((e) => {
 			setBusy("#ja-sub-signin", false);
 			$err.text(e.message || "Couldn't reach Jarvis.");
 		});
 	}
 
-	function schedulePoll(intervalSec) {
-		cancelPollTimer();
-		ui.subPollTimer = setTimeout(() => pollOnce(intervalSec), intervalSec * 1000);
-	}
-
-	function pollOnce(intervalSec) {
-		if (!ui.subNonce) return;
+	function submitPastedUrl() {
+		const $err = $body.find("#ja-sub-err");
+		$err.text("");
+		const pasted = ($body.find("#ja-sub-pasted-url").val() || "").trim();
+		if (!pasted) {
+			$err.text("Paste the URL from your browser's address bar first.");
+			return;
+		}
+		setBusy("#ja-sub-submit", true);
 		frappe.call({
-			method: "jarvis.oauth.api.poll_signin",
-			args: { nonce: ui.subNonce },
+			method: "jarvis.oauth.api.complete_paste_signin",
+			args: { nonce: ui.subNonce, redirected_url: pasted },
 		}).then((r) => {
+			setBusy("#ja-sub-submit", false);
 			const m = r.message || {};
 			if (!m.ok) {
-				$body.find("#ja-sub-err").text((m.error && m.error.message) || "Sign-in failed.");
-				cancelSubscriptionFlow();
-				render();
-				return;
-			}
-			const data = m.data || {};
-			if (data.status === "connected") {
-				ui.subConnectedEmail = data.account_email || "(unknown)";
-				cancelPollTimer();
-				ui.subOneLiner = null;
-				render();
-				return;
-			}
-			schedulePoll(intervalSec);
-		}).catch(() => {
-			schedulePoll(intervalSec);
-		});
-	}
-
-	function cancelPollTimer() {
-		if (ui.subPollTimer) { clearTimeout(ui.subPollTimer); ui.subPollTimer = null; }
-	}
-
-	function cancelSubscriptionFlow() {
-		cancelPollTimer();
-		ui.subNonce = null;
-		ui.subOneLiner = null;
-		ui.subExpiresAt = null;
-		ui.subConnectedEmail = null;
-	}
-
-	function commitSubscriptionSignin() {
-		setBusy("#ja-sub-commit", true);
-		frappe.call({
-			method: "jarvis.oauth.api.commit_signin",
-			args: { nonce: ui.subNonce },
-		}).then((r) => {
-			setBusy("#ja-sub-commit", false);
-			const m = r.message || {};
-			if (!m.ok) {
-				$body.find("#ja-sub-err").text((m.error && m.error.message) || "Couldn't finalize sign-in.");
+				const errCode = (m.error && m.error.code) || "";
+				const errMsg = (m.error && m.error.message) || "Sign-in failed.";
+				$err.text(`${errCode}: ${errMsg}`);
+				if (errCode === "expired" || errCode === "unknown_nonce") {
+					setTimeout(() => { cancelSubscriptionFlow(); render(); }, 2500);
+				}
 				return;
 			}
 			frappe.show_alert({ message: "Connected to chat subscription.", indicator: "green" });
-			ui.subNonce = null;
-			ui.subConnectedEmail = null;
-			loadInitial();  // re-pulls Jarvis Settings; auth_mode now "oauth"
+			cancelSubscriptionFlow();
+			loadInitial();
 		}).catch((e) => {
-			setBusy("#ja-sub-commit", false);
-			$body.find("#ja-sub-err").text(e.message || "Couldn't reach Jarvis.");
+			setBusy("#ja-sub-submit", false);
+			$err.text(e.message || "Couldn't reach Jarvis.");
 		});
 	}
 
-	function shareSubscriptionOneLiner() {
-		const recipient = prompt("Send the sign-in command to which email address?");
+	function cancelSubscriptionFlow() {
+		ui.subNonce = null;
+		ui.subAuthorizeUrl = null;
+		ui.subExpiresAt = null;
+	}
+
+	function shareSubscriptionUrl() {
+		const recipient = prompt("Send the sign-in URL to which email address?");
 		if (!recipient) return;
 		frappe.call({
-			method: "jarvis.oauth.api.share_signin",
+			method: "jarvis.oauth.api.share_paste_signin",
 			args: { nonce: ui.subNonce, recipient_email: recipient },
 		}).then((r) => {
 			const m = r.message || {};
@@ -474,8 +437,6 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 			} else {
 				frappe.show_alert({ message: (m.error && m.error.message) || "Couldn't send", indicator: "red" });
 			}
-		}).catch((e) => {
-			frappe.show_alert({ message: e.message || "Couldn't send", indicator: "red" });
 		});
 	}
 
