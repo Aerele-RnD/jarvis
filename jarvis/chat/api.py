@@ -10,6 +10,16 @@ import frappe
 CONV = "Jarvis Conversation"
 MSG = "Jarvis Chat Message"
 
+# Subscription-tier model IDs accepted by codex / gemini-cli's auth tunnel.
+# These are CLI-specific names (NOT OpenAI's API names like "gpt-4o").
+# Mirrors SUBSCRIPTION_MODELS in jarvis_chat.js / jarvis_account.js / jarvis_onboarding.js.
+# Keep all three in sync; see customer-app/chat-subscription-onboarding.md
+# "Why these model names look weird" for why.
+_SUBSCRIPTION_MODELS = {
+	"OpenAI":        ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"],
+	"Google Gemini": ["gemini-2.0-pro", "gemini-1.5-pro", "gemini-1.5-flash"],
+}
+
 
 @frappe.whitelist()
 def list_conversations() -> list[dict]:
@@ -181,6 +191,48 @@ def send_message(conversation: str, message: str) -> dict:
 	)
 
 	return {"ok": True, "run_id": run_id, "message_id": msg_doc.name}
+
+
+@frappe.whitelist()
+def set_conversation_model(conversation: str, model: str | None = None) -> dict:
+	"""Set or clear the per-conversation model override.
+
+	`model`: bare model id (no provider prefix), validated against
+	the customer's current llm_provider's allowed set. Empty string or
+	None clears the override (so subsequent turns fall back to
+	Jarvis Settings.llm_model).
+
+	Returns {"ok": True, "data": {"effective_model": <model>}} where
+	effective_model is what will be sent for the next turn — either
+	the override or the settings default.
+	"""
+	if not frappe.db.exists(CONV, conversation):
+		return {"ok": False, "error": {
+			"code": "unknown_conversation",
+			"message": f"conversation {conversation!r} not found",
+		}}
+
+	settings = frappe.get_single("Jarvis Settings")
+
+	# Empty / None clears the override.
+	if not model:
+		frappe.db.set_value(CONV, conversation, "model_override", "", update_modified=False)
+		frappe.db.commit()
+		return {"ok": True, "data": {"effective_model": settings.llm_model or ""}}
+
+	allowed = _SUBSCRIPTION_MODELS.get(settings.llm_provider, [])
+	if model not in allowed:
+		return {"ok": False, "error": {
+			"code": "unknown_model",
+			"message": (
+				f"{model!r} is not a recognized model for {settings.llm_provider!r}. "
+				f"Allowed: {allowed!r}"
+			),
+		}}
+
+	frappe.db.set_value(CONV, conversation, "model_override", model, update_modified=False)
+	frappe.db.commit()
+	return {"ok": True, "data": {"effective_model": model}}
 
 
 @frappe.whitelist()
