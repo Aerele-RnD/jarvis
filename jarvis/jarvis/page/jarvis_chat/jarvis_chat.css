@@ -113,6 +113,9 @@
 	cursor: pointer;
 	transition: background 0.12s;
 	margin-bottom: 2px;
+	display: flex;
+	align-items: center;
+	gap: 8px;
 }
 
 .jarvis-conv-item:hover {
@@ -127,6 +130,36 @@
 .jarvis-conv-main {
 	flex: 1;
 	min-width: 0;
+}
+
+/* Delete (trash) icon — hidden by default, revealed on row hover.
+   Active row's icon stays visible too, so deleting the current
+   conversation doesn't require hover-hunting. */
+.jarvis-conv-delete {
+	flex: 0 0 auto;
+	width: 24px;
+	height: 24px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	background: transparent;
+	border: 0;
+	border-radius: 4px;
+	color: var(--text-muted);
+	cursor: pointer;
+	opacity: 0;
+	transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+
+.jarvis-conv-item:hover .jarvis-conv-delete,
+.jarvis-conv-item.active .jarvis-conv-delete,
+.jarvis-conv-delete:focus-visible {
+	opacity: 1;
+}
+
+.jarvis-conv-delete:hover {
+	background: var(--red-50, rgba(220, 38, 38, 0.08));
+	color: var(--red-600, #dc2626);
 }
 
 .jarvis-conv-title {
