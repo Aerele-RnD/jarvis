@@ -146,19 +146,33 @@ class OpenclawSession:
 
 	def stream_agent_turn(
 		self, session_key: str, message: str, idempotency_key: str,
+		*,
+		model: str | None = None,
+		provider: str | None = None,
 	) -> Iterator[dict[str, Any]]:
 		"""Send an `agent` request, then yield parsed events until lifecycle.end.
+
+		`model` / `provider` are optional per-turn overrides. When set, they
+		flow into openclaw's agent RPC params; the gateway honours them via
+		the operator.admin-scope-gated modelOverride path (our connect already
+		declares that scope). When omitted, openclaw falls back to
+		agents.defaults.model.primary from openclaw.json.
 
 		Yields the same parsed-event shape the worker used to consume from
 		the subprocess. Raises OpenclawUnreachableError on WS drop, agent
 		errors, or timeout — all the failure modes worker.py already maps to
 		assistant-message error rows."""
-		agent_id = self._send("agent", {
+		params = {
 			"message": message,
 			"sessionKey": session_key,
 			"deliver": False,
 			"idempotencyKey": idempotency_key,
-		})
+		}
+		if model:
+			params["model"] = model
+		if provider:
+			params["provider"] = provider
+		agent_id = self._send("agent", params)
 		deadline = time.monotonic() + TURN_TIMEOUT_SECONDS
 
 		# 1. Drain frames until we see the agent ack OR an error/event for our run.
