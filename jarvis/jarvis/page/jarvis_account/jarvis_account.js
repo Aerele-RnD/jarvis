@@ -204,7 +204,10 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 			const provider = settingsLocal.llm_provider || "—";
 			const model = settingsLocal.llm_model || "—";
 			const email = settingsLocal.llm_oauth_account_email || "—";
-			const connectedAt = settingsLocal.llm_oauth_connected_at
+			// frappe.datetime.comment_when returns a <span class="frappe-timestamp">
+			// HTML widget (with hover tooltip). DON'T escape — let it render
+			// as live HTML. Other fields are plain strings; keep esc() on them.
+			const connectedAtHtml = settingsLocal.llm_oauth_connected_at
 				? frappe.datetime.comment_when(settingsLocal.llm_oauth_connected_at)
 				: "—";
 			return `
@@ -213,7 +216,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 					<tr><td>Account</td><td>${esc(email)}</td></tr>
 					<tr><td>Provider</td><td>${esc(provider)}</td></tr>
 					<tr><td>Model</td><td>${esc(model)}</td></tr>
-					<tr><td>Connected</td><td>${esc(connectedAt)}</td></tr>
+					<tr><td>Connected</td><td>${connectedAtHtml}</td></tr>
 				</table>
 				<div class="ja-actions">
 					<button class="ja-btn ja-btn-ghost" id="ja-sub-disconnect">Disconnect</button>
