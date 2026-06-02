@@ -73,3 +73,69 @@ class TestBeginPasteSignin(_OAuthApiBase):
 		out = oauth_api.begin_paste_signin("Anthropic", "claude-3-5")
 		self.assertFalse(out["ok"])
 		self.assertEqual(out["error"]["code"], "unknown_provider")
+
+
+class TestCompletePasteSigninParsing(_OAuthApiBase):
+	def _seed(self, **overrides):
+		nonce = "n_" + ("a" * 46)
+		entry = {
+			"provider": "OpenAI",
+			"model": "gpt-4o",
+			"status": "pending",
+			"expires_at_ts": int(time.time()) + 600,
+			"send_count": 0,
+			"verifier": "test-verifier",
+			"state": "test-state",
+			"authorize_url": "https://auth.openai.com/oauth/authorize?...",
+		}
+		entry.update(overrides)
+		frappe.cache.hset(_CACHE_KEY, nonce, entry)
+		return nonce
+
+	def test_rejects_unknown_nonce(self):
+		out = oauth_api.complete_paste_signin(
+			nonce="bogus",
+			redirected_url="http://localhost:1455/auth/callback?code=A&state=B",
+		)
+		self.assertEqual(out["error"]["code"], "unknown_nonce")
+
+	def test_rejects_expired_nonce(self):
+		nonce = self._seed(expires_at_ts=0)
+		out = oauth_api.complete_paste_signin(
+			nonce=nonce,
+			redirected_url="http://localhost:1455/auth/callback?code=A&state=test-state",
+		)
+		self.assertEqual(out["error"]["code"], "expired")
+
+	def test_rejects_missing_code(self):
+		nonce = self._seed()
+		out = oauth_api.complete_paste_signin(
+			nonce=nonce,
+			redirected_url="http://localhost:1455/auth/callback?state=test-state",
+		)
+		self.assertEqual(out["error"]["code"], "missing_code")
+
+	def test_rejects_state_mismatch(self):
+		nonce = self._seed()
+		out = oauth_api.complete_paste_signin(
+			nonce=nonce,
+			redirected_url="http://localhost:1455/auth/callback?code=A&state=wrong",
+		)
+		self.assertEqual(out["error"]["code"], "state_mismatch")
+
+	def test_accepts_query_string_only(self):
+		nonce = self._seed()
+		out = oauth_api.complete_paste_signin(
+			nonce=nonce,
+			redirected_url="?code=ABC&state=test-state",
+		)
+		# Bridge: parsing succeeds; token exchange comes in Task 1.4.
+		self.assertEqual(out["error"]["code"], "not_implemented")
+
+	def test_accepts_bare_querystring_no_prefix(self):
+		nonce = self._seed()
+		out = oauth_api.complete_paste_signin(
+			nonce=nonce,
+			redirected_url="code=ABC&state=test-state",
+		)
+		self.assertEqual(out["error"]["code"], "not_implemented")

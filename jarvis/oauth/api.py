@@ -79,3 +79,58 @@ def begin_paste_signin(provider: str, model: str) -> dict:
 		"authorize_url": authorize_url,
 		"expires_in": _NONCE_TTL_SECS,
 	})
+
+
+from urllib.parse import urlparse, parse_qs
+
+
+def _parse_redirected_url(raw: str) -> dict:
+	"""Defensively parse the URL the customer pasted.
+
+	Accepts:
+	  - http://localhost:1455/auth/callback?code=A&state=B
+	  - ?code=A&state=B
+	  - code=A&state=B
+
+	Returns: {"code": str|None, "state": str|None}
+	"""
+	raw = (raw or "").strip()
+	if not raw:
+		return {"code": None, "state": None}
+
+	if "://" in raw or raw.startswith("/"):
+		query = urlparse(raw).query
+	elif raw.startswith("?"):
+		query = raw[1:]
+	else:
+		query = raw
+
+	q = parse_qs(query)
+	return {
+		"code": (q.get("code") or [None])[0],
+		"state": (q.get("state") or [None])[0],
+	}
+
+
+@frappe.whitelist()
+def complete_paste_signin(nonce: str, redirected_url: str) -> dict:
+	"""Wizard calls this after the customer signs in and pastes the URL
+	they copied from the browser's address bar."""
+	entry = frappe.cache.hget(_CACHE_KEY, nonce)
+	if not entry:
+		return _err("unknown_nonce", "nonce not recognized")
+	if entry["expires_at_ts"] < int(time.time()):
+		return _err("expired", "nonce has expired; generate a new sign-in URL")
+	if entry["status"] != "pending":
+		return _err("not_pending", f"nonce status is {entry['status']!r}")
+
+	parsed = _parse_redirected_url(redirected_url)
+	if not parsed["code"]:
+		return _err("missing_code", "no `code` parameter found in the pasted URL")
+	if parsed["state"] != entry["state"]:
+		return _err("state_mismatch",
+		            "the `state` parameter doesn't match; "
+		            "regenerate the sign-in URL and try again")
+
+	# Token exchange + blob push come in Task 1.4.
+	return _err("not_implemented", "token exchange not yet wired")
