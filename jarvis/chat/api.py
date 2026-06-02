@@ -136,8 +136,16 @@ from jarvis.chat.openclaw_client import OpenclawSession
 
 
 @frappe.whitelist()
-def send_message(conversation: str, message: str) -> dict:
+def send_message(
+	conversation: str, message: str, model_override: str | None = None,
+) -> dict:
 	"""Validate, persist the user message, ensure session_key, enqueue the worker.
+
+	`model_override` (optional): bare model id to apply to this conversation
+	BEFORE enqueueing the worker. Used from the welcome screen so the first
+	turn lands on the picker-chosen model without a race against the worker.
+	Validated against the same allowlist set_conversation_model uses.
+	Empty string / None leaves the existing override alone.
 
 	Returns {ok: True, run_id, message_id} on success or
 	{ok: False, reason: str} on validation failure. Raises
@@ -154,6 +162,18 @@ def send_message(conversation: str, message: str) -> dict:
 		return {"ok": False, "reason": _("message is empty")}
 
 	conv_doc = frappe.get_doc(CONV, conversation)  # respects perms
+
+	# Apply model override BEFORE enqueueing so the worker sees the new value
+	# when it loads the conversation. (If we set this after the enqueue, the
+	# worker may pick up the run before the DB write commits.)
+	if model_override:
+		settings = frappe.get_single("Jarvis Settings")
+		allowed = _SUBSCRIPTION_MODELS.get(settings.llm_provider, [])
+		if model_override not in allowed:
+			return {"ok": False, "reason":
+			        f"model {model_override!r} is not valid for "
+			        f"{settings.llm_provider!r}"}
+		conv_doc.model_override = model_override
 
 	# Persist the user message with next seq value
 	seq = _next_seq(conversation)

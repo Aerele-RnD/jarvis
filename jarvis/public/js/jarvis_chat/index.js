@@ -86,10 +86,13 @@ export function init(wrapper) {
 		$welcome.show();
 		page.set_title(__("Jarvis Chat"));
 		syncUrl(null);
-		// No conversation open → hide the model picker.
+		// Welcome screen still shows the picker (oauth mode) so the customer
+		// can choose a model for the next conversation. Keep
+		// current_model_override in state so the next send_message threads it.
 		state.current_conversation = null;
-		state.current_model_override = "";
 		refreshModelPickerVisibility?.();
+		// Reflect the current (possibly preserved) override in the dropdown.
+		$modelPicker?.val(state.current_model_override || "");
 	}
 
 	// Reflect the active conversation in the URL so refresh / share / back
@@ -126,10 +129,10 @@ export function init(wrapper) {
 	}
 
 	function refreshModelPickerVisibility() {
-		// Hidden in api_key mode (per spec § Out of scope).
-		// Hidden when there's no current conversation (welcome screen).
-		const show =
-			state.llm_auth_mode === "oauth" && !!state.current_conversation;
+		// Shown in oauth mode (api_key mode has no multi-model picker).
+		// Visible on the welcome screen too — the picked value gets applied
+		// to whichever conversation receives the first send_message.
+		const show = state.llm_auth_mode === "oauth";
 		$convToolbar.prop("hidden", !show);
 	}
 
@@ -140,9 +143,21 @@ export function init(wrapper) {
 	}
 
 	$modelPicker.on("change", async function () {
-		const conv = state.current_conversation;
-		if (!conv) return;
 		const newModel = this.value || null;
+		const conv = state.current_conversation;
+
+		// On the welcome screen (no conversation yet), just stash the choice
+		// in local state. It'll be applied to whichever conversation gets
+		// the first send_message via the model_override arg.
+		if (!conv) {
+			state.current_model_override = newModel || "";
+			frappe.show_alert({
+				message: __("Model for next chat: ") + (newModel || state.llm_model),
+				indicator: "blue",
+			});
+			return;
+		}
+
 		try {
 			const r = await api.setConversationModel(conv, newModel);
 			if (!r || !r.ok) {
@@ -325,7 +340,11 @@ export function init(wrapper) {
 			$input.val("");
 			autoGrowInput();
 
-			const result = await api.sendMessage(conv, text);
+			// Pass the picker's current value (if any) so the new
+			// conversation lands on it atomically — no race against the worker.
+			const result = await api.sendMessage(
+				conv, text, state.current_model_override || null,
+			);
 			if (!result.ok) {
 				frappe.show_alert({ message: result.reason, indicator: "red" });
 				return;

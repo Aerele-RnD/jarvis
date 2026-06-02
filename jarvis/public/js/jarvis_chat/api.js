@@ -31,10 +31,12 @@ export async function archiveConversation(name) {
 	});
 }
 
-export async function sendMessage(conversation, message) {
+export async function sendMessage(conversation, message, model_override) {
+	const args = { conversation, message };
+	if (model_override) args.model_override = model_override;
 	const r = await frappe.call({
 		method: "jarvis.chat.api.send_message",
-		args: { conversation, message },
+		args,
 	});
 	return r.message;
 }
