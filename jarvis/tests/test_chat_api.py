@@ -455,3 +455,74 @@ class TestSetConversationModel(_ChatTestCase):
 		out = set_conversation_model("missing-conv-id-xyz", "gpt-5.5")
 		self.assertFalse(out["ok"])
 		self.assertEqual(out["error"]["code"], "unknown_conversation")
+
+
+class TestSendMessageWithModelOverride(_ChatTestCase):
+	"""send_message accepts an optional model_override that gets applied
+	to the conversation BEFORE the worker is enqueued — so the first
+	turn lands on the picked model without a race against the worker."""
+
+	@classmethod
+	def setUpClass(cls):
+		super().setUpClass()
+		settings = frappe.get_single("Jarvis Settings")
+		cls._settings_snap = {
+			"llm_auth_mode": settings.llm_auth_mode,
+			"llm_provider": settings.llm_provider,
+			"llm_model": settings.llm_model,
+		}
+		settings.db_set("llm_auth_mode", "oauth", update_modified=False)
+		settings.db_set("llm_provider", "OpenAI", update_modified=False)
+		settings.db_set("llm_model", "gpt-5.5", update_modified=False)
+		frappe.db.commit()
+
+	@classmethod
+	def tearDownClass(cls):
+		settings = frappe.get_single("Jarvis Settings")
+		for k, v in cls._settings_snap.items():
+			settings.db_set(k, v, update_modified=False)
+		frappe.db.commit()
+		super().tearDownClass()
+
+	def setUp(self):
+		super().setUp()
+		self.conv = create_conversation()
+
+	def test_valid_override_persists_before_enqueue(self):
+		"""When model_override is passed, conv.model_override is set
+		before frappe.enqueue is called (so the worker sees the right value)."""
+		from jarvis.chat.api import send_message
+		written = {}
+		def capture(*a, **kw):
+			# Snapshot the DB value at the moment enqueue is called
+			written["override"] = frappe.db.get_value(CONV, self.conv, "model_override")
+		with patch("jarvis.chat.api._ensure_session_key", return_value="agent:fake"), \
+		     patch("frappe.enqueue", side_effect=capture):
+			result = send_message(self.conv, "hi", model_override="gpt-5.4-mini")
+		self.assertTrue(result["ok"])
+		self.assertEqual(written["override"], "gpt-5.4-mini")
+
+	def test_unknown_override_rejected(self):
+		"""Invalid model name yields ok:false with no DB write or enqueue."""
+		from jarvis.chat.api import send_message
+		with patch("frappe.enqueue") as enqueue:
+			result = send_message(self.conv, "hi", model_override="gpt-4o")
+		self.assertFalse(result["ok"])
+		self.assertIn("gpt-4o", result["reason"])
+		enqueue.assert_not_called()
+		# Conversation unchanged
+		self.assertFalse(frappe.db.get_value(CONV, self.conv, "model_override"))
+
+	def test_no_override_keeps_existing(self):
+		"""Calling send_message without model_override doesn't touch
+		conv.model_override (so per-conversation settings persist)."""
+		from jarvis.chat.api import send_message
+		# Pre-set an override
+		frappe.db.set_value(CONV, self.conv, "model_override", "gpt-5.4")
+		with patch("jarvis.chat.api._ensure_session_key", return_value="agent:fake"), \
+		     patch("frappe.enqueue"):
+			send_message(self.conv, "hi")
+		self.assertEqual(
+			frappe.db.get_value(CONV, self.conv, "model_override"),
+			"gpt-5.4",
+		)
