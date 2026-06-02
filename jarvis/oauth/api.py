@@ -29,7 +29,10 @@ _CACHE_KEY = "jarvis.oauth.codex_signin"
 _NONCE_TTL_SECS = 600
 _HTTP_TIMEOUT = 30
 _REDIRECT_URI = "http://localhost:1455/auth/callback"
-_DEFAULT_MODEL = {"OpenAI": "gpt-4o", "Google Gemini": "gemini-2.0-pro"}
+# Defaults for subscription mode — these are codex/gemini-cli's CLI-specific
+# model IDs, not OpenAI/Google's standard API model names. Mirrors the
+# SUBSCRIPTION_MODELS dict in jarvis_onboarding.js / jarvis_account.js.
+_DEFAULT_MODEL = {"OpenAI": "gpt-5.5", "Google Gemini": "gemini-2.0-pro"}
 
 
 def _ok(data: dict) -> dict:
