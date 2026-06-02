@@ -227,7 +227,6 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 				<p class="ja-sub"><strong>Step 1</strong> — Sign in with your ${esc(ui.subProvider)} account in a new tab.</p>
 				<div class="ja-actions" style="margin-bottom:10px">
 					<button class="ja-btn ja-btn-primary" id="ja-sub-open-url">Open Sign-in URL →</button>
-					<button class="ja-btn ja-btn-ghost" id="ja-sub-share">Send to colleague</button>
 				</div>
 				<div class="ja-url-row" style="margin-bottom:18px">
 					<code class="ja-url-text" id="ja-sub-url-text" title="${esc(ui.subAuthorizeUrl)}">${esc(ui.subAuthorizeUrl)}</code>
@@ -371,7 +370,6 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 			render();
 		});
 		$body.find("#ja-sub-submit").on("click", submitPastedUrl);
-		$body.find("#ja-sub-share").on("click", shareSubscriptionUrl);
 	}
 
 	function startCodexSignin() {
@@ -435,22 +433,6 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		ui.subNonce = null;
 		ui.subAuthorizeUrl = null;
 		ui.subExpiresAt = null;
-	}
-
-	function shareSubscriptionUrl() {
-		const recipient = prompt("Send the sign-in URL to which email address?");
-		if (!recipient) return;
-		frappe.call({
-			method: "jarvis.oauth.api.share_paste_signin",
-			args: { nonce: ui.subNonce, recipient_email: recipient },
-		}).then((r) => {
-			const m = r.message || {};
-			if (m.ok) {
-				frappe.show_alert({ message: "Sent to " + recipient, indicator: "green" });
-			} else {
-				frappe.show_alert({ message: (m.error && m.error.message) || "Couldn't send", indicator: "red" });
-			}
-		});
 	}
 
 	// ---- plan & validity section ------------------------------------------

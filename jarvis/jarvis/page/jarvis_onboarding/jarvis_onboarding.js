@@ -308,9 +308,8 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 			const minsLeft = Math.max(0, Math.floor((state.subExpiresAt - Date.now()) / 60000));
 			return `
 				<p class="jo-hint" style="margin-bottom:14px"><strong>Step 1</strong> — Sign in with your ${esc(state.subProvider)} account in a new tab.</p>
-				<div class="jo-actions jo-actions-split" style="margin-bottom:10px">
+				<div class="jo-actions" style="margin-bottom:10px">
 				  <button class="jo-btn jo-btn-primary" id="jo-sub-open-url">Open Sign-in URL →</button>
-				  <button class="jo-btn jo-btn-ghost" id="jo-sub-share">Send to colleague</button>
 				</div>
 				<div class="jo-url-row" style="margin-bottom:18px">
 				  <code class="jo-url-text" id="jo-sub-url-text" title="${esc(state.subAuthorizeUrl)}">${esc(state.subAuthorizeUrl)}</code>
@@ -378,7 +377,6 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 			renderLlm();
 		});
 		$body.find("#jo-sub-submit").on("click", submitPastedUrl);
-		$body.find("#jo-sub-share").on("click", shareSubscriptionUrl);
 	}
 
 	function startSubscriptionSignin() {
@@ -441,23 +439,6 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		state.subNonce = null;
 		state.subAuthorizeUrl = null;
 		state.subExpiresAt = null;
-	}
-
-	function shareSubscriptionUrl() {
-		const recipient = prompt("Send the sign-in URL to which email address?");
-		if (!recipient) return;
-		frappe.call({
-			method: "jarvis.oauth.api.share_paste_signin",
-			args: { nonce: state.subNonce, recipient_email: recipient },
-		}).then((r) => {
-			const m = r.message || {};
-			if (m.ok) {
-				frappe.show_alert({ message: "Sent to " + recipient, indicator: "green" });
-			} else {
-				const err = m.error || {};
-				frappe.show_alert({ message: err.message || "Couldn't send", indicator: "red" });
-			}
-		});
 	}
 
 	function saveLlm() {
