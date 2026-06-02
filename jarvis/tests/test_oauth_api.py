@@ -83,7 +83,6 @@ class TestCompletePasteSigninParsing(_OAuthApiBase):
 			"model": "gpt-4o",
 			"status": "pending",
 			"expires_at_ts": int(time.time()) + 600,
-			"send_count": 0,
 			"verifier": "test-verifier",
 			"state": "test-state",
 			"authorize_url": "https://auth.openai.com/oauth/authorize?...",
@@ -159,7 +158,6 @@ class TestCompletePasteSigninFlow(_OAuthApiBase):
 			"provider": provider, "model": model,
 			"status": "pending",
 			"expires_at_ts": int(time.time()) + 600,
-			"send_count": 0,
 			"verifier": "test-verifier",
 			"state": "test-state",
 			"authorize_url": "https://auth.openai.com/oauth/authorize?...",
@@ -272,36 +270,3 @@ class TestDisconnect(_OAuthApiBase):
 		self.assertEqual(out["error"]["code"], "disconnect_failed")
 
 
-class TestSharePasteSignin(_OAuthApiBase):
-	def _seed(self):
-		nonce = "s_" + ("e" * 46)
-		frappe.cache.hset(_CACHE_KEY, nonce, {
-			"provider": "OpenAI", "model": "gpt-4o", "status": "pending",
-			"expires_at_ts": int(time.time()) + 600, "send_count": 0,
-			"verifier": "v", "state": "test-state",
-			"authorize_url": "https://auth.openai.com/oauth/authorize?...",
-		})
-		return nonce
-
-	@patch("jarvis.oauth.api.frappe.sendmail")
-	def test_share_sends_email_with_authorize_url(self, mock_mail):
-		nonce = self._seed()
-		out = oauth_api.share_paste_signin(
-			nonce=nonce, recipient_email="dev@acme.com",
-		)
-		self.assertTrue(out["ok"])
-		mock_mail.assert_called_once()
-		body = mock_mail.call_args.kwargs["message"]
-		self.assertIn("auth.openai.com/oauth/authorize", body)
-
-	def test_share_unknown_nonce(self):
-		out = oauth_api.share_paste_signin(nonce="bogus", recipient_email="x@y.com")
-		self.assertEqual(out["error"]["code"], "unknown_nonce")
-
-	@patch("jarvis.oauth.api.frappe.sendmail")
-	def test_share_rate_limited_at_5(self, _):
-		nonce = self._seed()
-		for _ in range(5):
-			oauth_api.share_paste_signin(nonce=nonce, recipient_email="x@y.com")
-		out = oauth_api.share_paste_signin(nonce=nonce, recipient_email="x@y.com")
-		self.assertEqual(out["error"]["code"], "rate_limited")

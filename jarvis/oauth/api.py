@@ -5,7 +5,7 @@ Two whitelisted endpoints:
   - begin_paste_signin(provider, model) → {nonce, authorize_url}
   - complete_paste_signin(nonce, redirected_url) → {account_email, sync_status}
 
-Plus disconnect() and share_paste_signin() (rate-limited email send).
+Plus disconnect() to reverse the connection.
 """
 import base64
 import hashlib
@@ -27,7 +27,6 @@ class TokenExchangeError(JarvisError):
 
 _CACHE_KEY = "jarvis.oauth.codex_signin"
 _NONCE_TTL_SECS = 600
-_SHARE_LIMIT = 5
 _HTTP_TIMEOUT = 30
 _REDIRECT_URI = "http://localhost:1455/auth/callback"
 _DEFAULT_MODEL = {"OpenAI": "gpt-4o", "Google Gemini": "gemini-2.0-pro"}
@@ -75,10 +74,8 @@ def begin_paste_signin(provider: str, model: str) -> dict:
 		"model": model or _DEFAULT_MODEL.get(provider, ""),
 		"status": "pending",
 		"expires_at_ts": int(time.time()) + _NONCE_TTL_SECS,
-		"send_count": 0,
 		"verifier": verifier,
 		"state": state,
-		"authorize_url": authorize_url,
 	})
 
 	return _ok({
@@ -248,42 +245,6 @@ def _fetch_account_email(provider: str, access_token: str, id_token: str) -> str
 		return _json.loads(decoded).get("email", "") or ""
 	except (ValueError, Exception):
 		return ""
-
-
-@frappe.whitelist()
-def share_paste_signin(nonce: str, recipient_email: str) -> dict:
-	"""Email the authorize URL + paste-back instructions to a colleague."""
-	from jarvis.oauth.email_templates import build_share_paste_signin_email
-	from frappe.utils import get_url
-
-	entry = frappe.cache.hget(_CACHE_KEY, nonce)
-	if not entry:
-		return _err("unknown_nonce", "nonce not recognized")
-	if entry["expires_at_ts"] < int(time.time()):
-		return _err("expired", "nonce has expired")
-	if entry["send_count"] >= _SHARE_LIMIT:
-		return _err("rate_limited",
-		            f"Already shared {_SHARE_LIMIT} times.")
-
-	minutes_left = max(0, (entry["expires_at_ts"] - int(time.time())) // 60)
-	sender = getattr(frappe.session, "user_fullname", None) or frappe.session.user
-	email = build_share_paste_signin_email(
-		sender_name=sender,
-		company=frappe.local.site,
-		provider=entry["provider"],
-		authorize_url=entry.get("authorize_url", ""),
-		bench_url=get_url().rstrip("/"),
-		minutes_left=minutes_left,
-	)
-	frappe.sendmail(
-		recipients=[recipient_email],
-		subject=email["subject"],
-		message=email["body"],
-		now=True,
-	)
-	entry["send_count"] += 1
-	frappe.cache.hset(_CACHE_KEY, nonce, entry)
-	return _ok({})
 
 
 @frappe.whitelist()
