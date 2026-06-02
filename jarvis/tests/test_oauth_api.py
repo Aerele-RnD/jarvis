@@ -229,7 +229,6 @@ class TestCompletePasteSigninFlow(_OAuthApiBase):
 		that the endpoint surfaces the failure cleanly."""
 		from jarvis.oauth import api as oa
 		nonce = self._seed()
-		# Override the mock to raise TokenExchangeError specifically
 		with patch("jarvis.oauth.api._exchange_code",
 		           side_effect=oa.TokenExchangeError("provider 400")):
 			out = oauth_api.complete_paste_signin(
@@ -238,5 +237,36 @@ class TestCompletePasteSigninFlow(_OAuthApiBase):
 			)
 		self.assertFalse(out["ok"])
 		self.assertEqual(out["error"]["code"], "token_exchange_failed")
-		# Nonce NOT cleared — customer can paste again (within TTL)
 		self.assertIsNotNone(frappe.cache.hget(_CACHE_KEY, nonce))
+
+
+from jarvis import admin_client as _admin_module
+
+
+class TestDisconnect(_OAuthApiBase):
+	@patch("jarvis.oauth.api.admin_client.post_subscription_disconnect")
+	def test_disconnect_clears_state(self, mock_disc):
+		settings = frappe.get_single("Jarvis Settings")
+		settings.db_set("llm_auth_mode", "oauth", update_modified=False)
+		settings.db_set("llm_oauth_account_email", "x@y.com", update_modified=False)
+		settings.db_set("llm_oauth_connected_at",
+		                frappe.utils.now_datetime(), update_modified=False)
+		frappe.cache.hset(_CACHE_KEY, "leftover_nonce", {"status": "pending"})
+		frappe.db.commit()
+
+		out = oauth_api.disconnect()
+		self.assertTrue(out["ok"])
+		mock_disc.assert_called_once()
+		settings = frappe.get_single("Jarvis Settings")
+		self.assertEqual(settings.llm_auth_mode, "api_key")
+		self.assertEqual(settings.last_sync_status, "disconnected")
+		self.assertFalse(settings.llm_oauth_account_email)
+		self.assertIsNone(settings.llm_oauth_connected_at)
+		self.assertIsNone(frappe.cache.hget(_CACHE_KEY, "leftover_nonce"))
+
+	@patch("jarvis.oauth.api.admin_client.post_subscription_disconnect",
+	       side_effect=_admin_module.AdminUnreachableError("net"))
+	def test_disconnect_admin_failure(self, _):
+		out = oauth_api.disconnect()
+		self.assertFalse(out["ok"])
+		self.assertEqual(out["error"]["code"], "disconnect_failed")
