@@ -1,13 +1,13 @@
 """Tests for Jarvis Settings on_update classification + admin dispatch.
 
-`Jarvis Settings` is a Single — there's exactly one row in the whole DB,
+`Jarvis Settings` is a Single - there's exactly one row in the whole DB,
 shared by tests and the live UI. `_SettingsSingletonTestCase` snapshots
 the pre-test field values in setUpClass and restores them in
 tearDownClass so the suite leaves no footprint on the user's real
 credentials.
 
 Post-unification (2026-05-29): on_update always dispatches via
-`_sync_via_admin` — there is no longer a bench-local push shortcut. All
+`_sync_via_admin` - there is no longer a bench-local push shortcut. All
 tests mock `jarvis.admin_client.*` accordingly.
 """
 
@@ -157,7 +157,7 @@ class TestOnUpdateClassification(_SettingsSingletonTestCase):
 class TestOnUpdateAlwaysAdminPath(_SettingsSingletonTestCase):
     """Unified architecture: on_update always uses `_sync_via_admin`,
     regardless of whether the admin api_key is configured. If admin isn't
-    configured, the call fails with AdminAuthError (which we don't mock —
+    configured, the call fails with AdminAuthError (which we don't mock -
     the test only verifies the path is taken)."""
 
     def setUp(self):
@@ -269,7 +269,7 @@ class TestValidateAuthMode(_SettingsSingletonTestCase):
 
     def test_legacy_subscription_mode_no_bench_credential_required(self):
         """Migrated tenants on the legacy 'subscription' value are treated
-        the same as oauth — no bench-side credential required."""
+        the same as oauth - no bench-side credential required."""
         settings = frappe.get_single("Jarvis Settings")
         settings.llm_auth_mode = "subscription"
         settings.llm_provider = "OpenAI"
@@ -278,7 +278,7 @@ class TestValidateAuthMode(_SettingsSingletonTestCase):
 
 
 class TestClassifyAuthModeSwitch(_SettingsSingletonTestCase):
-    """Mode-switch is structural — always triggers restart."""
+    """Mode-switch is structural - always triggers restart."""
 
     def setUp(self):
         _reset_settings()

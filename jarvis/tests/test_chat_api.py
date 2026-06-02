@@ -1,4 +1,4 @@
-"""Tests for jarvis.chat.api — whitelisted endpoints.
+"""Tests for jarvis.chat.api - whitelisted endpoints.
 
 These tests run as a **dedicated test user** (``TEST_USER``) so they never
 touch Administrator's data. Running the suite against a dev site that has
@@ -48,7 +48,7 @@ def _ensure_test_user(user: str = TEST_USER) -> None:
 def _cleanup_user_conversations(user: str = TEST_USER) -> None:
 	"""Delete all conversations owned by `user` (and their messages).
 
-	Defaults to the test fixture user — callers should NOT pass
+	Defaults to the test fixture user - callers should NOT pass
 	``Administrator`` here; doing so wipes real chat history on the dev site.
 	"""
 	names = frappe.get_all(CONV, filters={"owner": user}, pluck="name")
@@ -341,7 +341,7 @@ class TestRetryMessage(_ChatTestCase):
 		self.assertIn("error", result["reason"].lower())
 
 	def test_rejects_if_no_preceding_user_message(self):
-		"""An orphan errored assistant (somehow inserted without a user) — refuse."""
+		"""An orphan errored assistant (somehow inserted without a user) - refuse."""
 		asst_doc = frappe.get_doc({
 			"doctype": MSG, "conversation": self.conv, "seq": 1,
 			"role": "assistant", "content": "", "error": "boom",
@@ -459,7 +459,7 @@ class TestSetConversationModel(_ChatTestCase):
 
 class TestSendMessageWithModelOverride(_ChatTestCase):
 	"""send_message accepts an optional model_override that gets applied
-	to the conversation BEFORE the worker is enqueued — so the first
+	to the conversation BEFORE the worker is enqueued - so the first
 	turn lands on the picked model without a race against the worker."""
 
 	@classmethod

@@ -36,7 +36,7 @@ DEFAULT_TIMEOUT = 120  # seconds for the whole exchange
 # lifecycle / tool / assistant events until the run ends. Output is
 # line-delimited JSON so Python can parse it.
 #
-# The sessions.pluginPatch step has been removed — identity is now propagated
+# The sessions.pluginPatch step has been removed - identity is now propagated
 # via the Frappe database (Jarvis Chat Session row) + HTTP lookup in the plugin.
 _NODE_SCRIPT = r"""
 const ws = new (require('ws'))('ws://127.0.0.1:18789');
@@ -261,7 +261,7 @@ def ask_one(user: str, message: str, timeout: int = DEFAULT_TIMEOUT) -> dict:
 						print(f"\n[lifecycle] run errored: {data.get('error')}")
 
 				elif stream == "item":
-					# openclaw's unified item stream — kind discriminates between
+					# openclaw's unified item stream - kind discriminates between
 					# tool calls, model messages, etc.
 					kind = data.get("kind")
 					phase = data.get("phase")
@@ -302,12 +302,12 @@ def ask_one(user: str, message: str, timeout: int = DEFAULT_TIMEOUT) -> dict:
 					if delta:
 						print(delta, end="", flush=True)
 					if isinstance(full_text, str):
-						# Replace, not append — `text` is cumulative across deltas.
+						# Replace, not append - `text` is cumulative across deltas.
 						final_text_parts.clear()
 						final_text_parts.append(full_text)
 
 				elif stream is None:
-					# Empty / heartbeat frames — silent.
+					# Empty / heartbeat frames - silent.
 					continue
 
 				else:

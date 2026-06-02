@@ -49,7 +49,7 @@ export async function refreshSidebar($sidebar, $empty, onSelect, onArchive) {
 
 		$item.on("click", () => onSelect(c.name));
 
-		// Per-row delete (soft-delete via archive — sidebar's list query
+		// Per-row delete (soft-delete via archive - sidebar's list query
 		// filters status='Active', so archived rows fall out of view).
 		// Delegates the API call + cleanup to onArchive (the controller in
 		// index.js) so this stays a pure UI affordance.

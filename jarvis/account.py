@@ -5,7 +5,7 @@ api_secret). Errors are normalized via the shared ``_surface`` helper from
 onboarding so admin ValidationErrors arrive as clean ``frappe.throw`` toasts.
 
 The page also reuses these existing onboarding endpoints directly under
-their published names — no duplicates:
+their published names - no duplicates:
 
   - jarvis.onboarding.save_llm_creds  (LLM section save)
   - jarvis.onboarding.renew           (renew / reactivate / resume CTAs)
@@ -23,7 +23,7 @@ def is_onboarded() -> dict:
 	"""True iff Jarvis Settings holds an admin api_key. The wizard's
 	completion-card branch and the account page's redirect guard share this.
 
-	Pool-pending customers (paid but no tenant yet) still count as onboarded —
+	Pool-pending customers (paid but no tenant yet) still count as onboarded -
 	they've completed signup; the agent_url just hasn't been wired up. The
 	account page handles that state via tenant_status: pending.
 	"""

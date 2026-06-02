@@ -7,7 +7,7 @@ names. The operator-tab fields (gateway URL/token/paths) get brand-
 neutral `agent_*` names so customers never see "openclaw" in the UI.
 
 Module file names (openclaw_bootstrap.py, etc.) are intentionally NOT
-renamed — they're implementation detail, not customer-visible.
+renamed - they're implementation detail, not customer-visible.
 
 Implementation note: Jarvis Settings is a Single DocType. Single DocTypes
 store data as key/value rows in `tabSingles` rather than columns on a

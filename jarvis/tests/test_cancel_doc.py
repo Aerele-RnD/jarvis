@@ -1,6 +1,6 @@
-"""Tests for jarvis.tools.cancel_doc — fourth mutating tool.
+"""Tests for jarvis.tools.cancel_doc - fourth mutating tool.
 
-Mirror of test_submit_doc.py — cancel is the inverse state transition
+Mirror of test_submit_doc.py - cancel is the inverse state transition
 (docstatus 1 → 2). Same mock-heavy approach: on_cancel hooks belong to
 the DocType, not us.
 """
@@ -106,7 +106,7 @@ class TestCancelDocHappyPath(FrappeTestCase):
 		self.assertEqual(result["docstatus"], 2)
 
 	def test_propagates_validation_error_from_cancel(self):
-		"""on_cancel hooks may reject — e.g. invoice partly paid → can't
+		"""on_cancel hooks may reject - e.g. invoice partly paid → can't
 		cancel without first reversing payment. Let the real reason surface."""
 		doc = _fake_doc(docstatus=1)
 		doc.cancel.side_effect = frappe.ValidationError(

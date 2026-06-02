@@ -1,5 +1,5 @@
 /* =============================================================
- * Jarvis Chat — page styles
+ * Jarvis Chat - page styles
  * Tokens follow Frappe Desk CSS variables so dark mode "just works".
  * ============================================================= */
 
@@ -47,7 +47,7 @@
 /* ---- Layout ------------------------------------------------- */
 
 /* Use Frappe's page-body as the layout container so we fill exactly the
- * space the Desk gave us — no magic number for navbar/header height. The
+ * space the Desk gave us - no magic number for navbar/header height. The
  * 100dvh fallback handles mobile chrome (URL bar) collapsing. */
 .jarvis-chat-page {
 	position: relative;
@@ -132,7 +132,7 @@
 	min-width: 0;
 }
 
-/* Delete (trash) icon — hidden by default, revealed on row hover.
+/* Delete (trash) icon - hidden by default, revealed on row hover.
    Active row's icon stays visible too, so deleting the current
    conversation doesn't require hover-hunting. */
 .jarvis-conv-delete {
@@ -464,7 +464,7 @@
 	font-style: italic;
 }
 
-/* Nested "Raw JSON" toggle inside the table details — smaller +
+/* Nested "Raw JSON" toggle inside the table details - smaller +
  * de-emphasised since the table is the primary view. */
 .jarvis-tool-raw {
 	margin-top: 8px;
@@ -563,7 +563,7 @@
 	margin-bottom: 0;
 }
 
-/* Inside a group, tool heads use a slightly lighter background — the group
+/* Inside a group, tool heads use a slightly lighter background - the group
  * itself already conveys "this is the agent's work area". */
 .jarvis-tool-group-body .jarvis-tool-head {
 	background: var(--bg-light-gray);

@@ -1,4 +1,4 @@
-// Shared mutable state for the page. Kept tiny on purpose — the source of
+// Shared mutable state for the page. Kept tiny on purpose - the source of
 // truth for messages/conversations is the server; this object only tracks
 // what the UI is currently looking at.
 
@@ -17,7 +17,7 @@ export const state = {
 	llm_model: "",
 	subscription_models: {},    // { "OpenAI": [...], "Google Gemini": [...] }
 
-	// Per-conversation model override mirror — refreshed each loadConversation.
+	// Per-conversation model override mirror - refreshed each loadConversation.
 	// Empty string means "use llm_model default".
 	current_model_override: "",
 };

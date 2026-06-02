@@ -180,7 +180,7 @@
       "fieldname": "operator_section",
       "fieldtype": "Section Break",
       "label": "Agent Operator",
-      "description": "Operator config — populated by jarvis.openclaw_bootstrap.start (dev) or the Jarvis admin signup response (prod)."
+      "description": "Operator config - populated by jarvis.openclaw_bootstrap.start (dev) or the Jarvis admin signup response (prod)."
     },
     {
       "fieldname": "agent_url",
@@ -201,7 +201,7 @@
       "fieldtype": "Data",
       "label": "Chat Device ID",
       "read_only": 1,
-      "description": "sha256(rawPublicKey).hex — openclaw deviceId this bench was paired as. Set lazily on first chat; cleared on re-pair."
+      "description": "sha256(rawPublicKey).hex - openclaw deviceId this bench was paired as. Set lazily on first chat; cleared on re-pair."
     },
     {
       "fieldname": "chat_device_public_key",

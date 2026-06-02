@@ -10,7 +10,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	const inr = (n) => "₹" + Number(n || 0).toLocaleString("en-IN");
 	const cycleLabel = (c) => (String(c).toLowerCase() === "annual" ? "/year" : "/month");
 
-	// LLM provider defaults — mirror the onboarding wizard's PROVIDER_DEFAULTS
+	// LLM provider defaults - mirror the onboarding wizard's PROVIDER_DEFAULTS
 	// so the section behaves identically there and here.
 	const PROVIDER_DEFAULTS = {
 		"Anthropic":          { model: "claude-sonnet-4-6",                 baseUrl: "https://api.anthropic.com" },
@@ -54,7 +54,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 
 	// Subscription providers + models (chat-subscription OAuth path).
 	// REV-3: server holds the verifier; UI offers a model picker at start.
-	// Subscription-tier model IDs — these go through codex/gemini-cli's
+	// Subscription-tier model IDs - these go through codex/gemini-cli's
 	// auth tunnel rather than the standard API, so the valid set is
 	// CLI-specific (not OpenAI/Google's public API model names).
 	// Verified live against ChatGPT-prolite + Gemini Advanced 2026-06-02.
@@ -84,7 +84,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		frappe.call({ method: "jarvis.account.is_onboarded" })
 			.then((r) => {
 				if (!r.message || !r.message.onboarded) {
-					// Not onboarded — wizard owns this customer.
+					// Not onboarded - wizard owns this customer.
 					window.location.assign("/app/jarvis-onboarding");
 					return;
 				}
@@ -119,7 +119,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	}
 
 	// ---- AI provider card (tabbed: API key | Chat subscription) ----------
-	// Segmented-control style — full-width container, sliding thumb between
+	// Segmented-control style - full-width container, sliding thumb between
 	// the two halves, equal-width buttons. Click handler swaps only the
 	// panel body so the slide animation isn't interrupted by a full
 	// re-render of the tabs DOM.
@@ -127,7 +127,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	const ICON_CHAT = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`;
 
 	function renderAiProviderCard(editable) {
-		const provider = settingsLocal.llm_provider || "—";
+		const provider = settingsLocal.llm_provider || "-";
 		const inApiKeyMode = settingsLocal.llm_auth_mode !== "oauth";
 		const tabs = `
 			<label class="ja-tabs-label">Authentication mode</label>
@@ -167,7 +167,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 			? `<div class="ja-banner ja-banner-warn">You're currently using a chat subscription. Saving credentials here will switch you to API-key mode and disconnect the subscription.</div>`
 			: "";
 		return `
-			<p class="ja-sub">Your API key is sent directly to the provider — Jarvis only relays prompts.</p>
+			<p class="ja-sub">Your API key is sent directly to the provider - Jarvis only relays prompts.</p>
 			${notice}
 			<div class="ja-row2">
 				<div class="ja-field">
@@ -203,17 +203,17 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	}
 
 	function renderSubscriptionPanel(editable, isActiveMode) {
-		// Screen 3 — already connected (oauth mode)
+		// Screen 3 - already connected (oauth mode)
 		if (isActiveMode) {
-			const provider = settingsLocal.llm_provider || "—";
-			const model = settingsLocal.llm_model || "—";
-			const email = settingsLocal.llm_oauth_account_email || "—";
+			const provider = settingsLocal.llm_provider || "-";
+			const model = settingsLocal.llm_model || "-";
+			const email = settingsLocal.llm_oauth_account_email || "-";
 			// frappe.datetime.comment_when returns a <span class="frappe-timestamp">
-			// HTML widget (with hover tooltip). DON'T escape — let it render
+			// HTML widget (with hover tooltip). DON'T escape - let it render
 			// as live HTML. Other fields are plain strings; keep esc() on them.
 			const connectedAtHtml = settingsLocal.llm_oauth_connected_at
 				? frappe.datetime.comment_when(settingsLocal.llm_oauth_connected_at)
-				: "—";
+				: "-";
 			return `
 				<p class="ja-sub">Refresh and account state live inside your Jarvis container. If chat starts failing, click Re-authorize to mint fresh tokens.</p>
 				<table class="ja-kv">
@@ -227,11 +227,11 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 					<button class="ja-btn ja-btn-primary" id="ja-sub-reauth">Re-authorize</button>
 				</div>`;
 		}
-		// Screen 2 — authorize URL shown, awaiting paste-back
+		// Screen 2 - authorize URL shown, awaiting paste-back
 		if (ui.subAuthorizeUrl) {
 			const minsLeft = Math.max(0, Math.floor((ui.subExpiresAt - Date.now()) / 60000));
 			return `
-				<p class="ja-sub"><strong>Step 1</strong> — Sign in with your ${esc(ui.subProvider)} account in a new tab.</p>
+				<p class="ja-sub"><strong>Step 1</strong> - Sign in with your ${esc(ui.subProvider)} account in a new tab.</p>
 				<div class="ja-actions" style="margin-bottom:10px">
 					<button class="ja-btn ja-btn-primary" id="ja-sub-open-url">Open Sign-in URL →</button>
 				</div>
@@ -239,7 +239,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 					<code class="ja-url-text" id="ja-sub-url-text" title="${esc(ui.subAuthorizeUrl)}">${esc(ui.subAuthorizeUrl)}</code>
 					<button type="button" class="ja-btn ja-btn-ghost ja-btn-small" id="ja-sub-copy-url" title="Copy URL">Copy</button>
 				</div>
-				<p class="ja-sub"><strong>Step 2</strong> — After clicking Authorize, your browser will show a page saying <em>"This site can't be reached."</em> <strong>That's expected.</strong> Copy the URL from your browser's address bar (it'll start with <code>http://localhost:1455/auth/callback?code=…</code>) and paste it here:</p>
+				<p class="ja-sub"><strong>Step 2</strong> - After clicking Authorize, your browser will show a page saying <em>"This site can't be reached."</em> <strong>That's expected.</strong> Copy the URL from your browser's address bar (it'll start with <code>http://localhost:1455/auth/callback?code=…</code>) and paste it here:</p>
 				<div class="ja-field">
 					<textarea class="ja-input" id="ja-sub-pasted-url" rows="3" placeholder="Paste the URL from the error page here"></textarea>
 				</div>
@@ -250,7 +250,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 				<div class="ja-hint" style="margin-top:14px;font-size:12px;color:var(--text-muted)">Link valid for ~${minsLeft} minute${minsLeft === 1 ? "" : "s"}.</div>
 				<div class="ja-err" id="ja-sub-err"></div>`;
 		}
-		// Screen 1 — provider + model picker (not yet started)
+		// Screen 1 - provider + model picker (not yet started)
 		const provOptions = Object.keys(SUBSCRIPTION_MODELS).map(
 			(p) => `<option value="${esc(p)}" ${p === ui.subProvider ? "selected" : ""}>${esc(p)}</option>`
 		).join("");
@@ -259,7 +259,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		).join("");
 		const dis = editable ? "" : "disabled";
 		return `
-			<p class="ja-sub">Sign in with your existing ChatGPT Plus / Pro or Gemini Advanced account — no developer key needed.</p>
+			<p class="ja-sub">Sign in with your existing ChatGPT Plus / Pro or Gemini Advanced account - no developer key needed.</p>
 			<div class="ja-row2">
 				<div class="ja-field">
 					<label>Provider</label>
@@ -483,7 +483,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 			case "Cancelled":
 				return `<div class="ja-banner ja-banner-warn">Cancelled · runs until <b>${esc(end)}</b>.</div>`;
 			case "Past Due":
-				return `<div class="ja-banner ja-banner-warn">Plan past due — expired on <b>${esc(end)}</b>. Reactivate to resume service.</div>`;
+				return `<div class="ja-banner ja-banner-warn">Plan past due - expired on <b>${esc(end)}</b>. Reactivate to resume service.</div>`;
 			case "Expired":
 				return `<div class="ja-banner ja-banner-bad">Plan expired on <b>${esc(end)}</b>. Reactivate to resume service.</div>`;
 			case "Pending Payment":
@@ -572,7 +572,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 			case "Active":
 				return upgrade
 					? { action: "upgrade", label: "Upgrade plan",
-						heading: "Want more capacity?", subtitle: "Move to a higher plan — you only pay the prorated difference for the remaining period." }
+						heading: "Want more capacity?", subtitle: "Move to a higher plan - you only pay the prorated difference for the remaining period." }
 					: { action: "renew", label: "Renew now",
 						heading: "Renew early", subtitle: "Add another billing cycle to your current plan." };
 			case "Cancelled":
@@ -707,7 +707,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	}
 
 	function pollForApplied() {
-		showOverlay("Payment received — finalizing your account…");
+		showOverlay("Payment received - finalizing your account…");
 		const before = JSON.stringify({
 			plan: (account.plan || {}).name || "",
 			end: account.current_period_end || "",
@@ -729,7 +729,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 					clearInterval(tick); hideOverlay();
 					frappe.msgprint({
 						title: "Plan update pending",
-						message: "Your payment was received. The page should update within a minute — refresh to view, or contact support if it doesn't.",
+						message: "Your payment was received. The page should update within a minute - refresh to view, or contact support if it doesn't.",
 						indicator: "blue",
 					});
 				}
@@ -780,7 +780,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		.ja-panel{flex:1;padding:34px 36px;min-width:0;display:flex;flex-direction:column;gap:18px}
 		.ja-loading,.ja-empty{color:var(--text-muted);padding:18px 0}
 		.ja-card{border:1px solid var(--border-color);border-radius:12px;padding:20px;background:var(--card-bg)}
-		/* Segmented control — full-width two-up tab picker with sliding thumb */
+		/* Segmented control - full-width two-up tab picker with sliding thumb */
 		.ja-tabs-label{display:block;font-size:11.5px;letter-spacing:.6px;font-weight:600;
 			color:var(--text-muted);text-transform:uppercase;margin-bottom:8px}
 		.ja-tabs{position:relative;display:flex;width:100%;padding:4px;margin-bottom:18px;

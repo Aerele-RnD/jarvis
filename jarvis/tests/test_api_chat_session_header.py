@@ -101,7 +101,7 @@ class TestCallToolWithSessionHeader(FrappeTestCase):
 		self.assertEqual(kwargs["status"], "completed")
 
 	def test_missing_session_header_now_rejected(self):
-		"""Path A v2 requires X-Jarvis-Session — there is no user header any
+		"""Path A v2 requires X-Jarvis-Session - there is no user header any
 		more, so without a session we cannot resolve identity."""
 		req = _FakeRequest({"X-Jarvis-Token": PLUGIN_TOKEN})
 		with patch.object(frappe, "request", req, create=True):
@@ -111,7 +111,7 @@ class TestCallToolWithSessionHeader(FrappeTestCase):
 		self.assertIn("X-Jarvis-Session", result["error"]["message"])
 
 	def test_unknown_session_now_rejected(self):
-		"""Without a Chat Session row we have no user to dispatch as — fail
+		"""Without a Chat Session row we have no user to dispatch as - fail
 		fast rather than silently fall back to a different identity."""
 		req = _FakeRequest({
 			"X-Jarvis-Token": PLUGIN_TOKEN,

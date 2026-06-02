@@ -96,7 +96,7 @@ export function init(wrapper) {
 	}
 
 	// Reflect the active conversation in the URL so refresh / share / back
-	// land on the same chat. Uses replaceState — we don't want every sidebar
+	// land on the same chat. Uses replaceState - we don't want every sidebar
 	// click to push a history entry.
 	function syncUrl(name) {
 		const target = name ? `/app/jarvis-chat/${encodeURIComponent(name)}` : "/app/jarvis-chat";
@@ -112,10 +112,10 @@ export function init(wrapper) {
 	function rebuildModelPickerOptions() {
 		// Source of truth for "what models can the customer pick?" is the
 		// SUBSCRIPTION_MODELS map fetched on init. First option is "Default
-		// — <settings.llm_model>" which clears the override.
+		// - <settings.llm_model>" which clears the override.
 		const allowed = (state.subscription_models || {})[state.llm_provider] || [];
 		const defaultLabel =
-			__("Default") + " — " + (state.llm_model || "(unset)");
+			__("Default") + " - " + (state.llm_model || "(unset)");
 		const opts = [
 			`<option value="">${frappe.utils.escape_html(defaultLabel)}</option>`,
 			...allowed.map(
@@ -130,7 +130,7 @@ export function init(wrapper) {
 
 	function refreshModelPickerVisibility() {
 		// Shown in oauth mode (api_key mode has no multi-model picker).
-		// Visible on the welcome screen too — the picked value gets applied
+		// Visible on the welcome screen too - the picked value gets applied
 		// to whichever conversation receives the first send_message.
 		const show = state.llm_auth_mode === "oauth";
 		$convToolbar.prop("hidden", !show);
@@ -207,12 +207,12 @@ export function init(wrapper) {
 			syncModelPickerToConversation(data.conversation?.model_override);
 			await refreshSidebar($sidebar, $sidebarEmpty, loadConversation, archive);
 		} catch (err) {
-			// Conv missing / archived / not permitted — clean up and fall back
+			// Conv missing / archived / not permitted - clean up and fall back
 			// to welcome so a stale URL doesn't trap the user.
 			state.current_conversation = null;
 			if (opts.fromUrl) {
 				frappe.show_alert({
-					message: __("Conversation not found — opened a fresh view."),
+					message: __("Conversation not found - opened a fresh view."),
 					indicator: "orange",
 				});
 			}
@@ -274,7 +274,7 @@ export function init(wrapper) {
 	function renderEmptyConvHint() {
 		$list.append(`
 			<div class="jarvis-empty-conv">
-				<p>No messages yet — ask Jarvis something to get started.</p>
+				<p>No messages yet - ask Jarvis something to get started.</p>
 			</div>
 		`);
 	}
@@ -295,7 +295,7 @@ export function init(wrapper) {
 		if (state.is_sending || state.is_loading_conv) return;
 
 		// Client-side fast path: if the current conversation has zero messages,
-		// just focus the input — no need to round-trip.
+		// just focus the input - no need to round-trip.
 		if (state.current_conversation) {
 			const current = state.conversations.find(
 				(c) => c.name === state.current_conversation
@@ -314,7 +314,7 @@ export function init(wrapper) {
 			return;
 		}
 
-		// Server-side guarantee — won't create a duplicate empty even under a
+		// Server-side guarantee - won't create a duplicate empty even under a
 		// race with another tab.
 		const name = await api.createOrFocusEmpty();
 		await loadConversation(name);
@@ -341,7 +341,7 @@ export function init(wrapper) {
 			autoGrowInput();
 
 			// Pass the picker's current value (if any) so the new
-			// conversation lands on it atomically — no race against the worker.
+			// conversation lands on it atomically - no race against the worker.
 			const result = await api.sendMessage(
 				conv, text, state.current_model_override || null,
 			);
@@ -422,7 +422,7 @@ export function init(wrapper) {
 	const urlConv = route[1] ? decodeURIComponent(route[1]) : null;
 
 	(async () => {
-		// Load LLM settings first — picker rendering + visibility depend on them.
+		// Load LLM settings first - picker rendering + visibility depend on them.
 		try {
 			const s = await api.getChatUiSettings();
 			state.llm_auth_mode = s.llm_auth_mode || "api_key";

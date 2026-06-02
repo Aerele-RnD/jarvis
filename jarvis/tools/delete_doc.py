@@ -1,7 +1,7 @@
 """Delete a Frappe document.
 
-The **most destructive** mutating tool. Unlike cancel — which keeps the
-row and adds a reversal entry — delete removes the row outright. Some
+The **most destructive** mutating tool. Unlike cancel - which keeps the
+row and adds a reversal entry - delete removes the row outright. Some
 DocTypes retain an audit trail via the ``Version`` DocType; many don't.
 Treat every delete as irreversible from the user's perspective.
 
@@ -9,7 +9,7 @@ Safety bounds:
 
 - Calling user must have ``delete`` permission on the record.
 - For submittable DocTypes: only Draft (0) or Cancelled (2) docs are
-  deletable. Submitted (1) is refused — the user must cancel first
+  deletable. Submitted (1) is refused - the user must cancel first
   (Frappe enforces this too; we pre-check for a clearer error).
 - Some DocTypes block delete entirely via ``allow_delete = 0`` on their
   meta; Frappe's ``delete_doc`` will raise in that case and the error
@@ -17,7 +17,7 @@ Safety bounds:
 - Linked records: if other docs reference this one (e.g. a Customer with
   Sales Invoices), Frappe raises ``LinkExistsError``. Let it propagate so
   the agent can tell the user "X cannot be deleted because Y references
-  it" — clearer than a generic "delete failed".
+  it" - clearer than a generic "delete failed".
 """
 
 import frappe
@@ -46,7 +46,7 @@ def delete_doc(doctype: str, name: str) -> dict:
             f"no delete permission on {doctype} '{name}'"
         )
 
-    # Pre-load the doc to check docstatus — gives a clearer error than
+    # Pre-load the doc to check docstatus - gives a clearer error than
     # Frappe's "cannot delete a submitted document" for the agent to
     # explain to the user.
     doc = frappe.get_doc(doctype, name)  # raises DoesNotExistError if missing

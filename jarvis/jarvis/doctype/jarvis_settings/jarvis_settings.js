@@ -109,7 +109,7 @@ function confirmAndReset(frm) {
 				  <li>Last sync timestamp + status</li>
 				</ul>
 				<p>Preserved: Admin URL, monthly budget, sampling settings.</p>
-				<p>Does NOT touch admin-side records — use the admin's
+				<p>Does NOT touch admin-side records - use the admin's
 				<i>Purge customer (DEV)</i> button for that.</p>
 				<p>Type <b>RESET</b> to confirm:</p>` },
 			{ fieldtype: "Data", fieldname: "confirm", label: __("Confirm"), reqd: 1 },
@@ -125,7 +125,7 @@ function confirmAndReset(frm) {
 				d.hide();
 				const n = ((r && r.message && r.message.data && r.message.data.cleared_fields) || []).length;
 				frappe.show_alert({
-					message: __("Onboarding reset — cleared {0} field(s). Go to /app/jarvis-onboarding to start fresh.", [n]),
+					message: __("Onboarding reset - cleared {0} field(s). Go to /app/jarvis-onboarding to start fresh.", [n]),
 					indicator: "green",
 				});
 				frm.reload_doc();

@@ -1,4 +1,4 @@
-"""Tests for jarvis.diagnostics — the three Jarvis Settings buttons."""
+"""Tests for jarvis.diagnostics - the three Jarvis Settings buttons."""
 
 from unittest.mock import patch
 

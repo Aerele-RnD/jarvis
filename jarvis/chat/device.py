@@ -85,7 +85,7 @@ def _read_credentials() -> ChatDeviceCredentials | None:
 	try:
 		priv = _load_private_key(private_key_b64u)
 	except (ValueError, TypeError):
-		# Corrupted private-key bytes — treat as unpaired so caller re-pairs.
+		# Corrupted private-key bytes - treat as unpaired so caller re-pairs.
 		return None
 	return ChatDeviceCredentials(
 		device_id=device_id,
@@ -100,7 +100,7 @@ def ensure_paired() -> ChatDeviceCredentials:
 	if missing. Idempotent: a fully-populated Settings row is reused as-is.
 
 	Raises OpenclawUnreachableError if pairing fails (no creds to fall back
-	to — the caller has no way to chat without them, so we surface the error
+	to - the caller has no way to chat without them, so we surface the error
 	cleanly instead of half-persisting an unusable state)."""
 	existing = _read_credentials()
 	if existing is not None:
@@ -163,7 +163,7 @@ def build_payload_v3(
 	"""Byte-for-byte mirror of openclaw's buildDeviceAuthPayloadV3.
 
 	If openclaw rev-bumps the payload format we discover it as a
-	'device-signature' rejection on connect — the only fragile spot in
+	'device-signature' rejection on connect - the only fragile spot in
 	the whole transport rewrite, hence the explicit comment + the
 	corresponding test in tests/test_chat_device.py."""
 	return "|".join([

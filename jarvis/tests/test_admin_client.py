@@ -1,4 +1,4 @@
-"""Tests for jarvis.admin_client — HTTPS wrapper for jarvis_admin calls.
+"""Tests for jarvis.admin_client - HTTPS wrapper for jarvis_admin calls.
 
 All HTTP is mocked. Tests verify header construction, error mapping,
 envelope unwrapping, and missing-config handling.
@@ -374,7 +374,7 @@ class TestOnboardingClient(FrappeTestCase):
 		self.assertEqual(captured["headers"]["Authorization"], "token renew-key:renew-secret")
 
 	def test_guest_call_omits_authorization_header(self):
-		# get_plans is a guest endpoint — no auth header is sent.
+		# get_plans is a guest endpoint - no auth header is sent.
 		_settings_clear_admin()
 		captured = {}
 

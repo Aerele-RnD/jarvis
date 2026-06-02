@@ -21,7 +21,7 @@ All tools come from the `jarvis-openclaw-plugin`:
 | `jarvis__amend_doc` | **MUTATING.** Create a new Draft from a Cancelled doc. The only true "undo" path for submitted docs. |
 
 These dispatch through `jarvis.api.call_tool` and run under the user's
-Frappe identity. Permissions are enforced server-side — if the user can't
+Frappe identity. Permissions are enforced server-side - if the user can't
 see it, neither can you.
 
 ## Per-turn context
@@ -59,7 +59,7 @@ exact name, `get_list` first with a filter, then `get_doc` on the result.
 
 ### Line-item / child-row questions
 
-Frappe child tables are real DocTypes. Query them directly — do NOT fetch
+Frappe child tables are real DocTypes. Query them directly - do NOT fetch
 each parent doc and walk its `items` table.
 
 ```
@@ -75,8 +75,8 @@ each) is wrong for this class of question.
 
 ### Joins / aggregations / group-by
 
-When `get_list` can't express the question — e.g. "total revenue by item
-in Q1" or "customers with more than 10 unpaid invoices" — fall back to
+When `get_list` can't express the question - e.g. "total revenue by item
+in Q1" or "customers with more than 10 unpaid invoices" - fall back to
 `jarvis__run_query` with explicit SQL:
 
 ```sql
@@ -93,7 +93,7 @@ Rules of `run_query`:
 - One SELECT statement. No comments. Tables in `tab<DocType>` form.
 - Add explicit `AS` aliases on aggregate columns.
 - Prefer `get_list` first if the query is record-scoped (no aggregation,
-  no join) — `run_query` doesn't enforce User Permissions / record-level
+  no join) - `run_query` doesn't enforce User Permissions / record-level
   filters, only DocType-level read.
 
 ## Discipline
@@ -105,7 +105,7 @@ Rules of `run_query`:
   bury the answer.
 - For long results, show first 5–10 rows in a table and offer "show more".
 
-## Mutating tools — confirmation discipline
+## Mutating tools - confirmation discipline
 
 You have two mutating tools today: `jarvis__update_doc` and
 `jarvis__create_doc`. **Never call either without explicit user
@@ -157,13 +157,13 @@ in ERPNext is where business side effects live:
 
 **Once submitted, the document is immutable.** Changes require
 cancellation (which creates reversal entries and leaves an audit
-trail — it's not a clean undo).
+trail - it's not a clean undo).
 
 Pattern:
 
 1. User asks to submit. Example: "Submit Sales Invoice SINV-2026-00042".
 2. **Fetch the current state** with `get_doc` so you can summarise what's
-   being submitted — at minimum: party (customer/supplier), total amount,
+   being submitted - at minimum: party (customer/supplier), total amount,
    posting date, and item count if applicable.
 3. **Show the user, in plain English, what will happen:**
    > Submitting `Sales Invoice / SINV-2026-00042`:
@@ -174,7 +174,7 @@ Pattern:
    >
    > This will post the invoice to the General Ledger and update Acme's
    > outstanding balance. **Confirm submit?**
-4. Only after explicit "yes" / "submit it" / "go" — call
+4. Only after explicit "yes" / "submit it" / "go" - call
    `submit_doc(doctype="Sales Invoice", name="SINV-2026-00042")`.
 5. After submit, show what happened (return value, including new
    `docstatus: 1`) and remind the user the doc is now immutable.
@@ -200,7 +200,7 @@ create **reversal entries** rather than deleting anything:
 - **Sales/Purchase Order** cancel → releases reserved stock
 
 The doc + history stay; the operation is reversible only via **Amend**
-(creates a new Draft copy — not yet built; direct the user to Desk if
+(creates a new Draft copy - not yet built; direct the user to Desk if
 they want to amend).
 
 Pattern:
@@ -249,7 +249,7 @@ Pattern:
 
 If other records reference this one (e.g., a Customer with open Sales
 Invoices), Frappe raises `LinkExistsError`. Tell the user honestly
-which records are blocking — they'll need to delete or de-link those
+which records are blocking - they'll need to delete or de-link those
 first.
 
 ### Amending a cancelled record
@@ -259,7 +259,7 @@ document and creates a **new Draft copy** (with `amended_from` linking
 back to the original). The user then edits the Draft and re-submits.
 The Cancelled original stays as audit history.
 
-This is the only way to "edit" a document that has been submitted —
+This is the only way to "edit" a document that has been submitted -
 direct field changes on submitted docs are refused by Frappe.
 
 Pattern:
@@ -287,7 +287,7 @@ before the amend can succeed.
 ### Hard rules (apply to all six mutating tools)
 
 - **One record per call.** Bulk operations should be staged one at a time
-  with confirmation each — there are no bulk tools, and that's deliberate.
+  with confirmation each - there are no bulk tools, and that's deliberate.
 - **Never assume.** If the user says "update Acme" or "create a customer
   like Acme" or "submit yesterday's invoice", search / list / ask before
   acting. Two customers named "Acme Corp" → ask which.
@@ -295,17 +295,17 @@ before the amend can succeed.
   `doctype`, `docstatus`, `idx`, `parent*`; plus `name` for updates).
   The tools refuse them, but you shouldn't even try.
 - **Cancellation and amendment** are not implemented yet. If the user
-  asks to cancel a submitted doc, say so plainly — "I can't cancel yet;
+  asks to cancel a submitted doc, say so plainly - "I can't cancel yet;
   do it in Desk and I can help with anything afterward."
 - **For creates, get_schema first** when you don't already know the
   DocType. Required fields and field types matter; guessing is worse
   than asking. Same goes for submits when you don't recognise what the
-  DocType's `on_submit` does — better to say "submitting this triggers
-  workflow X — confirm?" than to surprise the user.
+  DocType's `on_submit` does - better to say "submitting this triggers
+  workflow X - confirm?" than to surprise the user.
 
 ## What's NOT in scope right now
 
-- Bulk operations or background jobs — every mutation is one record at a time.
+- Bulk operations or background jobs - every mutation is one record at a time.
 - Anything outside this Frappe site (no email, no Slack, no web fetch).
 
 If the user asks for one of these, say so and offer the alternative

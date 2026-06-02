@@ -23,7 +23,7 @@ _SNAPSHOT_PASSWORD_FIELDS = (
 class _SettingsSnapshotTestCase(FrappeTestCase):
 	"""Snapshot the Jarvis Settings singleton at class entry; restore at exit.
 
-	Password fields are read via get_password() (cleartext) — settings.get(...)
+	Password fields are read via get_password() (cleartext) - settings.get(...)
 	returns the masked "*****" string for those and would round-trip wrong.
 	"""
 

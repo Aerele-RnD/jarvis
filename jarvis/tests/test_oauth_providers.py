@@ -1,4 +1,4 @@
-"""Tests for jarvis.oauth.providers — provider OAuth metadata."""
+"""Tests for jarvis.oauth.providers - provider OAuth metadata."""
 import unittest
 from urllib.parse import urlparse, parse_qs
 

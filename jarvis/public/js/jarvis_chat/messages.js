@@ -1,4 +1,4 @@
-// Rendering helpers for individual chat messages. Stateless on purpose —
+// Rendering helpers for individual chat messages. Stateless on purpose -
 // they receive a message dict and return a DOM element. The realtime layer
 // patches existing elements via updateMessage().
 
@@ -21,7 +21,7 @@ export function renderMarkdown(text) {
  *
  * LLMs frequently emit tables as space-separated columns despite SOUL.md
  * asking for pipes. This client-side fallback makes the renderer robust
- * against that — every model, every prompt — without depending on the
+ * against that - every model, every prompt - without depending on the
  * agent to follow instructions.
  *
  * Heuristic: any run of 2+ consecutive non-blank lines where each line
@@ -78,7 +78,7 @@ function autoTablify(text) {
 
 function looksLikeTableRow(line) {
 	if (!line || !line.trim()) return false;
-	// Already pipe-formatted — let Showdown handle it directly.
+	// Already pipe-formatted - let Showdown handle it directly.
 	if (/^\s*\|/.test(line)) return false;
 	// Skip markdown structures that might have multi-space gaps for
 	// stylistic reasons but aren't actually tables.
@@ -178,7 +178,7 @@ function renderAssistantError(msg) {
 function timestampHtml($el, msg) {
 	// Read from the data attribute first (set by buildMessageEl on initial
 	// render from the DB-backed conversation). Realtime delta payloads don't
-	// carry a creation field — fall back to "just now" so the assistant
+	// carry a creation field - fall back to "just now" so the assistant
 	// bubble has a meaningful stamp while streaming.
 	const creation = $el.attr("data-creation");
 	if (!creation) {
@@ -224,7 +224,7 @@ function renderToolBody(msg) {
 //   - run_query envelope:  {sql: "...", rows: [...]}
 //   - get_schema envelope: {doctype, fields: [...]}
 //   - get_list envelope:   data is a bare array
-// When we can find a row array, render it as an HTML table — drastically
+// When we can find a row array, render it as an HTML table - drastically
 // more readable than the equivalent JSON for an LLM-driven UI. Fall back
 // to <pre> JSON for unstructured shapes.
 
@@ -276,7 +276,7 @@ function extractTable(result) {
 		return extractTable(result.data);
 	}
 
-	// Direct array — most get_list responses.
+	// Direct array - most get_list responses.
 	if (Array.isArray(result)) return tablify(result);
 
 	if (typeof result === "object") {
@@ -286,7 +286,7 @@ function extractTable(result) {
 		if (Array.isArray(result.fields)) return tablify(result.fields);
 		// Frappe Report shape: {columns: [...], result: [...]}
 		if (Array.isArray(result.result)) return tablify(result.result);
-		// Single record (e.g. get_doc) — render the doc's fields as a
+		// Single record (e.g. get_doc) - render the doc's fields as a
 		// 2-column key/value table.
 		return tablifyObject(result);
 	}
@@ -298,7 +298,7 @@ function extractTable(result) {
  * so the existing renderTable can produce a 2-column key/value view. Used
  * for get_doc results where the agent fetched a single record.
  *
- * `name` is hoisted to the top if present — for Frappe docs it's the
+ * `name` is hoisted to the top if present - for Frappe docs it's the
  * primary key and almost always the first thing a reader wants to see.
  */
 function tablifyObject(obj) {
@@ -351,7 +351,7 @@ function renderTable({ keys, rows }) {
 				const v = row[k];
 				let cell;
 				if (v === null || v === undefined) {
-					cell = '<span class="jarvis-tool-null">—</span>';
+					cell = '<span class="jarvis-tool-null">-</span>';
 				} else if (typeof v === "object") {
 					// Nested objects/arrays don't fit a flat table; show their
 					// JSON in the cell with a tooltip for the full value.

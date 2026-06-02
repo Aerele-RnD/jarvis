@@ -29,7 +29,7 @@ _CACHE_KEY = "jarvis.oauth.codex_signin"
 _NONCE_TTL_SECS = 600
 _HTTP_TIMEOUT = 30
 _REDIRECT_URI = "http://localhost:1455/auth/callback"
-# Defaults for subscription mode — these are codex/gemini-cli's CLI-specific
+# Defaults for subscription mode - these are codex/gemini-cli's CLI-specific
 # model IDs, not OpenAI/Google's standard API model names. Mirrors the
 # SUBSCRIPTION_MODELS dict in jarvis_onboarding.js / jarvis_account.js.
 _DEFAULT_MODEL = {"OpenAI": "gpt-5.5", "Google Gemini": "gemini-2.0-pro"}
@@ -237,7 +237,7 @@ def _fetch_account_email(provider: str, access_token: str, id_token: str) -> str
 		except requests.RequestException:
 			pass
 		return ""
-	# Gemini path — parse JWT payload for email claim
+	# Gemini path - parse JWT payload for email claim
 	if not id_token or id_token.count(".") < 2:
 		return ""
 	try:

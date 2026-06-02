@@ -12,7 +12,7 @@ What's verified here:
 - stream_agent_turn yields parsed events between agent ack and lifecycle end.
 - Close is forgiving (no raise on already-closed sockets).
 
-Pairing itself is mocked here — see test_chat_device.py for the device.py
+Pairing itself is mocked here - see test_chat_device.py for the device.py
 half of the integration (keypair + admin call).
 """
 
@@ -214,7 +214,7 @@ class TestStreamAgentTurn(FrappeTestCase):
 								  "payload": {"runId": "run-1", "stream": "lifecycle",
 											  "data": {"phase": "end"}}}))
 		# Streams to completion (no items required to be yielded for the
-		# completion-path test — parse_event filters its own shapes).
+		# completion-path test - parse_event filters its own shapes).
 		list(sess.stream_agent_turn("session-x", "hi", "idem-1"))
 
 	def test_agent_rejection_raises(self):
@@ -396,7 +396,7 @@ class TestSelfHealOnStalePairing(FrappeTestCase):
 
 	def test_second_failure_does_not_loop(self):
 		"""After one repair attempt, a second stale-pairing signal must
-		propagate as a real failure — not a third retry."""
+		propagate as a real failure - not a third retry."""
 		first_ws, second_ws = self._build_two_ws("device-not-paired", second_ok=False)
 		with self.assertRaises(OpenclawUnreachableError):
 			self._connect_with_two_ws(first_ws, second_ws)

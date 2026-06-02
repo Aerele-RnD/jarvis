@@ -220,7 +220,7 @@ def get_chat_ui_settings() -> dict:
 	model picker (provider label, current default model, auth mode, and the
 	allowlist of subscription-mode models per provider).
 
-	Picker is shown only when auth_mode == "oauth" — api_key customers
+	Picker is shown only when auth_mode == "oauth" - api_key customers
 	register a single model at signup and there's no multi-model UI
 	for them yet (see spec § Out of scope).
 	"""
@@ -243,7 +243,7 @@ def set_conversation_model(conversation: str, model: str | None = None) -> dict:
 	Jarvis Settings.llm_model).
 
 	Returns {"ok": True, "data": {"effective_model": <model>}} where
-	effective_model is what will be sent for the next turn — either
+	effective_model is what will be sent for the next turn - either
 	the override or the settings default.
 	"""
 	if not frappe.db.exists(CONV, conversation):
@@ -281,7 +281,7 @@ def retry_message(message: str) -> dict:
 
 	Finds the user message that immediately precedes ``message`` in the same
 	conversation, then enqueues ``run_agent_turn`` against it. The original
-	errored placeholder stays in the conversation as history — the new turn
+	errored placeholder stays in the conversation as history - the new turn
 	creates its own assistant placeholder, so the chat reads "user → (errored
 	turn) → (retried turn)".
 

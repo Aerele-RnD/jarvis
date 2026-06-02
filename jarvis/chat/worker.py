@@ -19,7 +19,7 @@ CONV = "Jarvis Conversation"
 MSG = "Jarvis Chat Message"
 
 # Provider label → openclaw provider id. Mirrors _PROVIDER_LABEL_TO_OPENCLAW
-# in jarvis.oauth.api. Only used in oauth mode — api_key mode has no
+# in jarvis.oauth.api. Only used in oauth mode - api_key mode has no
 # per-tenant codex/gemini-cli provider to override against, so we leave
 # the provider param off the WS frame and openclaw falls back to its
 # single registered models.providers.<id> entry.

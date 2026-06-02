@@ -1,4 +1,4 @@
-"""Tests for jarvis.chat.policy — the subscription/credits validation seam."""
+"""Tests for jarvis.chat.policy - the subscription/credits validation seam."""
 
 from frappe.tests.utils import FrappeTestCase
 
