@@ -308,9 +308,13 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 			const minsLeft = Math.max(0, Math.floor((state.subExpiresAt - Date.now()) / 60000));
 			return `
 				<p class="jo-hint" style="margin-bottom:14px"><strong>Step 1</strong> — Sign in with your ${esc(state.subProvider)} account in a new tab.</p>
-				<div class="jo-actions jo-actions-split" style="margin-bottom:18px">
+				<div class="jo-actions jo-actions-split" style="margin-bottom:10px">
 				  <button class="jo-btn jo-btn-primary" id="jo-sub-open-url">Open Sign-in URL →</button>
 				  <button class="jo-btn jo-btn-ghost" id="jo-sub-share">Send to colleague</button>
+				</div>
+				<div class="jo-url-row" style="margin-bottom:18px">
+				  <code class="jo-url-text" id="jo-sub-url-text" title="${esc(state.subAuthorizeUrl)}">${esc(state.subAuthorizeUrl)}</code>
+				  <button type="button" class="jo-btn jo-btn-ghost jo-btn-small" id="jo-sub-copy-url" title="Copy URL">Copy</button>
 				</div>
 				<p class="jo-hint"><strong>Step 2</strong> — After clicking Authorize, your browser will show a page saying <em>"This site can't be reached."</em> <strong>That's expected.</strong> Copy the URL from your browser's address bar (it'll start with <code>http://localhost:1455/auth/callback?code=…</code>) and paste it here:</p>
 				<div class="jo-field">
@@ -359,6 +363,15 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 			if (state.subAuthorizeUrl) {
 				window.open(state.subAuthorizeUrl, "_blank", "noopener,noreferrer");
 			}
+		});
+		$body.find("#jo-sub-copy-url").on("click", function () {
+			if (!state.subAuthorizeUrl) return;
+			const $btn = $(this);
+			navigator.clipboard.writeText(state.subAuthorizeUrl).then(() => {
+				const orig = $btn.text();
+				$btn.text("Copied ✓");
+				setTimeout(() => $btn.text(orig), 1400);
+			});
 		});
 		$body.find("#jo-sub-cancel").on("click", () => {
 			cancelSubscriptionFlow();
@@ -693,6 +706,12 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		.jo-tab:hover svg{opacity:.95}
 		.jo-tab-active{color:var(--jarvis-primary);font-weight:600}
 		.jo-tab-active svg{opacity:1}
+		.jo-url-row{display:flex;gap:8px;align-items:center}
+		.jo-url-text{flex:1;font-family:'Menlo','Monaco',monospace;font-size:11.5px;line-height:1.4;
+			padding:8px 10px;background:var(--bg-color);border:1px solid var(--border-color);
+			border-radius:6px;white-space:nowrap;overflow-x:auto;color:var(--text-muted);
+			display:block;min-width:0}
+		.jo-btn-small{padding:6px 12px;font-size:12px;flex:0 0 auto}
 		@media(max-width:760px){.jo-bg{padding:16px 10px}.jo{flex-direction:column;margin:auto}.jo-brand{flex-basis:auto}.jo-panel{padding:26px 22px}}`;
 		$(`<style id="jo-styles">${css}</style>`).appendTo(document.head);
 	}

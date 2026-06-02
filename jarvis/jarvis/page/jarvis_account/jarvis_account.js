@@ -225,9 +225,13 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 			const minsLeft = Math.max(0, Math.floor((ui.subExpiresAt - Date.now()) / 60000));
 			return `
 				<p class="ja-sub"><strong>Step 1</strong> — Sign in with your ${esc(ui.subProvider)} account in a new tab.</p>
-				<div class="ja-actions" style="margin-bottom:18px">
+				<div class="ja-actions" style="margin-bottom:10px">
 					<button class="ja-btn ja-btn-primary" id="ja-sub-open-url">Open Sign-in URL →</button>
 					<button class="ja-btn ja-btn-ghost" id="ja-sub-share">Send to colleague</button>
+				</div>
+				<div class="ja-url-row" style="margin-bottom:18px">
+					<code class="ja-url-text" id="ja-sub-url-text" title="${esc(ui.subAuthorizeUrl)}">${esc(ui.subAuthorizeUrl)}</code>
+					<button type="button" class="ja-btn ja-btn-ghost ja-btn-small" id="ja-sub-copy-url" title="Copy URL">Copy</button>
 				</div>
 				<p class="ja-sub"><strong>Step 2</strong> — After clicking Authorize, your browser will show a page saying <em>"This site can't be reached."</em> <strong>That's expected.</strong> Copy the URL from your browser's address bar (it'll start with <code>http://localhost:1455/auth/callback?code=…</code>) and paste it here:</p>
 				<div class="ja-field">
@@ -352,6 +356,15 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 			if (ui.subAuthorizeUrl) {
 				window.open(ui.subAuthorizeUrl, "_blank", "noopener,noreferrer");
 			}
+		});
+		$body.find("#ja-sub-copy-url").on("click", function () {
+			if (!ui.subAuthorizeUrl) return;
+			const $btn = $(this);
+			navigator.clipboard.writeText(ui.subAuthorizeUrl).then(() => {
+				const orig = $btn.text();
+				$btn.text("Copied ✓");
+				setTimeout(() => $btn.text(orig), 1400);
+			});
 		});
 		$body.find("#ja-sub-cancel").on("click", () => {
 			cancelSubscriptionFlow();
@@ -800,6 +813,12 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		.ja-tab-active svg{opacity:1}
 		.ja-tab-body{transition:opacity .14s ease,transform .14s ease}
 		.ja-tab-body-swap{opacity:0;transform:translateY(4px)}
+		.ja-url-row{display:flex;gap:8px;align-items:center}
+		.ja-url-text{flex:1;font-family:'Menlo','Monaco',monospace;font-size:11.5px;line-height:1.4;
+			padding:8px 10px;background:var(--bg-color);border:1px solid var(--border-color);
+			border-radius:6px;white-space:nowrap;overflow-x:auto;color:var(--text-muted);
+			display:block;min-width:0}
+		.ja-btn-small{padding:6px 12px;font-size:12px;flex:0 0 auto}
 		.ja-card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
 		.ja-eyebrow{font-size:11.5px;letter-spacing:.6px;font-weight:600;color:var(--text-muted);text-transform:uppercase}
 		.ja-h{font-size:20px;font-weight:700;margin:2px 0 4px;color:var(--text-color)}
