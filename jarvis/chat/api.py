@@ -5,10 +5,48 @@ The browser talks to these from the /app/jarvis-chat Desk page.
 
 from __future__ import annotations
 
+import json
+import os
+
 import frappe
 
 CONV = "Jarvis Conversation"
 MSG = "Jarvis Chat Message"
+
+# Process-local cache for the chat bundle hash. Invalidated by mtime so a
+# `bench build` is picked up without restarting workers.
+_BUILD_ID_CACHE: dict = {"mtime": 0.0, "value": ""}
+
+
+def _get_build_id() -> str:
+	"""Return the current chat bundle hash (e.g. "PY42KOXK").
+
+	Reads sites/assets/assets.json and pulls the hashed filename for
+	jarvis_chat.bundle.js. The hash changes on every `bench build`, so a
+	mismatch with what the browser captured at page load means the bundle
+	has been rebuilt - banner the user to refresh.
+
+	Returns "" if the asset map is missing (dev bench before first build).
+	"""
+	path = os.path.join(frappe.utils.get_bench_path(), "sites", "assets", "assets.json")
+	try:
+		mtime = os.path.getmtime(path)
+	except OSError:
+		return ""
+	if mtime == _BUILD_ID_CACHE["mtime"] and _BUILD_ID_CACHE["value"]:
+		return _BUILD_ID_CACHE["value"]
+	try:
+		with open(path) as f:
+			data = json.load(f)
+	except (OSError, ValueError):
+		return ""
+	# Entry looks like "/assets/jarvis/dist/js/jarvis_chat.bundle.PY42KOXK.js".
+	entry = data.get("jarvis_chat.bundle.js") or ""
+	# Last path component, drop the .js suffix.
+	value = os.path.basename(entry).removesuffix(".js")
+	_BUILD_ID_CACHE["mtime"] = mtime
+	_BUILD_ID_CACHE["value"] = value
+	return value
 
 # Subscription-tier model IDs accepted by codex / gemini-cli's auth tunnel.
 # These are CLI-specific names (NOT OpenAI's API names like "gpt-4o").
@@ -230,7 +268,16 @@ def get_chat_ui_settings() -> dict:
 		"llm_provider": settings.llm_provider or "",
 		"llm_model": settings.llm_model or "",
 		"subscription_models": _SUBSCRIPTION_MODELS,
+		"build_id": _get_build_id(),
 	}
+
+
+@frappe.whitelist()
+def get_build_id() -> dict:
+	"""Cheap endpoint the chat UI polls on tab refocus to detect a stale
+	JS bundle after a `bench build`. Returns {"build_id": "<hash>"}.
+	"""
+	return {"build_id": _get_build_id()}
 
 
 @frappe.whitelist()

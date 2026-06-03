@@ -15,6 +15,12 @@ export const PAGE_HTML = `
   </aside>
 
   <main class="jarvis-chat-main">
+    <div class="jarvis-stale-banner" hidden>
+      <span class="jarvis-stale-banner-text">
+        Jarvis has been updated. Refresh to load the latest version.
+      </span>
+      <button class="btn btn-xs btn-primary jarvis-stale-refresh">Refresh</button>
+    </div>
     <div class="jarvis-conv-toolbar" hidden>
       <label class="jarvis-model-picker-label" for="jarvis-model-picker">Model</label>
       <select id="jarvis-model-picker" class="jarvis-model-picker"></select>

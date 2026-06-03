@@ -20,4 +20,9 @@ export const state = {
 	// Per-conversation model override mirror - refreshed each loadConversation.
 	// Empty string means "use llm_model default".
 	current_model_override: "",
+
+	// Bundle hash captured at page load. When a re-check on tab refocus
+	// returns a different hash, the JS the user is running is older than
+	// what the server now ships - banner asks for a refresh.
+	build_id: "",
 };
