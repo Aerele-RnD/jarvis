@@ -768,6 +768,24 @@
 	to { transform: rotate(360deg); }
 }
 
+/* ---- Stale-bundle banner ------------------------------------ */
+
+.jarvis-stale-banner {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 8px 16px;
+	background: var(--yellow-50, #fef7e0);
+	border-bottom: 1px solid var(--yellow-200, #f4d35e);
+	color: var(--text-color);
+	font-size: 13px;
+}
+
+.jarvis-stale-banner[hidden] { display: none; }
+
+.jarvis-stale-banner-text { flex: 1; }
+
 /* ---- Conversation toolbar (model picker) -------------------- */
 
 .jarvis-conv-toolbar {

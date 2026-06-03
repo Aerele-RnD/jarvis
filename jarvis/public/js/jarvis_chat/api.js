@@ -54,6 +54,11 @@ export async function getChatUiSettings() {
 	return r.message || {};
 }
 
+export async function getBuildId() {
+	const r = await frappe.call({ method: "jarvis.chat.api.get_build_id" });
+	return (r.message && r.message.build_id) || "";
+}
+
 export async function setConversationModel(conversation, model) {
 	const r = await frappe.call({
 		method: "jarvis.chat.api.set_conversation_model",

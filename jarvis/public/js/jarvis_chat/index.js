@@ -414,6 +414,30 @@ export function init(wrapper) {
 
 	attachRealtime({ $list, $thinking, scrollToBottom, loadConversation });
 
+	// ---- Stale-bundle detection ----------------------------------------
+	//
+	// Captured build_id arrives via getChatUiSettings() below. When the tab
+	// regains focus we re-fetch and, if the server is now shipping a
+	// different bundle, banner the user. Refresh is a one-click resolution.
+	const $staleBanner = root.find(".jarvis-stale-banner");
+	root.find(".jarvis-stale-refresh").on("click", () => window.location.reload());
+
+	async function checkBuildFreshness() {
+		if (!state.build_id) return; // didn't capture a baseline yet
+		try {
+			const current = await api.getBuildId();
+			if (current && current !== state.build_id) {
+				$staleBanner.prop("hidden", false);
+			}
+		} catch (_) {
+			// Transient failure - silently retry next refocus.
+		}
+	}
+
+	document.addEventListener("visibilitychange", () => {
+		if (document.visibilityState === "visible") checkBuildFreshness();
+	});
+
 	// ---- Bootstrap ------------------------------------------------------
 
 	// Deep-link: if the URL carries a conversation name (e.g.
@@ -429,6 +453,7 @@ export function init(wrapper) {
 			state.llm_provider = s.llm_provider || "";
 			state.llm_model = s.llm_model || "";
 			state.subscription_models = s.subscription_models || {};
+			state.build_id = s.build_id || "";
 			rebuildModelPickerOptions();
 			refreshModelPickerVisibility();
 		} catch (e) {
