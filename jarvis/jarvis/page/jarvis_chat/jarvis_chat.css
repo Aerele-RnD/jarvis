@@ -86,6 +86,7 @@
 	display: flex;
 	flex-direction: column;
 	min-width: 0;
+	min-height: 0;  /* required so .jarvis-conversation-list (overflow:auto) can scroll when there are many conversations */
 }
 
 .jarvis-sidebar-header {
