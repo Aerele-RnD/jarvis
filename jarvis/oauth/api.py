@@ -240,7 +240,8 @@ def _fetch_account_email(provider: str, access_token: str, id_token: str) -> str
 		except requests.RequestException:
 			pass
 		return ""
-	# Gemini path - parse JWT payload for email claim
+	# Fallback for providers with userinfo=None - parse id_token JWT for email.
+	# No current provider takes this path; retained defensively.
 	if not id_token or id_token.count(".") < 2:
 		return ""
 	try:
