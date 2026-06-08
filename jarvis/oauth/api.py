@@ -223,7 +223,10 @@ def _exchange_code(*, provider: str, code: str, code_verifier: str) -> dict:
 
 
 def _fetch_account_email(provider: str, access_token: str, id_token: str) -> str:
-	"""Best-effort email lookup. OpenAI: userinfo endpoint. Gemini: id_token JWT."""
+	"""Best-effort email lookup via the provider's Bearer-authenticated
+	userinfo endpoint (OpenAI + Gemini). The id_token JWT branch below is
+	retained as a defensive fallback for any future provider configured
+	with ``userinfo: None`` - no current provider takes that path."""
 	p = get_provider(provider)
 	if p["userinfo"]:
 		try:

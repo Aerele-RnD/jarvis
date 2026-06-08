@@ -21,7 +21,20 @@ class TestGetProvider(unittest.TestCase):
 		p = providers.get_provider("Google Gemini")
 		self.assertEqual(p["authorize"], "https://accounts.google.com/o/oauth2/v2/auth")
 		self.assertEqual(p["openclaw_provider"], "google-gemini-cli")
-		self.assertIsNone(p["userinfo"])
+		# Userinfo flipped from None to the Google v1 endpoint after the
+		# scope drift bug fix - the bundled gemini-cli OAuth client doesn't
+		# have `openid` registered, so no id_token comes back and email is
+		# fetched via Bearer-authenticated userinfo instead.
+		self.assertEqual(p["userinfo"], "https://www.googleapis.com/oauth2/v1/userinfo?alt=json")
+		# Lock in the scope contract - matches openclaw's gemini-cli SCOPES.
+		# Reject the previously-broken `generative-language` and the
+		# `openid`/`email`/`profile` short forms that aren't registered on
+		# the gemini-cli OAuth client.
+		self.assertIn("https://www.googleapis.com/auth/cloud-platform", p["scope"])
+		self.assertIn("https://www.googleapis.com/auth/userinfo.email", p["scope"])
+		self.assertIn("https://www.googleapis.com/auth/userinfo.profile", p["scope"])
+		self.assertNotIn("generative-language", p["scope"])
+		self.assertNotIn("openid", p["scope"])
 
 	def test_unknown_provider_raises(self):
 		with self.assertRaises(providers.UnknownProviderError):
