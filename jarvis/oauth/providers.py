@@ -32,9 +32,17 @@ _PROVIDER_OAUTH_MAP: dict[str, dict] = {
 	"Google Gemini": {
 		"authorize": "https://accounts.google.com/o/oauth2/v2/auth",
 		"token":     "https://oauth2.googleapis.com/token",
-		# Gemini's id_token carries the email claim - no separate userinfo.
-		"userinfo":  None,
-		"scope":     "openid email profile https://www.googleapis.com/auth/generative-language",
+		# Use Google's standard userinfo endpoint - the bundled gemini-cli
+		# OAuth client doesn't have `openid` registered, so no id_token comes
+		# back. Email is fetched via Bearer-authenticated userinfo instead.
+		"userinfo":  "https://www.googleapis.com/oauth2/v1/userinfo?alt=json",
+		# Scopes MUST match what the bundled gemini-cli OAuth client has
+		# registered in its Google Cloud Console consent screen. Verified
+		# against openclaw/extensions/google/oauth.shared.ts:19-23.
+		# `https://www.googleapis.com/auth/generative-language` is NOT a real
+		# Google OAuth scope - Google returns Error 403 restricted_client
+		# "Unregistered scope(s) in the request" if anything else is sent.
+		"scope":     "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile",
 		"openclaw_provider": "google-gemini-cli",
 		"extra_authorize_params": {
 			"access_type": "offline",
