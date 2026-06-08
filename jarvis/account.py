@@ -35,6 +35,57 @@ def is_onboarded() -> dict:
 
 
 @frappe.whitelist()
+def is_ready_for_chat() -> dict:
+	"""Pre-flight check used by /jarvis-chat's page load to decide whether to
+	render the chat surface or redirect the customer to /jarvis-onboarding.
+
+	Stricter than ``is_onboarded`` - signup (admin api_key) AND a usable LLM
+	credential for the active ``llm_auth_mode`` must be in place. Pool-pending
+	customers count as ready here (the chat surface has its own waiting state
+	while the tenant is being provisioned).
+
+	Returns ``{ready: bool, reason: str | None}`` where ``reason`` is one of:
+
+	- ``"signup"`` - jarvis_admin_api_key is empty (customer hasn't completed
+	  the wizard's signup step).
+	- ``"llm_credentials"`` - signup done, but LLM creds for the active
+	  auth mode are missing. api_key mode needs llm_api_key + llm_provider +
+	  llm_model; subscription / oauth modes need llm_oauth_connected_at
+	  (the timestamp set when the oauth grant completes).
+	- ``None`` when ``ready`` is True.
+	"""
+	settings = frappe.get_single("Jarvis Settings")
+
+	admin_api_key = (settings.get_password(
+		"jarvis_admin_api_key", raise_exception=False,
+	) or "").strip()
+	if not admin_api_key:
+		return {"ready": False, "reason": "signup"}
+
+	auth_mode = (getattr(settings, "llm_auth_mode", "") or "api_key").strip()
+
+	if auth_mode == "api_key":
+		llm_key = (settings.get_password(
+			"llm_api_key", raise_exception=False,
+		) or "").strip()
+		provider = (getattr(settings, "llm_provider", "") or "").strip()
+		model = (getattr(settings, "llm_model", "") or "").strip()
+		if not (llm_key and provider and model):
+			return {"ready": False, "reason": "llm_credentials"}
+	elif auth_mode in ("subscription", "oauth"):
+		# Both modes use the same local signal: llm_oauth_connected_at is
+		# set (read-only) when the oauth grant completes and the admin
+		# pushes the auth-profile blob to the container.
+		if not getattr(settings, "llm_oauth_connected_at", None):
+			return {"ready": False, "reason": "llm_credentials"}
+	else:
+		# Unknown auth_mode - treat as misconfigured; the wizard owns it.
+		return {"ready": False, "reason": "llm_credentials"}
+
+	return {"ready": True, "reason": None}
+
+
+@frappe.whitelist()
 def get_account() -> dict:
 	"""Plan + validity + upgrade-eligible plans for the account page."""
 	return _surface(admin_client.get_account_summary)
