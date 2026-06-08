@@ -76,6 +76,36 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		subExpiresAt: null,
 	};
 
+	// ---- helpers -----------------------------------------------------------
+	// Copy text to clipboard with a graceful fallback for insecure contexts
+	// (HTTP / non-localhost). Returns a Promise that resolves on success,
+	// rejects on failure so callers can show honest feedback. Customers
+	// reach /jarvis-account over LAN HTTP where navigator.clipboard is
+	// undefined, so we must NOT call it unguarded.
+	function copyTextWithFallback(text) {
+		if (navigator.clipboard && window.isSecureContext) {
+			return navigator.clipboard.writeText(text);
+		}
+		return new Promise((resolve, reject) => {
+			const ta = document.createElement("textarea");
+			ta.value = text;
+			ta.style.position = "fixed";
+			ta.style.left = "-9999px";
+			ta.style.top = "0";
+			document.body.appendChild(ta);
+			ta.focus();
+			ta.select();
+			try {
+				const ok = document.execCommand("copy");
+				document.body.removeChild(ta);
+				ok ? resolve() : reject(new Error("execCommand copy returned false"));
+			} catch (e) {
+				document.body.removeChild(ta);
+				reject(e);
+			}
+		});
+	}
+
 	// ---- boot --------------------------------------------------------------
 	loadInitial();
 
@@ -366,10 +396,13 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		$body.find("#ja-sub-copy-url").on("click", function () {
 			if (!ui.subAuthorizeUrl) return;
 			const $btn = $(this);
-			navigator.clipboard.writeText(ui.subAuthorizeUrl).then(() => {
+			copyTextWithFallback(ui.subAuthorizeUrl).then(() => {
 				const orig = $btn.text();
 				$btn.text("Copied ✓");
 				setTimeout(() => $btn.text(orig), 1400);
+				frappe.show_alert({ indicator: "green", message: __("Sign-in URL copied") });
+			}).catch(() => {
+				frappe.show_alert({ indicator: "red", message: __("Could not copy - select the URL above and copy manually") });
 			});
 		});
 		$body.find("#ja-sub-cancel").on("click", () => {

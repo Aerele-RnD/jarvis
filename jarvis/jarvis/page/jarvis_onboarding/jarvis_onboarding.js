@@ -81,6 +81,36 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 	const $body = $root.find(".jo-body");
 	const $footLink = $root.find(".jo-foot-link");
 
+	// ---- helpers -----------------------------------------------------------
+	// Copy text to clipboard with a graceful fallback for insecure contexts
+	// (HTTP / non-localhost). Returns a Promise that resolves on success,
+	// rejects on failure so callers can show honest feedback. The customer
+	// can hit /jarvis-onboarding over LAN HTTP where navigator.clipboard is
+	// undefined, so we must NOT call it unguarded.
+	function copyTextWithFallback(text) {
+		if (navigator.clipboard && window.isSecureContext) {
+			return navigator.clipboard.writeText(text);
+		}
+		return new Promise((resolve, reject) => {
+			const ta = document.createElement("textarea");
+			ta.value = text;
+			ta.style.position = "fixed";
+			ta.style.left = "-9999px";
+			ta.style.top = "0";
+			document.body.appendChild(ta);
+			ta.focus();
+			ta.select();
+			try {
+				const ok = document.execCommand("copy");
+				document.body.removeChild(ta);
+				ok ? resolve() : reject(new Error("execCommand copy returned false"));
+			} catch (e) {
+				document.body.removeChild(ta);
+				reject(e);
+			}
+		});
+	}
+
 	// ---- chrome ------------------------------------------------------------
 	const STEP_NAMES = ["Account", "Plan", "Pay", "Connect AI"];
 	function renderSteps() {
@@ -370,19 +400,14 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		$body.find("#jo-sub-copy-url").on("click", function () {
 			if (!state.subAuthorizeUrl) return;
 			const $btn = $(this);
-			// `navigator.clipboard` is only available on HTTPS or localhost.
-			// When the customer accesses the bench over LAN HTTP (e.g.
-			// http://192.168.1.64:8000) navigator.clipboard is undefined and
-			// the old direct call was a silent no-op with no error feedback.
-			// `frappe.utils.copy_to_clipboard` ships with an
-			// `execCommand("copy")` fallback that works in insecure contexts,
-			// plus a green toast on success.
-			frappe.utils.copy_to_clipboard(state.subAuthorizeUrl, __("Sign-in URL copied"));
-			// Keep the existing inline button-label feedback too - the toast
-			// alone is easy to miss when the user is mid-task copying the URL.
-			const orig = $btn.text();
-			$btn.text("Copied ✓");
-			setTimeout(() => $btn.text(orig), 1400);
+			copyTextWithFallback(state.subAuthorizeUrl).then(() => {
+				const orig = $btn.text();
+				$btn.text("Copied ✓");
+				setTimeout(() => $btn.text(orig), 1400);
+				frappe.show_alert({ indicator: "green", message: __("Sign-in URL copied") });
+			}).catch(() => {
+				frappe.show_alert({ indicator: "red", message: __("Could not copy - select the URL above and copy manually") });
+			});
 		});
 		$body.find("#jo-sub-cancel").on("click", () => {
 			cancelSubscriptionFlow();
