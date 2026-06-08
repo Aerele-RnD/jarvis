@@ -370,11 +370,19 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		$body.find("#jo-sub-copy-url").on("click", function () {
 			if (!state.subAuthorizeUrl) return;
 			const $btn = $(this);
-			navigator.clipboard.writeText(state.subAuthorizeUrl).then(() => {
-				const orig = $btn.text();
-				$btn.text("Copied ✓");
-				setTimeout(() => $btn.text(orig), 1400);
-			});
+			// `navigator.clipboard` is only available on HTTPS or localhost.
+			// When the customer accesses the bench over LAN HTTP (e.g.
+			// http://192.168.1.64:8000) navigator.clipboard is undefined and
+			// the old direct call was a silent no-op with no error feedback.
+			// `frappe.utils.copy_to_clipboard` ships with an
+			// `execCommand("copy")` fallback that works in insecure contexts,
+			// plus a green toast on success.
+			frappe.utils.copy_to_clipboard(state.subAuthorizeUrl, __("Sign-in URL copied"));
+			// Keep the existing inline button-label feedback too - the toast
+			// alone is easy to miss when the user is mid-task copying the URL.
+			const orig = $btn.text();
+			$btn.text("Copied ✓");
+			setTimeout(() => $btn.text(orig), 1400);
 		});
 		$body.find("#jo-sub-cancel").on("click", () => {
 			cancelSubscriptionFlow();
