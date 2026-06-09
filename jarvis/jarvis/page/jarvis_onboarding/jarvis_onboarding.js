@@ -496,13 +496,71 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 				base_url: state.llmBaseUrl.trim(),
 			},
 		}).then((r) => {
-			setBusy("#jo-llm-save", false);
 			const m = r.message || {};
-			renderSuccess(state.successData || {}, m.last_sync_status || "");
+			const status = (m.last_sync_status || "").trim();
+			// 2026-06-09: on_update is now async - the save call returns
+			// immediately with "pending: ..." while the admin restart
+			// runs in the background. Poll for the final status.
+			if (status.startsWith("pending:")) {
+				pollSyncStatus(status);
+			} else {
+				setBusy("#jo-llm-save", false);
+				renderSuccess(state.successData || {}, status);
+			}
 		}).catch((e) => {
 			setBusy("#jo-llm-save", false);
 			$err.text(e.message || "Couldn't save LLM settings. Please try again.");
 		});
+	}
+
+	function pollSyncStatus(initialStatus) {
+		// Render an in-place "provisioning" panel before polling. Keep the
+		// save button busy throughout so the user can't double-submit.
+		renderProvisioning(initialStatus);
+		const startedAt = Date.now();
+		// Admin's healthz timeout is 60s; bench round-trip + buffer ≈ 90s.
+		// Cap at 150s so we surface a graceful "still working" state even
+		// if the container is unusually slow to come back up.
+		const TIMEOUT_MS = 150 * 1000;
+		const tick = () => {
+			frappe.call({ method: "jarvis.onboarding.get_llm_sync_status" })
+				.then((r) => {
+					const m = r.message || {};
+					const status = (m.last_sync_status || "").trim();
+					if (!m.pending) {
+						setBusy("#jo-llm-save", false);
+						renderSuccess(state.successData || {}, status);
+						return;
+					}
+					if (Date.now() - startedAt > TIMEOUT_MS) {
+						setBusy("#jo-llm-save", false);
+						renderSuccess(state.successData || {}, status || "pending: container still provisioning");
+						return;
+					}
+					setTimeout(tick, 2500);
+				})
+				.catch(() => {
+					// Polling failure is transient - keep trying until timeout.
+					if (Date.now() - startedAt > TIMEOUT_MS) {
+						setBusy("#jo-llm-save", false);
+						renderSuccess(state.successData || {}, "pending: lost contact while provisioning");
+						return;
+					}
+					setTimeout(tick, 2500);
+				});
+		};
+		setTimeout(tick, 2500);
+	}
+
+	function renderProvisioning(status) {
+		const label = (status || "").replace(/^pending:\s*/i, "") || "provisioning your agent";
+		$body.html(`
+			<div class="jo-success">
+			  <div class="jo-success-ring jo-spinner-ring">↻</div>
+			  <h2 class="jo-h">Spinning up your Jarvis agent...</h2>
+			  <p class="jo-sub">${esc(label.charAt(0).toUpperCase() + label.slice(1))}. This usually takes around 30 seconds.</p>
+			  <p class="jo-sub" style="margin-top:8px;font-size:12px;opacity:.7">Don't close this tab.</p>
+			</div>`);
 	}
 
 	function renderSuccess(data, syncStatus, extra) {
@@ -708,6 +766,7 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		.jo-success{text-align:center;padding:18px 0}
 		.jo-success-ring{width:64px;height:64px;border-radius:50%;background:rgba(46,189,89,.14);color:var(--green-600,#28a745);
 			font-size:30px;display:flex;align-items:center;justify-content:center;margin:0 auto 16px}
+		.jo-spinner-ring{background:rgba(99,102,241,.14);color:var(--jarvis-primary,#5b6bff);animation:jo-spin 1.4s linear infinite}
 		.jo-success .jo-actions{justify-content:center}
 		.jo-spin{display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,.5);border-top-color:#fff;
 			border-radius:50%;animation:jo-spin .6s linear infinite;vertical-align:-1px}
