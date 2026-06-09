@@ -416,3 +416,63 @@ class TestSyncViaAdminDispatch(_SettingsSingletonTestCase):
         settings.reload()
         self.assertIn("failed", settings.last_sync_status or "")
         self.assertIn("auth", settings.last_sync_status or "")
+
+
+class TestOnUpdateAsyncPending(_SettingsSingletonTestCase):
+    """The async path writes ``last_sync_status = 'pending: ...'``
+    synchronously, then enqueues the admin call. In tests we normally run
+    the enqueue inline (via ``frappe.flags.in_test``), so the final status
+    overwrites the pending marker. This class explicitly stops the inline
+    behavior to verify the intermediate "pending:" write happens BEFORE
+    ``_sync_via_admin`` fires."""
+
+    def setUp(self):
+        super().setUp()
+        _reset_settings()
+
+    def test_pending_status_written_before_enqueue_for_reload(self):
+        seen = []
+
+        def capture_pending(*args, **kwargs):
+            # Called from _enqueued_sync_via_admin via frappe.enqueue(now=True).
+            # By the time this runs, the synchronous "pending:" db_set in
+            # on_update should already be persisted.
+            settings = frappe.get_single("Jarvis Settings")
+            seen.append(settings.last_sync_status)
+            # Now simulate the admin call's final status write.
+            settings.db_set("last_sync_status", "ok (reload via admin)",
+                            update_modified=False)
+            return {"action": "reload"}
+
+        settings = frappe.get_single("Jarvis Settings")
+        settings.llm_api_key = "sk-rotation"
+        with patch("jarvis.admin_client.post_rotate_llm_secret",
+                   side_effect=capture_pending):
+            settings.save()
+        self.assertEqual(len(seen), 1)
+        self.assertTrue(
+            (seen[0] or "").startswith("pending: rotating credentials"),
+            f"expected 'pending: rotating credentials', got {seen[0]!r}",
+        )
+
+    def test_pending_status_written_before_enqueue_for_restart(self):
+        seen = []
+
+        def capture_pending(*args, **kwargs):
+            settings = frappe.get_single("Jarvis Settings")
+            seen.append(settings.last_sync_status)
+            settings.db_set("last_sync_status", "ok (restart via admin)",
+                            update_modified=False)
+            return {"action": "restart"}
+
+        settings = frappe.get_single("Jarvis Settings")
+        settings.llm_provider = "Anthropic"
+        settings.llm_model = "claude-sonnet-4-6"
+        with patch("jarvis.admin_client.post_update_llm_creds",
+                   side_effect=capture_pending):
+            settings.save()
+        self.assertEqual(len(seen), 1)
+        self.assertTrue(
+            (seen[0] or "").startswith("pending: provisioning container"),
+            f"expected 'pending: provisioning container', got {seen[0]!r}",
+        )

@@ -560,9 +560,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 				method: "jarvis.onboarding.save_llm_creds",
 				args: { provider, model, api_key: key || "", base_url: base, auth_mode: "api_key" },
 			}).then((r) => {
-				setBusy("#ja-llm-save", false);
 				const status = (r.message && r.message.last_sync_status) || "";
-				$body.find(".ja-llm-status").text(status ? "Last sync: " + status : "Saved.");
 				const wasOauth = settingsLocal.llm_auth_mode === "oauth";
 				settingsLocal.llm_provider = provider;
 				settingsLocal.llm_model = model;
@@ -571,14 +569,62 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 				settingsLocal.llm_auth_mode = "api_key";
 				settingsLocal.last_sync_status = status;
 				$body.find("#ja-key").val("");
-				// If we just flipped out of oauth mode, re-render so the
-				// "current mode" pill and notice banner update correctly.
-				if (wasOauth) render();
+				// 2026-06-09: on_update is async - the save returns
+				// "pending: ..." while the admin restart runs in the
+				// background. Poll until the status flips to ok/failed.
+				if (status.startsWith("pending:")) {
+					$body.find(".ja-llm-status").text("Provisioning... " + status.replace(/^pending:\s*/i, ""));
+					pollLlmSyncStatus({ wasOauth });
+				} else {
+					setBusy("#ja-llm-save", false);
+					$body.find(".ja-llm-status").text(status ? "Last sync: " + status : "Saved.");
+					// If we just flipped out of oauth mode, re-render so the
+					// "current mode" pill and notice banner update correctly.
+					if (wasOauth) render();
+				}
 			}).catch((e) => {
 				setBusy("#ja-llm-save", false);
 				$body.find("#ja-llm-err").text(e.message || "Save failed.");
 			});
 		});
+	}
+
+	function pollLlmSyncStatus({ wasOauth }) {
+		// On_update is async - poll get_llm_sync_status until the status
+		// flips from "pending: ..." to "ok ..." / "failed: ...". Admin's
+		// healthz timeout is 60s; we cap at 150s for slack.
+		const startedAt = Date.now();
+		const TIMEOUT_MS = 150 * 1000;
+		const tick = () => {
+			frappe.call({ method: "jarvis.onboarding.get_llm_sync_status" })
+				.then((r) => {
+					const m = r.message || {};
+					const status = (m.last_sync_status || "").trim();
+					settingsLocal.last_sync_status = status;
+					if (!m.pending) {
+						setBusy("#ja-llm-save", false);
+						$body.find(".ja-llm-status").text(status ? "Last sync: " + status : "Saved.");
+						if (wasOauth) render();
+						return;
+					}
+					if (Date.now() - startedAt > TIMEOUT_MS) {
+						setBusy("#ja-llm-save", false);
+						$body.find(".ja-llm-status").text("Still provisioning - check back in a moment.");
+						return;
+					}
+					$body.find(".ja-llm-status").text("Provisioning... " + status.replace(/^pending:\s*/i, ""));
+					setTimeout(tick, 2500);
+				})
+				.catch(() => {
+					if (Date.now() - startedAt > TIMEOUT_MS) {
+						setBusy("#ja-llm-save", false);
+						$body.find(".ja-llm-status").text("Lost contact while provisioning - refresh later.");
+						return;
+					}
+					setTimeout(tick, 2500);
+				});
+		};
+		setTimeout(tick, 2500);
 	}
 
 	// ---- billing section --------------------------------------------------

@@ -171,3 +171,46 @@ class TestSyncConnection(FrappeTestCase):
 		with self.assertRaises(frappe.ValidationError):
 			onboarding.save_llm_creds(provider="OpenAI", model="gpt-4o",
 			                          api_key="", auth_mode="token")
+
+
+class TestGetLlmSyncStatus(FrappeTestCase):
+	"""The polling endpoint that the onboarding + account pages hit while
+	the background admin sync is running."""
+
+	def setUp(self):
+		self._snap = _snapshot_settings()
+		_set_token("admin-key")
+
+	def tearDown(self):
+		_restore_settings(self._snap)
+
+	def test_returns_pending_true_when_status_starts_with_pending(self):
+		s = frappe.get_single("Jarvis Settings")
+		s.db_set("last_sync_status", "pending: provisioning container",
+		         update_modified=False)
+		frappe.db.commit()
+		out = onboarding.get_llm_sync_status()
+		self.assertEqual(out["last_sync_status"], "pending: provisioning container")
+		self.assertTrue(out["pending"])
+
+	def test_returns_pending_false_for_ok_status(self):
+		s = frappe.get_single("Jarvis Settings")
+		s.db_set("last_sync_status", "ok (restart via admin)",
+		         update_modified=False)
+		frappe.db.commit()
+		out = onboarding.get_llm_sync_status()
+		self.assertFalse(out["pending"])
+
+	def test_returns_pending_false_for_failed_status(self):
+		s = frappe.get_single("Jarvis Settings")
+		s.db_set("last_sync_status", "failed: admin unreachable: boom",
+		         update_modified=False)
+		frappe.db.commit()
+		out = onboarding.get_llm_sync_status()
+		self.assertFalse(out["pending"])
+
+	def test_shape_has_expected_keys(self):
+		out = onboarding.get_llm_sync_status()
+		self.assertIn("last_sync_at", out)
+		self.assertIn("last_sync_status", out)
+		self.assertIn("pending", out)

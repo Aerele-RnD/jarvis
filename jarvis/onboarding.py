@@ -118,6 +118,31 @@ def save_llm_creds(provider: str, model: str, api_key: str = "",
 
 
 @frappe.whitelist()
+def get_llm_sync_status() -> dict:
+	"""Lightweight poller for the onboarding + account pages.
+
+	``Jarvis Settings.on_update`` writes ``last_sync_status = 'pending: ...'``
+	synchronously, then enqueues the heavy admin call. When the background
+	job finishes, the status flips to ``ok (... via admin)`` or
+	``failed: ...``. The UI polls this method every few seconds to observe
+	that transition.
+
+	Returns:
+	    A dict with ``last_sync_at`` (ISO string or ""), ``last_sync_status``
+	    (e.g. ``pending: provisioning container``, ``ok (restart via admin)``,
+	    ``failed: admin unreachable: ...``), and a convenience boolean
+	    ``pending`` for client-side branching.
+	"""
+	s = frappe.get_single("Jarvis Settings")
+	status = s.get("last_sync_status") or ""
+	return {
+		"last_sync_at": str(s.get("last_sync_at") or ""),
+		"last_sync_status": status,
+		"pending": status.startswith("pending:"),
+	}
+
+
+@frappe.whitelist()
 def dev_onboard(email: str, company: str, plan: str) -> dict:
 	"""Local Razorpay-free onboarding: dev_force_signup → store token+connection.
 

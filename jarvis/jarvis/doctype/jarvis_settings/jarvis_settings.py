@@ -66,13 +66,35 @@ class JarvisSettings(Document):
         action = self._classify_llm_change()
         if action is None:
             return
-        # Unified architecture (post-2026-05-29): on_update always routes
-        # through admin → fleet-agent → container. Local-dev runs admin +
-        # fleet-agent on the same machine; there is no longer a bench-
-        # local push shortcut. If admin isn't configured, _sync_via_admin
-        # fails with AdminAuthError - the right error for "this workspace
-        # isn't set up; run bootstrap_host then dev_onboard."
-        self._sync_via_admin(action)
+        # Async path (2026-06-09): a container restart can take 30-60s on
+        # the admin side waiting for healthz to come back up. Blocking the
+        # save call for that long stalls the onboarding UI and feels
+        # broken. Instead, mark the status as "pending: ..." synchronously
+        # so the UI can render a "provisioning..." state, then enqueue the
+        # real admin call on the long queue. The UI polls
+        # ``onboarding.get_llm_sync_status`` until the status flips from
+        # ``pending:`` to ``ok ...`` or ``failed: ...``.
+        pending_label = (
+            "pending: provisioning container"
+            if action == "restart"
+            else "pending: rotating credentials"
+        )
+        self.db_set("last_sync_status", pending_label, update_modified=False)
+        # In tests, run inline so existing assertions on the final status
+        # don't have to poll. Set ``frappe.flags.run_admin_sync_inline``
+        # from app code that needs the synchronous behavior (rare).
+        run_inline = bool(
+            frappe.flags.in_test or frappe.flags.run_admin_sync_inline
+        )
+        frappe.enqueue(
+            "jarvis.jarvis.doctype.jarvis_settings.jarvis_settings"
+            "._enqueued_sync_via_admin",
+            queue="long",
+            timeout=120,
+            enqueue_after_commit=not run_inline,
+            now=run_inline,
+            action=action,
+        )
 
     def _sync_via_admin(self, action: str) -> None:
         """Prod path: route LLM creds through admin → fleet → openclaw container.
@@ -159,3 +181,18 @@ class JarvisSettings(Document):
             return "reload"
 
         return None
+
+
+def _enqueued_sync_via_admin(action: str) -> None:
+    """Background-queue wrapper: re-load Jarvis Settings + run _sync_via_admin.
+
+    Loading a fresh Single is necessary because the queue worker runs in a
+    separate request context - we can't pass the Document instance across
+    the queue boundary safely.
+
+    Updates ``last_sync_status`` from ``pending: ...`` to either
+    ``ok (... via admin)`` or ``failed: ...`` - the UI polls
+    ``onboarding.get_llm_sync_status`` to observe the transition.
+    """
+    settings = frappe.get_single("Jarvis Settings")
+    settings._sync_via_admin(action)
