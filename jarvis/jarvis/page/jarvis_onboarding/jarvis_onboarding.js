@@ -61,10 +61,10 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		    <div class="jo-brand-name">Jarvis</div>
 		    <div class="jo-brand-tag">Ask your ERP anything - in plain English.</div>
 		    <ul class="jo-props">
-		      <li><span class="jo-tick">✓</span> Permission-aware answers over <b>your own</b> data</li>
-		      <li><span class="jo-tick">✓</span> Reads schemas, docs, lists &amp; reports - and acts, with approval</li>
-		      <li><span class="jo-tick">✓</span> Your data stays on your bench; the AI runs in a managed container</li>
-		      <li><span class="jo-tick">✓</span> Set up in under a minute</li>
+		      <li><span class="jo-tick">✓</span><span class="jo-prop-text">Permission-aware answers over <b>your own</b> data</span></li>
+		      <li><span class="jo-tick">✓</span><span class="jo-prop-text">Reads schemas, docs, lists &amp; reports - and acts, with approval</span></li>
+		      <li><span class="jo-tick">✓</span><span class="jo-prop-text">Your data stays on your bench; the AI runs in a managed container</span></li>
+		      <li><span class="jo-tick">✓</span><span class="jo-prop-text">Set up in under a minute</span></li>
 		    </ul>
 		    <div class="jo-brand-foot">A quick setup connects this site to Jarvis Cloud.</div>
 		  </div>
@@ -643,6 +643,7 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		.jo-brand-tag{font-size:15px;opacity:.92;margin-top:6px;line-height:1.45}
 		.jo-props{list-style:none;padding:0;margin:28px 0 0}
 		.jo-props li{display:flex;gap:10px;align-items:flex-start;font-size:13.5px;line-height:1.5;margin-bottom:14px;opacity:.97}
+		.jo-prop-text{flex:1;min-width:0}
 		.jo-brand .jo-tick{color:#fff;background:rgba(255,255,255,.22);border-radius:50%;width:18px;height:18px;
 			display:inline-flex;align-items:center;justify-content:center;font-size:11px;flex:0 0 18px;margin-top:1px}
 		.jo-brand-foot{margin-top:auto;padding-top:24px;font-size:12px;opacity:.8}
