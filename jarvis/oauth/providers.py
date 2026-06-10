@@ -20,7 +20,14 @@ _PROVIDER_OAUTH_MAP: dict[str, dict] = {
 		"token":     "https://auth.openai.com/oauth/token",
 		"userinfo":  "https://api.openai.com/v1/userinfo",
 		"scope":     "openid profile email offline_access api.connectors.read api.connectors.invoke",
-		"openclaw_provider": "openai-codex",
+		# openclaw_provider keys the auth-profiles.json entry that openclaw
+		# looks up at request time. After fix/oauth-model-provider-key on
+		# fleet-agent + fix/chat-worker-mapped-model-provider on this app,
+		# openclaw queries by the MODEL-provider key ("openai"), not the
+		# OAuth flow id ("openai-codex"). The OAuth login flow itself uses
+		# the metadata above (authorize URL, scopes, codex-cli params); only
+		# the storage/lookup identity is the mapped name.
+		"openclaw_provider": "openai",
 		# codex-cli-specific authorize params - auth.openai.com returns a
 		# generic "unknown_error" page mid-flow without these.
 		"extra_authorize_params": {
@@ -43,7 +50,10 @@ _PROVIDER_OAUTH_MAP: dict[str, dict] = {
 		# Google OAuth scope - Google returns Error 403 restricted_client
 		# "Unregistered scope(s) in the request" if anything else is sent.
 		"scope":     "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile",
-		"openclaw_provider": "google-gemini-cli",
+		# Same rationale as the OpenAI entry above: openclaw queries by the
+		# mapped model-provider key ("google"), not the OAuth flow id
+		# ("google-gemini-cli").
+		"openclaw_provider": "google",
 		"extra_authorize_params": {
 			"access_type": "offline",
 			"prompt":      "consent",
