@@ -57,8 +57,79 @@ def get_oauth_client_id(provider: str) -> str:
 	return OAUTH_CLIENT_IDS[provider]
 
 
-# OAuth flow lives entirely in jarvis/oauth/api.py + jarvis/oauth/providers.py.
-# The OAUTH_CLIENT_IDS above is the only OAuth-related state in hooks.
+# OAuth client_secrets. Required for "confidential client" flows even when
+# PKCE is in play - Google's gemini-cli is one (its /token endpoint returns
+# `HTTP 400: client_secret is missing` without it). OpenAI's codex CLI flow
+# is pure PKCE so the secret stays empty there. Treat these as public-by-
+# design (distributed with the upstream CLI), not as real secrets. Operators
+# override via env when upstream rotates.
+#
+# Resolution order for "Google Gemini":
+#   1. JARVIS_GEMINI_CLI_OAUTH_CLIENT_SECRET env var (operator override)
+#   2. Extract from the gemini-cli npm package shipped as a runtime dep of
+#      this app (see apps/jarvis/package.json - install with `npm install`
+#      inside that dir after bench-getting the app). This auto-tracks
+#      upstream rotations.
+#   3. Empty -> the token exchange fails with the explicit
+#      `client_secret is missing` so the operator knows to install + restart.
+OAUTH_CLIENT_SECRETS = {
+	"OpenAI": _env_or_default("JARVIS_OPENAI_CODEX_OAUTH_CLIENT_SECRET", ""),
+	"Google Gemini": _env_or_default("JARVIS_GEMINI_CLI_OAUTH_CLIENT_SECRET", ""),
+}
+
+
+def _extract_gemini_cli_secret_from_node_modules() -> str:
+	"""Best-effort: locate the gemini-cli npm package alongside this app and
+	grep its bundled source for the OAuth client_secret. Returns "" if the
+	package isn't installed, the value can't be located, or any IO error.
+
+	The expected install location is ``<app>/node_modules/@google/gemini-cli``
+	relative to this file. Run ``npm install`` in the customer app's root
+	(``apps/jarvis/``) after bench-getting the app to seed it."""
+	import os
+	import re
+	try:
+		app_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+		pkg_root = os.path.join(app_root, "node_modules", "@google", "gemini-cli")
+		if not os.path.isdir(pkg_root):
+			return ""
+		# Scan the dist/ tree; the bundled secret appears as a literal in the
+		# emitted JS. Upstream packagers occasionally rename dist/ so we walk
+		# the whole package as a fallback. Skip very large files (>5 MB) to
+		# avoid runaway scans.
+		pattern = re.compile(rb'(?:client[_-]?secret|GOCSPX[^\'"\s]+)["\']?\s*[:=]\s*["\']([^"\']{16,})["\']', re.IGNORECASE)
+		for root, _dirs, files in os.walk(pkg_root):
+			for name in files:
+				if not (name.endswith(".js") or name.endswith(".cjs") or name.endswith(".mjs") or name.endswith(".json")):
+					continue
+				path = os.path.join(root, name)
+				try:
+					if os.path.getsize(path) > 5 * 1024 * 1024:
+						continue
+					with open(path, "rb") as f:
+						blob = f.read()
+				except (OSError, IOError):
+					continue
+				for match in pattern.finditer(blob):
+					val = match.group(1).decode("utf-8", errors="ignore")
+					if val.startswith("GOCSPX-"):
+						return val
+	except Exception:
+		return ""
+	return ""
+
+
+def get_oauth_client_secret(provider: str) -> str:
+	"""Return the client_secret for confidential-client OAuth flows. Empty
+	string for PKCE-only providers (OpenAI codex). For Google Gemini falls
+	back to extracting from the installed @google/gemini-cli package if no
+	env var override was supplied."""
+	val = OAUTH_CLIENT_SECRETS.get(provider, "")
+	if val:
+		return val
+	if provider == "Google Gemini":
+		return _extract_gemini_cli_secret_from_node_modules()
+	return ""
 
 # Apps
 # ------------------

@@ -1,0 +1,8 @@
+{
+	"name": "jarvis",
+	"private": true,
+	"description": "Node-side dependencies required at runtime by jarvis customer app. Currently only @google/gemini-cli, used solely to source the gemini-cli OAuth client_secret needed by the confidential-client token exchange flow (jarvis/oauth/api.py). Install with `npm install` in this directory after bench-getting the app.",
+	"dependencies": {
+		"@google/gemini-cli": "*"
+	}
+}

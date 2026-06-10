@@ -197,15 +197,20 @@ def _exchange_code(*, provider: str, code: str, code_verifier: str) -> dict:
 	"""POST to provider's token endpoint, return parsed JSON."""
 	p = get_provider(provider)
 	try:
+		data = {
+			"grant_type": "authorization_code",
+			"code": code,
+			"code_verifier": code_verifier,
+			"client_id": p["client_id"],
+			"redirect_uri": _REDIRECT_URI,
+		}
+		# Confidential clients (gemini-cli) require client_secret alongside
+		# PKCE. Pure-PKCE clients (codex) leave it blank and we don't send it.
+		if p.get("client_secret"):
+			data["client_secret"] = p["client_secret"]
 		resp = requests.post(
 			p["token"],
-			data={
-				"grant_type": "authorization_code",
-				"code": code,
-				"code_verifier": code_verifier,
-				"client_id": p["client_id"],
-				"redirect_uri": _REDIRECT_URI,
-			},
+			data=data,
 			timeout=_HTTP_TIMEOUT,
 		)
 	except requests.RequestException as e:
