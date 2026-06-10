@@ -197,10 +197,13 @@ class TestCompletePasteSigninFlow(_OAuthApiBase):
 
 		mock_push.assert_called_once()
 		args = mock_push.call_args.args
-		self.assertEqual(args[0], "openai-codex")
+		# Blob is keyed by the mapped model-provider name so openclaw's
+		# request-time auth lookup hits. The OAuth flow itself (authorize
+		# URL, client_id, codex-cli params) still uses the OpenAI metadata.
+		self.assertEqual(args[0], "openai")
 		blob = args[1]
 		self.assertEqual(blob["type"], "oauth")
-		self.assertEqual(blob["provider"], "openai-codex")
+		self.assertEqual(blob["provider"], "openai")
 		self.assertEqual(blob["access"], "AT-123")
 		self.assertEqual(blob["refresh"], "RT-456")
 		self.assertEqual(blob["email"], "manager@acme.com")

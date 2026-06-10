@@ -12,7 +12,9 @@ class TestGetProvider(unittest.TestCase):
 		self.assertEqual(p["token"], "https://auth.openai.com/oauth/token")
 		self.assertEqual(p["userinfo"], "https://api.openai.com/v1/userinfo")
 		self.assertEqual(p["client_id"], "app_EMoamEEZ73f0CkXaXp7hrann")
-		self.assertEqual(p["openclaw_provider"], "openai-codex")
+		# Storage/lookup identity is the mapped model-provider key, not the
+		# OAuth flow id. See providers.py for rationale.
+		self.assertEqual(p["openclaw_provider"], "openai")
 		self.assertIn("openid", p["scope"])
 		self.assertIn("api.connectors.read", p["scope"])
 		self.assertIn("api.connectors.invoke", p["scope"])
@@ -20,7 +22,7 @@ class TestGetProvider(unittest.TestCase):
 	def test_gemini_returns_gemini_cli_metadata(self):
 		p = providers.get_provider("Google Gemini")
 		self.assertEqual(p["authorize"], "https://accounts.google.com/o/oauth2/v2/auth")
-		self.assertEqual(p["openclaw_provider"], "google-gemini-cli")
+		self.assertEqual(p["openclaw_provider"], "google")
 		# Userinfo flipped from None to the Google v1 endpoint after the
 		# scope drift bug fix - the bundled gemini-cli OAuth client doesn't
 		# have `openid` registered, so no id_token comes back and email is
