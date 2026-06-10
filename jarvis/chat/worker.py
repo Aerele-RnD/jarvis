@@ -18,28 +18,40 @@ from jarvis.exceptions import OpenclawUnreachableError
 CONV = "Jarvis Conversation"
 MSG = "Jarvis Chat Message"
 
-# Provider label → openclaw MODEL-provider id (the key under
-# models.providers.<id> in the container's openclaw.json).
+# Provider label → openclaw provider id sent in the chat WS frame.
 #
-# This is distinct from the OAuth flow identifier (openai-codex /
-# google-gemini-cli) used in auth.profiles[].provider. Openclaw's codex
-# and gemini agent runtimes accept only their respective allowlists for
-# the model-provider key ({codex, openai} / {google, gemini}) - passing
-# the OAuth flow id at request time yields:
-#   "Run error: Unknown model: openai-codex/<model>" or
-#   "Requested agent harness 'codex' does not support openai-codex/<model>"
+# Openclaw has two dispatch paths chosen at request time
+# (openclaw/src/agents/model-selection-cli.ts:6-20):
 #
-# The fleet-agent's openclaw.json template (since
-# fix/oauth-model-provider-key) emits the mapped key in models.providers,
-# so the chat WS frame must use the same name.
+#   - CLI backend: taken when isCliProvider(provider) returns true.
+#     Routes dispatch to a registered CliBackend that spawns an external
+#     CLI binary. The CliBackend is keyed by the provider id (so the
+#     provider sent here must match the CliBackend's id).
 #
-# Only used in oauth mode - api_key mode has no per-tenant
-# codex/gemini-cli provider to override against, so we leave the provider
-# param off the WS frame and openclaw falls back to its single registered
-# models.providers.<id> entry.
+#   - Embedded runtime (codex / pi harness): taken otherwise. The codex
+#     harness has an allowlist of accepted providers; pi handles
+#     everything else but expects HTTP API auth (api key).
+#
+# The two providers we currently support resolve to two different paths:
+#
+#   - OpenAI codex: codex IS a registered plugin harness
+#     (openclaw/extensions/codex/index.ts:34) whose allowlist accepts
+#     "openai" as the model-provider key. Use "openai" for the chat WS
+#     frame and the embedded codex-harness path handles the dispatch.
+#
+#   - Google Gemini: gemini-cli is registered ONLY as a CliBackend
+#     (openclaw/extensions/google/cli-backend.ts:16 with id
+#     "google-gemini-cli"). Use "google-gemini-cli" verbatim so
+#     isCliProvider returns true and dispatch routes via the CLI backend
+#     to the gemini binary inside the container. Mapping it to "google"
+#     makes isCliProvider return false, dispatch falls into the embedded
+#     path, and openclaw errors "No API key found for provider 'google'".
+#
+# Only used in oauth mode - api_key mode skips this map and lets
+# openclaw resolve the single registered models.providers entry.
 _PROVIDER_LABEL_TO_OPENCLAW_ID = {
 	"OpenAI": "openai",
-	"Google Gemini": "google",
+	"Google Gemini": "google-gemini-cli",
 }
 
 
