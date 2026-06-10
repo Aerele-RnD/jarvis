@@ -61,7 +61,6 @@ def list_plans() -> list:
 @frappe.whitelist()
 def start_signup(email: str, company: str, plan: str) -> dict:
 	"""Guest signup → store the api_token → return the Razorpay handles for Checkout."""
-	_require_admin_url()
 	data = _surface(admin_client.signup, email, company, plan)
 	if data.get("api_token"):
 		write_connection({"api_token": data["api_token"]})
@@ -153,23 +152,6 @@ def dev_onboard(email: str, company: str, plan: str) -> dict:
 	of the current site URL. On a multi-site bench that quietly lands the
 	wrong value into the wrong site's Jarvis Settings. Force the operator to
 	set it deliberately."""
-	_require_admin_url()
 	data = _surface(admin_client.dev_signup, email, company, plan)
 	write_connection(data)
 	return data
-
-
-def _require_admin_url() -> None:
-	"""Pre-flight guard for the customer→admin signup paths. Throws with an
-	actionable message when ``Jarvis Settings.jarvis_admin_url`` is blank so
-	the operator knows exactly which setting to populate."""
-	settings = frappe.get_single("Jarvis Settings")
-	if (settings.jarvis_admin_url or "").strip():
-		return
-	frappe.throw(
-		"Jarvis Settings.jarvis_admin_url is not set. Set it to the admin "
-		"server's URL (e.g. http://<server-ip>:8080) before signing up. "
-		"From bench: `bench --site <site> execute frappe.client.set_value "
-		"--kwargs '{\"doctype\":\"Jarvis Settings\",\"name\":\"Jarvis "
-		"Settings\",\"fieldname\":\"jarvis_admin_url\",\"value\":\"<url>\"}'`"
-	)
