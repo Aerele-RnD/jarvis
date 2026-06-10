@@ -266,7 +266,10 @@ class TestRunAgentTurnModelResolution(FrappeTestCase):
 		call = self._run_and_capture()
 		kwargs = call.kwargs
 		self.assertEqual(kwargs.get("model"), "gpt-5.5")
-		self.assertEqual(kwargs.get("provider"), "openai-codex")
+		# Maps to openclaw's model-provider key, not the OAuth flow id
+		# (which is "openai-codex"). See _PROVIDER_LABEL_TO_OPENCLAW_ID
+		# in chat/worker.py for the rationale.
+		self.assertEqual(kwargs.get("provider"), "openai")
 
 	def test_override_used_when_set(self):
 		"""conv.model_override = gpt-5.4-mini → effective_model = gpt-5.4-mini."""
@@ -275,7 +278,10 @@ class TestRunAgentTurnModelResolution(FrappeTestCase):
 		call = self._run_and_capture()
 		kwargs = call.kwargs
 		self.assertEqual(kwargs.get("model"), "gpt-5.4-mini")
-		self.assertEqual(kwargs.get("provider"), "openai-codex")
+		# Maps to openclaw's model-provider key, not the OAuth flow id
+		# (which is "openai-codex"). See _PROVIDER_LABEL_TO_OPENCLAW_ID
+		# in chat/worker.py for the rationale.
+		self.assertEqual(kwargs.get("provider"), "openai")
 
 
 class TestRunAgentTurnApiKeyModeOmitsProvider(FrappeTestCase):

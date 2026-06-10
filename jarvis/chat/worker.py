@@ -18,14 +18,28 @@ from jarvis.exceptions import OpenclawUnreachableError
 CONV = "Jarvis Conversation"
 MSG = "Jarvis Chat Message"
 
-# Provider label → openclaw provider id. Mirrors _PROVIDER_LABEL_TO_OPENCLAW
-# in jarvis.oauth.api. Only used in oauth mode - api_key mode has no
-# per-tenant codex/gemini-cli provider to override against, so we leave
-# the provider param off the WS frame and openclaw falls back to its
-# single registered models.providers.<id> entry.
+# Provider label → openclaw MODEL-provider id (the key under
+# models.providers.<id> in the container's openclaw.json).
+#
+# This is distinct from the OAuth flow identifier (openai-codex /
+# google-gemini-cli) used in auth.profiles[].provider. Openclaw's codex
+# and gemini agent runtimes accept only their respective allowlists for
+# the model-provider key ({codex, openai} / {google, gemini}) - passing
+# the OAuth flow id at request time yields:
+#   "Run error: Unknown model: openai-codex/<model>" or
+#   "Requested agent harness 'codex' does not support openai-codex/<model>"
+#
+# The fleet-agent's openclaw.json template (since
+# fix/oauth-model-provider-key) emits the mapped key in models.providers,
+# so the chat WS frame must use the same name.
+#
+# Only used in oauth mode - api_key mode has no per-tenant
+# codex/gemini-cli provider to override against, so we leave the provider
+# param off the WS frame and openclaw falls back to its single registered
+# models.providers.<id> entry.
 _PROVIDER_LABEL_TO_OPENCLAW_ID = {
-	"OpenAI": "openai-codex",
-	"Google Gemini": "google-gemini-cli",
+	"OpenAI": "openai",
+	"Google Gemini": "google",
 }
 
 
