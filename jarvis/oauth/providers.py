@@ -7,7 +7,7 @@ parameter set that auth.openai.com requires for codex's client_id.
 from urllib.parse import urlencode
 
 from jarvis.exceptions import JarvisError
-from jarvis.hooks import OAUTH_CLIENT_IDS
+from jarvis.hooks import OAUTH_CLIENT_IDS, get_oauth_client_secret
 
 
 class UnknownProviderError(JarvisError):
@@ -63,11 +63,16 @@ _PROVIDER_OAUTH_MAP: dict[str, dict] = {
 
 
 def get_provider(label: str) -> dict:
-	"""Look up provider metadata, including the lazy-resolved client_id."""
+	"""Look up provider metadata, including the lazy-resolved client_id +
+	client_secret. ``client_secret`` is an empty string for PKCE-only
+	providers (OpenAI codex); for confidential-client providers (Google
+	Gemini) the resolver falls back to the bundled gemini-cli package when
+	no env override is set."""
 	if label not in _PROVIDER_OAUTH_MAP:
 		raise UnknownProviderError(f"OAuth not supported for provider {label!r}")
 	entry = dict(_PROVIDER_OAUTH_MAP[label])
 	entry["client_id"] = OAUTH_CLIENT_IDS[label]
+	entry["client_secret"] = get_oauth_client_secret(label)
 	return entry
 
 
