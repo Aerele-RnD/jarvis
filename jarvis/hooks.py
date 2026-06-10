@@ -85,7 +85,12 @@ def _extract_gemini_cli_secret_from_node_modules() -> str:
 
 	The expected install location is ``<app>/node_modules/@google/gemini-cli``
 	relative to this file. Run ``npm install`` in the customer app's root
-	(``apps/jarvis/``) after bench-getting the app to seed it."""
+	(``apps/jarvis/``) after bench-getting the app to seed it.
+
+	gemini-cli's bundle/ ships chunks up to ~16 MB each, so we iterate
+	line-by-line instead of slurping. The secret appears as a single-line
+	literal (`var OAUTH_CLIENT_SECRET = "GOCSPX-..."`), so a per-line scan
+	finds it without holding more than a line in memory."""
 	import os
 	import re
 	try:
@@ -93,27 +98,23 @@ def _extract_gemini_cli_secret_from_node_modules() -> str:
 		pkg_root = os.path.join(app_root, "node_modules", "@google", "gemini-cli")
 		if not os.path.isdir(pkg_root):
 			return ""
-		# Scan the dist/ tree; the bundled secret appears as a literal in the
-		# emitted JS. Upstream packagers occasionally rename dist/ so we walk
-		# the whole package as a fallback. Skip very large files (>5 MB) to
-		# avoid runaway scans.
-		pattern = re.compile(rb'(?:client[_-]?secret|GOCSPX[^\'"\s]+)["\']?\s*[:=]\s*["\']([^"\']{16,})["\']', re.IGNORECASE)
+		# Direct match against `GOCSPX-...` literal - tight, fast, and ignores
+		# the surrounding context (`var OAUTH_CLIENT_SECRET = "..."`,
+		# `client_secret: "..."`, JSON, whatever).
+		pattern = re.compile(rb'"(GOCSPX-[A-Za-z0-9_-]+)"')
 		for root, _dirs, files in os.walk(pkg_root):
 			for name in files:
-				if not (name.endswith(".js") or name.endswith(".cjs") or name.endswith(".mjs") or name.endswith(".json")):
+				if not name.endswith((".js", ".cjs", ".mjs", ".json")):
 					continue
 				path = os.path.join(root, name)
 				try:
-					if os.path.getsize(path) > 5 * 1024 * 1024:
-						continue
 					with open(path, "rb") as f:
-						blob = f.read()
+						for line in f:
+							m = pattern.search(line)
+							if m:
+								return m.group(1).decode("utf-8", errors="ignore")
 				except (OSError, IOError):
 					continue
-				for match in pattern.finditer(blob):
-					val = match.group(1).decode("utf-8", errors="ignore")
-					if val.startswith("GOCSPX-"):
-						return val
 	except Exception:
 		return ""
 	return ""
