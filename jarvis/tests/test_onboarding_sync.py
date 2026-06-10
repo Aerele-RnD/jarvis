@@ -77,6 +77,9 @@ class TestSyncConnection(FrappeTestCase):
 
 	def test_dev_onboard_writes_native_credentials_and_connection(self):
 		_set_token("")
+		frappe.db.set_value("Jarvis Settings", "Jarvis Settings",
+							"jarvis_admin_url", "http://admin.example.com")
+		frappe.db.commit()
 		with patch("jarvis.onboarding.admin_client.dev_signup",
 				   return_value={"customer": "C1", "api_key": "k2", "api_secret": "s2",
 								 "agent_url": "ws://localhost:19002", "agent_token": "tok"}):
@@ -86,21 +89,25 @@ class TestSyncConnection(FrappeTestCase):
 		self.assertEqual(s.get_password("jarvis_admin_api_secret"), "s2")
 		self.assertEqual(s.agent_url, "ws://localhost:19002")
 
-	def test_dev_onboard_defaults_admin_url_when_empty(self):
-		"""Single-bench dev: dev_onboard should auto-set jarvis_admin_url to the
-		current site URL so admin_client doesn't fall back to the prod default."""
+	def test_dev_onboard_throws_when_admin_url_blank(self):
+		"""dev_onboard no longer auto-populates jarvis_admin_url. Earlier
+		versions defaulted it to frappe.utils.get_url(), which on a multi-site
+		bench returns the bench default URL (host_name in
+		common_site_config) instead of the current site's URL - that quietly
+		landed the wrong value into the wrong site's Jarvis Settings. The
+		operator now sets the URL explicitly; a blank field fails fast with
+		an actionable error."""
 		_set_token("")
 		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "jarvis_admin_url", "")
 		frappe.db.commit()
-		with patch("jarvis.onboarding.admin_client.dev_signup",
-				   return_value={"api_key": "k", "api_secret": "s", "agent_url": "ws://h:1", "agent_token": "t"}):
-			onboarding.dev_onboard("e2@x.com", "Co", "Annual Plan")
-		s = frappe.get_single("Jarvis Settings")
-		self.assertEqual(s.jarvis_admin_url, frappe.utils.get_url())
+		with patch("jarvis.onboarding.admin_client.dev_signup") as mock_signup:
+			with self.assertRaises(frappe.ValidationError):
+				onboarding.dev_onboard("e2@x.com", "Co", "Annual Plan")
+			mock_signup.assert_not_called()
 
 	def test_dev_onboard_preserves_existing_admin_url(self):
-		"""If operator has already set jarvis_admin_url (e.g. multi-bench dev),
-		don't overwrite it."""
+		"""Pre-set jarvis_admin_url stays untouched - dev_onboard never
+		writes to the field anymore."""
 		_set_token("")
 		frappe.db.set_value("Jarvis Settings", "Jarvis Settings",
 							"jarvis_admin_url", "http://other-admin.local")
@@ -114,6 +121,17 @@ class TestSyncConnection(FrappeTestCase):
 		finally:
 			frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "jarvis_admin_url", "")
 			frappe.db.commit()
+
+	def test_start_signup_throws_when_admin_url_blank(self):
+		"""start_signup gets the same pre-flight guard as dev_onboard - admin
+		URL must be set deliberately before any signup attempt."""
+		_set_token("")
+		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "jarvis_admin_url", "")
+		frappe.db.commit()
+		with patch("jarvis.onboarding.admin_client.signup") as mock_signup:
+			with self.assertRaises(frappe.ValidationError):
+				onboarding.start_signup("e4@x.com", "Co", "Annual Plan")
+			mock_signup.assert_not_called()
 
 	def test_write_connection_ignores_legacy_api_token(self):
 		"""If admin returns the old api_token key, write_connection should NOT
