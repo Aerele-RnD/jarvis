@@ -22,7 +22,11 @@ class TestGetProvider(unittest.TestCase):
 	def test_gemini_returns_gemini_cli_metadata(self):
 		p = providers.get_provider("Google Gemini")
 		self.assertEqual(p["authorize"], "https://accounts.google.com/o/oauth2/v2/auth")
-		self.assertEqual(p["openclaw_provider"], "google")
+		# Auth storage key matches openclaw's registered CliBackend id so the
+		# gemini binary finds the OAuth token when openclaw routes dispatch
+		# via the CLI backend. Mapping to "google" makes openclaw's
+		# isCliProvider return false and the CLI dispatch path is missed.
+		self.assertEqual(p["openclaw_provider"], "google-gemini-cli")
 		# Userinfo flipped from None to the Google v1 endpoint after the
 		# scope drift bug fix - the bundled gemini-cli OAuth client doesn't
 		# have `openid` registered, so no id_token comes back and email is

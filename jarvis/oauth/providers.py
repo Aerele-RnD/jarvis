@@ -50,10 +50,13 @@ _PROVIDER_OAUTH_MAP: dict[str, dict] = {
 		# Google OAuth scope - Google returns Error 403 restricted_client
 		# "Unregistered scope(s) in the request" if anything else is sent.
 		"scope":     "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile",
-		# Same rationale as the OpenAI entry above: openclaw queries by the
-		# mapped model-provider key ("google"), not the OAuth flow id
-		# ("google-gemini-cli").
-		"openclaw_provider": "google",
+		# Gemini OAuth tokens are read by the `gemini` binary which
+		# openclaw spawns via the CliBackend registered at
+		# extensions/google/cli-backend.ts:16 (id "google-gemini-cli").
+		# auth-profiles.json must key the credential by this exact id -
+		# mapping to "google" makes openclaw's CLI dispatch path miss the
+		# stored credential (different lookup key).
+		"openclaw_provider": "google-gemini-cli",
 		"extra_authorize_params": {
 			"access_type": "offline",
 			"prompt":      "consent",
