@@ -15,7 +15,13 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		// step 4 inputs - chat subscription path (REV-3 paste-back)
 		authMode: "api_key", // "api_key" | "subscription"
 		subProvider: "OpenAI",
-		subModel: "gpt-4o",
+		// Subscription default MUST be a codex-CLI model (not a standard
+		// API model like "gpt-4o"). The codex auth tunnel rejects
+		// standard-API names, surfacing as a generic
+		// ProviderAuthError "No API key found for provider openai".
+		// Keep in sync with the first entry of SUBSCRIPTION_MODELS["OpenAI"]
+		// below + _DEFAULT_MODEL["OpenAI"] in jarvis/oauth/api.py.
+		subModel: "gpt-5.5",
 		subNonce: null,
 		subAuthorizeUrl: null,   // shown to the customer in Screen 2
 		subExpiresAt: null,

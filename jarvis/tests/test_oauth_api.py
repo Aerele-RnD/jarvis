@@ -66,10 +66,10 @@ class TestBeginPasteSignin(_OAuthApiBase):
 		self.assertIn("redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback", url)
 
 	def test_caches_verifier_state_provider_model(self):
-		out = oauth_api.begin_paste_signin("OpenAI", "gpt-4o")
+		out = oauth_api.begin_paste_signin("OpenAI", "gpt-5.5")
 		entry = frappe.cache.hget(_CACHE_KEY, out["data"]["nonce"])
 		self.assertEqual(entry["provider"], "OpenAI")
-		self.assertEqual(entry["model"], "gpt-4o")
+		self.assertEqual(entry["model"], "gpt-5.5")
 		self.assertEqual(entry["status"], "pending")
 		self.assertIn("verifier", entry)
 		self.assertIn("state", entry)
@@ -84,13 +84,47 @@ class TestBeginPasteSignin(_OAuthApiBase):
 		self.assertFalse(out["ok"])
 		self.assertEqual(out["error"]["code"], "unknown_provider")
 
+	def test_standard_api_model_coerced_to_codex_default(self):
+		"""Customer-supplied models that aren't in the codex subscription list
+		(e.g. "gpt-4o" carried over from api_key mode) get rewritten to the
+		default codex model. Otherwise the openclaw codex extension fails
+		every chat turn with ProviderAuthError "No API key found for provider
+		openai" - treats model-mismatch as auth failure. Confirmed live on
+		jarvis-pool-05b704 (2026-06-11)."""
+		out = oauth_api.begin_paste_signin("OpenAI", "gpt-4o")
+		entry = frappe.cache.hget(_CACHE_KEY, out["data"]["nonce"])
+		self.assertEqual(entry["model"], "gpt-5.5")
+
+	def test_empty_model_coerced_to_default(self):
+		out = oauth_api.begin_paste_signin("OpenAI", "")
+		entry = frappe.cache.hget(_CACHE_KEY, out["data"]["nonce"])
+		self.assertEqual(entry["model"], "gpt-5.5")
+
+	def test_valid_codex_model_passed_through(self):
+		for model in ("gpt-5.5", "gpt-5.4", "gpt-5.4-mini"):
+			out = oauth_api.begin_paste_signin("OpenAI", model)
+			entry = frappe.cache.hget(_CACHE_KEY, out["data"]["nonce"])
+			self.assertEqual(entry["model"], model, f"valid codex model {model!r} should pass through unchanged")
+
+	def test_gemini_standard_api_model_coerced_to_cli_default(self):
+		"""Same hazard on the Gemini side: a gemini-pro / gemini-1.0-pro from
+		the api_key catalog has to be rewritten to a gemini-cli model before
+		entering the OAuth nonce cache."""
+		out = oauth_api.begin_paste_signin("Google Gemini", "gemini-pro")
+		entry = frappe.cache.hget(_CACHE_KEY, out["data"]["nonce"])
+		self.assertEqual(entry["model"], "gemini-2.0-pro")
+
 
 class TestCompletePasteSigninParsing(_OAuthApiBase):
 	def _seed(self, **overrides):
 		nonce = "n_" + ("a" * 46)
 		entry = {
 			"provider": "OpenAI",
-			"model": "gpt-4o",
+			# Seed with a codex-CLI model - in production begin_paste_signin
+			# has already coerced the customer-supplied model via
+			# _coerce_subscription_model before caching, so any nonce
+			# complete_paste_signin sees holds a valid codex model.
+			"model": "gpt-5.5",
 			"status": "pending",
 			"expires_at_ts": int(time.time()) + 600,
 			"verifier": "test-verifier",
@@ -162,7 +196,7 @@ class TestCompletePasteSigninParsing(_OAuthApiBase):
 
 
 class TestCompletePasteSigninFlow(_OAuthApiBase):
-	def _seed(self, provider="OpenAI", model="gpt-4o"):
+	def _seed(self, provider="OpenAI", model="gpt-5.5"):
 		nonce = "k_" + ("d" * 46)
 		frappe.cache.hset(_CACHE_KEY, nonce, {
 			"provider": provider, "model": model,
@@ -232,7 +266,7 @@ class TestCompletePasteSigninFlow(_OAuthApiBase):
 		mock_save.assert_called_once()
 		sk = mock_save.call_args.kwargs
 		self.assertEqual(sk["provider"], "OpenAI")
-		self.assertEqual(sk["model"], "gpt-4o")
+		self.assertEqual(sk["model"], "gpt-5.5")
 		self.assertEqual(sk["api_key"], "")
 		self.assertEqual(sk["auth_mode"], "oauth")
 
@@ -241,6 +275,41 @@ class TestCompletePasteSigninFlow(_OAuthApiBase):
 		self.assertIsNotNone(settings.llm_oauth_connected_at)
 
 		self.assertIsNone(frappe.cache.hget(_CACHE_KEY, nonce))
+
+	@patch("jarvis.oauth.api.onboarding.save_llm_creds")
+	@patch("jarvis.oauth.api.admin_client.post_push_oauth_blob")
+	@patch("jarvis.oauth.api._exchange_code")
+	def test_stale_nonce_model_recoerced_at_complete_time(
+		self, mock_exchange, mock_push, mock_save,
+	):
+		"""Belt-and-suspenders: if a nonce somehow holds a non-codex model
+		(e.g. _SUBSCRIPTION_MODELS tightened mid-flight, or a manually
+		seeded cache row), complete_paste_signin must re-coerce before
+		writing to the blob and save_llm_creds. Otherwise the customer's
+		container ends up rendering openclaw.json with the bad model and
+		every chat turn fails."""
+		jwt = _jwt({
+			"https://api.openai.com/auth": {
+				"chatgpt_account_id": "acct-test",
+			},
+		})
+		mock_exchange.return_value = {
+			"access_token": jwt, "refresh_token": "RT", "expires_in": 3600,
+			"id_token": "", "email": "manager@acme.com",
+		}
+		mock_save.return_value = {"last_sync_status": "ok"}
+		nonce = self._seed(model="gpt-4o")  # bypasses begin_paste_signin's coercion
+
+		oauth_api.complete_paste_signin(
+			nonce=nonce,
+			redirected_url="?code=ABC&state=test-state",
+		)
+
+		self.assertEqual(mock_save.call_args.kwargs["model"], "gpt-5.5",
+			"complete_paste_signin must re-coerce a stale-cached non-codex model")
+		# Blob doesn't carry the model field today, but the push provider id
+		# remains tied to OAuth flow, not to the model.
+		self.assertEqual(mock_push.call_args.args[0], "openai")
 
 	@patch("jarvis.oauth.api._exchange_code",
 	       side_effect=Exception("provider 400"))

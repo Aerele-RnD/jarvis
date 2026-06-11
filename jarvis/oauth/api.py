@@ -29,10 +29,30 @@ _CACHE_KEY = "jarvis.oauth.codex_signin"
 _NONCE_TTL_SECS = 600
 _HTTP_TIMEOUT = 30
 _REDIRECT_URI = "http://localhost:1455/auth/callback"
-# Defaults for subscription mode - these are codex/gemini-cli's CLI-specific
-# model IDs, not OpenAI/Google's standard API model names. Mirrors the
-# SUBSCRIPTION_MODELS dict in jarvis_onboarding.js / jarvis_account.js.
+# Codex/gemini-cli's CLI-specific model IDs (not OpenAI/Google's standard
+# API model names). Mirrors the SUBSCRIPTION_MODELS dict in
+# jarvis_onboarding.js / jarvis_account.js - keep both in sync. Customer-
+# supplied models outside this set get coerced to _DEFAULT_MODEL before
+# being cached: sending a standard-API model (e.g. "gpt-4o") through the
+# codex auth tunnel makes openclaw's codex extension fail every chat turn
+# with ProviderAuthError: "No API key found for provider openai" (it
+# treats model-mismatch as auth failure, not as a clearer model error).
+# Live-confirmed 2026-06-11 on jarvis-pool-05b704.
+_SUBSCRIPTION_MODELS = {
+	"OpenAI": {"gpt-5.5", "gpt-5.4", "gpt-5.4-mini"},
+	"Google Gemini": {"gemini-2.0-pro", "gemini-1.5-pro", "gemini-1.5-flash"},
+}
 _DEFAULT_MODEL = {"OpenAI": "gpt-5.5", "Google Gemini": "gemini-2.0-pro"}
+
+
+def _coerce_subscription_model(provider: str, model: str) -> str:
+	"""Return ``model`` if valid for ``provider``'s subscription mode,
+	else fall back to ``_DEFAULT_MODEL[provider]``. Empty string for an
+	unknown provider (begin_paste_signin already rejects those upstream)."""
+	valid = _SUBSCRIPTION_MODELS.get(provider, set())
+	if model and model in valid:
+		return model
+	return _DEFAULT_MODEL.get(provider, "")
 
 
 def _ok(data: dict) -> dict:
@@ -74,7 +94,7 @@ def begin_paste_signin(provider: str, model: str) -> dict:
 
 	frappe.cache.hset(_CACHE_KEY, nonce, {
 		"provider": provider,
-		"model": model or _DEFAULT_MODEL.get(provider, ""),
+		"model": _coerce_subscription_model(provider, model),
 		"status": "pending",
 		"expires_at_ts": int(time.time()) + _NONCE_TTL_SECS,
 		"verifier": verifier,
@@ -140,7 +160,12 @@ def complete_paste_signin(nonce: str, redirected_url: str) -> dict:
 		            "regenerate the sign-in URL and try again")
 
 	provider = entry["provider"]
-	model = entry["model"]
+	# Re-coerce belt-and-suspenders: nonces live up to 10 min, so
+	# _SUBSCRIPTION_MODELS could in principle be tightened mid-flight
+	# (e.g. a codex model deprecated). begin_paste_signin already coerced
+	# at cache time; doing it again here means the cached model can never
+	# escape the codex-valid set even across config reloads.
+	model = _coerce_subscription_model(provider, entry["model"])
 
 	try:
 		tokens = _exchange_code(
