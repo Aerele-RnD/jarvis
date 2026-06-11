@@ -1,8 +1,16 @@
 """Tests for jarvis.oauth.providers - provider OAuth metadata."""
+import base64
+import json
 import unittest
 from urllib.parse import urlparse, parse_qs
 
 from jarvis.oauth import providers
+
+
+def _jwt(payload: dict) -> str:
+	"""Build a fake JWT with the given payload. Header + signature are bogus."""
+	payload_b64 = base64.urlsafe_b64encode(json.dumps(payload).encode()).rstrip(b"=").decode()
+	return f"header.{payload_b64}.signature"
 
 
 class TestGetProvider(unittest.TestCase):
@@ -45,6 +53,63 @@ class TestGetProvider(unittest.TestCase):
 	def test_unknown_provider_raises(self):
 		with self.assertRaises(providers.UnknownProviderError):
 			providers.get_provider("Anthropic")
+
+
+class TestExtractAccountId(unittest.TestCase):
+	"""openclaw's codex auth resolver requires `accountId` on the OAuth
+	profile; without it the credential is treated as unusable and the
+	chat surfaces 'No API key found for provider openai'. See
+	openclaw/docs/concepts/oauth.md step 6 of the codex OAuth exchange."""
+
+	def test_openai_pulls_chatgpt_account_id_from_jwt(self):
+		jwt = _jwt({
+			"https://api.openai.com/auth": {
+				"chatgpt_account_id": "9151840e-6317-4e8c-a575-8ea33beda869",
+			},
+		})
+		self.assertEqual(
+			providers.extract_account_id("OpenAI", jwt),
+			"9151840e-6317-4e8c-a575-8ea33beda869",
+		)
+
+	def test_openai_returns_empty_when_claim_missing(self):
+		jwt = _jwt({"https://api.openai.com/auth": {}})
+		self.assertEqual(providers.extract_account_id("OpenAI", jwt), "")
+
+	def test_openai_returns_empty_when_namespace_missing(self):
+		jwt = _jwt({"sub": "user-1"})
+		self.assertEqual(providers.extract_account_id("OpenAI", jwt), "")
+
+	def test_returns_empty_on_malformed_jwt(self):
+		for bad in ["", "not-a-jwt", "only.one.dot", "x.!!notb64!!.y"]:
+			self.assertEqual(providers.extract_account_id("OpenAI", bad), "")
+
+	def test_returns_empty_when_payload_is_not_a_dict(self):
+		# OpenAI's JWT spec requires the payload be a JSON object, but if the
+		# spec ever drifts (or a custom provider sends a list/string), the
+		# helper must not raise - it's called inline from complete_paste_signin
+		# where any exception would 500 the wizard.
+		for bad_payload in [[1, 2, 3], "just-a-string", 42, None]:
+			jwt = _jwt(bad_payload)
+			self.assertEqual(providers.extract_account_id("OpenAI", jwt), "")
+
+	def test_returns_empty_when_namespace_value_is_not_a_dict(self):
+		jwt = _jwt({"https://api.openai.com/auth": "unexpected-string"})
+		self.assertEqual(providers.extract_account_id("OpenAI", jwt), "")
+
+	def test_returns_empty_when_account_id_is_not_a_string(self):
+		jwt = _jwt({"https://api.openai.com/auth": {"chatgpt_account_id": 12345}})
+		self.assertEqual(providers.extract_account_id("OpenAI", jwt), "")
+
+	def test_gemini_returns_empty_until_verified_live(self):
+		# Per oauth-implementation.md, Gemini's account-id claim hasn't been
+		# verified against a real account; helper returns "" defensively.
+		jwt = _jwt({"sub": "google-oauth2|123"})
+		self.assertEqual(providers.extract_account_id("Google Gemini", jwt), "")
+
+	def test_unknown_provider_returns_empty(self):
+		jwt = _jwt({"sub": "x"})
+		self.assertEqual(providers.extract_account_id("Anthropic", jwt), "")
 
 
 class TestBuildAuthorizeUrl(unittest.TestCase):

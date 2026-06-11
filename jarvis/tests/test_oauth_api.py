@@ -1,6 +1,8 @@
 """REV-3 OAuth API tests. Bench owns the full OAuth flow (PKCE gen +
 token exchange + blob push). Customer's laptop just hosts a browser
 session that pastes the redirected URL back."""
+import base64
+import json
 import time
 from unittest.mock import patch
 
@@ -8,6 +10,14 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 
 from jarvis.oauth import api as oauth_api
+
+
+def _jwt(payload: dict) -> str:
+	"""Build a fake JWT for tests. Header + signature are bogus; the
+	bench never verifies the signature - TLS to the provider is the
+	trust root for token-derived claims."""
+	payload_b64 = base64.urlsafe_b64encode(json.dumps(payload).encode()).rstrip(b"=").decode()
+	return f"header.{payload_b64}.signature"
 
 _CACHE_KEY = "jarvis.oauth.codex_signin"
 
@@ -170,8 +180,17 @@ class TestCompletePasteSigninFlow(_OAuthApiBase):
 	def test_happy_path_pushes_blob_and_saves_creds(
 		self, mock_exchange, mock_push, mock_save,
 	):
+		# Realistic JWT shape: openclaw's codex auth resolver pulls accountId
+		# from the access token's `https://api.openai.com/auth.chatgpt_account_id`
+		# claim; without that field the OAuth profile is treated as unusable
+		# and chat surfaces "No API key found for provider openai".
+		access_jwt = _jwt({
+			"https://api.openai.com/auth": {
+				"chatgpt_account_id": "9151840e-6317-4e8c-a575-8ea33beda869",
+			},
+		})
 		mock_exchange.return_value = {
-			"access_token": "AT-123",
+			"access_token": access_jwt,
 			"refresh_token": "RT-456",
 			"expires_in": 3600,
 			"id_token": "",
@@ -204,9 +223,10 @@ class TestCompletePasteSigninFlow(_OAuthApiBase):
 		blob = args[1]
 		self.assertEqual(blob["type"], "oauth")
 		self.assertEqual(blob["provider"], "openai")
-		self.assertEqual(blob["access"], "AT-123")
+		self.assertEqual(blob["access"], access_jwt)
 		self.assertEqual(blob["refresh"], "RT-456")
 		self.assertEqual(blob["email"], "manager@acme.com")
+		self.assertEqual(blob["accountId"], "9151840e-6317-4e8c-a575-8ea33beda869")
 		self.assertEqual(blob["clientId"], "app_EMoamEEZ73f0CkXaXp7hrann")
 
 		mock_save.assert_called_once()

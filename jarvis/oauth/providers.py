@@ -4,6 +4,8 @@ Used by jarvis.oauth.api to drive the paste-back OAuth flow against
 the provider's own /oauth/authorize endpoint, with the codex-CLI-specific
 parameter set that auth.openai.com requires for codex's client_id.
 """
+import base64
+import json
 from urllib.parse import urlencode
 
 from jarvis.exceptions import JarvisError
@@ -77,6 +79,41 @@ def get_provider(label: str) -> dict:
 	entry["client_id"] = OAUTH_CLIENT_IDS[label]
 	entry["client_secret"] = get_oauth_client_secret(label)
 	return entry
+
+
+def extract_account_id(provider: str, access_token: str) -> str:
+	"""Pull openclaw's `accountId` claim out of the access JWT.
+
+	openclaw's codex auth resolver gates on this field: profiles without
+	an accountId are treated as unusable and chat fails with "No API key
+	found for provider openai". See openclaw/docs/concepts/oauth.md step
+	6 of the codex OAuth exchange.
+
+	OpenAI codex: ``payload["https://api.openai.com/auth"]["chatgpt_account_id"]``.
+	Gemini: claim shape not yet verified against a real Gemini Advanced
+	account; returns ``""`` until that lands (per the live-verification
+	caveat in oauth-implementation.md).
+
+	Best-effort: returns ``""`` on any parse / claim-lookup failure,
+	mirroring ``_fetch_account_email``'s never-raise contract.
+	"""
+	if provider != "OpenAI":
+		return ""
+	if not access_token or access_token.count(".") < 2:
+		return ""
+	try:
+		_, payload_b64, _ = access_token.split(".", 2)
+		padded = payload_b64 + "=" * (-len(payload_b64) % 4)
+		claims = json.loads(base64.urlsafe_b64decode(padded))
+	except (ValueError, TypeError):
+		return ""
+	if not isinstance(claims, dict):
+		return ""
+	namespace = claims.get("https://api.openai.com/auth")
+	if not isinstance(namespace, dict):
+		return ""
+	value = namespace.get("chatgpt_account_id")
+	return value if isinstance(value, str) else ""
 
 
 def build_authorize_url(*, provider: str, redirect_uri: str,
