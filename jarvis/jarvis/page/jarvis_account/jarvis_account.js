@@ -70,7 +70,13 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	const ui = {
 		aiTab: "api_key",
 		subProvider: "OpenAI",
-		subModel: "gpt-4o",
+		// Subscription default MUST be a codex-CLI model (not a standard
+		// API model like "gpt-4o"). The codex auth tunnel rejects
+		// standard-API names, surfacing as a generic
+		// ProviderAuthError "No API key found for provider openai".
+		// Keep in sync with SUBSCRIPTION_MODELS["OpenAI"][0] above +
+		// _DEFAULT_MODEL["OpenAI"] in jarvis/oauth/api.py.
+		subModel: "gpt-5.5",
 		subNonce: null,
 		subAuthorizeUrl: null,   // shown to the customer in Screen 2
 		subExpiresAt: null,
@@ -127,11 +133,26 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 					ui.aiTab = settingsLocal.llm_auth_mode === "oauth" ? "subscription" : "api_key";
 					// In oauth mode, seed sub-state from the saved provider/model so
 					// a Re-authorize click uses THIS customer's provider (e.g.
-					// "Google Gemini") instead of the hardcoded "OpenAI"/"gpt-4o"
-					// defaults that the api_key→subscription wizard path uses.
+					// "Google Gemini") instead of the hardcoded default that the
+					// api_key→subscription wizard path uses.
+					// Carry-over guards: only adopt llm_provider if it's still a
+					// known subscription provider, and only adopt llm_model if it
+					// matches a codex-CLI model for that provider. A standard-API
+					// model (e.g. "gpt-4o") going through codex auth makes
+					// openclaw fail every chat turn with "No API key found".
+					// jarvis.oauth.api._coerce_subscription_model server-side
+					// catches this too; this is just so the dropdown + the
+					// "Sign in with ..." button label stay consistent.
 					if (settingsLocal.llm_auth_mode === "oauth") {
-						if (settingsLocal.llm_provider) ui.subProvider = settingsLocal.llm_provider;
-						if (settingsLocal.llm_model) ui.subModel = settingsLocal.llm_model;
+						if (settingsLocal.llm_provider && SUBSCRIPTION_MODELS[settingsLocal.llm_provider]) {
+							ui.subProvider = settingsLocal.llm_provider;
+						}
+						const valid = SUBSCRIPTION_MODELS[ui.subProvider] || [];
+						if (settingsLocal.llm_model && valid.includes(settingsLocal.llm_model)) {
+							ui.subModel = settingsLocal.llm_model;
+						} else {
+							ui.subModel = valid[0] || ui.subModel;
+						}
 					}
 					render();
 				});
