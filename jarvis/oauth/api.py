@@ -18,7 +18,7 @@ import requests
 from jarvis import admin_client, onboarding
 from jarvis.exceptions import JarvisError
 from jarvis.oauth.providers import (
-	UnknownProviderError, build_authorize_url, get_provider,
+	UnknownProviderError, build_authorize_url, extract_account_id, get_provider,
 )
 
 
@@ -171,6 +171,7 @@ def complete_paste_signin(nonce: str, redirected_url: str) -> dict:
 		"refresh": tokens.get("refresh_token") or "",
 		"expires": expires_ms,
 		"email": email,
+		"accountId": extract_account_id(provider, access_token),
 		"clientId": p["client_id"],
 	}
 
