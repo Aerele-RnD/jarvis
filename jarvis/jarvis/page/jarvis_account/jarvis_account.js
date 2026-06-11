@@ -125,6 +125,14 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 					account = (acc && acc.message) || {};
 					settingsLocal = settings || {};
 					ui.aiTab = settingsLocal.llm_auth_mode === "oauth" ? "subscription" : "api_key";
+					// In oauth mode, seed sub-state from the saved provider/model so
+					// a Re-authorize click uses THIS customer's provider (e.g.
+					// "Google Gemini") instead of the hardcoded "OpenAI"/"gpt-4o"
+					// defaults that the api_key→subscription wizard path uses.
+					if (settingsLocal.llm_auth_mode === "oauth") {
+						if (settingsLocal.llm_provider) ui.subProvider = settingsLocal.llm_provider;
+						if (settingsLocal.llm_model) ui.subModel = settingsLocal.llm_model;
+					}
 					render();
 				});
 			})
@@ -233,7 +241,33 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	}
 
 	function renderSubscriptionPanel(editable, isActiveMode) {
-		// Screen 3 - already connected (oauth mode)
+		// Screen 2 - authorize URL shown, awaiting paste-back. Wins over
+		// Screen 3 so that Re-authorize (in oauth mode) actually swaps to
+		// the paste-back UI. Without this, the isActiveMode short-circuit
+		// re-renders Screen 3 and the new subAuthorizeUrl is invisible.
+		if (ui.subAuthorizeUrl) {
+			const minsLeft = Math.max(0, Math.floor((ui.subExpiresAt - Date.now()) / 60000));
+			return `
+				<p class="ja-sub"><strong>Step 1</strong> - Sign in with your ${esc(ui.subProvider)} account in a new tab.</p>
+				<div class="ja-actions" style="margin-bottom:10px">
+					<button class="ja-btn ja-btn-primary" id="ja-sub-open-url">Open Sign-in URL →</button>
+				</div>
+				<div class="ja-url-row" style="margin-bottom:18px">
+					<code class="ja-url-text" id="ja-sub-url-text" title="${esc(ui.subAuthorizeUrl)}">${esc(ui.subAuthorizeUrl)}</code>
+					<button type="button" class="ja-btn ja-btn-ghost ja-btn-small" id="ja-sub-copy-url" title="Copy URL">Copy</button>
+				</div>
+				<p class="ja-sub"><strong>Step 2</strong> - After clicking Authorize, your browser will show a page saying <em>"This site can't be reached."</em> <strong>That's expected.</strong> Copy the URL from your browser's address bar (it'll start with <code>http://localhost:1455/auth/callback?code=…</code>) and paste it here:</p>
+				<div class="ja-field">
+					<textarea class="ja-input" id="ja-sub-pasted-url" rows="3" placeholder="Paste the URL from the error page here"></textarea>
+				</div>
+				<div class="ja-actions">
+					<button class="ja-btn ja-btn-ghost" id="ja-sub-cancel">Cancel</button>
+					<button class="ja-btn ja-btn-primary" id="ja-sub-submit">Submit →</button>
+				</div>
+				<div class="ja-hint" style="margin-top:14px;font-size:12px;color:var(--text-muted)">Link valid for ~${minsLeft} minute${minsLeft === 1 ? "" : "s"}.</div>
+				<div class="ja-err" id="ja-sub-err"></div>`;
+		}
+		// Screen 3 - already connected (oauth mode, no in-flight Re-authorize).
 		if (isActiveMode) {
 			const provider = settingsLocal.llm_provider || "-";
 			const model = settingsLocal.llm_model || "-";
@@ -256,29 +290,6 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 					<button class="ja-btn ja-btn-ghost" id="ja-sub-disconnect">Disconnect</button>
 					<button class="ja-btn ja-btn-primary" id="ja-sub-reauth">Re-authorize</button>
 				</div>`;
-		}
-		// Screen 2 - authorize URL shown, awaiting paste-back
-		if (ui.subAuthorizeUrl) {
-			const minsLeft = Math.max(0, Math.floor((ui.subExpiresAt - Date.now()) / 60000));
-			return `
-				<p class="ja-sub"><strong>Step 1</strong> - Sign in with your ${esc(ui.subProvider)} account in a new tab.</p>
-				<div class="ja-actions" style="margin-bottom:10px">
-					<button class="ja-btn ja-btn-primary" id="ja-sub-open-url">Open Sign-in URL →</button>
-				</div>
-				<div class="ja-url-row" style="margin-bottom:18px">
-					<code class="ja-url-text" id="ja-sub-url-text" title="${esc(ui.subAuthorizeUrl)}">${esc(ui.subAuthorizeUrl)}</code>
-					<button type="button" class="ja-btn ja-btn-ghost ja-btn-small" id="ja-sub-copy-url" title="Copy URL">Copy</button>
-				</div>
-				<p class="ja-sub"><strong>Step 2</strong> - After clicking Authorize, your browser will show a page saying <em>"This site can't be reached."</em> <strong>That's expected.</strong> Copy the URL from your browser's address bar (it'll start with <code>http://localhost:1455/auth/callback?code=…</code>) and paste it here:</p>
-				<div class="ja-field">
-					<textarea class="ja-input" id="ja-sub-pasted-url" rows="3" placeholder="Paste the URL from the error page here"></textarea>
-				</div>
-				<div class="ja-actions">
-					<button class="ja-btn ja-btn-ghost" id="ja-sub-cancel">Cancel</button>
-					<button class="ja-btn ja-btn-primary" id="ja-sub-submit">Submit →</button>
-				</div>
-				<div class="ja-hint" style="margin-top:14px;font-size:12px;color:var(--text-muted)">Link valid for ~${minsLeft} minute${minsLeft === 1 ? "" : "s"}.</div>
-				<div class="ja-err" id="ja-sub-err"></div>`;
 		}
 		// Screen 1 - provider + model picker (not yet started)
 		const provOptions = Object.keys(SUBSCRIPTION_MODELS).map(
@@ -357,6 +368,15 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 
 	function bindSubscriptionPanel(editable) {
 		const isActiveMode = settingsLocal.llm_auth_mode === "oauth";
+		// Screen 2 wiring must come BEFORE the Screen 3 short-circuit. When
+		// Re-authorize is clicked in oauth mode, ui.subAuthorizeUrl gets set,
+		// render() emits Screen 2 HTML, and we need to bind its open/copy/
+		// cancel/submit handlers - the Screen 3 path returns early, so we
+		// have to fall through here when subAuthorizeUrl is set.
+		if (ui.subAuthorizeUrl) {
+			bindSubscriptionScreen2();
+			return;
+		}
 		if (isActiveMode) {
 			$body.find("#ja-sub-disconnect").on("click", () => {
 				if (!confirm("Disconnect the LLM subscription? Jarvis chat will stop working until you reconnect.")) return;
@@ -387,7 +407,11 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 			ui.subModel = e.target.value;
 		});
 		$body.find("#ja-sub-signin").on("click", startCodexSignin);
-		// Screen 2 wiring
+		// Screen 2 wiring - also reachable from Screen 1 -> startCodexSignin.
+		bindSubscriptionScreen2();
+	}
+
+	function bindSubscriptionScreen2() {
 		$body.find("#ja-sub-open-url").on("click", () => {
 			if (ui.subAuthorizeUrl) {
 				window.open(ui.subAuthorizeUrl, "_blank", "noopener,noreferrer");
@@ -413,6 +437,11 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	}
 
 	function startCodexSignin() {
+		// $err only exists on Screen 1 and Screen 2. When called from the
+		// Screen 3 Re-authorize handler, $err is an empty jQuery set so
+		// .text() is a no-op - errors would be silent. surfaceErr() falls
+		// back to a frappe.show_alert toast when the in-form error div is
+		// missing, so the customer always sees what went wrong.
 		const $err = $body.find("#ja-sub-err");
 		$err.text("");
 		setBusy("#ja-sub-signin", true);
@@ -423,7 +452,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 			setBusy("#ja-sub-signin", false);
 			const m = r.message || {};
 			if (!m.ok) {
-				$err.text((m.error && m.error.message) || "Couldn't start sign-in.");
+				surfaceErr($err, (m.error && m.error.message) || "Couldn't start sign-in.");
 				return;
 			}
 			ui.subNonce = m.data.nonce;
@@ -432,8 +461,16 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 			render();
 		}).catch((e) => {
 			setBusy("#ja-sub-signin", false);
-			$err.text(e.message || "Couldn't reach Jarvis.");
+			surfaceErr($err, e.message || "Couldn't reach Jarvis.");
 		});
+	}
+
+	function surfaceErr($err, message) {
+		if ($err && $err.length) {
+			$err.text(message);
+		} else {
+			frappe.show_alert({ indicator: "red", message: message });
+		}
 	}
 
 	function submitPastedUrl() {
