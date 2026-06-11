@@ -57,10 +57,13 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	// Subscription-tier model IDs - these go through codex/gemini-cli's
 	// auth tunnel rather than the standard API, so the valid set is
 	// CLI-specific (not OpenAI/Google's public API model names).
-	// Verified live against ChatGPT-prolite + Gemini Advanced 2026-06-02.
+	// Gemini hidden 2026-06-11 pending live verification of the accountId
+	// claim shape in its OAuth JWT. Mirror the same list in
+	// jarvis_onboarding.js's SUBSCRIPTION_MODELS - re-enable both at once
+	// once we have a real Gemini Advanced account to capture the claim
+	// path against.
 	const SUBSCRIPTION_MODELS = {
 		"OpenAI":        ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"],
-		"Google Gemini": ["gemini-2.0-pro", "gemini-1.5-pro", "gemini-1.5-flash"],
 	};
 
 	// AI provider card state.
@@ -126,12 +129,17 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 					settingsLocal = settings || {};
 					ui.aiTab = settingsLocal.llm_auth_mode === "oauth" ? "subscription" : "api_key";
 					// In oauth mode, seed sub-state from the saved provider/model so
-					// a Re-authorize click uses THIS customer's provider (e.g.
-					// "Google Gemini") instead of the hardcoded "OpenAI"/"gpt-4o"
-					// defaults that the api_key→subscription wizard path uses.
+					// a Re-authorize click uses THIS customer's provider instead of
+					// the hardcoded "OpenAI"/"gpt-4o" defaults that the api_key
+					// →subscription wizard path uses. If the saved provider is no
+					// longer in SUBSCRIPTION_MODELS (e.g. Gemini hidden 2026-06-11
+					// pending accountId verification), drop back to the default so
+					// the dropdown + sign-in button stay consistent.
 					if (settingsLocal.llm_auth_mode === "oauth") {
-						if (settingsLocal.llm_provider) ui.subProvider = settingsLocal.llm_provider;
-						if (settingsLocal.llm_model) ui.subModel = settingsLocal.llm_model;
+						if (settingsLocal.llm_provider && SUBSCRIPTION_MODELS[settingsLocal.llm_provider]) {
+							ui.subProvider = settingsLocal.llm_provider;
+							if (settingsLocal.llm_model) ui.subModel = settingsLocal.llm_model;
+						}
 					}
 					render();
 				});
@@ -300,7 +308,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		).join("");
 		const dis = editable ? "" : "disabled";
 		return `
-			<p class="ja-sub">Sign in with your existing ChatGPT Plus / Pro or Gemini Advanced account - no developer key needed.</p>
+			<p class="ja-sub">Sign in with your existing ChatGPT Plus / Pro account - no developer key needed.</p>
 			<div class="ja-row2">
 				<div class="ja-field">
 					<label>Provider</label>
