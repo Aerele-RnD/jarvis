@@ -470,9 +470,10 @@ class TestPostPushOauthBlob(FrappeTestCase):
 		blob = {"type": "oauth", "provider": "openai-codex",
 				"access": "AT-fresh", "refresh": "RT-fresh", "expires": 1735689600}
 
-		def _fake_post(url, json=None, **_kw):
+		def _fake_post(url, json=None, timeout=None, **_kw):
 			captured["url"] = url
 			captured["body"] = json
+			captured["timeout"] = timeout
 			return _mock_response(200, json_body={"message": {"ok": True, "data": {"ok": True}}})
 
 		with patch("requests.post", side_effect=_fake_post):
@@ -480,6 +481,14 @@ class TestPostPushOauthBlob(FrappeTestCase):
 		self.assertEqual(result, {"ok": True})
 		self.assertIn("push_oauth_blob", captured["url"])
 		self.assertEqual(captured["body"], {"provider": "openai-codex", "blob": blob})
+		# Timeout must exceed admin's own put_auth_profile bound (150s) so
+		# bench doesn't time out before admin can return. Lower bound
+		# locked at 180s; raise this and admin's bound together if either
+		# bumps. Doctor + restart + healthz easily fits inside 150s on a
+		# healthy host.
+		self.assertGreaterEqual(captured["timeout"], 180,
+			"post_push_oauth_blob timeout must accommodate fleet-agent's "
+			"doctor + restart + healthz chain (~120s typical, 150s cap)")
 
 
 class TestPostSubscriptionDisconnect(FrappeTestCase):

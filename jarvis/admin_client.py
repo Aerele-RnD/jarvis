@@ -131,6 +131,16 @@ def post_push_oauth_blob(provider: str, blob: dict) -> dict:
 	codex/gemini-cli provider reads the blob from auth-profiles.json and
 	refreshes internally via pi-ai going forward.
 
+	Timeout is bumped above the default 90s because the admin handler
+	chains to fleet-agent's PUT /auth-profile, which now runs
+	``openclaw doctor --fix --non-interactive`` (up to 60s, migrates the
+	legacy JSON store to SQLite on openclaw 2026.6.5+) plus
+	``docker compose restart`` + healthz poll. Admin's own bound is 150s;
+	we give bench 180s to allow for the HTTPS round-trip and admin's
+	response serialization on top of that. The earlier 90s default ran
+	out at the doctor step, surfacing as the same
+	"AdminUnreachableError: read timeout" we hit 2026-06-12.
+
 	Raises:
 		AdminAuthError, AdminUnreachableError, AdminValidationError
 		(rate-limit shares rotate-secret's 20/h bucket).
@@ -140,6 +150,7 @@ def post_push_oauth_blob(provider: str, blob: dict) -> dict:
 		path="/api/method/jarvis_admin.api.tenant.push_oauth_blob",
 		body={"provider": provider, "blob": blob},
 		admin_url=_admin_url(settings),
+		timeout_s=180,
 	)
 
 
@@ -151,6 +162,38 @@ def post_subscription_disconnect() -> dict:
 	settings = frappe.get_single("Jarvis Settings")
 	return _post(
 		path="/api/method/jarvis_admin.api.tenant.subscription_disconnect",
+		body={},
+		admin_url=_admin_url(settings),
+	)
+
+
+def post_llm_auth_status() -> dict:
+	"""Ask admin (and via admin, fleet-agent) whether the customer's
+	container actually holds a usable OAuth profile right now.
+
+	Used by the wizard / account page to gate the "Connected" UI state
+	on the runtime contract rather than on the bench having sent the
+	push. The on-disk file can be present without the running gateway
+	seeing it (that's the bug class fleet-agent Task 1.2's restart
+	closed), and the bench's last_sync_status only reflects whether the
+	admin call returned 2xx - neither tells you "openclaw resolved the
+	profile."
+
+	Returns:
+	    Same shape as the admin endpoint:
+	    {"ok": True,
+	     "data": {"auth_profile_present": bool,
+	              "profile_ids": [...],
+	              "default_model": str,
+	              "openai_profile_expires_ms": int | None}}
+	    Never includes token material.
+
+	Raises AdminAuthError / AdminUnreachableError / AdminValidationError
+	in the same shape as the other admin_client methods.
+	"""
+	settings = frappe.get_single("Jarvis Settings")
+	return _post(
+		path="/api/method/jarvis_admin.api.tenant.llm_auth_status",
 		body={},
 		admin_url=_admin_url(settings),
 	)
