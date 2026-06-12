@@ -152,7 +152,16 @@ class JarvisSettings(Document):
           is the common case - openclaw owns refresh).
         - 'reload': api_key rotation only; hot-reload via rotate-secret.
         - 'restart': structural change (mode switch, provider/model/base_url).
+
+        ``flags.force_admin_sync`` (set by save_llm_creds(force=True))
+        overrides the no-diff gate and always returns 'restart' so the
+        complete_paste_signin path can re-render openclaw.json + restart
+        the container even when nothing structural changed on the bench.
         """
+        # Caller-forced sync (e.g. complete_paste_signin re-authorize):
+        # bypass the diff gate so admin actually fires.
+        if self.flags.get("force_admin_sync"):
+            return "restart"
         # Structural triggers.
         if self.flags.get("llm_auth_mode_changed"):
             return "restart"

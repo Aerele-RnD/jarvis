@@ -86,7 +86,8 @@ def renew() -> dict:
 
 @frappe.whitelist()
 def save_llm_creds(provider: str, model: str, api_key: str = "",
-                   base_url: str = "", auth_mode: str = "api_key") -> dict:
+                   base_url: str = "", auth_mode: str = "api_key",
+                   force: bool = False) -> dict:
 	"""Save LLM provider/model/auth mode + (api_key when applicable) and let
 	on_update re-render openclaw.json. Returns the on_update outcome
 	(last_sync_status) so the page can tell the customer whether their
@@ -94,7 +95,19 @@ def save_llm_creds(provider: str, model: str, api_key: str = "",
 
 	REV-1: ``auth_mode="oauth"`` lets the OAuth poll-success path save
 	without requiring an api_key - credentials live in the container's
-	auth-profiles.json (pushed via the separate push_oauth_blob path)."""
+	auth-profiles.json (pushed via the separate push_oauth_blob path).
+
+	``force`` (REV-3, 2026-06-12): when True, bypass on_update's diff
+	gate (``_classify_llm_change`` returning None when no field changed)
+	so the admin/fleet-agent push fires even on a no-op save. Required
+	in the complete_paste_signin path because that flow:
+	  - pushes the OAuth blob (which lives in auth-profiles.json, not
+	    Jarvis Settings, so the bench's diff classifier doesn't see it)
+	  - then needs fleet-agent to re-render openclaw.json AND restart
+	    the container so openclaw picks up the new auth profile.
+	Without ``force=True``, a customer re-authorizing with the same
+	provider+model gets a stale openclaw.json + no restart, and openclaw
+	keeps serving the previous (broken) state. Verified live 2026-06-11."""
 	if not provider or not model:
 		raise frappe.ValidationError("provider and model are required")
 	if auth_mode not in {"api_key", "oauth"}:
@@ -108,6 +121,11 @@ def save_llm_creds(provider: str, model: str, api_key: str = "",
 	s.llm_base_url = (base_url or "").strip()
 	if auth_mode == "api_key":
 		s.llm_api_key = api_key
+	if force:
+		# Read by on_update -> _classify_llm_change. Cleared after the
+		# enqueue dispatches so a subsequent save() in the same request
+		# (e.g. db_set for last_sync_status) doesn't double-fire.
+		s.flags.force_admin_sync = True
 	s.save(ignore_permissions=True)
 	frappe.db.commit()
 	s = frappe.get_single("Jarvis Settings")

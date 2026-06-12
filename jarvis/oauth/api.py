@@ -38,6 +38,14 @@ _REDIRECT_URI = "http://localhost:1455/auth/callback"
 # with ProviderAuthError: "No API key found for provider openai" (it
 # treats model-mismatch as auth failure, not as a clearer model error).
 # Live-confirmed 2026-06-11 on jarvis-pool-05b704.
+#
+# Catalog sync: these values must match openclaw 2026.6.4's bundled
+# codex catalog (the version pinned by jarvis_admin.host_setup.
+# DEFAULT_OPENCLAW_IMAGE). The script at
+# jarvis-fleet-agent/scripts/verify-openclaw-assumptions.sh asserts at
+# image-bump time that the catalog still contains "gpt-5.5"; if it ever
+# fails because the catalog drifted, update this set + the JS mirrors
+# atomically and re-run the script before bumping the image pin.
 _SUBSCRIPTION_MODELS = {
 	"OpenAI": {"gpt-5.5", "gpt-5.4", "gpt-5.4-mini"},
 	"Google Gemini": {"gemini-2.0-pro", "gemini-1.5-pro", "gemini-1.5-flash"},
@@ -201,9 +209,17 @@ def complete_paste_signin(nonce: str, redirected_url: str) -> dict:
 	}
 
 	admin_client.post_push_oauth_blob(p["openclaw_provider"], blob)
+	# force=True is mandatory here. The OAuth blob lives in the container's
+	# auth-profiles.json (out-of-band from Jarvis Settings), so on_update's
+	# diff classifier sees no change and skips the re-render+restart when
+	# a customer re-authorizes with the same provider+model. Without the
+	# restart the container's openclaw keeps serving stale auth, surfacing
+	# as the same ProviderAuthError the re-auth was meant to fix. Verified
+	# live 2026-06-11.
 	sync_result = onboarding.save_llm_creds(
 		provider=provider, model=model,
 		api_key="", base_url="", auth_mode="oauth",
+		force=True,
 	)
 
 	settings = frappe.get_single("Jarvis Settings")
