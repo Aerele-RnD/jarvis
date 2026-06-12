@@ -355,36 +355,47 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		const currentMode = settingsLocal.llm_auth_mode === "oauth" ? "subscription" : "api_key";
 		// Switching to a tab that diverges from the active mode → preview-only,
 		// no destructive action until the user actively confirms (Save / Confirm switch).
-		if (targetTab === "api_key" && currentMode === "subscription") {
-			if (!confirm("Switch to API-key mode? Your chat subscription will be disconnected when you save credentials.")) return;
-		}
-		ui.aiTab = targetTab;
-		if (targetTab !== "subscription") cancelSubscriptionFlow();
+		// frappe.confirm is callback-based, so the actual switch lives in an
+		// inner function called from either the on-yes branch or the no-
+		// confirm-needed direct path.
+		const applySwitch = () => {
+			ui.aiTab = targetTab;
+			if (targetTab !== "subscription") cancelSubscriptionFlow();
 
-		// Drive the slide animation by updating data-active on the persistent
-		// tabs node. Swap only the panel body (fade out → swap → fade in)
-		// instead of re-rendering the whole card, so the slide isn't
-		// interrupted by a DOM rebuild.
-		const sub = account.subscription_status || "none";
-		const editable = EDITABLE_STATES.has(sub);
-		const $tabs = $body.find(".ja-tabs");
-		$tabs.attr("data-active", targetTab);
-		$tabs.find(".ja-tab").each(function () {
-			const isActive = $(this).data("tab") === targetTab;
-			$(this).toggleClass("ja-tab-active", isActive).attr("aria-selected", isActive);
-		});
-		const inApiKeyMode = settingsLocal.llm_auth_mode !== "oauth";
-		const newBody = targetTab === "api_key"
-			? renderApiKeyPanel(editable, inApiKeyMode)
-			: renderSubscriptionPanel(editable, !inApiKeyMode);
-		const $panel = $body.find(".ja-tab-body");
-		$panel.addClass("ja-tab-body-swap");
-		setTimeout(() => {
-			$panel.html(newBody);
-			$panel.removeClass("ja-tab-body-swap");
-			if (targetTab === "api_key") bindLlm(editable);
-			else bindSubscriptionPanel(editable);
-		}, 160);
+			// Drive the slide animation by updating data-active on the persistent
+			// tabs node. Swap only the panel body (fade out → swap → fade in)
+			// instead of re-rendering the whole card, so the slide isn't
+			// interrupted by a DOM rebuild.
+			const sub = account.subscription_status || "none";
+			const editable = EDITABLE_STATES.has(sub);
+			const $tabs = $body.find(".ja-tabs");
+			$tabs.attr("data-active", targetTab);
+			$tabs.find(".ja-tab").each(function () {
+				const isActive = $(this).data("tab") === targetTab;
+				$(this).toggleClass("ja-tab-active", isActive).attr("aria-selected", isActive);
+			});
+			const inApiKeyMode = settingsLocal.llm_auth_mode !== "oauth";
+			const newBody = targetTab === "api_key"
+				? renderApiKeyPanel(editable, inApiKeyMode)
+				: renderSubscriptionPanel(editable, !inApiKeyMode);
+			const $panel = $body.find(".ja-tab-body");
+			$panel.addClass("ja-tab-body-swap");
+			setTimeout(() => {
+				$panel.html(newBody);
+				$panel.removeClass("ja-tab-body-swap");
+				if (targetTab === "api_key") bindLlm(editable);
+				else bindSubscriptionPanel(editable);
+			}, 160);
+		};
+
+		if (targetTab === "api_key" && currentMode === "subscription") {
+			frappe.confirm(
+				__("Switch to API-key mode? Your chat subscription will be disconnected when you save credentials."),
+				applySwitch,
+			);
+			return;
+		}
+		applySwitch();
 	}
 
 	function bindSubscriptionPanel(editable) {
@@ -400,16 +411,23 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		}
 		if (isActiveMode) {
 			$body.find("#ja-sub-disconnect").on("click", () => {
-				if (!confirm("Disconnect the LLM subscription? Jarvis chat will stop working until you reconnect.")) return;
-				frappe.call({ method: "jarvis.oauth.api.disconnect" }).then((r) => {
-					const m = r.message || {};
-					if (m.ok) {
-						frappe.show_alert({ message: "Disconnected.", indicator: "orange" });
-						loadInitial();
-					} else {
-						frappe.show_alert({ message: (m.error && m.error.message) || "Disconnect failed.", indicator: "red" });
-					}
-				});
+				frappe.confirm(
+					__("Disconnect the LLM subscription? Jarvis chat will stop working until you reconnect."),
+					() => {
+						frappe.call({ method: "jarvis.oauth.api.disconnect" }).then((r) => {
+							const m = r.message || {};
+							if (m.ok) {
+								frappe.show_alert({ message: __("Disconnected."), indicator: "orange" });
+								loadInitial();
+							} else {
+								frappe.show_alert({
+									message: (m.error && m.error.message) || __("Disconnect failed."),
+									indicator: "red",
+								});
+							}
+						});
+					},
+				);
 			});
 			$body.find("#ja-sub-reauth").on("click", () => {
 				cancelSubscriptionFlow();
