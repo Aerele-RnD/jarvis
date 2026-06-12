@@ -101,6 +101,20 @@ class TestOnUpdateClassification(_SettingsSingletonTestCase):
             settings.save()
         sync_mock.assert_not_called()
 
+    def test_force_admin_sync_flag_triggers_restart_even_without_diff(self):
+        """Save_llm_creds(force=True) sets flags.force_admin_sync. With no
+        field change, the no-diff classifier would normally return None
+        and skip the push, leaving the container with the previous (and
+        in re-authorize cases, broken) auth state. The flag forces
+        'restart' so admin re-renders openclaw.json + restarts the
+        container. Verified-live failure mode 2026-06-11."""
+        settings = frappe.get_single("Jarvis Settings")
+        settings.flags.force_admin_sync = True
+        # No structural field changes.
+        with patch.object(type(settings), "_sync_via_admin") as sync_mock:
+            settings.save()
+        sync_mock.assert_called_once_with("restart")
+
     def test_only_key_change_triggers_reload(self):
         settings = frappe.get_single("Jarvis Settings")
         settings.llm_api_key = "sk-new-key-9999"

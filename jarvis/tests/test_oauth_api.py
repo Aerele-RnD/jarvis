@@ -269,6 +269,13 @@ class TestCompletePasteSigninFlow(_OAuthApiBase):
 		self.assertEqual(sk["model"], "gpt-5.5")
 		self.assertEqual(sk["api_key"], "")
 		self.assertEqual(sk["auth_mode"], "oauth")
+		# force=True is mandatory in the re-authorize path: without it
+		# Jarvis Settings.on_update's diff classifier sees no change
+		# and skips the re-render + restart, so openclaw keeps serving
+		# the previous (broken) auth state. Verified live 2026-06-11.
+		self.assertTrue(sk.get("force"),
+			"complete_paste_signin must pass force=True so a no-diff "
+			"save still re-renders openclaw.json + restarts the container")
 
 		settings = frappe.get_single("Jarvis Settings")
 		self.assertEqual(settings.llm_oauth_account_email, "manager@acme.com")
