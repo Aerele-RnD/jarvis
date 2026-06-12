@@ -53,29 +53,33 @@ export async function refreshSidebar($sidebar, $empty, onSelect, onArchive) {
 		// filters status='Active', so archived rows fall out of view).
 		// Delegates the API call + cleanup to onArchive (the controller in
 		// index.js) so this stays a pure UI affordance.
-		$item.find(".jarvis-conv-delete").on("click", async (e) => {
+		$item.find(".jarvis-conv-delete").on("click", (e) => {
 			e.stopPropagation();   // don't trigger onSelect on the row
-			const ok = window.confirm(
-				`Delete "${title}"?\n\nThis can't be undone.`
-			);
-			if (!ok) return;
-			try {
-				if (typeof onArchive === "function") {
-					await onArchive(c.name);
-				} else {
-					// Fallback if no callback is wired (shouldn't happen).
-					await api.archiveConversation(c.name);
+			// frappe.confirm is callback-based (not boolean) so the work
+			// has to live inside the on-yes branch. on-no = no-op.
+			frappe.confirm(
+				__("Delete {0}?", [`<b>${frappe.utils.escape_html(title)}</b>`])
+				+ "<br><br>" + __("This can't be undone."),
+				async () => {
+					try {
+						if (typeof onArchive === "function") {
+							await onArchive(c.name);
+						} else {
+							// Fallback if no callback is wired (shouldn't happen).
+							await api.archiveConversation(c.name);
+						}
+						frappe.show_alert({
+							message: __("Deleted") + ` "${title}"`,
+							indicator: "orange",
+						});
+					} catch (err) {
+						frappe.show_alert({
+							message: __("Couldn't delete: ") + (err.message || err),
+							indicator: "red",
+						});
+					}
 				}
-				frappe.show_alert({
-					message: __("Deleted") + ` "${title}"`,
-					indicator: "orange",
-				});
-			} catch (err) {
-				frappe.show_alert({
-					message: __("Couldn't delete: ") + (err.message || err),
-					indicator: "red",
-				});
-			}
+			);
 		});
 
 		$sidebar.append($item);
