@@ -10,12 +10,42 @@ app_license = "MIT"
 # ---------------------------------------------------------------------------
 # Default URL of the Jarvis Cloud control plane the customer bench targets
 # for signup, billing, plan list, container connection, and account summary.
-# A per-customer override at ``Jarvis Settings.jarvis_admin_url`` wins; this
-# is the bench-wide fallback for fresh installs.
 #
-# Rebranding the deployment? Change this string + ship a new release.
-# (Re-exported by ``jarvis.admin_client`` so existing imports keep working.)
-DEFAULT_ADMIN_URL = "https://admin.jarvis.aerele.in"
+# Resolution order (highest precedence first):
+#   1. ``Jarvis Settings.jarvis_admin_url`` per-customer override
+#      (resolved in admin_client, not here)
+#   2. ``jarvis_admin_url`` in site_config.json (or common_site_config.json)
+#   3. this hardcoded fallback for fresh installs
+#
+# Rebranding the deployment? Set ``jarvis_admin_url`` in site config, or
+# change this string + ship a new release.
+# (``DEFAULT_ADMIN_URL`` is re-exported by ``jarvis.admin_client`` so existing
+# imports keep working - resolved lazily via module __getattr__ below.)
+_DEFAULT_ADMIN_URL_FALLBACK = "https://admin.jarvis.aerele.in"
+
+
+def get_default_admin_url() -> str:
+	"""Bench-wide default admin URL.
+
+	Reads ``jarvis_admin_url`` from site config via ``frappe.conf``; falls
+	back to the hardcoded default when the key is absent or empty. Resolve
+	this lazily at call time - ``frappe.conf`` is only populated once a site
+	is initialized, which is not guaranteed at hooks.py import time."""
+	import frappe
+
+	val = (frappe.conf.get("jarvis_admin_url") or "").strip()
+	return val or _DEFAULT_ADMIN_URL_FALLBACK
+
+
+def __getattr__(name: str):
+	# Lazy resolution so ``jarvis.hooks.DEFAULT_ADMIN_URL`` reads site config
+	# on access instead of being frozen at import time. Note: a bare
+	# ``from jarvis.hooks import DEFAULT_ADMIN_URL`` still binds once at the
+	# importer's import time, so prefer calling ``get_default_admin_url()``
+	# directly where freshness matters.
+	if name == "DEFAULT_ADMIN_URL":
+		return get_default_admin_url()
+	raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 # ---------------------------------------------------------------------------
 # OAuth client IDs - one per supported chat-subscription provider
