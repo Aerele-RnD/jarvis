@@ -5,6 +5,15 @@ app_description = "AI superpowers for Frappe/ERPNext"
 app_email = "navin@aerele.in"
 app_license = "MIT"
 
+
+# ---------------------------------------------------------------------------
+# Per-session bootinfo
+# ---------------------------------------------------------------------------
+# Frappe calls this once per page load. We use it to expose
+# ``frappe.boot.jarvis_sandbox_mode`` so JS can branch on sandbox state
+# without a round-trip back to the server.
+boot_session = "jarvis.boot.set_jarvis_boot"
+
 # ---------------------------------------------------------------------------
 # Deployment constants
 # ---------------------------------------------------------------------------

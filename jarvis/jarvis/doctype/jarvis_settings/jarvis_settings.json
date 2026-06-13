@@ -37,7 +37,9 @@
     "chat_device_token",
     "last_sync_section",
     "last_sync_at",
-    "last_sync_status"
+    "last_sync_status",
+    "developer_section",
+    "sandbox_mode"
   ],
   "fields": [
     {
@@ -241,6 +243,18 @@
       "fieldtype": "Long Text",
       "label": "Last Sync Status",
       "read_only": 1
+    },
+    {
+      "fieldname": "developer_section",
+      "fieldtype": "Section Break",
+      "label": "Developer / Sandbox"
+    },
+    {
+      "fieldname": "sandbox_mode",
+      "fieldtype": "Check",
+      "label": "Enable Sandbox Mode",
+      "default": "0",
+      "description": "When enabled, skip payment + allow the developer-onboarding shortcut (jarvis.onboarding.dev_onboard) on this site. Customer's responsibility: only flip this on a dev/test bench. Replaces the legacy <code>frappe.conf.developer_mode</code> check; that flag still works as a backwards-compat fallback for one release."
     }
   ],
   "permissions": [

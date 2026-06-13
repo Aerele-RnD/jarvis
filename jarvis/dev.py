@@ -1,8 +1,10 @@
 """Dev-only helpers for the customer bench.
 
-Gated by ``frappe.conf.developer_mode`` + the System Manager role. Used by
-the Jarvis Settings form to wipe local state so the operator can run the
-onboarding wizard fresh without manual DB surgery.
+Gated by sandbox mode (Jarvis Settings.sandbox_mode, with legacy
+frappe.conf.developer_mode as a one-release backwards-compat fallback)
++ the System Manager role. Used by the Jarvis Settings form to wipe local
+state so the operator can run the onboarding wizard fresh without manual
+DB surgery.
 
 Companion to ``jarvis_admin.api.dev.purge_customer`` on the admin side -
 the admin button wipes admin-side records; this clears the customer bench.
@@ -26,13 +28,41 @@ _PASSWORD_FIELDS = {
 }
 
 
+def is_sandbox_mode() -> bool:
+	"""Return True iff this site is in sandbox mode.
+
+	Resolution:
+	  1. ``Jarvis Settings.sandbox_mode = 1`` (the canonical flag)
+	  2. legacy fallback: ``frappe.conf.developer_mode`` is truthy
+	     (kept for one release so existing dev installs don't break;
+	     remove this branch in the release after this one)
+
+	Either condition opens the dev surface (dev_onboard, reset_onboarding,
+	the DEV-only reset button in Jarvis Settings). Customer responsibility:
+	flip this only on dev/test benches. The trust model is self-attested -
+	same as the legacy developer_mode behavior - so this is not a security
+	hardening, just a UX improvement (discoverable in the settings form,
+	doesn't bleed across apps, doesn't require a bench restart)."""
+	try:
+		if frappe.get_single_value(SETTINGS, "sandbox_mode"):
+			return True
+	except Exception:
+		# DocType may not be migrated yet on a fresh install; fall through
+		# to the legacy check rather than crashing.
+		pass
+	return bool(frappe.conf.get("developer_mode"))
+
+
 def _dev_guard():
-	"""Reject unless developer_mode is enabled AND the caller is a System
+	"""Reject unless sandbox mode is enabled AND the caller is a System
 	Manager. Sets HTTP 403 + throws so the form action surfaces the standard
 	red dialog."""
-	if not frappe.conf.get("developer_mode"):
+	if not is_sandbox_mode():
 		frappe.local.response.http_status_code = 403
-		frappe.throw("developer_mode is not enabled in site_config")
+		frappe.throw(
+			"Sandbox mode is not enabled. Set Jarvis Settings -> "
+			"Enable Sandbox Mode (or, legacy: developer_mode in site_config)."
+		)
 	if "System Manager" not in frappe.get_roles():
 		frappe.local.response.http_status_code = 403
 		frappe.throw("System Manager role required")
@@ -42,7 +72,7 @@ def _dev_guard():
 def is_dev_mode_active() -> dict:
 	"""Cheap probe so the Jarvis Settings form JS can decide whether to
 	surface the reset button. Returns ``{active: True}`` iff both gates
-	(developer_mode + System Manager) pass for the current user."""
+	(sandbox mode + System Manager) pass for the current user."""
 	try:
 		_dev_guard()
 		return {"ok": True, "data": {"active": True}}
