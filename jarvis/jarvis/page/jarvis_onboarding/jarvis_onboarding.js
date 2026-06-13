@@ -1,6 +1,15 @@
 frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({ parent: wrapper, title: "Connect to Jarvis", single_column: true });
-	// `dev` gates the dev-onboard shortcut (skip payment).
+	// `dev` gates the dev-onboard shortcut (skip payment). Read once from
+	// the bootinfo here for UX-only decisions (Razorpay script preload,
+	// renderPay()'s heading + button label). This value can be STALE if
+	// the operator toggles `Jarvis Settings.sandbox_mode` after page load.
+	//
+	// The click-time payment branch must NOT trust this value alone. See
+	// the click handler in renderPay() - it queries
+	// `jarvis.dev.is_dev_mode_active` at click time so we never charge a
+	// customer when sandbox mode was switched on mid-session.
+	//
 	// Replaces the legacy `frappe.boot.developer_mode` check with the
 	// per-site `Jarvis Settings.sandbox_mode` flag, exposed via
 	// jarvis.boot.set_jarvis_boot. Falls back to developer_mode for one
@@ -246,7 +255,31 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 			  <button class="jo-btn jo-btn-primary" id="jo-pay">${dev ? "Dev signup &amp; connect" : "Sign up &amp; pay →"}</button>
 			</div>`);
 		$body.find("#jo-back").on("click", () => go(2));
-		$body.find("#jo-pay").on("click", dev ? devOnboard : startPay);
+		// Server-authoritative branch: query is_dev_mode_active at CLICK
+		// time, not at page load. The boot-time `dev` value can be stale
+		// (operator toggled Jarvis Settings.sandbox_mode after the
+		// wizard loaded, or bench cache not cleared post-deploy). If we
+		// trusted `dev` here, a stale "false" would charge a customer
+		// on a bench that's actually in sandbox - exactly the
+		// regression reported 2026-06-13. The heading + button label
+		// can be wrong (they're rendered from `dev`) but the actual
+		// outcome will be correct.
+		$body.find("#jo-pay").on("click", async () => {
+			// Visual feedback while the server check is in flight.
+			// startPay()/devOnboard() set their own busy state, so we
+			// don't need to clear ours - they take over.
+			setBusy("#jo-pay", true);
+			let isDev = dev;
+			try {
+				const r = await frappe.call({ method: "jarvis.dev.is_dev_mode_active" });
+				isDev = !!(r && r.message && r.message.data && r.message.data.active);
+			} catch (_) {
+				// Server unreachable - fall back to the boot-time value
+				// as a best-effort guess. Better than blocking the user.
+				isDev = dev;
+			}
+			if (isDev) { devOnboard(); } else { startPay(); }
+		});
 	}
 
 	function renderLlm() {
