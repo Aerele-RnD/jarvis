@@ -48,8 +48,11 @@ frappe.ui.form.on("Jarvis Settings", {
 			});
 		}, __("Diagnostics"));
 
-		// DEV-only reset: visible when developer_mode is on AND caller is
-		// System Manager. The server re-checks both gates.
+		// DEV-only reset: visible when sandbox mode is on AND caller is
+		// System Manager. The server re-checks both gates - is_dev_mode_active
+		// resolves "sandbox mode" through jarvis.dev.is_sandbox_mode (which
+		// reads Jarvis Settings.sandbox_mode, with legacy frappe.conf.
+		// developer_mode as a one-release fallback).
 		frappe.call({ method: "jarvis.dev.is_dev_mode_active" }).then((r) => {
 			if (!(r && r.message && r.message.data && r.message.data.active)) return;
 			frm.add_custom_button(__("Reset onboarding (DEV)"), () => {

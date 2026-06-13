@@ -164,12 +164,25 @@ def get_llm_sync_status() -> dict:
 def dev_onboard(email: str, company: str, plan: str) -> dict:
 	"""Local Razorpay-free onboarding: dev_force_signup → store token+connection.
 
+	Server-side gated on sandbox mode (Jarvis Settings.sandbox_mode, with
+	legacy frappe.conf.developer_mode as a one-release backwards-compat
+	fallback). Without the gate, this whitelisted endpoint would let any
+	authenticated user skip payment - the JS-only check on
+	``frappe.boot.jarvis_sandbox_mode`` is just UX, not security.
+
 	Requires ``Jarvis Settings.jarvis_admin_url`` to be set first. Earlier
 	versions auto-populated it from ``frappe.utils.get_url()``, but that
 	returns the bench-wide URL (the host_name in common_site_config) instead
 	of the current site URL. On a multi-site bench that quietly lands the
 	wrong value into the wrong site's Jarvis Settings. Force the operator to
 	set it deliberately."""
+	from jarvis.dev import is_sandbox_mode
+	if not is_sandbox_mode():
+		frappe.local.response.http_status_code = 403
+		frappe.throw(
+			"dev_onboard requires sandbox mode. Enable it in Jarvis "
+			"Settings -> Enable Sandbox Mode before retrying."
+		)
 	data = _surface(admin_client.dev_signup, email, company, plan)
 	write_connection(data)
 	return data

@@ -3,7 +3,7 @@
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
-from jarvis.dev import is_dev_mode_active, reset_onboarding, _RESET_CLEAR_FIELDS
+from jarvis.dev import is_dev_mode_active, is_sandbox_mode, reset_onboarding, _RESET_CLEAR_FIELDS
 
 
 SETTINGS = "Jarvis Settings"
@@ -98,12 +98,18 @@ class TestResetOnboardingGuards(FrappeTestCase):
 		frappe.conf.developer_mode = self._prior_dev_mode
 		_restore(self._snap)
 
-	def test_rejects_when_developer_mode_off(self):
+	def test_rejects_when_sandbox_mode_off(self):
 		frappe.conf.developer_mode = 0
+		# Make sure Jarvis Settings.sandbox_mode is also off (the doctype
+		# field is the new canonical source; conf.developer_mode is the
+		# one-release legacy fallback).
+		frappe.get_single("Jarvis Settings").db_set("sandbox_mode", 0)
+		frappe.db.commit()
 		with self.assertRaises(frappe.ValidationError) as cm:
 			reset_onboarding()
 		self.assertEqual(frappe.local.response.http_status_code, 403)
-		self.assertIn("developer_mode", str(cm.exception))
+		# Error message references the new flag name + the legacy fallback.
+		self.assertIn("sandbox", str(cm.exception).lower())
 
 	def test_rejects_when_non_system_manager(self):
 		frappe.conf.developer_mode = 1
@@ -131,6 +137,53 @@ class TestIsDevModeActive(FrappeTestCase):
 
 	def test_false_when_developer_mode_off(self):
 		frappe.conf.developer_mode = 0
+		# Belt-and-suspenders: also make sure Jarvis Settings.sandbox_mode
+		# is off; otherwise it would also flip is_dev_mode_active to True.
+		frappe.get_single("Jarvis Settings").db_set("sandbox_mode", 0)
+		frappe.db.commit()
 		out = is_dev_mode_active()
 		self.assertEqual(out["data"]["active"], False)
 		self.assertEqual(frappe.local.response.http_status_code, 200)
+
+
+class TestIsSandboxMode(FrappeTestCase):
+	"""is_sandbox_mode resolution: Jarvis Settings.sandbox_mode wins, then
+	the legacy frappe.conf.developer_mode fallback (one release only)."""
+
+	def setUp(self):
+		self._prior_dev_mode = frappe.conf.get("developer_mode") or 0
+		self._prior_sandbox = frappe.get_single("Jarvis Settings").get("sandbox_mode") or 0
+
+	def tearDown(self):
+		frappe.conf.developer_mode = self._prior_dev_mode
+		frappe.get_single("Jarvis Settings").db_set("sandbox_mode", self._prior_sandbox)
+		frappe.db.commit()
+
+	def test_true_when_sandbox_field_set(self):
+		frappe.conf.developer_mode = 0
+		frappe.get_single("Jarvis Settings").db_set("sandbox_mode", 1)
+		frappe.db.commit()
+		self.assertTrue(is_sandbox_mode())
+
+	def test_true_when_only_legacy_developer_mode_set(self):
+		# Backwards-compat fallback: existing dev installs that have
+		# developer_mode in site_config but never migrated their
+		# Jarvis Settings to the new flag still get the dev surface.
+		frappe.conf.developer_mode = 1
+		frappe.get_single("Jarvis Settings").db_set("sandbox_mode", 0)
+		frappe.db.commit()
+		self.assertTrue(is_sandbox_mode())
+
+	def test_false_when_both_off(self):
+		frappe.conf.developer_mode = 0
+		frappe.get_single("Jarvis Settings").db_set("sandbox_mode", 0)
+		frappe.db.commit()
+		self.assertFalse(is_sandbox_mode())
+
+	def test_sandbox_field_wins_over_legacy_off(self):
+		# The new flag is the canonical source - legacy off + new on
+		# should still report sandbox active.
+		frappe.conf.developer_mode = 0
+		frappe.get_single("Jarvis Settings").db_set("sandbox_mode", 1)
+		frappe.db.commit()
+		self.assertTrue(is_sandbox_mode())

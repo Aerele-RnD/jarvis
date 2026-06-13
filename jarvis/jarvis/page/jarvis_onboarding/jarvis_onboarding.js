@@ -1,6 +1,11 @@
 frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({ parent: wrapper, title: "Connect to Jarvis", single_column: true });
-	const dev = !!frappe.boot.developer_mode;
+	// `dev` gates the dev-onboard shortcut (skip payment).
+	// Replaces the legacy `frappe.boot.developer_mode` check with the
+	// per-site `Jarvis Settings.sandbox_mode` flag, exposed via
+	// jarvis.boot.set_jarvis_boot. Falls back to developer_mode for one
+	// release so existing dev installs aren't disrupted.
+	const dev = !!(frappe.boot.jarvis_sandbox_mode || frappe.boot.developer_mode);
 	if (!dev && !window.Razorpay) {
 		frappe.require("https://checkout.razorpay.com/v1/checkout.js");
 	}
