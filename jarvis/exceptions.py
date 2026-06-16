@@ -15,7 +15,20 @@ class InvalidArgumentError(JarvisError):
 
 
 class OpenclawUnreachableError(JarvisError):
-    """Raised when the openclaw gateway can't be reached (WS handshake failed, container down)."""
+    """Raised when the openclaw gateway can't be reached (WS handshake
+    failed, container down).
+
+    Sprint-3 (2026-06-16 review): may carry a structured ``code`` taken
+    from openclaw's rejection payload (``device-not-paired``,
+    ``token-mismatch``, ``signature-invalid``, etc.). Downstream
+    classifiers (e.g. _is_stale_pairing) should branch on this
+    attribute, not on a substring match of the message. ``code`` is
+    None when the error didn't originate from an openclaw response
+    (e.g. network-level WS open failure)."""
+
+    def __init__(self, message: str, *, code: str | None = None):
+        super().__init__(message)
+        self.code = code
 
 
 class OpenclawReloadFailedError(JarvisError):

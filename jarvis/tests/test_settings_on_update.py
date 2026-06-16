@@ -404,19 +404,28 @@ class TestSyncViaAdminDispatch(_SettingsSingletonTestCase):
         mock_rotate.assert_not_called()
 
     @patch("jarvis.admin_client.post_rotate_llm_secret")
-    def test_rate_limited_is_logged_not_raised(self, mock_rotate):
+    def test_rate_limited_writes_terminal_failure_status(self, mock_rotate):
+        """Sprint-3 (2026-06-16 review): rate-limit USED to be silently
+        swallowed - last_sync_status stayed at 'pending:' forever and
+        the UI poller spun on it indefinitely. Now we write a terminal
+        failure status with the admin-provided retry_after hint so the
+        UI can render a clean retry timer."""
         from jarvis.exceptions import AdminRateLimitedError
         mock_rotate.side_effect = AdminRateLimitedError(retry_after_seconds=600)
         settings = frappe.get_single("Jarvis Settings")
         settings.db_set("llm_api_key", "sk-1", update_modified=False)
         frappe.db.commit()
         settings.reload()
-        before_status = settings.last_sync_status
         # Should not raise.
         settings._sync_via_admin("reload")
-        # last_sync_status unchanged (rate-limit is a bench-side bug, not creds).
+        # last_sync_status flips to a terminal-failure shape that
+        # carries the retry hint.
         settings.reload()
-        self.assertEqual(settings.last_sync_status, before_status)
+        self.assertIn("failed", settings.last_sync_status or "")
+        self.assertIn("rate-limited", settings.last_sync_status or "")
+        self.assertIn("600", settings.last_sync_status or "")
+        # last_sync_at gets bumped so the UI knows when the status was set.
+        self.assertIsNotNone(settings.last_sync_at)
 
     @patch("jarvis.admin_client.post_rotate_llm_secret")
     def test_admin_auth_error_recorded_in_status(self, mock_rotate):

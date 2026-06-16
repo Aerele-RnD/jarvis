@@ -165,6 +165,44 @@ class TestRunAgentTurnErrorPaths(FrappeTestCase):
 		)
 		self.assertIn("model overloaded", assistants[0]["error"])
 
+	def test_unexpected_exception_marks_errored_then_reraises(self):
+		"""Sprint-3 (2026-06-16 review): the inline OpenclawUnreachableError
+		catches USED to leave every other exception (cryptography.InvalidKey
+		from device signing, ssl.SSLError, programmer bugs in _handle_event)
+		propagating to RQ without _mark_errored or run:error - the
+		assistant row stayed at streaming=1 forever and the UI spun. The
+		outer catch-all now marks errored + publishes run:error AND
+		re-raises so RQ records the job failure.
+		"""
+		fake_sess = MagicMock()
+		# Simulate a non-Openclaw exception escaping from stream_agent_turn
+		# (e.g. an SSL handshake mid-stream, or a tool-handler bug).
+		import ssl
+		fake_sess.stream_agent_turn.side_effect = ssl.SSLError("handshake failed")
+
+		published_kinds: list = []
+		def _capture(user, payload):
+			published_kinds.append(payload.get("kind"))
+
+		with patch("jarvis.chat.worker.OpenclawSession.connect", return_value=fake_sess), \
+		     patch("jarvis.chat.worker.publish_to_user", side_effect=_capture):
+			with self.assertRaises(ssl.SSLError):
+				run_agent_turn(self.conv, self.user_msg, run_id="r1")
+
+		# Placeholder must be flipped off streaming + carry an error.
+		assistants = frappe.get_all(
+			MSG,
+			filters={"conversation": self.conv, "role": "assistant"},
+			fields=["error", "streaming"],
+		)
+		self.assertEqual(len(assistants), 1)
+		self.assertEqual(assistants[0]["streaming"], 0)
+		# Error message names the exception class - operator can grep
+		# the Error Log for the full traceback.
+		self.assertIn("SSLError", assistants[0]["error"] or "")
+		# Realtime run:error was published so the UI exits its spinner.
+		self.assertIn("run:error", published_kinds)
+
 
 class TestRunAgentTurnAugmentsMessage(FrappeTestCase):
 	"""Worker should prepend `[Context: today is ...]` to the user message

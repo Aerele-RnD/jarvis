@@ -72,7 +72,18 @@ def _resolve_model_and_provider(conv) -> tuple[str, str | None]:
 
 
 def run_agent_turn(conversation_id: str, message_id: str, run_id: str) -> None:
-	"""Drive one agent turn end to end. Called by RQ; not whitelisted."""
+	"""Drive one agent turn end to end. Called by RQ; not whitelisted.
+
+	Sprint-3 (2026-06-16 review): the inline ``except OpenclawUnreachableError``
+	blocks only marked the placeholder errored for openclaw-specific
+	failures. Any OTHER exception (cryptography.InvalidKey, ssl.SSLError,
+	programmer bug in _handle_event, etc.) propagated to RQ without
+	calling _mark_errored, leaving the assistant row stuck at
+	``streaming=1`` forever (the UI poller spins on the empty body).
+	An outer try/except Exception now catches everything else, marks the
+	row errored + publishes run:error, then re-raises so RQ still records
+	the job as failed.
+	"""
 	conv = frappe.get_doc(CONV, conversation_id)
 	user = conv.owner
 
@@ -101,51 +112,81 @@ def run_agent_turn(conversation_id: str, message_id: str, run_id: str) -> None:
 	user_message = _augment_with_context(user_message or "")
 
 	try:
-		sess = OpenclawSession.connect(gateway_url, gateway_token)
-	except OpenclawUnreachableError as e:
-		_mark_errored(assistant_msg.name, str(e))
-		publish_to_user(user, {
-			"kind": "run:error",
-			"conversation_id": conversation_id,
-			"message_id": assistant_msg.name,
-			"run_id": run_id,
-			"error": str(e),
-		})
-		return
+		try:
+			sess = OpenclawSession.connect(gateway_url, gateway_token)
+		except OpenclawUnreachableError as e:
+			_mark_errored(assistant_msg.name, str(e))
+			publish_to_user(user, {
+				"kind": "run:error",
+				"conversation_id": conversation_id,
+				"message_id": assistant_msg.name,
+				"run_id": run_id,
+				"error": str(e),
+			})
+			return
 
-	effective_model, oauth_provider_id = _resolve_model_and_provider(conv)
+		effective_model, oauth_provider_id = _resolve_model_and_provider(conv)
 
-	try:
-		idem = f"{conversation_id}:{message_id}"
-		tool_msg_by_call_id: dict[str, str] = {}
-		for event in sess.stream_agent_turn(
-			conv.session_key, user_message, idem,
-			model=effective_model, provider=oauth_provider_id,
-		):
-			_handle_event(
-				event,
-				conversation_id=conversation_id,
-				assistant_msg_name=assistant_msg.name,
-				tool_msg_by_call_id=tool_msg_by_call_id,
-				user=user,
-				run_id=run_id,
+		try:
+			idem = f"{conversation_id}:{message_id}"
+			tool_msg_by_call_id: dict[str, str] = {}
+			for event in sess.stream_agent_turn(
+				conv.session_key, user_message, idem,
+				model=effective_model, provider=oauth_provider_id,
+			):
+				_handle_event(
+					event,
+					conversation_id=conversation_id,
+					assistant_msg_name=assistant_msg.name,
+					tool_msg_by_call_id=tool_msg_by_call_id,
+					user=user,
+					run_id=run_id,
+				)
+		except OpenclawUnreachableError as e:
+			_mark_errored(assistant_msg.name, str(e))
+			publish_to_user(user, {
+				"kind": "run:error",
+				"conversation_id": conversation_id,
+				"message_id": assistant_msg.name,
+				"run_id": run_id,
+				"error": str(e),
+			})
+			return
+		finally:
+			sess.close()
+
+		# Streaming exited cleanly via lifecycle.end
+		frappe.db.set_value(MSG, assistant_msg.name, "streaming", 0)
+		frappe.db.commit()
+
+	except Exception as e:
+		# Last-resort backstop. Any exception that wasn't an
+		# OpenclawUnreachableError (e.g. cryptography.InvalidKey from
+		# device-pairing signing, ssl.SSLError, a tool-handler bug,
+		# DoesNotExistError on a stale conversation row) would otherwise
+		# leave the assistant row at ``streaming=1`` indefinitely. Mark
+		# it errored, publish run:error, then re-raise so RQ records the
+		# job as failed (and the operator gets a normal Error Log entry).
+		try:
+			_mark_errored(
+				assistant_msg.name,
+				f"unexpected worker error: {type(e).__name__}",
 			)
-	except OpenclawUnreachableError as e:
-		_mark_errored(assistant_msg.name, str(e))
-		publish_to_user(user, {
-			"kind": "run:error",
-			"conversation_id": conversation_id,
-			"message_id": assistant_msg.name,
-			"run_id": run_id,
-			"error": str(e),
-		})
-		return
-	finally:
-		sess.close()
-
-	# Streaming exited cleanly via lifecycle.end
-	frappe.db.set_value(MSG, assistant_msg.name, "streaming", 0)
-	frappe.db.commit()
+			publish_to_user(user, {
+				"kind": "run:error",
+				"conversation_id": conversation_id,
+				"message_id": assistant_msg.name,
+				"run_id": run_id,
+				# Don't leak full str(e) - the operator-safe identifier is
+				# the exception class; the full traceback is in Error Log.
+				"error": f"{type(e).__name__}",
+			})
+		except Exception:
+			# If even the error-marking path fails, swallow - we're
+			# already in an error path and re-raising would mask the
+			# original exception that RQ should see.
+			pass
+		raise
 	publish_to_user(user, {
 		"kind": "run:end",
 		"conversation_id": conversation_id,
