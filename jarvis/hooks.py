@@ -321,6 +321,15 @@ scheduler_events = {
 			"jarvis.chat.stale_scan.scan_and_mark_errored",
 		],
 	},
+	"hourly": [
+		# Sprint-3 (2026-06-16 review): bench has no way to know if the
+		# container's OAuth profile silently went away (refresh-token
+		# failure, operator clear, re-provision without re-push). Hourly
+		# reconciliation keeps last_sync_status honest so the UI can
+		# render a "reconnect" banner instead of "Connected" until the
+		# user hits a ProviderAuthError mid-chat.
+		"jarvis.oauth.cron.poll_oauth_refresh_status",
+	],
 	"daily": [
 		"jarvis.onboarding.sync_connection",
 	],
