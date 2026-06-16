@@ -2,7 +2,8 @@ import json
 
 import frappe
 
-from jarvis._http import validate_bearer as _validate_bearer
+from jarvis._http import validate_bearer as _validate_bearer  # noqa: F401 (kept for callers in mcp.py)
+from jarvis._plugin_auth import PluginAuthError, validate_plugin_request
 from jarvis.exceptions import JarvisError
 from jarvis.tools.registry import dispatch
 
@@ -35,18 +36,17 @@ def call_tool(tool: str, args: dict | str | None = None) -> dict:
 	failures are reported with the corresponding HTTP status code.
 	"""
 	# Plugin auth mode - detected by presence of X-Jarvis-Token header.
+	# Goes through the C2 hardening pipeline (IP allowlist → bearer →
+	# session → optional HMAC signature → rate limit) implemented in
+	# jarvis._plugin_auth. PluginAuthError carries the correct status
+	# code; any other exception bubbles as a 500 (logged by Frappe).
 	if _get_header("X-Jarvis-Token"):
-		if not _validate_bearer():
-			frappe.local.response.http_status_code = 401
-			return _error("AuthenticationError", "invalid X-Jarvis-Token")
+		try:
+			session_key = validate_plugin_request(_request_body_bytes())
+		except PluginAuthError as e:
+			frappe.local.response.http_status_code = e.http_status
+			return _error(e.code, e.message)
 
-		session_key = _get_header("X-Jarvis-Session")
-		if not session_key:
-			frappe.local.response.http_status_code = 400
-			return _error(
-				"InvalidArgumentError",
-				"X-Jarvis-Session header required when using X-Jarvis-Token",
-			)
 		plugin_user = frappe.db.get_value(
 			"Jarvis Chat Session",
 			{"session_key": session_key},
@@ -229,5 +229,23 @@ def _get_header(name: str) -> str:
 	except (AttributeError, RuntimeError):
 		return ""
 	return (value or "").strip()
+
+
+def _request_body_bytes() -> bytes:
+	"""Best-effort raw request body for HMAC validation.
+
+	Returns b"" in direct-Python contexts (tests, ``bench execute``)
+	where ``frappe.request`` isn't bound. Phase-2 signed clients can
+	then either skip the signature in tests or use the test harness's
+	header-faking shape; an unsigned legacy request returns b"" which
+	doesn't matter because the signature path isn't entered.
+	"""
+	try:
+		data = frappe.request.get_data(cache=True)
+	except (AttributeError, RuntimeError):
+		return b""
+	return data if isinstance(data, (bytes, bytearray)) else (data or "").encode("utf-8")
+
+
 
 
