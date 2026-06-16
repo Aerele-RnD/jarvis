@@ -69,6 +69,98 @@ class TestRunQueryValidation(FrappeTestCase):
 		with self.assertRaises(InvalidArgumentError):
 			run_query("SELECT 1")
 
+	# ----- Sprint-1 (2026-06-16) bypass surfaces ---------------------
+
+	def test_rejects_into_outfile(self):
+		"""SELECT ... INTO OUTFILE writes the result set to the MariaDB
+		server's filesystem. With FILE privilege, an attacker could exfil
+		whatever the bench's DB user can read into a path they later
+		fetch via another route."""
+		with self.assertRaises(InvalidArgumentError) as cm:
+			run_query("SELECT name FROM tabDocType INTO OUTFILE '/tmp/leak.txt'")
+		self.assertIn("INTO", str(cm.exception).upper())
+
+	def test_rejects_into_dumpfile(self):
+		with self.assertRaises(InvalidArgumentError):
+			run_query("SELECT name FROM tabDocType INTO DUMPFILE '/tmp/leak'")
+
+	def test_rejects_load_file(self):
+		"""LOAD_FILE('/etc/passwd') AS x - filesystem read in a column."""
+		with self.assertRaises(InvalidArgumentError) as cm:
+			run_query("SELECT LOAD_FILE('/etc/passwd') AS x FROM tabDocType")
+		self.assertIn("LOAD_FILE", str(cm.exception))
+
+	def test_rejects_sleep(self):
+		"""SLEEP(N) ties up a connection for N seconds; a few concurrent
+		calls saturate the Frappe DB pool."""
+		with self.assertRaises(InvalidArgumentError) as cm:
+			run_query("SELECT name FROM tabDocType WHERE SLEEP(10)")
+		self.assertIn("SLEEP", str(cm.exception))
+
+	def test_rejects_benchmark(self):
+		"""BENCHMARK(1e9, MD5('x')) - the family that SLEEP belongs to."""
+		with self.assertRaises(InvalidArgumentError):
+			run_query("SELECT BENCHMARK(1000000, MD5('x')) FROM tabDocType")
+
+	def test_rejects_get_lock(self):
+		"""GET_LOCK('jarvis-test', 0) holds a server-side named lock; a
+		conspiracy of stuck connections is a coordination DoS."""
+		with self.assertRaises(InvalidArgumentError) as cm:
+			run_query("SELECT GET_LOCK('x', 0) FROM tabDocType")
+		self.assertIn("GET_LOCK", str(cm.exception))
+
+	def test_rejects_release_lock(self):
+		with self.assertRaises(InvalidArgumentError):
+			run_query("SELECT RELEASE_LOCK('x') FROM tabDocType")
+
+	def test_rejects_comma_from_to_information_schema(self):
+		"""The leading-FROM regex catches the FIRST table after FROM, but
+		comma-continuations slip past: ``FROM tabDocType, information_schema.tables t``
+		grants access to internal schemas the agent has no business reading.
+		"""
+		with self.assertRaises(InvalidArgumentError) as cm:
+			run_query(
+				"SELECT name FROM tabDocType, information_schema.tables t WHERE 1=1"
+			)
+		self.assertIn("information_schema", str(cm.exception))
+
+	def test_rejects_backticked_information_schema(self):
+		with self.assertRaises(InvalidArgumentError):
+			run_query(
+				"SELECT name FROM tabDocType, `information_schema`.tables t WHERE 1=1"
+			)
+
+	def test_rejects_mysql_user_table(self):
+		"""``mysql.user`` carries password hashes. Same comma-FROM family."""
+		with self.assertRaises(InvalidArgumentError) as cm:
+			run_query("SELECT * FROM tabDocType, mysql.user u WHERE 1=1")
+		self.assertIn("mysql", str(cm.exception))
+
+	def test_rejects_comma_from_to_non_tab_table(self):
+		"""Even if the second table isn't in a forbidden schema, it must
+		still start with ``tab`` - the second comma slot was previously
+		unchecked."""
+		with self.assertRaises(InvalidArgumentError) as cm:
+			run_query("SELECT name FROM tabDocType, __Auth a WHERE 1=1")
+		# Error message should call out the bad identifier.
+		self.assertIn("__Auth", str(cm.exception))
+
+	def test_load_file_false_positive_when_used_as_column_name(self):
+		"""``load_file`` substring inside another identifier must NOT
+		trigger the function reject (word-boundary check)."""
+		# A column named ``upload_filename`` happens to contain "load_file";
+		# the function reject must use a word-boundary + open-paren so this
+		# benign case passes the function check. We don't actually run it
+		# (no such column / DocType), so we expect the table-not-found-flow
+		# error path, NOT an InvalidArgumentError about LOAD_FILE.
+		with patch("frappe.has_permission", return_value=True), \
+		     patch("jarvis.tools.run_query.frappe.db.sql",
+		           return_value=[{"upload_filename": "x"}]):
+			result = run_query(
+				"SELECT upload_filename FROM tabDocType LIMIT 1"
+			)
+		self.assertTrue("rows" in result, msg=result)
+
 
 class TestRunQueryPermissions(FrappeTestCase):
 	"""DocType-level read permission is the only line of defense we provide.
