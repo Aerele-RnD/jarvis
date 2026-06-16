@@ -40,7 +40,14 @@ def write_connection(data: dict) -> None:
 @frappe.whitelist()
 def sync_connection() -> dict:
 	"""Pull the container connection from admin and store it. Daily scheduled +
-	the page's 'Sync connection' button. No-op until onboarded/assigned."""
+	the page's 'Sync connection' button. No-op until onboarded/assigned.
+
+	Gated on System Manager: writes admin credentials and container connection
+	into Jarvis Settings (jarvis_admin_api_key, agent_url, agent_token). The
+	scheduler runs as Administrator which bypasses only_for. Sprint-1 Important
+	from the 2026-06-16 code review.
+	"""
+	frappe.only_for("System Manager")
 	settings = frappe.get_single("Jarvis Settings")
 	api_key = settings.get_password("jarvis_admin_api_key", raise_exception=False) or ""
 	api_secret = settings.get_password("jarvis_admin_api_secret", raise_exception=False) or ""
@@ -60,7 +67,15 @@ def list_plans() -> list:
 
 @frappe.whitelist()
 def start_signup(email: str, company: str, plan: str) -> dict:
-	"""Guest signup → store the api_token → return the Razorpay handles for Checkout."""
+	"""Guest signup → store the api_token → return the Razorpay handles for Checkout.
+
+	Gated on System Manager (Sprint-1 Important from the 2026-06-16 code
+	review): the customer signing up is configuring Jarvis for their entire
+	site, which is a System Manager operation on Frappe by convention.
+	Without this, a non-admin staff user could initiate a paid signup using
+	a different email/company under the site's admin contract.
+	"""
+	frappe.only_for("System Manager")
 	data = _surface(admin_client.signup, email, company, plan)
 	if data.get("api_token"):
 		write_connection({"api_token": data["api_token"]})
@@ -68,8 +83,13 @@ def start_signup(email: str, company: str, plan: str) -> dict:
 
 
 @frappe.whitelist()
-def finish_payment(payload) -> dict:
-	"""Confirm Checkout success → store the returned container connection."""
+def finish_payment(payload: dict | str) -> dict:
+	"""Confirm Checkout success → store the returned container connection.
+
+	Gated on System Manager: writes container connection (agent_url,
+	agent_token) into Jarvis Settings.
+	"""
+	frappe.only_for("System Manager")
 	if isinstance(payload, str):
 		payload = json.loads(payload)
 	data = _surface(admin_client.confirm_payment, payload)
@@ -80,7 +100,12 @@ def finish_payment(payload) -> dict:
 @frappe.whitelist()
 def renew() -> dict:
 	"""Existing customer initiates a renewal payment; returns the Razorpay handles
-	for Checkout. The page then completes Checkout and calls finish_payment."""
+	for Checkout. The page then completes Checkout and calls finish_payment.
+
+	Gated on System Manager: initiates a billing transaction tied to the
+	site's admin account.
+	"""
+	frappe.only_for("System Manager")
 	return _surface(admin_client.renew)
 
 
@@ -107,7 +132,14 @@ def save_llm_creds(provider: str, model: str, api_key: str = "",
 	    the container so openclaw picks up the new auth profile.
 	Without ``force=True``, a customer re-authorizing with the same
 	provider+model gets a stale openclaw.json + no restart, and openclaw
-	keeps serving the previous (broken) state. Verified live 2026-06-11."""
+	keeps serving the previous (broken) state. Verified live 2026-06-11.
+
+	Gated on System Manager (Sprint-1 Important from the 2026-06-16 code
+	review): a non-admin staff user could otherwise flip ``llm_base_url``
+	to an attacker-controlled URL and exfiltrate chat context through
+	future LLM calls.
+	"""
+	frappe.only_for("System Manager")
 	if not provider or not model:
 		raise frappe.ValidationError("provider and model are required")
 	if auth_mode not in {"api_key", "oauth"}:
@@ -175,7 +207,11 @@ def dev_onboard(email: str, company: str, plan: str) -> dict:
 	returns the bench-wide URL (the host_name in common_site_config) instead
 	of the current site URL. On a multi-site bench that quietly lands the
 	wrong value into the wrong site's Jarvis Settings. Force the operator to
-	set it deliberately."""
+	set it deliberately.
+
+	Gated on System Manager in addition to the sandbox_mode check.
+	"""
+	frappe.only_for("System Manager")
 	from jarvis.dev import is_sandbox_mode
 	if not is_sandbox_mode():
 		frappe.local.response.http_status_code = 403

@@ -23,7 +23,42 @@ from jarvis.oauth.providers import (
 
 
 class TokenExchangeError(JarvisError):
-	"""Provider's /oauth/token endpoint rejected the code or had an error."""
+	"""Provider's /oauth/token endpoint rejected the code or had an error.
+
+	The ``code`` attribute is one of the opaque codes from
+	``_TOKEN_EXCHANGE_OPAQUE_CODES`` below; the message is safe to surface
+	to the customer. The full provider response detail is logged via
+	``frappe.log_error`` server-side at raise time so ops can triage.
+	"""
+
+	def __init__(self, message: str, *, code: str = "token_exchange_failed"):
+		super().__init__(message)
+		self.code = code
+
+
+# Provider error_description → opaque code mapping.
+# Provider responses can leak implementation detail; in particular,
+# ``invalid_client`` distinguishes "client_secret needed" from
+# "client_secret wrong", an oracle on gemini-cli's confidential-client
+# secret. We collapse the provider's distinction into opaque buckets.
+# Sprint-1 Important #6 from the 2026-06-16 code review.
+_TOKEN_EXCHANGE_OPAQUE_CODES = {
+	"invalid_grant": (
+		"code_invalid",
+		"The authorization code was rejected. Start a fresh sign-in.",
+	),
+	"invalid_client": (
+		"auth_failed",
+		"The provider rejected this sign-in. If this keeps happening, "
+		"contact support.",
+	),
+	"invalid_request": (
+		"auth_failed",
+		"The provider rejected this sign-in. If this keeps happening, "
+		"contact support.",
+	),
+}
+
 
 _CACHE_KEY = "jarvis.oauth.codex_signin"
 _NONCE_TTL_SECS = 600
@@ -83,7 +118,14 @@ def _generate_pkce() -> tuple[str, str]:
 @frappe.whitelist()
 def begin_paste_signin(provider: str, model: str) -> dict:
 	"""Mint a nonce + PKCE pair, return the authorize URL for the customer
-	to open in their browser."""
+	to open in their browser.
+
+	Gated on System Manager (Sprint-1 Important from the 2026-06-16 code
+	review). The cached nonce is bound to ``frappe.session.user`` so
+	another logged-in System Manager can't complete an in-flight sign-in
+	that someone else started.
+	"""
+	frappe.only_for("System Manager")
 	try:
 		get_provider(provider)
 	except UnknownProviderError as e:
@@ -107,6 +149,7 @@ def begin_paste_signin(provider: str, model: str) -> dict:
 		"expires_at_ts": int(time.time()) + _NONCE_TTL_SECS,
 		"verifier": verifier,
 		"state": state,
+		"originator_user": frappe.session.user,
 	})
 
 	return _ok({
@@ -150,7 +193,14 @@ def _parse_redirected_url(raw: str) -> dict:
 @frappe.whitelist()
 def complete_paste_signin(nonce: str, redirected_url: str) -> dict:
 	"""Wizard calls this after the customer signs in and pastes the URL
-	they copied from the browser's address bar."""
+	they copied from the browser's address bar.
+
+	Gated on System Manager + per-user nonce binding: another System
+	Manager can't accidentally (or maliciously) complete a sign-in that
+	someone else started. Sprint-1 Important from the 2026-06-16 code
+	review.
+	"""
+	frappe.only_for("System Manager")
 	entry = frappe.cache.hget(_CACHE_KEY, nonce)
 	if not entry:
 		return _err("unknown_nonce", "nonce not recognized")
@@ -158,6 +208,13 @@ def complete_paste_signin(nonce: str, redirected_url: str) -> dict:
 		return _err("expired", "nonce has expired; generate a new sign-in URL")
 	if entry["status"] != "pending":
 		return _err("not_pending", f"nonce status is {entry['status']!r}")
+	# Per-user binding: the user who began the sign-in must be the same
+	# one completing it. Without this, a second System Manager on the same
+	# site could complete a peer's pending OAuth with a redirect they
+	# control. The error message is the same as "unknown_nonce" on purpose
+	# (don't leak which nonces are live).
+	if entry.get("originator_user") != frappe.session.user:
+		return _err("unknown_nonce", "nonce not recognized")
 
 	parsed = _parse_redirected_url(redirected_url)
 	if not parsed["code"]:
@@ -183,7 +240,11 @@ def complete_paste_signin(nonce: str, redirected_url: str) -> dict:
 		)
 	except TokenExchangeError as e:
 		# Nonce NOT cleared; customer can paste again if they fix the URL.
-		return _err("token_exchange_failed", str(e))
+		# `e.code` is one of the pre-mapped opaque codes from
+		# _TOKEN_EXCHANGE_OPAQUE_CODES; the message is the user-safe text
+		# from that same map, NOT the raw provider response. The provider
+		# detail was logged via frappe.log_error inside _exchange_code.
+		return _err(e.code, str(e))
 
 	access_token = tokens.get("access_token")
 	if not access_token:
@@ -236,7 +297,14 @@ def complete_paste_signin(nonce: str, redirected_url: str) -> dict:
 
 
 def _exchange_code(*, provider: str, code: str, code_verifier: str) -> dict:
-	"""POST to provider's token endpoint, return parsed JSON."""
+	"""POST to provider's token endpoint, return parsed JSON.
+
+	On error, raises TokenExchangeError with an opaque code + user-safe
+	message. The full provider response detail is logged server-side via
+	frappe.log_error so operators can triage without leaking the detail
+	(e.g. invalid_client vs invalid_grant) to the wire. Sprint-1
+	Important #6 from the 2026-06-16 code review.
+	"""
 	p = get_provider(provider)
 	try:
 		data = {
@@ -256,15 +324,40 @@ def _exchange_code(*, provider: str, code: str, code_verifier: str) -> dict:
 			timeout=_HTTP_TIMEOUT,
 		)
 	except requests.RequestException as e:
-		raise TokenExchangeError(f"network error: {e}") from e
+		# Log the network detail; surface a fixed message + opaque code.
+		frappe.log_error(
+			title="oauth token exchange: network error",
+			message=f"provider={provider!r} error={e!r}",
+		)
+		raise TokenExchangeError(
+			"Couldn't reach the sign-in provider. Try again in a minute.",
+			code="network_error",
+		) from e
 
 	if not resp.ok:
+		# Parse the provider's response defensively. The full body is logged
+		# server-side; only an opaque code + canned message goes back to
+		# the wire so the response can't be used as an oracle (e.g.
+		# distinguishing invalid_client from invalid_grant).
+		raw_error = ""
 		try:
 			body = resp.json()
-			detail = body.get("error_description") or body.get("error") or resp.text
+			raw_error = body.get("error") or ""
+			detail = body.get("error_description") or raw_error or resp.text
 		except ValueError:
 			detail = resp.text
-		raise TokenExchangeError(f"HTTP {resp.status_code}: {detail}")
+		frappe.log_error(
+			title="oauth token exchange: provider rejected",
+			message=(
+				f"provider={provider!r} status={resp.status_code} "
+				f"raw_error={raw_error!r} detail={detail!r}"
+			),
+		)
+		opaque_code, opaque_msg = _TOKEN_EXCHANGE_OPAQUE_CODES.get(
+			raw_error, ("token_exchange_failed",
+						"Sign-in failed at the provider. Start a fresh sign-in."),
+		)
+		raise TokenExchangeError(opaque_msg, code=opaque_code)
 
 	return resp.json()
 
@@ -303,7 +396,13 @@ def _fetch_account_email(provider: str, access_token: str, id_token: str) -> str
 
 @frappe.whitelist()
 def disconnect() -> dict:
-	"""Clear the container's OAuth profile, flip bench back to api_key."""
+	"""Clear the container's OAuth profile, flip bench back to api_key.
+
+	Gated on System Manager (Sprint-1 Important from the 2026-06-16
+	code review): writes Jarvis Settings, ends an active subscription
+	connection.
+	"""
+	frappe.only_for("System Manager")
 	try:
 		admin_client.post_subscription_disconnect()
 	except (admin_client.AdminUnreachableError,
