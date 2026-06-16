@@ -15,8 +15,32 @@ PLUGIN_TOKEN = "test-plugin-token-xyz"
 
 
 class _FakeRequest:
-	def __init__(self, headers: dict):
+	def __init__(self, headers: dict, body: bytes = b""):
 		self.headers = headers
+		self._body = body
+
+	def get_data(self, cache: bool = True) -> bytes:
+		return self._body
+
+
+import contextlib  # noqa: E402
+
+
+@contextlib.contextmanager
+def _patch_request(req, *, request_ip: str = "127.0.0.1"):
+	"""Patch frappe.request AND set frappe.local.request_ip so the
+	C2 IP-allowlist check (default loopback+RFC1918) passes."""
+	prior_ip = getattr(frappe.local, "request_ip", None)
+	frappe.local.request_ip = request_ip
+	with patch.object(frappe, "request", req, create=True):
+		try:
+			yield
+		finally:
+			if prior_ip is None:
+				try: del frappe.local.request_ip
+				except AttributeError: pass
+			else:
+				frappe.local.request_ip = prior_ip
 
 
 def _cleanup_for_session(session_key: str):
@@ -73,7 +97,7 @@ class TestCallToolWithSessionHeader(FrappeTestCase):
 			"X-Jarvis-Token": PLUGIN_TOKEN,
 			"X-Jarvis-Session": self.session_key,
 		})
-		with patch.object(frappe, "request", req, create=True):
+		with _patch_request(req):
 			with patch("jarvis.api.publish_realtime_tool_result"):
 				result = call_tool("get_schema", args={"doctype": "Customer"})
 
@@ -92,7 +116,7 @@ class TestCallToolWithSessionHeader(FrappeTestCase):
 			"X-Jarvis-Token": PLUGIN_TOKEN,
 			"X-Jarvis-Session": self.session_key,
 		})
-		with patch.object(frappe, "request", req, create=True):
+		with _patch_request(req):
 			with patch("jarvis.api.publish_realtime_tool_result") as pub:
 				call_tool("get_schema", args={"doctype": "Customer"})
 		pub.assert_called_once()
@@ -104,7 +128,7 @@ class TestCallToolWithSessionHeader(FrappeTestCase):
 		"""Path A v2 requires X-Jarvis-Session - there is no user header any
 		more, so without a session we cannot resolve identity."""
 		req = _FakeRequest({"X-Jarvis-Token": PLUGIN_TOKEN})
-		with patch.object(frappe, "request", req, create=True):
+		with _patch_request(req):
 			result = call_tool("get_schema", args={"doctype": "Customer"})
 		self.assertFalse(result["ok"])
 		self.assertEqual(result["error"]["code"], "InvalidArgumentError")
@@ -117,7 +141,7 @@ class TestCallToolWithSessionHeader(FrappeTestCase):
 			"X-Jarvis-Token": PLUGIN_TOKEN,
 			"X-Jarvis-Session": "agent:nonexistent",
 		})
-		with patch.object(frappe, "request", req, create=True):
+		with _patch_request(req):
 			result = call_tool("get_schema", args={"doctype": "Customer"})
 		self.assertFalse(result["ok"])
 		self.assertEqual(result["error"]["code"], "InvalidArgumentError")
