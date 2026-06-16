@@ -47,23 +47,39 @@ _CLIENT_MODE = "backend"
 _ROLE = "operator"
 _PLATFORM = "linux"  # informational; only affects the v3 signature payload
 
-# Substrings in openclaw's connect-rejection error message that indicate the
-# customer's stored pairing is stale for the current container (typically
-# because admin re-provisioned the tenant and the new container has no record
-# of this deviceId). In those cases we wipe + re-pair once. Other rejection
-# reasons (signature-invalid, scope-mismatch) are programming bugs and must
-# NOT trigger a retry - that'd hide the bug behind silent re-pair attempts.
-_STALE_PAIRING_MARKERS = (
+# openclaw rejection codes that indicate the customer's stored pairing
+# is stale for the CURRENT container (typically because admin re-provisioned
+# the tenant and the new container has no record of this deviceId). On
+# any of these we wipe + re-pair once. OTHER rejection codes
+# (signature-invalid, scope-mismatch, etc.) are programming bugs / config
+# errors and must NOT trigger a retry - that'd hide the bug behind silent
+# re-pair attempts that destroy valid credentials.
+#
+# Sprint-3 (2026-06-16 review): we used to substring-match on
+# ``str(err).lower()`` which would false-positive any future error
+# embedding one of these tokens in its message text (think log lines,
+# diagnostic dumps, partial-match codes like ``device-not-paired-yet``).
+# The classifier now reads the structured ``.code`` attribute populated
+# at the raise site from openclaw's response envelope.
+_STALE_PAIRING_CODES = frozenset({
 	"device-not-paired",
 	"token-mismatch",
 	"token-revoked",
 	"device-id-mismatch",
-)
+})
 
 
 def _is_stale_pairing(err: Exception) -> bool:
-	msg = str(err).lower()
-	return any(marker in msg for marker in _STALE_PAIRING_MARKERS)
+	"""Return True iff ``err`` is an OpenclawUnreachableError whose
+	openclaw error.code is in the stale-pairing set.
+
+	Strictly typed: an error WITHOUT a ``.code`` attribute (network-level
+	failure, programmer bug) never triggers the repair path. The previous
+	substring check would have caught these falsely if their message
+	happened to contain one of the marker strings.
+	"""
+	code = getattr(err, "code", None)
+	return code in _STALE_PAIRING_CODES
 
 
 def _persisted_device_id() -> str:
@@ -247,6 +263,7 @@ class OpenclawSession:
 					err = frame.get("error") or {}
 					raise OpenclawUnreachableError(
 						f"agent rejected: {err.get('code', '?')}: {err.get('message', '')}",
+						code=err.get("code"),
 					)
 				active_run_id = (frame.get("payload") or {}).get("runId")
 				got_ack = True
@@ -340,6 +357,7 @@ class OpenclawSession:
 					err = frame.get("error") or {}
 					raise OpenclawUnreachableError(
 						f"connect rejected: {err.get('code', '?')}: {err.get('message', '')}",
+						code=err.get("code"),
 					)
 				return
 		raise OpenclawUnreachableError("no connect response before timeout")
@@ -369,6 +387,7 @@ class OpenclawSession:
 					err = frame.get("error") or {}
 					raise OpenclawUnreachableError(
 						f"{method} rejected: {err.get('code', '?')}: {err.get('message', '')}",
+						code=err.get("code"),
 					)
 				return frame
 		raise OpenclawUnreachableError(f"{method} timed out")

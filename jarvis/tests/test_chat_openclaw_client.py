@@ -335,10 +335,15 @@ class TestSelfHealOnStalePairing(FrappeTestCase):
 		first_sent: list = []
 		second_sent: list = []
 
+		# Sprint-3 (2026-06-16 review): openclaw's rejection payload puts
+		# the marker in error.code, not error.message. The classifier on
+		# the client side now reads the structured code rather than
+		# substring-matching the message text, so the scripted fixture
+		# must place the marker accordingly.
 		def _first_nack():
 			req_id = first.sent[-1]["id"]
 			return _frame({"type": "res", "id": req_id, "ok": False,
-						   "error": {"code": "UNAUTHORIZED", "message": first_reject_marker}})
+						   "error": {"code": first_reject_marker, "message": "stale"}})
 
 		def _second_ok():
 			req_id = second.sent[-1]["id"]
@@ -347,7 +352,7 @@ class TestSelfHealOnStalePairing(FrappeTestCase):
 		def _second_nack():
 			req_id = second.sent[-1]["id"]
 			return _frame({"type": "res", "id": req_id, "ok": False,
-						   "error": {"code": "UNAUTHORIZED", "message": first_reject_marker}})
+						   "error": {"code": first_reject_marker, "message": "stale"}})
 
 		first = _ScriptedWS([_challenge(), _first_nack])
 		second_response = _second_ok if second_ok else _second_nack
@@ -403,14 +408,20 @@ class TestSelfHealOnStalePairing(FrappeTestCase):
 
 	def test_signature_invalid_does_not_trigger_repair(self):
 		"""A signing bug must surface, not get masked by a silent re-pair.
-		signature-invalid means our client code is broken; clearing creds
-		won't help and the operator needs to see the original error."""
+		device-signature-invalid means our client code is broken; clearing
+		creds won't help and the operator needs to see the original error.
+
+		Sprint-3 (2026-06-16): the classifier now reads the structured
+		``code`` attribute, not the message. Putting the marker in
+		``error.code`` is the production wire shape; this test pins that
+		signature-invalid is NOT in the stale-pairing code set."""
 		creds = _make_creds()
 
 		def _nack():
 			req_id = first_ws.sent[-1]["id"]
 			return _frame({"type": "res", "id": req_id, "ok": False,
-						   "error": {"code": "UNAUTHORIZED", "message": "device-signature-invalid"}})
+						   "error": {"code": "device-signature-invalid",
+									 "message": "bad sig"}})
 
 		first_ws = _ScriptedWS([_challenge(), _nack])
 		clear_called: list = []
@@ -422,7 +433,37 @@ class TestSelfHealOnStalePairing(FrappeTestCase):
 			with self.assertRaises(OpenclawUnreachableError) as cm:
 				OpenclawSession.connect("ws://t", "x")
 		self.assertFalse(clear_called, "should not clear creds for signing bugs")
-		self.assertIn("signature-invalid", str(cm.exception))
+		self.assertEqual(cm.exception.code, "device-signature-invalid")
+
+	def test_message_substring_does_not_trigger_repair(self):
+		"""Sprint-3: pre-fix bug class - the classifier USED to substring-
+		match str(err).lower(), so any future error whose message text
+		happened to embed one of the stale-pairing markers (a log dump,
+		a partial-match code like 'device-not-paired-yet') would
+		false-positive and wipe valid credentials. The structured-code
+		classifier prevents that."""
+		creds = _make_creds()
+
+		def _nack():
+			req_id = first_ws.sent[-1]["id"]
+			return _frame({"type": "res", "id": req_id, "ok": False,
+						   "error": {"code": "diagnostic-dump",
+									 "message": "context: device-not-paired log line"}})
+
+		first_ws = _ScriptedWS([_challenge(), _nack])
+		clear_called: list = []
+		with patch("jarvis.chat.openclaw_client.websocket.create_connection",
+				   return_value=first_ws), \
+			 patch("jarvis.chat.openclaw_client.ensure_paired", return_value=creds), \
+			 patch("jarvis.chat.openclaw_client.clear_credentials",
+				   side_effect=lambda: clear_called.append(True)):
+			with self.assertRaises(OpenclawUnreachableError):
+				OpenclawSession.connect("ws://t", "x")
+		self.assertFalse(
+			clear_called,
+			"a substring match in the message must NOT trigger the repair "
+			"path - we read the structured error.code",
+		)
 
 
 class TestRepairConvoyCollapse(FrappeTestCase):
@@ -442,7 +483,8 @@ class TestRepairConvoyCollapse(FrappeTestCase):
 		second = _ScriptedWS([_challenge(), None])
 		first._frames[1] = lambda: _frame({
 			"type": "res", "id": first.sent[-1]["id"], "ok": False,
-			"error": {"code": "UNAUTHORIZED", "message": "device-not-paired"},
+			# Sprint-3: marker in code, not message - matches openclaw's wire shape.
+			"error": {"code": "device-not-paired", "message": "stale"},
 		})
 		second._frames[1] = lambda: _frame({
 			"type": "res", "id": second.sent[-1]["id"], "ok": True, "payload": {},

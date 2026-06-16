@@ -115,8 +115,20 @@ class JarvisSettings(Document):
         - "restart" calls post_update_llm_creds (re-render openclaw.json
           and restart container) - used for mode switches and
           provider/model/base_url changes.
+
+        Sprint-3 (2026-06-16 review): the previous shape silently swallowed
+        AdminRateLimitedError (logged only; last_sync_status stayed at
+        "pending: ..." forever). The UI poller spins on that, never showing
+        the user a state they can act on. Now the rate-limit branch ALSO
+        writes a terminal failure status with the admin-provided
+        retry_after_seconds hint so the UI can render a retry timer.
+
+        Additionally a try/finally backstop guarantees last_sync_status
+        never stays at "pending: ..." on an unexpected exception path -
+        the UI poller flips off pending no matter what blew up.
         """
         from jarvis import admin_client
+        terminal_written = False
         try:
             if action == "reload":
                 secret = self._resolve_llm_secret_for_push()
@@ -138,22 +150,55 @@ class JarvisSettings(Document):
                 "last_sync_at": frappe.utils.now(),
                 "last_sync_status": f"ok ({resolved_action} via admin)",
             })
+            terminal_written = True
         except admin_client.AdminAuthError as e:
-            self.db_set("last_sync_status", f"failed: auth: {e}")
+            self.db_set({
+                "last_sync_at": frappe.utils.now(),
+                "last_sync_status": f"failed: auth: {e}",
+            })
+            terminal_written = True
             frappe.log_error(
                 title="Jarvis: admin auth failed",
                 message=frappe.get_traceback(),
             )
         except admin_client.AdminUnreachableError as e:
-            self.db_set("last_sync_status", f"failed: admin unreachable: {e}")
+            self.db_set({
+                "last_sync_at": frappe.utils.now(),
+                "last_sync_status": f"failed: admin unreachable: {e}",
+            })
+            terminal_written = True
             frappe.log_error(
                 title="Jarvis: admin unreachable",
                 message=frappe.get_traceback(),
             )
         except admin_client.AdminRateLimitedError as e:
+            retry = e.retry_after_seconds or 0
+            retry_str = f"retry_after={retry}s" if retry > 0 else "retry shortly"
+            self.db_set({
+                "last_sync_at": frappe.utils.now(),
+                "last_sync_status": f"failed: rate-limited; {retry_str}",
+            })
+            terminal_written = True
             frappe.logger().info(
-                f"admin_client: rate-limited; retry_after={e.retry_after_seconds}s"
+                f"admin_client: rate-limited; retry_after={retry}s"
             )
+        finally:
+            # Final backstop: if a non-Admin* exception path blew through
+            # (network exception class admin_client doesn't translate,
+            # programmer error, etc.) the status would otherwise stay
+            # 'pending: ...' indefinitely. Flip it to a terminal failure
+            # so the UI poller stops spinning.
+            if not terminal_written:
+                try:
+                    self.db_set({
+                        "last_sync_at": frappe.utils.now(),
+                        "last_sync_status": "failed: unexpected error; see Error Log",
+                    })
+                except Exception:
+                    # If even the status write fails, swallow - we're
+                    # already in an error path and re-raising would mask
+                    # the real exception.
+                    pass
 
     def _classify_llm_change(self) -> str | None:
         """Return one of: None | 'reload' | 'restart'.

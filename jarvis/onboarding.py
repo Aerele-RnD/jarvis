@@ -7,18 +7,47 @@ import json
 import frappe
 
 from jarvis import admin_client
-from jarvis.exceptions import AdminValidationError
+from jarvis.exceptions import (
+	AdminAuthError, AdminRateLimitedError, AdminUnreachableError,
+	AdminValidationError,
+)
 
 
 def _surface(fn, *args, **kwargs):
-	"""Run an admin_client call; re-raise admin validation errors as
-	frappe.ValidationError so the onboarding page gets a clean operator-facing
-	message (and Frappe's standard red toast) instead of a long traceback dump
-	from AdminUnreachableError."""
+	"""Run an admin_client call; re-raise every admin-side error as a clean
+	frappe.ValidationError so the onboarding page renders a red toast with
+	an operator-actionable message instead of a long traceback dump.
+
+	Sprint-3 (2026-06-16 review): the docstring promised "no traceback for
+	any admin failure" but only AdminValidationError was actually caught;
+	AdminUnreachableError / AdminAuthError / AdminRateLimitedError fell
+	through and surfaced as raw 500s. Now ALL four are caught:
+
+	- AdminValidationError  -> "<message>"
+	- AdminAuthError        -> "admin authentication failed; check your "
+	                            "site's bench-admin credentials"
+	- AdminUnreachableError -> "admin is unreachable; check network / "
+	                            "service status and try again"
+	- AdminRateLimitedError -> "rate-limited by admin; retry in Ns" where
+	                            N is the AdminRateLimitedError.retry_after_seconds
+	                            (admin's response hint).
+	"""
 	try:
 		return fn(*args, **kwargs)
 	except AdminValidationError as e:
 		frappe.throw(str(e))
+	except AdminAuthError as e:
+		frappe.throw(
+			f"admin authentication failed; check the bench's admin credentials. ({e})"
+		)
+	except AdminUnreachableError as e:
+		frappe.throw(
+			f"admin is unreachable right now; try again in a moment. ({e})"
+		)
+	except AdminRateLimitedError as e:
+		retry = e.retry_after_seconds or 0
+		retry_str = f"retry in {retry}s" if retry > 0 else "retry shortly"
+		frappe.throw(f"admin rate-limited the request; {retry_str}.")
 
 
 def write_connection(data: dict) -> None:
