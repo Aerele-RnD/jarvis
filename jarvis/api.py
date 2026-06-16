@@ -247,5 +247,96 @@ def _request_body_bytes() -> bytes:
 	return data if isinstance(data, (bytes, bytearray)) else (data or "").encode("utf-8")
 
 
+@frappe.whitelist(methods=["POST"])
+def rotate_agent_token() -> dict:
+	"""Rotate the plugin agent_token (C2 PR-3C orchestrator).
 
+	System Manager only. Generates a fresh 32-byte random token,
+	pushes it via admin -> fleet-agent -> container env, and only
+	persists locally after admin confirms the container is healthy
+	against the new value. This keeps the bench's notion of the
+	token in lockstep with what the container holds: a mid-rotation
+	failure leaves both ends on the OLD token.
 
+	Operators run this after a suspected leak or as routine hygiene.
+	The container is briefly unavailable (~10-30s) during the
+	``compose up -d`` recreate that the fleet-agent runs.
+
+	Returns:
+	  {"ok": true, "data": {"rotated_at": "<isoformat>"}} on success
+	  {"ok": false, "error": {"code": ..., "message": ...}} on any failure;
+	      old token is preserved on the bench; admin's response carries
+	      the precise failure code (NoRunningTenant 409, RateLimited 429,
+	      etc.)
+
+	The old token stops working on the container as soon as the
+	recreate completes; legitimate in-flight plugin requests presenting
+	the old token will start hitting 401 from the bench (the new
+	token doesn't match) AND from the container's plugin (the new
+	JARVIS_GATEWAY_TOKEN doesn't match what the plugin remembers).
+	Both sides re-sync naturally on the next call.
+	"""
+	import secrets
+
+	# Block non-System-Manager callers explicitly. allow_guest defaults
+	# to False; this is defense-in-depth against a future @whitelist
+	# expansion shipping with relaxed defaults.
+	frappe.only_for("System Manager")
+
+	new_token = secrets.token_hex(32)  # 64 hex chars
+
+	# Push to admin FIRST. We only persist locally after admin confirms
+	# the container is healthy against the new value. If admin fails,
+	# the bench's stored token is unchanged - the container also still
+	# holds the old token (fleet-agent rolled back per PR-3A), so both
+	# ends stay in lockstep.
+	from jarvis import admin_client
+	try:
+		admin_client.post_rotate_agent_token(new_token=new_token)
+	except admin_client.AdminAuthError as e:
+		frappe.local.response.http_status_code = 502
+		return {"ok": False, "error": {
+			"code": "AdminAuthError",
+			"message": f"admin rejected our credentials: {e}",
+		}}
+	except admin_client.AdminUnreachableError as e:
+		frappe.local.response.http_status_code = 502
+		return {"ok": False, "error": {
+			"code": "AdminUnreachableError",
+			"message": f"admin not reachable: {e}",
+		}}
+	except admin_client.AdminRateLimitedError as e:
+		frappe.local.response.http_status_code = 429
+		return {"ok": False, "error": {
+			"code": "RateLimitExceeded",
+			"message": "admin rate-limit hit; retry later",
+			"retry_after_seconds": e.retry_after_seconds,
+		}}
+	except admin_client.AdminValidationError as e:
+		# Admin raised a Frappe ValidationError - typically a 4xx input
+		# problem the operator can fix (e.g. malformed token; though our
+		# token comes from secrets.token_hex so that's unlikely here).
+		frappe.local.response.http_status_code = 400
+		return {"ok": False, "error": {
+			"code": "AdminValidationError",
+			"message": str(e),
+		}}
+	except Exception as e:
+		frappe.local.response.http_status_code = 502
+		frappe.log_error(
+			title="rotate_agent_token: unexpected admin failure",
+			message=frappe.get_traceback(),
+		)
+		return {"ok": False, "error": {
+			"code": type(e).__name__,
+			"message": f"unexpected error during rotation: {e}",
+		}}
+
+	# Admin succeeded -> the container is now running against new_token.
+	# Persist it locally so the bench's future plugin-auth validations
+	# match what the container holds.
+	settings = frappe.get_single("Jarvis Settings")
+	settings.db_set("agent_token", new_token)
+	frappe.db.commit()
+
+	return {"ok": True, "data": {"rotated_at": frappe.utils.now()}}
