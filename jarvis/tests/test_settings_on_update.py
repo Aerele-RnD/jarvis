@@ -490,3 +490,95 @@ class TestOnUpdateAsyncPending(_SettingsSingletonTestCase):
             (seen[0] or "").startswith("pending: provisioning container"),
             f"expected 'pending: provisioning container', got {seen[0]!r}",
         )
+
+
+class TestEnqueueDedupAndJobId(_SettingsSingletonTestCase):
+    """Sprint-2 (2026-06-16): two close-together saves with the same
+    action collapse into one enqueued job via job_id + deduplicate=True.
+    Without this, two `reload` saves landed as two redundant rotate-
+    secret round trips (or worse: stale-snapshot interleaved actions)."""
+
+    def setUp(self):
+        super().setUp()
+        _reset_settings()
+        # The async path runs inline under in_test - we need to peek at
+        # the kwargs before the inline call collapses them, so stop the
+        # inline shortcut just for this class.
+        frappe.flags.in_test = False
+        self.addCleanup(lambda: setattr(frappe.flags, "in_test", True))
+
+    def test_enqueue_carries_action_keyed_job_id_and_dedupe_flag(self):
+        settings = frappe.get_single("Jarvis Settings")
+        settings.llm_api_key = "sk-rotation-1"
+        with patch("frappe.enqueue") as enqueue:
+            settings.save()
+        enqueue.assert_called_once()
+        _, kwargs = enqueue.call_args
+        self.assertEqual(
+            kwargs.get("job_id"), "jarvis_settings_sync:reload",
+            "job_id must encode the action so identical-action saves dedup "
+            "and different-action saves don't",
+        )
+        self.assertTrue(
+            kwargs.get("deduplicate"),
+            "deduplicate=True must be set so the second enqueue is a no-op",
+        )
+
+    def test_restart_action_uses_distinct_job_id(self):
+        """A restart save must NOT collapse into an in-flight reload save -
+        they're different operations on the container side."""
+        settings = frappe.get_single("Jarvis Settings")
+        settings.llm_provider = "Anthropic"
+        settings.llm_model = "claude-sonnet-4-6"
+        with patch("frappe.enqueue") as enqueue:
+            settings.save()
+        _, kwargs = enqueue.call_args
+        self.assertEqual(kwargs.get("job_id"), "jarvis_settings_sync:restart")
+
+
+class TestEnqueuedSyncRedisLock(_SettingsSingletonTestCase):
+    """_enqueued_sync_via_admin must run under a Redis lock so two queued
+    jobs with different actions don't fire admin/fleet calls in parallel."""
+
+    def setUp(self):
+        super().setUp()
+        _reset_settings()
+
+    def test_lock_acquired_and_released_around_sync(self):
+        from jarvis.jarvis.doctype.jarvis_settings.jarvis_settings import (
+            _enqueued_sync_via_admin,
+        )
+        sync_called = []
+
+        def _fake_sync(action):
+            sync_called.append(action)
+
+        with patch("jarvis.admin_client.post_rotate_llm_secret",
+                   side_effect=lambda **kw: sync_called.append("reload") or {"action": "reload"}):
+            _enqueued_sync_via_admin("reload")
+        # The admin call ran exactly once - confirms the lock acquired
+        # the happy path and yielded into the sync.
+        self.assertEqual(len(sync_called), 1)
+
+    def test_lock_contention_writes_skipped_status_and_no_admin_call(self):
+        """If a prior worker is still holding the lock past blocking timeout,
+        the late arrival logs + writes a 'failed: skipped' status. It must
+        NOT call admin (the in-flight one is in charge)."""
+        from jarvis.jarvis.doctype.jarvis_settings.jarvis_settings import (
+            _enqueued_sync_via_admin,
+        )
+        # Patch the lock helper to simulate contention - context manager
+        # yields False without ever acquiring.
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _held(*_a, **_kw):
+            yield False
+
+        with patch("jarvis._redis_lock.redis_lock", side_effect=_held), \
+             patch("jarvis.admin_client.post_rotate_llm_secret") as admin_mock:
+            _enqueued_sync_via_admin("reload")
+        admin_mock.assert_not_called()
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertIn("failed", settings.last_sync_status or "")
+        self.assertIn("skipped", settings.last_sync_status or "")

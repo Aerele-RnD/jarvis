@@ -66,6 +66,21 @@ def _is_stale_pairing(err: Exception) -> bool:
 	return any(marker in msg for marker in _STALE_PAIRING_MARKERS)
 
 
+def _persisted_device_id() -> str:
+	"""Cheap unauthenticated read of Jarvis Settings.chat_device_id.
+
+	Used by the repair convoy-collapse path to detect "someone else
+	already re-paired" without re-running the whole ensure_paired flow.
+	Returns "" if Settings is unreadable for any reason (the caller
+	treats empty as "no winner yet, proceed").
+	"""
+	import frappe
+	try:
+		return (frappe.db.get_single_value("Jarvis Settings", "chat_device_id") or "").strip()
+	except Exception:
+		return ""
+
+
 class OpenclawSession:
 	"""Direct WebSocket session to one tenant's openclaw gateway.
 
@@ -121,7 +136,7 @@ class OpenclawSession:
 			try: ws.close()
 			except Exception: pass
 			if allow_repair and _is_stale_pairing(e):
-				clear_credentials()
+				cls._repair_and_reconnect(gateway_url, stale_device_id=creds.device_id)
 				return cls._attempt_connect(gateway_url, allow_repair=False)
 			raise
 		except Exception:
@@ -129,6 +144,50 @@ class OpenclawSession:
 			except Exception: pass
 			raise
 		return cls(ws, creds)
+
+	@classmethod
+	def _repair_and_reconnect(cls, gateway_url: str, *, stale_device_id: str) -> None:
+		"""Serialize the clear+re-pair window after a stale-pairing rejection.
+
+		Sprint-2 (2026-06-16 review): with N concurrent chat workers
+		racing after a tenant re-provision, every one observes the same
+		"stale pairing" error, every one called ``clear_credentials() +
+		ensure_paired()``, every one generated a different Ed25519
+		keypair, and only the last writer's keypair survived in Jarvis
+		Settings - the other N-1 workers held in-memory creds the admin
+		side didn't know about, then EACH of them re-paired again,
+		flapping admin/openclaw state. The Redis lock collapses the
+		convoy: one worker re-pairs, the rest wait, then read the fresh
+		keypair from Settings.
+
+		``stale_device_id`` is the device_id we just observed as stale.
+		If by the time we acquire the lock the persisted device_id no
+		longer matches, the winning worker already re-paired - we skip
+		the wipe entirely and the caller's next ``ensure_paired`` reads
+		the new creds.
+		"""
+		from jarvis._redis_lock import redis_lock
+
+		with redis_lock(
+			"chat_device_pair_repair", timeout_s=120, blocking_timeout_s=60.0,
+		) as acquired:
+			# Even if we lost the lock race, we still want to retry the
+			# connect once with fresh creds - the holder may have already
+			# repaired. Let the caller re-read on its next attempt.
+			if not acquired:
+				return
+			current = _persisted_device_id()
+			if current and current != stale_device_id:
+				# Another worker already re-paired while we waited. Don't
+				# wipe their work; let the caller re-read.
+				return
+			clear_credentials()
+			# Don't prime ensure_paired() here: the caller's next
+			# _attempt_connect(allow_repair=False) calls ensure_paired
+			# on its own which is what generates+persists the new
+			# keypair under our lock. Late convoy followers also call
+			# ensure_paired on their own next attempt and see the
+			# newly-persisted creds without re-pairing.
 
 	def close(self) -> None:
 		try: self._ws.close()
