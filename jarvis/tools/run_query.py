@@ -35,11 +35,41 @@ DEFAULT_LIMIT = 100
 # Identifiers we refuse outright in any token stream - covers single-line
 # comments (--), block comments (/* */), and forbidden statement types that
 # might slip past sqlparse's get_type() in edge cases (subqueries, CTEs).
+#
+# Sprint-1 (2026-06-16 review) extra entries: keywords that compose into
+# real attacks even from inside a SELECT:
+#   - INTO         dangerous in "SELECT ... INTO OUTFILE 'p'" (filesystem write)
+#   - OUTFILE      same
+#   - DUMPFILE     same
+#   - LOAD_FILE    function form of filesystem read
+#   - SLEEP        DoS via tied-up connections, also a timing oracle
+#   - BENCHMARK    same family
+#   - GET_LOCK     hold a named lock indefinitely -> DoS
+#   - RELEASE_LOCK release someone else's lock -> coordination DoS
+#   - IS_FREE_LOCK / IS_USED_LOCK probe for lock holders
 _FORBIDDEN_TOKENS = {
 	"INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE", "TRUNCATE",
 	"RENAME", "GRANT", "REVOKE", "REPLACE", "CALL", "EXEC", "EXECUTE",
 	"LOAD", "HANDLER", "LOCK", "UNLOCK", "USE", "SET",
+	"INTO", "OUTFILE", "DUMPFILE",
 }
+
+# Function-shaped attacks. sqlparse classifies these as Name (function call)
+# rather than Keyword, so the token-stream check above won't catch them.
+# We re-check via a case-insensitive substring search on the cleaned query.
+# Each entry is matched as a word boundary; ``LOAD_FILE`` alone would not
+# false-positive a column named ``upload_filename``.
+_FORBIDDEN_FUNCTIONS = (
+	"LOAD_FILE", "SLEEP", "BENCHMARK",
+	"GET_LOCK", "RELEASE_LOCK", "RELEASE_ALL_LOCKS",
+	"IS_FREE_LOCK", "IS_USED_LOCK",
+)
+
+# Schemas that have no business being touched from an agent-driven SELECT.
+# Catching these specifically defends against the ``FROM tabUser,
+# information_schema.tables t`` comma-FROM trick the table extractor's
+# leading-FROM regex misses.
+_FORBIDDEN_SCHEMAS = ("information_schema", "mysql", "performance_schema", "sys")
 
 # Match `tab<DocType>` after FROM/JOIN. We accept backticks too:
 # `FROM \`tabSales Invoice\` AS si JOIN tabSales Invoice Item AS sii ...`
@@ -64,6 +94,8 @@ def run_query(query: str, limit: int = DEFAULT_LIMIT) -> dict:
 	clean = query.strip().rstrip(";").strip()
 	_reject_comments(clean)
 	_reject_multi_statement(clean)
+	_reject_forbidden_functions(clean)
+	_reject_forbidden_schemas(clean)
 	parsed = _parse_single_select(clean)
 	_reject_forbidden_keywords(parsed)
 	tables = _extract_tables(clean)
@@ -106,6 +138,46 @@ def _reject_multi_statement(query: str) -> None:
 		raise InvalidArgumentError("multiple statements are not allowed")
 
 
+def _reject_forbidden_functions(query: str) -> None:
+	"""Refuse MySQL function calls that compose into DoS / FS-read attacks
+	even from inside a SELECT. sqlparse tokenizes ``LOAD_FILE(`` as a Name
+	(function call) rather than a Keyword, so the token-stream
+	walker won't catch it.
+
+	Word-boundary regex so a benign column like ``upload_filename`` is not
+	false-matched against ``LOAD_FILE``.
+	"""
+	for fn in _FORBIDDEN_FUNCTIONS:
+		if re.search(rf"\b{re.escape(fn)}\s*\(", query, re.IGNORECASE):
+			raise InvalidArgumentError(
+				f"function not allowed: {fn} (DoS or filesystem-access surface)"
+			)
+
+
+def _reject_forbidden_schemas(query: str) -> None:
+	"""Catch the comma-FROM cross-schema trick:
+	``FROM tabUser, information_schema.tables t``. The leading-FROM table
+	extractor below only checks the first table after FROM/JOIN, so a
+	second comma-separated table referencing ``information_schema`` would
+	slip past the ``tab<DocType>`` requirement.
+
+	Schema-qualified identifiers in MySQL use ``schema.table``; an explicit
+	textual reject of the dangerous schemas closes the comma-FROM hole
+	regardless of how the LLM phrases it.
+	"""
+	for schema in _FORBIDDEN_SCHEMAS:
+		# Match ``information_schema.`` (case-insensitive, word-anchored
+		# before the dot). Also catch backtick-quoted form.
+		if re.search(rf"\b{re.escape(schema)}\s*\.", query, re.IGNORECASE):
+			raise InvalidArgumentError(
+				f"queries against schema {schema!r} are not allowed"
+			)
+		if re.search(rf"`{re.escape(schema)}`\s*\.", query, re.IGNORECASE):
+			raise InvalidArgumentError(
+				f"queries against schema {schema!r} are not allowed"
+			)
+
+
 def _parse_single_select(query: str):
 	"""Return the single sqlparse Statement object, ensuring it's a SELECT."""
 	statements = sqlparse.parse(query)
@@ -146,17 +218,68 @@ def _extract_tables(query: str) -> list[str]:
 		raw = (m.group(1) or m.group(2) or "").strip()
 		if raw and raw not in seen:
 			seen.append(raw)
-	# Any non-tab table reference is a smell: refuse rather than silently
-	# allow access to non-DocType tables (`__Auth`, internal tables, etc.).
-	for m in re.finditer(r"\b(?:FROM|JOIN)\s+(`?\w[^\s`,()]*`?)", query, re.IGNORECASE):
-		raw = m.group(1).strip("`").strip()
-		# Frappe table names always start with `tab` or are derived (`tabDocType`).
-		# Anything else means the query is touching a non-public table.
-		if raw and not raw.startswith("tab"):
+	# Walk every FROM/JOIN clause and tokenize comma-separated table lists.
+	# Defends against ``FROM tabUser, tabHidden`` (second table silently
+	# missing from the perm check) and ``FROM tabUser, secret_table t``
+	# (second table not a tab*). The leading-FROM regex above only checked
+	# the FIRST identifier after each FROM/JOIN.
+	for raw in _comma_from_table_list(query):
+		if not raw.startswith("tab"):
 			raise InvalidArgumentError(
 				f"only `tab<DocType>` tables are allowed; got: {raw}"
 			)
+		# Comma-separated tab tables are legal, but the leading-FROM
+		# extractor missed them; fold them in so the permission check
+		# below covers EVERY referenced DocType.
+		if raw not in seen:
+			seen.append(raw)
 	return seen
+
+
+# Words that terminate a FROM/JOIN table list in standard SQL. Lowercased
+# for case-insensitive matching after we lowercase the input.
+_FROM_TERMINATORS = (
+	"where", "group", "order", "limit", "having", "join", "on", "union",
+	"into", "for",
+)
+
+
+def _comma_from_table_list(query: str) -> list[str]:
+	"""Tokenize every FROM/JOIN clause's comma-separated table list.
+
+	For ``FROM tabUser u, information_schema.tables t WHERE ...`` returns
+	``["tabUser", "information_schema.tables"]``. Aliases stripped.
+
+	Returns lower-cased-input-derived raw identifiers; callers compare to
+	``tab`` (lowercase). Backticks stripped.
+	"""
+	out: list[str] = []
+	lowered = query.lower()
+	# Find every FROM/JOIN start.
+	for m in re.finditer(r"\b(?:from|join)\s+", lowered):
+		start = m.end()
+		# End of the clause = next terminator keyword OR end of string.
+		end = len(lowered)
+		for term in _FROM_TERMINATORS:
+			t_m = re.search(rf"\b{term}\b", lowered[start:])
+			if t_m:
+				end = min(end, start + t_m.start())
+		clause_lower = lowered[start:end]
+		clause_orig = query[start:end]
+		# Strip parenthesized subexpressions so a subquery's comma doesn't
+		# split the outer list. Naive paren-skip is fine here because we
+		# only care about table identifiers, not the subquery's contents.
+		clause_orig = re.sub(r"\([^()]*\)", "", clause_orig)
+		for piece in clause_orig.split(","):
+			ident = piece.strip().split()[0] if piece.strip() else ""
+			ident = ident.strip("`").strip()
+			if not ident:
+				continue
+			# Lowercase only the schema-prefix comparison; preserve the
+			# table-name case for the perm check downstream (Frappe
+			# DocTypes are mixed case: "Sales Invoice").
+			out.append(ident)
+	return out
 
 
 def _enforce_limit(query: str, limit: int) -> str:
