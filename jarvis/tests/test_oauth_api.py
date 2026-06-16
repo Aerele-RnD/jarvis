@@ -130,6 +130,9 @@ class TestCompletePasteSigninParsing(_OAuthApiBase):
 			"verifier": "test-verifier",
 			"state": "test-state",
 			"authorize_url": "https://auth.openai.com/oauth/authorize?...",
+			# Per-user binding (Sprint-1 #9 fix): cache entry remembers who
+			# began the sign-in; complete_paste_signin enforces match.
+			"originator_user": frappe.session.user,
 		}
 		entry.update(overrides)
 		frappe.cache.hset(_CACHE_KEY, nonce, entry)
@@ -205,6 +208,8 @@ class TestCompletePasteSigninFlow(_OAuthApiBase):
 			"verifier": "test-verifier",
 			"state": "test-state",
 			"authorize_url": "https://auth.openai.com/oauth/authorize?...",
+			# Per-user binding (Sprint-1 #9 fix).
+			"originator_user": frappe.session.user,
 		})
 		return nonce
 
