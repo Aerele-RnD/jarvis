@@ -124,6 +124,33 @@ def post_rotate_llm_secret(secret: str) -> dict:
 	)
 
 
+def post_rotate_agent_token(new_token: str) -> dict:
+	"""POST a rotated plugin agent_token to admin's /tenant/rotate-agent-token.
+
+	C2 PR-3C orchestrator. Called from rotate_agent_token (this module's
+	whitelisted bench endpoint, gated to System Manager). The bench
+	generates fresh randomness, calls here, and ONLY persists locally
+	when this returns success - so a partial-failure mid-rotation leaves
+	the on-disk token in lockstep with what the container knows.
+
+	Default 180s timeout matches push_oauth_blob: admin chains to
+	fleet-agent's PUT /rotate-agent-token, which does a ``compose up -d``
+	(container recreate) + healthz poll. Admin's bound is healthz+30s
+	(default 90s); 180s gives HTTPS round-trip + response headroom.
+
+	Raises:
+	    AdminAuthError, AdminUnreachableError, AdminValidationError
+	    (shares the rotate-secret 20/h bucket).
+	"""
+	settings = frappe.get_single("Jarvis Settings")
+	return _post(
+		path="/api/method/jarvis_admin.api.tenant.rotate_agent_token",
+		body={"new_token": new_token},
+		admin_url=_admin_url(settings),
+		timeout_s=180,
+	)
+
+
 def post_push_oauth_blob(provider: str, blob: dict) -> dict:
 	"""POST an openclaw OAuthCredential blob to admin → fleet-agent → container.
 

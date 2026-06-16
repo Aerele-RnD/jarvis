@@ -446,3 +446,104 @@ class TestC2HmacSignature(_PluginAuthTestBase):
 		self.assertFalse(result["ok"])
 		self.assertEqual(result["error"]["code"], "AuthenticationError")
 		self.assertIn("nonce", result["error"]["message"].lower())
+
+
+class TestRotateAgentTokenEndpoint(FrappeTestCase):
+	"""C2 PR-3C: bench-side orchestrator. Generates fresh randomness,
+	pushes via admin (which proxies to fleet which recreates the
+	container against the new env), persists locally on success."""
+
+	@classmethod
+	def setUpClass(cls):
+		super().setUpClass()
+		settings = frappe.get_single("Jarvis Settings")
+		cls._original_token = settings.get_password("agent_token", raise_exception=False) or ""
+		settings.db_set("agent_token", "before-rotation-token")
+		frappe.db.commit()
+
+	@classmethod
+	def tearDownClass(cls):
+		settings = frappe.get_single("Jarvis Settings")
+		settings.db_set("agent_token", cls._original_token)
+		frappe.db.commit()
+		super().tearDownClass()
+
+	def setUp(self):
+		# rotate_agent_token requires System Manager; tests run as Admin.
+		frappe.set_user("Administrator")
+		# Reset to a known starting token.
+		settings = frappe.get_single("Jarvis Settings")
+		settings.db_set("agent_token", "before-rotation-token")
+		frappe.db.commit()
+
+	def _call_rotate(self):
+		from jarvis.api import rotate_agent_token
+		return rotate_agent_token()
+
+	def test_happy_path_persists_new_token_after_admin_success(self):
+		from jarvis import admin_client
+		seen = {}
+		def _spy(*, new_token):
+			seen["pushed"] = new_token
+			return {"action": "recreate", "result": "ok"}
+		with patch.object(admin_client, "post_rotate_agent_token", side_effect=_spy):
+			res = self._call_rotate()
+		self.assertTrue(res["ok"], msg=res)
+		self.assertIn("rotated_at", res["data"])
+		# Locally persisted token must equal what we pushed to admin.
+		settings = frappe.get_single("Jarvis Settings")
+		stored = settings.get_password("agent_token")
+		self.assertEqual(stored, seen["pushed"])
+		# Token is 64 hex chars (secrets.token_hex(32)).
+		self.assertRegex(stored, r"^[0-9a-f]{64}$")
+		# And it changed from the seeded value.
+		self.assertNotEqual(stored, "before-rotation-token")
+
+	def test_admin_failure_does_not_persist_new_token(self):
+		"""Mid-rotation admin failure must leave the bench's stored
+		token UNTOUCHED. fleet-agent rolled the container back per
+		PR-3A, so both sides stay in lockstep on the OLD token."""
+		from jarvis import admin_client
+		with patch.object(admin_client, "post_rotate_agent_token",
+		                  side_effect=admin_client.AdminUnreachableError("network down")):
+			res = self._call_rotate()
+		self.assertFalse(res["ok"])
+		self.assertEqual(res["error"]["code"], "AdminUnreachableError")
+		self.assertEqual(frappe.local.response.http_status_code, 502)
+		settings = frappe.get_single("Jarvis Settings")
+		self.assertEqual(
+			settings.get_password("agent_token"),
+			"before-rotation-token",
+			"old token must survive an admin-side rotation failure",
+		)
+
+	def test_rate_limited_returns_429_with_retry_after(self):
+		from jarvis import admin_client
+		with patch.object(admin_client, "post_rotate_agent_token",
+		                  side_effect=admin_client.AdminRateLimitedError(
+		                      "rate limit hit", retry_after_seconds=120,
+		                  )):
+			res = self._call_rotate()
+		self.assertFalse(res["ok"])
+		self.assertEqual(res["error"]["code"], "RateLimitExceeded")
+		self.assertEqual(res["error"]["retry_after_seconds"], 120)
+		self.assertEqual(frappe.local.response.http_status_code, 429)
+
+	def test_non_system_manager_rejected(self):
+		"""rotate_agent_token must reject non-System-Manager callers."""
+		# Make a fresh user with no roles beyond default.
+		user_email = "rat-test-no-role@example.com"
+		if not frappe.db.exists("User", user_email):
+			frappe.get_doc({
+				"doctype": "User", "email": user_email, "first_name": "T",
+				"send_welcome_email": 0,
+			}).insert(ignore_permissions=True)
+			frappe.db.commit()
+		try:
+			frappe.set_user(user_email)
+			with self.assertRaises(frappe.PermissionError):
+				self._call_rotate()
+		finally:
+			frappe.set_user("Administrator")
+			frappe.delete_doc("User", user_email, force=True, ignore_permissions=True)
+			frappe.db.commit()
