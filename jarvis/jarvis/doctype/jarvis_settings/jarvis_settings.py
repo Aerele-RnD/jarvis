@@ -86,6 +86,14 @@ class JarvisSettings(Document):
         run_inline = bool(
             frappe.flags.in_test or frappe.flags.run_admin_sync_inline
         )
+        # Coalesce duplicate close-together saves: enqueue under a fixed
+        # job_id keyed by the action. Two saves that produce the same
+        # action within the worker-poll window resolve to one job. The
+        # worker re-reads the doc fresh so it always sees the latest
+        # committed state, not whatever was in flight when each save
+        # fired. Different actions still both enqueue (one "reload" and
+        # one "restart" are not the same op) but the in-worker Redis
+        # lock makes them run serially, not interleaved.
         frappe.enqueue(
             "jarvis.jarvis.doctype.jarvis_settings.jarvis_settings"
             "._enqueued_sync_via_admin",
@@ -93,6 +101,8 @@ class JarvisSettings(Document):
             timeout=120,
             enqueue_after_commit=not run_inline,
             now=run_inline,
+            job_id=f"jarvis_settings_sync:{action}",
+            deduplicate=True,
             action=action,
         )
 
@@ -202,6 +212,34 @@ def _enqueued_sync_via_admin(action: str) -> None:
     Updates ``last_sync_status`` from ``pending: ...`` to either
     ``ok (... via admin)`` or ``failed: ...`` - the UI polls
     ``onboarding.get_llm_sync_status`` to observe the transition.
+
+    Sprint-2 (2026-06-16 review): serialize concurrent sync workers
+    with a Redis lock. Two close saves on the same Single can still
+    enqueue two jobs with different actions ("reload" then "restart");
+    both must run, but they must NOT run in parallel - one calling
+    post_rotate_llm_secret while the other calls post_update_llm_creds
+    crosses container state in unpredictable ways. The lock yields one
+    serial run; the late arrival waits up to 60s for the early one to
+    finish, then runs against the now-current doc state.
     """
-    settings = frappe.get_single("Jarvis Settings")
-    settings._sync_via_admin(action)
+    from jarvis._redis_lock import redis_lock
+
+    with redis_lock("jarvis_settings_admin_sync", timeout_s=120, blocking_timeout_s=60.0) as acquired:
+        if not acquired:
+            # Couldn't get the lock within 60s: an earlier sync is
+            # apparently stuck. Log + bail; the failed status field
+            # carries the diagnostic. Don't fight the holder.
+            frappe.logger().warning(
+                "jarvis_settings: skipping admin sync (action=%s); "
+                "another worker held the lock past blocking timeout",
+                action,
+            )
+            settings = frappe.get_single("Jarvis Settings")
+            settings.db_set(
+                "last_sync_status",
+                "failed: skipped (concurrent sync did not finish in time)",
+                update_modified=False,
+            )
+            return
+        settings = frappe.get_single("Jarvis Settings")
+        settings._sync_via_admin(action)

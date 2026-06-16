@@ -423,3 +423,98 @@ class TestSelfHealOnStalePairing(FrappeTestCase):
 				OpenclawSession.connect("ws://t", "x")
 		self.assertFalse(clear_called, "should not clear creds for signing bugs")
 		self.assertIn("signature-invalid", str(cm.exception))
+
+
+class TestRepairConvoyCollapse(FrappeTestCase):
+	"""Sprint-2 (2026-06-16): N concurrent workers all observe a stale
+	pairing after tenant re-provision. Without the Redis lock, every
+	worker calls clear_credentials() + ensure_paired() independently,
+	each generating a different Ed25519 keypair, and only the last
+	writer's keypair survives in Jarvis Settings - the others hold
+	in-memory creds the admin side doesn't know about. The lock
+	collapses the convoy: one worker pairs, the rest detect the new
+	device_id on disk and skip the wipe."""
+
+	def _build_stale_then_ok(self) -> tuple[_ScriptedWS, _ScriptedWS]:
+		"""Two scripted WS: first rejects with device-not-paired, second
+		accepts. Caller wires per-test patches on top."""
+		first = _ScriptedWS([_challenge(), None])
+		second = _ScriptedWS([_challenge(), None])
+		first._frames[1] = lambda: _frame({
+			"type": "res", "id": first.sent[-1]["id"], "ok": False,
+			"error": {"code": "UNAUTHORIZED", "message": "device-not-paired"},
+		})
+		second._frames[1] = lambda: _frame({
+			"type": "res", "id": second.sent[-1]["id"], "ok": True, "payload": {},
+		})
+		return first, second
+
+	def test_repair_skipped_when_persisted_device_id_diverges(self):
+		"""Late arrival: the lock-holder already re-paired and wrote a
+		new device_id to Settings. The convoy follower sees current !=
+		its stale_device_id and SHOULD NOT wipe the winner's work."""
+		stale_creds = _make_creds()
+		winner_device_id = "winner-device-id-from-other-worker"
+		clear_called: list = []
+
+		first_ws, second_ws = self._build_stale_then_ok()
+		ws_iter = iter([first_ws, second_ws])
+		with patch("jarvis.chat.openclaw_client.websocket.create_connection",
+				   side_effect=lambda *a, **kw: next(ws_iter)), \
+			 patch("jarvis.chat.openclaw_client.ensure_paired",
+				   return_value=stale_creds), \
+			 patch("jarvis.chat.openclaw_client.clear_credentials",
+				   side_effect=lambda: clear_called.append(True)), \
+			 patch("jarvis.chat.openclaw_client._persisted_device_id",
+				   return_value=winner_device_id):
+			sess = OpenclawSession.connect("ws://t", "x")
+		self.assertEqual(clear_called, [],
+			"convoy follower must NOT clear the winner's freshly-paired creds")
+		sess.close()
+
+	def test_repair_proceeds_when_persisted_id_matches_stale(self):
+		"""Lock-holder path: nobody else has re-paired yet (current ==
+		stale OR current empty). Standard wipe + re-pair."""
+		stale_creds = _make_creds()
+		clear_called: list = []
+
+		first_ws, second_ws = self._build_stale_then_ok()
+		ws_iter = iter([first_ws, second_ws])
+		with patch("jarvis.chat.openclaw_client.websocket.create_connection",
+				   side_effect=lambda *a, **kw: next(ws_iter)), \
+			 patch("jarvis.chat.openclaw_client.ensure_paired",
+				   return_value=stale_creds), \
+			 patch("jarvis.chat.openclaw_client.clear_credentials",
+				   side_effect=lambda: clear_called.append(True)), \
+			 patch("jarvis.chat.openclaw_client._persisted_device_id",
+				   return_value=stale_creds.device_id):
+			sess = OpenclawSession.connect("ws://t", "x")
+		self.assertEqual(len(clear_called), 1,
+			"lock-holder must wipe + re-pair when persisted id matches stale")
+		sess.close()
+
+	def test_repair_skipped_when_redis_lock_unavailable(self):
+		"""Defensive: if the lock acquire times out (Redis down,
+		extreme contention), we DON'T wipe creds blindly. The caller
+		retries once with allow_repair=False against the same gateway."""
+		from contextlib import contextmanager
+		stale_creds = _make_creds()
+		clear_called: list = []
+
+		@contextmanager
+		def _never_acquired(*_a, **_kw):
+			yield False
+
+		first_ws, second_ws = self._build_stale_then_ok()
+		ws_iter = iter([first_ws, second_ws])
+		with patch("jarvis.chat.openclaw_client.websocket.create_connection",
+				   side_effect=lambda *a, **kw: next(ws_iter)), \
+			 patch("jarvis.chat.openclaw_client.ensure_paired",
+				   return_value=stale_creds), \
+			 patch("jarvis.chat.openclaw_client.clear_credentials",
+				   side_effect=lambda: clear_called.append(True)), \
+			 patch("jarvis._redis_lock.redis_lock", side_effect=_never_acquired):
+			sess = OpenclawSession.connect("ws://t", "x")
+		self.assertEqual(clear_called, [],
+			"no clear when we never held the lock")
+		sess.close()

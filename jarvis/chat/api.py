@@ -240,10 +240,16 @@ def send_message(
 
 	# Enqueue the worker. Returns immediately; worker runs async.
 	run_id = uuid.uuid4().hex[:12]
+	# RQ worker budget covers worst-case: pair (<=90s admin round-trip) +
+	# WS connect (10s) + TURN_TIMEOUT_SECONDS (180s). The previous 200s
+	# ceiling fell under that 280s envelope, so a SIGKILL on timeout
+	# bypassed run_agent_turn's try/finally and stranded the placeholder
+	# row with ``streaming=1`` forever. 300s gives 20s headroom on the
+	# nominal worst case. Sprint-2 review item.
 	frappe.enqueue(
 		method="jarvis.chat.worker.run_agent_turn",
 		queue="default",
-		timeout=200,
+		timeout=300,
 		conversation_id=conversation,
 		message_id=msg_doc.name,
 		run_id=run_id,
@@ -360,10 +366,12 @@ def retry_message(message: str) -> dict:
 	)
 
 	run_id = uuid.uuid4().hex[:12]
+	# Parity with send_message: 300s covers pair (<=90s) + connect (10s)
+	# + turn (180s). See note at the send_message enqueue site.
 	frappe.enqueue(
 		method="jarvis.chat.worker.run_agent_turn",
 		queue="default",
-		timeout=200,
+		timeout=300,
 		conversation_id=doc.conversation,
 		message_id=user_msg_id,
 		run_id=run_id,
