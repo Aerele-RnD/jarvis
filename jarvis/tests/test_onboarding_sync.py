@@ -79,6 +79,7 @@ class TestSyncConnection(FrappeTestCase):
 		_set_token("")
 		frappe.db.set_value("Jarvis Settings", "Jarvis Settings",
 							"jarvis_admin_url", "http://admin.example.com")
+		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "sandbox_mode", 1)
 		frappe.db.commit()
 		with patch("jarvis.onboarding.admin_client.dev_signup",
 				   return_value={"customer": "C1", "api_key": "k2", "api_secret": "s2",
@@ -111,6 +112,7 @@ class TestSyncConnection(FrappeTestCase):
 		_set_token("")
 		frappe.db.set_value("Jarvis Settings", "Jarvis Settings",
 							"jarvis_admin_url", "http://other-admin.local")
+		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "sandbox_mode", 1)
 		frappe.db.commit()
 		try:
 			with patch("jarvis.onboarding.admin_client.dev_signup",

@@ -1,10 +1,9 @@
 """Dev-only helpers for the customer bench.
 
-Gated by sandbox mode (Jarvis Settings.sandbox_mode, with legacy
-frappe.conf.developer_mode as a one-release backwards-compat fallback)
-+ the System Manager role. Used by the Jarvis Settings form to wipe local
-state so the operator can run the onboarding wizard fresh without manual
-DB surgery.
+Gated by sandbox mode (Jarvis Settings.sandbox_mode) + the System
+Manager role. Used by the Jarvis Settings form to wipe local state so
+the operator can run the onboarding wizard fresh without manual DB
+surgery.
 
 Companion to ``jarvis_admin.api.dev.purge_customer`` on the admin side -
 the admin button wipes admin-side records; this clears the customer bench.
@@ -29,28 +28,25 @@ _PASSWORD_FIELDS = {
 
 
 def is_sandbox_mode() -> bool:
-	"""Return True iff this site is in sandbox mode.
+	"""Return True iff ``Jarvis Settings.sandbox_mode`` is enabled.
 
-	Resolution:
-	  1. ``Jarvis Settings.sandbox_mode = 1`` (the canonical flag)
-	  2. legacy fallback: ``frappe.conf.developer_mode`` is truthy
-	     (kept for one release so existing dev installs don't break;
-	     remove this branch in the release after this one)
+	Opens the dev surface (dev_onboard, reset_onboarding, the DEV-only
+	reset button in Jarvis Settings). Customer responsibility: flip this
+	only on dev/test benches. The trust model is self-attested - this is
+	a UX improvement (discoverable in the settings form, doesn't bleed
+	across apps, doesn't require a bench restart), not a security
+	hardening.
 
-	Either condition opens the dev surface (dev_onboard, reset_onboarding,
-	the DEV-only reset button in Jarvis Settings). Customer responsibility:
-	flip this only on dev/test benches. The trust model is self-attested -
-	same as the legacy developer_mode behavior - so this is not a security
-	hardening, just a UX improvement (discoverable in the settings form,
-	doesn't bleed across apps, doesn't require a bench restart)."""
+	The legacy ``frappe.conf.developer_mode`` fallback was dropped in
+	this batch (2026-06-16 punch-list "scheduled for removal" item).
+	Operators on benches that previously relied on developer_mode in
+	site_config need to flip ``Jarvis Settings -> Enable Sandbox Mode``
+	once after migration."""
 	try:
-		if frappe.get_single_value(SETTINGS, "sandbox_mode"):
-			return True
+		return bool(frappe.get_single_value(SETTINGS, "sandbox_mode"))
 	except Exception:
-		# DocType may not be migrated yet on a fresh install; fall through
-		# to the legacy check rather than crashing.
-		pass
-	return bool(frappe.conf.get("developer_mode"))
+		# DocType may not be migrated yet on a fresh install.
+		return False
 
 
 def _dev_guard():
@@ -61,7 +57,7 @@ def _dev_guard():
 		frappe.local.response.http_status_code = 403
 		frappe.throw(
 			"Sandbox mode is not enabled. Set Jarvis Settings -> "
-			"Enable Sandbox Mode (or, legacy: developer_mode in site_config)."
+			"Enable Sandbox Mode."
 		)
 	if "System Manager" not in frappe.get_roles():
 		frappe.local.response.http_status_code = 403
