@@ -102,18 +102,20 @@ def run_agent_turn(conversation_id: str, message_id: str, run_id: str) -> None:
 	gateway_url = (settings.agent_url or "").replace(
 		"http://", "ws://"
 	).replace("https://", "wss://")
-	gateway_token = settings.get_password("agent_token", raise_exception=False) or ""
-
 	user_message = frappe.db.get_value(MSG, message_id, "content")
-	# Prepend today's date as a context line so the agent can resolve
-	# relative time expressions ("last quarter", "this week") without an
-	# extra round-trip to clarify. The persisted user_message in the DB
-	# is unchanged; only the value sent over to openclaw is augmented.
-	user_message = _augment_with_context(user_message or "")
+	# Prepend today's date as a context line so the agent (AGENTS.md tells
+	# it to treat the leading ``[Context: ...]`` as system, not user) can
+	# resolve relative time expressions ("last quarter", "this week")
+	# without an extra round-trip to clarify. The persisted user_message
+	# in the DB is unchanged; only the value sent over to openclaw is
+	# augmented.
+	now = frappe.utils.now_datetime()
+	today = now.strftime("%Y-%m-%d (%A)")
+	user_message = f"[Context: today is {today}]\n\n{user_message or ''}"
 
 	try:
 		try:
-			sess = OpenclawSession.connect(gateway_url, gateway_token)
+			sess = OpenclawSession.connect(gateway_url)
 		except OpenclawUnreachableError as e:
 			_mark_errored(assistant_msg.name, str(e))
 			publish_to_user(user, {
@@ -193,19 +195,6 @@ def run_agent_turn(conversation_id: str, message_id: str, run_id: str) -> None:
 		"message_id": assistant_msg.name,
 		"run_id": run_id,
 	})
-
-
-def _augment_with_context(user_message: str) -> str:
-	"""Wrap the user message with a small session-level context block.
-
-	The agent's persona (AGENTS.md) tells it to treat the leading
-	``[Context: ...]`` line as system context, not user intent. This is
-	how Jarvis grounds relative time expressions without per-turn clock
-	lookups inside the agent.
-	"""
-	now = frappe.utils.now_datetime()
-	today = now.strftime("%Y-%m-%d (%A)")
-	return f"[Context: today is {today}]\n\n{user_message}"
 
 
 def _create_assistant_placeholder(conv) -> "frappe.model.document.Document":

@@ -400,7 +400,7 @@ def _ensure_session_key(user: str) -> str:
 		frappe.throw(_("openclaw is not configured"))
 
 	import time
-	sess = OpenclawSession.connect(gateway_url, gateway_token)
+	sess = OpenclawSession.connect(gateway_url)
 	try:
 		# Label includes a timestamp because openclaw deduplicates sessions
 		# by label and rejects collisions.

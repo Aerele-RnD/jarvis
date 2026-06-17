@@ -390,7 +390,12 @@ def _fetch_account_email(provider: str, access_token: str, id_token: str) -> str
 		padding = "=" * (-len(payload) % 4)
 		decoded = base64.urlsafe_b64decode(payload + padding)
 		return _json.loads(decoded).get("email", "") or ""
-	except (ValueError, Exception):
+	except Exception:
+		# ValueError used to be listed explicitly but it's a subclass
+		# of Exception - the union was redundant. Anything that goes
+		# wrong parsing a JWT id_token (malformed base64, broken JSON,
+		# missing dots) is non-fatal: id_token is a best-effort source
+		# for the email hint, callers always have a fallback.
 		return ""
 
 
