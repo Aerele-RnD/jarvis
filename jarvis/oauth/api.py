@@ -62,6 +62,11 @@ _TOKEN_EXCHANGE_OPAQUE_CODES = {
 
 _CACHE_KEY = "jarvis.oauth.codex_signin"
 _NONCE_TTL_SECS = 600
+# Cap on how many cache fields the GC sweep visits per begin_paste_signin.
+# A misbehaving caller looping begin without complete could otherwise fill
+# the hash and make every subsequent begin pay an O(N) Redis trip. The cap
+# bounds the sweep cost; truly stale entries get cleaned next time.
+_GC_SWEEP_LIMIT = 256
 _HTTP_TIMEOUT = 30
 _REDIRECT_URI = "http://localhost:1455/auth/callback"
 # Codex/gemini-cli's CLI-specific model IDs (not OpenAI/Google's standard
@@ -108,6 +113,45 @@ def _generate_pkce() -> tuple[str, str]:
 	return verifier, challenge
 
 
+def _gc_expired_nonces() -> None:
+	"""Sweep ``_CACHE_KEY`` for entries past their ``expires_at_ts`` and drop
+	them.
+
+	The OAuth nonce cache is a Redis hash where each field is a per-flow
+	nonce. ``frappe.cache.hset`` doesn't honour per-field TTLs (Redis HSET
+	can't), so abandoned sign-ins (customer started the flow, closed the
+	tab, never pasted the URL) leave their PKCE verifier + state hanging
+	in the hash until the whole key gets wiped. Punch-list "stale PKCE
+	verifiers + unconsumed nonces never GC'd" from the 2026-06-16 review.
+
+	Called opportunistically from begin_paste_signin so the hash stays
+	bounded without a separate scheduled job. Cost is one HGETALL per
+	begin (~ms-cheap until N gets large; the sweep limit caps the
+	worst case).
+	"""
+	try:
+		entries = frappe.cache.hgetall(_CACHE_KEY) or {}
+	except Exception:
+		# Best-effort: a Redis hiccup mustn't block a fresh sign-in.
+		return
+	now_ts = int(time.time())
+	for i, (field, value) in enumerate(entries.items()):
+		if i >= _GC_SWEEP_LIMIT:
+			break
+		# hgetall on a freshly-wiped cache can return {} - any field shape
+		# that doesn't carry expires_at_ts is something we didn't write
+		# and shouldn't try to interpret.
+		try:
+			expires_at_ts = (value or {}).get("expires_at_ts")
+		except AttributeError:
+			continue
+		if not expires_at_ts or expires_at_ts < now_ts:
+			# Decode bytes-vs-str defensively - Frappe's redis hash returns
+			# bytes on some configs and str on others.
+			key = field.decode() if isinstance(field, bytes) else field
+			frappe.cache.hdel(_CACHE_KEY, key)
+
+
 @frappe.whitelist()
 def begin_paste_signin(provider: str, model: str) -> dict:
 	"""Mint a nonce + PKCE pair, return the authorize URL for the customer
@@ -123,6 +167,11 @@ def begin_paste_signin(provider: str, model: str) -> dict:
 		get_provider(provider)
 	except UnknownProviderError as e:
 		return _err("unknown_provider", str(e))
+
+	# GC abandoned sign-ins BEFORE writing the new nonce. Otherwise a
+	# user who loops begin without ever completing (e.g. wizard reload
+	# while debugging) grows the cache hash unboundedly.
+	_gc_expired_nonces()
 
 	nonce = secrets.token_hex(24)
 	verifier, challenge = _generate_pkce()
@@ -198,6 +247,10 @@ def complete_paste_signin(nonce: str, redirected_url: str) -> dict:
 	if not entry:
 		return _err("unknown_nonce", "nonce not recognized")
 	if entry["expires_at_ts"] < int(time.time()):
+		# Drop the expired field so the hash doesn't grow with dead
+		# entries waiting on the periodic GC sweep. Companion to the
+		# _gc_expired_nonces sweep on begin.
+		frappe.cache.hdel(_CACHE_KEY, nonce)
 		return _err("expired", "nonce has expired; generate a new sign-in URL")
 	if entry["status"] != "pending":
 		return _err("not_pending", f"nonce status is {entry['status']!r}")
@@ -212,7 +265,13 @@ def complete_paste_signin(nonce: str, redirected_url: str) -> dict:
 	parsed = _parse_redirected_url(redirected_url)
 	if not parsed["code"]:
 		return _err("missing_code", "no `code` parameter found in the pasted URL")
-	if parsed["state"] != entry["state"]:
+	# Constant-time compare on the state parameter. The state value is the
+	# OAuth CSRF nonce - if an attacker can observe how long the
+	# comparison takes, plain ``!=`` short-circuits on the first
+	# differing byte and leaks a prefix-recovery oracle. secrets.compare_digest
+	# runs in constant time over the longer of the two inputs.
+	# Punch-list "state comparison non-constant-time" from the 2026-06-16 review.
+	if not secrets.compare_digest(parsed["state"] or "", entry["state"] or ""):
 		return _err("state_mismatch",
 		            "the `state` parameter doesn't match; "
 		            "regenerate the sign-in URL and try again")
@@ -412,5 +471,12 @@ def disconnect() -> dict:
 	settings.db_set("last_sync_status", "disconnected", update_modified=False)
 	settings.db_set("llm_oauth_account_email", "", update_modified=False)
 	settings.db_set("llm_oauth_connected_at", None, update_modified=False)
-	frappe.cache.delete_key(_CACHE_KEY)
+	# DON'T wipe _CACHE_KEY here. The previous shape called
+	# frappe.cache.delete_key(_CACHE_KEY), which nukes every pending
+	# OAuth sign-in across the whole site - so a second System Manager
+	# mid-paste-signin would see their nonce vanish under them when a
+	# peer happened to click Disconnect. The cache holds only short-TTL
+	# (10 min) per-user-bound nonces; _gc_expired_nonces sweeps them on
+	# the next begin call. Punch-list "disconnect() wipes entire OAuth
+	# signin cache hash" from the 2026-06-16 review.
 	return _ok({})
