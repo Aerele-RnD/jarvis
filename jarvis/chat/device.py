@@ -101,11 +101,52 @@ def ensure_paired() -> ChatDeviceCredentials:
 
 	Raises OpenclawUnreachableError if pairing fails (no creds to fall back
 	to - the caller has no way to chat without them, so we surface the error
-	cleanly instead of half-persisting an unusable state)."""
+	cleanly instead of half-persisting an unusable state).
+
+	Cold-start concurrency: send_message (web) and the RQ worker (background)
+	both call ensure_paired before each turn. On a fresh bench (no
+	credentials persisted yet) two concurrent callers both observe
+	``_read_credentials() is None`` and both call ``_generate_and_pair``,
+	each generating a different Ed25519 keypair and each round-tripping to
+	admin.pair_chat_device. Last writer to Jarvis Settings wins; the other
+	caller holds in-memory creds that admin's PairedDevice row doesn't know
+	about. Cross-repo punch-list "Race: send_message + RQ worker both invoke
+	ensure_paired() concurrently" from the 2026-06-16 review.
+
+	Fix: serialize the generate+pair window under a Redis advisory lock.
+	Double-checked: re-read inside the lock so the second arrival finds the
+	winner's creds and skips the duplicate pair entirely. The lock has a
+	60s TTL backstop so a crashed holder can't deadlock cold-start forever;
+	on lock unavailability we fall through and pair anyway (better one
+	duplicate keypair than a permanently broken chat).
+	"""
 	existing = _read_credentials()
 	if existing is not None:
 		return existing
-	return _generate_and_pair()
+	return _generate_and_pair_under_lock()
+
+
+def _generate_and_pair_under_lock() -> ChatDeviceCredentials:
+	"""Convoy-collapse helper for the cold-start race. Acquires the
+	chat_device_initial_pair lock with a bounded wait; inside the lock,
+	re-reads to see if the winner already paired; if so, returns their
+	creds; if not, runs the actual pair flow."""
+	from jarvis._redis_lock import redis_lock
+
+	with redis_lock(
+		"chat_device_initial_pair", timeout_s=60, blocking_timeout_s=30.0,
+	) as acquired:
+		# Re-check inside the lock window. The winner of a contended cold-
+		# start has already populated Jarvis Settings; followers read those
+		# creds and return without a second pair_chat_device round-trip.
+		existing = _read_credentials()
+		if existing is not None:
+			return existing
+		# Lock-unavailable + no creds: a Redis outage during cold-start
+		# would otherwise block the bench's chat path indefinitely.
+		# Falling through accepts at-worst-one-duplicate-pair; that's a
+		# strictly better failure mode than chat-permanently-broken.
+		return _generate_and_pair()
 
 
 def _generate_and_pair() -> ChatDeviceCredentials:

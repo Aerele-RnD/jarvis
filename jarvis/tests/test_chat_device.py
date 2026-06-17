@@ -135,6 +135,68 @@ class TestEnsurePaired(_SettingsSnapshotMixin, FrappeTestCase):
 			with self.assertRaises(OpenclawUnreachableError):
 				chat_device.ensure_paired()
 
+	def test_concurrent_callers_share_one_admin_pair_call(self):
+		"""Cold-start convoy collapse. Cross-repo punch-list "Race:
+		send_message + RQ worker both invoke ensure_paired() concurrently".
+
+		Before the fix: a fresh bench with no chat_device_* fields and
+		two concurrent callers (web request + RQ worker) BOTH observed
+		``_read_credentials() is None`` and BOTH called
+		``_generate_and_pair`` - last writer to Jarvis Settings wins;
+		the other caller holds in-memory creds that don't match what
+		admin saw.
+
+		After the fix: a Redis lock collapses the convoy. The first
+		caller pairs; the second waits on the lock, re-reads inside it,
+		and returns the winner's creds without a second admin call.
+
+		Real concurrency on a single-threaded test runner is tricky to
+		stage. We simulate the convoy by patching the lock context
+		manager so the "second" caller pre-populates Settings before
+		entering the lock body - the re-check inside the lock must
+		short-circuit on those existing creds.
+		"""
+		# First caller paints credentials into Settings as if it had won
+		# the lock race.
+		first_priv = Ed25519PrivateKey.generate()
+		first_pub_raw = first_priv.public_key().public_bytes(
+			serialization.Encoding.Raw, serialization.PublicFormat.Raw,
+		)
+		first_device_id = hashlib.sha256(first_pub_raw).hexdigest()
+
+		def _pre_populate_settings_inside_lock():
+			s = frappe.get_single("Jarvis Settings")
+			s.db_set("chat_device_id", first_device_id)
+			s.db_set("chat_device_public_key", _b64u(first_pub_raw))
+			s.db_set("chat_device_private_key", _b64u(first_priv.private_bytes(
+				serialization.Encoding.Raw, serialization.PrivateFormat.Raw,
+				serialization.NoEncryption(),
+			)))
+			s.db_set("chat_device_token", "tok-winner")
+			frappe.db.commit()
+
+		class _FakeLockCtx:
+			def __enter__(_self):
+				_pre_populate_settings_inside_lock()
+				return True
+			def __exit__(_self, *a):
+				return False
+
+		mock_pair = patch("jarvis.chat.device.admin_client.pair_chat_device").start()
+		mock_lock = patch("jarvis._redis_lock.redis_lock",
+		                  return_value=_FakeLockCtx()).start()
+		try:
+			creds = chat_device.ensure_paired()
+		finally:
+			patch.stopall()
+
+		# Second caller picked up the winner's creds; no admin pair call
+		# was made.
+		self.assertFalse(mock_pair.called)
+		self.assertEqual(creds.device_token, "tok-winner")
+		self.assertEqual(creds.device_id, first_device_id)
+		self.assertTrue(mock_lock.called)
+
 	def test_partial_state_triggers_repair(self):
 		"""If only some fields are set, treat the whole pairing as missing
 		so the next call re-pairs atomically - protects against half-failed
