@@ -334,13 +334,30 @@ def _do_post(url: str, body: dict, headers: dict, timeout_s: int, admin_url: str
 	try:
 		resp = requests.post(url, json=body, headers=headers, timeout=timeout_s)
 	except (requests.ConnectionError, requests.Timeout) as e:
-		raise AdminUnreachableError(f"admin {admin_url}: {e}") from e
+		# Log the raw network detail to Error Log for operator triage;
+		# surface only the bench-friendly summary on the exception (the
+		# UI renders this verbatim). Punch-list item from the 2026-06-16
+		# review: error bodies were re-raised verbatim, leaking
+		# internal exception strings (paths, urllib internals) into
+		# the customer-facing toast.
+		frappe.log_error(
+			title="admin_client: network error",
+			message=f"url={url!r} error={e!r}",
+		)
+		raise AdminUnreachableError("admin is unreachable; check network / service status") from e
 
 	try:
 		payload = resp.json()
 	except ValueError:
+		# Non-JSON response usually = Frappe 5xx HTML error page or an
+		# upstream proxy 502/504. The body could include internal
+		# paths/tracebacks; log it but don't surface to the bench UI.
+		frappe.log_error(
+			title="admin_client: non-JSON response",
+			message=f"url={url!r} status={resp.status_code} body={resp.text[:1000]!r}",
+		)
 		raise AdminUnreachableError(
-			f"admin {admin_url} returned non-JSON (status {resp.status_code})"
+			f"admin returned non-JSON response (status {resp.status_code})"
 		)
 
 	envelope = payload.get("message", payload) if isinstance(payload, dict) else payload
@@ -382,7 +399,16 @@ def _do_post(url: str, body: dict, headers: dict, timeout_s: int, admin_url: str
 			raise AdminValidationError(clean)
 		if exc_type in ("AuthenticationError", "PermissionError"):
 			raise AdminAuthError(clean)
-		raise AdminUnreachableError(f"admin {admin_url}: {clean}")
+		# Unknown exc_type. Log it (so we learn what other admin error
+		# classes to add to the allowlist) but don't embed admin_url +
+		# raw exception class in the user-facing message.
+		frappe.log_error(
+			title=f"admin_client: unrecognised exc_type={exc_type!r}",
+			message=f"url={url!r} clean={clean!r}",
+		)
+		raise AdminUnreachableError(
+			clean or f"admin returned an unrecognised error: {exc_type}"
+		)
 	# Sprint-3 PR-8 (2026-06-16 review): a 4xx response with the
 	# structured envelope ({"ok": false, "error": {...}}) is a
 	# user-input / business-rule error, NOT an "admin is unreachable"
@@ -398,17 +424,32 @@ def _do_post(url: str, body: dict, headers: dict, timeout_s: int, admin_url: str
 	#   200 with ok:false (rare; some endpoints inline failure) -> AdminUnreachableError
 	if resp.status_code >= 400:
 		err = (envelope or {}).get("error", {}) if isinstance(envelope, dict) else {}
-		msg = err.get("message") or resp.text[:200] or f"admin returned {resp.status_code}"
+		msg = err.get("message")
+		if not msg:
+			# No structured ``error.message`` -> log the raw body but
+			# don't include it in the user-facing exception.
+			frappe.log_error(
+				title=f"admin_client: {resp.status_code} with no error.message",
+				message=f"url={url!r} body={resp.text[:1000]!r}",
+			)
+			msg = f"admin returned {resp.status_code}"
 		if 400 <= resp.status_code < 500:
 			raise AdminValidationError(msg)
 		raise AdminUnreachableError(
-			f"admin {admin_url} returned error: "
-			f"{err.get('code', '?')}: {msg}"
+			f"admin returned a {resp.status_code} error: {msg}"
 		)
 	if isinstance(envelope, dict) and not envelope.get("ok", True):
 		err = envelope.get("error", {}) or {}
-		raise AdminUnreachableError(
-			f"admin {admin_url} returned error: "
-			f"{err.get('code', '?')}: {err.get('message', resp.text[:200])}"
-		)
+		code = err.get("code") or "?"
+		msg = err.get("message")
+		if not msg:
+			frappe.log_error(
+				title="admin_client: 200 with ok:false but no error.message",
+				message=f"url={url!r} body={resp.text[:1000]!r}",
+			)
+			msg = "admin returned an error envelope with no message"
+		# Keep code in the message (stable identifier admin_client
+		# callers + ops can grep for). admin_url is intentionally
+		# omitted - the bench knows where it's pointing.
+		raise AdminUnreachableError(f"{code}: {msg}")
 	return envelope.get("data", envelope) if isinstance(envelope, dict) else envelope
