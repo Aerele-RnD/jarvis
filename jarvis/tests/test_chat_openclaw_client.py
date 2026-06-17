@@ -102,7 +102,7 @@ def _build_session(creds=None) -> tuple[OpenclawSession, _ScriptedWS]:
 	scripted = _ScriptedWS([_challenge(), _ok])
 	with patch("jarvis.chat.openclaw_client.websocket.create_connection", return_value=scripted), \
 		 patch("jarvis.chat.openclaw_client.ensure_paired", return_value=creds):
-		sess = OpenclawSession.connect("ws://test", "ignored-token")
+		sess = OpenclawSession.connect("ws://test")
 	scripted.sent.clear()
 	return sess, scripted
 
@@ -120,7 +120,7 @@ class TestConnect(FrappeTestCase):
 		scripted = _ScriptedWS([_challenge("nonce-xyz"), _ok])
 		with patch("jarvis.chat.openclaw_client.websocket.create_connection", return_value=scripted), \
 			 patch("jarvis.chat.openclaw_client.ensure_paired", return_value=creds):
-			sess = OpenclawSession.connect("ws://t", "x")
+			sess = OpenclawSession.connect("ws://t")
 
 		self.assertEqual(len(scripted.sent), 1)
 		req = scripted.sent[0]
@@ -151,7 +151,7 @@ class TestConnect(FrappeTestCase):
 		with patch("jarvis.chat.openclaw_client.websocket.create_connection", return_value=scripted), \
 			 patch("jarvis.chat.openclaw_client.ensure_paired", return_value=creds):
 			with self.assertRaises(OpenclawUnreachableError) as cm:
-				OpenclawSession.connect("ws://t", "x")
+				OpenclawSession.connect("ws://t")
 		self.assertIn("UNAUTHORIZED", str(cm.exception))
 		self.assertTrue(scripted.closed)
 
@@ -162,12 +162,12 @@ class TestConnect(FrappeTestCase):
 				   return_value=_ScriptedWS([])), \
 			 patch("jarvis.chat.openclaw_client.ensure_paired", return_value=creds):
 			with self.assertRaises(OpenclawUnreachableError):
-				OpenclawSession.connect("ws://t", "x")
+				OpenclawSession.connect("ws://t")
 
 	def test_empty_gateway_url_raises(self):
 		with patch("jarvis.chat.openclaw_client.ensure_paired", return_value=_make_creds()):
 			with self.assertRaises(OpenclawUnreachableError):
-				OpenclawSession.connect("", "x")
+				OpenclawSession.connect("")
 
 
 # --- TestCreateSession ----------------------------------------------------
@@ -379,7 +379,7 @@ class TestSelfHealOnStalePairing(FrappeTestCase):
 				   side_effect=_fake_ensure_paired), \
 			 patch("jarvis.chat.openclaw_client.clear_credentials",
 				   side_effect=_fake_clear):
-			result = OpenclawSession.connect("ws://t", "x")
+			result = OpenclawSession.connect("ws://t")
 		return result, clear_called, ensure_paired_calls
 
 	def test_device_not_paired_triggers_repair_and_retry_succeeds(self):
@@ -431,7 +431,7 @@ class TestSelfHealOnStalePairing(FrappeTestCase):
 			 patch("jarvis.chat.openclaw_client.clear_credentials",
 				   side_effect=lambda: clear_called.append(True)):
 			with self.assertRaises(OpenclawUnreachableError) as cm:
-				OpenclawSession.connect("ws://t", "x")
+				OpenclawSession.connect("ws://t")
 		self.assertFalse(clear_called, "should not clear creds for signing bugs")
 		self.assertEqual(cm.exception.code, "device-signature-invalid")
 
@@ -458,7 +458,7 @@ class TestSelfHealOnStalePairing(FrappeTestCase):
 			 patch("jarvis.chat.openclaw_client.clear_credentials",
 				   side_effect=lambda: clear_called.append(True)):
 			with self.assertRaises(OpenclawUnreachableError):
-				OpenclawSession.connect("ws://t", "x")
+				OpenclawSession.connect("ws://t")
 		self.assertFalse(
 			clear_called,
 			"a substring match in the message must NOT trigger the repair "
@@ -509,7 +509,7 @@ class TestRepairConvoyCollapse(FrappeTestCase):
 				   side_effect=lambda: clear_called.append(True)), \
 			 patch("jarvis.chat.openclaw_client._persisted_device_id",
 				   return_value=winner_device_id):
-			sess = OpenclawSession.connect("ws://t", "x")
+			sess = OpenclawSession.connect("ws://t")
 		self.assertEqual(clear_called, [],
 			"convoy follower must NOT clear the winner's freshly-paired creds")
 		sess.close()
@@ -530,7 +530,7 @@ class TestRepairConvoyCollapse(FrappeTestCase):
 				   side_effect=lambda: clear_called.append(True)), \
 			 patch("jarvis.chat.openclaw_client._persisted_device_id",
 				   return_value=stale_creds.device_id):
-			sess = OpenclawSession.connect("ws://t", "x")
+			sess = OpenclawSession.connect("ws://t")
 		self.assertEqual(len(clear_called), 1,
 			"lock-holder must wipe + re-pair when persisted id matches stale")
 		sess.close()
@@ -556,7 +556,7 @@ class TestRepairConvoyCollapse(FrappeTestCase):
 			 patch("jarvis.chat.openclaw_client.clear_credentials",
 				   side_effect=lambda: clear_called.append(True)), \
 			 patch("jarvis._redis_lock.redis_lock", side_effect=_never_acquired):
-			sess = OpenclawSession.connect("ws://t", "x")
+			sess = OpenclawSession.connect("ws://t")
 		self.assertEqual(clear_called, [],
 			"no clear when we never held the lock")
 		sess.close()

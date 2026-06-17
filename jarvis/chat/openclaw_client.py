@@ -101,14 +101,14 @@ class OpenclawSession:
 	"""Direct WebSocket session to one tenant's openclaw gateway.
 
 	Public surface:
-	  OpenclawSession.connect(gateway_url, gateway_token) -> session
+	  OpenclawSession.connect(gateway_url) -> session
 	  session.create_session(label=...) -> session_key
 	  session.stream_agent_turn(session_key, message, idem) -> iter of parsed events
 	  session.close()
 
-	The gateway_token arg is kept for call-site compatibility but unused -
-	device pairing supersedes the shared bearer token. The chat device's
-	deviceToken from `jarvis.chat.device.ensure_paired()` is the credential.
+	Authentication is via device pairing - the chat device's deviceToken
+	from `jarvis.chat.device.ensure_paired()` is the credential. The
+	legacy shared bearer-token path is gone.
 	"""
 
 	def __init__(self, ws: websocket.WebSocket, creds: ChatDeviceCredentials):
@@ -119,8 +119,7 @@ class OpenclawSession:
 	# -- lifecycle --------------------------------------------------------
 
 	@classmethod
-	def connect(cls, gateway_url: str, gateway_token: str) -> OpenclawSession:
-		_ = gateway_token  # see class docstring
+	def connect(cls, gateway_url: str) -> OpenclawSession:
 		if not gateway_url:
 			raise OpenclawUnreachableError("agent_url not set on Jarvis Settings")
 
