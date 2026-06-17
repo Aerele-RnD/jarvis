@@ -555,3 +555,45 @@ class TestPostSubscriptionDisconnect(FrappeTestCase):
 		self.assertEqual(result, {"ok": True})
 		self.assertIn("subscription_disconnect", captured["url"])
 		self.assertEqual(captured["body"], {})
+
+
+class TestPairChatDevice(FrappeTestCase):
+	"""Sprint-2 plumb-through (2026-06-16 review): bench's pair_chat_device
+	now accepts request_timeout_s and forwards it as a body field so admin
+	can configure its admin -> fleet-agent leg accordingly."""
+
+	def setUp(self):
+		_settings_for_admin()
+
+	def tearDown(self):
+		_settings_clear_admin()
+
+	def test_default_timeout_sent_as_30(self):
+		captured = {}
+
+		def _fake_post(url, json=None, headers=None, timeout=None):
+			captured["body"] = json
+			return _mock_response(200, json_body={"message": {
+				"ok": True, "data": {"device_token": "tok"},
+			}})
+
+		with patch("requests.post", side_effect=_fake_post):
+			admin_client.pair_chat_device(public_key="pk", device_id="did")
+		self.assertEqual(captured["body"]["request_timeout_s"], 30)
+		self.assertEqual(captured["body"]["public_key"], "pk")
+		self.assertEqual(captured["body"]["device_id"], "did")
+
+	def test_caller_supplied_timeout_forwarded(self):
+		captured = {}
+
+		def _fake_post(url, json=None, headers=None, timeout=None):
+			captured["body"] = json
+			return _mock_response(200, json_body={"message": {
+				"ok": True, "data": {"device_token": "tok"},
+			}})
+
+		with patch("requests.post", side_effect=_fake_post):
+			admin_client.pair_chat_device(
+				public_key="pk", device_id="did", request_timeout_s=75,
+			)
+		self.assertEqual(captured["body"]["request_timeout_s"], 75)

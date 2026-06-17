@@ -226,14 +226,29 @@ def post_llm_auth_status() -> dict:
 	)
 
 
-def pair_chat_device(public_key: str, device_id: str) -> dict:
+def pair_chat_device(public_key: str, device_id: str,
+                     *, request_timeout_s: int = 30) -> dict:
 	"""POST customer's chat device pubkey to admin; admin asks the fleet-agent
 	to write a PairedDevice record into the customer's openclaw container and
-	returns the issued bearer device-token. Customer keeps the private key."""
+	returns the issued bearer device-token. Customer keeps the private key.
+
+	Sprint-2 plumb-through (2026-06-16 review): ``request_timeout_s`` is
+	the budget the bench asks admin to allow for its admin -> fleet-agent
+	leg. Defaults to 30s (matches admin's prior hardcoded value). Admin
+	clamps to [5, 90] on its side so an over-large value can't push the
+	overall HTTPS round-trip past the bench's outer DEFAULT_TIMEOUT_S=90.
+
+	The outer HTTPS round-trip timeout (bench -> admin) stays at
+	DEFAULT_TIMEOUT_S=90s; that's the absolute upper bound on this call.
+	"""
 	settings = frappe.get_single("Jarvis Settings")
 	return _post(
 		path="/api/method/jarvis_admin.api.tenant.pair_chat_device",
-		body={"public_key": public_key, "device_id": device_id},
+		body={
+			"public_key": public_key,
+			"device_id": device_id,
+			"request_timeout_s": request_timeout_s,
+		},
 		admin_url=_admin_url(settings),
 	)
 
