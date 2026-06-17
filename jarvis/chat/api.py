@@ -49,14 +49,12 @@ def _get_build_id() -> str:
 	return value
 
 # Subscription-tier model IDs accepted by codex / gemini-cli's auth tunnel.
-# These are CLI-specific names (NOT OpenAI's API names like "gpt-4o").
-# Mirrors SUBSCRIPTION_MODELS in jarvis_chat.js / jarvis_account.js / jarvis_onboarding.js.
-# Keep all three in sync; see customer-app/chat-subscription-onboarding.md
-# "Why these model names look weird" for why.
-_SUBSCRIPTION_MODELS = {
-	"OpenAI":        ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"],
-	"Google Gemini": ["gemini-2.0-pro", "gemini-1.5-pro", "gemini-1.5-flash"],
-}
+# Catalogue lives in jarvis/_subscription_models.py (shared with oauth/api.py
+# - the two used to declare it independently, see 2026-06-16 punch-list).
+# Mirrors SUBSCRIPTION_MODELS in jarvis_chat.js / jarvis_account.js /
+# jarvis_onboarding.js; keep all three JS files in sync with the Python
+# catalogue.
+from jarvis._subscription_models import SUBSCRIPTION_MODELS as _SUBSCRIPTION_MODELS
 
 
 @frappe.whitelist()
