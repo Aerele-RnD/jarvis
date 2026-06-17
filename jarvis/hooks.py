@@ -332,6 +332,10 @@ scheduler_events = {
 	],
 	"daily": [
 		"jarvis.onboarding.sync_connection",
+		# C2 (2026-06-16 review): nudge operators when the bench's
+		# agent_token is approaching or past its configured max age.
+		# Daily is plenty - the warning window is 7 days.
+		"jarvis.oauth.cron.check_agent_token_age",
 	],
 }
 

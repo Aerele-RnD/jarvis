@@ -646,3 +646,68 @@ class TestRotateAgentTokenEndpoint(FrappeTestCase):
 			frappe.set_user("Administrator")
 			frappe.delete_doc("User", user_email, force=True, ignore_permissions=True)
 			frappe.db.commit()
+
+
+class TestC2AgentTokenExpiry(_PluginAuthTestBase):
+	"""C2 (2026-06-16 review): time-bounded agent_token.
+
+	Tokens older than ``Jarvis Settings.agent_token_max_age_days``
+	are rejected with AgentTokenExpired so the bench enforces periodic
+	rotation hygiene. max_age=0 disables (legacy escape hatch).
+	"""
+
+	def _patch_settings(self, *, max_age_days: int, age_days: int | None):
+		"""Patch _plugin_auth's view of Jarvis Settings: max_age + issued_at.
+
+		``age_days=None`` simulates a legacy token with no issued_at field
+		(must NOT expire - returning False from _agent_token_expired)."""
+		import datetime as _dt
+		from unittest.mock import MagicMock
+
+		fake = MagicMock()
+		fake.agent_token_max_age_days = max_age_days
+		if age_days is None:
+			fake.agent_token_issued_at = None
+		else:
+			fake.agent_token_issued_at = (
+				_dt.datetime.now() - _dt.timedelta(days=age_days)
+			)
+		fake.get_password.return_value = self.TOKEN
+		return patch("jarvis._plugin_auth.frappe.get_single", return_value=fake)
+
+	def test_expiry_disabled_when_max_age_zero(self):
+		"""Legacy escape hatch: max_age=0 = no expiry check."""
+		with self._patch_settings(max_age_days=0, age_days=1000):
+			result = self._call()
+		self.assertTrue(result["ok"], msg=result)
+
+	def test_unset_issued_at_does_not_expire_token(self):
+		"""Pre-fix token with no issued_at must NOT 401 - operator gets
+		a one-time grace window to rotate (cron warns separately)."""
+		with self._patch_settings(max_age_days=90, age_days=None):
+			result = self._call()
+		self.assertTrue(result["ok"], msg=result)
+
+	def test_within_age_window_accepted(self):
+		"""A 30-day-old token in a 90-day window is fine."""
+		with self._patch_settings(max_age_days=90, age_days=30):
+			result = self._call()
+		self.assertTrue(result["ok"], msg=result)
+
+	def test_past_max_age_rejected_with_agent_token_expired(self):
+		"""A 100-day-old token in a 90-day window is rejected. The error
+		code is distinct (``AgentTokenExpired``) so the bench's UI can
+		render a "rotate now" CTA instead of a generic 401."""
+		with self._patch_settings(max_age_days=90, age_days=100):
+			result = self._call()
+		self.assertFalse(result["ok"])
+		self.assertEqual(result["error"]["code"], "AgentTokenExpired")
+		self.assertEqual(frappe.local.response.http_status_code, 401)
+		self.assertIn("rotate", result["error"]["message"].lower())
+
+	def test_exactly_at_max_age_rejected(self):
+		"""Boundary: age_days == max_age_days hits the >= cutoff."""
+		with self._patch_settings(max_age_days=90, age_days=90):
+			result = self._call()
+		self.assertFalse(result["ok"])
+		self.assertEqual(result["error"]["code"], "AgentTokenExpired")

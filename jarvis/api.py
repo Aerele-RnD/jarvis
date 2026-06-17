@@ -371,7 +371,15 @@ def rotate_agent_token() -> dict:
 	# Persist it locally so the bench's future plugin-auth validations
 	# match what the container holds.
 	settings = frappe.get_single("Jarvis Settings")
+	now = frappe.utils.now()
 	settings.db_set("agent_token", new_token)
+	# C2 time-bound: stamp issued_at so plugin_auth's expiry check has
+	# a reference point. Tolerate the column not existing yet on a
+	# pre-migration deploy state.
+	try:
+		settings.db_set("agent_token_issued_at", now)
+	except Exception:
+		pass
 	frappe.db.commit()
 
-	return {"ok": True, "data": {"rotated_at": frappe.utils.now()}}
+	return {"ok": True, "data": {"rotated_at": now}}

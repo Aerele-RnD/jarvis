@@ -99,3 +99,73 @@ def poll_oauth_refresh_status() -> None:
 		"flipped last_sync_status %r -> %r",
 		current_status, _LAST_SYNC_OAUTH_EXPIRED,
 	)
+
+
+# Warning thresholds for the agent_token age check below. Tune via the
+# Jarvis Settings.agent_token_max_age_days field, not these constants.
+_AGENT_TOKEN_WARN_WITHIN_DAYS = 7
+
+
+def check_agent_token_age() -> None:
+	"""Daily scheduled job: warn the operator when the bench's
+	agent_token is approaching or past its configured max age.
+
+	C2 (2026-06-16 review): the plugin_auth validator HARD-rejects past
+	max-age tokens so the bench doesn't keep accepting stale credentials.
+	The cron's job is observability + nudge - operators see the warning
+	in Error Log before the hard cutoff lands.
+
+	Decision tree:
+	  - max_age_days unset / <= 0: no-op (expiry disabled)
+	  - no issued_at recorded: log once per day (legacy token; nudge to
+	    do a one-time rotate so the timestamp is captured going forward)
+	  - issued_at + max_age <= now: error-log (token IS expired right now)
+	  - issued_at + (max_age - warn_within_days) <= now: warn-log (about
+	    to expire; rotate in the next few days)
+	  - otherwise: no-op
+	"""
+	try:
+		settings = frappe.get_single("Jarvis Settings")
+		max_age_days = int(getattr(settings, "agent_token_max_age_days", 0) or 0)
+	except Exception:
+		return
+	if max_age_days <= 0:
+		return
+
+	issued_at = getattr(settings, "agent_token_issued_at", None)
+	if not issued_at:
+		frappe.logger().warning(
+			"check_agent_token_age: agent_token has no issued_at "
+			"timestamp; rotate via /api/method/jarvis.api.rotate_agent_token "
+			"so the expiry check can apply going forward",
+		)
+		return
+
+	try:
+		import datetime as _dt
+		issued = frappe.utils.get_datetime(issued_at)
+		now = (_dt.datetime.now(issued.tzinfo) if issued.tzinfo
+		       else _dt.datetime.now())
+		age_days = (now - issued).days
+	except Exception:
+		return
+
+	if age_days >= max_age_days:
+		# Hard expiry. plugin_auth is already rejecting; just shout.
+		frappe.log_error(
+			title="agent_token past max age",
+			message=(
+				f"agent_token is {age_days}d old (max {max_age_days}d). "
+				"All plugin call_tool requests now fail with "
+				"AgentTokenExpired. Rotate immediately via "
+				"/api/method/jarvis.api.rotate_agent_token."
+			),
+		)
+		return
+
+	if age_days >= max_age_days - _AGENT_TOKEN_WARN_WITHIN_DAYS:
+		frappe.logger().warning(
+			"check_agent_token_age: agent_token is %dd old "
+			"(max %dd; %dd remaining before hard rejection)",
+			age_days, max_age_days, max_age_days - age_days,
+		)

@@ -31,6 +31,8 @@
     "operator_section",
     "agent_url",
     "agent_token",
+    "agent_token_issued_at",
+    "agent_token_max_age_days",
     "chat_device_id",
     "chat_device_public_key",
     "chat_device_private_key",
@@ -197,6 +199,20 @@
       "label": "Agent Token",
       "read_only": 1,
       "description": "Bearer token used to authenticate the secrets.reload RPC and the chat worker's WebSocket session"
+    },
+    {
+      "fieldname": "agent_token_issued_at",
+      "fieldtype": "Datetime",
+      "label": "Agent Token Issued At",
+      "read_only": 1,
+      "description": "Timestamp of the last rotate_agent_token. C2 (2026-06-16 review): combined with agent_token_max_age_days, lets the bench enforce periodic rotation hygiene like SSH host-key / TLS-cert rotation. Empty == unbounded (legacy)."
+    },
+    {
+      "fieldname": "agent_token_max_age_days",
+      "fieldtype": "Int",
+      "label": "Agent Token Max Age (days)",
+      "default": 90,
+      "description": "Reject the bearer token if issued_at + this many days < now. Default 90 days. Set to 0 to disable expiry (not recommended). Operator rotates via the rotate_agent_token endpoint."
     },
     {
       "fieldname": "chat_device_id",
