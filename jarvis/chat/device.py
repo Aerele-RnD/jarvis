@@ -105,7 +105,20 @@ def ensure_paired() -> ChatDeviceCredentials:
 	existing = _read_credentials()
 	if existing is not None:
 		return existing
+	return _generate_and_pair()
 
+
+def _generate_and_pair() -> ChatDeviceCredentials:
+	"""Generate a fresh Ed25519 keypair, register it with admin (which
+	relays to the customer's openclaw container as a PairedDevice
+	record), and persist the resulting credentials.
+
+	Shared between ensure_paired (cold-start path) and
+	rotate_chat_device (operator-triggered rotation path). The two
+	previously share-and-fork happened inline; pulling it out lets
+	rotation reuse the validation + error surface without
+	duplicating the keypair generation logic.
+	"""
 	priv, _pub_raw, pub_b64u, device_id = _generate_keypair()
 	priv_b64u = _b64u(priv.private_bytes(
 		encoding=serialization.Encoding.Raw,
@@ -134,6 +147,42 @@ def ensure_paired() -> ChatDeviceCredentials:
 		device_id=device_id, public_key=pub_b64u,
 		private_key=priv, device_token=device_token,
 	)
+
+
+@frappe.whitelist(methods=["POST"])
+def rotate_chat_device() -> dict:
+	"""Force a fresh Ed25519 keypair + re-pair, overwriting any existing
+	chat-device credentials in Jarvis Settings.
+
+	System Manager only. Operators run this:
+	  - After a suspected leak of the private key (the Password field
+	    is encrypted at rest but operators with site DB access could
+	    read __Auth).
+	  - As routine hygiene on a schedule (annual rotation).
+	  - To recover from a corrupted PairedDevice record on the
+	    container side - admin's pair leg invalidates the previous
+	    PairedDevice for this device_id.
+
+	Atomicity: a new keypair is generated and admin-paired BEFORE the
+	old credentials are overwritten. If admin's pair_chat_device
+	fails (network, validation, rate-limit), the old credentials stay
+	intact so chat keeps working on the previous pairing. The new
+	credentials only land in Jarvis Settings on a successful
+	round-trip.
+
+	Returns ``{"ok": true, "data": {"device_id": "<new>"}}`` on
+	success; raises (translated to the {ok: false, error: {...}}
+	envelope at the @frappe.whitelist boundary) on any failure.
+
+	Punch-list item from the 2026-06-16 review: chat-device Ed25519
+	private key had no rotation surface.
+	"""
+	frappe.only_for("System Manager")
+	creds = _generate_and_pair()
+	frappe.logger().info(
+		"chat_device.rotate: new device_id=%s", creds.device_id,
+	)
+	return {"ok": True, "data": {"device_id": creds.device_id}}
 
 
 def clear_credentials() -> None:
