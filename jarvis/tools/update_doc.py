@@ -24,6 +24,7 @@ Safety bounds enforced here (on top of Frappe's standard validation):
 import frappe
 
 from jarvis.exceptions import InvalidArgumentError, PermissionDeniedError
+from jarvis.tools import require_doctype_and_name
 
 # Fields Frappe maintains itself or that govern DocType identity. An LLM
 # rewriting these would corrupt the row.
@@ -54,10 +55,7 @@ def update_doc(doctype: str, name: str, changes: dict) -> dict:
       - frappe.DoesNotExistError when the record doesn't exist
       - frappe.ValidationError when the DocType's own validate() rejects
     """
-    if not doctype:
-        raise InvalidArgumentError("doctype is required")
-    if not name:
-        raise InvalidArgumentError("name is required")
+    require_doctype_and_name(doctype, name)
     if not isinstance(changes, dict) or not changes:
         raise InvalidArgumentError("changes must be a non-empty dict")
 

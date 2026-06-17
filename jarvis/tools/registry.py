@@ -1,31 +1,45 @@
+"""Tool registry + dispatch.
+
+Tool modules live as siblings in jarvis.tools.<name>; the function
+in each module is named the same as the file. Adding a new tool is
+a two-step change: drop the module in, list the name in
+``_TOOL_NAMES``. No additional import line needed here.
+
+Previous shape: 11 explicit ``from jarvis.tools.<name> import <name>``
+lines + an 11-entry dict literal. The repetition was a 2026-06-16
+punch-list item. Now: one tuple of names, one comprehension that
+walks ``importlib.import_module``. Each module is imported once at
+registry-load time (Python caches it), so dispatch keeps the same
+O(1) lookup behaviour.
+"""
+from __future__ import annotations
+
+import importlib
 from typing import Callable
 
 from jarvis.exceptions import InvalidArgumentError, ToolNotFoundError
-from jarvis.tools.amend_doc import amend_doc
-from jarvis.tools.cancel_doc import cancel_doc
-from jarvis.tools.create_doc import create_doc
-from jarvis.tools.delete_doc import delete_doc
-from jarvis.tools.get_doc import get_doc
-from jarvis.tools.get_list import get_list
-from jarvis.tools.get_schema import get_schema
-from jarvis.tools.run_query import run_query
-from jarvis.tools.run_report import run_report
-from jarvis.tools.submit_doc import submit_doc
-from jarvis.tools.update_doc import update_doc
 
-_TOOLS: dict[str, Callable] = {
-    "get_schema": get_schema,
-    "get_doc": get_doc,
-    "get_list": get_list,
-    "run_report": run_report,
-    "run_query": run_query,
-    "update_doc": update_doc,
-    "create_doc": create_doc,
-    "submit_doc": submit_doc,
-    "cancel_doc": cancel_doc,
-    "delete_doc": delete_doc,
-    "amend_doc": amend_doc,
-}
+_TOOL_NAMES: tuple[str, ...] = (
+    "get_schema",
+    "get_doc",
+    "get_list",
+    "run_report",
+    "run_query",
+    "update_doc",
+    "create_doc",
+    "submit_doc",
+    "cancel_doc",
+    "delete_doc",
+    "amend_doc",
+)
+
+
+def _resolve(name: str) -> Callable:
+    mod = importlib.import_module(f"jarvis.tools.{name}")
+    return getattr(mod, name)
+
+
+_TOOLS: dict[str, Callable] = {name: _resolve(name) for name in _TOOL_NAMES}
 
 
 def list_tools() -> list[str]:

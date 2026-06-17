@@ -1,6 +1,7 @@
 import frappe
 
 from jarvis.exceptions import InvalidArgumentError, PermissionDeniedError
+from jarvis.tools import require_doctype_and_name
 
 
 def get_doc(doctype: str, name: str) -> dict:
@@ -8,10 +9,7 @@ def get_doc(doctype: str, name: str) -> dict:
 
     Enforces read permission on the specific document for the current user.
     """
-    if not doctype:
-        raise InvalidArgumentError("doctype is required")
-    if not name:
-        raise InvalidArgumentError("name is required")
+    require_doctype_and_name(doctype, name)
 
     if not frappe.db.exists(doctype, name):
         raise InvalidArgumentError(f"unknown {doctype}: {name}")
