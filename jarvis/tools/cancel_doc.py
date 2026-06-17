@@ -29,6 +29,7 @@ Safety bounds:
 import frappe
 
 from jarvis.exceptions import InvalidArgumentError, PermissionDeniedError
+from jarvis.tools import require_doctype_and_name
 
 
 def cancel_doc(doctype: str, name: str) -> dict:
@@ -42,10 +43,7 @@ def cancel_doc(doctype: str, name: str) -> dict:
       - frappe.DoesNotExistError when the record doesn't exist
       - frappe.ValidationError from the DocType's on_cancel hook
     """
-    if not doctype:
-        raise InvalidArgumentError("doctype is required")
-    if not name:
-        raise InvalidArgumentError("name is required")
+    require_doctype_and_name(doctype, name)
 
     meta = frappe.get_meta(doctype)
     if not meta.is_submittable:

@@ -23,6 +23,7 @@ Safety bounds:
 import frappe
 
 from jarvis.exceptions import InvalidArgumentError, PermissionDeniedError
+from jarvis.tools import require_doctype_and_name
 
 
 def delete_doc(doctype: str, name: str) -> dict:
@@ -36,10 +37,7 @@ def delete_doc(doctype: str, name: str) -> dict:
       - frappe.DoesNotExistError when the record doesn't exist
       - frappe.LinkExistsError when other records reference this one
     """
-    if not doctype:
-        raise InvalidArgumentError("doctype is required")
-    if not name:
-        raise InvalidArgumentError("name is required")
+    require_doctype_and_name(doctype, name)
 
     if not frappe.has_permission(doctype, ptype="delete", doc=name):
         raise PermissionDeniedError(
