@@ -343,30 +343,46 @@ def _do_post(url: str, body: dict, headers: dict, timeout_s: int, admin_url: str
 			f"admin {admin_url} returned non-JSON (status {resp.status_code})"
 		)
 
-	# Frappe wraps any exception raised inside a whitelisted endpoint into an
-	# envelope with `exc_type`. We surface those before the generic 4xx/5xx
-	# branches so user-input errors (ValidationError, DuplicateEntryError,
-	# DoesNotExistError) reach the page as clean text instead of a traceback dump.
-	if isinstance(payload, dict) and payload.get("exc_type"):
-		clean = _extract_frappe_message(payload)
-		exc_type = payload.get("exc_type", "")
+	envelope = payload.get("message", payload) if isinstance(payload, dict) else payload
+
+	# Pre-extract the clean message + exc_type if Frappe wrapped a raised
+	# exception. The status-based branches below prefer this clean text
+	# over the raw envelope when available.
+	exc_type = (
+		payload.get("exc_type", "") if isinstance(payload, dict) else ""
+	)
+	clean = _extract_frappe_message(payload) if (
+		isinstance(payload, dict) and (exc_type or payload.get("_server_messages"))
+	) else ""
+
+	def _envelope_message() -> str:
+		err = (envelope or {}).get("error", {}) if isinstance(envelope, dict) else {}
+		return err.get("message") or clean or ""
+
+	# Status-based routing for the three unambiguous wire signals.
+	# The 2026-06-16 review caught that the previous shape ran the
+	# exc_type allowlist BEFORE the status check, so a 429 admin
+	# response with exc_type="RateLimitedError" (not in the allowlist)
+	# fell through to AdminUnreachableError - losing the rate-limit
+	# category entirely. 401/403/429 always win.
+	if resp.status_code in (401, 403):
+		raise AdminAuthError(_envelope_message() or f"admin returned {resp.status_code}")
+	if resp.status_code == 429:
+		err = (envelope or {}).get("error", {}) if isinstance(envelope, dict) else {}
+		raise AdminRateLimitedError(
+			err.get("message") or clean or "rate_limited",
+			retry_after_seconds=int(err.get("retry_after_seconds") or 0),
+		)
+
+	# Frappe-wrapped raised exception with no unambiguous status. Route
+	# by exc_type allowlist; default to AdminUnreachableError when the
+	# class isn't recognised.
+	if exc_type:
 		if exc_type in ("ValidationError", "DuplicateEntryError", "DoesNotExistError"):
 			raise AdminValidationError(clean)
 		if exc_type in ("AuthenticationError", "PermissionError"):
 			raise AdminAuthError(clean)
 		raise AdminUnreachableError(f"admin {admin_url}: {clean}")
-
-	envelope = payload.get("message", payload) if isinstance(payload, dict) else payload
-
-	if resp.status_code in (401, 403):
-		err = (envelope or {}).get("error", {}) if isinstance(envelope, dict) else {}
-		raise AdminAuthError(err.get("message") or f"admin returned {resp.status_code}")
-	if resp.status_code == 429:
-		err = (envelope or {}).get("error", {}) if isinstance(envelope, dict) else {}
-		raise AdminRateLimitedError(
-			err.get("message") or "rate_limited",
-			retry_after_seconds=int(err.get("retry_after_seconds") or 0),
-		)
 	# Sprint-3 PR-8 (2026-06-16 review): a 4xx response with the
 	# structured envelope ({"ok": false, "error": {...}}) is a
 	# user-input / business-rule error, NOT an "admin is unreachable"

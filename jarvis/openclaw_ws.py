@@ -18,7 +18,7 @@ import uuid
 import websocket
 from websocket import create_connection
 
-from jarvis.exceptions import OpenclawReloadFailedError, OpenclawUnreachableError
+from jarvis.exceptions import OpenclawUnreachableError
 
 
 PING_TIMEOUT_SECONDS = 10
@@ -75,11 +75,19 @@ def ping(gateway_url: str, gateway_token: str) -> None:
 
 def _await_response(ws, request_id: str, deadline: float) -> dict:
 	"""Read frames until a `res` frame with matching id arrives. Other
-	frames (events, challenges) are skipped."""
+	frames (events, challenges) are skipped.
+
+	Timeout here surfaces as ``OpenclawUnreachableError`` - the module
+	docstring is explicit that this is a connect-only ping (no
+	secrets.reload, no restart), so the previous
+	``OpenclawReloadFailedError`` was the wrong category and confused
+	the diagnostics UI's branching on the exception type. Punch-list
+	item from the 2026-06-16 review.
+	"""
 	while True:
 		remaining = deadline - time.monotonic()
 		if remaining <= 0:
-			raise OpenclawReloadFailedError("timeout waiting for response")
+			raise OpenclawUnreachableError("timeout waiting for response")
 		ws.settimeout(remaining)
 		raw = ws.recv()
 		if not raw:
