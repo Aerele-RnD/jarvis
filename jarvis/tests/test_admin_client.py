@@ -306,6 +306,121 @@ class TestAdminErrorResponses(FrappeTestCase):
 		self.assertEqual(str(cm.exception), "customer status: Suspended")
 
 
+class TestSecretScrubbingAtBoundary(FrappeTestCase):
+	"""Cross-repo punch-list "secret values can leak to last_sync_status /
+	Error Log via upstream passthrough" from the 2026-06-16 review.
+
+	Defense-in-depth: even though admin's whitelisted endpoints shouldn't
+	echo secrets in error messages, a future admin handler raising
+	``frappe.throw("body was %s" % body)`` would reflect any token in the
+	request straight back to the bench. admin_client must scrub
+	token-shaped substrings BEFORE the Admin*Error reaches the caller,
+	since the caller f-strings ``{e}`` straight into ``last_sync_status``
+	(jarvis_settings.py:157) and frappe.log_error (Error Log doctype).
+	"""
+
+	def setUp(self):
+		_settings_for_admin()
+
+	def tearDown(self):
+		_settings_clear_admin()
+
+	def test_api_key_value_redacted_from_validation_error(self):
+		mock_post = MagicMock(return_value=_mock_response(
+			500,
+			json_body={
+				"exc_type": "ValidationError",
+				"_server_messages": (
+					'["{\\"message\\": \\"upstream rejected: api_key=sk-AbCdEf1234567890abcdef is invalid\\"}"]'
+				),
+			},
+		))
+		with patch("requests.post", mock_post):
+			with self.assertRaises(AdminValidationError) as cm:
+				post_update_llm_creds("p", "m", "b", "k")
+		msg = str(cm.exception)
+		self.assertNotIn("sk-AbCdEf1234567890abcdef", msg)
+		self.assertIn("[REDACTED]", msg)
+		# Keyword survives so operators can still see what kind of error
+		# this was - the secret is the only thing redacted.
+		self.assertIn("upstream rejected", msg)
+
+	def test_authorization_header_redacted_from_4xx_envelope(self):
+		# 4xx + structured envelope path (the most common cross-boundary
+		# shape for admin handler validation failures).
+		mock_post = MagicMock(return_value=_mock_response(
+			417,
+			json_body={
+				"message": {
+					"ok": False,
+					"error": {
+						"code": "BadAuth",
+						"message": "echoed Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload-stuff.sig-stuff",
+					},
+				},
+			},
+		))
+		with patch("requests.post", mock_post):
+			with self.assertRaises(AdminValidationError) as cm:
+				post_update_llm_creds("p", "m", "b", "k")
+		msg = str(cm.exception)
+		self.assertNotIn("eyJhbGciOiJIUzI1NiJ9.payload-stuff.sig-stuff", msg)
+		self.assertIn("[REDACTED]", msg)
+
+	def test_jwt_in_exc_redacted_from_500_envelope(self):
+		# Frappe always pairs ``exception`` with ``exc_type`` for raised
+		# Python exceptions; the bench routes by exc_type allowlist into
+		# AdminUnreachableError (unknown class). The scrub applies before
+		# the exception class name is stripped.
+		mock_post = MagicMock(return_value=_mock_response(
+			500,
+			json_body={
+				"exc_type": "ValueError",
+				"exception": "ValueError: id_token rejected: eyJ0eXAiOiJKV1QifQ.abcde123.signature456",
+			},
+		))
+		with patch("requests.post", mock_post):
+			with self.assertRaises(admin_client.AdminUnreachableError) as cm:
+				post_update_llm_creds("p", "m", "b", "k")
+		msg = str(cm.exception)
+		self.assertNotIn("eyJ0eXAiOiJKV1QifQ.abcde123.signature456", msg)
+		self.assertIn("[REDACTED]", msg)
+
+	def test_oversized_message_truncated(self):
+		# A 10KB traceback embedded in _server_messages must not blow up
+		# the Data field that last_sync_status writes to.
+		giant = "x" * 5000
+		mock_post = MagicMock(return_value=_mock_response(
+			500,
+			json_body={
+				"exc_type": "ValidationError",
+				"_server_messages": f'["{{\\"message\\": \\"{giant}\\"}}"]',
+			},
+		))
+		with patch("requests.post", mock_post):
+			with self.assertRaises(AdminValidationError) as cm:
+				post_update_llm_creds("p", "m", "b", "k")
+		self.assertLess(len(str(cm.exception)), 600)
+		self.assertIn("...[truncated]", str(cm.exception))
+
+	def test_clean_message_passes_through_unchanged(self):
+		# Negative case: a message with no token-shaped substring stays
+		# byte-identical (modulo the truncate cap).
+		mock_post = MagicMock(return_value=_mock_response(
+			417,
+			json_body={
+				"message": {
+					"ok": False,
+					"error": {"code": "no_subscription", "message": "no active subscription on this account"},
+				},
+			},
+		))
+		with patch("requests.post", mock_post):
+			with self.assertRaises(AdminValidationError) as cm:
+				post_update_llm_creds("p", "m", "b", "k")
+		self.assertEqual(str(cm.exception), "no active subscription on this account")
+
+
 class TestNonJsonResponse(FrappeTestCase):
 	def setUp(self):
 		_settings_for_admin()

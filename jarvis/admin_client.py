@@ -8,6 +8,8 @@ Guest calls (signup, get_plans) skip the header entirely; their admin
 endpoints are @frappe.whitelist(allow_guest=True).
 """
 
+import re
+
 import frappe
 import requests
 
@@ -22,6 +24,67 @@ from jarvis.exceptions import (
 # Admin's provision_healthz_timeout_s defaults to 60s for restart operations;
 # 90s leaves 30s buffer for network round-trip + handler overhead.
 DEFAULT_TIMEOUT_S = 90
+
+# Cap on the cross-boundary message length. Long messages (e.g. a Frappe
+# 500 with a 10KB traceback that happens to embed a token mid-frame) get
+# truncated at the admin_client edge so they can't blow up
+# ``last_sync_status`` (a Data field) or burn Error Log rows. Anything
+# longer than this lands in Error Log only.
+_MAX_MESSAGE_CHARS = 500
+
+# Patterns to redact before any admin response text is allowed to cross
+# the boundary into an Admin*Error message (which then becomes the body of
+# ``last_sync_status`` via jarvis_settings.py and the Error Log via
+# frappe.log_error). Even though admin's whitelisted endpoints are not
+# supposed to echo secrets, defense-in-depth: a future admin handler
+# raising ``frappe.throw("body was %s" % body)`` would otherwise reflect
+# the request's api_key / api_secret / refresh_token straight back into
+# the bench's status field. Punch-list "secret values can leak to
+# last_sync_status/Error Log via upstream passthrough" from the
+# 2026-06-16 cross-repo review.
+_SECRET_PATTERNS = (
+	# token=VALUE / api_key=VALUE / api_secret=VALUE / Bearer VALUE /
+	# Authorization: Bearer VALUE / etc. Captures the credential keyword
+	# + the (=|:) + the secret. We replace the whole tail with [REDACTED]
+	# so the keyword survives ("AuthenticationError: api_key=[REDACTED]
+	# is invalid").
+	re.compile(
+		r"(?i)\b("
+		r"api[_-]?key|api[_-]?secret|client[_-]?secret|"
+		r"access[_-]?token|refresh[_-]?token|"
+		r"authorization|bearer|password|secret"
+		r")\s*[=:]\s*\S+"
+	),
+	# OpenAI / Anthropic-style key prefixes (sk-..., sk-ant-..., etc.)
+	# without an explicit keyword. Conservative threshold (20+ chars)
+	# so we don't false-positive on short literals like "sk-1".
+	re.compile(r"\bsk-[A-Za-z0-9_\-]{20,}\b"),
+	# RFC 7519 JWTs (id_token / access_token shapes).
+	re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\b"),
+)
+
+
+def _scrub_secrets(text: str) -> str:
+	"""Strip token-shaped substrings from text crossing the admin_client
+	boundary. Truncate to ``_MAX_MESSAGE_CHARS`` so a 10KB Frappe traceback
+	can't pollute ``last_sync_status``.
+
+	Idempotent: scrubbing already-scrubbed text leaves [REDACTED] markers
+	intact (the patterns don't match the literal "[REDACTED]").
+	"""
+	if not text:
+		return text
+	out = text
+	for pat in _SECRET_PATTERNS:
+		out = pat.sub(lambda m: (
+			# Keyword + "=[REDACTED]" for the labeled-credential pattern;
+			# bare "[REDACTED]" for the prefix / JWT patterns (whole match
+			# IS the secret).
+			f"{m.group(1)}=[REDACTED]" if m.lastindex else "[REDACTED]"
+		), out)
+	if len(out) > _MAX_MESSAGE_CHARS:
+		out = out[:_MAX_MESSAGE_CHARS] + "...[truncated]"
+	return out
 
 # DEFAULT_ADMIN_URL lives in hooks.py as a single source of truth for
 # deployment-level constants; re-exported here so existing
@@ -311,7 +374,13 @@ def _extract_frappe_message(payload: dict) -> str:
 	Frappe encodes user-visible alerts under `_server_messages` (a JSON-encoded
 	list of JSON-encoded dicts with a `message` key). When that's empty, fall
 	back to the `exception` string and strip the leading `module.path.ClassName: `
-	prefix so we don't leak Python internals to the operator."""
+	prefix so we don't leak Python internals to the operator.
+
+	The return value is always scrubbed for token-shaped substrings before it
+	crosses the admin_client boundary - see _scrub_secrets for the patterns.
+	Punch-list "secret values can leak to last_sync_status/Error Log via
+	upstream passthrough" from the 2026-06-16 cross-repo review.
+	"""
 	import json as _json
 	raw = (payload.get("_server_messages") or "").strip()
 	if raw:
@@ -321,13 +390,24 @@ def _extract_frappe_message(payload: dict) -> str:
 				first = _json.loads(messages[0]) if isinstance(messages[0], str) else messages[0]
 				msg = (first or {}).get("message") or ""
 				if msg:
-					return msg
+					return _scrub_secrets(msg)
 		except (ValueError, TypeError):
 			pass
 	exc = (payload.get("exception") or "").strip()
 	if ":" in exc:
-		return exc.split(":", 1)[1].strip()
-	return exc or payload.get("exc_type") or "unknown admin error"
+		return _scrub_secrets(exc.split(":", 1)[1].strip())
+	return _scrub_secrets(exc or payload.get("exc_type") or "unknown admin error")
+
+
+def _envelope_error_message(envelope) -> str:
+	"""Pull ``error.message`` out of an admin envelope and run it through
+	_scrub_secrets. Single bottleneck for the err.get('message') paths -
+	every Admin*Error message we construct from upstream-controlled text
+	flows through here."""
+	if not isinstance(envelope, dict):
+		return ""
+	err = envelope.get("error", {}) or {}
+	return _scrub_secrets(err.get("message") or "")
 
 
 def _do_post(url: str, body: dict, headers: dict, timeout_s: int, admin_url: str) -> dict:
@@ -373,8 +453,9 @@ def _do_post(url: str, body: dict, headers: dict, timeout_s: int, admin_url: str
 	) else ""
 
 	def _envelope_message() -> str:
-		err = (envelope or {}).get("error", {}) if isinstance(envelope, dict) else {}
-		return err.get("message") or clean or ""
+		# _envelope_error_message already scrubs; clean is already scrubbed
+		# (it came from _extract_frappe_message). Falling back to "" is fine.
+		return _envelope_error_message(envelope) or clean or ""
 
 	# Status-based routing for the three unambiguous wire signals.
 	# The 2026-06-16 review caught that the previous shape ran the
@@ -387,7 +468,7 @@ def _do_post(url: str, body: dict, headers: dict, timeout_s: int, admin_url: str
 	if resp.status_code == 429:
 		err = (envelope or {}).get("error", {}) if isinstance(envelope, dict) else {}
 		raise AdminRateLimitedError(
-			err.get("message") or clean or "rate_limited",
+			_envelope_error_message(envelope) or clean or "rate_limited",
 			retry_after_seconds=int(err.get("retry_after_seconds") or 0),
 		)
 
@@ -423,8 +504,7 @@ def _do_post(url: str, body: dict, headers: dict, timeout_s: int, admin_url: str
 	#   5xx + envelope -> AdminUnreachableError (network / admin-down)
 	#   200 with ok:false (rare; some endpoints inline failure) -> AdminUnreachableError
 	if resp.status_code >= 400:
-		err = (envelope or {}).get("error", {}) if isinstance(envelope, dict) else {}
-		msg = err.get("message")
+		msg = _envelope_error_message(envelope)
 		if not msg:
 			# No structured ``error.message`` -> log the raw body but
 			# don't include it in the user-facing exception.
@@ -441,7 +521,7 @@ def _do_post(url: str, body: dict, headers: dict, timeout_s: int, admin_url: str
 	if isinstance(envelope, dict) and not envelope.get("ok", True):
 		err = envelope.get("error", {}) or {}
 		code = err.get("code") or "?"
-		msg = err.get("message")
+		msg = _envelope_error_message(envelope)
 		if not msg:
 			frappe.log_error(
 				title="admin_client: 200 with ok:false but no error.message",
