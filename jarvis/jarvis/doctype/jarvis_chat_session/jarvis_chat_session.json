@@ -9,6 +9,7 @@
   "field_order": [
     "session_key",
     "user",
+    "chat_device_id",
     "created_at",
     "last_seen_at"
   ],
@@ -31,6 +32,13 @@
       "reqd": 1,
       "in_list_view": 1,
       "description": "Frappe user who owns this openclaw session"
+    },
+    {
+      "fieldname": "chat_device_id",
+      "fieldtype": "Data",
+      "label": "Chat Device ID",
+      "read_only": 1,
+      "description": "Snapshot of Jarvis Settings.chat_device_id at session-create time. C2 stretch: if the bench re-pairs (device_id changes), all prior session_keys become invalid - even a leaked session_key + leaked agent_token can no longer impersonate after a routine re-pair."
     },
     {
       "fieldname": "created_at",
