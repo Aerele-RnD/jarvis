@@ -4,7 +4,7 @@ import frappe
 
 from jarvis._http import validate_bearer as _validate_bearer  # noqa: F401 (kept for callers in mcp.py)
 from jarvis._plugin_auth import PluginAuthError, validate_plugin_request
-from jarvis.exceptions import JarvisError
+from jarvis.exceptions import InvalidArgumentError, JarvisError
 from jarvis.tools.registry import dispatch
 
 
@@ -112,10 +112,7 @@ def call_tool(tool: str, args: dict | str | None = None) -> dict:
 
 
 def _dispatch_current_user(tool: str, args: dict | str | None) -> dict:
-	args = _parse_args(args)
-	if isinstance(args, dict):
-		return _dispatch_safe(tool, args)
-	return args  # already an error envelope
+	return _run_tool(tool, args)
 
 
 def _dispatch_from_session(
@@ -130,15 +127,23 @@ def _dispatch_from_session(
 	original = frappe.session.user
 	frappe.set_user(user)
 	try:
-		args_parsed = _parse_args(args)
-		if not isinstance(args_parsed, dict):
-			return args_parsed  # already an error envelope
-		result = _dispatch_safe(tool, args_parsed)
+		# Parse args up front so persist_and_publish gets the same
+		# dict shape the tool ran against (or the empty dict on a
+		# malformed-args rejection).
+		try:
+			parsed_args = _parse_args(args)
+		except InvalidArgumentError as e:
+			result = _error("InvalidArgumentError", str(e))
+			_persist_and_publish_tool_call(
+				session_key=session_key, tool=tool, args={}, result=result,
+			)
+			return result
+		# Pass the already-parsed dict back through _run_tool. _run_tool's
+		# _parse_args call is idempotent on dicts (no JSON parse path,
+		# legacy-marker strip is also idempotent), so no double-work.
+		result = _run_tool(tool, parsed_args)
 		_persist_and_publish_tool_call(
-			session_key=session_key,
-			tool=tool,
-			args=args_parsed,
-			result=result,
+			session_key=session_key, tool=tool, args=parsed_args, result=result,
 		)
 		return result
 	finally:
@@ -221,11 +226,19 @@ def publish_realtime_tool_result(
 
 
 def _parse_args(args: dict | str | None) -> dict:
+	"""Decode the args input into a dict + strip legacy identity markers.
+
+	Raises ``InvalidArgumentError`` (a JarvisError subclass) on JSON
+	parse failure - that mirrors what tools raise for malformed input
+	and lets ``_run_tool`` translate it via the same path. The previous
+	shape returned either a dict OR an error envelope dict, which made
+	every caller branch on the result type.
+	"""
 	if isinstance(args, str):
 		try:
 			args = json.loads(args)
 		except json.JSONDecodeError as e:
-			return _error("InvalidArgumentError", f"args is not valid JSON: {e}")
+			raise InvalidArgumentError(f"args is not valid JSON: {e}")
 	args = args or {}
 	# Defensive: strip LLM-hallucinated "_user" / "_session" fields. The
 	# old MCP design used them as in-band identity carriers; Path A moved
@@ -238,8 +251,31 @@ def _parse_args(args: dict | str | None) -> dict:
 	return args
 
 
-def _dispatch_safe(tool: str, args: dict) -> dict:
+def _run_tool(tool: str, raw_args: dict | str | None) -> dict:
+	"""Parse args + dispatch + wrap in the bench's standard envelope.
+
+	The translation layer between tool-level Python exceptions and
+	the wire-shape ``{ok, data}`` / ``{ok, error}`` envelope. JarvisError
+	subclasses (InvalidArgumentError, PermissionDeniedError,
+	ToolNotFoundError, ...) carry their class name as the wire
+	``code`` so the bench's admin_client + tests can branch on it
+	without parsing the message.
+
+	frappe.PermissionError is caught here so a tool that goes through
+	``frappe.has_permission`` (rather than raising PermissionDeniedError
+	itself) still translates to the bench's envelope rather than
+	Frappe's native 403 page. Anything else (programming errors, real
+	exceptions) propagates to Frappe's native handler so a 500 surfaces
+	at the seam where the bug actually lives.
+
+	Replaces the old _dispatch_safe + _parse_args dance: parse_args
+	used to mix "dict-or-error-envelope" returns with this function's
+	try/except, splitting the translation across two helpers. Folded
+	into one to match the reviewer's "native handler" pattern note
+	from the 2026-06-16 punch list.
+	"""
 	try:
+		args = _parse_args(raw_args)
 		data = dispatch(tool, args)
 	except JarvisError as e:
 		return _error(type(e).__name__, str(e))
