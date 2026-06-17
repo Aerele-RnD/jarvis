@@ -48,6 +48,47 @@ class _OAuthApiBase(FrappeTestCase):
 		frappe.cache.delete_key(_CACHE_KEY)
 
 
+class TestGcExpiredNonces(_OAuthApiBase):
+	# Punch-list "stale PKCE verifiers + unconsumed nonces never GC'd"
+	# from the 2026-06-16 review. The cache stores per-nonce metadata
+	# in a Redis hash whose fields can't carry individual TTLs, so
+	# abandoned begin_paste_signin flows leave verifier+state hanging
+	# until something explicitly wipes them. Now that disconnect() no
+	# longer wipes the hash (its own punch-list fix), the GC sweep on
+	# begin is the only cleanup; pin its behaviour.
+
+	def test_begin_evicts_expired_peer_nonces(self):
+		# Seed a peer's pending nonce that's already past its TTL.
+		frappe.cache.hset(_CACHE_KEY, "expired_peer", {
+			"status": "pending",
+			"originator_user": "peer@example.com",
+			"expires_at_ts": int(time.time()) - 60,
+			"state": "old-state",
+			"verifier": "old-verifier",
+			"provider": "OpenAI",
+			"model": "gpt-5.5",
+		})
+		oauth_api.begin_paste_signin("OpenAI", "gpt-5.5")
+		# Sweep dropped the expired entry.
+		self.assertIsNone(frappe.cache.hget(_CACHE_KEY, "expired_peer"))
+
+	def test_begin_keeps_unexpired_peer_nonces(self):
+		# Peer's nonce hasn't expired yet - sweep must not touch it.
+		frappe.cache.hset(_CACHE_KEY, "live_peer", {
+			"status": "pending",
+			"originator_user": "peer@example.com",
+			"expires_at_ts": int(time.time()) + 600,
+			"state": "live-state",
+			"verifier": "live-verifier",
+			"provider": "OpenAI",
+			"model": "gpt-5.5",
+		})
+		oauth_api.begin_paste_signin("OpenAI", "gpt-5.5")
+		survived = frappe.cache.hget(_CACHE_KEY, "live_peer")
+		self.assertIsNotNone(survived)
+		self.assertEqual(survived["originator_user"], "peer@example.com")
+
+
 class TestBeginPasteSignin(_OAuthApiBase):
 	def test_returns_nonce_authorize_url_expiry(self):
 		out = oauth_api.begin_paste_signin("OpenAI", "gpt-4o")
@@ -152,6 +193,9 @@ class TestCompletePasteSigninParsing(_OAuthApiBase):
 			redirected_url="http://localhost:1455/auth/callback?code=A&state=test-state",
 		)
 		self.assertEqual(out["error"]["code"], "expired")
+		# Expired nonces get evicted on read so the hash doesn't accumulate
+		# dead PKCE verifiers waiting for the periodic GC sweep.
+		self.assertIsNone(frappe.cache.hget(_CACHE_KEY, nonce))
 
 	def test_rejects_missing_code(self):
 		nonce = self._seed()
@@ -166,6 +210,34 @@ class TestCompletePasteSigninParsing(_OAuthApiBase):
 		out = oauth_api.complete_paste_signin(
 			nonce=nonce,
 			redirected_url="http://localhost:1455/auth/callback?code=A&state=wrong",
+		)
+		self.assertEqual(out["error"]["code"], "state_mismatch")
+
+	def test_rejects_state_one_char_off_constant_time(self):
+		# Pins the constant-time compare on state. The previous shape
+		# used ``!=`` which short-circuits on the first differing byte and
+		# would leak a prefix-recovery oracle to an attacker who can
+		# measure complete_paste_signin's response time. Punch-list
+		# "state comparison non-constant-time" - this test pins the
+		# behaviour by asserting a single-char drift still rejects with
+		# the same opaque code.
+		nonce = self._seed()
+		out = oauth_api.complete_paste_signin(
+			nonce=nonce,
+			# state seeded as "test-state"; flip last char.
+			redirected_url="http://localhost:1455/auth/callback?code=A&state=test-statf",
+		)
+		self.assertEqual(out["error"]["code"], "state_mismatch")
+
+	def test_rejects_missing_state_doesnt_crash(self):
+		# Defensive: secrets.compare_digest raises TypeError on None.
+		# Make sure the wrapper coerces both sides to "" before comparing,
+		# so a customer who pastes a code-only URL gets state_mismatch
+		# not a 500.
+		nonce = self._seed()
+		out = oauth_api.complete_paste_signin(
+			nonce=nonce,
+			redirected_url="http://localhost:1455/auth/callback?code=A",
 		)
 		self.assertEqual(out["error"]["code"], "state_mismatch")
 
@@ -353,7 +425,6 @@ class TestDisconnect(_OAuthApiBase):
 		settings.db_set("llm_oauth_account_email", "x@y.com", update_modified=False)
 		settings.db_set("llm_oauth_connected_at",
 		                frappe.utils.now_datetime(), update_modified=False)
-		frappe.cache.hset(_CACHE_KEY, "leftover_nonce", {"status": "pending"})
 		frappe.db.commit()
 
 		out = oauth_api.disconnect()
@@ -364,7 +435,31 @@ class TestDisconnect(_OAuthApiBase):
 		self.assertEqual(settings.last_sync_status, "disconnected")
 		self.assertFalse(settings.llm_oauth_account_email)
 		self.assertIsNone(settings.llm_oauth_connected_at)
-		self.assertIsNone(frappe.cache.hget(_CACHE_KEY, "leftover_nonce"))
+
+	@patch("jarvis.oauth.api.admin_client.post_subscription_disconnect")
+	def test_disconnect_preserves_peers_pending_signins(self, _):
+		# Punch-list "disconnect() wipes entire OAuth signin cache hash"
+		# from the 2026-06-16 review. The previous shape called
+		# frappe.cache.delete_key(_CACHE_KEY) on disconnect, which wipes
+		# every System Manager's pending sign-in - not just the caller's.
+		# Two co-admins on the same site: user A starts a paste-signin,
+		# user B clicks Disconnect, user A's nonce vanishes mid-flow.
+		# Disconnect must leave the (per-user-bound, short-TTL) nonce
+		# cache untouched.
+		frappe.cache.hset(_CACHE_KEY, "peer_pending_nonce", {
+			"status": "pending",
+			"originator_user": "peer@example.com",
+			"expires_at_ts": int(time.time()) + 600,
+			"state": "peer-state",
+			"verifier": "peer-verifier",
+			"provider": "OpenAI",
+			"model": "gpt-5.5",
+		})
+		out = oauth_api.disconnect()
+		self.assertTrue(out["ok"])
+		survived = frappe.cache.hget(_CACHE_KEY, "peer_pending_nonce")
+		self.assertIsNotNone(survived)
+		self.assertEqual(survived["originator_user"], "peer@example.com")
 
 	@patch("jarvis.oauth.api.admin_client.post_subscription_disconnect",
 	       side_effect=_admin_module.AdminUnreachableError("net"))
