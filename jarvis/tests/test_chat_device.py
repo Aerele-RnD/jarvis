@@ -153,6 +153,59 @@ class TestEnsurePaired(_SettingsSnapshotMixin, FrappeTestCase):
 		self.assertNotEqual(creds.device_id, "abc")  # fresh keypair was generated
 
 
+class TestRotateChatDevice(_SettingsSnapshotMixin, FrappeTestCase):
+	def setUp(self):
+		_clear_settings()
+
+	def test_rotate_generates_fresh_keypair_even_when_pairing_exists(self):
+		# Seed Settings with valid pre-rotation creds.
+		priv = Ed25519PrivateKey.generate()
+		pub_raw = priv.public_key().public_bytes(serialization.Encoding.Raw,
+												  serialization.PublicFormat.Raw)
+		old_device_id = hashlib.sha256(pub_raw).hexdigest()
+		s = frappe.get_single("Jarvis Settings")
+		s.db_set("chat_device_id", old_device_id)
+		s.db_set("chat_device_public_key", _b64u(pub_raw))
+		s.db_set("chat_device_private_key", _b64u(priv.private_bytes(
+			serialization.Encoding.Raw, serialization.PrivateFormat.Raw,
+			serialization.NoEncryption())))
+		s.db_set("chat_device_token", "tok-old")
+		frappe.db.commit()
+
+		with patch("jarvis.chat.device.admin_client.pair_chat_device",
+				   return_value={"device_token": "tok-new"}):
+			out = chat_device.rotate_chat_device()
+
+		# Wire-shape check + new device_id is fresh + token rotated.
+		self.assertTrue(out["ok"])
+		self.assertNotEqual(out["data"]["device_id"], old_device_id)
+		s2 = frappe.get_single("Jarvis Settings")
+		self.assertEqual(s2.chat_device_id, out["data"]["device_id"])
+		self.assertEqual(s2.get_password("chat_device_token"), "tok-new")
+
+	def test_rotate_preserves_old_creds_on_admin_failure(self):
+		# Seed old creds.
+		priv = Ed25519PrivateKey.generate()
+		pub_raw = priv.public_key().public_bytes(serialization.Encoding.Raw,
+												  serialization.PublicFormat.Raw)
+		old_device_id = hashlib.sha256(pub_raw).hexdigest()
+		s = frappe.get_single("Jarvis Settings")
+		s.db_set("chat_device_id", old_device_id)
+		s.db_set("chat_device_public_key", _b64u(pub_raw))
+		s.db_set("chat_device_token", "tok-old")
+		frappe.db.commit()
+
+		with patch("jarvis.chat.device.admin_client.pair_chat_device",
+				   side_effect=RuntimeError("admin down")):
+			with self.assertRaises(OpenclawUnreachableError):
+				chat_device.rotate_chat_device()
+
+		# Old creds intact.
+		s2 = frappe.get_single("Jarvis Settings")
+		self.assertEqual(s2.chat_device_id, old_device_id)
+		self.assertEqual(s2.get_password("chat_device_token"), "tok-old")
+
+
 class TestSigning(FrappeTestCase):
 	def test_build_payload_v3_format(self):
 		out = chat_device.build_payload_v3(
