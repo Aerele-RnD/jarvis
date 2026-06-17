@@ -13,6 +13,27 @@ from jarvis.exceptions import (
 )
 
 
+def _require_admin_url() -> None:
+	"""Raise ValidationError if Jarvis Settings.jarvis_admin_url is blank.
+
+	dev_onboard and start_signup both depend on this field being set
+	deliberately. The bench's admin_client falls back to the
+	DEFAULT_ADMIN_URL constant when the override is empty, which on a
+	multi-site bench may resolve to the wrong control plane and silently
+	land the wrong tenancy. Fail fast here with a message the operator
+	can act on (open Jarvis Settings, paste the URL) instead of letting
+	the request reach admin under the default.
+	"""
+	url = (
+		frappe.db.get_single_value("Jarvis Settings", "jarvis_admin_url") or ""
+	).strip()
+	if not url:
+		raise frappe.ValidationError(
+			"Jarvis Settings -> Jarvis Admin URL is blank. "
+			"Set it before continuing onboarding."
+		)
+
+
 def _surface(fn, *args, **kwargs):
 	"""Run an admin_client call; re-raise every admin-side error as a clean
 	frappe.ValidationError so the onboarding page renders a red toast with
@@ -103,8 +124,14 @@ def start_signup(email: str, company: str, plan: str) -> dict:
 	site, which is a System Manager operation on Frappe by convention.
 	Without this, a non-admin staff user could initiate a paid signup using
 	a different email/company under the site's admin contract.
+
+	Requires ``Jarvis Settings.jarvis_admin_url`` to be set first. Otherwise
+	admin_client falls back to the DEFAULT_ADMIN_URL, which on a multi-site
+	bench may be the wrong control plane. Fail fast with an actionable
+	error instead of silently landing the wrong tenancy.
 	"""
 	frappe.only_for("System Manager")
+	_require_admin_url()
 	data = _surface(admin_client.signup, email, company, plan)
 	if data.get("api_token"):
 		write_connection({"api_token": data["api_token"]})
@@ -256,6 +283,7 @@ def dev_onboard(email: str, company: str, plan: str) -> dict:
 			"dev_onboard requires sandbox mode. Enable it in Jarvis "
 			"Settings -> Enable Sandbox Mode before retrying."
 		)
+	_require_admin_url()
 	data = _surface(admin_client.dev_signup, email, company, plan)
 	write_connection(data)
 	return data
