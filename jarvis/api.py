@@ -248,8 +248,12 @@ def _dispatch_safe(tool: str, args: dict) -> dict:
 	return {"ok": True, "data": data}
 
 
-def _error(code: str, message: str) -> dict:
-	return {"ok": False, "error": {"code": code, "message": message}}
+# _error lives in jarvis/_responses.py - single source of truth for the
+# customer-facing envelope shape, shared with jarvis/oauth/api.py. The
+# success envelope (returned inline at lines like
+# ``{"ok": True, "data": data}``) is the matching ``ok()`` there if a
+# caller wants it explicitly.
+from jarvis._responses import err as _error  # noqa: E402
 
 
 def _get_header(name: str) -> str:

@@ -92,12 +92,11 @@ def _coerce_subscription_model(provider: str, model: str) -> str:
 	return _DEFAULT_MODEL.get(provider, "")
 
 
-def _ok(data: dict) -> dict:
-	return {"ok": True, "data": data}
-
-
-def _err(code: str, message: str) -> dict:
-	return {"ok": False, "error": {"code": code, "message": message}}
+# _ok / _err live in jarvis/_responses.py - single source of truth for the
+# customer-facing envelope shape, shared with jarvis/api.py and any future
+# bench endpoint. Punch-list item from the 2026-06-16 review.
+from jarvis._responses import err as _err
+from jarvis._responses import ok as _ok
 
 
 def _generate_pkce() -> tuple[str, str]:

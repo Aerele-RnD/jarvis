@@ -291,7 +291,24 @@ def _handle_event(
 		elif phase == "end":
 			name = tool_msg_by_call_id.get(tool_call_id)
 			if not name:
-				return  # shouldn't happen, but ignore orphaned end events
+				# Orphan: openclaw emitted a tool 'end' event for a
+				# tool_call_id we never logged a 'start' for. Shouldn't
+				# happen, but the previous shape silently returned and
+				# left no operator trace - so a real recurring orphan
+				# (would point at an openclaw event-ordering regression)
+				# would be invisible. Log it as a warning so it shows
+				# up in Error Log triage.
+				frappe.log_error(
+					title="chat worker: orphan tool 'end' event",
+					message=(
+						f"conversation_id={conversation_id!r} "
+						f"run_id={run_id!r} "
+						f"tool_call_id={tool_call_id!r} "
+						f"tool_name={tool_name!r} "
+						f"event_status={event.get('status')!r}"
+					),
+				)
+				return
 			frappe.db.set_value(MSG, name, {
 				"tool_status": event.get("status") or "completed",
 				"streaming": 0,
