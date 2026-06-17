@@ -210,6 +210,50 @@ class TestAdminErrorResponses(FrappeTestCase):
 				post_update_llm_creds("p", "m", "b", "k")
 		self.assertIn("NoRunningTenant", str(cm.exception))
 
+	# Sprint-3 PR-8: 4xx envelope responses route to AdminValidationError,
+	# not AdminUnreachableError. Used to be one bucket; UI showed
+	# "admin is unreachable" for things like NoRunningTenant or
+	# downgrade-not-supported.
+
+	def test_400_with_envelope_raises_validation_error(self):
+		"""InvalidArgument / InvalidToken / InvalidBlob etc. on tenant.py
+		now show up on the bench as AdminValidationError - operator-actionable
+		clean text, not "admin is unreachable; try again."""
+		mock_post = MagicMock(return_value=_mock_response(
+			400, json_body={"message": {
+				"ok": False, "error": {"code": "InvalidToken", "message": "token too short"},
+			}},
+		))
+		with patch("requests.post", mock_post):
+			with self.assertRaises(AdminValidationError) as cm:
+				post_update_llm_creds("p", "m", "b", "k")
+		self.assertEqual(str(cm.exception), "token too short")
+
+	def test_409_with_envelope_raises_validation_error(self):
+		"""NoRunningTenant (409) is a business-rule error, not a network
+		failure - now routes to AdminValidationError so _surface() shows
+		the actual reason."""
+		mock_post = MagicMock(return_value=_mock_response(
+			409, json_body={"message": {
+				"ok": False, "error": {"code": "NoRunningTenant", "message": "no running tenant"},
+			}},
+		))
+		with patch("requests.post", mock_post):
+			with self.assertRaises(AdminValidationError) as cm:
+				post_update_llm_creds("p", "m", "b", "k")
+		self.assertEqual(str(cm.exception), "no running tenant")
+
+	def test_5xx_envelope_still_raises_unreachable(self):
+		"""5xx is genuinely server-side; the unreachable class is correct."""
+		mock_post = MagicMock(return_value=_mock_response(
+			503, json_body={"message": {
+				"ok": False, "error": {"code": "ServiceUnavailable", "message": "down"},
+			}},
+		))
+		with patch("requests.post", mock_post):
+			with self.assertRaises(AdminUnreachableError):
+				post_update_llm_creds("p", "m", "b", "k")
+
 	def test_frappe_validation_error_surfaces_clean_message(self):
 		"""When admin raises frappe.ValidationError inside a whitelisted endpoint
 		(e.g. dev_force_signup → _reject_duplicate_email), the response body has
