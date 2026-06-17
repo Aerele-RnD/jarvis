@@ -27,7 +27,7 @@ DEFAULT_TIMEOUT_S = 90
 # deployment-level constants; re-exported here so existing
 # ``from jarvis.admin_client import DEFAULT_ADMIN_URL`` callers keep working.
 # Override per-customer via ``Jarvis Settings.jarvis_admin_url``.
-from jarvis.hooks import DEFAULT_ADMIN_URL  # noqa: E402, F401
+from jarvis.hooks import DEFAULT_ADMIN_URL  # noqa: E402  - used by _admin_url() below
 
 
 def _admin_url(settings) -> str:
@@ -38,50 +38,40 @@ def signup(email: str, company_name: str, plan: str, coupon: str | None = None) 
 	"""Guest signup against admin. Returns admin's data dict
 	{api_key, api_secret, razorpay_key_id, razorpay_order_id, amount_inr}.
 	Both annual and monthly are one-shot orders (manual renew - no Razorpay subscription)."""
-	settings = frappe.get_single("Jarvis Settings")
 	body = {"email": email, "company_name": company_name, "plan": plan,
 			"frappe_site_url": frappe.utils.get_url()}
 	if coupon:
 		body["coupon"] = coupon
-	return _post_guest(path="/api/method/jarvis_admin.billing.signup.signup",
-					   body=body, admin_url=_admin_url(settings))
+	return _post_guest(path="/api/method/jarvis_admin.billing.signup.signup", body=body)
 
 
 def dev_signup(email: str, company_name: str, plan: str) -> dict:
 	"""Razorpay-free dev signup. Returns admin's flat dict incl. api_key + api_secret + connection."""
-	settings = frappe.get_single("Jarvis Settings")
-	return _post_guest(path="/api/method/jarvis_admin.billing.signup.dev_force_signup",
-					   body={"email": email, "company_name": company_name, "plan": plan,
-							 "frappe_site_url": frappe.utils.get_url()},
-					   admin_url=_admin_url(settings))
+	return _post_guest(
+		path="/api/method/jarvis_admin.billing.signup.dev_force_signup",
+		body={"email": email, "company_name": company_name, "plan": plan,
+			  "frappe_site_url": frappe.utils.get_url()},
+	)
 
 
 def get_plans() -> list:
-	settings = frappe.get_single("Jarvis Settings")
-	return _post_guest(path="/api/method/jarvis_admin.billing.signup.get_plans",
-					   body={}, admin_url=_admin_url(settings))
+	return _post_guest(path="/api/method/jarvis_admin.billing.signup.get_plans", body={})
 
 
 def confirm_payment(payload: dict) -> dict:
 	"""POST Razorpay Checkout result; returns {agent_url, agent_token, tenant_status}."""
-	settings = frappe.get_single("Jarvis Settings")
-	return _post(path="/api/method/jarvis_admin.api.tenant.confirm_payment",
-				 body=payload, admin_url=_admin_url(settings))
+	return _post(path="/api/method/jarvis_admin.api.tenant.confirm_payment", body=payload)
 
 
 def get_connection() -> dict:
 	"""Fetch the assigned container connection (fallback / scheduled sync)."""
-	settings = frappe.get_single("Jarvis Settings")
-	return _post(path="/api/method/jarvis_admin.api.tenant.get_connection",
-				 body={}, admin_url=_admin_url(settings))
+	return _post(path="/api/method/jarvis_admin.api.tenant.get_connection", body={})
 
 
 def renew() -> dict:
 	"""Existing customer pays again to extend (manual one-shot). Returns admin's
 	data dict {razorpay_order_id, razorpay_key_id, amount_inr} for Checkout."""
-	settings = frappe.get_single("Jarvis Settings")
-	return _post(path="/api/method/jarvis_admin.api.tenant.renew",
-				 body={}, admin_url=_admin_url(settings))
+	return _post(path="/api/method/jarvis_admin.api.tenant.renew", body={})
 
 
 def post_update_llm_creds(
@@ -94,7 +84,6 @@ def post_update_llm_creds(
 	source-compatible. Subscription-mode callers pass ``"subscription"`` and
 	pass the OAuth access token as ``api_key``.
 	"""
-	settings = frappe.get_single("Jarvis Settings")
 	return _post(
 		path="/api/method/jarvis_admin.api.tenant.update_llm_creds",
 		body={
@@ -102,7 +91,6 @@ def post_update_llm_creds(
 			"base_url": base_url, "api_key": api_key,
 			"auth_mode": auth_mode,
 		},
-		admin_url=_admin_url(settings),
 	)
 
 
@@ -116,11 +104,9 @@ def post_rotate_llm_secret(secret: str) -> dict:
 		AdminRateLimitedError on HTTP 429.
 		AdminAuthError, AdminUnreachableError, AdminValidationError as usual.
 	"""
-	settings = frappe.get_single("Jarvis Settings")
 	return _post(
 		path="/api/method/jarvis_admin.api.tenant.rotate_llm_secret",
 		body={"secret": secret},
-		admin_url=_admin_url(settings),
 	)
 
 
@@ -142,11 +128,9 @@ def post_rotate_agent_token(new_token: str) -> dict:
 	    AdminAuthError, AdminUnreachableError, AdminValidationError
 	    (shares the rotate-secret 20/h bucket).
 	"""
-	settings = frappe.get_single("Jarvis Settings")
 	return _post(
 		path="/api/method/jarvis_admin.api.tenant.rotate_agent_token",
 		body={"new_token": new_token},
-		admin_url=_admin_url(settings),
 		timeout_s=180,
 	)
 
@@ -172,11 +156,9 @@ def post_push_oauth_blob(provider: str, blob: dict) -> dict:
 		AdminAuthError, AdminUnreachableError, AdminValidationError
 		(rate-limit shares rotate-secret's 20/h bucket).
 	"""
-	settings = frappe.get_single("Jarvis Settings")
 	return _post(
 		path="/api/method/jarvis_admin.api.tenant.push_oauth_blob",
 		body={"provider": provider, "blob": blob},
-		admin_url=_admin_url(settings),
 		timeout_s=180,
 	)
 
@@ -186,11 +168,9 @@ def post_subscription_disconnect() -> dict:
 
 	Idempotent - a tenant in api_key mode is a no-op success.
 	"""
-	settings = frappe.get_single("Jarvis Settings")
 	return _post(
 		path="/api/method/jarvis_admin.api.tenant.subscription_disconnect",
 		body={},
-		admin_url=_admin_url(settings),
 	)
 
 
@@ -218,11 +198,9 @@ def post_llm_auth_status() -> dict:
 	Raises AdminAuthError / AdminUnreachableError / AdminValidationError
 	in the same shape as the other admin_client methods.
 	"""
-	settings = frappe.get_single("Jarvis Settings")
 	return _post(
 		path="/api/method/jarvis_admin.api.tenant.llm_auth_status",
 		body={},
-		admin_url=_admin_url(settings),
 	)
 
 
@@ -241,7 +219,6 @@ def pair_chat_device(public_key: str, device_id: str,
 	The outer HTTPS round-trip timeout (bench -> admin) stays at
 	DEFAULT_TIMEOUT_S=90s; that's the absolute upper bound on this call.
 	"""
-	settings = frappe.get_single("Jarvis Settings")
 	return _post(
 		path="/api/method/jarvis_admin.api.tenant.pair_chat_device",
 		body={
@@ -249,17 +226,15 @@ def pair_chat_device(public_key: str, device_id: str,
 			"device_id": device_id,
 			"request_timeout_s": request_timeout_s,
 		},
-		admin_url=_admin_url(settings),
 	)
 
 
 def get_account_summary() -> dict:
 	"""Fetch the customer's plan + validity + upgrade-eligible plans. Used by
 	the /jarvis-account page to render plan summary and the upgrade picker."""
-	settings = frappe.get_single("Jarvis Settings")
 	return _post(
 		path="/api/method/jarvis_admin.api.account.get_account_summary",
-		body={}, admin_url=_admin_url(settings),
+		body={},
 	)
 
 
@@ -267,10 +242,9 @@ def preview_upgrade(target_plan: str) -> dict:
 	"""Get the prorated amount for upgrading to ``target_plan`` (no order
 	created). Used by the upgrade plan picker so each plan card shows the
 	live-computed amount before the customer commits."""
-	settings = frappe.get_single("Jarvis Settings")
 	return _post(
 		path="/api/method/jarvis_admin.api.account.preview_upgrade",
-		body={"target_plan": target_plan}, admin_url=_admin_url(settings),
+		body={"target_plan": target_plan},
 	)
 
 
@@ -279,21 +253,29 @@ def start_upgrade(target_plan: str) -> dict:
 	Razorpay handles ({razorpay_order_id, razorpay_key_id, amount_inr,
 	target_plan}). The order's notes carry the upgrade intent for
 	confirm_payment to pick up after Razorpay Checkout completes."""
-	settings = frappe.get_single("Jarvis Settings")
 	return _post(
 		path="/api/method/jarvis_admin.api.account.start_upgrade",
-		body={"target_plan": target_plan}, admin_url=_admin_url(settings),
+		body={"target_plan": target_plan},
 	)
 
 
-def _post(path: str, body: dict, admin_url: str,
+def _post(path: str, body: dict, *,
 		  timeout_s: int = DEFAULT_TIMEOUT_S) -> dict:
-	"""Authenticated POST. Reads native api_key + api_secret from Jarvis
-	Settings. Raises AdminAuthError early if either is empty."""
+	"""Authenticated POST. Reads native api_key + api_secret + the admin URL
+	override from Jarvis Settings. Raises AdminAuthError early if either
+	credential is empty.
+
+	Previously each public wrapper open-coded
+	``settings = frappe.get_single(...)`` + ``_admin_url(settings)`` before
+	calling _post (which then re-fetched Settings internally for the
+	credentials). Folding the settings read here means callers shrink to
+	``return _post(path=..., body=...)`` - one Settings load per call
+	instead of two. Punch-list item from the 2026-06-16 review.
+	"""
 	settings = frappe.get_single("Jarvis Settings")
-	# Both are Password fields - attribute access would return the masked
-	# "*****" placeholder Frappe stores in the row. get_password decrypts
-	# the real value out of __Auth.
+	# Both credential fields are Password fields - attribute access would
+	# return the masked "*****" placeholder Frappe stores in the row.
+	# get_password decrypts the real value out of __Auth.
 	api_key = (settings.get_password(
 		"jarvis_admin_api_key", raise_exception=False
 	) or "").strip()
@@ -304,6 +286,7 @@ def _post(path: str, body: dict, admin_url: str,
 		raise AdminAuthError(
 			"not onboarded (Jarvis Settings: admin api_key + api_secret empty)"
 		)
+	admin_url = _admin_url(settings)
 	headers = {
 		"Authorization": f"token {api_key}:{api_secret}",
 		"Content-Type": "application/json",
@@ -311,9 +294,13 @@ def _post(path: str, body: dict, admin_url: str,
 	return _do_post(admin_url + path, body, headers, timeout_s, admin_url)
 
 
-def _post_guest(path: str, body: dict, admin_url: str,
+def _post_guest(path: str, body: dict, *,
 				timeout_s: int = DEFAULT_TIMEOUT_S) -> dict:
-	"""Unauthenticated POST (signup, get_plans). No Authorization header."""
+	"""Unauthenticated POST (signup, get_plans). No Authorization header.
+	Fetches the admin URL override from Settings internally so callers
+	don't have to."""
+	settings = frappe.get_single("Jarvis Settings")
+	admin_url = _admin_url(settings)
 	headers = {"Content-Type": "application/json"}
 	return _do_post(admin_url + path, body, headers, timeout_s, admin_url)
 
