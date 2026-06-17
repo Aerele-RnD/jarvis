@@ -15,6 +15,7 @@ O(1) lookup behaviour.
 from __future__ import annotations
 
 import importlib
+import inspect
 from typing import Callable
 
 from jarvis.exceptions import InvalidArgumentError, ToolNotFoundError
@@ -42,6 +43,32 @@ def _resolve(name: str) -> Callable:
 _TOOLS: dict[str, Callable] = {name: _resolve(name) for name in _TOOL_NAMES}
 
 
+def _accepted_params(fn: Callable) -> set[str]:
+    """Names of the parameters ``fn`` is willing to bind by keyword.
+
+    Computed once per tool function and cached so dispatch doesn't pay
+    the inspect cost on every call. If a tool ever uses ``**kwargs``
+    we surface that with an empty set + a special VAR_KEYWORD marker
+    via the cache (caller skips filtering for those tools).
+    """
+    return {
+        p.name
+        for p in inspect.signature(fn).parameters.values()
+        if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)
+    }
+
+
+_ACCEPTS_VAR_KW: dict[str, bool] = {
+    name: any(
+        p.kind == p.VAR_KEYWORD for p in inspect.signature(fn).parameters.values()
+    )
+    for name, fn in _TOOLS.items()
+}
+_ACCEPTED_PARAMS: dict[str, set[str]] = {
+    name: _accepted_params(fn) for name, fn in _TOOLS.items()
+}
+
+
 def list_tools() -> list[str]:
     return sorted(_TOOLS.keys())
 
@@ -51,6 +78,18 @@ def dispatch(tool_name: str, args: dict):
         raise ToolNotFoundError(f"no such tool: {tool_name}")
     if not isinstance(args, dict):
         raise InvalidArgumentError("args must be a dict")
+    # Filter args to keys the tool's signature actually binds. Defense-
+    # in-depth against an LLM that hallucinates extra keyword args - a
+    # tool that does ``def get_doc(doctype, name)`` should not receive a
+    # ``permission_check=False`` kwarg even if the LLM emits one.
+    # ``api._parse_args`` already strips the legacy ``_user``/``_session``
+    # markers; this is the wider allowlist over what the tool's own
+    # parameter list declares. Tools that use ``**kwargs`` opt out
+    # (currently none, but future tools wanting bag-of-args semantics
+    # would skip the filter naturally).
+    if not _ACCEPTS_VAR_KW.get(tool_name, False):
+        accepted = _ACCEPTED_PARAMS[tool_name]
+        args = {k: v for k, v in args.items() if k in accepted}
     try:
         return _TOOLS[tool_name](**args)
     except TypeError as e:
