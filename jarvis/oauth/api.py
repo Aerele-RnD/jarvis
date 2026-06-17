@@ -65,34 +65,28 @@ _NONCE_TTL_SECS = 600
 _HTTP_TIMEOUT = 30
 _REDIRECT_URI = "http://localhost:1455/auth/callback"
 # Codex/gemini-cli's CLI-specific model IDs (not OpenAI/Google's standard
-# API model names). Mirrors the SUBSCRIPTION_MODELS dict in
-# jarvis_onboarding.js / jarvis_account.js - keep both in sync. Customer-
-# supplied models outside this set get coerced to _DEFAULT_MODEL before
-# being cached: sending a standard-API model (e.g. "gpt-4o") through the
-# codex auth tunnel makes openclaw's codex extension fail every chat turn
-# with ProviderAuthError: "No API key found for provider openai" (it
-# treats model-mismatch as auth failure, not as a clearer model error).
-# Live-confirmed 2026-06-11 on jarvis-pool-05b704.
+# API model names). Catalogue lives in jarvis/_subscription_models.py and
+# is imported here so the chat-tier and oauth-tier validators agree on
+# the same set of accepted models (previously this module declared sets
+# and chat/api.py declared lists - 2026-06-16 punch-list drift item).
 #
-# Catalog sync: these values must match openclaw 2026.6.4's bundled
-# codex catalog (the version pinned by jarvis_admin.host_setup.
+# Catalog sync constraints: these values must match openclaw 2026.6.4's
+# bundled codex catalog (the version pinned by jarvis_admin.host_setup.
 # DEFAULT_OPENCLAW_IMAGE). The script at
 # jarvis-fleet-agent/scripts/verify-openclaw-assumptions.sh asserts at
 # image-bump time that the catalog still contains "gpt-5.5"; if it ever
-# fails because the catalog drifted, update this set + the JS mirrors
-# atomically and re-run the script before bumping the image pin.
-_SUBSCRIPTION_MODELS = {
-	"OpenAI": {"gpt-5.5", "gpt-5.4", "gpt-5.4-mini"},
-	"Google Gemini": {"gemini-2.0-pro", "gemini-1.5-pro", "gemini-1.5-flash"},
-}
-_DEFAULT_MODEL = {"OpenAI": "gpt-5.5", "Google Gemini": "gemini-2.0-pro"}
+# fails because the catalog drifted, update jarvis/_subscription_models.py
+# + the JS mirrors atomically and re-run the script before bumping the
+# image pin.
+from jarvis._subscription_models import DEFAULT_MODEL as _DEFAULT_MODEL
+from jarvis._subscription_models import SUBSCRIPTION_MODELS as _SUBSCRIPTION_MODELS
 
 
 def _coerce_subscription_model(provider: str, model: str) -> str:
 	"""Return ``model`` if valid for ``provider``'s subscription mode,
 	else fall back to ``_DEFAULT_MODEL[provider]``. Empty string for an
 	unknown provider (begin_paste_signin already rejects those upstream)."""
-	valid = _SUBSCRIPTION_MODELS.get(provider, set())
+	valid = _SUBSCRIPTION_MODELS.get(provider, [])
 	if model and model in valid:
 		return model
 	return _DEFAULT_MODEL.get(provider, "")

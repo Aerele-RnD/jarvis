@@ -189,10 +189,18 @@ def save_llm_creds(provider: str, model: str, api_key: str = "",
 		s.flags.force_admin_sync = True
 	s.save(ignore_permissions=True)
 	frappe.db.commit()
-	s = frappe.get_single("Jarvis Settings")
+	# on_update writes last_sync_* via frappe.db.set_value so the
+	# in-memory ``s`` doc is stale. Fetch JUST the two fields we
+	# need rather than reloading the entire Singles doc (the previous
+	# shape was ``frappe.get_single(...)`` then ``.get(...)`` on
+	# every field - pointless re-fetch from the 2026-06-16 review).
+	row = frappe.db.get_value(
+		"Jarvis Settings", "Jarvis Settings",
+		["last_sync_at", "last_sync_status"], as_dict=True,
+	) or {}
 	return {
-		"last_sync_at": str(s.get("last_sync_at") or ""),
-		"last_sync_status": s.get("last_sync_status") or "",
+		"last_sync_at": str(row.get("last_sync_at") or ""),
+		"last_sync_status": row.get("last_sync_status") or "",
 	}
 
 
