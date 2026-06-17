@@ -33,6 +33,35 @@ from jarvis.chat.device import (
 	ensure_paired, sign_payload,
 )
 from jarvis.chat.events import parse_event
+
+
+# Openclaw gateway's WS frame format. Looks JSON-RPC-shaped but has its
+# own type discriminator (``"type": "req"|"res"|"event"``) rather than
+# JSON-RPC 2.0's ``"jsonrpc": "2.0"`` field, so a generic JSON-RPC
+# library doesn't fit. The frame builders here are the (small,
+# explicit) protocol seam between the bench and openclaw's WS;
+# centralised so the next time we need to add a frame field (e.g.
+# trace IDs, span context) it lands in one place rather than at every
+# ws.send site. Punch-list item "JSON-RPC framing reinvented" from
+# the 2026-06-16 review.
+
+def _build_request_frame(method: str, params: dict, *, req_id: str | None = None) -> tuple[str, str]:
+	"""Build a serialised openclaw request frame.
+
+	Returns (json_payload, req_id) - caller passes json_payload to
+	ws.send and uses req_id to match the response frame.
+	"""
+	rid = req_id or uuid.uuid4().hex
+	return json.dumps({
+		"type": "req", "id": rid, "method": method, "params": params,
+	}), rid
+
+
+def _is_response_frame(frame: dict, req_id: str) -> bool:
+	"""True when ``frame`` is the response to the request that issued
+	``req_id``. Encapsulates the (type, id) discrimination so the two
+	caller sites don't open-code it independently."""
+	return frame.get("type") == "res" and frame.get("id") == req_id
 from jarvis.exceptions import OpenclawUnreachableError
 
 CONNECT_TIMEOUT_SECONDS = 10
@@ -322,36 +351,33 @@ class OpenclawSession:
 		)
 		signature_b64u = sign_payload(creds.private_key, payload)
 		connect_id = uuid.uuid4().hex
-		ws.send(json.dumps({
-			"type": "req",
-			"id": connect_id,
-			"method": "connect",
-			"params": {
-				"minProtocol": 4,
-				"maxProtocol": 4,
-				"client": {
-					"id": _CLIENT_ID, "version": "0.1.0",
-					"platform": _PLATFORM, "mode": _CLIENT_MODE,
-				},
-				"role": _ROLE,
-				"scopes": _REQUESTED_SCOPES,
-				"auth": {"deviceToken": creds.device_token},
-				"device": {
-					"id": creds.device_id,
-					"publicKey": creds.public_key,
-					"signature": signature_b64u,
-					"signedAt": signed_at_ms,
-					"nonce": nonce,
-				},
+		connect_params = {
+			"minProtocol": 4,
+			"maxProtocol": 4,
+			"client": {
+				"id": _CLIENT_ID, "version": "0.1.0",
+				"platform": _PLATFORM, "mode": _CLIENT_MODE,
 			},
-		}))
+			"role": _ROLE,
+			"scopes": _REQUESTED_SCOPES,
+			"auth": {"deviceToken": creds.device_token},
+			"device": {
+				"id": creds.device_id,
+				"publicKey": creds.public_key,
+				"signature": signature_b64u,
+				"signedAt": signed_at_ms,
+				"nonce": nonce,
+			},
+		}
+		connect_payload, _ = _build_request_frame("connect", connect_params, req_id=connect_id)
+		ws.send(connect_payload)
 
 		# 3. Wait for the connect response.
 		while time.monotonic() < deadline:
 			frame = _recv_with_timeout(ws, deadline - time.monotonic())
 			if frame is None:
 				continue
-			if frame.get("type") == "res" and frame.get("id") == connect_id:
+			if _is_response_frame(frame, connect_id):
 				if not frame.get("ok"):
 					err = frame.get("error") or {}
 					raise OpenclawUnreachableError(
@@ -363,11 +389,9 @@ class OpenclawSession:
 
 	def _send(self, method: str, params: dict) -> str:
 		"""Send a request frame; return the generated request id."""
-		req_id = uuid.uuid4().hex
+		payload, req_id = _build_request_frame(method, params)
 		with self._lock:
-			self._ws.send(json.dumps({
-				"type": "req", "id": req_id, "method": method, "params": params,
-			}))
+			self._ws.send(payload)
 		return req_id
 
 	def _request(self, method: str, params: dict, *, timeout_s: float) -> dict:
@@ -381,7 +405,7 @@ class OpenclawSession:
 			frame = self._recv(deadline - time.monotonic())
 			if frame is None:
 				continue
-			if frame.get("type") == "res" and frame.get("id") == req_id:
+			if _is_response_frame(frame, req_id):
 				if not frame.get("ok"):
 					err = frame.get("error") or {}
 					raise OpenclawUnreachableError(
