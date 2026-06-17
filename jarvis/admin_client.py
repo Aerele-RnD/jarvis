@@ -365,8 +365,30 @@ def _do_post(url: str, body: dict, headers: dict, timeout_s: int, admin_url: str
 			err.get("message") or "rate_limited",
 			retry_after_seconds=int(err.get("retry_after_seconds") or 0),
 		)
-	if resp.status_code >= 400 or (isinstance(envelope, dict) and not envelope.get("ok", True)):
+	# Sprint-3 PR-8 (2026-06-16 review): a 4xx response with the
+	# structured envelope ({"ok": false, "error": {...}}) is a
+	# user-input / business-rule error, NOT an "admin is unreachable"
+	# condition. The previous shape raised AdminUnreachableError for
+	# both 4xx envelopes AND genuine 5xx / network failures, which
+	# made _surface() in onboarding.py show "admin is unreachable;
+	# try again" for things like "no subscription found" or
+	# "downgrade not supported" - misleading and unhelpful.
+	#
+	# Route by HTTP status:
+	#   4xx + envelope -> AdminValidationError (clean text to UI)
+	#   5xx + envelope -> AdminUnreachableError (network / admin-down)
+	#   200 with ok:false (rare; some endpoints inline failure) -> AdminUnreachableError
+	if resp.status_code >= 400:
 		err = (envelope or {}).get("error", {}) if isinstance(envelope, dict) else {}
+		msg = err.get("message") or resp.text[:200] or f"admin returned {resp.status_code}"
+		if 400 <= resp.status_code < 500:
+			raise AdminValidationError(msg)
+		raise AdminUnreachableError(
+			f"admin {admin_url} returned error: "
+			f"{err.get('code', '?')}: {msg}"
+		)
+	if isinstance(envelope, dict) and not envelope.get("ok", True):
+		err = envelope.get("error", {}) or {}
 		raise AdminUnreachableError(
 			f"admin {admin_url} returned error: "
 			f"{err.get('code', '?')}: {err.get('message', resp.text[:200])}"
