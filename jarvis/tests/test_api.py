@@ -172,6 +172,105 @@ class TestCallToolPluginAuth(FrappeTestCase):
 				call_tool(tool="get_schema", args={"doctype": "Customer"})
 		self.assertEqual(frappe.session.user, original)
 
+	def _patched_session_lookup(self, *, row_device: str, current_device: str):
+		"""Patch context that fakes:
+		  - The Chat Session row's user lookup returns "Administrator" so
+		    the existing user-resolution path succeeds.
+		  - The Chat Session row's chat_device_id lookup returns
+		    ``row_device`` (or "" to opt out of binding).
+		  - Jarvis Settings.chat_device_id returns ``current_device``.
+		Avoids requiring a real DB column (the JSON definition adds
+		``chat_device_id`` but the migration runs at deploy time).
+		"""
+		original_get_value = frappe.db.get_value
+		original_get_single_value = frappe.db.get_single_value
+
+		def _fake_get_value(*args, **kwargs):
+			# (doctype, filters, fieldname) positional OR kwargs.
+			doctype = args[0] if args else kwargs.get("doctype")
+			fieldname = args[2] if len(args) > 2 else kwargs.get("fieldname")
+			if doctype == "Jarvis Chat Session":
+				if fieldname == "user":
+					return "Administrator"
+				if fieldname == "chat_device_id":
+					return row_device
+			return original_get_value(*args, **kwargs)
+
+		def _fake_get_single_value(doctype, field, *a, **kw):
+			if doctype == "Jarvis Settings" and field == "chat_device_id":
+				return current_device
+			return original_get_single_value(doctype, field, *a, **kw)
+
+		return (
+			patch("jarvis.api.frappe.db.get_value", side_effect=_fake_get_value),
+			patch("jarvis.api.frappe.db.get_single_value",
+			      side_effect=_fake_get_single_value),
+		)
+
+	def test_session_bound_to_old_device_rejected_after_repair(self):
+		"""C2 stretch (2026-06-16 review): if the bench re-pairs the chat
+		device after a session was issued, that session's chat_device_id
+		snapshot won't match the current device id. The session is
+		rejected with 401 AuthenticationError - bounds leaked-session
+		replay to the window before the next operator re-pair."""
+		gv, gsv = self._patched_session_lookup(
+			row_device="old-device-id-from-before-repair",
+			current_device="current-device-id-after-repair",
+		)
+		with self._with_headers({
+			"X-Jarvis-Token": "plugin-auth-test-token",
+			"X-Jarvis-Session": "agent:test:any-session",
+		}):
+			with gv, gsv:
+				with patch("frappe.db.exists", return_value=True):
+					result = call_tool(tool="get_schema", args={"doctype": "Customer"})
+		self.assertFalse(result["ok"])
+		self.assertEqual(result["error"]["code"], "AuthenticationError")
+		self.assertEqual(frappe.local.response.http_status_code, 401)
+		self.assertIn("previous device pairing", result["error"]["message"])
+
+	def test_session_bound_to_current_device_accepted(self):
+		"""Sanity check: a session whose chat_device_id matches the
+		current bench device_id dispatches normally. No regression for
+		the happy path."""
+		gv, gsv = self._patched_session_lookup(
+			row_device="matching-device-id",
+			current_device="matching-device-id",
+		)
+		with self._with_headers({
+			"X-Jarvis-Token": "plugin-auth-test-token",
+			"X-Jarvis-Session": "agent:test:any-session",
+		}):
+			with gv, gsv:
+				with patch("frappe.db.exists", return_value=True):
+					with patch("jarvis.api.dispatch",
+					           return_value={"doctype": "Customer", "fields": []}):
+						with patch("jarvis.api._persist_and_publish_tool_call"):
+							result = call_tool(tool="get_schema",
+							                    args={"doctype": "Customer"})
+		self.assertTrue(result["ok"], msg=result)
+
+	def test_pre_migration_row_without_device_id_passes(self):
+		"""Backwards-compat: a row without ``chat_device_id`` (pre-migration
+		session or pre-fix bench) must continue to dispatch normally so
+		call_tool doesn't 500 on the first call after a deploy."""
+		gv, gsv = self._patched_session_lookup(
+			row_device="",  # empty = pre-migration session
+			current_device="current-device-id",
+		)
+		with self._with_headers({
+			"X-Jarvis-Token": "plugin-auth-test-token",
+			"X-Jarvis-Session": "agent:test:any-session",
+		}):
+			with gv, gsv:
+				with patch("frappe.db.exists", return_value=True):
+					with patch("jarvis.api.dispatch",
+					           return_value={"doctype": "Customer", "fields": []}):
+						with patch("jarvis.api._persist_and_publish_tool_call"):
+							result = call_tool(tool="get_schema",
+							                    args={"doctype": "Customer"})
+		self.assertTrue(result["ok"], msg=result)
+
 
 def _cleanup_session(session_key: str) -> None:
 	names = frappe.get_all(

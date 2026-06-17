@@ -408,11 +408,21 @@ def _ensure_session_key(user: str) -> str:
 	finally:
 		sess.close()
 
+	# C2 stretch (2026-06-16 review): snapshot the bench's current
+	# chat_device_id into the Jarvis Chat Session row. On every
+	# call_tool the plugin-auth validator re-checks that the row's
+	# device_id still matches the bench's current device_id; if not
+	# (because the bench re-paired - operator rotation or compromise
+	# response), the session_key is dead. This bounds the window for
+	# a leaked-session-key replay attack to "until the next re-pair."
+	current_device_id = (settings.chat_device_id or "").strip()
+
 	# Insert the Chat Session row (plugin's sessionKey → user lookup table)
 	frappe.get_doc({
 		"doctype": "Jarvis Chat Session",
 		"session_key": session_key,
 		"user": user,
+		"chat_device_id": current_device_id,
 	}).insert(ignore_permissions=True)
 	frappe.db.commit()
 

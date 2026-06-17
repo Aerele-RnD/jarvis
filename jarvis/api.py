@@ -65,6 +65,41 @@ def call_tool(tool: str, args: dict | str | None = None) -> dict:
 				f"session references unknown user: {plugin_user}",
 			)
 
+		# C2 stretch (2026-06-16 review): bind session_key -> bench's
+		# device_id at session-create time, verify on every call. If the
+		# bench has re-paired since this session was created (operator
+		# rotation, incident response, etc.) the snapshot won't match
+		# the current device_id and we reject. Bounds leaked-session
+		# replay to "until the next re-pair."
+		#
+		# Backwards-compat (two-fold):
+		#   1. A row without ``chat_device_id`` (pre-migration row from
+		#      before this column was added) passes through.
+		#   2. A bench whose Jarvis Chat Session DocType hasn't picked up
+		#      the new column yet (pre-bench-migrate state) also passes
+		#      through - we tolerate the AttributeError-ish read failure
+		#      so call_tool doesn't 500 on the first call after a deploy.
+		# Once everyone is migrated the strict check applies uniformly.
+		try:
+			row_device = (frappe.db.get_value(
+				"Jarvis Chat Session",
+				{"session_key": session_key},
+				"chat_device_id",
+			) or "").strip()
+		except Exception:
+			row_device = ""
+		if row_device:
+			current_device = (
+				frappe.db.get_single_value("Jarvis Settings", "chat_device_id") or ""
+			).strip()
+			if current_device and row_device != current_device:
+				frappe.local.response.http_status_code = 401
+				return _error(
+					"AuthenticationError",
+					"session is bound to a previous device pairing; "
+					"the bench has re-paired since this session was issued",
+				)
+
 		return _dispatch_from_session(plugin_user, session_key, tool, args)
 
 	# Standard Frappe auth path - Guest is rejected; everything else dispatches
