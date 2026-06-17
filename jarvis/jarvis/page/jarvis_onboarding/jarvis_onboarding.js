@@ -150,8 +150,20 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 			e.preventDefault();
 			frappe.call({ method: "jarvis.onboarding.sync_connection" }).then((r) => {
 				const m = r.message || {};
-				if (m.synced) frappe.show_alert({ message: __("Connection synced."), indicator: "green" });
-				else frappe.show_alert({ message: __("Nothing to sync yet ({0}).", [m.tenant_status || m.reason || "pending"]), indicator: "orange" });
+				if (m.synced) {
+					// Connection landed successfully - advance the wizard
+					// to the completion screen instead of leaving the
+					// customer staring at step 1 with a green toast.
+					// Punch-list item from the 2026-06-16 review: the
+					// previous shape showed "Connection synced." but
+					// left the wizard at whatever step they were on,
+					// which read as a dead state.
+					frappe.show_alert({ message: __("Connection synced."), indicator: "green" });
+					state.successData = state.successData || {};
+					go(4);
+				} else {
+					frappe.show_alert({ message: __("Nothing to sync yet ({0}).", [m.tenant_status || m.reason || "pending"]), indicator: "orange" });
+				}
 			});
 		});
 	}
@@ -664,7 +676,20 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 					args: { payload: { razorpay_payment_id: res.razorpay_payment_id, razorpay_order_id: res.razorpay_order_id, razorpay_signature: res.razorpay_signature } },
 				}).then((rr) => { state.successData = rr.message; go(4); }).catch((e) => payErr(e));
 			},
-			modal: { ondismiss: () => setBusy("#jo-pay", false) },
+			// Razorpay dismiss (customer closed Checkout without paying).
+			// Re-enable Pay AND surface why the wizard didn't advance -
+			// the previous shape just re-enabled the button silently,
+			// leaving the customer wondering if anything happened.
+			// Punch-list item from the 2026-06-16 review.
+			modal: {
+				ondismiss: () => {
+					setBusy("#jo-pay", false);
+					frappe.show_alert({
+						message: __("Payment cancelled. Click Pay to try again."),
+						indicator: "orange",
+					});
+				},
+			},
 		});
 		rz.open();
 	}
