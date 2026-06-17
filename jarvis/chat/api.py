@@ -13,6 +13,17 @@ import frappe
 CONV = "Jarvis Conversation"
 MSG = "Jarvis Chat Message"
 
+# Wall-clock budget for the RQ worker that runs one agent turn.
+#
+# Covers worst case end-to-end: pair (<=90s admin round-trip) +
+# WS connect (10s) + TURN_TIMEOUT_SECONDS (180s) = 280s. 300s gives
+# 20s headroom. Previously this was hardcoded as ``timeout=300``
+# at both enqueue sites (send_message + retry_message) so a bump
+# had to land in two places - the 2026-06-16 review caught a
+# previous 200s ceiling that had drifted to 300s in one site but
+# stayed 200s in the other.
+_AGENT_TURN_WORKER_TIMEOUT = 300
+
 # Process-local cache for the chat bundle hash. Invalidated by mtime so a
 # `bench build` is picked up without restarting workers.
 _BUILD_ID_CACHE: dict = {"mtime": 0.0, "value": ""}
@@ -238,16 +249,10 @@ def send_message(
 
 	# Enqueue the worker. Returns immediately; worker runs async.
 	run_id = uuid.uuid4().hex[:12]
-	# RQ worker budget covers worst-case: pair (<=90s admin round-trip) +
-	# WS connect (10s) + TURN_TIMEOUT_SECONDS (180s). The previous 200s
-	# ceiling fell under that 280s envelope, so a SIGKILL on timeout
-	# bypassed run_agent_turn's try/finally and stranded the placeholder
-	# row with ``streaming=1`` forever. 300s gives 20s headroom on the
-	# nominal worst case. Sprint-2 review item.
 	frappe.enqueue(
 		method="jarvis.chat.worker.run_agent_turn",
 		queue="default",
-		timeout=300,
+		timeout=_AGENT_TURN_WORKER_TIMEOUT,
 		conversation_id=conversation,
 		message_id=msg_doc.name,
 		run_id=run_id,
@@ -364,12 +369,10 @@ def retry_message(message: str) -> dict:
 	)
 
 	run_id = uuid.uuid4().hex[:12]
-	# Parity with send_message: 300s covers pair (<=90s) + connect (10s)
-	# + turn (180s). See note at the send_message enqueue site.
 	frappe.enqueue(
 		method="jarvis.chat.worker.run_agent_turn",
 		queue="default",
-		timeout=300,
+		timeout=_AGENT_TURN_WORKER_TIMEOUT,
 		conversation_id=doc.conversation,
 		message_id=user_msg_id,
 		run_id=run_id,
