@@ -1,15 +1,11 @@
 """Shared HTTP helpers for Jarvis whitelisted endpoints.
 
-Provides _validate_bearer() and _raw_json_response() so that both mcp.py
-and api.py can share the same auth logic and raw-response behaviour without
-duplication.
+Provides ``validate_bearer()`` for X-Jarvis-Token header auth.
 """
 
 import hmac
-import json
 
 import frappe
-from werkzeug.wrappers import Response as WerkzeugResponse
 
 
 def validate_bearer() -> bool:
@@ -28,20 +24,3 @@ def validate_bearer() -> bool:
         return False
     # Constant-time comparison to prevent timing-oracle attacks
     return hmac.compare_digest(presented, expected)
-
-
-def raw_json_response(data: dict, status_code: int = 200) -> WerkzeugResponse:
-    """Return ``data`` as a raw JSON Werkzeug response, bypassing Frappe's wrapper.
-
-    Frappe's ``@frappe.whitelist`` normally wraps return values in
-    ``{"message": <value>}``.  The MCP SDK validates the raw JSON-RPC envelope
-    and rejects the wrapper.  Returning a werkzeug ``Response`` object directly
-    from a whitelist function causes Frappe's API handler to pass it through
-    unchanged (see ``frappe.api.handle``: ``if isinstance(data, Response): return data``).
-    """
-    resp = WerkzeugResponse(
-        response=json.dumps(data),
-        status=status_code,
-        content_type="application/json",
-    )
-    return resp

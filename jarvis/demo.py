@@ -26,7 +26,6 @@ import subprocess
 from pathlib import Path
 
 import frappe
-import frappe.utils
 
 DEFAULT_TIMEOUT = 120  # seconds for the whole exchange
 
