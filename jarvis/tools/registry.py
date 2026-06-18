@@ -60,6 +60,21 @@ _TOOL_NAMES: tuple[str, ...] = (
     "get_linked_docs",
     "get_submitted_linked_docs",
     "get_naming_series_preview",
+    # Tier 3 desk-mirror actions: parity with the buttons a Desk user
+    # can click - email, comment, share, assign, tag, follow. All
+    # mutating; descriptors in tool-defs.ts carry ALWAYS-CONFIRM
+    # language for the side-effectful ones.
+    "send_email",
+    "add_comment",
+    "update_comment",
+    "share_doc",
+    "unshare_doc",
+    "assign_to",
+    "unassign_from",
+    "add_tag",
+    "remove_tag",
+    "follow_document",
+    "unfollow_document",
 )
 
 

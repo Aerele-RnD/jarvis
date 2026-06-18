@@ -41,6 +41,17 @@ class TestRegistry(FrappeTestCase):
                 "get_linked_docs",
                 "get_submitted_linked_docs",
                 "get_naming_series_preview",
+                "send_email",
+                "add_comment",
+                "update_comment",
+                "share_doc",
+                "unshare_doc",
+                "assign_to",
+                "unassign_from",
+                "add_tag",
+                "remove_tag",
+                "follow_document",
+                "unfollow_document",
             },
         )
 
