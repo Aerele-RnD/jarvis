@@ -40,6 +40,8 @@
     "last_sync_section",
     "last_sync_at",
     "last_sync_status",
+    "agent_tools_section",
+    "run_query_doctype_allowlist",
     "developer_section",
     "sandbox_mode"
   ],
