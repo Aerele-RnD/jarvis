@@ -100,12 +100,41 @@ def _admin_url(settings) -> str:
 def signup(email: str, company_name: str, plan: str, coupon: str | None = None) -> dict:
 	"""Guest signup against admin. Returns admin's data dict
 	{api_key, api_secret, razorpay_key_id, razorpay_order_id, amount_inr}.
-	Both annual and monthly are one-shot orders (manual renew - no Razorpay subscription)."""
+	Both annual and monthly are one-shot orders (manual renew - no Razorpay subscription).
+
+	When the admin's ``Jarvis Admin Settings.require_email_verification``
+	flag is ON, the response shape is:
+	    {api_key, api_secret, razorpay_key_id, amount_inr, customer,
+	     pending_verification: True}
+	(no razorpay_order_id - the order is deferred until the customer clicks
+	the magic link and the bench polls ``get_signup_payment_state``).
+	"""
 	body = {"email": email, "company_name": company_name, "plan": plan,
 			"frappe_site_url": frappe.utils.get_url()}
 	if coupon:
 		body["coupon"] = coupon
 	return _post_guest(path="/api/method/jarvis_admin.billing.signup.signup", body=body)
+
+
+def get_signup_payment_state() -> dict:
+	"""Authenticated poll. Returns one of:
+	    {pending_verification: True}
+	      - customer hasn't clicked the magic link yet
+	    {pending_verification: False, razorpay_order_id, razorpay_key_id,
+	     amount_inr}
+	      - verification done; wizard can advance to Razorpay Checkout
+	    {pending_verification: False, subscription_status: <other>}
+	      - signup already completed (verification + payment both done)
+
+	Uses the authenticated _post path with the api_key + api_secret the
+	bench stashed at signup time. Only meaningful between the verification-
+	on signup() return and the customer's click of the magic link; the
+	wizard polls this on a "I've verified my email" button click.
+	"""
+	return _post(
+		path="/api/method/jarvis_admin.billing.signup.get_signup_payment_state",
+		body={},
+	)
 
 
 def dev_signup(email: str, company_name: str, plan: str) -> dict:
