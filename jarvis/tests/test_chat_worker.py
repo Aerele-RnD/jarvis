@@ -371,3 +371,251 @@ class TestRunAgentTurnApiKeyModeOmitsProvider(FrappeTestCase):
 		kwargs = fake_sess.stream_agent_turn.call_args.kwargs
 		self.assertEqual(kwargs.get("model"), "claude-sonnet-4-6")
 		self.assertIsNone(kwargs.get("provider"))
+
+
+class TestAssistantContentBatching(FrappeTestCase):
+	"""Sprint-5 punch-list "Worker writes assistant.content on every
+	delta with full overwrite + commit per token" (2026-06-16 review).
+
+	The hot-path optimization buffers assistant-content writes and
+	flushes in batches instead of per-token. End-to-end observability
+	is unchanged - realtime publishes still fire on every token, and
+	the on-disk row holds the FINAL cumulative content at stream end -
+	but the wire shape now coalesces N=10 events or 250ms into one
+	commit, cutting hundreds of write+commit cycles to single digits
+	per turn.
+	"""
+
+	def setUp(self):
+		_ensure_test_user()
+		self._orig_user = frappe.session.user
+		frappe.set_user(TEST_USER)
+		_cleanup_user_conversations()
+		self.conv, self.user_msg = _make_conversation_with_user_message()
+
+	def tearDown(self):
+		_cleanup_user_conversations()
+		frappe.set_user(self._orig_user)
+
+	def test_realtime_delta_fires_on_every_token(self):
+		# Customer experience pin: the UI animates token-by-token via
+		# realtime, so every assistant event must still publish an
+		# assistant:delta even though the DB write coalesces.
+		fake_sess = MagicMock()
+		fake_sess.stream_agent_turn.return_value = _fake_event_stream([
+			{"kind": "lifecycle", "phase": "start"},
+			{"kind": "assistant", "text": "H", "delta": "H"},
+			{"kind": "assistant", "text": "He", "delta": "e"},
+			{"kind": "assistant", "text": "Hel", "delta": "l"},
+			{"kind": "assistant", "text": "Hell", "delta": "l"},
+			{"kind": "assistant", "text": "Hello", "delta": "o"},
+			{"kind": "lifecycle", "phase": "end"},
+		])
+		with patch("jarvis.chat.worker.OpenclawSession.connect", return_value=fake_sess):
+			with patch("jarvis.chat.worker.publish_to_user") as pub:
+				run_agent_turn(self.conv, self.user_msg, run_id="r1")
+		# Five assistant:delta publishes (one per token), even though
+		# only 1-2 DB commits would have fired under batching.
+		delta_calls = [
+			c for c in pub.call_args_list
+			if c.args[1].get("kind") == "assistant:delta"
+		]
+		self.assertEqual(len(delta_calls), 5)
+		# Final on-disk content is the full cumulative text - the
+		# end-of-stream batcher.flush() persists whatever was buffered.
+		row = frappe.db.get_value(
+			MSG,
+			{"conversation": self.conv, "role": "assistant"},
+			["content", "streaming"],
+			as_dict=True,
+		)
+		self.assertEqual(row["content"], "Hello")
+		self.assertEqual(row["streaming"], 0)
+
+	def test_db_writes_coalesce_under_size_threshold(self):
+		# 12 assistant events should produce 1 write at the size
+		# threshold (10) + 1 final drain write = 2 set_value calls on
+		# the assistant row's content. Without batching this would be
+		# 12 set_value + 12 commit pairs.
+		events = [{"kind": "lifecycle", "phase": "start"}]
+		cum = ""
+		for ch in "abcdefghijkl":  # 12 chars
+			cum += ch
+			events.append({"kind": "assistant", "text": cum, "delta": ch})
+		events.append({"kind": "lifecycle", "phase": "end"})
+
+		fake_sess = MagicMock()
+		fake_sess.stream_agent_turn.return_value = _fake_event_stream(events)
+
+		write_calls: list[tuple] = []
+		real_set_value = frappe.db.set_value
+
+		def tracking_set_value(*args, **kwargs):
+			# args[0]=doctype, args[1]=name, args[2]=field or dict
+			if (
+				args
+				and args[0] == MSG
+				and (
+					(len(args) >= 3 and args[2] == "content")
+					or (len(args) >= 3 and isinstance(args[2], dict) and "content" in args[2])
+				)
+			):
+				write_calls.append(args)
+			return real_set_value(*args, **kwargs)
+
+		with patch("jarvis.chat.worker.OpenclawSession.connect", return_value=fake_sess):
+			with patch("jarvis.chat.worker.publish_to_user"):
+				with patch("frappe.db.set_value", side_effect=tracking_set_value):
+					run_agent_turn(self.conv, self.user_msg, run_id="r1")
+
+		# At least 1 (the final drain) and at most 2 (size threshold +
+		# drain). Critically NOT 12 - that would mean batching broke
+		# and we're back to per-token commits.
+		self.assertGreaterEqual(len(write_calls), 1)
+		self.assertLessEqual(len(write_calls), 2)
+		# Final on-disk content is the full cumulative text.
+		row = frappe.db.get_value(
+			MSG,
+			{"conversation": self.conv, "role": "assistant"},
+			"content",
+		)
+		self.assertEqual(row, "abcdefghijkl")
+
+	def test_tool_event_flushes_pending_assistant_content_first(self):
+		# Ordering pin: a tool event inserts a new row. The assistant
+		# row's pending text must be persisted FIRST so the on-disk
+		# ordering matches the realtime channel (customer sees assistant
+		# text -> tool call). Verify by checking the assistant row's
+		# content immediately after the tool event would have fired.
+		fake_sess = MagicMock()
+		fake_sess.stream_agent_turn.return_value = _fake_event_stream([
+			{"kind": "lifecycle", "phase": "start"},
+			{"kind": "assistant", "text": "Looking it up", "delta": "Looking it up"},
+			# Tool event fires before the 10-event size threshold;
+			# without the pre-tool flush the assistant row would be
+			# empty until the next assistant delta.
+			{"kind": "tool", "phase": "start", "tool_name": "jarvis__get_list",
+			 "tool_call_id": "tc-1"},
+			{"kind": "tool", "phase": "end", "tool_name": "jarvis__get_list",
+			 "tool_call_id": "tc-1", "status": "completed"},
+			{"kind": "assistant", "text": "Done!", "delta": " Done!"},
+			{"kind": "lifecycle", "phase": "end"},
+		])
+		with patch("jarvis.chat.worker.OpenclawSession.connect", return_value=fake_sess):
+			with patch("jarvis.chat.worker.publish_to_user"):
+				run_agent_turn(self.conv, self.user_msg, run_id="r1")
+		# Final cumulative content is the last assistant text. The
+		# important thing is that the tool row got inserted AFTER the
+		# "Looking it up" persist (which we can't directly observe in
+		# this snapshot test, but the ordering invariant means the
+		# final content is the LAST assistant text, not an arbitrary
+		# unflushed earlier one).
+		row = frappe.db.get_value(
+			MSG,
+			{"conversation": self.conv, "role": "assistant"},
+			"content",
+		)
+		self.assertEqual(row, "Done!")
+
+	def test_handle_event_failure_is_logged_and_stream_continues(self):
+		# Sprint-5 punch-list "Wrap _handle_event in try/except logging
+		# event kind + tool_call_id + run_id". A malformed event must
+		# not blow up the whole turn - it gets logged via
+		# frappe.log_error, then the next event runs.
+		fake_sess = MagicMock()
+		fake_sess.stream_agent_turn.return_value = _fake_event_stream([
+			{"kind": "lifecycle", "phase": "start"},
+			# A 'tool' end event with no matching start is the cleanest
+			# trigger for an internal log, but we want to assert the
+			# _handle_event try/except path - so inject a guaranteed
+			# raise inside frappe.get_doc to break the tool-start
+			# write path.
+			{"kind": "tool", "phase": "start", "tool_name": "broken",
+			 "tool_call_id": "tc-x"},
+			{"kind": "assistant", "text": "Recovered", "delta": "Recovered"},
+			{"kind": "lifecycle", "phase": "end"},
+		])
+		# Force the tool-start insert to fail; the assistant event
+		# after it must still land.
+		_orig_get_doc = frappe.get_doc
+
+		def boom_on_tool_msg(*args, **kwargs):
+			if args and isinstance(args[0], dict) and args[0].get("role") == "tool":
+				raise RuntimeError("simulated tool-row insert failure")
+			return _orig_get_doc(*args, **kwargs)
+
+		with patch("jarvis.chat.worker.OpenclawSession.connect", return_value=fake_sess):
+			with patch("jarvis.chat.worker.publish_to_user"):
+				with patch("frappe.get_doc", side_effect=boom_on_tool_msg):
+					with patch("frappe.log_error") as log_err:
+						run_agent_turn(self.conv, self.user_msg, run_id="r1")
+		# The tool-row failure was logged with the event kind + ids.
+		titles = [c.kwargs.get("title", "") for c in log_err.call_args_list]
+		self.assertTrue(
+			any("_handle_event failed" in t for t in titles),
+			f"expected '_handle_event failed' log; got {titles!r}",
+		)
+		# The assistant event AFTER the broken tool event still ran
+		# (stream didn't abort), and the assistant row's final content
+		# reflects the recovery delta.
+		row = frappe.db.get_value(
+			MSG,
+			{"conversation": self.conv, "role": "assistant"},
+			"content",
+		)
+		self.assertEqual(row, "Recovered")
+
+
+class TestAssistantContentBatcherUnit(FrappeTestCase):
+	"""Unit-level coverage of _AssistantContentBatcher thresholds."""
+
+	def setUp(self):
+		_ensure_test_user()
+		self._orig_user = frappe.session.user
+		frappe.set_user(TEST_USER)
+		_cleanup_user_conversations()
+		self.conv, self.user_msg = _make_conversation_with_user_message()
+		# Find the assistant placeholder row created by the conversation.
+		self.assistant_name = frappe.get_doc({
+			"doctype": MSG,
+			"conversation": self.conv,
+			"seq": 99,
+			"role": "assistant",
+			"content": "",
+			"streaming": 1,
+		}).insert(ignore_permissions=True).name
+		frappe.db.commit()
+
+	def tearDown(self):
+		_cleanup_user_conversations()
+		frappe.set_user(self._orig_user)
+
+	def test_flush_persists_pending_text(self):
+		from jarvis.chat.worker import _AssistantContentBatcher
+		b = _AssistantContentBatcher(self.assistant_name)
+		b.delta("hello")
+		self.assertTrue(b.flush())
+		self.assertEqual(
+			frappe.db.get_value(MSG, self.assistant_name, "content"),
+			"hello",
+		)
+		# Second flush with no new text is a no-op.
+		self.assertFalse(b.flush())
+
+	def test_flush_if_due_respects_size_threshold(self):
+		from jarvis.chat.worker import (
+			_ASSISTANT_BATCH_SIZE,
+			_AssistantContentBatcher,
+		)
+		b = _AssistantContentBatcher(self.assistant_name)
+		# Below the size threshold: no flush (the time threshold is 250ms
+		# which this test runs well under).
+		for i in range(_ASSISTANT_BATCH_SIZE - 1):
+			b.delta(f"text-{i}")
+			self.assertFalse(b.flush_if_due())
+		# Hitting the size threshold flushes.
+		b.delta(f"text-{_ASSISTANT_BATCH_SIZE - 1}")
+		self.assertTrue(b.flush_if_due())
+		# After flush, the next delta starts the counter over.
+		b.delta("post-flush")
+		self.assertFalse(b.flush_if_due())

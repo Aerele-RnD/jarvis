@@ -9,6 +9,8 @@ socketio.
 
 from __future__ import annotations
 
+import time
+
 import frappe
 
 from jarvis.chat.events import publish_to_user
@@ -17,6 +19,85 @@ from jarvis.exceptions import OpenclawUnreachableError
 
 CONV = "Jarvis Conversation"
 MSG = "Jarvis Chat Message"
+
+# Batch-commit thresholds for the assistant-content writes during a
+# streamed turn. Sprint-5 punch-list "Worker writes assistant.content on
+# every delta with full overwrite + commit per token" (2026-06-16
+# review): the previous shape called frappe.db.set_value + frappe.db.
+# commit() for every single token, so a 500-token response = 500
+# write+commit cycles. The DB write itself is cheap (one Singles row);
+# the commit is where the cost lives - it forces a per-token transaction
+# round-trip.
+#
+# Now: buffer the latest cumulative text in memory, flush (write+commit)
+# when EITHER threshold trips, AND flush before any tool/lifecycle event
+# fires so the on-disk message-row order matches the realtime channel.
+# Customer experience stays unchanged - the realtime
+# ``assistant:delta`` publish still fires on every token, so the UI
+# animates token-by-token. The DB just catches up in batches.
+#
+# Numbers picked for the punch-list "every N=10 events or 250ms" ask:
+# at typical chat throughputs (1-50 tokens/s) this means 1-2 commits
+# per second instead of 1-50, but at most ~10 tokens of unwritten
+# content if the worker crashes mid-batch (recoverable next stream).
+_ASSISTANT_BATCH_SIZE = 10
+_ASSISTANT_BATCH_INTERVAL_MS = 250
+
+
+class _AssistantContentBatcher:
+	"""Coalesces per-token assistant-content writes into one DB
+	write+commit per batch.
+
+	Usage:
+	    batcher = _AssistantContentBatcher(assistant_msg.name)
+	    for event in stream:
+	        if event["kind"] == "assistant":
+	            batcher.delta(event["text"])
+	            batcher.flush_if_due()
+	            continue
+	        batcher.flush()  # ordering: flush before any non-delta event
+	        _handle_event(event, ...)
+	    batcher.flush()      # drain on stream end
+	"""
+
+	def __init__(self, msg_name: str):
+		self.msg_name = msg_name
+		self._pending_text: str | None = None
+		self._events_since_flush = 0
+		self._last_flush_ms = self._now_ms()
+
+	@staticmethod
+	def _now_ms() -> int:
+		return int(time.monotonic() * 1000)
+
+	def delta(self, text: str) -> None:
+		"""Record the latest cumulative assistant text. Caller decides
+		when to actually persist via flush / flush_if_due."""
+		self._pending_text = text
+		self._events_since_flush += 1
+
+	def flush_if_due(self) -> bool:
+		"""Flush iff the size or time threshold is hit. Returns True iff
+		a flush actually happened."""
+		if self._pending_text is None:
+			return False
+		if self._events_since_flush >= _ASSISTANT_BATCH_SIZE:
+			return self.flush()
+		if self._now_ms() - self._last_flush_ms >= _ASSISTANT_BATCH_INTERVAL_MS:
+			return self.flush()
+		return False
+
+	def flush(self) -> bool:
+		"""Flush immediately if any text is pending. Returns True iff a
+		flush happened (caller can use this for trace logging)."""
+		if self._pending_text is None:
+			return False
+		frappe.db.set_value(MSG, self.msg_name, "content", self._pending_text)
+		frappe.db.commit()
+		self._pending_text = None
+		self._events_since_flush = 0
+		self._last_flush_ms = self._now_ms()
+		return True
 
 # Provider label → openclaw provider id sent in the chat WS frame.
 #
@@ -132,6 +213,7 @@ def run_agent_turn(conversation_id: str, message_id: str, run_id: str) -> None:
 		try:
 			idem = f"{conversation_id}:{message_id}"
 			tool_msg_by_call_id: dict[str, str] = {}
+			batcher = _AssistantContentBatcher(assistant_msg.name)
 			for event in sess.stream_agent_turn(
 				conv.session_key, user_message, idem,
 				model=effective_model, provider=oauth_provider_id,
@@ -143,7 +225,15 @@ def run_agent_turn(conversation_id: str, message_id: str, run_id: str) -> None:
 					tool_msg_by_call_id=tool_msg_by_call_id,
 					user=user,
 					run_id=run_id,
+					batcher=batcher,
 				)
+			# Drain any buffered assistant deltas before the cleanup
+			# write below stamps streaming=0. The previous shape wrote
+			# every token directly so this drain wasn't needed; the
+			# punch-list batching defers writes, so we explicitly
+			# persist the final cumulative content before the row
+			# transitions out of streaming.
+			batcher.flush()
 		except OpenclawUnreachableError as e:
 			_mark_errored(assistant_msg.name, str(e))
 			publish_to_user(user, {
@@ -230,10 +320,64 @@ def _handle_event(
 	tool_msg_by_call_id: dict[str, str],
 	user: str,
 	run_id: str,
+	batcher: _AssistantContentBatcher,
+) -> None:
+	"""Per-event dispatch. Wrapped in a top-level try/except so a
+	programmer bug on one event (KeyError on a malformed openclaw frame,
+	a DB DoesNotExist on a stale row, etc.) doesn't kill the whole turn
+	and leave the assistant row stranded at streaming=1. Sprint-5
+	punch-list "Wrap _handle_event in try/except logging event kind +
+	tool_call_id + run_id". On failure we log the event metadata and
+	continue - the next event might be a clean recovery (e.g. the
+	turn's final lifecycle.end still flips streaming=0).
+	"""
+	try:
+		_handle_event_inner(
+			event,
+			conversation_id=conversation_id,
+			assistant_msg_name=assistant_msg_name,
+			tool_msg_by_call_id=tool_msg_by_call_id,
+			user=user,
+			run_id=run_id,
+			batcher=batcher,
+		)
+	except Exception:
+		frappe.log_error(
+			title="chat worker: _handle_event failed",
+			message=(
+				f"kind={event.get('kind')!r} "
+				f"phase={event.get('phase')!r} "
+				f"tool_call_id={event.get('tool_call_id')!r} "
+				f"tool_name={event.get('tool_name')!r} "
+				f"run_id={run_id!r} "
+				f"conversation_id={conversation_id!r}\n\n"
+				f"{frappe.get_traceback()}"
+			),
+		)
+		# Don't re-raise; the outer run_agent_turn loop catches Exception
+		# at its outermost layer for the streaming=1 cleanup. Per-event
+		# failures should let the stream continue (the next assistant
+		# delta might overwrite this bad row with good content).
+
+
+def _handle_event_inner(
+	event: dict,
+	*,
+	conversation_id: str,
+	assistant_msg_name: str,
+	tool_msg_by_call_id: dict[str, str],
+	user: str,
+	run_id: str,
+	batcher: _AssistantContentBatcher,
 ) -> None:
 	kind = event.get("kind")
 
 	if kind == "lifecycle":
+		# Lifecycle events bracket the stream. Drain any pending
+		# assistant content before we write the lifecycle outcome so
+		# the on-disk row reflects whatever text was rendered up to
+		# this point (matters mostly for the error branch).
+		batcher.flush()
 		phase = event.get("phase")
 		if phase == "error":
 			_mark_errored(assistant_msg_name, event.get("error") or "lifecycle error")
@@ -249,8 +393,11 @@ def _handle_event(
 
 	if kind == "assistant":
 		text = event.get("text", "")
-		frappe.db.set_value(MSG, assistant_msg_name, "content", text)
-		frappe.db.commit()
+		# Hot path: buffer the cumulative text + maybe-flush. The
+		# realtime publish still fires on every token so the customer's
+		# UI animates without delay; the DB write coalesces.
+		batcher.delta(text)
+		batcher.flush_if_due()
 		publish_to_user(user, {
 			"kind": "assistant:delta",
 			"conversation_id": conversation_id,
@@ -261,6 +408,11 @@ def _handle_event(
 		return
 
 	if kind == "tool":
+		# Tool start/end events insert new rows. Drain pending assistant
+		# content first so the on-disk row order matches the realtime
+		# event order (assistant text the customer saw before this tool
+		# call is durable before the tool row appears).
+		batcher.flush()
 		phase = event.get("phase")
 		tool_call_id = event.get("tool_call_id")
 		tool_name = event.get("tool_name")
