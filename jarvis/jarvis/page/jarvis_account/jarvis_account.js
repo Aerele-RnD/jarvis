@@ -222,9 +222,25 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		const sync = settingsLocal.last_sync_status || "";
 		const dis = editable ? "" : "disabled";
 		const sel = PROVIDERS.map((p) => `<option value="${esc(p)}" ${p === provider ? "selected" : ""}>${esc(p)}</option>`).join("");
-		const notice = !isActiveMode
-			? `<div class="ja-banner ja-banner-warn">You're currently using a chat subscription. Saving credentials here will switch you to API-key mode and disconnect the subscription.</div>`
+		// Sprint-4 punch-list "frappe.confirm consent for destructive
+		// subscription→api-key switch bypassable via Save": when the
+		// customer is on the api_key tab while still in oauth mode, show
+		// a danger-styled banner that names the connected account (so
+		// they can tell exactly which session is about to be cut) and
+		// makes the Save button danger-coloured. The actual destructive
+		// confirm fires in bindLlm at click time via frappe.warn.
+		const connectedEmail = settingsLocal.llm_oauth_account_email || "";
+		const emailLine = connectedEmail
+			? ` Currently connected as <b>${esc(connectedEmail)}</b>.`
 			: "";
+		const notice = !isActiveMode
+			? `<div class="ja-banner ja-banner-danger">⚠ You're currently using a chat subscription.${emailLine} Saving credentials here will switch you to API-key mode and disconnect the subscription.</div>`
+			: "";
+		// Save button gets the danger variant when we're about to act
+		// destructively. Keeps the primary variant for the normal case
+		// (already in api_key mode and just updating the key / model).
+		const saveBtnClass = !isActiveMode ? "ja-btn-danger" : "ja-btn-primary";
+		const saveBtnLabel = !isActiveMode ? "Disconnect &amp; switch to API key" : "Save credentials";
 		return `
 			<p class="ja-sub">Your API key is sent directly to the provider - Jarvis only relays prompts.</p>
 			${notice}
@@ -255,7 +271,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 				</div>
 			</div>
 			<div class="ja-actions">
-				<button class="ja-btn ja-btn-primary" id="ja-llm-save" ${dis}>Save credentials</button>
+				<button class="ja-btn ${saveBtnClass}" id="ja-llm-save" ${dis}>${saveBtnLabel}</button>
 				<span class="ja-llm-status">${sync ? "Last sync: " + esc(sync) : ""}</span>
 			</div>
 			<div class="ja-err" id="ja-llm-err"></div>`;
@@ -352,50 +368,47 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	}
 
 	function handleTabSwitch(targetTab) {
-		const currentMode = settingsLocal.llm_auth_mode === "oauth" ? "subscription" : "api_key";
-		// Switching to a tab that diverges from the active mode → preview-only,
-		// no destructive action until the user actively confirms (Save / Confirm switch).
-		// frappe.confirm is callback-based, so the actual switch lives in an
-		// inner function called from either the on-yes branch or the no-
-		// confirm-needed direct path.
-		const applySwitch = () => {
-			ui.aiTab = targetTab;
-			if (targetTab !== "subscription") cancelSubscriptionFlow();
+		// Sprint-4 punch-list "frappe.confirm consent for destructive
+		// subscription→api-key switch bypassable via Save": the previous
+		// shape fired a destructive frappe.confirm here at tab-switch
+		// time, BUT bindLlm's save handler unconditionally called
+		// save_llm_creds with auth_mode='api_key' regardless of how the
+		// user got onto the API-key panel. A customer could cancel the
+		// switch confirm, accept the panel preview, then click Save and
+		// silently lose their OAuth connection.
+		//
+		// Now: tab switching is preview-only, no confirm. The destructive
+		// consent gate moved to the Save click handler (bindLlm below),
+		// uses frappe.warn for danger-styled UI, and shows the previously
+		// connected email so the customer knows exactly what's about to
+		// be disconnected.
+		ui.aiTab = targetTab;
+		if (targetTab !== "subscription") cancelSubscriptionFlow();
 
-			// Drive the slide animation by updating data-active on the persistent
-			// tabs node. Swap only the panel body (fade out → swap → fade in)
-			// instead of re-rendering the whole card, so the slide isn't
-			// interrupted by a DOM rebuild.
-			const sub = account.subscription_status || "none";
-			const editable = EDITABLE_STATES.has(sub);
-			const $tabs = $body.find(".ja-tabs");
-			$tabs.attr("data-active", targetTab);
-			$tabs.find(".ja-tab").each(function () {
-				const isActive = $(this).data("tab") === targetTab;
-				$(this).toggleClass("ja-tab-active", isActive).attr("aria-selected", isActive);
-			});
-			const inApiKeyMode = settingsLocal.llm_auth_mode !== "oauth";
-			const newBody = targetTab === "api_key"
-				? renderApiKeyPanel(editable, inApiKeyMode)
-				: renderSubscriptionPanel(editable, !inApiKeyMode);
-			const $panel = $body.find(".ja-tab-body");
-			$panel.addClass("ja-tab-body-swap");
-			setTimeout(() => {
-				$panel.html(newBody);
-				$panel.removeClass("ja-tab-body-swap");
-				if (targetTab === "api_key") bindLlm(editable);
-				else bindSubscriptionPanel(editable);
-			}, 160);
-		};
-
-		if (targetTab === "api_key" && currentMode === "subscription") {
-			frappe.confirm(
-				__("Switch to API-key mode? Your chat subscription will be disconnected when you save credentials."),
-				applySwitch,
-			);
-			return;
-		}
-		applySwitch();
+		// Drive the slide animation by updating data-active on the
+		// persistent tabs node. Swap only the panel body (fade out → swap
+		// → fade in) instead of re-rendering the whole card, so the slide
+		// isn't interrupted by a DOM rebuild.
+		const sub = account.subscription_status || "none";
+		const editable = EDITABLE_STATES.has(sub);
+		const $tabs = $body.find(".ja-tabs");
+		$tabs.attr("data-active", targetTab);
+		$tabs.find(".ja-tab").each(function () {
+			const isActive = $(this).data("tab") === targetTab;
+			$(this).toggleClass("ja-tab-active", isActive).attr("aria-selected", isActive);
+		});
+		const inApiKeyMode = settingsLocal.llm_auth_mode !== "oauth";
+		const newBody = targetTab === "api_key"
+			? renderApiKeyPanel(editable, inApiKeyMode)
+			: renderSubscriptionPanel(editable, !inApiKeyMode);
+		const $panel = $body.find(".ja-tab-body");
+		$panel.addClass("ja-tab-body-swap");
+		setTimeout(() => {
+			$panel.html(newBody);
+			$panel.removeClass("ja-tab-body-swap");
+			if (targetTab === "api_key") bindLlm(editable);
+			else bindSubscriptionPanel(editable);
+		}, 160);
 	}
 
 	function bindSubscriptionPanel(editable) {
@@ -631,13 +644,52 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 				return $body.find("#ja-llm-err").text("API key is required.");
 			}
 			$body.find("#ja-llm-err").text("");
-			setBusy("#ja-llm-save", true);
-			frappe.call({
-				method: "jarvis.onboarding.save_llm_creds",
-				args: { provider, model, api_key: key || "", base_url: base, auth_mode: "api_key" },
-			}).then((r) => {
+
+			// Sprint-4 punch-list "frappe.confirm consent for destructive
+			// subscription→api-key switch bypassable via Save": when the
+			// customer is currently in oauth mode and about to switch to
+			// api_key, fire frappe.warn here at click time (the
+			// authoritative destructive gate). frappe.warn is the
+			// danger-styled variant of frappe.confirm - red Proceed
+			// button + warning iconography. Names the connected account
+			// so the customer can see exactly which session is about to
+			// be cut. If the customer cancels, no save happens; the
+			// previous shape moved the confirm to tab-switch time and
+			// the Save handler ran unconditionally - a click-cancel-on-
+			// tab-switch then click-Save sequence silently dropped the
+			// subscription.
+			const wasOauth = settingsLocal.llm_auth_mode === "oauth";
+			const proceedSave = () => doSaveApiKeyCreds({ provider, model, key, base, wasOauth });
+			if (wasOauth) {
+				const connectedEmail = settingsLocal.llm_oauth_account_email || "";
+				const emailLine = connectedEmail
+					? `<p>This will disconnect your chat subscription connected as <b>${frappe.utils.escape_html(connectedEmail)}</b>.</p>`
+					: "<p>This will disconnect your chat subscription.</p>";
+				frappe.warn(
+					__("Disconnect chat subscription?"),
+					emailLine
+						+ "<p>Your saved API key will be used for chat instead. "
+						+ "Reconnecting later means signing in again from the Subscription tab.</p>",
+					proceedSave,
+					__("Disconnect and switch"),
+				);
+				return;
+			}
+			proceedSave();
+		});
+	}
+
+	function doSaveApiKeyCreds({ provider, model, key, base, wasOauth }) {
+		setBusy("#ja-llm-save", true);
+		frappe.call({
+			method: "jarvis.onboarding.save_llm_creds",
+			args: { provider, model, api_key: key || "", base_url: base, auth_mode: "api_key" },
+		}).then((r) => {
 				const status = (r.message && r.message.last_sync_status) || "";
-				const wasOauth = settingsLocal.llm_auth_mode === "oauth";
+				// wasOauth was captured in the click handler before frappe.call
+				// fired and threaded in via doSaveApiKeyCreds's destructured
+				// param so the post-save branch below correctly knows whether
+				// to re-render the card.
 				settingsLocal.llm_provider = provider;
 				settingsLocal.llm_model = model;
 				settingsLocal.llm_base_url = base;
@@ -662,7 +714,6 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 				setBusy("#ja-llm-save", false);
 				$body.find("#ja-llm-err").text(e.message || "Save failed.");
 			});
-		});
 	}
 
 	function pollLlmSyncStatus({ wasOauth }) {
@@ -999,6 +1050,15 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		.ja-btn-primary:disabled{opacity:.5;cursor:not-allowed}
 		.ja-btn-ghost{background:transparent;border-color:var(--border-color);color:var(--text-color)}
 		.ja-btn-ghost:hover{border-color:var(--jarvis-primary);color:var(--jarvis-primary)}
+		/* Sprint-4 punch-list: danger variant signals destructive action.
+		   Used on the api_key Save button when the customer is still in
+		   oauth mode (Save will disconnect the subscription). Same shape
+		   as ja-btn-primary so layout doesn't jump; red background +
+		   white text + accessible contrast on hover.   */
+		.ja-btn-danger{background:var(--red-500,#e24c4c);color:#fff}
+		.ja-btn-danger:hover{filter:brightness(.92)}
+		.ja-btn-danger:disabled{opacity:.5;cursor:not-allowed}
+		.ja-banner-danger{background:rgba(226,76,76,.12);color:var(--text-color);border:1px solid rgba(226,76,76,.30);border-radius:var(--border-radius,8px);padding:10px 12px;margin:8px 0 14px}
 		.ja-err{color:var(--red-500,#e24c4c);font-size:12.5px;margin-top:8px;min-height:1px}
 		.ja-llm-status{color:var(--text-muted);font-size:12.5px;margin-left:8px}
 		.ja-spin{display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,.5);border-top-color:#fff;border-radius:50%;animation:ja-spin .6s linear infinite;vertical-align:-1px}
