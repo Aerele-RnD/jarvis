@@ -49,6 +49,17 @@ _TOOL_NAMES: tuple[str, ...] = (
     "get_exchange_rate",
     "get_fiscal_year",
     "get_itemised_tax_breakup",
+    # Tier 2b HRMS + Frappe computed reads: leave/shift/holiday lookups
+    # the LLM gets wrong because they need policy-aware math, plus
+    # Frappe linked-doc walking + naming-series preview.
+    "get_leave_balance_on",
+    "get_leaves_for_period",
+    "get_leave_details",
+    "get_holidays_for_employee",
+    "get_employee_shift",
+    "get_linked_docs",
+    "get_submitted_linked_docs",
+    "get_naming_series_preview",
 )
 
 

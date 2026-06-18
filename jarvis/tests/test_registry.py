@@ -33,6 +33,14 @@ class TestRegistry(FrappeTestCase):
                 "get_exchange_rate",
                 "get_fiscal_year",
                 "get_itemised_tax_breakup",
+                "get_leave_balance_on",
+                "get_leaves_for_period",
+                "get_leave_details",
+                "get_holidays_for_employee",
+                "get_employee_shift",
+                "get_linked_docs",
+                "get_submitted_linked_docs",
+                "get_naming_series_preview",
             },
         )
 
