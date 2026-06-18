@@ -180,14 +180,21 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 	}
 
 	function renderAccount() {
+		// Sprint-4 a11y: `<label for=>` pairs each label with its input so
+		// screen readers announce the field label when focus lands on the
+		// input. `role="alert" aria-live="polite"` on the error container
+		// makes the error text announce when populated, instead of being a
+		// silent color-only state change. Punch-list "Accessibility:
+		// missing <label for=>, missing ARIA roles, color-only error
+		// signal" from the 2026-06-16 review.
 		$body.html(`
 			<h2 class="jo-h">Create your account</h2>
 			<p class="jo-sub">We'll set up Jarvis for this site.</p>
-			<label class="jo-label">Work email</label>
-			<input class="jo-input" id="jo-email" type="email" placeholder="you@company.com" value="${esc(state.email)}">
-			<label class="jo-label">Company</label>
-			<input class="jo-input" id="jo-company" placeholder="Acme Inc." value="${esc(state.company)}">
-			<div class="jo-err" id="jo-acc-err"></div>
+			<label class="jo-label" for="jo-email">Work email</label>
+			<input class="jo-input" id="jo-email" type="email" placeholder="you@company.com" value="${esc(state.email)}" autocomplete="email" required aria-required="true">
+			<label class="jo-label" for="jo-company">Company</label>
+			<input class="jo-input" id="jo-company" placeholder="Acme Inc." value="${esc(state.company)}" autocomplete="organization" required aria-required="true">
+			<div class="jo-err" id="jo-acc-err" role="alert" aria-live="polite"></div>
 			<div class="jo-actions">
 			  <button class="jo-btn jo-btn-primary" id="jo-next">Continue →</button>
 			</div>`);
@@ -395,6 +402,21 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 	function renderSubscriptionPanel() {
 		// Screen 2 - authorize URL shown, awaiting paste-back
 		if (state.subAuthorizeUrl) {
+			// Sprint-4 punch-list "Subscription paste-back instructions
+			// confusing/brittle":
+			//   - Live URL-shape validation (the `code=` check below +
+			//     wireSubscriptionPanel's input handler) gives instant
+			//     feedback instead of waiting for Submit -> server-side
+			//     `missing_code` round trip.
+			//   - `minsLeft` re-rendered every 30s via setInterval so the
+			//     customer sees the countdown tick down, not a frozen
+			//     "X minutes" stamp from page-render time.
+			//   - "Start over" is clearer than "Cancel" (the user might
+			//     have already clicked Authorize; cancelling sounds like
+			//     it undoes the sign-in).
+			//   - Expandable "Why an error page?" explains the
+			//     localhost:1455 trick so the customer doesn't think
+			//     something broke.
 			const minsLeft = Math.max(0, Math.floor((state.subExpiresAt - Date.now()) / 60000));
 			return `
 				<p class="jo-hint" style="margin-bottom:14px"><strong>Step 1</strong> - Sign in with your ${esc(state.subProvider)} account in a new tab.</p>
@@ -407,13 +429,19 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 				</div>
 				<p class="jo-hint"><strong>Step 2</strong> - After clicking Authorize, your browser will show a page saying <em>"This site can't be reached."</em> <strong>That's expected.</strong> Copy the URL from your browser's address bar (it'll start with <code>http://localhost:1455/auth/callback?code=…</code>) and paste it here:</p>
 				<div class="jo-field">
-				  <textarea class="jo-input" id="jo-sub-pasted-url" rows="3" placeholder="Paste the URL from the error page here"></textarea>
+				  <label class="jo-label" for="jo-sub-pasted-url">Pasted URL</label>
+				  <textarea class="jo-input" id="jo-sub-pasted-url" rows="3" placeholder="http://localhost:1455/auth/callback?code=..." aria-describedby="jo-sub-paste-hint"></textarea>
+				  <div class="jo-hint" id="jo-sub-paste-hint" style="font-size:12px;margin-top:6px;color:var(--text-muted)"></div>
 				</div>
+				<details class="jo-help" style="margin:0 0 12px">
+				  <summary style="cursor:pointer;font-size:13px">Why does my browser show a "site can't be reached" error?</summary>
+				  <p class="jo-sub" style="margin-top:6px;font-size:13px">After you click Authorize, ${esc(state.subProvider)} redirects your browser back to <code>localhost:1455</code> - that's a port on your machine. Nothing is listening on it (Jarvis runs on this site, not on your laptop), so your browser shows an error. The redirect itself succeeded though, and the URL in your address bar carries the one-time code we need. Just copy that whole URL and paste it above.</p>
+				</details>
 				<div class="jo-actions jo-actions-split">
-				  <button class="jo-btn jo-btn-ghost" id="jo-sub-cancel">Cancel</button>
-				  <button class="jo-btn jo-btn-primary" id="jo-sub-submit">Submit →</button>
+				  <button class="jo-btn jo-btn-ghost" id="jo-sub-cancel">Start over</button>
+				  <button class="jo-btn jo-btn-primary" id="jo-sub-submit" disabled>Submit →</button>
 				</div>
-				<div class="jo-hint" style="margin-top:14px;font-size:12px">Link valid for ~${minsLeft} minute${minsLeft === 1 ? "" : "s"}.</div>`;
+				<div class="jo-hint" id="jo-sub-countdown" style="margin-top:14px;font-size:12px" aria-live="polite">Link valid for ~${minsLeft} minute${minsLeft === 1 ? "" : "s"}.</div>`;
 		}
 		// Screen 1 - provider + model picker (not yet started)
 		const provOptions = Object.keys(SUBSCRIPTION_MODELS).map(
@@ -466,10 +494,85 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 			});
 		});
 		$body.find("#jo-sub-cancel").on("click", () => {
+			stopSubCountdown();
 			cancelSubscriptionFlow();
 			renderLlm();
 		});
 		$body.find("#jo-sub-submit").on("click", submitPastedUrl);
+
+		// Live URL-shape validation for the paste-back textarea.
+		// Acceptance criteria (deliberately permissive - we let the bench
+		// run the strict parse): contains "code=" somewhere AND parses as a
+		// URL OR starts with "?" / "code=". The inline hint shows what's
+		// missing so the customer can tell whether they pasted the wrong
+		// thing before the round-trip.
+		const $ta = $body.find("#jo-sub-pasted-url");
+		const $hint = $body.find("#jo-sub-paste-hint");
+		const $submit = $body.find("#jo-sub-submit");
+		const validateInline = () => {
+			const raw = ($ta.val() || "").trim();
+			if (!raw) {
+				$hint.text("").css("color", "");
+				$submit.prop("disabled", true);
+				return;
+			}
+			if (!/code=[^&\s]+/i.test(raw)) {
+				$hint.text("This URL is missing a `code=` parameter. Paste the full URL from your browser's address bar.").css("color", "var(--red-600, #b91c1c)");
+				$submit.prop("disabled", true);
+				return;
+			}
+			// Acceptable shapes: full URL, ?-prefixed query, or bare
+			// query. The bench's _parse_redirected_url handles all three.
+			const looksOk = /^(https?:\/\/|\?|code=)/i.test(raw);
+			if (!looksOk) {
+				$hint.text("Doesn't look like a callback URL. Paste the FULL address starting with http://localhost:1455/...").css("color", "var(--red-600, #b91c1c)");
+				$submit.prop("disabled", true);
+				return;
+			}
+			$hint.text("Looks good. Click Submit to finish sign-in.").css("color", "var(--green-700, #15803d)");
+			$submit.prop("disabled", false);
+		};
+		$ta.on("input paste", () => setTimeout(validateInline, 0));
+
+		// Countdown refresh: rewrite the "Link valid for ~N minutes" hint
+		// every 30s while this screen is mounted so the customer sees the
+		// timer move. cleared on cancel + on screen-leave by render().
+		startSubCountdown();
+	}
+
+	// Module-level so cancelSubscriptionFlow / wireSubscriptionPanel can
+	// share a single timer handle without leaking duplicates on re-render.
+	let _subCountdownTimer = null;
+	function startSubCountdown() {
+		stopSubCountdown();
+		const tick = () => {
+			if (!state.subExpiresAt) {
+				stopSubCountdown();
+				return;
+			}
+			const $c = $body.find("#jo-sub-countdown");
+			if ($c.length === 0) {
+				// User navigated away (panel re-rendered into a different
+				// screen). Clear and bail.
+				stopSubCountdown();
+				return;
+			}
+			const minsLeft = Math.max(0, Math.floor((state.subExpiresAt - Date.now()) / 60000));
+			if (minsLeft <= 0) {
+				$c.text("Link expired. Click Start over to generate a fresh sign-in URL.").css("color", "var(--red-600, #b91c1c)");
+				stopSubCountdown();
+				return;
+			}
+			$c.text(`Link valid for ~${minsLeft} minute${minsLeft === 1 ? "" : "s"}.`);
+		};
+		tick();
+		_subCountdownTimer = setInterval(tick, 30 * 1000);
+	}
+	function stopSubCountdown() {
+		if (_subCountdownTimer) {
+			clearInterval(_subCountdownTimer);
+			_subCountdownTimer = null;
+		}
 	}
 
 	function startSubscriptionSignin() {
@@ -504,6 +607,11 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 			$err.text("Paste the URL from your browser's address bar first.");
 			return;
 		}
+		// Once we're round-tripping to the bench, the screen's about to
+		// flip either way (success -> save flow, failure -> back to
+		// signin form). Stop the countdown ticker now to free the timer
+		// even on the success path.
+		stopSubCountdown();
 		setBusy("#jo-sub-submit", true);
 		frappe.call({
 			method: "jarvis.oauth.api.complete_paste_signin",
@@ -530,6 +638,7 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 	}
 
 	function cancelSubscriptionFlow() {
+		stopSubCountdown();
 		state.subNonce = null;
 		state.subAuthorizeUrl = null;
 		state.subExpiresAt = null;
@@ -589,8 +698,17 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 						return;
 					}
 					if (Date.now() - startedAt > TIMEOUT_MS) {
+						// Sprint-4 punch-list "Provisioning poll silently
+						// times out into success screen": the previous
+						// shape called renderSuccess with the still-
+						// pending status, showing a green ring + "You're
+						// connected!" even though the agent wasn't ready.
+						// Customers landed on chat thinking it was set up
+						// and hit a wall. Now: render the in-between
+						// "Almost there" state with a yellow ring, the
+						// real status, and a Check status button.
 						setBusy("#jo-llm-save", false);
-						renderSuccess(state.successData || {}, status || "pending: container still provisioning");
+						renderAlmostThere(state.successData || {}, status || "pending: container still provisioning");
 						return;
 					}
 					setTimeout(tick, 2500);
@@ -599,13 +717,59 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 					// Polling failure is transient - keep trying until timeout.
 					if (Date.now() - startedAt > TIMEOUT_MS) {
 						setBusy("#jo-llm-save", false);
-						renderSuccess(state.successData || {}, "pending: lost contact while provisioning");
+						renderAlmostThere(state.successData || {}, "pending: lost contact while provisioning");
 						return;
 					}
 					setTimeout(tick, 2500);
 				});
 		};
 		setTimeout(tick, 2500);
+	}
+
+	function renderAlmostThere(data, syncStatus) {
+		// In-between state for the provisioning-poll timeout. Distinguish
+		// from renderSuccess: yellow ring + clearer wording so the
+		// customer knows the agent isn't ready yet, plus a Check status
+		// button that re-polls. Two ways out:
+		//   - Check status -> re-enter pollSyncStatus and either flip to
+		//     success or refresh this screen with the current state
+		//   - Open Jarvis Settings -> show the Force Resync surface
+		state.step = 5;
+		renderSteps();
+		$footLink.empty();
+		const status = (syncStatus || "").trim();
+		const label = status.replace(/^pending:\s*/i, "") || "your agent is still warming up";
+		$body.html(`
+			<div class="jo-success" role="status" aria-live="polite">
+			  <div class="jo-success-ring jo-success-ring-warn" style="background:#f59e0b">⌛</div>
+			  <h2 class="jo-h">Almost there</h2>
+			  <p class="jo-sub">${esc(state.company)}'s container is still spinning up - ${esc(label)}. This is normal on a busy day; the agent usually catches up within another minute or two.</p>
+			  <div class="jo-actions jo-actions-split">
+			    <button class="jo-btn jo-btn-ghost" id="jo-almost-settings">Open Jarvis Settings</button>
+			    <button class="jo-btn jo-btn-primary" id="jo-almost-check">Check status</button>
+			  </div>
+			</div>`);
+		$body.find("#jo-almost-check").on("click", () => {
+			setBusy("#jo-almost-check", true);
+			frappe.call({ method: "jarvis.onboarding.get_llm_sync_status" })
+				.then((r) => {
+					const m = r.message || {};
+					const s = (m.last_sync_status || "").trim();
+					if (!m.pending) {
+						renderSuccess(data, s);
+						return;
+					}
+					setBusy("#jo-almost-check", false);
+					// Update inline so the customer sees the latest status
+					// without re-rendering the whole screen.
+					renderAlmostThere(data, s || "pending: container still provisioning");
+				})
+				.catch(() => {
+					setBusy("#jo-almost-check", false);
+					renderAlmostThere(data, "pending: lost contact while provisioning");
+				});
+		});
+		$body.find("#jo-almost-settings").on("click", () => frappe.set_route("Form", "Jarvis Settings"));
 	}
 
 	function renderProvisioning(status) {
