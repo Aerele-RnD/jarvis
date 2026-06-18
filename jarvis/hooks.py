@@ -117,48 +117,6 @@ OAUTH_CLIENT_SECRETS = {
 }
 
 
-def _extract_gemini_cli_secret_from_node_modules() -> str:
-	"""Best-effort: locate the gemini-cli npm package alongside this app and
-	grep its bundled source for the OAuth client_secret. Returns "" if the
-	package isn't installed, the value can't be located, or any IO error.
-
-	The expected install location is ``<app>/node_modules/@google/gemini-cli``
-	relative to this file. Run ``npm install`` in the customer app's root
-	(``apps/jarvis/``) after bench-getting the app to seed it.
-
-	gemini-cli's bundle/ ships chunks up to ~16 MB each, so we iterate
-	line-by-line instead of slurping. The secret appears as a single-line
-	literal (`var OAUTH_CLIENT_SECRET = "GOCSPX-..."`), so a per-line scan
-	finds it without holding more than a line in memory."""
-	import os
-	import re
-	try:
-		app_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-		pkg_root = os.path.join(app_root, "node_modules", "@google", "gemini-cli")
-		if not os.path.isdir(pkg_root):
-			return ""
-		# Direct match against `GOCSPX-...` literal - tight, fast, and ignores
-		# the surrounding context (`var OAUTH_CLIENT_SECRET = "..."`,
-		# `client_secret: "..."`, JSON, whatever).
-		pattern = re.compile(rb'"(GOCSPX-[A-Za-z0-9_-]+)"')
-		for root, _dirs, files in os.walk(pkg_root):
-			for name in files:
-				if not name.endswith((".js", ".cjs", ".mjs", ".json")):
-					continue
-				path = os.path.join(root, name)
-				try:
-					with open(path, "rb") as f:
-						for line in f:
-							m = pattern.search(line)
-							if m:
-								return m.group(1).decode("utf-8", errors="ignore")
-				except (OSError, IOError):
-					continue
-	except Exception:
-		return ""
-	return ""
-
-
 def get_oauth_client_secret(provider: str) -> str:
 	"""Return the client_secret for confidential-client OAuth flows. Empty
 	string for PKCE-only providers (OpenAI codex). For Google Gemini falls
@@ -168,7 +126,10 @@ def get_oauth_client_secret(provider: str) -> str:
 	if val:
 		return val
 	if provider == "Google Gemini":
-		return _extract_gemini_cli_secret_from_node_modules()
+		# Imported lazily so the node_modules walk only runs when a
+		# Google OAuth call asks for it.
+		from jarvis.oauth.gemini_cli_secret import extract_gemini_cli_secret
+		return extract_gemini_cli_secret()
 	return ""
 
 # Includes in <head>
