@@ -193,6 +193,122 @@ class TestSyncConnection(FrappeTestCase):
 			                          api_key="", auth_mode="token")
 
 
+class TestSignupEmailVerification(FrappeTestCase):
+	"""Customer-bench half of the Sprint-1 punch-list email-verification
+	work. Pairs with the admin-side flag on
+	Jarvis Admin Settings.require_email_verification.
+
+	Bench-side surfaces:
+	  start_signup persists api_key + api_secret regardless of which
+	    response shape it got, so the poll endpoint can authenticate.
+	  check_signup_payment_state wraps admin's get_signup_payment_state.
+	"""
+
+	def setUp(self):
+		self._snap = _snapshot_settings()
+		# Both paths need a non-empty admin URL to pass the pre-flight
+		# guard at start_signup; tests don't actually hit it because
+		# admin_client.signup is mocked.
+		frappe.db.set_value(
+			"Jarvis Settings", "Jarvis Settings",
+			"jarvis_admin_url", "https://admin.example.com",
+		)
+		frappe.db.commit()
+
+	def tearDown(self):
+		_restore_settings(self._snap)
+
+	def test_start_signup_persists_api_key_secret_on_verification_response(self):
+		# When admin returns pending_verification=True with api_key+secret,
+		# the bench MUST store both so the subsequent poll endpoint can
+		# authenticate during the verification window. Without this, the
+		# wizard would call check_signup_payment_state with no creds and
+		# admin would 401.
+		with patch("jarvis.onboarding.admin_client.signup",
+		           return_value={
+		               "ok": True,
+		               "api_key": "verify-key",
+		               "api_secret": "verify-secret",
+		               "customer": "alice@example.com",
+		               "pending_verification": True,
+		           }):
+			out = onboarding.start_signup(
+				"verify-test@example.com", "Acme", "Annual Plan",
+			)
+		self.assertTrue(out["pending_verification"])
+		s = frappe.get_single("Jarvis Settings")
+		self.assertEqual(
+			s.get_password("jarvis_admin_api_key", raise_exception=False),
+			"verify-key",
+		)
+		self.assertEqual(
+			s.get_password("jarvis_admin_api_secret", raise_exception=False),
+			"verify-secret",
+		)
+
+	def test_start_signup_legacy_response_still_persists_key_secret(self):
+		# Regression pin: the flag-off (legacy) response shape must keep
+		# persisting api_key + api_secret on the bench - all subsequent
+		# admin calls (finish_payment, get_connection, sync_connection,
+		# rotate-secret, push_oauth_blob) authenticate via these.
+		with patch("jarvis.onboarding.admin_client.signup",
+		           return_value={
+		               "ok": True,
+		               "api_key": "legacy-key",
+		               "api_secret": "legacy-secret",
+		               "customer": "bob@example.com",
+		               "razorpay_key_id": "rzp_test_X",
+		               "razorpay_order_id": "order_LEGACY",
+		               "amount_inr": 12000,
+		           }):
+			out = onboarding.start_signup(
+				"legacy-test@example.com", "Bob Inc", "Annual Plan",
+			)
+		self.assertEqual(out["razorpay_order_id"], "order_LEGACY")
+		s = frappe.get_single("Jarvis Settings")
+		self.assertEqual(
+			s.get_password("jarvis_admin_api_key", raise_exception=False),
+			"legacy-key",
+		)
+
+	def test_check_signup_payment_state_returns_pending(self):
+		# Customer hasn't clicked the link yet - admin returns
+		# pending_verification: True. Wizard keeps showing the "check
+		# your email" screen.
+		with patch("jarvis.onboarding.admin_client.get_signup_payment_state",
+		           return_value={"pending_verification": True}):
+			out = onboarding.check_signup_payment_state()
+		self.assertTrue(out["pending_verification"])
+
+	def test_check_signup_payment_state_returns_razorpay_payload(self):
+		# Customer clicked the link - admin returns the deferred order
+		# details. Wizard transitions to Razorpay Checkout.
+		with patch("jarvis.onboarding.admin_client.get_signup_payment_state",
+		           return_value={
+		               "pending_verification": False,
+		               "razorpay_order_id": "order_VERIFIED",
+		               "razorpay_key_id": "rzp_test_X",
+		               "amount_inr": 12000,
+		           }):
+			out = onboarding.check_signup_payment_state()
+		self.assertFalse(out["pending_verification"])
+		self.assertEqual(out["razorpay_order_id"], "order_VERIFIED")
+
+	def test_check_signup_payment_state_requires_admin_url(self):
+		# Same pre-flight guard as start_signup - misconfigured bench
+		# shouldn't silently route to DEFAULT_ADMIN_URL.
+		frappe.db.set_value(
+			"Jarvis Settings", "Jarvis Settings", "jarvis_admin_url", "",
+		)
+		frappe.db.commit()
+		with patch(
+			"jarvis.onboarding.admin_client.get_signup_payment_state",
+		) as mock_call:
+			with self.assertRaises(frappe.ValidationError):
+				onboarding.check_signup_payment_state()
+			mock_call.assert_not_called()
+
+
 class TestGetLlmSyncStatus(FrappeTestCase):
 	"""The polling endpoint that the onboarding + account pages hit while
 	the background admin sync is running."""

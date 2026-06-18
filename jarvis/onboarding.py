@@ -129,13 +129,51 @@ def start_signup(email: str, company: str, plan: str) -> dict:
 	admin_client falls back to the DEFAULT_ADMIN_URL, which on a multi-site
 	bench may be the wrong control plane. Fail fast with an actionable
 	error instead of silently landing the wrong tenancy.
+
+	Two response shapes depending on admin's
+	``require_email_verification`` flag:
+	  - flag OFF (legacy): admin returns a Razorpay order; wizard goes
+	    straight to Checkout.
+	  - flag ON: admin returns ``pending_verification: True`` and no
+	    order; wizard shows a "check your email" screen and polls
+	    ``check_signup_payment_state`` after the customer clicks the
+	    magic link. Either shape persists api_key + api_secret on the
+	    bench so the poll endpoint can authenticate.
 	"""
 	frappe.only_for("System Manager")
 	_require_admin_url()
 	data = _surface(admin_client.signup, email, company, plan)
+	# Persist api_key + api_secret regardless of which response shape we
+	# got - the bench needs them to authenticate to the poll endpoint
+	# during the verification window, and to every subsequent admin call.
+	# Legacy api_token shape kept for backwards compat with older admin
+	# responses (admin moved to native api_key:api_secret in Sprint-1).
 	if data.get("api_token"):
 		write_connection({"api_token": data["api_token"]})
+	if data.get("api_key") or data.get("api_secret"):
+		write_connection({
+			"api_key": data.get("api_key", ""),
+			"api_secret": data.get("api_secret", ""),
+		})
 	return data
+
+
+@frappe.whitelist()
+def check_signup_payment_state() -> dict:
+	"""Wizard-poll endpoint for the email-verification window.
+
+	Calls admin's ``get_signup_payment_state`` (authenticated via the
+	api_key + api_secret persisted at start_signup time) and returns the
+	response unchanged. The wizard JS branches on
+	``pending_verification`` to decide whether to keep showing the
+	"check your email" screen or to open Razorpay Checkout.
+
+	Gated on System Manager for the same reason as start_signup: this is
+	part of the same paid-signup flow on the customer's bench.
+	"""
+	frappe.only_for("System Manager")
+	_require_admin_url()
+	return _surface(admin_client.get_signup_payment_state)
 
 
 @frappe.whitelist()

@@ -658,8 +658,72 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 	function startPay() {
 		setBusy("#jo-pay", true);
 		frappe.call({ method: "jarvis.onboarding.start_signup", args: { email: state.email, company: state.company, plan: state.planName } })
-			.then((r) => openCheckout(r.message || {}))
+			.then((r) => {
+				const d = r.message || {};
+				// Admin's require_email_verification flag steers the response
+				// shape. When the flag is ON, signup returns no razorpay_order_id
+				// and instead asks the customer to click a magic link emailed
+				// to their address. The wizard switches to a "check your email"
+				// screen + a poll-the-admin button until the link has been
+				// clicked, at which point we transition to Razorpay Checkout.
+				// Flag OFF (legacy) = response carries razorpay_order_id and
+				// we go straight to Checkout, unchanged.
+				if (d.pending_verification) {
+					renderVerifyEmail();
+					return;
+				}
+				openCheckout(d);
+			})
 			.catch((e) => payErr(e));
+	}
+
+	function renderVerifyEmail() {
+		setBusy("#jo-pay", false);
+		$body.html(`
+			<div class="jo-verify">
+				<h2 class="jo-h">Check your email</h2>
+				<p class="jo-sub">We sent a confirmation link to <strong>${esc(state.email)}</strong>.
+				Click the link to verify your address, then come back here and click
+				the button below to continue to payment.</p>
+				<p class="jo-sub">The link expires in 24 hours. Check your spam folder if
+				it doesn't arrive.</p>
+				<div class="jo-err" id="jo-verify-err"></div>
+				<div class="jo-actions">
+					<button class="jo-btn jo-btn-primary" id="jo-verify-check">I've verified my email →</button>
+				</div>
+			</div>`);
+		$body.find("#jo-verify-check").on("click", () => {
+			setBusy("#jo-verify-check", true);
+			$body.find("#jo-verify-err").text("");
+			frappe.call({ method: "jarvis.onboarding.check_signup_payment_state" })
+				.then((r) => {
+					const d = r.message || {};
+					setBusy("#jo-verify-check", false);
+					if (d.pending_verification) {
+						$body.find("#jo-verify-err").text(
+							"We haven't received your verification yet. Click the link in your email, then try again."
+						);
+						return;
+					}
+					if (d.razorpay_order_id) {
+						openCheckout(d);
+						return;
+					}
+					// Edge case: subscription already advanced past Pending
+					// Payment (e.g. operator manually transitioned, or this
+					// is a stale tab). Show a generic message; the next
+					// reload picks up the right step.
+					$body.find("#jo-verify-err").text(
+						"Signup state has changed. Refresh this page to continue."
+					);
+				})
+				.catch((e) => {
+					setBusy("#jo-verify-check", false);
+					$body.find("#jo-verify-err").text(
+						e.message || "Couldn't reach the admin server. Try again."
+					);
+				});
+		});
 	}
 
 	function openCheckout(d) {

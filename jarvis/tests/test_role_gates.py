@@ -27,6 +27,7 @@ from jarvis.oauth.api import _CACHE_KEY
 GATED_ENDPOINTS = [
 	("jarvis.onboarding", "sync_connection", {}),
 	("jarvis.onboarding", "start_signup", {"email": "x@y.test", "company": "C", "plan": "p"}),
+	("jarvis.onboarding", "check_signup_payment_state", {}),
 	("jarvis.onboarding", "finish_payment", {"payload": {}}),
 	("jarvis.onboarding", "renew", {}),
 	("jarvis.onboarding", "save_llm_creds", {"provider": "OpenAI", "model": "gpt-4o", "api_key": "k"}),
