@@ -32,6 +32,11 @@ _TOOL_NAMES: tuple[str, ...] = (
     "cancel_doc",
     "delete_doc",
     "amend_doc",
+    # Tier 1 artifact producers: hand the agent a file/URL the customer
+    # can act on, instead of a wall of JSON.
+    "download_pdf",
+    "attach_to_doc",
+    "download_vcard",
 )
 
 

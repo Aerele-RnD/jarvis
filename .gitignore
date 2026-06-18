@@ -7,6 +7,12 @@ __pycache__/
 
 # Node
 node_modules/
+**/node_modules/
+jarvis/public/node_modules/
+jarvis/public/node_modules
+
+# graphify (knowledge-graph index; local-only)
+graphify-out/
 
 # Frappe build artefacts
 jarvis/public/dist/

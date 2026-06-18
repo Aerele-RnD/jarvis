@@ -21,6 +21,9 @@ class TestRegistry(FrappeTestCase):
                 "cancel_doc",
                 "delete_doc",
                 "amend_doc",
+                "download_pdf",
+                "attach_to_doc",
+                "download_vcard",
             },
         )
 
