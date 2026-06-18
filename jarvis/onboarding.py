@@ -143,13 +143,6 @@ def start_signup(email: str, company: str, plan: str) -> dict:
 	frappe.only_for("System Manager")
 	_require_admin_url()
 	data = _surface(admin_client.signup, email, company, plan)
-	# Persist api_key + api_secret regardless of which response shape we
-	# got - the bench needs them to authenticate to the poll endpoint
-	# during the verification window, and to every subsequent admin call.
-	# Legacy api_token shape kept for backwards compat with older admin
-	# responses (admin moved to native api_key:api_secret in Sprint-1).
-	if data.get("api_token"):
-		write_connection({"api_token": data["api_token"]})
 	if data.get("api_key") or data.get("api_secret"):
 		write_connection({
 			"api_key": data.get("api_key", ""),
