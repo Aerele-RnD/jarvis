@@ -29,13 +29,11 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		// step 4 inputs - chat subscription path (REV-3 paste-back)
 		authMode: "api_key", // "api_key" | "subscription"
 		subProvider: "OpenAI",
-		// Subscription default MUST be a codex-CLI model (not a standard
-		// API model like "gpt-4o"). The codex auth tunnel rejects
-		// standard-API names, surfacing as a generic
-		// ProviderAuthError "No API key found for provider openai".
-		// Keep in sync with the first entry of SUBSCRIPTION_MODELS["OpenAI"]
-		// below + _DEFAULT_MODEL["OpenAI"] in jarvis/oauth/api.py.
-		subModel: "gpt-5.5",
+		// Populated from defaultModels[subProvider] once bootRender
+		// fetches the catalogue. Empty until then so a stale value
+		// can't sneak into a paste-back signin before the canonical
+		// Python set has been confirmed.
+		subModel: "",
 		subNonce: null,
 		subAuthorizeUrl: null,   // shown to the customer in Screen 2
 		subExpiresAt: null,
@@ -43,16 +41,17 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		successData: null,
 	};
 
-	// Providers + models for chat-subscription. Mirrors
-	// jarvis.oauth.providers - keep in sync.
-	// Subscription-tier model IDs - these go through codex/gemini-cli's
-	// auth tunnel rather than the standard API, so the valid set is
-	// CLI-specific (not OpenAI/Google's public API model names).
-	// Verified live against ChatGPT-prolite + Gemini Advanced 2026-06-02.
-	const SUBSCRIPTION_MODELS = {
-		"OpenAI":        ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"],
-		"Google Gemini": ["gemini-2.0-pro", "gemini-1.5-pro", "gemini-1.5-flash"],
-	};
+	// Providers + models for chat-subscription. Populated by bootRender
+	// via jarvis.chat.api.get_chat_ui_settings - the canonical
+	// catalogue lives in jarvis/_subscription_models.py, so the JS
+	// side is a pure consumer and never drifts from the Python /
+	// security allowlist (jarvis.oauth.api validates against the
+	// same dict). Until the fetch lands the maps are empty and
+	// renderSubscriptionPanel falls through to a "Loading…" state.
+	// Punch-list "_SUBSCRIPTION_MODELS duplicated 4-5 times" from
+	// the 2026-06-16 cross-repo review.
+	let subscriptionModels = {};
+	let defaultModels = {};
 
 	// Default model + baseUrl per provider, surfaced as autofilled hints on step 4.
 	// Customers can override both in the form (and later in Jarvis Settings).
@@ -444,10 +443,10 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 				<div class="jo-hint" id="jo-sub-countdown" style="margin-top:14px;font-size:12px" aria-live="polite">Link valid for ~${minsLeft} minute${minsLeft === 1 ? "" : "s"}.</div>`;
 		}
 		// Screen 1 - provider + model picker (not yet started)
-		const provOptions = Object.keys(SUBSCRIPTION_MODELS).map(
+		const provOptions = Object.keys(subscriptionModels).map(
 			(p) => `<option value="${esc(p)}" ${p === state.subProvider ? "selected" : ""}>${esc(p)}</option>`
 		).join("");
-		const modelOptions = (SUBSCRIPTION_MODELS[state.subProvider] || []).map(
+		const modelOptions = (subscriptionModels[state.subProvider] || []).map(
 			(m) => `<option value="${esc(m)}" ${m === state.subModel ? "selected" : ""}>${esc(m)}</option>`
 		).join("");
 		return `
@@ -468,7 +467,7 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		// Screen 1 wiring
 		$body.find("#jo-sub-provider").on("change", (e) => {
 			state.subProvider = e.target.value;
-			state.subModel = (SUBSCRIPTION_MODELS[state.subProvider] || [])[0] || "";
+			state.subModel = (subscriptionModels[state.subProvider] || [])[0] || "";
 			renderLlm();
 		});
 		$body.find("#jo-sub-model").on("change", (e) => {
@@ -948,12 +947,34 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		// card instead of the create-account form. On RPC failure (e.g. site
 		// just spun up, scheduler not running), fall back to the wizard so
 		// the page is never stuck.
-		frappe.call({ method: "jarvis.account.is_onboarded" })
-			.then((r) => {
-				if (r && r.message && r.message.onboarded) renderCompletionCard();
-				else render();
-			})
-			.catch(() => render());
+		//
+		// The chat-ui settings call carries the subscription catalogue +
+		// per-provider defaults (jarvis/_subscription_models.py). Fired
+		// alongside is_onboarded so the picker is populated before the
+		// customer ever lands on the Connect AI step. If it fails (rare;
+		// frappe.call retries 3xx + auth), the maps stay empty and
+		// renderSubscriptionPanel shows the Loading… placeholder, which
+		// is preferable to silently mounting a hardcoded fallback that
+		// could drift from the Python allowlist.
+		Promise.all([
+			frappe.call({ method: "jarvis.account.is_onboarded" }),
+			frappe.call({ method: "jarvis.chat.api.get_chat_ui_settings" })
+				.catch(() => ({ message: {} })),
+		]).then(([onboarded, chatUi]) => {
+			const cui = (chatUi && chatUi.message) || {};
+			subscriptionModels = cui.subscription_models || {};
+			defaultModels = cui.default_models || {};
+			// Seed the default for the initial subProvider so the AI
+			// step doesn't open with an empty model dropdown.
+			state.subModel = defaultModels[state.subProvider]
+				|| (subscriptionModels[state.subProvider] || [])[0]
+				|| "";
+			if (onboarded && onboarded.message && onboarded.message.onboarded) {
+				renderCompletionCard();
+			} else {
+				render();
+			}
+		}).catch(() => render());
 	}
 
 	function renderCompletionCard() {

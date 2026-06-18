@@ -65,7 +65,10 @@ def _get_build_id() -> str:
 # Mirrors SUBSCRIPTION_MODELS in jarvis_chat.js / jarvis_account.js /
 # jarvis_onboarding.js; keep all three JS files in sync with the Python
 # catalogue.
-from jarvis._subscription_models import SUBSCRIPTION_MODELS as _SUBSCRIPTION_MODELS
+from jarvis._subscription_models import (
+	DEFAULT_MODEL as _DEFAULT_MODEL,
+	SUBSCRIPTION_MODELS as _SUBSCRIPTION_MODELS,
+)
 
 
 @frappe.whitelist()
@@ -272,11 +275,19 @@ def get_chat_ui_settings() -> dict:
 	for them yet (see spec § Out of scope).
 	"""
 	settings = frappe.get_single("Jarvis Settings")
+	# default_models lets callers (jarvis_onboarding.js,
+	# jarvis_account.js subscription-tab) skip duplicating the
+	# canonical "what's the safe default model id per provider"
+	# table. Together with subscription_models this turns the JS
+	# pages into pure consumers of jarvis/_subscription_models.py.
+	# Punch-list "_SUBSCRIPTION_MODELS duplicated 4-5 times" from
+	# the 2026-06-16 cross-repo review.
 	return {
 		"llm_auth_mode": settings.llm_auth_mode or "api_key",
 		"llm_provider": settings.llm_provider or "",
 		"llm_model": settings.llm_model or "",
 		"subscription_models": _SUBSCRIPTION_MODELS,
+		"default_models": _DEFAULT_MODEL,
 		"build_id": _get_build_id(),
 	}
 

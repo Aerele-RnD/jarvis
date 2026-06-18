@@ -559,6 +559,23 @@ class TestBuildId(FrappeTestCase):
 		self.assertIn("build_id", s)
 		self.assertIsInstance(s["build_id"], str)
 
+	def test_get_chat_ui_settings_exposes_subscription_catalogue(self):
+		# Regression pin for "_SUBSCRIPTION_MODELS duplicated 4-5
+		# times" - the catalogue + per-provider defaults are now
+		# served from the single Python source so jarvis_onboarding.js
+		# and jarvis_account.js can drop their hand-maintained copies.
+		from jarvis.chat.api import get_chat_ui_settings
+		from jarvis._subscription_models import (
+			DEFAULT_MODEL, SUBSCRIPTION_MODELS,
+		)
+		s = get_chat_ui_settings()
+		self.assertEqual(s["subscription_models"], SUBSCRIPTION_MODELS)
+		self.assertEqual(s["default_models"], DEFAULT_MODEL)
+		# Every default must be a member of its provider's allow-list -
+		# protects against a future drift in jarvis/_subscription_models.py.
+		for provider, default in DEFAULT_MODEL.items():
+			self.assertIn(default, SUBSCRIPTION_MODELS[provider])
+
 	def test_build_id_matches_assets_json(self):
 		"""When sites/assets/assets.json exists, build_id is derived from
 		the hashed jarvis_chat.bundle.js filename (no extension)."""

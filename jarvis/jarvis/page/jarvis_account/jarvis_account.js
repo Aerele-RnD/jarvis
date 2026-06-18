@@ -53,15 +53,15 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	let settingsLocal = null; // local Jarvis Settings LLM fields snapshot
 
 	// Subscription providers + models (chat-subscription OAuth path).
-	// REV-3: server holds the verifier; UI offers a model picker at start.
-	// Subscription-tier model IDs - these go through codex/gemini-cli's
-	// auth tunnel rather than the standard API, so the valid set is
-	// CLI-specific (not OpenAI/Google's public API model names).
-	// Verified live against ChatGPT-prolite + Gemini Advanced 2026-06-02.
-	const SUBSCRIPTION_MODELS = {
-		"OpenAI":        ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"],
-		"Google Gemini": ["gemini-2.0-pro", "gemini-1.5-pro", "gemini-1.5-flash"],
-	};
+	// Populated by loadInitial() via jarvis.chat.api.get_chat_ui_settings -
+	// the canonical catalogue lives in jarvis/_subscription_models.py, so
+	// the JS side is a pure consumer and never drifts from the Python /
+	// security allowlist (jarvis.oauth.api validates against the same dict).
+	// Until the fetch lands, the maps are empty and renderSubscriptionPanel
+	// renders the loading placeholder. Punch-list "_SUBSCRIPTION_MODELS
+	// duplicated 4-5 times" from the 2026-06-16 cross-repo review.
+	let subscriptionModels = {};
+	let defaultModels = {};
 
 	// AI provider card state.
 	// aiTab follows llm_auth_mode by default; can diverge briefly while
@@ -70,13 +70,11 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	const ui = {
 		aiTab: "api_key",
 		subProvider: "OpenAI",
-		// Subscription default MUST be a codex-CLI model (not a standard
-		// API model like "gpt-4o"). The codex auth tunnel rejects
-		// standard-API names, surfacing as a generic
-		// ProviderAuthError "No API key found for provider openai".
-		// Keep in sync with SUBSCRIPTION_MODELS["OpenAI"][0] above +
-		// _DEFAULT_MODEL["OpenAI"] in jarvis/oauth/api.py.
-		subModel: "gpt-5.5",
+		// Populated from defaultModels[subProvider] once
+		// loadInitial fetches the catalogue. Empty until then so a
+		// stale ui.subModel can't sneak into a paste-back signin
+		// before the canonical Python set has been confirmed.
+		subModel: "",
 		subNonce: null,
 		subAuthorizeUrl: null,   // shown to the customer in Screen 2
 		subExpiresAt: null,
@@ -127,9 +125,19 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 				return Promise.all([
 					frappe.call({ method: "jarvis.account.get_account" }),
 					frappe.db.get_doc("Jarvis Settings"),
-				]).then(([acc, settings]) => {
+					frappe.call({ method: "jarvis.chat.api.get_chat_ui_settings" }),
+				]).then(([acc, settings, chatUi]) => {
 					account = (acc && acc.message) || {};
 					settingsLocal = settings || {};
+					const cui = (chatUi && chatUi.message) || {};
+					subscriptionModels = cui.subscription_models || {};
+					defaultModels = cui.default_models || {};
+					// First-paint seed: pick the canonical default for the
+					// initial subProvider so render() doesn't show an empty
+					// model dropdown before the user has touched anything.
+					ui.subModel = defaultModels[ui.subProvider]
+						|| (subscriptionModels[ui.subProvider] || [])[0]
+						|| "";
 					ui.aiTab = settingsLocal.llm_auth_mode === "oauth" ? "subscription" : "api_key";
 					// In oauth mode, seed sub-state from the saved provider/model so
 					// a Re-authorize click uses THIS customer's provider (e.g.
@@ -144,10 +152,10 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 					// catches this too; this is just so the dropdown + the
 					// "Sign in with ..." button label stay consistent.
 					if (settingsLocal.llm_auth_mode === "oauth") {
-						if (settingsLocal.llm_provider && SUBSCRIPTION_MODELS[settingsLocal.llm_provider]) {
+						if (settingsLocal.llm_provider && subscriptionModels[settingsLocal.llm_provider]) {
 							ui.subProvider = settingsLocal.llm_provider;
 						}
-						const valid = SUBSCRIPTION_MODELS[ui.subProvider] || [];
+						const valid = subscriptionModels[ui.subProvider] || [];
 						if (settingsLocal.llm_model && valid.includes(settingsLocal.llm_model)) {
 							ui.subModel = settingsLocal.llm_model;
 						} else {
@@ -329,10 +337,10 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 				</div>`;
 		}
 		// Screen 1 - provider + model picker (not yet started)
-		const provOptions = Object.keys(SUBSCRIPTION_MODELS).map(
+		const provOptions = Object.keys(subscriptionModels).map(
 			(p) => `<option value="${esc(p)}" ${p === ui.subProvider ? "selected" : ""}>${esc(p)}</option>`
 		).join("");
-		const modelOptions = (SUBSCRIPTION_MODELS[ui.subProvider] || []).map(
+		const modelOptions = (subscriptionModels[ui.subProvider] || []).map(
 			(m) => `<option value="${esc(m)}" ${m === ui.subModel ? "selected" : ""}>${esc(m)}</option>`
 		).join("");
 		const dis = editable ? "" : "disabled";
@@ -452,7 +460,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		// Screen 1 wiring
 		$body.find("#ja-sub-provider").on("change", (e) => {
 			ui.subProvider = e.target.value;
-			ui.subModel = (SUBSCRIPTION_MODELS[ui.subProvider] || [])[0] || "";
+			ui.subModel = (subscriptionModels[ui.subProvider] || [])[0] || "";
 			render();
 		});
 		$body.find("#ja-sub-model").on("change", (e) => {
