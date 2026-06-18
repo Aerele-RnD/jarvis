@@ -37,6 +37,18 @@ _TOOL_NAMES: tuple[str, ...] = (
     "download_pdf",
     "attach_to_doc",
     "download_vcard",
+    # Tier 2a ERPNext computed reads: numbers the LLM keeps hallucinating
+    # because they need business-logic-aware math (FIFO/Moving-Avg,
+    # fiscal-year boundaries, party-level GL aggregation).
+    "get_stock_balance",
+    "get_valuation_rate",
+    "scan_barcode",
+    "get_balance_on",
+    "get_customer_outstanding",
+    "get_party_dashboard_info",
+    "get_exchange_rate",
+    "get_fiscal_year",
+    "get_itemised_tax_breakup",
 )
 
 
