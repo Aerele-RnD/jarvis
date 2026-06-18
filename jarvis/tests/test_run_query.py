@@ -193,6 +193,122 @@ class TestRunQueryPermissions(FrappeTestCase):
 		self.assertIn("Sales Invoice Item", checked)
 
 
+class TestRunQueryDocTypeAllowlist(FrappeTestCase):
+	"""Sprint-1 punch-list "run_query SQL allowlist has bypass surfaces"
+	(2026-06-16 review) — defense-in-depth per-tenant DocType allowlist
+	on top of the Frappe permission system. When configured, run_query
+	must refuse a DocType not on the allowlist even when the calling
+	user has read permission.
+
+	The allowlist is opt-in: empty = current behaviour (any DocType the
+	user can read). The tests pin both directions.
+	"""
+
+	def setUp(self):
+		# Always reset the allowlist between tests so each test's
+		# patches start from a known state.
+		settings = frappe.get_single("Jarvis Settings")
+		settings.db_set(
+			"run_query_doctype_allowlist", "", update_modified=False,
+		)
+		frappe.db.commit()
+
+	def tearDown(self):
+		settings = frappe.get_single("Jarvis Settings")
+		settings.db_set(
+			"run_query_doctype_allowlist", "", update_modified=False,
+		)
+		frappe.db.commit()
+
+	def test_empty_allowlist_imposes_no_extra_restriction(self):
+		# Empty field = behave as before; perm check is the only gate.
+		# Patch frappe.db.sql so we don't need a real table.
+		with patch("frappe.has_permission", return_value=True), \
+		     patch("frappe.db.sql", return_value=[]):
+			result = run_query("SELECT name FROM tabSales Invoice LIMIT 1")
+		self.assertIn("rows", result)
+
+	def test_doctype_on_allowlist_is_allowed(self):
+		settings = frappe.get_single("Jarvis Settings")
+		settings.db_set(
+			"run_query_doctype_allowlist",
+			"Sales Invoice, Customer",
+			update_modified=False,
+		)
+		frappe.db.commit()
+		with patch("frappe.has_permission", return_value=True), \
+		     patch("frappe.db.sql", return_value=[]):
+			result = run_query("SELECT name FROM tabSales Invoice LIMIT 1")
+		self.assertIn("rows", result)
+
+	def test_doctype_off_allowlist_is_rejected_even_with_read_perm(self):
+		# The whole point of the allowlist: a user who CAN read 'User' via
+		# Frappe perms must still be denied if the operator didn't put
+		# 'User' on the allowlist.
+		settings = frappe.get_single("Jarvis Settings")
+		settings.db_set(
+			"run_query_doctype_allowlist",
+			"Sales Invoice, Customer",
+			update_modified=False,
+		)
+		frappe.db.commit()
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(PermissionDeniedError) as cm:
+				run_query("SELECT name FROM tabUser LIMIT 1")
+		self.assertIn("User", str(cm.exception))
+		self.assertIn("allowlist", str(cm.exception))
+
+	def test_allowlist_enforced_per_doctype_in_joins(self):
+		# Sales Invoice is on the list, Sales Invoice Item isn't - the
+		# JOIN must fail even though the leading table is allowed.
+		settings = frappe.get_single("Jarvis Settings")
+		settings.db_set(
+			"run_query_doctype_allowlist",
+			"Sales Invoice",
+			update_modified=False,
+		)
+		frappe.db.commit()
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(PermissionDeniedError) as cm:
+				run_query(
+					"SELECT si.name FROM `tabSales Invoice` AS si "
+					"JOIN `tabSales Invoice Item` AS sii ON sii.parent = si.name"
+				)
+		self.assertIn("Sales Invoice Item", str(cm.exception))
+
+	def test_newline_separated_allowlist(self):
+		# The Small Text field renders multiline by default; operators
+		# with >5 DocTypes will paste one-per-line. Both separators
+		# (and a mix) must work.
+		settings = frappe.get_single("Jarvis Settings")
+		settings.db_set(
+			"run_query_doctype_allowlist",
+			"Sales Invoice\nCustomer\nItem",
+			update_modified=False,
+		)
+		frappe.db.commit()
+		with patch("frappe.has_permission", return_value=True), \
+		     patch("frappe.db.sql", return_value=[]):
+			run_query("SELECT name FROM tabCustomer LIMIT 1")
+			run_query("SELECT name FROM tabItem LIMIT 1")
+
+	def test_allowlist_is_case_sensitive(self):
+		# Frappe DocType names are case-sensitive ("Sales Invoice" !=
+		# "sales invoice"); the allowlist matches them as-is so a typo
+		# in the operator's configured list silently fails-closed
+		# rather than silently fails-open.
+		settings = frappe.get_single("Jarvis Settings")
+		settings.db_set(
+			"run_query_doctype_allowlist",
+			"sales invoice",  # lowercase - shouldn't match "Sales Invoice"
+			update_modified=False,
+		)
+		frappe.db.commit()
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(PermissionDeniedError):
+				run_query("SELECT name FROM `tabSales Invoice` LIMIT 1")
+
+
 class TestRunQueryLimitInjection(FrappeTestCase):
 	"""LIMIT is the only bound on result size - it must always be present
 	and never exceed the cap. Test the rewriter, not the SQL execution.

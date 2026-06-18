@@ -110,6 +110,24 @@ def run_query(query: str, limit: int = DEFAULT_LIMIT) -> dict:
 				f"no read permission on referenced DocType: {doctype}"
 			)
 
+	# Operator-configured defense-in-depth: a per-site DocType allowlist on
+	# top of the Frappe permission system. If set, run_query refuses any
+	# DocType not on the list - even when the calling user has read perm.
+	# Closes Sprint-1 punch-list "run_query SQL allowlist has bypass
+	# surfaces" by giving operators a way to lock the tool to a known-good
+	# slice of the DocType graph (e.g. "Sales Invoice, Customer, Item")
+	# so a future allowlist bypass in the SQL parser is contained.
+	allowlist = _load_doctype_allowlist()
+	if allowlist is not None:
+		for tbl in tables:
+			doctype = tbl[len("tab"):]
+			if doctype not in allowlist:
+				raise PermissionDeniedError(
+					f"DocType {doctype!r} is not in this site's run_query "
+					f"allowlist; add it to Jarvis Settings."
+					f"run_query_doctype_allowlist to enable."
+				)
+
 	final = _enforce_limit(clean, limit)
 
 	rows = frappe.db.sql(final, as_dict=True)
@@ -122,6 +140,45 @@ def run_query(query: str, limit: int = DEFAULT_LIMIT) -> dict:
 
 
 # ---- Validation helpers ----------------------------------------------
+
+
+def _load_doctype_allowlist() -> set[str] | None:
+	"""Read the per-site DocType allowlist from Jarvis Settings.
+
+	Returns ``None`` when the field is unset or empty (default; means
+	"no extra restriction beyond Frappe permissions"). Returns a
+	normalised set of DocType names when configured. Accepts comma OR
+	newline separation so operators can paste from either a CSV row or
+	a one-DocType-per-line list, the latter being the more readable
+	form for >5 entries in the Small Text field.
+
+	Whitespace is trimmed; empty entries are dropped. Names are NOT
+	normalised for case (Frappe DocType names are case-sensitive:
+	"Sales Invoice" != "sales invoice"), so a typo in the allowlist
+	silently doesn't match - that's the right failure mode (closed by
+	default).
+
+	Reads via ``frappe.get_cached_doc`` rather than ``get_single_value``
+	so the call uses Frappe's Single-doc cache (a single in-memory dict
+	per process) instead of an SQL round-trip. The cached path also
+	doesn't get fooled by callers who have ``patch('frappe.db.sql')``
+	in scope (a common pattern in run_query's own tests).
+	"""
+	try:
+		settings = frappe.get_cached_doc("Jarvis Settings")
+	except Exception:
+		# Bench misconfig / migration in flight / similar. Failing open
+		# here is the safe call: the actual perm check above already
+		# gated every DocType through frappe.has_permission. Without
+		# this fallback, a transient Settings read error would brick
+		# every run_query call.
+		return None
+	raw = (settings.get("run_query_doctype_allowlist") or "").strip()
+	if not raw:
+		return None
+	parts = re.split(r"[,\n]", raw)
+	cleaned = {p.strip() for p in parts if p.strip()}
+	return cleaned if cleaned else None
 
 
 def _reject_comments(query: str) -> None:

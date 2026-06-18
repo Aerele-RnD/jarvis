@@ -261,6 +261,17 @@
       "read_only": 1
     },
     {
+      "fieldname": "agent_tools_section",
+      "fieldtype": "Section Break",
+      "label": "Agent Tool Restrictions"
+    },
+    {
+      "fieldname": "run_query_doctype_allowlist",
+      "fieldtype": "Small Text",
+      "label": "run_query DocType Allowlist",
+      "description": "Defense-in-depth restriction for the run_query agent tool. Comma- or newline-separated list of DocType names. When non-empty, run_query refuses any query referencing a DocType not on this list - even if the calling user has read permission on it through Frappe's normal permission system. Leave empty (default) to allow any DocType the user can read. Use this to lock the agent to a known-good slice of your data (e.g. 'Sales Invoice, Customer, Item, Sales Invoice Item') so a future allowlist bypass in the SQL parser still can't reach the rest of the bench."
+    },
+    {
       "fieldname": "developer_section",
       "fieldtype": "Section Break",
       "label": "Developer / Sandbox"
