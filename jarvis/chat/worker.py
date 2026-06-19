@@ -180,9 +180,6 @@ def run_agent_turn(conversation_id: str, message_id: str, run_id: str) -> None:
 	})
 
 	settings = frappe.get_single("Jarvis Settings")
-	gateway_url = (settings.agent_url or "").replace(
-		"http://", "ws://"
-	).replace("https://", "wss://")
 	user_message = frappe.db.get_value(MSG, message_id, "content")
 	# Prepend today's date as a context line so the agent (AGENTS.md tells
 	# it to treat the leading ``[Context: ...]`` as system, not user) can
@@ -194,30 +191,25 @@ def run_agent_turn(conversation_id: str, message_id: str, run_id: str) -> None:
 	today = now.strftime("%Y-%m-%d (%A)")
 	user_message = f"[Context: today is {today}]\n\n{user_message or ''}"
 
+	from jarvis import selfhost
+
+	def _publish_run_error(err: str) -> None:
+		_mark_errored(assistant_msg.name, err)
+		publish_to_user(user, {
+			"kind": "run:error",
+			"conversation_id": conversation_id,
+			"message_id": assistant_msg.name,
+			"run_id": run_id,
+			"error": err,
+		})
+
 	try:
-		try:
-			sess = OpenclawSession.connect(gateway_url)
-		except OpenclawUnreachableError as e:
-			_mark_errored(assistant_msg.name, str(e))
-			publish_to_user(user, {
-				"kind": "run:error",
-				"conversation_id": conversation_id,
-				"message_id": assistant_msg.name,
-				"run_id": run_id,
-				"error": str(e),
-			})
-			return
+		idem = f"{conversation_id}:{message_id}"
+		tool_msg_by_call_id: dict[str, str] = {}
+		batcher = _AssistantContentBatcher(assistant_msg.name)
 
-		effective_model, oauth_provider_id = _resolve_model_and_provider(conv)
-
-		try:
-			idem = f"{conversation_id}:{message_id}"
-			tool_msg_by_call_id: dict[str, str] = {}
-			batcher = _AssistantContentBatcher(assistant_msg.name)
-			for event in sess.stream_agent_turn(
-				conv.session_key, user_message, idem,
-				model=effective_model, provider=oauth_provider_id,
-			):
+		def _consume(events) -> None:
+			for event in events:
 				_handle_event(
 					event,
 					conversation_id=conversation_id,
@@ -227,25 +219,51 @@ def run_agent_turn(conversation_id: str, message_id: str, run_id: str) -> None:
 					run_id=run_id,
 					batcher=batcher,
 				)
-			# Drain any buffered assistant deltas before the cleanup
-			# write below stamps streaming=0. The previous shape wrote
-			# every token directly so this drain wasn't needed; the
-			# punch-list batching defers writes, so we explicitly
-			# persist the final cumulative content before the row
-			# transitions out of streaming.
+			# Drain buffered assistant deltas before the streaming=0 cleanup.
 			batcher.flush()
-		except OpenclawUnreachableError as e:
-			_mark_errored(assistant_msg.name, str(e))
-			publish_to_user(user, {
-				"kind": "run:error",
-				"conversation_id": conversation_id,
-				"message_id": assistant_msg.name,
-				"run_id": run_id,
-				"error": str(e),
-			})
-			return
-		finally:
-			sess.close()
+
+		if selfhost.is_self_hosted():
+			# Self-hosted: openclaw's HTTP OpenAI-compatible surface with a
+			# bearer token (full operator scope, no device pairing). agent_url
+			# holds the http(s) base; the user's openclaw uses its own LLM.
+			from jarvis.chat import openclaw_http_client
+			base_url = (settings.agent_url or "").strip()
+			token = settings.get_password("agent_token", raise_exception=False) or ""
+			# Register this turn so the plugin's call_tool callback (which only
+			# carries the openclaw HTTP session key, not our conversation) can
+			# attribute tool calls back here and surface tool cards.
+			tool_user = (settings.selfhost_tool_user or "").strip()
+			selfhost.set_active_turn(tool_user, conversation=conversation_id, owner=user, run_id=run_id)
+			try:
+				_consume(openclaw_http_client.stream_agent_turn(
+					base_url, token, user_message, model="openclaw",
+				))
+			except OpenclawUnreachableError as e:
+				_publish_run_error(str(e))
+				return
+			finally:
+				selfhost.clear_active_turn(tool_user)
+		else:
+			# Managed: device-paired WebSocket to the tenant's gateway.
+			gateway_url = (settings.agent_url or "").replace(
+				"http://", "ws://"
+			).replace("https://", "wss://")
+			try:
+				sess = OpenclawSession.connect(gateway_url)
+			except OpenclawUnreachableError as e:
+				_publish_run_error(str(e))
+				return
+			effective_model, oauth_provider_id = _resolve_model_and_provider(conv)
+			try:
+				_consume(sess.stream_agent_turn(
+					conv.session_key, user_message, idem,
+					model=effective_model, provider=oauth_provider_id,
+				))
+			except OpenclawUnreachableError as e:
+				_publish_run_error(str(e))
+				return
+			finally:
+				sess.close()
 
 		# Streaming exited cleanly via lifecycle.end
 		frappe.db.set_value(MSG, assistant_msg.name, "streaming", 0)

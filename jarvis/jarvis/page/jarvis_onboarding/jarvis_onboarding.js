@@ -24,6 +24,10 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 	// ---- state -------------------------------------------------------------
 	const state = {
 		step: 1, email: "", company: "", planName: null, plans: [], busy: false,
+		// Deployment-mode fork: null = not chosen yet (show the chooser),
+		// "managed" = Aerele-hosted (the existing plan/pay/LLM flow),
+		// "selfhost" = bring-your-own openclaw (URL + token + validate).
+		mode: null, shUrl: "", shToken: "",
 		// step 4 inputs - API key path
 		llmProvider: "Anthropic", llmModel: "", llmApiKey: "", llmBaseUrl: "",
 		// step 4 inputs - chat subscription path (REV-3 paste-back)
@@ -171,11 +175,125 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 	function go(step) { state.step = step; render(); }
 
 	function render() {
+		if (state.mode === null) return renderModeChoice();
+		if (state.mode === "selfhost") return renderSelfHost();
 		renderSteps();
 		if (state.step === 1) return renderAccount();
 		if (state.step === 2) return renderPlan();
 		if (state.step === 3) return renderPay();
 		if (state.step === 4) return renderLlm();
+	}
+
+	// ---- deployment-mode fork ---------------------------------------------
+	function renderModeChoice() {
+		$steps.empty();
+		$footLink.empty();
+		$body.html(`
+			<h2 class="jo-h">How do you want to run Jarvis?</h2>
+			<p class="jo-sub">Choose where the openclaw agent runs. You can switch later from My Account.</p>
+			<div class="jo-modes">
+			  <div class="jo-mode" data-mode="managed">
+			    <div class="jo-mode-icon">☁</div>
+			    <div class="jo-mode-name">Aerele-managed</div>
+			    <ul class="jo-mode-feats">
+			      <li><span class="jo-tick">✓</span>We host the openclaw agent for you</li>
+			      <li><span class="jo-tick">✓</span>Includes the Jarvis persona + Frappe skills</li>
+			      <li><span class="jo-tick">✓</span>Simple plan &amp; billing</li>
+			    </ul>
+			    <button class="jo-btn jo-btn-primary jo-mode-pick">Choose →</button>
+			  </div>
+			  <div class="jo-mode" data-mode="selfhost">
+			    <div class="jo-mode-icon">🖥</div>
+			    <div class="jo-mode-name">Self-hosted</div>
+			    <ul class="jo-mode-feats">
+			      <li><span class="jo-tick">✓</span>Bring your own openclaw server</li>
+			      <li><span class="jo-tick">✓</span>Bring your own LLM</li>
+			      <li><span class="jo-tick">✓</span>Open-source · no Aerele persona/skills</li>
+			    </ul>
+			    <button class="jo-btn jo-btn-ghost jo-mode-pick">Choose →</button>
+			  </div>
+			</div>`);
+		$body.find('.jo-mode[data-mode="managed"] .jo-mode-pick').on("click", () => { state.mode = "managed"; go(1); });
+		$body.find('.jo-mode[data-mode="selfhost"] .jo-mode-pick').on("click", () => { state.mode = "selfhost"; render(); });
+	}
+
+	function renderSelfHost() {
+		$steps.empty();
+		$footLink.empty();
+		$body.html(`
+			<h2 class="jo-h">Connect your openclaw</h2>
+			<p class="jo-sub">Point Jarvis at <b>your own</b> openclaw server. Jarvis connects over HTTP
+			   with a bearer token - no Aerele persona/skills. Validate first, then connect.</p>
+			<div class="jo-field">
+			  <label for="jo-sh-url">openclaw URL</label>
+			  <input id="jo-sh-url" class="jo-input" type="text" placeholder="http://host.docker.internal:19060" value="${esc(state.shUrl)}"/>
+			</div>
+			<div class="jo-field">
+			  <label for="jo-sh-token">Gateway token</label>
+			  <input id="jo-sh-token" class="jo-input" type="password" placeholder="paste your openclaw gateway token" value="${esc(state.shToken)}" autocomplete="off"/>
+			</div>
+			<label class="jo-check"><input type="checkbox" id="jo-sh-deep"/> Run deep chat test (slower — sends one message)</label>
+			<div class="jo-actions" style="margin-top:12px;justify-content:flex-start">
+			  <button class="jo-btn jo-btn-ghost" id="jo-sh-test">Test connection</button>
+			</div>
+			<div id="jo-sh-results" class="jo-sh-results"></div>
+			<div class="jo-err" id="jo-sh-err"></div>
+			<div class="jo-actions jo-actions-split">
+			  <button class="jo-btn jo-btn-ghost" id="jo-sh-back">← Back</button>
+			  <button class="jo-btn jo-btn-primary" id="jo-sh-connect">Connect →</button>
+			</div>`);
+		$body.find("#jo-sh-url").on("input", (e) => { state.shUrl = e.target.value; });
+		$body.find("#jo-sh-token").on("input", (e) => { state.shToken = e.target.value; });
+		$body.find("#jo-sh-back").on("click", () => { state.mode = null; render(); });
+		$body.find("#jo-sh-test").on("click", () => runSelfHostTest());
+		$body.find("#jo-sh-connect").on("click", saveSelfHost);
+		$body.find("#jo-sh-url").focus();
+	}
+
+	function renderShResults(result) {
+		const checks = result.checks || [];
+		const rows = checks.map((c) =>
+			`<div class="jo-sh-check">${c.ok ? "✅" : "❌"} <b>${esc(c.check)}</b> — ${esc(c.detail || "")}</div>`
+		).join("");
+		const overall = result.ok
+			? `<div class="jo-sh-ok">All required checks passed.</div>`
+			: `<div class="jo-sh-bad">Some checks failed — fix them and retry.</div>`;
+		$body.find("#jo-sh-results").html(overall + rows);
+	}
+
+	function runSelfHostTest() {
+		const url = (state.shUrl || "").trim();
+		const tok = (state.shToken || "").trim();
+		const $err = $body.find("#jo-sh-err");
+		$err.text("");
+		if (!url) { $err.text("Enter the openclaw URL first."); return; }
+		$body.find("#jo-sh-results").html(`<div class="jo-hint">Testing…</div>`);
+		const deep = $body.find("#jo-sh-deep").is(":checked") ? 1 : 0;
+		frappe.call({ method: "jarvis.selfhost.test_connection", args: { base_url: url, token: tok, deep } })
+			.then((r) => renderShResults(r.message || {}))
+			.catch((e) => $err.text(e.message || "Test failed."));
+	}
+
+	function saveSelfHost() {
+		const url = (state.shUrl || "").trim();
+		const tok = (state.shToken || "").trim();
+		const $err = $body.find("#jo-sh-err");
+		$err.text("");
+		if (!url || !tok) { $err.text("openclaw URL and gateway token are both required."); return; }
+		setBusy("#jo-sh-connect", true);
+		const deep = $body.find("#jo-sh-deep").is(":checked") ? 1 : 0;
+		frappe.call({ method: "jarvis.selfhost.save_self_hosted", args: { base_url: url, token: tok, deep } })
+			.then((r) => {
+				setBusy("#jo-sh-connect", false);
+				const m = r.message || {};
+				if (m.ok) {
+					renderSuccess({ agent_url: url }, "ok (self-hosted)");
+				} else {
+					renderShResults(m.result || {});
+					$err.text("Validation failed — fix the checks above, then retry.");
+				}
+			})
+			.catch((e) => { setBusy("#jo-sh-connect", false); $err.text(e.message || "Couldn't connect."); });
 	}
 
 	function renderAccount() {
@@ -971,9 +1089,17 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 				|| "";
 			if (onboarded && onboarded.message && onboarded.message.onboarded) {
 				renderCompletionCard();
-			} else {
-				render();
+				return;
 			}
+			// Not managed-onboarded. A self-hosted bench with a validated
+			// connection is also "set up" - is_ready_for_chat recognizes
+			// it - so show the completion card instead of the chooser.
+			frappe.call({ method: "jarvis.account.is_ready_for_chat" })
+				.then((rr) => {
+					if (rr && rr.message && rr.message.ready) renderCompletionCard();
+					else render();
+				})
+				.catch(() => render());
 		}).catch(() => render());
 	}
 
@@ -1114,7 +1240,22 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 			border-radius:6px;white-space:nowrap;overflow-x:auto;color:var(--text-muted);
 			display:block;min-width:0}
 		.jo-btn-small{padding:6px 12px;font-size:12px;flex:0 0 auto}
-		@media(max-width:760px){.jo-bg{padding:16px 10px}.jo{flex-direction:column;margin:auto}.jo-brand{flex-basis:auto}.jo-panel{padding:26px 22px}}`;
+		.jo-modes{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:6px}
+		.jo-mode{display:flex;flex-direction:column;border:1.5px solid var(--border-color);border-radius:12px;
+			padding:18px 16px;background:var(--card-bg);transition:border-color .15s,box-shadow .15s,transform .1s}
+		.jo-mode:hover{border-color:var(--jarvis-primary);transform:translateY(-1px)}
+		.jo-mode-icon{font-size:26px;line-height:1}
+		.jo-mode-name{font-size:16px;font-weight:700;color:var(--text-color);margin:8px 0 10px}
+		.jo-mode-feats{list-style:none;padding:0;margin:0 0 16px;flex:1}
+		.jo-mode-feats li{display:flex;gap:7px;font-size:12.5px;color:var(--text-color);line-height:1.5;margin-bottom:7px}
+		.jo-mode-feats .jo-tick{color:var(--jarvis-primary);font-size:11px;margin-top:2px}
+		.jo-mode .jo-btn{width:100%}
+		.jo-check{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text-color);margin-top:4px;cursor:pointer}
+		.jo-sh-results{margin:14px 0 4px;font-size:12.5px;line-height:1.7}
+		.jo-sh-check{color:var(--text-color)}
+		.jo-sh-ok{color:var(--green-700,#15803d);font-weight:600;margin-bottom:4px}
+		.jo-sh-bad{color:var(--red-600,#b91c1c);font-weight:600;margin-bottom:4px}
+		@media(max-width:760px){.jo-bg{padding:16px 10px}.jo{flex-direction:column;margin:auto}.jo-brand{flex-basis:auto}.jo-panel{padding:26px 22px}.jo-modes{grid-template-columns:1fr}}`;
 		$(`<style id="jo-styles">${css}</style>`).appendTo(document.head);
 	}
 };
