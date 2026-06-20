@@ -152,12 +152,15 @@ def start_signup(email: str, company: str, plan: str) -> dict:
 	frappe.only_for("System Manager")
 	_require_admin_url()
 	data = _surface(admin_client.signup, email, company, plan)
-	if data.get("api_key") or data.get("api_secret"):
+	# Persist whatever credentials the response carries. The guard also fires
+	# on ``customer`` so the OAuth grant username is stored even if a future
+	# admin response shape omits api_key/api_secret. write_connection skips
+	# empty fields individually. customer_password is present only on the
+	# flag-off path (verify-on defers it to the poll).
+	if data.get("api_key") or data.get("api_secret") or data.get("customer"):
 		write_connection({
 			"api_key": data.get("api_key", ""),
 			"api_secret": data.get("api_secret", ""),
-			# customer (email) is always present; customer_password is present
-			# only on the flag-off path (verify-on defers it to the poll).
 			"customer": data.get("customer", ""),
 			"customer_password": data.get("customer_password", ""),
 		})

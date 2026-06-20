@@ -385,17 +385,21 @@ def _oauth_token_request(admin_url: str, grant: dict) -> dict | None:
 	Form-encoded (not JSON): Frappe's get_token reads ``request.form``.
 	"""
 	payload = {**grant, "client_id": _OAUTH_CLIENT_ID, "scope": _OAUTH_SCOPE}
+	url = admin_url + _OAUTH_TOKEN_PATH
 	try:
 		resp = requests.post(
-			admin_url + _OAUTH_TOKEN_PATH,
+			url,
 			data=payload,
 			headers={"Content-Type": "application/x-www-form-urlencoded"},
 			timeout=DEFAULT_TIMEOUT_S,
 		)
-	except (requests.ConnectionError, requests.Timeout) as e:
+	except requests.RequestException as e:
+		# Broad catch (not just ConnectionError/Timeout) so SSL errors, redirect
+		# loops, etc. return None and the caller falls back rather than crashing.
+		# A requests exception repr carries url/host, never the POST body.
 		frappe.log_error(
 			title="admin_client: oauth token network error",
-			message=f"grant={grant.get('grant_type')!r} error={e!r}",
+			message=f"url={url!r} grant={grant.get('grant_type')!r} error={e!r}",
 		)
 		return None
 	try:
@@ -422,12 +426,18 @@ def _oauth_token_request(admin_url: str, grant: dict) -> dict | None:
 
 
 def _cache_oauth_token(token: dict) -> None:
+	ttl = int(token.get("expires_in") or 0)
+	if ttl <= 0:
+		# No usable lifetime advertised. Don't cache an instantly-stale token:
+		# the freshness check would always miss and re-mint on every call,
+		# storming the token endpoint. The caller still uses this token once.
+		return
 	frappe.cache().set_value(
 		_OAUTH_CACHE_KEY,
 		{
 			"access_token": token["access_token"],
 			"refresh_token": token.get("refresh_token"),
-			"access_expires_at": time.time() + int(token.get("expires_in") or 0),
+			"access_expires_at": time.time() + ttl,
 		},
 		expires_in_sec=_OAUTH_CACHE_TTL_S,
 	)
@@ -487,12 +497,12 @@ def _post(path: str, body: dict, *,
 	admin_url = _admin_url(settings)
 
 	# Preferred path: OAuth bearer. Retry once on a token rejection (revoked,
-	# or raced past the ~15min cap) by re-minting; if both attempts are
-	# rejected, fall through to the legacy credential below.
+	# or raced past the ~15min cap) by re-minting. If the retry is still
+	# rejected, drop the cached token so the next call re-mints cleanly
+	# instead of replaying the poisoned one, then fall through to the legacy
+	# credential below.
 	access_token = _admin_access_token(settings, admin_url)
-	for attempt in range(2):
-		if not access_token:
-			break
+	if access_token:
 		headers = {
 			"Authorization": f"Bearer {access_token}",
 			"Content-Type": "application/json",
@@ -500,12 +510,16 @@ def _post(path: str, body: dict, *,
 		try:
 			return _do_post(admin_url + path, body, headers, timeout_s, admin_url)
 		except AdminAuthError:
-			if attempt == 0:
-				access_token = _admin_access_token(
-					settings, admin_url, force_refresh=True,
-				)
-				continue
-			break
+			access_token = _admin_access_token(settings, admin_url, force_refresh=True)
+			if access_token:
+				headers["Authorization"] = f"Bearer {access_token}"
+				try:
+					return _do_post(admin_url + path, body, headers, timeout_s, admin_url)
+				except AdminAuthError:
+					pass
+			# Both bearer attempts rejected (or re-mint failed) - clear the
+			# cache and fall through to legacy.
+			frappe.cache().delete_value(_OAUTH_CACHE_KEY)
 
 	# Legacy native api_key:api_secret (pre-OAuth customers / OAuth fallback).
 	# Both are Password fields - attribute access returns the masked "*****"
@@ -513,9 +527,9 @@ def _post(path: str, body: dict, *,
 	api_key = (settings.get_password(
 		"jarvis_admin_api_key", raise_exception=False
 	) or "").strip()
-	api_secret = settings.get_password(
+	api_secret = (settings.get_password(
 		"jarvis_admin_api_secret", raise_exception=False
-	) or ""
+	) or "").strip()
 	if not api_key or not api_secret:
 		raise AdminAuthError(
 			"not onboarded (Jarvis Settings: no OAuth password and no api_key/secret)"

@@ -833,3 +833,15 @@ class TestOAuthBearer(FrappeTestCase):
 		self.assertEqual(auths[0], "Bearer ACCESS-1")
 		self.assertEqual(auths[-1], "token legacy-key:legacy-secret")
 		self.assertGreaterEqual(len(cap["token_calls"]), 2)
+		# The poisoned token must be evicted so the next call re-mints clean.
+		self.assertIsNone(frappe.cache().get_value(admin_client._OAUTH_CACHE_KEY))
+
+	def test_zero_expiry_token_is_not_cached(self):
+		# A token with no usable lifetime must not be cached (else every call
+		# would miss and storm the token endpoint).
+		admin_client._cache_oauth_token({"access_token": "A", "expires_in": 0})
+		self.assertIsNone(frappe.cache().get_value(admin_client._OAUTH_CACHE_KEY))
+		admin_client._cache_oauth_token({"access_token": "B", "expires_in": 900})
+		self.assertEqual(
+			frappe.cache().get_value(admin_client._OAUTH_CACHE_KEY)["access_token"], "B")
+		frappe.cache().delete_value(admin_client._OAUTH_CACHE_KEY)
