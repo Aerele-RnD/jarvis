@@ -24,6 +24,7 @@ def _set_token(value, secret="secret"):
 # rolled back between tests.
 _SNAPSHOTTED_FIELDS = (
 	"jarvis_admin_url", "jarvis_admin_api_key", "jarvis_admin_api_secret",
+	"jarvis_admin_customer_email", "jarvis_admin_customer_password",
 	"agent_url", "agent_token",
 )
 
@@ -33,7 +34,7 @@ def _snapshot_settings() -> dict:
 	snap = {}
 	for f in _SNAPSHOTTED_FIELDS:
 		# Password fields → get_password; plain → attribute. Both safe.
-		v = s.get_password(f, raise_exception=False) if f.endswith(("_key", "_secret", "_token")) else s.get(f)
+		v = s.get_password(f, raise_exception=False) if f.endswith(("_key", "_secret", "_token", "_password")) else s.get(f)
 		snap[f] = v or ""
 	return snap
 
@@ -245,6 +246,13 @@ class TestSignupEmailVerification(FrappeTestCase):
 			s.get_password("jarvis_admin_api_secret", raise_exception=False),
 			"verify-secret",
 		)
+		# The customer email (OAuth grant username) is persisted now; the
+		# password is deliberately absent on the verify-on response (admin
+		# defers it to the verified poll).
+		self.assertEqual(s.get("jarvis_admin_customer_email"), "alice@example.com")
+		self.assertFalse(
+			s.get_password("jarvis_admin_customer_password", raise_exception=False) or ""
+		)
 
 	def test_start_signup_legacy_response_still_persists_key_secret(self):
 		# Regression pin: the flag-off (legacy) response shape must keep
@@ -257,6 +265,7 @@ class TestSignupEmailVerification(FrappeTestCase):
 		               "api_key": "legacy-key",
 		               "api_secret": "legacy-secret",
 		               "customer": "bob@example.com",
+		               "customer_password": "bob-pw",
 		               "razorpay_key_id": "rzp_test_X",
 		               "razorpay_order_id": "order_LEGACY",
 		               "amount_inr": 12000,
@@ -269,6 +278,13 @@ class TestSignupEmailVerification(FrappeTestCase):
 		self.assertEqual(
 			s.get_password("jarvis_admin_api_key", raise_exception=False),
 			"legacy-key",
+		)
+		# Flag-off path carries the OAuth password in the signup response; the
+		# bench persists it (+ the email) for bearer auth on subsequent calls.
+		self.assertEqual(s.get("jarvis_admin_customer_email"), "bob@example.com")
+		self.assertEqual(
+			s.get_password("jarvis_admin_customer_password", raise_exception=False),
+			"bob-pw",
 		)
 
 	def test_check_signup_payment_state_returns_pending(self):
@@ -293,6 +309,25 @@ class TestSignupEmailVerification(FrappeTestCase):
 			out = onboarding.check_signup_payment_state()
 		self.assertFalse(out["pending_verification"])
 		self.assertEqual(out["razorpay_order_id"], "order_VERIFIED")
+
+	def test_check_signup_payment_state_persists_customer_password(self):
+		# On the verified poll admin delivers the OAuth password once. The
+		# bench must persist it so later admin calls use bearer auth.
+		with patch("jarvis.onboarding.admin_client.get_signup_payment_state",
+		           return_value={
+		               "pending_verification": False,
+		               "razorpay_order_id": "order_VERIFIED",
+		               "razorpay_key_id": "rzp_test_X",
+		               "amount_inr": 12000,
+		               "customer_password": "verified-pw",
+		           }):
+			out = onboarding.check_signup_payment_state()
+		self.assertFalse(out["pending_verification"])
+		s = frappe.get_single("Jarvis Settings")
+		self.assertEqual(
+			s.get_password("jarvis_admin_customer_password", raise_exception=False),
+			"verified-pw",
+		)
 
 	def test_check_signup_payment_state_requires_admin_url(self):
 		# Same pre-flight guard as start_signup - misconfigured bench

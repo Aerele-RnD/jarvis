@@ -32,15 +32,34 @@ def _settings_for_admin(admin_url="https://admin.example.com",
 	frappe.db.commit()
 
 
+def _settings_for_oauth(admin_url="https://admin.example.com",
+						email="cust@example.com", password="pw-secret",
+						api_key="", api_secret=""):
+	"""Configure Jarvis Settings for the OAuth bearer path. By default no
+	api_key/secret so the bearer path is exercised in isolation; pass them to
+	test the 401 -> legacy fallback."""
+	settings = frappe.get_single("Jarvis Settings")
+	settings.db_set("jarvis_admin_url", admin_url)
+	settings.db_set("jarvis_admin_customer_email", email)
+	settings.db_set("jarvis_admin_customer_password", password)
+	settings.db_set("jarvis_admin_api_key", api_key)
+	settings.db_set("jarvis_admin_api_secret", api_secret)
+	frappe.db.commit()
+	frappe.cache().delete_value(admin_client._OAUTH_CACHE_KEY)
+
+
 def _settings_clear_admin():
 	from frappe.utils.password import remove_encrypted_password
 	settings = frappe.get_single("Jarvis Settings")
 	settings.db_set("jarvis_admin_url", "")
+	settings.db_set("jarvis_admin_customer_email", "")
 	# Password fields need __Auth cleared too, not just the column.
-	for f in ("jarvis_admin_api_key", "jarvis_admin_api_secret"):
+	for f in ("jarvis_admin_api_key", "jarvis_admin_api_secret",
+			  "jarvis_admin_customer_password"):
 		remove_encrypted_password("Jarvis Settings", "Jarvis Settings", f)
 		settings.db_set(f, "")
 	frappe.db.commit()
+	frappe.cache().delete_value(admin_client._OAUTH_CACHE_KEY)
 
 
 def _mock_response(status_code: int, json_body=None, text: str = ""):
@@ -712,3 +731,105 @@ class TestPairChatDevice(FrappeTestCase):
 				public_key="pk", device_id="did", request_timeout_s=75,
 			)
 		self.assertEqual(captured["body"]["request_timeout_s"], 75)
+
+
+class TestOAuthBearer(FrappeTestCase):
+	"""Bench-side OAuth password-grant: prefer a cached bearer token, fall back
+	to legacy api_key:api_secret when no password is stored."""
+
+	def tearDown(self):
+		_settings_clear_admin()
+
+	def _route(self, *, token_response, api_capture, api_response=None):
+		"""Build a requests.post stand-in that routes the OAuth token endpoint
+		vs the real API call by URL. ``api_capture`` records the API call's
+		headers; ``token_response``/``api_response`` are _mock_response objects
+		(or callables returning one, for stateful tests)."""
+		# A _mock_response is itself a MagicMock (callable); only treat a real
+		# function as a stateful factory, never a mock response object.
+		def _resolve(r, arg):
+			if callable(r) and not isinstance(r, MagicMock):
+				return r(arg)
+			return r
+
+		def _fake_post(url, data=None, json=None, headers=None, timeout=None):
+			if url.endswith(admin_client._OAUTH_TOKEN_PATH):
+				api_capture.setdefault("token_calls", []).append(data)
+				return _resolve(token_response, data)
+			api_capture.setdefault("api_headers", []).append(headers)
+			api_capture["json"] = json
+			r = _resolve(api_response, headers)
+			return r or _mock_response(200, json_body={"message": {"ok": True, "data": {"x": 1}}})
+		return _fake_post
+
+	def test_prefers_bearer_and_omits_client_secret(self):
+		_settings_for_oauth()
+		cap = {}
+		token_resp = _mock_response(200, json_body={
+			"access_token": "ACCESS-1", "refresh_token": "REFRESH-1",
+			"token_type": "Bearer", "expires_in": 900,
+		})
+		with patch("requests.post", side_effect=self._route(
+				token_response=token_resp, api_capture=cap)):
+			admin_client.get_connection()
+		# Token requested via password grant, public-client (no client_secret).
+		grant = cap["token_calls"][0]
+		self.assertEqual(grant["grant_type"], "password")
+		self.assertEqual(grant["username"], "cust@example.com")
+		self.assertEqual(grant["password"], "pw-secret")
+		self.assertEqual(grant["client_id"], "jarvis-bench")
+		self.assertNotIn("client_secret", grant)
+		# API call carried the bearer, not a token key:secret header.
+		self.assertEqual(cap["api_headers"][0]["Authorization"], "Bearer ACCESS-1")
+
+	def test_caches_access_token_across_calls(self):
+		_settings_for_oauth()
+		cap = {}
+		token_resp = _mock_response(200, json_body={
+			"access_token": "ACCESS-1", "refresh_token": "REFRESH-1",
+			"token_type": "Bearer", "expires_in": 900,
+		})
+		with patch("requests.post", side_effect=self._route(
+				token_response=token_resp, api_capture=cap)):
+			admin_client.get_connection()
+			admin_client.get_connection()
+		# Two API calls, but the token endpoint was hit only once (cached).
+		self.assertEqual(len(cap["token_calls"]), 1)
+		self.assertEqual(len(cap["api_headers"]), 2)
+		self.assertEqual(cap["api_headers"][1]["Authorization"], "Bearer ACCESS-1")
+
+	def test_falls_back_to_legacy_without_password(self):
+		# No customer_password -> legacy api_key:api_secret path.
+		_settings_for_admin(api_key="legacy-key", api_secret="legacy-secret")
+		cap = {}
+		def _fake_post(url, data=None, json=None, headers=None, timeout=None):
+			cap["headers"] = headers
+			return _mock_response(200, json_body={"message": {"ok": True, "data": {"x": 1}}})
+		with patch("requests.post", side_effect=_fake_post):
+			admin_client.get_connection()
+		self.assertEqual(cap["headers"]["Authorization"], "token legacy-key:legacy-secret")
+
+	def test_bearer_401_remints_then_falls_back_to_legacy(self):
+		# Password present (bearer preferred) AND legacy creds present. The API
+		# rejects the bearer twice (revoked); after a re-mint it still 401s, so
+		# the call falls back to the legacy header and succeeds.
+		_settings_for_oauth(api_key="legacy-key", api_secret="legacy-secret")
+		cap = {}
+		token_resp = _mock_response(200, json_body={
+			"access_token": "ACCESS-1", "token_type": "Bearer", "expires_in": 900,
+		})
+		def _api_response(headers):
+			auth = headers["Authorization"]
+			if auth.startswith("Bearer "):
+				return _mock_response(401, json_body={"message": {
+					"ok": False, "error": {"code": "AuthError", "message": "bad token"}}})
+			return _mock_response(200, json_body={"message": {"ok": True, "data": {"ok": 1}}})
+		with patch("requests.post", side_effect=self._route(
+				token_response=token_resp, api_capture=cap, api_response=_api_response)):
+			result = admin_client.get_connection()
+		self.assertEqual(result, {"ok": 1})
+		# Two bearer attempts (initial + re-mint) then the legacy header.
+		auths = [h["Authorization"] for h in cap["api_headers"]]
+		self.assertEqual(auths[0], "Bearer ACCESS-1")
+		self.assertEqual(auths[-1], "token legacy-key:legacy-secret")
+		self.assertGreaterEqual(len(cap["token_calls"]), 2)

@@ -81,6 +81,15 @@ def write_connection(data: dict) -> None:
 		s.db_set("jarvis_admin_api_key", data["api_key"])
 	if data.get("api_secret"):
 		s.db_set("jarvis_admin_api_secret", data["api_secret"])
+	# OAuth password-grant credentials. ``customer`` is the admin-side login
+	# (email, the grant username); ``customer_password`` is the durable secret
+	# the bench exchanges for short-lived bearer tokens. The email arrives in
+	# the signup response; the password arrives later (verified poll / flag-off
+	# signup), so each is persisted independently when present.
+	if data.get("customer"):
+		s.db_set("jarvis_admin_customer_email", data["customer"])
+	if data.get("customer_password"):
+		s.db_set("jarvis_admin_customer_password", data["customer_password"])
 	if data.get("agent_url"):
 		s.db_set("agent_url", data["agent_url"])
 	if data.get("agent_token"):
@@ -147,6 +156,10 @@ def start_signup(email: str, company: str, plan: str) -> dict:
 		write_connection({
 			"api_key": data.get("api_key", ""),
 			"api_secret": data.get("api_secret", ""),
+			# customer (email) is always present; customer_password is present
+			# only on the flag-off path (verify-on defers it to the poll).
+			"customer": data.get("customer", ""),
+			"customer_password": data.get("customer_password", ""),
 		})
 	return data
 
@@ -166,7 +179,13 @@ def check_signup_payment_state() -> dict:
 	"""
 	frappe.only_for("System Manager")
 	_require_admin_url()
-	return _surface(admin_client.get_signup_payment_state)
+	data = _surface(admin_client.get_signup_payment_state)
+	# On the verified poll (email confirmed) admin delivers the customer's
+	# OAuth password once. Persist it so subsequent admin calls use bearer
+	# auth. Absent on the not-yet-verified poll and on the flag-off path.
+	if isinstance(data, dict) and data.get("customer_password"):
+		write_connection({"customer_password": data["customer_password"]})
+	return data
 
 
 @frappe.whitelist()
