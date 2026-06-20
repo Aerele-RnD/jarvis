@@ -183,16 +183,34 @@ def run_agent_turn(conversation_id: str, message_id: str, run_id: str) -> None:
 	gateway_url = (settings.agent_url or "").replace(
 		"http://", "ws://"
 	).replace("https://", "wss://")
-	user_message = frappe.db.get_value(MSG, message_id, "content")
-	# Prepend today's date as a context line so the agent (AGENTS.md tells
-	# it to treat the leading ``[Context: ...]`` as system, not user) can
-	# resolve relative time expressions ("last quarter", "this week")
-	# without an extra round-trip to clarify. The persisted user_message
-	# in the DB is unchanged; only the value sent over to openclaw is
-	# augmented.
+	# Fetch content + sender of THIS user message in one round-trip.
+	# msg_row.owner is the Frappe user who sent this turn, set by Frappe
+	# at insert time in send_message (jarvis/chat/api.py). We use it
+	# rather than conv.owner for the context bracket because the bench-
+	# side dispatcher (_dispatch_from_session in jarvis/api.py:118) also
+	# acts on the per-request identity, not the conversation creator -
+	# the bracket and the tool-call's frappe.session.user stay in lock-
+	# step. Today these are equal for single-owner conversations; the
+	# distinction matters the moment we ship shared conversations.
+	msg_row = (
+		frappe.db.get_value(MSG, message_id, ["content", "owner"], as_dict=True)
+		or {}
+	)
+	user_message = msg_row.get("content")
+	chat_user = msg_row.get("owner") or user
+	# Prepend today's date AND the chat user's Frappe id as a context line so
+	# the agent (AGENTS.md tells it to treat the leading ``[Context: ...]``
+	# as system, not user) can (a) resolve relative time expressions
+	# ("last quarter", "this week") and (b) answer "who am I" / "what
+	# perms do I have" without a clarifying round-trip or a doomed
+	# get_list on User. The persisted user_message in the DB is
+	# unchanged; only the value sent over to openclaw is augmented.
 	now = frappe.utils.now_datetime()
 	today = now.strftime("%Y-%m-%d (%A)")
-	user_message = f"[Context: today is {today}]\n\n{user_message or ''}"
+	user_message = (
+		f"[Context: today is {today}; chat user: {chat_user}]"
+		f"\n\n{user_message or ''}"
+	)
 
 	try:
 		try:

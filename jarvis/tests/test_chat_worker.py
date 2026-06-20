@@ -244,6 +244,9 @@ class TestRunAgentTurnAugmentsMessage(FrappeTestCase):
 		)
 		self.assertIsNotNone(message_sent)
 		self.assertIn("[Context: today is ", message_sent)
+		# Chat user (conv.owner) is in the same bracket so the agent can
+		# answer "who am I" / "what perms do I have" without round-tripping.
+		self.assertIn(f"chat user: {TEST_USER}", message_sent)
 		self.assertIn("how many invoices last quarter?", message_sent)
 		# The DB-persisted user message stays untouched (no prefix)
 		original = frappe.db.get_value(MSG, self.user_msg, "content")
