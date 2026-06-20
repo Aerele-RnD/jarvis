@@ -36,8 +36,8 @@ def call_tool(tool: str, args: dict | str | None = None) -> dict:
 	failures are reported with the corresponding HTTP status code.
 	"""
 	# Plugin auth mode - detected by presence of X-Jarvis-Token header.
-	# Goes through the C2 hardening pipeline (IP allowlist → bearer →
-	# session → optional HMAC signature → rate limit) implemented in
+	# Goes through the C2 hardening pipeline (bearer → session →
+	# optional HMAC signature → rate limit) implemented in
 	# jarvis._plugin_auth. PluginAuthError carries the correct status
 	# code; any other exception bubbles as a 500 (logged by Frappe).
 	if _get_header("X-Jarvis-Token"):
