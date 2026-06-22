@@ -27,10 +27,23 @@ import sqlparse
 from sqlparse.sql import Identifier, IdentifierList
 from sqlparse.tokens import DDL, DML, Keyword
 
-from jarvis.exceptions import InvalidArgumentError, PermissionDeniedError
+from jarvis.exceptions import (
+	InvalidArgumentError,
+	PermissionDeniedError,
+	ResultTooLargeError,
+)
 
 MAX_LIMIT = 1000
 DEFAULT_LIMIT = 100
+
+# Row guard: refuse a result over this size unless the caller passes
+# ``confirm_large=True``. Sits below ``MAX_LIMIT`` (the hard ceiling on
+# the SQL ``LIMIT`` clause) and above the default ``DEFAULT_LIMIT`` so
+# that ordinary queries with no explicit limit fit silently and only
+# the agent's wide ``limit=N`` calls trigger the guard. See the
+# ``ResultTooLargeError`` docstring for the load-bearing rationale (the
+# 2026-06-22 outage on openai/gpt-5.5).
+ROW_GUARD = 200
 
 # Identifiers we refuse outright in any token stream - covers single-line
 # comments (--), block comments (/* */), and forbidden statement types that
@@ -79,12 +92,24 @@ _TABLE_RE = re.compile(
 )
 
 
-def run_query(query: str, limit: int = DEFAULT_LIMIT) -> dict:
+def run_query(
+	query: str,
+	limit: int = DEFAULT_LIMIT,
+	confirm_large: bool = False,
+) -> dict:
 	"""Execute a validated read-only SELECT and return rows + the executed SQL.
 
 	Returns ``{"sql": <final query with limit>, "rows": [...]}``. The
 	executed SQL is included so the model can show the user what ran and so
 	debugging is straightforward.
+
+	Row guard: results above ``ROW_GUARD`` (200) rows raise
+	``ResultTooLargeError`` unless ``confirm_large=True``. The agent should
+	respond to that error by narrowing the filter, aggregating the query
+	(``GROUP BY``/``COUNT``/``SUM``), or - when a row dump genuinely IS the
+	answer (export, audit) - retrying with ``confirm_large=True``. See the
+	``ResultTooLargeError`` docstring for the 2026-06-22 outage that
+	motivated this guard.
 	"""
 	if not query or not query.strip():
 		raise InvalidArgumentError("query is required")
@@ -135,6 +160,12 @@ def run_query(query: str, limit: int = DEFAULT_LIMIT) -> dict:
 	if rows and not isinstance(rows[0], dict):
 		raise InvalidArgumentError(
 			"query did not return named columns; add explicit column aliases"
+		)
+	if len(rows) > ROW_GUARD and not confirm_large:
+		raise ResultTooLargeError(
+			row_count=len(rows),
+			limit=ROW_GUARD,
+			tool="run_query",
 		)
 	return {"sql": final, "rows": rows}
 
