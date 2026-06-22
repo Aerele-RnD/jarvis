@@ -12,6 +12,7 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 
 from jarvis.chat.api import (
+	_AGENT_TURN_WORKER_TIMEOUT,
 	archive_conversation,
 	create_conversation,
 	create_or_focus_empty,
@@ -260,7 +261,7 @@ class TestSendMessage(_ChatTestCase):
 			with patch("frappe.enqueue") as enqueue:
 				send_message(self.conv, "hi")
 		_, kwargs = enqueue.call_args
-		self.assertEqual(kwargs["timeout"], 300,
+		self.assertEqual(kwargs["timeout"], _AGENT_TURN_WORKER_TIMEOUT,
 			"RQ worker budget must cover pair+connect+turn worst case")
 
 	def test_seq_increments_across_calls(self):
@@ -340,8 +341,8 @@ class TestRetryMessage(_ChatTestCase):
 		self.assertEqual(kwargs["method"], "jarvis.chat.worker.run_agent_turn")
 		self.assertEqual(kwargs["conversation_id"], self.conv)
 		self.assertEqual(kwargs["message_id"], user_id)
-		# Sprint-2: parity with send_message - 300s covers worst case.
-		self.assertEqual(kwargs["timeout"], 300)
+		# Sprint-2: parity with send_message - the worker timeout covers worst case.
+		self.assertEqual(kwargs["timeout"], _AGENT_TURN_WORKER_TIMEOUT)
 
 	def test_rejects_non_assistant_message(self):
 		user_id, _asst_id = self._make_turn(self.conv, with_error=True)
