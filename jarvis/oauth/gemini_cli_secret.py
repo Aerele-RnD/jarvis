@@ -21,8 +21,17 @@ SECRET_PATTERN = re.compile(rb'"(GOCSPX-[A-Za-z0-9_-]+)"')
 
 
 def _app_root() -> str:
-    """Return the customer-bench app root (``apps/jarvis/``)."""
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    """Return the customer-bench app root (``apps/jarvis/``).
+
+    This file is ``apps/jarvis/jarvis/oauth/gemini_cli_secret.py``, so the app
+    root that holds ``package.json`` + ``node_modules`` is THREE levels up
+    (oauth -> jarvis module -> apps/jarvis), not two. Walking up only two
+    levels pointed pkg_root at a non-existent ``apps/jarvis/jarvis/node_modules``
+    and made the extractor silently return "".
+    """
+    return os.path.dirname(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    )
 
 
 def extract_gemini_cli_secret(app_root: str | None = None) -> str:
