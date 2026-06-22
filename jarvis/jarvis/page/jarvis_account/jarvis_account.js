@@ -15,7 +15,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	const PROVIDER_DEFAULTS = {
 		"Anthropic":          { model: "claude-sonnet-4-6",                 baseUrl: "https://api.anthropic.com" },
 		"OpenAI":             { model: "gpt-4o",                            baseUrl: "https://api.openai.com/v1" },
-		"Google Gemini":      { model: "gemini-1.5-pro",                    baseUrl: "https://generativelanguage.googleapis.com" },
+		"Google Gemini":      { model: "gemini-2.5-pro",                    baseUrl: "https://generativelanguage.googleapis.com" },
 		"Mistral":            { model: "mistral-large-latest",              baseUrl: "https://api.mistral.ai/v1" },
 		"Groq":               { model: "llama-3.3-70b-versatile",           baseUrl: "https://api.groq.com/openai/v1" },
 		"Together AI":        { model: "meta-llama/Llama-3.3-70B-Instruct-Turbo", baseUrl: "https://api.together.xyz/v1" },
