@@ -836,6 +836,35 @@ class TestOAuthBearer(FrappeTestCase):
 		# The poisoned token must be evicted so the next call re-mints clean.
 		self.assertIsNone(frappe.cache().get_value(admin_client._OAUTH_CACHE_KEY))
 
+	def test_bearer_403_is_terminal_no_remint_no_fallback(self):
+		# A 403 is an authorization denial, not a stale token. The bearer call
+		# must NOT re-mint, NOT fall back to legacy, and NOT evict the cached
+		# token - doing so would storm the token endpoint on every call and
+		# mask the real "forbidden" behind a generic auth retry. Both the
+		# bearer and the legacy api_key:api_secret back the same customer
+		# principal, so the fallback would 403 again anyway.
+		_settings_for_oauth(api_key="legacy-key", api_secret="legacy-secret")
+		cap = {}
+		token_resp = _mock_response(200, json_body={
+			"access_token": "ACCESS-1", "token_type": "Bearer", "expires_in": 900,
+		})
+		def _api_response(headers):
+			return _mock_response(403, json_body={"message": {
+				"ok": False, "error": {"code": "Forbidden", "message": "not allowed"}}})
+		with patch("requests.post", side_effect=self._route(
+				token_response=token_resp, api_capture=cap, api_response=_api_response)):
+			with self.assertRaises(AdminAuthError) as ctx:
+				admin_client.get_connection()
+		# The real 403 is surfaced (status tagged), not retried away.
+		self.assertEqual(ctx.exception.status_code, 403)
+		# Exactly one bearer attempt: no force-refresh, no legacy header.
+		auths = [h["Authorization"] for h in cap["api_headers"]]
+		self.assertEqual(auths, ["Bearer ACCESS-1"])
+		# Token endpoint hit once (initial mint only) - no re-mint storm.
+		self.assertEqual(len(cap["token_calls"]), 1)
+		# Cache retained (not evicted) so the next call reuses the valid token.
+		self.assertIsNotNone(frappe.cache().get_value(admin_client._OAUTH_CACHE_KEY))
+
 	def test_zero_expiry_token_is_not_cached(self):
 		# A token with no usable lifetime must not be cached (else every call
 		# would miss and storm the token endpoint).

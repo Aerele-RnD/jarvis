@@ -509,14 +509,25 @@ def _post(path: str, body: dict, *,
 		}
 		try:
 			return _do_post(admin_url + path, body, headers, timeout_s, admin_url)
-		except AdminAuthError:
+		except AdminAuthError as token_err:
+			# A 403 is an authorization denial, not a stale token. Re-minting
+			# would yield a token for the same customer principal (which backs
+			# both the bearer and the legacy api_key:api_secret), so the retry
+			# and the legacy fallback would just replay into the same 403 while
+			# storming the token endpoint and evicting the cache on every call.
+			# Surface it as-is; only a 401 (revoked / over-cap token) re-mints.
+			if token_err.status_code == 403:
+				raise
 			access_token = _admin_access_token(settings, admin_url, force_refresh=True)
 			if access_token:
 				headers["Authorization"] = f"Bearer {access_token}"
 				try:
 					return _do_post(admin_url + path, body, headers, timeout_s, admin_url)
-				except AdminAuthError:
-					pass
+				except AdminAuthError as retry_err:
+					# Same rule on the retry: a 403 is terminal; a 401 falls
+					# through to the legacy credential below.
+					if retry_err.status_code == 403:
+						raise
 			# Both bearer attempts rejected (or re-mint failed) - clear the
 			# cache and fall through to legacy.
 			frappe.cache().delete_value(_OAUTH_CACHE_KEY)
@@ -648,7 +659,10 @@ def _do_post(url: str, body: dict, headers: dict, timeout_s: int, admin_url: str
 	# fell through to AdminUnreachableError - losing the rate-limit
 	# category entirely. 401/403/429 always win.
 	if resp.status_code in (401, 403):
-		raise AdminAuthError(_envelope_message() or f"admin returned {resp.status_code}")
+		raise AdminAuthError(
+			_envelope_message() or f"admin returned {resp.status_code}",
+			status_code=resp.status_code,
+		)
 	if resp.status_code == 429:
 		err = (envelope or {}).get("error", {}) if isinstance(envelope, dict) else {}
 		raise AdminRateLimitedError(
@@ -662,8 +676,13 @@ def _do_post(url: str, body: dict, headers: dict, timeout_s: int, admin_url: str
 	if exc_type:
 		if exc_type in ("ValidationError", "DuplicateEntryError", "DoesNotExistError"):
 			raise AdminValidationError(clean)
-		if exc_type in ("AuthenticationError", "PermissionError"):
-			raise AdminAuthError(clean)
+		# AuthenticationError ~ a token/credential failure (retry-eligible, 401);
+		# PermissionError ~ an authorization denial (terminal, 403). Tag the
+		# status so _post re-mints on the former but surfaces the latter as-is.
+		if exc_type == "AuthenticationError":
+			raise AdminAuthError(clean, status_code=401)
+		if exc_type == "PermissionError":
+			raise AdminAuthError(clean, status_code=403)
 		# Unknown exc_type. Log it (so we learn what other admin error
 		# classes to add to the allowlist) but don't embed admin_url +
 		# raw exception class in the user-facing message.

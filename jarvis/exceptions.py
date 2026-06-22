@@ -40,7 +40,19 @@ class AdminUnreachableError(JarvisError):
 
 
 class AdminAuthError(JarvisError):
-	"""jarvis_admin rejected the token / site (401 / 403)."""
+	"""jarvis_admin rejected the token / site (401 / 403).
+
+	``status_code`` carries the rejecting HTTP status (401 or 403) when known.
+	The bench uses it to tell a *token* rejection (401 - revoked or raced past
+	the ~15min cap; re-minting and retrying helps) apart from an
+	*authorization* denial (403 - the same customer principal backs both the
+	bearer and the legacy api_key:api_secret, so re-minting and the legacy
+	fallback would just replay into the same 403 while storming the token
+	endpoint). None when the status isn't known."""
+
+	def __init__(self, message: str, *, status_code: int | None = None):
+		super().__init__(message)
+		self.status_code = status_code
 
 
 class AdminValidationError(JarvisError):
