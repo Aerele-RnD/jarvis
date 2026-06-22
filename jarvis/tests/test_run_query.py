@@ -5,8 +5,12 @@ from unittest.mock import patch
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
-from jarvis.exceptions import InvalidArgumentError, PermissionDeniedError
-from jarvis.tools.run_query import run_query
+from jarvis.exceptions import (
+	InvalidArgumentError,
+	PermissionDeniedError,
+	ResultTooLargeError,
+)
+from jarvis.tools.run_query import ROW_GUARD, run_query
 
 
 class TestRunQueryValidation(FrappeTestCase):
@@ -383,3 +387,49 @@ class TestRunQueryHappyPath(FrappeTestCase):
 		result = run_query("SELECT COUNT(*) AS n FROM tabDocType", limit=1)
 		self.assertEqual(len(result["rows"]), 1)
 		self.assertIn("n", result["rows"][0])
+
+
+class TestRunQueryRowGuard(FrappeTestCase):
+	"""The row guard refuses to return more than ``ROW_GUARD`` rows unless
+	the caller opts in with ``confirm_large=True``. ``tabDocType`` has
+	hundreds of rows on every Frappe site, so it makes a stable fixture
+	for the over-threshold case.
+	"""
+
+	def test_guard_fires_above_threshold(self):
+		with self.assertRaises(ResultTooLargeError) as cm:
+			run_query(
+				"SELECT name FROM tabDocType",
+				limit=ROW_GUARD + 50,
+			)
+		err = cm.exception
+		self.assertGreater(err.row_count, ROW_GUARD)
+		self.assertEqual(err.limit, ROW_GUARD)
+		self.assertEqual(err.tool, "run_query")
+		self.assertIn("confirm_large", str(err))
+
+	def test_guard_silent_under_threshold(self):
+		result = run_query(
+			"SELECT name FROM tabDocType",
+			limit=ROW_GUARD - 50,
+		)
+		self.assertLessEqual(len(result["rows"]), ROW_GUARD - 50)
+
+	def test_guard_opt_in_bypasses(self):
+		result = run_query(
+			"SELECT name FROM tabDocType",
+			limit=ROW_GUARD + 50,
+			confirm_large=True,
+		)
+		self.assertGreater(len(result["rows"]), ROW_GUARD)
+
+	def test_guard_message_carries_actionable_hints(self):
+		"""The error message must mention narrowing, aggregating, and the
+		confirm_large opt-in - that's what the agent uses to retry. If we
+		ever change the wording, this test pins the actionable triple."""
+		with self.assertRaises(ResultTooLargeError) as cm:
+			run_query("SELECT name FROM tabDocType", limit=ROW_GUARD + 10)
+		msg = str(cm.exception).lower()
+		self.assertIn("narrow", msg)
+		self.assertIn("aggregate", msg)
+		self.assertIn("confirm_large", msg)
