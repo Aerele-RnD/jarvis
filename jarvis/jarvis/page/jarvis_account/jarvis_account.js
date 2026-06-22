@@ -115,8 +115,19 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 
 	function loadInitial() {
 		$body.html(`<div class="ja-loading">Loading your account…</div>`);
-		frappe.call({ method: "jarvis.account.is_onboarded" })
+		frappe.call({ method: "jarvis.selfhost.get_status" })
+			.then((st) => {
+				// Self-hosted benches have no admin signup, so is_onboarded
+				// is false for them - render the self-host connection view
+				// instead of bouncing to the onboarding wizard.
+				if ((st && st.message && st.message.deployment_mode) === "Self-Hosted") {
+					renderSelfHostAccount(st.message);
+					return null;
+				}
+				return frappe.call({ method: "jarvis.account.is_onboarded" });
+			})
 			.then((r) => {
+				if (r === null) return;  // self-hosted view already rendered
 				if (!r.message || !r.message.onboarded) {
 					// Not onboarded - wizard owns this customer.
 					window.location.assign("/app/jarvis-onboarding");
@@ -171,6 +182,87 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 					<button class="ja-btn ja-btn-ghost" id="ja-retry">Retry</button></div>`);
 				$body.find("#ja-retry").on("click", loadInitial);
 			});
+	}
+
+	// ---- self-hosted connection view --------------------------------------
+	function renderShChecks($container, result) {
+		const checks = result.checks || [];
+		const rows = checks.map((c) =>
+			`<div>${c.ok ? "✅" : "❌"} <b>${esc(c.check)}</b> — ${esc(c.detail || "")}</div>`).join("");
+		const overall = result.ok
+			? `<div style="color:var(--green-700,#15803d);font-weight:600">All required checks passed.</div>`
+			: `<div style="color:var(--red-600,#b91c1c);font-weight:600">Some checks failed.</div>`;
+		$container.html(overall + rows);
+	}
+
+	function renderSelfHostAccount(st) {
+		const row = (k, v) => `<div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--border-color);font-size:13px"><span style="color:var(--text-muted)">${k}</span><b>${esc(v || "-")}</b></div>`;
+		$body.html(`
+			<div class="ja-card">
+			  <div class="ja-eyebrow">Connection</div>
+			  <div class="ja-card-head" style="margin-bottom:14px">
+			    <h2 class="ja-h">Self-hosted openclaw</h2>
+			    <span class="ja-pill ja-pill-ok">Self-hosted</span>
+			  </div>
+			  <p class="ja-sub">Jarvis is connected to <b>your own</b> openclaw server. You manage openclaw and the LLM. Switch to Aerele-managed anytime.</p>
+			  ${row("openclaw URL", st.agent_url)}
+			  ${row("Last validated", st.validated_at)}
+			  <div id="ja-sh-results" style="margin:12px 0;font-size:12.5px;line-height:1.7"></div>
+			  <div class="ja-err" id="ja-sh-err"></div>
+			  <div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap">
+			    <button class="ja-btn ja-btn-ghost" id="ja-sh-test">Test connection</button>
+			    <button class="ja-btn ja-btn-ghost" id="ja-sh-recfg">Reconfigure</button>
+			    <button class="ja-btn ja-btn-primary" id="ja-sh-managed">Switch to managed</button>
+			  </div>
+			</div>`);
+		const $err = $body.find("#ja-sh-err");
+		const $res = $body.find("#ja-sh-results");
+		$body.find("#ja-sh-test").on("click", () => {
+			$err.text(""); $res.html(`<div style="color:var(--text-muted)">Testing…</div>`);
+			frappe.call({ method: "jarvis.selfhost.test_connection", args: { base_url: st.agent_url, token: "", deep: 0 } })
+				.then((r) => renderShChecks($res, r.message || {}))
+				.catch((e) => $err.text(e.message || "Test failed."));
+		});
+		$body.find("#ja-sh-recfg").on("click", () => openSelfHostReconfigure(st));
+		$body.find("#ja-sh-managed").on("click", () => {
+			frappe.confirm(
+				__("Switch back to Aerele-managed openclaw? This re-syncs the managed connection."),
+				() => frappe.call({ method: "jarvis.selfhost.switch_to_managed" }).then(() => {
+					frappe.show_alert({ message: __("Switched to managed."), indicator: "green" });
+					loadInitial();
+				}));
+		});
+	}
+
+	function openSelfHostReconfigure(st) {
+		const d = new frappe.ui.Dialog({
+			title: __("Reconfigure self-hosted openclaw"),
+			fields: [
+				{ fieldtype: "Data", fieldname: "base_url", label: __("openclaw URL"), reqd: 1, default: st.agent_url || "" },
+				{ fieldtype: "Password", fieldname: "token", label: __("Gateway token"), reqd: 1 },
+				{ fieldtype: "Check", fieldname: "stream", label: __("Stream responses token-by-token"), default: st.stream === false ? 0 : 1, description: __("Off = full reply at once; use if a proxy buffers SSE.") },
+				{ fieldtype: "Button", fieldname: "test_btn", label: __("Test connection") },
+				{ fieldtype: "HTML", fieldname: "results" },
+			],
+			primary_action_label: __("Save"),
+			primary_action(v) {
+				d.disable_primary_action();
+				frappe.call({ method: "jarvis.selfhost.save_self_hosted", args: { base_url: v.base_url, token: v.token, deep: 0, stream: v.stream ? 1 : 0 } })
+					.then((r) => {
+						const m = r.message || {};
+						if (m.ok) { d.hide(); frappe.show_alert({ message: __("Saved."), indicator: "green" }); loadInitial(); }
+						else { renderShChecks(d.fields_dict.results.$wrapper, m.result || {}); d.enable_primary_action(); }
+					}).catch(() => d.enable_primary_action());
+			},
+		});
+		d.fields_dict.test_btn.$input.on("click", () => {
+			const v = d.get_values(true);
+			if (!v.base_url) { frappe.msgprint(__("Enter the openclaw URL.")); return; }
+			d.fields_dict.results.$wrapper.html(`<div class="text-muted">${__("Testing…")}</div>`);
+			frappe.call({ method: "jarvis.selfhost.test_connection", args: { base_url: v.base_url, token: v.token || "", deep: 0 } })
+				.then((r) => renderShChecks(d.fields_dict.results.$wrapper, r.message || {}));
+		});
+		d.show();
 	}
 
 	function render() {

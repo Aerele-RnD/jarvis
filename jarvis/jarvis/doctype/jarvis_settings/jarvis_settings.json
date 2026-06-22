@@ -24,6 +24,12 @@
     "llm_oauth_account_email",
     "llm_oauth_connected_at",
     "system_tab",
+    "deployment_section",
+    "deployment_mode",
+    "selfhost_last_validated_at",
+    "selfhost_last_validation",
+    "selfhost_tool_user",
+    "selfhost_stream",
     "admin_connection_section",
     "jarvis_admin_url",
     "jarvis_admin_api_key",
@@ -154,6 +160,50 @@
       "fieldname": "system_tab",
       "fieldtype": "Tab Break",
       "label": "System"
+    },
+    {
+      "fieldname": "deployment_section",
+      "fieldtype": "Section Break",
+      "label": "Deployment Mode"
+    },
+    {
+      "fieldname": "deployment_mode",
+      "fieldtype": "Select",
+      "label": "Deployment Mode",
+      "options": "Managed\nSelf-Hosted",
+      "default": "Managed",
+      "description": "Managed = Aerele-hosted openclaw container (persona + skills, billed). Self-Hosted = connect to your own openclaw server (you bring openclaw + LLM; no Aerele persona/skills). Switchable; chat history is preserved."
+    },
+    {
+      "fieldname": "selfhost_last_validated_at",
+      "fieldtype": "Datetime",
+      "label": "Self-Host Last Validated At",
+      "read_only": 1,
+      "depends_on": "eval:doc.deployment_mode == 'Self-Hosted'"
+    },
+    {
+      "fieldname": "selfhost_last_validation",
+      "fieldtype": "Long Text",
+      "label": "Self-Host Last Validation",
+      "read_only": 1,
+      "depends_on": "eval:doc.deployment_mode == 'Self-Hosted'",
+      "description": "JSON result of the last connection validation (per-check pass/fail)."
+    },
+    {
+      "fieldname": "selfhost_tool_user",
+      "fieldtype": "Link",
+      "options": "User",
+      "label": "Self-Host Tool User",
+      "depends_on": "eval:doc.deployment_mode == 'Self-Hosted'",
+      "description": "Frappe user whose permissions the jarvis__* (ERP) tools run under when chatting via a self-hosted openclaw. A self-hosted bench is single-tenant; defaults to whoever configured self-host."
+    },
+    {
+      "fieldname": "selfhost_stream",
+      "fieldtype": "Check",
+      "label": "Stream Self-Host Responses",
+      "default": "1",
+      "depends_on": "eval:doc.deployment_mode == 'Self-Hosted'",
+      "description": "Stream the agent's reply token-by-token over HTTP (SSE) for a responsive chat. Turn off if your openclaw (or a proxy in front of it) buffers streaming responses, in which case the full reply appears at once."
     },
     {
       "fieldname": "admin_connection_section",

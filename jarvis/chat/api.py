@@ -249,8 +249,11 @@ def send_message(
 
 	# Ensure the conversation has an openclaw session_key; create one on
 	# first turn. Insert the Jarvis Chat Session row so the plugin's
-	# sessionKey → user lookup works.
-	if not conv_doc.session_key:
+	# sessionKey → user lookup works. Self-hosted mode chats over openclaw's
+	# HTTP surface (stateless per call) and needs no WS session / device
+	# pairing, so skip session creation there.
+	from jarvis import selfhost
+	if not selfhost.is_self_hosted() and not conv_doc.session_key:
 		conv_doc.session_key = _ensure_session_key(user)
 	conv_doc.save()
 	frappe.db.commit()
