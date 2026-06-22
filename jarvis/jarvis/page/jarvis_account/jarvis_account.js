@@ -240,13 +240,14 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 			fields: [
 				{ fieldtype: "Data", fieldname: "base_url", label: __("openclaw URL"), reqd: 1, default: st.agent_url || "" },
 				{ fieldtype: "Password", fieldname: "token", label: __("Gateway token"), reqd: 1 },
+				{ fieldtype: "Check", fieldname: "stream", label: __("Stream responses token-by-token"), default: st.stream === false ? 0 : 1, description: __("Off = full reply at once; use if a proxy buffers SSE.") },
 				{ fieldtype: "Button", fieldname: "test_btn", label: __("Test connection") },
 				{ fieldtype: "HTML", fieldname: "results" },
 			],
 			primary_action_label: __("Save"),
 			primary_action(v) {
 				d.disable_primary_action();
-				frappe.call({ method: "jarvis.selfhost.save_self_hosted", args: { base_url: v.base_url, token: v.token, deep: 0 } })
+				frappe.call({ method: "jarvis.selfhost.save_self_hosted", args: { base_url: v.base_url, token: v.token, deep: 0, stream: v.stream ? 1 : 0 } })
 					.then((r) => {
 						const m = r.message || {};
 						if (m.ok) { d.hide(); frappe.show_alert({ message: __("Saved."), indicator: "green" }); loadInitial(); }

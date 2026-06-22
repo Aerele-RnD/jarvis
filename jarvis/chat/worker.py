@@ -252,9 +252,12 @@ def run_agent_turn(conversation_id: str, message_id: str, run_id: str) -> None:
 			# attribute tool calls back here and surface tool cards.
 			tool_user = (settings.selfhost_tool_user or "").strip()
 			selfhost.set_active_turn(tool_user, conversation=conversation_id, owner=user, run_id=run_id)
+			# Stream token-by-token unless the operator explicitly turned it
+			# off (a NULL field on a pre-existing config defaults to streaming).
+			stream_pref = (settings.selfhost_stream is None) or bool(settings.selfhost_stream)
 			try:
 				_consume(openclaw_http_client.stream_agent_turn(
-					base_url, token, user_message, model="openclaw",
+					base_url, token, user_message, model="openclaw", stream=stream_pref,
 				))
 			except OpenclawUnreachableError as e:
 				_publish_run_error(str(e))

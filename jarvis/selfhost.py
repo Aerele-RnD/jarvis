@@ -163,9 +163,13 @@ def test_connection(base_url: str, token: str = "", deep: int | str = 0) -> dict
 
 
 @frappe.whitelist()
-def save_self_hosted(base_url: str, token: str, deep: int | str = 0) -> dict:
+def save_self_hosted(base_url: str, token: str, deep: int | str = 0,
+                     stream: int | str = 1) -> dict:
     """Validate, then switch this bench to Self-Hosted mode pointed at the
     given openclaw. Refuses to persist if validation fails (no half-config).
+
+    ``stream`` controls token-by-token SSE rendering of the agent's reply
+    (default on; off => one-shot, for openclaw behind a buffering proxy).
 
     System Manager only."""
     frappe.only_for("System Manager")
@@ -179,6 +183,7 @@ def save_self_hosted(base_url: str, token: str, deep: int | str = 0) -> dict:
     s.db_set("deployment_mode", "Self-Hosted")
     s.db_set("agent_url", base)
     s.db_set("agent_token", (token or "").strip())
+    s.db_set("selfhost_stream", 1 if str(stream) in ("1", "true", "True") else 0)
     s.db_set("selfhost_last_validated_at", now_datetime())
     s.db_set("selfhost_last_validation", json.dumps(result))
     # Default the tool-user to whoever configured self-host (single-tenant
@@ -220,6 +225,7 @@ def get_status() -> dict:
         "deployment_mode": s.deployment_mode or "Managed",
         "agent_url": (s.agent_url or "") if (s.deployment_mode == "Self-Hosted") else "",
         "validated_at": str(s.selfhost_last_validated_at or ""),
+        "stream": (s.selfhost_stream is None) or bool(s.selfhost_stream),
     }
 
 

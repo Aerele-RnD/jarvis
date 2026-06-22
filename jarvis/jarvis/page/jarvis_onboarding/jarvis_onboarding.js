@@ -232,6 +232,7 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 			  <label for="jo-sh-token">Gateway token</label>
 			  <input id="jo-sh-token" class="jo-input" type="password" placeholder="paste your openclaw gateway token" value="${esc(state.shToken)}" autocomplete="off"/>
 			</div>
+			<label class="jo-check"><input type="checkbox" id="jo-sh-stream" checked/> Stream responses token-by-token (recommended)</label>
 			<label class="jo-check"><input type="checkbox" id="jo-sh-deep"/> Run deep chat test (slower — sends one message)</label>
 			<div class="jo-actions" style="margin-top:12px;justify-content:flex-start">
 			  <button class="jo-btn jo-btn-ghost" id="jo-sh-test">Test connection</button>
@@ -282,7 +283,8 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		if (!url || !tok) { $err.text("openclaw URL and gateway token are both required."); return; }
 		setBusy("#jo-sh-connect", true);
 		const deep = $body.find("#jo-sh-deep").is(":checked") ? 1 : 0;
-		frappe.call({ method: "jarvis.selfhost.save_self_hosted", args: { base_url: url, token: tok, deep } })
+		const stream = $body.find("#jo-sh-stream").is(":checked") ? 1 : 0;
+		frappe.call({ method: "jarvis.selfhost.save_self_hosted", args: { base_url: url, token: tok, deep, stream } })
 			.then((r) => {
 				setBusy("#jo-sh-connect", false);
 				const m = r.message || {};

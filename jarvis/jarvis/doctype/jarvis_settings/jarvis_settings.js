@@ -141,6 +141,9 @@ function openSelfHostDialog(frm) {
 			  default: (frm.doc.deployment_mode === "Self-Hosted" ? frm.doc.agent_url : "") || "",
 			  description: __("e.g. http://host.docker.internal:19060 or https://openclaw.example.com") },
 			{ fieldtype: "Password", fieldname: "token", label: __("Gateway Token"), reqd: 1 },
+			{ fieldtype: "Check", fieldname: "stream", label: __("Stream responses token-by-token"),
+			  default: (frm.doc.deployment_mode === "Self-Hosted" && frm.doc.selfhost_stream === 0) ? 0 : 1,
+			  description: __("Off = full reply appears at once; use if a proxy in front of your openclaw buffers SSE.") },
 			{ fieldtype: "Check", fieldname: "deep", label: __("Run deep chat test (slower — sends one message)"), default: 0 },
 			{ fieldtype: "Button", fieldname: "test_btn", label: __("Test connection") },
 			{ fieldtype: "HTML", fieldname: "results" },
@@ -150,7 +153,7 @@ function openSelfHostDialog(frm) {
 			d.disable_primary_action();
 			frappe.call({
 				method: "jarvis.selfhost.save_self_hosted",
-				args: { base_url: values.base_url, token: values.token, deep: values.deep ? 1 : 0 },
+				args: { base_url: values.base_url, token: values.token, deep: values.deep ? 1 : 0, stream: values.stream ? 1 : 0 },
 			}).then((r) => {
 				const m = r.message || {};
 				if (m.ok) {
