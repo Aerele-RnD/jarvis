@@ -14,6 +14,7 @@ from unittest.mock import patch
 from jarvis import hooks
 from jarvis.oauth.gemini_cli_secret import (
     PACKAGE_REL_PATH,
+    _app_root,
     extract_gemini_cli_secret,
 )
 
@@ -93,6 +94,25 @@ class TestExtractGeminiCliSecret(unittest.TestCase):
                 self.assertEqual(extract_gemini_cli_secret(tmp), "GOCSPX-fromfallback")
             finally:
                 os.chmod(bad, 0o644)
+
+
+class TestAppRootResolution(unittest.TestCase):
+    def test_app_root_is_app_root_not_module_dir(self):
+        # _app_root() must resolve to apps/jarvis (the app root holding the npm
+        # package.json + node_modules + the inner jarvis module dir), NOT the
+        # inner apps/jarvis/jarvis module dir. The regression returned the
+        # module dir, so pkg_root pointed at a non-existent
+        # apps/jarvis/jarvis/node_modules and extraction silently returned "",
+        # surfacing as Google's "client_secret is missing" token-exchange error.
+        root = _app_root()
+        self.assertTrue(
+            os.path.isfile(os.path.join(root, "package.json")),
+            f"_app_root() {root!r} should contain apps/jarvis/package.json",
+        )
+        self.assertTrue(
+            os.path.isdir(os.path.join(root, "jarvis", "oauth")),
+            f"_app_root() {root!r} should contain the inner jarvis/oauth module",
+        )
 
 
 class TestGetOauthClientSecretPrecedence(unittest.TestCase):

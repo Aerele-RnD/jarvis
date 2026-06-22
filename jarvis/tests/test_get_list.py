@@ -1,8 +1,12 @@
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
-from jarvis.exceptions import InvalidArgumentError, PermissionDeniedError
-from jarvis.tools.get_list import get_list
+from jarvis.exceptions import (
+    InvalidArgumentError,
+    PermissionDeniedError,
+    ResultTooLargeError,
+)
+from jarvis.tools.get_list import ROW_GUARD, get_list
 
 
 def _ensure_master_data():
@@ -78,6 +82,41 @@ class TestGetList(FrappeTestCase):
     def test_rejects_missing_doctype(self):
         with self.assertRaises(InvalidArgumentError):
             get_list(doctype="", fields=["name"])
+
+    def test_row_guard_fires_above_threshold(self):
+        """A get_list call that returns more than ROW_GUARD rows must
+        raise ResultTooLargeError when confirm_large is not set. DocType
+        is a stable, populated system table on any Frappe site - hundreds
+        of rows guaranteed - so we use it as the fixture and don't need
+        to seed."""
+        with self.assertRaises(ResultTooLargeError) as cm:
+            get_list(
+                doctype="DocType",
+                fields=["name"],
+                limit=ROW_GUARD + 50,
+            )
+        err = cm.exception
+        self.assertGreater(err.row_count, ROW_GUARD)
+        self.assertEqual(err.limit, ROW_GUARD)
+        self.assertEqual(err.tool, "get_list")
+        self.assertIn("confirm_large", str(err))
+
+    def test_row_guard_silent_under_threshold(self):
+        rows = get_list(
+            doctype="DocType",
+            fields=["name"],
+            limit=ROW_GUARD - 50,
+        )
+        self.assertLessEqual(len(rows), ROW_GUARD - 50)
+
+    def test_row_guard_opt_in_bypasses(self):
+        rows = get_list(
+            doctype="DocType",
+            fields=["name"],
+            limit=ROW_GUARD + 50,
+            confirm_large=True,
+        )
+        self.assertGreater(len(rows), ROW_GUARD)
 
     def test_permission_check_blocks_unauthorized_user(self):
         user_email = "listless@example.com"

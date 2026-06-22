@@ -2,20 +2,32 @@
 
 Layered defenses against the C2 attack surface (2026-06-16 review):
 
-  1. IP allowlist - default loopback + RFC1918 (docker bridge), tunable
-     via Jarvis Settings.plugin_ip_allowlist (one CIDR per line, "*" = wildcard).
-     Closes the "leaked agent_token + curl from the public internet" attack.
-  2. Rate limit per session_key - 60 calls/min per session. A leaked token
-     can no longer fan out into a flood of writes.
-  3. Audit log on validation failure - every reject is a frappe.log_error
-     row so an operator can grep for brute-force attempts.
-  4. Optional HMAC signature (Phase 2) - if the plugin presents
+  1. Rate limit per session_key - 60 calls/min per session. A leaked
+     token can no longer fan out into a flood of writes.
+  2. Audit log on validation failure - every reject is a frappe.log_error
+     row so an operator can grep for brute-force attempts. The caller IP
+     is recorded for triage context even though the IP itself is not
+     used as an enforcement gate.
+  3. Optional HMAC signature (Phase 2) - if the plugin presents
      X-Jarvis-Signature + X-Jarvis-Nonce + X-Jarvis-Timestamp, the
      bench validates a signed canonical request and dedupes the nonce
      in Redis. Replay-proof. A leaked agent_token alone is no longer
      enough to forge a request - the attacker also needs the HMAC key
      (which today is the same secret, but Phase 3 will rotate it
      under a per-tenant KDF so the blast radius shrinks further).
+
+An IP allowlist used to be a 4th layer (default loopback + RFC1918,
+tunable via Jarvis Settings.plugin_ip_allowlist). It was removed on
+2026-06-19. The schema field was never migrated, so the runtime
+fell back to the hardcoded default and rejected every callback from a
+public IP in Frappe Cloud + remote fleet host deployments. After
+weighing completion vs removal, the layer was removed: it only
+defended against the narrow "secrets leaked, but no network access"
+attacker profile, and the other defenses already require the attacker
+to hold both bearer + sessionKey + a fresh-signed HMAC within a 60-second
+window, with replay killed by Redis-backed nonce dedup. The operational
+cost (every multi-host deployment maintaining CIDRs through cloud IP
+churn) outweighed the marginal protection.
 
 Plugin clients that don't send signatures keep working with a
 warn-log. The plugin repo (jarvis-openclaw-plugin) gets a separate PR
@@ -27,19 +39,10 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import ipaddress
 import time
 
 import frappe
 
-
-_DEFAULT_ALLOWLIST_CIDRS = (
-	"127.0.0.0/8",    # loopback
-	"::1/128",        # IPv6 loopback
-	"10.0.0.0/8",     # RFC1918
-	"172.16.0.0/12",  # RFC1918 (covers docker default bridge 172.17.0.0/16)
-	"192.168.0.0/16", # RFC1918
-)
 
 _MAX_CLOCK_SKEW_S = 60
 _NONCE_TTL_S = 120
@@ -75,17 +78,13 @@ def validate_plugin_request(body_bytes: bytes) -> str:
 	"""
 	headers = _safe_headers()
 
-	# 1. IP allowlist.
+	# Caller IP is read once and threaded through every audit row in
+	# the remaining checks so the operator can grep the Error Log for
+	# brute-force activity. It is not used as an enforcement gate; see
+	# the module docstring for the removal rationale.
 	caller_ip = _caller_ip()
-	if not _ip_allowed(caller_ip):
-		_audit_log("plugin_auth: source IP rejected",
-		           f"remote_ip={caller_ip!r}")
-		raise PluginAuthError(
-			http_status=403, code="ForbiddenSourceIp",
-			message="source IP not in plugin allowlist",
-		)
 
-	# 2. Bearer token (legacy, still required).
+	# 1. Bearer token (legacy, still required).
 	presented_token = (headers.get("X-Jarvis-Token") or "").strip()
 	if not presented_token:
 		raise PluginAuthError(
@@ -207,45 +206,6 @@ def _caller_ip() -> str:
 		if val:
 			return str(val).strip()
 	return ""
-
-
-def _ip_allowed(ip: str) -> bool:
-	if not ip:
-		# Fail closed on a missing source IP - typically only happens in
-		# test paths that forget to set request_ip; production has it.
-		return False
-	allowlist = _configured_allowlist()
-	if "*" in allowlist:
-		return True
-	try:
-		addr = ipaddress.ip_address(ip)
-	except ValueError:
-		return False
-	for cidr in allowlist:
-		try:
-			if addr in ipaddress.ip_network(cidr, strict=False):
-				return True
-		except ValueError:
-			continue
-	return False
-
-
-def _configured_allowlist() -> tuple[str, ...]:
-	"""Read Jarvis Settings.plugin_ip_allowlist, one entry per line.
-
-	Empty / unset returns the default (loopback + RFC1918). The "*" entry
-	disables IP allowlisting entirely (escape hatch for unusual deploys;
-	logged at request time)."""
-	try:
-		raw = (frappe.db.get_single_value("Jarvis Settings", "plugin_ip_allowlist") or "").strip()
-	except Exception:
-		raw = ""
-	if not raw:
-		return _DEFAULT_ALLOWLIST_CIDRS
-	entries = tuple(
-		line.strip() for line in raw.splitlines() if line.strip()
-	)
-	return entries or _DEFAULT_ALLOWLIST_CIDRS
 
 
 def _agent_token() -> str:

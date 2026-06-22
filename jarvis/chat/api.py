@@ -16,13 +16,18 @@ MSG = "Jarvis Chat Message"
 # Wall-clock budget for the RQ worker that runs one agent turn.
 #
 # Covers worst case end-to-end: pair (<=90s admin round-trip) +
-# WS connect (10s) + TURN_TIMEOUT_SECONDS (180s) = 280s. 300s gives
-# 20s headroom. Previously this was hardcoded as ``timeout=300``
-# at both enqueue sites (send_message + retry_message) so a bump
-# had to land in two places - the 2026-06-16 review caught a
-# previous 200s ceiling that had drifted to 300s in one site but
-# stayed 200s in the other.
-_AGENT_TURN_WORKER_TIMEOUT = 300
+# WS connect (10s) + TURN_TIMEOUT_SECONDS (600s) = 700s. 720s gives
+# 20s headroom. Bumped from 300s in lockstep with the
+# TURN_TIMEOUT_SECONDS bump to 600s (see openclaw_client.py for the
+# Frappe-Cloud + Hetzner WAN rationale - the bench RQ envelope has
+# to be larger than the WS turn cap or the worker dies first and
+# the WS cap never gets a chance to enforce). Previously this was
+# hardcoded as ``timeout=300`` at both enqueue sites (send_message
+# + retry_message) so a bump had to land in two places - the
+# 2026-06-16 review caught a previous 200s ceiling that had drifted
+# to 300s in one site but stayed 200s in the other; consolidating
+# behind this constant prevents that drift.
+_AGENT_TURN_WORKER_TIMEOUT = 720
 
 # Process-local cache for the chat bundle hash. Invalidated by mtime so a
 # `bench build` is picked up without restarting workers.
