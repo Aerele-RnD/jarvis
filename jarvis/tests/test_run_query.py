@@ -433,3 +433,127 @@ class TestRunQueryRowGuard(FrappeTestCase):
 		self.assertIn("narrow", msg)
 		self.assertIn("aggregate", msg)
 		self.assertIn("confirm_large", msg)
+
+
+class TestRunQueryUserPermissions(FrappeTestCase):
+	"""User Permissions gate: when the calling user has User Permission
+	rows that restrict their view of a referenced DocType (directly or
+	via a Link field on the referenced DocType), refuse the query and
+	route the agent to ``get_list`` instead. See ``run_query.py`` module
+	docstring for the rationale - we can't weave record-level WHERE
+	predicates into arbitrary operator-authored SQL, so we refuse
+	cleanly rather than silently bypassing.
+
+	Uses ``frappe.set_user`` to switch identity (rather than patching
+	``frappe.session.user`` directly - it's a thread-local proxy and
+	doesn't unittest.patch cleanly). The teardown resets to
+	Administrator so other tests aren't affected.
+	"""
+
+	USER_EMAIL = "run-query-up-test@example.com"
+
+	@classmethod
+	def setUpClass(cls):
+		super().setUpClass()
+		if not frappe.db.exists("User", cls.USER_EMAIL):
+			frappe.get_doc({
+				"doctype": "User",
+				"email": cls.USER_EMAIL,
+				"first_name": "RQ UP",
+				"send_welcome_email": 0,
+			}).insert(ignore_permissions=True)
+		# Give the test user broad doctype read so the DocType-level
+		# gate doesn't fire first and short-circuit the User-Permissions
+		# check we're trying to exercise.
+		user = frappe.get_doc("User", cls.USER_EMAIL)
+		if "System Manager" not in [r.role for r in user.get("roles", [])]:
+			user.append("roles", {"role": "System Manager"})
+			user.save(ignore_permissions=True)
+		frappe.db.commit()
+
+	def tearDown(self):
+		frappe.set_user("Administrator")
+		super().tearDown()
+
+	def test_administrator_bypasses_user_permission_gate(self):
+		"""Administrator never has User Permissions applied; the gate is
+		a no-op. Confirms the hot path stays fast for the dominant user."""
+		from unittest.mock import patch
+		frappe.set_user("Administrator")
+		with patch("frappe.db.sql", return_value=[]):
+			run_query("SELECT name FROM tabDocType")
+		# No PermissionDeniedError raised; happy path.
+
+	def test_user_with_no_user_permissions_can_run(self):
+		"""Helper returns an empty restricted set when the user has no
+		User Permission rows. Tests the helper directly rather than the
+		full run_query path because that path also reaches Frappe's
+		permission internals (which touch Meta cache lookups that don't
+		matter for the gate's contract)."""
+		from unittest.mock import patch
+		from jarvis.tools.run_query import _restricted_by_user_permissions
+		with patch("frappe.permissions.get_user_permissions", return_value={}):
+			result = _restricted_by_user_permissions("alice@example.com",
+													  ["Sales Invoice", "Customer", "Item"])
+		self.assertEqual(result, set())
+
+	def test_direct_user_permission_on_referenced_doctype_refused(self):
+		"""User has User Permission on Customer; agent queries
+		``tabCustomer`` directly. Refuse - the SQL would return all
+		customers including ones the user can't see.
+
+		Patches ``frappe.has_permission`` to True so the DocType-level
+		gate (which has its own dedicated tests in
+		TestRunQueryPermissions) doesn't short-circuit first - we want
+		to exercise the User-Permissions branch in isolation."""
+		from unittest.mock import patch
+		frappe.set_user(self.USER_EMAIL)
+		with patch("frappe.has_permission", return_value=True), \
+			 patch(
+				 "frappe.permissions.get_user_permissions",
+				 return_value={"Customer": [{"doc": "ACME"}]},
+			 ):
+			with self.assertRaises(PermissionDeniedError) as cm:
+				run_query("SELECT name FROM tabCustomer")
+			msg = str(cm.exception)
+			self.assertIn("Customer", msg)
+			self.assertIn("get_list", msg)
+
+	def test_transitive_user_permission_via_link_refused(self):
+		"""User has User Permission on Customer; agent queries
+		``tabSales Invoice`` (which has a Link field ``customer`` ->
+		Customer). The user's restriction transitively limits which SI
+		rows they should see; refuse to weave WHERE that we can't."""
+		from unittest.mock import patch, MagicMock
+		frappe.set_user(self.USER_EMAIL)
+		# Stub a meta with one Link field pointing at Customer.
+		fake_meta = MagicMock()
+		fake_link = MagicMock()
+		fake_link.options = "Customer"
+		fake_meta.get_link_fields.return_value = [fake_link]
+		with patch("frappe.has_permission", return_value=True), \
+			 patch(
+				 "frappe.permissions.get_user_permissions",
+				 return_value={"Customer": [{"doc": "ACME"}]},
+			 ), patch("frappe.get_meta", return_value=fake_meta):
+			with self.assertRaises(PermissionDeniedError) as cm:
+				run_query("SELECT name FROM `tabSales Invoice`")
+			self.assertIn("Sales Invoice", str(cm.exception))
+
+	def test_unrelated_user_permission_does_not_refuse(self):
+		"""User has User Permission on Customer; agent queries
+		``tabDocType`` (no Link to Customer). Don't refuse - the
+		restriction doesn't affect this query."""
+		from unittest.mock import patch, MagicMock
+		frappe.set_user(self.USER_EMAIL)
+		# DocType has no Link to Customer.
+		fake_meta = MagicMock()
+		fake_meta.get_link_fields.return_value = []
+		with patch("frappe.has_permission", return_value=True), \
+			 patch(
+				 "frappe.permissions.get_user_permissions",
+				 return_value={"Customer": [{"doc": "ACME"}]},
+			 ), patch("frappe.get_meta", return_value=fake_meta), \
+			 patch("frappe.db.sql", return_value=[]):
+			# Should NOT raise.
+			run_query("SELECT name FROM tabDocType")

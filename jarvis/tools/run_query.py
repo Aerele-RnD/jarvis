@@ -12,10 +12,17 @@ parsing, not just trust:
   referenced DocType.
 - A row cap is enforced; the tool injects ``LIMIT`` if missing.
 
-**Caveat:** DocType-level perms only. User Permissions and record-level
-share/role filters are NOT enforced (Frappe's permission engine doesn't
-have a public hook for arbitrary SQL). Document this in the tool
-description so the model picks ``get_list`` for record-scoped queries.
+**Caveat:** DocType-level perms are checked. User Permissions are
+**refused-not-bypassed**: when the calling user has User Permission
+rows that would restrict their view of a referenced DocType (directly
+OR transitively via a Link field), run_query raises
+PermissionDeniedError and the agent must fall back to ``get_list``,
+which weaves the record-level filter into the query at build time.
+DocShare records and controller ``has_permission`` hooks remain
+unenforced - those are dynamic per-doc Python checks that can't be
+statically detected from the SQL shape. The operator-configured
+DocType allowlist (Jarvis Settings.run_query_doctype_allowlist) is
+the safety net for environments where those matter.
 """
 
 from __future__ import annotations
@@ -135,6 +142,31 @@ def run_query(
 				f"no read permission on referenced DocType: {doctype}"
 			)
 
+	# User Permissions gate. Frappe's permission engine enforces User
+	# Permissions (record-level "you can only see Customer ACME") on
+	# get_list / get_doc by weaving WHERE fragments into the query at
+	# build time. There's no public hook to do the same to arbitrary
+	# operator-authored SQL, so the historical behavior was: run_query
+	# enforces DocType-level read perms ONLY and User Permissions are
+	# silently bypassed. That's a real record-level data-leak vector
+	# for users whose access is shaped by User Permissions.
+	#
+	# Rather than fake an enforcement we can't deliver, refuse the
+	# query when any referenced DocType is restricted for this user.
+	# Clean error -> agent retries via get_list, which weaves the
+	# permission filter in correctly. Administrator + users with no
+	# User Permission rows are unaffected (the dominant case).
+	doctypes = [tbl[len("tab"):] for tbl in tables]
+	restricted = _restricted_by_user_permissions(frappe.session.user, doctypes)
+	if restricted:
+		raise PermissionDeniedError(
+			f"User Permissions restrict your access on: "
+			f"{', '.join(sorted(restricted))}. run_query cannot weave "
+			f"record-level filters into arbitrary SQL; use get_list "
+			f"(which auto-applies User Permissions) for record-scoped "
+			f"questions."
+		)
+
 	# Operator-configured defense-in-depth: a per-site DocType allowlist on
 	# top of the Frappe permission system. If set, run_query refuses any
 	# DocType not on the list - even when the calling user has read perm.
@@ -210,6 +242,67 @@ def _load_doctype_allowlist() -> set[str] | None:
 	parts = re.split(r"[,\n]", raw)
 	cleaned = {p.strip() for p in parts if p.strip()}
 	return cleaned if cleaned else None
+
+
+def _restricted_by_user_permissions(user: str, doctypes: list[str]) -> set[str]:
+	"""Return the subset of ``doctypes`` for which ``user`` has User
+	Permission rows that would restrict their view.
+
+	A User Permission row of the form ``(user=U, allow=Customer,
+	for_value=ACME)`` restricts U to only seeing Customer ACME, AND
+	(when ``applicable_for`` is empty or matches) also restricts U to
+	only seeing records on OTHER doctypes that Link to Customer ACME.
+	So when the agent's SQL touches ``tabSales Invoice`` (which has a
+	Link-typed ``customer`` field pointing at Customer), U's User
+	Permission on Customer transitively restricts what Sales Invoice
+	rows they should see. Our raw SQL doesn't enforce that transit;
+	this helper flags the case so the caller can refuse cleanly.
+
+	Returns the set of restricted doctypes (subset of ``doctypes``).
+	Empty set when ``user`` has no relevant User Permissions - the
+	common case for System Manager / unrestricted users; the early
+	return on that branch keeps the hot path fast.
+
+	Note: doesn't enforce controller has_permission hooks or DocShare
+	records - those are dynamic, per-doc Python checks that can't be
+	statically detected from the SQL shape. They remain unenforced for
+	run_query; the operator-configured DocType allowlist is the safety
+	net for environments where those matter.
+	"""
+	if user == "Administrator":
+		# Administrator bypasses User Permissions site-wide; no need
+		# to walk the rows.
+		return set()
+	try:
+		user_perms = frappe.permissions.get_user_permissions(user) or {}
+	except Exception:
+		# If the perm lookup itself fails (very rare; usually means
+		# the user row is broken), fail closed - refuse the query
+		# rather than letting it through with no checks.
+		return set(doctypes)
+	if not user_perms:
+		return set()
+	restricted: set[str] = set()
+	for doctype in doctypes:
+		# Direct restriction: a User Permission ON the doctype itself.
+		if doctype in user_perms:
+			restricted.add(doctype)
+			continue
+		# Transitive restriction: a Link-typed field on this doctype
+		# points at a DocType the user has a User Permission for.
+		# ``get_meta`` is cached after the first read so this is cheap.
+		try:
+			meta = frappe.get_meta(doctype)
+		except Exception:
+			# Bench misconfig / missing DocType. Fail closed.
+			restricted.add(doctype)
+			continue
+		for link_field in meta.get_link_fields():
+			target = link_field.options
+			if target and target in user_perms:
+				restricted.add(doctype)
+				break
+	return restricted
 
 
 def _reject_comments(query: str) -> None:
