@@ -355,3 +355,288 @@ class TestQueryHappyPath(FrappeTestCase):
 		self.assertIn("module", result["rows"][0])
 		self.assertIn("n", result["rows"][0])
 		self.assertGreater(result["rows"][0]["n"], 0)
+
+
+class TestQueryV02Additions(FrappeTestCase):
+	"""v0.2 additions: DISTINCT, OFFSET, COUNT(DISTINCT), EXISTS / NOT EXISTS.
+
+	Uses the same _build_sql helper pattern as TestQueryQbTranslation
+	to assert on resolved SQL substrings rather than execution.
+	"""
+
+	def _build_sql(self, spec: dict) -> str:
+		"""Build through the full pipeline, capture the resolved SQL."""
+		with patch("frappe.has_permission", return_value=True), \
+		     patch("frappe.database.query.Engine") as fake_engine:
+			fake_engine.return_value.get_permission_conditions.return_value = None
+			with patch("pypika.queries.QueryBuilder.run", return_value=[]):
+				result = query(spec)
+		return result["sql"]
+
+	# ---- DISTINCT --------------------------------------------------
+
+	def test_distinct_emits_distinct_in_sql(self):
+		"""distinct=True at the spec root produces SELECT DISTINCT."""
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": ["dt.module"],
+			"distinct": True,
+		})
+		self.assertIn("DISTINCT", sql.upper())
+
+	def test_distinct_false_no_distinct(self):
+		"""distinct=False (or omitted) does NOT add DISTINCT."""
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": ["dt.module"],
+			"distinct": False,
+		})
+		self.assertNotIn("DISTINCT", sql.upper())
+
+	def test_distinct_rejects_non_bool(self):
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError):
+				query({"from": "DocType", "distinct": "yes"})
+
+	# ---- OFFSET ----------------------------------------------------
+
+	def test_offset_emits_offset_in_sql(self):
+		sql = self._build_sql({
+			"from": "DocType",
+			"select": ["name"],
+			"limit": 10,
+			"offset": 20,
+		})
+		self.assertIn("OFFSET 20", sql.upper())
+
+	def test_offset_zero_does_not_emit_offset(self):
+		"""offset=0 is a no-op; pypika shouldn't emit OFFSET 0 either."""
+		sql = self._build_sql({
+			"from": "DocType",
+			"select": ["name"],
+			"limit": 10,
+			"offset": 0,
+		})
+		self.assertNotIn("OFFSET", sql.upper())
+
+	def test_offset_rejects_negative(self):
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError):
+				query({"from": "DocType", "offset": -1})
+
+	def test_offset_rejects_above_ceiling(self):
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError):
+				query({"from": "DocType", "offset": 200_000})
+
+	def test_offset_rejects_non_int(self):
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError):
+				query({"from": "DocType", "offset": "ten"})
+
+	# ---- COUNT(DISTINCT) -------------------------------------------
+
+	def test_count_distinct_emits_count_distinct(self):
+		"""distinct=True on a count aggregate becomes COUNT(DISTINCT field)."""
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": [{
+				"agg": "count",
+				"field": "dt.module",
+				"distinct": True,
+				"as": "n",
+			}],
+		})
+		# Substring matches accommodate dialect spacing variation
+		# (some dialects emit COUNT(DISTINCT x), others COUNT( DISTINCT x )).
+		upper = sql.upper().replace(" ", "")
+		self.assertIn("COUNT(DISTINCT", upper)
+
+	def test_sum_distinct_emits_sum_distinct(self):
+		"""DISTINCT modifier applies to all aggregates uniformly. Use
+		tabDocType.idx (a numeric field guaranteed present)."""
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": [{
+				"agg": "sum",
+				"field": "dt.idx",
+				"distinct": True,
+				"as": "s",
+			}],
+		})
+		upper = sql.upper().replace(" ", "")
+		self.assertIn("SUM(DISTINCT", upper)
+
+	# ---- EXISTS / NOT EXISTS ---------------------------------------
+
+	def test_exists_subquery_emits_exists(self):
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": ["dt.name"],
+			"where": [{
+				"op": "exists",
+				"value": {
+					"from": "DocField", "alias": "df",
+					"where": [{
+						"field": "df.parent", "op": "=",
+						"value": {"$field": "dt.name"},
+					}],
+				},
+			}],
+		})
+		self.assertIn("EXISTS", sql.upper())
+
+	def test_not_exists_subquery_emits_not_exists(self):
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": ["dt.name"],
+			"where": [{
+				"op": "not exists",
+				"value": {
+					"from": "DocField", "alias": "df",
+					"where": [{
+						"field": "df.parent", "op": "=",
+						"value": {"$field": "dt.name"},
+					}],
+				},
+			}],
+		})
+		upper = sql.upper()
+		self.assertIn("NOT", upper)
+		self.assertIn("EXISTS", upper)
+
+	def test_correlated_subquery_resolves_outer_field(self):
+		"""The {"$field": "dt.name"} marker must resolve to the OUTER
+		table's column, not a literal string."""
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": ["dt.name"],
+			"where": [{
+				"op": "exists",
+				"value": {
+					"from": "DocField", "alias": "df",
+					"where": [{
+						"field": "df.parent", "op": "=",
+						"value": {"$field": "dt.name"},
+					}],
+				},
+			}],
+		})
+		# The resolved SQL should reference the outer dt.name column,
+		# not the literal string 'dt.name'. We check that the literal
+		# string form is NOT present (with the surrounding quotes).
+		self.assertNotIn("'dt.name'", sql)
+
+	def test_exists_subspec_rejects_select(self):
+		"""SELECT in a sub-spec is rejected - subqueries auto-select 1."""
+		with patch("frappe.has_permission", return_value=True), \
+		     patch("frappe.database.query.Engine") as fake_engine:
+			fake_engine.return_value.get_permission_conditions.return_value = None
+			with self.assertRaises(InvalidArgumentError) as cm:
+				query({
+					"from": "DocType", "alias": "dt",
+					"where": [{
+						"op": "exists",
+						"value": {
+							"from": "DocField", "alias": "df",
+							"select": ["df.fieldname"],  # not allowed
+						},
+					}],
+				})
+			self.assertIn("select", str(cm.exception).lower())
+
+	def test_exists_subspec_rejects_order_by(self):
+		with patch("frappe.has_permission", return_value=True), \
+		     patch("frappe.database.query.Engine") as fake_engine:
+			fake_engine.return_value.get_permission_conditions.return_value = None
+			with self.assertRaises(InvalidArgumentError):
+				query({
+					"from": "DocType", "alias": "dt",
+					"where": [{
+						"op": "exists",
+						"value": {
+							"from": "DocField", "alias": "df",
+							"order_by": [{"field": "df.fieldname"}],
+						},
+					}],
+				})
+
+	def test_exists_subspec_rejects_limit(self):
+		with patch("frappe.has_permission", return_value=True), \
+		     patch("frappe.database.query.Engine") as fake_engine:
+			fake_engine.return_value.get_permission_conditions.return_value = None
+			with self.assertRaises(InvalidArgumentError):
+				query({
+					"from": "DocType", "alias": "dt",
+					"where": [{
+						"op": "exists",
+						"value": {
+							"from": "DocField", "alias": "df",
+							"limit": 10,
+						},
+					}],
+				})
+
+	def test_exists_subspec_rejects_distinct(self):
+		with patch("frappe.has_permission", return_value=True), \
+		     patch("frappe.database.query.Engine") as fake_engine:
+			fake_engine.return_value.get_permission_conditions.return_value = None
+			with self.assertRaises(InvalidArgumentError):
+				query({
+					"from": "DocType", "alias": "dt",
+					"where": [{
+						"op": "exists",
+						"value": {
+							"from": "DocField", "alias": "df",
+							"distinct": True,
+						},
+					}],
+				})
+
+	def test_exists_recursion_depth_capped(self):
+		"""Two levels of nesting (outer + one EXISTS) is the cap;
+		three levels raises."""
+		# Build a depth-3 spec: outer -> EXISTS(... EXISTS(... ))
+		with patch("frappe.has_permission", return_value=True), \
+		     patch("frappe.database.query.Engine") as fake_engine:
+			fake_engine.return_value.get_permission_conditions.return_value = None
+			with self.assertRaises(InvalidArgumentError) as cm:
+				query({
+					"from": "DocType", "alias": "dt",
+					"where": [{
+						"op": "exists",
+						"value": {
+							"from": "DocField", "alias": "df",
+							"where": [{
+								"op": "exists",
+								"value": {
+									"from": "DocPerm", "alias": "dp",
+									"where": [{
+										"field": "dp.parent", "op": "=",
+										"value": {"$field": "df.parent"},
+									}],
+								},
+							}],
+						},
+					}],
+				})
+			self.assertIn("nesting", str(cm.exception).lower())
+
+	def test_exists_subspec_must_be_dict(self):
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError):
+				query({
+					"from": "DocType", "alias": "dt",
+					"where": [{"op": "exists", "value": "not-a-dict"}],
+				})
+
+	def test_exists_subspec_requires_from(self):
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError):
+				query({
+					"from": "DocType", "alias": "dt",
+					"where": [{
+						"op": "exists",
+						"value": {"alias": "df"},  # missing 'from'
+					}],
+				})

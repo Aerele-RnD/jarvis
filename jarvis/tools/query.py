@@ -92,6 +92,17 @@ from jarvis.tools.run_query import (
 ROW_GUARD = 200
 MAX_LIMIT = 1000
 DEFAULT_LIMIT = 100
+# OFFSET ceiling. Operator dashboards rarely page past ~100k; higher
+# numbers usually mean the agent should narrow the filter instead of
+# paginating into a wall of irrelevant rows. The ceiling sits above
+# realistic reporting depth but below "agent typo / accident".
+MAX_OFFSET = 100_000
+
+# EXISTS / NOT EXISTS sub-spec recursion cap. Two levels = one nest;
+# deeper specs are rejected to prevent runaway agent payloads. The
+# common case is a single nest ("rows where there's an X matching Y"),
+# which fits comfortably under this cap.
+_MAX_SUBSPEC_DEPTH = 2
 
 # Operators allowed in ``where`` / ``having`` clauses. The dispatch
 # table below maps each to a callable that produces a pypika Criterion.
@@ -102,6 +113,12 @@ _OPERATORS = {
 	"like", "not like",
 	"is null", "is not null",
 	"between",
+	# v0.2 additions: set-existence subqueries. The ``value`` for these
+	# operators is a stripped sub-spec (from + alias + joins + where)
+	# rather than a literal. Closes the "membership against complex
+	# inner predicates" use case that LEFT JOIN + IS NULL gets unwieldy
+	# at.
+	"exists", "not exists",
 }
 
 # Aggregate functions allowed in ``select`` and ``having``. Each maps
@@ -197,6 +214,12 @@ def query(spec: dict, confirm_large: bool = False) -> dict:
 	select_terms = _build_select(spec.get("select") or ["name"], alias_map)
 	q = q.select(*select_terms)
 
+	# DISTINCT (v0.2). Applies to the SELECT - emits ``SELECT DISTINCT``
+	# at the SQL level. pypika's ``.distinct()`` is a no-arg toggle on
+	# the query builder, idempotent.
+	if spec.get("distinct"):
+		q = q.distinct()
+
 	# WHERE.
 	for w in spec.get("where") or []:
 		q = q.where(_build_predicate(w, alias_map))
@@ -223,6 +246,20 @@ def query(spec: dict, confirm_large: bool = False) -> dict:
 	if limit <= 0 or limit > MAX_LIMIT:
 		raise InvalidArgumentError(f"limit must be between 1 and {MAX_LIMIT}")
 	q = q.limit(limit)
+
+	# OFFSET (v0.2). Optional pagination. Same None-check pattern as
+	# limit so an explicit ``offset: 0`` is honored (no-op but valid)
+	# and missing offset doesn't accidentally clobber. Default 0 means
+	# the qb query doesn't get an OFFSET clause appended.
+	offset_raw = spec.get("offset")
+	if offset_raw is not None:
+		offset = int(offset_raw)
+		if offset < 0 or offset > MAX_OFFSET:
+			raise InvalidArgumentError(
+				f"offset must be between 0 and {MAX_OFFSET}"
+			)
+		if offset > 0:
+			q = q.offset(offset)
 
 	# Step 6: weave record-level permission predicates per DocType.
 	# This is the structural difference vs run_query - one call per
@@ -292,6 +329,12 @@ def _validate_spec_shape(spec: dict) -> None:
 	translator below can assume its inputs are well-formed."""
 	if "from" not in spec or not isinstance(spec["from"], str):
 		raise InvalidArgumentError("spec.from must be a DocType name (string)")
+
+	# v0.2 top-level fields.
+	if "distinct" in spec and not isinstance(spec["distinct"], bool):
+		raise InvalidArgumentError("spec.distinct must be true or false")
+	if "offset" in spec and not isinstance(spec["offset"], int):
+		raise InvalidArgumentError("spec.offset must be an integer")
 
 	if "joins" in spec:
 		if not isinstance(spec["joins"], list):
@@ -429,27 +472,16 @@ def _build_select(select_spec: list, alias_map: dict) -> list:
 	"""Translate the select list. Entries can be:
 	- bare string ``"si.customer"`` → resolved field
 	- dict ``{"agg": "sum", "field": "sii.qty", "as": "total_qty"}`` →
-	  aggregate function wrapping the field, with ``.as_()`` aliased."""
+	  aggregate function wrapping the field, with ``.as_()`` aliased.
+	- dict with ``"distinct": True`` (v0.2) → ``COUNT(DISTINCT field)``
+	  etc. Applies to all aggregates uniformly; qb rejects semantically
+	  invalid combos (e.g. ``MIN(DISTINCT x)``) at SQL-build time."""
 	out = []
 	for item in select_spec:
 		if isinstance(item, str):
 			out.append(_resolve_field(item, alias_map))
 		elif isinstance(item, dict):
-			agg_name = item.get("agg")
-			if agg_name not in _AGGREGATES:
-				raise InvalidArgumentError(
-					f"select aggregate {agg_name!r} not allowed; "
-					f"must be one of {sorted(_AGGREGATES)}"
-				)
-			field_ref = item.get("field")
-			if agg_name == "count" and field_ref == "*":
-				expr = fn.Count("*")
-			elif field_ref:
-				expr = _AGGREGATES[agg_name](_resolve_field(field_ref, alias_map))
-			else:
-				raise InvalidArgumentError(
-					f"select aggregate {agg_name!r} missing 'field'"
-				)
+			expr = _build_aggregate(item, alias_map)
 			if "as" in item:
 				expr = expr.as_(item["as"])
 			out.append(expr)
@@ -460,7 +492,42 @@ def _build_select(select_spec: list, alias_map: dict) -> list:
 	return out
 
 
-def _build_predicate(p: dict, alias_map: dict) -> Criterion:
+def _build_aggregate(spec: dict, alias_map: dict):
+	"""Build a single aggregate expression from a spec entry. Shared
+	between ``_build_select`` and ``_build_predicate`` so the DISTINCT
+	modifier (v0.2) lands in one place.
+
+	pypika's aggregate classes accept a ``Field`` (or string for the
+	``COUNT(*)`` special case). For DISTINCT support, the canonical
+	pypika idiom is ``Count(field).distinct()`` - the aggregate gets
+	wrapped, then ``.distinct()`` toggles the inner column to a
+	DISTINCT projection. Same shape works across the aggregate family.
+	"""
+	agg_name = spec.get("agg")
+	if agg_name not in _AGGREGATES:
+		raise InvalidArgumentError(
+			f"aggregate {agg_name!r} not allowed; "
+			f"must be one of {sorted(_AGGREGATES)}"
+		)
+	field_ref = spec.get("field")
+	if agg_name == "count" and field_ref == "*":
+		# COUNT(*) and COUNT(DISTINCT *) - the latter is pointless but
+		# pypika accepts it; we don't gate semantics, only shapes.
+		expr = fn.Count("*")
+	elif field_ref:
+		expr = _AGGREGATES[agg_name](_resolve_field(field_ref, alias_map))
+	else:
+		raise InvalidArgumentError(
+			f"aggregate {agg_name!r} missing 'field' (use '*' for COUNT(*))"
+		)
+	if spec.get("distinct"):
+		# Toggle DISTINCT on the inner column. pypika's
+		# AggregateFunction.distinct() is the canonical entry point.
+		expr = expr.distinct()
+	return expr
+
+
+def _build_predicate(p: dict, alias_map: dict, depth: int = 1) -> Criterion:
 	"""Translate a WHERE/HAVING predicate dict to a pypika Criterion.
 
 	Predicate shapes:
@@ -473,28 +540,35 @@ def _build_predicate(p: dict, alias_map: dict) -> Criterion:
 
 	    {"agg": "sum", "field": "sii.qty", "op": ">", "value": 100}
 
+	- Set-existence (v0.2)::
+
+	    {"op": "not exists", "value": <stripped sub-spec>}
+
 	The aggregate variant wraps the field in the agg function; we
 	support both shapes in WHERE and HAVING uniformly so the agent
 	doesn't have to remember which clause permits which.
+
+	``depth`` tracks subquery nesting for the EXISTS recursion cap
+	(default 1 = outer query; each EXISTS nesting increments).
 	"""
 	op = p["op"]
+
+	# v0.2: EXISTS / NOT EXISTS take a sub-spec as ``value`` rather
+	# than a literal. Handle these BEFORE the lhs/rhs path since
+	# they don't have a ``field`` or ``agg`` lhs.
+	if op in ("exists", "not exists"):
+		sub_spec = p.get("value")
+		if not isinstance(sub_spec, dict):
+			raise InvalidArgumentError(
+				f"{op!r} requires a sub-spec dict as 'value'"
+			)
+		return _build_exists_criterion(
+			sub_spec, alias_map, depth, negate=(op == "not exists"),
+		)
+
 	# Resolve the left side: either a bare field or an aggregate.
 	if "agg" in p:
-		agg_name = p["agg"]
-		if agg_name not in _AGGREGATES:
-			raise InvalidArgumentError(
-				f"predicate aggregate {agg_name!r} not allowed; "
-				f"must be one of {sorted(_AGGREGATES)}"
-			)
-		field_ref = p.get("field")
-		if agg_name == "count" and field_ref == "*":
-			lhs = fn.Count("*")
-		elif field_ref:
-			lhs = _AGGREGATES[agg_name](_resolve_field(field_ref, alias_map))
-		else:
-			raise InvalidArgumentError(
-				f"predicate aggregate {agg_name!r} missing 'field'"
-			)
+		lhs = _build_aggregate(p, alias_map)
 	else:
 		field_ref = p.get("field")
 		if not field_ref:
@@ -547,3 +621,177 @@ def _build_predicate(p: dict, alias_map: dict) -> Criterion:
 		return lhs[slice(*values)]
 	# Unreachable - _validate_spec_shape already restricts op to _OPERATORS.
 	raise InvalidArgumentError(f"unsupported operator: {op}")
+
+
+# ---- v0.2: EXISTS / NOT EXISTS sub-specs ----------------------------
+
+
+# Fields the stripped sub-spec is NOT allowed to carry. Subqueries
+# inside EXISTS don't need aggregates / ordering / paging - the engine
+# just checks if any row matches, so SELECT / GROUP BY / HAVING /
+# ORDER BY / LIMIT / OFFSET / DISTINCT are all noise. Reject up front
+# so the agent gets a clear error rather than building a spec the
+# qb side silently ignores.
+_SUBSPEC_DISALLOWED_FIELDS = (
+	"select", "group_by", "having", "order_by", "limit", "offset", "distinct",
+)
+
+
+def _build_exists_criterion(sub_spec: dict, outer_alias_map: dict,
+                              depth: int, *, negate: bool) -> Criterion:
+	"""Build an EXISTS or NOT EXISTS criterion from a stripped sub-spec.
+
+	The sub-spec carries only ``from``, ``alias``, ``joins``, ``where``.
+	The outer ``alias_map`` is needed so the sub-spec's WHERE can
+	reference outer-query columns via the ``{"$field": "alias.col"}``
+	correlated-reference marker.
+
+	Depth-counted to cap recursion at ``_MAX_SUBSPEC_DEPTH``. The outer
+	query is depth=1; the first nested EXISTS is depth=2; depth=3
+	raises - one level of nesting is the realistic ceiling and deeper
+	specs are usually agent confusion or runaway payloads.
+
+	Returns a pypika Criterion suitable for ``.where(...)``. NOT EXISTS
+	is built via pypika's ``~`` negation on the EXISTS criterion (a
+	standard pypika Term operator), avoiding a separate code path.
+	"""
+	if depth + 1 > _MAX_SUBSPEC_DEPTH:
+		raise InvalidArgumentError(
+			f"EXISTS / NOT EXISTS sub-spec nesting exceeds the {_MAX_SUBSPEC_DEPTH}-"
+			f"level cap. Restructure the query to flatten the membership "
+			f"check (e.g. a LEFT JOIN at the outer level)."
+		)
+
+	# Validate shape: only the four allowed fields are present.
+	if not isinstance(sub_spec, dict):
+		raise InvalidArgumentError("EXISTS sub-spec must be a dict")
+	if "from" not in sub_spec or not isinstance(sub_spec["from"], str):
+		raise InvalidArgumentError(
+			"EXISTS sub-spec.from must be a DocType name (string)"
+		)
+	for forbidden in _SUBSPEC_DISALLOWED_FIELDS:
+		if forbidden in sub_spec:
+			raise InvalidArgumentError(
+				f"EXISTS sub-spec must not include {forbidden!r}; "
+				f"subqueries only carry from + alias + joins + where"
+			)
+
+	# Build the inner alias_map. The OUTER aliases stay reachable for
+	# correlated references via the ``$field`` marker; they're folded
+	# into the inner map under their original keys. If the sub-spec
+	# accidentally re-uses an outer alias, that's a real collision -
+	# refuse with a clean error.
+	sub_from_table, sub_alias_map = _build_from_and_aliases(sub_spec)
+	for outer_alias in outer_alias_map:
+		if outer_alias in sub_alias_map:
+			raise InvalidArgumentError(
+				f"EXISTS sub-spec alias {outer_alias!r} collides with "
+				f"the outer query's alias of the same name"
+			)
+		# Outer aliases are visible-but-not-redefinable inside the
+		# subquery. We add them so $field markers resolve, but we also
+		# track that they are outer-scope so the subquery doesn't
+		# accidentally pull them into its FROM (handled because we
+		# only consult these for resolving $field markers, not for
+		# the qb.from_() chain).
+		sub_alias_map[outer_alias] = outer_alias_map[outer_alias]
+
+	# Sub-spec joins land in the inner alias_map as usual.
+	sub_q = frappe.qb.from_(sub_from_table)
+	for j in sub_spec.get("joins") or []:
+		if j.get("type", "inner") not in _JOIN_METHODS:
+			raise InvalidArgumentError(
+				f"EXISTS sub-spec.joins[*].type must be one of: "
+				f"{sorted(_JOIN_METHODS)}"
+			)
+		for k in ("doctype", "alias", "on"):
+			if k not in j:
+				raise InvalidArgumentError(
+					f"EXISTS sub-spec.joins[*] missing required field: {k}"
+				)
+		if j["alias"] in sub_alias_map:
+			raise InvalidArgumentError(
+				f"EXISTS sub-spec alias {j['alias']!r} collides"
+			)
+		joined_table = frappe.qb.DocType(j["doctype"]).as_(j["alias"])
+		sub_alias_map[j["alias"]] = (j["doctype"], joined_table)
+		on_criterion = _build_on_criterion(j["on"], sub_alias_map)
+		join_method_name = _JOIN_METHODS[j.get("type", "inner")]
+		sub_q = getattr(sub_q, join_method_name)(joined_table).on(on_criterion)
+
+	# Sub-spec WHERE. Predicates may carry ``$field`` markers for
+	# correlated references; resolve those before handing to the
+	# regular predicate builder.
+	for w in sub_spec.get("where") or []:
+		resolved = _resolve_correlated_refs(w, sub_alias_map)
+		sub_q = sub_q.where(_build_predicate(resolved, sub_alias_map,
+		                                       depth=depth + 1))
+
+	# The SELECT projection of an EXISTS subquery is semantically
+	# irrelevant; we select the literal 1 (cheapest non-empty
+	# projection). Matches the SQL convention ``EXISTS (SELECT 1
+	# FROM ...)`` so resolved SQL reads naturally.
+	sub_q = sub_q.select(1)
+
+	# pypika's ``QueryBuilder`` exposes the EXISTS-ness via being
+	# usable as a Criterion when wrapped. The canonical idiom across
+	# pypika versions is ``ExistsCriterion(sub_q)``; some versions
+	# also have ``sub_q.exists()`` as a shorthand. Use the explicit
+	# wrapper for stability across versions Frappe pins.
+	try:
+		# Newer pypika (>=0.49) exposes ExistsCriterion via terms.
+		from pypika.terms import ExistsCriterion
+		crit = ExistsCriterion(sub_q)
+	except ImportError:
+		# Fallback: some versions expose ``.exists()`` on QueryBuilder.
+		# If neither path works we raise with a clear message rather
+		# than silently mis-building.
+		if hasattr(sub_q, "exists"):
+			crit = sub_q.exists()
+		else:
+			raise InvalidArgumentError(
+				"This Frappe version's pypika does not expose EXISTS "
+				"subquery support; restructure the spec to a LEFT JOIN "
+				"+ IS NULL form."
+			)
+
+	# NOT EXISTS via pypika's ``~`` term-negation.
+	if negate:
+		crit = crit.negate() if hasattr(crit, "negate") else (~crit)
+	return crit
+
+
+def _resolve_correlated_refs(predicate: dict, alias_map: dict) -> dict:
+	"""Walk a predicate dict and convert any ``{"$field": "alias.col"}``
+	values into resolved pypika ``Field`` references against the
+	(combined inner+outer) alias_map.
+
+	The agent writes correlated subqueries like::
+
+	    {"field": "t.employee", "op": "=", "value": {"$field": "e.name"}}
+
+	without the marker, pypika would treat ``"$field": "e.name"`` as a
+	literal string and the EXISTS would compare ``t.employee`` to the
+	literal text ``"e.name"`` instead of the outer table's column. The
+	marker disambiguates: any time the value is a dict with the single
+	key ``$field``, treat as a column reference.
+
+	Returns a shallow-copy of the predicate with the value resolved.
+	Idempotent on predicates that don't carry the marker.
+	"""
+	value = predicate.get("value")
+	if isinstance(value, dict) and "$field" in value:
+		resolved = _resolve_field(value["$field"], alias_map, allow_alias=False)
+		return {**predicate, "value": resolved}
+	# Lists may contain $field markers too (e.g. ``in [{$field: ...}]``,
+	# though uncommon). Walk and resolve element-by-element.
+	if isinstance(value, list):
+		new_value = []
+		for v in value:
+			if isinstance(v, dict) and "$field" in v:
+				new_value.append(_resolve_field(v["$field"], alias_map,
+				                                  allow_alias=False))
+			else:
+				new_value.append(v)
+		return {**predicate, "value": new_value}
+	return predicate
