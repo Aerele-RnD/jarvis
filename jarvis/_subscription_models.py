@@ -30,10 +30,14 @@ from __future__ import annotations
 
 SUBSCRIPTION_MODELS: dict[str, list[str]] = {
 	"OpenAI": ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"],
-	"Google Gemini": ["gemini-2.0-pro", "gemini-1.5-pro", "gemini-1.5-flash"],
+	"Google Gemini": [
+		"gemini-2.5-pro",
+		"gemini-2.5-flash",
+		"gemini-3.1-flash",
+	],
 }
 
 DEFAULT_MODEL: dict[str, str] = {
 	"OpenAI": "gpt-5.5",
-	"Google Gemini": "gemini-2.0-pro",
+	"Google Gemini": "gemini-2.5-pro",
 }
