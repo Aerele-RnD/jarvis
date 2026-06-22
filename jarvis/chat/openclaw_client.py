@@ -65,7 +65,22 @@ def _is_response_frame(frame: dict, req_id: str) -> bool:
 from jarvis.exceptions import OpenclawUnreachableError
 
 CONNECT_TIMEOUT_SECONDS = 10
-TURN_TIMEOUT_SECONDS = 180
+# Wall-clock cap on one agent turn waiting for the WS lifecycle to
+# complete (final lifecycle "end" frame from openclaw). Was 180s when
+# the bench + openclaw container ran on the same host (sub-ms WS
+# RTT); bumped to 600s after a Frappe-Cloud-hosted bench + Hetzner-
+# hosted openclaw deploy hit the 180s cap on multi-recipient
+# announcement turns. Each tool call now crosses the public internet
+# (~50-200ms WAN RTT depending on FC↔Hetzner region pairing); a
+# typical multi-step turn with ~30 tool calls + a 26-recipient batch
+# send hit ~4-8s of pure network overhead alone, then ran past the
+# 180s ceiling before openclaw emitted lifecycle-end. The row-guard
+# walk-back (jarvis#134) cut the tool-call count meaningfully but
+# WAN latency is a structural floor; the timeout has to absorb it.
+# The matching RQ envelope ``_AGENT_TURN_WORKER_TIMEOUT`` in
+# jarvis/chat/api.py was bumped in lockstep so the worker has room
+# for this turn + pair + WS connect overhead.
+TURN_TIMEOUT_SECONDS = 600
 
 # Scopes the chat path needs: operator.write for sessions.create + agent;
 # operator.admin so the same connection can also read state (status snapshots,
