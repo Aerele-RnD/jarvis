@@ -798,6 +798,42 @@ class TestOAuthBearer(FrappeTestCase):
 		self.assertEqual(len(cap["api_headers"]), 2)
 		self.assertEqual(cap["api_headers"][1]["Authorization"], "Bearer ACCESS-1")
 
+	def test_uses_refresh_token_when_access_expired_but_refresh_present(self):
+		# Cache holds a live refresh token but the access token has expired.
+		# The next call must renew via grant_type=refresh_token (the cheap
+		# path) instead of replaying the password grant, and must carry the
+		# freshly minted access token on the API call. Exercises the
+		# refresh-first branch in _admin_access_token (the password grant is
+		# only the durable bootstrap fallback). 2026-06-21 review follow-up.
+		_settings_for_oauth()
+		# Seed AFTER _settings_for_oauth (it clears the cache): a stale access
+		# token (expires_at in the past) plus a still-valid refresh token.
+		frappe.cache().set_value(admin_client._OAUTH_CACHE_KEY, {
+			"access_token": "STALE-ACCESS",
+			"refresh_token": "REFRESH-1",
+			"access_expires_at": 0,
+		})
+		cap = {}
+		token_resp = _mock_response(200, json_body={
+			"access_token": "ACCESS-2", "refresh_token": "REFRESH-2",
+			"token_type": "Bearer", "expires_in": 900,
+		})
+		with patch("requests.post", side_effect=self._route(
+				token_response=token_resp, api_capture=cap)):
+			admin_client.get_connection()
+		# Exactly one token call, and it was the refresh grant - never password.
+		self.assertEqual(len(cap["token_calls"]), 1)
+		grant = cap["token_calls"][0]
+		self.assertEqual(grant["grant_type"], "refresh_token")
+		self.assertEqual(grant["refresh_token"], "REFRESH-1")
+		self.assertNotIn("username", grant)
+		self.assertNotIn("password", grant)
+		# Public client: client_id present, no client_secret.
+		self.assertEqual(grant["client_id"], "jarvis-bench")
+		self.assertNotIn("client_secret", grant)
+		# The API call carried the access token minted off the refresh grant.
+		self.assertEqual(cap["api_headers"][0]["Authorization"], "Bearer ACCESS-2")
+
 	def test_falls_back_to_legacy_without_password(self):
 		# No customer_password -> legacy api_key:api_secret path.
 		_settings_for_admin(api_key="legacy-key", api_secret="legacy-secret")
