@@ -263,7 +263,7 @@ def run_agent_turn(conversation_id: str, message_id: str, run_id: str) -> None:
 				_publish_run_error(str(e))
 				return
 			finally:
-				selfhost.clear_active_turn(tool_user)
+				selfhost.clear_active_turn(tool_user, run_id)
 		else:
 			# Managed: device-paired WebSocket to the tenant's gateway.
 			gateway_url = (settings.agent_url or "").replace(
