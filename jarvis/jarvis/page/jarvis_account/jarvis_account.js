@@ -250,7 +250,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 				frappe.call({ method: "jarvis.selfhost.save_self_hosted", args: { base_url: v.base_url, token: v.token, deep: 0, stream: v.stream ? 1 : 0 } })
 					.then((r) => {
 						const m = r.message || {};
-						if (m.ok) { d.hide(); frappe.show_alert({ message: __("Saved."), indicator: "green" }); loadInitial(); }
+						if (m.ok) { d.hide(); frappe.show_alert({ message: m.warning ? __(m.warning) : __("Saved."), indicator: m.warning ? "orange" : "green" }, m.warning ? 15 : undefined); loadInitial(); }
 						else { renderShChecks(d.fields_dict.results.$wrapper, m.result || {}); d.enable_primary_action(); }
 					}).catch(() => d.enable_primary_action());
 			},

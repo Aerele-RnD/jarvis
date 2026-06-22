@@ -16,6 +16,7 @@ v1 = connect + chat. ERP tools (the openclaw plugin) are out of scope.
 
 from __future__ import annotations
 
+import contextlib
 import json
 
 import frappe
@@ -164,12 +165,20 @@ def test_connection(base_url: str, token: str = "", deep: int | str = 0) -> dict
 
 @frappe.whitelist()
 def save_self_hosted(base_url: str, token: str, deep: int | str = 0,
-                     stream: int | str = 1) -> dict:
+                     stream: int | str = 1, tool_user: str = "") -> dict:
     """Validate, then switch this bench to Self-Hosted mode pointed at the
     given openclaw. Refuses to persist if validation fails (no half-config).
 
     ``stream`` controls token-by-token SSE rendering of the agent's reply
     (default on; off => one-shot, for openclaw behind a buffering proxy).
+
+    ``tool_user`` is the Frappe user the jarvis__* (ERP) tools run under. When
+    omitted we keep any already-configured value, else default to the
+    configuring user - but never Administrator/Guest, since running ERP tools
+    as Administrator bypasses all DocType permissions. If it ends up unset
+    (e.g. self-host configured while logged in as Administrator) we still save
+    the connection but return a ``warning`` so the operator knows tool calls
+    will be rejected until they pick a tool user.
 
     System Manager only."""
     frappe.only_for("System Manager")
@@ -177,6 +186,11 @@ def save_self_hosted(base_url: str, token: str, deep: int | str = 0,
     result = validate_connection(base_url, token, deep=deep_flag)
     if not result["ok"]:
         return {"ok": False, "error": "validation_failed", "result": result}
+
+    tu = (tool_user or "").strip()
+    if tu and (tu in ("Guest", "Administrator") or not frappe.db.exists("User", tu)):
+        return {"ok": False, "error": "invalid_tool_user",
+                "detail": f"{tu!r} is not a valid non-admin Frappe user"}
 
     base = _normalize_base_url(base_url)
     s = frappe.get_single("Jarvis Settings")
@@ -186,15 +200,24 @@ def save_self_hosted(base_url: str, token: str, deep: int | str = 0,
     s.db_set("selfhost_stream", 1 if str(stream) in ("1", "true", "True") else 0)
     s.db_set("selfhost_last_validated_at", now_datetime())
     s.db_set("selfhost_last_validation", json.dumps(result))
-    # Default the tool-user to whoever configured self-host (single-tenant
-    # bench); operators can override it on Jarvis Settings. The jarvis__*
-    # tools run under this user's Frappe permissions.
-    if not (getattr(s, "selfhost_tool_user", "") or "").strip():
+    # Tool user the jarvis__* tools run under: explicit choice > existing >
+    # the configuring user (never Administrator/Guest - see docstring).
+    if tu:
+        s.db_set("selfhost_tool_user", tu)
+    elif not (getattr(s, "selfhost_tool_user", "") or "").strip():
         u = frappe.session.user
         if u and u not in ("Guest", "Administrator"):
             s.db_set("selfhost_tool_user", u)
     frappe.db.commit()
-    return {"ok": True, "result": result}
+
+    out = {"ok": True, "result": result}
+    if not (getattr(s, "selfhost_tool_user", "") or "").strip():
+        out["warning"] = (
+            "Connection saved, but no Self-Host Tool User is set, so ERP tool "
+            "calls will be rejected. Set 'Self-Host Tool User' in Jarvis "
+            "Settings to a non-admin Frappe user."
+        )
+    return out
 
 
 @frappe.whitelist()
@@ -239,28 +262,90 @@ def is_self_hosted() -> bool:
 # openclaw's HTTP transport executes tools internally and returns only the
 # final answer, and the plugin's call_tool callback carries only the openclaw
 # session key - not our conversation. To still show tool cards in self-host
-# chat, the worker records the in-flight turn here (keyed by the tool user),
-# and call_tool reads it to attribute each tool call to that conversation.
-# A self-hosted bench runs ~one turn at a time per tool user.
-_ACTIVE_TURN_KEY = "jarvis:selfhost_active_turn:"
+# chat, the worker records the in-flight turn here, and call_tool reads it to
+# attribute each tool call back to that conversation.
+#
+# A self-hosted bench is single-tenant and normally runs one turn at a time
+# per tool user, but two turns CAN overlap (the same user in two tabs, or two
+# Frappe users sharing the bench). The callback cannot tell which turn a tool
+# call belongs to, so instead of a single last-writer-wins slot - which would
+# mis-file, and realtime-leak, one conversation's tool result into another -
+# we track every in-flight turn and only attribute when exactly one is active;
+# otherwise get_active_turn returns None and the tool card is dropped (fail
+# safe, no cross-conversation leak). A crashed worker that never clears its
+# marker self-heals: each per-run record carries a TTL, and stale run ids are
+# pruned from the set on read.
+_ACTIVE_TURN_KEY = "jarvis:selfhost_active_turn:"   # per-run turn data, keyed by run_id
+_ACTIVE_RUNS_KEY = "jarvis:selfhost_active_runs:"   # in-flight run ids, keyed by tool_user
+_ACTIVE_TURN_TTL = 300
+
+
+def _turn_key(run_id: str) -> str:
+    return _ACTIVE_TURN_KEY + run_id
 
 
 def set_active_turn(tool_user: str, *, conversation: str, owner: str, run_id: str) -> None:
-    if not tool_user:
+    if not tool_user or not run_id:
         return
-    frappe.cache().set_value(
-        _ACTIVE_TURN_KEY + tool_user,
-        {"conversation": conversation, "owner": owner, "run_id": run_id},
-        expires_in_sec=300,
-    )
+    # Best-effort + cosmetic (drives tool cards); never fail the turn on a
+    # cache blip - mirrors the old set_value(suppress ConnectionError).
+    with contextlib.suppress(Exception):
+        frappe.cache().set_value(
+            _turn_key(run_id),
+            {"conversation": conversation, "owner": owner,
+             "run_id": run_id, "tool_user": tool_user},
+            expires_in_sec=_ACTIVE_TURN_TTL,
+        )
+        frappe.cache().sadd(_ACTIVE_RUNS_KEY + tool_user, run_id)
 
 
 def get_active_turn(tool_user: str) -> dict | None:
+    """The single in-flight turn for ``tool_user``, or None if there isn't an
+    unambiguous one.
+
+    Returns None when zero or 2+ turns are concurrently active, so a tool call
+    is never attributed to - nor its result published into - the wrong
+    conversation. Run ids whose per-run record has expired (e.g. a worker
+    killed before clear_active_turn ran) are pruned from the set on read.
+    """
     if not tool_user:
         return None
-    return frappe.cache().get_value(_ACTIVE_TURN_KEY + tool_user) or None
+    runs_key = _ACTIVE_RUNS_KEY + tool_user
+    try:
+        members = {
+            m.decode() if isinstance(m, bytes) else m
+            for m in (frappe.cache().smembers(runs_key) or set())
+        }
+        if not members:
+            return None
+        live: list[dict] = []
+        dead: list[str] = []
+        for rid in members:
+            data = frappe.cache().get_value(_turn_key(rid), use_local_cache=False)
+            if data:
+                live.append(data)
+            else:
+                dead.append(rid)
+        if dead:
+            frappe.cache().srem(runs_key, *dead)
+        return live[0] if len(live) == 1 else None
+    except Exception:
+        return None
 
 
-def clear_active_turn(tool_user: str) -> None:
-    if tool_user:
-        frappe.cache().delete_value(_ACTIVE_TURN_KEY + tool_user)
+def clear_active_turn(tool_user: str, run_id: str = "") -> None:
+    """Drop a finished turn. Pass ``run_id`` to clear just that turn (so an
+    ending turn never wipes a concurrent one's marker); omit it to clear all of
+    the tool user's turns (defensive cleanup)."""
+    if not tool_user:
+        return
+    runs_key = _ACTIVE_RUNS_KEY + tool_user
+    with contextlib.suppress(Exception):
+        if run_id:
+            frappe.cache().srem(runs_key, run_id)
+            frappe.cache().delete_value(_turn_key(run_id))
+            return
+        for m in (frappe.cache().smembers(runs_key) or set()):
+            rid = m.decode() if isinstance(m, bytes) else m
+            frappe.cache().delete_value(_turn_key(rid))
+        frappe.cache().delete_value(runs_key)

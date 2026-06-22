@@ -57,10 +57,21 @@ def call_tool(tool: str, args: dict | str | None = None) -> dict:
 			# creates no Jarvis Chat Session row. The gateway token was already
 			# validated above (proving the call came from the configured
 			# openclaw), so run the tool as the configured self-host tool user
-			# - a self-hosted bench is single-tenant. Returns None when not
-			# self-hosted, so the normal "unknown session" rejection still
-			# applies to managed benches.
-			plugin_user = _selfhost_tool_user()
+			# - a self-hosted bench is single-tenant.
+			from jarvis import selfhost
+			if selfhost.is_self_hosted():
+				plugin_user = _selfhost_tool_user()
+				if not plugin_user:
+					# Self-hosted, but the tool user is unset (or names a user
+					# that no longer exists). Fail with a clear, fixable
+					# message instead of the opaque "unknown session" below.
+					frappe.local.response.http_status_code = 400
+					return _error(
+						"ConfigurationError",
+						"self-hosted tool user is not configured. Set "
+						"'Self-Host Tool User' in Jarvis Settings to a "
+						"non-admin Frappe user so ERP tools can run.",
+					)
 		if not plugin_user:
 			frappe.local.response.http_status_code = 400
 			return _error(
@@ -192,8 +203,11 @@ def _persist_and_publish_tool_call(
 	if not conv_name:
 		# Self-hosted: the openclaw HTTP session key isn't linked to a
 		# conversation. Attribute the tool call to the in-flight self-host
-		# turn (marker keyed by the tool user = current dispatch user) so the
-		# UI renders the tool card like managed mode.
+		# turn (keyed by the tool user = current dispatch user) so the UI
+		# renders the tool card like managed mode. get_active_turn returns
+		# None when 2+ turns are concurrently active for the tool user, so an
+		# ambiguous tool call is dropped rather than mis-filed into - and
+		# realtime-leaked to - the wrong conversation.
 		from jarvis import selfhost
 		turn = selfhost.get_active_turn(frappe.session.user) if selfhost.is_self_hosted() else None
 		conv_name = (turn or {}).get("conversation")
