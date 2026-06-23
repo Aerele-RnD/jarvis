@@ -230,8 +230,63 @@ def _persist_and_publish_tool_call(
 			result=result,
 			status=status,
 		)
+		# Generation: if the tool produced a file artifact (download_pdf,
+		# export_excel, …), attach it to the in-flight assistant message's
+		# canvas field + publish a canvas event so it renders inline — the
+		# same surface the agent's own canvas files use.
+		_maybe_attach_artifact(conv_name, conv_owner, result)
 	finally:
 		frappe.set_user(original)
+
+
+def _maybe_attach_artifact(conv_name: str, user: str, result: dict) -> None:
+	"""Attach a tool-produced file artifact ({file_url, filename, …}) to the
+	current assistant message's ``canvas`` field and publish a canvas event so
+	the chat renders it (PDF/image inline, xlsx/other as a download card)."""
+	if not isinstance(result, dict) or not result.get("ok"):
+		return
+	data = result.get("data")
+	if not isinstance(data, dict):
+		return
+	file_url = data.get("file_url")
+	filename = data.get("filename") or data.get("file_name")
+	if not file_url or not filename:
+		return
+
+	from jarvis.chat import canvas as canvas_mod
+
+	typ = canvas_mod._type_for(filename)
+	item = {
+		"name": filename,
+		"title": data.get("title") or canvas_mod._title_for(filename, None, typ),
+		"type": typ, "file_url": file_url,
+	}
+	MSG = "Jarvis Chat Message"
+	# Prefer the in-flight (streaming) assistant message; fall back to the latest.
+	rows = frappe.get_all(
+		MSG, filters={"conversation": conv_name, "role": "assistant", "streaming": 1},
+		order_by="seq desc", limit=1, pluck="name",
+	) or frappe.get_all(
+		MSG, filters={"conversation": conv_name, "role": "assistant"},
+		order_by="seq desc", limit=1, pluck="name",
+	)
+	if not rows:
+		return
+	msg_name = rows[0]
+	existing = frappe.db.get_value(MSG, msg_name, "canvas")
+	items = frappe.parse_json(existing) if existing else []
+	if not isinstance(items, list):
+		items = []
+	if any(i.get("file_url") == file_url for i in items):
+		return  # already attached
+	items.append(item)
+	frappe.db.set_value(MSG, msg_name, "canvas", frappe.as_json(items))
+	frappe.db.commit()
+	frappe.publish_realtime(
+		"jarvis:event",
+		{"kind": "canvas", "conversation_id": conv_name, "message_id": msg_name, "items": items},
+		user=user,
+	)
 
 
 def publish_realtime_tool_result(
