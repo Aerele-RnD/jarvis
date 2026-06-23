@@ -543,21 +543,9 @@ class TestSendMessageWithModelOverride(_ChatTestCase):
 		)
 
 
-class TestBuildId(FrappeTestCase):
-	"""build_id powers the stale-bundle banner: chat UI captures it on
-	load, refetches on tab refocus, banners on mismatch."""
-
-	def test_get_build_id_returns_string(self):
-		from jarvis.chat.api import get_build_id
-		r = get_build_id()
-		self.assertIn("build_id", r)
-		self.assertIsInstance(r["build_id"], str)
-
-	def test_get_chat_ui_settings_includes_build_id(self):
-		from jarvis.chat.api import get_chat_ui_settings
-		s = get_chat_ui_settings()
-		self.assertIn("build_id", s)
-		self.assertIsInstance(s["build_id"], str)
+class TestChatUiSettings(FrappeTestCase):
+	"""get_chat_ui_settings serves the canonical subscription catalogue +
+	per-provider defaults so the JS pages don't duplicate them."""
 
 	def test_get_chat_ui_settings_exposes_subscription_catalogue(self):
 		# Regression pin for "_SUBSCRIPTION_MODELS duplicated 4-5
@@ -575,31 +563,3 @@ class TestBuildId(FrappeTestCase):
 		# protects against a future drift in jarvis/_subscription_models.py.
 		for provider, default in DEFAULT_MODEL.items():
 			self.assertIn(default, SUBSCRIPTION_MODELS[provider])
-
-	def test_build_id_matches_assets_json(self):
-		"""When sites/assets/assets.json exists, build_id is derived from
-		the hashed jarvis_chat.bundle.js filename (no extension)."""
-		import json
-		import os
-		from jarvis.chat.api import _get_build_id, _BUILD_ID_CACHE
-		path = os.path.join(
-			frappe.utils.get_bench_path(), "sites", "assets", "assets.json"
-		)
-		if not os.path.exists(path):
-			self.skipTest("assets.json missing (build hasn't run)")
-		with open(path) as f:
-			data = json.load(f)
-		entry = data.get("jarvis_chat.bundle.js") or ""
-		if not entry:
-			self.skipTest("jarvis_chat bundle not in asset map")
-		_BUILD_ID_CACHE["mtime"] = 0.0  # force re-read
-		expected = os.path.basename(entry).removesuffix(".js")
-		self.assertEqual(_get_build_id(), expected)
-
-	def test_get_build_id_returns_empty_when_assets_missing(self):
-		"""Graceful degradation: if assets.json is unreadable, return ""
-		so the UI just doesn't enable the banner (rather than crashing)."""
-		from jarvis.chat.api import _get_build_id, _BUILD_ID_CACHE
-		with patch("os.path.getmtime", side_effect=OSError):
-			_BUILD_ID_CACHE["mtime"] = 0.0
-			self.assertEqual(_get_build_id(), "")

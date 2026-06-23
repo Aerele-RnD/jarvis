@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Jarvis Chat</title>
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link
+			href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;550;600;700&display=swap"
+			rel="stylesheet"
+		/>
+	</head>
+	<body>
+		<div id="app"></div>
+		<!-- frappe-ui's jinjaBootData plugin injects window.<bootkey> = … here at
+		     build time; Frappe fills the values at /jarvis via www/jarvis.py. -->
+		<script type="module" src="/src/main.js"></script>
+	</body>
+</html>

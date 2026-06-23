@@ -31,9 +31,17 @@ export async function archiveConversation(name) {
 	});
 }
 
-export async function sendMessage(conversation, message, model_override) {
+export async function sendMessage(conversation, message, model_override, attachments, context) {
 	const args = { conversation, message };
 	if (model_override) args.model_override = model_override;
+	if (attachments && attachments.length) {
+		args.attachments = JSON.stringify(attachments);
+	}
+	// `context` = { doctype, name, label } for the doc the user is viewing
+	// (floating widget auto-context); the backend prepends it for the agent.
+	if (context && context.doctype) {
+		args.context = JSON.stringify(context);
+	}
 	const r = await frappe.call({
 		method: "jarvis.chat.api.send_message",
 		args,
@@ -52,11 +60,6 @@ export async function retryMessage(messageId) {
 export async function getChatUiSettings() {
 	const r = await frappe.call({ method: "jarvis.chat.api.get_chat_ui_settings" });
 	return r.message || {};
-}
-
-export async function getBuildId() {
-	const r = await frappe.call({ method: "jarvis.chat.api.get_build_id" });
-	return (r.message && r.message.build_id) || "";
 }
 
 export async function setConversationModel(conversation, model) {

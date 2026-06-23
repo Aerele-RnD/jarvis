@@ -3,16 +3,96 @@
 // patches existing elements via updateMessage().
 
 export function renderMarkdown(text) {
+	// Render GFM pipe tables ourselves and let frappe.markdown handle the rest.
+	// Frappe's Showdown build does not reliably enable the tables extension, so
+	// LLM-emitted tables were surfacing as raw `| a | b |` pipes. Extracting +
+	// rendering table blocks here makes tables render regardless of the markdown
+	// lib's config; non-table prose still flows through frappe.markdown.
 	const prepped = autoTablify(text || "");
+	return splitTableBlocks(prepped)
+		.map((seg) => (seg.table ? renderGfmTable(seg.text) : renderInlineMarkdown(seg.text)))
+		.join("");
+}
+
+function renderInlineMarkdown(text) {
+	if (!text.trim()) return "";
 	if (typeof frappe.markdown === "function") {
 		try {
-			return frappe.markdown(prepped);
+			return frappe.markdown(text);
 		} catch (_) {
 			// fall through to plain rendering
 		}
 	}
-	const escaped = frappe.utils.escape_html(prepped);
+	const escaped = frappe.utils.escape_html(text);
 	return escaped.replace(/\n/g, "<br>");
+}
+
+// Split text into ordered {table:true|false, text} segments. A table block is a
+// pipe-bearing header line immediately followed by a `---` separator line, plus
+// any contiguous pipe rows after it.
+function splitTableBlocks(text) {
+	const lines = (text || "").split("\n");
+	const segs = [];
+	let buf = [];
+	const flushProse = () => {
+		if (buf.length) {
+			segs.push({ table: false, text: buf.join("\n") });
+			buf = [];
+		}
+	};
+	let i = 0;
+	while (i < lines.length) {
+		if (
+			lines[i].includes("|") &&
+			i + 1 < lines.length &&
+			isTableSeparator(lines[i + 1])
+		) {
+			flushProse();
+			const tbl = [lines[i], lines[i + 1]];
+			let j = i + 2;
+			while (j < lines.length && lines[j].trim() && lines[j].includes("|")) {
+				tbl.push(lines[j]);
+				j++;
+			}
+			segs.push({ table: true, text: tbl.join("\n") });
+			i = j;
+		} else {
+			buf.push(lines[i]);
+			i++;
+		}
+	}
+	flushProse();
+	return segs;
+}
+
+function isTableSeparator(line) {
+	// `|---|---|`, `| :--- | ---: |`, `---|---`, etc.
+	return /\|/.test(line) && /-/.test(line) && /^\s*\|?[\s:|-]*-[\s:|-]*\|?\s*$/.test(line);
+}
+
+function splitPipeRow(line) {
+	return line
+		.replace(/^\s*\|/, "")
+		.replace(/\|\s*$/, "")
+		.split("|")
+		.map((c) => c.trim());
+}
+
+// Turn a pipe-table block into HTML via the shared renderTable (so it gets the
+// same `.jarvis-tool-table` styling used elsewhere).
+function renderGfmTable(block) {
+	const rowsRaw = block.split("\n").filter((l) => l.trim());
+	if (rowsRaw.length < 2) return renderInlineMarkdown(block);
+	const keys = splitPipeRow(rowsRaw[0]);
+	const rows = rowsRaw.slice(2).map((line) => {
+		const cells = splitPipeRow(line);
+		const obj = {};
+		keys.forEach((k, idx) => {
+			obj[k] = cells[idx] !== undefined ? cells[idx] : "";
+		});
+		return obj;
+	});
+	return renderTable({ keys, rows });
 }
 
 /**
@@ -228,7 +308,7 @@ function renderToolBody(msg) {
 // more readable than the equivalent JSON for an LLM-driven UI. Fall back
 // to <pre> JSON for unstructured shapes.
 
-function renderToolResultBody(toolResult) {
+export function renderToolResultBody(toolResult) {
 	let parsed = toolResult;
 	if (typeof parsed === "string") {
 		try { parsed = JSON.parse(parsed); } catch (_) { /* keep as string */ }
@@ -268,7 +348,7 @@ function renderToolResultBody(toolResult) {
  * `{ keys: string[], rows: object[] }` when the data looks tabular,
  * `null` otherwise.
  */
-function extractTable(result) {
+export function extractTable(result) {
 	if (result == null) return null;
 
 	// Unwrap call_tool envelope first.
@@ -341,7 +421,7 @@ function tablify(rows) {
 	return { keys, rows };
 }
 
-function renderTable({ keys, rows }) {
+export function renderTable({ keys, rows }) {
 	const head = keys
 		.map((k) => `<th>${frappe.utils.escape_html(k)}</th>`)
 		.join("");
@@ -382,43 +462,8 @@ function bindToolToggles($el) {
 	void $el;
 }
 
-// ---- Agent loop (tool group) -----------------------------------------
-//
-// Group renderer: consecutive tool messages within a turn collapse into a
-// single <details> block so the conversation reads
-//   user → [collapsable agent trace] → assistant
-// instead of a wall of tool bubbles between turns.
-
-export function buildToolGroupEl() {
-	const $g = $(`
-		<details class="jarvis-tool-group" open>
-			<summary class="jarvis-tool-group-summary">
-				<span class="jarvis-tool-group-chevron">▸</span>
-				<span class="jarvis-tool-group-label">Agent loop</span>
-				<span class="jarvis-tool-group-count"></span>
-				<span class="jarvis-tool-group-status"></span>
-			</summary>
-			<div class="jarvis-tool-group-body"></div>
-		</details>
-	`);
-	return $g;
-}
-
-export function updateToolGroupCount($group) {
-	const $tools = $group.find(".jarvis-message-tool");
-	const count = $tools.length;
-	$group
-		.find(".jarvis-tool-group-count")
-		.text(count ? `· ${count} ${count === 1 ? "tool" : "tools"}` : "");
-
-	// Roll up status: running > error > completed
-	let status = "completed";
-	if ($tools.find(".jarvis-tool-running").length) status = "running";
-	else if ($tools.find(".jarvis-tool-error").length) status = "error";
-
-	const $st = $group.find(".jarvis-tool-group-status");
-	$st.removeClass(
-		"jarvis-tool-running jarvis-tool-completed jarvis-tool-error"
-	);
-	$st.addClass(`jarvis-tool-${status}`).text(status);
-}
+// NOTE: inline tool-group rendering (buildToolGroupEl / updateToolGroupCount)
+// was removed in the 3-pane redesign - tool calls now stream into the Activity
+// rail (activity.js) instead of inline in the thread. renderToolResultBody /
+// extractTable / renderTable are exported above and reused by the rail to
+// render the expandable result detail of each timeline node.
