@@ -182,15 +182,20 @@ def save_self_hosted(base_url: str, token: str, deep: int | str = 0,
 
     System Manager only."""
     frappe.only_for("System Manager")
+    # Validate the tool user (cheap, synchronous) BEFORE the network/LLM
+    # validate_connection so a typo'd user doesn't cost a full (deep) round-trip.
+    # Reject Administrator (bypasses all DocType perms) and Guest, plus a missing
+    # or disabled user - get_value("enabled") is None/0 for both.
+    tu = (tool_user or "").strip()
+    if tu and (tu in ("Guest", "Administrator")
+               or not frappe.db.get_value("User", tu, "enabled")):
+        return {"ok": False, "error": "invalid_tool_user",
+                "detail": f"{tu!r} is not a valid, enabled, non-admin Frappe user"}
+
     deep_flag = str(deep) in ("1", "true", "True")
     result = validate_connection(base_url, token, deep=deep_flag)
     if not result["ok"]:
         return {"ok": False, "error": "validation_failed", "result": result}
-
-    tu = (tool_user or "").strip()
-    if tu and (tu in ("Guest", "Administrator") or not frappe.db.exists("User", tu)):
-        return {"ok": False, "error": "invalid_tool_user",
-                "detail": f"{tu!r} is not a valid non-admin Frappe user"}
 
     base = _normalize_base_url(base_url)
     s = frappe.get_single("Jarvis Settings")
@@ -277,7 +282,14 @@ def is_self_hosted() -> bool:
 # pruned from the set on read.
 _ACTIVE_TURN_KEY = "jarvis:selfhost_active_turn:"   # per-run turn data, keyed by run_id
 _ACTIVE_RUNS_KEY = "jarvis:selfhost_active_runs:"   # in-flight run ids, keyed by tool_user
-_ACTIVE_TURN_TTL = 300
+# Must outlive the longest possible turn so a marker never expires mid-flight.
+# The RQ run_agent_turn budget is _AGENT_TURN_WORKER_TIMEOUT = 720s (jarvis/
+# chat/api.py); a slow *streaming* reply keeps the HTTP turn open that long
+# (openclaw_http_client._CHAT_TIMEOUT is inter-chunk, not total). If the record
+# expired mid-turn, get_active_turn would treat a still-live run as dead, drop
+# its tool card, and prune it - which could then make a genuinely concurrent
+# turn look unambiguous and mis-attribute. 900s leaves margin over the budget.
+_ACTIVE_TURN_TTL = 900
 
 
 def _turn_key(run_id: str) -> str:
@@ -296,6 +308,9 @@ def set_active_turn(tool_user: str, *, conversation: str, owner: str, run_id: st
              "run_id": run_id, "tool_user": tool_user},
             expires_in_sec=_ACTIVE_TURN_TTL,
         )
+        # Record MUST be written before the set membership: get_active_turn
+        # treats a member whose record is missing as dead, so a run id must
+        # never become visible in the set before its record exists.
         frappe.cache().sadd(_ACTIVE_RUNS_KEY + tool_user, run_id)
 
 

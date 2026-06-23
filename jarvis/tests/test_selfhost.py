@@ -172,14 +172,15 @@ class TestSaveSelfHostedToolUser(unittest.TestCase):
     bench into Self-Hosted mode.
     """
 
-    def _save(self, *, session_user, existing_tool_user="", tool_user="", exists=True):
+    def _save(self, *, session_user, existing_tool_user="", tool_user="", enabled=True):
         fake = _FakeSettings(selfhost_tool_user=existing_tool_user)
         validation = {"ok": True, "checks": [], "openclaw_version": None, "models": ["openclaw"]}
         with mock.patch("jarvis.selfhost.validate_connection", return_value=validation), \
                 mock.patch("jarvis.selfhost.frappe") as fr:
             fr.get_single.return_value = fake
             fr.session.user = session_user
-            fr.db.exists.return_value = exists
+            # User.enabled lookup: 1 = exists+enabled, None = missing/disabled.
+            fr.db.get_value.return_value = 1 if enabled else None
             out = selfhost.save_self_hosted("http://host:19060", "tok", tool_user=tool_user)
         return out, fake
 
@@ -207,9 +208,9 @@ class TestSaveSelfHostedToolUser(unittest.TestCase):
         self.assertFalse(out["ok"])
         self.assertEqual(out["error"], "invalid_tool_user")
 
-    def test_explicit_unknown_user_rejected(self):
+    def test_explicit_unknown_or_disabled_user_rejected(self):
         out, _ = self._save(session_user="alice@example.com",
-                            tool_user="ghost@example.com", exists=False)
+                            tool_user="ghost@example.com", enabled=False)
         self.assertFalse(out["ok"])
         self.assertEqual(out["error"], "invalid_tool_user")
 
