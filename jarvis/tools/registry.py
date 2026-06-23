@@ -35,6 +35,8 @@ _TOOL_NAMES: tuple[str, ...] = (
     # Tier 1 artifact producers: hand the agent a file/URL the customer
     # can act on, instead of a wall of JSON.
     "download_pdf",
+    "export_excel",
+    "read_file",
     "attach_to_doc",
     "download_vcard",
     # Tier 2a ERPNext computed reads: numbers the LLM keeps hallucinating

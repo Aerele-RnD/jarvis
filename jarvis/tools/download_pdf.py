@@ -62,7 +62,7 @@ def download_pdf(
     with print_language(language):
         pdf_bytes = frappe.get_print(
             doctype, name,
-            format=print_format,
+            print_format=print_format,
             as_pdf=True,
             letterhead=letterhead,
             no_letterhead=bool(no_letterhead),
@@ -87,6 +87,7 @@ def download_pdf(
     return {
         "file_url": file_doc.file_url,
         "filename": file_doc.file_name,
+        "title": name,  # clean title for the chat artifact card (no hash suffix)
         "mime_type": "application/pdf",
         "size_bytes": int(file_doc.file_size or len(pdf_bytes)),
         "name": file_doc.name,

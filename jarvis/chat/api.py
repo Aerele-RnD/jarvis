@@ -1,12 +1,9 @@
 """Whitelisted endpoints for the Jarvis chat surface.
 
-The browser talks to these from the /app/jarvis-chat Desk page.
+The browser talks to these from the /jarvis chat SPA (apps/jarvis/frontend).
 """
 
 from __future__ import annotations
-
-import json
-import os
 
 import frappe
 
@@ -28,42 +25,6 @@ MSG = "Jarvis Chat Message"
 # to 300s in one site but stayed 200s in the other; consolidating
 # behind this constant prevents that drift.
 _AGENT_TURN_WORKER_TIMEOUT = 720
-
-# Process-local cache for the chat bundle hash. Invalidated by mtime so a
-# `bench build` is picked up without restarting workers.
-_BUILD_ID_CACHE: dict = {"mtime": 0.0, "value": ""}
-
-
-def _get_build_id() -> str:
-	"""Return the current chat bundle hash (e.g. "PY42KOXK").
-
-	Reads sites/assets/assets.json and pulls the hashed filename for
-	jarvis_chat.bundle.js. The hash changes on every `bench build`, so a
-	mismatch with what the browser captured at page load means the bundle
-	has been rebuilt - banner the user to refresh.
-
-	Returns "" if the asset map is missing (dev bench before first build).
-	"""
-	path = os.path.join(frappe.utils.get_bench_path(), "sites", "assets", "assets.json")
-	try:
-		mtime = os.path.getmtime(path)
-	except OSError:
-		return ""
-	if mtime == _BUILD_ID_CACHE["mtime"] and _BUILD_ID_CACHE["value"]:
-		return _BUILD_ID_CACHE["value"]
-	try:
-		with open(path) as f:
-			data = json.load(f)
-	except (OSError, ValueError):
-		return ""
-	# Entry looks like "/assets/jarvis/dist/js/jarvis_chat.bundle.PY42KOXK.js".
-	entry = data.get("jarvis_chat.bundle.js") or ""
-	# Last path component, drop the .js suffix.
-	value = os.path.basename(entry).removesuffix(".js")
-	_BUILD_ID_CACHE["mtime"] = mtime
-	_BUILD_ID_CACHE["value"] = value
-	return value
-
 # Subscription-tier model IDs accepted by codex / gemini-cli's auth tunnel.
 # Catalogue lives in jarvis/_subscription_models.py (shared with oauth/api.py
 # - the two used to declare it independently, see 2026-06-16 punch-list).
@@ -142,10 +103,17 @@ def get_conversation(conversation: str) -> dict:
 		fields=[
 			"name", "seq", "role", "content", "streaming", "error",
 			"tool_name", "tool_args", "tool_result", "tool_status",
-			"creation",
+			"canvas", "creation",
 		],
 		order_by="seq asc",
 	)
+	# canvas is stored as a JSON string; hand the UI a real list (or None).
+	for m in messages:
+		if m.get("canvas"):
+			try:
+				m["canvas"] = frappe.parse_json(m["canvas"])
+			except Exception:
+				m["canvas"] = None
 	return {
 		"conversation": {
 			"name": doc.name,
@@ -157,6 +125,69 @@ def get_conversation(conversation: str) -> dict:
 		},
 		"messages": messages,
 	}
+
+
+@frappe.whitelist()
+def get_canvas(message: str, name: str | None = None) -> dict:
+	"""Return one canvas artifact's render-ready content for inline display.
+
+	Permission: the caller must own the parent conversation (same gate as
+	get_conversation). Returns {name, title, type, content} where content is
+	ready to drop into a sandboxed iframe srcdoc — HTML as-is, SVG wrapped in
+	a minimal HTML shell.
+	"""
+	from frappe import _ as _t
+
+	row = frappe.db.get_value(MSG, message, ["conversation", "canvas"], as_dict=True)
+	if not row:
+		frappe.throw(_t("message not found"), frappe.DoesNotExistError)
+	frappe.get_doc(CONV, row.conversation)  # owner-only permission check
+
+	items = frappe.parse_json(row.canvas) if row.canvas else []
+	if not isinstance(items, list) or not items:
+		frappe.throw(_t("no canvas on this message"), frappe.DoesNotExistError)
+	item = next((c for c in items if c.get("name") == name), None) if name else None
+	if item is None:
+		item = items[0]
+
+	typ = item.get("type")
+	fdoc = frappe.get_doc("File", {"file_url": item.get("file_url")})
+	raw = fdoc.get_content()
+	out = {
+		"name": item.get("name"), "title": item.get("title"),
+		"type": typ, "file_url": item.get("file_url"),
+	}
+	if typ in ("html", "svg"):
+		# Rendered inline in a sandboxed iframe srcdoc.
+		body = raw.decode("utf-8") if isinstance(raw, bytes) else (raw or "")
+		if typ == "svg":
+			body = (
+				'<!doctype html><meta charset="utf-8">'
+				"<style>html,body{margin:0;height:100%;background:#fff}"
+				"svg{display:block;max-width:100%;height:auto;margin:0 auto}</style>"
+				+ body
+			)
+		out["content"] = body
+	else:
+		# pdf / image / file → base64 data URL (used by <iframe>/<img>/download).
+		import base64
+
+		data = raw if isinstance(raw, bytes) else (raw or "").encode("utf-8")
+		out["data_url"] = f"data:{_artifact_mime(item)};base64," + base64.b64encode(data).decode("ascii")
+	return out
+
+
+def _artifact_mime(item: dict) -> str:
+	"""Best-effort MIME for a non-text artifact, from its extension."""
+	ext = (item.get("name") or "").rsplit(".", 1)[-1].lower()
+	return {
+		"pdf": "application/pdf",
+		"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+		"gif": "image/gif", "webp": "image/webp", "svg": "image/svg+xml",
+		"xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+		"xls": "application/vnd.ms-excel", "csv": "text/csv",
+		"json": "application/json", "txt": "text/plain", "md": "text/markdown",
+	}.get(ext, "application/octet-stream")
 
 
 @frappe.whitelist()
@@ -193,6 +224,7 @@ from jarvis.chat.openclaw_client import OpenclawSession
 @frappe.whitelist()
 def send_message(
 	conversation: str, message: str, model_override: str | None = None,
+	attachments: str | None = None, context: str | None = None,
 ) -> dict:
 	"""Validate, persist the user message, ensure session_key, enqueue the worker.
 
@@ -213,7 +245,20 @@ def send_message(
 	if not ok:
 		return {"ok": False, "reason": reason}
 
-	if not message or not message.strip():
+	# Attachments arrive as a JSON string of [{file_url, file_name}, ...] from
+	# the composer's file picker (already uploaded to the Frappe File doctype).
+	# The worker inlines their text content into the prompt; here we only keep
+	# a "📎 name" marker on the visible message.
+	atts = []
+	if attachments:
+		try:
+			parsed = frappe.parse_json(attachments)
+			if isinstance(parsed, list):
+				atts = [a for a in parsed if isinstance(a, dict) and a.get("file_url")]
+		except Exception:
+			atts = []
+
+	if (not message or not message.strip()) and not atts:
 		return {"ok": False, "reason": _("message is empty")}
 
 	conv_doc = frappe.get_doc(CONV, conversation)  # respects perms
@@ -230,6 +275,13 @@ def send_message(
 			        f"{settings.llm_provider!r}"}
 		conv_doc.model_override = model_override
 
+	# Visible message keeps the typed text plus a compact attachment marker;
+	# the file bytes are inlined for the agent in the worker, not stored here.
+	display_content = message.strip()
+	if atts:
+		names = ", ".join((a.get("file_name") or "file") for a in atts)
+		display_content = (display_content + "\n\n" if display_content else "") + "📎 " + names
+
 	# Persist the user message with next seq value
 	seq = _next_seq(conversation)
 	msg_doc = frappe.get_doc({
@@ -237,14 +289,14 @@ def send_message(
 		"conversation": conversation,
 		"seq": seq,
 		"role": "user",
-		"content": message.strip(),
+		"content": display_content,
 		"streaming": 0,
 	})
 	msg_doc.insert()
 
 	# First user message becomes the conversation title (capped at 60 chars)
 	if conv_doc.title == "New chat":
-		conv_doc.title = message.strip()[:60]
+		conv_doc.title = (message.strip() or display_content or "New chat")[:60]
 	conv_doc.last_active_at = frappe.utils.now()
 
 	# Ensure the conversation has an openclaw session_key; create one on
@@ -260,13 +312,34 @@ def send_message(
 
 	# Enqueue the worker. Returns immediately; worker runs async.
 	run_id = uuid.uuid4().hex[:12]
+	# Only pass `attachments` when there are some, so a not-yet-reloaded worker
+	# (RQ workers don't hot-reload) keeps handling ordinary messages instead of
+	# erroring on an unexpected kwarg.
+	enqueue_kwargs = {
+		"conversation_id": conversation,
+		"message_id": msg_doc.name,
+		"run_id": run_id,
+	}
+	if atts:
+		enqueue_kwargs["attachments"] = atts
+	# Floating-widget auto-context: {doctype, name, label} of the doc the user
+	# is viewing. Only forwarded when present, for the same not-yet-reloaded
+	# worker safety as attachments above.
+	if context:
+		try:
+			ctx = frappe.parse_json(context)
+			if isinstance(ctx, dict) and ctx.get("doctype"):
+				enqueue_kwargs["context"] = {
+					"doctype": ctx.get("doctype"),
+					"name": ctx.get("name") or "",
+				}
+		except Exception:
+			pass
 	frappe.enqueue(
 		method="jarvis.chat.worker.run_agent_turn",
 		queue="default",
 		timeout=_AGENT_TURN_WORKER_TIMEOUT,
-		conversation_id=conversation,
-		message_id=msg_doc.name,
-		run_id=run_id,
+		**enqueue_kwargs,
 	)
 
 	return {"ok": True, "run_id": run_id, "message_id": msg_doc.name}
@@ -296,16 +369,58 @@ def get_chat_ui_settings() -> dict:
 		"llm_model": settings.llm_model or "",
 		"subscription_models": _SUBSCRIPTION_MODELS,
 		"default_models": _DEFAULT_MODEL,
-		"build_id": _get_build_id(),
 	}
 
 
+def _est_tokens(text: str | None) -> int:
+	"""Rough token estimate for ``text`` (~4 chars/token, the standard English
+	approximation). We can't do better: openclaw's gateway stream doesn't emit
+	real per-turn token counts, so everything here is clearly labelled an
+	estimate in the UI."""
+	if not text:
+		return 0
+	return (len(text) + 3) // 4
+
+
 @frappe.whitelist()
-def get_build_id() -> dict:
-	"""Cheap endpoint the chat UI polls on tab refocus to detect a stale
-	JS bundle after a `bench build`. Returns {"build_id": "<hash>"}.
+def get_usage(conversation: str | None = None) -> dict:
+	"""Estimated token usage for the current user — this chat, this month, and
+	all-time — plus the monthly budget so the UI can draw a meter.
+
+	ESTIMATE ONLY (see _est_tokens): summed from stored message text
+	(content + tool args/results), not real API token counts, which openclaw
+	doesn't expose. Owner-scoped: only the caller's own conversations.
 	"""
-	return {"build_id": _get_build_id()}
+	from frappe.utils import get_datetime, get_first_day, now_datetime
+
+	user = frappe.session.user
+	convs = frappe.get_all(CONV, filters={"owner": user}, pluck="name")
+	budget = int(frappe.db.get_single_value("Jarvis Settings", "token_budget_monthly") or 0)
+	month_start = get_datetime(get_first_day(now_datetime()))
+	out = {
+		"estimated": True,
+		"chat_tokens": 0,
+		"month_tokens": 0,
+		"total_tokens": 0,
+		"budget_monthly": budget,
+		"month_label": now_datetime().strftime("%B %Y"),
+	}
+	if not convs:
+		return out
+
+	rows = frappe.get_all(
+		MSG,
+		filters={"conversation": ["in", convs]},
+		fields=["conversation", "content", "tool_args", "tool_result", "creation"],
+	)
+	for m in rows:
+		t = _est_tokens(m.content) + _est_tokens(m.tool_args) + _est_tokens(m.tool_result)
+		out["total_tokens"] += t
+		if m.creation and get_datetime(m.creation) >= month_start:
+			out["month_tokens"] += t
+		if conversation and m.conversation == conversation:
+			out["chat_tokens"] += t
+	return out
 
 
 @frappe.whitelist()

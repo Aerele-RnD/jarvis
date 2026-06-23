@@ -16,7 +16,8 @@
     "tool_name",
     "tool_args",
     "tool_result",
-    "tool_status"
+    "tool_status",
+    "canvas"
   ],
   "fields": [
     {
@@ -84,6 +85,12 @@
       "label": "Tool Status",
       "options": "\nrunning\ncompleted\nerror",
       "depends_on": "eval:doc.role=='tool'"
+    },
+    {
+      "fieldname": "canvas",
+      "fieldtype": "JSON",
+      "label": "Canvas",
+      "description": "Rich artifacts (chart/canvas) the agent rendered this turn: [{name,title,type,file_url}]."
     }
   ],
   "permissions": [

@@ -152,8 +152,20 @@ def _resolve_model_and_provider(conv) -> tuple[str, str | None]:
 	return effective_model, provider
 
 
-def run_agent_turn(conversation_id: str, message_id: str, run_id: str) -> None:
+def run_agent_turn(
+	conversation_id: str, message_id: str, run_id: str, attachments=None,
+	context=None,
+) -> None:
 	"""Drive one agent turn end to end. Called by RQ; not whitelisted.
+
+	`attachments` (optional): list of {file_url, file_name} dicts whose text
+	content is inlined into the prompt sent to the agent (see
+	_inline_attachments). The persisted/visible user message keeps only the
+	"📎 name" marker, so file bytes never bloat the chat history.
+
+	`context` (optional): {doctype, name} of the ERP document the user was
+	viewing when they asked (floating-widget auto-context). Prepended to the
+	agent prompt only — the persisted/visible user message is unchanged.
 
 	Sprint-3 (2026-06-16 review): the inline ``except OpenclawUnreachableError``
 	blocks only marked the placeholder errored for openclaw-specific
@@ -210,6 +222,12 @@ def run_agent_turn(conversation_id: str, message_id: str, run_id: str) -> None:
 	)
 
 	from jarvis import selfhost
+
+	# Floating-widget auto-context + file inputs layer onto the
+	# already date/user-augmented user_message built above. Prompt-only;
+	# the persisted/visible user message is unchanged.
+	user_message = _prepend_doc_context(user_message, context)
+	user_message = _inline_attachments(user_message, attachments)
 
 	def _publish_run_error(err: str) -> None:
 		_mark_errored(assistant_msg.name, err)
@@ -290,6 +308,34 @@ def run_agent_turn(conversation_id: str, message_id: str, run_id: str) -> None:
 		frappe.db.set_value(MSG, assistant_msg.name, "streaming", 0)
 		frappe.db.commit()
 
+		# Rich outputs: detect any canvas/chart artifact the agent produced
+		# this turn (HTML or SVG), fetch it from the gateway, persist it as a
+		# private File, and publish a 'canvas' event so the UI renders it
+		# inline. Managed mode only — self-hosted chats over the HTTP surface
+		# have no gateway canvas route. Failure here never fails the turn.
+		if not selfhost.is_self_hosted():
+			try:
+				from jarvis.chat import canvas as canvas_mod
+
+				final_content = frappe.db.get_value(MSG, assistant_msg.name, "content") or ""
+				canvas_token = settings.get_password("agent_token", raise_exception=False) or ""
+				canvas_items = canvas_mod.persist_canvases(
+					assistant_msg.name, final_content, settings.agent_url or "", canvas_token,
+				)
+				if canvas_items:
+					publish_to_user(user, {
+						"kind": "canvas",
+						"conversation_id": conversation_id,
+						"message_id": assistant_msg.name,
+						"run_id": run_id,
+						"items": canvas_items,
+					})
+			except Exception:
+				frappe.log_error(
+					title="chat worker: canvas persist failed",
+					message=frappe.get_traceback(),
+				)
+
 	except Exception as e:
 		# Last-resort backstop. Any exception that wasn't an
 		# OpenclawUnreachableError (e.g. cryptography.InvalidKey from
@@ -324,6 +370,64 @@ def run_agent_turn(conversation_id: str, message_id: str, run_id: str) -> None:
 		"message_id": assistant_msg.name,
 		"run_id": run_id,
 	})
+
+
+def _prepend_doc_context(user_message: str, context) -> str:
+	"""Prepend the ERP doc the user was viewing (floating-widget auto-context)
+	as a leading ``[Viewing: ...]`` line, so questions like "is this overdue?"
+	resolve against the right record without the user naming it. Prompt-only;
+	the stored message is untouched. Defensive: a malformed context is ignored.
+	"""
+	if not isinstance(context, dict):
+		return user_message
+	doctype = (context.get("doctype") or "").strip()
+	if not doctype:
+		return user_message
+	name = (context.get("name") or "").strip()
+	ref = f"{doctype} {name}".strip() if name else f"the {doctype} list"
+	return f"[Viewing: {ref} — resolve 'this'/'here' against it]\n\n{user_message}"
+
+
+_MAX_INLINE_CHARS = 20000
+
+
+def _inline_attachments(user_message: str, attachments) -> str:
+	"""Inline the text content of attached files into the message sent to the
+	agent. Binary/undecodable files get a short note instead of bytes. Only the
+	prompt is augmented - the stored, visible user message is untouched.
+	"""
+	if not attachments:
+		return user_message
+	blocks = []
+	for att in attachments:
+		if not isinstance(att, dict):
+			continue
+		url = att.get("file_url")
+		name = att.get("file_name") or url or "file"
+		if not url:
+			continue
+		try:
+			fdoc = frappe.get_doc("File", {"file_url": url})
+			raw = fdoc.get_content()
+		except Exception:
+			blocks.append(f"[Could not read attached file `{name}`.]")
+			continue
+		if isinstance(raw, bytes):
+			try:
+				text = raw.decode("utf-8")
+			except UnicodeDecodeError:
+				blocks.append(
+					f"[Attached file `{name}` is binary ({len(raw)} bytes); not inlined.]"
+				)
+				continue
+		else:
+			text = raw or ""
+		if len(text) > _MAX_INLINE_CHARS:
+			text = text[:_MAX_INLINE_CHARS] + "\n…[truncated]"
+		blocks.append(f"Attached file `{name}`:\n```\n{text}\n```")
+	if not blocks:
+		return user_message
+	return user_message + "\n\n" + "\n\n".join(blocks)
 
 
 def _create_assistant_placeholder(conv) -> "frappe.model.document.Document":
