@@ -51,6 +51,25 @@ export function renderMarkdown(src) {
 	}
 	while (i < lines.length) {
 		const line = lines[i]
+		// fenced code block: ``` or ```lang — mermaid renders as a diagram,
+		// everything else as a styled code block.
+		const fence = line.match(/^\s*```\s*([\w-]*)\s*$/)
+		if (fence) {
+			flushPara()
+			flushList()
+			const lang = (fence[1] || "").toLowerCase()
+			const body = []
+			i++
+			while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) body.push(lines[i++])
+			i++ // consume closing fence
+			const code = body.join("\n")
+			if (lang === "mermaid") {
+				out.push(`<div class="jv-mermaid">${esc(code)}</div>`)
+			} else {
+				out.push(`<pre class="jv-md-pre"><code>${esc(code)}</code></pre>`)
+			}
+			continue
+		}
 		// table: a header row followed by a |---| separator
 		if (/\|/.test(line) && i + 1 < lines.length && /^\s*\|?[\s:-]+\|[\s:|-]*$/.test(lines[i + 1])) {
 			flushPara()

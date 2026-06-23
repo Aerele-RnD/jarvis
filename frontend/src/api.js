@@ -16,6 +16,9 @@ export const archiveConversation = (conversation) =>
 	call("jarvis.chat.api.archive_conversation", { conversation })
 export const retryMessage = (message) => call("jarvis.chat.api.retry_message", { message })
 export const getChatUiSettings = () => call("jarvis.chat.api.get_chat_ui_settings")
+// Estimated token usage (this chat / this month / total + monthly budget).
+export const getUsage = (conversation) =>
+	call("jarvis.chat.api.get_usage", { conversation: conversation || "" })
 export const isReadyForChat = () => call("jarvis.account.is_ready_for_chat")
 export const setConversationModel = (conversation, model) =>
 	call("jarvis.chat.api.set_conversation_model", { conversation, model: model || "" })
