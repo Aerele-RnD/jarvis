@@ -137,14 +137,21 @@ def _selfhost_tool_user() -> str | None:
 	Self-hosted openclaw uses the HTTP transport, which has no Jarvis Chat
 	Session → user mapping. The gateway token (X-Jarvis-Token) was already
 	validated, so we run tools as the configured self-host tool user (the
-	bench is single-tenant). Returns None when not self-hosted or unset.
+	bench is single-tenant). Returns None when not self-hosted, unset, or the
+	configured user is not a usable tool user.
 	"""
 	from jarvis import selfhost
 	if not selfhost.is_self_hosted():
 		return None
 	s = frappe.get_single("Jarvis Settings")
 	user = (getattr(s, "selfhost_tool_user", "") or "").strip()
-	if user and frappe.db.exists("User", user):
+	# Authoritative guard: the selfhost_tool_user Link field can be edited
+	# directly on Jarvis Settings (bypassing save_self_hosted's validation), so
+	# enforce the invariant HERE - never run jarvis__* tools as Administrator
+	# (bypasses all DocType perms), Guest, or a missing/disabled user, however
+	# the field was set. get_value("enabled") is None for missing, 0 for disabled.
+	if (user and user not in ("Guest", "Administrator")
+			and frappe.db.get_value("User", user, "enabled")):
 		return user
 	return None
 

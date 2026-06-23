@@ -222,5 +222,38 @@ class TestSaveSelfHostedToolUser(unittest.TestCase):
         self.assertNotIn("warning", out)
 
 
+class TestSelfhostToolUserResolver(unittest.TestCase):
+    """Use-time guard: _selfhost_tool_user refuses Administrator/Guest/disabled,
+    so a direct Jarvis Settings edit (bypassing save_self_hosted) can't escalate
+    tool execution to a privilege-bypassing or disabled account."""
+
+    def _resolve(self, configured, *, enabled=1):
+        from jarvis import api
+        fake = _FakeSettings(selfhost_tool_user=configured)
+        with mock.patch("jarvis.selfhost.is_self_hosted", return_value=True), \
+                mock.patch("jarvis.api.frappe") as fr:
+            fr.get_single.return_value = fake
+            fr.db.get_value.return_value = enabled
+            return api._selfhost_tool_user()
+
+    def test_normal_enabled_user_allowed(self):
+        self.assertEqual(self._resolve("alice@example.com"), "alice@example.com")
+
+    def test_administrator_refused(self):
+        self.assertIsNone(self._resolve("Administrator"))
+
+    def test_guest_refused(self):
+        self.assertIsNone(self._resolve("Guest"))
+
+    def test_disabled_user_refused(self):
+        self.assertIsNone(self._resolve("bob@example.com", enabled=0))
+
+    def test_missing_user_refused(self):
+        self.assertIsNone(self._resolve("ghost@example.com", enabled=None))
+
+    def test_unset_returns_none(self):
+        self.assertIsNone(self._resolve(""))
+
+
 if __name__ == "__main__":
     unittest.main()
