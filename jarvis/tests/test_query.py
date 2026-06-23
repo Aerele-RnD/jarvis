@@ -973,3 +973,133 @@ class TestQueryV03ExistsSubquerySecurityHardening(FrappeTestCase):
 				c["engine_doctype"], "DocField",
 				f"sub_engine.doctype not set: {c['engine_doctype']!r}",
 			)
+
+
+class TestQueryRobustnessHardening(FrappeTestCase):
+	"""Defensive validation that turns malformed-agent-input crashes /
+	silently-bad-SQL into clean InvalidArgumentError. Catches what
+	TypeBox can't (Type.Unknown shapes, semantic edge cases)."""
+
+	def test_select_must_be_list_not_string(self):
+		"""``select: 'name'`` would iterate per-character and silently
+		produce table['n']/['a']/etc. Reject at validation time."""
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError) as cm:
+				query({"from": "DocType", "select": "name"})
+			self.assertIn("select", str(cm.exception).lower())
+
+	def test_limit_must_be_int_not_float(self):
+		"""``limit: 10.5`` would silently int-truncate to 10. Mirror
+		offset's existing isinstance(int) check."""
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError) as cm:
+				query({"from": "DocType", "limit": 10.5})
+			self.assertIn("limit", str(cm.exception).lower())
+
+	def test_limit_must_be_int_not_bool(self):
+		"""``isinstance(True, int)`` is True in Python; explicit bool
+		rejection keeps ``limit: true`` from sneaking through."""
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError) as cm:
+				query({"from": "DocType", "limit": True})
+			self.assertIn("limit", str(cm.exception).lower())
+
+	def test_field_ref_rejects_empty_string(self):
+		"""GROUP BY / ORDER BY paths could pass empty strings through
+		to _resolve_field, which would produce table['']."""
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError) as cm:
+				query({
+					"from": "DocType",
+					"select": ["name"],
+					"group_by": [""],
+				})
+			self.assertIn("non-empty", str(cm.exception).lower())
+
+	def test_field_ref_rejects_trailing_dot(self):
+		"""``alias.`` produces an empty field name after split;
+		generates broken SQL with empty column reference."""
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError) as cm:
+				query({
+					"from": "DocType", "alias": "dt",
+					"select": ["dt."],
+				})
+			self.assertIn("alias.field", str(cm.exception).lower())
+
+	def test_field_ref_rejects_leading_dot(self):
+		"""``.field`` produces an empty alias half."""
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError) as cm:
+				query({
+					"from": "DocType", "alias": "dt",
+					"select": [".name"],
+				})
+			self.assertIn("alias.field", str(cm.exception).lower())
+
+	def test_join_on_empty_dict_rejected(self):
+		"""Empty ``on`` dict would crash _build_on_criterion at
+		terms[0] with IndexError. Reject with a clear error."""
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError) as cm:
+				query({
+					"from": "DocType", "alias": "dt",
+					"joins": [{
+						"type": "inner", "doctype": "DocField",
+						"alias": "df", "on": {},
+					}],
+					"select": ["dt.name"],
+				})
+			self.assertIn("on", str(cm.exception).lower())
+
+	def test_subspec_join_on_empty_dict_rejected(self):
+		"""Same guard inside a sub-spec join."""
+		with patch("frappe.has_permission", return_value=True), \
+		     patch("frappe.database.query.Engine") as fake_engine:
+			fake_engine.return_value.get_permission_conditions.return_value = None
+			with self.assertRaises(InvalidArgumentError) as cm:
+				query({
+					"from": "DocType", "alias": "dt",
+					"select": ["dt.name"],
+					"where": [{
+						"op": "exists",
+						"value": {
+							"from": "DocField", "alias": "df",
+							"joins": [{
+								"type": "inner", "doctype": "DocPerm",
+								"alias": "dp", "on": {},
+							}],
+							"where": [{
+								"field": "df.parent", "op": "=",
+								"value": {"$field": "dt.name"},
+							}],
+						},
+					}],
+				})
+			self.assertIn("on", str(cm.exception).lower())
+
+	def test_nested_field_marker_rejected(self):
+		"""Buried ``{$field: ...}`` inside a nested dict value would
+		reach pypika as a raw dict. Reject with a clear message."""
+		with patch("frappe.has_permission", return_value=True), \
+		     patch("frappe.database.query.Engine") as fake_engine:
+			fake_engine.return_value.get_permission_conditions.return_value = None
+			with self.assertRaises(InvalidArgumentError) as cm:
+				query({
+					"from": "DocType", "alias": "dt",
+					"select": ["dt.name"],
+					"where": [{
+						"op": "exists",
+						"value": {
+							"from": "DocField", "alias": "df",
+							"where": [{
+								"field": "df.parent", "op": "in",
+								"value": [
+									"foo",
+									{"nested": {"$field": "dt.name"}},
+								],
+							}],
+						},
+					}],
+				})
+			self.assertIn("$field", str(cm.exception))

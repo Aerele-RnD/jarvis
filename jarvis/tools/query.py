@@ -338,6 +338,19 @@ def _validate_spec_shape(spec: dict) -> None:
 	if "offset" in spec and not isinstance(spec["offset"], int):
 		raise InvalidArgumentError("spec.offset must be an integer")
 
+	# ``select`` must be a list, not a string. A bare string passes the
+	# truthy check and then ``for item in 'name'`` yields per-character
+	# refs which the resolver silently turns into invalid SQL. Catch it
+	# here. Also reject ``limit`` as a non-int (mirrors offset's check;
+	# Python's ``int(10.5)`` would otherwise silently truncate to 10).
+	if "select" in spec and not isinstance(spec["select"], list):
+		raise InvalidArgumentError("spec.select must be a list")
+	# Note: ``isinstance(True, int)`` is True in Python, so we explicitly
+	# reject bools here - a stray ``limit: true`` would otherwise pass.
+	if "limit" in spec:
+		if isinstance(spec["limit"], bool) or not isinstance(spec["limit"], int):
+			raise InvalidArgumentError("spec.limit must be an integer")
+
 	if "joins" in spec:
 		if not isinstance(spec["joins"], list):
 			raise InvalidArgumentError("spec.joins must be a list")
@@ -483,6 +496,15 @@ def _resolve_field(field_ref: str, alias_map: dict, allow_alias: bool = False):
 	returned as a pypika ``Field`` without table qualification — this
 	is the ORDER BY case where the operator may reference a SELECT
 	alias like ``total_qty``."""
+	# Reject empty / non-string / dot-only refs. Without this, callers
+	# producing accidental empty strings (e.g. GROUP BY with an empty
+	# entry, ORDER BY with an unset field) would silently produce
+	# ``table[""]`` which generates invalid SQL with an empty column
+	# reference.
+	if not isinstance(field_ref, str) or not field_ref.strip():
+		raise InvalidArgumentError(
+			f"field reference must be a non-empty string, got {field_ref!r}"
+		)
 	if "." not in field_ref:
 		if allow_alias:
 			from pypika import Field
@@ -499,6 +521,14 @@ def _resolve_field(field_ref: str, alias_map: dict, allow_alias: bool = False):
 			f"query; prefix with the alias (e.g. 'si.name')"
 		)
 	alias, field = field_ref.split(".", 1)
+	# Both halves of an alias.field reference must be non-empty.
+	# ``"si."`` would otherwise produce ``table[""]`` and ``".name"``
+	# would look up an empty alias - both generate invalid SQL.
+	if not alias or not field:
+		raise InvalidArgumentError(
+			f"field reference {field_ref!r} must be of the form "
+			f"'alias.field' with both halves non-empty"
+		)
 	if alias not in alias_map:
 		raise InvalidArgumentError(
 			f"field reference {field_ref!r} uses unknown alias {alias!r}; "
@@ -517,6 +547,13 @@ def _build_on_criterion(on_spec: dict, alias_map: dict) -> Criterion:
 	conditions). We auto-detect: if the value resolves as a known
 	alias.field, treat it as column-equality; otherwise as a literal.
 	"""
+	# Empty ``on`` dict produces no equality terms; ``terms[0]`` below
+	# would IndexError. Surface a clear error instead.
+	if not isinstance(on_spec, dict) or not on_spec:
+		raise InvalidArgumentError(
+			"join.on must be a non-empty dict mapping lhs to rhs field "
+			"references (e.g. {'sii.parent': 'si.name'})"
+		)
 	terms = []
 	for lhs_ref, rhs_ref in on_spec.items():
 		lhs = _resolve_field(lhs_ref, alias_map)
@@ -791,9 +828,17 @@ def _build_exists_criterion(sub_spec: dict, outer_alias_map: dict,
 
 	# Sub-spec WHERE. Predicates may carry ``$field`` markers for
 	# correlated references; resolve those before handing to the
-	# regular predicate builder.
+	# regular predicate builder. Skip correlated-ref resolution for
+	# nested EXISTS / NOT EXISTS predicates - their ``value`` is a
+	# deeper sub-spec that gets its own recursive call through
+	# ``_build_exists_criterion``, and any ``$field`` markers inside
+	# that deeper level resolve against the deeper alias_map, not
+	# this one.
 	for w in sub_spec.get("where") or []:
-		resolved = _resolve_correlated_refs(w, sub_alias_map)
+		if w.get("op") in ("exists", "not exists"):
+			resolved = w
+		else:
+			resolved = _resolve_correlated_refs(w, sub_alias_map)
 		sub_q = sub_q.where(_build_predicate(resolved, sub_alias_map,
 		                                       depth=depth + 1))
 
@@ -903,6 +948,37 @@ def _resolve_correlated_refs(predicate: dict, alias_map: dict) -> dict:
 				new_value.append(_resolve_field(v["$field"], alias_map,
 				                                  allow_alias=False))
 			else:
+				# Reject unresolved $field markers buried inside nested
+				# structures - those would otherwise reach pypika as raw
+				# dicts and either fail opaquely or stringify into broken
+				# SQL. The supported shapes are a top-level marker or a
+				# direct list element; anything deeper is malformed.
+				_assert_no_unresolved_field_marker(v)
 				new_value.append(v)
 		return {**predicate, "value": new_value}
+	# Top-level value is neither a marker dict nor a list, but may still
+	# carry a buried marker (e.g. a dict literal the agent constructed
+	# by accident). Reject those too.
+	_assert_no_unresolved_field_marker(value)
 	return predicate
+
+
+def _assert_no_unresolved_field_marker(node) -> None:
+	"""Walk ``node`` recursively and raise if any nested dict still
+	carries the ``$field`` marker. Resolution only handles top-level
+	marker dicts and direct list elements; anywhere else means the
+	agent built a malformed value and pypika would receive a raw dict.
+	"""
+	if isinstance(node, dict):
+		if "$field" in node:
+			raise InvalidArgumentError(
+				"{'$field': ...} markers are only supported as a "
+				"predicate's top-level value or as a direct list element "
+				"in an 'in'/'not in' value; nested $field markers are "
+				"not resolved"
+			)
+		for v in node.values():
+			_assert_no_unresolved_field_marker(v)
+	elif isinstance(node, list):
+		for v in node:
+			_assert_no_unresolved_field_marker(v)
