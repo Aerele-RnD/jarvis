@@ -10,19 +10,15 @@ from __future__ import annotations
 import frappe
 
 from jarvis.exceptions import InvalidArgumentError
-from jarvis.tools import require_doctype_and_name
+from jarvis.tools import desk_action
 
 
+@desk_action(check_user_arg="user")
 def unassign_from(doctype: str, name: str, user: str) -> dict:
     """Close the ToDo assigning ``user`` to ``doctype/name``. Returns
     ``{doctype, name, user}``."""
-    require_doctype_and_name(doctype, name)
     if not user:
         raise InvalidArgumentError("user is required")
-    if not frappe.db.exists(doctype, name):
-        raise InvalidArgumentError(f"unknown {doctype}: {name}")
-    if not frappe.db.exists("User", user):
-        raise InvalidArgumentError(f"unknown User: {user}")
 
     from frappe.desk.form.assign_to import remove as _assign_remove
 

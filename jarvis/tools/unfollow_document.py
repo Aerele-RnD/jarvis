@@ -7,10 +7,10 @@ from __future__ import annotations
 
 import frappe
 
-from jarvis.exceptions import InvalidArgumentError
-from jarvis.tools import require_doctype_and_name
+from jarvis.tools import desk_action
 
 
+@desk_action(check_user_arg="user")
 def unfollow_document(
     doctype: str,
     name: str,
@@ -18,12 +18,7 @@ def unfollow_document(
 ) -> dict:
     """Unsubscribe ``user`` (or the session user) from
     ``doctype/name``. Returns ``{doctype, name, user, unfollowed}``."""
-    require_doctype_and_name(doctype, name)
-    if not frappe.db.exists(doctype, name):
-        raise InvalidArgumentError(f"unknown {doctype}: {name}")
     target_user = user or frappe.session.user
-    if user and not frappe.db.exists("User", user):
-        raise InvalidArgumentError(f"unknown User: {user}")
 
     from frappe.desk.form.document_follow import (
         unfollow_document as _unfollow,

@@ -14,9 +14,10 @@ from __future__ import annotations
 import frappe
 
 from jarvis.exceptions import InvalidArgumentError
-from jarvis.tools import require_doctype_and_name
+from jarvis.tools import desk_action
 
 
+@desk_action(check_user_arg="user")
 def share_doc(
     doctype: str,
     name: str,
@@ -32,15 +33,10 @@ def share_doc(
     (or to every user when ``everyone=True``). Returns
     ``{doctype, name, user, everyone, read, write, submit, share}``.
     """
-    require_doctype_and_name(doctype, name)
-    if not frappe.db.exists(doctype, name):
-        raise InvalidArgumentError(f"unknown {doctype}: {name}")
     if not everyone and not user:
         raise InvalidArgumentError(
             "either user or everyone=True is required",
         )
-    if user and not frappe.db.exists("User", user):
-        raise InvalidArgumentError(f"unknown User: {user}")
 
     from frappe.share import add as _share_add
 

@@ -12,10 +12,10 @@ from __future__ import annotations
 
 import frappe
 
-from jarvis.exceptions import InvalidArgumentError
-from jarvis.tools import require_doctype_and_name
+from jarvis.tools import desk_action
 
 
+@desk_action(check_user_arg="user")
 def follow_document(
     doctype: str,
     name: str,
@@ -25,12 +25,7 @@ def follow_document(
     Returns ``{doctype, name, user, followed}`` where ``followed`` is
     True on the wire path that actually inserted a follow row, False
     when the doc was already being followed (idempotent)."""
-    require_doctype_and_name(doctype, name)
-    if not frappe.db.exists(doctype, name):
-        raise InvalidArgumentError(f"unknown {doctype}: {name}")
     target_user = user or frappe.session.user
-    if user and not frappe.db.exists("User", user):
-        raise InvalidArgumentError(f"unknown User: {user}")
 
     from frappe.desk.form.document_follow import (
         follow_document as _follow,
