@@ -809,3 +809,167 @@ class TestQueryV03ExistsSubquerySecurityHardening(FrappeTestCase):
 		}
 		collected = _collect_doctypes(spec)
 		self.assertEqual(set(collected), {"DocType", "DocField", "DocPerm"})
+
+	# ---- v0.2.2 fixes from code-review workflow ---------------------
+
+	def test_subspec_self_join_perm_gates_every_alias(self):
+		"""Sub-spec self-joining the same doctype under two aliases
+		must apply ``get_permission_conditions`` to BOTH aliases, not
+		just the first. The pre-fix code deduplicated by doctype and
+		silently bypassed perms on the second alias - a side-channel
+		identical in shape to the v0.2.1 outer/sub-spec gap."""
+		from pypika import Field
+		# Distinct sentinel per call so we can verify both calls
+		# landed in the resolved SQL (not just the first).
+		sentinels = [
+			Field("name") == "SELF_JOIN_SENTINEL_FIRST",
+			Field("name") == "SELF_JOIN_SENTINEL_SECOND",
+		]
+
+		def _perm_conds(dt, table):
+			# Outer DocType call (perm conditions are returned None so
+			# we don't conflate the outer perm-weave with the sub-spec
+			# self-join one).
+			if dt == "DocType":
+				return None
+			# Sub-spec DocField calls - one per alias. Return a
+			# different sentinel each time so we can prove both
+			# landed.
+			if dt == "DocField":
+				return sentinels.pop(0) if sentinels else None
+			return None
+
+		with patch("frappe.has_permission", return_value=True), \
+		     patch("frappe.database.query.Engine") as fake_engine_cls:
+			fake_engine_cls.return_value.get_permission_conditions.side_effect = \
+				_perm_conds
+			with patch("pypika.queries.QueryBuilder.run", return_value=[]):
+				result = query({
+					"from": "DocType", "alias": "dt",
+					"select": ["dt.name"],
+					"where": [{
+						"op": "exists",
+						"value": {
+							"from": "DocField", "alias": "df",
+							"joins": [{
+								"type": "inner", "doctype": "DocField",
+								"alias": "df2",
+								"on": {"df2.parent": "df.parent"},
+							}],
+							"where": [{
+								"field": "df.parent", "op": "=",
+								"value": {"$field": "dt.name"},
+							}],
+						},
+					}],
+				})
+		sql = result["sql"]
+		# Both sentinels must appear in the resolved SQL.
+		self.assertIn(
+			"SELF_JOIN_SENTINEL_FIRST", sql,
+			"sub-spec perm gate skipped the first alias - regression",
+		)
+		self.assertIn(
+			"SELF_JOIN_SENTINEL_SECOND", sql,
+			"sub-spec perm gate skipped the second alias - v0.2.1 "
+			"side-channel still open",
+		)
+		# Both sentinels are inside the EXISTS subquery, not at the
+		# outer WHERE level.
+		exists_idx = sql.upper().find("EXISTS")
+		first_idx = sql.find("SELF_JOIN_SENTINEL_FIRST")
+		second_idx = sql.find("SELF_JOIN_SENTINEL_SECOND")
+		self.assertGreater(first_idx, exists_idx)
+		self.assertGreater(second_idx, exists_idx)
+
+	def test_outer_engine_has_doctype_attribute_set(self):
+		"""Frappe's ``permission_query_conditions`` hooks read
+		``engine.doctype`` to format the main table name (e.g.
+		``f"tab{self.doctype}"``). Without it, the first hook with a
+		permission_query_conditions entry crashes with AttributeError.
+		Verify the outer Engine has ``.doctype`` set to ``spec["from"]``
+		before ``get_permission_conditions`` is called."""
+		captured = []
+
+		def _capture(dt, table):
+			# Capture the Engine instance's doctype attribute at
+			# call time.
+			engine_instance = fake_engine_cls.return_value
+			captured.append({
+				"dt": dt,
+				"engine_doctype": getattr(
+					engine_instance, "doctype", "<UNSET>"
+				),
+			})
+			return None
+
+		with patch("frappe.has_permission", return_value=True), \
+		     patch("frappe.database.query.Engine") as fake_engine_cls:
+			fake_engine_cls.return_value.get_permission_conditions.side_effect = \
+				_capture
+			with patch("pypika.queries.QueryBuilder.run", return_value=[]):
+				query({
+					"from": "DocType",
+					"select": ["name"],
+				})
+		self.assertTrue(captured, "engine.get_permission_conditions never called")
+		for c in captured:
+			self.assertEqual(
+				c["engine_doctype"], "DocType",
+				f"engine.doctype not set when querying {c['dt']!r}: "
+				f"{c['engine_doctype']!r}",
+			)
+
+	def test_subspec_engine_has_doctype_attribute_set(self):
+		"""Same fix applied to the sub-spec engine. Without it, an
+		EXISTS sub-query whose sub-spec's primary DocType has a
+		permission_query_conditions hook crashes the same way."""
+		captured = []
+
+		def _capture(dt, table):
+			engine_instance = fake_engine_cls.return_value
+			captured.append({
+				"dt": dt,
+				"engine_doctype": getattr(
+					engine_instance, "doctype", "<UNSET>"
+				),
+			})
+			return None
+
+		with patch("frappe.has_permission", return_value=True), \
+		     patch("frappe.database.query.Engine") as fake_engine_cls:
+			fake_engine_cls.return_value.get_permission_conditions.side_effect = \
+				_capture
+			with patch("pypika.queries.QueryBuilder.run", return_value=[]):
+				query({
+					"from": "DocType", "alias": "dt",
+					"select": ["dt.name"],
+					"where": [{
+						"op": "exists",
+						"value": {
+							"from": "DocField", "alias": "df",
+							"where": [{
+								"field": "df.parent", "op": "=",
+								"value": {"$field": "dt.name"},
+							}],
+						},
+					}],
+				})
+		# Find the sub-spec calls (dt == "DocField") and check the
+		# engine's doctype was the sub-spec's "from" value.
+		subspec_calls = [c for c in captured if c["dt"] == "DocField"]
+		self.assertTrue(
+			subspec_calls,
+			"sub-spec get_permission_conditions never called",
+		)
+		# Note: because we share a single mock Engine across outer
+		# and sub-spec, the *last* assignment to engine.doctype wins
+		# in this captured snapshot. The mock's doctype attribute at
+		# capture time reflects the most-recent setter. For the
+		# sub-spec calls, that setter was for the sub-spec's "from"
+		# value (DocField).
+		for c in subspec_calls:
+			self.assertEqual(
+				c["engine_doctype"], "DocField",
+				f"sub_engine.doctype not set: {c['engine_doctype']!r}",
+			)

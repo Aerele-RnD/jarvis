@@ -283,6 +283,13 @@ def query(spec: dict, confirm_large: bool = False) -> dict:
 	# Some permission_query_conditions hooks consult ``self.tables``;
 	# pre-populate it from our alias_map.
 	engine.tables = [table for (_, table) in alias_map.values()]
+	# ``permission_query_conditions`` hooks read ``self.doctype`` to
+	# format the main table name (e.g. ``f"tab{self.doctype}"``). Frappe's
+	# normal entry point ``Engine.get_query(dt)`` sets this internally;
+	# we don't go through that path, so set it explicitly to the primary
+	# doctype. Otherwise the first hook with a permission_query_conditions
+	# entry crashes with AttributeError.
+	engine.doctype = spec["from"]
 	for dt in doctypes:
 		# Find the table object we built for this doctype. If the spec
 		# has multiple references to the same doctype (rare; usually
@@ -814,14 +821,19 @@ def _build_exists_criterion(sub_spec: dict, outer_alias_map: dict,
 		if a not in outer_alias_map
 	}
 	sub_engine.tables = [table for (_, table) in sub_local_aliases.values()]
-	sub_doctypes_seen: set[str] = set()
+	# Same reason as the outer engine: permission_query_conditions hooks
+	# read ``self.doctype`` to build the main table name. Set it to the
+	# sub-spec's primary doctype.
+	sub_engine.doctype = sub_spec["from"]
+	# Apply ``get_permission_conditions`` to every alias's table object.
+	# Earlier code de-duplicated by doctype on the assumption that the
+	# returned criterion was scoped to a canonical table; that's wrong —
+	# ``get_permission_conditions(dt, table)`` builds the predicate
+	# against the specific table object it's handed, so a self-join under
+	# two aliases needs the gate applied twice (once per alias) or the
+	# second alias bypasses User Permissions / DocShare entirely. Mirror
+	# the outer loop's per-alias iteration.
 	for alias, (resolved_dt, table) in sub_local_aliases.items():
-		if resolved_dt in sub_doctypes_seen:
-			# Same doctype joined under multiple aliases — only the
-			# first occurrence weaves; the engine's predicate is
-			# scoped to the canonical table object regardless.
-			continue
-		sub_doctypes_seen.add(resolved_dt)
 		cond = sub_engine.get_permission_conditions(resolved_dt, table)
 		if cond is not None:
 			sub_q = sub_q.where(cond)
