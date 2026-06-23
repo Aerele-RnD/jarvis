@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
+from jarvis.chat import openclaw_session_pool
 from jarvis.chat.api import create_conversation, send_message
 from jarvis.chat.worker import run_agent_turn
 from jarvis.tests.test_chat_api import (
@@ -39,6 +40,7 @@ def _fake_event_stream(events: list[dict]):
 
 class TestRunAgentTurnHappyPath(FrappeTestCase):
 	def setUp(self):
+		openclaw_session_pool._POOL.clear()
 		_ensure_test_user()
 		self._orig_user = frappe.session.user
 		frappe.set_user(TEST_USER)
@@ -57,7 +59,7 @@ class TestRunAgentTurnHappyPath(FrappeTestCase):
 			{"kind": "assistant", "text": "Hello world", "delta": " world"},
 			{"kind": "lifecycle", "phase": "end"},
 		])
-		with patch("jarvis.chat.worker.OpenclawSession.connect", return_value=fake_sess):
+		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess):
 			with patch("jarvis.chat.worker.publish_to_user") as pub:
 				run_agent_turn(self.conv, self.user_msg, run_id="r1")
 
@@ -80,6 +82,7 @@ class TestRunAgentTurnHappyPath(FrappeTestCase):
 
 class TestRunAgentTurnToolCall(FrappeTestCase):
 	def setUp(self):
+		openclaw_session_pool._POOL.clear()
 		_ensure_test_user()
 		self._orig_user = frappe.session.user
 		frappe.set_user(TEST_USER)
@@ -101,7 +104,7 @@ class TestRunAgentTurnToolCall(FrappeTestCase):
 			{"kind": "assistant", "text": "Done", "delta": "Done"},
 			{"kind": "lifecycle", "phase": "end"},
 		])
-		with patch("jarvis.chat.worker.OpenclawSession.connect", return_value=fake_sess):
+		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess):
 			with patch("jarvis.chat.worker.publish_to_user"):
 				run_agent_turn(self.conv, self.user_msg, run_id="r1")
 
@@ -117,6 +120,7 @@ class TestRunAgentTurnToolCall(FrappeTestCase):
 
 class TestRunAgentTurnErrorPaths(FrappeTestCase):
 	def setUp(self):
+		openclaw_session_pool._POOL.clear()
 		_ensure_test_user()
 		self._orig_user = frappe.session.user
 		frappe.set_user(TEST_USER)
@@ -130,7 +134,7 @@ class TestRunAgentTurnErrorPaths(FrappeTestCase):
 	def test_connect_failure_publishes_run_error_and_marks_message_errored(self):
 		from jarvis.exceptions import OpenclawUnreachableError
 		with patch(
-			"jarvis.chat.worker.OpenclawSession.connect",
+			"jarvis.chat.openclaw_session_pool.OpenclawSession.connect",
 			side_effect=OpenclawUnreachableError("connect refused"),
 		):
 			with patch("jarvis.chat.worker.publish_to_user") as pub:
@@ -154,7 +158,7 @@ class TestRunAgentTurnErrorPaths(FrappeTestCase):
 			{"kind": "lifecycle", "phase": "start"},
 			{"kind": "lifecycle", "phase": "error", "error": "model overloaded"},
 		])
-		with patch("jarvis.chat.worker.OpenclawSession.connect", return_value=fake_sess):
+		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess):
 			with patch("jarvis.chat.worker.publish_to_user"):
 				run_agent_turn(self.conv, self.user_msg, run_id="r1")
 
@@ -184,7 +188,7 @@ class TestRunAgentTurnErrorPaths(FrappeTestCase):
 		def _capture(user, payload):
 			published_kinds.append(payload.get("kind"))
 
-		with patch("jarvis.chat.worker.OpenclawSession.connect", return_value=fake_sess), \
+		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess), \
 		     patch("jarvis.chat.worker.publish_to_user", side_effect=_capture):
 			with self.assertRaises(ssl.SSLError):
 				run_agent_turn(self.conv, self.user_msg, run_id="r1")
@@ -211,6 +215,7 @@ class TestRunAgentTurnAugmentsMessage(FrappeTestCase):
 	"""
 
 	def setUp(self):
+		openclaw_session_pool._POOL.clear()
 		_ensure_test_user()
 		self._orig_user = frappe.session.user
 		frappe.set_user(TEST_USER)
@@ -229,7 +234,7 @@ class TestRunAgentTurnAugmentsMessage(FrappeTestCase):
 			{"kind": "lifecycle", "phase": "start"},
 			{"kind": "lifecycle", "phase": "end"},
 		])
-		with patch("jarvis.chat.worker.OpenclawSession.connect", return_value=fake_sess):
+		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess):
 			with patch("jarvis.chat.worker.publish_to_user"):
 				run_agent_turn(self.conv, self.user_msg, run_id="r1")
 
@@ -281,6 +286,7 @@ class TestRunAgentTurnModelResolution(FrappeTestCase):
 		super().tearDownClass()
 
 	def setUp(self):
+		openclaw_session_pool._POOL.clear()
 		_ensure_test_user()
 		self._orig_user = frappe.session.user
 		frappe.set_user(TEST_USER)
@@ -296,7 +302,7 @@ class TestRunAgentTurnModelResolution(FrappeTestCase):
 		fake_sess.stream_agent_turn.return_value = _fake_event_stream([
 			{"kind": "lifecycle", "phase": "end"},
 		])
-		with patch("jarvis.chat.worker.OpenclawSession.connect", return_value=fake_sess):
+		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess):
 			with patch("jarvis.chat.worker.publish_to_user"):
 				run_agent_turn(self.conv, self.user_msg, run_id="r1")
 		return fake_sess.stream_agent_turn.call_args
@@ -353,6 +359,7 @@ class TestRunAgentTurnApiKeyModeOmitsProvider(FrappeTestCase):
 		super().tearDownClass()
 
 	def setUp(self):
+		openclaw_session_pool._POOL.clear()
 		_ensure_test_user()
 		self._orig_user = frappe.session.user
 		frappe.set_user(TEST_USER)
@@ -368,7 +375,7 @@ class TestRunAgentTurnApiKeyModeOmitsProvider(FrappeTestCase):
 		fake_sess.stream_agent_turn.return_value = _fake_event_stream([
 			{"kind": "lifecycle", "phase": "end"},
 		])
-		with patch("jarvis.chat.worker.OpenclawSession.connect", return_value=fake_sess):
+		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess):
 			with patch("jarvis.chat.worker.publish_to_user"):
 				run_agent_turn(self.conv, self.user_msg, run_id="r1")
 		kwargs = fake_sess.stream_agent_turn.call_args.kwargs
@@ -390,6 +397,7 @@ class TestAssistantContentBatching(FrappeTestCase):
 	"""
 
 	def setUp(self):
+		openclaw_session_pool._POOL.clear()
 		_ensure_test_user()
 		self._orig_user = frappe.session.user
 		frappe.set_user(TEST_USER)
@@ -414,7 +422,7 @@ class TestAssistantContentBatching(FrappeTestCase):
 			{"kind": "assistant", "text": "Hello", "delta": "o"},
 			{"kind": "lifecycle", "phase": "end"},
 		])
-		with patch("jarvis.chat.worker.OpenclawSession.connect", return_value=fake_sess):
+		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess):
 			with patch("jarvis.chat.worker.publish_to_user") as pub:
 				run_agent_turn(self.conv, self.user_msg, run_id="r1")
 		# Five assistant:delta publishes (one per token), even though
@@ -466,7 +474,7 @@ class TestAssistantContentBatching(FrappeTestCase):
 				write_calls.append(args)
 			return real_set_value(*args, **kwargs)
 
-		with patch("jarvis.chat.worker.OpenclawSession.connect", return_value=fake_sess):
+		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess):
 			with patch("jarvis.chat.worker.publish_to_user"):
 				with patch("frappe.db.set_value", side_effect=tracking_set_value):
 					run_agent_turn(self.conv, self.user_msg, run_id="r1")
@@ -504,7 +512,7 @@ class TestAssistantContentBatching(FrappeTestCase):
 			{"kind": "assistant", "text": "Done!", "delta": " Done!"},
 			{"kind": "lifecycle", "phase": "end"},
 		])
-		with patch("jarvis.chat.worker.OpenclawSession.connect", return_value=fake_sess):
+		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess):
 			with patch("jarvis.chat.worker.publish_to_user"):
 				run_agent_turn(self.conv, self.user_msg, run_id="r1")
 		# Final cumulative content is the last assistant text. The
@@ -547,7 +555,7 @@ class TestAssistantContentBatching(FrappeTestCase):
 				raise RuntimeError("simulated tool-row insert failure")
 			return _orig_get_doc(*args, **kwargs)
 
-		with patch("jarvis.chat.worker.OpenclawSession.connect", return_value=fake_sess):
+		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess):
 			with patch("jarvis.chat.worker.publish_to_user"):
 				with patch("frappe.get_doc", side_effect=boom_on_tool_msg):
 					with patch("frappe.log_error") as log_err:
@@ -573,6 +581,7 @@ class TestAssistantContentBatcherUnit(FrappeTestCase):
 	"""Unit-level coverage of _AssistantContentBatcher thresholds."""
 
 	def setUp(self):
+		openclaw_session_pool._POOL.clear()
 		_ensure_test_user()
 		self._orig_user = frappe.session.user
 		frappe.set_user(TEST_USER)
