@@ -1103,3 +1103,272 @@ class TestQueryRobustnessHardening(FrappeTestCase):
 					}],
 				})
 			self.assertIn("$field", str(cm.exception))
+
+
+class TestQueryExprDSLPhase1Dates(FrappeTestCase):
+	"""Expression DSL Phase 1: foundation + date functions.
+
+	Verifies the tree-shaped expression spec lands correctly in
+	SELECT / GROUP BY / WHERE / aggregates, and that the date
+	functions (date_part, date_trunc, date_add) emit the expected
+	SQL substrings.
+	"""
+
+	def _build_sql(self, spec: dict) -> str:
+		with patch("frappe.has_permission", return_value=True), \
+		     patch("frappe.database.query.Engine") as fake_engine:
+			fake_engine.return_value.get_permission_conditions.return_value = None
+			with patch("pypika.queries.QueryBuilder.run", return_value=[]):
+				result = query(spec)
+		return result["sql"]
+
+	def test_date_part_month_in_select(self):
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": [{
+				"expr": {
+					"fn": "date_part",
+					"args": [
+						{"literal": "month"},
+						{"field": "dt.creation"},
+					],
+				},
+				"as": "month",
+			}],
+		})
+		self.assertIn("EXTRACT", sql.upper())
+		self.assertIn("MONTH", sql.upper())
+
+	def test_date_part_year_in_select(self):
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": [{
+				"expr": {
+					"fn": "date_part",
+					"args": [{"literal": "year"}, {"field": "dt.creation"}],
+				},
+				"as": "year",
+			}],
+		})
+		self.assertIn("EXTRACT", sql.upper())
+		self.assertIn("YEAR", sql.upper())
+
+	def test_date_part_rejects_unknown_unit(self):
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError) as cm:
+				query({
+					"from": "DocType",
+					"select": [{
+						"expr": {
+							"fn": "date_part",
+							"args": [
+								{"literal": "fortnight"},
+								{"field": "creation"},
+							],
+						},
+						"as": "x",
+					}],
+				})
+			self.assertIn("date_part", str(cm.exception))
+
+	def test_date_part_fiscal_year_explicit_error(self):
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError) as cm:
+				query({
+					"from": "DocType",
+					"select": [{
+						"expr": {
+							"fn": "date_part",
+							"args": [
+								{"literal": "fiscal_year"},
+								{"field": "creation"},
+							],
+						},
+						"as": "fy",
+					}],
+				})
+			self.assertIn("fiscal_year", str(cm.exception))
+
+	def test_date_part_group_by_with_count_aggregate(self):
+		"""The load-bearing reporting case: 'count per month'."""
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": [
+				{
+					"expr": {
+						"fn": "date_part",
+						"args": [
+							{"literal": "month"},
+							{"field": "dt.creation"},
+						],
+					},
+					"as": "month",
+				},
+				{"agg": "count", "field": "*", "as": "n"},
+			],
+			"group_by": ["month"],
+		})
+		self.assertIn("EXTRACT", sql.upper())
+		self.assertIn("MONTH", sql.upper())
+		self.assertIn("COUNT", sql.upper())
+		self.assertIn("GROUP BY", sql.upper())
+
+	def test_date_trunc_month_emits_format_or_trunc(self):
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": [{
+				"expr": {
+					"fn": "date_trunc",
+					"args": [
+						{"literal": "month"},
+						{"field": "dt.creation"},
+					],
+				},
+				"as": "month_start",
+			}],
+		})
+		upper = sql.upper()
+		self.assertTrue(
+			"DATE_FORMAT" in upper or "DATE_TRUNC" in upper or "STRFTIME" in upper,
+			f"expected a date-trunc construct, got: {sql}",
+		)
+
+	def test_date_add_in_where_predicate(self):
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": ["dt.name"],
+			"where": [{
+				"expr": {
+					"fn": "date_add",
+					"args": [
+						{"field": "dt.creation"},
+						{"literal": 7},
+						{"literal": "day"},
+					],
+				},
+				"op": ">=",
+				"value": "2026-06-01",
+			}],
+		})
+		self.assertIn("DATE_ADD", sql.upper())
+
+	def test_expr_rejects_unknown_function(self):
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError) as cm:
+				query({
+					"from": "DocType",
+					"select": [{
+						"expr": {"fn": "not_a_function", "args": []},
+						"as": "x",
+					}],
+				})
+			self.assertIn("not_a_function", str(cm.exception))
+
+	def test_expr_rejects_arity_mismatch(self):
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError) as cm:
+				query({
+					"from": "DocType",
+					"select": [{
+						"expr": {
+							"fn": "date_part",
+							"args": [{"literal": "month"}],
+						},
+						"as": "m",
+					}],
+				})
+			self.assertIn("date_part", str(cm.exception))
+
+	def test_expr_rejects_wrong_arg_kind(self):
+		"""date_part's first arg must be a literal, not a field."""
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError) as cm:
+				query({
+					"from": "DocType",
+					"select": [{
+						"expr": {
+							"fn": "date_part",
+							"args": [
+								{"field": "dt.unit"},
+								{"field": "dt.creation"},
+							],
+						},
+						"as": "m",
+					}],
+				})
+			self.assertIn("literal", str(cm.exception).lower())
+
+	def test_expr_rejects_nesting_beyond_cap(self):
+		deepest = {"field": "creation"}
+		for _ in range(5):
+			deepest = {
+				"fn": "date_add",
+				"args": [deepest, {"literal": 1}, {"literal": "day"}],
+			}
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError) as cm:
+				query({
+					"from": "DocType",
+					"select": [{"expr": deepest, "as": "x"}],
+				})
+			self.assertIn("nesting", str(cm.exception).lower())
+
+	def test_expr_select_requires_as_alias(self):
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError) as cm:
+				query({
+					"from": "DocType",
+					"select": [{
+						"expr": {"field": "creation"},
+					}],
+				})
+			self.assertIn("as", str(cm.exception).lower())
+
+	def test_expr_field_node_resolves_correctly(self):
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": [{"expr": {"field": "dt.name"}, "as": "name"}],
+		})
+		self.assertIn("name", sql)
+
+	def test_expr_literal_node(self):
+		sql = self._build_sql({
+			"from": "DocType",
+			"select": [
+				"name",
+				{"expr": {"literal": 42}, "as": "answer"},
+			],
+		})
+		self.assertIn("42", sql)
+
+	def test_aggregate_can_wrap_expression(self):
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": [{
+				"agg": "max",
+				"expr": {
+					"fn": "date_part",
+					"args": [
+						{"literal": "year"},
+						{"field": "dt.creation"},
+					],
+				},
+				"as": "max_year",
+			}],
+		})
+		self.assertIn("MAX", sql.upper())
+		self.assertIn("EXTRACT", sql.upper())
+
+	def test_aggregate_rejects_both_field_and_expr(self):
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError) as cm:
+				query({
+					"from": "DocType",
+					"select": [{
+						"agg": "sum",
+						"field": "creation",
+						"expr": {"field": "creation"},
+						"as": "x",
+					}],
+				})
+			self.assertIn("expr", str(cm.exception).lower())

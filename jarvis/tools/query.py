@@ -80,6 +80,7 @@ from jarvis.exceptions import (
 	PermissionDeniedError,
 	ResultTooLargeError,
 )
+from jarvis.tools import _expr
 
 # Row guard: refuse a result over this size unless the caller passes
 # ``confirm_large=True``. Mirrors the run_query guard so the agent's
@@ -582,16 +583,34 @@ def _build_select(select_spec: list, alias_map: dict) -> list:
 	  aggregate function wrapping the field, with ``.as_()`` aliased.
 	- dict with ``"distinct": True`` (v0.2) → ``COUNT(DISTINCT field)``
 	  etc. Applies to all aggregates uniformly; qb rejects semantically
-	  invalid combos (e.g. ``MIN(DISTINCT x)``) at SQL-build time."""
+	  invalid combos (e.g. ``MIN(DISTINCT x)``) at SQL-build time.
+	- dict ``{"expr": <tree>, "as": "alias"}`` (v0.3) → expression DSL
+	  translated via ``_expr.build_expr``. The expression may itself be
+	  a function call, field reference, or literal. Aliasing is
+	  mandatory for expression entries (otherwise the column name is
+	  whatever pypika emits from the expression, which is brittle)."""
 	out = []
 	for item in select_spec:
 		if isinstance(item, str):
 			out.append(_resolve_field(item, alias_map))
 		elif isinstance(item, dict):
-			expr = _build_aggregate(item, alias_map)
-			if "as" in item:
-				expr = expr.as_(item["as"])
-			out.append(expr)
+			if "expr" in item and "agg" not in item:
+				# Plain expression projection: {"expr": ..., "as": ...}
+				if "as" not in item:
+					raise InvalidArgumentError(
+						"select expression entries must carry an 'as' alias"
+					)
+				_expr.validate_expr(item["expr"])
+				built = _expr.build_expr(
+					item["expr"],
+					lambda ref: _resolve_field(ref, alias_map),
+				)
+				out.append(built.as_(item["as"]))
+			else:
+				expr = _build_aggregate(item, alias_map)
+				if "as" in item:
+					expr = expr.as_(item["as"])
+				out.append(expr)
 		else:
 			raise InvalidArgumentError(
 				f"select entry must be a string or dict; got {type(item).__name__}"
@@ -617,15 +636,31 @@ def _build_aggregate(spec: dict, alias_map: dict):
 			f"must be one of {sorted(_AGGREGATES)}"
 		)
 	field_ref = spec.get("field")
+	# v0.3: aggregates can wrap an expression instead of a bare field.
+	# ``{"agg": "sum", "expr": <tree>, ...}`` produces ``SUM(<expr>)``.
+	# Mutually exclusive with ``field``.
+	agg_expr = spec.get("expr")
+	if agg_expr is not None and field_ref is not None:
+		raise InvalidArgumentError(
+			f"aggregate {agg_name!r} cannot have both 'field' and 'expr'"
+		)
 	if agg_name == "count" and field_ref == "*":
 		# COUNT(*) and COUNT(DISTINCT *) - the latter is pointless but
 		# pypika accepts it; we don't gate semantics, only shapes.
 		expr = fn.Count("*")
 	elif field_ref:
 		expr = _AGGREGATES[agg_name](_resolve_field(field_ref, alias_map))
+	elif agg_expr is not None:
+		_expr.validate_expr(agg_expr)
+		inner = _expr.build_expr(
+			agg_expr,
+			lambda ref: _resolve_field(ref, alias_map),
+		)
+		expr = _AGGREGATES[agg_name](inner)
 	else:
 		raise InvalidArgumentError(
-			f"aggregate {agg_name!r} missing 'field' (use '*' for COUNT(*))"
+			f"aggregate {agg_name!r} missing 'field' or 'expr' "
+			f"(use '*' for COUNT(*))"
 		)
 	if spec.get("distinct"):
 		# Toggle DISTINCT on the inner column. pypika's
@@ -673,14 +708,21 @@ def _build_predicate(p: dict, alias_map: dict, depth: int = 1) -> Criterion:
 			sub_spec, alias_map, depth, negate=(op == "not exists"),
 		)
 
-	# Resolve the left side: either a bare field or an aggregate.
+	# Resolve the left side: bare field, aggregate, or v0.3 expression.
 	if "agg" in p:
 		lhs = _build_aggregate(p, alias_map)
+	elif "expr" in p:
+		# v0.3: WHERE / HAVING can predicate against an expression.
+		_expr.validate_expr(p["expr"])
+		lhs = _expr.build_expr(
+			p["expr"],
+			lambda ref: _resolve_field(ref, alias_map),
+		)
 	else:
 		field_ref = p.get("field")
 		if not field_ref:
 			raise InvalidArgumentError(
-				f"predicate missing 'field' or 'agg'/'field' pair"
+				f"predicate missing 'field', 'agg', or 'expr'"
 			)
 		lhs = _resolve_field(field_ref, alias_map)
 
