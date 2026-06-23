@@ -67,6 +67,7 @@ permission enforcement.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import frappe
@@ -78,12 +79,6 @@ from jarvis.exceptions import (
 	InvalidArgumentError,
 	PermissionDeniedError,
 	ResultTooLargeError,
-)
-from jarvis.tools.run_query import (
-	# Reuse the per-site DocType allowlist gate. Both ``query`` and
-	# ``run_query`` honor the same ``Jarvis Settings.run_query_doctype_allowlist``
-	# field - one knob gates both tools.
-	_load_doctype_allowlist,
 )
 
 # Row guard: refuse a result over this size unless the caller passes
@@ -375,6 +370,46 @@ def _validate_spec_shape(spec: dict) -> None:
 					f"spec.{clause}[{i}].op {p['op']!r} not allowed; "
 					f"must be one of {sorted(_OPERATORS)}"
 				)
+
+
+def _load_doctype_allowlist() -> set[str] | None:
+	"""Read the per-site DocType allowlist from Jarvis Settings.
+
+	Returns ``None`` when the field is unset or empty (default; means
+	"no extra restriction beyond Frappe permissions"). Returns a
+	normalised set of DocType names when configured. Accepts comma OR
+	newline separation so operators can paste from either a CSV row or
+	a one-DocType-per-line list.
+
+	Whitespace is trimmed; empty entries are dropped. Names are NOT
+	case-normalised (Frappe DocType names are case-sensitive) so a
+	typo in the allowlist silently doesn't match — that's the right
+	failure mode (closed by default).
+
+	Reads via ``frappe.get_cached_doc`` to use Frappe's Single-doc
+	cache (one in-memory dict per process) instead of an SQL round-
+	trip on every call. The cached path also doesn't get fooled by
+	callers who have ``patch('frappe.db.sql')`` in scope.
+
+	Note: the underlying Jarvis Settings field is named
+	``run_query_doctype_allowlist`` for historical reasons (it was
+	introduced before this tool replaced the old SQL tool). The
+	field name stays as-is to avoid a migration; one operator knob
+	gates everything.
+	"""
+	try:
+		settings = frappe.get_cached_doc("Jarvis Settings")
+	except Exception:
+		# Bench misconfig / migration in flight / similar. Failing
+		# open is safe: the caller's ``has_permission`` gate already
+		# ran on every referenced DocType.
+		return None
+	raw = (settings.get("run_query_doctype_allowlist") or "").strip()
+	if not raw:
+		return None
+	parts = re.split(r"[,\n]", raw)
+	cleaned = {p.strip() for p in parts if p.strip()}
+	return cleaned if cleaned else None
 
 
 def _collect_doctypes(spec: dict) -> list[str]:
