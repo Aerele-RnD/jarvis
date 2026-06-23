@@ -378,14 +378,42 @@ def _validate_spec_shape(spec: dict) -> None:
 
 
 def _collect_doctypes(spec: dict) -> list[str]:
-	"""Return the list of DocTypes the spec references — FROM + joins.
+	"""Return the list of DocTypes the spec references — FROM + joins,
+	plus any EXISTS / NOT EXISTS sub-spec FROM + joins recursively.
+
 	De-duplicated while preserving first-seen order so error messages
-	read naturally to the operator."""
-	out: list[str] = [spec["from"]]
-	for j in spec.get("joins") or []:
-		dt = j["doctype"]
-		if dt not in out:
-			out.append(dt)
+	read naturally to the operator.
+
+	The recursion into sub-specs is what closes the side-channel: the
+	caller iterates this list for both the role gate
+	(``has_permission``) and the per-site allowlist gate, so every
+	doctype touched anywhere in the spec — outer or nested — is
+	subjected to both checks. The ``Engine.get_permission_conditions``
+	weave for record-level User Permissions happens separately, at
+	the outer level for FROM + joins (in ``query()``) and at each
+	sub-query level (in ``_build_exists_criterion``)."""
+	out: list[str] = []
+
+	def _walk(node: dict) -> None:
+		if not isinstance(node, dict):
+			return
+		from_dt = node.get("from")
+		if isinstance(from_dt, str) and from_dt not in out:
+			out.append(from_dt)
+		for j in node.get("joins") or []:
+			dt = j.get("doctype")
+			if isinstance(dt, str) and dt not in out:
+				out.append(dt)
+		for predicate_list_key in ("where", "having"):
+			for p in node.get(predicate_list_key) or []:
+				if not isinstance(p, dict):
+					continue
+				if p.get("op") in ("exists", "not exists"):
+					sub = p.get("value")
+					if isinstance(sub, dict):
+						_walk(sub)
+
+	_walk(spec)
 	return out
 
 
@@ -726,6 +754,42 @@ def _build_exists_criterion(sub_spec: dict, outer_alias_map: dict,
 		resolved = _resolve_correlated_refs(w, sub_alias_map)
 		sub_q = sub_q.where(_build_predicate(resolved, sub_alias_map,
 		                                       depth=depth + 1))
+
+	# Record-level permission weave for the sub-query. Without this
+	# the EXISTS / NOT EXISTS form becomes a side-channel: a caller
+	# with role-read on the sub-spec's DocType but a User Permission
+	# restricting which records they can see would otherwise leak
+	# existence over the full table. Mirror the outer query's
+	# pipeline — instantiate an Engine, share the sub-query, and AND
+	# each sub-spec doctype's get_permission_conditions() into the
+	# sub-query WHERE. Outer aliases that we folded into
+	# sub_alias_map for $field resolution are skipped — they were
+	# already perm-gated at the outer level (and weaving them again
+	# here would double-filter).
+	from frappe.database.query import Engine
+	sub_engine = Engine()
+	sub_engine.user = frappe.session.user
+	sub_engine.ignore_user_permissions = False
+	sub_engine.ignore_permissions = False
+	sub_engine.query = sub_q
+	# Only the sub-spec's own tables, not the outer-scoped aliases.
+	sub_local_aliases = {
+		a: (dt, table)
+		for a, (dt, table) in sub_alias_map.items()
+		if a not in outer_alias_map
+	}
+	sub_engine.tables = [table for (_, table) in sub_local_aliases.values()]
+	sub_doctypes_seen: set[str] = set()
+	for alias, (resolved_dt, table) in sub_local_aliases.items():
+		if resolved_dt in sub_doctypes_seen:
+			# Same doctype joined under multiple aliases — only the
+			# first occurrence weaves; the engine's predicate is
+			# scoped to the canonical table object regardless.
+			continue
+		sub_doctypes_seen.add(resolved_dt)
+		cond = sub_engine.get_permission_conditions(resolved_dt, table)
+		if cond is not None:
+			sub_q = sub_q.where(cond)
 
 	# The SELECT projection of an EXISTS subquery is semantically
 	# irrelevant; we select the literal 1 (cheapest non-empty
