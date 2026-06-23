@@ -34,6 +34,8 @@
     "jarvis_admin_url",
     "jarvis_admin_api_key",
     "jarvis_admin_api_secret",
+    "jarvis_admin_customer_email",
+    "jarvis_admin_customer_password",
     "operator_section",
     "agent_url",
     "agent_token",
@@ -231,6 +233,20 @@
       "label": "Jarvis Admin API Secret",
       "read_only": 1,
       "description": "Native Frappe api_secret paired with the API Key. Set automatically at onboarding."
+    },
+    {
+      "fieldname": "jarvis_admin_customer_email",
+      "fieldtype": "Data",
+      "label": "Jarvis Admin Customer Email",
+      "read_only": 1,
+      "description": "The customer's login (email) on the admin site. Used as the OAuth password-grant username. Set automatically at onboarding."
+    },
+    {
+      "fieldname": "jarvis_admin_customer_password",
+      "fieldtype": "Password",
+      "label": "Jarvis Admin Customer Password",
+      "read_only": 1,
+      "description": "The customer's password on the admin site, exchanged for short-lived OAuth bearer tokens (client_id `jarvis-bench`). Set automatically once the email is verified. Empty for pre-OAuth customers, which fall back to api_key:api_secret."
     },
     {
       "fieldname": "operator_section",

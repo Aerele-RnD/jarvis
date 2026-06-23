@@ -32,15 +32,34 @@ def _settings_for_admin(admin_url="https://admin.example.com",
 	frappe.db.commit()
 
 
+def _settings_for_oauth(admin_url="https://admin.example.com",
+						email="cust@example.com", password="pw-secret",
+						api_key="", api_secret=""):
+	"""Configure Jarvis Settings for the OAuth bearer path. By default no
+	api_key/secret so the bearer path is exercised in isolation; pass them to
+	test the 401 -> legacy fallback."""
+	settings = frappe.get_single("Jarvis Settings")
+	settings.db_set("jarvis_admin_url", admin_url)
+	settings.db_set("jarvis_admin_customer_email", email)
+	settings.db_set("jarvis_admin_customer_password", password)
+	settings.db_set("jarvis_admin_api_key", api_key)
+	settings.db_set("jarvis_admin_api_secret", api_secret)
+	frappe.db.commit()
+	frappe.cache().delete_value(admin_client._OAUTH_CACHE_KEY)
+
+
 def _settings_clear_admin():
 	from frappe.utils.password import remove_encrypted_password
 	settings = frappe.get_single("Jarvis Settings")
 	settings.db_set("jarvis_admin_url", "")
+	settings.db_set("jarvis_admin_customer_email", "")
 	# Password fields need __Auth cleared too, not just the column.
-	for f in ("jarvis_admin_api_key", "jarvis_admin_api_secret"):
+	for f in ("jarvis_admin_api_key", "jarvis_admin_api_secret",
+			  "jarvis_admin_customer_password"):
 		remove_encrypted_password("Jarvis Settings", "Jarvis Settings", f)
 		settings.db_set(f, "")
 	frappe.db.commit()
+	frappe.cache().delete_value(admin_client._OAUTH_CACHE_KEY)
 
 
 def _mock_response(status_code: int, json_body=None, text: str = ""):
@@ -712,3 +731,182 @@ class TestPairChatDevice(FrappeTestCase):
 				public_key="pk", device_id="did", request_timeout_s=75,
 			)
 		self.assertEqual(captured["body"]["request_timeout_s"], 75)
+
+
+class TestOAuthBearer(FrappeTestCase):
+	"""Bench-side OAuth password-grant: prefer a cached bearer token, fall back
+	to legacy api_key:api_secret when no password is stored."""
+
+	def tearDown(self):
+		_settings_clear_admin()
+
+	def _route(self, *, token_response, api_capture, api_response=None):
+		"""Build a requests.post stand-in that routes the OAuth token endpoint
+		vs the real API call by URL. ``api_capture`` records the API call's
+		headers; ``token_response``/``api_response`` are _mock_response objects
+		(or callables returning one, for stateful tests)."""
+		# A _mock_response is itself a MagicMock (callable); only treat a real
+		# function as a stateful factory, never a mock response object.
+		def _resolve(r, arg):
+			if callable(r) and not isinstance(r, MagicMock):
+				return r(arg)
+			return r
+
+		def _fake_post(url, data=None, json=None, headers=None, timeout=None):
+			if url.endswith(admin_client._OAUTH_TOKEN_PATH):
+				api_capture.setdefault("token_calls", []).append(data)
+				return _resolve(token_response, data)
+			api_capture.setdefault("api_headers", []).append(headers)
+			api_capture["json"] = json
+			r = _resolve(api_response, headers)
+			return r or _mock_response(200, json_body={"message": {"ok": True, "data": {"x": 1}}})
+		return _fake_post
+
+	def test_prefers_bearer_and_omits_client_secret(self):
+		_settings_for_oauth()
+		cap = {}
+		token_resp = _mock_response(200, json_body={
+			"access_token": "ACCESS-1", "refresh_token": "REFRESH-1",
+			"token_type": "Bearer", "expires_in": 900,
+		})
+		with patch("requests.post", side_effect=self._route(
+				token_response=token_resp, api_capture=cap)):
+			admin_client.get_connection()
+		# Token requested via password grant, public-client (no client_secret).
+		grant = cap["token_calls"][0]
+		self.assertEqual(grant["grant_type"], "password")
+		self.assertEqual(grant["username"], "cust@example.com")
+		self.assertEqual(grant["password"], "pw-secret")
+		self.assertEqual(grant["client_id"], "jarvis-bench")
+		self.assertNotIn("client_secret", grant)
+		# API call carried the bearer, not a token key:secret header.
+		self.assertEqual(cap["api_headers"][0]["Authorization"], "Bearer ACCESS-1")
+
+	def test_caches_access_token_across_calls(self):
+		_settings_for_oauth()
+		cap = {}
+		token_resp = _mock_response(200, json_body={
+			"access_token": "ACCESS-1", "refresh_token": "REFRESH-1",
+			"token_type": "Bearer", "expires_in": 900,
+		})
+		with patch("requests.post", side_effect=self._route(
+				token_response=token_resp, api_capture=cap)):
+			admin_client.get_connection()
+			admin_client.get_connection()
+		# Two API calls, but the token endpoint was hit only once (cached).
+		self.assertEqual(len(cap["token_calls"]), 1)
+		self.assertEqual(len(cap["api_headers"]), 2)
+		self.assertEqual(cap["api_headers"][1]["Authorization"], "Bearer ACCESS-1")
+
+	def test_uses_refresh_token_when_access_expired_but_refresh_present(self):
+		# Cache holds a live refresh token but the access token has expired.
+		# The next call must renew via grant_type=refresh_token (the cheap
+		# path) instead of replaying the password grant, and must carry the
+		# freshly minted access token on the API call. Exercises the
+		# refresh-first branch in _admin_access_token (the password grant is
+		# only the durable bootstrap fallback). 2026-06-21 review follow-up.
+		_settings_for_oauth()
+		# Seed AFTER _settings_for_oauth (it clears the cache): a stale access
+		# token (expires_at in the past) plus a still-valid refresh token.
+		frappe.cache().set_value(admin_client._OAUTH_CACHE_KEY, {
+			"access_token": "STALE-ACCESS",
+			"refresh_token": "REFRESH-1",
+			"access_expires_at": 0,
+		})
+		cap = {}
+		token_resp = _mock_response(200, json_body={
+			"access_token": "ACCESS-2", "refresh_token": "REFRESH-2",
+			"token_type": "Bearer", "expires_in": 900,
+		})
+		with patch("requests.post", side_effect=self._route(
+				token_response=token_resp, api_capture=cap)):
+			admin_client.get_connection()
+		# Exactly one token call, and it was the refresh grant - never password.
+		self.assertEqual(len(cap["token_calls"]), 1)
+		grant = cap["token_calls"][0]
+		self.assertEqual(grant["grant_type"], "refresh_token")
+		self.assertEqual(grant["refresh_token"], "REFRESH-1")
+		self.assertNotIn("username", grant)
+		self.assertNotIn("password", grant)
+		# Public client: client_id present, no client_secret.
+		self.assertEqual(grant["client_id"], "jarvis-bench")
+		self.assertNotIn("client_secret", grant)
+		# The API call carried the access token minted off the refresh grant.
+		self.assertEqual(cap["api_headers"][0]["Authorization"], "Bearer ACCESS-2")
+
+	def test_falls_back_to_legacy_without_password(self):
+		# No customer_password -> legacy api_key:api_secret path.
+		_settings_for_admin(api_key="legacy-key", api_secret="legacy-secret")
+		cap = {}
+		def _fake_post(url, data=None, json=None, headers=None, timeout=None):
+			cap["headers"] = headers
+			return _mock_response(200, json_body={"message": {"ok": True, "data": {"x": 1}}})
+		with patch("requests.post", side_effect=_fake_post):
+			admin_client.get_connection()
+		self.assertEqual(cap["headers"]["Authorization"], "token legacy-key:legacy-secret")
+
+	def test_bearer_401_remints_then_falls_back_to_legacy(self):
+		# Password present (bearer preferred) AND legacy creds present. The API
+		# rejects the bearer twice (revoked); after a re-mint it still 401s, so
+		# the call falls back to the legacy header and succeeds.
+		_settings_for_oauth(api_key="legacy-key", api_secret="legacy-secret")
+		cap = {}
+		token_resp = _mock_response(200, json_body={
+			"access_token": "ACCESS-1", "token_type": "Bearer", "expires_in": 900,
+		})
+		def _api_response(headers):
+			auth = headers["Authorization"]
+			if auth.startswith("Bearer "):
+				return _mock_response(401, json_body={"message": {
+					"ok": False, "error": {"code": "AuthError", "message": "bad token"}}})
+			return _mock_response(200, json_body={"message": {"ok": True, "data": {"ok": 1}}})
+		with patch("requests.post", side_effect=self._route(
+				token_response=token_resp, api_capture=cap, api_response=_api_response)):
+			result = admin_client.get_connection()
+		self.assertEqual(result, {"ok": 1})
+		# Two bearer attempts (initial + re-mint) then the legacy header.
+		auths = [h["Authorization"] for h in cap["api_headers"]]
+		self.assertEqual(auths[0], "Bearer ACCESS-1")
+		self.assertEqual(auths[-1], "token legacy-key:legacy-secret")
+		self.assertGreaterEqual(len(cap["token_calls"]), 2)
+		# The poisoned token must be evicted so the next call re-mints clean.
+		self.assertIsNone(frappe.cache().get_value(admin_client._OAUTH_CACHE_KEY))
+
+	def test_bearer_403_is_terminal_no_remint_no_fallback(self):
+		# A 403 is an authorization denial, not a stale token. The bearer call
+		# must NOT re-mint, NOT fall back to legacy, and NOT evict the cached
+		# token - doing so would storm the token endpoint on every call and
+		# mask the real "forbidden" behind a generic auth retry. Both the
+		# bearer and the legacy api_key:api_secret back the same customer
+		# principal, so the fallback would 403 again anyway.
+		_settings_for_oauth(api_key="legacy-key", api_secret="legacy-secret")
+		cap = {}
+		token_resp = _mock_response(200, json_body={
+			"access_token": "ACCESS-1", "token_type": "Bearer", "expires_in": 900,
+		})
+		def _api_response(headers):
+			return _mock_response(403, json_body={"message": {
+				"ok": False, "error": {"code": "Forbidden", "message": "not allowed"}}})
+		with patch("requests.post", side_effect=self._route(
+				token_response=token_resp, api_capture=cap, api_response=_api_response)):
+			with self.assertRaises(AdminAuthError) as ctx:
+				admin_client.get_connection()
+		# The real 403 is surfaced (status tagged), not retried away.
+		self.assertEqual(ctx.exception.status_code, 403)
+		# Exactly one bearer attempt: no force-refresh, no legacy header.
+		auths = [h["Authorization"] for h in cap["api_headers"]]
+		self.assertEqual(auths, ["Bearer ACCESS-1"])
+		# Token endpoint hit once (initial mint only) - no re-mint storm.
+		self.assertEqual(len(cap["token_calls"]), 1)
+		# Cache retained (not evicted) so the next call reuses the valid token.
+		self.assertIsNotNone(frappe.cache().get_value(admin_client._OAUTH_CACHE_KEY))
+
+	def test_zero_expiry_token_is_not_cached(self):
+		# A token with no usable lifetime must not be cached (else every call
+		# would miss and storm the token endpoint).
+		admin_client._cache_oauth_token({"access_token": "A", "expires_in": 0})
+		self.assertIsNone(frappe.cache().get_value(admin_client._OAUTH_CACHE_KEY))
+		admin_client._cache_oauth_token({"access_token": "B", "expires_in": 900})
+		self.assertEqual(
+			frappe.cache().get_value(admin_client._OAUTH_CACHE_KEY)["access_token"], "B")
+		frappe.cache().delete_value(admin_client._OAUTH_CACHE_KEY)
