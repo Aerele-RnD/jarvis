@@ -6,6 +6,11 @@ import { call } from "frappe-ui"
 export const listConversations = () => call("jarvis.chat.api.list_conversations")
 export const getConversation = (conversation) =>
 	call("jarvis.chat.api.get_conversation", { conversation })
+// Rich outputs: fetch one canvas/chart artifact's render-ready HTML for an
+// assistant message (sandboxed-iframe srcdoc). `name` selects which artifact
+// when a message has several.
+export const getCanvas = (message, name) =>
+	call("jarvis.chat.api.get_canvas", { message, name: name || "" })
 export const createOrFocusEmpty = () => call("jarvis.chat.api.create_or_focus_empty")
 export const archiveConversation = (conversation) =>
 	call("jarvis.chat.api.archive_conversation", { conversation })

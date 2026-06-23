@@ -103,10 +103,17 @@ def get_conversation(conversation: str) -> dict:
 		fields=[
 			"name", "seq", "role", "content", "streaming", "error",
 			"tool_name", "tool_args", "tool_result", "tool_status",
-			"creation",
+			"canvas", "creation",
 		],
 		order_by="seq asc",
 	)
+	# canvas is stored as a JSON string; hand the UI a real list (or None).
+	for m in messages:
+		if m.get("canvas"):
+			try:
+				m["canvas"] = frappe.parse_json(m["canvas"])
+			except Exception:
+				m["canvas"] = None
 	return {
 		"conversation": {
 			"name": doc.name,
@@ -117,6 +124,47 @@ def get_conversation(conversation: str) -> dict:
 			"last_active_at": doc.last_active_at,
 		},
 		"messages": messages,
+	}
+
+
+@frappe.whitelist()
+def get_canvas(message: str, name: str | None = None) -> dict:
+	"""Return one canvas artifact's render-ready content for inline display.
+
+	Permission: the caller must own the parent conversation (same gate as
+	get_conversation). Returns {name, title, type, content} where content is
+	ready to drop into a sandboxed iframe srcdoc — HTML as-is, SVG wrapped in
+	a minimal HTML shell.
+	"""
+	from frappe import _ as _t
+
+	row = frappe.db.get_value(MSG, message, ["conversation", "canvas"], as_dict=True)
+	if not row:
+		frappe.throw(_t("message not found"), frappe.DoesNotExistError)
+	frappe.get_doc(CONV, row.conversation)  # owner-only permission check
+
+	items = frappe.parse_json(row.canvas) if row.canvas else []
+	if not isinstance(items, list) or not items:
+		frappe.throw(_t("no canvas on this message"), frappe.DoesNotExistError)
+	item = next((c for c in items if c.get("name") == name), None) if name else None
+	if item is None:
+		item = items[0]
+
+	fdoc = frappe.get_doc("File", {"file_url": item.get("file_url")})
+	raw = fdoc.get_content()
+	body = raw.decode("utf-8") if isinstance(raw, bytes) else (raw or "")
+	if item.get("type") == "svg":
+		body = (
+			'<!doctype html><meta charset="utf-8">'
+			"<style>html,body{margin:0;height:100%;background:#fff}"
+			"svg{display:block;max-width:100%;height:auto;margin:0 auto}</style>"
+			+ body
+		)
+	return {
+		"name": item.get("name"),
+		"title": item.get("title"),
+		"type": item.get("type"),
+		"content": body,
 	}
 
 

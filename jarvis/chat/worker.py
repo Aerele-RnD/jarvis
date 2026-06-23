@@ -308,6 +308,34 @@ def run_agent_turn(
 		frappe.db.set_value(MSG, assistant_msg.name, "streaming", 0)
 		frappe.db.commit()
 
+		# Rich outputs: detect any canvas/chart artifact the agent produced
+		# this turn (HTML or SVG), fetch it from the gateway, persist it as a
+		# private File, and publish a 'canvas' event so the UI renders it
+		# inline. Managed mode only — self-hosted chats over the HTTP surface
+		# have no gateway canvas route. Failure here never fails the turn.
+		if not selfhost.is_self_hosted():
+			try:
+				from jarvis.chat import canvas as canvas_mod
+
+				final_content = frappe.db.get_value(MSG, assistant_msg.name, "content") or ""
+				canvas_token = settings.get_password("agent_token", raise_exception=False) or ""
+				canvas_items = canvas_mod.persist_canvases(
+					assistant_msg.name, final_content, settings.agent_url or "", canvas_token,
+				)
+				if canvas_items:
+					publish_to_user(user, {
+						"kind": "canvas",
+						"conversation_id": conversation_id,
+						"message_id": assistant_msg.name,
+						"run_id": run_id,
+						"items": canvas_items,
+					})
+			except Exception:
+				frappe.log_error(
+					title="chat worker: canvas persist failed",
+					message=frappe.get_traceback(),
+				)
+
 	except Exception as e:
 		# Last-resort backstop. Any exception that wasn't an
 		# OpenclawUnreachableError (e.g. cryptography.InvalidKey from

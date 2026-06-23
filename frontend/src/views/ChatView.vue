@@ -145,6 +145,23 @@
 									</div>
 								</div>
 								<div v-else class="jv-md" style="font-size:14px;line-height:1.6;color:var(--text);" v-html="render(m.content)"></div>
+								<!-- rich outputs: agent canvas/chart artifacts rendered inline (sandboxed) -->
+								<div v-for="cv in (m.canvas || [])" :key="cv.name" class="jv-canvas">
+									<div class="jv-canvas-bar">
+										<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18" /><path d="M18 9l-5 5-3-3-4 4" /></svg>
+										<span>{{ cv.title }}</span>
+										<span class="jv-canvas-type">{{ cv.type }}</span>
+									</div>
+									<iframe
+										v-if="canvasContent[m.name + '::' + cv.name]"
+										:srcdoc="canvasContent[m.name + '::' + cv.name]"
+										sandbox="allow-scripts allow-popups"
+										class="jv-canvas-frame"
+										loading="lazy"
+										title="Jarvis chart"
+									></iframe>
+									<div v-else class="jv-canvas-loading">Rendering {{ cv.title }}…</div>
+								</div>
 								<div v-if="runMeta[m.name] && !m.error" class="jv-meta">
 									<span :title="(runMeta[m.name].names || []).join(', ')"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 1 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></svg>{{ runMeta[m.name].tools }} tool{{ runMeta[m.name].tools === 1 ? "" : "s" }}</span>
 									<span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>{{ (runMeta[m.name].ms / 1000).toFixed(1) }}s</span>
@@ -247,6 +264,7 @@ const currentRunId = ref(null)
 const stoppedRunId = ref(null)
 const activeTools = ref([]) // [{ id, name, status }] for the in-flight run
 const runMeta = ref({}) // { [message_id]: { ms, tools, names } } — survives reloads
+const canvasContent = ref({}) // { `${msgName}::${canvasName}`: render-ready html for the iframe srcdoc }
 const pendingFiles = ref([]) // [{ file_url, file_name }] attachments to send
 const uploading = ref(false)
 const fileInput = ref(null)
@@ -321,6 +339,22 @@ const suggestions = [
 function render(text) {
 	return renderMarkdown(text || "")
 }
+// Lazily fetch each canvas artifact's render-ready HTML and cache it by
+// `${msgName}::${canvasName}` so the inline iframe srcdoc can bind to it.
+async function ensureCanvas(m) {
+	if (!m || !Array.isArray(m.canvas) || !m.canvas.length) return
+	for (const cv of m.canvas) {
+		const key = m.name + "::" + cv.name
+		if (canvasContent.value[key]) continue
+		try {
+			const r = await api.getCanvas(m.name, cv.name)
+			if (r && r.content) canvasContent.value = { ...canvasContent.value, [key]: r.content }
+		} catch (e) {
+			/* leave it in the loading state; a reload retries */
+		}
+	}
+	nextTick(scrollBottom)
+}
 function scrollBottom() {
 	const el = threadEl.value
 	if (el) el.scrollTop = el.scrollHeight
@@ -373,6 +407,9 @@ async function loadConversation(id) {
 	const d = await api.getConversation(id)
 	messages.value = d?.messages || []
 	modelOverride.value = d?.model_override || ""
+	for (const m of messages.value) {
+		if (Array.isArray(m.canvas) && m.canvas.length) ensureCanvas(m)
+	}
 	await nextTick()
 	scrollBottom()
 }
@@ -498,6 +535,15 @@ function onEvent(p) {
 		case "tool:end": {
 			const t = activeTools.value.find((x) => x.id === p.tool_call_id)
 			if (t) t.status = p.status || "completed"
+			break
+		}
+		case "canvas": {
+			// Agent produced a chart/canvas this turn — attach + render inline.
+			const cm = messages.value.find((x) => x.name === p.message_id)
+			if (cm) {
+				cm.canvas = p.items
+				ensureCanvas(cm)
+			}
 			break
 		}
 		case "run:end": {
@@ -682,6 +728,14 @@ onBeforeUnmount(() => {
 .jv-toolrow b { font-weight: 600; color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 .jv-spin { animation: jv-spin 0.8s linear infinite; }
 @keyframes jv-spin { to { transform: rotate(360deg); } }
+
+/* inline canvas/chart artifacts (rendered sandboxed) */
+.jv-canvas { margin-top: 12px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface); }
+.jv-canvas-bar { display: flex; align-items: center; gap: 7px; padding: 8px 12px; font-size: 12.5px; font-weight: 550; color: var(--text-2); background: var(--surface-1); border-bottom: 1px solid var(--border); }
+.jv-canvas-bar svg { color: var(--text-3); flex: none; }
+.jv-canvas-type { margin-left: auto; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
+.jv-canvas-frame { width: 100%; height: 440px; border: 0; display: block; background: #fff; }
+.jv-canvas-loading { padding: 26px 14px; text-align: center; font-size: 12.5px; color: var(--text-3); }
 
 /* markdown content → the imported design's table look */
 .jv-md :deep(.jv-md-p) { margin: 0 0 10px; }
