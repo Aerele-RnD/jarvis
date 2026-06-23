@@ -604,6 +604,7 @@ def _build_select(select_spec: list, alias_map: dict) -> list:
 				built = _expr.build_expr(
 					item["expr"],
 					lambda ref: _resolve_field(ref, alias_map),
+					lambda pr: _build_predicate(pr, alias_map),
 				)
 				out.append(built.as_(item["as"]))
 			else:
@@ -655,6 +656,7 @@ def _build_aggregate(spec: dict, alias_map: dict):
 		inner = _expr.build_expr(
 			agg_expr,
 			lambda ref: _resolve_field(ref, alias_map),
+			lambda pr: _build_predicate(pr, alias_map),
 		)
 		expr = _AGGREGATES[agg_name](inner)
 	else:
@@ -717,6 +719,7 @@ def _build_predicate(p: dict, alias_map: dict, depth: int = 1) -> Criterion:
 		lhs = _expr.build_expr(
 			p["expr"],
 			lambda ref: _resolve_field(ref, alias_map),
+			lambda pr: _build_predicate(pr, alias_map),
 		)
 	else:
 		field_ref = p.get("field")
