@@ -33,7 +33,7 @@ def get_list(
     Row guard: results above ``ROW_GUARD`` (200) rows raise
     ``ResultTooLargeError`` unless ``confirm_large=True``. The agent
     should respond by narrowing the filter, aggregating the question
-    via ``run_query``, or - for genuine export workflows - retrying
+    via ``query``, or - for genuine export workflows - retrying
     with ``confirm_large=True``.
     """
     if not doctype:

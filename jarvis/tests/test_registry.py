@@ -14,7 +14,7 @@ class TestRegistry(FrappeTestCase):
                 "get_doc",
                 "get_list",
                 "run_report",
-                "run_query",
+                "query",
                 "update_doc",
                 "create_doc",
                 "submit_doc",
