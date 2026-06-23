@@ -150,22 +150,44 @@ def get_canvas(message: str, name: str | None = None) -> dict:
 	if item is None:
 		item = items[0]
 
+	typ = item.get("type")
 	fdoc = frappe.get_doc("File", {"file_url": item.get("file_url")})
 	raw = fdoc.get_content()
-	body = raw.decode("utf-8") if isinstance(raw, bytes) else (raw or "")
-	if item.get("type") == "svg":
-		body = (
-			'<!doctype html><meta charset="utf-8">'
-			"<style>html,body{margin:0;height:100%;background:#fff}"
-			"svg{display:block;max-width:100%;height:auto;margin:0 auto}</style>"
-			+ body
-		)
-	return {
-		"name": item.get("name"),
-		"title": item.get("title"),
-		"type": item.get("type"),
-		"content": body,
+	out = {
+		"name": item.get("name"), "title": item.get("title"),
+		"type": typ, "file_url": item.get("file_url"),
 	}
+	if typ in ("html", "svg"):
+		# Rendered inline in a sandboxed iframe srcdoc.
+		body = raw.decode("utf-8") if isinstance(raw, bytes) else (raw or "")
+		if typ == "svg":
+			body = (
+				'<!doctype html><meta charset="utf-8">'
+				"<style>html,body{margin:0;height:100%;background:#fff}"
+				"svg{display:block;max-width:100%;height:auto;margin:0 auto}</style>"
+				+ body
+			)
+		out["content"] = body
+	else:
+		# pdf / image / file → base64 data URL (used by <iframe>/<img>/download).
+		import base64
+
+		data = raw if isinstance(raw, bytes) else (raw or "").encode("utf-8")
+		out["data_url"] = f"data:{_artifact_mime(item)};base64," + base64.b64encode(data).decode("ascii")
+	return out
+
+
+def _artifact_mime(item: dict) -> str:
+	"""Best-effort MIME for a non-text artifact, from its extension."""
+	ext = (item.get("name") or "").rsplit(".", 1)[-1].lower()
+	return {
+		"pdf": "application/pdf",
+		"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+		"gif": "image/gif", "webp": "image/webp", "svg": "image/svg+xml",
+		"xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+		"xls": "application/vnd.ms-excel", "csv": "text/csv",
+		"json": "application/json", "txt": "text/plain", "md": "text/markdown",
+	}.get(ext, "application/octet-stream")
 
 
 @frappe.whitelist()
@@ -348,6 +370,57 @@ def get_chat_ui_settings() -> dict:
 		"subscription_models": _SUBSCRIPTION_MODELS,
 		"default_models": _DEFAULT_MODEL,
 	}
+
+
+def _est_tokens(text: str | None) -> int:
+	"""Rough token estimate for ``text`` (~4 chars/token, the standard English
+	approximation). We can't do better: openclaw's gateway stream doesn't emit
+	real per-turn token counts, so everything here is clearly labelled an
+	estimate in the UI."""
+	if not text:
+		return 0
+	return (len(text) + 3) // 4
+
+
+@frappe.whitelist()
+def get_usage(conversation: str | None = None) -> dict:
+	"""Estimated token usage for the current user — this chat, this month, and
+	all-time — plus the monthly budget so the UI can draw a meter.
+
+	ESTIMATE ONLY (see _est_tokens): summed from stored message text
+	(content + tool args/results), not real API token counts, which openclaw
+	doesn't expose. Owner-scoped: only the caller's own conversations.
+	"""
+	from frappe.utils import get_datetime, get_first_day, now_datetime
+
+	user = frappe.session.user
+	convs = frappe.get_all(CONV, filters={"owner": user}, pluck="name")
+	budget = int(frappe.db.get_single_value("Jarvis Settings", "token_budget_monthly") or 0)
+	month_start = get_datetime(get_first_day(now_datetime()))
+	out = {
+		"estimated": True,
+		"chat_tokens": 0,
+		"month_tokens": 0,
+		"total_tokens": 0,
+		"budget_monthly": budget,
+		"month_label": now_datetime().strftime("%B %Y"),
+	}
+	if not convs:
+		return out
+
+	rows = frappe.get_all(
+		MSG,
+		filters={"conversation": ["in", convs]},
+		fields=["conversation", "content", "tool_args", "tool_result", "creation"],
+	)
+	for m in rows:
+		t = _est_tokens(m.content) + _est_tokens(m.tool_args) + _est_tokens(m.tool_result)
+		out["total_tokens"] += t
+		if m.creation and get_datetime(m.creation) >= month_start:
+			out["month_tokens"] += t
+		if conversation and m.conversation == conversation:
+			out["chat_tokens"] += t
+	return out
 
 
 @frappe.whitelist()
