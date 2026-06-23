@@ -254,6 +254,203 @@ _register(
 )
 
 
+# ---- Phase 2: NULL handling + arithmetic ----------------------------
+
+
+def _build_coalesce(args: list, dialect: str) -> Term:
+	"""COALESCE returns the first non-NULL arg. pypika.Coalesce
+	accepts a variable number of positional args and emits standard
+	SQL across all three dialects."""
+	return fn.Coalesce(*args)
+
+
+def _build_ifnull(args: list, dialect: str) -> Term:
+	"""IFNULL(x, default) is the 2-arg sibling of COALESCE. Postgres
+	calls it COALESCE; SQLite calls it IFNULL natively; MariaDB has
+	both. pypika emits IFNULL on MariaDB/SQLite and COALESCE on
+	Postgres via the fn.IfNull class - or rather, fn.IfNull always
+	emits IFNULL which Postgres doesn't have. Safer to route through
+	Coalesce uniformly."""
+	x, default = args
+	return fn.Coalesce(x, default)
+
+
+def _build_binop(op: str):
+	"""Factory for binary arithmetic builders. pypika.Field supports
+	Python operators, so the build is just ``a OP b``. Order of
+	args matches the spec (a, b)."""
+	def _b(args: list, dialect: str) -> Term:
+		a, b = args
+		if op == "+":
+			return a + b
+		if op == "-":
+			return a - b
+		if op == "*":
+			return a * b
+		if op == "/":
+			return a / b
+		raise RuntimeError(f"unreachable binop {op!r}")
+	return _b
+
+
+def _build_neg(args: list, dialect: str) -> Term:
+	(x,) = args
+	# pypika supports unary negation as `0 - x` portable across
+	# dialects; using `-x` requires Term.__neg__ which pypika
+	# doesn't always wire up consistently across versions.
+	return 0 - x
+
+
+def _build_abs(args: list, dialect: str) -> Term:
+	(x,) = args
+	return fn.Abs(x)
+
+
+def _build_round(args: list, dialect: str) -> Term:
+	"""ROUND(x, digits). pypika has no Round class; use the generic
+	Function constructor. ROUND is uniform across MariaDB / Postgres
+	/ SQLite (all accept the same 2-arg signature)."""
+	x, digits = args
+	from pypika.terms import Function
+	return Function("ROUND", x, digits)
+
+
+def _build_ceil(args: list, dialect: str) -> Term:
+	(x,) = args
+	from pypika.terms import Function
+	# MariaDB/Postgres use CEIL; SQLite uses CEIL via the math
+	# extension (loaded by default in 3.35+). Stick with CEIL across
+	# the board; production is MariaDB anyway.
+	return Function("CEIL", x)
+
+
+def _build_floor(args: list, dialect: str) -> Term:
+	(x,) = args
+	return fn.Floor(x)
+
+
+_register(
+	"coalesce",
+	arity=(2, None),
+	args_uniform="expr",
+	builder=_build_coalesce,
+)
+_register(
+	"ifnull",
+	arity=(2, 2),
+	args=["expr", "expr"],
+	builder=_build_ifnull,
+)
+_register("add", arity=(2, 2), args=["expr", "expr"], builder=_build_binop("+"))
+_register("sub", arity=(2, 2), args=["expr", "expr"], builder=_build_binop("-"))
+_register("mul", arity=(2, 2), args=["expr", "expr"], builder=_build_binop("*"))
+_register("div", arity=(2, 2), args=["expr", "expr"], builder=_build_binop("/"))
+_register("neg", arity=(1, 1), args=["expr"], builder=_build_neg)
+_register("abs", arity=(1, 1), args=["expr"], builder=_build_abs)
+_register(
+	"round",
+	arity=(2, 2),
+	args=["expr", "literal"],
+	builder=_build_round,
+)
+_register("ceil", arity=(1, 1), args=["expr"], builder=_build_ceil)
+_register("floor", arity=(1, 1), args=["expr"], builder=_build_floor)
+
+
+# ---- Phase 3: CASE WHEN ---------------------------------------------
+
+
+# CASE breaks the "args are expressions" pattern. Its args are clauses:
+# ``{"when": <predicate>, "then": <expr>}`` and one optional
+# ``{"else": <expr>}`` terminator. The validator and translator both
+# special-case ``case`` to walk the clauses, with the ``when``
+# predicate handed off to ``query.py``'s ``_build_predicate`` machinery
+# via the ``build_predicate`` callback (same pattern as
+# ``resolve_field``, to avoid a circular import).
+#
+# The case builder is registered with a stub builder; ``build_expr``
+# checks for ``name == "case"`` and routes to the case-specific
+# translator instead of calling the registry's builder directly.
+def _build_case_stub(args: list, dialect: str) -> Term:
+	raise RuntimeError(
+		"_build_case_stub should be unreachable - build_expr routes "
+		"the 'case' function to its own translator"
+	)
+
+
+_register(
+	"case",
+	# Arity is on clauses; 1+ clauses (at least one when/then or one
+	# else). The validator (case branch) enforces the shape more
+	# tightly than the generic arity check.
+	arity=(1, None),
+	# args_uniform marks each clause as a "case_clause" - a special
+	# kind validated by the case-specific branch in validate_expr,
+	# not by _check_arg_kind.
+	args_uniform="case_clause",
+	builder=_build_case_stub,
+)
+
+
+# ---- Phase 4: string + numeric helpers ------------------------------
+
+
+def _build_concat(args: list, dialect: str) -> Term:
+	"""CONCAT(a, b, ...) returns a string concatenation. pypika.Concat
+	works on MariaDB and SQLite natively; Postgres CONCAT also exists
+	but treats NULL as empty (unlike `||` which propagates NULL).
+	Use the function form across the board."""
+	return fn.Concat(*args)
+
+
+def _build_lower(args: list, dialect: str) -> Term:
+	(x,) = args
+	return fn.Lower(x)
+
+
+def _build_upper(args: list, dialect: str) -> Term:
+	(x,) = args
+	return fn.Upper(x)
+
+
+def _build_trim(args: list, dialect: str) -> Term:
+	(x,) = args
+	return fn.Trim(x)
+
+
+def _build_length(args: list, dialect: str) -> Term:
+	(x,) = args
+	return fn.Length(x)
+
+
+def _build_substring(args: list, dialect: str) -> Term:
+	"""SUBSTRING(x, start, length). pypika.Substring expects keyword
+	args in some versions; use the generic Function constructor for
+	stability. SUBSTRING is SQL-standard and supported by all three
+	dialects."""
+	x, start, length = args
+	from pypika.terms import Function
+	return Function("SUBSTRING", x, start, length)
+
+
+_register(
+	"concat",
+	arity=(2, None),
+	args_uniform="expr",
+	builder=_build_concat,
+)
+_register("lower", arity=(1, 1), args=["expr"], builder=_build_lower)
+_register("upper", arity=(1, 1), args=["expr"], builder=_build_upper)
+_register("trim", arity=(1, 1), args=["expr"], builder=_build_trim)
+_register("length", arity=(1, 1), args=["expr"], builder=_build_length)
+_register(
+	"substring",
+	arity=(3, 3),
+	args=["expr", "literal", "literal"],
+	builder=_build_substring,
+)
+
+
 # ---- Public API: validate + build ------------------------------------
 
 
@@ -349,7 +546,13 @@ def validate_expr(node: Any, depth: int = 1) -> None:
 			f"expression {name!r} takes {arity_min}..{max_s} args, "
 			f"got {len(args)}"
 		)
-	# Per-arg kind check.
+	# CASE special shape: args are clause dicts, not expression nodes.
+	# Each clause is either {"when": <pred>, "then": <expr>} OR
+	# {"else": <expr>}. At most one "else", and it must be terminal.
+	if name == "case":
+		_validate_case_clauses(args, depth=depth)
+		return
+	# Per-arg kind check (generic function path).
 	expected_kinds = entry.get("args", [])
 	uniform = entry.get("args_uniform")
 	for i, a in enumerate(args):
@@ -373,6 +576,72 @@ def validate_expr(node: Any, depth: int = 1) -> None:
 				)
 		# Recurse for sub-expressions.
 		validate_expr(a, depth=depth + 1)
+
+
+def _validate_case_clauses(clauses: list, depth: int) -> None:
+	"""Validate the special-shape CASE clause list. Each clause is
+	either ``{"when": <predicate>, "then": <expr>}`` or
+	``{"else": <expr>}``. Rules:
+
+	- At most one ``"else"`` clause, and if present it must be the last
+	  entry (matches SQL CASE semantics).
+	- ``when`` predicates are validated structurally here; full
+	  alias-aware validation happens at translate time via the
+	  ``build_predicate`` callback (predicates can carry expressions
+	  themselves, but we don't validate those at this layer).
+	- ``then`` / ``else`` values are expressions; recurse.
+	- The ``op`` inside ``when`` cannot be ``exists`` / ``not exists``;
+	  CASE-inside-EXISTS would be a recursion sink and is not a
+	  realistic shape for v1.
+	"""
+	if not clauses:
+		raise InvalidArgumentError(
+			"case requires at least one clause "
+			"({when: ..., then: ...} or {else: ...})"
+		)
+	seen_else = False
+	for i, clause in enumerate(clauses):
+		if not isinstance(clause, dict):
+			raise InvalidArgumentError(
+				f"case clause {i} must be a dict, got {type(clause).__name__}"
+			)
+		if "else" in clause:
+			if seen_else:
+				raise InvalidArgumentError("case can have at most one 'else'")
+			if i != len(clauses) - 1:
+				raise InvalidArgumentError(
+					"case 'else' clause must be the last entry"
+				)
+			seen_else = True
+			other = set(clause) - {"else"}
+			if other:
+				raise InvalidArgumentError(
+					f"case 'else' clause cannot also carry {sorted(other)!r}"
+				)
+			validate_expr(clause["else"], depth=depth + 1)
+			continue
+		# Otherwise expect when/then.
+		if "when" not in clause or "then" not in clause:
+			raise InvalidArgumentError(
+				f"case clause {i} must carry both 'when' and 'then' "
+				f"(or be a terminal {{else: ...}} clause)"
+			)
+		other = set(clause) - {"when", "then"}
+		if other:
+			raise InvalidArgumentError(
+				f"case clause {i} cannot also carry {sorted(other)!r}"
+			)
+		pred = clause["when"]
+		if not isinstance(pred, dict):
+			raise InvalidArgumentError(
+				f"case clause {i} 'when' must be a predicate dict"
+			)
+		if pred.get("op") in ("exists", "not exists"):
+			raise InvalidArgumentError(
+				f"case clause {i} 'when' cannot use 'exists'/'not exists' "
+				f"(sub-queries inside CASE are not supported)"
+			)
+		validate_expr(clause["then"], depth=depth + 1)
 
 
 def _check_arg_kind(fn_name: str, idx: int, expected_kind: str, node: Any) -> None:
@@ -410,13 +679,23 @@ def _check_arg_kind(fn_name: str, idx: int, expected_kind: str, node: Any) -> No
 	raise RuntimeError(f"unreachable: bad expected_kind {expected_kind!r}")
 
 
-def build_expr(node: dict, resolve_field: Callable[[str], Term]) -> Term:
+def build_expr(
+	node: dict,
+	resolve_field: Callable[[str], Term],
+	build_predicate: Callable[[dict], Term] | None = None,
+) -> Term:
 	"""Translate a validated expression tree to a pypika Term.
 
 	``resolve_field`` is the field-resolution callback - in practice
 	this is ``lambda ref: _resolve_field(ref, alias_map)`` from
 	query.py, but we keep this module decoupled from query.py to
 	avoid circular imports.
+
+	``build_predicate`` is the predicate-translation callback,
+	required only when the tree contains a ``case`` node (CASE WHEN
+	clauses carry predicate dicts as their ``when`` values). Callers
+	in query.py pass ``lambda p: _build_predicate(p, alias_map)``.
+	If absent and a ``case`` node is encountered, raises.
 
 	Validation must have run first; this builder assumes well-formed
 	input and emits AttributeError on misuse rather than user-facing
@@ -434,6 +713,14 @@ def build_expr(node: dict, resolve_field: Callable[[str], Term]) -> Term:
 		return _literal_term(v)
 	# Function call.
 	name = node["fn"]
+	# CASE special path: args are clause dicts, not expression nodes.
+	if name == "case":
+		if build_predicate is None:
+			raise RuntimeError(
+				"build_expr requires a build_predicate callback when the "
+				"tree contains a 'case' node"
+			)
+		return _build_case(node.get("args") or [], resolve_field, build_predicate)
 	entry = _REGISTRY[name]
 	dialect = _current_dialect()
 	# Translate each arg first.
@@ -444,8 +731,32 @@ def build_expr(node: dict, resolve_field: Callable[[str], Term]) -> Term:
 			# need them as ints / strings rather than pypika Terms.
 			translated.append(a["literal"])
 		else:
-			translated.append(build_expr(a, resolve_field))
+			translated.append(build_expr(a, resolve_field, build_predicate))
 	return entry["builder"](translated, dialect)
+
+
+def _build_case(
+	clauses: list,
+	resolve_field: Callable[[str], Term],
+	build_predicate: Callable[[dict], Term],
+) -> Term:
+	"""Translate a validated CASE clause list to a pypika.Case Term.
+
+	pypika exposes Case() with a fluent .when(criterion, value).else_
+	(value) API. Iterate clauses; for each ``{"when": pred, "then":
+	expr}`` call .when(build_predicate(pred), build_expr(expr)); for
+	the terminal ``{"else": expr}`` call .else_(build_expr(expr))."""
+	from pypika.terms import Case
+	case = Case()
+	for clause in clauses:
+		if "else" in clause:
+			else_term = build_expr(clause["else"], resolve_field, build_predicate)
+			case = case.else_(else_term)
+			continue
+		criterion = build_predicate(clause["when"])
+		then_term = build_expr(clause["then"], resolve_field, build_predicate)
+		case = case.when(criterion, then_term)
+	return case
 
 
 def _literal_term(v: Any) -> Term:

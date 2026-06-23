@@ -1372,3 +1372,380 @@ class TestQueryExprDSLPhase1Dates(FrappeTestCase):
 					}],
 				})
 			self.assertIn("expr", str(cm.exception).lower())
+
+
+class TestQueryExprDSLPhase2NullAndArithmetic(FrappeTestCase):
+	"""Expression DSL Phase 2: NULL handling + arithmetic."""
+
+	def _build_sql(self, spec: dict) -> str:
+		with patch("frappe.has_permission", return_value=True), \
+		     patch("frappe.database.query.Engine") as fake_engine:
+			fake_engine.return_value.get_permission_conditions.return_value = None
+			with patch("pypika.queries.QueryBuilder.run", return_value=[]):
+				result = query(spec)
+		return result["sql"]
+
+	def test_coalesce_two_args(self):
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": [{
+				"expr": {
+					"fn": "coalesce",
+					"args": [{"field": "dt.module"}, {"literal": "(unset)"}],
+				},
+				"as": "module_or_unset",
+			}],
+		})
+		self.assertIn("COALESCE", sql.upper())
+
+	def test_coalesce_variadic_three_args(self):
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": [{
+				"expr": {
+					"fn": "coalesce",
+					"args": [
+						{"field": "dt.module"},
+						{"field": "dt.name"},
+						{"literal": "fallback"},
+					],
+				},
+				"as": "x",
+			}],
+		})
+		self.assertIn("COALESCE", sql.upper())
+
+	def test_ifnull(self):
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": [{
+				"expr": {
+					"fn": "ifnull",
+					"args": [{"field": "dt.module"}, {"literal": "Other"}],
+				},
+				"as": "module",
+			}],
+		})
+		self.assertIn("COALESCE", sql.upper())
+
+	def test_arithmetic_mul(self):
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": [{
+				"expr": {"fn": "mul", "args": [{"field": "dt.idx"}, {"literal": 100}]},
+				"as": "scaled",
+			}],
+		})
+		self.assertIn("*", sql)
+		self.assertIn("100", sql)
+
+	def test_arithmetic_add_sub_div(self):
+		for op_name, op_sym in [("add", "+"), ("sub", "-"), ("div", "/")]:
+			sql = self._build_sql({
+				"from": "DocType", "alias": "dt",
+				"select": [{
+					"expr": {"fn": op_name, "args": [{"field": "dt.idx"}, {"literal": 2}]},
+					"as": "x",
+				}],
+			})
+			self.assertIn(op_sym, sql, f"{op_name} should emit {op_sym!r}")
+
+	def test_neg_emits_unary_negation(self):
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": [{
+				"expr": {"fn": "neg", "args": [{"field": "dt.idx"}]},
+				"as": "x",
+			}],
+		})
+		self.assertIn("0", sql)
+
+	def test_abs(self):
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": [{"expr": {"fn": "abs", "args": [{"field": "dt.idx"}]}, "as": "x"}],
+		})
+		self.assertIn("ABS", sql.upper())
+
+	def test_round(self):
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": [{
+				"expr": {"fn": "round", "args": [{"field": "dt.idx"}, {"literal": 2}]},
+				"as": "x",
+			}],
+		})
+		self.assertIn("ROUND", sql.upper())
+
+	def test_round_rejects_non_literal_digits(self):
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError):
+				query({
+					"from": "DocType",
+					"select": [{
+						"expr": {"fn": "round", "args": [{"field": "x"}, {"field": "y"}]},
+						"as": "x",
+					}],
+				})
+
+	def test_ceil_and_floor(self):
+		for fn_name, expected in [("ceil", "CEIL"), ("floor", "FLOOR")]:
+			sql = self._build_sql({
+				"from": "DocType", "alias": "dt",
+				"select": [{"expr": {"fn": fn_name, "args": [{"field": "dt.idx"}]}, "as": "x"}],
+			})
+			self.assertIn(expected, sql.upper())
+
+	def test_nested_arithmetic_in_aggregate(self):
+		"""SUM(qty * rate) - the flagship combination."""
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": [{
+				"agg": "sum",
+				"expr": {"fn": "mul", "args": [{"field": "dt.idx"}, {"literal": 10}]},
+				"as": "total",
+			}],
+		})
+		self.assertIn("SUM", sql.upper())
+		self.assertIn("*", sql)
+
+
+class TestQueryExprDSLPhase3CaseWhen(FrappeTestCase):
+	"""Expression DSL Phase 3: CASE WHEN conditional aggregation."""
+
+	def _build_sql(self, spec: dict) -> str:
+		with patch("frappe.has_permission", return_value=True), \
+		     patch("frappe.database.query.Engine") as fake_engine:
+			fake_engine.return_value.get_permission_conditions.return_value = None
+			with patch("pypika.queries.QueryBuilder.run", return_value=[]):
+				result = query(spec)
+		return result["sql"]
+
+	def test_case_when_with_else(self):
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": [{
+				"expr": {
+					"fn": "case",
+					"args": [
+						{"when": {"field": "dt.module", "op": "=", "value": "Core"},
+						 "then": {"literal": "core"}},
+						{"else": {"literal": "other"}},
+					],
+				},
+				"as": "bucket",
+			}],
+		})
+		upper = sql.upper()
+		self.assertIn("CASE", upper)
+		self.assertIn("WHEN", upper)
+		self.assertIn("ELSE", upper)
+		self.assertIn("END", upper)
+
+	def test_case_when_only_no_else(self):
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": [{
+				"expr": {
+					"fn": "case",
+					"args": [
+						{"when": {"field": "dt.module", "op": "=", "value": "Core"},
+						 "then": {"literal": "core"}},
+					],
+				},
+				"as": "bucket",
+			}],
+		})
+		self.assertIn("CASE", sql.upper())
+		self.assertIn("WHEN", sql.upper())
+
+	def test_case_inside_sum_for_conditional_aggregate(self):
+		"""SUM(CASE WHEN ... THEN ... ELSE 0) - killer use case."""
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": [{
+				"agg": "sum",
+				"expr": {
+					"fn": "case",
+					"args": [
+						{"when": {"field": "dt.module", "op": "=", "value": "Core"},
+						 "then": {"field": "dt.idx"}},
+						{"else": {"literal": 0}},
+					],
+				},
+				"as": "core_idx_total",
+			}],
+		})
+		upper = sql.upper()
+		self.assertIn("SUM", upper)
+		self.assertIn("CASE", upper)
+		self.assertIn("WHEN", upper)
+
+	def test_case_rejects_empty_clauses(self):
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError) as cm:
+				query({
+					"from": "DocType",
+					"select": [{"expr": {"fn": "case", "args": []}, "as": "x"}],
+				})
+			self.assertIn("case", str(cm.exception).lower())
+
+	def test_case_rejects_multiple_else(self):
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError) as cm:
+				query({
+					"from": "DocType",
+					"select": [{
+						"expr": {
+							"fn": "case",
+							"args": [
+								{"else": {"literal": 1}},
+								{"else": {"literal": 2}},
+							],
+						},
+						"as": "x",
+					}],
+				})
+			self.assertIn("else", str(cm.exception).lower())
+
+	def test_case_rejects_else_not_last(self):
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError) as cm:
+				query({
+					"from": "DocType",
+					"select": [{
+						"expr": {
+							"fn": "case",
+							"args": [
+								{"else": {"literal": 0}},
+								{"when": {"field": "module", "op": "=", "value": "Core"},
+								 "then": {"literal": 1}},
+							],
+						},
+						"as": "x",
+					}],
+				})
+			self.assertIn("last", str(cm.exception).lower())
+
+	def test_case_rejects_when_without_then(self):
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError) as cm:
+				query({
+					"from": "DocType",
+					"select": [{
+						"expr": {
+							"fn": "case",
+							"args": [{"when": {"field": "module", "op": "=", "value": "Core"}}],
+						},
+						"as": "x",
+					}],
+				})
+			self.assertIn("when", str(cm.exception).lower())
+
+	def test_case_rejects_exists_in_when(self):
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError) as cm:
+				query({
+					"from": "DocType", "alias": "dt",
+					"select": [{
+						"expr": {
+							"fn": "case",
+							"args": [{
+								"when": {"op": "exists", "value": {"from": "DocField"}},
+								"then": {"literal": 1},
+							}],
+						},
+						"as": "x",
+					}],
+				})
+			self.assertIn("exists", str(cm.exception).lower())
+
+
+class TestQueryExprDSLPhase4StringHelpers(FrappeTestCase):
+	"""Expression DSL Phase 4: string + numeric helpers."""
+
+	def _build_sql(self, spec: dict) -> str:
+		with patch("frappe.has_permission", return_value=True), \
+		     patch("frappe.database.query.Engine") as fake_engine:
+			fake_engine.return_value.get_permission_conditions.return_value = None
+			with patch("pypika.queries.QueryBuilder.run", return_value=[]):
+				result = query(spec)
+		return result["sql"]
+
+	def test_concat_two_args(self):
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": [{
+				"expr": {"fn": "concat", "args": [{"field": "dt.module"}, {"literal": "/"}]},
+				"as": "labelled",
+			}],
+		})
+		self.assertIn("CONCAT", sql.upper())
+
+	def test_concat_variadic_three_args(self):
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": [{
+				"expr": {
+					"fn": "concat",
+					"args": [
+						{"field": "dt.module"},
+						{"literal": "/"},
+						{"field": "dt.name"},
+					],
+				},
+				"as": "full",
+			}],
+		})
+		self.assertIn("CONCAT", sql.upper())
+
+	def test_lower_for_case_insensitive_match(self):
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": ["dt.name"],
+			"where": [{
+				"expr": {"fn": "lower", "args": [{"field": "dt.name"}]},
+				"op": "like",
+				"value": "%customer%",
+			}],
+		})
+		self.assertIn("LOWER", sql.upper())
+		self.assertIn("LIKE", sql.upper())
+
+	def test_upper_trim_length(self):
+		for fn_name, expected in [("upper", "UPPER"), ("trim", "TRIM"), ("length", "LENGTH")]:
+			sql = self._build_sql({
+				"from": "DocType", "alias": "dt",
+				"select": [{
+					"expr": {"fn": fn_name, "args": [{"field": "dt.module"}]},
+					"as": "x",
+				}],
+			})
+			self.assertIn(expected, sql.upper())
+
+	def test_substring(self):
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": [{
+				"expr": {
+					"fn": "substring",
+					"args": [{"field": "dt.module"}, {"literal": 1}, {"literal": 3}],
+				},
+				"as": "prefix",
+			}],
+		})
+		self.assertIn("SUBSTRING", sql.upper())
+
+	def test_substring_rejects_non_literal_offsets(self):
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError):
+				query({
+					"from": "DocType",
+					"select": [{
+						"expr": {
+							"fn": "substring",
+							"args": [{"field": "x"}, {"field": "y"}, {"literal": 3}],
+						},
+						"as": "x",
+					}],
+				})
