@@ -10,6 +10,10 @@ node_modules/
 **/node_modules/
 jarvis/public/node_modules/
 jarvis/public/node_modules
+# Root yarn.lock has no production role here (the frontend has its own
+# frontend/package-lock.json); a stray `yarn`/`npx` in the repo root would
+# otherwise pull gemini-cli + keytar onto contributor machines.
+yarn.lock
 
 # graphify (knowledge-graph index; local-only)
 graphify-out/
