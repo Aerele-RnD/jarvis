@@ -9,19 +9,15 @@ from __future__ import annotations
 import frappe
 
 from jarvis.exceptions import InvalidArgumentError
-from jarvis.tools import require_doctype_and_name
+from jarvis.tools import desk_action
 
 
+@desk_action(check_user_arg="user")
 def unshare_doc(doctype: str, name: str, user: str) -> dict:
     """Remove the DocShare granting ``user`` access to ``doctype/name``.
     Returns ``{doctype, name, user}``."""
-    require_doctype_and_name(doctype, name)
     if not user:
         raise InvalidArgumentError("user is required")
-    if not frappe.db.exists(doctype, name):
-        raise InvalidArgumentError(f"unknown {doctype}: {name}")
-    if not frappe.db.exists("User", user):
-        raise InvalidArgumentError(f"unknown User: {user}")
 
     from frappe.share import remove as _share_remove
 

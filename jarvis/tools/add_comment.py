@@ -19,9 +19,10 @@ from __future__ import annotations
 import frappe
 
 from jarvis.exceptions import InvalidArgumentError
-from jarvis.tools import require_doctype_and_name
+from jarvis.tools import desk_action
 
 
+@desk_action()
 def add_comment(doctype: str, name: str, content: str) -> dict:
     """Add a Comment to ``doctype/name`` with ``content`` as the body.
 
@@ -29,11 +30,8 @@ def add_comment(doctype: str, name: str, content: str) -> dict:
     ``comment_name`` is the new Comment doc id (so a follow-up
     update_comment can target it).
     """
-    require_doctype_and_name(doctype, name)
     if content is None or content == "":
         raise InvalidArgumentError("content is required")
-    if not frappe.db.exists(doctype, name):
-        raise InvalidArgumentError(f"unknown {doctype}: {name}")
 
     from frappe.desk.form.utils import add_comment as _ac
 

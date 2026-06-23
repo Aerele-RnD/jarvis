@@ -11,17 +11,15 @@ from jarvis.exceptions import (
     InvalidArgumentError,
     PermissionDeniedError,
 )
-from jarvis.tools import require_doctype_and_name
+from jarvis.tools import desk_action
 
 
+@desk_action()
 def remove_tag(doctype: str, name: str, tag: str) -> dict:
     """Remove ``tag`` from ``doctype/name``. Returns
     ``{doctype, name, tag}``."""
-    require_doctype_and_name(doctype, name)
     if not tag:
         raise InvalidArgumentError("tag is required")
-    if not frappe.db.exists(doctype, name):
-        raise InvalidArgumentError(f"unknown {doctype}: {name}")
     if not frappe.has_permission(doctype, "write", doc=name):
         raise PermissionDeniedError(
             f"no write permission on {doctype} {name}",
