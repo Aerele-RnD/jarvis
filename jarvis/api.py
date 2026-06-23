@@ -57,10 +57,21 @@ def call_tool(tool: str, args: dict | str | None = None) -> dict:
 			# creates no Jarvis Chat Session row. The gateway token was already
 			# validated above (proving the call came from the configured
 			# openclaw), so run the tool as the configured self-host tool user
-			# - a self-hosted bench is single-tenant. Returns None when not
-			# self-hosted, so the normal "unknown session" rejection still
-			# applies to managed benches.
-			plugin_user = _selfhost_tool_user()
+			# - a self-hosted bench is single-tenant.
+			from jarvis import selfhost
+			if selfhost.is_self_hosted():
+				plugin_user = _selfhost_tool_user()
+				if not plugin_user:
+					# Self-hosted, but the tool user is unset (or names a user
+					# that no longer exists). Fail with a clear, fixable
+					# message instead of the opaque "unknown session" below.
+					frappe.local.response.http_status_code = 400
+					return _error(
+						"ConfigurationError",
+						"self-hosted tool user is not configured. Set "
+						"'Self-Host Tool User' in Jarvis Settings to a "
+						"non-admin Frappe user so ERP tools can run.",
+					)
 		if not plugin_user:
 			frappe.local.response.http_status_code = 400
 			return _error(
@@ -126,14 +137,21 @@ def _selfhost_tool_user() -> str | None:
 	Self-hosted openclaw uses the HTTP transport, which has no Jarvis Chat
 	Session → user mapping. The gateway token (X-Jarvis-Token) was already
 	validated, so we run tools as the configured self-host tool user (the
-	bench is single-tenant). Returns None when not self-hosted or unset.
+	bench is single-tenant). Returns None when not self-hosted, unset, or the
+	configured user is not a usable tool user.
 	"""
 	from jarvis import selfhost
 	if not selfhost.is_self_hosted():
 		return None
 	s = frappe.get_single("Jarvis Settings")
 	user = (getattr(s, "selfhost_tool_user", "") or "").strip()
-	if user and frappe.db.exists("User", user):
+	# Authoritative guard: the selfhost_tool_user Link field can be edited
+	# directly on Jarvis Settings (bypassing save_self_hosted's validation), so
+	# enforce the invariant HERE - never run jarvis__* tools as Administrator
+	# (bypasses all DocType perms), Guest, or a missing/disabled user, however
+	# the field was set. get_value("enabled") is None for missing, 0 for disabled.
+	if (user and user not in ("Guest", "Administrator")
+			and frappe.db.get_value("User", user, "enabled")):
 		return user
 	return None
 
@@ -192,8 +210,11 @@ def _persist_and_publish_tool_call(
 	if not conv_name:
 		# Self-hosted: the openclaw HTTP session key isn't linked to a
 		# conversation. Attribute the tool call to the in-flight self-host
-		# turn (marker keyed by the tool user = current dispatch user) so the
-		# UI renders the tool card like managed mode.
+		# turn (keyed by the tool user = current dispatch user) so the UI
+		# renders the tool card like managed mode. get_active_turn returns
+		# None when 2+ turns are concurrently active for the tool user, so an
+		# ambiguous tool call is dropped rather than mis-filed into - and
+		# realtime-leaked to - the wrong conversation.
 		from jarvis import selfhost
 		turn = selfhost.get_active_turn(frappe.session.user) if selfhost.is_self_hosted() else None
 		conv_name = (turn or {}).get("conversation")

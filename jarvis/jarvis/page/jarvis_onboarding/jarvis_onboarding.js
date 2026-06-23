@@ -289,6 +289,7 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 				setBusy("#jo-sh-connect", false);
 				const m = r.message || {};
 				if (m.ok) {
+					if (m.warning) frappe.show_alert({ message: __(m.warning), indicator: "orange" }, 15);
 					renderSuccess({ agent_url: url }, "ok (self-hosted)");
 				} else {
 					renderShResults(m.result || {});
