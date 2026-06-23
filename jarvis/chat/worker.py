@@ -14,7 +14,7 @@ import time
 import frappe
 
 from jarvis.chat.events import publish_to_user
-from jarvis.chat.openclaw_client import OpenclawSession
+from jarvis.chat import openclaw_session_pool
 from jarvis.exceptions import OpenclawUnreachableError
 
 CONV = "Jarvis Conversation"
@@ -266,25 +266,25 @@ def run_agent_turn(conversation_id: str, message_id: str, run_id: str) -> None:
 				selfhost.clear_active_turn(tool_user, run_id)
 		else:
 			# Managed: device-paired WebSocket to the tenant's gateway.
+			# Uses a per-process connection pool so we don't pay the
+			# DNS + TCP + TLS + WS upgrade + handshake (~50-200ms) on
+			# every turn. The pool eviction on OpenclawUnreachableError
+			# means the next attempt will reconnect; we don't auto-
+			# retry inside this turn because tokens may have already
+			# streamed to the UI by the time the failure surfaces.
 			gateway_url = (settings.agent_url or "").replace(
 				"http://", "ws://"
 			).replace("https://", "wss://")
-			try:
-				sess = OpenclawSession.connect(gateway_url)
-			except OpenclawUnreachableError as e:
-				_publish_run_error(str(e))
-				return
 			effective_model, oauth_provider_id = _resolve_model_and_provider(conv)
 			try:
-				_consume(sess.stream_agent_turn(
-					conv.session_key, user_message, idem,
-					model=effective_model, provider=oauth_provider_id,
-				))
+				with openclaw_session_pool.checkout(gateway_url) as sess:
+					_consume(sess.stream_agent_turn(
+						conv.session_key, user_message, idem,
+						model=effective_model, provider=oauth_provider_id,
+					))
 			except OpenclawUnreachableError as e:
 				_publish_run_error(str(e))
 				return
-			finally:
-				sess.close()
 
 		# Streaming exited cleanly via lifecycle.end
 		frappe.db.set_value(MSG, assistant_msg.name, "streaming", 0)

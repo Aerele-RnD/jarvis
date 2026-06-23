@@ -20,6 +20,7 @@ stream_agent_turn / close) is unchanged. worker.py and api.py don't notice.
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 import uuid
@@ -27,6 +28,9 @@ from collections.abc import Iterator
 from typing import Any
 
 import websocket
+
+
+_logger = logging.getLogger(__name__)
 
 from jarvis.chat.device import (
 	ChatDeviceCredentials, build_payload_v3, clear_credentials,
@@ -177,7 +181,17 @@ class OpenclawSession:
 
 	@classmethod
 	def _attempt_connect(cls, gateway_url: str, *, allow_repair: bool) -> OpenclawSession:
+		# Timing breakdown logged so the connection pool's win is
+		# measurable in production. Three phases:
+		#   - ensure_paired (cache hit on a paired bench, real I/O on
+		#     first run or after repair)
+		#   - WS open (DNS + TCP + TLS + WS upgrade)
+		#   - _handshake (3-phase signed connect over an open WS)
+		# The pool reuses connections, so we only pay this on pool
+		# miss / stale eviction / first turn in a worker process.
+		t_pair_start = time.monotonic()
 		creds = ensure_paired()
+		t_pair_done = time.monotonic()
 		try:
 			ws = websocket.create_connection(
 				gateway_url, timeout=CONNECT_TIMEOUT_SECONDS,
@@ -188,6 +202,7 @@ class OpenclawSession:
 			)
 		except (websocket.WebSocketException, OSError) as e:
 			raise OpenclawUnreachableError(f"WS open failed: {e}") from e
+		t_ws_done = time.monotonic()
 
 		try:
 			cls._handshake(ws, creds)
@@ -202,6 +217,15 @@ class OpenclawSession:
 			try: ws.close()
 			except Exception: pass
 			raise
+		t_handshake_done = time.monotonic()
+		_logger.info(
+			"OpenclawSession.connect: pair_ms=%d ws_open_ms=%d handshake_ms=%d total_ms=%d gateway=%s",
+			int((t_pair_done - t_pair_start) * 1000),
+			int((t_ws_done - t_pair_done) * 1000),
+			int((t_handshake_done - t_ws_done) * 1000),
+			int((t_handshake_done - t_pair_start) * 1000),
+			gateway_url,
+		)
 		return cls(ws, creds)
 
 	@classmethod
