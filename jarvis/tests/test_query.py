@@ -355,3 +355,457 @@ class TestQueryHappyPath(FrappeTestCase):
 		self.assertIn("module", result["rows"][0])
 		self.assertIn("n", result["rows"][0])
 		self.assertGreater(result["rows"][0]["n"], 0)
+
+
+class TestQueryV02Additions(FrappeTestCase):
+	"""v0.2 additions: DISTINCT, OFFSET, COUNT(DISTINCT), EXISTS / NOT EXISTS.
+
+	Uses the same _build_sql helper pattern as TestQueryQbTranslation
+	to assert on resolved SQL substrings rather than execution.
+	"""
+
+	def _build_sql(self, spec: dict) -> str:
+		"""Build through the full pipeline, capture the resolved SQL."""
+		with patch("frappe.has_permission", return_value=True), \
+		     patch("frappe.database.query.Engine") as fake_engine:
+			fake_engine.return_value.get_permission_conditions.return_value = None
+			with patch("pypika.queries.QueryBuilder.run", return_value=[]):
+				result = query(spec)
+		return result["sql"]
+
+	# ---- DISTINCT --------------------------------------------------
+
+	def test_distinct_emits_distinct_in_sql(self):
+		"""distinct=True at the spec root produces SELECT DISTINCT."""
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": ["dt.module"],
+			"distinct": True,
+		})
+		self.assertIn("DISTINCT", sql.upper())
+
+	def test_distinct_false_no_distinct(self):
+		"""distinct=False (or omitted) does NOT add DISTINCT."""
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": ["dt.module"],
+			"distinct": False,
+		})
+		self.assertNotIn("DISTINCT", sql.upper())
+
+	def test_distinct_rejects_non_bool(self):
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError):
+				query({"from": "DocType", "distinct": "yes"})
+
+	# ---- OFFSET ----------------------------------------------------
+
+	def test_offset_emits_offset_in_sql(self):
+		sql = self._build_sql({
+			"from": "DocType",
+			"select": ["name"],
+			"limit": 10,
+			"offset": 20,
+		})
+		self.assertIn("OFFSET 20", sql.upper())
+
+	def test_offset_zero_does_not_emit_offset(self):
+		"""offset=0 is a no-op; pypika shouldn't emit OFFSET 0 either."""
+		sql = self._build_sql({
+			"from": "DocType",
+			"select": ["name"],
+			"limit": 10,
+			"offset": 0,
+		})
+		self.assertNotIn("OFFSET", sql.upper())
+
+	def test_offset_rejects_negative(self):
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError):
+				query({"from": "DocType", "offset": -1})
+
+	def test_offset_rejects_above_ceiling(self):
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError):
+				query({"from": "DocType", "offset": 200_000})
+
+	def test_offset_rejects_non_int(self):
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError):
+				query({"from": "DocType", "offset": "ten"})
+
+	# ---- COUNT(DISTINCT) -------------------------------------------
+
+	def test_count_distinct_emits_count_distinct(self):
+		"""distinct=True on a count aggregate becomes COUNT(DISTINCT field)."""
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": [{
+				"agg": "count",
+				"field": "dt.module",
+				"distinct": True,
+				"as": "n",
+			}],
+		})
+		# Substring matches accommodate dialect spacing variation
+		# (some dialects emit COUNT(DISTINCT x), others COUNT( DISTINCT x )).
+		upper = sql.upper().replace(" ", "")
+		self.assertIn("COUNT(DISTINCT", upper)
+
+	def test_sum_distinct_emits_sum_distinct(self):
+		"""DISTINCT modifier applies to all aggregates uniformly. Use
+		tabDocType.idx (a numeric field guaranteed present)."""
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": [{
+				"agg": "sum",
+				"field": "dt.idx",
+				"distinct": True,
+				"as": "s",
+			}],
+		})
+		upper = sql.upper().replace(" ", "")
+		self.assertIn("SUM(DISTINCT", upper)
+
+	# ---- EXISTS / NOT EXISTS ---------------------------------------
+
+	def test_exists_subquery_emits_exists(self):
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": ["dt.name"],
+			"where": [{
+				"op": "exists",
+				"value": {
+					"from": "DocField", "alias": "df",
+					"where": [{
+						"field": "df.parent", "op": "=",
+						"value": {"$field": "dt.name"},
+					}],
+				},
+			}],
+		})
+		self.assertIn("EXISTS", sql.upper())
+
+	def test_not_exists_subquery_emits_not_exists(self):
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": ["dt.name"],
+			"where": [{
+				"op": "not exists",
+				"value": {
+					"from": "DocField", "alias": "df",
+					"where": [{
+						"field": "df.parent", "op": "=",
+						"value": {"$field": "dt.name"},
+					}],
+				},
+			}],
+		})
+		upper = sql.upper()
+		self.assertIn("NOT", upper)
+		self.assertIn("EXISTS", upper)
+
+	def test_correlated_subquery_resolves_outer_field(self):
+		"""The {"$field": "dt.name"} marker must resolve to the OUTER
+		table's column, not a literal string."""
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": ["dt.name"],
+			"where": [{
+				"op": "exists",
+				"value": {
+					"from": "DocField", "alias": "df",
+					"where": [{
+						"field": "df.parent", "op": "=",
+						"value": {"$field": "dt.name"},
+					}],
+				},
+			}],
+		})
+		# The resolved SQL should reference the outer dt.name column,
+		# not the literal string 'dt.name'. We check that the literal
+		# string form is NOT present (with the surrounding quotes).
+		self.assertNotIn("'dt.name'", sql)
+
+	def test_exists_subspec_rejects_select(self):
+		"""SELECT in a sub-spec is rejected - subqueries auto-select 1."""
+		with patch("frappe.has_permission", return_value=True), \
+		     patch("frappe.database.query.Engine") as fake_engine:
+			fake_engine.return_value.get_permission_conditions.return_value = None
+			with self.assertRaises(InvalidArgumentError) as cm:
+				query({
+					"from": "DocType", "alias": "dt",
+					"where": [{
+						"op": "exists",
+						"value": {
+							"from": "DocField", "alias": "df",
+							"select": ["df.fieldname"],  # not allowed
+						},
+					}],
+				})
+			self.assertIn("select", str(cm.exception).lower())
+
+	def test_exists_subspec_rejects_order_by(self):
+		with patch("frappe.has_permission", return_value=True), \
+		     patch("frappe.database.query.Engine") as fake_engine:
+			fake_engine.return_value.get_permission_conditions.return_value = None
+			with self.assertRaises(InvalidArgumentError):
+				query({
+					"from": "DocType", "alias": "dt",
+					"where": [{
+						"op": "exists",
+						"value": {
+							"from": "DocField", "alias": "df",
+							"order_by": [{"field": "df.fieldname"}],
+						},
+					}],
+				})
+
+	def test_exists_subspec_rejects_limit(self):
+		with patch("frappe.has_permission", return_value=True), \
+		     patch("frappe.database.query.Engine") as fake_engine:
+			fake_engine.return_value.get_permission_conditions.return_value = None
+			with self.assertRaises(InvalidArgumentError):
+				query({
+					"from": "DocType", "alias": "dt",
+					"where": [{
+						"op": "exists",
+						"value": {
+							"from": "DocField", "alias": "df",
+							"limit": 10,
+						},
+					}],
+				})
+
+	def test_exists_subspec_rejects_distinct(self):
+		with patch("frappe.has_permission", return_value=True), \
+		     patch("frappe.database.query.Engine") as fake_engine:
+			fake_engine.return_value.get_permission_conditions.return_value = None
+			with self.assertRaises(InvalidArgumentError):
+				query({
+					"from": "DocType", "alias": "dt",
+					"where": [{
+						"op": "exists",
+						"value": {
+							"from": "DocField", "alias": "df",
+							"distinct": True,
+						},
+					}],
+				})
+
+	def test_exists_recursion_depth_capped(self):
+		"""Two levels of nesting (outer + one EXISTS) is the cap;
+		three levels raises."""
+		# Build a depth-3 spec: outer -> EXISTS(... EXISTS(... ))
+		with patch("frappe.has_permission", return_value=True), \
+		     patch("frappe.database.query.Engine") as fake_engine:
+			fake_engine.return_value.get_permission_conditions.return_value = None
+			with self.assertRaises(InvalidArgumentError) as cm:
+				query({
+					"from": "DocType", "alias": "dt",
+					"where": [{
+						"op": "exists",
+						"value": {
+							"from": "DocField", "alias": "df",
+							"where": [{
+								"op": "exists",
+								"value": {
+									"from": "DocPerm", "alias": "dp",
+									"where": [{
+										"field": "dp.parent", "op": "=",
+										"value": {"$field": "df.parent"},
+									}],
+								},
+							}],
+						},
+					}],
+				})
+			self.assertIn("nesting", str(cm.exception).lower())
+
+	def test_exists_subspec_must_be_dict(self):
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError):
+				query({
+					"from": "DocType", "alias": "dt",
+					"where": [{"op": "exists", "value": "not-a-dict"}],
+				})
+
+	def test_exists_subspec_requires_from(self):
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError):
+				query({
+					"from": "DocType", "alias": "dt",
+					"where": [{
+						"op": "exists",
+						"value": {"alias": "df"},  # missing 'from'
+					}],
+				})
+
+
+class TestQueryV03ExistsSubquerySecurityHardening(FrappeTestCase):
+	"""Verify EXISTS / NOT EXISTS sub-spec doctypes are subjected to
+	the SAME three permission gates as the outer query:
+
+	1. ``has_permission(dt, ptype="read")`` role gate
+	2. Per-site DocType allowlist gate
+	3. ``Engine.get_permission_conditions`` woven into the sub-query
+	   WHERE (User Permissions / DocShare / if_owner / hooks)
+
+	Pre-fix, ``_collect_doctypes`` walked only outer FROM + joins and
+	``_build_exists_criterion`` weaved no permission conditions on the
+	sub-query, opening a side-channel: caller could probe existence of
+	rows the operator was not allowed to read."""
+
+	def test_subspec_doctype_subjected_to_has_permission(self):
+		"""Role gate denies sub-spec DocType → PermissionDeniedError."""
+		# has_permission returns True for the outer doctype, False for
+		# the sub-spec's doctype. The pre-fix code would let this slip
+		# through because _collect_doctypes only saw the outer FROM.
+		def _perm(dt, ptype="read", **_):
+			if dt == "DocType":
+				return True
+			if dt == "DocField":
+				return False
+			return True
+		with patch("frappe.has_permission", side_effect=_perm):
+			with self.assertRaises(PermissionDeniedError) as cm:
+				query({
+					"from": "DocType", "alias": "dt",
+					"where": [{
+						"op": "exists",
+						"value": {
+							"from": "DocField", "alias": "df",
+							"where": [{
+								"field": "df.parent", "op": "=",
+								"value": {"$field": "dt.name"},
+							}],
+						},
+					}],
+				})
+			self.assertIn("DocField", str(cm.exception))
+
+	def test_subspec_doctype_subjected_to_allowlist(self):
+		"""Per-site allowlist denies sub-spec doctype."""
+		with patch("frappe.has_permission", return_value=True), \
+		     patch("jarvis.tools.query._load_doctype_allowlist",
+		           return_value={"DocType"}):  # DocField NOT in allowlist
+			with self.assertRaises(PermissionDeniedError) as cm:
+				query({
+					"from": "DocType", "alias": "dt",
+					"where": [{
+						"op": "exists",
+						"value": {
+							"from": "DocField", "alias": "df",
+							"where": [{
+								"field": "df.parent", "op": "=",
+								"value": {"$field": "dt.name"},
+							}],
+						},
+					}],
+				})
+			self.assertIn("DocField", str(cm.exception))
+			self.assertIn("allowlist", str(cm.exception).lower())
+
+	def test_subspec_get_permission_conditions_woven_into_subquery(self):
+		"""The Engine.get_permission_conditions output for a sub-spec
+		doctype must land inside the EXISTS subquery's WHERE, not the
+		outer query's WHERE. This is the User Permission enforcement
+		that closes the row-level side-channel."""
+		from pypika import Field
+		# Distinctive sentinel literals only contributed by each
+		# perm-condition path. The literal strings make it
+		# unambiguous where they land in the resolved SQL.
+		sub_sentinel = Field("name") == "SENTINEL_SUB"
+		outer_sentinel = Field("name") == "SENTINEL_OUTER"
+
+		def _perm_conds(dt, table):
+			if dt == "DocField":
+				return sub_sentinel
+			if dt == "DocType":
+				return outer_sentinel
+			return None
+
+		with patch("frappe.has_permission", return_value=True), \
+		     patch("frappe.database.query.Engine") as fake_engine_cls:
+			fake_engine_cls.return_value.get_permission_conditions.side_effect = \
+				_perm_conds
+			with patch("pypika.queries.QueryBuilder.run", return_value=[]):
+				result = query({
+					"from": "DocType", "alias": "dt",
+					"select": ["dt.name"],
+					"where": [{
+						"op": "exists",
+						"value": {
+							"from": "DocField", "alias": "df",
+							"where": [{
+								"field": "df.parent", "op": "=",
+								"value": {"$field": "dt.name"},
+							}],
+						},
+					}],
+				})
+		sql = result["sql"]
+		# Both sentinels appear; the sub-spec one is the new
+		# behavior the fix introduces.
+		self.assertIn("SENTINEL_SUB", sql,
+		              "sub-spec permission condition missing from "
+		              "resolved SQL — security weave broken")
+		self.assertIn("SENTINEL_OUTER", sql,
+		              "outer permission condition missing — sanity check")
+		# And the sub sentinel is inside the EXISTS parenthesized
+		# subquery, not at the outer query top level.
+		exists_idx = sql.upper().find("EXISTS")
+		sub_idx = sql.find("SENTINEL_SUB")
+		self.assertGreater(sub_idx, exists_idx,
+		                   "sub-spec perm condition leaked to outer WHERE")
+
+	def test_collect_doctypes_walks_nested_exists(self):
+		"""Two-level EXISTS: outermost has FROM A, level-1 sub-spec
+		has FROM B, level-2 sub-spec has FROM C. All three doctypes
+		must be collected for role + allowlist gates."""
+		from jarvis.tools.query import _collect_doctypes
+		spec = {
+			"from": "DocType", "alias": "dt",
+			"where": [{
+				"op": "exists",
+				"value": {
+					"from": "DocField", "alias": "df",
+					"where": [{
+						"op": "exists",
+						"value": {
+							"from": "DocPerm", "alias": "dp",
+							"where": [{
+								"field": "dp.parent", "op": "=",
+								"value": {"$field": "df.parent"},
+							}],
+						},
+					}],
+				},
+			}],
+		}
+		collected = _collect_doctypes(spec)
+		self.assertEqual(set(collected), {"DocType", "DocField", "DocPerm"})
+
+	def test_collect_doctypes_walks_subspec_joins(self):
+		"""A sub-spec's own joins also contribute doctypes."""
+		from jarvis.tools.query import _collect_doctypes
+		spec = {
+			"from": "DocType", "alias": "dt",
+			"where": [{
+				"op": "not exists",
+				"value": {
+					"from": "DocField", "alias": "df",
+					"joins": [{
+						"type": "inner", "doctype": "DocPerm",
+						"alias": "dp",
+						"on": {"dp.parent": "df.parent"},
+					}],
+					"where": [{
+						"field": "df.parent", "op": "=",
+						"value": {"$field": "dt.name"},
+					}],
+				},
+			}],
+		}
+		collected = _collect_doctypes(spec)
+		self.assertEqual(set(collected), {"DocType", "DocField", "DocPerm"})
