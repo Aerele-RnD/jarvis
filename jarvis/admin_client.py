@@ -201,12 +201,15 @@ def post_update_llm_creds(
 	source-compatible. Subscription-mode callers pass ``"subscription"`` and
 	pass the OAuth access token as ``api_key``.
 	"""
+	# Ship the site's installed apps so admin persists them and the fleet-agent
+	# scopes the tenant's persona skill families (e.g. no hrms app -> no hrms-*).
 	return _post(
 		path="/api/method/jarvis_admin.api.tenant.update_llm_creds",
 		body={
 			"provider": provider, "model": model,
 			"base_url": base_url, "api_key": api_key,
 			"auth_mode": auth_mode,
+			"installed_apps": frappe.get_installed_apps(),
 		},
 	)
 

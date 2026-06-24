@@ -47,7 +47,7 @@
   {# NOTE: the template fleet-agent actually renders lives in jarvis-fleet-agent
      (jarvis_fleet_agent/templates/openclaw.json.j2). This copy is a reference —
      keep it in sync. Progressive tool disclosure for the "pi" runtime: #}
-  "tools": { "toolSearch": { "mode": "directory" } },
+  "tools": { "toolSearch": { "mode": "directory" }, "deny": {{ tool_deny | tojson }} },
   "secrets": {
     "providers": {
       "llm_key": {
