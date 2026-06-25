@@ -216,8 +216,12 @@ def run_agent_turn(
 	# unchanged; only the value sent over to openclaw is augmented.
 	now = frappe.utils.now_datetime()
 	today = now.strftime("%Y-%m-%d (%A)")
+	# Fold the auto-apply preference into the system context line so the agent
+	# knows whether to confirm mutating ops. Default (off) = confirm; the persona
+	# confirms by default, so we only signal the non-default "auto" mode.
+	auto_apply = "; auto-apply changes: ON" if settings.auto_apply_changes else ""
 	user_message = (
-		f"[Context: today is {today}; chat user: {chat_user}]"
+		f"[Context: today is {today}; chat user: {chat_user}{auto_apply}]"
 		f"\n\n{user_message or ''}"
 	)
 

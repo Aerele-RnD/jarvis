@@ -377,7 +377,23 @@ def get_chat_ui_settings() -> dict:
 		"llm_model": settings.llm_model or "",
 		"subscription_models": _SUBSCRIPTION_MODELS,
 		"default_models": _DEFAULT_MODEL,
+		# When 1, the agent applies mutating changes without confirming (auto mode).
+		"auto_apply_changes": int(settings.auto_apply_changes or 0),
 	}
+
+
+@frappe.whitelist()
+def set_auto_apply(value) -> dict:
+	"""Toggle the per-site 'auto-apply changes (skip confirmation)' setting.
+
+	OFF (default) = the agent confirms every ERP-mutating action before running
+	it; ON = it applies changes immediately. Read by the chat worker and folded
+	into the turn's [Context: ...] line so the agent knows which mode it's in.
+	"""
+	on = 1 if str(value) in ("1", "true", "True", "on", "yes") else 0
+	frappe.db.set_single_value("Jarvis Settings", "auto_apply_changes", on)
+	frappe.db.commit()
+	return {"ok": True, "data": {"auto_apply_changes": on}}
 
 
 def _est_tokens(text: str | None) -> int:
