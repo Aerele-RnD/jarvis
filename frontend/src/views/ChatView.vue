@@ -147,7 +147,7 @@
 
 			<!-- ===== CONVERSATION ===== -->
 			<div v-else ref="threadEl" style="flex:1;overflow-y:auto;">
-				<div style="max-width:760px;margin:0 auto;padding:26px 24px 36px;display:flex;flex-direction:column;gap:26px;">
+				<div style="max-width:1280px;margin:0 auto;padding:26px 40px 36px;display:flex;flex-direction:column;gap:26px;">
 					<template v-for="m in visibleMessages" :key="m.name">
 						<!-- user -->
 						<div v-if="m.role === 'user'" style="display:flex;justify-content:flex-end;">
@@ -258,8 +258,8 @@
 			</div>
 
 			<!-- ===== COMPOSER ===== -->
-			<div style="flex:none;padding:12px 24px 16px;border-top:1px solid var(--border);background:var(--surface);">
-				<div style="max-width:760px;margin:0 auto;">
+			<div style="flex:none;padding:12px 40px 16px;border-top:1px solid var(--border);background:var(--surface);">
+				<div style="max-width:1280px;margin:0 auto;">
 					<div class="jv-composer" style="position:relative;border:1.5px solid var(--text);border-radius:13px;background:var(--surface);box-shadow:0 2px 12px rgba(0,0,0,.07);padding:5px 6px 6px 6px;transition:border-color .12s,box-shadow .12s;">
 						<!-- mention dropdown (@ user, / doctype·tool) -->
 						<div v-if="mention.open && mention.items.length" style="position:absolute;bottom:calc(100% + 6px);left:0;min-width:248px;max-height:248px;overflow-y:auto;background:var(--surface);border:1px solid var(--border-2);border-radius:10px;box-shadow:0 10px 28px rgba(20,20,30,.16);padding:5px;z-index:30;">
