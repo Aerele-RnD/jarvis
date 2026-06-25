@@ -106,15 +106,18 @@
 							<span style="font-size:12px;color:var(--text-2);font-weight:500;">{{ modelLabel }}</span>
 							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg>
 						</button>
-						<div v-if="modelMenuOpen && availableModels.length" style="position:absolute;top:calc(100% + 6px);right:0;min-width:184px;background:var(--surface);border:1px solid var(--border-2);border-radius:10px;box-shadow:0 8px 24px rgba(20,20,30,.14);padding:5px;z-index:30;">
-							<div style="padding:5px 9px 6px;font-size:10px;color:var(--text-3);font-weight:600;text-transform:uppercase;letter-spacing:.03em;">Model · {{ ui.llm_provider }}</div>
-							<button class="jv-menuitem" @click="selectModel('')">
+						<div v-if="modelMenuOpen && availableModels.length" style="position:absolute;top:calc(100% + 6px);right:0;min-width:198px;background:var(--surface);border:1px solid var(--border-2);border-radius:10px;box-shadow:0 8px 24px rgba(20,20,30,.14);padding:5px;z-index:30;">
+							<!-- Auto: its own separate option (let Jarvis pick), divided from the explicit models -->
+							<button class="jv-menuitem" :class="{ on: !modelOverride }" @click="selectModel('')">
+								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex:none;"><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8" /></svg>
 								<span style="flex:1;">Auto <span style="color:var(--text-3);font-weight:450;">· {{ ui.llm_model || "default" }}</span></span>
-								<svg v-if="!modelOverride" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+								<svg v-if="!modelOverride" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;"><path d="M20 6 9 17l-5-5" /></svg>
 							</button>
-							<button v-for="m in availableModels" :key="m" class="jv-menuitem" @click="selectModel(m)">
+							<div style="height:1px;background:var(--border);margin:5px 2px;"></div>
+							<div style="padding:3px 9px 6px;font-size:10px;color:var(--text-3);font-weight:600;text-transform:uppercase;letter-spacing:.03em;">Model · {{ ui.llm_provider }}</div>
+							<button v-for="m in availableModels" :key="m" class="jv-menuitem" :class="{ on: m === modelOverride }" @click="selectModel(m)">
 								<span style="flex:1;">{{ m }}</span>
-								<svg v-if="m === modelOverride" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+								<svg v-if="m === modelOverride" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;"><path d="M20 6 9 17l-5-5" /></svg>
 							</button>
 						</div>
 					</div>
@@ -482,6 +485,10 @@ const conversations = ref([])
 const currentId = ref(null)
 const messages = ref([])
 const input = ref("")
+// Up/Down recall of previously sent prompts (shell-style history).
+const promptHistory = ref([])
+const histIdx = ref(null)
+const histDraft = ref("")
 const sending = ref(false)
 const waiting = ref(false)
 const search = ref("")
@@ -977,6 +984,42 @@ function onKey(e) {
 			return
 		}
 	}
+	// Up/Down: recall sent prompts — only when the caret is at the very start
+	// (Up) or end (Down) so it doesn't fight normal multi-line editing.
+	const el = e.target
+	if (e.key === "ArrowUp" && (input.value === "" || el.selectionStart === 0) && promptHistory.value.length) {
+		e.preventDefault()
+		if (histIdx.value === null) {
+			histDraft.value = input.value
+			histIdx.value = promptHistory.value.length
+		}
+		if (histIdx.value > 0) {
+			histIdx.value -= 1
+			input.value = promptHistory.value[histIdx.value]
+			nextTick(() => {
+				autoGrow()
+				const p = input.value.length
+				el.setSelectionRange(p, p)
+			})
+		}
+		return
+	}
+	if (e.key === "ArrowDown" && histIdx.value !== null && el.selectionStart === input.value.length) {
+		e.preventDefault()
+		if (histIdx.value < promptHistory.value.length - 1) {
+			histIdx.value += 1
+			input.value = promptHistory.value[histIdx.value]
+		} else {
+			histIdx.value = null
+			input.value = histDraft.value
+		}
+		nextTick(() => {
+			autoGrow()
+			const p = input.value.length
+			el.setSelectionRange(p, p)
+		})
+		return
+	}
 	if (e.key === "Enter" && !e.shiftKey) {
 		e.preventDefault()
 		send()
@@ -1202,6 +1245,11 @@ async function send(textArg) {
 	const text = (fromMain ? input.value : textArg).trim()
 	const attachments = fromMain ? pendingFiles.value.slice() : []
 	if ((!text && !attachments.length) || sending.value) return
+	if (text && promptHistory.value[promptHistory.value.length - 1] !== text) {
+		promptHistory.value.push(text) // for Up/Down recall
+	}
+	histIdx.value = null
+	histDraft.value = ""
 	if (fromMain) {
 		input.value = ""
 		pendingFiles.value = []
@@ -1353,6 +1401,7 @@ function removeFile(i) {
 // ---- mentions (@ user, / doctype·tool) ----
 let _mentionSeq = 0
 function onInput() {
+	histIdx.value = null // typing exits prompt-history navigation
 	autoGrow()
 	const el = inputEl.value
 	if (!el) return
