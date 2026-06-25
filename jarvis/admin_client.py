@@ -324,7 +324,7 @@ def post_subscription_disconnect() -> dict:
 	)
 
 
-def post_update_llm_pool(spec: dict, api_keys: dict, oauth_blobs: dict) -> dict:
+def post_update_llm_pool(*, spec: dict, api_keys: dict, oauth_blobs: dict) -> dict:
 	"""POST a PoolSpec + separated secrets to admin → fleet-agent → openclaw.
 
 	``spec``        : secret-free PoolSpec dict (name, routing_mode, models).
