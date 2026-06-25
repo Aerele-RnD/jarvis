@@ -16,15 +16,18 @@ class TestJarvisLLMPool(FrappeTestCase):
         meta = frappe.get_meta("Jarvis LLM Pool Model")
         fields = {f.fieldname: f.fieldtype for f in meta.fields}
         for fn, ft in {"provider":"Data","model":"Data","tier":"Select","base_url":"Data",
-                       "credential_type":"Select","api_key":"Password","order":"Int","enabled":"Check"}.items():
+                       "credential_type":"Select","api_key":"Password","order":"Int","enabled":"Check",
+                       "rotation":"Select"}.items():
             assert fields.get(fn) == ft, (fn, fields.get(fn))
 
     def test_subscription_grandchild_fields(self):
         meta = frappe.get_meta("Jarvis LLM Pool Subscription Account")
         fields = {f.fieldname: f.fieldtype for f in meta.fields}
         for fn, ft in {"upstream":"Select","account_ref":"Data","label":"Data",
-                       "oauth_blob":"Password","rotation":"Select"}.items():
+                       "oauth_blob":"Password"}.items():
             assert fields.get(fn) == ft, (fn, fields.get(fn))
+        # rotation must NOT be on the account — it lives on the model row
+        assert "rotation" not in fields, "rotation should be on model, not subscription account"
 
     def _make_test_pool(self):
         """Build an in-memory pool with 2 enabled models (one api_key, one subscription).
@@ -42,11 +45,12 @@ class TestJarvisLLMPool(FrappeTestCase):
         pool.append("models", {"provider":"openai_compat","model":"claude-sonnet-4-6","tier":"strong",
                                "base_url":"http://host.docker.internal:9000/openai","credential_type":"api_key",
                                "api_key":"shimsecret","order":0,"enabled":1})
-        pool.append("models", {"model":"gpt-5.5","tier":"cheap","credential_type":"subscription","order":1,"enabled":1})
+        pool.append("models", {"model":"gpt-5.5","tier":"cheap","credential_type":"subscription",
+                               "rotation":"round_robin","order":1,"enabled":1})
         # Inject grandchild rows directly — pool.models[1].append() can't be used
         # on an unsaved child doc (Frappe sets _table_fieldnames to {} for child rows).
         account = frappe._dict(upstream="openai", account_ref="SUB_A1",
-                               oauth_blob='{"t":1}', rotation="sticky", label="")
+                               oauth_blob='{"t":1}', label="")
         pool.models[1].accounts = [account]
         return pool
 
@@ -56,11 +60,17 @@ class TestJarvisLLMPool(FrappeTestCase):
         spec, api_keys, oauth_blobs = build_pool_payload(pool)
         assert spec["routing_mode"] == "dynamic"
         assert spec["models"][0]["key_ref"] and spec["models"][0]["base_url"].endswith("/openai")
-        assert spec["models"][1]["subscription"]["upstream"] == "openai"
+        sub = spec["models"][1]["subscription"]
+        assert sub["upstream"] == "openai"
+        # rotation lives on the subscription backing, not per-account
+        assert sub["rotation"] == "round_robin"
+        assert all("rotation" not in a for a in sub["accounts"])
         # secrets carried OUT of the spec, keyed by ref
         assert "shimsecret" not in str(spec)
         assert spec["models"][0]["key_ref"] in api_keys and api_keys[spec["models"][0]["key_ref"]] == "shimsecret"
         assert oauth_blobs["SUB_A1"] == {"t": 1}
+        # stable key_ref: first api_key model gets POOL_KEY_0 regardless of position
+        assert spec["models"][0]["key_ref"] == "POOL_KEY_0"
         # auto-enable: 1 api_key + 1 subscription account -> enabled
         assert compute_auto_enable(pool) is True
 

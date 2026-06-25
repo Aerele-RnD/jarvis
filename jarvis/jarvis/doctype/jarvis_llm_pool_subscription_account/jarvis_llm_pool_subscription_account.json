@@ -9,8 +9,7 @@
     "upstream",
     "account_ref",
     "label",
-    "oauth_blob",
-    "rotation"
+    "oauth_blob"
   ],
   "fields": [
     {
@@ -38,13 +37,6 @@
       "fieldname": "oauth_blob",
       "fieldtype": "Password",
       "label": "OAuth Blob (JSON)"
-    },
-    {
-      "fieldname": "rotation",
-      "fieldtype": "Select",
-      "label": "Rotation",
-      "options": "sticky\nround_robin\nleast_used",
-      "default": "sticky"
     }
   ],
   "permissions": []

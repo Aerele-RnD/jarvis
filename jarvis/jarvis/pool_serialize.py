@@ -32,7 +32,8 @@ def compute_auto_enable(pool) -> bool:
 def build_pool_payload(pool):
     """Return (spec_dict, api_keys, oauth_blobs). Pure; no I/O except get_password."""
     models, api_keys, oauth_blobs = [], {}, {}
-    for idx, m in enumerate(pool.models):
+    key_idx = 0
+    for m in pool.models:
         if not m.enabled:
             continue
         entry = {
@@ -54,14 +55,18 @@ def build_pool_payload(pool):
                 accounts.append({
                     "account_ref": a.account_ref,
                     "label": a.label or "",
-                    "rotation": a.rotation or "sticky",
                 })
-                blob = (_get_password(a, "oauth_blob")) if a.oauth_blob else ""
+                blob = _get_password(a, "oauth_blob") if a.oauth_blob else ""
                 if blob:
                     oauth_blobs[a.account_ref] = json.loads(blob)
-            entry["subscription"] = {"upstream": upstream, "accounts": accounts}
+            entry["subscription"] = {
+                "upstream": upstream,
+                "accounts": accounts,
+                "rotation": (m.rotation or "sticky"),
+            }
         else:
-            ref = _key_ref(idx)
+            ref = _key_ref(key_idx)
+            key_idx += 1
             entry["key_ref"] = ref
             val = _get_password(m, "api_key") if m.api_key else ""
             if val:

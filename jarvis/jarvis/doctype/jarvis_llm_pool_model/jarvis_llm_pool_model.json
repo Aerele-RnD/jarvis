@@ -14,6 +14,7 @@
     "base_url",
     "credential_type",
     "api_key",
+    "rotation",
     "accounts"
   ],
   "fields": [
@@ -71,6 +72,14 @@
       "fieldtype": "Password",
       "label": "API Key",
       "depends_on": "eval:doc.credential_type=='api_key'"
+    },
+    {
+      "fieldname": "rotation",
+      "fieldtype": "Select",
+      "label": "Rotation",
+      "options": "sticky\nround_robin\nleast_used",
+      "default": "sticky",
+      "depends_on": "eval:doc.credential_type=='subscription'"
     },
     {
       "fieldname": "accounts",

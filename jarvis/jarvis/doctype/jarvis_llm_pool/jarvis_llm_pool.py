@@ -5,10 +5,11 @@ from jarvis.jarvis.pool_serialize import build_pool_payload, compute_auto_enable
 
 class JarvisLLMPool(Document):
     def on_update(self):
-        self.auto_enabled = compute_auto_enable(self)
-        if self.auto_enabled and not self.enabled:
+        auto = compute_auto_enable(self)
+        self.auto_enabled = auto
+        self.db_set("auto_enabled", 1 if auto else 0, update_modified=False)
+        if auto and not self.enabled:
             self.db_set("enabled", 1, update_modified=False)
-            self.db_set("auto_enabled", 1, update_modified=False)
         # Only sync when the proxy is on (managed path). Single-model stays on /llm-creds.
         if not self.enabled:
             return
