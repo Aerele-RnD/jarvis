@@ -239,6 +239,19 @@ def archive_conversation(conversation: str) -> dict:
 	return {"ok": True}
 
 
+@frappe.whitelist()
+def rename_conversation(conversation: str, title: str) -> dict:
+	"""Rename a conversation. ``get_doc`` enforces the owner-only permission."""
+	title = (title or "").strip()[:140]
+	if not title:
+		return {"ok": False, "reason": _("title is empty")}
+	doc = frappe.get_doc(CONV, conversation)
+	doc.title = title
+	doc.save()
+	frappe.db.commit()
+	return {"ok": True, "data": {"title": title}}
+
+
 import uuid
 
 from frappe import _
