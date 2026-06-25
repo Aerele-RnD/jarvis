@@ -2,7 +2,7 @@
 	<div ref="rootEl" class="jv-root" :class="{ 'jv-dark': effectiveDark }" :style="paletteVars" style="--rad:8px;font-family:'Inter',system-ui,sans-serif;height:100vh;width:100%;display:flex;color:var(--text);background:var(--surface);overflow:hidden;position:relative;">
 
 		<!-- ============ SIDEBAR ============ -->
-		<aside style="width:268px;flex:none;background:var(--surface-1);border-right:1px solid var(--border);display:flex;flex-direction:column;height:100%;">
+		<aside class="jv-sidebar" :class="{ collapsed: sidebarCollapsed }" style="width:268px;flex:none;background:var(--surface-1);border-right:1px solid var(--border);display:flex;flex-direction:column;height:100%;">
 			<div style="padding:14px 14px 10px;display:flex;align-items:center;gap:9px;">
 				<div style="width:28px;height:28px;border-radius:7px;background:var(--blue);display:flex;align-items:center;justify-content:center;flex:none;box-shadow:0 1px 2px rgba(37,99,235,.35);">
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
@@ -11,14 +11,19 @@
 					<span style="font-size:14px;font-weight:600;letter-spacing:-.01em;">Jarvis</span>
 					<span style="font-size:11px;color:var(--text-3);font-weight:450;">ERPNext Assistant</span>
 				</div>
-				<div style="margin-left:auto;display:flex;align-items:center;gap:5px;padding:3px 7px;background:var(--green-bg);border-radius:20px;">
-					<span style="width:6px;height:6px;border-radius:50%;background:var(--green);"></span>
-					<span style="font-size:10px;color:var(--green);font-weight:550;">Live</span>
+				<div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
+					<div style="display:flex;align-items:center;gap:5px;padding:3px 7px;background:var(--green-bg);border-radius:20px;">
+						<span style="width:6px;height:6px;border-radius:50%;background:var(--green);"></span>
+						<span style="font-size:10px;color:var(--green);font-weight:550;">Live</span>
+					</div>
+					<button class="jv-iconbtn" @click="toggleSidebar" title="Collapse sidebar" style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;border-radius:6px;cursor:pointer;color:var(--text-3);flex:none;">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18" /><path d="m14 9-3 3 3 3" /></svg>
+					</button>
 				</div>
 			</div>
 
 			<div style="padding:6px 12px 10px;">
-				<button class="jv-newchat" @click="newChat" style="width:100%;display:flex;align-items:center;gap:8px;padding:8px 11px;background:var(--blue);color:#fff;border:none;border-radius:var(--rad);font-family:inherit;font-size:13px;font-weight:550;cursor:pointer;">
+				<button class="jv-newchat" @click="newChat" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;padding:8px 11px;background:var(--blue);color:#fff;border:none;border-radius:var(--rad);font-family:inherit;font-size:13px;font-weight:550;cursor:pointer;">
 					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
 					New chat
 				</button>
@@ -86,6 +91,9 @@
 		<!-- ============ MAIN ============ -->
 		<main style="flex:1;display:flex;flex-direction:column;height:100%;min-width:0;background:var(--surface);">
 			<header style="height:52px;flex:none;border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 18px;gap:12px;">
+				<button v-if="sidebarCollapsed" class="jv-iconbtn-bd" @click="toggleSidebar" title="Expand sidebar" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:var(--surface);border:1px solid var(--border);border-radius:7px;cursor:pointer;flex:none;">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18" /><path d="m11 9 3 3-3 3" /></svg>
+				</button>
 				<div style="display:flex;flex-direction:column;line-height:1.15;min-width:0;">
 					<span style="font-size:14px;font-weight:600;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ currentTitle }}</span>
 					<span style="font-size:11.5px;color:var(--text-3);">{{ headerSub }}</span>
@@ -283,7 +291,7 @@
 							<button v-if="busy" @click="stopRun" title="Stop generating" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:var(--blue);border:none;border-radius:8px;cursor:pointer;">
 								<svg width="13" height="13" viewBox="0 0 24 24" fill="#fff"><rect x="6" y="6" width="12" height="12" rx="2.5" /></svg>
 							</button>
-							<button v-else @click="send()" :disabled="!canSend" :style="{ width:'32px', height:'32px', display:'flex', alignItems:'center', justifyContent:'center', background: canSend ? 'var(--blue)' : 'var(--surface-3)', border:'none', borderRadius:'8px', cursor: canSend ? 'pointer' : 'default', transition:'background .12s' }">
+							<button v-else class="jv-sendbtn" :class="{ ready: canSend }" @click="send()" :disabled="!canSend" :style="{ width:'32px', height:'32px', display:'flex', alignItems:'center', justifyContent:'center', background: canSend ? 'var(--blue)' : 'var(--surface-3)', border:'none', borderRadius:'8px', cursor: canSend ? 'pointer' : 'default' }">
 								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" :stroke="canSend ? '#fff' : 'var(--text-3)'" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
 							</button>
 						</div>
@@ -483,6 +491,14 @@ const threadEl = ref(null)
 const rootEl = ref(null)
 const userMenuOpen = ref(false)
 const modelMenuOpen = ref(false)
+// Collapsible sidebar (persisted per device, openclaw-style).
+const sidebarCollapsed = ref(localStorage.getItem("jarvis-sidebar") === "collapsed")
+function toggleSidebar() {
+	sidebarCollapsed.value = !sidebarCollapsed.value
+	try {
+		localStorage.setItem("jarvis-sidebar", sidebarCollapsed.value ? "collapsed" : "open")
+	} catch (e) {}
+}
 // per-conversation ⋯ menu + inline rename (sidebar)
 const convMenuFor = ref(null)
 const renamingId = ref(null)
@@ -1437,7 +1453,26 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.jv-newchat:hover { filter: brightness(0.9); }
+/* primary buttons also invert to black/white on hover (depends on their base
+   color, so the white text/icon flips to the surface color). !important beats
+   the inline backgrounds on the new-chat and send buttons. */
+.jv-newchat:hover { background: var(--text) !important; color: var(--surface) !important; }
+.jv-newchat:hover svg { stroke: var(--surface) !important; }
+/* Send button: springy lift + arrow nudge on hover, press-in on click, and a
+   one-shot pop when it becomes ready (text entered). */
+.jv-sendbtn { transition: transform .16s cubic-bezier(.34, 1.56, .64, 1), background .14s ease; }
+.jv-sendbtn svg { transition: transform .16s ease; }
+.jv-sendbtn:not(:disabled):hover { transform: translateY(-2px) scale(1.07); }
+.jv-sendbtn:not(:disabled):hover svg { transform: translateY(-2px); }
+.jv-sendbtn:not(:disabled):active { transform: scale(.9); }
+.jv-sendbtn.ready { animation: jv-send-pop .3s ease; }
+@keyframes jv-send-pop { 0% { transform: scale(.7); } 55% { transform: scale(1.15); } 100% { transform: scale(1); } }
+.jv-sendbtn:hover:not(:disabled) { background: var(--text) !important; }
+.jv-sendbtn:hover:not(:disabled) svg { stroke: var(--surface) !important; }
+/* Collapsible sidebar: slide it off-screen (root has overflow:hidden) so the
+   chat reclaims the full width, openclaw-style. */
+.jv-sidebar { transition: margin-left .22s ease; }
+.jv-sidebar.collapsed { margin-left: -269px; }
 .jv-conv { position: relative; display: flex; align-items: center; gap: 9px; padding: 7px 9px; border-radius: 6px; cursor: pointer; margin-bottom: 1px; }
 .jv-conv:hover { background: var(--surface-2); }
 .jv-conv.on { background: var(--surface-3); }
@@ -1453,11 +1488,18 @@ onBeforeUnmount(() => {
 .jv-menuitem-danger:hover { background: var(--red-bg); }
 .jv-rename-input { flex: 1; min-width: 0; font-family: inherit; font-size: 13px; color: var(--text); background: var(--surface); border: 1px solid var(--blue); border-radius: 5px; padding: 3px 6px; outline: none; }
 .jv-suggest:hover { border-color: var(--border-2); background: var(--surface-1); }
-.jv-iconbtn:hover { background: var(--surface-2); color: var(--text-2); }
-.jv-iconbtn-bd:hover { background: var(--surface-1); }
+/* buttons invert to black/white on hover (theme-adaptive: black on light,
+   white on dark) — var(--text)/var(--surface) flip, with an svg-stroke
+   override so the icon stays visible on the inverted background. */
+.jv-iconbtn:hover { background: var(--text) !important; color: var(--surface) !important; }
+.jv-iconbtn:hover svg { stroke: var(--surface) !important; }
+.jv-iconbtn-bd:hover { background: var(--text) !important; border-color: var(--text) !important; }
+.jv-iconbtn-bd:hover svg { stroke: var(--surface) !important; }
 .jv-ctxbtn:hover { background: var(--surface-2); }
 .jv-retry:hover { filter: brightness(0.94); }
-.jv-modelpill:hover { background: var(--surface-2); }
+.jv-modelpill:hover { background: var(--text) !important; border-color: var(--text) !important; }
+.jv-modelpill:hover svg { stroke: var(--surface) !important; }
+.jv-modelpill:hover span { color: var(--surface) !important; }
 .jv-menuitem { display: flex; align-items: center; gap: 9px; width: 100%; padding: 7px 9px; border: none; background: transparent; border-radius: 7px; font-family: inherit; font-size: 12.5px; color: var(--text); cursor: pointer; text-align: left; }
 .jv-menuitem:hover, .jv-menuitem.on { background: var(--surface-1); }
 .jv-usercard { transition: background 0.12s; }
@@ -1591,9 +1633,9 @@ onBeforeUnmount(() => {
 .jv-confirm-label { flex: 1; min-width: 0; font-size: 13px; font-weight: 550; color: var(--text); }
 .jv-confirm-no, .jv-confirm-yes { font-family: inherit; font-size: 12.5px; font-weight: 600; padding: 6px 14px; border-radius: 7px; cursor: pointer; border: 1px solid var(--border-2); flex: none; }
 .jv-confirm-no { background: var(--surface); color: var(--text-2); }
-.jv-confirm-no:hover { background: var(--surface-1); }
+.jv-confirm-no:hover { background: var(--text); color: var(--surface); border-color: var(--text); }
 .jv-confirm-yes { background: var(--blue); color: #fff; border-color: var(--blue); }
-.jv-confirm-yes:hover { filter: brightness(0.95); }
+.jv-confirm-yes:hover { background: var(--text); color: var(--surface); border-color: var(--text); }
 
 /* rich action cards (doc confirm / email draft) */
 .jv-action, .jv-email { margin-top: 12px; border: 1px solid var(--border); border-radius: 11px; overflow: hidden; background: var(--surface); }
@@ -1608,9 +1650,28 @@ onBeforeUnmount(() => {
 .jv-action-v { flex: 1; min-width: 0; color: var(--text); word-break: break-word; }
 .jv-action-foot { display: flex; align-items: center; gap: 8px; padding: 11px 14px; border-top: 1px solid var(--border); background: var(--surface-1); }
 .jv-action-primary { display: inline-flex; align-items: center; gap: 7px; font-family: inherit; font-size: 13px; font-weight: 600; padding: 8px 14px; border-radius: 8px; cursor: pointer; background: var(--blue); color: #fff; border: 1px solid var(--blue); }
-.jv-action-primary:hover { filter: brightness(0.95); }
+.jv-action-primary:hover { background: var(--text); color: var(--surface); border-color: var(--text); }
 .jv-action-2nd { display: inline-flex; align-items: center; gap: 7px; font-family: inherit; font-size: 13px; font-weight: 550; padding: 8px 13px; border-radius: 8px; cursor: pointer; background: var(--surface); color: var(--text-2); border: 1px solid var(--border-2); }
-.jv-action-2nd:hover { background: var(--surface-2); color: var(--text); }
+.jv-action-2nd:hover { background: var(--text); color: var(--surface); border-color: var(--text); }
+/* Dark mode: a black hover is invisible on the dark surface and the invert
+   would flash a stark white button, so neutral buttons get a subtle elevated
+   grey hover and primaries keep their colour (just brighter). */
+.jv-dark .jv-iconbtn:hover,
+.jv-dark .jv-iconbtn-bd:hover,
+.jv-dark .jv-artifact-head .jv-iconbtn:hover,
+.jv-dark .jv-modelpill:hover,
+.jv-dark .jv-confirm-no:hover,
+.jv-dark .jv-action-2nd:hover { background: var(--surface-3) !important; color: var(--text) !important; border-color: var(--border-2) !important; }
+.jv-dark .jv-iconbtn:hover svg,
+.jv-dark .jv-iconbtn-bd:hover svg,
+.jv-dark .jv-modelpill:hover svg { stroke: var(--text) !important; }
+.jv-dark .jv-modelpill:hover span { color: var(--text) !important; }
+.jv-dark .jv-newchat:hover,
+.jv-dark .jv-sendbtn:hover:not(:disabled),
+.jv-dark .jv-confirm-yes:hover,
+.jv-dark .jv-action-primary:hover { background: var(--blue) !important; color: #fff !important; border-color: var(--blue) !important; filter: brightness(1.18); }
+.jv-dark .jv-newchat:hover svg,
+.jv-dark .jv-sendbtn:hover:not(:disabled) svg { stroke: #fff !important; }
 .jv-action-discard { margin-left: auto; font-family: inherit; font-size: 12.5px; font-weight: 550; padding: 8px 10px; border: none; background: transparent; color: var(--text-3); cursor: pointer; }
 .jv-action-discard:hover { color: var(--red); }
 .jv-email-head { padding: 12px 14px 6px; }
@@ -1627,7 +1688,7 @@ onBeforeUnmount(() => {
 .jv-artifact-head { display: flex; align-items: center; gap: 9px; padding: 11px 12px 11px 14px; border-bottom: 1px solid var(--border); flex: none; }
 .jv-artifact-head svg { color: var(--text-3); flex: none; }
 .jv-artifact-head-title { font-size: 14px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
-.jv-artifact-head .jv-iconbtn:hover { background: var(--surface-1); color: var(--text-2); }
+.jv-artifact-head .jv-iconbtn:hover { background: var(--text) !important; color: var(--surface) !important; }
 .jv-artifact-body { flex: 1; min-height: 0; overflow: auto; background: var(--surface-1); display: flex; flex-direction: column; }
 .jv-artifact-frame { flex: 1; width: 100%; border: 0; background: #fff; }
 .jv-artifact-img { max-width: 100%; height: auto; margin: auto; padding: 16px; }
