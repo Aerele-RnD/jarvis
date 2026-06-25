@@ -2,6 +2,12 @@ import frappe
 from unittest.mock import patch
 from frappe.tests.utils import FrappeTestCase
 
+try:
+    import llm_proxy as _llm_proxy_mod
+    _HAS_LLM_PROXY = True
+except ImportError:
+    _HAS_LLM_PROXY = False
+
 class TestJarvisLLMPool(FrappeTestCase):
     def test_pool_doctype_exists_and_is_single_sysmanager_only(self):
         assert frappe.db.exists("DocType", "Jarvis LLM Pool")
@@ -88,3 +94,69 @@ class TestJarvisLLMPool(FrappeTestCase):
         assert "shimsecret" not in str(call_kwargs["spec"])
         assert call_kwargs["api_keys"]["POOL_KEY_0"] == "shimsecret"
         assert call_kwargs["oauth_blobs"]["SUB_A1"] == {"t": 1}
+
+    # ------------------------------------------------------------------
+    # E2E validation tests: build_pool_payload -> PoolSpec -> validate
+    # ------------------------------------------------------------------
+
+    def _make_dynamic_pool_both_tiers(self):
+        """Pool with 1 cheap + 1 strong api_key model — should stay dynamic."""
+        pool = frappe.get_single("Jarvis LLM Pool")
+        pool.routing_mode = "dynamic"
+        pool.set("models", [])
+        pool.append("models", {"provider": "openai_compat", "model": "gpt-4o", "tier": "strong",
+                               "credential_type": "api_key", "api_key": "sk-strong", "order": 0, "enabled": 1})
+        pool.append("models", {"provider": "openai_compat", "model": "gpt-3.5-turbo", "tier": "cheap",
+                               "credential_type": "api_key", "api_key": "sk-cheap", "order": 1, "enabled": 1})
+        return pool
+
+    def _make_two_strong_pool(self):
+        """Pool with 2 strong api_key models — dynamic has no cheap tier, must fall back to failover."""
+        pool = frappe.get_single("Jarvis LLM Pool")
+        pool.routing_mode = "dynamic"
+        pool.set("models", [])
+        pool.append("models", {"provider": "openai_compat", "model": "gpt-4o", "tier": "strong",
+                               "credential_type": "api_key", "api_key": "sk-a", "order": 0, "enabled": 1})
+        pool.append("models", {"provider": "openai_compat", "model": "gpt-4-turbo", "tier": "strong",
+                               "credential_type": "api_key", "api_key": "sk-b", "order": 1, "enabled": 1})
+        return pool
+
+    def test_validate_dynamic_pool_with_both_tiers(self):
+        """1 cheap + 1 strong → routing_mode stays 'dynamic', classifier present, validate clean."""
+        import unittest
+        if not _HAS_LLM_PROXY:
+            raise unittest.SkipTest("llm_proxy not installed")
+
+        from llm_proxy.schema import PoolSpec
+        from llm_proxy.validate import validate
+        from jarvis.jarvis.pool_serialize import build_pool_payload
+
+        pool = self._make_dynamic_pool_both_tiers()
+        spec, _, _ = build_pool_payload(pool)
+
+        assert spec["routing_mode"] == "dynamic", f"expected dynamic, got {spec['routing_mode']}"
+        assert "classifier" in spec, "classifier key must be present for dynamic routing"
+
+        pool_spec = PoolSpec(**spec)
+        issues = validate(pool_spec)
+        assert issues == [], f"Expected zero validate issues, got: {issues}"
+
+    def test_validate_two_strong_pool_falls_back_to_failover(self):
+        """2 strong models (no cheap) → routing_mode falls back to 'failover', validate clean."""
+        import unittest
+        if not _HAS_LLM_PROXY:
+            raise unittest.SkipTest("llm_proxy not installed")
+
+        from llm_proxy.schema import PoolSpec
+        from llm_proxy.validate import validate
+        from jarvis.jarvis.pool_serialize import build_pool_payload
+
+        pool = self._make_two_strong_pool()
+        spec, _, _ = build_pool_payload(pool)
+
+        assert spec["routing_mode"] == "failover", f"expected failover fallback, got {spec['routing_mode']}"
+        assert "classifier" not in spec, "classifier must NOT be emitted for failover mode"
+
+        pool_spec = PoolSpec(**spec)
+        issues = validate(pool_spec)
+        assert issues == [], f"Expected zero validate issues, got: {issues}"

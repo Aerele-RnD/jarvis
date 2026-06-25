@@ -72,11 +72,18 @@ def build_pool_payload(pool):
             if val:
                 api_keys[ref] = val
         models.append(entry)
+    eff_mode = pool.routing_mode or "dynamic"
+    # preset is honored as Custom in 2b; preset→tier templates deferred to 2c
+    tiers = {(m.get("tier") or "strong") for m in models}
+    if eff_mode == "dynamic" and not ({"cheap", "strong"} <= tiers):
+        eff_mode = "failover"   # dynamic is meaningless without BOTH tiers; fall back
     spec = {
         "name": _pool_name(),
-        "routing_mode": pool.routing_mode or "dynamic",
+        "routing_mode": eff_mode,
         "models": models,
     }
+    if eff_mode == "dynamic":
+        spec["classifier"] = {}   # pydantic defaults ClassifierConfig(); satisfies validate
     return spec, api_keys, oauth_blobs
 
 
