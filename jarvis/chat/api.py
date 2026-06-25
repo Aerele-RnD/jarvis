@@ -47,12 +47,12 @@ def list_conversations() -> list[dict]:
 	user = frappe.session.user
 	rows = frappe.db.sql(
 		"""
-		SELECT c.name, c.title, c.last_active_at,
+		SELECT c.name, c.title, c.last_active_at, c.starred,
 		       (SELECT COUNT(*) FROM `tabJarvis Chat Message` m
 		        WHERE m.conversation = c.name) AS message_count
 		FROM `tabJarvis Conversation` c
 		WHERE c.owner = %s AND c.status = 'Active'
-		ORDER BY c.last_active_at DESC
+		ORDER BY c.starred DESC, c.last_active_at DESC
 		""",
 		(user,),
 		as_dict=True,
@@ -250,6 +250,18 @@ def rename_conversation(conversation: str, title: str) -> dict:
 	doc.save()
 	frappe.db.commit()
 	return {"ok": True, "data": {"title": title}}
+
+
+@frappe.whitelist()
+def set_star(conversation: str, starred) -> dict:
+	"""Star/unstar a conversation (owner-gated via get_doc). Starred chats are
+	listed first and grouped under 'Starred' in the sidebar."""
+	on = 1 if str(starred) in ("1", "true", "True", "on", "yes") else 0
+	doc = frappe.get_doc(CONV, conversation)
+	doc.starred = on
+	doc.save()
+	frappe.db.commit()
+	return {"ok": True, "data": {"starred": on}}
 
 
 import uuid

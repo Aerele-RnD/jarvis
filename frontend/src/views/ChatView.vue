@@ -46,6 +46,7 @@
 						<span v-else class="jv-conv-title">{{ c.title || "New chat" }}</span>
 						<button v-if="renamingId !== c.name" class="jv-conv-more" @click.stop="toggleConvMenu(c.name)" title="Options"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></svg></button>
 						<div v-if="convMenuFor === c.name" class="jv-conv-menu" @click.stop>
+							<button class="jv-menuitem" @click="toggleStar(c)"><svg width="14" height="14" viewBox="0 0 24 24" :fill="c.starred ? 'var(--amber)' : 'none'" :stroke="c.starred ? 'var(--amber)' : 'currentColor'" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg><span>{{ c.starred ? "Unstar" : "Star" }}</span></button>
 							<button class="jv-menuitem" @click="startRename(c)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg><span>Rename</span></button>
 							<button class="jv-menuitem jv-menuitem-danger" @click="deleteConv(c)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /></svg><span>Delete</span></button>
 						</div>
@@ -465,6 +466,17 @@ const renameText = ref("")
 function toggleConvMenu(id) {
 	convMenuFor.value = convMenuFor.value === id ? null : id
 }
+async function toggleStar(c) {
+	convMenuFor.value = null
+	const next = c.starred ? 0 : 1
+	const conv = conversations.value.find((x) => x.name === c.name)
+	if (conv) conv.starred = next // optimistic — regroups instantly
+	try {
+		await api.setStar(c.name, next)
+	} catch (e) {
+		loadConversations()
+	}
+}
 function startRename(c) {
 	convMenuFor.value = null
 	renamingId.value = c.name
@@ -694,10 +706,14 @@ const filteredConvs = computed(() => {
 	return q ? conversations.value.filter((c) => (c.title || "").toLowerCase().includes(q)) : conversations.value
 })
 const groups = computed(() => {
-	const today = [], yest = [], earlier = []
+	const starred = [], today = [], yest = [], earlier = []
 	const now = new Date()
 	const d0 = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
 	for (const c of filteredConvs.value) {
+		if (c.starred) {
+			starred.push(c)
+			continue
+		}
 		const raw = (c.last_active_at || c.modified || "").replace(" ", "T")
 		const t = raw ? new Date(raw) : now
 		const cd = new Date(t.getFullYear(), t.getMonth(), t.getDate()).getTime()
@@ -707,6 +723,7 @@ const groups = computed(() => {
 		else earlier.push(c)
 	}
 	return [
+		{ label: "Starred", items: starred },
 		{ label: "Today", items: today },
 		{ label: "Yesterday", items: yest },
 		{ label: "Earlier", items: earlier },
