@@ -191,6 +191,32 @@ def _artifact_mime(item: dict) -> str:
 
 
 @frappe.whitelist()
+def preview_file(file_url: str) -> dict:
+	"""Render-ready preview for the artifact side panel.
+
+	Tabular files (xlsx / csv) → ``{kind:"table", sheets:[{name, rows}]}``; plain
+	text/json/md → ``{kind:"text", text}``. PDFs, images and html/svg are
+	rendered by the panel directly from the file URL, so this is only called for
+	the non-inline ("file") types. Permission-gated through ``read_file`` (needs
+	File read perm on the private File — the user's own chat artifact)."""
+	if not file_url:
+		return {"kind": "binary"}
+	from jarvis.tools.read_file import read_file
+
+	data = read_file(file_url=file_url, max_rows=300, max_chars=8000)
+	kind = data.get("kind")
+	if kind == "table":
+		sheets = [
+			{"name": s.get("name") or "Sheet", "rows": (s.get("rows") or [])}
+			for s in (data.get("sheets") or [])
+		]
+		return {"kind": "table", "sheets": sheets, "filename": data.get("filename")}
+	if kind == "text":
+		return {"kind": "text", "text": data.get("text") or ""}
+	return {"kind": kind or "binary"}
+
+
+@frappe.whitelist()
 def create_conversation() -> str:
 	"""Create an empty conversation owned by the current user; return its name."""
 	doc = frappe.get_doc({
@@ -211,6 +237,19 @@ def archive_conversation(conversation: str) -> dict:
 	doc.save()
 	frappe.db.commit()
 	return {"ok": True}
+
+
+@frappe.whitelist()
+def rename_conversation(conversation: str, title: str) -> dict:
+	"""Rename a conversation. ``get_doc`` enforces the owner-only permission."""
+	title = (title or "").strip()[:140]
+	if not title:
+		return {"ok": False, "reason": _("title is empty")}
+	doc = frappe.get_doc(CONV, conversation)
+	doc.title = title
+	doc.save()
+	frappe.db.commit()
+	return {"ok": True, "data": {"title": title}}
 
 
 import uuid
@@ -377,7 +416,23 @@ def get_chat_ui_settings() -> dict:
 		"llm_model": settings.llm_model or "",
 		"subscription_models": _SUBSCRIPTION_MODELS,
 		"default_models": _DEFAULT_MODEL,
+		# When 1, the agent applies mutating changes without confirming (auto mode).
+		"auto_apply_changes": int(settings.auto_apply_changes or 0),
 	}
+
+
+@frappe.whitelist()
+def set_auto_apply(value) -> dict:
+	"""Toggle the per-site 'auto-apply changes (skip confirmation)' setting.
+
+	OFF (default) = the agent confirms every ERP-mutating action before running
+	it; ON = it applies changes immediately. Read by the chat worker and folded
+	into the turn's [Context: ...] line so the agent knows which mode it's in.
+	"""
+	on = 1 if str(value) in ("1", "true", "True", "on", "yes") else 0
+	frappe.db.set_single_value("Jarvis Settings", "auto_apply_changes", on)
+	frappe.db.commit()
+	return {"ok": True, "data": {"auto_apply_changes": on}}
 
 
 def _est_tokens(text: str | None) -> int:

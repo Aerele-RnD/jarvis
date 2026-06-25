@@ -10,6 +10,27 @@
 			href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;550;600;700&display=swap"
 			rel="stylesheet"
 		/>
+		<!-- Paint the saved theme BEFORE the app mounts so a refresh doesn't flash
+		     white (FOUC) on the way to dark, and fade the app in smoothly. -->
+		<style>
+			html, body { margin: 0; background: #ffffff; }
+			html.jv-preload-dark, html.jv-preload-dark body { background: #16161a; }
+			#app { animation: jv-appin 0.24s ease both; }
+			@keyframes jv-appin { from { opacity: 0; } to { opacity: 1; } }
+		</style>
+		<script>
+			(function () {
+				try {
+					var t = localStorage.getItem("jarvis-theme") || "system"
+					var dark =
+						t === "dark" ||
+						(t === "system" &&
+							window.matchMedia &&
+							window.matchMedia("(prefers-color-scheme: dark)").matches)
+					if (dark) document.documentElement.classList.add("jv-preload-dark")
+				} catch (e) {}
+			})()
+		</script>
 	</head>
 	<body>
 		<div id="app"></div>
