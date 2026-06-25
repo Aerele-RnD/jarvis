@@ -191,6 +191,32 @@ def _artifact_mime(item: dict) -> str:
 
 
 @frappe.whitelist()
+def preview_file(file_url: str) -> dict:
+	"""Render-ready preview for the artifact side panel.
+
+	Tabular files (xlsx / csv) → ``{kind:"table", sheets:[{name, rows}]}``; plain
+	text/json/md → ``{kind:"text", text}``. PDFs, images and html/svg are
+	rendered by the panel directly from the file URL, so this is only called for
+	the non-inline ("file") types. Permission-gated through ``read_file`` (needs
+	File read perm on the private File — the user's own chat artifact)."""
+	if not file_url:
+		return {"kind": "binary"}
+	from jarvis.tools.read_file import read_file
+
+	data = read_file(file_url=file_url, max_rows=300, max_chars=8000)
+	kind = data.get("kind")
+	if kind == "table":
+		sheets = [
+			{"name": s.get("name") or "Sheet", "rows": (s.get("rows") or [])}
+			for s in (data.get("sheets") or [])
+		]
+		return {"kind": "table", "sheets": sheets, "filename": data.get("filename")}
+	if kind == "text":
+		return {"kind": "text", "text": data.get("text") or ""}
+	return {"kind": kind or "binary"}
+
+
+@frappe.whitelist()
 def create_conversation() -> str:
 	"""Create an empty conversation owned by the current user; return its name."""
 	doc = frappe.get_doc({
