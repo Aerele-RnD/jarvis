@@ -11,11 +11,20 @@ export const getConversation = (conversation) =>
 // when a message has several.
 export const getCanvas = (message, name) =>
 	call("jarvis.chat.api.get_canvas", { message, name: name || "" })
+// Tabular/text preview for the artifact side panel (xlsx/csv → sheets, txt → text).
+export const previewFile = (fileUrl) =>
+	call("jarvis.chat.api.preview_file", { file_url: fileUrl })
 export const createOrFocusEmpty = () => call("jarvis.chat.api.create_or_focus_empty")
 export const archiveConversation = (conversation) =>
 	call("jarvis.chat.api.archive_conversation", { conversation })
+export const renameConversation = (conversation, title) =>
+	call("jarvis.chat.api.rename_conversation", { conversation, title })
 export const retryMessage = (message) => call("jarvis.chat.api.retry_message", { message })
 export const getChatUiSettings = () => call("jarvis.chat.api.get_chat_ui_settings")
+// Toggle "auto-apply changes" (skip the agent's confirmation step before
+// mutating ERP data). Off = confirm every change (default).
+export const setAutoApply = (value) =>
+	call("jarvis.chat.api.set_auto_apply", { value: value ? 1 : 0 })
 // Estimated token usage (this chat / this month / total + monthly budget).
 export const getUsage = (conversation) =>
 	call("jarvis.chat.api.get_usage", { conversation: conversation || "" })
