@@ -1,5 +1,6 @@
 """Unit tests for jarvis.tools.summarize_dataset (pure-Python, no DB)."""
 
+import math
 import unittest
 
 from jarvis.exceptions import InvalidArgumentError
@@ -51,6 +52,29 @@ class TestSummarizeDataset(unittest.TestCase):
 		out = summarize_dataset(rows, top_n=3)
 		self.assertEqual(out["columns"]["k"]["type"], "categorical")
 		self.assertEqual(len(out["columns"]["k"]["top"]), 3)
+
+	def test_nan_inf_strings_do_not_poison_numeric(self):
+		# 'nan'/'inf' must NOT coerce to float and turn the column numeric with
+		# NaN/inf stats; they are non-numeric tokens here -> column is mixed.
+		out = summarize_dataset([{"x": 1}, {"x": 2}, {"x": "nan"}, {"x": "inf"}])
+		col = out["columns"]["x"]
+		self.assertEqual(col["type"], "mixed")
+		for v in col.values():
+			if isinstance(v, float):
+				self.assertTrue(math.isfinite(v))
+
+	def test_real_nan_float_excluded(self):
+		out = summarize_dataset([{"x": 1.0}, {"x": 2.0}, {"x": float("nan")}])
+		self.assertEqual(out["columns"]["x"]["type"], "mixed")  # the nan float is not numeric
+
+	def test_long_strings_not_conflated(self):
+		a = "x" * 300 + "A"
+		b = "x" * 300 + "B"  # shares a 300-char prefix; differs only at the end
+		out = summarize_dataset([{"u": a}, {"u": b}, {"u": a}])
+		col = out["columns"]["u"]
+		self.assertEqual(col["distinct"], 2)  # full-value key, not a 200-char prefix
+		self.assertEqual(col["top"][0]["count"], 2)
+		self.assertLessEqual(len(col["top"][0]["value"]), 84)  # display truncated
 
 
 if __name__ == "__main__":
