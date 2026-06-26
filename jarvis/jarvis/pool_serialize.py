@@ -17,12 +17,21 @@ def _get_password(doc, fieldname: str, raise_exception: bool = False) -> str:
       values and in-memory plaintext. raise_exception=False so masked-empty → "".
     - frappe._dict / plain dict rows (used in tests / in-memory) just have the
       raw value; read it directly.
+
+    FT4 hardening: if the field is non-empty but get_password raises, propagate
+    the error rather than collapsing it to "". Collapsing a real decryption failure
+    to blank would silently drop the credential and send an empty secret to admin.
     """
     if callable(getattr(doc, "get_password", None)):
         try:
             return doc.get_password(fieldname, raise_exception=raise_exception) or ""
         except Exception:
-            return ""
+            # Check if the raw in-memory field has content (masked) — if so,
+            # this is a real decryption error, not "field unset".
+            raw = getattr(doc, fieldname, None) or (doc.get(fieldname) if hasattr(doc, "get") else None)
+            if raw and raw != "":
+                raise  # Real decryption error: propagate
+            return ""  # Field genuinely unset
     return (doc.get(fieldname) or "") if hasattr(doc, "get") else (getattr(doc, fieldname, "") or "")
 
 
@@ -34,9 +43,13 @@ def _safe_json_loads(blob: str):
     """Try to parse blob as JSON. Returns (parsed, error_str).
 
     error_str is None on success, a human-readable message on failure.
+    FT4: also rejects blobs that parse successfully but are not a dict (e.g. lists).
     """
     try:
-        return json.loads(blob), None
+        parsed = json.loads(blob)
+        if not isinstance(parsed, dict):
+            return None, f"oauth_blob must be a JSON object (dict), got {type(parsed).__name__}"
+        return parsed, None
     except Exception as exc:
         return None, f"malformed oauth_blob JSON: {exc}"
 
@@ -130,8 +143,9 @@ def validate_models(settings) -> list:
 
                 upstreams.add(upstream)
 
-                # Malformed oauth_blob
-                blob_raw = a.oauth_blob if hasattr(a, "oauth_blob") else a.get("oauth_blob", "")
+                # Malformed oauth_blob — use _get_password so DB-backed masked rows
+                # are decrypted correctly (avoids "malformed" error on re-save).
+                blob_raw = _get_password(a, "oauth_blob") if callable(getattr(a, "get_password", None)) else (a.oauth_blob if hasattr(a, "oauth_blob") else a.get("oauth_blob", ""))
                 if blob_raw:
                     _, parse_err = _safe_json_loads(blob_raw)
                     if parse_err:
