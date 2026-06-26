@@ -1235,3 +1235,296 @@ class TestRT5OnboardingWritesModelsRow(_RT3SettingsTestCase):
         post_count = len(settings.get("models") or [])
         self.assertEqual(post_count, 2,
                          "models table must NOT be cleared when guard is triggered")
+
+
+# ---------------------------------------------------------------------------
+# FT1: Migration patch tests — v1_seed_llm_models.py
+#
+# TDD RED→GREEN tests for the deploy-blocker fix:
+#   (a) oauth-mode tenant → execute() must NOT raise, models stays empty
+#   (b) blank-key api_key tenant → execute() must NOT raise, models stays empty
+#   (c) api_key tenant WITH a key → execute() seeds models[0]
+#   (d) no admin/network sync is enqueued during migrate
+# ---------------------------------------------------------------------------
+
+class TestFT1MigrationPatch(_RT3SettingsTestCase):
+    """FT1: Verify v1_seed_llm_models.execute() is safe for all credential modes.
+
+    The patch must:
+    - NOT raise for oauth/subscription tenants (legacy path, models stays empty)
+    - NOT raise for blank-key api_key tenants (models stays empty)
+    - Seed models[0] only for api_key tenants with a non-blank key
+    - NOT enqueue an admin sync (no network calls during bench migrate)
+    """
+
+    def setUp(self):
+        super().setUp()
+        self._clear_models()
+        # Clean state: no models, no preset
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("preset", "", update_modified=False)
+        settings.db_set("proxy_active", 0, update_modified=False)
+        settings.db_set("proxy_recommended", 0, update_modified=False)
+        settings.db_set("llm_provider", "", update_modified=False)
+        settings.db_set("llm_model", "", update_modified=False)
+        settings.db_set("llm_base_url", "", update_modified=False)
+        settings.db_set("llm_auth_mode", "", update_modified=False)
+        # Clear llm_api_key from both __Auth (encrypted) and tabSingles (plaintext).
+        # tabSingles may store a non-masked value if legacy code wrote it directly;
+        # db_set("", ...) clears it so get_password() returns "" in the next test.
+        settings.db_set("llm_api_key", "", update_modified=False)
+        from frappe.utils.password import remove_encrypted_password
+        try:
+            remove_encrypted_password("Jarvis Settings", "Jarvis Settings", "llm_api_key")
+        except Exception:
+            pass
+        frappe.db.commit()
+
+    def _set_legacy_fields(self, *, llm_model, llm_auth_mode, llm_api_key=None,
+                           llm_provider="OpenAI", llm_base_url="https://api.openai.com"):
+        """Seed the legacy single-model fields (without triggering on_update)."""
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("llm_model", llm_model, update_modified=False)
+        settings.db_set("llm_auth_mode", llm_auth_mode, update_modified=False)
+        settings.db_set("llm_provider", llm_provider, update_modified=False)
+        settings.db_set("llm_base_url", llm_base_url, update_modified=False)
+        if llm_api_key:
+            from frappe.utils.password import set_encrypted_password
+            set_encrypted_password(
+                "Jarvis Settings", "Jarvis Settings",
+                llm_api_key, "llm_api_key",
+            )
+        frappe.db.commit()
+
+    # ------------------------------------------------------------------ #
+    # (a) oauth-mode tenant → execute() must NOT raise, models stays empty
+    # ------------------------------------------------------------------ #
+
+    def test_oauth_tenant_patch_does_not_raise_and_leaves_models_empty(self):
+        """FT1(a): oauth-mode tenant: execute() must NOT raise, models stays empty."""
+        from unittest.mock import patch as mock_patch
+
+        self._set_legacy_fields(
+            llm_model="gpt-4o",
+            llm_auth_mode="oauth",
+            llm_api_key=None,
+        )
+
+        with (
+            mock_patch("jarvis.admin_client.post_update_llm_creds") as mock_creds,
+            mock_patch("jarvis.admin_client.post_update_llm_pool") as mock_pool,
+        ):
+            try:
+                from jarvis.patches import v1_seed_llm_models
+                import importlib
+                importlib.reload(v1_seed_llm_models)
+                v1_seed_llm_models.execute()
+            except Exception as exc:
+                self.fail(
+                    f"v1_seed_llm_models.execute() raised for oauth tenant: {exc}"
+                )
+
+        settings = frappe.get_single("Jarvis Settings")
+        models = settings.get("models") or []
+        self.assertEqual(len(models), 0,
+                         "oauth tenant: models must stay empty after migration patch")
+
+        # No admin sync must be enqueued
+        mock_creds.assert_not_called()
+        mock_pool.assert_not_called()
+
+    # ------------------------------------------------------------------ #
+    # (b) subscription-mode tenant → execute() must NOT raise, models empty
+    # ------------------------------------------------------------------ #
+
+    def test_subscription_tenant_patch_does_not_raise_and_leaves_models_empty(self):
+        """FT1(a-sub): subscription-mode tenant: execute() must NOT raise, models stays empty."""
+        from unittest.mock import patch as mock_patch
+
+        self._set_legacy_fields(
+            llm_model="gpt-4o",
+            llm_auth_mode="subscription",
+            llm_api_key=None,
+        )
+
+        with (
+            mock_patch("jarvis.admin_client.post_update_llm_creds") as mock_creds,
+            mock_patch("jarvis.admin_client.post_update_llm_pool") as mock_pool,
+        ):
+            try:
+                from jarvis.patches import v1_seed_llm_models
+                import importlib
+                importlib.reload(v1_seed_llm_models)
+                v1_seed_llm_models.execute()
+            except Exception as exc:
+                self.fail(
+                    f"v1_seed_llm_models.execute() raised for subscription tenant: {exc}"
+                )
+
+        settings = frappe.get_single("Jarvis Settings")
+        models = settings.get("models") or []
+        self.assertEqual(len(models), 0,
+                         "subscription tenant: models must stay empty after migration patch")
+
+        mock_creds.assert_not_called()
+        mock_pool.assert_not_called()
+
+    # ------------------------------------------------------------------ #
+    # (b) blank-key api_key tenant → execute() must NOT raise, models empty
+    # ------------------------------------------------------------------ #
+
+    def test_blank_key_api_key_tenant_patch_does_not_raise_and_leaves_models_empty(self):
+        """FT1(b): blank-key api_key tenant: execute() must NOT raise, models stays empty."""
+        from unittest.mock import patch as mock_patch
+
+        # api_key mode but NO key set (llm_api_key blank/absent)
+        self._set_legacy_fields(
+            llm_model="gpt-4o",
+            llm_auth_mode="api_key",
+            llm_api_key=None,  # blank
+        )
+
+        with (
+            mock_patch("jarvis.admin_client.post_update_llm_creds") as mock_creds,
+            mock_patch("jarvis.admin_client.post_update_llm_pool") as mock_pool,
+        ):
+            try:
+                from jarvis.patches import v1_seed_llm_models
+                import importlib
+                importlib.reload(v1_seed_llm_models)
+                v1_seed_llm_models.execute()
+            except Exception as exc:
+                self.fail(
+                    f"v1_seed_llm_models.execute() raised for blank-key api_key tenant: {exc}"
+                )
+
+        settings = frappe.get_single("Jarvis Settings")
+        models = settings.get("models") or []
+        self.assertEqual(len(models), 0,
+                         "blank-key api_key tenant: models must stay empty after migration patch")
+
+        mock_creds.assert_not_called()
+        mock_pool.assert_not_called()
+
+    # ------------------------------------------------------------------ #
+    # (c) api_key tenant WITH key → execute() seeds models[0]
+    # ------------------------------------------------------------------ #
+
+    def test_api_key_tenant_with_key_patch_seeds_models_row(self):
+        """FT1(c): api_key tenant with non-blank key: execute() seeds models[0]."""
+        from unittest.mock import patch as mock_patch
+
+        self._set_legacy_fields(
+            llm_model="gpt-4o",
+            llm_auth_mode="api_key",
+            llm_api_key="sk-migrate-test-key-xyz",
+            llm_provider="OpenAI",
+            llm_base_url="https://api.openai.com",
+        )
+
+        with (
+            mock_patch("jarvis.admin_client.post_update_llm_creds",
+                       return_value={"action": "restart"}) as mock_creds,
+            mock_patch("jarvis.admin_client.post_update_llm_pool") as mock_pool,
+        ):
+            from jarvis.patches import v1_seed_llm_models
+            import importlib
+            importlib.reload(v1_seed_llm_models)
+            v1_seed_llm_models.execute()
+
+        settings = frappe.get_single("Jarvis Settings")
+        models = settings.get("models") or []
+        self.assertEqual(len(models), 1,
+                         "api_key tenant with key: must have exactly 1 model row after migration")
+
+        row = models[0]
+        self.assertEqual(row.credential_type, "api_key",
+                         "seeded row credential_type must be 'api_key'")
+        self.assertEqual(row.model, "gpt-4o",
+                         "seeded row model must match legacy llm_model")
+        self.assertEqual(int(row.enabled or 0), 1,
+                         "seeded row must be enabled")
+
+        # Pool sync must NOT have been called (1 model → single-model path, not proxy)
+        mock_pool.assert_not_called()
+
+    # ------------------------------------------------------------------ #
+    # (c-idempotent) second execute() with existing models → no-op
+    # ------------------------------------------------------------------ #
+
+    def test_api_key_patch_is_idempotent_when_models_already_seeded(self):
+        """FT1(c-idempotent): second execute() when models already exist → no-op (no duplicate rows)."""
+        from unittest.mock import patch as mock_patch
+
+        self._set_legacy_fields(
+            llm_model="gpt-4o",
+            llm_auth_mode="api_key",
+            llm_api_key="sk-idempotent-key",
+        )
+
+        with mock_patch("jarvis.admin_client.post_update_llm_creds",
+                        return_value={"action": "restart"}):
+            from jarvis.patches import v1_seed_llm_models
+            import importlib
+            importlib.reload(v1_seed_llm_models)
+            v1_seed_llm_models.execute()
+
+        # Run again — must not add a second row
+        with mock_patch("jarvis.admin_client.post_update_llm_creds",
+                        return_value={"action": "restart"}):
+            importlib.reload(v1_seed_llm_models)
+            v1_seed_llm_models.execute()
+
+        settings = frappe.get_single("Jarvis Settings")
+        models = settings.get("models") or []
+        self.assertEqual(len(models), 1,
+                         "idempotent: second execute() must NOT add a duplicate row")
+
+    # ------------------------------------------------------------------ #
+    # (d) no admin sync enqueued during migrate
+    # ------------------------------------------------------------------ #
+
+    def test_migrate_does_not_enqueue_admin_sync_for_api_key_tenant(self):
+        """FT1(d): During migrate, execute() must NOT enqueue an admin sync call.
+
+        The in_llm_migrate flag (or equivalent) must suppress the sync enqueue
+        so that bench migrate does not make per-tenant admin/network calls.
+        """
+        from unittest.mock import patch as mock_patch
+
+        self._set_legacy_fields(
+            llm_model="gpt-4o",
+            llm_auth_mode="api_key",
+            llm_api_key="sk-no-sync-test",
+            llm_provider="OpenAI",
+            llm_base_url="https://api.openai.com",
+        )
+
+        enqueued_calls = []
+
+        original_enqueue = frappe.enqueue
+
+        def capture_enqueue(*args, **kwargs):
+            # Capture any enqueue calls
+            method = args[0] if args else kwargs.get("method", "")
+            if "sync" in str(method).lower() or "admin" in str(method).lower():
+                enqueued_calls.append({"method": method, "kwargs": kwargs})
+            # Still call original but prevent actual network calls
+            return None
+
+        with (
+            mock_patch("frappe.enqueue", side_effect=capture_enqueue),
+            mock_patch("jarvis.admin_client.post_update_llm_creds") as mock_creds,
+            mock_patch("jarvis.admin_client.post_update_llm_pool") as mock_pool,
+        ):
+            from jarvis.patches import v1_seed_llm_models
+            import importlib
+            importlib.reload(v1_seed_llm_models)
+            v1_seed_llm_models.execute()
+
+        # No admin sync must be enqueued during migration
+        self.assertEqual(enqueued_calls, [],
+                         f"execute() must NOT enqueue any admin sync during migrate; "
+                         f"got: {enqueued_calls}")
+        mock_creds.assert_not_called()
+        mock_pool.assert_not_called()
