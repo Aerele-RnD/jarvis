@@ -1017,3 +1017,165 @@ class TestRT4PoolSyncReReadsAtRunTime(_RT3SettingsTestCase):
             status.startswith("failed: rate-limited"),
             f"Expected last_sync_status to start with 'failed: rate-limited', got: {status!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Task 5 (RT5): onboarding writes models[0] (table is the source of truth)
+# ---------------------------------------------------------------------------
+
+class TestRT5OnboardingWritesModelsRow(_RT3SettingsTestCase):
+    """Task 5 (RT5): save_llm_creds with auth_mode='api_key' must upsert
+    Jarvis Settings.models[0] (table is source of truth) so that:
+
+    (a) models[0] carries provider / model / base_url / credential_type='api_key'
+    (b) get_password on the row returns the api_key (encrypted via on_update mirror)
+    (c) legacy llm_provider / llm_model / llm_auth_mode are populated by the mirror
+    (d) is_ready_for_chat() returns ready=True after save_llm_creds (api_key path)
+    (e) auth_mode='oauth' is left on the legacy direct path (models table untouched)
+    """
+
+    def setUp(self):
+        super().setUp()
+        self._clear_models()
+        _reset_settings()
+        # Seed admin creds so is_ready_for_chat passes the signup gate.
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("jarvis_admin_api_key", "test-admin-key", update_modified=False)
+        settings.db_set("preset", "", update_modified=False)
+        settings.db_set("proxy_active", 0, update_modified=False)
+        settings.db_set("proxy_recommended", 0, update_modified=False)
+        frappe.db.commit()
+
+    # ------------------------------------------------------------------
+    # (a)+(b)+(c) models[0] row created with correct shape + encrypted key
+    # ------------------------------------------------------------------
+
+    def test_api_key_onboarding_upserts_models_row(self):
+        """save_llm_creds(auth_mode='api_key') must create models[0] with
+        provider / model / base_url / credential_type='api_key' and the
+        api_key retrievable via get_password on the row."""
+        from unittest.mock import patch
+
+        with patch("jarvis.admin_client.post_update_llm_creds",
+                   return_value={"action": "restart"}):
+            from jarvis import onboarding
+            onboarding.save_llm_creds(
+                provider="openai_compat",
+                model="gpt-4o",
+                api_key="sk-onboard-test-key",
+                base_url="https://api.openai.com",
+                auth_mode="api_key",
+            )
+
+        settings = frappe.get_single("Jarvis Settings")
+        models = settings.get("models") or []
+        self.assertTrue(len(models) >= 1,
+                        "models table must have at least one row after api_key onboarding")
+
+        row = models[0]
+        self.assertEqual(row.provider, "openai_compat",
+                         "models[0].provider must match the onboarding provider")
+        self.assertEqual(row.model, "gpt-4o",
+                         "models[0].model must match the onboarding model")
+        self.assertEqual(row.base_url, "https://api.openai.com",
+                         "models[0].base_url must match the onboarding base_url")
+        self.assertEqual(row.credential_type, "api_key",
+                         "models[0].credential_type must be 'api_key'")
+        self.assertEqual(int(row.enabled or 0), 1,
+                         "models[0].enabled must be 1")
+        self.assertEqual(int(row.order or 0), 0,
+                         "models[0].order must be 0")
+
+        # api_key must be stored encrypted, readable via get_password.
+        recovered = row.get_password("api_key", raise_exception=False)
+        self.assertEqual(recovered, "sk-onboard-test-key",
+                         "models[0].get_password('api_key') must return the onboarding key")
+
+    # ------------------------------------------------------------------
+    # (c) Legacy mirror fields are populated by on_update
+    # ------------------------------------------------------------------
+
+    def test_api_key_onboarding_mirrors_legacy_fields(self):
+        """After save_llm_creds(api_key), on_update must mirror models[0]
+        into the legacy llm_provider / llm_model / llm_auth_mode / llm_api_key
+        fields so existing downstream readers (chat worker, is_ready_for_chat)
+        continue to work unchanged."""
+        from unittest.mock import patch
+
+        with patch("jarvis.admin_client.post_update_llm_creds",
+                   return_value={"action": "restart"}):
+            from jarvis import onboarding
+            onboarding.save_llm_creds(
+                provider="openai_compat",
+                model="gpt-4o-mini",
+                api_key="sk-mirror-test",
+                base_url="https://api.openai.com",
+                auth_mode="api_key",
+            )
+
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertEqual(settings.llm_provider, "openai_compat",
+                         "llm_provider must be mirrored from models[0]")
+        self.assertEqual(settings.llm_model, "gpt-4o-mini",
+                         "llm_model must be mirrored from models[0]")
+        self.assertEqual(settings.llm_auth_mode, "api_key",
+                         "llm_auth_mode must be mirrored as 'api_key' from models[0]")
+        recovered_key = settings.get_password("llm_api_key", raise_exception=False)
+        self.assertEqual(recovered_key, "sk-mirror-test",
+                         "get_password('llm_api_key') must return the onboarding key via mirror")
+
+    # ------------------------------------------------------------------
+    # (d) is_ready_for_chat returns ready after api_key onboarding
+    # ------------------------------------------------------------------
+
+    def test_api_key_onboarding_leaves_is_ready_for_chat_passing(self):
+        """is_ready_for_chat must return ready=True after a successful
+        api_key onboarding via save_llm_creds."""
+        from unittest.mock import patch
+
+        with patch("jarvis.admin_client.post_update_llm_creds",
+                   return_value={"action": "restart"}):
+            from jarvis import onboarding
+            onboarding.save_llm_creds(
+                provider="openai_compat",
+                model="gpt-4o",
+                api_key="sk-readiness-test",
+                base_url="https://api.openai.com",
+                auth_mode="api_key",
+            )
+
+        from jarvis.account import is_ready_for_chat
+        result = is_ready_for_chat()
+        self.assertTrue(result.get("ready"),
+                        f"is_ready_for_chat must return ready=True after api_key onboarding; got: {result}")
+        self.assertIsNone(result.get("reason"),
+                          f"reason must be None when ready; got: {result.get('reason')!r}")
+
+    # ------------------------------------------------------------------
+    # (e) OAuth mode leaves the models table untouched
+    # ------------------------------------------------------------------
+
+    def test_oauth_mode_does_not_write_models_row(self):
+        """save_llm_creds(auth_mode='oauth') must NOT write to the models
+        table — direct-OAuth single-model uses the legacy field path."""
+        from unittest.mock import patch
+
+        # Pre-condition: no models rows.
+        settings = frappe.get_single("Jarvis Settings")
+        initial_count = len(settings.get("models") or [])
+
+        with patch("jarvis.admin_client.post_update_llm_creds",
+                   return_value={"action": "restart"}):
+            from jarvis import onboarding
+            onboarding.save_llm_creds(
+                provider="OpenAI",
+                model="gpt-4o",
+                api_key="",
+                base_url="",
+                auth_mode="oauth",
+            )
+
+        settings = frappe.get_single("Jarvis Settings")
+        final_count = len(settings.get("models") or [])
+        self.assertEqual(final_count, initial_count,
+                         "oauth mode must NOT add rows to the models table")
