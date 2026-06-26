@@ -12,9 +12,10 @@ a model-readable shape:
   - spreadsheets (xlsx / csv)  → rows (per sheet)
   - pdf                        → extracted text (per page)
   - text-like (txt/md/json/html/log/yaml/xml/tsv) → decoded text
-  - images (png/jpg/…)         → metadata (dimensions/format); pixel content
-                                 needs a vision input, not a text tool, so we
-                                 say so instead of dumping useless base64.
+  - images (png/jpg/…)         → metadata only. Images and PDFs the customer
+                                 attaches in chat are delivered to the model as
+                                 native vision at attach time, so visual content
+                                 is seen directly, not through this tool.
 
 Permission contract: the calling user must have **read** permission on the
 File (Frappe's File ``has_permission`` walks the attached-doc perms for private
@@ -35,23 +36,6 @@ _TEXT_EXT = {"txt", "md", "markdown", "json", "html", "htm", "log", "yaml", "yml
 _MAX_ROWS = 1000
 _MAX_CHARS = 40000
 
-# OCR is expensive and a crafted PDF/image can DoS a worker - cap the work.
-_OCR_MAX_PAGES = 30
-_OCR_MAX_PIXELS = 25_000_000
-_OCR_MAX_BYTES = 25 * 1024 * 1024
-_OCR_TIMEOUT = 25
-
-# Lower PIL's decompression-bomb ceiling once at import (a process-global), so a
-# crafted image is rejected before it is decoded. Set here rather than per-call
-# so the limit is deterministic for every PIL consumer in the worker instead of
-# being re-mutated on each read_file image read.
-try:
-    from PIL import Image as _PILImage
-
-    _PILImage.MAX_IMAGE_PIXELS = _OCR_MAX_PIXELS
-except Exception:
-    pass
-
 
 def read_file(
     file_url: str | None = None,
@@ -59,7 +43,6 @@ def read_file(
     sheet: str | None = None,
     max_rows: int = 500,
     max_chars: int = 20000,
-    ocr: bool | None = None,
 ) -> dict:
     """Read an attached file and return its contents.
 
@@ -67,17 +50,19 @@ def read_file(
     name shown in the ``📎`` marker; resolves to the most recent matching File
     the user can read). ``sheet`` selects one worksheet by name for xlsx;
     omitted returns the first sheet. ``max_rows`` / ``max_chars`` bound the
-    payload so a huge file doesn't blow the turn's context. ``ocr`` controls
-    optical character recognition: None (auto - OCR a scanned PDF only when text
-    extraction comes back empty), True (also OCR image files), False (never OCR).
-    OCR needs the tesseract engine installed; when absent it degrades to a note.
+    payload so a huge file doesn't blow the turn's context. Images return
+    metadata only — when the customer attaches an image or PDF in chat I receive
+    it as native vision and see it directly, so I don't need this tool for
+    visual content (use it for spreadsheets, text, and text-PDF extraction).
     """
     fdoc = _resolve_file(file_url, filename)
     if not frappe.has_permission("File", "read", doc=fdoc.name):
         raise PermissionDeniedError(f"no read permission on file {fdoc.file_name!r}")
 
     ext = (fdoc.file_name or "").rsplit(".", 1)[-1].lower() if "." in (fdoc.file_name or "") else ""
-    content = fdoc.get_content()
+    # encodings=[] -> raw bytes; skip Frappe's text-encoding guess loop, which
+    # lossily decodes small binaries (a PNG/PDF) to a str and corrupts them.
+    content = fdoc.get_content(encodings=[])
     if isinstance(content, str):
         content = content.encode("utf-8", "replace")
 
@@ -87,13 +72,13 @@ def read_file(
     base = {"filename": fdoc.file_name, "file_url": fdoc.file_url, "size_bytes": len(content)}
 
     if ext in _PDF_EXT:
-        return {**base, **_read_pdf(content, max_chars, ocr)}
+        return {**base, **_read_pdf(content, max_chars)}
     if ext == "xlsx":
         return {**base, **_read_xlsx(content, sheet, max_rows)}
     if ext in ("csv", "tsv"):
         return {**base, **_read_csv(content, ext, max_rows)}
     if ext in _IMAGE_EXT:
-        return {**base, **_read_image(content, ext, ocr)}
+        return {**base, **_read_image(content, ext)}
     if ext in _TEXT_EXT or _looks_text(content):
         return {**base, **_read_text(content, max_chars)}
     if ext == "xls":
@@ -121,45 +106,34 @@ def _resolve_file(file_url: str | None, filename: str | None):
     raise InvalidArgumentError("pass file_url or filename to identify the attachment")
 
 
-def _read_pdf(content: bytes, max_chars: int, ocr: bool | None = None) -> dict:
+def _read_pdf(content: bytes, max_chars: int) -> dict:
     from pypdf import PdfReader
 
     reader = PdfReader(io.BytesIO(content))
     pages = []
+    total = 0
     for page in reader.pages:
         try:
-            pages.append(page.extract_text() or "")
+            txt = page.extract_text() or ""
         except Exception:
-            pages.append("")
+            txt = ""
+        pages.append(txt)
+        total += len(txt)
+        if total >= max_chars:
+            break
     text = "\n\n".join(pages)
-    page_count = len(reader.pages)
-    used_ocr = False
-
-    # A scanned page yields ~no embedded text. OCR when at least half the pages
-    # are empty - this catches fully-scanned PDFs AND mixed ones (a short text
-    # layer on a page or two otherwise masks a scanned majority and the scanned
-    # pages get silently dropped). Per-page emptiness, not total text length.
-    empty_pages = sum(1 for p in pages if len(p.strip()) < 10)
-    mostly_scanned = page_count > 0 and empty_pages >= max(1, page_count // 2)
-    if (ocr is not False and len(content) <= _OCR_MAX_BYTES
-            and mostly_scanned and _ocr_available()):
-        try:
-            ocr_text = _ocr_pdf(content, max_chars)
-        except Exception:
-            ocr_text = ""
-        if len(ocr_text.strip()) > len(text.strip()):
-            text, used_ocr = ocr_text, True
-
     result = {
         "kind": "pdf",
-        "page_count": page_count,
+        "page_count": len(reader.pages),
         "text": text[:max_chars],
         "truncated": len(text) > max_chars,
-        "ocr": used_ocr,
     }
-    if not text.strip() and not used_ocr:
-        why = "disabled for this call" if ocr is False else "not available on this server"
-        result["note"] = f"No extractable text; looks like a scanned PDF and OCR is {why}."
+    if not text.strip():
+        result["note"] = (
+            "No extractable text; looks like a scanned PDF. If the customer "
+            "attached it in chat I receive its pages as images (native vision) - "
+            "read those directly instead of this tool."
+        )
     return result
 
 
@@ -200,106 +174,26 @@ def _read_text(content: bytes, max_chars: int) -> dict:
     return {"kind": "text", "text": text[:max_chars], "truncated": len(text) > max_chars}
 
 
-def _read_image(content: bytes, ext: str, ocr: bool | None = None) -> dict:
+def _read_image(content: bytes, ext: str) -> dict:
+    """Image metadata only. Visual content reaches the model as native vision
+    when the file is attached in chat (see jarvis/chat/vision.py); this tool
+    deliberately does not OCR or base64-dump pixels."""
     out = {"kind": "image", "format": ext}
-    im = None
     try:
         from PIL import Image
 
         im = Image.open(io.BytesIO(content))
         out["width"], out["height"] = im.size
         out["mode"] = im.mode
+        im.close()
     except Exception:
-        im = None
-
-    try:
-        # Image OCR is opt-in (ocr=True): it's costly and most images aren't text.
-        if ocr is True and im is not None and len(content) <= _OCR_MAX_BYTES and _ocr_available():
-            try:
-                out["text"] = _ocr_pil(im)
-                out["ocr"] = True
-                out["note"] = (
-                    "Text extracted via OCR. Visual/diagram content (not text) still "
-                    "needs a vision model, not this tool."
-                )
-                return out
-            except Exception:
-                pass
-        out["note"] = (
-            "Image metadata only. Pixel/visual content can't be extracted as text by a "
-            "tool - to analyse what the image shows it needs a vision model as an image "
-            "input, not read here. Pass ocr=true to OCR any text in the image."
-        )
-        return out
-    finally:
-        if im is not None:
-            try:
-                im.close()
-            except Exception:
-                pass
-
-
-_OCR_OK = None
-
-
-def _ocr_available() -> bool:
-    """True iff pytesseract + tesseract + pypdfium2 are all present (memoized).
-
-    pypdfium2 (the PDF rasterizer) is checked too so a server missing only that
-    wheel reports OCR honestly unavailable, rather than passing the gate and
-    then silently swallowing the pypdfium2 ImportError inside _ocr_pdf."""
-    global _OCR_OK
-    if _OCR_OK is None:
-        try:
-            import pypdfium2  # noqa: F401
-            import pytesseract
-
-            pytesseract.get_tesseract_version()
-            _OCR_OK = True
-        except Exception:
-            _OCR_OK = False
-    return _OCR_OK
-
-
-def _ocr_pil(im) -> str:
-    import pytesseract
-
-    return pytesseract.image_to_string(im, timeout=_OCR_TIMEOUT) or ""
-
-
-def _ocr_pdf(content: bytes, max_chars: int) -> str:
-    """Rasterize each page and OCR it with tesseract.
-
-    Uses pypdfium2 (Apache/BSD, permissive) for rendering - NOT PyMuPDF, which
-    is AGPL and would impose copyleft on this proprietary app.
-    """
-    import pypdfium2 as pdfium
-    import pytesseract
-
-    out = []
-    total = 0
-    pdf = pdfium.PdfDocument(content)
-    try:
-        n = min(len(pdf), _OCR_MAX_PAGES)  # cap page count
-        for i in range(n):
-            page = pdf[i]
-            scale = 200 / 72  # ~200 DPI
-            try:
-                w, h = page.get_size()  # points (1/72 inch)
-                if w and h and (w * scale) * (h * scale) > _OCR_MAX_PIXELS:
-                    scale = (_OCR_MAX_PIXELS / (w * h)) ** 0.5  # clamp to pixel budget
-            except Exception:
-                pass
-            txt = pytesseract.image_to_string(
-                page.render(scale=scale).to_pil(), timeout=_OCR_TIMEOUT
-            ) or ""
-            out.append(txt)
-            total += len(txt)
-            if total >= max_chars:
-                break
-    finally:
-        pdf.close()
-    return "\n\n".join(out)
+        pass
+    out["note"] = (
+        "Image metadata only. When the customer attaches an image or PDF in chat "
+        "I receive it as native vision and can see it directly - I don't need this "
+        "tool for visual content."
+    )
+    return out
 
 
 def _looks_text(content: bytes) -> bool:

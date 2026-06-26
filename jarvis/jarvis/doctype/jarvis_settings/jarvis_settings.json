@@ -19,6 +19,7 @@
     "llm_advanced_section",
     "llm_temperature",
     "llm_max_output_tokens",
+    "vision_attachments_enabled",
     "llm_auth_section",
     "llm_auth_mode",
     "llm_oauth_account_email",
@@ -207,6 +208,13 @@
       "default": "1",
       "depends_on": "eval:doc.deployment_mode == 'Self-Hosted'",
       "description": "Stream the agent's reply token-by-token over HTTP (SSE) for a responsive chat. Turn off if your openclaw (or a proxy in front of it) buffers streaming responses, in which case the full reply appears at once."
+    },
+    {
+      "fieldname": "vision_attachments_enabled",
+      "fieldtype": "Check",
+      "label": "Send Image/PDF Attachments as Vision",
+      "default": "1",
+      "description": "When on, images and PDFs the customer attaches in chat are sent to the model as native vision (the model sees them directly; PDFs are rasterized to page-images). Requires a vision-capable model (Anthropic / OpenAI / Google Gemini). Managed pool only."
     },
     {
       "fieldname": "admin_connection_section",
