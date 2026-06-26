@@ -345,9 +345,12 @@ def send_message(
 	})
 	msg_doc.insert()
 
-	# First user message becomes the conversation title (capped at 60 chars)
-	if conv_doc.title == "New chat":
-		conv_doc.title = (message.strip() or display_content or "New chat")[:60]
+	# Title is NOT taken from the raw first message anymore. The worker
+	# generates a concise, LLM-summarised title after the first substantive
+	# turn (jarvis.chat.title.maybe_autotitle) — like ChatGPT/openclaw — and
+	# pushes it via a "conversation:renamed" event. We leave it as "New chat"
+	# here so the sidebar never flashes the raw prompt (and greeting-only
+	# openers stay unnamed until a real prompt arrives).
 	conv_doc.last_active_at = frappe.utils.now()
 
 	# Ensure the conversation has an openclaw session_key; create one on

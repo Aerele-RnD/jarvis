@@ -375,6 +375,30 @@ def run_agent_turn(
 		"run_id": run_id,
 	})
 
+	# Auto-title (managed mode): the first substantive turn of a still-unnamed
+	# conversation gets a concise, LLM-summarised title — not the raw first
+	# message. Runs AFTER run:end so the turn UI has already unblocked; the new
+	# title lands a few seconds later via a "conversation:renamed" event.
+	# Best-effort — a title failure must never affect the completed turn.
+	from jarvis import selfhost
+	if not selfhost.is_self_hosted():
+		try:
+			from jarvis.chat import title as title_mod
+
+			gw = (settings.agent_url or "").replace(
+				"http://", "ws://"
+			).replace("https://", "wss://")
+			eff_model, oauth_pid = _resolve_model_and_provider(conv)
+			title_mod.maybe_autotitle(
+				conversation_id, user,
+				gateway_url=gw, model=eff_model, provider=oauth_pid,
+			)
+		except Exception:
+			frappe.log_error(
+				title="chat worker: auto-title failed",
+				message=frappe.get_traceback(),
+			)
+
 
 def _prepend_doc_context(user_message: str, context) -> str:
 	"""Prepend the ERP doc the user was viewing (floating-widget auto-context)

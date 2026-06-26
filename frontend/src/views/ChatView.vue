@@ -1278,6 +1278,14 @@ async function send(textArg) {
 }
 
 function onEvent(p) {
+	// Auto-generated title arrives async (worker titles the chat after the
+	// first real turn). Handle it before the current-conversation guard so the
+	// sidebar updates even if the user has since switched chats.
+	if (p.kind === "conversation:renamed" && p.conversation_id) {
+		const c = conversations.value.find((x) => x.name === p.conversation_id)
+		if (c && p.title) c.title = p.title
+		return
+	}
 	if (p.conversation_id !== currentId.value) return
 	if (p.run_id && p.run_id === stoppedRunId.value) return // user stopped this run
 	switch (p.kind) {
