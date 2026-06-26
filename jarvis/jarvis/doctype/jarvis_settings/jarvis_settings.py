@@ -63,6 +63,116 @@ class JarvisSettings(Document):
         return self.get_password("llm_api_key", raise_exception=False) or ""
 
     def on_update(self):
+        # ------------------------------------------------------------------ #
+        # Unified LLM path (2026-06-26): models table rows or preset present.
+        # ------------------------------------------------------------------ #
+        has_models = bool(getattr(self, "models", None))
+        has_preset = bool(getattr(self, "preset", None))
+
+        if has_models or has_preset:
+            self._on_update_unified_llm()
+            return
+
+        # ------------------------------------------------------------------ #
+        # Back-compat (legacy path): no models rows, no preset.
+        # Runs the existing single-model classify/sync path unchanged.
+        # ------------------------------------------------------------------ #
+        self._on_update_single_model_legacy()
+
+    def _on_update_unified_llm(self):
+        """New LLM path: validate → derive proxy_active/proxy_recommended →
+        mirror models[0] into legacy fields → route to proxy or single-model path.
+
+        Runs when the models table has rows OR a preset is set.
+        Validate fires BEFORE any mutation so that errors surface clean without
+        partially applying state.
+        """
+        from jarvis.jarvis.pool_serialize import (
+            build_pool_payload,
+            compute_proxy_active,
+            validate_models,
+        )
+
+        # Step 1: Validate first — clean error before any state mutation.
+        errors = validate_models(self)
+        if errors:
+            frappe.throw("<br>".join(errors), title="LLM Configuration")
+
+        # Step 2: Compute and persist derived flags (read-only, no modified bump).
+        proxy_active = compute_proxy_active(self)
+        enabled_models = [m for m in (self.models or []) if m.enabled]
+        proxy_recommended = (len(enabled_models) == 1 and not bool(getattr(self, "preset", None)))
+        self.db_set("proxy_active", 1 if proxy_active else 0, update_modified=False)
+        self.db_set("proxy_recommended", 1 if proxy_recommended else 0, update_modified=False)
+
+        # Step 3: Mirror models[0] into the read-only legacy fields so that
+        # the chat worker + onboarding gate continue to read llm_model / llm_auth_mode
+        # correctly in direct (single-model) mode.
+        if enabled_models:
+            m0 = enabled_models[0]
+            cred_type = (
+                m0.credential_type if hasattr(m0, "credential_type")
+                else (m0.get("credential_type") if hasattr(m0, "get") else "api_key")
+            ) or "api_key"
+            legacy_updates = {
+                "llm_provider": (m0.provider if hasattr(m0, "provider") else m0.get("provider", "")) or "",
+                "llm_model":    (m0.model    if hasattr(m0, "model")    else m0.get("model", ""))    or "",
+                "llm_base_url": (m0.base_url if hasattr(m0, "base_url") else m0.get("base_url", "")) or "",
+                "llm_auth_mode": cred_type,
+            }
+            for field, value in legacy_updates.items():
+                self.db_set(field, value, update_modified=False)
+            # Mirror api_key secret for api_key mode.
+            if cred_type == "api_key":
+                from jarvis.jarvis.pool_serialize import _get_password
+                api_key_val = _get_password(m0, "api_key")
+                if api_key_val:
+                    # db_set uses password field writing path for Password fieldtype.
+                    self.db_set("llm_api_key", api_key_val, update_modified=False)
+
+        # Step 4: Route to proxy or single-model path.
+        if proxy_active:
+            # Proxy path: build pool payload and enqueue the admin call.
+            spec, api_keys, oauth_blobs = build_pool_payload(self)
+            self._enqueue_pool_sync(spec, api_keys, oauth_blobs)
+        else:
+            # Single-model path (1 model, no preset): reuse the existing
+            # classify/enqueue path. The legacy fields are now mirrored, so
+            # _classify_llm_change will correctly see any structural change.
+            self._on_update_single_model_legacy()
+
+    def _enqueue_pool_sync(self, spec: dict, api_keys: dict, oauth_blobs: dict) -> None:
+        """Enqueue the pool-sync admin call for the proxy path.
+
+        Mirrors the existing ``on_update`` enqueue pattern:
+        - Writes a ``pending:`` status synchronously so the UI can render
+          "provisioning..." immediately.
+        - Runs inline under ``frappe.flags.in_test`` so tests see the final
+          status without polling.
+        - Uses a stable ``job_id`` + ``deduplicate=True`` so two close-together
+          saves coalesce into one worker invocation.
+        - Admin errors are caught and written to ``last_sync_status``; the
+          save is never aborted on an admin failure.
+        """
+        self.db_set("last_sync_status", "pending: provisioning container (pool)",
+                    update_modified=False)
+        run_inline = bool(frappe.flags.in_test or frappe.flags.run_admin_sync_inline)
+        frappe.enqueue(
+            "jarvis.jarvis.doctype.jarvis_settings.jarvis_settings"
+            "._enqueued_sync_via_admin_pool",
+            queue="long",
+            timeout=120,
+            enqueue_after_commit=not run_inline,
+            now=run_inline,
+            job_id="jarvis_settings_sync:pool",
+            deduplicate=True,
+            spec=spec,
+            api_keys=api_keys,
+            oauth_blobs=oauth_blobs,
+        )
+
+    def _on_update_single_model_legacy(self):
+        """The existing single-model on_update logic, extracted for reuse."""
         action = self._classify_llm_change()
         if action is None:
             return
@@ -278,6 +388,92 @@ class JarvisSettings(Document):
             return "reload"
 
         return None
+
+
+def _enqueued_sync_via_admin_pool(spec: dict, api_keys: dict, oauth_blobs: dict) -> None:
+    """Background-queue wrapper for the proxy (pool) sync path.
+
+    Re-loads Jarvis Settings and calls admin_client.post_update_llm_pool.
+    Mirrors the Redis-lock + error-handling pattern of ``_enqueued_sync_via_admin``
+    so admin failures set last_sync_status (terminal) without aborting the save.
+
+    Sprint-3 hardening (matching single-model path):
+    - Redis lock prevents parallel pool + creds calls racing on the container.
+    - AdminRateLimitedError writes a terminal failure with retry hint.
+    - try/finally backstop ensures the status never sticks at "pending:".
+    """
+    import frappe as _frappe
+    from jarvis._redis_lock import redis_lock
+    from jarvis import admin_client
+
+    with redis_lock("jarvis_settings_admin_sync", timeout_s=120, blocking_timeout_s=60.0) as acquired:
+        if not acquired:
+            _frappe.logger().warning(
+                "jarvis_settings: skipping pool admin sync; "
+                "another worker held the lock past blocking timeout",
+            )
+            settings = _frappe.get_single("Jarvis Settings")
+            settings.db_set(
+                "last_sync_status",
+                "failed: skipped (concurrent sync did not finish in time)",
+                update_modified=False,
+            )
+            return
+
+        settings = _frappe.get_single("Jarvis Settings")
+        terminal_written = False
+        try:
+            result = admin_client.post_update_llm_pool(
+                spec=spec,
+                api_keys=api_keys,
+                oauth_blobs=oauth_blobs,
+            ) or {}
+            resolved_action = result.get("action", "pool_update")
+            settings.db_set({
+                "last_sync_at": _frappe.utils.now(),
+                "last_sync_status": f"ok ({resolved_action} via admin)",
+            })
+            terminal_written = True
+        except admin_client.AdminAuthError as e:
+            settings.db_set({
+                "last_sync_at": _frappe.utils.now(),
+                "last_sync_status": f"failed: auth: {e}",
+            })
+            terminal_written = True
+            _frappe.log_error(
+                title="Jarvis: admin auth failed (pool sync)",
+                message=_frappe.get_traceback(),
+            )
+        except admin_client.AdminUnreachableError as e:
+            settings.db_set({
+                "last_sync_at": _frappe.utils.now(),
+                "last_sync_status": f"failed: admin unreachable: {e}",
+            })
+            terminal_written = True
+            _frappe.log_error(
+                title="Jarvis: admin unreachable (pool sync)",
+                message=_frappe.get_traceback(),
+            )
+        except admin_client.AdminRateLimitedError as e:
+            retry = e.retry_after_seconds or 0
+            retry_str = f"retry_after={retry}s" if retry > 0 else "retry shortly"
+            settings.db_set({
+                "last_sync_at": _frappe.utils.now(),
+                "last_sync_status": f"failed: rate-limited; {retry_str}",
+            })
+            terminal_written = True
+            _frappe.logger().info(
+                f"admin_client: pool sync rate-limited; retry_after={retry}s"
+            )
+        finally:
+            if not terminal_written:
+                try:
+                    settings.db_set({
+                        "last_sync_at": _frappe.utils.now(),
+                        "last_sync_status": "failed: unexpected error; see Error Log",
+                    })
+                except Exception:
+                    pass
 
 
 def _enqueued_sync_via_admin(action: str) -> None:

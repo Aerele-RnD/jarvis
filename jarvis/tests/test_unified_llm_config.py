@@ -525,3 +525,275 @@ class TestPoolSerializeE2E(FrappeTestCase):
         pool_spec = PoolSpec(**spec)
         issues = validate(pool_spec)
         self.assertEqual(issues, [], f"Expected zero validate issues, got: {issues}")
+
+
+# ---------------------------------------------------------------------------
+# Task 3 (RT3): unified on_update — direct-vs-proxy routing, legacy mirror,
+# proxy_active/proxy_recommended derived fields, validate_models gate
+# ---------------------------------------------------------------------------
+
+# Import the snapshot/restore base class from the existing test module.
+from jarvis.tests.test_settings_on_update import (
+    _SettingsSingletonTestCase,
+    _reset_settings,
+)
+
+
+def frappe_patch(target, **kwargs):
+    """Convenience wrapper around unittest.mock.patch for jarvis admin_client calls."""
+    from unittest.mock import patch
+    return patch(target, **kwargs)
+
+
+def _add_model_row(settings, *, provider="openai_compat", model="gpt-4o",
+                   tier="strong", order=0, enabled=1,
+                   credential_type="api_key", api_key="sk-test-pool-key",
+                   base_url="https://api.openai.com", accounts=None):
+    """Append an in-memory model row to settings.models using frappe.new_doc."""
+    row = frappe.new_doc("Jarvis LLM Pool Model")
+    row.provider = provider
+    row.model = model
+    row.tier = tier
+    row.order = order
+    row.enabled = enabled
+    row.credential_type = credential_type
+    row.api_key = api_key
+    row.base_url = base_url
+    if accounts:
+        row.accounts = accounts
+    settings.append("models", row)
+
+
+class _RT3SettingsTestCase(_SettingsSingletonTestCase):
+    """Extends snapshot/restore with models-table cleanup."""
+
+    # Extra plain fields specific to RT3 that we snapshot/restore.
+    _RT3_PLAIN_FIELDS = ("proxy_active", "proxy_recommended", "preset")
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        settings = frappe.get_single("Jarvis Settings")
+        cls._rt3_snapshot = {f: settings.get(f) for f in cls._RT3_PLAIN_FIELDS}
+
+    @classmethod
+    def tearDownClass(cls):
+        try:
+            settings = frappe.get_single("Jarvis Settings")
+            for field, value in cls._rt3_snapshot.items():
+                settings.db_set(field, value or "", update_modified=False)
+            # Remove any models rows added by tests
+            frappe.db.delete("Jarvis LLM Pool Model",
+                             {"parenttype": "Jarvis Settings",
+                              "parent": "Jarvis Settings"})
+            frappe.db.commit()
+        finally:
+            super().tearDownClass()
+
+    def _clear_models(self):
+        frappe.db.delete("Jarvis LLM Pool Model",
+                         {"parenttype": "Jarvis Settings",
+                          "parent": "Jarvis Settings"})
+        frappe.db.commit()
+
+
+class TestRT3UnifiedOnUpdateRouting(_RT3SettingsTestCase):
+    """Task 3 (RT3): Verifies that on_update routes to the correct sync path
+    based on the models table contents and preset.
+
+    (a) 1 model, no preset → single-model creds path, proxy_active==0,
+        proxy_recommended==1
+    (b) 2 models → proxy pool path, proxy_active==1, legacy llm_model mirrors
+        models[0]
+    (c) validate_models errors → frappe.throw (ValidationError), NO sync called
+    (d) 1 model + preset → proxy path, proxy_active==1
+    """
+
+    def setUp(self):
+        super().setUp()
+        self._clear_models()
+        _reset_settings()
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("preset", "", update_modified=False)
+        settings.db_set("proxy_active", 0, update_modified=False)
+        settings.db_set("proxy_recommended", 0, update_modified=False)
+        frappe.db.commit()
+
+    # ------------------------------------------------------------------ #
+    # (a) 1 model, no preset → single-model creds path (direct)
+    # ------------------------------------------------------------------ #
+
+    def test_one_model_no_preset_routes_to_single_model_path(self):
+        """1 enabled model + no preset → single-model creds path (_enqueued_sync_via_admin),
+        proxy_active==0, proxy_recommended==1."""
+        settings = frappe.get_single("Jarvis Settings")
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-4o",
+                       api_key="sk-direct-key",
+                       base_url="https://api.openai.com")
+        settings.preset = ""
+        # Trigger a structural change so the single-model path fires.
+        settings.llm_model = "gpt-4o"
+
+        pool_sync_called = []
+
+        with (
+            frappe_patch("jarvis.admin_client.post_update_llm_pool",
+                         side_effect=lambda **kw: pool_sync_called.append(kw) or {}),
+            frappe_patch("jarvis.admin_client.post_update_llm_creds",
+                         return_value={"action": "restart"}),
+        ):
+            settings.save()
+
+        # proxy path must NOT have been called
+        self.assertEqual(pool_sync_called, [],
+                         "proxy pool path must NOT be called when 1 model and no preset")
+
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertEqual(int(settings.proxy_active or 0), 0,
+                         "proxy_active must be 0 for 1 model / no preset")
+        self.assertEqual(int(settings.proxy_recommended or 0), 1,
+                         "proxy_recommended must be 1 (nudge to add a model/preset)")
+
+    # ------------------------------------------------------------------ #
+    # (b) 2 models → proxy path, proxy_active==1, legacy mirror
+    # ------------------------------------------------------------------ #
+
+    def test_two_models_routes_to_proxy_path(self):
+        """2 enabled models → proxy pool path, proxy_active==1,
+        legacy llm_model mirrors models[0].model."""
+        settings = frappe.get_single("Jarvis Settings")
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-4o",
+                       tier="strong", order=0,
+                       api_key="sk-pool-key-1",
+                       base_url="https://api.openai.com")
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-3.5-turbo",
+                       tier="cheap", order=1,
+                       api_key="sk-pool-key-2",
+                       base_url="https://api.openai.com")
+        settings.preset = ""
+
+        pool_sync_called = []
+
+        with (
+            frappe_patch("jarvis.admin_client.post_update_llm_pool",
+                         side_effect=lambda **kw: pool_sync_called.append(kw) or {"action": "pool_update"}),
+            frappe_patch("jarvis.admin_client.post_update_llm_creds") as mock_creds,
+        ):
+            settings.save()
+
+        self.assertTrue(len(pool_sync_called) >= 1,
+                        "proxy pool path MUST be called when ≥2 enabled models")
+        mock_creds.assert_not_called()
+
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertEqual(int(settings.proxy_active or 0), 1,
+                         "proxy_active must be 1 for ≥2 models")
+        # Legacy mirror: llm_model should reflect models[0]
+        self.assertEqual(settings.llm_model, "gpt-4o",
+                         "legacy llm_model must mirror models[0].model")
+
+    # ------------------------------------------------------------------ #
+    # (c) validate_models errors → ValidationError, NO sync called
+    # ------------------------------------------------------------------ #
+
+    def test_validate_models_errors_raise_before_sync(self):
+        """A model with blank api_key → validate_models returns errors →
+        frappe.throw (ValidationError), no sync enqueued."""
+        settings = frappe.get_single("Jarvis Settings")
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-4o",
+                       tier="strong", order=0,
+                       api_key="",  # blank → validation error
+                       base_url="https://api.openai.com")
+        settings.preset = ""
+
+        pool_sync_called = []
+        creds_sync_called = []
+
+        with (
+            frappe_patch("jarvis.admin_client.post_update_llm_pool",
+                         side_effect=lambda **kw: pool_sync_called.append(kw)),
+            frappe_patch("jarvis.admin_client.post_update_llm_creds",
+                         side_effect=lambda **kw: creds_sync_called.append(kw)),
+        ):
+            with self.assertRaises(frappe.ValidationError,
+                                   msg="frappe.throw must surface a clean ValidationError on blank api_key"):
+                settings.save()
+
+        self.assertEqual(pool_sync_called, [],
+                         "pool sync must NOT be called when validate_models has errors")
+        self.assertEqual(creds_sync_called, [],
+                         "creds sync must NOT be called when validate_models has errors")
+
+    # ------------------------------------------------------------------ #
+    # (d) 1 model + preset → proxy path, proxy_active==1
+    # ------------------------------------------------------------------ #
+
+    def test_one_model_with_preset_routes_to_proxy_path(self):
+        """1 model + preset → proxy path (proxy implied by preset), proxy_active==1."""
+        settings = frappe.get_single("Jarvis Settings")
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-4o",
+                       tier="strong", order=0,
+                       api_key="sk-preset-key",
+                       base_url="https://api.openai.com")
+        settings.preset = "Cost-saver"
+
+        pool_sync_called = []
+
+        with (
+            frappe_patch("jarvis.admin_client.post_update_llm_pool",
+                         side_effect=lambda **kw: pool_sync_called.append(kw) or {"action": "pool_update"}),
+            frappe_patch("jarvis.admin_client.post_update_llm_creds") as mock_creds,
+        ):
+            settings.save()
+
+        self.assertTrue(len(pool_sync_called) >= 1,
+                        "proxy pool path MUST be called when 1 model + preset")
+        mock_creds.assert_not_called()
+
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertEqual(int(settings.proxy_active or 0), 1,
+                         "proxy_active must be 1 when preset is set")
+
+
+class TestRT3LegacyNoModelsBackcompat(_RT3SettingsTestCase):
+    """Task 3 (RT3): Back-compat — tenant with NO models rows + no preset must
+    route through the EXISTING single-model classify/sync path unchanged.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self._clear_models()
+        _reset_settings()
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("preset", "", update_modified=False)
+        settings.db_set("proxy_active", 0, update_modified=False)
+        settings.db_set("proxy_recommended", 0, update_modified=False)
+        frappe.db.commit()
+
+    def test_no_models_no_preset_still_uses_single_model_path(self):
+        """Legacy tenant (no models table, no preset) saves exactly as today:
+        _classify_llm_change → _sync_via_admin → /llm-creds."""
+        settings = frappe.get_single("Jarvis Settings")
+        # No models rows; trigger a single-model structural change.
+        settings.llm_model = "kimi-k2.5"
+
+        creds_sync_called = []
+        pool_sync_called = []
+
+        with (
+            frappe_patch("jarvis.admin_client.post_update_llm_creds",
+                         side_effect=lambda **kw: creds_sync_called.append(kw) or {"action": "restart"}),
+            frappe_patch("jarvis.admin_client.post_update_llm_pool",
+                         side_effect=lambda **kw: pool_sync_called.append(kw)),
+        ):
+            settings.save()
+
+        self.assertEqual(pool_sync_called, [],
+                         "proxy pool path must NOT be called when no models rows")
+        self.assertTrue(len(creds_sync_called) >= 1,
+                        "single-model creds path MUST be called for legacy tenant")
