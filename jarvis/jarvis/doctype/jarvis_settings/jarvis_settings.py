@@ -145,9 +145,11 @@ class JarvisSettings(Document):
 
         # Step 4: Route to proxy or single-model path.
         if proxy_active:
-            # Proxy path: build pool payload and enqueue the admin call.
-            spec, api_keys, oauth_blobs = build_pool_payload(self)
-            self._enqueue_pool_sync(spec, api_keys, oauth_blobs)
+            # Proxy path: enqueue the admin call. The worker re-reads
+            # Jarvis Settings at run time so no snapshot is needed here.
+            # validate_models() already ran above (Step 1) so we know the
+            # current config is clean before enqueuing.
+            self._enqueue_pool_sync()
         else:
             # Single-model path (1 model, no preset): reset any stale proxy
             # flags so UI/workers don't think the tenant is still in pool mode.
@@ -165,7 +167,7 @@ class JarvisSettings(Document):
             # will correctly see any structural change.
             self._on_update_single_model_legacy()
 
-    def _enqueue_pool_sync(self, spec: dict, api_keys: dict, oauth_blobs: dict) -> None:
+    def _enqueue_pool_sync(self) -> None:
         """Enqueue the pool-sync admin call for the proxy path.
 
         Mirrors the existing ``on_update`` enqueue pattern:
@@ -175,6 +177,9 @@ class JarvisSettings(Document):
           status without polling.
         - Uses a stable ``job_id`` + ``deduplicate=True`` so two close-together
           saves coalesce into one worker invocation.
+        - The worker re-reads Jarvis Settings at run time (no snapshot args),
+          so a correction saved while the first job is still queued is
+          naturally included when the job eventually executes.
         - Admin errors are caught and written to ``last_sync_status``; the
           save is never aborted on an admin failure.
         """
@@ -190,9 +195,6 @@ class JarvisSettings(Document):
             now=run_inline,
             job_id="jarvis_settings_sync:pool",
             deduplicate=True,
-            spec=spec,
-            api_keys=api_keys,
-            oauth_blobs=oauth_blobs,
         )
 
     def _on_update_single_model_legacy(self):
@@ -414,10 +416,15 @@ class JarvisSettings(Document):
         return None
 
 
-def _enqueued_sync_via_admin_pool(spec: dict, api_keys: dict, oauth_blobs: dict) -> None:
+def _enqueued_sync_via_admin_pool() -> None:
     """Background-queue wrapper for the proxy (pool) sync path.
 
-    Re-loads Jarvis Settings and calls admin_client.post_update_llm_pool.
+    Re-reads Jarvis Settings at run time and rebuilds the pool payload via
+    ``build_pool_payload``. This means a correction saved while the first
+    job is still queued is naturally included when the job eventually runs —
+    the dedup (fixed job_id + deduplicate=True) drops the duplicate job but
+    the single job that executes always sees the LATEST committed config.
+
     Mirrors the Redis-lock + error-handling pattern of ``_enqueued_sync_via_admin``
     so admin failures set last_sync_status (terminal) without aborting the save.
 
@@ -429,6 +436,7 @@ def _enqueued_sync_via_admin_pool(spec: dict, api_keys: dict, oauth_blobs: dict)
     import frappe as _frappe
     from jarvis._redis_lock import redis_lock
     from jarvis import admin_client
+    from jarvis.jarvis.pool_serialize import build_pool_payload
 
     with redis_lock("jarvis_settings_admin_sync", timeout_s=120, blocking_timeout_s=60.0) as acquired:
         if not acquired:
@@ -444,7 +452,11 @@ def _enqueued_sync_via_admin_pool(spec: dict, api_keys: dict, oauth_blobs: dict)
             )
             return
 
+        # Re-read CURRENT settings at run time (not a snapshot from job args)
+        # so a correction saved between enqueue and execution is included.
         settings = _frappe.get_single("Jarvis Settings")
+        spec, api_keys, oauth_blobs = build_pool_payload(settings)
+
         terminal_written = False
         try:
             result = admin_client.post_update_llm_pool(

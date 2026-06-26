@@ -870,3 +870,150 @@ class TestRT3ProxyToDirectTransition(_RT3SettingsTestCase):
                          "proxy_active must be reset to 0 after transition to 1 model/no preset")
         self.assertEqual(int(settings.proxy_recommended or 0), 1,
                          "proxy_recommended must be 1 when exactly 1 model is present")
+
+
+# ---------------------------------------------------------------------------
+# Task 4 (RT4): sync hardening — worker re-reads at run time (dedup-safe)
+# ---------------------------------------------------------------------------
+
+from jarvis.jarvis.doctype.jarvis_settings.jarvis_settings import (
+    _enqueued_sync_via_admin_pool,
+)
+
+
+class TestRT4PoolSyncReReadsAtRunTime(_RT3SettingsTestCase):
+    """Task 4 (RT4): The pool-sync worker must rebuild the payload from the
+    CURRENT Jarvis Settings at run time rather than using the snapshot
+    passed as job args.  This makes a fixed-job_id + deduplicate=True safe:
+    a correction saved while the first job is still queued is naturally
+    included when the job eventually executes.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self._clear_models()
+        _reset_settings()
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("preset", "", update_modified=False)
+        settings.db_set("proxy_active", 0, update_modified=False)
+        settings.db_set("proxy_recommended", 0, update_modified=False)
+        frappe.db.commit()
+
+    # ------------------------------------------------------------------
+    # (a) Worker pushes CURRENT settings, not a stale snapshot
+    # ------------------------------------------------------------------
+
+    def test_worker_pushes_current_settings_not_stale_snapshot(self):
+        """Simulate a 'correction' scenario:
+
+        1. Save settings with model set A (model="gpt-4o").
+        2. Before the queued job runs, update the DB to model set B
+           (model="gpt-3.5-turbo") — simulating a second save while the
+           first job is still pending.
+        3. Run the worker directly (inline) with NO args.
+        4. Assert the spec pushed to admin reflects set B (current DB),
+           not set A (original snapshot).
+        """
+        from unittest.mock import patch
+
+        # Step 1: save with model set A (2 models so proxy_active fires).
+        settings = frappe.get_single("Jarvis Settings")
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-4o",
+                       tier="strong", order=0,
+                       api_key="sk-set-a",
+                       base_url="https://api.openai.com")
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-3.5-turbo",
+                       tier="cheap", order=1,
+                       api_key="sk-set-a-2",
+                       base_url="https://api.openai.com")
+
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   return_value={"action": "pool_update"}):
+            settings.save()
+
+        # Step 2: simulate a correction — update model set in DB to set B
+        # without triggering another enqueue (direct DB manipulation).
+        frappe.db.delete("Jarvis LLM Pool Model",
+                         {"parenttype": "Jarvis Settings",
+                          "parent": "Jarvis Settings"})
+        frappe.db.commit()
+
+        # Insert set B: only one corrected model (strong only, different model name).
+        fresh = frappe.get_single("Jarvis Settings")
+        _add_model_row(fresh,
+                       provider="openai_compat", model="claude-3-5-sonnet",
+                       tier="strong", order=0,
+                       api_key="sk-set-b",
+                       base_url="https://api.anthropic.com")
+        _add_model_row(fresh,
+                       provider="openai_compat", model="claude-3-haiku",
+                       tier="cheap", order=1,
+                       api_key="sk-set-b-2",
+                       base_url="https://api.anthropic.com")
+        # Directly save model rows via the document's child table mechanism.
+        for row in fresh.models:
+            row.parent = "Jarvis Settings"
+            row.parenttype = "Jarvis Settings"
+            row.parentfield = "models"
+            row.insert()
+        frappe.db.commit()
+
+        # Step 3: run the worker directly (no snapshot args — worker re-reads).
+        pushed_specs = []
+
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   side_effect=lambda **kw: pushed_specs.append(kw) or {"action": "pool_update"}):
+            _enqueued_sync_via_admin_pool()
+
+        # Step 4: assert set B was pushed (model names from set B).
+        self.assertTrue(pushed_specs,
+                        "post_update_llm_pool must have been called by the worker")
+        pushed_models = pushed_specs[0]["spec"]["models"]
+        pushed_model_names = {m["model"] for m in pushed_models}
+        self.assertIn("claude-3-5-sonnet", pushed_model_names,
+                      "worker must push CURRENT model set B (claude-3-5-sonnet), not stale set A (gpt-4o)")
+        self.assertNotIn("gpt-4o", pushed_model_names,
+                         "worker must NOT push stale snapshot model gpt-4o")
+
+    # ------------------------------------------------------------------
+    # (b) AdminRateLimitedError → terminal failure status (pool path)
+    # ------------------------------------------------------------------
+
+    def test_pool_sync_rate_limit_writes_terminal_failure_status(self):
+        """AdminRateLimitedError from post_update_llm_pool must write
+        last_sync_status starting with 'failed: rate-limited' — matching
+        the single-model path wording — so the UI poller stops spinning."""
+        from unittest.mock import patch
+        from jarvis.exceptions import AdminRateLimitedError
+
+        # Save with 2 models so proxy_active=1 and last_sync_status is set to pending.
+        settings = frappe.get_single("Jarvis Settings")
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-4o",
+                       tier="strong", order=0,
+                       api_key="sk-rl-key-1",
+                       base_url="https://api.openai.com")
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-3.5-turbo",
+                       tier="cheap", order=1,
+                       api_key="sk-rl-key-2",
+                       base_url="https://api.openai.com")
+
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   return_value={"action": "pool_update"}):
+            settings.save()
+
+        # Now run the worker with a rate-limited admin response.
+        err = AdminRateLimitedError("too many requests", retry_after_seconds=90)
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   side_effect=err):
+            _enqueued_sync_via_admin_pool()
+
+        settings = frappe.get_single("Jarvis Settings")
+        status = settings.last_sync_status or ""
+        self.assertTrue(
+            status.startswith("failed: rate-limited"),
+            f"Expected last_sync_status to start with 'failed: rate-limited', got: {status!r}"
+        )
