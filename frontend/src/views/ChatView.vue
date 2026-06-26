@@ -274,6 +274,12 @@
 									<span :title="(runMeta[m.name].names || []).join(', ')"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 1 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></svg>{{ runMeta[m.name].tools }} tool{{ runMeta[m.name].tools === 1 ? "" : "s" }}</span>
 									<span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>{{ (runMeta[m.name].ms / 1000).toFixed(1) }}s</span>
 								</div>
+								<div v-if="!m.error && m.content" class="jv-msgbar">
+									<button class="jv-msgbtn" @click="copyMsg(m.name, stripBlocks(m.content))" :title="copiedId === m.name ? 'Copied' : 'Copy'">
+										<svg v-if="copiedId === m.name" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+										<svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+									</button>
+								</div>
 							</div>
 						</div>
 					</template>
@@ -935,11 +941,58 @@ function answerConfirm(ok) {
 	send(ok ? "Yes, go ahead." : "No, cancel that.")
 }
 function copyText(t) {
+	const s = t || ""
+	// navigator.clipboard only exists in a secure context (https / localhost).
+	// Over plain http (e.g. jarvis-test.localhost) it's undefined, so the old
+	// `navigator.clipboard?.writeText` silently did nothing — that's why Copy
+	// "didn't work". Fall back to the legacy execCommand path in that case.
 	try {
-		navigator.clipboard?.writeText(t || "")
+		if (navigator.clipboard && window.isSecureContext) {
+			navigator.clipboard.writeText(s).catch(() => fallbackCopy(s))
+			return
+		}
 	} catch (e) {
-		/* clipboard blocked */
+		/* fall through to legacy copy */
 	}
+	fallbackCopy(s)
+}
+function fallbackCopy(s) {
+	try {
+		const ta = document.createElement("textarea")
+		ta.value = s
+		ta.setAttribute("readonly", "")
+		ta.style.position = "fixed"
+		ta.style.top = "-9999px"
+		document.body.appendChild(ta)
+		ta.select()
+		ta.setSelectionRange(0, s.length)
+		document.execCommand("copy")
+		document.body.removeChild(ta)
+	} catch (e) {
+		/* clipboard truly unavailable */
+	}
+}
+// Per-message Copy with a brief "copied" tick, and Edit (load a previous
+// command back into the composer to tweak and resend).
+const copiedId = ref("")
+let _copyTimer = null
+function copyMsg(id, text) {
+	copyText(text)
+	copiedId.value = id
+	clearTimeout(_copyTimer)
+	_copyTimer = setTimeout(() => { copiedId.value = "" }, 1300)
+}
+function editCommand(m) {
+	input.value = m.content || ""
+	nextTick(() => {
+		autoGrow()
+		const el = inputEl.value
+		if (el) {
+			el.focus()
+			const p = input.value.length
+			el.setSelectionRange(p, p)
+		}
+	})
 }
 const _VERB = { create: "Create", update: "Update", submit: "Submit", cancel: "Cancel", delete: "Delete", amend: "Amend" }
 function actionVerb(a) {
