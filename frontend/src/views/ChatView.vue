@@ -161,15 +161,54 @@
 				<div style="max-width:1280px;margin:0 auto;padding:26px 40px 36px;display:flex;flex-direction:column;gap:26px;">
 					<template v-for="m in visibleMessages" :key="m.name">
 						<!-- user -->
-						<div v-if="m.role === 'user'" style="display:flex;justify-content:flex-end;">
+						<div v-if="m.role === 'user'" class="jv-umsg" style="display:flex;flex-direction:column;align-items:flex-end;">
 							<div style="max-width:78%;background:var(--surface-2);border:1px solid var(--border);border-radius:14px 14px 4px 14px;padding:10px 14px;font-size:14px;line-height:1.5;color:var(--text);white-space:pre-wrap;">{{ m.content }}</div>
+							<div class="jv-msgbar">
+								<button class="jv-msgbtn" @click="copyMsg(m.name, m.content)" :title="copiedId === m.name ? 'Copied' : 'Copy'">
+									<svg v-if="copiedId === m.name" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+									<svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+								</button>
+								<button class="jv-msgbtn" @click="editCommand(m)" title="Edit & resend">
+									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
+								</button>
+							</div>
 						</div>
 						<!-- assistant -->
-						<div v-else style="display:flex;gap:12px;">
+						<div v-else class="jv-amsg" style="display:flex;gap:12px;">
 							<div style="width:28px;height:28px;flex:none;border-radius:7px;background:var(--blue);display:flex;align-items:center;justify-content:center;margin-top:2px;">
 								<svg width="15" height="15" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
 							</div>
 							<div style="flex:1;min-width:0;">
+								<!-- Activity: the tool calls (with input + output) that produced
+								     this answer — openclaw-style, collapsible. -->
+								<div v-if="(activityByAssistant[m.name] || []).length" class="jv-activity">
+									<button class="jv-activity-head" @click="toggleActivity(m.name)" :aria-expanded="!!isActivityOpen(m.name)">
+										<svg class="jv-activity-chev" :class="{ open: isActivityOpen(m.name) }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6" /></svg>
+										<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 1 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></svg>
+										<span class="jv-activity-count">{{ (activityByAssistant[m.name] || []).length }} tool call{{ (activityByAssistant[m.name] || []).length === 1 ? "" : "s" }}</span>
+										<span v-if="!isActivityOpen(m.name)" class="jv-activity-preview">{{ activityNames(m.name) }}</span>
+									</button>
+									<div v-if="isActivityOpen(m.name)" class="jv-activity-body">
+										<div v-for="t in (activityByAssistant[m.name] || [])" :key="t.name" class="jv-tool" :class="{ open: toolOpen[t.name] }">
+											<button class="jv-tool-head" @click="toggleTool(t.name)">
+												<span class="jv-tool-dot" :class="(t.tool_status === 'completed' ? 'ok' : (t.tool_status === 'running' ? 'run' : 'err'))"></span>
+												<span class="jv-tool-name">{{ toolLabel(t.tool_name) }}</span>
+												<span class="jv-tool-status">{{ t.tool_status }}</span>
+												<svg class="jv-tool-chev" :class="{ open: toolOpen[t.name] }" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6" /></svg>
+											</button>
+											<div v-if="toolOpen[t.name]" class="jv-tool-detail">
+												<template v-if="prettyJson(t.tool_args)">
+													<div class="jv-tool-io-k">Input</div>
+													<pre class="jv-tool-io">{{ prettyJson(t.tool_args) }}</pre>
+												</template>
+												<template v-if="prettyJson(t.tool_result)">
+													<div class="jv-tool-io-k">Output</div>
+													<pre class="jv-tool-io">{{ prettyJson(t.tool_result) }}</pre>
+												</template>
+											</div>
+										</div>
+									</div>
+								</div>
 								<div v-if="m.error" style="border:1px solid var(--red-bd);border-radius:11px;background:var(--red-bg);padding:13px 15px;display:flex;align-items:flex-start;gap:10px;">
 									<svg width="17" height="17" style="margin-top:1px;flex:none;" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><path d="M12 9v4M12 17h.01" /></svg>
 									<div style="flex:1;">
@@ -346,6 +385,12 @@
 								<div class="jv-set-row">
 									<span>Confirm before changes<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Ask before any create, update, or delete</span></span>
 									<button class="jv-switch" :class="{ on: !ui.auto_apply_changes }" @click="toggleAutoApply" role="switch" :aria-checked="String(!ui.auto_apply_changes)" :title="ui.auto_apply_changes ? 'Auto mode — changes apply without asking' : 'Confirm each change before it runs'">
+										<span class="jv-switch-knob"></span>
+									</button>
+								</div>
+								<div class="jv-set-row">
+									<span>Auto-expand tool activity<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Show each answer's tool calls + output unfolded</span></span>
+									<button class="jv-switch" :class="{ on: activityAutoExpand }" @click="setActivityAutoExpand(!activityAutoExpand)" role="switch" :aria-checked="String(activityAutoExpand)" title="Expand the activity panel under each answer by default">
 										<span class="jv-switch-knob"></span>
 									</button>
 								</div>
@@ -713,6 +758,50 @@ const currentTitle = computed(
 const visibleMessages = computed(() =>
 	messages.value.filter((m) => m.role === "user" || m.role === "assistant"),
 )
+// Group role=tool messages under the assistant turn they belong to, so each
+// answer can show an expandable "Activity" list of the tool calls (with input
+// + output) that produced it — openclaw-style. Tool rows follow their
+// assistant placeholder in seq order, so we attach to the most recent
+// assistant message and reset on each user message.
+const activityByAssistant = computed(() => {
+	const map = {}
+	let cur = null
+	for (const m of messages.value) {
+		if (m.role === "user") cur = null
+		else if (m.role === "assistant") { cur = m.name; if (!map[cur]) map[cur] = [] }
+		else if (m.role === "tool" && cur) (map[cur] || (map[cur] = [])).push(m)
+	}
+	return map
+})
+const activityOpen = ref({})
+const toolOpen = ref({})
+// Whether tool-activity disclosures start expanded (a Settings preference).
+const activityAutoExpand = ref(localStorage.getItem("jarvis-activity-expand") === "1")
+function setActivityAutoExpand(v) {
+	activityAutoExpand.value = !!v
+	try { localStorage.setItem("jarvis-activity-expand", v ? "1" : "0") } catch (e) {}
+}
+// Open state falls back to the pref until the user explicitly toggles a turn.
+function isActivityOpen(name) {
+	return name in activityOpen.value ? activityOpen.value[name] : activityAutoExpand.value
+}
+function toggleActivity(name) { activityOpen.value = { ...activityOpen.value, [name]: !isActivityOpen(name) } }
+function toggleTool(name) { toolOpen.value = { ...toolOpen.value, [name]: !toolOpen.value[name] } }
+function toolLabel(n) { return (n || "tool").replace(/^jarvis__/, "") }
+function activityNames(assistantName) {
+	return (activityByAssistant.value[assistantName] || [])
+		.map((t) => toolLabel(t.tool_name)).join(", ")
+}
+// args/result are stored as JSON strings — pretty-print, and trim very large
+// payloads so a 10k-row result doesn't blow up the chat.
+function prettyJson(s) {
+	if (s == null || s === "") return ""
+	let v = s
+	try { v = typeof s === "string" ? JSON.parse(s) : s } catch (e) { return String(s).slice(0, 4000) }
+	let out = ""
+	try { out = JSON.stringify(v, null, 2) } catch (e) { out = String(s) }
+	return out.length > 4000 ? out.slice(0, 4000) + "\n… (truncated)" : out
+}
 // True only until the initial conversation load finishes — keeps the welcome
 // screen from flashing on refresh before the open chat appears.
 const booting = ref(true)
@@ -1565,6 +1654,35 @@ onBeforeUnmount(() => {
 .jv-composer:focus-within { border-color: var(--text); box-shadow: 0 0 0 3px rgba(23, 23, 23, 0.07); }
 /* response metrics (tools · time) */
 .jv-meta { display: flex; align-items: center; gap: 14px; margin-top: 9px; font-size: 11px; color: var(--text-3); }
+/* Tool activity (openclaw-style): collapsible list of tool calls with I/O */
+.jv-activity { margin: 0 0 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-1); overflow: hidden; }
+.jv-activity-head { display: flex; align-items: center; gap: 7px; width: 100%; padding: 7px 11px; background: transparent; border: none; cursor: pointer; font-family: inherit; font-size: 12px; color: var(--text-2); text-align: left; }
+.jv-activity-head:hover { background: var(--surface-2); }
+.jv-activity-chev { flex: none; color: var(--text-3); transition: transform .15s ease; }
+.jv-activity-chev.open { transform: rotate(90deg); }
+.jv-activity-count { font-weight: 600; color: var(--text); flex: none; }
+.jv-activity-preview { color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.jv-activity-body { border-top: 1px solid var(--border); padding: 5px; display: flex; flex-direction: column; gap: 4px; }
+.jv-tool { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); overflow: hidden; }
+.jv-tool-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 10px; background: transparent; border: none; cursor: pointer; font-family: inherit; font-size: 12.5px; color: var(--text); text-align: left; }
+.jv-tool-head:hover { background: var(--surface-1); }
+.jv-tool-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.jv-tool-dot.ok { background: var(--green); }
+.jv-tool-dot.err { background: var(--red); }
+.jv-tool-dot.run { background: var(--amber); animation: jv-pulse 1s ease-in-out infinite; }
+@keyframes jv-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+.jv-tool-name { font-weight: 550; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; }
+.jv-tool-status { margin-left: auto; font-size: 11px; color: var(--text-3); }
+.jv-tool-chev { flex: none; color: var(--text-3); transition: transform .15s ease; }
+.jv-tool-chev.open { transform: rotate(90deg); }
+.jv-tool-detail { padding: 4px 11px 11px; border-top: 1px solid var(--border); }
+.jv-tool-io-k { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-3); margin: 9px 0 4px; }
+.jv-tool-io { margin: 0; padding: 9px 11px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; line-height: 1.5; color: var(--text); white-space: pre-wrap; word-break: break-word; overflow-x: auto; max-height: 320px; overflow-y: auto; }
+/* per-message Copy/Edit bar — revealed on hover */
+.jv-msgbar { display: flex; gap: 3px; margin-top: 5px; opacity: 0; transition: opacity .12s ease; }
+.jv-umsg:hover .jv-msgbar, .jv-amsg:hover .jv-msgbar { opacity: 1; }
+.jv-msgbtn { display: flex; align-items: center; justify-content: center; width: 26px; height: 26px; border: none; background: transparent; border-radius: 6px; cursor: pointer; color: var(--text-3); }
+.jv-msgbtn:hover { background: var(--surface-2); color: var(--text); }
 .jv-meta span { display: inline-flex; align-items: center; gap: 4px; }
 /* live tool activity rows */
 .jv-toolrow { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--text-2); padding: 2px 0; }

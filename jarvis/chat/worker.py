@@ -587,31 +587,52 @@ def _handle_event_inner(
 		phase = event.get("phase")
 		tool_call_id = event.get("tool_call_id")
 		tool_name = event.get("tool_name")
+		# jarvis__* tools execute through the backend call_tool path, which
+		# ALREADY persists a role=tool message carrying the full args + result
+		# (jarvis.api._persist_and_publish_tool_call). Persisting again here
+		# would double up every ERP tool call with an arg-less duplicate, so we
+		# only drive the live activity indicator for those and let the backend
+		# own the durable row. Built-in openclaw tools (browser/canvas/…) never
+		# hit call_tool, so we still persist those here.
+		is_jarvis = (tool_name or "").startswith("jarvis__")
 		if phase == "start":
-			from jarvis.chat.api import _next_seq
-			seq = _next_seq(conversation_id)
-			doc = frappe.get_doc({
-				"doctype": MSG,
-				"conversation": conversation_id,
-				"seq": seq,
-				"role": "tool",
-				"content": f"calling {tool_name}…",
-				"tool_name": tool_name,
-				"tool_status": "running",
-				"streaming": 1,
-			})
-			doc.insert(ignore_permissions=True)
-			frappe.db.commit()
-			tool_msg_by_call_id[tool_call_id] = doc.name
+			if not is_jarvis:
+				from jarvis.chat.api import _next_seq
+				seq = _next_seq(conversation_id)
+				doc = frappe.get_doc({
+					"doctype": MSG,
+					"conversation": conversation_id,
+					"seq": seq,
+					"role": "tool",
+					"content": f"calling {tool_name}…",
+					"tool_name": tool_name,
+					"tool_status": "running",
+					"streaming": 1,
+				})
+				doc.insert(ignore_permissions=True)
+				frappe.db.commit()
+				tool_msg_by_call_id[tool_call_id] = doc.name
 			publish_to_user(user, {
 				"kind": "tool:start",
 				"conversation_id": conversation_id,
-				"message_id": doc.name,
+				"message_id": tool_msg_by_call_id.get(tool_call_id),
 				"tool_name": tool_name,
 				"tool_call_id": tool_call_id,
 				"run_id": run_id,
 			})
 		elif phase == "end":
+			if is_jarvis:
+				# No worker-side row for jarvis tools; just close the live card.
+				publish_to_user(user, {
+					"kind": "tool:end",
+					"conversation_id": conversation_id,
+					"message_id": None,
+					"tool_name": tool_name,
+					"tool_call_id": tool_call_id,
+					"status": event.get("status"),
+					"run_id": run_id,
+				})
+				return
 			name = tool_msg_by_call_id.get(tool_call_id)
 			if not name:
 				# Orphan: openclaw emitted a tool 'end' event for a
