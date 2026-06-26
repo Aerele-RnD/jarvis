@@ -951,7 +951,67 @@ function confirmLabel(m) {
 	return mt ? mt[1].trim() : ""
 }
 function render(text) {
-	return renderMarkdown(stripBlocks(text))
+	return linkifyDocs(renderMarkdown(stripBlocks(text)))
+}
+// {document name → DocType} harvested from THIS conversation's tool calls
+// (get_doc / create_doc / get_list / update_doc / …). We only ever linkify IDs
+// that actually came back from a tool, so we always know the DocType for the
+// Desk URL and never false-positive on arbitrary prose.
+const docRefs = computed(() => {
+	const map = {}
+	const add = (dt, name) => {
+		if (dt && typeof name === "string" && name.length >= 4) map[name] = dt
+	}
+	for (const m of messages.value) {
+		if (m.role !== "tool") continue
+		let args = {}
+		let res = {}
+		try { args = m.tool_args ? JSON.parse(m.tool_args) : {} } catch (e) {}
+		try { res = m.tool_result ? JSON.parse(m.tool_result) : {} } catch (e) {}
+		const dt = args.doctype
+		if (args.name) add(dt, args.name)
+		const data = res && res.data
+		if (Array.isArray(data)) {
+			for (const row of data) if (row && row.name) add(row.doctype || dt, row.name)
+		} else if (data && typeof data === "object") {
+			add(data.doctype || dt, data.name)
+		}
+	}
+	return map
+})
+const _escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+// Compiled once per docRefs change: matches any known doc name as a whole token
+// (not a substring of a longer id/word). Capped so a huge get_list can't build a
+// pathological alternation.
+const docNameRegex = computed(() => {
+	const names = Object.keys(docRefs.value).sort((a, b) => b.length - a.length).slice(0, 400)
+	if (!names.length) return null
+	try {
+		return new RegExp(`(?<![\\w-])(${names.map(_escapeRegex).join("|")})(?![\\w-])`, "g")
+	} catch (e) {
+		return null // e.g. a browser without lookbehind — degrade to no links
+	}
+})
+const _deskSlug = (dt) => dt.toLowerCase().replace(/ /g, "-")
+// Turn known document IDs in the rendered markdown HTML into Desk links, without
+// touching text already inside an <a> (so markdown links stay intact).
+function linkifyDocs(html) {
+	const re = docNameRegex.value
+	const refs = docRefs.value
+	if (!re || !html) return html
+	let inAnchor = 0
+	return html.replace(/(<a\b[^>]*>)|(<\/a>)|(<[^>]+>)|([^<]+)/gi, (m, aOpen, aClose, otherTag, text) => {
+		if (aOpen) { inAnchor++; return aOpen }
+		if (aClose) { inAnchor = Math.max(0, inAnchor - 1); return aClose }
+		if (otherTag != null) return otherTag
+		if (inAnchor) return text
+		return text.replace(re, (name) => {
+			const dt = refs[name]
+			if (!dt) return name
+			const url = `/app/${_deskSlug(dt)}/${encodeURIComponent(name)}`
+			return `<a href="${url}" target="_blank" rel="noopener" class="jv-doclink" title="Open ${dt} in ERPNext">${name}</a>`
+		})
+	})
 }
 // The last assistant message (finished, turn idle) decides which card is live —
 // once the user clicks, a new message lands and the card retires automatically.
@@ -1867,6 +1927,10 @@ function onGlobalKey(e) {
 .jv-md :deep(.jv-md-list li) { margin: 2px 0; }
 .jv-md :deep(.jv-md-code) { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .jv-md :deep(.jv-md-link) { color: var(--blue); text-decoration: none; font-weight: 500; }
+/* Auto-linked document IDs → open the record in ERPNext Desk. Dashed underline
+   marks them as record links, distinct from plain markdown links. */
+.jv-md :deep(.jv-doclink) { color: var(--blue); text-decoration: none; font-weight: 550; border-bottom: 1px dashed var(--blue); cursor: pointer; transition: background .12s; }
+.jv-md :deep(.jv-doclink:hover) { border-bottom-style: solid; background: var(--blue-bg); border-radius: 3px; }
 .jv-md :deep(.jv-md-tablewrap) { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin: 4px 0 10px; }
 .jv-md :deep(.jv-md-table) { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 .jv-md :deep(.jv-md-table th) { padding: 8px 13px; font-weight: 550; color: var(--text-3); background: var(--surface-1); border-bottom: 1px solid var(--border); }
