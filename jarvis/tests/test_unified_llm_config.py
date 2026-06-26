@@ -1805,6 +1805,7 @@ class TestFT4PasswordMaskingAndBlobShape(FrappeTestCase):
             _get_password(doc, "oauth_blob")
 
 
+
 # ---------------------------------------------------------------------------
 # FT5: chat-worker pool-awareness + routing_mode + worker error
 # ---------------------------------------------------------------------------
@@ -1928,3 +1929,130 @@ class TestFT5ChatWorkerPoolAwareness(_RT3SettingsTestCase):
         f = fields["routing_mode"]
         self.assertEqual(f.fieldtype, "Select",
                          "routing_mode must be of type Select")
+
+
+# ---------------------------------------------------------------------------
+# FT4b: Real DB-backed validate_models tests (never-raises contract)
+# ---------------------------------------------------------------------------
+
+class TestFT4bValidateModelsNeverRaises(_RT3SettingsTestCase):
+    """FT4b: Real-DB and mock-decrypt tests verifying the 'never raises' contract
+    of validate_models when reading oauth_blob / api_key via get_password.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self._clear_models()
+        _reset_settings()
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("preset", "", update_modified=False)
+        settings.db_set("proxy_active", 0, update_modified=False)
+        settings.db_set("proxy_recommended", 0, update_modified=False)
+        frappe.db.commit()
+
+    def test_real_db_backed_subscription_resave_does_not_produce_malformed_error(self):
+        """FT4b DB-backed path: save a Jarvis Settings with a real subscription model +
+        account whose oauth_blob is encrypted in the DB.  Re-loading the doc and
+        running validate_models on the reloaded doc must NOT produce a 'malformed'
+        error and must NOT raise.
+
+        This exercises the real DB + get_password path (not the frappe._dict fallback
+        used by test_resave_db_backed_subscription_tenant_does_not_raise_malformed_blob).
+        """
+        from unittest.mock import patch
+
+        # Step 1: build and save settings with a subscription model + account.
+        settings = frappe.get_single("Jarvis Settings")
+
+        # Subscription model with one account whose oauth_blob will be encrypted.
+        sub_row = frappe.new_doc("Jarvis LLM Pool Model")
+        sub_row.model = "gpt-5.5-db-backed"
+        sub_row.tier = "cheap"
+        sub_row.order = 99
+        sub_row.enabled = 1
+        sub_row.credential_type = "subscription"
+
+        acc_row = frappe.new_doc("Jarvis LLM Pool Subscription Account")
+        acc_row.upstream = "openai"
+        acc_row.account_ref = "ACC_DB_BACKED_FT4B_001"
+        acc_row.label = "db-backed-ft4b@example.com"
+        acc_row.oauth_blob = '{"token": "real_token", "refresh": "real_refresh"}'
+        sub_row.append("accounts", acc_row)
+
+        settings.append("models", sub_row)
+
+        # A second strong api_key model so proxy_active triggers (≥2 models).
+        strong_row = frappe.new_doc("Jarvis LLM Pool Model")
+        strong_row.model = "gpt-4o-db-backed"
+        strong_row.tier = "strong"
+        strong_row.order = 98
+        strong_row.enabled = 1
+        strong_row.credential_type = "api_key"
+        strong_row.api_key = "sk-db-backed-ft4b-key"
+        strong_row.provider = "openai_compat"
+        strong_row.base_url = "https://api.openai.com"
+        settings.append("models", strong_row)
+
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   return_value={"action": "pool_update"}):
+            settings.save()
+
+        frappe.db.commit()
+
+        # Step 2: reload from DB — oauth_blob will be masked "****" in-memory
+        # but readable via row.get_password("oauth_blob") from __Auth table.
+        from jarvis.jarvis.pool_serialize import validate_models
+        reloaded = frappe.get_single("Jarvis Settings")
+
+        try:
+            errors = validate_models(reloaded)
+        except Exception as exc:
+            self.fail(f"validate_models raised on reloaded DB-backed doc: {exc}")
+
+        malformed_errors = [e for e in errors if "malformed" in e.lower()]
+        self.assertEqual(
+            malformed_errors, [],
+            f"Re-running validate_models on a reloaded DB-backed subscription doc must NOT "
+            f"report 'malformed'; got errors: {errors}",
+        )
+
+    def test_validate_models_decrypt_error_returns_clean_error_string_not_raise(self):
+        """FT4b decrypt-error path: if get_password raises for oauth_blob on a DB-backed
+        account row, validate_models must return a clean error string containing
+        'cannot read' or 'decryption error' and must NOT propagate the exception.
+
+        Mocks get_password to raise so the test is independent of real key material.
+        """
+        from jarvis.jarvis.pool_serialize import validate_models
+        from unittest.mock import MagicMock
+
+        # Build an account object that looks like a real child-doc row
+        # (has get_password callable) but whose get_password always raises.
+        acc = MagicMock()
+        acc.get_password = MagicMock(side_effect=Exception("simulated decryption failure"))
+        # Non-empty field so _get_password knows the field is set and re-raises.
+        acc.oauth_blob = "***masked***"
+        acc.get = MagicMock(return_value="***masked***")
+        acc.account_ref = "ACC_DECRYPT_ERR_FT4B"
+        acc.upstream = "openai"
+        acc.label = "decrypt-err@example.com"
+
+        m = _subscription_model(accounts=[acc])
+        settings = _make_settings_with_models([m])
+
+        # validate_models must NOT raise.
+        try:
+            errors = validate_models(settings)
+        except Exception as exc:
+            self.fail(
+                f"validate_models must never raise; got exception on decrypt error: {exc}"
+            )
+
+        # Must return a clean, human-readable error string about the failure.
+        self.assertTrue(
+            any(
+                "decryption error" in e.lower() or "cannot read" in e.lower()
+                for e in errors
+            ),
+            f"Expected a clean 'decryption error' / 'cannot read' error string; got: {errors}",
+        )

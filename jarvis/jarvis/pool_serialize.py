@@ -111,7 +111,11 @@ def validate_models(settings) -> list:
 
         if cred_type == "api_key":
             # Blank api_key on an enabled model → dangling key_ref
-            key_val = _get_password(m, "api_key")
+            try:
+                key_val = _get_password(m, "api_key")
+            except Exception:
+                errors.append(f"cannot read api_key for model '{getattr(m, 'model', None) or m.get('model', '?')}' (decryption error)")
+                continue
             if not key_val:
                 errors.append(f"{label}: api_key is blank on an enabled model (would produce a dangling key_ref)")
 
@@ -145,7 +149,11 @@ def validate_models(settings) -> list:
 
                 # Malformed oauth_blob — use _get_password so DB-backed masked rows
                 # are decrypted correctly (avoids "malformed" error on re-save).
-                blob_raw = _get_password(a, "oauth_blob") if callable(getattr(a, "get_password", None)) else (a.oauth_blob if hasattr(a, "oauth_blob") else a.get("oauth_blob", ""))
+                try:
+                    blob_raw = _get_password(a, "oauth_blob") if callable(getattr(a, "get_password", None)) else (a.oauth_blob if hasattr(a, "oauth_blob") else a.get("oauth_blob", ""))
+                except Exception:
+                    errors.append(f"cannot read oauth_blob for account '{acc_ref}' (decryption error)")
+                    continue
                 if blob_raw:
                     _, parse_err = _safe_json_loads(blob_raw)
                     if parse_err:
@@ -244,7 +252,12 @@ def build_pool_payload(settings):
 
         else:
             # api_key model: only emit key_ref when secret is actually present
-            val = _get_password(m, "api_key")
+            # Guard: if get_password raises (decrypt error), treat as blank —
+            # no key_ref emitted; validate_models will already have flagged this.
+            try:
+                val = _get_password(m, "api_key")
+            except Exception:
+                val = ""
             if val:
                 ref = _key_ref(key_idx)
                 key_idx += 1

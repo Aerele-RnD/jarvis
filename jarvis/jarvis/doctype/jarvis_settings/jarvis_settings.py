@@ -24,7 +24,8 @@ class JarvisSettings(Document):
         api_key from the models table, not stale legacy fields.
         Only mirrors when models table has at least one enabled row.
 
-        Note: llm_provider is a constrained Select field (display names only).
+        Note: llm_provider isn't needed by _validate_auth_mode_requirements;
+        kept in db_set (in _on_update_unified_llm) to avoid in-memory drift.
         It is NOT mirrored here to avoid _validate_selects rejecting the pool
         model's internal provider ID (e.g. "openai_compat"). The db_set in
         _on_update_unified_llm bypasses validation and writes the internal ID.
@@ -43,9 +44,14 @@ class JarvisSettings(Document):
         self.llm_auth_mode = cred_type
         # Mirror api_key in-memory so _validate_auth_mode_requirements sees it.
         # The encrypted write happens in on_update.
+        # Guard: if get_password raises (decrypt error on a previously saved row),
+        # skip the mirror silently rather than crashing through save().
         if cred_type == "api_key":
             from jarvis.jarvis.pool_serialize import _get_password
-            api_key_val = _get_password(m0, "api_key")
+            try:
+                api_key_val = _get_password(m0, "api_key")
+            except Exception:
+                api_key_val = None  # leave prior encrypted value; skip mirror
             if api_key_val and not (getattr(self, "llm_api_key", None) and not self.is_dummy_password(self.llm_api_key or "")):
                 self.llm_api_key = api_key_val
 
