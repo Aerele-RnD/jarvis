@@ -661,7 +661,8 @@ class TestRT3UnifiedOnUpdateRouting(_RT3SettingsTestCase):
 
     def test_two_models_routes_to_proxy_path(self):
         """2 enabled models → proxy pool path, proxy_active==1,
-        legacy llm_model mirrors models[0].model."""
+        legacy llm_model mirrors models[0].model, ALL legacy fields mirrored,
+        AND get_password('llm_api_key') returns models[0]'s key (encrypted path)."""
         settings = frappe.get_single("Jarvis Settings")
         _add_model_row(settings,
                        provider="openai_compat", model="gpt-4o",
@@ -691,9 +692,19 @@ class TestRT3UnifiedOnUpdateRouting(_RT3SettingsTestCase):
         settings = frappe.get_single("Jarvis Settings")
         self.assertEqual(int(settings.proxy_active or 0), 1,
                          "proxy_active must be 1 for ≥2 models")
-        # Legacy mirror: llm_model should reflect models[0]
+        # All legacy fields must mirror models[0].
         self.assertEqual(settings.llm_model, "gpt-4o",
                          "legacy llm_model must mirror models[0].model")
+        self.assertEqual(settings.llm_provider, "openai_compat",
+                         "legacy llm_provider must mirror models[0].provider")
+        self.assertEqual(settings.llm_base_url, "https://api.openai.com",
+                         "legacy llm_base_url must mirror models[0].base_url")
+        self.assertEqual(settings.llm_auth_mode, "api_key",
+                         "legacy llm_auth_mode must mirror models[0].credential_type")
+        # api_key must be stored encrypted, not plaintext — readable via get_password.
+        recovered_key = settings.get_password("llm_api_key", raise_exception=False)
+        self.assertEqual(recovered_key, "sk-pool-key-1",
+                         "get_password('llm_api_key') must return models[0]'s key after mirror")
 
     # ------------------------------------------------------------------ #
     # (c) validate_models errors → ValidationError, NO sync called
@@ -797,3 +808,65 @@ class TestRT3LegacyNoModelsBackcompat(_RT3SettingsTestCase):
                          "proxy pool path must NOT be called when no models rows")
         self.assertTrue(len(creds_sync_called) >= 1,
                         "single-model creds path MUST be called for legacy tenant")
+
+
+class TestRT3ProxyToDirectTransition(_RT3SettingsTestCase):
+    """Fix 2: proxy→direct transition test.
+
+    A tenant that had ≥2 models (proxy_active=1) then drops to 1 model
+    (no preset) must have proxy_active reset to 0 and proxy_recommended
+    set to 1, and the single-model creds path must be taken (not proxy).
+    """
+
+    def setUp(self):
+        super().setUp()
+        self._clear_models()
+        _reset_settings()
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("preset", "", update_modified=False)
+        # Simulate stale proxy_active=1 from a prior 2-model save.
+        settings.db_set("proxy_active", 1, update_modified=False)
+        settings.db_set("proxy_recommended", 0, update_modified=False)
+        frappe.db.commit()
+
+    def test_proxy_to_direct_resets_flags_and_takes_single_model_path(self):
+        """Start with proxy_active=1 (stale), save with 1 model + no preset:
+        → proxy_active==0, proxy_recommended==1, single-model creds path taken."""
+        settings = frappe.get_single("Jarvis Settings")
+        # Confirm the stale proxy_active state.
+        self.assertEqual(int(settings.proxy_active or 0), 1,
+                         "pre-condition: proxy_active must start at 1")
+
+        # Now configure a single model (no preset) — should trigger direct path.
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-4o",
+                       tier="strong", order=0,
+                       api_key="sk-single-after-pool",
+                       base_url="https://api.openai.com")
+        settings.preset = ""
+
+        pool_sync_called = []
+        creds_sync_called = []
+
+        with (
+            frappe_patch("jarvis.admin_client.post_update_llm_pool",
+                         side_effect=lambda **kw: pool_sync_called.append(kw)),
+            frappe_patch("jarvis.admin_client.post_update_llm_creds",
+                         side_effect=lambda **kw: creds_sync_called.append(kw) or {"action": "restart"}),
+        ):
+            settings.save()
+
+        # Proxy path must NOT have been called.
+        self.assertEqual(pool_sync_called, [],
+                         "proxy pool path must NOT be called after transition to 1 model/no preset")
+
+        # Single-model path must have been taken (structural change fires restart).
+        self.assertTrue(len(creds_sync_called) >= 1,
+                        "single-model creds path MUST be called after proxy→direct transition")
+
+        # Flags must be reset.
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertEqual(int(settings.proxy_active or 0), 0,
+                         "proxy_active must be reset to 0 after transition to 1 model/no preset")
+        self.assertEqual(int(settings.proxy_recommended or 0), 1,
+                         "proxy_recommended must be 1 when exactly 1 model is present")

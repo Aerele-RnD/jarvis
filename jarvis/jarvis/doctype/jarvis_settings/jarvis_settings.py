@@ -76,7 +76,12 @@ class JarvisSettings(Document):
         # ------------------------------------------------------------------ #
         # Back-compat (legacy path): no models rows, no preset.
         # Runs the existing single-model classify/sync path unchanged.
+        # Reset any stale proxy flags so UI/workers don't think it's in
+        # pool mode (handles the proxy→direct transition when all models
+        # are removed).
         # ------------------------------------------------------------------ #
+        self.db_set("proxy_active", 0, update_modified=False)
+        self.db_set("proxy_recommended", 0, update_modified=False)
         self._on_update_single_model_legacy()
 
     def _on_update_unified_llm(self):
@@ -122,13 +127,21 @@ class JarvisSettings(Document):
             }
             for field, value in legacy_updates.items():
                 self.db_set(field, value, update_modified=False)
-            # Mirror api_key secret for api_key mode.
+            # Mirror api_key secret for api_key mode via the encrypted path.
+            # IMPORTANT: db_set on a Password field writes PLAINTEXT into Singles
+            # (it bypasses Frappe's __Auth encryption). Use set_encrypted_password
+            # so the secret is stored in the __Auth table, never in plaintext.
             if cred_type == "api_key":
                 from jarvis.jarvis.pool_serialize import _get_password
+                from frappe.utils.password import set_encrypted_password
                 api_key_val = _get_password(m0, "api_key")
                 if api_key_val:
-                    # db_set uses password field writing path for Password fieldtype.
-                    self.db_set("llm_api_key", api_key_val, update_modified=False)
+                    set_encrypted_password(
+                        "Jarvis Settings", "Jarvis Settings",
+                        api_key_val, "llm_api_key",
+                    )
+                    # Mask in-memory so nothing downstream re-writes plaintext.
+                    self.llm_api_key = "*" * 10
 
         # Step 4: Route to proxy or single-model path.
         if proxy_active:
@@ -136,9 +149,20 @@ class JarvisSettings(Document):
             spec, api_keys, oauth_blobs = build_pool_payload(self)
             self._enqueue_pool_sync(spec, api_keys, oauth_blobs)
         else:
-            # Single-model path (1 model, no preset): reuse the existing
-            # classify/enqueue path. The legacy fields are now mirrored, so
-            # _classify_llm_change will correctly see any structural change.
+            # Single-model path (1 model, no preset): reset any stale proxy
+            # flags so UI/workers don't think the tenant is still in pool mode.
+            # (proxy_active/proxy_recommended were already written above in step 2,
+            # but we explicitly reset here in case a tenant removed all models
+            # and routed to the legacy path instead of the unified path.)
+            self.db_set("proxy_active", 0, update_modified=False)
+            self.db_set(
+                "proxy_recommended",
+                1 if (len(enabled_models) == 1) else 0,
+                update_modified=False,
+            )
+            # Single-model path: reuse the existing classify/enqueue path.
+            # The legacy fields are now mirrored, so _classify_llm_change
+            # will correctly see any structural change.
             self._on_update_single_model_legacy()
 
     def _enqueue_pool_sync(self, spec: dict, api_keys: dict, oauth_blobs: dict) -> None:
