@@ -27,6 +27,11 @@ name = "jarvis"
 # These dependencies are only installed when developer mode is enabled
 [tool.bench.dev-dependencies]
 # package_name = "~=1.1.0"
+# Needed by the run_python_code sandbox (Tier-5, OFF by default). Kept out of
+# base dependencies so installs that never enable the sandbox stay lean; an
+# operator enabling site_config jarvis_python_sandbox installs these too.
+pandas = ">=2"
+numpy = ">=1.26"
 
 # These apt dependencies will be installed from Ubuntu repositories when you host your app on Frappe Cloud
 [deploy.dependencies.apt]
