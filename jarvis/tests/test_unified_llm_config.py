@@ -146,3 +146,263 @@ class TestUnifiedLLMConfigSchema(FrappeTestCase):
         option_list = [o.strip() for o in options.split("\n") if o.strip()]
         self.assertNotIn("anthropic", option_list,
                          "upstream options must not include 'anthropic' (ToS violation)")
+
+
+# ---------------------------------------------------------------------------
+# Task 2: pool_serialize re-sourced from settings.models + hygiene tests
+# ---------------------------------------------------------------------------
+
+def _make_settings_with_models(models_rows):
+    """Build a minimal in-memory settings-like object without saving to DB.
+
+    Uses frappe._dict so that _get_password adapter works (hasattr(doc, 'get') path).
+    models_rows is a list of frappe._dict; accounts inside subscription models
+    are also frappe._dict objects.
+    """
+    settings = frappe._dict(
+        models=models_rows,
+        preset=None,
+        routing_mode="dynamic",
+    )
+    return settings
+
+
+def _api_key_model(**kwargs):
+    defaults = frappe._dict(
+        model="gpt-4o",
+        tier="strong",
+        order=0,
+        enabled=1,
+        credential_type="api_key",
+        api_key="sk-test-key",
+        provider="openai_compat",
+        base_url="https://api.openai.com",
+        rotation=None,
+        accounts=[],
+    )
+    defaults.update(kwargs)
+    return defaults
+
+
+def _subscription_model(**kwargs):
+    defaults = frappe._dict(
+        model="gpt-5.5",
+        tier="cheap",
+        order=1,
+        enabled=1,
+        credential_type="subscription",
+        api_key=None,
+        provider="",
+        base_url="",
+        rotation="round_robin",
+        accounts=[],
+    )
+    defaults.update(kwargs)
+    return defaults
+
+
+def _account(upstream="openai", account_ref="ACC_001", label="test@example.com", oauth_blob='{"token":"abc"}'):
+    return frappe._dict(
+        upstream=upstream,
+        account_ref=account_ref,
+        label=label,
+        oauth_blob=oauth_blob,
+    )
+
+
+class TestPoolSerializeFromSettings(FrappeTestCase):
+    """Task 2: Direct-call tests for build_pool_payload / validate_models / compute_proxy_active."""
+
+    # ------------------------------------------------------------------ #
+    # Imports
+    # ------------------------------------------------------------------ #
+
+    def _imports(self):
+        from jarvis.jarvis.pool_serialize import (
+            build_pool_payload,
+            validate_models,
+            compute_proxy_active,
+        )
+        return build_pool_payload, validate_models, compute_proxy_active
+
+    # ------------------------------------------------------------------ #
+    # (a) Secrets out of spec
+    # ------------------------------------------------------------------ #
+
+    def test_secrets_not_in_spec(self):
+        """API key values must NOT appear in the serialized spec dict."""
+        build_pool_payload, _, _ = self._imports()
+        m = _api_key_model(api_key="super-secret-key-xyz")
+        settings = _make_settings_with_models([m])
+        spec, api_keys, _ = build_pool_payload(settings)
+        # secret must not appear anywhere in spec
+        self.assertNotIn("super-secret-key-xyz", str(spec))
+        # secret must be in api_keys under the key_ref
+        self.assertTrue(any(v == "super-secret-key-xyz" for v in api_keys.values()))
+
+    # ------------------------------------------------------------------ #
+    # (b) Subscription entry omits provider/base_url
+    # ------------------------------------------------------------------ #
+
+    def test_subscription_model_omits_provider_and_base_url(self):
+        """Subscription models must NOT emit provider or base_url in the spec."""
+        build_pool_payload, _, _ = self._imports()
+        acc = _account()
+        m = _subscription_model(accounts=[acc], provider="openai_compat", base_url="https://api.openai.com")
+        settings = _make_settings_with_models([m])
+        spec, _, _ = build_pool_payload(settings)
+        entry = spec["models"][0]
+        self.assertNotIn("provider", entry, "subscription entry must not emit provider")
+        self.assertNotIn("base_url", entry, "subscription entry must not emit base_url")
+
+    # ------------------------------------------------------------------ #
+    # (c) Mixed upstream across accounts → validate_models error
+    # ------------------------------------------------------------------ #
+
+    def test_mixed_upstream_across_accounts_is_a_validate_error(self):
+        """Accounts with different upstreams in one subscription model → validate_models error."""
+        _, validate_models, _ = self._imports()
+        acc1 = _account(upstream="openai", account_ref="ACC_001")
+        acc2 = _account(upstream="google", account_ref="ACC_002")
+        m = _subscription_model(accounts=[acc1, acc2])
+        settings = _make_settings_with_models([m])
+        errors = validate_models(settings)
+        self.assertTrue(
+            any("upstream" in e.lower() or "mixed" in e.lower() or "consistent" in e.lower() for e in errors),
+            f"Expected upstream consistency error, got: {errors}"
+        )
+
+    # ------------------------------------------------------------------ #
+    # (d) Duplicate account_ref → validate_models error
+    # ------------------------------------------------------------------ #
+
+    def test_duplicate_account_ref_is_a_validate_error(self):
+        """Same account_ref used in two different models → validate_models error."""
+        _, validate_models, _ = self._imports()
+        acc1 = _account(upstream="openai", account_ref="DUPE_REF")
+        acc2 = _account(upstream="openai", account_ref="DUPE_REF")
+        m1 = _subscription_model(accounts=[acc1], model="gpt-5.5", order=0)
+        m2 = _subscription_model(accounts=[acc2], model="gpt-4o-mini", tier="strong", order=1)
+        settings = _make_settings_with_models([m1, m2])
+        errors = validate_models(settings)
+        self.assertTrue(
+            any("duplicate" in e.lower() or "account_ref" in e.lower() for e in errors),
+            f"Expected duplicate account_ref error, got: {errors}"
+        )
+
+    # ------------------------------------------------------------------ #
+    # (e) Blank api_key on enabled api_key model → validate_models error
+    # ------------------------------------------------------------------ #
+
+    def test_blank_api_key_on_enabled_model_is_a_validate_error(self):
+        """Enabled api_key model with empty key → validate_models error (no dangling key_ref)."""
+        _, validate_models, _ = self._imports()
+        m = _api_key_model(api_key="", enabled=1)
+        settings = _make_settings_with_models([m])
+        errors = validate_models(settings)
+        self.assertTrue(
+            any("api_key" in e.lower() or "key" in e.lower() or "blank" in e.lower() for e in errors),
+            f"Expected blank api_key error, got: {errors}"
+        )
+
+    # ------------------------------------------------------------------ #
+    # (f) Empty subscription accounts → validate_models error
+    # ------------------------------------------------------------------ #
+
+    def test_empty_accounts_on_enabled_subscription_model_is_a_validate_error(self):
+        """Enabled subscription model with no accounts → validate_models error."""
+        _, validate_models, _ = self._imports()
+        m = _subscription_model(accounts=[], enabled=1)
+        settings = _make_settings_with_models([m])
+        errors = validate_models(settings)
+        self.assertTrue(
+            any("account" in e.lower() or "empty" in e.lower() for e in errors),
+            f"Expected empty accounts error, got: {errors}"
+        )
+
+    # ------------------------------------------------------------------ #
+    # (g) Malformed oauth_blob → validate_models error STRING (no raise)
+    # ------------------------------------------------------------------ #
+
+    def test_malformed_oauth_blob_returns_error_string_not_raise(self):
+        """Malformed JSON in oauth_blob must produce a validate_models error string — NOT raise."""
+        build_pool_payload, validate_models, _ = self._imports()
+        acc = _account(oauth_blob="{not valid json!!!")
+        m = _subscription_model(accounts=[acc])
+        settings = _make_settings_with_models([m])
+
+        # validate_models must NOT raise — must return list with an error
+        try:
+            errors = validate_models(settings)
+        except Exception as exc:
+            self.fail(f"validate_models raised an exception on malformed oauth_blob: {exc}")
+        self.assertTrue(
+            any("oauth" in e.lower() or "json" in e.lower() or "blob" in e.lower() or "malformed" in e.lower() for e in errors),
+            f"Expected malformed oauth_blob error string, got: {errors}"
+        )
+
+        # build_pool_payload must also NOT raise
+        try:
+            build_pool_payload(settings)
+        except Exception as exc:
+            self.fail(f"build_pool_payload raised on malformed oauth_blob: {exc}")
+
+    # ------------------------------------------------------------------ #
+    # (h) compute_proxy_active
+    # ------------------------------------------------------------------ #
+
+    def test_compute_proxy_active_true_when_two_enabled_models(self):
+        """compute_proxy_active is True when ≥2 models are enabled."""
+        _, _, compute_proxy_active = self._imports()
+        m1 = _api_key_model(enabled=1)
+        m2 = _api_key_model(model="gpt-4-turbo", enabled=1, order=1)
+        settings = _make_settings_with_models([m1, m2])
+        self.assertTrue(compute_proxy_active(settings))
+
+    def test_compute_proxy_active_true_when_preset_set(self):
+        """compute_proxy_active is True when preset is set (even with only 1 model)."""
+        _, _, compute_proxy_active = self._imports()
+        m = _api_key_model(enabled=1)
+        settings = _make_settings_with_models([m])
+        settings.preset = "Cost-saver"
+        self.assertTrue(compute_proxy_active(settings))
+
+    def test_compute_proxy_active_false_when_one_model_no_preset(self):
+        """compute_proxy_active is False for exactly 1 enabled model and no preset."""
+        _, _, compute_proxy_active = self._imports()
+        m = _api_key_model(enabled=1)
+        settings = _make_settings_with_models([m])
+        settings.preset = None
+        self.assertFalse(compute_proxy_active(settings))
+
+    # ------------------------------------------------------------------ #
+    # No dangling key_ref: build_pool_payload only emits key_ref+api_keys together
+    # ------------------------------------------------------------------ #
+
+    def test_no_dangling_key_ref_when_api_key_is_blank(self):
+        """A model with blank api_key must not emit a key_ref pointing to nothing."""
+        build_pool_payload, _, _ = self._imports()
+        m = _api_key_model(api_key="", enabled=1)
+        settings = _make_settings_with_models([m])
+        spec, api_keys, _ = build_pool_payload(settings)
+        # Either the model is skipped entirely, or key_ref is absent from the entry
+        for entry in spec.get("models", []):
+            if "key_ref" in entry:
+                self.assertIn(entry["key_ref"], api_keys,
+                              "key_ref in spec must have a corresponding entry in api_keys")
+
+    # ------------------------------------------------------------------ #
+    # anthropic upstream → validate_models error
+    # ------------------------------------------------------------------ #
+
+    def test_anthropic_upstream_in_subscription_is_a_validate_error(self):
+        """Subscription account with upstream='anthropic' → validate_models error (ToS)."""
+        _, validate_models, _ = self._imports()
+        acc = _account(upstream="anthropic")
+        m = _subscription_model(accounts=[acc])
+        settings = _make_settings_with_models([m])
+        errors = validate_models(settings)
+        self.assertTrue(
+            any("anthropic" in e.lower() or "tos" in e.lower() or "upstream" in e.lower() for e in errors),
+            f"Expected anthropic upstream ToS error, got: {errors}"
+        )

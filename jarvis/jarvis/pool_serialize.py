@@ -1,19 +1,28 @@
-"""Pure serialization: Jarvis LLM Pool doc -> (PoolSpec dict, api_keys, oauth_blobs).
-Secrets are pulled OUT of the spec and keyed by a deterministic ref so the rendered
-config stays secret-free."""
+"""Pure serialization: Jarvis Settings.models -> (PoolSpec dict, api_keys, oauth_blobs).
+
+Secrets are pulled OUT of the spec and keyed by a deterministic ref so the
+rendered config stays secret-free.
+
+All functions here are defensive: no function raises on bad input.
+- get_password() calls use raise_exception=False (masked-empty → "").
+- json.loads() is guarded; errors are reported via validate_models(), not raised.
+"""
 import json
 
 
-def _get_password(doc, fieldname: str) -> str:
+def _get_password(doc, fieldname: str, raise_exception: bool = False) -> str:
     """Read a password field from a doc (BaseDocument) or plain dict/frappe._dict.
 
     - BaseDocument rows support .get_password() which handles DB-stored encrypted
-      values and in-memory plaintext.
+      values and in-memory plaintext. raise_exception=False so masked-empty → "".
     - frappe._dict / plain dict rows (used in tests / in-memory) just have the
       raw value; read it directly.
     """
     if callable(getattr(doc, "get_password", None)):
-        return doc.get_password(fieldname) or ""
+        try:
+            return doc.get_password(fieldname, raise_exception=raise_exception) or ""
+        except Exception:
+            return ""
     return (doc.get(fieldname) or "") if hasattr(doc, "get") else (getattr(doc, fieldname, "") or "")
 
 
@@ -21,7 +30,23 @@ def _key_ref(idx: int) -> str:
     return f"POOL_KEY_{idx}"
 
 
+def _safe_json_loads(blob: str):
+    """Try to parse blob as JSON. Returns (parsed, error_str).
+
+    error_str is None on success, a human-readable message on failure.
+    """
+    try:
+        return json.loads(blob), None
+    except Exception as exc:
+        return None, f"malformed oauth_blob JSON: {exc}"
+
+
+# ---------------------------------------------------------------------------
+# compute_auto_enable — kept for back-compat with test_jarvis_llm_pool.py
+# ---------------------------------------------------------------------------
+
 def compute_auto_enable(pool) -> bool:
+    """Legacy helper used by the old Jarvis LLM Pool on_update (kept for back-compat)."""
     return len([m for m in pool.models if m.enabled]) >= 2 or any(
         m.credential_type == "subscription" and m.get("accounts")
         for m in pool.models
@@ -29,61 +54,201 @@ def compute_auto_enable(pool) -> bool:
     )
 
 
-def build_pool_payload(pool):
-    """Return (spec_dict, api_keys, oauth_blobs). Pure; no I/O except get_password."""
-    models, api_keys, oauth_blobs = [], {}, {}
-    key_idx = 0
-    for m in pool.models:
+# ---------------------------------------------------------------------------
+# compute_proxy_active — new helper (re-sourced from settings)
+# ---------------------------------------------------------------------------
+
+def compute_proxy_active(settings) -> bool:
+    """Return True when the proxy should be engaged.
+
+    True when ≥2 models are enabled OR a preset is selected.
+    """
+    return len([m for m in settings.models if m.enabled]) >= 2 or bool(settings.preset)
+
+
+# ---------------------------------------------------------------------------
+# validate_models — collect clean human-readable errors; never raises
+# ---------------------------------------------------------------------------
+
+def validate_models(settings) -> list:
+    """Validate settings.models and return a list of human-readable error strings.
+
+    Empty list means the configuration is clean.
+    No exception is ever raised from this function.
+    """
+    errors = []
+    seen_account_refs = {}  # account_ref -> model index (for duplicate detection)
+
+    for i, m in enumerate(settings.models):
+        label = f"Model[{i}] ({getattr(m, 'model', None) or m.get('model', '?')})"
+
         if not m.enabled:
             continue
+
+        cred_type = m.credential_type if hasattr(m, "credential_type") else m.get("credential_type", "api_key")
+
+        if cred_type == "api_key":
+            # Blank api_key on an enabled model → dangling key_ref
+            key_val = _get_password(m, "api_key")
+            if not key_val:
+                errors.append(f"{label}: api_key is blank on an enabled model (would produce a dangling key_ref)")
+
+        elif cred_type == "subscription":
+            accounts = m.accounts if hasattr(m, "accounts") else m.get("accounts") or []
+
+            # Empty accounts list
+            if not accounts:
+                errors.append(f"{label}: enabled subscription model has no accounts configured")
+                continue
+
+            # Per-account upstream consistency + anthropic ToS check + malformed oauth_blob
+            upstreams = set()
+            for j, a in enumerate(accounts):
+                acc_ref = a.account_ref if hasattr(a, "account_ref") else a.get("account_ref", "")
+                upstream = a.upstream if hasattr(a, "upstream") else a.get("upstream", "")
+
+                # anthropic upstream is ToS-banned
+                if upstream == "anthropic":
+                    errors.append(
+                        f"{label} account[{j}] ({acc_ref}): upstream='anthropic' is not permitted (ToS)"
+                    )
+
+                upstreams.add(upstream)
+
+                # Malformed oauth_blob
+                blob_raw = a.oauth_blob if hasattr(a, "oauth_blob") else a.get("oauth_blob", "")
+                if blob_raw:
+                    _, parse_err = _safe_json_loads(blob_raw)
+                    if parse_err:
+                        errors.append(f"{label} account[{j}] ({acc_ref}): {parse_err}")
+
+                # Duplicate account_ref detection
+                if acc_ref:
+                    if acc_ref in seen_account_refs:
+                        errors.append(
+                            f"Duplicate account_ref '{acc_ref}' found in {label} account[{j}]"
+                            f" (also in Model[{seen_account_refs[acc_ref]}])"
+                        )
+                    else:
+                        seen_account_refs[acc_ref] = i
+
+            # Mixed upstreams within one subscription model
+            if len(upstreams) > 1:
+                errors.append(
+                    f"{label}: all accounts must share the same upstream;"
+                    f" found mixed upstreams: {sorted(upstreams)}"
+                )
+
+    return errors
+
+
+# ---------------------------------------------------------------------------
+# build_pool_payload — re-sourced from settings (not pool single)
+# ---------------------------------------------------------------------------
+
+def build_pool_payload(settings):
+    """Return (spec_dict, api_keys, oauth_blobs).
+
+    Reads settings.models (enabled rows) + settings.routing_mode / settings.preset.
+    Pure; no I/O except get_password (which uses raise_exception=False).
+
+    Hygiene guarantees:
+    - Secrets never appear in the returned spec dict.
+    - Subscription models never emit 'provider' or 'base_url'.
+    - key_ref is only emitted when the secret is non-empty (no dangling refs).
+    - json.loads on oauth_blob is guarded; errors are silently skipped here
+      (validate_models() catches them before save).
+    """
+    models, api_keys, oauth_blobs = [], {}, {}
+    key_idx = 0
+
+    for m in settings.models:
+        if not m.enabled:
+            continue
+
+        cred_type = m.credential_type if hasattr(m, "credential_type") else m.get("credential_type", "api_key")
+
         entry = {
-            "model": m.model,
-            "tier": m.tier or "strong",
-            "order": m.order or 0,
+            "model": m.model if hasattr(m, "model") else m.get("model"),
+            "tier": (m.tier if hasattr(m, "tier") else m.get("tier")) or "strong",
+            "order": (m.order if hasattr(m, "order") else m.get("order")) or 0,
             "enabled": True,
         }
-        if m.base_url:
-            entry["base_url"] = m.base_url
-        if m.provider:
-            entry["provider"] = m.provider
-        if m.credential_type == "subscription":
-            accounts = []
-            upstream = "openai"
-            for a in (m.get("accounts") or []):
-                if not accounts:
-                    upstream = a.upstream or "openai"
-                accounts.append({
-                    "account_ref": a.account_ref,
-                    "label": a.label or "",
+
+        if cred_type == "subscription":
+            # Omit provider and base_url for subscription models (avoids subscription_field_conflict)
+            accounts = (m.accounts if hasattr(m, "accounts") else m.get("accounts")) or []
+            serialized_accounts = []
+            upstream = "openai"  # default; overridden by consistent account upstreams
+
+            upstreams_seen = []
+            for a in accounts:
+                acc_ref = a.account_ref if hasattr(a, "account_ref") else a.get("account_ref", "")
+                a_upstream = (a.upstream if hasattr(a, "upstream") else a.get("upstream", "")) or "openai"
+                upstreams_seen.append(a_upstream)
+
+                serialized_accounts.append({
+                    "account_ref": acc_ref,
+                    "label": (a.label if hasattr(a, "label") else a.get("label", "")) or "",
                 })
-                blob = _get_password(a, "oauth_blob") if a.oauth_blob else ""
-                if blob:
-                    oauth_blobs[a.account_ref] = json.loads(blob)
+
+                # Defensively guard json.loads; errors surfaced via validate_models
+                blob_raw = (a.oauth_blob if hasattr(a, "oauth_blob") else a.get("oauth_blob", "")) or ""
+                if blob_raw:
+                    parsed, _ = _safe_json_loads(blob_raw)
+                    if parsed is not None:
+                        oauth_blobs[acc_ref] = parsed
+
+            # Use common upstream if consistent; fall back to "openai"
+            if upstreams_seen:
+                unique_upstreams = set(upstreams_seen)
+                if len(unique_upstreams) == 1:
+                    upstream = upstreams_seen[0]
+                # else: mixed — validate_models will catch this; emit "openai" as safe default
+
+            rotation = (m.rotation if hasattr(m, "rotation") else m.get("rotation", "")) or "sticky"
             entry["subscription"] = {
                 "upstream": upstream,
-                "accounts": accounts,
-                "rotation": (m.rotation or "sticky"),
+                "accounts": serialized_accounts,
+                "rotation": rotation,
             }
+
         else:
-            ref = _key_ref(key_idx)
-            key_idx += 1
-            entry["key_ref"] = ref
-            val = _get_password(m, "api_key") if m.api_key else ""
+            # api_key model: only emit key_ref when secret is actually present
+            val = _get_password(m, "api_key")
             if val:
+                ref = _key_ref(key_idx)
+                key_idx += 1
+                entry["key_ref"] = ref
                 api_keys[ref] = val
+            # else: no key_ref emitted — dangling ref avoided; validate_models flags this
+            # Also emit provider/base_url for api_key models
+            provider = (m.provider if hasattr(m, "provider") else m.get("provider", "")) or ""
+            base_url = (m.base_url if hasattr(m, "base_url") else m.get("base_url", "")) or ""
+            if base_url:
+                entry["base_url"] = base_url
+            if provider:
+                entry["provider"] = provider
+
         models.append(entry)
-    eff_mode = pool.routing_mode or "dynamic"
-    # preset is honored as Custom in 2b; preset→tier templates deferred to 2c
+
+    routing_mode = (
+        (settings.routing_mode if hasattr(settings, "routing_mode") else settings.get("routing_mode", "")) or "dynamic"
+    )
+
+    # Tier-fallback: dynamic is meaningless without BOTH cheap + strong tiers
     tiers = {(m.get("tier") or "strong") for m in models}
-    if eff_mode == "dynamic" and not ({"cheap", "strong"} <= tiers):
-        eff_mode = "failover"   # dynamic is meaningless without BOTH tiers; fall back
+    if routing_mode == "dynamic" and not ({"cheap", "strong"} <= tiers):
+        routing_mode = "failover"  # fall back gracefully
+
     spec = {
         "name": _pool_name(),
-        "routing_mode": eff_mode,
+        "routing_mode": routing_mode,
         "models": models,
     }
-    if eff_mode == "dynamic":
-        spec["classifier"] = {}   # pydantic defaults ClassifierConfig(); satisfies validate
+    if routing_mode == "dynamic":
+        spec["classifier"] = {}  # pydantic defaults ClassifierConfig(); satisfies validate
+
     return spec, api_keys, oauth_blobs
 
 
