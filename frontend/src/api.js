@@ -19,6 +19,8 @@ export const archiveConversation = (conversation) =>
 	call("jarvis.chat.api.archive_conversation", { conversation })
 export const renameConversation = (conversation, title) =>
 	call("jarvis.chat.api.rename_conversation", { conversation, title })
+export const setStar = (conversation, starred) =>
+	call("jarvis.chat.api.set_star", { conversation, starred: starred ? 1 : 0 })
 export const retryMessage = (message) => call("jarvis.chat.api.retry_message", { message })
 export const getChatUiSettings = () => call("jarvis.chat.api.get_chat_ui_settings")
 // Toggle "auto-apply changes" (skip the agent's confirmation step before

@@ -11,7 +11,8 @@
     "session_key",
     "model_override",
     "status",
-    "last_active_at"
+    "last_active_at",
+    "starred"
   ],
   "fields": [
     {
@@ -50,6 +51,12 @@
       "label": "Last Active At",
       "in_list_view": 1,
       "in_standard_filter": 1
+    },
+    {
+      "fieldname": "starred",
+      "fieldtype": "Check",
+      "label": "Starred",
+      "default": "0"
     }
   ],
   "permissions": [
