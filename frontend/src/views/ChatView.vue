@@ -3,6 +3,24 @@
 
 		<!-- ============ SIDEBAR ============ -->
 		<aside class="jv-sidebar" :class="{ collapsed: sidebarCollapsed }" style="width:268px;flex:none;background:var(--surface-1);border-right:1px solid var(--border);display:flex;flex-direction:column;height:100%;">
+			<!-- Collapsed: slim icon rail (instead of hiding the sidebar entirely) -->
+			<div v-if="sidebarCollapsed" class="jv-rail">
+				<div class="jv-rail-logo"><svg width="16" height="16" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg></div>
+				<button class="jv-rail-btn" @click="toggleSidebar" title="Expand sidebar">
+					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18" /><path d="m11 9 3 3-3 3" /></svg>
+				</button>
+				<button class="jv-rail-btn jv-rail-new" @click="newChat" title="New chat">
+					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
+				</button>
+				<button class="jv-rail-btn" @click="toggleSidebar" title="Search chats">
+					<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
+				</button>
+				<div style="flex:1;"></div>
+				<button class="jv-rail-btn" @click="openSettings" title="Settings">
+					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
+				</button>
+				<div class="jv-rail-avatar" @click="toggleSidebar" title="Account">{{ initials }}</div>
+			</div>
 			<div style="padding:14px 14px 10px;display:flex;align-items:center;gap:9px;">
 				<div style="width:28px;height:28px;border-radius:7px;background:var(--blue);display:flex;align-items:center;justify-content:center;flex:none;box-shadow:0 1px 2px rgba(37,99,235,.35);">
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
@@ -1691,8 +1709,20 @@ onBeforeUnmount(() => {
 .jv-sendbtn:hover:not(:disabled) svg { stroke: var(--surface) !important; }
 /* Collapsible sidebar: slide it off-screen (root has overflow:hidden) so the
    chat reclaims the full width, openclaw-style. */
-.jv-sidebar { transition: margin-left .22s ease; }
-.jv-sidebar.collapsed { margin-left: -269px; }
+.jv-sidebar { transition: width .2s ease; }
+/* Collapsed → slim icon rail: shrink to a bar and hide everything but the rail. */
+.jv-sidebar.collapsed { width: 56px !important; }
+/* `!important` is required: the sidebar header carries an inline
+   `display:flex`, which beats a plain rule and would otherwise leak the logo +
+   "ERPNext Assistant" text into (and below) the collapsed rail. */
+.jv-sidebar.collapsed > *:not(.jv-rail) { display: none !important; }
+.jv-rail { display: flex; flex-direction: column; align-items: center; gap: 7px; height: 100%; padding: 12px 0; }
+.jv-rail-logo { width: 30px; height: 30px; border-radius: 8px; background: var(--blue); display: flex; align-items: center; justify-content: center; flex: none; margin-bottom: 3px; box-shadow: 0 1px 2px rgba(37,99,235,.35); }
+.jv-rail-btn { width: 38px; height: 38px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; border-radius: 9px; cursor: pointer; color: var(--text-2); flex: none; transition: background .12s, color .12s; }
+.jv-rail-btn:hover { background: var(--surface-2); color: var(--text); }
+.jv-rail-new { background: var(--blue); color: #fff; }
+.jv-rail-new:hover { background: var(--blue); color: #fff; filter: brightness(1.08); }
+.jv-rail-avatar { width: 32px; height: 32px; border-radius: 50%; background: #e7ddcf; color: #8a6d3b; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; cursor: pointer; flex: none; }
 .jv-conv { position: relative; display: flex; align-items: center; gap: 9px; padding: 7px 9px; border-radius: 6px; cursor: pointer; margin-bottom: 1px; }
 .jv-conv:hover { background: var(--surface-2); }
 .jv-conv.on { background: var(--surface-3); }
