@@ -287,6 +287,13 @@ def save_llm_creds(provider: str, model: str, api_key: str = "",
 		# Clear any stale api_key models rows so on_update takes the legacy
 		# classify/sync path rather than the unified table path (which would
 		# mirror models[0].credential_type='api_key' back over the oauth mode).
+		existing_enabled = [m for m in (s.get("models") or []) if m.enabled]
+		if len(existing_enabled) > 1:
+			frappe.throw(
+				"A multi-model LLM pool is configured. Remove the extra models from your LLM settings "
+				"before switching to single-model OAuth.",
+				title="LLM Configuration",
+			)
 		s.set("models", [])
 		s.llm_provider = provider
 		s.llm_model = model

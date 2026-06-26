@@ -1177,5 +1177,61 @@ class TestRT5OnboardingWritesModelsRow(_RT3SettingsTestCase):
 
         settings = frappe.get_single("Jarvis Settings")
         final_count = len(settings.get("models") or [])
-        self.assertEqual(final_count, initial_count,
-                         "oauth mode must NOT add rows to the models table")
+        self.assertEqual(final_count, 0,
+                         "oauth mode must leave the models table empty (0 rows)")
+
+    # ------------------------------------------------------------------
+    # (f) OAuth mode with multi-model pool raises error (data-loss guard)
+    # ------------------------------------------------------------------
+
+    def test_oauth_mode_with_multi_model_pool_raises_error(self):
+        """save_llm_creds(auth_mode='oauth') with ≥2 enabled models must raise
+        frappe.ValidationError and NOT clear the models table (data-loss guard)."""
+        from unittest.mock import patch
+
+        # Pre-condition: configure a multi-model pool with 2 enabled models.
+        settings = frappe.get_single("Jarvis Settings")
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-4o",
+                       tier="strong", order=0, enabled=1,
+                       api_key="sk-pool-key-1",
+                       base_url="https://api.openai.com")
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-3.5-turbo",
+                       tier="cheap", order=1, enabled=1,
+                       api_key="sk-pool-key-2",
+                       base_url="https://api.openai.com")
+        settings.save()
+
+        # Confirm 2 models exist before attempting OAuth switch.
+        settings = frappe.get_single("Jarvis Settings")
+        pre_count = len(settings.get("models") or [])
+        self.assertEqual(pre_count, 2,
+                         "pre-condition: must have 2 enabled models")
+
+        # Attempt to switch to OAuth with the multi-model pool in place.
+        # This must raise ValidationError and NOT clear the models table.
+        with patch("jarvis.admin_client.post_update_llm_creds",
+                   return_value={"action": "restart"}):
+            from jarvis import onboarding
+            with self.assertRaises(frappe.ValidationError) as ctx:
+                onboarding.save_llm_creds(
+                    provider="OpenAI",
+                    model="gpt-4o",
+                    api_key="",
+                    base_url="",
+                    auth_mode="oauth",
+                )
+
+        # Assert the error message is clear about the guard.
+        error_msg = str(ctx.exception)
+        self.assertIn("multi-model", error_msg.lower(),
+                      f"Error message must mention multi-model; got: {error_msg}")
+        self.assertIn("remove", error_msg.lower(),
+                      f"Error message must mention removing models; got: {error_msg}")
+
+        # Assert the models table was NOT cleared.
+        settings = frappe.get_single("Jarvis Settings")
+        post_count = len(settings.get("models") or [])
+        self.assertEqual(post_count, 2,
+                         "models table must NOT be cleared when guard is triggered")
