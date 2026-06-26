@@ -13,6 +13,7 @@
     "llm_section",
     "models",
     "preset",
+    "routing_mode",
     "proxy_active",
     "proxy_recommended",
     "llm_provider",
@@ -101,6 +102,14 @@
       "fieldtype": "Select",
       "label": "Preset",
       "options": "\nCost-saver\nBalanced\nMax-reliability"
+    },
+    {
+      "fieldname": "routing_mode",
+      "fieldtype": "Select",
+      "label": "Routing Mode",
+      "options": "\ndynamic\nfailover",
+      "default": "dynamic",
+      "description": "How the LLM pool routes requests. 'dynamic' uses cost-tier routing; 'failover' tries models in order."
     },
     {
       "fieldname": "proxy_active",

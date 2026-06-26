@@ -547,6 +547,16 @@ def _enqueued_sync_via_admin_pool() -> None:
             _frappe.logger().info(
                 f"admin_client: pool sync rate-limited; retry_after={retry}s"
             )
+        except admin_client.AdminValidationError as e:
+            settings.db_set({
+                "last_sync_at": _frappe.utils.now(),
+                "last_sync_status": f"failed: validation: {e}",
+            })
+            terminal_written = True
+            _frappe.log_error(
+                title="Jarvis: admin validation failed (pool sync)",
+                message=_frappe.get_traceback(),
+            )
         finally:
             if not terminal_written:
                 try:
