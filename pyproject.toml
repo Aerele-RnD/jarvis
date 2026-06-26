@@ -10,10 +10,8 @@ dynamic = ["version"]
 dependencies = [
     # "frappe~=15.0.0" # Installed and managed by bench.
     "websocket-client>=1.6,<2",
-    # OCR for read_file (scanned PDFs / images). Permissive licenses only:
-    # pypdfium2 (Apache/BSD) for PDF rasterization, NOT PyMuPDF (AGPL).
-    # Needs the `tesseract-ocr` apt package (see deploy.dependencies.apt).
-    "pytesseract>=0.3.10",
+    # PDF -> image rasterization for native LLM vision (jarvis/chat/vision.py).
+    # Permissive license only: pypdfium2 (Apache/BSD), NOT PyMuPDF (AGPL).
     "pypdfium2>=4",
 ]
 
@@ -27,10 +25,6 @@ name = "jarvis"
 # These dependencies are only installed when developer mode is enabled
 [tool.bench.dev-dependencies]
 # package_name = "~=1.1.0"
-
-# These apt dependencies will be installed from Ubuntu repositories when you host your app on Frappe Cloud
-[deploy.dependencies.apt]
-packages = ["tesseract-ocr"]
 
 [tool.ruff]
 line-length = 110

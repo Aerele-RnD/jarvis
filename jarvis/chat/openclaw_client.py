@@ -291,6 +291,7 @@ class OpenclawSession:
 		*,
 		model: str | None = None,
 		provider: str | None = None,
+		attachments: list[dict] | None = None,
 	) -> Iterator[dict[str, Any]]:
 		"""Send an `agent` request, then yield parsed events until lifecycle.end.
 
@@ -314,6 +315,12 @@ class OpenclawSession:
 			params["model"] = model
 		if provider:
 			params["provider"] = provider
+		if attachments:
+			# Native vision input. openclaw's `agent` handler reads these and
+			# normalizes them to the active provider's image blocks; the flat
+			# {type:"image", mimeType, fileName, content:<base64>} shape is what
+			# its gateway normalizer accepts.
+			params["attachments"] = attachments
 		agent_id = self._send("agent", params)
 		deadline = time.monotonic() + TURN_TIMEOUT_SECONDS
 

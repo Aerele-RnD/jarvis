@@ -14,7 +14,7 @@ import time
 import frappe
 
 from jarvis.chat.events import publish_to_user
-from jarvis.chat import openclaw_session_pool
+from jarvis.chat import openclaw_session_pool, vision
 from jarvis.exceptions import OpenclawUnreachableError
 
 CONV = "Jarvis Conversation"
@@ -158,10 +158,11 @@ def run_agent_turn(
 ) -> None:
 	"""Drive one agent turn end to end. Called by RQ; not whitelisted.
 
-	`attachments` (optional): list of {file_url, file_name} dicts whose text
-	content is inlined into the prompt sent to the agent (see
-	_inline_attachments). The persisted/visible user message keeps only the
-	"📎 name" marker, so file bytes never bloat the chat history.
+	`attachments` (optional): list of {file_url, file_name} dicts. Text files are
+	inlined into the prompt; images/PDFs are sent to the model as native vision
+	(managed pool + a vision-capable model) - see _prepare_attachments. The
+	persisted/visible user message keeps only the "📎 name" marker, so file
+	bytes never bloat the chat history.
 
 	`context` (optional): {doctype, name} of the ERP document the user was
 	viewing when they asked (floating-widget auto-context). Prepended to the
@@ -231,7 +232,15 @@ def run_agent_turn(
 	# already date/user-augmented user_message built above. Prompt-only;
 	# the persisted/visible user message is unchanged.
 	user_message = _prepend_doc_context(user_message, context)
-	user_message = _inline_attachments(user_message, attachments)
+	# Vision is managed-pool only (self-host vision is a follow-up), gated by the
+	# operator toggle and the model's provider being multimodal. When off, image/
+	# PDF attachments degrade to a short note (no OCR fallback any more).
+	vision_ok = (
+		not selfhost.is_self_hosted()
+		and _vision_enabled(settings)
+		and vision.supports_vision(settings.llm_provider)
+	)
+	user_message, vision_parts = _prepare_attachments(user_message, attachments, vision_ok)
 
 	def _publish_run_error(err: str) -> None:
 		_mark_errored(assistant_msg.name, err)
@@ -303,6 +312,7 @@ def run_agent_turn(
 					_consume(sess.stream_agent_turn(
 						conv.session_key, user_message, idem,
 						model=effective_model, provider=oauth_provider_id,
+						attachments=_to_managed_attachments(vision_parts) if vision_parts else None,
 					))
 			except OpenclawUnreachableError as e:
 				_publish_run_error(str(e))
@@ -393,16 +403,39 @@ def _prepend_doc_context(user_message: str, context) -> str:
 
 
 _MAX_INLINE_CHARS = 20000
+_IMAGE_EXT = {"png", "jpg", "jpeg", "gif", "webp", "bmp"}
 
 
-def _inline_attachments(user_message: str, attachments) -> str:
-	"""Inline the text content of attached files into the message sent to the
-	agent. Binary/undecodable files get a short note instead of bytes. Only the
-	prompt is augmented - the stored, visible user message is untouched.
+def _vision_enabled(settings) -> bool:
+	"""Operator toggle; NULL-safe (a pre-existing config without the field
+	defaults to ON), mirroring selfhost_stream."""
+	v = settings.vision_attachments_enabled
+	return v is None or bool(v)
+
+
+def _to_managed_attachments(vision_parts: list[dict]) -> list[dict]:
+	"""Map internal parts to the flat shape openclaw's gateway normalizer accepts
+	({type:"image", mimeType, fileName, content:<base64>})."""
+	return [
+		{"type": "image", "mimeType": p["mime"], "fileName": p["file_name"], "content": p["data_b64"]}
+		for p in vision_parts
+	]
+
+
+def _prepare_attachments(user_message: str, attachments, vision_ok: bool):
+	"""Build the prompt augmentation + the vision image parts for one turn.
+
+	Returns ``(user_message, vision_parts)``. Text files are inlined into the
+	prompt. When ``vision_ok``, images are sent to the model as native vision and
+	PDFs are rasterized to page-images; otherwise image/PDF attachments degrade
+	to a short note (there is no OCR fallback). Every file is gated by the chat
+	user's File read permission. Only the prompt is augmented - the stored,
+	visible user message is untouched.
 	"""
 	if not attachments:
-		return user_message
-	blocks = []
+		return user_message, []
+	blocks: list[str] = []
+	vision_parts: list[dict] = []
 	for att in attachments:
 		if not isinstance(att, dict):
 			continue
@@ -412,26 +445,58 @@ def _inline_attachments(user_message: str, attachments) -> str:
 			continue
 		try:
 			fdoc = frappe.get_doc("File", {"file_url": url})
-			raw = fdoc.get_content()
 		except Exception:
 			blocks.append(f"[Could not read attached file `{name}`.]")
 			continue
-		if isinstance(raw, bytes):
+		# Same gate read_file enforces - never read bytes the chat user can't
+		# read (else vision/inlining is a private-File exfil bypass).
+		if not frappe.has_permission("File", "read", doc=fdoc.name):
+			blocks.append(f"[No permission to read attached file `{name}`.]")
+			continue
+		try:
+			# encodings=[] -> raw bytes; skip Frappe's text-encoding guess loop,
+			# which lossily decodes small binaries (e.g. a PNG) to a str.
+			raw = fdoc.get_content(encodings=[])
+		except Exception:
+			blocks.append(f"[Could not read attached file `{name}`.]")
+			continue
+		if isinstance(raw, str):
+			raw = raw.encode("utf-8", "replace")
+		ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+
+		if ext == "pdf":
+			if not vision_ok:
+				blocks.append(f"[Attached PDF `{name}` couldn't be viewed (image input unavailable here).]")
+				continue
+			parts, total = vision.pdf_parts(raw, name)
+			if parts:
+				vision_parts.extend(parts)
+				shown = f"all {total} pages" if total <= len(parts) else f"first {len(parts)} of {total} pages"
+				blocks.append(f"[Attached PDF `{name}` - {shown} sent as images.]")
+			else:
+				blocks.append(f"[Attached PDF `{name}` could not be rendered.]")
+		elif ext in _IMAGE_EXT:
+			if not vision_ok:
+				blocks.append(f"[Attached image `{name}` couldn't be viewed (image input unavailable here).]")
+				continue
+			part = vision.image_part(raw, name)
+			if part:
+				vision_parts.append(part)
+				blocks.append(f"[Attached image `{name}` sent for viewing.]")
+			else:
+				blocks.append(f"[Attached image `{name}` could not be read.]")
+		else:
 			try:
 				text = raw.decode("utf-8")
 			except UnicodeDecodeError:
-				blocks.append(
-					f"[Attached file `{name}` is binary ({len(raw)} bytes); not inlined.]"
-				)
+				blocks.append(f"[Attached file `{name}` is binary ({len(raw)} bytes); not inlined.]")
 				continue
-		else:
-			text = raw or ""
-		if len(text) > _MAX_INLINE_CHARS:
-			text = text[:_MAX_INLINE_CHARS] + "\n…[truncated]"
-		blocks.append(f"Attached file `{name}`:\n```\n{text}\n```")
-	if not blocks:
-		return user_message
-	return user_message + "\n\n" + "\n\n".join(blocks)
+			if len(text) > _MAX_INLINE_CHARS:
+				text = text[:_MAX_INLINE_CHARS] + "\n…[truncated]"
+			blocks.append(f"Attached file `{name}`:\n```\n{text}\n```")
+	if blocks:
+		user_message = user_message + "\n\n" + "\n\n".join(blocks)
+	return user_message, vision_parts
 
 
 def _create_assistant_placeholder(conv) -> "frappe.model.document.Document":
