@@ -389,10 +389,14 @@
 							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2" /></svg>
 							<span>Activity</span>
 						</button>
+						<button class="jv-settings-navitem" :class="{ on: settingsTab === 'shortcuts' }" @click="settingsTab = 'shortcuts'">
+							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2" /><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M6 12h.01M10 12h.01M14 12h.01M18 12h.01M7 16h10" /></svg>
+							<span>Shortcuts</span>
+						</button>
 					</div>
 					<div class="jv-settings-main">
 						<div class="jv-settings-head">
-							<span style="font-size:15px;font-weight:600;">{{ settingsTab === "appearance" ? "Appearance" : settingsTab === "activity" ? "Activity" : settingsTab === "usage" ? "Usage" : "General" }}</span>
+							<span style="font-size:15px;font-weight:600;">{{ settingsTab === "appearance" ? "Appearance" : settingsTab === "activity" ? "Activity" : settingsTab === "usage" ? "Usage" : settingsTab === "shortcuts" ? "Keyboard shortcuts" : "General" }}</span>
 							<button class="jv-iconbtn" @click="settingsOpen = false" title="Close" style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;border-radius:7px;cursor:pointer;color:var(--text-3);">
 								<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
 							</button>
@@ -465,6 +469,20 @@
 								</div>
 								<div v-if="a.names.length" class="jv-act-names">{{ a.names.join(" · ") }}</div>
 							</div>
+						</template>
+						<!-- SHORTCUTS -->
+						<template v-else-if="settingsTab === 'shortcuts'">
+							<div style="font-size:12px;color:var(--text-3);margin:0 0 14px;">Speed up the composer and chat.</div>
+							<div class="jv-set-sec">Composer</div>
+							<div class="jv-kbd-row"><span>Recall previous / next prompt</span><span><kbd class="jv-kbd">↑</kbd><kbd class="jv-kbd">↓</kbd></span></div>
+							<div class="jv-kbd-row"><span>Send message</span><kbd class="jv-kbd">Enter</kbd></div>
+							<div class="jv-kbd-row"><span>New line</span><span><kbd class="jv-kbd">Shift</kbd><span class="jv-kbd-plus">+</span><kbd class="jv-kbd">Enter</kbd></span></div>
+							<div class="jv-kbd-row"><span>Mention a doctype / record</span><kbd class="jv-kbd">@</kbd></div>
+							<div class="jv-set-sec" style="margin-top:20px;">Chat</div>
+							<div class="jv-kbd-row"><span>New chat</span><span><kbd class="jv-kbd">Ctrl</kbd><span class="jv-kbd-plus">+</span><kbd class="jv-kbd">Shift</kbd><span class="jv-kbd-plus">+</span><kbd class="jv-kbd">O</kbd></span></div>
+							<div class="jv-kbd-row"><span>Toggle sidebar</span><span><kbd class="jv-kbd">Ctrl</kbd><span class="jv-kbd-plus">+</span><kbd class="jv-kbd">B</kbd></span></div>
+							<div class="jv-kbd-row"><span>Close panel / cancel</span><kbd class="jv-kbd">Esc</kbd></div>
+							<div class="jv-set-hint" style="margin-top:14px;">Tip: <kbd class="jv-kbd">↑</kbd> at the start of an empty composer walks back through your earlier prompts in this chat.</div>
 						</template>
 						<!-- APPEARANCE -->
 						<template v-else>
@@ -1657,6 +1675,7 @@ onMounted(async () => {
 	}
 	socket?.on("jarvis:event", onEvent)
 	document.addEventListener("pointerdown", onDocClick)
+	window.addEventListener("keydown", onGlobalKey)
 	// Track the OS color scheme so theme:'system' updates live.
 	_mq = window.matchMedia("(prefers-color-scheme: dark)")
 	prefersDark.value = _mq.matches
@@ -1686,8 +1705,20 @@ onMounted(async () => {
 onBeforeUnmount(() => {
 	socket?.off("jarvis:event", onEvent)
 	document.removeEventListener("pointerdown", onDocClick)
+	window.removeEventListener("keydown", onGlobalKey)
 	_mq?.removeEventListener("change", onColorScheme)
 })
+// Global keyboard shortcuts (documented in Settings → Shortcuts).
+function onGlobalKey(e) {
+	if (e.defaultPrevented) return
+	if (e.ctrlKey && e.shiftKey && (e.key === "O" || e.key === "o")) {
+		e.preventDefault(); newChat()
+	} else if (e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === "B" || e.key === "b")) {
+		e.preventDefault(); toggleSidebar()
+	} else if (e.key === "Escape" && settingsOpen.value) {
+		settingsOpen.value = false
+	}
+}
 </script>
 
 <style scoped>
@@ -1870,6 +1901,10 @@ onBeforeUnmount(() => {
 .jv-set-row b { font-weight: 600; color: var(--text); text-align: right; }
 .jv-set-empty { font-size: 12.5px; color: var(--text-3); padding: 14px 0; }
 .jv-set-hint { font-size: 11.5px; color: var(--text-3); margin-top: 9px; }
+.jv-kbd-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 13px; color: var(--text-2); }
+.jv-kbd-row:last-of-type { border-bottom: 0; }
+.jv-kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 22px; padding: 0 6px; background: var(--surface-1); border: 1px solid var(--border-2); border-bottom-width: 2px; border-radius: 6px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; font-weight: 600; color: var(--text); }
+.jv-kbd-plus { color: var(--text-3); margin: 0 3px; font-size: 11px; }
 .jv-est { font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
 .jv-usage-bar { margin-top: 12px; height: 7px; border-radius: 99px; background: var(--surface-2); overflow: hidden; }
 .jv-usage-fill { height: 100%; border-radius: 99px; background: var(--blue); transition: width .25s ease; }
