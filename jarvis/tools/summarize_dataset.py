@@ -16,6 +16,7 @@ from collections import Counter
 from jarvis.exceptions import InvalidArgumentError
 
 _MAX_ROWS = 100_000
+_MAX_COLS = 200
 _DEFAULT_TOP_N = 5
 
 
@@ -52,6 +53,9 @@ def summarize_dataset(rows: list, columns: list | None = None, top_n: int = 5) -
 			return r[i] if i < len(r) else None
 	else:
 		raise InvalidArgumentError("rows must be a list of dicts or a list of lists")
+
+	if len(cols) > _MAX_COLS:
+		raise InvalidArgumentError(f"too many columns ({len(cols)}); cap is {_MAX_COLS}")
 
 	out = {}
 	for c in cols:
@@ -94,4 +98,8 @@ def _num(v):
 
 
 def _hashable(v):
-	return v if isinstance(v, (str, int, float, bool)) else str(v)
+	if isinstance(v, str):
+		return v[:200]
+	if isinstance(v, (int, float, bool)):
+		return v
+	return str(v)[:200]

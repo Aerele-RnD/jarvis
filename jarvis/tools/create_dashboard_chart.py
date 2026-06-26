@@ -35,7 +35,7 @@ def create_dashboard_chart(
 	timespan: str = "Last Year",
 	time_interval: str = "Monthly",
 	filters: dict | list | None = None,
-	is_public: int = 1,
+	is_public: int = 0,
 ) -> dict:
 	"""Create a Dashboard Chart; return {name, chart_name, chart_type, url}.
 

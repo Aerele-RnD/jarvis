@@ -35,6 +35,12 @@ _TEXT_EXT = {"txt", "md", "markdown", "json", "html", "htm", "log", "yaml", "yml
 _MAX_ROWS = 1000
 _MAX_CHARS = 40000
 
+# OCR is expensive and a crafted PDF/image can DoS a worker - cap the work.
+_OCR_MAX_PAGES = 30
+_OCR_MAX_PIXELS = 25_000_000
+_OCR_MAX_BYTES = 25 * 1024 * 1024
+_OCR_TIMEOUT = 25
+
 
 def read_file(
     file_url: str | None = None,
@@ -126,7 +132,8 @@ def _read_pdf(content: bytes, max_chars: int, ocr: bool | None = None) -> dict:
     # Scanned PDFs carry no embedded text, so pypdf returns ~nothing. Fall back
     # to OCR when the extraction is essentially empty, the caller didn't disable
     # it (ocr is not False), and a tesseract engine is actually available.
-    if ocr is not False and len(text.strip()) < 10 * max(1, page_count) and _ocr_available():
+    if (ocr is not False and len(content) <= _OCR_MAX_BYTES
+            and len(text.strip()) < 10 * max(1, page_count) and _ocr_available()):
         try:
             ocr_text = _ocr_pdf(content, max_chars)
         except Exception:
@@ -190,6 +197,7 @@ def _read_image(content: bytes, ext: str, ocr: bool | None = None) -> dict:
     try:
         from PIL import Image
 
+        Image.MAX_IMAGE_PIXELS = _OCR_MAX_PIXELS  # PIL raises past this (decompression bomb)
         im = Image.open(io.BytesIO(content))
         out["width"], out["height"] = im.size
         out["mode"] = im.mode
@@ -197,7 +205,7 @@ def _read_image(content: bytes, ext: str, ocr: bool | None = None) -> dict:
         im = None
 
     # Image OCR is opt-in (ocr=True): it's costly and most images aren't text.
-    if ocr is True and im is not None and _ocr_available():
+    if ocr is True and im is not None and len(content) <= _OCR_MAX_BYTES and _ocr_available():
         try:
             out["text"] = _ocr_pil(im)
             out["ocr"] = True
@@ -216,21 +224,27 @@ def _read_image(content: bytes, ext: str, ocr: bool | None = None) -> dict:
     return out
 
 
-def _ocr_available() -> bool:
-    """True iff pytesseract + a working tesseract binary are both present."""
-    try:
-        import pytesseract
+_OCR_OK = None
 
-        pytesseract.get_tesseract_version()
-        return True
-    except Exception:
-        return False
+
+def _ocr_available() -> bool:
+    """True iff pytesseract + a working tesseract binary are present (memoized)."""
+    global _OCR_OK
+    if _OCR_OK is None:
+        try:
+            import pytesseract
+
+            pytesseract.get_tesseract_version()
+            _OCR_OK = True
+        except Exception:
+            _OCR_OK = False
+    return _OCR_OK
 
 
 def _ocr_pil(im) -> str:
     import pytesseract
 
-    return pytesseract.image_to_string(im) or ""
+    return pytesseract.image_to_string(im, timeout=_OCR_TIMEOUT) or ""
 
 
 def _ocr_pdf(content: bytes, max_chars: int) -> str:
@@ -246,9 +260,19 @@ def _ocr_pdf(content: bytes, max_chars: int) -> str:
     total = 0
     pdf = pdfium.PdfDocument(content)
     try:
-        for page in pdf:
-            bitmap = page.render(scale=200 / 72)  # ~200 DPI
-            txt = pytesseract.image_to_string(bitmap.to_pil()) or ""
+        n = min(len(pdf), _OCR_MAX_PAGES)  # cap page count
+        for i in range(n):
+            page = pdf[i]
+            scale = 200 / 72  # ~200 DPI
+            try:
+                w, h = page.get_size()  # points (1/72 inch)
+                if w and h and (w * scale) * (h * scale) > _OCR_MAX_PIXELS:
+                    scale = (_OCR_MAX_PIXELS / (w * h)) ** 0.5  # clamp to pixel budget
+            except Exception:
+                pass
+            txt = pytesseract.image_to_string(
+                page.render(scale=scale).to_pil(), timeout=_OCR_TIMEOUT
+            ) or ""
             out.append(txt)
             total += len(txt)
             if total >= max_chars:

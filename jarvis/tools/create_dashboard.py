@@ -16,7 +16,6 @@ def create_dashboard(
 	dashboard_name: str,
 	charts: list | None = None,
 	cards: list | None = None,
-	is_default: int = 0,
 ) -> dict:
 	"""Create a Dashboard; return {name, dashboard_name, url}.
 
@@ -30,7 +29,6 @@ def create_dashboard(
 
 	doc = frappe.new_doc("Dashboard")
 	doc.dashboard_name = dashboard_name
-	doc.is_default = 1 if is_default else 0
 	for ch in charts:
 		if isinstance(ch, dict):
 			name, width = ch.get("chart"), (ch.get("width") or "Half")
