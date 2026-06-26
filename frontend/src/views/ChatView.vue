@@ -1175,11 +1175,32 @@ async function loadConversation(id) {
 	if (!id) {
 		messages.value = []
 		modelOverride.value = ""
+		promptHistory.value = []
+		histIdx.value = null
+		histDraft.value = ""
 		return
 	}
 	const d = await api.getConversation(id)
+	// Stale-response guard: if the user navigated to a different conversation
+	// while this request was in flight, drop the result. Without this, a slow
+	// get_conversation response clobbers the conversation you actually switched
+	// to with the wrong (or empty) messages — and only a page refresh, which
+	// does a single clean load, would put it right. (Root cause of "open a
+	// chat, switch away and back, it shows empty until I refresh".)
+	if (currentId.value !== id) return
 	messages.value = d?.messages || []
 	modelOverride.value = d?.model_override || ""
+	// Seed Up/Down recall from THIS conversation's past prompts. Without this,
+	// promptHistory only held prompts typed in the current page session, so
+	// after a reload or when opening an existing chat the arrows did nothing.
+	// Strip the trailing "📎 name" attachment marker so recall yields the
+	// actual typed text.
+	promptHistory.value = (d?.messages || [])
+		.filter((m) => m.role === "user" && m.content)
+		.map((m) => m.content.replace(/\n*📎[^\n]*$/, "").trim())
+		.filter(Boolean)
+	histIdx.value = null
+	histDraft.value = ""
 	for (const m of messages.value) {
 		if (Array.isArray(m.canvas) && m.canvas.length) ensureCanvas(m)
 	}
