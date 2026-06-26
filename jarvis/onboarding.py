@@ -295,6 +295,9 @@ def save_llm_creds(provider: str, model: str, api_key: str = "",
 				title="LLM Configuration",
 			)
 		s.set("models", [])
+		# Also clear preset so that a stale preset doesn't leave a ghost pool
+		# flag after switching to oauth (preset + 0 models → empty pool push).
+		s.preset = ""
 		s.llm_provider = provider
 		s.llm_model = model
 		s.llm_auth_mode = auth_mode

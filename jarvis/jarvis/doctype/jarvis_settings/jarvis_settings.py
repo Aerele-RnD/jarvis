@@ -487,6 +487,20 @@ def _enqueued_sync_via_admin_pool() -> None:
         # Re-read CURRENT settings at run time (not a snapshot from job args)
         # so a correction saved between enqueue and execution is included.
         settings = _frappe.get_single("Jarvis Settings")
+
+        # Re-validate: the config may have changed between enqueue and run.
+        # If no longer proxy-valid, skip the push.
+        from jarvis.jarvis.pool_serialize import validate_models, compute_proxy_active
+        revalidation_errors = validate_models(settings)
+        if revalidation_errors or not compute_proxy_active(settings):
+            reason = "; ".join(revalidation_errors) if revalidation_errors else "not proxy_active"
+            settings.db_set(
+                "last_sync_status",
+                f"skipped: no longer proxy-valid after re-read ({reason})",
+                update_modified=False,
+            )
+            return
+
         spec, api_keys, oauth_blobs = build_pool_payload(settings)
 
         terminal_written = False

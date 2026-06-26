@@ -61,9 +61,11 @@ def compute_auto_enable(pool) -> bool:
 def compute_proxy_active(settings) -> bool:
     """Return True when the proxy should be engaged.
 
-    True when ≥2 models are enabled OR a preset is selected.
+    True when ≥2 models are enabled OR (a preset is selected AND ≥1 model enabled).
+    An empty enabled-model list with a preset does NOT count as proxy-valid.
     """
-    return len([m for m in settings.models if m.enabled]) >= 2 or bool(settings.preset)
+    enabled = [m for m in (settings.models or []) if m.enabled]
+    return len(enabled) >= 2 or (bool(settings.preset) and len(enabled) >= 1)
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +80,13 @@ def validate_models(settings) -> list:
     """
     errors = []
     seen_account_refs = {}  # account_ref -> model index (for duplicate detection)
+
+    # If models has rows but ALL are disabled → at least 1 must be enabled.
+    if settings.models:
+        enabled_count = sum(1 for m in settings.models if m.enabled)
+        if enabled_count == 0:
+            errors.append("at least 1 model must be enabled when models are configured")
+            return errors  # Early exit — rest of validation is moot
 
     for i, m in enumerate(settings.models):
         label = f"Model[{i}] ({getattr(m, 'model', None) or m.get('model', '?')})"
