@@ -56,6 +56,38 @@ class TestPrepareAttachments(FrappeTestCase):
 		self.assertEqual(parts, fake)
 		self.assertIn("sent as images", msg)
 
+	def test_pdf_text_extracted_without_vision(self):
+		# Vision off -> fall back to pypdf text extraction (digital PDFs).
+		import io as _io
+
+		from pypdf import PdfWriter
+
+		w = PdfWriter()
+		w.add_blank_page(width=100, height=100)
+		buf = _io.BytesIO()
+		w.write(buf)
+		att = _make_file("digital.pdf", buf.getvalue())
+		with patch("jarvis.tools.read_file._read_pdf", return_value={"text": "hello pdf"}):
+			msg, parts = _prepare_attachments("hi", [att], vision_ok=False)
+		self.assertEqual(parts, [])
+		self.assertIn("hello pdf", msg)
+		self.assertIn("extracted text", msg)
+
+	def test_pdf_no_text_notes_scanned_without_vision(self):
+		# Vision off + a PDF with no text layer -> a note, not silence.
+		import io as _io
+
+		from pypdf import PdfWriter
+
+		w = PdfWriter()
+		w.add_blank_page(width=100, height=100)
+		buf = _io.BytesIO()
+		w.write(buf)
+		att = _make_file("scanned.pdf", buf.getvalue())
+		msg, parts = _prepare_attachments("hi", [att], vision_ok=False)
+		self.assertEqual(parts, [])
+		self.assertIn("no extractable text", msg)
+
 	def test_image_degrades_to_note_without_vision(self):
 		att = _make_file("pic2.png", b"x")
 		msg, parts = _prepare_attachments("hi", [att], vision_ok=False)

@@ -466,7 +466,22 @@ def _prepare_attachments(user_message: str, attachments, vision_ok: bool):
 
 		if ext == "pdf":
 			if not vision_ok:
-				blocks.append(f"[Attached PDF `{name}` couldn't be viewed (image input unavailable here).]")
+				# Vision off: fall back to pypdf text extraction. Works for
+				# digital/text-layer PDFs; a scanned PDF has no text layer and
+				# needs vision (we no longer OCR), so it comes back empty.
+				from jarvis.tools.read_file import _read_pdf
+
+				try:
+					text = (_read_pdf(raw, _MAX_INLINE_CHARS).get("text") or "").strip()
+				except Exception:
+					text = ""
+				if text:
+					blocks.append(f"Attached PDF `{name}` (extracted text):\n```\n{text}\n```")
+				else:
+					blocks.append(
+						f"[Attached PDF `{name}`: no extractable text (looks scanned); "
+						"enable Send Image/PDF Attachments as Vision to read it.]"
+					)
 				continue
 			parts, total = vision.pdf_parts(raw, name)
 			if parts:
