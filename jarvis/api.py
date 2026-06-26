@@ -392,6 +392,16 @@ def _run_tool(tool: str, raw_args: dict | str | None) -> dict:
 		return _error(type(e).__name__, str(e))
 	except frappe.PermissionError as e:
 		return _error("PermissionDeniedError", str(e) or "permission denied")
+	except (frappe.ValidationError, frappe.DuplicateEntryError) as e:
+		# Bad-input errors a tool surfaces from doc.insert()/get_doc/link
+		# validation - DuplicateEntryError (a NameError subclass, NOT a
+		# ValidationError), MandatoryError, LinkValidationError,
+		# DoesNotExistError, UniqueValidationError, plus app-level
+		# ValidationError business rules. These are the user's fault, not a
+		# bug, so translate to the envelope instead of leaking Frappe's
+		# native 500/404. The message carries the specifics; the code stays
+		# in the known JarvisError set the bench client branches on.
+		return _error("InvalidArgumentError", str(e) or type(e).__name__)
 	return {"ok": True, "data": data}
 
 

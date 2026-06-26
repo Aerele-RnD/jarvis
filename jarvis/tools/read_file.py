@@ -41,6 +41,17 @@ _OCR_MAX_PIXELS = 25_000_000
 _OCR_MAX_BYTES = 25 * 1024 * 1024
 _OCR_TIMEOUT = 25
 
+# Lower PIL's decompression-bomb ceiling once at import (a process-global), so a
+# crafted image is rejected before it is decoded. Set here rather than per-call
+# so the limit is deterministic for every PIL consumer in the worker instead of
+# being re-mutated on each read_file image read.
+try:
+    from PIL import Image as _PILImage
+
+    _PILImage.MAX_IMAGE_PIXELS = _OCR_MAX_PIXELS
+except Exception:
+    pass
+
 
 def read_file(
     file_url: str | None = None,
@@ -115,25 +126,23 @@ def _read_pdf(content: bytes, max_chars: int, ocr: bool | None = None) -> dict:
 
     reader = PdfReader(io.BytesIO(content))
     pages = []
-    total = 0
     for page in reader.pages:
         try:
-            txt = page.extract_text() or ""
+            pages.append(page.extract_text() or "")
         except Exception:
-            txt = ""
-        pages.append(txt)
-        total += len(txt)
-        if total >= max_chars:
-            break
+            pages.append("")
     text = "\n\n".join(pages)
     page_count = len(reader.pages)
     used_ocr = False
 
-    # Scanned PDFs carry no embedded text, so pypdf returns ~nothing. Fall back
-    # to OCR when the extraction is essentially empty, the caller didn't disable
-    # it (ocr is not False), and a tesseract engine is actually available.
+    # A scanned page yields ~no embedded text. OCR when at least half the pages
+    # are empty - this catches fully-scanned PDFs AND mixed ones (a short text
+    # layer on a page or two otherwise masks a scanned majority and the scanned
+    # pages get silently dropped). Per-page emptiness, not total text length.
+    empty_pages = sum(1 for p in pages if len(p.strip()) < 10)
+    mostly_scanned = page_count > 0 and empty_pages >= max(1, page_count // 2)
     if (ocr is not False and len(content) <= _OCR_MAX_BYTES
-            and len(text.strip()) < 10 * max(1, page_count) and _ocr_available()):
+            and mostly_scanned and _ocr_available()):
         try:
             ocr_text = _ocr_pdf(content, max_chars)
         except Exception:
@@ -197,41 +206,52 @@ def _read_image(content: bytes, ext: str, ocr: bool | None = None) -> dict:
     try:
         from PIL import Image
 
-        Image.MAX_IMAGE_PIXELS = _OCR_MAX_PIXELS  # PIL raises past this (decompression bomb)
         im = Image.open(io.BytesIO(content))
         out["width"], out["height"] = im.size
         out["mode"] = im.mode
     except Exception:
         im = None
 
-    # Image OCR is opt-in (ocr=True): it's costly and most images aren't text.
-    if ocr is True and im is not None and len(content) <= _OCR_MAX_BYTES and _ocr_available():
-        try:
-            out["text"] = _ocr_pil(im)
-            out["ocr"] = True
-            out["note"] = (
-                "Text extracted via OCR. Visual/diagram content (not text) still "
-                "needs a vision model, not this tool."
-            )
-            return out
-        except Exception:
-            pass
-    out["note"] = (
-        "Image metadata only. Pixel/visual content can't be extracted as text by a "
-        "tool - to analyse what the image shows it needs a vision model as an image "
-        "input, not read here. Pass ocr=true to OCR any text in the image."
-    )
-    return out
+    try:
+        # Image OCR is opt-in (ocr=True): it's costly and most images aren't text.
+        if ocr is True and im is not None and len(content) <= _OCR_MAX_BYTES and _ocr_available():
+            try:
+                out["text"] = _ocr_pil(im)
+                out["ocr"] = True
+                out["note"] = (
+                    "Text extracted via OCR. Visual/diagram content (not text) still "
+                    "needs a vision model, not this tool."
+                )
+                return out
+            except Exception:
+                pass
+        out["note"] = (
+            "Image metadata only. Pixel/visual content can't be extracted as text by a "
+            "tool - to analyse what the image shows it needs a vision model as an image "
+            "input, not read here. Pass ocr=true to OCR any text in the image."
+        )
+        return out
+    finally:
+        if im is not None:
+            try:
+                im.close()
+            except Exception:
+                pass
 
 
 _OCR_OK = None
 
 
 def _ocr_available() -> bool:
-    """True iff pytesseract + a working tesseract binary are present (memoized)."""
+    """True iff pytesseract + tesseract + pypdfium2 are all present (memoized).
+
+    pypdfium2 (the PDF rasterizer) is checked too so a server missing only that
+    wheel reports OCR honestly unavailable, rather than passing the gate and
+    then silently swallowing the pypdfium2 ImportError inside _ocr_pdf."""
     global _OCR_OK
     if _OCR_OK is None:
         try:
+            import pypdfium2  # noqa: F401
             import pytesseract
 
             pytesseract.get_tesseract_version()

@@ -45,6 +45,20 @@ class TestCreateDashboardChart(FrappeTestCase):
 				chart_name="x", document_type="ToDo", chart_type="Sum", based_on="creation",
 			)
 
+	def test_duplicate_chart_name_returns_clean_error(self):
+		# Dashboard Chart autonames on chart_name -> a repeat raises Frappe's
+		# DuplicateEntryError (a NameError). _run_tool must translate it to the
+		# {ok: False, error} envelope, not let it escape as an HTTP 500.
+		from jarvis.api import _run_tool
+
+		name = _h("JT Dup")
+		args = {"chart_name": name, "document_type": "ToDo", "chart_type": "Count",
+				"based_on": "creation"}
+		create_dashboard_chart(**args)
+		res = _run_tool("create_dashboard_chart", dict(args))
+		self.assertFalse(res["ok"])
+		self.assertEqual(res["error"]["code"], "InvalidArgumentError")
+
 
 class TestCreateDashboard(FrappeTestCase):
 	def test_dashboard_links_a_chart(self):
