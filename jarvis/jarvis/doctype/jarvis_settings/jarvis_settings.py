@@ -17,6 +17,38 @@ _CONTAINER_OWNED_MODES = {"oauth", "subscription"}
 
 
 class JarvisSettings(Document):
+    def before_validate(self):
+        """Mirror models[0] into legacy fields BEFORE validate() runs.
+
+        This ensures _validate_auth_mode_requirements sees fresh auth mode +
+        api_key from the models table, not stale legacy fields.
+        Only mirrors when models table has at least one enabled row.
+
+        Note: llm_provider is a constrained Select field (display names only).
+        It is NOT mirrored here to avoid _validate_selects rejecting the pool
+        model's internal provider ID (e.g. "openai_compat"). The db_set in
+        _on_update_unified_llm bypasses validation and writes the internal ID.
+        """
+        if not getattr(self, "models", None):
+            return
+        enabled = [m for m in self.models if m.enabled]
+        if not enabled:
+            return
+        m0 = enabled[0]
+        cred_type = (
+            m0.credential_type if hasattr(m0, "credential_type")
+            else (m0.get("credential_type") if hasattr(m0, "get") else "api_key")
+        ) or "api_key"
+        # Mirror auth mode so _validate_auth_mode_requirements sees the right mode.
+        self.llm_auth_mode = cred_type
+        # Mirror api_key in-memory so _validate_auth_mode_requirements sees it.
+        # The encrypted write happens in on_update.
+        if cred_type == "api_key":
+            from jarvis.jarvis.pool_serialize import _get_password
+            api_key_val = _get_password(m0, "api_key")
+            if api_key_val and not (getattr(self, "llm_api_key", None) and not self.is_dummy_password(self.llm_api_key or "")):
+                self.llm_api_key = api_key_val
+
     def validate(self):
         # Detect a new llm_api_key before _save_passwords() masks it to '****'.
         current_key = getattr(self, "llm_api_key", None) or ""

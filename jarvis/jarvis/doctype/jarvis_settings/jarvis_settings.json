@@ -116,11 +116,10 @@
     },
     {
       "fieldname": "llm_provider",
-      "fieldtype": "Select",
+      "fieldtype": "Data",
       "label": "Provider",
-      "options": "Anthropic\nOpenAI\nGoogle Gemini\nMistral\nGroq\nTogether AI\nDeepSeek\nMoonshot (Kimi)\nOpenRouter\nOllama (local)\nvLLM (local)\nOpenAI-Compatible",
-      "default": "Anthropic",
-      "read_only": 1
+      "read_only": 1,
+      "description": "Mirrored from models[0].provider. May hold an internal provider ID (e.g. 'openai_compat') or a display name from legacy single-model config."
     },
     {
       "fieldname": "llm_model",

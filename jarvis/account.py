@@ -71,6 +71,10 @@ def is_ready_for_chat() -> dict:
 	if not admin_api_key:
 		return {"ready": False, "reason": "signup"}
 
+	# Pool mode: proxy_active means the pool is provisioned → ready.
+	if getattr(settings, "proxy_active", 0):
+		return {"ready": True, "reason": None}
+
 	auth_mode = (getattr(settings, "llm_auth_mode", "") or "api_key").strip()
 
 	if auth_mode == "api_key":
