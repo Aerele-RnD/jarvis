@@ -30,7 +30,8 @@
       "fieldtype": "Data",
       "label": "Provider",
       "in_list_view": 1,
-      "description": "e.g. openai, anthropic, openai_compat"
+      "description": "e.g. openai, anthropic, openai_compat",
+      "depends_on": "eval:doc.credential_type=='api_key'"
     },
     {
       "fieldname": "model",
@@ -57,7 +58,8 @@
       "fieldname": "base_url",
       "fieldtype": "Data",
       "label": "Base URL",
-      "description": "for openai_compat upstreams"
+      "description": "for openai_compat upstreams",
+      "depends_on": "eval:doc.credential_type=='api_key'"
     },
     {
       "fieldname": "credential_type",

@@ -16,7 +16,7 @@
       "fieldname": "upstream",
       "fieldtype": "Select",
       "label": "Upstream",
-      "options": "openai\ngoogle\nanthropic",
+      "options": "openai\ngoogle",
       "reqd": 1,
       "in_list_view": 1
     },
