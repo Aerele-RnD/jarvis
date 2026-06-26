@@ -82,10 +82,6 @@ _TOOL_NAMES: tuple[str, ...] = (
     "summarize_dataset",
     "create_dashboard_chart",
     "create_dashboard",
-    # Tier 5 sandboxed compute: arbitrary Python over a dataset, run in a
-    # resource-limited frappe-free subprocess. OFF unless the operator sets
-    # site_config jarvis_python_sandbox: true.
-    "run_python_code",
 )
 
 
