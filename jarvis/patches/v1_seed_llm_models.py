@@ -5,6 +5,7 @@ import frappe
 
 
 def execute():
+    frappe.set_user("Administrator")
     settings = frappe.get_single("Jarvis Settings")
     if settings.get("models"):
         return  # Already migrated
@@ -29,4 +30,3 @@ def execute():
         "api_key": api_key,
     })
     settings.save(ignore_permissions=True)
-    frappe.db.commit()

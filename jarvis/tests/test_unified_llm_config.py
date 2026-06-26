@@ -125,15 +125,15 @@ class TestUnifiedLLMConfigSchema(FrappeTestCase):
         """Pool Model 'provider' field must have depends_on gating on credential_type=='api_key'."""
         self.assertIn("provider", self.pool_model_fields)
         depends_on = self.pool_model_fields["provider"].depends_on or ""
-        self.assertIn("credential_type", depends_on,
-                      "provider field depends_on must reference credential_type")
+        self.assertEqual(depends_on, "eval:doc.credential_type=='api_key'",
+                         "provider field depends_on must be exactly eval:doc.credential_type=='api_key'")
 
     def test_pool_model_base_url_has_depends_on_credential_type(self):
         """Pool Model 'base_url' field must have depends_on gating on credential_type=='api_key'."""
         self.assertIn("base_url", self.pool_model_fields)
         depends_on = self.pool_model_fields["base_url"].depends_on or ""
-        self.assertIn("credential_type", depends_on,
-                      "base_url field depends_on must reference credential_type")
+        self.assertEqual(depends_on, "eval:doc.credential_type=='api_key'",
+                         "base_url field depends_on must be exactly eval:doc.credential_type=='api_key'")
 
     # ------------------------------------------------------------------ #
     # Subscription Account — upstream must not include 'anthropic'
