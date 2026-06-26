@@ -129,6 +129,10 @@ class TestHeaders(FrappeTestCase):
 		self.assertEqual(captured["json"], {
 			"provider": "p", "model": "m", "base_url": "b", "api_key": "k",
 			"auth_mode": "api_key",
+			# Gating: the client sends the tenant's installed apps so the admin
+			# can scope per-tenant skills/tools. Assert against the same source
+			# the client reads, so this stays correct as apps change.
+			"installed_apps": frappe.get_installed_apps(),
 		})
 		self.assertTrue(captured["url"].startswith("https://admin.example.com/api/method/"))
 		self.assertIn("jarvis_admin.api.tenant.update_llm_creds", captured["url"])

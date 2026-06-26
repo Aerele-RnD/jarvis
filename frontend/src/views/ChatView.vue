@@ -2,7 +2,25 @@
 	<div ref="rootEl" class="jv-root" :class="{ 'jv-dark': effectiveDark }" :style="paletteVars" style="--rad:8px;font-family:'Inter',system-ui,sans-serif;height:100vh;width:100%;display:flex;color:var(--text);background:var(--surface);overflow:hidden;position:relative;">
 
 		<!-- ============ SIDEBAR ============ -->
-		<aside style="width:268px;flex:none;background:var(--surface-1);border-right:1px solid var(--border);display:flex;flex-direction:column;height:100%;">
+		<aside class="jv-sidebar" :class="{ collapsed: sidebarCollapsed }" style="width:268px;flex:none;background:var(--surface-1);border-right:1px solid var(--border);display:flex;flex-direction:column;height:100%;">
+			<!-- Collapsed: slim icon rail (instead of hiding the sidebar entirely) -->
+			<div v-if="sidebarCollapsed" class="jv-rail">
+				<div class="jv-rail-logo"><svg width="16" height="16" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg></div>
+				<button class="jv-rail-btn" @click="toggleSidebar" title="Expand sidebar">
+					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18" /><path d="m11 9 3 3-3 3" /></svg>
+				</button>
+				<button class="jv-rail-btn jv-rail-new" @click="newChat" title="New chat">
+					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
+				</button>
+				<button class="jv-rail-btn" @click="toggleSidebar" title="Search chats">
+					<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
+				</button>
+				<div style="flex:1;"></div>
+				<button class="jv-rail-btn" @click="openSettings" title="Settings">
+					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
+				</button>
+				<div class="jv-rail-avatar" @click="toggleSidebar" title="Account">{{ initials }}</div>
+			</div>
 			<div style="padding:14px 14px 10px;display:flex;align-items:center;gap:9px;">
 				<div style="width:28px;height:28px;border-radius:7px;background:var(--blue);display:flex;align-items:center;justify-content:center;flex:none;box-shadow:0 1px 2px rgba(37,99,235,.35);">
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
@@ -11,14 +29,19 @@
 					<span style="font-size:14px;font-weight:600;letter-spacing:-.01em;">Jarvis</span>
 					<span style="font-size:11px;color:var(--text-3);font-weight:450;">ERPNext Assistant</span>
 				</div>
-				<div style="margin-left:auto;display:flex;align-items:center;gap:5px;padding:3px 7px;background:var(--green-bg);border-radius:20px;">
-					<span style="width:6px;height:6px;border-radius:50%;background:var(--green);"></span>
-					<span style="font-size:10px;color:var(--green);font-weight:550;">Live</span>
+				<div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
+					<div style="display:flex;align-items:center;gap:5px;padding:3px 7px;background:var(--green-bg);border-radius:20px;">
+						<span style="width:6px;height:6px;border-radius:50%;background:var(--green);"></span>
+						<span style="font-size:10px;color:var(--green);font-weight:550;">Live</span>
+					</div>
+					<button class="jv-iconbtn" @click="toggleSidebar" title="Collapse sidebar" style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;border-radius:6px;cursor:pointer;color:var(--text-3);flex:none;">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18" /><path d="m14 9-3 3 3 3" /></svg>
+					</button>
 				</div>
 			</div>
 
 			<div style="padding:6px 12px 10px;">
-				<button class="jv-newchat" @click="newChat" style="width:100%;display:flex;align-items:center;gap:8px;padding:8px 11px;background:var(--blue);color:#fff;border:none;border-radius:var(--rad);font-family:inherit;font-size:13px;font-weight:550;cursor:pointer;">
+				<button class="jv-newchat" @click="newChat" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;padding:8px 11px;background:var(--blue);color:#fff;border:none;border-radius:var(--rad);font-family:inherit;font-size:13px;font-weight:550;cursor:pointer;">
 					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
 					New chat
 				</button>
@@ -46,6 +69,7 @@
 						<span v-else class="jv-conv-title">{{ c.title || "New chat" }}</span>
 						<button v-if="renamingId !== c.name" class="jv-conv-more" @click.stop="toggleConvMenu(c.name)" title="Options"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></svg></button>
 						<div v-if="convMenuFor === c.name" class="jv-conv-menu" @click.stop>
+							<button class="jv-menuitem" @click="toggleStar(c)"><svg width="14" height="14" viewBox="0 0 24 24" :fill="c.starred ? 'var(--amber)' : 'none'" :stroke="c.starred ? 'var(--amber)' : 'currentColor'" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg><span>{{ c.starred ? "Unstar" : "Star" }}</span></button>
 							<button class="jv-menuitem" @click="startRename(c)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg><span>Rename</span></button>
 							<button class="jv-menuitem jv-menuitem-danger" @click="deleteConv(c)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /></svg><span>Delete</span></button>
 						</div>
@@ -85,6 +109,9 @@
 		<!-- ============ MAIN ============ -->
 		<main style="flex:1;display:flex;flex-direction:column;height:100%;min-width:0;background:var(--surface);">
 			<header style="height:52px;flex:none;border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 18px;gap:12px;">
+				<button v-if="sidebarCollapsed" class="jv-iconbtn-bd" @click="toggleSidebar" title="Expand sidebar" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:var(--surface);border:1px solid var(--border);border-radius:7px;cursor:pointer;flex:none;">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18" /><path d="m11 9 3 3-3 3" /></svg>
+				</button>
 				<div style="display:flex;flex-direction:column;line-height:1.15;min-width:0;">
 					<span style="font-size:14px;font-weight:600;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ currentTitle }}</span>
 					<span style="font-size:11.5px;color:var(--text-3);">{{ headerSub }}</span>
@@ -97,15 +124,18 @@
 							<span style="font-size:12px;color:var(--text-2);font-weight:500;">{{ modelLabel }}</span>
 							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg>
 						</button>
-						<div v-if="modelMenuOpen && availableModels.length" style="position:absolute;top:calc(100% + 6px);right:0;min-width:184px;background:var(--surface);border:1px solid var(--border-2);border-radius:10px;box-shadow:0 8px 24px rgba(20,20,30,.14);padding:5px;z-index:30;">
-							<div style="padding:5px 9px 6px;font-size:10px;color:var(--text-3);font-weight:600;text-transform:uppercase;letter-spacing:.03em;">Model · {{ ui.llm_provider }}</div>
-							<button class="jv-menuitem" @click="selectModel('')">
+						<div v-if="modelMenuOpen && availableModels.length" style="position:absolute;top:calc(100% + 6px);right:0;min-width:198px;background:var(--surface);border:1px solid var(--border-2);border-radius:10px;box-shadow:0 8px 24px rgba(20,20,30,.14);padding:5px;z-index:30;">
+							<!-- Auto: its own separate option (let Jarvis pick), divided from the explicit models -->
+							<button class="jv-menuitem" :class="{ on: !modelOverride }" @click="selectModel('')">
+								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex:none;"><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8" /></svg>
 								<span style="flex:1;">Auto <span style="color:var(--text-3);font-weight:450;">· {{ ui.llm_model || "default" }}</span></span>
-								<svg v-if="!modelOverride" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+								<svg v-if="!modelOverride" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;"><path d="M20 6 9 17l-5-5" /></svg>
 							</button>
-							<button v-for="m in availableModels" :key="m" class="jv-menuitem" @click="selectModel(m)">
+							<div style="height:1px;background:var(--border);margin:5px 2px;"></div>
+							<div style="padding:3px 9px 6px;font-size:10px;color:var(--text-3);font-weight:600;text-transform:uppercase;letter-spacing:.03em;">Model · {{ ui.llm_provider }}</div>
+							<button v-for="m in availableModels" :key="m" class="jv-menuitem" :class="{ on: m === modelOverride }" @click="selectModel(m)">
 								<span style="flex:1;">{{ m }}</span>
-								<svg v-if="m === modelOverride" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+								<svg v-if="m === modelOverride" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;"><path d="M20 6 9 17l-5-5" /></svg>
 							</button>
 						</div>
 					</div>
@@ -146,18 +176,57 @@
 
 			<!-- ===== CONVERSATION ===== -->
 			<div v-else ref="threadEl" style="flex:1;overflow-y:auto;">
-				<div style="max-width:760px;margin:0 auto;padding:26px 24px 36px;display:flex;flex-direction:column;gap:26px;">
+				<div style="max-width:1280px;margin:0 auto;padding:26px 40px 36px;display:flex;flex-direction:column;gap:26px;">
 					<template v-for="m in visibleMessages" :key="m.name">
 						<!-- user -->
-						<div v-if="m.role === 'user'" style="display:flex;justify-content:flex-end;">
+						<div v-if="m.role === 'user'" class="jv-umsg" style="display:flex;flex-direction:column;align-items:flex-end;">
 							<div style="max-width:78%;background:var(--surface-2);border:1px solid var(--border);border-radius:14px 14px 4px 14px;padding:10px 14px;font-size:14px;line-height:1.5;color:var(--text);white-space:pre-wrap;">{{ m.content }}</div>
+							<div class="jv-msgbar">
+								<button class="jv-msgbtn" @click="copyMsg(m.name, m.content)" :title="copiedId === m.name ? 'Copied' : 'Copy'">
+									<svg v-if="copiedId === m.name" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+									<svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+								</button>
+								<button class="jv-msgbtn" @click="editCommand(m)" title="Edit & resend">
+									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
+								</button>
+							</div>
 						</div>
 						<!-- assistant -->
-						<div v-else style="display:flex;gap:12px;">
+						<div v-else class="jv-amsg" style="display:flex;gap:12px;">
 							<div style="width:28px;height:28px;flex:none;border-radius:7px;background:var(--blue);display:flex;align-items:center;justify-content:center;margin-top:2px;">
 								<svg width="15" height="15" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
 							</div>
 							<div style="flex:1;min-width:0;">
+								<!-- Activity: the tool calls (with input + output) that produced
+								     this answer — openclaw-style, collapsible. -->
+								<div v-if="(activityByAssistant[m.name] || []).length" class="jv-activity">
+									<button class="jv-activity-head" @click="toggleActivity(m.name)" :aria-expanded="!!isActivityOpen(m.name)">
+										<svg class="jv-activity-chev" :class="{ open: isActivityOpen(m.name) }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6" /></svg>
+										<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 1 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></svg>
+										<span class="jv-activity-count">{{ (activityByAssistant[m.name] || []).length }} tool call{{ (activityByAssistant[m.name] || []).length === 1 ? "" : "s" }}</span>
+										<span v-if="!isActivityOpen(m.name)" class="jv-activity-preview">{{ activityNames(m.name) }}</span>
+									</button>
+									<div v-if="isActivityOpen(m.name)" class="jv-activity-body">
+										<div v-for="t in (activityByAssistant[m.name] || [])" :key="t.name" class="jv-tool" :class="{ open: toolOpen[t.name] }">
+											<button class="jv-tool-head" @click="toggleTool(t.name)">
+												<span class="jv-tool-dot" :class="(t.tool_status === 'completed' ? 'ok' : (t.tool_status === 'running' ? 'run' : 'err'))"></span>
+												<span class="jv-tool-name">{{ toolLabel(t.tool_name) }}</span>
+												<span class="jv-tool-status">{{ t.tool_status }}</span>
+												<svg class="jv-tool-chev" :class="{ open: toolOpen[t.name] }" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6" /></svg>
+											</button>
+											<div v-if="toolOpen[t.name]" class="jv-tool-detail">
+												<template v-if="prettyJson(t.tool_args)">
+													<div class="jv-tool-io-k">Input</div>
+													<pre class="jv-tool-io">{{ prettyJson(t.tool_args) }}</pre>
+												</template>
+												<template v-if="prettyJson(t.tool_result)">
+													<div class="jv-tool-io-k">Output</div>
+													<pre class="jv-tool-io">{{ prettyJson(t.tool_result) }}</pre>
+												</template>
+											</div>
+										</div>
+									</div>
+								</div>
 								<div v-if="m.error" style="border:1px solid var(--red-bd);border-radius:11px;background:var(--red-bg);padding:13px 15px;display:flex;align-items:flex-start;gap:10px;">
 									<svg width="17" height="17" style="margin-top:1px;flex:none;" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><path d="M12 9v4M12 17h.01" /></svg>
 									<div style="flex:1;">
@@ -223,6 +292,12 @@
 									<span :title="(runMeta[m.name].names || []).join(', ')"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 1 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></svg>{{ runMeta[m.name].tools }} tool{{ runMeta[m.name].tools === 1 ? "" : "s" }}</span>
 									<span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>{{ (runMeta[m.name].ms / 1000).toFixed(1) }}s</span>
 								</div>
+								<div v-if="!m.error && m.content" class="jv-msgbar">
+									<button class="jv-msgbtn" @click="copyMsg(m.name, stripBlocks(m.content))" :title="copiedId === m.name ? 'Copied' : 'Copy'">
+										<svg v-if="copiedId === m.name" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+										<svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+									</button>
+								</div>
 							</div>
 						</div>
 					</template>
@@ -257,8 +332,8 @@
 			</div>
 
 			<!-- ===== COMPOSER ===== -->
-			<div style="flex:none;padding:12px 24px 16px;border-top:1px solid var(--border);background:var(--surface);">
-				<div style="max-width:760px;margin:0 auto;">
+			<div style="flex:none;padding:12px 40px 16px;border-top:1px solid var(--border);background:var(--surface);">
+				<div style="max-width:1280px;margin:0 auto;">
 					<div class="jv-composer" style="position:relative;border:1.5px solid var(--text);border-radius:13px;background:var(--surface);box-shadow:0 2px 12px rgba(0,0,0,.07);padding:5px 6px 6px 6px;transition:border-color .12s,box-shadow .12s;">
 						<!-- mention dropdown (@ user, / doctype·tool) -->
 						<div v-if="mention.open && mention.items.length" style="position:absolute;bottom:calc(100% + 6px);left:0;min-width:248px;max-height:248px;overflow-y:auto;background:var(--surface);border:1px solid var(--border-2);border-radius:10px;box-shadow:0 10px 28px rgba(20,20,30,.16);padding:5px;z-index:30;">
@@ -282,7 +357,7 @@
 							<button v-if="busy" @click="stopRun" title="Stop generating" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:var(--blue);border:none;border-radius:8px;cursor:pointer;">
 								<svg width="13" height="13" viewBox="0 0 24 24" fill="#fff"><rect x="6" y="6" width="12" height="12" rx="2.5" /></svg>
 							</button>
-							<button v-else @click="send()" :disabled="!canSend" :style="{ width:'32px', height:'32px', display:'flex', alignItems:'center', justifyContent:'center', background: canSend ? 'var(--blue)' : 'var(--surface-3)', border:'none', borderRadius:'8px', cursor: canSend ? 'pointer' : 'default', transition:'background .12s' }">
+							<button v-else class="jv-sendbtn" :class="{ ready: canSend }" @click="send()" :disabled="!canSend" :style="{ width:'32px', height:'32px', display:'flex', alignItems:'center', justifyContent:'center', background: canSend ? 'var(--blue)' : 'var(--surface-3)', border:'none', borderRadius:'8px', cursor: canSend ? 'pointer' : 'default' }">
 								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" :stroke="canSend ? '#fff' : 'var(--text-3)'" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
 							</button>
 						</div>
@@ -302,6 +377,10 @@
 							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
 							<span>General</span>
 						</button>
+						<button class="jv-settings-navitem" :class="{ on: settingsTab === 'usage' }" @click="settingsTab = 'usage'">
+							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18" /><rect x="7" y="10" width="3" height="7" /><rect x="13" y="6" width="3" height="11" /></svg>
+							<span>Usage</span>
+						</button>
 						<button class="jv-settings-navitem" :class="{ on: settingsTab === 'appearance' }" @click="settingsTab = 'appearance'">
 							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
 							<span>Appearance</span>
@@ -310,10 +389,14 @@
 							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2" /></svg>
 							<span>Activity</span>
 						</button>
+						<button class="jv-settings-navitem" :class="{ on: settingsTab === 'shortcuts' }" @click="settingsTab = 'shortcuts'">
+							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2" /><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M6 12h.01M10 12h.01M14 12h.01M18 12h.01M7 16h10" /></svg>
+							<span>Shortcuts</span>
+						</button>
 					</div>
 					<div class="jv-settings-main">
 						<div class="jv-settings-head">
-							<span style="font-size:15px;font-weight:600;">{{ settingsTab === "appearance" ? "Appearance" : settingsTab === "activity" ? "Activity" : "General" }}</span>
+							<span style="font-size:15px;font-weight:600;">{{ settingsTab === "appearance" ? "Appearance" : settingsTab === "activity" ? "Activity" : settingsTab === "usage" ? "Usage" : settingsTab === "shortcuts" ? "Keyboard shortcuts" : "General" }}</span>
 							<button class="jv-iconbtn" @click="settingsOpen = false" title="Close" style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;border-radius:7px;cursor:pointer;color:var(--text-3);">
 								<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
 							</button>
@@ -333,6 +416,12 @@
 										<span class="jv-switch-knob"></span>
 									</button>
 								</div>
+								<div class="jv-set-row">
+									<span>Auto-expand tool activity<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Show each answer's tool calls + output unfolded</span></span>
+									<button class="jv-switch" :class="{ on: activityAutoExpand }" @click="setActivityAutoExpand(!activityAutoExpand)" role="switch" :aria-checked="String(activityAutoExpand)" title="Expand the activity panel under each answer by default">
+										<span class="jv-switch-knob"></span>
+									</button>
+								</div>
 							<div class="jv-set-sec" style="margin-top:18px;">Workspace</div>
 							<div class="jv-set-row"><span>Conversations</span><b>{{ convCount }}</b></div>
 							<div class="jv-set-row"><span>Messages in this chat</span><b>{{ msgCount }}</b></div>
@@ -348,6 +437,26 @@
 							</template>
 							<div v-else class="jv-set-hint">No monthly budget set · counts are estimated from message text.</div>
 						</template>
+						<!-- USAGE -->
+						<template v-else-if="settingsTab === 'usage'">
+							<div style="font-size:12px;color:var(--text-3);margin:0 0 14px;">Estimated tokens, messages and tool activity for your workspace. <span class="jv-est">est.</span></div>
+							<div class="jv-statgrid">
+								<div class="jv-stat"><div class="jv-stat-label">Messages</div><div class="jv-stat-val">{{ msgCount }}</div><div class="jv-stat-sub">{{ userMsgCount }} you · {{ assistantMsgCount }} Jarvis</div></div>
+								<div class="jv-stat"><div class="jv-stat-label">Tool calls</div><div class="jv-stat-val">{{ sessionToolCalls }}</div><div class="jv-stat-sub">this session</div></div>
+								<div class="jv-stat"><div class="jv-stat-label">Avg tokens / msg</div><div class="jv-stat-val">{{ avgTokensPerMsg }}</div><div class="jv-stat-sub">this chat</div></div>
+								<div class="jv-stat"><div class="jv-stat-label">Conversations</div><div class="jv-stat-val">{{ convCount }}</div><div class="jv-stat-sub">{{ starredCount }} starred</div></div>
+								<div class="jv-stat"><div class="jv-stat-label">This chat</div><div class="jv-stat-val">{{ usage ? fmtTokens(usage.chat_tokens) : "—" }}</div><div class="jv-stat-sub">tokens</div></div>
+								<div class="jv-stat"><div class="jv-stat-label">{{ usage ? usage.month_label : "This month" }}</div><div class="jv-stat-val">{{ usage ? fmtTokens(usage.month_tokens) : "—" }}</div><div class="jv-stat-sub">tokens</div></div>
+								<div class="jv-stat"><div class="jv-stat-label">All time</div><div class="jv-stat-val">{{ usage ? fmtTokens(usage.total_tokens) : "—" }}</div><div class="jv-stat-sub">tokens</div></div>
+								<div class="jv-stat"><div class="jv-stat-label">Tools</div><div class="jv-stat-val">{{ toolCount }}</div><div class="jv-stat-sub">available</div></div>
+							</div>
+							<template v-if="usage && usage.budget_monthly">
+								<div class="jv-set-sec" style="margin-top:20px;">Monthly budget</div>
+								<div class="jv-usage-bar"><div class="jv-usage-fill" :style="{ width: usagePct + '%' }"></div></div>
+								<div class="jv-set-hint">{{ fmtTokens(usage.month_tokens) }} / {{ fmtTokens(usage.budget_monthly) }} this month · {{ usagePct }}%</div>
+							</template>
+							<div v-else class="jv-set-hint" style="margin-top:14px;">No monthly budget set · token counts are estimated from message text.</div>
+						</template>
 						<!-- ACTIVITY -->
 						<template v-else-if="settingsTab === 'activity'">
 							<div class="jv-set-sec">Recent tool runs</div>
@@ -360,6 +469,20 @@
 								</div>
 								<div v-if="a.names.length" class="jv-act-names">{{ a.names.join(" · ") }}</div>
 							</div>
+						</template>
+						<!-- SHORTCUTS -->
+						<template v-else-if="settingsTab === 'shortcuts'">
+							<div style="font-size:12px;color:var(--text-3);margin:0 0 14px;">Speed up the composer and chat.</div>
+							<div class="jv-set-sec">Composer</div>
+							<div class="jv-kbd-row"><span>Recall previous / next prompt</span><span><kbd class="jv-kbd">↑</kbd><kbd class="jv-kbd">↓</kbd></span></div>
+							<div class="jv-kbd-row"><span>Send message</span><kbd class="jv-kbd">Enter</kbd></div>
+							<div class="jv-kbd-row"><span>New line</span><span><kbd class="jv-kbd">Shift</kbd><span class="jv-kbd-plus">+</span><kbd class="jv-kbd">Enter</kbd></span></div>
+							<div class="jv-kbd-row"><span>Mention a doctype / record</span><kbd class="jv-kbd">@</kbd></div>
+							<div class="jv-set-sec" style="margin-top:20px;">Chat</div>
+							<div class="jv-kbd-row"><span>New chat</span><span><kbd class="jv-kbd">Ctrl</kbd><span class="jv-kbd-plus">+</span><kbd class="jv-kbd">Shift</kbd><span class="jv-kbd-plus">+</span><kbd class="jv-kbd">O</kbd></span></div>
+							<div class="jv-kbd-row"><span>Toggle sidebar</span><span><kbd class="jv-kbd">Ctrl</kbd><span class="jv-kbd-plus">+</span><kbd class="jv-kbd">B</kbd></span></div>
+							<div class="jv-kbd-row"><span>Close panel / cancel</span><kbd class="jv-kbd">Esc</kbd></div>
+							<div class="jv-set-hint" style="margin-top:14px;">Tip: <kbd class="jv-kbd">↑</kbd> at the start of an empty composer walks back through your earlier prompts in this chat.</div>
 						</template>
 						<!-- APPEARANCE -->
 						<template v-else>
@@ -449,6 +572,10 @@ const conversations = ref([])
 const currentId = ref(null)
 const messages = ref([])
 const input = ref("")
+// Up/Down recall of previously sent prompts (shell-style history).
+const promptHistory = ref([])
+const histIdx = ref(null)
+const histDraft = ref("")
 const sending = ref(false)
 const waiting = ref(false)
 const search = ref("")
@@ -458,12 +585,31 @@ const threadEl = ref(null)
 const rootEl = ref(null)
 const userMenuOpen = ref(false)
 const modelMenuOpen = ref(false)
+// Collapsible sidebar (persisted per device, openclaw-style).
+const sidebarCollapsed = ref(localStorage.getItem("jarvis-sidebar") === "collapsed")
+function toggleSidebar() {
+	sidebarCollapsed.value = !sidebarCollapsed.value
+	try {
+		localStorage.setItem("jarvis-sidebar", sidebarCollapsed.value ? "collapsed" : "open")
+	} catch (e) {}
+}
 // per-conversation ⋯ menu + inline rename (sidebar)
 const convMenuFor = ref(null)
 const renamingId = ref(null)
 const renameText = ref("")
 function toggleConvMenu(id) {
 	convMenuFor.value = convMenuFor.value === id ? null : id
+}
+async function toggleStar(c) {
+	convMenuFor.value = null
+	const next = c.starred ? 0 : 1
+	const conv = conversations.value.find((x) => x.name === c.name)
+	if (conv) conv.starred = next // optimistic — regroups instantly
+	try {
+		await api.setStar(c.name, next)
+	} catch (e) {
+		loadConversations()
+	}
 }
 function startRename(c) {
 	convMenuFor.value = null
@@ -654,6 +800,50 @@ const currentTitle = computed(
 const visibleMessages = computed(() =>
 	messages.value.filter((m) => m.role === "user" || m.role === "assistant"),
 )
+// Group role=tool messages under the assistant turn they belong to, so each
+// answer can show an expandable "Activity" list of the tool calls (with input
+// + output) that produced it — openclaw-style. Tool rows follow their
+// assistant placeholder in seq order, so we attach to the most recent
+// assistant message and reset on each user message.
+const activityByAssistant = computed(() => {
+	const map = {}
+	let cur = null
+	for (const m of messages.value) {
+		if (m.role === "user") cur = null
+		else if (m.role === "assistant") { cur = m.name; if (!map[cur]) map[cur] = [] }
+		else if (m.role === "tool" && cur) (map[cur] || (map[cur] = [])).push(m)
+	}
+	return map
+})
+const activityOpen = ref({})
+const toolOpen = ref({})
+// Whether tool-activity disclosures start expanded (a Settings preference).
+const activityAutoExpand = ref(localStorage.getItem("jarvis-activity-expand") === "1")
+function setActivityAutoExpand(v) {
+	activityAutoExpand.value = !!v
+	try { localStorage.setItem("jarvis-activity-expand", v ? "1" : "0") } catch (e) {}
+}
+// Open state falls back to the pref until the user explicitly toggles a turn.
+function isActivityOpen(name) {
+	return name in activityOpen.value ? activityOpen.value[name] : activityAutoExpand.value
+}
+function toggleActivity(name) { activityOpen.value = { ...activityOpen.value, [name]: !isActivityOpen(name) } }
+function toggleTool(name) { toolOpen.value = { ...toolOpen.value, [name]: !toolOpen.value[name] } }
+function toolLabel(n) { return (n || "tool").replace(/^jarvis__/, "") }
+function activityNames(assistantName) {
+	return (activityByAssistant.value[assistantName] || [])
+		.map((t) => toolLabel(t.tool_name)).join(", ")
+}
+// args/result are stored as JSON strings — pretty-print, and trim very large
+// payloads so a 10k-row result doesn't blow up the chat.
+function prettyJson(s) {
+	if (s == null || s === "") return ""
+	let v = s
+	try { v = typeof s === "string" ? JSON.parse(s) : s } catch (e) { return String(s).slice(0, 4000) }
+	let out = ""
+	try { out = JSON.stringify(v, null, 2) } catch (e) { out = String(s) }
+	return out.length > 4000 ? out.slice(0, 4000) + "\n… (truncated)" : out
+}
 // True only until the initial conversation load finishes — keeps the welcome
 // screen from flashing on refresh before the open chat appears.
 const booting = ref(true)
@@ -668,6 +858,14 @@ const toolCount = computed(() => JARVIS_TOOLS.length)
 const sessionToolCalls = computed(() =>
 	Object.values(runMeta.value).reduce((s, r) => s + (r.tools || 0), 0),
 )
+const userMsgCount = computed(() => visibleMessages.value.filter((m) => m.role === "user").length)
+const assistantMsgCount = computed(() => visibleMessages.value.filter((m) => m.role === "assistant").length)
+const avgTokensPerMsg = computed(() => {
+	const n = msgCount.value
+	if (!usage.value || !n) return "—"
+	return fmtTokens(Math.round((usage.value.chat_tokens || 0) / n))
+})
+const starredCount = computed(() => conversations.value.filter((c) => c.starred).length)
 // Recent tool runs in this chat (most recent first), from the per-message run
 // metrics we already stamp on run:end.
 const recentActivity = computed(() => {
@@ -694,10 +892,14 @@ const filteredConvs = computed(() => {
 	return q ? conversations.value.filter((c) => (c.title || "").toLowerCase().includes(q)) : conversations.value
 })
 const groups = computed(() => {
-	const today = [], yest = [], earlier = []
+	const starred = [], today = [], yest = [], earlier = []
 	const now = new Date()
 	const d0 = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
 	for (const c of filteredConvs.value) {
+		if (c.starred) {
+			starred.push(c)
+			continue
+		}
 		const raw = (c.last_active_at || c.modified || "").replace(" ", "T")
 		const t = raw ? new Date(raw) : now
 		const cd = new Date(t.getFullYear(), t.getMonth(), t.getDate()).getTime()
@@ -707,6 +909,7 @@ const groups = computed(() => {
 		else earlier.push(c)
 	}
 	return [
+		{ label: "Starred", items: starred },
 		{ label: "Today", items: today },
 		{ label: "Yesterday", items: yest },
 		{ label: "Earlier", items: earlier },
@@ -748,7 +951,67 @@ function confirmLabel(m) {
 	return mt ? mt[1].trim() : ""
 }
 function render(text) {
-	return renderMarkdown(stripBlocks(text))
+	return linkifyDocs(renderMarkdown(stripBlocks(text)))
+}
+// {document name → DocType} harvested from THIS conversation's tool calls
+// (get_doc / create_doc / get_list / update_doc / …). We only ever linkify IDs
+// that actually came back from a tool, so we always know the DocType for the
+// Desk URL and never false-positive on arbitrary prose.
+const docRefs = computed(() => {
+	const map = {}
+	const add = (dt, name) => {
+		if (dt && typeof name === "string" && name.length >= 4) map[name] = dt
+	}
+	for (const m of messages.value) {
+		if (m.role !== "tool") continue
+		let args = {}
+		let res = {}
+		try { args = m.tool_args ? JSON.parse(m.tool_args) : {} } catch (e) {}
+		try { res = m.tool_result ? JSON.parse(m.tool_result) : {} } catch (e) {}
+		const dt = args.doctype
+		if (args.name) add(dt, args.name)
+		const data = res && res.data
+		if (Array.isArray(data)) {
+			for (const row of data) if (row && row.name) add(row.doctype || dt, row.name)
+		} else if (data && typeof data === "object") {
+			add(data.doctype || dt, data.name)
+		}
+	}
+	return map
+})
+const _escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+// Compiled once per docRefs change: matches any known doc name as a whole token
+// (not a substring of a longer id/word). Capped so a huge get_list can't build a
+// pathological alternation.
+const docNameRegex = computed(() => {
+	const names = Object.keys(docRefs.value).sort((a, b) => b.length - a.length).slice(0, 400)
+	if (!names.length) return null
+	try {
+		return new RegExp(`(?<![\\w-])(${names.map(_escapeRegex).join("|")})(?![\\w-])`, "g")
+	} catch (e) {
+		return null // e.g. a browser without lookbehind — degrade to no links
+	}
+})
+const _deskSlug = (dt) => dt.toLowerCase().replace(/ /g, "-")
+// Turn known document IDs in the rendered markdown HTML into Desk links, without
+// touching text already inside an <a> (so markdown links stay intact).
+function linkifyDocs(html) {
+	const re = docNameRegex.value
+	const refs = docRefs.value
+	if (!re || !html) return html
+	let inAnchor = 0
+	return html.replace(/(<a\b[^>]*>)|(<\/a>)|(<[^>]+>)|([^<]+)/gi, (m, aOpen, aClose, otherTag, text) => {
+		if (aOpen) { inAnchor++; return aOpen }
+		if (aClose) { inAnchor = Math.max(0, inAnchor - 1); return aClose }
+		if (otherTag != null) return otherTag
+		if (inAnchor) return text
+		return text.replace(re, (name) => {
+			const dt = refs[name]
+			if (!dt) return name
+			const url = `/app/${_deskSlug(dt)}/${encodeURIComponent(name)}`
+			return `<a href="${url}" target="_blank" rel="noopener" class="jv-doclink" title="Open ${dt} in ERPNext">${name}</a>`
+		})
+	})
 }
 // The last assistant message (finished, turn idle) decides which card is live —
 // once the user clicks, a new message lands and the card retires automatically.
@@ -774,11 +1037,58 @@ function answerConfirm(ok) {
 	send(ok ? "Yes, go ahead." : "No, cancel that.")
 }
 function copyText(t) {
+	const s = t || ""
+	// navigator.clipboard only exists in a secure context (https / localhost).
+	// Over plain http (e.g. jarvis-test.localhost) it's undefined, so the old
+	// `navigator.clipboard?.writeText` silently did nothing — that's why Copy
+	// "didn't work". Fall back to the legacy execCommand path in that case.
 	try {
-		navigator.clipboard?.writeText(t || "")
+		if (navigator.clipboard && window.isSecureContext) {
+			navigator.clipboard.writeText(s).catch(() => fallbackCopy(s))
+			return
+		}
 	} catch (e) {
-		/* clipboard blocked */
+		/* fall through to legacy copy */
 	}
+	fallbackCopy(s)
+}
+function fallbackCopy(s) {
+	try {
+		const ta = document.createElement("textarea")
+		ta.value = s
+		ta.setAttribute("readonly", "")
+		ta.style.position = "fixed"
+		ta.style.top = "-9999px"
+		document.body.appendChild(ta)
+		ta.select()
+		ta.setSelectionRange(0, s.length)
+		document.execCommand("copy")
+		document.body.removeChild(ta)
+	} catch (e) {
+		/* clipboard truly unavailable */
+	}
+}
+// Per-message Copy with a brief "copied" tick, and Edit (load a previous
+// command back into the composer to tweak and resend).
+const copiedId = ref("")
+let _copyTimer = null
+function copyMsg(id, text) {
+	copyText(text)
+	copiedId.value = id
+	clearTimeout(_copyTimer)
+	_copyTimer = setTimeout(() => { copiedId.value = "" }, 1300)
+}
+function editCommand(m) {
+	input.value = m.content || ""
+	nextTick(() => {
+		autoGrow()
+		const el = inputEl.value
+		if (el) {
+			el.focus()
+			const p = input.value.length
+			el.setSelectionRange(p, p)
+		}
+	})
 }
 const _VERB = { create: "Create", update: "Update", submit: "Submit", cancel: "Cancel", delete: "Delete", amend: "Amend" }
 function actionVerb(a) {
@@ -912,6 +1222,42 @@ function onKey(e) {
 			return
 		}
 	}
+	// Up/Down: recall sent prompts — only when the caret is at the very start
+	// (Up) or end (Down) so it doesn't fight normal multi-line editing.
+	const el = e.target
+	if (e.key === "ArrowUp" && (input.value === "" || el.selectionStart === 0) && promptHistory.value.length) {
+		e.preventDefault()
+		if (histIdx.value === null) {
+			histDraft.value = input.value
+			histIdx.value = promptHistory.value.length
+		}
+		if (histIdx.value > 0) {
+			histIdx.value -= 1
+			input.value = promptHistory.value[histIdx.value]
+			nextTick(() => {
+				autoGrow()
+				const p = input.value.length
+				el.setSelectionRange(p, p)
+			})
+		}
+		return
+	}
+	if (e.key === "ArrowDown" && histIdx.value !== null && el.selectionStart === input.value.length) {
+		e.preventDefault()
+		if (histIdx.value < promptHistory.value.length - 1) {
+			histIdx.value += 1
+			input.value = promptHistory.value[histIdx.value]
+		} else {
+			histIdx.value = null
+			input.value = histDraft.value
+		}
+		nextTick(() => {
+			autoGrow()
+			const p = input.value.length
+			el.setSelectionRange(p, p)
+		})
+		return
+	}
 	if (e.key === "Enter" && !e.shiftKey) {
 		e.preventDefault()
 		send()
@@ -925,11 +1271,32 @@ async function loadConversation(id) {
 	if (!id) {
 		messages.value = []
 		modelOverride.value = ""
+		promptHistory.value = []
+		histIdx.value = null
+		histDraft.value = ""
 		return
 	}
 	const d = await api.getConversation(id)
+	// Stale-response guard: if the user navigated to a different conversation
+	// while this request was in flight, drop the result. Without this, a slow
+	// get_conversation response clobbers the conversation you actually switched
+	// to with the wrong (or empty) messages — and only a page refresh, which
+	// does a single clean load, would put it right. (Root cause of "open a
+	// chat, switch away and back, it shows empty until I refresh".)
+	if (currentId.value !== id) return
 	messages.value = d?.messages || []
 	modelOverride.value = d?.model_override || ""
+	// Seed Up/Down recall from THIS conversation's past prompts. Without this,
+	// promptHistory only held prompts typed in the current page session, so
+	// after a reload or when opening an existing chat the arrows did nothing.
+	// Strip the trailing "📎 name" attachment marker so recall yields the
+	// actual typed text.
+	promptHistory.value = (d?.messages || [])
+		.filter((m) => m.role === "user" && m.content)
+		.map((m) => m.content.replace(/\n*📎[^\n]*$/, "").trim())
+		.filter(Boolean)
+	histIdx.value = null
+	histDraft.value = ""
 	for (const m of messages.value) {
 		if (Array.isArray(m.canvas) && m.canvas.length) ensureCanvas(m)
 	}
@@ -1137,6 +1504,11 @@ async function send(textArg) {
 	const text = (fromMain ? input.value : textArg).trim()
 	const attachments = fromMain ? pendingFiles.value.slice() : []
 	if ((!text && !attachments.length) || sending.value) return
+	if (text && promptHistory.value[promptHistory.value.length - 1] !== text) {
+		promptHistory.value.push(text) // for Up/Down recall
+	}
+	histIdx.value = null
+	histDraft.value = ""
 	if (fromMain) {
 		input.value = ""
 		pendingFiles.value = []
@@ -1165,6 +1537,14 @@ async function send(textArg) {
 }
 
 function onEvent(p) {
+	// Auto-generated title arrives async (worker titles the chat after the
+	// first real turn). Handle it before the current-conversation guard so the
+	// sidebar updates even if the user has since switched chats.
+	if (p.kind === "conversation:renamed" && p.conversation_id) {
+		const c = conversations.value.find((x) => x.name === p.conversation_id)
+		if (c && p.title) c.title = p.title
+		return
+	}
 	if (p.conversation_id !== currentId.value) return
 	if (p.run_id && p.run_id === stoppedRunId.value) return // user stopped this run
 	switch (p.kind) {
@@ -1288,6 +1668,7 @@ function removeFile(i) {
 // ---- mentions (@ user, / doctype·tool) ----
 let _mentionSeq = 0
 function onInput() {
+	histIdx.value = null // typing exits prompt-history navigation
 	autoGrow()
 	const el = inputEl.value
 	if (!el) return
@@ -1354,6 +1735,7 @@ onMounted(async () => {
 	}
 	socket?.on("jarvis:event", onEvent)
 	document.addEventListener("pointerdown", onDocClick)
+	window.addEventListener("keydown", onGlobalKey)
 	// Track the OS color scheme so theme:'system' updates live.
 	_mq = window.matchMedia("(prefers-color-scheme: dark)")
 	prefersDark.value = _mq.matches
@@ -1383,12 +1765,55 @@ onMounted(async () => {
 onBeforeUnmount(() => {
 	socket?.off("jarvis:event", onEvent)
 	document.removeEventListener("pointerdown", onDocClick)
+	window.removeEventListener("keydown", onGlobalKey)
 	_mq?.removeEventListener("change", onColorScheme)
 })
+// Global keyboard shortcuts (documented in Settings → Shortcuts).
+function onGlobalKey(e) {
+	if (e.defaultPrevented) return
+	if (e.ctrlKey && e.shiftKey && (e.key === "O" || e.key === "o")) {
+		e.preventDefault(); newChat()
+	} else if (e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === "B" || e.key === "b")) {
+		e.preventDefault(); toggleSidebar()
+	} else if (e.key === "Escape" && settingsOpen.value) {
+		settingsOpen.value = false
+	}
+}
 </script>
 
 <style scoped>
-.jv-newchat:hover { filter: brightness(0.9); }
+/* primary buttons also invert to black/white on hover (depends on their base
+   color, so the white text/icon flips to the surface color). !important beats
+   the inline backgrounds on the new-chat and send buttons. */
+.jv-newchat:hover { background: var(--text) !important; color: var(--surface) !important; }
+.jv-newchat:hover svg { stroke: var(--surface) !important; }
+/* Send button: springy lift + arrow nudge on hover, press-in on click, and a
+   one-shot pop when it becomes ready (text entered). */
+.jv-sendbtn { transition: transform .16s cubic-bezier(.34, 1.56, .64, 1), background .14s ease; }
+.jv-sendbtn svg { transition: transform .16s ease; }
+.jv-sendbtn:not(:disabled):hover { transform: translateY(-2px) scale(1.07); }
+.jv-sendbtn:not(:disabled):hover svg { transform: translateY(-2px); }
+.jv-sendbtn:not(:disabled):active { transform: scale(.9); }
+.jv-sendbtn.ready { animation: jv-send-pop .3s ease; }
+@keyframes jv-send-pop { 0% { transform: scale(.7); } 55% { transform: scale(1.15); } 100% { transform: scale(1); } }
+.jv-sendbtn:hover:not(:disabled) { background: var(--text) !important; }
+.jv-sendbtn:hover:not(:disabled) svg { stroke: var(--surface) !important; }
+/* Collapsible sidebar: slide it off-screen (root has overflow:hidden) so the
+   chat reclaims the full width, openclaw-style. */
+.jv-sidebar { transition: width .2s ease; }
+/* Collapsed → slim icon rail: shrink to a bar and hide everything but the rail. */
+.jv-sidebar.collapsed { width: 56px !important; }
+/* `!important` is required: the sidebar header carries an inline
+   `display:flex`, which beats a plain rule and would otherwise leak the logo +
+   "ERPNext Assistant" text into (and below) the collapsed rail. */
+.jv-sidebar.collapsed > *:not(.jv-rail) { display: none !important; }
+.jv-rail { display: flex; flex-direction: column; align-items: center; gap: 7px; height: 100%; padding: 12px 0; }
+.jv-rail-logo { width: 30px; height: 30px; border-radius: 8px; background: var(--blue); display: flex; align-items: center; justify-content: center; flex: none; margin-bottom: 3px; box-shadow: 0 1px 2px rgba(37,99,235,.35); }
+.jv-rail-btn { width: 38px; height: 38px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; border-radius: 9px; cursor: pointer; color: var(--text-2); flex: none; transition: background .12s, color .12s; }
+.jv-rail-btn:hover { background: var(--surface-2); color: var(--text); }
+.jv-rail-new { background: var(--blue); color: #fff; }
+.jv-rail-new:hover { background: var(--blue); color: #fff; filter: brightness(1.08); }
+.jv-rail-avatar { width: 32px; height: 32px; border-radius: 50%; background: #e7ddcf; color: #8a6d3b; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; cursor: pointer; flex: none; }
 .jv-conv { position: relative; display: flex; align-items: center; gap: 9px; padding: 7px 9px; border-radius: 6px; cursor: pointer; margin-bottom: 1px; }
 .jv-conv:hover { background: var(--surface-2); }
 .jv-conv.on { background: var(--surface-3); }
@@ -1404,11 +1829,18 @@ onBeforeUnmount(() => {
 .jv-menuitem-danger:hover { background: var(--red-bg); }
 .jv-rename-input { flex: 1; min-width: 0; font-family: inherit; font-size: 13px; color: var(--text); background: var(--surface); border: 1px solid var(--blue); border-radius: 5px; padding: 3px 6px; outline: none; }
 .jv-suggest:hover { border-color: var(--border-2); background: var(--surface-1); }
-.jv-iconbtn:hover { background: var(--surface-2); color: var(--text-2); }
-.jv-iconbtn-bd:hover { background: var(--surface-1); }
+/* buttons invert to black/white on hover (theme-adaptive: black on light,
+   white on dark) — var(--text)/var(--surface) flip, with an svg-stroke
+   override so the icon stays visible on the inverted background. */
+.jv-iconbtn:hover { background: var(--text) !important; color: var(--surface) !important; }
+.jv-iconbtn:hover svg { stroke: var(--surface) !important; }
+.jv-iconbtn-bd:hover { background: var(--text) !important; border-color: var(--text) !important; }
+.jv-iconbtn-bd:hover svg { stroke: var(--surface) !important; }
 .jv-ctxbtn:hover { background: var(--surface-2); }
 .jv-retry:hover { filter: brightness(0.94); }
-.jv-modelpill:hover { background: var(--surface-2); }
+.jv-modelpill:hover { background: var(--text) !important; border-color: var(--text) !important; }
+.jv-modelpill:hover svg { stroke: var(--surface) !important; }
+.jv-modelpill:hover span { color: var(--surface) !important; }
 .jv-menuitem { display: flex; align-items: center; gap: 9px; width: 100%; padding: 7px 9px; border: none; background: transparent; border-radius: 7px; font-family: inherit; font-size: 12.5px; color: var(--text); cursor: pointer; text-align: left; }
 .jv-menuitem:hover, .jv-menuitem.on { background: var(--surface-1); }
 .jv-usercard { transition: background 0.12s; }
@@ -1417,6 +1849,35 @@ onBeforeUnmount(() => {
 .jv-composer:focus-within { border-color: var(--text); box-shadow: 0 0 0 3px rgba(23, 23, 23, 0.07); }
 /* response metrics (tools · time) */
 .jv-meta { display: flex; align-items: center; gap: 14px; margin-top: 9px; font-size: 11px; color: var(--text-3); }
+/* Tool activity (openclaw-style): collapsible list of tool calls with I/O */
+.jv-activity { margin: 0 0 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-1); overflow: hidden; }
+.jv-activity-head { display: flex; align-items: center; gap: 7px; width: 100%; padding: 7px 11px; background: transparent; border: none; cursor: pointer; font-family: inherit; font-size: 12px; color: var(--text-2); text-align: left; }
+.jv-activity-head:hover { background: var(--surface-2); }
+.jv-activity-chev { flex: none; color: var(--text-3); transition: transform .15s ease; }
+.jv-activity-chev.open { transform: rotate(90deg); }
+.jv-activity-count { font-weight: 600; color: var(--text); flex: none; }
+.jv-activity-preview { color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.jv-activity-body { border-top: 1px solid var(--border); padding: 5px; display: flex; flex-direction: column; gap: 4px; }
+.jv-tool { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); overflow: hidden; }
+.jv-tool-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 10px; background: transparent; border: none; cursor: pointer; font-family: inherit; font-size: 12.5px; color: var(--text); text-align: left; }
+.jv-tool-head:hover { background: var(--surface-1); }
+.jv-tool-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.jv-tool-dot.ok { background: var(--green); }
+.jv-tool-dot.err { background: var(--red); }
+.jv-tool-dot.run { background: var(--amber); animation: jv-pulse 1s ease-in-out infinite; }
+@keyframes jv-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+.jv-tool-name { font-weight: 550; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; }
+.jv-tool-status { margin-left: auto; font-size: 11px; color: var(--text-3); }
+.jv-tool-chev { flex: none; color: var(--text-3); transition: transform .15s ease; }
+.jv-tool-chev.open { transform: rotate(90deg); }
+.jv-tool-detail { padding: 4px 11px 11px; border-top: 1px solid var(--border); }
+.jv-tool-io-k { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-3); margin: 9px 0 4px; }
+.jv-tool-io { margin: 0; padding: 9px 11px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; line-height: 1.5; color: var(--text); white-space: pre-wrap; word-break: break-word; overflow-x: auto; max-height: 320px; overflow-y: auto; }
+/* per-message Copy/Edit bar — revealed on hover */
+.jv-msgbar { display: flex; gap: 3px; margin-top: 5px; opacity: 0; transition: opacity .12s ease; }
+.jv-umsg:hover .jv-msgbar, .jv-amsg:hover .jv-msgbar { opacity: 1; }
+.jv-msgbtn { display: flex; align-items: center; justify-content: center; width: 26px; height: 26px; border: none; background: transparent; border-radius: 6px; cursor: pointer; color: var(--text-3); }
+.jv-msgbtn:hover { background: var(--surface-2); color: var(--text); }
 .jv-meta span { display: inline-flex; align-items: center; gap: 4px; }
 /* live tool activity rows */
 .jv-toolrow { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--text-2); padding: 2px 0; }
@@ -1466,6 +1927,10 @@ onBeforeUnmount(() => {
 .jv-md :deep(.jv-md-list li) { margin: 2px 0; }
 .jv-md :deep(.jv-md-code) { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .jv-md :deep(.jv-md-link) { color: var(--blue); text-decoration: none; font-weight: 500; }
+/* Auto-linked document IDs → open the record in ERPNext Desk. Dashed underline
+   marks them as record links, distinct from plain markdown links. */
+.jv-md :deep(.jv-doclink) { color: var(--blue); text-decoration: none; font-weight: 550; border-bottom: 1px dashed var(--blue); cursor: pointer; transition: background .12s; }
+.jv-md :deep(.jv-doclink:hover) { border-bottom-style: solid; background: var(--blue-bg); border-radius: 3px; }
 .jv-md :deep(.jv-md-tablewrap) { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin: 4px 0 10px; }
 .jv-md :deep(.jv-md-table) { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 .jv-md :deep(.jv-md-table th) { padding: 8px 13px; font-weight: 550; color: var(--text-3); background: var(--surface-1); border-bottom: 1px solid var(--border); }
@@ -1489,11 +1954,21 @@ onBeforeUnmount(() => {
 .jv-settings-head { display: flex; align-items: center; justify-content: space-between; padding: 15px 18px; border-bottom: 1px solid var(--border); flex: none; }
 .jv-settings-body { flex: 1; overflow-y: auto; padding: 18px 22px 28px; }
 .jv-set-sec { font-size: 11px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: .04em; margin: 0 0 8px; }
+/* openclaw-style usage stat cards */
+.jv-statgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+.jv-stat { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 13px 15px; }
+.jv-stat-label { font-size: 10px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--text-3); }
+.jv-stat-val { font-size: 22px; font-weight: 650; color: var(--text); margin-top: 5px; line-height: 1.05; }
+.jv-stat-sub { font-size: 11px; color: var(--text-3); margin-top: 3px; }
 .jv-set-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 13px; color: var(--text-2); }
 .jv-set-row:last-child { border-bottom: 0; }
 .jv-set-row b { font-weight: 600; color: var(--text); text-align: right; }
 .jv-set-empty { font-size: 12.5px; color: var(--text-3); padding: 14px 0; }
 .jv-set-hint { font-size: 11.5px; color: var(--text-3); margin-top: 9px; }
+.jv-kbd-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 13px; color: var(--text-2); }
+.jv-kbd-row:last-of-type { border-bottom: 0; }
+.jv-kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 22px; padding: 0 6px; background: var(--surface-1); border: 1px solid var(--border-2); border-bottom-width: 2px; border-radius: 6px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; font-weight: 600; color: var(--text); }
+.jv-kbd-plus { color: var(--text-3); margin: 0 3px; font-size: 11px; }
 .jv-est { font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
 .jv-usage-bar { margin-top: 12px; height: 7px; border-radius: 99px; background: var(--surface-2); overflow: hidden; }
 .jv-usage-fill { height: 100%; border-radius: 99px; background: var(--blue); transition: width .25s ease; }
@@ -1536,9 +2011,9 @@ onBeforeUnmount(() => {
 .jv-confirm-label { flex: 1; min-width: 0; font-size: 13px; font-weight: 550; color: var(--text); }
 .jv-confirm-no, .jv-confirm-yes { font-family: inherit; font-size: 12.5px; font-weight: 600; padding: 6px 14px; border-radius: 7px; cursor: pointer; border: 1px solid var(--border-2); flex: none; }
 .jv-confirm-no { background: var(--surface); color: var(--text-2); }
-.jv-confirm-no:hover { background: var(--surface-1); }
+.jv-confirm-no:hover { background: var(--text); color: var(--surface); border-color: var(--text); }
 .jv-confirm-yes { background: var(--blue); color: #fff; border-color: var(--blue); }
-.jv-confirm-yes:hover { filter: brightness(0.95); }
+.jv-confirm-yes:hover { background: var(--text); color: var(--surface); border-color: var(--text); }
 
 /* rich action cards (doc confirm / email draft) */
 .jv-action, .jv-email { margin-top: 12px; border: 1px solid var(--border); border-radius: 11px; overflow: hidden; background: var(--surface); }
@@ -1553,9 +2028,28 @@ onBeforeUnmount(() => {
 .jv-action-v { flex: 1; min-width: 0; color: var(--text); word-break: break-word; }
 .jv-action-foot { display: flex; align-items: center; gap: 8px; padding: 11px 14px; border-top: 1px solid var(--border); background: var(--surface-1); }
 .jv-action-primary { display: inline-flex; align-items: center; gap: 7px; font-family: inherit; font-size: 13px; font-weight: 600; padding: 8px 14px; border-radius: 8px; cursor: pointer; background: var(--blue); color: #fff; border: 1px solid var(--blue); }
-.jv-action-primary:hover { filter: brightness(0.95); }
+.jv-action-primary:hover { background: var(--text); color: var(--surface); border-color: var(--text); }
 .jv-action-2nd { display: inline-flex; align-items: center; gap: 7px; font-family: inherit; font-size: 13px; font-weight: 550; padding: 8px 13px; border-radius: 8px; cursor: pointer; background: var(--surface); color: var(--text-2); border: 1px solid var(--border-2); }
-.jv-action-2nd:hover { background: var(--surface-2); color: var(--text); }
+.jv-action-2nd:hover { background: var(--text); color: var(--surface); border-color: var(--text); }
+/* Dark mode: a black hover is invisible on the dark surface and the invert
+   would flash a stark white button, so neutral buttons get a subtle elevated
+   grey hover and primaries keep their colour (just brighter). */
+.jv-dark .jv-iconbtn:hover,
+.jv-dark .jv-iconbtn-bd:hover,
+.jv-dark .jv-artifact-head .jv-iconbtn:hover,
+.jv-dark .jv-modelpill:hover,
+.jv-dark .jv-confirm-no:hover,
+.jv-dark .jv-action-2nd:hover { background: var(--surface-3) !important; color: var(--text) !important; border-color: var(--border-2) !important; }
+.jv-dark .jv-iconbtn:hover svg,
+.jv-dark .jv-iconbtn-bd:hover svg,
+.jv-dark .jv-modelpill:hover svg { stroke: var(--text) !important; }
+.jv-dark .jv-modelpill:hover span { color: var(--text) !important; }
+.jv-dark .jv-newchat:hover,
+.jv-dark .jv-sendbtn:hover:not(:disabled),
+.jv-dark .jv-confirm-yes:hover,
+.jv-dark .jv-action-primary:hover { background: var(--blue) !important; color: #fff !important; border-color: var(--blue) !important; filter: brightness(1.18); }
+.jv-dark .jv-newchat:hover svg,
+.jv-dark .jv-sendbtn:hover:not(:disabled) svg { stroke: #fff !important; }
 .jv-action-discard { margin-left: auto; font-family: inherit; font-size: 12.5px; font-weight: 550; padding: 8px 10px; border: none; background: transparent; color: var(--text-3); cursor: pointer; }
 .jv-action-discard:hover { color: var(--red); }
 .jv-email-head { padding: 12px 14px 6px; }
@@ -1572,7 +2066,7 @@ onBeforeUnmount(() => {
 .jv-artifact-head { display: flex; align-items: center; gap: 9px; padding: 11px 12px 11px 14px; border-bottom: 1px solid var(--border); flex: none; }
 .jv-artifact-head svg { color: var(--text-3); flex: none; }
 .jv-artifact-head-title { font-size: 14px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
-.jv-artifact-head .jv-iconbtn:hover { background: var(--surface-1); color: var(--text-2); }
+.jv-artifact-head .jv-iconbtn:hover { background: var(--text) !important; color: var(--surface) !important; }
 .jv-artifact-body { flex: 1; min-height: 0; overflow: auto; background: var(--surface-1); display: flex; flex-direction: column; }
 .jv-artifact-frame { flex: 1; width: 100%; border: 0; background: #fff; }
 .jv-artifact-img { max-width: 100%; height: auto; margin: auto; padding: 16px; }
