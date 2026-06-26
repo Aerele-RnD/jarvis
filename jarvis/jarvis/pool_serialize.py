@@ -107,6 +107,12 @@ def validate_models(settings) -> list:
                 acc_ref = a.account_ref if hasattr(a, "account_ref") else a.get("account_ref", "")
                 upstream = a.upstream if hasattr(a, "upstream") else a.get("upstream", "")
 
+                # Blank account_ref on enabled subscription account
+                if not acc_ref:
+                    errors.append(
+                        f"{label} account[{j}]: subscription account is missing account_ref"
+                    )
+
                 # anthropic upstream is ToS-banned
                 if upstream == "anthropic":
                     errors.append(
@@ -196,7 +202,7 @@ def build_pool_payload(settings):
                 blob_raw = (a.oauth_blob if hasattr(a, "oauth_blob") else a.get("oauth_blob", "")) or ""
                 if blob_raw:
                     parsed, _ = _safe_json_loads(blob_raw)
-                    if parsed is not None:
+                    if parsed is not None and acc_ref:
                         oauth_blobs[acc_ref] = parsed
 
             # Use common upstream if consistent; fall back to "openai"

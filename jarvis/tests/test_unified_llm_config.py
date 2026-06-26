@@ -385,11 +385,10 @@ class TestPoolSerializeFromSettings(FrappeTestCase):
         m = _api_key_model(api_key="", enabled=1)
         settings = _make_settings_with_models([m])
         spec, api_keys, _ = build_pool_payload(settings)
-        # Either the model is skipped entirely, or key_ref is absent from the entry
+        # The blank-key model must not have key_ref at all
         for entry in spec.get("models", []):
-            if "key_ref" in entry:
-                self.assertIn(entry["key_ref"], api_keys,
-                              "key_ref in spec must have a corresponding entry in api_keys")
+            self.assertNotIn("key_ref", entry,
+                             "blank api_key model must not emit key_ref in spec")
 
     # ------------------------------------------------------------------ #
     # anthropic upstream → validate_models error
@@ -406,3 +405,123 @@ class TestPoolSerializeFromSettings(FrappeTestCase):
             any("anthropic" in e.lower() or "tos" in e.lower() or "upstream" in e.lower() for e in errors),
             f"Expected anthropic upstream ToS error, got: {errors}"
         )
+
+    # ------------------------------------------------------------------ #
+    # (i) Blank account_ref on subscription account
+    # ------------------------------------------------------------------ #
+
+    def test_blank_account_ref_on_subscription_is_a_validate_error(self):
+        """Enabled subscription account with blank account_ref → validate_models error."""
+        _, validate_models, _ = self._imports()
+        acc = _account(account_ref="")  # blank account_ref
+        m = _subscription_model(accounts=[acc])
+        settings = _make_settings_with_models([m])
+        errors = validate_models(settings)
+        self.assertTrue(
+            any("account_ref" in e.lower() or "missing" in e.lower() for e in errors),
+            f"Expected blank account_ref error, got: {errors}"
+        )
+
+    def test_blank_account_ref_does_not_write_empty_string_oauth_key(self):
+        """Enabled subscription account with blank account_ref must not produce oauth_blobs['']."""
+        build_pool_payload, _, _ = self._imports()
+        acc = _account(account_ref="", oauth_blob='{"token":"secret"}')
+        m = _subscription_model(accounts=[acc])
+        settings = _make_settings_with_models([m])
+        _, _, oauth_blobs = build_pool_payload(settings)
+        self.assertNotIn("", oauth_blobs,
+                         "blank account_ref must NOT produce an empty-string key in oauth_blobs")
+
+
+# ---------------------------------------------------------------------------
+# Task 3: E2E serialize → llm_proxy.validate tests
+# (ported from test_jarvis_llm_pool.py — re-sourced from Jarvis Settings)
+# ---------------------------------------------------------------------------
+
+try:
+    import llm_proxy as _llm_proxy_mod
+    _HAS_LLM_PROXY = True
+except ImportError:
+    _HAS_LLM_PROXY = False
+
+
+class TestPoolSerializeE2E(FrappeTestCase):
+    """E2E tests: build_pool_payload(settings) → PoolSpec → llm_proxy.validate → zero issues."""
+
+    def _imports(self):
+        from jarvis.jarvis.pool_serialize import build_pool_payload
+        return build_pool_payload
+
+    def _make_settings_dynamic_both_tiers(self):
+        """Settings with 1 strong + 1 cheap api_key model — routing_mode must stay dynamic."""
+        strong = _api_key_model(
+            model="gpt-4o", tier="strong", order=0, enabled=1,
+            api_key="sk-strong", provider="openai_compat",
+            base_url="https://api.openai.com",
+        )
+        cheap = _api_key_model(
+            model="gpt-3.5-turbo", tier="cheap", order=1, enabled=1,
+            api_key="sk-cheap", provider="openai_compat",
+            base_url="https://api.openai.com",
+        )
+        settings = _make_settings_with_models([strong, cheap])
+        return settings
+
+    def _make_settings_two_strong(self):
+        """Settings with 2 strong api_key models — no cheap tier → routing_mode must fall back to failover."""
+        m1 = _api_key_model(
+            model="gpt-4o", tier="strong", order=0, enabled=1,
+            api_key="sk-a", provider="openai_compat",
+            base_url="https://api.openai.com",
+        )
+        m2 = _api_key_model(
+            model="gpt-4-turbo", tier="strong", order=1, enabled=1,
+            api_key="sk-b", provider="openai_compat",
+            base_url="https://api.openai.com",
+        )
+        settings = _make_settings_with_models([m1, m2])
+        return settings
+
+    def test_e2e_dynamic_pool_with_both_tiers_validates_clean(self):
+        """1 cheap + 1 strong → routing_mode stays 'dynamic', classifier present, validate() clean."""
+        import unittest
+        if not _HAS_LLM_PROXY:
+            raise unittest.SkipTest("llm_proxy not installed")
+
+        from llm_proxy.schema import PoolSpec
+        from llm_proxy.validate import validate
+
+        build_pool_payload = self._imports()
+        settings = self._make_settings_dynamic_both_tiers()
+        spec, _, _ = build_pool_payload(settings)
+
+        self.assertEqual(spec["routing_mode"], "dynamic",
+                         f"expected dynamic routing_mode, got {spec['routing_mode']}")
+        self.assertIn("classifier", spec,
+                      "classifier key must be present for dynamic routing")
+
+        pool_spec = PoolSpec(**spec)
+        issues = validate(pool_spec)
+        self.assertEqual(issues, [], f"Expected zero validate issues, got: {issues}")
+
+    def test_e2e_two_strong_pool_falls_back_to_failover_and_validates_clean(self):
+        """2 strong models (no cheap) → routing_mode falls back to 'failover', validate() clean."""
+        import unittest
+        if not _HAS_LLM_PROXY:
+            raise unittest.SkipTest("llm_proxy not installed")
+
+        from llm_proxy.schema import PoolSpec
+        from llm_proxy.validate import validate
+
+        build_pool_payload = self._imports()
+        settings = self._make_settings_two_strong()
+        spec, _, _ = build_pool_payload(settings)
+
+        self.assertEqual(spec["routing_mode"], "failover",
+                         f"expected failover fallback, got {spec['routing_mode']}")
+        self.assertNotIn("classifier", spec,
+                         "classifier must NOT be emitted for failover mode")
+
+        pool_spec = PoolSpec(**spec)
+        issues = validate(pool_spec)
+        self.assertEqual(issues, [], f"Expected zero validate issues, got: {issues}")
