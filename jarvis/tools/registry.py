@@ -77,6 +77,11 @@ _TOOL_NAMES: tuple[str, ...] = (
     "remove_tag",
     "follow_document",
     "unfollow_document",
+    # Tier 4 analytics + visualization: dataset stats + dashboard/chart
+    # creation (clean-room reimplementations of capability gaps).
+    "summarize_dataset",
+    "create_dashboard_chart",
+    "create_dashboard",
 )
 
 
