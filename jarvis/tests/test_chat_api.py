@@ -544,6 +544,37 @@ class TestSendMessageWithModelOverride(_ChatTestCase):
 		)
 
 
+class TestThinkingOverride(FrappeTestCase):
+	def setUp(self):
+		self.conv = frappe.get_doc({"doctype": "Jarvis Conversation", "title": "t"}).insert()
+
+	def test_set_thinking_persists_valid_level(self):
+		from jarvis.chat import api
+
+		out = api.set_conversation_thinking(self.conv.name, "low")
+		self.assertTrue(out["ok"])
+		self.assertEqual(out["data"]["effective_thinking"], "low")
+		self.assertEqual(
+			frappe.db.get_value("Jarvis Conversation", self.conv.name, "thinking_override"),
+			"low",
+		)
+
+	def test_set_thinking_rejects_invalid_level(self):
+		from jarvis.chat import api
+
+		out = api.set_conversation_thinking(self.conv.name, "ultra")
+		self.assertFalse(out["ok"])
+		self.assertEqual(out["error"]["code"], "unknown_thinking")
+
+	def test_set_thinking_empty_clears(self):
+		from jarvis.chat import api
+
+		api.set_conversation_thinking(self.conv.name, "high")
+		out = api.set_conversation_thinking(self.conv.name, "")
+		self.assertTrue(out["ok"])
+		self.assertEqual(out["data"]["effective_thinking"], "medium")
+
+
 class TestChatUiSettings(FrappeTestCase):
 	"""get_chat_ui_settings serves the canonical subscription catalogue +
 	per-provider defaults so the JS pages don't duplicate them."""
