@@ -119,7 +119,13 @@ from jarvis.hooks import DEFAULT_ADMIN_URL  # noqa: E402  - used by _admin_url()
 
 
 def _admin_url(settings) -> str:
-	return ((settings.jarvis_admin_url or "").rstrip("/")) or DEFAULT_ADMIN_URL
+	# Per-customer override wins; otherwise fall through to the bench-wide
+	# default - site/common config ``jarvis_admin_url`` then the hardcoded
+	# fallback - resolved FRESH via get_default_admin_url() so a config value
+	# added after worker start is honored without a restart (the module-level
+	# DEFAULT_ADMIN_URL import binds once and would miss late config changes).
+	from jarvis.hooks import get_default_admin_url
+	return ((settings.jarvis_admin_url or "").rstrip("/")) or get_default_admin_url().rstrip("/")
 
 
 def signup(email: str, company_name: str, plan: str, coupon: str | None = None) -> dict:

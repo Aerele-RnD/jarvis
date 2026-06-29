@@ -14,23 +14,26 @@ from jarvis.exceptions import (
 
 
 def _require_admin_url() -> None:
-	"""Raise ValidationError if Jarvis Settings.jarvis_admin_url is blank.
+	"""Raise ValidationError if no admin URL is configured deliberately.
 
-	dev_onboard and start_signup both depend on this field being set
-	deliberately. The bench's admin_client falls back to the
-	DEFAULT_ADMIN_URL constant when the override is empty, which on a
-	multi-site bench may resolve to the wrong control plane and silently
-	land the wrong tenancy. Fail fast here with a message the operator
-	can act on (open Jarvis Settings, paste the URL) instead of letting
-	the request reach admin under the default.
+	dev_onboard and start_signup must target a deliberately-chosen control
+	plane. The admin URL resolves (admin_client._admin_url ->
+	hooks.get_default_admin_url) in this order: (1) Jarvis Settings.
+	jarvis_admin_url per-customer override, (2) ``jarvis_admin_url`` in
+	site_config / common_site_config (via frappe.conf), (3) the hardcoded
+	fallback for fresh installs. Silently falling through to (3) on a
+	multi-site bench may land the wrong tenancy, so require (1) or (2) to be
+	set - only (3)-alone is the fail-fast case. (1) wins when both are set.
 	"""
-	url = (
-		frappe.db.get_single_value("Jarvis Settings", "jarvis_admin_url") or ""
-	).strip()
-	if not url:
+	configured = (
+		(frappe.db.get_single_value("Jarvis Settings", "jarvis_admin_url") or "").strip()
+		or (frappe.conf.get("jarvis_admin_url") or "").strip()
+	)
+	if not configured:
 		raise frappe.ValidationError(
-			"Jarvis Settings -> Jarvis Admin URL is blank. "
-			"Set it before continuing onboarding."
+			"No Jarvis Admin URL configured. Set Jarvis Settings -> Jarvis "
+			"Admin URL, or 'jarvis_admin_url' in site_config.json, before "
+			"continuing onboarding."
 		)
 
 
