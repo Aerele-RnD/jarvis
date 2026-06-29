@@ -221,8 +221,15 @@ def run_agent_turn(
 	# knows whether to confirm mutating ops. Default (off) = confirm; the persona
 	# confirms by default, so we only signal the non-default "auto" mode.
 	auto_apply = "; auto-apply changes: ON" if settings.auto_apply_changes else ""
+	# Custom-skill invocation: if the user typed /slug for an enabled custom
+	# skill, name the installed custom-<slug> skill(s) in the system context so
+	# the agent activates them deterministically (openclaw has no documented
+	# user-invocable trigger; the SKILL.md is already in workspace/skills/).
+	from jarvis.chat.custom_skills import invoked_skill_clause
+
+	skill_clause = invoked_skill_clause(msg_row.get("content") or "")
 	user_message = (
-		f"[Context: today is {today}; chat user: {chat_user}{auto_apply}]"
+		f"[Context: today is {today}; chat user: {chat_user}{auto_apply}{skill_clause}]"
 		f"\n\n{user_message or ''}"
 	)
 
