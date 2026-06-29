@@ -49,6 +49,8 @@
     "last_sync_section",
     "last_sync_at",
     "last_sync_status",
+    "custom_skills_synced_at",
+    "custom_skills_sync_status",
     "agent_tools_section",
     "run_query_doctype_allowlist",
     "auto_apply_changes",
@@ -335,6 +337,18 @@
       "fieldname": "last_sync_status",
       "fieldtype": "Long Text",
       "label": "Last Sync Status",
+      "read_only": 1
+    },
+    {
+      "fieldname": "custom_skills_synced_at",
+      "fieldtype": "Datetime",
+      "label": "Custom Skills Synced At",
+      "read_only": 1
+    },
+    {
+      "fieldname": "custom_skills_sync_status",
+      "fieldtype": "Long Text",
+      "label": "Custom Skills Sync Status",
       "read_only": 1
     },
     {

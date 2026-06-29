@@ -151,6 +151,12 @@ class JarvisSettings(Document):
                 "last_sync_status": f"ok ({resolved_action} via admin)",
             })
             terminal_written = True
+            # A "restart" means the container may be freshly (re)provisioned
+            # (rebind / reboot recovery / image upgrade) with an EMPTY
+            # custom_skills/. Re-push the customer's custom skills so a rebuilt
+            # container repopulates them from the DB - no manual re-save needed.
+            if action == "restart":
+                self._resync_custom_skills_after_restart()
         except admin_client.AdminAuthError as e:
             self.db_set({
                 "last_sync_at": frappe.utils.now(),
@@ -199,6 +205,33 @@ class JarvisSettings(Document):
                     # already in an error path and re-raising would mask
                     # the real exception.
                     pass
+
+    def _resync_custom_skills_after_restart(self) -> None:
+        """Re-push the customer's custom skills to a (re)provisioned container.
+
+        On a container rebuild the per-container ``custom_skills/`` is empty, so
+        the durable ``Jarvis Custom Skill`` rows must be re-pushed. Enqueued (the
+        same deduped job the SPA "save" uses) so it runs after this restart and
+        does its own container restart. No-op when there are no custom skills, so
+        customers without skills never pay an extra restart.
+        """
+        try:
+            if not frappe.db.count("Jarvis Custom Skill"):
+                return
+            frappe.db.set_single_value(
+                "Jarvis Settings", "custom_skills_sync_status",
+                "pending: applying skills", update_modified=False,
+            )
+            frappe.enqueue(
+                "jarvis.chat.custom_skills_api._enqueued_push_custom_skills",
+                queue="long", timeout=180,
+                job_id="jarvis_custom_skills_push", deduplicate=True,
+            )
+        except Exception:
+            frappe.log_error(
+                title="Jarvis: custom-skills resync after restart failed",
+                message=frappe.get_traceback(),
+            )
 
     def _classify_llm_change(self) -> str | None:
         """Return one of: None | 'reload' | 'restart'.

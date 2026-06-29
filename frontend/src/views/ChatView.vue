@@ -277,17 +277,71 @@
 									<button class="jv-confirm-no" @click="answerConfirm(false)">Cancel</button>
 									<button class="jv-confirm-yes" @click="answerConfirm(true)">Confirm</button>
 								</div>
+								<!-- interactive clarifying questions (Claude-style cards; one Submit) -->
+								<div v-else-if="askFor === m.name && activeAsk" class="jv-ask">
+									<div v-for="(q, qi) in activeAsk.questions" :key="qi" class="jv-ask-q">
+										<div class="jv-ask-qt"><span class="jv-ask-num">{{ qi + 1 }}</span>{{ q.q }}</div>
+										<!-- yes/no, with optional custom labels (e.g. Approve / Reject) -->
+										<div v-if="q.type === 'yesno'" class="jv-ask-opts">
+											<button v-for="(lbl, li) in (q.options.length === 2 ? q.options : ['Yes', 'No'])" :key="li" class="jv-ask-opt" :class="{ on: isPicked(qi, lbl) }" @click="pickSingle(qi, lbl)"><span v-if="isPicked(qi, lbl)" class="jv-ask-tick">✓</span>{{ lbl }}</button>
+										</div>
+										<!-- single / multi choice -->
+										<div v-else-if="q.type === 'single' || q.type === 'multi'" class="jv-ask-opts">
+											<button v-for="(opt, oi) in q.options" :key="oi" class="jv-ask-opt" :class="{ on: isPicked(qi, opt) }" @click="q.type === 'multi' ? toggleMulti(qi, opt) : pickSingle(qi, opt)"><span v-if="isPicked(qi, opt)" class="jv-ask-tick">✓</span>{{ opt }}</button>
+										</div>
+										<!-- date / datetime / free text fields -->
+										<input v-else-if="q.type === 'date'" type="date" class="jv-ask-field" :value="askSel[qi] || ''" @input="pickSingle(qi, $event.target.value)" />
+										<input v-else-if="q.type === 'datetime'" type="datetime-local" class="jv-ask-field" :value="askSel[qi] || ''" @input="pickSingle(qi, $event.target.value)" />
+										<input v-else-if="q.type === 'text'" type="text" class="jv-ask-field" :value="askSel[qi] || ''" @input="pickSingle(qi, $event.target.value)" placeholder="Type your answer…" @keydown.enter.prevent />
+										<!-- link: search a record of the given DocType -->
+										<div v-else-if="q.type === 'link'" class="jv-ask-link">
+											<input type="text" class="jv-ask-field" :value="(askLink[qi] && askLink[qi].q != null) ? askLink[qi].q : (askSel[qi] || '')" @input="onLinkSearch(qi, q.doctype, $event.target.value)" @focus="onLinkSearch(qi, q.doctype, (askLink[qi] && askLink[qi].q) || '')" :placeholder="'Search ' + (q.doctype || 'records') + '…'" @keydown.enter.prevent />
+											<div v-if="askLink[qi] && askLink[qi].open && (askLink[qi].items || []).length" class="jv-ask-linkmenu">
+												<button v-for="(it, ii) in askLink[qi].items" :key="ii" @click="pickLink(qi, it)"><b>{{ it.value }}</b><span v-if="it.label"> · {{ it.label }}</span></button>
+											</div>
+										</div>
+										<!-- Other free-text only for choice questions -->
+										<input v-if="q.type === 'single' || q.type === 'multi' || q.type === 'yesno'" class="jv-ask-other" v-model="askOther[qi]" placeholder="Other…" @keydown.enter.prevent />
+									</div>
+									<div class="jv-ask-foot">
+										<button class="jv-ask-submit" :disabled="!askReady" @click="submitAsk">Submit answers</button>
+										<span v-if="!askReady" class="jv-ask-hint">Answer each question to continue</span>
+									</div>
+								</div>
+								<!-- record cards: scrollable card strip instead of a wide table -->
+								<div v-if="cardsOf(m)" class="jv-cards">
+									<div v-if="cardsOf(m).title" class="jv-cards-title">{{ cardsOf(m).title }}</div>
+									<div class="jv-cards-strip">
+										<div v-for="(c, ci) in cardsOf(m).cards" :key="ci" class="jv-card">
+											<a v-if="c.doctype && c.name" :href="`/app/${_deskSlug(c.doctype)}/${encodeURIComponent(c.name)}`" target="_blank" rel="noopener" class="jv-card-title jv-card-link" :title="'Open ' + c.doctype">{{ c.title }}</a>
+											<div v-else class="jv-card-title">{{ c.title }}</div>
+											<div v-if="c.subtitle" class="jv-card-sub">{{ c.subtitle }}</div>
+											<div v-for="(f, fi) in c.fields" :key="fi" class="jv-card-field"><span class="jv-card-k">{{ f.label }}</span><span class="jv-card-v">{{ f.value }}</span></div>
+										</div>
+									</div>
+								</div>
 								<!-- rich outputs: agent artifacts rendered by type (sandboxed) -->
-								<button v-for="cv in (m.canvas || [])" :key="cv.name" class="jv-artifact" @click="openArtifact(m, cv)" :title="'Open ' + cv.title">
-									<span class="jv-artifact-ic" :class="'t-' + cv.type">
-										<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></svg>
-									</span>
-									<span class="jv-artifact-txt">
-										<span class="jv-artifact-title">{{ cv.title }}</span>
-										<span class="jv-artifact-sub">{{ (cv.type || "file").toUpperCase() }} · open preview</span>
-									</span>
-									<svg class="jv-artifact-go" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6" /></svg>
-								</button>
+								<template v-for="cv in (m.canvas || [])" :key="cv.name">
+									<!-- generated image → clickable thumbnail (click to enlarge) -->
+									<button v-if="cv.type === 'image' && cv.file_url" class="jv-img-artifact" @click="openArtifact(m, cv)" :title="'Open ' + cv.title">
+										<img :src="cv.file_url" :alt="cv.title" loading="lazy" />
+										<span class="jv-img-artifact-cap"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M14 10l7-7M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5" /></svg>{{ cv.title }}</span>
+									</button>
+									<!-- everything else → the file card -->
+									<button v-else class="jv-artifact" @click="openArtifact(m, cv)" :title="'Open ' + cv.title">
+										<span class="jv-artifact-ic" :class="'t-' + cv.type">
+											<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></svg>
+										</span>
+										<span class="jv-artifact-txt">
+											<span class="jv-artifact-title">{{ cv.title }}</span>
+											<span class="jv-artifact-sub">{{ (cv.type || "file").toUpperCase() }} · open preview</span>
+										</span>
+										<svg class="jv-artifact-go" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6" /></svg>
+									</button>
+								</template>
+								<div v-if="skillsUsedOf(m).length" class="jv-skillused">
+									<span v-for="(sk, si) in skillsUsedOf(m)" :key="si" class="jv-skillused-chip" :title="'This reply used the ' + sk + ' skill'"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 7v10l8 5 8-5V7z" /><path d="M12 22V12M12 12 4 7M12 12l8-5" /></svg>{{ sk }}</span>
+								</div>
 								<div v-if="runMeta[m.name] && !m.error" class="jv-meta">
 									<span :title="(runMeta[m.name].names || []).join(', ')"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 1 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></svg>{{ runMeta[m.name].tools }} tool{{ runMeta[m.name].tools === 1 ? "" : "s" }}</span>
 									<span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>{{ (runMeta[m.name].ms / 1000).toFixed(1) }}s</span>
@@ -366,6 +420,88 @@
 				</div>
 			</div>
 		</main>
+
+		<!-- ============ RIGHT RAIL: CUSTOM SKILLS (opens the center popup) ============ -->
+		<aside class="jv-skillbar">
+			<div class="jv-skillrail">
+				<button class="jv-skillrail-btn" @click="openSkillsModal()" title="Skills">
+					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 7v10l8 5 8-5V7z" /><path d="M12 22V12M12 12 4 7M12 12l8-5" /></svg>
+				</button>
+				<button class="jv-skillrail-btn jv-skillrail-new" @click="openSkillsModal(true)" title="New skill">
+					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>
+				</button>
+			</div>
+		</aside>
+
+		<!-- ============ SKILLS POPUP (centered) ============ -->
+		<transition name="jv-fade">
+			<div v-if="skillsModalOpen" class="jv-skills-overlay" @click.self="closeSkillsModal">
+				<div class="jv-skills-modal">
+					<div class="jv-skills-head">
+						<div style="min-width:0;">
+							<div class="jv-skills-title">{{ skillFormOpen ? (skillForm.name ? "Edit skill" : "New skill") : "Skills" }}</div>
+							<div class="jv-skills-sub">Abilities your assistant can use — type <kbd class="jv-kbd">/</kbd> in chat to trigger one.</div>
+						</div>
+						<button class="jv-iconbtn" title="Close" @click="closeSkillsModal" style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;color:var(--text-3);border:none;background:transparent;border-radius:7px;cursor:pointer;flex:none;">
+							<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+						</button>
+					</div>
+					<div class="jv-skills-status" :class="{ ok: skillsSync.last_sync_status.startsWith('ok'), err: skillsSync.last_sync_status.startsWith('failed') }">
+						<template v-if="skillsSync.pending"><span class="jv-skill-dot spin"></span> Updating your assistant… (restarts briefly, ~30s)</template>
+						<template v-else-if="skillsSync.last_sync_status.startsWith('ok')"><span class="jv-skill-dot ok"></span> Your assistant is up to date.</template>
+						<template v-else-if="skillsSync.last_sync_status.startsWith('failed')"><span class="jv-skill-dot err"></span> Couldn't update your assistant. {{ skillsSync.last_sync_status.replace("failed:", "").trim() }}</template>
+						<template v-else><span class="jv-skill-dot"></span> Changes you save are pushed to your assistant automatically.</template>
+					</div>
+					<div class="jv-skills-body">
+						<!-- create / edit form -->
+						<div v-if="skillFormOpen" class="jv-skill-form">
+							<div v-if="skillError" class="jv-skill-err">{{ skillError }}</div>
+							<label class="jv-skill-l">Name</label>
+							<input class="jv-skill-in" v-model="skillForm.skill_name" :disabled="!!skillForm.name" placeholder="e.g. monthly-close" maxlength="40" />
+							<div class="jv-set-hint" style="margin:3px 0 10px;">Lowercase letters, digits and hyphens. Trigger it in chat with <kbd class="jv-kbd">/{{ skillForm.skill_name || 'name' }}</kbd>.</div>
+							<label class="jv-skill-l">Description</label>
+							<input class="jv-skill-in" v-model="skillForm.description" placeholder="When should the assistant use this skill?" maxlength="500" />
+							<div class="jv-set-hint" style="margin:3px 0 10px;">A short hint so the assistant knows when this skill applies.</div>
+							<label class="jv-skill-l">Instructions</label>
+							<textarea class="jv-skill-ta" v-model="skillForm.instructions" rows="9" placeholder="Markdown instructions the assistant follows when this skill runs…"></textarea>
+							<div class="jv-set-row" style="margin-top:10px;"><span>Let users trigger it with /<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Appears in the chat “/” menu</span></span><button class="jv-switch" :class="{ on: skillForm.user_invocable }" @click="skillForm.user_invocable = !skillForm.user_invocable" role="switch" :aria-checked="String(!!skillForm.user_invocable)"><span class="jv-switch-knob"></span></button></div>
+							<div class="jv-set-row"><span>Enabled<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Off = saved as a draft, not used by the assistant</span></span><button class="jv-switch" :class="{ on: skillForm.enabled }" @click="skillForm.enabled = !skillForm.enabled" role="switch" :aria-checked="String(!!skillForm.enabled)"><span class="jv-switch-knob"></span></button></div>
+							<div class="jv-skill-formfoot">
+								<button class="jv-skill-btn" :disabled="skillSaving || skillsSync.pending" @click="saveSkill">{{ skillSaving ? "Saving…" : "Save skill" }}</button>
+								<button class="jv-skill-btn ghost" :disabled="skillSaving" @click="skillFormOpen = false">Cancel</button>
+								<span class="jv-skill-foothint">Saving updates your assistant automatically.</span>
+							</div>
+						</div>
+						<!-- skills list -->
+						<template v-else>
+							<button class="jv-skill-newrow" @click="newSkill"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg> New skill</button>
+							<div v-if="!customSkills.length" class="jv-set-empty" style="text-align:center;padding:26px 0;">No skills yet.<br />Create one to give your assistant a new ability.</div>
+							<div v-for="s in customSkills" :key="s.name" class="jv-skill-row">
+								<div style="min-width:0;flex:1;cursor:pointer;" @click="editSkill(s)">
+									<div class="jv-skill-name">/{{ s.skill_name }} <span v-if="!s.enabled" class="jv-skill-off">draft</span></div>
+									<div class="jv-skill-desc">{{ s.description }}</div>
+								</div>
+								<button class="jv-iconbtn" title="Edit" @click="editSkill(s)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg></button>
+								<button class="jv-iconbtn" title="Delete" @click="removeSkill(s)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" /></svg></button>
+							</div>
+						</template>
+					</div>
+				</div>
+			</div>
+		</transition>
+
+		<!-- ============ PROACTIVE MESSAGE TOAST (Jarvis started a chat) ============ -->
+		<transition name="jv-fade">
+			<div v-if="proactiveToast" class="jv-toast" @click="openProactive">
+				<div class="jv-toast-ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg></div>
+				<div style="min-width:0;flex:1;">
+					<div class="jv-toast-title">{{ proactiveToast.title }}</div>
+					<div class="jv-toast-preview">{{ proactiveToast.preview }}</div>
+				</div>
+				<button class="jv-toast-open" @click.stop="openProactive">Open</button>
+				<button class="jv-toast-x" @click.stop="proactiveToast = null" title="Dismiss"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg></button>
+			</div>
+		</transition>
 
 		<!-- ============ SETTINGS (openclaw-style console) ============ -->
 		<transition name="jv-fade">
@@ -559,7 +695,7 @@
 </template>
 
 <script setup>
-import { ref, computed, inject, onMounted, onBeforeUnmount, nextTick } from "vue"
+import { ref, computed, inject, onMounted, onBeforeUnmount, nextTick, watch } from "vue"
 import { useRoute } from "vue-router"
 import * as api from "@/api"
 import { renderMarkdown } from "@/markdown"
@@ -658,6 +794,99 @@ const modelOverride = ref("")
 // ---- settings panel + theme (openclaw-style console) ----
 const settingsOpen = ref(false)
 const settingsTab = ref("overview")
+
+// --- Custom skills (Skills settings tab + "/" composer menu) ---
+const customSkills = ref([])
+const skillFormOpen = ref(false)
+const skillSaving = ref(false)
+const skillError = ref("")
+const skillForm = ref({ name: "", skill_name: "", description: "", instructions: "", user_invocable: true, enabled: true })
+const skillsSync = ref({ last_sync_status: "", pending: false })
+let _skillsPoll = null
+
+function _skillErr(e) {
+	return (e && ((e.messages && e.messages[0]) || e.message)) || "Something went wrong."
+}
+async function loadCustomSkills() {
+	try { customSkills.value = (await api.listCustomSkills()) || [] } catch (e) { /* keep prior */ }
+}
+async function loadSkillsSync() {
+	try {
+		const s = (await api.getCustomSkillsSyncStatus()) || {}
+		skillsSync.value = { last_sync_status: s.last_sync_status || "", pending: !!s.pending }
+	} catch (e) { /* ignore */ }
+}
+// The right skills sidebar is always present as a slim icon rail (collapsed);
+// clicking the rail expands it. openclaw-style, mirrors the left sidebar rail.
+const skillsModalOpen = ref(false)
+function openSkillsModal(openForm) {
+	skillsModalOpen.value = true
+	skillError.value = ""
+	loadCustomSkills()
+	loadSkillsSync()
+	if (openForm === true) newSkill()
+	else skillFormOpen.value = false
+}
+function closeSkillsModal() {
+	skillsModalOpen.value = false
+	skillFormOpen.value = false
+	skillError.value = ""
+}
+// Push the current skills to the assistant — the old "Apply", now run
+// automatically on save/delete. No confirm: an empty set legitimately clears
+// all custom skills (e.g. after deleting the last one).
+async function syncSkills() {
+	try {
+		await api.applyCustomSkills()
+		skillsSync.value = { last_sync_status: "pending: applying skills", pending: true }
+		if (_skillsPoll) clearInterval(_skillsPoll)
+		_skillsPoll = setInterval(async () => {
+			await loadSkillsSync()
+			if (!skillsSync.value.pending) { clearInterval(_skillsPoll); _skillsPoll = null }
+		}, 3000)
+	} catch (e) { skillError.value = _skillErr(e) }
+}
+function newSkill() {
+	skillError.value = ""
+	skillForm.value = { name: "", skill_name: "", description: "", instructions: "", user_invocable: true, enabled: true }
+	skillFormOpen.value = true
+}
+async function editSkill(s) {
+	skillError.value = ""
+	try {
+		const full = await api.getCustomSkill(s.name)
+		skillForm.value = {
+			name: full.name, skill_name: full.skill_name, description: full.description || "",
+			instructions: full.instructions || "", user_invocable: !!full.user_invocable, enabled: !!full.enabled,
+		}
+		skillFormOpen.value = true
+	} catch (e) { skillError.value = _skillErr(e) }
+}
+async function saveSkill() {
+	skillError.value = ""
+	skillSaving.value = true
+	try {
+		const f = skillForm.value
+		const payload = {
+			skill_name: (f.skill_name || "").trim().toLowerCase(),
+			description: f.description, instructions: f.instructions,
+			user_invocable: f.user_invocable ? 1 : 0, enabled: f.enabled ? 1 : 0,
+		}
+		if (f.name) await api.updateCustomSkill({ name: f.name, ...payload })
+		else await api.createCustomSkill(payload)
+		skillFormOpen.value = false
+		await loadCustomSkills()
+		syncSkills() // saving pushes to the assistant automatically
+	} catch (e) { skillError.value = _skillErr(e) } finally { skillSaving.value = false }
+}
+async function removeSkill(s) {
+	if (!window.confirm(`Delete “${s.skill_name}”? It will be removed from your assistant.`)) return
+	try {
+		await api.deleteCustomSkill(s.name)
+		await loadCustomSkills()
+		syncSkills() // deleting updates the assistant automatically
+	} catch (e) { skillError.value = _skillErr(e) }
+}
 const usage = ref(null) // { estimated, chat_tokens, month_tokens, total_tokens, budget_monthly, month_label }
 // Compact token count: 1234 → "1.2k", 2_500_000 → "2.5M".
 function fmtTokens(n) {
@@ -929,12 +1158,102 @@ const suggestions = [
 // from the visible prose.
 const _ACTION_RE = /```jarvis-action[ \t]*\n([\s\S]*?)```/
 const _CONFIRM_RE = /```confirm[ \t]*\n([\s\S]*?)```/
+// Interactive clarifying questions: the agent emits a ```jarvis-ask JSON block
+// (a list of questions, each single/multi/yesno with up to a few options); the
+// chat renders it as option cards with one Submit, and strips the raw block.
+const _ASK_RE = /```jarvis-ask[ \t]*\n([\s\S]*?)```/
+// A ```jarvis-cards block: a list of record cards the chat renders as a
+// horizontally-scrollable card strip instead of a wide Markdown table.
+const _CARDS_RE = /```jarvis-cards[ \t]*\n([\s\S]*?)```/
+// The agent declares which skill(s) it used to shape a reply in a ```jarvis-skill
+// block; the chat shows a small chip and strips the raw block.
+const _SKILL_RE = /```jarvis-skill[ \t]*\n([\s\S]*?)```/
 function stripBlocks(text) {
 	return (text || "")
 		.replace(/```jarvis-action[ \t]*\n[\s\S]*?```/g, "")
 		.replace(/```confirm[ \t]*\n[\s\S]*?```/g, "")
+		.replace(/```jarvis-ask[ \t]*\n[\s\S]*?```/g, "")
+		.replace(/```jarvis-cards[ \t]*\n[\s\S]*?```/g, "")
+		.replace(/```jarvis-skill[ \t]*\n[\s\S]*?```/g, "")
 		.replace(/\n{3,}/g, "\n\n")
 		.trim()
+}
+const _skillUsedCache = new Map()
+function skillsUsedOf(m) {
+	const content = (m && m.content) || ""
+	if (!content.includes("jarvis-skill")) return []
+	if (_skillUsedCache.has(content)) return _skillUsedCache.get(content)
+	let names = []
+	const mt = content.match(_SKILL_RE)
+	if (mt) {
+		names = mt[1]
+			.split(/[\n,]+/)
+			.map((s) => s.trim().replace(/^[-*]\s*/, ""))
+			.filter(Boolean)
+			.map((s) => s.replace(/^custom-/, "")) // hide the internal prefix
+			.slice(0, 6)
+		names = [...new Set(names)]
+	}
+	_skillUsedCache.set(content, names)
+	return names
+}
+const _cardsCache = new Map()
+function cardsOf(m) {
+	const content = (m && m.content) || ""
+	if (!content.includes("jarvis-cards")) return null
+	if (_cardsCache.has(content)) return _cardsCache.get(content)
+	let res = null
+	const mt = content.match(_CARDS_RE)
+	if (mt) {
+		try {
+			const a = JSON.parse(mt[1].trim())
+			const list = Array.isArray(a) ? a : a && a.cards
+			if (Array.isArray(list)) {
+				const cards = list.slice(0, 60).map((c) => ({
+					title: String(c.title || c.name || "").trim(),
+					subtitle: String(c.subtitle || "").trim(),
+					doctype: String(c.doctype || "").trim(),
+					name: String(c.name || "").trim(),
+					fields: Array.isArray(c.fields)
+						? c.fields.slice(0, 12).map((f) => ({ label: String(f.label || ""), value: String(f.value != null ? f.value : "") }))
+						: [],
+				})).filter((c) => c.title || c.fields.length)
+				if (cards.length) res = { title: String((a && a.title) || ""), cards }
+			}
+		} catch (e) {
+			res = null
+		}
+	}
+	_cardsCache.set(content, res)
+	return res
+}
+function askOf(m) {
+	const mt = ((m && m.content) || "").match(_ASK_RE)
+	if (!mt) return null
+	try {
+		const a = JSON.parse(mt[1].trim())
+		const raw = Array.isArray(a) ? a : a && a.questions
+		if (!Array.isArray(raw)) return null
+		const FIELD = ["date", "datetime", "link", "text"]
+		const questions = raw.slice(0, 6).map((q) => {
+			let type = q.type === "boolean" ? "yesno" : q.type
+			if (!["single", "multi", "yesno", ...FIELD].includes(type)) type = "single"
+			return {
+				q: String(q.q || q.question || "").trim(),
+				type,
+				// yesno may carry exactly 2 custom labels (e.g. ["Approve","Reject"]).
+				options: Array.isArray(q.options) ? q.options.map(String).slice(0, 8) : [],
+				doctype: type === "link" ? String(q.doctype || q.link || "").trim() : "",
+			}
+		}).filter((q) => {
+			if (!q.q) return false
+			if (q.type === "yesno" || FIELD.includes(q.type)) return true
+			return q.options.length > 0
+		})
+		return questions.length ? { questions } : null
+	} catch (e) {
+		return null
+	}
 }
 function actionOf(m) {
 	const mt = ((m && m.content) || "").match(_ACTION_RE)
@@ -1035,6 +1354,78 @@ function actionSend(text) {
 }
 function answerConfirm(ok) {
 	send(ok ? "Yes, go ahead." : "No, cancel that.")
+}
+
+// --- interactive clarifying questions (card on the last assistant message) ---
+const activeAsk = computed(() =>
+	_lastAssistant.value && !activeAction.value ? askOf(_lastAssistant.value) : null,
+)
+const askFor = computed(() => (activeAsk.value ? _lastAssistant.value.name : null))
+const askSel = ref({}) // qIdx -> string (single/yesno/date/datetime/text/link) | string[] (multi)
+const askOther = ref({}) // qIdx -> free-text (option types only)
+const askLink = ref({}) // qIdx -> { q, items, open } for link-type record search
+const _FIELD_TYPES = ["date", "datetime", "link", "text"]
+// Reset the draft whenever a new question set appears (new message asks).
+watch(askFor, () => {
+	askSel.value = {}
+	askOther.value = {}
+	askLink.value = {}
+})
+async function onLinkSearch(i, doctype, val) {
+	askLink.value = { ...askLink.value, [i]: { ...(askLink.value[i] || {}), q: val, open: true } }
+	if (!doctype) return
+	try {
+		const r = await api.searchLink(doctype, val)
+		const items = (r || []).map((x) => ({ value: x.value, label: x.description || "" })).slice(0, 8)
+		askLink.value = { ...askLink.value, [i]: { q: val, items, open: true } }
+	} catch (e) {
+		askLink.value = { ...askLink.value, [i]: { q: val, items: [], open: true } }
+	}
+}
+function pickLink(i, item) {
+	askSel.value = { ...askSel.value, [i]: item.value }
+	askLink.value = { ...askLink.value, [i]: { q: item.value, items: [], open: false } }
+}
+function pickSingle(i, opt) {
+	askSel.value = { ...askSel.value, [i]: opt }
+}
+function toggleMulti(i, opt) {
+	const cur = Array.isArray(askSel.value[i]) ? askSel.value[i].slice() : []
+	const ix = cur.indexOf(opt)
+	if (ix >= 0) cur.splice(ix, 1)
+	else cur.push(opt)
+	askSel.value = { ...askSel.value, [i]: cur }
+}
+function isPicked(i, opt) {
+	const v = askSel.value[i]
+	return Array.isArray(v) ? v.includes(opt) : v === opt
+}
+const askReady = computed(() => {
+	const spec = activeAsk.value
+	if (!spec) return false
+	return spec.questions.every((q, i) => {
+		const v = askSel.value[i]
+		if (_FIELD_TYPES.includes(q.type)) return v != null && String(v).trim() !== ""
+		const other = (askOther.value[i] || "").trim()
+		if (q.type === "multi") return (Array.isArray(v) && v.length > 0) || !!other
+		return (v != null && v !== "") || !!other
+	})
+})
+function submitAsk() {
+	const spec = activeAsk.value
+	if (!spec || !askReady.value) return
+	const lines = spec.questions.map((q, i) => {
+		const ans = []
+		const v = askSel.value[i]
+		if (Array.isArray(v)) ans.push(...v)
+		else if (v != null && v !== "") ans.push(v)
+		const other = (askOther.value[i] || "").trim()
+		if (other) ans.push(other)
+		return `${i + 1}. ${q.q} → ${ans.join(", ") || "(no answer)"}`
+	})
+	askSel.value = {}
+	askOther.value = {}
+	send("Here are my answers:\n" + lines.join("\n"))
 }
 function copyText(t) {
 	const s = t || ""
@@ -1536,6 +1927,15 @@ async function send(textArg) {
 	}
 }
 
+// Proactive (Jarvis-initiated) conversation toast.
+const proactiveToast = ref(null)
+function openProactive() {
+	const t = proactiveToast.value
+	if (!t) return
+	currentId.value = t.id
+	loadConversation(t.id)
+	proactiveToast.value = null
+}
 function onEvent(p) {
 	// Auto-generated title arrives async (worker titles the chat after the
 	// first real turn). Handle it before the current-conversation guard so the
@@ -1543,6 +1943,13 @@ function onEvent(p) {
 	if (p.kind === "conversation:renamed" && p.conversation_id) {
 		const c = conversations.value.find((x) => x.name === p.conversation_id)
 		if (c && p.title) c.title = p.title
+		return
+	}
+	// Jarvis started a conversation with us (proactive). Refresh the sidebar and
+	// surface a toast; handled before the current-conversation guard.
+	if (p.kind === "conversation:new" && p.conversation_id) {
+		loadConversations()
+		proactiveToast.value = { id: p.conversation_id, title: p.title || "Message from Jarvis", preview: p.preview || "" }
 		return
 	}
 	if (p.conversation_id !== currentId.value) return
@@ -1691,10 +2098,15 @@ async function queryMentions(type, query) {
 			const r = await api.searchLink("User", query)
 			items = (r || []).map((x) => ({ value: x.value, sub: x.description || "user" }))
 		} else {
-			const tools = JARVIS_TOOLS.filter((t) => t.includes(query.toLowerCase())).map((t) => ({ value: t, sub: "tool" }))
+			const q = query.toLowerCase()
+			// Customer's own skills first (the "/" command, Claude-style).
+			const skills = customSkills.value
+				.filter((s) => s.enabled && (s.skill_name || "").includes(q))
+				.map((s) => ({ value: s.skill_name, sub: "skill" }))
+			const tools = JARVIS_TOOLS.filter((t) => t.includes(q)).map((t) => ({ value: t, sub: "tool" }))
 			const r = await api.searchLink("DocType", query)
 			const dts = (r || []).map((x) => ({ value: x.value, sub: "doctype" }))
-			items = [...tools, ...dts].slice(0, 8)
+			items = [...skills, ...tools, ...dts].slice(0, 8)
 		}
 	} catch (e) {
 		items = []
@@ -1745,6 +2157,8 @@ onMounted(async () => {
 	} catch (e) {
 		/* ignore */
 	}
+	// Load custom skills so the "/" composer menu can offer them.
+	loadCustomSkills()
 	try {
 		await loadConversations()
 		const first = route.params.id || conversations.value[0]?.name
@@ -1775,6 +2189,8 @@ function onGlobalKey(e) {
 		e.preventDefault(); newChat()
 	} else if (e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === "B" || e.key === "b")) {
 		e.preventDefault(); toggleSidebar()
+	} else if (e.key === "Escape" && skillsModalOpen.value) {
+		closeSkillsModal()
 	} else if (e.key === "Escape" && settingsOpen.value) {
 		settingsOpen.value = false
 	}
@@ -1848,6 +2264,8 @@ function onGlobalKey(e) {
 /* black focus highlight on the composer */
 .jv-composer:focus-within { border-color: var(--text); box-shadow: 0 0 0 3px rgba(23, 23, 23, 0.07); }
 /* response metrics (tools · time) */
+.jv-skillused { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.jv-skillused-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px 2px 7px; background: var(--blue-bg); border: 1px solid var(--blue); border-radius: 20px; font-size: 11px; font-weight: 600; color: var(--blue); }
 .jv-meta { display: flex; align-items: center; gap: 14px; margin-top: 9px; font-size: 11px; color: var(--text-3); }
 /* Tool activity (openclaw-style): collapsible list of tool calls with I/O */
 .jv-activity { margin: 0 0 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-1); overflow: hidden; }
@@ -1972,6 +2390,62 @@ function onGlobalKey(e) {
 .jv-est { font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
 .jv-usage-bar { margin-top: 12px; height: 7px; border-radius: 99px; background: var(--surface-2); overflow: hidden; }
 .jv-usage-fill { height: 100%; border-radius: 99px; background: var(--blue); transition: width .25s ease; }
+/* custom skills */
+.jv-skill-btn { padding: 6px 12px; background: var(--blue); border: 1px solid var(--blue); border-radius: 8px; font-family: inherit; font-size: 12.5px; font-weight: 600; color: #fff; cursor: pointer; white-space: nowrap; transition: opacity .12s; }
+.jv-skill-btn:hover { opacity: .9; }
+.jv-skill-btn:disabled { opacity: .5; cursor: default; }
+.jv-skill-btn.ghost { background: transparent; color: var(--text-2); border-color: var(--border-2); }
+.jv-skill-form { border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin: 6px 0 14px; background: var(--surface-1); }
+.jv-skill-err { font-size: 12px; color: var(--red); background: var(--red-bg); border: 1px solid var(--red-bd); border-radius: 7px; padding: 7px 10px; margin-bottom: 10px; }
+.jv-skill-l { display: block; font-size: 11px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: .04em; margin: 0 0 4px; }
+.jv-skill-in, .jv-skill-ta { width: 100%; box-sizing: border-box; padding: 8px 10px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; font-family: inherit; font-size: 13px; color: var(--text); outline: none; }
+.jv-skill-ta { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; resize: vertical; line-height: 1.5; }
+.jv-skill-in:focus, .jv-skill-ta:focus { border-color: var(--blue); }
+.jv-skill-in:disabled { color: var(--text-3); }
+.jv-skill-row { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.jv-skill-row:last-child { border-bottom: 0; }
+.jv-skill-name { font-size: 13px; font-weight: 600; color: var(--text); font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+.jv-skill-off { font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; margin-left: 6px; font-family: inherit; }
+.jv-skill-desc { font-size: 12px; color: var(--text-3); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* right sidebar: custom skills */
+.jv-skillbar { width: 52px; flex: none; height: 100%; background: var(--surface-1); border-left: 1px solid var(--border); display: flex; flex-direction: column; min-width: 0; }
+/* centered skills popup */
+.jv-skills-overlay { position: absolute; inset: 0; z-index: 62; background: rgba(15, 15, 22, 0.34); display: flex; align-items: center; justify-content: center; padding: 24px; }
+.jv-dark .jv-skills-overlay { background: rgba(0, 0, 0, 0.55); }
+.jv-skills-modal { width: 760px; max-width: 100%; height: 560px; max-height: 88vh; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; box-shadow: 0 24px 70px rgba(20, 20, 30, 0.28); animation: jv-popin 0.16s ease; }
+.jv-skills-head { flex: none; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 16px 16px 13px 20px; border-bottom: 1px solid var(--border); }
+.jv-skills-title { font-size: 15px; font-weight: 600; color: var(--text); letter-spacing: -.01em; }
+.jv-skills-sub { font-size: 11.5px; color: var(--text-3); margin-top: 2px; }
+.jv-skills-status { flex: none; display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--text-3); padding: 11px 20px; background: var(--surface-1); border-bottom: 1px solid var(--border); }
+.jv-skills-status.ok { color: var(--green); }
+.jv-skills-status.err { color: var(--red); }
+.jv-skills-body { flex: 1; overflow-y: auto; padding: 16px 20px 20px; }
+.jv-skill-newrow { display: flex; align-items: center; gap: 8px; width: 100%; justify-content: center; padding: 10px; margin-bottom: 12px; background: var(--blue-bg); border: 1px dashed var(--blue); border-radius: 10px; font-family: inherit; font-size: 13px; font-weight: 600; color: var(--blue); cursor: pointer; }
+.jv-skill-newrow:hover { background: var(--blue); color: #fff; }
+.jv-skill-newrow:hover svg { stroke: #fff; }
+.jv-skill-formfoot { display: flex; align-items: center; gap: 10px; margin-top: 15px; flex-wrap: wrap; }
+.jv-skill-foothint { font-size: 11px; color: var(--text-3); }
+.jv-skillrail { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 0; }
+.jv-skillrail-btn { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; background: transparent; border: 1px solid transparent; border-radius: 9px; color: var(--text-2); cursor: pointer; transition: background .12s, border-color .12s, color .12s; }
+.jv-skillrail-btn:hover { background: var(--surface-2); border-color: var(--border); color: var(--text); }
+.jv-skillrail-new { background: var(--blue); border-color: var(--blue); color: #fff; }
+.jv-skillrail-new:hover { background: var(--blue); border-color: var(--blue); opacity: .9; }
+.jv-skillbar-head { flex: none; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 14px 14px 12px 16px; border-bottom: 1px solid var(--border); }
+.jv-skillbar-title { font-size: 15px; font-weight: 600; color: var(--text); letter-spacing: -.01em; }
+.jv-skillbar-sub { font-size: 11px; color: var(--text-3); margin-top: 2px; }
+.jv-skillbar-actions { flex: none; display: flex; gap: 8px; padding: 12px 16px 0; }
+.jv-skillbar-actions .jv-skill-btn { flex: 1; text-align: center; }
+.jv-skillbar-status { flex: none; display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--text-3); padding: 10px 16px 0; line-height: 1.4; }
+.jv-skillbar-status.ok { color: var(--green); }
+.jv-skillbar-status.err { color: var(--red); }
+.jv-skill-dot { width: 7px; height: 7px; border-radius: 99px; background: var(--text-3); flex: none; }
+.jv-skill-dot.ok { background: var(--green); }
+.jv-skill-dot.err { background: var(--red); }
+.jv-skill-dot.spin { border: 2px solid var(--border-2); border-top-color: var(--blue); background: transparent; width: 11px; height: 11px; animation: jv-spin .7s linear infinite; }
+@keyframes jv-spin { to { transform: rotate(360deg); } }
+.jv-skillbar-body { flex: 1; overflow-y: auto; padding: 12px 16px 18px; }
+.jv-iconbtn-bd.on { background: var(--blue-bg) !important; border-color: var(--blue) !important; }
+.jv-iconbtn-bd.on svg { stroke: var(--blue); }
 /* theme segmented control */
 .jv-seg { display: flex; gap: 6px; }
 .jv-seg button { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 11px 6px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 9px; font-family: inherit; font-size: 11.5px; font-weight: 550; color: var(--text-2); cursor: pointer; transition: border-color .12s, background .12s, color .12s; }
@@ -1994,6 +2468,11 @@ function onGlobalKey(e) {
 .jv-fade-enter-from, .jv-fade-leave-to { opacity: 0; }
 
 /* artifact card (in the message) */
+/* generated-image artifact: clickable thumbnail */
+.jv-img-artifact { display: block; position: relative; margin-top: 12px; padding: 0; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-1); cursor: zoom-in; overflow: hidden; max-width: 380px; line-height: 0; }
+.jv-img-artifact:hover { border-color: var(--border-2); }
+.jv-img-artifact img { display: block; width: 100%; max-height: 320px; object-fit: cover; }
+.jv-img-artifact-cap { display: flex; align-items: center; gap: 6px; padding: 7px 10px; font-family: inherit; font-size: 11.5px; line-height: 1.3; color: var(--text-3); background: var(--surface); border-top: 1px solid var(--border); }
 .jv-artifact { display: flex; align-items: center; gap: 11px; width: 100%; margin-top: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); cursor: pointer; text-align: left; font-family: inherit; transition: border-color .12s, background .12s; }
 .jv-artifact:hover { border-color: var(--border-2); background: var(--surface-1); }
 .jv-artifact-ic { flex: none; width: 34px; height: 34px; border-radius: 8px; display: flex; align-items: center; justify-content: center; background: var(--blue-bg); color: var(--blue); }
@@ -2014,6 +2493,54 @@ function onGlobalKey(e) {
 .jv-confirm-no:hover { background: var(--text); color: var(--surface); border-color: var(--text); }
 .jv-confirm-yes { background: var(--blue); color: #fff; border-color: var(--blue); }
 .jv-confirm-yes:hover { background: var(--text); color: var(--surface); border-color: var(--text); }
+
+/* interactive clarifying-question cards */
+.jv-ask { margin-top: 12px; padding: 14px; border: 1px solid var(--border); background: var(--surface-1); border-radius: 12px; }
+.jv-ask-q { padding-bottom: 13px; margin-bottom: 13px; border-bottom: 1px solid var(--border); }
+.jv-ask-q:last-of-type { border-bottom: 0; padding-bottom: 4px; margin-bottom: 4px; }
+.jv-ask-qt { display: flex; align-items: flex-start; gap: 8px; font-size: 13.5px; font-weight: 600; color: var(--text); margin-bottom: 9px; line-height: 1.4; }
+.jv-ask-num { flex: none; width: 19px; height: 19px; border-radius: 99px; background: var(--blue-bg); color: var(--blue); font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; margin-top: 1px; }
+.jv-ask-opts { display: flex; flex-wrap: wrap; gap: 7px; }
+.jv-ask-opt { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 9px; font-family: inherit; font-size: 12.5px; font-weight: 500; color: var(--text-2); cursor: pointer; transition: border-color .12s, background .12s, color .12s; }
+.jv-ask-opt:hover { border-color: var(--border-2); color: var(--text); }
+.jv-ask-opt.on { border-color: var(--blue); background: var(--blue-bg); color: var(--text); font-weight: 600; }
+.jv-ask-tick { color: var(--blue); font-weight: 700; font-size: 11px; }
+.jv-ask-field { width: 100%; box-sizing: border-box; padding: 8px 10px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; font-family: inherit; font-size: 13px; color: var(--text); outline: none; }
+.jv-ask-field:focus { border-color: var(--blue); }
+.jv-ask-link { position: relative; }
+.jv-ask-linkmenu { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 20; background: var(--surface); border: 1px solid var(--border-2); border-radius: 9px; box-shadow: 0 8px 24px rgba(20, 20, 30, .14); padding: 4px; max-height: 220px; overflow-y: auto; }
+.jv-ask-linkmenu button { display: block; width: 100%; text-align: left; padding: 7px 9px; background: transparent; border: none; border-radius: 6px; font-family: inherit; font-size: 12.5px; color: var(--text-2); cursor: pointer; }
+.jv-ask-linkmenu button:hover { background: var(--surface-2); color: var(--text); }
+.jv-ask-other { width: 100%; box-sizing: border-box; margin-top: 8px; padding: 7px 10px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; font-family: inherit; font-size: 12.5px; color: var(--text); outline: none; }
+.jv-ask-other:focus { border-color: var(--blue); }
+.jv-ask-foot { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+.jv-ask-submit { padding: 8px 16px; background: var(--blue); border: 1px solid var(--blue); border-radius: 8px; font-family: inherit; font-size: 13px; font-weight: 600; color: #fff; cursor: pointer; transition: opacity .12s; }
+.jv-ask-submit:hover { opacity: .9; }
+.jv-ask-submit:disabled { opacity: .45; cursor: default; }
+.jv-ask-hint { font-size: 11.5px; color: var(--text-3); }
+/* scrollable record cards (alternative to a wide table) */
+.jv-cards { margin-top: 12px; }
+.jv-cards-title { font-size: 12px; font-weight: 600; color: var(--text-2); margin-bottom: 8px; }
+.jv-cards-strip { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 6px; scroll-snap-type: x proximity; }
+.jv-cards-strip::-webkit-scrollbar { height: 7px; }
+.jv-cards-strip::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 99px; }
+.jv-card { flex: none; width: 210px; scroll-snap-align: start; box-sizing: border-box; padding: 12px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 11px; }
+.jv-card-title { display: block; font-size: 13.5px; font-weight: 600; color: var(--text); margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jv-card-link { color: var(--blue); text-decoration: none; }
+.jv-card-link:hover { text-decoration: underline; }
+.jv-card-sub { font-size: 11.5px; color: var(--text-3); margin-bottom: 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jv-card-field { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; border-top: 1px solid var(--border); font-size: 12px; }
+.jv-card-field:first-of-type { border-top: 0; }
+.jv-card-k { color: var(--text-3); flex: none; }
+.jv-card-v { color: var(--text); font-weight: 500; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* proactive message toast */
+.jv-toast { position: absolute; right: 20px; bottom: 22px; z-index: 70; display: flex; align-items: center; gap: 11px; width: 360px; max-width: calc(100% - 40px); padding: 13px 14px; background: var(--surface); border: 1px solid var(--border-2); border-radius: 13px; box-shadow: 0 12px 32px rgba(20, 20, 30, .22); cursor: pointer; }
+.jv-toast-ic { flex: none; width: 30px; height: 30px; border-radius: 8px; background: var(--blue); display: flex; align-items: center; justify-content: center; }
+.jv-toast-title { font-size: 13px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jv-toast-preview { font-size: 12px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jv-toast-open { flex: none; padding: 6px 12px; background: var(--blue); border: 1px solid var(--blue); border-radius: 7px; font-family: inherit; font-size: 12px; font-weight: 600; color: #fff; cursor: pointer; }
+.jv-toast-x { flex: none; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; border-radius: 6px; color: var(--text-3); cursor: pointer; }
+.jv-toast-x:hover { background: var(--surface-2); color: var(--text); }
 
 /* rich action cards (doc confirm / email draft) */
 .jv-action, .jv-email { margin-top: 12px; border: 1px solid var(--border); border-radius: 11px; overflow: hidden; background: var(--surface); }

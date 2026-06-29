@@ -289,6 +289,30 @@ def post_push_oauth_blob(provider: str, blob: dict) -> dict:
 	)
 
 
+def post_push_custom_skills(skills: list[dict]) -> dict:
+	"""POST the customer's rendered custom skills to admin → fleet → container.
+
+	``skills`` is the list built by ``jarvis.chat.custom_skills.build_push_payload``
+	(each ``{slug, description, user_invocable, body}``). The fleet-agent does a
+	FULL RECONCILE (writes the desired set, removes the rest) then restarts the
+	container so openclaw re-scans ``workspace/skills``. An empty list is a valid
+	"remove all custom skills" reconcile.
+
+	Timeout matches ``post_push_oauth_blob``: the admin handler chains to the
+	fleet-agent's ``PUT /custom-skills`` which re-renders the entrypoint, writes
+	the files and runs ``docker compose restart`` + healthz poll.
+
+	Raises:
+		AdminAuthError, AdminUnreachableError, AdminValidationError
+		(rate-limit shares the rotate-secret bucket).
+	"""
+	return _post(
+		path="/api/method/jarvis_admin.api.tenant.push_custom_skills",
+		body={"skills": skills},
+		timeout_s=180,
+	)
+
+
 def post_subscription_disconnect() -> dict:
 	"""POST to admin to clear the customer's OAuth profile on the container.
 
