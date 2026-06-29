@@ -43,3 +43,14 @@ class TestRunMethod(FrappeTestCase):
     def test_allowlist_permits_matched_method(self):
         with patch.dict(frappe.local.conf, {"jarvis_run_method_allowlist": ["frappe.*"]}):
             self.assertEqual(run_method("frappe.ping"), "pong")
+
+    def test_empty_allowlist_blocks_everything(self):
+        # [] is "block all", not "no restriction" (the falsy-empty pitfall).
+        with patch.dict(frappe.local.conf, {"jarvis_run_method_allowlist": []}):
+            with self.assertRaises(PermissionDeniedError):
+                run_method("frappe.ping")
+
+    def test_unknown_arg_is_rejected(self):
+        # A mistyped/extra arg must error, not be silently dropped by frappe.call.
+        with self.assertRaises(InvalidArgumentError):
+            run_method("frappe.ping", {"bogus_arg": 1})

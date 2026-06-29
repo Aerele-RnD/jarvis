@@ -139,10 +139,17 @@ def dispatch(tool_name: str, args: dict):
     # parameter list declares. Tools that use ``**kwargs`` opt out
     # (currently none, but future tools wanting bag-of-args semantics
     # would skip the filter naturally).
+    fn = _TOOLS[tool_name]
     if not _ACCEPTS_VAR_KW.get(tool_name, False):
         accepted = _ACCEPTED_PARAMS[tool_name]
         args = {k: v for k, v in args.items() if k in accepted}
+    # Validate the call binds *before* invoking, so a genuine arg/signature
+    # mismatch (a missing required arg - the caller's fault) becomes
+    # InvalidArgumentError, while a TypeError raised inside the tool body (a real
+    # bug, e.g. from a method run via run_method) propagates to the 500 handler
+    # instead of being mislabeled as bad input.
     try:
-        return _TOOLS[tool_name](**args)
+        inspect.signature(fn).bind(**args)
     except TypeError as e:
         raise InvalidArgumentError(str(e))
+    return fn(**args)

@@ -37,3 +37,17 @@ class TestGetSchemaMetaCache(FrappeTestCase):
             self.assertEqual(build.call_count, 0)
             gs.get_schema("ToDo", refresh=True)   # refresh -> rebuild
             self.assertEqual(build.call_count, 1)
+
+    def test_stringified_false_is_treated_as_slim(self):
+        for k in ("jarvis_schema:ToDo:0", "jarvis_schema:ToDo:1"):
+            frappe.cache().delete_value(k)
+        gs.get_schema("ToDo", verbose="false")  # truthy string must NOT enable verbose
+        self.assertIsNotNone(frappe.cache().get_value("jarvis_schema:ToDo:0"))
+        self.assertIsNone(frappe.cache().get_value("jarvis_schema:ToDo:1"))
+
+    def test_refresh_busts_both_variants(self):
+        gs.get_schema("ToDo", verbose=False)  # caches :0
+        gs.get_schema("ToDo", verbose=True)   # caches :1
+        self.assertIsNotNone(frappe.cache().get_value("jarvis_schema:ToDo:1"))
+        gs.get_schema("ToDo", refresh=True)   # slim refresh must still bust :1
+        self.assertIsNone(frappe.cache().get_value("jarvis_schema:ToDo:1"))

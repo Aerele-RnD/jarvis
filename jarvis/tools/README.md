@@ -130,8 +130,10 @@ Returns the live schema, not a stored copy:
 
 The write tools (`create_doc`, `update_doc`, `submit_doc`, `cancel_doc`,
 `amend_doc`, `delete_doc`) and `run_method` accept `preview: true`. The operation
-runs through all DocType validations inside a **savepoint that is then rolled
-back** - nothing is committed:
+runs through all DocType validations with **every DB write rolled back** -
+commits are neutralized for the duration and the work is undone via a savepoint,
+so even a tool (or a `run_method` target) that calls `frappe.db.commit()`
+internally cannot persist:
 
 ```jsonc
 // args
@@ -139,13 +141,14 @@ back** - nothing is committed:
 // data
 { "preview": true,
   "would": { "name": "<resolved name>", "grand_total": 1180.0, ... },
-  "note": "Validated in a rolled-back savepoint; nothing was committed. External side effects (emails/webhooks in on_submit / on_cancel) are not sandboxed by preview." }
+  "note": "Validated with all DB writes rolled back; nothing was committed. External side effects (emails/webhooks in on_submit / on_cancel) are not sandboxed by preview." }
 ```
 
 Use it to show the user exactly what a write would produce (resolved name,
 fetched/computed fields) - or the validation error it would hit - before they
-confirm. **Caveat:** DB effects are sandboxed, but external side effects in
-`on_submit` / `on_cancel` (emails, webhooks) are not rolled back.
+confirm. Preview runs are never audited (nothing is committed). **Caveat:** DB
+effects are sandboxed, but external side effects in `on_submit` / `on_cancel`
+(emails, webhooks) are not rolled back.
 
 ## Audit logging
 

@@ -52,3 +52,29 @@ class TestWriteAudit(FrappeTestCase):
         with patch("jarvis.api.audit.record") as rec:
             api._run_tool("get_list", {"doctype": "ToDo", "limit": 1})
         self.assertFalse(rec.called)
+
+    def test_preview_error_is_not_audited(self):
+        # A failed dry-run must not pollute the audit log with a phantom write.
+        with patch("jarvis.api.audit.record") as rec:
+            r = api._run_tool("create_doc", {
+                "doctype": "No Such DocType ZZZ", "values": {}, "preview": True,
+            })
+        self.assertFalse(r["ok"])
+        self.assertFalse(rec.called)
+
+    def test_preview_sandboxes_a_tool_that_commits(self):
+        # The core fix: even when the dispatched tool calls frappe.db.commit()
+        # internally, preview must not persist anything.
+        sentinel = "jarvis-test-preview-commit-sentinel"
+
+        def fake_dispatch(tool, args):
+            frappe.get_doc({"doctype": "ToDo", "description": sentinel}).insert(
+                ignore_permissions=True)
+            frappe.db.commit()  # would persist + destroy a naive savepoint
+            return {"ok": True}
+
+        with patch("jarvis.api.dispatch", side_effect=fake_dispatch):
+            r = api._run_tool("run_method", {"method": "x", "preview": True})
+        self.assertTrue(r["ok"])
+        self.assertTrue(r["data"]["preview"])
+        self.assertFalse(frappe.db.exists("ToDo", {"description": sentinel}))

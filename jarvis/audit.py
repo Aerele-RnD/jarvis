@@ -27,17 +27,22 @@ def record(*, tool: str, args: dict | None, ok: bool,
 
     Best-effort: never raises (audit must not break or fail the tool)."""
     try:
-        doctype, name = _ref(args, result)
+        doctype, name, method = _ref(args, result)
+        scrubbed = _scrub(args)
+        rendered = json.dumps(scrubbed, default=str)
+        if len(rendered) > _MAX_ARGS_CHARS:
+            scrubbed = {"_truncated": rendered[:_MAX_ARGS_CHARS]}
         entry = {
             "ts": frappe.utils.now(),
             "user": getattr(frappe.session, "user", None),
             "tool": tool,
             "doctype": doctype,
             "name": name,
+            "method": method,
             "status": "ok" if ok else "error",
             "error_code": error_code,
             "error_message": (error_message or "")[:500] or None,
-            "args": _scrub(args),
+            "args": scrubbed,
         }
         frappe.logger("jarvis.tool_audit").info(json.dumps(entry, default=str))
     except Exception:
@@ -48,27 +53,28 @@ def record(*, tool: str, args: dict | None, ok: bool,
 
 
 def _ref(args, result):
-    a = args or {}
-    doctype = a.get("doctype")
-    name = a.get("name") or a.get("docname")
+    """Best-effort (doctype, name, method) for the audited target. Covers the
+    common arg names across the write tools - doctype/name plus attach_to_doc's
+    target_doctype/target_name and run_method's method - and falls back to the
+    returned doc when the args don't name it."""
+    a = args if isinstance(args, dict) else {}
+    doctype = a.get("doctype") or a.get("target_doctype")
+    name = a.get("name") or a.get("docname") or a.get("target_name")
+    method = a.get("method")
     if isinstance(result, dict):
         doctype = doctype or result.get("doctype")
         name = name or result.get("name")
-    return doctype, name
+    return doctype, name, method
 
 
-def _scrub(args):
-    """Redact secret-shaped values; cap total size so a giant payload can't
-    bloat the log."""
-    if not isinstance(args, dict):
-        return args
-    out = {}
-    for k, v in args.items():
-        if k.lower() in _SECRET_KEYS:
-            out[k] = "[REDACTED]"
-        elif isinstance(v, dict):
-            out[k] = _scrub(v)
-        else:
-            out[k] = v
-    rendered = json.dumps(out, default=str)
-    return out if len(rendered) <= _MAX_ARGS_CHARS else {"_truncated": rendered[:_MAX_ARGS_CHARS]}
+def _scrub(value):
+    """Recursively redact secret-shaped keys in dicts, including dicts nested in
+    lists (e.g. child-table rows like values={"users":[{"password":...}]}).
+    Non-collection values pass through. Size-capping is applied once by the
+    caller after the whole structure is scrubbed."""
+    if isinstance(value, dict):
+        return {k: ("[REDACTED]" if k.lower() in _SECRET_KEYS else _scrub(v))
+                for k, v in value.items()}
+    if isinstance(value, list):
+        return [_scrub(item) for item in value]
+    return value

@@ -62,6 +62,40 @@ def _build_schema(doctype: str, verbose: bool) -> dict:
 	}
 
 
+def _as_bool(value) -> bool:
+	"""Coerce a possibly-stringified flag to bool. A JSON client may send
+	``"false"``/``"0"``; ``bool("false")`` is True, so treat common falsy
+	strings as False rather than trusting plain ``bool()``."""
+	if isinstance(value, str):
+		return value.strip().lower() in ("1", "true", "yes", "on")
+	return bool(value)
+
+
+def clear_cache_for(doctype: str) -> None:
+	"""Drop both cached schema variants (slim + verbose) for a DocType."""
+	cache = frappe.cache()
+	cache.delete_value(f"jarvis_schema:{doctype}:0")
+	cache.delete_value(f"jarvis_schema:{doctype}:1")
+
+
+def clear_schema_cache(doc, method=None) -> None:
+	"""doc_event handler (wired in hooks.py): when a schema-defining doc is
+	saved or trashed, bust the cached schema for the DocType it affects so the
+	agent never builds a write off a stale field list within the TTL window."""
+	dtype = getattr(doc, "doctype", None)
+	dt = None
+	if dtype == "DocType":
+		dt = doc.name
+	elif dtype == "Custom Field":
+		dt = getattr(doc, "dt", None)
+	elif dtype == "Property Setter":
+		dt = getattr(doc, "doc_type", None)
+	elif dtype == "Workflow":
+		dt = getattr(doc, "document_type", None)
+	if dt:
+		clear_cache_for(dt)
+
+
 def get_schema(doctype: str, verbose: bool = False, refresh: bool = False) -> dict:
 	"""Return live meta for a DocType: identity + the write-relevant
 	doctype-level flags + the field list.
@@ -81,15 +115,20 @@ def get_schema(doctype: str, verbose: bool = False, refresh: bool = False) -> di
 	where 8 recursive schema dumps overran the model.
 
 	Result is cached in Redis for ~5 min (schema is the same for every user).
-	The read-permission check below runs on EVERY call regardless of cache, so
+	The cache is busted automatically when a Custom Field / Property Setter /
+	DocType / Workflow change fires its doc_event (see hooks.py), so a
+	customization shows up immediately rather than after the TTL. The
+	read-permission check below runs on EVERY call regardless of cache, so
 	caching never leaks a schema to a user who can't read the DocType. Pass
-	``refresh=True`` to bust + recompute (use after a Customize Form / Custom
-	Field change).
+	``refresh=True`` to force a re-read (busts both slim + verbose variants).
 
 	Enforces read permission on the parent DocType for the current user. Child
 	tables (under ``verbose=True``) are part of the parent, not checked
 	separately.
 	"""
+	verbose = _as_bool(verbose)
+	refresh = _as_bool(refresh)
+
 	if not doctype:
 		raise InvalidArgumentError("doctype is required")
 
@@ -99,12 +138,14 @@ def get_schema(doctype: str, verbose: bool = False, refresh: bool = False) -> di
 	if not frappe.has_permission(doctype, ptype="read"):
 		raise PermissionDeniedError(f"no read permission on {doctype}")
 
-	key = f"jarvis_schema:{doctype}:{int(bool(verbose))}"
 	cache = frappe.cache()
-	if not refresh:
+	key = f"jarvis_schema:{doctype}:{int(verbose)}"
+	if refresh:
+		clear_cache_for(doctype)  # bust BOTH variants, not just the current one
+	else:
 		cached = cache.get_value(key)
 		if cached is not None:
 			return cached
-	result = _build_schema(doctype, bool(verbose))
+	result = _build_schema(doctype, verbose)
 	cache.set_value(key, result, expires_in_sec=_SCHEMA_TTL)
 	return result
