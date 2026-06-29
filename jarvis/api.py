@@ -6,6 +6,7 @@ from jarvis._http import validate_bearer as _validate_bearer  # noqa: F401 (kept
 from jarvis._plugin_auth import PluginAuthError, validate_plugin_request
 from jarvis.exceptions import InvalidArgumentError, JarvisError
 from jarvis.tools.registry import dispatch
+from jarvis import audit
 
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
@@ -362,6 +363,43 @@ def _parse_args(args: dict | str | None) -> dict:
 	return args
 
 
+# Mutating tools: audited on every call, and the only tools that accept
+# ``preview`` (a dry-run executed in a rolled-back savepoint).
+_WRITE_TOOLS = frozenset({
+	"create_doc", "update_doc", "submit_doc", "cancel_doc", "amend_doc",
+	"delete_doc", "run_method",
+	"send_email", "add_comment", "update_comment", "share_doc", "unshare_doc",
+	"assign_to", "unassign_from", "add_tag", "remove_tag",
+	"follow_document", "unfollow_document", "attach_to_doc",
+	"create_dashboard_chart", "create_dashboard",
+})
+_PREVIEWABLE = frozenset({
+	"create_doc", "update_doc", "submit_doc", "cancel_doc", "amend_doc",
+	"delete_doc", "run_method",
+})
+
+
+def _run_preview(tool: str, args: dict) -> dict:
+	"""Dispatch a write tool inside a savepoint and roll it back, so the
+	caller sees what WOULD happen (validations run, naming + fetched fields
+	resolved) with nothing committed. DB effects are fully sandboxed; external
+	side effects in on_submit/on_cancel (emails, webhooks) are NOT - the result
+	note says so."""
+	sp = "jarvis_preview"
+	frappe.db.savepoint(sp)
+	try:
+		would = dispatch(tool, args)
+	finally:
+		frappe.db.rollback(save_point=sp)
+	return {
+		"preview": True,
+		"would": would,
+		"note": ("Validated in a rolled-back savepoint; nothing was committed. "
+				 "External side effects (emails/webhooks in on_submit / "
+				 "on_cancel) are not sandboxed by preview."),
+	}
+
+
 def _run_tool(tool: str, raw_args: dict | str | None) -> dict:
 	"""Parse args + dispatch + wrap in the bench's standard envelope.
 
@@ -385,12 +423,26 @@ def _run_tool(tool: str, raw_args: dict | str | None) -> dict:
 	into one to match the reviewer's "native handler" pattern note
 	from the 2026-06-16 punch list.
 	"""
+	args = None
+	is_write = tool in _WRITE_TOOLS
 	try:
 		args = _parse_args(raw_args)
+		preview = bool(args.pop("preview", False))
+		if preview:
+			if tool not in _PREVIEWABLE:
+				return _error("InvalidArgumentError",
+							  f"preview is not supported for {tool}")
+			return {"ok": True, "data": _run_preview(tool, args)}
 		data = dispatch(tool, args)
 	except JarvisError as e:
+		if is_write:
+			audit.record(tool=tool, args=args, ok=False,
+						 error_code=type(e).__name__, error_message=str(e))
 		return _error(type(e).__name__, str(e))
 	except frappe.PermissionError as e:
+		if is_write:
+			audit.record(tool=tool, args=args, ok=False,
+						 error_code="PermissionDeniedError", error_message=str(e))
 		return _error("PermissionDeniedError", str(e) or "permission denied")
 	except (frappe.ValidationError, frappe.DuplicateEntryError) as e:
 		# Bad-input errors a tool surfaces from doc.insert()/get_doc/link
@@ -401,7 +453,12 @@ def _run_tool(tool: str, raw_args: dict | str | None) -> dict:
 		# bug, so translate to the envelope instead of leaking Frappe's
 		# native 500/404. The message carries the specifics; the code stays
 		# in the known JarvisError set the bench client branches on.
+		if is_write:
+			audit.record(tool=tool, args=args, ok=False,
+						 error_code="InvalidArgumentError", error_message=str(e))
 		return _error("InvalidArgumentError", str(e) or type(e).__name__)
+	if is_write:
+		audit.record(tool=tool, args=args, ok=True, result=data)
 	return {"ok": True, "data": data}
 
 

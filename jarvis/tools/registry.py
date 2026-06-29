@@ -26,6 +26,7 @@ _TOOL_NAMES: tuple[str, ...] = (
     "get_list",
     "run_report",
     "get_report_filters",
+    "run_method",
     "query",
     "update_doc",
     "create_doc",
