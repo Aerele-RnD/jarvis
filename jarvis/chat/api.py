@@ -389,20 +389,29 @@ def send_message(
 				}
 		except Exception:
 			pass
-	# Route to the ``long`` queue rather than ``default``: chat turns can run
-	# up to ``_AGENT_TURN_WORKER_TIMEOUT`` (720s, far above the 300s default
-	# cap), and ``default`` is shared with provisioning + OAuth-refresh jobs
+	# Dispatch the turn. On the default Node socketio backend we route to
+	# the ``long`` RQ queue (chat turns can run up to
+	# ``_AGENT_TURN_WORKER_TIMEOUT`` = 720s, far above the 300s default
+	# cap; ``default`` is shared with provisioning + OAuth-refresh jobs
 	# which would otherwise block interactive chat behind 30s+ pieces of
-	# infrastructure work. ``at_front=True`` pushes interactive chat to the
-	# head of the long queue so a scheduled long-running job (backup, big
-	# import) doesn't make a user wait for it to finish.
-	frappe.enqueue(
-		method="jarvis.chat.worker.run_agent_turn",
-		queue="long",
-		timeout=_AGENT_TURN_WORKER_TIMEOUT,
-		at_front=True,
-		**enqueue_kwargs,
-	)
+	# infrastructure work; ``at_front=True`` keeps interactive chat ahead
+	# of any scheduled long-running job). When the bench is on the Python
+	# socketio backend, dispatch goes through Redis pub/sub instead: an
+	# in-process subscriber inside Frappe's existing Python realtime
+	# process (see ``jarvis.realtime.handlers``) picks it up and runs the
+	# turn via gevent, removing the RQ-worker concurrency cap.
+	if (frappe.conf.get("socketio_backend") or "").strip().lower() == "python":
+		from jarvis.chat.dispatch import publish_chat_send
+
+		publish_chat_send(enqueue_kwargs)
+	else:
+		frappe.enqueue(
+			method="jarvis.chat.worker.run_agent_turn",
+			queue="long",
+			timeout=_AGENT_TURN_WORKER_TIMEOUT,
+			at_front=True,
+			**enqueue_kwargs,
+		)
 
 	return {"ok": True, "run_id": run_id, "message_id": msg_doc.name}
 
@@ -581,17 +590,26 @@ def retry_message(message: str) -> dict:
 	)
 
 	run_id = uuid.uuid4().hex[:12]
-	# Same routing as send_message: long queue + push to the front so the
-	# retry doesn't wait behind unrelated long-queue work.
-	frappe.enqueue(
-		method="jarvis.chat.worker.run_agent_turn",
-		queue="long",
-		timeout=_AGENT_TURN_WORKER_TIMEOUT,
-		at_front=True,
-		conversation_id=doc.conversation,
-		message_id=user_msg_id,
-		run_id=run_id,
-	)
+	# Same dispatch branch as send_message: Path B (Python socketio backend)
+	# publishes onto Redis pub/sub for the in-process realtime subscriber;
+	# default Node backend keeps using the long RQ queue with at_front=True.
+	payload = {
+		"conversation_id": doc.conversation,
+		"message_id": user_msg_id,
+		"run_id": run_id,
+	}
+	if (frappe.conf.get("socketio_backend") or "").strip().lower() == "python":
+		from jarvis.chat.dispatch import publish_chat_send
+
+		publish_chat_send(payload)
+	else:
+		frappe.enqueue(
+			method="jarvis.chat.worker.run_agent_turn",
+			queue="long",
+			timeout=_AGENT_TURN_WORKER_TIMEOUT,
+			at_front=True,
+			**payload,
+		)
 	return {"ok": True, "run_id": run_id}
 
 
