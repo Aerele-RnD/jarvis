@@ -102,10 +102,26 @@ class TestSyncConnection(FrappeTestCase):
 		_set_token("")
 		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "jarvis_admin_url", "")
 		frappe.db.commit()
-		with patch("jarvis.onboarding.admin_client.dev_signup") as mock_signup:
+		with patch.dict(frappe.local.conf, {"jarvis_admin_url": ""}), \
+			 patch("jarvis.onboarding.admin_client.dev_signup") as mock_signup:
 			with self.assertRaises(frappe.ValidationError):
 				onboarding.dev_onboard("e2@x.com", "Co", "Annual Plan")
 			mock_signup.assert_not_called()
+
+	def test_dev_onboard_uses_config_admin_url_when_field_blank(self):
+		"""Blank Jarvis Settings.jarvis_admin_url but site/common config
+		provides jarvis_admin_url: the guard treats config as a deliberate
+		source, so onboarding proceeds instead of failing fast."""
+		_set_token("")
+		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "jarvis_admin_url", "")
+		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "sandbox_mode", 1)
+		frappe.db.commit()
+		with patch.dict(frappe.local.conf, {"jarvis_admin_url": "http://conf-admin.local"}), \
+			 patch("jarvis.onboarding.admin_client.dev_signup",
+				   return_value={"api_key": "k", "api_secret": "s",
+								 "agent_url": "ws://h:1", "agent_token": "t"}) as mock_signup:
+			onboarding.dev_onboard("e5@x.com", "Co", "Annual Plan")
+			mock_signup.assert_called_once()
 
 	def test_dev_onboard_preserves_existing_admin_url(self):
 		"""Pre-set jarvis_admin_url stays untouched - dev_onboard never
@@ -131,7 +147,8 @@ class TestSyncConnection(FrappeTestCase):
 		_set_token("")
 		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "jarvis_admin_url", "")
 		frappe.db.commit()
-		with patch("jarvis.onboarding.admin_client.signup") as mock_signup:
+		with patch.dict(frappe.local.conf, {"jarvis_admin_url": ""}), \
+			 patch("jarvis.onboarding.admin_client.signup") as mock_signup:
 			with self.assertRaises(frappe.ValidationError):
 				onboarding.start_signup("e4@x.com", "Co", "Annual Plan")
 			mock_signup.assert_not_called()
@@ -336,7 +353,7 @@ class TestSignupEmailVerification(FrappeTestCase):
 			"Jarvis Settings", "Jarvis Settings", "jarvis_admin_url", "",
 		)
 		frappe.db.commit()
-		with patch(
+		with patch.dict(frappe.local.conf, {"jarvis_admin_url": ""}), patch(
 			"jarvis.onboarding.admin_client.get_signup_payment_state",
 		) as mock_call:
 			with self.assertRaises(frappe.ValidationError):

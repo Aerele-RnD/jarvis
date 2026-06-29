@@ -914,3 +914,28 @@ class TestOAuthBearer(FrappeTestCase):
 		self.assertEqual(
 			frappe.cache().get_value(admin_client._OAUTH_CACHE_KEY)["access_token"], "B")
 		frappe.cache().delete_value(admin_client._OAUTH_CACHE_KEY)
+
+
+class TestAdminUrlResolution(FrappeTestCase):
+	"""_admin_url resolution order: Jarvis Settings override -> site/common
+	config (frappe.conf jarvis_admin_url) -> hardcoded fallback, all resolved
+	FRESH per call so a config value added after worker start is honored."""
+
+	def test_settings_override_wins_over_config(self):
+		s = MagicMock()
+		s.jarvis_admin_url = "https://override.example.com/"
+		with patch.dict(frappe.local.conf, {"jarvis_admin_url": "https://conf.example.com"}):
+			self.assertEqual(admin_client._admin_url(s), "https://override.example.com")
+
+	def test_falls_back_to_config_when_field_blank(self):
+		s = MagicMock()
+		s.jarvis_admin_url = ""
+		with patch.dict(frappe.local.conf, {"jarvis_admin_url": "https://conf.example.com/"}):
+			self.assertEqual(admin_client._admin_url(s), "https://conf.example.com")
+
+	def test_falls_back_to_hardcoded_when_field_and_config_blank(self):
+		from jarvis.hooks import _DEFAULT_ADMIN_URL_FALLBACK
+		s = MagicMock()
+		s.jarvis_admin_url = ""
+		with patch.dict(frappe.local.conf, {"jarvis_admin_url": ""}):
+			self.assertEqual(admin_client._admin_url(s), _DEFAULT_ADMIN_URL_FALLBACK)
