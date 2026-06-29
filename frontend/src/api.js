@@ -31,6 +31,16 @@ export const setAutoApply = (value) =>
 export const getUsage = (conversation) =>
 	call("jarvis.chat.api.get_usage", { conversation: conversation || "" })
 export const isReadyForChat = () => call("jarvis.account.is_ready_for_chat")
+
+// --- Custom skills (customer-authored, pushed to the container) ---
+const SK = "jarvis.chat.custom_skills_api."
+export const listCustomSkills = () => call(SK + "list_custom_skills")
+export const getCustomSkill = (name) => call(SK + "get_custom_skill", { name })
+export const createCustomSkill = (p) => call(SK + "create_custom_skill", p)
+export const updateCustomSkill = (p) => call(SK + "update_custom_skill", p)
+export const deleteCustomSkill = (name) => call(SK + "delete_custom_skill", { name })
+export const applyCustomSkills = () => call(SK + "apply_custom_skills")
+export const getCustomSkillsSyncStatus = () => call(SK + "get_custom_skills_sync_status")
 export const setConversationModel = (conversation, model) =>
 	call("jarvis.chat.api.set_conversation_model", { conversation, model: model || "" })
 
