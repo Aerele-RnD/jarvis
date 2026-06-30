@@ -168,10 +168,23 @@ _PROVIDER_LABEL_TO_OPENCLAW_ID = {
 def _resolve_model_and_provider(conv) -> tuple[str, str | None]:
 	"""Return (effective_model, openclaw_provider_id_or_None) for this conv.
 
-	- effective_model = conv.model_override or Jarvis Settings.llm_model
-	- provider id is set only in oauth mode (api_key mode keeps it None)
+	Pool mode (proxy_active=1): let Bifrost route. Return empty model unless
+	conv.model_override matches an enabled pool model name (validated override).
+	Direct mode: use conv.model_override or settings.llm_model.
 	"""
 	settings = frappe.get_single("Jarvis Settings")
+
+	if getattr(settings, "proxy_active", 0):
+		# Pool mode: Bifrost routes. Use override if it matches an enabled model name.
+		enabled_names = {
+			(m.model if hasattr(m, "model") else m.get("model", ""))
+			for m in (settings.models or []) if m.enabled
+		}
+		override = (conv.model_override or "").strip()
+		if override and override in enabled_names:
+			return override, None  # Validated override accepted
+		return "", None  # Let Bifrost/pool route
+
 	effective_model = (conv.model_override or settings.llm_model or "")
 	provider = (
 		_PROVIDER_LABEL_TO_OPENCLAW_ID.get(settings.llm_provider)
@@ -179,6 +192,16 @@ def _resolve_model_and_provider(conv) -> tuple[str, str | None]:
 		else None
 	)
 	return effective_model, provider
+
+
+def _thinking_prefix(thinking_override: str | None) -> str:
+	"""Inline openclaw /think directive for this turn, or '' when unset.
+
+	openclaw reads a leading /think directive from the MESSAGE BODY and
+	strips it. We keep it in the user message (after the static system
+	prefix), so it never busts the prefix cache the warm-up populates."""
+	level = (thinking_override or "").strip().lower()
+	return f"/think {level}\n" if level in ("low", "medium", "high") else ""
 
 
 def handle_chat_send(payload: dict) -> None:
@@ -296,6 +319,12 @@ def handle_chat_send(payload: dict) -> None:
 		and vision.supports_vision(settings.llm_provider)
 	)
 	user_message, vision_parts = _prepare_attachments(user_message, attachments, vision_ok)
+	# Apply the /think directive as the FIRST bytes of the final message so
+	# openclaw's leading-directive parser always sees it, even when
+	# _prepend_doc_context prepended a [Viewing: ...] line and
+	# _prepare_attachments appended attachment text. Cache-safe: the
+	# directive stays in the user message, never the system prompt.
+	user_message = _thinking_prefix(conv.thinking_override) + user_message
 
 	def _publish_run_error(err: str) -> None:
 		_mark_errored(assistant_msg.name, err)

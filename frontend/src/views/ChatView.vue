@@ -326,6 +326,10 @@
 										</div>
 									</div>
 								</div>
+								<!-- inline charts: ECharts rendered from the agent's jarvis-chart spec -->
+								<div v-for="(spec, ci) in chartsOf(m)" :key="'chart' + ci" class="jv-chartwrap">
+									<JvChart :spec="spec" :dark="effectiveDark" />
+								</div>
 								<!-- rich outputs: agent artifacts rendered by type (sandboxed) -->
 								<template v-for="cv in (m.canvas || [])" :key="cv.name">
 									<!-- generated image → clickable thumbnail (click to enlarge) -->
@@ -713,6 +717,7 @@ import { ref, computed, inject, onMounted, onBeforeUnmount, nextTick, watch } fr
 import { useRoute } from "vue-router"
 import * as api from "@/api"
 import { renderMarkdown } from "@/markdown"
+import JvChart from "@/charts/JvChart.vue"
 
 const session = inject("$session")
 const socket = inject("$socket")
@@ -1216,6 +1221,10 @@ const _CARDS_RE = /```jarvis-cards[ \t]*\n([\s\S]*?)```/
 // The agent declares which skill(s) it used to shape a reply in a ```jarvis-skill
 // block; the chat shows a small chip and strips the raw block.
 const _SKILL_RE = /```jarvis-skill[ \t]*\n([\s\S]*?)```/
+// A ```jarvis-chart block: a high-level chart spec the chat renders inline with
+// ECharts (themed by chartTheme; the agent never sends raw ECharts options).
+const _CHART_RE = /```jarvis-chart[ \t]*\n([\s\S]*?)```/g
+const _CHART_TYPES = new Set(["bar", "line", "area", "pie", "donut"])
 function stripBlocks(text) {
 	return (text || "")
 		.replace(/```jarvis-action[ \t]*\n[\s\S]*?```/g, "")
@@ -1223,6 +1232,7 @@ function stripBlocks(text) {
 		.replace(/```jarvis-ask[ \t]*\n[\s\S]*?```/g, "")
 		.replace(/```jarvis-cards[ \t]*\n[\s\S]*?```/g, "")
 		.replace(/```jarvis-skill[ \t]*\n[\s\S]*?```/g, "")
+		.replace(/```jarvis-chart[ \t]*\n[\s\S]*?```/g, "")
 		.replace(/\n{3,}/g, "\n\n")
 		.trim()
 }
@@ -1275,6 +1285,26 @@ function cardsOf(m) {
 	_cardsCache.set(content, res)
 	return res
 }
+const _chartsCache = new Map()
+function chartsOf(m) {
+	const content = (m && m.content) || ""
+	if (!content.includes("jarvis-chart")) return []
+	if (_chartsCache.has(content)) return _chartsCache.get(content)
+	const specs = []
+	for (const mt of content.matchAll(_CHART_RE)) {
+		try {
+			const s = JSON.parse(mt[1].trim())
+			if (s && typeof s === "object" && _CHART_TYPES.has(s.type) && Array.isArray(s.series)) {
+				specs.push(s)
+			}
+		} catch (e) {
+			/* incomplete mid-stream JSON: skip until the closing fence arrives */
+		}
+	}
+	_chartsCache.set(content, specs)
+	return specs
+}
+
 function askOf(m) {
 	const mt = ((m && m.content) || "").match(_ASK_RE)
 	if (!mt) return null
@@ -2491,6 +2521,7 @@ function onGlobalKey(e) {
 
 /* inline canvas/chart artifacts (rendered sandboxed) */
 .jv-canvas { margin-top: 12px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface); }
+.jv-chartwrap { margin: 10px 0; border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; background: var(--surface); }
 .jv-canvas-bar { display: flex; align-items: center; gap: 7px; padding: 8px 12px; font-size: 12.5px; font-weight: 550; color: var(--text-2); background: var(--surface-1); border-bottom: 1px solid var(--border); }
 .jv-canvas-bar svg { color: var(--text-3); flex: none; }
 .jv-canvas-type { margin-left: auto; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }

@@ -69,3 +69,11 @@ export async function setConversationModel(conversation, model) {
 	});
 	return r.message;
 }
+
+export async function setConversationThinking(conversation, thinking) {
+	const r = await frappe.call({
+		method: "jarvis.chat.api.set_conversation_thinking",
+		args: { conversation, thinking: thinking || "" },
+	});
+	return r.message;
+}

@@ -1,0 +1,2058 @@
+"""Tests for Task 1: Unified LLM config — Jarvis Settings schema assertions.
+
+Verifies:
+- Jarvis Settings has models (Table), preset (Select), proxy_active (Check, read_only),
+  proxy_recommended (Check, read_only) fields
+- Legacy llm_model, llm_api_key, llm_provider, llm_base_url, llm_auth_mode are read_only
+- Standalone Jarvis LLM Pool doctype no longer exists
+- Pool Model provider + base_url fields have depends_on on credential_type=='api_key'
+- Subscription Account upstream options do NOT contain 'anthropic'
+"""
+
+import frappe
+from frappe.tests.utils import FrappeTestCase
+
+
+def _field_map(meta):
+    """Return a dict of fieldname -> field dict from a Meta object."""
+    return {f.fieldname: f for f in meta.fields}
+
+
+class TestUnifiedLLMConfigSchema(FrappeTestCase):
+    """Schema-level assertions for the unified LLM config design."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.settings_meta = frappe.get_meta("Jarvis Settings")
+        cls.settings_fields = _field_map(cls.settings_meta)
+        cls.pool_model_meta = frappe.get_meta("Jarvis LLM Pool Model")
+        cls.pool_model_fields = _field_map(cls.pool_model_meta)
+        cls.sub_account_meta = frappe.get_meta("Jarvis LLM Pool Subscription Account")
+        cls.sub_account_fields = _field_map(cls.sub_account_meta)
+
+    # ------------------------------------------------------------------ #
+    # Jarvis Settings — new fields
+    # ------------------------------------------------------------------ #
+
+    def test_settings_has_models_table_field(self):
+        """Jarvis Settings must have a 'models' Table field pointing to Jarvis LLM Pool Model."""
+        self.assertIn("models", self.settings_fields,
+                      "Jarvis Settings must have a 'models' field")
+        f = self.settings_fields["models"]
+        self.assertEqual(f.fieldtype, "Table",
+                         "models field must be of type Table")
+        self.assertEqual(f.options, "Jarvis LLM Pool Model",
+                         "models Table must link to 'Jarvis LLM Pool Model'")
+
+    def test_settings_has_preset_select_field(self):
+        """Jarvis Settings must have a 'preset' Select field."""
+        self.assertIn("preset", self.settings_fields,
+                      "Jarvis Settings must have a 'preset' field")
+        f = self.settings_fields["preset"]
+        self.assertEqual(f.fieldtype, "Select",
+                         "preset field must be of type Select")
+
+    def test_settings_has_proxy_active_check_read_only(self):
+        """Jarvis Settings must have 'proxy_active' Check field that is read_only."""
+        self.assertIn("proxy_active", self.settings_fields,
+                      "Jarvis Settings must have a 'proxy_active' field")
+        f = self.settings_fields["proxy_active"]
+        self.assertEqual(f.fieldtype, "Check",
+                         "proxy_active must be of type Check")
+        self.assertEqual(f.read_only, 1,
+                         "proxy_active must be read_only=1")
+
+    def test_settings_has_proxy_recommended_check_read_only(self):
+        """Jarvis Settings must have 'proxy_recommended' Check field that is read_only."""
+        self.assertIn("proxy_recommended", self.settings_fields,
+                      "Jarvis Settings must have a 'proxy_recommended' field")
+        f = self.settings_fields["proxy_recommended"]
+        self.assertEqual(f.fieldtype, "Check",
+                         "proxy_recommended must be of type Check")
+        self.assertEqual(f.read_only, 1,
+                         "proxy_recommended must be read_only=1")
+
+    # ------------------------------------------------------------------ #
+    # Jarvis Settings — legacy fields become read_only
+    # ------------------------------------------------------------------ #
+
+    def test_llm_model_is_read_only(self):
+        """Legacy llm_model field must be read_only=1 (derived mirror)."""
+        self.assertIn("llm_model", self.settings_fields)
+        self.assertEqual(self.settings_fields["llm_model"].read_only, 1,
+                         "llm_model must be read_only=1")
+
+    def test_llm_api_key_is_read_only(self):
+        """Legacy llm_api_key field must be read_only=1 (derived mirror)."""
+        self.assertIn("llm_api_key", self.settings_fields)
+        self.assertEqual(self.settings_fields["llm_api_key"].read_only, 1,
+                         "llm_api_key must be read_only=1")
+
+    def test_llm_provider_is_read_only(self):
+        """Legacy llm_provider field must be read_only=1 (derived mirror)."""
+        self.assertIn("llm_provider", self.settings_fields)
+        self.assertEqual(self.settings_fields["llm_provider"].read_only, 1,
+                         "llm_provider must be read_only=1")
+
+    def test_llm_base_url_is_read_only(self):
+        """Legacy llm_base_url field must be read_only=1 (derived mirror)."""
+        self.assertIn("llm_base_url", self.settings_fields)
+        self.assertEqual(self.settings_fields["llm_base_url"].read_only, 1,
+                         "llm_base_url must be read_only=1")
+
+    def test_llm_auth_mode_is_read_only(self):
+        """Legacy llm_auth_mode field must be read_only=1 (derived mirror)."""
+        self.assertIn("llm_auth_mode", self.settings_fields)
+        self.assertEqual(self.settings_fields["llm_auth_mode"].read_only, 1,
+                         "llm_auth_mode must be read_only=1")
+
+    # ------------------------------------------------------------------ #
+    # Standalone Jarvis LLM Pool doctype must NOT exist
+    # ------------------------------------------------------------------ #
+
+    def test_standalone_llm_pool_doctype_dropped(self):
+        """The standalone 'Jarvis LLM Pool' Single doctype must not exist."""
+        exists = frappe.db.exists("DocType", "Jarvis LLM Pool")
+        self.assertFalse(exists,
+                        "Jarvis LLM Pool standalone doctype must be dropped")
+
+    # ------------------------------------------------------------------ #
+    # Pool Model — provider + base_url gated on credential_type
+    # ------------------------------------------------------------------ #
+
+    def test_pool_model_provider_has_depends_on_credential_type(self):
+        """Pool Model 'provider' field must have depends_on gating on credential_type=='api_key'."""
+        self.assertIn("provider", self.pool_model_fields)
+        depends_on = self.pool_model_fields["provider"].depends_on or ""
+        self.assertEqual(depends_on, "eval:doc.credential_type=='api_key'",
+                         "provider field depends_on must be exactly eval:doc.credential_type=='api_key'")
+
+    def test_pool_model_base_url_has_depends_on_credential_type(self):
+        """Pool Model 'base_url' field must have depends_on gating on credential_type=='api_key'."""
+        self.assertIn("base_url", self.pool_model_fields)
+        depends_on = self.pool_model_fields["base_url"].depends_on or ""
+        self.assertEqual(depends_on, "eval:doc.credential_type=='api_key'",
+                         "base_url field depends_on must be exactly eval:doc.credential_type=='api_key'")
+
+    # ------------------------------------------------------------------ #
+    # Subscription Account — upstream must not include 'anthropic'
+    # ------------------------------------------------------------------ #
+
+    def test_subscription_account_upstream_no_anthropic(self):
+        """Subscription Account 'upstream' options must NOT contain 'anthropic' (ToS-banned)."""
+        self.assertIn("upstream", self.sub_account_fields)
+        options = self.sub_account_fields["upstream"].options or ""
+        option_list = [o.strip() for o in options.split("\n") if o.strip()]
+        self.assertNotIn("anthropic", option_list,
+                         "upstream options must not include 'anthropic' (ToS violation)")
+
+
+# ---------------------------------------------------------------------------
+# Task 2: pool_serialize re-sourced from settings.models + hygiene tests
+# ---------------------------------------------------------------------------
+
+def _make_settings_with_models(models_rows):
+    """Build a minimal in-memory settings-like object without saving to DB.
+
+    Uses frappe._dict so that _get_password adapter works (hasattr(doc, 'get') path).
+    models_rows is a list of frappe._dict; accounts inside subscription models
+    are also frappe._dict objects.
+    """
+    settings = frappe._dict(
+        models=models_rows,
+        preset=None,
+        routing_mode="dynamic",
+    )
+    return settings
+
+
+def _api_key_model(**kwargs):
+    defaults = frappe._dict(
+        model="gpt-4o",
+        tier="strong",
+        order=0,
+        enabled=1,
+        credential_type="api_key",
+        api_key="sk-test-key",
+        provider="openai_compat",
+        base_url="https://api.openai.com",
+        rotation=None,
+        accounts=[],
+    )
+    defaults.update(kwargs)
+    return defaults
+
+
+def _subscription_model(**kwargs):
+    defaults = frappe._dict(
+        model="gpt-5.5",
+        tier="cheap",
+        order=1,
+        enabled=1,
+        credential_type="subscription",
+        api_key=None,
+        provider="",
+        base_url="",
+        rotation="round_robin",
+        accounts=[],
+    )
+    defaults.update(kwargs)
+    return defaults
+
+
+def _account(upstream="openai", account_ref="ACC_001", label="test@example.com", oauth_blob='{"token":"abc"}'):
+    return frappe._dict(
+        upstream=upstream,
+        account_ref=account_ref,
+        label=label,
+        oauth_blob=oauth_blob,
+    )
+
+
+class TestPoolSerializeFromSettings(FrappeTestCase):
+    """Task 2: Direct-call tests for build_pool_payload / validate_models / compute_proxy_active."""
+
+    # ------------------------------------------------------------------ #
+    # Imports
+    # ------------------------------------------------------------------ #
+
+    def _imports(self):
+        from jarvis.jarvis.pool_serialize import (
+            build_pool_payload,
+            validate_models,
+            compute_proxy_active,
+        )
+        return build_pool_payload, validate_models, compute_proxy_active
+
+    # ------------------------------------------------------------------ #
+    # (a) Secrets out of spec
+    # ------------------------------------------------------------------ #
+
+    def test_secrets_not_in_spec(self):
+        """API key values must NOT appear in the serialized spec dict."""
+        build_pool_payload, _, _ = self._imports()
+        m = _api_key_model(api_key="super-secret-key-xyz")
+        settings = _make_settings_with_models([m])
+        spec, api_keys, _ = build_pool_payload(settings)
+        # secret must not appear anywhere in spec
+        self.assertNotIn("super-secret-key-xyz", str(spec))
+        # secret must be in api_keys under the key_ref
+        self.assertTrue(any(v == "super-secret-key-xyz" for v in api_keys.values()))
+
+    # ------------------------------------------------------------------ #
+    # (b) Subscription entry omits provider/base_url
+    # ------------------------------------------------------------------ #
+
+    def test_subscription_model_omits_provider_and_base_url(self):
+        """Subscription models must NOT emit provider or base_url in the spec."""
+        build_pool_payload, _, _ = self._imports()
+        acc = _account()
+        m = _subscription_model(accounts=[acc], provider="openai_compat", base_url="https://api.openai.com")
+        settings = _make_settings_with_models([m])
+        spec, _, _ = build_pool_payload(settings)
+        entry = spec["models"][0]
+        self.assertNotIn("provider", entry, "subscription entry must not emit provider")
+        self.assertNotIn("base_url", entry, "subscription entry must not emit base_url")
+
+    # ------------------------------------------------------------------ #
+    # (c) Mixed upstream across accounts → validate_models error
+    # ------------------------------------------------------------------ #
+
+    def test_mixed_upstream_across_accounts_is_a_validate_error(self):
+        """Accounts with different upstreams in one subscription model → validate_models error."""
+        _, validate_models, _ = self._imports()
+        acc1 = _account(upstream="openai", account_ref="ACC_001")
+        acc2 = _account(upstream="google", account_ref="ACC_002")
+        m = _subscription_model(accounts=[acc1, acc2])
+        settings = _make_settings_with_models([m])
+        errors = validate_models(settings)
+        self.assertTrue(
+            any("upstream" in e.lower() or "mixed" in e.lower() or "consistent" in e.lower() for e in errors),
+            f"Expected upstream consistency error, got: {errors}"
+        )
+
+    # ------------------------------------------------------------------ #
+    # (d) Duplicate account_ref → validate_models error
+    # ------------------------------------------------------------------ #
+
+    def test_duplicate_account_ref_is_a_validate_error(self):
+        """Same account_ref used in two different models → validate_models error."""
+        _, validate_models, _ = self._imports()
+        acc1 = _account(upstream="openai", account_ref="DUPE_REF")
+        acc2 = _account(upstream="openai", account_ref="DUPE_REF")
+        m1 = _subscription_model(accounts=[acc1], model="gpt-5.5", order=0)
+        m2 = _subscription_model(accounts=[acc2], model="gpt-4o-mini", tier="strong", order=1)
+        settings = _make_settings_with_models([m1, m2])
+        errors = validate_models(settings)
+        self.assertTrue(
+            any("duplicate" in e.lower() or "account_ref" in e.lower() for e in errors),
+            f"Expected duplicate account_ref error, got: {errors}"
+        )
+
+    # ------------------------------------------------------------------ #
+    # (e) Blank api_key on enabled api_key model → validate_models error
+    # ------------------------------------------------------------------ #
+
+    def test_blank_api_key_on_enabled_model_is_a_validate_error(self):
+        """Enabled api_key model with empty key → validate_models error (no dangling key_ref)."""
+        _, validate_models, _ = self._imports()
+        m = _api_key_model(api_key="", enabled=1)
+        settings = _make_settings_with_models([m])
+        errors = validate_models(settings)
+        self.assertTrue(
+            any("api_key" in e.lower() or "key" in e.lower() or "blank" in e.lower() for e in errors),
+            f"Expected blank api_key error, got: {errors}"
+        )
+
+    # ------------------------------------------------------------------ #
+    # (f) Empty subscription accounts → validate_models error
+    # ------------------------------------------------------------------ #
+
+    def test_empty_accounts_on_enabled_subscription_model_is_a_validate_error(self):
+        """Enabled subscription model with no accounts → validate_models error."""
+        _, validate_models, _ = self._imports()
+        m = _subscription_model(accounts=[], enabled=1)
+        settings = _make_settings_with_models([m])
+        errors = validate_models(settings)
+        self.assertTrue(
+            any("account" in e.lower() or "empty" in e.lower() for e in errors),
+            f"Expected empty accounts error, got: {errors}"
+        )
+
+    # ------------------------------------------------------------------ #
+    # (g) Malformed oauth_blob → validate_models error STRING (no raise)
+    # ------------------------------------------------------------------ #
+
+    def test_malformed_oauth_blob_returns_error_string_not_raise(self):
+        """Malformed JSON in oauth_blob must produce a validate_models error string — NOT raise."""
+        build_pool_payload, validate_models, _ = self._imports()
+        acc = _account(oauth_blob="{not valid json!!!")
+        m = _subscription_model(accounts=[acc])
+        settings = _make_settings_with_models([m])
+
+        # validate_models must NOT raise — must return list with an error
+        try:
+            errors = validate_models(settings)
+        except Exception as exc:
+            self.fail(f"validate_models raised an exception on malformed oauth_blob: {exc}")
+        self.assertTrue(
+            any("oauth" in e.lower() or "json" in e.lower() or "blob" in e.lower() or "malformed" in e.lower() for e in errors),
+            f"Expected malformed oauth_blob error string, got: {errors}"
+        )
+
+        # build_pool_payload must also NOT raise
+        try:
+            build_pool_payload(settings)
+        except Exception as exc:
+            self.fail(f"build_pool_payload raised on malformed oauth_blob: {exc}")
+
+    # ------------------------------------------------------------------ #
+    # (h) compute_proxy_active
+    # ------------------------------------------------------------------ #
+
+    def test_compute_proxy_active_true_when_two_enabled_models(self):
+        """compute_proxy_active is True when ≥2 models are enabled."""
+        _, _, compute_proxy_active = self._imports()
+        m1 = _api_key_model(enabled=1)
+        m2 = _api_key_model(model="gpt-4-turbo", enabled=1, order=1)
+        settings = _make_settings_with_models([m1, m2])
+        self.assertTrue(compute_proxy_active(settings))
+
+    def test_compute_proxy_active_true_when_preset_set(self):
+        """compute_proxy_active is True when preset is set (even with only 1 model)."""
+        _, _, compute_proxy_active = self._imports()
+        m = _api_key_model(enabled=1)
+        settings = _make_settings_with_models([m])
+        settings.preset = "Cost-saver"
+        self.assertTrue(compute_proxy_active(settings))
+
+    def test_compute_proxy_active_false_when_one_model_no_preset(self):
+        """compute_proxy_active is False for exactly 1 enabled model and no preset."""
+        _, _, compute_proxy_active = self._imports()
+        m = _api_key_model(enabled=1)
+        settings = _make_settings_with_models([m])
+        settings.preset = None
+        self.assertFalse(compute_proxy_active(settings))
+
+    # ------------------------------------------------------------------ #
+    # No dangling key_ref: build_pool_payload only emits key_ref+api_keys together
+    # ------------------------------------------------------------------ #
+
+    def test_no_dangling_key_ref_when_api_key_is_blank(self):
+        """A model with blank api_key must not emit a key_ref pointing to nothing."""
+        build_pool_payload, _, _ = self._imports()
+        m = _api_key_model(api_key="", enabled=1)
+        settings = _make_settings_with_models([m])
+        spec, api_keys, _ = build_pool_payload(settings)
+        # The blank-key model must not have key_ref at all
+        for entry in spec.get("models", []):
+            self.assertNotIn("key_ref", entry,
+                             "blank api_key model must not emit key_ref in spec")
+
+    # ------------------------------------------------------------------ #
+    # anthropic upstream → validate_models error
+    # ------------------------------------------------------------------ #
+
+    def test_anthropic_upstream_in_subscription_is_a_validate_error(self):
+        """Subscription account with upstream='anthropic' → validate_models error (ToS)."""
+        _, validate_models, _ = self._imports()
+        acc = _account(upstream="anthropic")
+        m = _subscription_model(accounts=[acc])
+        settings = _make_settings_with_models([m])
+        errors = validate_models(settings)
+        self.assertTrue(
+            any("anthropic" in e.lower() or "tos" in e.lower() or "upstream" in e.lower() for e in errors),
+            f"Expected anthropic upstream ToS error, got: {errors}"
+        )
+
+    # ------------------------------------------------------------------ #
+    # (i) Blank account_ref on subscription account
+    # ------------------------------------------------------------------ #
+
+    def test_blank_account_ref_on_subscription_is_a_validate_error(self):
+        """Enabled subscription account with blank account_ref → validate_models error."""
+        _, validate_models, _ = self._imports()
+        acc = _account(account_ref="")  # blank account_ref
+        m = _subscription_model(accounts=[acc])
+        settings = _make_settings_with_models([m])
+        errors = validate_models(settings)
+        self.assertTrue(
+            any("account_ref" in e.lower() or "missing" in e.lower() for e in errors),
+            f"Expected blank account_ref error, got: {errors}"
+        )
+
+    def test_blank_account_ref_does_not_write_empty_string_oauth_key(self):
+        """Enabled subscription account with blank account_ref must not produce oauth_blobs['']."""
+        build_pool_payload, _, _ = self._imports()
+        acc = _account(account_ref="", oauth_blob='{"token":"secret"}')
+        m = _subscription_model(accounts=[acc])
+        settings = _make_settings_with_models([m])
+        _, _, oauth_blobs = build_pool_payload(settings)
+        self.assertNotIn("", oauth_blobs,
+                         "blank account_ref must NOT produce an empty-string key in oauth_blobs")
+
+
+# ---------------------------------------------------------------------------
+# Task 3: E2E serialize → llm_proxy.validate tests
+# (ported from test_jarvis_llm_pool.py — re-sourced from Jarvis Settings)
+# ---------------------------------------------------------------------------
+
+try:
+    import llm_proxy as _llm_proxy_mod
+    _HAS_LLM_PROXY = True
+except ImportError:
+    _HAS_LLM_PROXY = False
+
+
+class TestPoolSerializeE2E(FrappeTestCase):
+    """E2E tests: build_pool_payload(settings) → PoolSpec → llm_proxy.validate → zero issues."""
+
+    def _imports(self):
+        from jarvis.jarvis.pool_serialize import build_pool_payload
+        return build_pool_payload
+
+    def _make_settings_dynamic_both_tiers(self):
+        """Settings with 1 strong + 1 cheap api_key model — routing_mode must stay dynamic."""
+        strong = _api_key_model(
+            model="gpt-4o", tier="strong", order=0, enabled=1,
+            api_key="sk-strong", provider="openai_compat",
+            base_url="https://api.openai.com",
+        )
+        cheap = _api_key_model(
+            model="gpt-3.5-turbo", tier="cheap", order=1, enabled=1,
+            api_key="sk-cheap", provider="openai_compat",
+            base_url="https://api.openai.com",
+        )
+        settings = _make_settings_with_models([strong, cheap])
+        return settings
+
+    def _make_settings_two_strong(self):
+        """Settings with 2 strong api_key models — no cheap tier → routing_mode must fall back to failover."""
+        m1 = _api_key_model(
+            model="gpt-4o", tier="strong", order=0, enabled=1,
+            api_key="sk-a", provider="openai_compat",
+            base_url="https://api.openai.com",
+        )
+        m2 = _api_key_model(
+            model="gpt-4-turbo", tier="strong", order=1, enabled=1,
+            api_key="sk-b", provider="openai_compat",
+            base_url="https://api.openai.com",
+        )
+        settings = _make_settings_with_models([m1, m2])
+        return settings
+
+    def test_e2e_dynamic_pool_with_both_tiers_validates_clean(self):
+        """1 cheap + 1 strong → routing_mode stays 'dynamic', classifier present, validate() clean."""
+        import unittest
+        if not _HAS_LLM_PROXY:
+            raise unittest.SkipTest("llm_proxy not installed")
+
+        from llm_proxy.schema import PoolSpec
+        from llm_proxy.validate import validate
+
+        build_pool_payload = self._imports()
+        settings = self._make_settings_dynamic_both_tiers()
+        spec, _, _ = build_pool_payload(settings)
+
+        self.assertEqual(spec["routing_mode"], "dynamic",
+                         f"expected dynamic routing_mode, got {spec['routing_mode']}")
+        self.assertIn("classifier", spec,
+                      "classifier key must be present for dynamic routing")
+
+        pool_spec = PoolSpec(**spec)
+        issues = validate(pool_spec)
+        self.assertEqual(issues, [], f"Expected zero validate issues, got: {issues}")
+
+    def test_e2e_two_strong_pool_falls_back_to_failover_and_validates_clean(self):
+        """2 strong models (no cheap) → routing_mode falls back to 'failover', validate() clean."""
+        import unittest
+        if not _HAS_LLM_PROXY:
+            raise unittest.SkipTest("llm_proxy not installed")
+
+        from llm_proxy.schema import PoolSpec
+        from llm_proxy.validate import validate
+
+        build_pool_payload = self._imports()
+        settings = self._make_settings_two_strong()
+        spec, _, _ = build_pool_payload(settings)
+
+        self.assertEqual(spec["routing_mode"], "failover",
+                         f"expected failover fallback, got {spec['routing_mode']}")
+        self.assertNotIn("classifier", spec,
+                         "classifier must NOT be emitted for failover mode")
+
+        pool_spec = PoolSpec(**spec)
+        issues = validate(pool_spec)
+        self.assertEqual(issues, [], f"Expected zero validate issues, got: {issues}")
+
+
+# ---------------------------------------------------------------------------
+# Task 3 (RT3): unified on_update — direct-vs-proxy routing, legacy mirror,
+# proxy_active/proxy_recommended derived fields, validate_models gate
+# ---------------------------------------------------------------------------
+
+# Import the snapshot/restore base class from the existing test module.
+from jarvis.tests.test_settings_on_update import (
+    _SettingsSingletonTestCase,
+    _reset_settings,
+)
+
+
+def frappe_patch(target, **kwargs):
+    """Convenience wrapper around unittest.mock.patch for jarvis admin_client calls."""
+    from unittest.mock import patch
+    return patch(target, **kwargs)
+
+
+def _add_model_row(settings, *, provider="openai_compat", model="gpt-4o",
+                   tier="strong", order=0, enabled=1,
+                   credential_type="api_key", api_key="sk-test-pool-key",
+                   base_url="https://api.openai.com", accounts=None):
+    """Append an in-memory model row to settings.models using frappe.new_doc."""
+    row = frappe.new_doc("Jarvis LLM Pool Model")
+    row.provider = provider
+    row.model = model
+    row.tier = tier
+    row.order = order
+    row.enabled = enabled
+    row.credential_type = credential_type
+    row.api_key = api_key
+    row.base_url = base_url
+    if accounts:
+        row.accounts = accounts
+    settings.append("models", row)
+
+
+class _RT3SettingsTestCase(_SettingsSingletonTestCase):
+    """Extends snapshot/restore with models-table cleanup."""
+
+    # Extra plain fields specific to RT3 that we snapshot/restore.
+    _RT3_PLAIN_FIELDS = ("proxy_active", "proxy_recommended", "preset")
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        settings = frappe.get_single("Jarvis Settings")
+        cls._rt3_snapshot = {f: settings.get(f) for f in cls._RT3_PLAIN_FIELDS}
+
+    @classmethod
+    def tearDownClass(cls):
+        try:
+            settings = frappe.get_single("Jarvis Settings")
+            for field, value in cls._rt3_snapshot.items():
+                settings.db_set(field, value or "", update_modified=False)
+            # Remove any models rows added by tests
+            frappe.db.delete("Jarvis LLM Pool Model",
+                             {"parenttype": "Jarvis Settings",
+                              "parent": "Jarvis Settings"})
+            frappe.db.commit()
+        finally:
+            super().tearDownClass()
+
+    def _clear_models(self):
+        frappe.db.delete("Jarvis LLM Pool Model",
+                         {"parenttype": "Jarvis Settings",
+                          "parent": "Jarvis Settings"})
+        frappe.db.commit()
+
+
+class TestRT3UnifiedOnUpdateRouting(_RT3SettingsTestCase):
+    """Task 3 (RT3): Verifies that on_update routes to the correct sync path
+    based on the models table contents and preset.
+
+    (a) 1 model, no preset → single-model creds path, proxy_active==0,
+        proxy_recommended==1
+    (b) 2 models → proxy pool path, proxy_active==1, legacy llm_model mirrors
+        models[0]
+    (c) validate_models errors → frappe.throw (ValidationError), NO sync called
+    (d) 1 model + preset → proxy path, proxy_active==1
+    """
+
+    def setUp(self):
+        super().setUp()
+        self._clear_models()
+        _reset_settings()
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("preset", "", update_modified=False)
+        settings.db_set("proxy_active", 0, update_modified=False)
+        settings.db_set("proxy_recommended", 0, update_modified=False)
+        frappe.db.commit()
+
+    # ------------------------------------------------------------------ #
+    # (a) 1 model, no preset → single-model creds path (direct)
+    # ------------------------------------------------------------------ #
+
+    def test_one_model_no_preset_routes_to_single_model_path(self):
+        """1 enabled model + no preset → single-model creds path (_enqueued_sync_via_admin),
+        proxy_active==0, proxy_recommended==1."""
+        settings = frappe.get_single("Jarvis Settings")
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-4o",
+                       api_key="sk-direct-key",
+                       base_url="https://api.openai.com")
+        settings.preset = ""
+        # Trigger a structural change so the single-model path fires.
+        settings.llm_model = "gpt-4o"
+
+        pool_sync_called = []
+
+        with (
+            frappe_patch("jarvis.admin_client.post_update_llm_pool",
+                         side_effect=lambda **kw: pool_sync_called.append(kw) or {}),
+            frappe_patch("jarvis.admin_client.post_update_llm_creds",
+                         return_value={"action": "restart"}),
+        ):
+            settings.save()
+
+        # proxy path must NOT have been called
+        self.assertEqual(pool_sync_called, [],
+                         "proxy pool path must NOT be called when 1 model and no preset")
+
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertEqual(int(settings.proxy_active or 0), 0,
+                         "proxy_active must be 0 for 1 model / no preset")
+        self.assertEqual(int(settings.proxy_recommended or 0), 1,
+                         "proxy_recommended must be 1 (nudge to add a model/preset)")
+
+    # ------------------------------------------------------------------ #
+    # (b) 2 models → proxy path, proxy_active==1, legacy mirror
+    # ------------------------------------------------------------------ #
+
+    def test_two_models_routes_to_proxy_path(self):
+        """2 enabled models → proxy pool path, proxy_active==1,
+        legacy llm_model mirrors models[0].model, ALL legacy fields mirrored,
+        AND get_password('llm_api_key') returns models[0]'s key (encrypted path)."""
+        settings = frappe.get_single("Jarvis Settings")
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-4o",
+                       tier="strong", order=0,
+                       api_key="sk-pool-key-1",
+                       base_url="https://api.openai.com")
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-3.5-turbo",
+                       tier="cheap", order=1,
+                       api_key="sk-pool-key-2",
+                       base_url="https://api.openai.com")
+        settings.preset = ""
+
+        pool_sync_called = []
+
+        with (
+            frappe_patch("jarvis.admin_client.post_update_llm_pool",
+                         side_effect=lambda **kw: pool_sync_called.append(kw) or {"action": "pool_update"}),
+            frappe_patch("jarvis.admin_client.post_update_llm_creds") as mock_creds,
+        ):
+            settings.save()
+
+        self.assertTrue(len(pool_sync_called) >= 1,
+                        "proxy pool path MUST be called when ≥2 enabled models")
+        mock_creds.assert_not_called()
+
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertEqual(int(settings.proxy_active or 0), 1,
+                         "proxy_active must be 1 for ≥2 models")
+        # All legacy fields must mirror models[0].
+        self.assertEqual(settings.llm_model, "gpt-4o",
+                         "legacy llm_model must mirror models[0].model")
+        self.assertEqual(settings.llm_provider, "openai_compat",
+                         "legacy llm_provider must mirror models[0].provider")
+        self.assertEqual(settings.llm_base_url, "https://api.openai.com",
+                         "legacy llm_base_url must mirror models[0].base_url")
+        self.assertEqual(settings.llm_auth_mode, "api_key",
+                         "legacy llm_auth_mode must mirror models[0].credential_type")
+        # api_key must be stored encrypted, not plaintext — readable via get_password.
+        recovered_key = settings.get_password("llm_api_key", raise_exception=False)
+        self.assertEqual(recovered_key, "sk-pool-key-1",
+                         "get_password('llm_api_key') must return models[0]'s key after mirror")
+
+    # ------------------------------------------------------------------ #
+    # (c) validate_models errors → ValidationError, NO sync called
+    # ------------------------------------------------------------------ #
+
+    def test_validate_models_errors_raise_before_sync(self):
+        """A model with blank api_key → validate_models returns errors →
+        frappe.throw (ValidationError), no sync enqueued."""
+        settings = frappe.get_single("Jarvis Settings")
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-4o",
+                       tier="strong", order=0,
+                       api_key="",  # blank → validation error
+                       base_url="https://api.openai.com")
+        settings.preset = ""
+
+        pool_sync_called = []
+        creds_sync_called = []
+
+        with (
+            frappe_patch("jarvis.admin_client.post_update_llm_pool",
+                         side_effect=lambda **kw: pool_sync_called.append(kw)),
+            frappe_patch("jarvis.admin_client.post_update_llm_creds",
+                         side_effect=lambda **kw: creds_sync_called.append(kw)),
+        ):
+            with self.assertRaises(frappe.ValidationError,
+                                   msg="frappe.throw must surface a clean ValidationError on blank api_key"):
+                settings.save()
+
+        self.assertEqual(pool_sync_called, [],
+                         "pool sync must NOT be called when validate_models has errors")
+        self.assertEqual(creds_sync_called, [],
+                         "creds sync must NOT be called when validate_models has errors")
+
+    # ------------------------------------------------------------------ #
+    # (d) 1 model + preset → proxy path, proxy_active==1
+    # ------------------------------------------------------------------ #
+
+    def test_one_model_with_preset_routes_to_proxy_path(self):
+        """1 model + preset → proxy path (proxy implied by preset), proxy_active==1."""
+        settings = frappe.get_single("Jarvis Settings")
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-4o",
+                       tier="strong", order=0,
+                       api_key="sk-preset-key",
+                       base_url="https://api.openai.com")
+        settings.preset = "Cost-saver"
+
+        pool_sync_called = []
+
+        with (
+            frappe_patch("jarvis.admin_client.post_update_llm_pool",
+                         side_effect=lambda **kw: pool_sync_called.append(kw) or {"action": "pool_update"}),
+            frappe_patch("jarvis.admin_client.post_update_llm_creds") as mock_creds,
+        ):
+            settings.save()
+
+        self.assertTrue(len(pool_sync_called) >= 1,
+                        "proxy pool path MUST be called when 1 model + preset")
+        mock_creds.assert_not_called()
+
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertEqual(int(settings.proxy_active or 0), 1,
+                         "proxy_active must be 1 when preset is set")
+
+
+class TestRT3LegacyNoModelsBackcompat(_RT3SettingsTestCase):
+    """Task 3 (RT3): Back-compat — tenant with NO models rows + no preset must
+    route through the EXISTING single-model classify/sync path unchanged.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self._clear_models()
+        _reset_settings()
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("preset", "", update_modified=False)
+        settings.db_set("proxy_active", 0, update_modified=False)
+        settings.db_set("proxy_recommended", 0, update_modified=False)
+        frappe.db.commit()
+
+    def test_no_models_no_preset_still_uses_single_model_path(self):
+        """Legacy tenant (no models table, no preset) saves exactly as today:
+        _classify_llm_change → _sync_via_admin → /llm-creds."""
+        settings = frappe.get_single("Jarvis Settings")
+        # No models rows; trigger a single-model structural change.
+        settings.llm_model = "kimi-k2.5"
+
+        creds_sync_called = []
+        pool_sync_called = []
+
+        with (
+            frappe_patch("jarvis.admin_client.post_update_llm_creds",
+                         side_effect=lambda **kw: creds_sync_called.append(kw) or {"action": "restart"}),
+            frappe_patch("jarvis.admin_client.post_update_llm_pool",
+                         side_effect=lambda **kw: pool_sync_called.append(kw)),
+        ):
+            settings.save()
+
+        self.assertEqual(pool_sync_called, [],
+                         "proxy pool path must NOT be called when no models rows")
+        self.assertTrue(len(creds_sync_called) >= 1,
+                        "single-model creds path MUST be called for legacy tenant")
+
+
+class TestRT3ProxyToDirectTransition(_RT3SettingsTestCase):
+    """Fix 2: proxy→direct transition test.
+
+    A tenant that had ≥2 models (proxy_active=1) then drops to 1 model
+    (no preset) must have proxy_active reset to 0 and proxy_recommended
+    set to 1, and the single-model creds path must be taken (not proxy).
+    """
+
+    def setUp(self):
+        super().setUp()
+        self._clear_models()
+        _reset_settings()
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("preset", "", update_modified=False)
+        # Simulate stale proxy_active=1 from a prior 2-model save.
+        settings.db_set("proxy_active", 1, update_modified=False)
+        settings.db_set("proxy_recommended", 0, update_modified=False)
+        frappe.db.commit()
+
+    def test_proxy_to_direct_resets_flags_and_takes_single_model_path(self):
+        """Start with proxy_active=1 (stale), save with 1 model + no preset:
+        → proxy_active==0, proxy_recommended==1, single-model creds path taken."""
+        settings = frappe.get_single("Jarvis Settings")
+        # Confirm the stale proxy_active state.
+        self.assertEqual(int(settings.proxy_active or 0), 1,
+                         "pre-condition: proxy_active must start at 1")
+
+        # Now configure a single model (no preset) — should trigger direct path.
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-4o",
+                       tier="strong", order=0,
+                       api_key="sk-single-after-pool",
+                       base_url="https://api.openai.com")
+        settings.preset = ""
+
+        pool_sync_called = []
+        creds_sync_called = []
+
+        with (
+            frappe_patch("jarvis.admin_client.post_update_llm_pool",
+                         side_effect=lambda **kw: pool_sync_called.append(kw)),
+            frappe_patch("jarvis.admin_client.post_update_llm_creds",
+                         side_effect=lambda **kw: creds_sync_called.append(kw) or {"action": "restart"}),
+        ):
+            settings.save()
+
+        # Proxy path must NOT have been called.
+        self.assertEqual(pool_sync_called, [],
+                         "proxy pool path must NOT be called after transition to 1 model/no preset")
+
+        # Single-model path must have been taken (structural change fires restart).
+        self.assertTrue(len(creds_sync_called) >= 1,
+                        "single-model creds path MUST be called after proxy→direct transition")
+
+        # Flags must be reset.
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertEqual(int(settings.proxy_active or 0), 0,
+                         "proxy_active must be reset to 0 after transition to 1 model/no preset")
+        self.assertEqual(int(settings.proxy_recommended or 0), 1,
+                         "proxy_recommended must be 1 when exactly 1 model is present")
+
+
+# ---------------------------------------------------------------------------
+# Task 4 (RT4): sync hardening — worker re-reads at run time (dedup-safe)
+# ---------------------------------------------------------------------------
+
+from jarvis.jarvis.doctype.jarvis_settings.jarvis_settings import (
+    _enqueued_sync_via_admin_pool,
+)
+
+
+class TestRT4PoolSyncReReadsAtRunTime(_RT3SettingsTestCase):
+    """Task 4 (RT4): The pool-sync worker must rebuild the payload from the
+    CURRENT Jarvis Settings at run time rather than using the snapshot
+    passed as job args.  This makes a fixed-job_id + deduplicate=True safe:
+    a correction saved while the first job is still queued is naturally
+    included when the job eventually executes.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self._clear_models()
+        _reset_settings()
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("preset", "", update_modified=False)
+        settings.db_set("proxy_active", 0, update_modified=False)
+        settings.db_set("proxy_recommended", 0, update_modified=False)
+        frappe.db.commit()
+
+    # ------------------------------------------------------------------
+    # (a) Worker pushes CURRENT settings, not a stale snapshot
+    # ------------------------------------------------------------------
+
+    def test_worker_pushes_current_settings_not_stale_snapshot(self):
+        """Simulate a 'correction' scenario:
+
+        1. Save settings with model set A (model="gpt-4o").
+        2. Before the queued job runs, update the DB to model set B
+           (model="gpt-3.5-turbo") — simulating a second save while the
+           first job is still pending.
+        3. Run the worker directly (inline) with NO args.
+        4. Assert the spec pushed to admin reflects set B (current DB),
+           not set A (original snapshot).
+        """
+        from unittest.mock import patch
+
+        # Step 1: save with model set A (2 models so proxy_active fires).
+        settings = frappe.get_single("Jarvis Settings")
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-4o",
+                       tier="strong", order=0,
+                       api_key="sk-set-a",
+                       base_url="https://api.openai.com")
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-3.5-turbo",
+                       tier="cheap", order=1,
+                       api_key="sk-set-a-2",
+                       base_url="https://api.openai.com")
+
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   return_value={"action": "pool_update"}):
+            settings.save()
+
+        # Step 2: simulate a correction — update model set in DB to set B
+        # without triggering another enqueue (direct DB manipulation).
+        frappe.db.delete("Jarvis LLM Pool Model",
+                         {"parenttype": "Jarvis Settings",
+                          "parent": "Jarvis Settings"})
+        frappe.db.commit()
+
+        # Insert set B: only one corrected model (strong only, different model name).
+        fresh = frappe.get_single("Jarvis Settings")
+        _add_model_row(fresh,
+                       provider="openai_compat", model="claude-3-5-sonnet",
+                       tier="strong", order=0,
+                       api_key="sk-set-b",
+                       base_url="https://api.anthropic.com")
+        _add_model_row(fresh,
+                       provider="openai_compat", model="claude-3-haiku",
+                       tier="cheap", order=1,
+                       api_key="sk-set-b-2",
+                       base_url="https://api.anthropic.com")
+        # Directly save model rows via the document's child table mechanism.
+        for row in fresh.models:
+            row.parent = "Jarvis Settings"
+            row.parenttype = "Jarvis Settings"
+            row.parentfield = "models"
+            row.insert()
+        frappe.db.commit()
+
+        # Step 3: run the worker directly (no snapshot args — worker re-reads).
+        pushed_specs = []
+
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   side_effect=lambda **kw: pushed_specs.append(kw) or {"action": "pool_update"}):
+            _enqueued_sync_via_admin_pool()
+
+        # Step 4: assert set B was pushed (model names from set B).
+        self.assertTrue(pushed_specs,
+                        "post_update_llm_pool must have been called by the worker")
+        pushed_models = pushed_specs[0]["spec"]["models"]
+        pushed_model_names = {m["model"] for m in pushed_models}
+        self.assertIn("claude-3-5-sonnet", pushed_model_names,
+                      "worker must push CURRENT model set B (claude-3-5-sonnet), not stale set A (gpt-4o)")
+        self.assertNotIn("gpt-4o", pushed_model_names,
+                         "worker must NOT push stale snapshot model gpt-4o")
+
+    # ------------------------------------------------------------------
+    # (b) AdminRateLimitedError → terminal failure status (pool path)
+    # ------------------------------------------------------------------
+
+    def test_pool_sync_rate_limit_writes_terminal_failure_status(self):
+        """AdminRateLimitedError from post_update_llm_pool must write
+        last_sync_status starting with 'failed: rate-limited' — matching
+        the single-model path wording — so the UI poller stops spinning."""
+        from unittest.mock import patch
+        from jarvis.exceptions import AdminRateLimitedError
+
+        # Save with 2 models so proxy_active=1 and last_sync_status is set to pending.
+        settings = frappe.get_single("Jarvis Settings")
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-4o",
+                       tier="strong", order=0,
+                       api_key="sk-rl-key-1",
+                       base_url="https://api.openai.com")
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-3.5-turbo",
+                       tier="cheap", order=1,
+                       api_key="sk-rl-key-2",
+                       base_url="https://api.openai.com")
+
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   return_value={"action": "pool_update"}):
+            settings.save()
+
+        # Now run the worker with a rate-limited admin response.
+        err = AdminRateLimitedError("too many requests", retry_after_seconds=90)
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   side_effect=err):
+            _enqueued_sync_via_admin_pool()
+
+        settings = frappe.get_single("Jarvis Settings")
+        status = settings.last_sync_status or ""
+        self.assertTrue(
+            status.startswith("failed: rate-limited"),
+            f"Expected last_sync_status to start with 'failed: rate-limited', got: {status!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Task 5 (RT5): onboarding writes models[0] (table is the source of truth)
+# ---------------------------------------------------------------------------
+
+class TestRT5OnboardingWritesModelsRow(_RT3SettingsTestCase):
+    """Task 5 (RT5): save_llm_creds with auth_mode='api_key' must upsert
+    Jarvis Settings.models[0] (table is source of truth) so that:
+
+    (a) models[0] carries provider / model / base_url / credential_type='api_key'
+    (b) get_password on the row returns the api_key (encrypted via on_update mirror)
+    (c) legacy llm_provider / llm_model / llm_auth_mode are populated by the mirror
+    (d) is_ready_for_chat() returns ready=True after save_llm_creds (api_key path)
+    (e) auth_mode='oauth' is left on the legacy direct path (models table untouched)
+    """
+
+    def setUp(self):
+        super().setUp()
+        self._clear_models()
+        _reset_settings()
+        # Seed admin creds so is_ready_for_chat passes the signup gate.
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("jarvis_admin_api_key", "test-admin-key", update_modified=False)
+        settings.db_set("preset", "", update_modified=False)
+        settings.db_set("proxy_active", 0, update_modified=False)
+        settings.db_set("proxy_recommended", 0, update_modified=False)
+        frappe.db.commit()
+
+    # ------------------------------------------------------------------
+    # (a)+(b)+(c) models[0] row created with correct shape + encrypted key
+    # ------------------------------------------------------------------
+
+    def test_api_key_onboarding_upserts_models_row(self):
+        """save_llm_creds(auth_mode='api_key') must create models[0] with
+        provider / model / base_url / credential_type='api_key' and the
+        api_key retrievable via get_password on the row."""
+        from unittest.mock import patch
+
+        with patch("jarvis.admin_client.post_update_llm_creds",
+                   return_value={"action": "restart"}):
+            from jarvis import onboarding
+            onboarding.save_llm_creds(
+                provider="openai_compat",
+                model="gpt-4o",
+                api_key="sk-onboard-test-key",
+                base_url="https://api.openai.com",
+                auth_mode="api_key",
+            )
+
+        settings = frappe.get_single("Jarvis Settings")
+        models = settings.get("models") or []
+        self.assertTrue(len(models) >= 1,
+                        "models table must have at least one row after api_key onboarding")
+
+        row = models[0]
+        self.assertEqual(row.provider, "openai_compat",
+                         "models[0].provider must match the onboarding provider")
+        self.assertEqual(row.model, "gpt-4o",
+                         "models[0].model must match the onboarding model")
+        self.assertEqual(row.base_url, "https://api.openai.com",
+                         "models[0].base_url must match the onboarding base_url")
+        self.assertEqual(row.credential_type, "api_key",
+                         "models[0].credential_type must be 'api_key'")
+        self.assertEqual(int(row.enabled or 0), 1,
+                         "models[0].enabled must be 1")
+        self.assertEqual(int(row.order or 0), 0,
+                         "models[0].order must be 0")
+
+        # api_key must be stored encrypted, readable via get_password.
+        recovered = row.get_password("api_key", raise_exception=False)
+        self.assertEqual(recovered, "sk-onboard-test-key",
+                         "models[0].get_password('api_key') must return the onboarding key")
+
+    # ------------------------------------------------------------------
+    # (c) Legacy mirror fields are populated by on_update
+    # ------------------------------------------------------------------
+
+    def test_api_key_onboarding_mirrors_legacy_fields(self):
+        """After save_llm_creds(api_key), on_update must mirror models[0]
+        into the legacy llm_provider / llm_model / llm_auth_mode / llm_api_key
+        fields so existing downstream readers (chat worker, is_ready_for_chat)
+        continue to work unchanged."""
+        from unittest.mock import patch
+
+        with patch("jarvis.admin_client.post_update_llm_creds",
+                   return_value={"action": "restart"}):
+            from jarvis import onboarding
+            onboarding.save_llm_creds(
+                provider="openai_compat",
+                model="gpt-4o-mini",
+                api_key="sk-mirror-test",
+                base_url="https://api.openai.com",
+                auth_mode="api_key",
+            )
+
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertEqual(settings.llm_provider, "openai_compat",
+                         "llm_provider must be mirrored from models[0]")
+        self.assertEqual(settings.llm_model, "gpt-4o-mini",
+                         "llm_model must be mirrored from models[0]")
+        self.assertEqual(settings.llm_auth_mode, "api_key",
+                         "llm_auth_mode must be mirrored as 'api_key' from models[0]")
+        recovered_key = settings.get_password("llm_api_key", raise_exception=False)
+        self.assertEqual(recovered_key, "sk-mirror-test",
+                         "get_password('llm_api_key') must return the onboarding key via mirror")
+
+    # ------------------------------------------------------------------
+    # (d) is_ready_for_chat returns ready after api_key onboarding
+    # ------------------------------------------------------------------
+
+    def test_api_key_onboarding_leaves_is_ready_for_chat_passing(self):
+        """is_ready_for_chat must return ready=True after a successful
+        api_key onboarding via save_llm_creds."""
+        from unittest.mock import patch
+
+        with patch("jarvis.admin_client.post_update_llm_creds",
+                   return_value={"action": "restart"}):
+            from jarvis import onboarding
+            onboarding.save_llm_creds(
+                provider="openai_compat",
+                model="gpt-4o",
+                api_key="sk-readiness-test",
+                base_url="https://api.openai.com",
+                auth_mode="api_key",
+            )
+
+        from jarvis.account import is_ready_for_chat
+        result = is_ready_for_chat()
+        self.assertTrue(result.get("ready"),
+                        f"is_ready_for_chat must return ready=True after api_key onboarding; got: {result}")
+        self.assertIsNone(result.get("reason"),
+                          f"reason must be None when ready; got: {result.get('reason')!r}")
+
+    # ------------------------------------------------------------------
+    # (e) OAuth mode leaves the models table untouched
+    # ------------------------------------------------------------------
+
+    def test_oauth_mode_does_not_write_models_row(self):
+        """save_llm_creds(auth_mode='oauth') must NOT write to the models
+        table — direct-OAuth single-model uses the legacy field path."""
+        from unittest.mock import patch
+
+        # Pre-condition: no models rows.
+        settings = frappe.get_single("Jarvis Settings")
+        initial_count = len(settings.get("models") or [])
+
+        with patch("jarvis.admin_client.post_update_llm_creds",
+                   return_value={"action": "restart"}):
+            from jarvis import onboarding
+            onboarding.save_llm_creds(
+                provider="OpenAI",
+                model="gpt-4o",
+                api_key="",
+                base_url="",
+                auth_mode="oauth",
+            )
+
+        settings = frappe.get_single("Jarvis Settings")
+        final_count = len(settings.get("models") or [])
+        self.assertEqual(final_count, 0,
+                         "oauth mode must leave the models table empty (0 rows)")
+
+    # ------------------------------------------------------------------
+    # (f) OAuth mode with multi-model pool raises error (data-loss guard)
+    # ------------------------------------------------------------------
+
+    def test_oauth_mode_with_multi_model_pool_raises_error(self):
+        """save_llm_creds(auth_mode='oauth') with ≥2 enabled models must raise
+        frappe.ValidationError and NOT clear the models table (data-loss guard)."""
+        from unittest.mock import patch
+
+        # Pre-condition: configure a multi-model pool with 2 enabled models.
+        settings = frappe.get_single("Jarvis Settings")
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-4o",
+                       tier="strong", order=0, enabled=1,
+                       api_key="sk-pool-key-1",
+                       base_url="https://api.openai.com")
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-3.5-turbo",
+                       tier="cheap", order=1, enabled=1,
+                       api_key="sk-pool-key-2",
+                       base_url="https://api.openai.com")
+        settings.save()
+
+        # Confirm 2 models exist before attempting OAuth switch.
+        settings = frappe.get_single("Jarvis Settings")
+        pre_count = len(settings.get("models") or [])
+        self.assertEqual(pre_count, 2,
+                         "pre-condition: must have 2 enabled models")
+
+        # Attempt to switch to OAuth with the multi-model pool in place.
+        # This must raise ValidationError and NOT clear the models table.
+        with patch("jarvis.admin_client.post_update_llm_creds",
+                   return_value={"action": "restart"}):
+            from jarvis import onboarding
+            with self.assertRaises(frappe.ValidationError) as ctx:
+                onboarding.save_llm_creds(
+                    provider="OpenAI",
+                    model="gpt-4o",
+                    api_key="",
+                    base_url="",
+                    auth_mode="oauth",
+                )
+
+        # Assert the error message is clear about the guard.
+        error_msg = str(ctx.exception)
+        self.assertIn("multi-model", error_msg.lower(),
+                      f"Error message must mention multi-model; got: {error_msg}")
+        self.assertIn("remove", error_msg.lower(),
+                      f"Error message must mention removing models; got: {error_msg}")
+
+        # Assert the models table was NOT cleared.
+        settings = frappe.get_single("Jarvis Settings")
+        post_count = len(settings.get("models") or [])
+        self.assertEqual(post_count, 2,
+                         "models table must NOT be cleared when guard is triggered")
+
+
+# ---------------------------------------------------------------------------
+# FT1: Migration patch tests — v1_seed_llm_models.py
+#
+# TDD RED→GREEN tests for the deploy-blocker fix:
+#   (a) oauth-mode tenant → execute() must NOT raise, models stays empty
+#   (b) blank-key api_key tenant → execute() must NOT raise, models stays empty
+#   (c) api_key tenant WITH a key → execute() seeds models[0]
+#   (d) no admin/network sync is enqueued during migrate
+# ---------------------------------------------------------------------------
+
+class TestFT1MigrationPatch(_RT3SettingsTestCase):
+    """FT1: Verify v1_seed_llm_models.execute() is safe for all credential modes.
+
+    The patch must:
+    - NOT raise for oauth/subscription tenants (legacy path, models stays empty)
+    - NOT raise for blank-key api_key tenants (models stays empty)
+    - Seed models[0] only for api_key tenants with a non-blank key
+    - NOT enqueue an admin sync (no network calls during bench migrate)
+    """
+
+    def setUp(self):
+        super().setUp()
+        self._clear_models()
+        # Clean state: no models, no preset
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("preset", "", update_modified=False)
+        settings.db_set("proxy_active", 0, update_modified=False)
+        settings.db_set("proxy_recommended", 0, update_modified=False)
+        settings.db_set("llm_provider", "", update_modified=False)
+        settings.db_set("llm_model", "", update_modified=False)
+        settings.db_set("llm_base_url", "", update_modified=False)
+        settings.db_set("llm_auth_mode", "", update_modified=False)
+        # Clear llm_api_key from both __Auth (encrypted) and tabSingles (plaintext).
+        # tabSingles may store a non-masked value if legacy code wrote it directly;
+        # db_set("", ...) clears it so get_password() returns "" in the next test.
+        settings.db_set("llm_api_key", "", update_modified=False)
+        from frappe.utils.password import remove_encrypted_password
+        try:
+            remove_encrypted_password("Jarvis Settings", "Jarvis Settings", "llm_api_key")
+        except Exception:
+            pass
+        frappe.db.commit()
+
+    def _set_legacy_fields(self, *, llm_model, llm_auth_mode, llm_api_key=None,
+                           llm_provider="OpenAI", llm_base_url="https://api.openai.com"):
+        """Seed the legacy single-model fields (without triggering on_update)."""
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("llm_model", llm_model, update_modified=False)
+        settings.db_set("llm_auth_mode", llm_auth_mode, update_modified=False)
+        settings.db_set("llm_provider", llm_provider, update_modified=False)
+        settings.db_set("llm_base_url", llm_base_url, update_modified=False)
+        if llm_api_key:
+            from frappe.utils.password import set_encrypted_password
+            set_encrypted_password(
+                "Jarvis Settings", "Jarvis Settings",
+                llm_api_key, "llm_api_key",
+            )
+        frappe.db.commit()
+
+    # ------------------------------------------------------------------ #
+    # (a) oauth-mode tenant → execute() must NOT raise, models stays empty
+    # ------------------------------------------------------------------ #
+
+    def test_oauth_tenant_patch_does_not_raise_and_leaves_models_empty(self):
+        """FT1(a): oauth-mode tenant: execute() must NOT raise, models stays empty."""
+        from unittest.mock import patch as mock_patch
+
+        self._set_legacy_fields(
+            llm_model="gpt-4o",
+            llm_auth_mode="oauth",
+            llm_api_key=None,
+        )
+
+        with (
+            mock_patch("jarvis.admin_client.post_update_llm_creds") as mock_creds,
+            mock_patch("jarvis.admin_client.post_update_llm_pool") as mock_pool,
+        ):
+            try:
+                from jarvis.patches import v1_seed_llm_models
+                import importlib
+                importlib.reload(v1_seed_llm_models)
+                v1_seed_llm_models.execute()
+            except Exception as exc:
+                self.fail(
+                    f"v1_seed_llm_models.execute() raised for oauth tenant: {exc}"
+                )
+
+        settings = frappe.get_single("Jarvis Settings")
+        models = settings.get("models") or []
+        self.assertEqual(len(models), 0,
+                         "oauth tenant: models must stay empty after migration patch")
+
+        # No admin sync must be enqueued
+        mock_creds.assert_not_called()
+        mock_pool.assert_not_called()
+
+    # ------------------------------------------------------------------ #
+    # (b) subscription-mode tenant → execute() must NOT raise, models empty
+    # ------------------------------------------------------------------ #
+
+    def test_subscription_tenant_patch_does_not_raise_and_leaves_models_empty(self):
+        """FT1(a-sub): subscription-mode tenant: execute() must NOT raise, models stays empty."""
+        from unittest.mock import patch as mock_patch
+
+        self._set_legacy_fields(
+            llm_model="gpt-4o",
+            llm_auth_mode="subscription",
+            llm_api_key=None,
+        )
+
+        with (
+            mock_patch("jarvis.admin_client.post_update_llm_creds") as mock_creds,
+            mock_patch("jarvis.admin_client.post_update_llm_pool") as mock_pool,
+        ):
+            try:
+                from jarvis.patches import v1_seed_llm_models
+                import importlib
+                importlib.reload(v1_seed_llm_models)
+                v1_seed_llm_models.execute()
+            except Exception as exc:
+                self.fail(
+                    f"v1_seed_llm_models.execute() raised for subscription tenant: {exc}"
+                )
+
+        settings = frappe.get_single("Jarvis Settings")
+        models = settings.get("models") or []
+        self.assertEqual(len(models), 0,
+                         "subscription tenant: models must stay empty after migration patch")
+
+        mock_creds.assert_not_called()
+        mock_pool.assert_not_called()
+
+    # ------------------------------------------------------------------ #
+    # (b) blank-key api_key tenant → execute() must NOT raise, models empty
+    # ------------------------------------------------------------------ #
+
+    def test_blank_key_api_key_tenant_patch_does_not_raise_and_leaves_models_empty(self):
+        """FT1(b): blank-key api_key tenant: execute() must NOT raise, models stays empty."""
+        from unittest.mock import patch as mock_patch
+
+        # api_key mode but NO key set (llm_api_key blank/absent)
+        self._set_legacy_fields(
+            llm_model="gpt-4o",
+            llm_auth_mode="api_key",
+            llm_api_key=None,  # blank
+        )
+
+        with (
+            mock_patch("jarvis.admin_client.post_update_llm_creds") as mock_creds,
+            mock_patch("jarvis.admin_client.post_update_llm_pool") as mock_pool,
+        ):
+            try:
+                from jarvis.patches import v1_seed_llm_models
+                import importlib
+                importlib.reload(v1_seed_llm_models)
+                v1_seed_llm_models.execute()
+            except Exception as exc:
+                self.fail(
+                    f"v1_seed_llm_models.execute() raised for blank-key api_key tenant: {exc}"
+                )
+
+        settings = frappe.get_single("Jarvis Settings")
+        models = settings.get("models") or []
+        self.assertEqual(len(models), 0,
+                         "blank-key api_key tenant: models must stay empty after migration patch")
+
+        mock_creds.assert_not_called()
+        mock_pool.assert_not_called()
+
+    # ------------------------------------------------------------------ #
+    # (c) api_key tenant WITH key → execute() seeds models[0]
+    # ------------------------------------------------------------------ #
+
+    def test_api_key_tenant_with_key_patch_seeds_models_row(self):
+        """FT1(c): api_key tenant with non-blank key: execute() seeds models[0]."""
+        from unittest.mock import patch as mock_patch
+
+        self._set_legacy_fields(
+            llm_model="gpt-4o",
+            llm_auth_mode="api_key",
+            llm_api_key="sk-migrate-test-key-xyz",
+            llm_provider="OpenAI",
+            llm_base_url="https://api.openai.com",
+        )
+
+        with (
+            mock_patch("jarvis.admin_client.post_update_llm_creds",
+                       return_value={"action": "restart"}) as mock_creds,
+            mock_patch("jarvis.admin_client.post_update_llm_pool") as mock_pool,
+        ):
+            from jarvis.patches import v1_seed_llm_models
+            import importlib
+            importlib.reload(v1_seed_llm_models)
+            v1_seed_llm_models.execute()
+
+        settings = frappe.get_single("Jarvis Settings")
+        models = settings.get("models") or []
+        self.assertEqual(len(models), 1,
+                         "api_key tenant with key: must have exactly 1 model row after migration")
+
+        row = models[0]
+        self.assertEqual(row.credential_type, "api_key",
+                         "seeded row credential_type must be 'api_key'")
+        self.assertEqual(row.model, "gpt-4o",
+                         "seeded row model must match legacy llm_model")
+        self.assertEqual(int(row.enabled or 0), 1,
+                         "seeded row must be enabled")
+
+        # Pool sync must NOT have been called (1 model → single-model path, not proxy)
+        mock_pool.assert_not_called()
+
+    # ------------------------------------------------------------------ #
+    # (c-idempotent) second execute() with existing models → no-op
+    # ------------------------------------------------------------------ #
+
+    def test_api_key_patch_is_idempotent_when_models_already_seeded(self):
+        """FT1(c-idempotent): second execute() when models already exist → no-op (no duplicate rows)."""
+        from unittest.mock import patch as mock_patch
+
+        self._set_legacy_fields(
+            llm_model="gpt-4o",
+            llm_auth_mode="api_key",
+            llm_api_key="sk-idempotent-key",
+        )
+
+        with mock_patch("jarvis.admin_client.post_update_llm_creds",
+                        return_value={"action": "restart"}):
+            from jarvis.patches import v1_seed_llm_models
+            import importlib
+            importlib.reload(v1_seed_llm_models)
+            v1_seed_llm_models.execute()
+
+        # Run again — must not add a second row
+        with mock_patch("jarvis.admin_client.post_update_llm_creds",
+                        return_value={"action": "restart"}):
+            importlib.reload(v1_seed_llm_models)
+            v1_seed_llm_models.execute()
+
+        settings = frappe.get_single("Jarvis Settings")
+        models = settings.get("models") or []
+        self.assertEqual(len(models), 1,
+                         "idempotent: second execute() must NOT add a duplicate row")
+
+    # ------------------------------------------------------------------ #
+    # (d) no admin sync enqueued during migrate
+    # ------------------------------------------------------------------ #
+
+    def test_migrate_does_not_enqueue_admin_sync_for_api_key_tenant(self):
+        """FT1(d): During migrate, execute() must NOT enqueue an admin sync call.
+
+        The in_llm_migrate flag (or equivalent) must suppress the sync enqueue
+        so that bench migrate does not make per-tenant admin/network calls.
+        """
+        from unittest.mock import patch as mock_patch
+
+        self._set_legacy_fields(
+            llm_model="gpt-4o",
+            llm_auth_mode="api_key",
+            llm_api_key="sk-no-sync-test",
+            llm_provider="OpenAI",
+            llm_base_url="https://api.openai.com",
+        )
+
+        enqueued_calls = []
+
+        original_enqueue = frappe.enqueue
+
+        def capture_enqueue(*args, **kwargs):
+            # Capture any enqueue calls
+            method = args[0] if args else kwargs.get("method", "")
+            if "sync" in str(method).lower() or "admin" in str(method).lower():
+                enqueued_calls.append({"method": method, "kwargs": kwargs})
+            # Still call original but prevent actual network calls
+            return None
+
+        with (
+            mock_patch("frappe.enqueue", side_effect=capture_enqueue),
+            mock_patch("jarvis.admin_client.post_update_llm_creds") as mock_creds,
+            mock_patch("jarvis.admin_client.post_update_llm_pool") as mock_pool,
+        ):
+            from jarvis.patches import v1_seed_llm_models
+            import importlib
+            importlib.reload(v1_seed_llm_models)
+            v1_seed_llm_models.execute()
+
+        # No admin sync must be enqueued during migration
+        self.assertEqual(enqueued_calls, [],
+                         f"execute() must NOT enqueue any admin sync during migrate; "
+                         f"got: {enqueued_calls}")
+        mock_creds.assert_not_called()
+        mock_pool.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# FT2: validate-vs-mirror timing
+# ---------------------------------------------------------------------------
+
+class TestFT2ValidateMirrorTiming(_RT3SettingsTestCase):
+    """FT2: before_validate mirrors models[0] so validate() sees fresh values."""
+
+    def setUp(self):
+        super().setUp()
+        self._clear_models()
+        _reset_settings()
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("preset", "", update_modified=False)
+        settings.db_set("proxy_active", 0, update_modified=False)
+        settings.db_set("proxy_recommended", 0, update_modified=False)
+        settings.db_set("jarvis_admin_api_key", "test-admin-key-ft2", update_modified=False)
+        frappe.db.commit()
+
+    def test_table_api_key_rotation_enqueues_reload(self):
+        """Changing only the table row's api_key → a credential sync (reload or restart) is enqueued.
+
+        'reload' calls post_rotate_llm_secret; 'restart' calls post_update_llm_creds.
+        Either is acceptable — what matters is that an admin sync fires.
+        """
+        from unittest.mock import patch
+
+        # First, set up with initial key.
+        settings = frappe.get_single("Jarvis Settings")
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-4o",
+                       api_key="sk-initial-key",
+                       base_url="https://api.openai.com")
+        settings.preset = ""
+
+        with (
+            patch("jarvis.admin_client.post_update_llm_creds",
+                  return_value={"action": "restart"}),
+            patch("jarvis.admin_client.post_rotate_llm_secret",
+                  return_value={"action": "reload"}),
+        ):
+            settings.save()
+
+        frappe.db.commit()
+
+        # Now rotate the key only in the table row (not in the legacy field).
+        settings = frappe.get_single("Jarvis Settings")
+        # Update the model row's api_key
+        for row in settings.models:
+            if row.model == "gpt-4o":
+                row.api_key = "sk-rotated-key"
+        # Do NOT touch legacy llm_api_key — before_validate should mirror it.
+
+        creds_calls = []
+        rotate_calls = []
+        with (
+            patch("jarvis.admin_client.post_update_llm_creds",
+                  side_effect=lambda **kw: creds_calls.append(kw) or {"action": "restart"}),
+            patch("jarvis.admin_client.post_rotate_llm_secret",
+                  side_effect=lambda **kw: rotate_calls.append(kw) or {"action": "reload"}),
+        ):
+            settings.save()
+
+        # Some admin call (reload or restart) must have been made.
+        total_calls = len(creds_calls) + len(rotate_calls)
+        self.assertTrue(total_calls >= 1,
+                        "A credential sync (reload or restart) must be enqueued when table api_key rotates")
+
+    def test_fresh_tenant_no_preseeded_key_can_save(self):
+        """Fresh tenant: no llm_api_key in DB, save with model row having api_key → no ValidationError."""
+        from unittest.mock import patch
+
+        # Ensure no llm_api_key in DB.
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("llm_api_key", "", update_modified=False)
+        from frappe.utils.password import remove_encrypted_password
+        try:
+            remove_encrypted_password("Jarvis Settings", "Jarvis Settings", "llm_api_key")
+        except Exception:
+            pass
+        frappe.db.commit()
+
+        settings = frappe.get_single("Jarvis Settings")
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-4o",
+                       api_key="sk-fresh-tenant-key",
+                       base_url="https://api.openai.com")
+        settings.preset = ""
+
+        with patch("jarvis.admin_client.post_update_llm_creds",
+                   return_value={"action": "restart"}):
+            try:
+                settings.save()
+            except frappe.ValidationError as exc:
+                self.fail(f"Fresh tenant save raised ValidationError unexpectedly: {exc}")
+
+    def test_proxy_active_pool_is_ready_for_chat(self):
+        """proxy_active=1 (without llm_oauth_connected_at) → is_ready_for_chat returns ready."""
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("proxy_active", 1, update_modified=False)
+        settings.db_set("llm_oauth_connected_at", None, update_modified=False)
+        frappe.db.commit()
+
+        from jarvis.account import is_ready_for_chat
+        result = is_ready_for_chat()
+        self.assertTrue(result.get("ready"),
+                        f"proxy_active=1 must make is_ready_for_chat return ready=True; got: {result}")
+
+
+# ---------------------------------------------------------------------------
+# FT3: empty/invalid pool guards
+# ---------------------------------------------------------------------------
+
+class TestFT3EmptyPoolGuards(_RT3SettingsTestCase):
+    """FT3: Guards against empty/stale-preset pool pushes."""
+
+    def setUp(self):
+        super().setUp()
+        self._clear_models()
+        _reset_settings()
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("preset", "", update_modified=False)
+        settings.db_set("proxy_active", 0, update_modified=False)
+        settings.db_set("proxy_recommended", 0, update_modified=False)
+        frappe.db.commit()
+
+    def test_preset_with_zero_enabled_models_raises_validation(self):
+        """preset set + all models disabled → ValidationError with 'at least 1' in message."""
+        settings = frappe.get_single("Jarvis Settings")
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-4o",
+                       api_key="sk-disabled-key",
+                       base_url="https://api.openai.com",
+                       enabled=0)  # disabled!
+        settings.preset = "Cost-saver"
+
+        with self.assertRaises(frappe.ValidationError) as ctx:
+            settings.save()
+
+        error_msg = str(ctx.exception)
+        self.assertIn("at least 1", error_msg.lower(),
+                      f"Error must mention 'at least 1'; got: {error_msg}")
+
+    def test_oauth_save_llm_creds_clears_preset(self):
+        """save_llm_creds(auth_mode='oauth') clears preset."""
+        from unittest.mock import patch
+
+        # Set a preset first.
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("preset", "Cost-saver", update_modified=False)
+        frappe.db.commit()
+
+        with patch("jarvis.admin_client.post_update_llm_creds",
+                   return_value={"action": "restart"}):
+            from jarvis import onboarding
+            onboarding.save_llm_creds(
+                provider="OpenAI",
+                model="gpt-4o",
+                api_key="",
+                base_url="",
+                auth_mode="oauth",
+            )
+
+        settings = frappe.get_single("Jarvis Settings")
+        preset_val = settings.get("preset") or ""
+        self.assertEqual(preset_val, "",
+                         f"preset must be cleared after oauth save_llm_creds; got: {preset_val!r}")
+
+    def test_pool_worker_skips_push_when_no_longer_proxy_valid(self):
+        """Worker re-validates at run time: if no models left → skips push, sets 'skipped' status."""
+        from unittest.mock import patch
+
+        # Set up proxy-valid state (2 models).
+        settings = frappe.get_single("Jarvis Settings")
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-4o",
+                       tier="strong", order=0,
+                       api_key="sk-worker-key-1",
+                       base_url="https://api.openai.com")
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-3.5-turbo",
+                       tier="cheap", order=1,
+                       api_key="sk-worker-key-2",
+                       base_url="https://api.openai.com")
+        settings.preset = ""
+
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   return_value={"action": "pool_update"}):
+            settings.save()
+
+        frappe.db.commit()
+
+        # Now delete models directly so worker sees 0 models.
+        frappe.db.delete("Jarvis LLM Pool Model",
+                         {"parenttype": "Jarvis Settings",
+                          "parent": "Jarvis Settings"})
+        frappe.db.commit()
+
+        # Run worker — it should skip, NOT call post_update_llm_pool.
+        pool_sync_called = []
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   side_effect=lambda **kw: pool_sync_called.append(kw) or {"action": "pool_update"}):
+            _enqueued_sync_via_admin_pool()
+
+        self.assertEqual(pool_sync_called, [],
+                         "post_update_llm_pool must NOT be called when models deleted before worker runs")
+
+        settings = frappe.get_single("Jarvis Settings")
+        status = settings.last_sync_status or ""
+        self.assertIn("skipped", status.lower(),
+                      f"last_sync_status must contain 'skipped'; got: {status!r}")
+
+
+# ---------------------------------------------------------------------------
+# FT4: password masking + blob shape
+# ---------------------------------------------------------------------------
+
+class TestFT4PasswordMaskingAndBlobShape(FrappeTestCase):
+    """FT4: Password masking and oauth_blob shape validation."""
+
+    def test_resave_db_backed_subscription_tenant_does_not_raise_malformed_blob(self):
+        """Re-reading a DB-backed subscription account's oauth_blob (masked) and
+        running validate_models must NOT produce a 'malformed' error."""
+        from jarvis.jarvis.pool_serialize import validate_models
+
+        # Build in-memory account with oauth_blob set (simulating a DB-backed row
+        # where the field is readable via _get_password which returns the real value).
+        acc = frappe._dict(
+            upstream="openai",
+            account_ref="ACC_MASKED_001",
+            label="test@example.com",
+            oauth_blob='{"token": "real_value", "refresh": "abc"}',
+        )
+        m = _subscription_model(accounts=[acc])
+        settings = _make_settings_with_models([m])
+
+        # Should not produce a 'malformed' error.
+        errors = validate_models(settings)
+        malformed_errors = [e for e in errors if "malformed" in e.lower()]
+        self.assertEqual(malformed_errors, [],
+                         f"No malformed errors expected for valid oauth_blob; got: {errors}")
+
+    def test_non_dict_blob_is_rejected(self):
+        """oauth_blob that parses to a list → validate_models returns error containing 'dict' or 'object'."""
+        from jarvis.jarvis.pool_serialize import validate_models
+
+        acc = frappe._dict(
+            upstream="openai",
+            account_ref="ACC_LIST_BLOB",
+            label="test@example.com",
+            oauth_blob='[1, 2, 3]',  # list, not dict
+        )
+        m = _subscription_model(accounts=[acc])
+        settings = _make_settings_with_models([m])
+
+        errors = validate_models(settings)
+        self.assertTrue(
+            any("dict" in e.lower() or "object" in e.lower() for e in errors),
+            f"Expected error about non-dict blob; got: {errors}"
+        )
+
+    def test_get_password_does_not_collapse_decrypt_error_to_blank(self):
+        """_get_password must propagate when the field is non-empty but get_password raises."""
+        from jarvis.jarvis.pool_serialize import _get_password
+        from unittest.mock import MagicMock
+
+        # Simulate a doc whose get_password raises even though the field has content.
+        doc = MagicMock()
+        doc.get_password.side_effect = Exception("decryption failed")
+        doc.oauth_blob = "masked_value"  # non-empty field
+        doc.get = MagicMock(return_value="masked_value")
+
+        with self.assertRaises(Exception):
+            _get_password(doc, "oauth_blob")
+
+
+
+# ---------------------------------------------------------------------------
+# FT5: chat-worker pool-awareness + routing_mode + worker error
+# ---------------------------------------------------------------------------
+
+class TestFT5ChatWorkerPoolAwareness(_RT3SettingsTestCase):
+    """FT5: Chat worker pool-awareness and routing_mode field."""
+
+    def setUp(self):
+        super().setUp()
+        self._clear_models()
+        _reset_settings()
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("preset", "", update_modified=False)
+        settings.db_set("proxy_active", 0, update_modified=False)
+        settings.db_set("proxy_recommended", 0, update_modified=False)
+        frappe.db.commit()
+
+    def _make_conv(self, model_override=""):
+        """Make a minimal conversation-like object."""
+        return frappe._dict(model_override=model_override)
+
+    def _set_proxy_active(self, models_list):
+        """Set proxy_active=1 and persist model rows to DB."""
+        from unittest.mock import patch
+        settings = frappe.get_single("Jarvis Settings")
+        for m in models_list:
+            _add_model_row(settings, **m)
+        # Save with admin calls mocked so the model rows are persisted to DB.
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   return_value={"action": "pool_update"}):
+            settings.save()
+        # Force proxy_active=1 in DB (in case 2 models triggered it already;
+        # this handles the case where tests add only models via this helper
+        # and proxy_active should be 1 for the pool routing assertion).
+        frappe.db.set_value("Jarvis Settings", "Jarvis Settings",
+                            "proxy_active", 1, update_modified=False)
+        frappe.db.commit()
+
+    def test_pool_mode_resolves_empty_model_for_pool_routing(self):
+        """proxy_active=1, no model_override → _resolve_model_and_provider returns ('', None)."""
+        from jarvis.chat.worker import _resolve_model_and_provider
+
+        self._set_proxy_active([
+            {"provider": "openai_compat", "model": "gpt-4o", "tier": "strong", "order": 0, "api_key": "sk-p1"},
+            {"provider": "openai_compat", "model": "gpt-3.5-turbo", "tier": "cheap", "order": 1, "api_key": "sk-p2"},
+        ])
+
+        conv = self._make_conv(model_override="")
+        effective_model, provider = _resolve_model_and_provider(conv)
+        self.assertEqual(effective_model, "",
+                         f"Pool mode with no override must return '' for model; got: {effective_model!r}")
+        self.assertIsNone(provider,
+                          f"Pool mode must return None provider; got: {provider!r}")
+
+    def test_pool_mode_validates_override_against_enabled_models(self):
+        """proxy_active=1, model_override in enabled models → override returned."""
+        from jarvis.chat.worker import _resolve_model_and_provider
+
+        self._set_proxy_active([
+            {"provider": "openai_compat", "model": "gpt-4o", "tier": "strong", "order": 0, "api_key": "sk-p1"},
+            {"provider": "openai_compat", "model": "gpt-3.5-turbo", "tier": "cheap", "order": 1, "api_key": "sk-p2"},
+        ])
+
+        conv = self._make_conv(model_override="gpt-4o")
+        effective_model, _ = _resolve_model_and_provider(conv)
+        self.assertEqual(effective_model, "gpt-4o",
+                         f"Valid pool override must be accepted; got: {effective_model!r}")
+
+    def test_pool_mode_invalid_override_falls_back_to_pool_routing(self):
+        """proxy_active=1, model_override NOT in enabled models → falls back to '' (pool routing)."""
+        from jarvis.chat.worker import _resolve_model_and_provider
+
+        self._set_proxy_active([
+            {"provider": "openai_compat", "model": "gpt-4o", "tier": "strong", "order": 0, "api_key": "sk-p1"},
+            {"provider": "openai_compat", "model": "gpt-3.5-turbo", "tier": "cheap", "order": 1, "api_key": "sk-p2"},
+        ])
+
+        conv = self._make_conv(model_override="not-a-real-model")
+        effective_model, _ = _resolve_model_and_provider(conv)
+        self.assertEqual(effective_model, "",
+                         f"Invalid pool override must fall back to '' (pool routing); got: {effective_model!r}")
+
+    def test_worker_catches_admin_validation_error(self):
+        """AdminValidationError from pool sync → last_sync_status contains 'validation'."""
+        from unittest.mock import patch
+        from jarvis.exceptions import AdminValidationError
+
+        # Set up 2 models so proxy path is taken.
+        settings = frappe.get_single("Jarvis Settings")
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-4o",
+                       tier="strong", order=0,
+                       api_key="sk-av-key-1",
+                       base_url="https://api.openai.com")
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-3.5-turbo",
+                       tier="cheap", order=1,
+                       api_key="sk-av-key-2",
+                       base_url="https://api.openai.com")
+
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   return_value={"action": "pool_update"}):
+            settings.save()
+
+        err = AdminValidationError("pool model config rejected by admin")
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   side_effect=err):
+            _enqueued_sync_via_admin_pool()
+
+        settings = frappe.get_single("Jarvis Settings")
+        status = settings.last_sync_status or ""
+        self.assertIn("validation", status.lower(),
+                      f"Expected 'validation' in status; got: {status!r}")
+
+    def test_routing_mode_field_exists_in_settings_schema(self):
+        """Jarvis Settings must have routing_mode Select field."""
+        meta = frappe.get_meta("Jarvis Settings")
+        fields = {f.fieldname: f for f in meta.fields}
+        self.assertIn("routing_mode", fields,
+                      "Jarvis Settings must have 'routing_mode' field")
+        f = fields["routing_mode"]
+        self.assertEqual(f.fieldtype, "Select",
+                         "routing_mode must be of type Select")
+
+
+# ---------------------------------------------------------------------------
+# FT4b: Real DB-backed validate_models tests (never-raises contract)
+# ---------------------------------------------------------------------------
+
+class TestFT4bValidateModelsNeverRaises(_RT3SettingsTestCase):
+    """FT4b: Real-DB and mock-decrypt tests verifying the 'never raises' contract
+    of validate_models when reading oauth_blob / api_key via get_password.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self._clear_models()
+        _reset_settings()
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("preset", "", update_modified=False)
+        settings.db_set("proxy_active", 0, update_modified=False)
+        settings.db_set("proxy_recommended", 0, update_modified=False)
+        frappe.db.commit()
+
+    def test_real_db_backed_subscription_resave_does_not_produce_malformed_error(self):
+        """FT4b DB-backed path: save a Jarvis Settings with a real subscription model +
+        account whose oauth_blob is encrypted in the DB.  Re-loading the doc and
+        running validate_models on the reloaded doc must NOT produce a 'malformed'
+        error and must NOT raise.
+
+        This exercises the real DB + get_password path (not the frappe._dict fallback
+        used by test_resave_db_backed_subscription_tenant_does_not_raise_malformed_blob).
+        """
+        from unittest.mock import patch
+
+        # Step 1: build and save settings with a subscription model + account.
+        settings = frappe.get_single("Jarvis Settings")
+
+        # Subscription model with one account whose oauth_blob will be encrypted.
+        sub_row = frappe.new_doc("Jarvis LLM Pool Model")
+        sub_row.model = "gpt-5.5-db-backed"
+        sub_row.tier = "cheap"
+        sub_row.order = 99
+        sub_row.enabled = 1
+        sub_row.credential_type = "subscription"
+
+        acc_row = frappe.new_doc("Jarvis LLM Pool Subscription Account")
+        acc_row.upstream = "openai"
+        acc_row.account_ref = "ACC_DB_BACKED_FT4B_001"
+        acc_row.label = "db-backed-ft4b@example.com"
+        acc_row.oauth_blob = '{"token": "real_token", "refresh": "real_refresh"}'
+        sub_row.append("accounts", acc_row)
+
+        settings.append("models", sub_row)
+
+        # A second strong api_key model so proxy_active triggers (≥2 models).
+        strong_row = frappe.new_doc("Jarvis LLM Pool Model")
+        strong_row.model = "gpt-4o-db-backed"
+        strong_row.tier = "strong"
+        strong_row.order = 98
+        strong_row.enabled = 1
+        strong_row.credential_type = "api_key"
+        strong_row.api_key = "sk-db-backed-ft4b-key"
+        strong_row.provider = "openai_compat"
+        strong_row.base_url = "https://api.openai.com"
+        settings.append("models", strong_row)
+
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   return_value={"action": "pool_update"}):
+            settings.save()
+
+        frappe.db.commit()
+
+        # Step 2: reload from DB — oauth_blob will be masked "****" in-memory
+        # but readable via row.get_password("oauth_blob") from __Auth table.
+        from jarvis.jarvis.pool_serialize import validate_models
+        reloaded = frappe.get_single("Jarvis Settings")
+
+        try:
+            errors = validate_models(reloaded)
+        except Exception as exc:
+            self.fail(f"validate_models raised on reloaded DB-backed doc: {exc}")
+
+        malformed_errors = [e for e in errors if "malformed" in e.lower()]
+        self.assertEqual(
+            malformed_errors, [],
+            f"Re-running validate_models on a reloaded DB-backed subscription doc must NOT "
+            f"report 'malformed'; got errors: {errors}",
+        )
+
+    def test_validate_models_decrypt_error_returns_clean_error_string_not_raise(self):
+        """FT4b decrypt-error path: if get_password raises for oauth_blob on a DB-backed
+        account row, validate_models must return a clean error string containing
+        'cannot read' or 'decryption error' and must NOT propagate the exception.
+
+        Mocks get_password to raise so the test is independent of real key material.
+        """
+        from jarvis.jarvis.pool_serialize import validate_models
+        from unittest.mock import MagicMock
+
+        # Build an account object that looks like a real child-doc row
+        # (has get_password callable) but whose get_password always raises.
+        acc = MagicMock()
+        acc.get_password = MagicMock(side_effect=Exception("simulated decryption failure"))
+        # Non-empty field so _get_password knows the field is set and re-raises.
+        acc.oauth_blob = "***masked***"
+        acc.get = MagicMock(return_value="***masked***")
+        acc.account_ref = "ACC_DECRYPT_ERR_FT4B"
+        acc.upstream = "openai"
+        acc.label = "decrypt-err@example.com"
+
+        m = _subscription_model(accounts=[acc])
+        settings = _make_settings_with_models([m])
+
+        # validate_models must NOT raise.
+        try:
+            errors = validate_models(settings)
+        except Exception as exc:
+            self.fail(
+                f"validate_models must never raise; got exception on decrypt error: {exc}"
+            )
+
+        # Must return a clean, human-readable error string about the failure.
+        self.assertTrue(
+            any(
+                "decryption error" in e.lower() or "cannot read" in e.lower()
+                for e in errors
+            ),
+            f"Expected a clean 'decryption error' / 'cannot read' error string; got: {errors}",
+        )

@@ -10,6 +10,7 @@
     "title",
     "session_key",
     "model_override",
+    "thinking_override",
     "status",
     "last_active_at",
     "starred"
@@ -35,6 +36,13 @@
       "fieldtype": "Data",
       "label": "Model Override",
       "description": "Bare model id (no provider prefix) used for chat turns in this conversation. Null/empty falls back to Jarvis Settings.llm_model. Validated against the SUBSCRIPTION_MODELS allowlist at write time."
+    },
+    {
+      "fieldname": "thinking_override",
+      "fieldtype": "Select",
+      "label": "Thinking Effort",
+      "options": "\nlow\nmedium\nhigh",
+      "description": "Per-conversation reasoning effort sent to openclaw via an inline /think directive in the user message. Empty falls back to openclaw's default (medium). Maps to the Fast/Balanced/Deep UI selector."
     },
     {
       "fieldname": "status",

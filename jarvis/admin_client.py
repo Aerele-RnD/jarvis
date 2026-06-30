@@ -342,6 +342,27 @@ def post_subscription_disconnect() -> dict:
 	)
 
 
+def post_update_llm_pool(*, spec: dict, api_keys: dict, oauth_blobs: dict) -> dict:
+	"""POST a PoolSpec + separated secrets to admin → fleet-agent → openclaw.
+
+	``spec``        : secret-free PoolSpec dict (name, routing_mode, models).
+	``api_keys``    : mapping ref → plaintext key (e.g. {"POOL_KEY_0": "sk-..."}).
+	``oauth_blobs`` : mapping account_ref → parsed OAuth blob dict.
+
+	The admin endpoint merges the secrets with the spec before forwarding to
+	fleet-agent. Implemented in T3 (jarvis_admin); this stub is the bench-side
+	caller so the controller and tests can reference it before that lands.
+
+	Raises:
+		AdminAuthError, AdminUnreachableError, AdminValidationError
+	"""
+	return _post(
+		path="/api/method/jarvis_admin.api.tenant.update_llm_pool",
+		body={"spec": spec, "api_keys": api_keys, "oauth_blobs": oauth_blobs},
+		timeout_s=120,
+	)
+
+
 def post_llm_auth_status() -> dict:
 	"""Ask admin (and via admin, fleet-agent) whether the customer's
 	container actually holds a usable OAuth profile right now.

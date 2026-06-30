@@ -469,3 +469,56 @@ class TestDisconnect(_OAuthApiBase):
 		self.assertEqual(out["error"]["code"], "disconnect_failed")
 
 
+class _FakeResp:
+	def __init__(self, *, ok, status=400, json_body=None, text=""):
+		self.ok = ok
+		self.status_code = status
+		self.text = text
+		self._body = json_body
+
+	def json(self):
+		if self._body is None:
+			raise ValueError("no json")
+		return self._body
+
+
+class TestExchangeCodeErrorParsing(_OAuthApiBase):
+	"""Regression for the prod crash: a provider that returns `error` as an
+	OBJECT made _exchange_code use a dict as a dict key
+	(_TOKEN_EXCHANGE_OPAQUE_CODES.get(<dict>)) -> TypeError: unhashable type.
+	The error path must surface a clean TokenExchangeError instead."""
+
+	_PROV = {"client_id": "cid", "token": "https://p.example/token", "client_secret": None}
+
+	def _exchange(self, json_body):
+		resp = _FakeResp(ok=False, status=400, json_body=json_body)
+		with patch("jarvis.oauth.api.get_provider", return_value=self._PROV), \
+		     patch("jarvis.oauth.api.requests.post", return_value=resp), \
+		     patch("jarvis.oauth.api.frappe.log_error"):
+			with self.assertRaises(oauth_api.TokenExchangeError) as ctx:
+				oauth_api._exchange_code(provider="openai", code="ac_x", code_verifier="v")
+		return ctx.exception
+
+	def test_object_error_does_not_crash_and_maps_nested_code(self):
+		# The exact prod shape: `error` is an object with a nested code.
+		exc = self._exchange({"error": {"type": "invalid_grant", "message": "bad code"}})
+		self.assertEqual(exc.code, "code_invalid")
+
+	def test_string_error_still_maps(self):
+		exc = self._exchange({"error": "invalid_client"})
+		self.assertEqual(exc.code, "auth_failed")
+
+	def test_unmappable_object_error_falls_back(self):
+		exc = self._exchange({"error": {"unexpected": "shape"}})
+		self.assertEqual(exc.code, "token_exchange_failed")
+
+	def test_non_json_error_body_falls_back(self):
+		resp = _FakeResp(ok=False, status=500, json_body=None, text="<html>502</html>")
+		with patch("jarvis.oauth.api.get_provider", return_value=self._PROV), \
+		     patch("jarvis.oauth.api.requests.post", return_value=resp), \
+		     patch("jarvis.oauth.api.frappe.log_error"):
+			with self.assertRaises(oauth_api.TokenExchangeError) as ctx:
+				oauth_api._exchange_code(provider="openai", code="ac_x", code_verifier="v")
+		self.assertEqual(ctx.exception.code, "token_exchange_failed")
+
+
