@@ -6,6 +6,7 @@ from jarvis._http import validate_bearer as _validate_bearer  # noqa: F401 (kept
 from jarvis._plugin_auth import PluginAuthError, validate_plugin_request
 from jarvis.exceptions import InvalidArgumentError, JarvisError
 from jarvis.tools.registry import dispatch
+from jarvis import audit
 
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
@@ -362,6 +363,65 @@ def _parse_args(args: dict | str | None) -> dict:
 	return args
 
 
+# Mutating tools: audited on every call, and the only tools that accept
+# ``preview`` (a dry-run with every DB write rolled back).
+_WRITE_TOOLS = frozenset({
+	"create_doc", "update_doc", "submit_doc", "cancel_doc", "amend_doc",
+	"delete_doc", "run_method",
+	"send_email", "add_comment", "update_comment", "share_doc", "unshare_doc",
+	"assign_to", "unassign_from", "add_tag", "remove_tag",
+	"follow_document", "unfollow_document", "attach_to_doc",
+	"create_dashboard_chart", "create_dashboard",
+})
+_PREVIEWABLE = frozenset({
+	"create_doc", "update_doc", "submit_doc", "cancel_doc", "amend_doc",
+	"delete_doc", "run_method",
+})
+
+
+def _as_bool(value) -> bool:
+	"""Coerce an agent-supplied flag to bool. A JSON client may send the
+	string ``"false"``/``"0"``; ``bool("false")`` is True, so treat the common
+	falsy strings as False rather than trusting plain ``bool()``."""
+	if isinstance(value, str):
+		return value.strip().lower() in ("1", "true", "yes", "on")
+	return bool(value)
+
+
+def _run_preview(tool: str, args: dict) -> dict:
+	"""Dispatch a write tool with all DB effects sandboxed, so the caller sees
+	what WOULD happen (validations run, naming + fetched fields resolved) with
+	nothing committed.
+
+	Commits are neutralized for the duration, then the work is rolled back to a
+	savepoint - so even a tool (or a ``run_method`` target) that calls
+	``frappe.db.commit()`` internally cannot persist. The neutralization is what
+	makes the savepoint safe: a real COMMIT would release all savepoints in
+	MariaDB, both persisting the write and breaking the rollback; with commit a
+	no-op the savepoint survives and the rollback is surgical (it does not touch
+	work done before the preview). The savepoint name is unique per call so
+	nested/concurrent previews can't collide. External side effects
+	(emails/webhooks fired from on_submit / on_cancel) are NOT sandboxed.
+	"""
+	db = frappe.db
+	real_commit = db.commit
+	db.commit = lambda *a, **k: None  # neutralize commits so the savepoint survives
+	sp = "jp_" + frappe.generate_hash(length=10)
+	db.savepoint(sp)
+	try:
+		would = dispatch(tool, args)
+	finally:
+		db.commit = real_commit
+		db.rollback(save_point=sp)  # undo everything the dry-run wrote
+	return {
+		"preview": True,
+		"would": would,
+		"note": ("Validated with all DB writes rolled back; nothing was "
+				 "committed. External side effects (emails/webhooks in "
+				 "on_submit / on_cancel) are not sandboxed by preview."),
+	}
+
+
 def _run_tool(tool: str, raw_args: dict | str | None) -> dict:
 	"""Parse args + dispatch + wrap in the bench's standard envelope.
 
@@ -376,8 +436,8 @@ def _run_tool(tool: str, raw_args: dict | str | None) -> dict:
 	``frappe.has_permission`` (rather than raising PermissionDeniedError
 	itself) still translates to the bench's envelope rather than
 	Frappe's native 403 page. Anything else (programming errors, real
-	exceptions) propagates to Frappe's native handler so a 500 surfaces
-	at the seam where the bug actually lives.
+	exceptions) is audited (for write tools) and re-raised to Frappe's
+	native handler so a 500 surfaces at the seam where the bug lives.
 
 	Replaces the old _dispatch_safe + _parse_args dance: parse_args
 	used to mix "dict-or-error-envelope" returns with this function's
@@ -385,12 +445,41 @@ def _run_tool(tool: str, raw_args: dict | str | None) -> dict:
 	into one to match the reviewer's "native handler" pattern note
 	from the 2026-06-16 punch list.
 	"""
+	is_write = tool in _WRITE_TOOLS
 	try:
 		args = _parse_args(raw_args)
-		data = dispatch(tool, args)
 	except JarvisError as e:
 		return _error(type(e).__name__, str(e))
+
+	# ``preview`` is read, not popped: dispatch() filters args to the tool's
+	# signature so the flag never reaches the tool anyway, and leaving ``args``
+	# unmutated keeps the shared dict the session-persistence path holds intact.
+	if isinstance(args, dict) and _as_bool(args.get("preview")):
+		if tool not in _PREVIEWABLE:
+			return _error("InvalidArgumentError",
+						  f"preview is not supported for {tool}")
+		# A dry-run: surface its validation errors, but never audit - nothing
+		# is committed, so there is no write to record.
+		try:
+			return {"ok": True, "data": _run_preview(tool, args)}
+		except JarvisError as e:
+			return _error(type(e).__name__, str(e))
+		except frappe.PermissionError as e:
+			return _error("PermissionDeniedError", str(e) or "permission denied")
+		except (frappe.ValidationError, frappe.DuplicateEntryError) as e:
+			return _error("InvalidArgumentError", str(e) or type(e).__name__)
+
+	try:
+		data = dispatch(tool, args)
+	except JarvisError as e:
+		if is_write:
+			audit.record(tool=tool, args=args, ok=False,
+						 error_code=type(e).__name__, error_message=str(e))
+		return _error(type(e).__name__, str(e))
 	except frappe.PermissionError as e:
+		if is_write:
+			audit.record(tool=tool, args=args, ok=False,
+						 error_code="PermissionDeniedError", error_message=str(e))
 		return _error("PermissionDeniedError", str(e) or "permission denied")
 	except (frappe.ValidationError, frappe.DuplicateEntryError) as e:
 		# Bad-input errors a tool surfaces from doc.insert()/get_doc/link
@@ -401,7 +490,20 @@ def _run_tool(tool: str, raw_args: dict | str | None) -> dict:
 		# bug, so translate to the envelope instead of leaking Frappe's
 		# native 500/404. The message carries the specifics; the code stays
 		# in the known JarvisError set the bench client branches on.
+		if is_write:
+			audit.record(tool=tool, args=args, ok=False,
+						 error_code="InvalidArgumentError", error_message=str(e))
 		return _error("InvalidArgumentError", str(e) or type(e).__name__)
+	except Exception as e:
+		# Unexpected error (a real bug): audit the attempt for write tools so
+		# the trail is complete even for a partial mutation, then re-raise so
+		# Frappe's native 500 still surfaces at the seam.
+		if is_write:
+			audit.record(tool=tool, args=args, ok=False,
+						 error_code=type(e).__name__, error_message=str(e))
+		raise
+	if is_write:
+		audit.record(tool=tool, args=args, ok=True, result=data)
 	return {"ok": True, "data": data}
 
 

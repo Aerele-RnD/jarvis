@@ -180,3 +180,16 @@ scheduler_events = {
 export_python_type_annotations = True
 require_type_annotated_api_methods = True
 
+# ---------------------------------------------------------------------------
+# Schema-cache invalidation
+# ---------------------------------------------------------------------------
+# get_schema caches each DocType's schema in Redis with a short TTL. Bust that
+# cache the moment a schema-defining doc changes, so the agent never builds a
+# write off a stale field list inside the TTL window (a Custom Field added via
+# Customize Form must show up immediately, not 5 minutes later).
+_CLEAR_SCHEMA_CACHE = "jarvis.tools.get_schema.clear_schema_cache"
+doc_events = {
+	dt: {"on_update": _CLEAR_SCHEMA_CACHE, "on_trash": _CLEAR_SCHEMA_CACHE}
+	for dt in ("DocType", "Custom Field", "Property Setter", "Workflow")
+}
+
