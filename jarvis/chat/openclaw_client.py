@@ -433,8 +433,16 @@ class OpenclawSession:
 			raise OpenclawUnreachableError("agent RPC never acknowledged")
 
 		# 2. Stream events for this run until lifecycle.end / .error.
+		# The run has started (we have the ack); a WS drop from here is
+		# RECOVERABLE - openclaw keeps running and persists the result - so tag
+		# it code="turn-timeout" to park for recovery, never a false error (#4).
 		while time.monotonic() < deadline:
-			frame = self._recv(deadline - time.monotonic())
+			try:
+				frame = self._recv(deadline - time.monotonic())
+			except OpenclawUnreachableError as e:
+				if getattr(e, "code", None):
+					raise
+				raise OpenclawUnreachableError(str(e), code="turn-timeout") from e
 			if frame is None:
 				continue
 			ftype = frame.get("type")

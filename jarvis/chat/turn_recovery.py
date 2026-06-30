@@ -6,10 +6,17 @@ turn and persists the result regardless. So instead of falsely erroring, the
 turn is left `streaming=1, recovering=1` and this job finalizes it from the
 gateway's durable transcript.
 
-This is worker/process-INDEPENDENT: everything it needs survives a worker
-death (the row, conv.session_key, openclaw's transcript). Completion is the
-non-destructive `is_run_active` signal; content comes from `chat.history`.
-Mirrors how openclaw's own UI reconciles after a drop (snapshot, not deltas).
+Design notes (from the 2026-06-30 review):
+- Content comes from the RAW transcript (sessions.get), never chat.history,
+  which truncates assistant text at max_chars.
+- Only the LATEST recovering row per conversation is snapshot-finalized, so the
+  session-wide "newest assistant message" can never bleed onto an older row.
+- There is an UNCONDITIONAL ceiling backstop: a row past the ceiling is errored
+  even when the gateway is unreachable, so a managed turn can never be stranded
+  at a perpetual spinner.
+- Finalize/error are conditional (only act on a row still streaming=1 AND
+  recovering=1), so overlapping cycles cannot double-deliver.
+- is_run_active is read ONCE per cycle (sessions.list is expensive), not per row.
 """
 from __future__ import annotations
 
@@ -24,12 +31,10 @@ from jarvis.chat.openclaw_client import OpenclawSession
 MSG = "Jarvis Chat Message"
 CONV = "Jarvis Conversation"
 
-# Absolute give-up: a run still "active" past this long is treated as stuck.
+# Absolute give-up: a row recovering longer than this is errored, gateway
+# reachable or not. The unconditional backstop that replaces the old
+# time-based stale_scan error path.
 _RECOVERY_CEILING_MINUTES = 60
-# One extra cycle of grace before declaring a finished-but-empty run a failure
-# (covers the brief window where the run just ended and the transcript final
-# message has not flushed yet).
-_EMPTY_GRACE_MINUTES = 3
 
 
 @contextlib.contextmanager
@@ -51,9 +56,9 @@ def _age_minutes(dt) -> float:
 
 
 def _latest_assistant_text(messages: list) -> str:
-	"""Newest assistant message text from a chat.history snapshot. Handles a
+	"""Newest assistant message text from a raw transcript. Handles a
 	plain-string content and the {type:"text", text} block list. Sorted by the
-	transcript seq so the latest turn wins."""
+	transcript seq so the latest turn wins. Every text source is type-guarded."""
 	def seq(m):
 		return ((m or {}).get("__openclaw") or {}).get("seq", 0)
 
@@ -66,27 +71,44 @@ def _latest_assistant_text(messages: list) -> str:
 		if isinstance(c, list):
 			parts = [
 				b.get("text", "") for b in c
-				if isinstance(b, dict) and b.get("type") == "text" and b.get("text")
+				if isinstance(b, dict) and b.get("type") == "text"
+				and isinstance(b.get("text"), str) and b.get("text")
 			]
 			joined = "\n".join(p for p in parts if p.strip())
 			if joined.strip():
 				return joined
-		if isinstance(m.get("text"), str) and m["text"].strip():
-			return m["text"]
+		t = m.get("text")
+		if isinstance(t, str) and t.strip():
+			return t
 	return ""
 
 
-def _finalize(row: dict, text: str) -> None:
-	"""Authoritative completion: overwrite content from the snapshot (NOT
-	append, so partial streamed content is replaced with no duplication),
-	clear the streaming/recovering flags, then publish for any live viewer
-	using the existing jarvis:event kinds the SPA already renders."""
-	name = row["name"]
-	frappe.db.set_value(
-		MSG, name, {"content": text, "streaming": 0, "recovering": 0, "error": ""},
+def _conditional_clear(name: str, fields: dict) -> bool:
+	"""Apply `fields` to a row ONLY if it is still streaming=1 AND recovering=1.
+	Returns True if this call won the row (so the caller publishes), False if
+	another cycle already finalized it. Idempotency guard for #8."""
+	set_clause = ", ".join(f"`{k}` = %({k})s" for k in fields)
+	params = dict(fields, name=name)
+	frappe.db.sql(
+		f"UPDATE `tab{MSG}` SET {set_clause} "
+		f"WHERE name = %(name)s AND streaming = 1 AND recovering = 1",
+		params,
 	)
+	# Read rowcount BEFORE commit (commit can reset the cursor).
+	cursor = getattr(frappe.db, "_cursor", None)
+	won = bool(cursor and cursor.rowcount)
 	frappe.db.commit()
-	conv, owner = row["conversation"], row["owner"]
+	return won
+
+
+def _finalize(row: dict, text: str) -> None:
+	"""Authoritative completion (conditional + idempotent): overwrite content
+	from the raw snapshot, clear the flags, then publish for any live viewer."""
+	if not _conditional_clear(row["name"], {
+		"content": text, "streaming": 0, "recovering": 0, "error": "",
+	}):
+		return  # another cycle already finalized this row
+	conv, owner, name = row["conversation"], row["owner"], row["name"]
 	publish_to_user(owner, {
 		"kind": "assistant:delta", "conversation_id": conv,
 		"message_id": name, "text": text, "run_id": "recovered",
@@ -98,63 +120,46 @@ def _finalize(row: dict, text: str) -> None:
 
 
 def _error(row: dict, message: str) -> None:
-	name = row["name"]
-	frappe.db.set_value(
-		MSG, name, {"streaming": 0, "recovering": 0, "error": message},
-	)
-	frappe.db.commit()
+	if not _conditional_clear(row["name"], {
+		"streaming": 0, "recovering": 0, "error": message,
+	}):
+		return
 	publish_to_user(row["owner"], {
 		"kind": "run:error", "conversation_id": row["conversation"],
-		"message_id": name, "run_id": "recovered", "error": message,
+		"message_id": row["name"], "run_id": "recovered", "error": message,
 	})
 
 
-def _recover_one(sess: OpenclawSession, row: dict) -> str:
-	"""Drive one recovering row to a terminal state. Returns the outcome
-	('finalized' | 'active' | 'errored' | 'waiting')."""
-	session_key = row["session_key"]
-	if sess.is_run_active(session_key):
-		if _age_minutes(row["recovery_started_at"]) > _RECOVERY_CEILING_MINUTES:
-			_error(row, "Run exceeded the recovery ceiling.")
-			return "errored"
-		return "active"
-	# Not active: openclaw finished (or never started). Reconcile from snapshot.
-	hist = sess.get_history(session_key)
-	text = _latest_assistant_text(hist.get("messages") or [])
-	if text:
-		_finalize(row, text)
-		return "finalized"
-	if _age_minutes(row["recovery_started_at"]) > _EMPTY_GRACE_MINUTES:
-		_error(row, "Run finished with no assistant output.")
-		return "errored"
-	return "waiting"
+def _active_map(sess: OpenclawSession) -> dict:
+	"""One sessions.list per cycle -> {session_key: hasActiveRun}. Replaces the
+	per-row is_run_active call (#13)."""
+	res = sess._request("sessions.list", {}, timeout_s=10)
+	out = {}
+	for s in (res.get("payload") or {}).get("sessions") or []:
+		if s.get("key"):
+			out[s["key"]] = bool(s.get("hasActiveRun"))
+	return out
 
 
 def recover_pending_turns(limit: int = 20) -> dict:
-	"""Scheduler entry: finalize managed turns stuck in the recovering state.
-	Self-hosted turns have no gateway transcript to recover from, so they are
-	left to stale_scan. Best-effort: a connect or per-row failure logs and the
-	next cycle retries."""
+	"""Scheduler entry: finalize managed turns stuck in the recovering state."""
 	from jarvis import selfhost
 
 	if selfhost.is_self_hosted():
 		return {"skipped": "self-hosted"}
 
-	settings = frappe.get_single("Jarvis Settings")
-	gateway_url = (settings.agent_url or "").replace(
-		"http://", "ws://").replace("https://", "wss://")
-	if not gateway_url:
-		return {"skipped": "no gateway"}
-
+	# Query rows FIRST (so we never load Settings on an empty bench, #14).
+	# Ordered conversation, seq DESC so the first row per conversation is the
+	# latest (used for the no-bleed dedup, #2).
 	rows = frappe.db.sql(
 		"""
 		SELECT m.name, m.conversation, c.session_key, c.owner,
-			   m.recovery_started_at
+			   m.recovery_started_at, m.seq
 		FROM `tabJarvis Chat Message` m
 		JOIN `tabJarvis Conversation` c ON c.name = m.conversation
 		WHERE m.streaming = 1 AND m.recovering = 1
 		  AND c.session_key IS NOT NULL AND c.session_key != ''
-		ORDER BY m.recovery_started_at ASC
+		ORDER BY m.conversation ASC, m.seq DESC
 		LIMIT %(limit)s
 		""",
 		{"limit": limit},
@@ -164,20 +169,69 @@ def recover_pending_turns(limit: int = 20) -> dict:
 		return {"checked": 0}
 
 	counts = {"finalized": 0, "active": 0, "errored": 0, "waiting": 0}
+
+	# UNCONDITIONAL backstop FIRST (#3/#5): error anything past the ceiling,
+	# gateway reachable or not, so a row is never stranded at a spinner.
+	live = []
+	for r in rows:
+		if _age_minutes(r["recovery_started_at"]) > _RECOVERY_CEILING_MINUTES:
+			_error(r, "Run did not finish within the recovery window.")
+			counts["errored"] += 1
+		else:
+			live.append(r)
+	if not live:
+		return {"checked": len(rows), **counts}
+
+	# Only the LATEST recovering row per conversation is eligible for snapshot
+	# finalize (#2: never assign the session-wide newest answer to an older row).
+	# Older recovering rows ride the ceiling backstop above.
+	eligible = {}
+	for r in live:  # seq DESC, so first seen per conversation is the latest
+		eligible.setdefault(r["conversation"], r)
+	eligible = list(eligible.values())
+
+	settings = frappe.get_single("Jarvis Settings")
+	gateway_url = (settings.agent_url or "").replace(
+		"http://", "ws://").replace("https://", "wss://")
+	if not gateway_url:
+		return {"checked": len(rows), **counts, "skipped": "no gateway"}
+
 	try:
 		with _recovery_connection(gateway_url) as sess:
-			for row in rows:
+			active = _active_map(sess)  # one sessions.list per cycle (#13)
+			for r in eligible:
 				try:
-					counts[_recover_one(sess, row)] += 1
+					counts[_recover_one(sess, r, active)] += 1
 				except Exception:
 					frappe.log_error(
 						title="turn_recovery: row failed",
 						message=frappe.get_traceback(),
 					)
 	except Exception:
+		# Gateway unreachable this cycle. The ceiling backstop already ran, so
+		# nothing is stranded; non-expired rows simply retry next cycle.
 		frappe.log_error(
 			title="turn_recovery: connect failed",
 			message=frappe.get_traceback(),
 		)
-		return {"checked": len(rows), "connect_failed": True}
+		return {"checked": len(rows), **counts, "connect_failed": True}
 	return {"checked": len(rows), **counts}
+
+
+def _recover_one(sess: OpenclawSession, row: dict, active: dict) -> str:
+	"""Drive one eligible (latest-per-conversation) recovering row. Returns
+	'finalized' | 'active' | 'waiting'. Ceiling/error is handled by the caller
+	and the unconditional backstop, not here."""
+	session_key = row["session_key"]
+	# Absent from sessions.list -> treat as not-active, but only finalize when
+	# the transcript actually has content (#9: never finalize from a stale
+	# snapshot just because a row vanished from the gateway's in-memory list).
+	if active.get(session_key, False):
+		return "active"
+	# Raw transcript (sessions.get), NOT chat.history -> no max_chars truncation (#1).
+	messages = sess.get_session_messages(session_key, limit=50)
+	text = _latest_assistant_text(messages)
+	if text:
+		_finalize(row, text)
+		return "finalized"
+	return "waiting"  # no output yet; the ceiling backstop bounds the wait

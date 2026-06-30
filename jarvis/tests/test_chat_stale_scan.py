@@ -93,10 +93,12 @@ class TestScanAndMarkErrored(FrappeTestCase):
 		# A stale streaming row whose conversation has a gateway session_key is
 		# recoverable: promoted to recovering (handed to turn_recovery), NOT
 		# errored. Covers a worker hard-killed before it could mark recovering.
+		# Past the 720s managed cap so it is definitely orphaned, not live.
 		frappe.db.set_value(CONV, self.conv, "session_key", "sk_managed")
 		frappe.db.commit()
-		name = self._insert_stale_streaming_message(age_seconds=300)
-		with patch("jarvis.chat.stale_scan.publish_to_user") as pub:
+		name = self._insert_stale_streaming_message(age_seconds=800)
+		with patch("jarvis.selfhost.is_self_hosted", return_value=False), \
+			 patch("jarvis.chat.stale_scan.publish_to_user") as pub:
 			scan_and_mark_errored()
 		doc = frappe.get_doc(MSG, name)
 		self.assertEqual(doc.streaming, 1)   # spinner stays up

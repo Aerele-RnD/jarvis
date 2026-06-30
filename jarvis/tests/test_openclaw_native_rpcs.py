@@ -83,3 +83,43 @@ class TestOpenclawNativeRpcs(FrappeTestCase):
 		self.assertFalse(sess.is_run_active("sk"))
 		cap["response"] = {"ok": True, "payload": {"sessions": []}}
 		self.assertFalse(sess.is_run_active("sk"))
+
+	def test_stream_agent_turn_tags_midstream_drop_as_turn_timeout(self):
+		# A WS drop AFTER the run is acked must surface code="turn-timeout" so
+		# turn_handler parks it for recovery instead of false-erroring (#4).
+		from jarvis.chat.openclaw_client import OpenclawUnreachableError
+		sess = OpenclawSession.__new__(OpenclawSession)
+		frames = [{"type": "res", "id": "a1", "ok": True, "payload": {"runId": "r1"}}]
+		sess._send = lambda method, params: "a1"
+
+		def fake_recv(_timeout):
+			if frames:
+				return frames.pop(0)
+			raise OpenclawUnreachableError("ws closed mid-stream")
+
+		sess._recv = fake_recv
+		with self.assertRaises(OpenclawUnreachableError) as ctx:
+			list(sess.stream_agent_turn("sk", "hi", "idem"))
+		self.assertEqual(getattr(ctx.exception, "code", None), "turn-timeout")
+
+	def test_stream_agent_turn_propagates_preack_failure_uncoded(self):
+		# A failure BEFORE the ack (run never started) must NOT be turn-timeout,
+		# so turn_handler errors it rather than parking a non-existent run.
+		from jarvis.chat.openclaw_client import OpenclawUnreachableError
+		sess = OpenclawSession.__new__(OpenclawSession)
+		sess._send = lambda method, params: "a1"
+
+		def fake_recv(_timeout):
+			raise OpenclawUnreachableError("ws closed before ack")
+
+		sess._recv = fake_recv
+		with self.assertRaises(OpenclawUnreachableError) as ctx:
+			list(sess.stream_agent_turn("sk", "hi", "idem"))
+		self.assertNotEqual(getattr(ctx.exception, "code", None), "turn-timeout")
+
+	def test_subscribe_session_params_and_payload(self):
+		sess, cap = self._sess({"ok": True, "payload": {"subscribed": True}})
+		out = sess.subscribe_session("sk")
+		self.assertEqual(cap["method"], "sessions.messages.subscribe")
+		self.assertEqual(cap["params"], {"key": "sk"})
+		self.assertEqual(out, {"subscribed": True})
