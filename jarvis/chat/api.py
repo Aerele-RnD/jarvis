@@ -36,6 +36,8 @@ from jarvis._subscription_models import (
 	SUBSCRIPTION_MODELS as _SUBSCRIPTION_MODELS,
 )
 
+_ALLOWED_THINKING = {"", "low", "medium", "high"}
+
 
 @frappe.whitelist()
 def list_conversations() -> list[dict]:
@@ -276,6 +278,7 @@ from jarvis.chat.openclaw_client import OpenclawSession
 def send_message(
 	conversation: str, message: str, model_override: str | None = None,
 	attachments: str | None = None, context: str | None = None,
+	thinking_override: str | None = None,
 ) -> dict:
 	"""Validate, persist the user message, ensure session_key, enqueue the worker.
 
@@ -284,6 +287,13 @@ def send_message(
 	turn lands on the picker-chosen model without a race against the worker.
 	Validated against the same allowlist set_conversation_model uses.
 	Empty string / None leaves the existing override alone.
+
+	`thinking_override` (optional): per-conversation Claude thinking effort
+	level to set BEFORE enqueueing the worker. Valid values: "low", "medium",
+	"high", or "" (empty string). An empty string clears the override, which
+	resets to the model default. None leaves the existing value unchanged.
+	Note: this differs from `model_override`, which treats both None and empty
+	string as "leave the existing value alone".
 
 	Returns {ok: True, run_id, message_id} on success or
 	{ok: False, reason: str} on validation failure. Raises
@@ -325,6 +335,12 @@ def send_message(
 			        f"model {model_override!r} is not valid for "
 			        f"{settings.llm_provider!r}"}
 		conv_doc.model_override = model_override
+
+	if thinking_override is not None:
+		level = (thinking_override or "").strip().lower()
+		if level not in _ALLOWED_THINKING:
+			return {"ok": False, "reason": f"invalid thinking level {thinking_override!r}"}
+		conv_doc.thinking_override = level
 
 	# Visible message keeps the typed text plus a compact attachment marker;
 	# the file bytes are inlined for the agent in the worker, not stored here.
@@ -550,6 +566,30 @@ def set_conversation_model(conversation: str, model: str | None = None) -> dict:
 	frappe.db.set_value(CONV, conversation, "model_override", model, update_modified=False)
 	frappe.db.commit()
 	return {"ok": True, "data": {"effective_model": model}}
+
+
+@frappe.whitelist()
+def set_conversation_thinking(conversation: str, thinking: str | None = None) -> dict:
+	"""Set or clear the per-conversation thinking effort (low/medium/high).
+
+	Empty / None clears it, so turns fall back to openclaw's default. The
+	value is plumbed as an inline /think directive in the user message, so it
+	never affects the cacheable system prefix. Returns the effective level
+	(empty resolves to "medium" for display)."""
+	if not frappe.db.exists(CONV, conversation):
+		return {"ok": False, "error": {
+			"code": "unknown_conversation",
+			"message": f"conversation {conversation!r} not found",
+		}}
+	level = (thinking or "").strip().lower()
+	if level not in _ALLOWED_THINKING:
+		return {"ok": False, "error": {
+			"code": "unknown_thinking",
+			"message": f"{thinking!r} is not a valid thinking level. Allowed: low, medium, high",
+		}}
+	frappe.db.set_value(CONV, conversation, "thinking_override", level, update_modified=False)
+	frappe.db.commit()
+	return {"ok": True, "data": {"effective_thinking": level or "medium"}}
 
 
 @frappe.whitelist()

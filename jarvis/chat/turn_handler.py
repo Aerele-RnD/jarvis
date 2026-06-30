@@ -181,6 +181,16 @@ def _resolve_model_and_provider(conv) -> tuple[str, str | None]:
 	return effective_model, provider
 
 
+def _thinking_prefix(thinking_override: str | None) -> str:
+	"""Inline openclaw /think directive for this turn, or '' when unset.
+
+	openclaw reads a leading /think directive from the MESSAGE BODY and
+	strips it. We keep it in the user message (after the static system
+	prefix), so it never busts the prefix cache the warm-up populates."""
+	level = (thinking_override or "").strip().lower()
+	return f"/think {level}\n" if level in ("low", "medium", "high") else ""
+
+
 def handle_chat_send(payload: dict) -> None:
 	"""Drive one agent turn end to end.
 
@@ -293,6 +303,12 @@ def handle_chat_send(payload: dict) -> None:
 		and vision.supports_vision(settings.llm_provider)
 	)
 	user_message, vision_parts = _prepare_attachments(user_message, attachments, vision_ok)
+	# Apply the /think directive as the FIRST bytes of the final message so
+	# openclaw's leading-directive parser always sees it, even when
+	# _prepend_doc_context prepended a [Viewing: ...] line and
+	# _prepare_attachments appended attachment text. Cache-safe: the
+	# directive stays in the user message, never the system prompt.
+	user_message = _thinking_prefix(conv.thinking_override) + user_message
 
 	def _publish_run_error(err: str) -> None:
 		_mark_errored(assistant_msg.name, err)
