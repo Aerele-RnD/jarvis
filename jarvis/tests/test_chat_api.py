@@ -277,12 +277,17 @@ class TestSendMessage(_ChatTestCase):
 		)
 		self.assertEqual([r["seq"] for r in seqs], [1, 2])
 
-	def test_first_message_sets_conversation_title(self):
+	def test_first_message_does_not_title_from_raw_text(self):
+		"""send_message must NOT set the conversation title from the raw first
+		message. The title stays "New chat"; the worker generates a concise
+		LLM-summarised title after the first substantive turn and pushes it via
+		a conversation:renamed event, so the sidebar never flashes the raw prompt.
+		"""
 		with patch("jarvis.chat.api._ensure_session_key", return_value="agent:fake"):
 			with patch("frappe.enqueue"):
 				send_message(self.conv, "How many invoices last quarter?")
 		doc = frappe.get_doc(CONV, self.conv)
-		self.assertEqual(doc.title, "How many invoices last quarter?")
+		self.assertEqual(doc.title, "New chat")
 
 	def test_bumps_last_active_at(self):
 		before = frappe.utils.get_datetime(frappe.get_value(
