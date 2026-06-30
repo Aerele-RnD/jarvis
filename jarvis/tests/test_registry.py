@@ -1,58 +1,34 @@
+import importlib
+import os
+
 from frappe.tests.utils import FrappeTestCase
 
 from jarvis.exceptions import ToolNotFoundError, InvalidArgumentError
-from jarvis.tools.registry import dispatch, list_tools
+from jarvis.tools.registry import _TOOL_NAMES, dispatch, list_tools
 
 
 class TestRegistry(FrappeTestCase):
-    def test_list_tools_contains_all_registered(self):
+    def test_registered_tools_match_modules_exactly(self):
+        """The registered set must equal the tool .py modules on disk - a new
+        tool file without registration (or a stale registration) fails here
+        instead of silently drifting. (Replaces a hardcoded list the 2026-06
+        wiring audit found 7 tools out of date.)"""
         names = set(list_tools())
+        self.assertEqual(names, set(_TOOL_NAMES))
+
+        tools_dir = os.path.dirname(
+            importlib.import_module("jarvis.tools.registry").__file__
+        )
+        modules = {
+            f[:-3]
+            for f in os.listdir(tools_dir)
+            if f.endswith(".py") and not f.startswith("_") and f != "registry.py"
+        }
         self.assertEqual(
             names,
-            {
-                "get_schema",
-                "get_doc",
-                "get_list",
-                "run_report",
-                "query",
-                "update_doc",
-                "create_doc",
-                "submit_doc",
-                "cancel_doc",
-                "delete_doc",
-                "amend_doc",
-                "download_pdf",
-                "attach_to_doc",
-                "download_vcard",
-                "get_stock_balance",
-                "get_valuation_rate",
-                "scan_barcode",
-                "get_balance_on",
-                "get_customer_outstanding",
-                "get_party_dashboard_info",
-                "get_exchange_rate",
-                "get_fiscal_year",
-                "get_itemised_tax_breakup",
-                "get_leave_balance_on",
-                "get_leaves_for_period",
-                "get_leave_details",
-                "get_holidays_for_employee",
-                "get_employee_shift",
-                "get_linked_docs",
-                "get_submitted_linked_docs",
-                "get_naming_series_preview",
-                "send_email",
-                "add_comment",
-                "update_comment",
-                "share_doc",
-                "unshare_doc",
-                "assign_to",
-                "unassign_from",
-                "add_tag",
-                "remove_tag",
-                "follow_document",
-                "unfollow_document",
-            },
+            modules,
+            f"registry vs tool modules drift: only-registered={names - modules}, "
+            f"only-on-disk={modules - names}",
         )
 
     def test_dispatch_invokes_correct_tool(self):
