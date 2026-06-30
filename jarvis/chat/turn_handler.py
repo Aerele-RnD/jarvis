@@ -248,6 +248,9 @@ def handle_chat_send(payload: dict) -> None:
 
 	conv = frappe.get_doc(CONV, conversation_id)
 	user = conv.owner
+	# Wall-clock turn start (epoch ms) - scopes codex imagegen output produced
+	# during this turn (compared against the generated image files' mtime).
+	turn_start_ms = int(time.time() * 1000)
 
 	# Create the assistant placeholder row up-front so the browser has a
 	# stable name to attach realtime events to.
@@ -428,6 +431,33 @@ def handle_chat_send(payload: dict) -> None:
 			except Exception:
 				frappe.log_error(
 					title="chat worker: canvas persist failed",
+					message=frappe.get_traceback(),
+				)
+
+			# Generated images: codex imagegen writes them on the container disk
+			# (not the canvas dir, and openclaw neither streams nor serves them),
+			# so pull any produced this turn via the fleet agent + persist as ERP
+			# Files so they show inline. Gated on the imagegen skill badge to
+			# avoid a fleet round-trip on every turn. Failure never fails a turn.
+			try:
+				final_content = frappe.db.get_value(MSG, assistant_msg.name, "content") or ""
+				if "imagegen" in final_content:
+					from jarvis.chat import generated_media as gen_media
+
+					gen_items = gen_media.persist_generated_images(
+						assistant_msg.name, conversation_id, turn_start_ms,
+					)
+					if gen_items:
+						_publish_to_user(user, {
+							"kind": "canvas",
+							"conversation_id": conversation_id,
+							"message_id": assistant_msg.name,
+							"run_id": run_id,
+							"items": gen_items,
+						})
+			except Exception:
+				frappe.log_error(
+					title="chat worker: generated-image persist failed",
 					message=frappe.get_traceback(),
 				)
 
