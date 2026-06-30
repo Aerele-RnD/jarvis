@@ -286,6 +286,91 @@ class OpenclawSession:
 			raise OpenclawUnreachableError(f"sessions.create returned no key: {res}")
 		return key
 
+	# -- openclaw-native turn model (chat.send + chat.history + sessions.*) --
+	# Mirrors openclaw's own UI gateway client so the bench can drive a turn
+	# and reconcile from the durable transcript instead of holding the agent
+	# RPC's request stream. Each method below is a plain request/response.
+
+	def chat_send(
+		self, session_key: str, message: str, idempotency_key: str,
+		*, thinking: str | None = None, deliver: bool = False,
+		attachments: list[dict] | None = None,
+		timeout_s: float = CONNECT_TIMEOUT_SECONDS,
+	) -> dict:
+		"""Start an agent turn via chat.send (openclaw's UI turn-start RPC).
+
+		Returns the ack payload, e.g. {"runId": ..., "status": "in_flight"}.
+		The turn's output is delivered as session-scoped "chat" events (consume
+		them via the relay after subscribe_session), NOT on this response.
+		deliver=False keeps the result session-only (no external channel
+		delivery), matching the current chat path."""
+		params: dict = {
+			"sessionKey": session_key,
+			"message": message,
+			"idempotencyKey": idempotency_key,
+			"deliver": deliver,
+		}
+		if thinking:
+			params["thinking"] = thinking
+		if attachments:
+			params["attachments"] = attachments
+		res = self._request("chat.send", params, timeout_s=timeout_s)
+		return res.get("payload") or {}
+
+	def subscribe_session(
+		self, session_key: str, *, timeout_s: float = CONNECT_TIMEOUT_SECONDS,
+	) -> dict:
+		"""Subscribe THIS connection to a session's message events via
+		sessions.messages.subscribe. After this the WS receives the session's
+		message event frames going forward. openclaw keeps no per-run delta
+		buffer, so this yields only FUTURE events - catch up via get_history /
+		get_session_messages on (re)connect."""
+		res = self._request(
+			"sessions.messages.subscribe", {"key": session_key}, timeout_s=timeout_s,
+		)
+		return res.get("payload") or {}
+
+	def get_history(
+		self, session_key: str, *, limit: int = 100, max_chars: int = 4000,
+		timeout_s: float = CONNECT_TIMEOUT_SECONDS,
+	) -> dict:
+		"""Snapshot the session's DISPLAY transcript via chat.history. Returns
+		{"sessionId", "messages", "thinkingLevel"} - the same projected display
+		messages openclaw's UI renders. The authoritative source of truth used
+		to reconcile after a timeout / reconnect."""
+		res = self._request(
+			"chat.history",
+			{"sessionKey": session_key, "limit": limit, "maxChars": max_chars},
+			timeout_s=timeout_s,
+		)
+		return res.get("payload") or {}
+
+	def get_session_messages(
+		self, session_key: str, *, limit: int = 50,
+		timeout_s: float = CONNECT_TIMEOUT_SECONDS,
+	) -> list:
+		"""Raw recent transcript tail via sessions.get. Returns the messages
+		list (each: role, content, __openclaw:{seq,id}); [] for an unknown or
+		empty session."""
+		res = self._request(
+			"sessions.get", {"key": session_key, "limit": limit}, timeout_s=timeout_s,
+		)
+		return (res.get("payload") or {}).get("messages") or []
+
+	def is_run_active(
+		self, session_key: str, *, timeout_s: float = CONNECT_TIMEOUT_SECONDS,
+	) -> bool:
+		"""Non-destructive done-signal: True iff the gateway is tracking an
+		in-flight run for session_key. Reads sessions.list and matches
+		hasActiveRun on the row whose key == session_key. (Do NOT use
+		sessions.abort for this - it kills the run.)"""
+		res = self._request("sessions.list", {}, timeout_s=timeout_s)
+		sessions = (res.get("payload") or {}).get("sessions") or []
+		for s in sessions:
+			if s.get("key") == session_key:
+				return bool(s.get("hasActiveRun"))
+		return False
+
 	def stream_agent_turn(
 		self, session_key: str, message: str, idempotency_key: str,
 		*,
