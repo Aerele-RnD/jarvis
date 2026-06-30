@@ -288,6 +288,13 @@ def send_message(
 	Validated against the same allowlist set_conversation_model uses.
 	Empty string / None leaves the existing override alone.
 
+	`thinking_override` (optional): per-conversation Claude thinking effort
+	level to set BEFORE enqueueing the worker. Valid values: "low", "medium",
+	"high", or "" (empty string). An empty string clears the override, which
+	resets to the model default. None leaves the existing value unchanged.
+	Note: this differs from `model_override`, which treats both None and empty
+	string as "leave the existing value alone".
+
 	Returns {ok: True, run_id, message_id} on success or
 	{ok: False, reason: str} on validation failure. Raises
 	frappe.DoesNotExistError if the conversation does not exist or the

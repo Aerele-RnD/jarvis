@@ -544,9 +544,68 @@ class TestSendMessageWithModelOverride(_ChatTestCase):
 		)
 
 
+class TestSendMessageThinkingOverride(_ChatTestCase):
+	"""send_message accepts an optional thinking_override that persists to
+	conv.thinking_override BEFORE the worker is enqueued - mirroring the
+	model_override path."""
+
+	def setUp(self):
+		super().setUp()
+		self.conv = create_conversation()
+
+	def test_valid_thinking_override_persists_before_enqueue(self):
+		"""thinking_override='low' is written to conv before frappe.enqueue fires."""
+		from jarvis.chat.api import send_message
+		written = {}
+		def capture(*a, **kw):
+			written["thinking"] = frappe.db.get_value(CONV, self.conv, "thinking_override")
+		with patch("jarvis.chat.api._ensure_session_key", return_value="agent:fake"), \
+		     patch("frappe.enqueue", side_effect=capture):
+			result = send_message(self.conv, "hi", thinking_override="low")
+		self.assertTrue(result["ok"])
+		self.assertEqual(written["thinking"], "low")
+
+	def test_empty_string_clears_thinking_override(self):
+		"""An empty string clears thinking_override (unlike model_override which
+		ignores empty strings)."""
+		from jarvis.chat.api import send_message
+		frappe.db.set_value(CONV, self.conv, "thinking_override", "high")
+		with patch("jarvis.chat.api._ensure_session_key", return_value="agent:fake"), \
+		     patch("frappe.enqueue"):
+			result = send_message(self.conv, "hi", thinking_override="")
+		self.assertTrue(result["ok"])
+		self.assertEqual(frappe.db.get_value(CONV, self.conv, "thinking_override"), "")
+
+	def test_none_keeps_existing_thinking_override(self):
+		"""None for thinking_override does not touch conv.thinking_override."""
+		from jarvis.chat.api import send_message
+		frappe.db.set_value(CONV, self.conv, "thinking_override", "medium")
+		with patch("jarvis.chat.api._ensure_session_key", return_value="agent:fake"), \
+		     patch("frappe.enqueue"):
+			result = send_message(self.conv, "hi")
+		self.assertTrue(result["ok"])
+		self.assertEqual(
+			frappe.db.get_value(CONV, self.conv, "thinking_override"),
+			"medium",
+		)
+
+	def test_invalid_thinking_override_rejected(self):
+		"""Invalid thinking level yields ok:false with no DB write or enqueue."""
+		from jarvis.chat.api import send_message
+		with patch("frappe.enqueue") as enqueue:
+			result = send_message(self.conv, "hi", thinking_override="ultra")
+		self.assertFalse(result["ok"])
+		self.assertIn("ultra", result["reason"])
+		enqueue.assert_not_called()
+
+
 class TestThinkingOverride(FrappeTestCase):
 	def setUp(self):
 		self.conv = frappe.get_doc({"doctype": "Jarvis Conversation", "title": "t"}).insert()
+
+	def tearDown(self):
+		frappe.delete_doc("Jarvis Conversation", self.conv.name, ignore_permissions=True, force=True)
+		frappe.db.commit()
 
 	def test_set_thinking_persists_valid_level(self):
 		from jarvis.chat import api

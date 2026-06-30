@@ -284,7 +284,6 @@ def handle_chat_send(payload: dict) -> None:
 
 	skill_clause = invoked_skill_clause(msg_row.get("content") or "")
 	user_message = (
-		f"{_thinking_prefix(conv.thinking_override)}"
 		f"[Context: today is {today}; chat user: {chat_user}{auto_apply}{skill_clause}]"
 		f"\n\n{user_message or ''}"
 	)
@@ -304,6 +303,12 @@ def handle_chat_send(payload: dict) -> None:
 		and vision.supports_vision(settings.llm_provider)
 	)
 	user_message, vision_parts = _prepare_attachments(user_message, attachments, vision_ok)
+	# Apply the /think directive as the FIRST bytes of the final message so
+	# openclaw's leading-directive parser always sees it, even when
+	# _prepend_doc_context prepended a [Viewing: ...] line and
+	# _prepare_attachments appended attachment text. Cache-safe: the
+	# directive stays in the user message, never the system prompt.
+	user_message = _thinking_prefix(conv.thinking_override) + user_message
 
 	def _publish_run_error(err: str) -> None:
 		_mark_errored(assistant_msg.name, err)
