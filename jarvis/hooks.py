@@ -153,6 +153,9 @@ scheduler_events = {
 		"*/5 * * * *": [
 			"jarvis.chat.stale_scan.scan_and_mark_errored",
 		],
+		"*/2 * * * *": [
+			"jarvis.chat.turn_recovery.recover_pending_turns",
+		],
 	},
 	"hourly": [
 		# Sprint-3 (2026-06-16 review): bench has no way to know if the

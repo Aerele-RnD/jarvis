@@ -451,7 +451,9 @@ class OpenclawSession:
 				phase = (payload.get("data") or {}).get("phase")
 				if phase in ("end", "error"):
 					return
-		raise OpenclawUnreachableError("agent turn timed out before lifecycle end")
+		raise OpenclawUnreachableError(
+			"agent turn timed out before lifecycle end", code="turn-timeout",
+		)
 
 	# -- internals --------------------------------------------------------
 

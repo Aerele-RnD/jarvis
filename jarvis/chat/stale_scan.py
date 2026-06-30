@@ -21,32 +21,48 @@ CONV = "Jarvis Conversation"
 
 
 def scan_and_mark_errored() -> int:
-	"""Scan for stale streaming messages; mark them errored and publish.
+	"""Scan for stale streaming messages.
 
-	Returns the count of messages marked.
+	Managed rows (with a gateway session_key) are RECOVERABLE - openclaw
+	persists the result - so instead of erroring we promote them to the
+	recovering state for turn_recovery to finalize from the snapshot. This
+	also catches workers hard-killed BEFORE they could mark recovering. Only
+	genuinely unrecoverable rows (self-hosted, no session_key) are errored
+	here; rows already recovering are skipped (turn_recovery owns them).
+
+	Returns the count of rows ERRORED (not promoted).
 	"""
 	cutoff = now_datetime() - timedelta(seconds=STALE_THRESHOLD_SECONDS)
-	stale_names = frappe.db.sql(
+	rows = frappe.db.sql(
 		"""
-		SELECT name FROM `tabJarvis Chat Message`
-		WHERE streaming = 1 AND creation < %s
+		SELECT m.name, m.conversation, c.owner, c.session_key
+		FROM `tabJarvis Chat Message` m
+		JOIN `tabJarvis Conversation` c ON c.name = m.conversation
+		WHERE m.streaming = 1 AND m.recovering = 0 AND m.creation < %s
 		""",
 		(cutoff,),
-		as_dict=False,
+		as_dict=True,
 	)
 
-	for (name,) in stale_names:
-		conv_name = frappe.db.get_value(MSG, name, "conversation")
-		owner = frappe.db.get_value(CONV, conv_name, "owner")
-		frappe.db.set_value(MSG, name, {
+	errored = 0
+	for r in rows:
+		if (r.get("session_key") or "").strip():
+			# Recoverable: hand off to turn_recovery rather than error.
+			frappe.db.set_value(MSG, r["name"], {
+				"recovering": 1,
+				"recovery_started_at": now_datetime(),
+			})
+			continue
+		frappe.db.set_value(MSG, r["name"], {
 			"streaming": 0,
 			"error": "Run abandoned (worker did not finish within the timeout).",
 		})
-		publish_to_user(owner, {
+		publish_to_user(r["owner"], {
 			"kind": "run:error",
-			"conversation_id": conv_name,
-			"message_id": name,
+			"conversation_id": r["conversation"],
+			"message_id": r["name"],
 			"error": "Run abandoned (worker did not finish within the timeout).",
 		})
+		errored += 1
 	frappe.db.commit()
-	return len(stale_names)
+	return errored
