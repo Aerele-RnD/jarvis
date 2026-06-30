@@ -1,0 +1,43 @@
+{
+  "doctype": "DocType",
+  "name": "Jarvis LLM Pool Subscription Account",
+  "module": "Jarvis",
+  "istable": 1,
+  "custom": 0,
+  "engine": "InnoDB",
+  "field_order": [
+    "upstream",
+    "account_ref",
+    "label",
+    "oauth_blob"
+  ],
+  "fields": [
+    {
+      "fieldname": "upstream",
+      "fieldtype": "Select",
+      "label": "Upstream",
+      "options": "openai\ngoogle",
+      "reqd": 1,
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "account_ref",
+      "fieldtype": "Data",
+      "label": "Account Ref",
+      "reqd": 1,
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "label",
+      "fieldtype": "Data",
+      "label": "Label",
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "oauth_blob",
+      "fieldtype": "Password",
+      "label": "OAuth Blob (JSON)"
+    }
+  ],
+  "permissions": []
+}

@@ -168,10 +168,23 @@ _PROVIDER_LABEL_TO_OPENCLAW_ID = {
 def _resolve_model_and_provider(conv) -> tuple[str, str | None]:
 	"""Return (effective_model, openclaw_provider_id_or_None) for this conv.
 
-	- effective_model = conv.model_override or Jarvis Settings.llm_model
-	- provider id is set only in oauth mode (api_key mode keeps it None)
+	Pool mode (proxy_active=1): let Bifrost route. Return empty model unless
+	conv.model_override matches an enabled pool model name (validated override).
+	Direct mode: use conv.model_override or settings.llm_model.
 	"""
 	settings = frappe.get_single("Jarvis Settings")
+
+	if getattr(settings, "proxy_active", 0):
+		# Pool mode: Bifrost routes. Use override if it matches an enabled model name.
+		enabled_names = {
+			(m.model if hasattr(m, "model") else m.get("model", ""))
+			for m in (settings.models or []) if m.enabled
+		}
+		override = (conv.model_override or "").strip()
+		if override and override in enabled_names:
+			return override, None  # Validated override accepted
+		return "", None  # Let Bifrost/pool route
+
 	effective_model = (conv.model_override or settings.llm_model or "")
 	provider = (
 		_PROVIDER_LABEL_TO_OPENCLAW_ID.get(settings.llm_provider)
