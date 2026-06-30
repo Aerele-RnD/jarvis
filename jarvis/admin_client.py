@@ -313,6 +313,24 @@ def post_push_custom_skills(skills: list[dict]) -> dict:
 	)
 
 
+def get_generated_media(since_ms: int = 0) -> list[dict]:
+	"""Pull recent codex ``imagegen`` output for this customer's running tenant
+	container (admin → fleet → container disk). Returns a list of
+	``{filename, mime, size, mtime_ms, b64}`` (capped by the fleet agent).
+
+	Best-effort: the caller swallows failures - a missing generated image must
+	never fail a chat turn. Read-only on the container (no restart).
+	"""
+	# _post already unwraps the admin's ``data`` envelope, so the response here
+	# is the ``{"media": [...]}`` dict itself (not ``{"data": {"media": ...}}``).
+	resp = _post(
+		path="/api/method/jarvis_admin.api.tenant.fetch_generated_media",
+		body={"since_ms": int(since_ms or 0)},
+		timeout_s=60,
+	)
+	return (resp or {}).get("media") or []
+
+
 def post_subscription_disconnect() -> dict:
 	"""POST to admin to clear the customer's OAuth profile on the container.
 
