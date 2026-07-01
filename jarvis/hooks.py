@@ -156,6 +156,9 @@ scheduler_events = {
 		"*/2 * * * *": [
 			"jarvis.chat.turn_recovery.recover_pending_turns",
 		],
+		"*/30 * * * *": [
+			"jarvis.chat.prewarm.keep_warm_if_active",
+		],
 	},
 	"hourly": [
 		# Sprint-3 (2026-06-16 review): bench has no way to know if the

@@ -69,7 +69,7 @@
 						<span v-else class="jv-conv-title">{{ c.title || "New chat" }}</span>
 						<button v-if="renamingId !== c.name" class="jv-conv-more" @click.stop="toggleConvMenu(c.name)" title="Options"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></svg></button>
 						<div v-if="convMenuFor === c.name" class="jv-conv-menu" @click.stop>
-							<button class="jv-menuitem" @click="toggleStar(c)"><svg width="14" height="14" viewBox="0 0 24 24" :fill="c.starred ? 'var(--amber)' : 'none'" :stroke="c.starred ? 'var(--amber)' : 'currentColor'" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg><span>{{ c.starred ? "Unstar" : "Star" }}</span></button>
+							<button class="jv-menuitem" @click="toggleStar(c)"><svg width="14" height="14" viewBox="0 0 24 24" :fill="c.starred ? 'var(--amber)' : 'none'" :stroke="c.starred ? 'var(--amber)' : 'currentColor'" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg><span>{{ c.starred ? "Remove" : "Star" }}</span></button>
 							<button class="jv-menuitem" @click="startRename(c)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg><span>Rename</span></button>
 							<button class="jv-menuitem jv-menuitem-danger" @click="deleteConv(c)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /></svg><span>Delete</span></button>
 						</div>
@@ -180,7 +180,13 @@
 					<template v-for="m in visibleMessages" :key="m.name">
 						<!-- user -->
 						<div v-if="m.role === 'user'" class="jv-umsg" style="display:flex;flex-direction:column;align-items:flex-end;">
-							<div style="max-width:78%;background:var(--surface-2);border:1px solid var(--border);border-radius:14px 14px 4px 14px;padding:10px 14px;font-size:14px;line-height:1.5;color:var(--text);white-space:pre-wrap;">{{ m.content }}</div>
+							<div v-if="m.content" style="max-width:78%;background:var(--surface-2);border:1px solid var(--border);border-radius:14px 14px 4px 14px;padding:10px 14px;font-size:14px;line-height:1.5;color:var(--text);white-space:pre-wrap;">{{ m.content }}</div>
+							<!-- attached images → same clickable thumbnail + preview as generated ones -->
+							<template v-for="cv in (m.canvas || [])" :key="cv.name">
+								<button v-if="cv.type === 'image' && cv.file_url" class="jv-img-artifact" @click="openArtifact(m, cv)" :title="'Open ' + cv.title" style="margin-top:8px;cursor:zoom-in;">
+									<img :src="cv.file_url" :alt="cv.title" loading="lazy" />
+								</button>
+							</template>
 							<div class="jv-msgbar">
 								<button class="jv-msgbtn" @click="copyMsg(m.name, m.content)" :title="copiedId === m.name ? 'Copied' : 'Copy'">
 									<svg v-if="copiedId === m.name" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
@@ -199,7 +205,7 @@
 							<div style="flex:1;min-width:0;">
 								<!-- Activity: the tool calls (with input + output) that produced
 								     this answer — openclaw-style, collapsible. -->
-								<div v-if="(activityByAssistant[m.name] || []).length" class="jv-activity">
+								<div v-if="showActivityDetail && (activityByAssistant[m.name] || []).length" class="jv-activity">
 									<button class="jv-activity-head" @click="toggleActivity(m.name)" :aria-expanded="!!isActivityOpen(m.name)">
 										<svg class="jv-activity-chev" :class="{ open: isActivityOpen(m.name) }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6" /></svg>
 										<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 1 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></svg>
@@ -320,6 +326,10 @@
 										</div>
 									</div>
 								</div>
+								<!-- inline charts: ECharts rendered from the agent's jarvis-chart spec -->
+								<div v-for="(spec, ci) in chartsOf(m)" :key="'chart' + ci" class="jv-chartwrap">
+									<JvChart :spec="spec" :dark="effectiveDark" />
+								</div>
 								<!-- rich outputs: agent artifacts rendered by type (sandboxed) -->
 								<template v-for="cv in (m.canvas || [])" :key="cv.name">
 									<!-- generated image → clickable thumbnail (click to enlarge) -->
@@ -342,9 +352,9 @@
 								<div v-if="skillsUsedOf(m).length" class="jv-skillused">
 									<span v-for="(sk, si) in skillsUsedOf(m)" :key="si" class="jv-skillused-chip" :title="'This reply used the ' + sk + ' skill'"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 7v10l8 5 8-5V7z" /><path d="M12 22V12M12 12 4 7M12 12l8-5" /></svg>{{ sk }}</span>
 								</div>
-								<div v-if="runMeta[m.name] && !m.error" class="jv-meta">
-									<span :title="(runMeta[m.name].names || []).join(', ')"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 1 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></svg>{{ runMeta[m.name].tools }} tool{{ runMeta[m.name].tools === 1 ? "" : "s" }}</span>
-									<span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>{{ (runMeta[m.name].ms / 1000).toFixed(1) }}s</span>
+								<div v-if="!m.error && !m.streaming && (toolCountOf(m) || elapsedOf(m))" class="jv-meta">
+									<span v-if="toolCountOf(m)" :title="activityNames(m.name)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 1 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></svg>{{ toolCountOf(m) }} tool{{ toolCountOf(m) === 1 ? "" : "s" }}</span>
+									<span v-if="elapsedOf(m)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>{{ elapsedOf(m) }}s</span>
 								</div>
 								<div v-if="!m.error && m.content" class="jv-msgbar">
 									<button class="jv-msgbtn" @click="copyMsg(m.name, stripBlocks(m.content))" :title="copiedId === m.name ? 'Copied' : 'Copy'">
@@ -363,22 +373,22 @@
 						</div>
 						<div style="flex:1;min-width:0;padding-top:3px;">
 							<!-- the single tool running right now -->
-							<div v-if="currentTool" :key="currentTool.id" class="jv-toolrow">
+							<div v-if="showActivityDetail && currentTool" :key="currentTool.id" class="jv-toolrow">
 								<svg class="jv-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2.4" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9" /></svg>
 								<span>Running <b>{{ currentTool.name }}</b></span>
 							</div>
 							<!-- compact tally of tools finished this turn -->
-							<div v-if="doneCount" class="jv-toolrow jv-tooldone">
+							<div v-if="showActivityDetail && doneCount" class="jv-toolrow jv-tooldone">
 								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
 								<span>{{ doneCount }} tool{{ doneCount === 1 ? "" : "s" }} done<template v-if="failedCount"> · {{ failedCount }} failed</template></span>
 							</div>
-							<div v-if="waiting && !currentTool" style="display:flex;align-items:center;gap:7px;padding-top:4px;">
+							<div v-if="!showActivityDetail || (waiting && !currentTool)" style="display:flex;align-items:center;gap:7px;padding-top:4px;">
 								<span style="display:flex;gap:4px;">
 									<span style="width:6px;height:6px;border-radius:50%;background:var(--text-3);animation:jv-dot 1.1s infinite;"></span>
 									<span style="width:6px;height:6px;border-radius:50%;background:var(--text-3);animation:jv-dot 1.1s infinite .18s;"></span>
 									<span style="width:6px;height:6px;border-radius:50%;background:var(--text-3);animation:jv-dot 1.1s infinite .36s;"></span>
 								</span>
-								<span style="font-size:12px;color:var(--text-3);">Thinking…</span>
+								<span style="font-size:12px;color:var(--text-3);">{{ thinkingWord }}</span>
 							</div>
 						</div>
 					</div>
@@ -388,7 +398,8 @@
 			<!-- ===== COMPOSER ===== -->
 			<div style="flex:none;padding:12px 40px 16px;border-top:1px solid var(--border);background:var(--surface);">
 				<div style="max-width:1280px;margin:0 auto;">
-					<div class="jv-composer" style="position:relative;border:1.5px solid var(--text);border-radius:13px;background:var(--surface);box-shadow:0 2px 12px rgba(0,0,0,.07);padding:5px 6px 6px 6px;transition:border-color .12s,box-shadow .12s;">
+					<div class="jv-composer" @dragover.prevent @dragenter.prevent="onDragEnter" @dragleave.prevent="onDragLeave" @drop.prevent="onDrop" style="position:relative;border:1.5px solid var(--text);border-radius:13px;background:var(--surface);box-shadow:0 2px 12px rgba(0,0,0,.07);padding:5px 6px 6px 6px;transition:border-color .12s,box-shadow .12s;">
+						<div v-if="dragActive" style="position:absolute;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;background:var(--blue-bg);border:2px dashed var(--blue);border-radius:13px;color:var(--blue);font-size:13px;font-weight:600;pointer-events:none;">Drop image or file to attach</div>
 						<!-- mention dropdown (@ user, / doctype·tool) -->
 						<div v-if="mention.open && mention.items.length" style="position:absolute;bottom:calc(100% + 6px);left:0;min-width:248px;max-height:248px;overflow-y:auto;background:var(--surface);border:1px solid var(--border-2);border-radius:10px;box-shadow:0 10px 28px rgba(20,20,30,.16);padding:5px;z-index:30;">
 							<button v-for="(it, i) in mention.items" :key="it.value" class="jv-menuitem" :class="{ on: i === mention.index }" @click="applyMention(it)" @mouseenter="mention.index = i">
@@ -396,12 +407,19 @@
 								<span style="font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.03em;">{{ it.sub }}</span>
 							</button>
 						</div>
-						<!-- pending file attachments -->
-						<div v-if="pendingFiles.length || uploading" style="display:flex;flex-wrap:wrap;gap:6px;padding:4px 4px 2px;">
-							<span v-for="(f, i) in pendingFiles" :key="i" style="display:inline-flex;align-items:center;gap:5px;font-size:11.5px;padding:3px 5px 3px 9px;border-radius:999px;color:var(--text-2);background:var(--surface-1);border:1px solid var(--border);">📎 {{ f.file_name }}<button @click="removeFile(i)" style="border:none;background:transparent;cursor:pointer;font-size:14px;line-height:1;color:var(--text-3);">×</button></span>
+						<!-- pending attachments: image thumbnails (Claude-style) + file chips -->
+						<div v-if="pendingFiles.length || uploading" style="display:flex;flex-wrap:wrap;gap:8px;padding:6px 4px 2px;">
+							<template v-for="(f, i) in pendingFiles" :key="i">
+								<span v-if="isImageFile(f)" :title="f.file_name" style="position:relative;display:inline-block;line-height:0;">
+									<img :src="f.file_url" alt="" style="width:52px;height:52px;object-fit:cover;border-radius:9px;border:1px solid var(--border);display:block;" />
+									<button @click="removeFile(i)" title="Remove" style="position:absolute;top:-7px;right:-7px;width:18px;height:18px;border-radius:50%;background:var(--text);color:var(--surface);border:none;cursor:pointer;font-size:12px;line-height:1;display:flex;align-items:center;justify-content:center;padding:0;">×</button>
+								</span>
+								<span v-else style="display:inline-flex;align-items:center;gap:5px;font-size:11.5px;padding:3px 5px 3px 9px;border-radius:999px;color:var(--text-2);background:var(--surface-1);border:1px solid var(--border);">📎 {{ f.file_name }}<button @click="removeFile(i)" style="border:none;background:transparent;cursor:pointer;font-size:14px;line-height:1;color:var(--text-3);">×</button></span>
+							</template>
 							<span v-if="uploading" style="font-size:11.5px;color:var(--text-3);padding:3px 6px;">Uploading…</span>
 						</div>
-						<textarea ref="inputEl" v-model="input" @input="onInput" @keydown="onKey" rows="1" placeholder="Ask Jarvis…   @ to mention a user, / for a doctype or tool" style="width:100%;border:none;outline:none;resize:none;font-family:inherit;font-size:14px;line-height:1.5;color:var(--text);background:transparent;padding:8px 8px 4px;max-height:140px;"></textarea>
+						<div v-if="pasteHint" style="font-size:11.5px;color:var(--amber);padding:4px 8px;line-height:1.4;">{{ pasteHint }}</div>
+						<textarea ref="inputEl" v-model="input" @input="onInput" @keydown="onKey" @paste="onPaste" rows="1" placeholder="Ask Jarvis…   @ to mention a user, / for a doctype or tool" style="width:100%;border:none;outline:none;resize:none;font-family:inherit;font-size:14px;line-height:1.5;color:var(--text);background:transparent;padding:8px 8px 4px;max-height:140px;"></textarea>
 						<input ref="fileInput" type="file" multiple style="display:none;" @change="onFilesPicked" />
 						<div style="display:flex;align-items:center;gap:6px;padding:2px 4px;">
 							<button class="jv-iconbtn" title="Attach file" @click="pickFiles" style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;border-radius:7px;cursor:pointer;color:var(--text-3);">
@@ -553,8 +571,8 @@
 									</button>
 								</div>
 								<div class="jv-set-row">
-									<span>Auto-expand tool activity<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Show each answer's tool calls + output unfolded</span></span>
-									<button class="jv-switch" :class="{ on: activityAutoExpand }" @click="setActivityAutoExpand(!activityAutoExpand)" role="switch" :aria-checked="String(activityAutoExpand)" title="Expand the activity panel under each answer by default">
+									<span>Show tool activity<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Show the live tool steps + input/output above each reply. The tools count &amp; time always show below.</span></span>
+									<button class="jv-switch" :class="{ on: showActivityDetail }" @click="setActivityDetail(!showActivityDetail)" role="switch" :aria-checked="String(showActivityDetail)" title="Show the tool/skill activity under each answer">
 										<span class="jv-switch-knob"></span>
 									</button>
 								</div>
@@ -699,6 +717,7 @@ import { ref, computed, inject, onMounted, onBeforeUnmount, nextTick, watch } fr
 import { useRoute } from "vue-router"
 import * as api from "@/api"
 import { renderMarkdown } from "@/markdown"
+import JvChart from "@/charts/JvChart.vue"
 
 const session = inject("$session")
 const socket = inject("$socket")
@@ -706,8 +725,21 @@ const route = useRoute()
 
 const conversations = ref([])
 const currentId = ref(null)
+// Remember the open chat per-device so a refresh — or a duplicated tab — restores
+// it instead of jumping to whatever sorts first in the sidebar (e.g. a starred
+// chat). Also lets a duplicated tab land on the SAME in-progress conversation.
+watch(currentId, (id) => {
+	try {
+		id ? localStorage.setItem("jarvis-last-conv", id) : localStorage.removeItem("jarvis-last-conv")
+	} catch (e) {}
+})
 const messages = ref([])
 const input = ref("")
+// Per-conversation composer drafts: switching chats stashes the leaving
+// chat's unsent text here and restores the target chat's own draft, so a
+// draft never bleeds into another conversation (and is never lost on an
+// accidental switch).
+const drafts = ref({})
 // Up/Down recall of previously sent prompts (shell-style history).
 const promptHistory = ref([])
 const histIdx = ref(null)
@@ -1046,15 +1078,36 @@ const activityByAssistant = computed(() => {
 })
 const activityOpen = ref({})
 const toolOpen = ref({})
-// Whether tool-activity disclosures start expanded (a Settings preference).
-const activityAutoExpand = ref(localStorage.getItem("jarvis-activity-expand") === "1")
-function setActivityAutoExpand(v) {
-	activityAutoExpand.value = !!v
-	try { localStorage.setItem("jarvis-activity-expand", v ? "1" : "0") } catch (e) {}
+// Whether replies reveal which tools + skills produced them. When off, the
+// chat shows only a generic "Thinking…/Working…" indicator and hides the
+// per-reply tool/skill chips. Persisted per device.
+const showActivityDetail = ref(localStorage.getItem("jarvis-activity-detail") === "1")
+function setActivityDetail(v) {
+	showActivityDetail.value = !!v
+	try { localStorage.setItem("jarvis-activity-detail", v ? "1" : "0") } catch (e) {}
+}
+// In-flight wording shown while a turn runs (tool-activity hidden). Kept to a
+// single neutral "Thinking\u2026" \u2014 no task-describing phrases that could overclaim.
+const THINK_WORDS = ["Thinking\u2026"]
+const thinkTick = ref(0)
+let _thinkTimer = null
+const thinkingWord = computed(() => THINK_WORDS[thinkTick.value % THINK_WORDS.length])
+// Persisted per-reply tool count + duration so they survive a refresh (runMeta
+// is live-session only): count from the saved tool messages, duration from the
+// assistant row's modified-minus-creation span (clamped to a sane window).
+function toolCountOf(m) { return (activityByAssistant.value[m.name] || []).length }
+function elapsedOf(m) {
+	const live = runMeta.value[m.name] && runMeta.value[m.name].ms
+	if (live) return (live / 1000).toFixed(1)
+	if (m.creation && m.modified) {
+		const d = (new Date(m.modified.replace(" ", "T")) - new Date(m.creation.replace(" ", "T"))) / 1000
+		if (d >= 0 && d < 1800) return d.toFixed(1)
+	}
+	return ""
 }
 // Open state falls back to the pref until the user explicitly toggles a turn.
 function isActivityOpen(name) {
-	return name in activityOpen.value ? activityOpen.value[name] : activityAutoExpand.value
+	return name in activityOpen.value ? activityOpen.value[name] : false
 }
 function toggleActivity(name) { activityOpen.value = { ...activityOpen.value, [name]: !isActivityOpen(name) } }
 function toggleTool(name) { toolOpen.value = { ...toolOpen.value, [name]: !toolOpen.value[name] } }
@@ -1168,6 +1221,10 @@ const _CARDS_RE = /```jarvis-cards[ \t]*\n([\s\S]*?)```/
 // The agent declares which skill(s) it used to shape a reply in a ```jarvis-skill
 // block; the chat shows a small chip and strips the raw block.
 const _SKILL_RE = /```jarvis-skill[ \t]*\n([\s\S]*?)```/
+// A ```jarvis-chart block: a high-level chart spec the chat renders inline with
+// ECharts (themed by chartTheme; the agent never sends raw ECharts options).
+const _CHART_RE = /```jarvis-chart[ \t]*\n([\s\S]*?)```/g
+const _CHART_TYPES = new Set(["bar", "line", "area", "pie", "donut"])
 function stripBlocks(text) {
 	return (text || "")
 		.replace(/```jarvis-action[ \t]*\n[\s\S]*?```/g, "")
@@ -1175,6 +1232,7 @@ function stripBlocks(text) {
 		.replace(/```jarvis-ask[ \t]*\n[\s\S]*?```/g, "")
 		.replace(/```jarvis-cards[ \t]*\n[\s\S]*?```/g, "")
 		.replace(/```jarvis-skill[ \t]*\n[\s\S]*?```/g, "")
+		.replace(/```jarvis-chart[ \t]*\n[\s\S]*?```/g, "")
 		.replace(/\n{3,}/g, "\n\n")
 		.trim()
 }
@@ -1227,6 +1285,26 @@ function cardsOf(m) {
 	_cardsCache.set(content, res)
 	return res
 }
+const _chartsCache = new Map()
+function chartsOf(m) {
+	const content = (m && m.content) || ""
+	if (!content.includes("jarvis-chart")) return []
+	if (_chartsCache.has(content)) return _chartsCache.get(content)
+	const specs = []
+	for (const mt of content.matchAll(_CHART_RE)) {
+		try {
+			const s = JSON.parse(mt[1].trim())
+			if (s && typeof s === "object" && _CHART_TYPES.has(s.type) && Array.isArray(s.series)) {
+				specs.push(s)
+			}
+		} catch (e) {
+			/* incomplete mid-stream JSON: skip until the closing fence arrives */
+		}
+	}
+	_chartsCache.set(content, specs)
+	return specs
+}
+
 function askOf(m) {
 	const mt = ((m && m.content) || "").match(_ASK_RE)
 	if (!mt) return null
@@ -1691,6 +1769,19 @@ async function loadConversation(id) {
 	for (const m of messages.value) {
 		if (Array.isArray(m.canvas) && m.canvas.length) ensureCanvas(m)
 	}
+	// Resume the in-progress indicator if the last reply is still streaming, so a
+	// refreshed or duplicated tab shows "Thinking…"/streaming (realtime deltas go
+	// to every tab) instead of a frozen blank reply. Freshness-guarded so a stale
+	// streaming=1 (crashed worker) can't lock the composer forever; live deltas +
+	// run:end clear it normally.
+	const _streaming = [...messages.value].reverse().find((m) => m.role === "assistant" && m.streaming)
+	if (_streaming) {
+		const fresh = _streaming.modified && new Date() - new Date(_streaming.modified.replace(" ", "T")) < 5 * 60 * 1000
+		if (fresh) {
+			sending.value = true
+			waiting.value = !((_streaming.content || "").trim())
+		}
+	}
 	await nextTick()
 	scrollBottom()
 	processMermaid()
@@ -1833,13 +1924,40 @@ function downloadSvgAsPng(svgEl) {
 	}
 	img.src = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(xml)))
 }
+// Clear all per-turn UI state that belongs to the conversation we are leaving,
+// so a chat that was mid-stream does not strand the composer when we open
+// another: without this, sending stays true (composer stuck in "Stop" mode and
+// send() bails on sending) because the leaving run's run:end event is dropped
+// by the conversation guard in onEvent.
+function resetRunState() {
+	sending.value = false
+	waiting.value = false
+	activeTools.value = []
+	currentRunId.value = null
+	pendingFiles.value = []
+	mention.value = { ...mention.value, open: false }
+	histIdx.value = null
+	histDraft.value = ""
+}
+// Stash the leaving chat's draft and restore the target chat's own, so unsent
+// text follows its conversation instead of bleeding into the next one.
+function swapDraft(toId) {
+	if (currentId.value) drafts.value[currentId.value] = input.value
+	input.value = (toId && drafts.value[toId]) || ""
+}
 async function selectConversation(id) {
 	if (id === currentId.value) return
+	swapDraft(id)
+	resetRunState()
 	currentId.value = id
-	waiting.value = false
 	await loadConversation(id)
+	await nextTick()
+	autoGrow()
+	inputEl.value?.focus()
 }
 async function newChat() {
+	swapDraft(null)
+	resetRunState()
 	const conv = await api.createOrFocusEmpty()
 	currentId.value = conv?.name || conv
 	messages.value = []
@@ -1914,9 +2032,13 @@ async function send(textArg) {
 	sending.value = true
 	waiting.value = true
 	stoppedRunId.value = null
-	const marker = attachments.length ? "📎 " + attachments.map((a) => a.file_name).join(", ") : ""
+	const isImgAtt = (a) => /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(a.file_name || a.file_url || "")
+	const imgAtts = attachments.filter(isImgAtt)
+	const otherAtts = attachments.filter((a) => !isImgAtt(a))
+	const marker = otherAtts.length ? "📎 " + otherAtts.map((a) => a.file_name).join(", ") : ""
 	const optimistic = [text, marker].filter(Boolean).join("\n\n")
-	messages.value = [...messages.value, { name: `tmp-${Date.now()}`, role: "user", content: optimistic }]
+	const optCanvas = imgAtts.map((a, i) => ({ name: `tmpimg-${Date.now()}-${i}`, type: "image", file_url: a.file_url, title: a.file_name || "image" }))
+	messages.value = [...messages.value, { name: `tmp-${Date.now()}`, role: "user", content: optimistic, canvas: optCanvas.length ? optCanvas : undefined }]
 	await nextTick()
 	scrollBottom()
 	try {
@@ -1932,6 +2054,8 @@ const proactiveToast = ref(null)
 function openProactive() {
 	const t = proactiveToast.value
 	if (!t) return
+	swapDraft(t.id)
+	resetRunState()
 	currentId.value = t.id
 	loadConversation(t.id)
 	proactiveToast.value = null
@@ -2053,9 +2177,9 @@ function stopRun() {
 function pickFiles() {
 	fileInput.value?.click()
 }
-async function onFilesPicked(e) {
-	const files = Array.from(e.target.files || [])
-	e.target.value = ""
+// Shared upload path for the file picker, clipboard paste, and drag-and-drop.
+async function uploadFiles(list) {
+	const files = Array.from(list || [])
 	if (!files.length) return
 	uploading.value = true
 	for (const f of files) {
@@ -2068,8 +2192,91 @@ async function onFilesPicked(e) {
 	uploading.value = false
 	inputEl.value?.focus()
 }
+async function onFilesPicked(e) {
+	const picked = Array.from(e.target.files || [])
+	e.target.value = ""
+	await uploadFiles(picked)
+}
+// Drag-and-drop a file/image onto the composer (Claude-style). dragDepth guards
+// against the flicker from dragenter/leave firing on child elements.
+const dragActive = ref(false)
+let _dragDepth = 0
+function onDragEnter() {
+	_dragDepth++
+	dragActive.value = true
+}
+function onDragLeave() {
+	_dragDepth = Math.max(0, _dragDepth - 1)
+	if (!_dragDepth) dragActive.value = false
+}
+async function onDrop(e) {
+	_dragDepth = 0
+	dragActive.value = false
+	await uploadFiles((e.dataTransfer && e.dataTransfer.files) || [])
+}
+// Transient hint shown when the clipboard holds only a file PATH, not the image
+// bytes (e.g. copying an image FILE from a file manager - the OS exposes only
+// the path and browsers can't read the bytes from it).
+const pasteHint = ref("")
+let _pasteHintTimer = null
+function flashPasteHint() {
+	pasteHint.value = "That copied the file's path, not the image. Use the 📎 button, or copy the image itself (e.g. a screenshot) and paste again."
+	if (_pasteHintTimer) clearTimeout(_pasteHintTimer)
+	_pasteHintTimer = setTimeout(() => { pasteHint.value = "" }, 6000)
+}
+// Paste an image straight from the clipboard (screenshot / copied image) →
+// upload it as an attachment, the same path as the file picker. Plain-text
+// pastes are left untouched (we only preventDefault when an image is present).
+async function onPaste(e) {
+	const cd = e.clipboardData
+	if (!cd) return
+	const imgs = []
+	// Some browsers populate .files for a copied file; screenshots / "Copy image"
+	// land in .items. Check both, .files first.
+	for (const f of cd.files || []) {
+		if ((f.type || "").startsWith("image/")) imgs.push(f)
+	}
+	if (!imgs.length) {
+		for (const it of cd.items || []) {
+			if (it.kind === "file" && (it.type || "").startsWith("image/")) {
+				const f = it.getAsFile()
+				if (f) imgs.push(f)
+			}
+		}
+	}
+	if (!imgs.length) {
+		// No image bytes. If the clipboard is just a local image-file PATH/URI
+		// (file-manager copy), don't dump the raw path into the box - hint the
+		// user to the right method instead. Otherwise let normal text paste run.
+		const text = (cd.getData && (cd.getData("text/uri-list") || cd.getData("text/plain"))) || ""
+		if (/^\s*(file:\/\/|\/|[a-z]:\\).*\.(png|jpe?g|gif|webp|bmp|svg)\s*$/i.test(text)) {
+			e.preventDefault()
+			flashPasteHint()
+		}
+		return
+	}
+	e.preventDefault()
+	uploading.value = true
+	for (let i = 0; i < imgs.length; i++) {
+		const f = imgs[i]
+		const ext = (((f.type || "image/png").split("/")[1]) || "png").split("+")[0]
+		// Clipboard images come in unnamed (or all "image.png"); give each a
+		// unique, descriptive name so the upload + dedup behave.
+		const named = new File([f], `pasted-${Date.now()}-${i}.${ext}`, { type: f.type || "image/png" })
+		try {
+			pendingFiles.value = [...pendingFiles.value, await api.uploadFile(named)]
+		} catch (err) {
+			/* skip a file that failed to upload */
+		}
+	}
+	uploading.value = false
+	inputEl.value?.focus()
+}
 function removeFile(i) {
 	pendingFiles.value = pendingFiles.value.filter((_, idx) => idx !== i)
+}
+function isImageFile(f) {
+	return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test((f && (f.file_name || f.file_url)) || "")
 }
 
 // ---- mentions (@ user, / doctype·tool) ----
@@ -2148,6 +2355,7 @@ onMounted(async () => {
 	socket?.on("jarvis:event", onEvent)
 	document.addEventListener("pointerdown", onDocClick)
 	window.addEventListener("keydown", onGlobalKey)
+	_thinkTimer = setInterval(() => { thinkTick.value = busy.value ? thinkTick.value + 1 : 0 }, 2200)
 	// Track the OS color scheme so theme:'system' updates live.
 	_mq = window.matchMedia("(prefers-color-scheme: dark)")
 	prefersDark.value = _mq.matches
@@ -2161,7 +2369,13 @@ onMounted(async () => {
 	loadCustomSkills()
 	try {
 		await loadConversations()
-		const first = route.params.id || conversations.value[0]?.name
+		// Restore the chat the user was last on (survives refresh + duplicated tab)
+		// before falling back to the first sidebar entry, so a starred chat sorting
+		// to the top never hijacks navigation away from your current chat.
+		let _stored = null
+		try { _stored = localStorage.getItem("jarvis-last-conv") } catch (e) {}
+		const _storedValid = _stored && conversations.value.some((c) => c.name === _stored)
+		const first = route.params.id || (_storedValid ? _stored : null) || conversations.value[0]?.name
 		if (first) {
 			currentId.value = first
 			await loadConversation(first)
@@ -2180,6 +2394,7 @@ onBeforeUnmount(() => {
 	socket?.off("jarvis:event", onEvent)
 	document.removeEventListener("pointerdown", onDocClick)
 	window.removeEventListener("keydown", onGlobalKey)
+	clearInterval(_thinkTimer)
 	_mq?.removeEventListener("change", onColorScheme)
 })
 // Global keyboard shortcuts (documented in Settings → Shortcuts).
@@ -2306,6 +2521,7 @@ function onGlobalKey(e) {
 
 /* inline canvas/chart artifacts (rendered sandboxed) */
 .jv-canvas { margin-top: 12px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface); }
+.jv-chartwrap { margin: 10px 0; border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; background: var(--surface); }
 .jv-canvas-bar { display: flex; align-items: center; gap: 7px; padding: 8px 12px; font-size: 12.5px; font-weight: 550; color: var(--text-2); background: var(--surface-1); border-bottom: 1px solid var(--border); }
 .jv-canvas-bar svg { color: var(--text-3); flex: none; }
 .jv-canvas-type { margin-left: auto; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }

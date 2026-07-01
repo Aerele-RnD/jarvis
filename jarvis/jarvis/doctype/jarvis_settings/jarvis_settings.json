@@ -11,6 +11,11 @@
     "token_budget_monthly",
     "enabled",
     "llm_section",
+    "models",
+    "preset",
+    "routing_mode",
+    "proxy_active",
+    "proxy_recommended",
     "llm_provider",
     "llm_model",
     "llm_column_break",
@@ -87,17 +92,50 @@
       "label": "Language Model"
     },
     {
-      "fieldname": "llm_provider",
+      "fieldname": "models",
+      "fieldtype": "Table",
+      "label": "LLM Models",
+      "options": "Jarvis LLM Pool Model"
+    },
+    {
+      "fieldname": "preset",
       "fieldtype": "Select",
+      "label": "Preset",
+      "options": "\nCost-saver\nBalanced\nMax-reliability"
+    },
+    {
+      "fieldname": "routing_mode",
+      "fieldtype": "Select",
+      "label": "Routing Mode",
+      "options": "\ndynamic\nfailover",
+      "default": "dynamic",
+      "description": "How the LLM pool routes requests. 'dynamic' uses cost-tier routing; 'failover' tries models in order."
+    },
+    {
+      "fieldname": "proxy_active",
+      "fieldtype": "Check",
+      "label": "Proxy Active",
+      "read_only": 1
+    },
+    {
+      "fieldname": "proxy_recommended",
+      "fieldtype": "Check",
+      "label": "Proxy Recommended",
+      "read_only": 1
+    },
+    {
+      "fieldname": "llm_provider",
+      "fieldtype": "Data",
       "label": "Provider",
-      "options": "Anthropic\nOpenAI\nGoogle Gemini\nMistral\nGroq\nTogether AI\nDeepSeek\nMoonshot (Kimi)\nOpenRouter\nOllama (local)\nvLLM (local)\nOpenAI-Compatible",
-      "default": "Anthropic"
+      "read_only": 1,
+      "description": "Mirrored from models[0].provider. May hold an internal provider ID (e.g. 'openai_compat') or a display name from legacy single-model config."
     },
     {
       "fieldname": "llm_model",
       "fieldtype": "Data",
       "label": "Model",
-      "description": "Provider-specific model identifier (e.g. claude-sonnet-4-6, gpt-4o, gemini-2.0-flash, deepseek-chat, moonshot-v1-32k, llama-3.1-70b)."
+      "description": "Provider-specific model identifier (e.g. claude-sonnet-4-6, gpt-4o, gemini-2.0-flash, deepseek-chat, moonshot-v1-32k, llama-3.1-70b).",
+      "read_only": 1
     },
     {
       "fieldname": "llm_column_break",
@@ -107,13 +145,15 @@
       "fieldname": "llm_api_key",
       "fieldtype": "Password",
       "label": "API Key",
-      "description": "API key for the chosen provider. Leave blank for local providers (Ollama, vLLM)."
+      "description": "API key for the chosen provider. Leave blank for local providers (Ollama, vLLM).",
+      "read_only": 1
     },
     {
       "fieldname": "llm_base_url",
       "fieldtype": "Data",
       "label": "Base URL",
-      "description": "Only for local or OpenAI-Compatible providers (e.g. http://localhost:11434/v1 for Ollama). Leave blank for hosted providers."
+      "description": "Only for local or OpenAI-Compatible providers (e.g. http://localhost:11434/v1 for Ollama). Leave blank for hosted providers.",
+      "read_only": 1
     },
     {
       "fieldname": "llm_advanced_section",
@@ -145,7 +185,8 @@
       "label": "Auth Mode",
       "options": "api_key\nsubscription\noauth",
       "default": "api_key",
-      "reqd": 1
+      "reqd": 1,
+      "read_only": 1
     },
     {
       "fieldname": "llm_oauth_account_email",

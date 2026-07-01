@@ -1,0 +1,179 @@
+# app/jarvis/tests/test_prewarm.py
+from unittest.mock import MagicMock, patch
+
+import frappe
+from frappe.tests.utils import FrappeTestCase
+
+from jarvis.chat.openclaw_client import OpenclawSession
+
+
+class TestFireAgent(FrappeTestCase):
+    def test_fire_agent_sends_deliver_false_and_returns_runid(self):
+        sess = OpenclawSession.__new__(OpenclawSession)  # bypass __init__/WS
+        captured = {}
+
+        def fake_request(method, params, *, timeout_s):
+            captured["method"], captured["params"] = method, params
+            return {"ok": True, "payload": {"runId": "run123"}}
+
+        sess._request = fake_request
+        rid = sess.fire_agent("sk_1", "/think off warmup", "idem1")
+
+        self.assertEqual(rid, "run123")
+        self.assertEqual(captured["method"], "agent")
+        self.assertEqual(captured["params"]["deliver"], False)
+        self.assertEqual(captured["params"]["sessionKey"], "sk_1")
+        self.assertEqual(captured["params"]["message"], "/think off warmup")
+
+
+class TestWarmPrefix(FrappeTestCase):
+    def _settings_stub(self):
+        s = MagicMock()
+        s.agent_url = "https://gw.example"
+        s.llm_model = "gpt-5.5"
+        s.llm_auth_mode = "api_key"
+        s.llm_provider = "OpenAI"
+        return s
+
+    def tearDown(self):
+        from jarvis.chat import prewarm
+        frappe.cache().delete_value(prewarm._warm_cooldown_key())
+
+    def test_warm_prefix_throwaway_session_no_rows_best_effort(self):
+        from jarvis.chat import prewarm
+
+        frappe.cache().delete_value(prewarm._warm_cooldown_key())
+        fake_sess = MagicMock()
+        fake_sess.create_session.return_value = "sk_throwaway"
+        before = frappe.db.count("Jarvis Chat Message")
+
+        with patch("jarvis.chat.prewarm.OpenclawSession") as OC, \
+             patch("jarvis.chat.prewarm.selfhost.is_self_hosted", return_value=False), \
+             patch("jarvis.chat.prewarm.frappe.get_single", return_value=self._settings_stub()):
+            OC.connect.return_value = fake_sess
+            fired = prewarm.warm_prefix()
+
+        self.assertTrue(fired)
+        fake_sess.create_session.assert_called_once()
+        msg = fake_sess.fire_agent.call_args.args[1]
+        self.assertIn("/think off", msg)
+        fake_sess.close.assert_called_once()
+        self.assertEqual(frappe.db.count("Jarvis Chat Message"), before)
+
+    def test_warm_prefix_debounced_second_call_is_noop(self):
+        from jarvis.chat import prewarm
+
+        frappe.cache().delete_value(prewarm._warm_cooldown_key())
+        with patch("jarvis.chat.prewarm.OpenclawSession") as OC, \
+             patch("jarvis.chat.prewarm.selfhost.is_self_hosted", return_value=False), \
+             patch("jarvis.chat.prewarm.frappe.get_single", return_value=self._settings_stub()):
+            OC.connect.return_value = MagicMock(create_session=MagicMock(return_value="sk"))
+            self.assertTrue(prewarm.warm_prefix())
+            self.assertFalse(prewarm.warm_prefix())  # within cooldown
+
+    def test_warm_prefix_swallows_errors(self):
+        from jarvis.chat import prewarm
+
+        frappe.cache().delete_value(prewarm._warm_cooldown_key())
+        with patch("jarvis.chat.prewarm.selfhost.is_self_hosted", return_value=False), \
+             patch("jarvis.chat.prewarm.frappe.get_single", side_effect=RuntimeError("boom")):
+            self.assertFalse(prewarm.warm_prefix())  # no raise
+
+    # --- adversarial tests ---
+
+    def test_warm_prefix_fires_with_empty_agent_token(self):
+        """Warming must succeed even when agent_token is empty.
+        connect() uses device-pairing auth, not agent_token - proves FIX A."""
+        from jarvis.chat import prewarm
+
+        frappe.cache().delete_value(prewarm._warm_cooldown_key())
+        stub = self._settings_stub()
+        stub.get_password.return_value = ""  # empty agent_token (device-paired bench)
+        fake_sess = MagicMock()
+        fake_sess.create_session.return_value = "sk_throwaway"
+
+        with patch("jarvis.chat.prewarm.OpenclawSession") as OC, \
+             patch("jarvis.chat.prewarm.selfhost.is_self_hosted", return_value=False), \
+             patch("jarvis.chat.prewarm.frappe.get_single", return_value=stub):
+            OC.connect.return_value = fake_sess
+            fired = prewarm.warm_prefix()
+
+        self.assertTrue(fired, "warm_prefix must fire even with empty agent_token")
+
+    def test_warm_prefix_failure_does_not_arm_full_cooldown(self):
+        """A failed connect must set only the short in-progress marker,
+        not the full cooldown. Proves FIX B: transient failures retry soon
+        instead of being disabled for 25 min."""
+        from jarvis.chat import prewarm
+
+        cache_mock = MagicMock()
+        cache_mock.get_value.return_value = None  # not debounced
+
+        with patch("jarvis.chat.prewarm.OpenclawSession") as OC, \
+             patch("jarvis.chat.prewarm.selfhost.is_self_hosted", return_value=False), \
+             patch("jarvis.chat.prewarm.frappe.get_single", return_value=self._settings_stub()), \
+             patch("jarvis.chat.prewarm.frappe.cache", return_value=cache_mock), \
+             patch("jarvis.chat.prewarm.frappe.logger"):
+            OC.connect.side_effect = RuntimeError("gateway blip")
+            fired = prewarm.warm_prefix()
+
+        self.assertFalse(fired)
+        set_calls = cache_mock.set_value.call_args_list
+        # Exactly one set_value call: the short in-progress guard.
+        # A second call (full cooldown) must not appear on failure.
+        self.assertEqual(
+            len(set_calls), 1,
+            "Only the short in-progress TTL should be set on failure, not the full cooldown",
+        )
+        _, call_kwargs = set_calls[0]
+        self.assertEqual(
+            call_kwargs.get("expires_in_sec"), prewarm._WARM_INPROGRESS_S,
+            "The single cache set on failure must use the short in-progress TTL",
+        )
+
+    def test_warm_prefix_passes_default_model_to_fire_agent(self):
+        """warm_prefix resolves the Settings default model and passes it to
+        fire_agent - proves FIX C (prevents container-default model drift)."""
+        from jarvis.chat import prewarm
+
+        frappe.cache().delete_value(prewarm._warm_cooldown_key())
+        fake_sess = MagicMock()
+        fake_sess.create_session.return_value = "sk_throwaway"
+
+        with patch("jarvis.chat.prewarm.OpenclawSession") as OC, \
+             patch("jarvis.chat.prewarm.selfhost.is_self_hosted", return_value=False), \
+             patch("jarvis.chat.prewarm.frappe.get_single", return_value=self._settings_stub()):
+            OC.connect.return_value = fake_sess
+            prewarm.warm_prefix()
+
+        fake_sess.fire_agent.assert_called_once()
+        _, call_kwargs = fake_sess.fire_agent.call_args
+        self.assertEqual(call_kwargs.get("model"), "gpt-5.5",
+            "fire_agent must receive the Settings default model")
+        # api_key mode: no oauth provider
+        self.assertIsNone(call_kwargs.get("provider"),
+            "provider must be None in api_key mode")
+
+
+class TestKeepWarm(FrappeTestCase):
+    def tearDown(self):
+        from jarvis.chat import prewarm
+        frappe.cache().delete_value(prewarm._warm_cooldown_key())
+
+    def test_keep_warm_warms_when_recent_activity(self):
+        from jarvis.chat import prewarm
+
+        with patch("jarvis.chat.prewarm.selfhost.is_self_hosted", return_value=False), \
+             patch("jarvis.chat.prewarm.frappe.db.exists", return_value="MSG-1"), \
+             patch("jarvis.chat.prewarm.warm_prefix") as wp:
+            prewarm.keep_warm_if_active()
+        wp.assert_called_once()
+
+    def test_keep_warm_noop_when_idle(self):
+        from jarvis.chat import prewarm
+
+        with patch("jarvis.chat.prewarm.selfhost.is_self_hosted", return_value=False), \
+             patch("jarvis.chat.prewarm.frappe.db.exists", return_value=None), \
+             patch("jarvis.chat.prewarm.warm_prefix") as wp:
+            prewarm.keep_warm_if_active()
+        wp.assert_not_called()

@@ -168,10 +168,23 @@ _PROVIDER_LABEL_TO_OPENCLAW_ID = {
 def _resolve_model_and_provider(conv) -> tuple[str, str | None]:
 	"""Return (effective_model, openclaw_provider_id_or_None) for this conv.
 
-	- effective_model = conv.model_override or Jarvis Settings.llm_model
-	- provider id is set only in oauth mode (api_key mode keeps it None)
+	Pool mode (proxy_active=1): let Bifrost route. Return empty model unless
+	conv.model_override matches an enabled pool model name (validated override).
+	Direct mode: use conv.model_override or settings.llm_model.
 	"""
 	settings = frappe.get_single("Jarvis Settings")
+
+	if getattr(settings, "proxy_active", 0):
+		# Pool mode: Bifrost routes. Use override if it matches an enabled model name.
+		enabled_names = {
+			(m.model if hasattr(m, "model") else m.get("model", ""))
+			for m in (settings.models or []) if m.enabled
+		}
+		override = (conv.model_override or "").strip()
+		if override and override in enabled_names:
+			return override, None  # Validated override accepted
+		return "", None  # Let Bifrost/pool route
+
 	effective_model = (conv.model_override or settings.llm_model or "")
 	provider = (
 		_PROVIDER_LABEL_TO_OPENCLAW_ID.get(settings.llm_provider)
@@ -189,6 +202,43 @@ def _thinking_prefix(thinking_override: str | None) -> str:
 	prefix), so it never busts the prefix cache the warm-up populates."""
 	level = (thinking_override or "").strip().lower()
 	return f"/think {level}\n" if level in ("low", "medium", "high") else ""
+
+
+def _org_locale_clause() -> str:
+	"""Region/locale of the site's default Company, folded into the turn's
+	``[Context: ...]`` line so the agent formats dates, currency, and numbers
+	for the org instead of defaulting to US conventions. Reads cached Single /
+	Company values, so it is cheap per turn; any read failure yields an empty
+	clause (the turn still runs, just without the locale hint)."""
+	try:
+		company = frappe.defaults.get_global_default("company")
+		country = currency = ""
+		if company:
+			country = frappe.get_cached_value("Company", company, "country") or ""
+			currency = frappe.get_cached_value("Company", company, "default_currency") or ""
+		country = country or frappe.db.get_single_value("System Settings", "country") or ""
+		currency = currency or frappe.db.get_default("currency") or ""
+		date_format = frappe.db.get_single_value("System Settings", "date_format") or ""
+		number_format = frappe.db.get_single_value("System Settings", "number_format") or ""
+		time_zone = frappe.db.get_single_value("System Settings", "time_zone") or ""
+	except Exception:
+		return ""
+	parts = []
+	region = ", ".join(p for p in (country, currency) if p)
+	if company:
+		# Company names can be long (legal suffixes, "formerly known as"); cap
+		# so the per-turn context stays lean.
+		name = (company[:40].rstrip() + "...") if len(company) > 43 else company
+		parts.append(f"org: {name}" + (f" ({region})" if region else ""))
+	elif region:
+		parts.append(f"region: {region}")
+	if date_format:
+		parts.append(f"dates {date_format}")
+	if number_format:
+		parts.append(f"numbers {number_format}")
+	if time_zone:
+		parts.append(f"tz {time_zone}")
+	return ("; " + "; ".join(parts)) if parts else ""
 
 
 def handle_chat_send(payload: dict) -> None:
@@ -235,6 +285,9 @@ def handle_chat_send(payload: dict) -> None:
 
 	conv = frappe.get_doc(CONV, conversation_id)
 	user = conv.owner
+	# Wall-clock turn start (epoch ms) - scopes codex imagegen output produced
+	# during this turn (compared against the generated image files' mtime).
+	turn_start_ms = int(time.time() * 1000)
 
 	# Create the assistant placeholder row up-front so the browser has a
 	# stable name to attach realtime events to.
@@ -283,8 +336,11 @@ def handle_chat_send(payload: dict) -> None:
 	from jarvis.chat.custom_skills import invoked_skill_clause
 
 	skill_clause = invoked_skill_clause(msg_row.get("content") or "")
+	# Org locale (default Company country/currency + site date/number/tz) so the
+	# agent formats for the org's region instead of defaulting to US conventions.
+	locale_clause = _org_locale_clause()
 	user_message = (
-		f"[Context: today is {today}; chat user: {chat_user}{auto_apply}{skill_clause}]"
+		f"[Context: today is {today}{locale_clause}; chat user: {chat_user}{auto_apply}{skill_clause}]"
 		f"\n\n{user_message or ''}"
 	)
 
@@ -422,6 +478,33 @@ def handle_chat_send(payload: dict) -> None:
 			except Exception:
 				frappe.log_error(
 					title="chat worker: canvas persist failed",
+					message=frappe.get_traceback(),
+				)
+
+			# Generated images: codex imagegen writes them on the container disk
+			# (not the canvas dir, and openclaw neither streams nor serves them),
+			# so pull any produced this turn via the fleet agent + persist as ERP
+			# Files so they show inline. Gated on the imagegen skill badge to
+			# avoid a fleet round-trip on every turn. Failure never fails a turn.
+			try:
+				final_content = frappe.db.get_value(MSG, assistant_msg.name, "content") or ""
+				if "imagegen" in final_content:
+					from jarvis.chat import generated_media as gen_media
+
+					gen_items = gen_media.persist_generated_images(
+						assistant_msg.name, conversation_id, turn_start_ms,
+					)
+					if gen_items:
+						_publish_to_user(user, {
+							"kind": "canvas",
+							"conversation_id": conversation_id,
+							"message_id": assistant_msg.name,
+							"run_id": run_id,
+							"items": gen_items,
+						})
+			except Exception:
+				frappe.log_error(
+					title="chat worker: generated-image persist failed",
 					message=frappe.get_traceback(),
 				)
 

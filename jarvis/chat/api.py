@@ -10,6 +10,16 @@ import frappe
 CONV = "Jarvis Conversation"
 MSG = "Jarvis Chat Message"
 
+# Image attachments are stored as canvas items on the user message so the SPA
+# renders them inline as clickable thumbnails (same preview path as generated
+# images) instead of a bare "📎 name" marker.
+_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg")
+
+
+def _att_is_image(att: dict) -> bool:
+	name = (att.get("file_name") or att.get("file_url") or "").lower()
+	return name.endswith(_IMAGE_EXTS)
+
 # Wall-clock budget for the RQ worker that runs one agent turn.
 #
 # Covers worst case end-to-end: pair (<=90s admin round-trip) +
@@ -105,7 +115,7 @@ def get_conversation(conversation: str) -> dict:
 		fields=[
 			"name", "seq", "role", "content", "streaming", "error",
 			"tool_name", "tool_args", "tool_result", "tool_status",
-			"canvas", "creation",
+			"canvas", "creation", "modified",
 		],
 		order_by="seq asc",
 	)
@@ -255,7 +265,7 @@ def rename_conversation(conversation: str, title: str) -> dict:
 
 
 @frappe.whitelist()
-def set_star(conversation: str, starred) -> dict:
+def set_star(conversation: str, starred: str | int | bool) -> dict:
 	"""Star/unstar a conversation (owner-gated via get_doc). Starred chats are
 	listed first and grouped under 'Starred' in the sidebar."""
 	on = 1 if str(starred) in ("1", "true", "True", "on", "yes") else 0
@@ -342,12 +352,27 @@ def send_message(
 			return {"ok": False, "reason": f"invalid thinking level {thinking_override!r}"}
 		conv_doc.thinking_override = level
 
-	# Visible message keeps the typed text plus a compact attachment marker;
-	# the file bytes are inlined for the agent in the worker, not stored here.
+	# Non-image files keep a compact "📎 name" marker on the visible message;
+	# image attachments are stored as canvas items so the SPA shows them inline
+	# as clickable thumbnails (same preview as generated images). Either way the
+	# file bytes are inlined for the agent in the worker, not stored here.
+	image_atts = [a for a in atts if _att_is_image(a)]
+	other_atts = [a for a in atts if not _att_is_image(a)]
 	display_content = message.strip()
-	if atts:
-		names = ", ".join((a.get("file_name") or "file") for a in atts)
+	if other_atts:
+		names = ", ".join((a.get("file_name") or "file") for a in other_atts)
 		display_content = (display_content + "\n\n" if display_content else "") + "📎 " + names
+	canvas_json = None
+	if image_atts:
+		canvas_json = frappe.as_json([
+			{
+				"name": frappe.generate_hash(length=10),
+				"type": "image",
+				"file_url": a["file_url"],
+				"title": a.get("file_name") or "image",
+			}
+			for a in image_atts
+		])
 
 	# Persist the user message with next seq value
 	seq = _next_seq(conversation)
@@ -358,6 +383,7 @@ def send_message(
 		"role": "user",
 		"content": display_content,
 		"streaming": 0,
+		"canvas": canvas_json,
 	})
 	msg_doc.insert()
 
@@ -462,7 +488,7 @@ def get_chat_ui_settings() -> dict:
 
 
 @frappe.whitelist()
-def set_auto_apply(value) -> dict:
+def set_auto_apply(value: str | int | bool) -> dict:
 	"""Toggle the per-site 'auto-apply changes (skip confirmation)' setting.
 
 	OFF (default) = the agent confirms every ERP-mutating action before running
@@ -566,6 +592,19 @@ def set_conversation_model(conversation: str, model: str | None = None) -> dict:
 	frappe.db.set_value(CONV, conversation, "model_override", model, update_modified=False)
 	frappe.db.commit()
 	return {"ok": True, "data": {"effective_model": model}}
+
+
+@frappe.whitelist()
+def warm_session() -> dict:
+	"""Fire-and-forget: warm this tenant's openclaw prefix cache so the next
+	new-chat first turn skips the cold prefill. Best-effort; always ok. The
+	chat UI calls this on open. Self-hosted and unconfigured benches no-op.
+	Runs in a background RQ job so the gunicorn web worker is not blocked."""
+	frappe.enqueue(
+		"jarvis.chat.prewarm.warm_prefix",
+		queue="short",
+	)
+	return {"ok": True, "enqueued": True}
 
 
 @frappe.whitelist()

@@ -79,3 +79,40 @@ def force_resync(action: str = "reload") -> dict:
 		"last_sync_at": str(settings.get("last_sync_at") or ""),
 		"last_sync_status": settings.get("last_sync_status") or "",
 	}
+
+
+@frappe.whitelist()
+def reset_agent_pairing() -> dict:
+	"""Clear the cached chat-device pairing and re-pair from scratch.
+
+	Use when openclaw rejects the existing pairing (e.g. 'device token
+	mismatch') and the automatic repair did not fire because openclaw
+	returned a generic error code. Clears the chat-device creds, drops any
+	pooled connection, then opens a fresh device-paired connection (which
+	re-pairs via the ops bench + fleet-agent) to verify. System Manager only.
+	"""
+	frappe.only_for("System Manager")
+	from jarvis.chat import openclaw_session_pool
+	from jarvis.chat.device import clear_credentials
+	from jarvis.chat.openclaw_client import OpenclawSession
+	from jarvis.exceptions import OpenclawUnreachableError
+
+	settings = frappe.get_single("Jarvis Settings")
+	gateway_url = (settings.agent_url or "").strip().replace(
+		"http://", "ws://").replace("https://", "wss://")
+	if not gateway_url:
+		return {"ok": False, "kind": "config", "error": "agent_url is not set."}
+
+	clear_credentials()
+	try:
+		openclaw_session_pool.drain_all()
+	except Exception:
+		pass
+	try:
+		sess = OpenclawSession.connect(gateway_url)
+		sess.close()
+		return {"ok": True, "message": "Cleared the old pairing and reconnected to the agent."}
+	except OpenclawUnreachableError as e:
+		return {"ok": False, "kind": "unreachable", "error": str(e)}
+	except Exception as e:
+		return {"ok": False, "kind": "error", "error": f"{type(e).__name__}: {e}"}

@@ -259,12 +259,49 @@ def save_llm_creds(provider: str, model: str, api_key: str = "",
 	if auth_mode == "api_key" and not api_key:
 		raise frappe.ValidationError("api_key is required when auth_mode=api_key")
 	s = frappe.get_single("Jarvis Settings")
-	s.llm_provider = provider
-	s.llm_model = model
-	s.llm_auth_mode = auth_mode
-	s.llm_base_url = (base_url or "").strip()
 	if auth_mode == "api_key":
+		# API-key path: write models[0] so the table is the source of truth.
+		# on_update's _on_update_unified_llm mirrors models[0] back to the
+		# legacy fields (llm_provider / llm_model / llm_base_url / llm_auth_mode
+		# / llm_api_key) so all downstream readers continue to work unchanged.
+		#
+		# We also set llm_api_key in-memory so that validate()'s
+		# _validate_auth_mode_requirements passes before on_update runs (the
+		# validator checks the in-memory value first, then falls back to DB).
+		s.set("models", [])
+		s.append("models", {
+			"provider": provider,
+			"model": model,
+			"base_url": (base_url or "").strip(),
+			"credential_type": "api_key",
+			"api_key": api_key,
+			"tier": "strong",
+			"order": 0,
+			"enabled": 1,
+		})
+		# Satisfy _validate_auth_mode_requirements (reads in-memory before DB).
 		s.llm_api_key = api_key
+	else:
+		# TODO: represent direct-OAuth single-model in the models table (future)
+		# For now, leave the direct-OAuth path on the legacy field write.
+		# Clear any stale api_key models rows so on_update takes the legacy
+		# classify/sync path rather than the unified table path (which would
+		# mirror models[0].credential_type='api_key' back over the oauth mode).
+		existing_enabled = [m for m in (s.get("models") or []) if m.enabled]
+		if len(existing_enabled) > 1:
+			frappe.throw(
+				"A multi-model LLM pool is configured. Remove the extra models from your LLM settings "
+				"before switching to single-model OAuth.",
+				title="LLM Configuration",
+			)
+		s.set("models", [])
+		# Also clear preset so that a stale preset doesn't leave a ghost pool
+		# flag after switching to oauth (preset + 0 models → empty pool push).
+		s.preset = ""
+		s.llm_provider = provider
+		s.llm_model = model
+		s.llm_auth_mode = auth_mode
+		s.llm_base_url = (base_url or "").strip()
 	if force:
 		# Read by on_update -> _classify_llm_change. Cleared after the
 		# enqueue dispatches so a subsequent save() in the same request

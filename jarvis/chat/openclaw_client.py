@@ -371,6 +371,27 @@ class OpenclawSession:
 				return bool(s.get("hasActiveRun"))
 		return False
 
+	def fire_agent(self, session_key: str, message: str, idempotency_key: str,
+	               *, model: str | None = None, provider: str | None = None) -> str:
+		"""Send one agent turn and return its runId after the ack, WITHOUT
+		consuming the event stream. openclaw keeps running the turn server
+		side after we close (the run lane survives client disconnect), so this
+		is enough to warm the provider prompt cache. ``deliver`` is False so
+		the result stays session-only. ``_request`` drops the interleaved
+		event frames and returns the agent ack response."""
+		params = {
+			"message": message,
+			"sessionKey": session_key,
+			"deliver": False,
+			"idempotencyKey": idempotency_key,
+		}
+		if model:
+			params["model"] = model
+		if provider:
+			params["provider"] = provider
+		res = self._request("agent", params, timeout_s=CONNECT_TIMEOUT_SECONDS)
+		return (res.get("payload") or {}).get("runId") or ""
+
 	def stream_agent_turn(
 		self, session_key: str, message: str, idempotency_key: str,
 		*,

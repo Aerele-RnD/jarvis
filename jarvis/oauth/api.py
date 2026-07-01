@@ -392,12 +392,23 @@ def _exchange_code(*, provider: str, code: str, code_verifier: str) -> dict:
 		# the wire so the response can't be used as an oracle (e.g.
 		# distinguishing invalid_client from invalid_grant).
 		raw_error = ""
+		detail = resp.text
 		try:
 			body = resp.json()
-			raw_error = body.get("error") or ""
-			detail = body.get("error_description") or raw_error or resp.text
+			err = body.get("error")
+			# RFC-6749 says `error` is a STRING code, but some providers return
+			# it as an object. Only a string is a valid (hashable) opaque-code
+			# lookup key; for an object, pull a nested code if one is present,
+			# else fall through to the generic message. This guards the
+			# `unhashable type: 'dict'` crash from using `error` as a dict key.
+			if isinstance(err, str):
+				raw_error = err
+			elif isinstance(err, dict):
+				nested = err.get("type") or err.get("code") or err.get("error")
+				raw_error = nested if isinstance(nested, str) else ""
+			detail = body.get("error_description") or err or resp.text
 		except ValueError:
-			detail = resp.text
+			pass
 		frappe.log_error(
 			title="oauth token exchange: provider rejected",
 			message=(

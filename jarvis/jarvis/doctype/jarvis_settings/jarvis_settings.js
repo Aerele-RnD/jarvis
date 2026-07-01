@@ -48,6 +48,35 @@ frappe.ui.form.on("Jarvis Settings", {
 			});
 		}, __("Diagnostics"));
 
+		frm.add_custom_button(__("Reset Agent Pairing"), () => {
+			frappe.confirm(
+				__("Clear the cached agent pairing and re-pair from scratch? Use this if chat fails with a device/token mismatch error."),
+				() => {
+					frappe.call({
+						method: "jarvis.diagnostics.reset_agent_pairing",
+						freeze: true,
+						freeze_message: __("Clearing pairing and reconnecting to the agent…"),
+					}).then((r) => {
+						const m = r.message || {};
+						if (m.ok) {
+							frappe.msgprint({
+								title: __("Reconnected"),
+								message: m.message || __("Re-paired with the agent."),
+								indicator: "green",
+							});
+							frm.reload_doc();
+						} else {
+							frappe.msgprint({
+								title: __("Re-pair Failed ({0})", [m.kind || "error"]),
+								message: m.error || "unknown",
+								indicator: "red",
+							});
+						}
+					});
+				},
+			);
+		}, __("Diagnostics"));
+
 		// DEV-only reset: visible when sandbox mode is on AND caller is
 		// System Manager. The server re-checks both gates - is_dev_mode_active
 		// resolves "sandbox mode" through jarvis.dev.is_sandbox_mode (which
