@@ -12,6 +12,13 @@ const routes = [
 		name: "Conversation",
 		component: () => import("@/views/ChatView.vue"),
 	},
+	// AI / Models config — System-Manager only; guard redirects others to Chat.
+	{
+		path: "/ai",
+		name: "AiModels",
+		component: () => import("@/views/AiView.vue"),
+		beforeEnter: (to, from, next) => { next(window.is_system_manager ? undefined : { name: "Chat" }) },
+	},
 ]
 
 // Served under /jarvis (website_route_rules catch-all → www/jarvis page).
