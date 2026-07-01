@@ -43,6 +43,8 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		subExpiresAt: null,
 		// passed through to step 5 (success)
 		successData: null,
+		// LLM setup mode: "quick" | "preset" | "custom"
+		llmMode: "quick", selectedPreset: null, presetKeys: {}, customRows: [],
 	};
 
 	// Providers + models for chat-subscription. Populated by bootRender
@@ -482,6 +484,21 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 	}
 
 	function renderLlm() {
+		const modeTabs = `
+			<div class="jo-field">
+			  <label class="jo-tabs-label">Setup</label>
+			  <div class="jo-tabs" role="tablist" data-active="${state.llmMode}">
+			    <span class="jo-tabs-thumb" aria-hidden="true"></span>
+			    ${["quick","preset","custom"].map(m =>
+			      `<button type="button" class="jo-tab ${state.llmMode===m?"jo-tab-active":""}" data-llmmode="${m}" role="tab" aria-selected="${state.llmMode===m}"><span>${m[0].toUpperCase()+m.slice(1)}</span></button>`).join("")}
+			  </div>
+			</div>`;
+		if (state.llmMode === "preset") return renderLlmPreset(modeTabs);
+		if (state.llmMode === "custom") return renderLlmCustom(modeTabs);
+		return renderLlmQuick(modeTabs);
+	}
+
+	function renderLlmQuick(modeTabs) {
 		// Defaults arrive lazy: only fill model/baseUrl if the customer hasn't typed.
 		const d = PROVIDER_DEFAULTS[state.llmProvider] || { model: "", baseUrl: "" };
 		if (!state.llmModel) state.llmModel = d.model;
@@ -505,9 +522,11 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 				<h2 class="jo-h">Connect your AI</h2>
 				<p class="jo-sub">Sign in once with your existing ChatGPT Plus or Gemini Advanced
 				   account - no API key, no extra cost. Jarvis will use your subscription quota.</p>
+				${modeTabs}
 				${authModeHtml}
 				${renderSubscriptionPanel()}
 				<div class="jo-err" id="jo-llm-err"></div>`);
+			wireLlmModeTabs();
 			wireAuthModeTabs();
 			wireSubscriptionPanel();
 			return;
@@ -516,6 +535,7 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 			<h2 class="jo-h">Connect your AI</h2>
 			<p class="jo-sub">Pick which model Jarvis should use and paste your API key.
 			   You can change this anytime in Jarvis Settings.</p>
+			${modeTabs}
 			${authModeHtml}
 			<div class="jo-field">
 			  <label>Provider</label>
@@ -565,7 +585,18 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		$body.find("#jo-llm-base").on("input", (e) => { state.llmBaseUrl = e.target.value; });
 		$body.find("#jo-llm-skip").on("click", () => renderSuccess(state.successData || {}));
 		$body.find("#jo-llm-save").on("click", saveLlm);
+		wireLlmModeTabs();
 		wireAuthModeTabs();
+	}
+
+	function wireLlmModeTabs() {
+		$body.find(".jo-tab[data-llmmode]").on("click", function () {
+			const m = $(this).data("llmmode");
+			if (m === state.llmMode) return;
+			state.llmMode = m;
+			if (m !== "quick") cancelSubscriptionFlow();
+			renderLlm();
+		});
 	}
 
 	function wireAuthModeTabs() {
