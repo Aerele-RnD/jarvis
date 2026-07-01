@@ -32,6 +32,8 @@ GATED_ENDPOINTS = [
 	("jarvis.onboarding", "renew", {}),
 	("jarvis.onboarding", "save_llm_creds", {"provider": "OpenAI", "model": "gpt-4o", "api_key": "k"}),
 	("jarvis.onboarding", "dev_onboard", {"email": "x@y.test", "company": "C", "plan": "p"}),
+	("jarvis.onboarding", "save_llm_pool", {"models": "[]"}),
+	("jarvis.onboarding", "get_llm_config", {}),
 	("jarvis.account", "start_upgrade", {"target_plan": "team_monthly"}),
 	("jarvis.oauth.api", "begin_paste_signin", {"provider": "OpenAI", "model": "gpt-5.5"}),
 	("jarvis.oauth.api", "complete_paste_signin",

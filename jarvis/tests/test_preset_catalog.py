@@ -23,14 +23,15 @@ class TestGetPresetCatalog(FrappeTestCase):
                           side_effect=AssertionError("must use cache")):
             self.assertEqual(admin_client.get_preset_catalog(), payload)
 
-    def test_falls_back_to_cache_when_admin_unreachable(self):
+    def test_cache_hit_short_circuits_network(self):
         cached = [{"key": "cost-saver", "label": "Cost-saver", "kind": "cross_vendor",
                    "blurb": "", "enabled": True, "models": [], "vendors": []}]
         frappe.cache().set_value(admin_client._PRESET_CATALOG_CACHE_KEY, cached,
                                  expires_in_sec=admin_client._PRESET_CATALOG_TTL_S)
-        with patch.object(admin_client, "_post_guest",
-                          side_effect=AdminUnreachableError("down")):
-            self.assertEqual(admin_client.get_preset_catalog(), cached)
+        with patch.object(admin_client, "_post_guest") as m:
+            result = admin_client.get_preset_catalog()
+        self.assertEqual(result, cached)
+        m.assert_not_called()
 
     def test_falls_back_to_bundled_when_admin_down_and_cache_empty(self):
         from jarvis._preset_catalog import BUNDLED_PRESET_CATALOG
