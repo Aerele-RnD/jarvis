@@ -136,7 +136,7 @@ def get_oauth_client_secret(provider: str) -> str:
 # ------------------
 # Brand styling for the Desk shell (loaded on every desk page).
 app_include_css = ["/assets/jarvis/css/jarvis-brand.css"]
-app_include_js = ["jarvis_immersive.bundle.js", "jarvis_widget.bundle.js"]
+app_include_js = ["jarvis_immersive.bundle.js", "jarvis_widget.bundle.js", "jarvis_onboarding_llm.bundle.js"]
 
 # Separate frappe-ui Vue SPA (apps/jarvis/frontend) served at /jarvis. The
 # catch-all routes every /jarvis/* deep link to the www/jarvis page so the
