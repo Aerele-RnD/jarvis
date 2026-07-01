@@ -181,6 +181,35 @@ def get_plans() -> list:
 	return _post_guest(path="/api/method/jarvis_admin.billing.signup.get_plans", body={})
 
 
+# Admin-owned preset catalog (spec 3.3). Guest-safe fetch (get_plans pattern),
+# cached in per-site Redis, bundled fallback so onboarding never hard-fails.
+_PRESET_CATALOG_PATH = "/api/method/jarvis_admin.billing.catalog.get_preset_catalog"
+_PRESET_CATALOG_CACHE_KEY = "jarvis:preset_catalog"
+_PRESET_CATALOG_TTL_S = 6 * 60 * 60
+
+
+def get_preset_catalog() -> list:
+	"""Fetch the enabled Aerele preset catalog from admin (guest-safe), cache it,
+	and fall back to the last cached copy then the bundled default so onboarding
+	never hard-fails (spec L7). Never raises."""
+	from jarvis._preset_catalog import BUNDLED_PRESET_CATALOG
+	cache = frappe.cache()
+	cached = cache.get_value(_PRESET_CATALOG_CACHE_KEY)
+	if cached:
+		return cached
+	try:
+		catalog = _post_guest(path=_PRESET_CATALOG_PATH, body={})
+	except (AdminUnreachableError, AdminAuthError,
+			AdminValidationError, AdminRateLimitedError):
+		return BUNDLED_PRESET_CATALOG
+	if isinstance(catalog, dict):
+		catalog = catalog.get("data") or catalog.get("catalog") or catalog.get("presets") or []
+	if isinstance(catalog, list) and catalog:
+		cache.set_value(_PRESET_CATALOG_CACHE_KEY, catalog, expires_in_sec=_PRESET_CATALOG_TTL_S)
+		return catalog
+	return BUNDLED_PRESET_CATALOG
+
+
 def confirm_payment(payload: dict) -> dict:
 	"""POST Razorpay Checkout result; returns {agent_url, agent_token, tenant_status}."""
 	return _post(path="/api/method/jarvis_admin.api.tenant.confirm_payment", body=payload)

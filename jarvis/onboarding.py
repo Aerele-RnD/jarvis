@@ -154,6 +154,13 @@ def list_plans() -> list:
 
 
 @frappe.whitelist()
+def get_preset_catalog() -> list:
+	"""Preset catalog for the desk onboarding step + the /ai SPA route.
+	Thin wrapper over admin_client (fetch/cache/bundled fallback)."""
+	return admin_client.get_preset_catalog()
+
+
+@frappe.whitelist()
 def start_signup(email: str, company: str, plan: str) -> dict:
 	"""Guest signup → store the api_token → return the Razorpay handles for Checkout.
 
