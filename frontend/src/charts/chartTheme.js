@@ -28,13 +28,14 @@ function axisOption(spec, series, { text, grid, title }) {
 	const opts = spec.options || {}
 	const cat = {
 		type: "category", data: x, axisTick: { show: false },
-		axisLine: { lineStyle: { color: grid } }, axisLabel: { color: text },
+		axisLine: { lineStyle: { color: grid } }, axisLabel: { color: text, hideOverlap: true },
 	}
 	const val = {
 		type: "value", axisLabel: { color: text },
 		splitLine: { lineStyle: { type: "dashed", color: grid } },
 	}
 	return {
+		backgroundColor: "transparent",
 		color: PALETTE,
 		title,
 		grid: { left: 8, right: 16, top: title ? 36 : 20, bottom: 8, containLabel: true },
@@ -79,6 +80,7 @@ function pieOption(spec, series, text, title) {
 	const d0 = Array.isArray(series[0] && series[0].data) ? series[0].data : []
 	const data = d0.map((v, i) => ({ name: labels[i] != null ? labels[i] : `#${i + 1}`, value: Number(v) || 0 }))
 	return {
+		backgroundColor: "transparent",
 		color: PALETTE,
 		title,
 		tooltip: { trigger: "item", confine: true },
