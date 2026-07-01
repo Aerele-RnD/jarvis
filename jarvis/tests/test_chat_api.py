@@ -662,11 +662,20 @@ class TestChatUiSettings(FrappeTestCase):
 
 
 class TestWarmSessionEndpoint(FrappeTestCase):
-	def test_warm_session_calls_warm_prefix(self):
+	def test_warm_session_enqueues_not_inline(self):
+		"""warm_session must enqueue warm_prefix as a background job and
+		return immediately - proves FIX D (non-blocking web worker)."""
 		from jarvis.chat import api
 
-		with patch("jarvis.chat.prewarm.warm_prefix", return_value=True) as wp:
+		with patch("frappe.enqueue") as enqueue, \
+		     patch("jarvis.chat.prewarm.warm_prefix") as wp:
 			out = api.warm_session()
 
-		wp.assert_called_once()
-		self.assertEqual(out, {"ok": True, "warmed": True})
+		# Must have enqueued the prewarm job with the right method + queue.
+		enqueue.assert_called_once_with(
+			"jarvis.chat.prewarm.warm_prefix",
+			queue="short",
+		)
+		# warm_prefix must NOT have been called inline in the web worker.
+		wp.assert_not_called()
+		self.assertEqual(out, {"ok": True, "enqueued": True})
