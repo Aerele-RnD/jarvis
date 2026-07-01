@@ -569,6 +569,16 @@ def set_conversation_model(conversation: str, model: str | None = None) -> dict:
 
 
 @frappe.whitelist()
+def warm_session() -> dict:
+	"""Fire-and-forget: warm this tenant's openclaw prefix cache so the next
+	new-chat first turn skips the cold prefill. Best-effort; always ok. The
+	chat UI calls this on open. Self-hosted and unconfigured benches no-op."""
+	from jarvis.chat import prewarm
+
+	return {"ok": True, "warmed": bool(prewarm.warm_prefix())}
+
+
+@frappe.whitelist()
 def set_conversation_thinking(conversation: str, thinking: str | None = None) -> dict:
 	"""Set or clear the per-conversation thinking effort (low/medium/high).
 

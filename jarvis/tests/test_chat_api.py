@@ -659,3 +659,14 @@ class TestChatUiSettings(FrappeTestCase):
 		# protects against a future drift in jarvis/_subscription_models.py.
 		for provider, default in DEFAULT_MODEL.items():
 			self.assertIn(default, SUBSCRIPTION_MODELS[provider])
+
+
+class TestWarmSessionEndpoint(FrappeTestCase):
+	def test_warm_session_calls_warm_prefix(self):
+		from jarvis.chat import api
+
+		with patch("jarvis.chat.prewarm.warm_prefix", return_value=True) as wp:
+			out = api.warm_session()
+
+		wp.assert_called_once()
+		self.assertEqual(out, {"ok": True, "warmed": True})
