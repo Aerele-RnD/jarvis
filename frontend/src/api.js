@@ -123,6 +123,10 @@ export const saveLlmPool = (models, preset = null, routingMode = "failover") =>
 		routing_mode: routingMode,
 	})
 
+// --- LLM Monitor (System-Manager gated server-side). Real Bifrost usage, NOT the getUsage estimate. ---
+export const getLlmUsage = () => call("jarvis.account.get_llm_usage")
+export const getLlmConnectionStatus = () => call("jarvis.account.get_llm_connection_status")
+
 // File input: upload to Frappe's File doctype, return {file_url, file_name}.
 export async function uploadFile(file) {
 	const fd = new FormData()
