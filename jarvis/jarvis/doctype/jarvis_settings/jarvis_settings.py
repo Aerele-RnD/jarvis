@@ -70,35 +70,42 @@ class JarvisSettings(Document):
 
         self._validate_auth_mode_requirements()
 
-    def _llm_is_configured(self) -> bool:
-        """True once the tenant has actually chosen an LLM.
-
-        Configured via ANY of: the unified ``models`` table, a ``preset``, a
-        legacy direct ``llm_model``, or a connected OAuth account. A fresh
-        site with none of these is *unconfigured* - LLM gets set up later,
-        through onboarding - so credential validation must not fire yet.
-        """
-        return bool(
-            getattr(self, "models", None)
-            or getattr(self, "preset", None)
-            or (getattr(self, "llm_model", None) or "")
-            or (getattr(self, "llm_oauth_account_email", None) or "")
-        )
-
     def _validate_auth_mode_requirements(self):
         """Each auth mode requires its own credential field.
 
         REV-1: oauth/subscription mode has no bench-side credential
         requirement - openclaw owns the credential blob on the container.
 
-        Skipped entirely for an unconfigured/pre-onboarding Settings: on a
-        brand-new site ``llm_auth_mode`` DEFAULTS to ``api_key`` before any
-        model is chosen, so enforcing a key here would wrongly block
-        unrelated saves (e.g. enabling sandbox mode) that a customer must
-        make during onboarding. The credential is enforced the moment LLM
-        is actually configured (a model/preset/oauth account present).
+        Scope: this validates ONLY the legacy single-model DIRECT path (the
+        flat ``llm_*`` fields, with no ``models`` rows and no ``preset``).
+        When the models table or a preset is present the config is unified -
+        ``validate_models()`` (run in ``on_update``) owns credential
+        validation, and the flat ``llm_*`` fields are only a derived mirror
+        that ``before_validate`` populates for an ENABLED row. Re-checking that
+        mirror here would race it and throw spuriously for a disabled-only
+        table, a bare preset, or a ``models[0]`` decrypt error.
+
+        For the legacy path, an unconfigured/pre-onboarding Settings (no model,
+        no base_url, no connected oauth account) is skipped so unrelated saves
+        (e.g. enabling sandbox mode during onboarding) aren't blocked - even
+        though ``llm_auth_mode`` DEFAULTS to ``api_key`` before anything is
+        chosen. ``reset_onboarding`` leaves ``llm_provider`` at a default but
+        clears model/base_url/key, so it correctly reads as unconfigured.
         """
-        if not self._llm_is_configured():
+        # Unified config (any models rows or a preset) -> validate_models owns it.
+        if getattr(self, "models", None) or getattr(self, "preset", None):
+            return
+
+        # Legacy direct path: only enforce once a real direct config exists.
+        # llm_base_url covers custom-endpoint configs where llm_model is blank;
+        # llm_oauth_connected_at is the canonical oauth signal (is_ready_for_chat
+        # keys off it too), not the display-only llm_oauth_account_email.
+        configured = bool(
+            (getattr(self, "llm_model", None) or "")
+            or (getattr(self, "llm_base_url", None) or "")
+            or getattr(self, "llm_oauth_connected_at", None)
+        )
+        if not configured:
             return
 
         def is_password_set(fieldname: str) -> bool:
@@ -109,12 +116,11 @@ class JarvisSettings(Document):
             return bool(db_value)
 
         mode = getattr(self, "llm_auth_mode", None) or "api_key"
-        if mode == "api_key":
-            if not is_password_set("llm_api_key"):
-                frappe.throw(
-                    "API-key auth mode requires llm_api_key",
-                    frappe.ValidationError,
-                )
+        if mode == "api_key" and not is_password_set("llm_api_key"):
+            frappe.throw(
+                "API-key auth mode requires llm_api_key",
+                frappe.ValidationError,
+            )
 
     def _resolve_llm_secret_for_push(self) -> str:
         """Return the bytes to push to openclaw's llm.key.

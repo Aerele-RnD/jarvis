@@ -245,12 +245,31 @@ class TestValidateAuthMode(_SettingsSingletonTestCase):
     subscription modes (oauth / legacy subscription) keep credentials on
     the container, so the bench's validate() has no check for them."""
 
+    @classmethod
+    def tearDownClass(cls):
+        # Tests here mutate models/preset/oauth signals the base snapshot
+        # doesn't cover; clear them so this class leaves no footprint on the
+        # shared Jarvis Settings singleton (test-pollution guard).
+        frappe.db.delete("Jarvis LLM Pool Model",
+                         {"parenttype": "Jarvis Settings", "parent": "Jarvis Settings"})
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("preset", "", update_modified=False)
+        settings.db_set("llm_oauth_connected_at", None, update_modified=False)
+        frappe.db.commit()
+        super().tearDownClass()
+
     def setUp(self):
         from frappe.utils.password import remove_encrypted_password
         _reset_settings()
         remove_encrypted_password("Jarvis Settings", "Jarvis Settings", "llm_api_key")
+        # Start each test from a clean LEGACY-direct state: no models rows, no
+        # preset, no oauth connection (the base snapshot doesn't cover these).
+        frappe.db.delete("Jarvis LLM Pool Model",
+                         {"parenttype": "Jarvis Settings", "parent": "Jarvis Settings"})
         settings = frappe.get_single("Jarvis Settings")
         settings.db_set("llm_auth_mode", "api_key", update_modified=False)
+        settings.db_set("preset", "", update_modified=False)
+        settings.db_set("llm_oauth_connected_at", None, update_modified=False)
         frappe.db.commit()
 
     def test_api_key_mode_requires_api_key(self):
@@ -292,15 +311,13 @@ class TestValidateAuthMode(_SettingsSingletonTestCase):
 
     def test_unconfigured_fresh_settings_does_not_require_api_key(self):
         """Fresh/pre-onboarding Settings - no models, no preset, no direct
-        model, no oauth account - must validate even though llm_auth_mode
-        DEFAULTS to 'api_key' with no key set.
+        model/base_url, no connected oauth account - must validate even though
+        llm_auth_mode DEFAULTS to 'api_key' with no key set.
 
         Regression for the fresh-start save deadlock: on a brand-new site the
-        customer must save Jarvis Settings (e.g. to enable sandbox mode)
-        BEFORE onboarding configures an LLM. Enforcing the api_key credential
-        on that defaulted mirror made the whole settings form unsaveable, so
-        onboarding could never start. The credential is enforced the moment
-        LLM is actually configured (see the api_key/oauth tests above)."""
+        customer must save Jarvis Settings (e.g. to enable sandbox mode) BEFORE
+        onboarding configures an LLM. The credential is enforced the moment LLM
+        is actually configured (see the api_key/oauth tests above)."""
         settings = frappe.get_single("Jarvis Settings")
         settings.set("models", [])
         settings.preset = ""
@@ -308,8 +325,44 @@ class TestValidateAuthMode(_SettingsSingletonTestCase):
         settings.llm_api_key = ""
         settings.llm_provider = ""
         settings.llm_model = ""
-        settings.llm_oauth_account_email = ""
+        settings.llm_base_url = ""
+        settings.llm_oauth_connected_at = None
         settings.validate()  # must NOT raise - nothing is configured yet
+
+    def test_legacy_direct_base_url_without_key_still_raises(self):
+        """A real legacy-direct api_key config (custom base_url set) with the
+        key cleared must still raise even when llm_model is blank - it is a
+        configured tenant, not a fresh/unconfigured site. Guards the boundary
+        so narrowing the fresh-start gate doesn't let a keyless credential push
+        through (review finding: keyless-direct bypass)."""
+        settings = frappe.get_single("Jarvis Settings")
+        settings.set("models", [])
+        settings.preset = ""
+        settings.llm_auth_mode = "api_key"
+        settings.llm_api_key = ""
+        settings.llm_provider = "Custom"
+        settings.llm_model = ""
+        settings.llm_base_url = "https://llm.internal.example.com/v1"
+        with self.assertRaises(frappe.ValidationError):
+            settings.validate()
+
+    def test_models_table_present_skips_flat_api_key_check(self):
+        """When the models table drives config, validate_models() (in
+        on_update) owns credential validation; the flat llm_* guard must NOT
+        fire against the derived mirror. A models row present (even disabled,
+        which before_validate won't mirror) with a stale/empty legacy
+        llm_api_key + api_key mode must not raise from validate() - otherwise
+        disabled-only tables / decrypt errors produce spurious throws that
+        re-block saves (review findings: disabled-only, decrypt-error)."""
+        settings = frappe.get_single("Jarvis Settings")
+        settings.llm_auth_mode = "api_key"
+        settings.llm_api_key = ""
+        settings.append("models", {
+            "provider": "openai_compat", "model": "gpt-4o",
+            "credential_type": "api_key", "api_key": "",
+            "tier": "strong", "order": 0, "enabled": 0,
+        })
+        settings.validate()  # must NOT raise the flat 'requires llm_api_key'
 
 
 class TestClassifyAuthModeSwitch(_SettingsSingletonTestCase):
