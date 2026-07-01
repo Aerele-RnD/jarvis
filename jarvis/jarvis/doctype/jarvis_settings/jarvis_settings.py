@@ -70,12 +70,37 @@ class JarvisSettings(Document):
 
         self._validate_auth_mode_requirements()
 
+    def _llm_is_configured(self) -> bool:
+        """True once the tenant has actually chosen an LLM.
+
+        Configured via ANY of: the unified ``models`` table, a ``preset``, a
+        legacy direct ``llm_model``, or a connected OAuth account. A fresh
+        site with none of these is *unconfigured* - LLM gets set up later,
+        through onboarding - so credential validation must not fire yet.
+        """
+        return bool(
+            getattr(self, "models", None)
+            or getattr(self, "preset", None)
+            or (getattr(self, "llm_model", None) or "")
+            or (getattr(self, "llm_oauth_account_email", None) or "")
+        )
+
     def _validate_auth_mode_requirements(self):
         """Each auth mode requires its own credential field.
 
         REV-1: oauth/subscription mode has no bench-side credential
         requirement - openclaw owns the credential blob on the container.
+
+        Skipped entirely for an unconfigured/pre-onboarding Settings: on a
+        brand-new site ``llm_auth_mode`` DEFAULTS to ``api_key`` before any
+        model is chosen, so enforcing a key here would wrongly block
+        unrelated saves (e.g. enabling sandbox mode) that a customer must
+        make during onboarding. The credential is enforced the moment LLM
+        is actually configured (a model/preset/oauth account present).
         """
+        if not self._llm_is_configured():
+            return
+
         def is_password_set(fieldname: str) -> bool:
             in_memory = getattr(self, fieldname, None) or ""
             if in_memory and not self.is_dummy_password(in_memory):

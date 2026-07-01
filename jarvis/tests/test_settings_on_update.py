@@ -290,6 +290,27 @@ class TestValidateAuthMode(_SettingsSingletonTestCase):
         settings.llm_model = "gpt-4o"
         settings.validate()  # should not raise
 
+    def test_unconfigured_fresh_settings_does_not_require_api_key(self):
+        """Fresh/pre-onboarding Settings - no models, no preset, no direct
+        model, no oauth account - must validate even though llm_auth_mode
+        DEFAULTS to 'api_key' with no key set.
+
+        Regression for the fresh-start save deadlock: on a brand-new site the
+        customer must save Jarvis Settings (e.g. to enable sandbox mode)
+        BEFORE onboarding configures an LLM. Enforcing the api_key credential
+        on that defaulted mirror made the whole settings form unsaveable, so
+        onboarding could never start. The credential is enforced the moment
+        LLM is actually configured (see the api_key/oauth tests above)."""
+        settings = frappe.get_single("Jarvis Settings")
+        settings.set("models", [])
+        settings.preset = ""
+        settings.llm_auth_mode = "api_key"
+        settings.llm_api_key = ""
+        settings.llm_provider = ""
+        settings.llm_model = ""
+        settings.llm_oauth_account_email = ""
+        settings.validate()  # must NOT raise - nothing is configured yet
+
 
 class TestClassifyAuthModeSwitch(_SettingsSingletonTestCase):
     """Mode-switch is structural - always triggers restart."""
