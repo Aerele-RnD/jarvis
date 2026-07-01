@@ -56,6 +56,7 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 	// the 2026-06-16 cross-repo review.
 	let subscriptionModels = {};
 	let defaultModels = {};
+	let presetCatalog = [];
 
 	// Default model + baseUrl per provider, surfaced as autofilled hints on step 4.
 	// Customers can override both in the form (and later in Jarvis Settings).
@@ -1153,10 +1154,12 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 			frappe.call({ method: "jarvis.account.is_onboarded" }),
 			frappe.call({ method: "jarvis.chat.api.get_chat_ui_settings" })
 				.catch(() => ({ message: {} })),
-		]).then(([onboarded, chatUi]) => {
+			frappe.call({ method: "jarvis.onboarding.get_preset_catalog" }).catch(() => ({ message: [] })),
+		]).then(([onboarded, chatUi, catalog]) => {
 			const cui = (chatUi && chatUi.message) || {};
 			subscriptionModels = cui.subscription_models || {};
 			defaultModels = cui.default_models || {};
+			presetCatalog = (catalog && catalog.message) || [];
 			// Seed the default for the initial subProvider so the AI
 			// step doesn't open with an empty model dropdown.
 			state.subModel = defaultModels[state.subProvider]
