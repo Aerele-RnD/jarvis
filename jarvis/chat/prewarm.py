@@ -52,3 +52,20 @@ def warm_prefix() -> bool:
 	except Exception:
 		frappe.logger("jarvis.chat.prewarm").debug("prefix warm-up skipped", exc_info=True)
 		return False
+
+
+def keep_warm_if_active() -> None:
+	"""Scheduler entry: keep the prefix cache warm for benches with recent
+	chat activity, so a returning user's first turn is warm after an idle
+	gap. No-op on idle or self-hosted benches. Runs on the existing
+	scheduler; the per-bench debounce in warm_prefix bounds frequency."""
+	try:
+		if selfhost.is_self_hosted():
+			return
+		cutoff = frappe.utils.add_to_date(frappe.utils.now_datetime(), hours=-2)
+		recent = frappe.db.exists("Jarvis Chat Message", {"creation": [">", cutoff]})
+		if not recent:
+			return
+		warm_prefix()
+	except Exception:
+		frappe.logger("jarvis.chat.prewarm").debug("keep_warm skipped", exc_info=True)

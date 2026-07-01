@@ -72,3 +72,23 @@ class TestWarmPrefix(FrappeTestCase):
         with patch("jarvis.chat.prewarm.selfhost.is_self_hosted", return_value=False), \
              patch("jarvis.chat.prewarm.frappe.get_single", side_effect=RuntimeError("boom")):
             self.assertFalse(prewarm.warm_prefix())  # no raise
+
+
+class TestKeepWarm(FrappeTestCase):
+    def test_keep_warm_warms_when_recent_activity(self):
+        from jarvis.chat import prewarm
+
+        with patch("jarvis.chat.prewarm.selfhost.is_self_hosted", return_value=False), \
+             patch("jarvis.chat.prewarm.frappe.db.exists", return_value="MSG-1"), \
+             patch("jarvis.chat.prewarm.warm_prefix") as wp:
+            prewarm.keep_warm_if_active()
+        wp.assert_called_once()
+
+    def test_keep_warm_noop_when_idle(self):
+        from jarvis.chat import prewarm
+
+        with patch("jarvis.chat.prewarm.selfhost.is_self_hosted", return_value=False), \
+             patch("jarvis.chat.prewarm.frappe.db.exists", return_value=None), \
+             patch("jarvis.chat.prewarm.warm_prefix") as wp:
+            prewarm.keep_warm_if_active()
+        wp.assert_not_called()
