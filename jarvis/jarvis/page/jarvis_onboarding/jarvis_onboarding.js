@@ -197,7 +197,7 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 			<div class="jo-modes">
 			  <div class="jo-mode" data-mode="managed">
 			    <div class="jo-mode-icon">☁</div>
-			    <div class="jo-mode-name">Aerele-managed</div>
+			    <div class="jo-mode-name">Aerele-hosted</div>
 			    <ul class="jo-mode-feats">
 			      <li><span class="jo-tick">✓</span>We host the openclaw agent for you</li>
 			      <li><span class="jo-tick">✓</span>Includes the Jarvis persona + Frappe skills</li>
