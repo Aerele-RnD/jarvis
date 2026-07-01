@@ -75,7 +75,39 @@ class JarvisSettings(Document):
 
         REV-1: oauth/subscription mode has no bench-side credential
         requirement - openclaw owns the credential blob on the container.
+
+        Scope: this validates ONLY the legacy single-model DIRECT path (the
+        flat ``llm_*`` fields, with no ``models`` rows and no ``preset``).
+        When the models table or a preset is present the config is unified -
+        ``validate_models()`` (run in ``on_update``) owns credential
+        validation, and the flat ``llm_*`` fields are only a derived mirror
+        that ``before_validate`` populates for an ENABLED row. Re-checking that
+        mirror here would race it and throw spuriously for a disabled-only
+        table, a bare preset, or a ``models[0]`` decrypt error.
+
+        For the legacy path, an unconfigured/pre-onboarding Settings (no model,
+        no base_url, no connected oauth account) is skipped so unrelated saves
+        (e.g. enabling sandbox mode during onboarding) aren't blocked - even
+        though ``llm_auth_mode`` DEFAULTS to ``api_key`` before anything is
+        chosen. ``reset_onboarding`` leaves ``llm_provider`` at a default but
+        clears model/base_url/key, so it correctly reads as unconfigured.
         """
+        # Unified config (any models rows or a preset) -> validate_models owns it.
+        if getattr(self, "models", None) or getattr(self, "preset", None):
+            return
+
+        # Legacy direct path: only enforce once a real direct config exists.
+        # llm_base_url covers custom-endpoint configs where llm_model is blank;
+        # llm_oauth_connected_at is the canonical oauth signal (is_ready_for_chat
+        # keys off it too), not the display-only llm_oauth_account_email.
+        configured = bool(
+            (getattr(self, "llm_model", None) or "")
+            or (getattr(self, "llm_base_url", None) or "")
+            or getattr(self, "llm_oauth_connected_at", None)
+        )
+        if not configured:
+            return
+
         def is_password_set(fieldname: str) -> bool:
             in_memory = getattr(self, fieldname, None) or ""
             if in_memory and not self.is_dummy_password(in_memory):
@@ -84,12 +116,11 @@ class JarvisSettings(Document):
             return bool(db_value)
 
         mode = getattr(self, "llm_auth_mode", None) or "api_key"
-        if mode == "api_key":
-            if not is_password_set("llm_api_key"):
-                frappe.throw(
-                    "API-key auth mode requires llm_api_key",
-                    frappe.ValidationError,
-                )
+        if mode == "api_key" and not is_password_set("llm_api_key"):
+            frappe.throw(
+                "API-key auth mode requires llm_api_key",
+                frappe.ValidationError,
+            )
 
     def _resolve_llm_secret_for_push(self) -> str:
         """Return the bytes to push to openclaw's llm.key.
