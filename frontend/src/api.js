@@ -112,6 +112,17 @@ export const searchLink = (doctype, txt) =>
 export const getDoctypeFields = (doctype) =>
 	call("jarvis.chat.api.get_doctype_fields", { doctype })
 
+// --- LLM pool / models config (System-Manager only, gated server-side) ---
+export const getLlmConfig = () => call("jarvis.onboarding.get_llm_config")
+export const getPresetCatalog = () => call("jarvis.onboarding.get_preset_catalog")
+export const getLlmSyncStatus = () => call("jarvis.onboarding.get_llm_sync_status")
+export const saveLlmPool = (models, preset = null, routingMode = "failover") =>
+	call("jarvis.onboarding.save_llm_pool", {
+		models: JSON.stringify(models),
+		preset: preset || "",
+		routing_mode: routingMode,
+	})
+
 // File input: upload to Frappe's File doctype, return {file_url, file_name}.
 export async function uploadFile(file) {
 	const fd = new FormData()
