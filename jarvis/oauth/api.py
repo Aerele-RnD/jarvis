@@ -321,19 +321,25 @@ def complete_paste_signin(nonce: str, redirected_url: str) -> dict:
 		"clientId": p["client_id"],
 	}
 
-	admin_client.post_push_oauth_blob(p["openclaw_provider"], blob)
-	# force=True is mandatory here. The OAuth blob lives in the container's
-	# auth-profiles.json (out-of-band from Jarvis Settings), so on_update's
-	# diff classifier sees no change and skips the re-render+restart when
-	# a customer re-authorizes with the same provider+model. Without the
-	# restart the container's openclaw keeps serving stale auth, surfacing
-	# as the same ProviderAuthError the re-auth was meant to fix. Verified
-	# live 2026-06-11.
+	# Render the OAuth config BEFORE pushing the credential blob. save_llm_creds
+	# re-renders openclaw.json (provider/model + gateway.mode) and restarts the
+	# container; push_oauth_blob then writes the blob and runs `openclaw doctor
+	# --fix` to migrate the auth-profile store. A bare pool member has NO
+	# rendered openclaw.json, so if the blob push (doctor) runs first, doctor
+	# exits non-zero on "gateway.mode is unset" and the whole apply fails with
+	# doctor_failed. Rendering creds first guarantees gateway.mode is present
+	# when doctor runs, so the migration's exit code is clean.
+	#
+	# force=True bypasses on_update's no-diff gate (_classify_llm_change returns
+	# None when no Jarvis Settings field changed) so the re-render+restart fires
+	# even on a same-provider re-authorize. The blob lives in auth-profiles.json,
+	# out-of-band from Jarvis Settings, so the diff classifier can't see it.
 	sync_result = onboarding.save_llm_creds(
 		provider=provider, model=model,
 		api_key="", base_url="", auth_mode="oauth",
 		force=True,
 	)
+	admin_client.post_push_oauth_blob(p["openclaw_provider"], blob)
 
 	settings = frappe.get_single("Jarvis Settings")
 	settings.db_set("llm_oauth_account_email", email, update_modified=False)
