@@ -10,6 +10,7 @@ tests pin only the payload-mapping contract between the shim and the
 handler so a future refactor cannot silently change the payload shape.
 """
 
+import unittest
 from unittest.mock import MagicMock, patch
 
 import frappe
@@ -145,3 +146,47 @@ class TestRunAgentTurnShimForwardsToHandleChatSend(FrappeTestCase):
 		(payload,), _ = fake.call_args
 		self.assertIsNone(payload["attachments"])
 		self.assertIsNone(payload["context"])
+
+
+class TestOrgLocaleClause(unittest.TestCase):
+	"""_org_locale_clause folds the default Company's region + the site's
+	date / number / timezone formats into the context line so the agent
+	stops defaulting to US conventions; any read failure degrades to ''."""
+
+	def _run(self, *, company, cached=None, singles=None, default=None):
+		cached = cached or {}
+		singles = singles or {}
+		with patch("frappe.defaults.get_global_default", return_value=company), \
+			patch("frappe.get_cached_value", side_effect=lambda dt, name, field: cached.get(field, "")), \
+			patch("frappe.db.get_single_value", side_effect=lambda dt, field: singles.get(field, "")), \
+			patch("frappe.db.get_default", return_value=default):
+			return turn_handler._org_locale_clause()
+
+	def test_full_company_locale(self):
+		clause = self._run(
+			company="Acme Ltd",
+			cached={"country": "India", "default_currency": "INR"},
+			singles={"date_format": "dd-mm-yyyy", "number_format": "#,##,###.##", "time_zone": "Asia/Kolkata"},
+		)
+		self.assertTrue(clause.startswith("; "))
+		self.assertIn("org: Acme Ltd (India, INR)", clause)
+		self.assertIn("dates dd-mm-yyyy", clause)
+		self.assertIn("numbers #,##,###.##", clause)
+		self.assertIn("tz Asia/Kolkata", clause)
+
+	def test_no_company_falls_back_to_region(self):
+		clause = self._run(
+			company=None,
+			singles={"country": "Germany", "date_format": "dd.mm.yyyy"},
+			default="EUR",
+		)
+		self.assertIn("region: Germany, EUR", clause)
+		self.assertNotIn("org:", clause)
+		self.assertIn("dates dd.mm.yyyy", clause)
+
+	def test_read_failure_yields_empty_clause(self):
+		with patch("frappe.defaults.get_global_default", side_effect=RuntimeError("db down")):
+			self.assertEqual(turn_handler._org_locale_clause(), "")
+
+	def test_empty_site_yields_empty_clause(self):
+		self.assertEqual(self._run(company=None, default=None), "")
