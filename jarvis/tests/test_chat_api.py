@@ -659,3 +659,23 @@ class TestChatUiSettings(FrappeTestCase):
 		# protects against a future drift in jarvis/_subscription_models.py.
 		for provider, default in DEFAULT_MODEL.items():
 			self.assertIn(default, SUBSCRIPTION_MODELS[provider])
+
+
+class TestWarmSessionEndpoint(FrappeTestCase):
+	def test_warm_session_enqueues_not_inline(self):
+		"""warm_session must enqueue warm_prefix as a background job and
+		return immediately - proves FIX D (non-blocking web worker)."""
+		from jarvis.chat import api
+
+		with patch("frappe.enqueue") as enqueue, \
+		     patch("jarvis.chat.prewarm.warm_prefix") as wp:
+			out = api.warm_session()
+
+		# Must have enqueued the prewarm job with the right method + queue.
+		enqueue.assert_called_once_with(
+			"jarvis.chat.prewarm.warm_prefix",
+			queue="short",
+		)
+		# warm_prefix must NOT have been called inline in the web worker.
+		wp.assert_not_called()
+		self.assertEqual(out, {"ok": True, "enqueued": True})
