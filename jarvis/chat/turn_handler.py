@@ -226,7 +226,10 @@ def _org_locale_clause() -> str:
 	parts = []
 	region = ", ".join(p for p in (country, currency) if p)
 	if company:
-		parts.append(f"org: {company}" + (f" ({region})" if region else ""))
+		# Company names can be long (legal suffixes, "formerly known as"); cap
+		# so the per-turn context stays lean.
+		name = (company[:40].rstrip() + "...") if len(company) > 43 else company
+		parts.append(f"org: {name}" + (f" ({region})" if region else ""))
 	elif region:
 		parts.append(f"region: {region}")
 	if date_format:

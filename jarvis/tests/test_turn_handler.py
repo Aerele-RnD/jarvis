@@ -184,6 +184,16 @@ class TestOrgLocaleClause(unittest.TestCase):
 		self.assertNotIn("org:", clause)
 		self.assertIn("dates dd.mm.yyyy", clause)
 
+	def test_long_company_name_is_capped(self):
+		clause = self._run(
+			company="Globex Trading Company Limited w.e.f 01/04/2024 (Formerly Globex Trading Private Limited)",
+			cached={"country": "India", "default_currency": "INR"},
+		)
+		self.assertIn("org: Globex Trading Company", clause)
+		self.assertIn("...", clause)  # truncation marker
+		self.assertNotIn("Private Limited", clause)  # long tail dropped
+		self.assertIn("(India, INR)", clause)
+
 	def test_read_failure_yields_empty_clause(self):
 		with patch("frappe.defaults.get_global_default", side_effect=RuntimeError("db down")):
 			self.assertEqual(turn_handler._org_locale_clause(), "")
