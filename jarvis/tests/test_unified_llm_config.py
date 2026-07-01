@@ -45,13 +45,10 @@ class TestUnifiedLLMConfigSchema(FrappeTestCase):
         self.assertEqual(f.options, "Jarvis LLM Pool Model",
                          "models Table must link to 'Jarvis LLM Pool Model'")
 
-    def test_settings_has_preset_select_field(self):
-        """Jarvis Settings must have a 'preset' Select field."""
-        self.assertIn("preset", self.settings_fields,
-                      "Jarvis Settings must have a 'preset' field")
-        f = self.settings_fields["preset"]
-        self.assertEqual(f.fieldtype, "Select",
-                         "preset field must be of type Select")
+    def test_settings_preset_is_free_form(self):
+        self.assertIn("preset", self.settings_fields)
+        self.assertEqual(self.settings_fields["preset"].fieldtype, "Data",
+                         "preset must be Data (validated against fetched catalog keys, not a Select)")
 
     def test_settings_has_proxy_active_check_read_only(self):
         """Jarvis Settings must have 'proxy_active' Check field that is read_only."""

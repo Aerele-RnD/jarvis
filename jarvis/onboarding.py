@@ -161,6 +161,66 @@ def get_preset_catalog() -> list:
 
 
 @frappe.whitelist()
+def save_llm_pool(models, preset: str | None = None, routing_mode: str = "failover") -> dict:
+	"""Write the customer's multi-model LLM pool into Jarvis Settings.models[]
+	(+ preset, routing_mode) and let the existing on_update pipeline validate
+	(validate_models), derive proxy_active, mirror models[0] into legacy llm_*,
+	and sync DIRECT (/llm-creds) vs PROXY (/llm-pool) via admin.
+
+	System-Manager-gated. routing_mode is always 'failover' in v1. preset is an
+	admin-catalog key or None; validated against the fetched catalog."""
+	frappe.only_for("System Manager")
+	if isinstance(models, str):
+		models = json.loads(models)
+	if not isinstance(models, list) or not models:
+		raise frappe.ValidationError("models must be a non-empty list")
+	if routing_mode != "failover":
+		raise frappe.ValidationError("routing_mode must be 'failover' in v1")
+
+	preset = (preset or "").strip()
+	if preset:
+		keys = {e.get("key") for e in admin_client.get_preset_catalog()}
+		if preset not in keys:
+			raise frappe.ValidationError(f"unknown preset '{preset}'")
+
+	s = frappe.get_single("Jarvis Settings")
+	s.set("models", [])
+	for i, m in enumerate(models):
+		sub = m.get("subscription")
+		cred_type = "subscription" if sub else "api_key"
+		row = {
+			"provider": (m.get("provider") or "").strip(),
+			"model": (m.get("model") or "").strip(),
+			"base_url": (m.get("base_url") or "").strip(),
+			"tier": m.get("tier") or "strong",
+			"order": m.get("order", i),
+			"credential_type": cred_type,
+			"enabled": 1,
+		}
+		if cred_type == "api_key":
+			row["api_key"] = m.get("api_key") or ""
+		else:
+			row["rotation"] = (sub or {}).get("rotation") or "sticky"
+			row["accounts"] = (sub or {}).get("accounts") or []
+		s.append("models", row)
+
+	s.preset = preset
+	s.routing_mode = routing_mode
+	# save() -> on_update -> _on_update_unified_llm: validate_models (throws),
+	# compute_proxy_active, mirror models[0], enqueue pool/creds sync.
+	s.save(ignore_permissions=True)
+	frappe.db.commit()
+
+	row = frappe.db.get_value("Jarvis Settings", "Jarvis Settings",
+	                          ["last_sync_at", "last_sync_status"], as_dict=True) or {}
+	return {
+		"last_sync_at": str(row.get("last_sync_at") or ""),
+		"last_sync_status": row.get("last_sync_status") or "",
+		"proxy_active": bool(frappe.db.get_single_value("Jarvis Settings", "proxy_active")),
+	}
+
+
+@frappe.whitelist()
 def start_signup(email: str, company: str, plan: str) -> dict:
 	"""Guest signup → store the api_token → return the Razorpay handles for Checkout.
 
