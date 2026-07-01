@@ -1034,10 +1034,14 @@ const pendingFiles = ref([]) // [{ file_url, file_name }] attachments to send
 const uploading = ref(false)
 const fileInput = ref(null)
 const mention = ref({ open: false, type: "", query: "", start: 0, items: [], index: 0 })
-const JARVIS_TOOLS = [
-	"get_list", "get_doc", "get_schema", "run_query", "run_report",
+// Tool names for the "Tools available" count + the /tool autocomplete. Seeded
+// with the core set as a fallback, then replaced on mount with the live bench
+// registry (jarvis.chat.api.list_tools) so it reflects every registered tool
+// instead of drifting from a hardcoded list.
+const jarvisTools = ref([
+	"get_list", "get_doc", "get_schema", "query", "run_report",
 	"create_doc", "update_doc", "submit_doc", "cancel_doc", "amend_doc", "delete_doc",
-]
+])
 
 function cookie(name) {
 	return new URLSearchParams(document.cookie.split("; ").join("&")).get(name)
@@ -1136,7 +1140,7 @@ const showWelcome = computed(
 // settings/overview derived metrics (all from data we already hold)
 const convCount = computed(() => conversations.value.length)
 const msgCount = computed(() => visibleMessages.value.length)
-const toolCount = computed(() => JARVIS_TOOLS.length)
+const toolCount = computed(() => jarvisTools.value.length)
 const sessionToolCalls = computed(() =>
 	Object.values(runMeta.value).reduce((s, r) => s + (r.tools || 0), 0),
 )
@@ -2356,7 +2360,7 @@ async function queryMentions(type, query) {
 			const skills = customSkills.value
 				.filter((s) => s.enabled && (s.skill_name || "").includes(q))
 				.map((s) => ({ value: s.skill_name, sub: "skill" }))
-			const tools = JARVIS_TOOLS.filter((t) => t.includes(q)).map((t) => ({ value: t, sub: "tool" }))
+			const tools = jarvisTools.value.filter((t) => t.includes(q)).map((t) => ({ value: t, sub: "tool" }))
 			const r = await api.searchLink("DocType", query)
 			const dts = (r || []).map((x) => ({ value: x.value, sub: "doctype" }))
 			items = [...skills, ...tools, ...dts].slice(0, 8)
@@ -2399,6 +2403,9 @@ onMounted(async () => {
 		/* fall through */
 	}
 	socket?.on("jarvis:event", onEvent)
+	// Live tool list for the "Tools available" count + /tool autocomplete
+	// (best-effort; falls back to the seeded core set on failure).
+	api.listTools().then((t) => { if (Array.isArray(t) && t.length) jarvisTools.value = t }).catch(() => {})
 	document.addEventListener("pointerdown", onDocClick)
 	window.addEventListener("keydown", onGlobalKey)
 	_thinkTimer = setInterval(() => { thinkTick.value = busy.value ? thinkTick.value + 1 : 0 }, 2200)

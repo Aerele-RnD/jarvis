@@ -4,6 +4,7 @@
 import { call } from "frappe-ui"
 
 export const listConversations = () => call("jarvis.chat.api.list_conversations")
+export const listTools = () => call("jarvis.chat.api.list_tools")
 export const getConversation = (conversation) =>
 	call("jarvis.chat.api.get_conversation", { conversation })
 // Rich outputs: fetch one canvas/chart artifact's render-ready HTML for an
