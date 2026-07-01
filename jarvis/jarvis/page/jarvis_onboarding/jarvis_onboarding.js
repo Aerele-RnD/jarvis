@@ -487,7 +487,7 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		const modeTabs = `
 			<div class="jo-field">
 			  <label class="jo-tabs-label">Setup</label>
-			  <div class="jo-tabs" role="tablist" data-active="${state.llmMode}">
+			  <div class="jo-tabs jo-tabs-3" role="tablist" data-active="${state.llmMode}">
 			    <span class="jo-tabs-thumb" aria-hidden="true"></span>
 			    ${["quick","preset","custom"].map(m =>
 			      `<button type="button" class="jo-tab ${state.llmMode===m?"jo-tab-active":""}" data-llmmode="${m}" role="tab" aria-selected="${state.llmMode===m}"><span>${m[0].toUpperCase()+m.slice(1)}</span></button>`).join("")}
@@ -748,7 +748,8 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 
 	function saveCustom() {
 		const models = jarvis_onboarding_llm.buildCustomModels(state.customRows);
-		if (!models.length) { $body.find("#jo-llm-err").text("Add at least one model."); return; }
+		const check = jarvis_onboarding_llm.validatePool(models, null);
+		if (!check.ok) { $body.find("#jo-llm-err").text(check.error); return; }
 		setBusy("#jo-custom-save", true);
 		frappe.call({ method: "jarvis.onboarding.save_llm_pool",
 			args: { models: JSON.stringify(models), preset: null, routing_mode: "failover" } })
@@ -779,7 +780,7 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 	}
 
 	function wireAuthModeTabs() {
-		$body.find(".jo-tab").on("click", function () {
+		$body.find(".jo-tab[data-mode]").on("click", function () {
 			const mode = $(this).data("mode");
 			if (mode === state.authMode) return;
 			state.authMode = mode;
@@ -1552,9 +1553,9 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		.jo-sh-ok{color:var(--green-700,#15803d);font-weight:600;margin-bottom:4px}
 		.jo-sh-bad{color:var(--red-600,#b91c1c);font-weight:600;margin-bottom:4px}
 		@media(max-width:760px){.jo-bg{padding:16px 10px}.jo{flex-direction:column;margin:auto}.jo-brand{flex-basis:auto}.jo-panel{padding:26px 22px}.jo-modes{grid-template-columns:1fr}}
-		.jo-tabs .jo-tabs-thumb{width:calc(33.333% - 4px)}
-		.jo-tabs[data-active="preset"] .jo-tabs-thumb{transform:translateX(100%)}
-		.jo-tabs[data-active="custom"] .jo-tabs-thumb{transform:translateX(200%)}
+		.jo-tabs-3 .jo-tabs-thumb{width:calc(33.333% - 4px)}
+		.jo-tabs-3[data-active="preset"] .jo-tabs-thumb{transform:translateX(100%)}
+		.jo-tabs-3[data-active="custom"] .jo-tabs-thumb{transform:translateX(200%)}
 		.jo-preset-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
 		.jo-preset-card{border:1.5px solid var(--border-color);border-radius:12px;padding:14px;cursor:pointer;background:var(--card-bg);transition:border-color .15s,box-shadow .15s}
 		.jo-preset-card:hover{border-color:var(--jarvis-primary)}
