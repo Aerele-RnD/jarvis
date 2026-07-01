@@ -1225,6 +1225,47 @@ const _SKILL_RE = /```jarvis-skill[ \t]*\n([\s\S]*?)```/
 // ECharts (themed by chartTheme; the agent never sends raw ECharts options).
 const _CHART_RE = /```jarvis-chart[ \t]*\n([\s\S]*?)```/g
 const _CHART_TYPES = new Set(["bar", "line", "area", "pie", "donut"])
+// The agent keeps emitting ```mermaid xychart-beta for DATA charts instead of
+// jarvis-chart. Mermaid renders xychart unstyled and crams the axis labels, so
+// we intercept those blocks, parse the fixed xychart-beta grammar into a
+// jarvis-chart spec, and render them through the themed ECharts path instead.
+const _XYCHART_RE = /```mermaid[ \t]*\n([\s\S]*?)```/g
+function _xySplit(s) {
+	const out = []
+	const re = /"([^"]*)"|'([^']*)'|([^,]+)/g
+	let m
+	while ((m = re.exec(s))) {
+		const v = (m[1] ?? m[2] ?? m[3] ?? "").trim().replace(/^["']|["']$/g, "")
+		if (v) out.push(v)
+	}
+	return out
+}
+function parseXychart(body) {
+	const text = String(body || "")
+	if (!/^\s*xychart-beta\b/.test(text)) return null
+	const horizontal = /xychart-beta[ \t]+horizontal\b/.test(text)
+	const tM = text.match(/title[ \t]+"([^"]*)"/)
+	const yM = text.match(/y-axis[ \t]+"([^"]*)"/)
+	const yLabel = yM ? yM[1].trim() : undefined
+	let x = []
+	const xM = text.match(/x-axis[ \t]+\[([^\]]*)\]/)
+	if (xM) x = _xySplit(xM[1])
+	const series = []
+	let anyBar = false
+	const re = /\b(bar|line)[ \t]+(?:"([^"]*)"[ \t]+)?\[([^\]]*)\]/g
+	let m
+	while ((m = re.exec(text))) {
+		const data = _xySplit(m[3]).map(Number).filter((n) => !Number.isNaN(n))
+		if (!data.length) continue
+		if (m[1] === "bar") anyBar = true
+		series.push({ name: m[2] || yLabel || "Value", data })
+	}
+	if (!series.length) return null
+	const spec = { type: anyBar ? "bar" : "line", x, series }
+	if (tM) spec.title = tM[1].trim()
+	if (horizontal) spec.options = { horizontal: true }
+	return spec
+}
 function stripBlocks(text) {
 	return (text || "")
 		.replace(/```jarvis-action[ \t]*\n[\s\S]*?```/g, "")
@@ -1233,6 +1274,7 @@ function stripBlocks(text) {
 		.replace(/```jarvis-cards[ \t]*\n[\s\S]*?```/g, "")
 		.replace(/```jarvis-skill[ \t]*\n[\s\S]*?```/g, "")
 		.replace(/```jarvis-chart[ \t]*\n[\s\S]*?```/g, "")
+		.replace(/```mermaid[ \t]*\n[ \t]*xychart-beta[\s\S]*?```/g, "")
 		.replace(/\n{3,}/g, "\n\n")
 		.trim()
 }
@@ -1288,7 +1330,7 @@ function cardsOf(m) {
 const _chartsCache = new Map()
 function chartsOf(m) {
 	const content = (m && m.content) || ""
-	if (!content.includes("jarvis-chart")) return []
+	if (!content.includes("jarvis-chart") && !content.includes("xychart-beta")) return []
 	if (_chartsCache.has(content)) return _chartsCache.get(content)
 	const specs = []
 	for (const mt of content.matchAll(_CHART_RE)) {
@@ -1300,6 +1342,10 @@ function chartsOf(m) {
 		} catch (e) {
 			/* incomplete mid-stream JSON: skip until the closing fence arrives */
 		}
+	}
+	for (const mt of content.matchAll(_XYCHART_RE)) {
+		const s = parseXychart(mt[1])
+		if (s) specs.push(s)
 	}
 	_chartsCache.set(content, specs)
 	return specs
@@ -1852,7 +1898,7 @@ async function _renderMermaid() {
 			primaryBorderColor: dark ? "#3a3a45" : "#d6e2fb",
 			primaryTextColor: dark ? "#ededf2" : "#171717",
 			lineColor: dark ? "#5b7cfa" : "#3b82f6",
-			textColor: dark ? "#b6b6c0" : "#4a4a4f",
+			textColor: dark ? "#b6b6c0" : "#4a4a4f", xyChart: { backgroundColor: dark ? "#16161a" : "#ffffff", titleColor: dark ? "#ededf2" : "#171717", xAxisLabelColor: dark ? "#b6b6c0" : "#4a4a4f", xAxisTitleColor: dark ? "#b6b6c0" : "#4a4a4f", xAxisTickColor: dark ? "#3a3a45" : "#d6e2fb", xAxisLineColor: dark ? "#3a3a45" : "#d6e2fb", yAxisLabelColor: dark ? "#b6b6c0" : "#4a4a4f", yAxisTitleColor: dark ? "#b6b6c0" : "#4a4a4f", yAxisTickColor: dark ? "#3a3a45" : "#d6e2fb", yAxisLineColor: dark ? "#3a3a45" : "#d6e2fb", plotColorPalette: MERMAID_PALETTE.join(",") },
 		},
 	})
 	let n = 0
