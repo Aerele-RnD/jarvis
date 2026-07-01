@@ -419,6 +419,36 @@ def save_llm_creds(provider: str, model: str, api_key: str = "",
 
 
 @frappe.whitelist()
+def get_llm_config() -> dict:
+	"""Current effective LLM pool for the desk step + /ai SPA: models[] rows,
+	preset, routing_mode, derived proxy_active. Reads models[] (NOT the legacy
+	llm_* mirrors). Never returns api_key secrets — only a has_key boolean.
+	System-Manager-only (spec 7)."""
+	frappe.only_for("System Manager")
+	s = frappe.get_single("Jarvis Settings")
+	models = []
+	for m in (s.get("models") or []):
+		cred_type = m.credential_type or "api_key"
+		models.append({
+			"provider": m.provider or "",
+			"model": m.model or "",
+			"base_url": m.base_url or "",
+			"tier": m.tier or "strong",
+			"order": m.order or 0,
+			"enabled": bool(m.enabled),
+			"credential_type": cred_type,
+			"has_key": bool(m.get_password("api_key", raise_exception=False))
+			           if cred_type == "api_key" else bool(m.get("accounts")),
+		})
+	return {
+		"models": models,
+		"preset": s.get("preset") or "",
+		"routing_mode": s.get("routing_mode") or "failover",
+		"proxy_active": bool(s.get("proxy_active")),
+	}
+
+
+@frappe.whitelist()
 def get_llm_sync_status() -> dict:
 	"""Lightweight poller for the onboarding + account pages.
 
