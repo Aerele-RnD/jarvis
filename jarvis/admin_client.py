@@ -422,6 +422,13 @@ def post_llm_auth_status() -> dict:
 	)
 
 
+def get_llm_usage() -> dict:
+	"""Curated real Bifrost usage for the customer's tenant (monitor tab).
+	Chain: fleet-agent /llm-usage -> admin api.tenant.get_llm_usage -> here.
+	Raises AdminAuthError / AdminUnreachableError / AdminValidationError."""
+	return _post(path="/api/method/jarvis_admin.api.tenant.get_llm_usage", body={})
+
+
 def pair_chat_device(public_key: str, device_id: str,
                      *, request_timeout_s: int = 30) -> dict:
 	"""POST customer's chat device pubkey to admin; admin asks the fleet-agent

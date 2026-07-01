@@ -99,6 +99,38 @@ def is_ready_for_chat() -> dict:
 
 
 @frappe.whitelist()
+def get_llm_usage() -> dict:
+	"""Real, curated Bifrost usage for the Monitor tab (System-Manager only,
+	spec 7). DIRECT tenants (proxy_active=0, no Bifrost) short-circuit to the
+	empty shape — no pointless admin round-trip."""
+	frappe.only_for("System Manager")
+	settings = frappe.get_single("Jarvis Settings")
+	if not getattr(settings, "proxy_active", 0):
+		return {"applicable": False, "period": None, "tokens_in": 0, "tokens_out": 0,
+				"cost_usd": 0.0, "per_model": [],
+				"used_vs_limit": {"used_usd": 0.0, "limit_usd": None}}
+	data = _surface(admin_client.get_llm_usage) or {}
+	data["applicable"] = True
+	return data
+
+
+@frappe.whitelist()
+def get_llm_connection_status() -> dict:
+	"""Connection card for the Monitor tab: auth profile present + OAuth expiry.
+	Wrapper over admin_client.post_llm_auth_status, remapped to the customer
+	contract field names. Never returns token material. System-Manager only."""
+	frappe.only_for("System Manager")
+	raw = _surface(admin_client.post_llm_auth_status) or {}
+	data = raw.get("data", raw) or {}
+	return {
+		"auth_present": bool(data.get("auth_profile_present")),
+		"oauth_expires_at": data.get("openai_profile_expires_ms"),
+		"profile_ids": data.get("profile_ids", []),
+		"default_model": data.get("default_model", ""),
+	}
+
+
+@frappe.whitelist()
 def get_account() -> dict:
 	"""Plan + validity + upgrade-eligible plans for the account page."""
 	return _surface(admin_client.get_account_summary)

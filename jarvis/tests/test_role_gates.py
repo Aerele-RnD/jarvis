@@ -35,6 +35,8 @@ GATED_ENDPOINTS = [
 	("jarvis.onboarding", "save_llm_pool", {"models": "[]"}),
 	("jarvis.onboarding", "get_llm_config", {}),
 	("jarvis.account", "start_upgrade", {"target_plan": "team_monthly"}),
+	("jarvis.account", "get_llm_usage", {}),
+	("jarvis.account", "get_llm_connection_status", {}),
 	("jarvis.oauth.api", "begin_paste_signin", {"provider": "OpenAI", "model": "gpt-5.5"}),
 	("jarvis.oauth.api", "complete_paste_signin",
 		{"nonce": "x" * 48, "redirected_url": "http://localhost:1455/auth/callback?code=A&state=B"}),
