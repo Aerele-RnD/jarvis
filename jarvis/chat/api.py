@@ -50,6 +50,16 @@ _ALLOWED_THINKING = {"", "low", "medium", "high"}
 
 
 @frappe.whitelist()
+def list_tools() -> list[str]:
+	"""Tool names the agent can call, from the bench registry (the openclaw
+	plugin registers one ``jarvis__<name>`` per entry). Drives the chat's
+	"Tools available" count + the ``/tool`` autocomplete so they track the
+	registry instead of a hardcoded SPA list that drifts."""
+	from jarvis.tools.registry import list_tools as _registry_list_tools
+	return _registry_list_tools()
+
+
+@frappe.whitelist()
 def list_conversations() -> list[dict]:
 	"""Return active conversations owned by the current user, newest first.
 
