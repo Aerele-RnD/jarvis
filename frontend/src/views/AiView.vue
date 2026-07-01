@@ -148,9 +148,8 @@
       </div>
     </main>
 
-    <!-- Monitor tab: Plan 3 replaces this placeholder with <MonitorTab :dark="dark" /> -->
     <main v-show="activeTab==='monitor'" style="max-width:900px;margin:0 auto;padding:22px 18px;">
-      <div style="font-size:13px;color:var(--text-3);">Usage monitoring arrives with the monitor build.</div>
+      <MonitorTab :dark="dark" />
     </main>
   </div>
 </template>
@@ -160,6 +159,7 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue"
 import * as api from "@/api"
 import { LIGHT_VARS, DARK_VARS, isDark } from "@/theme"
 import { deriveMode, reorder, presetToModels, missingVendorKeys, validatePool } from "@/llm/pool"
+import MonitorTab from "@/views/MonitorTab.vue"
 
 // Theme — reactive to OS changes (mirrors ChatView.vue pattern)
 const theme = ref(localStorage.getItem("jarvis-theme") || "system")
