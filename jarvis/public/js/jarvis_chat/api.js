@@ -77,3 +77,13 @@ export async function setConversationThinking(conversation, thinking) {
 	});
 	return r.message;
 }
+
+export async function warmSession() {
+	// Best-effort: warm the openclaw prefix cache so the first new-chat turn
+	// is fast. Non-critical, so failures are swallowed.
+	try {
+		await frappe.call({ method: "jarvis.chat.api.warm_session" });
+	} catch (e) {
+		/* warming is best-effort */
+	}
+}
