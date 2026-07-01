@@ -204,6 +204,43 @@ def _thinking_prefix(thinking_override: str | None) -> str:
 	return f"/think {level}\n" if level in ("low", "medium", "high") else ""
 
 
+def _org_locale_clause() -> str:
+	"""Region/locale of the site's default Company, folded into the turn's
+	``[Context: ...]`` line so the agent formats dates, currency, and numbers
+	for the org instead of defaulting to US conventions. Reads cached Single /
+	Company values, so it is cheap per turn; any read failure yields an empty
+	clause (the turn still runs, just without the locale hint)."""
+	try:
+		company = frappe.defaults.get_global_default("company")
+		country = currency = ""
+		if company:
+			country = frappe.get_cached_value("Company", company, "country") or ""
+			currency = frappe.get_cached_value("Company", company, "default_currency") or ""
+		country = country or frappe.db.get_single_value("System Settings", "country") or ""
+		currency = currency or frappe.db.get_default("currency") or ""
+		date_format = frappe.db.get_single_value("System Settings", "date_format") or ""
+		number_format = frappe.db.get_single_value("System Settings", "number_format") or ""
+		time_zone = frappe.db.get_single_value("System Settings", "time_zone") or ""
+	except Exception:
+		return ""
+	parts = []
+	region = ", ".join(p for p in (country, currency) if p)
+	if company:
+		# Company names can be long (legal suffixes, "formerly known as"); cap
+		# so the per-turn context stays lean.
+		name = (company[:40].rstrip() + "...") if len(company) > 43 else company
+		parts.append(f"org: {name}" + (f" ({region})" if region else ""))
+	elif region:
+		parts.append(f"region: {region}")
+	if date_format:
+		parts.append(f"dates {date_format}")
+	if number_format:
+		parts.append(f"numbers {number_format}")
+	if time_zone:
+		parts.append(f"tz {time_zone}")
+	return ("; " + "; ".join(parts)) if parts else ""
+
+
 def handle_chat_send(payload: dict) -> None:
 	"""Drive one agent turn end to end.
 
@@ -299,8 +336,11 @@ def handle_chat_send(payload: dict) -> None:
 	from jarvis.chat.custom_skills import invoked_skill_clause
 
 	skill_clause = invoked_skill_clause(msg_row.get("content") or "")
+	# Org locale (default Company country/currency + site date/number/tz) so the
+	# agent formats for the org's region instead of defaulting to US conventions.
+	locale_clause = _org_locale_clause()
 	user_message = (
-		f"[Context: today is {today}; chat user: {chat_user}{auto_apply}{skill_clause}]"
+		f"[Context: today is {today}{locale_clause}; chat user: {chat_user}{auto_apply}{skill_clause}]"
 		f"\n\n{user_message or ''}"
 	)
 
