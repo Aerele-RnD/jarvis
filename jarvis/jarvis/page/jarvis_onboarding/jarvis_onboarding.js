@@ -671,6 +671,95 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		wireLlmModeTabs();
 	}
 
+	function renderLlmCustom(modeTabs) {
+		const rows = state.customRows;
+		const providers = Object.keys(PROVIDER_DEFAULTS).map(
+			(p) => `<option value="${esc(p)}">${esc(p)}</option>`
+		).join("");
+		const mode = jarvis_onboarding_llm.deriveMode(
+			rows.filter(r => r && (r.provider || "").trim() && (r.model || "").trim()), null
+		);
+		const modeBadge = `<span class="jo-hint" style="margin-left:8px">${mode === "proxy" ? "🔀 Proxy (failover)" : "⟶ Direct"}</span>`;
+
+		const rowsHtml = rows.map((r, i) => {
+			const provOpts = Object.keys(PROVIDER_DEFAULTS).map(
+				(p) => `<option value="${esc(p)}" ${p === (r.provider || "") ? "selected" : ""}>${esc(p)}</option>`
+			).join("");
+			return `<div class="jo-custom-row" data-i="${i}">
+				<select class="jo-input jo-custom-prov" data-i="${i}">${provOpts}</select>
+				<input type="text" class="jo-input jo-custom-model" data-i="${i}" value="${esc(r.model || "")}" placeholder="model id"/>
+				<input type="password" class="jo-input jo-custom-key" data-i="${i}" value="${esc(r.apiKey || "")}" placeholder="API key" autocomplete="off"/>
+				<div style="display:flex;gap:4px">
+				  <button type="button" class="jo-btn jo-btn-ghost jo-btn-small jo-row-up" data-i="${i}" title="Move up" ${i === 0 ? "disabled" : ""}>↑</button>
+				  <button type="button" class="jo-btn jo-btn-ghost jo-btn-small jo-row-down" data-i="${i}" title="Move down" ${i === rows.length - 1 ? "disabled" : ""}>↓</button>
+				  <button type="button" class="jo-btn jo-btn-ghost jo-btn-small jo-row-rm" data-i="${i}" title="Remove">✕</button>
+				</div>
+			</div>`;
+		}).join("");
+
+		$body.html(`
+			<h2 class="jo-h">Connect your AI${modeBadge}</h2>
+			<p class="jo-sub">Build your own failover list. First model runs every turn; others are backups.</p>
+			${modeTabs}
+			<div id="jo-custom-rows" style="margin-top:16px">${rowsHtml}</div>
+			<div class="jo-actions" style="justify-content:flex-start;margin-top:8px">
+			  <button class="jo-btn jo-btn-ghost jo-btn-small" id="jo-custom-add">+ Add model</button>
+			</div>
+			<div class="jo-err" id="jo-llm-err"></div>
+			<div class="jo-actions jo-actions-split">
+			  <button class="jo-btn jo-btn-ghost" id="jo-llm-skip">Skip for now</button>
+			  <button class="jo-btn jo-btn-primary" id="jo-custom-save">Save &amp; finish →</button>
+			</div>`);
+
+		$body.find(".jo-row-up").on("click", function () {
+			const i = +$(this).data("i");
+			if (i > 0) { state.customRows = jarvis_onboarding_llm.reorder(state.customRows, i, i - 1); renderLlm(); }
+		});
+		$body.find(".jo-row-down").on("click", function () {
+			const i = +$(this).data("i");
+			if (i < state.customRows.length - 1) { state.customRows = jarvis_onboarding_llm.reorder(state.customRows, i, i + 1); renderLlm(); }
+		});
+		$body.find(".jo-row-rm").on("click", function () {
+			const i = +$(this).data("i");
+			state.customRows = state.customRows.filter((_, idx) => idx !== i);
+			renderLlm();
+		});
+		$body.find(".jo-custom-prov").on("change", function () {
+			const i = +$(this).data("i");
+			state.customRows[i] = Object.assign({}, state.customRows[i], { provider: $(this).val() });
+		});
+		$body.find(".jo-custom-model").on("input", function () {
+			const i = +$(this).data("i");
+			state.customRows[i] = Object.assign({}, state.customRows[i], { model: $(this).val() });
+		});
+		$body.find(".jo-custom-key").on("input", function () {
+			const i = +$(this).data("i");
+			state.customRows[i] = Object.assign({}, state.customRows[i], { apiKey: $(this).val() });
+		});
+		$body.find("#jo-custom-add").on("click", () => {
+			const firstProvider = Object.keys(PROVIDER_DEFAULTS)[0] || "Anthropic";
+			state.customRows = state.customRows.concat({ provider: firstProvider, model: "", apiKey: "" });
+			renderLlm();
+		});
+		$body.find("#jo-llm-skip").on("click", () => renderSuccess(state.successData || {}));
+		$body.find("#jo-custom-save").on("click", saveCustom);
+		wireLlmModeTabs();
+	}
+
+	function saveCustom() {
+		const models = jarvis_onboarding_llm.buildCustomModels(state.customRows);
+		if (!models.length) { $body.find("#jo-llm-err").text("Add at least one model."); return; }
+		setBusy("#jo-custom-save", true);
+		frappe.call({ method: "jarvis.onboarding.save_llm_pool",
+			args: { models: JSON.stringify(models), preset: null, routing_mode: "failover" } })
+			.then((r) => {
+				const m = r.message || {}; const status = (m.last_sync_status || "").trim();
+				if (status.startsWith("pending:")) pollSyncStatus(status);
+				else { setBusy("#jo-custom-save", false); renderSuccess(state.successData || {}, status); }
+			})
+			.catch((e) => { setBusy("#jo-custom-save", false); $body.find("#jo-llm-err").text(e.message || "Couldn't save models."); });
+	}
+
 	function savePreset() {
 		const entry = presetCatalog.find(e => e.key === state.selectedPreset);
 		if (!entry || jarvis_onboarding_llm.missingVendorKeys(entry, state.presetKeys).length) {
