@@ -255,7 +255,7 @@ def rename_conversation(conversation: str, title: str) -> dict:
 
 
 @frappe.whitelist()
-def set_star(conversation: str, starred) -> dict:
+def set_star(conversation: str, starred: str | int | bool) -> dict:
 	"""Star/unstar a conversation (owner-gated via get_doc). Starred chats are
 	listed first and grouped under 'Starred' in the sidebar."""
 	on = 1 if str(starred) in ("1", "true", "True", "on", "yes") else 0
@@ -462,7 +462,7 @@ def get_chat_ui_settings() -> dict:
 
 
 @frappe.whitelist()
-def set_auto_apply(value) -> dict:
+def set_auto_apply(value: str | int | bool) -> dict:
 	"""Toggle the per-site 'auto-apply changes (skip confirmation)' setting.
 
 	OFF (default) = the agent confirms every ERP-mutating action before running
