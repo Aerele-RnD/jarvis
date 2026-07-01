@@ -599,6 +599,96 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		});
 	}
 
+	function renderLlmPreset(modeTabs) {
+		if (!presetCatalog.length) {
+			$body.html(`
+				<h2 class="jo-h">Connect your AI</h2>
+				${modeTabs}
+				<p class="jo-sub" style="margin-top:16px">Couldn't load presets — use Quick or Custom.</p>`);
+			wireLlmModeTabs();
+			return;
+		}
+		const entry = presetCatalog.find(e => e.key === state.selectedPreset) || null;
+		const missing = entry ? jarvis_onboarding_llm.missingVendorKeys(entry, state.presetKeys) : [];
+		const saveBtnDisabled = (!entry || missing.length > 0) ? "disabled" : "";
+
+		const cardGroup = (kind) => presetCatalog
+			.filter(e => e.kind === kind)
+			.map(e => {
+				const sel = state.selectedPreset === e.key ? "selected" : "";
+				const ladder = (e.models || []).slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+					.map((m, i) => `<div class="jo-preset-model"><span class="jo-hint">${i === 0 ? "Runs every turn" : "Backup " + i}</span> <b>${esc(m.model)}</b></div>`)
+					.join("");
+				return `<div class="jo-preset-card ${sel}" data-pkey="${esc(e.key)}">
+					<div class="jo-preset-label">${esc(e.label)}</div>
+					<div class="jo-hint" style="margin-bottom:8px">${esc(e.blurb || "")}</div>
+					${ladder}
+				</div>`;
+			}).join("");
+
+		const singleVendorCards = cardGroup("single_vendor");
+		const crossVendorCards = cardGroup("cross_vendor");
+
+		let keyFieldsHtml = "";
+		if (entry) {
+			const vendors = jarvis_onboarding_llm.uniqueVendors(entry);
+			keyFieldsHtml = vendors.map(v => `
+				<div class="jo-field">
+				  <label>${esc(v)} API key</label>
+				  <input type="password" class="jo-input jo-preset-key" data-vendor="${esc(v)}" value="${esc(state.presetKeys[v] || "")}" placeholder="sk-..." autocomplete="off"/>
+				</div>`).join("");
+		}
+
+		$body.html(`
+			<h2 class="jo-h">Connect your AI</h2>
+			<p class="jo-sub">Pick a preset failover ladder. Keys are stored encrypted.</p>
+			${modeTabs}
+			${singleVendorCards ? `<p class="jo-tabs-label" style="margin-top:16px">Single-vendor ladders</p><div class="jo-preset-cards">${singleVendorCards}</div>` : ""}
+			${crossVendorCards ? `<p class="jo-tabs-label" style="margin-top:14px">Cross-vendor presets</p><div class="jo-preset-cards">${crossVendorCards}</div>` : ""}
+			${entry ? `<div style="margin-top:18px">${keyFieldsHtml}</div>` : ""}
+			<div class="jo-err" id="jo-llm-err"></div>
+			<div class="jo-actions jo-actions-split">
+			  <button class="jo-btn jo-btn-ghost" id="jo-llm-skip">Skip for now</button>
+			  <button class="jo-btn jo-btn-primary" id="jo-preset-save" ${saveBtnDisabled}>Save &amp; finish →</button>
+			</div>`);
+
+		$body.find(".jo-preset-card").on("click", function () {
+			state.selectedPreset = $(this).data("pkey");
+			// Reset keys when switching presets
+			state.presetKeys = {};
+			renderLlm();
+		});
+		$body.find(".jo-preset-key").on("input", function () {
+			const vendor = $(this).data("vendor");
+			state.presetKeys[vendor] = $(this).val();
+			// Update save button live
+			const e2 = presetCatalog.find(e => e.key === state.selectedPreset);
+			const m2 = e2 ? jarvis_onboarding_llm.missingVendorKeys(e2, state.presetKeys) : ["?"];
+			$body.find("#jo-preset-save").prop("disabled", m2.length > 0);
+		});
+		$body.find("#jo-llm-skip").on("click", () => renderSuccess(state.successData || {}));
+		$body.find("#jo-preset-save").on("click", savePreset);
+		wireLlmModeTabs();
+	}
+
+	function savePreset() {
+		const entry = presetCatalog.find(e => e.key === state.selectedPreset);
+		if (!entry || jarvis_onboarding_llm.missingVendorKeys(entry, state.presetKeys).length) {
+			$body.find("#jo-llm-err").text("Presets need every vendor's key. Use Quick or Custom to finish with fewer keys.");
+			return;
+		}
+		const models = jarvis_onboarding_llm.presetToModels(entry, state.presetKeys);
+		setBusy("#jo-preset-save", true);
+		frappe.call({ method: "jarvis.onboarding.save_llm_pool",
+			args: { models: JSON.stringify(models), preset: entry.key, routing_mode: "failover" } })
+			.then((r) => {
+				const m = r.message || {}; const status = (m.last_sync_status || "").trim();
+				if (status.startsWith("pending:")) pollSyncStatus(status);
+				else { setBusy("#jo-preset-save", false); renderSuccess(state.successData || {}, status); }
+			})
+			.catch((e) => { setBusy("#jo-preset-save", false); $body.find("#jo-llm-err").text(e.message || "Couldn't save preset."); });
+	}
+
 	function wireAuthModeTabs() {
 		$body.find(".jo-tab").on("click", function () {
 			const mode = $(this).data("mode");
