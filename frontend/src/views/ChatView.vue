@@ -1224,7 +1224,7 @@ const _SKILL_RE = /```jarvis-skill[ \t]*\n([\s\S]*?)```/
 // A ```jarvis-chart block: a high-level chart spec the chat renders inline with
 // ECharts (themed by chartTheme; the agent never sends raw ECharts options).
 const _CHART_RE = /```jarvis-chart[ \t]*\n([\s\S]*?)```/g
-const _CHART_TYPES = new Set(["bar", "line", "area", "pie", "donut"])
+const _CHART_TYPES = new Set(["bar", "line", "area", "pie", "donut", "scatter", "bubble", "heatmap", "boxplot", "radar", "funnel", "gauge"])
 // The agent keeps emitting ```mermaid xychart-beta for DATA charts instead of
 // jarvis-chart. Mermaid renders xychart unstyled and crams the axis labels, so
 // we intercept those blocks, parse the fixed xychart-beta grammar into a

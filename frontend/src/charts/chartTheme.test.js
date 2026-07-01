@@ -55,3 +55,61 @@ test("legend only when >1 series; dark text differs from light", () => {
 	const light = buildOption({ type: "bar", x: ["A"], series: [{ data: [1] }], title: "t" }, false)
 	assert.notEqual(dark.xAxis.axisLabel.color, light.xAxis.axisLabel.color)
 })
+
+test("every chart type sets a transparent background (dark-mode safe)", () => {
+	const specs = [
+		{ type: "bar", x: ["A"], series: [{ data: [1] }] },
+		{ type: "pie", x: ["A"], series: [{ data: [1] }] },
+		{ type: "scatter", series: [{ data: [[1, 2]] }] },
+		{ type: "heatmap", x: ["A"], y: ["B"], series: [{ data: [[0, 0, 5]] }] },
+		{ type: "boxplot", x: ["A"], series: [{ data: [[1, 2, 3, 4, 5]] }] },
+		{ type: "radar", x: ["A", "B"], series: [{ data: [1, 2] }] },
+		{ type: "funnel", x: ["A"], series: [{ data: [1] }] },
+		{ type: "gauge", series: [{ data: [42] }] },
+	]
+	for (const s of specs) assert.equal(buildOption(s).backgroundColor, "transparent", s.type)
+})
+
+test("scatter/bubble: value axes; bubble sizes the symbol from the 3rd value", () => {
+	const sc = buildOption({ type: "scatter", series: [{ name: "S", data: [[1, 2], [3, 4]] }] })
+	assert.equal(sc.xAxis.type, "value")
+	assert.equal(sc.yAxis.type, "value")
+	assert.equal(sc.series[0].type, "scatter")
+	assert.equal(typeof sc.series[0].symbolSize, "number")
+	const bub = buildOption({ type: "bubble", series: [{ data: [[1, 2, 10], [3, 4, 40]] }] })
+	assert.equal(typeof bub.series[0].symbolSize, "function")
+	assert.ok(bub.series[0].symbolSize([3, 4, 40]) > bub.series[0].symbolSize([1, 2, 10]))
+})
+
+test("heatmap: category x+y and a visualMap scaled to the data range", () => {
+	const o = buildOption({ type: "heatmap", x: ["Mon", "Tue"], y: ["AM", "PM"], series: [{ data: [[0, 0, 3], [1, 1, 9]] }] })
+	assert.equal(o.xAxis.type, "category")
+	assert.equal(o.yAxis.type, "category")
+	assert.equal(o.series[0].type, "heatmap")
+	assert.equal(o.visualMap.min, 3)
+	assert.equal(o.visualMap.max, 9)
+})
+
+test("boxplot: category x, five-number data passes through", () => {
+	const o = buildOption({ type: "boxplot", x: ["A"], series: [{ data: [[1, 2, 3, 4, 5]] }] })
+	assert.equal(o.series[0].type, "boxplot")
+	assert.deepEqual(o.series[0].data, [[1, 2, 3, 4, 5]])
+})
+
+test("radar: indicators from x with per-spoke max headroom", () => {
+	const o = buildOption({ type: "radar", x: ["Speed", "Cost"], series: [{ name: "P", data: [10, 20] }] })
+	assert.equal(o.series[0].type, "radar")
+	assert.equal(o.radar.indicator[0].name, "Speed")
+	assert.ok(o.radar.indicator[1].max >= 20)
+	assert.deepEqual(o.series[0].data[0].value, [10, 20])
+})
+
+test("funnel maps x+series[0] to stages; gauge reads a single value + options.max", () => {
+	const fn = buildOption({ type: "funnel", x: ["Lead", "Won"], series: [{ data: [100, 20] }] })
+	assert.equal(fn.series[0].type, "funnel")
+	assert.deepEqual(fn.series[0].data, [{ name: "Lead", value: 100 }, { name: "Won", value: 20 }])
+	const g = buildOption({ type: "gauge", series: [{ name: "SLA", data: [87] }], options: { max: 100 } })
+	assert.equal(g.series[0].type, "gauge")
+	assert.equal(g.series[0].max, 100)
+	assert.equal(g.series[0].data[0].value, 87)
+})
