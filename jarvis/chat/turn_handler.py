@@ -439,6 +439,13 @@ def handle_chat_send(payload: dict) -> None:
 						attachments=_to_managed_attachments(vision_parts) if vision_parts else None,
 					))
 			except OpenclawUnreachableError as e:
+				if getattr(e, "code", None) == "turn-timeout":
+					# openclaw is still running this turn and persists the
+					# result; park the row for snapshot recovery instead of
+					# falsely erroring. Spinner stays up (streaming=1) and
+					# turn_recovery finalizes it from the gateway snapshot.
+					_mark_recovering(assistant_msg.name)
+					return
 				_publish_run_error(str(e))
 				return
 
@@ -710,6 +717,17 @@ def _mark_errored(assistant_msg_name: str, error: str) -> None:
 	frappe.db.set_value(MSG, assistant_msg_name, {
 		"streaming": 0,
 		"error": error,
+	})
+	frappe.db.commit()
+
+
+def _mark_recovering(assistant_msg_name: str) -> None:
+	"""Park a managed turn for snapshot recovery instead of erroring: openclaw
+	is still running/finished and turn_recovery will finalize it from the
+	gateway snapshot. streaming stays 1 (spinner up); no error, no run:error."""
+	frappe.db.set_value(MSG, assistant_msg_name, {
+		"recovering": 1,
+		"recovery_started_at": frappe.utils.now_datetime(),
 	})
 	frappe.db.commit()
 

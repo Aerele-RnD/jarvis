@@ -153,6 +153,9 @@ scheduler_events = {
 		"*/5 * * * *": [
 			"jarvis.chat.stale_scan.scan_and_mark_errored",
 		],
+		"*/2 * * * *": [
+			"jarvis.chat.turn_recovery.recover_pending_turns",
+		],
 		"*/30 * * * *": [
 			"jarvis.chat.prewarm.keep_warm_if_active",
 		],

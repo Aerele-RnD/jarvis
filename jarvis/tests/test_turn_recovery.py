@@ -1,0 +1,173 @@
+"""Tests for jarvis.chat.turn_recovery (scheduler-driven long-turn recovery).
+
+Isolation note: the test conversation uses a UNIQUE session_key and the fake
+gateway returns transcript content only for that key, so any unrelated
+recovering rows on the test site are left in the waiting state untouched. No
+destructive global cleanup is needed.
+"""
+import contextlib
+from unittest.mock import MagicMock, patch
+
+import frappe
+from frappe.tests.utils import FrappeTestCase
+
+from jarvis.chat import turn_recovery
+from jarvis.chat.turn_recovery import MSG as MSG_DT
+
+SK = "sk_rec_unique_test"
+
+
+class TestTurnRecovery(FrappeTestCase):
+	def setUp(self):
+		self.conv = frappe.get_doc({
+			"doctype": "Jarvis Conversation", "title": "rec", "session_key": SK,
+		}).insert(ignore_permissions=True)
+		self.msg = self._add_msg(seq=1, started_min=-10)
+		frappe.db.commit()
+
+	def tearDown(self):
+		frappe.db.delete(MSG_DT, {"conversation": self.conv.name})
+		frappe.db.delete(turn_recovery.CONV, {"name": self.conv.name})
+		frappe.db.commit()
+
+	def _add_msg(self, seq, started_min, content="partial..."):
+		return frappe.get_doc({
+			"doctype": "Jarvis Chat Message",
+			"conversation": self.conv.name, "seq": seq, "role": "assistant",
+			"content": content, "streaming": 1, "recovering": 1,
+			"recovery_started_at": frappe.utils.add_to_date(
+				frappe.utils.now_datetime(), minutes=started_min),
+		}).insert(ignore_permissions=True)
+
+	def _fake_sess(self, *, active=None, messages_by_key=None):
+		active = active or set()
+		messages_by_key = messages_by_key or {}
+		sess = MagicMock()
+
+		def _request(method, params, *, timeout_s):
+			if method == "sessions.list":
+				return {"payload": {"sessions": [
+					{"key": k, "hasActiveRun": True} for k in active]}}
+			return {"payload": {}}
+
+		sess._request = _request
+		sess.get_session_messages = lambda key, limit=50: messages_by_key.get(key, [])
+		return sess
+
+	def _run(self, sess):
+		@contextlib.contextmanager
+		def fake_conn(_gateway_url):
+			yield sess
+
+		settings = MagicMock()
+		settings.agent_url = "https://gw.example"
+		with patch("jarvis.selfhost.is_self_hosted", return_value=False), \
+			 patch("jarvis.chat.turn_recovery.frappe.get_single", return_value=settings), \
+			 patch("jarvis.chat.turn_recovery._recovery_connection", fake_conn), \
+			 patch("jarvis.chat.turn_recovery.publish_to_user") as pub:
+			out = turn_recovery.recover_pending_turns()
+		return out, pub
+
+	def _row(self, name=None):
+		return frappe.db.get_value(
+			MSG_DT, name or self.msg.name,
+			["content", "streaming", "recovering", "error"], as_dict=True)
+
+	# --- finalize from the RAW transcript (no truncation), overwrite ---------
+	def test_finalizes_when_run_done_with_text(self):
+		sess = self._fake_sess(messages_by_key={SK: [
+			{"role": "user", "content": "q", "__openclaw": {"seq": 1}},
+			{"role": "assistant", "content": "the full answer", "__openclaw": {"seq": 2}},
+		]})
+		_, pub = self._run(sess)
+		row = self._row()
+		self.assertEqual(row.content, "the full answer")  # overwrite, not append
+		self.assertEqual(row.streaming, 0)
+		self.assertEqual(row.recovering, 0)
+		self.assertFalse(row.error)
+		kinds = [c.args[1]["kind"] for c in pub.call_args_list]
+		self.assertIn("assistant:delta", kinds)
+		self.assertIn("run:end", kinds)
+
+	def test_uses_raw_session_messages_not_truncating_history(self):
+		# Content must come from get_session_messages (raw), never get_history (#1).
+		sess = self._fake_sess(messages_by_key={SK: [
+			{"role": "assistant", "content": "x", "__openclaw": {"seq": 1}}]})
+		self._run(sess)
+		sess.get_history.assert_not_called()
+
+	def test_leaves_active_run_untouched(self):
+		sess = self._fake_sess(active={SK}, messages_by_key={SK: [
+			{"role": "assistant", "content": "x", "__openclaw": {"seq": 1}}]})
+		self._run(sess)
+		row = self._row()
+		self.assertEqual(row.recovering, 1)
+		self.assertEqual(row.streaming, 1)
+
+	def test_waits_when_no_output_yet_does_not_error(self):
+		# Not active, no transcript content -> wait (NOT errored before ceiling).
+		sess = self._fake_sess(messages_by_key={SK: []})
+		_, pub = self._run(sess)
+		row = self._row()
+		self.assertEqual(row.streaming, 1)
+		self.assertEqual(row.recovering, 1)
+		self.assertFalse(row.error)
+		self.assertNotIn("run:error", [c.args[1]["kind"] for c in pub.call_args_list])
+
+	# --- #3/#5: unconditional ceiling backstop, even when gateway is down ----
+	def test_ceiling_errors_even_when_gateway_unreachable(self):
+		old = self._add_msg(seq=2, started_min=-120)  # 2h, past the 60min ceiling
+		frappe.db.commit()
+
+		def boom(_url):
+			raise RuntimeError("gateway down")
+
+		settings = MagicMock()
+		settings.agent_url = "https://gw.example"
+		with patch("jarvis.selfhost.is_self_hosted", return_value=False), \
+			 patch("jarvis.chat.turn_recovery.frappe.get_single", return_value=settings), \
+			 patch("jarvis.chat.turn_recovery._recovery_connection", boom), \
+			 patch("jarvis.chat.turn_recovery.publish_to_user"):
+			turn_recovery.recover_pending_turns()
+		row = self._row(old.name)
+		self.assertEqual(row.streaming, 0)  # errored despite gateway down
+		self.assertEqual(row.recovering, 0)
+		self.assertTrue(row.error)
+
+	# --- #2: no cross-row content bleed -------------------------------------
+	def test_no_cross_row_bleed_only_latest_finalized(self):
+		older = self.msg  # seq 1
+		newer = self._add_msg(seq=2, started_min=-10, content="partial2")
+		frappe.db.commit()
+		sess = self._fake_sess(messages_by_key={SK: [
+			{"role": "assistant", "content": "latest answer", "__openclaw": {"seq": 9}}]})
+		self._run(sess)
+		self.assertEqual(self._row(newer.name).content, "latest answer")
+		older_row = self._row(older.name)
+		self.assertNotEqual(older_row.content, "latest answer")  # no bleed
+		self.assertEqual(older_row.streaming, 1)  # older rides the ceiling backstop
+
+	# --- #8: conditional finalize is idempotent -----------------------------
+	def test_conditional_finalize_no_op_on_already_cleared_row(self):
+		frappe.db.set_value(MSG_DT, self.msg.name, {"streaming": 0, "recovering": 0})
+		frappe.db.commit()
+		pub = MagicMock()
+		with patch("jarvis.chat.turn_recovery.publish_to_user", pub):
+			turn_recovery._finalize(
+				{"name": self.msg.name, "conversation": self.conv.name, "owner": "x"},
+				"ignored")
+		pub.assert_not_called()
+		self.assertNotEqual(self._row().content, "ignored")
+
+	# --- #10: type-guarded extraction ---------------------------------------
+	def test_extract_latest_assistant_text_handles_block_list(self):
+		text = turn_recovery._latest_assistant_text([
+			{"role": "assistant", "__openclaw": {"seq": 5},
+			 "content": [{"type": "text", "text": "hello"}, {"type": "text", "text": "world"}]}])
+		self.assertEqual(text, "hello\nworld")
+
+	def test_extract_ignores_non_string_text(self):
+		text = turn_recovery._latest_assistant_text([
+			{"role": "assistant", "__openclaw": {"seq": 5},
+			 "content": [{"type": "text", "text": {"unexpected": "dict"}}], "text": 123}])
+		self.assertEqual(text, "")
