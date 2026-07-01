@@ -572,10 +572,13 @@ def set_conversation_model(conversation: str, model: str | None = None) -> dict:
 def warm_session() -> dict:
 	"""Fire-and-forget: warm this tenant's openclaw prefix cache so the next
 	new-chat first turn skips the cold prefill. Best-effort; always ok. The
-	chat UI calls this on open. Self-hosted and unconfigured benches no-op."""
-	from jarvis.chat import prewarm
-
-	return {"ok": True, "warmed": bool(prewarm.warm_prefix())}
+	chat UI calls this on open. Self-hosted and unconfigured benches no-op.
+	Runs in a background RQ job so the gunicorn web worker is not blocked."""
+	frappe.enqueue(
+		"jarvis.chat.prewarm.warm_prefix",
+		queue="short",
+	)
+	return {"ok": True, "enqueued": True}
 
 
 @frappe.whitelist()
