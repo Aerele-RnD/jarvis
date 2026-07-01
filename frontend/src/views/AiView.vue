@@ -114,21 +114,21 @@
         </button>
       </section>
 
-      <!-- Custom "+ Add model" row for Quick/Custom mode -->
+      <!-- Custom "+ Add model" row for Quick/Custom mode — binds to models directly -->
       <section v-if="!selectedPreset" style="margin-bottom:18px;">
         <div style="font-size:12px;font-weight:600;color:var(--text-2);margin-bottom:8px;letter-spacing:.03em;text-transform:uppercase;">Custom models</div>
-        <div v-for="(row, i) in customRows" :key="i"
+        <div v-for="(m, i) in models" :key="i"
              style="display:flex;gap:8px;margin-bottom:8px;align-items:center;">
-          <input v-model="row.provider" placeholder="Provider (e.g. openai)"
+          <input v-model="m.provider" placeholder="Provider (e.g. openai)"
                  style="flex:1;padding:6px 9px;font-size:12.5px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;" />
-          <input v-model="row.model" placeholder="Model ID (e.g. gpt-4o)"
+          <input v-model="m.model" placeholder="Model ID (e.g. gpt-4o)"
                  style="flex:1.5;padding:6px 9px;font-size:12.5px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;" />
-          <input v-model="row.apiKey" placeholder="API key" type="password"
+          <input v-model="m.api_key" :placeholder="m.has_key ? 'key set — re-enter to change' : 'API key'" type="password"
                  style="flex:1.5;padding:6px 9px;font-size:12.5px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;" />
-          <button @click="removeCustomRow(i)"
+          <button @click="remove(i)"
                   style="border:1px solid var(--red-bd,#f5d4d1);background:var(--red-bg,#fdf0ef);color:var(--red);border-radius:5px;width:28px;height:28px;cursor:pointer;flex:none;">✕</button>
         </div>
-        <button @click="addCustomRow"
+        <button @click="addModel"
                 style="font-size:12.5px;color:var(--blue);background:transparent;border:1px dashed var(--border-2);border-radius:7px;padding:6px 14px;cursor:pointer;width:100%;">
           + Add model
         </button>
@@ -156,16 +156,17 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from "vue"
+import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue"
 import * as api from "@/api"
 import { LIGHT_VARS, DARK_VARS, isDark } from "@/theme"
-import { deriveMode, reorder, presetToModels, missingVendorKeys, validatePool, buildCustomModels } from "@/llm/pool"
+import { deriveMode, reorder, presetToModels, missingVendorKeys, validatePool } from "@/llm/pool"
 
-// Theme (follows the same localStorage key as ChatView)
-const dark = ref(isDark(
-  localStorage.getItem("jarvis-theme") || "system",
-  window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)").matches : false
-))
+// Theme — reactive to OS changes (mirrors ChatView.vue pattern)
+const theme = ref(localStorage.getItem("jarvis-theme") || "system")
+const prefersDark = ref(false)
+let _mq = null
+function onColorScheme(e) { prefersDark.value = e.matches }
+const dark = computed(() => isDark(theme.value, prefersDark.value))
 const paletteVars = computed(() => (dark.value ? DARK_VARS : LIGHT_VARS))
 
 const activeTab = ref("manage")
@@ -182,9 +183,6 @@ let pollTimer = null
 // Preset selection state
 const selectedPreset = ref("")  // key of currently chosen preset card
 const keysByVendor = ref({})    // vendor -> api_key (entered progressively)
-
-// Custom model rows (used when no preset)
-const customRows = ref([])      // [{ provider, model, apiKey }]
 
 // Derived
 const mode = computed(() => deriveMode(models.value, selectedPreset.value))
@@ -228,50 +226,43 @@ function selectPreset(entry) {
 function clearPreset() {
   selectedPreset.value = ""
   cfg.value.preset = ""
-  // Retain current models as custom rows
-  customRows.value = models.value.map(m => ({ provider: m.provider, model: m.model, apiKey: m.api_key || "" }))
-  models.value = []
+  // Keep current models as the starting point for custom editing
 }
 
-function addCustomRow() { customRows.value.push({ provider: "", model: "", apiKey: "" }) }
-function removeCustomRow(i) { customRows.value = customRows.value.filter((_, j) => j !== i) }
-
-// When keys change and a preset is selected, refresh the models list
-function refreshPresetModels() {
-  const e = selectedEntry.value
-  if (e) models.value = presetToModels(e, keysByVendor.value)
+// In custom mode: add a blank row to the shared models array
+function addModel() {
+  models.value = [...models.value, { provider: "", model: "", api_key: "", has_key: false, order: models.value.length }]
 }
+
+// Whenever vendor keys change while a preset is active, refresh models preview
+watch(keysByVendor, () => {
+  if (selectedPreset.value) {
+    const e = selectedEntry.value
+    if (e) models.value = presetToModels(e, keysByVendor.value)
+  }
+}, { deep: true })
 
 async function load() {
   try {
     cfg.value = (await api.getLlmConfig()) || cfg.value
-    models.value = (cfg.value.models || []).slice()
-    // Restore preset selection from config
-    if (cfg.value.preset) {
-      selectedPreset.value = cfg.value.preset
-    } else {
-      selectedPreset.value = ""
-      // Populate custom rows from existing models
-      customRows.value = models.value.map(m => ({ provider: m.provider, model: m.model, apiKey: m.api_key || "" }))
-    }
+    // api_key is never returned by the server; has_key signals whether one is stored
+    models.value = (cfg.value.models || []).map(m => ({
+      provider: m.provider,
+      model: m.model,
+      api_key: "",
+      has_key: m.has_key || false,
+      order: m.order || 0
+    }))
+    selectedPreset.value = cfg.value.preset || ""
   } catch (e) { err.value = _err(e) }
   try { catalog.value = (await api.getPresetCatalog()) || [] } catch (e) { /* backend bundled fallback */ }
 }
 
 async function save() {
   err.value = ""
-  let saveModels = models.value
-  let savePreset = selectedPreset.value || null
-
-  if (!selectedPreset.value) {
-    // Custom mode: build from custom rows
-    saveModels = buildCustomModels(customRows.value)
-    savePreset = null
-  } else {
-    // Preset mode: rebuild with final keys
-    const e = selectedEntry.value
-    if (e) saveModels = presetToModels(e, keysByVendor.value)
-  }
+  // models is the single source of truth for both preset and custom mode
+  const saveModels = models.value
+  const savePreset = selectedPreset.value || null
 
   const v = validatePool(saveModels, savePreset)
   if (!v.ok) { err.value = v.error; return }
@@ -295,6 +286,14 @@ function startPolling() {
 }
 function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null } }
 
-onMounted(load)
-onBeforeUnmount(stopPolling)
+onMounted(() => {
+  load()
+  _mq = window.matchMedia("(prefers-color-scheme: dark)")
+  prefersDark.value = _mq.matches
+  _mq.addEventListener("change", onColorScheme)
+})
+onBeforeUnmount(() => {
+  stopPolling()
+  _mq?.removeEventListener("change", onColorScheme)
+})
 </script>
