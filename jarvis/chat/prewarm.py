@@ -113,3 +113,20 @@ def keep_warm_if_active() -> None:
 		warm_prefix()
 	except Exception:
 		frappe.logger("jarvis.chat.prewarm").debug("keep_warm skipped", exc_info=True)
+
+
+def enqueue_warm_if_due() -> None:
+	"""Warm-on-chat-load: enqueue a prefix warm-up in a background job if the
+	per-bench cooldown has lapsed. Called from list_conversations (which every
+	chat surface hits on load), so the first turn of a new chat gets a warm
+	prefix without a frontend change. Just a cheap cache read on the request
+	path - the connect + warm runs off the web worker. Best-effort, never
+	raises, and debounced so repeated calls do not fan out into jobs."""
+	try:
+		if selfhost.is_self_hosted():
+			return
+		if frappe.cache().get_value(_warm_cooldown_key()):
+			return
+		frappe.enqueue("jarvis.chat.prewarm.warm_prefix", queue="short")
+	except Exception:
+		frappe.logger("jarvis.chat.prewarm").debug("enqueue_warm_if_due skipped", exc_info=True)
