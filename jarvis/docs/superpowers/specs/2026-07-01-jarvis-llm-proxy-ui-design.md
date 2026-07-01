@@ -60,17 +60,33 @@ the same `models[]` and let the existing `Jarvis Settings.on_update` pipeline sy
   `jarvis_onboarding.js`); the separate manage/monitor surface is a **new Vue SPA
   route** (the chat app: Vue 3 + frappe-ui + echarts). The two frontends share the
   **backend contract + preset catalog**, not a literal component.
-- **L6 — Monitor honestly.** The monitor view shows only data that exists today
-  (status, current pool, sync state, connection/OAuth expiry, *estimated* tokens
-  clearly labeled, configured budget ceiling). Real per-model $ cost / request logs /
-  failover events are deferred — that data is locked inside each tenant's internal
-  Bifrost with no read path (§10).
+- **L6 — Monitor: admin-only, minimal, real Bifrost data.** The monitor view is
+  **System-Manager-only** and shows a **curated/abstracted subset of real metrics read
+  from the tenant's own Bifrost** (usage, cost, per-model tokens) — not an estimate. This
+  requires a minimal read-back path (fleet-agent → admin → client, §6). Constraint: only
+  **PROXY** tenants have a Bifrost; a single-model **DIRECT** tenant shows status/config
+  only (no usage panel). Full request logs / failover-event history stay deferred (§10).
+- **L7 — Catalog lives in admin; custom lives in jarvis.** The curated preset catalog is
+  **Aerele-owned in `jarvis_admin`** (a `Jarvis LLM Preset` doctype the Aerele team edits
+  in the admin desk — revisable without a customer-app deploy), fetched by the customer
+  app over the existing customer→admin channel, **cached with a bundled fallback** so
+  onboarding never hard-fails. Custom pools are the customer's own
+  `Jarvis Settings.models[]`, stored in **jarvis** (unchanged).
+- **L8 — Presets are all-or-nothing.** Choosing a preset requires **all** of that
+  preset's vendor keys (a preset is a complete package; no half-configured pools). The
+  escape hatch to finish onboarding with fewer keys is **Quick** (one model) or
+  **Custom** (any models you have keys for). A single-vendor ladder needs only one key,
+  so "all keys" = one key there.
 
 ## 3. v1 preset catalog (BYO, failover)
 
 Failover semantics reminder: `models[0]` handles every turn; the rest are fallbacks on
 error/exhaustion (never cost/quality routing). UI guidance everywhere: *"Your first
 model runs every turn; the others are backups if it fails."*
+
+**Order = failover priority (resolved §11.1).** For single-vendor ladders the primary is
+the vendor's **strongest agentic model**; fallbacks degrade to cheaper/faster models — so
+you keep top quality and only drop a tier if the primary is rate-limited/erroring.
 
 Model IDs below are the catalog spec's verified current IDs. **Data residency for BYO is
 the customer's own responsibility** (their keys/accounts); the catalog spec's D2
@@ -101,19 +117,30 @@ Catalog spec's presets, re-expressed as failover with the primary reflecting the
 (Model *sets* are the catalog spec's; only the routing mode and explicit order are v1
 adaptations. To be confirmed in review — see §11.)
 
-### 3.3 Catalog as a single source of truth
+### 3.3 Catalog source of truth: admin-owned, client-cached (L7)
 
-Fixes the current triplication (library `cost-saver` / doctype `Cost-saver` / SPA none).
-One canonical `PRESET_CATALOG` lives in the customer app (proposed
-`jarvis/jarvis/llm_config.py`), exposed via a whitelisted `get_preset_catalog()` that:
-- the desk onboarding JS consumes,
-- the Vue SPA consumes,
-- seeds the `Jarvis Settings.preset` Select options.
+Fixes the current triplication (library `cost-saver` / doctype `Cost-saver` / SPA none)
+by making the catalog **Aerele-owned in `jarvis_admin`**:
 
-Each catalog entry: `{ key, label, kind: "single_vendor"|"cross_vendor", blurb,
-models: [{provider, model, order}], vendors: [provider,…] }` — **no secrets** (keys are
-collected from the user at apply time). The llm-proxy library's `presets()` stays the
-future managed-tier concern; we align them when the managed tier is built (§10).
+- **Admin (source):** a `Jarvis LLM Preset` doctype (+ a `Jarvis LLM Preset Model` child)
+  the Aerele team edits in the admin desk. Fields per preset: `key`, `label`, `kind`
+  (`single_vendor` | `cross_vendor`), `blurb`, `enabled`, and ordered child rows
+  `{provider, model, order}`. **No secrets** — the catalog is model IDs + labels + order
+  only; keys are collected from the customer at apply time. Aerele can revise the catalog
+  without a customer-app deploy.
+- **Admin API:** a whitelisted `billing`/catalog endpoint (guest-safe, same pattern as
+  `get_plans`) returns the enabled catalog as JSON.
+- **Customer app (client):** `admin_client.get_preset_catalog()` fetches it, **caches**
+  the result, and **falls back to a bundled default copy** if admin is unreachable so
+  onboarding never hard-fails. The desk onboarding JS and the Vue SPA both read this via a
+  thin customer-side `get_preset_catalog()` whitelisted wrapper. The
+  `Jarvis Settings.preset` Select is validated against the fetched catalog keys, not a
+  hardcoded list.
+- **Custom pools** are **not** in the catalog — they are the customer's own
+  `Jarvis Settings.models[]`, stored in jarvis (unchanged).
+
+The llm-proxy library's `presets()` stays the future managed-tier concern; we align it
+with the admin catalog when the managed tier is built (§10).
 
 ## 4. Onboarding integration (Frappe desk — extend `jarvis_onboarding.js`)
 
@@ -137,9 +164,11 @@ CUSTOM (failover) + Add model  (provider ▾  model  key)   [drag to set priorit
 - **Progressive key entry:** picking a preset reveals exactly the key fields its unique
   vendors need (one per vendor; the same key is reused across that vendor's models). A
   single-vendor ladder → one field.
-- **Completion gate unchanged (L3):** onboarding finishes as soon as ≥1 model validates
-  (`is_ready_for_chat`). A preset that needs 3 keys can still be completed with a subset;
-  we surface which fallbacks are inactive until their key is added (no hard block).
+- **Presets are all-or-nothing (L8):** to *save a preset*, **all** its vendor keys must be
+  present and validate — no partially-keyed pools. A customer who can't supply every key
+  uses **Quick** (one model) or **Custom** (any subset they have keys for) to finish.
+- **Completion gate (L3):** onboarding finishes as soon as ≥1 working model exists
+  (`is_ready_for_chat`) — reachable via Quick/Custom even if the customer skips presets.
 - **Subscriptions:** Quick only (existing `begin_paste_signin`/`complete_paste_signin`);
   presets are API-key-backed (catalog spec D4). Anthropic-sub stays banned.
 
@@ -148,29 +177,34 @@ CUSTOM (failover) + Add model  (provider ▾  model  key)   [drag to set priorit
 New route in `frontend/src/router` — proposed `/ai` (label "AI / Models") — with two
 tabs (or one scrolling page):
 
+The whole `/ai` page is **System-Manager-only** (L6/§7).
+
 ### 5.1 Manage tab (same data as onboarding's step, full editor)
 - Current setup summary: mode (Direct / Proxy), preset name or "Custom", the ordered
   model list with a live "runs every turn / backup" indicator, `proxy_active` badge.
-- Actions (System-Manager-gated): switch preset, add/remove/reorder models, add/rotate a
-  key, connect/disconnect a subscription. All write through `save_llm_pool` /
-  `save_llm_creds` / the OAuth methods → the existing `on_update` sync pipeline.
+- Actions: switch preset, add/remove/reorder models, add/rotate a key,
+  connect/disconnect a subscription. All write through `save_llm_pool` / `save_llm_creds`
+  / the OAuth methods → the existing `on_update` sync pipeline.
 - Post-save: poll `get_llm_sync_status` (already exists) and show pending/ok/failed.
 
-### 5.2 Monitor tab (honest, available-now data only — L6)
-- **Status card:** container running/healthy, last health check, uptime (via admin
+### 5.2 Monitor tab (admin-only, minimal real Bifrost metrics — L6)
+Real, abstracted metrics read from the **tenant's own Bifrost** (not an estimate), via
+the read-back path in §6. **Only shown for PROXY tenants** — a DIRECT (single-model)
+tenant has no Bifrost, so it shows the status/pool cards only with a "usage available on
+multi-model (proxy) setups" note.
+- **Status card:** container running/healthy, last health check, uptime (admin
   `dashboard.get_tenant_detail` / `diagnostics.ping_openclaw`).
-- **Active pool:** models, order, routing mode, direct-vs-proxy.
-- **Usage (estimated):** token estimate from stored message text (`get_usage`, ~4
-  chars/token) rendered with **echarts**, explicitly labeled *"Estimated."*
-- **Budget:** configured ceiling (`token_budget_monthly` / rendered Bifrost
-  `max_limit_usd`) shown as a limit, **not** spend.
-- **Connection:** OAuth/key status + expiry (fleet-agent `/llm-auth-status` via a new
-  thin admin wrapper — small backend, §6).
-- **Recent activity:** last sync/config state from the customer-side `get_llm_sync_status`
-  (exists). A fuller audit trail lives admin-side in Jarvis Tenant Activity Log and is
-  deferred (would need an admin wrapper — §10).
-- Panels for real $ cost / request logs / failover events render a "Coming soon"
-  placeholder, not fake numbers (§10).
+- **Active pool:** models, failover order, routing mode, direct-vs-proxy.
+- **Usage (real, abstracted):** total tokens (in/out) and $ cost **for the current
+  period**, plus a **per-model** breakdown — read from Bifrost's usage/governance data
+  and curated down to the few relevant numbers. Rendered with **echarts**.
+- **Budget:** configured ceiling (`token_budget_monthly` / Bifrost `max_limit_usd`) shown
+  against consumption as a used/limit gauge.
+- **Connection:** OAuth/key status + expiry (fleet-agent `/llm-auth-status` via a thin
+  admin wrapper — §6).
+- **Recent activity:** last sync/config state from `get_llm_sync_status` (exists).
+- Deferred panels (full request-log stream, failover-event history) render a "Coming
+  soon" placeholder, not fake data (§10).
 
 ## 6. Backend & data contract
 
@@ -182,27 +216,37 @@ Reuse the unified pipeline; add the minimum new surface:
    vs PROXY (`/llm-pool`) via `admin_client` → admin `api.tenant` → fleet-agent. Secrets
    travel in the `models[].api_key` fields, encrypted at rest, scrubbed from logs (reuse
    existing serializer hygiene). Validates via existing `validate_models`.
-2. **`get_preset_catalog()`** (new whitelisted, read-only) — returns the §3.3 catalog.
+2. **Preset catalog (admin-owned, L7/§3.3):**
+   - Admin: `Jarvis LLM Preset` doctype (+ child) → a whitelisted admin endpoint returns
+     the enabled catalog JSON (guest-safe, `get_plans` pattern).
+   - Customer app: `admin_client.get_preset_catalog()` (fetch + cache + bundled fallback)
+     behind a thin whitelisted `get_preset_catalog()` the desk/SPA call.
 3. **`get_llm_config()`** (new whitelisted, read-only) — returns the current effective
    pool (`models[]`, `preset`, `routing_mode`, `proxy_active`) for the SPA/desk to render.
    Must read `models[]`, **not** the legacy `llm_*` mirror fields (those reflect only
    `models[0]`).
-4. **`get_llm_usage()`** (new whitelisted, read-only) — the estimated-token summary +
-   budget ceiling for the monitor tab. Labeled estimate.
+4. **`get_llm_usage()`** (new whitelisted, read-only) — **real Bifrost metrics read-back**
+   for the monitor tab (L6). New chain: fleet-agent `GET /v1/containers/{name}/llm-usage`
+   queries the tenant's Bifrost usage/governance API on the internal network and returns
+   curated JSON (period tokens in/out, $ cost, per-model breakdown, used-vs-limit) →
+   admin `api.tenant.get_llm_usage` wrapper → customer `get_llm_usage`. Returns an empty/
+   "not applicable" shape for DIRECT tenants (no Bifrost). No new persistent storage in
+   v1 — read live from Bifrost.
 5. **`get_llm_connection_status()`** (new whitelisted, read-only) — thin wrapper over the
    admin/fleet `/llm-auth-status` (auth present, OAuth expiry).
 6. **Reused as-is:** `save_llm_creds`, `begin_paste_signin`, `complete_paste_signin`,
    `disconnect`, `get_llm_sync_status`, `is_ready_for_chat`.
 
-The SPA calls these via `frontend/src/api.js` (frappe-ui resources).
+The SPA calls these via `frontend/src/api.js` (frappe-ui resources). All monitor/usage
+reads and all config writes are System-Manager-gated (§7).
 
 ## 7. Permissions
 
 - **Config writes** (`save_llm_pool`, key/subscription changes): **System Manager**
   (matches today's `Jarvis Settings` gate; keys are sensitive).
-- **Reads** (`get_llm_config`, `get_llm_usage`, status): **System Manager** for v1
-  (simplest). Broadening monitor read to all chat users is a later, opt-in decision
-  (§11).
+- **Reads / monitor** (`get_llm_config`, `get_llm_usage`, status, the whole `/ai` page):
+  **System-Manager-only** (resolved §11.2 — usage/cost is sensitive; not exposed to
+  ordinary chat users in v1).
 - Onboarding gate unchanged.
 
 ## 8. Naming
@@ -216,14 +260,17 @@ The SPA calls these via `frontend/src/api.js` (frappe-ui resources).
 
 ## 9. Build sequence (informs the plan, not the final plan)
 
-1. **Backend contract first:** `PRESET_CATALOG` + `get_preset_catalog` + `save_llm_pool`
-   + `get_llm_config` (unlocks both frontends). TDD.
-2. **Onboarding desk step** (Quick/Preset/Custom + progressive keys) over the new
-   endpoints.
-3. **Vue SPA Manage tab** (reuses the same endpoints).
-4. **Monitor endpoints + Vue Monitor tab** (`get_llm_usage`, connection status,
-   echarts).
-5. **Naming/label fixes**, docs.
+1. **Admin catalog:** `Jarvis LLM Preset` doctype + child + catalog endpoint + seed the
+   §3 presets. TDD.
+2. **Customer backend contract:** `get_preset_catalog` (admin_client fetch/cache/fallback)
+   + `save_llm_pool` + `get_llm_config` (unlocks both frontends). TDD.
+3. **Onboarding desk step** (Quick/Preset/Custom + progressive keys, all-or-nothing preset)
+   over the new endpoints.
+4. **Vue SPA Manage tab** (reuses the same endpoints).
+5. **Bifrost usage read-back:** fleet-agent `/llm-usage` route → admin wrapper →
+   `get_llm_usage` + `get_llm_connection_status`. TDD.
+6. **Vue Monitor tab** (echarts over the real metrics; DIRECT-tenant fallback).
+7. **Naming/label fixes**, docs.
 
 ## 10. Out of scope / deferred (explicit)
 
@@ -233,25 +280,32 @@ The SPA calls these via `frontend/src/api.js` (frappe-ui resources).
 - **Dynamic / tier-adaptive routing** — needs a `complexity_tier` signal (Bifrost auto-
   classify or an openclaw per-turn hint) + the Auto/Fast/Best steering plumbing. Until
   then, everything is failover (L2).
-- **Real usage/cost read-back** — per-model token counts, $ spend, spend-remaining,
-  request logs, failover-event history. Data lives in each tenant's internal Bifrost
-  `logs.db` with no host port / read route; DIRECT tenants have no Bifrost at all. Needs
-  a fleet-agent usage route + admin wrapper + storage.
+- **Full request-log stream + failover-event history** — the raw per-request log feed and
+  a history of which model served/failed each turn. (v1 **does** build a minimal read-back
+  for curated usage/cost/per-model tokens — §5.2/§6.4; only the deep log stream and event
+  history are deferred, plus any persistent usage storage — v1 reads Bifrost live.)
 - **Vertex ADC + EU residency** for Google (managed-tier concern).
 - **Chat subscriptions in presets** (catalog spec D4 — custom/Quick only).
 - **In-chat model steering** (per-conversation Auto/Fast/Best) — separate plan.
 
-## 11. Open questions (for spec review)
+## 11. Open questions
 
-1. **Preset model sets/orders (§3):** confirm the single-vendor ladders and the
-   cross-vendor trio failover orders. In particular, is single-vendor ladder order
-   "best→cheaper" (primary = strongest, degrade under rate-limit) the intended default?
-2. **Monitor read permission (§7):** System-Manager-only for v1, or readable by all
-   signed-in chat users?
-3. **Catalog home (§3.3):** define `PRESET_CATALOG` in the customer app now (proposed),
-   or align the llm-proxy library `presets()` as the shared source immediately?
-4. **Route/label (§5):** `/ai` ("AI / Models") acceptable, or a different path/name?
-5. **Marketing names (§8):** confirm customer-facing preset labels.
-6. **Progressive-key partial preset (§4):** OK to let a customer finish onboarding with a
-   preset only partially keyed (inactive fallbacks surfaced), or require all vendor keys
-   before a cross-vendor preset can be saved?
+**Resolved in review (2026-07-01):**
+1. **Preset order (§3)** → order = failover priority; single-vendor ladders are
+   best→cheaper (primary = strongest, degrade under rate-limit). ✅
+2. **Monitor read permission (§7)** → System-Manager-only. ✅
+3. **Catalog home (§3.3)** → Aerele-owned `Jarvis LLM Preset` doctype in admin, client
+   fetches/caches with a bundled fallback; custom pools stay in jarvis. ✅
+6. **Partial preset (§4)** → all-or-nothing; a preset needs all its vendor keys, else use
+   Quick/Custom (L8). ✅
+
+**Still defaulted (not blocking — will use these unless you say otherwise):**
+4. **Route/label (§5):** `/ai` ("AI / Models"). Change if you prefer another name.
+5. **Marketing names (§8):** single-vendor = "<Vendor> — resilient"; cross-vendor =
+   "Cost-saver" / "Balanced" / "Max-reliability".
+7. **Bifrost read-back mechanics (§6.4):** two things get pinned during the read-back task
+   (a small spike): (a) the exact Bifrost usage/governance endpoint + fields to read, and
+   (b) **how the host-side fleet-agent reaches the internal-only Bifrost** (`docker exec`
+   + localhost curl vs container bridge IP vs a loopback publish — the Bifrost UI needed a
+   temp socat forwarder in prior spikes). The spec fixes the *contract we expose*, not
+   Bifrost's internal API surface.
