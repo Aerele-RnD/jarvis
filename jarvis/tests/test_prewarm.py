@@ -177,3 +177,50 @@ class TestKeepWarm(FrappeTestCase):
              patch("jarvis.chat.prewarm.warm_prefix") as wp:
             prewarm.keep_warm_if_active()
         wp.assert_not_called()
+
+
+class TestEnqueueWarmIfDue(FrappeTestCase):
+    def tearDown(self):
+        from jarvis.chat import prewarm
+        frappe.cache().delete_value(prewarm._warm_cooldown_key())
+
+    def test_enqueues_warm_when_not_on_cooldown(self):
+        from jarvis.chat import prewarm
+
+        frappe.cache().delete_value(prewarm._warm_cooldown_key())
+        with patch("jarvis.selfhost.is_self_hosted", return_value=False), \
+             patch("jarvis.chat.prewarm.frappe.enqueue") as enq:
+            prewarm.enqueue_warm_if_due()
+        enq.assert_called_once()
+        self.assertEqual(enq.call_args.args[0], "jarvis.chat.prewarm.warm_prefix")
+
+    def test_skips_enqueue_when_on_cooldown(self):
+        from jarvis.chat import prewarm
+
+        frappe.cache().set_value(prewarm._warm_cooldown_key(), "1", expires_in_sec=60)
+        with patch("jarvis.selfhost.is_self_hosted", return_value=False), \
+             patch("jarvis.chat.prewarm.frappe.enqueue") as enq:
+            prewarm.enqueue_warm_if_due()
+        enq.assert_not_called()
+
+    def test_skips_enqueue_self_hosted(self):
+        from jarvis.chat import prewarm
+
+        frappe.cache().delete_value(prewarm._warm_cooldown_key())
+        with patch("jarvis.selfhost.is_self_hosted", return_value=True), \
+             patch("jarvis.chat.prewarm.frappe.enqueue") as enq:
+            prewarm.enqueue_warm_if_due()
+        enq.assert_not_called()
+
+
+class TestListConversationsWarms(FrappeTestCase):
+    def tearDown(self):
+        from jarvis.chat import prewarm
+        frappe.cache().delete_value(prewarm._warm_cooldown_key())
+
+    def test_list_conversations_triggers_warm_on_load(self):
+        from jarvis.chat import api
+
+        with patch("jarvis.chat.prewarm.enqueue_warm_if_due") as w:
+            api.list_conversations()
+        w.assert_called_once()

@@ -56,6 +56,11 @@ def list_conversations() -> list[dict]:
 	Each row includes ``message_count`` so the UI can identify empty
 	conversations (used by ``create_or_focus_empty``).
 	"""
+	# Chat page loaded: warm the openclaw prefix cache in the background
+	# (best-effort, debounced) so the first turn of a new chat skips the cold
+	# provider prefill. Never blocks or fails this read.
+	from jarvis.chat import prewarm
+	prewarm.enqueue_warm_if_due()
 	user = frappe.session.user
 	rows = frappe.db.sql(
 		"""
