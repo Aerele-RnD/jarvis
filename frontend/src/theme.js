@@ -9,11 +9,13 @@ export const LIGHT_VARS = {
 	"--red": "#dc2626", "--red-bg": "#fdf0ef", "--red-bd": "#f5d4d1",
 	"--amber": "#d97706", "--amber-bg": "#fdf6ec", "--amber-bd": "#f3e2c2",
 }
+// Dark = "Refined Indigo" (chosen 2026-07-02): neutral charcoal surfaces with a
+// crisper indigo accent; the brand mark gets an indigo→violet gradient.
 export const DARK_VARS = {
 	"--surface": "#16161a", "--surface-1": "#1d1d22", "--surface-2": "#26262d", "--surface-3": "#30303a",
 	"--border": "#2c2c34", "--border-2": "#3a3a45",
 	"--text": "#ededf2", "--text-2": "#b6b6c0", "--text-3": "#7e7e8a",
-	"--blue": "#5b7cfa", "--blue-bg": "#1c2545", "--blue-bd": "#2c3a66",
+	"--blue": "#6e8bff", "--blue-bg": "#1e2749", "--blue-bd": "#34437a",
 	"--green": "#34d399", "--green-bg": "#15271f", "--green-bd": "#214b38",
 	"--red": "#f87171", "--red-bg": "#2a1818", "--red-bd": "#4a2a2a",
 	"--amber": "#fbbf24", "--amber-bg": "#2a2315", "--amber-bd": "#4a3d1f",
