@@ -89,7 +89,7 @@ class TestDownloadPdfEnvelope(FrappeTestCase):
 
         # Envelope keys are the contract; pin every one.
         self.assertEqual(set(out.keys()),
-                         {"file_url", "filename", "mime_type", "size_bytes", "name"})
+                         {"file_url", "filename", "title", "mime_type", "size_bytes", "name"})
         self.assertEqual(out["mime_type"], "application/pdf")
         self.assertEqual(out["file_url"], "/private/files/User-fake.pdf")
         self.assertEqual(out["size_bytes"], len(fake_bytes))

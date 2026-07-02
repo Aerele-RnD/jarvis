@@ -20,6 +20,10 @@ concurrency:
   # Never auto-cancel a main run (cancelled reads as neutral, not failed → hides regressions).
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+# Least privilege: this job only reads the repo + fetches public apps; it never writes.
+permissions:
+  contents: read
+
 jobs:
   tests:
     runs-on: ubuntu-latest
@@ -54,7 +58,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"   # matches the bench (frappe 16.24 / py3.14)
-          cache: pip
 
       - uses: actions/setup-node@v4
         with:
@@ -82,8 +85,9 @@ jobs:
       - name: Get apps (erpnext + hrms + jarvis)
         working-directory: frappe-bench
         run: |
-          bench get-app --branch version-16 erpnext
-          bench get-app --branch version-16 hrms
+          # --skip-assets: backend tests never use the JS bundles; skip erpnext/hrms builds.
+          bench get-app --branch version-16 --skip-assets erpnext
+          bench get-app --branch version-16 --skip-assets hrms
           bench get-app "${GITHUB_WORKSPACE}/app" --skip-assets
 
       - name: Create test site + install apps
@@ -101,7 +105,8 @@ jobs:
       - name: Run tests + coverage
         working-directory: frappe-bench
         run: |
-          ./env/bin/pip install coverage
+          # gevent: needed by jarvis/realtime/handlers.py (socketio_backend=python) and its tests.
+          ./env/bin/pip install coverage gevent
           bench --site test_site run-tests --app jarvis --coverage
           # First run establishes the baseline; an enforced --fail-under is added after
           # (same as jarvis_admin). Non-fatal print for now.
