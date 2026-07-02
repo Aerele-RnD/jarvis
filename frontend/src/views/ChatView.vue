@@ -1125,13 +1125,38 @@ function _settleConfirm(val) {
 const userMenuOpen = ref(false)
 const modelMenuOpen = ref(false)
 // Collapsible sidebar (persisted per device, openclaw-style).
-const sidebarCollapsed = ref(localStorage.getItem("jarvis-sidebar") === "collapsed")
+// Below this width the sidebar auto-collapses to the icon rail so a narrow /
+// half-screen window doesn't let it crowd the chat.
+const SIDEBAR_NARROW_BP = 820
+const _sidebarNarrow = () => typeof window !== "undefined" && window.matchMedia(`(max-width: ${SIDEBAR_NARROW_BP}px)`).matches
+function _sidebarPref() {
+	try { return localStorage.getItem("jarvis-sidebar") === "collapsed" } catch (e) { return false }
+}
+// Initial: forced collapsed on a narrow viewport, else the saved preference.
+const sidebarCollapsed = ref(_sidebarNarrow() || _sidebarPref())
 function toggleSidebar() {
 	sidebarCollapsed.value = !sidebarCollapsed.value
-	try {
-		localStorage.setItem("jarvis-sidebar", sidebarCollapsed.value ? "collapsed" : "open")
-	} catch (e) {}
+	// Only persist as the user's preference on wide screens; on a narrow window
+	// the collapse is width-driven, so a manual toggle there is temporary and
+	// must not overwrite the saved preference.
+	if (!_sidebarNarrow()) {
+		try { localStorage.setItem("jarvis-sidebar", sidebarCollapsed.value ? "collapsed" : "open") } catch (e) {}
+	}
 }
+// React to viewport width crossing the breakpoint: collapse when it goes
+// narrow, restore the saved preference when it goes wide again.
+let _sidebarMq = null
+function _applySidebarForWidth() {
+	sidebarCollapsed.value = _sidebarNarrow() ? true : _sidebarPref()
+}
+onMounted(() => {
+	if (typeof window === "undefined") return
+	_sidebarMq = window.matchMedia(`(max-width: ${SIDEBAR_NARROW_BP}px)`)
+	_sidebarMq.addEventListener("change", _applySidebarForWidth)
+})
+onBeforeUnmount(() => {
+	if (_sidebarMq) _sidebarMq.removeEventListener("change", _applySidebarForWidth)
+})
 // per-conversation ⋯ menu + inline rename (sidebar)
 const convMenuFor = ref(null)
 const renamingId = ref(null)
