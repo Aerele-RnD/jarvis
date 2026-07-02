@@ -9,7 +9,7 @@ File. The chat surface then renders a download card from the returned
 """
 import frappe
 
-from jarvis.exceptions import InvalidArgumentError
+from jarvis.exceptions import InvalidArgumentError, NoDataError
 
 _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
@@ -26,15 +26,24 @@ def export_excel(
 	given ``columns``) or a list of lists (first row is the header unless
 	``columns`` is given). ``title`` names the sheet + file.
 	"""
+	# Nothing to export → tell the caller plainly instead of handing back an
+	# empty (or header-only) workbook the user then has to open to discover is
+	# blank. The agent relays this message to the user.
 	if not isinstance(rows, list) or not rows:
-		raise InvalidArgumentError("rows must be a non-empty list")
+		raise NoDataError("No data to prepare for Excel.")
 
 	first = rows[0]
 	if isinstance(first, dict):
 		cols = columns or list(first.keys())
-		data = [list(cols)]
-		data += [[_cell(r.get(c)) for c in cols] for r in rows if isinstance(r, dict)]
+		body = [[_cell(r.get(c)) for c in cols] for r in rows if isinstance(r, dict)]
+		if not body:
+			raise NoDataError("No data to prepare for Excel.")
+		data = [list(cols)] + body
 	elif isinstance(first, (list, tuple)):
+		# Without an explicit `columns`, the first row is the header — so a lone
+		# row means there's a header but zero data rows: still nothing to export.
+		if not columns and len(rows) < 2:
+			raise NoDataError("No data to prepare for Excel.")
 		data = ([list(columns)] if columns else []) + [list(r) for r in rows]
 	else:
 		raise InvalidArgumentError("rows must be a list of dicts or a list of lists")

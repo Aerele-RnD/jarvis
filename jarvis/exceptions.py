@@ -14,6 +14,14 @@ class InvalidArgumentError(JarvisError):
     """Raised when tool arguments fail validation."""
 
 
+class NoDataError(InvalidArgumentError):
+    """Raised when an export/report tool has nothing to produce (e.g. no rows
+    to write to a workbook). Carries a clean, user-facing message the agent
+    relays as-is — the point is to say "there's nothing to export" rather than
+    hand back an empty file. Inherits from InvalidArgumentError so existing
+    error envelopes route it the same way."""
+
+
 class ResultTooLargeError(InvalidArgumentError):
     """Raised when a row-dumping tool's result exceeds the guard threshold
     and the caller did not opt in with ``confirm_large=True``.
