@@ -155,13 +155,14 @@ def get_conversation(conversation: str) -> dict:
 
 
 @frappe.whitelist()
-def get_canvas(message: str, name: str | None = None) -> dict:
+def get_canvas(message: str, name: str | None = None, dark: int = 0) -> dict:
 	"""Return one canvas artifact's render-ready content for inline display.
 
 	Permission: the caller must own the parent conversation (same gate as
 	get_conversation). Returns {name, title, type, content} where content is
 	ready to drop into a sandboxed iframe srcdoc — HTML as-is, SVG wrapped in
-	a minimal HTML shell.
+	a minimal HTML shell. ``dark`` themes the SVG shell (and the frame bg the
+	SPA renders behind it) so the preview page follows the app's dark mode.
 	"""
 	from frappe import _ as _t
 
@@ -187,13 +188,19 @@ def get_canvas(message: str, name: str | None = None) -> dict:
 	if typ in ("html", "svg"):
 		# Rendered inline in a sandboxed iframe srcdoc.
 		body = raw.decode("utf-8") if isinstance(raw, bytes) else (raw or "")
+		bg, fg = ("#16161a", "#ededf2") if int(dark or 0) else ("#fff", "#171717")
 		if typ == "svg":
 			body = (
 				'<!doctype html><meta charset="utf-8">'
-				"<style>html,body{margin:0;height:100%;background:#fff}"
+				f"<style>html,body{{margin:0;height:100%;background:{bg};color:{fg}}}"
 				"svg{display:block;max-width:100%;height:auto;margin:0 auto}</style>"
 				+ body
 			)
+		elif int(dark or 0) and "<style" not in body and "background" not in body[:600]:
+			# Agent-authored HTML with no styling of its own: give it the app's
+			# dark canvas instead of the browser-default white glare. HTML that
+			# styles itself is left untouched.
+			body = f"<style>:root{{color-scheme:dark}}body{{background:{bg};color:{fg}}}</style>" + body
 		out["content"] = body
 	else:
 		# pdf / image / file → base64 data URL (used by <iframe>/<img>/download).
@@ -468,29 +475,9 @@ def send_message(
 				}
 		except Exception:
 			pass
-	# Dispatch the turn. On the default Node socketio backend we route to
-	# the ``long`` RQ queue (chat turns can run up to
-	# ``_AGENT_TURN_WORKER_TIMEOUT`` = 720s, far above the 300s default
-	# cap; ``default`` is shared with provisioning + OAuth-refresh jobs
-	# which would otherwise block interactive chat behind 30s+ pieces of
-	# infrastructure work; ``at_front=True`` keeps interactive chat ahead
-	# of any scheduled long-running job). When the bench is on the Python
-	# socketio backend, dispatch goes through Redis pub/sub instead: an
-	# in-process subscriber inside Frappe's existing Python realtime
-	# process (see ``jarvis.realtime.handlers``) picks it up and runs the
-	# turn via gevent, removing the RQ-worker concurrency cap.
-	if (frappe.conf.get("socketio_backend") or "").strip().lower() == "python":
-		from jarvis.chat.dispatch import publish_chat_send
-
-		publish_chat_send(enqueue_kwargs)
-	else:
-		frappe.enqueue(
-			method="jarvis.chat.worker.run_agent_turn",
-			queue="long",
-			timeout=_AGENT_TURN_WORKER_TIMEOUT,
-			at_front=True,
-			**enqueue_kwargs,
-		)
+	# Dispatch the turn (see _dispatch_turn for the Node-RQ vs Python-pubsub
+	# routing rationale).
+	_dispatch_turn(enqueue_kwargs)
 
 	# Latency telemetry (plan Phase 0): one line per send so the web-request
 	# segments are measurable. total_ms should now sit in the tens of ms even
@@ -752,6 +739,76 @@ def _next_seq(conversation: str) -> int:
 	return (current_max or 0) + 1
 
 
+def _dispatch_turn(enqueue_kwargs: dict) -> None:
+	"""Route a prepared turn to the worker. On the default Node socketio backend
+	we use the ``long`` RQ queue (chat turns run up to ``_AGENT_TURN_WORKER_TIMEOUT``
+	= 720s, far above the 300s default cap; ``default`` is shared with provisioning
+	+ OAuth-refresh jobs; ``at_front=True`` keeps interactive chat ahead of
+	scheduled work). On the Python socketio backend we publish to Redis instead so
+	an in-process subscriber (``jarvis.realtime.handlers``) runs it via gevent,
+	removing the RQ concurrency cap. Shared by send_message, retry_message and the
+	macro engine so every turn dispatches identically."""
+	if (frappe.conf.get("socketio_backend") or "").strip().lower() == "python":
+		from jarvis.chat.dispatch import publish_chat_send
+
+		publish_chat_send(enqueue_kwargs)
+	else:
+		frappe.enqueue(
+			method="jarvis.chat.worker.run_agent_turn",
+			queue="long",
+			timeout=_AGENT_TURN_WORKER_TIMEOUT,
+			at_front=True,
+			**enqueue_kwargs,
+		)
+
+
+def _enqueue_turn(
+	conversation: str,
+	prompt: str,
+	*,
+	model_override: str | None = None,
+	thinking_override: str | None = None,
+) -> dict:
+	"""Persist a user message + dispatch an agent turn for ``prompt`` (no
+	attachments / no auto-context). The macro engine (``jarvis.chat.macros``) uses
+	this to run one step exactly the way ``send_message`` runs a typed message —
+	same seq/session_key/dispatch path. Returns ``{run_id, message_id}``."""
+	conv_doc = frappe.get_doc(CONV, conversation)
+	if model_override:
+		conv_doc.model_override = model_override
+	if thinking_override is not None:
+		conv_doc.thinking_override = (thinking_override or "").strip().lower()
+
+	# First turn of a fresh (managed) macro conversation needs a session_key.
+	from jarvis import selfhost
+	if not selfhost.is_self_hosted() and not conv_doc.session_key:
+		conv_doc.session_key = _ensure_session_key(conv_doc.owner)
+
+	seq = _next_seq(conversation)
+	msg_doc = frappe.get_doc({
+		"doctype": MSG,
+		"conversation": conversation,
+		"seq": seq,
+		"role": "user",
+		"content": prompt,
+		"streaming": 0,
+	})
+	msg_doc.flags.ignore_permissions = True
+	msg_doc.insert()
+	conv_doc.last_active_at = frappe.utils.now()
+	conv_doc.flags.ignore_permissions = True
+	conv_doc.save()
+	frappe.db.commit()
+
+	run_id = uuid.uuid4().hex[:12]
+	_dispatch_turn({
+		"conversation_id": conversation,
+		"message_id": msg_doc.name,
+		"run_id": run_id,
+	})
+	return {"run_id": run_id, "message_id": msg_doc.name}
+
+
 def _ensure_session_key(user: str, sess: OpenclawSession | None = None) -> str:
 	"""Create an openclaw session for `user`, persist the Chat Session row,
 	and return the session_key. Caller is responsible for storing it on the
@@ -804,3 +861,41 @@ def _ensure_session_key(user: str, sess: OpenclawSession | None = None) -> str:
 	frappe.db.commit()
 
 	return session_key
+
+
+# Layout / non-editable fieldtypes the action-edit form should never render an
+# input for (mirrors the set the desk form skips).
+_NON_EDIT_FIELDTYPES = {
+	"Section Break", "Column Break", "Tab Break", "Fold", "Heading",
+	"HTML", "Button", "Image", "Table", "Table MultiSelect", "Attach",
+	"Attach Image", "Signature", "Geolocation", "Barcode",
+}
+
+
+@frappe.whitelist()
+def get_doctype_fields(doctype: str) -> dict:
+	"""Field metadata (fieldtype + options) for a DocType, so the chat SPA can
+	render the record-edit card with proper controls (Link → searchable picker,
+	Select → dropdown, Date → date input) instead of plain text boxes.
+
+	Returns only editable, data-bearing fields (layout/display fieldtypes are
+	dropped). Read-only structural info — gated on the caller being able to read
+	the DocType so it can't be used to enumerate arbitrary schemas."""
+	doctype = (doctype or "").strip()
+	if not doctype or not frappe.db.exists("DocType", doctype):
+		return {"ok": False, "reason": _("unknown doctype"), "fields": []}
+	if not frappe.has_permission(doctype, "read"):
+		frappe.throw(_("You don't have access to {0}.").format(doctype), frappe.PermissionError)
+	meta = frappe.get_meta(doctype)
+	fields = []
+	for df in meta.fields:
+		if df.fieldtype in _NON_EDIT_FIELDTYPES or not df.fieldname:
+			continue
+		fields.append({
+			"fieldname": df.fieldname,
+			"label": df.label or df.fieldname,
+			"fieldtype": df.fieldtype,
+			"options": df.options or "",
+			"reqd": int(df.reqd or 0),
+		})
+	return {"ok": True, "doctype": doctype, "fields": fields}

@@ -74,12 +74,34 @@ def invoked_skill_clause(message: str) -> str:
 	slugs = {s.lower() for s in _INVOKE_RE.findall(message)}
 	if not slugs:
 		return ""
+	# Only skills the current chat user OWNS or was SHARED with can be invoked by
+	# slug — so a skill shared with specific people isn't triggerable by others
+	# (even though it lives in the customer's shared container). Auto-pick by
+	# description is still bench-global (a container-level limitation).
+	me = frappe.session.user
 	enabled = {
 		r.skill_name
 		for r in frappe.get_all(
-			"Jarvis Custom Skill", filters={"enabled": 1}, fields=["skill_name"]
+			"Jarvis Custom Skill", filters={"enabled": 1, "owner": me}, fields=["skill_name"]
 		)
 	}
+	shared_names = [
+		r.parent
+		for r in frappe.get_all(
+			"Jarvis Custom Skill Share",
+			filters={"user": me, "parenttype": "Jarvis Custom Skill"},
+			fields=["parent"],
+		)
+	]
+	if shared_names:
+		enabled |= {
+			r.skill_name
+			for r in frappe.get_all(
+				"Jarvis Custom Skill",
+				filters={"enabled": 1, "name": ["in", shared_names]},
+				fields=["skill_name"],
+			)
+		}
 	matched = sorted(s for s in slugs if s in enabled)
 	if not matched:
 		return ""

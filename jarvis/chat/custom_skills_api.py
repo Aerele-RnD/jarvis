@@ -26,21 +26,66 @@ _LOCK_NAME = "jarvis_custom_skills_push"
 # --------------------------------------------------------------------------- #
 # CRUD (owner-scoped; frappe.get_doc enforces if_owner on read/write/delete)
 # --------------------------------------------------------------------------- #
+SHARE = "Jarvis Custom Skill Share"
+
+
+def _full_name(user: str) -> str:
+	return frappe.db.get_value("User", user, "full_name") or user
+
+
+def _skill_names_shared_with(user: str) -> list[str]:
+	"""Skill row-names shared with ``user`` (child-table lookup, perm-free)."""
+	return [
+		r.parent
+		for r in frappe.get_all(
+			SHARE, filters={"user": user, "parenttype": SKILL}, fields=["parent"]
+		)
+	]
+
+
 @frappe.whitelist()
 def list_custom_skills() -> list[dict]:
-	"""Return the current user's custom skills (no instructions body)."""
-	return frappe.get_all(
+	"""The current user's own skills PLUS skills shared with them (read-only).
+
+	Own rows carry ``mine=1`` + ``shared_count``; shared-with-me rows carry
+	``mine=0`` + ``shared_by`` (owner's name) and only when ``enabled`` (a draft
+	the owner shared is not surfaced to recipients)."""
+	me = frappe.session.user
+	own = frappe.get_all(
 		SKILL,
-		filters={"owner": frappe.session.user},
+		filters={"owner": me},
 		fields=["name", "skill_name", "description", "user_invocable", "enabled", "modified"],
 		order_by="skill_name asc",
 	)
+	for s in own:
+		s["mine"] = 1
+		s["shared_count"] = frappe.db.count(SHARE, {"parent": s["name"]})
+
+	shared_names = _skill_names_shared_with(me)
+	shared = []
+	if shared_names:
+		for s in frappe.get_all(
+			SKILL,
+			filters={"name": ["in", shared_names], "enabled": 1},
+			fields=["name", "skill_name", "description", "user_invocable", "enabled", "owner", "modified"],
+			order_by="skill_name asc",
+		):
+			s["mine"] = 0
+			s["shared_by"] = _full_name(s.pop("owner"))
+			shared.append(s)
+	return own + shared
 
 
 @frappe.whitelist()
 def get_custom_skill(name: str) -> dict:
-	"""Return one skill incl. the full markdown instructions (owner-gated)."""
+	"""Return one skill incl. the full markdown instructions. Readable by the
+	owner (editable) or a user it's shared with (read-only). ``can_edit`` tells
+	the SPA which view to render."""
 	doc = frappe.get_doc(SKILL, name)
+	me = frappe.session.user
+	is_owner = doc.owner == me
+	if not is_owner and not frappe.db.exists(SHARE, {"parent": name, "user": me}):
+		frappe.throw(_("You don't have access to this skill."), frappe.PermissionError)
 	return {
 		"name": doc.name,
 		"skill_name": doc.skill_name,
@@ -49,6 +94,9 @@ def get_custom_skill(name: str) -> dict:
 		"user_invocable": int(doc.user_invocable or 0),
 		"enabled": int(doc.enabled or 0),
 		"modified": str(doc.modified or ""),
+		"mine": int(is_owner),
+		"can_edit": int(is_owner),
+		"shared_by": "" if is_owner else _full_name(doc.owner),
 	}
 
 
@@ -109,6 +157,61 @@ def delete_custom_skill(name: str) -> dict:
 	frappe.delete_doc(SKILL, name)  # honors if_owner permission
 	frappe.db.commit()
 	return {"ok": True}
+
+
+# --------------------------------------------------------------------------- #
+# Sharing (owner shares a skill with specific users; recipients get read-only
+# use — they cannot edit, disable, delete, or re-share it)
+# --------------------------------------------------------------------------- #
+@frappe.whitelist()
+def list_shareable_users() -> list[dict]:
+	"""Users the current user can share a skill with (staff on this bench,
+	excluding self + Guest). Feeds the share multiselect."""
+	me = frappe.session.user
+	return frappe.get_all(
+		"User",
+		filters={"enabled": 1, "name": ["not in", [me, "Guest", "Administrator"]]},
+		fields=["name", "full_name"],
+		order_by="full_name asc",
+		limit_page_length=500,
+	)
+
+
+@frappe.whitelist()
+def get_skill_shares(name: str) -> dict:
+	"""Return who a skill is currently shared with (owner only)."""
+	doc = frappe.get_doc(SKILL, name)
+	if doc.owner != frappe.session.user:
+		frappe.throw(_("Only the owner can manage sharing."), frappe.PermissionError)
+	return {
+		"users": [
+			{"name": r.user, "full_name": _full_name(r.user)} for r in (doc.shared_with or [])
+		]
+	}
+
+
+@frappe.whitelist()
+def share_custom_skill(name: str, users=None) -> dict:
+	"""Replace a skill's share list with ``users`` (a JSON array or list of user
+	ids). Owner only. Recipients get read-only use; they can never re-share."""
+	doc = frappe.get_doc(SKILL, name)
+	doc.check_permission("write")  # owner-gate
+	if doc.owner != frappe.session.user:
+		frappe.throw(_("Only the owner can share this skill."), frappe.PermissionError)
+	raw = frappe.parse_json(users) if isinstance(users, str) else (users or [])
+	clean, seen = [], set()
+	for u in raw if isinstance(raw, list) else []:
+		u = (u or "").strip()
+		if not u or u in seen or u == doc.owner or u == "Guest":
+			continue
+		if not frappe.db.exists("User", u):
+			continue
+		seen.add(u)
+		clean.append(u)
+	doc.set("shared_with", [{"user": u} for u in clean])
+	doc.save()
+	frappe.db.commit()
+	return {"ok": True, "data": {"count": len(clean)}}
 
 
 # --------------------------------------------------------------------------- #

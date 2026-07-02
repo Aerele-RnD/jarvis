@@ -10,8 +10,8 @@ export const getConversation = (conversation) =>
 // Rich outputs: fetch one canvas/chart artifact's render-ready HTML for an
 // assistant message (sandboxed-iframe srcdoc). `name` selects which artifact
 // when a message has several.
-export const getCanvas = (message, name) =>
-	call("jarvis.chat.api.get_canvas", { message, name: name || "" })
+export const getCanvas = (message, name, dark) =>
+	call("jarvis.chat.api.get_canvas", { message, name: name || "", dark: dark ? 1 : 0 })
 // Tabular/text preview for the artifact side panel (xlsx/csv → sheets, txt → text).
 export const previewFile = (fileUrl) =>
 	call("jarvis.chat.api.preview_file", { file_url: fileUrl })
@@ -42,6 +42,24 @@ export const updateCustomSkill = (p) => call(SK + "update_custom_skill", p)
 export const deleteCustomSkill = (name) => call(SK + "delete_custom_skill", { name })
 export const applyCustomSkills = () => call(SK + "apply_custom_skills")
 export const getCustomSkillsSyncStatus = () => call(SK + "get_custom_skills_sync_status")
+// Skill sharing: owner shares a skill with specific users (read-only for them).
+export const listShareableUsers = () => call(SK + "list_shareable_users")
+export const getSkillShares = (name) => call(SK + "get_skill_shares", { name })
+export const shareCustomSkill = (name, users) => call(SK + "share_custom_skill", { name, users: JSON.stringify(users || []) })
+
+// --- Macros (customer-authored prompt sequences run as chained turns) ---
+const MC = "jarvis.chat.macros_api."
+export const listMacros = () => call(MC + "list_macros")
+export const getMacro = (name) => call(MC + "get_macro", { name })
+export const createMacro = (p) => call(MC + "create_macro", { ...p, steps: JSON.stringify(p.steps || []) })
+export const updateMacro = (p) => {
+	const args = { ...p }
+	if (p.steps !== undefined) args.steps = JSON.stringify(p.steps)
+	return call(MC + "update_macro", args)
+}
+export const deleteMacro = (name) => call(MC + "delete_macro", { name })
+export const runMacro = (name) => call(MC + "run_macro", { name })
+export const stopMacroRun = (run) => call(MC + "stop_macro_run", { run })
 export const setConversationModel = (conversation, model) =>
 	call("jarvis.chat.api.set_conversation_model", { conversation, model: model || "" })
 
@@ -59,6 +77,11 @@ export async function sendMessage(conversation, message, modelOverride, attachme
 // Mentions: reuse Frappe's built-in Link-field search (no custom backend).
 export const searchLink = (doctype, txt) =>
 	call("frappe.desk.search.search_link", { doctype, txt: txt || "", page_length: 8 })
+
+// Field metadata for the record-edit action card: powers Link/Select/Date
+// controls (returns {ok, doctype, fields:[{fieldname,label,fieldtype,options}]}).
+export const getDoctypeFields = (doctype) =>
+	call("jarvis.chat.api.get_doctype_fields", { doctype })
 
 // File input: upload to Frappe's File doctype, return {file_url, file_name}.
 export async function uploadFile(file) {
