@@ -73,6 +73,7 @@ class TestThinkingDirectiveLeading(FrappeTestCase):
 		The second call, if any, is the auto-title prompt and must be ignored.
 		"""
 		fake_sess = MagicMock()
+		fake_sess.create_session.return_value = "agent:fake"
 		fake_sess.stream_agent_turn.side_effect = lambda *a, **kw: iter([
 			{"kind": "lifecycle", "phase": "start"},
 			{"kind": "lifecycle", "phase": "end"},

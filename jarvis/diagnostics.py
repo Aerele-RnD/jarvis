@@ -69,10 +69,7 @@ def force_resync(action: str = "reload") -> dict:
 	if action not in ("reload", "restart"):
 		raise frappe.ValidationError(f"invalid action {action!r}; expected reload or restart")
 	settings = frappe.get_single("Jarvis Settings")
-	if (settings.get_password("jarvis_admin_api_key", raise_exception=False) or "").strip():
-		settings._sync_via_admin(action)
-	else:
-		settings._sync_via_local_openclaw(action)
+	settings._sync_via_admin(action)
 	settings.reload()
 	return {
 		"action": action,
