@@ -153,7 +153,7 @@ class TestBeginPasteSignin(_OAuthApiBase):
 		entering the OAuth nonce cache."""
 		out = oauth_api.begin_paste_signin("Google Gemini", "gemini-pro")
 		entry = frappe.cache.hget(_CACHE_KEY, out["data"]["nonce"])
-		self.assertEqual(entry["model"], "gemini-2.0-pro")
+		self.assertEqual(entry["model"], "gemini-2.5-pro")
 
 
 class TestCompletePasteSigninParsing(_OAuthApiBase):

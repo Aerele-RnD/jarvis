@@ -106,9 +106,9 @@ class TestRunAgentTurnToolCall(FrappeTestCase):
 		fake_sess = MagicMock()
 		fake_sess.stream_agent_turn.return_value = _fake_event_stream([
 			{"kind": "lifecycle", "phase": "start"},
-			{"kind": "tool", "phase": "start", "tool_name": "jarvis__get_list",
+			{"kind": "tool", "phase": "start", "tool_name": "browser",
 			 "tool_call_id": "tc-1"},
-			{"kind": "tool", "phase": "end", "tool_name": "jarvis__get_list",
+			{"kind": "tool", "phase": "end", "tool_name": "browser",
 			 "tool_call_id": "tc-1", "status": "completed"},
 			{"kind": "assistant", "text": "Done", "delta": "Done"},
 			{"kind": "lifecycle", "phase": "end"},
@@ -123,7 +123,7 @@ class TestRunAgentTurnToolCall(FrappeTestCase):
 			fields=["tool_name", "tool_status"],
 		)
 		self.assertEqual(len(tools), 1)
-		self.assertEqual(tools[0]["tool_name"], "jarvis__get_list")
+		self.assertEqual(tools[0]["tool_name"], "browser")
 		self.assertEqual(tools[0]["tool_status"], "completed")
 
 

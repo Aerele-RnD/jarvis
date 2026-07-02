@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
+from frappe.utils.password import remove_encrypted_password, set_encrypted_password
 
 
 LLM_BASELINE = {
@@ -46,10 +47,27 @@ _SNAPSHOT_PASSWORD_FIELDS = (
 def _reset_settings():
     """Reset settings to a known baseline. Seeds admin credentials so
     `_sync_via_admin` doesn't fail with `AdminAuthError` (callers mock
-    the admin_client HTTP call separately)."""
+    the admin_client HTTP call separately).
+
+    Two test-isolation guards are baked in here:
+
+    * ``llm_auth_mode`` is pinned to its ``api_key`` default. The classifier
+      keys ``restart`` off ``has_value_changed("llm_auth_mode")``. When the
+      field is absent/empty in ``tabSingles`` (as a prior test can leave it),
+      ``get_single`` applies the ``api_key`` default in memory while the
+      ``for_update`` snapshot loaded during ``save()`` reads it back as
+      ``None`` - so *every* save misfires as a structural ``restart``.
+      Persisting a concrete value makes both sides agree.
+    * Password fields are rewritten through the encrypted ``__Auth`` store.
+      ``db_set`` on a Password field only writes plaintext into ``tabSingles``
+      and never touches ``__Auth``, so a stale encrypted entry bled in from
+      another test (e.g. ``test_onboarding_sync``'s ``sk-test``) keeps winning
+      on ``get_password()``. Clear + set makes ``__Auth`` authoritative.
+    """
     settings = frappe.get_single("Jarvis Settings")
     base = {
         **LLM_BASELINE,
+        "llm_auth_mode": "api_key",
         "jarvis_admin_url": "http://127.0.0.1:8000",
         "jarvis_admin_api_key": "test-admin-key",
         "jarvis_admin_api_secret": "test-admin-secret",
@@ -58,6 +76,9 @@ def _reset_settings():
     }
     for field, value in base.items():
         settings.db_set(field, value)
+    for field in _SNAPSHOT_PASSWORD_FIELDS:
+        remove_encrypted_password("Jarvis Settings", "Jarvis Settings", field)
+        set_encrypted_password("Jarvis Settings", "Jarvis Settings", base[field], field)
     frappe.db.commit()
 
 
