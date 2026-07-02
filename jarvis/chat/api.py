@@ -140,13 +140,14 @@ def get_conversation(conversation: str) -> dict:
 
 
 @frappe.whitelist()
-def get_canvas(message: str, name: str | None = None) -> dict:
+def get_canvas(message: str, name: str | None = None, dark: int = 0) -> dict:
 	"""Return one canvas artifact's render-ready content for inline display.
 
 	Permission: the caller must own the parent conversation (same gate as
 	get_conversation). Returns {name, title, type, content} where content is
 	ready to drop into a sandboxed iframe srcdoc — HTML as-is, SVG wrapped in
-	a minimal HTML shell.
+	a minimal HTML shell. ``dark`` themes the SVG shell (and the frame bg the
+	SPA renders behind it) so the preview page follows the app's dark mode.
 	"""
 	from frappe import _ as _t
 
@@ -172,13 +173,19 @@ def get_canvas(message: str, name: str | None = None) -> dict:
 	if typ in ("html", "svg"):
 		# Rendered inline in a sandboxed iframe srcdoc.
 		body = raw.decode("utf-8") if isinstance(raw, bytes) else (raw or "")
+		bg, fg = ("#16161a", "#ededf2") if int(dark or 0) else ("#fff", "#171717")
 		if typ == "svg":
 			body = (
 				'<!doctype html><meta charset="utf-8">'
-				"<style>html,body{margin:0;height:100%;background:#fff}"
+				f"<style>html,body{{margin:0;height:100%;background:{bg};color:{fg}}}"
 				"svg{display:block;max-width:100%;height:auto;margin:0 auto}</style>"
 				+ body
 			)
+		elif int(dark or 0) and "<style" not in body and "background" not in body[:600]:
+			# Agent-authored HTML with no styling of its own: give it the app's
+			# dark canvas instead of the browser-default white glare. HTML that
+			# styles itself is left untouched.
+			body = f"<style>:root{{color-scheme:dark}}body{{background:{bg};color:{fg}}}</style>" + body
 		out["content"] = body
 	else:
 		# pdf / image / file → base64 data URL (used by <iframe>/<img>/download).
@@ -777,3 +784,41 @@ def _ensure_session_key(user: str) -> str:
 	frappe.db.commit()
 
 	return session_key
+
+
+# Layout / non-editable fieldtypes the action-edit form should never render an
+# input for (mirrors the set the desk form skips).
+_NON_EDIT_FIELDTYPES = {
+	"Section Break", "Column Break", "Tab Break", "Fold", "Heading",
+	"HTML", "Button", "Image", "Table", "Table MultiSelect", "Attach",
+	"Attach Image", "Signature", "Geolocation", "Barcode",
+}
+
+
+@frappe.whitelist()
+def get_doctype_fields(doctype: str) -> dict:
+	"""Field metadata (fieldtype + options) for a DocType, so the chat SPA can
+	render the record-edit card with proper controls (Link → searchable picker,
+	Select → dropdown, Date → date input) instead of plain text boxes.
+
+	Returns only editable, data-bearing fields (layout/display fieldtypes are
+	dropped). Read-only structural info — gated on the caller being able to read
+	the DocType so it can't be used to enumerate arbitrary schemas."""
+	doctype = (doctype or "").strip()
+	if not doctype or not frappe.db.exists("DocType", doctype):
+		return {"ok": False, "reason": _("unknown doctype"), "fields": []}
+	if not frappe.has_permission(doctype, "read"):
+		frappe.throw(_("You don't have access to {0}.").format(doctype), frappe.PermissionError)
+	meta = frappe.get_meta(doctype)
+	fields = []
+	for df in meta.fields:
+		if df.fieldtype in _NON_EDIT_FIELDTYPES or not df.fieldname:
+			continue
+		fields.append({
+			"fieldname": df.fieldname,
+			"label": df.label or df.fieldname,
+			"fieldtype": df.fieldtype,
+			"options": df.options or "",
+			"reqd": int(df.reqd or 0),
+		})
+	return {"ok": True, "doctype": doctype, "fields": fields}
