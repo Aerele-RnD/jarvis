@@ -1633,10 +1633,14 @@ const pendingFiles = ref([]) // [{ file_url, file_name }] attachments to send
 const uploading = ref(false)
 const fileInput = ref(null)
 const mention = ref({ open: false, type: "", query: "", start: 0, items: [], index: 0 })
-const JARVIS_TOOLS = [
-	"get_list", "get_doc", "get_schema", "run_query", "run_report",
+// Tool names for the "Tools available" count + the /tool autocomplete. Seeded
+// with the core set as a fallback, then replaced on mount with the live bench
+// registry (jarvis.chat.api.list_tools) so it reflects every registered tool
+// instead of drifting from a hardcoded list.
+const jarvisTools = ref([
+	"get_list", "get_doc", "get_schema", "query", "run_report",
 	"create_doc", "update_doc", "submit_doc", "cancel_doc", "amend_doc", "delete_doc",
-]
+])
 
 function cookie(name) {
 	return new URLSearchParams(document.cookie.split("; ").join("&")).get(name)
@@ -1735,7 +1739,7 @@ const showWelcome = computed(
 // settings/overview derived metrics (all from data we already hold)
 const convCount = computed(() => conversations.value.length)
 const msgCount = computed(() => visibleMessages.value.length)
-const toolCount = computed(() => JARVIS_TOOLS.length)
+const toolCount = computed(() => jarvisTools.value.length)
 const sessionToolCalls = computed(() =>
 	Object.values(runMeta.value).reduce((s, r) => s + (r.tools || 0), 0),
 )
@@ -1827,7 +1831,48 @@ const _MACRO_RE = /```jarvis-macro[ \t]*\n([\s\S]*?)```/
 // A ```jarvis-chart block: a high-level chart spec the chat renders inline with
 // ECharts (themed by chartTheme; the agent never sends raw ECharts options).
 const _CHART_RE = /```jarvis-chart[ \t]*\n([\s\S]*?)```/g
-const _CHART_TYPES = new Set(["bar", "line", "area", "pie", "donut"])
+const _CHART_TYPES = new Set(["bar", "line", "area", "pie", "donut", "scatter", "bubble", "heatmap", "boxplot", "radar", "funnel", "gauge"])
+// The agent keeps emitting ```mermaid xychart-beta for DATA charts instead of
+// jarvis-chart. Mermaid renders xychart unstyled and crams the axis labels, so
+// we intercept those blocks, parse the fixed xychart-beta grammar into a
+// jarvis-chart spec, and render them through the themed ECharts path instead.
+const _XYCHART_RE = /```mermaid[ \t]*\n([\s\S]*?)```/g
+function _xySplit(s) {
+	const out = []
+	const re = /"([^"]*)"|'([^']*)'|([^,]+)/g
+	let m
+	while ((m = re.exec(s))) {
+		const v = (m[1] ?? m[2] ?? m[3] ?? "").trim().replace(/^["']|["']$/g, "")
+		if (v) out.push(v)
+	}
+	return out
+}
+function parseXychart(body) {
+	const text = String(body || "")
+	if (!/^\s*xychart-beta\b/.test(text)) return null
+	const horizontal = /xychart-beta[ \t]+horizontal\b/.test(text)
+	const tM = text.match(/title[ \t]+"([^"]*)"/)
+	const yM = text.match(/y-axis[ \t]+"([^"]*)"/)
+	const yLabel = yM ? yM[1].trim() : undefined
+	let x = []
+	const xM = text.match(/x-axis[ \t]+\[([^\]]*)\]/)
+	if (xM) x = _xySplit(xM[1])
+	const series = []
+	let anyBar = false
+	const re = /\b(bar|line)[ \t]+(?:"([^"]*)"[ \t]+)?\[([^\]]*)\]/g
+	let m
+	while ((m = re.exec(text))) {
+		const data = _xySplit(m[3]).map(Number).filter((n) => !Number.isNaN(n))
+		if (!data.length) continue
+		if (m[1] === "bar") anyBar = true
+		series.push({ name: m[2] || yLabel || "Value", data })
+	}
+	if (!series.length) return null
+	const spec = { type: anyBar ? "bar" : "line", x, series }
+	if (tM) spec.title = tM[1].trim()
+	if (horizontal) spec.options = { horizontal: true }
+	return spec
+}
 function stripBlocks(text) {
 	return (text || "")
 		.replace(/```jarvis-action[ \t]*\n[\s\S]*?```/g, "")
@@ -1837,6 +1882,7 @@ function stripBlocks(text) {
 		.replace(/```jarvis-skill[ \t]*\n[\s\S]*?```/g, "")
 		.replace(/```jarvis-macro[ \t]*\n[\s\S]*?```/g, "")
 		.replace(/```jarvis-chart[ \t]*\n[\s\S]*?```/g, "")
+		.replace(/```mermaid[ \t]*\n[ \t]*xychart-beta[\s\S]*?```/g, "")
 		.replace(/\n{3,}/g, "\n\n")
 		.trim()
 }
@@ -1923,7 +1969,7 @@ function macroCardOf(m) {
 const _chartsCache = new Map()
 function chartsOf(m) {
 	const content = (m && m.content) || ""
-	if (!content.includes("jarvis-chart")) return []
+	if (!content.includes("jarvis-chart") && !content.includes("xychart-beta")) return []
 	if (_chartsCache.has(content)) return _chartsCache.get(content)
 	const specs = []
 	for (const mt of content.matchAll(_CHART_RE)) {
@@ -1935,6 +1981,10 @@ function chartsOf(m) {
 		} catch (e) {
 			/* incomplete mid-stream JSON: skip until the closing fence arrives */
 		}
+	}
+	for (const mt of content.matchAll(_XYCHART_RE)) {
+		const s = parseXychart(mt[1])
+		if (s) specs.push(s)
 	}
 	_chartsCache.set(content, specs)
 	return specs
@@ -2724,7 +2774,7 @@ async function _renderMermaid() {
 			primaryBorderColor: dark ? "#3a3a45" : "#d6e2fb",
 			primaryTextColor: dark ? "#ededf2" : "#171717",
 			lineColor: dark ? "#5b7cfa" : "#3b82f6",
-			textColor: dark ? "#b6b6c0" : "#4a4a4f",
+			textColor: dark ? "#b6b6c0" : "#4a4a4f", xyChart: { backgroundColor: dark ? "#16161a" : "#ffffff", titleColor: dark ? "#ededf2" : "#171717", xAxisLabelColor: dark ? "#b6b6c0" : "#4a4a4f", xAxisTitleColor: dark ? "#b6b6c0" : "#4a4a4f", xAxisTickColor: dark ? "#3a3a45" : "#d6e2fb", xAxisLineColor: dark ? "#3a3a45" : "#d6e2fb", yAxisLabelColor: dark ? "#b6b6c0" : "#4a4a4f", yAxisTitleColor: dark ? "#b6b6c0" : "#4a4a4f", yAxisTickColor: dark ? "#3a3a45" : "#d6e2fb", yAxisLineColor: dark ? "#3a3a45" : "#d6e2fb", plotColorPalette: MERMAID_PALETTE.join(",") },
 		},
 	})
 	let n = 0
@@ -2899,11 +2949,12 @@ async function send(textArg) {
 		mention.value = { ...mention.value, open: false }
 		nextTick(autoGrow)
 	}
-	if (!currentId.value) {
-		const conv = await api.createOrFocusEmpty()
-		currentId.value = conv?.name || conv
-		await loadConversations()
-	}
+	// No awaited pre-flight for a brand-new chat (latency plan, Phase 1.3):
+	// the backend's send_message creates/focuses the empty conversation
+	// itself and returns conversation_id — two fewer round-trips before the
+	// first message even leaves the browser. The sidebar refresh happens
+	// after the send resolves, off the critical path.
+	const isNewConv = !currentId.value
 	sending.value = true
 	waiting.value = true
 	stoppedRunId.value = null
@@ -2917,7 +2968,13 @@ async function send(textArg) {
 	await nextTick()
 	scrollBottom()
 	try {
-		await api.sendMessage(currentId.value, text, undefined, attachments)
+		const r = await api.sendMessage(currentId.value || "", text, undefined, attachments)
+		if (isNewConv && r?.conversation_id) {
+			// Adopt the server-created conversation so realtime events route to
+			// this thread, then refresh the sidebar without blocking anything.
+			currentId.value = r.conversation_id
+			loadConversations()
+		}
 	} catch (e) {
 		sending.value = false
 		waiting.value = false
@@ -3212,7 +3269,7 @@ async function queryMentions(type, query) {
 			const skills = customSkills.value
 				.filter((s) => s.enabled && (s.skill_name || "").includes(q))
 				.map((s) => ({ value: s.skill_name, sub: "skill" }))
-			const tools = JARVIS_TOOLS.filter((t) => t.includes(q)).map((t) => ({ value: t, sub: "tool" }))
+			const tools = jarvisTools.value.filter((t) => t.includes(q)).map((t) => ({ value: t, sub: "tool" }))
 			const r = await api.searchLink("DocType", query)
 			const dts = (r || []).map((x) => ({ value: x.value, sub: "doctype" }))
 			items = [...skills, ...tools, ...dts].slice(0, 8)
@@ -3242,19 +3299,27 @@ function applyMention(item) {
 }
 
 onMounted(async () => {
+	// Latency plan, Phase 1.3: the bootstrap network calls used to run as a
+	// serial awaited chain (ready → ui settings → conversations), each a full
+	// round-trip. Fire them concurrently and await in order below — the
+	// onboarding redirect check still resolves before anything is revealed,
+	// and list_conversations (which triggers the server-side prefix prewarm)
+	// now starts ~2 RTTs earlier.
+	const readyP = api.isReadyForChat().catch(() => null)
+	const uiP = api.getChatUiSettings().catch(() => null)
+	const convsP = loadConversations().catch(() => {})
 	// Gate the chat the way the old Desk page did: if the customer hasn't
 	// finished signup / LLM setup, send them to the onboarding wizard. A
 	// transient failure falls through to the chat rather than trapping them.
-	try {
-		const r = await api.isReadyForChat()
-		if (r && r.ready === false) {
-			window.location.assign("/app/jarvis-onboarding")
-			return
-		}
-	} catch (e) {
-		/* fall through */
+	const r = await readyP
+	if (r && r.ready === false) {
+		window.location.assign("/app/jarvis-onboarding")
+		return
 	}
 	socket?.on("jarvis:event", onEvent)
+	// Live tool list for the "Tools available" count + /tool autocomplete
+	// (best-effort; falls back to the seeded core set on failure).
+	api.listTools().then((t) => { if (Array.isArray(t) && t.length) jarvisTools.value = t }).catch(() => {})
 	document.addEventListener("pointerdown", onDocClick)
 	window.addEventListener("keydown", onGlobalKey)
 	_thinkTimer = setInterval(() => { thinkTick.value = busy.value ? thinkTick.value + 1 : 0 }, 2200)
@@ -3262,15 +3327,11 @@ onMounted(async () => {
 	_mq = window.matchMedia("(prefers-color-scheme: dark)")
 	prefersDark.value = _mq.matches
 	_mq.addEventListener("change", onColorScheme)
-	try {
-		ui.value = (await api.getChatUiSettings()) || {}
-	} catch (e) {
-		/* ignore */
-	}
+	ui.value = (await uiP) || {}
 	// Load custom skills so the "/" composer menu can offer them.
 	loadCustomSkills()
 	try {
-		await loadConversations()
+		await convsP
 		// Restore the chat the user was last on (survives refresh + duplicated tab)
 		// before falling back to the first sidebar entry, so a starred chat sorting
 		// to the top never hijacks navigation away from your current chat.

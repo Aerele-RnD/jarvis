@@ -13,6 +13,8 @@
     "content",
     "streaming",
     "error",
+    "recovering",
+    "recovery_started_at",
     "tool_name",
     "tool_args",
     "tool_result",
@@ -60,6 +62,19 @@
       "fieldname": "error",
       "fieldtype": "Long Text",
       "label": "Error"
+    },
+    {
+      "fieldname": "recovering",
+      "fieldtype": "Check",
+      "label": "Recovering",
+      "default": 0,
+      "description": "True while a managed turn timed out or dropped on the bench but openclaw is presumed still working or finished. turn_recovery finalizes it from the gateway snapshot instead of erroring. streaming stays 1 so the UI keeps the spinner."
+    },
+    {
+      "fieldname": "recovery_started_at",
+      "fieldtype": "Datetime",
+      "label": "Recovery Started At",
+      "description": "When this row entered the recovering state. Bounds the recovery window against an absolute ceiling."
     },
     {
       "fieldname": "tool_name",

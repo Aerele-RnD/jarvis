@@ -168,6 +168,7 @@ function toggle() {
 	else openPanel();
 }
 async function openPanel() {
+	api.warmSession();
 	open.value = true;
 	hasUnread.value = false;
 	if (!booted.value) await boot();

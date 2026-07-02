@@ -297,6 +297,30 @@ def handle_chat_send(payload: dict) -> None:
 	attachments = payload.get("attachments")
 	context = payload.get("context")
 
+	# Latency telemetry (plan Phase 0): one summary line per turn with the
+	# segment timings that dominate first-message latency. queue_wait_ms is
+	# how long the job sat between the web request's enqueue and this
+	# handler starting (RQ dequeue + fork on the default backend).
+	from jarvis.chat.latency import get_logger as _get_latency_logger
+
+	_lat = _get_latency_logger()
+	t_handle0 = time.monotonic()
+	enqueued_at_ms = payload.get("enqueued_at_ms")
+	queue_wait_ms = (
+		max(0, int(time.time() * 1000) - int(enqueued_at_ms))
+		if enqueued_at_ms else -1
+	)
+	# Stream-phase stats filled in by _consume: ms to the first event of any
+	# kind, ms to the first assistant delta (= first visible token), and how
+	# many tool events fired before that first delta (measures the persona's
+	# read-SOUL/TOOLS/STYLE-before-answering tax; see the latency plan).
+	stream_stats = {
+		"t0": None, "first_event_ms": -1, "first_delta_ms": -1,
+		"pre_reply_tool_calls": 0,
+	}
+	checkout_ms = -1
+	session_create_ms = 0
+
 	conv = frappe.get_doc(CONV, conversation_id)
 	user = conv.owner
 	# Wall-clock turn start (epoch ms) - scopes codex imagegen output produced
@@ -396,7 +420,21 @@ def handle_chat_send(payload: dict) -> None:
 		batcher = _AssistantContentBatcher(assistant_msg.name)
 
 		def _consume(events) -> None:
+			if stream_stats["t0"] is None:
+				stream_stats["t0"] = time.monotonic()
 			for event in events:
+				# Segment telemetry (plan Phase 0): first event / first
+				# assistant delta / tool calls that ran before the first
+				# visible token. Cheap dict writes, no extra I/O.
+				ev_ms = int((time.monotonic() - stream_stats["t0"]) * 1000)
+				if stream_stats["first_event_ms"] < 0:
+					stream_stats["first_event_ms"] = ev_ms
+				kind = event.get("kind")
+				if kind == "assistant" and stream_stats["first_delta_ms"] < 0:
+					stream_stats["first_delta_ms"] = ev_ms
+				elif kind == "tool" and stream_stats["first_delta_ms"] < 0:
+					if (event.get("phase") or "") != "end":
+						stream_stats["pre_reply_tool_calls"] += 1
 				_handle_event(
 					event,
 					conversation_id=conversation_id,
@@ -447,13 +485,42 @@ def handle_chat_send(payload: dict) -> None:
 			).replace("https://", "wss://")
 			effective_model, oauth_provider_id = _resolve_model_and_provider(conv)
 			try:
+				t_checkout = time.monotonic()
 				with openclaw_session_pool.checkout(gateway_url) as sess:
+					checkout_ms = int((time.monotonic() - t_checkout) * 1000)
+					# First turn of this conversation: create the openclaw
+					# session on THIS pooled connection (no extra handshake)
+					# and persist the Jarvis Chat Session row BEFORE the
+					# stream starts — the plugin's call_tool sessionKey→user
+					# lookup (the permission moat) needs the row in place
+					# before the agent's first tool callback. Moved here from
+					# send_message so the browser-awaited POST never pays a
+					# WS connect (2026-07 latency plan, Phase 1.1). chat_user
+					# (the sender) owns the session row, keeping tool-call
+					# identity in lockstep with the [Context:] bracket above.
+					if not conv.session_key:
+						from jarvis.chat.api import _ensure_session_key
+
+						t_sess = time.monotonic()
+						conv.session_key = _ensure_session_key(chat_user, sess=sess)
+						frappe.db.set_value(
+							CONV, conversation_id, "session_key", conv.session_key
+						)
+						frappe.db.commit()
+						session_create_ms = int((time.monotonic() - t_sess) * 1000)
 					_consume(sess.stream_agent_turn(
 						conv.session_key, user_message, idem,
 						model=effective_model, provider=oauth_provider_id,
 						attachments=_to_managed_attachments(vision_parts) if vision_parts else None,
 					))
 			except OpenclawUnreachableError as e:
+				if getattr(e, "code", None) == "turn-timeout":
+					# openclaw is still running this turn and persists the
+					# result; park the row for snapshot recovery instead of
+					# falsely erroring. Spinner stays up (streaming=1) and
+					# turn_recovery finalizes it from the gateway snapshot.
+					_mark_recovering(assistant_msg.name)
+					return
 				_publish_run_error(str(e))
 				_advance_macro(conversation_id, errored=True)
 				return
@@ -561,27 +628,36 @@ def handle_chat_send(payload: dict) -> None:
 		"run_id": run_id,
 	})
 
+	# Latency telemetry summary (plan Phase 0). first_delta_ms is the number
+	# users feel: worker start → first visible token. pre_reply_tool_calls
+	# counts agent tool round-trips before that token (persona read tax).
+	_lat.info(
+		"turn run_id=%s first_turn=%d queue_wait_ms=%d checkout_ms=%d "
+		"session_create_ms=%d first_event_ms=%d first_delta_ms=%d "
+		"pre_reply_tool_calls=%d turn_total_ms=%d",
+		run_id, 1 if session_create_ms else 0, queue_wait_ms, checkout_ms,
+		session_create_ms, stream_stats["first_event_ms"],
+		stream_stats["first_delta_ms"], stream_stats["pre_reply_tool_calls"],
+		int((time.monotonic() - t_handle0) * 1000),
+	)
+
 	# Auto-title (managed mode): the first substantive turn of a still-unnamed
 	# conversation gets a concise, LLM-summarised title, not the raw first
-	# message. Runs AFTER run:end so the turn UI has already unblocked; the new
-	# title lands a few seconds later via a "conversation:renamed" event.
+	# message. Deferred to the SHORT queue (2026-07 latency plan, Phase 1.2):
+	# it used to run inline here — a full extra LLM turn holding this long-
+	# queue worker for 2-8s, so the user's next message could queue behind a
+	# title generation. The job re-resolves settings/model itself; the title
+	# still lands via the same "conversation:renamed" event.
 	# Best-effort: a title failure must never affect the completed turn.
 	from jarvis import selfhost
 	if not selfhost.is_self_hosted():
 		try:
 			from jarvis.chat import title as title_mod
 
-			gw = (settings.agent_url or "").replace(
-				"http://", "ws://"
-			).replace("https://", "wss://")
-			eff_model, oauth_pid = _resolve_model_and_provider(conv)
-			title_mod.maybe_autotitle(
-				conversation_id, user,
-				gateway_url=gw, model=eff_model, provider=oauth_pid,
-			)
+			title_mod.enqueue_autotitle(conversation_id, user)
 		except Exception:
 			frappe.log_error(
-				title="chat worker: auto-title failed",
+				title="chat worker: auto-title enqueue failed",
 				message=frappe.get_traceback(),
 			)
 
@@ -735,6 +811,17 @@ def _mark_errored(assistant_msg_name: str, error: str) -> None:
 	frappe.db.set_value(MSG, assistant_msg_name, {
 		"streaming": 0,
 		"error": error,
+	})
+	frappe.db.commit()
+
+
+def _mark_recovering(assistant_msg_name: str) -> None:
+	"""Park a managed turn for snapshot recovery instead of erroring: openclaw
+	is still running/finished and turn_recovery will finalize it from the
+	gateway snapshot. streaming stays 1 (spinner up); no error, no run:error."""
+	frappe.db.set_value(MSG, assistant_msg_name, {
+		"recovering": 1,
+		"recovery_started_at": frappe.utils.now_datetime(),
 	})
 	frappe.db.commit()
 
