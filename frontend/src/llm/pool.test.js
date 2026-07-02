@@ -107,3 +107,26 @@ test("seedRowsFromConfig: empty/absent → empty array", () => {
   assert.deepEqual(seedRowsFromConfig(null), [])
   assert.deepEqual(seedRowsFromConfig({ models: [] }), [])
 })
+
+// ---- real jarvis.onboarding.get_llm_config shape (credential_type/has_key,
+// flat rotation+accounts - NOT the fixture's nested `subscription` object) --
+test("seedRowsFromConfig: real get_llm_config shape - api_key model", () => {
+  const cfg = { models: [{ provider: "openai", model: "gpt-4o", credential_type: "api_key",
+    has_key: true, base_url: "", order: 0 }] }
+  const [row] = seedRowsFromConfig(cfg)
+  assert.equal(row.credentialType, "api_key")
+  assert.equal(row.provider, "OpenAI")
+  assert.equal(row.model, "gpt-4o")
+  assert.equal(row.apiKey, "")
+  assert.equal(row.hasKey, true)
+})
+test("seedRowsFromConfig: real get_llm_config shape - subscription model (flat rotation+accounts)", () => {
+  const cfg = { models: [{ model: "gpt-5.5", credential_type: "subscription", rotation: "sticky",
+    accounts: [{ upstream: "openai", account_ref: "SUB_x", label: "me@x" }], order: 1 }] }
+  const [row] = seedRowsFromConfig(cfg)
+  assert.equal(row.credentialType, "subscription")
+  assert.equal(row.rotation, "sticky")
+  assert.equal(row.accounts.length, 1)
+  assert.equal(row.accounts[0].connected, true)
+  assert.equal(row.accounts[0].account_ref, "SUB_x")
+})
