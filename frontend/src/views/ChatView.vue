@@ -321,8 +321,9 @@
 												<button class="jv-action-discard" @click="actionSend('No, cancel that.')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /><path d="M10 11v6M14 11v6" /></svg>Discard</button>
 											</template>
 											<template v-else>
+												<!-- Cancel left, primary (Apply) right — matches the jv-confirm / jv-cdialog convention. -->
+												<button class="jv-action-2nd" style="margin-left:auto;" @click="cancelActionEdit">Cancel</button>
 												<button class="jv-action-primary" @click="applyActionEdits"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>Apply changes</button>
-												<button class="jv-action-2nd" @click="cancelActionEdit">Cancel</button>
 											</template>
 										</div>
 									</div>
