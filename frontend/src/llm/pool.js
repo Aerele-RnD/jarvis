@@ -47,3 +47,59 @@ export function validatePool(models, preset) {
   }
   return { ok: true, error: "" }
 }
+
+// ---- provider id <-> label ------------------------------------------------
+// Ports jarvis_account.js's PROVIDER_LABEL_BY_ID / providerLabel() verbatim
+// (same ids, same labels) so the dropdown in the shared editor matches the
+// desk page exactly. Stored pools may carry either the provider *id* (e.g.
+// "openai_compat" from presets / admin normalization) or the dropdown
+// *label* ("OpenAI-Compatible") directly - providerLabel() maps id -> label
+// and passes an already-a-label (or unknown) value through unchanged.
+export const PROVIDER_LABELS = [
+  { id: "anthropic", label: "Anthropic" },
+  { id: "openai", label: "OpenAI" },
+  { id: "google", label: "Google Gemini" },
+  { id: "mistral", label: "Mistral" },
+  { id: "groq", label: "Groq" },
+  { id: "together", label: "Together AI" },
+  { id: "deepseek", label: "DeepSeek" },
+  { id: "moonshot", label: "Moonshot (Kimi)" },
+  { id: "openrouter", label: "OpenRouter" },
+  { id: "ollama", label: "Ollama (local)" },
+  { id: "vllm", label: "vLLM (local)" },
+  { id: "openai_compat", label: "OpenAI-Compatible" },
+]
+const _LABEL_BY_ID = Object.fromEntries(PROVIDER_LABELS.map(p => [p.id, p.label]))
+const _ID_BY_LABEL = Object.fromEntries(PROVIDER_LABELS.map(p => [p.label, p.id]))
+export function providerLabel(id) { return _LABEL_BY_ID[id] || id || "" }
+export function providerId(label) { return _ID_BY_LABEL[label] || label || "" }
+
+// ---- config -> editor rows -------------------------------------------------
+// Ports jarvis_account.js's seedLlmSetupFromConfig() into a pure function that
+// turns a jarvis.onboarding.get_llm_config payload into the shared editor's
+// row shape. get_llm_config never returns secrets - api-key rows carry
+// `has_key` (bool) instead of the key itself, and subscription rows carry
+// `accounts`/`rotation` flat on the model entry (credential_type distinguishes
+// the two), NOT a nested `subscription` object with an `api_key` string.
+// Both shapes are accepted here (credential_type/has_key from the real
+// payload, subscription/api_key from the plain object shape) so this stays a
+// faithful mirror of the desk regardless of which shape a caller passes.
+export function seedRowsFromConfig(cfg) {
+  const models = (cfg && Array.isArray(cfg.models)) ? cfg.models : []
+  return models.slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0)).map((m, i) => {
+    const sub = m.subscription || null
+    const isSubscription = m.credential_type === "subscription" || !!sub
+    if (isSubscription) {
+      const rotation = (sub && sub.rotation) || m.rotation || "sticky"
+      const rawAccounts = (sub && sub.accounts) || m.accounts || []
+      const accounts = rawAccounts.map(a => ({
+        upstream: a.upstream, account_ref: a.account_ref, label: a.label, connected: true,
+      }))
+      return { provider: "", model: m.model || "", apiKey: "", hasKey: !!m.has_key, baseUrl: "",
+        credentialType: "subscription", rotation, accounts, order: i }
+    }
+    return { provider: providerLabel(m.provider), model: m.model || "",
+      apiKey: "", hasKey: !!(m.has_key || m.api_key), baseUrl: m.base_url || "",
+      credentialType: "api_key", rotation: "sticky", accounts: [], order: i }
+  })
+}

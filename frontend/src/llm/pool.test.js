@@ -1,6 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { deriveMode, uniqueVendors, missingVendorKeys, presetToModels, buildCustomModels, reorder, validatePool } from "./pool.js"
+import { PROVIDER_LABELS, providerLabel, providerId, seedRowsFromConfig } from "./pool.js"
 
 const LADDER = { key: "anthropic-resilient", kind: "single_vendor", vendors: ["anthropic"],
   models: [{ provider: "anthropic", model: "claude-opus-4-8", order: 0 },
@@ -67,4 +68,42 @@ test("validatePool: subscription model invalid when account has empty oauth_blob
   const sub = { model: "gpt-5.5", order: 0, subscription: { rotation: "sticky",
     accounts: [{ upstream: "openai", account_ref: "SUB_abc123", label: "me@x.com", oauth_blob: "" }] } }
   assert.equal(validatePool([sub], null).ok, false)
+})
+
+test("providerLabel/providerId: id⇄label round-trip for openai_compat", () => {
+  assert.equal(providerLabel("openai_compat"), "OpenAI-Compatible")
+  assert.equal(providerId("OpenAI-Compatible"), "openai_compat")
+  // unknown id passes through unchanged (no crash)
+  assert.equal(providerLabel("weird"), "weird")
+})
+test("PROVIDER_LABELS: includes the vendors + compat, each {id,label}", () => {
+  const ids = PROVIDER_LABELS.map(p => p.id)
+  assert.ok(ids.includes("openai"))
+  assert.ok(ids.includes("anthropic"))
+  assert.ok(ids.includes("openai_compat"))
+  assert.ok(PROVIDER_LABELS.every(p => p.id && p.label))
+})
+test("seedRowsFromConfig: api-key model → api_key row with label provider + hasKey", () => {
+  const cfg = { models: [{ provider: "openai_compat", model: "claude-sonnet-4-6", api_key: "set", base_url: "http://h:9000/openai", order: 0 }] }
+  const [row] = seedRowsFromConfig(cfg)
+  assert.equal(row.credentialType, "api_key")
+  assert.equal(row.provider, "OpenAI-Compatible")
+  assert.equal(row.model, "claude-sonnet-4-6")
+  assert.equal(row.baseUrl, "http://h:9000/openai")
+  assert.equal(row.apiKey, "")      // keys never returned to client
+  assert.equal(row.hasKey, true)    // but we know one is set → placeholder
+})
+test("seedRowsFromConfig: subscription model → subscription row with connected accounts", () => {
+  const cfg = { models: [{ model: "gpt-5.5", order: 1, subscription: { rotation: "sticky",
+    accounts: [{ upstream: "openai", account_ref: "SUB_x", label: "me@x" }] } }] }
+  const [row] = seedRowsFromConfig(cfg)
+  assert.equal(row.credentialType, "subscription")
+  assert.equal(row.rotation, "sticky")
+  assert.equal(row.accounts.length, 1)
+  assert.equal(row.accounts[0].connected, true)
+  assert.equal(row.accounts[0].account_ref, "SUB_x")
+})
+test("seedRowsFromConfig: empty/absent → empty array", () => {
+  assert.deepEqual(seedRowsFromConfig(null), [])
+  assert.deepEqual(seedRowsFromConfig({ models: [] }), [])
 })
