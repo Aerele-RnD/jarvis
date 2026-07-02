@@ -69,5 +69,31 @@ def create_doc(doctype: str, values: dict) -> dict:
     doc = frappe.new_doc(doctype)
     for field, value in values.items():
         doc.set(field, value)
+    _set_title_from_title_field(doc)
     doc.insert()  # runs DocType validate() + on_insert hooks; sets autoname
     return doc.as_dict()
+
+
+def _set_title_from_title_field(doc) -> None:
+    """Materialize an empty ``title`` from the doctype's ``title_field``.
+
+    Desk forms historically filled ``title`` via a templated default (e.g.
+    ``{supplier_name}`` on invoices); newer schemas dropped the template and
+    point ``title_field`` at the source field instead, leaving the stored
+    ``title`` column blank on API-created records - visibly inconsistent
+    next to older data and any print/report that reads ``title``. Filling
+    it with the ``title_field`` value just persists what Frappe would
+    display anyway; explicit caller values always win."""
+    try:
+        meta = doc.meta
+        tf = meta.get("title_field")
+        if (
+            tf
+            and tf != "title"
+            and meta.has_field("title")
+            and not doc.get("title")
+            and doc.get(tf)
+        ):
+            doc.set("title", doc.get(tf))
+    except Exception:
+        pass  # cosmetic best-effort; never block the insert
