@@ -22,7 +22,7 @@
 				<div class="jv-rail-avatar" @click="toggleSidebar" title="Account">{{ initials }}</div>
 			</div>
 			<div style="padding:14px 14px 10px;display:flex;align-items:center;gap:9px;">
-				<div style="width:28px;height:28px;border-radius:7px;background:var(--blue);display:flex;align-items:center;justify-content:center;flex:none;box-shadow:0 1px 2px rgba(37,99,235,.35);">
+				<div class="jv-logo" style="width:28px;height:28px;border-radius:7px;background:var(--blue);display:flex;align-items:center;justify-content:center;flex:none;box-shadow:0 1px 2px rgba(37,99,235,.35);">
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
 				</div>
 				<div style="display:flex;flex-direction:column;line-height:1.1;">
@@ -30,10 +30,6 @@
 					<span style="font-size:11px;color:var(--text-3);font-weight:450;">ERPNext Assistant</span>
 				</div>
 				<div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
-					<div style="display:flex;align-items:center;gap:5px;padding:3px 7px;background:var(--green-bg);border-radius:20px;">
-						<span style="width:6px;height:6px;border-radius:50%;background:var(--green);"></span>
-						<span style="font-size:10px;color:var(--green);font-weight:550;">Live</span>
-					</div>
 					<button class="jv-iconbtn" @click="toggleSidebar" title="Collapse sidebar" style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;border-radius:6px;cursor:pointer;color:var(--text-3);flex:none;">
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18" /><path d="m14 9-3 3 3 3" /></svg>
 					</button>
@@ -117,6 +113,11 @@
 					<span style="font-size:11.5px;color:var(--text-3);">{{ headerSub }}</span>
 				</div>
 				<div style="margin-left:auto;display:flex;align-items:center;gap:8px;">
+					<!-- Save the current conversation's prompts as a reusable macro -->
+					<button v-if="canSaveAsMacro" class="jv-modelpill" @click="saveConversationAsMacro" title="Save this chat's prompts as a macro" style="display:flex;align-items:center;gap:7px;padding:5px 10px;background:var(--surface-1);border:1px solid var(--border);border-radius:20px;cursor:pointer;font-family:inherit;">
+						<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l14 9-14 9V3z" /></svg>
+						<span style="font-size:12px;color:var(--text-2);font-weight:500;">Save as macro</span>
+					</button>
 					<!-- Model picker: switch the LLM model for this conversation -->
 					<div class="jv-modelmenu-wrap" style="position:relative;">
 						<button class="jv-modelpill" @click="modelMenuOpen = !modelMenuOpen" :title="availableModels.length ? 'Switch model' : 'Connected to ERPNext'" style="display:flex;align-items:center;gap:7px;padding:5px 10px;background:var(--surface-1);border:1px solid var(--border);border-radius:20px;cursor:pointer;font-family:inherit;">
@@ -157,7 +158,7 @@
 			<!-- ===== WELCOME ===== -->
 			<div v-else-if="showWelcome" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px;">
 				<div style="width:100%;max-width:680px;text-align:center;">
-					<div style="width:52px;height:52px;border-radius:13px;background:var(--blue);display:flex;align-items:center;justify-content:center;margin:0 auto 18px;box-shadow:0 4px 14px rgba(37,99,235,.28);">
+					<div class="jv-logo" style="width:52px;height:52px;border-radius:13px;background:var(--blue);display:flex;align-items:center;justify-content:center;margin:0 auto 18px;box-shadow:0 4px 14px rgba(37,99,235,.28);">
 						<svg width="28" height="28" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
 					</div>
 					<h1 style="font-size:23px;font-weight:600;letter-spacing:-.02em;margin:0 0 6px;">{{ greeting }}, {{ firstName }}</h1>
@@ -175,8 +176,19 @@
 			</div>
 
 			<!-- ===== CONVERSATION ===== -->
-			<div v-else ref="threadEl" style="flex:1;overflow-y:auto;">
-				<div style="max-width:1280px;margin:0 auto;padding:26px 40px 36px;display:flex;flex-direction:column;gap:26px;">
+			<div v-else ref="threadEl" @scroll.passive="onThreadScroll" style="flex:1;overflow-y:auto;">
+				<div ref="threadInnerEl" style="max-width:1280px;margin:0 auto;padding:26px 40px 36px;display:flex;flex-direction:column;gap:26px;">
+					<!-- macro run progress banner -->
+					<div v-if="macroRun && macroRun.conversation === currentId" class="jv-macrobar" :class="{ ok: macroRun.status === 'completed', err: macroRun.status === 'failed', stopped: macroRun.status === 'stopped' }">
+						<template v-if="macroRun.status === 'running'">
+							<span class="jv-macrobar-dot spin"></span>
+							<span class="jv-macrobar-txt">Running macro — step {{ macroRun.step }}/{{ macroRun.total }}<template v-if="macroRun.label">: {{ macroRun.label }}</template></span>
+							<button class="jv-macrobar-stop" @click="stopMacro">Stop</button>
+						</template>
+						<template v-else-if="macroRun.status === 'completed'"><span class="jv-macrobar-chip">✓ Macro completed</span></template>
+						<template v-else-if="macroRun.status === 'failed'"><span class="jv-macrobar-chip">✗ Macro failed</span></template>
+						<template v-else-if="macroRun.status === 'stopped'"><span class="jv-macrobar-chip">⏹ Macro stopped</span></template>
+					</div>
 					<template v-for="m in visibleMessages" :key="m.name">
 						<!-- user -->
 						<div v-if="m.role === 'user'" class="jv-umsg" style="display:flex;flex-direction:column;align-items:flex-end;">
@@ -199,7 +211,7 @@
 						</div>
 						<!-- assistant -->
 						<div v-else class="jv-amsg" style="display:flex;gap:12px;">
-							<div style="width:28px;height:28px;flex:none;border-radius:7px;background:var(--blue);display:flex;align-items:center;justify-content:center;margin-top:2px;">
+							<div class="jv-logo" style="width:28px;height:28px;flex:none;border-radius:7px;background:var(--blue);display:flex;align-items:center;justify-content:center;margin-top:2px;">
 								<svg width="15" height="15" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
 							</div>
 							<div style="flex:1;min-width:0;">
@@ -264,15 +276,54 @@
 											<span class="jv-action-title">{{ actionVerb(activeAction) }} <b>{{ activeAction.doctype }}</b><template v-if="activeAction.title"> · {{ activeAction.title }}</template></span>
 										</div>
 										<div class="jv-action-fields">
-											<div v-for="(f, fi) in (activeAction.fields || [])" :key="fi" class="jv-action-row">
-												<span class="jv-action-k">{{ f.label }}</span>
-												<span class="jv-action-v">{{ f.value }}</span>
-											</div>
+											<template v-if="!editingAction">
+												<div v-for="(f, fi) in (activeAction.fields || [])" :key="fi" class="jv-action-row">
+													<span class="jv-action-k">{{ f.label }}</span>
+													<span class="jv-action-v">{{ f.value }}</span>
+												</div>
+											</template>
+											<template v-else>
+												<div v-for="(f, fi) in actionEdits" :key="fi" class="jv-action-editrow" :class="{ changed: String(f.value) !== String(f.orig) }">
+													<label class="jv-action-k">{{ f.label }}</label>
+													<div class="jv-action-ctl">
+														<!-- Link: search the target DocType and pick a record -->
+														<div v-if="f.control === 'link'" class="jv-action-link">
+															<input class="jv-action-input" v-model="f.value" @input="onActLinkSearch(fi, f, $event)" @focus="onActLinkSearch(fi, f, $event)" @blur="closeActLink(fi)" :placeholder="'Search ' + (f.options || 'records') + '…'" @keydown.enter.prevent autocomplete="off" />
+															<div v-if="actLink[fi] && actLink[fi].open && (actLink[fi].items || []).length" class="jv-action-linkmenu" :class="{ up: actLink[fi].up }">
+																<button v-for="(it, ii) in actLink[fi].items" :key="ii" type="button" @mousedown.prevent="pickActLink(fi, f, it)"><b>{{ it.value }}</b><span v-if="it.label"> · {{ it.label }}</span></button>
+															</div>
+														</div>
+														<!-- Select / Check: dropdown of allowed values -->
+														<select v-else-if="f.control === 'select'" class="jv-action-input jv-action-sel" v-model="f.value">
+															<option v-for="(o, oi) in f.options" :key="oi" :value="o">{{ o === '' ? '— none —' : o }}</option>
+														</select>
+														<select v-else-if="f.control === 'check'" class="jv-action-input jv-action-sel" v-model="f.value">
+															<option value="Yes">Yes</option>
+															<option value="No">No</option>
+														</select>
+														<!-- Date / time / number: native typed inputs -->
+														<input v-else-if="f.control === 'date'" type="date" class="jv-action-input" v-model="f.value" />
+														<input v-else-if="f.control === 'datetime'" type="datetime-local" class="jv-action-input" v-model="f.value" />
+														<input v-else-if="f.control === 'time'" type="time" class="jv-action-input" v-model="f.value" />
+														<input v-else-if="f.control === 'number'" type="number" class="jv-action-input" v-model="f.value" />
+														<!-- long text vs single-line -->
+														<textarea v-else-if="f.control === 'text'" class="jv-action-input" v-model="f.value" rows="3"></textarea>
+														<input v-else class="jv-action-input" v-model="f.value" />
+													</div>
+												</div>
+											</template>
 										</div>
+										<div v-if="editingAction" class="jv-action-edithint">Change only the values you want — the rest stays exactly as shown.</div>
 										<div class="jv-action-foot">
-											<button class="jv-action-primary" @click="actionSend('Yes, go ahead.')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>{{ actionCta(activeAction) }}</button>
-											<button class="jv-action-2nd" @click="actionSend('I want to change something before you create it.')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>Edit</button>
-											<button class="jv-action-discard" @click="actionSend('No, cancel that.')">Discard</button>
+											<template v-if="!editingAction">
+												<button class="jv-action-primary" @click="actionSend('Yes, go ahead.')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>{{ actionCta(activeAction) }}</button>
+												<button class="jv-action-2nd" @click="startActionEdit"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>Edit</button>
+												<button class="jv-action-discard" @click="actionSend('No, cancel that.')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /><path d="M10 11v6M14 11v6" /></svg>Discard</button>
+											</template>
+											<template v-else>
+												<button class="jv-action-primary" @click="applyActionEdits"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>Apply changes</button>
+												<button class="jv-action-2nd" @click="cancelActionEdit">Cancel</button>
+											</template>
 										</div>
 									</div>
 								</template>
@@ -326,6 +377,15 @@
 										</div>
 									</div>
 								</div>
+								<!-- save-as-macro card: the agent proposed a reusable macro -->
+								<div v-if="macroCardOf(m)" class="jv-macrocard">
+									<div class="jv-macrocard-ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l14 9-14 9V3z" /></svg></div>
+									<div class="jv-macrocard-txt">
+										<span class="jv-macrocard-title">{{ macroCardOf(m).name || "Macro" }}</span>
+										<span class="jv-macrocard-sub">{{ macroCardOf(m).steps.length }} step{{ macroCardOf(m).steps.length === 1 ? "" : "s" }}<template v-if="macroCardOf(m).description"> · {{ macroCardOf(m).description }}</template></span>
+									</div>
+									<button class="jv-macrocard-btn" @click="openMacroFromCard(macroCardOf(m))">Save as macro</button>
+								</div>
 								<!-- inline charts: ECharts rendered from the agent's jarvis-chart spec -->
 								<div v-for="(spec, ci) in chartsOf(m)" :key="'chart' + ci" class="jv-chartwrap">
 									<JvChart :spec="spec" :dark="effectiveDark" />
@@ -368,7 +428,7 @@
 
 					<!-- live tool activity + thinking (Claude Code style) -->
 					<div v-if="activeTools.length || waiting" style="display:flex;gap:12px;">
-						<div style="width:28px;height:28px;flex:none;border-radius:7px;background:var(--blue);display:flex;align-items:center;justify-content:center;margin-top:2px;">
+						<div class="jv-logo" style="width:28px;height:28px;flex:none;border-radius:7px;background:var(--blue);display:flex;align-items:center;justify-content:center;margin-top:2px;">
 							<svg width="15" height="15" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
 						</div>
 						<div style="flex:1;min-width:0;padding-top:3px;">
@@ -396,7 +456,13 @@
 			</div>
 
 			<!-- ===== COMPOSER ===== -->
-			<div style="flex:none;padding:12px 40px 16px;border-top:1px solid var(--border);background:var(--surface);">
+			<div style="position:relative;flex:none;padding:12px 40px 16px;border-top:1px solid var(--border);background:var(--surface);">
+				<!-- floats just above the composer; jumps the thread to the newest message -->
+				<transition name="jv-sd">
+					<button v-if="showScrollDown && !showWelcome && !booting" class="jv-scrolldown" @click="jumpToBottom" title="Jump to latest" aria-label="Jump to latest message">
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14" /><path d="m19 12-7 7-7-7" /></svg>
+					</button>
+				</transition>
 				<div style="max-width:1280px;margin:0 auto;">
 					<div class="jv-composer" @dragover.prevent @dragenter.prevent="onDragEnter" @dragleave.prevent="onDragLeave" @drop.prevent="onDrop" style="position:relative;border:1.5px solid var(--text);border-radius:13px;background:var(--surface);box-shadow:0 2px 12px rgba(0,0,0,.07);padding:5px 6px 6px 6px;transition:border-color .12s,box-shadow .12s;">
 						<div v-if="dragActive" style="position:absolute;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;background:var(--blue-bg);border:2px dashed var(--blue);border-radius:13px;color:var(--blue);font-size:13px;font-weight:600;pointer-events:none;">Drop image or file to attach</div>
@@ -439,14 +505,16 @@
 			</div>
 		</main>
 
-		<!-- ============ RIGHT RAIL: CUSTOM SKILLS (opens the center popup) ============ -->
+		<!-- ============ RIGHT RAIL: SKILLS + MACROS (opens the center popup) ============ -->
 		<aside class="jv-skillbar">
 			<div class="jv-skillrail">
-				<button class="jv-skillrail-btn" @click="openSkillsModal()" title="Skills">
-					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 7v10l8 5 8-5V7z" /><path d="M12 22V12M12 12 4 7M12 12l8-5" /></svg>
+				<button class="jv-skillrail-btn" :class="{ active: skillsModalOpen }" @click="openSkillsModal()">
+					<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 7v10l8 5 8-5V7z" /><path d="M12 22V12M12 12 4 7M12 12l8-5" /></svg>
+					<span class="jv-railtip">Skills</span>
 				</button>
-				<button class="jv-skillrail-btn jv-skillrail-new" @click="openSkillsModal(true)" title="New skill">
-					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>
+				<button class="jv-skillrail-btn" :class="{ active: macrosModalOpen }" @click="openMacrosModal()">
+					<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l14 9-14 9V3z" /><path d="M3 5v14" /></svg>
+					<span class="jv-railtip">Macros</span>
 				</button>
 			</div>
 		</aside>
@@ -457,52 +525,223 @@
 				<div class="jv-skills-modal">
 					<div class="jv-skills-head">
 						<div style="min-width:0;">
-							<div class="jv-skills-title">{{ skillFormOpen ? (skillForm.name ? "Edit skill" : "New skill") : "Skills" }}</div>
+							<div class="jv-skills-title">{{ skillFormOpen ? (skillReadonly ? "Skill" : (skillForm.name ? "Edit skill" : "New skill")) : "Skills" }}</div>
 							<div class="jv-skills-sub">Abilities your assistant can use — type <kbd class="jv-kbd">/</kbd> in chat to trigger one.</div>
 						</div>
-						<button class="jv-iconbtn" title="Close" @click="closeSkillsModal" style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;color:var(--text-3);border:none;background:transparent;border-radius:7px;cursor:pointer;flex:none;">
+						<button v-if="!skillFormOpen" class="jv-btn jv-btn--primary jv-btn--sm" @click="newSkill">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg> New
+						</button>
+						<button class="jv-btn jv-btn--icon" title="Close (Esc)" @click="closeSkillsModal">
 							<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
 						</button>
 					</div>
-					<div class="jv-skills-status" :class="{ ok: skillsSync.last_sync_status.startsWith('ok'), err: skillsSync.last_sync_status.startsWith('failed') }">
+					<!-- Sync status shows only while actionable: an in-flight update or a
+					     failure. The steady "up to date" line was noise (user request). -->
+					<div v-if="skillsSync.pending || skillsSync.last_sync_status.startsWith('failed')" class="jv-skills-status" :class="{ err: skillsSync.last_sync_status.startsWith('failed') }">
 						<template v-if="skillsSync.pending"><span class="jv-skill-dot spin"></span> Updating your assistant… (restarts briefly, ~30s)</template>
-						<template v-else-if="skillsSync.last_sync_status.startsWith('ok')"><span class="jv-skill-dot ok"></span> Your assistant is up to date.</template>
-						<template v-else-if="skillsSync.last_sync_status.startsWith('failed')"><span class="jv-skill-dot err"></span> Couldn't update your assistant. {{ skillsSync.last_sync_status.replace("failed:", "").trim() }}</template>
-						<template v-else><span class="jv-skill-dot"></span> Changes you save are pushed to your assistant automatically.</template>
+						<template v-else><span class="jv-skill-dot err"></span> Couldn't update your assistant. {{ skillsSync.last_sync_status.replace("failed:", "").trim() }}</template>
 					</div>
 					<div class="jv-skills-body">
 						<!-- create / edit form -->
 						<div v-if="skillFormOpen" class="jv-skill-form">
 							<div v-if="skillError" class="jv-skill-err">{{ skillError }}</div>
+							<div v-if="skillReadonly" class="jv-ro-banner">
+								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
+								<span>Shared by <b>{{ skillSharedBy || "another user" }}</b> · read-only</span>
+							</div>
 							<label class="jv-skill-l">Name</label>
-							<input class="jv-skill-in" v-model="skillForm.skill_name" :disabled="!!skillForm.name" placeholder="e.g. monthly-close" maxlength="40" />
-							<div class="jv-set-hint" style="margin:3px 0 10px;">Lowercase letters, digits and hyphens. Trigger it in chat with <kbd class="jv-kbd">/{{ skillForm.skill_name || 'name' }}</kbd>.</div>
+							<input class="jv-skill-in" v-model="skillForm.skill_name" :disabled="skillReadonly || !!skillForm.name" placeholder="e.g. monthly-close" maxlength="40" />
+							<div v-if="!skillReadonly" class="jv-set-hint" style="margin:3px 0 10px;">Lowercase letters, digits and hyphens. Trigger it in chat with <kbd class="jv-kbd">/{{ skillForm.skill_name || 'name' }}</kbd>.</div>
+							<div v-else style="height:10px;"></div>
 							<label class="jv-skill-l">Description</label>
-							<input class="jv-skill-in" v-model="skillForm.description" placeholder="When should the assistant use this skill?" maxlength="500" />
-							<div class="jv-set-hint" style="margin:3px 0 10px;">A short hint so the assistant knows when this skill applies.</div>
+							<input class="jv-skill-in" v-model="skillForm.description" :disabled="skillReadonly" placeholder="When should the assistant use this skill?" maxlength="500" />
+							<div v-if="!skillReadonly" class="jv-set-hint" style="margin:3px 0 10px;">A short hint so the assistant knows when this skill applies.</div>
+							<div v-else style="height:10px;"></div>
 							<label class="jv-skill-l">Instructions</label>
-							<textarea class="jv-skill-ta" v-model="skillForm.instructions" rows="9" placeholder="Markdown instructions the assistant follows when this skill runs…"></textarea>
-							<div class="jv-set-row" style="margin-top:10px;"><span>Let users trigger it with /<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Appears in the chat “/” menu</span></span><button class="jv-switch" :class="{ on: skillForm.user_invocable }" @click="skillForm.user_invocable = !skillForm.user_invocable" role="switch" :aria-checked="String(!!skillForm.user_invocable)"><span class="jv-switch-knob"></span></button></div>
-							<div class="jv-set-row"><span>Enabled<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Off = saved as a draft, not used by the assistant</span></span><button class="jv-switch" :class="{ on: skillForm.enabled }" @click="skillForm.enabled = !skillForm.enabled" role="switch" :aria-checked="String(!!skillForm.enabled)"><span class="jv-switch-knob"></span></button></div>
+							<textarea class="jv-skill-ta" v-model="skillForm.instructions" :disabled="skillReadonly" rows="9" placeholder="Markdown instructions the assistant follows when this skill runs…"></textarea>
+							<div v-if="!skillReadonly" class="jv-set-row" style="margin-top:10px;"><span>Let users trigger it with /<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Appears in the chat “/” menu</span></span><button class="jv-switch" :class="{ on: skillForm.user_invocable }" @click="skillForm.user_invocable = !skillForm.user_invocable" role="switch" :aria-checked="String(!!skillForm.user_invocable)"><span class="jv-switch-knob"></span></button></div>
+							<div v-if="!skillReadonly" class="jv-set-row"><span>Enabled<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Off = saved as a draft, not used by the assistant</span></span><button class="jv-switch" :class="{ on: skillForm.enabled }" @click="skillForm.enabled = !skillForm.enabled" role="switch" :aria-checked="String(!!skillForm.enabled)"><span class="jv-switch-knob"></span></button></div>
 							<div class="jv-skill-formfoot">
-								<button class="jv-skill-btn" :disabled="skillSaving || skillsSync.pending" @click="saveSkill">{{ skillSaving ? "Saving…" : "Save skill" }}</button>
-								<button class="jv-skill-btn ghost" :disabled="skillSaving" @click="skillFormOpen = false">Cancel</button>
-								<span class="jv-skill-foothint">Saving updates your assistant automatically.</span>
+								<button v-if="!skillReadonly" class="jv-btn jv-btn--primary" :disabled="skillSaving || skillsSync.pending" @click="saveSkill">{{ skillSaving ? "Saving…" : "Save skill" }}</button>
+								<button v-if="skillReadonly" class="jv-btn jv-btn--ghost" @click="skillFormOpen = false; skillReadonly = false">Back</button>
+								<button v-else class="jv-btn jv-btn--ghost" :disabled="skillSaving" @click="skillFormOpen = false">Cancel</button>
+								<span v-if="!skillReadonly" class="jv-skill-foothint">Saving updates your assistant automatically.</span>
 							</div>
 						</div>
 						<!-- skills list -->
 						<template v-else>
-							<button class="jv-skill-newrow" @click="newSkill"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg> New skill</button>
 							<div v-if="!customSkills.length" class="jv-set-empty" style="text-align:center;padding:26px 0;">No skills yet.<br />Create one to give your assistant a new ability.</div>
-							<div v-for="s in customSkills" :key="s.name" class="jv-skill-row">
+							<!-- own skills: full controls + share -->
+							<div v-for="s in mySkills" :key="s.name" class="jv-skill-row">
 								<div style="min-width:0;flex:1;cursor:pointer;" @click="editSkill(s)">
-									<div class="jv-skill-name">/{{ s.skill_name }} <span v-if="!s.enabled" class="jv-skill-off">draft</span></div>
+									<div class="jv-skill-name">/{{ s.skill_name }} <span v-if="!s.enabled" class="jv-skill-off">draft</span><span v-if="s.shared_count > 0" class="jv-shared-chip"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a3 3 0 1 0-2.83-4M6 12a3 3 0 1 0 0 .01M18 16a3 3 0 1 0-2.83 4M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" /></svg>Shared · {{ s.shared_count }}</span></div>
 									<div class="jv-skill-desc">{{ s.description }}</div>
 								</div>
-								<button class="jv-iconbtn" title="Edit" @click="editSkill(s)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg></button>
-								<button class="jv-iconbtn" title="Delete" @click="removeSkill(s)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" /></svg></button>
+								<button class="jv-btn jv-btn--icon jv-ib jv-ib-accent" title="Share" @click="openShareModal(s)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" /></svg></button>
+								<button class="jv-btn jv-btn--icon jv-ib" title="Edit" @click="editSkill(s)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg></button>
+								<button class="jv-btn jv-btn--icon jv-ib jv-ib-danger" title="Delete" @click="removeSkill(s)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" /></svg></button>
+							</div>
+							<!-- shared-with-me: read-only -->
+							<template v-if="sharedSkills.length">
+								<div class="jv-share-divider">Shared with you</div>
+								<div v-for="s in sharedSkills" :key="s.name" class="jv-skill-row jv-skill-row-shared" @click="editSkill(s)" style="cursor:pointer;">
+									<span class="jv-share-lock" title="Read-only — shared with you"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg></span>
+									<div style="min-width:0;flex:1;">
+										<div class="jv-skill-name">/{{ s.skill_name }} <span class="jv-sharedby-chip"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>Shared by {{ s.shared_by }}</span></div>
+										<div class="jv-skill-desc">{{ s.description }}</div>
+									</div>
+								</div>
+							</template>
+						</template>
+					</div>
+				</div>
+			</div>
+		</transition>
+
+		<!-- ============ SHARE SKILL POPUP (centered) ============ -->
+		<transition name="jv-fade">
+			<div v-if="shareModalOpen" class="jv-skills-overlay" @click.self="closeShareModal">
+				<div class="jv-skills-modal jv-share-modal">
+					<div class="jv-skills-head">
+						<div style="min-width:0;">
+							<div class="jv-skills-title">Share “{{ shareSkill.skill_name }}”</div>
+							<div class="jv-skills-sub">They can use this skill in chat, but can’t edit or re-share it.</div>
+						</div>
+						<button class="jv-btn jv-btn--icon" title="Close (Esc)" @click="closeShareModal">
+							<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+						</button>
+					</div>
+					<div class="jv-skills-body">
+						<div v-if="shareLoading" class="jv-set-empty" style="text-align:center;padding:30px 0;">Loading people…</div>
+						<template v-else>
+							<!-- selected users as chips -->
+							<div v-if="shareSelected.length" class="jv-share-chips">
+								<span v-for="id in shareSelected" :key="id" class="jv-share-chip">
+									<span class="jv-share-avatar">{{ _shareInitials(_shareUser(id)) }}</span>
+									<span class="jv-share-chip-name">{{ _shareUser(id).full_name }}</span>
+									<button class="jv-share-chip-x" title="Remove" @click="toggleShareUser(id)"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg></button>
+								</span>
+							</div>
+							<!-- search -->
+							<div class="jv-share-searchwrap">
+								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="1.9" stroke-linecap="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
+								<input v-model="shareSearch" class="jv-share-search" placeholder="Search people…" />
+							</div>
+							<!-- candidate list -->
+							<div v-if="!shareCandidates.length" class="jv-set-empty" style="text-align:center;padding:22px 0;">No other users to share with yet.</div>
+							<div v-else-if="!shareMatches.length" class="jv-set-empty" style="text-align:center;padding:18px 0;">No people match “{{ shareSearch }}”.</div>
+							<div v-else class="jv-share-list">
+								<button v-for="u in shareMatches" :key="u.name" class="jv-share-row" :class="{ on: isShareSelected(u.name) }" @click="toggleShareUser(u.name)">
+									<span class="jv-share-avatar">{{ _shareInitials(u) }}</span>
+									<span class="jv-share-row-info">
+										<span class="jv-share-row-name">{{ u.full_name }}</span>
+										<span class="jv-share-row-id">{{ u.name }}</span>
+									</span>
+									<svg v-if="isShareSelected(u.name)" class="jv-share-check" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+								</button>
+							</div>
+							<div class="jv-share-helper">
+								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
+								They can use this skill in chat, but can’t edit or re-share it.
+							</div>
+							<div class="jv-skill-formfoot">
+								<button class="jv-btn jv-btn--primary" :disabled="shareSaving" @click="saveShares">{{ shareSaving ? "Saving…" : "Save" }}</button>
+								<button class="jv-btn jv-btn--ghost" :disabled="shareSaving" @click="closeShareModal">Cancel</button>
+								<span class="jv-skill-foothint">{{ shareSelected.length }} {{ shareSelected.length === 1 ? "person" : "people" }} selected</span>
 							</div>
 						</template>
+					</div>
+				</div>
+			</div>
+		</transition>
+
+		<!-- ============ MACROS POPUP (centered) ============ -->
+		<transition name="jv-fade">
+			<div v-if="macrosModalOpen" class="jv-skills-overlay" @click.self="closeMacrosModal">
+				<div class="jv-skills-modal">
+					<div class="jv-skills-head">
+						<div style="min-width:0;">
+							<div class="jv-skills-title">Macros</div>
+							<div class="jv-skills-sub">Saved prompt sequences your assistant runs as a chain of turns.</div>
+						</div>
+						<button class="jv-btn jv-btn--primary jv-btn--sm" @click="newMacro">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg> New
+						</button>
+						<button class="jv-btn jv-btn--icon" title="Close (Esc)" @click="closeMacrosModal">
+							<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+						</button>
+					</div>
+					<div class="jv-skills-body">
+						<div v-if="macroError" class="jv-skill-err">{{ macroError }}</div>
+						<div v-if="!macros.length" class="jv-set-empty" style="text-align:center;padding:32px 0;">No macros yet.<br />Hit <strong>New</strong> to record a sequence of prompts.</div>
+						<div v-for="mm in macros" :key="mm.name" class="jv-skill-row">
+							<div style="min-width:0;flex:1;cursor:pointer;" @click="editMacro(mm)">
+								<div class="jv-skill-name" style="font-family:inherit;">{{ mm.macro_name }} <span v-if="!mm.enabled" class="jv-skill-off">draft</span></div>
+								<div class="jv-macro-sub">{{ mm.step_count || 0 }} step{{ (mm.step_count || 0) === 1 ? "" : "s" }}<span v-if="mm.schedule_enabled" class="jv-macro-sched"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>{{ mm.schedule_frequency || "scheduled" }}</span></div>
+							</div>
+							<button class="jv-btn jv-btn--primary jv-btn--sm" title="Run" @click.stop="runMacroFromList(mm)"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8V4z" /></svg> Run</button>
+							<button class="jv-btn jv-btn--icon jv-ib" title="Edit" @click.stop="editMacro(mm)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg></button>
+							<button class="jv-btn jv-btn--icon jv-ib jv-ib-danger" title="Delete" @click.stop="removeMacro(mm)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" /></svg></button>
+						</div>
+					</div>
+				</div>
+			</div>
+		</transition>
+
+		<!-- ============ MACRO EDITOR POPUP (centered) ============ -->
+		<transition name="jv-fade">
+			<div v-if="macroEditorOpen" class="jv-skills-overlay" @click.self="closeMacroEditor">
+				<div class="jv-skills-modal">
+					<div class="jv-skills-head">
+						<div style="min-width:0;">
+							<div class="jv-skills-title">{{ macroForm.name ? "Edit macro" : "New macro" }}</div>
+							<div class="jv-skills-sub">Each step runs as its own agent turn, in order.</div>
+						</div>
+						<button class="jv-btn jv-btn--icon" title="Close (Esc)" @click="closeMacroEditor">
+							<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+						</button>
+					</div>
+					<div class="jv-skills-body">
+						<div v-if="macroError" class="jv-skill-err">{{ macroError }}</div>
+						<label class="jv-skill-l">Name</label>
+						<input class="jv-skill-in" v-model="macroForm.macro_name" placeholder="e.g. Monthly close" maxlength="140" />
+						<div style="height:10px;"></div>
+						<label class="jv-skill-l">Description</label>
+						<input class="jv-skill-in" v-model="macroForm.description" placeholder="What does this macro do?" maxlength="500" />
+						<div class="jv-set-row" style="margin-top:12px;"><span>Stop if a step fails<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Otherwise the chain keeps going after an error</span></span><button class="jv-switch" :class="{ on: macroForm.stop_on_error }" @click="macroForm.stop_on_error = !macroForm.stop_on_error" role="switch" :aria-checked="String(!!macroForm.stop_on_error)"><span class="jv-switch-knob"></span></button></div>
+						<div class="jv-set-row"><span>Run on a schedule<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Jarvis runs this macro automatically</span></span><button class="jv-switch" :class="{ on: macroForm.schedule_enabled }" @click="macroForm.schedule_enabled = !macroForm.schedule_enabled" role="switch" :aria-checked="String(!!macroForm.schedule_enabled)"><span class="jv-switch-knob"></span></button></div>
+						<div v-if="macroForm.schedule_enabled" class="jv-macro-sched-fields">
+							<div style="flex:1;">
+								<label class="jv-skill-l">Frequency</label>
+								<select class="jv-skill-in" v-model="macroForm.schedule_frequency"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select>
+							</div>
+							<div style="flex:1;">
+								<label class="jv-skill-l">Time</label>
+								<input type="time" class="jv-skill-in" v-model="macroForm.schedule_time" />
+							</div>
+						</div>
+						<label class="jv-skill-l" style="margin-top:16px;">Steps</label>
+						<div v-if="!macroForm.steps.length" class="jv-set-empty">No steps yet. Add one below.</div>
+						<div v-for="(st, si) in macroForm.steps" :key="si" class="jv-macro-step" :class="{ dragging: dragStepIdx === si, dragover: dragOverIdx === si && dragStepIdx !== null && dragStepIdx !== si }" @dragover.prevent="onStepDragOver(si)" @dragleave="onStepDragLeave(si)" @drop.prevent="onStepDrop(si)">
+							<div class="jv-macro-step-head">
+								<span class="jv-macro-grip" draggable="true" title="Drag to reorder" @dragstart="onStepDragStart(si, $event)" @dragend="onStepDragEnd"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.5" /><circle cx="15" cy="6" r="1.5" /><circle cx="9" cy="12" r="1.5" /><circle cx="15" cy="12" r="1.5" /><circle cx="9" cy="18" r="1.5" /><circle cx="15" cy="18" r="1.5" /></svg></span>
+								<span class="jv-macro-step-num">{{ si + 1 }}</span>
+								<input class="jv-skill-in jv-macro-step-label" v-model="st.label" placeholder="Optional label" maxlength="140" />
+								<button class="jv-btn jv-btn--icon jv-ib jv-ib-danger" title="Remove step" @click="removeMacroStep(si)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg></button>
+							</div>
+							<textarea class="jv-skill-ta" v-model="st.prompt" rows="3" placeholder="The prompt to send for this step…"></textarea>
+							<div v-if="macroSkillOptions.length" class="jv-macro-step-skills">
+								<span class="jv-macro-step-skills-l"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" /></svg>Skills</span>
+								<button v-for="s in macroSkillOptions" :key="s.name" class="jv-macro-skill-opt jv-macro-skill-opt--sm" :class="{ on: (st.skills || []).includes(s.name) }" @click="toggleStepSkill(si, s.name)" :title="s.description || s.skill_name">
+									<span v-if="(st.skills || []).includes(s.name)" class="jv-ask-tick">✓</span>/{{ s.skill_name }}<span v-if="!s.mine" class="jv-macro-skill-shared">shared</span>
+								</button>
+							</div>
+						</div>
+						<button class="jv-skill-newrow" style="margin-top:12px;margin-bottom:0;" @click="addMacroStep"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg> Add step</button>
+						<div class="jv-skill-formfoot">
+							<button class="jv-btn jv-btn--primary" :disabled="macroSaving" @click="saveMacro">{{ macroSaving ? "Saving…" : "Save macro" }}</button>
+							<button class="jv-btn jv-btn--ghost" :disabled="macroSaving" @click="closeMacroEditor">Cancel</button>
+						</div>
 					</div>
 				</div>
 			</div>
@@ -518,6 +757,38 @@
 				</div>
 				<button class="jv-toast-open" @click.stop="openProactive">Open</button>
 				<button class="jv-toast-x" @click.stop="proactiveToast = null" title="Dismiss"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg></button>
+			</div>
+		</transition>
+
+		<!-- ============ NOTIFIER (reusable toasts: "Deleted", etc.) ============ -->
+		<div class="jv-notes" aria-live="polite">
+			<transition-group name="jv-note">
+				<div v-for="n in notes" :key="n.id" class="jv-note" :class="n.type" role="status">
+					<span class="jv-note-ic" aria-hidden="true">
+						<svg v-if="n.type === 'success'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+						<svg v-else-if="n.type === 'error'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16.4v.01" /></svg>
+						<svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 16v-5M12 8v.01" /></svg>
+					</span>
+					<div class="jv-note-body">
+						<div v-if="n.title" class="jv-note-title">{{ n.title }}</div>
+						<div class="jv-note-msg">{{ n.message }}</div>
+					</div>
+					<button class="jv-note-x" @click="dismissNote(n.id)" title="Dismiss" aria-label="Dismiss"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg></button>
+				</div>
+			</transition-group>
+		</div>
+
+		<!-- ============ CONFIRM DIALOG (reusable; replaces window.confirm) ============ -->
+		<transition name="jv-fade">
+			<div v-if="confirmBox" class="jv-skills-overlay" @click.self="_settleConfirm(false)">
+				<div class="jv-cdialog" role="alertdialog" aria-modal="true">
+					<div class="jv-cdialog-title">{{ confirmBox.title }}</div>
+					<div v-if="confirmBox.message" class="jv-cdialog-msg">{{ confirmBox.message }}</div>
+					<div class="jv-cdialog-foot">
+						<button class="jv-btn jv-btn--ghost" @click="_settleConfirm(false)">{{ confirmBox.cancelLabel }}</button>
+						<button class="jv-btn" :class="confirmBox.danger ? 'jv-btn--danger' : 'jv-btn--primary'" @click="_settleConfirm(true)">{{ confirmBox.confirmLabel }}</button>
+					</div>
+				</div>
 			</div>
 		</transition>
 
@@ -669,18 +940,19 @@
 		<!-- Artifact preview panel — slides in from the right (PDF in a viewer, Excel as a table) -->
 		<transition name="jv-slide">
 			<div v-if="artifact" class="jv-artifact-overlay" @click.self="closeArtifact">
-				<aside class="jv-artifact-panel">
+				<aside class="jv-artifact-panel" ref="artifactPanelEl" tabindex="-1">
 					<div class="jv-artifact-head">
 						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></svg>
 						<span class="jv-artifact-head-title">{{ artifact.cv.title }}</span>
 						<span class="jv-canvas-type">{{ artifact.cv.type }}</span>
-						<a class="jv-iconbtn" :href="artifact.url" target="_blank" rel="noopener" title="Open in new tab" style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;color:var(--text-3);text-decoration:none;border-radius:7px;">
+						<a class="jv-art-act" :href="artifact.url" target="_blank" rel="noopener" title="Open in new tab" aria-label="Open in new tab">
 							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3" /></svg>
 						</a>
-						<a class="jv-iconbtn" :href="artifact.url" :download="cvFile(artifact.cv)" title="Download" style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;color:var(--text-3);text-decoration:none;border-radius:7px;">
+						<a class="jv-art-act" :href="artifact.url" :download="cvFile(artifact.cv)" title="Download" aria-label="Download">
 							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>
 						</a>
-						<button class="jv-iconbtn" @click="closeArtifact" title="Close" style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;cursor:pointer;color:var(--text-3);border-radius:7px;">
+						<span class="jv-art-divider" aria-hidden="true"></span>
+						<button class="jv-art-close" @click="closeArtifact" title="Close preview (Esc)" aria-label="Close preview">
 							<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
 						</button>
 					</div>
@@ -750,7 +1022,53 @@ const search = ref("")
 const ui = ref({})
 const inputEl = ref(null)
 const threadEl = ref(null)
+const threadInnerEl = ref(null)
 const rootEl = ref(null)
+// Jump-to-latest arrow: shown when the thread is scrolled up away from the newest
+// message. `pinnedToBottom` tracks whether we should auto-stick to the bottom as
+// content grows (streaming replies, late-loading images/charts) — true until the
+// user deliberately scrolls up.
+const showScrollDown = ref(false)
+const pinnedToBottom = ref(true)
+
+// ---- Reusable notifier + confirm dialog ------------------------------------
+// notify("Deleted", { type: "success" }) drops a lightweight toast that stacks
+// bottom-right and auto-dismisses. confirmDialog({...}) shows a centered confirm
+// modal and resolves true/false — a drop-in replacement for the native
+// window.confirm() used across destructive actions (delete chat/skill/macro).
+// Both are intentionally generic so any new call site can reuse them.
+const notes = ref([])
+let _noteSeq = 0
+function notify(message, opts = {}) {
+	const id = ++_noteSeq
+	notes.value = [...notes.value, { id, message, type: opts.type || "info", title: opts.title || "" }]
+	const ttl = opts.duration == null ? 3200 : opts.duration
+	if (ttl > 0) setTimeout(() => dismissNote(id), ttl)
+	return id
+}
+function dismissNote(id) {
+	notes.value = notes.value.filter((n) => n.id !== id)
+}
+const confirmBox = ref(null) // { title, message, confirmLabel, cancelLabel, danger }
+let _confirmResolve = null
+function confirmDialog(opts = {}) {
+	return new Promise((resolve) => {
+		_confirmResolve = resolve
+		confirmBox.value = {
+			title: opts.title || "Are you sure?",
+			message: opts.message || "",
+			confirmLabel: opts.confirmLabel || "Confirm",
+			cancelLabel: opts.cancelLabel || "Cancel",
+			danger: opts.danger !== false, // deletes default to the red confirm button
+		}
+	})
+}
+function _settleConfirm(val) {
+	confirmBox.value = null
+	const r = _confirmResolve
+	_confirmResolve = null
+	if (r) r(val)
+}
 const userMenuOpen = ref(false)
 const modelMenuOpen = ref(false)
 // Collapsible sidebar (persisted per device, openclaw-style).
@@ -809,9 +1127,10 @@ async function commitRename(c) {
 }
 async function deleteConv(c) {
 	convMenuFor.value = null
-	if (!window.confirm(`Delete "${c.title || "this chat"}"? This can't be undone.`)) return
+	if (!(await confirmDialog({ title: "Delete chat?", message: `Delete "${c.title || "this chat"}"? This can't be undone.`, confirmLabel: "Delete" }))) return
 	try {
 		await api.archiveConversation(c.name)
+		notify("Chat deleted", { type: "success" })
 	} catch (e) {
 		/* ignore */
 	}
@@ -835,6 +1154,79 @@ const skillError = ref("")
 const skillForm = ref({ name: "", skill_name: "", description: "", instructions: "", user_invocable: true, enabled: true })
 const skillsSync = ref({ last_sync_status: "", pending: false })
 let _skillsPoll = null
+// Read-only view of a skill someone shared with me (no editing, saving or toggles).
+const skillReadonly = ref(false)
+const skillSharedBy = ref("")
+
+// --- Skill sharing (owners share read-only use with specific users) ---
+const shareModalOpen = ref(false)
+const shareSkill = ref({ name: "", skill_name: "" })
+const shareSearch = ref("")
+const shareCandidates = ref([]) // [{name, full_name}]
+const shareSelected = ref([]) // array of user ids
+const shareLoading = ref(false)
+const shareSaving = ref(false)
+
+// Own skills vs skills shared with me (both arrive in customSkills).
+const mySkills = computed(() => customSkills.value.filter((s) => s.mine))
+const sharedSkills = computed(() => customSkills.value.filter((s) => !s.mine))
+
+// Candidate rows filtered by the search box; selected users always stay visible.
+const shareMatches = computed(() => {
+	const q = (shareSearch.value || "").trim().toLowerCase()
+	if (!q) return shareCandidates.value
+	return shareCandidates.value.filter((u) =>
+		(u.full_name || "").toLowerCase().includes(q) || (u.name || "").toLowerCase().includes(q))
+})
+
+function _shareInitials(u) {
+	const s = (u && (u.full_name || u.name) || "").trim()
+	if (!s) return "?"
+	const parts = s.split(/\s+/).filter(Boolean)
+	if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+	return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+}
+function _shareUser(id) {
+	return shareCandidates.value.find((u) => u.name === id) || { name: id, full_name: id }
+}
+function isShareSelected(id) {
+	return shareSelected.value.includes(id)
+}
+function toggleShareUser(id) {
+	if (shareSelected.value.includes(id)) shareSelected.value = shareSelected.value.filter((x) => x !== id)
+	else shareSelected.value = [...shareSelected.value, id]
+}
+async function openShareModal(s) {
+	shareSkill.value = { name: s.name, skill_name: s.skill_name }
+	shareSearch.value = ""
+	shareSelected.value = []
+	shareCandidates.value = []
+	shareModalOpen.value = true
+	shareLoading.value = true
+	try {
+		const [cand, shares] = await Promise.all([api.listShareableUsers(), api.getSkillShares(s.name)])
+		shareCandidates.value = cand || []
+		shareSelected.value = ((shares && shares.users) || []).map((u) => u.name)
+		// Make sure already-shared users are selectable even if not in the candidate list.
+		const known = new Set(shareCandidates.value.map((u) => u.name))
+		for (const u of ((shares && shares.users) || [])) {
+			if (!known.has(u.name)) { shareCandidates.value.push({ name: u.name, full_name: u.full_name || u.name }); known.add(u.name) }
+		}
+	} catch (e) { notify(_skillErr(e), { type: "error" }) } finally { shareLoading.value = false }
+}
+function closeShareModal() {
+	shareModalOpen.value = false
+	shareSaving.value = false
+}
+async function saveShares() {
+	shareSaving.value = true
+	try {
+		await api.shareCustomSkill(shareSkill.value.name, [...shareSelected.value])
+		await loadCustomSkills()
+		notify("Sharing updated", { type: "success" })
+		closeShareModal()
+	} catch (e) { notify(_skillErr(e), { type: "error" }); shareSaving.value = false }
+}
 
 function _skillErr(e) {
 	return (e && ((e.messages && e.messages[0]) || e.message)) || "Something went wrong."
@@ -862,6 +1254,8 @@ function openSkillsModal(openForm) {
 function closeSkillsModal() {
 	skillsModalOpen.value = false
 	skillFormOpen.value = false
+	skillReadonly.value = false
+	skillSharedBy.value = ""
 	skillError.value = ""
 }
 // Push the current skills to the assistant — the old "Apply", now run
@@ -880,17 +1274,24 @@ async function syncSkills() {
 }
 function newSkill() {
 	skillError.value = ""
+	skillReadonly.value = false
+	skillSharedBy.value = ""
 	skillForm.value = { name: "", skill_name: "", description: "", instructions: "", user_invocable: true, enabled: true }
 	skillFormOpen.value = true
 }
 async function editSkill(s) {
 	skillError.value = ""
+	// Shared-with-me skills open read-only: no editing, saving or toggles.
+	skillReadonly.value = !s.mine
+	skillSharedBy.value = ""
 	try {
 		const full = await api.getCustomSkill(s.name)
 		skillForm.value = {
 			name: full.name, skill_name: full.skill_name, description: full.description || "",
 			instructions: full.instructions || "", user_invocable: !!full.user_invocable, enabled: !!full.enabled,
 		}
+		if (full.can_edit === 0 || !s.mine) skillReadonly.value = true
+		skillSharedBy.value = full.shared_by || s.shared_by || ""
 		skillFormOpen.value = true
 	} catch (e) { skillError.value = _skillErr(e) }
 }
@@ -912,12 +1313,207 @@ async function saveSkill() {
 	} catch (e) { skillError.value = _skillErr(e) } finally { skillSaving.value = false }
 }
 async function removeSkill(s) {
-	if (!window.confirm(`Delete “${s.skill_name}”? It will be removed from your assistant.`)) return
+	if (!(await confirmDialog({ title: "Delete skill?", message: `Delete “${s.skill_name}”? It will be removed from your assistant.`, confirmLabel: "Delete" }))) return
 	try {
 		await api.deleteCustomSkill(s.name)
 		await loadCustomSkills()
 		syncSkills() // deleting updates the assistant automatically
+		notify("Skill deleted", { type: "success" })
 	} catch (e) { skillError.value = _skillErr(e) }
+}
+
+// --- Macros (customer-authored prompt sequences run as chained turns) ---
+const macros = ref([])
+const macrosModalOpen = ref(false)
+const macroEditorOpen = ref(false)
+const macroSaving = ref(false)
+const macroError = ref("")
+const macroForm = ref(_blankMacro())
+// The live macro-run banner: { run, conversation, step, total, label, status }.
+const macroRun = ref(null)
+let _macroDoneTimer = null
+
+function _blankMacro() {
+	return {
+		name: "", macro_name: "", description: "",
+		enabled: true, stop_on_error: true,
+		schedule_enabled: false, schedule_frequency: "daily", schedule_time: "09:00",
+		steps: [],
+	}
+}
+// Skills taggable on a macro STEP: my own + shared-with-me, enabled only (a
+// disabled skill can't be invoked, so offering it would silently no-op).
+const macroSkillOptions = computed(() => customSkills.value.filter((s) => s.enabled))
+function toggleStepSkill(si, name) {
+	const st = macroForm.value.steps[si]
+	if (!st) return
+	if (!Array.isArray(st.skills)) st.skills = []
+	const i = st.skills.indexOf(name)
+	if (i >= 0) st.skills.splice(i, 1)
+	else st.skills.push(name)
+}
+async function loadMacros() {
+	try { macros.value = (await api.listMacros()) || [] } catch (e) { /* keep prior */ }
+}
+function openMacrosModal() {
+	macrosModalOpen.value = true
+	macroError.value = ""
+	loadMacros()
+}
+function closeMacrosModal() {
+	macrosModalOpen.value = false
+	macroError.value = ""
+}
+function closeMacroEditor() {
+	macroEditorOpen.value = false
+	macroError.value = ""
+}
+function newMacro() {
+	macroError.value = ""
+	macroForm.value = _blankMacro()
+	macroForm.value.steps = [{ label: "", prompt: "", skills: [] }]
+	loadSkillsSync() // populate the taggable-skills options
+	macroEditorOpen.value = true
+}
+async function editMacro(m) {
+	macroError.value = ""
+	try {
+		const full = await api.getMacro(m.name)
+		macroForm.value = {
+			name: full.name,
+			macro_name: full.macro_name || "",
+			description: full.description || "",
+			enabled: full.enabled == null ? true : !!full.enabled,
+			stop_on_error: !!full.stop_on_error,
+			schedule_enabled: !!full.schedule_enabled,
+			schedule_frequency: full.schedule_frequency || "daily",
+			schedule_time: full.schedule_time || "09:00",
+			steps: (Array.isArray(full.steps) ? full.steps : []).map((s) => ({ label: s.label || "", prompt: s.prompt || "", skills: Array.isArray(s.skills) ? [...s.skills] : [] })),
+		}
+		if (!macroForm.value.steps.length) macroForm.value.steps = [{ label: "", prompt: "", skills: [] }]
+		loadSkillsSync() // populate the taggable-skills options
+		macroEditorOpen.value = true
+	} catch (e) { macroError.value = _skillErr(e) }
+}
+function addMacroStep() {
+	macroForm.value.steps.push({ label: "", prompt: "", skills: [] })
+}
+function removeMacroStep(i) {
+	macroForm.value.steps.splice(i, 1)
+}
+// Drag-to-reorder steps (premium replacement for up/down buttons). The grip
+// handle is the drag source; the whole step card is the drop target.
+const dragStepIdx = ref(null)
+const dragOverIdx = ref(null)
+function onStepDragStart(i, e) {
+	dragStepIdx.value = i
+	if (e && e.dataTransfer) {
+		e.dataTransfer.effectAllowed = "move"
+		try { e.dataTransfer.setData("text/plain", String(i)) } catch (_) { /* ignore */ }
+	}
+}
+function onStepDragOver(i) {
+	if (dragStepIdx.value !== null) dragOverIdx.value = i
+}
+function onStepDragLeave(i) {
+	if (dragOverIdx.value === i) dragOverIdx.value = null
+}
+function onStepDrop(i) {
+	const from = dragStepIdx.value
+	dragOverIdx.value = null
+	if (from === null || from === i) { dragStepIdx.value = null; return }
+	const steps = macroForm.value.steps
+	const [it] = steps.splice(from, 1)
+	steps.splice(i, 0, it)
+	dragStepIdx.value = null
+}
+function onStepDragEnd() {
+	dragStepIdx.value = null
+	dragOverIdx.value = null
+}
+async function saveMacro() {
+	macroError.value = ""
+	const f = macroForm.value
+	const steps = f.steps
+		.map((s) => ({ label: (s.label || "").trim(), prompt: (s.prompt || "").trim(), skills: Array.isArray(s.skills) ? s.skills : [] }))
+		.filter((s) => s.prompt)
+	if (!(f.macro_name || "").trim()) { macroError.value = "Give the macro a name."; return }
+	if (!steps.length) { macroError.value = "Add at least one step with a prompt."; return }
+	macroSaving.value = true
+	try {
+		const payload = {
+			macro_name: f.macro_name.trim(),
+			description: f.description || "",
+			steps,
+			enabled: f.enabled ? 1 : 0,
+			stop_on_error: f.stop_on_error ? 1 : 0,
+			schedule_enabled: f.schedule_enabled ? 1 : 0,
+			schedule_frequency: f.schedule_frequency || "daily",
+			schedule_time: f.schedule_time || "09:00",
+		}
+		if (f.name) await api.updateMacro({ name: f.name, ...payload })
+		else await api.createMacro(payload)
+		macroEditorOpen.value = false
+		await loadMacros()
+	} catch (e) { macroError.value = _skillErr(e) } finally { macroSaving.value = false }
+}
+async function removeMacro(m) {
+	if (!(await confirmDialog({ title: "Delete macro?", message: `Delete “${m.macro_name}”? This can't be undone.`, confirmLabel: "Delete" }))) return
+	try {
+		await api.deleteMacro(m.name)
+		await loadMacros()
+		notify("Macro deleted", { type: "success" })
+	} catch (e) { macroError.value = _skillErr(e) }
+}
+async function runMacroFromList(m) {
+	macroError.value = ""
+	try {
+		const res = await api.runMacro(m.name)
+		const data = (res && res.data) || res || {}
+		macrosModalOpen.value = false
+		await loadConversations()
+		if (data.conversation) await selectConversation(data.conversation)
+		macroRun.value = {
+			run: data.macro_run,
+			conversation: data.conversation,
+			step: 0,
+			total: m.step_count || 0,
+			label: "",
+			status: "running",
+		}
+	} catch (e) {
+		macroError.value = _skillErr(e)
+		macrosModalOpen.value = true
+	}
+}
+async function stopMacro() {
+	if (!macroRun.value) return
+	try { await api.stopMacroRun(macroRun.value.run) } catch (e) { /* ignore */ }
+}
+// A ```jarvis-macro card's "Save as macro" button: pre-fill the editor.
+function openMacroFromCard(card) {
+	macroError.value = ""
+	macroForm.value = _blankMacro()
+	macroForm.value.macro_name = card.name || ""
+	macroForm.value.description = card.description || ""
+	macroForm.value.steps = (card.steps || []).map((s) => ({ label: s.label || "", prompt: s.prompt || "" }))
+	if (!macroForm.value.steps.length) macroForm.value.steps = [{ label: "", prompt: "" }]
+	macroEditorOpen.value = true
+}
+// Header "Save as macro": collect this chat's user prompts into the editor.
+const canSaveAsMacro = computed(
+	() => !!currentId.value && messages.value.some((m) => m.role === "user" && m.content && !m.content.startsWith("▶ Running macro")),
+)
+function saveConversationAsMacro() {
+	macroError.value = ""
+	const steps = messages.value
+		.filter((m) => m.role === "user" && m.content && !m.content.startsWith("▶ Running macro"))
+		.map((m) => ({ label: "", prompt: m.content }))
+	if (!steps.length) return
+	macroForm.value = _blankMacro()
+	macroForm.value.macro_name = currentTitle.value && currentTitle.value !== "New chat" ? currentTitle.value : ""
+	macroForm.value.steps = steps
+	macroEditorOpen.value = true
 }
 const usage = ref(null) // { estimated, chat_tokens, month_tokens, total_tokens, budget_monthly, month_label }
 // Compact token count: 1234 → "1.2k", 2_500_000 → "2.5M".
@@ -952,11 +1548,13 @@ const LIGHT_VARS = {
 	"--red": "#dc2626", "--red-bg": "#fdf0ef", "--red-bd": "#f5d4d1",
 	"--amber": "#d97706", "--amber-bg": "#fdf6ec", "--amber-bd": "#f3e2c2",
 }
+// Dark = "Refined Indigo" (chosen 2026-07-02): neutral charcoal surfaces with a
+// crisper indigo accent; the brand mark gets an indigo→violet gradient below.
 const DARK_VARS = {
 	"--surface": "#16161a", "--surface-1": "#1d1d22", "--surface-2": "#26262d", "--surface-3": "#30303a",
 	"--border": "#2c2c34", "--border-2": "#3a3a45",
 	"--text": "#ededf2", "--text-2": "#b6b6c0", "--text-3": "#7e7e8a",
-	"--blue": "#5b7cfa", "--blue-bg": "#1c2545", "--blue-bd": "#2c3a66",
+	"--blue": "#6e8bff", "--blue-bg": "#1e2749", "--blue-bd": "#34437a",
 	"--green": "#34d399", "--green-bg": "#15271f", "--green-bd": "#214b38",
 	"--red": "#f87171", "--red-bg": "#2a1818", "--red-bd": "#4a2a2a",
 	"--amber": "#fbbf24", "--amber-bg": "#2a2315", "--amber-bd": "#4a3d1f",
@@ -999,9 +1597,10 @@ async function toggleAutoApply() {
 async function deleteChat() {
 	const id = currentId.value
 	if (!id) return
-	if (!window.confirm("Delete this chat? It will be removed from your history.")) return
+	if (!(await confirmDialog({ title: "Delete chat?", message: "Delete this chat? It will be removed from your history.", confirmLabel: "Delete" }))) return
 	try {
 		await api.archiveConversation(id)
+		notify("Chat deleted", { type: "success" })
 	} catch (e) {
 		/* ignore — reload below reflects the true state either way */
 	}
@@ -1221,6 +1820,10 @@ const _CARDS_RE = /```jarvis-cards[ \t]*\n([\s\S]*?)```/
 // The agent declares which skill(s) it used to shape a reply in a ```jarvis-skill
 // block; the chat shows a small chip and strips the raw block.
 const _SKILL_RE = /```jarvis-skill[ \t]*\n([\s\S]*?)```/
+// A ```jarvis-macro block: the agent proposes a reusable macro (name +
+// description + ordered steps); the chat renders a "Save as macro" card that
+// opens the macro editor pre-filled, and strips the raw JSON from the prose.
+const _MACRO_RE = /```jarvis-macro[ \t]*\n([\s\S]*?)```/
 // A ```jarvis-chart block: a high-level chart spec the chat renders inline with
 // ECharts (themed by chartTheme; the agent never sends raw ECharts options).
 const _CHART_RE = /```jarvis-chart[ \t]*\n([\s\S]*?)```/g
@@ -1232,6 +1835,7 @@ function stripBlocks(text) {
 		.replace(/```jarvis-ask[ \t]*\n[\s\S]*?```/g, "")
 		.replace(/```jarvis-cards[ \t]*\n[\s\S]*?```/g, "")
 		.replace(/```jarvis-skill[ \t]*\n[\s\S]*?```/g, "")
+		.replace(/```jarvis-macro[ \t]*\n[\s\S]*?```/g, "")
 		.replace(/```jarvis-chart[ \t]*\n[\s\S]*?```/g, "")
 		.replace(/\n{3,}/g, "\n\n")
 		.trim()
@@ -1283,6 +1887,37 @@ function cardsOf(m) {
 		}
 	}
 	_cardsCache.set(content, res)
+	return res
+}
+const _macroCardCache = new Map()
+function macroCardOf(m) {
+	const content = (m && m.content) || ""
+	if (!content.includes("jarvis-macro")) return null
+	if (_macroCardCache.has(content)) return _macroCardCache.get(content)
+	let res = null
+	const mt = content.match(_MACRO_RE)
+	if (mt) {
+		try {
+			const a = JSON.parse(mt[1].trim())
+			const rawSteps = Array.isArray(a) ? a : (a && a.steps)
+			if (Array.isArray(rawSteps)) {
+				const steps = rawSteps
+					.slice(0, 40)
+					.map((s) => ({ label: String((s && s.label) || "").trim(), prompt: String((s && (s.prompt != null ? s.prompt : s)) || "").trim() }))
+					.filter((s) => s.prompt)
+				if (steps.length) {
+					res = {
+						name: String((a && (a.name || a.macro_name)) || "").trim(),
+						description: String((a && a.description) || "").trim(),
+						steps,
+					}
+				}
+			}
+		} catch (e) {
+			res = null
+		}
+	}
+	_macroCardCache.set(content, res)
 	return res
 }
 const _chartsCache = new Map()
@@ -1434,6 +2069,183 @@ function answerConfirm(ok) {
 	send(ok ? "Yes, go ahead." : "No, cancel that.")
 }
 
+// --- Inline edit of a proposed action's values BEFORE confirming. The whole
+// action flow is conversational (send() a message the agent acts on), so
+// editing = pre-fill the proposed fields, let the user change any subset, then
+// send a precise "change these, keep the rest" instruction so the agent re-emits
+// an updated confirmation card. Unedited fields are never mentioned.
+const editingAction = ref(false)
+const actionEdits = ref([]) // [{ label, value, orig, control, options }]
+const actLink = ref({}) // per-row Link dropdown state: { [idx]: { items, open } }
+const _actMetaCache = {} // doctype -> { labelLower: { fieldtype, options } }
+function _isLongVal(v) {
+	const s = String(v == null ? "" : v)
+	return s.length > 55 || s.includes("\n")
+}
+// Map a Frappe fieldtype → the edit control to render + its options payload.
+function _controlFor(fieldtype, options) {
+	switch (fieldtype) {
+		case "Link":
+			return ["link", options || ""] // options = target doctype (searchLink)
+		case "Select":
+			return ["select", String(options || "").split("\n").map((o) => o.trim())]
+		case "Check":
+			return ["check", ""]
+		case "Date":
+			return ["date", ""]
+		case "Datetime":
+			return ["datetime", ""]
+		case "Time":
+			return ["time", ""]
+		case "Int":
+		case "Float":
+		case "Currency":
+		case "Percent":
+		case "Rating":
+			return ["number", ""]
+		case "Small Text":
+		case "Text":
+		case "Long Text":
+		case "Code":
+		case "Text Editor":
+		case "HTML Editor":
+		case "Markdown Editor":
+		case "JSON":
+			return ["text", ""]
+		default:
+			return ["data", ""]
+	}
+}
+// "Item Group" / "item_group" / "itemGroup" all → "itemgroup": the agent's
+// action JSON labels fields sometimes by display label, sometimes by fieldname.
+function _normKey(s) {
+	return String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "")
+}
+async function _actMeta(doctype) {
+	if (_actMetaCache[doctype]) return _actMetaCache[doctype]
+	const r = await api.getDoctypeFields(doctype)
+	const fields = ((r && r.fields) || []).map((f) => ({
+		...f,
+		_kl: _normKey(f.label),
+		_kf: _normKey(f.fieldname),
+	}))
+	const map = {}
+	for (const f of fields) {
+		// fieldname key first, label key second (label wins ties — it's what a
+		// human-authored card most likely means)
+		if (f._kf && !map[f._kf]) map[f._kf] = f
+		if (f._kl) map[f._kl] = f
+	}
+	const meta = { map, fields }
+	_actMetaCache[doctype] = meta
+	return meta
+}
+// Resolve one card label to a field: exact normalized match on label/fieldname,
+// else unique containment (e.g. "UOM" → stock_uom when it's the only sensible
+// hit; required fields win ambiguous shorthands).
+function _actField(meta, label) {
+	const k = _normKey(label)
+	if (!k) return null
+	if (meta.map[k]) return meta.map[k]
+	const hits = meta.fields.filter((f) => f._kl.includes(k) || f._kf.includes(k))
+	if (hits.length === 1) return hits[0]
+	if (hits.length > 1) {
+		const reqd = hits.filter((f) => f.reqd)
+		if (reqd.length === 1) return reqd[0]
+	}
+	return null
+}
+function _checkToYesNo(v) {
+	const s = typeof v === "string" ? v.toLowerCase() : v
+	return ["1", 1, "yes", "true", true, "on"].includes(s) ? "Yes" : "No"
+}
+async function startActionEdit() {
+	const a = activeAction.value
+	const fields = (a && a.fields) || []
+	// Render instantly with a text/data fallback, then enrich with field types.
+	actionEdits.value = fields.map((f) => {
+		const v = f.value == null ? "" : String(f.value)
+		return { label: f.label, value: v, orig: v, control: _isLongVal(v) ? "text" : "data", options: "" }
+	})
+	actLink.value = {}
+	editingAction.value = true
+	const dt = a && a.doctype
+	if (!dt) return
+	try {
+		const meta = await _actMeta(dt)
+		actionEdits.value = actionEdits.value.map((e) => {
+			const m = _actField(meta, e.label)
+			if (!m) return e // label didn't map to a field → keep the text fallback
+			let [control, options] = _controlFor(m.fieldtype, m.options)
+			let value = e.value
+			let orig = e.orig
+			if (control === "check") {
+				value = _checkToYesNo(value)
+				orig = _checkToYesNo(orig)
+			}
+			// Make sure the current value is selectable even if it's not a listed option.
+			if (control === "select" && Array.isArray(options) && orig && !options.includes(orig)) {
+				options = [orig, ...options]
+			}
+			return { ...e, control, options, value, orig }
+		})
+	} catch (e) {
+		/* meta unavailable (e.g. no read perm) — keep the text fallback */
+	}
+}
+function cancelActionEdit() {
+	editingAction.value = false
+	actionEdits.value = []
+	actLink.value = {}
+}
+async function onActLinkSearch(idx, f, ev) {
+	// Open the menu UPWARD when the input sits in the lower part of the
+	// viewport — a downward menu there runs off-screen / under the composer.
+	let up = actLink.value[idx] ? actLink.value[idx].up : false
+	const el = ev && ev.target
+	if (el && el.getBoundingClientRect) {
+		up = el.getBoundingClientRect().bottom > window.innerHeight - 260
+	}
+	actLink.value = { ...actLink.value, [idx]: { ...(actLink.value[idx] || {}), open: true, up } }
+	if (!f.options) return
+	try {
+		const r = await api.searchLink(f.options, f.value)
+		const items = (r || []).map((x) => ({ value: x.value, label: x.description || "" })).slice(0, 8)
+		actLink.value = { ...actLink.value, [idx]: { items, open: true, up } }
+	} catch (e) {
+		actLink.value = { ...actLink.value, [idx]: { items: [], open: true, up } }
+	}
+}
+function pickActLink(idx, f, item) {
+	f.value = item.value
+	actLink.value = { ...actLink.value, [idx]: { items: [], open: false } }
+}
+function closeActLink(idx) {
+	// Delay so a click on a dropdown option registers before the blur closes it.
+	setTimeout(() => {
+		actLink.value = { ...actLink.value, [idx]: { ...(actLink.value[idx] || {}), open: false } }
+	}, 160)
+}
+function applyActionEdits() {
+	const changed = actionEdits.value.filter((f) => String(f.value) !== String(f.orig))
+	const verb = (activeAction.value && activeAction.value.verb) || "create"
+	editingAction.value = false
+	actionEdits.value = []
+	actLink.value = {}
+	if (!changed.length) return // nothing edited → leave the card as-is
+	const lines = changed.map((f) => `- ${f.label}: ${f.value}`).join("\n")
+	send(
+		`Before you ${verb} it, change these values and show me the updated confirmation — ` +
+			`keep every other field exactly as it is:\n${lines}`,
+	)
+}
+// A fresh action card cancels any in-progress edit.
+watch(actionFor, () => {
+	editingAction.value = false
+	actionEdits.value = []
+	actLink.value = {}
+})
+
 // --- interactive clarifying questions (card on the last assistant message) ---
 const activeAsk = computed(() =>
 	_lastAssistant.value && !activeAction.value ? askOf(_lastAssistant.value) : null,
@@ -1572,9 +2384,11 @@ function actionCta(a) {
 	return "Confirm & create"
 }
 // Cached render payload for an artifact: HTML srcdoc (html/svg) or a base64
-// data-url (pdf/image/file). Keyed by `${msgName}::${canvasName}`.
+// data-url (pdf/image/file). Keyed by `${msgName}::${canvasName}::${theme}` —
+// the theme is in the key because the backend themes the srcdoc shell (dark
+// preview bg), so a toggle refetches instead of showing the stale scheme.
 function cvOf(m, cv) {
-	return canvasContent.value[m.name + "::" + cv.name]
+	return canvasContent.value[m.name + "::" + cv.name + "::" + (effectiveDark.value ? 1 : 0)]
 }
 // What to feed the renderer. html/svg need the fetched srcdoc content (sandboxed
 // iframe). pdf / image / file render straight from the on-site file_url instead:
@@ -1592,6 +2406,12 @@ function cvFile(cv) {
 // ---- artifact preview side panel (ChatGPT/Claude-style: click a card → slide-
 // in panel on the right; PDF/image render directly, xlsx/csv as a table) ----
 const artifact = ref(null) // { m, cv, url, kind, content?, sheets?, sheetIdx?, text? }
+const artifactPanelEl = ref(null)
+// Move focus into the panel when it opens so keyboard users land inside it
+// and Escape closes it right away (handled in onGlobalKey).
+watch(() => !!artifact.value, (open) => {
+	if (open) nextTick(() => artifactPanelEl.value && artifactPanelEl.value.focus())
+})
 const curSheet = computed(() => {
 	const a = artifact.value
 	if (!a || a.kind !== "table" || !a.sheets?.length) return { rows: [] }
@@ -1645,10 +2465,11 @@ async function ensureCanvas(m) {
 		// pdf / image / file render from file_url directly — only html/svg need
 		// the fetched srcdoc content.
 		if (cv.file_url && cv.type !== "html" && cv.type !== "svg") continue
-		const key = m.name + "::" + cv.name
+		const dark = effectiveDark.value ? 1 : 0
+		const key = m.name + "::" + cv.name + "::" + dark
 		if (canvasContent.value[key]) continue
 		try {
-			const r = await api.getCanvas(m.name, cv.name)
+			const r = await api.getCanvas(m.name, cv.name, dark)
 			const payload = r && (r.content || r.data_url)
 			if (payload) canvasContent.value = { ...canvasContent.value, [key]: payload }
 		} catch (e) {
@@ -1657,10 +2478,57 @@ async function ensureCanvas(m) {
 	}
 	nextTick(scrollBottom)
 }
-function scrollBottom() {
+function scrollBottom(smooth = false) {
 	const el = threadEl.value
-	if (el) el.scrollTop = el.scrollHeight
+	if (!el) return
+	if (smooth && "scrollTo" in el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
+	else el.scrollTop = el.scrollHeight
 }
+// Distance in px from the very bottom of the thread. 0 == pinned to newest.
+function distanceFromBottom() {
+	const el = threadEl.value
+	if (!el) return 0
+	return el.scrollHeight - el.scrollTop - el.clientHeight
+}
+// Runs on every user scroll: decide whether we're "at the bottom" (keep pinning
+// as new content arrives) and whether to reveal the jump-to-latest arrow.
+function onThreadScroll() {
+	const d = distanceFromBottom()
+	pinnedToBottom.value = d <= 80
+	showScrollDown.value = d > 140
+}
+// Arrow click: smooth-scroll to the newest message and re-pin.
+function jumpToBottom() {
+	pinnedToBottom.value = true
+	showScrollDown.value = false
+	scrollBottom(true)
+}
+// Keep the thread pinned to the newest message while its content is still
+// settling — streaming text, plus images/charts/mermaid that finish loading
+// *after* the initial scrollBottom() and would otherwise leave a freshly
+// refreshed chat parked mid-thread (the "10 messages, opens at the top" bug).
+// A ResizeObserver on the inner content re-pins on every growth, but only while
+// the user hasn't deliberately scrolled up.
+let threadRO = null
+watch(threadInnerEl, (el) => {
+	if (threadRO) {
+		threadRO.disconnect()
+		threadRO = null
+	}
+	if (el && typeof ResizeObserver !== "undefined") {
+		threadRO = new ResizeObserver(() => {
+			if (pinnedToBottom.value) scrollBottom()
+			else onThreadScroll()
+		})
+		threadRO.observe(el)
+	}
+})
+onBeforeUnmount(() => {
+	if (threadRO) {
+		threadRO.disconnect()
+		threadRO = null
+	}
+})
 function autoGrow() {
 	const el = inputEl.value
 	if (!el) return
@@ -1782,6 +2650,10 @@ async function loadConversation(id) {
 			waiting.value = !((_streaming.content || "").trim())
 		}
 	}
+	// A freshly opened/refreshed chat should land on the newest message and stay
+	// pinned there while late content settles; the ResizeObserver takes over.
+	pinnedToBottom.value = true
+	showScrollDown.value = false
 	await nextTick()
 	scrollBottom()
 	processMermaid()
@@ -1949,6 +2821,9 @@ async function selectConversation(id) {
 	if (id === currentId.value) return
 	swapDraft(id)
 	resetRunState()
+	// Don't let the macro banner leak across conversations — clear it unless we're
+	// navigating into the run's own conversation.
+	if (macroRun.value && macroRun.value.conversation !== id) macroRun.value = null
 	currentId.value = id
 	await loadConversation(id)
 	await nextTick()
@@ -2074,6 +2949,33 @@ function onEvent(p) {
 	if (p.kind === "conversation:new" && p.conversation_id) {
 		loadConversations()
 		proactiveToast.value = { id: p.conversation_id, title: p.title || "Message from Jarvis", preview: p.preview || "" }
+		return
+	}
+	// Macro-run events use `conversation` (not conversation_id) and are handled
+	// before the current-conversation guard so the banner tracks the run.
+	if (p.kind === "macro:progress") {
+		if (p.conversation === currentId.value) {
+			if (_macroDoneTimer) { clearTimeout(_macroDoneTimer); _macroDoneTimer = null }
+			macroRun.value = {
+				run: p.macro_run,
+				conversation: p.conversation,
+				step: p.step || 0,
+				total: p.total || (macroRun.value && macroRun.value.total) || 0,
+				label: p.label || "",
+				status: "running",
+			}
+		}
+		return
+	}
+	if (p.kind === "macro:done") {
+		if (p.conversation === currentId.value && macroRun.value) {
+			macroRun.value = { ...macroRun.value, status: p.status || "completed" }
+			if (_macroDoneTimer) clearTimeout(_macroDoneTimer)
+			_macroDoneTimer = setTimeout(() => {
+				if (macroRun.value && macroRun.value.conversation === p.conversation) macroRun.value = null
+				_macroDoneTimer = null
+			}, 4000)
+		}
 		return
 	}
 	if (p.conversation_id !== currentId.value) return
@@ -2404,6 +3306,16 @@ function onGlobalKey(e) {
 		e.preventDefault(); newChat()
 	} else if (e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === "B" || e.key === "b")) {
 		e.preventDefault(); toggleSidebar()
+	} else if (e.key === "Escape" && confirmBox.value) {
+		_settleConfirm(false)
+	} else if (e.key === "Escape" && artifact.value) {
+		closeArtifact()
+	} else if (e.key === "Escape" && macroEditorOpen.value) {
+		closeMacroEditor()
+	} else if (e.key === "Escape" && macrosModalOpen.value) {
+		closeMacrosModal()
+	} else if (e.key === "Escape" && shareModalOpen.value) {
+		closeShareModal()
 	} else if (e.key === "Escape" && skillsModalOpen.value) {
 		closeSkillsModal()
 	} else if (e.key === "Escape" && settingsOpen.value) {
@@ -2413,6 +3325,21 @@ function onGlobalKey(e) {
 </script>
 
 <style scoped>
+/* Native form controls (select dropdowns, date/time pickers, scrollbars)
+   follow the app theme instead of the OS default — without this, a dark app
+   pops white select menus and calendar popups. */
+.jv-root { color-scheme: light; }
+.jv-root.jv-dark { color-scheme: dark; }
+/* Refined Indigo brand mark (dark mode): the spark boxes — sidebar brand,
+   rail logo, empty-state hero, assistant avatars, proactive toast — trade the
+   flat accent fill for an indigo→violet gradient with a soft indigo glow.
+   !important beats the elements' inline background:var(--blue). */
+.jv-dark .jv-logo,
+.jv-dark .jv-rail-logo,
+.jv-dark .jv-toast-ic {
+	background: linear-gradient(135deg, #6e8bff, #8b5cf6) !important;
+	box-shadow: 0 2px 10px rgba(110, 139, 255, .35) !important;
+}
 /* primary buttons also invert to black/white on hover (depends on their base
    color, so the white text/icon flips to the surface color). !important beats
    the inline backgrounds on the new-chat and send buttons. */
@@ -2478,6 +3405,32 @@ function onGlobalKey(e) {
 .jv-usercard:hover { background: var(--surface-2); }
 /* black focus highlight on the composer */
 .jv-composer:focus-within { border-color: var(--text); box-shadow: 0 0 0 3px rgba(23, 23, 23, 0.07); }
+/* jump-to-latest arrow — floats just above the composer, centered */
+.jv-scrolldown {
+	position: absolute;
+	left: 50%;
+	bottom: 100%;
+	margin-bottom: 12px;
+	transform: translateX(-50%);
+	z-index: 20;
+	width: 38px;
+	height: 38px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 0;
+	border-radius: 50%;
+	background: var(--surface);
+	color: var(--text-2);
+	border: 1px solid var(--border-2);
+	box-shadow: 0 6px 20px rgba(20, 20, 30, 0.18);
+	cursor: pointer;
+	transition: color .12s, border-color .12s, background .12s, transform .12s, box-shadow .12s;
+}
+.jv-scrolldown:hover { color: var(--text); border-color: var(--text-3); transform: translateX(-50%) translateY(-2px); box-shadow: 0 9px 24px rgba(20, 20, 30, 0.22); }
+.jv-scrolldown:active { transform: translateX(-50%) scale(.92); }
+.jv-sd-enter-active, .jv-sd-leave-active { transition: opacity .18s ease, transform .18s ease; }
+.jv-sd-enter-from, .jv-sd-leave-to { opacity: 0; transform: translateX(-50%) translateY(10px); }
 /* response metrics (tools · time) */
 .jv-skillused { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
 .jv-skillused-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px 2px 7px; background: var(--blue-bg); border: 1px solid var(--blue); border-radius: 20px; font-size: 11px; font-weight: 600; color: var(--blue); }
@@ -2618,18 +3571,84 @@ function onGlobalKey(e) {
 .jv-skill-ta { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; resize: vertical; line-height: 1.5; }
 .jv-skill-in:focus, .jv-skill-ta:focus { border-color: var(--blue); }
 .jv-skill-in:disabled { color: var(--text-3); }
-.jv-skill-row { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.jv-skill-row { display: flex; align-items: center; gap: 8px; margin: 0 -10px; padding: 11px 10px; border-bottom: 1px solid var(--border); border-radius: 10px; transition: background .12s; }
 .jv-skill-row:last-child { border-bottom: 0; }
+.jv-skill-row:hover { background: var(--surface-1); }
+/* ============ PREDEFINED PREMIUM BUTTON ============
+   Reusable across the app. Compose a variant with the base:
+     <button class="jv-btn jv-btn--primary">Save</button>
+     <button class="jv-btn jv-btn--ghost">Cancel</button>
+     <button class="jv-btn jv-btn--danger">Delete</button>
+     <button class="jv-btn jv-btn--icon">…</button>   (icon-only)
+   Add --sm for a compact size (header actions). */
+.jv-btn { flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 34px; padding: 0 15px; border-radius: 10px; border: 1px solid transparent; background: transparent; font-family: inherit; font-size: 12.5px; font-weight: 600; line-height: 1; white-space: nowrap; cursor: pointer; user-select: none; transition: background .15s ease, color .15s ease, border-color .15s ease, box-shadow .15s ease, transform .12s ease; }
+.jv-btn:active { transform: scale(.97); }
+.jv-btn:disabled { opacity: .5; cursor: default; pointer-events: none; box-shadow: none; transform: none; }
+.jv-btn svg { flex: none; }
+.jv-btn--primary { background: var(--blue); border-color: var(--blue); color: #fff; box-shadow: 0 1px 2px rgba(20, 20, 30, .12); }
+.jv-btn--primary:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(20, 20, 30, .18); }
+.jv-btn--primary svg { stroke: #fff; }
+.jv-btn--ghost { background: var(--surface); border-color: var(--border-2); color: var(--text-2); }
+.jv-btn--ghost:hover { background: var(--surface-2); border-color: var(--border); color: var(--text); transform: translateY(-1px); }
+.jv-btn--danger { background: var(--red); border-color: var(--red); color: #fff; box-shadow: 0 1px 2px rgba(220, 38, 38, .14); }
+.jv-btn--danger:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(220, 38, 38, .24); }
+.jv-btn--danger svg { stroke: #fff; }
+.jv-btn--sm { height: 32px; padding: 0 12px; font-size: 12px; border-radius: 9px; }
+.jv-btn--icon { width: 32px; height: 32px; padding: 0; border-radius: 9px; color: var(--text-3); }
+.jv-btn--icon:hover { background: var(--surface-2); color: var(--text); transform: none; }
+.jv-btn--icon:active { transform: scale(.92); }
+/* row action icons (skills/macros): color-coded semantic hovers + springy pop */
+.jv-btn--icon.jv-ib:hover { transform: translateY(-1px); }
+.jv-btn--icon.jv-ib:active { transform: scale(.88); }
+.jv-btn--icon.jv-ib-accent:hover { background: var(--blue-bg); color: var(--blue); border-color: var(--blue-bd); }
+.jv-btn--icon.jv-ib-danger:hover { background: var(--red-bg); color: var(--red); border-color: var(--red-bd); }
+
+.jv-newpill { flex: none; display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px 6px 10px; background: var(--blue); border: 1px solid var(--blue); border-radius: 9px; font-family: inherit; font-size: 12.5px; font-weight: 600; color: #fff; cursor: pointer; transition: opacity .12s, transform .06s; }
+.jv-newpill:hover { opacity: .92; }
+.jv-newpill:active { transform: scale(.97); }
+.jv-newpill svg { stroke: #fff; }
 .jv-skill-name { font-size: 13px; font-weight: 600; color: var(--text); font-family: ui-monospace, "SF Mono", Menlo, monospace; }
 .jv-skill-off { font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; margin-left: 6px; font-family: inherit; }
 .jv-skill-desc { font-size: 12px; color: var(--text-3); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* skill sharing: chips, dividers, read-only + share modal */
+.jv-shared-chip { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; padding: 1px 7px 1px 6px; background: var(--blue-bg); color: var(--blue); border-radius: 999px; font-size: 10px; font-weight: 600; font-family: inherit; letter-spacing: .01em; vertical-align: middle; }
+.jv-shared-chip svg { stroke: var(--blue); }
+.jv-sharedby-chip { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; padding: 1px 7px 1px 6px; background: var(--surface-2); color: var(--text-3); border: 1px solid var(--border); border-radius: 999px; font-size: 10px; font-weight: 600; font-family: inherit; vertical-align: middle; }
+.jv-share-divider { margin: 14px -10px 4px; padding: 6px 10px 4px; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--text-3); border-top: 1px solid var(--border); }
+.jv-skill-row-shared { opacity: .96; }
+.jv-share-lock { flex: none; display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 8px; background: var(--surface-2); color: var(--text-3); border: 1px solid var(--border); }
+.jv-ro-banner { display: flex; align-items: center; gap: 8px; padding: 9px 11px; margin-bottom: 13px; background: var(--blue-bg); border: 1px solid var(--blue); border-radius: 9px; font-size: 12.5px; color: var(--text-2); }
+.jv-ro-banner svg { stroke: var(--blue); flex: none; }
+.jv-ro-banner b { color: var(--text); font-weight: 600; }
+/* share modal */
+.jv-share-modal { height: auto; max-height: 82vh; }
+.jv-share-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 12px; }
+.jv-share-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 6px 3px 3px; background: var(--surface-1); border: 1px solid var(--border-2); border-radius: 999px; font-size: 12px; color: var(--text); box-shadow: 0 1px 2px rgba(20, 20, 30, .05); }
+.jv-share-chip-name { font-weight: 500; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jv-share-chip-x { flex: none; width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; border: none; background: transparent; border-radius: 50%; color: var(--text-3); cursor: pointer; padding: 0; transition: background .12s, color .12s; }
+.jv-share-chip-x:hover { background: var(--red-bg); color: var(--red); }
+.jv-share-avatar { flex: none; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--blue); color: #fff; font-size: 10.5px; font-weight: 600; letter-spacing: .01em; box-shadow: 0 1px 2px rgba(37, 99, 235, .3); }
+.jv-share-searchwrap { display: flex; align-items: center; gap: 8px; padding: 8px 11px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 9px; margin-bottom: 10px; }
+.jv-share-searchwrap:focus-within { border-color: var(--blue); }
+.jv-share-search { flex: 1; border: none; outline: none; background: transparent; font-family: inherit; font-size: 13px; color: var(--text); }
+.jv-share-list { display: flex; flex-direction: column; gap: 2px; max-height: 280px; overflow-y: auto; margin: 0 -6px; }
+.jv-share-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; background: transparent; border: none; border-radius: 9px; cursor: pointer; text-align: left; transition: background .12s; }
+.jv-share-row:hover { background: var(--surface-1); }
+.jv-share-row.on { background: var(--blue-bg); }
+.jv-share-row-info { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.25; }
+.jv-share-row-name { font-size: 13px; font-weight: 550; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jv-share-row-id { font-size: 11px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jv-share-check { flex: none; }
+.jv-share-helper { display: flex; align-items: center; gap: 7px; margin-top: 13px; padding: 9px 11px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 9px; font-size: 11.5px; color: var(--text-3); line-height: 1.4; }
+.jv-share-helper svg { stroke: var(--text-3); flex: none; }
 /* right sidebar: custom skills */
 .jv-skillbar { width: 52px; flex: none; height: 100%; background: var(--surface-1); border-left: 1px solid var(--border); display: flex; flex-direction: column; min-width: 0; }
 /* centered skills popup */
 .jv-skills-overlay { position: absolute; inset: 0; z-index: 62; background: rgba(15, 15, 22, 0.34); display: flex; align-items: center; justify-content: center; padding: 24px; }
 .jv-dark .jv-skills-overlay { background: rgba(0, 0, 0, 0.55); }
 .jv-skills-modal { width: 760px; max-width: 100%; height: 560px; max-height: 88vh; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; box-shadow: 0 24px 70px rgba(20, 20, 30, 0.28); animation: jv-popin 0.16s ease; }
-.jv-skills-head { flex: none; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 16px 16px 13px 20px; border-bottom: 1px solid var(--border); }
+.jv-skills-head { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 15px 16px 14px 20px; border-bottom: 1px solid var(--border); }
+.jv-skills-head > div:first-child { flex: 1 1 auto; min-width: 0; align-self: center; }
 .jv-skills-title { font-size: 15px; font-weight: 600; color: var(--text); letter-spacing: -.01em; }
 .jv-skills-sub { font-size: 11.5px; color: var(--text-3); margin-top: 2px; }
 .jv-skills-status { flex: none; display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--text-3); padding: 11px 20px; background: var(--surface-1); border-bottom: 1px solid var(--border); }
@@ -2641,11 +3660,13 @@ function onGlobalKey(e) {
 .jv-skill-newrow:hover svg { stroke: #fff; }
 .jv-skill-formfoot { display: flex; align-items: center; gap: 10px; margin-top: 15px; flex-wrap: wrap; }
 .jv-skill-foothint { font-size: 11px; color: var(--text-3); }
-.jv-skillrail { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 0; }
-.jv-skillrail-btn { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; background: transparent; border: 1px solid transparent; border-radius: 9px; color: var(--text-2); cursor: pointer; transition: background .12s, border-color .12s, color .12s; }
+.jv-skillrail { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 16px 0; }
+.jv-skillrail-btn { position: relative; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; background: transparent; border: 1px solid transparent; border-radius: 12px; color: var(--text-2); cursor: pointer; transition: background .14s, border-color .14s, color .14s, transform .06s; }
 .jv-skillrail-btn:hover { background: var(--surface-2); border-color: var(--border); color: var(--text); }
-.jv-skillrail-new { background: var(--blue); border-color: var(--blue); color: #fff; }
-.jv-skillrail-new:hover { background: var(--blue); border-color: var(--blue); opacity: .9; }
+.jv-skillrail-btn:active { transform: scale(.94); }
+.jv-skillrail-btn.active { background: var(--blue-bg); border-color: transparent; color: var(--blue); }
+.jv-railtip { position: absolute; right: calc(100% + 12px); top: 50%; transform: translateY(-50%) translateX(4px); background: var(--text); color: var(--surface); font-size: 11.5px; font-weight: 600; letter-spacing: .01em; padding: 4px 9px; border-radius: 7px; white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity .13s, transform .13s; box-shadow: 0 6px 18px rgba(0, 0, 0, .2); }
+.jv-skillrail-btn:hover .jv-railtip { opacity: 1; transform: translateY(-50%) translateX(0); }
 .jv-skillbar-head { flex: none; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 14px 14px 12px 16px; border-bottom: 1px solid var(--border); }
 .jv-skillbar-title { font-size: 15px; font-weight: 600; color: var(--text); letter-spacing: -.01em; }
 .jv-skillbar-sub { font-size: 11px; color: var(--text-3); margin-top: 2px; }
@@ -2749,6 +3770,27 @@ function onGlobalKey(e) {
 .jv-card-field:first-of-type { border-top: 0; }
 .jv-card-k { color: var(--text-3); flex: none; }
 .jv-card-v { color: var(--text); font-weight: 500; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* reusable toast notifier (delete confirmations, "no data", any status) */
+.jv-notes { position: absolute; top: 16px; left: 50%; transform: translateX(-50%); z-index: 90; display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none; }
+.jv-note { pointer-events: auto; display: flex; align-items: center; gap: 10px; min-width: 220px; max-width: 400px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--border-2); border-radius: 11px; box-shadow: 0 10px 30px rgba(20, 20, 30, .18); }
+.jv-note-ic { flex: none; width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; }
+.jv-note.success .jv-note-ic { background: var(--green); }
+.jv-note.error .jv-note-ic { background: var(--red); }
+.jv-note.info .jv-note-ic { background: var(--blue); }
+.jv-note-body { min-width: 0; flex: 1; }
+.jv-note-title { font-size: 12px; font-weight: 650; color: var(--text); }
+.jv-note-msg { font-size: 13px; color: var(--text); }
+.jv-note-x { flex: none; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; border-radius: 6px; color: var(--text-3); cursor: pointer; }
+.jv-note-x:hover { background: var(--surface-2); color: var(--text); }
+.jv-note-enter-active, .jv-note-leave-active { transition: opacity .18s ease, transform .18s ease; }
+.jv-note-enter-from, .jv-note-leave-to { opacity: 0; transform: translateY(-8px); }
+
+/* reusable confirm dialog (replaces window.confirm) */
+.jv-cdialog { width: 400px; max-width: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 20px; box-shadow: 0 24px 70px rgba(20, 20, 30, .28); animation: jv-popin .16s ease; }
+.jv-cdialog-title { font-size: 16px; font-weight: 650; color: var(--text); }
+.jv-cdialog-msg { margin-top: 8px; font-size: 13.5px; line-height: 1.5; color: var(--text-2); }
+.jv-cdialog-foot { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+
 /* proactive message toast */
 .jv-toast { position: absolute; right: 20px; bottom: 22px; z-index: 70; display: flex; align-items: center; gap: 11px; width: 360px; max-width: calc(100% - 40px); padding: 13px 14px; background: var(--surface); border: 1px solid var(--border-2); border-radius: 13px; box-shadow: 0 12px 32px rgba(20, 20, 30, .22); cursor: pointer; }
 .jv-toast-ic { flex: none; width: 30px; height: 30px; border-radius: 8px; background: var(--blue); display: flex; align-items: center; justify-content: center; }
@@ -2758,8 +3800,58 @@ function onGlobalKey(e) {
 .jv-toast-x { flex: none; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; border-radius: 6px; color: var(--text-3); cursor: pointer; }
 .jv-toast-x:hover { background: var(--surface-2); color: var(--text); }
 
+/* ===== Macros ===== */
+/* list rows */
+.jv-macro-sub { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-3); margin-top: 2px; }
+.jv-macro-sched { display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px; background: var(--blue-bg); color: var(--blue); border-radius: 99px; font-size: 10.5px; font-weight: 600; text-transform: capitalize; }
+/* editor step rows */
+.jv-macro-sched-fields { display: flex; gap: 12px; margin: 8px 0 4px; }
+/* macro per-STEP skill tagging: compact pill multi-select under each prompt */
+.jv-macro-step-skills { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+.jv-macro-step-skills-l { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); margin-right: 2px; }
+.jv-macro-skill-opt { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border-2); background: var(--surface); color: var(--text-2); font-family: ui-monospace, Menlo, monospace; font-size: 12px; font-weight: 500; cursor: pointer; transition: border-color .12s, background .12s, color .12s, box-shadow .12s; }
+.jv-macro-skill-opt--sm { padding: 3px 9px; font-size: 11px; gap: 4px; }
+.jv-macro-skill-opt:hover { border-color: var(--blue); color: var(--text); }
+.jv-macro-skill-opt.on { background: var(--blue-bg); border-color: var(--blue-bd); color: var(--blue); box-shadow: 0 1px 2px rgba(20, 20, 30, .06); }
+.jv-macro-skill-shared { font-family: 'Inter', system-ui, sans-serif; font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; padding: 1px 6px; border-radius: 999px; background: var(--amber-bg); color: var(--amber); border: 1px solid var(--amber-bd); }
+.jv-macro-step { border: 1px solid var(--border); border-radius: 11px; padding: 10px; margin-top: 10px; background: var(--surface-1); transition: border-color .12s, box-shadow .12s, opacity .12s, transform .12s; }
+.jv-macro-step.dragging { opacity: .45; }
+.jv-macro-step.dragover { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-bg); }
+.jv-macro-step-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.jv-macro-grip { flex: none; display: flex; align-items: center; justify-content: center; width: 22px; height: 26px; color: var(--text-3); cursor: grab; border-radius: 6px; transition: background .12s, color .12s; }
+.jv-macro-grip:hover { color: var(--text); background: var(--surface-2); }
+.jv-macro-grip:active { cursor: grabbing; }
+.jv-macro-step-num { flex: none; width: 20px; height: 20px; border-radius: 99px; background: var(--blue-bg); color: var(--blue); font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+.jv-macro-step-label { flex: 1; }
+.jv-macro-step .jv-iconbtn:disabled { opacity: .35; cursor: default; }
+/* progress banner */
+.jv-macrobar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border: 1px solid var(--blue); background: var(--blue-bg); border-radius: 11px; }
+.jv-macrobar.ok { border-color: var(--green); background: var(--green-bg); }
+.jv-macrobar.err { border-color: var(--red-bd); background: var(--red-bg); }
+.jv-macrobar.stopped { border-color: var(--border-2); background: var(--surface-1); }
+.jv-macrobar-dot { width: 11px; height: 11px; flex: none; border-radius: 99px; background: var(--blue); }
+.jv-macrobar-dot.spin { border: 2px solid var(--border-2); border-top-color: var(--blue); background: transparent; animation: jv-spin .7s linear infinite; }
+.jv-macrobar-txt { flex: 1; min-width: 0; font-size: 13px; font-weight: 550; color: var(--text); }
+.jv-macrobar-stop { flex: none; padding: 6px 14px; background: var(--surface); border: 1px solid var(--border-2); border-radius: 7px; font-family: inherit; font-size: 12.5px; font-weight: 600; color: var(--text-2); cursor: pointer; }
+.jv-macrobar-stop:hover { background: var(--red); border-color: var(--red); color: #fff; }
+.jv-macrobar-chip { font-size: 13px; font-weight: 600; color: var(--text); }
+/* save-as-macro card (in a message) */
+.jv-macrocard { display: flex; align-items: center; gap: 11px; margin-top: 12px; padding: 11px 12px; border: 1px solid var(--border); background: var(--surface-1); border-radius: 11px; }
+.jv-macrocard-ic { flex: none; width: 34px; height: 34px; border-radius: 8px; display: flex; align-items: center; justify-content: center; background: var(--blue-bg); color: var(--blue); }
+.jv-macrocard-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.jv-macrocard-title { font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.jv-macrocard-sub { font-size: 11.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.jv-macrocard-btn { flex: none; padding: 7px 13px; background: var(--blue); border: 1px solid var(--blue); border-radius: 8px; font-family: inherit; font-size: 12.5px; font-weight: 600; color: #fff; cursor: pointer; transition: opacity .12s; }
+.jv-macrocard-btn:hover { opacity: .9; }
+
 /* rich action cards (doc confirm / email draft) */
-.jv-action, .jv-email { margin-top: 12px; border: 1px solid var(--border); border-radius: 11px; overflow: hidden; background: var(--surface); }
+/* .jv-action must stay overflow:visible — the edit form's Link dropdown
+   (.jv-action-linkmenu, position:absolute) would be CLIPPED to the card
+   otherwise, leaving a sliver you have to scroll inside. The rounded corners
+   are preserved by rounding the footer's own bottom edge instead. */
+.jv-action, .jv-email { margin-top: 12px; border: 1px solid var(--border); border-radius: 11px; background: var(--surface); }
+.jv-email { overflow: hidden; }
+.jv-action-foot { border-radius: 0 0 10px 10px; }
 .jv-action-head { display: flex; align-items: center; gap: 8px; padding: 11px 14px; border-bottom: 1px solid var(--border); }
 .jv-action-head svg { flex: none; }
 .jv-action-title { font-size: 13px; font-weight: 600; color: var(--text); }
@@ -2769,6 +3861,20 @@ function onGlobalKey(e) {
 .jv-action-row:not(:last-child) { border-bottom: 1px solid var(--surface-2); }
 .jv-action-k { flex: none; width: 140px; color: var(--text-3); font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
 .jv-action-v { flex: 1; min-width: 0; color: var(--text); word-break: break-word; }
+.jv-action-editrow { display: flex; align-items: flex-start; gap: 12px; padding: 7px 14px; }
+.jv-action-editrow > .jv-action-k { padding-top: 7px; }
+.jv-action-ctl { flex: 1; min-width: 0; position: relative; }
+.jv-action-input { width: 100%; box-sizing: border-box; font-family: inherit; font-size: 13px; line-height: 1.45; color: var(--text); background: var(--surface); border: 1px solid var(--border-2); border-radius: 7px; padding: 6px 9px; outline: none; resize: vertical; transition: border-color .12s, box-shadow .12s; }
+.jv-action-input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-bg); }
+.jv-action-sel { cursor: pointer; appearance: auto; }
+.jv-action-link { position: relative; }
+.jv-action-linkmenu { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 20; background: var(--surface); border: 1px solid var(--border-2); border-radius: 9px; box-shadow: 0 8px 24px rgba(20, 20, 30, .14); padding: 4px; max-height: 220px; overflow-y: auto; }
+.jv-action-linkmenu.up { top: auto; bottom: calc(100% + 4px); box-shadow: 0 -8px 24px rgba(20, 20, 30, .14); }
+.jv-action-linkmenu button { display: block; width: 100%; text-align: left; padding: 7px 9px; background: transparent; border: none; border-radius: 6px; font-family: inherit; font-size: 12.5px; color: var(--text-2); cursor: pointer; }
+.jv-action-linkmenu button:hover { background: var(--surface-2); color: var(--text); }
+.jv-action-editrow.changed .jv-action-input { border-color: var(--blue); }
+.jv-action-editrow.changed > .jv-action-k { color: var(--blue); font-weight: 600; }
+.jv-action-edithint { padding: 2px 14px 8px; font-size: 11.5px; color: var(--text-3); line-height: 1.4; }
 .jv-action-foot { display: flex; align-items: center; gap: 8px; padding: 11px 14px; border-top: 1px solid var(--border); background: var(--surface-1); }
 .jv-action-primary { display: inline-flex; align-items: center; gap: 7px; font-family: inherit; font-size: 13px; font-weight: 600; padding: 8px 14px; border-radius: 8px; cursor: pointer; background: var(--blue); color: #fff; border: 1px solid var(--blue); }
 .jv-action-primary:hover { background: var(--text); color: var(--surface); border-color: var(--text); }
@@ -2793,8 +3899,9 @@ function onGlobalKey(e) {
 .jv-dark .jv-action-primary:hover { background: var(--blue) !important; color: #fff !important; border-color: var(--blue) !important; filter: brightness(1.18); }
 .jv-dark .jv-newchat:hover svg,
 .jv-dark .jv-sendbtn:hover:not(:disabled) svg { stroke: #fff !important; }
-.jv-action-discard { margin-left: auto; font-family: inherit; font-size: 12.5px; font-weight: 550; padding: 8px 10px; border: none; background: transparent; color: var(--text-3); cursor: pointer; }
-.jv-action-discard:hover { color: var(--red); }
+.jv-action-discard { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-family: inherit; font-size: 12.5px; font-weight: 600; padding: 8px 13px; border-radius: 8px; border: 1px solid var(--red-bd); background: var(--red-bg); color: var(--red); cursor: pointer; transition: background .12s, color .12s, border-color .12s; }
+.jv-action-discard:hover { background: var(--red); color: #fff; border-color: var(--red); }
+.jv-action-discard:hover svg { stroke: #fff; }
 .jv-email-head { padding: 12px 14px 6px; }
 .jv-email-line { display: flex; gap: 10px; font-size: 13px; padding: 2px 0; }
 .jv-email-k { flex: none; width: 54px; color: var(--text-3); }
@@ -2803,6 +3910,17 @@ function onGlobalKey(e) {
 .jv-email-body { padding: 12px 14px 14px; font-size: 13px; line-height: 1.6; color: var(--text); white-space: pre-wrap; word-break: break-word; border-top: 1px solid var(--surface-2); }
 
 /* artifact preview panel (right side-over) */
+/* premium artifact-preview header actions (replaces the boxy .jv-iconbtn look) */
+.jv-art-act, .jv-art-close { flex: none; width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; border-radius: 9px; border: 1px solid transparent; background: transparent; color: var(--text-3); cursor: pointer; text-decoration: none; transition: background .15s ease, color .15s ease, border-color .15s ease, transform .15s ease, box-shadow .15s ease; }
+.jv-art-act svg, .jv-art-close svg { transition: transform .2s cubic-bezier(.34, 1.56, .64, 1); }
+.jv-art-act:hover { background: var(--surface-2); border-color: var(--border); color: var(--text); transform: translateY(-1px); box-shadow: 0 4px 12px rgba(20, 20, 30, .10); }
+.jv-art-act:active { transform: translateY(0) scale(.94); }
+.jv-art-divider { flex: none; width: 1px; height: 18px; margin: 0 3px; background: var(--border); border-radius: 1px; }
+.jv-art-close { border-radius: 50%; }
+.jv-art-close:hover { background: var(--red-bg); border-color: var(--red-bd); color: var(--red); box-shadow: 0 4px 12px rgba(220, 38, 38, .14); }
+.jv-art-close:hover svg { transform: rotate(90deg); }
+.jv-art-close:active { transform: scale(.9); }
+.jv-artifact-panel:focus { outline: none; }
 .jv-artifact-overlay { position: absolute; inset: 0; z-index: 60; background: rgba(15, 15, 22, 0.32); display: flex; justify-content: flex-end; }
 .jv-dark .jv-artifact-overlay { background: rgba(0, 0, 0, 0.5); }
 .jv-artifact-panel { width: min(720px, 82%); height: 100%; background: var(--surface); border-left: 1px solid var(--border); display: flex; flex-direction: column; box-shadow: -14px 0 44px rgba(20, 20, 30, 0.14); }
@@ -2812,6 +3930,10 @@ function onGlobalKey(e) {
 .jv-artifact-head .jv-iconbtn:hover { background: var(--text) !important; color: var(--surface) !important; }
 .jv-artifact-body { flex: 1; min-height: 0; overflow: auto; background: var(--surface-1); display: flex; flex-direction: column; }
 .jv-artifact-frame { flex: 1; width: 100%; border: 0; background: #fff; }
+/* Dark preview: the frame behind html/svg srcdoc follows the app surface (the
+   srcdoc itself is themed by get_canvas's dark param); PDFs keep the white
+   frame — pages are white paper either way. */
+.jv-dark .jv-artifact-frame:not([title="PDF preview"]) { background: var(--surface-1); }
 .jv-artifact-img { max-width: 100%; height: auto; margin: auto; padding: 16px; }
 .jv-artifact-text { margin: 0; padding: 16px; font-size: 12.5px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; color: var(--text); font-family: ui-monospace, "SF Mono", Menlo, monospace; }
 .jv-artifact-loading, .jv-artifact-nopreview { margin: auto; padding: 30px; text-align: center; color: var(--text-3); font-size: 13px; display: flex; flex-direction: column; gap: 12px; align-items: center; }
