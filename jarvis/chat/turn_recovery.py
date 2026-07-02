@@ -235,3 +235,48 @@ def _recover_one(sess: OpenclawSession, row: dict, active: dict) -> str:
 		_finalize(row, text)
 		return "finalized"
 	return "waiting"  # no output yet; the ceiling backstop bounds the wait
+
+
+def recover_now(conversation_id: str) -> str:
+	"""In-worker immediate recovery for one conversation's latest recovering
+	row, so the common case (run already finished when the stream was lost)
+	does not wait for the cron. Dedicated connection - the pooled WS may be
+	the very thing that just died. Idempotent vs the cron via
+	_conditional_clear inside _finalize/_error."""
+	from jarvis import selfhost
+
+	if selfhost.is_self_hosted():
+		return "skipped"
+	rows = frappe.db.sql(
+		"""
+		SELECT m.name, m.conversation, c.session_key, c.owner,
+			   m.recovery_started_at, m.seq
+		FROM `tabJarvis Chat Message` m
+		JOIN `tabJarvis Conversation` c ON c.name = m.conversation
+		WHERE m.streaming = 1 AND m.recovering = 1
+		  AND m.conversation = %(conv)s
+		  AND c.session_key IS NOT NULL AND c.session_key != ''
+		ORDER BY m.seq DESC
+		LIMIT 1
+		""",
+		{"conv": conversation_id},
+		as_dict=True,
+	)
+	if not rows:
+		return "skipped"
+	row = rows[0]
+	settings = frappe.get_single("Jarvis Settings")
+	gateway_url = (settings.agent_url or "").replace(
+		"http://", "ws://").replace("https://", "wss://")
+	if not gateway_url:
+		return "skipped"
+	try:
+		with _recovery_connection(gateway_url) as sess:
+			active = {row["session_key"]: sess.is_run_active(row["session_key"])}
+			return _recover_one(sess, row, active)
+	except Exception:
+		frappe.log_error(
+			title="turn_recovery: recover_now failed",
+			message=frappe.get_traceback(),
+		)
+		return "skipped"
