@@ -135,6 +135,7 @@ export const completePoolAccountSignin = (nonce, redirectedUrl) =>
 // --- LLM Monitor (System-Manager gated server-side). Real Bifrost usage, NOT the getUsage estimate. ---
 export const getLlmUsage = () => call("jarvis.account.get_llm_usage")
 export const getLlmConnectionStatus = () => call("jarvis.account.get_llm_connection_status")
+export const getAccount = () => call("jarvis.account.get_account")
 
 // File input: upload to Frappe's File doctype, return {file_url, file_name}.
 export async function uploadFile(file) {
