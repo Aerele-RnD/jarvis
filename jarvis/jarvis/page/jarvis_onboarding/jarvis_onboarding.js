@@ -313,7 +313,8 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 			<label class="jo-label" for="jo-email">Work email</label>
 			<input class="jo-input" id="jo-email" type="email" placeholder="you@company.com" value="${esc(state.email)}" autocomplete="email" required aria-required="true">
 			<label class="jo-label" for="jo-company">Company</label>
-			<input class="jo-input" id="jo-company" placeholder="Acme Inc." value="${esc(state.company)}" autocomplete="organization" required aria-required="true">
+			<input class="jo-input" id="jo-company" placeholder="Acme Inc." value="${esc(state.company)}" autocomplete="organization" list="jo-company-list" required aria-required="true">
+			<datalist id="jo-company-list"></datalist>
 			<div class="jo-err" id="jo-acc-err" role="alert" aria-live="polite"></div>
 			<div class="jo-actions">
 			  <button class="jo-btn jo-btn-primary" id="jo-next">Continue →</button>
@@ -329,6 +330,33 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		$body.find("#jo-next").on("click", submit);
 		$body.find("#jo-company").on("keydown", (e) => { if (e.key === "Enter") submit(); });
 		$body.find("#jo-email").focus();
+		prefillCompany();
+	}
+
+	// Auto-fetch the company from the site itself so the customer doesn't
+	// retype what ERPNext already knows: user/global default company when set,
+	// auto-fill when the site has exactly one Company, and datalist
+	// suggestions when there are several (no guessing between them). Silent
+	// no-op on sites without the Company doctype.
+	function prefillCompany() {
+		const setVal = (v) => {
+			const $in = $body.find("#jo-company");
+			if (v && $in.length && !$in.val().trim()) { state.company = v; $in.val(v); }
+		};
+		let dflt = null;
+		try {
+			dflt = frappe.defaults.get_user_default("Company") || frappe.defaults.get_default("company");
+		} catch (e) { /* defaults not booted */ }
+		if (dflt) return setVal(dflt);
+		frappe.db
+			.get_list("Company", { fields: ["name"], limit: 20 })
+			.then((rows) => {
+				if (state.step !== 1 || !rows || !rows.length) return;
+				if (rows.length === 1) return setVal(rows[0].name);
+				const $dl = $body.find("#jo-company-list");
+				if ($dl.length) $dl.html(rows.map((r) => `<option value="${esc(r.name)}"></option>`).join(""));
+			})
+			.catch(() => { /* no Company doctype / no read permission */ });
 	}
 
 	function loadPlansThen(cb) {
