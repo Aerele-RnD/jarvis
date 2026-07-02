@@ -53,6 +53,16 @@ class TestThinkingDirectiveLeading(FrappeTestCase):
 		self._orig_user = frappe.session.user
 		frappe.set_user(TEST_USER)
 		_cleanup_user_conversations()
+		# _ensure_session_key (chat/api.py) INSERTs a Jarvis Chat Session keyed
+		# on a UNIQUE session_key and COMMITs it. _capture_message_sent drives the
+		# real _ensure_session_key with fake_sess.create_session -> "agent:fake",
+		# so every test here inserts the same "agent:fake" key. Because that row
+		# is committed it survives FrappeTestCase's per-test rollback, so a
+		# leftover from an earlier test in this class (or elsewhere) collides on
+		# the unique session_key. Clear the test user's sessions so each test's
+		# insert starts clean.
+		frappe.db.delete("Jarvis Chat Session", {"user": TEST_USER})
+		frappe.db.commit()
 		conv = create_conversation()
 		with patch("jarvis.chat.api._ensure_session_key", return_value="agent:fake"):
 			with patch("frappe.enqueue"):
@@ -64,6 +74,11 @@ class TestThinkingDirectiveLeading(FrappeTestCase):
 
 	def tearDown(self):
 		_cleanup_user_conversations()
+		# Drop the committed Jarvis Chat Session row(s) created by
+		# _ensure_session_key so the unique session_key doesn't leak into the
+		# next test (see setUp).
+		frappe.db.delete("Jarvis Chat Session", {"user": TEST_USER})
+		frappe.db.commit()
 		frappe.set_user(self._orig_user)
 
 	def _capture_message_sent(self, context=None):
