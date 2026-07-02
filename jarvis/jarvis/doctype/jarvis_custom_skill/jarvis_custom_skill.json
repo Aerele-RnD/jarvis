@@ -11,7 +11,8 @@
     "enabled",
     "user_invocable",
     "description",
-    "instructions"
+    "instructions",
+    "shared_with"
   ],
   "fields": [
     {
@@ -51,6 +52,13 @@
       "label": "Instructions (Markdown)",
       "reqd": 1,
       "description": "Markdown body of the SKILL.md: what the assistant should do when this skill is used."
+    },
+    {
+      "fieldname": "shared_with",
+      "fieldtype": "Table",
+      "label": "Shared With",
+      "options": "Jarvis Custom Skill Share",
+      "description": "Users this skill is shared with (read-only for them; only the owner can edit or re-share)."
     }
   ],
   "permissions": [
