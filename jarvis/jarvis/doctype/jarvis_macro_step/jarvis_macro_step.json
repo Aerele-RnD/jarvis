@@ -1,0 +1,51 @@
+{
+ "doctype": "DocType",
+ "name": "Jarvis Macro Step",
+ "module": "Jarvis",
+ "istable": 1,
+ "custom": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "label",
+  "prompt",
+  "model_override",
+  "thinking_override",
+  "skills"
+ ],
+ "fields": [
+  {
+   "fieldname": "label",
+   "fieldtype": "Data",
+   "label": "Label",
+   "in_list_view": 1,
+   "description": "Optional short name for this step (shown in run progress)."
+  },
+  {
+   "fieldname": "prompt",
+   "fieldtype": "Small Text",
+   "label": "Prompt",
+   "reqd": 1,
+   "in_list_view": 1,
+   "description": "The prompt sent to the assistant for this step."
+  },
+  {
+   "fieldname": "model_override",
+   "fieldtype": "Data",
+   "label": "Model Override",
+   "description": "Optional bare model id to use for this step instead of the default."
+  },
+  {
+   "fieldname": "thinking_override",
+   "fieldtype": "Select",
+   "label": "Thinking",
+   "options": "\nlow\nmedium\nhigh"
+  },
+  {
+   "fieldname": "skills",
+   "fieldtype": "JSON",
+   "label": "Skills",
+   "description": "JSON list of Jarvis Custom Skill row-names applied to this step"
+  }
+ ],
+ "permissions": []
+}

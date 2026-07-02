@@ -162,6 +162,8 @@ scheduler_events = {
 		# render a "reconnect" banner instead of "Connected" until the
 		# user hits a ProviderAuthError mid-chat.
 		"jarvis.oauth.cron.poll_oauth_refresh_status",
+		# Fire any scheduled macros whose next_run_at has passed.
+		"jarvis.chat.macro_scheduler.run_due_macros",
 	],
 	"daily": [
 		"jarvis.onboarding.sync_connection",

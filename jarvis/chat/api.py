@@ -431,29 +431,9 @@ def send_message(
 				}
 		except Exception:
 			pass
-	# Dispatch the turn. On the default Node socketio backend we route to
-	# the ``long`` RQ queue (chat turns can run up to
-	# ``_AGENT_TURN_WORKER_TIMEOUT`` = 720s, far above the 300s default
-	# cap; ``default`` is shared with provisioning + OAuth-refresh jobs
-	# which would otherwise block interactive chat behind 30s+ pieces of
-	# infrastructure work; ``at_front=True`` keeps interactive chat ahead
-	# of any scheduled long-running job). When the bench is on the Python
-	# socketio backend, dispatch goes through Redis pub/sub instead: an
-	# in-process subscriber inside Frappe's existing Python realtime
-	# process (see ``jarvis.realtime.handlers``) picks it up and runs the
-	# turn via gevent, removing the RQ-worker concurrency cap.
-	if (frappe.conf.get("socketio_backend") or "").strip().lower() == "python":
-		from jarvis.chat.dispatch import publish_chat_send
-
-		publish_chat_send(enqueue_kwargs)
-	else:
-		frappe.enqueue(
-			method="jarvis.chat.worker.run_agent_turn",
-			queue="long",
-			timeout=_AGENT_TURN_WORKER_TIMEOUT,
-			at_front=True,
-			**enqueue_kwargs,
-		)
+	# Dispatch the turn (see _dispatch_turn for the Node-RQ vs Python-pubsub
+	# routing rationale).
+	_dispatch_turn(enqueue_kwargs)
 
 	return {"ok": True, "run_id": run_id, "message_id": msg_doc.name}
 
@@ -686,6 +666,76 @@ def _next_seq(conversation: str) -> int:
 		(conversation,),
 	)[0][0]
 	return (current_max or 0) + 1
+
+
+def _dispatch_turn(enqueue_kwargs: dict) -> None:
+	"""Route a prepared turn to the worker. On the default Node socketio backend
+	we use the ``long`` RQ queue (chat turns run up to ``_AGENT_TURN_WORKER_TIMEOUT``
+	= 720s, far above the 300s default cap; ``default`` is shared with provisioning
+	+ OAuth-refresh jobs; ``at_front=True`` keeps interactive chat ahead of
+	scheduled work). On the Python socketio backend we publish to Redis instead so
+	an in-process subscriber (``jarvis.realtime.handlers``) runs it via gevent,
+	removing the RQ concurrency cap. Shared by send_message, retry_message and the
+	macro engine so every turn dispatches identically."""
+	if (frappe.conf.get("socketio_backend") or "").strip().lower() == "python":
+		from jarvis.chat.dispatch import publish_chat_send
+
+		publish_chat_send(enqueue_kwargs)
+	else:
+		frappe.enqueue(
+			method="jarvis.chat.worker.run_agent_turn",
+			queue="long",
+			timeout=_AGENT_TURN_WORKER_TIMEOUT,
+			at_front=True,
+			**enqueue_kwargs,
+		)
+
+
+def _enqueue_turn(
+	conversation: str,
+	prompt: str,
+	*,
+	model_override: str | None = None,
+	thinking_override: str | None = None,
+) -> dict:
+	"""Persist a user message + dispatch an agent turn for ``prompt`` (no
+	attachments / no auto-context). The macro engine (``jarvis.chat.macros``) uses
+	this to run one step exactly the way ``send_message`` runs a typed message —
+	same seq/session_key/dispatch path. Returns ``{run_id, message_id}``."""
+	conv_doc = frappe.get_doc(CONV, conversation)
+	if model_override:
+		conv_doc.model_override = model_override
+	if thinking_override is not None:
+		conv_doc.thinking_override = (thinking_override or "").strip().lower()
+
+	# First turn of a fresh (managed) macro conversation needs a session_key.
+	from jarvis import selfhost
+	if not selfhost.is_self_hosted() and not conv_doc.session_key:
+		conv_doc.session_key = _ensure_session_key(conv_doc.owner)
+
+	seq = _next_seq(conversation)
+	msg_doc = frappe.get_doc({
+		"doctype": MSG,
+		"conversation": conversation,
+		"seq": seq,
+		"role": "user",
+		"content": prompt,
+		"streaming": 0,
+	})
+	msg_doc.flags.ignore_permissions = True
+	msg_doc.insert()
+	conv_doc.last_active_at = frappe.utils.now()
+	conv_doc.flags.ignore_permissions = True
+	conv_doc.save()
+	frappe.db.commit()
+
+	run_id = uuid.uuid4().hex[:12]
+	_dispatch_turn({
+		"conversation_id": conversation,
+		"message_id": msg_doc.name,
+		"run_id": run_id,
+	})
+	return {"run_id": run_id, "message_id": msg_doc.name}
 
 
 def _ensure_session_key(user: str) -> str:

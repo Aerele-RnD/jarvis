@@ -1,0 +1,90 @@
+{
+  "doctype": "DocType",
+  "name": "Jarvis Macro Run",
+  "module": "Jarvis",
+  "issingle": 0,
+  "custom": 0,
+  "engine": "InnoDB",
+  "autoname": "hash",
+  "field_order": [
+    "macro",
+    "conversation",
+    "status",
+    "current_step",
+    "total_steps",
+    "trigger",
+    "started_at",
+    "finished_at",
+    "error"
+  ],
+  "fields": [
+    {
+      "fieldname": "macro",
+      "fieldtype": "Link",
+      "label": "Macro",
+      "options": "Jarvis Macro",
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "conversation",
+      "fieldtype": "Link",
+      "label": "Conversation",
+      "options": "Jarvis Conversation",
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "status",
+      "fieldtype": "Select",
+      "label": "Status",
+      "options": "queued\nrunning\ncompleted\nfailed\nstopped",
+      "default": "queued",
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "current_step",
+      "fieldtype": "Int",
+      "label": "Current Step",
+      "default": "0"
+    },
+    {
+      "fieldname": "total_steps",
+      "fieldtype": "Int",
+      "label": "Total Steps",
+      "default": "0"
+    },
+    {
+      "fieldname": "trigger",
+      "fieldtype": "Select",
+      "label": "Trigger",
+      "options": "manual\nscheduled",
+      "default": "manual"
+    },
+    {
+      "fieldname": "started_at",
+      "fieldtype": "Datetime",
+      "label": "Started At"
+    },
+    {
+      "fieldname": "finished_at",
+      "fieldtype": "Datetime",
+      "label": "Finished At"
+    },
+    {
+      "fieldname": "error",
+      "fieldtype": "Small Text",
+      "label": "Error"
+    }
+  ],
+  "permissions": [
+    {
+      "role": "All",
+      "read": 1,
+      "write": 1,
+      "create": 1,
+      "delete": 1,
+      "if_owner": 1
+    }
+  ],
+  "sort_field": "modified",
+  "sort_order": "DESC"
+}

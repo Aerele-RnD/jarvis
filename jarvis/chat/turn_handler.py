@@ -241,6 +241,20 @@ def _org_locale_clause() -> str:
 	return ("; " + "; ".join(parts)) if parts else ""
 
 
+def _advance_macro(conversation_id: str, *, errored: bool) -> None:
+	"""Chaining hook for the macro engine: if this conversation is a running
+	macro, advance it (enqueue the next step, or finish). Best-effort — a macro
+	bug must never affect the normal turn."""
+	try:
+		from jarvis.chat import macros
+
+		macros.advance_after_turn(conversation_id, errored=errored)
+	except Exception:
+		frappe.log_error(
+			title="jarvis macro advance hook failed", message=frappe.get_traceback()
+		)
+
+
 def handle_chat_send(payload: dict) -> None:
 	"""Drive one agent turn end to end.
 
@@ -416,6 +430,7 @@ def handle_chat_send(payload: dict) -> None:
 				))
 			except OpenclawUnreachableError as e:
 				_publish_run_error(str(e))
+				_advance_macro(conversation_id, errored=True)
 				return
 			finally:
 				selfhost.clear_active_turn(tool_user, run_id)
@@ -440,6 +455,7 @@ def handle_chat_send(payload: dict) -> None:
 					))
 			except OpenclawUnreachableError as e:
 				_publish_run_error(str(e))
+				_advance_macro(conversation_id, errored=True)
 				return
 
 		# Streaming exited cleanly via lifecycle.end
@@ -528,7 +544,16 @@ def handle_chat_send(payload: dict) -> None:
 			# already in an error path and re-raising would mask the
 			# original exception that RQ should see.
 			pass
+		_advance_macro(conversation_id, errored=True)
 		raise
+	# A turn can end "cleanly" (no exception) yet be an LLM-level failure — an
+	# openclaw lifecycle:error frame (quota/cooldown/provider error) ends the
+	# stream normally after _mark_errored stamped the message. So the macro's
+	# errored signal is the assistant message's error field, not the code path.
+	_advance_macro(
+		conversation_id,
+		errored=bool(frappe.db.get_value(MSG, assistant_msg.name, "error")),
+	)
 	_publish_to_user(user, {
 		"kind": "run:end",
 		"conversation_id": conversation_id,
