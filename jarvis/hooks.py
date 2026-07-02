@@ -145,6 +145,13 @@ website_route_rules = [
 	{"from_route": "/jarvis/<path:app_path>", "to_route": "jarvis"},
 ]
 
+# Session hooks
+# --------------
+
+# 2026-07 latency plan, Phase 1.4: kick off a (debounced) prefix warm-up on
+# login so the provider prompt cache is warm before the chat page even loads.
+on_session_creation = ["jarvis.chat.prewarm.warm_on_login"]
+
 # Scheduled Tasks
 # ---------------
 
@@ -152,12 +159,15 @@ scheduler_events = {
 	"cron": {
 		"*/5 * * * *": [
 			"jarvis.chat.stale_scan.scan_and_mark_errored",
+			# 2026-07 latency plan, Phase 1.4: was */30, which left the
+			# provider prompt cache (5-10 min retention) cold for most of
+			# each half-hour. Every 5 min + a 4-min cooldown in prewarm.py
+			# keeps the prefix warm continuously while there is recent chat
+			# activity (the function itself gates on activity).
+			"jarvis.chat.prewarm.keep_warm_if_active",
 		],
 		"*/2 * * * *": [
 			"jarvis.chat.turn_recovery.recover_pending_turns",
-		],
-		"*/30 * * * *": [
-			"jarvis.chat.prewarm.keep_warm_if_active",
 		],
 	},
 	"hourly": [

@@ -2074,11 +2074,12 @@ async function send(textArg) {
 		mention.value = { ...mention.value, open: false }
 		nextTick(autoGrow)
 	}
-	if (!currentId.value) {
-		const conv = await api.createOrFocusEmpty()
-		currentId.value = conv?.name || conv
-		await loadConversations()
-	}
+	// No awaited pre-flight for a brand-new chat (latency plan, Phase 1.3):
+	// the backend's send_message creates/focuses the empty conversation
+	// itself and returns conversation_id — two fewer round-trips before the
+	// first message even leaves the browser. The sidebar refresh happens
+	// after the send resolves, off the critical path.
+	const isNewConv = !currentId.value
 	sending.value = true
 	waiting.value = true
 	stoppedRunId.value = null
@@ -2092,7 +2093,13 @@ async function send(textArg) {
 	await nextTick()
 	scrollBottom()
 	try {
-		await api.sendMessage(currentId.value, text, undefined, attachments)
+		const r = await api.sendMessage(currentId.value || "", text, undefined, attachments)
+		if (isNewConv && r?.conversation_id) {
+			// Adopt the server-created conversation so realtime events route to
+			// this thread, then refresh the sidebar without blocking anything.
+			currentId.value = r.conversation_id
+			loadConversations()
+		}
 	} catch (e) {
 		sending.value = false
 		waiting.value = false
@@ -2390,17 +2397,22 @@ function applyMention(item) {
 }
 
 onMounted(async () => {
+	// Latency plan, Phase 1.3: the bootstrap network calls used to run as a
+	// serial awaited chain (ready → ui settings → conversations), each a full
+	// round-trip. Fire them concurrently and await in order below — the
+	// onboarding redirect check still resolves before anything is revealed,
+	// and list_conversations (which triggers the server-side prefix prewarm)
+	// now starts ~2 RTTs earlier.
+	const readyP = api.isReadyForChat().catch(() => null)
+	const uiP = api.getChatUiSettings().catch(() => null)
+	const convsP = loadConversations().catch(() => {})
 	// Gate the chat the way the old Desk page did: if the customer hasn't
 	// finished signup / LLM setup, send them to the onboarding wizard. A
 	// transient failure falls through to the chat rather than trapping them.
-	try {
-		const r = await api.isReadyForChat()
-		if (r && r.ready === false) {
-			window.location.assign("/app/jarvis-onboarding")
-			return
-		}
-	} catch (e) {
-		/* fall through */
+	const r = await readyP
+	if (r && r.ready === false) {
+		window.location.assign("/app/jarvis-onboarding")
+		return
 	}
 	socket?.on("jarvis:event", onEvent)
 	// Live tool list for the "Tools available" count + /tool autocomplete
@@ -2413,15 +2425,11 @@ onMounted(async () => {
 	_mq = window.matchMedia("(prefers-color-scheme: dark)")
 	prefersDark.value = _mq.matches
 	_mq.addEventListener("change", onColorScheme)
-	try {
-		ui.value = (await api.getChatUiSettings()) || {}
-	} catch (e) {
-		/* ignore */
-	}
+	ui.value = (await uiP) || {}
 	// Load custom skills so the "/" composer menu can offer them.
 	loadCustomSkills()
 	try {
-		await loadConversations()
+		await convsP
 		// Restore the chat the user was last on (survives refresh + duplicated tab)
 		// before falling back to the first sidebar entry, so a starred chat sorting
 		// to the top never hijacks navigation away from your current chat.

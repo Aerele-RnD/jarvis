@@ -13,11 +13,15 @@ import frappe
 from jarvis import selfhost
 from jarvis.chat.openclaw_client import OpenclawSession
 
-# Cooldown between warm-ups for one bench. Set below the */30 cron
-# interval so keep_warm re-warms on each tick instead of every other.
-# Comfortably inside gpt-5.5's prompt-cache retention window so the
-# cache never cools between warms.
-_WARM_COOLDOWN_S = 25 * 60
+# Cooldown between warm-ups for one bench. 2026-07 latency plan, Phase
+# 1.4: was 25 min, which is LONGER than the providers' prompt-cache
+# retention (OpenAI evicts after ~5-10 min of inactivity; Gemini implicit
+# caching is similar or shorter) — so for most of each half-hour the
+# cooldown key said "warm" while the provider cache had already cooled,
+# and the first turn ate a cold prefill anyway. 4 min keeps every warm
+# inside the retention window; paired with the */5 keep_warm cron so each
+# tick re-warms. Watch warm-turn token spend after this change.
+_WARM_COOLDOWN_S = 4 * 60
 
 # Short in-progress TTL set BEFORE the slow connect so concurrent opens
 # cannot fan out into concurrent warm-ups. Expires quickly on failure
@@ -81,6 +85,8 @@ def warm_prefix() -> bool:
 		# disable warming for 25 min.
 		cache.set_value(key, "1", expires_in_sec=_WARM_INPROGRESS_S)
 		model, provider = _resolve_default_model_and_provider(settings)
+		import time
+		t0 = time.monotonic()
 		sess = OpenclawSession.connect(gateway_url)
 		try:
 			throwaway = sess.create_session(label=f"jarvis-prewarm-{uuid.uuid4().hex[:8]}")
@@ -90,6 +96,15 @@ def warm_prefix() -> bool:
 			)
 		finally:
 			sess.close()
+		# Latency telemetry (plan Phase 0): connect+create+fire duration.
+		# (fire_agent is fire-and-forget, so this does NOT include the
+		# prefill itself — cold-vs-warm shows up in real turns'
+		# first_delta_ms, logged by turn_handler.)
+		from jarvis.chat.latency import get_logger as _get_latency_logger
+
+		_get_latency_logger().info(
+			"warm_prefix fire_ms=%d", int((time.monotonic() - t0) * 1000),
+		)
 		# Warm succeeded: arm the full cooldown so the next cron tick skips.
 		cache.set_value(key, "1", expires_in_sec=_WARM_COOLDOWN_S)
 		return True
@@ -113,6 +128,19 @@ def keep_warm_if_active() -> None:
 		warm_prefix()
 	except Exception:
 		frappe.logger("jarvis.chat.prewarm").debug("keep_warm skipped", exc_info=True)
+
+
+def warm_on_login(login_manager=None) -> None:
+	"""``on_session_creation`` hook (2026-07 latency plan, Phase 1.4): start
+	warming as soon as anyone logs in, before the chat page even loads —
+	the warm-up has the whole page-load window to land. Same debounced
+	enqueue as the chat-load trigger, so non-chat logins cost one cache
+	read. Best-effort, never raises (a hook failure must never block login).
+	"""
+	try:
+		enqueue_warm_if_due()
+	except Exception:
+		pass
 
 
 def enqueue_warm_if_due() -> None:
