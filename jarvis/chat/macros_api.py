@@ -243,3 +243,80 @@ def get_macro_run(run: str) -> dict:
 		"total_steps": doc.total_steps,
 		"error": doc.error or "",
 	}
+
+
+# --------------------------------------------------------------------------- #
+# Run history dashboard (settings → Macro runs)
+# --------------------------------------------------------------------------- #
+_RUN_STATUSES = {"queued", "running", "completed", "failed", "stopped"}
+
+
+@frappe.whitelist()
+def list_macro_runs(status: str = "", macro: str = "", limit=30, start=0) -> dict:
+	"""The current user's macro runs, newest-first, for the history dashboard.
+
+	Joins the macro for its display name and computes each run's duration in
+	seconds. Optional filters: ``status`` (a run status) and ``macro`` (a macro
+	row-name). Owner-scoped in SQL so another user's runs are never returned.
+	Fetches ``limit + 1`` rows to report ``has_more`` for the SPA's Load more."""
+	limit = max(1, min(int(limit or 30), 100))
+	start = max(0, int(start or 0))
+	conditions = ["r.owner = %(owner)s"]
+	params = {"owner": frappe.session.user, "limit": limit + 1, "start": start}
+	if status and status in _RUN_STATUSES:
+		conditions.append("r.status = %(status)s")
+		params["status"] = status
+	if macro:
+		conditions.append("r.macro = %(macro)s")
+		params["macro"] = macro
+	where = " AND ".join(conditions)
+	rows = frappe.db.sql(
+		f"""
+		SELECT r.name, r.macro, COALESCE(m.macro_name, r.macro) AS macro_name,
+		       r.conversation, r.status, r.current_step, r.total_steps,
+		       r.`trigger` AS `trigger`, r.creation, r.started_at, r.finished_at, r.error,
+		       CASE WHEN r.started_at IS NOT NULL AND r.finished_at IS NOT NULL
+		            THEN TIMESTAMPDIFF(SECOND, r.started_at, r.finished_at)
+		       END AS duration_s
+		FROM `tabJarvis Macro Run` r
+		LEFT JOIN `tabJarvis Macro` m ON m.name = r.macro
+		WHERE {where}
+		ORDER BY r.creation DESC
+		LIMIT %(limit)s OFFSET %(start)s
+		""",
+		params,
+		as_dict=True,
+	)
+	return {"runs": rows[:limit], "has_more": len(rows) > limit}
+
+
+@frappe.whitelist()
+def macro_run_stats() -> dict:
+	"""Summary tiles for the dashboard: counts per status, success rate, and the
+	last run time — all owner-scoped. Success rate = completed / (completed +
+	failed); stopped runs are user cancellations, not failures, so they're
+	excluded from the rate (but still counted in ``total``)."""
+	owner = {"owner": frappe.session.user}
+	rows = frappe.db.sql(
+		"SELECT status, COUNT(*) AS n FROM `tabJarvis Macro Run` "
+		"WHERE owner = %(owner)s GROUP BY status",
+		owner,
+		as_dict=True,
+	)
+	by = {r.status: r.n for r in rows}
+	completed = by.get("completed", 0)
+	failed = by.get("failed", 0)
+	finished = completed + failed
+	last = frappe.db.sql(
+		"SELECT MAX(creation) FROM `tabJarvis Macro Run` WHERE owner = %(owner)s", owner
+	)[0][0]
+	return {
+		"total": sum(by.values()),
+		"completed": completed,
+		"failed": failed,
+		"running": by.get("running", 0),
+		"queued": by.get("queued", 0),
+		"stopped": by.get("stopped", 0),
+		"success_rate": round(completed * 100 / finished) if finished else None,
+		"last_run_at": str(last) if last else "",
+	}

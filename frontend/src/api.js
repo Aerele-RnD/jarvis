@@ -60,6 +60,9 @@ export const updateMacro = (p) => {
 export const deleteMacro = (name) => call(MC + "delete_macro", { name })
 export const runMacro = (name) => call(MC + "run_macro", { name })
 export const stopMacroRun = (run) => call(MC + "stop_macro_run", { run })
+// Run-history dashboard (settings → Macro runs).
+export const listMacroRuns = (params) => call(MC + "list_macro_runs", params || {})
+export const macroRunStats = () => call(MC + "macro_run_stats")
 export const setConversationModel = (conversation, model) =>
 	call("jarvis.chat.api.set_conversation_model", { conversation, model: model || "" })
 
