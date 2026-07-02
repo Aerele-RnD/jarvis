@@ -79,7 +79,7 @@ __all__ = [
 
 def run_agent_turn(
 	conversation_id: str, message_id: str, run_id: str, attachments=None,
-	context=None,
+	context=None, enqueued_at_ms=None,
 ) -> None:
 	"""RQ entry point. Thin shim around ``handle_chat_send``.
 
@@ -89,6 +89,10 @@ def run_agent_turn(
 	``frappe.enqueue("jarvis.chat.worker.run_agent_turn", ...)`` calls
 	continue to work unchanged. All real work happens in
 	``jarvis.chat.turn_handler.handle_chat_send``.
+
+	``enqueued_at_ms`` (optional): epoch ms stamped by the enqueue site so
+	the handler can log queue_wait_ms (latency plan, Phase 0). Deploys that
+	add this kwarg must restart workers (RQ workers don't hot-reload).
 	"""
 	handle_chat_send({
 		"conversation_id": conversation_id,
@@ -96,4 +100,5 @@ def run_agent_turn(
 		"run_id": run_id,
 		"attachments": attachments,
 		"context": context,
+		"enqueued_at_ms": enqueued_at_ms,
 	})

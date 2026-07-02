@@ -291,6 +291,7 @@ def set_star(conversation: str, starred: str | int | bool) -> dict:
 	return {"ok": True, "data": {"starred": on}}
 
 
+import time
 import uuid
 
 from frappe import _
@@ -301,11 +302,24 @@ from jarvis.chat.openclaw_client import OpenclawSession
 
 @frappe.whitelist()
 def send_message(
-	conversation: str, message: str, model_override: str | None = None,
+	conversation: str | None = None, message: str = "", model_override: str | None = None,
 	attachments: str | None = None, context: str | None = None,
 	thinking_override: str | None = None,
 ) -> dict:
-	"""Validate, persist the user message, ensure session_key, enqueue the worker.
+	"""Validate, persist the user message, enqueue the worker.
+
+	`conversation` (optional): when empty, an empty active conversation is
+	created (or the existing empty one focused) server-side and its id is
+	returned as `conversation_id`. Saves the SPA a `create_or_focus_empty`
+	round-trip before the first send of a brand-new chat (2026-07 latency
+	plan, Phase 1.3).
+
+	NOTE (2026-07 latency plan, Phase 1.1): this endpoint no longer creates
+	the openclaw session. That used to happen here synchronously — a full
+	unpooled WS connect + sessions.create + close INSIDE the POST the
+	browser awaits. The worker now creates the session on its own pooled
+	connection (see turn_handler.handle_chat_send), so this endpoint only
+	persists + enqueues.
 
 	`model_override` (optional): bare model id to apply to this conversation
 	BEFORE enqueueing the worker. Used from the welcome screen so the first
@@ -320,16 +334,23 @@ def send_message(
 	Note: this differs from `model_override`, which treats both None and empty
 	string as "leave the existing value alone".
 
-	Returns {ok: True, run_id, message_id} on success or
+	Returns {ok: True, run_id, message_id, conversation_id} on success or
 	{ok: False, reason: str} on validation failure. Raises
 	frappe.DoesNotExistError if the conversation does not exist or the
 	caller is not the owner.
 	"""
+	t0 = time.monotonic()
 	user = frappe.session.user
 
 	ok, reason = validate_can_send(user)
 	if not ok:
 		return {"ok": False, "reason": reason}
+
+	# No conversation yet (first send from a fresh chat surface): create or
+	# focus the user's empty conversation here instead of a separate
+	# round-trip from the SPA.
+	if not conversation:
+		conversation = create_or_focus_empty()
 
 	# Attachments arrive as a JSON string of [{file_url, file_name}, ...] from
 	# the composer's file picker (already uploaded to the Frappe File doctype).
@@ -410,14 +431,11 @@ def send_message(
 	# openers stay unnamed until a real prompt arrives).
 	conv_doc.last_active_at = frappe.utils.now()
 
-	# Ensure the conversation has an openclaw session_key; create one on
-	# first turn. Insert the Jarvis Chat Session row so the plugin's
-	# sessionKey → user lookup works. Self-hosted mode chats over openclaw's
-	# HTTP surface (stateless per call) and needs no WS session / device
-	# pairing, so skip session creation there.
-	from jarvis import selfhost
-	if not selfhost.is_self_hosted() and not conv_doc.session_key:
-		conv_doc.session_key = _ensure_session_key(user)
+	# session_key creation moved to the worker (turn_handler.handle_chat_send)
+	# so the browser-awaited POST never pays a WS connect + handshake. The
+	# worker creates it on its pooled connection and inserts the Jarvis Chat
+	# Session row BEFORE streaming starts (2026-07 latency plan, Phase 1.1).
+	first_turn = 1 if not conv_doc.session_key else 0
 	conv_doc.save()
 	frappe.db.commit()
 
@@ -430,6 +448,10 @@ def send_message(
 		"conversation_id": conversation,
 		"message_id": msg_doc.name,
 		"run_id": run_id,
+		# Epoch ms at enqueue time so the worker can log queue_wait_ms
+		# (latency plan, Phase 0). Workers must be restarted with this
+		# deploy — run_agent_turn grew the matching kwarg.
+		"enqueued_at_ms": int(time.time() * 1000),
 	}
 	if atts:
 		enqueue_kwargs["attachments"] = atts
@@ -470,7 +492,20 @@ def send_message(
 			**enqueue_kwargs,
 		)
 
-	return {"ok": True, "run_id": run_id, "message_id": msg_doc.name}
+	# Latency telemetry (plan Phase 0): one line per send so the web-request
+	# segments are measurable. total_ms should now sit in the tens of ms even
+	# on first_turn=1 — the old synchronous session-create is gone.
+	from jarvis.chat.latency import get_logger as _get_latency_logger
+
+	_get_latency_logger().info(
+		"send_message run_id=%s first_turn=%d total_ms=%d",
+		run_id, first_turn, int((time.monotonic() - t0) * 1000),
+	)
+
+	return {
+		"ok": True, "run_id": run_id, "message_id": msg_doc.name,
+		"conversation_id": conversation,
+	}
 
 
 @frappe.whitelist()
@@ -691,6 +726,7 @@ def retry_message(message: str) -> dict:
 		"conversation_id": doc.conversation,
 		"message_id": user_msg_id,
 		"run_id": run_id,
+		"enqueued_at_ms": int(time.time() * 1000),
 	}
 	if (frappe.conf.get("socketio_backend") or "").strip().lower() == "python":
 		from jarvis.chat.dispatch import publish_chat_send
@@ -716,25 +752,38 @@ def _next_seq(conversation: str) -> int:
 	return (current_max or 0) + 1
 
 
-def _ensure_session_key(user: str) -> str:
+def _ensure_session_key(user: str, sess: OpenclawSession | None = None) -> str:
 	"""Create an openclaw session for `user`, persist the Chat Session row,
 	and return the session_key. Caller is responsible for storing it on the
 	parent Conversation row.
-	"""
-	settings = frappe.get_single("Jarvis Settings")
-	gateway_url = (settings.agent_url or "").replace("http://", "ws://").replace("https://", "wss://")
-	gateway_token = settings.get_password("agent_token")
-	if not gateway_url or not gateway_token:
-		frappe.throw(_("openclaw is not configured"))
 
-	import time
-	sess = OpenclawSession.connect(gateway_url)
-	try:
-		# Label includes a timestamp because openclaw deduplicates sessions
-		# by label and rejects collisions.
+	2026-07 latency plan, Phase 1.1: ``send_message`` no longer calls this
+	on the web request. The worker calls it with ``sess`` = its pooled
+	connection (turn_handler.handle_chat_send) so the first turn pays ONE
+	handshake, off the browser-blocking path. The ``sess=None`` one-shot
+	branch remains for callers without a pooled connection.
+	"""
+	if sess is not None:
+		# Reuse the caller's already-connected (pooled) session — no extra
+		# connect/handshake. Label includes a timestamp because openclaw
+		# deduplicates sessions by label and rejects collisions.
 		session_key = sess.create_session(label=f"jarvis-chat-{user}-{int(time.time() * 1000)}")
-	finally:
-		sess.close()
+	else:
+		settings_check = frappe.get_single("Jarvis Settings")
+		gateway_url = (settings_check.agent_url or "").replace(
+			"http://", "ws://").replace("https://", "wss://")
+		gateway_token = settings_check.get_password("agent_token")
+		if not gateway_url or not gateway_token:
+			frappe.throw(_("openclaw is not configured"))
+
+		one_shot = OpenclawSession.connect(gateway_url)
+		try:
+			session_key = one_shot.create_session(
+				label=f"jarvis-chat-{user}-{int(time.time() * 1000)}")
+		finally:
+			one_shot.close()
+
+	settings = frappe.get_single("Jarvis Settings")
 
 	# C2 stretch (2026-06-16 review): snapshot the bench's current
 	# chat_device_id into the Jarvis Chat Session row. On every

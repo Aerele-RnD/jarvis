@@ -24,11 +24,20 @@ MSG = "Jarvis Chat Message"
 
 
 def _make_conversation_with_user_message(text: str = "hi") -> tuple[str, str]:
-	"""Helper: create conversation, attach a user message, return (conv, msg)."""
+	"""Helper: create conversation, attach a user message, return (conv, msg).
+
+	send_message no longer creates the openclaw session on the web request
+	(2026-07 latency plan, Phase 1.1 — the worker creates it on its pooled
+	connection for first turns). These tests drive the worker against a
+	conversation that already has a session, so set the key directly; the
+	first-turn creation path has its own test
+	(TestWorkerCreatesSessionOnFirstTurn).
+	"""
 	conv = create_conversation()
-	with patch("jarvis.chat.api._ensure_session_key", return_value="agent:fake"):
-		with patch("frappe.enqueue"):
-			result = send_message(conv, text)
+	with patch("frappe.enqueue"):
+		result = send_message(conv, text)
+	frappe.db.set_value(CONV, conv, "session_key", "agent:fake")
+	frappe.db.commit()
 	return conv, result["message_id"]
 
 
@@ -631,3 +640,68 @@ class TestAssistantContentBatcherUnit(FrappeTestCase):
 		# After flush, the next delta starts the counter over.
 		b.delta("post-flush")
 		self.assertFalse(b.flush_if_due())
+
+
+class TestWorkerCreatesSessionOnFirstTurn(FrappeTestCase):
+	"""2026-07 latency plan, Phase 1.1: the WORKER creates the openclaw
+	session for a conversation's first turn on its pooled connection —
+	send_message no longer does it on the browser-awaited POST. The
+	Jarvis Chat Session row (the plugin's sessionKey→user lookup, i.e.
+	the permission moat) must exist BEFORE the stream starts."""
+
+	def setUp(self):
+		openclaw_session_pool._POOL.clear()
+		_ensure_test_user()
+		self._orig_user = frappe.session.user
+		frappe.set_user(TEST_USER)
+		_cleanup_user_conversations()
+		# Deliberately NOT setting session_key: this simulates the first
+		# turn as send_message now leaves it.
+		self.conv = create_conversation()
+		with patch("frappe.enqueue"):
+			result = send_message(self.conv, "first message")
+		self.user_msg = result["message_id"]
+
+	def tearDown(self):
+		frappe.db.delete("Jarvis Chat Session", {"session_key": "agent:new"})
+		frappe.db.commit()
+		_cleanup_user_conversations()
+		frappe.set_user(self._orig_user)
+
+	def test_send_message_no_longer_sets_session_key(self):
+		self.assertFalse(frappe.db.get_value(CONV, self.conv, "session_key"))
+
+	def test_worker_creates_session_row_before_streaming(self):
+		fake_sess = MagicMock()
+		fake_sess.create_session.return_value = "agent:new"
+		row_exists_at_stream_start = {}
+
+		def _stream(session_key, *a, **kw):
+			# Capture the moat invariant at the exact moment streaming
+			# starts: the sessionKey→user row must already be committed.
+			row_exists_at_stream_start["row"] = frappe.db.get_value(
+				"Jarvis Chat Session", {"session_key": session_key},
+				["user", "session_key"], as_dict=True,
+			)
+			return _fake_event_stream([
+				{"kind": "lifecycle", "phase": "start"},
+				{"kind": "assistant", "text": "Hi", "delta": "Hi"},
+				{"kind": "lifecycle", "phase": "end"},
+			])
+
+		fake_sess.stream_agent_turn.side_effect = _stream
+		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess):
+			with patch("jarvis.chat.worker.publish_to_user"):
+				run_agent_turn(self.conv, self.user_msg, run_id="r1")
+
+		# The session was created on the WORKER's pooled connection.
+		fake_sess.create_session.assert_called_once()
+		# The row existed (with the sender's identity) before streaming.
+		row = row_exists_at_stream_start["row"]
+		self.assertIsNotNone(row, "Jarvis Chat Session row must exist before stream_agent_turn")
+		self.assertEqual(row["session_key"], "agent:new")
+		self.assertEqual(row["user"], TEST_USER)
+		# And the conversation now carries the session key.
+		self.assertEqual(
+			frappe.db.get_value(CONV, self.conv, "session_key"), "agent:new",
+		)

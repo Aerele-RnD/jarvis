@@ -7,8 +7,16 @@ handshake before sending the agent RPC. The spike (workflow
 confirmed:
 
 - The gateway dispatches concurrent RPCs on one WS (multiplex)
-- RQ workers are long-lived processes (Procfile, no ``--burst``)
 - One warm WS per gateway can serve every subsequent turn
+
+CAVEAT (2026-07 latency review): the RQ worker *parent* process is
+long-lived, but stock ``bench worker`` uses rq's forking Worker — each
+job runs in a forked work-horse child that exits after the job, taking
+this module-level pool with it. The pool therefore only amortizes under
+a non-forking executor: the Python-socketio realtime process (Path B,
+``socketio_backend: "python"``) or ``bench worker-pool`` with
+``FRAPPE_BACKGROUND_WORKERS_NOFORK=1``. The pool-hit/pool-miss log
+lines in ``checkout``/``_do_connect`` measure which world you're in.
 
 This module maintains one pooled OpenclawSession per gateway URL,
 per worker process, with lazy reconnect on stale / idle / error.
@@ -105,6 +113,15 @@ def checkout(gateway_url: str) -> Iterator[OpenclawSession]:
 			)
 			_close_quietly(entry.session)
 			entry.session = _do_connect(gateway_url)
+		else:
+			# Symmetric to the pool-miss log in _do_connect so the hit rate
+			# is measurable from logs (latency plan, Phase 0). Under stock
+			# fork-per-job RQ this line should ~never appear — that absence
+			# is itself the signal that Phase 2 (persistent relay) is needed.
+			logger.info(
+				"openclaw_session_pool: pool-hit gateway=%s idle_s=%.1f",
+				gateway_url, time.monotonic() - entry.last_used,
+			)
 		yield entry.session
 		entry.last_used = time.monotonic()
 	except OpenclawUnreachableError:
