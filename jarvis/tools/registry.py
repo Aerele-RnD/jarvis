@@ -39,6 +39,7 @@ _TOOL_NAMES: tuple[str, ...] = (
     "download_pdf",
     "export_excel",
     "read_file",
+    "get_file_pages",
     "attach_to_doc",
     "download_vcard",
     # Tier 2a ERPNext computed reads: numbers the LLM keeps hallucinating

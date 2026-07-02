@@ -68,9 +68,13 @@ def image_part(content: bytes, file_name: str) -> dict | None:
 			pass
 
 
-def pdf_parts(content: bytes, file_name: str) -> tuple[list[dict], int]:
+def pdf_parts(
+	content: bytes, file_name: str, first_page: int = 1, max_pages: int | None = None
+) -> tuple[list[dict], int]:
 	"""Rasterize up to _MAX_PDF_PAGES pages to JPEG image parts. Returns
-	``(parts, total_pages)`` so the caller can note truncation. Uses pypdfium2
+	``(parts, total_pages)`` so the caller can note truncation; each part
+	carries its 1-based ``page`` number. ``first_page``/``max_pages`` select a
+	window (defaults keep the from-the-start behaviour). Uses pypdfium2
 	(Apache/BSD) - NOT PyMuPDF (AGPL)."""
 	import pypdfium2 as pdfium
 
@@ -78,7 +82,9 @@ def pdf_parts(content: bytes, file_name: str) -> tuple[list[dict], int]:
 	pdf = pdfium.PdfDocument(content)
 	try:
 		total = len(pdf)
-		for i in range(min(total, _MAX_PDF_PAGES)):
+		limit = _MAX_PDF_PAGES if max_pages is None else max(1, min(max_pages, _MAX_PDF_PAGES))
+		start = max(0, int(first_page or 1) - 1)
+		for i in range(start, min(total, start + limit)):
 			page = pdf[i]
 			scale = _RASTER_SCALE
 			try:
@@ -93,6 +99,7 @@ def pdf_parts(content: bytes, file_name: str) -> tuple[list[dict], int]:
 				continue
 			part = _encode_under_caps(pil, f"{file_name}-p{i + 1}.jpg")
 			if part:
+				part["page"] = i + 1
 				parts.append(part)
 		return parts, total
 	finally:
