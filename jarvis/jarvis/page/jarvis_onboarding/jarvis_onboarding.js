@@ -313,35 +313,69 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 			<label class="jo-label" for="jo-email">Work email</label>
 			<input class="jo-input" id="jo-email" type="email" placeholder="you@company.com" value="${esc(state.email)}" autocomplete="email" required aria-required="true">
 			<label class="jo-label" for="jo-company">Company</label>
-			<input class="jo-input" id="jo-company" placeholder="Acme Inc." value="${esc(state.company)}" autocomplete="organization" list="jo-company-list" required aria-required="true">
-			<datalist id="jo-company-list"></datalist>
+			<div id="jo-company-wrap"></div>
 			<div class="jo-err" id="jo-acc-err" role="alert" aria-live="polite"></div>
 			<div class="jo-actions">
 			  <button class="jo-btn jo-btn-primary" id="jo-next">Continue →</button>
 			</div>`);
+		const companyCtrl = makeCompanyControl();
 		const submit = () => {
 			state.email = $body.find("#jo-email").val().trim();
-			state.company = $body.find("#jo-company").val().trim();
+			state.company = (companyCtrl ? companyCtrl.get_value() || "" : $body.find("#jo-company").val() || "").trim();
 			const ok = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(state.email);
 			if (!ok) return $body.find("#jo-acc-err").text("Enter a valid email address.");
 			if (!state.company) return $body.find("#jo-acc-err").text("Company name is required.");
 			loadPlansThen(() => go(2));
 		};
 		$body.find("#jo-next").on("click", submit);
-		$body.find("#jo-company").on("keydown", (e) => { if (e.key === "Enter") submit(); });
+		$body.find("#jo-company").on("keydown", (e) => {
+			if (e.key !== "Enter") return;
+			// When the Link dropdown is open, Enter picks a suggestion.
+			const aw = companyCtrl && companyCtrl.awesomplete;
+			if (aw && aw.opened) return;
+			submit();
+		});
 		$body.find("#jo-email").focus();
-		prefillCompany();
+		prefillCompany(companyCtrl);
+	}
+
+	// The Company field is a real Frappe Link control over the Company
+	// doctype (searchable dropdown, select-only so "Create new" can't yank
+	// the customer out of the wizard). Falls back to a plain text input on
+	// sites without the doctype so onboarding never blocks on it.
+	function makeCompanyControl() {
+		const $wrap = $body.find("#jo-company-wrap");
+		try {
+			const ctrl = frappe.ui.form.make_control({
+				parent: $wrap.get(0),
+				df: {
+					fieldtype: "Link", fieldname: "company", options: "Company",
+					placeholder: "Acme Inc.", only_select: 1,
+				},
+				render_input: true,
+			});
+			ctrl.$input.attr("id", "jo-company").attr("autocomplete", "organization");
+			if (state.company) ctrl.set_value(state.company);
+			return ctrl;
+		} catch (e) {
+			$wrap.replaceWith(`<input class="jo-input" id="jo-company" placeholder="Acme Inc." value="${esc(state.company)}" autocomplete="organization" required aria-required="true">`);
+			return null;
+		}
 	}
 
 	// Auto-fetch the company from the site itself so the customer doesn't
-	// retype what ERPNext already knows: user/global default company when set,
-	// auto-fill when the site has exactly one Company, and datalist
-	// suggestions when there are several (no guessing between them). Silent
-	// no-op on sites without the Company doctype.
-	function prefillCompany() {
+	// retype what ERPNext already knows: user/global default company when
+	// set, else auto-fill when the site has exactly one Company. Multiple
+	// companies stay a user choice via the Link dropdown. Silent no-op on
+	// sites without the Company doctype.
+	function prefillCompany(ctrl) {
 		const setVal = (v) => {
-			const $in = $body.find("#jo-company");
-			if (v && $in.length && !$in.val().trim()) { state.company = v; $in.val(v); }
+			if (!v) return;
+			const cur = (ctrl ? ctrl.get_value() || "" : $body.find("#jo-company").val() || "").trim();
+			if (cur) return;
+			state.company = v;
+			if (ctrl) ctrl.set_value(v);
+			else $body.find("#jo-company").val(v);
 		};
 		let dflt = null;
 		try {
@@ -349,12 +383,9 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		} catch (e) { /* defaults not booted */ }
 		if (dflt) return setVal(dflt);
 		frappe.db
-			.get_list("Company", { fields: ["name"], limit: 20 })
+			.get_list("Company", { fields: ["name"], limit: 2 })
 			.then((rows) => {
-				if (state.step !== 1 || !rows || !rows.length) return;
-				if (rows.length === 1) return setVal(rows[0].name);
-				const $dl = $body.find("#jo-company-list");
-				if ($dl.length) $dl.html(rows.map((r) => `<option value="${esc(r.name)}"></option>`).join(""));
+				if (state.step === 1 && rows && rows.length === 1) setVal(rows[0].name);
 			})
 			.catch(() => { /* no Company doctype / no read permission */ });
 	}
@@ -1198,6 +1229,14 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		.jo-input{width:100%;padding:10px 12px;font-size:14px;border:1px solid var(--border-color);
 			border-radius:var(--border-radius,8px);background:var(--control-bg,var(--bg-color));color:var(--text-color)}
 		.jo-input:focus{outline:none;border-color:var(--jarvis-primary);box-shadow:0 0 0 2px var(--jarvis-primary-faint)}
+		/* Company as a Frappe Link control - blend it into the wizard */
+		#jo-company-wrap .frappe-control,#jo-company-wrap .form-group{margin:0}
+		#jo-company-wrap .control-label,#jo-company-wrap .help-box{display:none}
+		#jo-company-wrap input.form-control{width:100%;padding:10px 12px;font-size:14px;height:auto;
+			border:1px solid var(--border-color);border-radius:var(--border-radius,8px);
+			background:var(--control-bg,var(--bg-color));color:var(--text-color)}
+		#jo-company-wrap input.form-control:focus{outline:none;border-color:var(--jarvis-primary);
+			box-shadow:0 0 0 2px var(--jarvis-primary-faint)}
 		.jo-field{margin-bottom:14px}
 		.jo-field label{display:block;font-size:12.5px;font-weight:600;color:var(--text-color);margin-bottom:6px}
 		.jo-hint{font-size:11.5px;color:var(--text-muted);margin-top:4px}
