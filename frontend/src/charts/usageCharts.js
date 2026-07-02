@@ -1,4 +1,5 @@
 // Pure builders for the LLM Monitor echarts (plain option objects; node:test-able).
+import { LIGHT_VARS, DARK_VARS } from "../theme.js"
 const GREEN = "#48bb74", AMBER = "#f6ad55", RED = "#fc8181"
 
 export function budgetGaugeOption(used, limit, dark = false) {
@@ -6,8 +7,8 @@ export function budgetGaugeOption(used, limit, dark = false) {
   if (lim <= 0) return null
   const val = Math.max(0, Number(used) || 0)
   const pct = Math.min(100, Math.round((val / lim) * 100))
-  const text = dark ? "#cbd5e0" : "#333333"
-  const track = dark ? "#2d3748" : "#e2e8f0"
+  const text = dark ? DARK_VARS["--text-2"] : LIGHT_VARS["--text-2"]
+  const track = dark ? DARK_VARS["--surface-2"] : LIGHT_VARS["--border"]
   const color = pct >= 90 ? RED : pct >= 70 ? AMBER : GREEN
   return {
     series: [{

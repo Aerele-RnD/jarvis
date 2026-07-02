@@ -39,6 +39,36 @@ def _key_ref(idx: int) -> str:
     return f"POOL_KEY_{idx}"
 
 
+def _model_accounts(m) -> list:
+    """Return a subscription model's accounts as a list of dicts.
+
+    Accounts are stored as a JSON array string in the ENCRYPTED
+    `subscription_accounts` Password field ON the model row (a child of the
+    Jarvis Settings Single). We read it via _get_password so DB-backed rows are
+    decrypted, then json.loads. Never raises: empty / malformed / non-list → [].
+
+    Back-compat: in-memory rows / unit-test objects that still carry a plain
+    `accounts` list attribute (the pre-migration grandchild shape) are honored
+    when `subscription_accounts` is empty. Real persisted rows no longer have an
+    `accounts` field, so production always takes the JSON path.
+    """
+    try:
+        raw = _get_password(m, "subscription_accounts")
+    except Exception:
+        raw = ""
+    if raw:
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            return []
+        return parsed if isinstance(parsed, list) else []
+    # Legacy in-memory fallback (never a DB read — the grandchild is gone).
+    legacy = getattr(m, "accounts", None)
+    if legacy is None and hasattr(m, "get"):
+        legacy = m.get("accounts")
+    return list(legacy) if legacy else []
+
+
 def _safe_json_loads(blob: str):
     """Try to parse blob as JSON. Returns (parsed, error_str).
 
@@ -61,7 +91,7 @@ def _safe_json_loads(blob: str):
 def compute_auto_enable(pool) -> bool:
     """Legacy helper used by the old Jarvis LLM Pool on_update (kept for back-compat)."""
     return len([m for m in pool.models if m.enabled]) >= 2 or any(
-        m.credential_type == "subscription" and m.get("accounts")
+        m.credential_type == "subscription" and _model_accounts(m)
         for m in pool.models
         if m.enabled
     )
@@ -120,7 +150,7 @@ def validate_models(settings) -> list:
                 errors.append(f"{label}: api_key is blank on an enabled model (would produce a dangling key_ref)")
 
         elif cred_type == "subscription":
-            accounts = m.accounts if hasattr(m, "accounts") else m.get("accounts") or []
+            accounts = _model_accounts(m)
 
             # Empty accounts list
             if not accounts:
@@ -214,7 +244,7 @@ def build_pool_payload(settings):
 
         if cred_type == "subscription":
             # Omit provider and base_url for subscription models (avoids subscription_field_conflict)
-            accounts = (m.accounts if hasattr(m, "accounts") else m.get("accounts")) or []
+            accounts = _model_accounts(m)
             serialized_accounts = []
             upstream = "openai"  # default; overridden by consistent account upstreams
 

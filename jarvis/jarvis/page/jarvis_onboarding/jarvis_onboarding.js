@@ -76,7 +76,78 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		"vLLM (local)":       { model: "",                                  baseUrl: "" },
 		"OpenAI-Compatible":  { model: "",                                  baseUrl: "" },
 	};
+	// Stored pools may carry the provider *id* (e.g. "openai_compat") rather
+	// than the dropdown *label* ("OpenAI-Compatible"). Map id -> label so a
+	// row's <select> selects the right option; a value that is already a
+	// label passes through unchanged. Mirrors jarvis_account.js providerLabel.
+	const PROVIDER_LABEL_BY_ID = {
+		anthropic: "Anthropic", openai: "OpenAI", google: "Google Gemini", mistral: "Mistral",
+		groq: "Groq", together: "Together AI", deepseek: "DeepSeek", moonshot: "Moonshot (Kimi)",
+		openrouter: "OpenRouter", ollama: "Ollama (local)", vllm: "vLLM (local)", openai_compat: "OpenAI-Compatible",
+	};
+	function providerLabel(v) {
+		if (!v) return v;
+		if (PROVIDER_DEFAULTS[v]) return v;   // already a label
+		return PROVIDER_LABEL_BY_ID[v] || v;  // map id -> label (or keep unknown as-is)
+	}
 	const esc = frappe.utils.escape_html;
+
+	// ---- model suggestions (Custom-mode <datalist>) -----------------------
+	// The Custom rows bind the model field to a <datalist> so common IDs are
+	// pickable while arbitrary IDs stay typeable (openai_compat / Ollama / shim
+	// need custom model ids). Suggestions are sourced per provider:
+	//   1) the already-loaded preset catalog (models grouped by vendor id), then
+	//   2) a small static fallback for providers the catalog omits, then
+	//   3) the provider's default model. Deduped, catalog-first.
+	// Mirrors jarvis_account.js so both surfaces stay uniform.
+	const STATIC_MODEL_SUGGESTIONS = {
+		"Anthropic":         ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"],
+		"OpenAI":            ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-4o"],
+		"Google Gemini":     ["gemini-2.5-pro", "gemini-3.5-flash", "gemini-3.1-flash-lite"],
+		"Mistral":           ["mistral-large-latest", "mistral-medium-latest", "mistral-small-latest"],
+		"Groq":              ["llama-3.3-70b-versatile"],
+		"Together AI":       ["meta-llama/Llama-3.3-70B-Instruct-Turbo"],
+		"DeepSeek":          ["deepseek-chat"],
+		"Moonshot (Kimi)":   ["kimi-k2.6"],
+		"OpenRouter":        ["anthropic/claude-sonnet-4-6", "openai/gpt-5.5"],
+		"Ollama (local)":    ["qwen2.5:3b", "qwen2.5:0.5b", "llama3"],
+		"OpenAI-Compatible": ["claude-sonnet-4-6", "gpt-4o", "qwen2.5:3b", "llama3"],
+		// vLLM (local): no useful default → plain free-text input.
+	};
+	// Subscription rows suggest the upstream's chat models (keyed by upstream id).
+	const SUB_MODEL_SUGGESTIONS = {
+		openai: ["gpt-5.5", "gpt-5.4"],
+		google: ["gemini-2.5-pro", "gemini-3.5-flash"],
+	};
+	// Preset-catalog vendor ids -> provider dropdown label. The catalog uses
+	// "gemini"; the dropdown label is "Google Gemini" (stored id "google"), so
+	// alias both to the same label. Others fall through to providerLabel.
+	function catalogVendorLabel(vid) {
+		if (vid === "gemini") return "Google Gemini";
+		return providerLabel(vid);
+	}
+	// Suggested model ids for an API-key row's provider (label or id).
+	function modelSuggestionsForProvider(provider) {
+		const label = providerLabel(provider || "");
+		const out = [];
+		const push = (id) => { if (id && out.indexOf(id) === -1) out.push(id); };
+		(presetCatalog || []).forEach((e) => (e.models || []).forEach((m) => {
+			if (catalogVendorLabel(m.provider) === label) push(m.model);
+		}));
+		(STATIC_MODEL_SUGGESTIONS[label] || []).forEach(push);
+		push((PROVIDER_DEFAULTS[label] || {}).model);
+		return out;
+	}
+	// Suggested model ids for a subscription row's chosen upstream.
+	function subModelSuggestions(upstream) {
+		return SUB_MODEL_SUGGESTIONS[upstream] || [];
+	}
+	// A <datalist> of model-id suggestions. Empty list → the bound input just
+	// behaves as a plain free-text field.
+	function renderModelDatalist(id, suggestions) {
+		const opts = (suggestions || []).map((m) => `<option value="${esc(m)}"></option>`).join("");
+		return `<datalist id="${id}">${opts}</datalist>`;
+	}
 	const inr = (n) => "₹" + Number(n || 0).toLocaleString("en-IN");
 	const cycleLabel = (c) => (String(c).toLowerCase() === "annual" ? "/year" : "/month");
 
@@ -197,10 +268,11 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 			<div class="jo-modes">
 			  <div class="jo-mode" data-mode="managed">
 			    <div class="jo-mode-icon">☁</div>
-			    <div class="jo-mode-name">Aerele-hosted</div>
+			    <div class="jo-mode-name">Managed</div>
 			    <ul class="jo-mode-feats">
 			      <li><span class="jo-tick">✓</span>We host the openclaw agent for you</li>
 			      <li><span class="jo-tick">✓</span>Includes the Jarvis persona + Frappe skills</li>
+			      <li><span class="jo-tick">✓</span>Managed LLM proxy — pool your API keys &amp; chat subscriptions, with automatic failover</li>
 			      <li><span class="jo-tick">✓</span>Simple plan &amp; billing</li>
 			    </ul>
 			    <button class="jo-btn jo-btn-primary jo-mode-pick">Choose →</button>
@@ -211,7 +283,8 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 			    <ul class="jo-mode-feats">
 			      <li><span class="jo-tick">✓</span>Bring your own openclaw server</li>
 			      <li><span class="jo-tick">✓</span>Bring your own LLM</li>
-			      <li><span class="jo-tick">✓</span>Open-source · no Aerele persona/skills</li>
+			      <li><span class="jo-tick">✓</span>Open-source · bring your own persona &amp; skills</li>
+			      <li style="color:var(--red-600,#b91c1c);margin-top:8px"><span style="margin-right:4px">⚠</span>Not included: the Jarvis persona + Frappe skill packs, the managed LLM proxy (pooling &amp; failover), and managed updates &amp; support.</li>
 			    </ul>
 			    <button class="jo-btn jo-btn-ghost jo-mode-pick">Choose →</button>
 			  </div>
@@ -643,8 +716,10 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 			<h2 class="jo-h">Connect your AI</h2>
 			<p class="jo-sub">Pick a preset failover ladder. Keys are stored encrypted.</p>
 			${modeTabs}
-			${singleVendorCards ? `<p class="jo-tabs-label" style="margin-top:16px">Single-vendor ladders</p><div class="jo-preset-cards">${singleVendorCards}</div>` : ""}
-			${crossVendorCards ? `<p class="jo-tabs-label" style="margin-top:14px">Cross-vendor presets</p><div class="jo-preset-cards">${crossVendorCards}</div>` : ""}
+			<div style="max-height:min(48vh,440px);overflow-y:auto;padding-right:4px;scrollbar-gutter:stable">
+				${singleVendorCards ? `<p class="jo-tabs-label" style="margin-top:16px">Single-vendor ladders</p><div class="jo-preset-cards">${singleVendorCards}</div>` : ""}
+				${crossVendorCards ? `<p class="jo-tabs-label" style="margin-top:14px">Cross-vendor presets</p><div class="jo-preset-cards">${crossVendorCards}</div>` : ""}
+			</div>
 			${entry ? `<div style="margin-top:18px">${keyFieldsHtml}</div>` : ""}
 			<div class="jo-err" id="jo-llm-err"></div>
 			<div class="jo-actions jo-actions-split">
@@ -671,37 +746,44 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		wireLlmModeTabs();
 	}
 
+	// Transient per-row state for the inline paste-back connect flow (chat
+	// subscription rows). Never emitted on save. Mirrors jarvis_account.js.
+	function blankConnect() {
+		return { open: false, loading: false, error: "", nonce: "", authorizeUrl: "", pastedUrl: "" };
+	}
+
+	// A fresh custom row. API-key by default; carries subscription scaffolding
+	// (rotation/upstream/accounts/connect) so the credType toggle can flip
+	// without re-seeding. Matches jarvis_account.js blankCustomRow.
+	function blankCustomRow() {
+		const firstProvider = Object.keys(PROVIDER_DEFAULTS)[0] || "Anthropic";
+		return {
+			credType: "api_key", provider: firstProvider, model: "",
+			apiKey: "", baseUrl: "",
+			rotation: "sticky", upstream: "openai", accounts: [], connect: blankConnect(),
+		};
+	}
+
 	function renderLlmCustom(modeTabs) {
 		const rows = state.customRows;
-		const providers = Object.keys(PROVIDER_DEFAULTS).map(
-			(p) => `<option value="${esc(p)}">${esc(p)}</option>`
-		).join("");
-		const mode = jarvis_onboarding_llm.deriveMode(
-			rows.filter(r => r && (r.provider || "").trim() && (r.model || "").trim()), null
-		);
+		// Mode badge counts VALID rows: subscription rows count once they have a
+		// model id; API-key rows need a provider + model. Mirrors the account
+		// page's renderModeBadge so the Direct/Proxy pill matches everywhere.
+		const valid = rows.filter((r) => r && (
+			r.credType === "subscription"
+				? (r.model || "").trim()
+				: ((r.provider || "").trim() && (r.model || "").trim())
+		));
+		const mode = jarvis_onboarding_llm.deriveMode(valid, null);
 		const modeBadge = `<span class="jo-hint" style="margin-left:8px">${mode === "proxy" ? "🔀 Proxy (failover)" : "⟶ Direct"}</span>`;
 
-		const rowsHtml = rows.map((r, i) => {
-			const provOpts = Object.keys(PROVIDER_DEFAULTS).map(
-				(p) => `<option value="${esc(p)}" ${p === (r.provider || "") ? "selected" : ""}>${esc(p)}</option>`
-			).join("");
-			return `<div class="jo-custom-row" data-i="${i}">
-				<select class="jo-input jo-custom-prov" data-i="${i}">${provOpts}</select>
-				<input type="text" class="jo-input jo-custom-model" data-i="${i}" value="${esc(r.model || "")}" placeholder="model id"/>
-				<input type="password" class="jo-input jo-custom-key" data-i="${i}" value="${esc(r.apiKey || "")}" placeholder="API key" autocomplete="off"/>
-				<div style="display:flex;gap:4px">
-				  <button type="button" class="jo-btn jo-btn-ghost jo-btn-small jo-row-up" data-i="${i}" title="Move up" ${i === 0 ? "disabled" : ""}>↑</button>
-				  <button type="button" class="jo-btn jo-btn-ghost jo-btn-small jo-row-down" data-i="${i}" title="Move down" ${i === rows.length - 1 ? "disabled" : ""}>↓</button>
-				  <button type="button" class="jo-btn jo-btn-ghost jo-btn-small jo-row-rm" data-i="${i}" title="Remove">✕</button>
-				</div>
-			</div>`;
-		}).join("");
+		const rowsHtml = rows.map((r, i) => renderCustomRow(r, i, rows.length)).join("");
 
 		$body.html(`
 			<h2 class="jo-h">Connect your AI${modeBadge}</h2>
-			<p class="jo-sub">Build your own failover list. First model runs every turn; others are backups.</p>
+			<p class="jo-sub">Build your own failover list. First model runs every turn; others are backups. Each row is an <b>API key</b> or a <b>Chat subscription</b> (multiple pooled accounts).</p>
 			${modeTabs}
-			<div id="jo-custom-rows" style="margin-top:16px">${rowsHtml}</div>
+			<div id="jo-custom-rows" style="margin-top:16px">${rowsHtml || `<div class="jo-empty" style="padding:8px 0">No models yet — add one below.</div>`}</div>
 			<div class="jo-actions" style="justify-content:flex-start;margin-top:8px">
 			  <button class="jo-btn jo-btn-ghost jo-btn-small" id="jo-custom-add">+ Add model</button>
 			</div>
@@ -711,6 +793,24 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 			  <button class="jo-btn jo-btn-primary" id="jo-custom-save">Save &amp; finish →</button>
 			</div>`);
 
+		wireLlmModeTabs();
+
+		// Credential-type toggle (API key ⇄ Chat subscription).
+		$body.find(".jo-cred-btn").on("click", function () {
+			const i = +$(this).data("i");
+			const cred = $(this).data("cred");
+			const row = state.customRows[i];
+			if (!row || row.credType === cred) return;
+			row.credType = cred;
+			if (cred === "subscription") {
+				if (!row.rotation) row.rotation = "sticky";
+				if (!row.upstream) row.upstream = "openai";
+				if (!Array.isArray(row.accounts)) row.accounts = [];
+				row.connect = blankConnect();
+			}
+			renderLlm();
+		});
+		// Reorder / remove rows.
 		$body.find(".jo-row-up").on("click", function () {
 			const i = +$(this).data("i");
 			if (i > 0) { state.customRows = jarvis_onboarding_llm.reorder(state.customRows, i, i - 1); renderLlm(); }
@@ -724,30 +824,292 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 			state.customRows = state.customRows.filter((_, idx) => idx !== i);
 			renderLlm();
 		});
+		// API-key row fields. Provider change re-renders (autofill defaults +
+		// mode badge); text inputs update state in place to preserve focus.
 		$body.find(".jo-custom-prov").on("change", function () {
 			const i = +$(this).data("i");
-			state.customRows[i] = Object.assign({}, state.customRows[i], { provider: $(this).val() });
+			const p = $(this).val();
+			const d = PROVIDER_DEFAULTS[p] || { model: "", baseUrl: "" };
+			const row = state.customRows[i] || {};
+			const patch = { provider: p };
+			if (!(row.model || "").trim() && d.model) patch.model = d.model;
+			if (!(row.baseUrl || "").trim() && d.baseUrl) patch.baseUrl = d.baseUrl;
+			state.customRows[i] = Object.assign({}, row, patch);
+			renderLlm();
 		});
 		$body.find(".jo-custom-model").on("input", function () {
 			const i = +$(this).data("i");
-			state.customRows[i] = Object.assign({}, state.customRows[i], { model: $(this).val() });
+			if (state.customRows[i]) state.customRows[i].model = $(this).val();
 		});
 		$body.find(".jo-custom-key").on("input", function () {
 			const i = +$(this).data("i");
-			state.customRows[i] = Object.assign({}, state.customRows[i], { apiKey: $(this).val() });
+			if (state.customRows[i]) state.customRows[i].apiKey = $(this).val();
 		});
+		$body.find(".jo-custom-base").on("input", function () {
+			const i = +$(this).data("i");
+			if (state.customRows[i]) state.customRows[i].baseUrl = $(this).val();
+		});
+		// Subscription row fields. Upstream change re-renders so the model
+		// datalist suggestions follow the chosen upstream (openai/google).
+		$body.find(".jo-custom-upstream").on("change", function () {
+			const i = +$(this).data("i");
+			if (state.customRows[i]) state.customRows[i].upstream = $(this).val();
+			renderLlm();
+		});
+		$body.find(".jo-custom-rotation").on("change", function () {
+			const i = +$(this).data("i");
+			if (state.customRows[i]) state.customRows[i].rotation = $(this).val();
+		});
+		$body.find(".jo-row-acct-rm").on("click", function () {
+			const i = +$(this).data("i");
+			const ai = +$(this).data("ai");
+			const row = state.customRows[i];
+			if (row) { row.accounts = (row.accounts || []).filter((_, j) => j !== ai); renderLlm(); }
+		});
+		// Per-account connect flow (begin/complete_pool_account_signin).
+		$body.find(".jo-conn-start").on("click", function () { startPoolConnect(+$(this).data("i")); });
+		$body.find(".jo-conn-open").on("click", function () {
+			const i = +$(this).data("i");
+			const url = (state.customRows[i].connect || {}).authorizeUrl;
+			if (url) window.open(url, "_blank", "noopener,noreferrer");
+		});
+		// Copy the authorize URL — same helper + "Copied ✓" feedback as the
+		// Quick-mode subscription copy button (#jo-sub-copy-url).
+		$body.find(".jo-conn-copy").on("click", function () {
+			const i = +$(this).data("i");
+			const url = (state.customRows[i].connect || {}).authorizeUrl;
+			if (!url) return;
+			const $btn = $(this);
+			copyTextWithFallback(url).then(() => {
+				const orig = $btn.text();
+				$btn.text("Copied ✓");
+				setTimeout(() => $btn.text(orig), 1400);
+				frappe.show_alert({ indicator: "green", message: __("Sign-in URL copied") });
+			}).catch(() => {
+				frappe.show_alert({ indicator: "red", message: __("Could not copy - select the URL above and copy manually") });
+			});
+		});
+		$body.find(".jo-conn-url").on("input", function () {
+			const i = +$(this).data("i");
+			if (state.customRows[i].connect) state.customRows[i].connect.pastedUrl = $(this).val();
+		});
+		$body.find(".jo-conn-cancel").on("click", function () {
+			const i = +$(this).data("i");
+			if (state.customRows[i]) state.customRows[i].connect = blankConnect();
+			renderLlm();
+		});
+		$body.find(".jo-conn-finish").on("click", function () { finishPoolConnect(+$(this).data("i")); });
+		// Add row / skip / save.
 		$body.find("#jo-custom-add").on("click", () => {
-			const firstProvider = Object.keys(PROVIDER_DEFAULTS)[0] || "Anthropic";
-			state.customRows = state.customRows.concat({ provider: firstProvider, model: "", apiKey: "" });
+			state.customRows = state.customRows.concat(blankCustomRow());
 			renderLlm();
 		});
 		$body.find("#jo-llm-skip").on("click", () => renderSuccess(state.successData || {}));
 		$body.find("#jo-custom-save").on("click", saveCustom);
-		wireLlmModeTabs();
+	}
+
+	function renderCustomRow(r, i, n) {
+		const credType = r.credType || "api_key";
+		const head = `
+			<div class="jo-crow-head">
+				<div class="jo-cred-toggle">
+					${["api_key", "subscription"].map((t) =>
+						`<button type="button" class="jo-cred-btn ${credType === t ? "jo-cred-active" : ""}" data-i="${i}" data-cred="${t}">${t === "api_key" ? "API key" : "Chat subscription"}</button>`
+					).join("")}
+				</div>
+				<div class="jo-crow-move">
+					<button type="button" class="jo-btn jo-btn-ghost jo-btn-small jo-row-up" data-i="${i}" title="Move up" ${i === 0 ? "disabled" : ""}>↑</button>
+					<button type="button" class="jo-btn jo-btn-ghost jo-btn-small jo-row-down" data-i="${i}" title="Move down" ${i === n - 1 ? "disabled" : ""}>↓</button>
+					<button type="button" class="jo-btn jo-btn-ghost jo-btn-small jo-row-rm" data-i="${i}" title="Remove">✕</button>
+				</div>
+			</div>`;
+		let bodyHtml;
+		if (credType === "subscription") {
+			bodyHtml = renderCustomSubBody(r, i);
+		} else {
+			const provOpts = Object.keys(PROVIDER_DEFAULTS)
+				.map((p) => `<option value="${esc(p)}" ${p === providerLabel(r.provider || "") ? "selected" : ""}>${esc(p)}</option>`).join("");
+			const dlId = `jo-dl-model-${i}`;
+			bodyHtml = `
+				<div class="jo-crow-grid">
+					<select class="jo-input jo-custom-prov" data-i="${i}">${provOpts}</select>
+					<input type="text" list="${dlId}" class="jo-input jo-custom-model" data-i="${i}" value="${esc(r.model || "")}" placeholder="model id"/>
+					<input type="password" class="jo-input jo-custom-key" data-i="${i}" value="${esc(r.apiKey || "")}" placeholder="API key" autocomplete="off"/>
+					<input type="text" class="jo-input jo-custom-base" data-i="${i}" value="${esc(r.baseUrl || "")}" placeholder="base URL (optional)"/>
+				</div>
+				${renderModelDatalist(dlId, modelSuggestionsForProvider(r.provider || ""))}`;
+		}
+		const runsLabel = i === 0 ? "Runs every turn" : "Backup " + i;
+		return `<div class="jo-crow" data-i="${i}"><div class="jo-crow-tag">${runsLabel}</div>${head}${bodyHtml}</div>`;
+	}
+
+	function renderCustomSubBody(r, i) {
+		const rotation = r.rotation || "sticky";
+		const upstream = r.upstream || "openai";
+		const rotOpts = [["sticky", "Sticky"], ["round_robin", "Round robin"], ["least_used", "Least used"]]
+			.map(([v, l]) => `<option value="${v}" ${rotation === v ? "selected" : ""}>${l}</option>`).join("");
+		const upOpts = [["openai", "OpenAI"], ["google", "Google"]]
+			.map(([v, l]) => `<option value="${v}" ${upstream === v ? "selected" : ""}>${l}</option>`).join("");
+		const accounts = r.accounts || [];
+		const accountsHtml = accounts.length
+			? accounts.map((a, ai) => `<div class="jo-acct">
+					<span class="jo-acct-dot">connected</span>
+					<span class="jo-acct-label">${esc(a.label || a.account_ref)}</span>
+					<span class="jo-hint-inline">${esc(a.upstream || "")}</span>
+					<button type="button" class="jo-acct-rm jo-row-acct-rm" data-i="${i}" data-ai="${ai}" title="Remove account">✕</button>
+				</div>`).join("")
+			: `<div class="jo-hint-inline" style="display:block;margin:4px 0 8px">No accounts connected yet.</div>`;
+
+		const c = r.connect || {};
+		let connectHtml = "";
+		if (c.open) {
+			if (c.authorizeUrl) {
+				connectHtml = `
+					<div class="jo-connect">
+						<p class="jo-hint-inline" style="display:block;margin-bottom:8px">Open the sign-in URL, authorize, then paste the redirected URL (it starts with <code>http://localhost:1455/…</code>).</p>
+						<div class="jo-url-row" style="margin-bottom:8px">
+							<code class="jo-url-text" title="${esc(c.authorizeUrl)}">${esc(c.authorizeUrl)}</code>
+							<button type="button" class="jo-btn jo-btn-ghost jo-btn-small jo-conn-copy" data-i="${i}" title="Copy URL">Copy</button>
+							<button type="button" class="jo-btn jo-btn-ghost jo-btn-small jo-conn-open" data-i="${i}">Open ↗</button>
+						</div>
+						<textarea class="jo-input jo-conn-url" data-i="${i}" rows="2" placeholder="Paste the URL after you sign in">${esc(c.pastedUrl || "")}</textarea>
+						<div class="jo-actions" style="margin-top:8px;justify-content:flex-start;gap:8px">
+							<button type="button" class="jo-btn jo-btn-ghost jo-conn-cancel" data-i="${i}">Cancel</button>
+							<button type="button" class="jo-btn jo-btn-primary jo-conn-finish" data-i="${i}" ${c.loading ? "disabled" : ""}>${c.loading ? "Connecting…" : "Connect"}</button>
+						</div>
+						${c.error ? `<div class="jo-err">${esc(c.error)}</div>` : ""}
+					</div>`;
+			} else {
+				connectHtml = `<div class="jo-connect"><div class="jo-hint-inline">${c.error ? "" : "Starting sign-in…"}</div>${c.error ? `<div class="jo-err">${esc(c.error)}</div>` : ""}</div>`;
+			}
+		}
+		const dlId = `jo-dl-submodel-${i}`;
+		return `
+			<div class="jo-crow-grid jo-crow-grid-sub">
+				<input type="text" list="${dlId}" class="jo-input jo-custom-model" data-i="${i}" value="${esc(r.model || "")}" placeholder="model id (e.g. gpt-5.5)"/>
+				<select class="jo-input jo-custom-upstream" data-i="${i}" title="Upstream">${upOpts}</select>
+				<select class="jo-input jo-custom-rotation" data-i="${i}" title="Account rotation">${rotOpts}</select>
+			</div>
+			${renderModelDatalist(dlId, subModelSuggestions(upstream))}
+			<div class="jo-accts">${accountsHtml}</div>
+			${connectHtml}
+			<button type="button" class="jo-btn jo-btn-ghost jo-btn-small jo-conn-start" data-i="${i}">+ Connect account</button>`;
+	}
+
+	// Start the inline paste-back sign-in for a subscription row: mint an
+	// authorize_url (begin_pool_account_signin) and reveal the Open/paste UI.
+	// Guards model-required-before-connect. Mirrors jarvis_account.js.
+	function startPoolConnect(i) {
+		const row = state.customRows[i];
+		if (!row) return;
+		if (!(row.model || "").trim()) {
+			row.connect = Object.assign(blankConnect(), { open: true, error: "Enter a model id before connecting an account." });
+			renderLlm();
+			return;
+		}
+		row.connect = Object.assign(blankConnect(), { open: true, loading: true });
+		renderLlm();
+		const provider = row.upstream === "google" ? "Google" : "OpenAI";
+		frappe.call({
+			method: "jarvis.oauth.api.begin_pool_account_signin",
+			args: { provider, model: row.model.trim() },
+		}).then((r) => {
+			const m = r.message || {};
+			const cur = state.customRows[i];
+			if (!cur) return;
+			if (!m.ok) {
+				cur.connect = Object.assign(blankConnect(), { open: true, error: (m.error && m.error.message) || "Couldn't start sign-in." });
+			} else {
+				cur.connect = Object.assign(blankConnect(), { open: true, loading: false, nonce: m.data.nonce, authorizeUrl: m.data.authorize_url });
+			}
+			renderLlm();
+		}).catch((e) => {
+			const cur = state.customRows[i];
+			if (!cur) return;
+			cur.connect = Object.assign(blankConnect(), { open: true, error: e.message || "Couldn't reach Jarvis." });
+			renderLlm();
+		});
+	}
+
+	// Complete the paste-back sign-in: exchange the redirected URL for an
+	// account (complete_pool_account_signin, capture-only) and push it into the
+	// row's accounts. Mirrors jarvis_account.js.
+	function finishPoolConnect(i) {
+		const row = state.customRows[i];
+		if (!row || !row.connect || !row.connect.nonce) return;
+		const pasted = (row.connect.pastedUrl || "").trim();
+		if (!pasted) {
+			row.connect.error = "Paste the URL you were redirected to.";
+			renderLlm();
+			return;
+		}
+		row.connect.loading = true;
+		row.connect.error = "";
+		renderLlm();
+		frappe.call({
+			method: "jarvis.oauth.api.complete_pool_account_signin",
+			args: { nonce: row.connect.nonce, redirected_url: pasted },
+		}).then((r) => {
+			const m = r.message || {};
+			const cur = state.customRows[i];
+			if (!cur) return;
+			if (!m.ok) {
+				cur.connect.loading = false;
+				const code = (m.error && m.error.code) ? m.error.code + ": " : "";
+				cur.connect.error = code + ((m.error && m.error.message) || "Sign-in failed.");
+				renderLlm();
+				return;
+			}
+			const d = m.data || {};
+			if (!Array.isArray(cur.accounts)) cur.accounts = [];
+			cur.accounts.push({
+				upstream: cur.upstream || "openai",
+				account_ref: d.account_ref,
+				label: d.label || d.account_email || d.account_ref,
+				oauth_blob: d.oauth_blob || "",
+			});
+			cur.connect = blankConnect();
+			frappe.show_alert({ message: __("Account connected."), indicator: "green" });
+			renderLlm();
+		}).catch((e) => {
+			const cur = state.customRows[i];
+			if (!cur) return;
+			cur.connect.loading = false;
+			cur.connect.error = e.message || "Couldn't reach Jarvis.";
+			renderLlm();
+		});
+	}
+
+	// Emit the per-row backend shape save_llm_pool expects: API-key rows carry
+	// {provider, model, api_key, base_url, order}; subscription rows carry
+	// {model, order, subscription:{rotation, accounts:[{upstream, account_ref,
+	// label, oauth_blob}]}}. Matches jarvis_account.js buildCustomSaveModels.
+	function buildCustomSaveModels() {
+		return (state.customRows || []).map((r, i) => {
+			if (r.credType === "subscription") {
+				return {
+					model: (r.model || "").trim(),
+					order: i,
+					subscription: {
+						rotation: r.rotation || "sticky",
+						accounts: (r.accounts || []).map((a) => ({
+							upstream: a.upstream || "openai",
+							account_ref: a.account_ref,
+							label: a.label,
+							oauth_blob: a.oauth_blob || "",
+						})),
+					},
+				};
+			}
+			const m = { provider: (r.provider || "").trim(), model: (r.model || "").trim(), api_key: (r.apiKey || "").trim(), order: i };
+			const b = (r.baseUrl || "").trim();
+			if (b) m.base_url = b;
+			return m;
+		});
 	}
 
 	function saveCustom() {
-		const models = jarvis_onboarding_llm.buildCustomModels(state.customRows);
+		const models = buildCustomSaveModels();
 		const check = jarvis_onboarding_llm.validatePool(models, null);
 		if (!check.ok) { $body.find("#jo-llm-err").text(check.error); return; }
 		setBusy("#jo-custom-save", true);
@@ -1562,7 +1924,26 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 		.jo-preset-card.selected{border-color:var(--jarvis-primary);box-shadow:0 0 0 2px var(--jarvis-primary-faint)}
 		.jo-preset-label{font-size:13px;font-weight:700;color:var(--text-color);margin-bottom:4px}
 		.jo-preset-model{font-size:12px;color:var(--text-muted);margin-top:4px}
-		.jo-custom-row{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:8px;align-items:center;margin-bottom:8px}`;
+		.jo-custom-row{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:8px;align-items:center;margin-bottom:8px}
+		/* Custom failover rows — per-row API key ⇄ Chat subscription (mirrors jarvis_account.js) */
+		.jo-crow{position:relative;border:1px solid var(--border-color);border-radius:10px;padding:12px;margin-bottom:10px;background:var(--card-bg)}
+		.jo-crow-tag{position:absolute;top:-9px;left:12px;font-size:10.5px;font-weight:600;letter-spacing:.3px;text-transform:uppercase;color:var(--text-muted);background:var(--card-bg);padding:0 6px}
+		.jo-crow-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+		.jo-crow-move{margin-left:auto;display:flex;gap:4px}
+		.jo-cred-toggle{display:inline-flex;border:1px solid var(--border-color);border-radius:8px;overflow:hidden}
+		.jo-cred-btn{appearance:none;border:0;background:var(--card-bg);color:var(--text-muted);font-size:12px;font-weight:500;padding:6px 12px;cursor:pointer;transition:background .15s,color .15s}
+		.jo-cred-btn:hover{color:var(--text-color)}
+		.jo-cred-btn.jo-cred-active{background:var(--jarvis-primary-faint);color:var(--jarvis-primary);font-weight:600}
+		.jo-crow-grid{display:grid;grid-template-columns:1fr 1.4fr 1.4fr 1.4fr;gap:8px;align-items:center}
+		.jo-crow-grid-sub{grid-template-columns:2fr 1fr 1.2fr}
+		.jo-accts{display:flex;flex-direction:column;gap:5px;margin:8px 0}
+		.jo-acct{display:flex;align-items:center;gap:8px;padding:5px 9px;border:1px solid rgba(46,189,89,.35);background:rgba(46,189,89,.08);border-radius:6px}
+		.jo-acct-dot{font-size:11px;font-weight:600;color:var(--green-700,#1f8d3a)}
+		.jo-acct-label{font-size:12.5px;color:var(--text-color)}
+		.jo-acct-rm{margin-left:auto;border:1px solid rgba(226,76,76,.35);background:rgba(226,76,76,.10);color:var(--red-600,#c0392b);border-radius:5px;width:22px;height:22px;cursor:pointer;flex:none;font-size:11px}
+		.jo-connect{padding:10px;background:var(--bg-color);border:1px solid var(--border-color);border-radius:8px;margin-bottom:8px}
+		.jo-connect textarea{resize:vertical}
+		@media(max-width:760px){.jo-crow-grid,.jo-crow-grid-sub{grid-template-columns:1fr}}`;
 		$(`<style id="jo-styles">${css}</style>`).appendTo(document.head);
 	}
 };

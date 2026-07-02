@@ -1,0 +1,182 @@
+"""Round-trip test for the re-modeled LLM-pool subscription accounts.
+
+Subscription accounts USED to be a grandchild Table (Jarvis Settings ->
+models[] -> accounts[]) which Frappe's ORM neither persists nor auto-loads
+(grandchildren are not saved/loaded), so subscription pools never provisioned.
+
+They are now stored as a JSON string in the ENCRYPTED `subscription_accounts`
+Password field ON the model row (a normal child-of-Single Password, exactly
+like `api_key`). This test drives the real save -> serialize -> read path:
+
+- save_llm_pool with a subscription model (2 accounts, each a fake oauth_blob)
+  + an api_key model.
+- build_pool_payload emits BOTH oauth_blobs keyed by their account_ref, the
+  spec carries the subscription block with 2 accounts, and the api_key model's
+  key is emitted.
+- get_llm_config returns the 2 account labels WITHOUT any oauth_blob.
+- the oauth_blob is stored ENCRYPTED (the raw DB column is masked, not the
+  plaintext token) yet decryptable via get_password.
+"""
+
+import json
+
+import frappe
+from unittest.mock import patch
+
+from jarvis import onboarding
+from jarvis.jarvis.pool_serialize import build_pool_payload
+from jarvis.tests.test_unified_llm_config import _RT3SettingsTestCase
+from jarvis.tests.test_settings_on_update import _reset_settings
+
+_BLOB_1 = '{"refresh_token":"fake-rt-ACC1-secret"}'
+_BLOB_2 = '{"refresh_token":"fake-rt-ACC2-secret"}'
+
+
+def _models_payload():
+    return [
+        {
+            "model": "gpt-5.5",
+            "tier": "cheap",
+            "order": 0,
+            "subscription": {
+                "rotation": "round_robin",
+                "accounts": [
+                    {"upstream": "openai", "account_ref": "ACC_1",
+                     "label": "alice@example.com", "oauth_blob": _BLOB_1},
+                    {"upstream": "openai", "account_ref": "ACC_2",
+                     "label": "bob@example.com", "oauth_blob": _BLOB_2},
+                ],
+            },
+        },
+        {
+            "provider": "openai", "model": "gpt-5.4",
+            "api_key": "sk-apikey-roundtrip-xyz",
+            "tier": "strong", "order": 1,
+        },
+    ]
+
+
+class TestSubscriptionAccountsRoundTrip(_RT3SettingsTestCase):
+    def setUp(self):
+        super().setUp()
+        self._clear_models()
+        _reset_settings()
+        s = frappe.get_single("Jarvis Settings")
+        s.db_set("preset", "", update_modified=False)
+        s.db_set("routing_mode", "failover", update_modified=False)
+        s.db_set("proxy_active", 0, update_modified=False)
+        frappe.db.commit()
+
+    def _save(self):
+        """save_llm_pool the mixed pool; capture the admin pool push kwargs."""
+        pool_calls = []
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   side_effect=lambda **kw: pool_calls.append(kw) or {"action": "pool_update"}), \
+             patch("jarvis.admin_client.post_update_llm_creds") as creds:
+            onboarding.save_llm_pool(frappe.as_json(_models_payload()),
+                                     preset=None, routing_mode="failover")
+        creds.assert_not_called()
+        self.assertTrue(pool_calls, "proxy pool path must fire for a 2-model pool")
+        return pool_calls[0]
+
+    # ------------------------------------------------------------------ #
+    # (1) The admin push carries both oauth_blobs + the api_key + a
+    #     subscription spec block with 2 accounts.
+    # ------------------------------------------------------------------ #
+
+    def test_admin_push_carries_blobs_spec_and_api_key(self):
+        pushed = self._save()
+
+        oauth_blobs = pushed["oauth_blobs"]
+        self.assertEqual(oauth_blobs.get("ACC_1"), {"refresh_token": "fake-rt-ACC1-secret"})
+        self.assertEqual(oauth_blobs.get("ACC_2"), {"refresh_token": "fake-rt-ACC2-secret"})
+
+        # api_key emitted (keyed by a POOL_KEY_* ref).
+        api_keys = pushed["api_keys"]
+        self.assertIn("sk-apikey-roundtrip-xyz", api_keys.values())
+
+        # Spec: subscription block with 2 accounts, secrets NOT in the spec.
+        spec = pushed["spec"]
+        sub_entries = [m for m in spec["models"] if "subscription" in m]
+        self.assertEqual(len(sub_entries), 1, "exactly one subscription model in spec")
+        sub = sub_entries[0]["subscription"]
+        self.assertEqual(sub["upstream"], "openai")
+        self.assertEqual(sub["rotation"], "round_robin")
+        refs = {a["account_ref"] for a in sub["accounts"]}
+        self.assertEqual(refs, {"ACC_1", "ACC_2"})
+        self.assertNotIn("fake-rt-ACC1-secret", json.dumps(spec),
+                         "oauth_blob secret must never appear in the spec")
+        self.assertNotIn("sk-apikey-roundtrip-xyz", json.dumps(spec),
+                         "api_key secret must never appear in the spec")
+
+    # ------------------------------------------------------------------ #
+    # (2) build_pool_payload, re-run on the persisted settings, is identical.
+    # ------------------------------------------------------------------ #
+
+    def test_build_pool_payload_from_persisted_settings(self):
+        self._save()
+        s = frappe.get_single("Jarvis Settings")
+        spec, api_keys, oauth_blobs = build_pool_payload(s)
+        self.assertEqual(oauth_blobs.get("ACC_1"), {"refresh_token": "fake-rt-ACC1-secret"})
+        self.assertEqual(oauth_blobs.get("ACC_2"), {"refresh_token": "fake-rt-ACC2-secret"})
+        self.assertIn("sk-apikey-roundtrip-xyz", api_keys.values())
+        sub = [m for m in spec["models"] if "subscription" in m][0]["subscription"]
+        self.assertEqual(len(sub["accounts"]), 2)
+
+    # ------------------------------------------------------------------ #
+    # (3) get_llm_config returns account labels WITHOUT oauth_blob.
+    # ------------------------------------------------------------------ #
+
+    def test_get_llm_config_returns_labels_without_secrets(self):
+        self._save()
+        cfg = onboarding.get_llm_config()
+        sub_models = [m for m in cfg["models"] if m.get("credential_type") == "subscription"]
+        self.assertEqual(len(sub_models), 1)
+        accounts = sub_models[0]["accounts"]
+        self.assertEqual(len(accounts), 2)
+        labels = {a["label"] for a in accounts}
+        self.assertEqual(labels, {"alice@example.com", "bob@example.com"})
+        for a in accounts:
+            self.assertNotIn("oauth_blob", a, "get_llm_config must NOT expose oauth_blob")
+            self.assertIn("upstream", a)
+            self.assertIn("account_ref", a)
+        self.assertTrue(sub_models[0]["has_key"], "subscription model with accounts -> has_key True")
+        # No secret anywhere in the returned config.
+        blob = frappe.as_json(cfg)
+        self.assertNotIn("fake-rt-ACC1-secret", blob)
+        self.assertNotIn("fake-rt-ACC2-secret", blob)
+
+    # ------------------------------------------------------------------ #
+    # (4) oauth_blob is stored ENCRYPTED at rest (masked column) yet
+    #     decryptable via get_password.
+    # ------------------------------------------------------------------ #
+
+    def test_accounts_stored_encrypted_not_plaintext(self):
+        self._save()
+
+        rows = frappe.db.sql(
+            """SELECT name, subscription_accounts FROM `tabJarvis LLM Pool Model`
+               WHERE parent='Jarvis Settings' AND credential_type='subscription'""",
+            as_dict=True,
+        )
+        self.assertEqual(len(rows), 1, "exactly one persisted subscription model row")
+        raw_column = rows[0]["subscription_accounts"] or ""
+
+        # The raw DB column must NOT contain the plaintext oauth_blob tokens.
+        self.assertNotIn("fake-rt-ACC1-secret", raw_column,
+                         "oauth_blob must be encrypted at rest, not plaintext in the column")
+        self.assertNotIn("fake-rt-ACC2-secret", raw_column)
+        self.assertNotIn("refresh_token", raw_column,
+                         "the accounts JSON must not sit in plaintext in the column")
+
+        # Decryptable via get_password on the reloaded child row.
+        s = frappe.get_single("Jarvis Settings")
+        sub_row = [m for m in s.models if m.credential_type == "subscription"][0]
+        decrypted = sub_row.get_password("subscription_accounts", raise_exception=False)
+        accounts = json.loads(decrypted)
+        self.assertEqual(len(accounts), 2)
+        refs = {a["account_ref"] for a in accounts}
+        self.assertEqual(refs, {"ACC_1", "ACC_2"})
+        blob_by_ref = {a["account_ref"]: a["oauth_blob"] for a in accounts}
+        self.assertEqual(blob_by_ref["ACC_1"], _BLOB_1)
+        self.assertEqual(blob_by_ref["ACC_2"], _BLOB_2)

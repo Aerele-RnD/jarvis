@@ -40,10 +40,31 @@ test("buildCustomModels: order = row index; trims; drops incomplete rows", () =>
   assert.deepEqual(models.map(m => m.order), [0, 1])
   assert.equal(models[0].api_key, "sk-o")
 })
+test("buildCustomModels: emits base_url when present, omits when blank", () => {
+  const rows = [{ provider: "openai_compat", model: "qwen2.5:3b", apiKey: "ollama", baseUrl: "http://host.docker.internal:11434/v1" },
+                { provider: "openai", model: "gpt-5.5", apiKey: "sk-o" }]
+  const models = buildCustomModels(rows)
+  assert.equal(models[0].base_url, "http://host.docker.internal:11434/v1")
+  assert.equal("base_url" in models[1], false)
+})
 test("reorder: pure move", () => {
   assert.deepEqual(reorder(["a", "b", "c"], 2, 0), ["c", "a", "b"])
 })
 test("validatePool: rejects empty pool", () => {
   assert.equal(validatePool([], null).ok, false)
   assert.equal(validatePool([{ provider: "openai", model: "gpt-5.5", api_key: "k" }], null).ok, true)
+})
+test("validatePool: subscription model valid with a connected account (no provider/api_key)", () => {
+  const sub = { model: "gpt-5.5", order: 0, subscription: { rotation: "sticky",
+    accounts: [{ upstream: "openai", account_ref: "SUB_abc123", label: "me@x.com", oauth_blob: '{"token":"t"}' }] } }
+  assert.equal(validatePool([sub], null).ok, true)
+})
+test("validatePool: subscription model invalid with no accounts", () => {
+  const sub = { model: "gpt-5.5", order: 0, subscription: { rotation: "sticky", accounts: [] } }
+  assert.equal(validatePool([sub], null).ok, false)
+})
+test("validatePool: subscription model invalid when account has empty oauth_blob", () => {
+  const sub = { model: "gpt-5.5", order: 0, subscription: { rotation: "sticky",
+    accounts: [{ upstream: "openai", account_ref: "SUB_abc123", label: "me@x.com", oauth_blob: "" }] } }
+  assert.equal(validatePool([sub], null).ok, false)
 })

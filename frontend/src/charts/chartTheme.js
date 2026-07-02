@@ -3,6 +3,7 @@
 // PURE: no echarts import (gradients use plain colorStops objects, bubble sizing
 // uses a plain function), so it is unit-testable under `node --test`. The chat
 // owns the theme; the agent never sends raw ECharts options.
+import { LIGHT_VARS, DARK_VARS } from "../theme.js"
 
 const PALETTE = [
 	"#2490ef", "#48bb74", "#f6ad55", "#fc8181", "#9f7aea",
@@ -19,8 +20,8 @@ export function buildOption(spec, dark = false) {
 	if (!spec || typeof spec !== "object" || !TYPES.has(spec.type)) return null
 	const series = Array.isArray(spec.series) ? spec.series : []
 	if (!series.length) return null
-	const text = dark ? "#cbd5e0" : "#333333"
-	const grid = dark ? "#2d3748" : "#e2e8f0"
+	const text = dark ? DARK_VARS["--text-2"] : LIGHT_VARS["--text-2"]
+	const grid = dark ? DARK_VARS["--border"] : LIGHT_VARS["--border"]
 	const title = spec.title
 		? { text: String(spec.title), left: 8, top: 4, textStyle: { fontSize: 13, color: text } }
 		: undefined

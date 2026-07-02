@@ -123,6 +123,15 @@ export const saveLlmPool = (models, preset = null, routingMode = "failover") =>
 		routing_mode: routingMode,
 	})
 
+// --- Per-account chat-subscription capture (paste-back OAuth) ---
+// begin → { nonce, authorize_url, expires_in }; open authorize_url, sign in,
+// paste the redirected URL back → complete captures the account (no side effects).
+export const beginPoolAccountSignin = (provider, model) =>
+	call("jarvis.oauth.api.begin_pool_account_signin", { provider, model })
+// complete is capture-only → { account_ref, label, oauth_blob, account_email }
+export const completePoolAccountSignin = (nonce, redirectedUrl) =>
+	call("jarvis.oauth.api.complete_pool_account_signin", { nonce, redirected_url: redirectedUrl })
+
 // --- LLM Monitor (System-Manager gated server-side). Real Bifrost usage, NOT the getUsage estimate. ---
 export const getLlmUsage = () => call("jarvis.account.get_llm_usage")
 export const getLlmConnectionStatus = () => call("jarvis.account.get_llm_connection_status")

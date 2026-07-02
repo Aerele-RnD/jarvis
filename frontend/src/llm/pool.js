@@ -19,7 +19,12 @@ export function presetToModels(entry, keysByVendor) {
 }
 export function buildCustomModels(rows) {
   return (rows || []).filter(r => r && (r.provider || "").trim() && (r.model || "").trim())
-    .map((r, i) => ({ provider: r.provider.trim(), model: r.model.trim(), api_key: (r.apiKey || "").trim(), order: i }))
+    .map((r, i) => {
+      const m = { provider: r.provider.trim(), model: r.model.trim(), api_key: (r.apiKey || "").trim(), order: i }
+      const b = (r.baseUrl || "").trim()
+      if (b) m.base_url = b
+      return m
+    })
 }
 export function reorder(list, from, to) {
   const a = list.slice(); const [x] = a.splice(from, 1); a.splice(to, 0, x); return a
@@ -27,8 +32,18 @@ export function reorder(list, from, to) {
 export function validatePool(models, preset) {
   if (!Array.isArray(models) || models.length === 0) return { ok: false, error: "Add at least one model." }
   for (const m of models) {
+    // Chat-subscription model: needs a model id + at least one connected account
+    // (an account with a non-empty oauth_blob). No provider / api_key required.
+    if (m.subscription) {
+      if (!(m.model || "").trim()) return { ok: false, error: "Every model needs a model id." }
+      const accounts = Array.isArray(m.subscription.accounts) ? m.subscription.accounts : []
+      const connected = accounts.some(a => a && (a.oauth_blob || "").trim())
+      if (!connected) return { ok: false, error: `Model ${m.model} needs at least one connected account.` }
+      continue
+    }
+    // API-key model: unchanged rules.
     if (!(m.provider || "").trim() || !(m.model || "").trim()) return { ok: false, error: "Every model needs a provider and a model id." }
-    if (!m.subscription && !(m.api_key || "").trim()) return { ok: false, error: `Model ${m.model} needs an API key.` }
+    if (!(m.api_key || "").trim()) return { ok: false, error: `Model ${m.model} needs an API key.` }
   }
   return { ok: true, error: "" }
 }

@@ -80,10 +80,9 @@
 						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
 						<span>Settings</span>
 					</button>
-					<router-link v-if="isSystemManager" to="/ai" class="jv-menuitem" @click="userMenuOpen = false" style="text-decoration:none;color:inherit;">
-						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"/></svg>
-						<span>AI / Models</span>
-					</router-link>
+					<!-- AI / Models nav entry sidelined: LLM config now lives on the account page.
+					     Route "/ai" (AiModels) + AiView.vue are kept intact for a future dedicated page;
+					     only this visible menu entry point was removed. -->
 					<button class="jv-menuitem" @click="goDesk">
 						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /></svg>
 						<span>Switch to Desk</span>
@@ -1285,7 +1284,7 @@ import { useRoute } from "vue-router"
 import * as api from "@/api"
 import { renderMarkdown } from "@/markdown"
 import JvChart from "@/charts/JvChart.vue"
-import { LIGHT_VARS, DARK_VARS } from "@/theme"
+import { useTheme } from "@/composables/useTheme"
 
 const session = inject("$session")
 const socket = inject("$socket")
@@ -2173,31 +2172,9 @@ const usagePct = computed(() => {
 	if (!u || !u.budget_monthly) return 0
 	return Math.min(100, Math.round((u.month_tokens / u.budget_monthly) * 100))
 })
-// theme: 'light' | 'dark' | 'system' — persisted per-device (a browser/device
-// preference; no migration needed). 'system' follows the OS color scheme live.
-const theme = ref(localStorage.getItem("jarvis-theme") || "system")
-const prefersDark = ref(false)
-let _mq = null
-function onColorScheme(e) {
-	prefersDark.value = e.matches
-}
-const effectiveDark = computed(
-	() => theme.value === "dark" || (theme.value === "system" && prefersDark.value),
-)
-const paletteVars = computed(() => (effectiveDark.value ? DARK_VARS : LIGHT_VARS))
-
-function setTheme(t) {
-	theme.value = t
-	try {
-		localStorage.setItem("jarvis-theme", t)
-	} catch (e) {
-		/* private mode / storage disabled — keep the in-memory choice */
-	}
-}
-// Quick header toggle: flip between light and dark (drops out of 'system').
-function toggleTheme() {
-	setTheme(effectiveDark.value ? "light" : "dark")
-}
+// theme: 'light' | 'dark' | 'system' — persisted per-device.
+// useTheme() owns localStorage, matchMedia, and cross-tab storage sync.
+const { pref: theme, prefersDark, effectiveDark, paletteVars, setTheme, toggleTheme } = useTheme()
 async function openSettings() {
 	userMenuOpen.value = false
 	modelMenuOpen.value = false
@@ -4477,10 +4454,6 @@ onMounted(async () => {
 	document.addEventListener("pointerdown", onDocClick)
 	window.addEventListener("keydown", onGlobalKey)
 	_thinkTimer = setInterval(() => { thinkTick.value = busy.value ? thinkTick.value + 1 : 0 }, 2200)
-	// Track the OS color scheme so theme:'system' updates live.
-	_mq = window.matchMedia("(prefers-color-scheme: dark)")
-	prefersDark.value = _mq.matches
-	_mq.addEventListener("change", onColorScheme)
 	ui.value = (await uiP) || {}
 	// Load custom skills so the "/" composer menu can offer them.
 	loadCustomSkills()
@@ -4514,7 +4487,6 @@ onBeforeUnmount(() => {
 	document.removeEventListener("pointerdown", onDocClick)
 	window.removeEventListener("keydown", onGlobalKey)
 	clearInterval(_thinkTimer)
-	_mq?.removeEventListener("change", onColorScheme)
 })
 // Global keyboard shortcuts (documented in Settings → Shortcuts).
 function onGlobalKey(e) {

@@ -9,6 +9,7 @@ Plus disconnect() to reverse the connection.
 """
 import base64
 import hashlib
+import json
 import secrets
 import time
 
@@ -152,17 +153,17 @@ def _gc_expired_nonces() -> None:
 			frappe.cache.hdel(_CACHE_KEY, key)
 
 
-@frappe.whitelist()
-def begin_paste_signin(provider: str, model: str) -> dict:
-	"""Mint a nonce + PKCE pair, return the authorize URL for the customer
-	to open in their browser.
+def _begin_signin(provider: str, model: str, *, pool: bool) -> dict:
+	"""Shared nonce/PKCE/state machinery behind ``begin_paste_signin`` (the
+	DIRECT single-model flow) and ``begin_pool_account_signin`` (the POOL
+	multi-account capture flow).
 
-	Gated on System Manager (Sprint-1 Important from the 2026-06-16 code
-	review). The cached nonce is bound to ``frappe.session.user`` so
-	another logged-in System Manager can't complete an in-flight sign-in
-	that someone else started.
+	Mints a nonce + PKCE pair, caches the verifier/state bound to
+	``frappe.session.user``, and returns the authorize URL. ``pool`` tags
+	the cached entry so ``complete_pool_account_signin`` can tell a POOL
+	nonce apart from a DIRECT one. The caller is responsible for the
+	System-Manager gate.
 	"""
-	frappe.only_for("System Manager")
 	try:
 		get_provider(provider)
 	except UnknownProviderError as e:
@@ -184,7 +185,7 @@ def begin_paste_signin(provider: str, model: str) -> dict:
 		state=state,
 	)
 
-	frappe.cache.hset(_CACHE_KEY, nonce, {
+	entry = {
 		"provider": provider,
 		"model": _coerce_subscription_model(provider, model),
 		"status": "pending",
@@ -192,13 +193,46 @@ def begin_paste_signin(provider: str, model: str) -> dict:
 		"verifier": verifier,
 		"state": state,
 		"originator_user": frappe.session.user,
-	})
+	}
+	if pool:
+		entry["pool"] = True
+	frappe.cache.hset(_CACHE_KEY, nonce, entry)
 
 	return _ok({
 		"nonce": nonce,
 		"authorize_url": authorize_url,
 		"expires_in": _NONCE_TTL_SECS,
 	})
+
+
+@frappe.whitelist()
+def begin_paste_signin(provider: str, model: str) -> dict:
+	"""Mint a nonce + PKCE pair, return the authorize URL for the customer
+	to open in their browser.
+
+	Gated on System Manager (Sprint-1 Important from the 2026-06-16 code
+	review). The cached nonce is bound to ``frappe.session.user`` so
+	another logged-in System Manager can't complete an in-flight sign-in
+	that someone else started.
+	"""
+	frappe.only_for("System Manager")
+	return _begin_signin(provider, model, pool=False)
+
+
+@frappe.whitelist()
+def begin_pool_account_signin(provider: str, model: str) -> dict:
+	"""POOL variant of ``begin_paste_signin``: mint a nonce + PKCE pair for
+	capturing ONE more account into a pool "subscription" model.
+
+	Same nonce/PKCE/state machinery and same System-Manager + per-user
+	binding as the DIRECT flow; the only difference is the cached entry is
+	tagged ``pool`` so ``complete_pool_account_signin`` can distinguish it.
+	Unlike the DIRECT flow this captures a blob and hands it back to the
+	caller (see ``complete_pool_account_signin``) instead of writing creds
+	to Jarvis Settings / pushing to the container.
+	"""
+	frappe.only_for("System Manager")
+	return _begin_signin(provider, model, pool=True)
 
 
 from urllib.parse import urlparse, parse_qs
@@ -232,39 +266,51 @@ def _parse_redirected_url(raw: str) -> dict:
 	}
 
 
-@frappe.whitelist()
-def complete_paste_signin(nonce: str, redirected_url: str) -> dict:
-	"""Wizard calls this after the customer signs in and pastes the URL
-	they copied from the browser's address bar.
+def _validate_signin_nonce(nonce: str):
+	"""Validate a cached sign-in nonce shared by the DIRECT and POOL complete
+	endpoints: existence, expiry (evicts on read), pending status, and the
+	per-user binding.
 
-	Gated on System Manager + per-user nonce binding: another System
-	Manager can't accidentally (or maliciously) complete a sign-in that
-	someone else started. Sprint-1 Important from the 2026-06-16 code
-	review.
+	Returns ``(entry, None)`` on success or ``(None, err_envelope)`` on any
+	failure. The error message for a user-binding mismatch is deliberately
+	the same as "unknown_nonce" so live nonces aren't leaked.
 	"""
-	frappe.only_for("System Manager")
 	entry = frappe.cache.hget(_CACHE_KEY, nonce)
 	if not entry:
-		return _err("unknown_nonce", "nonce not recognized")
+		return None, _err("unknown_nonce", "nonce not recognized")
 	if entry["expires_at_ts"] < int(time.time()):
 		# Drop the expired field so the hash doesn't grow with dead
 		# entries waiting on the periodic GC sweep. Companion to the
 		# _gc_expired_nonces sweep on begin.
 		frappe.cache.hdel(_CACHE_KEY, nonce)
-		return _err("expired", "nonce has expired; generate a new sign-in URL")
+		return None, _err("expired", "nonce has expired; generate a new sign-in URL")
 	if entry["status"] != "pending":
-		return _err("not_pending", f"nonce status is {entry['status']!r}")
+		return None, _err("not_pending", f"nonce status is {entry['status']!r}")
 	# Per-user binding: the user who began the sign-in must be the same
 	# one completing it. Without this, a second System Manager on the same
 	# site could complete a peer's pending OAuth with a redirect they
 	# control. The error message is the same as "unknown_nonce" on purpose
 	# (don't leak which nonces are live).
 	if entry.get("originator_user") != frappe.session.user:
-		return _err("unknown_nonce", "nonce not recognized")
+		return None, _err("unknown_nonce", "nonce not recognized")
+	return entry, None
 
+
+def _exchange_and_build_blob(entry: dict, redirected_url: str):
+	"""Parse the pasted redirect, verify state (constant-time), exchange the
+	code, and build the openclaw auth-profile blob.
+
+	Shared by the DIRECT (``complete_paste_signin``) and POOL
+	(``complete_pool_account_signin``) flows so both build an identically
+	shaped blob. Returns ``(result, None)`` on success where ``result`` is
+	``{"provider", "model", "email", "blob"}``, or ``(None, err_envelope)``
+	on any validation / token-exchange failure. Does NOT push the blob,
+	save creds, or touch Jarvis Settings — those side effects belong to the
+	DIRECT caller only.
+	"""
 	parsed = _parse_redirected_url(redirected_url)
 	if not parsed["code"]:
-		return _err("missing_code", "no `code` parameter found in the pasted URL")
+		return None, _err("missing_code", "no `code` parameter found in the pasted URL")
 	# Constant-time compare on the state parameter. The state value is the
 	# OAuth CSRF nonce - if an attacker can observe how long the
 	# comparison takes, plain ``!=`` short-circuits on the first
@@ -272,7 +318,7 @@ def complete_paste_signin(nonce: str, redirected_url: str) -> dict:
 	# runs in constant time over the longer of the two inputs.
 	# Punch-list "state comparison non-constant-time" from the 2026-06-16 review.
 	if not secrets.compare_digest(parsed["state"] or "", entry["state"] or ""):
-		return _err("state_mismatch",
+		return None, _err("state_mismatch",
 		            "the `state` parameter doesn't match; "
 		            "regenerate the sign-in URL and try again")
 
@@ -296,11 +342,11 @@ def complete_paste_signin(nonce: str, redirected_url: str) -> dict:
 		# _TOKEN_EXCHANGE_OPAQUE_CODES; the message is the user-safe text
 		# from that same map, NOT the raw provider response. The provider
 		# detail was logged via frappe.log_error inside _exchange_code.
-		return _err(e.code, str(e))
+		return None, _err(e.code, str(e))
 
 	access_token = tokens.get("access_token")
 	if not access_token:
-		return _err("token_exchange_failed", "provider returned no access_token")
+		return None, _err("token_exchange_failed", "provider returned no access_token")
 
 	email = (
 		tokens.get("email")
@@ -319,8 +365,39 @@ def complete_paste_signin(nonce: str, redirected_url: str) -> dict:
 		"email": email,
 		"accountId": extract_account_id(provider, access_token),
 		"clientId": p["client_id"],
+		# Retain the id_token: a downstream reformat to CLIProxyAPI-codex
+		# format needs it. Harmless to the DIRECT push path, which ignores
+		# unknown blob keys.
+		"id_token": tokens.get("id_token") or "",
 	}
+	return {"provider": provider, "model": model, "email": email, "blob": blob}, None
 
+
+@frappe.whitelist()
+def complete_paste_signin(nonce: str, redirected_url: str) -> dict:
+	"""Wizard calls this after the customer signs in and pastes the URL
+	they copied from the browser's address bar.
+
+	Gated on System Manager + per-user nonce binding: another System
+	Manager can't accidentally (or maliciously) complete a sign-in that
+	someone else started. Sprint-1 Important from the 2026-06-16 code
+	review.
+	"""
+	frappe.only_for("System Manager")
+	entry, err = _validate_signin_nonce(nonce)
+	if err:
+		return err
+
+	result, err = _exchange_and_build_blob(entry, redirected_url)
+	if err:
+		return err
+
+	provider = result["provider"]
+	model = result["model"]
+	email = result["email"]
+	blob = result["blob"]
+
+	p = get_provider(provider)
 	admin_client.post_push_oauth_blob(p["openclaw_provider"], blob)
 	# force=True is mandatory here. The OAuth blob lives in the container's
 	# auth-profiles.json (out-of-band from Jarvis Settings), so on_update's
@@ -345,6 +422,58 @@ def complete_paste_signin(nonce: str, redirected_url: str) -> dict:
 	return _ok({
 		"account_email": email,
 		"last_sync_status": (sync_result or {}).get("last_sync_status", ""),
+	})
+
+
+@frappe.whitelist()
+def complete_pool_account_signin(nonce: str, redirected_url: str) -> dict:
+	"""Capture ONE more chat-subscription account for a pool "subscription"
+	model, and RETURN the blob for the caller to stash in a pool
+	subscription-account row.
+
+	Same validation as ``complete_paste_signin`` (nonce+user binding,
+	constant-time state compare, code exchange) and builds the same
+	openclaw blob shape (WITH ``id_token``) — but this endpoint is
+	capture-only: it does NOT call ``save_llm_creds``, does NOT push the
+	blob to the container, and does NOT write to Jarvis Settings. The
+	frontend collects N of these into a pool subscription and persists them
+	later via ``save_llm_pool`` (which routes accounts[].oauth_blob through
+	``pool_serialize.build_pool_payload`` into the oauth_blobs map).
+
+	Gated on System Manager + per-user nonce binding; the nonce must have
+	been minted by ``begin_pool_account_signin`` (carries ``pool=True``).
+	Returns ``{account_ref, label, oauth_blob, account_email}`` where
+	``account_ref`` is a freshly generated ``SUB_<hex>`` id that satisfies
+	``^[A-Za-z0-9_-]{1,64}$`` and ``oauth_blob`` is the JSON-encoded blob.
+	"""
+	frappe.only_for("System Manager")
+	entry, err = _validate_signin_nonce(nonce)
+	if err:
+		return err
+	# Only nonces minted by begin_pool_account_signin may be completed here;
+	# a DIRECT paste-signin nonce must go through complete_paste_signin. Same
+	# opaque message as unknown_nonce so live nonces aren't leaked.
+	if not entry.get("pool"):
+		return _err("unknown_nonce", "nonce not recognized")
+
+	result, err = _exchange_and_build_blob(entry, redirected_url)
+	if err:
+		return err
+
+	email = result["email"]
+	# account_ref is the stable per-account key the pool subscription row is
+	# stored under (and later fed to build_pool_payload -> oauth_blobs). It
+	# must match ^[A-Za-z0-9_-]{1,64}$; "SUB_" + 16 hex chars = 20 chars.
+	account_ref = "SUB_" + secrets.token_hex(8)
+
+	# Capture-only: clear the nonce (single-use, like complete_paste_signin)
+	# and hand the blob back. No push, no save_llm_creds, no Settings write.
+	frappe.cache.hdel(_CACHE_KEY, nonce)
+	return _ok({
+		"account_ref": account_ref,
+		"label": email,
+		"oauth_blob": json.dumps(result["blob"]),
+		"account_email": email,
 	})
 
 

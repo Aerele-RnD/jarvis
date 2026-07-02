@@ -15,7 +15,7 @@
     "credential_type",
     "api_key",
     "rotation",
-    "accounts"
+    "subscription_accounts"
   ],
   "fields": [
     {
@@ -84,10 +84,10 @@
       "depends_on": "eval:doc.credential_type=='subscription'"
     },
     {
-      "fieldname": "accounts",
-      "fieldtype": "Table",
-      "label": "Subscription Accounts",
-      "options": "Jarvis LLM Pool Subscription Account",
+      "fieldname": "subscription_accounts",
+      "fieldtype": "Password",
+      "label": "Subscription Accounts (JSON)",
+      "description": "Encrypted JSON array of subscription accounts: [{upstream, account_ref, label, oauth_blob}]. Stored on the model row (a child of Jarvis Settings). Grandchild tables are not persisted by Frappe's ORM, so accounts live here, encrypted at rest.",
       "depends_on": "eval:doc.credential_type=='subscription'"
     }
   ],

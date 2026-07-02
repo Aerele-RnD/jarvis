@@ -201,7 +201,15 @@ def save_llm_pool(models, preset: str | None = None, routing_mode: str = "failov
 			row["api_key"] = m.get("api_key") or ""
 		else:
 			row["rotation"] = (sub or {}).get("rotation") or "sticky"
-			row["accounts"] = (sub or {}).get("accounts") or []
+			# Subscription accounts are stored as a JSON string in the
+			# `subscription_accounts` Password field ON the model row (a child of
+			# the Jarvis Settings Single). Frappe's ORM does NOT persist/auto-load
+			# grandchild tables, so the previous accounts[] grandchild Table never
+			# saved. As a child-row Password field it is encrypted at rest via the
+			# normal save() -> _save_passwords path (identical to `api_key`), so
+			# oauth_blobs never sit in plaintext in the DB column.
+			accounts = (sub or {}).get("accounts") or []
+			row["subscription_accounts"] = json.dumps(accounts)
 		s.append("models", row)
 
 	s.preset = preset
@@ -425,11 +433,12 @@ def get_llm_config() -> dict:
 	llm_* mirrors). Never returns api_key secrets — only a has_key boolean.
 	System-Manager-only (spec 7)."""
 	frappe.only_for("System Manager")
+	from jarvis.jarvis.pool_serialize import _model_accounts
 	s = frappe.get_single("Jarvis Settings")
 	models = []
 	for m in (s.get("models") or []):
 		cred_type = m.credential_type or "api_key"
-		models.append({
+		entry = {
 			"provider": m.provider or "",
 			"model": m.model or "",
 			"base_url": m.base_url or "",
@@ -437,9 +446,24 @@ def get_llm_config() -> dict:
 			"order": m.order or 0,
 			"enabled": bool(m.enabled),
 			"credential_type": cred_type,
-			"has_key": bool(m.get_password("api_key", raise_exception=False))
-			           if cred_type == "api_key" else bool(m.get("accounts")),
-		})
+		}
+		if cred_type == "subscription":
+			# Surface connected accounts so the UI can show them (has_key style).
+			# NEVER send oauth_blob to the client — only the display metadata.
+			accts = _model_accounts(m)
+			entry["rotation"] = m.rotation or "sticky"
+			entry["accounts"] = [
+				{
+					"upstream": (a.get("upstream") if hasattr(a, "get") else "") or "openai",
+					"account_ref": (a.get("account_ref") if hasattr(a, "get") else "") or "",
+					"label": (a.get("label") if hasattr(a, "get") else "") or "",
+				}
+				for a in accts
+			]
+			entry["has_key"] = bool(accts)
+		else:
+			entry["has_key"] = bool(m.get_password("api_key", raise_exception=False))
+		models.append(entry)
 	return {
 		"models": models,
 		"preset": s.get("preset") or "",
