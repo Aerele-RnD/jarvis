@@ -718,19 +718,20 @@
 			</div>
 		</transition>
 
-		<!-- ============ MACRO MERGE REVIEW (auto-offered after a 2+ step save) ============ -->
+		<!-- ============ MACRO MERGE CONFIRM (every 2+ step save summarizes; the user confirms the summary) ============ -->
 		<transition name="jv-fade">
 			<div v-if="macroMerge" class="jv-skills-overlay" @click.self="dropMacroMerge('')">
 				<div class="jv-merge-modal">
 					<div class="jv-merge-head">
-						<b>Merge “{{ macroMerge.macroName }}” into one prompt?</b>
+						<b>“{{ macroMerge.macroName }}” as one prompt</b>
 						<button class="jv-art-close" @click="dropMacroMerge('')" aria-label="Close">✕</button>
 					</div>
 					<div v-if="macroMerge.status === 'pending'" class="jv-merge-pending">
-						<span class="jv-merge-spin"></span> Summarizing {{ macroMerge.steps }} steps into one prompt…
-						<div class="jv-merge-sub">Macro saved. You'll review the merged prompt before anything changes — close this to keep the step sequence.</div>
+						<span class="jv-merge-spin"></span> Summarizing your {{ macroMerge.steps }} steps with the macro-merge skill…
+						<div class="jv-merge-sub">You'll confirm the summary before it replaces the steps.</div>
 					</div>
 					<template v-else-if="macroMerge.status === 'ready'">
+						<div class="jv-merge-sub">Here's your macro summarized into a single prompt — edit if needed, then confirm:</div>
 						<div v-if="(macroMerge.merge.dependencies || []).length" class="jv-merge-deps">
 							<span v-for="(d, di) in macroMerge.merge.dependencies" :key="di" class="jv-merge-chip">
 								step {{ d.step }} ← {{ (d.uses || []).join(", ") }}
@@ -739,9 +740,9 @@
 						<textarea class="jv-merge-text" v-model="macroMerge.editedPrompt" rows="10"></textarea>
 						<div v-if="macroMerge.error" class="jv-draft-error">{{ macroMerge.error }}</div>
 						<div class="jv-merge-foot">
-							<button class="jv-action-2nd" @click="dropMacroMerge('')">Keep sequence</button>
+							<button class="jv-action-2nd" @click="dropMacroMerge('')">Keep the steps instead</button>
 							<button class="jv-action-primary" style="margin-left:auto" :disabled="macroMerge.applying" @click="acceptMacroMerge">
-								{{ macroMerge.applying ? "Applying…" : "Use merged prompt" }}
+								{{ macroMerge.applying ? "Applying…" : "✓ Confirm — use this prompt" }}
 							</button>
 						</div>
 					</template>

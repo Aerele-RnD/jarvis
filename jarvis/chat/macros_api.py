@@ -335,13 +335,16 @@ def macro_run_stats() -> dict:
 _MERGE_RE = re.compile(r"```jarvis-macro-merge[ \t]*\n([\s\S]*?)```")
 
 _MERGE_INSTRUCTION = (
-	"Merge this macro's steps into ONE self-contained prompt. Reply with one "
-	"short lead-in line and exactly one fenced ```jarvis-macro-merge``` block "
-	'holding JSON: {"mergeable": bool, "reason": str, "merged_prompt": str, '
-	'"dependencies": [{"step": int, "uses": [int]}]}. Preserve step order as '
-	"numbered instructions and state every inter-step dependency explicitly "
-	'("Using the results of (1), ..."). Set mergeable=false when merging '
-	"would lose a user review checkpoint before a data change. Steps:\n\n"
+	"Summarize this macro's steps into ONE coherent self-contained prompt — a "
+	"genuine rewrite that reads as a single ask, NOT the steps restated as a "
+	"numbered list. Keep the execution order and weave every inter-step "
+	'dependency into the prose ("...and from those results..."). Keep every '
+	"concrete detail (filters, dates, names, quantities, formats). Reply with "
+	"one short lead-in line and exactly one fenced ```jarvis-macro-merge``` "
+	'block holding JSON: {"mergeable": bool, "reason": str, "merged_prompt": '
+	'str, "dependencies": [{"step": int, "uses": [int]}]}. Set '
+	"mergeable=false when merging would lose a user review checkpoint before "
+	"a data change. Steps:\n\n"
 )
 
 
