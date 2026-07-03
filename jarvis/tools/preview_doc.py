@@ -3,17 +3,20 @@
 ``create_doc`` inserts blind - the agent only discovers what ERPNext's
 ``set_missing_values`` chain / regional hooks resolved (party address, GST
 fields, payment schedule, totals) AFTER the record exists. This tool runs the
-exact same ``doc.insert()`` inside a savepoint and rolls back, returning the
-resolved header plus which fields the server filled and which integrity
-fields stayed empty - so the agent can show a faithful pre-create review and
-fix master-data gaps (e.g. a supplier with no linked Address) FIRST.
+exact same ``doc.insert()`` inside the shared preview sandbox (commits
+neutralized, savepoint rollback, commit-callback queues kept clean - see
+``_preview_sandbox``) and returns the resolved header plus which fields the
+server filled and which integrity fields stayed empty - so the agent can show
+a faithful pre-create review and fix master-data gaps (e.g. a supplier with
+no linked Address) FIRST.
 
-Same guards as ``create_doc``; the calling user needs create permission.
+Permission contract: same guards as ``create_doc`` (shared
+``_validate_create_args``).
 """
 import frappe
 
-from jarvis.exceptions import InvalidArgumentError, PermissionDeniedError
-from jarvis.tools.create_doc import PROTECTED_FIELDS, _set_title_from_title_field
+from jarvis.tools._preview_sandbox import preview_sandbox
+from jarvis.tools.create_doc import _set_title_from_title_field, _validate_create_args
 
 # Header fieldtypes worth echoing back (child tables + layout/HTML excluded).
 _HEADER_TYPES = {
@@ -22,95 +25,101 @@ _HEADER_TYPES = {
     "Small Text",
 }
 
-# Integrity-bearing fieldname fragments: emptiness here is worth surfacing
-# (a bare link field elsewhere is usually just an unused feature).
-_INTEGRITY_FRAGMENTS = (
-    "address", "contact", "payment_terms", "taxes_and_charges", "gstin",
-    "place_of_supply", "tax_category", "due_date",
-)
+# Exact integrity-bearing fieldnames: emptiness here is worth surfacing.
+# Deliberately an allow-list of the writable source fields - substring
+# matching swept in read-only display mirrors (contact_display/_mobile/_email)
+# and unrelated flags, so one missing contact link produced four "gaps".
+_INTEGRITY_FIELDS = {
+    "supplier_address", "customer_address", "company_address",
+    "shipping_address", "shipping_address_name", "dispatch_address",
+    "billing_address", "contact_person", "payment_terms_template",
+    "due_date", "place_of_supply", "tax_category", "taxes_and_charges",
+}
+
+_TOTAL_FIELDS = ("net_total", "total_taxes_and_charges", "grand_total", "rounded_total")
+
+
+def _norm(v):
+    """Fold the falsy-numeric family together: the insert pipeline writes 0
+    where a bare new_doc holds None, and that difference is not 'the server
+    filled this field'."""
+    return 0 if v in (None, 0, 0.0, False) else v
 
 
 def preview_doc(doctype: str, values: dict) -> dict:
     """Validate + resolve a would-be document without creating it.
 
     Runs ``doc.insert()`` (controller validate, set_missing_values, regional
-    hooks, payment schedule, autoname) inside a savepoint, captures the
-    resolved document, then rolls back - no record, no consumed name. Returns
-    ``{valid, resolved, server_filled, empty_fields, items_count, totals}``;
-    a rejected document returns ``{valid: false, error}`` instead of raising,
-    so drafts can be fixed and retried cheaply. Use before ``create_doc`` on
-    consequential documents (invoices, orders); then create the confirmed
-    draft with ``create_doc``.
+    hooks, payment schedule, autoname) inside the preview sandbox, captures
+    the resolved document, then rolls back - no record, no consumed name, no
+    queued webhooks/notifications. Returns ``{valid, resolved, server_filled,
+    empty_fields, items_count, totals}``; a rejected document returns
+    ``{valid: false, error}`` instead of raising, so drafts can be fixed and
+    retried cheaply. Use before ``create_doc`` on consequential documents
+    (invoices, orders); then create the confirmed draft with ``create_doc``.
+    Side effects fired directly inside hooks (inline HTTP calls) are not
+    sandboxed.
     """
-    if not doctype:
-        raise InvalidArgumentError("doctype is required")
-    if not isinstance(values, dict) or not values:
-        raise InvalidArgumentError("values must be a non-empty dict")
-
-    protected = sorted(set(values.keys()) & PROTECTED_FIELDS)
-    if protected:
-        raise InvalidArgumentError(
-            f"refusing to write protected field(s): {', '.join(protected)}"
-        )
-
-    if not frappe.has_permission(doctype, ptype="create"):
-        raise PermissionDeniedError(f"no create permission on {doctype}")
+    _validate_create_args(doctype, values)
 
     doc = frappe.new_doc(doctype)
     for field, value in values.items():
         doc.set(field, value)
     _set_title_from_title_field(doc)
 
-    # Same sandbox discipline as api._run_preview: neutralize commits for the
-    # duration (a hook calling frappe.db.commit() would RELEASE the savepoint
-    # and persist the "dry run"), unique savepoint name so nested previews
-    # can't collide.
-    db = frappe.db
-    real_commit = db.commit
-    db.commit = lambda *a, **k: None
-    sp = "jpd_" + frappe.generate_hash(length=10)
-    db.savepoint(sp)
     try:
-        doc.insert()
-        result = _summarize(doc, values)
+        with preview_sandbox():
+            doc.insert()
     except Exception as e:
-        db.commit = real_commit
-        db.rollback(save_point=sp)
         frappe.clear_messages()
         return {"valid": False, "error": _error_text(e)}
-    db.commit = real_commit
-    db.rollback(save_point=sp)
-    return result
+    # Summarize OUTSIDE the try: a summarization bug must never mislabel a
+    # document that validated cleanly as {valid: false}. The in-memory doc
+    # keeps its resolved fields after the rollback; nothing below hits the DB.
+    return _summarize(doc, values)
 
 
 def _summarize(doc, caller_values: dict) -> dict:
+    # Baseline = a bare new_doc: a value only counts as "server filled" when
+    # it differs from the untouched default, so zero-default flags/amounts
+    # don't flood the payload as fake auto-fill.
+    baseline = frappe.new_doc(doc.doctype)
     resolved: dict = {}
+    server_filled: list[str] = []
     empty_fields: list[str] = []
     for df in doc.meta.fields:
         if df.fieldtype not in _HEADER_TYPES:
             continue
-        val = doc.get(df.fieldname)
-        if val not in (None, ""):
-            resolved[df.fieldname] = val
-        elif any(f in df.fieldname for f in _INTEGRITY_FRAGMENTS):
-            empty_fields.append(df.fieldname)
-    server_filled = sorted(
-        f for f in resolved
-        if f not in caller_values and f not in ("naming_series",)
-    )
+        name = df.fieldname
+        val = doc.get(name)
+        if val in (None, ""):
+            if name in _INTEGRITY_FIELDS and not df.read_only:
+                empty_fields.append(name)
+            continue
+        if name in _TOTAL_FIELDS or name.startswith("base_"):
+            continue  # totals live in `totals`; base_* company mirrors add no signal
+        if name in caller_values:
+            resolved[name] = val
+        elif _norm(val) != _norm(baseline.get(name)):
+            resolved[name] = val
+            server_filled.append(name)
     totals = {
         f: doc.get(f)
-        for f in ("net_total", "total_taxes_and_charges", "grand_total", "rounded_total")
+        for f in _TOTAL_FIELDS
         if doc.meta.has_field(f) and doc.get(f) is not None
     }
     return {
         "valid": True,
         "resolved": resolved,
-        "server_filled": server_filled,
+        "server_filled": sorted(server_filled),
         "empty_fields": empty_fields,
         "items_count": len(doc.get("items") or []) if doc.meta.has_field("items") else None,
         "totals": totals,
-        "note": "dry run only - nothing was created; use create_doc to create",
+        "note": (
+            "dry run only - nothing was persisted or queued; use create_doc "
+            "to create. Side effects fired directly inside hooks (inline "
+            "HTTP calls) are not sandboxed."
+        ),
     }
 
 

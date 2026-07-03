@@ -72,3 +72,35 @@ class TestPreviewDoc(FrappeTestCase):
 		self.assertIs(getattr(frappe.db.commit, "__func__", None), real_func)
 		preview_doc("ToDo", {"priority": "High"})  # invalid -> valid:false path
 		self.assertIs(getattr(frappe.db.commit, "__func__", None), real_func)
+
+	def test_preview_drops_queued_commit_callbacks(self):
+		# Callbacks queued on after_commit during the dry run (webhook and
+		# notification enqueues register there) must not survive the sandbox;
+		# a savepoint rollback does not clear those queues, so without the
+		# sandbox restore they would fire on the request's next real commit
+		# for a phantom, rolled-back document.
+		from jarvis.tools._preview_sandbox import preview_sandbox
+
+		before = len(frappe.db.after_commit._functions)
+		with preview_sandbox():
+			frappe.db.after_commit.add(lambda: None)
+		self.assertEqual(len(frappe.db.after_commit._functions), before)
+
+	def test_sandbox_restores_commit_when_savepoint_fails(self):
+		# A savepoint failure must not leak the neutralized commit - the
+		# finally covers the savepoint call itself.
+		from jarvis.tools._preview_sandbox import preview_sandbox
+
+		real_func = frappe.db.commit.__func__
+		with patch.object(frappe.db, "savepoint", side_effect=Exception("boom")):
+			with self.assertRaises(Exception):
+				with preview_sandbox():
+					pass  # never reached
+		self.assertIs(getattr(frappe.db.commit, "__func__", None), real_func)
+
+	def test_zero_defaults_not_reported_as_server_filled(self):
+		# A field the server merely left at its 0/"Open" default is not
+		# "server filled"; only values differing from a bare new_doc count.
+		out = preview_doc("ToDo", {"description": "jarvis preview baseline"})
+		self.assertTrue(out["valid"])
+		self.assertNotIn("status", out["server_filled"])

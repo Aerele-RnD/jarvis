@@ -30,6 +30,7 @@ _TOOL_NAMES: tuple[str, ...] = (
     "query",
     "update_doc",
     "create_doc",
+    "preview_doc",
     "submit_doc",
     "cancel_doc",
     "delete_doc",
@@ -40,7 +41,6 @@ _TOOL_NAMES: tuple[str, ...] = (
     "export_excel",
     "read_file",
     "get_file_pages",
-    "preview_doc",
     "attach_to_doc",
     "download_vcard",
     # Tier 2a ERPNext computed reads: numbers the LLM keeps hallucinating

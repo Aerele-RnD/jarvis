@@ -393,32 +393,22 @@ def _run_preview(tool: str, args: dict) -> dict:
 	what WOULD happen (validations run, naming + fetched fields resolved) with
 	nothing committed.
 
-	Commits are neutralized for the duration, then the work is rolled back to a
-	savepoint - so even a tool (or a ``run_method`` target) that calls
-	``frappe.db.commit()`` internally cannot persist. The neutralization is what
-	makes the savepoint safe: a real COMMIT would release all savepoints in
-	MariaDB, both persisting the write and breaking the rollback; with commit a
-	no-op the savepoint survives and the rollback is surgical (it does not touch
-	work done before the preview). The savepoint name is unique per call so
-	nested/concurrent previews can't collide. External side effects
-	(emails/webhooks fired from on_submit / on_cancel) are NOT sandboxed.
+	The sandbox mechanics (commit neutralization, savepoint rollback,
+	commit-callback queue restore) live in ``jarvis.tools._preview_sandbox``,
+	shared with the ``preview_doc`` tool. Side effects fired directly inside
+	hooks (inline HTTP calls from on_submit / on_cancel) are NOT sandboxed.
 	"""
-	db = frappe.db
-	real_commit = db.commit
-	db.commit = lambda *a, **k: None  # neutralize commits so the savepoint survives
-	sp = "jp_" + frappe.generate_hash(length=10)
-	db.savepoint(sp)
-	try:
+	from jarvis.tools._preview_sandbox import preview_sandbox
+
+	with preview_sandbox():
 		would = dispatch(tool, args)
-	finally:
-		db.commit = real_commit
-		db.rollback(save_point=sp)  # undo everything the dry-run wrote
 	return {
 		"preview": True,
 		"would": would,
 		"note": ("Validated with all DB writes rolled back; nothing was "
-				 "committed. External side effects (emails/webhooks in "
-				 "on_submit / on_cancel) are not sandboxed by preview."),
+				 "committed or queued. Side effects fired directly inside "
+				 "hooks (inline HTTP calls in on_submit / on_cancel) are "
+				 "not sandboxed by preview."),
 	}
 
 
