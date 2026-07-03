@@ -2,6 +2,16 @@
 during one chat turn": DB writes, openclaw pool checkout, event
 streaming, canvas persist, auto-title.
 
+Managed transport is the openclaw-native relay (never-error discipline):
+chat.send with idempotencyKey = the bench run_id hands the turn to
+openclaw, relay_turn_events streams the broadcast frames, and the ONLY
+path to run:error after a successful ack is a genuine openclaw-reported
+terminal. Deadline expiry, transport drops, and exhausted streams park
+the row (_mark_recovering) and try recover_now immediately; the
+turn_recovery cron and its 60-minute ceiling are the backstop. See
+docs/superpowers/specs/2026-07-04-openclaw-native-chat-relay-design.md
+(jarvis repo root).
+
 Today this is called only by ``jarvis.chat.worker.run_agent_turn``,
 which is the RQ entry point invoked via
 ``frappe.enqueue("jarvis.chat.worker.run_agent_turn", ...)``. Phase 2 of

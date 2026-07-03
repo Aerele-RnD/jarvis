@@ -13,8 +13,15 @@ the requested scopes, and the rest of the protocol (sessions.create, agent,
 event streaming) is identical to what the Node script used to do - only the
 transport changed from subprocess-pipes to direct WS frames.
 
-The public surface (OpenclawSession.connect / create_session /
-stream_agent_turn / close) is unchanged. worker.py and api.py don't notice.
+Public surface: OpenclawSession.connect / create_session / chat_send /
+relay_turn_events / set_session_model / subscribe_session / get_history /
+get_session_messages / is_run_active / fire_agent / stream_agent_turn /
+close. The managed chat path now uses the relay pair (chat_send +
+relay_turn_events): the turn is owned by openclaw after the chat.send ack,
+streaming rides the broadcast agent frames, completion comes from the
+run-scoped chat event, and relay_turn_events never raises after entry -
+interruptions degrade to snapshot recovery instead of errors.
+stream_agent_turn remains for auto-title; fire_agent for prewarm.
 """
 
 from __future__ import annotations
