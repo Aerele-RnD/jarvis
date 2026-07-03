@@ -180,6 +180,10 @@ scheduler_events = {
 		"jarvis.oauth.cron.poll_oauth_refresh_status",
 		# Fire any scheduled macros whose next_run_at has passed.
 		"jarvis.chat.macro_scheduler.run_due_macros",
+		# Recovery-completeness batch: spike alarm if the 24h recovered-turn
+		# rate is high enough to suggest a sick gateway (deduped to roughly
+		# once a day inside the function).
+		"jarvis.chat.turn_recovery.recovery_rate_watch",
 	],
 	"daily": [
 		"jarvis.onboarding.sync_connection",

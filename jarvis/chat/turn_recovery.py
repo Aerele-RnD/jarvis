@@ -36,6 +36,22 @@ CONV = "Jarvis Conversation"
 # time-based stale_scan error path.
 _RECOVERY_CEILING_MINUTES = 60
 
+# Exact text stamped by the unconditional ceiling backstop below. Named so
+# jarvis.diagnostics.chat_recovery_stats can count ceiling errors without
+# duplicating (and risking drift from) the literal string.
+CEILING_ERROR_MESSAGE = "Run did not finish within the recovery window."
+
+# Spike-alarm thresholds (recovery_rate_watch): a sustained high recovered
+# rate over the last 24h means the never-error machinery is quietly
+# compensating for a sick gateway. Both must hold - the count guard (>=5)
+# keeps a quiet bench (e.g. 1 recovered out of 2 turns = 50%) from alarming
+# on noise.
+_RATE_WATCH_MIN_RECOVERED = 5
+_RATE_WATCH_MIN_RATE = 0.2
+# Dedupe window: a sustained problem alarms roughly once a day, not once an
+# hour, even though this is hooked hourly.
+_RATE_WATCH_DEDUPE_HOURS = 20
+
 
 @contextlib.contextmanager
 def _recovery_connection(gateway_url: str) -> Iterator[OpenclawSession]:
@@ -133,6 +149,7 @@ def _finalize(row: dict, text: str) -> None:
 	from the raw snapshot, clear the flags, then publish for any live viewer."""
 	if not _conditional_clear(row["name"], {
 		"content": text, "streaming": 0, "recovering": 0, "error": "",
+		"was_recovered": 1,
 	}):
 		return  # another cycle already finalized this row
 	conv, owner, name = row["conversation"], row["owner"], row["name"]
@@ -146,10 +163,29 @@ def _finalize(row: dict, text: str) -> None:
 	})
 	_advance_macro(conv, errored=False)
 
+	# Best-effort: a recovered long turn is exactly the kind that produced
+	# charts / generated images, so it deserves the same rich-output
+	# persistence as the worker's clean-exit path. Lazy import (codebase
+	# pattern - avoids any import-cycle question between turn_recovery and
+	# turn_handler).
+	try:
+		from jarvis.chat import turn_handler
+
+		turn_handler.persist_rich_outputs(
+			name, conv, row["owner"], "recovered",
+			int(frappe.utils.get_datetime(row["creation"]).timestamp() * 1000)
+			if row.get("creation") else 0,
+		)
+	except Exception:
+		frappe.log_error(
+			title="turn_recovery: rich-output persist failed",
+			message=frappe.get_traceback(),
+		)
+
 
 def _error(row: dict, message: str) -> None:
 	if not _conditional_clear(row["name"], {
-		"streaming": 0, "recovering": 0, "error": message,
+		"streaming": 0, "recovering": 0, "error": message, "was_recovered": 1,
 	}):
 		return
 	publish_to_user(row["owner"], {
@@ -183,7 +219,7 @@ def recover_pending_turns(limit: int = 20) -> dict:
 	rows = frappe.db.sql(
 		"""
 		SELECT m.name, m.conversation, c.session_key, c.owner,
-			   m.recovery_started_at, m.seq, m.openclaw_seq_watermark
+			   m.recovery_started_at, m.seq, m.openclaw_seq_watermark, m.creation
 		FROM `tabJarvis Chat Message` m
 		JOIN `tabJarvis Conversation` c ON c.name = m.conversation
 		WHERE m.streaming = 1 AND m.recovering = 1
@@ -204,7 +240,7 @@ def recover_pending_turns(limit: int = 20) -> dict:
 	live = []
 	for r in rows:
 		if _age_minutes(r["recovery_started_at"]) > _RECOVERY_CEILING_MINUTES:
-			_error(r, "Run did not finish within the recovery window.")
+			_error(r, CEILING_ERROR_MESSAGE)
 			counts["errored"] += 1
 		else:
 			live.append(r)
@@ -279,7 +315,7 @@ def recover_now(conversation_id: str) -> str:
 	rows = frappe.db.sql(
 		"""
 		SELECT m.name, m.conversation, c.session_key, c.owner,
-			   m.recovery_started_at, m.seq, m.openclaw_seq_watermark
+			   m.recovery_started_at, m.seq, m.openclaw_seq_watermark, m.creation
 		FROM `tabJarvis Chat Message` m
 		JOIN `tabJarvis Conversation` c ON c.name = m.conversation
 		WHERE m.streaming = 1 AND m.recovering = 1
@@ -309,3 +345,61 @@ def recover_now(conversation_id: str) -> str:
 			message=frappe.get_traceback(),
 		)
 		return "skipped"
+
+
+def recovery_rate_watch() -> None:
+	"""Hourly scheduler entry: spike alarm for the recovered-turn rate.
+
+	Snapshot recovery is designed to be invisible to the user (never-error),
+	which means a sick gateway that is forcing MOST turns through recovery
+	would otherwise go unnoticed. If at least _RATE_WATCH_MIN_RECOVERED turns
+	were recovered in the last 24h AND they are more than _RATE_WATCH_MIN_RATE
+	of all assistant turns in that window, log an Error Log so operators see
+	it - deduped against an existing Error Log with the same title in the
+	last _RATE_WATCH_DEDUPE_HOURS hours, so a sustained problem alarms
+	roughly once a day rather than every hour this cron fires."""
+	from jarvis import selfhost
+
+	if selfhost.is_self_hosted():
+		return
+
+	since_24h = frappe.utils.add_to_date(frappe.utils.now_datetime(), hours=-24)
+	row = frappe.db.sql(
+		"""
+		SELECT COUNT(*) AS total,
+			   SUM(CASE WHEN was_recovered = 1 THEN 1 ELSE 0 END) AS recovered
+		FROM `tabJarvis Chat Message`
+		WHERE role = 'assistant' AND creation >= %(since)s
+		""",
+		{"since": since_24h},
+		as_dict=True,
+	)[0]
+	total = row.total or 0
+	recovered = row.recovered or 0
+	rate = (recovered / total) if total else 0
+	if recovered < _RATE_WATCH_MIN_RECOVERED or rate <= _RATE_WATCH_MIN_RATE:
+		return
+
+	title = "chat: high recovered-turn rate"
+	since_dedupe = frappe.utils.add_to_date(
+		frappe.utils.now_datetime(), hours=-_RATE_WATCH_DEDUPE_HOURS
+	)
+	existing = frappe.db.sql(
+		"""
+		SELECT name FROM `tabError Log`
+		WHERE method = %(title)s AND creation >= %(since)s
+		LIMIT 1
+		""",
+		{"title": title, "since": since_dedupe},
+	)
+	if existing:
+		return
+	frappe.log_error(
+		title=title,
+		message=(
+			f"Recovered {recovered}/{total} assistant turns ({rate:.0%}) in "
+			"the last 24h via snapshot recovery. The never-error machinery "
+			"is compensating for turns that never completed live - check "
+			"gateway health."
+		),
+	)

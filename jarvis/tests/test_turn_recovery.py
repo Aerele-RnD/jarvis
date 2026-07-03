@@ -394,3 +394,201 @@ class TestTurnRecovery(FrappeTestCase):
 		out2, pub2 = self._run_now(sess2)
 		self.assertEqual(out2, "skipped")
 		pub2.assert_not_called()
+
+
+class TestRecoveryRichOutputsAndWasRecovered(FrappeTestCase):
+	"""Recovery-completeness batch: _finalize routes the recovered turn's
+	canvas/generated-image outputs through the same persist_rich_outputs
+	the worker's clean exit calls, and both _finalize and _error stamp
+	was_recovered=1 (the never-error machinery's fingerprint).
+
+	Deliberately does NOT subclass TestTurnRecovery (that would re-run its
+	whole suite under this class name too) - the small amount of shared
+	setup is duplicated instead."""
+
+	def setUp(self):
+		self.conv = frappe.get_doc({
+			"doctype": "Jarvis Conversation", "title": "rec2", "session_key": SK,
+		}).insert(ignore_permissions=True)
+		self.msg = self._add_msg(seq=1, started_min=-10)
+		frappe.db.commit()
+
+	def tearDown(self):
+		frappe.db.delete(MSG_DT, {"conversation": self.conv.name})
+		frappe.db.delete(turn_recovery.CONV, {"name": self.conv.name})
+		frappe.db.commit()
+
+	def _add_msg(self, seq, started_min, content="partial..."):
+		return frappe.get_doc({
+			"doctype": "Jarvis Chat Message",
+			"conversation": self.conv.name, "seq": seq, "role": "assistant",
+			"content": content, "streaming": 1, "recovering": 1,
+			"recovery_started_at": frappe.utils.add_to_date(
+				frappe.utils.now_datetime(), minutes=started_min),
+		}).insert(ignore_permissions=True)
+
+	def _fake_sess(self, *, active=None, messages_by_key=None):
+		active = active or set()
+		messages_by_key = messages_by_key or {}
+		sess = MagicMock()
+
+		def _request(method, params, *, timeout_s):
+			if method == "sessions.list":
+				return {"payload": {"sessions": [
+					{"key": k, "hasActiveRun": True} for k in active]}}
+			return {"payload": {}}
+
+		sess._request = _request
+		sess.get_session_messages = lambda key, limit=50: messages_by_key.get(key, [])
+		sess.is_run_active = lambda key, timeout_s=None: key in active
+		return sess
+
+	def _run(self, sess):
+		@contextlib.contextmanager
+		def fake_conn(_gateway_url):
+			yield sess
+
+		settings = MagicMock()
+		settings.agent_url = "https://gw.example"
+		with patch("jarvis.selfhost.is_self_hosted", return_value=False), \
+			 patch("jarvis.chat.turn_recovery.frappe.get_single", return_value=settings), \
+			 patch("jarvis.chat.turn_recovery._recovery_connection", fake_conn), \
+			 patch("jarvis.chat.turn_recovery.publish_to_user") as pub:
+			out = turn_recovery.recover_pending_turns()
+		return out, pub
+
+	def _row(self, name=None):
+		return frappe.db.get_value(
+			MSG_DT, name or self.msg.name,
+			["content", "streaming", "recovering", "error"], as_dict=True)
+
+	def test_finalize_calls_persist_rich_outputs_best_effort(self):
+		sess = self._fake_sess(messages_by_key={SK: [
+			{"role": "assistant", "content": "the full answer", "__openclaw": {"seq": 2}},
+		]})
+		with patch("jarvis.chat.turn_handler.persist_rich_outputs") as rich:
+			self._run(sess)
+		rich.assert_called_once()
+		args = rich.call_args.args
+		self.assertEqual(args[0], self.msg.name)
+		self.assertEqual(args[1], self.conv.name)
+		self.assertEqual(args[3], "recovered")
+
+	def test_finalize_survives_persist_rich_outputs_raising(self):
+		sess = self._fake_sess(messages_by_key={SK: [
+			{"role": "assistant", "content": "the full answer", "__openclaw": {"seq": 2}},
+		]})
+		with patch(
+			"jarvis.chat.turn_handler.persist_rich_outputs",
+			side_effect=RuntimeError("canvas fetch exploded"),
+		), patch("frappe.log_error") as log_err:
+			_, pub = self._run(sess)
+		log_err.assert_called()
+		row = self._row()
+		self.assertEqual(row.content, "the full answer")
+		self.assertEqual(row.streaming, 0)
+		self.assertEqual(row.recovering, 0)
+		kinds = [c.args[1]["kind"] for c in pub.call_args_list]
+		self.assertIn("assistant:delta", kinds)
+		self.assertIn("run:end", kinds)
+
+	def test_finalize_stamps_was_recovered(self):
+		sess = self._fake_sess(messages_by_key={SK: [
+			{"role": "assistant", "content": "the full answer", "__openclaw": {"seq": 2}},
+		]})
+		with patch("jarvis.chat.turn_handler.persist_rich_outputs"):
+			self._run(sess)
+		self.assertEqual(
+			frappe.db.get_value(MSG_DT, self.msg.name, "was_recovered"), 1,
+		)
+
+	def test_error_stamps_was_recovered(self):
+		old = self._add_msg(seq=2, started_min=-120)  # past the ceiling -> _error
+		frappe.db.commit()
+
+		def boom(_url):
+			raise RuntimeError("gateway down")
+
+		settings = MagicMock()
+		settings.agent_url = "https://gw.example"
+		with patch("jarvis.selfhost.is_self_hosted", return_value=False), \
+			 patch("jarvis.chat.turn_recovery.frappe.get_single", return_value=settings), \
+			 patch("jarvis.chat.turn_recovery._recovery_connection", boom), \
+			 patch("jarvis.chat.turn_recovery.publish_to_user"):
+			turn_recovery.recover_pending_turns()
+		self.assertEqual(
+			frappe.db.get_value(MSG_DT, old.name, "was_recovered"), 1,
+		)
+
+
+class TestRecoveryRateWatch(FrappeTestCase):
+	"""Hourly spike alarm: high 24h recovered-turn rate -> one Error Log,
+	deduped for _RATE_WATCH_DEDUPE_HOURS so a sustained problem alarms
+	roughly once a day rather than every hour."""
+
+	TITLE = "chat: high recovered-turn rate"
+
+	def setUp(self):
+		# Neutralize residue: the watch is site-global over the last 24h, so
+		# stray recovered rows or a stray alarm left by an aborted earlier
+		# run would make these deterministic threshold tests flaky.
+		frappe.db.sql(
+			"UPDATE `tabJarvis Chat Message` SET was_recovered = 0 WHERE was_recovered = 1"
+		)
+		frappe.db.delete("Error Log", {"method": self.TITLE})
+		self.conv = frappe.get_doc({
+			"doctype": "Jarvis Conversation", "title": "rate-watch",
+		}).insert(ignore_permissions=True)
+		frappe.db.commit()
+
+	def tearDown(self):
+		frappe.db.delete(MSG_DT, {"conversation": self.conv.name})
+		frappe.db.delete(turn_recovery.CONV, {"name": self.conv.name})
+		frappe.db.delete("Error Log", {"method": self.TITLE})
+		frappe.db.commit()
+
+	def _add_assistant(self, *, recovered):
+		frappe.get_doc({
+			"doctype": MSG_DT, "conversation": self.conv.name, "seq": 1,
+			"role": "assistant", "content": "x", "streaming": 0,
+			"was_recovered": 1 if recovered else 0,
+		}).insert(ignore_permissions=True)
+
+	def test_below_threshold_no_error_log(self):
+		# 1 recovered out of 2: rate 50% but recovered count (1) below the
+		# minimum (5), so no alarm.
+		self._add_assistant(recovered=True)
+		self._add_assistant(recovered=False)
+		frappe.db.commit()
+		with patch("jarvis.selfhost.is_self_hosted", return_value=False):
+			turn_recovery.recovery_rate_watch()
+		self.assertEqual(frappe.db.count("Error Log", {"method": self.TITLE}), 0)
+
+	def test_above_threshold_logs_exactly_one(self):
+		for _ in range(6):
+			self._add_assistant(recovered=True)
+		for _ in range(2):
+			self._add_assistant(recovered=False)
+		frappe.db.commit()
+		with patch("jarvis.selfhost.is_self_hosted", return_value=False):
+			turn_recovery.recovery_rate_watch()
+		self.assertEqual(frappe.db.count("Error Log", {"method": self.TITLE}), 1)
+
+	def test_second_run_within_20h_still_exactly_one(self):
+		for _ in range(6):
+			self._add_assistant(recovered=True)
+		for _ in range(2):
+			self._add_assistant(recovered=False)
+		frappe.db.commit()
+		with patch("jarvis.selfhost.is_self_hosted", return_value=False):
+			turn_recovery.recovery_rate_watch()
+			turn_recovery.recovery_rate_watch()
+		self.assertEqual(frappe.db.count("Error Log", {"method": self.TITLE}), 1)
+
+	def test_self_hosted_returns_early_no_query(self):
+		for _ in range(6):
+			self._add_assistant(recovered=True)
+		frappe.db.commit()
+		with patch("jarvis.selfhost.is_self_hosted", return_value=True):
+			turn_recovery.recovery_rate_watch()
+		self.assertEqual(frappe.db.count("Error Log", {"method": self.TITLE}), 0)
