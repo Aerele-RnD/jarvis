@@ -1,12 +1,4 @@
 frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
-	// Account management now lives in the Jarvis SPA. Redirect there by default,
-	// but keep this desk page reachable for the billing/upgrade flow (not yet in
-	// the SPA — Phase 2) when explicitly requested via ?billing=1.
-	if (!new URLSearchParams(window.location.search).get("billing")) {
-		window.location.replace("/jarvis/account");
-		return;
-	}
-
 	const page = frappe.ui.make_app_page({ parent: wrapper, title: "My Jarvis Account", single_column: true });
 	if (!window.Razorpay) {
 		frappe.require("https://checkout.razorpay.com/v1/checkout.js");
@@ -215,6 +207,15 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 					renderSelfHostAccount(st.message);
 					return null;
 				}
+
+				// Managed tenants: account management now lives in the Jarvis SPA.
+				// Redirect there unless ?billing=1 (the billing/upgrade flow is not
+				// yet in the SPA — Phase 2). Self-hosted tenants above keep this page.
+				if (!new URLSearchParams(window.location.search).get("billing")) {
+					window.location.replace("/jarvis/account");
+					return null;
+				}
+
 				return frappe.call({ method: "jarvis.account.is_onboarded" });
 			})
 			.then((r) => {
