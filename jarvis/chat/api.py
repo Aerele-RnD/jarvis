@@ -706,27 +706,17 @@ def retry_message(message: str) -> dict:
 	)
 
 	run_id = uuid.uuid4().hex[:12]
-	# Same dispatch branch as send_message: Path B (Python socketio backend)
-	# publishes onto Redis pub/sub for the in-process realtime subscriber;
-	# default Node backend keeps using the long RQ queue with at_front=True.
+	# Route through the SHARED dispatcher (after-commit publish on Path B,
+	# RQ on the default backend) - retry previously duplicated this branch
+	# inline with a synchronous publish, keeping the mid-transaction race
+	# _dispatch_turn fixes for every other turn.
 	payload = {
 		"conversation_id": doc.conversation,
 		"message_id": user_msg_id,
 		"run_id": run_id,
 		"enqueued_at_ms": int(time.time() * 1000),
 	}
-	if (frappe.conf.get("socketio_backend") or "").strip().lower() == "python":
-		from jarvis.chat.dispatch import publish_chat_send
-
-		publish_chat_send(payload)
-	else:
-		frappe.enqueue(
-			method="jarvis.chat.worker.run_agent_turn",
-			queue="long",
-			timeout=_AGENT_TURN_WORKER_TIMEOUT,
-			at_front=True,
-			**payload,
-		)
+	_dispatch_turn(payload)
 	return {"ok": True, "run_id": run_id}
 
 
@@ -751,7 +741,13 @@ def _dispatch_turn(enqueue_kwargs: dict) -> None:
 	if (frappe.conf.get("socketio_backend") or "").strip().lower() == "python":
 		from jarvis.chat.dispatch import publish_chat_send
 
-		publish_chat_send(enqueue_kwargs)
+		# Publish AFTER the request transaction commits. Pub/sub delivery is
+		# instant (unlike RQ dequeue latency), so publishing mid-transaction
+		# lets the subscriber greenlet start the turn before the conversation
+		# and user-message rows are visible - LinkValidationError on the
+		# placeholder insert. Mirrors enqueue-after-commit semantics; caught
+		# by the Stage A live smoke.
+		frappe.db.after_commit.add(lambda: publish_chat_send(enqueue_kwargs))
 	else:
 		frappe.enqueue(
 			method="jarvis.chat.worker.run_agent_turn",
