@@ -1109,12 +1109,20 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 
 	function payErr(e) {
 		setBusy("#jo-pay", false);
-		$body.find("#jo-pay-err").text(e.message || "Something went wrong. Please try again.");
+		// frappe.call failures don't reliably carry .message: server-side
+		// frappe.throw text arrives in _server_messages (JSON-in-JSON).
+		let msg = (e && e.message) || "";
+		if (!msg && e && e._server_messages) {
+			try { msg = JSON.parse(JSON.parse(e._server_messages)[0] || "{}").message || ""; } catch (x) { /* keep fallback */ }
+		}
+		$body.find("#jo-pay-err").text(msg || "Something went wrong. Please try again.");
 	}
 
 	function setBusy(sel, on) {
 		const $b = $body.find(sel);
-		if (on) { $b.prop("disabled", true).attr("data-label", $b.html()).html(`<span class="jo-spin"></span> Working…`); }
+		// Re-entry guard: a second busy(true) would snapshot the spinner as
+		// data-label, so the restore would put the spinner back forever.
+		if (on) { if ($b.prop("disabled")) return; $b.prop("disabled", true).attr("data-label", $b.html()).html(`<span class="jo-spin"></span> Working…`); }
 		else if ($b.attr("data-label")) { $b.prop("disabled", false).html($b.attr("data-label")); }
 	}
 

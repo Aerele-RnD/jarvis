@@ -52,11 +52,14 @@ def _require_https_site_url() -> None:
 		return
 	url = frappe.utils.get_url()
 	if not url.startswith("https://"):
-		raise frappe.ValidationError(
+		# frappe.throw (not a bare raise) so the wizard surfaces the message
+		# instead of a generic "Something went wrong".
+		frappe.throw(
 			f"Production onboarding requires this site to be served over "
 			f"https:// (currently {url}). Put the site behind TLS, or enable "
 			f"Sandbox Mode (Jarvis Settings -> Developer section) for a "
-			f"dev/sandbox install."
+			f"dev/sandbox install.",
+			frappe.ValidationError,
 		)
 
 
