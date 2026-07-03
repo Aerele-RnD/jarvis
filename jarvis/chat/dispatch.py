@@ -32,6 +32,20 @@ def _channel(site: str) -> str:
 	return f"jarvis:chat:send:{site}"
 
 
+def subscriber_count() -> int:
+	"""Live subscriber count on this site's Path B channel (PUBSUB NUMSUB).
+
+	Zero means a publish would be fire-and-forget into nowhere: either the
+	config/process mismatch (``socketio_backend: python`` while the Node
+	server is the one running - e.g. Frappe Cloud, which pins node in its
+	supervisor template) or the Python realtime process is down. The
+	dispatcher uses this to fall back to the RQ path instead of stranding
+	the turn."""
+	res = frappe.cache().pubsub_numsub(_channel(frappe.local.site))
+	# redis returns a list of (channel, count) pairs.
+	return int(res[0][1]) if res else 0
+
+
 def publish_chat_send(payload: dict) -> None:
 	"""Publish a chat turn onto the site-scoped Path B channel.
 
