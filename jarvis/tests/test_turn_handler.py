@@ -153,13 +153,18 @@ class TestOrgLocaleClause(unittest.TestCase):
 	date / number / timezone formats into the context line so the agent
 	stops defaulting to US conventions; any read failure degrades to ''."""
 
-	def _run(self, *, company, cached=None, singles=None, default=None):
+	def _run(self, *, company, cached=None, singles=None, default=None, fiscal=None):
 		cached = cached or {}
 		singles = singles or {}
+		# get_fiscal_year is patched in ALL cases so the base locale tests stay
+		# deterministic on sites that carry a real Fiscal Year; pass ``fiscal``
+		# (a dict) to opt into a mocked FY, default raises -> no fy clause.
+		fy_kwargs = {"return_value": fiscal} if fiscal is not None else {"side_effect": RuntimeError("no fy")}
 		with patch("frappe.defaults.get_global_default", return_value=company), \
 			patch("frappe.get_cached_value", side_effect=lambda dt, name, field: cached.get(field, "")), \
 			patch("frappe.db.get_single_value", side_effect=lambda dt, field: singles.get(field, "")), \
-			patch("frappe.db.get_default", return_value=default):
+			patch("frappe.db.get_default", return_value=default), \
+			patch("erpnext.accounts.utils.get_fiscal_year", **fy_kwargs):
 			return turn_handler._org_locale_clause()
 
 	def test_full_company_locale(self):
@@ -193,6 +198,25 @@ class TestOrgLocaleClause(unittest.TestCase):
 		self.assertIn("...", clause)  # truncation marker
 		self.assertNotIn("Private Limited", clause)  # long tail dropped
 		self.assertIn("(India, INR)", clause)
+
+	def test_fiscal_year_folded_in(self):
+		"""The current fiscal year rides the locale clause so accounting
+		turns don't spend a provider round trip on jarvis__get_fiscal_year."""
+		clause = self._run(
+			company="Acme Ltd",
+			cached={"country": "India", "default_currency": "INR"},
+			fiscal={"name": "2026-2027", "year_start_date": "2026-04-01", "year_end_date": "2027-03-31"},
+		)
+		self.assertIn("fy 2026-2027 (2026-04-01..2027-03-31)", clause)
+
+	def test_fiscal_year_failure_degrades_silently(self):
+		"""No Fiscal Year record (or no ERPNext) must not break the clause."""
+		clause = self._run(
+			company="Acme Ltd",
+			cached={"country": "India", "default_currency": "INR"},
+		)
+		self.assertIn("org: Acme Ltd (India, INR)", clause)
+		self.assertNotIn("fy ", clause)
 
 	def test_read_failure_yields_empty_clause(self):
 		with patch("frappe.defaults.get_global_default", side_effect=RuntimeError("db down")):

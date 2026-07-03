@@ -312,6 +312,21 @@ def _org_locale_clause() -> str:
 		parts.append(f"org: {name}" + (f" ({region})" if region else ""))
 	elif region:
 		parts.append(f"region: {region}")
+	# Current fiscal year, so accounting turns don't burn a provider
+	# round trip on jarvis__get_fiscal_year (observed 3 calls in one P&L
+	# turn on the fleet transcript, ~6s each on the codex runtime). Its
+	# own guard: no ERPNext / no Fiscal Year record degrades to no clause.
+	fiscal = ""
+	try:
+		from erpnext.accounts.utils import get_fiscal_year
+
+		fy = get_fiscal_year(frappe.utils.nowdate(), company=company or None, as_dict=True)
+		if fy and fy.get("name"):
+			fiscal = f"fy {fy.get('name')} ({fy.get('year_start_date')}..{fy.get('year_end_date')})"
+	except Exception:
+		fiscal = ""
+	if fiscal:
+		parts.append(fiscal)
 	if date_format:
 		parts.append(f"dates {date_format}")
 	if number_format:
