@@ -6,10 +6,14 @@ The ``/jarvis`` Macros UI calls these whitelisted methods to manage
 commit). Execution itself lives in ``jarvis.chat.macros``.
 """
 
+import re
+
 import frappe
+from frappe import _
 
 MACRO = "Jarvis Macro"
 RUN = "Jarvis Macro Run"
+MSG = "Jarvis Chat Message"
 
 
 def _parse_steps(steps) -> list[dict]:
@@ -320,3 +324,146 @@ def macro_run_stats() -> dict:
 		"success_rate": round(completed * 100 / finished) if finished else None,
 		"last_run_at": str(last) if last else "",
 	}
+
+
+# --------------------------------------------------------------------------- #
+# Macro merge — summarize a 2+ step sequence into one prompt (spec:
+# docs/superpowers/specs/2026-07-03-macro-merge-design.md). The LLM does the
+# merging via the persona /macro-merge skill in a throwaway archived
+# conversation; these endpoints are the deterministic plumbing around it.
+# --------------------------------------------------------------------------- #
+_MERGE_RE = re.compile(r"```jarvis-macro-merge[ \t]*\n([\s\S]*?)```")
+
+_MERGE_INSTRUCTION = (
+	"Merge this macro's steps into ONE self-contained prompt. Reply with one "
+	"short lead-in line and exactly one fenced ```jarvis-macro-merge``` block "
+	'holding JSON: {"mergeable": bool, "reason": str, "merged_prompt": str, '
+	'"dependencies": [{"step": int, "uses": [int]}]}. Preserve step order as '
+	"numbered instructions and state every inter-step dependency explicitly "
+	'("Using the results of (1), ..."). Set mergeable=false when merging '
+	"would lose a user review checkpoint before a data change. Steps:\n\n"
+)
+
+
+def _own_conversation(conversation: str) -> None:
+	owner = frappe.db.get_value("Jarvis Conversation", conversation, "owner")
+	if not owner:
+		frappe.throw(_("Unknown conversation."))
+	if owner != frappe.session.user:
+		frappe.throw(_("Not your conversation."), frappe.PermissionError)
+
+
+@frappe.whitelist()
+def summarize_macro(name: str) -> dict:
+	"""Kick off the merge: throwaway archived conversation + one agent turn
+	that invokes /macro-merge over the macro's steps. Returns the conversation
+	for the SPA to poll. The macro itself is untouched here."""
+	doc = frappe.get_doc(MACRO, name)
+	doc.check_permission("read")  # owner-gate (if_owner)
+	steps = doc.steps or []
+	if len(steps) < 2:
+		frappe.throw(_("Nothing to merge — the macro has fewer than 2 steps."))
+	conv = frappe.get_doc({
+		"doctype": "Jarvis Conversation",
+		"title": f"Merge: {doc.macro_name}"[:140],
+		"status": "Active",  # enqueue against Active; hidden right after
+	})
+	conv.flags.ignore_permissions = True
+	conv.insert()
+	payload = [
+		{"n": i + 1, "label": s.label or "", "prompt": s.prompt or ""}
+		for i, s in enumerate(steps)
+	]
+	from jarvis.chat import api as chat_api
+
+	prompt = _MERGE_INSTRUCTION + frappe.as_json(payload) + "\n\nApply these skills: /macro-merge"
+	chat_api._enqueue_turn(conv.name, prompt)
+	# Hide from the sidebar (list_conversations skips Archived).
+	frappe.db.set_value("Jarvis Conversation", conv.name, "status", "Archived",
+						update_modified=False)
+	frappe.db.commit()
+	return {"ok": True, "conversation": conv.name}
+
+
+@frappe.whitelist()
+def get_macro_merge(conversation: str) -> dict:
+	"""Poll target for the merge turn: pending → ready(merge)/error."""
+	_own_conversation(conversation)
+	rows = frappe.get_all(
+		MSG,
+		filters={"conversation": conversation, "role": "assistant"},
+		fields=["content", "streaming", "error"],
+		order_by="seq desc", limit=1,
+	)
+	m = rows[0] if rows else None
+	if m and (m.error or "").strip():
+		return {"status": "error", "error": m.error}
+	if not m or m.streaming or not (m.content or "").strip():
+		return {"status": "pending"}
+	mt = _MERGE_RE.search(m.content)
+	if not mt:
+		return {"status": "error", "error": "no merge block in the reply"}
+	try:
+		merge = frappe.parse_json(mt.group(1).strip())
+	except Exception:
+		merge = None
+	if not isinstance(merge, dict):
+		return {"status": "error", "error": "unparsable merge block"}
+	return {"status": "ready", "merge": {
+		"mergeable": bool(merge.get("mergeable")),
+		"reason": str(merge.get("reason") or ""),
+		"merged_prompt": str(merge.get("merged_prompt") or ""),
+		"dependencies": merge.get("dependencies") if isinstance(merge.get("dependencies"), list) else [],
+	}}
+
+
+@frappe.whitelist()
+def apply_macro_merge(name: str, merged_prompt: str, conversation: str = "") -> dict:
+	"""Collapse the macro to ONE step holding ``merged_prompt`` (possibly
+	user-edited). Skills = union of the original steps' tags (order kept);
+	model/thinking overrides = first non-empty. Cleans up the merge
+	conversation best-effort."""
+	doc = frappe.get_doc(MACRO, name)
+	doc.check_permission("write")
+	merged_prompt = (merged_prompt or "").strip()
+	if not merged_prompt:
+		frappe.throw(_("Merged prompt is empty."))
+	steps = doc.steps or []
+	union, seen = [], set()
+	for s in steps:
+		for sk in _step_skills(s):
+			if sk not in seen:
+				seen.add(sk)
+				union.append(sk)
+	model_o = next((s.model_override for s in steps if (s.model_override or "").strip()), "")
+	think_o = next((s.thinking_override for s in steps if (s.thinking_override or "").strip()), "")
+	doc.set("steps", [{
+		"label": "Merged",
+		"prompt": merged_prompt,
+		"model_override": model_o or "",
+		"thinking_override": think_o or "",
+		"skills": frappe.as_json(union),
+	}])
+	doc.save()
+	frappe.db.commit()
+	if conversation:
+		try:
+			discard_macro_merge(conversation)
+		except Exception:
+			pass  # best-effort cleanup; the conversation is archived anyway
+	return {"ok": True, "step_count": 1}
+
+
+@frappe.whitelist()
+def discard_macro_merge(conversation: str) -> dict:
+	"""Delete the throwaway merge conversation + its messages (Keep sequence /
+	unmergeable / error paths). Best-effort: if a link blocks the delete the
+	conversation stays archived, which is invisible anyway."""
+	_own_conversation(conversation)
+	frappe.db.delete(MSG, {"conversation": conversation})
+	try:
+		frappe.delete_doc("Jarvis Conversation", conversation, force=True, ignore_permissions=True)
+	except Exception:
+		pass
+	frappe.db.commit()
+	return {"ok": True}
