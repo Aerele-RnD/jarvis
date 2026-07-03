@@ -1,8 +1,13 @@
 <template>
-	<div class="jv-app" :class="{ 'jv-dark': dark }" :style="paletteVars"
-		 style="display:flex;min-height:100vh;background:var(--surface);color:var(--text);">
+	<div class="jv-ob-root" :class="{ 'jv-dark': dark }" :style="paletteVars">
 
-		<AppSidebar minimal />
+		<!-- Branded header — a centered wizard reads better than a full-height
+			 empty sidebar; the logo mark keeps it unmistakably Jarvis. -->
+		<header class="jv-ob-header">
+			<div class="jv-ob-logo"><svg width="18" height="18" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg></div>
+			<span class="jv-ob-brand">Jarvis</span>
+			<span class="jv-ob-setup">Set up your workspace</span>
+		</header>
 
 		<main class="jv-ob-main">
 			<div class="jv-ob-wrap">
@@ -210,7 +215,6 @@
 import { reactive, ref, computed, onMounted, watch } from "vue"
 import { call } from "frappe-ui"
 import { useTheme } from "@/composables/useTheme"
-import AppSidebar from "@/components/AppSidebar.vue"
 import LlmPoolEditor from "@/components/LlmPoolEditor.vue"
 import { STEPS_MANAGED, STEPS_SELFHOST, nextStep, prevStep, stepIndex } from "@/onboarding/steps"
 import {
@@ -670,16 +674,43 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.jv-ob-root {
+	--rad: 8px;
+	font-family: 'Inter', system-ui, sans-serif;
+	min-height: 100vh;
+	background: var(--surface);
+	color: var(--text);
+	display: flex;
+	flex-direction: column;
+}
+.jv-ob-header {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 16px 24px;
+	border-bottom: 1px solid var(--border);
+	flex: none;
+}
+.jv-ob-logo {
+	width: 28px; height: 28px; flex: none;
+	border-radius: 7px; background: var(--blue);
+	display: flex; align-items: center; justify-content: center;
+	box-shadow: 0 1px 2px rgba(37, 99, 235, .35);
+}
+.jv-ob-brand { font-size: 14px; font-weight: 600; letter-spacing: -.01em; }
+.jv-ob-setup { font-size: 12.5px; color: var(--text-3); border-left: 1px solid var(--border); padding-left: 10px; }
 .jv-ob-main {
 	flex: 1;
 	min-width: 0;
 	overflow-y: auto;
-	height: 100vh;
-	padding: 48px 32px 60px;
+	display: flex;
+	justify-content: center;
+	padding: 48px 24px 60px;
 }
 .jv-ob-wrap {
-	max-width: 640px;
-	margin: 0;
+	max-width: 720px;
+	width: 100%;
+	margin: 0 auto;
 }
 .jv-ob-h1 { font-size: 20px; font-weight: 600; margin: 0 0 8px; }
 .jv-ob-sub { font-size: 13.5px; color: var(--text-3); margin: 0 0 20px; }
