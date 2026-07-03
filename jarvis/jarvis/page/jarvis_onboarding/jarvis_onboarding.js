@@ -1109,11 +1109,16 @@ frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
 
 	function payErr(e) {
 		setBusy("#jo-pay", false);
-		// frappe.call failures don't reliably carry .message: server-side
-		// frappe.throw text arrives in _server_messages (JSON-in-JSON).
+		// frappe.call failures don't reliably carry .message: the .catch
+		// receives the raw jqXHR, so server-side frappe.throw text arrives at
+		// responseJSON._server_messages (JSON-in-JSON).
 		let msg = (e && e.message) || "";
-		if (!msg && e && e._server_messages) {
-			try { msg = JSON.parse(JSON.parse(e._server_messages)[0] || "{}").message || ""; } catch (x) { /* keep fallback */ }
+		const sm =
+			(e && e._server_messages) ||
+			(e && e.responseJSON && e.responseJSON._server_messages) ||
+			"";
+		if (!msg && sm) {
+			try { msg = JSON.parse(JSON.parse(sm)[0] || "{}").message || ""; } catch (x) { /* keep fallback */ }
 		}
 		$body.find("#jo-pay-err").text(msg || "Something went wrong. Please try again.");
 	}
