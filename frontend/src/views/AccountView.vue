@@ -67,7 +67,7 @@
 			<section class="jv-acct-card">
 				<h2>Connection</h2>
 				<div v-if="connLoading" class="jv-acct-muted">Checking…</div>
-				<div v-else-if="connErr" class="jv-acct-err">{{ connErr }}</div>
+				<div v-else-if="connErr" class="jv-acct-muted">Connection status is unavailable right now.</div>
 				<template v-else>
 					<div class="jv-acct-kv"><span>Status</span><b :class="conn.auth_present ? 'jv-ok' : 'jv-warn'">{{ conn.auth_present ? "Connected" : "Not connected" }}</b></div>
 					<div v-if="conn.default_model" class="jv-acct-kv"><span>Model</span><b>{{ conn.default_model }}</b></div>
@@ -79,7 +79,7 @@
 			<section class="jv-acct-card">
 				<h2>Usage<span v-if="usage.period" class="jv-acct-sub"> · {{ usage.period }}</span></h2>
 				<div v-if="usageLoading" class="jv-acct-muted">Loading…</div>
-				<div v-else-if="usageErr" class="jv-acct-err">{{ usageErr }}</div>
+				<div v-else-if="usageErr" class="jv-acct-muted">Usage data is unavailable right now.</div>
 				<div v-else-if="!usage.applicable" class="jv-acct-muted">Usage metering applies to multi-model (proxy) setups.</div>
 				<div v-else class="jv-acct-usage-line">{{ usage.tokens_in || 0 }} tokens in · {{ usage.tokens_out || 0 }} tokens out · ${{ costLabel }}</div>
 			</section>
