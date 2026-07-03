@@ -646,7 +646,7 @@
 						<div v-for="mm in macros" :key="mm.name" class="jv-skill-row">
 							<div style="min-width:0;flex:1;cursor:pointer;" @click="editMacro(mm)">
 								<div class="jv-skill-name" style="font-family:inherit;">{{ mm.macro_name }} <span v-if="!mm.enabled" class="jv-skill-off">draft</span></div>
-								<div class="jv-macro-sub">{{ mm.step_count || 0 }} step{{ (mm.step_count || 0) === 1 ? "" : "s" }}<span v-if="mm.schedule_enabled" class="jv-macro-sched"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>{{ mm.schedule_frequency || "scheduled" }}</span></div>
+								<div class="jv-macro-sub">{{ mm.step_count || 0 }} step{{ (mm.step_count || 0) === 1 ? "" : "s" }}<span v-if="(mm.merged_prompt || '').trim()" class="jv-macro-merged-badge" title="Runs its summarized prompt as one turn">summary</span><span v-if="mm.schedule_enabled" class="jv-macro-sched"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>{{ mm.schedule_frequency || "scheduled" }}</span></div>
 							</div>
 							<button class="jv-btn jv-btn--primary jv-btn--sm" title="Run" @click.stop="runMacroFromList(mm)"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8V4z" /></svg> Run</button>
 							<button class="jv-btn jv-btn--icon jv-ib" title="Edit" @click.stop="editMacro(mm)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg></button>
@@ -688,7 +688,22 @@
 								<input type="time" class="jv-skill-in" v-model="macroForm.schedule_time" />
 							</div>
 						</div>
-						<label class="jv-skill-l" style="margin-top:16px;">Steps</label>
+						<!-- Steps stay the editable source; the summarized prompt (own tab) is what runs when set. -->
+						<div class="jv-macro-tabs">
+							<button class="jv-macro-tab" :class="{ on: macroEdTab === 'steps' }" @click="macroEdTab = 'steps'">Steps</button>
+							<button class="jv-macro-tab" :class="{ on: macroEdTab === 'summary' }" @click="macroEdTab = 'summary'">
+								Summarized prompt<span v-if="(macroForm.merged_prompt || '').trim()" class="jv-macro-tab-dot" title="A summary is set — it runs instead of the steps"></span>
+							</button>
+						</div>
+						<template v-if="macroEdTab === 'summary'">
+							<template v-if="(macroForm.merged_prompt || '').trim()">
+								<div class="jv-merge-sub" style="margin-top:10px;">This single prompt <b>runs when you hit Run</b> — the steps stay as its source. Edit freely; saving keeps your edit.</div>
+								<textarea class="jv-merge-text" style="margin-top:8px;" v-model="macroForm.merged_prompt" rows="9"></textarea>
+								<button class="jv-skill-newrow" style="margin-top:10px;margin-bottom:0;" @click="macroForm.merged_prompt = ''">✕ Remove summary — run the steps instead</button>
+							</template>
+							<div v-else class="jv-set-empty" style="margin-top:12px;">No summary yet. Save the macro with 2+ steps and confirm the generated summary — it lands here and becomes what runs.</div>
+						</template>
+						<template v-if="macroEdTab === 'steps'">
 						<div v-if="!macroForm.steps.length" class="jv-set-empty">No steps yet. Add one below.</div>
 						<div v-for="(st, si) in macroForm.steps" :key="si" class="jv-macro-step" :class="{ dragging: dragStepIdx === si, dragover: dragOverIdx === si && dragStepIdx !== null && dragStepIdx !== si }" @dragover.prevent="onStepDragOver(si)" @dragleave="onStepDragLeave(si)" @drop.prevent="onStepDrop(si)">
 							<div class="jv-macro-step-head">
@@ -706,6 +721,7 @@
 							</div>
 						</div>
 						<button class="jv-skill-newrow" style="margin-top:12px;margin-bottom:0;" @click="addMacroStep"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg> Add step</button>
+						</template>
 						<!-- Error sits next to Save (the body scrolls — a top-of-form message
 						     is off-screen when a long step list is open, so it was missed). -->
 						<div v-if="macroError" class="jv-skill-err" style="margin-top:12px;">{{ macroError }}</div>
@@ -1522,8 +1538,13 @@ function _blankMacro() {
 		enabled: true, stop_on_error: true,
 		schedule_enabled: false, schedule_frequency: "daily", schedule_time: "09:00",
 		steps: [],
+		// The stored LLM summary — when set, run_macro runs THIS as one turn
+		// and the steps stay as the editable source. Snapshots (_orig*) let
+		// saveMacro tell "steps changed → stale summary" from a rename-only save.
+		merged_prompt: "", _origMerged: "", _origStepsJson: "",
 	}
 }
+const macroEdTab = ref("steps") // "steps" | "summary"
 // Skills taggable on a macro STEP: my own + shared-with-me, enabled only (a
 // disabled skill can't be invoked, so offering it would silently no-op).
 const macroSkillOptions = computed(() => customSkills.value.filter((s) => s.enabled))
@@ -1555,6 +1576,7 @@ function newMacro() {
 	macroError.value = ""
 	macroForm.value = _blankMacro()
 	macroForm.value.steps = [{ label: "", prompt: "", skills: [] }]
+	macroEdTab.value = "steps"
 	loadSkillsSync() // populate the taggable-skills options
 	macroEditorOpen.value = true
 }
@@ -1562,6 +1584,7 @@ async function editMacro(m) {
 	macroError.value = ""
 	try {
 		const full = await api.getMacro(m.name)
+		const steps = (Array.isArray(full.steps) ? full.steps : []).map((s) => ({ label: s.label || "", prompt: s.prompt || "", skills: Array.isArray(s.skills) ? [...s.skills] : [] }))
 		macroForm.value = {
 			name: full.name,
 			macro_name: full.macro_name || "",
@@ -1571,9 +1594,13 @@ async function editMacro(m) {
 			schedule_enabled: !!full.schedule_enabled,
 			schedule_frequency: full.schedule_frequency || "daily",
 			schedule_time: full.schedule_time || "09:00",
-			steps: (Array.isArray(full.steps) ? full.steps : []).map((s) => ({ label: s.label || "", prompt: s.prompt || "", skills: Array.isArray(s.skills) ? [...s.skills] : [] })),
+			steps,
+			merged_prompt: full.merged_prompt || "",
+			_origMerged: full.merged_prompt || "",
+			_origStepsJson: JSON.stringify(steps.filter((s) => (s.prompt || "").trim())),
 		}
 		if (!macroForm.value.steps.length) macroForm.value.steps = [{ label: "", prompt: "", skills: [] }]
+		macroEdTab.value = "steps"
 		loadSkillsSync() // populate the taggable-skills options
 		macroEditorOpen.value = true
 	} catch (e) { macroError.value = _skillErr(e) }
@@ -1634,16 +1661,31 @@ async function saveMacro() {
 			schedule_frequency: f.schedule_frequency || "daily",
 			schedule_time: f.schedule_time || "09:00",
 		}
+		// Summary handling (update only — a new macro has no summary yet): an
+		// edited summary is explicit intent → send it; a rename-only save keeps
+		// the stored one; changed steps with an untouched summary omit it → the
+		// backend clears the stale copy and the re-summarize below regenerates it.
+		const stepsTouched = JSON.stringify(steps) !== (f._origStepsJson || "")
+		const mergedTouched = (f.merged_prompt || "") !== (f._origMerged || "")
+		let sentMerged = ""
 		let savedName = f.name
 		if (f.name) {
-			await api.updateMacro({ name: f.name, ...payload })
+			const upd = { name: f.name, ...payload }
+			if (mergedTouched || !stepsTouched) {
+				upd.merged_prompt = (f.merged_prompt || "").trim()
+				sentMerged = upd.merged_prompt
+			}
+			await api.updateMacro(upd)
 		} else {
 			const r = await api.createMacro(payload)
 			savedName = r && r.data && r.data.name
 		}
 		macroEditorOpen.value = false
 		await loadMacros()
-		if (savedName && steps.length >= 2) startMacroMerge(savedName, payload.macro_name, steps.length)
+		// Re-summarize only when the sequence actually changed (or has no
+		// summary yet) — a rename shouldn't burn an LLM turn.
+		const needsSummary = steps.length >= 2 && (stepsTouched || !f.name || !sentMerged)
+		if (savedName && needsSummary) startMacroMerge(savedName, payload.macro_name, steps.length)
 	} catch (e) { macroError.value = _skillErr(e) } finally { macroSaving.value = false }
 }
 
@@ -1708,7 +1750,7 @@ async function acceptMacroMerge() {
 	try {
 		await api.applyMacroMerge(mm.macro, mm.editedPrompt, mm.conversation)
 		macroMerge.value = null
-		_showMergeNotice("Macro merged into one prompt.")
+		_showMergeNotice("Summary saved — it runs instead of the steps (see the Summarized prompt tab).")
 		loadMacros()
 	} catch (e) {
 		mm.applying = false
@@ -4451,6 +4493,13 @@ function onGlobalKey(e) {
 .jv-macrocard-sub { font-size: 11.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .jv-macrocard-btn { flex: none; padding: 7px 13px; background: var(--blue); border: 1px solid var(--blue); border-radius: 8px; font-family: inherit; font-size: 12.5px; font-weight: 600; color: #fff; cursor: pointer; transition: opacity .12s; }
 .jv-macrocard-btn:hover { opacity: .9; }
+/* --- macro editor tabs (Steps | Summarized prompt) --- */
+.jv-macro-tabs { display: flex; gap: 4px; margin-top: 16px; border-bottom: 1px solid var(--border); }
+.jv-macro-tab { background: none; border: none; border-bottom: 2px solid transparent; color: var(--text-3); font-size: 12.5px; font-weight: 600; padding: 7px 10px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.jv-macro-tab.on { color: var(--text); border-bottom-color: var(--blue); }
+.jv-macro-tab-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+.jv-macro-merged-badge { margin-left: 7px; font-size: 9.5px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; color: var(--green); background: var(--green-bg); border: 1px solid var(--green-bd); border-radius: 99px; padding: 1px 7px; }
+
 /* --- macro merge review --- */
 .jv-merge-modal { width: min(640px, 92vw); background: var(--surface); border: 1px solid var(--border-2); border-radius: 13px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
 .jv-merge-head { display: flex; align-items: center; gap: 10px; }

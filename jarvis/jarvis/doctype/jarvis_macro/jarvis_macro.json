@@ -12,6 +12,7 @@
   "stop_on_error",
   "description",
   "steps",
+  "merged_prompt",
   "schedule_section",
   "schedule_enabled",
   "schedule_frequency",
@@ -56,6 +57,12 @@
    "options": "Jarvis Macro Step",
    "reqd": 1,
    "description": "Ordered list of prompts run one per agent turn."
+  },
+  {
+   "fieldname": "merged_prompt",
+   "fieldtype": "Long Text",
+   "label": "Merged Prompt",
+   "description": "LLM-summarized single prompt; when set, runs instead of the step sequence"
   },
   {
    "fieldname": "schedule_section",

@@ -88,7 +88,7 @@ def list_macros() -> list[dict]:
 		fields=[
 			"name", "macro_name", "description", "enabled", "stop_on_error",
 			"schedule_enabled", "schedule_frequency", "schedule_time",
-			"next_run_at", "last_run_at", "modified",
+			"next_run_at", "last_run_at", "modified", "merged_prompt",
 		],
 		order_by="macro_name asc",
 	)
@@ -112,6 +112,7 @@ def get_macro(name: str) -> dict:
 		"schedule_frequency": doc.schedule_frequency or "daily",
 		"schedule_time": str(doc.schedule_time or ""),
 		"next_run_at": str(doc.next_run_at or ""),
+		"merged_prompt": doc.merged_prompt or "",
 		"steps": [
 			{
 				"label": s.label or "",
@@ -174,9 +175,12 @@ def update_macro(
 	schedule_enabled: int | None = None,
 	schedule_frequency: str | None = None,
 	schedule_time=None,
+	merged_prompt: str | None = None,
 ) -> dict:
 	"""Update provided fields of a macro (owner-gated). When ``steps`` is given it
-	replaces the whole ordered list (per-step skills ride inside each step dict)."""
+	replaces the whole ordered list (per-step skills ride inside each step dict) —
+	and, unless ``merged_prompt`` is sent in the same call, clears any stored
+	summary (it's stale once the steps change; the save flow regenerates it)."""
 	doc = frappe.get_doc(MACRO, name)
 	doc.check_permission("write")  # owner-gate (save enforces too; explicit for clarity)
 	if macro_name is not None:
@@ -195,6 +199,10 @@ def update_macro(
 		doc.schedule_time = schedule_time or None
 	if steps is not None:
 		doc.set("steps", _parse_steps(steps))
+		if merged_prompt is None:
+			doc.merged_prompt = ""  # steps changed → the stored summary is stale
+	if merged_prompt is not None:
+		doc.merged_prompt = (merged_prompt or "").strip()
 	doc.save()
 	frappe.db.commit()
 	return {"ok": True, "data": {"name": doc.name, "modified": str(doc.modified)}}
@@ -422,31 +430,16 @@ def get_macro_merge(conversation: str) -> dict:
 
 @frappe.whitelist()
 def apply_macro_merge(name: str, merged_prompt: str, conversation: str = "") -> dict:
-	"""Collapse the macro to ONE step holding ``merged_prompt`` (possibly
-	user-edited). Skills = union of the original steps' tags (order kept);
-	model/thinking overrides = first non-empty. Cleans up the merge
-	conversation best-effort."""
+	"""Store ``merged_prompt`` (possibly user-edited) on the macro. The step
+	sequence STAYS as the editable source of truth — but when a merged prompt
+	is set, ``run_macro`` runs IT as a single turn instead of chaining the
+	steps. Cleans up the merge conversation best-effort."""
 	doc = frappe.get_doc(MACRO, name)
 	doc.check_permission("write")
 	merged_prompt = (merged_prompt or "").strip()
 	if not merged_prompt:
 		frappe.throw(_("Merged prompt is empty."))
-	steps = doc.steps or []
-	union, seen = [], set()
-	for s in steps:
-		for sk in _step_skills(s):
-			if sk not in seen:
-				seen.add(sk)
-				union.append(sk)
-	model_o = next((s.model_override for s in steps if (s.model_override or "").strip()), "")
-	think_o = next((s.thinking_override for s in steps if (s.thinking_override or "").strip()), "")
-	doc.set("steps", [{
-		"label": "Merged",
-		"prompt": merged_prompt,
-		"model_override": model_o or "",
-		"thinking_override": think_o or "",
-		"skills": frappe.as_json(union),
-	}])
+	doc.merged_prompt = merged_prompt
 	doc.save()
 	frappe.db.commit()
 	if conversation:
@@ -454,7 +447,18 @@ def apply_macro_merge(name: str, merged_prompt: str, conversation: str = "") -> 
 			discard_macro_merge(conversation)
 		except Exception:
 			pass  # best-effort cleanup; the conversation is archived anyway
-	return {"ok": True, "step_count": 1}
+	return {"ok": True, "merged": True, "step_count": len(doc.steps or [])}
+
+
+@frappe.whitelist()
+def clear_macro_merge(name: str) -> dict:
+	"""Remove the stored merged prompt so the step sequence runs again."""
+	doc = frappe.get_doc(MACRO, name)
+	doc.check_permission("write")
+	doc.merged_prompt = ""
+	doc.save()
+	frappe.db.commit()
+	return {"ok": True}
 
 
 @frappe.whitelist()

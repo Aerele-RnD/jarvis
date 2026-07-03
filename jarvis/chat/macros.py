@@ -39,6 +39,11 @@ def run_macro(macro_name: str, *, trigger: str = "manual") -> dict:
 	if trigger == "scheduled" and not doc.enabled:
 		return {"ok": False, "reason": "macro disabled"}
 	owner = doc.owner
+	# A stored merged prompt (the LLM summary the user confirmed) runs as ONE
+	# turn instead of chaining the steps — the steps stay as the editable
+	# source the summary was made from.
+	merged = (doc.merged_prompt or "").strip()
+	total = 1 if merged else len(steps)
 
 	# Fresh conversation titled after the macro, seeded with an intro so the
 	# transcript reads as a self-contained run.
@@ -50,7 +55,11 @@ def run_macro(macro_name: str, *, trigger: str = "manual") -> dict:
 		"conversation": conv.name,
 		"seq": 1,
 		"role": "assistant",
-		"content": f"▶ Running macro **{doc.macro_name}** — {len(steps)} step(s).",
+		"content": (
+			f"▶ Running macro **{doc.macro_name}** — summarized prompt."
+			if merged else
+			f"▶ Running macro **{doc.macro_name}** — {len(steps)} step(s)."
+		),
 	})
 	intro.flags.ignore_permissions = True
 	intro.insert()
@@ -61,7 +70,7 @@ def run_macro(macro_name: str, *, trigger: str = "manual") -> dict:
 		"conversation": conv.name,
 		"status": "running",
 		"current_step": 0,
-		"total_steps": len(steps),
+		"total_steps": total,
 		"trigger": trigger,
 		"started_at": frappe.utils.now(),
 	})
@@ -86,7 +95,10 @@ def run_macro(macro_name: str, *, trigger: str = "manual") -> dict:
 			"preview": f"Scheduled macro: {doc.macro_name}",
 		})
 
-	_run_step(run, doc, 0)
+	if merged:
+		_run_merged(run, doc, merged)
+	else:
+		_run_step(run, doc, 0)
 	return {"ok": True, "data": {"macro_run": run.name, "conversation": conv.name}}
 
 
@@ -195,6 +207,62 @@ def _run_step(run, macro_doc, index: int) -> None:
 	frappe.db.commit()
 	run.current_step = index + 1
 	_publish_progress(run, macro_doc, index)
+
+
+def _merged_skill_invocations(macro_doc) -> str:
+	"""Union of ALL steps' tagged skills (order kept) for the merged
+	single-turn run — the summary covers every step, so it inherits every
+	step's skills. Same /slug mechanism + visibility rules as per-step."""
+	names, seen = [], set()
+	for s in (macro_doc.steps or []):
+		try:
+			lst = frappe.parse_json(s.skills) if s.skills else []
+		except Exception:
+			lst = []
+		for n in lst if isinstance(lst, list) else []:
+			if isinstance(n, str) and n.strip() and n not in seen:
+				seen.add(n)
+				names.append(n)
+	if not names:
+		return ""
+	slugs = frappe.get_all(
+		"Jarvis Custom Skill",
+		filters={"name": ["in", names], "enabled": 1},
+		fields=["skill_name"],
+		order_by="skill_name asc",
+	)
+	if not slugs:
+		return ""
+	return "\n\nApply these skills: " + " ".join(f"/{s.skill_name}" for s in slugs)
+
+
+def _run_merged(run, macro_doc, merged_prompt: str) -> None:
+	"""Enqueue the macro's summarized prompt as its single turn. Overrides =
+	first non-empty among the steps (same rule the merge apply used)."""
+	steps = macro_doc.steps or []
+	model_o = next((s.model_override for s in steps if (s.model_override or "").strip()), None)
+	think_o = next((s.thinking_override for s in steps if (s.thinking_override or "").strip()), None)
+	from jarvis.chat import api
+
+	api._enqueue_turn(
+		run.conversation,
+		merged_prompt + _merged_skill_invocations(macro_doc),
+		model_override=model_o,
+		thinking_override=think_o,
+	)
+	frappe.db.set_value(RUN, run.name, "current_step", 1)
+	frappe.db.commit()
+	run.current_step = 1
+	publish_to_user(macro_doc.owner, {
+		"kind": "macro:progress",
+		"macro_run": run.name,
+		"macro": macro_doc.name,
+		"conversation": run.conversation,
+		"step": 1,
+		"total": 1,
+		"label": "Summarized prompt",
+		"status": "running",
+	})
 
 
 def _finish(run, status: str, error: str | None = None) -> None:

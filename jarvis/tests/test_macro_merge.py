@@ -131,31 +131,87 @@ class TestGetMacroMerge(FrappeTestCase):
 
 
 class TestApplyMacroMerge(FrappeTestCase):
-	def test_replaces_steps_with_one_merged_step(self):
+	def test_stores_summary_and_keeps_steps(self):
+		# The sequence stays as the editable source; the summary rides alongside
+		# and (see TestMergedRun) is what run_macro executes.
 		m = _mk_macro([
-			{"label": "a", "prompt": "p1", "skills": frappe.as_json(["SK-A", "SK-B"]),
-			 "model_override": "", "thinking_override": "high"},
-			{"label": "b", "prompt": "p2", "skills": frappe.as_json(["SK-B", "SK-C"]),
-			 "model_override": "gpt-5.5", "thinking_override": ""},
+			{"label": "a", "prompt": "p1"},
+			{"label": "b", "prompt": "p2"},
 			{"label": "c", "prompt": "p3"},
 		])
 		self.addCleanup(lambda: frappe.delete_doc("Jarvis Macro", m.name, force=True, ignore_permissions=True))
-		r = apply_macro_merge(m.name, "1) p1. 2) Using the results of (1), p2. 3) p3.")
-		self.assertEqual(r["step_count"], 1)
+		r = apply_macro_merge(m.name, "Do p1, and from those results p2, then p3.")
+		self.assertEqual(r["step_count"], 3)  # steps untouched
 		doc = frappe.get_doc("Jarvis Macro", m.name)
-		self.assertEqual(len(doc.steps), 1)
-		s = doc.steps[0]
-		self.assertEqual(s.label, "Merged")
-		self.assertIn("Using the results of (1)", s.prompt)
-		self.assertEqual(frappe.parse_json(s.skills), ["SK-A", "SK-B", "SK-C"])  # union, order kept
-		self.assertEqual(s.model_override, "gpt-5.5")   # first non-empty
-		self.assertEqual(s.thinking_override, "high")   # first non-empty
+		self.assertEqual(len(doc.steps), 3)
+		self.assertEqual([s.prompt for s in doc.steps], ["p1", "p2", "p3"])
+		self.assertIn("from those results", doc.merged_prompt)
 
 	def test_empty_prompt_refused(self):
 		m = _mk_macro([{"prompt": "p1"}, {"prompt": "p2"}])
 		self.addCleanup(lambda: frappe.delete_doc("Jarvis Macro", m.name, force=True, ignore_permissions=True))
 		with self.assertRaises(frappe.ValidationError):
 			apply_macro_merge(m.name, "   ")
+
+	def test_clear_macro_merge(self):
+		m = _mk_macro([{"prompt": "p1"}, {"prompt": "p2"}])
+		self.addCleanup(lambda: frappe.delete_doc("Jarvis Macro", m.name, force=True, ignore_permissions=True))
+		apply_macro_merge(m.name, "the summary")
+		from jarvis.chat.macros_api import clear_macro_merge
+		clear_macro_merge(m.name)
+		self.assertEqual(frappe.db.get_value("Jarvis Macro", m.name, "merged_prompt") or "", "")
+
+	def test_update_steps_clears_stale_summary(self):
+		from jarvis.chat.macros_api import get_macro, update_macro
+		m = _mk_macro([{"prompt": "p1"}, {"prompt": "p2"}])
+		self.addCleanup(lambda: frappe.delete_doc("Jarvis Macro", m.name, force=True, ignore_permissions=True))
+		apply_macro_merge(m.name, "the summary")
+		# steps replaced without a merged_prompt in the same call → summary is stale → cleared
+		update_macro(m.name, steps=frappe.as_json([{"prompt": "p1 changed"}, {"prompt": "p2"}]))
+		self.assertEqual(get_macro(m.name)["merged_prompt"], "")
+		# but sending merged_prompt alongside keeps/sets it
+		update_macro(m.name, steps=frappe.as_json([{"prompt": "p1"}, {"prompt": "p2"}]),
+					 merged_prompt="edited summary")
+		self.assertEqual(get_macro(m.name)["merged_prompt"], "edited summary")
+
+
+class TestMergedRun(FrappeTestCase):
+	def test_run_macro_uses_summary_as_single_turn(self):
+		from jarvis.chat import macros
+		m = _mk_macro([{"prompt": "p1"}, {"prompt": "p2"}, {"prompt": "p3"}])
+		self.addCleanup(lambda: frappe.delete_doc("Jarvis Macro", m.name, force=True, ignore_permissions=True))
+		apply_macro_merge(m.name, "One prompt to rule them all.")
+		with patch("jarvis.chat.api._enqueue_turn") as enq:
+			r = macros.run_macro(m.name)
+		run_name = r["data"]["macro_run"]
+		conv = r["data"]["conversation"]
+		self.addCleanup(lambda: (
+			frappe.delete_doc("Jarvis Macro Run", run_name, force=True, ignore_permissions=True),
+			frappe.db.delete("Jarvis Chat Message", {"conversation": conv}),
+			frappe.delete_doc("Jarvis Conversation", conv, force=True, ignore_permissions=True),
+		))
+		enq.assert_called_once()  # ONE turn, not three
+		self.assertTrue(enq.call_args[0][1].startswith("One prompt to rule them all."))
+		run = frappe.get_doc("Jarvis Macro Run", run_name)
+		self.assertEqual(run.total_steps, 1)
+		self.assertEqual(run.current_step, 1)
+
+	def test_run_macro_without_summary_chains_steps(self):
+		from jarvis.chat import macros
+		m = _mk_macro([{"prompt": "p1"}, {"prompt": "p2"}])
+		self.addCleanup(lambda: frappe.delete_doc("Jarvis Macro", m.name, force=True, ignore_permissions=True))
+		with patch("jarvis.chat.api._enqueue_turn") as enq:
+			r = macros.run_macro(m.name)
+		run_name = r["data"]["macro_run"]
+		conv = r["data"]["conversation"]
+		self.addCleanup(lambda: (
+			frappe.delete_doc("Jarvis Macro Run", run_name, force=True, ignore_permissions=True),
+			frappe.db.delete("Jarvis Chat Message", {"conversation": conv}),
+			frappe.delete_doc("Jarvis Conversation", conv, force=True, ignore_permissions=True),
+		))
+		enq.assert_called_once()  # step 1 enqueued; the chain advances per turn
+		self.assertTrue(enq.call_args[0][1].startswith("p1"))
+		self.assertEqual(frappe.get_doc("Jarvis Macro Run", run_name).total_steps, 2)
 
 
 class TestDiscardMacroMerge(FrappeTestCase):
