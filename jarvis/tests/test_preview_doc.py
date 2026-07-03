@@ -60,13 +60,8 @@ class TestPreviewDoc(FrappeTestCase):
 				preview_doc(NOTE_DT, {"title": "x"})
 
 	def test_commit_restored_after_preview(self):
-		# Commits are neutralized during the dry run (a hook calling
-		# frappe.db.commit() would release the savepoint and persist the
-		# preview); the real commit must be back afterwards - on success
-		# AND on the valid:false path.
-		# Compare the underlying function: attribute access mints a fresh
-		# bound-method object every time, so identity on the bound method
-		# itself always fails.
+		# Compare __func__: attribute access mints a fresh bound method, so
+		# identity on the bound method itself always fails.
 		real_func = frappe.db.commit.__func__
 		preview_doc(NOTE_DT, {"title": "jarvis-preview-commit"})
 		self.assertIs(getattr(frappe.db.commit, "__func__", None), real_func)
@@ -74,11 +69,9 @@ class TestPreviewDoc(FrappeTestCase):
 		self.assertIs(getattr(frappe.db.commit, "__func__", None), real_func)
 
 	def test_preview_drops_queued_commit_callbacks(self):
-		# Callbacks queued on after_commit during the dry run (webhook and
-		# notification enqueues register there) must not survive the sandbox;
-		# a savepoint rollback does not clear those queues, so without the
-		# sandbox restore they would fire on the request's next real commit
-		# for a phantom, rolled-back document.
+		# Savepoint rollback does not clear the after_commit queue; without
+		# the sandbox restore, a queued webhook would fire on the request's
+		# next real commit for a rolled-back document.
 		from jarvis.tools._preview_sandbox import preview_sandbox
 
 		before = len(frappe.db.after_commit._functions)
@@ -87,8 +80,6 @@ class TestPreviewDoc(FrappeTestCase):
 		self.assertEqual(len(frappe.db.after_commit._functions), before)
 
 	def test_sandbox_restores_commit_when_savepoint_fails(self):
-		# A savepoint failure must not leak the neutralized commit - the
-		# finally covers the savepoint call itself.
 		from jarvis.tools._preview_sandbox import preview_sandbox
 
 		real_func = frappe.db.commit.__func__
@@ -99,8 +90,6 @@ class TestPreviewDoc(FrappeTestCase):
 		self.assertIs(getattr(frappe.db.commit, "__func__", None), real_func)
 
 	def test_zero_defaults_not_reported_as_server_filled(self):
-		# A field the server merely left at its 0/"Open" default is not
-		# "server filled"; only values differing from a bare new_doc count.
 		out = preview_doc("ToDo", {"description": "jarvis preview baseline"})
 		self.assertTrue(out["valid"])
 		self.assertNotIn("status", out["server_filled"])

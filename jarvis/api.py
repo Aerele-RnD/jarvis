@@ -389,15 +389,9 @@ def _as_bool(value) -> bool:
 
 
 def _run_preview(tool: str, args: dict) -> dict:
-	"""Dispatch a write tool with all DB effects sandboxed, so the caller sees
-	what WOULD happen (validations run, naming + fetched fields resolved) with
-	nothing committed.
-
-	The sandbox mechanics (commit neutralization, savepoint rollback,
-	commit-callback queue restore) live in ``jarvis.tools._preview_sandbox``,
-	shared with the ``preview_doc`` tool. Side effects fired directly inside
-	hooks (inline HTTP calls from on_submit / on_cancel) are NOT sandboxed.
-	"""
+	"""Dispatch a write tool with all DB effects sandboxed (mechanics in
+	``jarvis.tools._preview_sandbox``, shared with preview_doc). Side effects
+	fired directly inside hooks (inline HTTP calls) are NOT sandboxed."""
 	from jarvis.tools._preview_sandbox import preview_sandbox
 
 	with preview_sandbox():

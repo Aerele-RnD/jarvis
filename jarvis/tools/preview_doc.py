@@ -1,17 +1,9 @@
 """Dry-run a document create: full ERP pipeline, nothing persisted.
 
-``create_doc`` inserts blind - the agent only discovers what ERPNext's
-``set_missing_values`` chain / regional hooks resolved (party address, GST
-fields, payment schedule, totals) AFTER the record exists. This tool runs the
-exact same ``doc.insert()`` inside the shared preview sandbox (commits
-neutralized, savepoint rollback, commit-callback queues kept clean - see
-``_preview_sandbox``) and returns the resolved header plus which fields the
-server filled and which integrity fields stayed empty - so the agent can show
-a faithful pre-create review and fix master-data gaps (e.g. a supplier with
-no linked Address) FIRST.
-
-Permission contract: same guards as ``create_doc`` (shared
-``_validate_create_args``).
+Runs the same ``doc.insert()`` as create_doc inside the preview sandbox and
+rolls back, returning the resolved header, what the server filled, and which
+integrity fields stayed empty - so the agent reviews master-data gaps (e.g. a
+supplier with no linked Address) BEFORE creating.
 """
 import frappe
 
@@ -25,10 +17,9 @@ _HEADER_TYPES = {
     "Small Text",
 }
 
-# Exact integrity-bearing fieldnames: emptiness here is worth surfacing.
-# Deliberately an allow-list of the writable source fields - substring
-# matching swept in read-only display mirrors (contact_display/_mobile/_email)
-# and unrelated flags, so one missing contact link produced four "gaps".
+# Exact allow-list of writable integrity fields. Substring matching swept in
+# read-only mirrors (contact_display/_mobile/_email), turning one missing
+# contact link into four reported gaps.
 _INTEGRITY_FIELDS = {
     "supplier_address", "customer_address", "company_address",
     "shipping_address", "shipping_address_name", "dispatch_address",
@@ -40,25 +31,18 @@ _TOTAL_FIELDS = ("net_total", "total_taxes_and_charges", "grand_total", "rounded
 
 
 def _norm(v):
-    """Fold the falsy-numeric family together: the insert pipeline writes 0
-    where a bare new_doc holds None, and that difference is not 'the server
-    filled this field'."""
+    # The insert pipeline writes 0 where a bare new_doc holds None; that
+    # difference is not "the server filled this field".
     return 0 if v in (None, 0, 0.0, False) else v
 
 
 def preview_doc(doctype: str, values: dict) -> dict:
     """Validate + resolve a would-be document without creating it.
 
-    Runs ``doc.insert()`` (controller validate, set_missing_values, regional
-    hooks, payment schedule, autoname) inside the preview sandbox, captures
-    the resolved document, then rolls back - no record, no consumed name, no
-    queued webhooks/notifications. Returns ``{valid, resolved, server_filled,
-    empty_fields, items_count, totals}``; a rejected document returns
-    ``{valid: false, error}`` instead of raising, so drafts can be fixed and
-    retried cheaply. Use before ``create_doc`` on consequential documents
-    (invoices, orders); then create the confirmed draft with ``create_doc``.
-    Side effects fired directly inside hooks (inline HTTP calls) are not
-    sandboxed.
+    Same guards and values shape as ``create_doc``. Returns ``{valid,
+    resolved, server_filled, empty_fields, items_count, totals}``; a rejected
+    document returns ``{valid: false, error}`` instead of raising. Use before
+    ``create_doc`` on consequential documents (invoices, orders).
     """
     _validate_create_args(doctype, values)
 
@@ -73,16 +57,14 @@ def preview_doc(doctype: str, values: dict) -> dict:
     except Exception as e:
         frappe.clear_messages()
         return {"valid": False, "error": _error_text(e)}
-    # Summarize OUTSIDE the try: a summarization bug must never mislabel a
-    # document that validated cleanly as {valid: false}. The in-memory doc
-    # keeps its resolved fields after the rollback; nothing below hits the DB.
+    # Outside the try: a summarization bug must never mislabel a document
+    # that validated cleanly. The in-memory doc survives the rollback.
     return _summarize(doc, values)
 
 
 def _summarize(doc, caller_values: dict) -> dict:
-    # Baseline = a bare new_doc: a value only counts as "server filled" when
-    # it differs from the untouched default, so zero-default flags/amounts
-    # don't flood the payload as fake auto-fill.
+    # server_filled = differs from a bare new_doc, so zero-defaults don't
+    # masquerade as auto-fill.
     baseline = frappe.new_doc(doc.doctype)
     resolved: dict = {}
     server_filled: list[str] = []
@@ -97,7 +79,7 @@ def _summarize(doc, caller_values: dict) -> dict:
                 empty_fields.append(name)
             continue
         if name in _TOTAL_FIELDS or name.startswith("base_"):
-            continue  # totals live in `totals`; base_* company mirrors add no signal
+            continue  # totals live in `totals`; base_* mirrors add no signal
         if name in caller_values:
             resolved[name] = val
         elif _norm(val) != _norm(baseline.get(name)):
