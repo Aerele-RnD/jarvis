@@ -874,6 +874,55 @@ class TestRunAgentTurnRelayTerminals(FrappeTestCase):
 		self.assertEqual(row, "authoritative final text")
 
 
+class TestRunAgentTurnRelayStreamTelemetry(FrappeTestCase):
+	"""Follow-up (2026-07 review): the old ``_consume`` populated the
+	``stream_stats`` dict (first_event_ms, first_delta_ms,
+	pre_reply_tool_calls) that feeds the ``_lat.info`` latency summary
+	line. ``_consume_relay`` (the managed/relay path) never touched it, so
+	managed turns logged -1s for every field - dark telemetry for the
+	chat-latency investigation. ``_consume_relay`` must now stamp the same
+	stats for the events it dispatches."""
+
+	def setUp(self):
+		openclaw_session_pool._POOL.clear()
+		_ensure_test_user()
+		self._orig_user = frappe.session.user
+		frappe.set_user(TEST_USER)
+		_cleanup_user_conversations()
+		self.conv, self.user_msg = _make_conversation_with_user_message()
+
+	def tearDown(self):
+		_cleanup_user_conversations()
+		frappe.set_user(self._orig_user)
+
+	def test_relay_turn_populates_stream_stats_for_latency_log(self):
+		fake_sess = MagicMock()
+		fake_sess.chat_send.side_effect = lambda sk, msg, idem, **kw: {"runId": idem, "status": "started"}
+		fake_sess.relay_turn_events.return_value = _fake_event_stream([
+			{"kind": "tool", "phase": "start", "tool_name": "browser_click",
+			 "tool_call_id": "tc-1"},
+			{"kind": "tool", "phase": "end", "tool_name": "browser_click",
+			 "tool_call_id": "tc-1", "status": "completed"},
+			{"kind": "assistant", "text": "Hi", "delta": "Hi"},
+			{"kind": "relay:final", "text": None},
+		])
+		fake_logger = MagicMock()
+		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess):
+			with patch("jarvis.chat.worker.publish_to_user"):
+				with patch("jarvis.chat.latency.get_logger", return_value=fake_logger):
+					run_agent_turn(self.conv, self.user_msg, run_id="r1")
+
+		fake_logger.info.assert_called_once()
+		# _lat.info(fmt, run_id, first_turn, queue_wait_ms, checkout_ms,
+		#           session_create_ms, first_event_ms, first_delta_ms,
+		#           pre_reply_tool_calls, turn_total_ms)
+		args = fake_logger.info.call_args.args
+		first_event_ms, first_delta_ms, pre_reply_tool_calls = args[6], args[7], args[8]
+		self.assertGreaterEqual(first_event_ms, 0)
+		self.assertGreaterEqual(first_delta_ms, 0)
+		self.assertEqual(pre_reply_tool_calls, 1)
+
+
 class TestRunAgentTurnThinkingDirective(FrappeTestCase):
 	"""The /think directive is cache-unsafe as a message-body prefix on the
 	managed path (it would bust the OpenAI prefix cache the warm-up

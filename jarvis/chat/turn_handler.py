@@ -446,11 +446,25 @@ def handle_chat_send(payload: dict) -> None:
 			batcher.flush()
 
 		def _consume_relay(events) -> dict:
+			if stream_stats["t0"] is None:
+				stream_stats["t0"] = time.monotonic()
 			terminal = {"kind": "relay:interrupted", "reason": "stream-exhausted"}
 			for event in events:
-				if str(event.get("kind", "")).startswith("relay:"):
+				# Same segment telemetry as _consume (plan Phase 0), so managed
+				# (relay) turns keep feeding the latency summary below instead
+				# of logging -1s for every field.
+				ev_ms = int((time.monotonic() - stream_stats["t0"]) * 1000)
+				if stream_stats["first_event_ms"] < 0:
+					stream_stats["first_event_ms"] = ev_ms
+				kind = event.get("kind")
+				if str(kind or "").startswith("relay:"):
 					terminal = event
 					break
+				if kind == "assistant" and stream_stats["first_delta_ms"] < 0:
+					stream_stats["first_delta_ms"] = ev_ms
+				elif kind == "tool" and stream_stats["first_delta_ms"] < 0:
+					if (event.get("phase") or "") != "end":
+						stream_stats["pre_reply_tool_calls"] += 1
 				_handle_event(
 					event,
 					conversation_id=conversation_id,

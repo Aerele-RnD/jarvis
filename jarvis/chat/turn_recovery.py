@@ -101,6 +101,24 @@ def _conditional_clear(name: str, fields: dict) -> bool:
 	return won
 
 
+def _advance_macro(conversation_id: str, *, errored: bool) -> None:
+	"""Chaining hook for the macro engine (mirrors turn_handler._advance_macro;
+	not imported from there to avoid a cycle risk between chat.turn_handler
+	and chat.turn_recovery). A macro chain that ends its turn via park-and-
+	recover (any post-ack interruption under the relay model) must still
+	step/terminate the macro, or the chain stalls forever. Best-effort: a
+	macro bug must never affect the recovery outcome."""
+	try:
+		from jarvis.chat import macros
+
+		macros.advance_after_turn(conversation_id, errored=errored)
+	except Exception:
+		frappe.log_error(
+			title="turn_recovery: macro advance hook failed",
+			message=frappe.get_traceback(),
+		)
+
+
 def _finalize(row: dict, text: str) -> None:
 	"""Authoritative completion (conditional + idempotent): overwrite content
 	from the raw snapshot, clear the flags, then publish for any live viewer."""
@@ -117,6 +135,7 @@ def _finalize(row: dict, text: str) -> None:
 		"kind": "run:end", "conversation_id": conv,
 		"message_id": name, "run_id": "recovered",
 	})
+	_advance_macro(conv, errored=False)
 
 
 def _error(row: dict, message: str) -> None:
@@ -128,6 +147,7 @@ def _error(row: dict, message: str) -> None:
 		"kind": "run:error", "conversation_id": row["conversation"],
 		"message_id": row["name"], "run_id": "recovered", "error": message,
 	})
+	_advance_macro(row["conversation"], errored=True)
 
 
 def _active_map(sess: OpenclawSession) -> dict:

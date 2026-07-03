@@ -266,6 +266,64 @@ class TestTurnRecovery(FrappeTestCase):
 		self.assertEqual(row.streaming, 1)
 		self.assertEqual(row.recovering, 1)
 
+	# --- macro chaining hook: finalize/error must advance a running macro ---
+	def test_finalize_advances_macro_with_errored_false(self):
+		sess = self._fake_sess(messages_by_key={SK: [
+			{"role": "assistant", "content": "the full answer", "__openclaw": {"seq": 2}},
+		]})
+		with patch("jarvis.chat.macros.advance_after_turn") as advance:
+			self._run(sess)
+		advance.assert_called_once_with(self.conv.name, errored=False)
+
+	def test_error_advances_macro_with_errored_true(self):
+		old = self._add_msg(seq=2, started_min=-120)  # past the ceiling -> _error
+		frappe.db.commit()
+
+		def boom(_url):
+			raise RuntimeError("gateway down")
+
+		settings = MagicMock()
+		settings.agent_url = "https://gw.example"
+		with patch("jarvis.selfhost.is_self_hosted", return_value=False), \
+			 patch("jarvis.chat.turn_recovery.frappe.get_single", return_value=settings), \
+			 patch("jarvis.chat.turn_recovery._recovery_connection", boom), \
+			 patch("jarvis.chat.turn_recovery.publish_to_user"), \
+			 patch("jarvis.chat.macros.advance_after_turn") as advance:
+			turn_recovery.recover_pending_turns()
+		advance.assert_called_once_with(old.conversation, errored=True)
+
+	def test_losing_conditional_clear_does_not_advance_macro(self):
+		# Row already cleared by another cycle: _conditional_clear returns
+		# False, so _finalize must return before ever touching the macro.
+		frappe.db.set_value(MSG_DT, self.msg.name, {"streaming": 0, "recovering": 0})
+		frappe.db.commit()
+		with patch("jarvis.chat.turn_recovery.publish_to_user"), \
+			 patch("jarvis.chat.macros.advance_after_turn") as advance:
+			turn_recovery._finalize(
+				{"name": self.msg.name, "conversation": self.conv.name, "owner": "x"},
+				"ignored")
+		advance.assert_not_called()
+
+	def test_macro_advance_exception_is_swallowed_row_still_finalized(self):
+		sess = self._fake_sess(messages_by_key={SK: [
+			{"role": "assistant", "content": "the full answer", "__openclaw": {"seq": 2}},
+		]})
+		with patch(
+			"jarvis.chat.macros.advance_after_turn",
+			side_effect=RuntimeError("macro engine bug"),
+		), patch("frappe.log_error") as log_err:
+			_, pub = self._run(sess)
+		# The macro exception was logged, not raised.
+		log_err.assert_called()
+		# The row still finalized and the publishes still happened.
+		row = self._row()
+		self.assertEqual(row.content, "the full answer")
+		self.assertEqual(row.streaming, 0)
+		self.assertEqual(row.recovering, 0)
+		kinds = [c.args[1]["kind"] for c in pub.call_args_list]
+		self.assertIn("assistant:delta", kinds)
+		self.assertIn("run:end", kinds)
+
 	def test_recover_now_idempotent_after_finalize_no_double_publish(self):
 		sess = self._fake_sess(messages_by_key={SK: [
 			{"role": "assistant", "content": "the full answer", "__openclaw": {"seq": 2}},
