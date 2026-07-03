@@ -153,6 +153,45 @@ class TestSyncConnection(FrappeTestCase):
 				onboarding.start_signup("e4@x.com", "Co", "Annual Plan")
 			mock_signup.assert_not_called()
 
+	def test_start_signup_rejects_plaintext_site_url_in_production(self):
+		"""Production onboarding (sandbox_mode off) must hand the admin an
+		https:// frappe_site_url - a plaintext http bench fails fast with an
+		actionable error, before any admin call."""
+		_set_token("")
+		frappe.db.set_value("Jarvis Settings", "Jarvis Settings",
+							"jarvis_admin_url", "https://admin.example.com")
+		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "sandbox_mode", 0)
+		frappe.db.commit()
+		with patch("frappe.utils.get_url", return_value="http://erp.example.com"), \
+			 patch("jarvis.onboarding.admin_client.signup") as mock_signup:
+			with self.assertRaises(frappe.ValidationError):
+				onboarding.start_signup("e6@x.com", "Co", "Annual Plan")
+			mock_signup.assert_not_called()
+
+	def test_start_signup_allows_https_site_url_in_production(self):
+		_set_token("")
+		frappe.db.set_value("Jarvis Settings", "Jarvis Settings",
+							"jarvis_admin_url", "https://admin.example.com")
+		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "sandbox_mode", 0)
+		frappe.db.commit()
+		with patch("frappe.utils.get_url", return_value="https://erp.example.com"), \
+			 patch("jarvis.onboarding.admin_client.signup", return_value={}) as mock_signup:
+			onboarding.start_signup("e7@x.com", "Co", "Annual Plan")
+			mock_signup.assert_called_once()
+
+	def test_start_signup_allows_plaintext_site_url_in_sandbox(self):
+		"""Sandbox Mode (Jarvis Settings -> Developer) opts a dev/LAN bench
+		out of the https requirement."""
+		_set_token("")
+		frappe.db.set_value("Jarvis Settings", "Jarvis Settings",
+							"jarvis_admin_url", "https://admin.example.com")
+		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "sandbox_mode", 1)
+		frappe.db.commit()
+		with patch("frappe.utils.get_url", return_value="http://erp.local:8002"), \
+			 patch("jarvis.onboarding.admin_client.signup", return_value={}) as mock_signup:
+			onboarding.start_signup("e8@x.com", "Co", "Annual Plan")
+			mock_signup.assert_called_once()
+
 	def test_write_connection_ignores_legacy_api_token(self):
 		"""If admin returns the old api_token key, write_connection should NOT
 		write it (no accidental cross-population - that field is gone now)."""
@@ -232,8 +271,17 @@ class TestSignupEmailVerification(FrappeTestCase):
 			"jarvis_admin_url", "https://admin.example.com",
 		)
 		frappe.db.commit()
+		# The https pre-flight guard (production signup requires an https
+		# site URL) would trip on the test bench's plain-http URL; stub
+		# get_url so these tests stay focused on response persistence. The
+		# guard has its own coverage in TestOnboardingSync.
+		self._get_url_patch = patch(
+			"frappe.utils.get_url", return_value="https://erp.example.com"
+		)
+		self._get_url_patch.start()
 
 	def tearDown(self):
+		self._get_url_patch.stop()
 		_restore_settings(self._snap)
 
 	def test_start_signup_persists_api_key_secret_on_verification_response(self):
