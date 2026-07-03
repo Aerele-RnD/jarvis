@@ -123,6 +123,25 @@ export const saveLlmPool = (models, preset = null, routingMode = "failover") =>
 		routing_mode: routingMode,
 	})
 
+// --- Onboarding wizard (managed signup + self-hosted connect) ---
+// Arg names mirror the real backend signatures (jarvis/onboarding.py,
+// jarvis/account.py, jarvis/selfhost.py) — verified against the desk wizard's
+// frappe.call usage in jarvis/jarvis/page/jarvis_onboarding/jarvis_onboarding.js.
+export const listPlans = () => call("jarvis.onboarding.list_plans")
+export const startSignup = (email, company, plan) =>
+	call("jarvis.onboarding.start_signup", { email, company, plan })
+export const checkSignupPaymentState = () => call("jarvis.onboarding.check_signup_payment_state")
+export const finishPayment = (payload) => call("jarvis.onboarding.finish_payment", { payload })
+export const devOnboard = (email, company, plan) =>
+	call("jarvis.onboarding.dev_onboard", { email, company, plan })
+export const isOnboarded = () => call("jarvis.account.is_onboarded")
+// args: {provider, model, api_key, base_url, auth_mode, force}
+export const saveLlmCreds = (args) => call("jarvis.onboarding.save_llm_creds", args)
+// args: {base_url, token, deep, stream, tool_user}
+export const saveSelfHosted = (args) => call("jarvis.selfhost.save_self_hosted", args)
+// args: {base_url, token, deep}
+export const testSelfHostConnection = (args) => call("jarvis.selfhost.test_connection", args)
+
 // --- Per-account chat-subscription capture (paste-back OAuth) ---
 // begin → { nonce, authorize_url, expires_in }; open authorize_url, sign in,
 // paste the redirected URL back → complete captures the account (no side effects).
