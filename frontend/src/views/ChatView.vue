@@ -269,62 +269,30 @@
 											<button class="jv-action-2nd" @click="actionSend('Regenerate that email, please.')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2v6h6M21 12a9 9 0 1 1-3-6.7L21 8" /></svg>Regenerate</button>
 										</div>
 									</div>
-									<!-- doc create / update / delete confirm -->
+									<!-- create/update → compact chip; the side panel is the editor -->
+									<div v-else-if="!activeAction.verb || activeAction.verb === 'create' || activeAction.verb === 'update'"
+									     class="jv-draft-chip" role="button" tabindex="0"
+									     @click="openDraftPanel({ verb: activeAction.verb || 'create', ...activeAction })"
+									     @keydown.enter="openDraftPanel({ verb: activeAction.verb || 'create', ...activeAction })">
+										<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></svg>
+										<span><b>{{ activeAction.doctype }}</b> draft<template v-if="draftChipSummary"> · {{ draftChipSummary }}</template></span>
+										<span class="jv-draft-chip-cta">Open editor</span>
+									</div>
+									<!-- submit/cancel/delete/amend → confirm card, but Confirm applies directly (Task 4) -->
 									<div v-else class="jv-action">
 										<div class="jv-action-head">
-											<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></svg>
-											<span class="jv-action-title">{{ actionVerb(activeAction) }} <b>{{ activeAction.doctype }}</b><template v-if="activeAction.title"> · {{ activeAction.title }}</template></span>
+											<span class="jv-action-title">{{ actionVerb(activeAction) }} <b>{{ activeAction.doctype }}</b><template v-if="activeAction.name"> · {{ activeAction.name }}</template><template v-else-if="activeAction.title"> · {{ activeAction.title }}</template></span>
 										</div>
 										<div class="jv-action-fields">
-											<template v-if="!editingAction">
-												<div v-for="(f, fi) in (activeAction.fields || [])" :key="fi" class="jv-action-row">
-													<span class="jv-action-k">{{ f.label }}</span>
-													<span class="jv-action-v">{{ f.value }}</span>
-												</div>
-											</template>
-											<template v-else>
-												<div v-for="(f, fi) in actionEdits" :key="fi" class="jv-action-editrow" :class="{ changed: String(f.value) !== String(f.orig) }">
-													<label class="jv-action-k">{{ f.label }}</label>
-													<div class="jv-action-ctl">
-														<!-- Link: search the target DocType and pick a record -->
-														<div v-if="f.control === 'link'" class="jv-action-link">
-															<input class="jv-action-input" v-model="f.value" @input="onActLinkSearch(fi, f, $event)" @focus="onActLinkSearch(fi, f, $event)" @blur="closeActLink(fi)" :placeholder="'Search ' + (f.options || 'records') + '…'" @keydown.enter.prevent autocomplete="off" />
-															<div v-if="actLink[fi] && actLink[fi].open && (actLink[fi].items || []).length" class="jv-action-linkmenu" :class="{ up: actLink[fi].up }">
-																<button v-for="(it, ii) in actLink[fi].items" :key="ii" type="button" @mousedown.prevent="pickActLink(fi, f, it)"><b>{{ it.value }}</b><span v-if="it.label"> · {{ it.label }}</span></button>
-															</div>
-														</div>
-														<!-- Select / Check: dropdown of allowed values -->
-														<select v-else-if="f.control === 'select'" class="jv-action-input jv-action-sel" v-model="f.value">
-															<option v-for="(o, oi) in f.options" :key="oi" :value="o">{{ o === '' ? '— none —' : o }}</option>
-														</select>
-														<select v-else-if="f.control === 'check'" class="jv-action-input jv-action-sel" v-model="f.value">
-															<option value="Yes">Yes</option>
-															<option value="No">No</option>
-														</select>
-														<!-- Date / time / number: native typed inputs -->
-														<input v-else-if="f.control === 'date'" type="date" class="jv-action-input" v-model="f.value" />
-														<input v-else-if="f.control === 'datetime'" type="datetime-local" class="jv-action-input" v-model="f.value" />
-														<input v-else-if="f.control === 'time'" type="time" class="jv-action-input" v-model="f.value" />
-														<input v-else-if="f.control === 'number'" type="number" class="jv-action-input" v-model="f.value" />
-														<!-- long text vs single-line -->
-														<textarea v-else-if="f.control === 'text'" class="jv-action-input" v-model="f.value" rows="3"></textarea>
-														<input v-else class="jv-action-input" v-model="f.value" />
-													</div>
-												</div>
-											</template>
+											<div v-for="(f, fi) in (activeAction.fields || [])" :key="fi" class="jv-action-row">
+												<span class="jv-action-k">{{ f.label }}</span>
+												<span class="jv-action-v">{{ f.value }}</span>
+											</div>
 										</div>
-										<div v-if="editingAction" class="jv-action-edithint">Change only the values you want — the rest stays exactly as shown.</div>
+										<div v-if="confirmError" class="jv-draft-error" style="margin:0 14px 10px">{{ confirmError }}</div>
 										<div class="jv-action-foot">
-											<template v-if="!editingAction">
-												<button class="jv-action-primary" @click="actionSend('Yes, go ahead.')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>{{ actionCta(activeAction) }}</button>
-												<button class="jv-action-2nd" @click="startActionEdit"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>Edit</button>
-												<button class="jv-action-discard" @click="actionSend('No, cancel that.')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /><path d="M10 11v6M14 11v6" /></svg>Discard</button>
-											</template>
-											<template v-else>
-												<!-- Cancel left, primary (Apply) right — matches the jv-confirm / jv-cdialog convention. -->
-												<button class="jv-action-2nd" style="margin-left:auto;" @click="cancelActionEdit">Cancel</button>
-												<button class="jv-action-primary" @click="applyActionEdits"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>Apply changes</button>
-											</template>
+											<button class="jv-action-primary" :disabled="confirmBusy" @click="confirmApply">✓ {{ actionCta(activeAction) }}</button>
+											<button class="jv-action-discard" @click="actionSend('No, cancel that.')">Discard</button>
 										</div>
 									</div>
 								</template>
@@ -1030,6 +998,100 @@
 							<p>No inline preview for this file type.</p>
 							<a :href="artifact.url" :download="cvFile(artifact.cv)" class="jv-canvas-dl">Download {{ cvFile(artifact.cv) }}</a>
 						</div>
+					</div>
+				</aside>
+			</div>
+		</transition>
+		<!-- Record draft panel — the agent's proposed create/update, fully editable, applied directly -->
+		<transition name="jv-slide">
+			<div v-if="draftPanel" class="jv-artifact-overlay" @click.self="closeDraftPanel">
+				<aside class="jv-artifact-panel jv-draft-panel" tabindex="-1">
+					<div class="jv-artifact-head">
+						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></svg>
+						<span class="jv-artifact-head-title">{{ draftPanel.verb === 'update' ? 'Update' : 'New' }} {{ draftPanel.doctype }}<template v-if="draftPanel.docName"> · {{ draftPanel.docName }}</template></span>
+						<span class="jv-draft-badge">Draft — not saved</span>
+						<button class="jv-art-close" @click="closeDraftPanel" title="Close (draft stays in chat)" aria-label="Close">
+							<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+						</button>
+					</div>
+					<div class="jv-draft-body">
+						<div v-if="draftPanel.updatedToast" class="jv-draft-toast">Draft updated from chat</div>
+						<div class="jv-draft-fields">
+							<div v-for="f in draftPanel.fields" :key="f.fieldname" class="jv-draft-fld"
+							     :class="{ missing: f.reqd && !String(f.value).trim(), changed: f.changed }">
+								<label>{{ f.label }}<span v-if="f.reqd" class="jv-req"> *</span></label>
+								<div class="jv-draft-ctl">
+									<template v-if="f.control === 'link'">
+										<input class="jv-action-input" v-model="f.value"
+										       @input="onDraftLink('f:' + f.fieldname, () => f.value, f.options, $event)"
+										       @focus="onDraftLink('f:' + f.fieldname, () => f.value, f.options, $event)"
+										       @blur="closeDraftLink" :placeholder="'Search ' + (f.options || 'records') + '…'" autocomplete="off" />
+										<div v-if="draftLink.open && draftLink.key === 'f:' + f.fieldname && draftLink.items.length"
+										     class="jv-action-linkmenu" :class="{ up: draftLink.up }">
+											<button v-for="it in draftLink.items" :key="it.value" @mousedown.prevent="pickDraftLink((v) => { f.value = v }, it)">
+												<b>{{ it.value }}</b><span v-if="it.label"> — {{ it.label }}</span>
+											</button>
+										</div>
+									</template>
+									<select v-else-if="f.control === 'select'" class="jv-action-input jv-action-sel" v-model="f.value">
+										<option v-for="o in f.options" :key="o" :value="o">{{ o }}</option>
+									</select>
+									<select v-else-if="f.control === 'check'" class="jv-action-input jv-action-sel" v-model="f.value">
+										<option>Yes</option><option>No</option>
+									</select>
+									<input v-else-if="f.control === 'date'" type="date" class="jv-action-input" v-model="f.value" />
+									<input v-else-if="f.control === 'datetime'" type="datetime-local" class="jv-action-input" v-model="f.value" />
+									<input v-else-if="f.control === 'time'" type="time" class="jv-action-input" v-model="f.value" />
+									<input v-else-if="f.control === 'number'" type="number" class="jv-action-input" v-model="f.value" />
+									<textarea v-else-if="f.control === 'text'" class="jv-action-input" v-model="f.value" rows="3"></textarea>
+									<input v-else class="jv-action-input" v-model="f.value" />
+								</div>
+							</div>
+						</div>
+						<div v-for="(t, ti) in draftPanel.tables" :key="t.fieldname" class="jv-draft-table">
+							<div class="jv-draft-table-title">{{ t.label }}</div>
+							<div class="jv-draft-gridwrap">
+								<table class="jv-grid">
+									<thead><tr><th v-for="c in t.columns" :key="c.fieldname">{{ c.label }}</th><th class="jv-grid-x"></th></tr></thead>
+									<tbody>
+										<tr v-for="(r, ri) in t.rows" :key="ri">
+											<td v-for="c in t.columns" :key="c.fieldname" :class="{ 'jv-grid-ro': c.read_only }">
+												<span v-if="c.read_only">{{ r[c.fieldname] }}</span>
+												<template v-else-if="c.fieldtype === 'Link'">
+													<input class="jv-action-input" v-model="r[c.fieldname]"
+													       @input="onDraftLink('t:' + ti + ':' + ri + ':' + c.fieldname, () => r[c.fieldname], c.options, $event)"
+													       @focus="onDraftLink('t:' + ti + ':' + ri + ':' + c.fieldname, () => r[c.fieldname], c.options, $event)"
+													       @blur="closeDraftLink" autocomplete="off" />
+													<div v-if="draftLink.open && draftLink.key === 't:' + ti + ':' + ri + ':' + c.fieldname && draftLink.items.length"
+													     class="jv-action-linkmenu" :class="{ up: draftLink.up }">
+														<button v-for="it in draftLink.items" :key="it.value" @mousedown.prevent="pickDraftLink((v) => { r[c.fieldname] = v }, it)">
+															<b>{{ it.value }}</b><span v-if="it.label"> — {{ it.label }}</span>
+														</button>
+													</div>
+												</template>
+												<input v-else-if="['Int','Float','Currency','Percent'].includes(c.fieldtype)" type="number" class="jv-action-input" v-model="r[c.fieldname]" />
+												<input v-else-if="c.fieldtype === 'Date'" type="date" class="jv-action-input" v-model="r[c.fieldname]" />
+												<select v-else-if="c.fieldtype === 'Check'" class="jv-action-input jv-action-sel" v-model="r[c.fieldname]">
+													<option value="1">Yes</option><option value="0">No</option>
+												</select>
+												<input v-else class="jv-action-input" v-model="r[c.fieldname]" />
+											</td>
+											<td class="jv-grid-x"><button class="jv-grid-del" @click="removeDraftRow(ti, ri)" title="Remove row" aria-label="Remove row">✕</button></td>
+										</tr>
+									</tbody>
+								</table>
+							</div>
+							<button class="jv-draft-addrow" @click="addDraftRow(ti)">＋ Add row</button>
+						</div>
+						<div v-if="draftTotals" class="jv-draft-totals">{{ draftTotals }} <span class="jv-draft-est">(estimate — ERPNext computes final totals)</span></div>
+						<div v-if="draftPanel.error" class="jv-draft-error">{{ draftPanel.error }}</div>
+					</div>
+					<div class="jv-draft-foot">
+						<button class="jv-action-discard" @click="discardDraft">Discard</button>
+						<button v-if="draftPanel.submittable && draftPanel.verb === 'create'" class="jv-action-2nd" style="margin-left:auto" :disabled="draftPanel.applying" @click="applyDraft(1)">Create &amp; Submit</button>
+						<button class="jv-action-primary" :style="draftPanel.submittable && draftPanel.verb === 'create' ? '' : 'margin-left:auto'" :disabled="draftPanel.applying" @click="applyDraft(0)">
+							{{ draftPanel.applying ? 'Saving…' : draftCta }}
+						</button>
 					</div>
 				</aside>
 			</div>
@@ -2309,15 +2371,8 @@ function answerConfirm(ok) {
 	send(ok ? "Yes, go ahead." : "No, cancel that.")
 }
 
-// --- Inline edit of a proposed action's values BEFORE confirming. The whole
-// action flow is conversational (send() a message the agent acts on), so
-// editing = pre-fill the proposed fields, let the user change any subset, then
-// send a precise "change these, keep the rest" instruction so the agent re-emits
-// an updated confirmation card. Unedited fields are never mentioned.
-const editingAction = ref(false)
-const actionEdits = ref([]) // [{ label, value, orig, control, options }]
-const actLink = ref({}) // per-row Link dropdown state: { [idx]: { items, open } }
-const _actMetaCache = {} // doctype -> { labelLower: { fieldtype, options } }
+// --- Field-control helpers shared by the confirm card and the record draft
+// panel (chip → side panel; see _formMeta / openDraftPanel below).
 function _isLongVal(v) {
 	const s = String(v == null ? "" : v)
 	return s.length > 55 || s.includes("\n")
@@ -2361,25 +2416,6 @@ function _controlFor(fieldtype, options) {
 function _normKey(s) {
 	return String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "")
 }
-async function _actMeta(doctype) {
-	if (_actMetaCache[doctype]) return _actMetaCache[doctype]
-	const r = await api.getDoctypeFields(doctype)
-	const fields = ((r && r.fields) || []).map((f) => ({
-		...f,
-		_kl: _normKey(f.label),
-		_kf: _normKey(f.fieldname),
-	}))
-	const map = {}
-	for (const f of fields) {
-		// fieldname key first, label key second (label wins ties — it's what a
-		// human-authored card most likely means)
-		if (f._kf && !map[f._kf]) map[f._kf] = f
-		if (f._kl) map[f._kl] = f
-	}
-	const meta = { map, fields }
-	_actMetaCache[doctype] = meta
-	return meta
-}
 // Resolve one card label to a field: exact normalized match on label/fieldname,
 // else unique containment (e.g. "UOM" → stock_uom when it's the only sensible
 // hit; required fields win ambiguous shorthands).
@@ -2399,92 +2435,186 @@ function _checkToYesNo(v) {
 	const s = typeof v === "string" ? v.toLowerCase() : v
 	return ["1", 1, "yes", "true", true, "on"].includes(s) ? "Yes" : "No"
 }
-async function startActionEdit() {
-	const a = activeAction.value
-	const fields = (a && a.fields) || []
-	// Render instantly with a text/data fallback, then enrich with field types.
-	actionEdits.value = fields.map((f) => {
-		const v = f.value == null ? "" : String(f.value)
-		return { label: f.label, value: v, orig: v, control: _isLongVal(v) ? "text" : "data", options: "" }
-	})
-	actLink.value = {}
-	editingAction.value = true
-	const dt = a && a.doctype
-	if (!dt) return
-	try {
-		const meta = await _actMeta(dt)
-		actionEdits.value = actionEdits.value.map((e) => {
-			const m = _actField(meta, e.label)
-			if (!m) return e // label didn't map to a field → keep the text fallback
-			let [control, options] = _controlFor(m.fieldtype, m.options)
-			let value = e.value
-			let orig = e.orig
-			if (control === "check") {
-				value = _checkToYesNo(value)
-				orig = _checkToYesNo(orig)
+// --- Record draft panel: the action JSON is the draft; edits are local; apply
+// posts to actions_api (no LLM round-trip). ---
+const draftPanel = ref(null)
+// one shared link-search menu for panel inputs, keyed "f:<fieldname>" or "t:<ti>:<ri>:<col>"
+const draftLink = ref({ key: "", items: [], open: false, up: false })
+const _formMetaCache = {}
+
+async function _formMeta(doctype) {
+	if (_formMetaCache[doctype]) return _formMetaCache[doctype]
+	const r = await api.getDoctypeFormMeta(doctype)
+	if (!r || !r.ok) throw new Error("no form meta")
+	for (const f of r.fields) { f._kl = _normKey(f.label); f._kf = _normKey(f.fieldname) }
+	_formMetaCache[doctype] = r
+	return r
+}
+
+function _panelField(metaField, value) {
+	let [control, options] = _controlFor(metaField.fieldtype, metaField.options)
+	let v = value == null ? "" : String(value)
+	let orig = v
+	if (control === "check") { v = _checkToYesNo(v); orig = v }
+	if (control === "select" && Array.isArray(options) && v && !options.includes(v)) options = [v, ...options]
+	return {
+		fieldname: metaField.fieldname, label: metaField.label, control, options,
+		fieldtype: metaField.fieldtype, reqd: metaField.reqd, read_only: metaField.read_only,
+		value: v, orig,
+	}
+}
+
+// Build the panel model from an action + form meta (+ live doc for updates).
+async function openDraftPanel(a) {
+	if (!a || a.kind !== "doc" || !a.doctype) return
+	const verb = a.verb === "update" ? "update" : "create"
+	let meta
+	try { meta = await _formMeta(a.doctype) } catch (e) { return } // no meta → no panel (old card still shows)
+	let base = { values: {}, tables: {} }
+	if (verb === "update" && a.name) {
+		try { base = await api.loadDocForEdit(a.doctype, a.name) } catch (e) { /* not editable → create-style view */ }
+	}
+	// proposed main fields: agent's fields resolved by label-or-fieldname
+	const metaLookup = { fields: meta.fields, map: {} }
+	for (const f of meta.fields) { if (f._kf && !metaLookup.map[f._kf]) metaLookup.map[f._kf] = f; if (f._kl) metaLookup.map[f._kl] = f }
+	const proposed = {} // fieldname -> value
+	for (const f of a.fields || []) {
+		const m = _actField(metaLookup, f.label)
+		if (m && m.fieldtype !== "Table") proposed[m.fieldname] = f.value
+	}
+	const fields = []
+	const seen = new Set()
+	for (const f of meta.fields) {
+		if (f.fieldtype === "Table") continue
+		const has = f.fieldname in proposed
+		const baseV = base.values[f.fieldname]
+		// Show: agent-proposed fields + required fields + (update) filled fields the agent referenced
+		if (!has && !f.reqd) continue
+		const pf = _panelField(f, has ? proposed[f.fieldname] : baseV)
+		if (verb === "update") pf.orig = baseV == null ? "" : String(pf.control === "check" ? _checkToYesNo(baseV) : baseV)
+		pf.changed = verb === "update" && String(pf.value) !== String(pf.orig)
+		fields.push(pf); seen.add(f.fieldname)
+	}
+	// child tables: every meta table that is required, agent-proposed, or (update) non-empty
+	const tables = []
+	const aTables = {}
+	for (const t of a.tables || []) if (t && t.fieldname) aTables[t.fieldname] = t.rows || []
+	for (const [tf, spec] of Object.entries(meta.tables || {})) {
+		const metaField = meta.fields.find((f) => f.fieldname === tf) || { reqd: 0 }
+		const proposedRows = aTables[tf]
+		const baseRows = (base.tables || {})[tf] || []
+		if (!proposedRows && !metaField.reqd && !baseRows.length) continue
+		// columns = child meta columns ∪ keys the agent used (unknown keys → data input)
+		const columns = spec.columns.slice()
+		const known = new Set(columns.map((c) => c.fieldname))
+		for (const r of proposedRows || []) {
+			for (const k of Object.keys(r)) {
+				if (!known.has(k)) { known.add(k); columns.push({ fieldname: k, label: k, fieldtype: "Data", options: "", reqd: 0, read_only: 0 }) }
 			}
-			// Make sure the current value is selectable even if it's not a listed option.
-			if (control === "select" && Array.isArray(options) && orig && !options.includes(orig)) {
-				options = [orig, ...options]
-			}
-			return { ...e, control, options, value, orig }
+		}
+		const srcRows = proposedRows != null ? proposedRows : baseRows // proposal REPLACES loaded rows
+		const rows = srcRows.map((r) => { const o = {}; for (const c of columns) o[c.fieldname] = r[c.fieldname] == null ? "" : String(r[c.fieldname]); return o })
+		if (!rows.length) rows.push(_blankRow(columns))
+		tables.push({
+			fieldname: tf, label: spec.label, child: spec.child_doctype, columns, rows,
+			origJson: JSON.stringify(verb === "update" ? baseRows : null),
 		})
-	} catch (e) {
-		/* meta unavailable (e.g. no read perm) — keep the text fallback */
+	}
+	draftPanel.value = {
+		verb, doctype: a.doctype, docName: verb === "update" ? (a.name || "") : "",
+		title: a.title || "", submittable: !!meta.is_submittable,
+		fields, tables, applying: false, error: "", updatedToast: false,
 	}
 }
-function cancelActionEdit() {
-	editingAction.value = false
-	actionEdits.value = []
-	actLink.value = {}
+
+function _blankRow(columns) {
+	const o = {}
+	for (const c of columns) o[c.fieldname] = ""
+	return o
 }
-async function onActLinkSearch(idx, f, ev) {
-	// Open the menu UPWARD when the input sits in the lower part of the
-	// viewport — a downward menu there runs off-screen / under the composer.
-	let up = actLink.value[idx] ? actLink.value[idx].up : false
+function addDraftRow(ti) {
+	const t = draftPanel.value.tables[ti]
+	t.rows.push(_blankRow(t.columns))
+}
+function removeDraftRow(ti, ri) {
+	draftPanel.value.tables[ti].rows.splice(ri, 1)
+}
+function closeDraftPanel() {
+	draftPanel.value = null
+	draftLink.value = { key: "", items: [], open: false, up: false }
+}
+
+// Link search shared by panel fields + grid cells.
+async function onDraftLink(key, target, doctype, ev) {
+	let up = false
 	const el = ev && ev.target
-	if (el && el.getBoundingClientRect) {
-		up = el.getBoundingClientRect().bottom > window.innerHeight - 260
-	}
-	actLink.value = { ...actLink.value, [idx]: { ...(actLink.value[idx] || {}), open: true, up } }
-	if (!f.options) return
+	if (el && el.getBoundingClientRect) up = el.getBoundingClientRect().bottom > window.innerHeight - 260
+	draftLink.value = { key, items: [], open: true, up }
+	if (!doctype) return
 	try {
-		const r = await api.searchLink(f.options, f.value)
-		const items = (r || []).map((x) => ({ value: x.value, label: x.description || "" })).slice(0, 8)
-		actLink.value = { ...actLink.value, [idx]: { items, open: true, up } }
-	} catch (e) {
-		actLink.value = { ...actLink.value, [idx]: { items: [], open: true, up } }
+		const r = await api.searchLink(doctype, target())
+		if (draftLink.value.key !== key) return // user moved on
+		draftLink.value = { key, items: (r || []).map((x) => ({ value: x.value, label: x.description || "" })).slice(0, 8), open: true, up }
+	} catch (e) { /* menu stays empty */ }
+}
+function pickDraftLink(setter, item) {
+	setter(item.value)
+	draftLink.value = { key: "", items: [], open: false, up: false }
+}
+function closeDraftLink() {
+	setTimeout(() => { draftLink.value = { ...draftLink.value, open: false } }, 160)
+}
+
+// est. totals: any grid with qty (+rate) columns
+const draftTotals = computed(() => {
+	const p = draftPanel.value
+	if (!p) return ""
+	let qty = 0, amt = 0, hasQty = false, hasAmt = false
+	for (const t of p.tables) {
+		const q = t.columns.find((c) => c.fieldname === "qty")
+		const r = t.columns.find((c) => c.fieldname === "rate")
+		if (!q) continue
+		hasQty = true
+		for (const row of t.rows) {
+			const n = parseFloat(row.qty) || 0
+			qty += n
+			if (r) { hasAmt = true; amt += n * (parseFloat(row.rate) || 0) }
+		}
 	}
-}
-function pickActLink(idx, f, item) {
-	f.value = item.value
-	actLink.value = { ...actLink.value, [idx]: { items: [], open: false } }
-}
-function closeActLink(idx) {
-	// Delay so a click on a dropdown option registers before the blur closes it.
-	setTimeout(() => {
-		actLink.value = { ...actLink.value, [idx]: { ...(actLink.value[idx] || {}), open: false } }
-	}, 160)
-}
-function applyActionEdits() {
-	const changed = actionEdits.value.filter((f) => String(f.value) !== String(f.orig))
-	const verb = (activeAction.value && activeAction.value.verb) || "create"
-	editingAction.value = false
-	actionEdits.value = []
-	actLink.value = {}
-	if (!changed.length) return // nothing edited → leave the card as-is
-	const lines = changed.map((f) => `- ${f.label}: ${f.value}`).join("\n")
-	send(
-		`Before you ${verb} it, change these values and show me the updated confirmation — ` +
-			`keep every other field exactly as it is:\n${lines}`,
-	)
-}
-// A fresh action card cancels any in-progress edit.
-watch(actionFor, () => {
-	editingAction.value = false
-	actionEdits.value = []
-	actLink.value = {}
+	if (!hasQty) return ""
+	return `Total qty ${qty}` + (hasAmt ? ` · Est. total ${amt.toLocaleString("en-IN", { minimumFractionDigits: 2 })}` : "")
 })
+const draftCta = computed(() => {
+	const p = draftPanel.value
+	if (!p) return ""
+	return p.verb === "update" ? `Update ${p.docName || p.doctype}` : `Create ${p.doctype}`
+})
+const draftChipSummary = computed(() => {
+	const a = activeAction.value
+	if (!a) return ""
+	const n = (a.tables || []).reduce((s, t) => s + ((t.rows || []).length), 0)
+	return n ? `${n} row${n === 1 ? "" : "s"}` : ""
+})
+
+// Auto-open on a fresh create/update action (also fires when loading an old
+// conversation that ends on a pending draft — that draft IS still pending).
+watch(actionFor, () => {
+	const a = activeAction.value
+	if (a && a.kind === "doc" && (a.verb === "create" || a.verb === "update" || !a.verb)) {
+		const wasOpen = !!draftPanel.value
+		openDraftPanel({ verb: a.verb || "create", ...a }).then(() => {
+			if (wasOpen && draftPanel.value) draftPanel.value.updatedToast = true
+		})
+	}
+})
+
+// --- Task 4 wires these for real (apply_action round-trip); stubs here keep
+// the confirm card / draft panel buttons functional (no-op) until then.
+const confirmBusy = ref(false)
+const confirmError = ref("")
+function discardDraft() {}
+function applyDraft() {}
+function confirmApply() {}
 
 // --- interactive clarifying questions (card on the last assistant message) ---
 const activeAsk = computed(() =>
@@ -4196,6 +4326,37 @@ function onGlobalKey(e) {
 .jv-email-v { color: var(--text-2); word-break: break-word; }
 .jv-email-subj { color: var(--text); font-weight: 600; }
 .jv-email-body { padding: 12px 14px 14px; font-size: 13px; line-height: 1.6; color: var(--text); white-space: pre-wrap; word-break: break-word; border-top: 1px solid var(--surface-2); }
+
+/* --- record draft panel --- */
+.jv-draft-chip { display: inline-flex; align-items: center; gap: 9px; margin-top: 12px; padding: 10px 14px; border: 1px solid var(--blue-bd); background: var(--blue-bg); color: var(--text); border-radius: 11px; cursor: pointer; font-size: 13.5px; }
+.jv-draft-chip svg { color: var(--blue); flex: none; }
+.jv-draft-chip-cta { color: var(--blue); font-weight: 600; margin-left: 4px; }
+.jv-draft-panel { display: flex; flex-direction: column; }
+.jv-draft-badge { font-size: 10px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; color: var(--amber); background: var(--amber-bg); border: 1px solid var(--amber-bd); border-radius: 99px; padding: 3px 9px; margin-left: 8px; }
+.jv-draft-body { flex: 1; overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 14px; }
+.jv-draft-toast { font-size: 12px; color: var(--blue); background: var(--blue-bg); border: 1px solid var(--blue-bd); border-radius: 8px; padding: 7px 11px; }
+.jv-draft-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
+.jv-draft-fld label { display: block; font-size: 10.5px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); margin-bottom: 4px; }
+.jv-draft-fld .jv-req { color: var(--red); }
+.jv-draft-fld.missing .jv-action-input { border-color: var(--amber-bd); }
+.jv-draft-fld.changed .jv-action-input { border-color: var(--blue-bd); background: var(--blue-bg); }
+.jv-draft-ctl { position: relative; }
+.jv-draft-table-title { font-size: 12px; font-weight: 650; color: var(--text-2); margin-bottom: 6px; }
+.jv-draft-gridwrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 9px; }
+.jv-grid { width: 100%; border-collapse: collapse; font-size: 13px; }
+.jv-grid th { font-size: 10.5px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; color: var(--text-3); text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border-2); background: var(--surface-1); }
+.jv-grid td { padding: 5px 6px; border-bottom: 1px solid var(--border); position: relative; min-width: 90px; }
+.jv-grid td .jv-action-input { width: 100%; box-sizing: border-box; }
+.jv-grid-ro { color: var(--text-3); }
+.jv-grid-x { width: 30px; }
+.jv-grid-del { background: none; border: none; color: var(--text-3); cursor: pointer; padding: 4px 6px; border-radius: 6px; }
+.jv-grid-del:hover { color: var(--red); background: var(--red-bg); }
+.jv-draft-addrow { align-self: flex-start; margin-top: 8px; background: none; border: none; color: var(--blue); font-weight: 600; font-size: 12.5px; cursor: pointer; padding: 4px 2px; }
+.jv-draft-totals { font-size: 12.5px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.jv-draft-est { color: var(--text-3); font-size: 11px; }
+.jv-draft-error { font-size: 12.5px; color: var(--red); background: var(--red-bg); border: 1px solid var(--red-bd); border-radius: 8px; padding: 8px 11px; white-space: pre-wrap; }
+.jv-draft-foot { display: flex; gap: 10px; align-items: center; padding: 12px 16px; border-top: 1px solid var(--border); }
+@media (max-width: 700px) { .jv-draft-fields { grid-template-columns: 1fr; } }
 
 /* artifact preview panel (right side-over) */
 /* premium artifact-preview header actions (replaces the boxy .jv-iconbtn look) */

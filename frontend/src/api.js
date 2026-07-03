@@ -66,6 +66,12 @@ export const macroRunStats = () => call(MC + "macro_run_stats")
 export const setConversationModel = (conversation, model) =>
 	call("jarvis.chat.api.set_conversation_model", { conversation, model: model || "" })
 
+// --- Record draft panel (direct apply, no LLM in the loop) ---
+const AC = "jarvis.chat.actions_api."
+export const getDoctypeFormMeta = (doctype) => call(AC + "get_doctype_form_meta", { doctype })
+export const loadDocForEdit = (doctype, name) => call(AC + "load_doc", { doctype, name })
+export const applyAction = (action) => call(AC + "apply_action", { action: JSON.stringify(action) })
+
 export async function sendMessage(conversation, message, modelOverride, attachments, context) {
 	// Empty conversation is allowed: the backend creates (or focuses) an empty
 	// conversation itself and returns its id as `conversation_id` — saves the
