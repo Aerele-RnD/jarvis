@@ -426,8 +426,17 @@ async function startConnect(m) {
   try {
     const provider = m.upstream === "google" ? "Google" : "OpenAI"
     const res = await api.beginPoolAccountSignin(provider, m.model.trim())
-    m._connect.nonce = res.nonce
-    m._connect.authorizeUrl = res.authorize_url
+    // Backend returns an envelope: {ok:true, data:{nonce, authorize_url, …}} or
+    // {ok:false, error:{code, message}}. Unwrap data; surface errors instead of
+    // hanging on "Starting sign-in…".
+    if (!res || res.ok === false) {
+      m._connect.loading = false
+      m._connect.error = (res && res.error && res.error.message) || "Couldn't start sign-in — try again."
+      return
+    }
+    const d = res.data || {}
+    m._connect.nonce = d.nonce
+    m._connect.authorizeUrl = d.authorize_url
     m._connect.loading = false
   } catch (e) { m._connect.loading = false; m._connect.error = _err(e) }
 }
@@ -437,12 +446,19 @@ async function finishConnect(m) {
   m._connect.loading = true; m._connect.error = ""
   try {
     const res = await api.completePoolAccountSignin(m._connect.nonce, m._connect.pastedUrl.trim())
+    // Same {ok, data} envelope as begin — unwrap + surface errors.
+    if (!res || res.ok === false) {
+      m._connect.loading = false
+      m._connect.error = (res && res.error && res.error.message) || "Couldn't connect the account — check the pasted URL and try again."
+      return
+    }
+    const d = res.data || {}
     if (!Array.isArray(m.accounts)) m.accounts = []
     m.accounts.push({
       upstream: m.upstream || "openai",
-      account_ref: res.account_ref,
-      label: res.label || res.account_email || res.account_ref,
-      oauth_blob: res.oauth_blob || "",
+      account_ref: d.account_ref,
+      label: d.label || d.account_email || d.account_ref,
+      oauth_blob: d.oauth_blob || "",
       connected: true,
     })
     m._connect = blankConnect()
