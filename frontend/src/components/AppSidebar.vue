@@ -6,10 +6,13 @@
 				<svg width="16" height="16" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
 			</div>
 			<span style="font-size:14px;font-weight:600;letter-spacing:-.01em;">Jarvis</span>
+			<!-- First-run wizard: a first-run user has no account/chat state yet,
+				 so the brand row is tagged "Setup" instead of showing nav below. -->
+			<span v-if="minimal" style="font-size:11px;font-weight:600;color:var(--text-3);background:var(--surface-2);padding:2px 7px;border-radius:20px;">Setup</span>
 		</div>
 
-		<!-- ============ NAV ============ -->
-		<nav style="padding:6px 12px 10px;display:flex;flex-direction:column;gap:2px;">
+		<!-- ============ NAV (hidden during first-run setup — nowhere to navigate yet) ============ -->
+		<nav v-if="!minimal" style="padding:6px 12px 10px;display:flex;flex-direction:column;gap:2px;">
 			<router-link to="/" class="jv-nav-item" :class="{ on: route.path === '/' || route.path.startsWith('/c/') }">
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
 				<span>Chat</span>
@@ -22,8 +25,8 @@
 
 		<div style="flex:1;"></div>
 
-		<!-- ============ USER CARD + MENU ============ -->
-		<div class="jv-usermenu-wrap" style="position:relative;border-top:1px solid var(--border);">
+		<!-- ============ USER CARD + MENU (hidden during first-run setup) ============ -->
+		<div v-if="!minimal" class="jv-usermenu-wrap" style="position:relative;border-top:1px solid var(--border);">
 			<div v-if="userMenuOpen" style="position:absolute;bottom:calc(100% + 6px);left:12px;right:12px;background:var(--surface);border:1px solid var(--border-2);border-radius:10px;box-shadow:0 10px 28px rgba(20,20,30,.16);padding:5px;z-index:20;">
 				<button class="jv-menuitem" @click="toggleTheme">
 					<svg v-if="effectiveDark" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
@@ -59,6 +62,11 @@ import { ref, computed, onMounted, onBeforeUnmount } from "vue"
 import { useRoute } from "vue-router"
 import { useTheme } from "@/composables/useTheme"
 import { session } from "@/data/session"
+
+// `minimal` = first-run onboarding wizard shell: brand mark only, no
+// Chat/Account nav and no user card/menu (nothing to navigate to and no
+// fully-set-up account yet). Default false keeps ChatView/AccountView as-is.
+defineProps({ minimal: { type: Boolean, default: false } })
 
 const route = useRoute()
 
