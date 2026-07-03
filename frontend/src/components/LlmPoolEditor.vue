@@ -147,7 +147,7 @@
             <div v-for="(a, ai) in m.accounts" :key="a.account_ref || ai"
                  style="display:flex;align-items:center;gap:8px;padding:5px 9px;border:1px solid var(--green-bd);background:var(--green-bg);border-radius:6px;">
               <span style="font-size:12px;font-weight:600;color:var(--green);">connected</span>
-              <span style="font-size:14px;color:var(--text);">{{ a.label || a.account_ref }}</span>
+              <span style="font-size:14px;color:var(--text);">{{ accountLabel(a) }}</span>
               <span style="font-size:12px;color:var(--text-3);">{{ a.upstream || 'openai' }}</span>
               <button v-if="editable" @click="removeAccount(m, ai)" title="Remove account"
                       style="margin-left:auto;border:1px solid var(--red-bd);background:var(--red-bg);color:var(--red);border-radius:5px;width:22px;height:22px;cursor:pointer;font-size:12px;">✕</button>
@@ -416,6 +416,12 @@ function seedFromPreset(entry) {
 }
 
 // ---- connect flow (paste-back OAuth) -------------------------------------
+function accountLabel(a) {
+  // Show a real label / email; never surface the internal SUB_<hex> account ref.
+  const l = (a && a.label) || ""
+  if (l && !/^SUB_/i.test(l)) return l
+  return (a && a.account_email) || "Account connected"
+}
 async function startConnect(m) {
   if (!m._connect) m._connect = blankConnect()
   if (!(m.model || "").trim()) {
