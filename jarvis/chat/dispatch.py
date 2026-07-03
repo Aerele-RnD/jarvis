@@ -40,5 +40,7 @@ def publish_chat_send(payload: dict) -> None:
 	the subscriber rehydrates it and calls ``handle_chat_send`` with the
 	same dict, so the two dispatch paths produce identical turn behaviour.
 	"""
-	conn = frappe.cache().get_redis_connection()
-	conn.publish(_channel(frappe.local.site), json.dumps(payload))
+	# frappe.cache() IS a redis.Redis subclass (RedisWrapper) - publish
+	# directly. (The previously-assumed .get_redis_connection() accessor
+	# does not exist on this frappe; caught by the Stage A live smoke.)
+	frappe.cache().publish(_channel(frappe.local.site), json.dumps(payload))

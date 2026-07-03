@@ -44,7 +44,11 @@ class TestMaybeStartChatSubscriber(FrappeTestCase):
 		handlers._SUBSCRIBER_SPAWNED = False
 
 	def test_no_spawn_when_socketio_backend_unset(self):
+		# _read_common_config patched: the gate falls back to the real
+		# common_site_config.json, which may legitimately have the flag on
+		# (it does on the Path B dev bench).
 		with patch.object(frappe, "conf", _FakeConf({})), \
+		     patch.object(handlers, "_read_common_config", return_value={}), \
 		     patch("gevent.spawn") as spawn:
 			spawned = handlers.maybe_start_chat_subscriber()
 		self.assertFalse(spawned)
@@ -195,6 +199,40 @@ class TestRunOne(FrappeTestCase):
 		), patch("jarvis.chat.turn_handler.handle_chat_send") as mock_handle:
 			handlers._run_one(b"{}", self.SITE)  # must not raise
 		mock_handle.assert_not_called()
+
+
+class TestDispatch(FrappeTestCase):
+	"""Path B publisher semantics - both caught by the Stage A live smoke.
+
+	1. frappe.cache() IS a redis.Redis subclass; publish directly (the
+	   previously-assumed .get_redis_connection() accessor does not exist).
+	2. _dispatch_turn must publish AFTER the request transaction commits:
+	   pub/sub delivery is instant, so a mid-transaction publish lets the
+	   subscriber greenlet start the turn before the conversation and
+	   user-message rows are visible (LinkValidationError on the
+	   placeholder insert)."""
+
+	def test_publish_goes_through_cache_client_directly(self):
+		from jarvis.chat import dispatch
+
+		fake_cache = MagicMock()
+		payload = {"conversation_id": "c1", "message_id": "m1", "run_id": "r1"}
+		with patch.object(frappe, "cache", return_value=fake_cache):
+			dispatch.publish_chat_send(payload)
+		fake_cache.publish.assert_called_once_with(
+			dispatch._channel(frappe.local.site), json.dumps(payload)
+		)
+
+	def test_dispatch_turn_publishes_only_after_commit(self):
+		from jarvis.chat import api as chat_api
+
+		payload = {"conversation_id": "c1", "message_id": "m1", "run_id": "r1"}
+		with patch.object(frappe, "conf", _FakeConf({"socketio_backend": "python"})), \
+		     patch("jarvis.chat.dispatch.publish_chat_send") as mock_pub:
+			chat_api._dispatch_turn(payload)
+			mock_pub.assert_not_called()  # nothing until the transaction lands
+			frappe.db.commit()
+		mock_pub.assert_called_once_with(payload)
 
 
 class TestChannelFormat(FrappeTestCase):

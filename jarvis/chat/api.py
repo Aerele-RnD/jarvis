@@ -751,7 +751,13 @@ def _dispatch_turn(enqueue_kwargs: dict) -> None:
 	if (frappe.conf.get("socketio_backend") or "").strip().lower() == "python":
 		from jarvis.chat.dispatch import publish_chat_send
 
-		publish_chat_send(enqueue_kwargs)
+		# Publish AFTER the request transaction commits. Pub/sub delivery is
+		# instant (unlike RQ dequeue latency), so publishing mid-transaction
+		# lets the subscriber greenlet start the turn before the conversation
+		# and user-message rows are visible - LinkValidationError on the
+		# placeholder insert. Mirrors enqueue-after-commit semantics; caught
+		# by the Stage A live smoke.
+		frappe.db.after_commit.add(lambda: publish_chat_send(enqueue_kwargs))
 	else:
 		frappe.enqueue(
 			method="jarvis.chat.worker.run_agent_turn",
