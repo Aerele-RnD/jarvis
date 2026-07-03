@@ -168,7 +168,7 @@
 					</div>
 					<h1 style="font-size:23px;font-weight:600;letter-spacing:-.02em;margin:0 0 8px;">Welcome to Jarvis</h1>
 					<p style="font-size:14.5px;color:var(--text-2);margin:0 0 26px;line-height:1.5;">Finish a quick setup to start chatting.</p>
-					<button v-if="isSystemManager" class="jv-btn jv-btn--primary" style="height:38px;padding:0 20px;font-size:13.5px;" @click="window.location.assign('/jarvis/onboarding')">Set up Jarvis →</button>
+					<button v-if="isSystemManager" class="jv-btn jv-btn--primary" style="height:38px;padding:0 20px;font-size:13.5px;" @click="goToOnboarding">Set up Jarvis →</button>
 					<p v-else style="font-size:13.5px;color:var(--text-3);margin:0;">Ask your workspace admin to finish setting up Jarvis.</p>
 				</div>
 			</div>
@@ -3979,6 +3979,12 @@ function fillInput(text) {
 }
 function goDesk() {
 	window.location.assign("/app")
+}
+function goToOnboarding() {
+	// Full nav (not router.push): the onboarding-complete flow reloads to /jarvis/
+	// anyway, and a bare `window.*` in an inline @click compiles to _ctx.window
+	// (undefined) — so it must live in a script method, per goDesk/openErpDesk.
+	window.location.assign("/jarvis/onboarding")
 }
 function goAccount() {
 	userMenuOpen.value = false
