@@ -5,11 +5,17 @@ reads from ``frappe.boot`` at page load. Apps register a single hook
 function via ``hooks.boot_session`` to write their own keys onto that
 blob. This file is that function for jarvis.
 
-Today the only key we set is ``jarvis_sandbox_mode``, replacing the
-previous JS-side check on ``frappe.boot.developer_mode``. Sandbox mode
-controls whether the developer-onboarding shortcut + the Jarvis Settings
-DEV-only reset button are surfaced; see ``jarvis.dev.is_sandbox_mode``
-for the resolution rules.
+Keys we set:
+
+- ``jarvis_sandbox_mode`` - replacing the previous JS-side check on
+  ``frappe.boot.developer_mode``. Sandbox mode controls whether the
+  developer-onboarding shortcut + the Jarvis Settings DEV-only reset
+  button are surfaced; see ``jarvis.dev.is_sandbox_mode`` for the
+  resolution rules.
+- ``jarvis_onboarded`` - whether the customer has finished the Jarvis
+  setup wizard, used by the desk's not-onboarded banner
+  (``jarvis_onboarding_banner.bundle.js``) to decide whether to nag a
+  System Manager toward ``/jarvis/onboarding``.
 """
 
 import frappe
@@ -25,3 +31,15 @@ def set_jarvis_boot(bootinfo):
 		# Don't let a misconfigured doctype or missing migration break the
 		# session boot. JS treats the missing key as false (default off).
 		bootinfo.jarvis_sandbox_mode = False
+
+	# Drives the desk's not-onboarded banner (jarvis_onboarding_banner.bundle.js).
+	# Uses is_ready_for_chat rather than the lighter is_onboarded because the
+	# SPA wizard now covers both signup AND the LLM-connect step (Phase 2
+	# Task 5) - is_onboarded only reflects step 1 (admin api_key present) and
+	# would mark a signed-up-but-not-connected customer as "done", silencing
+	# the nag before setup is actually finished.
+	try:
+		from jarvis.account import is_ready_for_chat
+		bootinfo.jarvis_onboarded = bool((is_ready_for_chat() or {}).get("ready"))
+	except Exception:
+		bootinfo.jarvis_onboarded = True   # fail-safe: never nag on a boot error
