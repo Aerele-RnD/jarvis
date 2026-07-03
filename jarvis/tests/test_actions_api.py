@@ -52,3 +52,102 @@ class TestLoadDoc(FrappeTestCase):
 		self.assertEqual(r["values"]["first_name"], "LoadDoc Test")
 		self.assertEqual(r["tables"]["email_ids"][0]["email_id"], "a@example.com")
 		self.assertEqual(r["docstatus"], 0)
+
+
+from jarvis.chat.actions_api import apply_action
+
+
+def _make_conversation() -> str:
+	conv = frappe.get_doc({
+		"doctype": "Jarvis Conversation", "title": "actions-api test",
+	}).insert(ignore_permissions=True)
+	return conv.name
+
+
+class TestApplyAction(FrappeTestCase):
+	def _cleanup_doc(self, doctype, name):
+		self.addCleanup(lambda: frappe.delete_doc(doctype, name, force=True, ignore_permissions=True))
+
+	def test_create_simple(self):
+		r = apply_action(frappe.as_json({
+			"verb": "create", "doctype": "ToDo",
+			"values": {"description": "draft panel create test"},
+		}))
+		self._cleanup_doc("ToDo", r["name"])
+		self.assertTrue(r["ok"])
+		self.assertTrue(frappe.db.exists("ToDo", r["name"]))
+
+	def test_create_with_child_rows(self):
+		r = apply_action(frappe.as_json({
+			"verb": "create", "doctype": "Contact",
+			"values": {
+				"first_name": "DraftPanel Child Test",
+				"email_ids": [
+					{"email_id": "one@example.com", "is_primary": 1},
+					{"email_id": "two@example.com"},
+				],
+			},
+		}))
+		self._cleanup_doc("Contact", r["name"])
+		doc = frappe.get_doc("Contact", r["name"])
+		self.assertEqual(len(doc.email_ids), 2)
+		self.assertEqual(doc.email_ids[1].email_id, "two@example.com")
+
+	def test_update_replaces_child_rows(self):
+		c = frappe.get_doc({
+			"doctype": "Contact", "first_name": "DraftPanel Update Test",
+			"email_ids": [{"email_id": "old@example.com", "is_primary": 1}],
+		}).insert()
+		self._cleanup_doc("Contact", c.name)
+		apply_action(frappe.as_json({
+			"verb": "update", "doctype": "Contact", "name": c.name,
+			"values": {"email_ids": [
+				{"email_id": "new1@example.com", "is_primary": 1},
+				{"email_id": "new2@example.com"},
+			]},
+		}))
+		doc = frappe.get_doc("Contact", c.name)
+		self.assertEqual(
+			sorted(e.email_id for e in doc.email_ids),
+			["new1@example.com", "new2@example.com"],
+		)
+
+	def test_delete(self):
+		t = frappe.get_doc({"doctype": "ToDo", "description": "to delete"}).insert()
+		apply_action(frappe.as_json({"verb": "delete", "doctype": "ToDo", "name": t.name}))
+		self.assertFalse(frappe.db.exists("ToDo", t.name))
+
+	def test_unknown_verb_refused(self):
+		from jarvis.exceptions import InvalidArgumentError
+		with self.assertRaises(InvalidArgumentError):
+			apply_action(frappe.as_json({"verb": "yolo", "doctype": "ToDo"}))
+
+	def test_receipt_messages_appended(self):
+		conv = _make_conversation()
+		self.addCleanup(lambda: frappe.delete_doc("Jarvis Conversation", conv, force=True, ignore_permissions=True))
+		r = apply_action(frappe.as_json({
+			"verb": "create", "doctype": "ToDo",
+			"values": {"description": "receipt test"},
+			"conversation": conv,
+		}))
+		self._cleanup_doc("ToDo", r["name"])
+		msgs = frappe.get_all(
+			"Jarvis Chat Message", filters={"conversation": conv},
+			fields=["role", "content", "tool_name"], order_by="seq asc",
+		)
+		self.assertEqual([m.role for m in msgs], ["tool", "assistant"])
+		self.assertEqual(msgs[0].tool_name, "create_doc")
+		self.assertIn(r["name"], msgs[1].content)
+
+	def test_conversation_ownership_enforced(self):
+		conv = _make_conversation()  # owner = Administrator
+		self.addCleanup(lambda: frappe.delete_doc("Jarvis Conversation", conv, force=True, ignore_permissions=True))
+		frappe.set_user("Guest")
+		try:
+			with self.assertRaises(frappe.PermissionError):
+				apply_action(frappe.as_json({
+					"verb": "create", "doctype": "ToDo",
+					"values": {"description": "x"}, "conversation": conv,
+				}))
+		finally:
+			frappe.set_user("Administrator")
