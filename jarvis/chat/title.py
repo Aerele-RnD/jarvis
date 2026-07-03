@@ -152,6 +152,51 @@ def _generate_via_gateway(gateway_url, source_text, *, model, provider) -> str:
 	return normalize_title(text)
 
 
+def enqueue_autotitle(conversation_id: str, user: str) -> None:
+	"""Defer title generation to the SHORT queue (2026-07 latency plan,
+	Phase 1.2) so the long-queue chat worker is freed as soon as the turn
+	ends instead of running a 2-8s title LLM turn inline. Cheap still-unnamed
+	gate here so already-titled conversations never spawn a pointless job.
+	"""
+	title = frappe.db.get_value(CONV, conversation_id, "title")
+	if title and title != "New chat":
+		return  # user renamed it, or we already titled it
+	frappe.enqueue(
+		"jarvis.chat.title.autotitle_job",
+		queue="short",
+		conversation_id=conversation_id,
+		user=user,
+	)
+
+
+def autotitle_job(conversation_id: str, user: str) -> None:
+	"""Short-queue job body for the deferred auto-title. Re-resolves
+	settings / gateway / model itself (nothing heavyweight is serialized
+	through the queue). Managed mode only — the enqueue site is already
+	gated on ``not selfhost.is_self_hosted()``. Best-effort like the old
+	inline path: any failure is logged, never affects the finished turn.
+	"""
+	try:
+		from jarvis.chat.turn_handler import _resolve_model_and_provider
+
+		settings = frappe.get_single("Jarvis Settings")
+		gateway_url = (settings.agent_url or "").replace(
+			"http://", "ws://").replace("https://", "wss://")
+		if not gateway_url:
+			return
+		conv = frappe.get_doc(CONV, conversation_id)
+		model, provider = _resolve_model_and_provider(conv)
+		maybe_autotitle(
+			conversation_id, user,
+			gateway_url=gateway_url, model=model, provider=provider,
+		)
+	except Exception:
+		frappe.log_error(
+			title="auto-title job failed",
+			message=frappe.get_traceback(),
+		)
+
+
 def maybe_autotitle(conversation_id: str, user: str, *, gateway_url, model, provider) -> None:
 	"""Generate + set a concise title for a still-unnamed conversation.
 

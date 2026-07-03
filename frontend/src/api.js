@@ -46,7 +46,10 @@ export const setConversationModel = (conversation, model) =>
 	call("jarvis.chat.api.set_conversation_model", { conversation, model: model || "" })
 
 export async function sendMessage(conversation, message, modelOverride, attachments, context) {
-	const args = { conversation, message }
+	// Empty conversation is allowed: the backend creates (or focuses) an empty
+	// conversation itself and returns its id as `conversation_id` — saves the
+	// SPA a createOrFocusEmpty round-trip before the first send (latency plan).
+	const args = { conversation: conversation || "", message }
 	if (modelOverride) args.model_override = modelOverride
 	if (attachments && attachments.length) args.attachments = JSON.stringify(attachments)
 	if (context && context.doctype) args.context = JSON.stringify(context)
