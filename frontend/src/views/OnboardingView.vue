@@ -718,11 +718,11 @@ onMounted(() => {
 	padding: 40px 24px 64px;
 }
 .jv-ob-wrap {
-	max-width: 720px;
+	max-width: 920px;
 	width: 100%;
 }
-.jv-ob-h1 { font-size: 20px; font-weight: 600; margin: 0 0 8px; }
-.jv-ob-sub { font-size: 13.5px; color: var(--text-3); margin: 0 0 20px; }
+.jv-ob-h1 { font-size: 25px; font-weight: 650; margin: 0 0 10px; }
+.jv-ob-sub { font-size: 14.5px; color: var(--text-3); margin: 0 0 26px; }
 
 .jv-ob-steps {
 	display: flex;
@@ -764,8 +764,8 @@ onMounted(() => {
 
 .jv-ob-body {
 	border: 1px solid var(--border);
-	border-radius: 12px;
-	padding: 24px 26px;
+	border-radius: 14px;
+	padding: 34px 38px;
 	background: var(--surface);
 }
 .jv-ob-placeholder { font-size: 13.5px; color: var(--text-3); margin: 0 0 20px; }
@@ -787,13 +787,13 @@ onMounted(() => {
 /* ---- mode-choice cards — ported from desk .jo-mode* (jarvis_onboarding.js
    ~1889-1898), theme tokens standing in for the desk's --jarvis-primary /
    --card-bg / --border-color. ---- */
-.jv-ob-modes { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 4px; }
+.jv-ob-modes { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 6px; }
 .jv-ob-mode {
 	display: flex;
 	flex-direction: column;
 	border: 1px solid var(--border);
 	border-radius: 12px;
-	padding: 18px 16px;
+	padding: 24px 22px;
 	background: var(--surface-1);
 	transition: border-color .15s, transform .1s;
 }
