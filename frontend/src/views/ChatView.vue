@@ -2621,6 +2621,7 @@ function _coerceOut(f) {
 function _coerceRow(t, r) {
 	const out = {}
 	for (const c of t.columns) {
+		if (c.read_only) continue
 		let v = r[c.fieldname]
 		if (v === "" || v == null) continue
 		if (["Int", "Float", "Currency", "Percent"].includes(c.fieldtype)) v = Number(v)
