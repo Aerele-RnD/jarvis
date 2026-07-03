@@ -123,11 +123,18 @@ class TestRelayTurnEvents(FrappeTestCase):
 
 	def test_transport_drop_yields_interrupted_transport_and_does_not_raise(self):
 		sess = self._sess([OpenclawUnreachableError("ws closed mid-stream")])
+		# The generator swallows the exception, so the pool's
+		# discard-on-exception contract never fires; the consumer must close
+		# the dead WS itself so the pool healthcheck evicts it instead of
+		# handing the corpse to the next turn.
+		closed = []
+		sess.close = lambda: closed.append(True)
 		out = list(sess.relay_turn_events("sk", "r1"))
 		self.assertEqual(len(out), 1)
 		self.assertEqual(out[0]["kind"], "relay:interrupted")
 		self.assertEqual(out[0]["reason"], "transport")
 		self.assertIn("ws closed mid-stream", out[0]["detail"])
+		self.assertEqual(closed, [True])
 
 	def test_deadline_yields_interrupted_deadline_on_stalling_recv(self):
 		sess = OpenclawSession.__new__(OpenclawSession)

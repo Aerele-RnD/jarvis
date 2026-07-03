@@ -438,6 +438,15 @@ class OpenclawSession:
 			try:
 				frame = self._recv(remaining)
 			except OpenclawUnreachableError as e:
+				# Close the dead WS before yielding: this generator swallows
+				# the exception by design, so the pool's discard-on-exception
+				# contract never fires. Closing flips the connected flag the
+				# pool healthcheck reads, so the corpse is not handed to the
+				# next turn (which would fail pre-ack as a false run:error).
+				try:
+					self.close()
+				except Exception:
+					pass
 				yield {"kind": "relay:interrupted", "reason": "transport", "detail": str(e)}
 				return
 			if frame is None or frame.get("type") != "event":
