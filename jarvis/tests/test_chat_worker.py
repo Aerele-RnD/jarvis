@@ -996,3 +996,71 @@ class TestRunAgentTurnThinkingDirective(FrappeTestCase):
 		args, kwargs = stream_mock.call_args
 		message_sent = args[2]
 		self.assertTrue(message_sent.startswith("/think high\n"))
+
+
+class TestRichOutputsRouting(FrappeTestCase):
+	"""Recovery-completeness batch: the clean-exit path routes canvas +
+	generated-image persistence through the shared
+	``persist_rich_outputs`` function (extracted so snapshot recovery can
+	call the same code). Pin that the worker actually calls it, with the
+	right args, rather than re-testing canvas/generated-image behavior
+	itself (covered by test_canvas.py and generated_media's own tests)."""
+
+	def setUp(self):
+		openclaw_session_pool._POOL.clear()
+		_ensure_test_user()
+		self._orig_user = frappe.session.user
+		frappe.set_user(TEST_USER)
+		_cleanup_user_conversations()
+		self.conv, self.user_msg = _make_conversation_with_user_message()
+
+	def tearDown(self):
+		_cleanup_user_conversations()
+		frappe.set_user(self._orig_user)
+
+	def test_clean_exit_calls_persist_rich_outputs_with_int_turn_start_ms(self):
+		fake_sess = MagicMock()
+		fake_sess.chat_send.side_effect = lambda sk, msg, idem, **kw: {"runId": idem, "status": "started"}
+		fake_sess.relay_turn_events.return_value = _fake_event_stream([
+			{"kind": "lifecycle", "phase": "start"},
+			{"kind": "assistant", "text": "Hello", "delta": "Hello"},
+			{"kind": "lifecycle", "phase": "end"},
+			{"kind": "relay:final", "text": None},
+		])
+		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess):
+			with patch("jarvis.chat.worker.publish_to_user"):
+				with patch("jarvis.chat.turn_handler.persist_rich_outputs") as rich:
+					run_agent_turn(self.conv, self.user_msg, run_id="r1")
+
+		rich.assert_called_once()
+		args = rich.call_args.args
+		assistant_name = frappe.db.get_value(
+			MSG, {"conversation": self.conv, "role": "assistant"}, "name",
+		)
+		self.assertEqual(args[0], assistant_name)
+		self.assertEqual(args[1], self.conv)
+		self.assertEqual(args[2], TEST_USER)
+		self.assertEqual(args[3], "r1")
+		self.assertIsInstance(args[4], int)
+
+	def test_clean_exit_leaves_was_recovered_unset(self):
+		# was_recovered is snapshot recovery's fingerprint - a turn that
+		# finishes via the live worker's clean exit must NOT carry it.
+		fake_sess = MagicMock()
+		fake_sess.chat_send.side_effect = lambda sk, msg, idem, **kw: {"runId": idem, "status": "started"}
+		fake_sess.relay_turn_events.return_value = _fake_event_stream([
+			{"kind": "lifecycle", "phase": "start"},
+			{"kind": "assistant", "text": "Hello", "delta": "Hello"},
+			{"kind": "lifecycle", "phase": "end"},
+			{"kind": "relay:final", "text": None},
+		])
+		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess):
+			with patch("jarvis.chat.worker.publish_to_user"):
+				run_agent_turn(self.conv, self.user_msg, run_id="r1")
+
+		row = frappe.db.get_value(
+			MSG, {"conversation": self.conv, "role": "assistant"},
+			["streaming", "was_recovered"], as_dict=True,
+		)
+		self.assertEqual(row["streaming"], 0)  # the turn did finish cleanly
+		self.assertEqual(row["was_recovered"], 0)

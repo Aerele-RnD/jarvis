@@ -69,15 +69,66 @@ def force_resync(action: str = "reload") -> dict:
 	if action not in ("reload", "restart"):
 		raise frappe.ValidationError(f"invalid action {action!r}; expected reload or restart")
 	settings = frappe.get_single("Jarvis Settings")
-	if (settings.get_password("jarvis_admin_api_key", raise_exception=False) or "").strip():
-		settings._sync_via_admin(action)
-	else:
-		settings._sync_via_local_openclaw(action)
+	# Always the admin path: the legacy local-openclaw sync was retired with
+	# the managed fleet (its method no longer exists), and _sync_via_admin
+	# surfaces its own clear error on an unconfigured bench.
+	settings._sync_via_admin(action)
 	settings.reload()
 	return {
 		"action": action,
 		"last_sync_at": str(settings.get("last_sync_at") or ""),
 		"last_sync_status": settings.get("last_sync_status") or "",
+	}
+
+
+@frappe.whitelist()
+def chat_recovery_stats() -> dict:
+	"""Operator-facing visibility into snapshot recovery (turn_recovery):
+	how often the never-error machinery is quietly compensating for a
+	gateway/turn that never completed live. currently_recovering is a live,
+	un-windowed snapshot (streaming=1 AND recovering=1 right now); the other
+	counts are windowed over 24h and 7d."""
+	from jarvis.chat.turn_recovery import CEILING_ERROR_MESSAGE
+
+	currently_recovering = frappe.db.sql(
+		"""
+		SELECT COUNT(*) FROM `tabJarvis Chat Message`
+		WHERE role = 'assistant' AND streaming = 1 AND recovering = 1
+		"""
+	)[0][0]
+
+	def _window(hours: int) -> dict:
+		row = frappe.db.sql(
+			"""
+			SELECT
+				COUNT(*) AS total,
+				SUM(CASE WHEN was_recovered = 1 THEN 1 ELSE 0 END) AS recovered,
+				SUM(CASE WHEN error = %(ceiling_msg)s THEN 1 ELSE 0 END) AS ceiling_errored
+			FROM `tabJarvis Chat Message`
+			WHERE role = 'assistant' AND creation >= %(since)s
+			""",
+			{
+				"ceiling_msg": CEILING_ERROR_MESSAGE,
+				"since": frappe.utils.add_to_date(frappe.utils.now_datetime(), hours=-hours),
+			},
+			as_dict=True,
+		)[0]
+		return {
+			"total": row.total or 0,
+			"recovered": row.recovered or 0,
+			"currently_recovering": currently_recovering,
+			"ceiling_errored": row.ceiling_errored or 0,
+		}
+
+	win_24h = _window(24)
+	win_7d = _window(24 * 7)
+	recovered_rate_24h = (
+		(win_24h["recovered"] / win_24h["total"]) if win_24h["total"] else 0
+	)
+	return {
+		"24h": win_24h,
+		"7d": win_7d,
+		"recovered_rate_24h": recovered_rate_24h,
 	}
 
 
