@@ -380,6 +380,79 @@ class TestTurnRecovery(FrappeTestCase):
 		], min_seq=7)
 		self.assertEqual(text, "new")
 
+	# --- upper bound: never steal a LATER turn's answer (live catch,
+	# --- 2026-07-03: a parked row recovered with the next question's reply)
+
+	def test_latest_assistant_text_max_seq_excludes_later_turns_message(self):
+		msgs = [
+			{"role": "assistant", "__openclaw": {"seq": 2}, "content": "GOLF"},
+			{"role": "assistant", "__openclaw": {"seq": 4}, "content": "HOTEL"},
+		]
+		self.assertEqual(
+			turn_recovery._latest_assistant_text(msgs, min_seq=0, max_seq=2), "GOLF"
+		)
+		self.assertEqual(
+			turn_recovery._latest_assistant_text(msgs, min_seq=0), "HOTEL"
+		)
+
+	def _add_later_assistant_row(self, watermark: int):
+		"""A completed later turn in the same conversation whose watermark
+		(captured before ITS send) caps the parked row's window."""
+		seq0 = frappe.db.get_value(MSG_DT, self.msg.name, "seq")
+		doc = frappe.get_doc({
+			"doctype": MSG_DT, "conversation": self.conv.name,
+			"seq": (seq0 or 0) + 2, "role": "assistant",
+			"content": "HOTEL", "streaming": 0,
+		})
+		doc.insert(ignore_permissions=True)
+		frappe.db.set_value(MSG_DT, doc.name, "openclaw_seq_watermark", watermark)
+		frappe.db.commit()
+		return doc
+
+	def test_recovery_bounded_by_next_turns_watermark(self):
+		"""Parked row's own reply IS in the transcript window: recovery
+		must take it, not the later turn's newer reply."""
+		self._add_later_assistant_row(watermark=2)
+		sess = self._fake_sess(messages_by_key={SK: [
+			{"role": "assistant", "content": "GOLF", "__openclaw": {"seq": 2}},
+			{"role": "assistant", "content": "HOTEL", "__openclaw": {"seq": 4}},
+		]})
+		self._run(sess)
+		row = self._row()
+		self.assertEqual(row.content, "GOLF")
+		self.assertEqual(row.streaming, 0)
+		self.assertEqual(row.recovering, 0)
+
+	def test_recovery_waits_when_window_empty_instead_of_stealing(self):
+		"""Parked row's reply is genuinely lost (window empty); a later
+		turn's reply exists past the bound. Recovery must WAIT (ceiling
+		errors it later), never stamp the later answer onto this row."""
+		self._add_later_assistant_row(watermark=2)
+		sess = self._fake_sess(messages_by_key={SK: [
+			{"role": "assistant", "content": "HOTEL", "__openclaw": {"seq": 4}},
+		]})
+		_, pub = self._run(sess)
+		row = self._row()
+		self.assertEqual(row.streaming, 1)
+		self.assertEqual(row.recovering, 1)
+		self.assertNotEqual(row.content, "HOTEL")
+		self.assertNotIn("run:end", [c.args[1]["kind"] for c in pub.call_args_list])
+
+	def test_next_turn_watermark_none_without_later_usable_row(self):
+		self.assertIsNone(
+			turn_recovery._next_turn_watermark(
+				self.conv.name,
+				frappe.db.get_value(MSG_DT, self.msg.name, "seq"),
+			)
+		)
+		self._add_later_assistant_row(watermark=0)  # unusable: never captured
+		self.assertIsNone(
+			turn_recovery._next_turn_watermark(
+				self.conv.name,
+				frappe.db.get_value(MSG_DT, self.msg.name, "seq"),
+			)
+		)
+
 	def test_recover_now_idempotent_after_finalize_no_double_publish(self):
 		sess = self._fake_sess(messages_by_key={SK: [
 			{"role": "assistant", "content": "the full answer", "__openclaw": {"seq": 2}},
