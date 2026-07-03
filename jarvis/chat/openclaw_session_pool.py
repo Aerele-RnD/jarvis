@@ -199,8 +199,12 @@ def _acquire_entry(group: _GatewayGroup) -> _PooledEntry:
 			time.monotonic() - entry.last_used,
 			_safe_connected(entry.session),
 		)
-		_close_quietly(entry.session)
 		try:
+			# _close_quietly swallows Exception but not BaseException (a
+			# greenlet kill delivered inside close() would otherwise leak
+			# this slot forever: in_use stays True with no notify), so the
+			# close sits INSIDE the same guard as the reconnect.
+			_close_quietly(entry.session)
 			entry.session = _do_connect(group.gateway_url)
 		except BaseException:
 			# Reconnect failed: drop the dead entry entirely and free the
