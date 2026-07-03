@@ -103,7 +103,7 @@ const isSystemManager = !!window.is_system_manager
 
 // The desk page (still Razorpay-backed) is the existing billing entry point.
 // Building a new payment flow here is explicitly out of scope for this phase.
-const billingUrl = "/app/jarvis-account"
+const billingUrl = "/app/jarvis-account?billing=1"
 
 function errMsg(e) {
 	return (e && ((e.messages && e.messages[0]) || e.message)) || "Something went wrong."
