@@ -23,10 +23,31 @@
 				<div class="jv-ob-body">
 					<div v-if="state.step === 'mode'">
 						<h1 class="jv-ob-h1">How do you want to run Jarvis?</h1>
-						<p class="jv-ob-sub">[mode choice — Tasks 3-5. Placeholder buttons below exercise setMode().]</p>
-						<div class="jv-ob-placeholder-actions">
-							<button class="jv-ob-btn jv-ob-btn-primary" @click="setMode('managed')">Choose Managed →</button>
-							<button class="jv-ob-btn" @click="setMode('selfhost')">Choose Self-hosted →</button>
+						<p class="jv-ob-sub">Choose where the openclaw agent runs. You can switch later from My Account.</p>
+						<!-- Ported verbatim from desk renderModeChoice (jarvis_onboarding.js ~262). -->
+						<div class="jv-ob-modes">
+							<div class="jv-ob-mode">
+								<div class="jv-ob-mode-icon">☁</div>
+								<div class="jv-ob-mode-name">Managed</div>
+								<ul class="jv-ob-mode-feats">
+									<li><span class="jv-ob-tick">✓</span>We host the openclaw agent for you</li>
+									<li><span class="jv-ob-tick">✓</span>Includes the Jarvis persona + Frappe skills</li>
+									<li><span class="jv-ob-tick">✓</span>Managed LLM proxy — pool your API keys &amp; chat subscriptions, with automatic failover</li>
+									<li><span class="jv-ob-tick">✓</span>Simple plan &amp; billing</li>
+								</ul>
+								<button class="jv-ob-btn jv-ob-btn-primary jv-ob-mode-btn" @click="setMode('managed')">Choose →</button>
+							</div>
+							<div class="jv-ob-mode">
+								<div class="jv-ob-mode-icon">🖥</div>
+								<div class="jv-ob-mode-name">Self-hosted</div>
+								<ul class="jv-ob-mode-feats">
+									<li><span class="jv-ob-tick">✓</span>Bring your own openclaw server</li>
+									<li><span class="jv-ob-tick">✓</span>Bring your own LLM</li>
+									<li><span class="jv-ob-tick">✓</span>Open-source · bring your own persona &amp; skills</li>
+									<li class="jv-ob-mode-warn"><span class="jv-ob-warn-icon">⚠</span>Not included: the Jarvis persona + Frappe skill packs, the managed LLM proxy (pooling &amp; failover), and managed updates &amp; support.</li>
+								</ul>
+								<button class="jv-ob-btn jv-ob-mode-btn" @click="setMode('selfhost')">Choose →</button>
+							</div>
 						</div>
 					</div>
 
@@ -242,8 +263,32 @@ onMounted(() => {
 .jv-ob-btn:hover { background: var(--surface-2); }
 .jv-ob-btn-primary { border-color: var(--blue-bd); background: var(--blue-bg); color: var(--blue); }
 
+/* ---- mode-choice cards — ported from desk .jo-mode* (jarvis_onboarding.js
+   ~1889-1898), theme tokens standing in for the desk's --jarvis-primary /
+   --card-bg / --border-color. ---- */
+.jv-ob-modes { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 4px; }
+.jv-ob-mode {
+	display: flex;
+	flex-direction: column;
+	border: 1px solid var(--border);
+	border-radius: 12px;
+	padding: 18px 16px;
+	background: var(--surface-1);
+	transition: border-color .15s, transform .1s;
+}
+.jv-ob-mode:hover { border-color: var(--blue-bd); transform: translateY(-1px); }
+.jv-ob-mode-icon { font-size: 26px; line-height: 1; }
+.jv-ob-mode-name { font-size: 16px; font-weight: 700; color: var(--text); margin: 8px 0 10px; }
+.jv-ob-mode-feats { list-style: none; padding: 0; margin: 0 0 16px; flex: 1; }
+.jv-ob-mode-feats li { display: flex; gap: 7px; font-size: 12.5px; color: var(--text-2); line-height: 1.5; margin-bottom: 7px; }
+.jv-ob-tick { color: var(--blue); font-size: 11px; margin-top: 2px; flex: none; }
+.jv-ob-mode-warn { color: var(--red); margin-top: 8px; }
+.jv-ob-warn-icon { margin-right: 4px; flex: none; }
+.jv-ob-mode-btn { width: 100%; margin-top: auto; }
+
 @media (max-width: 520px) {
 	.jv-ob-main { padding: 28px 16px 48px; }
 	.jv-ob-body { padding: 18px; }
+	.jv-ob-modes { grid-template-columns: 1fr; }
 }
 </style>
