@@ -197,7 +197,7 @@ onMounted(() => {
 }
 .jv-acct-h1 { font-size: 20px; font-weight: 600; margin: 0 0 18px; }
 .jv-acct-wrap {
-	max-width: 960px;
+	max-width: 1120px;
 	margin: 0;
 	display: flex;
 	flex-direction: column;
