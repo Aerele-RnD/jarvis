@@ -567,6 +567,28 @@ def handle_chat_send(payload: dict) -> None:
 								title="chat: model override patch failed",
 								message=frappe.get_traceback(),
 							)
+					# Watermark BEFORE the send: recovery must never stamp a
+					# previous turn's answer onto this row (a run that dies
+					# with zero output leaves the prior reply as the newest
+					# transcript message). Best-effort: on failure the
+					# watermark stays 0 and recovery behaves as before.
+					try:
+						_wm_msgs = sess.get_session_messages(conv.session_key, limit=5)
+						watermark = max(
+							(((m or {}).get("__openclaw") or {}).get("seq", 0) for m in _wm_msgs),
+							default=0,
+						)
+						if watermark:
+							frappe.db.set_value(
+								MSG, assistant_msg.name, "openclaw_seq_watermark", watermark,
+								update_modified=False,
+							)
+							frappe.db.commit()
+					except Exception:
+						frappe.log_error(
+							title="chat: seq watermark capture failed",
+							message=frappe.get_traceback(),
+						)
 					ack = sess.chat_send(
 						conv.session_key, user_message, run_id,
 						thinking=(conv.thinking_override or "").strip() or None,
@@ -576,16 +598,26 @@ def handle_chat_send(payload: dict) -> None:
 						# Cached replay of a completed run (same run_id
 						# re-enqueued after the worker died post-completion).
 						# No events will follow; finalize from the durable
-						# transcript instead.
-						_mark_recovering(assistant_msg.name)
-						_try_recover_now(conversation_id)
-						return
-					terminal = _consume_relay(sess.relay_turn_events(
-						conv.session_key, ack.get("runId") or run_id,
-					))
+						# transcript instead. Routed through the same
+						# relay:interrupted handling as a dropped stream
+						# (below, AFTER this pool checkout releases the
+						# per-gateway lock) so the park+recover round-trip
+						# never holds the lock other turns are waiting on.
+						terminal = {"kind": "relay:interrupted", "reason": "completed-replay"}
+					else:
+						terminal = _consume_relay(sess.relay_turn_events(
+							conv.session_key, ack.get("runId") or run_id,
+						))
 			except OpenclawUnreachableError as e:
-				# Pre-ack only (relay_turn_events never raises): the run
-				# never started, so this is a real, retriable error.
+				# Pre-ack only (relay_turn_events never raises): the run never
+				# started, so this is a real, retriable error. Gray zone: a
+				# DELIVERED send whose ack was lost lands here too and a user
+				# retry then re-runs under a fresh run_id - deliberate. Reusing
+				# the old run_id would make openclaw REPLAY the cached outcome
+				# (dedupe semantics), never re-run; and while a ghost run is
+				# still active, openclaw's content-based dedupe already returns
+				# in_flight for the identical resend, so true double-runs are
+				# confined to the ghost-run-already-finished case.
 				_publish_run_error(str(e))
 				_advance_macro(conversation_id, errored=True)
 				return

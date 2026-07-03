@@ -873,6 +873,30 @@ class TestRunAgentTurnRelayTerminals(FrappeTestCase):
 		row = self._assistant_row("content")
 		self.assertEqual(row, "authoritative final text")
 
+	def test_watermark_captured_before_send_and_stamped_on_assistant_row(self):
+		# Watermark must be read (best-effort, via get_session_messages) BEFORE
+		# chat_send hands the turn to openclaw, and stamped onto the assistant
+		# row as the highest seq seen - so a run that later dies server-side
+		# with zero output can never have recovery finalize from the PREVIOUS
+		# turn's reply (that reply is already in the transcript at this point).
+		fake_sess = self._fake_sess([{"kind": "relay:final", "text": "hi"}])
+		fake_sess.get_session_messages.return_value = [
+			{"role": "assistant", "content": "old", "__openclaw": {"seq": 3}},
+			{"role": "user", "content": "q", "__openclaw": {"seq": 4}},
+		]
+		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess):
+			with patch("jarvis.chat.worker.publish_to_user"):
+				run_agent_turn(self.conv, self.user_msg, run_id="r1")
+
+		call_names = [
+			c[0] for c in fake_sess.mock_calls
+			if c[0] in ("get_session_messages", "chat_send")
+		]
+		self.assertEqual(call_names, ["get_session_messages", "chat_send"])
+
+		row = self._assistant_row("openclaw_seq_watermark")
+		self.assertEqual(row, 4)
+
 
 class TestRunAgentTurnRelayStreamTelemetry(FrappeTestCase):
 	"""Follow-up (2026-07 review): the old ``_consume`` populated the

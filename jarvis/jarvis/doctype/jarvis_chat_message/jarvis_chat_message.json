@@ -15,6 +15,7 @@
     "error",
     "recovering",
     "recovery_started_at",
+    "openclaw_seq_watermark",
     "tool_name",
     "tool_args",
     "tool_result",
@@ -75,6 +76,14 @@
       "fieldtype": "Datetime",
       "label": "Recovery Started At",
       "description": "When this row entered the recovering state. Bounds the recovery window against an absolute ceiling."
+    },
+    {
+      "fieldname": "openclaw_seq_watermark",
+      "fieldtype": "Int",
+      "label": "Openclaw Seq Watermark",
+      "read_only": 1,
+      "hidden": 1,
+      "description": "Highest openclaw transcript seq observed before this turn's chat.send; snapshot recovery only finalizes from strictly newer assistant messages."
     },
     {
       "fieldname": "tool_name",
