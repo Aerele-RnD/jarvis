@@ -101,6 +101,24 @@ def _conditional_clear(name: str, fields: dict) -> bool:
 	return won
 
 
+def _advance_macro(conversation_id: str, *, errored: bool) -> None:
+	"""Chaining hook for the macro engine (mirrors turn_handler._advance_macro;
+	not imported from there to avoid a cycle risk between chat.turn_handler
+	and chat.turn_recovery). A macro chain that ends its turn via park-and-
+	recover (any post-ack interruption under the relay model) must still
+	step/terminate the macro, or the chain stalls forever. Best-effort: a
+	macro bug must never affect the recovery outcome."""
+	try:
+		from jarvis.chat import macros
+
+		macros.advance_after_turn(conversation_id, errored=errored)
+	except Exception:
+		frappe.log_error(
+			title="turn_recovery: macro advance hook failed",
+			message=frappe.get_traceback(),
+		)
+
+
 def _finalize(row: dict, text: str) -> None:
 	"""Authoritative completion (conditional + idempotent): overwrite content
 	from the raw snapshot, clear the flags, then publish for any live viewer."""
@@ -117,6 +135,7 @@ def _finalize(row: dict, text: str) -> None:
 		"kind": "run:end", "conversation_id": conv,
 		"message_id": name, "run_id": "recovered",
 	})
+	_advance_macro(conv, errored=False)
 
 
 def _error(row: dict, message: str) -> None:
@@ -128,6 +147,7 @@ def _error(row: dict, message: str) -> None:
 		"kind": "run:error", "conversation_id": row["conversation"],
 		"message_id": row["name"], "run_id": "recovered", "error": message,
 	})
+	_advance_macro(row["conversation"], errored=True)
 
 
 def _active_map(sess: OpenclawSession) -> dict:
@@ -235,3 +255,48 @@ def _recover_one(sess: OpenclawSession, row: dict, active: dict) -> str:
 		_finalize(row, text)
 		return "finalized"
 	return "waiting"  # no output yet; the ceiling backstop bounds the wait
+
+
+def recover_now(conversation_id: str) -> str:
+	"""In-worker immediate recovery for one conversation's latest recovering
+	row, so the common case (run already finished when the stream was lost)
+	does not wait for the cron. Dedicated connection - the pooled WS may be
+	the very thing that just died. Idempotent vs the cron via
+	_conditional_clear inside _finalize/_error."""
+	from jarvis import selfhost
+
+	if selfhost.is_self_hosted():
+		return "skipped"
+	rows = frappe.db.sql(
+		"""
+		SELECT m.name, m.conversation, c.session_key, c.owner,
+			   m.recovery_started_at, m.seq
+		FROM `tabJarvis Chat Message` m
+		JOIN `tabJarvis Conversation` c ON c.name = m.conversation
+		WHERE m.streaming = 1 AND m.recovering = 1
+		  AND m.conversation = %(conv)s
+		  AND c.session_key IS NOT NULL AND c.session_key != ''
+		ORDER BY m.seq DESC
+		LIMIT 1
+		""",
+		{"conv": conversation_id},
+		as_dict=True,
+	)
+	if not rows:
+		return "skipped"
+	row = rows[0]
+	settings = frappe.get_single("Jarvis Settings")
+	gateway_url = (settings.agent_url or "").replace(
+		"http://", "ws://").replace("https://", "wss://")
+	if not gateway_url:
+		return "skipped"
+	try:
+		with _recovery_connection(gateway_url) as sess:
+			active = {row["session_key"]: sess.is_run_active(row["session_key"])}
+			return _recover_one(sess, row, active)
+	except Exception:
+		frappe.log_error(
+			title="turn_recovery: recover_now failed",
+			message=frappe.get_traceback(),
+		)
+		return "skipped"
