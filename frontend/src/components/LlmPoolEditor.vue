@@ -31,26 +31,26 @@
       <p v-if="!catalog.length" style="font-size:12.5px;color:var(--text-3);margin:0 0 12px;">
         Couldn't load presets — use <b>Quick</b> or <b>Custom</b>.
       </p>
-      <div v-else style="max-height:340px;overflow-y:auto;padding-right:2px;">
+      <div v-else style="max-height:440px;overflow-y:auto;padding-right:4px;">
         <!-- single_vendor presets -->
         <div v-if="singleVendorPresets.length" style="margin-bottom:10px;">
-          <div style="font-size:11px;color:var(--text-3);margin-bottom:6px;">Single-vendor resilience</div>
-          <div style="display:flex;flex-wrap:wrap;gap:8px;">
+          <div style="font-size:12px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.03em;margin-bottom:9px;">Single-vendor resilience</div>
+          <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;">
             <button v-for="entry in singleVendorPresets" :key="entry.key"
                     @click="selectPreset(entry)" :disabled="!editable" :style="presetCardStyle(entry)">
-              <div style="font-weight:inherit;">{{ entry.label }}</div>
-              <div style="font-size:10.5px;color:var(--text-3);margin-top:2px;">{{ entry.blurb }}</div>
+              <div style="font-size:14px;font-weight:600;">{{ entry.label }}</div>
+              <div style="font-size:13px;color:var(--text-2);margin-top:4px;line-height:1.45;">{{ entry.blurb }}</div>
             </button>
           </div>
         </div>
         <!-- cross_vendor presets -->
         <div v-if="crossVendorPresets.length">
-          <div style="font-size:11px;color:var(--text-3);margin-bottom:6px;">Cross-vendor strategies</div>
-          <div style="display:flex;flex-wrap:wrap;gap:8px;">
+          <div style="font-size:12px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.03em;margin:14px 0 9px;">Cross-vendor strategies</div>
+          <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;">
             <button v-for="entry in crossVendorPresets" :key="entry.key"
                     @click="selectPreset(entry)" :disabled="!editable" :style="presetCardStyle(entry)">
-              <div style="font-weight:inherit;">{{ entry.label }}</div>
-              <div style="font-size:10.5px;color:var(--text-3);margin-top:2px;">{{ entry.blurb }}</div>
+              <div style="font-size:14px;font-weight:600;">{{ entry.label }}</div>
+              <div style="font-size:13px;color:var(--text-2);margin-top:4px;line-height:1.45;">{{ entry.blurb }}</div>
             </button>
           </div>
         </div>
@@ -344,7 +344,7 @@ function blankConnect() { return { open: false, loading: false, error: "", copie
 function presetCardStyle(entry) {
   const on = selectedPreset.value === entry.key
   return {
-    padding: "8px 12px", fontSize: "12.5px", cursor: props.editable ? "pointer" : "default", borderRadius: "8px", textAlign: "left",
+    padding: "14px 16px", fontSize: "14px", cursor: props.editable ? "pointer" : "default", borderRadius: "10px", textAlign: "left",
     border: on ? "2px solid var(--blue)" : "1px solid var(--border)",
     background: on ? "var(--blue-bg)" : "var(--surface)",
     color: on ? "var(--blue)" : "var(--text)",
