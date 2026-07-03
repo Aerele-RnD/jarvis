@@ -75,6 +75,20 @@ class TestParseEvent(FrappeTestCase):
 		ev = parse_event({"stream": None, "data": {}})
 		self.assertIsNone(ev)
 
+	def test_assistant_with_non_dict_data_returns_empty_shape(self):
+		# A malformed frame where payload["data"] is a string (not a dict)
+		# must not raise inside the relay's never-raises generator - that
+		# would escape to the worker backstop as a false run:error.
+		ev = parse_event({"stream": "assistant", "data": "garbage"})
+		self.assertEqual(ev["kind"], "assistant")
+		self.assertEqual(ev["text"], "")
+		self.assertEqual(ev["delta"], "")
+
+	def test_lifecycle_with_none_data_returns_phase_none(self):
+		ev = parse_event({"stream": "lifecycle", "data": None})
+		self.assertEqual(ev["kind"], "lifecycle")
+		self.assertIsNone(ev["phase"])
+
 
 class TestPublishToUser(FrappeTestCase):
 	def test_publishes_to_jarvis_event_channel_scoped_to_user(self):

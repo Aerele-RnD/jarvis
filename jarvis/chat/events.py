@@ -22,7 +22,9 @@ CHANNEL = "jarvis:event"
 def parse_event(payload: dict[str, Any]) -> dict[str, Any] | None:
 	"""Normalize an openclaw WS frame to a flat dict, or return None to drop it."""
 	stream = payload.get("stream")
-	data = payload.get("data") or {}
+	data = payload.get("data")
+	if not isinstance(data, dict):
+		data = {}
 
 	if stream == "lifecycle":
 		out: dict[str, Any] = {"kind": "lifecycle", "phase": data.get("phase")}

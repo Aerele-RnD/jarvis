@@ -324,6 +324,62 @@ class TestTurnRecovery(FrappeTestCase):
 		self.assertIn("assistant:delta", kinds)
 		self.assertIn("run:end", kinds)
 
+	# --- transcript-seq watermark: never stamp a previous turn's answer ----
+	def test_watermark_ignores_older_assistant_message(self):
+		# Transcript's newest assistant message (seq 5) is OLDER than the
+		# watermark (7) captured before this turn's send - a run that died
+		# server-side with zero output must not have the previous reply
+		# wrongly stamped onto this row.
+		frappe.db.set_value(MSG_DT, self.msg.name, "openclaw_seq_watermark", 7)
+		frappe.db.commit()
+		sess = self._fake_sess(messages_by_key={SK: [
+			{"role": "assistant", "content": "the OLD reply", "__openclaw": {"seq": 5}},
+		]})
+		_, pub = self._run(sess)
+		row = self._row()
+		self.assertEqual(row.streaming, 1)
+		self.assertEqual(row.recovering, 1)
+		self.assertFalse(row.error)
+		self.assertNotIn("run:end", [c.args[1]["kind"] for c in pub.call_args_list])
+
+	def test_watermark_finalizes_from_strictly_newer_message(self):
+		frappe.db.set_value(MSG_DT, self.msg.name, "openclaw_seq_watermark", 7)
+		frappe.db.commit()
+		sess = self._fake_sess(messages_by_key={SK: [
+			{"role": "assistant", "content": "the NEW reply", "__openclaw": {"seq": 9}},
+		]})
+		_, pub = self._run(sess)
+		row = self._row()
+		self.assertEqual(row.content, "the NEW reply")
+		self.assertEqual(row.streaming, 0)
+		self.assertEqual(row.recovering, 0)
+		self.assertIn("run:end", [c.args[1]["kind"] for c in pub.call_args_list])
+
+	def test_watermark_zero_behaves_as_before(self):
+		# Default watermark (0, i.e. never captured) must not change any
+		# pre-existing recovery behavior.
+		sess = self._fake_sess(messages_by_key={SK: [
+			{"role": "assistant", "content": "the full answer", "__openclaw": {"seq": 2}},
+		]})
+		_, pub = self._run(sess)
+		row = self._row()
+		self.assertEqual(row.content, "the full answer")
+		self.assertEqual(row.streaming, 0)
+		self.assertEqual(row.recovering, 0)
+
+	def test_latest_assistant_text_min_seq_filters_out_older_message(self):
+		text = turn_recovery._latest_assistant_text([
+			{"role": "assistant", "__openclaw": {"seq": 5}, "content": "old"},
+		], min_seq=7)
+		self.assertEqual(text, "")
+
+	def test_latest_assistant_text_min_seq_keeps_strictly_newer_message(self):
+		text = turn_recovery._latest_assistant_text([
+			{"role": "assistant", "__openclaw": {"seq": 5}, "content": "old"},
+			{"role": "assistant", "__openclaw": {"seq": 9}, "content": "new"},
+		], min_seq=7)
+		self.assertEqual(text, "new")
+
 	def test_recover_now_idempotent_after_finalize_no_double_publish(self):
 		sess = self._fake_sess(messages_by_key={SK: [
 			{"role": "assistant", "content": "the full answer", "__openclaw": {"seq": 2}},

@@ -55,14 +55,23 @@ def _age_minutes(dt) -> float:
 	return delta.total_seconds() / 60.0
 
 
-def _latest_assistant_text(messages: list) -> str:
+def _latest_assistant_text(messages: list, *, min_seq: int = 0) -> str:
 	"""Newest assistant message text from a raw transcript. Handles a
 	plain-string content and the {type:"text", text} block list. Sorted by the
-	transcript seq so the latest turn wins. Every text source is type-guarded."""
+	transcript seq so the latest turn wins. Every text source is type-guarded.
+
+	``min_seq`` is the transcript-seq watermark captured before this turn's
+	chat.send: a message whose seq is <= min_seq predates this turn (or is a
+	previous turn's reply left over from a run that died server-side with
+	zero output), so it is skipped even if it is the newest assistant message
+	in the transcript. A message with no seq (0) is treated as predating the
+	turn whenever a watermark is in force (min_seq > 0)."""
 	def seq(m):
 		return ((m or {}).get("__openclaw") or {}).get("seq", 0)
 
 	for m in sorted(messages or [], key=seq, reverse=True):
+		if min_seq > 0 and seq(m) <= min_seq:
+			continue
 		if (m.get("role") or "").lower() != "assistant":
 			continue
 		c = m.get("content")
@@ -174,7 +183,7 @@ def recover_pending_turns(limit: int = 20) -> dict:
 	rows = frappe.db.sql(
 		"""
 		SELECT m.name, m.conversation, c.session_key, c.owner,
-			   m.recovery_started_at, m.seq
+			   m.recovery_started_at, m.seq, m.openclaw_seq_watermark
 		FROM `tabJarvis Chat Message` m
 		JOIN `tabJarvis Conversation` c ON c.name = m.conversation
 		WHERE m.streaming = 1 AND m.recovering = 1
@@ -250,7 +259,7 @@ def _recover_one(sess: OpenclawSession, row: dict, active: dict) -> str:
 		return "active"
 	# Raw transcript (sessions.get), NOT chat.history -> no max_chars truncation (#1).
 	messages = sess.get_session_messages(session_key, limit=50)
-	text = _latest_assistant_text(messages)
+	text = _latest_assistant_text(messages, min_seq=row.get("openclaw_seq_watermark") or 0)
 	if text:
 		_finalize(row, text)
 		return "finalized"
@@ -270,7 +279,7 @@ def recover_now(conversation_id: str) -> str:
 	rows = frappe.db.sql(
 		"""
 		SELECT m.name, m.conversation, c.session_key, c.owner,
-			   m.recovery_started_at, m.seq
+			   m.recovery_started_at, m.seq, m.openclaw_seq_watermark
 		FROM `tabJarvis Chat Message` m
 		JOIN `tabJarvis Conversation` c ON c.name = m.conversation
 		WHERE m.streaming = 1 AND m.recovering = 1
