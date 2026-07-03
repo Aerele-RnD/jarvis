@@ -30,6 +30,7 @@ _TOOL_NAMES: tuple[str, ...] = (
     "query",
     "update_doc",
     "create_doc",
+    "preview_doc",
     "submit_doc",
     "cancel_doc",
     "delete_doc",
