@@ -10,6 +10,7 @@ name: CI
 # 45-min timeout and cancel-in-progress on non-main only.
 
 on:
+  workflow_dispatch:   # allow manual runs
   # Run on PRs to ANY base branch, and pushes to main.
   pull_request:
   push:
