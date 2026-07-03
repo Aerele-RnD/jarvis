@@ -102,6 +102,16 @@ class TestSessionLifecycle(FrappeTestCase):
 			frappe.db.exists(CHAT_SESSION, {"session_key": "test-lc-dormant"})
 		)
 
+	def test_two_rotations_in_one_run_no_unique_collision(self):
+		"""Regression: session_key is UNIQUE; clearing to '' (instead of
+		NULL) collided on the SECOND rotation of a run (1062)."""
+		a = self._conv(session_key="test-lc-two-a", idle_days=40)
+		b = self._conv(session_key="test-lc-two-b", idle_days=41)
+		summary = self._run(_fake_sess())
+		self.assertEqual(summary["dormant_rotated"], 2)
+		self.assertFalse(frappe.db.get_value(CONV, a, "session_key"))
+		self.assertFalse(frappe.db.get_value(CONV, b, "session_key"))
+
 	def test_fresh_conversation_untouched(self):
 		name = self._conv(session_key="test-lc-fresh", idle_days=2)
 		sess = _fake_sess()
