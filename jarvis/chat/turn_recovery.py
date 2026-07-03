@@ -71,7 +71,7 @@ def _age_minutes(dt) -> float:
 	return delta.total_seconds() / 60.0
 
 
-def _latest_assistant_text(messages: list, *, min_seq: int = 0) -> str:
+def _latest_assistant_text(messages: list, *, min_seq: int = 0, max_seq: int | None = None) -> str:
 	"""Newest assistant message text from a raw transcript. Handles a
 	plain-string content and the {type:"text", text} block list. Sorted by the
 	transcript seq so the latest turn wins. Every text source is type-guarded.
@@ -81,12 +81,21 @@ def _latest_assistant_text(messages: list, *, min_seq: int = 0) -> str:
 	previous turn's reply left over from a run that died server-side with
 	zero output), so it is skipped even if it is the newest assistant message
 	in the transcript. A message with no seq (0) is treated as predating the
-	turn whenever a watermark is in force (min_seq > 0)."""
+	turn whenever a watermark is in force (min_seq > 0).
+
+	``max_seq`` bounds the window from ABOVE: the next turn's watermark
+	(captured before ITS chat.send) marks where this turn's transcript slice
+	ends. Without it, recovering an older parked row after a NEWER turn
+	completed in the same conversation would steal the newer turn's answer
+	(observed live 2026-07-03: the parked row recovered with the next
+	question's reply). Messages with seq > max_seq belong to a later turn."""
 	def seq(m):
 		return ((m or {}).get("__openclaw") or {}).get("seq", 0)
 
 	for m in sorted(messages or [], key=seq, reverse=True):
 		if min_seq > 0 and seq(m) <= min_seq:
+			continue
+		if max_seq is not None and seq(m) > max_seq:
 			continue
 		if (m.get("role") or "").lower() != "assistant":
 			continue
@@ -295,11 +304,34 @@ def _recover_one(sess: OpenclawSession, row: dict, active: dict) -> str:
 		return "active"
 	# Raw transcript (sessions.get), NOT chat.history -> no max_chars truncation (#1).
 	messages = sess.get_session_messages(session_key, limit=50)
-	text = _latest_assistant_text(messages, min_seq=row.get("openclaw_seq_watermark") or 0)
+	text = _latest_assistant_text(
+		messages,
+		min_seq=row.get("openclaw_seq_watermark") or 0,
+		max_seq=_next_turn_watermark(row["conversation"], row["seq"]),
+	)
 	if text:
 		_finalize(row, text)
 		return "finalized"
 	return "waiting"  # no output yet; the ceiling backstop bounds the wait
+
+
+def _next_turn_watermark(conversation: str, seq: int) -> int | None:
+	"""Upper bound for a parked row's transcript window: the smallest
+	watermark among LATER assistant rows in the same conversation (each
+	captured just before that turn's chat.send, so transcript messages
+	past it belong to that later turn). None when there is no later turn
+	(or none with a usable watermark) - then the window stays open-ended,
+	which matches the common single-in-flight-turn case."""
+	val = frappe.db.sql(
+		"""
+		SELECT MIN(openclaw_seq_watermark)
+		FROM `tabJarvis Chat Message`
+		WHERE conversation = %(conv)s AND role = 'assistant'
+		  AND seq > %(seq)s AND openclaw_seq_watermark > 0
+		""",
+		{"conv": conversation, "seq": seq},
+	)[0][0]
+	return int(val) if val else None
 
 
 def recover_now(conversation_id: str) -> str:
