@@ -38,10 +38,13 @@ def run_macro(macro_name: str, *, trigger: str = "manual") -> dict:
 		frappe.throw(_("This macro has no steps."))
 	if trigger == "scheduled" and not doc.enabled:
 		return {"ok": False, "reason": "macro disabled"}
+	if (doc.merge_status or "") == "pending" and trigger != "scheduled":
+		frappe.throw(_("Still summarizing this macro — try again in a few seconds."))
 	owner = doc.owner
-	# A stored merged prompt (the LLM summary the user confirmed) runs as ONE
-	# turn instead of chaining the steps — the steps stay as the editable
-	# source the summary was made from.
+	# A stored merged prompt (the background LLM summary) runs as ONE turn
+	# instead of chaining the steps — the steps stay as the editable source
+	# the summary was made from. merge_status "failed"/unmergeable falls back
+	# to the sequence (an unmergeable sequence NEEDS its checkpoints).
 	merged = (doc.merged_prompt or "").strip()
 	total = 1 if merged else len(steps)
 
@@ -105,11 +108,18 @@ def run_macro(macro_name: str, *, trigger: str = "manual") -> dict:
 def advance_after_turn(conversation_id: str, *, errored: bool) -> None:
 	"""Chaining hook, called from ``turn_handler`` after every terminal turn
 	outcome. If the conversation belongs to a ``running`` Macro Run, advance it:
-	enqueue the next step, or finish. No-op for normal (non-macro) chats.
+	enqueue the next step, or finish. If it's a macro's background SUMMARIZE
+	turn, apply the summary to the macro. No-op for normal (non-macro) chats.
 
 	Best-effort: never raises (a macro bug must not strand a normal turn).
 	Serialized + idempotent via a per-run redis lock + the ``current_step`` guard
 	so a re-delivered event / RQ retry can't double-advance."""
+	try:
+		_apply_merge_after_turn(conversation_id, errored=errored)
+	except Exception:
+		frappe.log_error(
+			title="jarvis macro merge-apply failed", message=frappe.get_traceback()
+		)
 	try:
 		run_name = frappe.db.get_value(
 			RUN, {"conversation": conversation_id, "status": "running"}, "name"
@@ -144,6 +154,59 @@ def advance_after_turn(conversation_id: str, *, errored: bool) -> None:
 		frappe.log_error(
 			title="jarvis macro advance failed", message=frappe.get_traceback()
 		)
+
+
+def _apply_merge_after_turn(conversation_id: str, *, errored: bool) -> None:
+	"""When a macro's background summarize turn ends, land the result on the
+	macro — server-side, so the summary arrives even if the user's tab is gone.
+	ready → merged_prompt set (this is what run_macro executes); failed /
+	unmergeable → the step sequence runs (correct fallback: an unmergeable
+	sequence NEEDS its checkpoints). Publishes ``macro:merged`` so an open SPA
+	refreshes its Run buttons."""
+	macro_name = frappe.db.get_value(
+		MACRO, {"merge_conversation": conversation_id, "merge_status": "pending"}, "name"
+	)
+	if not macro_name:
+		return
+	doc = frappe.get_doc(MACRO, macro_name)
+	status, merged = "failed", ""
+	if not errored:
+		rows = frappe.get_all(
+			MSG,
+			filters={"conversation": conversation_id, "role": "assistant"},
+			fields=["content", "streaming", "error"],
+			order_by="seq desc", limit=1,
+		)
+		m = rows[0] if rows else None
+		if m and not m.streaming and not (m.error or "").strip():
+			from jarvis.chat.macros_api import _MERGE_RE
+
+			mt = _MERGE_RE.search(m.content or "")
+			try:
+				merge = frappe.parse_json(mt.group(1).strip()) if mt else None
+			except Exception:
+				merge = None
+			if isinstance(merge, dict) and merge.get("mergeable") and str(merge.get("merged_prompt") or "").strip():
+				status, merged = "ready", str(merge.get("merged_prompt")).strip()
+	frappe.db.set_value(MACRO, macro_name, {
+		"merged_prompt": merged,
+		"merge_status": status,
+		"merge_conversation": "",
+	}, update_modified=False)
+	frappe.db.commit()
+	# The throwaway conversation served its purpose — clean it up best-effort.
+	try:
+		frappe.db.delete(MSG, {"conversation": conversation_id})
+		frappe.delete_doc("Jarvis Conversation", conversation_id, force=True, ignore_permissions=True)
+		frappe.db.commit()
+	except Exception:
+		pass
+	publish_to_user(doc.owner, {
+		"kind": "macro:merged",
+		"macro": macro_name,
+		"macro_name": doc.macro_name,
+		"status": status,
+	})
 
 
 def stop_macro_run(run_name: str) -> dict:

@@ -73,6 +73,9 @@ class TestSummarizeMacro(FrappeTestCase):
 		self.assertIn("/macro-merge", args[1])
 		# throwaway conversation is hidden from the sidebar
 		self.assertEqual(frappe.db.get_value("Jarvis Conversation", conv, "status"), "Archived")
+		# the macro is marked "summarizing" so Run is gated until the worker applies
+		self.assertEqual(frappe.db.get_value("Jarvis Macro", m.name, "merge_status"), "pending")
+		self.assertEqual(frappe.db.get_value("Jarvis Macro", m.name, "merge_conversation"), conv)
 
 	def test_rejects_single_step_macro(self):
 		m = _mk_macro([{"label": "only", "prompt": "one thing"}])
@@ -173,6 +176,58 @@ class TestApplyMacroMerge(FrappeTestCase):
 		update_macro(m.name, steps=frappe.as_json([{"prompt": "p1"}, {"prompt": "p2"}]),
 					 merged_prompt="edited summary")
 		self.assertEqual(get_macro(m.name)["merged_prompt"], "edited summary")
+
+
+class TestMergeApplyHook(FrappeTestCase):
+	"""The worker-side apply: advance_after_turn lands the summary on the macro
+	when the background summarize turn ends — no browser needed."""
+
+	def _pending_macro_with_reply(self, reply_content, errored=False):
+		m = _mk_macro([{"prompt": "p1"}, {"prompt": "p2"}])
+		self.addCleanup(lambda: frappe.delete_doc("Jarvis Macro", m.name, force=True, ignore_permissions=True))
+		conv = _mk_conv(assistant=reply_content)
+		frappe.db.set_value("Jarvis Macro", m.name, {
+			"merge_status": "pending", "merge_conversation": conv,
+		}, update_modified=False)
+		frappe.db.commit()
+		return m, conv
+
+	def test_ready_reply_applies_summary_and_cleans_up(self):
+		from jarvis.chat import macros
+		m, conv = self._pending_macro_with_reply(MERGE_BLOCK)
+		macros.advance_after_turn(conv, errored=False)
+		doc = frappe.get_doc("Jarvis Macro", m.name)
+		self.assertEqual(doc.merge_status, "ready")
+		self.assertIn("Using the results of (1)", doc.merged_prompt)
+		self.assertEqual(doc.merge_conversation or "", "")
+		self.assertFalse(frappe.db.exists("Jarvis Conversation", conv))  # throwaway cleaned
+
+	def test_errored_turn_marks_failed_and_steps_still_run(self):
+		from jarvis.chat import macros
+		m, conv = self._pending_macro_with_reply("irrelevant")
+		macros.advance_after_turn(conv, errored=True)
+		doc = frappe.get_doc("Jarvis Macro", m.name)
+		self.assertEqual(doc.merge_status, "failed")
+		self.assertEqual(doc.merged_prompt or "", "")
+		# failed ≠ blocked: the sequence runs (checked in TestMergedRun fallback)
+
+	def test_unmergeable_reply_marks_failed(self):
+		from jarvis.chat import macros
+		block = ('ok\n\n```jarvis-macro-merge\n{"mergeable": false, "reason": "checkpoint", '
+				 '"merged_prompt": "", "dependencies": []}\n```')
+		m, conv = self._pending_macro_with_reply(block)
+		macros.advance_after_turn(conv, errored=False)
+		self.assertEqual(frappe.db.get_value("Jarvis Macro", m.name, "merge_status"), "failed")
+
+	def test_run_blocked_while_pending(self):
+		from jarvis.chat import macros
+		m, conv = self._pending_macro_with_reply(MERGE_BLOCK)
+		self.addCleanup(lambda: (
+			frappe.db.delete("Jarvis Chat Message", {"conversation": conv}),
+			frappe.delete_doc("Jarvis Conversation", conv, force=True, ignore_permissions=True),
+		))
+		with self.assertRaises(frappe.ValidationError):
+			macros.run_macro(m.name)
 
 
 class TestMergedRun(FrappeTestCase):

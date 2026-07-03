@@ -88,7 +88,7 @@ def list_macros() -> list[dict]:
 		fields=[
 			"name", "macro_name", "description", "enabled", "stop_on_error",
 			"schedule_enabled", "schedule_frequency", "schedule_time",
-			"next_run_at", "last_run_at", "modified", "merged_prompt",
+			"next_run_at", "last_run_at", "modified", "merged_prompt", "merge_status",
 		],
 		order_by="macro_name asc",
 	)
@@ -113,6 +113,7 @@ def get_macro(name: str) -> dict:
 		"schedule_time": str(doc.schedule_time or ""),
 		"next_run_at": str(doc.next_run_at or ""),
 		"merged_prompt": doc.merged_prompt or "",
+		"merge_status": doc.merge_status or "",
 		"steps": [
 			{
 				"label": s.label or "",
@@ -200,9 +201,13 @@ def update_macro(
 	if steps is not None:
 		doc.set("steps", _parse_steps(steps))
 		if merged_prompt is None:
-			doc.merged_prompt = ""  # steps changed → the stored summary is stale
+			# steps changed → the stored summary is stale; the save flow's
+			# background re-summarize repopulates it (merge_status → pending).
+			doc.merged_prompt = ""
+			doc.merge_status = ""
 	if merged_prompt is not None:
 		doc.merged_prompt = (merged_prompt or "").strip()
+		doc.merge_status = "ready" if doc.merged_prompt else ""
 	doc.save()
 	frappe.db.commit()
 	return {"ok": True, "data": {"name": doc.name, "modified": str(doc.modified)}}
@@ -392,6 +397,13 @@ def summarize_macro(name: str) -> dict:
 	# Hide from the sidebar (list_conversations skips Archived).
 	frappe.db.set_value("Jarvis Conversation", conv.name, "status", "Archived",
 						update_modified=False)
+	# Mark the macro "summarizing": run_macro refuses while pending, and the
+	# worker's advance hook applies the summary when this turn finishes — so
+	# the flow completes even if the browser tab is gone.
+	frappe.db.set_value(MACRO, name, {
+		"merge_status": "pending",
+		"merge_conversation": conv.name,
+	}, update_modified=False)
 	frappe.db.commit()
 	return {"ok": True, "conversation": conv.name}
 
@@ -440,6 +452,8 @@ def apply_macro_merge(name: str, merged_prompt: str, conversation: str = "") -> 
 	if not merged_prompt:
 		frappe.throw(_("Merged prompt is empty."))
 	doc.merged_prompt = merged_prompt
+	doc.merge_status = "ready"
+	doc.merge_conversation = ""
 	doc.save()
 	frappe.db.commit()
 	if conversation:
@@ -456,6 +470,8 @@ def clear_macro_merge(name: str) -> dict:
 	doc = frappe.get_doc(MACRO, name)
 	doc.check_permission("write")
 	doc.merged_prompt = ""
+	doc.merge_status = ""
+	doc.merge_conversation = ""
 	doc.save()
 	frappe.db.commit()
 	return {"ok": True}

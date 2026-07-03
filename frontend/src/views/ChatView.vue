@@ -646,9 +646,10 @@
 						<div v-for="mm in macros" :key="mm.name" class="jv-skill-row">
 							<div style="min-width:0;flex:1;cursor:pointer;" @click="editMacro(mm)">
 								<div class="jv-skill-name" style="font-family:inherit;">{{ mm.macro_name }} <span v-if="!mm.enabled" class="jv-skill-off">draft</span></div>
-								<div class="jv-macro-sub">{{ mm.step_count || 0 }} step{{ (mm.step_count || 0) === 1 ? "" : "s" }}<span v-if="(mm.merged_prompt || '').trim()" class="jv-macro-merged-badge" title="Runs its summarized prompt as one turn">summary</span><span v-if="mm.schedule_enabled" class="jv-macro-sched"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>{{ mm.schedule_frequency || "scheduled" }}</span></div>
+								<div class="jv-macro-sub">{{ mm.step_count || 0 }} step{{ (mm.step_count || 0) === 1 ? "" : "s" }}<span v-if="mm.merge_status === 'pending'" class="jv-macro-merged-badge jv-macro-merged-badge--pending" title="Summarizing in the background">summarizing…</span><span v-else-if="(mm.merged_prompt || '').trim()" class="jv-macro-merged-badge" title="Runs its summarized prompt as one turn">summary</span><span v-if="mm.schedule_enabled" class="jv-macro-sched"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>{{ mm.schedule_frequency || "scheduled" }}</span></div>
 							</div>
-							<button class="jv-btn jv-btn--primary jv-btn--sm" title="Run" @click.stop="runMacroFromList(mm)"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8V4z" /></svg> Run</button>
+							<button v-if="mm.merge_status === 'pending'" class="jv-btn jv-btn--sm" disabled title="The summary is being prepared — Run unlocks when it's ready"><span class="jv-merge-spin" style="width:11px;height:11px;"></span> Summarizing…</button>
+							<button v-else class="jv-btn jv-btn--primary jv-btn--sm" title="Run" @click.stop="runMacroFromList(mm)"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8V4z" /></svg> Run</button>
 							<button class="jv-btn jv-btn--icon jv-ib" title="Edit" @click.stop="editMacro(mm)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg></button>
 							<button class="jv-btn jv-btn--icon jv-ib jv-ib-danger" title="Delete" @click.stop="removeMacro(mm)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" /></svg></button>
 						</div>
@@ -701,7 +702,7 @@
 								<textarea class="jv-merge-text" style="margin-top:8px;" v-model="macroForm.merged_prompt" rows="9"></textarea>
 								<button class="jv-skill-newrow" style="margin-top:10px;margin-bottom:0;" @click="macroForm.merged_prompt = ''">✕ Remove summary — run the steps instead</button>
 							</template>
-							<div v-else class="jv-set-empty" style="margin-top:12px;">No summary yet. Save the macro with 2+ steps and confirm the generated summary — it lands here and becomes what runs.</div>
+							<div v-else class="jv-set-empty" style="margin-top:12px;">No summary yet. Saving with 2+ steps generates one automatically in the background — it lands here and becomes what runs (Run stays locked until it's ready).</div>
 						</template>
 						<template v-if="macroEdTab === 'steps'">
 						<div v-if="!macroForm.steps.length" class="jv-set-empty">No steps yet. Add one below.</div>
@@ -734,43 +735,8 @@
 			</div>
 		</transition>
 
-		<!-- ============ MACRO MERGE CONFIRM (every 2+ step save summarizes; the user confirms the summary) ============ -->
-		<transition name="jv-fade">
-			<div v-if="macroMerge" class="jv-skills-overlay" @click.self="dropMacroMerge('')">
-				<div class="jv-merge-modal">
-					<div class="jv-merge-head">
-						<b>“{{ macroMerge.macroName }}” as one prompt</b>
-						<button class="jv-art-close" @click="dropMacroMerge('')" aria-label="Close">✕</button>
-					</div>
-					<div v-if="macroMerge.status === 'pending'" class="jv-merge-pending">
-						<span class="jv-merge-spin"></span> Summarizing your {{ macroMerge.steps }} steps with the macro-merge skill…
-						<div class="jv-merge-sub">You'll confirm the summary before it replaces the steps.</div>
-					</div>
-					<template v-else-if="macroMerge.status === 'ready'">
-						<div class="jv-merge-sub">Here's your macro summarized into a single prompt — edit if needed, then confirm:</div>
-						<div v-if="(macroMerge.merge.dependencies || []).length" class="jv-merge-deps">
-							<span v-for="(d, di) in macroMerge.merge.dependencies" :key="di" class="jv-merge-chip">
-								step {{ d.step }} ← {{ (d.uses || []).join(", ") }}
-							</span>
-						</div>
-						<textarea class="jv-merge-text" v-model="macroMerge.editedPrompt" rows="10"></textarea>
-						<div v-if="macroMerge.error" class="jv-draft-error">{{ macroMerge.error }}</div>
-						<div class="jv-merge-foot">
-							<button class="jv-action-2nd" @click="dropMacroMerge('')">Keep the steps instead</button>
-							<button class="jv-action-primary" style="margin-left:auto" :disabled="macroMerge.applying" @click="acceptMacroMerge">
-								{{ macroMerge.applying ? "Applying…" : "✓ Confirm — use this prompt" }}
-							</button>
-						</div>
-					</template>
-					<template v-else>
-						<div class="jv-merge-keep">Kept as a sequence — {{ (macroMerge.merge && macroMerge.merge.reason) || "these steps need their checkpoints." }}</div>
-						<div class="jv-merge-foot">
-							<button class="jv-action-primary" style="margin-left:auto" @click="dropMacroMerge('')">OK</button>
-						</div>
-					</template>
-				</div>
-			</div>
-		</transition>
+		<!-- Macro summarize happens fully in the BACKGROUND (worker applies it);
+		     the only UI is this transient notice + the Run-button gate. -->
 		<transition name="jv-fade">
 			<div v-if="mergeNotice" class="jv-merge-notice">{{ mergeNotice }}</div>
 		</transition>
@@ -1685,13 +1651,14 @@ async function saveMacro() {
 		// Re-summarize only when the sequence actually changed (or has no
 		// summary yet) — a rename shouldn't burn an LLM turn.
 		const needsSummary = steps.length >= 2 && (stepsTouched || !f.name || !sentMerged)
-		if (savedName && needsSummary) startMacroMerge(savedName, payload.macro_name, steps.length)
+		if (savedName && needsSummary) startMacroMerge(savedName)
 	} catch (e) { macroError.value = _skillErr(e) } finally { macroSaving.value = false }
 }
 
-// --- Macro merge: on every 2+ step save, generate a single merged prompt in
-// the background and let the user adopt or keep the sequence. ---
-const macroMerge = ref(null) // {macro, macroName, conversation, steps, status:'pending'|'ready'|'unmergeable', merge, editedPrompt, applying, error}
+// --- Macro merge: every 2+ step save fires a BACKGROUND summarize turn (no
+// modal, nothing to confirm). The WORKER applies the summary to the macro when
+// the turn ends — even if this tab is gone — and pushes a `macro:merged` event.
+// Run is blocked (backend + button) while merge_status is "pending". ---
 const mergeNotice = ref("")
 let _mergeNoticeTimer = null
 function _showMergeNotice(text) {
@@ -1700,62 +1667,14 @@ function _showMergeNotice(text) {
 	_mergeNoticeTimer = setTimeout(() => { mergeNotice.value = "" }, 6000)
 }
 
-async function startMacroMerge(name, macroName, stepCount) {
-	let conversation
+async function startMacroMerge(name) {
 	try {
-		const r = await api.summarizeMacro(name)
-		conversation = r && r.conversation
-	} catch (e) { return } // macro already saved — merging is optional sugar
-	if (!conversation) return
-	macroMerge.value = {
-		macro: name, macroName, conversation, steps: stepCount,
-		status: "pending", merge: null, editedPrompt: "", applying: false, error: "",
-	}
-	_pollMacroMerge(conversation)
-}
-
-async function _pollMacroMerge(conversation) {
-	for (let i = 0; i < 30; i++) { // 30 × 3s ≈ 90s budget
-		await new Promise((res) => setTimeout(res, 3000))
-		const mm = macroMerge.value
-		if (!mm || mm.conversation !== conversation) return // modal closed / superseded
-		let r
-		try { r = await api.getMacroMerge(conversation) } catch (e) { continue }
-		if (!macroMerge.value || macroMerge.value.conversation !== conversation) return
-		if (!r || r.status === "pending") continue
-		if (r.status === "ready" && r.merge && r.merge.mergeable) {
-			macroMerge.value = { ...macroMerge.value, status: "ready", merge: r.merge, editedPrompt: r.merge.merged_prompt }
-		} else if (r.status === "ready") {
-			macroMerge.value = { ...macroMerge.value, status: "unmergeable", merge: r.merge }
-		} else {
-			dropMacroMerge("Couldn't generate a merged prompt — macro saved as a sequence.")
-		}
-		return
-	}
-	dropMacroMerge("Merging timed out — macro saved as a sequence.")
-}
-
-function dropMacroMerge(notice) {
-	const mm = macroMerge.value
-	macroMerge.value = null
-	if (mm) api.discardMacroMerge(mm.conversation).catch(() => {})
-	if (notice) _showMergeNotice(notice)
-}
-
-async function acceptMacroMerge() {
-	const mm = macroMerge.value
-	if (!mm || mm.applying) return
-	mm.applying = true
-	mm.error = ""
-	try {
-		await api.applyMacroMerge(mm.macro, mm.editedPrompt, mm.conversation)
-		macroMerge.value = null
-		_showMergeNotice("Summary saved — it runs instead of the steps (see the Summarized prompt tab).")
-		loadMacros()
+		await api.summarizeMacro(name)
+		_showMergeNotice("Summarizing in the background — Run unlocks when the summary is ready.")
 	} catch (e) {
-		mm.applying = false
-		mm.error = (e && e.messages && e.messages[0]) || (e && e.message) || "Could not apply the merge."
+		/* macro is saved either way; without a summary the steps run */
 	}
+	loadMacros() // pick up merge_status=pending for the Run-button gate
 }
 
 async function removeMacro(m) {
@@ -3575,6 +3494,17 @@ function onEvent(p) {
 		patchMacroRunRow(p, false) // live-advance the open run-history dashboard
 		return
 	}
+	// Background summarize finished (worker-side apply) — refresh the Run gate
+	// + badges and tell the user; handled before the current-conversation guard.
+	if (p.kind === "macro:merged") {
+		if (macrosModalOpen.value) loadMacros()
+		_showMergeNotice(
+			p.status === "ready"
+				? `Summary ready — “${p.macro_name || "macro"}” now runs as one prompt.`
+				: `“${p.macro_name || "Macro"}” keeps its step sequence (couldn't summarize).`,
+		)
+		return
+	}
 	if (p.kind === "macro:done") {
 		if (p.conversation === currentId.value && macroRun.value) {
 			macroRun.value = { ...macroRun.value, status: p.status || "completed" }
@@ -3923,8 +3853,6 @@ function onGlobalKey(e) {
 		_settleConfirm(false)
 	} else if (e.key === "Escape" && artifact.value) {
 		closeArtifact()
-	} else if (e.key === "Escape" && macroMerge.value) {
-		dropMacroMerge("")
 	} else if (e.key === "Escape" && macroEditorOpen.value) {
 		closeMacroEditor()
 	} else if (e.key === "Escape" && macrosModalOpen.value) {
@@ -4499,6 +4427,7 @@ function onGlobalKey(e) {
 .jv-macro-tab.on { color: var(--text); border-bottom-color: var(--blue); }
 .jv-macro-tab-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
 .jv-macro-merged-badge { margin-left: 7px; font-size: 9.5px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; color: var(--green); background: var(--green-bg); border: 1px solid var(--green-bd); border-radius: 99px; padding: 1px 7px; }
+.jv-macro-merged-badge--pending { color: var(--amber); background: var(--amber-bg); border-color: var(--amber-bd); }
 
 /* --- macro merge review --- */
 .jv-merge-modal { width: min(640px, 92vw); background: var(--surface); border: 1px solid var(--border-2); border-radius: 13px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }

@@ -13,6 +13,8 @@
   "description",
   "steps",
   "merged_prompt",
+  "merge_status",
+  "merge_conversation",
   "schedule_section",
   "schedule_enabled",
   "schedule_frequency",
@@ -63,6 +65,19 @@
    "fieldtype": "Long Text",
    "label": "Merged Prompt",
    "description": "LLM-summarized single prompt; when set, runs instead of the step sequence"
+  },
+  {
+   "fieldname": "merge_status",
+   "fieldtype": "Select",
+   "label": "Merge Status",
+   "options": "\npending\nready\nfailed",
+   "description": "Background summarization state; run is blocked while pending"
+  },
+  {
+   "fieldname": "merge_conversation",
+   "fieldtype": "Data",
+   "label": "Merge Conversation",
+   "description": "Throwaway conversation whose turn produces the summary"
   },
   {
    "fieldname": "schedule_section",
