@@ -186,6 +186,10 @@ scheduler_events = {
 		"jarvis.chat.turn_recovery.recovery_rate_watch",
 	],
 	"daily": [
+		# Session lifecycle Phase 1: rotate dormant conversations' openclaw
+		# sessions and reap orphaned throwaway sessions (title/prewarm,
+		# deleted conversations). Batch-capped; bench history untouched.
+		"jarvis.chat.session_lifecycle.rotate_dormant_sessions",
 		"jarvis.onboarding.sync_connection",
 		# C2 (2026-06-16 review): nudge operators when the bench's
 		# agent_token is approaching or past its configured max age.
