@@ -18,6 +18,8 @@ export const previewFile = (fileUrl) =>
 export const createOrFocusEmpty = () => call("jarvis.chat.api.create_or_focus_empty")
 export const archiveConversation = (conversation) =>
 	call("jarvis.chat.api.archive_conversation", { conversation })
+// Danger zone: permanently delete ALL of the user's conversations + messages.
+export const clearChatHistory = () => call("jarvis.chat.api.clear_chat_history")
 export const renameConversation = (conversation, title) =>
 	call("jarvis.chat.api.rename_conversation", { conversation, title })
 export const setStar = (conversation, starred) =>

@@ -105,9 +105,8 @@
 		<!-- ============ MAIN ============ -->
 		<main style="flex:1;display:flex;flex-direction:column;height:100%;min-width:0;background:var(--surface);">
 			<header style="height:52px;flex:none;border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 18px;gap:12px;">
-				<button v-if="sidebarCollapsed" class="jv-iconbtn-bd" @click="toggleSidebar" title="Expand sidebar" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:var(--surface);border:1px solid var(--border);border-radius:7px;cursor:pointer;flex:none;">
-					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18" /><path d="m11 9 3 3-3 3" /></svg>
-				</button>
+				<!-- (no expand button here — the collapsed rail's top button already expands;
+				     two visible "Expand sidebar" controls was confusing) -->
 				<div style="display:flex;flex-direction:column;line-height:1.15;min-width:0;">
 					<span style="font-size:14px;font-weight:600;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ currentTitle }}</span>
 					<span style="font-size:11.5px;color:var(--text-3);">{{ headerSub }}</span>
@@ -300,8 +299,8 @@
 								<div v-else-if="confirmFor === m.name" class="jv-confirm">
 									<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--amber)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><path d="M12 9v4M12 17h.01" /></svg>
 									<span class="jv-confirm-label">{{ confirmLabel(m) || "Apply this change?" }}</span>
-									<button class="jv-confirm-no" @click="answerConfirm(false)">Cancel</button>
-									<button class="jv-confirm-yes" @click="answerConfirm(true)">Confirm</button>
+									<button class="jv-confirm-no" @click="answerConfirm(false, confirmLabel(m))">Cancel</button>
+									<button class="jv-confirm-yes" @click="answerConfirm(true, confirmLabel(m))">Confirm</button>
 								</div>
 								<!-- interactive clarifying questions (Claude-style cards; one Submit) -->
 								<div v-else-if="askFor === m.name && activeAsk" class="jv-ask">
@@ -309,11 +308,11 @@
 										<div class="jv-ask-qt"><span class="jv-ask-num">{{ qi + 1 }}</span>{{ q.q }}</div>
 										<!-- yes/no, with optional custom labels (e.g. Approve / Reject) -->
 										<div v-if="q.type === 'yesno'" class="jv-ask-opts">
-											<button v-for="(lbl, li) in (q.options.length === 2 ? q.options : ['Yes', 'No'])" :key="li" class="jv-ask-opt" :class="{ on: isPicked(qi, lbl) }" @click="pickSingle(qi, lbl)"><span v-if="isPicked(qi, lbl)" class="jv-ask-tick">✓</span>{{ lbl }}</button>
+											<button v-for="(lbl, li) in (q.options.length === 2 ? q.options : ['Yes', 'No'])" :key="li" class="jv-ask-opt" :class="{ on: isPicked(qi, lbl) }" @click="toggleSingle(qi, lbl)"><span v-if="isPicked(qi, lbl)" class="jv-ask-tick">✓</span>{{ lbl }}</button>
 										</div>
 										<!-- single / multi choice -->
 										<div v-else-if="q.type === 'single' || q.type === 'multi'" class="jv-ask-opts">
-											<button v-for="(opt, oi) in q.options" :key="oi" class="jv-ask-opt" :class="{ on: isPicked(qi, opt) }" @click="q.type === 'multi' ? toggleMulti(qi, opt) : pickSingle(qi, opt)"><span v-if="isPicked(qi, opt)" class="jv-ask-tick">✓</span>{{ opt }}</button>
+											<button v-for="(opt, oi) in q.options" :key="oi" class="jv-ask-opt" :class="{ on: isPicked(qi, opt) }" @click="q.type === 'multi' ? toggleMulti(qi, opt) : toggleSingle(qi, opt)"><span v-if="isPicked(qi, opt)" class="jv-ask-tick">✓</span>{{ opt }}</button>
 										</div>
 										<!-- date / datetime / free text fields -->
 										<input v-else-if="q.type === 'date'" type="date" class="jv-ask-field" :value="askSel[qi] || ''" @input="pickSingle(qi, $event.target.value)" />
@@ -327,7 +326,7 @@
 											</div>
 										</div>
 										<!-- Other free-text only for choice questions -->
-										<input v-if="q.type === 'single' || q.type === 'multi' || q.type === 'yesno'" class="jv-ask-other" v-model="askOther[qi]" placeholder="Other…" @keydown.enter.prevent />
+										<input v-if="q.type === 'single' || q.type === 'multi' || q.type === 'yesno'" class="jv-ask-other" v-model="askOther[qi]" placeholder="Other…" @input="onAskOther(qi, q.type)" @keydown.enter.prevent />
 									</div>
 									<div class="jv-ask-foot">
 										<button class="jv-ask-submit" :disabled="!askReady" @click="submitAsk">Submit answers</button>
@@ -338,12 +337,18 @@
 								<div v-if="cardsOf(m)" class="jv-cards">
 									<div v-if="cardsOf(m).title" class="jv-cards-title">{{ cardsOf(m).title }}</div>
 									<div class="jv-cards-strip">
-										<div v-for="(c, ci) in cardsOf(m).cards" :key="ci" class="jv-card">
+										<div v-for="(c, ci) in pagedCards(m)" :key="cardPageOf(m) + '-' + ci" class="jv-card">
 											<a v-if="c.doctype && c.name" :href="`/app/${_deskSlug(c.doctype)}/${encodeURIComponent(c.name)}`" target="_blank" rel="noopener" class="jv-card-title jv-card-link" :title="'Open ' + c.doctype">{{ c.title }}</a>
 											<div v-else class="jv-card-title">{{ c.title }}</div>
 											<div v-if="c.subtitle" class="jv-card-sub">{{ c.subtitle }}</div>
 											<div v-for="(f, fi) in c.fields" :key="fi" class="jv-card-field"><span class="jv-card-k">{{ f.label }}</span><span class="jv-card-v">{{ f.value }}</span></div>
 										</div>
+									</div>
+									<!-- long lists paginate — an endless horizontal scroll loses your place -->
+									<div v-if="cardsOf(m).cards.length > CARD_PAGE_SIZE" class="jv-cards-pager">
+										<button class="jv-cards-pgbtn" :disabled="cardPageOf(m) === 0" @click="stepCardPage(m, -1)" aria-label="Previous cards">‹</button>
+										<span class="jv-cards-pginfo">{{ cardPageOf(m) * CARD_PAGE_SIZE + 1 }}–{{ Math.min((cardPageOf(m) + 1) * CARD_PAGE_SIZE, cardsOf(m).cards.length) }} of {{ cardsOf(m).cards.length }}</span>
+										<button class="jv-cards-pgbtn" :disabled="(cardPageOf(m) + 1) * CARD_PAGE_SIZE >= cardsOf(m).cards.length" @click="stepCardPage(m, 1)" aria-label="Next cards">›</button>
 									</div>
 								</div>
 								<!-- save-as-macro card: the agent proposed a reusable macro -->
@@ -845,11 +850,13 @@
 										<span class="jv-switch-knob"></span>
 									</button>
 								</div>
-							<div class="jv-set-sec" style="margin-top:18px;">Workspace</div>
-							<div class="jv-set-row"><span>Conversations</span><b>{{ convCount }}</b></div>
-							<div class="jv-set-row"><span>Messages in this chat</span><b>{{ msgCount }}</b></div>
-							<div class="jv-set-row"><span>Tool calls this session</span><b>{{ sessionToolCalls }}</b></div>
-							<div class="jv-set-row"><span>Tools available</span><b>{{ toolCount }}</b></div>
+							<div class="jv-set-row">
+								<span>Notify when a reply is ready<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Browser notification when Jarvis finishes while you're in another tab</span></span>
+								<button class="jv-switch" :class="{ on: notifyEnabled }" @click="toggleNotify" role="switch" :aria-checked="String(notifyEnabled)" title="Browser notification when a reply finishes in a background tab">
+									<span class="jv-switch-knob"></span>
+								</button>
+							</div>
+							<!-- (the Workspace counts block lived here — removed as noise; the Usage tab has it all) -->
 							<div class="jv-set-sec" style="margin-top:18px;display:flex;align-items:center;gap:7px;">Token usage <span class="jv-est">est.</span></div>
 							<div class="jv-set-row"><span>This chat</span><b>{{ usage ? fmtTokens(usage.chat_tokens) : "—" }}</b></div>
 							<div class="jv-set-row"><span>{{ usage ? usage.month_label : "This month" }}</span><b>{{ usage ? fmtTokens(usage.month_tokens) : "—" }}</b></div>
@@ -859,6 +866,11 @@
 								<div class="jv-set-hint">{{ fmtTokens(usage.month_tokens) }} / {{ fmtTokens(usage.budget_monthly) }} this month · {{ usagePct }}%</div>
 							</template>
 							<div v-else class="jv-set-hint">No monthly budget set · counts are estimated from message text.</div>
+							<div class="jv-set-sec" style="margin-top:18px;color:var(--red);">Danger zone</div>
+							<div class="jv-set-row">
+								<span>Delete all chat history<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Every conversation and message, permanently. Macros and skills stay.</span></span>
+								<button class="jv-btn jv-btn--sm jv-btn-danger" :disabled="clearingHistory" @click="clearAllHistory">{{ clearingHistory ? "Deleting…" : "Delete all" }}</button>
+							</div>
 						</template>
 						<!-- USAGE -->
 						<template v-else-if="settingsTab === 'usage'">
@@ -2021,6 +2033,58 @@ function setActivityDetail(v) {
 	showActivityDetail.value = !!v
 	try { localStorage.setItem("jarvis-activity-detail", v ? "1" : "0") } catch (e) {}
 }
+// Optional browser notification when a reply lands while the tab is hidden.
+// Per-device (localStorage); enabling asks for Notification permission.
+const notifyEnabled = ref(typeof Notification !== "undefined" && localStorage.getItem("jarvis-notify") === "1" && Notification.permission === "granted")
+async function toggleNotify() {
+	if (typeof Notification === "undefined") return
+	if (notifyEnabled.value) {
+		notifyEnabled.value = false
+		try { localStorage.setItem("jarvis-notify", "0") } catch (e) {}
+		return
+	}
+	let perm = Notification.permission
+	if (perm !== "granted") {
+		try { perm = await Notification.requestPermission() } catch (e) { perm = "denied" }
+	}
+	if (perm === "granted") {
+		notifyEnabled.value = true
+		try { localStorage.setItem("jarvis-notify", "1") } catch (e) {}
+	}
+}
+function _notifyReplyReady() {
+	if (!notifyEnabled.value || !document.hidden) return
+	try {
+		const n = new Notification("Jarvis replied", {
+			body: currentTitle.value || "Your reply is ready.",
+			tag: "jarvis-reply", // collapse bursts into one notification
+		})
+		n.onclick = () => { window.focus(); n.close() }
+	} catch (e) { /* notification blocked at OS level — nothing to do */ }
+}
+
+// Danger zone: wipe every conversation + message (macros/skills untouched).
+const clearingHistory = ref(false)
+async function clearAllHistory() {
+	if (!(await confirmDialog({
+		title: "Delete ALL chat history?",
+		message: "Every conversation and message will be permanently deleted. Macros, skills and settings stay. This can't be undone.",
+		confirmLabel: "Delete everything",
+	}))) return
+	clearingHistory.value = true
+	try {
+		await api.clearChatHistory()
+		conversations.value = []
+		messages.value = []
+		currentId.value = ""
+		settingsOpen.value = false
+		newChat()
+	} catch (e) {
+		notify(_skillErr(e) || "Could not delete history", { type: "error" })
+	} finally {
+		clearingHistory.value = false
+	}
+}
 // In-flight wording shown while a turn runs (tool-activity hidden). Kept to a
 // single neutral "Thinking\u2026" \u2014 no task-describing phrases that could overclaim.
 const THINK_WORDS = ["Thinking\u2026"]
@@ -2267,6 +2331,26 @@ function cardsOf(m) {
 	_cardsCache.set(content, res)
 	return res
 }
+// Card-strip pagination: past a page of cards the horizontal scroll loses your
+// place, so long lists page instead (‹ 1–6 of 50 ›). Page index per message.
+const CARD_PAGE_SIZE = 6
+const cardPage = ref({}) // message name -> 0-based page
+function cardPageOf(m) {
+	return cardPage.value[m.name] || 0
+}
+function pagedCards(m) {
+	const cs = cardsOf(m)
+	if (!cs) return []
+	const p = cardPageOf(m)
+	return cs.cards.slice(p * CARD_PAGE_SIZE, (p + 1) * CARD_PAGE_SIZE)
+}
+function stepCardPage(m, dir) {
+	const cs = cardsOf(m)
+	if (!cs) return
+	const last = Math.max(0, Math.ceil(cs.cards.length / CARD_PAGE_SIZE) - 1)
+	const next = Math.min(last, Math.max(0, cardPageOf(m) + dir))
+	cardPage.value = { ...cardPage.value, [m.name]: next }
+}
 const _macroCardCache = new Map()
 function macroCardOf(m) {
 	const content = (m && m.content) || ""
@@ -2447,8 +2531,11 @@ const confirmFor = computed(() =>
 function actionSend(text) {
 	send(text)
 }
-function answerConfirm(ok) {
-	send(ok ? "Yes, go ahead." : "No, cancel that.")
+function answerConfirm(ok, label) {
+	// Echo the card's own wording so the transcript reads like what the user
+	// clicked ("Yes — Confirm and save") instead of a canned "go ahead".
+	const l = (label || "").trim()
+	send(ok ? (l ? `Yes — ${l}` : "Yes, go ahead.") : "No, cancel that.")
 }
 
 // --- Field-control helpers shared by the confirm card and the record draft
@@ -2531,9 +2618,34 @@ async function _formMeta(doctype) {
 	return r
 }
 
+// Native date/time inputs REQUIRE canonical values (yyyy-mm-dd / yyyy-mm-ddThh:mm);
+// anything else — "2026-07-10 00:00:00", "10-07-2026" — renders the input EMPTY,
+// which read as "the date isn't picking". Normalize whatever the agent/doc gave us.
+function _normDateVal(fieldtype, v) {
+	const s = String(v == null ? "" : v).trim()
+	if (!s) return s
+	if (fieldtype === "Date") {
+		let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/)
+		if (m) return `${m[1]}-${m[2]}-${m[3]}`
+		m = s.match(/^(\d{2})[-/](\d{2})[-/](\d{4})$/) // dd-mm-yyyy / dd/mm/yyyy
+		if (m) return `${m[3]}-${m[2]}-${m[1]}`
+	}
+	if (fieldtype === "Datetime") {
+		let m = s.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})/)
+		if (m) return `${m[1]}T${m[2]}`
+		m = s.match(/^(\d{4}-\d{2}-\d{2})$/)
+		if (m) return `${m[1]}T00:00`
+	}
+	if (fieldtype === "Time") {
+		const m = s.match(/^(\d{2}:\d{2})/)
+		if (m) return m[1]
+	}
+	return s
+}
 function _panelField(metaField, value) {
 	let [control, options] = _controlFor(metaField.fieldtype, metaField.options)
 	let v = value == null ? "" : String(value)
+	if (["date", "datetime", "time"].includes(control)) v = _normDateVal(metaField.fieldtype, v)
 	let orig = v
 	if (control === "check") { v = _checkToYesNo(v); orig = v }
 	if (control === "select" && Array.isArray(options) && v && !options.includes(v)) options = [v, ...options]
@@ -2593,7 +2705,7 @@ async function openDraftPanel(a) {
 			}
 		}
 		const srcRows = proposedRows != null ? proposedRows : baseRows // proposal REPLACES loaded rows
-		const rows = srcRows.map((r) => { const o = {}; for (const c of columns) o[c.fieldname] = r[c.fieldname] == null ? "" : String(r[c.fieldname]); return o })
+		const rows = srcRows.map((r) => { const o = {}; for (const c of columns) o[c.fieldname] = _normDateVal(c.fieldtype, r[c.fieldname] == null ? "" : String(r[c.fieldname])); return o })
 		if (!rows.length) rows.push(_blankRow(columns))
 		tables.push({
 			fieldname: tf, label: spec.label, child: spec.child_doctype, columns, rows,
@@ -2752,7 +2864,7 @@ function discardDraft() {
 async function confirmApply() {
 	const a = activeAction.value
 	if (!a) return
-	if (!a.name) { actionSend("Yes, go ahead."); return }
+	if (!a.name) { actionSend(`Yes — ${actionCta(a).toLowerCase()}.`); return } // echo the button's wording
 	confirmBusy.value = true; confirmError.value = ""
 	try {
 		await api.applyAction({ verb: a.verb, doctype: a.doctype, name: a.name, conversation: currentId.value || "" })
@@ -2798,6 +2910,22 @@ function pickLink(i, item) {
 function pickSingle(i, opt) {
 	askSel.value = { ...askSel.value, [i]: opt }
 }
+// Option BUTTONS (single/yesno) toggle: clicking the picked option again
+// unselects it, and picking one clears the "Other…" text (they're exclusive —
+// both being sent as the answer was a reported bug).
+function toggleSingle(i, opt) {
+	const cur = askSel.value[i]
+	askSel.value = { ...askSel.value, [i]: cur === opt ? "" : opt }
+	if (cur !== opt && (askOther.value[i] || "").trim()) {
+		askOther.value = { ...askOther.value, [i]: "" }
+	}
+}
+// Typing in "Other…" clears a picked option for single/yesno (mirror of the above).
+function onAskOther(i, qtype) {
+	if (qtype !== "multi" && (askOther.value[i] || "").trim() && askSel.value[i]) {
+		askSel.value = { ...askSel.value, [i]: "" }
+	}
+}
 function toggleMulti(i, opt) {
 	const cur = Array.isArray(askSel.value[i]) ? askSel.value[i].slice() : []
 	const ix = cur.indexOf(opt)
@@ -2826,9 +2954,12 @@ function submitAsk() {
 	const lines = spec.questions.map((q, i) => {
 		const ans = []
 		const v = askSel.value[i]
-		if (Array.isArray(v)) ans.push(...v)
-		else if (v != null && v !== "") ans.push(v)
 		const other = (askOther.value[i] || "").trim()
+		if (Array.isArray(v)) ans.push(...v)
+		// Single-answer questions: a typed "Other…" IS the answer — never send
+		// both it and a leftover pick (the UI keeps them exclusive; this is the
+		// belt-and-braces for stale state).
+		else if (v != null && v !== "" && !other) ans.push(v)
 		if (other) ans.push(other)
 		return `${i + 1}. ${q.q} → ${ans.join(", ") || "(no answer)"}`
 	})
@@ -3579,6 +3710,7 @@ function onEvent(p) {
 			sending.value = false
 			activeTools.value = []
 			currentRunId.value = null
+			_notifyReplyReady() // browser notification when the tab is hidden (opt-in)
 			loadConversations()
 			loadConversation(currentId.value)
 			// Re-render charts after the reload settles — late re-renders can swap a
@@ -4032,6 +4164,16 @@ function onGlobalKey(e) {
 .jv-canvas-file:hover { background: var(--surface-1); }
 .jv-canvas-file b { font-weight: 600; color: var(--text); }
 /* mermaid diagrams + fenced code blocks in markdown */
+/* Narrow-window resilience: without min-width:0 a flex child refuses to shrink
+   below its content, so on minimize the layout "breaks"; wide content (tables,
+   code) must scroll INSIDE its own box, never squeeze the text around it. */
+.jv-md { min-width: 0; max-width: 100%; overflow-wrap: break-word; }
+.jv-md :deep(table) { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
+.jv-md :deep(pre) { max-width: 100%; overflow-x: auto; }
+.jv-md :deep(img) { max-width: 100%; height: auto; }
+.jv-cards, .jv-action, .jv-email { min-width: 0; max-width: 100%; }
+.jv-btn-danger { color: #fff; background: var(--red); border-color: var(--red); }
+.jv-btn-danger:disabled { opacity: .6; }
 .jv-md :deep(.jv-mermaid) { position: relative; margin: 8px 0 12px; text-align: center; overflow-x: auto; }
 .jv-md :deep(.jv-mermaid svg) { max-width: 100%; height: auto; }
 /* skeleton shimmer while a chart hasn't rendered to SVG yet (no data-rendered) —
@@ -4336,7 +4478,11 @@ function onGlobalKey(e) {
 /* scrollable record cards (alternative to a wide table) */
 .jv-cards { margin-top: 12px; }
 .jv-cards-title { font-size: 12px; font-weight: 600; color: var(--text-2); margin-bottom: 8px; }
-.jv-cards-strip { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 6px; scroll-snap-type: x proximity; }
+.jv-cards-strip { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 6px; scroll-snap-type: x proximity; max-width: 100%; }
+.jv-cards-pager { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+.jv-cards-pgbtn { width: 26px; height: 26px; border: 1px solid var(--border-2); border-radius: 7px; background: var(--surface-1); color: var(--text-2); font-size: 15px; line-height: 1; cursor: pointer; }
+.jv-cards-pgbtn:disabled { opacity: .35; cursor: default; }
+.jv-cards-pginfo { font-size: 11.5px; color: var(--text-3); font-variant-numeric: tabular-nums; }
 .jv-cards-strip::-webkit-scrollbar { height: 7px; }
 .jv-cards-strip::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 99px; }
 .jv-card { flex: none; width: 210px; scroll-snap-align: start; box-sizing: border-box; padding: 12px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 11px; }
