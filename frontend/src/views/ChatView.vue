@@ -4449,8 +4449,12 @@ onMounted(async () => {
 	// Gate the chat the way the old Desk page did: if the customer hasn't
 	// finished signup / LLM setup, send them to the onboarding wizard. A
 	// transient failure falls through to the chat rather than trapping them.
+	// Only System Managers can run onboarding, and the /onboarding route's
+	// beforeEnter bounces non-SM users back to Chat — so a non-SM must NOT be
+	// redirected here, or the two would ping-pong in an infinite reload loop.
+	// A non-SM on a not-yet-ready site stays on Chat (degrades gracefully).
 	const r = await readyP
-	if (r && r.ready === false) {
+	if (r && r.ready === false && window.is_system_manager) {
 		window.location.assign("/jarvis/onboarding")
 		return
 	}
