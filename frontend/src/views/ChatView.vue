@@ -671,7 +671,6 @@
 						</button>
 					</div>
 					<div class="jv-skills-body">
-						<div v-if="macroError" class="jv-skill-err">{{ macroError }}</div>
 						<label class="jv-skill-l">Name</label>
 						<input class="jv-skill-in" v-model="macroForm.macro_name" placeholder="e.g. Monthly close" maxlength="140" />
 						<div style="height:10px;"></div>
@@ -707,6 +706,9 @@
 							</div>
 						</div>
 						<button class="jv-skill-newrow" style="margin-top:12px;margin-bottom:0;" @click="addMacroStep"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg> Add step</button>
+						<!-- Error sits next to Save (the body scrolls — a top-of-form message
+						     is off-screen when a long step list is open, so it was missed). -->
+						<div v-if="macroError" class="jv-skill-err" style="margin-top:12px;">{{ macroError }}</div>
 						<div class="jv-skill-formfoot">
 							<button class="jv-btn jv-btn--primary" :disabled="macroSaving" @click="saveMacro">{{ macroSaving ? "Saving…" : "Save macro" }}</button>
 							<button class="jv-btn jv-btn--ghost" :disabled="macroSaving" @click="closeMacroEditor">Cancel</button>
@@ -725,8 +727,8 @@
 						<button class="jv-art-close" @click="dropMacroMerge('')" aria-label="Close">✕</button>
 					</div>
 					<div v-if="macroMerge.status === 'pending'" class="jv-merge-pending">
-						<span class="jv-merge-spin"></span> Summarizing {{ macroMerge.steps }} steps…
-						<div class="jv-merge-sub">Your macro is already saved as a sequence — this is optional.</div>
+						<span class="jv-merge-spin"></span> Summarizing {{ macroMerge.steps }} steps into one prompt…
+						<div class="jv-merge-sub">Macro saved. You'll review the merged prompt before anything changes — close this to keep the step sequence.</div>
 					</div>
 					<template v-else-if="macroMerge.status === 'ready'">
 						<div v-if="(macroMerge.merge.dependencies || []).length" class="jv-merge-deps">
