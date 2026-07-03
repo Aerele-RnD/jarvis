@@ -228,11 +228,65 @@ class TestDispatch(FrappeTestCase):
 
 		payload = {"conversation_id": "c1", "message_id": "m1", "run_id": "r1"}
 		with patch.object(frappe, "conf", _FakeConf({"socketio_backend": "python"})), \
-		     patch("jarvis.chat.dispatch.publish_chat_send") as mock_pub:
+		     patch("jarvis.chat.dispatch.subscriber_count", return_value=1), \
+		     patch("jarvis.chat.dispatch.publish_chat_send") as mock_pub, \
+		     patch("frappe.enqueue") as mock_enqueue:
 			chat_api._dispatch_turn(payload)
 			mock_pub.assert_not_called()  # nothing until the transaction lands
 			frappe.db.commit()
 		mock_pub.assert_called_once_with(payload)
+		mock_enqueue.assert_not_called()
+
+	def test_dispatch_turn_falls_back_to_rq_when_no_subscriber(self):
+		"""The mismatch guard: socketio_backend=python but zero live
+		subscribers (config/process mismatch - e.g. Frappe Cloud pins
+		node - or the realtime process died) must route the turn to RQ
+		and log loudly, never publish into the void."""
+		from jarvis.chat import api as chat_api
+
+		payload = {"conversation_id": "c2", "message_id": "m2", "run_id": "r2"}
+		with patch.object(frappe, "conf", _FakeConf({"socketio_backend": "python"})), \
+		     patch("jarvis.chat.dispatch.subscriber_count", return_value=0), \
+		     patch("jarvis.chat.dispatch.publish_chat_send") as mock_pub, \
+		     patch("frappe.enqueue") as mock_enqueue, \
+		     patch("frappe.log_error") as mock_log:
+			chat_api._dispatch_turn(payload)
+			frappe.db.commit()  # even after commit: no publish was registered
+		mock_pub.assert_not_called()
+		mock_enqueue.assert_called_once()
+		self.assertEqual(
+			mock_enqueue.call_args.kwargs["method"],
+			"jarvis.chat.worker.run_agent_turn",
+		)
+		mock_log.assert_called_once()
+
+	def test_dispatch_turn_falls_back_to_rq_when_numsub_check_fails(self):
+		"""Any doubt (redis hiccup during the NUMSUB probe) also falls
+		back to RQ - both dispatch flows are first-class, so RQ is always
+		a correct executor."""
+		from jarvis.chat import api as chat_api
+
+		payload = {"conversation_id": "c3", "message_id": "m3", "run_id": "r3"}
+		with patch.object(frappe, "conf", _FakeConf({"socketio_backend": "python"})), \
+		     patch("jarvis.chat.dispatch.subscriber_count",
+		           side_effect=RuntimeError("redis hiccup")), \
+		     patch("jarvis.chat.dispatch.publish_chat_send") as mock_pub, \
+		     patch("frappe.enqueue") as mock_enqueue:
+			chat_api._dispatch_turn(payload)
+			frappe.db.commit()
+		mock_pub.assert_not_called()
+		mock_enqueue.assert_called_once()
+
+	def test_subscriber_count_reads_pubsub_numsub(self):
+		from jarvis.chat import dispatch
+
+		fake_cache = MagicMock()
+		fake_cache.pubsub_numsub.return_value = [(b"jarvis:chat:send:x", 2)]
+		with patch.object(frappe, "cache", return_value=fake_cache):
+			self.assertEqual(dispatch.subscriber_count(), 2)
+		fake_cache.pubsub_numsub.return_value = []
+		with patch.object(frappe, "cache", return_value=fake_cache):
+			self.assertEqual(dispatch.subscriber_count(), 0)
 
 
 class TestChannelFormat(FrappeTestCase):
