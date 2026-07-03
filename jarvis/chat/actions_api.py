@@ -199,8 +199,13 @@ def apply_action(action=None) -> dict:
 
 	frappe.db.commit()
 	if conversation:
-		_append_receipt(conversation, verb, doctype, name, args, do_submit)
-		frappe.db.commit()
+		try:
+			_append_receipt(conversation, verb, doctype, name, args, do_submit)
+			frappe.db.commit()
+		except Exception:
+			# The mutation is already committed — a receipt hiccup must not
+			# report failure (the SPA would retry and duplicate the create).
+			frappe.log_error(title="apply_action receipt failed", message=frappe.get_traceback())
 	slug = doctype.lower().replace(" ", "-")
 	return {"ok": True, "verb": verb, "name": name,
 			"doc_url": f"/app/{slug}/{name}" if verb != "delete" else ""}

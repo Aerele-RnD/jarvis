@@ -122,6 +122,37 @@ class TestApplyAction(FrappeTestCase):
 		with self.assertRaises(InvalidArgumentError):
 			apply_action(frappe.as_json({"verb": "yolo", "doctype": "ToDo"}))
 
+	def test_create_doc_url_contract(self):
+		r = apply_action(frappe.as_json({
+			"verb": "create", "doctype": "ToDo",
+			"values": {"description": "doc_url contract test"},
+		}))
+		self._cleanup_doc("ToDo", r["name"])
+		self.assertEqual(r["doc_url"], f"/app/todo/{r['name']}")
+
+	def test_delete_returns_empty_doc_url(self):
+		t = frappe.get_doc({"doctype": "ToDo", "description": "doc_url delete test"}).insert()
+		r = apply_action(frappe.as_json({"verb": "delete", "doctype": "ToDo", "name": t.name}))
+		self.assertTrue(r["ok"])
+		self.assertEqual(r["doc_url"], "")
+
+	def test_create_submit_then_amend_lifecycle(self):
+		# A throwaway submittable doctype (no ERPNext data deps) exercises the
+		# submit:1 flag and the amend path's "return the NEW draft's id" contract.
+		from frappe.core.doctype.doctype.test_doctype import new_doctype
+		dt = new_doctype(custom=1, is_submittable=1).insert()
+		self.addCleanup(lambda: frappe.delete_doc("DocType", dt.name, force=True, ignore_permissions=True))
+		r = apply_action(frappe.as_json({
+			"verb": "create", "doctype": dt.name,
+			"values": {"some_fieldname": "lifecycle test"}, "submit": 1,
+		}))
+		self.assertTrue(r["ok"])
+		self.assertEqual(frappe.db.get_value(dt.name, r["name"], "docstatus"), 1)
+		apply_action(frappe.as_json({"verb": "cancel", "doctype": dt.name, "name": r["name"]}))
+		r2 = apply_action(frappe.as_json({"verb": "amend", "doctype": dt.name, "name": r["name"]}))
+		self.assertNotEqual(r2["name"], r["name"])  # the NEW draft's id, not the source's
+		self.assertEqual(frappe.db.get_value(dt.name, r2["name"], "docstatus"), 0)
+
 	def test_receipt_messages_appended(self):
 		conv = _make_conversation()
 		self.addCleanup(lambda: frappe.delete_doc("Jarvis Conversation", conv, force=True, ignore_permissions=True))
