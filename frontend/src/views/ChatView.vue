@@ -2599,6 +2599,7 @@ const draftChipSummary = computed(() => {
 // Auto-open on a fresh create/update action (also fires when loading an old
 // conversation that ends on a pending draft — that draft IS still pending).
 watch(actionFor, () => {
+	confirmError.value = ""
 	const a = activeAction.value
 	if (a && a.kind === "doc" && (a.verb === "create" || a.verb === "update" || !a.verb)) {
 		const wasOpen = !!draftPanel.value
@@ -2608,13 +2609,80 @@ watch(actionFor, () => {
 	}
 })
 
-// --- Task 4 wires these for real (apply_action round-trip); stubs here keep
-// the confirm card / draft panel buttons functional (no-op) until then.
+// --- apply wiring: draft panel + confirm card round-trip via apply_action ---
 const confirmBusy = ref(false)
 const confirmError = ref("")
-function discardDraft() {}
-function applyDraft() {}
-function confirmApply() {}
+
+function _coerceOut(f) {
+	if (f.control === "check") return f.value === "Yes" ? 1 : 0
+	if (f.control === "number") return f.value === "" ? "" : Number(f.value)
+	return f.value
+}
+function _coerceRow(t, r) {
+	const out = {}
+	for (const c of t.columns) {
+		let v = r[c.fieldname]
+		if (v === "" || v == null) continue
+		if (["Int", "Float", "Currency", "Percent"].includes(c.fieldtype)) v = Number(v)
+		if (c.fieldtype === "Check") v = Number(v) ? 1 : 0
+		out[c.fieldname] = v
+	}
+	return out
+}
+
+async function applyDraft(submitFlag) {
+	const p = draftPanel.value
+	if (!p || p.applying) return
+	const values = {}
+	for (const f of p.fields) {
+		if (f.read_only) continue
+		const changed = String(f.value) !== String(f.orig)
+		if (p.verb === "create" ? String(f.value).trim() !== "" : changed) values[f.fieldname] = _coerceOut(f)
+	}
+	for (const t of p.tables) {
+		const rows = t.rows.map((r) => _coerceRow(t, r)).filter((r) => Object.keys(r).length)
+		if (p.verb === "create") { if (rows.length) values[t.fieldname] = rows }
+		else if (JSON.stringify(rows) !== JSON.stringify((JSON.parse(t.origJson) || []).map((r) => _coerceRow(t, Object.fromEntries(Object.entries(r).map(([k, v]) => [k, v == null ? "" : String(v)])))))) {
+			values[t.fieldname] = rows
+		}
+	}
+	p.applying = true; p.error = ""
+	try {
+		await api.applyAction({
+			verb: p.verb, doctype: p.doctype, name: p.docName || "",
+			values, submit: submitFlag ? 1 : 0, conversation: currentId.value || "",
+		})
+		closeDraftPanel()
+		await loadConversation(currentId.value)
+		loadConversations()
+	} catch (e) {
+		p.applying = false
+		p.error = (e && e.messages && e.messages[0]) || (e && e.message) || "Could not save — check the values."
+	}
+}
+
+function discardDraft() {
+	closeDraftPanel()
+	send("No, cancel that.")
+}
+
+// submit/cancel/delete/amend confirm card → direct apply (no LLM turn).
+// Old-format cards without `name` fall back to the conversational path.
+async function confirmApply() {
+	const a = activeAction.value
+	if (!a) return
+	if (!a.name) { actionSend("Yes, go ahead."); return }
+	confirmBusy.value = true; confirmError.value = ""
+	try {
+		await api.applyAction({ verb: a.verb, doctype: a.doctype, name: a.name, conversation: currentId.value || "" })
+		await loadConversation(currentId.value)
+		loadConversations()
+	} catch (e) {
+		confirmError.value = (e && e.messages && e.messages[0]) || (e && e.message) || "Could not apply."
+	} finally {
+		confirmBusy.value = false
+	}
+}
 
 // --- interactive clarifying questions (card on the last assistant message) ---
 const activeAsk = computed(() =>
