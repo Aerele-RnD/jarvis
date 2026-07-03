@@ -274,6 +274,30 @@ def archive_conversation(conversation: str) -> dict:
 
 
 @frappe.whitelist()
+def clear_chat_history() -> dict:
+	"""Permanently delete ALL of the current user's conversations and messages
+	(the settings "Danger zone" action). Macros, skills and settings are
+	untouched; macro-run history rows survive but drop their (now deleted)
+	conversation reference."""
+	user = frappe.session.user
+	names = frappe.get_all(CONV, filters={"owner": user}, pluck="name")
+	if not names:
+		return {"ok": True, "deleted": 0}
+	frappe.db.delete(MSG, {"conversation": ["in", names]})
+	# Macro runs LINK conversations — blank the reference instead of leaving a
+	# dangling link (the run-history dashboard tolerates an empty conversation).
+	frappe.db.sql(
+		"""UPDATE `tabJarvis Macro Run` SET conversation = NULL
+		   WHERE conversation IN %(names)s""",
+		{"names": names},
+	)
+	for name in names:
+		frappe.delete_doc(CONV, name, force=True, ignore_permissions=True)
+	frappe.db.commit()
+	return {"ok": True, "deleted": len(names)}
+
+
+@frappe.whitelist()
 def rename_conversation(conversation: str, title: str) -> dict:
 	"""Rename a conversation. ``get_doc`` enforces the owner-only permission."""
 	title = (title or "").strip()[:140]

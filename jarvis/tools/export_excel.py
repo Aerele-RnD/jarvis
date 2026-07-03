@@ -34,19 +34,25 @@ def export_excel(
 
 	first = rows[0]
 	if isinstance(first, dict):
-		cols = columns or list(first.keys())
-		body = [[_cell(r.get(c)) for c in cols] for r in rows if isinstance(r, dict)]
-		if not body:
-			raise NoDataError("No data to prepare for Excel.")
-		data = [list(cols)] + body
+		header = list(columns) if columns else list(first.keys())
+		body = [[_cell(r.get(c)) for c in header] for r in rows if isinstance(r, dict)]
 	elif isinstance(first, (list, tuple)):
-		# Without an explicit `columns`, the first row is the header — so a lone
-		# row means there's a header but zero data rows: still nothing to export.
-		if not columns and len(rows) < 2:
-			raise NoDataError("No data to prepare for Excel.")
-		data = ([list(columns)] if columns else []) + [list(r) for r in rows]
+		if columns:
+			header, body = list(columns), [list(r) for r in rows]
+		else:
+			# Without an explicit `columns`, the first row is the header and the
+			# rest is the body.
+			header, body = list(first), [list(r) for r in rows[1:]]
 	else:
 		raise InvalidArgumentError("rows must be a list of dicts or a list of lists")
+
+	# Reject a contentless workbook — no columns, no data rows, or every cell
+	# blank — instead of handing back a blank .xlsx the user opens to find empty.
+	# (The earlier guard only caught zero rows, so `[{}]` / all-None rows and
+	# header-only lists still generated a file.)
+	if not header or not any(_nonempty(c) for r in body for c in r):
+		raise NoDataError("No data to prepare for Excel.")
+	data = [header] + body
 
 	from frappe.utils.xlsxutils import make_xlsx
 
@@ -74,3 +80,9 @@ def _cell(v):
 	if isinstance(v, (dict, list)):
 		return frappe.as_json(v)
 	return v
+
+
+def _nonempty(v):
+	"""A cell counts as data unless it's None or blank/whitespace. 0 and False
+	are real values, so they count."""
+	return v is not None and str(v).strip() != ""

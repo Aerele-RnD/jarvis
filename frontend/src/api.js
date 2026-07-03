@@ -18,6 +18,8 @@ export const previewFile = (fileUrl) =>
 export const createOrFocusEmpty = () => call("jarvis.chat.api.create_or_focus_empty")
 export const archiveConversation = (conversation) =>
 	call("jarvis.chat.api.archive_conversation", { conversation })
+// Danger zone: permanently delete ALL of the user's conversations + messages.
+export const clearChatHistory = () => call("jarvis.chat.api.clear_chat_history")
 export const renameConversation = (conversation, title) =>
 	call("jarvis.chat.api.rename_conversation", { conversation, title })
 export const setStar = (conversation, starred) =>
@@ -60,8 +62,21 @@ export const updateMacro = (p) => {
 export const deleteMacro = (name) => call(MC + "delete_macro", { name })
 export const runMacro = (name) => call(MC + "run_macro", { name })
 export const stopMacroRun = (run) => call(MC + "stop_macro_run", { run })
+// Run-history dashboard (settings → Macro runs).
+export const listMacroRuns = (params) => call(MC + "list_macro_runs", params || {})
+export const macroRunStats = () => call(MC + "macro_run_stats")
+// Background summarize: fired after every 2+ step save; the WORKER applies the
+// summary when the turn ends (macro:merged event) — no client round-trip needed.
+// Run is gated on merge_status while pending.
+export const summarizeMacro = (name) => call(MC + "summarize_macro", { name })
 export const setConversationModel = (conversation, model) =>
 	call("jarvis.chat.api.set_conversation_model", { conversation, model: model || "" })
+
+// --- Record draft panel (direct apply, no LLM in the loop) ---
+const AC = "jarvis.chat.actions_api."
+export const getDoctypeFormMeta = (doctype) => call(AC + "get_doctype_form_meta", { doctype })
+export const loadDocForEdit = (doctype, name) => call(AC + "load_doc", { doctype, name })
+export const applyAction = (action) => call(AC + "apply_action", { action: JSON.stringify(action) })
 
 export async function sendMessage(conversation, message, modelOverride, attachments, context) {
 	// Empty conversation is allowed: the backend creates (or focuses) an empty

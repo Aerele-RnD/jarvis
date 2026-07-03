@@ -12,6 +12,9 @@
   "stop_on_error",
   "description",
   "steps",
+  "merged_prompt",
+  "merge_status",
+  "merge_conversation",
   "schedule_section",
   "schedule_enabled",
   "schedule_frequency",
@@ -56,6 +59,25 @@
    "options": "Jarvis Macro Step",
    "reqd": 1,
    "description": "Ordered list of prompts run one per agent turn."
+  },
+  {
+   "fieldname": "merged_prompt",
+   "fieldtype": "Long Text",
+   "label": "Merged Prompt",
+   "description": "LLM-summarized single prompt; when set, runs instead of the step sequence"
+  },
+  {
+   "fieldname": "merge_status",
+   "fieldtype": "Select",
+   "label": "Merge Status",
+   "options": "\npending\nready\nfailed",
+   "description": "Background summarization state; run is blocked while pending"
+  },
+  {
+   "fieldname": "merge_conversation",
+   "fieldtype": "Data",
+   "label": "Merge Conversation",
+   "description": "Throwaway conversation whose turn produces the summary"
   },
   {
    "fieldname": "schedule_section",

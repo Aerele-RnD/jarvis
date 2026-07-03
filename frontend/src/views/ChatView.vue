@@ -105,9 +105,8 @@
 		<!-- ============ MAIN ============ -->
 		<main style="flex:1;display:flex;flex-direction:column;height:100%;min-width:0;background:var(--surface);">
 			<header style="height:52px;flex:none;border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 18px;gap:12px;">
-				<button v-if="sidebarCollapsed" class="jv-iconbtn-bd" @click="toggleSidebar" title="Expand sidebar" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:var(--surface);border:1px solid var(--border);border-radius:7px;cursor:pointer;flex:none;">
-					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18" /><path d="m11 9 3 3-3 3" /></svg>
-				</button>
+				<!-- (no expand button here — the collapsed rail's top button already expands;
+				     two visible "Expand sidebar" controls was confusing) -->
 				<div style="display:flex;flex-direction:column;line-height:1.15;min-width:0;">
 					<span style="font-size:14px;font-weight:600;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ currentTitle }}</span>
 					<span style="font-size:11.5px;color:var(--text-3);">{{ headerSub }}</span>
@@ -269,61 +268,30 @@
 											<button class="jv-action-2nd" @click="actionSend('Regenerate that email, please.')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2v6h6M21 12a9 9 0 1 1-3-6.7L21 8" /></svg>Regenerate</button>
 										</div>
 									</div>
-									<!-- doc create / update / delete confirm -->
+									<!-- create/update → compact chip; the side panel is the editor -->
+									<div v-else-if="!activeAction.verb || activeAction.verb === 'create' || activeAction.verb === 'update'"
+									     class="jv-draft-chip" role="button" tabindex="0"
+									     @click="openDraftPanel({ verb: activeAction.verb || 'create', ...activeAction })"
+									     @keydown.enter="openDraftPanel({ verb: activeAction.verb || 'create', ...activeAction })">
+										<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></svg>
+										<span><b>{{ activeAction.doctype }}</b> draft<template v-if="draftChipSummary"> · {{ draftChipSummary }}</template></span>
+										<span class="jv-draft-chip-cta">Open editor</span>
+									</div>
+									<!-- submit/cancel/delete/amend → confirm card, but Confirm applies directly (Task 4) -->
 									<div v-else class="jv-action">
 										<div class="jv-action-head">
-											<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></svg>
-											<span class="jv-action-title">{{ actionVerb(activeAction) }} <b>{{ activeAction.doctype }}</b><template v-if="activeAction.title"> · {{ activeAction.title }}</template></span>
+											<span class="jv-action-title">{{ actionVerb(activeAction) }} <b>{{ activeAction.doctype }}</b><template v-if="activeAction.name"> · {{ activeAction.name }}</template><template v-else-if="activeAction.title"> · {{ activeAction.title }}</template></span>
 										</div>
 										<div class="jv-action-fields">
-											<template v-if="!editingAction">
-												<div v-for="(f, fi) in (activeAction.fields || [])" :key="fi" class="jv-action-row">
-													<span class="jv-action-k">{{ f.label }}</span>
-													<span class="jv-action-v">{{ f.value }}</span>
-												</div>
-											</template>
-											<template v-else>
-												<div v-for="(f, fi) in actionEdits" :key="fi" class="jv-action-editrow" :class="{ changed: String(f.value) !== String(f.orig) }">
-													<label class="jv-action-k">{{ f.label }}</label>
-													<div class="jv-action-ctl">
-														<!-- Link: search the target DocType and pick a record -->
-														<div v-if="f.control === 'link'" class="jv-action-link">
-															<input class="jv-action-input" v-model="f.value" @input="onActLinkSearch(fi, f, $event)" @focus="onActLinkSearch(fi, f, $event)" @blur="closeActLink(fi)" :placeholder="'Search ' + (f.options || 'records') + '…'" @keydown.enter.prevent autocomplete="off" />
-															<div v-if="actLink[fi] && actLink[fi].open && (actLink[fi].items || []).length" class="jv-action-linkmenu" :class="{ up: actLink[fi].up }">
-																<button v-for="(it, ii) in actLink[fi].items" :key="ii" type="button" @mousedown.prevent="pickActLink(fi, f, it)"><b>{{ it.value }}</b><span v-if="it.label"> · {{ it.label }}</span></button>
-															</div>
-														</div>
-														<!-- Select / Check: dropdown of allowed values -->
-														<select v-else-if="f.control === 'select'" class="jv-action-input jv-action-sel" v-model="f.value">
-															<option v-for="(o, oi) in f.options" :key="oi" :value="o">{{ o === '' ? '— none —' : o }}</option>
-														</select>
-														<select v-else-if="f.control === 'check'" class="jv-action-input jv-action-sel" v-model="f.value">
-															<option value="Yes">Yes</option>
-															<option value="No">No</option>
-														</select>
-														<!-- Date / time / number: native typed inputs -->
-														<input v-else-if="f.control === 'date'" type="date" class="jv-action-input" v-model="f.value" />
-														<input v-else-if="f.control === 'datetime'" type="datetime-local" class="jv-action-input" v-model="f.value" />
-														<input v-else-if="f.control === 'time'" type="time" class="jv-action-input" v-model="f.value" />
-														<input v-else-if="f.control === 'number'" type="number" class="jv-action-input" v-model="f.value" />
-														<!-- long text vs single-line -->
-														<textarea v-else-if="f.control === 'text'" class="jv-action-input" v-model="f.value" rows="3"></textarea>
-														<input v-else class="jv-action-input" v-model="f.value" />
-													</div>
-												</div>
-											</template>
+											<div v-for="(f, fi) in (activeAction.fields || [])" :key="fi" class="jv-action-row">
+												<span class="jv-action-k">{{ f.label }}</span>
+												<span class="jv-action-v">{{ f.value }}</span>
+											</div>
 										</div>
-										<div v-if="editingAction" class="jv-action-edithint">Change only the values you want — the rest stays exactly as shown.</div>
+										<div v-if="confirmError" class="jv-draft-error" style="margin:0 14px 10px">{{ confirmError }}</div>
 										<div class="jv-action-foot">
-											<template v-if="!editingAction">
-												<button class="jv-action-primary" @click="actionSend('Yes, go ahead.')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>{{ actionCta(activeAction) }}</button>
-												<button class="jv-action-2nd" @click="startActionEdit"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>Edit</button>
-												<button class="jv-action-discard" @click="actionSend('No, cancel that.')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /><path d="M10 11v6M14 11v6" /></svg>Discard</button>
-											</template>
-											<template v-else>
-												<button class="jv-action-primary" @click="applyActionEdits"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>Apply changes</button>
-												<button class="jv-action-2nd" @click="cancelActionEdit">Cancel</button>
-											</template>
+											<button class="jv-action-primary" :disabled="confirmBusy" @click="confirmApply">✓ {{ actionCta(activeAction) }}</button>
+											<button class="jv-action-discard" @click="actionSend('No, cancel that.')">Discard</button>
 										</div>
 									</div>
 								</template>
@@ -331,8 +299,8 @@
 								<div v-else-if="confirmFor === m.name" class="jv-confirm">
 									<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--amber)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><path d="M12 9v4M12 17h.01" /></svg>
 									<span class="jv-confirm-label">{{ confirmLabel(m) || "Apply this change?" }}</span>
-									<button class="jv-confirm-no" @click="answerConfirm(false)">Cancel</button>
-									<button class="jv-confirm-yes" @click="answerConfirm(true)">Confirm</button>
+									<button class="jv-confirm-no" @click="answerConfirm(false, confirmLabel(m))">Cancel</button>
+									<button class="jv-confirm-yes" @click="answerConfirm(true, confirmLabel(m))">Confirm</button>
 								</div>
 								<!-- interactive clarifying questions (Claude-style cards; one Submit) -->
 								<div v-else-if="askFor === m.name && activeAsk" class="jv-ask">
@@ -340,11 +308,11 @@
 										<div class="jv-ask-qt"><span class="jv-ask-num">{{ qi + 1 }}</span>{{ q.q }}</div>
 										<!-- yes/no, with optional custom labels (e.g. Approve / Reject) -->
 										<div v-if="q.type === 'yesno'" class="jv-ask-opts">
-											<button v-for="(lbl, li) in (q.options.length === 2 ? q.options : ['Yes', 'No'])" :key="li" class="jv-ask-opt" :class="{ on: isPicked(qi, lbl) }" @click="pickSingle(qi, lbl)"><span v-if="isPicked(qi, lbl)" class="jv-ask-tick">✓</span>{{ lbl }}</button>
+											<button v-for="(lbl, li) in (q.options.length === 2 ? q.options : ['Yes', 'No'])" :key="li" class="jv-ask-opt" :class="{ on: isPicked(qi, lbl) }" @click="toggleSingle(qi, lbl)"><span v-if="isPicked(qi, lbl)" class="jv-ask-tick">✓</span>{{ lbl }}</button>
 										</div>
 										<!-- single / multi choice -->
 										<div v-else-if="q.type === 'single' || q.type === 'multi'" class="jv-ask-opts">
-											<button v-for="(opt, oi) in q.options" :key="oi" class="jv-ask-opt" :class="{ on: isPicked(qi, opt) }" @click="q.type === 'multi' ? toggleMulti(qi, opt) : pickSingle(qi, opt)"><span v-if="isPicked(qi, opt)" class="jv-ask-tick">✓</span>{{ opt }}</button>
+											<button v-for="(opt, oi) in q.options" :key="oi" class="jv-ask-opt" :class="{ on: isPicked(qi, opt) }" @click="q.type === 'multi' ? toggleMulti(qi, opt) : toggleSingle(qi, opt)"><span v-if="isPicked(qi, opt)" class="jv-ask-tick">✓</span>{{ opt }}</button>
 										</div>
 										<!-- date / datetime / free text fields -->
 										<input v-else-if="q.type === 'date'" type="date" class="jv-ask-field" :value="askSel[qi] || ''" @input="pickSingle(qi, $event.target.value)" />
@@ -358,7 +326,7 @@
 											</div>
 										</div>
 										<!-- Other free-text only for choice questions -->
-										<input v-if="q.type === 'single' || q.type === 'multi' || q.type === 'yesno'" class="jv-ask-other" v-model="askOther[qi]" placeholder="Other…" @keydown.enter.prevent />
+										<input v-if="q.type === 'single' || q.type === 'multi' || q.type === 'yesno'" class="jv-ask-other" v-model="askOther[qi]" placeholder="Other…" @input="onAskOther(qi, q.type)" @keydown.enter.prevent />
 									</div>
 									<div class="jv-ask-foot">
 										<button class="jv-ask-submit" :disabled="!askReady" @click="submitAsk">Submit answers</button>
@@ -369,12 +337,18 @@
 								<div v-if="cardsOf(m)" class="jv-cards">
 									<div v-if="cardsOf(m).title" class="jv-cards-title">{{ cardsOf(m).title }}</div>
 									<div class="jv-cards-strip">
-										<div v-for="(c, ci) in cardsOf(m).cards" :key="ci" class="jv-card">
+										<div v-for="(c, ci) in pagedCards(m)" :key="cardPageOf(m) + '-' + ci" class="jv-card">
 											<a v-if="c.doctype && c.name" :href="`/app/${_deskSlug(c.doctype)}/${encodeURIComponent(c.name)}`" target="_blank" rel="noopener" class="jv-card-title jv-card-link" :title="'Open ' + c.doctype">{{ c.title }}</a>
 											<div v-else class="jv-card-title">{{ c.title }}</div>
 											<div v-if="c.subtitle" class="jv-card-sub">{{ c.subtitle }}</div>
 											<div v-for="(f, fi) in c.fields" :key="fi" class="jv-card-field"><span class="jv-card-k">{{ f.label }}</span><span class="jv-card-v">{{ f.value }}</span></div>
 										</div>
+									</div>
+									<!-- long lists paginate — an endless horizontal scroll loses your place -->
+									<div v-if="cardsOf(m).cards.length > CARD_PAGE_SIZE" class="jv-cards-pager">
+										<button class="jv-cards-pgbtn" :disabled="cardPageOf(m) === 0" @click="stepCardPage(m, -1)" aria-label="Previous cards">‹</button>
+										<span class="jv-cards-pginfo">{{ cardPageOf(m) * CARD_PAGE_SIZE + 1 }}–{{ Math.min((cardPageOf(m) + 1) * CARD_PAGE_SIZE, cardsOf(m).cards.length) }} of {{ cardsOf(m).cards.length }}</span>
+										<button class="jv-cards-pgbtn" :disabled="(cardPageOf(m) + 1) * CARD_PAGE_SIZE >= cardsOf(m).cards.length" @click="stepCardPage(m, 1)" aria-label="Next cards">›</button>
 									</div>
 								</div>
 								<!-- save-as-macro card: the agent proposed a reusable macro -->
@@ -677,9 +651,10 @@
 						<div v-for="mm in macros" :key="mm.name" class="jv-skill-row">
 							<div style="min-width:0;flex:1;cursor:pointer;" @click="editMacro(mm)">
 								<div class="jv-skill-name" style="font-family:inherit;">{{ mm.macro_name }} <span v-if="!mm.enabled" class="jv-skill-off">draft</span></div>
-								<div class="jv-macro-sub">{{ mm.step_count || 0 }} step{{ (mm.step_count || 0) === 1 ? "" : "s" }}<span v-if="mm.schedule_enabled" class="jv-macro-sched"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>{{ mm.schedule_frequency || "scheduled" }}</span></div>
+								<div class="jv-macro-sub">{{ mm.step_count || 0 }} step{{ (mm.step_count || 0) === 1 ? "" : "s" }}<span v-if="mm.merge_status === 'pending'" class="jv-macro-merged-badge jv-macro-merged-badge--pending" title="Summarizing in the background">summarizing…</span><span v-else-if="(mm.merged_prompt || '').trim()" class="jv-macro-merged-badge" title="Runs its summarized prompt as one turn">summary</span><span v-if="mm.schedule_enabled" class="jv-macro-sched"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>{{ mm.schedule_frequency || "scheduled" }}</span></div>
 							</div>
-							<button class="jv-btn jv-btn--primary jv-btn--sm" title="Run" @click.stop="runMacroFromList(mm)"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8V4z" /></svg> Run</button>
+							<button v-if="mm.merge_status === 'pending'" class="jv-btn jv-btn--sm" disabled title="The summary is being prepared — Run unlocks when it's ready"><span class="jv-merge-spin" style="width:11px;height:11px;"></span> Summarizing…</button>
+							<button v-else class="jv-btn jv-btn--primary jv-btn--sm" title="Run" @click.stop="runMacroFromList(mm)"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8V4z" /></svg> Run</button>
 							<button class="jv-btn jv-btn--icon jv-ib" title="Edit" @click.stop="editMacro(mm)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg></button>
 							<button class="jv-btn jv-btn--icon jv-ib jv-ib-danger" title="Delete" @click.stop="removeMacro(mm)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" /></svg></button>
 						</div>
@@ -702,7 +677,6 @@
 						</button>
 					</div>
 					<div class="jv-skills-body">
-						<div v-if="macroError" class="jv-skill-err">{{ macroError }}</div>
 						<label class="jv-skill-l">Name</label>
 						<input class="jv-skill-in" v-model="macroForm.macro_name" placeholder="e.g. Monthly close" maxlength="140" />
 						<div style="height:10px;"></div>
@@ -720,7 +694,22 @@
 								<input type="time" class="jv-skill-in" v-model="macroForm.schedule_time" />
 							</div>
 						</div>
-						<label class="jv-skill-l" style="margin-top:16px;">Steps</label>
+						<!-- Steps stay the editable source; the summarized prompt (own tab) is what runs when set. -->
+						<div class="jv-macro-tabs">
+							<button class="jv-macro-tab" :class="{ on: macroEdTab === 'steps' }" @click="macroEdTab = 'steps'">Steps</button>
+							<button class="jv-macro-tab" :class="{ on: macroEdTab === 'summary' }" @click="macroEdTab = 'summary'">
+								Summarized prompt<span v-if="(macroForm.merged_prompt || '').trim()" class="jv-macro-tab-dot" title="A summary is set — it runs instead of the steps"></span>
+							</button>
+						</div>
+						<template v-if="macroEdTab === 'summary'">
+							<template v-if="(macroForm.merged_prompt || '').trim()">
+								<div class="jv-merge-sub" style="margin-top:10px;">This single prompt <b>runs when you hit Run</b> — the steps stay as its source. Edit freely; saving keeps your edit.</div>
+								<textarea class="jv-merge-text" style="margin-top:8px;" v-model="macroForm.merged_prompt" rows="9"></textarea>
+								<button class="jv-skill-newrow" style="margin-top:10px;margin-bottom:0;" @click="macroForm.merged_prompt = ''">✕ Remove summary — run the steps instead</button>
+							</template>
+							<div v-else class="jv-set-empty" style="margin-top:12px;">No summary yet. Saving with 2+ steps generates one automatically in the background — it lands here and becomes what runs (Run stays locked until it's ready).</div>
+						</template>
+						<template v-if="macroEdTab === 'steps'">
 						<div v-if="!macroForm.steps.length" class="jv-set-empty">No steps yet. Add one below.</div>
 						<div v-for="(st, si) in macroForm.steps" :key="si" class="jv-macro-step" :class="{ dragging: dragStepIdx === si, dragover: dragOverIdx === si && dragStepIdx !== null && dragStepIdx !== si }" @dragover.prevent="onStepDragOver(si)" @dragleave="onStepDragLeave(si)" @drop.prevent="onStepDrop(si)">
 							<div class="jv-macro-step-head">
@@ -738,6 +727,10 @@
 							</div>
 						</div>
 						<button class="jv-skill-newrow" style="margin-top:12px;margin-bottom:0;" @click="addMacroStep"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg> Add step</button>
+						</template>
+						<!-- Error sits next to Save (the body scrolls — a top-of-form message
+						     is off-screen when a long step list is open, so it was missed). -->
+						<div v-if="macroError" class="jv-skill-err" style="margin-top:12px;">{{ macroError }}</div>
 						<div class="jv-skill-formfoot">
 							<button class="jv-btn jv-btn--primary" :disabled="macroSaving" @click="saveMacro">{{ macroSaving ? "Saving…" : "Save macro" }}</button>
 							<button class="jv-btn jv-btn--ghost" :disabled="macroSaving" @click="closeMacroEditor">Cancel</button>
@@ -745,6 +738,12 @@
 					</div>
 				</div>
 			</div>
+		</transition>
+
+		<!-- Macro summarize happens fully in the BACKGROUND (worker applies it);
+		     the only UI is this transient notice + the Run-button gate. -->
+		<transition name="jv-fade">
+			<div v-if="mergeNotice" class="jv-merge-notice">{{ mergeNotice }}</div>
 		</transition>
 
 		<!-- ============ PROACTIVE MESSAGE TOAST (Jarvis started a chat) ============ -->
@@ -814,6 +813,10 @@
 							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2" /></svg>
 							<span>Activity</span>
 						</button>
+						<button class="jv-settings-navitem" :class="{ on: settingsTab === 'macroruns' }" @click="settingsTab = 'macroruns'">
+							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l14 9-14 9V3z" /></svg>
+							<span>Macro runs</span>
+						</button>
 						<button class="jv-settings-navitem" :class="{ on: settingsTab === 'shortcuts' }" @click="settingsTab = 'shortcuts'">
 							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2" /><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M6 12h.01M10 12h.01M14 12h.01M18 12h.01M7 16h10" /></svg>
 							<span>Shortcuts</span>
@@ -847,11 +850,13 @@
 										<span class="jv-switch-knob"></span>
 									</button>
 								</div>
-							<div class="jv-set-sec" style="margin-top:18px;">Workspace</div>
-							<div class="jv-set-row"><span>Conversations</span><b>{{ convCount }}</b></div>
-							<div class="jv-set-row"><span>Messages in this chat</span><b>{{ msgCount }}</b></div>
-							<div class="jv-set-row"><span>Tool calls this session</span><b>{{ sessionToolCalls }}</b></div>
-							<div class="jv-set-row"><span>Tools available</span><b>{{ toolCount }}</b></div>
+							<div class="jv-set-row">
+								<span>Notify when a reply is ready<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Browser notification when Jarvis finishes while you're in another tab</span></span>
+								<button class="jv-switch" :class="{ on: notifyEnabled }" @click="toggleNotify" role="switch" :aria-checked="String(notifyEnabled)" title="Browser notification when a reply finishes in a background tab">
+									<span class="jv-switch-knob"></span>
+								</button>
+							</div>
+							<!-- (the Workspace counts block lived here — removed as noise; the Usage tab has it all) -->
 							<div class="jv-set-sec" style="margin-top:18px;display:flex;align-items:center;gap:7px;">Token usage <span class="jv-est">est.</span></div>
 							<div class="jv-set-row"><span>This chat</span><b>{{ usage ? fmtTokens(usage.chat_tokens) : "—" }}</b></div>
 							<div class="jv-set-row"><span>{{ usage ? usage.month_label : "This month" }}</span><b>{{ usage ? fmtTokens(usage.month_tokens) : "—" }}</b></div>
@@ -861,6 +866,11 @@
 								<div class="jv-set-hint">{{ fmtTokens(usage.month_tokens) }} / {{ fmtTokens(usage.budget_monthly) }} this month · {{ usagePct }}%</div>
 							</template>
 							<div v-else class="jv-set-hint">No monthly budget set · counts are estimated from message text.</div>
+							<div class="jv-set-sec" style="margin-top:18px;color:var(--red);">Danger zone</div>
+							<div class="jv-set-row">
+								<span>Delete all chat history<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Every conversation and message, permanently. Macros and skills stay.</span></span>
+								<button class="jv-btn jv-btn--sm jv-btn-danger" :disabled="clearingHistory" @click="clearAllHistory">{{ clearingHistory ? "Deleting…" : "Delete all" }}</button>
+							</div>
 						</template>
 						<!-- USAGE -->
 						<template v-else-if="settingsTab === 'usage'">
@@ -894,6 +904,54 @@
 								</div>
 								<div v-if="a.names.length" class="jv-act-names">{{ a.names.join(" · ") }}</div>
 							</div>
+						</template>
+						<!-- MACRO RUNS -->
+						<template v-else-if="settingsTab === 'macroruns'">
+							<div class="jv-statgrid">
+								<div class="jv-stat"><div class="jv-stat-label">Total runs</div><div class="jv-stat-val">{{ macroRunStats ? macroRunStats.total : "—" }}</div><div class="jv-stat-sub">all time</div></div>
+								<div class="jv-stat"><div class="jv-stat-label">Success rate</div><div class="jv-stat-val" style="color:var(--green);">{{ macroRunStats && macroRunStats.success_rate != null ? macroRunStats.success_rate + "%" : "—" }}</div><div class="jv-stat-sub">completed ÷ finished</div></div>
+								<div class="jv-stat"><div class="jv-stat-label">Running now</div><div class="jv-stat-val" style="color:var(--blue);">{{ macroRunStats ? macroRunStats.running : "—" }}</div><div class="jv-stat-sub">active</div></div>
+								<div class="jv-stat"><div class="jv-stat-label">Last run</div><div class="jv-stat-val">{{ macroRunStats && macroRunStats.last_run_at ? fmtAgo(macroRunStats.last_run_at) : "—" }}</div><div class="jv-stat-sub">&nbsp;</div></div>
+							</div>
+							<div class="jv-runfilters">
+								<div class="jv-seg jv-runchips">
+									<button v-for="s in MACRO_RUN_STATUSES" :key="s || 'all'" :class="{ on: macroRunStatus === s }" @click="setMacroRunStatus(s)">{{ s ? (s[0].toUpperCase() + s.slice(1)) : "All" }}</button>
+								</div>
+								<select class="jv-runmacrosel" :value="macroRunMacro" @change="setMacroRunMacro">
+									<option value="">All macros</option>
+									<option v-for="mm in macros" :key="mm.name" :value="mm.name">{{ mm.macro_name }}</option>
+								</select>
+							</div>
+							<div v-if="!macroRuns.length && !macroRunsLoading" class="jv-set-empty" style="text-align:center;padding:30px 0;">No macro runs yet.<br />Run a macro to see its history here.</div>
+							<div v-for="run in macroRuns" :key="run.name" class="jv-run">
+								<span class="jv-run-dot" :class="'d-' + macroRunBadge(run.status)"></span>
+								<div class="jv-run-main">
+									<div class="jv-run-top">
+										<span class="jv-run-name">{{ run.macro_name }}</span>
+										<span class="jv-run-badge" :class="'b-' + macroRunBadge(run.status)">{{ run.status }}</span>
+										<span class="jv-run-trig">
+											<svg v-if="run.trigger === 'scheduled'" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="15" rx="2" /><path d="M8 3v4M16 3v4M4 10h16" /></svg>
+											<svg v-else width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 8v4l3 2" /></svg>
+											{{ run.trigger }}
+										</span>
+									</div>
+									<div class="jv-run-meta">
+										<span class="jv-run-prog">{{ run.current_step }}/{{ run.total_steps }}</span>
+										<span class="jv-run-sep">·</span><span>{{ fmtAgo(run.started_at || run.creation) }}</span>
+										<template v-if="macroRunElapsed(run)"><span class="jv-run-sep">·</span><span>{{ macroRunElapsed(run) }}</span></template>
+									</div>
+									<div v-if="run.error" class="jv-run-err">
+										<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /><path d="M12 9v4M12 17h.01" /></svg>
+										{{ run.error }}
+									</div>
+								</div>
+								<div class="jv-run-act">
+									<button v-if="run.status === 'running' || run.status === 'queued'" class="jv-run-btn stop" @click="stopRunFromHistory(run)">Stop</button>
+									<button v-else class="jv-run-btn" @click="rerunFromHistory(run)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2v6h6M21 12a9 9 0 1 1-3-6.7L21 8" /></svg>Re-run</button>
+									<button v-if="run.conversation" class="jv-run-btn" @click="openRunConversation(run)">Open ›</button>
+								</div>
+							</div>
+							<button v-if="macroRunHasMore" class="jv-run-loadmore" :disabled="macroRunsLoading" @click="loadMacroRuns(false)">{{ macroRunsLoading ? "Loading…" : "Load more" }}</button>
 						</template>
 						<!-- SHORTCUTS -->
 						<template v-else-if="settingsTab === 'shortcuts'">
@@ -977,6 +1035,100 @@
 							<p>No inline preview for this file type.</p>
 							<a :href="artifact.url" :download="cvFile(artifact.cv)" class="jv-canvas-dl">Download {{ cvFile(artifact.cv) }}</a>
 						</div>
+					</div>
+				</aside>
+			</div>
+		</transition>
+		<!-- Record draft panel — the agent's proposed create/update, fully editable, applied directly -->
+		<transition name="jv-slide">
+			<div v-if="draftPanel" class="jv-artifact-overlay" @click.self="closeDraftPanel">
+				<aside class="jv-artifact-panel jv-draft-panel" tabindex="-1">
+					<div class="jv-artifact-head">
+						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></svg>
+						<span class="jv-artifact-head-title">{{ draftPanel.verb === 'update' ? 'Update' : 'New' }} {{ draftPanel.doctype }}<template v-if="draftPanel.docName"> · {{ draftPanel.docName }}</template></span>
+						<span class="jv-draft-badge">Draft — not saved</span>
+						<button class="jv-art-close" @click="closeDraftPanel" title="Close (draft stays in chat)" aria-label="Close">
+							<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+						</button>
+					</div>
+					<div class="jv-draft-body">
+						<div v-if="draftPanel.updatedToast" class="jv-draft-toast">Draft updated from chat</div>
+						<div class="jv-draft-fields">
+							<div v-for="f in draftPanel.fields" :key="f.fieldname" class="jv-draft-fld"
+							     :class="{ missing: f.reqd && !String(f.value).trim(), changed: f.changed }">
+								<label>{{ f.label }}<span v-if="f.reqd" class="jv-req"> *</span></label>
+								<div class="jv-draft-ctl">
+									<template v-if="f.control === 'link'">
+										<input class="jv-action-input" v-model="f.value"
+										       @input="onDraftLink('f:' + f.fieldname, () => f.value, f.options, $event)"
+										       @focus="onDraftLink('f:' + f.fieldname, () => f.value, f.options, $event)"
+										       @blur="closeDraftLink" :placeholder="'Search ' + (f.options || 'records') + '…'" autocomplete="off" />
+										<div v-if="draftLink.open && draftLink.key === 'f:' + f.fieldname && draftLink.items.length"
+										     class="jv-action-linkmenu" :class="{ up: draftLink.up }">
+											<button v-for="it in draftLink.items" :key="it.value" @mousedown.prevent="pickDraftLink((v) => { f.value = v }, it)">
+												<b>{{ it.value }}</b><span v-if="it.label"> — {{ it.label }}</span>
+											</button>
+										</div>
+									</template>
+									<select v-else-if="f.control === 'select'" class="jv-action-input jv-action-sel" v-model="f.value">
+										<option v-for="o in f.options" :key="o" :value="o">{{ o }}</option>
+									</select>
+									<select v-else-if="f.control === 'check'" class="jv-action-input jv-action-sel" v-model="f.value">
+										<option>Yes</option><option>No</option>
+									</select>
+									<input v-else-if="f.control === 'date'" type="date" class="jv-action-input" v-model="f.value" />
+									<input v-else-if="f.control === 'datetime'" type="datetime-local" class="jv-action-input" v-model="f.value" />
+									<input v-else-if="f.control === 'time'" type="time" class="jv-action-input" v-model="f.value" />
+									<input v-else-if="f.control === 'number'" type="number" class="jv-action-input" v-model="f.value" />
+									<textarea v-else-if="f.control === 'text'" class="jv-action-input" v-model="f.value" rows="3"></textarea>
+									<input v-else class="jv-action-input" v-model="f.value" />
+								</div>
+							</div>
+						</div>
+						<div v-for="(t, ti) in draftPanel.tables" :key="t.fieldname" class="jv-draft-table">
+							<div class="jv-draft-table-title">{{ t.label }}</div>
+							<div class="jv-draft-gridwrap">
+								<table class="jv-grid">
+									<thead><tr><th v-for="c in t.columns" :key="c.fieldname">{{ c.label }}</th><th class="jv-grid-x"></th></tr></thead>
+									<tbody>
+										<tr v-for="(r, ri) in t.rows" :key="ri">
+											<td v-for="c in t.columns" :key="c.fieldname" :class="{ 'jv-grid-ro': c.read_only }">
+												<span v-if="c.read_only">{{ r[c.fieldname] }}</span>
+												<template v-else-if="c.fieldtype === 'Link'">
+													<input class="jv-action-input" v-model="r[c.fieldname]"
+													       @input="onDraftLink('t:' + ti + ':' + ri + ':' + c.fieldname, () => r[c.fieldname], c.options, $event)"
+													       @focus="onDraftLink('t:' + ti + ':' + ri + ':' + c.fieldname, () => r[c.fieldname], c.options, $event)"
+													       @blur="closeDraftLink" autocomplete="off" />
+													<div v-if="draftLink.open && draftLink.key === 't:' + ti + ':' + ri + ':' + c.fieldname && draftLink.items.length"
+													     class="jv-action-linkmenu" :class="{ up: draftLink.up }">
+														<button v-for="it in draftLink.items" :key="it.value" @mousedown.prevent="pickDraftLink((v) => { r[c.fieldname] = v }, it)">
+															<b>{{ it.value }}</b><span v-if="it.label"> — {{ it.label }}</span>
+														</button>
+													</div>
+												</template>
+												<input v-else-if="['Int','Float','Currency','Percent'].includes(c.fieldtype)" type="number" class="jv-action-input" v-model="r[c.fieldname]" />
+												<input v-else-if="c.fieldtype === 'Date'" type="date" class="jv-action-input" v-model="r[c.fieldname]" />
+												<select v-else-if="c.fieldtype === 'Check'" class="jv-action-input jv-action-sel" v-model="r[c.fieldname]">
+													<option value="1">Yes</option><option value="0">No</option>
+												</select>
+												<input v-else class="jv-action-input" v-model="r[c.fieldname]" />
+											</td>
+											<td class="jv-grid-x"><button class="jv-grid-del" @click="removeDraftRow(ti, ri)" title="Remove row" aria-label="Remove row">✕</button></td>
+										</tr>
+									</tbody>
+								</table>
+							</div>
+							<button class="jv-draft-addrow" @click="addDraftRow(ti)">＋ Add row</button>
+						</div>
+						<div v-if="draftTotals" class="jv-draft-totals">{{ draftTotals }} <span class="jv-draft-est">(estimate — ERPNext computes final totals)</span></div>
+						<div v-if="draftPanel.error" class="jv-draft-error">{{ draftPanel.error }}</div>
+					</div>
+					<div class="jv-draft-foot">
+						<button class="jv-action-discard" @click="discardDraft">Discard</button>
+						<button v-if="draftPanel.submittable && draftPanel.verb === 'create'" class="jv-action-2nd" style="margin-left:auto" :disabled="draftPanel.applying" @click="applyDraft(1)">Create &amp; Submit</button>
+						<button class="jv-action-primary" :style="draftPanel.submittable && draftPanel.verb === 'create' ? '' : 'margin-left:auto'" :disabled="draftPanel.applying" @click="applyDraft(0)">
+							{{ draftPanel.applying ? 'Saving…' : draftCta }}
+						</button>
 					</div>
 				</aside>
 			</div>
@@ -1072,13 +1224,38 @@ function _settleConfirm(val) {
 const userMenuOpen = ref(false)
 const modelMenuOpen = ref(false)
 // Collapsible sidebar (persisted per device, openclaw-style).
-const sidebarCollapsed = ref(localStorage.getItem("jarvis-sidebar") === "collapsed")
+// Below this width the sidebar auto-collapses to the icon rail so a narrow /
+// half-screen window doesn't let it crowd the chat.
+const SIDEBAR_NARROW_BP = 820
+const _sidebarNarrow = () => typeof window !== "undefined" && window.matchMedia(`(max-width: ${SIDEBAR_NARROW_BP}px)`).matches
+function _sidebarPref() {
+	try { return localStorage.getItem("jarvis-sidebar") === "collapsed" } catch (e) { return false }
+}
+// Initial: forced collapsed on a narrow viewport, else the saved preference.
+const sidebarCollapsed = ref(_sidebarNarrow() || _sidebarPref())
 function toggleSidebar() {
 	sidebarCollapsed.value = !sidebarCollapsed.value
-	try {
-		localStorage.setItem("jarvis-sidebar", sidebarCollapsed.value ? "collapsed" : "open")
-	} catch (e) {}
+	// Only persist as the user's preference on wide screens; on a narrow window
+	// the collapse is width-driven, so a manual toggle there is temporary and
+	// must not overwrite the saved preference.
+	if (!_sidebarNarrow()) {
+		try { localStorage.setItem("jarvis-sidebar", sidebarCollapsed.value ? "collapsed" : "open") } catch (e) {}
+	}
 }
+// React to viewport width crossing the breakpoint: collapse when it goes
+// narrow, restore the saved preference when it goes wide again.
+let _sidebarMq = null
+function _applySidebarForWidth() {
+	sidebarCollapsed.value = _sidebarNarrow() ? true : _sidebarPref()
+}
+onMounted(() => {
+	if (typeof window === "undefined") return
+	_sidebarMq = window.matchMedia(`(max-width: ${SIDEBAR_NARROW_BP}px)`)
+	_sidebarMq.addEventListener("change", _applySidebarForWidth)
+})
+onBeforeUnmount(() => {
+	if (_sidebarMq) _sidebarMq.removeEventListener("change", _applySidebarForWidth)
+})
 // per-conversation ⋯ menu + inline rename (sidebar)
 const convMenuFor = ref(null)
 const renamingId = ref(null)
@@ -1339,8 +1516,13 @@ function _blankMacro() {
 		enabled: true, stop_on_error: true,
 		schedule_enabled: false, schedule_frequency: "daily", schedule_time: "09:00",
 		steps: [],
+		// The stored LLM summary — when set, run_macro runs THIS as one turn
+		// and the steps stay as the editable source. Snapshots (_orig*) let
+		// saveMacro tell "steps changed → stale summary" from a rename-only save.
+		merged_prompt: "", _origMerged: "", _origStepsJson: "",
 	}
 }
+const macroEdTab = ref("steps") // "steps" | "summary"
 // Skills taggable on a macro STEP: my own + shared-with-me, enabled only (a
 // disabled skill can't be invoked, so offering it would silently no-op).
 const macroSkillOptions = computed(() => customSkills.value.filter((s) => s.enabled))
@@ -1372,6 +1554,7 @@ function newMacro() {
 	macroError.value = ""
 	macroForm.value = _blankMacro()
 	macroForm.value.steps = [{ label: "", prompt: "", skills: [] }]
+	macroEdTab.value = "steps"
 	loadSkillsSync() // populate the taggable-skills options
 	macroEditorOpen.value = true
 }
@@ -1379,6 +1562,7 @@ async function editMacro(m) {
 	macroError.value = ""
 	try {
 		const full = await api.getMacro(m.name)
+		const steps = (Array.isArray(full.steps) ? full.steps : []).map((s) => ({ label: s.label || "", prompt: s.prompt || "", skills: Array.isArray(s.skills) ? [...s.skills] : [] }))
 		macroForm.value = {
 			name: full.name,
 			macro_name: full.macro_name || "",
@@ -1388,9 +1572,13 @@ async function editMacro(m) {
 			schedule_enabled: !!full.schedule_enabled,
 			schedule_frequency: full.schedule_frequency || "daily",
 			schedule_time: full.schedule_time || "09:00",
-			steps: (Array.isArray(full.steps) ? full.steps : []).map((s) => ({ label: s.label || "", prompt: s.prompt || "", skills: Array.isArray(s.skills) ? [...s.skills] : [] })),
+			steps,
+			merged_prompt: full.merged_prompt || "",
+			_origMerged: full.merged_prompt || "",
+			_origStepsJson: JSON.stringify(steps.filter((s) => (s.prompt || "").trim())),
 		}
 		if (!macroForm.value.steps.length) macroForm.value.steps = [{ label: "", prompt: "", skills: [] }]
+		macroEdTab.value = "steps"
 		loadSkillsSync() // populate the taggable-skills options
 		macroEditorOpen.value = true
 	} catch (e) { macroError.value = _skillErr(e) }
@@ -1451,12 +1639,56 @@ async function saveMacro() {
 			schedule_frequency: f.schedule_frequency || "daily",
 			schedule_time: f.schedule_time || "09:00",
 		}
-		if (f.name) await api.updateMacro({ name: f.name, ...payload })
-		else await api.createMacro(payload)
+		// Summary handling (update only — a new macro has no summary yet): an
+		// edited summary is explicit intent → send it; a rename-only save keeps
+		// the stored one; changed steps with an untouched summary omit it → the
+		// backend clears the stale copy and the re-summarize below regenerates it.
+		const stepsTouched = JSON.stringify(steps) !== (f._origStepsJson || "")
+		const mergedTouched = (f.merged_prompt || "") !== (f._origMerged || "")
+		let sentMerged = ""
+		let savedName = f.name
+		if (f.name) {
+			const upd = { name: f.name, ...payload }
+			if (mergedTouched || !stepsTouched) {
+				upd.merged_prompt = (f.merged_prompt || "").trim()
+				sentMerged = upd.merged_prompt
+			}
+			await api.updateMacro(upd)
+		} else {
+			const r = await api.createMacro(payload)
+			savedName = r && r.data && r.data.name
+		}
 		macroEditorOpen.value = false
 		await loadMacros()
+		// Re-summarize only when the sequence actually changed (or has no
+		// summary yet) — a rename shouldn't burn an LLM turn.
+		const needsSummary = steps.length >= 2 && (stepsTouched || !f.name || !sentMerged)
+		if (savedName && needsSummary) startMacroMerge(savedName)
 	} catch (e) { macroError.value = _skillErr(e) } finally { macroSaving.value = false }
 }
+
+// --- Macro merge: every 2+ step save fires a BACKGROUND summarize turn (no
+// modal, nothing to confirm). The WORKER applies the summary to the macro when
+// the turn ends — even if this tab is gone — and pushes a `macro:merged` event.
+// Run is blocked (backend + button) while merge_status is "pending". ---
+const mergeNotice = ref("")
+let _mergeNoticeTimer = null
+function _showMergeNotice(text) {
+	mergeNotice.value = text
+	if (_mergeNoticeTimer) clearTimeout(_mergeNoticeTimer)
+	_mergeNoticeTimer = setTimeout(() => { mergeNotice.value = "" }, 6000)
+}
+
+async function startMacroMerge(name) {
+	try {
+		await api.summarizeMacro(name)
+		_showMergeNotice("Summarizing in the background — Run unlocks when the summary is ready.")
+	} catch (e) {
+		/* macro is saved either way; without a summary the steps run */
+	}
+	loadMacros() // pick up merge_status=pending for the Run-button gate
+}
+
 async function removeMacro(m) {
 	if (!(await confirmDialog({ title: "Delete macro?", message: `Delete “${m.macro_name}”? This can't be undone.`, confirmLabel: "Delete" }))) return
 	try {
@@ -1490,6 +1722,118 @@ async function stopMacro() {
 	if (!macroRun.value) return
 	try { await api.stopMacroRun(macroRun.value.run) } catch (e) { /* ignore */ }
 }
+
+// ---- Macro run history dashboard (settings → Macro runs) ----
+const MACRO_RUN_PAGE = 30
+const macroRuns = ref([])
+const macroRunStats = ref(null)
+const macroRunStatus = ref("") // "" = all
+const macroRunMacro = ref("") // "" = all macros
+const macroRunStart = ref(0)
+const macroRunHasMore = ref(false)
+const macroRunsLoading = ref(false)
+const MACRO_RUN_STATUSES = ["", "running", "completed", "failed", "stopped"]
+
+async function loadMacroRunStats() {
+	try { macroRunStats.value = await api.macroRunStats() } catch (e) { /* keep prior */ }
+}
+// reset=true starts a fresh page-1 load (also refreshes stats + the macro
+// filter options); reset=false appends the next page ("Load more").
+async function loadMacroRuns(reset = true) {
+	if (macroRunsLoading.value) return
+	macroRunsLoading.value = true
+	if (reset) {
+		macroRunStart.value = 0
+		loadMacroRunStats()
+		if (!macros.value.length) loadMacros() // populate the macro filter dropdown
+	}
+	try {
+		const r = await api.listMacroRuns({
+			status: macroRunStatus.value,
+			macro: macroRunMacro.value,
+			limit: MACRO_RUN_PAGE,
+			start: macroRunStart.value,
+		})
+		const rows = (r && r.runs) || []
+		macroRuns.value = reset ? rows : [...macroRuns.value, ...rows]
+		macroRunHasMore.value = !!(r && r.has_more)
+		macroRunStart.value += rows.length
+	} catch (e) { /* keep the last-good list */ } finally { macroRunsLoading.value = false }
+}
+function setMacroRunStatus(s) { macroRunStatus.value = s; loadMacroRuns(true) }
+function setMacroRunMacro(e) { macroRunMacro.value = e.target.value; loadMacroRuns(true) }
+
+// Row actions -------------------------------------------------------------
+async function openRunConversation(run) {
+	if (!run.conversation) return
+	settingsOpen.value = false
+	await loadConversations()
+	await selectConversation(run.conversation)
+}
+async function rerunFromHistory(run) {
+	try {
+		const res = await api.runMacro(run.macro)
+		const data = (res && res.data) || res || {}
+		settingsOpen.value = false
+		await loadConversations()
+		if (data.conversation) await selectConversation(data.conversation)
+		macroRun.value = { run: data.macro_run, conversation: data.conversation, step: 0, total: 0, label: "", status: "running" }
+	} catch (e) { notify(_skillErr(e), { type: "error" }) }
+}
+async function stopRunFromHistory(run) {
+	try {
+		await api.stopMacroRun(run.name)
+		run.status = "stopped" // optimistic patch
+		loadMacroRunStats()
+	} catch (e) { notify(_skillErr(e), { type: "error" }) }
+}
+
+// Formatters --------------------------------------------------------------
+function macroRunBadge(status) {
+	return { completed: "ok", failed: "err", running: "run", queued: "run", stopped: "stop" }[status] || "stop"
+}
+function fmtAgo(dt) {
+	if (!dt) return ""
+	const t = new Date(String(dt).replace(" ", "T")).getTime()
+	if (isNaN(t)) return ""
+	const s = Math.max(0, Math.floor((Date.now() - t) / 1000))
+	if (s < 60) return "just now"
+	const m = Math.floor(s / 60); if (m < 60) return `${m}m ago`
+	const h = Math.floor(m / 60); if (h < 24) return `${h}h ago`
+	const d = Math.floor(h / 24); if (d < 7) return `${d}d ago`
+	return new Date(t).toLocaleDateString()
+}
+function fmtDuration(sec) {
+	if (sec == null) return ""
+	sec = Math.max(0, Math.round(sec))
+	if (sec < 60) return `${sec}s`
+	const m = Math.floor(sec / 60), s = sec % 60
+	if (m < 60) return s ? `${m}m ${s}s` : `${m}m`
+	const h = Math.floor(m / 60)
+	return `${h}h ${m % 60}m`
+}
+// Elapsed for a run that hasn't finished (running/queued) — shows "· 18s".
+function macroRunElapsed(run) {
+	if (run.duration_s != null || !run.started_at) return fmtDuration(run.duration_s)
+	const t = new Date(String(run.started_at).replace(" ", "T")).getTime()
+	if (isNaN(t)) return ""
+	return fmtDuration((Date.now() - t) / 1000) + " elapsed"
+}
+// Live-patch an open dashboard from macro:progress / macro:done events.
+function patchMacroRunRow(p, done) {
+	if (!settingsOpen.value || settingsTab.value !== "macroruns") return
+	const row = macroRuns.value.find((r) => r.name === p.macro_run)
+	if (row) {
+		if (p.step != null) row.current_step = p.step
+		row.status = done ? (p.status || "completed") : "running"
+	}
+	loadMacroRunStats()
+}
+// Load the dashboard when the user enters the Macro runs tab (fresh each time).
+watch(
+	() => settingsOpen.value && settingsTab.value === "macroruns",
+	(active) => { if (active) loadMacroRuns(true) },
+)
 // A ```jarvis-macro card's "Save as macro" button: pre-fill the editor.
 function openMacroFromCard(card) {
 	macroError.value = ""
@@ -1688,6 +2032,58 @@ const showActivityDetail = ref(localStorage.getItem("jarvis-activity-detail") ==
 function setActivityDetail(v) {
 	showActivityDetail.value = !!v
 	try { localStorage.setItem("jarvis-activity-detail", v ? "1" : "0") } catch (e) {}
+}
+// Optional browser notification when a reply lands while the tab is hidden.
+// Per-device (localStorage); enabling asks for Notification permission.
+const notifyEnabled = ref(typeof Notification !== "undefined" && localStorage.getItem("jarvis-notify") === "1" && Notification.permission === "granted")
+async function toggleNotify() {
+	if (typeof Notification === "undefined") return
+	if (notifyEnabled.value) {
+		notifyEnabled.value = false
+		try { localStorage.setItem("jarvis-notify", "0") } catch (e) {}
+		return
+	}
+	let perm = Notification.permission
+	if (perm !== "granted") {
+		try { perm = await Notification.requestPermission() } catch (e) { perm = "denied" }
+	}
+	if (perm === "granted") {
+		notifyEnabled.value = true
+		try { localStorage.setItem("jarvis-notify", "1") } catch (e) {}
+	}
+}
+function _notifyReplyReady() {
+	if (!notifyEnabled.value || !document.hidden) return
+	try {
+		const n = new Notification("Jarvis replied", {
+			body: currentTitle.value || "Your reply is ready.",
+			tag: "jarvis-reply", // collapse bursts into one notification
+		})
+		n.onclick = () => { window.focus(); n.close() }
+	} catch (e) { /* notification blocked at OS level — nothing to do */ }
+}
+
+// Danger zone: wipe every conversation + message (macros/skills untouched).
+const clearingHistory = ref(false)
+async function clearAllHistory() {
+	if (!(await confirmDialog({
+		title: "Delete ALL chat history?",
+		message: "Every conversation and message will be permanently deleted. Macros, skills and settings stay. This can't be undone.",
+		confirmLabel: "Delete everything",
+	}))) return
+	clearingHistory.value = true
+	try {
+		await api.clearChatHistory()
+		conversations.value = []
+		messages.value = []
+		currentId.value = ""
+		settingsOpen.value = false
+		newChat()
+	} catch (e) {
+		notify(_skillErr(e) || "Could not delete history", { type: "error" })
+	} finally {
+		clearingHistory.value = false
+	}
 }
 // In-flight wording shown while a turn runs (tool-activity hidden). Kept to a
 // single neutral "Thinking\u2026" \u2014 no task-describing phrases that could overclaim.
@@ -1935,6 +2331,26 @@ function cardsOf(m) {
 	_cardsCache.set(content, res)
 	return res
 }
+// Card-strip pagination: past a page of cards the horizontal scroll loses your
+// place, so long lists page instead (‹ 1–6 of 50 ›). Page index per message.
+const CARD_PAGE_SIZE = 6
+const cardPage = ref({}) // message name -> 0-based page
+function cardPageOf(m) {
+	return cardPage.value[m.name] || 0
+}
+function pagedCards(m) {
+	const cs = cardsOf(m)
+	if (!cs) return []
+	const p = cardPageOf(m)
+	return cs.cards.slice(p * CARD_PAGE_SIZE, (p + 1) * CARD_PAGE_SIZE)
+}
+function stepCardPage(m, dir) {
+	const cs = cardsOf(m)
+	if (!cs) return
+	const last = Math.max(0, Math.ceil(cs.cards.length / CARD_PAGE_SIZE) - 1)
+	const next = Math.min(last, Math.max(0, cardPageOf(m) + dir))
+	cardPage.value = { ...cardPage.value, [m.name]: next }
+}
 const _macroCardCache = new Map()
 function macroCardOf(m) {
 	const content = (m && m.content) || ""
@@ -2115,19 +2531,15 @@ const confirmFor = computed(() =>
 function actionSend(text) {
 	send(text)
 }
-function answerConfirm(ok) {
-	send(ok ? "Yes, go ahead." : "No, cancel that.")
+function answerConfirm(ok, label) {
+	// Echo the card's own wording so the transcript reads like what the user
+	// clicked ("Yes — Confirm and save") instead of a canned "go ahead".
+	const l = (label || "").trim()
+	send(ok ? (l ? `Yes — ${l}` : "Yes, go ahead.") : "No, cancel that.")
 }
 
-// --- Inline edit of a proposed action's values BEFORE confirming. The whole
-// action flow is conversational (send() a message the agent acts on), so
-// editing = pre-fill the proposed fields, let the user change any subset, then
-// send a precise "change these, keep the rest" instruction so the agent re-emits
-// an updated confirmation card. Unedited fields are never mentioned.
-const editingAction = ref(false)
-const actionEdits = ref([]) // [{ label, value, orig, control, options }]
-const actLink = ref({}) // per-row Link dropdown state: { [idx]: { items, open } }
-const _actMetaCache = {} // doctype -> { labelLower: { fieldtype, options } }
+// --- Field-control helpers shared by the confirm card and the record draft
+// panel (chip → side panel; see _formMeta / openDraftPanel below).
 function _isLongVal(v) {
 	const s = String(v == null ? "" : v)
 	return s.length > 55 || s.includes("\n")
@@ -2171,25 +2583,6 @@ function _controlFor(fieldtype, options) {
 function _normKey(s) {
 	return String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "")
 }
-async function _actMeta(doctype) {
-	if (_actMetaCache[doctype]) return _actMetaCache[doctype]
-	const r = await api.getDoctypeFields(doctype)
-	const fields = ((r && r.fields) || []).map((f) => ({
-		...f,
-		_kl: _normKey(f.label),
-		_kf: _normKey(f.fieldname),
-	}))
-	const map = {}
-	for (const f of fields) {
-		// fieldname key first, label key second (label wins ties — it's what a
-		// human-authored card most likely means)
-		if (f._kf && !map[f._kf]) map[f._kf] = f
-		if (f._kl) map[f._kl] = f
-	}
-	const meta = { map, fields }
-	_actMetaCache[doctype] = meta
-	return meta
-}
 // Resolve one card label to a field: exact normalized match on label/fieldname,
 // else unique containment (e.g. "UOM" → stock_uom when it's the only sensible
 // hit; required fields win ambiguous shorthands).
@@ -2209,92 +2602,280 @@ function _checkToYesNo(v) {
 	const s = typeof v === "string" ? v.toLowerCase() : v
 	return ["1", 1, "yes", "true", true, "on"].includes(s) ? "Yes" : "No"
 }
-async function startActionEdit() {
-	const a = activeAction.value
-	const fields = (a && a.fields) || []
-	// Render instantly with a text/data fallback, then enrich with field types.
-	actionEdits.value = fields.map((f) => {
-		const v = f.value == null ? "" : String(f.value)
-		return { label: f.label, value: v, orig: v, control: _isLongVal(v) ? "text" : "data", options: "" }
-	})
-	actLink.value = {}
-	editingAction.value = true
-	const dt = a && a.doctype
-	if (!dt) return
-	try {
-		const meta = await _actMeta(dt)
-		actionEdits.value = actionEdits.value.map((e) => {
-			const m = _actField(meta, e.label)
-			if (!m) return e // label didn't map to a field → keep the text fallback
-			let [control, options] = _controlFor(m.fieldtype, m.options)
-			let value = e.value
-			let orig = e.orig
-			if (control === "check") {
-				value = _checkToYesNo(value)
-				orig = _checkToYesNo(orig)
+// --- Record draft panel: the action JSON is the draft; edits are local; apply
+// posts to actions_api (no LLM round-trip). ---
+const draftPanel = ref(null)
+// one shared link-search menu for panel inputs, keyed "f:<fieldname>" or "t:<ti>:<ri>:<col>"
+const draftLink = ref({ key: "", items: [], open: false, up: false })
+const _formMetaCache = {}
+
+async function _formMeta(doctype) {
+	if (_formMetaCache[doctype]) return _formMetaCache[doctype]
+	const r = await api.getDoctypeFormMeta(doctype)
+	if (!r || !r.ok) throw new Error("no form meta")
+	for (const f of r.fields) { f._kl = _normKey(f.label); f._kf = _normKey(f.fieldname) }
+	_formMetaCache[doctype] = r
+	return r
+}
+
+// Native date/time inputs REQUIRE canonical values (yyyy-mm-dd / yyyy-mm-ddThh:mm);
+// anything else — "2026-07-10 00:00:00", "10-07-2026" — renders the input EMPTY,
+// which read as "the date isn't picking". Normalize whatever the agent/doc gave us.
+function _normDateVal(fieldtype, v) {
+	const s = String(v == null ? "" : v).trim()
+	if (!s) return s
+	if (fieldtype === "Date") {
+		let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/)
+		if (m) return `${m[1]}-${m[2]}-${m[3]}`
+		m = s.match(/^(\d{2})[-/](\d{2})[-/](\d{4})$/) // dd-mm-yyyy / dd/mm/yyyy
+		if (m) return `${m[3]}-${m[2]}-${m[1]}`
+	}
+	if (fieldtype === "Datetime") {
+		let m = s.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})/)
+		if (m) return `${m[1]}T${m[2]}`
+		m = s.match(/^(\d{4}-\d{2}-\d{2})$/)
+		if (m) return `${m[1]}T00:00`
+	}
+	if (fieldtype === "Time") {
+		const m = s.match(/^(\d{2}:\d{2})/)
+		if (m) return m[1]
+	}
+	return s
+}
+function _panelField(metaField, value) {
+	let [control, options] = _controlFor(metaField.fieldtype, metaField.options)
+	let v = value == null ? "" : String(value)
+	if (["date", "datetime", "time"].includes(control)) v = _normDateVal(metaField.fieldtype, v)
+	let orig = v
+	if (control === "check") { v = _checkToYesNo(v); orig = v }
+	if (control === "select" && Array.isArray(options) && v && !options.includes(v)) options = [v, ...options]
+	return {
+		fieldname: metaField.fieldname, label: metaField.label, control, options,
+		fieldtype: metaField.fieldtype, reqd: metaField.reqd, read_only: metaField.read_only,
+		value: v, orig,
+	}
+}
+
+// Build the panel model from an action + form meta (+ live doc for updates).
+async function openDraftPanel(a) {
+	if (!a || a.kind !== "doc" || !a.doctype) return
+	const verb = a.verb === "update" ? "update" : "create"
+	let meta
+	try { meta = await _formMeta(a.doctype) } catch (e) { return } // no meta → no panel (old card still shows)
+	let base = { values: {}, tables: {} }
+	if (verb === "update" && a.name) {
+		try { base = await api.loadDocForEdit(a.doctype, a.name) } catch (e) { /* not editable → create-style view */ }
+	}
+	// proposed main fields: agent's fields resolved by label-or-fieldname
+	const metaLookup = { fields: meta.fields, map: {} }
+	for (const f of meta.fields) { if (f._kf && !metaLookup.map[f._kf]) metaLookup.map[f._kf] = f; if (f._kl) metaLookup.map[f._kl] = f }
+	const proposed = {} // fieldname -> value
+	for (const f of a.fields || []) {
+		const m = _actField(metaLookup, f.label)
+		if (m && m.fieldtype !== "Table") proposed[m.fieldname] = f.value
+	}
+	const fields = []
+	const seen = new Set()
+	for (const f of meta.fields) {
+		if (f.fieldtype === "Table") continue
+		const has = f.fieldname in proposed
+		const baseV = base.values[f.fieldname]
+		// Show: agent-proposed fields + required fields + (update) filled fields the agent referenced
+		if (!has && !f.reqd) continue
+		const pf = _panelField(f, has ? proposed[f.fieldname] : baseV)
+		if (verb === "update") pf.orig = baseV == null ? "" : String(pf.control === "check" ? _checkToYesNo(baseV) : baseV)
+		pf.changed = verb === "update" && String(pf.value) !== String(pf.orig)
+		fields.push(pf); seen.add(f.fieldname)
+	}
+	// child tables: every meta table that is required, agent-proposed, or (update) non-empty
+	const tables = []
+	const aTables = {}
+	for (const t of a.tables || []) if (t && t.fieldname) aTables[t.fieldname] = t.rows || []
+	for (const [tf, spec] of Object.entries(meta.tables || {})) {
+		const metaField = meta.fields.find((f) => f.fieldname === tf) || { reqd: 0 }
+		const proposedRows = aTables[tf]
+		const baseRows = (base.tables || {})[tf] || []
+		if (!proposedRows && !metaField.reqd && !baseRows.length) continue
+		// columns = child meta columns ∪ keys the agent used (unknown keys → data input)
+		const columns = spec.columns.slice()
+		const known = new Set(columns.map((c) => c.fieldname))
+		for (const r of proposedRows || []) {
+			for (const k of Object.keys(r)) {
+				if (!known.has(k)) { known.add(k); columns.push({ fieldname: k, label: k, fieldtype: "Data", options: "", reqd: 0, read_only: 0 }) }
 			}
-			// Make sure the current value is selectable even if it's not a listed option.
-			if (control === "select" && Array.isArray(options) && orig && !options.includes(orig)) {
-				options = [orig, ...options]
-			}
-			return { ...e, control, options, value, orig }
+		}
+		const srcRows = proposedRows != null ? proposedRows : baseRows // proposal REPLACES loaded rows
+		const rows = srcRows.map((r) => { const o = {}; for (const c of columns) o[c.fieldname] = _normDateVal(c.fieldtype, r[c.fieldname] == null ? "" : String(r[c.fieldname])); return o })
+		if (!rows.length) rows.push(_blankRow(columns))
+		tables.push({
+			fieldname: tf, label: spec.label, child: spec.child_doctype, columns, rows,
+			origJson: JSON.stringify(verb === "update" ? baseRows : null),
 		})
-	} catch (e) {
-		/* meta unavailable (e.g. no read perm) — keep the text fallback */
+	}
+	draftPanel.value = {
+		verb, doctype: a.doctype, docName: verb === "update" ? (a.name || "") : "",
+		title: a.title || "", submittable: !!meta.is_submittable,
+		fields, tables, applying: false, error: "", updatedToast: false,
 	}
 }
-function cancelActionEdit() {
-	editingAction.value = false
-	actionEdits.value = []
-	actLink.value = {}
+
+function _blankRow(columns) {
+	const o = {}
+	for (const c of columns) o[c.fieldname] = ""
+	return o
 }
-async function onActLinkSearch(idx, f, ev) {
-	// Open the menu UPWARD when the input sits in the lower part of the
-	// viewport — a downward menu there runs off-screen / under the composer.
-	let up = actLink.value[idx] ? actLink.value[idx].up : false
+function addDraftRow(ti) {
+	const t = draftPanel.value.tables[ti]
+	t.rows.push(_blankRow(t.columns))
+}
+function removeDraftRow(ti, ri) {
+	draftPanel.value.tables[ti].rows.splice(ri, 1)
+}
+function closeDraftPanel() {
+	draftPanel.value = null
+	draftLink.value = { key: "", items: [], open: false, up: false }
+}
+
+// Link search shared by panel fields + grid cells.
+async function onDraftLink(key, target, doctype, ev) {
+	let up = false
 	const el = ev && ev.target
-	if (el && el.getBoundingClientRect) {
-		up = el.getBoundingClientRect().bottom > window.innerHeight - 260
-	}
-	actLink.value = { ...actLink.value, [idx]: { ...(actLink.value[idx] || {}), open: true, up } }
-	if (!f.options) return
+	if (el && el.getBoundingClientRect) up = el.getBoundingClientRect().bottom > window.innerHeight - 260
+	draftLink.value = { key, items: [], open: true, up }
+	if (!doctype) return
 	try {
-		const r = await api.searchLink(f.options, f.value)
-		const items = (r || []).map((x) => ({ value: x.value, label: x.description || "" })).slice(0, 8)
-		actLink.value = { ...actLink.value, [idx]: { items, open: true, up } }
+		const r = await api.searchLink(doctype, target())
+		if (draftLink.value.key !== key) return // user moved on
+		draftLink.value = { key, items: (r || []).map((x) => ({ value: x.value, label: x.description || "" })).slice(0, 8), open: true, up }
+	} catch (e) { /* menu stays empty */ }
+}
+function pickDraftLink(setter, item) {
+	setter(item.value)
+	draftLink.value = { key: "", items: [], open: false, up: false }
+}
+function closeDraftLink() {
+	setTimeout(() => { draftLink.value = { ...draftLink.value, open: false } }, 160)
+}
+
+// est. totals: any grid with qty (+rate) columns
+const draftTotals = computed(() => {
+	const p = draftPanel.value
+	if (!p) return ""
+	let qty = 0, amt = 0, hasQty = false, hasAmt = false
+	for (const t of p.tables) {
+		const q = t.columns.find((c) => c.fieldname === "qty")
+		const r = t.columns.find((c) => c.fieldname === "rate")
+		if (!q) continue
+		hasQty = true
+		for (const row of t.rows) {
+			const n = parseFloat(row.qty) || 0
+			qty += n
+			if (r) { hasAmt = true; amt += n * (parseFloat(row.rate) || 0) }
+		}
+	}
+	if (!hasQty) return ""
+	return `Total qty ${qty}` + (hasAmt ? ` · Est. total ${amt.toLocaleString("en-IN", { minimumFractionDigits: 2 })}` : "")
+})
+const draftCta = computed(() => {
+	const p = draftPanel.value
+	if (!p) return ""
+	return p.verb === "update" ? `Update ${p.docName || p.doctype}` : `Create ${p.doctype}`
+})
+const draftChipSummary = computed(() => {
+	const a = activeAction.value
+	if (!a) return ""
+	const n = (a.tables || []).reduce((s, t) => s + ((t.rows || []).length), 0)
+	return n ? `${n} row${n === 1 ? "" : "s"}` : ""
+})
+
+// Auto-open on a fresh create/update action (also fires when loading an old
+// conversation that ends on a pending draft — that draft IS still pending).
+watch(actionFor, () => {
+	confirmError.value = ""
+	const a = activeAction.value
+	if (a && a.kind === "doc" && (a.verb === "create" || a.verb === "update" || !a.verb)) {
+		const wasOpen = !!draftPanel.value
+		openDraftPanel({ verb: a.verb || "create", ...a }).then(() => {
+			if (wasOpen && draftPanel.value) draftPanel.value.updatedToast = true
+		})
+	}
+})
+
+// --- apply wiring: draft panel + confirm card round-trip via apply_action ---
+const confirmBusy = ref(false)
+const confirmError = ref("")
+
+function _coerceOut(f) {
+	if (f.control === "check") return f.value === "Yes" ? 1 : 0
+	if (f.control === "number") return f.value === "" ? "" : Number(f.value)
+	return f.value
+}
+function _coerceRow(t, r) {
+	const out = {}
+	for (const c of t.columns) {
+		if (c.read_only) continue
+		let v = r[c.fieldname]
+		if (v === "" || v == null) continue
+		if (["Int", "Float", "Currency", "Percent"].includes(c.fieldtype)) v = Number(v)
+		if (c.fieldtype === "Check") v = Number(v) ? 1 : 0
+		out[c.fieldname] = v
+	}
+	return out
+}
+
+async function applyDraft(submitFlag) {
+	const p = draftPanel.value
+	if (!p || p.applying) return
+	const values = {}
+	for (const f of p.fields) {
+		if (f.read_only) continue
+		const changed = String(f.value) !== String(f.orig)
+		if (p.verb === "create" ? String(f.value).trim() !== "" : changed) values[f.fieldname] = _coerceOut(f)
+	}
+	for (const t of p.tables) {
+		const rows = t.rows.map((r) => _coerceRow(t, r)).filter((r) => Object.keys(r).length)
+		if (p.verb === "create") { if (rows.length) values[t.fieldname] = rows }
+		else if (JSON.stringify(rows) !== JSON.stringify((JSON.parse(t.origJson) || []).map((r) => _coerceRow(t, Object.fromEntries(Object.entries(r).map(([k, v]) => [k, v == null ? "" : String(v)])))))) {
+			values[t.fieldname] = rows
+		}
+	}
+	p.applying = true; p.error = ""
+	try {
+		await api.applyAction({
+			verb: p.verb, doctype: p.doctype, name: p.docName || "",
+			values, submit: submitFlag ? 1 : 0, conversation: currentId.value || "",
+		})
+		closeDraftPanel()
+		await loadConversation(currentId.value)
+		loadConversations()
 	} catch (e) {
-		actLink.value = { ...actLink.value, [idx]: { items: [], open: true, up } }
+		p.applying = false
+		p.error = (e && e.messages && e.messages[0]) || (e && e.message) || "Could not save — check the values."
 	}
 }
-function pickActLink(idx, f, item) {
-	f.value = item.value
-	actLink.value = { ...actLink.value, [idx]: { items: [], open: false } }
+
+function discardDraft() {
+	closeDraftPanel()
+	send("No, cancel that.")
 }
-function closeActLink(idx) {
-	// Delay so a click on a dropdown option registers before the blur closes it.
-	setTimeout(() => {
-		actLink.value = { ...actLink.value, [idx]: { ...(actLink.value[idx] || {}), open: false } }
-	}, 160)
+
+// submit/cancel/delete/amend confirm card → direct apply (no LLM turn).
+// Old-format cards without `name` fall back to the conversational path.
+async function confirmApply() {
+	const a = activeAction.value
+	if (!a) return
+	if (!a.name) { actionSend(`Yes — ${actionCta(a).toLowerCase()}.`); return } // echo the button's wording
+	confirmBusy.value = true; confirmError.value = ""
+	try {
+		await api.applyAction({ verb: a.verb, doctype: a.doctype, name: a.name, conversation: currentId.value || "" })
+		await loadConversation(currentId.value)
+		loadConversations()
+	} catch (e) {
+		confirmError.value = (e && e.messages && e.messages[0]) || (e && e.message) || "Could not apply."
+	} finally {
+		confirmBusy.value = false
+	}
 }
-function applyActionEdits() {
-	const changed = actionEdits.value.filter((f) => String(f.value) !== String(f.orig))
-	const verb = (activeAction.value && activeAction.value.verb) || "create"
-	editingAction.value = false
-	actionEdits.value = []
-	actLink.value = {}
-	if (!changed.length) return // nothing edited → leave the card as-is
-	const lines = changed.map((f) => `- ${f.label}: ${f.value}`).join("\n")
-	send(
-		`Before you ${verb} it, change these values and show me the updated confirmation — ` +
-			`keep every other field exactly as it is:\n${lines}`,
-	)
-}
-// A fresh action card cancels any in-progress edit.
-watch(actionFor, () => {
-	editingAction.value = false
-	actionEdits.value = []
-	actLink.value = {}
-})
 
 // --- interactive clarifying questions (card on the last assistant message) ---
 const activeAsk = computed(() =>
@@ -2329,6 +2910,22 @@ function pickLink(i, item) {
 function pickSingle(i, opt) {
 	askSel.value = { ...askSel.value, [i]: opt }
 }
+// Option BUTTONS (single/yesno) toggle: clicking the picked option again
+// unselects it, and picking one clears the "Other…" text (they're exclusive —
+// both being sent as the answer was a reported bug).
+function toggleSingle(i, opt) {
+	const cur = askSel.value[i]
+	askSel.value = { ...askSel.value, [i]: cur === opt ? "" : opt }
+	if (cur !== opt && (askOther.value[i] || "").trim()) {
+		askOther.value = { ...askOther.value, [i]: "" }
+	}
+}
+// Typing in "Other…" clears a picked option for single/yesno (mirror of the above).
+function onAskOther(i, qtype) {
+	if (qtype !== "multi" && (askOther.value[i] || "").trim() && askSel.value[i]) {
+		askSel.value = { ...askSel.value, [i]: "" }
+	}
+}
 function toggleMulti(i, opt) {
 	const cur = Array.isArray(askSel.value[i]) ? askSel.value[i].slice() : []
 	const ix = cur.indexOf(opt)
@@ -2357,9 +2954,12 @@ function submitAsk() {
 	const lines = spec.questions.map((q, i) => {
 		const ans = []
 		const v = askSel.value[i]
-		if (Array.isArray(v)) ans.push(...v)
-		else if (v != null && v !== "") ans.push(v)
 		const other = (askOther.value[i] || "").trim()
+		if (Array.isArray(v)) ans.push(...v)
+		// Single-answer questions: a typed "Other…" IS the answer — never send
+		// both it and a leftover pick (the UI keeps them exclusive; this is the
+		// belt-and-braces for stale state).
+		else if (v != null && v !== "" && !other) ans.push(v)
 		if (other) ans.push(other)
 		return `${i + 1}. ${q.q} → ${ans.join(", ") || "(no answer)"}`
 	})
@@ -3022,6 +3622,18 @@ function onEvent(p) {
 				status: "running",
 			}
 		}
+		patchMacroRunRow(p, false) // live-advance the open run-history dashboard
+		return
+	}
+	// Background summarize finished (worker-side apply) — refresh the Run gate
+	// + badges and tell the user; handled before the current-conversation guard.
+	if (p.kind === "macro:merged") {
+		if (macrosModalOpen.value) loadMacros()
+		_showMergeNotice(
+			p.status === "ready"
+				? `Summary ready — “${p.macro_name || "macro"}” now runs as one prompt.`
+				: `“${p.macro_name || "Macro"}” keeps its step sequence (couldn't summarize).`,
+		)
 		return
 	}
 	if (p.kind === "macro:done") {
@@ -3033,6 +3645,7 @@ function onEvent(p) {
 				_macroDoneTimer = null
 			}, 4000)
 		}
+		patchMacroRunRow(p, true)
 		return
 	}
 	if (p.conversation_id !== currentId.value) return
@@ -3097,6 +3710,7 @@ function onEvent(p) {
 			sending.value = false
 			activeTools.value = []
 			currentRunId.value = null
+			_notifyReplyReady() // browser notification when the tab is hidden (opt-in)
 			loadConversations()
 			loadConversation(currentId.value)
 			// Re-render charts after the reload settles — late re-renders can swap a
@@ -3573,6 +4187,16 @@ function onGlobalKey(e) {
 .jv-canvas-file:hover { background: var(--surface-1); }
 .jv-canvas-file b { font-weight: 600; color: var(--text); }
 /* mermaid diagrams + fenced code blocks in markdown */
+/* Narrow-window resilience: without min-width:0 a flex child refuses to shrink
+   below its content, so on minimize the layout "breaks"; wide content (tables,
+   code) must scroll INSIDE its own box, never squeeze the text around it. */
+.jv-md { min-width: 0; max-width: 100%; overflow-wrap: break-word; }
+.jv-md :deep(table) { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
+.jv-md :deep(pre) { max-width: 100%; overflow-x: auto; }
+.jv-md :deep(img) { max-width: 100%; height: auto; }
+.jv-cards, .jv-action, .jv-email { min-width: 0; max-width: 100%; }
+.jv-btn-danger { color: #fff; background: var(--red); border-color: var(--red); }
+.jv-btn-danger:disabled { opacity: .6; }
 .jv-md :deep(.jv-mermaid) { position: relative; margin: 8px 0 12px; text-align: center; overflow-x: auto; }
 .jv-md :deep(.jv-mermaid svg) { max-width: 100%; height: auto; }
 /* skeleton shimmer while a chart hasn't rendered to SVG yet (no data-rendered) —
@@ -3784,6 +4408,41 @@ function onGlobalKey(e) {
 .jv-act-top { display: flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 550; color: var(--text-2); }
 .jv-act-ms { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--text-3); font-weight: 500; }
 .jv-act-names { font-size: 11.5px; color: var(--text-3); margin-top: 3px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-word; }
+/* macro run history dashboard (settings → Macro runs) */
+.jv-runfilters { display: flex; align-items: center; gap: 10px; margin: 16px 0 6px; flex-wrap: wrap; }
+.jv-runchips { display: inline-flex; background: var(--surface-1); border: 1px solid var(--border); border-radius: 9px; padding: 3px; gap: 2px; }
+.jv-runchips button { font-family: inherit; font-size: 12px; font-weight: 550; padding: 5px 11px; border-radius: 6px; color: var(--text-3); cursor: pointer; border: none; background: transparent; }
+.jv-runchips button.on { background: var(--surface-3); color: var(--text); }
+.jv-runmacrosel { margin-left: auto; font-family: inherit; font-size: 12px; color: var(--text-2); background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; cursor: pointer; outline: none; }
+.jv-runmacrosel:focus { border-color: var(--blue); }
+.jv-run { display: flex; align-items: flex-start; gap: 11px; padding: 12px 2px; border-bottom: 1px solid var(--surface-2); }
+.jv-run:last-of-type { border-bottom: none; }
+.jv-run-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; margin-top: 5px; }
+.jv-run-dot.d-ok { background: var(--green); }
+.jv-run-dot.d-err { background: var(--red); }
+.jv-run-dot.d-run { background: var(--blue); box-shadow: 0 0 0 3px var(--blue-bg); }
+.jv-run-dot.d-stop { background: var(--text-3); }
+.jv-run-main { flex: 1; min-width: 0; }
+.jv-run-top { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.jv-run-name { font-size: 13.5px; font-weight: 600; color: var(--text); }
+.jv-run-badge { font-size: 10.5px; font-weight: 600; padding: 2px 8px; border-radius: 99px; text-transform: capitalize; }
+.jv-run-badge.b-ok { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-bd); }
+.jv-run-badge.b-err { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-bd); }
+.jv-run-badge.b-run { background: var(--blue-bg); color: var(--blue); border: 1px solid var(--blue-bd); }
+.jv-run-badge.b-stop { background: var(--surface-2); color: var(--text-3); border: 1px solid var(--border-2); }
+.jv-run-trig { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; color: var(--text-3); }
+.jv-run-meta { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--text-3); margin-top: 4px; flex-wrap: wrap; }
+.jv-run-prog { font-family: ui-monospace, Menlo, monospace; }
+.jv-run-sep { opacity: .5; }
+.jv-run-err { display: flex; align-items: center; gap: 5px; margin-top: 5px; font-size: 11.5px; color: var(--red); word-break: break-word; }
+.jv-run-err svg { flex: none; }
+.jv-run-act { display: flex; align-items: center; gap: 6px; flex: none; }
+.jv-run-btn { display: inline-flex; align-items: center; gap: 5px; font-family: inherit; font-size: 11.5px; font-weight: 550; padding: 5px 11px; border-radius: 7px; cursor: pointer; background: var(--surface); color: var(--text-2); border: 1px solid var(--border-2); }
+.jv-run-btn:hover { color: var(--text); border-color: var(--text-3); }
+.jv-run-btn.stop { background: var(--red-bg); color: var(--red); border-color: var(--red-bd); }
+.jv-run-btn.stop:hover { background: var(--red); color: #fff; border-color: var(--red); }
+.jv-run-loadmore { display: block; margin: 14px auto 2px; font-family: inherit; font-size: 12px; font-weight: 550; color: var(--text-2); background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 8px 18px; cursor: pointer; }
+.jv-run-loadmore:disabled { opacity: .6; cursor: default; }
 /* fade for the overlay */
 .jv-fade-enter-active, .jv-fade-leave-active { transition: opacity .16s ease; }
 .jv-fade-enter-from, .jv-fade-leave-to { opacity: 0; }
@@ -3842,7 +4501,11 @@ function onGlobalKey(e) {
 /* scrollable record cards (alternative to a wide table) */
 .jv-cards { margin-top: 12px; }
 .jv-cards-title { font-size: 12px; font-weight: 600; color: var(--text-2); margin-bottom: 8px; }
-.jv-cards-strip { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 6px; scroll-snap-type: x proximity; }
+.jv-cards-strip { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 6px; scroll-snap-type: x proximity; max-width: 100%; }
+.jv-cards-pager { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+.jv-cards-pgbtn { width: 26px; height: 26px; border: 1px solid var(--border-2); border-radius: 7px; background: var(--surface-1); color: var(--text-2); font-size: 15px; line-height: 1; cursor: pointer; }
+.jv-cards-pgbtn:disabled { opacity: .35; cursor: default; }
+.jv-cards-pginfo { font-size: 11.5px; color: var(--text-3); font-variant-numeric: tabular-nums; }
 .jv-cards-strip::-webkit-scrollbar { height: 7px; }
 .jv-cards-strip::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 99px; }
 .jv-card { flex: none; width: 210px; scroll-snap-align: start; box-sizing: border-box; padding: 12px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 11px; }
@@ -3927,6 +4590,28 @@ function onGlobalKey(e) {
 .jv-macrocard-sub { font-size: 11.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .jv-macrocard-btn { flex: none; padding: 7px 13px; background: var(--blue); border: 1px solid var(--blue); border-radius: 8px; font-family: inherit; font-size: 12.5px; font-weight: 600; color: #fff; cursor: pointer; transition: opacity .12s; }
 .jv-macrocard-btn:hover { opacity: .9; }
+/* --- macro editor tabs (Steps | Summarized prompt) --- */
+.jv-macro-tabs { display: flex; gap: 4px; margin-top: 16px; border-bottom: 1px solid var(--border); }
+.jv-macro-tab { background: none; border: none; border-bottom: 2px solid transparent; color: var(--text-3); font-size: 12.5px; font-weight: 600; padding: 7px 10px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.jv-macro-tab.on { color: var(--text); border-bottom-color: var(--blue); }
+.jv-macro-tab-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+.jv-macro-merged-badge { margin-left: 7px; font-size: 9.5px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; color: var(--green); background: var(--green-bg); border: 1px solid var(--green-bd); border-radius: 99px; padding: 1px 7px; }
+.jv-macro-merged-badge--pending { color: var(--amber); background: var(--amber-bg); border-color: var(--amber-bd); }
+
+/* --- macro merge review --- */
+.jv-merge-modal { width: min(640px, 92vw); background: var(--surface); border: 1px solid var(--border-2); border-radius: 13px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
+.jv-merge-head { display: flex; align-items: center; gap: 10px; }
+.jv-merge-head b { font-size: 15px; }
+.jv-merge-head .jv-art-close { margin-left: auto; }
+.jv-merge-pending { color: var(--text-2); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 0; }
+.jv-merge-sub { flex-basis: 100%; font-size: 12px; color: var(--text-3); }
+.jv-merge-spin { width: 14px; height: 14px; border: 2px solid var(--border-2); border-top-color: var(--blue); border-radius: 50%; animation: jv-spin 0.9s linear infinite; }
+.jv-merge-deps { display: flex; gap: 6px; flex-wrap: wrap; }
+.jv-merge-chip { font-size: 11px; font-weight: 600; color: var(--blue); background: var(--blue-bg); border: 1px solid var(--blue-bd); border-radius: 99px; padding: 3px 9px; }
+.jv-merge-text { width: 100%; box-sizing: border-box; background: var(--surface-1); border: 1px solid var(--border-2); border-radius: 9px; color: var(--text); padding: 10px 12px; font-size: 13.5px; line-height: 1.5; resize: vertical; }
+.jv-merge-keep { color: var(--text-2); background: var(--surface-1); border: 1px solid var(--border); border-radius: 9px; padding: 12px 14px; }
+.jv-merge-foot { display: flex; gap: 10px; align-items: center; }
+.jv-merge-notice { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); z-index: 60; background: var(--surface-2); border: 1px solid var(--border-2); color: var(--text); border-radius: 99px; padding: 9px 16px; font-size: 13px; box-shadow: 0 8px 28px rgba(0,0,0,.35); }
 
 /* rich action cards (doc confirm / email draft) */
 /* .jv-action must stay overflow:visible — the edit form's Link dropdown
@@ -3992,6 +4677,37 @@ function onGlobalKey(e) {
 .jv-email-v { color: var(--text-2); word-break: break-word; }
 .jv-email-subj { color: var(--text); font-weight: 600; }
 .jv-email-body { padding: 12px 14px 14px; font-size: 13px; line-height: 1.6; color: var(--text); white-space: pre-wrap; word-break: break-word; border-top: 1px solid var(--surface-2); }
+
+/* --- record draft panel --- */
+.jv-draft-chip { display: inline-flex; align-items: center; gap: 9px; margin-top: 12px; padding: 10px 14px; border: 1px solid var(--blue-bd); background: var(--blue-bg); color: var(--text); border-radius: 11px; cursor: pointer; font-size: 13.5px; }
+.jv-draft-chip svg { color: var(--blue); flex: none; }
+.jv-draft-chip-cta { color: var(--blue); font-weight: 600; margin-left: 4px; }
+.jv-draft-panel { display: flex; flex-direction: column; }
+.jv-draft-badge { font-size: 10px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; color: var(--amber); background: var(--amber-bg); border: 1px solid var(--amber-bd); border-radius: 99px; padding: 3px 9px; margin-left: 8px; }
+.jv-draft-body { flex: 1; overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 14px; }
+.jv-draft-toast { font-size: 12px; color: var(--blue); background: var(--blue-bg); border: 1px solid var(--blue-bd); border-radius: 8px; padding: 7px 11px; }
+.jv-draft-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
+.jv-draft-fld label { display: block; font-size: 10.5px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); margin-bottom: 4px; }
+.jv-draft-fld .jv-req { color: var(--red); }
+.jv-draft-fld.missing .jv-action-input { border-color: var(--amber-bd); }
+.jv-draft-fld.changed .jv-action-input { border-color: var(--blue-bd); background: var(--blue-bg); }
+.jv-draft-ctl { position: relative; }
+.jv-draft-table-title { font-size: 12px; font-weight: 650; color: var(--text-2); margin-bottom: 6px; }
+.jv-draft-gridwrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 9px; }
+.jv-grid { width: 100%; border-collapse: collapse; font-size: 13px; }
+.jv-grid th { font-size: 10.5px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; color: var(--text-3); text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border-2); background: var(--surface-1); }
+.jv-grid td { padding: 5px 6px; border-bottom: 1px solid var(--border); position: relative; min-width: 90px; }
+.jv-grid td .jv-action-input { width: 100%; box-sizing: border-box; }
+.jv-grid-ro { color: var(--text-3); }
+.jv-grid-x { width: 30px; }
+.jv-grid-del { background: none; border: none; color: var(--text-3); cursor: pointer; padding: 4px 6px; border-radius: 6px; }
+.jv-grid-del:hover { color: var(--red); background: var(--red-bg); }
+.jv-draft-addrow { align-self: flex-start; margin-top: 8px; background: none; border: none; color: var(--blue); font-weight: 600; font-size: 12.5px; cursor: pointer; padding: 4px 2px; }
+.jv-draft-totals { font-size: 12.5px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.jv-draft-est { color: var(--text-3); font-size: 11px; }
+.jv-draft-error { font-size: 12.5px; color: var(--red); background: var(--red-bg); border: 1px solid var(--red-bd); border-radius: 8px; padding: 8px 11px; white-space: pre-wrap; }
+.jv-draft-foot { display: flex; gap: 10px; align-items: center; padding: 12px 16px; border-top: 1px solid var(--border); }
+@media (max-width: 700px) { .jv-draft-fields { grid-template-columns: 1fr; } }
 
 /* artifact preview panel (right side-over) */
 /* premium artifact-preview header actions (replaces the boxy .jv-iconbtn look) */
