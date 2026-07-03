@@ -156,6 +156,24 @@
 				</div>
 			</header>
 
+			<!-- ===== NOT READY: invite-to-onboarding card (replaces thread + composer) =====
+			     Shown instead of the normal chat UI when the backend reports the site
+			     hasn't finished setup — see onMounted's readiness check. System Managers
+			     get a CTA into the wizard; everyone else is told to ask their admin. The
+			     desk also shows a setup banner, so onboarding is invited, not forced. -->
+			<div v-if="notReady" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px;">
+				<div style="width:100%;max-width:480px;text-align:center;">
+					<div class="jv-logo" style="width:52px;height:52px;border-radius:13px;background:var(--blue);display:flex;align-items:center;justify-content:center;margin:0 auto 18px;box-shadow:0 4px 14px rgba(37,99,235,.28);">
+						<svg width="28" height="28" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
+					</div>
+					<h1 style="font-size:23px;font-weight:600;letter-spacing:-.02em;margin:0 0 8px;">Welcome to Jarvis</h1>
+					<p style="font-size:14.5px;color:var(--text-2);margin:0 0 26px;line-height:1.5;">Finish a quick setup to start chatting.</p>
+					<button v-if="isSystemManager" class="jv-btn jv-btn--primary" style="height:38px;padding:0 20px;font-size:13.5px;" @click="window.location.assign('/jarvis/onboarding')">Set up Jarvis →</button>
+					<p v-else style="font-size:13.5px;color:var(--text-3);margin:0;">Ask your workspace admin to finish setting up Jarvis.</p>
+				</div>
+			</div>
+			<template v-else>
+
 			<!-- initial load: a quiet spinner so the welcome screen doesn't flash
 			     before the open conversation finishes loading on refresh -->
 			<div v-if="booting" style="flex:1;display:flex;align-items:center;justify-content:center;">
@@ -503,6 +521,8 @@
 					<div style="text-align:center;font-size:10.5px;color:var(--text-3);margin-top:8px;">Jarvis can make mistakes. Verify important actions before submitting to ERPNext.</div>
 				</div>
 			</div>
+
+			</template>
 		</main>
 
 		<!-- ============ RIGHT RAIL: SKILLS + MACROS (opens the center popup) ============ -->
@@ -2467,6 +2487,9 @@ function prettyJson(s) {
 // True only until the initial conversation load finishes — keeps the welcome
 // screen from flashing on refresh before the open chat appears.
 const booting = ref(true)
+// True when the backend reports the site hasn't finished setup yet — shows the
+// invite-to-onboarding card instead of the chat thread/composer (see onMounted).
+const notReady = ref(false)
 const showWelcome = computed(
 	() => !booting.value && (!currentId.value || visibleMessages.value.length === 0),
 )
@@ -4446,17 +4469,16 @@ onMounted(async () => {
 	const readyP = api.isReadyForChat().catch(() => null)
 	const uiP = api.getChatUiSettings().catch(() => null)
 	const convsP = loadConversations().catch(() => {})
-	// Gate the chat the way the old Desk page did: if the customer hasn't
-	// finished signup / LLM setup, send them to the onboarding wizard. A
-	// transient failure falls through to the chat rather than trapping them.
-	// Only System Managers can run onboarding, and the /onboarding route's
-	// beforeEnter bounces non-SM users back to Chat — so a non-SM must NOT be
-	// redirected here, or the two would ping-pong in an infinite reload loop.
-	// A non-SM on a not-yet-ready site stays on Chat (degrades gracefully).
+	// Invite, don't force: if the customer hasn't finished signup / LLM setup,
+	// show a welcome card in place of the chat thread/composer instead of
+	// redirecting into the wizard (System Managers get a "Set up Jarvis" button
+	// there; everyone else is told to ask their admin). A transient readiness
+	// check failure falls through to the normal chat rather than trapping them.
 	const r = await readyP
-	if (r && r.ready === false && window.is_system_manager) {
-		window.location.assign("/jarvis/onboarding")
-		return
+	if (r && r.ready === false) {
+		notReady.value = true
+		booting.value = false // reveal the UI (show the card, not the spinner)
+		return // skip socket/tool setup — chat can't work until set up
 	}
 	socket?.on("jarvis:event", onEvent)
 	socket?.on("connect", onResync)

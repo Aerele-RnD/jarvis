@@ -23,8 +23,8 @@ const routes = [
 		beforeEnter: (to, from, next) => { next(window.is_system_manager ? undefined : { name: "Chat" }) },
 	},
 	// First-run wizard (managed signup or self-hosted connect) — System-Manager
-	// only; guard redirects others to Chat. The global beforeEach below also
-	// routes not-yet-onboarded System Managers here automatically.
+	// only; guard redirects others to Chat. Reached via the chat welcome card
+	// or the desk banner, not a forced redirect (see beforeEach below).
 	{
 		path: "/onboarding",
 		name: "Onboarding",
@@ -47,22 +47,21 @@ const router = createRouter({
 	routes,
 })
 
-// First-run guard: send a not-yet-onboarded System Manager to /onboarding on
-// their first navigation, and bounce a fully-onboarded user away from
-// /onboarding back to Chat. The readiness check hits the backend once per
-// page load — `readyPromise` caches the in-flight/resolved call so repeated
-// client-side navigations (Chat -> Account -> Chat, etc.) don't re-fire it.
-// Fail-open: if the backend call throws, treat the app as ready so a flaky
-// check never strands the user unable to reach Chat.
+// First-run guard: bounce a fully-onboarded user away from a stale
+// /onboarding link back to Chat. The readiness check hits the backend once
+// per page load — `readyPromise` caches the in-flight/resolved call so
+// repeated client-side navigations (Chat -> Account -> Chat, etc.) don't
+// re-fire it. Fail-open: if the backend call throws, treat the app as ready
+// so a flaky check never strands the user unable to reach Chat.
 let readyPromise = null
 router.beforeEach(async (to) => {
 	if (!readyPromise) {
 		readyPromise = isReadyForChat().catch(() => ({ ready: true }))
 	}
 	const ready = isOnboardComplete(await readyPromise)
-	if (!ready && to.name !== "Onboarding" && window.is_system_manager) {
-		return { name: "Onboarding" }
-	}
+	// We no longer force not-ready users into the wizard — onboarding is now
+	// invited via the chat welcome card (below) + the desk banner. Only bounce a
+	// fully-onboarded user away from a stale /onboarding link.
 	if (ready && to.name === "Onboarding") {
 		return { name: "Chat" }
 	}
