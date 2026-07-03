@@ -10,7 +10,7 @@ confirmed:
 - One warm WS per gateway can serve every subsequent turn
 
 CAVEAT (2026-07 latency review): the RQ worker *parent* process is
-long-lived, but stock ``bench worker`` uses rq's forking Worker — each
+long-lived, but stock ``bench worker`` uses rq's forking Worker - each
 job runs in a forked work-horse child that exits after the job, taking
 this module-level pool with it. The pool therefore only amortizes under
 a non-forking executor: the Python-socketio realtime process (Path B,
@@ -23,15 +23,15 @@ Concurrency model (Stage B, 2026-07-03): the pool keeps UP TO
 out any free healthy entry, opens a new connection while the gateway is
 below the cap, and blocks on a Condition once every slot is busy. The
 bench-side ``OpenclawSession`` is NOT safe for concurrent
-``stream_agent_turn``/``relay_turn_events`` on the same WS — ``_recv``
-is shared state and would steal frames between turns — so PER-ENTRY
+``stream_agent_turn``/``relay_turn_events`` on the same WS - ``_recv``
+is shared state and would steal frames between turns - so PER-ENTRY
 exclusivity is preserved: one turn per pooled session at a time. What
 Stage B removes is the per-GATEWAY exclusivity that made two
 same-tenant turns serialize end-to-end under Path B's greenlet
 executor (measured: turn B's first token landed exactly at turn A's
 finish). Under the default fork-per-job RQ executor the cap is
 irrelevant (one turn per process); the same code serves both executors
-unchanged — both dispatch flows are first-class.
+unchanged - both dispatch flows are first-class.
 
 Waiting is done on ``threading.Condition``, which the Path B realtime
 process monkey-patches (gevent) into a cooperative wait; under plain
@@ -92,7 +92,7 @@ class _GatewayGroup:
 	``cond`` guards ``entries`` membership, every entry's ``in_use``
 	flag, and ``connecting`` (slots reserved by in-flight connection
 	attempts so a burst of checkouts cannot overshoot the cap). Slow
-	work — connect, healthcheck, close — happens OUTSIDE the Condition,
+	work - connect, healthcheck, close - happens OUTSIDE the Condition,
 	on entries the caller owns."""
 	gateway_url: str
 	cond: threading.Condition = field(default_factory=threading.Condition)
@@ -146,7 +146,7 @@ def _acquire_entry(group: _GatewayGroup) -> _PooledEntry:
 
 	Returns an entry already marked ``in_use`` whose session passed the
 	healthcheck (reconnected in place when stale). Raises
-	``OpenclawUnreachableError`` if a needed connect fails — after
+	``OpenclawUnreachableError`` if a needed connect fails - after
 	releasing the reserved slot so waiters retry."""
 	while True:
 		create_new = False
@@ -180,12 +180,12 @@ def _acquire_entry(group: _GatewayGroup) -> _PooledEntry:
 				group.entries.append(new_entry)
 			return new_entry
 
-		# Healthcheck the claimed entry OUTSIDE the Condition — we own it
+		# Healthcheck the claimed entry OUTSIDE the Condition - we own it
 		# (in_use=True), so the slow reconnect never blocks other slots.
 		if _is_alive(entry.session, entry.last_used):
 			# Symmetric to the pool-miss log in _do_connect so the hit rate
 			# is measurable from logs (latency plan, Phase 0). Under stock
-			# fork-per-job RQ this line should ~never appear — that absence
+			# fork-per-job RQ this line should ~never appear - that absence
 			# is itself the signal that the persistent executor is needed.
 			logger.info(
 				"openclaw_session_pool: pool-hit gateway=%s idle_s=%.1f",
@@ -235,7 +235,7 @@ def _remove_entry(group: _GatewayGroup, entry: _PooledEntry) -> None:
 
 def _do_connect(gateway_url: str) -> OpenclawSession:
 	"""Open a fresh WS + handshake. Wraps ``OpenclawSession.connect``
-	for timing visibility — the actual connect logic stays in the
+	for timing visibility - the actual connect logic stays in the
 	client. Phase-level breakdown is logged inside ``_attempt_connect``
 	itself; this just captures the total."""
 	t0 = time.monotonic()
@@ -278,7 +278,7 @@ def drain_all() -> None:
 	"""Close every pooled session. Called from ``atexit`` on worker
 	shutdown so the gateway sees clean disconnects rather than dangling
 	half-open TCP connections. Also exposed for tests. In-use entries
-	are closed too — this only runs at process exit (or from tests),
+	are closed too - this only runs at process exit (or from tests),
 	when no turn should still be live."""
 	with _POOL_LOCK:
 		groups = list(_POOL.values())
