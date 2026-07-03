@@ -716,6 +716,46 @@
 			</div>
 		</transition>
 
+		<!-- ============ MACRO MERGE REVIEW (auto-offered after a 2+ step save) ============ -->
+		<transition name="jv-fade">
+			<div v-if="macroMerge" class="jv-skills-overlay" @click.self="dropMacroMerge('')">
+				<div class="jv-merge-modal">
+					<div class="jv-merge-head">
+						<b>Merge “{{ macroMerge.macroName }}” into one prompt?</b>
+						<button class="jv-art-close" @click="dropMacroMerge('')" aria-label="Close">✕</button>
+					</div>
+					<div v-if="macroMerge.status === 'pending'" class="jv-merge-pending">
+						<span class="jv-merge-spin"></span> Summarizing {{ macroMerge.steps }} steps…
+						<div class="jv-merge-sub">Your macro is already saved as a sequence — this is optional.</div>
+					</div>
+					<template v-else-if="macroMerge.status === 'ready'">
+						<div v-if="(macroMerge.merge.dependencies || []).length" class="jv-merge-deps">
+							<span v-for="(d, di) in macroMerge.merge.dependencies" :key="di" class="jv-merge-chip">
+								step {{ d.step }} ← {{ (d.uses || []).join(", ") }}
+							</span>
+						</div>
+						<textarea class="jv-merge-text" v-model="macroMerge.editedPrompt" rows="10"></textarea>
+						<div v-if="macroMerge.error" class="jv-draft-error">{{ macroMerge.error }}</div>
+						<div class="jv-merge-foot">
+							<button class="jv-action-2nd" @click="dropMacroMerge('')">Keep sequence</button>
+							<button class="jv-action-primary" style="margin-left:auto" :disabled="macroMerge.applying" @click="acceptMacroMerge">
+								{{ macroMerge.applying ? "Applying…" : "Use merged prompt" }}
+							</button>
+						</div>
+					</template>
+					<template v-else>
+						<div class="jv-merge-keep">Kept as a sequence — {{ (macroMerge.merge && macroMerge.merge.reason) || "these steps need their checkpoints." }}</div>
+						<div class="jv-merge-foot">
+							<button class="jv-action-primary" style="margin-left:auto" @click="dropMacroMerge('')">OK</button>
+						</div>
+					</template>
+				</div>
+			</div>
+		</transition>
+		<transition name="jv-fade">
+			<div v-if="mergeNotice" class="jv-merge-notice">{{ mergeNotice }}</div>
+		</transition>
+
 		<!-- ============ PROACTIVE MESSAGE TOAST (Jarvis started a chat) ============ -->
 		<transition name="jv-fade">
 			<div v-if="proactiveToast" class="jv-toast" @click="openProactive">
@@ -1591,12 +1631,88 @@ async function saveMacro() {
 			schedule_frequency: f.schedule_frequency || "daily",
 			schedule_time: f.schedule_time || "09:00",
 		}
-		if (f.name) await api.updateMacro({ name: f.name, ...payload })
-		else await api.createMacro(payload)
+		let savedName = f.name
+		if (f.name) {
+			await api.updateMacro({ name: f.name, ...payload })
+		} else {
+			const r = await api.createMacro(payload)
+			savedName = r && r.data && r.data.name
+		}
 		macroEditorOpen.value = false
 		await loadMacros()
+		if (savedName && steps.length >= 2) startMacroMerge(savedName, payload.macro_name, steps.length)
 	} catch (e) { macroError.value = _skillErr(e) } finally { macroSaving.value = false }
 }
+
+// --- Macro merge: on every 2+ step save, generate a single merged prompt in
+// the background and let the user adopt or keep the sequence. ---
+const macroMerge = ref(null) // {macro, macroName, conversation, steps, status:'pending'|'ready'|'unmergeable', merge, editedPrompt, applying, error}
+const mergeNotice = ref("")
+let _mergeNoticeTimer = null
+function _showMergeNotice(text) {
+	mergeNotice.value = text
+	if (_mergeNoticeTimer) clearTimeout(_mergeNoticeTimer)
+	_mergeNoticeTimer = setTimeout(() => { mergeNotice.value = "" }, 6000)
+}
+
+async function startMacroMerge(name, macroName, stepCount) {
+	let conversation
+	try {
+		const r = await api.summarizeMacro(name)
+		conversation = r && r.conversation
+	} catch (e) { return } // macro already saved — merging is optional sugar
+	if (!conversation) return
+	macroMerge.value = {
+		macro: name, macroName, conversation, steps: stepCount,
+		status: "pending", merge: null, editedPrompt: "", applying: false, error: "",
+	}
+	_pollMacroMerge(conversation)
+}
+
+async function _pollMacroMerge(conversation) {
+	for (let i = 0; i < 30; i++) { // 30 × 3s ≈ 90s budget
+		await new Promise((res) => setTimeout(res, 3000))
+		const mm = macroMerge.value
+		if (!mm || mm.conversation !== conversation) return // modal closed / superseded
+		let r
+		try { r = await api.getMacroMerge(conversation) } catch (e) { continue }
+		if (!macroMerge.value || macroMerge.value.conversation !== conversation) return
+		if (!r || r.status === "pending") continue
+		if (r.status === "ready" && r.merge && r.merge.mergeable) {
+			macroMerge.value = { ...macroMerge.value, status: "ready", merge: r.merge, editedPrompt: r.merge.merged_prompt }
+		} else if (r.status === "ready") {
+			macroMerge.value = { ...macroMerge.value, status: "unmergeable", merge: r.merge }
+		} else {
+			dropMacroMerge("Couldn't generate a merged prompt — macro saved as a sequence.")
+		}
+		return
+	}
+	dropMacroMerge("Merging timed out — macro saved as a sequence.")
+}
+
+function dropMacroMerge(notice) {
+	const mm = macroMerge.value
+	macroMerge.value = null
+	if (mm) api.discardMacroMerge(mm.conversation).catch(() => {})
+	if (notice) _showMergeNotice(notice)
+}
+
+async function acceptMacroMerge() {
+	const mm = macroMerge.value
+	if (!mm || mm.applying) return
+	mm.applying = true
+	mm.error = ""
+	try {
+		await api.applyMacroMerge(mm.macro, mm.editedPrompt, mm.conversation)
+		macroMerge.value = null
+		_showMergeNotice("Macro merged into one prompt.")
+		loadMacros()
+	} catch (e) {
+		mm.applying = false
+		mm.error = (e && e.messages && e.messages[0]) || (e && e.message) || "Could not apply the merge."
+	}
+}
+
 async function removeMacro(m) {
 	if (!(await confirmDialog({ title: "Delete macro?", message: `Delete “${m.macro_name}”? This can't be undone.`, confirmLabel: "Delete" }))) return
 	try {
@@ -3762,6 +3878,8 @@ function onGlobalKey(e) {
 		_settleConfirm(false)
 	} else if (e.key === "Escape" && artifact.value) {
 		closeArtifact()
+	} else if (e.key === "Escape" && macroMerge.value) {
+		dropMacroMerge("")
 	} else if (e.key === "Escape" && macroEditorOpen.value) {
 		closeMacroEditor()
 	} else if (e.key === "Escape" && macrosModalOpen.value) {
@@ -4330,6 +4448,20 @@ function onGlobalKey(e) {
 .jv-macrocard-sub { font-size: 11.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .jv-macrocard-btn { flex: none; padding: 7px 13px; background: var(--blue); border: 1px solid var(--blue); border-radius: 8px; font-family: inherit; font-size: 12.5px; font-weight: 600; color: #fff; cursor: pointer; transition: opacity .12s; }
 .jv-macrocard-btn:hover { opacity: .9; }
+/* --- macro merge review --- */
+.jv-merge-modal { width: min(640px, 92vw); background: var(--surface); border: 1px solid var(--border-2); border-radius: 13px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
+.jv-merge-head { display: flex; align-items: center; gap: 10px; }
+.jv-merge-head b { font-size: 15px; }
+.jv-merge-head .jv-art-close { margin-left: auto; }
+.jv-merge-pending { color: var(--text-2); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 0; }
+.jv-merge-sub { flex-basis: 100%; font-size: 12px; color: var(--text-3); }
+.jv-merge-spin { width: 14px; height: 14px; border: 2px solid var(--border-2); border-top-color: var(--blue); border-radius: 50%; animation: jv-spin 0.9s linear infinite; }
+.jv-merge-deps { display: flex; gap: 6px; flex-wrap: wrap; }
+.jv-merge-chip { font-size: 11px; font-weight: 600; color: var(--blue); background: var(--blue-bg); border: 1px solid var(--blue-bd); border-radius: 99px; padding: 3px 9px; }
+.jv-merge-text { width: 100%; box-sizing: border-box; background: var(--surface-1); border: 1px solid var(--border-2); border-radius: 9px; color: var(--text); padding: 10px 12px; font-size: 13.5px; line-height: 1.5; resize: vertical; }
+.jv-merge-keep { color: var(--text-2); background: var(--surface-1); border: 1px solid var(--border); border-radius: 9px; padding: 12px 14px; }
+.jv-merge-foot { display: flex; gap: 10px; align-items: center; }
+.jv-merge-notice { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); z-index: 60; background: var(--surface-2); border: 1px solid var(--border-2); color: var(--text); border-radius: 99px; padding: 9px 16px; font-size: 13px; box-shadow: 0 8px 28px rgba(0,0,0,.35); }
 
 /* rich action cards (doc confirm / email draft) */
 /* .jv-action must stay overflow:visible — the edit form's Link dropdown
