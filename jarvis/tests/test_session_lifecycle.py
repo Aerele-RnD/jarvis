@@ -150,6 +150,41 @@ class TestSessionLifecycle(FrappeTestCase):
 			frappe.db.exists(CHAT_SESSION, {"session_key": "test-lc-fail"})
 		)
 
+	def test_not_found_delete_treated_as_success(self):
+		"""Idempotent cleanup: a session already gone (e.g. a prior run
+		crashed between the gateway delete and the local commit) counts
+		as deleted, so the bench pointers finally clear instead of
+		retry-failing forever."""
+		name = self._conv(session_key="test-lc-gone", idle_days=40)
+		sess = _fake_sess()
+		sess.delete_session.side_effect = RuntimeError(
+			"gateway error: session not found: test-lc-gone")
+		summary = self._run(sess)
+		self.assertEqual(summary["dormant_rotated"], 1)
+		self.assertEqual(summary["errors"], 0)
+		self.assertFalse(frappe.db.get_value(CONV, name, "session_key"))
+
+	def test_one_bad_row_does_not_abort_the_batch(self):
+		"""Per-row isolation (turn_recovery's loop pattern): a bench-side
+		cleanup failure on row 1 logs and continues to row 2."""
+		a = self._conv(session_key="test-lc-bad", idle_days=41)
+		b = self._conv(session_key="test-lc-good", idle_days=40)
+		sess = _fake_sess()
+		real_set_value = frappe.db.set_value
+
+		def flaky_set_value(dt, name, *args, **kwargs):
+			if name == a:
+				raise RuntimeError("simulated deadlock")
+			return real_set_value(dt, name, *args, **kwargs)
+
+		with patch("frappe.db.set_value", side_effect=flaky_set_value), \
+		     patch("frappe.log_error") as log_err:
+			summary = self._run(sess)
+		self.assertEqual(summary["dormant_rotated"], 1)
+		self.assertEqual(summary["errors"], 1)
+		log_err.assert_called()
+		self.assertFalse(frappe.db.get_value(CONV, b, "session_key"))
+
 	# ---- orphan sweep -----------------------------------------------
 
 	def test_orphan_throwaway_reaped(self):

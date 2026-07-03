@@ -127,16 +127,28 @@ def _rotate_dormant(sess, budget: int, summary: dict) -> int:
 	)
 	for row in rows:
 		if budget <= 0:
-			break
+			break  # defensive; the SQL LIMIT already bounds rows to budget
 		budget -= 1
-		if _delete_gateway_session(sess, row.session_key, summary):
-			# Only detach the bench side once the gateway side is gone,
-			# so a failed delete retries on the next run. NULL, not "":
-			# session_key is UNIQUE and two "" rows would collide.
-			frappe.db.set_value(CONV, row.name, "session_key", None)
-			frappe.db.delete(CHAT_SESSION, {"session_key": row.session_key})
-			frappe.db.commit()
-			summary["dormant_rotated"] += 1
+		# Per-row isolation (turn_recovery's loop pattern): one bad row
+		# must never abort the rest of the batch, and a failure between
+		# the gateway delete and the local commit must not strand the
+		# sweep - the idempotent not-found handling in
+		# _delete_gateway_session lets the next run finish the cleanup.
+		try:
+			if _delete_gateway_session(sess, row.session_key, summary):
+				# Only detach the bench side once the gateway side is
+				# gone. NULL, not "": session_key is UNIQUE and two ""
+				# rows would collide.
+				frappe.db.set_value(CONV, row.name, "session_key", None)
+				frappe.db.delete(CHAT_SESSION, {"session_key": row.session_key})
+				frappe.db.commit()
+				summary["dormant_rotated"] += 1
+		except Exception:
+			frappe.log_error(
+				title="session_lifecycle: dormant row cleanup failed",
+				message=f"conversation={row.name}\n{frappe.get_traceback()}",
+			)
+			summary["errors"] += 1
 	return budget
 
 
@@ -177,11 +189,18 @@ def _reap_orphans(sess, budget: int, summary: dict) -> None:
 			summary["skipped"] += 1
 			continue
 		budget -= 1
-		if _delete_gateway_session(sess, key, summary):
-			# Deleted-conversation case: the lookup row may still exist.
-			frappe.db.delete(CHAT_SESSION, {"session_key": key})
-			frappe.db.commit()
-			summary["orphans_reaped"] += 1
+		try:
+			if _delete_gateway_session(sess, key, summary):
+				# Deleted-conversation case: the lookup row may still exist.
+				frappe.db.delete(CHAT_SESSION, {"session_key": key})
+				frappe.db.commit()
+				summary["orphans_reaped"] += 1
+		except Exception:
+			frappe.log_error(
+				title="session_lifecycle: orphan cleanup failed",
+				message=f"session_key={key}\n{frappe.get_traceback()}",
+			)
+			summary["errors"] += 1
 
 
 def _delete_gateway_session(sess, session_key: str, summary: dict) -> bool:
@@ -192,7 +211,13 @@ def _delete_gateway_session(sess, session_key: str, summary: dict) -> bool:
 	try:
 		sess.delete_session(session_key)
 		return True
-	except Exception:
+	except Exception as e:
+		# Idempotent: a session that is ALREADY gone counts as success.
+		# This self-heals the crashed-between-delete-and-commit window -
+		# the next run's delete "fails" as not-found and the bench
+		# pointers finally get cleared instead of sticking forever.
+		if "not found" in str(e).lower() or "unknown session" in str(e).lower():
+			return True
 		frappe.log_error(
 			title="session_lifecycle: sessions.delete failed",
 			message=f"session_key={session_key}\n{frappe.get_traceback()}",
