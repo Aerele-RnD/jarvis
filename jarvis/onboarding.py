@@ -37,6 +37,29 @@ def _require_admin_url() -> None:
 		)
 
 
+def _require_https_site_url() -> None:
+	"""Production onboarding must hand the admin an https:// site URL.
+
+	The plugin accepts any frappe_site_url shape (transport security is the
+	deployment's responsibility), so the policy guardrail lives here: the
+	URL recorded at signup (``frappe.utils.get_url()``) must be https unless
+	the install opted into Sandbox Mode (Jarvis Settings -> Developer
+	section) - dev/LAN benches run plaintext http legitimately.
+	"""
+	from jarvis.dev import is_sandbox_mode
+
+	if is_sandbox_mode():
+		return
+	url = frappe.utils.get_url()
+	if not url.startswith("https://"):
+		raise frappe.ValidationError(
+			f"Production onboarding requires this site to be served over "
+			f"https:// (currently {url}). Put the site behind TLS, or enable "
+			f"Sandbox Mode (Jarvis Settings -> Developer section) for a "
+			f"dev/sandbox install."
+		)
+
+
 def _surface(fn, *args, **kwargs):
 	"""Run an admin_client call; re-raise every admin-side error as a clean
 	frappe.ValidationError so the onboarding page renders a red toast with
@@ -154,6 +177,7 @@ def start_signup(email: str, company: str, plan: str) -> dict:
 	"""
 	frappe.only_for("System Manager")
 	_require_admin_url()
+	_require_https_site_url()
 	data = _surface(admin_client.signup, email, company, plan)
 	# Persist whatever credentials the response carries. The guard also fires
 	# on ``customer`` so the OAuth grant username is stored even if a future
