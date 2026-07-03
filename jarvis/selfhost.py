@@ -11,7 +11,12 @@ no Ed25519 device-pairing is needed (unlike the WS path, which strips
 operator.write from non-loopback token-only clients). See the design spec
 ``docs/superpowers/specs/2026-06-18-self-hosted-openclaw-design.md``.
 
-v1 = connect + chat. ERP tools (the openclaw plugin) are out of scope.
+ERP tools ARE supported in self-host: the openclaw plugin's ``jarvis__*`` tools
+call back into ``jarvis.api.call_tool`` (gateway-token auth) and run as the
+configured ``selfhost_tool_user`` (single-tenant bench). What stays Managed-only
+is Aerele's **persona/skills** - a self-hosted openclaw runs the plugin + tools,
+never the persona. See ``docs/superpowers/specs/2026-07-03-selfhost-tools-and-
+local-setup-design.md`` for the tool-path validation + local-setup scaffold.
 """
 
 from __future__ import annotations
@@ -151,16 +156,129 @@ def validate_connection(base_url: str, token: str, *, deep: bool = False) -> dic
     return {"ok": ok, "checks": checks, "openclaw_version": version, "models": models}
 
 
+# --- deterministic config checks (no network, no LLM) --------------------
+# Surfaced in "Test connection" so a user sees the two most common self-host
+# tool failures (unset tool user / missing gateway token) BEFORE they chat.
+
+
+def _tool_user_ok(user: str) -> tuple[bool, str]:
+    """The invariant shared with api._selfhost_tool_user: a self-host tool user
+    must be set, non-admin (Administrator bypasses all DocType perms), non-Guest,
+    and an enabled Frappe user. Returns (ok, human detail)."""
+    user = (user or "").strip()
+    if not user:
+        return False, "no Self-Host Tool User set (ERP tool calls will be rejected)"
+    if user in ("Guest", "Administrator"):
+        return False, f"{user!r} is not allowed as tool user (privilege bypass)"
+    if not frappe.db.get_value("User", user, "enabled"):
+        return False, f"{user!r} is not an enabled Frappe user"
+    return True, f"tool user {user!r} (non-admin, enabled)"
+
+
+def config_checks(token: str, tool_user: str = "") -> list[dict]:
+    """Deterministic Frappe-side checks for the self-host tool path. ``tool_user``
+    falls back to the stored ``selfhost_tool_user`` when blank. No network I/O."""
+    checks = [_check(
+        "gateway_token", bool((token or "").strip()),
+        "gateway token present" if (token or "").strip() else "no gateway token",
+    )]
+    user = (tool_user or "").strip()
+    if not user:
+        s = frappe.get_single("Jarvis Settings")
+        user = (getattr(s, "selfhost_tool_user", "") or "").strip()
+    ok, detail = _tool_user_ok(user)
+    checks.append(_check("tool_user", ok, detail))
+    return checks
+
+
+# --- opt-in end-to-end callback probe ------------------------------------
+# Confirms the user's openclaw can actually reach back into this bench's
+# call_tool (the failure "Test connection" alone can't see). The self-host
+# call_tool branch bumps a cache counter (note_callback_seen); the probe reads
+# it before/after inducing a tool call over HTTP.
+
+_CALLTOOL_SEEN_KEY = "jarvis:selfhost_calltool_seen"
+_CALLTOOL_SEEN_TTL = 600
+
+
+def note_callback_seen() -> None:
+    """Record that a self-host ``call_tool`` callback just landed (drives
+    ``probe_tool_callback``). Best-effort: never fail a real tool call on a
+    cache blip. Called ONLY from api.call_tool's self-host branch."""
+    with contextlib.suppress(Exception):
+        cur = frappe.cache().get_value(_CALLTOOL_SEEN_KEY) or 0
+        frappe.cache().set_value(
+            _CALLTOOL_SEEN_KEY, int(cur) + 1, expires_in_sec=_CALLTOOL_SEEN_TTL)
+
+
+def _seen_counter() -> int:
+    try:
+        return int(frappe.cache().get_value(_CALLTOOL_SEEN_KEY) or 0)
+    except Exception:
+        return 0
+
+
+def probe_tool_callback(base_url: str, token: str) -> dict:
+    """Opt-in probe: induce a ``jarvis__*`` tool call over openclaw's HTTP
+    surface and confirm the openclaw->Frappe callback landed. Returns a single
+    ``{check, ok, detail}`` row.
+
+    Requires self-host mode to be ALREADY active (the callback's call_tool
+    self-host branch, which bumps the counter, only runs when
+    ``is_self_hosted()``). Pre-save it reports ``skipped``. Best-effort: a
+    negative result is advisory (the model may simply not have called a tool)."""
+    if not is_self_hosted():
+        return _check("callback_probe", False,
+                      "skipped: save Self-Hosted mode first, then re-test")
+    try:
+        base = _normalize_base_url(base_url)
+    except ValueError as e:
+        return _check("callback_probe", False, str(e))
+
+    headers = {"Authorization": f"Bearer {(token or '').strip()}"}
+    before = _seen_counter()
+    prompt = ('Call the jarvis__get_schema tool with doctype "User" now, '
+              "then reply with the single word DONE.")
+    try:
+        requests.post(
+            f"{base}/v1/chat/completions", headers=headers,
+            json={"model": "openclaw",
+                  "messages": [{"role": "user", "content": prompt}],
+                  "stream": False},
+            timeout=_DEEP_TIMEOUT,
+        )
+    except requests.RequestException as e:
+        return _check("callback_probe", False, f"chat/completions failed: {e}")
+
+    advanced = _seen_counter() > before
+    return _check(
+        "callback_probe", advanced,
+        "openclaw->Frappe callback confirmed" if advanced
+        else "no callback observed (the model may not have called a tool, or "
+             "your openclaw can't reach this bench's URL from its network)",
+    )
+
+
 @frappe.whitelist()
-def test_connection(base_url: str, token: str = "", deep: int | str = 0) -> dict:
-    """UI 'Test connection' button. System Manager only (reads/writes config)."""
+def test_connection(base_url: str, token: str = "", deep: int | str = 0,
+                    deep_tool: int | str = 0, tool_user: str = "") -> dict:
+    """UI 'Test connection' button. System Manager only (reads/writes config).
+
+    Appends the deterministic ``config_checks`` (advisory: they don't flip
+    ``ok``, which stays about the openclaw connection). ``deep_tool`` adds the
+    opt-in end-to-end callback probe (only meaningful once Self-Hosted mode is
+    saved - otherwise reported ``skipped``)."""
     frappe.only_for("System Manager")
     deep_flag = str(deep) in ("1", "true", "True")
     # Fall back to the stored token if the UI sends a blank (masked Password field).
     if not (token or "").strip():
         token = (frappe.get_single("Jarvis Settings").get_password(
             "agent_token", raise_exception=False) or "")
-    return validate_connection(base_url, token, deep=deep_flag)
+    result = validate_connection(base_url, token, deep=deep_flag)
+    result["checks"].extend(config_checks(token, tool_user))
+    if str(deep_tool) in ("1", "true", "True"):
+        result["checks"].append(probe_tool_callback(base_url, token))
+    return result
 
 
 @frappe.whitelist()
