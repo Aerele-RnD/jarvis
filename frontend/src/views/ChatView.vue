@@ -85,8 +85,8 @@
 						<span>Account</span>
 					</button>
 					<!-- AI / Models nav entry sidelined: LLM config now lives on the account page.
-					     Route "/ai" (AiModels) + AiView.vue are kept intact for a future dedicated page;
-					     only this visible menu entry point was removed. -->
+					     The old "/ai" (AiModels) shell + AiView.vue were removed; the usage
+					     dashboard it hosted now lives at "/monitor" (see AppSidebar's Usage entry). -->
 					<button class="jv-menuitem" @click="goDesk">
 						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /></svg>
 						<span>Switch to Desk</span>

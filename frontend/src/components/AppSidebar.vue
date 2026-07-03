@@ -21,6 +21,10 @@
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
 				<span>Account</span>
 			</router-link>
+			<router-link :to="{ name: 'Monitor' }" class="jv-nav-item" :class="{ on: route.path.startsWith('/monitor') }">
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18" /><rect x="7" y="12" width="3" height="6" /><rect x="12" y="8" width="3" height="10" /><rect x="17" y="4" width="3" height="14" /></svg>
+				<span>Usage</span>
+			</router-link>
 		</nav>
 
 		<div style="flex:1;"></div>

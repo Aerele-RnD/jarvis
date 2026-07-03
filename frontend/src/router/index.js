@@ -14,13 +14,6 @@ const routes = [
 		name: "Conversation",
 		component: () => import("@/views/ChatView.vue"),
 	},
-	// AI / Models config — System-Manager only; guard redirects others to Chat.
-	{
-		path: "/ai",
-		name: "AiModels",
-		component: () => import("@/views/AiView.vue"),
-		beforeEnter: (to, from, next) => { next(window.is_system_manager ? undefined : { name: "Chat" }) },
-	},
 	// Account: plan/billing + AI models editor + connection/usage summaries —
 	// System-Manager only; guard redirects others to Chat.
 	{
@@ -36,6 +29,14 @@ const routes = [
 		path: "/onboarding",
 		name: "Onboarding",
 		component: () => import("@/views/OnboardingView.vue"),
+		beforeEnter: (to, from, next) => { next(window.is_system_manager ? undefined : { name: "Chat" }) },
+	},
+	// Usage dashboard (moved out of the old /ai shell) — System-Manager only;
+	// guard redirects others to Chat.
+	{
+		path: "/monitor",
+		name: "Monitor",
+		component: () => import("@/views/MonitorView.vue"),
 		beforeEnter: (to, from, next) => { next(window.is_system_manager ? undefined : { name: "Chat" }) },
 	},
 ]

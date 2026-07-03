@@ -77,6 +77,7 @@
 					<div v-else-if="usageErr" class="jv-acct-muted">Usage data is unavailable right now.</div>
 					<div v-else-if="!usage.applicable" class="jv-acct-muted">Usage metering applies to multi-model (proxy) setups.</div>
 					<div v-else class="jv-acct-usage-line">{{ usage.tokens_in || 0 }} tokens in · {{ usage.tokens_out || 0 }} tokens out · ${{ costLabel }}</div>
+					<router-link :to="{ name: 'Monitor' }" class="jv-acct-link">View full usage →</router-link>
 				</section>
 			</div>
 		</main>
