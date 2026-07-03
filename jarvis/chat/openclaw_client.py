@@ -398,6 +398,26 @@ class OpenclawSession:
 				return bool(s.get("hasActiveRun"))
 		return False
 
+	def list_sessions(
+		self, *, timeout_s: float = CONNECT_TIMEOUT_SECONDS,
+	) -> list[dict]:
+		"""Every session the gateway is tracking (sessions.list rows:
+		key, hasActiveRun, updatedAt, label, ...). Used by the session
+		lifecycle sweep to find orphaned throwaway sessions."""
+		res = self._request("sessions.list", {}, timeout_s=timeout_s)
+		return (res.get("payload") or {}).get("sessions") or []
+
+	def delete_session(
+		self, session_key: str, *, timeout_s: float = CONNECT_TIMEOUT_SECONDS,
+	) -> None:
+		"""Remove a session's gateway state via ``sessions.delete``
+		(transcript is archived gateway-side first; ``deleteTranscript``
+		defaults true there). The gateway refuses to delete the agent's
+		main session - callers treat that error as a skip, never retry."""
+		self._request(
+			"sessions.delete", {"key": session_key}, timeout_s=timeout_s,
+		)
+
 	def set_session_model(
 		self, session_key: str, model_ref: str,
 		*, timeout_s: float = CONNECT_TIMEOUT_SECONDS,
