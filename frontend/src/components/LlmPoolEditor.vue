@@ -13,13 +13,13 @@
       <div role="tablist" style="display:inline-flex;border:1px solid var(--border);border-radius:9px;overflow:hidden;">
         <button v-for="t in modeTabs" :key="t.value" role="tab" :aria-selected="llmMode===t.value"
                 @click="setMode(t.value)" :disabled="!editable"
-                :style="{fontSize:'13px',padding:'6px 14px',border:'none',
+                :style="{fontSize:'14px',padding:'10px 18px',border:'none',
                          cursor: editable ? 'pointer' : 'default',
                          background: llmMode===t.value ? 'var(--blue-bg)' : 'var(--surface)',
                          color: llmMode===t.value ? 'var(--blue)' : 'var(--text-3)',
                          fontWeight: llmMode===t.value ? '600' : '400'}">{{ t.label }}</button>
       </div>
-      <span :style="{fontSize:'11px',fontWeight:600,padding:'3px 9px',borderRadius:'20px',
+      <span :style="{fontSize:'12px',fontWeight:600,padding:'4px 11px',borderRadius:'20px',
              background: badgeMode==='proxy' ? 'var(--green-bg)' : 'var(--surface-2)',
              color: badgeMode==='proxy' ? 'var(--green)' : 'var(--text-3)'}">
         {{ badgeMode === 'proxy' ? 'Proxy (failover)' : 'Direct' }}
@@ -28,13 +28,13 @@
 
     <!-- ===================== PRESET ===================== -->
     <section v-if="llmMode==='preset'" style="margin-bottom:18px;">
-      <p v-if="!catalog.length" style="font-size:12.5px;color:var(--text-3);margin:0 0 12px;">
+      <p v-if="!catalog.length" style="font-size:14px;color:var(--text-3);margin:0 0 12px;">
         Couldn't load presets — use <b>Quick</b> or <b>Custom</b>.
       </p>
       <div v-else style="max-height:440px;overflow-y:auto;padding-right:4px;">
         <!-- single_vendor presets -->
         <div v-if="singleVendorPresets.length" style="margin-bottom:10px;">
-          <div style="font-size:12px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.03em;margin-bottom:9px;">Single-vendor resilience</div>
+          <div style="font-size:13px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.03em;margin-bottom:9px;">Single-vendor resilience</div>
           <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;">
             <button v-for="entry in singleVendorPresets" :key="entry.key"
                     @click="selectPreset(entry)" :disabled="!editable" :style="presetCardStyle(entry)">
@@ -45,7 +45,7 @@
         </div>
         <!-- cross_vendor presets -->
         <div v-if="crossVendorPresets.length">
-          <div style="font-size:12px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.03em;margin:14px 0 9px;">Cross-vendor strategies</div>
+          <div style="font-size:13px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.03em;margin:14px 0 9px;">Cross-vendor strategies</div>
           <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;">
             <button v-for="entry in crossVendorPresets" :key="entry.key"
                     @click="selectPreset(entry)" :disabled="!editable" :style="presetCardStyle(entry)">
@@ -59,7 +59,7 @@
       <!-- Progressive vendor key fields for the chosen preset (all-or-nothing) -->
       <div v-if="selectedPreset && vendorsForPreset.length"
            style="margin-top:12px;padding:12px;background:var(--amber-bg);border:1px solid var(--amber-bd);border-radius:8px;">
-        <div style="font-size:12px;color:var(--amber);font-weight:600;margin-bottom:8px;">
+        <div style="font-size:13px;color:var(--amber);font-weight:600;margin-bottom:8px;">
           Provide API keys for this preset:
         </div>
         <div v-for="vendor in vendorsForPreset" :key="vendor" style="margin-bottom:8px;">
@@ -68,17 +68,17 @@
           </label>
           <input :value="keysByVendor[vendor] || ''" @input="keysByVendor[vendor] = $event.target.value"
                  type="password" :disabled="!editable" :placeholder="providerLabel(vendor) + ' API key'"
-                 style="width:100%;padding:6px 9px;font-size:12.5px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;" />
+                 style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;" />
         </div>
       </div>
     </section>
 
     <!-- ================ QUICK / CUSTOM (shared rows) ================ -->
     <section v-else style="margin-bottom:18px;">
-      <p v-if="llmMode==='quick'" style="font-size:12.5px;color:var(--text-3);margin:0 0 12px;">
+      <p v-if="llmMode==='quick'" style="font-size:14px;color:var(--text-3);margin:0 0 12px;">
         A single model, sent directly to the provider. Need multiple models with failover? Use <b>Preset</b> or <b>Custom</b>.
       </p>
-      <div v-else style="font-size:12px;font-weight:600;color:var(--text-2);margin-bottom:8px;letter-spacing:.03em;text-transform:uppercase;">
+      <div v-else style="font-size:13px;font-weight:600;color:var(--text-2);margin-bottom:8px;letter-spacing:.03em;text-transform:uppercase;">
         Custom failover pool
       </div>
 
@@ -102,42 +102,42 @@
             <button @click="move(i,1)" :disabled="!editable || i===editorRows.length-1" title="Down"
                     :style="{border:'1px solid var(--border)',background:'var(--surface)',borderRadius:'5px',width:'26px',height:'26px',cursor:'pointer',fontSize:'11px',opacity: i===editorRows.length-1 ? '0.35' : '1'}">▼</button>
             <button @click="remove(i)" :disabled="!editable" title="Remove"
-                    style="border:1px solid var(--red-bd);background:var(--red-bg);color:var(--red);border-radius:5px;width:26px;height:26px;cursor:pointer;font-size:11px;">✕</button>
+                    style="border:1px solid var(--red-bd);background:var(--red-bg);color:var(--red);border-radius:5px;width:26px;height:26px;cursor:pointer;font-size:12px;">✕</button>
           </div>
         </div>
 
         <!-- API-key credential: provider (select) / model (datalist) / api_key / base_url -->
         <div v-if="m.credentialType!=='subscription'" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           <select v-model="m.provider" @change="onProviderChange(m)" :disabled="!editable" title="Provider"
-                  style="flex:1;min-width:120px;padding:6px 9px;font-size:12.5px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;">
+                  style="flex:1;min-width:120px;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;">
             <option v-for="p in providerOptions" :key="p" :value="p">{{ p }}</option>
           </select>
           <input v-model="m.model" :list="'jv-dl-'+i" :disabled="!editable" placeholder="Model ID (e.g. gpt-4o)"
-                 style="flex:1.5;min-width:120px;padding:6px 9px;font-size:12.5px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;" />
+                 style="flex:1.5;min-width:120px;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;" />
           <datalist :id="'jv-dl-'+i">
             <option v-for="s in modelSuggestionsForProvider(m.provider)" :key="s" :value="s"></option>
           </datalist>
           <input v-model="m.apiKey" :disabled="!editable" type="password"
                  :placeholder="m.hasKey ? 'key set — re-enter to change' : 'API key'"
-                 style="flex:1.5;min-width:120px;padding:6px 9px;font-size:12.5px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;" />
+                 style="flex:1.5;min-width:120px;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;" />
           <input v-model="m.baseUrl" :disabled="!editable" placeholder="Base URL (OpenAI-compatible)"
-                 style="flex:1.5;min-width:120px;padding:6px 9px;font-size:12.5px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;" />
+                 style="flex:1.5;min-width:120px;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;" />
         </div>
 
         <!-- Chat-subscription credential: model + upstream + rotation + accounts + connect -->
         <div v-else>
           <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
             <input v-model="m.model" :list="'jv-subdl-'+i" :disabled="!editable" placeholder="Model ID (e.g. gpt-5.5)"
-                   style="flex:2;min-width:120px;padding:6px 9px;font-size:12.5px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;" />
+                   style="flex:2;min-width:120px;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;" />
             <datalist :id="'jv-subdl-'+i">
               <option v-for="s in (SUB_MODEL_SUGGESTIONS[m.upstream] || [])" :key="s" :value="s"></option>
             </datalist>
             <select v-model="m.upstream" :disabled="!editable" title="Upstream"
-                    style="flex:1;min-width:100px;padding:6px 9px;font-size:12.5px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;">
+                    style="flex:1;min-width:100px;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;">
               <option v-for="o in upstreamOpts" :key="o.value" :value="o.value">{{ o.label }}</option>
             </select>
             <select v-model="m.rotation" :disabled="!editable" title="Account rotation"
-                    style="flex:1.2;min-width:110px;padding:6px 9px;font-size:12.5px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;">
+                    style="flex:1.2;min-width:110px;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;">
               <option v-for="o in rotationOpts" :key="o.value" :value="o.value">{{ o.label }}</option>
             </select>
           </div>
@@ -146,14 +146,14 @@
           <div v-if="m.accounts && m.accounts.length" style="display:flex;flex-direction:column;gap:5px;margin-bottom:8px;">
             <div v-for="(a, ai) in m.accounts" :key="a.account_ref || ai"
                  style="display:flex;align-items:center;gap:8px;padding:5px 9px;border:1px solid var(--green-bd);background:var(--green-bg);border-radius:6px;">
-              <span style="font-size:11px;font-weight:600;color:var(--green);">connected</span>
-              <span style="font-size:12.5px;color:var(--text);">{{ a.label || a.account_ref }}</span>
-              <span style="font-size:11px;color:var(--text-3);">{{ a.upstream || 'openai' }}</span>
+              <span style="font-size:12px;font-weight:600;color:var(--green);">connected</span>
+              <span style="font-size:14px;color:var(--text);">{{ a.label || a.account_ref }}</span>
+              <span style="font-size:12px;color:var(--text-3);">{{ a.upstream || 'openai' }}</span>
               <button v-if="editable" @click="removeAccount(m, ai)" title="Remove account"
-                      style="margin-left:auto;border:1px solid var(--red-bd);background:var(--red-bg);color:var(--red);border-radius:5px;width:22px;height:22px;cursor:pointer;font-size:11px;">✕</button>
+                      style="margin-left:auto;border:1px solid var(--red-bd);background:var(--red-bg);color:var(--red);border-radius:5px;width:22px;height:22px;cursor:pointer;font-size:12px;">✕</button>
             </div>
           </div>
-          <div v-else style="font-size:12px;color:var(--text-3);margin-bottom:8px;">No accounts connected yet.</div>
+          <div v-else style="font-size:13px;color:var(--text-3);margin-bottom:8px;">No accounts connected yet.</div>
 
           <!-- Inline paste-back connect flow -->
           <div v-if="m._connect && m._connect.open"
@@ -161,14 +161,14 @@
             <div v-if="m._connect.authorizeUrl" style="display:flex;flex-direction:column;gap:8px;">
               <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                 <a :href="m._connect.authorizeUrl" target="_blank" rel="noopener noreferrer"
-                   style="font-size:12.5px;color:var(--blue);text-decoration:none;font-weight:600;">Open sign-in ↗</a>
+                   style="font-size:14px;color:var(--blue);text-decoration:none;font-weight:600;">Open sign-in ↗</a>
                 <button @click="copyAuthorizeUrl(m)" title="Copy URL"
-                        style="font-size:12px;padding:4px 10px;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:var(--surface);color:var(--text-2);">
+                        style="font-size:13px;padding:4px 10px;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:var(--surface);color:var(--text-2);">
                   {{ m._connect.copied ? 'Copied ✓' : 'Copy' }}
                 </button>
               </div>
               <input v-model="m._connect.pastedUrl" placeholder="Paste the URL after you sign in"
-                     style="width:100%;padding:6px 9px;font-size:12.5px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;" />
+                     style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;" />
               <div style="display:flex;gap:8px;">
                 <button @click="finishConnect(m)" :disabled="m._connect.loading"
                         :style="{padding:'6px 14px',fontSize:'12.5px',border:'none',borderRadius:'6px',
@@ -177,23 +177,23 @@
                   {{ m._connect.loading ? 'Connecting…' : 'Connect' }}
                 </button>
                 <button @click="closeConnect(m)"
-                        style="padding:6px 14px;font-size:12.5px;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:var(--surface);color:var(--text-2);">Cancel</button>
+                        style="padding:9px 16px;font-size:14px;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:var(--surface);color:var(--text-2);">Cancel</button>
               </div>
             </div>
-            <div v-else style="font-size:12px;color:var(--text-2);">Starting sign-in…</div>
-            <div v-if="m._connect.error" style="margin-top:6px;font-size:12px;color:var(--red);">{{ m._connect.error }}</div>
+            <div v-else style="font-size:13px;color:var(--text-2);">Starting sign-in…</div>
+            <div v-if="m._connect.error" style="margin-top:6px;font-size:13px;color:var(--red);">{{ m._connect.error }}</div>
           </div>
 
           <button v-if="editable" @click="startConnect(m)"
                   :disabled="m._connect && m._connect.loading && !m._connect.authorizeUrl"
-                  style="font-size:12.5px;color:var(--blue);background:transparent;border:1px dashed var(--border-2);border-radius:7px;padding:6px 14px;cursor:pointer;">
+                  style="font-size:14px;color:var(--blue);background:transparent;border:1px dashed var(--border-2);border-radius:7px;padding:9px 16px;cursor:pointer;">
             + Connect account
           </button>
         </div>
       </div>
 
       <button v-if="isMulti && editable" @click="addModel"
-              style="font-size:12.5px;color:var(--blue);background:transparent;border:1px dashed var(--border-2);border-radius:7px;padding:6px 14px;cursor:pointer;width:100%;">
+              style="font-size:14px;color:var(--blue);background:transparent;border:1px dashed var(--border-2);border-radius:7px;padding:9px 16px;cursor:pointer;width:100%;">
         + Add model
       </button>
     </section>
@@ -201,15 +201,15 @@
     <!-- Save bar + sync status -->
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
       <button v-if="editable" @click="save" :disabled="saving || saveBlocked"
-              :style="{padding:'8px 16px',background: saveBlocked ? 'var(--surface-3)' : 'var(--blue)',
-                       color: saveBlocked ? 'var(--text-3)' : '#fff',border:'none',borderRadius:'8px',
-                       cursor: saveBlocked ? 'not-allowed' : 'pointer',fontSize:'13px'}">
+              :style="{padding:'12px 24px',background: saveBlocked ? 'var(--surface-3)' : 'var(--blue)',
+                       color: saveBlocked ? 'var(--text-3)' : '#fff',border:'none',borderRadius:'9px',
+                       cursor: saveBlocked ? 'not-allowed' : 'pointer',fontSize:'15px',fontWeight:'600'}">
         {{ saving ? 'Saving…' : 'Save configuration' }}
       </button>
-      <span v-if="saveBlocked && missingVendors.length" style="font-size:12px;color:var(--amber);">
+      <span v-if="saveBlocked && missingVendors.length" style="font-size:13px;color:var(--amber);">
         Provide keys for: {{ missingVendors.map(providerLabel).join(', ') }}
       </span>
-      <span style="font-size:12px;color:var(--text-3);">{{ syncLabel }}</span>
+      <span style="font-size:13px;color:var(--text-3);">{{ syncLabel }}</span>
     </div>
   </div>
 </template>
