@@ -229,6 +229,12 @@ function submitDraft() {
 async function boot() {
 	booted.value = true;
 	frappe.realtime.on("jarvis:event", onEvent);
+	// frappe.realtime.socket is the underlying socket.io client instance
+	// (a public field on RealTimeClient, not a private internal). Its
+	// "connect" event fires on the initial connect and on every
+	// reconnect, both of which can hide a gap in delivered events.
+	frappe.realtime.socket?.on("connect", onResync);
+	document.addEventListener("visibilitychange", onVisibility);
 	try {
 		const convs = await api.listConversations();
 		if (convs && convs.length) {
@@ -312,6 +318,23 @@ async function reload() {
 	scrollBottom();
 }
 
+// Resync from durable state after any gap in the socket stream. Socketio
+// has no replay: events published while the tab was asleep or the socket
+// was disconnected are gone, so on every (re)connect and on tab-wake we
+// refetch instead of trusting the stream. reload() already re-derives the
+// full message list from the server.
+let _lastResync = 0;
+function onResync() {
+	if (!conversationId.value) return;
+	const now = Date.now();
+	if (now - _lastResync < 2000) return; // connect + visibility often co-fire
+	_lastResync = now;
+	reload();
+}
+function onVisibility() {
+	if (document.visibilityState === "visible") onResync();
+}
+
 function onRouteChange() {
 	readContext();
 }
@@ -332,9 +355,11 @@ onMounted(() => {
 onBeforeUnmount(() => {
 	try {
 		frappe.realtime.off("jarvis:event", onEvent);
+		frappe.realtime.socket?.off("connect", onResync);
 	} catch (e) {
 		/* not registered */
 	}
+	document.removeEventListener("visibilitychange", onVisibility);
 });
 
 defineExpose({ openPanel });
