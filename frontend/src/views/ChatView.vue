@@ -80,6 +80,10 @@
 						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
 						<span>Settings</span>
 					</button>
+					<button class="jv-menuitem" @click="goAccount">
+						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
+						<span>Account</span>
+					</button>
 					<!-- AI / Models nav entry sidelined: LLM config now lives on the account page.
 					     Route "/ai" (AiModels) + AiView.vue are kept intact for a future dedicated page;
 					     only this visible menu entry point was removed. -->
@@ -1280,7 +1284,7 @@
 
 <script setup>
 import { ref, computed, inject, onMounted, onBeforeUnmount, nextTick, watch } from "vue"
-import { useRoute } from "vue-router"
+import { useRoute, useRouter } from "vue-router"
 import * as api from "@/api"
 import { renderMarkdown } from "@/markdown"
 import JvChart from "@/charts/JvChart.vue"
@@ -1289,6 +1293,7 @@ import { useTheme } from "@/composables/useTheme"
 const session = inject("$session")
 const socket = inject("$socket")
 const route = useRoute()
+const router = useRouter()
 const isSystemManager = !!window.is_system_manager
 
 const conversations = ref([])
@@ -3951,6 +3956,10 @@ function fillInput(text) {
 }
 function goDesk() {
 	window.location.assign("/app")
+}
+function goAccount() {
+	userMenuOpen.value = false
+	router.push({ name: "Account" })
 }
 function openErpDesk() {
 	window.open("/app", "_blank")
