@@ -10,6 +10,7 @@
 		</header>
 
 		<main class="jv-ob-main">
+			<div class="jv-ob-center">
 			<div class="jv-ob-wrap">
 				<!-- ===== step indicator — managed mode only, mirrors desk renderSteps
 					 (jarvis_onboarding.js ~213: STEP_NAMES = Account/Plan/Pay/Connect AI).
@@ -206,6 +207,7 @@
 						</div>
 					</div>
 				</div>
+			</div>
 			</div>
 		</main>
 	</div>
@@ -703,14 +705,21 @@ onMounted(() => {
 	flex: 1;
 	min-width: 0;
 	overflow-y: auto;
+}
+/* Fills the viewport so the card centers vertically when short; when a step is
+   taller than the viewport it grows and the card top-aligns (scrolls from top,
+   no cutoff). */
+.jv-ob-center {
+	min-height: 100%;
+	box-sizing: border-box;
 	display: flex;
+	align-items: center;
 	justify-content: center;
-	padding: 48px 24px 60px;
+	padding: 40px 24px 64px;
 }
 .jv-ob-wrap {
 	max-width: 720px;
 	width: 100%;
-	margin: 0 auto;
 }
 .jv-ob-h1 { font-size: 20px; font-weight: 600; margin: 0 0 8px; }
 .jv-ob-sub { font-size: 13.5px; color: var(--text-3); margin: 0 0 20px; }
