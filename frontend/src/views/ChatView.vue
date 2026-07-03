@@ -4451,7 +4451,7 @@ onMounted(async () => {
 	// transient failure falls through to the chat rather than trapping them.
 	const r = await readyP
 	if (r && r.ready === false) {
-		window.location.assign("/app/jarvis-onboarding")
+		window.location.assign("/jarvis/onboarding")
 		return
 	}
 	socket?.on("jarvis:event", onEvent)

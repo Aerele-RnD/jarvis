@@ -1,4 +1,10 @@
 frappe.pages["jarvis-onboarding"].on_page_load = function (wrapper) {
+	// Onboarding now lives in the Jarvis SPA. This desk page is a thin redirect.
+	// (Unlike the account page, the wizard has NO billing-only sub-flow to preserve,
+	//  so a full unconditional redirect is correct here.)
+	window.location.replace("/jarvis/onboarding");
+	return;
+
 	const page = frappe.ui.make_app_page({ parent: wrapper, title: "Connect to Jarvis", single_column: true });
 	// `dev` gates the dev-onboard shortcut (skip payment). Read once from
 	// the bootinfo here for UX-only decisions (Razorpay script preload,
