@@ -721,8 +721,8 @@ onMounted(() => {
 	max-width: 920px;
 	width: 100%;
 }
-.jv-ob-h1 { font-size: 25px; font-weight: 650; margin: 0 0 10px; }
-.jv-ob-sub { font-size: 14.5px; color: var(--text-3); margin: 0 0 26px; }
+.jv-ob-h1 { font-size: 28px; font-weight: 650; margin: 0 0 10px; text-align: center; }
+.jv-ob-sub { font-size: 15.5px; color: var(--text-3); margin: 0 0 30px; text-align: center; }
 
 .jv-ob-steps {
 	display: flex;
@@ -765,7 +765,7 @@ onMounted(() => {
 .jv-ob-body {
 	border: 1px solid var(--border);
 	border-radius: 14px;
-	padding: 34px 38px;
+	padding: 48px 44px;
 	background: var(--surface);
 }
 .jv-ob-placeholder { font-size: 13.5px; color: var(--text-3); margin: 0 0 20px; }
@@ -798,10 +798,10 @@ onMounted(() => {
 	transition: border-color .15s, transform .1s;
 }
 .jv-ob-mode:hover { border-color: var(--blue-bd); transform: translateY(-1px); }
-.jv-ob-mode-icon { font-size: 26px; line-height: 1; }
-.jv-ob-mode-name { font-size: 16px; font-weight: 700; color: var(--text); margin: 8px 0 10px; }
+.jv-ob-mode-icon { font-size: 30px; line-height: 1; }
+.jv-ob-mode-name { font-size: 18px; font-weight: 700; color: var(--text); margin: 10px 0 12px; }
 .jv-ob-mode-feats { list-style: none; padding: 0; margin: 0 0 16px; flex: 1; }
-.jv-ob-mode-feats li { display: flex; gap: 7px; font-size: 12.5px; color: var(--text-2); line-height: 1.5; margin-bottom: 7px; }
+.jv-ob-mode-feats li { display: flex; gap: 7px; font-size: 13.5px; color: var(--text-2); line-height: 1.55; margin-bottom: 9px; }
 .jv-ob-tick { color: var(--blue); font-size: 11px; margin-top: 2px; flex: none; }
 .jv-ob-mode-warn { color: var(--red); margin-top: 8px; }
 .jv-ob-warn-icon { margin-right: 4px; flex: none; }
