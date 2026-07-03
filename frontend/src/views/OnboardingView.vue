@@ -138,17 +138,66 @@
 						</template>
 					</div>
 
+					<!-- ===== Connect AI (managed) — embeds the shared LlmPoolEditor component
+						 (same one AiView/AccountView use). Replaces desk renderLlm's entire
+						 Quick/Preset/Custom implementation (jarvis_onboarding.js ~559-1080)
+						 verbatim — the component already owns that UI + save_llm_pool call.
+						 Desk's renderLlm has no "Back" button (only Skip/Save); mirrored here
+						 by omitting one too, since stepping back to "pay" post-payment would
+						 read as re-triggering checkout. ===== -->
 					<div v-else-if="state.step === 'connect'">
-						<p class="jv-ob-placeholder">[managed: connect AI panel — Tasks 3-5]</p>
-						<div class="jv-ob-placeholder-actions">
-							<button class="jv-ob-btn" @click="goBack">← Back</button>
+						<h1 class="jv-ob-h1">Connect your AI</h1>
+						<p class="jv-ob-sub">Pick which model Jarvis should use. You can change this anytime from My Account.</p>
+						<LlmPoolEditor :editable="true" @saved="onConnected" />
+						<div v-if="state.finishing" class="jv-ob-note">Finishing setup…</div>
+						<div v-else-if="state.finishNote" class="jv-ob-note">
+							<span>{{ state.finishNote }}</span>
+							<button class="jv-ob-btn jv-ob-btn-primary" @click="forceContinue">Continue to Jarvis →</button>
 						</div>
 					</div>
 
+					<!-- ===== Self-host — ported from desk renderSelfHost + renderShResults
+						 (jarvis_onboarding.js ~296-376). Field names/args match
+						 test_connection / save_self_hosted verbatim (base_url, token, deep,
+						 stream) — see api.js's testSelfHostConnection/saveSelfHosted. ===== -->
 					<div v-else-if="state.step === 'selfhost'">
-						<p class="jv-ob-placeholder">[self-host: connect panel — Tasks 3-5]</p>
+						<h1 class="jv-ob-h1">Connect your openclaw</h1>
+						<p class="jv-ob-sub">Point Jarvis at <b>your own</b> openclaw server. Jarvis connects over HTTP
+							with a bearer token — no Aerele persona/skills. Validate first, then connect.</p>
+						<label class="jv-ob-label" for="jv-ob-sh-url">openclaw URL</label>
+						<input id="jv-ob-sh-url" class="jv-ob-input" type="text" v-model="state.shUrl"
+							   placeholder="http://host.docker.internal:19060">
+						<label class="jv-ob-label" for="jv-ob-sh-token">Gateway token</label>
+						<input id="jv-ob-sh-token" class="jv-ob-input" type="password" v-model="state.shToken"
+							   placeholder="paste your openclaw gateway token" autocomplete="off">
+						<label class="jv-ob-check"><input type="checkbox" v-model="state.shStream"> Stream responses token-by-token (recommended)</label>
+						<label class="jv-ob-check"><input type="checkbox" v-model="state.shDeep"> Run deep chat test (slower — sends one message)</label>
+						<div class="jv-ob-placeholder-actions" style="margin-top:14px;justify-content:flex-start">
+							<button class="jv-ob-btn" :disabled="state.shTestBusy" @click="runSelfHostTest">
+								{{ state.shTestBusy ? "Testing…" : "Test connection" }}
+							</button>
+						</div>
+						<div v-if="state.shTestBusy" class="jv-ob-note">Testing…</div>
+						<div v-else-if="state.shTestResult" class="jv-ob-sh-results">
+							<div :class="state.shTestResult.ok ? 'jv-ob-sh-ok' : 'jv-ob-sh-bad'">
+								{{ state.shTestResult.ok ? "All required checks passed." : "Some checks failed — fix them and retry." }}
+							</div>
+							<div v-for="(c, i) in (state.shTestResult.checks || [])" :key="i" class="jv-ob-sh-check">
+								{{ c.ok ? "✅" : "❌" }} <b>{{ c.check }}</b> — {{ c.detail || "" }}
+							</div>
+						</div>
+						<div v-if="state.shWarning" class="jv-ob-devnote">{{ state.shWarning }}</div>
+						<div class="jv-ob-err" role="alert" aria-live="polite">{{ state.shErr }}</div>
+						<div v-if="state.finishing" class="jv-ob-note">Finishing setup…</div>
+						<div v-else-if="state.finishNote" class="jv-ob-note">
+							<span>{{ state.finishNote }}</span>
+							<button class="jv-ob-btn jv-ob-btn-primary" @click="forceContinue">Continue to Jarvis →</button>
+						</div>
 						<div class="jv-ob-placeholder-actions">
-							<button class="jv-ob-btn" @click="goBack">← Back</button>
+							<button class="jv-ob-btn" :disabled="state.shSaveBusy" @click="goBack">← Back</button>
+							<button class="jv-ob-btn jv-ob-btn-primary" :disabled="state.shSaveBusy" @click="onSelfHostSave">
+								{{ state.shSaveBusy ? "Connecting…" : "Connect →" }}
+							</button>
 						</div>
 					</div>
 				</div>
@@ -162,10 +211,12 @@ import { reactive, ref, computed, onMounted, watch } from "vue"
 import { call } from "frappe-ui"
 import { useTheme } from "@/composables/useTheme"
 import AppSidebar from "@/components/AppSidebar.vue"
+import LlmPoolEditor from "@/components/LlmPoolEditor.vue"
 import { STEPS_MANAGED, STEPS_SELFHOST, nextStep, prevStep, stepIndex } from "@/onboarding/steps"
 import {
 	checkSignupPaymentState, isReadyForChat,
 	listPlans, startSignup, finishPayment, devOnboard,
+	saveSelfHosted, testSelfHostConnection,
 } from "@/api"
 import { planPriceLabel } from "@/account/format.js"
 
@@ -194,6 +245,13 @@ const state = reactive({
 	payErr: "", payBusy: false,
 	devActive: null, // UX-only mirror of desk's boot-time `dev`; null until probed on entering "pay"
 	successData: null,
+	// post-save readiness recheck (Connect-AI + self-host both funnel through
+	// afterSaveRecheckReady/forceContinue below)
+	finishing: false, finishNote: "",
+	// self-host (renderSelfHost / renderShResults, jarvis_onboarding.js ~296-376)
+	shUrl: "", shToken: "", shStream: true, shDeep: false,
+	shTestBusy: false, shTestResult: null, shSaveBusy: false,
+	shErr: "", shWarning: "",
 })
 const accountBusy = ref(false)
 
@@ -479,6 +537,122 @@ async function openCheckout(d) {
 	rz.open()
 }
 
+// ---- post-save readiness recheck (Connect-AI + self-host) ------------------
+// CRITICAL: the router's first-run guard (router/index.js) caches its
+// is_ready_for_chat probe in a module-level `readyPromise` for the lifetime
+// of the page — it never invalidates mid-session. So a plain
+// `router.push({ name: "Chat" })` right after completing onboarding would
+// read that STALE "not ready" cache and bounce straight back to
+// /onboarding. Both completion paths (onConnected below and
+// onSelfHostSave) instead do a FULL PAGE RELOAD via
+// window.location.assign("/jarvis/") once ready, which re-imports the
+// router module from scratch and re-runs the readiness check fresh.
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+// Poll is_ready_for_chat a few times (short backoff) rather than trusting a
+// single check — the save itself (pool save or self-host connect) can
+// return before whatever it kicked off (e.g. proxy provisioning) is fully
+// reflected. Fails closed (returns false) on a persistent error; callers
+// treat "not ready yet" as advisory, not fatal — see finishNote below.
+async function waitUntilReady(attempts = 5, delayMs = 800) {
+	for (let i = 0; i < attempts; i++) {
+		try {
+			const r = await isReadyForChat()
+			if (r && r.ready) return true
+		} catch (e) {
+			// keep retrying — transient network hiccups shouldn't strand the user
+		}
+		if (i < attempts - 1) await sleep(delayMs)
+	}
+	return false
+}
+
+// Manual fallback for the "still not ready" case: never hard-block. The
+// customer can always force their way to Chat; if something's genuinely
+// still missing, Chat/Account will surface that.
+function forceContinue() {
+	window.location.assign("/jarvis/")
+}
+
+// Shared tail for both completion paths: poll for readiness, then either
+// auto-reload (the common case) or leave a "still finishing" note with a
+// manual continue button so the user is never stuck staring at a spinner.
+async function afterSaveRecheckReady() {
+	state.finishNote = ""
+	state.finishing = true
+	const ready = await waitUntilReady()
+	state.finishing = false
+	if (ready) {
+		window.location.assign("/jarvis/")
+		return
+	}
+	state.finishNote = "Still finishing setup — this can take a few seconds. You can continue to Jarvis now, or wait and try again."
+}
+
+// ---- Connect AI (renders <LlmPoolEditor>, jarvis_onboarding.js ~559-1080
+// renderLlm) — the component itself owns Quick/Preset/Custom + save_llm_pool;
+// this is only the post-save readiness handoff. ---------------------------
+function onConnected(sync) {
+	afterSaveRecheckReady()
+}
+
+// ---- Self-host (renderSelfHost / renderShResults / runSelfHostTest /
+// saveSelfHost, jarvis_onboarding.js ~296-376) --------------------------------
+async function runSelfHostTest() {
+	state.shErr = ""
+	const url = (state.shUrl || "").trim()
+	if (!url) {
+		state.shErr = "Enter the openclaw URL first."
+		return
+	}
+	state.shTestBusy = true
+	state.shTestResult = null
+	try {
+		const r = await testSelfHostConnection({
+			base_url: url,
+			token: (state.shToken || "").trim(),
+			deep: state.shDeep ? 1 : 0,
+		})
+		state.shTestResult = r || {}
+	} catch (e) {
+		state.shErr = errMsg(e)
+	} finally {
+		state.shTestBusy = false
+	}
+}
+
+async function onSelfHostSave() {
+	state.shErr = ""
+	state.shWarning = ""
+	const url = (state.shUrl || "").trim()
+	const tok = (state.shToken || "").trim()
+	if (!url || !tok) {
+		state.shErr = "openclaw URL and gateway token are both required."
+		return
+	}
+	state.shSaveBusy = true
+	try {
+		const r = await saveSelfHosted({
+			base_url: url, token: tok,
+			deep: state.shDeep ? 1 : 0, stream: state.shStream ? 1 : 0,
+		})
+		const m = r || {}
+		state.shSaveBusy = false
+		if (m.ok) {
+			// Advisory only (e.g. no Self-Host Tool User set yet) — the connection
+			// itself is already saved, so this doesn't block the readiness recheck.
+			if (m.warning) state.shWarning = m.warning
+			await afterSaveRecheckReady()
+		} else {
+			state.shTestResult = m.result || {}
+			state.shErr = "Validation failed — fix the checks above, then retry."
+		}
+	} catch (e) {
+		state.shSaveBusy = false
+		state.shErr = errMsg(e)
+	}
+}
+
 // Enter-step triggers: load the plan list on reaching "plan" (defensive —
 // normally already loaded by onAccountSubmit, but also covers a reconcile
 // that lands directly on "plan"), and probe dev-mode + preload Razorpay on
@@ -648,6 +822,17 @@ onMounted(() => {
 .jv-ob-row-total { font-size: 13.5px; }
 .jv-ob-row-total b { font-size: 15px; }
 .jv-ob-devnote { font-size: 12.5px; color: var(--amber); background: var(--amber-bg); border: 1px solid var(--amber-bd); border-radius: 8px; padding: 8px 12px; margin-bottom: 14px; }
+
+/* ---- Self-host — ported from desk .jo-check/.jo-sh-* (jarvis_onboarding.js
+   ~296-376 renderSelfHost/renderShResults). ---- */
+.jv-ob-check { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text); margin-top: 8px; cursor: pointer; }
+.jv-ob-sh-results { margin: 14px 0 4px; font-size: 12.5px; line-height: 1.7; }
+.jv-ob-sh-check { color: var(--text); }
+.jv-ob-sh-ok { color: var(--green); font-weight: 600; margin-bottom: 4px; }
+.jv-ob-sh-bad { color: var(--red); font-weight: 600; margin-bottom: 4px; }
+
+/* ---- Connect-AI / self-host post-save readiness note (afterSaveRecheckReady). ---- */
+.jv-ob-note { font-size: 12.5px; color: var(--text-3); margin-top: 14px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
 @media (max-width: 520px) {
 	.jv-ob-main { padding: 28px 16px 48px; }
