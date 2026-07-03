@@ -730,27 +730,17 @@ def retry_message(message: str) -> dict:
 	)
 
 	run_id = uuid.uuid4().hex[:12]
-	# Same dispatch branch as send_message: Path B (Python socketio backend)
-	# publishes onto Redis pub/sub for the in-process realtime subscriber;
-	# default Node backend keeps using the long RQ queue with at_front=True.
+	# Route through the SHARED dispatcher (after-commit publish on Path B,
+	# RQ on the default backend) - retry previously duplicated this branch
+	# inline with a synchronous publish, keeping the mid-transaction race
+	# _dispatch_turn fixes for every other turn.
 	payload = {
 		"conversation_id": doc.conversation,
 		"message_id": user_msg_id,
 		"run_id": run_id,
 		"enqueued_at_ms": int(time.time() * 1000),
 	}
-	if (frappe.conf.get("socketio_backend") or "").strip().lower() == "python":
-		from jarvis.chat.dispatch import publish_chat_send
-
-		publish_chat_send(payload)
-	else:
-		frappe.enqueue(
-			method="jarvis.chat.worker.run_agent_turn",
-			queue="long",
-			timeout=_AGENT_TURN_WORKER_TIMEOUT,
-			at_front=True,
-			**payload,
-		)
+	_dispatch_turn(payload)
 	return {"ok": True, "run_id": run_id}
 
 
@@ -773,17 +763,50 @@ def _dispatch_turn(enqueue_kwargs: dict) -> None:
 	removing the RQ concurrency cap. Shared by send_message, retry_message and the
 	macro engine so every turn dispatches identically."""
 	if (frappe.conf.get("socketio_backend") or "").strip().lower() == "python":
-		from jarvis.chat.dispatch import publish_chat_send
+		from jarvis.chat import dispatch
 
-		publish_chat_send(enqueue_kwargs)
-	else:
-		frappe.enqueue(
-			method="jarvis.chat.worker.run_agent_turn",
-			queue="long",
-			timeout=_AGENT_TURN_WORKER_TIMEOUT,
-			at_front=True,
-			**enqueue_kwargs,
+		# Mismatch guard: pub/sub is fire-and-forget, so publishing with no
+		# live subscriber (config says python but the Node server is the one
+		# running - Frappe Cloud pins node in its supervisor template and
+		# does NOT blacklist this config key - or the realtime process is
+		# down) would strand the turn: hang, then ceiling-error. Verify a
+		# subscriber first; on zero, or any doubt (redis hiccup), fall back
+		# to the RQ path - both dispatch flows are first-class, so RQ is
+		# always a correct executor. The fallback logs loudly: it is a
+		# misconfiguration signal, not a normal mode.
+		listening = False
+		try:
+			listening = dispatch.subscriber_count() > 0
+		except Exception:
+			pass
+		if listening:
+			# Publish AFTER the request transaction commits. Pub/sub delivery
+			# is instant (unlike RQ dequeue latency), so publishing mid-
+			# transaction lets the subscriber greenlet start the turn before
+			# the conversation and user-message rows are visible -
+			# LinkValidationError on the placeholder insert. Mirrors enqueue-
+			# after-commit semantics; caught by the Stage A live smoke.
+			frappe.db.after_commit.add(
+				lambda: dispatch.publish_chat_send(enqueue_kwargs)
+			)
+			return
+		frappe.log_error(
+			title="chat: Path B subscriber missing - dispatched via RQ",
+			message=(
+				"socketio_backend=python but no live subscriber on the chat "
+				"channel (config/process mismatch, or the Python realtime "
+				"process is down). The turn was routed to the RQ worker "
+				"instead, so chat keeps working - but fix the mismatch or "
+				"unset socketio_backend."
+			),
 		)
+	frappe.enqueue(
+		method="jarvis.chat.worker.run_agent_turn",
+		queue="long",
+		timeout=_AGENT_TURN_WORKER_TIMEOUT,
+		at_front=True,
+		**enqueue_kwargs,
+	)
 
 
 def _enqueue_turn(

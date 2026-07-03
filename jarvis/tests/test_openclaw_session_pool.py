@@ -149,39 +149,153 @@ class TestOpenclawSessionPool(FrappeTestCase):
 				with openclaw_session_pool.checkout("ws://gw"):
 					raise OpenclawUnreachableError("boom")
 			# Entry should have been removed even though close raised.
-			self.assertNotIn("ws://gw", openclaw_session_pool._POOL)
+			# (The gateway GROUP object stays in the dict; what matters
+			# is that no dead entry remains inside it.)
+			group = openclaw_session_pool._POOL["ws://gw"]
+			self.assertEqual(len(group.entries), 0)
 
-	# ---- concurrent checkout ----------------------------------------
+	# ---- concurrent checkout (Stage B: N entries per gateway) --------
 
-	def test_concurrent_checkout_shares_session(self):
-		"""Multiple threads checking out the same URL serialise on the
-		entry's lock; one connect, all five threads see the same
-		session. Workers are single-threaded in production but the lock
-		is exercised here as a safety check."""
-		sess = _fake_session()
-		# Connect is slow so threads pile up against the lock.
-		import time as _time
-		def slow_connect(_url):
-			_time.sleep(0.01)
-			return sess
+	def _held_checkout(self, url, acquired_evt, release_evt, out, errors):
+		"""Thread body: hold a checkout open until release_evt fires."""
+		try:
+			with openclaw_session_pool.checkout(url) as got:
+				out.append(got)
+				acquired_evt.set()
+				release_evt.wait(timeout=5)
+		except Exception as e:  # pragma: no cover - surfaced via assertion
+			errors.append(e)
+			acquired_evt.set()
+
+	def test_concurrent_checkouts_get_distinct_sessions(self):
+		"""Two checkouts held at the same time get two DIFFERENT pooled
+		sessions (per-entry exclusivity kept, per-gateway exclusivity
+		gone - the Stage B point)."""
+		sessions = [_fake_session(), _fake_session(), _fake_session()]
 		with patch.object(openclaw_session_pool.OpenclawSession, "connect",
-		                  side_effect=slow_connect) as mock_connect:
-			results: list[object] = []
-			lock = threading.Lock()
-			def runner():
-				with openclaw_session_pool.checkout("ws://gw") as got:
-					with lock:
-						results.append(got)
-			threads = [threading.Thread(target=runner) for _ in range(5)]
-			for t in threads: t.start()
-			for t in threads: t.join()
-			self.assertEqual(len(results), 5)
-			self.assertTrue(all(r is sess for r in results))
-			# Race window means more than one connect MAY have started
-			# (the "lost-race insertion" branch handles it), but at
-			# least one session must have made it into the pool.
-			self.assertGreaterEqual(mock_connect.call_count, 1)
-			self.assertIn("ws://gw", openclaw_session_pool._POOL)
+		                  side_effect=sessions) as mock_connect:
+			out, errors = [], []
+			acq = [threading.Event() for _ in range(2)]
+			rel = threading.Event()
+			threads = [
+				threading.Thread(
+					target=self._held_checkout,
+					args=("ws://gw", acq[i], rel, out, errors),
+				)
+				for i in range(2)
+			]
+			for t in threads:
+				t.start()
+			for e in acq:
+				self.assertTrue(e.wait(timeout=5))
+			# Both hold a session simultaneously, and they are distinct.
+			self.assertEqual(len(out), 2)
+			self.assertIsNot(out[0], out[1])
+			self.assertEqual(mock_connect.call_count, 2)
+			rel.set()
+			for t in threads:
+				t.join(timeout=5)
+			self.assertEqual(errors, [])
+
+	def test_cap_blocks_fourth_concurrent_checkout(self):
+		"""With POOL_MAX_PER_GATEWAY sessions held, the next checkout
+		waits; releasing one slot unblocks it and it reuses that entry
+		(no fourth connect)."""
+		cap = openclaw_session_pool.POOL_MAX_PER_GATEWAY
+		sessions = [_fake_session() for _ in range(cap + 1)]
+		with patch.object(openclaw_session_pool.OpenclawSession, "connect",
+		                  side_effect=sessions) as mock_connect:
+			out, errors = [], []
+			acq = [threading.Event() for _ in range(cap)]
+			rels = [threading.Event() for _ in range(cap)]
+			holders = [
+				threading.Thread(
+					target=self._held_checkout,
+					args=("ws://gw", acq[i], rels[i], out, errors),
+				)
+				for i in range(cap)
+			]
+			for t in holders:
+				t.start()
+			for e in acq:
+				self.assertTrue(e.wait(timeout=5))
+			self.assertEqual(mock_connect.call_count, cap)
+
+			# Fourth checkout: must block while all slots are busy.
+			acq4, rel4 = threading.Event(), threading.Event()
+			fourth = threading.Thread(
+				target=self._held_checkout,
+				args=("ws://gw", acq4, rel4, out, errors),
+			)
+			fourth.start()
+			self.assertFalse(acq4.wait(timeout=0.3))  # still blocked
+
+			rels[0].set()  # free one slot
+			self.assertTrue(acq4.wait(timeout=5))  # now acquired
+			# Reused a pooled entry - no additional connect.
+			self.assertEqual(mock_connect.call_count, cap)
+			rel4.set()
+			for e in rels[1:]:
+				e.set()
+			for t in [*holders, fourth]:
+				t.join(timeout=5)
+			self.assertEqual(errors, [])
+
+	def test_eviction_of_one_entry_does_not_affect_others(self):
+		"""An OpenclawUnreachableError on one held session evicts ONLY
+		that entry; the concurrently-held sibling survives in the pool
+		and is reused by the next checkout."""
+		sess_a, sess_b = _fake_session(), _fake_session()
+		with patch.object(openclaw_session_pool.OpenclawSession, "connect",
+		                  side_effect=[sess_a, sess_b]) as mock_connect:
+			out, errors = [], []
+			acq_b, rel_b = threading.Event(), threading.Event()
+
+			def failing_holder():
+				try:
+					with openclaw_session_pool.checkout("ws://gw"):
+						# Hold until B has its own session, then die.
+						self.assertTrue(acq_b.wait(timeout=5))
+						raise OpenclawUnreachableError("stream died")
+				except OpenclawUnreachableError:
+					pass
+
+			holder_b = threading.Thread(
+				target=self._held_checkout,
+				args=("ws://gw", acq_b, rel_b, out, errors),
+			)
+			holder_a = threading.Thread(target=failing_holder)
+			holder_a.start()
+			holder_b.start()
+			holder_a.join(timeout=5)
+			rel_b.set()
+			holder_b.join(timeout=5)
+			self.assertEqual(errors, [])
+
+			group = openclaw_session_pool._POOL["ws://gw"]
+			self.assertEqual(len(group.entries), 1)  # one evicted, one kept
+			# Next checkout reuses the survivor - no third connect.
+			with openclaw_session_pool.checkout("ws://gw") as got:
+				self.assertIn(got, (sess_a, sess_b))
+			self.assertEqual(mock_connect.call_count, 2)
+
+	def test_connect_failure_frees_reserved_slot(self):
+		"""A failed connect must release its reserved slot so the pool
+		does not leak capacity (the 'connecting' counter)."""
+		sess = _fake_session()
+		with patch.object(
+			openclaw_session_pool.OpenclawSession, "connect",
+			side_effect=[OpenclawUnreachableError("refused"), sess],
+		) as mock_connect:
+			with self.assertRaises(OpenclawUnreachableError):
+				with openclaw_session_pool.checkout("ws://gw"):
+					pass  # pragma: no cover - never reached
+			group = openclaw_session_pool._POOL["ws://gw"]
+			self.assertEqual(group.connecting, 0)
+			# Retry succeeds and occupies a normal slot.
+			with openclaw_session_pool.checkout("ws://gw") as got:
+				self.assertIs(got, sess)
+			self.assertEqual(mock_connect.call_count, 2)
 
 	# ---- drain ------------------------------------------------------
 

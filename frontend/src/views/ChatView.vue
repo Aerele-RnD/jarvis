@@ -3912,6 +3912,25 @@ function applyMention(item) {
 	})
 }
 
+// Resync from durable state after any gap in the socket stream. Socketio
+// has no replay: events published while disconnected or hidden are gone,
+// so on every (re)connect and on tab-wake we refetch instead of trusting
+// the stream. loadConversation already reconciles messages, restores the
+// spinner from streaming flags (freshness-guarded), and drops stale
+// responses.
+let _lastResync = 0
+function onResync() {
+	if (booting.value || !currentId.value) return
+	const now = Date.now()
+	if (now - _lastResync < 2000) return // connect + visibility often co-fire
+	_lastResync = now
+	loadConversations()
+	loadConversation(currentId.value)
+}
+function onVisibility() {
+	if (document.visibilityState === "visible") onResync()
+}
+
 onMounted(async () => {
 	// Latency plan, Phase 1.3: the bootstrap network calls used to run as a
 	// serial awaited chain (ready → ui settings → conversations), each a full
@@ -3931,6 +3950,8 @@ onMounted(async () => {
 		return
 	}
 	socket?.on("jarvis:event", onEvent)
+	socket?.on("connect", onResync)
+	document.addEventListener("visibilitychange", onVisibility)
 	// Live tool list for the "Tools available" count + /tool autocomplete
 	// (best-effort; falls back to the seeded core set on failure).
 	api.listTools().then((t) => { if (Array.isArray(t) && t.length) jarvisTools.value = t }).catch(() => {})
@@ -3969,6 +3990,8 @@ onMounted(async () => {
 })
 onBeforeUnmount(() => {
 	socket?.off("jarvis:event", onEvent)
+	socket?.off("connect", onResync)
+	document.removeEventListener("visibilitychange", onVisibility)
 	document.removeEventListener("pointerdown", onDocClick)
 	window.removeEventListener("keydown", onGlobalKey)
 	clearInterval(_thinkTimer)

@@ -16,5 +16,5 @@ export function initSocket() {
 	// plain http, as before.
 	const protocol = port ? "http" : window.location.protocol.replace(":", "")
 	const url = `${protocol}://${host}${port}/${siteName}`
-	return io(url, { withCredentials: true, reconnectionAttempts: 5 })
+	return io(url, { withCredentials: true })
 }

@@ -335,6 +335,22 @@ class TestRetryMessage(_ChatTestCase):
 		super().setUp()
 		self.conv = create_conversation()
 
+	def test_routes_through_shared_dispatcher(self):
+		"""Retry must use the SAME dispatcher as send_message (after-commit
+		publish on Path B, RQ otherwise). It previously duplicated the
+		branch inline with a synchronous publish, keeping the
+		mid-transaction race the shared dispatcher fixes - both dispatch
+		flows must behave identically for every turn source."""
+		user_id, asst_id = self._make_turn(self.conv, with_error=True)
+		with patch("jarvis.chat.api._dispatch_turn") as dispatch:
+			result = retry_message(asst_id)
+		self.assertTrue(result["ok"])
+		dispatch.assert_called_once()
+		payload = dispatch.call_args[0][0]
+		self.assertEqual(payload["conversation_id"], self.conv)
+		self.assertEqual(payload["message_id"], user_id)
+		self.assertEqual(payload["run_id"], result["run_id"])
+
 	def test_enqueues_worker_against_preceding_user_message(self):
 		user_id, asst_id = self._make_turn(self.conv, with_error=True)
 		with patch("frappe.enqueue") as enqueue:

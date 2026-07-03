@@ -180,8 +180,16 @@ scheduler_events = {
 		"jarvis.oauth.cron.poll_oauth_refresh_status",
 		# Fire any scheduled macros whose next_run_at has passed.
 		"jarvis.chat.macro_scheduler.run_due_macros",
+		# Recovery-completeness batch: spike alarm if the 24h recovered-turn
+		# rate is high enough to suggest a sick gateway (deduped to roughly
+		# once a day inside the function).
+		"jarvis.chat.turn_recovery.recovery_rate_watch",
 	],
 	"daily": [
+		# Session lifecycle Phase 1: rotate dormant conversations' openclaw
+		# sessions and reap orphaned throwaway sessions (title/prewarm,
+		# deleted conversations). Batch-capped; bench history untouched.
+		"jarvis.chat.session_lifecycle.rotate_dormant_sessions",
 		"jarvis.onboarding.sync_connection",
 		# C2 (2026-06-16 review): nudge operators when the bench's
 		# agent_token is approaching or past its configured max age.

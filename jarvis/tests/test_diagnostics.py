@@ -120,3 +120,63 @@ class TestForceResync(FrappeTestCase):
 		with patch.object(cls, "_sync_via_admin") as sa:
 			diagnostics.force_resync(action="reload")
 		sa.assert_called_once_with("reload")
+
+
+class TestChatRecoveryStats(FrappeTestCase):
+	"""jarvis.diagnostics.chat_recovery_stats - operator visibility into
+	how often snapshot recovery is rescuing turns."""
+
+	MSG = "Jarvis Chat Message"
+	CONV = "Jarvis Conversation"
+
+	def setUp(self):
+		self.conv = frappe.get_doc({
+			"doctype": self.CONV, "title": "diag-stats",
+		}).insert(ignore_permissions=True)
+		frappe.db.commit()
+
+	def tearDown(self):
+		frappe.db.delete(self.MSG, {"conversation": self.conv.name})
+		frappe.db.delete(self.CONV, {"name": self.conv.name})
+		frappe.db.commit()
+
+	def _add(self, *, was_recovered=0, streaming=0, recovering=0, error=""):
+		frappe.get_doc({
+			"doctype": self.MSG, "conversation": self.conv.name, "seq": 1,
+			"role": "assistant", "content": "x",
+			"streaming": streaming, "recovering": recovering,
+			"was_recovered": was_recovered, "error": error,
+		}).insert(ignore_permissions=True)
+
+	def test_shape_and_zero_rate_with_no_turns(self):
+		out = diagnostics.chat_recovery_stats()
+		for window in ("24h", "7d"):
+			self.assertIn(window, out)
+			for key in ("total", "recovered", "currently_recovering", "ceiling_errored"):
+				self.assertIn(key, out[window])
+		self.assertEqual(out["recovered_rate_24h"], 0)
+
+	def test_counts_move_after_a_finalize(self):
+		before = diagnostics.chat_recovery_stats()
+		self._add(was_recovered=0)
+		self._add(was_recovered=1)
+		self._add(
+			was_recovered=1, error="Run did not finish within the recovery window.",
+		)
+		self._add(streaming=1, recovering=1)
+		frappe.db.commit()
+		after = diagnostics.chat_recovery_stats()
+
+		self.assertEqual(after["24h"]["total"], before["24h"]["total"] + 4)
+		self.assertEqual(after["24h"]["recovered"], before["24h"]["recovered"] + 2)
+		self.assertEqual(
+			after["24h"]["currently_recovering"],
+			before["24h"]["currently_recovering"] + 1,
+		)
+		self.assertEqual(
+			after["24h"]["ceiling_errored"], before["24h"]["ceiling_errored"] + 1,
+		)
+		# 7d window includes the same new rows.
+		self.assertEqual(after["7d"]["total"], before["7d"]["total"] + 4)
+		self.assertEqual(after["7d"]["recovered"], before["7d"]["recovered"] + 2)
+		self.assertGreater(after["recovered_rate_24h"], 0)

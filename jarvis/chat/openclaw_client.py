@@ -13,8 +13,15 @@ the requested scopes, and the rest of the protocol (sessions.create, agent,
 event streaming) is identical to what the Node script used to do - only the
 transport changed from subprocess-pipes to direct WS frames.
 
-The public surface (OpenclawSession.connect / create_session /
-stream_agent_turn / close) is unchanged. worker.py and api.py don't notice.
+Public surface: OpenclawSession.connect / create_session / chat_send /
+relay_turn_events / set_session_model / subscribe_session / get_history /
+get_session_messages / is_run_active / fire_agent / stream_agent_turn /
+close. The managed chat path now uses the relay pair (chat_send +
+relay_turn_events): the turn is owned by openclaw after the chat.send ack,
+streaming rides the broadcast agent frames, completion comes from the
+run-scoped chat event, and relay_turn_events never raises after entry -
+interruptions degrade to snapshot recovery instead of errors.
+stream_agent_turn remains for auto-title; fire_agent for prewarm.
 """
 
 from __future__ import annotations
@@ -128,6 +135,26 @@ def _is_stale_pairing(err: Exception) -> bool:
 	"""
 	code = getattr(err, "code", None)
 	return code in _STALE_PAIRING_CODES
+
+
+def _chat_final_text(payload: dict) -> str | None:
+	"""Authoritative final text from a chat final event: joined text blocks
+	of payload.message.content; None for silent finals."""
+	msg = payload.get("message")
+	if not isinstance(msg, dict):
+		return None
+	c = msg.get("content")
+	if isinstance(c, str):
+		return c or None
+	if isinstance(c, list):
+		parts = [
+			b.get("text", "") for b in c
+			if isinstance(b, dict) and b.get("type") == "text"
+			and isinstance(b.get("text"), str)
+		]
+		joined = "\n".join(p for p in parts if p.strip())
+		return joined or None
+	return None
 
 
 def _persisted_device_id() -> str:
@@ -370,6 +397,101 @@ class OpenclawSession:
 			if s.get("key") == session_key:
 				return bool(s.get("hasActiveRun"))
 		return False
+
+	def list_sessions(
+		self, *, timeout_s: float = CONNECT_TIMEOUT_SECONDS,
+	) -> list[dict]:
+		"""Every session the gateway is tracking (sessions.list rows:
+		key, hasActiveRun, updatedAt, label, ...). Used by the session
+		lifecycle sweep to find orphaned throwaway sessions."""
+		res = self._request("sessions.list", {}, timeout_s=timeout_s)
+		return (res.get("payload") or {}).get("sessions") or []
+
+	def delete_session(
+		self, session_key: str, *, timeout_s: float = CONNECT_TIMEOUT_SECONDS,
+	) -> None:
+		"""Remove a session's gateway state via ``sessions.delete``
+		(transcript is archived gateway-side first; ``deleteTranscript``
+		defaults true there). The gateway refuses to delete the agent's
+		main session - callers treat that error as a skip, never retry."""
+		self._request(
+			"sessions.delete", {"key": session_key}, timeout_s=timeout_s,
+		)
+
+	def set_session_model(
+		self, session_key: str, model_ref: str,
+		*, timeout_s: float = CONNECT_TIMEOUT_SECONDS,
+	) -> None:
+		"""Point the session at ``model_ref`` (``"<provider>/<model>"`` or
+		bare ``"<model>"``) via ``sessions.patch``. chat.send has no per-turn
+		model param, so per-conversation overrides are applied to the session
+		before the send."""
+		self._request(
+			"sessions.patch", {"key": session_key, "model": model_ref},
+			timeout_s=timeout_s,
+		)
+
+	def relay_turn_events(
+		self, session_key: str, run_id: str,
+		*, soft_deadline_s: float = TURN_TIMEOUT_SECONDS,
+	) -> Iterator[dict[str, Any]]:
+		"""Consume broadcast events for a chat.send run until a terminal
+		``chat`` event, the soft deadline, or a transport drop.
+
+		Mirror of openclaw's own UI model: token/tool streaming comes from
+		the broadcast ``agent`` frames (retagged with the chat.send
+		clientRunId == run_id); completion comes ONLY from the run-scoped
+		``chat`` event (state final|aborted|error). agent ``lifecycle``
+		frames are dropped so there is a single terminal path.
+
+		NEVER raises after entry. Terminal yields:
+		  {"kind": "relay:final", "text": str|None}
+		  {"kind": "relay:error", "state": "error"|"aborted", "error": str}
+		  {"kind": "relay:interrupted", "reason": "transport"|"deadline", ...}
+		"""
+		deadline = time.monotonic() + soft_deadline_s
+		while True:
+			remaining = deadline - time.monotonic()
+			if remaining <= 0:
+				yield {"kind": "relay:interrupted", "reason": "deadline"}
+				return
+			try:
+				frame = self._recv(remaining)
+			except OpenclawUnreachableError as e:
+				# Close the dead WS before yielding: this generator swallows
+				# the exception by design, so the pool's discard-on-exception
+				# contract never fires. Closing flips the connected flag the
+				# pool healthcheck reads, so the corpse is not handed to the
+				# next turn (which would fail pre-ack as a false run:error).
+				try:
+					self.close()
+				except Exception:
+					pass
+				yield {"kind": "relay:interrupted", "reason": "transport", "detail": str(e)}
+				return
+			if frame is None or frame.get("type") != "event":
+				continue
+			payload = frame.get("payload") or {}
+			if frame.get("event") == "chat":
+				if payload.get("runId") != run_id or payload.get("sessionKey") != session_key:
+					continue
+				state = payload.get("state")
+				if state == "final":
+					yield {"kind": "relay:final", "text": _chat_final_text(payload)}
+					return
+				if state in ("error", "aborted"):
+					yield {
+						"kind": "relay:error", "state": state,
+						"error": payload.get("errorMessage") or state,
+					}
+					return
+				continue  # delta (150ms cumulative mirror) and unknown states: ignore
+			if payload.get("runId") != run_id:
+				continue
+			parsed = parse_event(payload)
+			if parsed is None or parsed.get("kind") == "lifecycle":
+				continue
+			yield parsed
 
 	def fire_agent(self, session_key: str, message: str, idempotency_key: str,
 	               *, model: str | None = None, provider: str | None = None) -> str:
