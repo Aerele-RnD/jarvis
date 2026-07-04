@@ -3416,7 +3416,7 @@ async function loadConversation(id) {
 	autoApplyNote.value = ""
 	// Per-conversation confirm-card slate (issue #186): drop any parked cards from
 	// OTHER conversations, then re-surface this conversation's still-live parked
-	// confirmations (R3 fix for #3 — survives reload / reconnect).
+	// confirmations (R3 fix for #3 - survives reload / reconnect).
 	pendingActions.value = pendingActions.value.filter((pa) => pa.conversation === id)
 	resyncPendingConfirmations(id)
 	// Seed Up/Down recall from THIS conversation's past prompts. Without this,
