@@ -233,7 +233,7 @@ _INVALID_CONFIRM = {
 
 
 @frappe.whitelist()
-def confirm_tool(token: str) -> dict:
+def confirm_tool(token: str, conversation: str | None = None) -> dict:
 	"""Execute a parked mutating tool call after the human clicked Confirm.
 
 	Owner-bound + conversation-bound + single-use via ``pending_confirm``. The
@@ -241,44 +241,107 @@ def confirm_tool(token: str) -> dict:
 	stores the authoritative call; this endpoint is the ONLY path that runs it.
 
 	Human cookie-session only (whitelisted, not allow_guest, not the plugin
-	path). ``peek`` reads the record just to learn which conversation the token
-	belongs to; ``consume`` then re-validates owner + conversation atomically
-	and single-uses the token. A wrong-owner caller learns nothing and does NOT
-	burn the token (consume rejects on the owner mismatch before deleting).
+	path).
+
+	Identity model (issue #186, #1/#5/#6): the gate binds the token to the
+	CONVERSATION OWNER - the human whose browser is subscribed and who clicks
+	Confirm. That is ``frappe.session.user`` here in BOTH deployment modes (in
+	self-host the operator's browser session is the conversation owner, not the
+	restricted tool user), so we consume under the session user directly - no
+	per-mode owner resolution. ``consume`` re-validates owner + conversation
+	atomically and single-uses the token; a wrong-owner caller learns nothing
+	and does NOT burn the token.
+
+	Conversation guard (#11): ``conversation`` is the conversation the click came
+	from (the SPA passes its current id). When given it is passed into
+	``consume`` as a REAL check (record.conversation must match). When omitted
+	(back-compat) the record's own conversation is used - a tautology - so the
+	guard reduces to owner + single-use and the conversation check does not
+	actually run.
+
+	Execution scope (#6): the confirmed write executes AS the stored
+	``exec_user`` (the scoped model-execution identity - the tool user in
+	self-host), so a confirm can never exceed the model path's permission scope.
+	The original session user is always restored in a finally.
 	"""
 	if frappe.session.user == "Guest":
 		raise frappe.PermissionError("authentication required")
 
 	from jarvis.chat import pending_confirm
-	from jarvis import api, selfhost
+	from jarvis import api
 
 	token = (token or "").strip()
 	record = pending_confirm.peek(token)
 	if not record:
 		return _INVALID_CONFIRM
 
-	# Consume under the SAME owner identity the gate minted the token under.
-	# The gate (jarvis.api._run_tool) mints with owner=frappe.session.user at
-	# gate time. In managed mode that gate ran under the impersonated chat user
-	# - the same user whose browser session is confirming now, so the session
-	# user is the right owner. In self-hosted mode the gate ran inside call_tool
-	# under the self-host tool user (api._selfhost_tool_user), NOT this human
-	# browser session, so consuming under the session user would never match and
-	# every self-host confirm would fail closed-but-broken. Resolve the expected
-	# owner by mode instead. Guest is already rejected above; the single
-	# self-host operator IS authorized (selfhost single-tool-user design).
-	expected_owner = (
-		api._selfhost_tool_user() if selfhost.is_self_hosted()
-		else frappe.session.user)
-	if not expected_owner:
-		return _INVALID_CONFIRM
+	# Real conversation guard (#11): if the caller passed the conversation the
+	# click came from, enforce it; otherwise fall back to the record's own
+	# conversation (owner + single-use remain the guarantees).
+	passed_conv = (conversation or "").strip()
+	guard_conv = passed_conv if passed_conv else record.get("conversation")
 	record = pending_confirm.consume(
-		token, owner=expected_owner,
-		conversation=record.get("conversation"))
+		token, owner=frappe.session.user, conversation=guard_conv)
 	if not record:
 		return _INVALID_CONFIRM
 
-	# Runs under the confirming user (already the session user). Same envelope
-	# + audit as an inline write - dispatch_confirmed bypasses the gate so the
-	# stored call actually executes instead of parking again.
-	return api.dispatch_confirmed(record["tool"], record["args"])
+	# Execute AS the scoped model-execution identity the gate stored, restoring
+	# the confirming session user afterwards no matter what. exec_user defaults
+	# to the owner for tokens minted before this field existed.
+	exec_user = record.get("exec_user") or record.get("owner") or frappe.session.user
+	original = frappe.session.user
+	frappe.set_user(exec_user)
+	try:
+		# Same envelope + audit as an inline write - dispatch_confirmed bypasses
+		# the gate so the stored call actually executes instead of parking again.
+		result = api.dispatch_confirmed(record["tool"], record["args"])
+	finally:
+		frappe.set_user(original)
+
+	# Leave a transcript receipt (#7) so a confirmed delete/submit/email shows on
+	# reload, matching the inline model-write path's tool card. Best-effort: the
+	# write already committed, so a receipt hiccup must not report failure. Needs
+	# a resolved conversation to attach to (self-host with no conv binding skips).
+	conv = record.get("conversation")
+	if conv:
+		try:
+			api.persist_tool_receipt(conv, record["tool"], record["args"], result)
+		except Exception:
+			frappe.log_error(title="confirm_tool receipt failed",
+							 message=frappe.get_traceback())
+
+	return result
+
+
+@frappe.whitelist()
+def list_pending_confirmations(conversation: str | None = None) -> dict:
+	"""Re-surface the caller's OWN currently-parked confirmation cards after a
+	reload/reconnect (issue #186, enables R3's fix for #3).
+
+	Owner-scoped: returns only the calling user's live parked tokens (never
+	another user's), optionally filtered to ``conversation``. Each item carries
+	exactly what the ``action:pending`` realtime event already delivers to this
+	same owner's UI - token + tool + preview + summary + conversation + run_id -
+	so no new information is leaked. Human cookie-session only.
+	"""
+	if frappe.session.user == "Guest":
+		raise frappe.PermissionError("authentication required")
+
+	from jarvis.chat import pending_confirm
+	from jarvis.api import _pending_preview, _describe_call
+
+	conv = (conversation or "").strip() or None
+	records = pending_confirm.list_for_owner(frappe.session.user, conversation=conv)
+	items = []
+	for r in records:
+		tool = r.get("tool")
+		args = r.get("args") or {}
+		items.append({
+			"token": r.get("token"),
+			"tool": tool,
+			"preview": _pending_preview(tool, args),
+			"summary": _describe_call(tool, args),
+			"conversation": r.get("conversation"),
+			"run_id": r.get("run_id"),
+		})
+	return {"ok": True, "data": {"pending": items}}

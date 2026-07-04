@@ -59,6 +59,79 @@ class TestMint(FrappeTestCase):
 		self.assertIsNotNone(pending_confirm.peek(t2))
 
 
+class TestExecUser(FrappeTestCase):
+	def test_exec_user_stored_and_returned(self):
+		token = pending_confirm.mint(
+			conversation=CONV, owner=OWNER, tool=TOOL, args=ARGS, run_id=RUN_ID,
+			exec_user="tool-user@example.invalid",
+		)
+		record = pending_confirm.peek(token)
+		self.assertEqual(record["owner"], OWNER)
+		self.assertEqual(record["exec_user"], "tool-user@example.invalid")
+		# consume returns it too.
+		got = pending_confirm.consume(token, owner=OWNER, conversation=CONV)
+		self.assertEqual(got["exec_user"], "tool-user@example.invalid")
+
+	def test_exec_user_defaults_to_owner(self):
+		# Managed mode / back-compat: omitting exec_user binds execution to the
+		# owner (no behavior change from the pre-exec_user record shape).
+		token = pending_confirm.mint(
+			conversation=CONV, owner=OWNER, tool=TOOL, args=ARGS, run_id=RUN_ID,
+		)
+		self.assertEqual(pending_confirm.peek(token)["exec_user"], OWNER)
+
+
+class TestListForOwner(FrappeTestCase):
+	_A = "owner-a@example.invalid"
+	_B = "owner-b@example.invalid"
+
+	def setUp(self):
+		# The per-owner index lives in Redis (not rolled back with the DB), so
+		# clear these owners' sets to isolate token-count assertions from prior
+		# methods/runs.
+		for o in (self._A, self._B):
+			frappe.cache().delete_value(pending_confirm._OWNER_PREFIX + o)
+
+	def _mint(self, owner, conversation, desc):
+		return pending_confirm.mint(
+			conversation=conversation, owner=owner, tool="create_doc",
+			args={"doctype": "ToDo", "values": {"description": desc}}, run_id="")
+
+	def test_returns_only_callers_live_tokens(self):
+		t1 = self._mint(self._A, "conv-a1", "la-1")
+		t2 = self._mint(self._A, "conv-a2", "la-2")
+		self._mint(self._B, "conv-b1", "lb-1")  # another owner's token
+
+		got = pending_confirm.list_for_owner(self._A)
+		tokens = {r["token"] for r in got}
+		self.assertEqual(tokens, {t1, t2})
+		# Every record carries its token + owner and never leaks owner B's.
+		for r in got:
+			self.assertEqual(r["owner"], self._A)
+
+	def test_filtered_by_conversation(self):
+		t1 = self._mint(self._A, "conv-a1", "fc-1")
+		self._mint(self._A, "conv-a2", "fc-2")
+		got = pending_confirm.list_for_owner(self._A, conversation="conv-a1")
+		self.assertEqual([r["token"] for r in got], [t1])
+
+	def test_excludes_expired_and_consumed(self):
+		t_live = self._mint(self._A, "conv-a1", "ex-live")
+		t_expired = self._mint(self._A, "conv-a1", "ex-expired")
+		t_consumed = self._mint(self._A, "conv-a1", "ex-consumed")
+		# Expire one by dropping its record; consume another.
+		frappe.cache().delete_value(pending_confirm._PREFIX + t_expired)
+		pending_confirm.consume(t_consumed, owner=self._A, conversation="conv-a1")
+
+		got_tokens = {r["token"] for r in pending_confirm.list_for_owner(self._A)}
+		self.assertEqual(got_tokens, {t_live})
+		self.assertNotIn(t_expired, got_tokens)
+		self.assertNotIn(t_consumed, got_tokens)
+
+	def test_empty_for_unknown_owner(self):
+		self.assertEqual(pending_confirm.list_for_owner("nobody@example.invalid"), [])
+
+
 class TestPeek(FrappeTestCase):
 	def test_unknown_token_is_none(self):
 		self.assertIsNone(pending_confirm.peek("does-not-exist"))

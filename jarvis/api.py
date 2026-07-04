@@ -226,6 +226,16 @@ def _persist_and_publish_tool_call(
 		conv_name = (turn or {}).get("conversation")
 		if not conv_name:
 			return
+	persist_tool_receipt(conv_name, tool, args, result)
+
+
+def persist_tool_receipt(conv_name: str, tool: str, args: dict, result: dict) -> None:
+	"""Write a role=tool Jarvis Chat Message receipt into ``conv_name`` and
+	publish the realtime tool:result event, running as the conversation owner so
+	DocType perms allow the insert. Shared by the inline model-write path
+	(``_persist_and_publish_tool_call``) and the confirmed-write path
+	(``confirm_tool`` -> ``dispatch_confirmed``) so a confirmed delete/submit/
+	email leaves the same transcript trace the SPA already renders (fixes #7)."""
 	status = "completed" if result.get("ok") else "error"
 
 	# Run as the conversation owner so DocType perms allow it
@@ -602,33 +612,64 @@ def _run_tool(tool: str, raw_args: dict | str | None,
 	# the UI out-of-band below, over the realtime channel (Task 3).
 	if tool in _GATED_WRITES:
 		from jarvis.chat import events, pending_confirm
+
+		# preview=True on a gated write is a category error (issue #186, #14):
+		# the model never needs preview here - it calls the tool directly and the
+		# bench shows a confirmation card. Silently parking a preview=True call was
+		# confusing for a transition-window model that used preview to dry-run.
+		# Return a legible signal instead of a premature pending card. (We do NOT
+		# sandbox-execute - that path fires inline non-DB side effects unconfirmed.)
+		if isinstance(args, dict) and _as_bool(args.get("preview")):
+			return _error(
+				"InvalidArgumentError",
+				f"preview is not needed for {tool}: call it directly and the "
+				"bench will show a confirmation card")
+
 		conv, run_id = _gate_context(conversation)
-		# Auto-apply bypass (issue #186, Task 4): the ONLY path where a gated
+		# Two identities (issue #186, #1/#5/#6):
+		#   owner_user = the CONVERSATION OWNER - the human who sees the card,
+		#     clicks Confirm, and whose browser is subscribed. Deliver + bind +
+		#     confirm all key off THIS user. In managed mode it equals the acting
+		#     user; in self-host it is the operator, NOT the restricted tool user
+		#     the gate runs as (frappe.session.user).
+		#   exec_user = frappe.session.user - the scoped model-execution identity
+		#     the confirmed write must run AS, so a confirm can never exceed the
+		#     model path's permission scope.
+		# Fall back to the acting user when the conversation/owner cannot be
+		# resolved (managed direct-Python calls) so the gate still functions.
+		exec_user = frappe.session.user
+		owner_user = (
+			frappe.db.get_value("Jarvis Conversation", conv, "owner")
+			if conv else None) or exec_user
+		# Auto-apply bypass (issue #186, Task 4 + #5): the ONLY path where a gated
 		# write runs without a confirmation token. Strictly limited to
-		# {the owner's OWN conversation, admin-enabled auto_apply, an
-		# _AUTO_APPLYABLE (reversible create/update) tool}. We only trust
-		# auto_apply when the resolved conversation is non-empty AND its owner ==
-		# the acting user - an empty/mismatched conv is treated as OFF (safe
-		# default). Everything outside create/update - submit_doc, run_method,
-		# and every destructive tool (delete/cancel/amend/send_email) - ALWAYS
-		# parks, even with auto_apply on.
+		# {a resolved conversation owned by owner_user, admin-enabled auto_apply,
+		# an _AUTO_APPLYABLE (reversible create/update) tool}. Comparing against
+		# owner_user (the conv owner) rather than the acting session user lets it
+		# fire in self-host too, where the acting user is the tool user. An
+		# empty/unresolved conv is treated as OFF (safe default). Everything
+		# outside create/update - submit_doc, run_method, and every destructive
+		# tool (delete/cancel/amend/send_email) - ALWAYS parks, even with
+		# auto_apply on.
 		if conv and tool in _AUTO_APPLYABLE:
 			row = frappe.db.get_value(
 				"Jarvis Conversation", conv, ["owner", "auto_apply"], as_dict=True
 			) or {}
-			if row.get("owner") == frappe.session.user and row.get("auto_apply"):
+			if row.get("owner") == owner_user and row.get("auto_apply"):
 				return dispatch_confirmed(tool, args)
 		preview = _pending_preview(tool, args)
-		token = pending_confirm.mint(conversation=conv, owner=frappe.session.user,
-									 tool=tool, args=args, run_id=run_id)
+		token = pending_confirm.mint(conversation=conv, owner=owner_user,
+									 tool=tool, args=args, run_id=run_id,
+									 exec_user=exec_user)
 		# Deliver the token to the human's UI out-of-band, over the realtime
 		# channel, NEVER via the function return below - the model must never
-		# see it. Best-effort: a publish hiccup must not crash the tool call
+		# see it. Published to the OWNER (the subscribed browser), not the acting
+		# session user. Best-effort: a publish hiccup must not crash the tool call
 		# or the turn, and must NOT execute the write - the token still lives
 		# in pending_confirm either way, so a retry or a future resync can
 		# still surface it.
 		try:
-			events.publish_to_user(frappe.session.user, {
+			events.publish_to_user(owner_user, {
 				"kind": "action:pending",
 				"token": token,
 				"tool": tool,

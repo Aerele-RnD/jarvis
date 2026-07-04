@@ -307,21 +307,38 @@ class TestGateAutoApplyBypass(FrappeTestCase):
 		self.assertEqual(r["data"]["status"], "pending_confirmation")
 		self.assertFalse(frappe.db.exists("ToDo", {"description": desc}))
 
-	def test_bypass_only_trusts_owner_matching_conversation(self):
-		# auto_apply is ON, but on a conversation owned by a DIFFERENT user.
-		other_conv = _make_conv(NON_ADMIN_USER)
-		frappe.db.set_value(
-			CONV, other_conv, "auto_apply", 1, update_modified=False
-		)
-		frappe.db.commit()
-		# Acting as TEST_USER, routing the call through the OTHER user's conv:
-		# owner mismatch -> the bypass is not trusted -> parks.
-		desc = "jarvis-autoapply-mismatch-004"
-		r = api._run_tool("create_doc", {
-			"doctype": "ToDo", "values": {"description": desc},
-		}, conversation=other_conv)
-		self.assertEqual(r["data"]["status"], "pending_confirmation")
-		self.assertFalse(frappe.db.exists("ToDo", {"description": desc}))
+	def test_auto_apply_fires_when_actor_differs_from_owner(self):
+		# #5: the bypass now compares auto_apply against owner_user (the
+		# CONVERSATION OWNER) rather than the acting session user, so it fires in
+		# self-host where the acting user (the restricted tool user) differs from
+		# the operator who owns the conversation and enabled auto-apply. Modelled
+		# here by acting as a DIFFERENT user than the conversation owner: the
+		# reversible write fast-paths (reaches dispatch, does not park) and runs
+		# under the acting/exec user's scope. dispatch is spied so the test is
+		# not coupled to the exec user's DocType permissions.
+		conv = _make_conv(TEST_USER)   # owner (operator) enabled auto-apply
+		self._enable(conv)
+		acting = {}
+
+		def _spy(tool, args):
+			acting["user"] = frappe.session.user
+			acting["tool"] = tool
+			return {"name": "TODO-FAKE"}
+
+		frappe.set_user(NON_ADMIN_USER)  # the distinct exec/tool user
+		try:
+			with patch("jarvis.api.dispatch", side_effect=_spy):
+				r = api._run_tool("create_doc", {
+					"doctype": "ToDo", "values": {"description": "cross-004"},
+				}, conversation=conv)
+		finally:
+			frappe.set_user(TEST_USER)
+		# Fast-pathed to execution (not parked) - owner_user enabled the flag.
+		self.assertTrue(r["ok"])
+		self.assertNotEqual(r["data"].get("status"), "pending_confirmation")
+		self.assertEqual(acting["tool"], "create_doc")
+		# Ran under the acting/exec user, not the owner.
+		self.assertEqual(acting["user"], NON_ADMIN_USER)
 
 	def test_bypass_off_when_conversation_empty(self):
 		# No conversation binding (and no active turn) -> conv resolves to ""
