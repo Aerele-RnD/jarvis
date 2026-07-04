@@ -33,3 +33,8 @@ frontend/components.d.ts
 # Brainstorm mockups + design specs (local working docs — never commit)
 .superpowers/
 docs/superpowers/
+
+# Local virtualenvs + logs
+.venv/
+logs/
+*.log
