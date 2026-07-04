@@ -734,3 +734,34 @@ class TestCompletePoolAccountSignin(_OAuthApiBase):
 		self.assertEqual(len(refs), 5)
 
 
+
+
+class TestPoolSigninScope(_OAuthApiBase):
+	"""Pool sign-ins must request the codex-CLI scope set (no connectors).
+
+	The connectors scope yields an access_token with
+	aud=https://api.openai.com/v1 - openclaw's codex app-server accepts it
+	(so the DIRECT flow keeps it), but cli-proxy-api's codex backend needs
+	aud=chatgpt.com/backend-api and rejects the connectors-audience token:
+	the account loads, /v1/models returns [], every call 502s "unknown
+	provider". Live-verified 2026-07-03. The pool scope set matches
+	cli-proxy-api's own --codex-login."""
+
+	def test_pool_signin_uses_codex_scope_without_connectors(self):
+		out = oauth_api.begin_pool_account_signin("OpenAI", "gpt-5.5")
+		url = out["data"]["authorize_url"]
+		self.assertIn("scope=openid+email+profile+offline_access", url)
+		self.assertNotIn("api.connectors", url)
+
+	def test_direct_signin_keeps_connectors_scope(self):
+		out = oauth_api.begin_paste_signin("OpenAI", "gpt-5.5")
+		url = out["data"]["authorize_url"]
+		self.assertIn("api.connectors.read", url)
+		self.assertIn("api.connectors.invoke", url)
+
+	def test_pool_signin_provider_without_pool_scope_falls_back(self):
+		# Google Gemini defines no pool_scope -> pool flow uses the normal
+		# scope (the gemini-cli scope set is what its pool path needs too).
+		out = oauth_api.begin_pool_account_signin("Google Gemini", "gemini-2.5-pro")
+		url = out["data"]["authorize_url"]
+		self.assertIn("cloud-platform", url)  # the normal gemini-cli scope set
