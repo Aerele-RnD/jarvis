@@ -115,7 +115,15 @@
 						 Razorpay options/handler fields below are lifted verbatim; see
 						 task-4-report.md for the field-by-field comparison. ===== -->
 					<div v-else-if="state.step === 'pay'">
-						<template v-if="state.payPhase === 'verify'">
+						<template v-if="state.provisioning || state.provisionErr">
+								<h1 class="jv-ob-h1">Setting up your workspace</h1>
+								<p v-if="state.provisioning" class="jv-ob-sub">Payment received — we're provisioning your Jarvis workspace. This usually takes under a minute…</p>
+								<p v-if="state.provisionErr" class="jv-ob-err" role="alert">{{ state.provisionErr }}</p>
+								<div v-if="state.provisionErr" class="jv-ob-placeholder-actions">
+									<button class="jv-ob-btn jv-ob-btn-primary" @click="proceedAfterPay">Retry</button>
+								</div>
+							</template>
+							<template v-else-if="state.payPhase === 'verify'">
 							<h1 class="jv-ob-h1">Check your email</h1>
 							<p class="jv-ob-sub">We sent a confirmation link to <b>{{ state.email || "your email" }}</b>.
 								Click the link to verify your address, then come back here and click the button below
@@ -225,7 +233,7 @@ import { STEPS_MANAGED, STEPS_SELFHOST, nextStep, prevStep, stepIndex } from "@/
 import {
 	checkSignupPaymentState, isReadyForChat,
 	listPlans, startSignup, finishPayment, devOnboard,
-	saveSelfHosted, testSelfHostConnection, getAccountDefaults,
+	saveSelfHosted, testSelfHostConnection, getAccountDefaults, syncConnection,
 } from "@/api"
 import { planPriceLabel } from "@/account/format.js"
 import { errMessage as errMsg } from "@/lib/errors"
@@ -252,6 +260,10 @@ const state = reactive({
 	payErr: "", payBusy: false,
 	devActive: null, // UX-only mirror of desk's boot-time `dev`; null until probed on entering "pay"
 	successData: null,
+	// provisioning gate: after pay, the openclaw container is still spinning up.
+	// We block entry to the Connect-AI step until it's running (else save_llm_pool
+	// has no container to configure).
+	provisioning: false, provisionErr: "",
 	// post-save readiness recheck (Connect-AI + self-host both funnel through
 	// afterSaveRecheckReady/forceContinue below)
 	finishing: false, finishNote: "",
@@ -452,11 +464,37 @@ async function runDevOnboard() {
 	try {
 		state.successData = await devOnboard(state.email, state.company, state.planName)
 		state.payBusy = false
-		goNext() // → "connect"
+		await proceedAfterPay() // gate on provisioning before → "connect"
 	} catch (e) {
 		state.payBusy = false
 		state.payErr = errMsg(e)
 	}
+}
+
+function _sleep(ms) { return new Promise((r) => setTimeout(r, ms)) }
+
+// Provisioning gate: after pay, the openclaw container is still spinning up.
+// Don't enter Connect-AI until it's running — otherwise save_llm_pool there has
+// no container to configure. If pay already returned a running tenant, advance
+// immediately; otherwise poll sync_connection until the container is ready.
+async function proceedAfterPay() {
+	const sd = state.successData || {}
+	if (sd.agent_url || sd.tenant_status === "running") { goNext(); return }
+	state.provisioning = true
+	state.provisionErr = ""
+	for (let i = 0; i < 45; i++) {   // ~45 × 2s ≈ 90s
+		try {
+			const r = await syncConnection()
+			if (r && (r.synced || r.tenant_status === "running")) {
+				state.provisioning = false
+				goNext()
+				return
+			}
+		} catch (e) { /* transient admin/agent hiccup — keep polling */ }
+		await _sleep(2000)
+	}
+	state.provisioning = false
+	state.provisionErr = "Your workspace is still being set up — this can take a minute. Retry when you're ready."
 }
 
 async function runStartPay() {
@@ -525,7 +563,7 @@ async function openCheckout(d) {
 			}).then((rr) => {
 				state.successData = rr
 				state.payBusy = false
-				goNext() // → "connect"
+				proceedAfterPay() // gate on provisioning before → "connect"
 			}).catch((e) => {
 				state.payBusy = false
 				state.payErr = errMsg(e)

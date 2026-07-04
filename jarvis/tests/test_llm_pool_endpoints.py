@@ -79,6 +79,40 @@ class TestSaveLlmPool(_RT3SettingsTestCase):
         s.reload()
         self.assertEqual(s.preset, "balanced")
 
+    def _two_models(self):
+        return [
+            {"provider": "openai", "model": "gpt-5.5", "api_key": "sk-a", "base_url": "", "tier": "strong", "order": 0},
+            {"provider": "openai", "model": "gpt-5.4", "api_key": "sk-b", "base_url": "", "tier": "strong", "order": 1},
+        ]
+
+    def test_pool_sync_retries_transient_unreachable_then_succeeds(self):
+        """A transient admin/agent 502 (AdminUnreachableError) on the first push
+        is retried; the second succeeds → status 'ok'. #onboarding-hardening."""
+        calls = []
+        def _flaky(**kw):
+            calls.append(kw)
+            if len(calls) == 1:
+                raise admin_client.AdminUnreachableError("admin returned a 502: agent_error")
+            return {"action": "pool_update"}
+        with patch("jarvis.admin_client.post_update_llm_pool", side_effect=_flaky), \
+             patch("jarvis.admin_client.post_update_llm_creds"):
+            onboarding.save_llm_pool(frappe.as_json(self._two_models()), preset=None, routing_mode="failover")
+        self.assertEqual(len(calls), 2, "should retry once after a transient unreachable")
+        s = frappe.get_single("Jarvis Settings")
+        self.assertTrue(s.last_sync_status.startswith("ok"), f"expected ok, got {s.last_sync_status!r}")
+
+    def test_pool_sync_gives_up_after_bounded_retries(self):
+        """Persistent unreachable → terminal 'failed', but only after the bounded
+        retry budget (no infinite loop)."""
+        from jarvis.jarvis.doctype.jarvis_settings.jarvis_settings import _POOL_SYNC_RETRIES
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   side_effect=admin_client.AdminUnreachableError("down")) as m, \
+             patch("jarvis.admin_client.post_update_llm_creds"):
+            onboarding.save_llm_pool(frappe.as_json(self._two_models()), preset=None, routing_mode="failover")
+        self.assertEqual(m.call_count, _POOL_SYNC_RETRIES)
+        s = frappe.get_single("Jarvis Settings")
+        self.assertIn("admin unreachable", s.last_sync_status)
+
     def test_preset_validated_against_catalog(self):
         models = [{"provider": "openai", "model": "gpt-5.5", "api_key": "sk-x", "base_url": "", "tier": "strong", "order": 0}]
         with patch("jarvis.admin_client.get_preset_catalog", return_value=_CATALOG):

@@ -485,6 +485,41 @@ class JarvisSettings(Document):
         return None
 
 
+# Auto-retry transient pool-provisioning failures. The fleet-agent can 500
+# ("admin unreachable: … agent_error: Internal Server Error") on a first cold
+# provision that succeeds moments later (e.g. a sidecar not yet healthy within
+# the health-poll window). A bounded retry self-heals the hiccup so it never
+# strands the customer at the Connect-AI step. Only AdminUnreachableError (the
+# 502/agent_error/connection class) is retried; auth/validation are terminal.
+_POOL_SYNC_RETRIES = 3
+_POOL_SYNC_RETRY_DELAY_S = 5
+
+
+def _post_pool_with_retry(spec, api_keys, oauth_blobs):
+    """post_update_llm_pool, retrying only the transient AdminUnreachableError.
+    Re-raises the last unreachable error after exhausting retries; other Admin*
+    errors propagate immediately (not retried)."""
+    import time as _time
+    import frappe as _frappe
+    from jarvis import admin_client
+
+    last = None
+    for attempt in range(_POOL_SYNC_RETRIES):
+        try:
+            return admin_client.post_update_llm_pool(
+                spec=spec, api_keys=api_keys, oauth_blobs=oauth_blobs,
+            )
+        except admin_client.AdminUnreachableError as e:
+            last = e
+            _frappe.logger().warning(
+                f"jarvis_settings: pool sync unreachable "
+                f"(attempt {attempt + 1}/{_POOL_SYNC_RETRIES}): {e}"
+            )
+            if attempt < _POOL_SYNC_RETRIES - 1 and not _frappe.flags.in_test:
+                _time.sleep(_POOL_SYNC_RETRY_DELAY_S)
+    raise last
+
+
 def _enqueued_sync_via_admin_pool() -> None:
     """Background-queue wrapper for the proxy (pool) sync path.
 
@@ -542,11 +577,7 @@ def _enqueued_sync_via_admin_pool() -> None:
 
         terminal_written = False
         try:
-            result = admin_client.post_update_llm_pool(
-                spec=spec,
-                api_keys=api_keys,
-                oauth_blobs=oauth_blobs,
-            ) or {}
+            result = _post_pool_with_retry(spec, api_keys, oauth_blobs) or {}
             resolved_action = result.get("action", "pool_update")
             settings.db_set({
                 "last_sync_at": _frappe.utils.now(),

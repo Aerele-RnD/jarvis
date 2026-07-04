@@ -129,6 +129,7 @@ export const saveLlmPool = (models, preset = null, routingMode = "failover") =>
 // frappe.call usage in jarvis/jarvis/page/jarvis_onboarding/jarvis_onboarding.js.
 export const listPlans = () => call("jarvis.onboarding.list_plans")
 export const getAccountDefaults = () => call("jarvis.onboarding.get_account_defaults")
+export const syncConnection = () => call("jarvis.onboarding.sync_connection")
 export const startSignup = (email, company, plan) =>
 	call("jarvis.onboarding.start_signup", { email, company, plan })
 export const checkSignupPaymentState = () => call("jarvis.onboarding.check_signup_payment_state")
