@@ -66,6 +66,7 @@ import { ref, computed, onMounted, onBeforeUnmount } from "vue"
 import { useRoute } from "vue-router"
 import { useTheme } from "@/composables/useTheme"
 import { session } from "@/data/session"
+import { displayName, initialsOf } from "@/lib/user"
 
 // `minimal` = first-run onboarding wizard shell: brand mark only, no
 // Chat/Account nav and no user card/menu (nothing to navigate to and no
@@ -78,15 +79,10 @@ const route = useRoute()
 // useTheme.js) so toggling here re-themes the rest of the page immediately.
 const { effectiveDark, toggleTheme } = useTheme()
 
-// Same derivation as ChatView.vue's fullName/initials so both sidebars show
-// an identical avatar/name for the same logged-in user.
-function cookie(name) {
-	return new URLSearchParams(document.cookie.split("; ").join("&")).get(name)
-}
-const fullName = (cookie("full_name") ? decodeURIComponent(cookie("full_name")) : "") || session.user || "User"
-const initials = computed(
-	() => fullName.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase() || "U",
-)
+// Shared with ChatView via @/lib/user so both sidebars show an identical
+// avatar/name for the same logged-in user.
+const fullName = displayName(session.user)
+const initials = computed(() => initialsOf(fullName))
 
 const userMenuOpen = ref(false)
 function goDesk() {

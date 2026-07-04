@@ -1309,6 +1309,7 @@ import * as api from "@/api"
 import { renderMarkdown } from "@/markdown"
 import JvChart from "@/charts/JvChart.vue"
 import { useTheme } from "@/composables/useTheme"
+import { displayName, initialsOf } from "@/lib/user"
 
 const session = inject("$session")
 const socket = inject("$socket")
@@ -2345,14 +2346,10 @@ const jarvisTools = ref([
 	"create_doc", "update_doc", "submit_doc", "cancel_doc", "amend_doc", "delete_doc",
 ])
 
-function cookie(name) {
-	return new URLSearchParams(document.cookie.split("; ").join("&")).get(name)
-}
-const fullName = (cookie("full_name") ? decodeURIComponent(cookie("full_name")) : "") || session.user || "User"
+// Shared with AppSidebar via @/lib/user (see the cookie double-decode note there).
+const fullName = displayName(session.user)
 const firstName = computed(() => fullName.split(/\s+/)[0])
-const initials = computed(
-	() => fullName.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase() || "U",
-)
+const initials = computed(() => initialsOf(fullName))
 const greeting = computed(() => {
 	const h = new Date().getHours()
 	return h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening"
