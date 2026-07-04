@@ -848,7 +848,7 @@
 							<div class="jv-set-row"><span>Status</span><b style="color:var(--green);">Live</b></div>
 								<div class="jv-set-sec" style="margin-top:18px;">Behavior</div>
 								<div class="jv-set-row">
-									<span>Confirm before changes<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Ask before any create, update, or delete in this chat</span></span>
+									<span>Confirm before changes<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Ask before creating, updating, or submitting in this chat. Deletes, cancels, amends, and emails always ask, even with this off.</span></span>
 									<button class="jv-switch" :class="{ on: !convAutoApply }" @click="toggleAutoApply" :disabled="!currentId" role="switch" :aria-checked="String(!convAutoApply)" :title="convAutoApply ? 'Auto mode - changes apply without asking' : 'Confirm each change before it runs'">
 										<span class="jv-switch-knob"></span>
 									</button>
@@ -2912,6 +2912,12 @@ const pendingPreviewText = computed(() => {
 async function confirmPending() {
 	const pa = pendingAction.value
 	if (!pa || pendingBusy.value) return
+	// Capture the token this call is confirming. A realtime action:pending event
+	// can replace pendingAction with a newer card while this request is still in
+	// flight - only that same-token card's state should be touched on resolve, so
+	// a slow-resolving older call can never clear/error a newer unconfirmed card.
+	const token = pa.token
+	const isSameCard = () => pendingAction.value && pendingAction.value.token === token
 	pendingBusy.value = true; pendingError.value = ""
 	try {
 		const r = await api.confirmTool(pa.token)
@@ -2919,22 +2925,22 @@ async function confirmPending() {
 			// Token gone/expired/used, or the executed tool reported failure. Either
 			// way the card is spent - surface a brief note and dismiss.
 			if (r.error && r.error.type === "InvalidConfirmation") {
-				pendingAction.value = null
+				if (isSameCard()) pendingAction.value = null
 				notify("That confirmation expired - ask Jarvis to try again.", { type: "error" })
 				return
 			}
-			pendingError.value = (r.error && r.error.message) || "Could not run this action."
+			if (isSameCard()) pendingError.value = (r.error && r.error.message) || "Could not run this action."
 			return
 		}
 		// Success - the executed result surfaces via the turn's normal tool/stream
 		// events; reload to be sure the transcript reflects it (same as applyDraft).
-		pendingAction.value = null
+		if (isSameCard()) pendingAction.value = null
 		await loadConversation(currentId.value)
 		loadConversations()
 	} catch (e) {
-		pendingError.value = (e && e.messages && e.messages[0]) || (e && e.message) || "Could not confirm."
+		if (isSameCard()) pendingError.value = (e && e.messages && e.messages[0]) || (e && e.message) || "Could not confirm."
 	} finally {
-		pendingBusy.value = false
+		if (isSameCard()) pendingBusy.value = false
 	}
 }
 // Local-only dismiss: the parked token expires server-side; no backend call and
