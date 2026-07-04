@@ -1,0 +1,274 @@
+"""Tests for per-conversation, admin-gated auto-apply (issue #186, Task 4).
+
+Auto-apply moved from an ungated site-wide switch to a per-conversation flag
+(``Jarvis Conversation.auto_apply``) that:
+  - Requires the System Manager role to ENABLE (disabling is always allowed).
+  - Is owner-scoped: you can only toggle your own conversation.
+  - When ON, fast-paths the write-safety gate for REVERSIBLE writes only -
+	destructive tools (delete/cancel/amend/send_email) STILL park.
+  - Only trusts the acting user's OWN matching conversation.
+"""
+
+from contextlib import contextmanager
+from unittest.mock import MagicMock, patch
+
+import frappe
+from frappe.tests.utils import FrappeTestCase
+
+from jarvis import api
+from jarvis.chat import openclaw_session_pool
+from jarvis.chat.api import create_conversation, send_message, set_auto_apply
+from jarvis.chat.worker import run_agent_turn
+from jarvis.tests.test_chat_api import (
+	TEST_USER,
+	_cleanup_user_conversations,
+	_ensure_test_user,
+)
+
+CONV = "Jarvis Conversation"
+
+# A plain System User WITHOUT System Manager, used for the non-admin cases.
+NON_ADMIN_USER = "jarvis-autoapply-plain@example.com"
+
+
+def _ensure_non_admin_user() -> None:
+	"""Create a System User with no System Manager role (idempotent)."""
+	if frappe.db.exists("User", NON_ADMIN_USER):
+		# Make sure a prior run didn't leave System Manager on it.
+		if "System Manager" in frappe.get_roles(NON_ADMIN_USER):
+			frappe.get_doc("User", NON_ADMIN_USER).remove_roles("System Manager")
+			frappe.db.commit()
+		return
+	doc = frappe.get_doc({
+		"doctype": "User",
+		"email": NON_ADMIN_USER,
+		"first_name": "Plain",
+		"last_name": "User",
+		"enabled": 1,
+		"send_welcome_email": 0,
+		"user_type": "System User",
+	})
+	doc.insert(ignore_permissions=True)
+	frappe.db.commit()
+
+
+def _make_conv(owner: str) -> str:
+	"""Create a Jarvis Conversation owned by ``owner`` and return its name."""
+	orig = frappe.session.user
+	frappe.set_user(owner)
+	try:
+		doc = frappe.get_doc({"doctype": CONV, "title": "auto-apply test"})
+		doc.insert(ignore_permissions=True)
+		frappe.db.commit()
+		return doc.name
+	finally:
+		frappe.set_user(orig)
+
+
+class TestSetAutoApplyGating(FrappeTestCase):
+	"""set_auto_apply: owner-scoped + admin-gated to enable."""
+
+	def setUp(self):
+		_ensure_test_user()            # TEST_USER has System Manager
+		_ensure_non_admin_user()
+		self._orig_user = frappe.session.user
+
+	def tearDown(self):
+		frappe.set_user(self._orig_user)
+		_cleanup_user_conversations(TEST_USER)
+		_cleanup_user_conversations(NON_ADMIN_USER)
+
+	def test_non_admin_cannot_enable(self):
+		conv = _make_conv(NON_ADMIN_USER)
+		frappe.set_user(NON_ADMIN_USER)
+		with self.assertRaises(frappe.PermissionError):
+			set_auto_apply(conv, 1)
+		# The flag must stay 0 - the write never happened.
+		self.assertEqual(
+			int(frappe.db.get_value(CONV, conv, "auto_apply") or 0), 0
+		)
+
+	def test_admin_enables_own_conversation(self):
+		conv = _make_conv(TEST_USER)
+		frappe.set_user(TEST_USER)
+		res = set_auto_apply(conv, 1)
+		self.assertTrue(res["ok"])
+		self.assertEqual(res["data"]["auto_apply"], 1)
+		self.assertEqual(int(frappe.db.get_value(CONV, conv, "auto_apply")), 1)
+
+	def test_owner_check_precedes_admin_check(self):
+		# Conversation owned by the non-admin; TEST_USER (an admin) tries to
+		# enable it -> PermissionError for NOT being the owner, even though the
+		# caller has System Manager.
+		conv = _make_conv(NON_ADMIN_USER)
+		frappe.set_user(TEST_USER)
+		with self.assertRaises(frappe.PermissionError):
+			set_auto_apply(conv, 1)
+		self.assertEqual(
+			int(frappe.db.get_value(CONV, conv, "auto_apply") or 0), 0
+		)
+
+	def test_disable_allowed_for_owner_without_admin(self):
+		# Owner (non-admin) turning it OFF is always allowed - no admin needed.
+		conv = _make_conv(NON_ADMIN_USER)
+		frappe.set_user(NON_ADMIN_USER)
+		res = set_auto_apply(conv, 0)
+		self.assertTrue(res["ok"])
+		self.assertEqual(res["data"]["auto_apply"], 0)
+		self.assertEqual(
+			int(frappe.db.get_value(CONV, conv, "auto_apply") or 0), 0
+		)
+
+	def test_unknown_conversation_raises(self):
+		frappe.set_user(TEST_USER)
+		with self.assertRaises(frappe.DoesNotExistError):
+			set_auto_apply("no-such-conversation-zzz", 1)
+
+
+class TestGateAutoApplyBypass(FrappeTestCase):
+	"""The gate's auto-apply bypass in ``jarvis.api._run_tool``."""
+
+	def setUp(self):
+		_ensure_test_user()
+		_ensure_non_admin_user()
+		self._orig_user = frappe.session.user
+		frappe.set_user(TEST_USER)
+
+	def tearDown(self):
+		frappe.set_user(self._orig_user)
+		_cleanup_user_conversations(TEST_USER)
+		_cleanup_user_conversations(NON_ADMIN_USER)
+		for name in frappe.get_all(
+			"ToDo", filters={"description": ("like", "jarvis-autoapply-%")},
+			pluck="name",
+		):
+			frappe.delete_doc("ToDo", name, ignore_permissions=True, force=True)
+		frappe.db.commit()
+
+	def _enable(self, conv: str) -> None:
+		frappe.db.set_value(CONV, conv, "auto_apply", 1, update_modified=False)
+		frappe.db.commit()
+
+	def test_reversible_write_executes_immediately_when_on(self):
+		conv = _make_conv(TEST_USER)
+		self._enable(conv)
+		desc = "jarvis-autoapply-exec-001"
+		r = api._run_tool("create_doc", {
+			"doctype": "ToDo", "values": {"description": desc},
+		}, conversation=conv)
+		self.assertTrue(r["ok"])
+		# NOT parked - the row exists and there is no pending status.
+		self.assertNotEqual(r["data"].get("status"), "pending_confirmation")
+		self.assertTrue(frappe.db.exists("ToDo", {"description": desc}))
+
+	def test_destructive_write_still_parks_when_on(self):
+		conv = _make_conv(TEST_USER)
+		self._enable(conv)
+		# Something to (attempt to) delete.
+		todo = frappe.get_doc({
+			"doctype": "ToDo", "description": "jarvis-autoapply-del-002",
+		}).insert(ignore_permissions=True)
+		frappe.db.commit()
+		r = api._run_tool("delete_doc", {
+			"doctype": "ToDo", "name": todo.name,
+		}, conversation=conv)
+		# Destructive tools ALWAYS park, even with auto_apply ON.
+		self.assertEqual(r["data"]["status"], "pending_confirmation")
+		self.assertTrue(frappe.db.exists("ToDo", todo.name))
+
+	def test_reversible_write_parks_when_off(self):
+		conv = _make_conv(TEST_USER)   # auto_apply defaults to 0
+		desc = "jarvis-autoapply-off-003"
+		r = api._run_tool("create_doc", {
+			"doctype": "ToDo", "values": {"description": desc},
+		}, conversation=conv)
+		self.assertEqual(r["data"]["status"], "pending_confirmation")
+		self.assertFalse(frappe.db.exists("ToDo", {"description": desc}))
+
+	def test_bypass_only_trusts_owner_matching_conversation(self):
+		# auto_apply is ON, but on a conversation owned by a DIFFERENT user.
+		other_conv = _make_conv(NON_ADMIN_USER)
+		frappe.db.set_value(
+			CONV, other_conv, "auto_apply", 1, update_modified=False
+		)
+		frappe.db.commit()
+		# Acting as TEST_USER, routing the call through the OTHER user's conv:
+		# owner mismatch -> the bypass is not trusted -> parks.
+		desc = "jarvis-autoapply-mismatch-004"
+		r = api._run_tool("create_doc", {
+			"doctype": "ToDo", "values": {"description": desc},
+		}, conversation=other_conv)
+		self.assertEqual(r["data"]["status"], "pending_confirmation")
+		self.assertFalse(frappe.db.exists("ToDo", {"description": desc}))
+
+	def test_bypass_off_when_conversation_empty(self):
+		# No conversation binding (and no active turn) -> conv resolves to ""
+		# -> auto_apply cannot be trusted -> parks.
+		desc = "jarvis-autoapply-empty-005"
+		with patch("jarvis.selfhost.get_active_turn", return_value=None):
+			r = api._run_tool("create_doc", {
+				"doctype": "ToDo", "values": {"description": desc},
+			}, conversation=None)
+		self.assertEqual(r["data"]["status"], "pending_confirmation")
+		self.assertFalse(frappe.db.exists("ToDo", {"description": desc}))
+
+
+class TestTurnContextReflectsFlag(FrappeTestCase):
+	"""The turn_handler [Context: ...] line reflects THIS conversation's flag."""
+
+	def setUp(self):
+		openclaw_session_pool._POOL.clear()
+		_ensure_test_user()
+		self._orig_user = frappe.session.user
+		frappe.set_user(TEST_USER)
+		_cleanup_user_conversations(TEST_USER)
+		self.conv = create_conversation()
+		with patch("jarvis.chat.api._ensure_session_key", return_value="agent:fake"):
+			with patch("frappe.enqueue"):
+				result = send_message(self.conv, "make a todo please")
+		# Pre-seed a session_key so the worker's pool path skips the real
+		# _ensure_session_key handshake (turn_handler.py:631 guard).
+		frappe.db.set_value(CONV, self.conv, "session_key", "agent:fake")
+		frappe.db.commit()
+		self.user_msg = result["message_id"]
+
+	def tearDown(self):
+		_cleanup_user_conversations(TEST_USER)
+		frappe.set_user(self._orig_user)
+
+	def _capture_message_sent(self) -> str:
+		"""Run one worker turn against a mocked pooled session and return the
+		``user_message`` (positional arg 1) passed to ``sess.chat_send`` - the
+		string carrying the [Context: ...] bracket the worker builds."""
+		fake_sess = MagicMock()
+		fake_sess.get_session_messages.return_value = []
+		# status ok -> the worker treats it as a completed replay and skips the
+		# relay stream; chat_send has already been called with the message.
+		fake_sess.chat_send.return_value = {"status": "ok"}
+
+		@contextmanager
+		def _fake_checkout(url):
+			yield fake_sess
+
+		with patch("jarvis.chat.openclaw_session_pool.checkout", _fake_checkout):
+			with patch("jarvis.chat.worker.publish_to_user"):
+				run_agent_turn(self.conv, self.user_msg, run_id="r1")
+		first = fake_sess.chat_send.call_args_list[0]
+		pos = first.args
+		return pos[1] if len(pos) >= 2 else first.kwargs.get("message")
+
+	def test_context_line_on_when_flag_set(self):
+		frappe.db.set_value(
+			CONV, self.conv, "auto_apply", 1, update_modified=False
+		)
+		frappe.db.commit()
+		msg = self._capture_message_sent()
+		self.assertIn("auto-apply changes: ON", msg)
+
+	def test_context_line_absent_when_flag_clear(self):
+		frappe.db.set_value(
+			CONV, self.conv, "auto_apply", 0, update_modified=False
+		)
+		frappe.db.commit()
+		msg = self._capture_message_sent()
+		self.assertNotIn("auto-apply changes: ON", msg)

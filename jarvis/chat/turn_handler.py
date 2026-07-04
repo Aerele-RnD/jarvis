@@ -461,7 +461,7 @@ def handle_chat_send(payload: dict) -> None:
 	# Fold the auto-apply preference into the system context line so the agent
 	# knows whether to confirm mutating ops. Default (off) = confirm; the persona
 	# confirms by default, so we only signal the non-default "auto" mode.
-	auto_apply = "; auto-apply changes: ON" if settings.auto_apply_changes else ""
+	auto_apply = "; auto-apply changes: ON" if conv.auto_apply else ""
 	# Custom-skill invocation: if the user typed /slug for an enabled custom
 	# skill, name the installed custom-<slug> skill(s) in the system context so
 	# the agent activates them deterministically (openclaw has no documented

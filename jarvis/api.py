@@ -590,6 +590,19 @@ def _run_tool(tool: str, raw_args: dict | str | None,
 	if tool in _GATED_WRITES:
 		from jarvis.chat import events, pending_confirm
 		conv, run_id = _gate_context(conversation)
+		# Auto-apply bypass (issue #186, Task 4): the ONLY path where a gated
+		# write runs without a confirmation token. Strictly limited to
+		# {the owner's OWN conversation, admin-enabled auto_apply, NON-destructive
+		# tool}. We only trust auto_apply when the resolved conversation is
+		# non-empty AND its owner == the acting user - an empty/mismatched conv
+		# is treated as OFF (safe default). Destructive tools (delete/cancel/
+		# amend/send_email) ALWAYS park, even with auto_apply on.
+		if conv and tool not in _DESTRUCTIVE:
+			row = frappe.db.get_value(
+				"Jarvis Conversation", conv, ["owner", "auto_apply"], as_dict=True
+			) or {}
+			if row.get("owner") == frappe.session.user and row.get("auto_apply"):
+				return dispatch_confirmed(tool, args)
 		preview = _pending_preview(tool, args)
 		token = pending_confirm.mint(conversation=conv, owner=frappe.session.user,
 									 tool=tool, args=args, run_id=run_id)

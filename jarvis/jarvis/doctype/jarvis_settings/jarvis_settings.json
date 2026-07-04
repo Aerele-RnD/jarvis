@@ -408,7 +408,7 @@
       "fieldtype": "Check",
       "label": "Auto-apply changes (skip confirmation)",
       "default": "0",
-      "description": "When OFF (default), the agent shows a plain-English summary and waits for your explicit confirmation before any create/update/submit/cancel/delete/amend that changes ERP data. When ON, it applies changes immediately without asking (auto mode)."
+      "description": "DEPRECATED (issue #186): auto-apply is now per-conversation and admin-gated (Jarvis Conversation.auto_apply). This site-wide Single field is no longer read or written; left in place to avoid a destructive schema change."
     },
     {
       "fieldname": "developer_section",
