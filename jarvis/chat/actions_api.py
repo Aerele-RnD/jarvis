@@ -166,7 +166,7 @@ def apply_action(action: dict | str | None = None) -> dict:
 	and leaves a receipt in the conversation.
 
 	The confirm-as-proposed verbs (submit/cancel/delete/amend) run the payload
-	the MODEL proposed, so they are NOT accepted here — they route through the
+	the MODEL proposed, so they are NOT accepted here; they route through the
 	token gate (``confirm_tool``). ``conversation`` is mandatory and always
 	owner-checked: an apply can only ever act inside the caller's own
 	conversation."""
