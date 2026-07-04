@@ -5,7 +5,7 @@ import frappe
 from frappe.model.document import Document
 
 
-class JarvisApproval(Document):
+class JarvisApprovalRequest(Document):
 	"""A decision the agent needs a human for.
 
 	Created by the agent itself (via the generic ``jarvis__create_doc``

@@ -1,7 +1,6 @@
 """Approvals pane API: pending-decision queue + decide-and-resume.
 
-The agent queues decisions it cannot take autonomously as ``Jarvis
-Approval`` rows (see the ocr-data-entry skill contract) and ends the
+The agent queues decisions it cannot take autonomously as ``Jarvis Approval Request`` rows (see the ocr-data-entry skill contract) and ends the
 turn. The customer decides from the SPA Approvals pane (or the Desk
 list); deciding posts the decision back into the linked conversation
 through the normal ``send_message`` path, so the agent resumes the flow
@@ -14,7 +13,7 @@ import json
 
 import frappe
 
-APPROVAL = "Jarvis Approval"
+APPROVAL = "Jarvis Approval Request"
 
 
 def _parse_options(raw: str | None) -> list[str]:
@@ -45,9 +44,14 @@ def _may_act_on(conversation: str | None) -> bool:
 def list_approvals(status: str = "Pending", limit: int = 50) -> list[dict]:
 	"""Approvals visible to the current user (owner of the linked
 	conversation, or any System Manager)."""
-	if status not in ("Pending", "Approved", "Rejected", "All"):
+	if status not in ("Pending", "Approved", "Rejected", "Decided", "All"):
 		frappe.throw("Invalid status filter")
-	filters = {} if status == "All" else {"status": status}
+	if status == "All":
+		filters = {}
+	elif status == "Decided":
+		filters = {"status": ["in", ["Approved", "Rejected"]]}
+	else:
+		filters = {"status": status}
 	# Non-SM: filter by ownership IN the query so `limit` applies to the
 	# caller's rows, not to a mixed page that later shrinks (and no N+1).
 	if "System Manager" not in frappe.get_roles():
@@ -96,12 +100,24 @@ def decide(name: str, decision: str, approve: int = 1) -> dict:
 		frappe.throw("Not permitted", frappe.PermissionError)
 	if doc.status != "Pending":
 		frappe.throw(f"Approval {name} is already {doc.status}")
-	doc.status = "Approved" if int(approve) else "Rejected"
-	doc.decision = decision
-	doc.decided_by = frappe.session.user
-	doc.decided_at = frappe.utils.now_datetime()
-	doc.save(ignore_permissions=True)
+	new_status = "Approved" if int(approve) else "Rejected"
+	# Conditional flip closes the double-decide race: only ONE concurrent
+	# caller wins the Pending -> decided transition.
+	changed = frappe.db.sql(
+		"""update `tabJarvis Approval Request`
+		set status=%s, decision=%s, decided_by=%s, decided_at=%s
+		where name=%s and status='Pending'""",
+		(new_status, decision, frappe.session.user, frappe.utils.now_datetime(), name),
+	)
+	if not frappe.db.sql(
+		"select 1 from `tabJarvis Approval Request` where name=%s and status=%s and decided_by=%s",
+		(name, new_status, frappe.session.user),
+	):
+		frappe.throw(f"Approval {name} was decided concurrently")
 	frappe.db.commit()
+	doc.reload()
+	# fire the trace-comment hook (db update bypasses on_update)
+	doc.run_method("on_update")
 
 	resumed = False
 	if doc.conversation and frappe.db.exists("Jarvis Conversation", doc.conversation):
