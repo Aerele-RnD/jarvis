@@ -148,6 +148,7 @@ def get_conversation(conversation: str) -> dict:
 			"status": doc.status,
 			"session_key": doc.session_key,
 			"model_override": doc.model_override or "",
+			"auto_apply": int(doc.auto_apply or 0),
 			"last_active_at": doc.last_active_at,
 		},
 		"messages": messages,
@@ -543,23 +544,45 @@ def get_chat_ui_settings() -> dict:
 		"llm_model": settings.llm_model or "",
 		"subscription_models": _SUBSCRIPTION_MODELS,
 		"default_models": _DEFAULT_MODEL,
-		# When 1, the agent applies mutating changes without confirming (auto mode).
-		"auto_apply_changes": int(settings.auto_apply_changes or 0),
+		# auto-apply is per-conversation now (issue #186); the frontend reads
+		# ``auto_apply`` from the conversation payload, not this global endpoint.
 	}
 
 
 @frappe.whitelist()
-def set_auto_apply(value: str | int | bool) -> dict:
-	"""Toggle the per-site 'auto-apply changes (skip confirmation)' setting.
+def set_auto_apply(conversation: str, value: str | int | bool) -> dict:
+	"""Toggle per-conversation 'auto-apply changes (skip confirmation)' (issue #186).
 
-	OFF (default) = the agent confirms every ERP-mutating action before running
-	it; ON = it applies changes immediately. Read by the chat worker and folded
-	into the turn's [Context: ...] line so the agent knows which mode it's in.
+	OFF (default) = the write-safety gate parks every mutating tool call for a
+	confirmation click; ON = only the reversible create/update pair
+	(create_doc/update_doc) fast-paths and executes immediately. Everything
+	else ALWAYS parks regardless: submit_doc, run_method, and the destructive
+	ops (delete/cancel/amend/send_email). run_method in particular never
+	fast-paths - its default-unrestricted allowlist under auto-apply would be
+	an unconfirmed arbitrary whitelisted method call.
+
+	Scoping + gating:
+	- Owner-only: the conversation must belong to the caller
+	  (``frappe.session.user == conv.owner``), else PermissionError. Jarvis
+	  Conversation is owner-guarded, so per-conversation == per-user.
+	- ENABLING requires the System Manager role (``frappe.only_for`` -> 403 for
+	  non-admins). DISABLING is always allowed for the owner.
+
+	Writes ``auto_apply`` on the CONVERSATION row (not the deprecated site-wide
+	Jarvis Settings Single). Returns ``{ok, data: {auto_apply: on}}``.
 	"""
 	on = 1 if str(value) in ("1", "true", "True", "on", "yes") else 0
-	frappe.db.set_single_value("Jarvis Settings", "auto_apply_changes", on)
+	owner = frappe.db.get_value(CONV, conversation, "owner")
+	if owner is None:
+		raise frappe.DoesNotExistError(f"conversation {conversation!r} not found")
+	if owner != frappe.session.user:
+		raise frappe.PermissionError("not your conversation")
+	# Enabling is admin-only; disabling is always allowed for the owner.
+	if on:
+		frappe.only_for("System Manager")
+	frappe.db.set_value(CONV, conversation, "auto_apply", on, update_modified=False)
 	frappe.db.commit()
-	return {"ok": True, "data": {"auto_apply_changes": on}}
+	return {"ok": True, "data": {"auto_apply": on}}
 
 
 def _est_tokens(text: str | None) -> int:

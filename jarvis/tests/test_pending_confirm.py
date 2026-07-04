@@ -1,0 +1,288 @@
+"""Tests for jarvis.chat.pending_confirm - the cache-backed token store that
+parks a pending mutating tool call until a human confirms it.
+
+No gate wiring here (that is a later task) - just mint/peek/consume and the
+args_hash used to bind a token to the exact call.
+"""
+
+import contextvars
+import threading
+from unittest.mock import patch
+
+import frappe
+from frappe.tests.utils import FrappeTestCase
+
+from jarvis.chat import pending_confirm
+
+CONV = "conv-1"
+OWNER = "owner@example.invalid"
+TOOL = "create_doc"
+ARGS = {"doctype": "Task", "subject": "hello", "nested": {"b": 2, "a": 1}}
+RUN_ID = "run-1"
+
+
+class TestArgsHash(FrappeTestCase):
+	def test_stable_across_key_ordering(self):
+		a = {"x": 1, "y": 2, "nested": {"b": 2, "a": 1}}
+		b = {"nested": {"a": 1, "b": 2}, "y": 2, "x": 1}
+		self.assertEqual(
+			pending_confirm.args_hash("some_tool", a),
+			pending_confirm.args_hash("some_tool", b),
+		)
+
+	def test_differs_when_a_value_changes(self):
+		a = {"x": 1}
+		b = {"x": 2}
+		self.assertNotEqual(
+			pending_confirm.args_hash("some_tool", a),
+			pending_confirm.args_hash("some_tool", b),
+		)
+
+	def test_differs_when_tool_changes(self):
+		self.assertNotEqual(
+			pending_confirm.args_hash("tool_a", ARGS),
+			pending_confirm.args_hash("tool_b", ARGS),
+		)
+
+
+class TestMint(FrappeTestCase):
+	def test_two_mints_are_distinct_tokens(self):
+		t1 = pending_confirm.mint(
+			conversation=CONV, owner=OWNER, tool=TOOL, args=ARGS, run_id=RUN_ID,
+		)
+		t2 = pending_confirm.mint(
+			conversation=CONV, owner=OWNER, tool=TOOL, args=ARGS, run_id=RUN_ID,
+		)
+		self.assertNotEqual(t1, t2)
+		# Both are independently live.
+		self.assertIsNotNone(pending_confirm.peek(t1))
+		self.assertIsNotNone(pending_confirm.peek(t2))
+
+
+class TestExecUser(FrappeTestCase):
+	def test_exec_user_stored_and_returned(self):
+		token = pending_confirm.mint(
+			conversation=CONV, owner=OWNER, tool=TOOL, args=ARGS, run_id=RUN_ID,
+			exec_user="tool-user@example.invalid",
+		)
+		record = pending_confirm.peek(token)
+		self.assertEqual(record["owner"], OWNER)
+		self.assertEqual(record["exec_user"], "tool-user@example.invalid")
+		# consume returns it too.
+		got = pending_confirm.consume(token, owner=OWNER, conversation=CONV)
+		self.assertEqual(got["exec_user"], "tool-user@example.invalid")
+
+	def test_exec_user_defaults_to_owner(self):
+		# Managed mode / back-compat: omitting exec_user binds execution to the
+		# owner (no behavior change from the pre-exec_user record shape).
+		token = pending_confirm.mint(
+			conversation=CONV, owner=OWNER, tool=TOOL, args=ARGS, run_id=RUN_ID,
+		)
+		self.assertEqual(pending_confirm.peek(token)["exec_user"], OWNER)
+
+
+class TestListForOwner(FrappeTestCase):
+	_A = "owner-a@example.invalid"
+	_B = "owner-b@example.invalid"
+
+	def setUp(self):
+		# The per-owner index lives in Redis (not rolled back with the DB), so
+		# clear these owners' sets to isolate token-count assertions from prior
+		# methods/runs.
+		for o in (self._A, self._B):
+			frappe.cache().delete_value(pending_confirm._OWNER_PREFIX + o)
+
+	def _mint(self, owner, conversation, desc):
+		return pending_confirm.mint(
+			conversation=conversation, owner=owner, tool="create_doc",
+			args={"doctype": "ToDo", "values": {"description": desc}}, run_id="")
+
+	def test_returns_only_callers_live_tokens(self):
+		t1 = self._mint(self._A, "conv-a1", "la-1")
+		t2 = self._mint(self._A, "conv-a2", "la-2")
+		self._mint(self._B, "conv-b1", "lb-1")  # another owner's token
+
+		got = pending_confirm.list_for_owner(self._A)
+		tokens = {r["token"] for r in got}
+		self.assertEqual(tokens, {t1, t2})
+		# Every record carries its token + owner and never leaks owner B's.
+		for r in got:
+			self.assertEqual(r["owner"], self._A)
+
+	def test_filtered_by_conversation(self):
+		t1 = self._mint(self._A, "conv-a1", "fc-1")
+		self._mint(self._A, "conv-a2", "fc-2")
+		got = pending_confirm.list_for_owner(self._A, conversation="conv-a1")
+		self.assertEqual([r["token"] for r in got], [t1])
+
+	def test_excludes_expired_and_consumed(self):
+		t_live = self._mint(self._A, "conv-a1", "ex-live")
+		t_expired = self._mint(self._A, "conv-a1", "ex-expired")
+		t_consumed = self._mint(self._A, "conv-a1", "ex-consumed")
+		# Expire one by dropping its record; consume another.
+		frappe.cache().delete_value(pending_confirm._PREFIX + t_expired)
+		pending_confirm.consume(t_consumed, owner=self._A, conversation="conv-a1")
+
+		got_tokens = {r["token"] for r in pending_confirm.list_for_owner(self._A)}
+		self.assertEqual(got_tokens, {t_live})
+		self.assertNotIn(t_expired, got_tokens)
+		self.assertNotIn(t_consumed, got_tokens)
+
+	def test_empty_for_unknown_owner(self):
+		self.assertEqual(pending_confirm.list_for_owner("nobody@example.invalid"), [])
+
+
+class TestPeek(FrappeTestCase):
+	def test_unknown_token_is_none(self):
+		self.assertIsNone(pending_confirm.peek("does-not-exist"))
+
+	def test_live_token_returns_full_record(self):
+		token = pending_confirm.mint(
+			conversation=CONV, owner=OWNER, tool=TOOL, args=ARGS, run_id=RUN_ID,
+		)
+		record = pending_confirm.peek(token)
+		self.assertIsNotNone(record)
+		self.assertEqual(record["conversation"], CONV)
+		self.assertEqual(record["owner"], OWNER)
+		self.assertEqual(record["tool"], TOOL)
+		self.assertEqual(record["args"], ARGS)
+		self.assertEqual(record["run_id"], RUN_ID)
+		self.assertEqual(record["args_hash"], pending_confirm.args_hash(TOOL, ARGS))
+
+	def test_expired_token_is_none(self):
+		"""Simulate expiry directly (waiting out the real 900s TTL is not
+		practical in a test): mint, then drop the underlying cache key, then
+		peek must report it gone same as a token that never existed."""
+		token = pending_confirm.mint(
+			conversation=CONV, owner=OWNER, tool=TOOL, args=ARGS, run_id=RUN_ID,
+		)
+		frappe.cache().delete_value(pending_confirm._PREFIX + token)
+		self.assertIsNone(pending_confirm.peek(token))
+
+
+class TestConsume(FrappeTestCase):
+	def _mint(self):
+		return pending_confirm.mint(
+			conversation=CONV, owner=OWNER, tool=TOOL, args=ARGS, run_id=RUN_ID,
+		)
+
+	def test_happy_path_returns_record_and_is_single_use(self):
+		token = self._mint()
+		record = pending_confirm.consume(token, owner=OWNER, conversation=CONV)
+		self.assertIsNotNone(record)
+		self.assertEqual(record["tool"], TOOL)
+		self.assertEqual(record["args"], ARGS)
+		# Second consume of the same token: already burned.
+		self.assertIsNone(pending_confirm.consume(token, owner=OWNER, conversation=CONV))
+		# And it is really gone, not just "consumed once but still peekable".
+		self.assertIsNone(pending_confirm.peek(token))
+
+	def test_wrong_owner_returns_none_and_does_not_burn_token(self):
+		token = self._mint()
+		self.assertIsNone(
+			pending_confirm.consume(token, owner="someone-else@example.invalid", conversation=CONV)
+		)
+		# Token still lives - a later correct consume still works.
+		record = pending_confirm.consume(token, owner=OWNER, conversation=CONV)
+		self.assertIsNotNone(record)
+
+	def test_wrong_conversation_returns_none_and_does_not_burn_token(self):
+		token = self._mint()
+		self.assertIsNone(
+			pending_confirm.consume(token, owner=OWNER, conversation="conv-other")
+		)
+		record = pending_confirm.consume(token, owner=OWNER, conversation=CONV)
+		self.assertIsNotNone(record)
+
+	def test_unknown_token_returns_none(self):
+		self.assertIsNone(
+			pending_confirm.consume("does-not-exist", owner=OWNER, conversation=CONV)
+		)
+
+	def test_expired_token_returns_none(self):
+		token = self._mint()
+		frappe.cache().delete_value(pending_confirm._PREFIX + token)
+		self.assertIsNone(pending_confirm.consume(token, owner=OWNER, conversation=CONV))
+
+	def test_concurrent_consumes_exactly_one_wins(self):
+		"""Two threads race to consume the same legitimate token. Redis GETDEL
+		is atomic server-side, so exactly one of the two concurrent consumes
+		must get the record back; the other must get None - never both, never
+		neither.
+
+		Without a barrier, nothing forces the two threads to actually overlap:
+		the OS could just run them back-to-back, in which case a naive
+		non-atomic get-then-delete would also pass this test by accident. A
+		threading.Barrier(2) is spliced in front of the real getdel call (the
+		only place consume() mutates the store) so neither thread's getdel can
+		return until BOTH threads have completed their ownership-check read
+		(the plain get_value earlier in consume()) and are standing right at
+		the delete. That is the actual race window consume()'s docstring
+		claims is safe - this test now forces it open on every run instead of
+		hoping the scheduler happens to create it.
+		"""
+		token = self._mint()
+		results = [None, None]
+		barrier = threading.Barrier(2)
+		real_getdel = frappe.cache().getdel
+
+		def _synced_getdel(*args, **kwargs):
+			# Both threads land here only after their own ownership-check
+			# read already matched, so this rendezvous pins both threads
+			# past that read before either delete is allowed to fire.
+			barrier.wait(timeout=5)
+			return real_getdel(*args, **kwargs)
+
+		def _consume(i):
+			results[i] = pending_confirm.consume(token, owner=OWNER, conversation=CONV)
+
+		# threading.Thread does not inherit frappe.local (a contextvar-backed
+		# thread local); copy_context().run propagates it into each thread so
+		# frappe.cache() works there too.
+		ctx1 = contextvars.copy_context()
+		ctx2 = contextvars.copy_context()
+		t1 = threading.Thread(target=ctx1.run, args=(_consume, 0))
+		t2 = threading.Thread(target=ctx2.run, args=(_consume, 1))
+
+		# frappe.cache is a process-wide singleton (frappe/__init__.py sets
+		# it via `global cache`, not a thread local), so patching the bound
+		# method on the one instance affects both threads.
+		with patch.object(frappe.cache(), "getdel", side_effect=_synced_getdel):
+			t1.start()
+			t2.start()
+			t1.join(timeout=5)
+			t2.join(timeout=5)
+
+		self.assertFalse(t1.is_alive(), "thread 1 did not finish - barrier likely deadlocked")
+		self.assertFalse(t2.is_alive(), "thread 2 did not finish - barrier likely deadlocked")
+
+		winners = [r for r in results if r is not None]
+		self.assertEqual(len(winners), 1)
+		self.assertIsNone(pending_confirm.peek(token))
+
+	def test_getdel_connection_error_returns_none_without_burning_token(self):
+		"""Finding #8 (max-effort review of issue #186): the raw
+		``frappe.cache().getdel`` call in consume() is not wrapped in the
+		RedisWrapper's usual ``suppress(redis.exceptions.ConnectionError)``
+		(unlike get_value, used by peek), so a transient redis blip during a
+		Confirm click propagated as an uncaught 500 instead of a graceful
+		None. consume() must itself catch the error and return None - the
+		token must not be burned, so a later consume against a healthy cache
+		still succeeds. This must NOT fall back to a non-atomic
+		get-then-delete: only the same getdel is retried later."""
+		import redis.exceptions
+
+		token = self._mint()
+
+		def _raise_once(*args, **kwargs):
+			raise redis.exceptions.ConnectionError("simulated redis blip")
+
+		with patch.object(frappe.cache(), "getdel", side_effect=_raise_once):
+			result = pending_confirm.consume(token, owner=OWNER, conversation=CONV)
+		self.assertIsNone(result)
+		# Token was not burned: still peekable, and a later consume against a
+		# healthy cache still succeeds.
+		self.assertIsNotNone(pending_confirm.peek(token))
+		record = pending_confirm.consume(token, owner=OWNER, conversation=CONV)
+		self.assertIsNotNone(record)
+		self.assertEqual(record["tool"], TOOL)

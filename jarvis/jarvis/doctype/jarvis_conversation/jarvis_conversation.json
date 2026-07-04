@@ -11,6 +11,7 @@
     "session_key",
     "model_override",
     "thinking_override",
+    "auto_apply",
     "status",
     "last_active_at",
     "starred"
@@ -43,6 +44,13 @@
       "label": "Thinking Effort",
       "options": "\nlow\nmedium\nhigh",
       "description": "Per-conversation reasoning effort sent to openclaw via an inline /think directive in the user message. Empty falls back to openclaw's default (medium). Maps to the Fast/Balanced/Deep UI selector."
+    },
+    {
+      "fieldname": "auto_apply",
+      "fieldtype": "Check",
+      "label": "Auto-apply changes (skip confirmation)",
+      "default": "0",
+      "description": "When 1, reversible mutating tool calls in this conversation execute without a confirmation card. Enabling requires the System Manager role; destructive ops (delete/cancel/amend/send_email) still park regardless. Default 0 (confirm every write)."
     },
     {
       "fieldname": "status",

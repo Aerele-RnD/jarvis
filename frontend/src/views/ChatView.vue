@@ -263,10 +263,17 @@
 										</div>
 										<div class="jv-email-body">{{ activeAction.body }}</div>
 										<div class="jv-action-foot">
-											<button class="jv-action-primary" @click="actionSend('Yes, send it.')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13M22 2 15 22l-4-9-9-4 20-7z" /></svg>Send email</button>
+											<!-- send_email is a gated write (issue #186): the actual Send confirmation
+											     arrives as an action:pending card, not a model-visible approval message.
+											     This draft card stays a read-only preview (copy / regenerate). -->
 											<button class="jv-action-2nd" @click="copyText(activeAction.body)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>Copy</button>
 											<button class="jv-action-2nd" @click="actionSend('Regenerate that email, please.')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2v6h6M21 12a9 9 0 1 1-3-6.7L21 8" /></svg>Regenerate</button>
 										</div>
+										<!-- Rollout window (#13): a legacy container may still emit this email
+										     card whose Send button was removed. The real Send confirmation
+										     arrives as an action:pending card; note that here so the draft is
+										     not a dead end while every container upgrades. -->
+										<div class="jv-legacy-note">{{ LEGACY_GATE_NOTE }}</div>
 									</div>
 									<!-- create/update → compact chip; the side panel is the editor -->
 									<div v-else-if="!activeAction.verb || activeAction.verb === 'create' || activeAction.verb === 'update'"
@@ -277,23 +284,14 @@
 										<span><b>{{ activeAction.doctype }}</b> draft<template v-if="draftChipSummary"> · {{ draftChipSummary }}</template></span>
 										<span class="jv-draft-chip-cta">Open editor</span>
 									</div>
-									<!-- submit/cancel/delete/amend → confirm card, but Confirm applies directly (Task 4) -->
-									<div v-else class="jv-action">
-										<div class="jv-action-head">
-											<span class="jv-action-title">{{ actionVerb(activeAction) }} <b>{{ activeAction.doctype }}</b><template v-if="activeAction.name"> · {{ activeAction.name }}</template><template v-else-if="activeAction.title"> · {{ activeAction.title }}</template></span>
-										</div>
-										<div class="jv-action-fields">
-											<div v-for="(f, fi) in (activeAction.fields || [])" :key="fi" class="jv-action-row">
-												<span class="jv-action-k">{{ f.label }}</span>
-												<span class="jv-action-v">{{ f.value }}</span>
-											</div>
-										</div>
-										<div v-if="confirmError" class="jv-draft-error" style="margin:0 14px 10px">{{ confirmError }}</div>
-										<div class="jv-action-foot">
-											<button class="jv-action-primary" :disabled="confirmBusy" @click="confirmApply">✓ {{ actionCta(activeAction) }}</button>
-											<button class="jv-action-discard" @click="actionSend('No, cancel that.')">Discard</button>
-										</div>
-									</div>
+									<!-- submit/cancel/delete/amend are gated writes (issue #186): the real
+									     confirmation is the action:pending card rendered below the thread,
+									     which carries the server-minted token. A model-authored confirm card
+									     for these verbs applies nothing. During the persona rollout window
+									     (#12) a legacy container may still emit one; render a note in place of
+									     the removed button instead of a dead card, and never wire it to the
+									     removed applyAction path. -->
+									<div v-else class="jv-legacy-note">{{ LEGACY_GATE_NOTE }}</div>
 								</template>
 								<!-- confirm / cancel (fallback, simple label) -->
 								<div v-else-if="confirmFor === m.name" class="jv-confirm">
@@ -424,6 +422,27 @@
 								</span>
 								<span style="font-size:12px;color:var(--text-3);">{{ thinkingWord }}</span>
 							</div>
+						</div>
+					</div>
+
+					<!-- action:pending - gated ERP writes parked awaiting the owner's
+					     Confirm click (issue #186). The authoritative confirm UI: each
+					     carries its own server-minted one-time token. A single turn can
+					     park more than one, so we stack a card per queued token (#4). -->
+					<div v-for="pa in visiblePendingActions" :key="pa.token" class="jv-action jv-pending">
+						<div class="jv-action-head">
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--amber)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><path d="M12 9v4M12 17h.01" /></svg>
+							<span class="jv-action-title">Confirm before this runs</span>
+						</div>
+						<div class="jv-pending-body">
+							<div v-if="pendingSummaryOf(pa)" class="jv-pending-summary">{{ pendingSummaryOf(pa) }}</div>
+							<div v-if="pendingNoteOf(pa)" class="jv-pending-note">{{ pendingNoteOf(pa) }}</div>
+							<pre v-if="pendingPreviewOf(pa)" class="jv-pending-preview">{{ pendingPreviewOf(pa) }}</pre>
+						</div>
+						<div v-if="pa.error" class="jv-draft-error" style="margin:0 14px 10px">{{ pa.error }}</div>
+						<div class="jv-action-foot">
+							<button class="jv-action-primary" :disabled="pa.busy" @click="confirmPending(pa)">✓ Confirm</button>
+							<button class="jv-action-discard" :disabled="pa.busy" @click="discardPending(pa)">Discard</button>
 						</div>
 					</div>
 				</div>
@@ -839,11 +858,12 @@
 							<div class="jv-set-row"><span>Status</span><b style="color:var(--green);">Live</b></div>
 								<div class="jv-set-sec" style="margin-top:18px;">Behavior</div>
 								<div class="jv-set-row">
-									<span>Confirm before changes<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Ask before any create, update, or delete</span></span>
-									<button class="jv-switch" :class="{ on: !ui.auto_apply_changes }" @click="toggleAutoApply" role="switch" :aria-checked="String(!ui.auto_apply_changes)" :title="ui.auto_apply_changes ? 'Auto mode — changes apply without asking' : 'Confirm each change before it runs'">
+									<span>Confirm before changes<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Ask before creating, updating, or submitting in this chat. Deletes, cancels, amends, and emails always ask, even with this off.</span></span>
+									<button class="jv-switch" :class="{ on: !convAutoApply }" @click="toggleAutoApply" :disabled="!currentId" role="switch" :aria-checked="String(!convAutoApply)" :title="convAutoApply ? 'Auto mode - changes apply without asking' : 'Confirm each change before it runs'">
 										<span class="jv-switch-knob"></span>
 									</button>
 								</div>
+								<div v-if="autoApplyNote" class="jv-set-row" style="padding-top:0;"><span style="font-size:11px;color:var(--amber);font-weight:500;">{{ autoApplyNote }}</span></div>
 								<div class="jv-set-row">
 									<span>Show tool activity<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Show the live tool steps + input/output above each reply. The tools count &amp; time always show below.</span></span>
 									<button class="jv-switch" :class="{ on: showActivityDetail }" @click="setActivityDetail(!showActivityDetail)" role="switch" :aria-checked="String(showActivityDetail)" title="Show the tool/skill activity under each answer">
@@ -1172,6 +1192,11 @@ const sending = ref(false)
 const waiting = ref(false)
 const search = ref("")
 const ui = ref({})
+// Per-conversation "auto-apply changes" (issue #186): seeded from
+// get_conversation().conversation.auto_apply on each load; the toggle reflects
+// THIS chat. autoApplyNote surfaces the admin-only-enable message.
+const convAutoApply = ref(false)
+const autoApplyNote = ref("")
 const inputEl = ref(null)
 const threadEl = ref(null)
 const threadInnerEl = ref(null)
@@ -1927,15 +1952,22 @@ async function openSettings() {
 		/* usage stays null → the section shows a dash */
 	}
 }
-// Flip "confirm before changes" (server-side, per site). Optimistic; reverts on
-// failure. Stored as auto_apply_changes (1 = skip confirmation / auto mode).
+// Flip "confirm before changes" for THIS conversation (issue #186). Optimistic;
+// reverts on failure. auto_apply=1 = skip confirmation (auto mode). Enabling is
+// admin-only server-side - a non-admin gets a 403, so we revert + show a note.
 async function toggleAutoApply() {
-	const next = ui.value.auto_apply_changes ? 0 : 1
-	ui.value = { ...ui.value, auto_apply_changes: next }
+	if (!currentId.value) return
+	const next = convAutoApply.value ? 0 : 1
+	autoApplyNote.value = ""
+	convAutoApply.value = !!next // optimistic
 	try {
-		await api.setAutoApply(next)
+		const r = await api.setAutoApply(currentId.value, next)
+		// Response envelope is {ok, data:{auto_apply}} - trust the server's value.
+		if (r && r.data && typeof r.data.auto_apply !== "undefined") convAutoApply.value = !!r.data.auto_apply
 	} catch (e) {
-		ui.value = { ...ui.value, auto_apply_changes: next ? 0 : 1 } // revert
+		convAutoApply.value = !next // revert
+		// Enabling requires System Manager; a non-admin gets a PermissionError (403).
+		if (next) autoApplyNote.value = "Only an administrator can enable auto-apply."
 	}
 }
 async function deleteChat() {
@@ -2791,7 +2823,6 @@ const draftChipSummary = computed(() => {
 // Auto-open on a fresh create/update action (also fires when loading an old
 // conversation that ends on a pending draft — that draft IS still pending).
 watch(actionFor, () => {
-	confirmError.value = ""
 	const a = activeAction.value
 	if (a && a.kind === "doc" && (a.verb === "create" || a.verb === "update" || !a.verb)) {
 		const wasOpen = !!draftPanel.value
@@ -2801,9 +2832,7 @@ watch(actionFor, () => {
 	}
 })
 
-// --- apply wiring: draft panel + confirm card round-trip via apply_action ---
-const confirmBusy = ref(false)
-const confirmError = ref("")
+// --- apply wiring: draft panel create/update round-trip via apply_action ---
 
 function _coerceOut(f) {
 	if (f.control === "check") return f.value === "Yes" ? 1 : 0
@@ -2859,21 +2888,141 @@ function discardDraft() {
 	send("No, cancel that.")
 }
 
-// submit/cancel/delete/amend confirm card → direct apply (no LLM turn).
-// Old-format cards without `name` fall back to the conversational path.
-async function confirmApply() {
-	const a = activeAction.value
-	if (!a) return
-	if (!a.name) { actionSend(`Yes — ${actionCta(a).toLowerCase()}.`); return } // echo the button's wording
-	confirmBusy.value = true; confirmError.value = ""
+// --- action:pending confirm card (write-safety gate, issue #186) ---
+// A gated ERP write (create/update/submit/cancel/delete/amend/run_method/
+// send_email) is parked server-side; the owner gets a realtime action:pending
+// event carrying a one-time token. confirm_tool(token) is the ONLY path that
+// runs the parked call. Discard just drops the card - the token expires server
+// side, no backend call needed.
+// A QUEUE of parked confirmations, keyed by token (issue #186, R3 fix for #4):
+// a single turn can park more than one gated write, and each keeps its OWN
+// confirmable card + busy/error state. Each item:
+// { conversation, token, tool, summary, preview, run_id, busy, error }.
+const pendingActions = ref([])
+
+// Only the cards belonging to the conversation on screen render (a parked write
+// from another chat must not show here). The queue is already pruned to the
+// current conversation on load, but filter defensively for the template v-for.
+const visiblePendingActions = computed(() =>
+	pendingActions.value.filter((pa) => pa.conversation === currentId.value),
+)
+
+// A legacy container (persona v0.39, pre write-safety) may still emit a
+// jarvis-action card for a gated write verb / an email whose own action button
+// was removed. During the rollout window we render this note in place of the
+// dead button instead of a card that can never act (R3 fix for #12/#13).
+const LEGACY_GATE_NOTE =
+	"Waiting for the confirmation card. If it does not appear shortly, ask me to try again."
+
+// The card's headline: the event's own summary, or the described-intent's.
+function pendingSummaryOf(pa) {
+	if (!pa) return ""
+	return pa.summary || (pa.preview && pa.preview.summary) || pa.tool || ""
+}
+// The "will send/execute on confirm" caption carried on either preview shape.
+function pendingNoteOf(pa) {
+	const pv = pa && pa.preview
+	return (pv && pv.note) || ""
+}
+// For a previewable dry-run, show the would-be result; described-intent
+// (send_email) has no dry-run doc, so nothing extra to dump.
+function pendingPreviewOf(pa) {
+	const pv = pa && pa.preview
+	if (!pv || pv.described) return ""
+	const w = pv.would
+	if (w == null) return ""
+	return typeof w === "string" ? w : prettyJson(w)
+}
+// Drop one card from the queue by its token (confirm-success / discard / expiry).
+function removePending(token) {
+	if (!token) return
+	pendingActions.value = pendingActions.value.filter((x) => x.token !== token)
+}
+// Enqueue a parked confirmation, deduped by token (a resync + a live event can
+// both carry the same card).
+function enqueuePending(card) {
+	if (!card || !card.token) return
+	if (pendingActions.value.some((x) => x.token === card.token)) return
+	pendingActions.value.push({
+		conversation: card.conversation,
+		token: card.token,
+		tool: card.tool,
+		summary: card.summary || "",
+		preview: card.preview || null,
+		run_id: card.run_id || null,
+		busy: false,
+		error: "",
+	})
+}
+
+async function confirmPending(pa) {
+	if (!pa || pa.busy) return
+	// This confirm acts on THIS card's specific token. A realtime action:pending
+	// event or a resync can add/remove other cards while the request is in flight
+	// - only the same-token card's state is touched on resolve, so a slow older
+	// call can never clear/error a different unconfirmed card (in-flight-race
+	// guard, R1/Task7).
+	const token = pa.token
+	const cardById = () => pendingActions.value.find((x) => x.token === token)
+	pa.busy = true; pa.error = ""
 	try {
-		await api.applyAction({ verb: a.verb, doctype: a.doctype, name: a.name, conversation: currentId.value || "" })
+		const r = await api.confirmTool(token, pa.conversation || currentId.value || "")
+		if (r && r.ok === false) {
+			// Token gone/expired/used, or the executed tool reported failure. Either
+			// way the card is spent - surface a brief note and dismiss.
+			if (r.error && r.error.type === "InvalidConfirmation") {
+				removePending(token)
+				notify("That confirmation expired - ask Jarvis to try again.", { type: "error" })
+				return
+			}
+			const card = cardById()
+			if (card) card.error = (r.error && r.error.message) || "Could not run this action."
+			return
+		}
+		// Success - the executed result surfaces via the turn's normal tool/stream
+		// events; reload to be sure the transcript reflects it (same as applyDraft).
+		removePending(token)
 		await loadConversation(currentId.value)
 		loadConversations()
 	} catch (e) {
-		confirmError.value = (e && e.messages && e.messages[0]) || (e && e.message) || "Could not apply."
+		const card = cardById()
+		if (card) card.error = (e && e.messages && e.messages[0]) || (e && e.message) || "Could not confirm."
 	} finally {
-		confirmBusy.value = false
+		const card = cardById()
+		if (card) card.busy = false
+	}
+}
+// Local-only dismiss: the parked token expires server-side; no backend call and
+// no model-visible message (the card is authoritative, not a chat approval).
+function discardPending(pa) {
+	removePending(pa && pa.token)
+}
+
+// Resync (R3 fix for #3): re-fetch the current conversation's live parked
+// confirmations so a reload / reconnect re-surfaces the cards that a realtime
+// action:pending event delivered before the page was open. Deduped by token
+// against whatever is already queued; freshness-guarded against a mid-flight
+// conversation switch.
+async function resyncPendingConfirmations(id) {
+	if (!id) return
+	let items = []
+	try {
+		const r = await api.listPendingConfirmations(id)
+		items = (r && r.data && r.data.pending) || []
+	} catch (e) {
+		return
+	}
+	if (currentId.value !== id) return // navigated away while the request was in flight
+	if (!Array.isArray(items)) return
+	for (const it of items) {
+		enqueuePending({
+			conversation: it.conversation || id,
+			token: it.token,
+			tool: it.tool,
+			summary: it.summary || "",
+			preview: it.preview || null,
+			run_id: it.run_id || null,
+		})
 	}
 }
 
@@ -3020,18 +3169,6 @@ function editCommand(m) {
 			el.setSelectionRange(p, p)
 		}
 	})
-}
-const _VERB = { create: "Create", update: "Update", submit: "Submit", cancel: "Cancel", delete: "Delete", amend: "Amend" }
-function actionVerb(a) {
-	return _VERB[a && a.verb] || "Review"
-}
-function actionCta(a) {
-	const v = a && a.verb
-	if (v === "delete") return "Confirm & delete"
-	if (v === "submit") return "Confirm & submit"
-	if (v === "cancel") return "Confirm & cancel"
-	if (v === "update" || v === "amend") return "Confirm & save"
-	return "Confirm & create"
 }
 // Cached render payload for an artifact: HTML srcdoc (html/svg) or a base64
 // data-url (pdf/image/file). Keyed by `${msgName}::${canvasName}::${theme}` —
@@ -3273,6 +3410,15 @@ async function loadConversation(id) {
 	if (currentId.value !== id) return
 	messages.value = d?.messages || []
 	modelOverride.value = d?.model_override || ""
+	// Per-conversation auto-apply + a fresh confirm-card slate for this chat
+	// (issue #186): a pending write from another conversation must not linger.
+	convAutoApply.value = !!(d?.conversation && d.conversation.auto_apply)
+	autoApplyNote.value = ""
+	// Per-conversation confirm-card slate (issue #186): drop any parked cards from
+	// OTHER conversations, then re-surface this conversation's still-live parked
+	// confirmations (R3 fix for #3 - survives reload / reconnect).
+	pendingActions.value = pendingActions.value.filter((pa) => pa.conversation === id)
+	resyncPendingConfirmations(id)
 	// Seed Up/Down recall from THIS conversation's past prompts. Without this,
 	// promptHistory only held prompts typed in the current page session, so
 	// after a reload or when opening an existing chat the arrows did nothing.
@@ -3646,6 +3792,33 @@ function onEvent(p) {
 			}, 4000)
 		}
 		patchMacroRunRow(p, true)
+		return
+	}
+	// A gated ERP write was parked awaiting the owner's Confirm click (issue
+	// #186). Keyed by `conversation` (like macro events), so handle it before the
+	// conversation_id guard. Only surface it in the conversation on screen; an
+	// off-conversation pending write is ignored here (the card is realtime-only).
+	if (p.kind === "action:pending") {
+		// #10: a write parked by a run the user already Stopped gets no card. This
+		// branch returns above the shared stoppedRunId guard below, so it must make
+		// the same check itself.
+		if (p.run_id && p.run_id === stoppedRunId.value) return
+		// #2: the server can publish conversation="" when it cannot resolve one.
+		// The event still reached THIS user's socket about THIS active turn, so
+		// attach it to the current conversation rather than dropping the card.
+		const conv = p.conversation || currentId.value
+		if (conv === currentId.value) {
+			// #4: append (deduped by token) so a second parked write in the same turn
+			// gets its OWN card instead of overwriting the first still-valid one.
+			enqueuePending({
+				conversation: conv,
+				token: p.token,
+				tool: p.tool,
+				summary: p.summary || "",
+				preview: p.preview || null,
+				run_id: p.run_id || null,
+			})
+		}
 		return
 	}
 	if (p.conversation_id !== currentId.value) return
@@ -4671,6 +4844,18 @@ function onGlobalKey(e) {
 .jv-action-discard { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-family: inherit; font-size: 12.5px; font-weight: 600; padding: 8px 13px; border-radius: 8px; border: 1px solid var(--red-bd); background: var(--red-bg); color: var(--red); cursor: pointer; transition: background .12s, color .12s, border-color .12s; }
 .jv-action-discard:hover { background: var(--red); color: #fff; border-color: var(--red); }
 .jv-action-discard:hover svg { stroke: #fff; }
+/* action:pending confirm card (write-safety gate, issue #186): an amber accent
+   marks a write parked awaiting the owner's Confirm click. */
+.jv-pending { border-color: var(--amber); }
+.jv-pending .jv-action-head { border-bottom-color: var(--border); }
+.jv-pending-body { padding: 11px 14px; display: flex; flex-direction: column; gap: 8px; }
+.jv-pending-summary { font-size: 13.5px; line-height: 1.5; color: var(--text); }
+.jv-pending-note { font-size: 12px; line-height: 1.45; color: var(--text-3); }
+.jv-pending-preview { margin: 0; padding: 9px 11px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; line-height: 1.5; color: var(--text); white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow-y: auto; }
+.jv-action-primary:disabled, .jv-action-discard:disabled { opacity: .55; cursor: default; }
+/* rollout-window note shown for a legacy gated-write / email card whose own
+   action button was removed (issue #186, #12/#13). */
+.jv-legacy-note { margin-top: 10px; padding: 9px 12px; border: 1px solid var(--amber-bd); background: var(--amber-bg); border-radius: 9px; font-size: 12.5px; line-height: 1.45; color: var(--text-2); }
 .jv-email-head { padding: 12px 14px 6px; }
 .jv-email-line { display: flex; gap: 10px; font-size: 13px; padding: 2px 0; }
 .jv-email-k { flex: none; width: 54px; color: var(--text-3); }
