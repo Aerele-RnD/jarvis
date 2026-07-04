@@ -34,6 +34,7 @@ GATED_ENDPOINTS = [
 	("jarvis.onboarding", "dev_onboard", {"email": "x@y.test", "company": "C", "plan": "p"}),
 	("jarvis.onboarding", "save_llm_pool", {"models": "[]"}),
 	("jarvis.onboarding", "get_llm_config", {}),
+	("jarvis.onboarding", "get_account_defaults", {}),
 	("jarvis.account", "start_upgrade", {"target_plan": "team_monthly"}),
 	("jarvis.account", "get_llm_usage", {}),
 	("jarvis.account", "get_llm_connection_status", {}),

@@ -308,6 +308,39 @@ def start_signup(email: str, company: str, plan: str) -> dict:
 
 
 @frappe.whitelist()
+def get_account_defaults() -> dict:
+	"""Prefill for the onboarding Account step so the customer doesn't retype what
+	the site already knows: the caller's email + a default company. Company is the
+	user/global default when set, else the site's sole Company; ``companies`` lists
+	options for a client datalist when several exist. Silent no-op (blank / empty
+	list) on sites without the Company doctype or read permission.
+
+	Ports the desk auto-fetch (jarvis_onboarding.js, commit 1507495) to the server
+	because the SPA has no ``frappe.defaults``. System-Manager only (the onboarding
+	route is SM-gated).
+	"""
+	frappe.only_for("System Manager")
+	user = frappe.session.user
+	email = (frappe.db.get_value("User", user, "email") or user) if user and user != "Guest" else ""
+
+	company, companies = "", []
+	try:
+		company = (
+			frappe.defaults.get_user_default("Company")
+			or frappe.defaults.get_global_default("company")
+			or ""
+		)
+		companies = [c.name for c in frappe.get_all("Company", fields=["name"], limit=20)]
+		if not company and len(companies) == 1:
+			company = companies[0]
+	except Exception:
+		# No Company doctype / no read permission — leave blank so the client keeps
+		# its placeholder, exactly like the desk auto-fetch's silent no-op.
+		company, companies = "", []
+	return {"email": email, "company": company, "companies": companies}
+
+
+@frappe.whitelist()
 def check_signup_payment_state() -> dict:
 	"""Wizard-poll endpoint for the email-verification window.
 

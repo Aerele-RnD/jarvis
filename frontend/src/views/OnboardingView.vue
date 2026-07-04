@@ -69,9 +69,12 @@
 							   @keydown.enter="onAccountSubmit">
 						<label class="jv-ob-label" for="jv-ob-company">Company</label>
 						<input id="jv-ob-company" class="jv-ob-input" type="text" v-model="state.company"
-							   placeholder="Acme Inc." autocomplete="organization" required aria-required="true"
+							   placeholder="Acme Inc." autocomplete="organization" list="jv-ob-company-list" required aria-required="true"
 							   @keydown.enter="onAccountSubmit">
-						<div class="jv-ob-err" role="alert" aria-live="polite">{{ state.accountErr }}</div>
+						<datalist id="jv-ob-company-list">
+								<option v-for="c in state.companies" :key="c" :value="c" />
+							</datalist>
+							<div class="jv-ob-err" role="alert" aria-live="polite">{{ state.accountErr }}</div>
 						<div class="jv-ob-placeholder-actions">
 							<button class="jv-ob-btn" :disabled="accountBusy" @click="goBack">← Back</button>
 							<button class="jv-ob-btn jv-ob-btn-primary" :disabled="accountBusy" @click="onAccountSubmit">
@@ -222,7 +225,7 @@ import { STEPS_MANAGED, STEPS_SELFHOST, nextStep, prevStep, stepIndex } from "@/
 import {
 	checkSignupPaymentState, isReadyForChat,
 	listPlans, startSignup, finishPayment, devOnboard,
-	saveSelfHosted, testSelfHostConnection,
+	saveSelfHosted, testSelfHostConnection, getAccountDefaults,
 } from "@/api"
 import { planPriceLabel } from "@/account/format.js"
 import { errMessage as errMsg } from "@/lib/errors"
@@ -241,7 +244,7 @@ const STEP_NAMES = ["Account", "Plan", "Pay", "Connect AI"]
 const state = reactive({
 	mode: null, step: "mode",
 	// account (renderAccount)
-	email: "", company: "", accountErr: "",
+	email: "", company: "", companies: [], accountErr: "",
 	// plan (renderPlan)
 	plans: [], planName: null, plansLoading: false, plansErr: "",
 	// pay (renderPay / renderVerifyEmail / startPay / openCheckout / devOnboard)
@@ -668,8 +671,22 @@ watch(() => state.step, (s) => {
 	if (s === "pay") enterPayStep()
 })
 
+// Prefill the Account step from what the site already knows (caller's email +
+// default/sole company; datalist for several) so the customer doesn't retype it.
+// Backend-sourced because the SPA has no frappe.defaults. Never overwrites a
+// value the user already typed; silent on any failure.
+async function prefillAccount() {
+	try {
+		const d = (await getAccountDefaults()) || {}
+		if (d.email && !state.email.trim()) state.email = d.email
+		if (d.company && !state.company.trim()) state.company = d.company
+		if (Array.isArray(d.companies)) state.companies = d.companies
+	} catch (e) { /* no-op: keep the placeholders */ }
+}
+
 onMounted(() => {
 	reconcileMidFlightSignup()
+	prefillAccount()
 })
 </script>
 
