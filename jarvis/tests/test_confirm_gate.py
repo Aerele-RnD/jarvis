@@ -171,3 +171,127 @@ class TestConfirmTool(FrappeTestCase):
 		res = confirm_tool("no-such-token-zzz")
 		self.assertFalse(res["ok"])
 		self.assertEqual(res["error"]["type"], "InvalidConfirmation")
+
+
+class TestGatedToolRefusesModelPreview(FrappeTestCase):
+	"""Fix 1: a gated write called with ``preview=True`` must NOT take the
+	model-facing preview branch (a dry-run that still fires inline non-DB hook
+	side effects). It must fall through to the gate and PARK, which builds its
+	own preview. The park's status discriminates it from the old preview-branch
+	return (which had ``would`` at the top of ``data`` and no ``status``)."""
+
+	def test_gated_create_with_preview_true_parks_not_dry_run(self):
+		desc = "jarvis-test-gate-preview-bypass-010"
+		patcher, captured = _spy_mint()
+		with patcher:
+			r = api._run_tool("create_doc", {
+				"doctype": "ToDo", "values": {"description": desc},
+				"preview": True,
+			})
+		# Parked (gate), not the preview-branch dry-run shape.
+		self.assertTrue(r["ok"])
+		self.assertEqual(r["data"]["status"], "pending_confirmation")
+		# The preview branch would have put ``would`` at the top of ``data``;
+		# the gate nests its preview under data["preview"] instead.
+		self.assertNotIn("would", r["data"])
+		self.assertIn("preview", r["data"])
+		# A token was minted (the gate ran), and nothing was written.
+		self.assertIsNotNone(captured.get("token"))
+		self.assertFalse(frappe.db.exists("ToDo", {"description": desc}))
+
+	def test_gated_run_method_with_preview_true_does_not_execute_on_model_path(self):
+		# run_method is gated + previewable. Even with preview=True the model's
+		# call must park - the real (non-sandboxed) target is never dispatched
+		# outside the gate on this call. dispatch is patched, so if the model
+		# reached execution it would be visible; the gate parks first and only
+		# the sandboxed preview builder may touch dispatch.
+		patcher, captured = _spy_mint()
+		with patcher:
+			r = api._run_tool("run_method", {
+				"method": "frappe.ping", "preview": True,
+			})
+		self.assertTrue(r["ok"])
+		self.assertEqual(r["data"]["status"], "pending_confirmation")
+		self.assertNotIn("would", r["data"])
+		self.assertIsNotNone(captured.get("token"))
+
+
+class TestConfirmSelfHostOwnerBinding(FrappeTestCase):
+	"""Fix 2: in self-hosted mode the gate mints the token under the self-host
+	tool user (that is the session user inside call_tool), but the human confirms
+	from a DIFFERENT browser session. ``confirm_tool`` must consume under the
+	same owner the gate minted under - resolved by deployment mode - or every
+	self-host confirm fails closed-but-broken. Managed mode is unchanged."""
+
+	_TOOL_USER = "jarvis-selfhost-tool@example.com"
+
+	def _ensure_user(self, email):
+		if not frappe.db.exists("User", email):
+			frappe.get_doc({
+				"doctype": "User", "email": email, "first_name": "SelfHost",
+				"send_welcome_email": 0,
+			}).insert(ignore_permissions=True)
+		return email
+
+	def test_selfhost_confirm_consumes_under_tool_user_not_session(self):
+		desc = "jarvis-test-selfhost-confirm-020"
+		tool_user = self._ensure_user(self._TOOL_USER)
+		# Park directly under the tool user, exactly as the gate does in
+		# self-host (owner == frappe.session.user == the self-host tool user).
+		token = pending_confirm.mint(
+			conversation="", owner=tool_user, tool="create_doc",
+			args={"doctype": "ToDo", "values": {"description": desc}}, run_id="")
+		self.assertFalse(frappe.db.exists("ToDo", {"description": desc}))
+
+		# The confirm arrives on the human browser session (Administrator here -
+		# a DIFFERENT user than the token owner). Self-host owner binding still
+		# resolves to the tool user, so it consumes + executes.
+		with patch("jarvis.selfhost.is_self_hosted", return_value=True), \
+				patch("jarvis.api._selfhost_tool_user", return_value=tool_user):
+			res = confirm_tool(token)
+		self.assertTrue(res["ok"])
+		self.assertTrue(frappe.db.exists("ToDo", {"description": desc}))
+
+	def test_selfhost_confirm_still_rejects_guest(self):
+		tool_user = self._ensure_user(self._TOOL_USER)
+		token = pending_confirm.mint(
+			conversation="", owner=tool_user, tool="create_doc",
+			args={"doctype": "ToDo", "values": {"description": "x-021"}},
+			run_id="")
+		original = frappe.session.user
+		frappe.set_user("Guest")
+		try:
+			with patch("jarvis.selfhost.is_self_hosted", return_value=True), \
+					patch("jarvis.api._selfhost_tool_user", return_value=tool_user), \
+					self.assertRaises(frappe.PermissionError):
+				confirm_tool(token)
+		finally:
+			frappe.set_user(original)
+		# Guest was rejected before consume, so the token is NOT burned.
+		self.assertFalse(frappe.db.exists("ToDo", {"description": "x-021"}))
+
+	def test_managed_confirm_owner_is_session_user_unchanged(self):
+		# Managed mode: owner must equal the confirming session user.
+		desc_ok = "jarvis-test-managed-owner-ok-022"
+		desc_bad = "jarvis-test-managed-owner-bad-022"
+		session_user = frappe.session.user  # Administrator in tests
+		with patch("jarvis.selfhost.is_self_hosted", return_value=False):
+			# Token minted under the session user -> confirms + executes.
+			ok_token = pending_confirm.mint(
+				conversation="", owner=session_user, tool="create_doc",
+				args={"doctype": "ToDo", "values": {"description": desc_ok}},
+				run_id="")
+			res = confirm_tool(ok_token)
+			self.assertTrue(res["ok"])
+			self.assertTrue(frappe.db.exists("ToDo", {"description": desc_ok}))
+
+			# Token minted under a DIFFERENT owner -> rejected, not executed.
+			bad_token = pending_confirm.mint(
+				conversation="", owner="someone-else@example.com",
+				tool="create_doc",
+				args={"doctype": "ToDo", "values": {"description": desc_bad}},
+				run_id="")
+			res = confirm_tool(bad_token)
+			self.assertFalse(res["ok"])
+			self.assertEqual(res["error"]["type"], "InvalidConfirmation")
+			self.assertFalse(frappe.db.exists("ToDo", {"description": desc_bad}))

@@ -554,7 +554,18 @@ def _run_tool(tool: str, raw_args: dict | str | None,
 	# ``preview`` is read, not popped: dispatch() filters args to the tool's
 	# signature so the flag never reaches the tool anyway, and leaving ``args``
 	# unmutated keeps the shared dict the session-persistence path holds intact.
-	if isinstance(args, dict) and _as_bool(args.get("preview")):
+	#
+	# ``and tool not in _GATED_WRITES``: the model-facing preview branch is a
+	# dry-run that only rolls back DB writes - inline non-DB side effects fired
+	# directly inside hooks (an on_submit that POSTs/emails, a run_method target
+	# with real effects) STILL fire with no confirmation. Every _PREVIEWABLE
+	# tool is also gated, so a model could otherwise call a gated write with
+	# preview=True and trigger those side effects while dodging the gate. Gated
+	# tools therefore always fall through to the gate/park below, which builds
+	# its own preview via _pending_preview - the model never needs (nor is
+	# allowed) preview=True on a gated write.
+	if (isinstance(args, dict) and _as_bool(args.get("preview"))
+			and tool not in _GATED_WRITES):
 		if tool not in _PREVIEWABLE:
 			return _error("InvalidArgumentError",
 						  f"preview is not supported for {tool}")

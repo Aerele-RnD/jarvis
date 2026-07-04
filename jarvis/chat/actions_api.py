@@ -238,14 +238,30 @@ def confirm_tool(token: str) -> dict:
 		raise frappe.PermissionError("authentication required")
 
 	from jarvis.chat import pending_confirm
-	from jarvis import api
+	from jarvis import api, selfhost
 
 	token = (token or "").strip()
 	record = pending_confirm.peek(token)
 	if not record:
 		return _INVALID_CONFIRM
+
+	# Consume under the SAME owner identity the gate minted the token under.
+	# The gate (jarvis.api._run_tool) mints with owner=frappe.session.user at
+	# gate time. In managed mode that gate ran under the impersonated chat user
+	# - the same user whose browser session is confirming now, so the session
+	# user is the right owner. In self-hosted mode the gate ran inside call_tool
+	# under the self-host tool user (api._selfhost_tool_user), NOT this human
+	# browser session, so consuming under the session user would never match and
+	# every self-host confirm would fail closed-but-broken. Resolve the expected
+	# owner by mode instead. Guest is already rejected above; the single
+	# self-host operator IS authorized (selfhost single-tool-user design).
+	expected_owner = (
+		api._selfhost_tool_user() if selfhost.is_self_hosted()
+		else frappe.session.user)
+	if not expected_owner:
+		return _INVALID_CONFIRM
 	record = pending_confirm.consume(
-		token, owner=frappe.session.user,
+		token, owner=expected_owner,
 		conversation=record.get("conversation"))
 	if not record:
 		return _INVALID_CONFIRM
