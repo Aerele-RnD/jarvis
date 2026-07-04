@@ -8,6 +8,7 @@
  "field_order": [
   "title",
   "status",
+  "document_type",
   "conversation",
   "question",
   "context_md",
@@ -16,7 +17,8 @@
   "ref_name",
   "decision",
   "decided_by",
-  "decided_at"
+  "decided_at",
+  "trace_comment_added"
  ],
  "fields": [
   {
@@ -34,6 +36,14 @@
    "in_standard_filter": 1,
    "label": "Status",
    "options": "Pending\nApproved\nRejected"
+  },
+  {
+   "description": "The business document type this decision concerns (e.g. Purchase Invoice). Blank = the document type itself is undetermined (Unclassified tab).",
+   "fieldname": "document_type",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Document Type"
   },
   {
    "fieldname": "conversation",
@@ -84,6 +94,13 @@
    "fieldname": "decided_at",
    "fieldtype": "Datetime",
    "label": "Decided At"
+  },
+  {
+   "default": "0",
+   "fieldname": "trace_comment_added",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Trace Comment Added"
   }
  ],
  "index_web_pages_for_search": 0,

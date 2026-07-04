@@ -35,9 +35,9 @@ def list_approvals(status: str = "Pending", limit: int = 50) -> list[dict]:
 	rows = frappe.get_all(
 		APPROVAL, filters=filters,
 		fields=[
-			"name", "title", "status", "question", "context_md", "options",
-			"conversation", "ref_doctype", "ref_name", "decision",
-			"decided_by", "decided_at", "creation",
+			"name", "title", "status", "document_type", "question",
+			"context_md", "options", "conversation", "ref_doctype",
+			"ref_name", "decision", "decided_by", "decided_at", "creation",
 		],
 		order_by="creation desc", limit_page_length=int(limit),
 	)
