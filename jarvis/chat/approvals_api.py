@@ -48,6 +48,16 @@ def list_approvals(status: str = "Pending", limit: int = 50) -> list[dict]:
 	if status not in ("Pending", "Approved", "Rejected", "All"):
 		frappe.throw("Invalid status filter")
 	filters = {} if status == "All" else {"status": status}
+	# Non-SM: filter by ownership IN the query so `limit` applies to the
+	# caller's rows, not to a mixed page that later shrinks (and no N+1).
+	if "System Manager" not in frappe.get_roles():
+		my_convs = frappe.get_all(
+			"Jarvis Conversation", filters={"owner": frappe.session.user},
+			pluck="name",
+		)
+		if not my_convs:
+			return []
+		filters["conversation"] = ["in", my_convs]
 	rows = frappe.get_all(
 		APPROVAL, filters=filters,
 		fields=[
@@ -57,19 +67,9 @@ def list_approvals(status: str = "Pending", limit: int = 50) -> list[dict]:
 		],
 		order_by="creation desc", limit_page_length=int(limit),
 	)
-	is_sm = "System Manager" in frappe.get_roles()
-	out = []
 	for r in rows:
-		if not is_sm:
-			conv_owner = (
-				frappe.db.get_value("Jarvis Conversation", r.conversation, "owner")
-				if r.conversation else None
-			)
-			if conv_owner != frappe.session.user:
-				continue
 		r["options"] = _parse_options(r.get("options"))
-		out.append(r)
-	return out
+	return rows
 
 
 @frappe.whitelist()

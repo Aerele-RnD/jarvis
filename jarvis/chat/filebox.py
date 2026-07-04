@@ -102,6 +102,10 @@ def list_inbound(limit: int = 30) -> list[dict]:
 			r["status"] = "processing"
 		elif last and last[0].error:
 			r["status"] = "error"
+		elif not last:
+			# Dropped but the worker hasn't inserted the assistant
+			# placeholder yet - queued, not done.
+			r["status"] = "processing"
 		else:
 			r["status"] = "done"
 		r["pending_approvals"] = pending
