@@ -659,10 +659,21 @@ def handle_chat_send(payload: dict) -> None:
 							title="chat: seq watermark capture failed",
 							message=frappe.get_traceback(),
 						)
+					managed_attachments = (
+						_to_managed_attachments(vision_parts) if vision_parts else None
+					)
+					# openclaw preprocesses attachments BEFORE acking chat.send
+					# (each PDF page is rasterized + resized inside the RPC:
+					# measured 22s for a 4-page invoice). The default 10s ack
+					# timeout made every document send fail with
+					# "chat.send timed out" while the gateway completed the
+					# turn anyway. Scale the ack window with the payload.
+					ack_timeout = 10.0 + (30.0 * len(managed_attachments) if managed_attachments else 0.0)
 					ack = sess.chat_send(
 						conv.session_key, user_message, run_id,
 						thinking=(conv.thinking_override or "").strip() or None,
-						attachments=_to_managed_attachments(vision_parts) if vision_parts else None,
+						attachments=managed_attachments,
+						timeout_s=min(ack_timeout, 180.0),
 					) or {}
 					if ack.get("status") == "ok":
 						# Cached replay of a completed run (same run_id
