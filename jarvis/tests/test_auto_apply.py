@@ -235,6 +235,54 @@ class TestGateAutoApplyBypass(FrappeTestCase):
 		self.assertNotEqual(r["data"].get("status"), "pending_confirmation")
 		self.assertTrue(frappe.db.exists("ToDo", {"description": desc}))
 
+	def test_update_doc_executes_immediately_when_on(self):
+		conv = _make_conv(TEST_USER)
+		self._enable(conv)
+		todo = frappe.get_doc({
+			"doctype": "ToDo", "description": "jarvis-autoapply-upd-006",
+		}).insert(ignore_permissions=True)
+		frappe.db.commit()
+		r = api._run_tool("update_doc", {
+			"doctype": "ToDo", "name": todo.name,
+			"changes": {"description": "jarvis-autoapply-upd-006-changed"},
+		}, conversation=conv)
+		self.assertTrue(r["ok"])
+		# create/update are the ONLY auto-applyable tools -> fast-path, no park.
+		self.assertNotEqual(r["data"].get("status"), "pending_confirmation")
+		self.assertEqual(
+			frappe.db.get_value("ToDo", todo.name, "description"),
+			"jarvis-autoapply-upd-006-changed",
+		)
+
+	def test_submit_doc_still_parks_when_on(self):
+		# submit_doc is reversible-ish but NOT in _AUTO_APPLYABLE: it always
+		# parks, even with auto_apply ON. (Previously it fast-pathed as a
+		# non-destructive write - the Fix 1 tightening closes that.)
+		conv = _make_conv(TEST_USER)
+		self._enable(conv)
+		todo = frappe.get_doc({
+			"doctype": "ToDo", "description": "jarvis-autoapply-submit-007",
+		}).insert(ignore_permissions=True)
+		frappe.db.commit()
+		r = api._run_tool("submit_doc", {
+			"doctype": "ToDo", "name": todo.name,
+		}, conversation=conv)
+		self.assertEqual(r["data"]["status"], "pending_confirmation")
+
+	def test_run_method_still_parks_when_on(self):
+		# run_method NEVER fast-paths under auto_apply (default-unrestricted
+		# allowlist + injection = unconfirmed arbitrary whitelisted call). It
+		# parks, and (Fix 2) its preview is described-only: dispatch is never
+		# called to build the park preview.
+		conv = _make_conv(TEST_USER)
+		self._enable(conv)
+		with patch("jarvis.api.dispatch") as disp:
+			r = api._run_tool("run_method", {
+				"method": "frappe.ping",
+			}, conversation=conv)
+		self.assertEqual(r["data"]["status"], "pending_confirmation")
+		self.assertFalse(disp.called)
+
 	def test_destructive_write_still_parks_when_on(self):
 		conv = _make_conv(TEST_USER)
 		self._enable(conv)

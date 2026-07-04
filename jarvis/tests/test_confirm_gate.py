@@ -216,6 +216,43 @@ class TestGatedToolRefusesModelPreview(FrappeTestCase):
 		self.assertIsNotNone(captured.get("token"))
 
 
+class TestRunMethodParkDoesNotSandboxExecute(FrappeTestCase):
+	"""Fix 2: run_method is _PREVIEWABLE, but parking one must NOT sandbox-
+	execute the target method to build its preview - the sandbox only rolls
+	back DB writes, so a method's inline non-DB side effects (HTTP/email) would
+	fire unconfirmed and its result would leak to the model. run_method parks
+	with a described-intent preview (never executed at park time); the real
+	call runs exactly once, only on confirm."""
+
+	def test_run_method_parks_described_and_not_executed_at_park(self):
+		patcher, captured = _spy_mint()
+		with patch("jarvis.api.dispatch") as disp, patcher:
+			r = api._run_tool("run_method", {"method": "frappe.ping"})
+			# No sandbox execution at park time: dispatch is never touched.
+			self.assertFalse(disp.called)
+		self.assertEqual(r["data"]["status"], "pending_confirmation")
+		preview = r["data"]["preview"]
+		# Described intent, explicitly NOT a dry run (no sandboxed "would").
+		self.assertFalse(preview["preview"])
+		self.assertTrue(preview["described"])
+		self.assertIn("summary", preview)
+		self.assertNotIn("would", preview)
+		self.assertIsNotNone(captured.get("token"))
+
+	def test_confirm_executes_run_method_exactly_once(self):
+		patcher, captured = _spy_mint()
+		with patcher:
+			r = api._run_tool("run_method", {"method": "frappe.ping"})
+		self.assertEqual(r["data"]["status"], "pending_confirmation")
+		token = captured["token"]
+		# The method runs for the first and only time on confirm.
+		with patch("jarvis.api.dispatch", return_value={"message": "pong"}) as disp:
+			res = confirm_tool(token)
+		self.assertTrue(res["ok"])
+		self.assertEqual(disp.call_count, 1)
+		self.assertEqual(disp.call_args.args[0], "run_method")
+
+
 class TestConfirmSelfHostOwnerBinding(FrappeTestCase):
 	"""Fix 2: in self-hosted mode the gate mints the token under the self-host
 	tool user (that is the session user inside call_tool), but the human confirms

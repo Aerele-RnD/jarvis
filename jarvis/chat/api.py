@@ -554,9 +554,12 @@ def set_auto_apply(conversation: str, value: str | int | bool) -> dict:
 	"""Toggle per-conversation 'auto-apply changes (skip confirmation)' (issue #186).
 
 	OFF (default) = the write-safety gate parks every mutating tool call for a
-	confirmation click; ON = reversible writes (create/update/submit/run_method)
-	execute immediately, while destructive ops (delete/cancel/amend/send_email)
-	STILL park regardless.
+	confirmation click; ON = only the reversible create/update pair
+	(create_doc/update_doc) fast-paths and executes immediately. Everything
+	else ALWAYS parks regardless: submit_doc, run_method, and the destructive
+	ops (delete/cancel/amend/send_email). run_method in particular never
+	fast-paths - its default-unrestricted allowlist under auto-apply would be
+	an unconfirmed arbitrary whitelisted method call.
 
 	Scoping + gating:
 	- Owner-only: the conversation must belong to the caller

@@ -392,6 +392,12 @@ _GATED_WRITES = frozenset({
 # Irreversible/consequential subset - gated even when a user has auto-apply
 # on (Task 4 uses this; define it here so the sets live together).
 _DESTRUCTIVE = frozenset({"delete_doc", "cancel_doc", "amend_doc", "send_email"})
+# Writes that auto-apply may fast-path without a confirmation click. Strictly
+# the reversible create/update pair, per spec. submit_doc, run_method and every
+# _DESTRUCTIVE tool ALWAYS park even with auto-apply on: run_method's
+# default-unrestricted allowlist under auto-apply + a prompt injection would be
+# an unconfirmed arbitrary whitelisted method call, so it never fast-paths.
+_AUTO_APPLYABLE = frozenset({"create_doc", "update_doc"})
 
 
 def _as_bool(value) -> bool:
@@ -467,7 +473,14 @@ def _pending_preview(tool: str, args: dict) -> dict:
 		"summary": _describe_call(tool, args),
 		"note": ("not a dry run - this will send/execute on confirm"),
 	}
-	if tool not in _PREVIEWABLE:
+	# run_method is _PREVIEWABLE for the dry-run path, but it must NEVER be
+	# sandbox-executed to build a park preview: even inside the rollback
+	# sandbox the target method's inline non-DB side effects (HTTP/email fired
+	# directly, not via DB writes) would fire unconfirmed and its result would
+	# be returned to the model. Route it to the described-intent path (like
+	# send_email) so parking a run_method never executes it - the real call
+	# runs only on confirm.
+	if tool not in _PREVIEWABLE or tool == "run_method":
 		return described
 	try:
 		return _run_preview(tool, args)
@@ -592,12 +605,14 @@ def _run_tool(tool: str, raw_args: dict | str | None,
 		conv, run_id = _gate_context(conversation)
 		# Auto-apply bypass (issue #186, Task 4): the ONLY path where a gated
 		# write runs without a confirmation token. Strictly limited to
-		# {the owner's OWN conversation, admin-enabled auto_apply, NON-destructive
-		# tool}. We only trust auto_apply when the resolved conversation is
-		# non-empty AND its owner == the acting user - an empty/mismatched conv
-		# is treated as OFF (safe default). Destructive tools (delete/cancel/
-		# amend/send_email) ALWAYS park, even with auto_apply on.
-		if conv and tool not in _DESTRUCTIVE:
+		# {the owner's OWN conversation, admin-enabled auto_apply, an
+		# _AUTO_APPLYABLE (reversible create/update) tool}. We only trust
+		# auto_apply when the resolved conversation is non-empty AND its owner ==
+		# the acting user - an empty/mismatched conv is treated as OFF (safe
+		# default). Everything outside create/update - submit_doc, run_method,
+		# and every destructive tool (delete/cancel/amend/send_email) - ALWAYS
+		# parks, even with auto_apply on.
+		if conv and tool in _AUTO_APPLYABLE:
 			row = frappe.db.get_value(
 				"Jarvis Conversation", conv, ["owner", "auto_apply"], as_dict=True
 			) or {}
