@@ -90,6 +90,23 @@ def decide(name: str, decision: str, approve: int = 1) -> dict:
 			f"[Approval {doc.name} - {doc.title}] {verdict}: {decision}\n"
 			f"Continue the flow with this decision; do not re-ask."
 		)
-		res = send_message(conversation=doc.conversation, message=msg)
+		# File-Box conversations: re-attach the source document. Attachments
+		# ride only the message they were sent with, so a resumed turn can
+		# no longer SEE the pages - observed live: the agent (correctly)
+		# refused to draft rather than fabricate lines it couldn't see.
+		attachments = None
+		title = frappe.db.get_value("Jarvis Conversation", doc.conversation, "title") or ""
+		if title.startswith("File: "):
+			fname = title[len("File: "):]
+			f = frappe.get_all(
+				"File", filters={"file_name": ["like", fname + "%"]},
+				fields=["file_url", "file_name"],
+				order_by="creation desc", limit_page_length=1,
+			)
+			if f:
+				attachments = json.dumps(
+					[{"file_url": f[0].file_url, "file_name": f[0].file_name}]
+				)
+		res = send_message(conversation=doc.conversation, message=msg, attachments=attachments)
 		resumed = bool(res.get("ok"))
 	return {"ok": True, "status": doc.status, "resumed": resumed}
