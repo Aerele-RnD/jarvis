@@ -22,7 +22,23 @@ def _parse_options(raw: str | None) -> list[str]:
 		out = json.loads(raw or "[]")
 		return [str(o) for o in out] if isinstance(out, list) else []
 	except Exception:
-		return []
+		# The agent sometimes hands create_doc a real list, which Frappe
+		# coerces to str(list) with single quotes - salvage it.
+		try:
+			import ast
+			out = ast.literal_eval(raw or "[]")
+			return [str(o) for o in out] if isinstance(out, list) else []
+		except Exception:
+			return []
+
+
+def _may_act_on(conversation: str | None) -> bool:
+	# SM, or the owner of the linked conversation.
+	if "System Manager" in frappe.get_roles():
+		return True
+	if not conversation:
+		return False
+	return frappe.db.get_value("Jarvis Conversation", conversation, "owner") == frappe.session.user
 
 
 @frappe.whitelist()
@@ -58,7 +74,10 @@ def list_approvals(status: str = "Pending", limit: int = 50) -> list[dict]:
 
 @frappe.whitelist()
 def pending_count() -> int:
-	return frappe.db.count(APPROVAL, {"status": "Pending"})
+	# Scoped like list_approvals: non-SM users count only their own.
+	if "System Manager" in frappe.get_roles():
+		return frappe.db.count(APPROVAL, {"status": "Pending"})
+	return len(list_approvals("Pending"))
 
 
 @frappe.whitelist()
@@ -73,6 +92,8 @@ def decide(name: str, decision: str, approve: int = 1) -> dict:
 	if not decision:
 		frappe.throw("Decision text is required")
 	doc = frappe.get_doc(APPROVAL, name)
+	if not _may_act_on(doc.conversation):
+		frappe.throw("Not permitted", frappe.PermissionError)
 	if doc.status != "Pending":
 		frappe.throw(f"Approval {name} is already {doc.status}")
 	doc.status = "Approved" if int(approve) else "Rejected"
@@ -95,18 +116,24 @@ def decide(name: str, decision: str, approve: int = 1) -> dict:
 		# no longer SEE the pages - observed live: the agent (correctly)
 		# refused to draft rather than fabricate lines it couldn't see.
 		attachments = None
-		title = frappe.db.get_value("Jarvis Conversation", doc.conversation, "title") or ""
-		if title.startswith("File: "):
-			fname = title[len("File: "):]
-			f = frappe.get_all(
-				"File", filters={"file_name": ["like", fname + "%"]},
-				fields=["file_url", "file_name"],
-				order_by="creation desc", limit_page_length=1,
+		f = frappe.get_all(
+			"File",
+			filters={
+				"attached_to_doctype": "Jarvis Conversation",
+				"attached_to_name": doc.conversation,
+			},
+			fields=["file_url", "file_name"],
+			order_by="creation desc", limit_page_length=1,
+		)
+		if f:
+			attachments = json.dumps(
+				[{"file_url": f[0].file_url, "file_name": f[0].file_name}]
 			)
-			if f:
-				attachments = json.dumps(
-					[{"file_url": f[0].file_url, "file_name": f[0].file_name}]
-				)
-		res = send_message(conversation=doc.conversation, message=msg, attachments=attachments)
-		resumed = bool(res.get("ok"))
+		# The decision is durably recorded above; a resume failure must
+		# not 500 the endpoint (the SPA would re-show a decided row).
+		try:
+			res = send_message(conversation=doc.conversation, message=msg, attachments=attachments)
+			resumed = bool(res.get("ok"))
+		except Exception:
+			frappe.log_error(title="approval resume failed", message=frappe.get_traceback())
 	return {"ok": True, "status": doc.status, "resumed": resumed}
