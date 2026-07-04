@@ -26,10 +26,12 @@ export const setStar = (conversation, starred) =>
 	call("jarvis.chat.api.set_star", { conversation, starred: starred ? 1 : 0 })
 export const retryMessage = (message) => call("jarvis.chat.api.retry_message", { message })
 export const getChatUiSettings = () => call("jarvis.chat.api.get_chat_ui_settings")
-// Toggle "auto-apply changes" (skip the agent's confirmation step before
-// mutating ERP data). Off = confirm every change (default).
-export const setAutoApply = (value) =>
-	call("jarvis.chat.api.set_auto_apply", { value: value ? 1 : 0 })
+// Toggle per-conversation "auto-apply changes" (skip the write-safety
+// confirmation before mutating ERP data). Off = confirm every gated write
+// (default). Enabling requires System Manager (a non-admin gets a 403);
+// disabling is always allowed for the owner. Response: {ok, data:{auto_apply}}.
+export const setAutoApply = (conversation, value) =>
+	call("jarvis.chat.api.set_auto_apply", { conversation, value: value ? 1 : 0 })
 // Estimated token usage (this chat / this month / total + monthly budget).
 export const getUsage = (conversation) =>
 	call("jarvis.chat.api.get_usage", { conversation: conversation || "" })
@@ -77,6 +79,10 @@ const AC = "jarvis.chat.actions_api."
 export const getDoctypeFormMeta = (doctype) => call(AC + "get_doctype_form_meta", { doctype })
 export const loadDocForEdit = (doctype, name) => call(AC + "load_doc", { doctype, name })
 export const applyAction = (action) => call(AC + "apply_action", { action: JSON.stringify(action) })
+// Write-safety gate (issue #186): confirm a parked ERP write by its one-time
+// token. Returns the tool result envelope {ok, ...} on success, or
+// {ok:False, error:{type:"InvalidConfirmation", ...}} if the token is gone.
+export const confirmTool = (token) => call(AC + "confirm_tool", { token })
 
 export async function sendMessage(conversation, message, modelOverride, attachments, context) {
 	// Empty conversation is allowed: the backend creates (or focuses) an empty

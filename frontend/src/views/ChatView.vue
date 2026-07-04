@@ -263,7 +263,9 @@
 										</div>
 										<div class="jv-email-body">{{ activeAction.body }}</div>
 										<div class="jv-action-foot">
-											<button class="jv-action-primary" @click="actionSend('Yes, send it.')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13M22 2 15 22l-4-9-9-4 20-7z" /></svg>Send email</button>
+											<!-- send_email is a gated write (issue #186): the actual Send confirmation
+											     arrives as an action:pending card, not a model-visible approval message.
+											     This draft card stays a read-only preview (copy / regenerate). -->
 											<button class="jv-action-2nd" @click="copyText(activeAction.body)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>Copy</button>
 											<button class="jv-action-2nd" @click="actionSend('Regenerate that email, please.')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2v6h6M21 12a9 9 0 1 1-3-6.7L21 8" /></svg>Regenerate</button>
 										</div>
@@ -277,23 +279,10 @@
 										<span><b>{{ activeAction.doctype }}</b> draft<template v-if="draftChipSummary"> · {{ draftChipSummary }}</template></span>
 										<span class="jv-draft-chip-cta">Open editor</span>
 									</div>
-									<!-- submit/cancel/delete/amend → confirm card, but Confirm applies directly (Task 4) -->
-									<div v-else class="jv-action">
-										<div class="jv-action-head">
-											<span class="jv-action-title">{{ actionVerb(activeAction) }} <b>{{ activeAction.doctype }}</b><template v-if="activeAction.name"> · {{ activeAction.name }}</template><template v-else-if="activeAction.title"> · {{ activeAction.title }}</template></span>
-										</div>
-										<div class="jv-action-fields">
-											<div v-for="(f, fi) in (activeAction.fields || [])" :key="fi" class="jv-action-row">
-												<span class="jv-action-k">{{ f.label }}</span>
-												<span class="jv-action-v">{{ f.value }}</span>
-											</div>
-										</div>
-										<div v-if="confirmError" class="jv-draft-error" style="margin:0 14px 10px">{{ confirmError }}</div>
-										<div class="jv-action-foot">
-											<button class="jv-action-primary" :disabled="confirmBusy" @click="confirmApply">✓ {{ actionCta(activeAction) }}</button>
-											<button class="jv-action-discard" @click="actionSend('No, cancel that.')">Discard</button>
-										</div>
-									</div>
+									<!-- submit/cancel/delete/amend are gated writes (issue #186): the real
+									     confirmation is the action:pending card rendered below the thread,
+									     which carries the server-minted token. A model-authored confirm card
+									     for these verbs no longer applies anything, so it is not rendered. -->
 								</template>
 								<!-- confirm / cancel (fallback, simple label) -->
 								<div v-else-if="confirmFor === m.name" class="jv-confirm">
@@ -424,6 +413,26 @@
 								</span>
 								<span style="font-size:12px;color:var(--text-3);">{{ thinkingWord }}</span>
 							</div>
+						</div>
+					</div>
+
+					<!-- action:pending - a gated ERP write parked awaiting the owner's
+					     Confirm click (issue #186). The authoritative confirm UI: it
+					     carries the server-minted one-time token. -->
+					<div v-if="pendingAction && pendingAction.conversation === currentId" class="jv-action jv-pending">
+						<div class="jv-action-head">
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--amber)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><path d="M12 9v4M12 17h.01" /></svg>
+							<span class="jv-action-title">Confirm before this runs</span>
+						</div>
+						<div class="jv-pending-body">
+							<div v-if="pendingSummary" class="jv-pending-summary">{{ pendingSummary }}</div>
+							<div v-if="pendingNoteText" class="jv-pending-note">{{ pendingNoteText }}</div>
+							<pre v-if="pendingPreviewText" class="jv-pending-preview">{{ pendingPreviewText }}</pre>
+						</div>
+						<div v-if="pendingError" class="jv-draft-error" style="margin:0 14px 10px">{{ pendingError }}</div>
+						<div class="jv-action-foot">
+							<button class="jv-action-primary" :disabled="pendingBusy" @click="confirmPending">✓ Confirm</button>
+							<button class="jv-action-discard" :disabled="pendingBusy" @click="discardPending">Discard</button>
 						</div>
 					</div>
 				</div>
@@ -839,11 +848,12 @@
 							<div class="jv-set-row"><span>Status</span><b style="color:var(--green);">Live</b></div>
 								<div class="jv-set-sec" style="margin-top:18px;">Behavior</div>
 								<div class="jv-set-row">
-									<span>Confirm before changes<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Ask before any create, update, or delete</span></span>
-									<button class="jv-switch" :class="{ on: !ui.auto_apply_changes }" @click="toggleAutoApply" role="switch" :aria-checked="String(!ui.auto_apply_changes)" :title="ui.auto_apply_changes ? 'Auto mode — changes apply without asking' : 'Confirm each change before it runs'">
+									<span>Confirm before changes<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Ask before any create, update, or delete in this chat</span></span>
+									<button class="jv-switch" :class="{ on: !convAutoApply }" @click="toggleAutoApply" :disabled="!currentId" role="switch" :aria-checked="String(!convAutoApply)" :title="convAutoApply ? 'Auto mode - changes apply without asking' : 'Confirm each change before it runs'">
 										<span class="jv-switch-knob"></span>
 									</button>
 								</div>
+								<div v-if="autoApplyNote" class="jv-set-row" style="padding-top:0;"><span style="font-size:11px;color:var(--amber);font-weight:500;">{{ autoApplyNote }}</span></div>
 								<div class="jv-set-row">
 									<span>Show tool activity<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Show the live tool steps + input/output above each reply. The tools count &amp; time always show below.</span></span>
 									<button class="jv-switch" :class="{ on: showActivityDetail }" @click="setActivityDetail(!showActivityDetail)" role="switch" :aria-checked="String(showActivityDetail)" title="Show the tool/skill activity under each answer">
@@ -1172,6 +1182,11 @@ const sending = ref(false)
 const waiting = ref(false)
 const search = ref("")
 const ui = ref({})
+// Per-conversation "auto-apply changes" (issue #186): seeded from
+// get_conversation().conversation.auto_apply on each load; the toggle reflects
+// THIS chat. autoApplyNote surfaces the admin-only-enable message.
+const convAutoApply = ref(false)
+const autoApplyNote = ref("")
 const inputEl = ref(null)
 const threadEl = ref(null)
 const threadInnerEl = ref(null)
@@ -1927,15 +1942,22 @@ async function openSettings() {
 		/* usage stays null → the section shows a dash */
 	}
 }
-// Flip "confirm before changes" (server-side, per site). Optimistic; reverts on
-// failure. Stored as auto_apply_changes (1 = skip confirmation / auto mode).
+// Flip "confirm before changes" for THIS conversation (issue #186). Optimistic;
+// reverts on failure. auto_apply=1 = skip confirmation (auto mode). Enabling is
+// admin-only server-side - a non-admin gets a 403, so we revert + show a note.
 async function toggleAutoApply() {
-	const next = ui.value.auto_apply_changes ? 0 : 1
-	ui.value = { ...ui.value, auto_apply_changes: next }
+	if (!currentId.value) return
+	const next = convAutoApply.value ? 0 : 1
+	autoApplyNote.value = ""
+	convAutoApply.value = !!next // optimistic
 	try {
-		await api.setAutoApply(next)
+		const r = await api.setAutoApply(currentId.value, next)
+		// Response envelope is {ok, data:{auto_apply}} - trust the server's value.
+		if (r && r.data && typeof r.data.auto_apply !== "undefined") convAutoApply.value = !!r.data.auto_apply
 	} catch (e) {
-		ui.value = { ...ui.value, auto_apply_changes: next ? 0 : 1 } // revert
+		convAutoApply.value = !next // revert
+		// Enabling requires System Manager; a non-admin gets a PermissionError (403).
+		if (next) autoApplyNote.value = "Only an administrator can enable auto-apply."
 	}
 }
 async function deleteChat() {
@@ -2791,7 +2813,6 @@ const draftChipSummary = computed(() => {
 // Auto-open on a fresh create/update action (also fires when loading an old
 // conversation that ends on a pending draft — that draft IS still pending).
 watch(actionFor, () => {
-	confirmError.value = ""
 	const a = activeAction.value
 	if (a && a.kind === "doc" && (a.verb === "create" || a.verb === "update" || !a.verb)) {
 		const wasOpen = !!draftPanel.value
@@ -2801,9 +2822,7 @@ watch(actionFor, () => {
 	}
 })
 
-// --- apply wiring: draft panel + confirm card round-trip via apply_action ---
-const confirmBusy = ref(false)
-const confirmError = ref("")
+// --- apply wiring: draft panel create/update round-trip via apply_action ---
 
 function _coerceOut(f) {
 	if (f.control === "check") return f.value === "Yes" ? 1 : 0
@@ -2859,22 +2878,70 @@ function discardDraft() {
 	send("No, cancel that.")
 }
 
-// submit/cancel/delete/amend confirm card → direct apply (no LLM turn).
-// Old-format cards without `name` fall back to the conversational path.
-async function confirmApply() {
-	const a = activeAction.value
-	if (!a) return
-	if (!a.name) { actionSend(`Yes — ${actionCta(a).toLowerCase()}.`); return } // echo the button's wording
-	confirmBusy.value = true; confirmError.value = ""
+// --- action:pending confirm card (write-safety gate, issue #186) ---
+// A gated ERP write (create/update/submit/cancel/delete/amend/run_method/
+// send_email) is parked server-side; the owner gets a realtime action:pending
+// event carrying a one-time token. confirm_tool(token) is the ONLY path that
+// runs the parked call. Discard just drops the card - the token expires server
+// side, no backend call needed.
+const pendingAction = ref(null) // { conversation, token, tool, summary, preview, run_id }
+const pendingBusy = ref(false)
+const pendingError = ref("")
+
+// The card's headline: the event's own summary, or the described-intent's.
+const pendingSummary = computed(() => {
+	const pa = pendingAction.value
+	if (!pa) return ""
+	return pa.summary || (pa.preview && pa.preview.summary) || pa.tool || ""
+})
+// The "will send/execute on confirm" caption carried on either preview shape.
+const pendingNoteText = computed(() => {
+	const pv = pendingAction.value && pendingAction.value.preview
+	return (pv && pv.note) || ""
+})
+// For a previewable dry-run, show the would-be result; described-intent
+// (send_email) has no dry-run doc, so nothing extra to dump.
+const pendingPreviewText = computed(() => {
+	const pv = pendingAction.value && pendingAction.value.preview
+	if (!pv || pv.described) return ""
+	const w = pv.would
+	if (w == null) return ""
+	return typeof w === "string" ? w : prettyJson(w)
+})
+
+async function confirmPending() {
+	const pa = pendingAction.value
+	if (!pa || pendingBusy.value) return
+	pendingBusy.value = true; pendingError.value = ""
 	try {
-		await api.applyAction({ verb: a.verb, doctype: a.doctype, name: a.name, conversation: currentId.value || "" })
+		const r = await api.confirmTool(pa.token)
+		if (r && r.ok === false) {
+			// Token gone/expired/used, or the executed tool reported failure. Either
+			// way the card is spent - surface a brief note and dismiss.
+			if (r.error && r.error.type === "InvalidConfirmation") {
+				pendingAction.value = null
+				notify("That confirmation expired - ask Jarvis to try again.", { type: "error" })
+				return
+			}
+			pendingError.value = (r.error && r.error.message) || "Could not run this action."
+			return
+		}
+		// Success - the executed result surfaces via the turn's normal tool/stream
+		// events; reload to be sure the transcript reflects it (same as applyDraft).
+		pendingAction.value = null
 		await loadConversation(currentId.value)
 		loadConversations()
 	} catch (e) {
-		confirmError.value = (e && e.messages && e.messages[0]) || (e && e.message) || "Could not apply."
+		pendingError.value = (e && e.messages && e.messages[0]) || (e && e.message) || "Could not confirm."
 	} finally {
-		confirmBusy.value = false
+		pendingBusy.value = false
 	}
+}
+// Local-only dismiss: the parked token expires server-side; no backend call and
+// no model-visible message (the card is authoritative, not a chat approval).
+function discardPending() {
+	pendingAction.value = null
+	pendingError.value = ""
 }
 
 // --- interactive clarifying questions (card on the last assistant message) ---
@@ -3020,18 +3087,6 @@ function editCommand(m) {
 			el.setSelectionRange(p, p)
 		}
 	})
-}
-const _VERB = { create: "Create", update: "Update", submit: "Submit", cancel: "Cancel", delete: "Delete", amend: "Amend" }
-function actionVerb(a) {
-	return _VERB[a && a.verb] || "Review"
-}
-function actionCta(a) {
-	const v = a && a.verb
-	if (v === "delete") return "Confirm & delete"
-	if (v === "submit") return "Confirm & submit"
-	if (v === "cancel") return "Confirm & cancel"
-	if (v === "update" || v === "amend") return "Confirm & save"
-	return "Confirm & create"
 }
 // Cached render payload for an artifact: HTML srcdoc (html/svg) or a base64
 // data-url (pdf/image/file). Keyed by `${msgName}::${canvasName}::${theme}` —
@@ -3273,6 +3328,14 @@ async function loadConversation(id) {
 	if (currentId.value !== id) return
 	messages.value = d?.messages || []
 	modelOverride.value = d?.model_override || ""
+	// Per-conversation auto-apply + a fresh confirm-card slate for this chat
+	// (issue #186): a pending write from another conversation must not linger.
+	convAutoApply.value = !!(d?.conversation && d.conversation.auto_apply)
+	autoApplyNote.value = ""
+	if (pendingAction.value && pendingAction.value.conversation !== id) {
+		pendingAction.value = null
+		pendingError.value = ""
+	}
 	// Seed Up/Down recall from THIS conversation's past prompts. Without this,
 	// promptHistory only held prompts typed in the current page session, so
 	// after a reload or when opening an existing chat the arrows did nothing.
@@ -3646,6 +3709,25 @@ function onEvent(p) {
 			}, 4000)
 		}
 		patchMacroRunRow(p, true)
+		return
+	}
+	// A gated ERP write was parked awaiting the owner's Confirm click (issue
+	// #186). Keyed by `conversation` (like macro events), so handle it before the
+	// conversation_id guard. Only surface it in the conversation on screen; an
+	// off-conversation pending write is ignored here (the card is realtime-only).
+	if (p.kind === "action:pending") {
+		if (p.conversation === currentId.value) {
+			pendingAction.value = {
+				conversation: p.conversation,
+				token: p.token,
+				tool: p.tool,
+				summary: p.summary || "",
+				preview: p.preview || null,
+				run_id: p.run_id || null,
+			}
+			pendingBusy.value = false
+			pendingError.value = ""
+		}
 		return
 	}
 	if (p.conversation_id !== currentId.value) return
@@ -4671,6 +4753,15 @@ function onGlobalKey(e) {
 .jv-action-discard { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-family: inherit; font-size: 12.5px; font-weight: 600; padding: 8px 13px; border-radius: 8px; border: 1px solid var(--red-bd); background: var(--red-bg); color: var(--red); cursor: pointer; transition: background .12s, color .12s, border-color .12s; }
 .jv-action-discard:hover { background: var(--red); color: #fff; border-color: var(--red); }
 .jv-action-discard:hover svg { stroke: #fff; }
+/* action:pending confirm card (write-safety gate, issue #186): an amber accent
+   marks a write parked awaiting the owner's Confirm click. */
+.jv-pending { border-color: var(--amber); }
+.jv-pending .jv-action-head { border-bottom-color: var(--border); }
+.jv-pending-body { padding: 11px 14px; display: flex; flex-direction: column; gap: 8px; }
+.jv-pending-summary { font-size: 13.5px; line-height: 1.5; color: var(--text); }
+.jv-pending-note { font-size: 12px; line-height: 1.45; color: var(--text-3); }
+.jv-pending-preview { margin: 0; padding: 9px 11px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; line-height: 1.5; color: var(--text); white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow-y: auto; }
+.jv-action-primary:disabled, .jv-action-discard:disabled { opacity: .55; cursor: default; }
 .jv-email-head { padding: 12px 14px 6px; }
 .jv-email-line { display: flex; gap: 10px; font-size: 13px; padding: 2px 0; }
 .jv-email-k { flex: none; width: 54px; color: var(--text-3); }
