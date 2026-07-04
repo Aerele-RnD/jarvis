@@ -53,17 +53,34 @@ _CANVAS_LINK = re.compile(
 _CANVAS_BARE = re.compile(rf"\S*?canvas/{_PATH}\.(?:{_EXTS})(?![\w])", re.IGNORECASE)
 
 
+def _is_safe_canvas_path(name: str) -> bool:
+	"""Reject anything that could escape the gateway's canvas/ root.
+
+	The reference regex allows subdirs and the ``.``/``-`` chars, so a crafted
+	reply like ``canvas/../skills/erpnext-accounts/SKILL.md`` matches and would
+	otherwise be fetched and saved to the user's site as a download - a
+	traversal that exfiltrates our proprietary skills. The gateway may or may
+	not normalise ``..`` itself; the bench must not depend on that.
+	"""
+	if not name or name.startswith("/") or "\\" in name or "\x00" in name:
+		return False
+	# No segment may be empty (//) or a parent ref (.. / ...).
+	return all(seg not in ("", ".", "..") and set(seg) != {"."} for seg in name.split("/"))
+
+
 def detect_canvas_names(text: str) -> list[str]:
 	"""Return canvas artifact paths referenced in ``text``, de-duplicated, in order.
 
 	Paths keep their subdir (e.g. ``charts/sales.html``) so the gateway fetch
-	hits the right URL.
+	hits the right URL. Traversal paths are dropped (see _is_safe_canvas_path).
 	"""
 	if not text:
 		return []
 	seen: dict[str, None] = {}
 	for m in _CANVAS_REF.finditer(text):
-		seen.setdefault(m.group(1), None)
+		name = m.group(1)
+		if _is_safe_canvas_path(name):
+			seen.setdefault(name, None)
 	return list(seen)[:_MAX_CANVAS_PER_TURN]
 
 
@@ -89,6 +106,10 @@ def fetch_canvas(agent_url: str, token: str, name: str) -> tuple[bytes, str] | N
 
 	base = _http_base(agent_url)
 	if not base or not token:
+		return None
+	# Belt-and-suspenders: never issue a fetch for a traversal path even if a
+	# caller reaches fetch_canvas directly (detect_canvas_names already filters).
+	if not _is_safe_canvas_path(name):
 		return None
 	url = f"{base}/__openclaw__/canvas/{name}"
 	try:
