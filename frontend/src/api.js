@@ -128,3 +128,16 @@ export async function uploadFile(file) {
 	const f = data.message || data
 	return { file_url: f.file_url, file_name: f.file_name || file.name }
 }
+
+// ── File Box: drop an inbound document, get a directed processing chat ──
+export const fileboxDrop = (file_url, file_name) =>
+	call("jarvis.chat.filebox.drop_file", { file_url, file_name })
+export const fileboxList = () => call("jarvis.chat.filebox.list_inbound", {})
+
+// ── Approvals: pending-decision queue + decide-and-resume ──
+export const listApprovals = (status = "Pending") =>
+	call("jarvis.chat.approvals_api.list_approvals", { status })
+export const approvalsPendingCount = () =>
+	call("jarvis.chat.approvals_api.pending_count", {})
+export const decideApproval = (name, decision, approve = 1) =>
+	call("jarvis.chat.approvals_api.decide", { name, decision, approve })

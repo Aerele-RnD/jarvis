@@ -474,7 +474,10 @@ def handle_chat_send(payload: dict) -> None:
 	# agent formats for the org's region instead of defaulting to US conventions.
 	locale_clause = _org_locale_clause()
 	user_message = (
-		f"[Context: today is {today}{locale_clause}; chat user: {chat_user}{auto_apply}{skill_clause}]"
+		# conv:<id> lets the agent link rows it creates (e.g. Jarvis Approval)
+		# back to this conversation so deciding can resume the chat.
+		f"[Context: today is {today}{locale_clause}; chat user: {chat_user}"
+		f"; conv: {conversation_id}{auto_apply}{skill_clause}]"
 		f"\n\n{user_message or ''}"
 	)
 
