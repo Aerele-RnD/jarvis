@@ -24,10 +24,6 @@ MSG = "Jarvis Chat Message"
 
 # Cap how many artifacts we'll fetch per turn (defensive).
 _MAX_CANVAS_PER_TURN = 8
-# Per-artifact byte cap. Legit charts/PDFs/xlsx are well under this; the cap
-# bounds how much can leave via a file staged in canvas/ and named with an
-# allowlisted extension (the extension check alone trusts the filename).
-_MAX_CANVAS_BYTES = 25 * 1024 * 1024
 
 # Supported artifact extension -> render type.
 #   html/svg -> sandboxed iframe srcdoc
@@ -117,32 +113,14 @@ def fetch_canvas(agent_url: str, token: str, name: str) -> tuple[bytes, str] | N
 		return None
 	url = f"{base}/__openclaw__/canvas/{name}"
 	try:
-		# Stream so an oversized artifact is capped mid-download, not after a
-		# full read into memory. A chart/PDF/xlsx is well under this; the cap
-		# only bites bulk dumps staged as a renamed canvas file.
 		r = requests.get(
-			url, headers={"Authorization": f"Bearer {token}"}, timeout=20,
-			stream=True,
+			url, headers={"Authorization": f"Bearer {token}"}, timeout=20
 		)
-		if r.status_code != 200:
-			return None
-		chunks, total = [], 0
-		for chunk in r.iter_content(64 * 1024):
-			total += len(chunk)
-			if total > _MAX_CANVAS_BYTES:
-				return None
-			chunks.append(chunk)
 	except Exception:
 		return None
-	finally:
-		try:
-			r.close()
-		except Exception:
-			pass
-	content = b"".join(chunks)
-	if not content:
+	if r.status_code != 200 or not r.content:
 		return None
-	return content, _type_for(name)
+	return r.content, _type_for(name)
 
 
 def _title_for(name: str, content: bytes | None, typ: str) -> str:
