@@ -523,7 +523,7 @@
 
 		<!-- ============ SKILLS POPUP (centered) ============ -->
 		<transition name="jv-fade">
-			<div v-if="skillsModalOpen" class="jv-skills-overlay" @click.self="closeSkillsModal">
+			<div v-if="skillsModalOpen" class="jv-skills-overlay" :class="{ 'jv-page-mode': pageMode }" @click.self="closeSkillsModal">
 				<div class="jv-skills-modal">
 					<div class="jv-skills-head">
 						<div style="min-width:0;">
@@ -659,14 +659,17 @@
 
 		<!-- ============ MACROS POPUP (centered) ============ -->
 		<transition name="jv-fade">
-			<div v-if="fileboxOpen" class="jv-skills-overlay" @click.self="fileboxOpen = false">
+			<div v-if="fileboxOpen" class="jv-skills-overlay" :class="{ 'jv-page-mode': pageMode }" @click.self="fileboxOpen = false; _clearPageHash()">
 				<div class="jv-skills-modal">
 					<div class="jv-skills-head">
 						<div style="min-width:0;">
 							<div class="jv-skills-title">File Box</div>
 							<div class="jv-skills-sub">Drop an inbound document — invoice, receipt, PO — and Jarvis drafts it for you.</div>
 						</div>
-						<button class="jv-btn jv-btn--icon" title="Close (Esc)" @click="fileboxOpen = false">
+						<button v-if="!pageMode" class="jv-btn jv-btn--icon" title="Open as page" @click="openAsPage('filebox')">
+							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" /></svg>
+						</button>
+						<button class="jv-btn jv-btn--icon" title="Close (Esc)" @click="fileboxOpen = false; _clearPageHash()">
 							<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
 						</button>
 					</div>
@@ -678,9 +681,11 @@
 							@dragover.prevent="fileboxDrag = true" @dragleave="fileboxDrag = false"
 							@drop.prevent="onFileboxDrop($event)"
 						>
-							<div v-if="fileboxBusy" style="font-size:13px;color:var(--text-2);">Uploading &amp; starting the draft…</div>
-							<div v-else style="font-size:13px;color:var(--text-2);">Drop a file here, or click to browse.<br /><span style="font-size:11.5px;color:var(--text-3);">One document per file works best. The draft opens as a chat.</span></div>
-							<input ref="fileboxInput" type="file" style="display:none" @change="onFileboxPick($event)" />
+							<div style="font-size:13px;color:var(--text-2);">
+								Drop files here, or click to browse<span v-if="fileboxUploading"> — {{ fileboxUploading }} uploading…</span>.<br />
+								<span style="font-size:11.5px;color:var(--text-3);">Keep adding — each file processes in the background and lands in Approvals if it needs you.</span>
+							</div>
+							<input ref="fileboxInput" type="file" multiple style="display:none" @change="onFileboxPick($event)" />
 						</div>
 						<div v-if="fileboxError" class="jv-skill-err">{{ fileboxError }}</div>
 						<div v-if="!fileboxItems.length" class="jv-set-empty" style="text-align:center;padding:10px 0;">Nothing processed yet.</div>
@@ -701,22 +706,34 @@
 				</div>
 			</div>
 
-			<div v-if="approvalsOpen" class="jv-skills-overlay" @click.self="approvalsOpen = false">
+			<div v-if="approvalsOpen" class="jv-skills-overlay" :class="{ 'jv-page-mode': pageMode }" @click.self="approvalsOpen = false; _clearPageHash()">
 				<div class="jv-skills-modal">
 					<div class="jv-skills-head">
 						<div style="min-width:0;">
 							<div class="jv-skills-title">Approvals</div>
 							<div class="jv-skills-sub">Decisions waiting on you. Deciding resumes the chat that asked.</div>
 						</div>
-						<button class="jv-btn jv-btn--icon" title="Close (Esc)" @click="approvalsOpen = false">
+						<button v-if="!pageMode" class="jv-btn jv-btn--icon" title="Open as page" @click="openAsPage('approvals')">
+							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" /></svg>
+						</button>
+						<button class="jv-btn jv-btn--icon" title="Close (Esc)" @click="approvalsOpen = false; _clearPageHash()">
 							<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
 						</button>
 					</div>
 					<div class="jv-skills-body">
 						<div v-if="approvalsError" class="jv-skill-err">{{ approvalsError }}</div>
-						<div v-if="!approvalItems.length" class="jv-set-empty" style="text-align:center;padding:26px 0;">Nothing waiting on you. 🎉</div>
-						<div v-for="a in approvalItems" :key="a.name" style="border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px;">
-							<div style="font-size:13px;font-weight:600;">{{ a.title }}</div>
+						<div v-if="approvalTabs.length > 1" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">
+							<button v-for="[tab, n] in approvalTabs" :key="tab" class="jv-btn jv-btn--sm"
+								:class="{ 'jv-btn--primary': approvalTab === tab }" @click="approvalTab = tab">
+								{{ tab }} <span style="opacity:.65;">({{ n }})</span>
+							</button>
+						</div>
+						<div v-if="!approvalItemsShown.length" class="jv-set-empty" style="text-align:center;padding:26px 0;">Nothing waiting on you. 🎉</div>
+						<div v-for="a in approvalItemsShown" :key="a.name" style="border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px;">
+							<div style="display:flex;gap:8px;align-items:center;">
+								<div style="font-size:13px;font-weight:600;flex:1;min-width:0;">{{ a.title }}</div>
+								<span style="font-size:10.5px;border-radius:7px;padding:2px 7px;background:var(--surface-2);color:var(--text-2);flex:none;">{{ (a.document_type || "").trim() || "Unclassified" }}</span>
+							</div>
 							<div style="font-size:12.5px;color:var(--text-2);margin:6px 0;">{{ a.question }}</div>
 							<details v-if="a.context_md" style="margin-bottom:8px;">
 								<summary style="font-size:11.5px;color:var(--text-3);cursor:pointer;">context</summary>
@@ -739,7 +756,7 @@
 				</div>
 			</div>
 
-			<div v-if="macrosModalOpen" class="jv-skills-overlay" @click.self="closeMacrosModal">
+			<div v-if="macrosModalOpen" class="jv-skills-overlay" :class="{ 'jv-page-mode': pageMode }" @click.self="closeMacrosModal">
 				<div class="jv-skills-modal">
 					<div class="jv-skills-head">
 						<div style="min-width:0;">
@@ -1628,41 +1645,71 @@ const approvalsError = ref("")
 const approvalItems = ref([])
 const approvalDrafts = ref({})
 const approvalsBadge = ref(0)
+// ── Page mode: #approvals / #filebox / #skills / #macros open the same
+// surface as a near-fullscreen page (more room for detail); the rail
+// buttons keep the quick popup. Closing clears the hash.
+const pageMode = ref(false)
+function _applyHashRoute() {
+	const h = (window.location.hash || "").replace("#", "")
+	pageMode.value = ["approvals", "filebox", "skills", "macros"].includes(h)
+	if (h === "approvals") openApprovals()
+	else if (h === "filebox") openFilebox()
+	else if (h === "skills") openSkillsModal()
+	else if (h === "macros") openMacrosModal()
+}
+function openAsPage(name) {
+	window.location.hash = name
+}
+function _clearPageHash() {
+	if (pageMode.value) {
+		pageMode.value = false
+		history.replaceState(null, "", window.location.pathname + window.location.search)
+	}
+}
 
 async function refreshApprovalsBadge() {
 	try { approvalsBadge.value = (await api.approvalsPendingCount()) || 0 } catch (e) { /* badge is best-effort */ }
 }
+window.addEventListener("hashchange", () => _applyHashRoute())
+setTimeout(() => _applyHashRoute(), 0)
+
 async function openFilebox() {
 	fileboxOpen.value = true
 	fileboxError.value = ""
 	try { fileboxItems.value = (await api.fileboxList()) || [] } catch (e) { fileboxError.value = "Could not load the inbound list." }
 }
+const fileboxUploading = ref(0) // in-flight drops; the box stays open and accepts more
 async function _fileboxProcess(file) {
-	if (!file || fileboxBusy.value) return
-	fileboxBusy.value = true
+	// Background-first: each file is its own async pipeline. Keep dropping -
+	// nothing blocks, nothing navigates; items appear in the inbound list as
+	// "processing" and land in Approvals if they need you.
+	if (!file) return
+	fileboxUploading.value++
 	fileboxError.value = ""
 	try {
 		const up = await api.uploadFile(file)
 		const res = await api.fileboxDrop(up.file_url, up.file_name)
 		if (!res || !res.ok) throw new Error((res && res.reason) || "drop failed")
-		fileboxOpen.value = false
-		await loadConversations()
-		await selectConversation(res.conversation_id)
+		fileboxItems.value = [
+			{ name: res.conversation_id, title: `File: ${up.file_name}`, creation: new Date().toISOString(), status: "processing", pending_approvals: 0 },
+			...fileboxItems.value.filter((x) => x.name !== res.conversation_id),
+		]
+		loadConversations() // background refresh; no navigation
 	} catch (e) {
-		fileboxError.value = `Could not process the file: ${e.message || e}`
+		fileboxError.value = `Could not process ${file.name}: ${e.message || e}`
 	} finally {
-		fileboxBusy.value = false
+		fileboxUploading.value--
 	}
 }
 function onFileboxDrop(ev) {
 	fileboxDrag.value = false
-	const f = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0]
-	_fileboxProcess(f)
+	const files = (ev.dataTransfer && ev.dataTransfer.files) || []
+	for (const f of files) _fileboxProcess(f)
 }
 function onFileboxPick(ev) {
-	const f = ev.target.files && ev.target.files[0]
+	const files = ev.target.files || []
+	for (const f of files) _fileboxProcess(f)
 	ev.target.value = ""
-	_fileboxProcess(f)
 }
 async function openFileboxItem(f) {
 	fileboxOpen.value = false
@@ -1682,21 +1729,37 @@ async function doDecide(a, approve) {
 	approvalsBusy.value = true
 	try {
 		await api.decideApproval(a.name, decision, approve)
+		// Background-first: the decision resumes the chat over there; stay
+		// on the board so the next approval can be handled. The per-item
+		// "Chat" button is the opt-in way in.
 		approvalItems.value = approvalItems.value.filter((x) => x.name !== a.name)
 		delete approvalDrafts.value[a.name]
 		refreshApprovalsBadge()
-		// The decision resumed the linked chat - take the user there.
-		if (a.conversation) {
-			approvalsOpen.value = false
-			await loadConversations()
-			await selectConversation(a.conversation)
-		}
+		loadConversations()
 	} catch (e) {
 		approvalsError.value = `Could not record the decision: ${e.message || e}`
 	} finally {
 		approvalsBusy.value = false
 	}
 }
+// Internal tabs: group pending approvals by the business document type so a
+// busy queue can be triaged one type at a time. Empty document_type = the
+// classification itself needs deciding - its own tab.
+const approvalTab = ref("All")
+const approvalTabs = computed(() => {
+	const counts = {}
+	for (const a of approvalItems.value) {
+		const k = (a.document_type || "").trim() || "Unclassified"
+		counts[k] = (counts[k] || 0) + 1
+	}
+	return [["All", approvalItems.value.length], ...Object.entries(counts).sort((x, y) => y[1] - x[1])]
+})
+const approvalItemsShown = computed(() => {
+	if (approvalTab.value === "All") return approvalItems.value
+	return approvalItems.value.filter(
+		(a) => (((a.document_type || "").trim()) || "Unclassified") === approvalTab.value,
+	)
+})
 async function openApprovalChat(a) {
 	approvalsOpen.value = false
 	await selectConversation(a.conversation)
@@ -5195,4 +5258,10 @@ function onGlobalKey(e) {
 .jv-slide-enter-active .jv-artifact-panel, .jv-slide-leave-active .jv-artifact-panel { transition: transform .24s cubic-bezier(.4, 0, .2, 1); }
 .jv-slide-enter-from, .jv-slide-leave-to { opacity: 0; }
 .jv-slide-enter-from .jv-artifact-panel, .jv-slide-leave-to .jv-artifact-panel { transform: translateX(100%); }
+
+.jv-page-mode .jv-skills-modal {
+	width: min(1150px, 96vw);
+	height: 93vh;
+	max-height: 93vh;
+}
 </style>
