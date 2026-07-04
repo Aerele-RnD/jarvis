@@ -269,7 +269,7 @@ def persist_tool_receipt(conv_name: str, tool: str, args: dict, result: dict) ->
 		)
 		# Generation: if the tool produced a file artifact (download_pdf,
 		# export_excel, …), attach it to the in-flight assistant message's
-		# canvas field + publish a canvas event so it renders inline — the
+		# canvas field + publish a canvas event so it renders inline - the
 		# same surface the agent's own canvas files use.
 		_maybe_attach_artifact(conv_name, conv_owner, result)
 	finally:
@@ -643,19 +643,20 @@ def _run_tool(tool: str, raw_args: dict | str | None,
 			if conv else None) or exec_user
 		# Auto-apply bypass (issue #186, Task 4 + #5): the ONLY path where a gated
 		# write runs without a confirmation token. Strictly limited to
-		# {a resolved conversation owned by owner_user, admin-enabled auto_apply,
-		# an _AUTO_APPLYABLE (reversible create/update) tool}. Comparing against
-		# owner_user (the conv owner) rather than the acting session user lets it
-		# fire in self-host too, where the acting user is the tool user. An
-		# empty/unresolved conv is treated as OFF (safe default). Everything
-		# outside create/update - submit_doc, run_method, and every destructive
-		# tool (delete/cancel/amend/send_email) - ALWAYS parks, even with
-		# auto_apply on.
+		# {a resolved conversation, admin-enabled auto_apply, an _AUTO_APPLYABLE
+		# (reversible create/update) tool}. An empty/unresolved conv is treated
+		# as OFF (safe default). Everything outside create/update - submit_doc,
+		# run_method, and every destructive tool (delete/cancel/amend/send_email)
+		# - ALWAYS parks, even with auto_apply on.
+		#
+		# conv is never a client claim - it is resolved server-side by
+		# _gate_context above (managed mode from the session_key, self-host from
+		# selfhost.get_active_turn) - so there is no owner to re-check here: an
+		# owner comparison against owner_user (itself read from this same conv
+		# a few lines up) would just be comparing one DB read to another read of
+		# the identical field, not a real access-control boundary.
 		if conv and tool in _AUTO_APPLYABLE:
-			row = frappe.db.get_value(
-				"Jarvis Conversation", conv, ["owner", "auto_apply"], as_dict=True
-			) or {}
-			if row.get("owner") == owner_user and row.get("auto_apply"):
+			if frappe.db.get_value("Jarvis Conversation", conv, "auto_apply"):
 				return dispatch_confirmed(tool, args)
 		preview = _pending_preview(tool, args)
 		token = pending_confirm.mint(conversation=conv, owner=owner_user,

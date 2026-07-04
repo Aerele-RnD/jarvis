@@ -259,3 +259,30 @@ class TestConsume(FrappeTestCase):
 		winners = [r for r in results if r is not None]
 		self.assertEqual(len(winners), 1)
 		self.assertIsNone(pending_confirm.peek(token))
+
+	def test_getdel_connection_error_returns_none_without_burning_token(self):
+		"""Finding #8 (max-effort review of issue #186): the raw
+		``frappe.cache().getdel`` call in consume() is not wrapped in the
+		RedisWrapper's usual ``suppress(redis.exceptions.ConnectionError)``
+		(unlike get_value, used by peek), so a transient redis blip during a
+		Confirm click propagated as an uncaught 500 instead of a graceful
+		None. consume() must itself catch the error and return None - the
+		token must not be burned, so a later consume against a healthy cache
+		still succeeds. This must NOT fall back to a non-atomic
+		get-then-delete: only the same getdel is retried later."""
+		import redis.exceptions
+
+		token = self._mint()
+
+		def _raise_once(*args, **kwargs):
+			raise redis.exceptions.ConnectionError("simulated redis blip")
+
+		with patch.object(frappe.cache(), "getdel", side_effect=_raise_once):
+			result = pending_confirm.consume(token, owner=OWNER, conversation=CONV)
+		self.assertIsNone(result)
+		# Token was not burned: still peekable, and a later consume against a
+		# healthy cache still succeeds.
+		self.assertIsNotNone(pending_confirm.peek(token))
+		record = pending_confirm.consume(token, owner=OWNER, conversation=CONV)
+		self.assertIsNotNone(record)
+		self.assertEqual(record["tool"], TOOL)

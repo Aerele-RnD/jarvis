@@ -874,7 +874,7 @@ def _escape_untrusted_tag(match: "re.Match[str]") -> str:
 	)
 
 
-def _safe_label_name(name: str) -> str:
+def _safe_label_name(name) -> str:
 	"""Sanitize an attacker-controllable name (attachment file name/URL)
 	before it is interpolated into a bench-authored label line that sits
 	OUTSIDE the untrusted-data fence (e.g. "Attached file `{name}`:"). A
@@ -883,8 +883,13 @@ def _safe_label_name(name: str) -> str:
 	complete fence bypass (issue #186 finding 1). Collapse all whitespace
 	(including newlines) to single spaces and drop backticks so the label
 	stays one safe line and can't prematurely close/open a markdown code
-	span."""
-	single_line = re.sub(r"\s+", " ", name).strip()
+	span.
+
+	``name`` is unvalidated client JSON (the attachment dict is only checked
+	to be a dict, not that ``file_name`` is a string), so a number, list, or
+	other JSON value must not crash the turn here - coerce to str first
+	(issue #186 max-effort review finding #9)."""
+	single_line = re.sub(r"\s+", " ", str(name)).strip()
 	return single_line.replace("`", "'")
 
 

@@ -26,6 +26,7 @@ from jarvis.chat.turn_handler import (
 	_fence_untrusted,
 	_prepare_attachments,
 	_prepend_doc_context,
+	_safe_label_name,
 )
 
 
@@ -108,6 +109,27 @@ class TestFenceUntrustedHelper(FrappeTestCase):
 		self.assertNotIn("＜/untrusted-data＞", out)
 		self.assertIn("before", out)
 		self.assertIn("after", out)
+
+
+class TestSafeLabelNameNonString(FrappeTestCase):
+	"""``file_name`` is unvalidated client JSON (chat/api.py only checks the
+	attachment is a dict, not that file_name is a string). Finding #9 (max-
+	effort review of issue #186): a non-string value used to reach ``re.sub``
+	directly and raise ``TypeError``, crashing the whole turn - a live
+	regression introduced by the fence work (pre-fence the value was only
+	f-string-interpolated, which tolerates any type). ``_safe_label_name``
+	must coerce to str first so any JSON value is handled safely."""
+
+	def test_int_does_not_raise(self):
+		self.assertEqual(_safe_label_name(12345), "12345")
+
+	def test_list_does_not_raise(self):
+		out = _safe_label_name(["a", "b"])
+		self.assertIsInstance(out, str)
+		self.assertNotIn("`", out)
+
+	def test_none_does_not_raise(self):
+		self.assertEqual(_safe_label_name(None), "None")
 
 
 class TestPrepareAttachmentsFencing(FrappeTestCase):
@@ -217,6 +239,22 @@ class TestPrepareAttachmentsFencing(FrappeTestCase):
 		msg, _ = _prepare_attachments("hi", [att], vision_ok=False)
 		self.assertIn("couldn't be viewed", msg)
 		self.assertNotIn("<untrusted-data", msg)
+
+	def test_non_string_file_name_does_not_crash_the_turn(self):
+		# Finding #9: a client-supplied file_name of a non-string JSON type
+		# (int here) must not blow up the whole turn with a TypeError from
+		# _safe_label_name's re.sub. The trusted File doc's own name still
+		# wins once the file is loaded.
+		att = _make_file("notes.txt", b"hello world")
+		crafted_att = {"file_url": att["file_url"], "file_name": 12345}
+		msg, _ = _prepare_attachments("hi", [crafted_att], vision_ok=True)
+		self.assertIn(att["file_name"], msg)
+
+	def test_list_file_name_does_not_crash_the_turn(self):
+		att = _make_file("notes.txt", b"hello world")
+		crafted_att = {"file_url": att["file_url"], "file_name": ["a", "b"]}
+		msg, _ = _prepare_attachments("hi", [crafted_att], vision_ok=True)
+		self.assertIn(att["file_name"], msg)
 
 	def test_truncation_still_applies_inside_the_fence(self):
 		big = "x" * (_MAX_INLINE_CHARS + 500)

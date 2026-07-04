@@ -1,7 +1,7 @@
 """Direct apply for chat action cards (the record draft panel).
 
 The agent emits a ``jarvis-action`` block; the SPA renders it in a side-panel
-editor and posts the FINAL values here — no LLM turn in the apply path. All
+editor and posts the FINAL values here - no LLM turn in the apply path. All
 mutations route through the existing permission-checked tools
 (``jarvis.tools.create_doc`` etc.), so this module adds routing + a receipt,
 not a second write path.
@@ -49,7 +49,7 @@ def _child_columns(child_doctype: str) -> list[dict]:
 @frappe.whitelist()
 def get_doctype_form_meta(doctype: str) -> dict:
 	"""Form metadata for the draft panel: main fields INCLUDING Table fields,
-	plus per-table child columns — one call, so the panel never fans out.
+	plus per-table child columns - one call, so the panel never fans out.
 	Gated on read permission of the parent (child meta rides on that gate)."""
 	doctype = (doctype or "").strip()
 	if not doctype or not frappe.db.exists("DocType", doctype):
@@ -86,7 +86,7 @@ def get_doctype_form_meta(doctype: str) -> dict:
 def load_doc(doctype: str, name: str) -> dict:
 	"""Current values of one document (main fields + child rows restricted to
 	the form-meta columns) so the panel can pre-fill an update draft. Gated on
-	WRITE permission — this endpoint exists to edit."""
+	WRITE permission - this endpoint exists to edit."""
 	doctype = (doctype or "").strip()
 	name = (name or "").strip()
 	if not doctype or not name:
@@ -137,7 +137,7 @@ def _append_receipt(conversation: str, verb: str, doctype: str, name: str,
 					args: dict, submitted: int = 0) -> None:
 	"""Tool message first (feeds the SPA's docRefs → the receipt's doc id
 	linkifies to Desk), then a short assistant receipt the agent also sees in
-	the transcript on its next turn — so it never re-applies the change."""
+	the transcript on its next turn - so it never re-applies the change."""
 	frappe.get_doc({
 		"doctype": MSG, "conversation": conversation, "seq": _next_seq(conversation),
 		"role": "tool", "streaming": 0,
@@ -215,7 +215,7 @@ def apply_action(action: dict | str | None = None) -> dict:
 		_append_receipt(conversation, verb, doctype, name, args, do_submit)
 		frappe.db.commit()
 	except Exception:
-		# The mutation is already committed — a receipt hiccup must not
+		# The mutation is already committed - a receipt hiccup must not
 		# report failure (the SPA would retry and duplicate the create).
 		frappe.log_error(title="apply_action receipt failed", message=frappe.get_traceback())
 	slug = doctype.lower().replace(" ", "-")

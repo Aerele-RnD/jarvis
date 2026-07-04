@@ -21,6 +21,8 @@ import json
 import pickle
 import secrets
 
+import redis.exceptions
+
 import frappe
 
 _TTL_S = 900  # 15 min; a confirmation token the user must click within
@@ -124,7 +126,22 @@ def consume(token: str, *, owner: str, conversation: str) -> dict | None:
 		return None
 
 	full_key = frappe.cache().make_key(_key(token))
-	raw = frappe.cache().getdel(full_key)
+	# GETDEL is a raw redis-py command, not one of RedisWrapper's own wrapped
+	# methods (get_value/set_value/...), so unlike those it is NOT wrapped in
+	# RedisWrapper's usual suppress(redis.exceptions.ConnectionError) - a
+	# transient redis blip here would otherwise propagate as an uncaught 500
+	# instead of the graceful None the caller expects (treated as
+	# not-consumable -> InvalidConfirmation; the token is not burned, the user
+	# can retry). Also defensively catch ResponseError: GETDEL requires
+	# redis-server >= 6.2, and an older/misconfigured server rejects the
+	# command outright. Either error returns None here WITHOUT falling back to
+	# a non-atomic get-then-delete, which would reintroduce the very race
+	# GETDEL exists to close - only the same atomic getdel is retried on a
+	# later call.
+	try:
+		raw = frappe.cache().getdel(full_key)
+	except (redis.exceptions.ConnectionError, redis.exceptions.ResponseError):
+		return None
 	frappe.local.cache.pop(full_key, None)
 	if raw is None:
 		return None
