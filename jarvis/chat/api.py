@@ -336,7 +336,7 @@ from jarvis.chat.openclaw_client import OpenclawSession
 def send_message(
 	conversation: str | None = None, message: str = "", model_override: str | None = None,
 	attachments: str | None = None, context: str | None = None,
-	thinking_override: str | None = None,
+	thinking_override: str | None = None, background: int = 0,
 ) -> dict:
 	"""Validate, persist the user message, enqueue the worker.
 
@@ -501,8 +501,9 @@ def send_message(
 		except Exception:
 			pass
 	# Dispatch the turn (see _dispatch_turn for the Node-RQ vs Python-pubsub
-	# routing rationale).
-	_dispatch_turn(enqueue_kwargs)
+	# routing rationale). `background` marks unattended turns (File Box
+	# drops) that must not jump ahead of a human's queued question.
+	_dispatch_turn(enqueue_kwargs, interactive=not int(background or 0))
 
 	# Latency telemetry (plan Phase 0): one line per send so the web-request
 	# segments are measurable. total_ms should now sit in the tens of ms even
@@ -776,9 +777,88 @@ def _next_seq(conversation: str) -> int:
 	return (current_max or 0) + 1
 
 
-def _dispatch_turn(enqueue_kwargs: dict) -> None:
+CHAT_QUEUE = "jarvis_chat"
+
+
+def _turn_queue() -> str:
+	"""RQ queue for agent turns: ``jarvis_chat`` when the bench provisions
+	it, else ``long``.
+
+	A turn occupies its worker for the turn's whole wall-clock (the worker
+	holds the openclaw event relay), so on ``long`` a batch of File-Box
+	documents serializes behind ``background_workers`` AND starves every
+	other long job behind minutes-long turns. A bench that declares the
+	queue in ``common_site_config.workers`` (Frappe Cloud: bench worker
+	config) and runs workers for it gets isolated, parallel chat turns;
+	every other deployment keeps today's ``long`` behavior untouched.
+
+	Both gates matter: ``frappe.enqueue`` rejects queue names missing from
+	the ``workers`` config, and a declared queue whose workers are down
+	(supervisor edit, half-applied deploy) would blackhole turns - so we
+	also require a live listener. Result cached 10s per site; a
+	``jarvis_chat_queue`` site_config value overrides verbatim (e.g.
+	``"long"`` to force off without touching worker config).
+	"""
+	override = (frappe.conf.get("jarvis_chat_queue") or "").strip()
+	if override:
+		# Validate against declared queues: a typo'd override would make
+		# frappe.enqueue's validate_queue throw and 500 EVERY send_message.
+		from frappe.utils.background_jobs import get_queues_timeout
+
+		if override in get_queues_timeout():
+			return override
+		return "long"
+	if CHAT_QUEUE not in (frappe.get_conf().get("workers") or {}):
+		return "long"
+	cache_key = "jarvis:turn_queue"
+	cached = frappe.cache().get_value(cache_key)
+	if cached:
+		return cached
+	queue = "long"
+	try:
+		from frappe.utils.background_jobs import generate_qname, get_workers
+
+		qname = generate_qname(CHAT_QUEUE)
+		if any(qname in (w.queue_names() or []) for w in get_workers()):
+			queue = CHAT_QUEUE
+	except Exception:
+		# Probe trouble (redis hiccup, RQ API drift) must never take down
+		# send_message - long is always a correct executor.
+		pass
+	# Short TTL: the probe is ~4ms, and this bounds the window in which
+	# turns can be enqueued toward workers that just went away (RQ's
+	# 420s worker-registration TTL can keep hard-killed workers "visible"
+	# regardless; the orphan sweep in stale_scan is the backstop).
+	frappe.cache().set_value(cache_key, queue, expires_in_sec=10)
+	return queue
+
+
+def _redispatch_orphan(
+	conversation_id: str, message_id: str,
+	attachments=None, context=None,
+) -> None:
+	"""Re-dispatch a turn whose original RQ job never ran (orphan sweep in
+	stale_scan). Fresh run_id; the 10s probe re-routes to a live queue.
+	``attachments``/``context`` are recovered from the dead job's kwargs
+	when it still exists - they ride only the enqueue payload, so dropping
+	them would resume the turn blind to its own file."""
+	payload = {
+		"conversation_id": conversation_id,
+		"message_id": message_id,
+		"run_id": uuid.uuid4().hex[:12],
+		"enqueued_at_ms": int(time.time() * 1000),
+	}
+	if attachments:
+		payload["attachments"] = attachments
+	if context:
+		payload["context"] = context
+	_dispatch_turn(payload, interactive=False)
+
+
+def _dispatch_turn(enqueue_kwargs: dict, interactive: bool = True) -> None:
 	"""Route a prepared turn to the worker. On the default Node socketio backend
-	we use the ``long`` RQ queue (chat turns run up to ``_AGENT_TURN_WORKER_TIMEOUT``
+	we use the ``jarvis_chat`` RQ queue when the bench provisions one, else
+	``long`` (chat turns run up to ``_AGENT_TURN_WORKER_TIMEOUT``
 	= 720s, far above the 300s default cap; ``default`` is shared with provisioning
 	+ OAuth-refresh jobs; ``at_front=True`` keeps interactive chat ahead of
 	scheduled work). On the Python socketio backend we publish to Redis instead so
@@ -823,11 +903,27 @@ def _dispatch_turn(enqueue_kwargs: dict) -> None:
 				"unset socketio_backend."
 			),
 		)
+	queue = _turn_queue()
+	# Deterministic job id so the orphan sweep (stale_scan) can tell a
+	# queued-and-draining job from one lost in a dead queue. The attempt
+	# suffix comes from the user row's was_recovered flag (0 first
+	# dispatch, 1 after a sweeper re-dispatch) so an id is never reused
+	# for a live job.
+	job_id = None
+	message_id = enqueue_kwargs.get("message_id")
+	if message_id:
+		attempt = frappe.db.get_value(MSG, message_id, "was_recovered") or 0
+		job_id = f"jarvis-turn::{message_id}::a{int(attempt)}"
 	frappe.enqueue(
 		method="jarvis.chat.worker.run_agent_turn",
-		queue="long",
+		queue=queue,
 		timeout=_AGENT_TURN_WORKER_TIMEOUT,
-		at_front=True,
+		# Interactive turns (typed message, retry, macro step) jump the
+		# queue; background turns (File Box batch drops) keep FIFO drop
+		# order on the dedicated chat queue. On the shared long queue
+		# everything stays at_front, as before, to beat scheduled work.
+		at_front=(queue == "long") or interactive,
+		job_id=job_id,
 		**enqueue_kwargs,
 	)
 

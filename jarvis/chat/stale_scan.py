@@ -55,7 +55,7 @@ def scan_and_mark_errored() -> int:
 		as_dict=True,
 	)
 
-	errored = 0
+	errored = _sweep_orphan_turns(now)
 	for r in rows:
 		creation = r.get("creation")
 		recoverable = (not self_hosted) and bool((r.get("session_key") or "").strip())
@@ -77,4 +77,113 @@ def scan_and_mark_errored() -> int:
 				})
 			errored += 1
 	frappe.db.commit()
+	return errored
+
+
+# Orphan sweep: recovery above keys on a streaming=1 ASSISTANT row, but that
+# placeholder is only created inside the worker. A turn whose RQ job never ran
+# (enqueued toward workers that died - possible for up to the probe TTL, or
+# ~420s after a hard kill while RQ's stale worker registration lingers) has no
+# assistant row at all, so without this sweep it would hang as an unanswered
+# user message forever.
+ORPHAN_MIN_AGE_SECONDS = 180  # past any normal dequeue delay
+ORPHAN_MAX_AGE_SECONDS = 3 * 3600  # don't touch history predating job ids
+_ORPHAN_ERR = "Run was never started (no worker picked it up)."
+
+
+def _sweep_orphan_turns(now) -> int:
+	"""Find user messages with no assistant row after them, decide from the
+	RQ job's actual state, and heal or surface them. Returns rows errored."""
+	from frappe.utils.background_jobs import (
+		get_job,
+		get_job_status,
+		get_workers,
+	)
+
+	rows = frappe.db.sql(
+		"""
+		SELECT m.name, m.conversation, m.seq, m.was_recovered, c.owner
+		FROM `tabJarvis Chat Message` m
+		LEFT JOIN `tabJarvis Conversation` c ON c.name = m.conversation
+		WHERE m.role = 'user'
+		  AND m.creation BETWEEN %(lo)s AND %(hi)s
+		  AND NOT EXISTS (
+			SELECT 1 FROM `tabJarvis Chat Message` a
+			WHERE a.conversation = m.conversation
+			  AND a.role = 'assistant' AND a.seq > m.seq)
+		""",
+		{
+			"lo": now - timedelta(seconds=ORPHAN_MAX_AGE_SECONDS),
+			"hi": now - timedelta(seconds=ORPHAN_MIN_AGE_SECONDS),
+		},
+		as_dict=True,
+	)
+	if not rows:
+		return 0
+
+	live_qnames = set()
+	try:
+		for w in get_workers():
+			live_qnames.update(w.queue_names() or [])
+	except Exception:
+		live_qnames = None  # probe trouble: treat queued jobs as draining
+
+	errored = 0
+	for r in rows:
+		job_id = f"jarvis-turn::{r['name']}::a{int(r['was_recovered'] or 0)}"
+		try:
+			status = get_job_status(job_id)
+			status = str(status) if status else None
+		except Exception:
+			continue
+		if status == "started":
+			continue  # a worker owns it; the streaming scans take over
+		orig_attachments = orig_context = None
+		if status == "queued":
+			job = get_job(job_id)
+			origin = getattr(job, "origin", None)
+			if live_qnames is None or (origin and origin in live_qnames):
+				continue  # backlog draining toward live workers - leave it
+			# Queued into a queue nobody listens on: salvage the payload
+			# (attachments ride only the enqueue kwargs), cancel, heal.
+			try:
+				inner = (job.kwargs or {}).get("kwargs") or {}
+				orig_attachments = inner.get("attachments")
+				orig_context = inner.get("context")
+			except Exception:
+				pass
+			try:
+				job.cancel()
+			except Exception:
+				pass
+		# Lost (no job / canceled / dead-queue). Heal once, then surface.
+		if not int(r["was_recovered"] or 0):
+			frappe.db.set_value(MSG, r["name"], "was_recovered", 1,
+				update_modified=False)
+			from jarvis.chat.api import _redispatch_orphan
+			_redispatch_orphan(
+				r["conversation"], r["name"],
+				attachments=orig_attachments, context=orig_context,
+			)
+			continue
+		# Second strike: give the user the normal error + retry surface.
+		from jarvis.chat.api import _next_seq
+		err = frappe.get_doc({
+			"doctype": MSG,
+			"conversation": r["conversation"],
+			"seq": _next_seq(r["conversation"]),
+			"role": "assistant",
+			"content": "",
+			"streaming": 0,
+			"error": _ORPHAN_ERR,
+		})
+		err.insert(ignore_permissions=True)
+		if r.get("owner"):
+			publish_to_user(r["owner"], {
+				"kind": "run:error",
+				"conversation_id": r["conversation"],
+				"message_id": err.name,
+				"error": _ORPHAN_ERR,
+			})
+		errored += 1
 	return errored
