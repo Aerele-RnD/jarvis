@@ -145,7 +145,18 @@ def compute_proxy_active(settings) -> bool:
     An empty enabled-model list with a preset does NOT count as proxy-valid.
     """
     enabled = [m for m in (settings.models or []) if m.enabled]
-    return len(enabled) >= 2 or (bool(settings.preset) and len(enabled) >= 1)
+    if len(enabled) >= 2 or (bool(settings.preset) and len(enabled) >= 1):
+        return True
+    # A chat-subscription model REQUIRES the cliproxy sidecar, which is
+    # provisioned ONLY on the proxy path. The DIRECT (single-model) path just
+    # pushes llm-creds and has no cliproxy, so a lone subscription model would
+    # never get its OAuth blob served and chat would fail despite a "connected"
+    # UI. Force such a pool onto the proxy path. (#200 review #1)
+    for m in enabled:
+        ct = m.credential_type if hasattr(m, "credential_type") else m.get("credential_type", "api_key")
+        if ct == "subscription":
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------

@@ -17,6 +17,10 @@ test("deriveMode: 1 model & no preset => direct; else proxy", () => {
   assert.equal(deriveMode([{}, {}], null), "proxy")
   assert.equal(deriveMode([], null), "direct")
 })
+test("deriveMode: a single subscription model is proxy (needs cliproxy)", () => {
+  assert.equal(deriveMode([{ model: "gpt-5.5", credentialType: "subscription" }], null), "proxy")
+  assert.equal(deriveMode([{ model: "gpt-5.5", subscription: { accounts: [] } }], null), "proxy")
+})
 test("uniqueVendors: dedup preserving order", () => {
   assert.deepEqual(uniqueVendors(LADDER), ["anthropic"])
   assert.deepEqual(uniqueVendors(TRIO), ["anthropic", "openai", "gemini"])

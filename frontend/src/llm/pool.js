@@ -1,8 +1,14 @@
 // Shared pure pool logic. Consumed by the Vue app (direct import) AND the desk
 // onboarding page (via jarvis_onboarding_llm.bundle.js -> window). No framework imports.
 export function deriveMode(models, preset) {
-  const n = Array.isArray(models) ? models.length : 0
-  return (n <= 1 && !preset) ? "direct" : "proxy"
+  const list = Array.isArray(models) ? models : []
+  // A chat-subscription model needs the cliproxy sidecar, which only the proxy
+  // path provisions — so even a single subscription is "proxy". (#200 review #1)
+  const hasSubscription = list.some(
+    (m) => m && (m.subscription || m.credentialType === "subscription" || m.credential_type === "subscription"),
+  )
+  if (hasSubscription) return "proxy"
+  return (list.length <= 1 && !preset) ? "direct" : "proxy"
 }
 export function uniqueVendors(entry) {
   if (entry && Array.isArray(entry.vendors) && entry.vendors.length) return entry.vendors.slice()

@@ -47,6 +47,28 @@ class TestSaveLlmPool(_RT3SettingsTestCase):
         s = frappe.get_single("Jarvis Settings")
         self.assertEqual(int(s.proxy_active or 0), 0)
 
+    def test_one_subscription_model_is_proxy(self):
+        """A single chat-subscription model needs cliproxy → proxy path, NOT the
+        DIRECT llm-creds path (which never serves the OAuth blob). #200 review #1."""
+        models = [{
+            "model": "gpt-5.5", "tier": "strong", "order": 0,
+            "subscription": {"rotation": "sticky", "accounts": [
+                {"upstream": "openai", "account_ref": "SUB_deadbeef",
+                 "label": "me@x.com", "oauth_blob": '{"refresh_token":"rt"}'},
+            ]},
+        }]
+        pool_calls = []
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   side_effect=lambda **kw: pool_calls.append(kw) or {"action": "pool_update"}), \
+             patch("jarvis.admin_client.post_update_llm_creds") as creds:
+            onboarding.save_llm_pool(frappe.as_json(models), preset=None, routing_mode="failover")
+        self.assertTrue(pool_calls, "single subscription model must route to the proxy pool path")
+        creds.assert_not_called()
+        s = frappe.get_single("Jarvis Settings")
+        self.assertEqual(int(s.proxy_active or 0), 1)
+        # The account's blob reaches the pool push (served via cliproxy).
+        self.assertEqual(pool_calls[0]["oauth_blobs"].get("SUB_deadbeef"), {"refresh_token": "rt"})
+
     def test_preset_validated_against_catalog(self):
         models = [{"provider": "openai", "model": "gpt-5.5", "api_key": "sk-x", "base_url": "", "tier": "strong", "order": 0}]
         with patch("jarvis.admin_client.get_preset_catalog", return_value=_CATALOG):
