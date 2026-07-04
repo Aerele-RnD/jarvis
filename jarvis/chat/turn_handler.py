@@ -723,7 +723,28 @@ def handle_chat_send(payload: dict) -> None:
 				return
 
 			if terminal["kind"] == "relay:error":
-				_publish_run_error(terminal.get("error") or "agent error")
+				err_text = terminal.get("error") or "agent error"
+				# Context overflow is NOT terminal on openclaw: it emits the
+				# error, then auto-compacts and RETRIES the prompt (observed
+				# live: 'auto-compaction succeeded; retrying prompt' ~45s
+				# after the error; the retried run completes in the session).
+				# Park for snapshot recovery instead of erroring - the
+				# recovery cron finalizes the retried answer; if the retry
+				# ALSO dies, the recovery ceiling errors it honestly. This
+				# holds for ANY plan/context-window size: openclaw derives
+				# the window from the model catalog, so smaller-plan windows
+				# just compact sooner - the customer never sees the raw
+				# overflow either way.
+				if "context overflow" in err_text.lower():
+					_mark_recovering(assistant_msg.name)
+					_publish_to_user(user, {
+						"kind": "run:recovering",
+						"conversation_id": conversation_id,
+						"message_id": assistant_msg.name,
+						"run_id": run_id,
+					})
+					return
+				_publish_run_error(err_text)
 				_advance_macro(conversation_id, errored=True)
 				return
 			if terminal["kind"] == "relay:interrupted":

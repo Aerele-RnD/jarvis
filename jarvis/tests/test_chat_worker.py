@@ -1114,3 +1114,18 @@ class TestChatSendAttachmentTimeout(FrappeTestCase):
 		).read()
 		self.assertIn("ack_timeout = 10.0 + (30.0 * len(managed_attachments)", src)
 		self.assertIn("timeout_s=min(ack_timeout, 180.0)", src)
+
+
+class TestRelayOverflowParks(FrappeTestCase):
+	"""relay:error carrying a context overflow must PARK the turn (openclaw
+	auto-compacts + retries; recovery finalizes the retried answer) - the
+	raw overflow error must never reach the chat regardless of the
+	customer plan's context-window size."""
+
+	def test_relay_error_overflow_branch_parks(self):
+		src = open(frappe.get_app_path("jarvis", "chat", "turn_handler.py")).read()
+		i = src.index('terminal["kind"] == "relay:error"')
+		branch = src[i:i + 900]
+		self.assertIn('"context overflow" in err_text.lower()', branch)
+		self.assertIn("_mark_recovering(assistant_msg.name)", branch)
+		self.assertIn('"kind": "run:recovering"', branch)
