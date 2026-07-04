@@ -39,6 +39,43 @@ def _key_ref(idx: int) -> str:
     return f"POOL_KEY_{idx}"
 
 
+# Canonical provider ids follow the admin preset catalog vocabulary
+# (jarvis_admin/billing/catalog.py). The onboarding UI stores a provider as
+# either the catalog *id* (presets: "openai"/"gemini") or the dropdown *label*
+# ("OpenAI"/"Google Gemini") depending on which mode built it; normalize both to
+# one canonical id so the same pool built two ways pushes an identical provider
+# to admin/Bifrost. `gemini` (NOT `google`) is canonical — matches the catalog.
+_PROVIDER_ALIASES = {
+    # dropdown labels -> id (must match frontend pool.js PROVIDER_LABELS)
+    "openai": "openai",
+    "anthropic": "anthropic",
+    "google gemini": "gemini",
+    "mistral": "mistral",
+    "groq": "groq",
+    "together ai": "together",
+    "deepseek": "deepseek",
+    "moonshot (kimi)": "moonshot",
+    "openrouter": "openrouter",
+    "ollama (local)": "ollama",
+    "vllm (local)": "vllm",
+    "openai-compatible": "openai_compat",
+    # legacy id alias: the old frontend used "google" for Gemini
+    "google": "gemini",
+}
+
+
+def normalize_provider(value: str) -> str:
+    """Map a stored provider label/alias to its canonical catalog id.
+
+    Case-insensitive on the lookup; unknown values pass through lowercased
+    (Bifrost provider ids are lowercase). Blank stays blank.
+    """
+    v = (value or "").strip()
+    if not v:
+        return ""
+    return _PROVIDER_ALIASES.get(v.lower(), v.lower())
+
+
 def _model_accounts(m) -> list:
     """Return a subscription model's accounts as a list of dicts.
 
@@ -299,6 +336,7 @@ def build_pool_payload(settings):
             base_url = (m.base_url if hasattr(m, "base_url") else m.get("base_url", "")) or ""
             if base_url:
                 entry["base_url"] = base_url
+            provider = normalize_provider(provider)
             if provider:
                 entry["provider"] = provider
 

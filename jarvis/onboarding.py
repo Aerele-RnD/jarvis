@@ -183,13 +183,40 @@ def save_llm_pool(models, preset: str | None = None, routing_mode: str = "failov
 		if preset not in keys:
 			raise frappe.ValidationError(f"unknown preset '{preset}'")
 
+	from jarvis.jarvis.pool_serialize import (
+		normalize_provider, _get_password, _model_accounts,
+	)
+
 	s = frappe.get_single("Jarvis Settings")
+
+	# Preserve secrets on re-save. get_llm_config never returns api_key / oauth_blob,
+	# so the reloaded editor posts a BLANK secret for anything the user didn't
+	# re-enter this session. Snapshot the currently-stored secrets and merge them
+	# back into any row/account left blank, so editing a pool (e.g. changing a
+	# model id or reordering) does not silently wipe a previously-working
+	# credential. Keyed by canonical provider (api keys are per-vendor) and by
+	# account_ref (server-stable) respectively.
+	prior_api_keys = {}
+	prior_blobs = {}
+	for pm in (s.get("models") or []):
+		if (pm.credential_type or "api_key") == "api_key":
+			pk = _get_password(pm, "api_key")
+			if pk:
+				prior_api_keys[normalize_provider(pm.provider)] = pk
+		else:
+			for a in _model_accounts(pm):
+				ref = (a.get("account_ref") if hasattr(a, "get") else "") or ""
+				blob = (a.get("oauth_blob") if hasattr(a, "get") else "") or ""
+				if ref and blob:
+					prior_blobs[ref] = blob
+
 	s.set("models", [])
 	for i, m in enumerate(models):
 		sub = m.get("subscription")
 		cred_type = "subscription" if sub else "api_key"
+		provider = normalize_provider(m.get("provider"))
 		row = {
-			"provider": (m.get("provider") or "").strip(),
+			"provider": provider,
 			"model": (m.get("model") or "").strip(),
 			"base_url": (m.get("base_url") or "").strip(),
 			"tier": m.get("tier") or "strong",
@@ -198,7 +225,8 @@ def save_llm_pool(models, preset: str | None = None, routing_mode: str = "failov
 			"enabled": 1,
 		}
 		if cred_type == "api_key":
-			row["api_key"] = m.get("api_key") or ""
+			# Blank posted key + a stored key for this vendor → keep the stored one.
+			row["api_key"] = (m.get("api_key") or "").strip() or prior_api_keys.get(provider, "")
 		else:
 			row["rotation"] = (sub or {}).get("rotation") or "sticky"
 			# Subscription accounts are stored as a JSON string in the
@@ -208,8 +236,15 @@ def save_llm_pool(models, preset: str | None = None, routing_mode: str = "failov
 			# saved. As a child-row Password field it is encrypted at rest via the
 			# normal save() -> _save_passwords path (identical to `api_key`), so
 			# oauth_blobs never sit in plaintext in the DB column.
-			accounts = (sub or {}).get("accounts") or []
-			row["subscription_accounts"] = json.dumps(accounts)
+			merged_accounts = []
+			for a in ((sub or {}).get("accounts") or []):
+				a = dict(a)
+				if not (a.get("oauth_blob") or "").strip():
+					ref = a.get("account_ref") or ""
+					if ref and prior_blobs.get(ref):
+						a["oauth_blob"] = prior_blobs[ref]
+				merged_accounts.append(a)
+			row["subscription_accounts"] = json.dumps(merged_accounts)
 		s.append("models", row)
 
 	s.preset = preset

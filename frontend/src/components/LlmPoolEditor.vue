@@ -529,6 +529,7 @@ function buildSaveModels(sourceRows) {
       }
     }
     const m = { provider: (r.provider || "").trim(), model: (r.model || "").trim(), api_key: (r.apiKey || "").trim(), order: i }
+    if (r.hasKey) m.has_key = true  // let validatePool + backend merge keep a stored key on re-save
     const b = (r.baseUrl || "").trim()
     if (b) m.base_url = b
     return m

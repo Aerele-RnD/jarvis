@@ -21,6 +21,7 @@ export function buildCustomModels(rows) {
   return (rows || []).filter(r => r && (r.provider || "").trim() && (r.model || "").trim())
     .map((r, i) => {
       const m = { provider: r.provider.trim(), model: r.model.trim(), api_key: (r.apiKey || "").trim(), order: i }
+      if (r.hasKey) m.has_key = true
       const b = (r.baseUrl || "").trim()
       if (b) m.base_url = b
       return m
@@ -37,13 +38,17 @@ export function validatePool(models, preset) {
     if (m.subscription) {
       if (!(m.model || "").trim()) return { ok: false, error: "Every model needs a model id." }
       const accounts = Array.isArray(m.subscription.accounts) ? m.subscription.accounts : []
-      const connected = accounts.some(a => a && (a.oauth_blob || "").trim())
+      // Connected = a freshly-captured blob this session OR a previously-connected
+      // account (has an account_ref; its stored blob is merged back on save, so the
+      // user need not re-connect to edit an existing pool).
+      const connected = accounts.some(a => a && ((a.oauth_blob || "").trim() || (a.account_ref || "").trim()))
       if (!connected) return { ok: false, error: `Model ${m.model} needs at least one connected account.` }
       continue
     }
-    // API-key model: unchanged rules.
+    // API-key model.
     if (!(m.provider || "").trim() || !(m.model || "").trim()) return { ok: false, error: "Every model needs a provider and a model id." }
-    if (!(m.api_key || "").trim()) return { ok: false, error: `Model ${m.model} needs an API key.` }
+    // A freshly-entered key OR a previously-saved key (has_key; merged back on save).
+    if (!(m.api_key || "").trim() && !m.has_key) return { ok: false, error: `Model ${m.model} needs an API key.` }
   }
   return { ok: true, error: "" }
 }
@@ -58,7 +63,7 @@ export function validatePool(models, preset) {
 export const PROVIDER_LABELS = [
   { id: "anthropic", label: "Anthropic" },
   { id: "openai", label: "OpenAI" },
-  { id: "google", label: "Google Gemini" },
+  { id: "gemini", label: "Google Gemini" },
   { id: "mistral", label: "Mistral" },
   { id: "groq", label: "Groq" },
   { id: "together", label: "Together AI" },

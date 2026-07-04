@@ -30,6 +30,7 @@ from jarvis.tests.test_settings_on_update import _reset_settings
 
 _BLOB_1 = '{"refresh_token":"fake-rt-ACC1-secret"}'
 _BLOB_2 = '{"refresh_token":"fake-rt-ACC2-secret"}'
+_BLOB_1_NEW = '{"refresh_token":"fake-rt-ACC1-RECONNECTED"}'
 
 
 def _models_payload():
@@ -180,3 +181,69 @@ class TestSubscriptionAccountsRoundTrip(_RT3SettingsTestCase):
         blob_by_ref = {a["account_ref"]: a["oauth_blob"] for a in accounts}
         self.assertEqual(blob_by_ref["ACC_1"], _BLOB_1)
         self.assertEqual(blob_by_ref["ACC_2"], _BLOB_2)
+
+    # ------------------------------------------------------------------ #
+    # (5) Re-save with blanked secrets (the reloaded-editor case) preserves
+    #     credentials the user did not re-enter. Regression for #200 review
+    #     findings #2 (silent OAuth-blob loss) and #3 (can't edit without
+    #     re-typing keys).
+    # ------------------------------------------------------------------ #
+
+    def _resave_blanked_payload(self):
+        """Same pool, but account ACC_1 reconnected (fresh blob), ACC_2 NOT
+        reconnected (blank blob), and the api_key model's key blanked with
+        has_key set — exactly what the SPA posts after a reload."""
+        return [
+            {
+                "model": "gpt-5.5", "tier": "cheap", "order": 0,
+                "subscription": {
+                    "rotation": "round_robin",
+                    "accounts": [
+                        {"upstream": "openai", "account_ref": "ACC_1",
+                         "label": "alice@example.com", "oauth_blob": _BLOB_1_NEW},
+                        {"upstream": "openai", "account_ref": "ACC_2",
+                         "label": "bob@example.com", "oauth_blob": ""},
+                    ],
+                },
+            },
+            {
+                "provider": "openai", "model": "gpt-5.4",
+                "api_key": "", "has_key": True, "tier": "strong", "order": 1,
+            },
+        ]
+
+    def test_resave_preserves_unreentered_secrets(self):
+        self._save()  # initial save with both blobs + the api_key
+        pool_calls = []
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   side_effect=lambda **kw: pool_calls.append(kw) or {"action": "pool_update"}), \
+             patch("jarvis.admin_client.post_update_llm_creds"):
+            onboarding.save_llm_pool(frappe.as_json(self._resave_blanked_payload()),
+                                     preset=None, routing_mode="failover")
+        pushed = pool_calls[0]
+        oauth_blobs = pushed["oauth_blobs"]
+        # ACC_1 took the freshly-reconnected blob; ACC_2 kept its ORIGINAL blob
+        # (blank posted value merged back), not wiped.
+        self.assertEqual(oauth_blobs.get("ACC_1"), {"refresh_token": "fake-rt-ACC1-RECONNECTED"})
+        self.assertEqual(oauth_blobs.get("ACC_2"), {"refresh_token": "fake-rt-ACC2-secret"})
+        # The api_key survived the blank re-post (has_key → merge).
+        self.assertIn("sk-apikey-roundtrip-xyz", pushed["api_keys"].values())
+
+    # ------------------------------------------------------------------ #
+    # (6) Provider label / alias is canonicalized before persist + wire, so a
+    #     custom-mode pool (labels) and a preset pool (ids) converge. Regression
+    #     for #200 review #4.
+    # ------------------------------------------------------------------ #
+
+    def test_provider_label_normalized_to_canonical_id(self):
+        payload = [
+            {"provider": "OpenAI", "model": "gpt-5.5", "api_key": "sk-x", "tier": "strong", "order": 0},
+            {"provider": "Google Gemini", "model": "gemini-2.5-pro", "api_key": "sk-y", "tier": "strong", "order": 1},
+        ]
+        pool_calls = []
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   side_effect=lambda **kw: pool_calls.append(kw) or {"action": "pool_update"}), \
+             patch("jarvis.admin_client.post_update_llm_creds"):
+            onboarding.save_llm_pool(frappe.as_json(payload), preset=None, routing_mode="failover")
+        providers = {m.get("provider") for m in pool_calls[0]["spec"]["models"]}
+        self.assertEqual(providers, {"openai", "gemini"})

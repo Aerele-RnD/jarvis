@@ -64,10 +64,21 @@ test("validatePool: subscription model invalid with no accounts", () => {
   const sub = { model: "gpt-5.5", order: 0, subscription: { rotation: "sticky", accounts: [] } }
   assert.equal(validatePool([sub], null).ok, false)
 })
-test("validatePool: subscription model invalid when account has empty oauth_blob", () => {
+test("validatePool: subscription account with account_ref but blank blob is valid (previously connected; blob merged back on save)", () => {
   const sub = { model: "gpt-5.5", order: 0, subscription: { rotation: "sticky",
     accounts: [{ upstream: "openai", account_ref: "SUB_abc123", label: "me@x.com", oauth_blob: "" }] } }
+  assert.equal(validatePool([sub], null).ok, true)
+})
+test("validatePool: subscription account with neither blob nor account_ref is invalid (never connected)", () => {
+  const sub = { model: "gpt-5.5", order: 0, subscription: { rotation: "sticky",
+    accounts: [{ upstream: "openai", account_ref: "", label: "", oauth_blob: "" }] } }
   assert.equal(validatePool([sub], null).ok, false)
+})
+test("validatePool: api_key model with blank key but has_key is valid (key preserved on save)", () => {
+  assert.equal(validatePool([{ provider: "openai", model: "gpt-5.5", api_key: "", has_key: true }], null).ok, true)
+})
+test("validatePool: api_key model with neither key nor has_key is invalid", () => {
+  assert.equal(validatePool([{ provider: "openai", model: "gpt-5.5", api_key: "" }], null).ok, false)
 })
 
 test("providerLabel/providerId: id⇄label round-trip for openai_compat", () => {
@@ -75,6 +86,10 @@ test("providerLabel/providerId: id⇄label round-trip for openai_compat", () => 
   assert.equal(providerId("OpenAI-Compatible"), "openai_compat")
   // unknown id passes through unchanged (no crash)
   assert.equal(providerLabel("weird"), "weird")
+})
+test("providerLabel/providerId: gemini id ⇄ Google Gemini label (matches catalog id, not legacy 'google')", () => {
+  assert.equal(providerLabel("gemini"), "Google Gemini")
+  assert.equal(providerId("Google Gemini"), "gemini")
 })
 test("PROVIDER_LABELS: includes the vendors + compat, each {id,label}", () => {
   const ids = PROVIDER_LABELS.map(p => p.id)
