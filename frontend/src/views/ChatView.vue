@@ -669,6 +669,7 @@
 							<input ref="fileboxInput" type="file" multiple style="display:none" @change="onFileboxPick($event)" />
 						</div>
 						<div v-if="fileboxError" class="jv-skill-err">{{ fileboxError }}</div>
+						<div v-for="d in fileboxDropStatus.filter((x) => x.state === 'error')" :key="d.key" class="jv-skill-err" style="margin-bottom:6px;">{{ d.name }}: {{ d.error }}</div>
 						<div v-if="!fileboxItems.length" class="jv-set-empty" style="text-align:center;padding:10px 0;">Nothing processed yet.</div>
 						<div v-for="f in fileboxItems" :key="f.name" class="jv-skill-row" style="cursor:pointer;" @click="openFileboxItem(f)">
 							<div style="flex:1;min-width:0;">
@@ -703,6 +704,10 @@
 					</div>
 					<div class="jv-skills-body">
 						<div v-if="approvalsError" class="jv-skill-err">{{ approvalsError }}</div>
+						<div style="display:flex;gap:6px;margin-bottom:10px;">
+							<button class="jv-btn jv-btn--sm" :class="{ 'jv-btn--primary': approvalsView === 'Pending' }" @click="setApprovalsView('Pending')">Pending<span v-if="approvalsBadge"> ({{ approvalsBadge }})</span></button>
+							<button class="jv-btn jv-btn--sm" :class="{ 'jv-btn--primary': approvalsView === 'Decided' }" @click="setApprovalsView('Decided')">Decided</button>
+						</div>
 						<div v-if="approvalTabs.length > 1" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">
 							<button v-for="[tab, n] in approvalTabs" :key="tab" class="jv-btn jv-btn--sm"
 								:class="{ 'jv-btn--primary': approvalTab === tab }" @click="approvalTab = tab">
@@ -720,17 +725,25 @@
 								<summary style="font-size:11.5px;color:var(--text-3);cursor:pointer;">context</summary>
 								<pre style="font-size:11px;white-space:pre-wrap;max-height:180px;overflow:auto;background:var(--surface-2);border-radius:7px;padding:8px;">{{ a.context_md }}</pre>
 							</details>
-							<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
+							<div v-if="a.status !== 'Pending'" style="font-size:12px;margin-bottom:4px;">
+								<b :style="a.status === 'Approved' ? 'color:var(--green,#30a46c);' : 'color:var(--red,#e5484d);'">{{ a.status }}</b>
+								— {{ a.decision }}
+								<span style="color:var(--text-3);"> · {{ a.decided_by }} · {{ a.decided_at ? new Date(a.decided_at).toLocaleString() : "" }}</span>
+							</div>
+							<div v-if="a.status === 'Pending'" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
 								<button v-for="opt in a.options" :key="opt" class="jv-btn jv-btn--sm"
 									:class="{ 'jv-btn--primary': approvalDrafts[a.name] === opt }"
 									@click="approvalDrafts[a.name] = opt">{{ opt }}</button>
 							</div>
-							<div style="display:flex;gap:6px;">
+							<div v-if="a.status === 'Pending'" style="display:flex;gap:6px;">
 								<input v-model="approvalDrafts[a.name]" placeholder="Decision (pick an option or type)"
 									style="flex:1;font-size:12.5px;padding:6px 9px;border:1px solid var(--border);border-radius:7px;background:var(--surface-1);color:var(--text-1);" />
 								<button class="jv-btn jv-btn--primary jv-btn--sm" :disabled="!(approvalDrafts[a.name] || '').trim() || approvalsBusy" @click="doDecide(a, 1)">Approve</button>
 								<button class="jv-btn jv-btn--sm" :disabled="!(approvalDrafts[a.name] || '').trim() || approvalsBusy" @click="doDecide(a, 0)">Reject</button>
 								<button v-if="a.conversation" class="jv-btn jv-btn--sm" title="Open the chat" @click="openApprovalChat(a)">Chat</button>
+							</div>
+							<div v-if="a.status !== 'Pending' && a.conversation" style="display:flex;gap:6px;">
+								<button class="jv-btn jv-btn--sm" title="Open the chat" @click="openApprovalChat(a)">Chat</button>
 							</div>
 						</div>
 					</div>
@@ -1627,11 +1640,18 @@ const pageMode = ref(false)
 function _applyHashRoute() {
 	const h = (window.location.hash || "").replace("#", "")
 	pageMode.value = ["approvals", "filebox", "skills", "macros"].includes(h)
+	// State machine: exactly one surface per hash - close the others first
+	// (navigating #filebox -> #approvals used to stack both overlays).
+	fileboxOpen.value = false
+	approvalsOpen.value = false
+	skillsModalOpen.value = false
+	macrosModalOpen.value = false
 	if (h === "approvals") openApprovals()
 	else if (h === "filebox") openFilebox()
 	else if (h === "skills") openSkillsModal()
 	else if (h === "macros") openMacrosModal()
 }
+const _hashRouteHandler = () => _applyHashRoute()
 function openAsPage(name) {
 	window.location.hash = name
 }
@@ -1645,33 +1665,37 @@ function _clearPageHash() {
 async function refreshApprovalsBadge() {
 	try { approvalsBadge.value = (await api.approvalsPendingCount()) || 0 } catch (e) { /* badge is best-effort */ }
 }
-window.addEventListener("hashchange", () => _applyHashRoute())
-setTimeout(() => _applyHashRoute(), 0)
-
 async function openFilebox() {
 	fileboxOpen.value = true
 	fileboxError.value = ""
 	try { fileboxItems.value = (await api.fileboxList()) || [] } catch (e) { fileboxError.value = "Could not load the inbound list." }
 }
 const fileboxUploading = ref(0) // in-flight drops; the box stays open and accepts more
+const fileboxDropStatus = ref([]) // per-file: {key, name, state: uploading|ok|error, error}
 async function _fileboxProcess(file) {
 	// Background-first: each file is its own async pipeline. Keep dropping -
 	// nothing blocks, nothing navigates; items appear in the inbound list as
 	// "processing" and land in Approvals if they need you.
 	if (!file) return
 	fileboxUploading.value++
-	fileboxError.value = ""
+	const entry = { key: `${file.name}-${Date.now()}-${Math.random()}`, name: file.name, state: "uploading", error: "" }
+	fileboxDropStatus.value = [entry, ...fileboxDropStatus.value].slice(0, 8)
 	try {
 		const up = await api.uploadFile(file)
 		const res = await api.fileboxDrop(up.file_url, up.file_name)
 		if (!res || !res.ok) throw new Error((res && res.reason) || "drop failed")
+		entry.state = "ok"
 		fileboxItems.value = [
 			{ name: res.conversation_id, title: `File: ${up.file_name}`, creation: new Date().toISOString(), status: "processing", pending_approvals: 0 },
 			...fileboxItems.value.filter((x) => x.name !== res.conversation_id),
 		]
+		fileboxDropStatus.value = [...fileboxDropStatus.value]
 		loadConversations() // background refresh; no navigation
 	} catch (e) {
-		fileboxError.value = `Could not process ${file.name}: ${e.message || e}`
+		// Per-file error - concurrent drops no longer clobber each other.
+		entry.state = "error"
+		entry.error = e.message || String(e)
+		fileboxDropStatus.value = [...fileboxDropStatus.value]
 	} finally {
 		fileboxUploading.value--
 	}
@@ -1690,13 +1714,22 @@ async function openFileboxItem(f) {
 	fileboxOpen.value = false
 	await selectConversation(f.name)
 }
-async function openApprovals() {
-	approvalsOpen.value = true
+const approvalsView = ref("Pending") // "Pending" | "Decided"
+async function _loadApprovals() {
 	approvalsError.value = ""
 	try {
-		approvalItems.value = (await api.listApprovals("Pending")) || []
+		approvalItems.value = (await api.listApprovals(approvalsView.value)) || []
 	} catch (e) { approvalsError.value = "Could not load approvals." }
+}
+async function openApprovals() {
+	approvalsOpen.value = true
+	await _loadApprovals()
 	refreshApprovalsBadge()
+}
+async function setApprovalsView(v) {
+	approvalsView.value = v
+	approvalTab.value = "All"
+	await _loadApprovals()
 }
 async function doDecide(a, approve) {
 	const decision = (approvalDrafts.value[a.name] || "").trim()
@@ -3411,6 +3444,7 @@ watch(threadInnerEl, (el) => {
 	}
 })
 onBeforeUnmount(() => {
+	window.removeEventListener("hashchange", _hashRouteHandler)
 	if (threadRO) {
 		threadRO.disconnect()
 		threadRO = null
@@ -4170,6 +4204,10 @@ function onVisibility() {
 }
 
 onMounted(async () => {
+	// Hash page-routes: lifecycle-scoped (was a top-level anonymous listener
+	// that stacked on remount and fired before auth/bootstrap).
+	window.addEventListener("hashchange", _hashRouteHandler)
+	setTimeout(_hashRouteHandler, 400)
 	// Latency plan, Phase 1.3: the bootstrap network calls used to run as a
 	// serial awaited chain (ready → ui settings → conversations), each a full
 	// round-trip. Fire them concurrently and await in order below — the

@@ -11,3 +11,4 @@ jarvis.patches.v1_3_backfill_llm_auth_mode
 jarvis.patches.v1_4_drop_llm_oauth_fields
 jarvis.patches.v1_5_drop_dev_only_operator_fields
 jarvis.patches.v1_seed_llm_models
+jarvis.patches.v1_6_rename_jarvis_approval

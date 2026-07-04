@@ -25,7 +25,7 @@ INBOUND_PROMPT = (
 	"by the skill's convention ladder, and create the draft. Do NOT ask "
 	"me anything in this chat: I am not here. EVERY decision that needs "
 	"a human - including what document this is, or that the file is "
-	"unreadable - goes to a Jarvis Approval row (empty document_type for "
+	"unreadable - goes to a Jarvis Approval Request row (empty document_type for "
 	"classification decisions), then end the turn with a one-line summary."
 )
 
@@ -86,16 +86,34 @@ def list_inbound(limit: int = 30) -> list[dict]:
 		fields=["name", "title", "creation"],
 		order_by="creation desc", limit_page_length=int(limit),
 	)
+	conv_ids = [r.name for r in rows]
+	# Batched: one grouped query for pending approvals, one window query for
+	# each conversation's latest assistant message (was a 2xN loop).
+	pending_by_conv = {}
+	if conv_ids:
+		for row in frappe.get_all(
+			"Jarvis Approval Request",
+			filters={"conversation": ["in", conv_ids], "status": "Pending"},
+			fields=["conversation", "count(name) as n"],
+			group_by="conversation",
+		):
+			pending_by_conv[row.conversation] = row.n
+	last_by_conv = {}
+	if conv_ids:
+		for row in frappe.db.sql(
+			"""select m.conversation, m.streaming, m.error, m.recovering
+			from `tabJarvis Chat Message` m
+			join (select conversation, max(seq) mseq from `tabJarvis Chat Message`
+			      where conversation in %(convs)s and role='assistant'
+			      group by conversation) x
+			  on x.conversation = m.conversation and x.mseq = m.seq
+			where m.role='assistant'""",
+			{"convs": conv_ids}, as_dict=True,
+		):
+			last_by_conv[row.conversation] = row
 	for r in rows:
-		last = frappe.get_all(
-			"Jarvis Chat Message",
-			filters={"conversation": r.name, "role": "assistant"},
-			fields=["streaming", "error", "recovering"],
-			order_by="seq desc", limit_page_length=1,
-		)
-		pending = frappe.db.count(
-			"Jarvis Approval", {"conversation": r.name, "status": "Pending"}
-		)
+		last = [last_by_conv[r.name]] if r.name in last_by_conv else []
+		pending = pending_by_conv.get(r.name, 0)
 		if pending:
 			r["status"] = "needs_approval"
 		elif last and (last[0].streaming or last[0].recovering):
