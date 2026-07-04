@@ -7,6 +7,7 @@ args_hash used to bind a token to the exact call.
 
 import contextvars
 import threading
+from unittest.mock import patch
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
@@ -134,9 +135,30 @@ class TestConsume(FrappeTestCase):
 		"""Two threads race to consume the same legitimate token. Redis GETDEL
 		is atomic server-side, so exactly one of the two concurrent consumes
 		must get the record back; the other must get None - never both, never
-		neither."""
+		neither.
+
+		Without a barrier, nothing forces the two threads to actually overlap:
+		the OS could just run them back-to-back, in which case a naive
+		non-atomic get-then-delete would also pass this test by accident. A
+		threading.Barrier(2) is spliced in front of the real getdel call (the
+		only place consume() mutates the store) so neither thread's getdel can
+		return until BOTH threads have completed their ownership-check read
+		(the plain get_value earlier in consume()) and are standing right at
+		the delete. That is the actual race window consume()'s docstring
+		claims is safe - this test now forces it open on every run instead of
+		hoping the scheduler happens to create it.
+		"""
 		token = self._mint()
 		results = [None, None]
+		barrier = threading.Barrier(2)
+		real_getdel = frappe.cache().getdel
+
+		def _synced_getdel(*args, **kwargs):
+			# Both threads land here only after their own ownership-check
+			# read already matched, so this rendezvous pins both threads
+			# past that read before either delete is allowed to fire.
+			barrier.wait(timeout=5)
+			return real_getdel(*args, **kwargs)
 
 		def _consume(i):
 			results[i] = pending_confirm.consume(token, owner=OWNER, conversation=CONV)
@@ -148,10 +170,18 @@ class TestConsume(FrappeTestCase):
 		ctx2 = contextvars.copy_context()
 		t1 = threading.Thread(target=ctx1.run, args=(_consume, 0))
 		t2 = threading.Thread(target=ctx2.run, args=(_consume, 1))
-		t1.start()
-		t2.start()
-		t1.join(timeout=5)
-		t2.join(timeout=5)
+
+		# frappe.cache is a process-wide singleton (frappe/__init__.py sets
+		# it via `global cache`, not a thread local), so patching the bound
+		# method on the one instance affects both threads.
+		with patch.object(frappe.cache(), "getdel", side_effect=_synced_getdel):
+			t1.start()
+			t2.start()
+			t1.join(timeout=5)
+			t2.join(timeout=5)
+
+		self.assertFalse(t1.is_alive(), "thread 1 did not finish - barrier likely deadlocked")
+		self.assertFalse(t2.is_alive(), "thread 2 did not finish - barrier likely deadlocked")
 
 		winners = [r for r in results if r is not None]
 		self.assertEqual(len(winners), 1)
