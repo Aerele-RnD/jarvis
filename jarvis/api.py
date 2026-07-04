@@ -187,7 +187,12 @@ def _dispatch_from_session(
 		# Pass the already-parsed dict back through _run_tool. _run_tool's
 		# _parse_args call is idempotent on dicts (no JSON parse path,
 		# legacy-marker strip is also idempotent), so no double-work.
-		result = _run_tool(tool, parsed_args)
+		# Resolve the conversation for this session up front so the
+		# confirmation gate can bind a parked write to it (managed mode); the
+		# gate also falls back to the active-turn marker for run_id.
+		conv = frappe.db.get_value(
+			"Jarvis Conversation", {"session_key": session_key}, "name")
+		result = _run_tool(tool, parsed_args, conversation=conv)
 		_persist_and_publish_tool_call(
 			session_key=session_key, tool=tool, args=parsed_args, result=result,
 		)
@@ -377,6 +382,16 @@ _PREVIEWABLE = frozenset({
 	"create_doc", "update_doc", "submit_doc", "cancel_doc", "amend_doc",
 	"delete_doc", "run_method",
 })
+# Writes that MUST get a human confirmation before executing (issue #186).
+# The lighter mutators in _WRITE_TOOLS (comments/tags/share/assign/attach/
+# dashboard-create) are intentionally NOT gated - they never fire the card.
+_GATED_WRITES = frozenset({
+	"create_doc", "update_doc", "submit_doc", "cancel_doc",
+	"amend_doc", "delete_doc", "run_method", "send_email",
+})
+# Irreversible/consequential subset - gated even when a user has auto-apply
+# on (Task 4 uses this; define it here so the sets live together).
+_DESTRUCTIVE = frozenset({"delete_doc", "cancel_doc", "amend_doc", "send_email"})
 
 
 def _as_bool(value) -> bool:
@@ -406,7 +421,108 @@ def _run_preview(tool: str, args: dict) -> dict:
 	}
 
 
-def _run_tool(tool: str, raw_args: dict | str | None) -> dict:
+def _gate_context(conversation: str | None) -> tuple[str, str]:
+	"""Resolve (conversation, run_id) for the in-flight turn so a parked call
+	can be bound to it.
+
+	Primary source is ``selfhost.get_active_turn(current_user)`` - the only
+	place run_id is tracked - which returns ``{conversation, owner, run_id}``
+	for the single unambiguous in-flight turn. An explicit ``conversation``
+	(managed mode resolves it from the session_key upstream) wins for the
+	conversation binding; run_id only ever comes from the active turn. When
+	neither is available (direct-Python calls, ambiguous concurrency) both
+	fall back to "" - the token is then bound by OWNER alone, which is the
+	real security boundary; conversation binding is a secondary replay guard.
+	"""
+	from jarvis import selfhost
+	turn = selfhost.get_active_turn(frappe.session.user) or {}
+	conv = conversation or turn.get("conversation") or ""
+	run_id = turn.get("run_id") or ""
+	return conv, run_id
+
+
+def _describe_call(tool: str, args: dict) -> str:
+	"""Short human string of a tool call + its key args, for a pending card
+	whose write cannot be dry-run (send_email) or whose preview was
+	unavailable. No secrets: only structural fields are surfaced."""
+	a = args if isinstance(args, dict) else {}
+	parts = [tool]
+	for key in ("doctype", "name", "docname", "target_doctype", "target_name",
+				"method", "recipients", "to", "subject"):
+		val = a.get(key)
+		if val:
+			parts.append(f"{key}={val}")
+	return " ".join(str(p) for p in parts)
+
+
+def _pending_preview(tool: str, args: dict) -> dict:
+	"""Build the preview shown alongside a parked gated write. Previewable
+	tools reuse the sandboxed ``_run_preview`` (all DB writes rolled back);
+	everything else (send_email, or a previewable whose validation could not
+	be dry-run) gets a described-intent dict that makes clear it is NOT a dry
+	run - the real thing runs on confirm."""
+	described = {
+		"preview": False,
+		"described": True,
+		"summary": _describe_call(tool, args),
+		"note": ("not a dry run - this will send/execute on confirm"),
+	}
+	if tool not in _PREVIEWABLE:
+		return described
+	try:
+		return _run_preview(tool, args)
+	except (JarvisError, frappe.PermissionError, frappe.ValidationError,
+			frappe.DuplicateEntryError) as e:
+		# The call would fail validation - surface that in the card rather
+		# than blocking the park, so the human sees why before confirming.
+		described["note"] = f"preview unavailable: {e}"
+		return described
+
+
+def _dispatch_and_wrap(tool: str, args: dict, is_write: bool) -> dict:
+	"""Dispatch + translate exceptions into the ``{ok, data}`` / ``{ok, error}``
+	envelope + audit write tools. This is the shared core of ``_run_tool``'s
+	execute path, reused verbatim by ``confirm_tool`` so a confirmed write runs
+	through the exact same translation + audit as an inline one."""
+	try:
+		data = dispatch(tool, args)
+	except JarvisError as e:
+		if is_write:
+			audit.record(tool=tool, args=args, ok=False,
+						 error_code=type(e).__name__, error_message=str(e))
+		return _error(type(e).__name__, str(e))
+	except frappe.PermissionError as e:
+		if is_write:
+			audit.record(tool=tool, args=args, ok=False,
+						 error_code="PermissionDeniedError", error_message=str(e))
+		return _error("PermissionDeniedError", str(e) or "permission denied")
+	except (frappe.ValidationError, frappe.DuplicateEntryError) as e:
+		if is_write:
+			audit.record(tool=tool, args=args, ok=False,
+						 error_code="InvalidArgumentError", error_message=str(e))
+		return _error("InvalidArgumentError", str(e) or type(e).__name__)
+	except Exception as e:
+		if is_write:
+			audit.record(tool=tool, args=args, ok=False,
+						 error_code=type(e).__name__, error_message=str(e))
+		raise
+	if is_write:
+		audit.record(tool=tool, args=args, ok=True, result=data)
+	return {"ok": True, "data": data}
+
+
+def dispatch_confirmed(tool: str, args: dict) -> dict:
+	"""Execute a confirmed gated write. Public seam used by ``confirm_tool``
+	AFTER ``pending_confirm.consume`` has validated owner + single-use. Runs
+	the stored call directly (a gated write is always a _WRITE_TOOL, so it is
+	audited) WITHOUT re-entering ``_run_tool``'s gate - the gate would just
+	park it again. This is design option (a): the model can never execute a
+	gated write; only a confirmed human click reaches dispatch."""
+	return _dispatch_and_wrap(tool, args, is_write=True)
+
+
+def _run_tool(tool: str, raw_args: dict | str | None,
+			  *, conversation: str | None = None) -> dict:
 	"""Parse args + dispatch + wrap in the bench's standard envelope.
 
 	The translation layer between tool-level Python exceptions and
@@ -453,42 +569,24 @@ def _run_tool(tool: str, raw_args: dict | str | None) -> dict:
 		except (frappe.ValidationError, frappe.DuplicateEntryError) as e:
 			return _error("InvalidArgumentError", str(e) or type(e).__name__)
 
-	try:
-		data = dispatch(tool, args)
-	except JarvisError as e:
-		if is_write:
-			audit.record(tool=tool, args=args, ok=False,
-						 error_code=type(e).__name__, error_message=str(e))
-		return _error(type(e).__name__, str(e))
-	except frappe.PermissionError as e:
-		if is_write:
-			audit.record(tool=tool, args=args, ok=False,
-						 error_code="PermissionDeniedError", error_message=str(e))
-		return _error("PermissionDeniedError", str(e) or "permission denied")
-	except (frappe.ValidationError, frappe.DuplicateEntryError) as e:
-		# Bad-input errors a tool surfaces from doc.insert()/get_doc/link
-		# validation - DuplicateEntryError (a NameError subclass, NOT a
-		# ValidationError), MandatoryError, LinkValidationError,
-		# DoesNotExistError, UniqueValidationError, plus app-level
-		# ValidationError business rules. These are the user's fault, not a
-		# bug, so translate to the envelope instead of leaking Frappe's
-		# native 500/404. The message carries the specifics; the code stays
-		# in the known JarvisError set the bench client branches on.
-		if is_write:
-			audit.record(tool=tool, args=args, ok=False,
-						 error_code="InvalidArgumentError", error_message=str(e))
-		return _error("InvalidArgumentError", str(e) or type(e).__name__)
-	except Exception as e:
-		# Unexpected error (a real bug): audit the attempt for write tools so
-		# the trail is complete even for a partial mutation, then re-raise so
-		# Frappe's native 500 still surfaces at the seam.
-		if is_write:
-			audit.record(tool=tool, args=args, ok=False,
-						 error_code=type(e).__name__, error_message=str(e))
-		raise
-	if is_write:
-		audit.record(tool=tool, args=args, ok=True, result=data)
-	return {"ok": True, "data": data}
+	# Write-safety confirmation gate (issue #186): a gated write is NEVER
+	# executed on the model path. Park it - build a preview, mint a single-use
+	# token bound to the acting user + conversation, and return a non-executing
+	# ``pending_confirmation`` status. Only ``confirm_tool`` (a human click) can
+	# then run the stored call via ``dispatch_confirmed``. CRITICAL: the token
+	# is stored, not returned - the model must not see it (Task 3 delivers it to
+	# the UI out-of-band).
+	if tool in _GATED_WRITES:
+		from jarvis.chat import pending_confirm
+		conv, run_id = _gate_context(conversation)
+		preview = _pending_preview(tool, args)
+		pending_confirm.mint(conversation=conv, owner=frappe.session.user,
+							 tool=tool, args=args, run_id=run_id)
+		return {"ok": True, "data": {
+			"status": "pending_confirmation", "preview": preview, "tool": tool,
+		}}
+
+	return _dispatch_and_wrap(tool, args, is_write)
 
 
 # _error lives in jarvis/_responses.py - single source of truth for the

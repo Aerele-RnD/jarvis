@@ -29,20 +29,27 @@ class TestPreview(FrappeTestCase):
 
 
 class TestWriteAudit(FrappeTestCase):
+    # NOTE: these exercise the inline write-audit seam with a NON-gated write
+    # (add_comment). The gated writes in _GATED_WRITES (create_doc etc.) no
+    # longer execute inline - they park for confirmation and are audited only
+    # when confirm_tool runs them; that path is covered in test_confirm_gate.
     def test_successful_write_is_audited(self):
+        todo = frappe.get_doc({
+            "doctype": "ToDo", "description": "jarvis-test-audit-target",
+        }).insert(ignore_permissions=True)
         with patch("jarvis.api.audit.record") as rec:
-            r = api._run_tool("create_doc", {
-                "doctype": "ToDo", "values": {"description": "jarvis-test-audit-ok"},
+            r = api._run_tool("add_comment", {
+                "doctype": "ToDo", "name": todo.name, "content": "audited note",
             })
         self.assertTrue(r["ok"])
         self.assertTrue(rec.called)
-        self.assertEqual(rec.call_args.kwargs["tool"], "create_doc")
+        self.assertEqual(rec.call_args.kwargs["tool"], "add_comment")
         self.assertTrue(rec.call_args.kwargs["ok"])
 
     def test_failed_write_is_audited_as_error(self):
         with patch("jarvis.api.audit.record") as rec:
-            r = api._run_tool("create_doc", {
-                "doctype": "No Such DocType ZZZ", "values": {},
+            r = api._run_tool("add_comment", {
+                "doctype": "ToDo", "name": "no-such-todo-zzz", "content": "x",
             })
         self.assertFalse(r["ok"])
         self.assertTrue(rec.called)

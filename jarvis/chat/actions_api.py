@@ -209,3 +209,48 @@ def apply_action(action=None) -> dict:
 	slug = doctype.lower().replace(" ", "-")
 	return {"ok": True, "verb": verb, "name": name,
 			"doc_url": f"/app/{slug}/{name}" if verb != "delete" else ""}
+
+
+_INVALID_CONFIRM = {
+	"ok": False,
+	"error": {
+		"type": "InvalidConfirmation",
+		"message": "This confirmation is no longer valid.",
+	},
+}
+
+
+@frappe.whitelist()
+def confirm_tool(token: str) -> dict:
+	"""Execute a parked mutating tool call after the human clicked Confirm.
+
+	Owner-bound + conversation-bound + single-use via ``pending_confirm``. The
+	confirmation gate in ``jarvis.api._run_tool`` parks every gated write and
+	stores the authoritative call; this endpoint is the ONLY path that runs it.
+
+	Human cookie-session only (whitelisted, not allow_guest, not the plugin
+	path). ``peek`` reads the record just to learn which conversation the token
+	belongs to; ``consume`` then re-validates owner + conversation atomically
+	and single-uses the token. A wrong-owner caller learns nothing and does NOT
+	burn the token (consume rejects on the owner mismatch before deleting).
+	"""
+	if frappe.session.user == "Guest":
+		raise frappe.PermissionError("authentication required")
+
+	from jarvis.chat import pending_confirm
+	from jarvis import api
+
+	token = (token or "").strip()
+	record = pending_confirm.peek(token)
+	if not record:
+		return _INVALID_CONFIRM
+	record = pending_confirm.consume(
+		token, owner=frappe.session.user,
+		conversation=record.get("conversation"))
+	if not record:
+		return _INVALID_CONFIRM
+
+	# Runs under the confirming user (already the session user). Same envelope
+	# + audit as an inline write - dispatch_confirmed bypasses the gate so the
+	# stored call actually executes instead of parking again.
+	return api.dispatch_confirmed(record["tool"], record["args"])
