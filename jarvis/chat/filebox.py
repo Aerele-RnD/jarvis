@@ -66,7 +66,12 @@ def drop_file(file_url: str, file_name: str | None = None) -> dict:
 	frappe.db.commit()
 
 	attachments = json.dumps([{"file_url": file_url, "file_name": file_name or fdoc.file_name}])
-	res = send_message(conversation=conv_id, message=INBOUND_PROMPT, attachments=attachments)
+	# background=1 (requires the dedicated-chat-queue PR): a batch of
+	# drops drains FIFO and never jumps ahead of a human's typed question.
+	res = send_message(
+		conversation=conv_id, message=INBOUND_PROMPT, attachments=attachments,
+		background=1,
+	)
 	return {
 		"ok": bool(res.get("ok")),
 		"conversation_id": conv_id,
