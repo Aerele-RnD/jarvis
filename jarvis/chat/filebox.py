@@ -91,11 +91,15 @@ def list_inbound(limit: int = 30) -> list[dict]:
 	# each conversation's latest assistant message (was a 2xN loop).
 	pending_by_conv = {}
 	if conv_ids:
-		for row in frappe.get_all(
-			"Jarvis Approval Request",
-			filters={"conversation": ["in", conv_ids], "status": "Pending"},
-			fields=["conversation", "count(name) as n"],
-			group_by="conversation",
+		# Raw SQL: v16's get_all rejects SQL-function strings in fields
+		# ("count(name) as n" -> ValidationError), which 500'd this whole
+		# endpoint for anyone with a File-Box conversation.
+		for row in frappe.db.sql(
+			"""select conversation, count(name) n
+			from `tabJarvis Approval Request`
+			where conversation in %(convs)s and status='Pending'
+			group by conversation""",
+			{"convs": conv_ids}, as_dict=True,
 		):
 			pending_by_conv[row.conversation] = row.n
 	last_by_conv = {}
