@@ -43,6 +43,10 @@ def drop_file(file_url: str, file_name: str | None = None) -> dict:
 	)
 	if not fdoc:
 		frappe.throw("Unknown file - upload it first")
+	# Object-level auth: a caller must not be able to feed SOMEONE ELSE'S
+	# private file_url and have the agent OCR its contents back to them.
+	if not frappe.has_permission("File", doc=fdoc.name):
+		frappe.throw("Not permitted", frappe.PermissionError)
 
 	from jarvis.chat.api import create_conversation, send_message
 
@@ -50,6 +54,13 @@ def drop_file(file_url: str, file_name: str | None = None) -> dict:
 	title = (file_name or fdoc.file_name or "Inbound document")[:60]
 	frappe.db.set_value(
 		"Jarvis Conversation", conv_id, "title", f"File: {title}",
+		update_modified=False,
+	)
+	# Durable exact link: attach the File to the conversation so resumes
+	# re-attach THIS file (not a fragile filename-prefix LIKE match).
+	frappe.db.set_value(
+		"File", fdoc.name,
+		{"attached_to_doctype": "Jarvis Conversation", "attached_to_name": conv_id},
 		update_modified=False,
 	)
 	frappe.db.commit()
