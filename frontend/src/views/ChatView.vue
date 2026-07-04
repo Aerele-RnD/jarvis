@@ -3651,6 +3651,13 @@ function onEvent(p) {
 	if (p.conversation_id !== currentId.value) return
 	if (p.run_id && p.run_id === stoppedRunId.value) return // user stopped this run
 	switch (p.kind) {
+		case "run:recovering":
+			// openclaw hit a context overflow and is auto-compacting + retrying;
+			// the worker parked the turn for snapshot recovery. Keep the
+			// indicator alive - the answer lands via recovery shortly.
+			waiting.value = true
+			statusPhase.value = "model"
+			break
 		case "run:start":
 			currentRunId.value = p.run_id
 			runStartMs.value = Date.now()
