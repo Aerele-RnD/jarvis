@@ -17,14 +17,16 @@ import json
 import frappe
 
 INBOUND_PROMPT = (
-	"Process the attached file as an inbound business document using the "
-	"ocr-data-entry skill (read skills/ocr-data-entry/SKILL.md first and "
-	"follow its decision policy exactly). Classify the document type, "
-	"extract it fully - every line item verbatim, never a lump-sum "
-	"balancing line - resolve ambiguities by the skill's convention "
-	"ladder, create the draft, and queue a Jarvis Approval for anything "
-	"the ladder cannot resolve. Ask me at most ONE consolidated question, "
-	"and only if the skill's policy requires it."
+	"This file arrived through the File Box - process it as an inbound "
+	"business document using the ocr-data-entry skill (read "
+	"skills/ocr-data-entry/SKILL.md first and follow its decision policy "
+	"exactly). Classify the document type, extract it fully - every line "
+	"item verbatim, never a lump-sum balancing line - resolve ambiguities "
+	"by the skill's convention ladder, and create the draft. Do NOT ask "
+	"me anything in this chat: I am not here. EVERY decision that needs "
+	"a human - including what document this is, or that the file is "
+	"unreadable - goes to a Jarvis Approval row (empty document_type for "
+	"classification decisions), then end the turn with a one-line summary."
 )
 
 
