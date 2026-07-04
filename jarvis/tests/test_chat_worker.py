@@ -1064,3 +1064,38 @@ class TestRichOutputsRouting(FrappeTestCase):
 		)
 		self.assertEqual(row["streaming"], 0)  # the turn did finish cleanly
 		self.assertEqual(row["was_recovered"], 0)
+
+
+class TestOverflowParksForRecovery(FrappeTestCase):
+	"""A 'Context overflow' lifecycle error must PARK the turn (openclaw
+	auto-compacts and retries; the answer lands in the session shortly
+	after), never surface a terminal run:error to the chat."""
+
+	def _run_event(self, error_text):
+		from jarvis.chat import turn_handler
+		calls = {}
+		with patch.object(turn_handler, "_mark_recovering") as rec, \
+			patch.object(turn_handler, "_mark_errored") as err, \
+			patch.object(turn_handler, "_publish_to_user") as pub:
+			turn_handler._handle_event_inner(
+				{"kind": "lifecycle", "phase": "error", "error": error_text},
+				conversation_id="c1", assistant_msg_name="m1",
+				tool_msg_by_call_id={}, user="u@x", run_id="r1",
+				batcher=MagicMock(),
+			)
+		calls["recovering"] = rec.called
+		calls["errored"] = err.called
+		calls["kinds"] = [c.args[1]["kind"] for c in pub.call_args_list]
+		return calls
+
+	def test_context_overflow_parks(self):
+		out = self._run_event("Context overflow: prompt too large for the model. Try /reset ...")
+		self.assertTrue(out["recovering"])
+		self.assertFalse(out["errored"])
+		self.assertEqual(out["kinds"], ["run:recovering"])
+
+	def test_other_errors_still_error(self):
+		out = self._run_event("provider returned 500")
+		self.assertFalse(out["recovering"])
+		self.assertTrue(out["errored"])
+		self.assertEqual(out["kinds"], ["run:error"])

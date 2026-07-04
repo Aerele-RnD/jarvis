@@ -1175,7 +1175,27 @@ def _handle_event_inner(
 		batcher.flush()
 		phase = event.get("phase")
 		if phase == "error":
-			_mark_errored(assistant_msg_name, event.get("error") or "lifecycle error")
+			err_text = event.get("error") or "lifecycle error"
+			# Context overflow is NOT terminal on openclaw: the runtime
+			# auto-compacts and retries the prompt right after emitting
+			# this error (observed live: error at t+0, "auto-compaction
+			# succeeded; retrying prompt" at t+45s, full answer ~2min
+			# later in the session transcript - while the chat showed a
+			# dead "Context overflow" bubble). Park the turn for snapshot
+			# recovery instead: spinner stays up and turn_recovery
+			# finalizes from the session once the retried run lands. A
+			# retry that ALSO overflows leaves the turn parked; the
+			# recovery cron's ceiling turns it into an error then.
+			if "context overflow" in err_text.lower():
+				_mark_recovering(assistant_msg_name)
+				_publish_to_user(user, {
+					"kind": "run:recovering",
+					"conversation_id": conversation_id,
+					"message_id": assistant_msg_name,
+					"run_id": run_id,
+				})
+				return
+			_mark_errored(assistant_msg_name, err_text)
 			_publish_to_user(user, {
 				"kind": "run:error",
 				"conversation_id": conversation_id,
