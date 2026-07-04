@@ -80,9 +80,17 @@ export const getDoctypeFormMeta = (doctype) => call(AC + "get_doctype_form_meta"
 export const loadDocForEdit = (doctype, name) => call(AC + "load_doc", { doctype, name })
 export const applyAction = (action) => call(AC + "apply_action", { action: JSON.stringify(action) })
 // Write-safety gate (issue #186): confirm a parked ERP write by its one-time
-// token. Returns the tool result envelope {ok, ...} on success, or
-// {ok:False, error:{type:"InvalidConfirmation", ...}} if the token is gone.
-export const confirmTool = (token) => call(AC + "confirm_tool", { token })
+// token. Pass the conversation the click came from so the server enforces the
+// real conversation guard (#11). Returns the tool result envelope {ok, ...} on
+// success, or {ok:False, error:{type:"InvalidConfirmation", ...}} if the token
+// is gone.
+export const confirmTool = (token, conversation) =>
+	call(AC + "confirm_tool", { token, conversation: conversation || "" })
+// Resync (issue #186, R3 fix for #3): re-surface the caller's own currently
+// parked confirmation cards after a reload/reconnect. Returns
+// {ok, data:{pending:[{token, tool, preview, summary, conversation, run_id}]}}.
+export const listPendingConfirmations = (conversation) =>
+	call(AC + "list_pending_confirmations", { conversation: conversation || "" })
 
 export async function sendMessage(conversation, message, modelOverride, attachments, context) {
 	// Empty conversation is allowed: the backend creates (or focuses) an empty
