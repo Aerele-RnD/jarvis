@@ -1099,3 +1099,18 @@ class TestOverflowParksForRecovery(FrappeTestCase):
 		self.assertFalse(out["recovering"])
 		self.assertTrue(out["errored"])
 		self.assertEqual(out["kinds"], ["run:error"])
+
+
+class TestChatSendAttachmentTimeout(FrappeTestCase):
+	"""openclaw preprocesses attachments (PDF page raster + resize) BEFORE
+	acking chat.send - 22s measured for a 4-page invoice vs the 10s default
+	ack timeout, so every document send errored 'chat.send timed out' while
+	the gateway ran the turn anyway. The ack window must scale with the
+	attachment count (and stay default without attachments)."""
+
+	def test_ack_timeout_scales_with_attachments(self):
+		src = open(
+			frappe.get_app_path("jarvis", "chat", "turn_handler.py")
+		).read()
+		self.assertIn("ack_timeout = 10.0 + (30.0 * len(managed_attachments)", src)
+		self.assertIn("timeout_s=min(ack_timeout, 180.0)", src)
