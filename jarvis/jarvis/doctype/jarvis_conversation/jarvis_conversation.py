@@ -19,6 +19,7 @@ class JarvisConversation(Document):
 
 	def validate(self):
 		self._guard_auto_apply_enable()
+		self._guard_file_box_enable()
 
 	def _guard_auto_apply_enable(self):
 		"""Defense-in-depth backstop for the admin-gated ``auto_apply`` flag
@@ -52,5 +53,24 @@ class JarvisConversation(Document):
 		if "System Manager" not in frappe.get_roles(frappe.session.user):
 			frappe.throw(
 				_("Enabling auto-apply requires the System Manager role."),
+				frappe.PermissionError,
+			)
+
+	def _guard_file_box_enable(self):
+		"""``file_box`` grants the same create/update confirm-card bypass as
+		``auto_apply`` (destructive ops still park), so it must be just as
+		unforgeable: a non-admin owner must not flip it 0 -> 1 through a
+		generic ``doc.save()`` / ``update_doc`` to self-grant auto-apply.
+		The legitimate enabler is the server-side File Box drop path, which
+		writes via ``frappe.db.set_value`` and bypasses this controller.
+		"""
+		if not self.file_box:
+			return
+		previous = self.get_doc_before_save()
+		if previous and bool(previous.file_box):
+			return
+		if "System Manager" not in frappe.get_roles(frappe.session.user):
+			frappe.throw(
+				_("Enabling File Box mode requires the System Manager role."),
 				frappe.PermissionError,
 			)
