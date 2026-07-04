@@ -133,7 +133,9 @@ def _sweep_orphan_turns(now) -> int:
 		job_id = f"jarvis-turn::{r['name']}::a{int(r['was_recovered'] or 0)}"
 		try:
 			status = get_job_status(job_id)
-			status = str(status) if status else None
+			# rq's JobStatus is a (str, Enum) mixin: str() gives
+			# "JobStatus.QUEUED" on py3.11+, so compare the .value.
+			status = getattr(status, "value", None) or (str(status) if status else None)
 		except Exception:
 			continue
 		if status == "started":
