@@ -69,6 +69,16 @@ class TestSaveLlmPool(_RT3SettingsTestCase):
         # The account's blob reaches the pool push (served via cliproxy).
         self.assertEqual(pool_calls[0]["oauth_blobs"].get("SUB_deadbeef"), {"refresh_token": "rt"})
 
+    def test_legacy_preset_value_normalized_by_patch(self):
+        """A legacy capitalized Select value is mapped to its lowercase catalog
+        key so the next save_llm_pool doesn't raise 'unknown preset'. #200 #12."""
+        from jarvis.patches.v1_6_normalize_llm_preset_value import execute as normalize_preset
+        s = frappe.get_single("Jarvis Settings")
+        s.db_set("preset", "Balanced", update_modified=False)
+        normalize_preset()
+        s.reload()
+        self.assertEqual(s.preset, "balanced")
+
     def test_preset_validated_against_catalog(self):
         models = [{"provider": "openai", "model": "gpt-5.5", "api_key": "sk-x", "base_url": "", "tier": "strong", "order": 0}]
         with patch("jarvis.admin_client.get_preset_catalog", return_value=_CATALOG):
