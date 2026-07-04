@@ -199,8 +199,14 @@ def get_preset_catalog() -> list:
 		return cached
 	try:
 		catalog = _post_guest(path=_PRESET_CATALOG_PATH, body={})
-	except (AdminUnreachableError, AdminAuthError,
-			AdminValidationError, AdminRateLimitedError):
+	except Exception:
+		# "Never raises": onboarding's preset step must degrade to the bundled
+		# catalog on ANY failure, not just the Admin* family. A scheme-less
+		# jarvis_admin_url, for instance, raises requests.MissingSchema (a
+		# RequestException that _do_post does NOT convert to an Admin* error),
+		# which would otherwise 500 the whitelisted onboarding endpoint. #200
+		# review #9.
+		frappe.log_error(title="get_preset_catalog fell back to bundled")
 		return BUNDLED_PRESET_CATALOG
 	if isinstance(catalog, dict):
 		catalog = catalog.get("data") or catalog.get("catalog") or catalog.get("presets") or []

@@ -40,6 +40,12 @@ GATED_ENDPOINTS = [
 	("jarvis.oauth.api", "begin_paste_signin", {"provider": "OpenAI", "model": "gpt-5.5"}),
 	("jarvis.oauth.api", "complete_paste_signin",
 		{"nonce": "x" * 48, "redirected_url": "http://localhost:1455/auth/callback?code=A&state=B"}),
+	# Pool OAuth-flow endpoints — start/complete a subscription-account capture.
+	# Must refuse a non-System-Manager caller (they return account credentials).
+	# #200 review #10: previously uncovered, so a dropped only_for would slip through.
+	("jarvis.oauth.api", "begin_pool_account_signin", {"provider": "OpenAI", "model": "gpt-5.5"}),
+	("jarvis.oauth.api", "complete_pool_account_signin",
+		{"nonce": "x" * 48, "redirected_url": "http://localhost:1455/auth/callback?code=A&state=B"}),
 	("jarvis.oauth.api", "disconnect", {}),
 ]
 

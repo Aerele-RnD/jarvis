@@ -568,6 +568,18 @@ class TestOnboardingClient(FrappeTestCase):
 			admin_client.get_plans()
 		self.assertNotIn("Authorization", captured["headers"])
 
+	def test_get_preset_catalog_falls_back_on_non_admin_error(self):
+		# A scheme-less jarvis_admin_url raises requests.MissingSchema — NOT an
+		# Admin* error — which must still degrade to the bundled catalog rather
+		# than 500 the onboarding preset step. #200 review #9.
+		import requests
+		from jarvis._preset_catalog import BUNDLED_PRESET_CATALOG
+		frappe.cache().delete_value(admin_client._PRESET_CATALOG_CACHE_KEY)
+		with patch("jarvis.admin_client._post_guest",
+				   side_effect=requests.exceptions.MissingSchema("no scheme in URL")):
+			out = admin_client.get_preset_catalog()
+		self.assertEqual(out, BUNDLED_PRESET_CATALOG)
+
 
 class TestPostUpdateLlmCredsAuthMode(FrappeTestCase):
 	def setUp(self):

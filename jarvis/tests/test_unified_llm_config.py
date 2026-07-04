@@ -269,6 +269,30 @@ class TestPoolSerializeFromSettings(FrappeTestCase):
             f"Expected upstream consistency error, got: {errors}"
         )
 
+    def test_unsupported_upstream_is_a_validate_error(self):
+        """A typo'd/unsupported subscription upstream is rejected (enum guard lost
+        in the JSON migration, re-enforced). #200 review #6."""
+        _, validate_models, _ = self._imports()
+        m = _subscription_model(accounts=[_account(upstream="gogle", account_ref="ACC_001")])
+        settings = _make_settings_with_models([m])
+        errors = validate_models(settings)
+        self.assertTrue(
+            any("unsupported upstream" in e.lower() for e in errors),
+            f"Expected an unsupported-upstream error, got: {errors}"
+        )
+
+    def test_supported_upstreams_pass_validation(self):
+        """openai + google are still accepted (no false positive from the guard)."""
+        _, validate_models, _ = self._imports()
+        for up in ("openai", "google"):
+            m = _subscription_model(accounts=[_account(upstream=up, account_ref=f"ACC_{up}")])
+            settings = _make_settings_with_models([m])
+            errors = validate_models(settings)
+            self.assertFalse(
+                any("unsupported upstream" in e.lower() for e in errors),
+                f"upstream={up!r} must be accepted, got: {errors}"
+            )
+
     # ------------------------------------------------------------------ #
     # (d) Duplicate account_ref → validate_models error
     # ------------------------------------------------------------------ #
