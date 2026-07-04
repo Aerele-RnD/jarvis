@@ -585,14 +585,35 @@ def _run_tool(tool: str, raw_args: dict | str | None,
 	# token bound to the acting user + conversation, and return a non-executing
 	# ``pending_confirmation`` status. Only ``confirm_tool`` (a human click) can
 	# then run the stored call via ``dispatch_confirmed``. CRITICAL: the token
-	# is stored, not returned - the model must not see it (Task 3 delivers it to
-	# the UI out-of-band).
+	# is stored, not returned - the model must not see it. It is delivered to
+	# the UI out-of-band below, over the realtime channel (Task 3).
 	if tool in _GATED_WRITES:
-		from jarvis.chat import pending_confirm
+		from jarvis.chat import events, pending_confirm
 		conv, run_id = _gate_context(conversation)
 		preview = _pending_preview(tool, args)
-		pending_confirm.mint(conversation=conv, owner=frappe.session.user,
-							 tool=tool, args=args, run_id=run_id)
+		token = pending_confirm.mint(conversation=conv, owner=frappe.session.user,
+									 tool=tool, args=args, run_id=run_id)
+		# Deliver the token to the human's UI out-of-band, over the realtime
+		# channel, NEVER via the function return below - the model must never
+		# see it. Best-effort: a publish hiccup must not crash the tool call
+		# or the turn, and must NOT execute the write - the token still lives
+		# in pending_confirm either way, so a retry or a future resync can
+		# still surface it.
+		try:
+			events.publish_to_user(frappe.session.user, {
+				"kind": "action:pending",
+				"token": token,
+				"tool": tool,
+				"preview": preview,
+				"conversation": conv,
+				"run_id": run_id,
+				"summary": _describe_call(tool, args),
+			})
+		except Exception:
+			frappe.log_error(
+				title="action:pending publish failed",
+				message=frappe.get_traceback(),
+			)
 		return {"ok": True, "data": {
 			"status": "pending_confirmation", "preview": preview, "tool": tool,
 		}}
