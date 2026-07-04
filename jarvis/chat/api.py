@@ -776,9 +776,56 @@ def _next_seq(conversation: str) -> int:
 	return (current_max or 0) + 1
 
 
+CHAT_QUEUE = "jarvis_chat"
+
+
+def _turn_queue() -> str:
+	"""RQ queue for agent turns: ``jarvis_chat`` when the bench provisions
+	it, else ``long``.
+
+	A turn occupies its worker for the turn's whole wall-clock (the worker
+	holds the openclaw event relay), so on ``long`` a batch of File-Box
+	documents serializes behind ``background_workers`` AND starves every
+	other long job behind minutes-long turns. A bench that declares the
+	queue in ``common_site_config.workers`` (Frappe Cloud: bench worker
+	config) and runs workers for it gets isolated, parallel chat turns;
+	every other deployment keeps today's ``long`` behavior untouched.
+
+	Both gates matter: ``frappe.enqueue`` rejects queue names missing from
+	the ``workers`` config, and a declared queue whose workers are down
+	(supervisor edit, half-applied deploy) would blackhole turns - so we
+	also require a live listener. Result cached 60s per site; a
+	``jarvis_chat_queue`` site_config value overrides verbatim (e.g.
+	``"long"`` to force off without touching worker config).
+	"""
+	override = (frappe.conf.get("jarvis_chat_queue") or "").strip()
+	if override:
+		return override
+	if CHAT_QUEUE not in (frappe.get_conf().get("workers") or {}):
+		return "long"
+	cache_key = "jarvis:turn_queue"
+	cached = frappe.cache().get_value(cache_key)
+	if cached:
+		return cached
+	queue = "long"
+	try:
+		from frappe.utils.background_jobs import generate_qname, get_workers
+
+		qname = generate_qname(CHAT_QUEUE)
+		if any(qname in (w.queue_names() or []) for w in get_workers()):
+			queue = CHAT_QUEUE
+	except Exception:
+		# Probe trouble (redis hiccup, RQ API drift) must never take down
+		# send_message - long is always a correct executor.
+		pass
+	frappe.cache().set_value(cache_key, queue, expires_in_sec=60)
+	return queue
+
+
 def _dispatch_turn(enqueue_kwargs: dict) -> None:
 	"""Route a prepared turn to the worker. On the default Node socketio backend
-	we use the ``long`` RQ queue (chat turns run up to ``_AGENT_TURN_WORKER_TIMEOUT``
+	we use the ``jarvis_chat`` RQ queue when the bench provisions one, else
+	``long`` (chat turns run up to ``_AGENT_TURN_WORKER_TIMEOUT``
 	= 720s, far above the 300s default cap; ``default`` is shared with provisioning
 	+ OAuth-refresh jobs; ``at_front=True`` keeps interactive chat ahead of
 	scheduled work). On the Python socketio backend we publish to Redis instead so
@@ -823,11 +870,15 @@ def _dispatch_turn(enqueue_kwargs: dict) -> None:
 				"unset socketio_backend."
 			),
 		)
+	queue = _turn_queue()
 	frappe.enqueue(
 		method="jarvis.chat.worker.run_agent_turn",
-		queue="long",
+		queue=queue,
 		timeout=_AGENT_TURN_WORKER_TIMEOUT,
-		at_front=True,
+		# On the shared long queue, jump ahead of scheduled work. On the
+		# dedicated chat queue every job IS a chat turn - at_front would
+		# invert a batch of File-Box drops to LIFO; keep drop order.
+		at_front=(queue == "long"),
 		**enqueue_kwargs,
 	)
 
