@@ -407,20 +407,20 @@
 							<!-- the single tool running right now -->
 							<div v-if="showActivityDetail && currentTool" :key="currentTool.id" class="jv-toolrow">
 								<svg class="jv-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2.4" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9" /></svg>
-								<span>Running <b>{{ currentTool.name }}</b></span>
+								<span>{{ toolPhrase(currentTool) }} <b>({{ currentTool.name }})</b></span>
 							</div>
 							<!-- compact tally of tools finished this turn -->
 							<div v-if="showActivityDetail && doneCount" class="jv-toolrow jv-tooldone">
 								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
 								<span>{{ doneCount }} tool{{ doneCount === 1 ? "" : "s" }} done<template v-if="failedCount"> · {{ failedCount }} failed</template></span>
 							</div>
-							<div v-if="!showActivityDetail || (waiting && !currentTool)" style="display:flex;align-items:center;gap:7px;padding-top:4px;">
+							<div v-if="!showActivityDetail || (waiting && !currentTool) || (!currentTool && statusPhase)" style="display:flex;align-items:center;gap:7px;padding-top:4px;">
 								<span style="display:flex;gap:4px;">
 									<span style="width:6px;height:6px;border-radius:50%;background:var(--text-3);animation:jv-dot 1.1s infinite;"></span>
 									<span style="width:6px;height:6px;border-radius:50%;background:var(--text-3);animation:jv-dot 1.1s infinite .18s;"></span>
 									<span style="width:6px;height:6px;border-radius:50%;background:var(--text-3);animation:jv-dot 1.1s infinite .36s;"></span>
 								</span>
-								<span style="font-size:12px;color:var(--text-3);">{{ thinkingWord }}</span>
+								<span style="font-size:12px;color:var(--text-3);">{{ liveStatus }}</span>
 							</div>
 						</div>
 					</div>
@@ -2003,6 +2003,75 @@ const currentTool = computed(
 )
 const doneCount = computed(() => activeTools.value.filter((t) => t.status !== "running").length)
 const failedCount = computed(() => activeTools.value.filter((t) => t.status === "error").length)
+// ── Live status line ────────────────────────────────────────────────────────
+// Real progress instead of a blanket "Thinking…": phase transitions come from
+// the run's realtime events (run:start → tool:start/end → assistant:delta).
+// Faithful by construction: tool phrases derive from the tool NAME plus
+// openclaw's own arg summary (tool_title, e.g. "get_list Sales Invoice") —
+// nothing is invented client-side.
+const statusPhase = ref(null) // 'model' | 'analyzing' | null
+const TOOL_PHRASES = {
+	get_list: "Fetching {d} records",
+	get_doc: "Opening {d}",
+	get_schema: "Checking the {d} structure",
+	run_report: "Running the {d} report",
+	get_report_filters: "Checking report filters",
+	query: "Querying the database",
+	summarize_dataset: "Summarizing the data",
+	get_stock_balance: "Checking stock balance",
+	get_balance_on: "Checking account balance",
+	get_customer_outstanding: "Checking outstanding",
+	add_tag: "Tagging {d}",
+	remove_tag: "Untagging {d}",
+	assign_to: "Assigning {d}",
+	share_doc: "Sharing {d}",
+	add_comment: "Adding a comment",
+	send_email: "Sending the email",
+	create_doc: "Drafting a {d}",
+	update_doc: "Updating {d}",
+	submit_doc: "Submitting {d}",
+	cancel_doc: "Cancelling {d}",
+	delete_doc: "Deleting {d}",
+	amend_doc: "Amending {d}",
+	preview_doc: "Previewing the draft",
+	export_excel: "Preparing your spreadsheet",
+	download_pdf: "Preparing your PDF",
+	download_vcard: "Preparing the contact card",
+	attach_to_doc: "Attaching the file",
+	read_file: "Reading the file",
+	get_file_pages: "Reading the document",
+	run_method: "Running the operation",
+	bash: "Reading reference material",
+	exec: "Reading reference material",
+	browser: "Browsing the web",
+	canvas: "Drawing the canvas",
+	image: "Generating the image",
+}
+function toolPhrase(tool) {
+	if (!tool) return ""
+	const raw = String(tool.name || "")
+	const base = raw.replace(/^jarvis__/, "")
+	// openclaw's title is "<toolName> <arg summary>"; the remainder after the
+	// tool name is its own faithful description of the target.
+	let detail = ""
+	if (tool.title) {
+		const title = String(tool.title)
+		detail = (title.startsWith(raw) ? title.slice(raw.length) : title.startsWith(base) ? title.slice(base.length) : "").trim()
+	}
+	if (detail.length > 60) detail = detail.slice(0, 57) + "…"
+	const tpl = TOOL_PHRASES[base]
+	if (!tpl) return detail ? `Using ${base} (${detail})…` : `Using ${base}…`
+	if (tpl.includes("{d}")) {
+		return (detail ? tpl.replace("{d}", detail) : tpl.replace(/ ?\{d\}/, "").replace("the  report", "the report")) + "…"
+	}
+	return tpl + "…"
+}
+const liveStatus = computed(() => {
+	if (currentTool.value) return toolPhrase(currentTool.value)
+	if (statusPhase.value === "analyzing") return "Analyzing the results…"
+	if (waiting.value || sending.value || statusPhase.value === "model") return "Talking to the model…"
+	return thinkingWord.value
+})
 const runMeta = ref({}) // { [message_id]: { ms, tools, names } } — survives reloads
 const canvasContent = ref({}) // { `${msgName}::${canvasName}`: srcdoc html (html/svg) | data-url (pdf/image/file) }
 const pendingFiles = ref([]) // [{ file_url, file_name }] attachments to send
@@ -3829,9 +3898,11 @@ function onEvent(p) {
 			runStartMs.value = Date.now()
 			activeTools.value = []
 			waiting.value = true
+			statusPhase.value = "model"
 			break
 		case "assistant:delta": {
 			waiting.value = false
+			statusPhase.value = null
 			// Upsert: the message may not be loaded yet when the first delta
 			// arrives — add it so streaming text shows immediately (the bug fix).
 			let m = messages.value.find((x) => x.name === p.message_id)
@@ -3846,14 +3917,18 @@ function onEvent(p) {
 		}
 		case "tool:start": {
 			const id = p.tool_call_id || `${p.tool_name}-${activeTools.value.length}`
-			activeTools.value = [...activeTools.value, { id, name: p.tool_name, status: "running" }]
+			activeTools.value = [...activeTools.value, { id, name: p.tool_name, title: p.tool_title || "", status: "running" }]
 			waiting.value = false
+			statusPhase.value = null
 			nextTick(scrollBottom)
 			break
 		}
 		case "tool:end": {
 			const t = activeTools.value.find((x) => x.id === p.tool_call_id)
 			if (t) t.status = p.status || "completed"
+			// No tool running anymore and no text yet → the model is reading
+			// the results; say so instead of a generic "Thinking…".
+			if (!activeTools.value.some((x) => x.status === "running")) statusPhase.value = "analyzing"
 			break
 		}
 		case "canvas": {
@@ -3881,6 +3956,7 @@ function onEvent(p) {
 			}
 			waiting.value = false
 			sending.value = false
+			statusPhase.value = null
 			activeTools.value = []
 			currentRunId.value = null
 			_notifyReplyReady() // browser notification when the tab is hidden (opt-in)
@@ -3896,6 +3972,7 @@ function onEvent(p) {
 		case "run:error":
 			waiting.value = false
 			sending.value = false
+			statusPhase.value = null
 			activeTools.value = []
 			currentRunId.value = null
 			loadConversation(currentId.value)
