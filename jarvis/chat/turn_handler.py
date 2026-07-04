@@ -1105,6 +1105,10 @@ def _handle_event_inner(
 				"conversation_id": conversation_id,
 				"message_id": tool_msg_by_call_id.get(tool_call_id),
 				"tool_name": tool_name,
+				# openclaw's own human summary ("get_list Sales Invoice") -
+				# drives the live status line; absent for runtimes that don't
+				# emit item titles.
+				"tool_title": event.get("tool_title"),
 				"tool_call_id": tool_call_id,
 				"run_id": run_id,
 			})

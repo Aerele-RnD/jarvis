@@ -43,6 +43,13 @@ def parse_event(payload: dict[str, Any]) -> dict[str, Any] | None:
 		}
 		if data.get("status"):
 			out["status"] = data["status"]
+		# openclaw's item events carry a human title it derives itself from
+		# the tool name + an arg summary (buildToolItemTitle ->
+		# inferToolMetaFromArgs, e.g. "get_list Sales Invoice"). Pass it
+		# through so the chat's live status line can say WHAT is being
+		# fetched without the bench parsing raw args.
+		if data.get("title"):
+			out["tool_title"] = data["title"]
 		return out
 
 	if stream == "assistant":
