@@ -509,6 +509,15 @@
 					<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l14 9-14 9V3z" /><path d="M3 5v14" /></svg>
 					<span class="jv-railtip">Macros</span>
 				</button>
+				<button class="jv-skillrail-btn" :class="{ active: fileboxOpen }" @click="openFilebox()">
+					<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-6l-2 3h-4l-2-3H2" /><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" /></svg>
+					<span class="jv-railtip">File Box</span>
+				</button>
+				<button class="jv-skillrail-btn" :class="{ active: approvalsOpen }" @click="openApprovals()" style="position:relative;">
+					<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg>
+					<span v-if="approvalsBadge" style="position:absolute;top:2px;right:2px;background:var(--red,#e5484d);color:#fff;border-radius:8px;font-size:9px;line-height:1;padding:2px 4px;">{{ approvalsBadge }}</span>
+					<span class="jv-railtip">Approvals</span>
+				</button>
 			</div>
 		</aside>
 
@@ -650,6 +659,86 @@
 
 		<!-- ============ MACROS POPUP (centered) ============ -->
 		<transition name="jv-fade">
+			<div v-if="fileboxOpen" class="jv-skills-overlay" @click.self="fileboxOpen = false">
+				<div class="jv-skills-modal">
+					<div class="jv-skills-head">
+						<div style="min-width:0;">
+							<div class="jv-skills-title">File Box</div>
+							<div class="jv-skills-sub">Drop an inbound document — invoice, receipt, PO — and Jarvis drafts it for you.</div>
+						</div>
+						<button class="jv-btn jv-btn--icon" title="Close (Esc)" @click="fileboxOpen = false">
+							<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+						</button>
+					</div>
+					<div class="jv-skills-body">
+						<div
+							style="border:2px dashed var(--border);border-radius:10px;padding:26px;text-align:center;cursor:pointer;margin-bottom:14px;"
+							:style="fileboxDrag ? 'border-color:var(--blue);background:var(--surface-2);' : ''"
+							@click="$refs.fileboxInput.click()"
+							@dragover.prevent="fileboxDrag = true" @dragleave="fileboxDrag = false"
+							@drop.prevent="onFileboxDrop($event)"
+						>
+							<div v-if="fileboxBusy" style="font-size:13px;color:var(--text-2);">Uploading &amp; starting the draft…</div>
+							<div v-else style="font-size:13px;color:var(--text-2);">Drop a file here, or click to browse.<br /><span style="font-size:11.5px;color:var(--text-3);">One document per file works best. The draft opens as a chat.</span></div>
+							<input ref="fileboxInput" type="file" style="display:none" @change="onFileboxPick($event)" />
+						</div>
+						<div v-if="fileboxError" class="jv-skill-err">{{ fileboxError }}</div>
+						<div v-if="!fileboxItems.length" class="jv-set-empty" style="text-align:center;padding:10px 0;">Nothing processed yet.</div>
+						<div v-for="f in fileboxItems" :key="f.name" class="jv-skill-row" style="cursor:pointer;" @click="openFileboxItem(f)">
+							<div style="flex:1;min-width:0;">
+								<div style="font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ f.title.replace(/^File: /, "") }}</div>
+								<div style="font-size:11px;color:var(--text-3);">{{ new Date(f.creation).toLocaleString() }}</div>
+							</div>
+							<span style="font-size:10.5px;border-radius:7px;padding:2px 7px;flex:none;"
+								:style="f.status === 'processing' ? 'background:var(--surface-2);color:var(--text-2);'
+									: f.status === 'needs_approval' ? 'background:rgba(229,72,77,.12);color:var(--red,#e5484d);'
+									: f.status === 'error' ? 'background:rgba(229,72,77,.12);color:var(--red,#e5484d);'
+									: 'background:rgba(48,164,108,.12);color:var(--green,#30a46c);'">
+								{{ f.status === "needs_approval" ? (f.pending_approvals + " approval" + (f.pending_approvals > 1 ? "s" : "")) : f.status }}
+							</span>
+						</div>
+					</div>
+				</div>
+			</div>
+
+			<div v-if="approvalsOpen" class="jv-skills-overlay" @click.self="approvalsOpen = false">
+				<div class="jv-skills-modal">
+					<div class="jv-skills-head">
+						<div style="min-width:0;">
+							<div class="jv-skills-title">Approvals</div>
+							<div class="jv-skills-sub">Decisions waiting on you. Deciding resumes the chat that asked.</div>
+						</div>
+						<button class="jv-btn jv-btn--icon" title="Close (Esc)" @click="approvalsOpen = false">
+							<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+						</button>
+					</div>
+					<div class="jv-skills-body">
+						<div v-if="approvalsError" class="jv-skill-err">{{ approvalsError }}</div>
+						<div v-if="!approvalItems.length" class="jv-set-empty" style="text-align:center;padding:26px 0;">Nothing waiting on you. 🎉</div>
+						<div v-for="a in approvalItems" :key="a.name" style="border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px;">
+							<div style="font-size:13px;font-weight:600;">{{ a.title }}</div>
+							<div style="font-size:12.5px;color:var(--text-2);margin:6px 0;">{{ a.question }}</div>
+							<details v-if="a.context_md" style="margin-bottom:8px;">
+								<summary style="font-size:11.5px;color:var(--text-3);cursor:pointer;">context</summary>
+								<pre style="font-size:11px;white-space:pre-wrap;max-height:180px;overflow:auto;background:var(--surface-2);border-radius:7px;padding:8px;">{{ a.context_md }}</pre>
+							</details>
+							<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
+								<button v-for="opt in a.options" :key="opt" class="jv-btn jv-btn--sm"
+									:class="{ 'jv-btn--primary': approvalDrafts[a.name] === opt }"
+									@click="approvalDrafts[a.name] = opt">{{ opt }}</button>
+							</div>
+							<div style="display:flex;gap:6px;">
+								<input v-model="approvalDrafts[a.name]" placeholder="Decision (pick an option or type)"
+									style="flex:1;font-size:12.5px;padding:6px 9px;border:1px solid var(--border);border-radius:7px;background:var(--surface-1);color:var(--text-1);" />
+								<button class="jv-btn jv-btn--primary jv-btn--sm" :disabled="!(approvalDrafts[a.name] || '').trim() || approvalsBusy" @click="doDecide(a, 1)">Approve</button>
+								<button class="jv-btn jv-btn--sm" :disabled="!(approvalDrafts[a.name] || '').trim() || approvalsBusy" @click="doDecide(a, 0)">Reject</button>
+								<button v-if="a.conversation" class="jv-btn jv-btn--sm" title="Open the chat" @click="openApprovalChat(a)">Chat</button>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+
 			<div v-if="macrosModalOpen" class="jv-skills-overlay" @click.self="closeMacrosModal">
 				<div class="jv-skills-modal">
 					<div class="jv-skills-head">
@@ -1527,6 +1616,91 @@ async function removeSkill(s) {
 // --- Macros (customer-authored prompt sequences run as chained turns) ---
 const macros = ref([])
 const macrosModalOpen = ref(false)
+// ── File Box + Approvals panes ──────────────────────────────────────────────
+const fileboxOpen = ref(false)
+const fileboxDrag = ref(false)
+const fileboxBusy = ref(false)
+const fileboxError = ref("")
+const fileboxItems = ref([])
+const approvalsOpen = ref(false)
+const approvalsBusy = ref(false)
+const approvalsError = ref("")
+const approvalItems = ref([])
+const approvalDrafts = ref({})
+const approvalsBadge = ref(0)
+
+async function refreshApprovalsBadge() {
+	try { approvalsBadge.value = (await api.approvalsPendingCount()) || 0 } catch (e) { /* badge is best-effort */ }
+}
+async function openFilebox() {
+	fileboxOpen.value = true
+	fileboxError.value = ""
+	try { fileboxItems.value = (await api.fileboxList()) || [] } catch (e) { fileboxError.value = "Could not load the inbound list." }
+}
+async function _fileboxProcess(file) {
+	if (!file || fileboxBusy.value) return
+	fileboxBusy.value = true
+	fileboxError.value = ""
+	try {
+		const up = await api.uploadFile(file)
+		const res = await api.fileboxDrop(up.file_url, up.file_name)
+		if (!res || !res.ok) throw new Error((res && res.reason) || "drop failed")
+		fileboxOpen.value = false
+		await loadConversations()
+		await selectConversation(res.conversation_id)
+	} catch (e) {
+		fileboxError.value = `Could not process the file: ${e.message || e}`
+	} finally {
+		fileboxBusy.value = false
+	}
+}
+function onFileboxDrop(ev) {
+	fileboxDrag.value = false
+	const f = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0]
+	_fileboxProcess(f)
+}
+function onFileboxPick(ev) {
+	const f = ev.target.files && ev.target.files[0]
+	ev.target.value = ""
+	_fileboxProcess(f)
+}
+async function openFileboxItem(f) {
+	fileboxOpen.value = false
+	await selectConversation(f.name)
+}
+async function openApprovals() {
+	approvalsOpen.value = true
+	approvalsError.value = ""
+	try {
+		approvalItems.value = (await api.listApprovals("Pending")) || []
+	} catch (e) { approvalsError.value = "Could not load approvals." }
+	refreshApprovalsBadge()
+}
+async function doDecide(a, approve) {
+	const decision = (approvalDrafts.value[a.name] || "").trim()
+	if (!decision) return
+	approvalsBusy.value = true
+	try {
+		await api.decideApproval(a.name, decision, approve)
+		approvalItems.value = approvalItems.value.filter((x) => x.name !== a.name)
+		delete approvalDrafts.value[a.name]
+		refreshApprovalsBadge()
+		// The decision resumed the linked chat - take the user there.
+		if (a.conversation) {
+			approvalsOpen.value = false
+			await loadConversations()
+			await selectConversation(a.conversation)
+		}
+	} catch (e) {
+		approvalsError.value = `Could not record the decision: ${e.message || e}`
+	} finally {
+		approvalsBusy.value = false
+	}
+}
+async function openApprovalChat(a) {
+	approvalsOpen.value = false
+	await selectConversation(a.conversation)
+}
 const macroEditorOpen = ref(false)
 const macroSaving = ref(false)
 const macroError = ref("")
@@ -3458,6 +3632,7 @@ function onKey(e) {
 }
 
 async function loadConversations() {
+	refreshApprovalsBadge()
 	conversations.value = await api.listConversations()
 }
 async function loadConversation(id) {
