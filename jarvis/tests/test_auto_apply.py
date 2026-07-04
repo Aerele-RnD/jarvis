@@ -125,6 +125,80 @@ class TestSetAutoApplyGating(FrappeTestCase):
 			set_auto_apply("no-such-conversation-zzz", 1)
 
 
+class TestAutoApplyControllerGuard(FrappeTestCase):
+	"""Doctype-layer backstop: a non-admin owner cannot flip ``auto_apply``
+	0 -> 1 through a generic ``doc.save()`` path (update_doc, frappe.client,
+	desk) that never touches ``set_auto_apply``. This is the defense-in-depth
+	fix for the exploit where a non-admin owner asks the agent to
+	``update_doc("Jarvis Conversation", <their conv>, {"auto_apply": 1})``
+	and self-confirms it - the confirmed write runs as the owner and used to
+	succeed via if_owner, since only ``set_auto_apply`` was gated.
+	"""
+
+	def setUp(self):
+		_ensure_test_user()            # TEST_USER has System Manager
+		_ensure_non_admin_user()
+		self._orig_user = frappe.session.user
+
+	def tearDown(self):
+		frappe.set_user(self._orig_user)
+		_cleanup_user_conversations(TEST_USER)
+		_cleanup_user_conversations(NON_ADMIN_USER)
+
+	def test_non_admin_owner_save_cannot_enable(self):
+		conv = _make_conv(NON_ADMIN_USER)
+		frappe.set_user(NON_ADMIN_USER)
+		doc = frappe.get_doc(CONV, conv)
+		doc.auto_apply = 1
+		with self.assertRaises(frappe.PermissionError):
+			doc.save()
+		self.assertEqual(
+			int(frappe.db.get_value(CONV, conv, "auto_apply") or 0), 0
+		)
+
+	def test_system_manager_save_can_enable(self):
+		conv = _make_conv(TEST_USER)
+		frappe.set_user(TEST_USER)
+		doc = frappe.get_doc(CONV, conv)
+		doc.auto_apply = 1
+		doc.save()
+		self.assertEqual(int(frappe.db.get_value(CONV, conv, "auto_apply")), 1)
+
+	def test_non_admin_owner_save_can_disable(self):
+		conv = _make_conv(NON_ADMIN_USER)
+		# Enable directly at the DB layer (bypasses the controller, same as
+		# an admin-approved set_auto_apply call would have done).
+		frappe.db.set_value(CONV, conv, "auto_apply", 1, update_modified=False)
+		frappe.db.commit()
+		frappe.set_user(NON_ADMIN_USER)
+		doc = frappe.get_doc(CONV, conv)
+		doc.auto_apply = 0
+		doc.save()  # disabling never requires System Manager
+		self.assertEqual(int(frappe.db.get_value(CONV, conv, "auto_apply")), 0)
+
+	def test_non_admin_owner_unrelated_edit_not_blocked(self):
+		# A save that leaves auto_apply unchanged (still 0) must not be
+		# blocked - no false positive on ordinary edits like the title.
+		conv = _make_conv(NON_ADMIN_USER)
+		frappe.set_user(NON_ADMIN_USER)
+		doc = frappe.get_doc(CONV, conv)
+		doc.title = "renamed by owner"
+		doc.save()  # should not raise
+		self.assertEqual(frappe.db.get_value(CONV, conv, "title"), "renamed by owner")
+		self.assertEqual(
+			int(frappe.db.get_value(CONV, conv, "auto_apply") or 0), 0
+		)
+
+	def test_set_auto_apply_admin_enable_still_works(self):
+		# Regression: set_auto_apply's frappe.db.set_value path bypasses the
+		# controller entirely and must be unaffected by this change.
+		conv = _make_conv(TEST_USER)
+		frappe.set_user(TEST_USER)
+		res = set_auto_apply(conv, 1)
+		self.assertTrue(res["ok"])
+		self.assertEqual(int(frappe.db.get_value(CONV, conv, "auto_apply")), 1)
+
+
 class TestGateAutoApplyBypass(FrappeTestCase):
 	"""The gate's auto-apply bypass in ``jarvis.api._run_tool``."""
 
