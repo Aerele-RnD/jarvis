@@ -119,12 +119,19 @@ from jarvis.hooks import DEFAULT_ADMIN_URL  # noqa: E402  - used by _admin_url()
 
 
 def _admin_url(settings) -> str:
-	# Per-customer override wins; otherwise fall through to the bench-wide
-	# default - site/common config ``jarvis_admin_url`` then the hardcoded
-	# fallback - resolved FRESH via get_default_admin_url() so a config value
-	# added after worker start is honored without a restart (the module-level
-	# DEFAULT_ADMIN_URL import binds once and would miss late config changes).
+	# A deliberately-set site/common config ``jarvis_admin_url`` is the
+	# deployment's source of truth and WINS over the ``Jarvis Settings`` field.
+	# A reinstall / re-provision can leave a stale dev value (e.g.
+	# "http://127.0.0.1:8000") in the doctype field; letting that mask a
+	# correctly-configured site config made the admin unreachable. Resolution
+	# order: site/common config -> Jarvis Settings override -> hardcoded
+	# fallback. Read FRESH via frappe.conf / get_default_admin_url() so a config
+	# value added after worker start is honored without a restart (the
+	# module-level DEFAULT_ADMIN_URL import binds once and would miss it).
 	from jarvis.hooks import get_default_admin_url
+	conf_url = (frappe.conf.get("jarvis_admin_url") or "").strip().rstrip("/")
+	if conf_url:
+		return conf_url
 	return ((settings.jarvis_admin_url or "").rstrip("/")) or get_default_admin_url().rstrip("/")
 
 

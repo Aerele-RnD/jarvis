@@ -21,10 +21,12 @@ boot_session = "jarvis.boot.set_jarvis_boot"
 # for signup, billing, plan list, container connection, and account summary.
 #
 # Resolution order (highest precedence first):
-#   1. ``Jarvis Settings.jarvis_admin_url`` per-customer override
-#      (resolved in admin_client, not here)
-#   2. ``jarvis_admin_url`` in site_config.json (or common_site_config.json)
+#   1. ``jarvis_admin_url`` in site_config.json (or common_site_config.json) -
+#      the deployment's source of truth (resolved in admin_client, not here)
+#   2. ``Jarvis Settings.jarvis_admin_url`` per-customer override
 #   3. this hardcoded fallback for fresh installs
+# Site config outranks the doctype field so a stale value left in Jarvis
+# Settings by a reinstall cannot mask a correctly-configured control plane.
 #
 # Rebranding the deployment? Set ``jarvis_admin_url`` in site config, or
 # change this string + ship a new release.

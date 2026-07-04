@@ -18,12 +18,13 @@ def _require_admin_url() -> None:
 
 	dev_onboard and start_signup must target a deliberately-chosen control
 	plane. The admin URL resolves (admin_client._admin_url ->
-	hooks.get_default_admin_url) in this order: (1) Jarvis Settings.
-	jarvis_admin_url per-customer override, (2) ``jarvis_admin_url`` in
-	site_config / common_site_config (via frappe.conf), (3) the hardcoded
-	fallback for fresh installs. Silently falling through to (3) on a
-	multi-site bench may land the wrong tenancy, so require (1) or (2) to be
-	set - only (3)-alone is the fail-fast case. (1) wins when both are set.
+	hooks.get_default_admin_url) in this order: (1) ``jarvis_admin_url`` in
+	site_config / common_site_config (via frappe.conf), (2) Jarvis Settings.
+	jarvis_admin_url per-customer override, (3) the hardcoded fallback for
+	fresh installs. Silently falling through to (3) on a multi-site bench may
+	land the wrong tenancy, so require (1) or (2) to be set - only (3)-alone is
+	the fail-fast case. (1) wins when both are set (site config is the
+	deployment's source of truth; a stale doctype value must not mask it).
 	"""
 	configured = (
 		(frappe.db.get_single_value("Jarvis Settings", "jarvis_admin_url") or "").strip()
