@@ -76,6 +76,15 @@ def _is_response_frame(frame: dict, req_id: str) -> bool:
 from jarvis.exceptions import OpenclawUnreachableError
 
 CONNECT_TIMEOUT_SECONDS = 10
+
+# openclaw v2026.6.8 (issue #29385) enforces gateway.controlUi.allowedOrigins on
+# LAN binds since v2026.2.26 and no longer honors a "*" wildcard: a
+# `--bind lan` gateway seeds ["http://localhost:18789", "http://127.0.0.1:18789"]
+# (its own internal port, a fixed constant) as the ONLY allowed origins. Our
+# server-side WS client isn't a browser, so it just has to present an Origin
+# openclaw accepts — send one of the seeded values, NOT a bare "http://localhost"
+# (which the old "*" config used to wave through and now gets rejected).
+_GATEWAY_ORIGIN = "http://127.0.0.1:18789"
 # Wall-clock cap on one agent turn waiting for the WS lifecycle to
 # complete (final lifecycle "end" frame from openclaw). Was 180s when
 # the bench + openclaw container ran on the same host (sub-ms WS
@@ -222,10 +231,9 @@ class OpenclawSession:
 		try:
 			ws = websocket.create_connection(
 				gateway_url, timeout=CONNECT_TIMEOUT_SECONDS,
-				# Origin must be a valid http(s)://… URL; openclaw's controlUi
-				# allowedOrigins is "*" in our rendered config, but the
-				# Origin-parse path rejects empty/malformed values outright.
-				origin="http://localhost",
+				# Origin must be in openclaw's controlUi.allowedOrigins, which the
+				# LAN-bound gateway enforces + seeds (see _GATEWAY_ORIGIN).
+				origin=_GATEWAY_ORIGIN,
 			)
 		except (websocket.WebSocketException, OSError) as e:
 			raise OpenclawUnreachableError(f"WS open failed: {e}") from e
