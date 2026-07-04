@@ -1,0 +1,155 @@
+"""Approvals pane API: pending-decision queue + decide-and-resume.
+
+The agent queues decisions it cannot take autonomously as ``Jarvis Approval Request`` rows (see the ocr-data-entry skill contract) and ends the
+turn. The customer decides from the SPA Approvals pane (or the Desk
+list); deciding posts the decision back into the linked conversation
+through the normal ``send_message`` path, so the agent resumes the flow
+in the same chat with full context - no separate notification plumbing.
+"""
+
+from __future__ import annotations
+
+import json
+
+import frappe
+
+APPROVAL = "Jarvis Approval Request"
+
+
+def _parse_options(raw: str | None) -> list[str]:
+	try:
+		out = json.loads(raw or "[]")
+		return [str(o) for o in out] if isinstance(out, list) else []
+	except Exception:
+		# The agent sometimes hands create_doc a real list, which Frappe
+		# coerces to str(list) with single quotes - salvage it.
+		try:
+			import ast
+			out = ast.literal_eval(raw or "[]")
+			return [str(o) for o in out] if isinstance(out, list) else []
+		except Exception:
+			return []
+
+
+def _may_act_on(conversation: str | None) -> bool:
+	# SM, or the owner of the linked conversation.
+	if "System Manager" in frappe.get_roles():
+		return True
+	if not conversation:
+		return False
+	return frappe.db.get_value("Jarvis Conversation", conversation, "owner") == frappe.session.user
+
+
+@frappe.whitelist()
+def list_approvals(status: str = "Pending", limit: int = 50) -> list[dict]:
+	"""Approvals visible to the current user (owner of the linked
+	conversation, or any System Manager)."""
+	if status not in ("Pending", "Approved", "Rejected", "Decided", "All"):
+		frappe.throw("Invalid status filter")
+	if status == "All":
+		filters = {}
+	elif status == "Decided":
+		filters = {"status": ["in", ["Approved", "Rejected"]]}
+	else:
+		filters = {"status": status}
+	# Non-SM: filter by ownership IN the query so `limit` applies to the
+	# caller's rows, not to a mixed page that later shrinks (and no N+1).
+	if "System Manager" not in frappe.get_roles():
+		my_convs = frappe.get_all(
+			"Jarvis Conversation", filters={"owner": frappe.session.user},
+			pluck="name",
+		)
+		if not my_convs:
+			return []
+		filters["conversation"] = ["in", my_convs]
+	rows = frappe.get_all(
+		APPROVAL, filters=filters,
+		fields=[
+			"name", "title", "status", "document_type", "question",
+			"context_md", "options", "conversation", "ref_doctype",
+			"ref_name", "decision", "decided_by", "decided_at", "creation",
+		],
+		order_by="creation desc", limit_page_length=int(limit),
+	)
+	for r in rows:
+		r["options"] = _parse_options(r.get("options"))
+	return rows
+
+
+@frappe.whitelist()
+def pending_count() -> int:
+	# Scoped like list_approvals: non-SM users count only their own.
+	if "System Manager" in frappe.get_roles():
+		return frappe.db.count(APPROVAL, {"status": "Pending"})
+	return len(list_approvals("Pending"))
+
+
+@frappe.whitelist()
+def decide(name: str, decision: str, approve: int = 1) -> dict:
+	"""Record the decision and resume the linked conversation.
+
+	``decision`` is the human's answer (an option or free text). The
+	resume message is a plain user message through send_message, so the
+	agent sees it exactly like any chat turn - same session, same context.
+	"""
+	decision = (decision or "").strip()
+	if not decision:
+		frappe.throw("Decision text is required")
+	doc = frappe.get_doc(APPROVAL, name)
+	if not _may_act_on(doc.conversation):
+		frappe.throw("Not permitted", frappe.PermissionError)
+	if doc.status != "Pending":
+		frappe.throw(f"Approval {name} is already {doc.status}")
+	new_status = "Approved" if int(approve) else "Rejected"
+	# Conditional flip closes the double-decide race: only ONE concurrent
+	# caller wins the Pending -> decided transition.
+	changed = frappe.db.sql(
+		"""update `tabJarvis Approval Request`
+		set status=%s, decision=%s, decided_by=%s, decided_at=%s
+		where name=%s and status='Pending'""",
+		(new_status, decision, frappe.session.user, frappe.utils.now_datetime(), name),
+	)
+	if not frappe.db.sql(
+		"select 1 from `tabJarvis Approval Request` where name=%s and status=%s and decided_by=%s",
+		(name, new_status, frappe.session.user),
+	):
+		frappe.throw(f"Approval {name} was decided concurrently")
+	frappe.db.commit()
+	doc.reload()
+	# fire the trace-comment hook (db update bypasses on_update)
+	doc.run_method("on_update")
+
+	resumed = False
+	if doc.conversation and frappe.db.exists("Jarvis Conversation", doc.conversation):
+		from jarvis.chat.api import send_message
+		verdict = "APPROVED" if doc.status == "Approved" else "REJECTED"
+		msg = (
+			f"[Approval {doc.name} - {doc.title}] {verdict}: {decision}\n"
+			f"Continue the flow with this decision; do not re-ask."
+		)
+		# File-Box conversations: re-attach the source document. Attachments
+		# ride only the message they were sent with, so a resumed turn can
+		# no longer SEE the pages - observed live: the agent (correctly)
+		# refused to draft rather than fabricate lines it couldn't see.
+		attachments = None
+		f = frappe.get_all(
+			"File",
+			filters={
+				"attached_to_doctype": "Jarvis Conversation",
+				"attached_to_name": doc.conversation,
+			},
+			fields=["file_url", "file_name"],
+			order_by="creation desc", limit_page_length=1,
+		)
+		if f:
+			attachments = json.dumps(
+				[{"file_url": f[0].file_url, "file_name": f[0].file_name}]
+			)
+		# The decision is durably recorded above; a resume failure must
+		# not 500 the endpoint (the SPA would re-show a decided row).
+		try:
+			res = send_message(conversation=doc.conversation, message=msg, attachments=attachments)
+			resumed = bool(res.get("ok"))
+		except Exception:
+			frappe.log_error(title="approval resume failed", message=frappe.get_traceback())
+	return {"ok": True, "status": doc.status, "resumed": resumed}
