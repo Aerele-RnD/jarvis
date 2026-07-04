@@ -23,7 +23,10 @@
 
       <section class="jv-mon-card">
         <h3>Usage <span class="jv-mon-sub">· {{ usage.period || "current period" }}</span></h3>
-        <div v-if="!usage.applicable" class="jv-mon-note">
+        <div v-if="usageError" class="jv-mon-note">
+          Usage is unavailable right now. <button type="button" class="jv-mon-retry" @click="loadAll">Retry</button>
+        </div>
+        <div v-else-if="!usage.applicable" class="jv-mon-note">
           Usage is available on multi-model (proxy) setups. This tenant runs a single model (direct), so there is no proxy to meter.
         </div>
         <template v-else>
@@ -64,6 +67,7 @@ const usage = ref({ applicable: false, per_model: [], used_vs_limit: {} })
 const conn = ref({})
 const sync = ref({})
 const denied = ref(false)
+const usageError = ref(false)
 
 const perModelSpec = computed(() =>
   (usage.value.per_model || []).length ? perModelBarSpec(usage.value.per_model, "tokens") : null)
@@ -77,15 +81,24 @@ const expiresLabel = computed(() => {
 })
 
 async function load(fetchFn, target) {
-  try { target.value = (await fetchFn()) || target.value }
-  catch (e) { if (String(e && e.message).includes("PermissionError")) denied.value = true }
+  try { target.value = (await fetchFn()) || target.value; return true }
+  catch (e) {
+    if (String(e && e.message).includes("PermissionError")) denied.value = true
+    return false
+  }
 }
-onMounted(async () => {
-  await Promise.all([
+async function loadAll() {
+  usageError.value = false
+  // Order matters: results map 1:1 to the calls below. A failed usage fetch must
+  // set usageError so the card shows "unavailable · retry" instead of the false
+  // "single model (direct)" note a transient error would otherwise render. #200 #7.
+  const [, usageOk] = await Promise.all([
     load(getLlmConfig, config), load(getLlmUsage, usage),
     load(getLlmConnectionStatus, conn), load(getLlmSyncStatus, sync),
   ])
-})
+  if (!usageOk && !denied.value) usageError.value = true
+}
+onMounted(loadAll)
 </script>
 
 <style scoped>
@@ -98,4 +111,6 @@ onMounted(async () => {
 .jv-mon-stats { display: flex; gap: 20px; margin-bottom: 10px; font-size: 13px; }
 .jv-mon-note, .jv-mon-empty { font-size: 13px; color: var(--text-3); }
 .jv-mon-empty { padding: 40px; text-align: center; }
+.jv-mon-retry { margin-left: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); border-radius: 6px; padding: 2px 10px; font-size: 12px; cursor: pointer; }
+.jv-mon-retry:hover { background: var(--surface-2, var(--surface)); }
 </style>

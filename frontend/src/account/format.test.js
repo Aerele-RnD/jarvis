@@ -18,3 +18,7 @@ test("renewalLabel: renders days remaining; handles empty/zero", () => {
   assert.equal(renewalLabel("2026-08-01 00:00:00", 1), "Renews 2026-08-01 · 1 day left")
   assert.equal(renewalLabel("", 0), "No active period")
 })
+test("renewalLabel: expired/past-due (<= 0 days) shows Expired, not negative days", () => {
+  assert.equal(renewalLabel("2026-06-01 00:00:00", -12), "Expired 2026-06-01")
+  assert.equal(renewalLabel("2026-06-01 00:00:00", 0), "Expired 2026-06-01")
+})

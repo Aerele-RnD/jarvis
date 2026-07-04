@@ -275,9 +275,16 @@ def test_connection(base_url: str, token: str = "", deep: int | str = 0,
         token = (frappe.get_single("Jarvis Settings").get_password(
             "agent_token", raise_exception=False) or "")
     result = validate_connection(base_url, token, deep=deep_flag)
-    result["checks"].extend(config_checks(token, tool_user))
+    # config_checks + the callback probe are ADVISORY — they don't flip result.ok
+    # (which is about the openclaw connection). Tag them so the UI renders them
+    # apart from the required checks instead of showing a red ❌ row under an
+    # "All required checks passed." summary. #200 review #8.
+    advisory = config_checks(token, tool_user)
     if str(deep_tool) in ("1", "true", "True"):
-        result["checks"].append(probe_tool_callback(base_url, token))
+        advisory.append(probe_tool_callback(base_url, token))
+    for row in advisory:
+        row["advisory"] = True
+    result["checks"].extend(advisory)
     return result
 
 

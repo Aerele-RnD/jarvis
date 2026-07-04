@@ -20,5 +20,8 @@ export function renewalLabel(currentPeriodEnd, daysRemaining) {
   if (!end) return "No active period"
   const date = end.split(" ")[0]
   const d = Number(daysRemaining) || 0
+  // A past-due / expired subscription reports 0 or negative days; don't render a
+  // nonsensical "Renews <past date> · -12 days left". #200 review #11.
+  if (d <= 0) return `Expired ${date}`
   return `Renews ${date} · ${d} day${d === 1 ? "" : "s"} left`
 }

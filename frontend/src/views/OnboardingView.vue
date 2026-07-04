@@ -188,8 +188,8 @@
 							<div :class="state.shTestResult.ok ? 'jv-ob-sh-ok' : 'jv-ob-sh-bad'">
 								{{ state.shTestResult.ok ? "All required checks passed." : "Some checks failed — fix them and retry." }}
 							</div>
-							<div v-for="(c, i) in (state.shTestResult.checks || [])" :key="i" class="jv-ob-sh-check">
-								{{ c.ok ? "✅" : "❌" }} <b>{{ c.check }}</b> — {{ c.detail || "" }}
+							<div v-for="(c, i) in (state.shTestResult.checks || [])" :key="i" class="jv-ob-sh-check" :class="{ 'jv-ob-sh-check-adv': c.advisory }">
+								{{ c.ok ? "✅" : (c.advisory ? "⚠️" : "❌") }} <b>{{ c.check }}</b> — {{ c.detail || "" }}<span v-if="c.advisory" class="jv-ob-sh-adv-tag"> · advisory</span>
 							</div>
 						</div>
 						<div v-if="state.shWarning" class="jv-ob-devnote">{{ state.shWarning }}</div>
@@ -868,6 +868,8 @@ onMounted(() => {
 .jv-ob-check { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text); margin-top: 8px; cursor: pointer; }
 .jv-ob-sh-results { margin: 14px 0 4px; font-size: 12.5px; line-height: 1.7; }
 .jv-ob-sh-check { color: var(--text); }
+.jv-ob-sh-check-adv { color: var(--text-3); }
+.jv-ob-sh-adv-tag { color: var(--text-3); font-style: italic; }
 .jv-ob-sh-ok { color: var(--green); font-weight: 600; margin-bottom: 4px; }
 .jv-ob-sh-bad { color: var(--red); font-weight: 600; margin-bottom: 4px; }
 
