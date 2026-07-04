@@ -10,6 +10,7 @@ not a second write path.
 import frappe
 from frappe import _
 
+from jarvis import audit
 from jarvis.chat.api import _NON_EDIT_FIELDTYPES, _next_seq
 from jarvis.exceptions import InvalidArgumentError
 
@@ -115,11 +116,13 @@ def load_doc(doctype: str, name: str) -> dict:
 	}
 
 
-_VERBS = {"create", "update", "submit", "cancel", "delete", "amend"}
-_RECEIPT = {
-	"create": "Created", "update": "Updated", "submit": "Submitted",
-	"cancel": "Cancelled", "delete": "Deleted", "amend": "Amended",
-}
+# apply_action is the human-authored EDIT path only: the human deliberately
+# changes values in the draft panel and applies them under their own session.
+# The confirm-as-proposed verbs run the payload the MODEL proposed, so they must
+# route through the token gate (confirm_tool), never here.
+_EDIT_VERBS = {"create", "update"}
+_CONFIRM_VERBS = {"submit", "cancel", "delete", "amend"}
+_RECEIPT = {"create": "Created", "update": "Updated"}
 
 
 def _require_own_conversation(conversation: str) -> None:
@@ -155,11 +158,18 @@ def _append_receipt(conversation: str, verb: str, doctype: str, name: str,
 
 
 @frappe.whitelist()
-def apply_action(action=None) -> dict:
-	"""Apply a confirmed action card directly — create/update from the draft
-	panel, submit/cancel/delete/amend from the inline confirm card. Runs as the
-	session user; every mutation goes through the existing tool (its permission
-	and protected-field checks fire unchanged)."""
+def apply_action(action: dict | str | None = None) -> dict:
+	"""Apply a human-authored draft-panel edit: create or update ONLY, with the
+	values the human deliberately entered before applying. Runs as the session
+	user; the mutation goes through the existing tool (its permission and
+	protected-field checks fire unchanged), is audited as a human-authored write,
+	and leaves a receipt in the conversation.
+
+	The confirm-as-proposed verbs (submit/cancel/delete/amend) run the payload
+	the MODEL proposed, so they are NOT accepted here — they route through the
+	token gate (``confirm_tool``). ``conversation`` is mandatory and always
+	owner-checked: an apply can only ever act inside the caller's own
+	conversation."""
 	a = frappe.parse_json(action) if isinstance(action, str) else (action or {})
 	verb = (a.get("verb") or "").strip()
 	doctype = (a.get("doctype") or "").strip()
@@ -167,48 +177,50 @@ def apply_action(action=None) -> dict:
 	conversation = (a.get("conversation") or "").strip()
 	values = a.get("values") or {}
 	do_submit = int(a.get("submit") or 0)
-	if verb not in _VERBS:
+	if verb in _CONFIRM_VERBS:
+		raise InvalidArgumentError(
+			f"{verb!r} is a confirm-as-proposed action; approve it through the "
+			"confirmation card, not the draft-edit path.")
+	if verb not in _EDIT_VERBS:
 		raise InvalidArgumentError(f"unsupported verb {verb!r}")
 	if not doctype:
 		raise InvalidArgumentError("doctype is required")
-	if conversation:
-		_require_own_conversation(conversation)
+	if not conversation:
+		raise InvalidArgumentError("conversation is required")
+	_require_own_conversation(conversation)
 
 	if verb == "create":
 		from jarvis.tools.create_doc import create_doc
 		res = create_doc(doctype, values)
 		name = res.get("name")
 		if do_submit:
+			# Submit of the JUST-created draft the human authored (the same
+			# payload they saw) - low risk, kept as part of the draft-editor UX.
 			from jarvis.tools.submit_doc import submit_doc
 			submit_doc(doctype, name)
 		args = {"doctype": doctype, "values": values}
-	elif verb == "update":
+	else:  # update
 		from jarvis.tools.update_doc import update_doc
 		update_doc(doctype, name, values)
 		args = {"doctype": doctype, "name": name, "changes": values}
-	else:
-		mod = {
-			"submit": "submit_doc", "cancel": "cancel_doc",
-			"delete": "delete_doc", "amend": "amend_doc",
-		}[verb]
-		fn = getattr(__import__(f"jarvis.tools.{mod}", fromlist=[mod]), mod)
-		res = fn(doctype, name)
-		if verb == "amend":
-			name = (res or {}).get("name") or name  # the new draft's id
-		args = {"doctype": doctype, "name": name}
+
+	# Audit as a human-authored write, distinct from a model tool call. The
+	# actor (frappe.session.user) is captured by audit.record; the tool label
+	# marks the human-edit origin.
+	audit.record(tool=f"apply_action.{verb}_doc", args=args, ok=True,
+				 result={"doctype": doctype, "name": name})
 
 	frappe.db.commit()
-	if conversation:
-		try:
-			_append_receipt(conversation, verb, doctype, name, args, do_submit)
-			frappe.db.commit()
-		except Exception:
-			# The mutation is already committed — a receipt hiccup must not
-			# report failure (the SPA would retry and duplicate the create).
-			frappe.log_error(title="apply_action receipt failed", message=frappe.get_traceback())
+	try:
+		_append_receipt(conversation, verb, doctype, name, args, do_submit)
+		frappe.db.commit()
+	except Exception:
+		# The mutation is already committed — a receipt hiccup must not
+		# report failure (the SPA would retry and duplicate the create).
+		frappe.log_error(title="apply_action receipt failed", message=frappe.get_traceback())
 	slug = doctype.lower().replace(" ", "-")
 	return {"ok": True, "verb": verb, "name": name,
-			"doc_url": f"/app/{slug}/{name}" if verb != "delete" else ""}
+			"doc_url": f"/app/{slug}/{name}"}
 
 
 _INVALID_CONFIRM = {

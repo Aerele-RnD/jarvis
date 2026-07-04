@@ -54,6 +54,8 @@ class TestLoadDoc(FrappeTestCase):
 		self.assertEqual(r["docstatus"], 0)
 
 
+from unittest.mock import patch
+
 from jarvis.chat.actions_api import apply_action
 
 
@@ -68,10 +70,16 @@ class TestApplyAction(FrappeTestCase):
 	def _cleanup_doc(self, doctype, name):
 		self.addCleanup(lambda: frappe.delete_doc(doctype, name, force=True, ignore_permissions=True))
 
+	def _conv(self) -> str:
+		conv = _make_conversation()
+		self.addCleanup(lambda: frappe.delete_doc("Jarvis Conversation", conv, force=True, ignore_permissions=True))
+		return conv
+
 	def test_create_simple(self):
 		r = apply_action(frappe.as_json({
 			"verb": "create", "doctype": "ToDo",
 			"values": {"description": "draft panel create test"},
+			"conversation": self._conv(),
 		}))
 		self._cleanup_doc("ToDo", r["name"])
 		self.assertTrue(r["ok"])
@@ -87,6 +95,7 @@ class TestApplyAction(FrappeTestCase):
 					{"email_id": "two@example.com"},
 				],
 			},
+			"conversation": self._conv(),
 		}))
 		self._cleanup_doc("Contact", r["name"])
 		doc = frappe.get_doc("Contact", r["name"])
@@ -105,6 +114,7 @@ class TestApplyAction(FrappeTestCase):
 				{"email_id": "new1@example.com", "is_primary": 1},
 				{"email_id": "new2@example.com"},
 			]},
+			"conversation": self._conv(),
 		}))
 		doc = frappe.get_doc("Contact", c.name)
 		self.assertEqual(
@@ -112,50 +122,76 @@ class TestApplyAction(FrappeTestCase):
 			["new1@example.com", "new2@example.com"],
 		)
 
-	def test_delete(self):
-		t = frappe.get_doc({"doctype": "ToDo", "description": "to delete"}).insert()
-		apply_action(frappe.as_json({"verb": "delete", "doctype": "ToDo", "name": t.name}))
-		self.assertFalse(frappe.db.exists("ToDo", t.name))
+	def test_confirm_verbs_rejected_here(self):
+		# submit/cancel/delete/amend are confirm-as-proposed actions: they must
+		# go through the token gate (confirm_tool), never the human-edit path.
+		from jarvis.exceptions import InvalidArgumentError
+		conv = self._conv()
+		for verb in ("submit", "cancel", "delete", "amend"):
+			with self.assertRaises(InvalidArgumentError) as cm:
+				apply_action(frappe.as_json({
+					"verb": verb, "doctype": "ToDo", "name": "whatever",
+					"conversation": conv,
+				}))
+			self.assertIn("confirm", str(cm.exception).lower())
 
 	def test_unknown_verb_refused(self):
 		from jarvis.exceptions import InvalidArgumentError
 		with self.assertRaises(InvalidArgumentError):
-			apply_action(frappe.as_json({"verb": "yolo", "doctype": "ToDo"}))
+			apply_action(frappe.as_json({
+				"verb": "yolo", "doctype": "ToDo", "conversation": self._conv(),
+			}))
+
+	def test_missing_conversation_rejected(self):
+		# conversation is mandatory now - an edit can only act inside the
+		# caller's own conversation, so there is always one.
+		from jarvis.exceptions import InvalidArgumentError
+		with self.assertRaises(InvalidArgumentError):
+			apply_action(frappe.as_json({
+				"verb": "create", "doctype": "ToDo",
+				"values": {"description": "no conversation"},
+			}))
 
 	def test_create_doc_url_contract(self):
 		r = apply_action(frappe.as_json({
 			"verb": "create", "doctype": "ToDo",
 			"values": {"description": "doc_url contract test"},
+			"conversation": self._conv(),
 		}))
 		self._cleanup_doc("ToDo", r["name"])
 		self.assertEqual(r["doc_url"], f"/app/todo/{r['name']}")
 
-	def test_delete_returns_empty_doc_url(self):
-		t = frappe.get_doc({"doctype": "ToDo", "description": "doc_url delete test"}).insert()
-		r = apply_action(frappe.as_json({"verb": "delete", "doctype": "ToDo", "name": t.name}))
-		self.assertTrue(r["ok"])
-		self.assertEqual(r["doc_url"], "")
-
-	def test_create_submit_then_amend_lifecycle(self):
-		# A throwaway submittable doctype (no ERPNext data deps) exercises the
-		# submit:1 flag and the amend path's "return the NEW draft's id" contract.
+	def test_create_then_submit_of_own_draft(self):
+		# create with submit:1 stays supported - it submits the JUST-created
+		# draft the human authored (same payload they saw), low risk.
 		from frappe.core.doctype.doctype.test_doctype import new_doctype
 		dt = new_doctype(custom=1, is_submittable=1).insert()
 		self.addCleanup(lambda: frappe.delete_doc("DocType", dt.name, force=True, ignore_permissions=True))
 		r = apply_action(frappe.as_json({
 			"verb": "create", "doctype": dt.name,
 			"values": {"some_fieldname": "lifecycle test"}, "submit": 1,
+			"conversation": self._conv(),
 		}))
 		self.assertTrue(r["ok"])
 		self.assertEqual(frappe.db.get_value(dt.name, r["name"], "docstatus"), 1)
-		apply_action(frappe.as_json({"verb": "cancel", "doctype": dt.name, "name": r["name"]}))
-		r2 = apply_action(frappe.as_json({"verb": "amend", "doctype": dt.name, "name": r["name"]}))
-		self.assertNotEqual(r2["name"], r["name"])  # the NEW draft's id, not the source's
-		self.assertEqual(frappe.db.get_value(dt.name, r2["name"], "docstatus"), 0)
+
+	def test_create_is_audited_as_human_write(self):
+		with patch("jarvis.chat.actions_api.audit.record") as rec:
+			r = apply_action(frappe.as_json({
+				"verb": "create", "doctype": "ToDo",
+				"values": {"description": "audit test"},
+				"conversation": self._conv(),
+			}))
+		self._cleanup_doc("ToDo", r["name"])
+		self.assertTrue(rec.called)
+		kwargs = rec.call_args.kwargs
+		self.assertTrue(kwargs["ok"])
+		# label makes clear it was human-authored via apply_action, distinct
+		# from a model tool call.
+		self.assertIn("apply_action", kwargs["tool"])
 
 	def test_receipt_messages_appended(self):
-		conv = _make_conversation()
-		self.addCleanup(lambda: frappe.delete_doc("Jarvis Conversation", conv, force=True, ignore_permissions=True))
+		conv = self._conv()
 		r = apply_action(frappe.as_json({
 			"verb": "create", "doctype": "ToDo",
 			"values": {"description": "receipt test"},
@@ -171,8 +207,7 @@ class TestApplyAction(FrappeTestCase):
 		self.assertIn(r["name"], msgs[1].content)
 
 	def test_conversation_ownership_enforced(self):
-		conv = _make_conversation()  # owner = Administrator
-		self.addCleanup(lambda: frappe.delete_doc("Jarvis Conversation", conv, force=True, ignore_permissions=True))
+		conv = self._conv()  # owner = Administrator
 		frappe.set_user("Guest")
 		try:
 			with self.assertRaises(frappe.PermissionError):
