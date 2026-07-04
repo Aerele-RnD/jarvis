@@ -221,6 +221,7 @@ import {
   deriveMode, reorder, presetToModels, missingVendorKeys, validatePool,
   PROVIDER_LABELS, providerLabel, seedRowsFromConfig,
 } from "@/llm/pool"
+import { errMessage as _err } from "@/lib/errors"
 
 const props = defineProps({ editable: { type: Boolean, default: true } })
 const emit = defineEmits(["saved"])
@@ -339,7 +340,6 @@ const syncLabel = computed(() => {
 })
 
 // ---- helpers -------------------------------------------------------------
-function _err(e) { return (e && ((e.messages && e.messages[0]) || e.message)) || "Something went wrong." }
 function blankConnect() { return { open: false, loading: false, error: "", copied: false, nonce: "", authorizeUrl: "", pastedUrl: "" } }
 function presetCardStyle(entry) {
   const on = selectedPreset.value === entry.key

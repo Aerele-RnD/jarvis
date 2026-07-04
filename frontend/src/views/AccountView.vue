@@ -91,6 +91,7 @@ import { getAccount, getLlmConnectionStatus, getLlmUsage } from "@/api"
 import { statusLabel, planPriceLabel, renewalLabel } from "@/account/format.js"
 import LlmPoolEditor from "@/components/LlmPoolEditor.vue"
 import AppSidebar from "@/components/AppSidebar.vue"
+import { errMessage as errMsg } from "@/lib/errors"
 
 // Theme — shared composable: honours "jarvis-theme" pref, cross-tab sync, OS live.
 // (toggleTheme itself now lives in AppSidebar; this view only needs the palette.)
@@ -104,9 +105,6 @@ const isSystemManager = !!window.is_system_manager
 // Building a new payment flow here is explicitly out of scope for this phase.
 const billingUrl = "/app/jarvis-account?billing=1"
 
-function errMsg(e) {
-	return (e && ((e.messages && e.messages[0]) || e.message)) || "Something went wrong."
-}
 
 // ---- Plan & billing --------------------------------------------------------
 const account = ref({})

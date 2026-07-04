@@ -225,12 +225,10 @@ import {
 	saveSelfHosted, testSelfHostConnection,
 } from "@/api"
 import { planPriceLabel } from "@/account/format.js"
+import { errMessage as errMsg } from "@/lib/errors"
 
 const { effectiveDark: dark, paletteVars } = useTheme()
 
-function errMsg(e) {
-	return (e && ((e.messages && e.messages[0]) || e.message)) || "Something went wrong."
-}
 
 // Mirrors jarvis_onboarding.js's STEP_NAMES (~line 212) — the 4 named steps
 // shown in managed mode. "mode" and "selfhost" have no header entry.
