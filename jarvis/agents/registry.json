@@ -3,13 +3,41 @@
   "publisher": "Aerele",
   "generated_note": "Catalog manifest read by the Jarvis bench to populate `Jarvis Agent Listing`. This is a BUNDLED deploy artifact synced at migrate time — NEVER fetched by a container at runtime (security posture: bundles are reviewed code, not runtime-pulled).",
   "domains": [
-    { "slug": "audit", "title": "Audit & Ledger Scrutiny", "blurb": "Reproducible ledger scrutiny with materiality-parameterised rules." },
-    { "slug": "compliance", "title": "Statutory Compliance", "blurb": "India GST/TDS/Income-Tax checks. Statutory thresholds are dated & law-review gated." },
-    { "slug": "close", "title": "Close & Reporting", "blurb": "Period-end: trial-balance integrity, materiality, misstatement aggregation." },
-    { "slug": "ap", "title": "Accounts Payable", "blurb": "Payables & expense: draft inbound documents through to the Approval Board." },
-    { "slug": "ar", "title": "AR & Collections", "blurb": "Order-to-cash and collections." },
-    { "slug": "bank-recon", "title": "Bank & Reconciliation", "blurb": "Bank & cash reconciliation." },
-    { "slug": "analytical-review", "title": "Analytical Review", "blurb": "Schedule III ratios and year-over-year variance review." }
+    {
+      "slug": "audit",
+      "title": "Audit & Ledger Scrutiny",
+      "blurb": "Reproducible ledger scrutiny with materiality-parameterised rules."
+    },
+    {
+      "slug": "compliance",
+      "title": "Statutory Compliance",
+      "blurb": "India GST/TDS/Income-Tax checks. Statutory thresholds are dated & law-review gated."
+    },
+    {
+      "slug": "close",
+      "title": "Close & Reporting",
+      "blurb": "Period-end: trial-balance integrity, materiality, misstatement aggregation."
+    },
+    {
+      "slug": "ap",
+      "title": "Accounts Payable",
+      "blurb": "Payables & expense: draft inbound documents through to the Approval Board."
+    },
+    {
+      "slug": "ar",
+      "title": "AR & Collections",
+      "blurb": "Order-to-cash and collections."
+    },
+    {
+      "slug": "bank-recon",
+      "title": "Bank & Reconciliation",
+      "blurb": "Bank & cash reconciliation."
+    },
+    {
+      "slug": "analytical-review",
+      "title": "Analytical Review",
+      "blurb": "Schedule III ratios and year-over-year variance review."
+    }
   ],
   "agents": [
     {
@@ -20,12 +48,24 @@
       "version": "1.0.0",
       "status": "Published",
       "description": "Read-only, reproducible ledger scrutiny. Computes engagement materiality, then evaluates deterministic rules (dormant ledgers, wrong-side balances, high-value cash transactions, vouchers large vs their ledger, year-over-year sign flips) against the general ledger and returns a severity-tagged, persisted findings list. Never writes.",
-      "tools_required": ["jarvis__compute_materiality", "jarvis__run_scrutiny", "jarvis__get_list", "jarvis__run_report"],
-      "min_apps": ["erpnext"],
+      "tools_required": [
+        "jarvis__compute_materiality",
+        "jarvis__run_scrutiny",
+        "jarvis__get_list",
+        "jarvis__run_report"
+      ],
+      "min_apps": [
+        "erpnext"
+      ],
       "rule_pack": "scrutiny-pack",
-      "skill_bundle": ["skills/agent-audit-auditor/SKILL.md"],
-      "default_schedule": { "schedule_enabled": 0, "schedule_frequency": "Weekly" },
-      "validated_for_fy": null
+      "skill_bundle": [
+        "skills/agent-audit-auditor/SKILL.md"
+      ],
+      "default_schedule": {
+        "schedule_enabled": 0,
+        "schedule_frequency": "Weekly"
+      },
+      "validated_for_fy": "2026-2027"
     },
     {
       "agent_slug": "compliance-auditor",
@@ -35,12 +75,24 @@
       "version": "1.0.0",
       "status": "Published",
       "description": "Read-only India statutory checks driven by DATED, cited threshold rules: s.40A(3) cash expense/creditor limits, s.269ST large cash receipts, s.43B statutory dues, MSME 45-day ageing. Every statutory finding carries its section, effective date, and a 'verify current law' disclaimer. Statutory rules ship inactive pending legal review. Never writes.",
-      "tools_required": ["jarvis__compute_materiality", "jarvis__run_scrutiny", "jarvis__get_list", "jarvis__run_report"],
-      "min_apps": ["erpnext"],
+      "tools_required": [
+        "jarvis__compute_materiality",
+        "jarvis__run_scrutiny",
+        "jarvis__get_list",
+        "jarvis__run_report"
+      ],
+      "min_apps": [
+        "erpnext"
+      ],
       "rule_pack": "scrutiny-pack",
-      "skill_bundle": ["skills/agent-compliance-auditor/SKILL.md"],
-      "default_schedule": { "schedule_enabled": 0, "schedule_frequency": "Monthly" },
-      "validated_for_fy": null
+      "skill_bundle": [
+        "skills/agent-compliance-auditor/SKILL.md"
+      ],
+      "default_schedule": {
+        "schedule_enabled": 0,
+        "schedule_frequency": "Monthly"
+      },
+      "validated_for_fy": "2026-2027"
     },
     {
       "agent_slug": "close-auditor",
@@ -50,12 +102,24 @@
       "version": "1.0.0",
       "status": "Published",
       "description": "Read-only period-end integrity checks: trial-balance balancing (opening & closing), accounts on the wrong side of their group above materiality, and misstatement aggregation vs performance materiality. Structural and reproducible. Never writes.",
-      "tools_required": ["jarvis__compute_materiality", "jarvis__run_scrutiny", "jarvis__run_report", "jarvis__get_balance_on"],
-      "min_apps": ["erpnext"],
+      "tools_required": [
+        "jarvis__compute_materiality",
+        "jarvis__run_scrutiny",
+        "jarvis__run_report",
+        "jarvis__get_balance_on"
+      ],
+      "min_apps": [
+        "erpnext"
+      ],
       "rule_pack": "scrutiny-pack",
-      "skill_bundle": ["skills/agent-close-auditor/SKILL.md"],
-      "default_schedule": { "schedule_enabled": 0, "schedule_frequency": "Monthly" },
-      "validated_for_fy": null
+      "skill_bundle": [
+        "skills/agent-close-auditor/SKILL.md"
+      ],
+      "default_schedule": {
+        "schedule_enabled": 0,
+        "schedule_frequency": "Monthly"
+      },
+      "validated_for_fy": "2026-2027"
     },
     {
       "agent_slug": "ap-operator",
@@ -65,11 +129,25 @@
       "version": "1.0.0",
       "status": "Published",
       "description": "Drafts inbound payables and expense documents through to the Approval Board — never past it. Extends the proven inbound-document data-entry pattern: classify, extract verbatim, resolve masters, reconcile, create the Draft, queue approvals for real ambiguities. Every submit/destructive action always parks for a human.",
-      "tools_required": ["jarvis__get_schema", "jarvis__get_list", "jarvis__get_doc", "jarvis__create_doc", "jarvis__update_doc", "jarvis__query"],
-      "min_apps": ["erpnext"],
+      "tools_required": [
+        "jarvis__get_schema",
+        "jarvis__get_list",
+        "jarvis__get_doc",
+        "jarvis__create_doc",
+        "jarvis__update_doc",
+        "jarvis__query"
+      ],
+      "min_apps": [
+        "erpnext"
+      ],
       "rule_pack": null,
-      "skill_bundle": ["skills/agent-ap-operator/SKILL.md"],
-      "default_schedule": { "schedule_enabled": 0, "schedule_frequency": "Weekly" },
+      "skill_bundle": [
+        "skills/agent-ap-operator/SKILL.md"
+      ],
+      "default_schedule": {
+        "schedule_enabled": 0,
+        "schedule_frequency": "Weekly"
+      },
       "validated_for_fy": null
     },
     {
@@ -81,7 +159,9 @@
       "status": "Coming Soon",
       "description": "Order-to-cash and collections: dunning drafts and receipt matching through the Approval Board. Planned.",
       "tools_required": [],
-      "min_apps": ["erpnext"],
+      "min_apps": [
+        "erpnext"
+      ],
       "rule_pack": null,
       "skill_bundle": [],
       "default_schedule": {},
@@ -96,7 +176,9 @@
       "status": "Coming Soon",
       "description": "Bank statement ingestion and reconciliation drafts. Planned — greenfield.",
       "tools_required": [],
-      "min_apps": ["erpnext"],
+      "min_apps": [
+        "erpnext"
+      ],
       "rule_pack": null,
       "skill_bundle": [],
       "default_schedule": {},
@@ -111,7 +193,9 @@
       "status": "Coming Soon",
       "description": "Schedule III ratios and year-over-year variance analytical review. Planned.",
       "tools_required": [],
-      "min_apps": ["erpnext"],
+      "min_apps": [
+        "erpnext"
+      ],
       "rule_pack": null,
       "skill_bundle": [],
       "default_schedule": {},
