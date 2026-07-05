@@ -518,6 +518,10 @@
 					<span v-if="approvalsBadge" style="position:absolute;top:2px;right:2px;background:var(--red,#e5484d);color:#fff;border-radius:8px;font-size:9px;line-height:1;padding:2px 4px;">{{ approvalsBadge }}</span>
 					<span class="jv-railtip">Approvals</span>
 				</button>
+				<button class="jv-skillrail-btn" :class="{ active: agentsOpen }" @click="openAgents()">
+					<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="8" width="18" height="12" rx="2" /><path d="M7 8V6a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v2" /><circle cx="9" cy="14" r="1" /><circle cx="15" cy="14" r="1" /><path d="M12 2v2" /></svg>
+					<span class="jv-railtip">Agents</span>
+				</button>
 			</div>
 		</aside>
 
@@ -796,6 +800,158 @@
 							<button class="jv-btn jv-btn--icon jv-ib" title="Edit" @click.stop="editMacro(mm)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg></button>
 							<button class="jv-btn jv-btn--icon jv-ib jv-ib-danger" title="Delete" @click.stop="removeMacro(mm)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" /></svg></button>
 						</div>
+					</div>
+				</div>
+			</div>
+
+			<!-- ============ AGENTS MARKETPLACE POPUP (centered) ============ -->
+			<div v-if="agentsOpen" class="jv-skills-overlay" :class="{ 'jv-page-mode': pageMode }" @click.self="agentsOpen = false; _clearPageHash()">
+				<div class="jv-skills-modal">
+					<div class="jv-skills-head">
+						<div style="min-width:0;">
+							<div class="jv-skills-title">Agents</div>
+							<div class="jv-skills-sub">Install audit &amp; operator agents, schedule them, and review their findings.</div>
+						</div>
+						<button v-if="agentsTab === 'catalog'" class="jv-btn jv-btn--sm" @click="openAgentsFindings()">Findings &amp; runs</button>
+						<button v-else class="jv-btn jv-btn--sm" @click="agentsTab = 'catalog'">Catalog</button>
+						<button v-if="!pageMode" class="jv-btn jv-btn--icon" title="Open as page" @click="openAsPage('agents')">
+							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" /></svg>
+						</button>
+						<button class="jv-btn jv-btn--icon" title="Close (Esc)" @click="agentsOpen = false; _clearPageHash()">
+							<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+						</button>
+					</div>
+					<!-- Apply reconciles the container; enable/schedule/config are instant. -->
+					<div v-if="agentsSync.pending || agentsSync.last_sync_status.startsWith('failed')" class="jv-skills-status" :class="{ err: agentsSync.last_sync_status.startsWith('failed') }">
+						<template v-if="agentsSync.pending"><span class="jv-skill-dot spin"></span> Applying to your assistant… (restarts briefly, ~30s)</template>
+						<template v-else><span class="jv-skill-dot err"></span> Couldn't apply agents. {{ agentsSync.last_sync_status.replace("failed:", "").trim() }}</template>
+					</div>
+					<div class="jv-skills-body">
+						<div v-if="agentsError" class="jv-skill-err">{{ agentsError }}</div>
+
+						<!-- ── CATALOG ─────────────────────────────────────────── -->
+						<template v-if="agentsTab === 'catalog'">
+							<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap;">
+								<button class="jv-btn jv-btn--primary jv-btn--sm" :disabled="agentsSync.pending" @click="applyAgents()">Apply</button>
+								<span style="font-size:11.5px;color:var(--text-3);flex:1;min-width:180px;">Apply reconciles your assistant's container with the agents you've installed &amp; enabled (install / uninstall / update — one brief restart). Enable, schedule and materiality changes take effect instantly, no Apply needed.</span>
+							</div>
+							<div v-if="!agentsCatalog.length" class="jv-set-empty" style="text-align:center;padding:26px 0;">No agents in the catalog yet.</div>
+							<div v-for="a in agentsCatalog" :key="a.name" style="border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px;" :style="a.status === 'Coming Soon' ? 'opacity:.6;' : ''">
+								<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+									<div style="font-size:13px;font-weight:600;flex:1;min-width:0;">{{ a.title }}</div>
+									<span style="font-size:10px;border-radius:7px;padding:2px 7px;flex:none;"
+										:style="a.nature === 'Auditor' ? 'background:rgba(88,101,242,.14);color:var(--blue,#5865f2);' : 'background:rgba(48,164,108,.14);color:var(--green,#30a46c);'">{{ a.nature }}</span>
+									<span v-if="a.status !== 'Published'" style="font-size:10px;border-radius:7px;padding:2px 7px;background:var(--surface-2);color:var(--text-2);flex:none;">{{ a.status }}</span>
+									<span v-if="a.update_available" style="font-size:10px;border-radius:7px;padding:2px 7px;background:rgba(229,72,77,.12);color:var(--red,#e5484d);flex:none;">Update</span>
+								</div>
+								<div v-if="a.category || a.version" style="font-size:11px;color:var(--text-3);margin:3px 0 6px;">{{ a.category }}<span v-if="a.category && a.version"> · </span><span v-if="a.version">v{{ a.version }}</span><span v-if="a.validated_for_fy"> · validated {{ a.validated_for_fy }}</span></div>
+								<div v-if="a.description" style="font-size:12.5px;color:var(--text-2);margin-bottom:8px;">{{ a.description }}</div>
+
+								<!-- actions -->
+								<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+									<button v-if="!a.installed" class="jv-btn jv-btn--sm jv-btn--primary" :disabled="a.status !== 'Published' || agentsBusy === a.agent_slug" @click="installAgentNow(a)">{{ agentsBusy === a.agent_slug ? "Installing…" : (a.status === 'Coming Soon' ? "Coming soon" : "Install") }}</button>
+									<template v-else>
+										<label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text-2);">
+											<button class="jv-switch" :class="{ on: a.enabled }" :disabled="agentsBusy === a.installation" @click="toggleAgentEnabled(a)" role="switch" :aria-checked="String(!!a.enabled)"><span class="jv-switch-knob"></span></button>
+											{{ a.enabled ? "Enabled" : "Disabled" }}
+										</label>
+										<button v-if="a.nature === 'Auditor'" class="jv-btn jv-btn--sm" @click="openAgentEditor(a)">{{ agentEditId === a.installation ? "Close" : "Configure" }}</button>
+										<button class="jv-btn jv-btn--sm jv-btn--danger" :disabled="agentsBusy === a.installation" @click="uninstallAgentNow(a)">Uninstall</button>
+									</template>
+								</div>
+
+								<!-- auditor schedule + materiality editor -->
+								<div v-if="a.installed && a.nature === 'Auditor' && agentEditId === a.installation" style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px;">
+									<div class="jv-set-row" style="margin:0;"><span>Run on a schedule<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Jarvis runs this audit automatically</span></span><button class="jv-switch" :class="{ on: agentSchedDraft.schedule_enabled }" @click="agentSchedDraft.schedule_enabled = agentSchedDraft.schedule_enabled ? 0 : 1" role="switch" :aria-checked="String(!!agentSchedDraft.schedule_enabled)"><span class="jv-switch-knob"></span></button></div>
+									<div v-if="agentSchedDraft.schedule_enabled" class="jv-macro-sched-fields">
+										<div style="flex:1;">
+											<label class="jv-skill-l">Frequency</label>
+											<select class="jv-skill-in" v-model="agentSchedDraft.schedule_frequency"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select>
+										</div>
+										<div style="flex:1;">
+											<label class="jv-skill-l">Time</label>
+											<input type="time" class="jv-skill-in" v-model="agentSchedDraft.schedule_time" />
+										</div>
+									</div>
+									<button class="jv-btn jv-btn--sm jv-btn--primary" style="margin-top:8px;" :disabled="agentsBusy === a.installation" @click="saveAgentSchedule(a)">Save schedule</button>
+									<div v-if="a.next_run_at" style="font-size:11px;color:var(--text-3);margin-top:6px;">Next run: {{ new Date(a.next_run_at).toLocaleString() }}</div>
+
+									<div style="font-size:12px;font-weight:600;margin:14px 0 4px;">Materiality (SA 320)</div>
+									<div style="font-size:11px;color:var(--text-3);margin-bottom:8px;">Engagement inputs the auditor uses to compute planning materiality.</div>
+									<div style="display:flex;gap:10px;flex-wrap:wrap;">
+										<div style="flex:1;min-width:130px;">
+											<label class="jv-skill-l">Benchmark value</label>
+											<input type="number" class="jv-skill-in" v-model="agentConfigDraft.benchmark_value" placeholder="e.g. 5000000" />
+										</div>
+										<div style="flex:1;min-width:90px;">
+											<label class="jv-skill-l">Percentage (%)</label>
+											<input type="number" step="0.1" class="jv-skill-in" v-model="agentConfigDraft.percentage" placeholder="e.g. 5" />
+										</div>
+									</div>
+									<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;">
+										<div style="flex:1;min-width:130px;">
+											<label class="jv-skill-l">Engagement risk</label>
+											<select class="jv-skill-in" v-model="agentConfigDraft.engagement_risk_level"><option value="High">High</option><option value="Medium">Medium</option><option value="Low">Low</option></select>
+										</div>
+										<div style="flex:1;min-width:90px;">
+											<label class="jv-skill-l">Rounding step</label>
+											<input type="number" class="jv-skill-in" v-model="agentConfigDraft.rounding_step" placeholder="e.g. 1000" />
+										</div>
+									</div>
+									<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">
+										<button class="jv-btn jv-btn--sm jv-btn--primary" :disabled="agentsBusy === a.installation" @click="saveAgentConfig(a)">Save materiality</button>
+										<button class="jv-btn jv-btn--sm" :disabled="!a.enabled || agentsBusy === a.installation" :title="a.enabled ? 'Run this audit now' : 'Enable the agent first'" @click="runAgentNow(a)">Run now</button>
+									</div>
+								</div>
+							</div>
+						</template>
+
+						<!-- ── FINDINGS / RUNS ─────────────────────────────────── -->
+						<template v-else>
+							<div style="font-size:12px;font-weight:600;margin-bottom:8px;">Recent runs</div>
+							<div v-if="!agentsRuns.length" class="jv-set-empty" style="text-align:center;padding:14px 0;">No runs yet.</div>
+							<div v-for="r in agentsRuns" :key="r.name" style="display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:6px;">
+								<span style="font-size:10.5px;border-radius:7px;padding:2px 7px;flex:none;"
+									:style="r.status === 'completed' ? 'background:rgba(48,164,108,.12);color:var(--green,#30a46c);'
+										: r.status === 'failed' ? 'background:rgba(229,72,77,.12);color:var(--red,#e5484d);'
+										: r.status === 'partial' ? 'background:rgba(245,158,11,.14);color:#b45309;'
+										: 'background:var(--surface-2);color:var(--text-2);'">{{ r.status }}</span>
+								<div style="flex:1;min-width:0;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ r.agent }}<span style="color:var(--text-3);"> · {{ r.trigger }}</span></div>
+								<span style="font-size:11px;color:var(--text-3);flex:none;">{{ r.findings_count || 0 }} finding{{ (r.findings_count || 0) === 1 ? "" : "s" }}</span>
+								<span v-if="r.started_at" style="font-size:11px;color:var(--text-3);flex:none;">{{ new Date(r.started_at).toLocaleDateString() }}</span>
+							</div>
+
+							<div style="font-size:12px;font-weight:600;margin:16px 0 8px;">Findings</div>
+							<div v-if="!agentsFindings.length" class="jv-set-empty" style="text-align:center;padding:14px 0;">No findings yet.</div>
+							<template v-for="[sev, items] in agentFindingGroups" :key="sev">
+								<div style="display:flex;align-items:center;gap:6px;margin:10px 0 6px;">
+									<span style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;border-radius:6px;padding:2px 7px;font-weight:600;"
+										:style="sev === 'blocker' ? 'background:rgba(229,72,77,.14);color:var(--red,#e5484d);'
+											: sev === 'warning' ? 'background:rgba(245,158,11,.16);color:#b45309;'
+											: 'background:var(--surface-2);color:var(--text-2);'">{{ sev }}</span>
+									<span style="font-size:11px;color:var(--text-3);">{{ items.length }}</span>
+								</div>
+								<div v-for="f in items" :key="f.name" style="border:1px solid var(--border);border-radius:9px;padding:10px 12px;margin-bottom:8px;" :style="f.state === 'resolved' ? 'opacity:.6;' : ''">
+									<div style="display:flex;gap:8px;align-items:center;">
+										<div style="font-size:12.5px;font-weight:600;flex:1;min-width:0;">{{ f.title }}</div>
+										<span style="font-size:10px;border-radius:6px;padding:2px 6px;flex:none;"
+											:style="f.state === 'resolved' ? 'background:rgba(48,164,108,.12);color:var(--green,#30a46c);'
+												: f.state === 'acknowledged' ? 'background:var(--surface-2);color:var(--text-2);'
+												: 'background:rgba(229,72,77,.10);color:var(--red,#e5484d);'">{{ f.state }}</span>
+									</div>
+									<div v-if="f.detail_md" style="font-size:12px;color:var(--text-2);margin:5px 0;white-space:pre-wrap;">{{ f.detail_md }}</div>
+									<div v-if="f.ref_doctype" style="font-size:11px;color:var(--text-3);margin-bottom:2px;">{{ f.ref_doctype }}<span v-if="f.ref_name">: {{ f.ref_name }}</span><span v-if="f.amount"> · {{ f.amount }}</span></div>
+									<div v-if="f.section" style="font-size:10.5px;color:var(--text-3);background:var(--surface-2);border-radius:6px;padding:6px 8px;margin:6px 0;line-height:1.45;">
+										<b>{{ f.section }}</b> — automated finding, informational only. Not professional, legal, or audit assurance; verify against the source records and applicable law before acting.
+									</div>
+									<div style="display:flex;gap:6px;margin-top:6px;">
+										<button v-if="f.state === 'open'" class="jv-btn jv-btn--sm" :disabled="agentsBusy === f.name" @click="setFindingState(f, 'acknowledged')">Acknowledge</button>
+										<button v-if="f.state !== 'resolved'" class="jv-btn jv-btn--sm jv-btn--primary" :disabled="agentsBusy === f.name" @click="setFindingState(f, 'resolved')">Resolve</button>
+										<button v-if="f.state !== 'open'" class="jv-btn jv-btn--sm" :disabled="agentsBusy === f.name" @click="setFindingState(f, 'open')">Reopen</button>
+									</div>
+								</div>
+							</template>
+						</template>
 					</div>
 				</div>
 			</div>
@@ -1658,23 +1814,41 @@ const approvalsError = ref("")
 const approvalItems = ref([])
 const approvalDrafts = ref({})
 const approvalsBadge = ref(0)
+// ── Agents Marketplace pane ─────────────────────────────────────────────────
+// Catalog cards (install/enable/schedule/config/run) + a Findings/Runs sub-view.
+// enable/disable/schedule/config are INSTANT; Apply reconciles the container.
+const agentsOpen = ref(false)
+const agentsError = ref("")
+const agentsCatalog = ref([]) // list_agents rows (listing + this owner's install state)
+const agentsInstalls = ref([]) // get_installations rows (for config JSON, etc.)
+const agentsSync = ref({ last_sync_status: "", pending: false })
+const agentsTab = ref("catalog") // "catalog" | "findings"
+const agentsRuns = ref([])
+const agentsFindings = ref([])
+const agentsBusy = ref("") // slug or installation id currently mutating (disables its buttons)
+const agentEditId = ref("") // installation whose schedule/config editor is expanded
+const agentSchedDraft = ref({ schedule_enabled: 0, schedule_frequency: "daily", schedule_time: "09:00" })
+const agentConfigDraft = ref({ benchmark_value: "", percentage: "", engagement_risk_level: "Medium", rounding_step: "" })
+let _agentsPoll = null
 // ── Page mode: #approvals / #filebox / #skills / #macros open the same
 // surface as a near-fullscreen page (more room for detail); the rail
 // buttons keep the quick popup. Closing clears the hash.
 const pageMode = ref(false)
 function _applyHashRoute() {
 	const h = (window.location.hash || "").replace("#", "")
-	pageMode.value = ["approvals", "filebox", "skills", "macros"].includes(h)
+	pageMode.value = ["approvals", "filebox", "skills", "macros", "agents"].includes(h)
 	// State machine: exactly one surface per hash - close the others first
 	// (navigating #filebox -> #approvals used to stack both overlays).
 	fileboxOpen.value = false
 	approvalsOpen.value = false
 	skillsModalOpen.value = false
 	macrosModalOpen.value = false
+	agentsOpen.value = false
 	if (h === "approvals") openApprovals()
 	else if (h === "filebox") openFilebox()
 	else if (h === "skills") openSkillsModal()
 	else if (h === "macros") openMacrosModal()
+	else if (h === "agents") openAgents()
 }
 const _hashRouteHandler = () => _applyHashRoute()
 function openAsPage(name) {
@@ -1796,6 +1970,164 @@ const approvalItemsShown = computed(() => {
 async function openApprovalChat(a) {
 	approvalsOpen.value = false
 	await selectConversation(a.conversation)
+}
+
+// ── Agents Marketplace ──────────────────────────────────────────────────────
+// Mirrors the File Box / Approvals panes + the custom-skills apply pill. Enable
+// / schedule / config are instant DB writes; only Apply reconciles the container
+// (install/uninstall/update → one restart), polled like syncSkills.
+async function openAgents() {
+	agentsOpen.value = true
+	agentsError.value = ""
+	agentsTab.value = "catalog"
+	agentEditId.value = ""
+	await _loadAgents()
+	loadAgentsSync()
+}
+async function _loadAgents() {
+	try {
+		const [cat, inst] = await Promise.all([api.listAgents(), api.getAgentInstallations()])
+		agentsCatalog.value = cat || []
+		agentsInstalls.value = inst || []
+	} catch (e) { agentsError.value = "Could not load the agent catalog." }
+}
+async function loadAgentsSync() {
+	try {
+		const s = (await api.getAgentsSyncStatus()) || {}
+		agentsSync.value = { last_sync_status: s.last_sync_status || "", pending: !!s.pending }
+	} catch (e) { /* best-effort */ }
+}
+// The linked installation row (for its config JSON) of a catalog card.
+function _agentInstall(a) {
+	return agentsInstalls.value.find((i) => i.name === a.installation) || null
+}
+async function installAgentNow(a) {
+	if (a.status !== "Published" || a.installed) return
+	agentsBusy.value = a.agent_slug
+	agentsError.value = ""
+	try {
+		await api.installAgent(a.agent_slug)
+		await _loadAgents()
+	} catch (e) { agentsError.value = _skillErr(e) } finally { agentsBusy.value = "" }
+}
+async function uninstallAgentNow(a) {
+	if (!a.installation) return
+	if (!(await confirmDialog({ title: "Uninstall agent?", message: `Remove “${a.title}”? It leaves the container on the next Apply. Runs and findings are kept.`, confirmLabel: "Uninstall" }))) return
+	agentsBusy.value = a.installation
+	agentsError.value = ""
+	try {
+		await api.uninstallAgent(a.installation)
+		if (agentEditId.value === a.installation) agentEditId.value = ""
+		await _loadAgents()
+	} catch (e) { agentsError.value = _skillErr(e) } finally { agentsBusy.value = "" }
+}
+async function toggleAgentEnabled(a) {
+	if (!a.installation) return
+	agentsBusy.value = a.installation
+	agentsError.value = ""
+	try {
+		await api.setAgentEnabled(a.installation, a.enabled ? 0 : 1)
+		await _loadAgents()
+	} catch (e) { agentsError.value = _skillErr(e) } finally { agentsBusy.value = "" }
+}
+// Expand the per-install schedule + materiality editor, seeding its drafts.
+function openAgentEditor(a) {
+	if (agentEditId.value === a.installation) { agentEditId.value = ""; return }
+	agentEditId.value = a.installation
+	agentSchedDraft.value = {
+		schedule_enabled: a.schedule_enabled ? 1 : 0,
+		schedule_frequency: a.schedule_frequency || "daily",
+		schedule_time: a.schedule_time || "09:00",
+	}
+	let cfg = {}
+	const inst = _agentInstall(a)
+	if (inst && inst.config) { try { cfg = JSON.parse(inst.config) || {} } catch (e) { cfg = {} } }
+	agentConfigDraft.value = {
+		benchmark_value: cfg.benchmark_value ?? "",
+		percentage: cfg.percentage ?? "",
+		engagement_risk_level: cfg.engagement_risk_level || "Medium",
+		rounding_step: cfg.rounding_step ?? "",
+	}
+}
+async function saveAgentSchedule(a) {
+	agentsBusy.value = a.installation
+	agentsError.value = ""
+	try {
+		await api.setAgentSchedule(a.installation, {
+			schedule_enabled: agentSchedDraft.value.schedule_enabled ? 1 : 0,
+			schedule_frequency: agentSchedDraft.value.schedule_frequency,
+			schedule_time: agentSchedDraft.value.schedule_time || "",
+		})
+		await _loadAgents()
+		notify("Schedule saved", { type: "success" })
+	} catch (e) { agentsError.value = _skillErr(e) } finally { agentsBusy.value = "" }
+}
+async function saveAgentConfig(a) {
+	agentsBusy.value = a.installation
+	agentsError.value = ""
+	// Coerce numeric materiality inputs; leave blanks out of the payload.
+	const d = agentConfigDraft.value
+	const cfg = { engagement_risk_level: d.engagement_risk_level || "Medium" }
+	for (const k of ["benchmark_value", "percentage", "rounding_step"]) {
+		const v = String(d[k] ?? "").trim()
+		if (v !== "") cfg[k] = Number(v)
+	}
+	try {
+		await api.setAgentConfig(a.installation, cfg)
+		await _loadAgents()
+		notify("Materiality config saved", { type: "success" })
+	} catch (e) { agentsError.value = _skillErr(e) } finally { agentsBusy.value = "" }
+}
+async function runAgentNow(a) {
+	agentsBusy.value = a.installation
+	agentsError.value = ""
+	try {
+		const r = await api.runAgentNow(a.installation)
+		notify("Audit started", { type: "success" })
+		// If the run opened a conversation, offer to jump into it.
+		const conv = r && r.data && (r.data.conversation || r.data.conversation_id)
+		if (conv) { agentsOpen.value = false; await selectConversation(conv) }
+		else await _loadAgents()
+	} catch (e) { agentsError.value = _skillErr(e) } finally { agentsBusy.value = "" }
+}
+// Apply: reconcile the container with the enabled installed set (one restart),
+// then poll the sync pill exactly like syncSkills.
+async function applyAgents() {
+	agentsError.value = ""
+	try {
+		await api.applyAgents()
+		agentsSync.value = { last_sync_status: "pending: applying agents", pending: true }
+		if (_agentsPoll) clearInterval(_agentsPoll)
+		_agentsPoll = setInterval(async () => {
+			await loadAgentsSync()
+			if (!agentsSync.value.pending) { clearInterval(_agentsPoll); _agentsPoll = null }
+		}, 3000)
+	} catch (e) { agentsError.value = _skillErr(e) }
+}
+// Findings / Runs sub-view.
+async function openAgentsFindings() {
+	agentsTab.value = "findings"
+	agentsError.value = ""
+	try {
+		const [runs, findings] = await Promise.all([api.listAgentRuns(), api.listAgentFindings({})])
+		agentsRuns.value = runs || []
+		agentsFindings.value = findings || []
+	} catch (e) { agentsError.value = "Could not load runs and findings." }
+}
+// Group findings by severity for the findings view (blocker → warning → note).
+const agentFindingGroups = computed(() => {
+	const order = ["blocker", "warning", "note"]
+	const by = { blocker: [], warning: [], note: [] }
+	for (const f of agentsFindings.value) (by[f.severity] || (by[f.severity] = [])).push(f)
+	return order.filter((s) => (by[s] || []).length).map((s) => [s, by[s]])
+})
+async function setFindingState(f, state) {
+	agentsBusy.value = f.name
+	agentsError.value = ""
+	try {
+		await api.setFindingState(f.name, state)
+		f.state = state // optimistic
+	} catch (e) { agentsError.value = _skillErr(e) } finally { agentsBusy.value = "" }
 }
 const macroEditorOpen = ref(false)
 const macroSaving = ref(false)
@@ -4542,6 +4874,8 @@ function onGlobalKey(e) {
 		closeShareModal()
 	} else if (e.key === "Escape" && skillsModalOpen.value) {
 		closeSkillsModal()
+	} else if (e.key === "Escape" && agentsOpen.value) {
+		agentsOpen.value = false; _clearPageHash()
 	} else if (e.key === "Escape" && settingsOpen.value) {
 		settingsOpen.value = false
 	}

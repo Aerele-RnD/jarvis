@@ -313,6 +313,37 @@ def post_push_custom_skills(skills: list[dict]) -> dict:
 	)
 
 
+def post_push_agent_skills(agent_skills: list[dict]) -> dict:
+	"""POST the customer's ENABLED marketplace-agent bundles to admin -> fleet ->
+	container, into the SEPARATE ``agent_skills`` reconcile namespace (adversarial
+	S4: never let it evict the customer's own custom skills).
+
+	``agent_skills`` is the list built by
+	``jarvis.chat.agent_catalog.build_agent_push_payload`` (each
+	``{slug, description, body}`` where ``slug`` is ``agent-<agent_slug>``). The
+	fleet-agent does a FULL RECONCILE of the agent_skills dir (writes the desired
+	set, removes the rest), unions ``agent-*`` into the skill allowlist, then
+	restarts the container so openclaw re-scans ``workspace/skills``. An empty
+	list is a valid "remove all agent skills" reconcile.
+
+	NOTE: the admin endpoint ``jarvis_admin.api.tenant.push_agent_skills`` and the
+	fleet ``PUT /v1/containers/{name}/agent-skills`` are the B5 half of this work
+	(a sibling of the custom-skills chain). Until they ship this raises
+	``AdminValidationError`` (unknown method), which ``apply_agents`` records as a
+	terminal ``failed:`` status — the bench-side path is complete and structured
+	identically to ``post_push_custom_skills``.
+
+	Raises:
+		AdminAuthError, AdminUnreachableError, AdminValidationError
+		(rate-limit shares the rotate-secret bucket).
+	"""
+	return _post(
+		path="/api/method/jarvis_admin.api.tenant.push_agent_skills",
+		body={"agent_skills": agent_skills},
+		timeout_s=180,
+	)
+
+
 def get_generated_media(since_ms: int = 0) -> list[dict]:
 	"""Pull recent codex ``imagegen`` output for this customer's running tenant
 	container (admin → fleet → container disk). Returns a list of

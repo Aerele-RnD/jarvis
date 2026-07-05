@@ -141,3 +141,29 @@ export const approvalsPendingCount = () =>
 	call("jarvis.chat.approvals_api.pending_count", {})
 export const decideApproval = (name, decision, approve = 1) =>
 	call("jarvis.chat.approvals_api.decide", { name, decision, approve })
+
+// ── Agents Marketplace: catalog, install/enable/schedule, apply, runs+findings ──
+// enable/disable + schedule + config are INSTANT (pure DB writes). Apply is the
+// only call that reconciles the container (install/uninstall/update → restart),
+// polled via getAgentsSyncStatus exactly like the custom-skills apply pill.
+const AG = "jarvis.chat.agents_api."
+export const listAgents = () => call(AG + "list_agents")
+export const getAgentInstallations = () => call(AG + "get_installations")
+export const installAgent = (agent_slug) => call(AG + "install_agent", { agent_slug })
+export const uninstallAgent = (installation) => call(AG + "uninstall_agent", { installation })
+export const setAgentEnabled = (installation, enabled) =>
+	call(AG + "set_enabled", { installation, enabled: enabled ? 1 : 0 })
+export const setAgentSchedule = (installation, p) =>
+	call(AG + "set_schedule", { installation, ...(p || {}) })
+// Engagement / materiality config JSON (benchmark_value, percentage,
+// engagement_risk_level, rounding_step → compute_materiality).
+export const setAgentConfig = (installation, config) =>
+	call(AG + "set_config", { installation, config: JSON.stringify(config || {}) })
+export const runAgentNow = (installation) => call(AG + "run_agent_now", { installation })
+export const applyAgents = () => call(AG + "apply_agents")
+export const getAgentsSyncStatus = () => call(AG + "get_agents_sync_status")
+export const listAgentRuns = (agent, limit) =>
+	call(AG + "list_runs", { agent: agent || "", limit: limit || 50 })
+export const listAgentFindings = (p) => call(AG + "list_findings", p || {})
+export const setFindingState = (finding, state) =>
+	call(AG + "set_finding_state", { finding, state })
