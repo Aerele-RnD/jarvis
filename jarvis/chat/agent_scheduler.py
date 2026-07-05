@@ -170,9 +170,10 @@ def _audit_prompt(listing, inst, trigger: str) -> str:
 	slug = listing.agent_slug
 	return (
 		f"[Automated {trigger} audit] Run the {listing.title} ({slug}) now for the current period. "
-		f"Follow your agent-{slug} skill exactly: compute engagement materiality, run the "
-		f"deterministic scrutiny (run_scrutiny), and report a severity-tagged findings summary. "
-		f"Read-only — never write.{cfg}"
+		f"Follow your agent-{slug} skill exactly: compute engagement materiality, then call "
+		f"jarvis__run_scrutiny for domain \"{listing.category}\" — and pass "
+		f"installation=\"{inst.name}\" to it so your findings are recorded — then report the "
+		f"severity-tagged findings summary it returns. Read-only — never write.{cfg}"
 	)
 
 
