@@ -234,10 +234,13 @@ def run_agent_now(installation: str) -> dict:
 		)
 	from jarvis.chat.agent_scheduler import _launch_audit, _valid_owner
 
-	# Fail-closed identity guard (same as the scheduler): never run an audit
-	# turn as Administrator/Guest/a disabled user, even on the manual path.
-	if not _valid_owner(doc.owner):
-		frappe.throw(_("This installation's owner cannot run audits (identity guard)."))
+	# Fail-closed identity guard: refuse to run an audit AS Administrator / Guest /
+	# a disabled user ON SOMEONE ELSE'S behalf (the escalation a System Manager could
+	# otherwise cause, and the unattended risk the scheduler faces). An owner running
+	# their OWN install manually is attended + same-identity, so it is allowed — this
+	# is how a single-admin dev / self-host box runs audits at all.
+	if not _valid_owner(doc.owner) and doc.owner != frappe.session.user:
+		frappe.throw(_("Cannot run this audit as the installation's owner (identity guard)."))
 
 	original_user = frappe.session.user
 	try:

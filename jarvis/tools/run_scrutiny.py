@@ -33,6 +33,7 @@ import frappe
 from jarvis.exceptions import InvalidArgumentError
 
 _PACK_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "agents", "rule_packs")
+INSTALLATION_DT = "Jarvis Agent Installation"
 
 
 # ---------------------------------------------------------------------------
@@ -292,10 +293,18 @@ def run_scrutiny(
     to_date: str | None = None,
     include_unreviewed: bool = False,
     max_findings_per_rule: int = 200,
+    installation: str | None = None,
 ) -> dict:
     """Evaluate a scrutiny rule pack deterministically against the GL and
-    return a severity-tagged findings summary. Read-only.
-    """
+    return a severity-tagged findings summary. Read-only over ERP data.
+
+    ``installation``: when an auditor agent runs inside a marketplace audit
+    turn it passes its ``Jarvis Agent Installation`` name; the findings are
+    then DETERMINISTICALLY persisted (``Jarvis Agent Run`` + ``Jarvis Agent
+    Finding`` rows, deduped) into the run the scheduler/manual-trigger opened
+    for it, and ``run_id`` is returned. Persistence is server-side, not
+    model-mediated — the agent only narrates. Only the installation OWNER can
+    persist (this runs under the caller's identity)."""
     pack = _load_pack(rule_pack)
     scope = _resolve_scope(company, fiscal_year, from_date, to_date)
 
@@ -337,7 +346,7 @@ def run_scrutiny(
             })
             counts[sev] = counts.get(sev, 0) + 1
 
-    return {
+    result = {
         "pack_id": pack.get("pack_id"),
         "domain": domain,
         "scope": scope,
@@ -349,3 +358,25 @@ def run_scrutiny(
         "skipped_unconfigured": skipped_unconfigured,
         "materiality_used": (materiality.get("bindings") if materiality else None),
     }
+
+    # Audit context: persist deterministically into the open run for this
+    # installation (created by the scheduler / run_agent_now). The OWNER-scoped
+    # `if_owner` rows only land for the caller's own installation.
+    if installation:
+        try:
+            inst = frappe.get_doc(INSTALLATION_DT, installation)
+            if inst.owner != frappe.session.user:
+                result["persist_skipped"] = "not the installation owner"
+            else:
+                from jarvis.chat.agent_runs import record_scrutiny_run
+                open_run = frappe.db.get_value(
+                    "Jarvis Agent Run",
+                    {"installation": installation, "status": "running"},
+                    "name", order_by="creation desc",
+                )
+                run_doc = record_scrutiny_run(inst, "manual", None, result, run=open_run)
+                result["run_id"] = run_doc.name
+                result["persisted"] = True
+        except Exception as e:
+            result["persist_error"] = f"{type(e).__name__}: {e}"
+    return result
