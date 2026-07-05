@@ -1,5 +1,7 @@
-// Shared theme palette — consumed by ChatView.vue and AiView.vue.
-// Extracted so both views stay visually consistent without duplicating vars.
+// Shared theme palette — consumed by ChatView.vue, AiView.vue and AgentsView.
+// Extracted so the views stay visually consistent without duplicating vars.
+import { ref, computed, onMounted, onBeforeUnmount } from "vue"
+
 export const LIGHT_VARS = {
 	"--surface": "#ffffff", "--surface-1": "#f7f7f8", "--surface-2": "#f1f1f3", "--surface-3": "#ececef",
 	"--border": "#e8e8ec", "--border-2": "#dfdfe4",
@@ -24,4 +26,32 @@ export const DARK_VARS = {
 /** Returns true when the effective theme should be dark. */
 export function isDark(pref, prefersDark) {
 	return pref === "dark" || (pref === "system" && prefersDark)
+}
+
+// Composable that tracks the per-device theme choice (localStorage
+// "jarvis-theme": light | dark | system) and the OS color scheme.
+export function useJarvisTheme() {
+	let stored = "system"
+	try { stored = localStorage.getItem("jarvis-theme") || "system" } catch (e) { /* private mode */ }
+	const theme = ref(stored)
+	const prefersDark = ref(false)
+	let mq = null
+	const onColorScheme = (e) => { prefersDark.value = e.matches }
+	onMounted(() => {
+		mq = window.matchMedia("(prefers-color-scheme: dark)")
+		prefersDark.value = mq.matches
+		mq.addEventListener("change", onColorScheme)
+	})
+	onBeforeUnmount(() => { mq?.removeEventListener("change", onColorScheme) })
+	const effectiveDark = computed(
+		() => theme.value === "dark" || (theme.value === "system" && prefersDark.value),
+	)
+	const paletteVars = computed(() => (effectiveDark.value ? DARK_VARS : LIGHT_VARS))
+	function setTheme(t) {
+		theme.value = t
+		try { localStorage.setItem("jarvis-theme", t) } catch (e) { /* keep in-memory */ }
+	}
+	// Quick toggle: flip light/dark (drops out of 'system'), same as ChatView.
+	function toggleTheme() { setTheme(effectiveDark.value ? "light" : "dark") }
+	return { theme, effectiveDark, paletteVars, setTheme, toggleTheme }
 }

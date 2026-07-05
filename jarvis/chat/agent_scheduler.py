@@ -57,6 +57,8 @@ def run_due_agent_audits() -> None:
 	if not due:
 		return
 
+	from jarvis.chat.agents_api import _user_allowed_for_agent
+
 	original_user = frappe.session.user
 	seen: set = set()  # O7: dedupe identical (owner, agent, cadence, time)
 	for row in due:
@@ -77,6 +79,14 @@ def run_due_agent_audits() -> None:
 		# Administrator / Guest / a disabled user.
 		if not _valid_owner(row.owner):
 			_record_failed(row, "scheduled audit skipped: invalid owner (fail-closed guard)")
+			_advance(row, now)
+			continue
+
+		# RBAC: the listing may have been restricted (or the owner's roles
+		# revoked) AFTER install. Skip, record WHY, and consume the slot — never
+		# dispatch a turn for an owner the agent no longer permits.
+		if not _user_allowed_for_agent(row.agent, row.owner):
+			_record_failed(row, "owner's roles no longer permit this agent")
 			_advance(row, now)
 			continue
 
