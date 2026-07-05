@@ -16,10 +16,37 @@ const TYPES = new Set([
 
 const num = (v) => Number(v) || 0
 
+// The agent sometimes emits a "records" spec variant instead of the documented
+// columnar one: {data: [{...row}, ...], x: "<field>", series: [{field, name}]}.
+// It has exactly one correct interpretation, so pivot it into the columnar
+// shape ({x: [labels], series: [{name, data: [...]}]}) rather than render an
+// empty plot. Specs already in the columnar shape pass through untouched.
+function normalizeSpec(spec) {
+	if (!spec || typeof spec !== "object") return spec
+	const rows = Array.isArray(spec.data) ? spec.data : null
+	const series = Array.isArray(spec.series) ? spec.series : []
+	if (!rows || !rows.length || !series.some((s) => s && s.field && !Array.isArray(s.data))) return spec
+	const out = { ...spec }
+	delete out.data
+	if (typeof spec.x === "string") {
+		out.x = rows.map((r) => String(r && r[spec.x] != null ? r[spec.x] : ""))
+	}
+	out.series = series.map((s) => {
+		if (!s || !s.field || Array.isArray(s.data)) return s
+		return { ...s, data: rows.map((r) => num(r && r[s.field])) }
+	})
+	return out
+}
+
 export function buildOption(spec, dark = false) {
+	spec = normalizeSpec(spec)
 	if (!spec || typeof spec !== "object" || !TYPES.has(spec.type)) return null
 	const series = Array.isArray(spec.series) ? spec.series : []
 	if (!series.length) return null
+	// No series carries any data points -> nothing to draw. Return null so the
+	// chat shows its "Couldn't render this chart." fallback instead of a
+	// silently empty plot (title + legend over a blank box).
+	if (!series.some((s) => Array.isArray(s && s.data) && s.data.length)) return null
 	const text = dark ? DARK_VARS["--text-2"] : LIGHT_VARS["--text-2"]
 	const grid = dark ? DARK_VARS["--border"] : LIGHT_VARS["--border"]
 	const title = spec.title
