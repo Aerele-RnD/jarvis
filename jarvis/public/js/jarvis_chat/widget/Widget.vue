@@ -10,7 +10,8 @@
 					<div class="jvw-mk"><svg viewBox="0 0 24 24" width="15" height="15" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg></div>
 					<div class="jvw-head-text">
 						<span class="jvw-name">Jarvis</span>
-						<span v-if="context" class="jvw-sub jvw-sub-ctx">{{ context.label }}</span>
+						<span v-if="onboarded === false" class="jvw-sub jvw-sub-off"><i></i> Disconnected from ERPNext</span>
+						<span v-else-if="context" class="jvw-sub jvw-sub-ctx">{{ context.label }}</span>
 						<span v-else class="jvw-sub jvw-sub-on"><i></i> Connected to ERPNext</span>
 					</div>
 					<div class="jvw-ctl">
@@ -24,7 +25,15 @@
 				</div>
 
 				<div ref="bodyEl" class="jvw-body">
-					<template v-if="visibleMessages.length">
+					<template v-if="onboarded === false">
+						<div class="jvw-welcome">
+							<div class="jvw-welcome-mk"><svg viewBox="0 0 24 24" width="20" height="20" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg></div>
+							<div class="jvw-welcome-h">You clearly need me… but you haven't onboarded me yet 🥲</div>
+							<div class="jvw-welcome-s">Finish onboarding and I'll start pulling my weight.</div>
+							<button type="button" class="jvw-onboard" @click="goOnboard">Onboard Jarvis →</button>
+						</div>
+					</template>
+					<template v-else-if="visibleMessages.length">
 						<template v-for="m in visibleMessages" :key="m.name">
 							<div v-if="m.role === 'user'" class="jvw-row jvw-row-u">
 								<div class="jvw-bub-u">{{ m.content }}</div>
@@ -56,11 +65,11 @@
 					</div>
 				</div>
 
-				<div v-if="files.length" class="jvw-files">
+				<div v-if="files.length && onboarded !== false" class="jvw-files">
 					<span v-for="(f, i) in files" :key="i" class="jvw-file">📎 {{ f.file_name }}<button type="button" @click="files.splice(i, 1)">×</button></span>
 				</div>
 
-				<div class="jvw-foot">
+				<div v-if="onboarded !== false" class="jvw-foot">
 					<div class="jvw-input-wrap">
 						<button type="button" class="jvw-attach" title="Attach a file" :disabled="isSending" @click="attach">
 							<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a5 5 0 0 1-7.07-7.07l9.19-9.19a3.5 3.5 0 0 1 4.95 4.95l-9.2 9.19a1.5 1.5 0 0 1-2.12-2.12l8.49-8.49" /></svg>
@@ -92,6 +101,12 @@ import * as api from "../api.js";
 const open = ref(false);
 const hasUnread = ref(false);
 const booted = ref(false);
+
+// Onboarding gate: null = not checked yet, true = onboarded (connected),
+// false = not onboarded (disconnected — hide composer, show the nudge).
+// Fail-closed: a failed check counts as not onboarded rather than crashing
+// or pretending to be connected.
+const onboarded = ref(null);
 
 const conversationId = ref(null);
 const messages = ref([]);
@@ -171,6 +186,12 @@ async function openPanel() {
 	api.warmSession();
 	open.value = true;
 	hasUnread.value = false;
+	if (onboarded.value === null) {
+		// Checked once, on first open. Non-blocking so the panel opens instantly.
+		api.isOnboarded().then((ok) => {
+			onboarded.value = ok;
+		});
+	}
 	if (!booted.value) await boot();
 	await nextTick();
 	input.value?.focus();
@@ -184,6 +205,10 @@ function expand() {
 	// Open the full chat SPA (the new canonical chat page), not the retired
 	// Desk page. Same backend + conversation, so the thread carries over.
 	window.location.assign("/jarvis");
+}
+function goOnboard() {
+	// Same SPA onboarding route the desk nudge + jarvis-onboarding page use.
+	window.location.assign("/jarvis/onboarding");
 }
 
 // ---- composer ----
@@ -248,6 +273,7 @@ async function boot() {
 }
 
 async function send(payload) {
+	if (onboarded.value === false) return; // composer is hidden; belt and braces
 	const text = typeof payload === "string" ? payload : payload?.text || "";
 	const attachments = (payload && payload.attachments) || [];
 	if (!text && !attachments.length) return;
@@ -457,6 +483,19 @@ defineExpose({ openPanel });
 	border-radius: 50%;
 	background: var(--green);
 }
+.jvw-sub-off {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	color: var(--red);
+	font-weight: 500;
+}
+.jvw-sub-off i {
+	width: 5px;
+	height: 5px;
+	border-radius: 50%;
+	background: var(--red);
+}
 .jvw-sub-ctx {
 	color: var(--text-3);
 	font-weight: 500;
@@ -595,6 +634,24 @@ defineExpose({ openPanel });
 	color: var(--text-3);
 	margin-top: 2px;
 	line-height: 1.45;
+}
+.jvw-onboard {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	margin-top: 12px;
+	padding: 8px 14px;
+	background: var(--accent);
+	color: #fff;
+	border: none;
+	border-radius: 8px;
+	font-family: inherit;
+	font-size: 12px;
+	font-weight: 600;
+	cursor: pointer;
+}
+.jvw-onboard:hover {
+	opacity: 0.9;
 }
 .jvw-sugs {
 	display: flex;
