@@ -35,7 +35,8 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Status",
-   "options": "Pending\nApproved\nRejected"
+   "options": "Pending\nApproved\nRejected",
+   "search_index": 1
   },
   {
    "description": "The business document type this decision concerns (e.g. Purchase Invoice). Blank = the document type itself is undetermined (Unclassified tab).",
@@ -43,13 +44,15 @@
    "fieldtype": "Data",
    "in_list_view": 1,
    "in_standard_filter": 1,
-   "label": "Document Type"
+   "label": "Document Type",
+   "search_index": 1
   },
   {
    "fieldname": "conversation",
    "fieldtype": "Link",
    "label": "Conversation",
-   "options": "Jarvis Conversation"
+   "options": "Jarvis Conversation",
+   "search_index": 1
   },
   {
    "fieldname": "question",
