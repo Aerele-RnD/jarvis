@@ -45,13 +45,10 @@ class TestUnifiedLLMConfigSchema(FrappeTestCase):
         self.assertEqual(f.options, "Jarvis LLM Pool Model",
                          "models Table must link to 'Jarvis LLM Pool Model'")
 
-    def test_settings_has_preset_select_field(self):
-        """Jarvis Settings must have a 'preset' Select field."""
-        self.assertIn("preset", self.settings_fields,
-                      "Jarvis Settings must have a 'preset' field")
-        f = self.settings_fields["preset"]
-        self.assertEqual(f.fieldtype, "Select",
-                         "preset field must be of type Select")
+    def test_settings_preset_is_free_form(self):
+        self.assertIn("preset", self.settings_fields)
+        self.assertEqual(self.settings_fields["preset"].fieldtype, "Data",
+                         "preset must be Data (validated against fetched catalog keys, not a Select)")
 
     def test_settings_has_proxy_active_check_read_only(self):
         """Jarvis Settings must have 'proxy_active' Check field that is read_only."""
@@ -271,6 +268,30 @@ class TestPoolSerializeFromSettings(FrappeTestCase):
             any("upstream" in e.lower() or "mixed" in e.lower() or "consistent" in e.lower() for e in errors),
             f"Expected upstream consistency error, got: {errors}"
         )
+
+    def test_unsupported_upstream_is_a_validate_error(self):
+        """A typo'd/unsupported subscription upstream is rejected (enum guard lost
+        in the JSON migration, re-enforced). #200 review #6."""
+        _, validate_models, _ = self._imports()
+        m = _subscription_model(accounts=[_account(upstream="gogle", account_ref="ACC_001")])
+        settings = _make_settings_with_models([m])
+        errors = validate_models(settings)
+        self.assertTrue(
+            any("unsupported upstream" in e.lower() for e in errors),
+            f"Expected an unsupported-upstream error, got: {errors}"
+        )
+
+    def test_supported_upstreams_pass_validation(self):
+        """openai + google are still accepted (no false positive from the guard)."""
+        _, validate_models, _ = self._imports()
+        for up in ("openai", "google"):
+            m = _subscription_model(accounts=[_account(upstream=up, account_ref=f"ACC_{up}")])
+            settings = _make_settings_with_models([m])
+            errors = validate_models(settings)
+            self.assertFalse(
+                any("unsupported upstream" in e.lower() for e in errors),
+                f"upstream={up!r} must be accepted, got: {errors}"
+            )
 
     # ------------------------------------------------------------------ #
     # (d) Duplicate account_ref → validate_models error

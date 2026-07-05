@@ -54,11 +54,17 @@ class TestThinkingDirectiveLeading(FrappeTestCase):
 		frappe.set_user(TEST_USER)
 		_cleanup_user_conversations()
 		conv = create_conversation()
-		with patch("jarvis.chat.api._ensure_session_key", return_value="agent:fake"):
-			with patch("frappe.enqueue"):
-				result = send_message(
-					conv, "what is the status?", thinking_override="high",
-				)
+		with patch("frappe.enqueue"):
+			result = send_message(
+				conv, "what is the status?", thinking_override="high",
+			)
+		# send_message no longer creates the openclaw session on the web
+		# request (2026-07 latency plan, Phase 1.1 — the worker creates it on
+		# its pooled connection). These tests assert message COMPOSITION on an
+		# existing session, so seed the key directly, same as
+		# test_chat_worker._make_conversation_with_user_message.
+		frappe.db.set_value("Jarvis Conversation", conv, "session_key", "agent:fake")
+		frappe.db.commit()
 		self.conv = conv
 		self.user_msg = result["message_id"]
 
@@ -67,15 +73,20 @@ class TestThinkingDirectiveLeading(FrappeTestCase):
 		frappe.set_user(self._orig_user)
 
 	def _capture_message_sent(self, context=None):
-		"""Run one agent turn and return the message arg passed to stream_agent_turn.
+		"""Run one agent turn and return (message, thinking) passed to chat_send.
 
-		Uses call_args_list[0] (the FIRST call) to capture the user turn message.
-		The second call, if any, is the auto-title prompt and must be ignored.
+		The managed path sends the turn via ``chat_send`` (relay flow); the
+		thinking level rides the structured ``thinking`` kwarg, not the message
+		body (only the self-hosted HTTP path still inlines ``/think``). Uses
+		call_args_list[0] (the FIRST call) to capture the user turn; a second
+		call, if any, is the auto-title prompt and must be ignored.
 		"""
 		fake_sess = MagicMock()
-		fake_sess.stream_agent_turn.side_effect = lambda *a, **kw: iter([
+		fake_sess.chat_send.side_effect = lambda sk, msg, idem, **kw: {"runId": idem, "status": "started"}
+		fake_sess.relay_turn_events.return_value = iter([
 			{"kind": "lifecycle", "phase": "start"},
 			{"kind": "lifecycle", "phase": "end"},
+			{"kind": "relay:final", "text": None},
 		])
 		with patch(
 			"jarvis.chat.openclaw_session_pool.OpenclawSession.connect",
@@ -85,34 +96,28 @@ class TestThinkingDirectiveLeading(FrappeTestCase):
 				run_agent_turn(
 					self.conv, self.user_msg, run_id="r1", context=context,
 				)
-		first_call = fake_sess.stream_agent_turn.call_args_list[0]
+		first_call = fake_sess.chat_send.call_args_list[0]
 		pos = first_call.args
 		kw = first_call.kwargs
-		return pos[1] if len(pos) >= 2 else kw.get("message")
+		msg = pos[1] if len(pos) >= 2 else kw.get("message")
+		return msg, kw.get("thinking")
 
 	def test_directive_leads_with_doc_context(self):
-		"""RED before fix / GREEN after: /think is first even with [Viewing: ...].
-
-		Before the relocation fix the message was:
-		  '[Viewing: Sales Order SO-001...]\n\n/think high\n[Context: ...]'
-		After the fix:
-		  '/think high\n[Viewing: Sales Order SO-001...]\n\n[Context: ...]'
-		"""
-		msg = self._capture_message_sent(
+		"""Thinking rides chat_send's structured kwarg even with [Viewing: ...]
+		doc-context prepended — never displaced, never inlined in the body."""
+		msg, thinking = self._capture_message_sent(
 			context={"doctype": "Sales Order", "name": "SO-001"},
 		)
 		self.assertIsNotNone(msg)
-		self.assertTrue(
-			msg.startswith("/think high\n"),
-			f"expected /think high as first bytes; got: {msg[:120]!r}",
-		)
+		self.assertEqual(thinking, "high")
+		self.assertNotIn("/think", msg)
 		self.assertIn("[Viewing: Sales Order SO-001", msg)
 		self.assertIn("[Context:", msg)
 		self.assertIn("what is the status?", msg)
 
 	def test_context_text_preserved(self):
-		"""[Viewing: ...] and [Context: ...] text is not mutated by the fix."""
-		msg = self._capture_message_sent(
+		"""[Viewing: ...] and [Context: ...] text is not mutated."""
+		msg, _thinking = self._capture_message_sent(
 			context={"doctype": "Purchase Invoice", "name": "PINV-0001"},
 		)
 		self.assertIn(
@@ -122,9 +127,7 @@ class TestThinkingDirectiveLeading(FrappeTestCase):
 		self.assertIn("[Context:", msg)
 
 	def test_directive_leads_without_doc_context(self):
-		"""Baseline: /think is first even without doc-context (no regression)."""
-		msg = self._capture_message_sent(context=None)
-		self.assertTrue(
-			msg.startswith("/think high\n"),
-			f"expected /think high at start without doc-context; got: {msg[:120]!r}",
-		)
+		"""Baseline: thinking kwarg set without doc-context (no regression)."""
+		msg, thinking = self._capture_message_sent(context=None)
+		self.assertEqual(thinking, "high")
+		self.assertNotIn("/think", msg)

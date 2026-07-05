@@ -99,9 +99,8 @@
     },
     {
       "fieldname": "preset",
-      "fieldtype": "Select",
-      "label": "Preset",
-      "options": "\nCost-saver\nBalanced\nMax-reliability"
+      "fieldtype": "Data",
+      "label": "Preset"
     },
     {
       "fieldname": "routing_mode",

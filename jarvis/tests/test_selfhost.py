@@ -255,5 +255,104 @@ class TestSelfhostToolUserResolver(unittest.TestCase):
         self.assertIsNone(self._resolve(""))
 
 
+class TestConfigChecks(unittest.TestCase):
+    """Deterministic, no-network config checks surfaced in 'Test connection':
+    gateway_token present + tool_user set/non-admin/enabled. Reuses the same
+    tool-user invariant as api._selfhost_tool_user."""
+
+    def _run(self, token, tool_user="", stored="", enabled=1):
+        fake = _FakeSettings(selfhost_tool_user=stored)
+        with mock.patch("jarvis.selfhost.frappe") as fr:
+            fr.get_single.return_value = fake
+            fr.db.get_value.return_value = enabled
+            checks = selfhost.config_checks(token, tool_user)
+        return {c["check"]: c["ok"] for c in checks}
+
+    def test_token_present_and_valid_tool_user(self):
+        r = self._run("tok", tool_user="alice@example.com")
+        self.assertTrue(r["gateway_token"])
+        self.assertTrue(r["tool_user"])
+
+    def test_blank_token_fails(self):
+        self.assertFalse(self._run("   ", tool_user="alice@example.com")["gateway_token"])
+
+    def test_unset_tool_user_fails(self):
+        self.assertFalse(self._run("tok")["tool_user"])
+
+    def test_administrator_tool_user_fails(self):
+        self.assertFalse(self._run("tok", tool_user="Administrator")["tool_user"])
+
+    def test_guest_tool_user_fails(self):
+        self.assertFalse(self._run("tok", tool_user="Guest")["tool_user"])
+
+    def test_disabled_tool_user_fails(self):
+        self.assertFalse(self._run("tok", tool_user="bob@example.com", enabled=None)["tool_user"])
+
+    def test_stored_tool_user_used_when_arg_blank(self):
+        self.assertTrue(self._run("tok", stored="carol@example.com")["tool_user"])
+
+
+class TestProbeToolCallback(unittest.TestCase):
+    """Opt-in end-to-end probe: induce a jarvis__* tool call over HTTP and
+    confirm the openclaw->Frappe callback landed (counter advanced)."""
+
+    def test_skipped_when_not_self_hosted(self):
+        with mock.patch("jarvis.selfhost.is_self_hosted", return_value=False):
+            row = selfhost.probe_tool_callback("http://h:19060", "tok")
+        self.assertFalse(row["ok"])
+        self.assertIn("save", row["detail"].lower())
+
+    def _probe(self, before, after, post=None):
+        with mock.patch("jarvis.selfhost.is_self_hosted", return_value=True), \
+                mock.patch("jarvis.selfhost.requests") as rq, \
+                mock.patch("jarvis.selfhost.frappe") as fr:
+            rq.RequestException = Exception
+            if post is None:
+                rq.post.return_value = _resp(200, {"choices": [{"message": {"content": "DONE"}}]})
+            else:
+                rq.post.side_effect = post
+            fr.cache.return_value.get_value.side_effect = [before, after]
+            return selfhost.probe_tool_callback("http://h:19060", "tok")
+
+    def test_confirmed_when_counter_advances(self):
+        self.assertTrue(self._probe(3, 4)["ok"])
+
+    def test_none_to_set_counts_as_advanced(self):
+        self.assertTrue(self._probe(None, 1)["ok"])
+
+    def test_not_ok_when_counter_unchanged(self):
+        self.assertFalse(self._probe(3, 3)["ok"])
+
+    def test_post_failure_reports_not_ok(self):
+        row = self._probe(None, None, post=Exception("connection refused"))
+        self.assertFalse(row["ok"])
+
+
+class TestNoteCallbackSeen(unittest.TestCase):
+    """The self-host callback marker written by api.call_tool (self-host branch
+    only). Increments a cache counter; must never raise on a cache blip."""
+
+    def test_writes_incremented_counter(self):
+        with mock.patch("jarvis.selfhost.frappe") as fr:
+            fr.cache.return_value.get_value.return_value = 4
+            selfhost.note_callback_seen()
+            fr.cache.return_value.set_value.assert_called_once()
+            args, _ = fr.cache.return_value.set_value.call_args
+            self.assertEqual(args[0], selfhost._CALLTOOL_SEEN_KEY)
+            self.assertEqual(args[1], 5)
+
+    def test_first_call_from_empty(self):
+        with mock.patch("jarvis.selfhost.frappe") as fr:
+            fr.cache.return_value.get_value.return_value = None
+            selfhost.note_callback_seen()
+            args, _ = fr.cache.return_value.set_value.call_args
+            self.assertEqual(args[1], 1)
+
+    def test_suppresses_cache_errors(self):
+        with mock.patch("jarvis.selfhost.frappe") as fr:
+            fr.cache.return_value.set_value.side_effect = Exception("redis down")
+            selfhost.note_callback_seen()  # must not raise
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -119,12 +119,19 @@ from jarvis.hooks import DEFAULT_ADMIN_URL  # noqa: E402  - used by _admin_url()
 
 
 def _admin_url(settings) -> str:
-	# Per-customer override wins; otherwise fall through to the bench-wide
-	# default - site/common config ``jarvis_admin_url`` then the hardcoded
-	# fallback - resolved FRESH via get_default_admin_url() so a config value
-	# added after worker start is honored without a restart (the module-level
-	# DEFAULT_ADMIN_URL import binds once and would miss late config changes).
+	# A deliberately-set site/common config ``jarvis_admin_url`` is the
+	# deployment's source of truth and WINS over the ``Jarvis Settings`` field.
+	# A reinstall / re-provision can leave a stale dev value (e.g.
+	# "http://127.0.0.1:8000") in the doctype field; letting that mask a
+	# correctly-configured site config made the admin unreachable. Resolution
+	# order: site/common config -> Jarvis Settings override -> hardcoded
+	# fallback. Read FRESH via frappe.conf / get_default_admin_url() so a config
+	# value added after worker start is honored without a restart (the
+	# module-level DEFAULT_ADMIN_URL import binds once and would miss it).
 	from jarvis.hooks import get_default_admin_url
+	conf_url = (frappe.conf.get("jarvis_admin_url") or "").strip().rstrip("/")
+	if conf_url:
+		return conf_url
 	return ((settings.jarvis_admin_url or "").rstrip("/")) or get_default_admin_url().rstrip("/")
 
 
@@ -179,6 +186,41 @@ def dev_signup(email: str, company_name: str, plan: str) -> dict:
 
 def get_plans() -> list:
 	return _post_guest(path="/api/method/jarvis_admin.billing.signup.get_plans", body={})
+
+
+# Admin-owned preset catalog (spec 3.3). Guest-safe fetch (get_plans pattern),
+# cached in per-site Redis, bundled fallback so onboarding never hard-fails.
+_PRESET_CATALOG_PATH = "/api/method/jarvis_admin.billing.catalog.get_preset_catalog"
+_PRESET_CATALOG_CACHE_KEY = "jarvis:preset_catalog"
+_PRESET_CATALOG_TTL_S = 6 * 60 * 60
+
+
+def get_preset_catalog() -> list:
+	"""Fetch the enabled Aerele preset catalog from admin (guest-safe), cache it,
+	and fall back to the last cached copy then the bundled default so onboarding
+	never hard-fails (spec L7). Never raises."""
+	from jarvis._preset_catalog import BUNDLED_PRESET_CATALOG
+	cache = frappe.cache()
+	cached = cache.get_value(_PRESET_CATALOG_CACHE_KEY)
+	if cached:
+		return cached
+	try:
+		catalog = _post_guest(path=_PRESET_CATALOG_PATH, body={})
+	except Exception:
+		# "Never raises": onboarding's preset step must degrade to the bundled
+		# catalog on ANY failure, not just the Admin* family. A scheme-less
+		# jarvis_admin_url, for instance, raises requests.MissingSchema (a
+		# RequestException that _do_post does NOT convert to an Admin* error),
+		# which would otherwise 500 the whitelisted onboarding endpoint. #200
+		# review #9.
+		frappe.log_error(title="get_preset_catalog fell back to bundled")
+		return BUNDLED_PRESET_CATALOG
+	if isinstance(catalog, dict):
+		catalog = catalog.get("data") or catalog.get("catalog") or catalog.get("presets") or []
+	if isinstance(catalog, list) and catalog:
+		cache.set_value(_PRESET_CATALOG_CACHE_KEY, catalog, expires_in_sec=_PRESET_CATALOG_TTL_S)
+		return catalog
+	return BUNDLED_PRESET_CATALOG
 
 
 def confirm_payment(payload: dict) -> dict:
@@ -391,6 +433,13 @@ def post_llm_auth_status() -> dict:
 		path="/api/method/jarvis_admin.api.tenant.llm_auth_status",
 		body={},
 	)
+
+
+def get_llm_usage() -> dict:
+	"""Curated real Bifrost usage for the customer's tenant (monitor tab).
+	Chain: fleet-agent /llm-usage -> admin api.tenant.get_llm_usage -> here.
+	Raises AdminAuthError / AdminUnreachableError / AdminValidationError."""
+	return _post(path="/api/method/jarvis_admin.api.tenant.get_llm_usage", body={})
 
 
 def pair_chat_device(public_key: str, device_id: str,

@@ -46,7 +46,15 @@ _SNAPSHOT_PASSWORD_FIELDS = (
 def _reset_settings():
     """Reset settings to a known baseline. Seeds admin credentials so
     `_sync_via_admin` doesn't fail with `AdminAuthError` (callers mock
-    the admin_client HTTP call separately)."""
+    the admin_client HTTP call separately).
+
+    Also clears the unified-config pool state (models child rows + preset):
+    these tests assert the LEGACY single-model routing, and a leftover pool
+    row — from the v1_seed_llm_models migration on a configured site, or from
+    another module's pool tests — flips on_update onto the pool-sync path and
+    the legacy assertions fail order-dependently."""
+    frappe.db.delete("Jarvis LLM Pool Model",
+                     {"parenttype": "Jarvis Settings", "parent": "Jarvis Settings"})
     settings = frappe.get_single("Jarvis Settings")
     base = {
         **LLM_BASELINE,
@@ -55,6 +63,8 @@ def _reset_settings():
         "jarvis_admin_api_secret": "test-admin-secret",
         "last_sync_status": "",
         "last_sync_at": None,
+        "preset": "",
+        "proxy_active": 0,
     }
     for field, value in base.items():
         settings.db_set(field, value)

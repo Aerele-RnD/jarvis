@@ -39,6 +39,73 @@ def _key_ref(idx: int) -> str:
     return f"POOL_KEY_{idx}"
 
 
+# Canonical provider ids follow the admin preset catalog vocabulary
+# (jarvis_admin/billing/catalog.py). The onboarding UI stores a provider as
+# either the catalog *id* (presets: "openai"/"gemini") or the dropdown *label*
+# ("OpenAI"/"Google Gemini") depending on which mode built it; normalize both to
+# one canonical id so the same pool built two ways pushes an identical provider
+# to admin/Bifrost. `gemini` (NOT `google`) is canonical — matches the catalog.
+_PROVIDER_ALIASES = {
+    # dropdown labels -> id (must match frontend pool.js PROVIDER_LABELS)
+    "openai": "openai",
+    "anthropic": "anthropic",
+    "google gemini": "gemini",
+    "mistral": "mistral",
+    "groq": "groq",
+    "together ai": "together",
+    "deepseek": "deepseek",
+    "moonshot (kimi)": "moonshot",
+    "openrouter": "openrouter",
+    "ollama (local)": "ollama",
+    "vllm (local)": "vllm",
+    "openai-compatible": "openai_compat",
+    # legacy id alias: the old frontend used "google" for Gemini
+    "google": "gemini",
+}
+
+
+def normalize_provider(value: str) -> str:
+    """Map a stored provider label/alias to its canonical catalog id.
+
+    Case-insensitive on the lookup; unknown values pass through lowercased
+    (Bifrost provider ids are lowercase). Blank stays blank.
+    """
+    v = (value or "").strip()
+    if not v:
+        return ""
+    return _PROVIDER_ALIASES.get(v.lower(), v.lower())
+
+
+def _model_accounts(m) -> list:
+    """Return a subscription model's accounts as a list of dicts.
+
+    Accounts are stored as a JSON array string in the ENCRYPTED
+    `subscription_accounts` Password field ON the model row (a child of the
+    Jarvis Settings Single). We read it via _get_password so DB-backed rows are
+    decrypted, then json.loads. Never raises: empty / malformed / non-list → [].
+
+    Back-compat: in-memory rows / unit-test objects that still carry a plain
+    `accounts` list attribute (the pre-migration grandchild shape) are honored
+    when `subscription_accounts` is empty. Real persisted rows no longer have an
+    `accounts` field, so production always takes the JSON path.
+    """
+    try:
+        raw = _get_password(m, "subscription_accounts")
+    except Exception:
+        raw = ""
+    if raw:
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            return []
+        return parsed if isinstance(parsed, list) else []
+    # Legacy in-memory fallback (never a DB read — the grandchild is gone).
+    legacy = getattr(m, "accounts", None)
+    if legacy is None and hasattr(m, "get"):
+        legacy = m.get("accounts")
+    return list(legacy) if legacy else []
+
+
 def _safe_json_loads(blob: str):
     """Try to parse blob as JSON. Returns (parsed, error_str).
 
@@ -61,7 +128,7 @@ def _safe_json_loads(blob: str):
 def compute_auto_enable(pool) -> bool:
     """Legacy helper used by the old Jarvis LLM Pool on_update (kept for back-compat)."""
     return len([m for m in pool.models if m.enabled]) >= 2 or any(
-        m.credential_type == "subscription" and m.get("accounts")
+        m.credential_type == "subscription" and _model_accounts(m)
         for m in pool.models
         if m.enabled
     )
@@ -78,7 +145,18 @@ def compute_proxy_active(settings) -> bool:
     An empty enabled-model list with a preset does NOT count as proxy-valid.
     """
     enabled = [m for m in (settings.models or []) if m.enabled]
-    return len(enabled) >= 2 or (bool(settings.preset) and len(enabled) >= 1)
+    if len(enabled) >= 2 or (bool(settings.preset) and len(enabled) >= 1):
+        return True
+    # A chat-subscription model REQUIRES the cliproxy sidecar, which is
+    # provisioned ONLY on the proxy path. The DIRECT (single-model) path just
+    # pushes llm-creds and has no cliproxy, so a lone subscription model would
+    # never get its OAuth blob served and chat would fail despite a "connected"
+    # UI. Force such a pool onto the proxy path. (#200 review #1)
+    for m in enabled:
+        ct = m.credential_type if hasattr(m, "credential_type") else m.get("credential_type", "api_key")
+        if ct == "subscription":
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +198,7 @@ def validate_models(settings) -> list:
                 errors.append(f"{label}: api_key is blank on an enabled model (would produce a dangling key_ref)")
 
         elif cred_type == "subscription":
-            accounts = m.accounts if hasattr(m, "accounts") else m.get("accounts") or []
+            accounts = _model_accounts(m)
 
             # Empty accounts list
             if not accounts:
@@ -143,6 +221,14 @@ def validate_models(settings) -> list:
                 if upstream == "anthropic":
                     errors.append(
                         f"{label} account[{j}] ({acc_ref}): upstream='anthropic' is not permitted (ToS)"
+                    )
+                # Only openai/google subscription upstreams are supported. The old
+                # child-doctype Select(reqd) structurally enforced this; the JSON
+                # migration dropped the guard, so a typo'd upstream would route to a
+                # nonexistent provider. Re-enforce here. #200 review #6.
+                elif upstream and upstream not in ("openai", "google"):
+                    errors.append(
+                        f"{label} account[{j}] ({acc_ref}): unsupported upstream '{upstream}' (must be openai or google)"
                     )
 
                 upstreams.add(upstream)
@@ -214,7 +300,7 @@ def build_pool_payload(settings):
 
         if cred_type == "subscription":
             # Omit provider and base_url for subscription models (avoids subscription_field_conflict)
-            accounts = (m.accounts if hasattr(m, "accounts") else m.get("accounts")) or []
+            accounts = _model_accounts(m)
             serialized_accounts = []
             upstream = "openai"  # default; overridden by consistent account upstreams
 
@@ -269,6 +355,7 @@ def build_pool_payload(settings):
             base_url = (m.base_url if hasattr(m, "base_url") else m.get("base_url", "")) or ""
             if base_url:
                 entry["base_url"] = base_url
+            provider = normalize_provider(provider)
             if provider:
                 entry["provider"] = provider
 

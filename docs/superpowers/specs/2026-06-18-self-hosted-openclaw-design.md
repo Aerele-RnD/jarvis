@@ -1,5 +1,12 @@
 # Self-Hosted (BYO) openclaw connection — Design
 
+> **Addendum (2026-07-03):** The "Out of scope (v1)" ERP-tools item below has
+> since **shipped** — self-host now runs the `jarvis__*` plugin tools (as
+> `selfhost_tool_user`). Tool-path validation (config checks + an opt-in
+> callback probe) and a turnkey local-setup scaffold are specified in
+> `2026-07-03-selfhost-tools-and-local-setup-design.md`. Persona/skills remain
+> Managed-only. This original doc is kept as-is for history.
+
 Date: 2026-06-18
 Status: approved (Approach A), v1 = connect + chat
 App: `jarvis` (customer Frappe app)

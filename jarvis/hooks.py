@@ -21,10 +21,12 @@ boot_session = "jarvis.boot.set_jarvis_boot"
 # for signup, billing, plan list, container connection, and account summary.
 #
 # Resolution order (highest precedence first):
-#   1. ``Jarvis Settings.jarvis_admin_url`` per-customer override
-#      (resolved in admin_client, not here)
-#   2. ``jarvis_admin_url`` in site_config.json (or common_site_config.json)
+#   1. ``jarvis_admin_url`` in site_config.json (or common_site_config.json) -
+#      the deployment's source of truth (resolved in admin_client, not here)
+#   2. ``Jarvis Settings.jarvis_admin_url`` per-customer override
 #   3. this hardcoded fallback for fresh installs
+# Site config outranks the doctype field so a stale value left in Jarvis
+# Settings by a reinstall cannot mask a correctly-configured control plane.
 #
 # Rebranding the deployment? Set ``jarvis_admin_url`` in site config, or
 # change this string + ship a new release.
@@ -136,7 +138,7 @@ def get_oauth_client_secret(provider: str) -> str:
 # ------------------
 # Brand styling for the Desk shell (loaded on every desk page).
 app_include_css = ["/assets/jarvis/css/jarvis-brand.css"]
-app_include_js = ["jarvis_immersive.bundle.js", "jarvis_widget.bundle.js"]
+app_include_js = ["jarvis_immersive.bundle.js", "jarvis_widget.bundle.js", "jarvis_onboarding_llm.bundle.js", "jarvis_onboarding_banner.bundle.js"]
 
 # Separate frappe-ui Vue SPA (apps/jarvis/frontend) served at /jarvis. The
 # catch-all routes every /jarvis/* deep link to the www/jarvis page so the

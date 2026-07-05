@@ -78,6 +78,18 @@ export async function setConversationThinking(conversation, thinking) {
 	return r.message;
 }
 
+export async function isOnboarded() {
+	// Gate for the floating widget's connected/disconnected header state.
+	// Fail-closed: if the check errors we can't confirm onboarding, so report
+	// not-onboarded instead of pretending to be connected.
+	try {
+		const r = await frappe.call({ method: "jarvis.account.is_onboarded" });
+		return Boolean(r.message && r.message.onboarded);
+	} catch (e) {
+		return false;
+	}
+}
+
 export async function warmSession() {
 	// Best-effort: warm the openclaw prefix cache so the first new-chat turn
 	// is fast. Non-critical, so failures are swallowed.
