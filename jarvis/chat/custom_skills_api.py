@@ -76,6 +76,170 @@ def list_custom_skills() -> list[dict]:
 	return own + shared
 
 
+# --------------------------------------------------------------------------- #
+# Paginated list (frozen envelope) — chat-features-page-migration-design §2.2.
+# ADDITIVE: list_custom_skills (above) STAYS for the composer "/" autocomplete.
+# --------------------------------------------------------------------------- #
+_SKILLS_SORTABLE = {"skill_name": "skill_name", "modified": "modified", "enabled": "enabled"}
+_SKILLS_FILTERS = {"scope", "enabled", "user_invocable"}
+
+
+def _lk(s: str) -> str:
+	"""Escape LIKE wildcards in user search input (``\\`` is the default escape)."""
+	return (s or "").replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _clamp_page(start, page_length) -> tuple[int, int]:
+	try:
+		start = max(0, int(start or 0))
+	except (TypeError, ValueError):
+		start = 0
+	try:
+		pl = int(page_length or 20)
+	except (TypeError, ValueError):
+		pl = 20
+	return start, max(1, min(pl, 100))
+
+
+def _bool01(v) -> int:
+	try:
+		iv = int(v)
+	except (TypeError, ValueError):
+		frappe.throw(_("Filter value must be 0 or 1."))
+	if iv not in (0, 1):
+		frappe.throw(_("Filter value must be 0 or 1."))
+	return iv
+
+
+def _load_filters(filters, allowed: set) -> dict:
+	"""Parse ``filters`` (JSON string or dict), whitelist keys (unknown → throw),
+	and drop empty values (an empty value = 'not filtering'; ``0`` is kept)."""
+	if isinstance(filters, str):
+		if filters.strip():
+			try:
+				raw = frappe.parse_json(filters)
+			except Exception:
+				raw = {}
+		else:
+			raw = {}
+	else:
+		raw = filters or {}
+	if not isinstance(raw, dict):
+		raw = {}
+	out: dict = {}
+	for k, v in raw.items():
+		if k not in allowed:
+			frappe.throw(_("Unknown filter: {0}").format(k))
+		if v in (None, ""):
+			continue
+		out[k] = v
+	return out
+
+
+def _order_by(sort_field, sort_dir, sortable: dict, default_field, default_dir, prefix="") -> str:
+	"""Build a safe ORDER BY: only whitelisted columns, direction normalized to
+	asc/desc, a ``name`` tiebreak for stable OFFSET pagination. No user input is
+	ever interpolated (columns come from ``sortable``; dir is a literal)."""
+	col = sortable.get(sort_field or "")
+	if not col:
+		return f"{prefix}`{sortable[default_field]}` {default_dir}, {prefix}`name` asc"
+	d = "desc" if (sort_dir or "").lower() == "desc" else "asc"
+	return f"{prefix}`{col}` {d}, {prefix}`name` asc"
+
+
+@frappe.whitelist()
+def list_custom_skills_page(
+	search: str = "",
+	filters=None,
+	sort_field: str = "",
+	sort_dir: str = "",
+	start: int = 0,
+	page_length: int = 20,
+) -> dict:
+	"""Owner-scoped + shared-with-me skills, server-side search/filter/sort/paginate.
+
+	Visibility parity with ``list_custom_skills``: own rows (any state) UNION
+	shared-with-me rows (``enabled=1`` only) — expressed in ONE owner-scoped SQL
+	WHERE so ``page_length``/``start`` slice the real result set (never a
+	post-filtered page). Envelope: ``{rows, total, has_more, start, page_length}``.
+	"""
+	me = frappe.session.user
+	start, pl = _clamp_page(start, page_length)
+	f = _load_filters(filters, _SKILLS_FILTERS)
+	shared = tuple(_skill_names_shared_with(me))
+
+	conds: list[str] = []
+	params: dict = {"me": me, "start": start, "page_length": pl}
+
+	scope = f.get("scope")
+	if scope is not None and scope not in ("mine", "shared"):
+		frappe.throw(_("Invalid scope filter."))
+	if scope == "mine":
+		conds.append("owner = %(me)s")
+	elif scope == "shared":
+		if not shared:
+			conds.append("1=0")
+		else:
+			params["shared"] = shared
+			conds.append("(name IN %(shared)s AND enabled = 1)")
+	else:  # both
+		if shared:
+			params["shared"] = shared
+			conds.append("(owner = %(me)s OR (name IN %(shared)s AND enabled = 1))")
+		else:
+			conds.append("owner = %(me)s")
+
+	if search:
+		params["q"] = f"%{_lk(search)}%"
+		conds.append("(skill_name LIKE %(q)s OR description LIKE %(q)s)")
+	if "enabled" in f:
+		params["enabled"] = _bool01(f["enabled"])
+		conds.append("enabled = %(enabled)s")
+	if "user_invocable" in f:
+		params["user_invocable"] = _bool01(f["user_invocable"])
+		conds.append("user_invocable = %(user_invocable)s")
+
+	where = " AND ".join(conds)
+	order = _order_by(sort_field, sort_dir, _SKILLS_SORTABLE, "skill_name", "asc")
+
+	total = frappe.db.sql(
+		f"SELECT COUNT(*) FROM `tabJarvis Custom Skill` WHERE {where}", params
+	)[0][0]
+	rows = frappe.db.sql(
+		f"""SELECT name, skill_name, description, user_invocable, enabled, modified, owner
+		FROM `tabJarvis Custom Skill`
+		WHERE {where}
+		ORDER BY {order}
+		LIMIT %(page_length)s OFFSET %(start)s""",
+		params, as_dict=True,
+	)
+
+	# One grouped child query for share counts over THIS page's own rows.
+	my_names = [r.name for r in rows if r.owner == me]
+	share_counts: dict = {}
+	if my_names:
+		for x in frappe.db.sql(
+			"""SELECT parent, COUNT(*) n FROM `tabJarvis Custom Skill Share`
+			WHERE parent IN %(names)s GROUP BY parent""",
+			{"names": tuple(my_names)}, as_dict=True,
+		):
+			share_counts[x.parent] = x.n
+	for r in rows:
+		mine = 1 if r.owner == me else 0
+		r["mine"] = mine
+		r["shared_by"] = "" if mine else _full_name(r.owner)
+		r["shared_count"] = share_counts.get(r.name, 0) if mine else 0
+		r.pop("owner", None)
+
+	return {
+		"rows": rows,
+		"total": total,
+		"has_more": start + len(rows) < total,
+		"start": start,
+		"page_length": pl,
+	}
+
+
 @frappe.whitelist()
 def get_custom_skill(name: str) -> dict:
 	"""Return one skill incl. the full markdown instructions. Readable by the
