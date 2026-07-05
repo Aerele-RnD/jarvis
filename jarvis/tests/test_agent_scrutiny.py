@@ -142,6 +142,35 @@ class TestRunScrutinyLive(unittest.TestCase):
     ENGAGEMENT = {"benchmark_value": 10_000_000, "percentage": 5,
                   "engagement_risk_level": "Medium", "rounding_step": 1000}
 
+    # run_scrutiny infers company as: user default -> db default -> the single
+    # Company row. Sites can carry several companies (or, on bare CI sites,
+    # none — and creating an ERPNext Company there trips missing fixtures like
+    # Warehouse Type "Transit"). Pin a db default from an EXISTING company for
+    # the class and restore the prior state; with no Company there is no GL to
+    # assert against, so the live class is honestly skipped.
+    _prev_default = None
+
+    @classmethod
+    def setUpClass(cls):
+        import frappe
+        cls._prev_default = frappe.db.get_default("company")
+        company = cls._prev_default
+        if not company or not frappe.db.exists("Company", company):
+            names = frappe.get_all("Company", pluck="name", limit=1)
+            company = names[0] if names else None
+        if not company:
+            raise unittest.SkipTest(
+                "no Company on this site — live GL assertions need one")
+        frappe.db.set_default("company", company)
+
+    @classmethod
+    def tearDownClass(cls):
+        import frappe
+        if cls._prev_default:
+            frappe.db.set_default("company", cls._prev_default)
+        else:
+            frappe.db.set_default("company", None)
+
     def test_new_kinds_not_unsupported(self):
         res = run_scrutiny(rule_pack=_inline_pack(
             _rule("T-ADV", "advance_in_party",
