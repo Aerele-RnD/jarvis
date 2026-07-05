@@ -150,10 +150,14 @@ class TestBeginPasteSignin(_OAuthApiBase):
 	def test_gemini_standard_api_model_coerced_to_cli_default(self):
 		"""Same hazard on the Gemini side: a gemini-pro / gemini-1.0-pro from
 		the api_key catalog has to be rewritten to a gemini-cli model before
-		entering the OAuth nonce cache."""
+		entering the OAuth nonce cache. Assert against the catalogue's
+		DEFAULT_MODEL rather than a literal so a catalogue refresh (e.g. the
+		2.0→2.5 bump) doesn't strand this test."""
+		from jarvis._subscription_models import DEFAULT_MODEL
 		out = oauth_api.begin_paste_signin("Google Gemini", "gemini-pro")
 		entry = frappe.cache.hget(_CACHE_KEY, out["data"]["nonce"])
-		self.assertEqual(entry["model"], "gemini-2.0-pro")
+		self.assertEqual(entry["model"], DEFAULT_MODEL["Google Gemini"])
+		self.assertNotEqual(entry["model"], "gemini-pro")
 
 
 class TestCompletePasteSigninParsing(_OAuthApiBase):
