@@ -47,22 +47,6 @@ class _SettingsSnapshotTestCase(FrappeTestCase):
 			super().tearDownClass()
 
 
-EXPECTED_PROVIDERS = {
-    "Anthropic",
-    "OpenAI",
-    "Google Gemini",
-    "Mistral",
-    "Groq",
-    "Together AI",
-    "DeepSeek",
-    "Moonshot (Kimi)",
-    "OpenRouter",
-    "Ollama (local)",
-    "vLLM (local)",
-    "OpenAI-Compatible",
-}
-
-
 class TestJarvisSettings(FrappeTestCase):
     def test_settings_is_single(self):
         meta = frappe.get_meta("Jarvis Settings")
@@ -101,13 +85,10 @@ class TestJarvisSettings(FrappeTestCase):
                 f"{fieldname} must be read-only (populated by signup wizard)",
             )
 
-    def test_llm_provider_options_cover_paid_and_open_weight(self):
-        meta = frappe.get_meta("Jarvis Settings")
-        provider_field = next(f for f in meta.fields if f.fieldname == "llm_provider")
-        self.assertEqual(provider_field.fieldtype, "Select")
-        options = {line.strip() for line in (provider_field.options or "").splitlines() if line.strip()}
-        missing = EXPECTED_PROVIDERS - options
-        self.assertFalse(missing, f"llm_provider missing options: {missing}")
+    # (test_llm_provider_options_cover_paid_and_open_weight removed: the
+    # unified LLM config turned legacy llm_provider into a read-only Data
+    # mirror of models[0].provider — provider choice now lives in the models
+    # table/preset catalog. Contract covered by test_unified_llm_config.)
 
     def test_tab_structure(self):
         """Two tabs: Configuration (editable) and System (read-only)."""

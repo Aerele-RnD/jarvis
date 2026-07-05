@@ -87,9 +87,10 @@ class TestDownloadPdfEnvelope(FrappeTestCase):
         self.assertEqual(sf.call_args.kwargs.get("dn"), user_name)
         self.assertEqual(sf.call_args.kwargs.get("is_private"), 1)
 
-        # Envelope keys are the contract; pin every one.
+        # Envelope keys are the contract; pin every one. ("title" is the
+        # clean display name for the chat artifact card — no hash suffix.)
         self.assertEqual(set(out.keys()),
-                         {"file_url", "filename", "mime_type", "size_bytes", "name"})
+                         {"file_url", "filename", "title", "mime_type", "size_bytes", "name"})
         self.assertEqual(out["mime_type"], "application/pdf")
         self.assertEqual(out["file_url"], "/private/files/User-fake.pdf")
         self.assertEqual(out["size_bytes"], len(fake_bytes))

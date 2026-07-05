@@ -51,10 +51,12 @@ class TestHandleChatSendAcceptsPayloadDict(FrappeTestCase):
 
 	def test_payload_dict_drives_a_full_turn(self):
 		fake_sess = MagicMock()
-		fake_sess.stream_agent_turn.return_value = _fake_event_stream([
+		fake_sess.chat_send.side_effect = lambda sk, msg, idem, **kw: {"runId": idem, "status": "started"}
+		fake_sess.relay_turn_events.return_value = _fake_event_stream([
 			{"kind": "lifecycle", "phase": "start"},
 			{"kind": "assistant", "text": "ok", "delta": "ok"},
 			{"kind": "lifecycle", "phase": "end"},
+			{"kind": "relay:final", "text": None},
 		])
 		with patch(
 			"jarvis.chat.openclaw_session_pool.OpenclawSession.connect",
@@ -90,8 +92,10 @@ class TestHandleChatSendAcceptsPayloadDict(FrappeTestCase):
 		"""The payload omits ``attachments`` and ``context``; the handler
 		must treat them as None and not blow up on missing keys."""
 		fake_sess = MagicMock()
-		fake_sess.stream_agent_turn.return_value = _fake_event_stream([
+		fake_sess.chat_send.side_effect = lambda sk, msg, idem, **kw: {"runId": idem, "status": "started"}
+		fake_sess.relay_turn_events.return_value = _fake_event_stream([
 			{"kind": "lifecycle", "phase": "end"},
+			{"kind": "relay:final", "text": None},
 		])
 		with patch(
 			"jarvis.chat.openclaw_session_pool.OpenclawSession.connect",
