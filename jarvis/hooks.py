@@ -145,6 +145,12 @@ website_route_rules = [
 	{"from_route": "/jarvis/<path:app_path>", "to_route": "jarvis"},
 ]
 
+# The agents marketplace lives at the SPA route /jarvis/agents; keep the
+# friendlier top-level /jarvis-agents spelling working as a redirect.
+website_redirects = [
+	{"source": "/jarvis-agents", "target": "/jarvis/agents"},
+]
+
 # Session hooks
 # --------------
 
