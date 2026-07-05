@@ -1,18 +1,25 @@
 import { createRouter, createWebHistory } from "vue-router"
 import { isReadyForChat } from "@/api.js"
 import { isOnboardComplete } from "@/onboarding/steps.js"
+// STATIC import: the main chunk = shell + store + ChatView (chat is the app
+// home, D33); every other page is a route-level dynamic import.
+import ChatView from "@/views/ChatView.vue"
 
 const routes = [
+	{ path: "/", name: "Chat", component: ChatView, meta: { chat: true } },
+	{ path: "/c/:id", name: "Conversation", component: ChatView, meta: { chat: true } },
+	{ path: "/skills", name: "SkillsList", component: () => import("@/pages/skills/SkillsList.vue") },
 	{
-		path: "/",
-		name: "Chat",
-		component: () => import("@/views/ChatView.vue"),
+		path: "/skills/new",
+		name: "SkillNew",
+		component: () => import("@/pages/skills/SkillDetail.vue"),
+		props: { isNew: true },
 	},
-	// Deep link to a specific conversation; ChatView reads the param.
 	{
-		path: "/c/:id",
-		name: "Conversation",
-		component: () => import("@/views/ChatView.vue"),
+		path: "/skills/:id",
+		name: "SkillDetail",
+		component: () => import("@/pages/skills/SkillDetail.vue"),
+		props: true,
 	},
 	// Account: plan/billing + AI models editor + connection/usage summaries —
 	// System-Manager only; guard redirects others to Chat.
@@ -39,23 +46,50 @@ const routes = [
 		component: () => import("@/views/MonitorView.vue"),
 		beforeEnter: (to, from, next) => { next(window.is_system_manager ? undefined : { name: "Chat" }) },
 	},
-	// Agents Marketplace — a real routed page (the server redirects the old
-	// /jarvis-agents Desk page here). Tabs deep-link: /agents/mine, /agents/
-	// activity, /agents/admin; bare /agents = marketplace.
+	{ path: "/macros", name: "MacrosList", component: () => import("@/pages/macros/MacrosList.vue") },
 	{
-		path: "/agents/:tab?",
-		name: "Agents",
-		component: () => import("@/views/AgentsView.vue"),
+		path: "/macros/runs",
+		name: "MacroRuns",
+		component: () => import("@/pages/macros/MacrosList.vue"),
+		props: { tab: "runs" },
 	},
-	// Feature pages migrated out of the ChatView overlays (design §1.1). Each is
-	// an independent top-level page reusing PageShell; the rail buttons and the
-	// old `/jarvis/#skills|#macros|#filebox|#approvals` hash links route here.
-	// Lazy imports of view files owned by B-pages (they may not exist until that
-	// task lands — the chunk is only fetched when the route is visited).
-	{ path: "/skills", name: "Skills", component: () => import("@/views/SkillsView.vue") },
-	{ path: "/macros/:tab?", name: "Macros", component: () => import("@/views/MacrosView.vue") }, // tab ∈ {undefined, "runs"}
-	{ path: "/files", name: "Files", component: () => import("@/views/FilesView.vue") },
-	{ path: "/approvals", name: "Approvals", component: () => import("@/views/ApprovalsView.vue") },
+	{
+		path: "/macros/new",
+		name: "MacroNew",
+		component: () => import("@/pages/macros/MacroDetail.vue"),
+		props: { isNew: true },
+	},
+	{
+		path: "/macros/:id",
+		name: "MacroDetail",
+		component: () => import("@/pages/macros/MacroDetail.vue"),
+		props: true,
+	},
+	{ path: "/files", name: "FilesList", component: () => import("@/pages/files/FilesList.vue") },
+	// §15.2: both approval routes render the two-pane board (the :id row is
+	// selected in place); names kept so nav highlighting + router.push targets
+	// keep working. The board reads route.params itself — no props.
+	{
+		path: "/approvals",
+		name: "ApprovalsList",
+		component: () => import("@/pages/approvals/ApprovalsBoard.vue"),
+	},
+	{
+		path: "/approvals/:id",
+		name: "ApprovalDetail",
+		component: () => import("@/pages/approvals/ApprovalsBoard.vue"),
+	},
+	{ path: "/agents", name: "AgentsList", component: () => import("@/pages/agents/AgentsList.vue") },
+	// Legacy round-2 tab routes — static, registered BEFORE :slug (§9).
+	{ path: "/agents/mine", redirect: "/agents" },
+	{ path: "/agents/activity", redirect: "/agents" },
+	{ path: "/agents/admin", redirect: "/agents" },
+	{
+		path: "/agents/:slug",
+		name: "AgentDetail",
+		component: () => import("@/pages/agents/AgentDetail.vue"),
+		props: true,
+	},
 ]
 
 // Served under /jarvis (website_route_rules catch-all → www/jarvis page).
@@ -84,5 +118,25 @@ router.beforeEach(async (to) => {
 	}
 	return true
 })
+
+// Legacy hash deep-links (moved out of ChatView, §9): /jarvis/#skills etc.
+// map to real routes. Applies only on chat routes so doc-page tab hashes
+// (#overview on /agents/:slug) are unaffected.
+const HASH_ROUTES = {
+	"#skills": "/skills",
+	"#macros": "/macros",
+	"#filebox": "/files",
+	"#approvals": "/approvals",
+	"#agents": "/agents",
+}
+function applyLegacyHash() {
+	const target = HASH_ROUTES[window.location.hash]
+	if (!target) return
+	const current = router.currentRoute.value
+	if (current.name && current.meta.chat !== true) return
+	router.replace(target)
+}
+router.isReady().then(applyLegacyHash)
+window.addEventListener("hashchange", applyLegacyHash)
 
 export default router

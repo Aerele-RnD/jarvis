@@ -113,6 +113,15 @@ def list_agents() -> list[dict]:
 			],
 		)
 	}
+	# All owners' install counts in one grouped query (DESIGN-V3 §14 F5 —
+	# additive; feeds the "Featured" strip + the "N installs" hero stat).
+	install_counts = {
+		r.agent: r.n
+		for r in frappe.db.sql(
+			"SELECT agent, COUNT(*) AS n FROM `tabJarvis Agent Installation` GROUP BY agent",
+			as_dict=True,
+		)
+	}
 	out = []
 	for lst in listings:
 		inst = installs.get(lst.name)
@@ -132,7 +141,73 @@ def list_agents() -> list[dict]:
 		lst["allowed"] = (
 			1 if (is_sm or not allowed_roles or my_roles.intersection(allowed_roles)) else 0
 		)
+		lst["install_count"] = install_counts.get(lst.name, 0)
 		out.append(lst)
+	return out
+
+
+@frappe.whitelist()
+def get_agent(agent_slug: str) -> dict:
+	"""One listing + the CURRENT user's installation for the agent detail page
+	(DESIGN-V3 §8.3 / D39). Any authenticated user may read (listing perms =
+	All read); the ``installation`` block is the caller's own install or None.
+	``all_roles`` rides along only for System Managers (Admin-tab roles editor)."""
+	listing = frappe.get_doc(LISTING, agent_slug)  # All-role read; 404s if unknown
+	me = frappe.session.user
+	is_sm = "System Manager" in frappe.get_roles(me)
+
+	out: dict = {
+		"name": listing.name,
+		"agent_slug": listing.agent_slug,
+		"title": listing.title,
+		"description": listing.description,
+		"category": listing.category,
+		"nature": listing.nature,
+		"version": listing.version,
+		"publisher": listing.publisher,
+		"status": listing.status,
+		"tools_required": listing.tools_required,
+		"min_apps": listing.min_apps,
+		"rule_pack": listing.rule_pack,
+		"skill_bundle": listing.skill_bundle,
+		"default_schedule": listing.default_schedule,
+		"validated_for_fy": listing.validated_for_fy,
+		"allowed_roles": [row.role for row in (listing.allowed_roles or [])],
+		"allowed": 1 if _user_allowed_for_agent(listing, me) else 0,
+		"install_count": frappe.db.count(INSTALLATION, {"agent": listing.name}),
+		"installation": None,
+	}
+
+	inst = frappe.get_all(
+		INSTALLATION,
+		filters={"owner": me, "agent": listing.name},
+		fields=[
+			"name", "enabled", "installed_version", "installed_at", "config",
+			"sync_status", "synced_at", "schedule_enabled", "schedule_frequency",
+			"schedule_time", "next_run_at", "last_run_at",
+		],
+		limit=1,
+	)
+	if inst:
+		i = inst[0]
+		i["enabled"] = int(i.enabled or 0)
+		i["schedule_enabled"] = int(i.schedule_enabled or 0)
+		i["schedule_time"] = str(i.schedule_time) if i.schedule_time else None
+		i["next_run_at"] = str(i.next_run_at) if i.next_run_at else None
+		i["last_run_at"] = str(i.last_run_at) if i.last_run_at else None
+		out["installation"] = i
+
+	if is_sm:
+		out["all_roles"] = [
+			r
+			for r in frappe.get_all(
+				"Role",
+				filters={"disabled": 0, "desk_access": 1},
+				order_by="name asc",
+				pluck="name",
+			)
+			if r not in _NON_SELECTABLE_ROLES
+		]
 	return out
 
 
@@ -468,11 +543,38 @@ def list_runs(agent: str | None = None, limit: int = 50) -> list[dict]:
 def list_findings(
 	run: str | None = None, state: str | None = None, limit: int = 100
 ) -> list[dict]:
-	"""This owner's persisted findings (optionally filtered by run and/or state)."""
+	"""This owner's persisted findings (optionally filtered by run and/or state).
+
+	``run`` means "the findings that run OBSERVED", not "rows whose ``run`` field
+	is that run": ``record_scrutiny_run`` dedupes re-detections into the EXISTING
+	Finding row (bumping ``last_seen_run``), so filtering on the ``run`` column
+	alone returns rows only for the FIRST run that discovered each finding while
+	the newer Run's ``findings_count`` still counts them. Dedupe only ever bumps
+	``last_seen_run`` while a finding stays open, and a finding NOT seen by a
+	recording run is auto-resolved (a later re-detection starts a NEW row), so a
+	row's observed runs are exactly the recording runs of its (owner, agent)
+	whose creation falls inside the ``[first_seen_run, last_seen_run]`` span —
+	which keeps this drill-down consistent with the Runs-table counts."""
 	me = frappe.session.user
 	filters = {"owner": me}
 	if run:
-		filters["run"] = run
+		run_row = frappe.db.get_value(RUN, run, ["agent", "creation", "status"], as_dict=True)
+		if not run_row or run_row.status not in ("completed", "partial"):
+			# unknown / failed / still-running runs recorded no findings snapshot
+			# (findings_count is 0 there too — the drill-down must match).
+			return []
+		observed = frappe.db.sql(
+			"""SELECT f.name FROM `tabJarvis Agent Finding` f
+			JOIN `tabJarvis Agent Run` fr ON fr.name = f.first_seen_run
+			JOIN `tabJarvis Agent Run` lr ON lr.name = f.last_seen_run
+			WHERE f.owner = %(me)s AND f.agent = %(agent)s
+			  AND fr.creation <= %(rc)s AND lr.creation >= %(rc)s""",
+			{"me": me, "agent": run_row.agent, "rc": run_row.creation},
+			pluck=True,
+		)
+		if not observed:
+			return []
+		filters["name"] = ["in", observed]
 	if state:
 		filters["state"] = state
 	return frappe.get_all(

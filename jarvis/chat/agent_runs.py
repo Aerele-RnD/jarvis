@@ -18,6 +18,8 @@ import hashlib
 import frappe
 from frappe.utils import getdate
 
+from jarvis.chat.macro_scheduler import compute_next_run
+
 RUN = "Jarvis Agent Run"
 FINDING = "Jarvis Agent Finding"
 INSTALLATION = "Jarvis Agent Installation"
@@ -159,6 +161,17 @@ def record_scrutiny_run(
 		"finished_at": frappe.utils.now(),
 		"coverage_note": coverage[:140],
 	}, update_modified=False)
+
+	# Stamp the installation on completion, WHATEVER the trigger: this is the
+	# single point where a run flips to completed/partial, so manual Run-Now
+	# runs get a real ``last_run_at`` too (the scheduler's ``_advance`` only
+	# stamps slot consumption at enqueue time; a manual run never passes it).
+	# ``next_run_at`` is recomputed ONLY for scheduled installs — a manual-only
+	# install must never grow a bogus next slot.
+	inst_values = {"last_run_at": frappe.utils.now()}
+	if inst.schedule_enabled:
+		inst_values["next_run_at"] = compute_next_run(inst.schedule_frequency, inst.schedule_time)
+	frappe.db.set_value(INSTALLATION, inst.name, inst_values, update_modified=False)
 	frappe.db.commit()
 
 	run_doc.reload()

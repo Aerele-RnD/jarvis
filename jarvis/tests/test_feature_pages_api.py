@@ -23,7 +23,7 @@ from datetime import timedelta
 import frappe
 from frappe.utils import now_datetime, today
 
-from jarvis.chat.approvals_api import list_approvals_page
+from jarvis.chat.approvals_api import list_approvals_page, pending_count
 from jarvis.chat.custom_skills_api import list_custom_skills_page
 from jarvis.chat.filebox import (
 	clear_processed_inbound,
@@ -700,6 +700,17 @@ class TestApprovalsPage(unittest.TestCase):
 	def test_bad_status_throws(self):
 		with self.assertRaises(frappe.ValidationError):
 			self._page(filters={"status": "Nonsense"})
+
+	def test_pending_count_scoped(self):
+		# Non-SM: a scoped COUNT over rows whose conversation the caller owns
+		# (NULL-conversation rows excluded — same JOIN semantics as the list).
+		with _as(USER_A):
+			self.assertEqual(pending_count(), 5)
+		with _as(USER_B):
+			self.assertEqual(pending_count(), 2)
+		# SM sees everything pending (>= our fixtures; real rows may exist).
+		with _as("Administrator"):
+			self.assertGreaterEqual(pending_count(), 8)
 
 
 if __name__ == "__main__":

@@ -169,6 +169,11 @@ _INBOUND_SORTABLE = {"creation": "creation", "title": "title"}
 # pending > no-assistant-message > streaming/recovering > error > done.
 # `%%` is the literal LIKE percent under pyformat params; `{extra}` is the only
 # str.format hole (server-built AND-clauses; never user text).
+# Both grouped subqueries (pa: pending approvals; lm: latest assistant message)
+# are CORRELATED to the owner's conversations — the owner filter is pushed
+# inside via a JOIN so they never aggregate the whole global tables (which
+# scaled with everyone's data, not the caller's). The outer WHERE keeps only
+# the owner's rows anyway, so results are identical.
 _INBOUND_INNER = """
 	SELECT c.name, c.title, c.creation,
 	       COALESCE(pa.n, 0) AS pending_approvals,
@@ -180,12 +185,19 @@ _INBOUND_INNER = """
 	         ELSE 'done'
 	       END AS status
 	FROM `tabJarvis Conversation` c
-	LEFT JOIN (SELECT conversation, COUNT(*) n FROM `tabJarvis Approval Request`
-	           WHERE status = 'Pending' GROUP BY conversation) pa ON pa.conversation = c.name
+	LEFT JOIN (SELECT ar.conversation, COUNT(*) n
+	           FROM `tabJarvis Approval Request` ar
+	           JOIN `tabJarvis Conversation` ac
+	             ON ac.name = ar.conversation AND ac.owner = %(me)s
+	           WHERE ar.status = 'Pending' GROUP BY ar.conversation) pa
+	  ON pa.conversation = c.name
 	LEFT JOIN (SELECT m.conversation, m.streaming, m.recovering, m.error
 	           FROM `tabJarvis Chat Message` m
-	           JOIN (SELECT conversation, MAX(seq) mseq FROM `tabJarvis Chat Message`
-	                 WHERE role = 'assistant' GROUP BY conversation) x
+	           JOIN (SELECT mm.conversation, MAX(mm.seq) mseq
+	                 FROM `tabJarvis Chat Message` mm
+	                 JOIN `tabJarvis Conversation` mc
+	                   ON mc.name = mm.conversation AND mc.owner = %(me)s
+	                 WHERE mm.role = 'assistant' GROUP BY mm.conversation) x
 	             ON x.conversation = m.conversation AND x.mseq = m.seq
 	           WHERE m.role = 'assistant') lm ON lm.conversation = c.name
 	WHERE c.owner = %(me)s AND c.title LIKE 'File: %%' AND c.status != 'Archived'

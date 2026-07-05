@@ -1,0 +1,87 @@
+/* Entry CSS for the Tailwind pipeline (DESIGN-V3 §2.3). Imported FIRST in
+   main.js, before ./main.css, so component styles and jv-* scoped rules can
+   win cascade ties against everything declared here. */
+@import "frappe-ui/style.css"; /* = Inter font + @tailwind base/components/utilities */
+
+/* ===== §2.4 preflight compensations (chat surface) =========================
+   Preflight + @tailwindcss/forms restyle bare elements globally; the jv-*
+   chat surface predates Tailwind and relies on a handful of UA defaults.
+   Each rule below restores exactly one enumerated regression. Rules scoped
+   to .jv-root leave frappe-ui pages with stock behavior. */
+
+/* 1. markdown lists: preflight strips list-style; jv-md-list sets only padding */
+.jv-md .jv-md-list {
+	list-style: revert;
+}
+/* 2. @tailwindcss/forms restyles native selects (appearance:none + preset
+      chevron at right .44rem); jv selects keep their own look — give the text
+      room under the injected chevron */
+.jv-root select {
+	padding-right: 1.75rem;
+}
+/* 3. placeholder color: preflight/forms force a fixed gray; chat uses theme var */
+.jv-root ::placeholder {
+	color: var(--text-3);
+	opacity: 1;
+}
+/* 4. dark image dimming: preset dims ALL imgs under [data-theme=dark]; chat
+      images (markdown, File Box previews, artifacts) opt out */
+[data-theme="dark"] .jv-root img {
+	filter: none;
+}
+/* 5. the one bare <p> (artifact no-preview note) loses UA margin — ChatView
+      carries class="jv-preview-note"; compensation: */
+.jv-preview-note {
+	margin: revert;
+}
+
+/* ===== §14 DA-02(b): forms-plugin base-property compensations ==============
+   @tailwindcss/forms (default strategy) sets padding / border / border-radius
+   / background / font-size / line-height / focus ring on every bare
+   input/textarea/select. Chat-surface controls get those properties reverted
+   at LOW specificity via :where() so every existing jv-* rule (scoped styles
+   carry [data-v-*] and win ties) and all 139 inline styles keep winning. */
+.jv-root :where(input:not([type="checkbox"]):not([type="radio"]), textarea, select) {
+	font-size: revert;
+	line-height: revert;
+	padding: revert;
+	border-width: revert;
+	border-style: revert;
+	border-color: revert;
+	border-radius: revert;
+	background-color: revert;
+	box-shadow: none;
+}
+/* forms-plugin focus ring (blue box-shadow ring + blue border) suppressed on
+   the chat surface; jv rules define their own :focus looks. */
+.jv-root :where(input:not([type="checkbox"]):not([type="radio"]), textarea, select):focus {
+	outline: revert;
+	box-shadow: none;
+	border-color: revert;
+}
+
+/* ===== §2.5 theme bridge: dark value overrides =============================
+   Light mode = stock frappe-ui values (no overrides). Dark mode re-maps the
+   frappe-ui semantic vars to the jarvis "Refined Indigo" palette so the shell
+   and the chat surface share one dark scheme. */
+[data-theme="dark"] {
+	--surface-white: #16161a;
+	--surface-gray-1: #1d1d22;
+	--surface-gray-2: #26262d;
+	--surface-gray-3: #30303a;
+	--surface-gray-4: #3a3a45;
+	--surface-menu-bar: #1d1d22;
+	--surface-cards: #1d1d22;
+	--surface-modal: #1d1d22;
+	--surface-selected: #30303a;
+	--outline-gray-1: #2c2c34;
+	--outline-gray-2: #3a3a45;
+	--outline-gray-3: #4a4a58;
+	--outline-gray-modals: #2c2c34;
+	--ink-gray-9: #ededf2;
+	--ink-gray-8: #d7d7de;
+	--ink-gray-7: #b6b6c0;
+	--ink-gray-6: #9a9aa5;
+	--ink-gray-5: #7e7e8a;
+	--ink-gray-4: #6a6a74;
+}

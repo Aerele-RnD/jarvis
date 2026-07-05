@@ -5,6 +5,9 @@ import App from "./App.vue"
 import router from "./router"
 import { initSocket } from "./socket"
 import { session, requireLogin } from "./data/session"
+// Tailwind pipeline entry (frappe-ui/style.css + compensations + dark bridge)
+// MUST load before main.css so jv-* globals win cascade ties (DESIGN-V3 §2.3).
+import "./index.css"
 import "./main.css"
 
 // Bounce to Frappe login if there's no session (cookie) — same auth as Desk.

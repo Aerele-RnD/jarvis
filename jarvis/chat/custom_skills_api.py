@@ -57,21 +57,43 @@ def list_custom_skills() -> list[dict]:
 		fields=["name", "skill_name", "description", "user_invocable", "enabled", "modified"],
 		order_by="skill_name asc",
 	)
+	# One grouped query for ALL own rows' share counts (was an N+1 count per
+	# skill — 123 queries at 121 skills, on every ChatView mount).
+	share_counts: dict = {}
+	own_names = [s["name"] for s in own]
+	if own_names:
+		for x in frappe.db.sql(
+			"""SELECT parent, COUNT(*) n FROM `tabJarvis Custom Skill Share`
+			WHERE parent IN %(names)s GROUP BY parent""",
+			{"names": tuple(own_names)}, as_dict=True,
+		):
+			share_counts[x.parent] = x.n
 	for s in own:
 		s["mine"] = 1
-		s["shared_count"] = frappe.db.count(SHARE, {"parent": s["name"]})
+		s["shared_count"] = share_counts.get(s["name"], 0)
 
 	shared_names = _skill_names_shared_with(me)
 	shared = []
 	if shared_names:
-		for s in frappe.get_all(
+		rows = frappe.get_all(
 			SKILL,
 			filters={"name": ["in", shared_names], "enabled": 1},
 			fields=["name", "skill_name", "description", "user_invocable", "enabled", "owner", "modified"],
 			order_by="skill_name asc",
-		):
+		)
+		# One query for the owners' display names (was a per-row lookup).
+		full_names = {
+			u.name: u.full_name
+			for u in frappe.get_all(
+				"User",
+				filters={"name": ["in", list({r.owner for r in rows})]},
+				fields=["name", "full_name"],
+			)
+		} if rows else {}
+		for s in rows:
 			s["mine"] = 0
-			s["shared_by"] = _full_name(s.pop("owner"))
+			owner = s.pop("owner")
+			s["shared_by"] = full_names.get(owner) or owner
 			shared.append(s)
 	return own + shared
 
@@ -321,6 +343,43 @@ def delete_custom_skill(name: str) -> dict:
 	frappe.delete_doc(SKILL, name)  # honors if_owner permission
 	frappe.db.commit()
 	return {"ok": True}
+
+
+@frappe.whitelist()
+def delete_custom_skills_bulk(names: str | list | None = None) -> dict:
+	"""Bulk delete skills the caller OWNS (DESIGN-V3 §8.3 / D20). ``names`` is a
+	JSON array of skill row-names. Per-row try/except so one bad row never
+	aborts the batch: shared-with-me / foreign rows skip with ``not owner``.
+	One deduped skills-apply enqueue at the end (mirrors the save/delete
+	auto-apply) — only when something was actually deleted.
+	Returns ``{deleted, skipped: [{name, reason}]}``."""
+	raw = frappe.parse_json(names) if isinstance(names, str) else (names or [])
+	items = [str(n) for n in raw if n] if isinstance(raw, list) else []
+	me = frappe.session.user
+	deleted = 0
+	skipped: list[dict] = []
+	for n in items:
+		try:
+			doc = frappe.get_doc(SKILL, n)
+			if doc.owner != me:
+				skipped.append({"name": n, "reason": "not owner"})
+				continue
+			frappe.delete_doc(SKILL, n)  # same path as delete_custom_skill (if_owner)
+			deleted += 1
+		except frappe.DoesNotExistError:
+			skipped.append({"name": n, "reason": "not found"})
+		except frappe.PermissionError:
+			skipped.append({"name": n, "reason": "not permitted"})
+		except Exception:
+			# Never leak internal exception text to the client — log server-side.
+			frappe.log_error(
+				title="Jarvis: bulk skill delete failed", message=frappe.get_traceback()
+			)
+			skipped.append({"name": n, "reason": "error"})
+	frappe.db.commit()
+	if deleted:
+		apply_custom_skills()
+	return {"deleted": deleted, "skipped": skipped}
 
 
 # --------------------------------------------------------------------------- #
