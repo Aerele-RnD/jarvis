@@ -1,0 +1,146 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "field:agent_slug",
+ "creation": "2026-07-04 20:30:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "agent_slug",
+  "title",
+  "description",
+  "category",
+  "nature",
+  "version",
+  "publisher",
+  "status",
+  "tools_required",
+  "min_apps",
+  "rule_pack",
+  "skill_bundle",
+  "default_schedule",
+  "validated_for_fy"
+ ],
+ "fields": [
+  {
+   "fieldname": "agent_slug",
+   "fieldtype": "Data",
+   "label": "Agent Slug",
+   "reqd": 1,
+   "unique": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "Stable registry key (e.g. audit-auditor). Used as the doc name (naming_rule By fieldname) so a re-sync is idempotent."
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "label": "Title",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Long Text",
+   "label": "Description"
+  },
+  {
+   "fieldname": "category",
+   "fieldtype": "Data",
+   "label": "Category",
+   "in_standard_filter": 1,
+   "description": "Domain slug (audit, compliance, close, ap, ar, bank-recon, analytical-review)."
+  },
+  {
+   "fieldname": "nature",
+   "fieldtype": "Select",
+   "label": "Nature",
+   "options": "Auditor\nOperator",
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "version",
+   "fieldtype": "Data",
+   "label": "Version"
+  },
+  {
+   "fieldname": "publisher",
+   "fieldtype": "Data",
+   "label": "Publisher"
+  },
+  {
+   "default": "Draft",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Draft\nPublished\nDeprecated\nComing Soon",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "tools_required",
+   "fieldtype": "Small Text",
+   "label": "Tools Required (JSON)",
+   "description": "JSON array of jarvis__* tool ids the agent needs."
+  },
+  {
+   "fieldname": "min_apps",
+   "fieldtype": "Small Text",
+   "label": "Min Apps (JSON)",
+   "description": "JSON array of required Frappe apps, e.g. [\"erpnext\"]."
+  },
+  {
+   "fieldname": "rule_pack",
+   "fieldtype": "Data",
+   "label": "Rule Pack",
+   "description": "Bundled rule-pack id evaluated by run_scrutiny (e.g. scrutiny-pack)."
+  },
+  {
+   "fieldname": "skill_bundle",
+   "fieldtype": "Long Text",
+   "label": "Skill Bundle (JSON)",
+   "description": "JSON list of {path, body} SKILL.md payloads pushed to the container on Apply."
+  },
+  {
+   "fieldname": "default_schedule",
+   "fieldtype": "Small Text",
+   "label": "Default Schedule (JSON)",
+   "description": "JSON {schedule_enabled, schedule_frequency} applied when the agent is installed."
+  },
+  {
+   "fieldname": "validated_for_fy",
+   "fieldtype": "Data",
+   "label": "Validated For FY",
+   "description": "The fiscal year the (statutory) rule set was last legal-reviewed for. Used to gate stale statutory packs."
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-07-04 20:30:00.000000",
+ "modified_by": "Administrator",
+ "module": "Jarvis",
+ "name": "Jarvis Agent Listing",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "All"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
