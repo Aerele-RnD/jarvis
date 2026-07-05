@@ -57,10 +57,12 @@ const session = inject("$session")
 const { effectiveDark, toggleTheme } = useJarvisTheme()
 
 function cookie(name) {
+	// URLSearchParams already percent-decodes; decoding AGAIN throws URIError
+	// when the display name contains a literal '%' (stored as %25 → '%'),
+	// blanking the whole shell — same bug main fixed in lib/user.js (0d19e7c).
 	return new URLSearchParams(document.cookie.split("; ").join("&")).get(name)
 }
-const fullName =
-	(cookie("full_name") ? decodeURIComponent(cookie("full_name")) : "") || session.user || "User"
+const fullName = cookie("full_name") || session.user || "User"
 
 const menuOptions = computed(() => [
 	{
@@ -68,6 +70,15 @@ const menuOptions = computed(() => [
 		hideLabel: true,
 		items: [
 			{ label: "Settings", icon: "settings", onClick: () => store.openSettings(router) },
+			// Account/Monitor ship on main (llm-proxy UI) — the routes exist only
+			// once this branch merges with it, so gate on the router. Monitor is
+			// SM-only there; www/jarvis.py (main side) boots is_system_manager.
+			...(router.hasRoute("Account")
+				? [{ label: "Account", icon: "user", onClick: () => router.push({ name: "Account" }) }]
+				: []),
+			...(router.hasRoute("Monitor") && window.is_system_manager !== false
+				? [{ label: "Monitor", icon: "activity", onClick: () => router.push({ name: "Monitor" }) }]
+				: []),
 			{
 				label: "Switch to Desk",
 				icon: "grid",
