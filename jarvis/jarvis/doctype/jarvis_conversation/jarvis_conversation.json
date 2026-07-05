@@ -1,91 +1,100 @@
 {
-  "doctype": "DocType",
-  "name": "Jarvis Conversation",
-  "module": "Jarvis",
-  "issingle": 0,
-  "custom": 0,
-  "engine": "InnoDB",
-  "autoname": "hash",
-  "field_order": [
-    "title",
-    "session_key",
-    "model_override",
-    "thinking_override",
-    "auto_apply",
-    "status",
-    "last_active_at",
-    "starred"
-  ],
-  "fields": [
-    {
-      "fieldname": "title",
-      "fieldtype": "Data",
-      "label": "Title",
-      "in_list_view": 1,
-      "description": "Auto-generated from the first user message; editable."
-    },
-    {
-      "fieldname": "session_key",
-      "fieldtype": "Data",
-      "label": "Openclaw Session Key",
-      "unique": 1,
-      "in_standard_filter": 1,
-      "description": "Populated on first agent turn; reused for subsequent turns in this conversation."
-    },
-    {
-      "fieldname": "model_override",
-      "fieldtype": "Data",
-      "label": "Model Override",
-      "description": "Bare model id (no provider prefix) used for chat turns in this conversation. Null/empty falls back to Jarvis Settings.llm_model. Validated against the SUBSCRIPTION_MODELS allowlist at write time."
-    },
-    {
-      "fieldname": "thinking_override",
-      "fieldtype": "Select",
-      "label": "Thinking Effort",
-      "options": "\nlow\nmedium\nhigh",
-      "description": "Per-conversation reasoning effort sent to openclaw via an inline /think directive in the user message. Empty falls back to openclaw's default (medium). Maps to the Fast/Balanced/Deep UI selector."
-    },
-    {
-      "fieldname": "auto_apply",
-      "fieldtype": "Check",
-      "label": "Auto-apply changes (skip confirmation)",
-      "default": "0",
-      "description": "When 1, reversible mutating tool calls in this conversation execute without a confirmation card. Enabling requires the System Manager role; destructive ops (delete/cancel/amend/send_email) still park regardless. Default 0 (confirm every write)."
-    },
-    {
-      "fieldname": "status",
-      "fieldtype": "Select",
-      "label": "Status",
-      "options": "Active\nArchived",
-      "default": "Active",
-      "in_list_view": 1,
-      "in_standard_filter": 1
-    },
-    {
-      "fieldname": "last_active_at",
-      "fieldtype": "Datetime",
-      "label": "Last Active At",
-      "in_list_view": 1,
-      "in_standard_filter": 1
-    },
-    {
-      "fieldname": "starred",
-      "fieldtype": "Check",
-      "label": "Starred",
-      "default": "0"
-    }
-  ],
-  "permissions": [
-    {
-      "role": "All",
-      "read": 1,
-      "write": 1,
-      "create": 1,
-      "delete": 1,
-      "if_owner": 1
-    }
-  ],
-  "sort_field": "last_active_at",
-  "sort_order": "DESC",
-  "track_changes": 1
+ "doctype": "DocType",
+ "name": "Jarvis Conversation",
+ "module": "Jarvis",
+ "issingle": 0,
+ "custom": 0,
+ "engine": "InnoDB",
+ "autoname": "hash",
+ "field_order": [
+  "title",
+  "session_key",
+  "model_override",
+  "thinking_override",
+  "auto_apply",
+  "status",
+  "last_active_at",
+  "starred"
+ ],
+ "fields": [
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "label": "Title",
+   "in_list_view": 1,
+   "description": "Auto-generated from the first user message; editable."
+  },
+  {
+   "fieldname": "session_key",
+   "fieldtype": "Data",
+   "label": "Openclaw Session Key",
+   "unique": 1,
+   "in_standard_filter": 1,
+   "description": "Populated on first agent turn; reused for subsequent turns in this conversation."
+  },
+  {
+   "fieldname": "model_override",
+   "fieldtype": "Data",
+   "label": "Model Override",
+   "description": "Bare model id (no provider prefix) used for chat turns in this conversation. Null/empty falls back to Jarvis Settings.llm_model. Validated against the SUBSCRIPTION_MODELS allowlist at write time."
+  },
+  {
+   "fieldname": "thinking_override",
+   "fieldtype": "Select",
+   "label": "Thinking Effort",
+   "options": "\nlow\nmedium\nhigh",
+   "description": "Per-conversation reasoning effort sent to openclaw via an inline /think directive in the user message. Empty falls back to openclaw's default (medium). Maps to the Fast/Balanced/Deep UI selector."
+  },
+  {
+   "fieldname": "auto_apply",
+   "fieldtype": "Check",
+   "label": "Auto-apply changes (skip confirmation)",
+   "default": "0",
+   "description": "When 1, reversible mutating tool calls in this conversation execute without a confirmation card. Enabling requires the System Manager role; destructive ops (delete/cancel/amend/send_email) still park regardless. Default 0 (confirm every write)."
+  },
+  {
+   "fieldname": "file_box",
+   "fieldtype": "Check",
+   "label": "File Box conversation (directed inbound run)",
+   "default": "0",
+   "hidden": 1,
+   "no_copy": 1,
+   "description": "Set by the File Box drop path. When 1, reversible create/update tool calls execute directly (no confirmation card) because the run is unattended and review happens on the created Draft + the approval board; destructive ops still park. Server-set only; enabling via a generic save requires System Manager, like auto_apply."
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Active\nArchived",
+   "default": "Active",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "last_active_at",
+   "fieldtype": "Datetime",
+   "label": "Last Active At",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "starred",
+   "fieldtype": "Check",
+   "label": "Starred",
+   "default": "0"
+  }
+ ],
+ "permissions": [
+  {
+   "role": "All",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1,
+   "if_owner": 1
+  }
+ ],
+ "sort_field": "last_active_at",
+ "sort_order": "DESC",
+ "track_changes": 1
 }
