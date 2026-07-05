@@ -373,6 +373,40 @@ def delete_macro(name: str) -> dict:
 	return {"ok": True}
 
 
+@frappe.whitelist()
+def delete_macros_bulk(names: str | list | None = None) -> dict:
+	"""Bulk delete macros the caller OWNS (DESIGN-V3 §8.3 / D20). ``names`` is a
+	JSON array of macro row-names. Reuses the ``delete_macro`` path per row so
+	each macro's Run history goes first (LinkExistsError otherwise). Per-row
+	try/except: foreign rows skip with ``not owner``, one bad row never aborts
+	the batch. Returns ``{deleted, skipped: [{name, reason}]}``."""
+	raw = frappe.parse_json(names) if isinstance(names, str) else (names or [])
+	items = [str(n) for n in raw if n] if isinstance(raw, list) else []
+	me = frappe.session.user
+	deleted = 0
+	skipped: list[dict] = []
+	for n in items:
+		try:
+			doc = frappe.get_doc(MACRO, n)
+			if doc.owner != me:
+				skipped.append({"name": n, "reason": "not owner"})
+				continue
+			delete_macro(n)  # clears run history first, then the macro
+			deleted += 1
+		except frappe.DoesNotExistError:
+			skipped.append({"name": n, "reason": "not found"})
+		except frappe.PermissionError:
+			skipped.append({"name": n, "reason": "not permitted"})
+		except Exception:
+			# Never leak internal exception text to the client — log server-side.
+			frappe.log_error(
+				title="Jarvis: bulk macro delete failed", message=frappe.get_traceback()
+			)
+			skipped.append({"name": n, "reason": "error"})
+	frappe.db.commit()
+	return {"deleted": deleted, "skipped": skipped}
+
+
 # --------------------------------------------------------------------------- #
 # Run / stop
 # --------------------------------------------------------------------------- #
@@ -421,7 +455,9 @@ def list_macro_runs(status: str = "", macro: str = "", limit=30, start=0) -> dic
 	Joins the macro for its display name and computes each run's duration in
 	seconds. Optional filters: ``status`` (a run status) and ``macro`` (a macro
 	row-name). Owner-scoped in SQL so another user's runs are never returned.
-	Fetches ``limit + 1`` rows to report ``has_more`` for the SPA's Load more."""
+	Fetches ``limit + 1`` rows to report ``has_more`` for the SPA's Load more.
+	``total`` (COUNT under the same filters) rides along for the "N of M"
+	footer (DESIGN-V3 D38 — additive)."""
 	limit = max(1, min(int(limit or 30), 100))
 	start = max(0, int(start or 0))
 	conditions = ["r.owner = %(owner)s"]
@@ -433,6 +469,9 @@ def list_macro_runs(status: str = "", macro: str = "", limit=30, start=0) -> dic
 		conditions.append("r.macro = %(macro)s")
 		params["macro"] = macro
 	where = " AND ".join(conditions)
+	total = frappe.db.sql(
+		f"SELECT COUNT(*) FROM `tabJarvis Macro Run` r WHERE {where}", params
+	)[0][0]
 	rows = frappe.db.sql(
 		f"""
 		SELECT r.name, r.macro, COALESCE(m.macro_name, r.macro) AS macro_name,
@@ -450,7 +489,7 @@ def list_macro_runs(status: str = "", macro: str = "", limit=30, start=0) -> dic
 		params,
 		as_dict=True,
 	)
-	return {"runs": rows[:limit], "has_more": len(rows) > limit}
+	return {"runs": rows[:limit], "has_more": len(rows) > limit, "total": total}
 
 
 @frappe.whitelist()

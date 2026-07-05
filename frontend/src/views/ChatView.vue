@@ -1,106 +1,5 @@
 <template>
-	<div ref="rootEl" class="jv-root" :class="{ 'jv-dark': effectiveDark }" :style="paletteVars" style="--rad:8px;font-family:'Inter',system-ui,sans-serif;height:100vh;width:100%;display:flex;color:var(--text);background:var(--surface);overflow:hidden;position:relative;">
-
-		<!-- ============ SIDEBAR ============ -->
-		<aside class="jv-sidebar" :class="{ collapsed: sidebarCollapsed }" style="width:268px;flex:none;background:var(--surface-1);border-right:1px solid var(--border);display:flex;flex-direction:column;height:100%;">
-			<!-- Collapsed: slim icon rail (instead of hiding the sidebar entirely) -->
-			<div v-if="sidebarCollapsed" class="jv-rail">
-				<div class="jv-rail-logo"><svg width="16" height="16" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg></div>
-				<button class="jv-rail-btn" @click="toggleSidebar" title="Expand sidebar">
-					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18" /><path d="m11 9 3 3-3 3" /></svg>
-				</button>
-				<button class="jv-rail-btn jv-rail-new" @click="newChat" title="New chat">
-					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
-				</button>
-				<button class="jv-rail-btn" @click="toggleSidebar" title="Search chats">
-					<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
-				</button>
-				<div style="flex:1;"></div>
-				<button class="jv-rail-btn" @click="openSettings" title="Settings">
-					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
-				</button>
-				<div class="jv-rail-avatar" @click="toggleSidebar" title="Account">{{ initials }}</div>
-			</div>
-			<div style="padding:14px 14px 10px;display:flex;align-items:center;gap:9px;">
-				<div class="jv-logo" style="width:28px;height:28px;border-radius:7px;background:var(--blue);display:flex;align-items:center;justify-content:center;flex:none;box-shadow:0 1px 2px rgba(37,99,235,.35);">
-					<svg width="16" height="16" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
-				</div>
-				<div style="display:flex;flex-direction:column;line-height:1.1;">
-					<span style="font-size:14px;font-weight:600;letter-spacing:-.01em;">Jarvis</span>
-					<span style="font-size:11px;color:var(--text-3);font-weight:450;">ERPNext Assistant</span>
-				</div>
-				<div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
-					<button class="jv-iconbtn" @click="toggleSidebar" title="Collapse sidebar" style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;border-radius:6px;cursor:pointer;color:var(--text-3);flex:none;">
-						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18" /><path d="m14 9-3 3 3 3" /></svg>
-					</button>
-				</div>
-			</div>
-
-			<div style="padding:6px 12px 10px;">
-				<button class="jv-newchat" @click="newChat" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;padding:8px 11px;background:var(--blue);color:#fff;border:none;border-radius:var(--rad);font-family:inherit;font-size:13px;font-weight:550;cursor:pointer;">
-					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
-					New chat
-				</button>
-			</div>
-
-			<div style="padding:0 12px 10px;">
-				<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--surface);border:1px solid var(--border);border-radius:var(--rad);">
-					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="1.9" stroke-linecap="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
-					<input v-model="search" placeholder="Search chats" style="flex:1;border:none;outline:none;background:transparent;font-family:inherit;font-size:12.5px;color:var(--text);" />
-				</div>
-			</div>
-
-			<nav style="flex:1;overflow-y:auto;padding:2px 8px 12px;">
-				<template v-for="g in groups" :key="g.label">
-					<div style="padding:8px 8px 4px;font-size:11px;font-weight:600;color:var(--text-3);letter-spacing:.03em;text-transform:uppercase;">{{ g.label }}</div>
-					<div
-						v-for="c in g.items"
-						:key="c.name"
-						class="jv-conv"
-						:class="{ on: c.name === currentId }"
-						@click="renamingId === c.name ? null : selectConversation(c.name)"
->
-						<svg class="jv-conv-ic" width="14" height="14" viewBox="0 0 24 24" fill="none" :stroke="c.name === currentId ? 'var(--text-2)' : 'var(--text-3)'" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
-						<input v-if="renamingId === c.name" class="jv-rename-input" v-model="renameText" @click.stop @keydown.enter.stop="commitRename(c)" @keydown.esc.stop="cancelRename()" @blur="commitRename(c)" />
-						<span v-else class="jv-conv-title">{{ c.title || "New chat" }}</span>
-						<button v-if="renamingId !== c.name" class="jv-conv-more" @click.stop="toggleConvMenu(c.name)" title="Options"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></svg></button>
-						<div v-if="convMenuFor === c.name" class="jv-conv-menu" @click.stop>
-							<button class="jv-menuitem" @click="toggleStar(c)"><svg width="14" height="14" viewBox="0 0 24 24" :fill="c.starred ? 'var(--amber)' : 'none'" :stroke="c.starred ? 'var(--amber)' : 'currentColor'" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg><span>{{ c.starred ? "Remove" : "Star" }}</span></button>
-							<button class="jv-menuitem" @click="startRename(c)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg><span>Rename</span></button>
-							<button class="jv-menuitem jv-menuitem-danger" @click="deleteConv(c)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /></svg><span>Delete</span></button>
-						</div>
-					</div>
-				</template>
-				<div v-if="!conversations.length" style="padding:18px 10px;text-align:center;font-size:12.5px;color:var(--text-3);">No chats yet</div>
-			</nav>
-
-			<div class="jv-usermenu-wrap" style="position:relative;border-top:1px solid var(--border);">
-				<div v-if="userMenuOpen" style="position:absolute;bottom:calc(100% + 6px);left:12px;right:12px;background:var(--surface);border:1px solid var(--border-2);border-radius:10px;box-shadow:0 10px 28px rgba(20,20,30,.16);padding:5px;z-index:20;">
-					<button class="jv-menuitem" @click="openSettings(); userMenuOpen = false">
-						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
-						<span>Settings</span>
-					</button>
-					<button class="jv-menuitem" @click="goDesk">
-						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /></svg>
-						<span>Switch to Desk</span>
-					</button>
-					<button class="jv-menuitem" @click="session.logout()">
-						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" /></svg>
-						<span style="color:var(--red);">Log out</span>
-					</button>
-				</div>
-				<div class="jv-usercard" @click="userMenuOpen = !userMenuOpen" style="padding:10px 12px;display:flex;align-items:center;gap:9px;cursor:pointer;">
-					<div style="width:28px;height:28px;border-radius:50%;background:#e7ddcf;color:#8a6d3b;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;flex:none;">{{ initials }}</div>
-					<div style="display:flex;flex-direction:column;line-height:1.2;min-width:0;">
-						<span style="font-size:12.5px;font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ fullName }}</span>
-						<span style="font-size:11px;color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ session.user }}</span>
-					</div>
-					<button class="jv-iconbtn" tabindex="-1" title="Account" style="margin-left:auto;flex:none;width:26px;height:26px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;border-radius:6px;cursor:pointer;pointer-events:none;">
-						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM12 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4z" /></svg>
-					</button>
-				</div>
-			</div>
-		</aside>
+	<div ref="rootEl" class="jv-root" :class="{ 'jv-dark': effectiveDark }" :style="paletteVars" style="--rad:8px;font-family:'Inter',system-ui,sans-serif;height:100%;width:100%;display:flex;color:var(--text);background:var(--surface);overflow:hidden;position:relative;">
 
 		<!-- ============ MAIN ============ -->
 		<main style="flex:1;display:flex;flex-direction:column;height:100%;min-width:0;background:var(--surface);">
@@ -498,34 +397,6 @@
 			</div>
 		</main>
 
-		<!-- ============ RIGHT RAIL: SKILLS + MACROS (opens the center popup) ============ -->
-		<aside class="jv-skillbar">
-			<div class="jv-skillrail">
-				<button class="jv-skillrail-btn" @click="router.push('/skills')">
-					<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 7v10l8 5 8-5V7z" /><path d="M12 22V12M12 12 4 7M12 12l8-5" /></svg>
-					<span class="jv-railtip">Skills</span>
-				</button>
-				<button class="jv-skillrail-btn" @click="router.push('/macros')">
-					<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l14 9-14 9V3z" /><path d="M3 5v14" /></svg>
-					<span class="jv-railtip">Macros</span>
-				</button>
-				<button class="jv-skillrail-btn" @click="router.push('/files')">
-					<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-6l-2 3h-4l-2-3H2" /><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" /></svg>
-					<span class="jv-railtip">File Box</span>
-				</button>
-				<button class="jv-skillrail-btn" @click="router.push('/approvals')" style="position:relative;">
-					<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg>
-					<span v-if="approvalsBadge" style="position:absolute;top:2px;right:2px;background:var(--red,#e5484d);color:#fff;border-radius:8px;font-size:9px;line-height:1;padding:2px 4px;">{{ approvalsBadge }}</span>
-					<span class="jv-railtip">Approvals</span>
-				</button>
-				<!-- Agents Marketplace is a real routed page now (/agents), not an overlay. -->
-				<button class="jv-skillrail-btn" @click="router.push('/agents')">
-					<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="8" width="18" height="12" rx="2" /><path d="M7 8V6a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v2" /><circle cx="9" cy="14" r="1" /><circle cx="15" cy="14" r="1" /><path d="M12 2v2" /></svg>
-					<span class="jv-railtip">Agents</span>
-				</button>
-			</div>
-		</aside>
-
 		<!-- ============ PROACTIVE MESSAGE TOAST (Jarvis started a chat) ============ -->
 		<transition name="jv-fade">
 			<div v-if="proactiveToast" class="jv-toast" @click="openProactive">
@@ -813,7 +684,7 @@
 						<pre v-else-if="artifact.kind === 'text'" class="jv-artifact-text">{{ artifact.text }}</pre>
 						<div v-else-if="artifact.kind === 'loading'" class="jv-artifact-loading">Loading preview…</div>
 						<div v-else class="jv-artifact-nopreview">
-							<p>No inline preview for this file type.</p>
+							<p class="jv-preview-note">No inline preview for this file type.</p>
 							<a :href="artifact.url" :download="cvFile(artifact.cv)" class="jv-canvas-dl">Download {{ cvFile(artifact.cv) }}</a>
 						</div>
 					</div>
@@ -924,18 +795,26 @@ import * as api from "@/api"
 import { setMacroPrefill } from "@/composables/macroPrefill"
 import { renderMarkdown } from "@/markdown"
 import JvChart from "@/charts/JvChart.vue"
+import { useShellStore } from "@/stores/shell"
+import { useJarvisTheme } from "@/theme"
 
 const session = inject("$session")
 const socket = inject("$socket")
 const route = useRoute()
 const router = useRouter()
 
-const conversations = ref([])
+// Shared shell state (DESIGN-V3 §4): the sidebar/conversation list lives in
+// the app shell now; ChatView is the only writer of currentConvId /
+// streamingConvId and the only caller of applyRemote* (socket contract DA-04).
+const store = useShellStore()
+
 const currentId = ref(null)
 // Remember the open chat per-device so a refresh — or a duplicated tab — restores
 // it instead of jumping to whatever sorts first in the sidebar (e.g. a starred
 // chat). Also lets a duplicated tab land on the SAME in-progress conversation.
+// Also mirrors the selection into the shell store (sidebar active row).
 watch(currentId, (id) => {
+	store.currentConvId = id
 	try {
 		id ? localStorage.setItem("jarvis-last-conv", id) : localStorage.removeItem("jarvis-last-conv")
 	} catch (e) {}
@@ -953,7 +832,6 @@ const histIdx = ref(null)
 const histDraft = ref("")
 const sending = ref(false)
 const waiting = ref(false)
-const search = ref("")
 const ui = ref({})
 // Per-conversation "auto-apply changes" (issue #186): seeded from
 // get_conversation().conversation.auto_apply on each load; the toggle reflects
@@ -1009,107 +887,33 @@ function _settleConfirm(val) {
 	_confirmResolve = null
 	if (r) r(val)
 }
-const userMenuOpen = ref(false)
 const modelMenuOpen = ref(false)
-// Collapsible sidebar (persisted per device, openclaw-style).
-// Below this width the sidebar auto-collapses to the icon rail so a narrow /
-// half-screen window doesn't let it crowd the chat.
-const SIDEBAR_NARROW_BP = 820
-const _sidebarNarrow = () => typeof window !== "undefined" && window.matchMedia(`(max-width: ${SIDEBAR_NARROW_BP}px)`).matches
-function _sidebarPref() {
-	try { return localStorage.getItem("jarvis-sidebar") === "collapsed" } catch (e) { return false }
-}
-// Initial: forced collapsed on a narrow viewport, else the saved preference.
-const sidebarCollapsed = ref(_sidebarNarrow() || _sidebarPref())
-function toggleSidebar() {
-	sidebarCollapsed.value = !sidebarCollapsed.value
-	// Only persist as the user's preference on wide screens; on a narrow window
-	// the collapse is width-driven, so a manual toggle there is temporary and
-	// must not overwrite the saved preference.
-	if (!_sidebarNarrow()) {
-		try { localStorage.setItem("jarvis-sidebar", sidebarCollapsed.value ? "collapsed" : "open") } catch (e) {}
-	}
-}
-// React to viewport width crossing the breakpoint: collapse when it goes
-// narrow, restore the saved preference when it goes wide again.
-let _sidebarMq = null
-function _applySidebarForWidth() {
-	sidebarCollapsed.value = _sidebarNarrow() ? true : _sidebarPref()
-}
-onMounted(() => {
-	if (typeof window === "undefined") return
-	_sidebarMq = window.matchMedia(`(max-width: ${SIDEBAR_NARROW_BP}px)`)
-	_sidebarMq.addEventListener("change", _applySidebarForWidth)
-})
-onBeforeUnmount(() => {
-	if (_sidebarMq) _sidebarMq.removeEventListener("change", _applySidebarForWidth)
-})
-// per-conversation ⋯ menu + inline rename (sidebar)
-const convMenuFor = ref(null)
-const renamingId = ref(null)
-const renameText = ref("")
-function toggleConvMenu(id) {
-	convMenuFor.value = convMenuFor.value === id ? null : id
-}
-async function toggleStar(c) {
-	convMenuFor.value = null
-	const next = c.starred ? 0 : 1
-	const conv = conversations.value.find((x) => x.name === c.name)
-	if (conv) conv.starred = next // optimistic — regroups instantly
-	try {
-		await api.setStar(c.name, next)
-	} catch (e) {
-		loadConversations()
-	}
-}
-function startRename(c) {
-	convMenuFor.value = null
-	renamingId.value = c.name
-	renameText.value = c.title || ""
-	nextTick(() => {
-		const el = document.querySelector(".jv-rename-input")
-		if (el) {
-			el.focus()
-			el.select()
-		}
-	})
-}
-function cancelRename() {
-	renamingId.value = null
-}
-async function commitRename(c) {
-	if (renamingId.value !== c.name) return
-	const t = renameText.value.trim()
-	renamingId.value = null
-	if (!t || t === (c.title || "")) return
-	const conv = conversations.value.find((x) => x.name === c.name)
-	if (conv) conv.title = t // optimistic
-	try {
-		await api.renameConversation(c.name, t)
-	} catch (e) {
-		loadConversations()
-	}
-}
-async function deleteConv(c) {
-	convMenuFor.value = null
-	if (!(await confirmDialog({ title: "Delete chat?", message: `Delete "${c.title || "this chat"}"? This can't be undone.`, confirmLabel: "Delete" }))) return
-	try {
-		await api.archiveConversation(c.name)
-		notify("Chat deleted", { type: "success" })
-	} catch (e) {
-		/* ignore */
-	}
-	if (currentId.value === c.name) {
-		currentId.value = null
-		messages.value = []
-	}
-	loadConversations()
-}
+// (sidebar collapse machinery, per-conversation ⋯ menu and inline rename
+// moved to the app shell — stores/shell.js + components/shell/*, §3.7)
 const modelOverride = ref("")
 
-// ---- settings panel + theme (openclaw-style console) ----
-const settingsOpen = ref(false)
+// ---- settings panel (openclaw-style console) ----
+// The overlay is bound to the SHELL's settingsOpen (D9): the user menu opens
+// it from any route via store.openSettings(router); Esc/close write through.
+const settingsOpen = computed({
+	get: () => store.settingsOpen,
+	set: (v) => {
+		store.settingsOpen = v
+	},
+})
 const settingsTab = ref("overview")
+// Load usage stats whenever the dialog opens (was openSettings()).
+watch(
+	() => store.settingsOpen,
+	async (open) => {
+		if (!open) return
+		try {
+			usage.value = await api.getUsage(currentId.value)
+		} catch (e) {
+			/* usage stays null → the section shows a dash */
+		}
+	},
+)
 
 // --- Custom skills (Skills settings tab + "/" composer menu) ---
 const customSkills = ref([])
@@ -1123,17 +927,8 @@ async function loadCustomSkills() {
 
 // --- Macros (customer-authored prompt sequences run as chained turns) ---
 const macros = ref([])
-const approvalsBadge = ref(0)
-const HASH_ROUTES = { skills: "/skills", macros: "/macros", filebox: "/files", approvals: "/approvals", agents: "/agents" }
-function _applyHashRoute() {
-	const h = (window.location.hash || "").replace("#", "")
-	if (HASH_ROUTES[h]) router.replace(HASH_ROUTES[h])
-}
-const _hashRouteHandler = () => _applyHashRoute()
-
-async function refreshApprovalsBadge() {
-	try { approvalsBadge.value = (await api.approvalsPendingCount()) || 0 } catch (e) { /* badge is best-effort */ }
-}
+// (approvals badge → store.refreshApprovalsCount; legacy #hash deep-links →
+// router-level redirects, §9)
 
 // The live macro-run banner: { run, conversation, step, total, label, status }.
 const macroRun = ref(null)
@@ -1192,7 +987,7 @@ function setMacroRunMacro(e) { macroRunMacro.value = e.target.value; loadMacroRu
 async function openRunConversation(run) {
 	if (!run.conversation) return
 	settingsOpen.value = false
-	await loadConversations()
+	await store.loadConversations()
 	await selectConversation(run.conversation)
 }
 async function rerunFromHistory(run) {
@@ -1200,7 +995,7 @@ async function rerunFromHistory(run) {
 		const res = await api.runMacro(run.macro)
 		const data = (res && res.data) || res || {}
 		settingsOpen.value = false
-		await loadConversations()
+		await store.loadConversations()
 		if (data.conversation) await selectConversation(data.conversation)
 		macroRun.value = { run: data.macro_run, conversation: data.conversation, step: 0, total: 0, label: "", status: "running" }
 	} catch (e) { notify(_skillErr(e), { type: "error" }) }
@@ -1272,61 +1067,11 @@ const usagePct = computed(() => {
 	if (!u || !u.budget_monthly) return 0
 	return Math.min(100, Math.round((u.month_tokens / u.budget_monthly) * 100))
 })
-// theme: 'light' | 'dark' | 'system' — persisted per-device (a browser/device
-// preference; no migration needed). 'system' follows the OS color scheme live.
-const theme = ref(localStorage.getItem("jarvis-theme") || "system")
-const prefersDark = ref(false)
-let _mq = null
-function onColorScheme(e) {
-	prefersDark.value = e.matches
-}
-const effectiveDark = computed(
-	() => theme.value === "dark" || (theme.value === "system" && prefersDark.value),
-)
-const LIGHT_VARS = {
-	"--surface": "#ffffff", "--surface-1": "#f7f7f8", "--surface-2": "#f1f1f3", "--surface-3": "#ececef",
-	"--border": "#e8e8ec", "--border-2": "#dfdfe4",
-	"--text": "#171717", "--text-2": "#4a4a4f", "--text-3": "#83838b",
-	"--blue": "#171717", "--blue-bg": "#eff4ff", "--blue-bd": "#d6e2fb",
-	"--green": "#16a34a", "--green-bg": "#edf8f0", "--green-bd": "#cdeed8",
-	"--red": "#dc2626", "--red-bg": "#fdf0ef", "--red-bd": "#f5d4d1",
-	"--amber": "#d97706", "--amber-bg": "#fdf6ec", "--amber-bd": "#f3e2c2",
-}
-// Dark = "Refined Indigo" (chosen 2026-07-02): neutral charcoal surfaces with a
-// crisper indigo accent; the brand mark gets an indigo→violet gradient below.
-const DARK_VARS = {
-	"--surface": "#16161a", "--surface-1": "#1d1d22", "--surface-2": "#26262d", "--surface-3": "#30303a",
-	"--border": "#2c2c34", "--border-2": "#3a3a45",
-	"--text": "#ededf2", "--text-2": "#b6b6c0", "--text-3": "#7e7e8a",
-	"--blue": "#6e8bff", "--blue-bg": "#1e2749", "--blue-bd": "#34437a",
-	"--green": "#34d399", "--green-bg": "#15271f", "--green-bd": "#214b38",
-	"--red": "#f87171", "--red-bg": "#2a1818", "--red-bd": "#4a2a2a",
-	"--amber": "#fbbf24", "--amber-bg": "#2a2315", "--amber-bd": "#4a3d1f",
-}
-const paletteVars = computed(() => (effectiveDark.value ? DARK_VARS : LIGHT_VARS))
-
-function setTheme(t) {
-	theme.value = t
-	try {
-		localStorage.setItem("jarvis-theme", t)
-	} catch (e) {
-		/* private mode / storage disabled — keep the in-memory choice */
-	}
-}
-// Quick header toggle: flip between light and dark (drops out of 'system').
-function toggleTheme() {
-	setTheme(effectiveDark.value ? "light" : "dark")
-}
-async function openSettings() {
-	userMenuOpen.value = false
-	modelMenuOpen.value = false
-	settingsOpen.value = true
-	try {
-		usage.value = await api.getUsage(currentId.value)
-	} catch (e) {
-		/* usage stays null → the section shows a dash */
-	}
-}
+// theme: the shared composable (module singleton, src/theme.js) replaces the
+// old private palette copy (D34). It also bridges `data-theme` onto <html>
+// for frappe-ui; the .jv-dark class + inline paletteVars below keep the jv-*
+// scoped styles untouched.
+const { theme, effectiveDark, paletteVars, setTheme, toggleTheme } = useJarvisTheme()
 // Flip "confirm before changes" for THIS conversation (issue #186). Optimistic;
 // reverts on failure. auto_apply=1 = skip confirmation (auto mode). Enabling is
 // admin-only server-side - a non-admin gets a 403, so we revert + show a note.
@@ -1343,26 +1088,6 @@ async function toggleAutoApply() {
 		convAutoApply.value = !next // revert
 		// Enabling requires System Manager; a non-admin gets a PermissionError (403).
 		if (next) autoApplyNote.value = "Only an administrator can enable auto-apply."
-	}
-}
-async function deleteChat() {
-	const id = currentId.value
-	if (!id) return
-	if (!(await confirmDialog({ title: "Delete chat?", message: "Delete this chat? It will be removed from your history.", confirmLabel: "Delete" }))) return
-	try {
-		await api.archiveConversation(id)
-		notify("Chat deleted", { type: "success" })
-	} catch (e) {
-		/* ignore — reload below reflects the true state either way */
-	}
-	settingsOpen.value = false
-	currentId.value = null
-	messages.value = []
-	await loadConversations()
-	const first = conversations.value[0]?.name
-	if (first) {
-		currentId.value = first
-		await loadConversation(first)
 	}
 }
 
@@ -1467,9 +1192,6 @@ function cookie(name) {
 }
 const fullName = (cookie("full_name") ? decodeURIComponent(cookie("full_name")) : "") || session.user || "User"
 const firstName = computed(() => fullName.split(/\s+/)[0])
-const initials = computed(
-	() => fullName.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase() || "U",
-)
 const greeting = computed(() => {
 	const h = new Date().getHours()
 	return h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening"
@@ -1479,7 +1201,7 @@ const modelLabel = computed(() => modelOverride.value || "Auto")
 const availableModels = computed(() => ui.value.subscription_models?.[ui.value.llm_provider] || [])
 
 const currentTitle = computed(
-	() => conversations.value.find((c) => c.name === currentId.value)?.title || "New chat",
+	() => store.conversations.find((c) => c.name === currentId.value)?.title || "New chat",
 )
 const visibleMessages = computed(() =>
 	messages.value.filter((m) => m.role === "user" || m.role === "assistant"),
@@ -1550,11 +1272,10 @@ async function clearAllHistory() {
 	clearingHistory.value = true
 	try {
 		await api.clearChatHistory()
-		conversations.value = []
 		messages.value = []
 		currentId.value = ""
 		settingsOpen.value = false
-		newChat()
+		newChat() // also reloads store.conversations
 	} catch (e) {
 		notify(_skillErr(e) || "Could not delete history", { type: "error" })
 	} finally {
@@ -1609,7 +1330,7 @@ const showWelcome = computed(
 )
 
 // settings/overview derived metrics (all from data we already hold)
-const convCount = computed(() => conversations.value.length)
+const convCount = computed(() => store.conversations.length)
 const msgCount = computed(() => visibleMessages.value.length)
 const toolCount = computed(() => jarvisTools.value.length)
 const sessionToolCalls = computed(() =>
@@ -1622,7 +1343,7 @@ const avgTokensPerMsg = computed(() => {
 	if (!usage.value || !n) return "—"
 	return fmtTokens(Math.round((usage.value.chat_tokens || 0) / n))
 })
-const starredCount = computed(() => conversations.value.filter((c) => c.starred).length)
+const starredCount = computed(() => store.conversations.filter((c) => c.starred).length)
 // Recent tool runs in this chat (most recent first), from the per-message run
 // metrics we already stamp on run:end.
 const recentActivity = computed(() => {
@@ -1643,35 +1364,6 @@ const canSend = computed(
 	() => (input.value.trim().length > 0 || pendingFiles.value.length > 0) && !sending.value,
 )
 const busy = computed(() => sending.value || waiting.value)
-
-const filteredConvs = computed(() => {
-	const q = search.value.trim().toLowerCase()
-	return q ? conversations.value.filter((c) => (c.title || "").toLowerCase().includes(q)) : conversations.value
-})
-const groups = computed(() => {
-	const starred = [], today = [], yest = [], earlier = []
-	const now = new Date()
-	const d0 = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
-	for (const c of filteredConvs.value) {
-		if (c.starred) {
-			starred.push(c)
-			continue
-		}
-		const raw = (c.last_active_at || c.modified || "").replace(" ", "T")
-		const t = raw ? new Date(raw) : now
-		const cd = new Date(t.getFullYear(), t.getMonth(), t.getDate()).getTime()
-		const diff = Math.round((d0 - cd) / 86400000)
-		if (diff <= 0) today.push(c)
-		else if (diff === 1) yest.push(c)
-		else earlier.push(c)
-	}
-	return [
-		{ label: "Starred", items: starred },
-		{ label: "Today", items: today },
-		{ label: "Yesterday", items: yest },
-		{ label: "Earlier", items: earlier },
-	].filter((g) => g.items.length)
-})
 
 const suggestions = [
 	{ title: "Analyse data", prompt: "Which sales orders are overdue this month?", bg: "var(--blue-bg)", icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#171717" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18 9l-5 5-3-3-4 4"/></svg>' },
@@ -1842,7 +1534,7 @@ function saveConversationAsMacro() {
 		macro_name: currentTitle.value && currentTitle.value !== "New chat" ? currentTitle.value : "",
 		steps,
 	})
-	router.push("/macros")
+	router.push("/macros/new")
 }
 // An agent-proposed ```jarvis-macro card's "Save as macro" button.
 function openMacroFromCard(card) {
@@ -1851,7 +1543,7 @@ function openMacroFromCard(card) {
 		description: card.description || "",
 		steps: (card.steps || []).map((s) => ({ label: s.label || "", prompt: s.prompt || "" })),
 	})
-	router.push("/macros")
+	router.push("/macros/new")
 }
 
 function macroCardOf(m) {
@@ -2346,7 +2038,7 @@ async function applyDraft(submitFlag) {
 		})
 		closeDraftPanel()
 		await loadConversation(currentId.value)
-		loadConversations()
+		store.loadConversations()
 	} catch (e) {
 		p.applying = false
 		p.error = (e && e.messages && e.messages[0]) || (e && e.message) || "Could not save — check the values."
@@ -2453,7 +2145,7 @@ async function confirmPending(pa) {
 		// events; reload to be sure the transcript reflects it (same as applyDraft).
 		removePending(token)
 		await loadConversation(currentId.value)
-		loadConversations()
+		store.loadConversations()
 	} catch (e) {
 		const card = cardById()
 		if (card) card.error = (e && e.messages && e.messages[0]) || (e && e.message) || "Could not confirm."
@@ -2781,7 +2473,6 @@ watch(threadInnerEl, (el) => {
 	}
 })
 onBeforeUnmount(() => {
-	window.removeEventListener("hashchange", _hashRouteHandler)
 	if (threadRO) {
 		threadRO.disconnect()
 		threadRO = null
@@ -2859,10 +2550,6 @@ function onKey(e) {
 	}
 }
 
-async function loadConversations() {
-	refreshApprovalsBadge()
-	conversations.value = await api.listConversations()
-}
 async function loadConversation(id) {
 	if (!id) {
 		messages.value = []
@@ -2911,13 +2598,22 @@ async function loadConversation(id) {
 	// streaming=1 (crashed worker) can't lock the composer forever; live deltas +
 	// run:end clear it normally.
 	const _streaming = [...messages.value].reverse().find((m) => m.role === "assistant" && m.streaming)
+	let _resumed = false
 	if (_streaming) {
 		const fresh = _streaming.modified && new Date() - new Date(_streaming.modified.replace(" ", "T")) < 5 * 60 * 1000
 		if (fresh) {
 			sending.value = true
 			waiting.value = !((_streaming.content || "").trim())
+			store.streamingConvId = id
+			_resumed = true
 		}
 	}
+	// Reconcile the sidebar streaming dot with the fetched state: if the store
+	// still marks THIS conversation as streaming but its messages say otherwise
+	// (run ended while we were on another route, or a stale streaming=1 flag),
+	// clear it — otherwise the dot pulses forever. A dot on a DIFFERENT
+	// conversation is left alone: its live socket deltas keep it honest.
+	if (!_resumed && store.streamingConvId === id) store.streamingConvId = null
 	// A freshly opened/refreshed chat should land on the newest message and stay
 	// pinned there while late content settles; the ResizeObserver takes over.
 	pinnedToBottom.value = true
@@ -3074,6 +2770,7 @@ function resetRunState() {
 	waiting.value = false
 	activeTools.value = []
 	currentRunId.value = null
+	store.streamingConvId = null
 	pendingFiles.value = []
 	mention.value = { ...mention.value, open: false }
 	histIdx.value = null
@@ -3093,6 +2790,10 @@ async function selectConversation(id) {
 	// navigating into the run's own conversation.
 	if (macroRun.value && macroRun.value.conversation !== id) macroRun.value = null
 	currentId.value = id
+	// Selection can also start INSIDE the component (proactive toast, run
+	// history) — keep the URL coherent with the sidebar's /c/:id navigation.
+	// No-op when the route watcher initiated this call (params already match).
+	if (route.params.id !== id) router.replace("/c/" + id)
 	await loadConversation(id)
 	await nextTick()
 	autoGrow()
@@ -3104,7 +2805,10 @@ async function newChat() {
 	const conv = await api.createOrFocusEmpty()
 	currentId.value = conv?.name || conv
 	messages.value = []
-	await loadConversations()
+	// Leaving a /c/:id URL on an old conversation would make its sidebar row
+	// unclickable (same-route push is a no-op) — reset to the chat home.
+	if (route.params.id) router.replace({ name: "Chat" })
+	await store.loadConversations()
 	await nextTick()
 	inputEl.value?.focus()
 }
@@ -3116,9 +2820,6 @@ function fillInput(text) {
 		inputEl.value?.focus()
 		autoGrow()
 	})
-}
-function goDesk() {
-	window.location.assign("/app")
 }
 function openErpDesk() {
 	window.open("/app", "_blank")
@@ -3135,10 +2836,8 @@ async function selectModel(m) {
 	}
 }
 function onDocClick(e) {
-	if (!e.target.closest(".jv-usermenu-wrap")) userMenuOpen.value = false
 	if (!e.target.closest(".jv-modelmenu-wrap")) modelMenuOpen.value = false
 	if (!e.target.closest(".jv-composer")) mention.value = { ...mention.value, open: false }
-	if (!e.target.closest(".jv-conv-menu") && !e.target.closest(".jv-conv-more")) convMenuFor.value = null
 }
 async function retry(messageId) {
 	sending.value = true
@@ -3191,7 +2890,7 @@ async function send(textArg) {
 			// Adopt the server-created conversation so realtime events route to
 			// this thread, then refresh the sidebar without blocking anything.
 			currentId.value = r.conversation_id
-			loadConversations()
+			store.loadConversations()
 		}
 	} catch (e) {
 		sending.value = false
@@ -3215,14 +2914,13 @@ function onEvent(p) {
 	// first real turn). Handle it before the current-conversation guard so the
 	// sidebar updates even if the user has since switched chats.
 	if (p.kind === "conversation:renamed" && p.conversation_id) {
-		const c = conversations.value.find((x) => x.name === p.conversation_id)
-		if (c && p.title) c.title = p.title
+		store.applyRemoteRename(p.conversation_id, p.title)
 		return
 	}
 	// Jarvis started a conversation with us (proactive). Refresh the sidebar and
 	// surface a toast; handled before the current-conversation guard.
 	if (p.kind === "conversation:new" && p.conversation_id) {
-		loadConversations()
+		store.applyRemoteNew()
 		proactiveToast.value = { id: p.conversation_id, title: p.title || "Message from Jarvis", preview: p.preview || "" }
 		return
 	}
@@ -3291,6 +2989,7 @@ function onEvent(p) {
 			activeTools.value = []
 			waiting.value = true
 			statusPhase.value = "model"
+			store.streamingConvId = p.conversation_id || currentId.value
 			break
 		case "assistant:delta": {
 			waiting.value = false
@@ -3351,8 +3050,9 @@ function onEvent(p) {
 			statusPhase.value = null
 			activeTools.value = []
 			currentRunId.value = null
+			store.streamingConvId = null
 			_notifyReplyReady() // browser notification when the tab is hidden (opt-in)
-			loadConversations()
+			store.loadConversations()
 			loadConversation(currentId.value)
 			// Re-render charts after the reload settles — late re-renders can swap a
 			// freshly-rendered mermaid node back to raw source; these idle passes
@@ -3367,6 +3067,7 @@ function onEvent(p) {
 			statusPhase.value = null
 			activeTools.value = []
 			currentRunId.value = null
+			store.streamingConvId = null
 			loadConversation(currentId.value)
 			break
 	}
@@ -3386,6 +3087,7 @@ function stopRun() {
 	waiting.value = false
 	sending.value = false
 	activeTools.value = []
+	store.streamingConvId = null
 }
 
 // ---- file input ----
@@ -3566,35 +3268,58 @@ function onResync() {
 	const now = Date.now()
 	if (now - _lastResync < 2000) return // connect + visibility often co-fire
 	_lastResync = now
-	loadConversations()
+	store.loadConversations()
 	loadConversation(currentId.value)
 }
 function onVisibility() {
 	if (document.visibilityState === "visible") onResync()
 }
 
+// ---- shell contract (§3.7): New Chat requests, external navigation and
+// external deletes now arrive from outside the component. ----
+// D10 — the shell sets pendingNewChat; consume + clear it here. During boot
+// the flag is only marked (onMounted starts on the empty state instead of
+// restoring the last conversation).
+let _consumedNewChat = false
+watch(
+	() => store.pendingNewChat,
+	(v) => {
+		if (!v) return
+		store.pendingNewChat = false
+		_consumedNewChat = true
+		if (!booting.value) newChat()
+	},
+	{ immediate: true },
+)
+// Sidebar rows navigate via /c/:id — selection now happens outside the
+// component, so follow the route param.
+watch(
+	() => route.params.id,
+	(id) => {
+		if (id && id !== currentId.value) selectConversation(id)
+	},
+)
+// External archive (deleted from the sidebar): fall back to the empty
+// new-chat state when the open conversation disappears from the list.
+watch(
+	() => store.conversations,
+	(list) => {
+		if (booting.value || !currentId.value) return
+		if (!list.some((c) => c.name === currentId.value)) {
+			currentId.value = null
+			messages.value = []
+			resetRunState()
+			if (route.params.id) router.replace({ name: "Chat" })
+		}
+	},
+)
+
 onMounted(async () => {
-	// Hash page-routes: lifecycle-scoped (was a top-level anonymous listener
-	// that stacked on remount and fired before auth/bootstrap).
-	window.addEventListener("hashchange", _hashRouteHandler)
-	setTimeout(_hashRouteHandler, 400)
-	// Latency plan, Phase 1.3: the bootstrap network calls used to run as a
-	// serial awaited chain (ready → ui settings → conversations), each a full
-	// round-trip. Fire them concurrently and await in order below — the
-	// onboarding redirect check still resolves before anything is revealed,
-	// and list_conversations (which triggers the server-side prefix prewarm)
-	// now starts ~2 RTTs earlier.
-	const readyP = api.isReadyForChat().catch(() => null)
+	// Latency plan, Phase 1.3: bootstrap calls run concurrently and are
+	// awaited in order below. (The onboarding gate moved to AppShell, D11;
+	// legacy #hash deep-links moved to the router, §9.)
 	const uiP = api.getChatUiSettings().catch(() => null)
-	const convsP = loadConversations().catch(() => {})
-	// Gate the chat the way the old Desk page did: if the customer hasn't
-	// finished signup / LLM setup, send them to the onboarding wizard. A
-	// transient failure falls through to the chat rather than trapping them.
-	const r = await readyP
-	if (r && r.ready === false) {
-		window.location.assign("/app/jarvis-onboarding")
-		return
-	}
+	const convsP = store.loadConversations().catch(() => {})
 	socket?.on("jarvis:event", onEvent)
 	socket?.on("connect", onResync)
 	document.addEventListener("visibilitychange", onVisibility)
@@ -3604,25 +3329,29 @@ onMounted(async () => {
 	document.addEventListener("pointerdown", onDocClick)
 	window.addEventListener("keydown", onGlobalKey)
 	_thinkTimer = setInterval(() => { thinkTick.value = busy.value ? thinkTick.value + 1 : 0 }, 2200)
-	// Track the OS color scheme so theme:'system' updates live.
-	_mq = window.matchMedia("(prefers-color-scheme: dark)")
-	prefersDark.value = _mq.matches
-	_mq.addEventListener("change", onColorScheme)
 	ui.value = (await uiP) || {}
 	// Load custom skills so the "/" composer menu can offer them.
 	loadCustomSkills()
 	try {
 		await convsP
-		// Restore the chat the user was last on (survives refresh + duplicated tab)
-		// before falling back to the first sidebar entry, so a starred chat sorting
-		// to the top never hijacks navigation away from your current chat.
-		let _stored = null
-		try { _stored = localStorage.getItem("jarvis-last-conv") } catch (e) {}
-		const _storedValid = _stored && conversations.value.some((c) => c.name === _stored)
-		const first = route.params.id || (_storedValid ? _stored : null) || conversations.value[0]?.name
-		if (first) {
-			currentId.value = first
-			await loadConversation(first)
+		if (_consumedNewChat) {
+			// New Chat was requested from another route while we booted —
+			// start on a fresh empty conversation instead of restoring.
+			_consumedNewChat = false
+			await newChat()
+		} else {
+			// Restore the chat the user was last on (survives refresh + duplicated
+			// tab) before falling back to the first sidebar entry, so a starred
+			// chat sorting to the top never hijacks navigation away from your
+			// current chat.
+			let _stored = null
+			try { _stored = localStorage.getItem("jarvis-last-conv") } catch (e) {}
+			const _storedValid = _stored && store.conversations.some((c) => c.name === _stored)
+			const first = route.params.id || (_storedValid ? _stored : null) || store.conversations[0]?.name
+			if (first) {
+				currentId.value = first
+				await loadConversation(first)
+			}
 		}
 	} finally {
 		booting.value = false // reveal welcome/thread only after the first load
@@ -3641,16 +3370,17 @@ onBeforeUnmount(() => {
 	document.removeEventListener("pointerdown", onDocClick)
 	window.removeEventListener("keydown", onGlobalKey)
 	clearInterval(_thinkTimer)
-	_mq?.removeEventListener("change", onColorScheme)
+	// ChatView is the sole writer of streamingConvId (§4 contract) and its
+	// socket handlers detach above — nothing can clear the flag once we're
+	// gone, so navigating off mid-stream would leave the sidebar dot pulsing
+	// forever. Remount reconciles from fetched state in loadConversation.
+	store.streamingConvId = null
 })
-// Global keyboard shortcuts (documented in Settings → Shortcuts).
+// Chat-surface keyboard handling (Esc closes overlays). Ctrl+Shift+O and
+// Ctrl+B are owned by the shell now (AppShell → useShortcuts, §3.1).
 function onGlobalKey(e) {
 	if (e.defaultPrevented) return
-	if (e.ctrlKey && e.shiftKey && (e.key === "O" || e.key === "o")) {
-		e.preventDefault(); newChat()
-	} else if (e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === "B" || e.key === "b")) {
-		e.preventDefault(); toggleSidebar()
-	} else if (e.key === "Escape" && confirmBox.value) {
+	if (e.key === "Escape" && confirmBox.value) {
 		_settleConfirm(false)
 	} else if (e.key === "Escape" && artifact.value) {
 		closeArtifact()
@@ -3666,21 +3396,18 @@ function onGlobalKey(e) {
    pops white select menus and calendar popups. */
 .jv-root { color-scheme: light; }
 .jv-root.jv-dark { color-scheme: dark; }
-/* Refined Indigo brand mark (dark mode): the spark boxes — sidebar brand,
-   rail logo, empty-state hero, assistant avatars, proactive toast — trade the
-   flat accent fill for an indigo→violet gradient with a soft indigo glow.
-   !important beats the elements' inline background:var(--blue). */
+/* Refined Indigo brand mark (dark mode): the spark boxes — empty-state hero,
+   assistant avatars, proactive toast — trade the flat accent fill for an
+   indigo→violet gradient with a soft indigo glow. !important beats the
+   elements' inline background:var(--blue). */
 .jv-dark .jv-logo,
-.jv-dark .jv-rail-logo,
 .jv-dark .jv-toast-ic {
 	background: linear-gradient(135deg, #6e8bff, #8b5cf6) !important;
 	box-shadow: 0 2px 10px rgba(110, 139, 255, .35) !important;
 }
-/* primary buttons also invert to black/white on hover (depends on their base
-   color, so the white text/icon flips to the surface color). !important beats
-   the inline backgrounds on the new-chat and send buttons. */
-.jv-newchat:hover { background: var(--text) !important; color: var(--surface) !important; }
-.jv-newchat:hover svg { stroke: var(--surface) !important; }
+/* The send button inverts to black/white on hover (depends on its base color,
+   so the white icon flips to the surface color). !important beats the inline
+   background. */
 /* Send button: springy lift + arrow nudge on hover, press-in on click, and a
    one-shot pop when it becomes ready (text entered). */
 .jv-sendbtn { transition: transform .16s cubic-bezier(.34, 1.56, .64, 1), background .14s ease; }
@@ -3692,36 +3419,9 @@ function onGlobalKey(e) {
 @keyframes jv-send-pop { 0% { transform: scale(.7); } 55% { transform: scale(1.15); } 100% { transform: scale(1); } }
 .jv-sendbtn:hover:not(:disabled) { background: var(--text) !important; }
 .jv-sendbtn:hover:not(:disabled) svg { stroke: var(--surface) !important; }
-/* Collapsible sidebar: slide it off-screen (root has overflow:hidden) so the
-   chat reclaims the full width, openclaw-style. */
-.jv-sidebar { transition: width .2s ease; }
-/* Collapsed → slim icon rail: shrink to a bar and hide everything but the rail. */
-.jv-sidebar.collapsed { width: 56px !important; }
-/* `!important` is required: the sidebar header carries an inline
-   `display:flex`, which beats a plain rule and would otherwise leak the logo +
-   "ERPNext Assistant" text into (and below) the collapsed rail. */
-.jv-sidebar.collapsed > *:not(.jv-rail) { display: none !important; }
-.jv-rail { display: flex; flex-direction: column; align-items: center; gap: 7px; height: 100%; padding: 12px 0; }
-.jv-rail-logo { width: 30px; height: 30px; border-radius: 8px; background: var(--blue); display: flex; align-items: center; justify-content: center; flex: none; margin-bottom: 3px; box-shadow: 0 1px 2px rgba(37,99,235,.35); }
-.jv-rail-btn { width: 38px; height: 38px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; border-radius: 9px; cursor: pointer; color: var(--text-2); flex: none; transition: background .12s, color .12s; }
-.jv-rail-btn:hover { background: var(--surface-2); color: var(--text); }
-.jv-rail-new { background: var(--blue); color: #fff; }
-.jv-rail-new:hover { background: var(--blue); color: #fff; filter: brightness(1.08); }
-.jv-rail-avatar { width: 32px; height: 32px; border-radius: 50%; background: #e7ddcf; color: #8a6d3b; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; cursor: pointer; flex: none; }
-.jv-conv { position: relative; display: flex; align-items: center; gap: 9px; padding: 7px 9px; border-radius: 6px; cursor: pointer; margin-bottom: 1px; }
-.jv-conv:hover { background: var(--surface-2); }
-.jv-conv.on { background: var(--surface-3); }
-.jv-conv-ic { flex: none; }
-.jv-conv-title { flex: 1; min-width: 0; font-size: 13px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.jv-conv.on .jv-conv-title { color: var(--text); font-weight: 500; }
-.jv-conv-more { flex: none; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; border: none; background: transparent; border-radius: 5px; color: var(--text-3); cursor: pointer; opacity: 0; }
-.jv-conv:hover .jv-conv-more, .jv-conv-more:focus { opacity: 1; }
-.jv-conv-more:hover { background: var(--surface-3); color: var(--text); }
-.jv-conv-menu { position: absolute; top: calc(100% - 2px); right: 6px; z-index: 25; min-width: 150px; background: var(--surface); border: 1px solid var(--border-2); border-radius: 9px; box-shadow: 0 10px 28px rgba(20, 20, 30, 0.18); padding: 5px; }
 .jv-menuitem-danger { color: var(--red); }
 .jv-menuitem-danger svg { color: var(--red); }
 .jv-menuitem-danger:hover { background: var(--red-bg); }
-.jv-rename-input { flex: 1; min-width: 0; font-family: inherit; font-size: 13px; color: var(--text); background: var(--surface); border: 1px solid var(--blue); border-radius: 5px; padding: 3px 6px; outline: none; }
 .jv-suggest:hover { border-color: var(--border-2); background: var(--surface-1); }
 /* buttons invert to black/white on hover (theme-adaptive: black on light,
    white on dark) — var(--text)/var(--surface) flip, with an svg-stroke
@@ -3737,8 +3437,6 @@ function onGlobalKey(e) {
 .jv-modelpill:hover span { color: var(--surface) !important; }
 .jv-menuitem { display: flex; align-items: center; gap: 9px; width: 100%; padding: 7px 9px; border: none; background: transparent; border-radius: 7px; font-family: inherit; font-size: 12.5px; color: var(--text); cursor: pointer; text-align: left; }
 .jv-menuitem:hover, .jv-menuitem.on { background: var(--surface-1); }
-.jv-usercard { transition: background 0.12s; }
-.jv-usercard:hover { background: var(--surface-2); }
 /* black focus highlight on the composer */
 .jv-composer:focus-within { border-color: var(--text); box-shadow: 0 0 0 3px rgba(23, 23, 23, 0.07); }
 /* jump-to-latest arrow — floats just above the composer, centered */
@@ -3987,8 +3685,6 @@ function onGlobalKey(e) {
 .jv-share-check { flex: none; }
 .jv-share-helper { display: flex; align-items: center; gap: 7px; margin-top: 13px; padding: 9px 11px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 9px; font-size: 11.5px; color: var(--text-3); line-height: 1.4; }
 .jv-share-helper svg { stroke: var(--text-3); flex: none; }
-/* right sidebar: custom skills */
-.jv-skillbar { width: 52px; flex: none; height: 100%; background: var(--surface-1); border-left: 1px solid var(--border); display: flex; flex-direction: column; min-width: 0; }
 /* centered skills popup */
 .jv-skills-overlay { position: absolute; inset: 0; z-index: 62; background: rgba(15, 15, 22, 0.34); display: flex; align-items: center; justify-content: center; padding: 24px; }
 .jv-dark .jv-skills-overlay { background: rgba(0, 0, 0, 0.55); }
@@ -4006,27 +3702,11 @@ function onGlobalKey(e) {
 .jv-skill-newrow:hover svg { stroke: #fff; }
 .jv-skill-formfoot { display: flex; align-items: center; gap: 10px; margin-top: 15px; flex-wrap: wrap; }
 .jv-skill-foothint { font-size: 11px; color: var(--text-3); }
-.jv-skillrail { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 16px 0; }
-.jv-skillrail-btn { position: relative; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; background: transparent; border: 1px solid transparent; border-radius: 12px; color: var(--text-2); cursor: pointer; transition: background .14s, border-color .14s, color .14s, transform .06s; }
-.jv-skillrail-btn:hover { background: var(--surface-2); border-color: var(--border); color: var(--text); }
-.jv-skillrail-btn:active { transform: scale(.94); }
-.jv-skillrail-btn.active { background: var(--blue-bg); border-color: transparent; color: var(--blue); }
-.jv-railtip { position: absolute; right: calc(100% + 12px); top: 50%; transform: translateY(-50%) translateX(4px); background: var(--text); color: var(--surface); font-size: 11.5px; font-weight: 600; letter-spacing: .01em; padding: 4px 9px; border-radius: 7px; white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity .13s, transform .13s; box-shadow: 0 6px 18px rgba(0, 0, 0, .2); }
-.jv-skillrail-btn:hover .jv-railtip { opacity: 1; transform: translateY(-50%) translateX(0); }
-.jv-skillbar-head { flex: none; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 14px 14px 12px 16px; border-bottom: 1px solid var(--border); }
-.jv-skillbar-title { font-size: 15px; font-weight: 600; color: var(--text); letter-spacing: -.01em; }
-.jv-skillbar-sub { font-size: 11px; color: var(--text-3); margin-top: 2px; }
-.jv-skillbar-actions { flex: none; display: flex; gap: 8px; padding: 12px 16px 0; }
-.jv-skillbar-actions .jv-skill-btn { flex: 1; text-align: center; }
-.jv-skillbar-status { flex: none; display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--text-3); padding: 10px 16px 0; line-height: 1.4; }
-.jv-skillbar-status.ok { color: var(--green); }
-.jv-skillbar-status.err { color: var(--red); }
 .jv-skill-dot { width: 7px; height: 7px; border-radius: 99px; background: var(--text-3); flex: none; }
 .jv-skill-dot.ok { background: var(--green); }
 .jv-skill-dot.err { background: var(--red); }
 .jv-skill-dot.spin { border: 2px solid var(--border-2); border-top-color: var(--blue); background: transparent; width: 11px; height: 11px; animation: jv-spin .7s linear infinite; }
 @keyframes jv-spin { to { transform: rotate(360deg); } }
-.jv-skillbar-body { flex: 1; overflow-y: auto; padding: 12px 16px 18px; }
 .jv-iconbtn-bd.on { background: var(--blue-bg) !important; border-color: var(--blue) !important; }
 .jv-iconbtn-bd.on svg { stroke: var(--blue); }
 /* theme segmented control */
@@ -4259,11 +3939,9 @@ function onGlobalKey(e) {
 .jv-dark .jv-iconbtn-bd:hover svg,
 .jv-dark .jv-modelpill:hover svg { stroke: var(--text) !important; }
 .jv-dark .jv-modelpill:hover span { color: var(--text) !important; }
-.jv-dark .jv-newchat:hover,
 .jv-dark .jv-sendbtn:hover:not(:disabled),
 .jv-dark .jv-confirm-yes:hover,
 .jv-dark .jv-action-primary:hover { background: var(--blue) !important; color: #fff !important; border-color: var(--blue) !important; filter: brightness(1.18); }
-.jv-dark .jv-newchat:hover svg,
 .jv-dark .jv-sendbtn:hover:not(:disabled) svg { stroke: #fff !important; }
 .jv-action-discard { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-family: inherit; font-size: 12.5px; font-weight: 600; padding: 8px 13px; border-radius: 8px; border: 1px solid var(--red-bd); background: var(--red-bg); color: var(--red); cursor: pointer; transition: background .12s, color .12s, border-color .12s; }
 .jv-action-discard:hover { background: var(--red); color: #fff; border-color: var(--red); }

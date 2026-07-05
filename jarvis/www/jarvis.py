@@ -13,6 +13,10 @@ def get_context(context):
 		"csrf_token": frappe.sessions.get_csrf_token(),
 		"site_name": str(frappe.local.site),
 		"default_route": "/jarvis",
+		# Site timezone for the SPA's dayjs config — shipping it in boot lets
+		# AppShell configure systemTimezone synchronously instead of gating the
+		# first routed render on a settings request.
+		"time_zone": frappe.utils.get_system_timezone(),
 	}
 	frappe.db.commit()
 	return context

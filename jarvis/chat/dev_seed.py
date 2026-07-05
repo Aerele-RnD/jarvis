@@ -41,6 +41,53 @@ _DOC_TYPES = [
 ]
 _FREQS = ["daily", "weekly", "monthly"]
 
+# Genuinely varied 3+ option payloads for currently-PENDING approvals, so the
+# varied-chip decide UI is exercisable live (not just Approve/Reject pairs).
+_VARIED_PENDING = [
+	{
+		"title": "GST rate mismatch on inbound vendor invoice",
+		"document_type": "Purchase Invoice",
+		"question": "Line 4 is billed at 12% GST but the HSN code maps to 18%. How should it be posted?",
+		"context_md": "Vendor billed 12% on HSN 3304; the item master maps that HSN to 18%.",
+		"options": ["Post as drafted", "Post with 18% GST correction", "Hold for vendor confirmation"],
+	},
+	{
+		"title": "Duplicate-looking supplier bill",
+		"document_type": "Purchase Invoice",
+		"question": "Bill INV-2214 matches INV-2209 on amount and date. Proceed?",
+		"context_md": "Same supplier, same 41,300.00 total, dated one day apart.",
+		"options": ["Post anyway (distinct delivery)", "Merge into INV-2209", "Reject as duplicate", "Ask supplier for clarification"],
+	},
+	{
+		"title": "Freight charge without a purchase order",
+		"document_type": "Journal Entry",
+		"question": "A 7,850.00 freight charge has no matching PO. Where should it be booked?",
+		"context_md": "Carrier invoice references a delivery challan, not a PO.",
+		"options": ["Book under Freight expense", "Book to the project cost center", "Park in suspense until PO is raised"],
+	},
+	{
+		"title": "Customer overpayment on SINV-0092",
+		"document_type": "Payment Entry",
+		"question": "Payment received exceeds the invoice by 2,000.00. How should the excess be handled?",
+		"context_md": "Bank credit of 52,000.00 against a 50,000.00 sales invoice.",
+		"options": ["Allocate to the next open invoice", "Record as advance", "Refund the excess"],
+	},
+	{
+		"title": "Expense claim missing one receipt",
+		"document_type": "Expense Claim",
+		"question": "Claim EC-118 has 5 lines but only 4 receipts. Approve?",
+		"context_md": "Missing receipt is a 640.00 taxi fare; claimant says it was a cash ride.",
+		"options": ["Approve in full", "Approve excluding the unreceipted line", "Return to claimant for the receipt"],
+	},
+	{
+		"title": "Unreadable scan — document class unclear",
+		"document_type": "",
+		"question": "The dropped file is a low-quality scan; it could be a quotation or a proforma invoice. How to proceed?",
+		"context_md": "OCR confidence below threshold on the header block.",
+		"options": ["Treat as quotation", "Treat as proforma invoice", "Request a re-scan", "Discard the file"],
+	},
+]
+
 
 # --------------------------------------------------------------------------- #
 # helpers
@@ -234,6 +281,56 @@ def _seed_standalone_approvals(owner: str, conv_pool: list[str], n_pending: int,
 	frappe.db.commit()
 
 
+def _wipe_varied(user: str) -> None:
+	"""Remove a prior varied-approvals seed for ``user`` (by its markers)."""
+	for name in frappe.get_all(
+		_APPROVAL, filters={"owner": user, "title": ["like", "Seed varied: %"]}, pluck="name"
+	):
+		frappe.delete_doc(_APPROVAL, name, ignore_permissions=True, force=True)
+	for conv in frappe.get_all(
+		_CONV, filters={"owner": user, "title": "seed-varied approvals"}, pluck="name"
+	):
+		frappe.db.delete(_MSG, {"conversation": conv})
+		frappe.delete_doc(_CONV, conv, ignore_permissions=True, force=True)
+	frappe.db.commit()
+
+
+@frappe.whitelist()
+def seed_varied_approvals(user: str) -> dict:
+	"""Seed ~6 currently-PENDING approvals with genuinely varied 3+ option
+	payloads (see ``_VARIED_PENDING``) so the varied-chip decide UI is
+	exercisable live. DEV ONLY (developer_mode guard) and idempotent — wipes its
+	own previous rows by marker first, touching nothing else. Runnable standalone:
+
+	    bench --site jarvis.localhost execute \\
+	        jarvis.chat.dev_seed.seed_varied_approvals \\
+	        --kwargs "{'user':'vignesh@aerele.in'}"
+	"""
+	_require_dev()
+	if not frappe.db.exists("User", user):
+		frappe.throw(f"Unknown user: {user}")
+	_wipe_varied(user)
+	original = frappe.session.user
+	frappe.set_user(user)
+	try:
+		conv = _insert({"doctype": _CONV, "title": "seed-varied approvals", "status": "Active"})
+		for spec in _VARIED_PENDING:
+			_insert({
+				"doctype": _APPROVAL,
+				"title": f"Seed varied: {spec['title']}",
+				"status": "Pending",
+				"document_type": spec["document_type"],
+				"conversation": conv.name,
+				"question": spec["question"],
+				"context_md": spec["context_md"],
+				"options": frappe.as_json(spec["options"]),
+			})
+	finally:
+		frappe.set_user(original)
+	frappe.db.commit()
+	return {"ok": True, "user": user, "varied_pending": len(_VARIED_PENDING)}
+
+
 def _seed_for(owner: str, share_to: str | None, scale: str) -> None:
 	"""Seed one user's data. ``scale`` = 'full' (primary) or 'small' (scoping proof)."""
 	original = frappe.session.user
@@ -271,6 +368,8 @@ def seed_feature_pages(user: str) -> dict:
 	_seed_for(user, share_to=other, scale="full")
 	# Second user's own data — must NEVER appear in the primary user's pages.
 	_seed_for(other, share_to=None, scale="small")
+	# Varied 3+ option pending approvals (exercises the varied-chip decide UI).
+	seed_varied_approvals(user)
 
 	frappe.db.commit()
 	return {
@@ -279,6 +378,6 @@ def seed_feature_pages(user: str) -> dict:
 		"second_user": other,
 		"seeded": {
 			"skills": 120, "macros": 120, "filebox_conversations": 1500,
-			"standalone_approvals": 60,
+			"standalone_approvals": 60, "varied_pending": len(_VARIED_PENDING),
 		},
 	}

@@ -231,11 +231,59 @@ def list_approvals_page(
 
 
 @frappe.whitelist()
+def get_approval(name: str) -> dict:
+	"""One approval with every field the detail page renders (DESIGN-V3 §8.3).
+
+	Read gate: ``_may_act_on`` (System Manager or linked-conversation owner) —
+	additionally a DocShare-read holder (an assignee, §13 risk 8 / §14 F1) may
+	READ but gets ``can_act=0`` so the UI hides the decide controls. ``can_act``
+	mirrors what ``decide()`` would permit; the UI combines it with status."""
+	doc = frappe.get_doc(APPROVAL, name)
+	can_act = _may_act_on(doc.conversation)
+	if not can_act and not frappe.db.exists(
+		"DocShare",
+		{"share_doctype": APPROVAL, "share_name": name, "user": frappe.session.user, "read": 1},
+	):
+		frappe.throw("Not permitted", frappe.PermissionError)
+	return {
+		"name": doc.name,
+		"title": doc.title,
+		"status": doc.status,
+		"document_type": doc.document_type or "",
+		"conversation": doc.conversation,
+		"question": doc.question,
+		"context_md": doc.context_md or "",
+		"options": _parse_options(doc.options),
+		"ref_doctype": doc.ref_doctype or "",
+		"ref_name": doc.ref_name or "",
+		"decision": doc.decision or "",
+		"decided_by": doc.decided_by or "",
+		"decided_by_name": (
+			(frappe.db.get_value("User", doc.decided_by, "full_name") or doc.decided_by)
+			if doc.decided_by
+			else ""
+		),
+		"decided_at": str(doc.decided_at or ""),
+		"creation": str(doc.creation or ""),
+		"owner": doc.owner,
+		"can_act": int(can_act),
+	}
+
+
+@frappe.whitelist()
 def pending_count() -> int:
-	# Scoped like list_approvals: non-SM users count only their own.
+	# Scoped like list_approvals_page: non-SM users count only rows whose
+	# conversation they own — as a COUNT with the same JOIN semantics, never by
+	# materializing the pending list.
 	if "System Manager" in frappe.get_roles():
 		return frappe.db.count(APPROVAL, {"status": "Pending"})
-	return len(list_approvals("Pending"))
+	return frappe.db.sql(
+		"""SELECT COUNT(*) FROM `tabJarvis Approval Request` a
+		JOIN `tabJarvis Conversation` c
+		ON c.name = a.conversation AND c.owner = %(me)s
+		WHERE a.status = 'Pending'""",
+		{"me": frappe.session.user},
+	)[0][0]
 
 
 @frappe.whitelist()

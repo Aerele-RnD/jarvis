@@ -1,0 +1,204 @@
+<template>
+	<div class="flex h-full flex-col overflow-hidden">
+		<LayoutHeader>
+			<template #left-header>
+				<Breadcrumbs :items="breadcrumbs" />
+			</template>
+			<template #right-header>
+				<slot name="right-header" />
+			</template>
+		</LayoutHeader>
+
+		<!-- toolbar: quick filters | divider | Refresh · Filter · Sort · Columns -->
+		<div class="flex items-center justify-between gap-2 px-5 py-4">
+			<div class="-ml-1 flex h-9 flex-1 items-center overflow-x-auto">
+				<div v-for="qf in quickFilters" :key="qf.key" class="m-1 min-w-36">
+					<FormControl
+						v-if="qf.type === 'select'"
+						type="select"
+						:options="qf.options"
+						:modelValue="quickValue(qf)"
+						@update:modelValue="(v) => applyQuick(qf, v)"
+					/>
+					<FormControl
+						v-else
+						type="text"
+						:placeholder="qf.label"
+						:modelValue="quickValue(qf)"
+						@update:modelValue="(v) => onQuickText(qf, v)"
+					/>
+				</div>
+			</div>
+			<div class="-ml-2 h-[70%] border-l" />
+			<div class="flex items-center gap-2">
+				<Button :tooltip="'Refresh'" icon="refresh-cw" :loading="loading" @click="$emit('refresh')" />
+				<FilterButton
+					:filter-defs="filterDefs"
+					:filters="filters"
+					@update:filters="(f) => $emit('update:filters', f)"
+				/>
+				<SortButton
+					:sort-options="sortOptions"
+					:sort="sort"
+					:default-sort="defaultSort"
+					@update:sort="(s) => $emit('update:sort', s)"
+				/>
+				<ColumnsButton
+					v-if="storageKey"
+					:columns="columns"
+					:storage-key="storageKey"
+					@update:hidden="(keys) => (hiddenKeys = keys)"
+				/>
+			</div>
+		</div>
+
+		<div v-if="$slots.banner" class="px-5">
+			<slot name="banner" />
+		</div>
+
+		<!-- list body -->
+		<ListView
+			v-if="rows.length"
+			:columns="visibleColumns"
+			:rows="rows"
+			:row-key="rowKey"
+			:options="{
+				selectable,
+				getRowRoute: getRowRoute || null,
+				onRowClick: onRowClick || null,
+				rowHeight: 40,
+				resizeColumn: false,
+				showTooltip: true,
+			}"
+			@update:selections="(s) => $emit('update:selections', s)"
+		>
+			<template #default>
+				<ListHeader class="sm:mx-5 mx-3">
+					<ListHeaderItem v-for="column in visibleColumns" :key="column.key" :item="column" />
+				</ListHeader>
+				<ListRows class="mx-3 sm:mx-5" />
+				<ListSelectBanner v-if="selectable">
+					<template #actions="{ selections, unselectAll }">
+						<slot name="select-actions" v-bind="{ selections, unselectAll }" />
+					</template>
+				</ListSelectBanner>
+			</template>
+			<!-- DA-08: cell renderers dispatch through ListView's named `cell` slot
+			     ({column, row, item, align}) and forward to #cell-<key> ({row, column, item});
+			     no page slot for a column ⇒ stock ListRowItem. -->
+			<template #cell="{ column, row, item, align }">
+				<slot :name="`cell-${column.key}`" v-bind="{ row, column, item }">
+					<ListRowItem :column="column" :row="row" :item="item" :align="align" />
+				</slot>
+			</template>
+		</ListView>
+
+		<!-- empty state (loaded, zero rows) -->
+		<div v-else-if="!loading" class="relative flex-1">
+			<div
+				class="absolute left-1/2 flex w-4/12 -translate-x-1/2 flex-col items-center gap-3"
+				:style="{ top: '35%' }"
+			>
+				<FeatherIcon :name="(emptyState && emptyState.icon) || 'file-text'" class="size-7.5 text-ink-gray-5" />
+				<div class="flex flex-col items-center gap-1">
+					<span class="text-lg font-medium text-ink-gray-8">
+						{{ (emptyState && emptyState.title) || "No records found" }}
+					</span>
+					<span v-if="emptyState && emptyState.description" class="text-center text-p-base text-ink-gray-6">
+						{{ emptyState.description }}
+					</span>
+				</div>
+			</div>
+		</div>
+		<div v-else class="flex-1" />
+
+		<ListFooter
+			v-if="rows.length"
+			class="border-t sm:px-5 px-3 py-2"
+			:modelValue="pageLength"
+			:options="{ rowCount: rows.length, totalCount: total }"
+			@update:modelValue="(v) => $emit('update:pageLength', v)"
+			@loadMore="$emit('loadMore')"
+		/>
+	</div>
+</template>
+
+<script setup>
+// ListPage — the standard list frame (DESIGN-V3 §5.2 + §14 F2/DA-08):
+// LayoutHeader breadcrumbs → toolbar (quick filters · Refresh/Filter/Sort/Columns)
+// → banner slot → frappe-ui ListView composition → ListFooter load-more.
+import { ref, computed, onBeforeUnmount } from "vue"
+import {
+	ListView,
+	ListHeader,
+	ListHeaderItem,
+	ListRows,
+	ListRowItem,
+	ListSelectBanner,
+	ListFooter,
+	Breadcrumbs,
+	Button,
+	FormControl,
+	FeatherIcon,
+} from "frappe-ui"
+import LayoutHeader from "@/components/LayoutHeader.vue"
+import FilterButton from "@/components/list/FilterButton.vue"
+import SortButton from "@/components/list/SortButton.vue"
+import ColumnsButton from "@/components/list/ColumnsButton.vue"
+
+const props = defineProps({
+	breadcrumbs: { type: Array, default: () => [] }, // [{label, route?}]
+	columns: { type: Array, default: () => [] }, // frappe-ui ListView columns
+	rows: { type: Array, default: () => [] },
+	rowKey: { type: String, default: "name" },
+	loading: { type: Boolean, default: false },
+	total: { type: Number, default: 0 },
+	hasMore: { type: Boolean, default: false },
+	quickFilters: { type: Array, default: () => [] }, // [{key,label,type,options}]
+	filterDefs: { type: Array, default: () => [] }, // [{key,label,type:'select'|'daterange',options}]
+	filters: { type: Object, default: () => ({}) },
+	sortOptions: { type: Array, default: () => [] }, // [{label, value}]
+	sort: { type: Object, default: () => ({ field: "", dir: "" }) },
+	pageLength: { type: Number, default: 20 },
+	defaultSort: { type: Object, default: () => ({ field: "", dir: "" }) },
+	selectable: { type: Boolean, default: false },
+	getRowRoute: { type: Function, default: null },
+	onRowClick: { type: Function, default: null },
+	emptyState: { type: Object, default: () => ({}) }, // {title, description, icon?}
+	storageKey: { type: String, default: "" }, // §14 F2 — column show/hide persistence
+})
+
+const emit = defineEmits([
+	"update:filters",
+	"update:sort",
+	"update:pageLength",
+	"loadMore",
+	"refresh",
+	"update:selections",
+])
+
+// §14 F2 — ColumnsButton owns useStorage('jarvis-cols-'+storageKey) and pushes
+// the hidden-key list up; ListPage filters the visible columns from it.
+const hiddenKeys = ref([])
+const visibleColumns = computed(() => (props.columns || []).filter((c) => !hiddenKeys.value.includes(c.key)))
+
+// ── quick filters (toolbar-left strip; selects apply immediately, text 500ms) ──
+function quickValue(qf) {
+	const v = props.filters ? props.filters[qf.key] : undefined
+	return v == null ? "" : v
+}
+function applyQuick(qf, value) {
+	const next = { ...(props.filters || {}) }
+	if (value === "" || value == null) delete next[qf.key]
+	else next[qf.key] = value
+	emit("update:filters", next)
+}
+const textTimers = {}
+function onQuickText(qf, value) {
+	clearTimeout(textTimers[qf.key])
+	textTimers[qf.key] = setTimeout(() => applyQuick(qf, value), 500)
+}
+onBeforeUnmount(() => {
+	for (const key of Object.keys(textTimers)) clearTimeout(textTimers[key])
+})
+</script>

@@ -1,9 +1,14 @@
 // Shared Jarvis theme: the palette CSS variables + a composable that tracks
 // the per-device theme choice (localStorage "jarvis-theme": light | dark |
-// system) and the OS color scheme. Mirrors ChatView's LIGHT_VARS / DARK_VARS —
-// ChatView keeps its own copy for now (it predates this module); if you change
-// a color, change it in BOTH places.
-import { ref, computed, onMounted, onBeforeUnmount } from "vue"
+// system) and the OS color scheme.
+//
+// v3 (DESIGN-V3 §2.5 / D34): state is a MODULE-SCOPE singleton so the shell
+// (UserMenu toggle), ChatView (header toggle + settings Appearance tab) and
+// the feature pages all share one live theme. applyTheme() additionally
+// bridges to frappe-ui by setting `data-theme` on <html> (the preset's
+// darkMode selector) and `color-scheme` on :root, so frappe-ui components and
+// the jv-* chat surface flip together.
+import { ref, computed, watch } from "vue"
 
 export const LIGHT_VARS = {
 	"--surface": "#ffffff", "--surface-1": "#f7f7f8", "--surface-2": "#f1f1f3", "--surface-3": "#ececef",
@@ -25,28 +30,45 @@ export const DARK_VARS = {
 	"--amber": "#fbbf24", "--amber-bg": "#2a2315", "--amber-bd": "#4a3d1f",
 }
 
+// ---- module-scope singleton state ------------------------------------------
+let _stored = "system"
+try { _stored = localStorage.getItem("jarvis-theme") || "system" } catch (e) { /* private mode */ }
+const theme = ref(_stored)
+const prefersDark = ref(false)
+
+const effectiveDark = computed(
+	() => theme.value === "dark" || (theme.value === "system" && prefersDark.value),
+)
+const paletteVars = computed(() => (effectiveDark.value ? DARK_VARS : LIGHT_VARS))
+
+function applyTheme() {
+	if (typeof document === "undefined") return
+	const dark = effectiveDark.value
+	document.documentElement.setAttribute("data-theme", dark ? "dark" : "light")
+	document.documentElement.style.colorScheme = dark ? "dark" : "light"
+}
+
+let _started = false
+function _start() {
+	if (_started || typeof window === "undefined") return
+	_started = true
+	const mq = window.matchMedia("(prefers-color-scheme: dark)")
+	prefersDark.value = mq.matches
+	mq.addEventListener("change", (e) => { prefersDark.value = e.matches })
+	// Singleton watcher (never stopped — lives for the page's lifetime).
+	watch(effectiveDark, applyTheme)
+	applyTheme()
+}
+
+function setTheme(t) {
+	theme.value = t
+	try { localStorage.setItem("jarvis-theme", t) } catch (e) { /* keep in-memory */ }
+	applyTheme()
+}
+// Quick toggle: flip light/dark (drops out of 'system').
+function toggleTheme() { setTheme(effectiveDark.value ? "light" : "dark") }
+
 export function useJarvisTheme() {
-	let stored = "system"
-	try { stored = localStorage.getItem("jarvis-theme") || "system" } catch (e) { /* private mode */ }
-	const theme = ref(stored)
-	const prefersDark = ref(false)
-	let mq = null
-	const onColorScheme = (e) => { prefersDark.value = e.matches }
-	onMounted(() => {
-		mq = window.matchMedia("(prefers-color-scheme: dark)")
-		prefersDark.value = mq.matches
-		mq.addEventListener("change", onColorScheme)
-	})
-	onBeforeUnmount(() => { mq?.removeEventListener("change", onColorScheme) })
-	const effectiveDark = computed(
-		() => theme.value === "dark" || (theme.value === "system" && prefersDark.value),
-	)
-	const paletteVars = computed(() => (effectiveDark.value ? DARK_VARS : LIGHT_VARS))
-	function setTheme(t) {
-		theme.value = t
-		try { localStorage.setItem("jarvis-theme", t) } catch (e) { /* keep in-memory */ }
-	}
-	// Quick toggle: flip light/dark (drops out of 'system'), same as ChatView.
-	function toggleTheme() { setTheme(effectiveDark.value ? "light" : "dark") }
+	_start()
 	return { theme, effectiveDark, paletteVars, setTheme, toggleTheme }
 }
