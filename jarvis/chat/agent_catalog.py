@@ -84,6 +84,11 @@ def sync_agent_listings() -> dict:
 			continue
 		seen_slugs.add(slug)
 
+		# NOTE: ``allowed_roles`` is deliberately ABSENT — it is bench-admin
+		# state (set via agents_api.set_agent_roles), not registry state. A
+		# re-sync must never clobber an admin's role restrictions: doc.update()
+		# only touches the keys given here, so the loaded child rows survive
+		# the save untouched.
 		values = {
 			"agent_slug": slug,
 			"title": a.get("title") or slug,
@@ -143,12 +148,24 @@ def build_agent_push_payload(owner: str | None = None) -> list[dict]:
 
 	Bench-global by design (one bench == one customer == one container), so all
 	enabled installs on the site are pushed; ``owner`` is accepted only to scope
-	tests. An empty list is a valid "remove all agent skills" reconcile."""
+	tests. An empty list is a valid "remove all agent skills" reconcile.
+
+	RBAC (defense in depth): an enabled install whose OWNER's roles no longer
+	permit the agent is EXCLUDED from the push — the scheduler / run-now gates
+	already refuse to run it, but its skill bundle must not reach the container
+	either."""
+	# Lazy import — agents_api imports build_agent_push_payload from this module
+	# at module level, so a top-level back-import would be circular.
+	from jarvis.chat.agents_api import _user_allowed_for_agent
+
 	filters = {"enabled": 1}
 	if owner:
 		filters["owner"] = owner
 	installs = frappe.get_all(
-		"Jarvis Agent Installation", filters=filters, fields=["agent"], order_by="agent asc"
+		"Jarvis Agent Installation",
+		filters=filters,
+		fields=["agent", "owner"],
+		order_by="agent asc",
 	)
 	payload = []
 	for row in installs:
@@ -156,6 +173,8 @@ def build_agent_push_payload(owner: str | None = None) -> list[dict]:
 			LISTING, row.agent, ["agent_slug", "description", "skill_bundle", "status"], as_dict=True
 		)
 		if not listing or listing.status != "Published":
+			continue
+		if not _user_allowed_for_agent(row.agent, row.owner):
 			continue
 		try:
 			bundle = frappe.parse_json(listing.skill_bundle) or []

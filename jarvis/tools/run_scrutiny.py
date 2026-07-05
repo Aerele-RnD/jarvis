@@ -67,6 +67,16 @@ def _resolve_threshold(value, materiality: dict | None):
     return value
 
 
+class _NotEvaluable:
+    """Sentinel an evaluator returns when a rule's data prerequisites are
+    missing (e.g. no prior Fiscal Year for a YoY rule). Distinct from a
+    clean zero-hit pass: the result reports it under
+    ``skipped_not_evaluable`` with the reason, never as "no findings"."""
+
+    def __init__(self, reason: str):
+        self.reason = reason
+
+
 # ---------------------------------------------------------------------------
 # period / company resolution
 # ---------------------------------------------------------------------------
@@ -272,14 +282,307 @@ def _k_dormant_party_ledger(rule, scope, materiality):
              "note": f"{party_type} {r.party}: balance {float(r.bal):.2f}, {label}"} for r in rows]
 
 
+def _k_advance_in_party(rule, scope, materiality):
+    """L6/L8: party-level net balance as of ``to_date`` sitting on the
+    ADVANCE side — Supplier with a net debit balance (advance paid) when
+    ``side=="debit"``, Customer with a net credit balance (advance
+    received) when ``side=="credit"`` — magnitude above ``min_amount``.
+    Party aggregation mirrors ``_k_dormant_party_ledger`` (all GL rows for
+    the party up to ``to_date``, any account)."""
+    p = rule.get("params", {})
+    min_amount = _resolve_threshold(p.get("min_amount", 0), materiality)
+    if min_amount is None:
+        return None  # materiality-bound but unconfigured -> skip
+    party_type = p.get("party_type")
+    side = p.get("side")  # debit -> advance paid (Supplier); credit -> advance received (Customer)
+    if side not in ("debit", "credit"):
+        raise InvalidArgumentError(f"advance_in_party requires params.side debit|credit, got: {side!r}")
+    net_expr = "coalesce(sum(g.debit),0)-coalesce(sum(g.credit),0)" if side == "debit" \
+        else "coalesce(sum(g.credit),0)-coalesce(sum(g.debit),0)"
+    rows = frappe.db.sql(
+        f"""select g.party, {net_expr} bal
+            from `tabGL Entry` g
+            where g.company=%(company)s and g.is_cancelled=0 and g.party_type=%(party_type)s
+              and g.party is not null and g.posting_date <= %(to_date)s
+            group by g.party having bal > %(min_amount)s
+            order by g.party""",
+        {**scope, "party_type": party_type, "min_amount": float(min_amount)}, as_dict=True,
+    )
+    label = "advance paid (net debit balance)" if side == "debit" else "advance received (net credit balance)"
+    return [{"ref_doctype": party_type, "ref_name": r.party, "amount": float(r.bal),
+             "note": f"{party_type} {r.party}: {label} {float(r.bal):.2f} as of {scope['to_date']}"} for r in rows]
+
+
+def _prior_fiscal_year(scope):
+    """The Fiscal Year immediately before the scope period: the enabled FY
+    with the greatest ``year_end_date`` strictly before ``scope.from_date``.
+    Returns {name, py_start, py_end} or None when no such FY exists."""
+    rows = frappe.db.sql(
+        """select name, year_start_date, year_end_date from `tabFiscal Year`
+           where year_end_date < %(from_date)s and disabled = 0
+           order by year_end_date desc limit 1""",
+        scope, as_dict=True,
+    )
+    if not rows:
+        return None
+    fy = rows[0]
+    return {"name": fy.name, "py_start": str(fy.year_start_date), "py_end": str(fy.year_end_date)}
+
+
+def _has_gl_rows(company: str, from_date: str | None, to_date: str) -> bool:
+    """True when at least one non-cancelled GL row exists for the company
+    in [from_date, to_date] (from_date None -> everything up to to_date)."""
+    cond = "and posting_date >= %(chk_from)s" if from_date else ""
+    row = frappe.db.sql(
+        f"""select count(*) n from `tabGL Entry`
+            where company=%(company)s and is_cancelled=0
+              and posting_date <= %(chk_to)s {cond}""",
+        {"company": company, "chk_from": from_date, "chk_to": to_date}, as_dict=True,
+    )[0]
+    return int(row.n) > 0
+
+
+def _k_sign_flip_yoy(rule, scope, materiality):
+    """L14: per non-group Account, the CUMULATIVE closing balance
+    (sum(debit)-sum(credit) over all non-cancelled GL rows up to the date)
+    as of the prior fiscal-year end vs as of ``to_date``. Flags accounts
+    where the sign flipped AND both magnitudes exceed ``min_amount``
+    (strict). Not evaluable (never a silent pass) when: threshold is
+    materiality-bound but unconfigured, no Fiscal Year ends before the
+    scope period, or the company has no GL rows on/before that FY end."""
+    p = rule.get("params", {})
+    min_amount = _resolve_threshold(p.get("min_amount", 0), materiality)
+    if min_amount is None:
+        return None
+    py = _prior_fiscal_year(scope)
+    if not py:
+        return _NotEvaluable("no Fiscal Year ends before the scope period; prior-year closing balances unavailable")
+    if not _has_gl_rows(scope["company"], None, py["py_end"]):
+        return _NotEvaluable(f"no GL rows on or before prior fiscal-year end {py['py_end']} ({py['name']})")
+    rows = frappe.db.sql(
+        """select a.name account,
+                  coalesce(sum(case when g.posting_date <= %(py_end)s then g.debit - g.credit else 0 end),0) py_net,
+                  coalesce(sum(g.debit - g.credit),0) cy_net
+           from `tabAccount` a
+           join `tabGL Entry` g on g.account=a.name and g.is_cancelled=0
+             and g.posting_date <= %(to_date)s
+           where a.company=%(company)s and a.is_group=0
+           group by a.name
+           having (py_net > %(min_amount)s and cy_net < (0 - %(min_amount)s))
+               or (py_net < (0 - %(min_amount)s) and cy_net > %(min_amount)s)
+           order by a.name""",
+        {**scope, "py_end": py["py_end"], "min_amount": float(min_amount)}, as_dict=True,
+    )
+    hits = []
+    for r in rows:
+        py_net, cy_net = float(r.py_net), float(r.cy_net)
+        frm = "debit" if py_net > 0 else "credit"
+        to = "debit" if cy_net > 0 else "credit"
+        hits.append({"ref_doctype": "Account", "ref_name": r.account, "amount": abs(cy_net),
+                     "note": (f"{r.account}: closing balance flipped {frm}->{to} "
+                              f"(PY {py['py_end']}: {py_net:.2f}, CY {scope['to_date']}: {cy_net:.2f})")})
+    return hits
+
+
+# MSME flag candidates on `tabSupplier`, best-first. On this deployment
+# NONE exist (verified against jarvis.localhost: stock v16 Supplier schema,
+# no india-compliance custom fields), so detection falls back to the
+# Supplier Group name containing "msme" — every hit note states the basis.
+_MSME_FIELD_CANDIDATES = (
+    "is_msme",
+    "msme_status",
+    "msme_registration_number",
+    "msme_registration_no",
+    "udyam_registration_number",
+    "udyam_no",
+)
+
+
+def _k_msme_overdue(rule, scope, materiality):
+    """COMP-MSME-OVERDUE (s.43B(h)): MSME suppliers' payable vouchers still
+    outstanding more than ``params.days`` days at ``to_date``.
+
+    Exact semantics (deterministic, GL-derived):
+      * Rows: non-cancelled GL entries on non-group Payable accounts of the
+        company, party_type=Supplier, posting_date <= to_date.
+      * Voucher identity: ``coalesce(nullif(against_voucher,''), voucher_no)``
+        (with the matching voucher_type), so payments / debit notes that
+        ERPNext posts *against* an invoice net into that invoice's bucket;
+        rows with no against_voucher (opening JVs, on-account payments)
+        form their own bucket.
+      * Outstanding: sum(credit) - sum(debit) per (party, voucher) > 0.
+      * Age: the earliest credit-side posting_date in the bucket (the
+        liability's origination) must be strictly before to_date - days.
+      * MSME detection: the first existing column of
+        ``_MSME_FIELD_CANDIDATES`` on `tabSupplier` (is_msme -> =1, other
+        fields -> non-empty); if none exists in the site schema, fallback:
+        supplier_group name contains 'msme'. The basis used is stated in
+        every hit note (and in the pack rule's disclaimer)."""
+    p = rule.get("params", {})
+    days = int(p.get("days", 45))
+    cutoff = str(frappe.utils.add_days(scope["to_date"], -days))
+    cols = set(frappe.db.get_table_columns("Supplier"))
+    field = next((f for f in _MSME_FIELD_CANDIDATES if f in cols), None)
+    if field == "is_msme":
+        msme_cond, basis = "s.`is_msme` = 1", "Supplier.is_msme flag"
+    elif field:
+        msme_cond, basis = f"coalesce(s.`{field}`, '') != ''", f"Supplier.{field} non-empty"
+    else:
+        msme_cond = "lower(coalesce(s.supplier_group, '')) like '%%msme%%'"
+        basis = "supplier_group name contains 'msme' (no MSME field on the Supplier schema)"
+    rows = frappe.db.sql(
+        f"""select g.party,
+                   coalesce(nullif(g.against_voucher_type,''), g.voucher_type) v_type,
+                   coalesce(nullif(g.against_voucher,''), g.voucher_no) v_no,
+                   coalesce(sum(g.credit),0) - coalesce(sum(g.debit),0) outstanding,
+                   min(case when g.credit > 0 then g.posting_date end) originated
+            from `tabGL Entry` g
+            join `tabAccount` a on a.name = g.account
+            join `tabSupplier` s on s.name = g.party
+            where a.company=%(company)s and a.account_type='Payable' and a.is_group=0
+              and g.company=%(company)s and g.is_cancelled=0
+              and g.party_type='Supplier' and g.party is not null
+              and g.posting_date <= %(to_date)s
+              and {msme_cond}
+            group by g.party, v_type, v_no
+            having outstanding > 0 and originated < %(cutoff)s
+            order by g.party, v_no""",
+        {**scope, "cutoff": cutoff}, as_dict=True,
+    )
+    return [{"ref_doctype": r.v_type, "ref_name": r.v_no, "amount": float(r.outstanding),
+             "note": (f"MSME supplier {r.party}: {float(r.outstanding):.2f} outstanding on {r.v_no} "
+                      f"since {r.originated} (> {days} days at {scope['to_date']}; "
+                      f"MSME detection basis: {basis})")} for r in rows]
+
+
+def _k_expense_variance_yoy(rule, scope, materiality):
+    """FPA-EXPENSE-VARIANCE-YOY (assure M11): per Expense leaf account,
+    ratio-to-revenue CY vs prior fiscal year.
+
+      revenue        = Income root_type period total (credit - debit)
+      cy_ratio       = round(cy_amt / cy_revenue * 100, 2)
+      py_ratio       = round(py_amt / py_revenue * 100, 2)
+      variance       = (cy_ratio / py_ratio) * 100 - 100      # M11 formula
+      flag           = abs(variance) >= variance_pct AND cy_amt >= min_amount
+
+    CY window = scope period; PY window = the prior Fiscal Year (see
+    ``_prior_fiscal_year``). Accounts with py_ratio == 0 have no YoY base
+    and are skipped per-account. Not evaluable when: min_amount is
+    materiality-bound but unconfigured, no prior FY exists, the PY window
+    has no GL rows, or revenue is zero in either period (ratio undefined)
+    — never fabricated."""
+    p = rule.get("params", {})
+    min_amount = _resolve_threshold(p.get("min_amount", 0), materiality)
+    if min_amount is None:
+        return None
+    variance_pct = float(p.get("variance_pct", 20))
+    py = _prior_fiscal_year(scope)
+    if not py:
+        return _NotEvaluable("no Fiscal Year ends before the scope period; prior-year comparatives unavailable")
+    if not _has_gl_rows(scope["company"], py["py_start"], py["py_end"]):
+        return _NotEvaluable(f"no GL rows in prior fiscal year {py['name']} ({py['py_start']}..{py['py_end']})")
+    params = {**scope, **py}
+    rev = frappe.db.sql(
+        """select coalesce(sum(case when g.posting_date between %(from_date)s and %(to_date)s
+                                    then g.credit - g.debit else 0 end),0) cy,
+                  coalesce(sum(case when g.posting_date between %(py_start)s and %(py_end)s
+                                    then g.credit - g.debit else 0 end),0) py
+           from `tabGL Entry` g join `tabAccount` a on a.name=g.account
+           where a.company=%(company)s and a.root_type='Income' and a.is_group=0
+             and g.is_cancelled=0 and g.posting_date between %(py_start)s and %(to_date)s""",
+        params, as_dict=True,
+    )[0]
+    cy_rev, py_rev = float(rev.cy), float(rev.py)
+    if cy_rev == 0 or py_rev == 0:
+        return _NotEvaluable(
+            f"revenue is zero (CY {cy_rev:.2f}, PY {py_rev:.2f}); ratio-to-revenue undefined")
+    rows = frappe.db.sql(
+        """select a.name account,
+                  coalesce(sum(case when g.posting_date between %(from_date)s and %(to_date)s
+                                    then g.debit - g.credit else 0 end),0) cy_amt,
+                  coalesce(sum(case when g.posting_date between %(py_start)s and %(py_end)s
+                                    then g.debit - g.credit else 0 end),0) py_amt
+           from `tabAccount` a
+           join `tabGL Entry` g on g.account=a.name and g.is_cancelled=0
+             and g.posting_date between %(py_start)s and %(to_date)s
+           where a.company=%(company)s and a.root_type='Expense' and a.is_group=0
+           group by a.name order by a.name""",
+        params, as_dict=True,
+    )
+    hits = []
+    for r in rows:
+        cy_amt, py_amt = float(r.cy_amt), float(r.py_amt)
+        cy_ratio = round(cy_amt / cy_rev * 100, 2)
+        py_ratio = round(py_amt / py_rev * 100, 2)
+        if py_ratio == 0:
+            continue  # no PY base for this account (M11: needs a prior-year ratio)
+        variance = (cy_ratio / py_ratio) * 100 - 100
+        if abs(variance) >= variance_pct and cy_amt >= float(min_amount):
+            hits.append({"ref_doctype": "Account", "ref_name": r.account, "amount": cy_amt,
+                         "note": (f"{r.account}: {cy_ratio:.2f}% of revenue vs {py_ratio:.2f}% in "
+                                  f"{py['name']} ({variance:+.1f}% change, threshold {variance_pct:g}%)")})
+    return hits
+
+
+def _k_pl_yoy_swing(rule, scope, materiality):
+    """FPA-PL-YOY-SWING: per P&L leaf account (root_type Income/Expense),
+    natural-side period activity CY (scope period) vs PY (prior Fiscal
+    Year): Income = credit - debit, Expense = debit - credit.
+
+      flag = |CY - PY| / max(|PY|, 1) >= swing_pct/100
+             AND |CY - PY| >= min_amount
+
+    Not evaluable when: min_amount is materiality-bound but unconfigured,
+    no prior FY exists, or the PY window has no GL rows. (Revenue does not
+    enter this formula, so zero revenue does not block evaluation.)"""
+    p = rule.get("params", {})
+    min_amount = _resolve_threshold(p.get("min_amount", 0), materiality)
+    if min_amount is None:
+        return None
+    swing_pct = float(p.get("swing_pct", 25))
+    py = _prior_fiscal_year(scope)
+    if not py:
+        return _NotEvaluable("no Fiscal Year ends before the scope period; prior-year comparatives unavailable")
+    if not _has_gl_rows(scope["company"], py["py_start"], py["py_end"]):
+        return _NotEvaluable(f"no GL rows in prior fiscal year {py['name']} ({py['py_start']}..{py['py_end']})")
+    rows = frappe.db.sql(
+        """select a.name account, a.root_type,
+                  coalesce(sum(case when g.posting_date between %(from_date)s and %(to_date)s
+                                    then g.debit - g.credit else 0 end),0) cy_raw,
+                  coalesce(sum(case when g.posting_date between %(py_start)s and %(py_end)s
+                                    then g.debit - g.credit else 0 end),0) py_raw
+           from `tabAccount` a
+           join `tabGL Entry` g on g.account=a.name and g.is_cancelled=0
+             and g.posting_date between %(py_start)s and %(to_date)s
+           where a.company=%(company)s and a.root_type in ('Income','Expense') and a.is_group=0
+           group by a.name, a.root_type order by a.name""",
+        {**scope, **py}, as_dict=True,
+    )
+    hits = []
+    for r in rows:
+        sign = -1.0 if r.root_type == "Income" else 1.0
+        cy, py_amt = sign * float(r.cy_raw), sign * float(r.py_raw)
+        delta = cy - py_amt
+        base = max(abs(py_amt), 1.0)
+        if abs(delta) >= float(min_amount) and abs(delta) / base >= swing_pct / 100.0:
+            hits.append({"ref_doctype": "Account", "ref_name": r.account, "amount": abs(delta),
+                         "note": (f"{r.account}: CY {cy:.2f} vs PY {py_amt:.2f} in {py['name']} "
+                                  f"(delta {delta:+.2f}, {abs(delta) / base * 100:.0f}% of PY base, "
+                                  f"threshold {swing_pct:g}%)")})
+    return hits
+
+
 _EVALUATORS = {
     "tb_balance_check": _k_tb_balance_check,
     "wrong_side_balance": _k_wrong_side_balance,
     "voucher_pct_of_ledger": _k_voucher_pct_of_ledger,
     "cash_txn_over_threshold": _k_cash_txn_over_threshold,
     "dormant_party_ledger": _k_dormant_party_ledger,
-    # not yet implemented (reported as skipped_unsupported): advance_in_party,
-    # sign_flip_yoy, msme_overdue
+    "advance_in_party": _k_advance_in_party,
+    "sign_flip_yoy": _k_sign_flip_yoy,
+    "msme_overdue": _k_msme_overdue,
+    "expense_variance_yoy": _k_expense_variance_yoy,
+    "pl_yoy_swing": _k_pl_yoy_swing,
 }
 
 
@@ -313,7 +616,7 @@ def run_scrutiny(
         from jarvis.tools.compute_materiality import compute_materiality
         materiality = compute_materiality(**engagement_config)
 
-    findings, skipped_legal, skipped_unsupported, skipped_unconfigured = [], [], [], []
+    findings, skipped_legal, skipped_unsupported, skipped_not_evaluable = [], [], [], []
     counts = {"blocker": 0, "warning": 0, "note": 0}
 
     for rule in pack.get("rules", []):
@@ -331,8 +634,15 @@ def run_scrutiny(
             skipped_unsupported.append({"rule_id": rid, "kind": kind})
             continue
         hits = evaluator(rule, scope, materiality)
-        if hits is None:  # materiality-bound rule but no engagement config
-            skipped_unconfigured.append({"rule_id": rid, "statement": rule.get("statement")})
+        if hits is None or isinstance(hits, _NotEvaluable):
+            # None: materiality-bound threshold but no engagement config.
+            # _NotEvaluable: data prerequisite missing (e.g. no prior FY).
+            # Either way the rule was NOT evaluated — reported, never a
+            # silent zero-findings pass.
+            reason = hits.reason if isinstance(hits, _NotEvaluable) \
+                else "materiality-bound threshold unresolved (no engagement_config)"
+            skipped_not_evaluable.append({"rule_id": rid, "reason": reason,
+                                          "statement": rule.get("statement")})
             continue
         sev = rule.get("severity", "note")
         for h in hits[:max_findings_per_rule]:
@@ -355,7 +665,10 @@ def run_scrutiny(
         "findings": findings,
         "skipped_needs_legal_review": skipped_legal,
         "skipped_unsupported": skipped_unsupported,
-        "skipped_unconfigured": skipped_unconfigured,
+        "skipped_not_evaluable": skipped_not_evaluable,
+        # Backward-compat alias (SKILL prose + SPA read this key): the same
+        # rows as skipped_not_evaluable, which generalises it.
+        "skipped_unconfigured": skipped_not_evaluable,
         "materiality_used": (materiality.get("bindings") if materiality else None),
     }
 

@@ -23,11 +23,59 @@ LISTING = "Jarvis Agent Listing"
 INSTALLATION = "Jarvis Agent Installation"
 RUN = "Jarvis Agent Run"
 FINDING = "Jarvis Agent Finding"
+ALLOWED_ROLE = "Jarvis Agent Allowed Role"
 _SETTINGS = "Jarvis Settings"
 _PUSH_JOB_ID = "jarvis_agent_skills_push"
 _LOCK_NAME = "jarvis_agent_skills_push"
 
 _FREQUENCIES = ("daily", "weekly", "monthly")
+# Statuses a bench admin may set via set_listing_status (Draft is registry-only).
+_ADMIN_STATUSES = ("Published", "Coming Soon", "Deprecated")
+# Never meaningful as an agent restriction ("All" == unrestricted; the other two
+# are identities, not grantable roles) and never offered in the admin picker.
+_NON_SELECTABLE_ROLES = ("Administrator", "Guest", "All")
+
+
+# --------------------------------------------------------------------------- #
+# role-based access (RBAC)
+# --------------------------------------------------------------------------- #
+def _user_allowed_for_agent(listing, user: str | None = None) -> bool:
+	"""True iff ``user`` may install / run the agent.
+
+	Allowed iff the listing has NO ``allowed_roles`` rows (empty = unrestricted)
+	OR the user's roles intersect them. System Manager is ALWAYS allowed.
+	``listing`` may be a Jarvis Agent Listing doc or its name (agent_slug).
+	Fail-closed on the restricted side: an unknown user has no roles beyond
+	Guest/All, which never satisfy a restriction.
+	"""
+	user = user or frappe.session.user
+	if isinstance(listing, str):
+		allowed = frappe.get_all(
+			ALLOWED_ROLE,
+			filters={"parenttype": LISTING, "parent": listing},
+			pluck="role",
+		)
+	else:
+		allowed = [row.role for row in (listing.get("allowed_roles") or [])]
+	if not allowed:
+		return True
+	roles = set(frappe.get_roles(user))
+	if "System Manager" in roles:
+		return True
+	return bool(roles.intersection(allowed))
+
+
+def _allowed_roles_map() -> dict[str, list[str]]:
+	"""All listings' allowed_roles child rows in ONE query: {listing_name: [role, ...]}."""
+	out: dict[str, list[str]] = {}
+	for row in frappe.get_all(
+		ALLOWED_ROLE,
+		filters={"parenttype": LISTING, "parentfield": "allowed_roles"},
+		fields=["parent", "role"],
+		order_by="parent asc, idx asc",
+	):
+		out.setdefault(row.parent, []).append(row.role)
+	return out
 
 
 # --------------------------------------------------------------------------- #
@@ -36,14 +84,20 @@ _FREQUENCIES = ("daily", "weekly", "monthly")
 @frappe.whitelist()
 def list_agents() -> list[dict]:
 	"""The full catalog plus THIS owner's install/enable/schedule state per
-	agent. Read-only — the catalog is visible to every logged-in user."""
+	agent. Read-only — the catalog is visible to every logged-in user. Each row
+	also carries ``allowed_roles`` (empty = unrestricted) and ``allowed`` (0/1
+	for the CURRENT user; System Manager is always 1) — display state only, the
+	real gate is server-side in install_agent / run_agent_now / the scheduler."""
 	me = frappe.session.user
+	roles_map = _allowed_roles_map()
+	my_roles = set(frappe.get_roles(me))
+	is_sm = "System Manager" in my_roles
 	listings = frappe.get_all(
 		LISTING,
 		fields=[
 			"name", "agent_slug", "title", "description", "category", "nature",
 			"version", "publisher", "status", "rule_pack", "default_schedule",
-			"validated_for_fy",
+			"validated_for_fy", "tools_required",
 		],
 		order_by="status asc, title asc",
 	)
@@ -72,6 +126,11 @@ def list_agents() -> list[dict]:
 		lst["next_run_at"] = str(inst.next_run_at) if (inst and inst.next_run_at) else None
 		lst["update_available"] = (
 			1 if inst and inst.installed_version and inst.installed_version != lst.version else 0
+		)
+		allowed_roles = roles_map.get(lst.name, [])
+		lst["allowed_roles"] = allowed_roles
+		lst["allowed"] = (
+			1 if (is_sm or not allowed_roles or my_roles.intersection(allowed_roles)) else 0
 		)
 		out.append(lst)
 	return out
@@ -103,16 +162,134 @@ def get_installations() -> list[dict]:
 
 
 # --------------------------------------------------------------------------- #
+# admin surface (System Manager ONLY — every check server-side)
+# --------------------------------------------------------------------------- #
+@frappe.whitelist()
+def set_agent_roles(agent_slug: str, roles=None) -> dict:
+	"""Restrict an agent listing to a set of Roles. System Manager only.
+
+	``roles`` is a JSON array of Role names; ``[]`` clears the restriction
+	(unrestricted). Roles are validated against the Role doctype; the
+	non-grantable Administrator/Guest/All are rejected (All would silently mean
+	unrestricted — force the explicit empty list instead)."""
+	frappe.only_for("System Manager")
+	parsed = roles
+	if isinstance(parsed, str):
+		try:
+			parsed = frappe.parse_json(parsed)
+		except Exception:
+			frappe.throw(_("roles must be a JSON array of Role names."))
+	if parsed is None:
+		parsed = []
+	if not isinstance(parsed, list):
+		frappe.throw(_("roles must be a JSON array of Role names."))
+
+	clean: list[str] = []
+	for r in parsed:
+		if not isinstance(r, str) or not r.strip():
+			frappe.throw(_("roles must be a JSON array of Role names."))
+		r = r.strip()
+		if r in _NON_SELECTABLE_ROLES:
+			frappe.throw(_("Role {0} cannot be used as an agent restriction.").format(r))
+		if not frappe.db.exists("Role", r):
+			frappe.throw(_("Role {0} does not exist.").format(r))
+		if r not in clean:
+			clean.append(r)
+
+	doc = frappe.get_doc(LISTING, agent_slug)
+	doc.check_permission("write")
+	doc.set("allowed_roles", [{"role": r} for r in clean])
+	doc.save()
+	frappe.db.commit()
+	return {"ok": True, "allowed_roles": [row.role for row in doc.allowed_roles]}
+
+
+@frappe.whitelist()
+def set_listing_status(agent_slug: str, status: str) -> dict:
+	"""Set a listing's marketplace status. System Manager only. Only the
+	admin-meaningful statuses are settable (Draft stays registry-controlled)."""
+	frappe.only_for("System Manager")
+	if status not in _ADMIN_STATUSES:
+		frappe.throw(_("Status must be one of: {0}.").format(", ".join(_ADMIN_STATUSES)))
+	doc = frappe.get_doc(LISTING, agent_slug)
+	doc.check_permission("write")
+	doc.status = status
+	doc.save()
+	frappe.db.commit()
+	return {"ok": True, "status": doc.status}
+
+
+@frappe.whitelist()
+def get_agent_admin_overview() -> dict:
+	"""Bench-admin overview: the selectable Roles + every listing with its
+	allowed_roles and ALL owners' installs. System Manager only — the SPA probes
+	this endpoint and hides the Admin tab when it throws PermissionError."""
+	frappe.only_for("System Manager")
+
+	roles = [
+		r
+		for r in frappe.get_all(
+			"Role",
+			filters={"disabled": 0, "desk_access": 1},
+			order_by="name asc",
+			pluck="name",
+		)
+		if r not in _NON_SELECTABLE_ROLES
+	]
+
+	roles_map = _allowed_roles_map()
+	installs_by_agent: dict[str, list[dict]] = {}
+	for i in frappe.get_all(
+		INSTALLATION,
+		fields=[
+			"name", "agent", "owner", "enabled", "schedule_enabled",
+			"schedule_frequency", "next_run_at", "last_run_at", "sync_status",
+		],
+		order_by="owner asc, creation asc",
+	):
+		installs_by_agent.setdefault(i.agent, []).append({
+			"installation": i.name,
+			"owner": i.owner,
+			"enabled": int(i.enabled or 0),
+			"schedule_enabled": int(i.schedule_enabled or 0),
+			"schedule_frequency": i.schedule_frequency,
+			"next_run_at": str(i.next_run_at) if i.next_run_at else None,
+			"last_run_at": str(i.last_run_at) if i.last_run_at else None,
+			"sync_status": i.sync_status,
+		})
+
+	listings = frappe.get_all(
+		LISTING,
+		fields=[
+			"name", "agent_slug", "title", "nature", "category", "status",
+			"version", "validated_for_fy",
+		],
+		order_by="status asc, title asc",
+	)
+	for lst in listings:
+		lst["allowed_roles"] = roles_map.get(lst.name, [])
+		lst["installs"] = installs_by_agent.get(lst.name, [])
+
+	return {"roles": roles, "listings": listings}
+
+
+# --------------------------------------------------------------------------- #
 # install / enable / schedule / uninstall (mutations — all owner-gated)
 # --------------------------------------------------------------------------- #
 @frappe.whitelist()
 def install_agent(agent_slug: str) -> dict:
 	"""Install a Published agent for the current user. The doctype validate()
-	enforces the per-owner cap + (owner, agent) uniqueness."""
+	enforces the per-owner cap + (owner, agent) uniqueness. Role-gated: a user
+	whose roles do not intersect the listing's allowed_roles is refused
+	server-side (System Manager always allowed)."""
 	listing = frappe.get_doc(LISTING, agent_slug)  # All-role read
+	me = frappe.session.user
+	if not _user_allowed_for_agent(listing, me):
+		frappe.throw(
+			_("Your roles do not permit installing this agent."), frappe.PermissionError
+		)
 	if listing.status != "Published":
 		frappe.throw(_("This agent is not available to install."))
-	me = frappe.session.user
 	if frappe.db.exists(INSTALLATION, {"owner": me, "agent": listing.name}):
 		frappe.throw(_("You have already installed this agent."))
 
@@ -226,6 +403,16 @@ def run_agent_now(installation: str) -> dict:
 	scheduler's S1 identity hinge on the manual path."""
 	doc = frappe.get_doc(INSTALLATION, installation)
 	doc.check_permission("write")  # S3: who may trigger
+	# RBAC: the audit executes AS the installation OWNER, so it is the OWNER's
+	# roles that must permit the agent (covers both a self-run by a user who
+	# lost the role, and an SM triggering an install whose owner lost it — the
+	# manual analogue of the scheduler's role skip). SM-owned installs pass via
+	# the System Manager bypass inside the helper.
+	if not _user_allowed_for_agent(doc.agent, doc.owner):
+		frappe.throw(
+			_("The installation owner's roles do not permit running this agent."),
+			frappe.PermissionError,
+		)
 	if not doc.enabled:
 		frappe.throw(_("Enable the agent before running it."))
 	if frappe.db.get_value(LISTING, doc.agent, "nature") != "Auditor":
