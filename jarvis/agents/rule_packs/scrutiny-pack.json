@@ -1,6 +1,6 @@
 {
   "pack_id": "scrutiny-pack",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "jurisdiction": "IN",
   "source": "Translated (clean-room) from the Assure Ledger-Scrutiny engine (47 rules) to the ERPNext GL model. Provenance `assure_rule` is the original rule tag. See reference/assure-rules-catalog.md.",
   "contract": {
@@ -21,7 +21,9 @@
       "voucher_pct_of_ledger": "a single voucher whose amount is >= `pct` of the account's period turnover, on `root_type`, above `min_amount`.",
       "sign_flip_yoy": "account whose closing-balance sign differs from the prior fiscal year's, magnitude above `min_amount`.",
       "tb_balance_check": "period trial balance: sum(debit) must equal sum(credit) at `tolerance_dp` decimal places (opening and closing).",
-      "msme_overdue": "MSME-registered supplier payables outstanding beyond `days` (STATUTORY 43B(h))."
+      "msme_overdue": "MSME-registered supplier payables outstanding beyond `days` (STATUTORY 43B(h)). Per (party, voucher) net credit from Payable-account GL, aged from the earliest credit posting; the MSME detection basis (Supplier field vs supplier_group fallback) is stated in each hit note.",
+      "expense_variance_yoy": "per Expense leaf account: ratio-to-revenue (Income root_type total) CY vs the prior Fiscal Year; flag when the ratio's percent change `(cy_ratio/py_ratio)*100-100` is >= `variance_pct` in magnitude AND the CY amount >= `min_amount`. Not evaluable without a prior FY, PY GL rows and nonzero revenue in both periods.",
+      "pl_yoy_swing": "per P&L leaf account (Income/Expense): natural-side period activity, flag when |CY-PY| / max(|PY|,1) >= `swing_pct`% AND |CY-PY| >= `min_amount`, PY = the prior Fiscal Year. Not evaluable without a prior FY and PY GL rows."
     }
   },
   "rules": [
@@ -297,10 +299,36 @@
       "statement": "MSME supplier dues outstanding beyond the statutory window (s.43B(h) disallowance).",
       "section": "Income-Tax Act s.43B(h)",
       "effective_date": "2024-04-01",
-      "disclaimer": "The 15/45-day window depends on a written agreement; assure does not hardcode it. As coded: MSME-flagged supplier payables overdue > 45 days. Verify the applicable window and MSME registration per supplier.",
+      "disclaimer": "The 15/45-day window depends on a written agreement; assure does not hardcode it. As coded: per (supplier, voucher) net credit outstanding on Payable accounts, aged from the earliest credit posting, overdue > 45 days. MSME detection basis: the deployed Supplier schema has NO MSME field (verified: stock schema, no is_msme/msme_status/msme_registration_number/udyam fields), so detection FALLS BACK to Supplier Group name containing 'msme'; if such a field is later added, the engine uses it automatically and each hit note states the basis actually used. Verify the applicable window and MSME registration per supplier.",
       "kind": "msme_overdue",
       "params": {
         "days": 45
+      }
+    },
+    {
+      "rule_id": "FPA-EXPENSE-VARIANCE-YOY",
+      "assure_rule": "M11",
+      "domain": "analytical-review",
+      "severity": "warning",
+      "status": "active",
+      "statement": "Expense account's ratio-to-revenue moved sharply versus the prior year (YoY analytical review).",
+      "kind": "expense_variance_yoy",
+      "params": {
+        "variance_pct": 20,
+        "min_amount": "$materiality:pl_balance"
+      }
+    },
+    {
+      "rule_id": "FPA-PL-YOY-SWING",
+      "assure_rule": null,
+      "domain": "analytical-review",
+      "severity": "note",
+      "status": "active",
+      "statement": "P&L account's period activity swung sharply versus the prior year.",
+      "kind": "pl_yoy_swing",
+      "params": {
+        "swing_pct": 25,
+        "min_amount": "$materiality:pl_balance"
       }
     }
   ],

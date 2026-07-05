@@ -19,7 +19,8 @@
   "rule_pack",
   "skill_bundle",
   "default_schedule",
-  "validated_for_fy"
+  "validated_for_fy",
+  "allowed_roles"
  ],
  "fields": [
   {
@@ -111,11 +112,18 @@
    "fieldtype": "Data",
    "label": "Validated For FY",
    "description": "The fiscal year the (statutory) rule set was last legal-reviewed for. Used to gate stale statutory packs."
+  },
+  {
+   "fieldname": "allowed_roles",
+   "fieldtype": "Table MultiSelect",
+   "label": "Allowed Roles",
+   "options": "Jarvis Agent Allowed Role",
+   "description": "Roles allowed to install/run this agent. Empty = unrestricted (any user). System Manager is always allowed. Bench-admin state — NEVER written by the catalog sync."
   }
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-07-04 20:30:00.000000",
+ "modified": "2026-07-05 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Jarvis",
  "name": "Jarvis Agent Listing",

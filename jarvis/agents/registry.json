@@ -155,16 +155,33 @@
       "title": "AR & Collections Operator",
       "domain": "ar",
       "nature": "operator",
-      "version": "0.0.0",
-      "status": "Coming Soon",
-      "description": "Order-to-cash and collections: dunning drafts and receipt matching through the Approval Board. Planned.",
-      "tools_required": [],
+      "version": "1.0.0",
+      "status": "Published",
+      "description": "Order-to-cash collections through the Approval Board — never past it. Pulls the AR ageing, ranks overdue customers, drafts firm dated-fact dunning emails (every outbound email parks for human approval; batches carry one bundled board decision), logs follow-ups, assigns collection tasks, and records receipts as Draft Payment Entries only against real evidence. Never submits, never reconciles, never writes off.",
+      "tools_required": [
+        "jarvis__run_report",
+        "jarvis__get_report_filters",
+        "jarvis__get_customer_outstanding",
+        "jarvis__get_party_dashboard_info",
+        "jarvis__get_list",
+        "jarvis__get_doc",
+        "jarvis__create_doc",
+        "jarvis__update_doc",
+        "jarvis__send_email",
+        "jarvis__add_comment",
+        "jarvis__assign_to"
+      ],
       "min_apps": [
         "erpnext"
       ],
       "rule_pack": null,
-      "skill_bundle": [],
-      "default_schedule": {},
+      "skill_bundle": [
+        "skills/agent-ar-collections-operator/SKILL.md"
+      ],
+      "default_schedule": {
+        "schedule_enabled": 0,
+        "schedule_frequency": "Weekly"
+      },
       "validated_for_fy": null
     },
     {
@@ -172,16 +189,28 @@
       "title": "Bank & Reconciliation Operator",
       "domain": "bank-recon",
       "nature": "operator",
-      "version": "0.0.0",
-      "status": "Coming Soon",
-      "description": "Bank statement ingestion and reconciliation drafts. Planned — greenfield.",
-      "tools_required": [],
+      "version": "1.0.0",
+      "status": "Published",
+      "description": "The reconciliation workbench as drafts + approvals: lists unreconciled Bank Transactions (statement ingestion itself is the OCR bank-statement playbook), proposes matches against submitted Payment Entries / invoices by reference, amount, date, and party, and queues every proposal as a Jarvis Approval Request carrying both sides of the evidence. Unmatched lines become Draft Payment Entry proposals. It proposes matches; a human confirms every one — it never reconciles, allocates, or submits.",
+      "tools_required": [
+        "jarvis__get_list",
+        "jarvis__get_doc",
+        "jarvis__query",
+        "jarvis__run_report",
+        "jarvis__create_doc",
+        "jarvis__update_doc"
+      ],
       "min_apps": [
         "erpnext"
       ],
       "rule_pack": null,
-      "skill_bundle": [],
-      "default_schedule": {},
+      "skill_bundle": [
+        "skills/agent-bank-recon-operator/SKILL.md"
+      ],
+      "default_schedule": {
+        "schedule_enabled": 0,
+        "schedule_frequency": "Weekly"
+      },
       "validated_for_fy": null
     },
     {
@@ -189,17 +218,28 @@
       "title": "Analytical Review Auditor",
       "domain": "analytical-review",
       "nature": "auditor",
-      "version": "0.0.0",
-      "status": "Coming Soon",
-      "description": "Schedule III ratios and year-over-year variance analytical review. Planned.",
-      "tools_required": [],
+      "version": "1.0.0",
+      "status": "Published",
+      "description": "Read-only year-over-year analytical review of the P&L. Computes engagement materiality, then evaluates deterministic analytics (expense-to-revenue ratio variance FPA-EXPENSE-VARIANCE-YOY, P&L year-over-year swings FPA-PL-YOY-SWING) and reports the findings verbatim with severities. When YoY analytics cannot run (no prior-year books, no materiality) it reports exactly that instead of improvising variances. Never writes.",
+      "tools_required": [
+        "jarvis__compute_materiality",
+        "jarvis__run_scrutiny",
+        "jarvis__get_doc",
+        "jarvis__run_report",
+        "jarvis__get_report_filters"
+      ],
       "min_apps": [
         "erpnext"
       ],
-      "rule_pack": null,
-      "skill_bundle": [],
-      "default_schedule": {},
-      "validated_for_fy": null
+      "rule_pack": "scrutiny-pack",
+      "skill_bundle": [
+        "skills/agent-analytical-review-auditor/SKILL.md"
+      ],
+      "default_schedule": {
+        "schedule_enabled": 0,
+        "schedule_frequency": "Monthly"
+      },
+      "validated_for_fy": "2026-2027"
     }
   ]
 }
