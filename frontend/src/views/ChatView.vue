@@ -112,8 +112,8 @@
 					<span style="font-size:11.5px;color:var(--text-3);">{{ headerSub }}</span>
 				</div>
 				<div style="margin-left:auto;display:flex;align-items:center;gap:8px;">
-					<!-- Save the current conversation's prompts as a reusable macro -->
-					<button v-if="canSaveAsMacro" class="jv-modelpill" @click="saveConversationAsMacro" title="Save this chat's prompts as a macro" style="display:flex;align-items:center;gap:7px;padding:5px 10px;background:var(--surface-1);border:1px solid var(--border);border-radius:20px;cursor:pointer;font-family:inherit;">
+					<!-- Save this conversation's prompts as a reusable macro (opens the /macros editor pre-filled) -->
+					<button v-if="canSaveAsMacro" class="jv-modelpill" @click="saveConversationAsMacro" title="Save this chat's prompts as a macro" style="display:flex;align-items:center;gap:6px;padding:5px 10px;background:var(--surface-1);border:1px solid var(--border);border-radius:20px;cursor:pointer;font-family:inherit;">
 						<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l14 9-14 9V3z" /></svg>
 						<span style="font-size:12px;color:var(--text-2);font-weight:500;">Save as macro</span>
 					</button>
@@ -501,19 +501,19 @@
 		<!-- ============ RIGHT RAIL: SKILLS + MACROS (opens the center popup) ============ -->
 		<aside class="jv-skillbar">
 			<div class="jv-skillrail">
-				<button class="jv-skillrail-btn" :class="{ active: skillsModalOpen }" @click="openSkillsModal()">
+				<button class="jv-skillrail-btn" @click="router.push('/skills')">
 					<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 7v10l8 5 8-5V7z" /><path d="M12 22V12M12 12 4 7M12 12l8-5" /></svg>
 					<span class="jv-railtip">Skills</span>
 				</button>
-				<button class="jv-skillrail-btn" :class="{ active: macrosModalOpen }" @click="openMacrosModal()">
+				<button class="jv-skillrail-btn" @click="router.push('/macros')">
 					<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l14 9-14 9V3z" /><path d="M3 5v14" /></svg>
 					<span class="jv-railtip">Macros</span>
 				</button>
-				<button class="jv-skillrail-btn" :class="{ active: fileboxOpen }" @click="openFilebox()">
+				<button class="jv-skillrail-btn" @click="router.push('/files')">
 					<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-6l-2 3h-4l-2-3H2" /><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" /></svg>
 					<span class="jv-railtip">File Box</span>
 				</button>
-				<button class="jv-skillrail-btn" :class="{ active: approvalsOpen }" @click="openApprovals()" style="position:relative;">
+				<button class="jv-skillrail-btn" @click="router.push('/approvals')" style="position:relative;">
 					<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg>
 					<span v-if="approvalsBadge" style="position:absolute;top:2px;right:2px;background:var(--red,#e5484d);color:#fff;border-radius:8px;font-size:9px;line-height:1;padding:2px 4px;">{{ approvalsBadge }}</span>
 					<span class="jv-railtip">Approvals</span>
@@ -525,369 +525,6 @@
 				</button>
 			</div>
 		</aside>
-
-		<!-- ============ SKILLS POPUP (centered) ============ -->
-		<transition name="jv-fade">
-			<div v-if="skillsModalOpen" class="jv-skills-overlay" :class="{ 'jv-page-mode': pageMode }" @click.self="closeSkillsModal">
-				<div class="jv-skills-modal">
-					<div class="jv-skills-head">
-						<div style="min-width:0;">
-							<div class="jv-skills-title">{{ skillFormOpen ? (skillReadonly ? "Skill" : (skillForm.name ? "Edit skill" : "New skill")) : "Skills" }}</div>
-							<div class="jv-skills-sub">Abilities your assistant can use — type <kbd class="jv-kbd">/</kbd> in chat to trigger one.</div>
-						</div>
-						<button v-if="!skillFormOpen" class="jv-btn jv-btn--primary jv-btn--sm" @click="newSkill">
-							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg> New
-						</button>
-						<button class="jv-btn jv-btn--icon" title="Close (Esc)" @click="closeSkillsModal">
-							<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
-						</button>
-					</div>
-					<!-- Sync status shows only while actionable: an in-flight update or a
-					     failure. The steady "up to date" line was noise (user request). -->
-					<div v-if="skillsSync.pending || skillsSync.last_sync_status.startsWith('failed')" class="jv-skills-status" :class="{ err: skillsSync.last_sync_status.startsWith('failed') }">
-						<template v-if="skillsSync.pending"><span class="jv-skill-dot spin"></span> Updating your assistant… (restarts briefly, ~30s)</template>
-						<template v-else><span class="jv-skill-dot err"></span> Couldn't update your assistant. {{ skillsSync.last_sync_status.replace("failed:", "").trim() }}</template>
-					</div>
-					<div class="jv-skills-body">
-						<!-- create / edit form -->
-						<div v-if="skillFormOpen" class="jv-skill-form">
-							<div v-if="skillError" class="jv-skill-err">{{ skillError }}</div>
-							<div v-if="skillReadonly" class="jv-ro-banner">
-								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
-								<span>Shared by <b>{{ skillSharedBy || "another user" }}</b> · read-only</span>
-							</div>
-							<label class="jv-skill-l">Name</label>
-							<input class="jv-skill-in" v-model="skillForm.skill_name" :disabled="skillReadonly || !!skillForm.name" placeholder="e.g. monthly-close" maxlength="40" />
-							<div v-if="!skillReadonly" class="jv-set-hint" style="margin:3px 0 10px;">Lowercase letters, digits and hyphens. Trigger it in chat with <kbd class="jv-kbd">/{{ skillForm.skill_name || 'name' }}</kbd>.</div>
-							<div v-else style="height:10px;"></div>
-							<label class="jv-skill-l">Description</label>
-							<input class="jv-skill-in" v-model="skillForm.description" :disabled="skillReadonly" placeholder="When should the assistant use this skill?" maxlength="500" />
-							<div v-if="!skillReadonly" class="jv-set-hint" style="margin:3px 0 10px;">A short hint so the assistant knows when this skill applies.</div>
-							<div v-else style="height:10px;"></div>
-							<label class="jv-skill-l">Instructions</label>
-							<textarea class="jv-skill-ta" v-model="skillForm.instructions" :disabled="skillReadonly" rows="9" placeholder="Markdown instructions the assistant follows when this skill runs…"></textarea>
-							<div v-if="!skillReadonly" class="jv-set-row" style="margin-top:10px;"><span>Let users trigger it with /<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Appears in the chat “/” menu</span></span><button class="jv-switch" :class="{ on: skillForm.user_invocable }" @click="skillForm.user_invocable = !skillForm.user_invocable" role="switch" :aria-checked="String(!!skillForm.user_invocable)"><span class="jv-switch-knob"></span></button></div>
-							<div v-if="!skillReadonly" class="jv-set-row"><span>Enabled<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Off = saved as a draft, not used by the assistant</span></span><button class="jv-switch" :class="{ on: skillForm.enabled }" @click="skillForm.enabled = !skillForm.enabled" role="switch" :aria-checked="String(!!skillForm.enabled)"><span class="jv-switch-knob"></span></button></div>
-							<div class="jv-skill-formfoot">
-								<button v-if="!skillReadonly" class="jv-btn jv-btn--primary" :disabled="skillSaving || skillsSync.pending" @click="saveSkill">{{ skillSaving ? "Saving…" : "Save skill" }}</button>
-								<button v-if="skillReadonly" class="jv-btn jv-btn--ghost" @click="skillFormOpen = false; skillReadonly = false">Back</button>
-								<button v-else class="jv-btn jv-btn--ghost" :disabled="skillSaving" @click="skillFormOpen = false">Cancel</button>
-								<span v-if="!skillReadonly" class="jv-skill-foothint">Saving updates your assistant automatically.</span>
-							</div>
-						</div>
-						<!-- skills list -->
-						<template v-else>
-							<div v-if="!customSkills.length" class="jv-set-empty" style="text-align:center;padding:26px 0;">No skills yet.<br />Create one to give your assistant a new ability.</div>
-							<!-- own skills: full controls + share -->
-							<div v-for="s in mySkills" :key="s.name" class="jv-skill-row">
-								<div style="min-width:0;flex:1;cursor:pointer;" @click="editSkill(s)">
-									<div class="jv-skill-name">/{{ s.skill_name }} <span v-if="!s.enabled" class="jv-skill-off">draft</span><span v-if="s.shared_count > 0" class="jv-shared-chip"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a3 3 0 1 0-2.83-4M6 12a3 3 0 1 0 0 .01M18 16a3 3 0 1 0-2.83 4M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" /></svg>Shared · {{ s.shared_count }}</span></div>
-									<div class="jv-skill-desc">{{ s.description }}</div>
-								</div>
-								<button class="jv-btn jv-btn--icon jv-ib jv-ib-accent" title="Share" @click="openShareModal(s)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" /></svg></button>
-								<button class="jv-btn jv-btn--icon jv-ib" title="Edit" @click="editSkill(s)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg></button>
-								<button class="jv-btn jv-btn--icon jv-ib jv-ib-danger" title="Delete" @click="removeSkill(s)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" /></svg></button>
-							</div>
-							<!-- shared-with-me: read-only -->
-							<template v-if="sharedSkills.length">
-								<div class="jv-share-divider">Shared with you</div>
-								<div v-for="s in sharedSkills" :key="s.name" class="jv-skill-row jv-skill-row-shared" @click="editSkill(s)" style="cursor:pointer;">
-									<span class="jv-share-lock" title="Read-only — shared with you"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg></span>
-									<div style="min-width:0;flex:1;">
-										<div class="jv-skill-name">/{{ s.skill_name }} <span class="jv-sharedby-chip"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>Shared by {{ s.shared_by }}</span></div>
-										<div class="jv-skill-desc">{{ s.description }}</div>
-									</div>
-								</div>
-							</template>
-						</template>
-					</div>
-				</div>
-			</div>
-		</transition>
-
-		<!-- ============ SHARE SKILL POPUP (centered) ============ -->
-		<transition name="jv-fade">
-			<div v-if="shareModalOpen" class="jv-skills-overlay" @click.self="closeShareModal">
-				<div class="jv-skills-modal jv-share-modal">
-					<div class="jv-skills-head">
-						<div style="min-width:0;">
-							<div class="jv-skills-title">Share “{{ shareSkill.skill_name }}”</div>
-							<div class="jv-skills-sub">They can use this skill in chat, but can’t edit or re-share it.</div>
-						</div>
-						<button class="jv-btn jv-btn--icon" title="Close (Esc)" @click="closeShareModal">
-							<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
-						</button>
-					</div>
-					<div class="jv-skills-body">
-						<div v-if="shareLoading" class="jv-set-empty" style="text-align:center;padding:30px 0;">Loading people…</div>
-						<template v-else>
-							<!-- selected users as chips -->
-							<div v-if="shareSelected.length" class="jv-share-chips">
-								<span v-for="id in shareSelected" :key="id" class="jv-share-chip">
-									<span class="jv-share-avatar">{{ _shareInitials(_shareUser(id)) }}</span>
-									<span class="jv-share-chip-name">{{ _shareUser(id).full_name }}</span>
-									<button class="jv-share-chip-x" title="Remove" @click="toggleShareUser(id)"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg></button>
-								</span>
-							</div>
-							<!-- search -->
-							<div class="jv-share-searchwrap">
-								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="1.9" stroke-linecap="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
-								<input v-model="shareSearch" class="jv-share-search" placeholder="Search people…" />
-							</div>
-							<!-- candidate list -->
-							<div v-if="!shareCandidates.length" class="jv-set-empty" style="text-align:center;padding:22px 0;">No other users to share with yet.</div>
-							<div v-else-if="!shareMatches.length" class="jv-set-empty" style="text-align:center;padding:18px 0;">No people match “{{ shareSearch }}”.</div>
-							<div v-else class="jv-share-list">
-								<button v-for="u in shareMatches" :key="u.name" class="jv-share-row" :class="{ on: isShareSelected(u.name) }" @click="toggleShareUser(u.name)">
-									<span class="jv-share-avatar">{{ _shareInitials(u) }}</span>
-									<span class="jv-share-row-info">
-										<span class="jv-share-row-name">{{ u.full_name }}</span>
-										<span class="jv-share-row-id">{{ u.name }}</span>
-									</span>
-									<svg v-if="isShareSelected(u.name)" class="jv-share-check" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
-								</button>
-							</div>
-							<div class="jv-share-helper">
-								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
-								They can use this skill in chat, but can’t edit or re-share it.
-							</div>
-							<div class="jv-skill-formfoot">
-								<button class="jv-btn jv-btn--primary" :disabled="shareSaving" @click="saveShares">{{ shareSaving ? "Saving…" : "Save" }}</button>
-								<button class="jv-btn jv-btn--ghost" :disabled="shareSaving" @click="closeShareModal">Cancel</button>
-								<span class="jv-skill-foothint">{{ shareSelected.length }} {{ shareSelected.length === 1 ? "person" : "people" }} selected</span>
-							</div>
-						</template>
-					</div>
-				</div>
-			</div>
-		</transition>
-
-		<!-- ============ MACROS POPUP (centered) ============ -->
-		<transition name="jv-fade">
-			<div v-if="fileboxOpen" class="jv-skills-overlay" :class="{ 'jv-page-mode': pageMode }" @click.self="fileboxOpen = false; _clearPageHash()">
-				<div class="jv-skills-modal">
-					<div class="jv-skills-head">
-						<div style="min-width:0;">
-							<div class="jv-skills-title">File Box</div>
-							<div class="jv-skills-sub">Drop an inbound document — invoice, receipt, PO — and Jarvis drafts it for you.</div>
-						</div>
-						<button v-if="!pageMode" class="jv-btn jv-btn--icon" title="Open as page" @click="openAsPage('filebox')">
-							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" /></svg>
-						</button>
-						<button class="jv-btn jv-btn--icon" title="Close (Esc)" @click="fileboxOpen = false; _clearPageHash()">
-							<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
-						</button>
-					</div>
-					<div class="jv-skills-body">
-						<div
-							style="border:2px dashed var(--border);border-radius:10px;padding:26px;text-align:center;cursor:pointer;margin-bottom:14px;"
-							:style="fileboxDrag ? 'border-color:var(--blue);background:var(--surface-2);' : ''"
-							@click="$refs.fileboxInput.click()"
-							@dragover.prevent="fileboxDrag = true" @dragleave="fileboxDrag = false"
-							@drop.prevent="onFileboxDrop($event)"
-						>
-							<div style="font-size:13px;color:var(--text-2);">
-								Drop files here, or click to browse<span v-if="fileboxUploading"> — {{ fileboxUploading }} uploading…</span>.<br />
-								<span style="font-size:11.5px;color:var(--text-3);">Keep adding — each file processes in the background and lands in Approvals if it needs you.</span>
-							</div>
-							<input ref="fileboxInput" type="file" multiple style="display:none" @change="onFileboxPick($event)" />
-						</div>
-						<div v-if="fileboxError" class="jv-skill-err">{{ fileboxError }}</div>
-						<div v-for="d in fileboxDropStatus.filter((x) => x.state === 'error')" :key="d.key" class="jv-skill-err" style="margin-bottom:6px;">{{ d.name }}: {{ d.error }}</div>
-						<div v-if="!fileboxItems.length" class="jv-set-empty" style="text-align:center;padding:10px 0;">Nothing processed yet.</div>
-						<div v-for="f in fileboxItems" :key="f.name" class="jv-skill-row" style="cursor:pointer;" @click="openFileboxItem(f)">
-							<div style="flex:1;min-width:0;">
-								<div style="font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ f.title.replace(/^File: /, "") }}</div>
-								<div style="font-size:11px;color:var(--text-3);">{{ new Date(f.creation).toLocaleString() }}</div>
-							</div>
-							<span style="font-size:10.5px;border-radius:7px;padding:2px 7px;flex:none;"
-								:style="f.status === 'processing' ? 'background:var(--surface-2);color:var(--text-2);'
-									: f.status === 'needs_approval' ? 'background:rgba(229,72,77,.12);color:var(--red,#e5484d);'
-									: f.status === 'error' ? 'background:rgba(229,72,77,.12);color:var(--red,#e5484d);'
-									: 'background:rgba(48,164,108,.12);color:var(--green,#30a46c);'">
-								{{ f.status === "needs_approval" ? (f.pending_approvals + " approval" + (f.pending_approvals > 1 ? "s" : "")) : f.status }}
-							</span>
-						</div>
-					</div>
-				</div>
-			</div>
-
-			<div v-if="approvalsOpen" class="jv-skills-overlay" :class="{ 'jv-page-mode': pageMode }" @click.self="approvalsOpen = false; _clearPageHash()">
-				<div class="jv-skills-modal">
-					<div class="jv-skills-head">
-						<div style="min-width:0;">
-							<div class="jv-skills-title">Approvals</div>
-							<div class="jv-skills-sub">Decisions waiting on you. Deciding resumes the chat that asked.</div>
-						</div>
-						<button v-if="!pageMode" class="jv-btn jv-btn--icon" title="Open as page" @click="openAsPage('approvals')">
-							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" /></svg>
-						</button>
-						<button class="jv-btn jv-btn--icon" title="Close (Esc)" @click="approvalsOpen = false; _clearPageHash()">
-							<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
-						</button>
-					</div>
-					<div class="jv-skills-body">
-						<div v-if="approvalsError" class="jv-skill-err">{{ approvalsError }}</div>
-						<div style="display:flex;gap:6px;margin-bottom:10px;">
-							<button class="jv-btn jv-btn--sm" :class="{ 'jv-btn--primary': approvalsView === 'Pending' }" @click="setApprovalsView('Pending')">Pending<span v-if="approvalsBadge"> ({{ approvalsBadge }})</span></button>
-							<button class="jv-btn jv-btn--sm" :class="{ 'jv-btn--primary': approvalsView === 'Decided' }" @click="setApprovalsView('Decided')">Decided</button>
-						</div>
-						<div v-if="approvalTabs.length > 1" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">
-							<button v-for="[tab, n] in approvalTabs" :key="tab" class="jv-btn jv-btn--sm"
-								:class="{ 'jv-btn--primary': approvalTab === tab }" @click="approvalTab = tab">
-								{{ tab }} <span style="opacity:.65;">({{ n }})</span>
-							</button>
-						</div>
-						<div v-if="!approvalItemsShown.length" class="jv-set-empty" style="text-align:center;padding:26px 0;">Nothing waiting on you. 🎉</div>
-						<div v-for="a in approvalItemsShown" :key="a.name" style="border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px;">
-							<div style="display:flex;gap:8px;align-items:center;">
-								<div style="font-size:13px;font-weight:600;flex:1;min-width:0;">{{ a.title }}</div>
-								<span style="font-size:10.5px;border-radius:7px;padding:2px 7px;background:var(--surface-2);color:var(--text-2);flex:none;">{{ (a.document_type || "").trim() || "Unclassified" }}</span>
-							</div>
-							<div style="font-size:12.5px;color:var(--text-2);margin:6px 0;">{{ a.question }}</div>
-							<details v-if="a.context_md" style="margin-bottom:8px;">
-								<summary style="font-size:11.5px;color:var(--text-3);cursor:pointer;">context</summary>
-								<pre style="font-size:11px;white-space:pre-wrap;max-height:180px;overflow:auto;background:var(--surface-2);border-radius:7px;padding:8px;">{{ a.context_md }}</pre>
-							</details>
-							<div v-if="a.status !== 'Pending'" style="font-size:12px;margin-bottom:4px;">
-								<b :style="a.status === 'Approved' ? 'color:var(--green,#30a46c);' : 'color:var(--red,#e5484d);'">{{ a.status }}</b>
-								— {{ a.decision }}
-								<span style="color:var(--text-3);"> · {{ a.decided_by }} · {{ a.decided_at ? new Date(a.decided_at).toLocaleString() : "" }}</span>
-							</div>
-							<div v-if="a.status === 'Pending'" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
-								<button v-for="opt in a.options" :key="opt" class="jv-btn jv-btn--sm"
-									:class="{ 'jv-btn--primary': approvalDrafts[a.name] === opt }"
-									@click="approvalDrafts[a.name] = opt">{{ opt }}</button>
-							</div>
-							<div v-if="a.status === 'Pending'" style="display:flex;gap:6px;">
-								<input v-model="approvalDrafts[a.name]" placeholder="Decision (pick an option or type)"
-									style="flex:1;font-size:12.5px;padding:6px 9px;border:1px solid var(--border);border-radius:7px;background:var(--surface-1);color:var(--text-1);" />
-								<button class="jv-btn jv-btn--primary jv-btn--sm" :disabled="!(approvalDrafts[a.name] || '').trim() || approvalsBusy" @click="doDecide(a, 1)">Approve</button>
-								<button class="jv-btn jv-btn--sm" :disabled="!(approvalDrafts[a.name] || '').trim() || approvalsBusy" @click="doDecide(a, 0)">Reject</button>
-								<button v-if="a.conversation" class="jv-btn jv-btn--sm" title="Open the chat" @click="openApprovalChat(a)">Chat</button>
-							</div>
-							<div v-if="a.status !== 'Pending' && a.conversation" style="display:flex;gap:6px;">
-								<button class="jv-btn jv-btn--sm" title="Open the chat" @click="openApprovalChat(a)">Chat</button>
-							</div>
-						</div>
-					</div>
-				</div>
-			</div>
-
-			<div v-if="macrosModalOpen" class="jv-skills-overlay" :class="{ 'jv-page-mode': pageMode }" @click.self="closeMacrosModal">
-				<div class="jv-skills-modal">
-					<div class="jv-skills-head">
-						<div style="min-width:0;">
-							<div class="jv-skills-title">Macros</div>
-							<div class="jv-skills-sub">Saved prompt sequences your assistant runs as a chain of turns.</div>
-						</div>
-						<button class="jv-btn jv-btn--primary jv-btn--sm" @click="newMacro">
-							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg> New
-						</button>
-						<button class="jv-btn jv-btn--icon" title="Close (Esc)" @click="closeMacrosModal">
-							<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
-						</button>
-					</div>
-					<div class="jv-skills-body">
-						<div v-if="macroError" class="jv-skill-err">{{ macroError }}</div>
-						<div v-if="!macros.length" class="jv-set-empty" style="text-align:center;padding:32px 0;">No macros yet.<br />Hit <strong>New</strong> to record a sequence of prompts.</div>
-						<div v-for="mm in macros" :key="mm.name" class="jv-skill-row">
-							<div style="min-width:0;flex:1;cursor:pointer;" @click="editMacro(mm)">
-								<div class="jv-skill-name" style="font-family:inherit;">{{ mm.macro_name }} <span v-if="!mm.enabled" class="jv-skill-off">draft</span></div>
-								<div class="jv-macro-sub">{{ mm.step_count || 0 }} step{{ (mm.step_count || 0) === 1 ? "" : "s" }}<span v-if="mm.merge_status === 'pending'" class="jv-macro-merged-badge jv-macro-merged-badge--pending" title="Summarizing in the background">summarizing…</span><span v-else-if="(mm.merged_prompt || '').trim()" class="jv-macro-merged-badge" title="Runs its summarized prompt as one turn">summary</span><span v-if="mm.schedule_enabled" class="jv-macro-sched"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>{{ mm.schedule_frequency || "scheduled" }}</span></div>
-							</div>
-							<button v-if="mm.merge_status === 'pending'" class="jv-btn jv-btn--sm" disabled title="The summary is being prepared — Run unlocks when it's ready"><span class="jv-merge-spin" style="width:11px;height:11px;"></span> Summarizing…</button>
-							<button v-else class="jv-btn jv-btn--primary jv-btn--sm" title="Run" @click.stop="runMacroFromList(mm)"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8V4z" /></svg> Run</button>
-							<button class="jv-btn jv-btn--icon jv-ib" title="Edit" @click.stop="editMacro(mm)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg></button>
-							<button class="jv-btn jv-btn--icon jv-ib jv-ib-danger" title="Delete" @click.stop="removeMacro(mm)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" /></svg></button>
-						</div>
-					</div>
-				</div>
-			</div>
-		</transition>
-
-		<!-- ============ MACRO EDITOR POPUP (centered) ============ -->
-		<transition name="jv-fade">
-			<div v-if="macroEditorOpen" class="jv-skills-overlay" @click.self="closeMacroEditor">
-				<div class="jv-skills-modal">
-					<div class="jv-skills-head">
-						<div style="min-width:0;">
-							<div class="jv-skills-title">{{ macroForm.name ? "Edit macro" : "New macro" }}</div>
-							<div class="jv-skills-sub">Each step runs as its own agent turn, in order.</div>
-						</div>
-						<button class="jv-btn jv-btn--icon" title="Close (Esc)" @click="closeMacroEditor">
-							<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
-						</button>
-					</div>
-					<div class="jv-skills-body">
-						<label class="jv-skill-l">Name</label>
-						<input class="jv-skill-in" v-model="macroForm.macro_name" placeholder="e.g. Monthly close" maxlength="140" />
-						<div style="height:10px;"></div>
-						<label class="jv-skill-l">Description</label>
-						<input class="jv-skill-in" v-model="macroForm.description" placeholder="What does this macro do?" maxlength="500" />
-						<div class="jv-set-row" style="margin-top:12px;"><span>Stop if a step fails<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Otherwise the chain keeps going after an error</span></span><button class="jv-switch" :class="{ on: macroForm.stop_on_error }" @click="macroForm.stop_on_error = !macroForm.stop_on_error" role="switch" :aria-checked="String(!!macroForm.stop_on_error)"><span class="jv-switch-knob"></span></button></div>
-						<div class="jv-set-row"><span>Run on a schedule<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Jarvis runs this macro automatically</span></span><button class="jv-switch" :class="{ on: macroForm.schedule_enabled }" @click="macroForm.schedule_enabled = !macroForm.schedule_enabled" role="switch" :aria-checked="String(!!macroForm.schedule_enabled)"><span class="jv-switch-knob"></span></button></div>
-						<div v-if="macroForm.schedule_enabled" class="jv-macro-sched-fields">
-							<div style="flex:1;">
-								<label class="jv-skill-l">Frequency</label>
-								<select class="jv-skill-in" v-model="macroForm.schedule_frequency"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select>
-							</div>
-							<div style="flex:1;">
-								<label class="jv-skill-l">Time</label>
-								<input type="time" class="jv-skill-in" v-model="macroForm.schedule_time" />
-							</div>
-						</div>
-						<!-- Steps stay the editable source; the summarized prompt (own tab) is what runs when set. -->
-						<div class="jv-macro-tabs">
-							<button class="jv-macro-tab" :class="{ on: macroEdTab === 'steps' }" @click="macroEdTab = 'steps'">Steps</button>
-							<button class="jv-macro-tab" :class="{ on: macroEdTab === 'summary' }" @click="macroEdTab = 'summary'">
-								Summarized prompt<span v-if="(macroForm.merged_prompt || '').trim()" class="jv-macro-tab-dot" title="A summary is set — it runs instead of the steps"></span>
-							</button>
-						</div>
-						<template v-if="macroEdTab === 'summary'">
-							<template v-if="(macroForm.merged_prompt || '').trim()">
-								<div class="jv-merge-sub" style="margin-top:10px;">This single prompt <b>runs when you hit Run</b> — the steps stay as its source. Edit freely; saving keeps your edit.</div>
-								<textarea class="jv-merge-text" style="margin-top:8px;" v-model="macroForm.merged_prompt" rows="9"></textarea>
-								<button class="jv-skill-newrow" style="margin-top:10px;margin-bottom:0;" @click="macroForm.merged_prompt = ''">✕ Remove summary — run the steps instead</button>
-							</template>
-							<div v-else class="jv-set-empty" style="margin-top:12px;">No summary yet. Saving with 2+ steps generates one automatically in the background — it lands here and becomes what runs (Run stays locked until it's ready).</div>
-						</template>
-						<template v-if="macroEdTab === 'steps'">
-						<div v-if="!macroForm.steps.length" class="jv-set-empty">No steps yet. Add one below.</div>
-						<div v-for="(st, si) in macroForm.steps" :key="si" class="jv-macro-step" :class="{ dragging: dragStepIdx === si, dragover: dragOverIdx === si && dragStepIdx !== null && dragStepIdx !== si }" @dragover.prevent="onStepDragOver(si)" @dragleave="onStepDragLeave(si)" @drop.prevent="onStepDrop(si)">
-							<div class="jv-macro-step-head">
-								<span class="jv-macro-grip" draggable="true" title="Drag to reorder" @dragstart="onStepDragStart(si, $event)" @dragend="onStepDragEnd"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.5" /><circle cx="15" cy="6" r="1.5" /><circle cx="9" cy="12" r="1.5" /><circle cx="15" cy="12" r="1.5" /><circle cx="9" cy="18" r="1.5" /><circle cx="15" cy="18" r="1.5" /></svg></span>
-								<span class="jv-macro-step-num">{{ si + 1 }}</span>
-								<input class="jv-skill-in jv-macro-step-label" v-model="st.label" placeholder="Optional label" maxlength="140" />
-								<button class="jv-btn jv-btn--icon jv-ib jv-ib-danger" title="Remove step" @click="removeMacroStep(si)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg></button>
-							</div>
-							<textarea class="jv-skill-ta" v-model="st.prompt" rows="3" placeholder="The prompt to send for this step…"></textarea>
-							<div v-if="macroSkillOptions.length" class="jv-macro-step-skills">
-								<span class="jv-macro-step-skills-l"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" /></svg>Skills</span>
-								<button v-for="s in macroSkillOptions" :key="s.name" class="jv-macro-skill-opt jv-macro-skill-opt--sm" :class="{ on: (st.skills || []).includes(s.name) }" @click="toggleStepSkill(si, s.name)" :title="s.description || s.skill_name">
-									<span v-if="(st.skills || []).includes(s.name)" class="jv-ask-tick">✓</span>/{{ s.skill_name }}<span v-if="!s.mine" class="jv-macro-skill-shared">shared</span>
-								</button>
-							</div>
-						</div>
-						<button class="jv-skill-newrow" style="margin-top:12px;margin-bottom:0;" @click="addMacroStep"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg> Add step</button>
-						</template>
-						<!-- Error sits next to Save (the body scrolls — a top-of-form message
-						     is off-screen when a long step list is open, so it was missed). -->
-						<div v-if="macroError" class="jv-skill-err" style="margin-top:12px;">{{ macroError }}</div>
-						<div class="jv-skill-formfoot">
-							<button class="jv-btn jv-btn--primary" :disabled="macroSaving" @click="saveMacro">{{ macroSaving ? "Saving…" : "Save macro" }}</button>
-							<button class="jv-btn jv-btn--ghost" :disabled="macroSaving" @click="closeMacroEditor">Cancel</button>
-						</div>
-					</div>
-				</div>
-			</div>
-		</transition>
-
-		<!-- Macro summarize happens fully in the BACKGROUND (worker applies it);
-		     the only UI is this transient notice + the Run-button gate. -->
-		<transition name="jv-fade">
-			<div v-if="mergeNotice" class="jv-merge-notice">{{ mergeNotice }}</div>
-		</transition>
 
 		<!-- ============ PROACTIVE MESSAGE TOAST (Jarvis started a chat) ============ -->
 		<transition name="jv-fade">
@@ -1284,6 +921,7 @@
 import { ref, computed, inject, onMounted, onBeforeUnmount, nextTick, watch } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import * as api from "@/api"
+import { setMacroPrefill } from "@/composables/macroPrefill"
 import { renderMarkdown } from "@/markdown"
 import JvChart from "@/charts/JvChart.vue"
 
@@ -1475,85 +1113,6 @@ const settingsTab = ref("overview")
 
 // --- Custom skills (Skills settings tab + "/" composer menu) ---
 const customSkills = ref([])
-const skillFormOpen = ref(false)
-const skillSaving = ref(false)
-const skillError = ref("")
-const skillForm = ref({ name: "", skill_name: "", description: "", instructions: "", user_invocable: true, enabled: true })
-const skillsSync = ref({ last_sync_status: "", pending: false })
-let _skillsPoll = null
-// Read-only view of a skill someone shared with me (no editing, saving or toggles).
-const skillReadonly = ref(false)
-const skillSharedBy = ref("")
-
-// --- Skill sharing (owners share read-only use with specific users) ---
-const shareModalOpen = ref(false)
-const shareSkill = ref({ name: "", skill_name: "" })
-const shareSearch = ref("")
-const shareCandidates = ref([]) // [{name, full_name}]
-const shareSelected = ref([]) // array of user ids
-const shareLoading = ref(false)
-const shareSaving = ref(false)
-
-// Own skills vs skills shared with me (both arrive in customSkills).
-const mySkills = computed(() => customSkills.value.filter((s) => s.mine))
-const sharedSkills = computed(() => customSkills.value.filter((s) => !s.mine))
-
-// Candidate rows filtered by the search box; selected users always stay visible.
-const shareMatches = computed(() => {
-	const q = (shareSearch.value || "").trim().toLowerCase()
-	if (!q) return shareCandidates.value
-	return shareCandidates.value.filter((u) =>
-		(u.full_name || "").toLowerCase().includes(q) || (u.name || "").toLowerCase().includes(q))
-})
-
-function _shareInitials(u) {
-	const s = (u && (u.full_name || u.name) || "").trim()
-	if (!s) return "?"
-	const parts = s.split(/\s+/).filter(Boolean)
-	if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
-	return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
-}
-function _shareUser(id) {
-	return shareCandidates.value.find((u) => u.name === id) || { name: id, full_name: id }
-}
-function isShareSelected(id) {
-	return shareSelected.value.includes(id)
-}
-function toggleShareUser(id) {
-	if (shareSelected.value.includes(id)) shareSelected.value = shareSelected.value.filter((x) => x !== id)
-	else shareSelected.value = [...shareSelected.value, id]
-}
-async function openShareModal(s) {
-	shareSkill.value = { name: s.name, skill_name: s.skill_name }
-	shareSearch.value = ""
-	shareSelected.value = []
-	shareCandidates.value = []
-	shareModalOpen.value = true
-	shareLoading.value = true
-	try {
-		const [cand, shares] = await Promise.all([api.listShareableUsers(), api.getSkillShares(s.name)])
-		shareCandidates.value = cand || []
-		shareSelected.value = ((shares && shares.users) || []).map((u) => u.name)
-		// Make sure already-shared users are selectable even if not in the candidate list.
-		const known = new Set(shareCandidates.value.map((u) => u.name))
-		for (const u of ((shares && shares.users) || [])) {
-			if (!known.has(u.name)) { shareCandidates.value.push({ name: u.name, full_name: u.full_name || u.name }); known.add(u.name) }
-		}
-	} catch (e) { notify(_skillErr(e), { type: "error" }) } finally { shareLoading.value = false }
-}
-function closeShareModal() {
-	shareModalOpen.value = false
-	shareSaving.value = false
-}
-async function saveShares() {
-	shareSaving.value = true
-	try {
-		await api.shareCustomSkill(shareSkill.value.name, [...shareSelected.value])
-		await loadCustomSkills()
-		notify("Sharing updated", { type: "success" })
-		closeShareModal()
-	} catch (e) { notify(_skillErr(e), { type: "error" }); shareSaving.value = false }
-}
 
 function _skillErr(e) {
 	return (e && ((e.messages && e.messages[0]) || e.message)) || "Something went wrong."
@@ -1561,467 +1120,29 @@ function _skillErr(e) {
 async function loadCustomSkills() {
 	try { customSkills.value = (await api.listCustomSkills()) || [] } catch (e) { /* keep prior */ }
 }
-async function loadSkillsSync() {
-	try {
-		const s = (await api.getCustomSkillsSyncStatus()) || {}
-		skillsSync.value = { last_sync_status: s.last_sync_status || "", pending: !!s.pending }
-	} catch (e) { /* ignore */ }
-}
-// The right skills sidebar is always present as a slim icon rail (collapsed);
-// clicking the rail expands it. openclaw-style, mirrors the left sidebar rail.
-const skillsModalOpen = ref(false)
-function openSkillsModal(openForm) {
-	skillsModalOpen.value = true
-	skillError.value = ""
-	loadCustomSkills()
-	loadSkillsSync()
-	if (openForm === true) newSkill()
-	else skillFormOpen.value = false
-}
-function closeSkillsModal() {
-	skillsModalOpen.value = false
-	skillFormOpen.value = false
-	skillReadonly.value = false
-	skillSharedBy.value = ""
-	skillError.value = ""
-}
-// Push the current skills to the assistant — the old "Apply", now run
-// automatically on save/delete. No confirm: an empty set legitimately clears
-// all custom skills (e.g. after deleting the last one).
-async function syncSkills() {
-	try {
-		await api.applyCustomSkills()
-		skillsSync.value = { last_sync_status: "pending: applying skills", pending: true }
-		if (_skillsPoll) clearInterval(_skillsPoll)
-		_skillsPoll = setInterval(async () => {
-			await loadSkillsSync()
-			if (!skillsSync.value.pending) { clearInterval(_skillsPoll); _skillsPoll = null }
-		}, 3000)
-	} catch (e) { skillError.value = _skillErr(e) }
-}
-function newSkill() {
-	skillError.value = ""
-	skillReadonly.value = false
-	skillSharedBy.value = ""
-	skillForm.value = { name: "", skill_name: "", description: "", instructions: "", user_invocable: true, enabled: true }
-	skillFormOpen.value = true
-}
-async function editSkill(s) {
-	skillError.value = ""
-	// Shared-with-me skills open read-only: no editing, saving or toggles.
-	skillReadonly.value = !s.mine
-	skillSharedBy.value = ""
-	try {
-		const full = await api.getCustomSkill(s.name)
-		skillForm.value = {
-			name: full.name, skill_name: full.skill_name, description: full.description || "",
-			instructions: full.instructions || "", user_invocable: !!full.user_invocable, enabled: !!full.enabled,
-		}
-		if (full.can_edit === 0 || !s.mine) skillReadonly.value = true
-		skillSharedBy.value = full.shared_by || s.shared_by || ""
-		skillFormOpen.value = true
-	} catch (e) { skillError.value = _skillErr(e) }
-}
-async function saveSkill() {
-	skillError.value = ""
-	skillSaving.value = true
-	try {
-		const f = skillForm.value
-		const payload = {
-			skill_name: (f.skill_name || "").trim().toLowerCase(),
-			description: f.description, instructions: f.instructions,
-			user_invocable: f.user_invocable ? 1 : 0, enabled: f.enabled ? 1 : 0,
-		}
-		if (f.name) await api.updateCustomSkill({ name: f.name, ...payload })
-		else await api.createCustomSkill(payload)
-		skillFormOpen.value = false
-		await loadCustomSkills()
-		syncSkills() // saving pushes to the assistant automatically
-	} catch (e) { skillError.value = _skillErr(e) } finally { skillSaving.value = false }
-}
-async function removeSkill(s) {
-	if (!(await confirmDialog({ title: "Delete skill?", message: `Delete “${s.skill_name}”? It will be removed from your assistant.`, confirmLabel: "Delete" }))) return
-	try {
-		await api.deleteCustomSkill(s.name)
-		await loadCustomSkills()
-		syncSkills() // deleting updates the assistant automatically
-		notify("Skill deleted", { type: "success" })
-	} catch (e) { skillError.value = _skillErr(e) }
-}
 
 // --- Macros (customer-authored prompt sequences run as chained turns) ---
 const macros = ref([])
-const macrosModalOpen = ref(false)
-// ── File Box + Approvals panes ──────────────────────────────────────────────
-const fileboxOpen = ref(false)
-const fileboxDrag = ref(false)
-const fileboxBusy = ref(false)
-const fileboxError = ref("")
-const fileboxItems = ref([])
-const approvalsOpen = ref(false)
-const approvalsBusy = ref(false)
-const approvalsError = ref("")
-const approvalItems = ref([])
-const approvalDrafts = ref({})
 const approvalsBadge = ref(0)
-// ── Page mode: #approvals / #filebox / #skills / #macros open the same
-// surface as a near-fullscreen page (more room for detail); the rail
-// buttons keep the quick popup. Closing clears the hash.
-const pageMode = ref(false)
+const HASH_ROUTES = { skills: "/skills", macros: "/macros", filebox: "/files", approvals: "/approvals", agents: "/agents" }
 function _applyHashRoute() {
 	const h = (window.location.hash || "").replace("#", "")
-	pageMode.value = ["approvals", "filebox", "skills", "macros"].includes(h)
-	// State machine: exactly one surface per hash - close the others first
-	// (navigating #filebox -> #approvals used to stack both overlays).
-	fileboxOpen.value = false
-	approvalsOpen.value = false
-	skillsModalOpen.value = false
-	macrosModalOpen.value = false
-	if (h === "approvals") openApprovals()
-	else if (h === "filebox") openFilebox()
-	else if (h === "skills") openSkillsModal()
-	else if (h === "macros") openMacrosModal()
-	// Back-compat: old #agents deep links now land on the routed Agents page.
-	else if (h === "agents") router.replace("/agents")
+	if (HASH_ROUTES[h]) router.replace(HASH_ROUTES[h])
 }
 const _hashRouteHandler = () => _applyHashRoute()
-function openAsPage(name) {
-	window.location.hash = name
-}
-function _clearPageHash() {
-	if (pageMode.value) {
-		pageMode.value = false
-		history.replaceState(null, "", window.location.pathname + window.location.search)
-	}
-}
 
 async function refreshApprovalsBadge() {
 	try { approvalsBadge.value = (await api.approvalsPendingCount()) || 0 } catch (e) { /* badge is best-effort */ }
 }
-async function openFilebox() {
-	fileboxOpen.value = true
-	fileboxError.value = ""
-	try { fileboxItems.value = (await api.fileboxList()) || [] } catch (e) { fileboxError.value = "Could not load the inbound list." }
-}
-const fileboxUploading = ref(0) // in-flight drops; the box stays open and accepts more
-const fileboxDropStatus = ref([]) // per-file: {key, name, state: uploading|ok|error, error}
-async function _fileboxProcess(file) {
-	// Background-first: each file is its own async pipeline. Keep dropping -
-	// nothing blocks, nothing navigates; items appear in the inbound list as
-	// "processing" and land in Approvals if they need you.
-	if (!file) return
-	fileboxUploading.value++
-	const entry = { key: `${file.name}-${Date.now()}-${Math.random()}`, name: file.name, state: "uploading", error: "" }
-	fileboxDropStatus.value = [entry, ...fileboxDropStatus.value].slice(0, 8)
-	try {
-		const up = await api.uploadFile(file)
-		const res = await api.fileboxDrop(up.file_url, up.file_name)
-		if (!res || !res.ok) throw new Error((res && res.reason) || "drop failed")
-		entry.state = "ok"
-		fileboxItems.value = [
-			{ name: res.conversation_id, title: `File: ${up.file_name}`, creation: new Date().toISOString(), status: "processing", pending_approvals: 0 },
-			...fileboxItems.value.filter((x) => x.name !== res.conversation_id),
-		]
-		fileboxDropStatus.value = [...fileboxDropStatus.value]
-		loadConversations() // background refresh; no navigation
-	} catch (e) {
-		// Per-file error - concurrent drops no longer clobber each other.
-		entry.state = "error"
-		entry.error = e.message || String(e)
-		fileboxDropStatus.value = [...fileboxDropStatus.value]
-	} finally {
-		fileboxUploading.value--
-	}
-}
-function onFileboxDrop(ev) {
-	fileboxDrag.value = false
-	const files = (ev.dataTransfer && ev.dataTransfer.files) || []
-	for (const f of files) _fileboxProcess(f)
-}
-function onFileboxPick(ev) {
-	const files = ev.target.files || []
-	for (const f of files) _fileboxProcess(f)
-	ev.target.value = ""
-}
-async function openFileboxItem(f) {
-	fileboxOpen.value = false
-	await selectConversation(f.name)
-}
-const approvalsView = ref("Pending") // "Pending" | "Decided"
-async function _loadApprovals() {
-	approvalsError.value = ""
-	try {
-		approvalItems.value = (await api.listApprovals(approvalsView.value)) || []
-	} catch (e) { approvalsError.value = "Could not load approvals." }
-}
-async function openApprovals() {
-	approvalsOpen.value = true
-	await _loadApprovals()
-	refreshApprovalsBadge()
-}
-async function setApprovalsView(v) {
-	approvalsView.value = v
-	approvalTab.value = "All"
-	await _loadApprovals()
-}
-async function doDecide(a, approve) {
-	const decision = (approvalDrafts.value[a.name] || "").trim()
-	if (!decision) return
-	approvalsBusy.value = true
-	try {
-		await api.decideApproval(a.name, decision, approve)
-		// Background-first: the decision resumes the chat over there; stay
-		// on the board so the next approval can be handled. The per-item
-		// "Chat" button is the opt-in way in.
-		approvalItems.value = approvalItems.value.filter((x) => x.name !== a.name)
-		delete approvalDrafts.value[a.name]
-		refreshApprovalsBadge()
-		loadConversations()
-	} catch (e) {
-		approvalsError.value = `Could not record the decision: ${e.message || e}`
-	} finally {
-		approvalsBusy.value = false
-	}
-}
-// Internal tabs: group pending approvals by the business document type so a
-// busy queue can be triaged one type at a time. Empty document_type = the
-// classification itself needs deciding - its own tab.
-const approvalTab = ref("All")
-const approvalTabs = computed(() => {
-	const counts = {}
-	for (const a of approvalItems.value) {
-		const k = (a.document_type || "").trim() || "Unclassified"
-		counts[k] = (counts[k] || 0) + 1
-	}
-	return [["All", approvalItems.value.length], ...Object.entries(counts).sort((x, y) => y[1] - x[1])]
-})
-const approvalItemsShown = computed(() => {
-	if (approvalTab.value === "All") return approvalItems.value
-	return approvalItems.value.filter(
-		(a) => (((a.document_type || "").trim()) || "Unclassified") === approvalTab.value,
-	)
-})
-async function openApprovalChat(a) {
-	approvalsOpen.value = false
-	await selectConversation(a.conversation)
-}
 
-const macroEditorOpen = ref(false)
-const macroSaving = ref(false)
-const macroError = ref("")
-const macroForm = ref(_blankMacro())
 // The live macro-run banner: { run, conversation, step, total, label, status }.
 const macroRun = ref(null)
 let _macroDoneTimer = null
 
-function _blankMacro() {
-	return {
-		name: "", macro_name: "", description: "",
-		enabled: true, stop_on_error: true,
-		schedule_enabled: false, schedule_frequency: "daily", schedule_time: "09:00",
-		steps: [],
-		// The stored LLM summary — when set, run_macro runs THIS as one turn
-		// and the steps stay as the editable source. Snapshots (_orig*) let
-		// saveMacro tell "steps changed → stale summary" from a rename-only save.
-		merged_prompt: "", _origMerged: "", _origStepsJson: "",
-	}
-}
-const macroEdTab = ref("steps") // "steps" | "summary"
-// Skills taggable on a macro STEP: my own + shared-with-me, enabled only (a
-// disabled skill can't be invoked, so offering it would silently no-op).
-const macroSkillOptions = computed(() => customSkills.value.filter((s) => s.enabled))
-function toggleStepSkill(si, name) {
-	const st = macroForm.value.steps[si]
-	if (!st) return
-	if (!Array.isArray(st.skills)) st.skills = []
-	const i = st.skills.indexOf(name)
-	if (i >= 0) st.skills.splice(i, 1)
-	else st.skills.push(name)
-}
 async function loadMacros() {
 	try { macros.value = (await api.listMacros()) || [] } catch (e) { /* keep prior */ }
 }
-function openMacrosModal() {
-	macrosModalOpen.value = true
-	macroError.value = ""
-	loadMacros()
-}
-function closeMacrosModal() {
-	macrosModalOpen.value = false
-	macroError.value = ""
-}
-function closeMacroEditor() {
-	macroEditorOpen.value = false
-	macroError.value = ""
-}
-function newMacro() {
-	macroError.value = ""
-	macroForm.value = _blankMacro()
-	macroForm.value.steps = [{ label: "", prompt: "", skills: [] }]
-	macroEdTab.value = "steps"
-	loadSkillsSync() // populate the taggable-skills options
-	macroEditorOpen.value = true
-}
-async function editMacro(m) {
-	macroError.value = ""
-	try {
-		const full = await api.getMacro(m.name)
-		const steps = (Array.isArray(full.steps) ? full.steps : []).map((s) => ({ label: s.label || "", prompt: s.prompt || "", skills: Array.isArray(s.skills) ? [...s.skills] : [] }))
-		macroForm.value = {
-			name: full.name,
-			macro_name: full.macro_name || "",
-			description: full.description || "",
-			enabled: full.enabled == null ? true : !!full.enabled,
-			stop_on_error: !!full.stop_on_error,
-			schedule_enabled: !!full.schedule_enabled,
-			schedule_frequency: full.schedule_frequency || "daily",
-			schedule_time: full.schedule_time || "09:00",
-			steps,
-			merged_prompt: full.merged_prompt || "",
-			_origMerged: full.merged_prompt || "",
-			_origStepsJson: JSON.stringify(steps.filter((s) => (s.prompt || "").trim())),
-		}
-		if (!macroForm.value.steps.length) macroForm.value.steps = [{ label: "", prompt: "", skills: [] }]
-		macroEdTab.value = "steps"
-		loadSkillsSync() // populate the taggable-skills options
-		macroEditorOpen.value = true
-	} catch (e) { macroError.value = _skillErr(e) }
-}
-function addMacroStep() {
-	macroForm.value.steps.push({ label: "", prompt: "", skills: [] })
-}
-function removeMacroStep(i) {
-	macroForm.value.steps.splice(i, 1)
-}
-// Drag-to-reorder steps (premium replacement for up/down buttons). The grip
-// handle is the drag source; the whole step card is the drop target.
-const dragStepIdx = ref(null)
-const dragOverIdx = ref(null)
-function onStepDragStart(i, e) {
-	dragStepIdx.value = i
-	if (e && e.dataTransfer) {
-		e.dataTransfer.effectAllowed = "move"
-		try { e.dataTransfer.setData("text/plain", String(i)) } catch (_) { /* ignore */ }
-	}
-}
-function onStepDragOver(i) {
-	if (dragStepIdx.value !== null) dragOverIdx.value = i
-}
-function onStepDragLeave(i) {
-	if (dragOverIdx.value === i) dragOverIdx.value = null
-}
-function onStepDrop(i) {
-	const from = dragStepIdx.value
-	dragOverIdx.value = null
-	if (from === null || from === i) { dragStepIdx.value = null; return }
-	const steps = macroForm.value.steps
-	const [it] = steps.splice(from, 1)
-	steps.splice(i, 0, it)
-	dragStepIdx.value = null
-}
-function onStepDragEnd() {
-	dragStepIdx.value = null
-	dragOverIdx.value = null
-}
-async function saveMacro() {
-	macroError.value = ""
-	const f = macroForm.value
-	const steps = f.steps
-		.map((s) => ({ label: (s.label || "").trim(), prompt: (s.prompt || "").trim(), skills: Array.isArray(s.skills) ? s.skills : [] }))
-		.filter((s) => s.prompt)
-	if (!(f.macro_name || "").trim()) { macroError.value = "Give the macro a name."; return }
-	if (!steps.length) { macroError.value = "Add at least one step with a prompt."; return }
-	macroSaving.value = true
-	try {
-		const payload = {
-			macro_name: f.macro_name.trim(),
-			description: f.description || "",
-			steps,
-			enabled: f.enabled ? 1 : 0,
-			stop_on_error: f.stop_on_error ? 1 : 0,
-			schedule_enabled: f.schedule_enabled ? 1 : 0,
-			schedule_frequency: f.schedule_frequency || "daily",
-			schedule_time: f.schedule_time || "09:00",
-		}
-		// Summary handling (update only — a new macro has no summary yet): an
-		// edited summary is explicit intent → send it; a rename-only save keeps
-		// the stored one; changed steps with an untouched summary omit it → the
-		// backend clears the stale copy and the re-summarize below regenerates it.
-		const stepsTouched = JSON.stringify(steps) !== (f._origStepsJson || "")
-		const mergedTouched = (f.merged_prompt || "") !== (f._origMerged || "")
-		let sentMerged = ""
-		let savedName = f.name
-		if (f.name) {
-			const upd = { name: f.name, ...payload }
-			if (mergedTouched || !stepsTouched) {
-				upd.merged_prompt = (f.merged_prompt || "").trim()
-				sentMerged = upd.merged_prompt
-			}
-			await api.updateMacro(upd)
-		} else {
-			const r = await api.createMacro(payload)
-			savedName = r && r.data && r.data.name
-		}
-		macroEditorOpen.value = false
-		await loadMacros()
-		// Re-summarize only when the sequence actually changed (or has no
-		// summary yet) — a rename shouldn't burn an LLM turn.
-		const needsSummary = steps.length >= 2 && (stepsTouched || !f.name || !sentMerged)
-		if (savedName && needsSummary) startMacroMerge(savedName)
-	} catch (e) { macroError.value = _skillErr(e) } finally { macroSaving.value = false }
-}
 
-// --- Macro merge: every 2+ step save fires a BACKGROUND summarize turn (no
-// modal, nothing to confirm). The WORKER applies the summary to the macro when
-// the turn ends — even if this tab is gone — and pushes a `macro:merged` event.
-// Run is blocked (backend + button) while merge_status is "pending". ---
-const mergeNotice = ref("")
-let _mergeNoticeTimer = null
-function _showMergeNotice(text) {
-	mergeNotice.value = text
-	if (_mergeNoticeTimer) clearTimeout(_mergeNoticeTimer)
-	_mergeNoticeTimer = setTimeout(() => { mergeNotice.value = "" }, 6000)
-}
-
-async function startMacroMerge(name) {
-	try {
-		await api.summarizeMacro(name)
-		_showMergeNotice("Summarizing in the background — Run unlocks when the summary is ready.")
-	} catch (e) {
-		/* macro is saved either way; without a summary the steps run */
-	}
-	loadMacros() // pick up merge_status=pending for the Run-button gate
-}
-
-async function removeMacro(m) {
-	if (!(await confirmDialog({ title: "Delete macro?", message: `Delete “${m.macro_name}”? This can't be undone.`, confirmLabel: "Delete" }))) return
-	try {
-		await api.deleteMacro(m.name)
-		await loadMacros()
-		notify("Macro deleted", { type: "success" })
-	} catch (e) { macroError.value = _skillErr(e) }
-}
-async function runMacroFromList(m) {
-	macroError.value = ""
-	try {
-		const res = await api.runMacro(m.name)
-		const data = (res && res.data) || res || {}
-		macrosModalOpen.value = false
-		await loadConversations()
-		if (data.conversation) await selectConversation(data.conversation)
-		macroRun.value = {
-			run: data.macro_run,
-			conversation: data.conversation,
-			step: 0,
-			total: m.step_count || 0,
-			label: "",
-			status: "running",
-		}
-	} catch (e) {
-		macroError.value = _skillErr(e)
-		macrosModalOpen.value = true
-	}
-}
 async function stopMacro() {
 	if (!macroRun.value) return
 	try { await api.stopMacroRun(macroRun.value.run) } catch (e) { /* ignore */ }
@@ -2138,31 +1259,6 @@ watch(
 	() => settingsOpen.value && settingsTab.value === "macroruns",
 	(active) => { if (active) loadMacroRuns(true) },
 )
-// A ```jarvis-macro card's "Save as macro" button: pre-fill the editor.
-function openMacroFromCard(card) {
-	macroError.value = ""
-	macroForm.value = _blankMacro()
-	macroForm.value.macro_name = card.name || ""
-	macroForm.value.description = card.description || ""
-	macroForm.value.steps = (card.steps || []).map((s) => ({ label: s.label || "", prompt: s.prompt || "" }))
-	if (!macroForm.value.steps.length) macroForm.value.steps = [{ label: "", prompt: "" }]
-	macroEditorOpen.value = true
-}
-// Header "Save as macro": collect this chat's user prompts into the editor.
-const canSaveAsMacro = computed(
-	() => !!currentId.value && messages.value.some((m) => m.role === "user" && m.content && !m.content.startsWith("▶ Running macro")),
-)
-function saveConversationAsMacro() {
-	macroError.value = ""
-	const steps = messages.value
-		.filter((m) => m.role === "user" && m.content && !m.content.startsWith("▶ Running macro"))
-		.map((m) => ({ label: "", prompt: m.content }))
-	if (!steps.length) return
-	macroForm.value = _blankMacro()
-	macroForm.value.macro_name = currentTitle.value && currentTitle.value !== "New chat" ? currentTitle.value : ""
-	macroForm.value.steps = steps
-	macroEditorOpen.value = true
-}
 const usage = ref(null) // { estimated, chat_tokens, month_tokens, total_tokens, budget_monthly, month_label }
 // Compact token count: 1234 → "1.2k", 2_500_000 → "2.5M".
 function fmtTokens(n) {
@@ -2732,6 +1828,32 @@ function stepCardPage(m, dir) {
 	cardPage.value = { ...cardPage.value, [m.name]: next }
 }
 const _macroCardCache = new Map()
+// "Save as macro" — the macro editor now lives on /macros, so these stash a
+// draft (via macroPrefill) and navigate there; MacrosView opens it pre-filled.
+const canSaveAsMacro = computed(
+	() => !!currentId.value && messages.value.some((m) => m.role === "user" && m.content && !m.content.startsWith("▶ Running macro")),
+)
+function saveConversationAsMacro() {
+	const steps = messages.value
+		.filter((m) => m.role === "user" && m.content && !m.content.startsWith("▶ Running macro"))
+		.map((m) => ({ label: "", prompt: m.content }))
+	if (!steps.length) return
+	setMacroPrefill({
+		macro_name: currentTitle.value && currentTitle.value !== "New chat" ? currentTitle.value : "",
+		steps,
+	})
+	router.push("/macros")
+}
+// An agent-proposed ```jarvis-macro card's "Save as macro" button.
+function openMacroFromCard(card) {
+	setMacroPrefill({
+		macro_name: card.name || "",
+		description: card.description || "",
+		steps: (card.steps || []).map((s) => ({ label: s.label || "", prompt: s.prompt || "" })),
+	})
+	router.push("/macros")
+}
+
 function macroCardOf(m) {
 	const content = (m && m.content) || ""
 	if (!content.includes("jarvis-macro")) return null
@@ -4121,17 +3243,6 @@ function onEvent(p) {
 		patchMacroRunRow(p, false) // live-advance the open run-history dashboard
 		return
 	}
-	// Background summarize finished (worker-side apply) — refresh the Run gate
-	// + badges and tell the user; handled before the current-conversation guard.
-	if (p.kind === "macro:merged") {
-		if (macrosModalOpen.value) loadMacros()
-		_showMergeNotice(
-			p.status === "ready"
-				? `Summary ready — “${p.macro_name || "macro"}” now runs as one prompt.`
-				: `“${p.macro_name || "Macro"}” keeps its step sequence (couldn't summarize).`,
-		)
-		return
-	}
 	if (p.kind === "macro:done") {
 		if (p.conversation === currentId.value && macroRun.value) {
 			macroRun.value = { ...macroRun.value, status: p.status || "completed" }
@@ -4550,14 +3661,6 @@ function onGlobalKey(e) {
 		_settleConfirm(false)
 	} else if (e.key === "Escape" && artifact.value) {
 		closeArtifact()
-	} else if (e.key === "Escape" && macroEditorOpen.value) {
-		closeMacroEditor()
-	} else if (e.key === "Escape" && macrosModalOpen.value) {
-		closeMacrosModal()
-	} else if (e.key === "Escape" && shareModalOpen.value) {
-		closeShareModal()
-	} else if (e.key === "Escape" && skillsModalOpen.value) {
-		closeSkillsModal()
 	} else if (e.key === "Escape" && settingsOpen.value) {
 		settingsOpen.value = false
 	}
@@ -5092,27 +4195,6 @@ function onGlobalKey(e) {
 /* ===== Macros ===== */
 /* list rows */
 .jv-macro-sub { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-3); margin-top: 2px; }
-.jv-macro-sched { display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px; background: var(--blue-bg); color: var(--blue); border-radius: 99px; font-size: 10.5px; font-weight: 600; text-transform: capitalize; }
-/* editor step rows */
-.jv-macro-sched-fields { display: flex; gap: 12px; margin: 8px 0 4px; }
-/* macro per-STEP skill tagging: compact pill multi-select under each prompt */
-.jv-macro-step-skills { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
-.jv-macro-step-skills-l { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); margin-right: 2px; }
-.jv-macro-skill-opt { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border-2); background: var(--surface); color: var(--text-2); font-family: ui-monospace, Menlo, monospace; font-size: 12px; font-weight: 500; cursor: pointer; transition: border-color .12s, background .12s, color .12s, box-shadow .12s; }
-.jv-macro-skill-opt--sm { padding: 3px 9px; font-size: 11px; gap: 4px; }
-.jv-macro-skill-opt:hover { border-color: var(--blue); color: var(--text); }
-.jv-macro-skill-opt.on { background: var(--blue-bg); border-color: var(--blue-bd); color: var(--blue); box-shadow: 0 1px 2px rgba(20, 20, 30, .06); }
-.jv-macro-skill-shared { font-family: 'Inter', system-ui, sans-serif; font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; padding: 1px 6px; border-radius: 999px; background: var(--amber-bg); color: var(--amber); border: 1px solid var(--amber-bd); }
-.jv-macro-step { border: 1px solid var(--border); border-radius: 11px; padding: 10px; margin-top: 10px; background: var(--surface-1); transition: border-color .12s, box-shadow .12s, opacity .12s, transform .12s; }
-.jv-macro-step.dragging { opacity: .45; }
-.jv-macro-step.dragover { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-bg); }
-.jv-macro-step-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-.jv-macro-grip { flex: none; display: flex; align-items: center; justify-content: center; width: 22px; height: 26px; color: var(--text-3); cursor: grab; border-radius: 6px; transition: background .12s, color .12s; }
-.jv-macro-grip:hover { color: var(--text); background: var(--surface-2); }
-.jv-macro-grip:active { cursor: grabbing; }
-.jv-macro-step-num { flex: none; width: 20px; height: 20px; border-radius: 99px; background: var(--blue-bg); color: var(--blue); font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
-.jv-macro-step-label { flex: 1; }
-.jv-macro-step .jv-iconbtn:disabled { opacity: .35; cursor: default; }
 /* progress banner */
 .jv-macrobar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border: 1px solid var(--blue); background: var(--blue-bg); border-radius: 11px; }
 .jv-macrobar.ok { border-color: var(--green); background: var(--green-bg); }
@@ -5132,28 +4214,8 @@ function onGlobalKey(e) {
 .jv-macrocard-sub { font-size: 11.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .jv-macrocard-btn { flex: none; padding: 7px 13px; background: var(--blue); border: 1px solid var(--blue); border-radius: 8px; font-family: inherit; font-size: 12.5px; font-weight: 600; color: #fff; cursor: pointer; transition: opacity .12s; }
 .jv-macrocard-btn:hover { opacity: .9; }
-/* --- macro editor tabs (Steps | Summarized prompt) --- */
-.jv-macro-tabs { display: flex; gap: 4px; margin-top: 16px; border-bottom: 1px solid var(--border); }
-.jv-macro-tab { background: none; border: none; border-bottom: 2px solid transparent; color: var(--text-3); font-size: 12.5px; font-weight: 600; padding: 7px 10px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
-.jv-macro-tab.on { color: var(--text); border-bottom-color: var(--blue); }
-.jv-macro-tab-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
 .jv-macro-merged-badge { margin-left: 7px; font-size: 9.5px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; color: var(--green); background: var(--green-bg); border: 1px solid var(--green-bd); border-radius: 99px; padding: 1px 7px; }
 .jv-macro-merged-badge--pending { color: var(--amber); background: var(--amber-bg); border-color: var(--amber-bd); }
-
-/* --- macro merge review --- */
-.jv-merge-modal { width: min(640px, 92vw); background: var(--surface); border: 1px solid var(--border-2); border-radius: 13px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
-.jv-merge-head { display: flex; align-items: center; gap: 10px; }
-.jv-merge-head b { font-size: 15px; }
-.jv-merge-head .jv-art-close { margin-left: auto; }
-.jv-merge-pending { color: var(--text-2); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 0; }
-.jv-merge-sub { flex-basis: 100%; font-size: 12px; color: var(--text-3); }
-.jv-merge-spin { width: 14px; height: 14px; border: 2px solid var(--border-2); border-top-color: var(--blue); border-radius: 50%; animation: jv-spin 0.9s linear infinite; }
-.jv-merge-deps { display: flex; gap: 6px; flex-wrap: wrap; }
-.jv-merge-chip { font-size: 11px; font-weight: 600; color: var(--blue); background: var(--blue-bg); border: 1px solid var(--blue-bd); border-radius: 99px; padding: 3px 9px; }
-.jv-merge-text { width: 100%; box-sizing: border-box; background: var(--surface-1); border: 1px solid var(--border-2); border-radius: 9px; color: var(--text); padding: 10px 12px; font-size: 13.5px; line-height: 1.5; resize: vertical; }
-.jv-merge-keep { color: var(--text-2); background: var(--surface-1); border: 1px solid var(--border); border-radius: 9px; padding: 12px 14px; }
-.jv-merge-foot { display: flex; gap: 10px; align-items: center; }
-.jv-merge-notice { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); z-index: 60; background: var(--surface-2); border: 1px solid var(--border-2); color: var(--text); border-radius: 99px; padding: 9px 16px; font-size: 13px; box-shadow: 0 8px 28px rgba(0,0,0,.35); }
 
 /* rich action cards (doc confirm / email draft) */
 /* .jv-action must stay overflow:visible — the edit form's Link dropdown
@@ -5306,9 +4368,4 @@ function onGlobalKey(e) {
 .jv-slide-enter-from, .jv-slide-leave-to { opacity: 0; }
 .jv-slide-enter-from .jv-artifact-panel, .jv-slide-leave-to .jv-artifact-panel { transform: translateX(100%); }
 
-.jv-page-mode .jv-skills-modal {
-	width: min(1150px, 96vw);
-	height: 93vh;
-	max-height: 93vh;
-}
 </style>

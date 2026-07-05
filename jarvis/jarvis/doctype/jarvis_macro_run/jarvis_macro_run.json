@@ -23,7 +23,8 @@
       "fieldtype": "Link",
       "label": "Macro",
       "options": "Jarvis Macro",
-      "in_list_view": 1
+      "in_list_view": 1,
+      "search_index": 1
     },
     {
       "fieldname": "conversation",
@@ -38,7 +39,8 @@
       "label": "Status",
       "options": "queued\nrunning\ncompleted\nfailed\nstopped",
       "default": "queued",
-      "in_list_view": 1
+      "in_list_view": 1,
+      "search_index": 1
     },
     {
       "fieldname": "current_step",
