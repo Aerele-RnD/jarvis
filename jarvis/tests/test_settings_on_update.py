@@ -11,12 +11,10 @@ Post-unification (2026-05-29): on_update always dispatches via
 tests mock `jarvis.admin_client.*` accordingly.
 """
 
-import unittest
 from unittest.mock import patch
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
-from frappe.utils.password import remove_encrypted_password, set_encrypted_password
 
 
 LLM_BASELINE = {
@@ -50,36 +48,26 @@ def _reset_settings():
     `_sync_via_admin` doesn't fail with `AdminAuthError` (callers mock
     the admin_client HTTP call separately).
 
-    Two test-isolation guards are baked in here:
-
-    * ``llm_auth_mode`` is pinned to its ``api_key`` default. The classifier
-      keys ``restart`` off ``has_value_changed("llm_auth_mode")``. When the
-      field is absent/empty in ``tabSingles`` (as a prior test can leave it),
-      ``get_single`` applies the ``api_key`` default in memory while the
-      ``for_update`` snapshot loaded during ``save()`` reads it back as
-      ``None`` - so *every* save misfires as a structural ``restart``.
-      Persisting a concrete value makes both sides agree.
-    * Password fields are rewritten through the encrypted ``__Auth`` store.
-      ``db_set`` on a Password field only writes plaintext into ``tabSingles``
-      and never touches ``__Auth``, so a stale encrypted entry bled in from
-      another test (e.g. ``test_onboarding_sync``'s ``sk-test``) keeps winning
-      on ``get_password()``. Clear + set makes ``__Auth`` authoritative.
-    """
+    Also clears the unified-config pool state (models child rows + preset):
+    these tests assert the LEGACY single-model routing, and a leftover pool
+    row — from the v1_seed_llm_models migration on a configured site, or from
+    another module's pool tests — flips on_update onto the pool-sync path and
+    the legacy assertions fail order-dependently."""
+    frappe.db.delete("Jarvis LLM Pool Model",
+                     {"parenttype": "Jarvis Settings", "parent": "Jarvis Settings"})
     settings = frappe.get_single("Jarvis Settings")
     base = {
         **LLM_BASELINE,
-        "llm_auth_mode": "api_key",
         "jarvis_admin_url": "http://127.0.0.1:8000",
         "jarvis_admin_api_key": "test-admin-key",
         "jarvis_admin_api_secret": "test-admin-secret",
         "last_sync_status": "",
         "last_sync_at": None,
+        "preset": "",
+        "proxy_active": 0,
     }
     for field, value in base.items():
         settings.db_set(field, value)
-    for field in _SNAPSHOT_PASSWORD_FIELDS:
-        remove_encrypted_password("Jarvis Settings", "Jarvis Settings", field)
-        set_encrypted_password("Jarvis Settings", "Jarvis Settings", base[field], field)
     frappe.db.commit()
 
 
@@ -117,7 +105,6 @@ class TestOnUpdateClassification(_SettingsSingletonTestCase):
         super().setUp()
         _reset_settings()
 
-    @unittest.skip("quarantined: fresh-site Frappe Singles classifier misfire — see issue #192")
     def test_no_change_is_noop(self):
         settings = frappe.get_single("Jarvis Settings")
         with patch.object(type(settings), "_sync_via_admin") as sync_mock:
@@ -138,7 +125,6 @@ class TestOnUpdateClassification(_SettingsSingletonTestCase):
             settings.save()
         sync_mock.assert_called_once_with("restart")
 
-    @unittest.skip("quarantined: fresh-site Frappe Singles classifier misfire — see issue #192")
     def test_only_key_change_triggers_reload(self):
         settings = frappe.get_single("Jarvis Settings")
         settings.llm_api_key = "sk-new-key-9999"
@@ -177,7 +163,6 @@ class TestOnUpdateClassification(_SettingsSingletonTestCase):
             settings.save()
         sync_mock.assert_called_once_with("restart")
 
-    @unittest.skip("quarantined: fresh-site Frappe Singles classifier misfire — see issue #192")
     def test_temperature_change_is_noop(self):
         settings = frappe.get_single("Jarvis Settings")
         settings.llm_temperature = 0.5
@@ -185,7 +170,6 @@ class TestOnUpdateClassification(_SettingsSingletonTestCase):
             settings.save()
         sync_mock.assert_not_called()
 
-    @unittest.skip("quarantined: fresh-site Frappe Singles classifier misfire — see issue #192")
     def test_max_output_tokens_change_is_noop(self):
         settings = frappe.get_single("Jarvis Settings")
         settings.llm_max_output_tokens = 8192
@@ -204,7 +188,6 @@ class TestOnUpdateAlwaysAdminPath(_SettingsSingletonTestCase):
         super().setUp()
         _reset_settings()
 
-    @unittest.skip("quarantined: fresh-site Frappe Singles classifier misfire — see issue #192")
     def test_on_update_routes_to_admin(self):
         settings = frappe.get_single("Jarvis Settings")
         settings.llm_api_key = "sk-rotated"
@@ -219,7 +202,6 @@ class TestOnUpdateStatus(_SettingsSingletonTestCase):
         super().setUp()
         _reset_settings()
 
-    @unittest.skip("quarantined: fresh-site Frappe Singles classifier misfire — see issue #192")
     def test_records_ok_reload_via_admin_on_success(self):
         settings = frappe.get_single("Jarvis Settings")
         settings.llm_api_key = "sk-new"
@@ -251,7 +233,6 @@ class TestOnUpdateStatus(_SettingsSingletonTestCase):
         self.assertIn("failed", settings.last_sync_status or "")
         self.assertIn("admin unreachable", settings.last_sync_status or "")
 
-    @unittest.skip("quarantined: fresh-site Frappe Singles classifier misfire — see issue #192")
     def test_save_succeeds_even_when_admin_call_fails(self):
         from jarvis.exceptions import AdminUnreachableError
         settings = frappe.get_single("Jarvis Settings")
@@ -556,7 +537,6 @@ class TestOnUpdateAsyncPending(_SettingsSingletonTestCase):
         super().setUp()
         _reset_settings()
 
-    @unittest.skip("quarantined: fresh-site Frappe Singles classifier misfire — see issue #192")
     def test_pending_status_written_before_enqueue_for_reload(self):
         seen = []
 
@@ -620,7 +600,6 @@ class TestEnqueueDedupAndJobId(_SettingsSingletonTestCase):
         frappe.flags.in_test = False
         self.addCleanup(lambda: setattr(frappe.flags, "in_test", True))
 
-    @unittest.skip("quarantined: fresh-site Frappe Singles classifier misfire — see issue #192")
     def test_enqueue_carries_action_keyed_job_id_and_dedupe_flag(self):
         settings = frappe.get_single("Jarvis Settings")
         settings.llm_api_key = "sk-rotation-1"

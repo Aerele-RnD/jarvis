@@ -13,8 +13,8 @@
    "indent": 0,
    "keep_closed": 0,
    "label": "Account",
-   "link_to": "jarvis-account",
-   "link_type": "Page",
+   "link_to": "/jarvis/account",
+   "link_type": "URL",
    "show_arrow": 0,
    "type": "Link"
   }

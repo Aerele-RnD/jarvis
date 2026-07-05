@@ -27,6 +27,77 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		"OpenAI-Compatible":  { model: "",                                  baseUrl: "" },
 	};
 	const PROVIDERS = Object.keys(PROVIDER_DEFAULTS);
+	// Stored pools may carry the provider *id* (e.g. "openai_compat" from presets /
+	// admin normalization) rather than the dropdown *label* ("OpenAI-Compatible").
+	// Map id -> label so the <select> selects the right option on load; a value that
+	// is already a label passes through unchanged.
+	const PROVIDER_LABEL_BY_ID = {
+		anthropic: "Anthropic", openai: "OpenAI", google: "Google Gemini", mistral: "Mistral",
+		groq: "Groq", together: "Together AI", deepseek: "DeepSeek", moonshot: "Moonshot (Kimi)",
+		openrouter: "OpenRouter", ollama: "Ollama (local)", vllm: "vLLM (local)", openai_compat: "OpenAI-Compatible",
+	};
+	function providerLabel(v) {
+		if (!v) return v;
+		if (PROVIDER_DEFAULTS[v]) return v;   // already a label
+		return PROVIDER_LABEL_BY_ID[v] || v;  // map id -> label (or keep unknown as-is)
+	}
+
+	// ---- model suggestions (Custom-mode <datalist>) -----------------------
+	// The Custom rows bind the model field to a <datalist> so common IDs are
+	// pickable while arbitrary IDs stay typeable (openai_compat / Ollama / shim
+	// need custom model ids). Suggestions are sourced per provider:
+	//   1) the already-loaded preset catalog (models grouped by vendor id), then
+	//   2) a small static fallback for providers the catalog omits, then
+	//   3) the provider's default model. Deduped, catalog-first.
+	// Static fallback keyed by the provider dropdown LABEL.
+	const STATIC_MODEL_SUGGESTIONS = {
+		"Anthropic":         ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"],
+		"OpenAI":            ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-4o"],
+		"Google Gemini":     ["gemini-2.5-pro", "gemini-3.5-flash", "gemini-3.1-flash-lite"],
+		"Mistral":           ["mistral-large-latest", "mistral-medium-latest", "mistral-small-latest"],
+		"Groq":              ["llama-3.3-70b-versatile"],
+		"Together AI":       ["meta-llama/Llama-3.3-70B-Instruct-Turbo"],
+		"DeepSeek":          ["deepseek-chat"],
+		"Moonshot (Kimi)":   ["kimi-k2.6"],
+		"OpenRouter":        ["anthropic/claude-sonnet-4-6", "openai/gpt-5.5"],
+		"Ollama (local)":    ["qwen2.5:3b", "qwen2.5:0.5b", "llama3"],
+		"OpenAI-Compatible": ["claude-sonnet-4-6", "gpt-4o", "qwen2.5:3b", "llama3"],
+		// vLLM (local): no useful default → plain free-text input.
+	};
+	// Subscription rows suggest the upstream's chat models (keyed by upstream id).
+	const SUB_MODEL_SUGGESTIONS = {
+		openai: ["gpt-5.5", "gpt-5.4"],
+		google: ["gemini-2.5-pro", "gemini-3.5-flash"],
+	};
+	// Preset-catalog vendor ids -> provider dropdown label. The catalog uses
+	// "gemini"; the dropdown label is "Google Gemini" (stored id "google"), so
+	// alias both to the same label. Others fall through to providerLabel.
+	function catalogVendorLabel(vid) {
+		if (vid === "gemini") return "Google Gemini";
+		return providerLabel(vid);
+	}
+	// Suggested model ids for an API-key row's provider (label or id).
+	function modelSuggestionsForProvider(provider) {
+		const label = providerLabel(provider || "");
+		const out = [];
+		const push = (id) => { if (id && out.indexOf(id) === -1) out.push(id); };
+		(presetCatalog || []).forEach((e) => (e.models || []).forEach((m) => {
+			if (catalogVendorLabel(m.provider) === label) push(m.model);
+		}));
+		(STATIC_MODEL_SUGGESTIONS[label] || []).forEach(push);
+		push((PROVIDER_DEFAULTS[label] || {}).model);
+		return out;
+	}
+	// Suggested model ids for a subscription row's chosen upstream.
+	function subModelSuggestions(upstream) {
+		return SUB_MODEL_SUGGESTIONS[upstream] || [];
+	}
+	// A <datalist> of model-id suggestions. Empty list → the bound input just
+	// behaves as a plain free-text field.
+	function renderModelDatalist(id, suggestions) {
+		const opts = (suggestions || []).map((m) => `<option value="${esc(m)}"></option>`).join("");
+		return `<datalist id="${id}">${opts}</datalist>`;
+	}
 
 	// Subscription states that allow LLM credential changes. The others all
 	// imply "service is paused" so the form is read-only.
@@ -62,6 +133,10 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	// duplicated 4-5 times" from the 2026-06-16 cross-repo review.
 	let subscriptionModels = {};
 	let defaultModels = {};
+	// Preset failover ladders (jarvis.onboarding.get_preset_catalog). Fetched in
+	// loadInitial alongside the pool config so the Preset tab is populated before
+	// the user opens it. Empty on fetch failure → Preset tab shows a fallback line.
+	let presetCatalog = [];
 
 	// AI provider card state.
 	// aiTab follows llm_auth_mode by default; can diverge briefly while
@@ -78,6 +153,14 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		subNonce: null,
 		subAuthorizeUrl: null,   // shown to the customer in Screen 2
 		subExpiresAt: null,
+		// LLM SETUP mode (mirrors the onboarding wizard): "quick" | "preset" |
+		// "custom". Seeded from the saved config in loadInitial so the editor
+		// opens on the tab that matches what's stored.
+		llmMode: "quick",
+		selectedPreset: null,   // Preset tab: chosen catalog key
+		savedPreset: "",        // preset key currently persisted (for the hint)
+		presetKeys: {},         // Preset tab: vendor -> api_key (progressive)
+		customRows: [],         // Custom tab: ordered failover rows (see blankCustomRow)
 	};
 
 	// ---- helpers -----------------------------------------------------------
@@ -124,6 +207,15 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 					renderSelfHostAccount(st.message);
 					return null;
 				}
+
+				// Managed tenants: account management now lives in the Jarvis SPA.
+				// Redirect there unless ?billing=1 (the billing/upgrade flow is not
+				// yet in the SPA — Phase 2). Self-hosted tenants above keep this page.
+				if (!new URLSearchParams(window.location.search).get("billing")) {
+					window.location.replace("/jarvis/account");
+					return null;
+				}
+
 				return frappe.call({ method: "jarvis.account.is_onboarded" });
 			})
 			.then((r) => {
@@ -137,12 +229,18 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 					frappe.call({ method: "jarvis.account.get_account" }),
 					frappe.db.get_doc("Jarvis Settings"),
 					frappe.call({ method: "jarvis.chat.api.get_chat_ui_settings" }),
-				]).then(([acc, settings, chatUi]) => {
+					// Preset catalog + effective pool config for the full 3-mode
+					// LLM editor (mirrors the onboarding wizard). Both fall back
+					// gracefully so a failure never blanks the account page.
+					frappe.call({ method: "jarvis.onboarding.get_preset_catalog" }).catch(() => ({ message: [] })),
+					frappe.call({ method: "jarvis.onboarding.get_llm_config" }).catch(() => ({ message: {} })),
+				]).then(([acc, settings, chatUi, catalog, llmCfg]) => {
 					account = (acc && acc.message) || {};
 					settingsLocal = settings || {};
 					const cui = (chatUi && chatUi.message) || {};
 					subscriptionModels = cui.subscription_models || {};
 					defaultModels = cui.default_models || {};
+					presetCatalog = (catalog && catalog.message) || [];
 					// First-paint seed: pick the canonical default for the
 					// initial subProvider so render() doesn't show an empty
 					// model dropdown before the user has touched anything.
@@ -173,6 +271,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 							ui.subModel = valid[0] || ui.subModel;
 						}
 					}
+					seedLlmSetupFromConfig((llmCfg && llmCfg.message) || {});
 					render();
 				});
 			})
@@ -285,12 +384,69 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	const ICON_KEY = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>`;
 	const ICON_CHAT = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`;
 
+	// Full 3-mode LLM editor — visually + behaviourally identical to the
+	// onboarding wizard's "Connect AI" step:
+	//   Quick   → a single model, sent DIRECT (API key or Chat subscription).
+	//   Preset  → a catalog failover ladder (single- or cross-vendor).
+	//   Custom  → a hand-built failover pool; each row is an API key OR a
+	//             pooled chat subscription (multiple OAuth accounts + rotation).
+	// The card re-renders itself (rerenderAiCard) on structural changes so the
+	// three modes share one native ja-* editor across onboarding and here.
 	function renderAiProviderCard(editable) {
-		const provider = settingsLocal.llm_provider || "-";
+		const setupTabs = `
+			<label class="ja-tabs-label">Setup</label>
+			<div class="ja-tabs ja-tabs-3 ja-setup-tabs" role="tablist" data-active="${ui.llmMode}">
+				<span class="ja-tabs-thumb" aria-hidden="true"></span>
+				${["quick", "preset", "custom"].map((m) =>
+					`<button type="button" class="ja-tab ${ui.llmMode === m ? "ja-tab-active" : ""}" data-llmmode="${m}" role="tab" aria-selected="${ui.llmMode === m}"><span>${m[0].toUpperCase() + m.slice(1)}</span></button>`
+				).join("")}
+			</div>`;
+		return `<div class="ja-card" id="ja-ai-card">
+			<div class="ja-eyebrow">AI provider</div>
+			<div class="ja-card-head" style="margin-bottom:18px">
+				<h2 class="ja-h">How Jarvis talks to your LLM</h2>
+				${renderModeBadge()}
+			</div>
+			${setupTabs}
+			<div class="ja-llm-setup">${renderLlmMode(editable)}</div>
+		</div>`;
+	}
+
+	// Direct/Proxy pill in the card head, derived via the shared pool logic
+	// (window.jarvis_onboarding_llm.deriveMode). Quick is always Direct; a
+	// preset or a ≥2-model pool is Proxy.
+	function renderModeBadge() {
+		const P = window.jarvis_onboarding_llm || {};
+		let mode = "direct";
+		if (ui.llmMode === "preset") {
+			mode = ui.selectedPreset ? "proxy" : "direct";
+		} else if (ui.llmMode === "custom") {
+			const valid = (ui.customRows || []).filter((r) => r && (
+				r.credType === "subscription"
+					? (r.model || "").trim()
+					: ((r.provider || "").trim() && (r.model || "").trim())
+			));
+			mode = P.deriveMode ? P.deriveMode(valid, null) : (valid.length > 1 ? "proxy" : "direct");
+		}
+		return mode === "proxy"
+			? `<span class="ja-pill ja-pill-ok">🔀 Proxy (failover)</span>`
+			: `<span class="ja-pill ja-pill-muted">⟶ Direct</span>`;
+	}
+
+	function renderLlmMode(editable) {
+		if (ui.llmMode === "preset") return renderPresetMode(editable);
+		if (ui.llmMode === "custom") return renderCustomMode(editable);
+		return renderQuickMode(editable);
+	}
+
+	// QUICK — the single-model DIRECT editor (unchanged behaviour): API key |
+	// Chat subscription auth-mode tabs, single-account paste-back OAuth,
+	// save_llm_creds. Wrapped under the "Quick" setup tab.
+	function renderQuickMode(editable) {
 		const inApiKeyMode = settingsLocal.llm_auth_mode !== "oauth";
 		const tabs = `
 			<label class="ja-tabs-label">Authentication mode</label>
-			<div class="ja-tabs" role="tablist" data-active="${ui.aiTab}">
+			<div class="ja-tabs ja-auth-tabs" role="tablist" data-active="${ui.aiTab}">
 				<span class="ja-tabs-thumb" aria-hidden="true"></span>
 				<button type="button" class="ja-tab ${ui.aiTab === "api_key" ? "ja-tab-active" : ""}"
 					data-tab="api_key" role="tab" aria-selected="${ui.aiTab === "api_key"}">
@@ -304,15 +460,10 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		const body = ui.aiTab === "api_key"
 			? renderApiKeyPanel(editable, inApiKeyMode)
 			: renderSubscriptionPanel(editable, !inApiKeyMode);
-		return `<div class="ja-card">
-			<div class="ja-eyebrow">AI provider</div>
-			<div class="ja-card-head" style="margin-bottom:18px">
-				<h2 class="ja-h">How Jarvis talks to your LLM</h2>
-				${!inApiKeyMode ? `<span class="ja-pill ja-pill-ok">${esc(provider)}</span>` : ""}
-			</div>
+		return `
+			<p class="ja-sub" style="margin-bottom:14px">A single model, sent directly to the provider. Need multiple models with failover? Use <b>Preset</b> or <b>Custom</b>.</p>
 			${tabs}
-			<div class="ja-tab-body">${body}</div>
-		</div>`;
+			<div class="ja-tab-body">${body}</div>`;
 	}
 
 	function renderApiKeyPanel(editable, isActiveMode) {
@@ -455,7 +606,37 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	}
 
 	function bindAiProviderCard(editable) {
-		$body.find(".ja-tab").on("click", function () {
+		// SETUP tabs (Quick | Preset | Custom). Switching modes re-renders the
+		// whole AI card — matches how the onboarding wizard re-renders its LLM
+		// step on a setup-mode switch.
+		$body.find(".ja-setup-tabs .ja-tab[data-llmmode]").on("click", function () {
+			const m = $(this).data("llmmode");
+			if (m === ui.llmMode) return;
+			ui.llmMode = m;
+			// Leaving Quick abandons any in-flight single-account paste-back.
+			if (m !== "quick") cancelSubscriptionFlow();
+			rerenderAiCard(editable);
+		});
+		bindLlmMode(editable);
+	}
+
+	// Re-render only the AI provider card (not the plan/billing sections) and
+	// re-wire it. Used on every structural change inside the LLM editor.
+	function rerenderAiCard(editable) {
+		$body.find("#ja-ai-card").replaceWith(renderAiProviderCard(editable));
+		bindAiProviderCard(editable);
+	}
+
+	function bindLlmMode(editable) {
+		if (ui.llmMode === "preset") return bindPresetMode(editable);
+		if (ui.llmMode === "custom") return bindCustomMode(editable);
+		return bindQuickMode(editable);
+	}
+
+	function bindQuickMode(editable) {
+		// Auth-mode tabs are scoped to .ja-auth-tabs so they don't collide
+		// with the .ja-setup-tabs above them (both use .ja-tab).
+		$body.find(".ja-auth-tabs .ja-tab[data-tab]").on("click", function () {
 			const tab = $(this).data("tab");
 			if (tab === ui.aiTab) return;
 			handleTabSwitch(tab);
@@ -491,7 +672,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		// isn't interrupted by a DOM rebuild.
 		const sub = account.subscription_status || "none";
 		const editable = EDITABLE_STATES.has(sub);
-		const $tabs = $body.find(".ja-tabs");
+		const $tabs = $body.find(".ja-auth-tabs");
 		$tabs.attr("data-active", targetTab);
 		$tabs.find(".ja-tab").each(function () {
 			const isActive = $(this).data("tab") === targetTab;
@@ -662,6 +843,559 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		ui.subNonce = null;
 		ui.subAuthorizeUrl = null;
 		ui.subExpiresAt = null;
+	}
+
+	// ======================================================================
+	// LLM SETUP — PRESET + CUSTOM modes (proxy pool via save_llm_pool)
+	// Mirrors jarvis_onboarding.js renderLlmPreset/renderLlmCustom and the
+	// per-row API-key⇄Chat-subscription editor from frontend AiView.vue.
+	// Shared pure logic comes from window.jarvis_onboarding_llm.* (loaded on
+	// every desk page via the jarvis_onboarding_llm.bundle in hooks.py).
+	// ======================================================================
+
+	// Transient per-row state for the inline paste-back connect flow. Never
+	// emitted on save.
+	function blankConnect() {
+		return { open: false, loading: false, error: "", nonce: "", authorizeUrl: "", pastedUrl: "" };
+	}
+
+	function blankCustomRow() {
+		return {
+			credType: "api_key", provider: PROVIDERS[0] || "Anthropic", model: "",
+			apiKey: "", baseUrl: "", has_key: false,
+			rotation: "sticky", upstream: "openai", accounts: [], connect: blankConnect(),
+		};
+	}
+
+	// Build the editor's Preset/Custom state from the effective pool config
+	// (jarvis.onboarding.get_llm_config). Subscription-account detail (labels,
+	// upstream, account_ref, rotation) comes straight from get_llm_config's
+	// model.accounts. It must NOT be sourced from settingsLocal.models[].accounts:
+	// accounts used to be a grandchild Table (Jarvis Settings -> models[] ->
+	// accounts[]) which Frappe never persists/loads, so those child rows carry
+	// no accounts. The server now returns display-only accounts (no oauth_blob).
+	function seedLlmSetupFromConfig(cfg) {
+		const models = (cfg && cfg.models) || [];
+		const preset = (cfg && cfg.preset) || "";
+		ui.savedPreset = preset;
+		ui.selectedPreset = preset || null;
+		ui.presetKeys = {};
+		ui.customRows = models.map((m) => {
+			if ((m.credential_type || "api_key") === "subscription") {
+				const accounts = ((m.accounts) || []).map((a) => ({
+					upstream: a.upstream || "openai",
+					account_ref: a.account_ref,
+					label: a.label || a.account_ref,
+					oauth_blob: "",   // never returned by the server; reconnect to change
+				}));
+				return {
+					credType: "subscription", provider: "", model: m.model || "",
+					apiKey: "", baseUrl: "", has_key: !!m.has_key,
+					rotation: m.rotation || "sticky",
+					upstream: (accounts[0] && accounts[0].upstream) || "openai",
+					accounts, connect: blankConnect(),
+				};
+			}
+			return {
+				credType: "api_key", provider: providerLabel(m.provider), model: m.model || "",
+				apiKey: "", baseUrl: m.base_url || "", has_key: !!m.has_key,
+				rotation: "sticky", upstream: "openai", accounts: [], connect: blankConnect(),
+			};
+		});
+		// Open on the tab that matches what's stored: a preset → Preset; a
+		// multi-model or subscription pool → Custom; otherwise the single-model
+		// Quick editor (legacy llm_* mirror).
+		if (preset) ui.llmMode = "preset";
+		else if (models.length >= 2 || models.some((m) => (m.credential_type || "api_key") === "subscription")) ui.llmMode = "custom";
+		else ui.llmMode = "quick";
+	}
+
+	// ---- PRESET mode ------------------------------------------------------
+	function renderPresetMode(editable) {
+		const P = window.jarvis_onboarding_llm || {};
+		if (!presetCatalog.length) {
+			return `<p class="ja-sub" style="margin-top:8px">Couldn't load presets — use <b>Quick</b> or <b>Custom</b>.</p>`;
+		}
+		const dis = editable ? "" : "disabled";
+		const entry = presetCatalog.find((e) => e.key === ui.selectedPreset) || null;
+		const missing = entry && P.missingVendorKeys ? P.missingVendorKeys(entry, ui.presetKeys) : [];
+		const saveDisabled = (!editable || !entry || missing.length > 0) ? "disabled" : "";
+
+		const cardGroup = (kind) => presetCatalog
+			.filter((e) => e.kind === kind)
+			.map((e) => {
+				const sel = ui.selectedPreset === e.key ? "ja-preset-selected" : "";
+				const ladder = (e.models || []).slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+					.map((m, i) => `<div class="ja-preset-model"><span class="ja-hint-inline">${i === 0 ? "Runs every turn" : "Backup " + i}</span> <b>${esc(m.model)}</b></div>`)
+					.join("");
+				return `<div class="ja-preset-card ${sel}" data-pkey="${esc(e.key)}">
+					<div class="ja-preset-label">${esc(e.label)}</div>
+					<div class="ja-hint-inline" style="display:block;margin-bottom:8px">${esc(e.blurb || "")}</div>
+					${ladder}
+				</div>`;
+			}).join("");
+
+		const singleVendorCards = cardGroup("single_vendor");
+		const crossVendorCards = cardGroup("cross_vendor");
+
+		let keyFieldsHtml = "";
+		if (entry) {
+			const vendors = P.uniqueVendors ? P.uniqueVendors(entry) : [];
+			const storedNote = (entry.key === ui.savedPreset)
+				? `<div class="ja-hint-inline" style="display:block;margin-bottom:10px">This preset is active. Keys are stored — re-enter every vendor's key to re-save the ladder.</div>`
+				: "";
+			keyFieldsHtml = storedNote + vendors.map((v) => `
+				<div class="ja-field">
+					<label>${esc(v)} API key</label>
+					<input type="password" class="ja-input ja-preset-key" data-vendor="${esc(v)}" value="${esc(ui.presetKeys[v] || "")}" placeholder="sk-..." autocomplete="off" ${dis}>
+				</div>`).join("");
+		}
+
+		const sync = settingsLocal.last_sync_status || "";
+		return `
+			<p class="ja-sub" style="margin-bottom:14px">Pick a preset failover ladder. Keys are stored encrypted; only your agent container sees the plaintext.</p>
+			<div class="ja-preset-scroll">
+				${singleVendorCards ? `<p class="ja-tabs-label" style="margin-top:8px">Single-vendor ladders</p><div class="ja-preset-cards">${singleVendorCards}</div>` : ""}
+				${crossVendorCards ? `<p class="ja-tabs-label" style="margin-top:14px">Cross-vendor presets</p><div class="ja-preset-cards">${crossVendorCards}</div>` : ""}
+			</div>
+			${entry ? `<div style="margin-top:18px">${keyFieldsHtml}</div>` : ""}
+			<div class="ja-actions">
+				<button class="ja-btn ja-btn-primary" id="ja-preset-save" ${saveDisabled}>Save configuration</button>
+				<span class="ja-llm-status">${sync ? "Last sync: " + esc(sync) : ""}</span>
+			</div>
+			<div class="ja-err" id="ja-llm-err"></div>`;
+	}
+
+	function bindPresetMode(editable) {
+		if (!editable) return;
+		const P = window.jarvis_onboarding_llm || {};
+		$body.find(".ja-preset-card").on("click", function () {
+			ui.selectedPreset = $(this).data("pkey");
+			ui.presetKeys = {};   // reset keys when switching presets
+			rerenderAiCard(editable);
+		});
+		$body.find(".ja-preset-key").on("input", function () {
+			const vendor = $(this).data("vendor");
+			ui.presetKeys[vendor] = $(this).val();
+			const e2 = presetCatalog.find((e) => e.key === ui.selectedPreset);
+			const m2 = (e2 && P.missingVendorKeys) ? P.missingVendorKeys(e2, ui.presetKeys) : ["?"];
+			$body.find("#ja-preset-save").prop("disabled", m2.length > 0);
+		});
+		$body.find("#ja-preset-save").on("click", () => savePreset(editable));
+	}
+
+	function savePreset(editable) {
+		const P = window.jarvis_onboarding_llm || {};
+		const $err = $body.find("#ja-llm-err");
+		$err.text("");
+		const entry = presetCatalog.find((e) => e.key === ui.selectedPreset);
+		if (!entry || (P.missingVendorKeys && P.missingVendorKeys(entry, ui.presetKeys).length)) {
+			$err.text("Presets need every vendor's key. Enter all keys, or use Quick / Custom to finish with fewer keys.");
+			return;
+		}
+		const models = P.presetToModels(entry, ui.presetKeys);
+		const check = P.validatePool(models, entry.key);
+		if (!check.ok) { $err.text(check.error); return; }
+		setBusy("#ja-preset-save", true);
+		frappe.call({
+			method: "jarvis.onboarding.save_llm_pool",
+			args: { models: JSON.stringify(models), preset: entry.key, routing_mode: "failover" },
+		}).then((r) => afterPoolSave(r, "#ja-preset-save"))
+			.catch((e) => { setBusy("#ja-preset-save", false); $err.text(e.message || "Couldn't save preset."); });
+	}
+
+	// ---- CUSTOM mode ------------------------------------------------------
+	function renderCustomMode(editable) {
+		const dis = editable ? "" : "disabled";
+		const rows = ui.customRows || [];
+		const rowsHtml = rows.map((r, i) => renderCustomRow(r, i, rows.length, dis)).join("");
+		const sync = settingsLocal.last_sync_status || "";
+		return `
+			<p class="ja-sub" style="margin-bottom:14px">Build your own failover pool. The first model runs every turn; the rest are backups. Each row is an <b>API key</b> or a <b>Chat subscription</b> (multiple pooled accounts).</p>
+			<div id="ja-custom-rows">${rowsHtml || `<div class="ja-empty" style="padding:8px 0">No models yet — add one below.</div>`}</div>
+			<div class="ja-actions" style="justify-content:flex-start;margin-top:4px">
+				<button class="ja-btn ja-btn-ghost ja-btn-small" id="ja-custom-add" ${dis}>+ Add model</button>
+			</div>
+			<div class="ja-actions">
+				<button class="ja-btn ja-btn-primary" id="ja-custom-save" ${dis}>Save configuration</button>
+				<span class="ja-llm-status">${sync ? "Last sync: " + esc(sync) : ""}</span>
+			</div>
+			<div class="ja-err" id="ja-llm-err"></div>`;
+	}
+
+	function renderCustomRow(r, i, n, dis) {
+		const credType = r.credType || "api_key";
+		const head = `
+			<div class="ja-crow-head">
+				<div class="ja-cred-toggle">
+					${["api_key", "subscription"].map((t) =>
+						`<button type="button" class="ja-cred-btn ${credType === t ? "ja-cred-active" : ""}" data-i="${i}" data-cred="${t}" ${dis}>${t === "api_key" ? "API key" : "Chat subscription"}</button>`
+					).join("")}
+				</div>
+				<div class="ja-crow-move">
+					<button type="button" class="ja-btn ja-btn-ghost ja-btn-small ja-row-up" data-i="${i}" title="Move up" ${i === 0 ? "disabled" : ""} ${dis}>↑</button>
+					<button type="button" class="ja-btn ja-btn-ghost ja-btn-small ja-row-down" data-i="${i}" title="Move down" ${i === n - 1 ? "disabled" : ""} ${dis}>↓</button>
+					<button type="button" class="ja-btn ja-btn-ghost ja-btn-small ja-row-rm" data-i="${i}" title="Remove" ${dis}>✕</button>
+				</div>
+			</div>`;
+		let bodyHtml;
+		if (credType === "subscription") {
+			bodyHtml = renderCustomSubBody(r, i, dis);
+		} else {
+			const provOpts = PROVIDERS.map((p) => `<option value="${esc(p)}" ${p === (r.provider || "") ? "selected" : ""}>${esc(p)}</option>`).join("");
+			const dlId = `ja-dl-model-${i}`;
+			bodyHtml = `
+				<div class="ja-crow-grid">
+					<select class="ja-input ja-custom-prov" data-i="${i}" ${dis}>${provOpts}</select>
+					<input type="text" list="${dlId}" class="ja-input ja-custom-model" data-i="${i}" value="${esc(r.model || "")}" placeholder="model id" ${dis}>
+					<input type="password" class="ja-input ja-custom-key" data-i="${i}" value="${esc(r.apiKey || "")}" placeholder="${r.has_key ? "key set — re-enter to change" : "API key"}" autocomplete="off" ${dis}>
+					<input type="text" class="ja-input ja-custom-base" data-i="${i}" value="${esc(r.baseUrl || "")}" placeholder="base URL (optional)" ${dis}>
+				</div>
+				${renderModelDatalist(dlId, modelSuggestionsForProvider(r.provider || ""))}`;
+		}
+		const runsLabel = i === 0 ? "Runs every turn" : "Backup " + i;
+		return `<div class="ja-crow" data-i="${i}"><div class="ja-crow-tag">${runsLabel}</div>${head}${bodyHtml}</div>`;
+	}
+
+	function renderCustomSubBody(r, i, dis) {
+		const rotation = r.rotation || "sticky";
+		const upstream = r.upstream || "openai";
+		const rotOpts = [["sticky", "Sticky"], ["round_robin", "Round robin"], ["least_used", "Least used"]]
+			.map(([v, l]) => `<option value="${v}" ${rotation === v ? "selected" : ""}>${l}</option>`).join("");
+		const upOpts = [["openai", "OpenAI"], ["google", "Google"]]
+			.map(([v, l]) => `<option value="${v}" ${upstream === v ? "selected" : ""}>${l}</option>`).join("");
+		const accounts = r.accounts || [];
+		const accountsHtml = accounts.length
+			? accounts.map((a, ai) => `<div class="ja-acct">
+					<span class="ja-acct-dot">connected</span>
+					<span class="ja-acct-label">${esc(a.label || a.account_ref)}</span>
+					<span class="ja-hint-inline">${esc(a.upstream || "")}</span>
+					<button type="button" class="ja-acct-rm ja-row-acct-rm" data-i="${i}" data-ai="${ai}" title="Remove account" ${dis}>✕</button>
+				</div>`).join("")
+			: `<div class="ja-hint-inline" style="display:block;margin:4px 0 8px">No accounts connected yet.</div>`;
+
+		const c = r.connect || {};
+		let connectHtml = "";
+		if (c.open) {
+			if (c.authorizeUrl) {
+				connectHtml = `
+					<div class="ja-connect">
+						<p class="ja-hint-inline" style="display:block;margin-bottom:8px">Open the sign-in URL, authorize, then paste the redirected URL (it starts with <code>http://localhost:1455/…</code>).</p>
+						<div class="ja-url-row" style="margin-bottom:8px">
+							<code class="ja-url-text" title="${esc(c.authorizeUrl)}">${esc(c.authorizeUrl)}</code>
+							<button type="button" class="ja-btn ja-btn-ghost ja-btn-small ja-conn-copy" data-i="${i}" title="Copy URL">Copy</button>
+							<button type="button" class="ja-btn ja-btn-ghost ja-btn-small ja-conn-open" data-i="${i}">Open ↗</button>
+						</div>
+						<textarea class="ja-input ja-conn-url" data-i="${i}" rows="2" placeholder="Paste the URL after you sign in">${esc(c.pastedUrl || "")}</textarea>
+						<div class="ja-actions" style="margin-top:8px">
+							<button type="button" class="ja-btn ja-btn-ghost ja-conn-cancel" data-i="${i}">Cancel</button>
+							<button type="button" class="ja-btn ja-btn-primary ja-conn-finish" data-i="${i}" ${c.loading ? "disabled" : ""}>${c.loading ? "Connecting…" : "Connect"}</button>
+						</div>
+						${c.error ? `<div class="ja-err">${esc(c.error)}</div>` : ""}
+					</div>`;
+			} else {
+				connectHtml = `<div class="ja-connect"><div class="ja-hint-inline">${c.error ? "" : "Starting sign-in…"}</div>${c.error ? `<div class="ja-err">${esc(c.error)}</div>` : ""}</div>`;
+			}
+		}
+		const dlId = `ja-dl-submodel-${i}`;
+		return `
+			<div class="ja-crow-grid ja-crow-grid-sub">
+				<input type="text" list="${dlId}" class="ja-input ja-custom-model" data-i="${i}" value="${esc(r.model || "")}" placeholder="model id (e.g. gpt-5.5)" ${dis}>
+				<select class="ja-input ja-custom-upstream" data-i="${i}" title="Upstream" ${dis}>${upOpts}</select>
+				<select class="ja-input ja-custom-rotation" data-i="${i}" title="Account rotation" ${dis}>${rotOpts}</select>
+			</div>
+			${renderModelDatalist(dlId, subModelSuggestions(upstream))}
+			<div class="ja-accts">${accountsHtml}</div>
+			${connectHtml}
+			<button type="button" class="ja-btn ja-btn-ghost ja-btn-small ja-conn-start" data-i="${i}" ${dis}>+ Connect account</button>`;
+	}
+
+	function bindCustomMode(editable) {
+		if (!editable) return;
+		const P = window.jarvis_onboarding_llm || {};
+		// Credential-type toggle (API key ⇄ Chat subscription).
+		$body.find(".ja-cred-btn").on("click", function () {
+			const i = +$(this).data("i");
+			const cred = $(this).data("cred");
+			const row = ui.customRows[i];
+			if (!row || row.credType === cred) return;
+			row.credType = cred;
+			if (cred === "subscription") {
+				if (!row.rotation) row.rotation = "sticky";
+				if (!row.upstream) row.upstream = "openai";
+				if (!Array.isArray(row.accounts)) row.accounts = [];
+				row.connect = blankConnect();
+			}
+			rerenderAiCard(editable);
+		});
+		// Reorder / remove rows.
+		$body.find(".ja-row-up").on("click", function () {
+			const i = +$(this).data("i");
+			if (i > 0) { ui.customRows = P.reorder(ui.customRows, i, i - 1); rerenderAiCard(editable); }
+		});
+		$body.find(".ja-row-down").on("click", function () {
+			const i = +$(this).data("i");
+			if (i < ui.customRows.length - 1) { ui.customRows = P.reorder(ui.customRows, i, i + 1); rerenderAiCard(editable); }
+		});
+		$body.find(".ja-row-rm").on("click", function () {
+			const i = +$(this).data("i");
+			ui.customRows = ui.customRows.filter((_, idx) => idx !== i);
+			rerenderAiCard(editable);
+		});
+		// API-key row fields. Provider change re-renders (autofill defaults +
+		// mode badge); text inputs update state in place to preserve focus.
+		$body.find(".ja-custom-prov").on("change", function () {
+			const i = +$(this).data("i");
+			const p = $(this).val();
+			const d = PROVIDER_DEFAULTS[p] || {};
+			const row = ui.customRows[i] || {};
+			const patch = { provider: p };
+			if (!(row.model || "").trim() && d.model) patch.model = d.model;
+			if (!(row.baseUrl || "").trim() && d.baseUrl) patch.baseUrl = d.baseUrl;
+			ui.customRows[i] = Object.assign({}, row, patch);
+			rerenderAiCard(editable);
+		});
+		$body.find(".ja-custom-model").on("input", function () {
+			const i = +$(this).data("i");
+			if (ui.customRows[i]) ui.customRows[i].model = $(this).val();
+		});
+		$body.find(".ja-custom-key").on("input", function () {
+			const i = +$(this).data("i");
+			if (ui.customRows[i]) ui.customRows[i].apiKey = $(this).val();
+		});
+		$body.find(".ja-custom-base").on("input", function () {
+			const i = +$(this).data("i");
+			if (ui.customRows[i]) ui.customRows[i].baseUrl = $(this).val();
+		});
+		// Subscription row fields. Upstream change re-renders so the model
+		// datalist suggestions follow the chosen upstream (openai/google).
+		$body.find(".ja-custom-upstream").on("change", function () {
+			const i = +$(this).data("i");
+			if (ui.customRows[i]) ui.customRows[i].upstream = $(this).val();
+			rerenderAiCard(editable);
+		});
+		$body.find(".ja-custom-rotation").on("change", function () {
+			const i = +$(this).data("i");
+			if (ui.customRows[i]) ui.customRows[i].rotation = $(this).val();
+		});
+		$body.find(".ja-row-acct-rm").on("click", function () {
+			const i = +$(this).data("i");
+			const ai = +$(this).data("ai");
+			const row = ui.customRows[i];
+			if (row) { row.accounts = (row.accounts || []).filter((_, j) => j !== ai); rerenderAiCard(editable); }
+		});
+		// Per-account connect flow (begin/complete_pool_account_signin).
+		$body.find(".ja-conn-start").on("click", function () { startPoolConnect(+$(this).data("i"), editable); });
+		$body.find(".ja-conn-open").on("click", function () {
+			const i = +$(this).data("i");
+			const url = (ui.customRows[i].connect || {}).authorizeUrl;
+			if (url) window.open(url, "_blank", "noopener,noreferrer");
+		});
+		// Copy the authorize URL — same helper + "Copied ✓" feedback as the
+		// Quick-mode subscription copy button (#ja-sub-copy-url).
+		$body.find(".ja-conn-copy").on("click", function () {
+			const i = +$(this).data("i");
+			const url = (ui.customRows[i].connect || {}).authorizeUrl;
+			if (!url) return;
+			const $btn = $(this);
+			copyTextWithFallback(url).then(() => {
+				const orig = $btn.text();
+				$btn.text("Copied ✓");
+				setTimeout(() => $btn.text(orig), 1400);
+				frappe.show_alert({ indicator: "green", message: __("Sign-in URL copied") });
+			}).catch(() => {
+				frappe.show_alert({ indicator: "red", message: __("Could not copy - select the URL above and copy manually") });
+			});
+		});
+		$body.find(".ja-conn-url").on("input", function () {
+			const i = +$(this).data("i");
+			if (ui.customRows[i].connect) ui.customRows[i].connect.pastedUrl = $(this).val();
+		});
+		$body.find(".ja-conn-cancel").on("click", function () {
+			const i = +$(this).data("i");
+			if (ui.customRows[i]) ui.customRows[i].connect = blankConnect();
+			rerenderAiCard(editable);
+		});
+		$body.find(".ja-conn-finish").on("click", function () { finishPoolConnect(+$(this).data("i"), editable); });
+		// Add row / save.
+		$body.find("#ja-custom-add").on("click", function () {
+			ui.customRows = ui.customRows.concat(blankCustomRow());
+			rerenderAiCard(editable);
+		});
+		$body.find("#ja-custom-save").on("click", () => saveCustom(editable));
+	}
+
+	function startPoolConnect(i, editable) {
+		const row = ui.customRows[i];
+		if (!row) return;
+		if (!(row.model || "").trim()) {
+			row.connect = Object.assign(blankConnect(), { open: true, error: "Enter a model id before connecting an account." });
+			rerenderAiCard(editable);
+			return;
+		}
+		row.connect = Object.assign(blankConnect(), { open: true, loading: true });
+		rerenderAiCard(editable);
+		const provider = row.upstream === "google" ? "Google" : "OpenAI";
+		frappe.call({
+			method: "jarvis.oauth.api.begin_pool_account_signin",
+			args: { provider, model: row.model.trim() },
+		}).then((r) => {
+			const m = r.message || {};
+			const cur = ui.customRows[i];
+			if (!cur) return;
+			if (!m.ok) {
+				cur.connect = Object.assign(blankConnect(), { open: true, error: (m.error && m.error.message) || "Couldn't start sign-in." });
+			} else {
+				cur.connect = Object.assign(blankConnect(), { open: true, loading: false, nonce: m.data.nonce, authorizeUrl: m.data.authorize_url });
+			}
+			rerenderAiCard(editable);
+		}).catch((e) => {
+			const cur = ui.customRows[i];
+			if (!cur) return;
+			cur.connect = Object.assign(blankConnect(), { open: true, error: e.message || "Couldn't reach Jarvis." });
+			rerenderAiCard(editable);
+		});
+	}
+
+	function finishPoolConnect(i, editable) {
+		const row = ui.customRows[i];
+		if (!row || !row.connect || !row.connect.nonce) return;
+		const pasted = (row.connect.pastedUrl || "").trim();
+		if (!pasted) {
+			row.connect.error = "Paste the URL you were redirected to.";
+			rerenderAiCard(editable);
+			return;
+		}
+		row.connect.loading = true;
+		row.connect.error = "";
+		rerenderAiCard(editable);
+		frappe.call({
+			method: "jarvis.oauth.api.complete_pool_account_signin",
+			args: { nonce: row.connect.nonce, redirected_url: pasted },
+		}).then((r) => {
+			const m = r.message || {};
+			const cur = ui.customRows[i];
+			if (!cur) return;
+			if (!m.ok) {
+				cur.connect.loading = false;
+				const code = (m.error && m.error.code) ? m.error.code + ": " : "";
+				cur.connect.error = code + ((m.error && m.error.message) || "Sign-in failed.");
+				rerenderAiCard(editable);
+				return;
+			}
+			const d = m.data || {};
+			if (!Array.isArray(cur.accounts)) cur.accounts = [];
+			cur.accounts.push({
+				upstream: cur.upstream || "openai",
+				account_ref: d.account_ref,
+				label: d.label || d.account_email || d.account_ref,
+				oauth_blob: d.oauth_blob || "",
+			});
+			cur.connect = blankConnect();
+			frappe.show_alert({ message: __("Account connected."), indicator: "green" });
+			rerenderAiCard(editable);
+		}).catch((e) => {
+			const cur = ui.customRows[i];
+			if (!cur) return;
+			cur.connect.loading = false;
+			cur.connect.error = e.message || "Couldn't reach Jarvis.";
+			rerenderAiCard(editable);
+		});
+	}
+
+	// Emit the per-row backend shape save_llm_pool expects: API-key rows carry
+	// {provider, model, api_key, base_url, order}; subscription rows carry
+	// {model, order, subscription:{rotation, accounts:[{upstream, account_ref,
+	// label, oauth_blob}]}}. Matches AiView.vue's save().
+	function buildCustomSaveModels() {
+		return (ui.customRows || []).map((r, i) => {
+			if (r.credType === "subscription") {
+				return {
+					model: (r.model || "").trim(),
+					order: i,
+					subscription: {
+						rotation: r.rotation || "sticky",
+						accounts: (r.accounts || []).map((a) => ({
+							upstream: a.upstream || "openai",
+							account_ref: a.account_ref,
+							label: a.label,
+							oauth_blob: a.oauth_blob || "",
+						})),
+					},
+				};
+			}
+			const m = { provider: (r.provider || "").trim(), model: (r.model || "").trim(), api_key: (r.apiKey || "").trim(), order: i };
+			const b = (r.baseUrl || "").trim();
+			if (b) m.base_url = b;
+			return m;
+		});
+	}
+
+	function saveCustom(editable) {
+		const P = window.jarvis_onboarding_llm || {};
+		const $err = $body.find("#ja-llm-err");
+		$err.text("");
+		const models = buildCustomSaveModels();
+		const check = P.validatePool(models, null);
+		if (!check.ok) { $err.text(check.error); return; }
+		setBusy("#ja-custom-save", true);
+		frappe.call({
+			method: "jarvis.onboarding.save_llm_pool",
+			args: { models: JSON.stringify(models), preset: null, routing_mode: "failover" },
+		}).then((r) => afterPoolSave(r, "#ja-custom-save"))
+			.catch((e) => { setBusy("#ja-custom-save", false); $err.text(e.message || "Couldn't save models."); });
+	}
+
+	// Shared post-save handler for the pool paths (Preset + Custom). Polls the
+	// async provisioning status, then reloads so the editor reflects the saved
+	// pool (and stays on the matching tab).
+	function afterPoolSave(r, btnSel) {
+		const m = r.message || {};
+		const status = (m.last_sync_status || "").trim();
+		settingsLocal.last_sync_status = status;
+		if (status.startsWith("pending:")) {
+			$body.find(".ja-llm-status").text("Provisioning... " + status.replace(/^pending:\s*/i, ""));
+			pollPoolSyncStatus(btnSel);
+		} else {
+			setBusy(btnSel, false);
+			frappe.show_alert({ message: __("LLM configuration saved."), indicator: "green" });
+			loadInitial();
+		}
+	}
+
+	function pollPoolSyncStatus(btnSel) {
+		const startedAt = Date.now();
+		const TIMEOUT_MS = 150 * 1000;
+		const tick = () => {
+			frappe.call({ method: "jarvis.onboarding.get_llm_sync_status" })
+				.then((r) => {
+					const m = r.message || {};
+					const status = (m.last_sync_status || "").trim();
+					settingsLocal.last_sync_status = status;
+					if (!m.pending) {
+						setBusy(btnSel, false);
+						frappe.show_alert({ message: __("LLM configuration saved."), indicator: "green" });
+						loadInitial();
+						return;
+					}
+					if (Date.now() - startedAt > TIMEOUT_MS) {
+						setBusy(btnSel, false);
+						$body.find(".ja-llm-status").text("Still provisioning — check back in a moment.");
+						return;
+					}
+					$body.find(".ja-llm-status").text("Provisioning... " + status.replace(/^pending:\s*/i, ""));
+					setTimeout(tick, 2500);
+				})
+				.catch(() => {
+					if (Date.now() - startedAt > TIMEOUT_MS) {
+						setBusy(btnSel, false);
+						$body.find(".ja-llm-status").text("Lost contact while provisioning — refresh later.");
+						return;
+					}
+					setTimeout(tick, 2500);
+				});
+		};
+		setTimeout(tick, 2500);
 	}
 
 	// ---- plan & validity section ------------------------------------------
@@ -1179,7 +1913,40 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		.ja-kv{width:100%;border-collapse:collapse;margin:8px 0 16px}
 		.ja-kv td{padding:6px 0;font-size:13.5px}
 		.ja-kv td:first-child{color:var(--text-muted);width:140px}
-		@media(max-width:760px){.ja{flex-direction:column}.ja-brand{flex-basis:auto}.ja-panel{padding:24px 22px}.ja-row2{grid-template-columns:1fr}}
+		/* --- LLM 3-mode editor (Quick | Preset | Custom) --- */
+		/* Three-up segmented control: thumb is 1/3 wide and slides in thirds. */
+		.ja-tabs-3 .ja-tabs-thumb{width:calc(33.333% - 4px)}
+		.ja-tabs-3[data-active="preset"] .ja-tabs-thumb{transform:translateX(100%)}
+		.ja-tabs-3[data-active="custom"] .ja-tabs-thumb{transform:translateX(200%)}
+		/* Preset cards */
+		.ja-preset-scroll{max-height:min(48vh,440px);overflow-y:auto;padding-right:4px;scrollbar-gutter:stable}
+		.ja-preset-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:6px}
+		.ja-preset-card{border:1.5px solid var(--border-color);border-radius:12px;padding:14px;cursor:pointer;background:var(--card-bg);transition:border-color .15s,box-shadow .15s}
+		.ja-preset-card:hover{border-color:var(--jarvis-primary)}
+		.ja-preset-card.ja-preset-selected{border-color:var(--jarvis-primary);box-shadow:0 0 0 2px var(--jarvis-primary-faint)}
+		.ja-preset-label{font-size:13px;font-weight:700;color:var(--text-color);margin-bottom:4px}
+		.ja-preset-model{font-size:12px;color:var(--text-muted);margin-top:4px}
+		/* Custom failover rows */
+		.ja-crow{position:relative;border:1px solid var(--border-color);border-radius:10px;padding:12px;margin-bottom:10px;background:var(--card-bg)}
+		.ja-crow-tag{position:absolute;top:-9px;left:12px;font-size:10.5px;font-weight:600;letter-spacing:.3px;text-transform:uppercase;color:var(--text-muted);background:var(--card-bg);padding:0 6px}
+		.ja-crow-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+		.ja-crow-move{margin-left:auto;display:flex;gap:4px}
+		.ja-cred-toggle{display:inline-flex;border:1px solid var(--border-color);border-radius:8px;overflow:hidden}
+		.ja-cred-btn{appearance:none;border:0;background:var(--card-bg);color:var(--text-muted);font-size:12px;font-weight:500;padding:6px 12px;cursor:pointer;transition:background .15s,color .15s}
+		.ja-cred-btn:hover{color:var(--text-color)}
+		.ja-cred-btn.ja-cred-active{background:var(--jarvis-primary-faint);color:var(--jarvis-primary);font-weight:600}
+		.ja-cred-btn:disabled{opacity:.5;cursor:not-allowed}
+		.ja-crow-grid{display:grid;grid-template-columns:1fr 1.4fr 1.4fr 1.4fr;gap:8px;align-items:center}
+		.ja-crow-grid-sub{grid-template-columns:2fr 1fr 1.2fr}
+		.ja-accts{display:flex;flex-direction:column;gap:5px;margin:8px 0}
+		.ja-acct{display:flex;align-items:center;gap:8px;padding:5px 9px;border:1px solid rgba(46,189,89,.35);background:rgba(46,189,89,.08);border-radius:6px}
+		.ja-acct-dot{font-size:11px;font-weight:600;color:var(--green-700,#1f8d3a)}
+		.ja-acct-label{font-size:12.5px;color:var(--text-color)}
+		.ja-acct-rm{margin-left:auto;border:1px solid rgba(226,76,76,.35);background:rgba(226,76,76,.10);color:var(--red-600,#c0392b);border-radius:5px;width:22px;height:22px;cursor:pointer;flex:none;font-size:11px}
+		.ja-acct-rm:disabled{opacity:.5;cursor:not-allowed}
+		.ja-connect{padding:10px;background:var(--bg-color);border:1px solid var(--border-color);border-radius:8px;margin-bottom:8px}
+		.ja-connect textarea{resize:vertical}
+		@media(max-width:760px){.ja{flex-direction:column}.ja-brand{flex-basis:auto}.ja-panel{padding:24px 22px}.ja-row2{grid-template-columns:1fr}.ja-crow-grid,.ja-crow-grid-sub{grid-template-columns:1fr}}
 		`;
 		$(`<style id="ja-styles">${css}</style>`).appendTo(document.head);
 	}

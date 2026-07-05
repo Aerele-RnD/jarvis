@@ -150,10 +150,14 @@ class TestBeginPasteSignin(_OAuthApiBase):
 	def test_gemini_standard_api_model_coerced_to_cli_default(self):
 		"""Same hazard on the Gemini side: a gemini-pro / gemini-1.0-pro from
 		the api_key catalog has to be rewritten to a gemini-cli model before
-		entering the OAuth nonce cache."""
+		entering the OAuth nonce cache. Assert against the catalogue's
+		DEFAULT_MODEL rather than a literal so a catalogue refresh (e.g. the
+		2.0→2.5 bump) doesn't strand this test."""
+		from jarvis._subscription_models import DEFAULT_MODEL
 		out = oauth_api.begin_paste_signin("Google Gemini", "gemini-pro")
 		entry = frappe.cache.hget(_CACHE_KEY, out["data"]["nonce"])
-		self.assertEqual(entry["model"], "gemini-2.5-pro")
+		self.assertEqual(entry["model"], DEFAULT_MODEL["Google Gemini"])
+		self.assertNotEqual(entry["model"], "gemini-pro")
 
 
 class TestCompletePasteSigninParsing(_OAuthApiBase):
@@ -520,5 +524,217 @@ class TestExchangeCodeErrorParsing(_OAuthApiBase):
 			with self.assertRaises(oauth_api.TokenExchangeError) as ctx:
 				oauth_api._exchange_code(provider="openai", code="ac_x", code_verifier="v")
 		self.assertEqual(ctx.exception.code, "token_exchange_failed")
+
+
+class TestCompletePasteSigninRetainsIdToken(_OAuthApiBase):
+	"""Task 1: the openclaw blob pushed by complete_paste_signin must retain
+	the id_token returned by the token exchange. It's used to derive the
+	email then was previously dropped from the blob; a downstream reformat to
+	CLIProxyAPI-codex format needs it. Harmless to the existing DIRECT push
+	(openclaw ignores unknown blob keys)."""
+
+	def _seed(self, provider="OpenAI", model="gpt-5.5"):
+		nonce = "i_" + ("d" * 46)
+		frappe.cache.hset(_CACHE_KEY, nonce, {
+			"provider": provider, "model": model,
+			"status": "pending",
+			"expires_at_ts": int(time.time()) + 600,
+			"verifier": "test-verifier",
+			"state": "test-state",
+			"originator_user": frappe.session.user,
+		})
+		return nonce
+
+	@patch("jarvis.oauth.api.onboarding.save_llm_creds")
+	@patch("jarvis.oauth.api.admin_client.post_push_oauth_blob")
+	@patch("jarvis.oauth.api._exchange_code")
+	def test_pushed_blob_carries_id_token(self, mock_exchange, mock_push, mock_save):
+		access_jwt = _jwt({
+			"https://api.openai.com/auth": {"chatgpt_account_id": "acct-idt"},
+		})
+		mock_exchange.return_value = {
+			"access_token": access_jwt,
+			"refresh_token": "RT",
+			"expires_in": 3600,
+			"id_token": "ID.TOKEN.XYZ",
+			"email": "manager@acme.com",
+		}
+		mock_save.return_value = {"last_sync_status": "ok"}
+		nonce = self._seed()
+
+		out = oauth_api.complete_paste_signin(
+			nonce=nonce,
+			redirected_url="?code=ABC&state=test-state",
+		)
+		self.assertTrue(out["ok"], msg=str(out))
+		mock_push.assert_called_once()
+		blob = mock_push.call_args.args[1]
+		self.assertIn("id_token", blob)
+		self.assertEqual(blob["id_token"], "ID.TOKEN.XYZ")
+
+
+class TestBeginPoolAccountSignin(_OAuthApiBase):
+	"""Task 2: begin_pool_account_signin reuses the DIRECT nonce/PKCE/state
+	machinery but tags the cached entry with pool=True so the pool complete
+	endpoint can tell it apart from a DIRECT paste-signin nonce."""
+
+	def test_returns_nonce_and_authorize_url(self):
+		out = oauth_api.begin_pool_account_signin("OpenAI", "gpt-5.5")
+		self.assertTrue(out["ok"], msg=str(out))
+		self.assertIn("nonce", out["data"])
+		self.assertIn("authorize_url", out["data"])
+		self.assertIn("auth.openai.com", out["data"]["authorize_url"])
+		self.assertEqual(out["data"]["expires_in"], 600)
+		self.assertEqual(len(out["data"]["nonce"]), 48)  # 24 hex bytes
+
+	def test_caches_pool_flag_and_user_binding(self):
+		out = oauth_api.begin_pool_account_signin("OpenAI", "gpt-5.5")
+		entry = frappe.cache.hget(_CACHE_KEY, out["data"]["nonce"])
+		self.assertTrue(entry.get("pool"))
+		self.assertEqual(entry["provider"], "OpenAI")
+		self.assertEqual(entry["model"], "gpt-5.5")
+		self.assertEqual(entry["status"], "pending")
+		self.assertEqual(entry["originator_user"], frappe.session.user)
+		self.assertIn("verifier", entry)
+		self.assertIn("state", entry)
+
+	def test_unknown_provider_rejected(self):
+		out = oauth_api.begin_pool_account_signin("Anthropic", "claude-3-5")
+		self.assertFalse(out["ok"])
+		self.assertEqual(out["error"]["code"], "unknown_provider")
+
+	def test_direct_begin_does_not_set_pool_flag(self):
+		# The DIRECT path must stay untouched: its nonce carries no pool flag.
+		out = oauth_api.begin_paste_signin("OpenAI", "gpt-5.5")
+		entry = frappe.cache.hget(_CACHE_KEY, out["data"]["nonce"])
+		self.assertIsNone(entry.get("pool"))
+
+
+class TestCompletePoolAccountSignin(_OAuthApiBase):
+	"""Task 2: complete_pool_account_signin captures ONE more subscription
+	account and RETURNS the blob (with id_token) for the frontend to store in
+	a pool subscription-account row. It must NOT touch the DIRECT path:
+	no save_llm_creds, no post_push_oauth_blob, no Jarvis Settings write."""
+
+	def _seed(self, provider="OpenAI", model="gpt-5.5", pool=True):
+		nonce = "p_" + ("e" * 46)
+		entry = {
+			"provider": provider, "model": model,
+			"status": "pending",
+			"expires_at_ts": int(time.time()) + 600,
+			"verifier": "test-verifier",
+			"state": "test-state",
+			"originator_user": frappe.session.user,
+		}
+		if pool:
+			entry["pool"] = True
+		frappe.cache.hset(_CACHE_KEY, nonce, entry)
+		return nonce
+
+	@patch("jarvis.oauth.api.onboarding.save_llm_creds")
+	@patch("jarvis.oauth.api.admin_client.post_push_oauth_blob")
+	@patch("jarvis.oauth.api._exchange_code")
+	def test_captures_blob_and_leaves_direct_path_untouched(
+		self, mock_exchange, mock_push, mock_save,
+	):
+		access_jwt = _jwt({
+			"https://api.openai.com/auth": {"chatgpt_account_id": "acct-pool"},
+		})
+		mock_exchange.return_value = {
+			"access_token": access_jwt,
+			"refresh_token": "RT-pool",
+			"expires_in": 3600,
+			"id_token": "ID.POOL.TOKEN",
+			"email": "pool-acct@acme.com",
+		}
+		# Pin a sentinel so we can prove Jarvis Settings is untouched.
+		settings = frappe.get_single("Jarvis Settings")
+		settings.db_set("llm_oauth_account_email", "SENTINEL@unchanged",
+		                update_modified=False)
+		frappe.db.commit()
+
+		nonce = self._seed()
+		out = oauth_api.complete_pool_account_signin(
+			nonce=nonce,
+			redirected_url="http://localhost:1455/auth/callback?code=ABC&state=test-state",
+		)
+
+		self.assertTrue(out["ok"], msg=str(out))
+		data = out["data"]
+
+		# account_ref satisfies the pool-key contract ^[A-Za-z0-9_-]{1,64}$.
+		self.assertRegex(data["account_ref"], r"^[A-Za-z0-9_-]{1,64}$")
+		self.assertTrue(data["account_ref"].startswith("SUB_"))
+
+		# label + account_email are the connected account's email.
+		self.assertEqual(data["label"], "pool-acct@acme.com")
+		self.assertEqual(data["account_email"], "pool-acct@acme.com")
+
+		# oauth_blob is a JSON STRING that parses and carries a non-empty
+		# id_token (Task 1 shape reused here).
+		self.assertIsInstance(data["oauth_blob"], str)
+		parsed = json.loads(data["oauth_blob"])
+		self.assertEqual(parsed["type"], "oauth")
+		self.assertEqual(parsed["provider"], "openai")
+		self.assertEqual(parsed["access"], access_jwt)
+		self.assertEqual(parsed["refresh"], "RT-pool")
+		self.assertEqual(parsed["email"], "pool-acct@acme.com")
+		self.assertEqual(parsed["accountId"], "acct-pool")
+		self.assertTrue(parsed["id_token"], "oauth_blob must carry a non-empty id_token")
+		self.assertEqual(parsed["id_token"], "ID.POOL.TOKEN")
+
+		# DIRECT path untouched: no container push, no creds save.
+		mock_push.assert_not_called()
+		mock_save.assert_not_called()
+
+		# Jarvis Settings not modified.
+		settings = frappe.get_single("Jarvis Settings")
+		self.assertEqual(settings.llm_oauth_account_email, "SENTINEL@unchanged")
+
+		# Nonce is single-use: consumed on success.
+		self.assertIsNone(frappe.cache.hget(_CACHE_KEY, nonce))
+
+	def test_rejects_unknown_nonce(self):
+		out = oauth_api.complete_pool_account_signin(
+			nonce="bogus",
+			redirected_url="?code=A&state=B",
+		)
+		self.assertFalse(out["ok"])
+		self.assertEqual(out["error"]["code"], "unknown_nonce")
+
+	def test_rejects_state_mismatch(self):
+		nonce = self._seed()
+		out = oauth_api.complete_pool_account_signin(
+			nonce=nonce,
+			redirected_url="?code=A&state=wrong",
+		)
+		self.assertEqual(out["error"]["code"], "state_mismatch")
+
+	def test_rejects_direct_nonce(self):
+		# A DIRECT paste-signin nonce (no pool flag) must not be completable
+		# through the pool capture endpoint - same opaque code as unknown.
+		nonce = self._seed(pool=False)
+		out = oauth_api.complete_pool_account_signin(
+			nonce=nonce,
+			redirected_url="?code=A&state=test-state",
+		)
+		self.assertEqual(out["error"]["code"], "unknown_nonce")
+
+	def test_generated_account_refs_are_unique(self):
+		# Each capture mints a fresh account_ref so two accounts in one pool
+		# don't collide (build_pool_payload keys oauth_blobs by account_ref).
+		refs = set()
+		for _ in range(5):
+			nonce = self._seed()
+			with patch("jarvis.oauth.api._exchange_code", return_value={
+				"access_token": "AT", "refresh_token": "RT", "expires_in": 3600,
+				"id_token": "ID.T", "email": "a@b.com",
+			}):
+				out = oauth_api.complete_pool_account_signin(
+					nonce=nonce,
+					redirected_url="?code=ABC&state=test-state",
+				)
+			refs.add(out["data"]["account_ref"])
+		self.assertEqual(len(refs), 5)
 
 

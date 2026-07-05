@@ -61,6 +61,11 @@ def call_tool(tool: str, args: dict | str | None = None) -> dict:
 			# - a self-hosted bench is single-tenant.
 			from jarvis import selfhost
 			if selfhost.is_self_hosted():
+				# The gateway token was validated above, so a callback reaching
+				# here proves openclaw->Frappe reachability. Bump the marker the
+				# connection probe reads (best-effort; self-host branch only, so
+				# the managed/session path never touches it).
+				selfhost.note_callback_seen()
 				plugin_user = _selfhost_tool_user()
 				if not plugin_user:
 					# Self-hosted, but the tool user is unset (or names a user

@@ -80,6 +80,13 @@
 						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
 						<span>Settings</span>
 					</button>
+					<button class="jv-menuitem" @click="goAccount">
+						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
+						<span>Account</span>
+					</button>
+					<!-- AI / Models nav entry sidelined: LLM config now lives on the account page.
+					     The old "/ai" (AiModels) shell + AiView.vue were removed; the usage
+					     dashboard it hosted now lives at "/monitor" (see AppSidebar's Usage entry). -->
 					<button class="jv-menuitem" @click="goDesk">
 						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /></svg>
 						<span>Switch to Desk</span>
@@ -148,6 +155,24 @@
 					</button>
 				</div>
 			</header>
+
+			<!-- ===== NOT READY: invite-to-onboarding card (replaces thread + composer) =====
+			     Shown instead of the normal chat UI when the backend reports the site
+			     hasn't finished setup — see onMounted's readiness check. System Managers
+			     get a CTA into the wizard; everyone else is told to ask their admin. The
+			     desk also shows a setup banner, so onboarding is invited, not forced. -->
+			<div v-if="notReady" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px;">
+				<div style="width:100%;max-width:480px;text-align:center;">
+					<div class="jv-logo" style="width:52px;height:52px;border-radius:13px;background:var(--blue);display:flex;align-items:center;justify-content:center;margin:0 auto 18px;box-shadow:0 4px 14px rgba(37,99,235,.28);">
+						<svg width="28" height="28" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
+					</div>
+					<h1 style="font-size:23px;font-weight:600;letter-spacing:-.02em;margin:0 0 8px;">Welcome to Jarvis</h1>
+					<p style="font-size:14.5px;color:var(--text-2);margin:0 0 26px;line-height:1.5;">Finish a quick setup to start chatting.</p>
+					<button v-if="isSystemManager" class="jv-btn jv-btn--primary" style="height:38px;padding:0 20px;font-size:13.5px;" @click="goToOnboarding">Set up Jarvis →</button>
+					<p v-else style="font-size:13.5px;color:var(--text-3);margin:0;">Ask your workspace admin to finish setting up Jarvis.</p>
+				</div>
+			</div>
+			<template v-else>
 
 			<!-- initial load: a quiet spinner so the welcome screen doesn't flash
 			     before the open conversation finishes loading on refresh -->
@@ -496,6 +521,8 @@
 					<div style="text-align:center;font-size:10.5px;color:var(--text-3);margin-top:8px;">Jarvis can make mistakes. Verify important actions before submitting to ERPNext.</div>
 				</div>
 			</div>
+
+			</template>
 		</main>
 
 		<!-- ============ RIGHT RAIL: SKILLS + MACROS (opens the center popup) ============ -->
@@ -1277,14 +1304,18 @@
 
 <script setup>
 import { ref, computed, inject, onMounted, onBeforeUnmount, nextTick, watch } from "vue"
-import { useRoute } from "vue-router"
+import { useRoute, useRouter } from "vue-router"
 import * as api from "@/api"
 import { renderMarkdown } from "@/markdown"
 import JvChart from "@/charts/JvChart.vue"
+import { useTheme } from "@/composables/useTheme"
+import { displayName, initialsOf } from "@/lib/user"
 
 const session = inject("$session")
 const socket = inject("$socket")
 const route = useRoute()
+const router = useRouter()
+const isSystemManager = !!window.is_system_manager
 
 const conversations = ref([])
 const currentId = ref(null)
@@ -2167,51 +2198,9 @@ const usagePct = computed(() => {
 	if (!u || !u.budget_monthly) return 0
 	return Math.min(100, Math.round((u.month_tokens / u.budget_monthly) * 100))
 })
-// theme: 'light' | 'dark' | 'system' — persisted per-device (a browser/device
-// preference; no migration needed). 'system' follows the OS color scheme live.
-const theme = ref(localStorage.getItem("jarvis-theme") || "system")
-const prefersDark = ref(false)
-let _mq = null
-function onColorScheme(e) {
-	prefersDark.value = e.matches
-}
-const effectiveDark = computed(
-	() => theme.value === "dark" || (theme.value === "system" && prefersDark.value),
-)
-const LIGHT_VARS = {
-	"--surface": "#ffffff", "--surface-1": "#f7f7f8", "--surface-2": "#f1f1f3", "--surface-3": "#ececef",
-	"--border": "#e8e8ec", "--border-2": "#dfdfe4",
-	"--text": "#171717", "--text-2": "#4a4a4f", "--text-3": "#83838b",
-	"--blue": "#171717", "--blue-bg": "#eff4ff", "--blue-bd": "#d6e2fb",
-	"--green": "#16a34a", "--green-bg": "#edf8f0", "--green-bd": "#cdeed8",
-	"--red": "#dc2626", "--red-bg": "#fdf0ef", "--red-bd": "#f5d4d1",
-	"--amber": "#d97706", "--amber-bg": "#fdf6ec", "--amber-bd": "#f3e2c2",
-}
-// Dark = "Refined Indigo" (chosen 2026-07-02): neutral charcoal surfaces with a
-// crisper indigo accent; the brand mark gets an indigo→violet gradient below.
-const DARK_VARS = {
-	"--surface": "#16161a", "--surface-1": "#1d1d22", "--surface-2": "#26262d", "--surface-3": "#30303a",
-	"--border": "#2c2c34", "--border-2": "#3a3a45",
-	"--text": "#ededf2", "--text-2": "#b6b6c0", "--text-3": "#7e7e8a",
-	"--blue": "#6e8bff", "--blue-bg": "#1e2749", "--blue-bd": "#34437a",
-	"--green": "#34d399", "--green-bg": "#15271f", "--green-bd": "#214b38",
-	"--red": "#f87171", "--red-bg": "#2a1818", "--red-bd": "#4a2a2a",
-	"--amber": "#fbbf24", "--amber-bg": "#2a2315", "--amber-bd": "#4a3d1f",
-}
-const paletteVars = computed(() => (effectiveDark.value ? DARK_VARS : LIGHT_VARS))
-
-function setTheme(t) {
-	theme.value = t
-	try {
-		localStorage.setItem("jarvis-theme", t)
-	} catch (e) {
-		/* private mode / storage disabled — keep the in-memory choice */
-	}
-}
-// Quick header toggle: flip between light and dark (drops out of 'system').
-function toggleTheme() {
-	setTheme(effectiveDark.value ? "light" : "dark")
-}
+// theme: 'light' | 'dark' | 'system' — persisted per-device.
+// useTheme() owns localStorage, matchMedia, and cross-tab storage sync.
+const { pref: theme, prefersDark, effectiveDark, paletteVars, setTheme, toggleTheme } = useTheme()
 async function openSettings() {
 	userMenuOpen.value = false
 	modelMenuOpen.value = false
@@ -2357,14 +2346,10 @@ const jarvisTools = ref([
 	"create_doc", "update_doc", "submit_doc", "cancel_doc", "amend_doc", "delete_doc",
 ])
 
-function cookie(name) {
-	return new URLSearchParams(document.cookie.split("; ").join("&")).get(name)
-}
-const fullName = (cookie("full_name") ? decodeURIComponent(cookie("full_name")) : "") || session.user || "User"
+// Shared with AppSidebar via @/lib/user (see the cookie double-decode note there).
+const fullName = displayName(session.user)
 const firstName = computed(() => fullName.split(/\s+/)[0])
-const initials = computed(
-	() => fullName.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase() || "U",
-)
+const initials = computed(() => initialsOf(fullName))
 const greeting = computed(() => {
 	const h = new Date().getHours()
 	return h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening"
@@ -2499,6 +2484,9 @@ function prettyJson(s) {
 // True only until the initial conversation load finishes — keeps the welcome
 // screen from flashing on refresh before the open chat appears.
 const booting = ref(true)
+// True when the backend reports the site hasn't finished setup yet — shows the
+// invite-to-onboarding card instead of the chat thread/composer (see onMounted).
+const notReady = ref(false)
 const showWelcome = computed(
 	() => !booting.value && (!currentId.value || visibleMessages.value.length === 0),
 )
@@ -3989,6 +3977,16 @@ function fillInput(text) {
 function goDesk() {
 	window.location.assign("/app")
 }
+function goToOnboarding() {
+	// Full nav (not router.push): the onboarding-complete flow reloads to /jarvis/
+	// anyway, and a bare `window.*` in an inline @click compiles to _ctx.window
+	// (undefined) — so it must live in a script method, per goDesk/openErpDesk.
+	window.location.assign("/jarvis/onboarding")
+}
+function goAccount() {
+	userMenuOpen.value = false
+	router.push({ name: "Account" })
+}
 function openErpDesk() {
 	window.open("/app", "_blank")
 }
@@ -4474,13 +4472,16 @@ onMounted(async () => {
 	const readyP = api.isReadyForChat().catch(() => null)
 	const uiP = api.getChatUiSettings().catch(() => null)
 	const convsP = loadConversations().catch(() => {})
-	// Gate the chat the way the old Desk page did: if the customer hasn't
-	// finished signup / LLM setup, send them to the onboarding wizard. A
-	// transient failure falls through to the chat rather than trapping them.
+	// Invite, don't force: if the customer hasn't finished signup / LLM setup,
+	// show a welcome card in place of the chat thread/composer instead of
+	// redirecting into the wizard (System Managers get a "Set up Jarvis" button
+	// there; everyone else is told to ask their admin). A transient readiness
+	// check failure falls through to the normal chat rather than trapping them.
 	const r = await readyP
 	if (r && r.ready === false) {
-		window.location.assign("/app/jarvis-onboarding")
-		return
+		notReady.value = true
+		booting.value = false // reveal the UI (show the card, not the spinner)
+		return // skip socket/tool setup — chat can't work until set up
 	}
 	socket?.on("jarvis:event", onEvent)
 	socket?.on("connect", onResync)
@@ -4491,10 +4492,6 @@ onMounted(async () => {
 	document.addEventListener("pointerdown", onDocClick)
 	window.addEventListener("keydown", onGlobalKey)
 	_thinkTimer = setInterval(() => { thinkTick.value = busy.value ? thinkTick.value + 1 : 0 }, 2200)
-	// Track the OS color scheme so theme:'system' updates live.
-	_mq = window.matchMedia("(prefers-color-scheme: dark)")
-	prefersDark.value = _mq.matches
-	_mq.addEventListener("change", onColorScheme)
 	ui.value = (await uiP) || {}
 	// Load custom skills so the "/" composer menu can offer them.
 	loadCustomSkills()
@@ -4528,7 +4525,6 @@ onBeforeUnmount(() => {
 	document.removeEventListener("pointerdown", onDocClick)
 	window.removeEventListener("keydown", onGlobalKey)
 	clearInterval(_thinkTimer)
-	_mq?.removeEventListener("change", onColorScheme)
 })
 // Global keyboard shortcuts (documented in Settings → Shortcuts).
 function onGlobalKey(e) {

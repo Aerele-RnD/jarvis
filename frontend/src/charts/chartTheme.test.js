@@ -10,6 +10,49 @@ test("rejects malformed / unknown specs -> null", () => {
 	assert.equal(buildOption({ type: "bar", series: [] }), null)
 })
 
+test("records-form spec is pivoted into the columnar shape", () => {
+	// The exact shape the agent emitted live (2026-07-05): rows + field refs
+	// instead of the documented x-labels + per-series data arrays.
+	const o = buildOption({
+		type: "bar",
+		title: "Top-sold items",
+		data: [
+			{ item: "SKU005 Sneakers", sold: 150, actual: 32, gap: 118 },
+			{ item: "SKU003 Book", sold: 100, actual: -100, gap: 200 },
+		],
+		x: "item",
+		series: [
+			{ field: "sold", name: "Units sold" },
+			{ field: "actual", name: "Actual stock" },
+			{ field: "gap", name: "Mfg gap" },
+		],
+	})
+	assert.ok(o, "records-form spec must render, not null")
+	assert.deepEqual(o.xAxis.data, ["SKU005 Sneakers", "SKU003 Book"])
+	assert.deepEqual(o.series.map((s) => s.name), ["Units sold", "Actual stock", "Mfg gap"])
+	assert.deepEqual(o.series[0].data, [150, 100])
+	assert.deepEqual(o.series[1].data, [32, -100]) // negatives pass through
+	assert.deepEqual(o.series[2].data, [118, 200])
+})
+
+test("columnar spec with a stray data key is not re-pivoted", () => {
+	const o = buildOption({
+		type: "bar",
+		data: [{ item: "A", v: 9 }],
+		x: ["A", "B"],
+		series: [{ name: "R", data: [1, 2] }],
+	})
+	assert.deepEqual(o.xAxis.data, ["A", "B"])
+	assert.deepEqual(o.series[0].data, [1, 2])
+})
+
+test("spec whose series carry no data points -> null (chat shows fallback)", () => {
+	assert.equal(buildOption({ type: "bar", x: ["A"], series: [{ name: "R" }] }), null)
+	assert.equal(buildOption({ type: "bar", x: ["A"], series: [{ name: "R", data: [] }] }), null)
+	// records form with an empty rows array stays undrawable -> null
+	assert.equal(buildOption({ type: "bar", data: [], x: "item", series: [{ field: "v", name: "V" }] }), null)
+})
+
 test("bar: category x, rounded bars, palette, dashed value split", () => {
 	const o = buildOption({ type: "bar", x: ["A", "B"], series: [{ name: "R", data: [1, 2] }] })
 	assert.equal(o.xAxis.type, "category")

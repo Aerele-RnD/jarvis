@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import base64
 import json
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import websocket
 from cryptography.hazmat.primitives import serialization
@@ -138,6 +138,30 @@ class TestConnect(FrappeTestCase):
 		import time
 		self.assertGreater(params["device"]["signedAt"], int(time.time() * 1000) - 60_000)
 		sess.close()
+
+	def test_connect_uses_an_origin_openclaw_allows_on_lan_bind(self):
+		"""openclaw >= v2026.2.26 enforces gateway.controlUi.allowedOrigins on LAN
+		binds and seeds ["http://localhost:18789", "http://127.0.0.1:18789"]; the WS
+		Origin we send MUST be one of those or the gateway rejects every connect
+		('origin not allowed'). Regression for the openclaw 2026.6.8 bump, which
+		stopped honoring the old "*" wildcard that a bare http://localhost relied on."""
+		from jarvis.chat.openclaw_client import _GATEWAY_ORIGIN
+		creds = _make_creds()
+
+		def _ok():
+			req_id = scripted.sent[-1]["id"]
+			return _frame({"type": "res", "id": req_id, "ok": True, "payload": {}})
+
+		scripted = _ScriptedWS([_challenge(), _ok])
+		cc = MagicMock(return_value=scripted)
+		with patch("jarvis.chat.openclaw_client.websocket.create_connection", cc), \
+			 patch("jarvis.chat.openclaw_client.ensure_paired", return_value=creds):
+			OpenclawSession.connect("ws://t")
+
+		self.assertEqual(cc.call_args.kwargs["origin"], _GATEWAY_ORIGIN)
+		# Loopback host + the gateway's own internal port (18789) — matches what
+		# openclaw seeds for a LAN bind, NOT a bare http://localhost.
+		self.assertIn(_GATEWAY_ORIGIN, ("http://127.0.0.1:18789", "http://localhost:18789"))
 
 	def test_connect_rejection_raises_unreachable(self):
 		creds = _make_creds()

@@ -112,6 +112,52 @@ export const searchLink = (doctype, txt) =>
 export const getDoctypeFields = (doctype) =>
 	call("jarvis.chat.api.get_doctype_fields", { doctype })
 
+// --- LLM pool / models config (System-Manager only, gated server-side) ---
+export const getLlmConfig = () => call("jarvis.onboarding.get_llm_config")
+export const getPresetCatalog = () => call("jarvis.onboarding.get_preset_catalog")
+export const getLlmSyncStatus = () => call("jarvis.onboarding.get_llm_sync_status")
+export const saveLlmPool = (models, preset = null, routingMode = "failover") =>
+	call("jarvis.onboarding.save_llm_pool", {
+		models: JSON.stringify(models),
+		preset: preset || "",
+		routing_mode: routingMode,
+	})
+
+// --- Onboarding wizard (managed signup + self-hosted connect) ---
+// Arg names mirror the real backend signatures (jarvis/onboarding.py,
+// jarvis/account.py, jarvis/selfhost.py) — verified against the desk wizard's
+// frappe.call usage in jarvis/jarvis/page/jarvis_onboarding/jarvis_onboarding.js.
+export const listPlans = () => call("jarvis.onboarding.list_plans")
+export const getAccountDefaults = () => call("jarvis.onboarding.get_account_defaults")
+export const syncConnection = () => call("jarvis.onboarding.sync_connection")
+export const startSignup = (email, company, plan) =>
+	call("jarvis.onboarding.start_signup", { email, company, plan })
+export const checkSignupPaymentState = () => call("jarvis.onboarding.check_signup_payment_state")
+export const finishPayment = (payload) => call("jarvis.onboarding.finish_payment", { payload })
+export const devOnboard = (email, company, plan) =>
+	call("jarvis.onboarding.dev_onboard", { email, company, plan })
+export const isOnboarded = () => call("jarvis.account.is_onboarded")
+// args: {provider, model, api_key, base_url, auth_mode, force}
+export const saveLlmCreds = (args) => call("jarvis.onboarding.save_llm_creds", args)
+// args: {base_url, token, deep, stream, tool_user}
+export const saveSelfHosted = (args) => call("jarvis.selfhost.save_self_hosted", args)
+// args: {base_url, token, deep}
+export const testSelfHostConnection = (args) => call("jarvis.selfhost.test_connection", args)
+
+// --- Per-account chat-subscription capture (paste-back OAuth) ---
+// begin → { nonce, authorize_url, expires_in }; open authorize_url, sign in,
+// paste the redirected URL back → complete captures the account (no side effects).
+export const beginPoolAccountSignin = (provider, model) =>
+	call("jarvis.oauth.api.begin_pool_account_signin", { provider, model })
+// complete is capture-only → { account_ref, label, oauth_blob, account_email }
+export const completePoolAccountSignin = (nonce, redirectedUrl) =>
+	call("jarvis.oauth.api.complete_pool_account_signin", { nonce, redirected_url: redirectedUrl })
+
+// --- LLM Monitor (System-Manager gated server-side). Real Bifrost usage, NOT the getUsage estimate. ---
+export const getLlmUsage = () => call("jarvis.account.get_llm_usage")
+export const getLlmConnectionStatus = () => call("jarvis.account.get_llm_connection_status")
+export const getAccount = () => call("jarvis.account.get_account")
+
 // File input: upload to Frappe's File doctype, return {file_url, file_name}.
 export async function uploadFile(file) {
 	const fd = new FormData()

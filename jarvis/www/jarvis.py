@@ -13,6 +13,7 @@ def get_context(context):
 		"csrf_token": frappe.sessions.get_csrf_token(),
 		"site_name": str(frappe.local.site),
 		"default_route": "/jarvis",
+		"is_system_manager": "System Manager" in frappe.get_roles(),
 	}
 	frappe.db.commit()
 	return context

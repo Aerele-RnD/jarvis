@@ -119,7 +119,10 @@ class TestHeaders(FrappeTestCase):
 			captured["timeout"] = timeout
 			return _mock_response(200, json_body={"message": {"ok": True, "data": {"action": "reload"}}})
 
-		with patch("requests.post", side_effect=_fake_post):
+		# Blank the bench's site-config jarvis_admin_url so the doctype-field
+		# URL is the one exercised here (site config otherwise outranks it).
+		with patch.dict(frappe.local.conf, {"jarvis_admin_url": ""}), \
+			 patch("requests.post", side_effect=_fake_post):
 			post_update_llm_creds("p", "m", "b", "k")
 
 		self.assertEqual(captured["headers"]["Authorization"], "token hdr-key:hdr-secret")
@@ -568,6 +571,18 @@ class TestOnboardingClient(FrappeTestCase):
 			admin_client.get_plans()
 		self.assertNotIn("Authorization", captured["headers"])
 
+	def test_get_preset_catalog_falls_back_on_non_admin_error(self):
+		# A scheme-less jarvis_admin_url raises requests.MissingSchema — NOT an
+		# Admin* error — which must still degrade to the bundled catalog rather
+		# than 500 the onboarding preset step. #200 review #9.
+		import requests
+		from jarvis._preset_catalog import BUNDLED_PRESET_CATALOG
+		frappe.cache().delete_value(admin_client._PRESET_CATALOG_CACHE_KEY)
+		with patch("jarvis.admin_client._post_guest",
+				   side_effect=requests.exceptions.MissingSchema("no scheme in URL")):
+			out = admin_client.get_preset_catalog()
+		self.assertEqual(out, BUNDLED_PRESET_CATALOG)
+
 
 class TestPostUpdateLlmCredsAuthMode(FrappeTestCase):
 	def setUp(self):
@@ -917,21 +932,35 @@ class TestOAuthBearer(FrappeTestCase):
 
 
 class TestAdminUrlResolution(FrappeTestCase):
-	"""_admin_url resolution order: Jarvis Settings override -> site/common
-	config (frappe.conf jarvis_admin_url) -> hardcoded fallback, all resolved
-	FRESH per call so a config value added after worker start is honored."""
+	"""_admin_url resolution order: site/common config (frappe.conf
+	jarvis_admin_url) -> Jarvis Settings override -> hardcoded fallback, all
+	resolved FRESH per call so a config value added after worker start is
+	honored. Site config outranks the doctype field so a stale value left in
+	Jarvis Settings by a reinstall cannot mask a correctly-configured
+	control plane."""
 
-	def test_settings_override_wins_over_config(self):
+	def test_config_wins_over_settings_field(self):
 		s = MagicMock()
 		s.jarvis_admin_url = "https://override.example.com/"
 		with patch.dict(frappe.local.conf, {"jarvis_admin_url": "https://conf.example.com"}):
-			self.assertEqual(admin_client._admin_url(s), "https://override.example.com")
-
-	def test_falls_back_to_config_when_field_blank(self):
-		s = MagicMock()
-		s.jarvis_admin_url = ""
-		with patch.dict(frappe.local.conf, {"jarvis_admin_url": "https://conf.example.com/"}):
 			self.assertEqual(admin_client._admin_url(s), "https://conf.example.com")
+
+	def test_stale_dev_field_does_not_mask_site_config(self):
+		"""Reinstall regression: Jarvis Settings.jarvis_admin_url ends up
+		holding the stale dev default "http://127.0.0.1:8000", but the site
+		config correctly points at the real control plane. The resolver must
+		use the site config, not the stale doctype value, or the admin is
+		unreachable after every reinstall."""
+		s = MagicMock()
+		s.jarvis_admin_url = "http://127.0.0.1:8000"
+		with patch.dict(frappe.local.conf, {"jarvis_admin_url": "http://jarvis.admin:8002"}):
+			self.assertEqual(admin_client._admin_url(s), "http://jarvis.admin:8002")
+
+	def test_falls_back_to_field_when_config_blank(self):
+		s = MagicMock()
+		s.jarvis_admin_url = "https://override.example.com/"
+		with patch.dict(frappe.local.conf, {"jarvis_admin_url": ""}):
+			self.assertEqual(admin_client._admin_url(s), "https://override.example.com")
 
 	def test_falls_back_to_hardcoded_when_field_and_config_blank(self):
 		from jarvis.hooks import _DEFAULT_ADMIN_URL_FALLBACK

@@ -18,12 +18,13 @@ def _require_admin_url() -> None:
 
 	dev_onboard and start_signup must target a deliberately-chosen control
 	plane. The admin URL resolves (admin_client._admin_url ->
-	hooks.get_default_admin_url) in this order: (1) Jarvis Settings.
-	jarvis_admin_url per-customer override, (2) ``jarvis_admin_url`` in
-	site_config / common_site_config (via frappe.conf), (3) the hardcoded
-	fallback for fresh installs. Silently falling through to (3) on a
-	multi-site bench may land the wrong tenancy, so require (1) or (2) to be
-	set - only (3)-alone is the fail-fast case. (1) wins when both are set.
+	hooks.get_default_admin_url) in this order: (1) ``jarvis_admin_url`` in
+	site_config / common_site_config (via frappe.conf), (2) Jarvis Settings.
+	jarvis_admin_url per-customer override, (3) the hardcoded fallback for
+	fresh installs. Silently falling through to (3) on a multi-site bench may
+	land the wrong tenancy, so require (1) or (2) to be set - only (3)-alone is
+	the fail-fast case. (1) wins when both are set (site config is the
+	deployment's source of truth; a stale doctype value must not mask it).
 	"""
 	configured = (
 		(frappe.db.get_single_value("Jarvis Settings", "jarvis_admin_url") or "").strip()
@@ -154,6 +155,116 @@ def list_plans() -> list:
 
 
 @frappe.whitelist()
+def get_preset_catalog() -> list:
+	"""Preset catalog for the desk onboarding step + the /ai SPA route.
+	Thin wrapper over admin_client (fetch/cache/bundled fallback)."""
+	return admin_client.get_preset_catalog()
+
+
+@frappe.whitelist()
+def save_llm_pool(models, preset: str | None = None, routing_mode: str = "failover") -> dict:
+	"""Write the customer's multi-model LLM pool into Jarvis Settings.models[]
+	(+ preset, routing_mode) and let the existing on_update pipeline validate
+	(validate_models), derive proxy_active, mirror models[0] into legacy llm_*,
+	and sync DIRECT (/llm-creds) vs PROXY (/llm-pool) via admin.
+
+	System-Manager-gated. routing_mode is always 'failover' in v1. preset is an
+	admin-catalog key or None; validated against the fetched catalog."""
+	frappe.only_for("System Manager")
+	if isinstance(models, str):
+		models = json.loads(models)
+	if not isinstance(models, list) or not models:
+		raise frappe.ValidationError("models must be a non-empty list")
+	if routing_mode != "failover":
+		raise frappe.ValidationError("routing_mode must be 'failover' in v1")
+
+	preset = (preset or "").strip()
+	if preset:
+		keys = {e.get("key") for e in admin_client.get_preset_catalog()}
+		if preset not in keys:
+			raise frappe.ValidationError(f"unknown preset '{preset}'")
+
+	from jarvis.jarvis.pool_serialize import (
+		normalize_provider, _get_password, _model_accounts,
+	)
+
+	s = frappe.get_single("Jarvis Settings")
+
+	# Preserve secrets on re-save. get_llm_config never returns api_key / oauth_blob,
+	# so the reloaded editor posts a BLANK secret for anything the user didn't
+	# re-enter this session. Snapshot the currently-stored secrets and merge them
+	# back into any row/account left blank, so editing a pool (e.g. changing a
+	# model id or reordering) does not silently wipe a previously-working
+	# credential. Keyed by canonical provider (api keys are per-vendor) and by
+	# account_ref (server-stable) respectively.
+	prior_api_keys = {}
+	prior_blobs = {}
+	for pm in (s.get("models") or []):
+		if (pm.credential_type or "api_key") == "api_key":
+			pk = _get_password(pm, "api_key")
+			if pk:
+				prior_api_keys[normalize_provider(pm.provider)] = pk
+		else:
+			for a in _model_accounts(pm):
+				ref = (a.get("account_ref") if hasattr(a, "get") else "") or ""
+				blob = (a.get("oauth_blob") if hasattr(a, "get") else "") or ""
+				if ref and blob:
+					prior_blobs[ref] = blob
+
+	s.set("models", [])
+	for i, m in enumerate(models):
+		sub = m.get("subscription")
+		cred_type = "subscription" if sub else "api_key"
+		provider = normalize_provider(m.get("provider"))
+		row = {
+			"provider": provider,
+			"model": (m.get("model") or "").strip(),
+			"base_url": (m.get("base_url") or "").strip(),
+			"tier": m.get("tier") or "strong",
+			"order": m.get("order", i),
+			"credential_type": cred_type,
+			"enabled": 1,
+		}
+		if cred_type == "api_key":
+			# Blank posted key + a stored key for this vendor → keep the stored one.
+			row["api_key"] = (m.get("api_key") or "").strip() or prior_api_keys.get(provider, "")
+		else:
+			row["rotation"] = (sub or {}).get("rotation") or "sticky"
+			# Subscription accounts are stored as a JSON string in the
+			# `subscription_accounts` Password field ON the model row (a child of
+			# the Jarvis Settings Single). Frappe's ORM does NOT persist/auto-load
+			# grandchild tables, so the previous accounts[] grandchild Table never
+			# saved. As a child-row Password field it is encrypted at rest via the
+			# normal save() -> _save_passwords path (identical to `api_key`), so
+			# oauth_blobs never sit in plaintext in the DB column.
+			merged_accounts = []
+			for a in ((sub or {}).get("accounts") or []):
+				a = dict(a)
+				if not (a.get("oauth_blob") or "").strip():
+					ref = a.get("account_ref") or ""
+					if ref and prior_blobs.get(ref):
+						a["oauth_blob"] = prior_blobs[ref]
+				merged_accounts.append(a)
+			row["subscription_accounts"] = json.dumps(merged_accounts)
+		s.append("models", row)
+
+	s.preset = preset
+	s.routing_mode = routing_mode
+	# save() -> on_update -> _on_update_unified_llm: validate_models (throws),
+	# compute_proxy_active, mirror models[0], enqueue pool/creds sync.
+	s.save(ignore_permissions=True)
+	frappe.db.commit()
+
+	row = frappe.db.get_value("Jarvis Settings", "Jarvis Settings",
+	                          ["last_sync_at", "last_sync_status"], as_dict=True) or {}
+	return {
+		"last_sync_at": str(row.get("last_sync_at") or ""),
+		"last_sync_status": row.get("last_sync_status") or "",
+		"proxy_active": bool(frappe.db.get_single_value("Jarvis Settings", "proxy_active")),
+	}
+
+
+@frappe.whitelist()
 def start_signup(email: str, company: str, plan: str) -> dict:
 	"""Guest signup → store the api_token → return the Razorpay handles for Checkout.
 
@@ -195,6 +306,39 @@ def start_signup(email: str, company: str, plan: str) -> dict:
 			"customer_password": data.get("customer_password", ""),
 		})
 	return data
+
+
+@frappe.whitelist()
+def get_account_defaults() -> dict:
+	"""Prefill for the onboarding Account step so the customer doesn't retype what
+	the site already knows: the caller's email + a default company. Company is the
+	user/global default when set, else the site's sole Company; ``companies`` lists
+	options for a client datalist when several exist. Silent no-op (blank / empty
+	list) on sites without the Company doctype or read permission.
+
+	Ports the desk auto-fetch (jarvis_onboarding.js, commit 1507495) to the server
+	because the SPA has no ``frappe.defaults``. System-Manager only (the onboarding
+	route is SM-gated).
+	"""
+	frappe.only_for("System Manager")
+	user = frappe.session.user
+	email = (frappe.db.get_value("User", user, "email") or user) if user and user != "Guest" else ""
+
+	company, companies = "", []
+	try:
+		company = (
+			frappe.defaults.get_user_default("Company")
+			or frappe.defaults.get_global_default("company")
+			or ""
+		)
+		companies = [c.name for c in frappe.get_all("Company", fields=["name"], limit=20)]
+		if not company and len(companies) == 1:
+			company = companies[0]
+	except Exception:
+		# No Company doctype / no read permission — leave blank so the client keeps
+		# its placeholder, exactly like the desk auto-fetch's silent no-op.
+		company, companies = "", []
+	return {"email": email, "company": company, "companies": companies}
 
 
 @frappe.whitelist()
@@ -348,6 +492,52 @@ def save_llm_creds(provider: str, model: str, api_key: str = "",
 	return {
 		"last_sync_at": str(row.get("last_sync_at") or ""),
 		"last_sync_status": row.get("last_sync_status") or "",
+	}
+
+
+@frappe.whitelist()
+def get_llm_config() -> dict:
+	"""Current effective LLM pool for the desk step + /ai SPA: models[] rows,
+	preset, routing_mode, derived proxy_active. Reads models[] (NOT the legacy
+	llm_* mirrors). Never returns api_key secrets — only a has_key boolean.
+	System-Manager-only (spec 7)."""
+	frappe.only_for("System Manager")
+	from jarvis.jarvis.pool_serialize import _model_accounts
+	s = frappe.get_single("Jarvis Settings")
+	models = []
+	for m in (s.get("models") or []):
+		cred_type = m.credential_type or "api_key"
+		entry = {
+			"provider": m.provider or "",
+			"model": m.model or "",
+			"base_url": m.base_url or "",
+			"tier": m.tier or "strong",
+			"order": m.order or 0,
+			"enabled": bool(m.enabled),
+			"credential_type": cred_type,
+		}
+		if cred_type == "subscription":
+			# Surface connected accounts so the UI can show them (has_key style).
+			# NEVER send oauth_blob to the client — only the display metadata.
+			accts = _model_accounts(m)
+			entry["rotation"] = m.rotation or "sticky"
+			entry["accounts"] = [
+				{
+					"upstream": (a.get("upstream") if hasattr(a, "get") else "") or "openai",
+					"account_ref": (a.get("account_ref") if hasattr(a, "get") else "") or "",
+					"label": (a.get("label") if hasattr(a, "get") else "") or "",
+				}
+				for a in accts
+			]
+			entry["has_key"] = bool(accts)
+		else:
+			entry["has_key"] = bool(m.get_password("api_key", raise_exception=False))
+		models.append(entry)
+	return {
+		"models": models,
+		"preset": s.get("preset") or "",
+		"routing_mode": s.get("routing_mode") or "failover",
+		"proxy_active": bool(s.get("proxy_active")),
 	}
 
 
