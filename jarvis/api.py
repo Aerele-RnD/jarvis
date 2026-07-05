@@ -656,7 +656,16 @@ def _run_tool(tool: str, raw_args: dict | str | None,
 		# a few lines up) would just be comparing one DB read to another read of
 		# the identical field, not a real access-control boundary.
 		if conv and tool in _AUTO_APPLYABLE:
-			if frappe.db.get_value("Jarvis Conversation", conv, "auto_apply"):
+			# Two direct-apply paths for reversible create/update (destructive
+			# tools above are excluded and always park): admin-enabled
+			# auto_apply, OR a File Box conversation - an unattended directed
+			# run where nobody can click a confirm card and review happens on
+			# the created Draft + the approval board. Both flags are
+			# server-controlled and admin-gated against generic saves.
+			flags = frappe.db.get_value(
+				"Jarvis Conversation", conv, ["auto_apply", "file_box"],
+				as_dict=True) or {}
+			if flags.get("auto_apply") or flags.get("file_box"):
 				return dispatch_confirmed(tool, args)
 		preview = _pending_preview(tool, args)
 		token = pending_confirm.mint(conversation=conv, owner=owner_user,

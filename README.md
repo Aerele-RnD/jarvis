@@ -30,6 +30,45 @@ chat at **`/app/jarvis-chat`**. Full walkthrough: **getting-started** (see Docum
 **Local single-bench dev** (run openclaw yourself, no control plane) → the
 **local-dev** guide (see Documentation).
 
+## Optional: parallel chat turns (dedicated worker queue)
+
+Each in-flight chat turn occupies one background (RQ) worker for the turn's
+whole duration, and turns run on the shared `long` queue by default — so on a
+bench with one long worker, multiple conversations (e.g. a batch of File Box
+documents) process **one at a time**, and other long-queue jobs wait behind
+them.
+
+To process turns in parallel and isolate them from the rest of the bench,
+declare a dedicated `jarvis_chat` queue in `common_site_config.json`:
+
+```json
+"workers": {
+    "jarvis_chat": {"timeout": 720, "background_workers": 4}
+}
+```
+
+then regenerate the process config and reload:
+
+```bash
+bench setup supervisor && sudo supervisorctl reread && sudo supervisorctl update
+# (dev benches without supervisor: bench setup procfile, then restart bench start)
+```
+
+- **Frappe Cloud**: add the same `workers` block through your bench's
+  configuration (dedicated/private benches; contact Frappe Cloud support if
+  the key isn't editable on your plan). If the queue can't be provisioned,
+  nothing breaks — see below.
+- **This is opt-in and self-disabling.** Jarvis routes turns to `jarvis_chat`
+  only when the queue is *declared* **and** a live worker is *listening on
+  it*; otherwise every turn uses the `long` queue exactly as before. A
+  declared-but-dead queue therefore never strands chats, and benches that
+  skip this section need no changes.
+- Chat workers mostly wait on network I/O (they relay the agent's event
+  stream), so they are cheap: ~100–150 MB RAM each, negligible CPU. Size
+  `background_workers` to the number of simultaneous conversations you want.
+- Escape hatch: set `jarvis_chat_queue` in a site's `site_config.json` to
+  force a specific queue (e.g. `"long"` to opt one site out).
+
 ## Architecture at a glance
 
 In production the customer site never runs openclaw — saving Jarvis Settings
