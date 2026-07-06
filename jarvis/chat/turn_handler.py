@@ -845,14 +845,51 @@ def handle_chat_send(payload: dict) -> None:
 			)
 
 
+_REPORT_FILTER_LINE_CAP = 400
+
+
+def _format_report_filters(filters: dict) -> str:
+	"""Compact one-line ``with filters {k=v, k=v}`` summary of a report's
+	active filter dict. Falsy values (None / "" / [] / {}) are skipped so
+	an unset optional filter doesn't clutter the line. Truncates at
+	``_REPORT_FILTER_LINE_CAP`` characters with a "(truncated; N total)"
+	suffix so a pathological filter dict (e.g. 100 keys, or a filter that
+	itself is a huge nested structure) can't blow the prompt budget.
+	Returns "" (empty string) when there are no meaningful filter values,
+	so the caller can concatenate it directly."""
+	pairs = [
+		f"{k}={v!r}"
+		for k, v in filters.items()
+		if v not in (None, "", [], {})
+	]
+	if not pairs:
+		return ""
+	body = ", ".join(pairs)
+	if len(body) > _REPORT_FILTER_LINE_CAP:
+		body = body[:_REPORT_FILTER_LINE_CAP] + f"... (truncated; {len(pairs)} filters total)"
+	return f" with filters {{{body}}}"
+
+
 def _prepend_doc_context(user_message: str, context) -> str:
-	"""Prepend the ERP doc the user was viewing (floating-widget auto-context)
-	as a leading ``[Viewing: ...]`` line, so questions like "is this overdue?"
-	resolve against the right record without the user naming it. Prompt-only;
-	the stored message is untouched. Defensive: a malformed context is ignored.
+	"""Prepend the ERP doc / report the user was viewing (floating-widget
+	auto-context) as a leading ``[Viewing: ...]`` line, so questions like
+	"is this overdue?" or "why is this row missing?" resolve against the
+	right record without the user naming it. Prompt-only; the stored
+	message is untouched. Defensive: a malformed context is ignored.
+
+	Report branch (added 2026-07-06): when ``context.report_name`` is set,
+	emits ``[Viewing: <Report Name> report with filters {k=v, ...}]`` so
+	the model can answer questions about the current filter set + call
+	``run_report`` with the same filters without asking. The filter line
+	is length-capped via ``_format_report_filters`` above.
 	"""
 	if not isinstance(context, dict):
 		return user_message
+	report_name = (context.get("report_name") or "").strip()
+	if report_name:
+		filters = context.get("filters") if isinstance(context.get("filters"), dict) else {}
+		filter_line = _format_report_filters(filters) if filters else ""
+		return f"[Viewing: {report_name} report{filter_line}; resolve 'this'/'here' against it]\n\n{user_message}"
 	doctype = (context.get("doctype") or "").strip()
 	if not doctype:
 		return user_message

@@ -488,15 +488,25 @@ def send_message(
 	if atts:
 		enqueue_kwargs["attachments"] = atts
 	# Floating-widget auto-context: {doctype, name, label} of the doc the user
-	# is viewing. Only forwarded when present, for the same not-yet-reloaded
-	# worker safety as attachments above.
+	# is viewing, OR {report_name, filters} when the user is on a
+	# query-report route. Only forwarded when present, for the same
+	# not-yet-reloaded worker safety as attachments above. The narrowing
+	# here is deliberate (allow-list, not passthrough) so a compromised /
+	# stale frontend can't smuggle arbitrary keys into the worker payload;
+	# every key the prompt-side actually consumes must be listed here.
 	if context:
 		try:
 			ctx = frappe.parse_json(context)
-			if isinstance(ctx, dict) and ctx.get("doctype"):
+			if isinstance(ctx, dict) and (ctx.get("doctype") or ctx.get("report_name")):
 				enqueue_kwargs["context"] = {
-					"doctype": ctx.get("doctype"),
+					"doctype": ctx.get("doctype") or "",
 					"name": ctx.get("name") or "",
+					"report_name": ctx.get("report_name") or "",
+					# filters is a dict of Frappe filter values (scalars,
+					# lists, or ``["op", "value"]`` pairs). Kept as-is;
+					# the prompt-side helper caps the rendered string
+					# length so a huge dict can't blow the context.
+					"filters": ctx.get("filters") if isinstance(ctx.get("filters"), dict) else None,
 				}
 		except Exception:
 			pass
