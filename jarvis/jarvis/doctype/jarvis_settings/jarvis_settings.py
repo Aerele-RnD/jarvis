@@ -69,6 +69,53 @@ class JarvisSettings(Document):
         self.flags.llm_auth_mode_changed = bool(self.has_value_changed("llm_auth_mode"))
 
         self._validate_auth_mode_requirements()
+        self._validate_pattern_window()
+
+    def _validate_pattern_window(self):
+        """Behavioural-learning window must be at least 1 hour when enabled.
+
+        Wrap-aware: start > end is legal and means the window crosses
+        midnight (e.g. 23:00-03:00). start == end reads as zero-length,
+        not 24 hours. Engine status fields (pattern_last_run_at etc.) are
+        written via db_set(update_modified=False) and never pass through
+        here or _classify_llm_change.
+        """
+        if not frappe.utils.cint(getattr(self, "pattern_learning_enabled", 0)):
+            return
+        # Model-layer defense: behavioural learning is managed-only. The API and
+        # the scheduler tick already bail on self-host; refusing enablement here
+        # closes the Desk-form path (the feature never runs on self-host anyway).
+        try:
+            from jarvis import selfhost
+
+            if selfhost.is_self_hosted():
+                frappe.throw(
+                    "Behavioural learning is available on managed plans only.",
+                    frappe.ValidationError,
+                )
+        except ImportError:
+            pass
+        start = getattr(self, "pattern_window_start", None)
+        end = getattr(self, "pattern_window_end", None)
+        if not start or not end:
+            frappe.throw(
+                "Pattern learning requires both an analysis window start and end time.",
+                frappe.ValidationError,
+            )
+
+        def seconds_of_day(value) -> int:
+            # Time fields surface as "HH:MM:SS" strings or timedelta
+            # depending on load path; get_time normalizes both.
+            t = frappe.utils.get_time(str(value))
+            return t.hour * 3600 + t.minute * 60 + t.second
+
+        duration = (seconds_of_day(end) - seconds_of_day(start)) % (24 * 3600)
+        if duration < 3600:
+            frappe.throw(
+                "The pattern learning analysis window must be at least 1 hour long "
+                "(a start after the end is allowed - the window crosses midnight).",
+                frappe.ValidationError,
+            )
 
     def _validate_auth_mode_requirements(self):
         """Each auth mode requires its own credential field.

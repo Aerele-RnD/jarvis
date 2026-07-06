@@ -467,9 +467,14 @@ def handle_chat_send(payload: dict) -> None:
 	# skill, name the installed custom-<slug> skill(s) in the system context so
 	# the agent activates them deterministically (openclaw has no documented
 	# user-invocable trigger; the SKILL.md is already in workspace/skills/).
-	from jarvis.chat.custom_skills import invoked_skill_clause
+	from jarvis.chat.custom_skills import invoked_skill_clause, learned_skill_clause
 
 	skill_clause = invoked_skill_clause(msg_row.get("content") or "")
+	# Learned skills (plan section 6.6, the reliable activation path): deterministically
+	# name the role-matched managed learned-<domain> skills for THIS chat user, so the
+	# agent applies them without depending on openclaw's undocumented auto-retrieval.
+	# Additive to skill_clause; role match uses the cached role lookup (hot path).
+	learned_clause = learned_skill_clause(chat_user)
 	# Org locale (default Company country/currency + site date/number/tz) so the
 	# agent formats for the org's region instead of defaulting to US conventions.
 	locale_clause = _org_locale_clause()
@@ -477,7 +482,7 @@ def handle_chat_send(payload: dict) -> None:
 		# conv:<id> lets the agent link rows it creates (e.g. Jarvis Approval)
 		# back to this conversation so deciding can resume the chat.
 		f"[Context: today is {today}{locale_clause}; chat user: {chat_user}"
-		f"; conv: {conversation_id}{auto_apply}{skill_clause}]"
+		f"; conv: {conversation_id}{auto_apply}{skill_clause}{learned_clause}]"
 		f"\n\n{user_message or ''}"
 	)
 
