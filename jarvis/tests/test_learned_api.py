@@ -479,11 +479,21 @@ class TestLearnedApi(unittest.TestCase):
 	# apply delegation + status proxy
 	# ------------------------------------------------------------------ #
 	def test_apply_learned_skills_delegates_to_compiler(self):
-		stub = types.ModuleType("jarvis.learning.compiler")
-		stub.apply_learned_skills = lambda: {"ok": True, "sentinel": "compiled"}
-		with mock.patch.dict(sys.modules, {"jarvis.learning.compiler": stub}):
+		# Patch the delegated function directly, NOT the whole module via
+		# sys.modules. apply_learned_skills() reaches the compiler with
+		# ``from jarvis.learning import compiler`` (a package-attribute bind that
+		# returns the REAL module once it has been imported anywhere), so a
+		# sys.modules stub is bypassed for the top-level call yet still shadows
+		# the deep ``from jarvis.learning.compiler import build_learned_push_payload``
+		# in enqueue_learned_skills_push -> ImportError "(unknown location)".
+		# That made the test order-dependent (green alone, red in the full suite/CI).
+		with mock.patch(
+			"jarvis.learning.compiler.apply_learned_skills",
+			return_value={"ok": True, "sentinel": "compiled"},
+		) as m:
 			out = learned_api.apply_learned_skills()
 		self.assertEqual(out["sentinel"], "compiled")
+		self.assertTrue(m.called)
 
 	def test_get_learned_apply_status_proxies_sync(self):
 		out = learned_api.get_learned_apply_status()
