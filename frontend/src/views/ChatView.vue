@@ -3955,10 +3955,26 @@ async function selectConversation(id) {
 	autoGrow()
 	inputEl.value?.focus()
 }
+// Surface a failed action (new chat, send, …) as an error toast. String()-coerces
+// the extracted reason so a non-string Frappe error payload can't throw inside the
+// caller's catch and re-swallow the very failure we're trying to report.
+function notifyActionError(prefix, e) {
+	notify(`${prefix} — ${String(_skillErr(e)).replace(/\.$/, "")}. Try again.`, { type: "error" })
+}
 async function newChat() {
+	// Create FIRST, mutate the UI only on success. If the backend 500s, we must
+	// not leave the user on a half-reset screen (blank draft + wiped run state
+	// but still the old conversation) with no feedback — surface why and bail,
+	// keeping them exactly where they were.
+	let conv
+	try {
+		conv = await api.createOrFocusEmpty()
+	} catch (e) {
+		notifyActionError("Couldn't start a new chat", e)
+		return
+	}
 	swapDraft(null)
 	resetRunState()
-	const conv = await api.createOrFocusEmpty()
 	currentId.value = conv?.name || conv
 	messages.value = []
 	await loadConversations()
@@ -4061,8 +4077,16 @@ async function send(textArg) {
 			loadConversations()
 		}
 	} catch (e) {
+		// send_message failed (e.g. a 500 on a migration gap). Stop the spinner and
+		// surface why — the fix this PR is really about is that the failure used to
+		// be silent. We deliberately do NOT roll the optimistic bubble back or refill
+		// the composer: the send is fire-and-forget, so a mid-send conversation
+		// switch would strand one thread's draft in another, and a post-ack timeout
+		// (server accepted, response dropped) would wrongly discard a live message.
+		// Leaving the bubble also keeps the attempted text visible for recovery.
 		sending.value = false
 		waiting.value = false
+		notifyActionError("Couldn't send your message", e)
 	}
 }
 
