@@ -3956,9 +3956,20 @@ async function selectConversation(id) {
 	inputEl.value?.focus()
 }
 async function newChat() {
+	// Create FIRST, mutate the UI only on success. If the backend 500s, we must
+	// not leave the user on a half-reset screen (blank draft + wiped run state
+	// but still the old conversation) with no feedback — surface why and bail,
+	// keeping them exactly where they were.
+	let conv
+	try {
+		conv = await api.createOrFocusEmpty()
+	} catch (e) {
+		const reason = _skillErr(e).replace(/\.$/, "")
+		notify(`Couldn't start a new chat — ${reason}. Try again.`, { type: "error" })
+		return
+	}
 	swapDraft(null)
 	resetRunState()
-	const conv = await api.createOrFocusEmpty()
 	currentId.value = conv?.name || conv
 	messages.value = []
 	await loadConversations()
@@ -4049,7 +4060,8 @@ async function send(textArg) {
 	const marker = otherAtts.length ? "📎 " + otherAtts.map((a) => a.file_name).join(", ") : ""
 	const optimistic = [text, marker].filter(Boolean).join("\n\n")
 	const optCanvas = imgAtts.map((a, i) => ({ name: `tmpimg-${Date.now()}-${i}`, type: "image", file_url: a.file_url, title: a.file_name || "image" }))
-	messages.value = [...messages.value, { name: `tmp-${Date.now()}`, role: "user", content: optimistic, canvas: optCanvas.length ? optCanvas : undefined }]
+	const tmpId = `tmp-${Date.now()}`
+	messages.value = [...messages.value, { name: tmpId, role: "user", content: optimistic, canvas: optCanvas.length ? optCanvas : undefined }]
 	await nextTick()
 	scrollBottom()
 	try {
@@ -4061,8 +4073,20 @@ async function send(textArg) {
 			loadConversations()
 		}
 	} catch (e) {
+		// The send never reached the model (e.g. send_message 500s on a migration
+		// gap). Don't just stop the spinner and leave a ghost user bubble with no
+		// reply: roll the optimistic message back, restore the composer so the
+		// text/attachments aren't lost, and tell the user why nothing happened.
 		sending.value = false
 		waiting.value = false
+		messages.value = messages.value.filter((m) => m.name !== tmpId)
+		if (fromMain) {
+			if (!input.value) input.value = text
+			if (!pendingFiles.value.length) pendingFiles.value = attachments
+			nextTick(autoGrow)
+		}
+		const reason = _skillErr(e).replace(/\.$/, "")
+		notify(`Couldn't send your message — ${reason}. Try again.`, { type: "error" })
 	}
 }
 
