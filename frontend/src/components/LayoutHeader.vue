@@ -10,12 +10,12 @@
 					     LEFTMOST item of the right cluster so each page's primary
 					     action keeps the rightmost corner (the design standard). -->
 					<Button
-						variant="ghost"
+						variant="outline"
 						size="sm"
 						icon="external-link"
 						label="Open ERPNext Desk"
 						:tooltip="'Open ERPNext Desk'"
-						@click="openDesk"
+						class="jv-deskbtn" @click="openDesk"
 					/>
 					<slot name="right-header" />
 				</div>
