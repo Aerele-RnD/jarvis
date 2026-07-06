@@ -177,3 +177,15 @@ class TestManagedFlagSecurity(FrappeTestCase):
 		self.assertEqual(doc.owner, self.non_sm)
 		self.assertNotIn("learned-rogue", learned_skill_clause(self.non_sm))
 		self.assertNotIn("learned-rogue", learned_skill_clause("Administrator"))
+
+	def test_learned_clause_emits_learned_namespace_slug(self):
+		# Phase-2 namespace: the clause names the wire slug ``learned-<domain>``
+		# VERBATIM (the managed row's skill_name) - never the pre-cutover
+		# ``custom-learned-<domain>``. The persona interplay clause names both
+		# prefixes, so agent-side behaviour is stable across the cutover.
+		with _as("Administrator"), _engine_flag():
+			doc = self._new(skill_name="learned-clausecheck", managed_by_learning=1)
+			doc.insert(ignore_permissions=True)
+		clause = learned_skill_clause("Administrator")
+		self.assertIn("learned-clausecheck", clause)
+		self.assertNotIn("custom-learned-clausecheck", clause)

@@ -50,6 +50,12 @@ export const acknowledgeLearnedPattern = (name) =>
 export const restoreRejectedPattern = (name) => call(LR + "restore_rejected_pattern", { name })
 export const snoozeLearnedPattern = (name, days) =>
 	call(LR + "snooze_learned_pattern", { name, days })
+// Correction loop (§6.5): any signed-in desk (System) user, NOT SM-gated,
+// flags an Active/Approved learned default as wrong-here. One entry per user
+// (a re-flag updates it); ≥2 distinct users or ≥3 events demotes the strength
+// band one level and notifies SMs. Guest/portal sessions are refused server-side.
+export const flagLearnedDefault = (name, note = "") =>
+	call(LR + "flag_learned_default", { name, note })
 // A-class only; a mixed batch (any B/C) is refused whole, server-side.
 export const batchApprove = (names) =>
 	call(LR + "batch_approve", { names: JSON.stringify(Array.from(names || [])) })

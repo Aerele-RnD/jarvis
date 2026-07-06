@@ -4,8 +4,12 @@
 registry (idempotent, best-effort: a seeding hiccup must never fail a migrate).
 ``enablement_preflight`` is the synchronous readiness check run at enablement
 (plan section 3). It READS freely (get_all / db.sql) and writes ONLY
-``Jarvis Pattern Detector State.data_starved``; it is NOT wired to any endpoint
-in this wave (Wave C surfaces it).
+``Jarvis Pattern Detector State`` readiness flags: ``data_starved`` per
+detector, plus ``not_applicable`` for the print-format detector when the
+Access Log signal shows printing bypasses Frappe's print system (zero Print
+rows despite submitted selling documents - custom print engines never write
+Access Log, so more data will NOT fix it). It is NOT wired to any endpoint in
+this wave (Wave C surfaces it).
 """
 
 from __future__ import annotations
@@ -135,9 +139,12 @@ def _seed_detector_state() -> None:
 def enablement_preflight() -> dict:
 	"""Synchronous readiness preflight. Returns a dict of signals; never raises
 	(each probe degrades to a note on failure). NOT wired to an endpoint here."""
+	access_log_signal = _safe(_access_log_signal, "access_log_signal")
+	print_signal = _safe(lambda: _apply_print_signal(access_log_signal), "print_signal")
 	return {
 		"site_size": _safe(_site_size_estimate, "site_size"),
-		"access_log_signal": _safe(_access_log_signal, "access_log_signal"),
+		"access_log_signal": access_log_signal,
+		"print_signal": print_signal,
 		"detector_readiness": _safe(_detector_readiness, "detector_readiness"),
 		"schema_coverage": _safe(_custom_schema_coverage, "schema_coverage"),
 		"item_group_hygiene": _safe(_item_group_hygiene, "item_group_hygiene"),
@@ -204,6 +211,88 @@ def _access_log_signal() -> dict:
 			else None
 		),
 	}
+
+
+_NOT_APPLICABLE_PREFIX = "not_applicable:"
+
+
+def _apply_print_signal(signal: dict) -> dict:
+	"""Wire the Access-Log Print signal into the print-format detector's state
+	(plan section 3): zero Print rows while submitted selling documents exist
+	means printing bypasses Frappe's print system entirely (Access Log Print
+	rows are written ONLY by frappe printview), so the detector can NEVER
+	produce - Detector State.not_applicable, distinct from data_starved. A
+	positive Print signal clears a previously set flag. No submitted documents
+	yet is a data question, not an applicability one: leave the flag alone."""
+	from jarvis.learning.snapshots import PRINT_FORMAT_DETECTOR_ID
+
+	if not isinstance(signal, dict) or not signal.get("supported"):
+		return {"applied": False, "note": "no Access Log signal to act on"}
+	if int(signal.get("print_rows") or 0) > 0:
+		_set_not_applicable(PRINT_FORMAT_DETECTOR_ID, False, None)
+		return {"applied": True, "detector_id": PRINT_FORMAT_DETECTOR_ID, "not_applicable": False}
+	if not _has_submitted_print_targets():
+		return {
+			"applied": False,
+			"note": "no submitted selling documents yet - data_starved territory, not applicability",
+		}
+	reason = (
+		f"{_NOT_APPLICABLE_PREFIX} zero Print rows in Access Log despite submitted selling "
+		"documents - printing bypasses Frappe's print system (custom print engine), so "
+		"print-format patterns can never be observed here."
+	)
+	_set_not_applicable(PRINT_FORMAT_DETECTOR_ID, True, reason)
+	return {
+		"applied": True,
+		"detector_id": PRINT_FORMAT_DETECTOR_ID,
+		"not_applicable": True,
+		"reason": reason,
+	}
+
+
+def _has_submitted_print_targets() -> bool:
+	"""Any submitted row in the selling doctypes the print detector resolves
+	against (bounded exists probes, never counts)."""
+	try:
+		from jarvis.learning.detectors.selling import PRINT_PARTY_SQL
+
+		doctypes = list(PRINT_PARTY_SQL)
+	except Exception:
+		doctypes = ["Sales Invoice", "Sales Order", "Delivery Note", "Quotation"]
+	for doctype in doctypes:
+		try:
+			if frappe.db.exists(doctype, {"docstatus": 1}):
+				return True
+		except Exception:
+			continue
+	return False
+
+
+def _set_not_applicable(detector_id: str, flag: bool, reason: str | None) -> None:
+	"""Persist the applicability verdict on Detector State (creates the row if
+	the after_migrate seed has not run). The reason lands in last_error with a
+	distinct prefix (the doctype has no dedicated reason field); clearing only
+	wipes a reason THIS preflight wrote, never a real engine error."""
+	try:
+		if frappe.db.exists(DETECTOR_STATE, detector_id):
+			update = {"not_applicable": 1 if flag else 0}
+			if flag:
+				update["last_error"] = reason
+			else:
+				last_error = frappe.db.get_value(DETECTOR_STATE, detector_id, "last_error") or ""
+				if last_error.startswith(_NOT_APPLICABLE_PREFIX):
+					update["last_error"] = None
+			frappe.db.set_value(DETECTOR_STATE, detector_id, update, update_modified=False)
+		else:
+			frappe.get_doc({
+				"doctype": DETECTOR_STATE,
+				"detector_id": detector_id,
+				"enabled": 1,
+				"not_applicable": 1 if flag else 0,
+				"last_error": reason if flag else None,
+			}).insert(ignore_permissions=True)
+	except Exception:
+		pass
 
 
 def _detector_readiness() -> dict:

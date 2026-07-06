@@ -90,6 +90,76 @@ SKILL_TEMPLATES: dict[str, dict[str, str]] = {
 		"rule": 'Documents usually use {field_label} "{used}" though the configured default is "{configured}".',
 		"statement": 'The configured {field_label} default is "{configured}", but documents usually use "{used}".',
 	},
+	# Phase 2 (sell-customer-print-format, S4). The tendency variant is picked
+	# by the detector postprocess below 30 effective print events (plan
+	# section 4.2): enough signal to propose, not enough to say "usually".
+	"customer-print-format": {
+		"rule": 'Print documents for customer "{customer}" with print format "{print_format}" by default.',
+		"statement": 'Customer "{customer}" documents are usually printed with format "{print_format}".',
+	},
+	"customer-print-format-tendency": {
+		"rule": 'Prefer print format "{print_format}" when printing documents for customer "{customer}".',
+		"statement": 'Customer "{customer}" documents tend to be printed with format "{print_format}".',
+	},
+	# --- Tier-2 pack (plan sections 4.2 marked rows, 4.4) ---------------------
+	# The geography warning is part of the template text on purpose: compiled
+	# skill text must ALWAYS carry it for this detector (plan section 4.2).
+	"party-tax-template": {
+		"rule": 'Apply {tax_kind} tax template "{tax_template}" when a {party_doctype} has {field_label} "{segment_value}". Verify the geography caveat first: this may be state-driven tax routing, not a segment habit.',
+		"statement": '{party_doctype}s with {field_label} "{segment_value}" usually get {tax_kind} tax template "{tax_template}". Caveat: may reflect party geography (state), not a segment habit; review before approval.',
+	},
+	"customer-payment-terms": {
+		"rule": 'Bill customer "{customer}" on payment terms "{terms}" by default ({master_clause}).',
+		"statement": 'Customer "{customer}" is usually billed on payment terms "{terms}" ({master_clause}).',
+	},
+	"supplier-payment-terms": {
+		"rule": 'Book invoices from supplier "{supplier}" on payment terms "{terms}" by default ({master_clause}).',
+		"statement": 'Supplier "{supplier}" is usually billed on payment terms "{terms}" ({master_clause}).',
+	},
+	"itemgroup-warehouse-dimensioned": {
+		"rule": 'For cost center "{cost_center}", ship item group "{item_group}" from warehouse "{warehouse}" by default.',
+		"statement": 'Item group "{item_group}" under cost center "{cost_center}" usually ships from warehouse "{warehouse}".',
+	},
+	"uom-conversion": {
+		"rule": 'Items in group "{item_group}" usually transact in UOM "{uom}" rather than their stock UOM; default the line UOM to "{uom}".',
+		"statement": 'Item group "{item_group}" usually transacts in UOM "{uom}", not the stock UOM.',
+	},
+	"batch-serial-usage": {
+		"rule": 'Items in group "{item_group}" are {tracking} in practice; set the matching tracking flags when creating items in this group.',
+		"statement": 'Items in group "{item_group}" are usually {tracking}.',
+	},
+	"cost-center-dimension": {
+		"rule": 'Book lines from warehouse "{warehouse}" to cost center "{cost_center}" by default.',
+		"statement": 'Lines from warehouse "{warehouse}" usually book to cost center "{cost_center}".',
+	},
+	"je-from-template": {
+		"rule": '{voucher_type} journal entries are usually created from template "{je_template}"; start from it.',
+		"statement": '{voucher_type} journal entries are usually created from template "{je_template}".',
+	},
+	"je-voucher-type": {
+		"rule": 'Journal entries here are usually "{voucher_type}" entries; default the voucher type accordingly.',
+		"statement": 'Journal entries are usually "{voucher_type}" entries.',
+	},
+	"deferred-usage": {
+		"rule": 'Items in group "{item_group}" usually book deferred {kind}; enable deferred {kind} when invoicing this group.',
+		"statement": 'Item group "{item_group}" usually books deferred {kind}.',
+	},
+	"default-bom-usage": {
+		"rule": 'Use BOM "{bom}" for work orders on item "{item}" by default ({master_clause}).',
+		"statement": 'Work Orders for item "{item}" usually use BOM "{bom}" ({master_clause}).',
+	},
+	"timesheet-rate-defaults": {
+		"rule": 'Bill activity "{activity_type}" at rate {rate} on timesheets by default ({master_clause}).',
+		"statement": 'Timesheet lines for activity "{activity_type}" are usually billed at rate {rate} ({master_clause}).',
+	},
+	"custom-field-always-filled": {
+		"rule": 'Fill the custom field "{fieldname}" ({label}) when drafting {doctype} documents; it is filled on nearly every submitted one despite not being mandatory.',
+		"statement": 'Custom field "{fieldname}" on {doctype} is filled on nearly every submitted document (mandatory in practice).',
+	},
+	"role-doctype-routing": {
+		"rule": '{doctype} documents are usually created by users holding the "{role}" role; route {doctype} work to them.',
+		"statement": '{doctype} documents are usually created by the "{role}" role.',
+	},
 }
 
 

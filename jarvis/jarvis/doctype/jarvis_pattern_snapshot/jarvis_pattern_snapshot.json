@@ -1,0 +1,78 @@
+{
+  "doctype": "DocType",
+  "name": "Jarvis Pattern Snapshot",
+  "module": "Jarvis",
+  "custom": 0,
+  "engine": "InnoDB",
+  "autoname": "format:JPS-{#####}",
+  "naming_rule": "Expression",
+  "field_order": [
+    "detector_id",
+    "period",
+    "company",
+    "snapshot_key",
+    "rows_ingested",
+    "payload"
+  ],
+  "fields": [
+    {
+      "fieldname": "detector_id",
+      "fieldtype": "Data",
+      "label": "Detector ID",
+      "reqd": 1,
+      "in_list_view": 1,
+      "in_standard_filter": 1,
+      "description": "Registry id of the Access-Log detector these aggregates belong to (e.g. sell-customer-print-format)."
+    },
+    {
+      "fieldname": "period",
+      "fieldtype": "Data",
+      "label": "Period",
+      "reqd": 1,
+      "in_list_view": 1,
+      "in_standard_filter": 1,
+      "description": "Calendar month the aggregates cover (YYYY-MM)."
+    },
+    {
+      "fieldname": "company",
+      "fieldtype": "Link",
+      "label": "Company",
+      "options": "Company",
+      "in_list_view": 1,
+      "in_standard_filter": 1
+    },
+    {
+      "fieldname": "snapshot_key",
+      "fieldtype": "Data",
+      "label": "Snapshot Key",
+      "unique": 1,
+      "read_only": 1,
+      "description": "Deterministic hash of (detector_id, period, company); the unique index makes the monthly upsert race-safe (mirrors Jarvis Learned Pattern.pattern_key)."
+    },
+    {
+      "default": "0",
+      "fieldname": "rows_ingested",
+      "fieldtype": "Int",
+      "label": "Rows Ingested",
+      "description": "Log rows folded into this month's aggregates so far."
+    },
+    {
+      "fieldname": "payload",
+      "fieldtype": "Code",
+      "label": "Payload",
+      "options": "JSON",
+      "description": "Monthly aggregate JSON (for print-format: nested party -> print format -> {n, eff, days} counts). Aggregates only; never raw log rows."
+    }
+  ],
+  "permissions": [
+    {
+      "role": "System Manager",
+      "read": 1,
+      "report": 1,
+      "export": 1
+    }
+  ],
+  "sort_field": "period",
+  "sort_order": "DESC",
+  "track_changes": 0
+}

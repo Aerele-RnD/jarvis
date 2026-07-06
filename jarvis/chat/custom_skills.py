@@ -13,6 +13,7 @@ The render helpers are PURE (no frappe calls) so they're unit-testable;
 import re
 
 import frappe
+from frappe import _
 
 # Mirrors the bench-side cap in jarvis_custom_skill.py; re-asserted here so a
 # stale/over-cap state can never be pushed.
@@ -58,6 +59,27 @@ def render_skill_md(
 		f"name: {prefixed_slug(skill_name)}",
 		f"description: {_yaml_quote(description)}",
 		f"user-invocable: {'true' if user_invocable else 'false'}",
+		"---",
+		"",
+		body,
+		"",
+	]
+	return "\n".join(lines)
+
+
+def render_learned_skill_md(slug: str, description: str, instructions: str) -> str:
+	"""The learned-namespace sibling of :func:`render_skill_md` (Behavioural
+	Pattern Learning Phase 2). ``slug`` is the FULL wire slug
+	(``learned-<domain>`` — never ``custom-`` prefixed: learned skills reconcile
+	into the fleet's separate ``learned_skills`` namespace, so the frontmatter
+	``name`` must match the on-disk ``learned-<domain>`` dir). Learned skills are
+	never user-invocable (they auto-inject via ``learned_skill_clause``)."""
+	body = (instructions or "").strip()
+	lines = [
+		"---",
+		f"name: {(slug or '').strip().lower()}",
+		f"description: {_yaml_quote(description)}",
+		"user-invocable: false",
 		"---",
 		"",
 		body,
@@ -155,10 +177,12 @@ def learned_skill_clause(user: str | None = None) -> str:
 
 	Enabled ``managed_by_learning`` skills whose ``allowed_roles`` the chat user
 	satisfies (empty = everyone; System Manager / Administrator always pass) are
-	folded into the leading ``[Context: ...]`` line as
-	``custom-learned-<domain>``, reusing the invoked-skill clause format. Portal
-	users (desk_access=0 roles) never intersect desk-role allowed_roles, so
-	learned skills self-suppress for them at this layer.
+	folded into the leading ``[Context: ...]`` line as ``learned-<domain>`` — the
+	dedicated learned-namespace wire slug (Phase 2; the persona interplay clause
+	names both the old ``custom-learned-`` and the new ``learned-`` prefixes, so
+	agent-side behaviour is unchanged across the cutover). Portal users
+	(desk_access=0 roles) never intersect desk-role allowed_roles, so learned
+	skills self-suppress for them at this layer.
 
 	Hot path: ONE cached role lookup + two indexed queries, capped at the <=6
 	managed rows - no per-skill N+1.
@@ -196,19 +220,42 @@ def learned_skill_clause(user: str | None = None) -> str:
 		]
 	if not matched:
 		return ""
-	slugs = ", ".join(prefixed_slug(s) for s in sorted(matched))
+	# skill_name on a managed row IS the wire slug ("learned-<domain>"): learned
+	# skills ship through the dedicated learned_skills namespace, NOT the custom-
+	# prefixed custom-skills push, so no RESERVED_PREFIX here.
+	slugs = ", ".join(sorted(matched))
 	return f"; apply these learned skills: {slugs}"
 
 
-def build_push_payload(owner: str | None = None) -> list[dict]:
+def build_push_payload(owner: str | None = None, strict: bool = False) -> list[dict]:
 	"""Collect the enabled custom skills into the fleet push payload.
 
 	Bench-global by design: a Jarvis bench maps to one customer / one
 	container, so ALL enabled rows on the site are pushed (``owner`` is accepted
 	only to scope tests). An empty list is a valid "remove all custom skills"
 	reconcile.
+
+	Managed learned rows (``managed_by_learning=1``) are EXCLUDED: since the
+	Phase-2 learned namespace they ride their own push
+	(``jarvis.learning.compiler.build_learned_push_payload`` ->
+	``admin_client.post_push_learned_skills``) and must not eat into the
+	customer's 25-skill custom budget. Their exclusion here is also what makes
+	the first post-cutover custom reconcile delete the stale
+	``custom-learned-<domain>`` dirs from the container.
+
+	Over-cap handling (Phase 2, plan 'tenant audit + graceful resync, then
+	build_push_payload raise'):
+
+	- ``strict=True`` (interactive callers - a human is present to act):
+	  ``frappe.throw`` an actionable error naming the count, the cap and the
+	  fix. Nothing is pushed.
+	- ``strict=False`` (default; unattended callers - the enqueued push worker
+	  and the post-restart resync): truncate to the first
+	  ``MAX_SKILLS_PER_PUSH`` rows (``skill_name`` asc, as before) but
+	  ``frappe.log_error`` a loud warning naming the dropped slugs, so the
+	  truncation is never silent again.
 	"""
-	filters = {"enabled": 1}
+	filters = {"enabled": 1, "managed_by_learning": 0}
 	if owner:
 		filters["owner"] = owner
 	rows = frappe.get_all(
@@ -217,6 +264,23 @@ def build_push_payload(owner: str | None = None) -> list[dict]:
 		fields=["skill_name", "description", "user_invocable", "instructions"],
 		order_by="skill_name asc",
 	)
+	if len(rows) > MAX_SKILLS_PER_PUSH:
+		if strict:
+			frappe.throw(
+				_(
+					"{0} enabled custom skills exceed the push cap of {1}; "
+					"disable {2} or consolidate. Nothing was pushed."
+				).format(len(rows), MAX_SKILLS_PER_PUSH, len(rows) - MAX_SKILLS_PER_PUSH)
+			)
+		dropped = [prefixed_slug(r.skill_name) for r in rows[MAX_SKILLS_PER_PUSH:]]
+		preview = ", ".join(dropped[:5]) + (", ..." if len(dropped) > 5 else "")
+		frappe.log_error(
+			title="Jarvis: custom-skills push truncated",
+			message=(
+				f"custom-skills push truncated: {len(rows)} enabled, "
+				f"{MAX_SKILLS_PER_PUSH} pushed, {len(dropped)} dropped: {preview}"
+			),
+		)
 	payload = []
 	for r in rows[:MAX_SKILLS_PER_PUSH]:
 		ui = bool(r.user_invocable)

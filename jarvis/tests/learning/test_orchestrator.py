@@ -184,6 +184,139 @@ class TestNormalizeDetectorResult(FrappeTestCase):
 		norm = engine._normalize_detector_result(DetectorResult([cand], None, rows_scanned=8123))
 		self.assertEqual(norm["rows"], 8123)
 
+	def test_raw_candidate_count_is_normalized(self):
+		# Drift needs the PRE-cap candidate count: absence from a truncated
+		# list is not evidence a pattern stopped holding.
+		from jarvis.learning.executor import DetectorResult
+
+		cand = {"pattern_key": "k1", "n_rows": 2}
+		norm = engine._normalize_detector_result(
+			DetectorResult([cand], None, rows_scanned=5, raw_candidate_count=120)
+		)
+		self.assertEqual(norm["raw_count"], 120)
+		# A hand-built result carries None (unknown - callers stay conservative).
+		self.assertIsNone(engine._normalize_detector_result(DetectorResult([cand], None))["raw_count"])
+		# A bare list IS the complete candidate set.
+		self.assertEqual(engine._normalize_detector_result([{"n_rows": 3}])["raw_count"], 1)
+		self.assertEqual(engine._normalize_detector_result(None)["raw_count"], 0)
+
+
+class TestWeakerOf(FrappeTestCase):
+	"""Correction-loop band clamp (shared field contract): pipeline strength_band
+	writes take the weaker of (computed band, flag_band_cap)."""
+
+	def test_cap_wins_when_weaker(self):
+		self.assertEqual(engine.weaker_of("High", "Low"), "Low")
+		self.assertEqual(engine.weaker_of("High", "Medium"), "Medium")
+		self.assertEqual(engine.weaker_of("Medium", "Low"), "Low")
+
+	def test_computed_wins_when_already_weaker(self):
+		self.assertEqual(engine.weaker_of("Low", "High"), "Low")
+		self.assertEqual(engine.weaker_of("Medium", "Medium"), "Medium")
+
+	def test_empty_or_unknown_cap_is_no_ceiling(self):
+		self.assertEqual(engine.weaker_of("High", None), "High")
+		self.assertEqual(engine.weaker_of("High", ""), "High")
+		self.assertEqual(engine.weaker_of("High", "Bogus"), "High")
+		self.assertIsNone(engine.weaker_of(None, "Low"))
+
+
+class TestPersistSurvivors(FrappeTestCase):
+	"""Per-survivor guarded persistence: one bad candidate must never abort the
+	rest of its FDR family (or, at the post-loop flush, the run's snapshot/
+	surfacing/drift steps), and failures are attributed to the RELEASED family's
+	detector_id with truthful counts."""
+
+	def test_one_bad_candidate_does_not_abort_the_family(self):
+		cands = [
+			{"pattern_key": "a", "company": "C1"},
+			{"pattern_key": "b", "company": "C2"},
+			{"pattern_key": "c", "company": "C3"},
+		]
+
+		def persist(cand, run):
+			if cand["pattern_key"] == "b":
+				raise ValueError("boom")
+			return "created"
+
+		with mock.patch.object(engine, "_persist_candidate", side_effect=persist), \
+			mock.patch("frappe.log_error") as log_error:
+			res = engine._persist_survivors(cands, None, "det-a")
+
+		self.assertEqual(res["created"], 2)
+		self.assertEqual(res["updated"], 0)
+		self.assertEqual(res["duplicates"], 0)
+		self.assertEqual(len(res["errors"]), 1)
+		self.assertEqual(res["errors"][0]["detector_id"], "det-a")
+		self.assertEqual(res["errors"][0]["company"], "C2")
+		log_error.assert_called_once()
+		self.assertIn("det-a", log_error.call_args.kwargs.get("title", ""))
+
+	def test_outcomes_counted(self):
+		outcomes = iter(["created", "updated", "duplicate"])
+		with mock.patch.object(engine, "_persist_candidate", side_effect=lambda c, r: next(outcomes)):
+			res = engine._persist_survivors([{}, {}, {}], None, "det-b")
+		self.assertEqual((res["created"], res["updated"], res["duplicates"]), (1, 1, 1))
+		self.assertEqual(res["errors"], [])
+
+	def test_empty_and_none_inputs(self):
+		self.assertEqual(engine._persist_survivors([], None, "det-c")["errors"], [])
+		self.assertEqual(engine._persist_survivors(None, None, "det-c")["created"], 0)
+
+
+class TestDriftStash(FrappeTestCase):
+	"""The mining loop stashes {(detector_id, company): {pattern_key: candidate}}
+	for drift re-validation - only watched (Approved/Active) keys, with the
+	unit's cap-truncation state - so drift never re-runs a detector."""
+
+	def _detect(self, result, mined, watch, company="CoA"):
+		from jarvis.learning.fdr import DetectorFamilyBuffer
+
+		spec = {"id": "det-stash", "doctype": "Sales Invoice"}
+		with mock.patch("jarvis.learning.executor.run_detector", return_value=result):
+			return engine._read_and_persist(
+				spec, company, None,
+				fdr_buffer=DetectorFamilyBuffer(), mined=mined, watch=watch,
+			)
+
+	def test_stashes_watched_keys_only(self):
+		from jarvis.learning.executor import DetectorResult
+
+		watched = {"pattern_key": "k-watched", "n_rows": 1}
+		other = {"pattern_key": "k-other", "n_rows": 1}
+		mined: dict = {}
+		watch = {("det-stash", "CoA"): {"k-watched"}}
+		unit = self._detect(
+			DetectorResult([watched, other], None, rows_scanned=2, raw_candidate_count=2),
+			mined, watch,
+		)
+		entry = mined[("det-stash", "CoA")]
+		self.assertEqual(set(entry["by_key"]), {"k-watched"})
+		self.assertEqual(entry["tracked"], {"k-watched"})
+		self.assertFalse(entry["cap_truncated"])
+		self.assertEqual(unit["candidates"], 2)
+		self.assertEqual(unit["persist_errors"], [])
+
+	def test_cap_truncated_unit_is_marked(self):
+		from jarvis.learning.executor import DetectorResult
+
+		cand = {"pattern_key": "k1", "n_rows": 1}
+		mined: dict = {}
+		unit = self._detect(
+			DetectorResult([cand], None, rows_scanned=1, raw_candidate_count=7),
+			mined, {},
+		)
+		self.assertTrue(mined[("det-stash", "CoA")]["cap_truncated"])
+		self.assertEqual(unit["candidates"], 1)
+
+	def test_skipped_unit_is_not_stashed(self):
+		from jarvis.learning.executor import DetectorResult
+
+		mined: dict = {}
+		unit = self._detect(DetectorResult([], "missing field X.y"), mined, {})
+		self.assertEqual(mined, {})
+		self.assertEqual(unit["skipped"], "missing field X.y")
+
 
 class TestRowBudget(FrappeTestCase):
 	"""fix 6: the nightly row budget can actually trip once detectors report a

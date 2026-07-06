@@ -1,6 +1,10 @@
-"""Compiler tests (plan sections 6.2, 6.3): A-only pushed body, B/C excluded,
-size/desc caps, sanitizer applied, allowed_roles union, <=6 managed rows,
-apply-time bench-cap pre-check.
+"""Compiler tests (plan sections 6.2, 6.3, 13 Q5): A-only pushed body, B/C
+excluded, size/desc caps, sanitizer applied, allowed_roles union, <=6 managed
+rows, apply-time learned-cap pre-check, the dedicated learned-namespace push
+payload (``learned-<domain>``, no ``custom-`` prefix) and the one-time cutover
+custom reconcile - exercised through the REAL chained worker path (admin wire
+mocked only): Phase-1-evidence gating, graceful strict=False decoupling from
+the customer's custom-skill count, and no chaining on a failed learned push.
 """
 
 from __future__ import annotations
@@ -29,6 +33,35 @@ def _engine_flag():
 		yield
 	finally:
 		frappe.flags.jarvis_pattern_engine = prev
+
+
+@contextlib.contextmanager
+def _patched_pushes():
+	"""Stub the dedicated learned enqueue (every apply). Since the cutover fix
+	the compiler never calls the custom apply itself - the learned WORKER chains
+	the graceful custom reconcile - so only the learned chain needs stubbing.
+	The cutover tests exercise the real worker path (admin wire mocked) instead.
+	Yields the learned-enqueue mock."""
+	with patch(
+		"jarvis.chat.learned_skills_api.enqueue_learned_skills_push",
+		return_value={"ok": True, "learned_skills_sync_status": "pending: applying learned skills", "count": 0},
+	) as learned:
+		yield learned
+
+
+@contextlib.contextmanager
+def _patched_admin_wire(learned_side_effect=None):
+	"""Mock ONLY the admin wire so both deduped workers run inline end-to-end
+	(``frappe.flags.in_test`` makes every enqueue run ``now=True``). Yields the
+	``(post_push_learned_skills, post_push_custom_skills)`` mocks."""
+	with patch(
+		"jarvis.admin_client.post_push_learned_skills",
+		return_value={},
+		side_effect=learned_side_effect,
+	) as learned_wire, patch(
+		"jarvis.admin_client.post_push_custom_skills", return_value={}
+	) as custom_wire:
+		yield learned_wire, custom_wire
 
 
 def _mk(
@@ -222,6 +255,24 @@ class TestApplyLearnedSkills(FrappeTestCase):
 			"WHERE managed_by_learning=0 AND skill_name NOT LIKE 'learned-%%'",
 			_PARK_OWNER,
 		)
+		# Snapshot the learned sync pair (the cutover detector reads it); each
+		# test starts from a deterministic post-cutover state so the one-time
+		# custom reconcile never fires unless a test asks for the cutover.
+		self._learned_sync = frappe.db.get_value(
+			"Jarvis Settings", "Jarvis Settings",
+			["learned_skills_synced_at", "learned_skills_sync_status"], as_dict=True,
+		) or frappe._dict()
+		# ...and the custom pair: the cutover tests run the real chained custom
+		# reconcile inline, which stamps it terminal.
+		self._custom_sync = frappe.db.get_value(
+			"Jarvis Settings", "Jarvis Settings",
+			["custom_skills_synced_at", "custom_skills_sync_status"], as_dict=True,
+		) or frappe._dict()
+		frappe.db.set_value(
+			"Jarvis Settings", "Jarvis Settings",
+			{"learned_skills_sync_status": "ok (applied 0 via admin)"},
+			update_modified=False,
+		)
 		frappe.db.commit()
 
 	def tearDown(self):
@@ -236,6 +287,16 @@ class TestApplyLearnedSkills(FrappeTestCase):
 			frappe.db.set_value(
 				SKILL, r.name, {"enabled": r.enabled, "owner": r.owner}, update_modified=False
 			)
+		frappe.db.set_value(
+			"Jarvis Settings", "Jarvis Settings",
+			{
+				"learned_skills_synced_at": self._learned_sync.get("learned_skills_synced_at"),
+				"learned_skills_sync_status": self._learned_sync.get("learned_skills_sync_status"),
+				"custom_skills_synced_at": self._custom_sync.get("custom_skills_synced_at"),
+				"custom_skills_sync_status": self._custom_sync.get("custom_skills_sync_status"),
+			},
+			update_modified=False,
+		)
 		frappe.db.commit()
 		super().tearDown()
 
@@ -252,7 +313,7 @@ class TestApplyLearnedSkills(FrappeTestCase):
 		for domain, (det, role) in domains.items():
 			approved[domain] = _mk(domain, "A", detector_id=det, roles=(role,))
 
-		with patch("jarvis.chat.custom_skills_api.apply_custom_skills", return_value={"ok": True}):
+		with _patched_pushes():
 			result = compiler.apply_learned_skills()
 
 		managed = frappe.get_all(
@@ -295,7 +356,7 @@ class TestApplyLearnedSkills(FrappeTestCase):
 			"managed_by_learning": 1,
 		}).insert(ignore_permissions=True)
 		_mk("selling", "A", roles=("Sales User",))  # only selling has patterns
-		with patch("jarvis.chat.custom_skills_api.apply_custom_skills", return_value={"ok": True}):
+		with _patched_pushes():
 			result = compiler.apply_learned_skills()
 		self.assertIn("stock", result["deleted_domains"])
 		self.assertFalse(
@@ -312,9 +373,7 @@ class TestApplyLearnedSkills(FrappeTestCase):
 			observed["during"] = compiler.apply_in_progress()
 			return real()
 
-		with patch.object(compiler, "compile_domain_skills", side_effect=spy), patch(
-			"jarvis.chat.custom_skills_api.apply_custom_skills", return_value={"ok": True}
-		):
+		with patch.object(compiler, "compile_domain_skills", side_effect=spy), _patched_pushes():
 			compiler.apply_learned_skills()
 		# The marker is set BEFORE compile (so un-approve is refused in-window)...
 		self.assertTrue(observed.get("during"))
@@ -383,9 +442,21 @@ class TestApplyLearnedSkills(FrappeTestCase):
 		# aborted before any managed write
 		self.assertFalse(frappe.db.exists(SKILL, {"managed_by_learning": 1}))
 
-	def test_bench_cap_precheck_throws(self):
-		# 25 enabled non-managed skills (low-level insert bypasses the per-owner
-		# cap + validation) + one A-class pattern -> apply must abort pre-write.
+	def test_learned_cap_precheck(self):
+		# The Phase-2 namespace's own <=10 fleet cap is the apply gate now: 11
+		# compiled domains abort pre-write, 10 pass. (Only 6 domains exist today;
+		# the pre-check is exercised directly so the cap holds when more ship.)
+		with self.assertRaises(frappe.ValidationError):
+			compiler._precheck_learned_cap({f"d{i}": {} for i in range(11)})
+		compiler._precheck_learned_cap({f"d{i}": {} for i in range(10)})  # no throw
+
+	def test_custom_cap_does_not_block_learned_apply(self):
+		# 25 enabled non-managed skills used to trip the old shared bench-cap
+		# pre-check; since the namespace cutover managed learned rows ride their
+		# OWN push and no longer count against (or with) the custom 25 - apply
+		# must succeed. (Owned by the park user, NOT Administrator: the per-owner
+		# authoring cap on the doctype is a separate, unchanged gate and the
+		# managed rows are Administrator-owned.)
 		for i in range(25):
 			d = frappe.new_doc(SKILL)
 			d.update({
@@ -396,12 +467,184 @@ class TestApplyLearnedSkills(FrappeTestCase):
 				"user_invocable": 0,
 				"managed_by_learning": 0,
 			})
-			d.owner = "Administrator"
+			# stamp creation FIRST: db_insert overwrites owner with the session
+			# user whenever creation is unset, and these must NOT count against
+			# Administrator's per-owner authoring cap (a separate, unchanged gate).
+			d.creation = d.modified = frappe.utils.now()
+			d.owner = d.modified_by = _PARK_OWNER
 			d.flags.name_set = True
 			d.name = f"cmpcap-row-{i}"
 			d.db_insert()
 		_mk("selling", "A", roles=("Sales User",))
-		with self.assertRaises(frappe.ValidationError):
+		with _patched_pushes():
+			result = compiler.apply_learned_skills()
+		self.assertIn("selling", result["applied_domains"])
+		self.assertTrue(
+			frappe.db.exists(SKILL, {"managed_by_learning": 1, "skill_name": "learned-selling"})
+		)
+
+	# --- dedicated learned push payload (Phase-2 namespace) ------------------ #
+	def test_learned_push_payload_matches_fleet_contract(self):
+		_mk("selling", "A", roles=("Sales User",))
+		with _patched_pushes():
 			compiler.apply_learned_skills()
-		# no managed row should have been created
-		self.assertFalse(frappe.db.exists(SKILL, {"managed_by_learning": 1}))
+		payload = compiler.build_learned_push_payload()
+		self.assertEqual(len(payload), 1)
+		item = payload[0]
+		# agent- item shape: {slug, description, body} - nothing else.
+		self.assertEqual(sorted(item.keys()), ["body", "description", "slug"])
+		# wire slug is learned-<domain> VERBATIM - never custom- prefixed.
+		self.assertEqual(item["slug"], "learned-selling")
+		# fleet caps: slug "learned-" + 1..40 (<=48), body <= 50KB, desc <= 500.
+		self.assertLessEqual(len(item["slug"]), 48)
+		self.assertLessEqual(len(item["body"]), 51200)
+		self.assertLessEqual(len(item["description"]), 500)
+		# SKILL.md frontmatter name matches the namespaced on-disk dir.
+		self.assertIn("name: learned-selling\n", item["body"])
+		self.assertNotIn("custom-learned", item["body"])
+		self.assertIn("user-invocable: false", item["body"])
+		# the compiled instructions ride verbatim in the body.
+		self.assertIn("# Learned selling habits", item["body"])
+
+	def test_managed_rows_excluded_from_custom_push(self):
+		from jarvis.chat.custom_skills import build_push_payload
+
+		_mk("selling", "A", roles=("Sales User",))
+		with _patched_pushes():
+			compiler.apply_learned_skills()
+		# a normal enabled custom row for contrast (low-level insert bypasses caps)
+		d = frappe.new_doc(SKILL)
+		d.update({
+			"skill_name": "cmpcap-normal",
+			"description": "x",
+			"instructions": "y",
+			"enabled": 1,
+			"user_invocable": 0,
+			"managed_by_learning": 0,
+		})
+		d.owner = "Administrator"
+		d.flags.name_set = True
+		d.name = "cmpcap-normal-row"
+		d.db_insert()
+		slugs = {p["slug"] for p in build_push_payload()}
+		self.assertIn("custom-cmpcap-normal", slugs)
+		# the managed learned row never rides the custom push any more.
+		self.assertFalse(any("learned-" in s for s in slugs))
+
+	# --- one-time cutover reconcile ------------------------------------------ #
+	def _pre_cutover_state(self, phase1_row=True):
+		"""Empty learned sync pair (never pushed through the namespace) plus,
+		unless ``phase1_row=False``, a pre-existing managed row - the positive
+		Phase-1 evidence the cutover gate requires."""
+		if phase1_row:
+			frappe.get_doc({
+				"doctype": SKILL,
+				"skill_name": "learned-stock",
+				"description": "phase-1 learned stock",
+				"instructions": "stale phase-1 body",
+				"enabled": 1,
+				"user_invocable": 0,
+				"managed_by_learning": 1,
+			}).insert(ignore_permissions=True)
+		frappe.db.set_value(
+			"Jarvis Settings", "Jarvis Settings",
+			{"learned_skills_synced_at": None, "learned_skills_sync_status": None},
+			update_modified=False,
+		)
+		frappe.db.commit()
+
+	def _sync_pair(self) -> frappe._dict:
+		return frappe.db.get_value(
+			"Jarvis Settings", "Jarvis Settings",
+			["learned_skills_sync_status", "custom_skills_sync_status"], as_dict=True,
+		)
+
+	def test_cutover_chains_graceful_custom_reconcile_once(self):
+		# REAL path: no apply_custom_skills / worker mocks - only the admin wire
+		# is stubbed, so both deduped workers run inline end-to-end.
+		_mk("selling", "A", roles=("Sales User",))
+		self._pre_cutover_state()
+		with _patched_admin_wire() as (learned_wire, custom_wire):
+			result = compiler.apply_learned_skills()
+		self.assertTrue(result["cutover"])
+		learned_wire.assert_called_once()
+		# ...the confirmed-ok learned push chained the GRACEFUL custom worker.
+		custom_wire.assert_called_once()
+		st = self._sync_pair()
+		self.assertTrue(st.learned_skills_sync_status.startswith("ok (applied"))
+		self.assertTrue(st.custom_skills_sync_status.startswith("ok (applied"))
+
+		# once the learned sync pair is stamped, later applies push learned ONLY.
+		with _patched_admin_wire() as (learned_wire, custom_wire):
+			result = compiler.apply_learned_skills()
+		self.assertFalse(result["cutover"])
+		learned_wire.assert_called_once()
+		custom_wire.assert_not_called()
+
+	def test_cutover_survives_over_cap_custom_bench(self):
+		# >25 enabled custom skills used to hard-fail the cutover through the
+		# STRICT interactive apply; the chained reconcile builds strict=False,
+		# so the learned Apply succeeds and the custom push truncates + logs.
+		for i in range(26):
+			d = frappe.new_doc(SKILL)
+			d.update({
+				"skill_name": f"cmpcap-{i}",
+				"description": "x",
+				"instructions": "y",
+				"enabled": 1,
+				"user_invocable": 0,
+				"managed_by_learning": 0,
+			})
+			d.creation = d.modified = frappe.utils.now()
+			d.owner = d.modified_by = _PARK_OWNER
+			d.flags.name_set = True
+			d.name = f"cmpcap-row-{i}"
+			d.db_insert()
+		_mk("selling", "A", roles=("Sales User",))
+		self._pre_cutover_state()
+		with _patched_admin_wire() as (learned_wire, custom_wire):
+			result = compiler.apply_learned_skills()  # must NOT throw
+		self.assertTrue(result["cutover"])
+		self.assertIn("selling", result["applied_domains"])
+		learned_wire.assert_called_once()
+		custom_wire.assert_called_once()
+		# graceful truncation: 25 of 26 pushed, terminal ok (never a throw).
+		pushed = custom_wire.call_args.kwargs["skills"]
+		self.assertEqual(len(pushed), 25)
+		st = self._sync_pair()
+		self.assertTrue(st.custom_skills_sync_status.startswith("ok (applied 25"))
+
+	def test_cutover_skipped_for_fresh_phase2_tenant(self):
+		# Empty sync pair but NO pre-existing managed rows: this tenant never
+		# ran Phase 1, so there are no stale dirs and no extra push/restart.
+		_mk("selling", "A", roles=("Sales User",))
+		self._pre_cutover_state(phase1_row=False)
+		before = self._sync_pair()
+		with _patched_admin_wire() as (learned_wire, custom_wire):
+			result = compiler.apply_learned_skills()
+		self.assertFalse(result["cutover"])
+		learned_wire.assert_called_once()
+		custom_wire.assert_not_called()
+		st = self._sync_pair()
+		self.assertTrue(st.learned_skills_sync_status.startswith("ok (applied"))
+		self.assertEqual(st.custom_skills_sync_status, before.custom_skills_sync_status)
+
+	def test_cutover_reconcile_not_chained_when_learned_push_fails(self):
+		# The custom reconcile rides ONLY a confirmed-ok learned push: on
+		# failure the stale dirs (the OLD guidance) must stay live and the
+		# custom pair must not be stamped pending (nothing to wedge).
+		from jarvis.exceptions import AdminUnreachableError
+
+		_mk("selling", "A", roles=("Sales User",))
+		self._pre_cutover_state()
+		before = self._sync_pair()
+		with _patched_admin_wire(
+			learned_side_effect=AdminUnreachableError("boom")
+		) as (learned_wire, custom_wire):
+			result = compiler.apply_learned_skills()  # worker swallows: no throw
+		self.assertTrue(result["cutover"])
+		learned_wire.assert_called_once()
+		custom_wire.assert_not_called()
+		st = self._sync_pair()
+		self.assertTrue(st.learned_skills_sync_status.startswith("failed: admin unreachable"))
+		self.assertEqual(st.custom_skills_sync_status, before.custom_skills_sync_status)
