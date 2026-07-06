@@ -16,13 +16,16 @@ Enable / schedule are pure DB writes (no container restart — O6); only Apply
 import frappe
 from frappe import _
 
+from jarvis.chat.agent_activity import log_activity
 from jarvis.chat.agent_catalog import build_agent_push_payload
+from jarvis.chat.filebox import _clamp_page, _lk
 from jarvis.chat.macro_scheduler import compute_next_run
 
 LISTING = "Jarvis Agent Listing"
 INSTALLATION = "Jarvis Agent Installation"
 RUN = "Jarvis Agent Run"
 FINDING = "Jarvis Agent Finding"
+ACTIVITY = "Jarvis Agent Activity"
 ALLOWED_ROLE = "Jarvis Agent Allowed Role"
 _SETTINGS = "Jarvis Settings"
 _PUSH_JOB_ID = "jarvis_agent_skills_push"
@@ -88,6 +91,13 @@ def list_agents() -> list[dict]:
 	also carries ``allowed_roles`` (empty = unrestricted) and ``allowed`` (0/1
 	for the CURRENT user; System Manager is always 1) — display state only, the
 	real gate is server-side in install_agent / run_agent_now / the scheduler."""
+	return _enriched_catalog()
+
+
+def _enriched_catalog() -> list[dict]:
+	"""The shared per-row enrichment behind ``list_agents`` AND
+	``list_agents_page`` — one implementation so the paginated SPA list can
+	never drift from the legacy full list."""
 	me = frappe.session.user
 	roles_map = _allowed_roles_map()
 	my_roles = set(frappe.get_roles(me))
@@ -97,7 +107,7 @@ def list_agents() -> list[dict]:
 		fields=[
 			"name", "agent_slug", "title", "description", "category", "nature",
 			"version", "publisher", "status", "rule_pack", "default_schedule",
-			"validated_for_fy", "tools_required",
+			"validated_for_fy", "tools_required", "modified",
 		],
 		order_by="status asc, title asc",
 	)
@@ -144,6 +154,73 @@ def list_agents() -> list[dict]:
 		lst["install_count"] = install_counts.get(lst.name, 0)
 		out.append(lst)
 	return out
+
+
+@frappe.whitelist()
+def list_agents_page(
+	tab: str = "available",
+	category: str | None = None,
+	sort: str = "installs",
+	search: str | None = None,
+	start: int = 0,
+	page_length: int = 20,
+) -> dict:
+	"""Paginated catalog for the SPA (envelope ``{rows, total, has_more, start,
+	page_length}``). ADDITIVE — ``list_agents`` stays. Reuses the exact per-row
+	enrichment of ``list_agents`` (``_enriched_catalog``) and filters/sorts/
+	slices in Python: the catalog is a bundled registry of at most a few dozen
+	rows, so the enriched-list-then-slice approach is both simplest and correct
+	(``total``/``has_more`` are computed on the active tab's filtered set).
+
+	Tabs (AgentsList.vue semantics): ``featured`` = Published only;
+	``available`` = everything except Deprecated (a Deprecated listing shows
+	only if the CALLER still has it installed); ``installed`` = the caller's
+	installs, any status. Sort: ``installs`` (install_count desc, title asc —
+	also the Featured strip's order), ``updated`` (modified desc), ``name``
+	(title asc). Search is case-insensitive over
+	title/description/category/agent_slug."""
+	if tab not in ("featured", "available", "installed"):
+		frappe.throw(_("Invalid tab."))
+	start, pl = _clamp_page(start, page_length)
+	rows = _enriched_catalog()
+
+	if tab == "featured":
+		rows = [r for r in rows if r.status == "Published"]
+	elif tab == "installed":
+		rows = [r for r in rows if r.installed]
+	else:  # available
+		rows = [r for r in rows if r.status != "Deprecated" or r.installed]
+
+	if category:
+		rows = [r for r in rows if (r.category or "") == category]
+
+	q = (search or "").strip().lower()
+	if q:
+		rows = [
+			r
+			for r in rows
+			if any(
+				q in str(r.get(k) or "").lower()
+				for k in ("title", "description", "category", "agent_slug")
+			)
+		]
+
+	if sort == "updated":
+		rows.sort(key=lambda r: str(r.get("modified") or ""), reverse=True)
+	elif sort == "name":
+		rows.sort(key=lambda r: (r.get("title") or "").lower())
+	else:  # installs (default)
+		rows.sort(key=lambda r: (-(r.get("install_count") or 0), (r.get("title") or "").lower()))
+
+	total = len(rows)
+	page = rows[start : start + pl]
+	return {
+		"rows": page,
+		"total": total,
+		"has_more": start + len(page) < total,
+		"start": start,
+		"page_length": pl,
+	}
 
 
 @frappe.whitelist()
@@ -351,6 +428,28 @@ def get_agent_admin_overview() -> dict:
 # --------------------------------------------------------------------------- #
 # install / enable / schedule / uninstall (mutations — all owner-gated)
 # --------------------------------------------------------------------------- #
+def _mark_catalog_dirty() -> None:
+	"""Flag that the container-pushed ENABLED set changed since the last Apply
+	(install / uninstall / enable-disable). Cleared only on a SUCCESSFUL push
+	inside ``_enqueued_push_agent_skills``; surfaced to the SPA as ``dirty`` in
+	``get_agents_sync_status``. Also bumps ``agent_catalog_version`` — the
+	optimistic-concurrency stamp the push worker snapshots before building its
+	payload, so a mutation landing MID-push can never have its dirty flag
+	cleared by that push (TOCTOU). Best-effort — the flag must never break the
+	mutation it annotates."""
+	try:
+		frappe.db.set_single_value(_SETTINGS, "agent_catalog_dirty", 1)
+		frappe.db.set_single_value(
+			_SETTINGS,
+			"agent_catalog_version",
+			frappe.utils.cint(frappe.db.get_single_value(_SETTINGS, "agent_catalog_version")) + 1,
+		)
+	except Exception:
+		frappe.log_error(
+			title="Jarvis: agent catalog dirty flag failed", message=frappe.get_traceback()
+		)
+
+
 @frappe.whitelist()
 def install_agent(agent_slug: str) -> dict:
 	"""Install a Published agent for the current user. The doctype validate()
@@ -387,6 +486,16 @@ def install_agent(agent_slug: str) -> dict:
 		"schedule_frequency": freq,
 	})
 	doc.insert()  # owner = me; validate() runs the cap/uniqueness checks
+	# No _mark_catalog_dirty(): installs start enabled=0, so the container's
+	# ENABLED set is unchanged — only enable/disable (and uninstalling an
+	# ENABLED install) make an Apply pending.
+	log_activity(
+		agent=listing.name,
+		agent_title=listing.title,
+		installation=doc.name,
+		action="installed",
+		detail=f"v{listing.version}" if listing.version else None,
+	)
 	frappe.db.commit()
 	return {"ok": True, "data": {"name": doc.name, "agent": listing.name}}
 
@@ -399,6 +508,13 @@ def set_enabled(installation: str, enabled: int) -> dict:
 	doc.check_permission("write")  # S3 owner-gate
 	doc.enabled = int(enabled or 0)
 	doc.save()
+	_mark_catalog_dirty()
+	log_activity(
+		agent=doc.agent,
+		agent_title=frappe.db.get_value(LISTING, doc.agent, "title"),
+		installation=doc.name,
+		action="enabled" if doc.enabled else "disabled",
+	)
 	frappe.db.commit()
 	return {"ok": True, "data": {"name": doc.name, "enabled": doc.enabled}}
 
@@ -427,6 +543,17 @@ def set_schedule(
 	if doc.schedule_enabled:
 		doc.next_run_at = compute_next_run(doc.schedule_frequency, doc.schedule_time)
 	doc.save()
+	log_activity(
+		agent=doc.agent,
+		agent_title=frappe.db.get_value(LISTING, doc.agent, "title"),
+		installation=doc.name,
+		action="schedule_changed",
+		detail=(
+			f"{doc.schedule_frequency} at {doc.schedule_time or '09:00'}"
+			if doc.schedule_enabled
+			else "schedule off"
+		),
+	)
 	frappe.db.commit()
 	return {
 		"ok": True,
@@ -450,17 +577,56 @@ def set_config(installation: str, config: str) -> dict:
 		frappe.throw(_("Config must be a JSON object."))
 	doc.config = frappe.as_json(parsed)
 	doc.save()
+	log_activity(
+		agent=doc.agent,
+		agent_title=frappe.db.get_value(LISTING, doc.agent, "title"),
+		installation=doc.name,
+		action="config_changed",
+		# Key names only — engagement/materiality VALUES stay out of the feed.
+		detail=", ".join(sorted(parsed)) or None,
+	)
 	frappe.db.commit()
 	return {"ok": True, "data": {"name": doc.name}}
 
 
 @frappe.whitelist()
 def uninstall_agent(installation: str) -> dict:
-	"""Delete an installation (owner-gated). The bundle leaves the container on
-	the next Apply (the fleet endpoint does a full reconcile)."""
+	"""Delete an installation (owner-gated) plus its run + finding history —
+	bottom-up, mirroring ``macros_api.delete_macro``: findings link runs (via
+	``run`` / ``first_seen_run`` / ``last_seen_run``) and runs link the
+	installation, so leaving either behind would block the delete with
+	LinkExistsError. One install is one (owner, agent) pair, so the owner's
+	findings for the agent go, PLUS (belt-and-braces) any finding whose run
+	pointers land in this install's runs. The ``uninstalled`` activity row is
+	written FIRST — it is Link-free by design, so the history survives the
+	cascade. The bundle leaves the container on the next Apply (the fleet
+	endpoint does a full reconcile); the dirty flag records that an Apply is
+	now pending — but only when the install was ENABLED (a disabled install
+	was never in the pushed set, so removing it changes nothing)."""
 	doc = frappe.get_doc(INSTALLATION, installation)
-	doc.check_permission("delete")  # S3 owner-gate
+	doc.check_permission("delete")  # S3 owner-gate before touching linked rows
+	log_activity(
+		agent=doc.agent,
+		agent_title=frappe.db.get_value(LISTING, doc.agent, "title"),
+		installation=doc.name,
+		action="uninstalled",
+	)
+	run_names = frappe.get_all(RUN, filters={"installation": doc.name}, pluck="name")
+	finding_names = set(
+		frappe.get_all(FINDING, filters={"owner": doc.owner, "agent": doc.agent}, pluck="name")
+	)
+	if run_names:
+		for field in ("run", "first_seen_run", "last_seen_run"):
+			finding_names.update(
+				frappe.get_all(FINDING, filters={field: ["in", run_names]}, pluck="name")
+			)
+	for name in finding_names:
+		frappe.delete_doc(FINDING, name, ignore_permissions=True, force=True)
+	for name in run_names:
+		frappe.delete_doc(RUN, name, ignore_permissions=True, force=True)
 	frappe.delete_doc(INSTALLATION, installation)  # honors if_owner
+	if doc.enabled:
+		_mark_catalog_dirty()
 	frappe.db.commit()
 	return {"ok": True}
 
@@ -519,6 +685,19 @@ def run_agent_now(installation: str) -> dict:
 # --------------------------------------------------------------------------- #
 # runs + findings (read)
 # --------------------------------------------------------------------------- #
+def _count(doctype: str, filters: dict, or_filters: list | None = None) -> int:
+	"""Server-side COUNT for the paginated envelopes. The common (no-search) path
+	uses ``frappe.db.count`` — a true ``COUNT(*)``. ``frappe.db.count`` cannot
+	express ``or_filters`` and newer Frappe rejects raw SQL functions in
+	``fields``, so the search path plucks names — bounded because it is already
+	owner-scoped AND search-narrowed."""
+	if or_filters:
+		return len(
+			frappe.get_all(doctype, filters=filters, or_filters=or_filters, pluck="name")
+		)
+	return frappe.db.count(doctype, filters=filters)
+
+
 @frappe.whitelist()
 def list_runs(agent: str | None = None, limit: int = 50) -> list[dict]:
 	"""This owner's run history (optionally filtered to one agent)."""
@@ -540,10 +719,70 @@ def list_runs(agent: str | None = None, limit: int = 50) -> list[dict]:
 
 
 @frappe.whitelist()
+def list_runs_page(
+	agent: str | None = None,
+	status: str | None = None,
+	search: str | None = None,
+	sort: str = "recent",
+	start: int = 0,
+	page_length: int = 20,
+) -> dict:
+	"""This owner's run history, paginated (envelope ``{rows, total, has_more,
+	start, page_length}``). ADDITIVE — ``list_runs`` stays. ``sort="recent"``
+	(the only order today; the param is forward-compat) is ``started_at desc``
+	— MariaDB sorts NULLs LAST on DESC, so a not-yet-started row sinks to the
+	bottom; ``creation desc`` breaks ties. Optional ``status`` filter; search
+	matches name/status (LIKE-escaped)."""
+	me = frappe.session.user
+	start, pl = _clamp_page(start, page_length)
+	filters: dict = {"owner": me}
+	if agent:
+		filters["agent"] = agent
+	if status:
+		if status not in ("running", "completed", "partial", "failed"):
+			frappe.throw(_("Invalid status filter."))
+		filters["status"] = status
+	or_filters = []
+	if search and search.strip():
+		q = f"%{_lk(search.strip())}%"
+		or_filters = [["name", "like", q], ["status", "like", q]]
+
+	total = _count(RUN, filters, or_filters)
+	rows = frappe.get_all(
+		RUN,
+		filters=filters,
+		or_filters=or_filters,
+		fields=[
+			"name", "agent", "installation", "trigger", "status", "started_at",
+			"finished_at", "conversation", "findings_count", "blocker_count",
+			"error", "coverage_note",
+		],
+		order_by="started_at desc, creation desc",
+		limit_start=start,
+		limit_page_length=pl,
+	)
+	return {
+		"rows": rows,
+		"total": total,
+		"has_more": start + len(rows) < total,
+		"start": start,
+		"page_length": pl,
+	}
+
+
+@frappe.whitelist()
 def list_findings(
-	run: str | None = None, state: str | None = None, limit: int = 100
-) -> list[dict]:
-	"""This owner's persisted findings (optionally filtered by run and/or state).
+	run: str | None = None,
+	state: str | None = None,
+	start: int = 0,
+	page_length: int = 50,
+) -> dict:
+	"""This owner's persisted findings (optionally filtered by run and/or state),
+	paginated. Envelope ``{rows, total, has_more, start, page_length,
+	severity_counts}`` — ``total`` counts ALL matching findings and
+	``severity_counts`` (``{blocker, warning, note}``) are the TRUE per-severity
+	totals across the whole matching set, NOT just the page, so the SPA's group
+	headers stay honest at scale.
 
 	``run`` means "the findings that run OBSERVED", not "rows whose ``run`` field
 	is that run": ``record_scrutiny_run`` dedupes re-detections into the EXISTING
@@ -556,13 +795,25 @@ def list_findings(
 	whose creation falls inside the ``[first_seen_run, last_seen_run]`` span —
 	which keeps this drill-down consistent with the Runs-table counts."""
 	me = frappe.session.user
+	start, pl = _clamp_page(start, page_length)
+
+	def _empty() -> dict:
+		return {
+			"rows": [],
+			"total": 0,
+			"has_more": False,
+			"start": start,
+			"page_length": pl,
+			"severity_counts": {"blocker": 0, "warning": 0, "note": 0},
+		}
+
 	filters = {"owner": me}
 	if run:
 		run_row = frappe.db.get_value(RUN, run, ["agent", "creation", "status"], as_dict=True)
 		if not run_row or run_row.status not in ("completed", "partial"):
 			# unknown / failed / still-running runs recorded no findings snapshot
 			# (findings_count is 0 there too — the drill-down must match).
-			return []
+			return _empty()
 		observed = frappe.db.sql(
 			"""SELECT f.name FROM `tabJarvis Agent Finding` f
 			JOIN `tabJarvis Agent Run` fr ON fr.name = f.first_seen_run
@@ -573,21 +824,49 @@ def list_findings(
 			pluck=True,
 		)
 		if not observed:
-			return []
+			return _empty()
 		filters["name"] = ["in", observed]
 	if state:
 		filters["state"] = state
-	return frappe.get_all(
+
+	# TRUE totals over the WHOLE matching set (one grouped COUNT — never the
+	# page): total + per-severity counts for the UI group headers.
+	severity_counts = {"blocker": 0, "warning": 0, "note": 0}
+	# Real COUNT(*)s via frappe.db.count — newer Frappe rejects raw
+	# "count(name)" SQL-function strings in get_all fields (see filebox.py).
+	total = frappe.db.count(FINDING, filters=filters)
+	for sev in severity_counts:
+		severity_counts[sev] = frappe.db.count(FINDING, filters={**filters, "severity": sev})
+
+	rows = frappe.get_all(
 		FINDING,
 		filters=filters,
 		fields=[
 			"name", "run", "agent", "rule_id", "severity", "title", "detail_md",
-			"section", "effective_date", "ref_doctype", "ref_name", "amount",
-			"state", "first_seen_run", "last_seen_run", "modified",
+			"section", "effective_date", "disclaimer", "ref_doctype", "ref_name",
+			"amount", "state", "first_seen_run", "last_seen_run", "modified",
 		],
 		order_by="modified desc",
-		limit=int(limit or 100),
+		limit_start=start,
+		limit_page_length=pl,
 	)
+	# Derived recurrence label: dedupe only ever bumps ``last_seen_run`` while a
+	# finding stays open, so a span wider than one run means it recurred.
+	for r in rows:
+		if r.state == "resolved":
+			r["recurrence"] = "resolved"
+		elif r.first_seen_run and r.first_seen_run != r.last_seen_run:
+			r["recurrence"] = "recurring"
+		else:
+			r["recurrence"] = "new"
+	return {
+		"rows": rows,
+		"total": total,
+		"has_more": start + len(rows) < total,
+		"start": start,
+		"page_length": pl,
+		"severity_counts": severity_counts,
+	}
 
 
 @frappe.whitelist()
@@ -603,6 +882,105 @@ def set_finding_state(finding: str, state: str) -> dict:
 	return {"ok": True, "data": {"name": doc.name, "state": state}}
 
 
+@frappe.whitelist()
+def list_agent_activity_page(
+	agent: str | None = None,
+	action: str | None = None,
+	search: str | None = None,
+	start: int = 0,
+	page_length: int = 20,
+) -> dict:
+	"""This owner's agent activity feed, newest first, paginated (envelope
+	``{rows, total, has_more, start, page_length}``). Activity rows are
+	Link-free Data snapshots, so the feed survives the uninstall cascade —
+	``agent`` filters on the slug snapshot, ``action`` on the lifecycle verb.
+	Search matches agent_title/detail (LIKE-escaped)."""
+	me = frappe.session.user
+	start, pl = _clamp_page(start, page_length)
+	filters: dict = {"owner": me}
+	if agent:
+		filters["agent"] = agent
+	if action:
+		filters["action"] = action
+	or_filters = []
+	if search and search.strip():
+		q = f"%{_lk(search.strip())}%"
+		or_filters = [["agent_title", "like", q], ["detail", "like", q]]
+
+	total = _count(ACTIVITY, filters, or_filters)
+	rows = frappe.get_all(
+		ACTIVITY,
+		filters=filters,
+		or_filters=or_filters,
+		fields=[
+			"name", "agent", "agent_title", "installation", "action", "run",
+			"detail", "creation",
+		],
+		order_by="creation desc",
+		limit_start=start,
+		limit_page_length=pl,
+	)
+	return {
+		"rows": rows,
+		"total": total,
+		"has_more": start + len(rows) < total,
+		"start": start,
+		"page_length": pl,
+	}
+
+
+@frappe.whitelist()
+def take_finding_to_chat(finding: str) -> dict:
+	"""Open a NEW conversation seeded with a finding's recorded facts so the
+	user can act on it with Jarvis. Owner-gated via ``check_permission("read")``
+	(the finding owner via ``if_owner``, or a System Manager). The seed hands
+	over ONLY what the run persisted — rule id, statement, severity, referenced
+	document, amount, statutory section — and asks for help; it never fabricates
+	a remediation. Dispatched as a normal FOREGROUND turn (no ``background``
+	flag — unlike ``filebox.drop_file``'s unattended drop, the user lands in
+	the live chat), mirroring ``approvals_api.decide``'s resume send."""
+	doc = frappe.get_doc(FINDING, finding)
+	doc.check_permission("read")  # S3 owner-gate (owner via if_owner, or SM)
+
+	from jarvis.chat.api import send_message
+
+	title = (doc.title or doc.rule_id or "finding").strip()
+	conv = frappe.get_doc({
+		"doctype": "Jarvis Conversation",
+		"title": f"Finding: {title}"[:140],
+		"status": "Active",
+	})
+	conv.insert()  # owned by the current user; respects perms
+	frappe.db.commit()
+
+	parts = [
+		f"I want to act on audit finding {doc.name} "
+		f"(rule {doc.rule_id}, severity: {doc.severity}).",
+		f"Finding: {title}",
+	]
+	if doc.ref_doctype and doc.ref_name:
+		parts.append(f"Referenced document: {doc.ref_doctype} {doc.ref_name}")
+	if doc.amount:
+		parts.append(f"Amount: {doc.amount}")
+	if doc.section:
+		eff = f" (effective {doc.effective_date})" if doc.effective_date else ""
+		parts.append(f"Statutory section: {doc.section}{eff}")
+	if doc.detail_md:
+		parts.append(f"Detail: {doc.detail_md[:500]}")
+	parts.append(
+		"Help me review and act on this finding. Start from the referenced "
+		"document and the recorded facts above; do not invent numbers, "
+		"documents or remediation steps the data does not support."
+	)
+	res = send_message(conversation=conv.name, message="\n".join(parts))
+	return {
+		"ok": bool(res.get("ok")),
+		"conversation": conv.name,
+		"run_id": res.get("run_id"),
+		"reason": res.get("reason"),
+	}
+
+
 # --------------------------------------------------------------------------- #
 # Apply (explicit push to the container, via admin -> fleet) + status poller
 # --------------------------------------------------------------------------- #
@@ -615,6 +993,9 @@ def get_agents_sync_status() -> dict:
 		"last_sync_at": str(s.get("agent_skills_synced_at") or ""),
 		"last_sync_status": status,
 		"pending": status.startswith("pending:"),
+		# The enabled set changed since the last successful Apply (install /
+		# uninstall / enable-disable) — the SPA shows "Apply pending".
+		"dirty": bool(frappe.utils.cint(s.get("agent_catalog_dirty"))),
 	}
 
 
@@ -676,16 +1057,29 @@ def _enqueued_push_agent_skills() -> None:
 
 		terminal_written = False
 		try:
+			# TOCTOU guard: snapshot the catalog version BEFORE building the
+			# payload (inside the lock). A mutation landing mid-push bumps it
+			# (``_mark_catalog_dirty``), and we then refuse to clear the dirty
+			# flag below — the change missed this payload; a later Apply
+			# reconciles it.
+			version = frappe.utils.cint(
+				frappe.db.get_single_value(_SETTINGS, "agent_catalog_version")
+			)
 			payload = build_agent_push_payload()
 			admin_client.post_push_agent_skills(agent_skills=payload)
-			frappe.db.set_value(
-				_SETTINGS,
-				_SETTINGS,
-				{
-					"agent_skills_synced_at": frappe.utils.now(),
-					"agent_skills_sync_status": f"ok (applied {len(payload)} via admin)",
-				},
-			)
+			values = {
+				"agent_skills_synced_at": frappe.utils.now(),
+				"agent_skills_sync_status": f"ok (applied {len(payload)} via admin)",
+			}
+			# The container now matches the DB — clear the dirty flag ONLY on a
+			# successful push whose payload saw every mutation (version
+			# unchanged); failures and mid-push mutations leave it set.
+			if (
+				frappe.utils.cint(frappe.db.get_single_value(_SETTINGS, "agent_catalog_version"))
+				== version
+			):
+				values["agent_catalog_dirty"] = 0
+			frappe.db.set_value(_SETTINGS, _SETTINGS, values)
 			terminal_written = True
 		except admin_client.AdminAuthError as e:
 			_fail(f"failed: auth: {e}")

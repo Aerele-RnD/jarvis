@@ -18,11 +18,13 @@ import hashlib
 import frappe
 from frappe.utils import getdate
 
+from jarvis.chat.agent_activity import log_activity
 from jarvis.chat.macro_scheduler import compute_next_run
 
 RUN = "Jarvis Agent Run"
 FINDING = "Jarvis Agent Finding"
 INSTALLATION = "Jarvis Agent Installation"
+LISTING = "Jarvis Agent Listing"
 
 
 def _fingerprint(rule_id, ref_doctype, ref_name) -> str:
@@ -133,6 +135,7 @@ def record_scrutiny_run(
 			"ref_doctype": f.get("ref_doctype") or "",
 			"ref_name": f.get("ref_name") or "",
 			"amount": f.get("amount") or 0,
+			"disclaimer": f.get("disclaimer") or "",
 			"fingerprint": fp,
 			"state": "open",
 			"first_seen_run": run_doc.name,
@@ -161,6 +164,21 @@ def record_scrutiny_run(
 		"finished_at": frappe.utils.now(),
 		"coverage_note": coverage[:140],
 	}, update_modified=False)
+
+	# Activity trail (best-effort, Link-free — survives the uninstall cascade).
+	# The explicit ``owner`` pins the feed row to the installation owner (today
+	# run_scrutiny enforces we ARE the owner, but a future non-owner caller must
+	# never misattribute the row).
+	log_activity(
+		agent=agent,
+		agent_title=frappe.db.get_value(LISTING, agent, "title"),
+		installation=inst.name,
+		action={"completed": "run_completed", "partial": "run_partial"}.get(status, "run_failed"),
+		run=run_doc.name,
+		detail=f"{len(seen_fps)} findings, {counts.get('blocker', 0)} blockers"
+		+ (f"; {coverage}" if coverage else ""),
+		owner=owner,
+	)
 
 	# Stamp the installation on completion, WHATEVER the trigger: this is the
 	# single point where a run flips to completed/partial, so manual Run-Now

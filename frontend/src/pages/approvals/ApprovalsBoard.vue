@@ -56,6 +56,9 @@
 								<div class="truncate text-base text-ink-gray-9">{{ row.title || row.name }}</div>
 								<div class="mt-1 flex items-center gap-2">
 									<Badge variant="subtle" theme="gray" :label="docType(row)" />
+									<Tooltip v-if="row.shared" text="Shared with you for review">
+										<Badge variant="subtle" theme="blue" label="Shared" />
+									</Tooltip>
 									<Tooltip :text="exactDate(row.creation)">
 										<span class="whitespace-nowrap text-sm text-ink-gray-5">{{ timeAgo(row.creation) }}</span>
 									</Tooltip>
@@ -116,6 +119,9 @@
 							:theme="STATUS_THEME[selected.status] || 'gray'"
 							:label="selected.status"
 						/>
+						<Tooltip v-if="selected.shared" text="Shared with you for review">
+							<Badge variant="subtle" theme="blue" label="Shared" />
+						</Tooltip>
 						<Button
 							v-if="selected.conversation"
 							variant="subtle"
@@ -216,6 +222,52 @@
 											:disabled="deciding !== null"
 											@click="submitDecide(0)"
 										/>
+										<div class="flex-1" />
+										<!-- tag for review — the DocShare path DocMetaPanel's
+										     "Shared with" block uses (same docmeta object, so the
+										     Record details block stays in sync) -->
+										<Popover placement="bottom-end">
+											<template #target="{ togglePopover }">
+												<Button
+													variant="subtle"
+													size="sm"
+													label="Tag for review"
+													iconLeft="user-plus"
+													:tooltip="'Share this approval so a colleague can review it'"
+													@click="openTagPicker(togglePopover)"
+												/>
+											</template>
+											<template #body>
+												<div
+													class="my-2 w-[320px] rounded-lg bg-surface-modal p-3 shadow-2xl ring-1 ring-black ring-opacity-5"
+												>
+													<div v-if="shares.length" class="mb-2 flex flex-wrap gap-1.5">
+														<div
+															v-for="s in shares"
+															:key="s.user"
+															class="flex h-6 items-center gap-1 rounded bg-surface-gray-2 px-2 text-sm text-ink-gray-8"
+														>
+															<span class="truncate">{{ s.full_name || s.user }}</span>
+															<Button
+																variant="ghost"
+																icon="x"
+																class="!h-4 !w-4"
+																@click="docmeta.toggleShare(s.user, 'remove')"
+															/>
+														</div>
+													</div>
+													<Autocomplete
+														:options="tagOptions"
+														:modelValue="null"
+														placeholder="Tag a colleague…"
+														@update:modelValue="(opt) => opt && addTag(opt)"
+													/>
+												</div>
+											</template>
+										</Popover>
+									</div>
+									<div class="mt-2 text-sm text-ink-gray-5">
+										Tag a colleague to view and comment — only you (or an admin) can approve.
 									</div>
 								</div>
 								<div v-else class="text-sm text-ink-gray-5">
@@ -257,12 +309,14 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import {
+	Autocomplete,
 	Badge,
 	Breadcrumbs,
 	Button,
 	FeatherIcon,
 	FormControl,
 	LoadingIndicator,
+	Popover,
 	Tooltip,
 	toast,
 } from "frappe-ui"
@@ -498,6 +552,41 @@ const decidedLine = computed(() => {
 	if (!s || !s.decided_by) return ""
 	const who = s.decided_by_name || s.decided_by
 	return "Decided by " + who + (s.decided_at ? " · " + timeAgo(s.decided_at) : "")
+})
+
+// ── tag for review (§15.2 addendum) ──────────────────────────────────────────
+// Sharing IS tagging: same DocShare path as DocMetaPanel's "Shared with" block
+// (docmeta.toggleShare), surfaced next to the Decision buttons so it's
+// discoverable. The backend makes shared approvals visible on the tagged
+// user's board; can_act stays owner/SM-only — tagged users view and comment.
+const shares = computed(() => (docmeta.meta && docmeta.meta.shares) || [])
+const shareUsers = ref([])
+let shareUsersLoaded = false
+async function loadShareUsers() {
+	if (shareUsersLoaded) return
+	shareUsersLoaded = true
+	try {
+		shareUsers.value = (await api.listShareableUsers()) || []
+	} catch (e) {
+		shareUsersLoaded = false // retry on next open
+	}
+}
+function openTagPicker(togglePopover) {
+	loadShareUsers()
+	togglePopover()
+}
+// toggleShare returns true on success (errors toast inside the composable)
+async function addTag(opt) {
+	if (await docmeta.toggleShare(opt.value, "add")) {
+		toast.success("Shared with " + (opt.label || opt.value))
+	}
+}
+const tagOptions = computed(() => {
+	const taken = new Set(shares.value.map((s) => s.user))
+	if (docmeta.meta && docmeta.meta.created) taken.add(docmeta.meta.created.owner)
+	return shareUsers.value
+		.filter((u) => !taken.has(u.name))
+		.map((u) => ({ label: u.full_name || u.name, value: u.name }))
 })
 
 // ── decide (§15.2 point 4) ────────────────────────────────────────────────────
