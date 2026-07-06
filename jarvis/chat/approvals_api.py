@@ -354,16 +354,37 @@ def decide(name: str, decision: str, approve: int = 1) -> dict:
 		# resume runs AS the conversation owner - the same identity hinge
 		# agents_api.run_agent_now uses. The decision itself stays attributed
 		# to the approver via decided_by on the Approval Request row.
+		from jarvis.chat.agent_scheduler import _valid_owner
+
 		conv_owner = frappe.db.get_value("Jarvis Conversation", doc.conversation, "owner")
 		original_user = frappe.session.user
-		try:
-			if conv_owner and conv_owner != original_user:
-				frappe.set_user(conv_owner)
-			res = send_message(conversation=doc.conversation, message=msg, attachments=attachments)
-			resumed = bool(res.get("ok"))
-		except Exception:
-			frappe.log_error(title="approval resume failed", message=frappe.get_traceback())
-		finally:
-			if frappe.session.user != original_user:
-				frappe.set_user(original_user)
+		# Fail-closed identity guard (mirrors agents_api.run_agent_now): never
+		# resume AS Administrator / Guest / a disabled user on someone else's
+		# behalf - that would run an unattended agent turn with elevated
+		# rights. A self-owned resume (owner == approver) always proceeds.
+		switch_to = conv_owner if (conv_owner and conv_owner != original_user) else None
+		if switch_to and not _valid_owner(switch_to):
+			frappe.log_error(
+				title="approval resume skipped (owner not an eligible run identity)",
+				message=(
+					f"Approval {doc.name}: conversation owner {switch_to!r} is not an "
+					f"eligible run identity (Administrator/Guest/disabled); the decision "
+					f"is recorded but the turn was not resumed."
+				),
+			)
+		else:
+			try:
+				if switch_to:
+					frappe.set_user(switch_to)
+				res = send_message(conversation=doc.conversation, message=msg, attachments=attachments)
+				resumed = bool(res.get("ok"))
+			except Exception:
+				# Restore BEFORE logging so the Error Log is attributed to the
+				# approver, not the impersonated conversation owner.
+				if frappe.session.user != original_user:
+					frappe.set_user(original_user)
+				frappe.log_error(title="approval resume failed", message=frappe.get_traceback())
+			finally:
+				if frappe.session.user != original_user:
+					frappe.set_user(original_user)
 	return {"ok": True, "status": doc.status, "resumed": resumed}

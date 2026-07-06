@@ -22,6 +22,7 @@ from jarvis.chat.api import (
 	rename_conversation,
 	retry_message,
 	set_conversation_model,
+	set_conversation_thinking,
 	set_star,
 )
 
@@ -788,6 +789,27 @@ class TestConversationOwnershipEnforcement(_ChatTestCase):
 			with self.assertRaises(frappe.PermissionError):
 				retry_message(self.asst_msg)
 		dispatch.assert_not_called()
+
+	def test_non_owner_cannot_set_model(self):
+		# set_conversation_model mutates the row via db.set_value (bypasses
+		# perms), so it must assert ownership explicitly (same IDOR class).
+		self._as_intruder()
+		with self.assertRaises(frappe.PermissionError):
+			set_conversation_model(self.conv, "gpt-5.5")
+		self.assertFalse(frappe.db.get_value(CONV, self.conv, "model_override"))
+
+	def test_non_owner_cannot_set_thinking(self):
+		self._as_intruder()
+		with self.assertRaises(frappe.PermissionError):
+			set_conversation_thinking(self.conv, "high")
+		self.assertFalse(frappe.db.get_value(CONV, self.conv, "thinking_override"))
+
+	def test_unknown_conversation_still_soft_errors_for_model(self):
+		# A missing conversation must keep returning the structured
+		# unknown_conversation error (not PermissionError) for the owner.
+		out = set_conversation_model("missing-conv-xyz", "gpt-5.5")
+		self.assertFalse(out["ok"])
+		self.assertEqual(out["error"]["code"], "unknown_conversation")
 
 	# ---- owner is not over-blocked ----------------------------------- #
 

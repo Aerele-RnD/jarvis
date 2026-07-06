@@ -724,12 +724,18 @@ def set_conversation_model(conversation: str, model: str | None = None) -> dict:
 	Returns {"ok": True, "data": {"effective_model": <model>}} where
 	effective_model is what will be sent for the next turn - either
 	the override or the settings default.
+
+	Owner-only (SEC-002): mutates the conversation via ``db.set_value`` (which
+	bypasses permission checks), so ownership is asserted explicitly here.
 	"""
-	if not frappe.db.exists(CONV, conversation):
+	owner = frappe.db.get_value(CONV, conversation, "owner")
+	if owner is None:
 		return {"ok": False, "error": {
 			"code": "unknown_conversation",
 			"message": f"conversation {conversation!r} not found",
 		}}
+	if owner != frappe.session.user:
+		raise frappe.PermissionError("not your conversation")
 
 	settings = frappe.get_single("Jarvis Settings")
 
@@ -774,12 +780,18 @@ def set_conversation_thinking(conversation: str, thinking: str | None = None) ->
 	Empty / None clears it, so turns fall back to openclaw's default. The
 	value is plumbed as an inline /think directive in the user message, so it
 	never affects the cacheable system prefix. Returns the effective level
-	(empty resolves to "medium" for display)."""
-	if not frappe.db.exists(CONV, conversation):
+	(empty resolves to "medium" for display).
+
+	Owner-only (SEC-002): mutates the conversation via ``db.set_value`` (which
+	bypasses permission checks), so ownership is asserted explicitly here."""
+	owner = frappe.db.get_value(CONV, conversation, "owner")
+	if owner is None:
 		return {"ok": False, "error": {
 			"code": "unknown_conversation",
 			"message": f"conversation {conversation!r} not found",
 		}}
+	if owner != frappe.session.user:
+		raise frappe.PermissionError("not your conversation")
 	level = (thinking or "").strip().lower()
 	if level not in _ALLOWED_THINKING:
 		return {"ok": False, "error": {
