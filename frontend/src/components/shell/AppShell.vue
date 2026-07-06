@@ -102,13 +102,14 @@ onMounted(async () => {
 		booted.value = true
 	}
 
-	// Onboarding gate (D11) — ran per-route in ChatView before; now every
-	// page load checks once. A transient failure falls through to the app
-	// rather than trapping the user.
-	const r = await api.isReadyForChat().catch(() => null)
-	if (r && r.ready === false) {
-		window.location.assign("/app/jarvis-onboarding")
-	}
+	// NOTE: no onboarding force-redirect here. Policy (see router/index.js
+	// beforeEach) is "invite, don't force" — a not-ready user stays in the app
+	// and is invited to onboard via the chat welcome card + desk banner. The
+	// old D11 gate redirected not-ready users to /app/jarvis-onboarding (desk),
+	// which redirects back to /jarvis/onboarding (SPA) → AppShell re-mounts →
+	// redirect again: an infinite loop that bricked the whole SPA on any fresh
+	// (not-onboarded) site. The router beforeEach already handles the only case
+	// the policy wants (bounce a fully-onboarded user off a stale /onboarding).
 })
 
 onBeforeUnmount(() => {
