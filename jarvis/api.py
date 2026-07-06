@@ -243,6 +243,18 @@ def persist_tool_receipt(conv_name: str, tool: str, args: dict, result: dict) ->
 	email leaves the same transcript trace the SPA already renders (fixes #7)."""
 	status = "completed" if result.get("ok") else "error"
 
+	# Entity stamping (org wiki): which doc this call touched, so wiki nudges
+	# can read a turn's entities off the receipt rows. Lazy + guarded: a
+	# missing/broken entities module must never break receipts.
+	ref_doctype = ref_name = None
+	try:
+		from jarvis.chat.entities import refs_from_tool
+		# refs_from_tool expects the tool's raw data, not the {ok, data} envelope.
+		ref_doctype, ref_name = refs_from_tool(
+			args, result.get("data") if isinstance(result, dict) else None)
+	except Exception:
+		ref_doctype = ref_name = None
+
 	# Run as the conversation owner so DocType perms allow it
 	conv_owner = frappe.db.get_value("Jarvis Conversation", conv_name, "owner")
 	original = frappe.session.user
@@ -259,6 +271,8 @@ def persist_tool_receipt(conv_name: str, tool: str, args: dict, result: dict) ->
 			"tool_args": frappe.as_json(args),
 			"tool_result": frappe.as_json(result),
 			"tool_status": status,
+			"ref_doctype": ref_doctype,
+			"ref_name": ref_name,
 			"content": f"{tool} → {status}",
 		})
 		doc.insert(ignore_permissions=True)
@@ -392,6 +406,7 @@ _WRITE_TOOLS = frozenset({
 	"assign_to", "unassign_from", "add_tag", "remove_tag",
 	"follow_document", "unfollow_document", "attach_to_doc",
 	"create_dashboard_chart", "create_dashboard",
+	"create_custom_skill", "update_wiki",
 })
 _PREVIEWABLE = frozenset({
 	"create_doc", "update_doc", "submit_doc", "cancel_doc", "amend_doc",
@@ -403,6 +418,7 @@ _PREVIEWABLE = frozenset({
 _GATED_WRITES = frozenset({
 	"create_doc", "update_doc", "submit_doc", "cancel_doc",
 	"amend_doc", "delete_doc", "run_method", "send_email",
+	"create_custom_skill", "update_wiki",
 })
 # Irreversible/consequential subset - gated even when a user has auto-apply
 # on (Task 4 uses this; define it here so the sets live together).

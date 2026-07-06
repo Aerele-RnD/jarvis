@@ -227,6 +227,43 @@ def learned_skill_clause(user: str | None = None) -> str:
 	return f"; apply these learned skills: {slugs}"
 
 
+PERSONAL_CLAUSE_TTL_S = 300
+
+
+def personal_skills_cache_key(user: str) -> str:
+	return f"jarvis:pskills:{user}"
+
+
+def personal_skill_clause(user: str | None = None) -> str:
+	"""Context-line clause telling the agent the chat user has Personal-scope
+	skills saved on the bench. Personal rows are never pushed to the container
+	catalog (see :func:`build_push_payload`), so without this hint the model
+	has no way to know they exist; it retrieves them via jarvis__find_skills /
+	jarvis__get_skill. Redis-cached per-user count (300s; invalidated by the
+	DocType controller on any row change) so the hot chat path pays one cache
+	read."""
+	user = user or frappe.session.user
+	if not user or user == "Guest":
+		return ""
+	cache = frappe.cache()
+	key = personal_skills_cache_key(user)
+	count = cache.get_value(key)
+	if count is None:
+		# Exact scope match: NULL/empty scope rows are Org and never counted.
+		count = frappe.db.count(
+			"Jarvis Custom Skill",
+			{"owner": user, "enabled": 1, "scope": "Personal"},
+		)
+		cache.set_value(key, int(count or 0), expires_in_sec=PERSONAL_CLAUSE_TTL_S)
+	try:
+		count = int(count or 0)
+	except (TypeError, ValueError):
+		count = 0
+	if not count:
+		return ""
+	return f"; {count} personal skill(s) saved - search with jarvis__find_skills"
+
+
 def build_push_payload(owner: str | None = None, strict: bool = False) -> list[dict]:
 	"""Collect the enabled custom skills into the fleet push payload.
 
@@ -234,6 +271,11 @@ def build_push_payload(owner: str | None = None, strict: bool = False) -> list[d
 	container, so ALL enabled rows on the site are pushed (``owner`` is accepted
 	only to scope tests). An empty list is a valid "remove all custom skills"
 	reconcile.
+
+	Personal-scope rows are EXCLUDED: they exist only for their owner (reached
+	via the find_skills/get_skill tools), never for the shared container
+	catalog, and must not eat into the 25-skill push budget. NULL/empty scope
+	(pre-migration rows) means Org and IS pushed.
 
 	Managed learned rows (``managed_by_learning=1``) are EXCLUDED: since the
 	Phase-2 learned namespace they ride their own push
@@ -255,7 +297,9 @@ def build_push_payload(owner: str | None = None, strict: bool = False) -> list[d
 	  ``frappe.log_error`` a loud warning naming the dropped slugs, so the
 	  truncation is never silent again.
 	"""
-	filters = {"enabled": 1, "managed_by_learning": 0}
+	# ("in", ("Org", "")) — not ("!=", "Personal") — because db_query wraps the
+	# "in" operator in ifnull(scope, ''), so legacy NULL-scope rows match ''.
+	filters = {"enabled": 1, "managed_by_learning": 0, "scope": ("in", ("Org", ""))}
 	if owner:
 		filters["owner"] = owner
 	rows = frappe.get_all(

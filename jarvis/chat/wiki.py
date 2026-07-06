@@ -1,0 +1,831 @@
+"""Org wiki over ``Jarvis Wiki Page`` (voice & wiki feature).
+
+Four surfaces, one merge discipline:
+
+- ``wiki_clause``: the fast [Context:] clause the chat worker folds into each
+  turn — one indexed get_all over the pages matching the refs in play
+  (viewing context + recent tool refs), up to two summaries inlined, further
+  slugs named for ``jarvis__read_wiki``. Always ``""`` on any failure: a
+  clause bug must never break a turn.
+- ``maybe_nudge``: short-queue post-turn job. When a turn's tool calls
+  touched wiki-worthy entities (and the conversation isn't dismissed /
+  cooling down / a File Box run), publishes a ``wiki:nudge`` realtime event
+  so the UI can offer "record what you know about X".
+- voice-note ingest (``enqueue_ingest_note`` / ``_ingest_note``): merges one
+  Conversation-context ``Jarvis Voice Note`` into pages via ONE
+  ``jarvis.chat.voice.openrouter_complete`` call (strict-JSON page updates).
+- SPA endpoints (list/get/save/archive) + ``apply_extracted_page_updates``,
+  the single write path shared with ``jarvis.learning.voice_facts``.
+
+Merge discipline (``apply_extracted_page_updates``): ``append_md`` appends,
+``body_md`` replaces only when the update carries no contradiction; a flagged
+contradiction APPENDS a ``## Contradiction flagged (<date>)`` section and sets
+``contradiction_flag`` — extracted content never silently overwrites contested
+knowledge. Every applied update appends a ``{date, kind, ref, user}`` sources
+entry and refreshes ``last_confirmed_at``.
+"""
+
+from __future__ import annotations
+
+import json
+import pickle
+
+import frappe
+from frappe import _
+from frappe.utils import cint, now_datetime
+
+from jarvis.chat.events import publish_to_user
+from jarvis.jarvis.doctype.jarvis_wiki_page.jarvis_wiki_page import (
+	MAX_BODY_LEN,
+	MAX_SLUG_LEN,
+	MAX_SUMMARY_LEN,
+	SLUG_RE,
+	WIKI_HAS_PAGES_CACHE_KEY,
+)
+from jarvis.learning.sanitizer import scan_instruction_injection
+
+WIKI = "Jarvis Wiki Page"
+CONV = "Jarvis Conversation"
+MSG = "Jarvis Chat Message"
+NOTE = "Jarvis Voice Note"
+SETTINGS = "Jarvis Settings"
+
+PAGE_TYPES = (
+	"Customer", "Supplier", "Item", "Process", "Doctype",
+	"Exception", "Integration", "People", "Org",
+)
+
+# [Context:] clause budget — shares ~700 chars with personal_skill_clause.
+_CLAUSE_MAX_INLINE = 2
+_CLAUSE_SUMMARY_CHARS = 200
+_CLAUSE_MAX_MORE = 4
+_CLAUSE_MAX_CHARS = 600
+_CLAUSE_MAX_REFS = 20
+
+_STALE_DAYS = 90
+MAX_PAGES_PER_NOTE = 5
+_MAX_SOURCES = 20
+_MAX_TRANSCRIPT_PROMPT_CHARS = 8000
+_MAX_EXISTING_BODY_PROMPT_CHARS = 3000
+
+_NUDGE_COOLDOWN_KEY = "jarvis:wiki_nudge:{conv}"
+_NUDGE_OFF_KEY = "jarvis:wiki_nudge_off:{conv}"
+_NUDGE_OFF_TTL_S = 7 * 24 * 3600
+_DEFAULT_COOLDOWN_HOURS = 24
+_NUDGE_MAX_ENTITIES = 5
+
+_INGEST_JOB_PREFIX = "jarvis_wiki_ingest"
+_INGEST_TIMEOUT_S = 300
+
+_INGEST_SYSTEM = (
+	"You maintain an internal business wiki. Given a spoken note transcript, "
+	"the ERP entities in view and the existing wiki pages, output ONLY a JSON "
+	"array of page updates - no prose, no markdown fences. Each item must be "
+	'an object with exactly these keys: "slug" (lowercase-hyphen page id; '
+	'reuse the existing or suggested slug when one is given), "page_type" '
+	'(one of "Customer", "Supplier", "Item", "Process", "Doctype", '
+	'"Exception", "Integration", "People", "Org"), "title", "ref_doctype", '
+	'"ref_name" (the ERP record the page is about, or null), "summary" (one '
+	'paragraph, max 500 characters), "body_md" (markdown) and "contradiction" '
+	'(boolean). When the note does NOT contradict a page, "body_md" must be '
+	"the FULL updated body: the existing body with the new durable knowledge "
+	"merged in - never drop existing content. When the note contradicts what "
+	'a page already says, set "contradiction": true and put ONLY the new '
+	'conflicting information in "body_md" (it is appended as a flagged '
+	"section; the existing body is preserved). Record only durable business "
+	"knowledge - how the org, its customers, suppliers, items and processes "
+	"work; ignore greetings, small talk and one-off tasks. At most "
+	f"{MAX_PAGES_PER_NOTE} pages. Output [] when there is nothing durable."
+)
+
+
+# --------------------------------------------------------------------------- #
+# shared helpers
+# --------------------------------------------------------------------------- #
+def wiki_enabled() -> bool:
+	"""Operator toggle; NULL=ON (the vision_attachments_enabled idiom — Single
+	defaults are not backfilled on migrate, so a pre-existing Settings row has
+	no tabSingles row at all). Probe row existence directly: BOTH a loaded
+	Document and get_single_value coerce an unset Check to 0, which would
+	break the NULL=ON idiom."""
+	rows = frappe.db.sql(
+		"select value from `tabSingles` where doctype=%s and field=%s",
+		(SETTINGS, "wiki_enabled"),
+	)
+	if not rows or rows[0][0] is None:
+		return True
+	return bool(cint(rows[0][0]))
+
+
+def _require_system_user() -> None:
+	user = frappe.session.user
+	if not user or user == "Guest":
+		frappe.throw(_("Not permitted."), frappe.PermissionError)
+	if user == "Administrator":
+		return
+	if frappe.db.get_value("User", user, "user_type") != "System User":
+		frappe.throw(_("Not permitted."), frappe.PermissionError)
+
+
+def _clamp_page(start, page_length) -> tuple[int, int]:
+	try:
+		start = max(0, int(start or 0))
+	except (TypeError, ValueError):
+		start = 0
+	try:
+		pl = int(page_length or 20)
+	except (TypeError, ValueError):
+		pl = 20
+	return start, max(1, min(pl, 100))
+
+
+def is_stale(last_confirmed_at, fallback=None) -> bool:
+	"""True when the page's knowledge is older than 90 days (falling back to
+	``modified`` for rows that predate last_confirmed_at stamping)."""
+	ts = last_confirmed_at or fallback
+	if not ts:
+		return True
+	cutoff = frappe.utils.add_to_date(now_datetime(), days=-_STALE_DAYS)
+	return frappe.utils.get_datetime(ts) < cutoff
+
+
+def _normalize_slug(slug) -> str:
+	"""Validate/repair an extracted slug. A valid slug passes through; an
+	invalid one has each ``--``-separated half scrubbed (so party slugs keep
+	their type prefix). Returns "" when nothing salvageable remains."""
+	from jarvis.chat.entities import scrub
+
+	s = str(slug or "").strip().lower()
+	if not s:
+		return ""
+	if not SLUG_RE.match(s):
+		halves = [h for h in (scrub(x) for x in s.split("--", 1)) if h]
+		s = "--".join(halves)
+	s = s[:MAX_SLUG_LEN].rstrip("-")
+	return s if SLUG_RE.match(s) else ""
+
+
+def _clip_summary(summary) -> str | None:
+	folded = " ".join(str(summary or "").split())
+	return folded[:MAX_SUMMARY_LEN] or None
+
+
+def _clip_body(body: str) -> str:
+	"""Keep a body under the controller cap. When an append pushes it over,
+	the OLDEST content is dropped (tail wins: appends carry the newest
+	knowledge, and the flagged-contradiction sections live at the bottom)."""
+	body = body or ""
+	if len(body) <= MAX_BODY_LEN:
+		return body
+	clipped = body[-MAX_BODY_LEN:]
+	nl = clipped.find("\n")
+	if 0 <= nl < 200:
+		clipped = clipped[nl + 1:]
+	return clipped.lstrip()
+
+
+def _source_entry(kind: str, ref: str | None, user: str | None) -> dict:
+	return {
+		"date": frappe.utils.today(),
+		"kind": kind or "unknown",
+		"ref": ref,
+		"user": user,
+	}
+
+
+def append_source(doc, kind: str, ref: str | None, user: str | None) -> None:
+	"""Append one provenance entry to the page's ``sources`` JSON (capped at
+	the newest ``_MAX_SOURCES`` entries; a corrupt existing value resets)."""
+	try:
+		sources = json.loads(doc.sources) if doc.sources else []
+	except Exception:
+		sources = []
+	if not isinstance(sources, list):
+		sources = []
+	sources.append(_source_entry(kind, ref, user))
+	doc.sources = frappe.as_json(sources[-_MAX_SOURCES:])
+
+
+# --------------------------------------------------------------------------- #
+# turn-context clause
+# --------------------------------------------------------------------------- #
+_HAS_PAGES_TTL_S = 300
+
+
+def _has_active_pages() -> bool:
+	"""Cheap cached "org has >=1 Active wiki page" flag so ``wiki_clause`` can
+	skip its per-turn queries entirely for orgs with no wiki. Invalidated by
+	the Jarvis Wiki Page controller on insert/update/trash (the archive path
+	saves through on_update), with a short TTL as the backstop."""
+	cache = frappe.cache()
+	flag = cache.get_value(WIKI_HAS_PAGES_CACHE_KEY)
+	if flag is None:
+		flag = 1 if frappe.db.exists(WIKI, {"status": "Active"}) else 0
+		cache.set_value(WIKI_HAS_PAGES_CACHE_KEY, flag, expires_in_sec=_HAS_PAGES_TTL_S)
+	return bool(cint(flag))
+
+
+def _safe_clause_summary(summary) -> str:
+	"""Summaries are org-user-authored text inlined into the [Context:] line
+	of EVERY turn. An instruction-shaped value is dropped outright (the slug
+	alone is still named), backticks are neutralized, and ']'/';' are replaced
+	so a crafted summary can never close the [Context:] envelope early or
+	forge a sibling clause token. Defense in depth with the controller's
+	write-boundary sanitization."""
+	text = " ".join(str(summary or "").split())
+	if not text or scan_instruction_injection(text):
+		return ""
+	text = text.replace("`", "'").replace("]", ")").replace(";", ",")
+	return text[:_CLAUSE_SUMMARY_CHARS]
+
+
+def wiki_clause(conversation_id: str, context: dict | None = None) -> str:
+	"""One [Context:] clause naming the Active wiki pages relevant to this
+	turn's refs (the viewing-context doc first, then recent tool refs). Up to
+	two summaries inline; further matches are named for ``jarvis__read_wiki``.
+	Hot path: one chat-message query + one wiki get_all. Returns ``""`` when
+	the wiki is off, nothing matches, or ANYTHING fails — never raises."""
+	try:
+		if not wiki_enabled():
+			return ""
+		if not _has_active_pages():
+			return ""
+		from jarvis.chat import entities as entities_mod
+
+		refs: list[dict] = []
+		if isinstance(context, dict) and context.get("doctype") and context.get("name"):
+			refs.append({"doctype": context["doctype"], "name": context["name"]})
+		refs.extend(entities_mod.entities_for_turn(conversation_id, 0))
+
+		slugs: list[str] = []
+		seen: set[str] = set()
+		for ref in refs:
+			page_ref = entities_mod.page_ref_for(ref.get("doctype"), ref.get("name"))
+			if not page_ref or page_ref["slug"] in seen:
+				continue
+			seen.add(page_ref["slug"])
+			slugs.append(page_ref["slug"])
+			if len(slugs) >= _CLAUSE_MAX_REFS:
+				break
+		if not slugs:
+			return ""
+
+		pages = frappe.get_all(
+			WIKI,
+			filters={"slug": ["in", slugs], "status": "Active"},
+			fields=["slug", "summary"],
+			limit_page_length=len(slugs),
+		)
+		if not pages:
+			return ""
+		by_slug = {p.slug: p for p in pages}
+		ordered = [by_slug[s] for s in slugs if s in by_slug]
+
+		bits = []
+		for p in ordered[:_CLAUSE_MAX_INLINE]:
+			summary = _safe_clause_summary(p.summary)
+			bits.append(f"{p.slug}: {summary}" if summary else p.slug)
+		clause = "; wiki notes: " + "; ".join(bits)
+		more = [
+			p.slug
+			for p in ordered[_CLAUSE_MAX_INLINE:_CLAUSE_MAX_INLINE + _CLAUSE_MAX_MORE]
+		]
+		if more:
+			more_clause = f"; more wiki: {', '.join(more)} via jarvis__read_wiki"
+			if len(clause) + len(more_clause) <= _CLAUSE_MAX_CHARS:
+				clause += more_clause
+		return clause[:_CLAUSE_MAX_CHARS]
+	except Exception:
+		frappe.log_error(
+			title="wiki: clause build failed", message=frappe.get_traceback()
+		)
+		return ""
+
+
+# --------------------------------------------------------------------------- #
+# post-turn nudge
+# --------------------------------------------------------------------------- #
+def maybe_nudge(conversation_id: str, user: str, run_id: str | None = None) -> None:
+	"""Short-queue job body (enqueued fire-and-forget by the chat worker's
+	clean exit and by snapshot recovery). All gates re-check HERE — the
+	enqueue site stays a blind best-effort. Never raises."""
+	try:
+		_maybe_nudge(conversation_id, user)
+	except Exception:
+		frappe.log_error(title="wiki: nudge failed", message=frappe.get_traceback())
+
+
+def _maybe_nudge(conversation_id: str, user: str) -> None:
+	from jarvis import selfhost
+
+	if selfhost.is_self_hosted():
+		return
+	if not wiki_enabled():
+		return
+	conv = frappe.db.get_value(
+		CONV, conversation_id, ["name", "file_box"], as_dict=True
+	)
+	if not conv or cint(conv.file_box):
+		return
+	cache = frappe.cache()
+	if cache.get_value(_NUDGE_OFF_KEY.format(conv=conversation_id)):
+		return
+	cooldown_key = _NUDGE_COOLDOWN_KEY.format(conv=conversation_id)
+	if cache.get_value(cooldown_key):
+		return
+
+	entities = _nudge_entities(conversation_id)
+	if not entities:
+		return
+
+	hours = (
+		cint(frappe.db.get_single_value(SETTINGS, "wiki_nudge_cooldown_hours"))
+		or _DEFAULT_COOLDOWN_HOURS
+	)
+	# Cooldown is stamped even though the user may ignore the nudge — one
+	# prompt per conversation per window, never a nag loop. Atomic NX set
+	# (pickled so get_value round-trips): of two concurrent turns racing past
+	# the get_value check above, only the winner publishes.
+	won = cache.set(
+		cache.make_key(cooldown_key),
+		pickle.dumps(1),
+		nx=True,
+		ex=hours * 3600,
+	)
+	if not won:
+		return
+	publish_to_user(user, {
+		"kind": "wiki:nudge",
+		"conversation_id": conversation_id,
+		"entities": entities,
+	})
+
+
+def _nudge_entities(conversation_id: str) -> list[dict]:
+	"""Wiki-worthy entities THIS turn's tool calls touched (tool rows after
+	the newest user message), deduped per target page, labelled, with
+	``has_page`` resolved by one get_all."""
+	from jarvis.chat import entities as entities_mod
+
+	rows = frappe.get_all(
+		MSG,
+		filters={"conversation": conversation_id, "role": "user"},
+		fields=["seq"],
+		order_by="seq desc",
+		limit_page_length=1,
+	)
+	after_seq = rows[0].seq if rows else 0
+	out: list[dict] = []
+	slugs: list[str] = []
+	seen: set[str] = set()
+	for ref in entities_mod.entities_for_turn(conversation_id, after_seq):
+		page_ref = entities_mod.page_ref_for(ref["doctype"], ref["name"])
+		if not page_ref or page_ref["slug"] in seen:
+			continue
+		seen.add(page_ref["slug"])
+		slugs.append(page_ref["slug"])
+		label = ref["name"] if page_ref["ref_name"] else ref["doctype"]
+		out.append({
+			"doctype": ref["doctype"],
+			"name": ref["name"],
+			"label": label,
+			"has_page": False,
+			"_slug": page_ref["slug"],
+		})
+		if len(out) >= _NUDGE_MAX_ENTITIES:
+			break
+	if not out:
+		return []
+	existing = {
+		r.slug
+		for r in frappe.get_all(
+			WIKI,
+			filters={"slug": ["in", slugs]},
+			fields=["slug"],
+			limit_page_length=len(slugs),
+		)
+	}
+	for e in out:
+		e["has_page"] = e.pop("_slug") in existing
+	return out
+
+
+@frappe.whitelist()
+def dismiss_nudge(conversation: str) -> dict:
+	"""Mute wiki nudges for one conversation for 7 days (owner-only)."""
+	_require_system_user()
+	conversation = (conversation or "").strip()
+	owner = frappe.db.get_value(CONV, conversation, "owner")
+	if not owner:
+		frappe.throw(_("Unknown conversation."))
+	if owner != frappe.session.user and frappe.session.user != "Administrator":
+		frappe.throw(_("Not your conversation."), frappe.PermissionError)
+	frappe.cache().set_value(
+		_NUDGE_OFF_KEY.format(conv=conversation), 1,
+		expires_in_sec=_NUDGE_OFF_TTL_S,
+	)
+	return {"ok": True}
+
+
+# --------------------------------------------------------------------------- #
+# voice-note ingest
+# --------------------------------------------------------------------------- #
+def enqueue_ingest_note(note_name: str) -> None:
+	"""Queue the deduped per-note ingest worker (a re-enqueue while the same
+	note's job is still queued/running coalesces)."""
+	frappe.enqueue(
+		"jarvis.chat.wiki._ingest_note",
+		queue="long",
+		timeout=_INGEST_TIMEOUT_S,
+		job_id=f"{_INGEST_JOB_PREFIX}::{note_name}",
+		deduplicate=True,
+		note_name=note_name,
+	)
+
+
+def _ingest_note(note_name: str) -> None:
+	"""Queue-long worker: merge ONE Conversation-context voice note into the
+	wiki, then mark the note Processed. Any failure leaves the note New — the
+	daily ``voice_facts`` sweep re-enqueues it as the backstop."""
+	if not frappe.db.exists(NOTE, note_name):
+		return
+	note = frappe.get_doc(NOTE, note_name)
+	if note.status != "New":
+		return  # already ingested (dedupe raced the daily sweep)
+	if not wiki_enabled():
+		return
+
+	entities = _note_entities(note)
+	suggested, existing = _pages_for_prompt(entities)
+	updates = _extract_page_updates(note, entities, suggested, existing)
+	if updates is None:
+		return  # extraction failed (logged); stays New for the sweep
+
+	applied, failed = apply_extracted_page_updates(
+		updates, "voice", note.owner, ref=note.name
+	)
+	if failed:
+		# A page write failed (already logged per-update): leave the note New
+		# so the daily voice_facts sweep retries — marking it Processed here
+		# would lose the note's knowledge forever.
+		frappe.log_error(
+			title="wiki: ingest left note New after page write failure",
+			message=f"{note.name}: {applied} applied, {failed} failed",
+		)
+		return
+	frappe.db.set_value(
+		NOTE,
+		note.name,
+		{
+			"status": "Processed",
+			"processed_at": now_datetime(),
+			"processed_note": (
+				f"wiki ingest: {applied} page update(s) applied"
+				if applied else "wiki ingest: nothing durable found"
+			),
+		},
+		update_modified=False,
+	)
+	frappe.db.commit()
+
+
+def _note_entities(note) -> list[dict]:
+	raw = note.entities
+	if isinstance(raw, list):
+		entities = raw
+	else:
+		try:
+			entities = json.loads(raw) if raw else []
+		except Exception:
+			return []
+	if not isinstance(entities, list):
+		return []
+	return [
+		{"doctype": e["doctype"], "name": e["name"]}
+		for e in entities
+		if isinstance(e, dict) and e.get("doctype") and e.get("name")
+	]
+
+
+def _pages_for_prompt(entities: list[dict]) -> tuple[list[dict], list[dict]]:
+	"""(suggested page refs for the note's entities, existing page rows for
+	those refs) — both handed to the merge prompt so the model reuses our
+	slug conventions and sees the current bodies it must merge into."""
+	from jarvis.chat import entities as entities_mod
+
+	suggested: list[dict] = []
+	seen: set[str] = set()
+	for e in entities:
+		page_ref = entities_mod.page_ref_for(e.get("doctype"), e.get("name"))
+		if page_ref and page_ref["slug"] not in seen:
+			seen.add(page_ref["slug"])
+			suggested.append(page_ref)
+	if not suggested:
+		return [], []
+	rows = frappe.get_all(
+		WIKI,
+		filters={"slug": ["in", [s["slug"] for s in suggested]]},
+		fields=["slug", "title", "page_type", "ref_doctype", "ref_name", "summary", "body_md"],
+		limit_page_length=len(suggested),
+	)
+	for r in rows:
+		r["body_md"] = (r.get("body_md") or "")[:_MAX_EXISTING_BODY_PROMPT_CHARS]
+	return suggested, rows
+
+
+def _extract_page_updates(note, entities, suggested, existing) -> list | None:
+	"""One openrouter_complete call -> parsed update list, or None on any
+	failure (logged; the caller leaves the note New for the daily sweep)."""
+	user_prompt = (
+		"Transcript:\n"
+		f"{(note.transcript or '')[:_MAX_TRANSCRIPT_PROMPT_CHARS]}\n\n"
+		f"Entities in view: {json.dumps(entities, default=str)}\n\n"
+		"Suggested pages for these entities (create/update these slugs):\n"
+		f"{json.dumps(suggested, default=str)}\n\n"
+		"Existing wiki pages (current bodies to merge into):\n"
+		f"{json.dumps(existing, default=str)}"
+	)
+	try:
+		from jarvis.chat import voice
+
+		raw = voice.openrouter_complete(
+			[
+				{"role": "system", "content": _INGEST_SYSTEM},
+				{"role": "user", "content": user_prompt},
+			],
+			max_tokens=4000,
+		)
+	except Exception:
+		frappe.log_error(
+			title="wiki: ingest extraction failed", message=frappe.get_traceback()
+		)
+		return None
+	updates = _parse_updates(raw)
+	if updates is None:
+		frappe.log_error(
+			title="wiki: ingest returned unparseable updates",
+			message=(raw or "")[:2000],
+		)
+	return updates
+
+
+def _parse_updates(raw: str) -> list | None:
+	"""The first JSON array in the reply (tolerates prose/fence wrapping the
+	strict-JSON instruction failed to suppress). None when unparseable."""
+	text = (raw or "").strip()
+	start, end = text.find("["), text.rfind("]")
+	if start < 0 or end <= start:
+		return None
+	try:
+		data = json.loads(text[start:end + 1])
+	except Exception:
+		return None
+	if not isinstance(data, list):
+		return None
+	return [d for d in data if isinstance(d, dict)]
+
+
+# --------------------------------------------------------------------------- #
+# the shared write path
+# --------------------------------------------------------------------------- #
+def apply_extracted_page_updates(
+	updates, source: str, user: str | None, ref: str | None = None
+) -> tuple[int, int]:
+	"""Create/update wiki pages from extracted updates (the note ingest above
+	and ``jarvis.learning.voice_facts`` both land here). At most
+	``MAX_PAGES_PER_NOTE`` updates apply per call; per-update failures are
+	logged and counted. Returns ``(applied, failed)`` — pages created/updated
+	vs updates that raised — so callers can distinguish "nothing durable"
+	from "a write silently failed" and keep their source row retryable.
+
+	``source``/``ref``/``user`` become the appended sources entry
+	(``{date, kind, ref, user}``): ``kind=source`` names the pipeline
+	("voice"), ``ref`` the originating row (the voice note name), ``user``
+	the human whose statement produced the update.
+	"""
+	if not isinstance(updates, list):
+		return 0, 0
+	applied = 0
+	failed = 0
+	for update in updates[:MAX_PAGES_PER_NOTE]:
+		if not isinstance(update, dict):
+			continue
+		try:
+			if _apply_one_update(update, source, user, ref):
+				applied += 1
+		except Exception:
+			failed += 1
+			frappe.log_error(
+				title="wiki: page update failed", message=frappe.get_traceback()
+			)
+	return applied, failed
+
+
+def _apply_one_update(
+	update: dict, source: str, user: str | None, ref: str | None
+) -> bool:
+	slug = _normalize_slug(update.get("slug"))
+	if not slug:
+		return False
+
+	name = frappe.db.get_value(WIKI, {"slug": slug}, "name")
+	if not name:
+		title = " ".join(str(update.get("title") or "").split())
+		page_type = (update.get("page_type") or "").strip()
+		if not title or page_type not in PAGE_TYPES:
+			return False  # can't create a page without an identity
+		body = str(update.get("body_md") or update.get("append_md") or "").strip()
+		doc = frappe.get_doc({
+			"doctype": WIKI,
+			"slug": slug,
+			"title": title[:140],
+			"page_type": page_type,
+			"ref_doctype": (update.get("ref_doctype") or "").strip() or None,
+			"ref_name": (update.get("ref_name") or "").strip() or None,
+			"summary": _clip_summary(update.get("summary")),
+			"body_md": _clip_body(body),
+			"status": "Active",
+			"sources": frappe.as_json([_source_entry(source, ref, user)]),
+			"last_confirmed_at": now_datetime(),
+		})
+		try:
+			doc.insert(ignore_permissions=True)
+			return True
+		except frappe.DuplicateEntryError:
+			# The slug appeared concurrently — merge into it instead.
+			name = frappe.db.get_value(WIKI, {"slug": slug}, "name")
+			if not name:
+				raise
+
+	try:
+		return _merge_update_into_page(name, update, source, user, ref)
+	except frappe.TimestampMismatchError:
+		# Concurrent save between our load and save: reload + re-merge once
+		# so ordinary concurrency doesn't drop the update.
+		return _merge_update_into_page(name, update, source, user, ref)
+
+
+def _merge_update_into_page(
+	name: str, update: dict, source: str, user: str | None, ref: str | None
+) -> bool:
+	body_md = update.get("body_md")
+	append_md = update.get("append_md")
+	contradiction = bool(update.get("contradiction"))
+
+	doc = frappe.get_doc(WIKI, name)
+	if update.get("summary"):
+		doc.summary = _clip_summary(update.get("summary"))
+	if not (doc.ref_doctype or "").strip() and update.get("ref_doctype"):
+		doc.ref_doctype = str(update["ref_doctype"]).strip()
+	if not (doc.ref_name or "").strip() and update.get("ref_name"):
+		doc.ref_name = str(update["ref_name"]).strip()
+
+	existing = (doc.body_md or "").strip()
+	if isinstance(append_md, str) and append_md.strip():
+		doc.body_md = _clip_body(f"{existing}\n\n{append_md.strip()}".strip())
+	elif isinstance(body_md, str) and body_md.strip():
+		incoming = body_md.strip()
+		if contradiction and existing:
+			stamp = now_datetime().strftime("%Y-%m-%d")
+			doc.body_md = _clip_body(
+				f"{existing}\n\n## Contradiction flagged ({stamp})\n\n{incoming}"
+			)
+			doc.contradiction_flag = 1
+		else:
+			doc.body_md = _clip_body(incoming)
+	append_source(doc, source, ref, user)
+	doc.last_confirmed_at = now_datetime()
+	doc.save(ignore_permissions=True)
+	return True
+
+
+# --------------------------------------------------------------------------- #
+# SPA endpoints
+# --------------------------------------------------------------------------- #
+@frappe.whitelist()
+def list_wiki_pages_page(
+	search: str | None = None,
+	page_type: str | None = None,
+	start: int = 0,
+	page_length: int = 20,
+) -> dict:
+	"""Active wiki pages, newest-modified first. Envelope:
+	``{rows, total, has_more, start, page_length}``; each row carries a
+	``stale`` flag (last confirmed more than 90 days ago)."""
+	_require_system_user()
+	start, pl = _clamp_page(start, page_length)
+
+	filters: dict = {"status": "Active"}
+	if page_type:
+		if page_type not in PAGE_TYPES:
+			frappe.throw(_("Invalid page type filter."))
+		filters["page_type"] = page_type
+	kwargs: dict = {"filters": filters}
+	if search:
+		like = f"%{str(search).strip()[:140]}%"
+		kwargs["or_filters"] = [
+			["slug", "like", like],
+			["title", "like", like],
+			["summary", "like", like],
+		]
+
+	total = len(frappe.get_all(WIKI, fields=["name"], limit_page_length=0, **kwargs))
+	rows = frappe.get_all(
+		WIKI,
+		fields=[
+			"name", "slug", "title", "page_type", "ref_doctype", "ref_name",
+			"summary", "status", "contradiction_flag", "last_confirmed_at",
+			"modified",
+		],
+		order_by="modified desc",
+		limit_start=start,
+		limit_page_length=pl,
+		**kwargs,
+	)
+	for r in rows:
+		r["stale"] = is_stale(r.get("last_confirmed_at"), r.get("modified"))
+
+	return {
+		"rows": rows,
+		"total": total,
+		"has_more": start + len(rows) < total,
+		"start": start,
+		"page_length": pl,
+	}
+
+
+@frappe.whitelist()
+def get_wiki_page(slug: str) -> dict:
+	"""One full wiki page by slug (any status — the editor can open an
+	archived page)."""
+	_require_system_user()
+	slug = (slug or "").strip().lower()
+	name = frappe.db.get_value(WIKI, {"slug": slug}, "name")
+	if not name:
+		frappe.throw(_("Wiki page not found."))
+	doc = frappe.get_doc(WIKI, name)
+	try:
+		sources = json.loads(doc.sources) if doc.sources else []
+	except Exception:
+		sources = []
+	return {
+		"name": doc.name,
+		"slug": doc.slug,
+		"title": doc.title,
+		"page_type": doc.page_type,
+		"ref_doctype": doc.ref_doctype,
+		"ref_name": doc.ref_name,
+		"summary": doc.summary,
+		"body_md": doc.body_md,
+		"sensitivity": doc.sensitivity,
+		"status": doc.status,
+		"sources": sources if isinstance(sources, list) else [],
+		"last_confirmed_at": str(doc.last_confirmed_at) if doc.last_confirmed_at else None,
+		"contradiction_flag": cint(doc.contradiction_flag),
+		"modified": str(doc.modified),
+		"stale": is_stale(doc.last_confirmed_at, doc.modified),
+	}
+
+
+@frappe.whitelist()
+def save_wiki_page(
+	slug: str,
+	body_md: str | None = None,
+	summary: str | None = None,
+	title: str | None = None,
+) -> dict:
+	"""Human edit of an existing page (desk users). A saved body counts as a
+	review: it refreshes ``last_confirmed_at`` and clears the contradiction
+	flag (the human just resolved or endorsed the content)."""
+	_require_system_user()
+	slug = (slug or "").strip().lower()
+	name = frappe.db.get_value(WIKI, {"slug": slug}, "name")
+	if not name:
+		frappe.throw(_("Wiki page not found."))
+	doc = frappe.get_doc(WIKI, name)
+	if title is not None and str(title).strip():
+		doc.title = str(title).strip()[:140]
+	if summary is not None:
+		doc.summary = _clip_summary(summary)
+	if body_md is not None:
+		doc.body_md = str(body_md)
+		doc.contradiction_flag = 0
+	append_source(doc, "manual", None, frappe.session.user)
+	doc.last_confirmed_at = now_datetime()
+	doc.save(ignore_permissions=True)
+	return {"ok": True, "slug": doc.slug, "modified": str(doc.modified)}
+
+
+@frappe.whitelist()
+def archive_wiki_page(slug: str) -> dict:
+	"""Retire a page (System Manager only). Archived pages drop out of the
+	list, the turn clause and read_wiki search; the slug stays reserved."""
+	frappe.only_for("System Manager")
+	slug = (slug or "").strip().lower()
+	name = frappe.db.get_value(WIKI, {"slug": slug}, "name")
+	if not name:
+		frappe.throw(_("Wiki page not found."))
+	doc = frappe.get_doc(WIKI, name)
+	doc.status = "Archived"
+	doc.save(ignore_permissions=True)
+	return {"ok": True, "slug": doc.slug}

@@ -168,6 +168,9 @@ after_migrate = [
 	# Behavioural pattern learning: seed Jarvis Pattern Detector State rows
 	# from the detector registry (best-effort; never blocks a migrate).
 	"jarvis.learning.bootstrap.after_migrate",
+	# Voice & Wiki: seed the Settings Check defaults (row-existence probe;
+	# an unset Check reads 0 on v16, so defaults must be materialized).
+	"jarvis.learning.voice_facts.after_migrate",
 ]
 
 # Scheduled Tasks
@@ -224,6 +227,9 @@ scheduler_events = {
 		# agent_token is approaching or past its configured max age.
 		# Daily is plenty - the warning window is 7 days.
 		"jarvis.oauth.cron.check_agent_token_age",
+		# Daily voice-note sweep: mine New voice notes into learned-pattern
+		# candidates + wiki updates (self-gating; see jarvis/learning/voice_facts.py).
+		"jarvis.learning.voice_facts.process_daily",
 	],
 }
 

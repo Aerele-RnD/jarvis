@@ -1,0 +1,128 @@
+{
+  "doctype": "DocType",
+  "name": "Jarvis Wiki Page",
+  "module": "Jarvis",
+  "issingle": 0,
+  "custom": 0,
+  "engine": "InnoDB",
+  "autoname": "field:slug",
+  "field_order": [
+    "slug",
+    "title",
+    "page_type",
+    "ref_doctype",
+    "ref_name",
+    "summary",
+    "body_md",
+    "sensitivity",
+    "status",
+    "sources",
+    "last_confirmed_at",
+    "contradiction_flag"
+  ],
+  "fields": [
+    {
+      "fieldname": "slug",
+      "fieldtype": "Data",
+      "label": "Slug",
+      "unique": 1,
+      "reqd": 1,
+      "description": "Lowercase page id, e.g. customer--acme-corp or doctype--sales-invoice."
+    },
+    {
+      "fieldname": "title",
+      "fieldtype": "Data",
+      "label": "Title",
+      "reqd": 1,
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "page_type",
+      "fieldtype": "Select",
+      "label": "Page Type",
+      "options": "Customer\nSupplier\nItem\nProcess\nDoctype\nException\nIntegration\nPeople\nOrg",
+      "reqd": 1,
+      "in_list_view": 1,
+      "in_standard_filter": 1,
+      "search_index": 1
+    },
+    {
+      "fieldname": "ref_doctype",
+      "fieldtype": "Data",
+      "label": "Reference DocType",
+      "search_index": 1,
+      "description": "ERP doctype this page is about (Customer, Supplier, Item, or a transactional doctype for Doctype-level pages)."
+    },
+    {
+      "fieldname": "ref_name",
+      "fieldtype": "Data",
+      "label": "Reference Name",
+      "search_index": 1,
+      "description": "ERP record this page is about; empty for Doctype/Process/Org-level pages."
+    },
+    {
+      "fieldname": "summary",
+      "fieldtype": "Small Text",
+      "label": "Summary",
+      "description": "One-paragraph gist (max 500 chars) inlined into chat context when the entity comes up."
+    },
+    {
+      "fieldname": "body_md",
+      "fieldtype": "Long Text",
+      "label": "Body (Markdown)"
+    },
+    {
+      "fieldname": "sensitivity",
+      "fieldtype": "Select",
+      "label": "Sensitivity",
+      "options": "A\nB\nC",
+      "default": "A"
+    },
+    {
+      "fieldname": "status",
+      "fieldtype": "Select",
+      "label": "Status",
+      "options": "Active\nArchived",
+      "default": "Active",
+      "in_standard_filter": 1,
+      "search_index": 1
+    },
+    {
+      "fieldname": "sources",
+      "fieldtype": "JSON",
+      "label": "Sources",
+      "read_only": 1,
+      "description": "Provenance trail: [{date, kind, ref, user}] appended on every applied update."
+    },
+    {
+      "fieldname": "last_confirmed_at",
+      "fieldtype": "Datetime",
+      "label": "Last Confirmed At",
+      "description": "When the content was last confirmed or refreshed; pages older than 90 days are flagged stale."
+    },
+    {
+      "fieldname": "contradiction_flag",
+      "fieldtype": "Check",
+      "label": "Contradiction Flagged",
+      "description": "Set when an extracted update contradicted the existing body; the conflicting info is appended as a flagged section, never silently overwritten."
+    }
+  ],
+  "permissions": [
+    {
+      "role": "Desk User",
+      "read": 1,
+      "write": 1,
+      "create": 1
+    },
+    {
+      "role": "System Manager",
+      "read": 1,
+      "write": 1,
+      "create": 1,
+      "delete": 1
+    }
+  ],
+  "sort_field": "modified",
+  "sort_order": "DESC",
+  "track_changes": 1
+}

@@ -1,0 +1,102 @@
+{
+  "doctype": "DocType",
+  "name": "Jarvis Voice Note",
+  "module": "Jarvis",
+  "issingle": 0,
+  "custom": 0,
+  "engine": "InnoDB",
+  "autoname": "hash",
+  "field_order": [
+    "transcript",
+    "duration_s",
+    "context_type",
+    "conversation",
+    "entities",
+    "source",
+    "status",
+    "processed_at",
+    "processed_note"
+  ],
+  "fields": [
+    {
+      "fieldname": "transcript",
+      "fieldtype": "Long Text",
+      "label": "Transcript",
+      "reqd": 1
+    },
+    {
+      "fieldname": "duration_s",
+      "fieldtype": "Int",
+      "label": "Duration (s)"
+    },
+    {
+      "fieldname": "context_type",
+      "fieldtype": "Select",
+      "label": "Context Type",
+      "options": "Business\nConversation",
+      "default": "Business",
+      "in_list_view": 1,
+      "in_standard_filter": 1
+    },
+    {
+      "fieldname": "conversation",
+      "fieldtype": "Link",
+      "label": "Conversation",
+      "options": "Jarvis Conversation",
+      "description": "Required for Conversation-context notes; optional provenance for Business notes captured from a chat nudge."
+    },
+    {
+      "fieldname": "entities",
+      "fieldtype": "JSON",
+      "label": "Entities",
+      "description": "Entities in view when the note was recorded: [{doctype, name}]."
+    },
+    {
+      "fieldname": "source",
+      "fieldtype": "Select",
+      "label": "Source",
+      "options": "Business Tab\nChat Nudge",
+      "default": "Business Tab"
+    },
+    {
+      "fieldname": "status",
+      "fieldtype": "Select",
+      "label": "Status",
+      "options": "New\nProcessed\nArchived",
+      "default": "New",
+      "in_list_view": 1,
+      "in_standard_filter": 1,
+      "search_index": 1
+    },
+    {
+      "fieldname": "processed_at",
+      "fieldtype": "Datetime",
+      "label": "Processed At",
+      "read_only": 1
+    },
+    {
+      "fieldname": "processed_note",
+      "fieldtype": "Small Text",
+      "label": "Processed Note",
+      "read_only": 1,
+      "description": "What the daily sweep did with this note (facts extracted / wiki ingest queued / nothing durable found)."
+    }
+  ],
+  "permissions": [
+    {
+      "role": "All",
+      "read": 1,
+      "write": 1,
+      "create": 1,
+      "delete": 1,
+      "if_owner": 1
+    },
+    {
+      "role": "System Manager",
+      "read": 1
+    }
+  ],
+  "sort_field": "creation",
+  "sort_order": "DESC",
+  "track_changes": 0
+}

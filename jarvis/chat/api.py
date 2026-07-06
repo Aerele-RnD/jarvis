@@ -554,6 +554,15 @@ def send_message(
 					# length so a huge dict can't blow the context.
 					"filters": ctx.get("filters") if isinstance(ctx.get("filters"), dict) else None,
 				}
+				# Persist the viewing-context doc ref on the user message row
+				# so post-turn entity extraction (jarvis.chat.entities) sees
+				# what the user was looking at, not just what tools touched.
+				# Best-effort (inside this try): a ref must never fail a send.
+				if ctx.get("doctype") and ctx.get("name"):
+					frappe.db.set_value(MSG, msg_doc.name, {
+						"ref_doctype": str(ctx["doctype"])[:140],
+						"ref_name": str(ctx["name"])[:140],
+					}, update_modified=False)
 		except Exception:
 			pass
 	# Dispatch the turn (see _dispatch_turn for the Node-RQ vs Python-pubsub
@@ -588,6 +597,10 @@ def get_chat_ui_settings() -> dict:
 	for them yet (see spec § Out of scope).
 	"""
 	settings = frappe.get_single("Jarvis Settings")
+	# Lazy import: keeps this hot endpoint's module import light and avoids
+	# a jarvis.chat.api <-> jarvis.chat.voice cycle.
+	from jarvis.chat.voice import stt_config
+
 	# default_models lets callers (jarvis_onboarding.js,
 	# jarvis_account.js subscription-tab) skip duplicating the
 	# canonical "what's the safe default model id per provider"
@@ -605,6 +618,9 @@ def get_chat_ui_settings() -> dict:
 		# SPA feeds it to frappe-ui's setConfig("systemTimezone") so dayjsLocal
 		# renders them correctly for viewers in any browser timezone.
 		"time_zone": frappe.utils.get_system_timezone(),
+		# Mic button gating: stt_config() is None when voice features / STT
+		# are off or no key resolves (admin path is Redis-cached, never raises).
+		"stt_enabled": bool(stt_config()),
 		# auto-apply is per-conversation now (issue #186); the frontend reads
 		# ``auto_apply`` from the conversation payload, not this global endpoint.
 	}
