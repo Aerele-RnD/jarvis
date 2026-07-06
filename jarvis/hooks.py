@@ -147,12 +147,23 @@ website_route_rules = [
 	{"from_route": "/jarvis/<path:app_path>", "to_route": "jarvis"},
 ]
 
+# The agents marketplace lives at the SPA route /jarvis/agents; keep the
+# friendlier top-level /jarvis-agents spelling working as a redirect.
+website_redirects = [
+	{"source": "/jarvis-agents", "target": "/jarvis/agents"},
+]
+
 # Session hooks
 # --------------
 
 # 2026-07 latency plan, Phase 1.4: kick off a (debounced) prefix warm-up on
 # login so the provider prompt cache is warm before the chat page even loads.
 on_session_creation = ["jarvis.chat.prewarm.warm_on_login"]
+
+# Keep the Agents Marketplace catalog (Jarvis Agent Listing) in lockstep with
+# the BUNDLED jarvis/agents/registry.json on every migrate (never a runtime
+# fetch — bundles are reviewed deploy artifacts, adversarial S2).
+after_migrate = ["jarvis.chat.agent_catalog.after_migrate"]
 
 # Scheduled Tasks
 # ---------------
@@ -182,6 +193,10 @@ scheduler_events = {
 		"jarvis.oauth.cron.poll_oauth_refresh_status",
 		# Fire any scheduled macros whose next_run_at has passed.
 		"jarvis.chat.macro_scheduler.run_due_macros",
+		# Fire any due scheduled auditor agents. Identity-safe (runs each audit
+		# as its owner, never Administrator); budget-capped; advances only on a
+		# successful enqueue. See jarvis/chat/agent_scheduler.py.
+		"jarvis.chat.agent_scheduler.run_due_agent_audits",
 		# Recovery-completeness batch: spike alarm if the 24h recovered-turn
 		# rate is high enough to suggest a sick gateway (deduped to roughly
 		# once a day inside the function).

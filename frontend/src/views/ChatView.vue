@@ -545,6 +545,11 @@
 					<span v-if="approvalsBadge" style="position:absolute;top:2px;right:2px;background:var(--red,#e5484d);color:#fff;border-radius:8px;font-size:9px;line-height:1;padding:2px 4px;">{{ approvalsBadge }}</span>
 					<span class="jv-railtip">Approvals</span>
 				</button>
+				<!-- Agents Marketplace is a real routed page now (/agents), not an overlay. -->
+				<button class="jv-skillrail-btn" @click="router.push('/agents')">
+					<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="8" width="18" height="12" rx="2" /><path d="M7 8V6a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v2" /><circle cx="9" cy="14" r="1" /><circle cx="15" cy="14" r="1" /><path d="M12 2v2" /></svg>
+					<span class="jv-railtip">Agents</span>
+				</button>
 			</div>
 		</aside>
 
@@ -1706,6 +1711,8 @@ function _applyHashRoute() {
 	else if (h === "filebox") openFilebox()
 	else if (h === "skills") openSkillsModal()
 	else if (h === "macros") openMacrosModal()
+	// Back-compat: old #agents deep links now land on the routed Agents page.
+	else if (h === "agents") router.replace("/agents")
 }
 const _hashRouteHandler = () => _applyHashRoute()
 function openAsPage(name) {
@@ -1828,6 +1835,7 @@ async function openApprovalChat(a) {
 	approvalsOpen.value = false
 	await selectConversation(a.conversation)
 }
+
 const macroEditorOpen = ref(false)
 const macroSaving = ref(false)
 const macroError = ref("")

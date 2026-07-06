@@ -1,0 +1,22 @@
+{
+  "doctype": "DocType",
+  "name": "Jarvis Agent Allowed Role",
+  "module": "Jarvis",
+  "istable": 1,
+  "custom": 0,
+  "engine": "InnoDB",
+  "field_order": [
+    "role"
+  ],
+  "fields": [
+    {
+      "fieldname": "role",
+      "fieldtype": "Link",
+      "label": "Role",
+      "options": "Role",
+      "reqd": 1,
+      "in_list_view": 1
+    }
+  ],
+  "permissions": []
+}

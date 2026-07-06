@@ -1,0 +1,143 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "hash",
+ "creation": "2026-07-04 20:30:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "agent",
+  "enabled",
+  "installed_version",
+  "installed_at",
+  "config",
+  "sync_status",
+  "synced_at",
+  "schedule_section",
+  "schedule_enabled",
+  "schedule_frequency",
+  "schedule_time",
+  "next_run_at",
+  "last_run_at"
+ ],
+ "fields": [
+  {
+   "fieldname": "agent",
+   "fieldtype": "Link",
+   "label": "Agent",
+   "options": "Jarvis Agent Listing",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled",
+   "in_list_view": 1,
+   "description": "When on, the installed bundle is pushed to the container on the next Apply and the agent's scheduled audits fire. Toggling this is a pure DB write (no container restart)."
+  },
+  {
+   "fieldname": "installed_version",
+   "fieldtype": "Data",
+   "label": "Installed Version",
+   "read_only": 1
+  },
+  {
+   "fieldname": "installed_at",
+   "fieldtype": "Datetime",
+   "label": "Installed At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "config",
+   "fieldtype": "Long Text",
+   "label": "Config (JSON)",
+   "description": "Engagement / materiality inputs for this install (benchmark, percentage, engagement_risk_level, company, ...). Consumed by compute_materiality / run_scrutiny."
+  },
+  {
+   "fieldname": "sync_status",
+   "fieldtype": "Data",
+   "label": "Sync Status",
+   "read_only": 1
+  },
+  {
+   "fieldname": "synced_at",
+   "fieldtype": "Datetime",
+   "label": "Synced At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "schedule_section",
+   "fieldtype": "Section Break",
+   "label": "Schedule"
+  },
+  {
+   "default": "0",
+   "fieldname": "schedule_enabled",
+   "fieldtype": "Check",
+   "label": "Run on a schedule"
+  },
+  {
+   "default": "daily",
+   "depends_on": "eval:doc.schedule_enabled",
+   "fieldname": "schedule_frequency",
+   "fieldtype": "Select",
+   "label": "Frequency",
+   "options": "daily\nweekly\nmonthly"
+  },
+  {
+   "depends_on": "eval:doc.schedule_enabled",
+   "fieldname": "schedule_time",
+   "fieldtype": "Time",
+   "label": "Time of day",
+   "description": "Local time the scheduled audit fires (defaults to 09:00 if unset)."
+  },
+  {
+   "fieldname": "next_run_at",
+   "fieldtype": "Datetime",
+   "label": "Next Run At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_run_at",
+   "fieldtype": "Datetime",
+   "label": "Last Run At",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-07-04 20:30:00.000000",
+ "modified_by": "Administrator",
+ "module": "Jarvis",
+ "name": "Jarvis Agent Installation",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "if_owner": 1,
+   "read": 1,
+   "role": "All",
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

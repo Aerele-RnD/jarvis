@@ -39,6 +39,14 @@ const routes = [
 		component: () => import("@/views/MonitorView.vue"),
 		beforeEnter: (to, from, next) => { next(window.is_system_manager ? undefined : { name: "Chat" }) },
 	},
+	// Agents Marketplace — a real routed page (the server redirects the old
+	// /jarvis-agents Desk page here). Tabs deep-link: /agents/mine, /agents/
+	// activity, /agents/admin; bare /agents = marketplace.
+	{
+		path: "/agents/:tab?",
+		name: "Agents",
+		component: () => import("@/views/AgentsView.vue"),
+	},
 ]
 
 // Served under /jarvis (website_route_rules catch-all → www/jarvis page).
