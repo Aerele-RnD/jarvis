@@ -16,10 +16,13 @@ from jarvis.chat.api import (
 	archive_conversation,
 	create_conversation,
 	create_or_focus_empty,
+	get_canvas,
 	get_conversation,
 	list_conversations,
+	rename_conversation,
 	retry_message,
 	set_conversation_model,
+	set_star,
 )
 
 CONV = "Jarvis Conversation"
@@ -695,3 +698,110 @@ class TestWarmSessionEndpoint(FrappeTestCase):
 		# warm_prefix must NOT have been called inline in the web worker.
 		wp.assert_not_called()
 		self.assertEqual(out, {"ok": True, "enqueued": True})
+
+
+INTRUDER_USER = "jarvis-test-intruder@example.com"
+
+
+class TestConversationOwnershipEnforcement(_ChatTestCase):
+	"""SEC-002 regression: every conversation-scoped endpoint must reject a
+	caller who does not own the conversation with ``frappe.PermissionError``
+	— and keep working for the legitimate owner.
+
+	``frappe.get_doc`` performs NO permission check, so the endpoints assert
+	ownership explicitly (``api._get_owned_conversation``); these tests pin
+	that gate for both the read and the write paths. The intruder fixture
+	deliberately holds System Manager (via ``_ensure_test_user``): even an
+	admin-role tenant user must not reach another user's chat through these
+	endpoints.
+	"""
+
+	def setUp(self):
+		super().setUp()  # runs as TEST_USER — the legitimate owner
+		_ensure_test_user(INTRUDER_USER)
+		self.conv = create_conversation()
+		# Seed one user turn + one errored assistant turn so the message-id
+		# endpoints (get_canvas, retry_message) have targets.
+		user_msg = frappe.get_doc({
+			"doctype": MSG, "conversation": self.conv, "seq": 1,
+			"role": "user", "content": "what is our payroll?",
+		})
+		user_msg.insert(ignore_permissions=True)
+		asst_msg = frappe.get_doc({
+			"doctype": MSG, "conversation": self.conv, "seq": 2,
+			"role": "assistant", "content": "", "error": "rate limit",
+		})
+		asst_msg.insert(ignore_permissions=True)
+		frappe.db.commit()
+		self.user_msg = user_msg.name
+		self.asst_msg = asst_msg.name
+
+	def _as_intruder(self):
+		frappe.set_user(INTRUDER_USER)
+
+	# ---- read paths -------------------------------------------------- #
+
+	def test_non_owner_cannot_read_conversation(self):
+		self._as_intruder()
+		with self.assertRaises(frappe.PermissionError):
+			get_conversation(self.conv)
+
+	def test_non_owner_cannot_read_canvas(self):
+		self._as_intruder()
+		with self.assertRaises(frappe.PermissionError):
+			get_canvas(self.asst_msg)
+
+	# ---- write paths ------------------------------------------------- #
+
+	def test_non_owner_cannot_archive(self):
+		self._as_intruder()
+		with self.assertRaises(frappe.PermissionError):
+			archive_conversation(self.conv)
+		self.assertEqual(frappe.db.get_value(CONV, self.conv, "status"), "Active")
+
+	def test_non_owner_cannot_rename(self):
+		self._as_intruder()
+		with self.assertRaises(frappe.PermissionError):
+			rename_conversation(self.conv, "pwned")
+		self.assertEqual(frappe.db.get_value(CONV, self.conv, "title"), "New chat")
+
+	def test_non_owner_cannot_star(self):
+		self._as_intruder()
+		with self.assertRaises(frappe.PermissionError):
+			set_star(self.conv, 1)
+		self.assertFalse(frappe.db.get_value(CONV, self.conv, "starred"))
+
+	def test_non_owner_cannot_send_message(self):
+		self._as_intruder()
+		with patch("jarvis.chat.api._dispatch_turn") as dispatch:
+			with self.assertRaises(frappe.PermissionError):
+				send_message(self.conv, "hijack this thread")
+		dispatch.assert_not_called()
+		# No message row was injected into the victim's conversation.
+		self.assertEqual(
+			len(frappe.get_all(MSG, filters={"conversation": self.conv})), 2
+		)
+
+	def test_non_owner_cannot_retry_message(self):
+		self._as_intruder()
+		with patch("jarvis.chat.api._dispatch_turn") as dispatch:
+			with self.assertRaises(frappe.PermissionError):
+				retry_message(self.asst_msg)
+		dispatch.assert_not_called()
+
+	# ---- owner is not over-blocked ----------------------------------- #
+
+	def test_owner_still_allowed(self):
+		"""The ownership gate must not lock out the legitimate owner."""
+		out = get_conversation(self.conv)
+		self.assertEqual(out["conversation"]["name"], self.conv)
+		# get_canvas passes the ownership gate for the owner: a message with
+		# no canvas fails LATER with DoesNotExistError, never PermissionError.
+		with self.assertRaises(frappe.DoesNotExistError):
+			get_canvas(self.asst_msg)
+		self.assertTrue(rename_conversation(self.conv, "my chat")["ok"])
+		self.assertTrue(set_star(self.conv, 1)["ok"])
+		with patch("jarvis.chat.api._dispatch_turn"):
+			self.assertTrue(send_message(self.conv, "hello")["ok"])
+			self.assertTrue(retry_message(self.asst_msg)["ok"])
+		self.assertTrue(archive_conversation(self.conv)["ok"])

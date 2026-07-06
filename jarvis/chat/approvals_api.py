@@ -349,9 +349,21 @@ def decide(name: str, decision: str, approve: int = 1) -> dict:
 			)
 		# The decision is durably recorded above; a resume failure must
 		# not 500 the endpoint (the SPA would re-show a decided row).
+		# send_message is owner-only (SEC-002). A System Manager may decide
+		# another user's approval (``_may_act_on`` gates that above), so the
+		# resume runs AS the conversation owner - the same identity hinge
+		# agents_api.run_agent_now uses. The decision itself stays attributed
+		# to the approver via decided_by on the Approval Request row.
+		conv_owner = frappe.db.get_value("Jarvis Conversation", doc.conversation, "owner")
+		original_user = frappe.session.user
 		try:
+			if conv_owner and conv_owner != original_user:
+				frappe.set_user(conv_owner)
 			res = send_message(conversation=doc.conversation, message=msg, attachments=attachments)
 			resumed = bool(res.get("ok"))
 		except Exception:
 			frappe.log_error(title="approval resume failed", message=frappe.get_traceback())
+		finally:
+			if frappe.session.user != original_user:
+				frappe.set_user(original_user)
 	return {"ok": True, "status": doc.status, "resumed": resumed}
