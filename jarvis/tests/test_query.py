@@ -1883,3 +1883,20 @@ class TestQuerySqlInjectionHardening(FrappeTestCase):
 			"group_by": ["month"],
 		})
 		self.assertIn("GROUP BY", sql.upper())
+
+	def test_optional_meta_column_still_pass(self):
+		"""The optional meta columns (_assign / _comments / _liked_by /
+		_user_tags / _seen) are real, queryable columns on standard
+		doctypes but are NOT returned by ``get_valid_columns()`` — they
+		must not be over-blocked by the column-existence check. Uses
+		``User`` (a non-special doctype whose get_valid_columns() takes
+		the default_fields + docfields path that omits _assign); a
+		special doctype like DocType would mask the gap because its path
+		returns the full DB column list."""
+		sql = self._build_sql({
+			"from": "User", "alias": "u",
+			"select": ["u.name"],
+			"where": [{"field": "u._assign", "op": "like",
+			           "value": "%Administrator%"}],
+		})
+		self.assertIn("_assign", sql)

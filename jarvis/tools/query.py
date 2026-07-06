@@ -71,6 +71,7 @@ import re
 from typing import Any
 
 import frappe
+from frappe.model import optional_fields as _OPTIONAL_FIELDS
 from pypika import Order
 from pypika import functions as fn
 from pypika.terms import Criterion
@@ -527,13 +528,19 @@ def _validate_column(dt: str, field: str) -> None:
 	confirms the column exists via ``get_valid_columns()`` — which
 	includes the standard fields (name / owner / creation / modified /
 	modified_by / idx / docstatus) and, for child tables,
-	parent / parentfield / parenttype."""
+	parent / parentfield / parenttype.
+
+	``get_valid_columns()`` omits the optional meta columns (_assign /
+	_comments / _liked_by / _user_tags / _seen), which are nonetheless
+	real, queryable columns on standard doctypes — permit them too so a
+	legitimate query (e.g. filtering on ``_assign``) is not over-blocked.
+	"""
 	_validate_identifier(field, "field")
 	try:
 		valid_columns = frappe.get_meta(dt).get_valid_columns()
 	except Exception:
 		raise InvalidArgumentError(f"unknown DocType: {dt!r}")
-	if field not in valid_columns:
+	if field not in valid_columns and field not in _OPTIONAL_FIELDS:
 		raise InvalidArgumentError(
 			f"unknown column {field!r} on DocType {dt!r}"
 		)
