@@ -22,6 +22,16 @@ _PROVIDER_OAUTH_MAP: dict[str, dict] = {
 		"token":     "https://auth.openai.com/oauth/token",
 		"userinfo":  "https://api.openai.com/v1/userinfo",
 		"scope":     "openid profile email offline_access api.connectors.read api.connectors.invoke",
+		# POOL sign-ins (CLIProxyAPI subscription accounts) MUST use the
+		# codex-CLI scope set - no connectors scopes. The connectors scope
+		# yields an access_token with aud=https://api.openai.com/v1 (fine for
+		# openclaw's codex app-server, which is why the DIRECT flow keeps it),
+		# but cli-proxy-api's codex backend needs aud=chatgpt.com/backend-api
+		# and rejects the connectors-audience token: the account loads, then
+		# /v1/models returns [] and every call 502s "unknown provider".
+		# Live-verified 2026-07-03; this scope set is exactly what
+		# cli-proxy-api's own --codex-login requests.
+		"pool_scope": "openid email profile offline_access",
 		# openclaw_provider keys the auth-profiles.json entry that openclaw
 		# looks up at request time. After fix/oauth-model-provider-key on
 		# fleet-agent + fix/chat-worker-mapped-model-provider on this app,
@@ -117,14 +127,20 @@ def extract_account_id(provider: str, access_token: str) -> str:
 
 
 def build_authorize_url(*, provider: str, redirect_uri: str,
-                         code_challenge: str, state: str) -> str:
-	"""Construct the /oauth/authorize URL with all required parameters."""
+                         code_challenge: str, state: str,
+                         pool: bool = False) -> str:
+	"""Construct the /oauth/authorize URL with all required parameters.
+
+	``pool=True`` selects the provider's ``pool_scope`` when it defines one
+	(subscription-pool accounts consumed by cli-proxy-api need a different
+	token audience than the direct openclaw flow - see the OpenAI entry).
+	"""
 	p = get_provider(provider)
 	params = {
 		"response_type": "code",
 		"client_id": p["client_id"],
 		"redirect_uri": redirect_uri,
-		"scope": p["scope"],
+		"scope": (p.get("pool_scope") or p["scope"]) if pool else p["scope"],
 		"code_challenge": code_challenge,
 		"code_challenge_method": "S256",
 		"state": state,

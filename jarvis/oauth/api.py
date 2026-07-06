@@ -183,6 +183,10 @@ def _begin_signin(provider: str, model: str, *, pool: bool) -> dict:
 		redirect_uri=_REDIRECT_URI,
 		code_challenge=challenge,
 		state=state,
+		# Pool accounts feed cli-proxy-api, which needs the codex-scope
+		# token audience; the direct flow keeps the connectors scope for
+		# openclaw's own codex path. See providers.py pool_scope.
+		pool=pool,
 	)
 
 	entry = {
