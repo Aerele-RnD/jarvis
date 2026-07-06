@@ -1,0 +1,291 @@
+{
+  "doctype": "DocType",
+  "name": "Jarvis Learned Pattern",
+  "module": "Jarvis",
+  "custom": 0,
+  "engine": "InnoDB",
+  "autoname": "format:JLP-{#####}",
+  "naming_rule": "Expression",
+  "field_order": [
+    "detector_id",
+    "pattern_key",
+    "domain",
+    "roles",
+    "company",
+    "pattern_statement",
+    "skill_draft",
+    "draft_edited",
+    "support_n",
+    "n_rows",
+    "exception_n",
+    "confidence_pct",
+    "wilson_low",
+    "gap",
+    "strength_band",
+    "temporal_spread",
+    "evidence",
+    "exceptions_cluster",
+    "sensitivity",
+    "effective_sensitivity",
+    "not_applicable",
+    "status",
+    "surfaced",
+    "surfaced_at",
+    "reviewed_by",
+    "approved_by",
+    "reviewed_at",
+    "review_note",
+    "snoozed_until",
+    "first_seen_run",
+    "last_seen_run",
+    "superseded_by",
+    "materialized_skill",
+    "last_validated_at",
+    "stale_reason",
+    "overlap_warning"
+  ],
+  "fields": [
+    {
+      "fieldname": "detector_id",
+      "fieldtype": "Data",
+      "label": "Detector ID",
+      "reqd": 1,
+      "in_standard_filter": 1
+    },
+    {
+      "fieldname": "pattern_key",
+      "fieldtype": "Data",
+      "label": "Pattern Key",
+      "reqd": 1,
+      "unique": 1,
+      "description": "Stable dedupe key: re-detection refreshes the existing row (and remembers Rejected suppressions) instead of proposing a duplicate."
+    },
+    {
+      "fieldname": "domain",
+      "fieldtype": "Select",
+      "label": "Domain",
+      "options": "selling\nbuying\nstock\naccounts\nprojects\norg",
+      "reqd": 1,
+      "in_list_view": 1,
+      "in_standard_filter": 1
+    },
+    {
+      "fieldname": "roles",
+      "fieldtype": "Table",
+      "label": "Roles",
+      "options": "Jarvis Learned Pattern Role",
+      "description": "Roles detected for this pattern; seeds the compiled skill's allowed_roles on Apply (admin-editable on the board)."
+    },
+    {
+      "fieldname": "company",
+      "fieldtype": "Link",
+      "label": "Company",
+      "options": "Company"
+    },
+    {
+      "fieldname": "pattern_statement",
+      "fieldtype": "Small Text",
+      "label": "Pattern Statement",
+      "reqd": 1,
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "skill_draft",
+      "fieldtype": "Long Text",
+      "label": "Skill Draft",
+      "reqd": 1
+    },
+    {
+      "default": "0",
+      "fieldname": "draft_edited",
+      "fieldtype": "Check",
+      "label": "Draft Edited",
+      "description": "Set on edit-then-approve; the evidence line is frozen (it reflects the originally detected pattern, not the edit)."
+    },
+    {
+      "fieldname": "support_n",
+      "fieldtype": "Int",
+      "label": "Support (Units)",
+      "description": "Independent units (distinct parent documents, parties or months as declared per detector), never child-table rows."
+    },
+    {
+      "fieldname": "n_rows",
+      "fieldtype": "Int",
+      "label": "Raw Rows",
+      "description": "Raw row count; drill-down only, never used for gating."
+    },
+    {
+      "fieldname": "exception_n",
+      "fieldtype": "Int",
+      "label": "Exceptions"
+    },
+    {
+      "fieldname": "confidence_pct",
+      "fieldtype": "Float",
+      "label": "Confidence %"
+    },
+    {
+      "fieldname": "wilson_low",
+      "fieldtype": "Float",
+      "label": "Wilson Lower Bound"
+    },
+    {
+      "fieldname": "gap",
+      "fieldtype": "Float",
+      "label": "Gap vs Base Rate",
+      "description": "confidence minus leave-segment-out base rate."
+    },
+    {
+      "fieldname": "strength_band",
+      "fieldtype": "Select",
+      "label": "Strength Band",
+      "options": "\nHigh\nMedium\nLow",
+      "in_list_view": 1,
+      "in_standard_filter": 1
+    },
+    {
+      "fieldname": "temporal_spread",
+      "fieldtype": "Code",
+      "label": "Temporal Spread",
+      "options": "JSON"
+    },
+    {
+      "fieldname": "evidence",
+      "fieldtype": "Code",
+      "label": "Evidence",
+      "options": "JSON",
+      "description": "Aggregates + exception refs for the drill-down. Never embedded in compiled skill text."
+    },
+    {
+      "fieldname": "exceptions_cluster",
+      "fieldtype": "Small Text",
+      "label": "Exceptions Cluster",
+      "description": "Set when >60% of exceptions concentrate in one entity (sub-rule candidate)."
+    },
+    {
+      "fieldname": "sensitivity",
+      "fieldtype": "Select",
+      "label": "Sensitivity (Declared)",
+      "options": "\nA\nB\nC"
+    },
+    {
+      "fieldname": "effective_sensitivity",
+      "fieldtype": "Select",
+      "label": "Sensitivity (Effective)",
+      "options": "\nA\nB\nC",
+      "in_standard_filter": 1,
+      "description": "max(declared class, content class): any text naming a specific party is at least B."
+    },
+    {
+      "default": "0",
+      "fieldname": "not_applicable",
+      "fieldtype": "Check",
+      "label": "Not Applicable",
+      "description": "The site's data can never satisfy this detector (e.g. printing bypasses Frappe's print system) - distinct from data-starved."
+    },
+    {
+      "fieldname": "status",
+      "fieldtype": "Select",
+      "label": "Status",
+      "options": "Proposed\nApproved\nActive\nRejected\nSnoozed\nStale\nSuperseded\nArchived",
+      "default": "Proposed",
+      "in_list_view": 1,
+      "in_standard_filter": 1
+    },
+    {
+      "default": "0",
+      "fieldname": "surfaced",
+      "fieldtype": "Check",
+      "label": "Surfaced"
+    },
+    {
+      "fieldname": "surfaced_at",
+      "fieldtype": "Datetime",
+      "label": "Surfaced At"
+    },
+    {
+      "fieldname": "reviewed_by",
+      "fieldtype": "Link",
+      "label": "Reviewed By",
+      "options": "User",
+      "read_only": 1
+    },
+    {
+      "fieldname": "approved_by",
+      "fieldtype": "Link",
+      "label": "Approved By",
+      "options": "User",
+      "read_only": 1
+    },
+    {
+      "fieldname": "reviewed_at",
+      "fieldtype": "Datetime",
+      "label": "Reviewed At"
+    },
+    {
+      "fieldname": "review_note",
+      "fieldtype": "Small Text",
+      "label": "Review Note"
+    },
+    {
+      "fieldname": "snoozed_until",
+      "fieldtype": "Date",
+      "label": "Snoozed Until"
+    },
+    {
+      "fieldname": "first_seen_run",
+      "fieldtype": "Link",
+      "label": "First Seen Run",
+      "options": "Jarvis Pattern Run"
+    },
+    {
+      "fieldname": "last_seen_run",
+      "fieldtype": "Link",
+      "label": "Last Seen Run",
+      "options": "Jarvis Pattern Run"
+    },
+    {
+      "fieldname": "superseded_by",
+      "fieldtype": "Link",
+      "label": "Superseded By",
+      "options": "Jarvis Learned Pattern"
+    },
+    {
+      "fieldname": "materialized_skill",
+      "fieldtype": "Link",
+      "label": "Materialized Skill",
+      "options": "Jarvis Custom Skill",
+      "description": "The learned-<domain> consolidated skill row this pattern last compiled into."
+    },
+    {
+      "fieldname": "last_validated_at",
+      "fieldtype": "Datetime",
+      "label": "Last Validated At"
+    },
+    {
+      "fieldname": "stale_reason",
+      "fieldtype": "Small Text",
+      "label": "Stale Reason"
+    },
+    {
+      "fieldname": "overlap_warning",
+      "fieldtype": "Small Text",
+      "label": "Overlap Warning",
+      "description": "Lexical overlap with a customer-authored skill (warn-only)."
+    }
+  ],
+  "permissions": [
+    {
+      "role": "System Manager",
+      "read": 1,
+      "write": 1,
+      "report": 1,
+      "export": 1,
+      "print": 1,
+      "email": 1
+    }
+  ],
+  "sort_field": "creation",
+  "sort_order": "DESC",
+  "track_changes": 1
+}

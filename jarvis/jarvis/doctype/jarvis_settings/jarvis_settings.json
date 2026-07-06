@@ -29,6 +29,16 @@
     "llm_auth_mode",
     "llm_oauth_account_email",
     "llm_oauth_connected_at",
+    "behavioural_learning_section",
+    "pattern_learning_enabled",
+    "pattern_window_start",
+    "pattern_window_end",
+    "pattern_max_proposals_per_run",
+    "pattern_row_budget_per_night",
+    "pattern_last_run_at",
+    "pattern_last_run_status",
+    "pattern_next_run_at",
+    "pattern_scan_mode",
     "system_tab",
     "deployment_section",
     "deployment_mode",
@@ -204,6 +214,70 @@
       "label": "Connected At",
       "read_only": 1,
       "depends_on": "eval:doc.llm_auth_mode == 'oauth'"
+    },
+    {
+      "fieldname": "behavioural_learning_section",
+      "fieldtype": "Section Break",
+      "label": "Behavioural Learning",
+      "collapsible": 1,
+      "depends_on": "eval:doc.deployment_mode != 'Self-Hosted'",
+      "description": "Nightly, window-bound, READ-ONLY mining of this site's history into reviewable pattern proposals. Nothing activates without System Manager approval. Managed deployments only in v1 (hidden for self-host)."
+    },
+    {
+      "fieldname": "pattern_learning_enabled",
+      "fieldtype": "Check",
+      "label": "Enable Pattern Learning",
+      "default": "0"
+    },
+    {
+      "fieldname": "pattern_window_start",
+      "fieldtype": "Time",
+      "label": "Analysis Window Start",
+      "default": "01:00:00"
+    },
+    {
+      "fieldname": "pattern_window_end",
+      "fieldtype": "Time",
+      "label": "Analysis Window End",
+      "default": "05:00:00",
+      "description": "Window must be at least 1 hour. End before start is legal: the window crosses midnight."
+    },
+    {
+      "fieldname": "pattern_max_proposals_per_run",
+      "fieldtype": "Int",
+      "label": "Max Proposals per Run",
+      "default": "10"
+    },
+    {
+      "fieldname": "pattern_row_budget_per_night",
+      "fieldtype": "Int",
+      "label": "Row Scan Budget per Night",
+      "default": "500000",
+      "description": "EXPLAIN-estimated rows a nightly run may scan before remaining detectors are deferred to later nights."
+    },
+    {
+      "fieldname": "pattern_last_run_at",
+      "fieldtype": "Datetime",
+      "label": "Last Learning Run At",
+      "read_only": 1
+    },
+    {
+      "fieldname": "pattern_last_run_status",
+      "fieldtype": "Long Text",
+      "label": "Last Learning Run Status",
+      "read_only": 1
+    },
+    {
+      "fieldname": "pattern_next_run_at",
+      "fieldtype": "Datetime",
+      "label": "Next Learning Run At",
+      "read_only": 1
+    },
+    {
+      "fieldname": "pattern_scan_mode",
+      "fieldtype": "Data",
+      "label": "Learning Scan Mode",
+      "read_only": 1
     },
     {
       "fieldname": "system_tab",

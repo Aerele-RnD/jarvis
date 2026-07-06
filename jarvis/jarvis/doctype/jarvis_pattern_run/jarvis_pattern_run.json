@@ -1,0 +1,196 @@
+{
+  "doctype": "DocType",
+  "name": "Jarvis Pattern Run",
+  "module": "Jarvis",
+  "custom": 0,
+  "engine": "InnoDB",
+  "autoname": "format:JPR-{#####}",
+  "naming_rule": "Expression",
+  "field_order": [
+    "status",
+    "trigger",
+    "requested_by",
+    "window_start_used",
+    "window_end_used",
+    "started_at",
+    "ended_at",
+    "heartbeat_at",
+    "scan_mode",
+    "detectors_total",
+    "detectors_completed",
+    "detectors_skipped",
+    "doctypes_read",
+    "rows_scanned",
+    "candidates_found",
+    "proposals_created",
+    "proposals_updated",
+    "duplicates_suppressed",
+    "patterns_revalidated",
+    "patterns_marked_stale",
+    "errors",
+    "remaining_units",
+    "coverage_note"
+  ],
+  "fields": [
+    {
+      "fieldname": "status",
+      "fieldtype": "Select",
+      "label": "Status",
+      "options": "Queued\nRunning\nPaused\nCompleted\nPartial\nFailed",
+      "default": "Queued",
+      "in_list_view": 1,
+      "in_standard_filter": 1
+    },
+    {
+      "fieldname": "trigger",
+      "fieldtype": "Select",
+      "label": "Trigger",
+      "options": "scheduled\nmanual",
+      "default": "scheduled",
+      "in_standard_filter": 1,
+      "description": "scheduled runs enforce the analysis window; manual runs (SM 'Run now') bypass it but keep the row budget and statement timeouts."
+    },
+    {
+      "fieldname": "requested_by",
+      "fieldtype": "Link",
+      "label": "Requested By",
+      "options": "User",
+      "description": "Set only for trigger=manual; the driver still runs as Administrator (uniform provenance)."
+    },
+    {
+      "fieldname": "window_start_used",
+      "fieldtype": "Time",
+      "label": "Window Start Used"
+    },
+    {
+      "fieldname": "window_end_used",
+      "fieldtype": "Time",
+      "label": "Window End Used"
+    },
+    {
+      "fieldname": "started_at",
+      "fieldtype": "Datetime",
+      "label": "Started At",
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "ended_at",
+      "fieldtype": "Datetime",
+      "label": "Ended At"
+    },
+    {
+      "fieldname": "heartbeat_at",
+      "fieldtype": "Datetime",
+      "label": "Heartbeat At",
+      "description": "Advanced by the driver between work units; the orchestrator's stale-run watch keys off it."
+    },
+    {
+      "fieldname": "scan_mode",
+      "fieldtype": "Data",
+      "label": "Scan Mode"
+    },
+    {
+      "default": "0",
+      "fieldname": "detectors_total",
+      "fieldtype": "Int",
+      "label": "Detectors Total"
+    },
+    {
+      "default": "0",
+      "fieldname": "detectors_completed",
+      "fieldtype": "Int",
+      "label": "Detectors Completed",
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "detectors_skipped",
+      "fieldtype": "Code",
+      "label": "Detectors Skipped",
+      "options": "JSON",
+      "description": "Every skip is recorded with its reason so a partial run never reads as a clean pass."
+    },
+    {
+      "fieldname": "doctypes_read",
+      "fieldtype": "Code",
+      "label": "DocTypes Read",
+      "options": "JSON",
+      "description": "Read-audit record of the Administrator-level analysis session."
+    },
+    {
+      "default": "0",
+      "fieldname": "rows_scanned",
+      "fieldtype": "Int",
+      "label": "Rows Scanned",
+      "description": "EXPLAIN-estimated rows scanned, charged against pattern_row_budget_per_night."
+    },
+    {
+      "default": "0",
+      "fieldname": "candidates_found",
+      "fieldtype": "Int",
+      "label": "Candidates Found"
+    },
+    {
+      "default": "0",
+      "fieldname": "proposals_created",
+      "fieldtype": "Int",
+      "label": "Proposals Created",
+      "in_list_view": 1
+    },
+    {
+      "default": "0",
+      "fieldname": "proposals_updated",
+      "fieldtype": "Int",
+      "label": "Proposals Updated"
+    },
+    {
+      "default": "0",
+      "fieldname": "duplicates_suppressed",
+      "fieldtype": "Int",
+      "label": "Duplicates Suppressed"
+    },
+    {
+      "default": "0",
+      "fieldname": "patterns_revalidated",
+      "fieldtype": "Int",
+      "label": "Patterns Revalidated"
+    },
+    {
+      "default": "0",
+      "fieldname": "patterns_marked_stale",
+      "fieldtype": "Int",
+      "label": "Patterns Marked Stale"
+    },
+    {
+      "fieldname": "errors",
+      "fieldtype": "Code",
+      "label": "Errors",
+      "options": "JSON"
+    },
+    {
+      "fieldname": "remaining_units",
+      "fieldtype": "Code",
+      "label": "Remaining Units",
+      "options": "JSON",
+      "description": "Ordered work units left when a run pauses at window end; next night's run starts with these first."
+    },
+    {
+      "fieldname": "coverage_note",
+      "fieldtype": "Small Text",
+      "label": "Coverage Note",
+      "description": "Why a run is Partial/Paused/Failed (window end, row budget, queue starvation). Never let a partial run read as a clean all-clear."
+    }
+  ],
+  "permissions": [
+    {
+      "role": "System Manager",
+      "read": 1,
+      "report": 1,
+      "export": 1,
+      "print": 1,
+      "email": 1
+    }
+  ],
+  "sort_field": "creation",
+  "sort_order": "DESC",
+  "track_changes": 0
+}

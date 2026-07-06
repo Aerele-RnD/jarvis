@@ -6,7 +6,11 @@ import ChatView from "@/views/ChatView.vue"
 const routes = [
 	{ path: "/", name: "Chat", component: ChatView, meta: { chat: true } },
 	{ path: "/c/:id", name: "Conversation", component: ChatView, meta: { chat: true } },
-	{ path: "/skills", name: "SkillsList", component: () => import("@/pages/skills/SkillsList.vue") },
+	// /skills renders the two-tab shell (Skills | Learning). The name stays
+	// "SkillsList" so every router.push({name:'SkillsList'}), the sidebar link,
+	// the command palette and SkillsList's own breadcrumb keep resolving here;
+	// the #skills legacy hash deep-link (HASH_ROUTES below) is unaffected.
+	{ path: "/skills", name: "SkillsList", component: () => import("@/pages/skills/SkillsPage.vue") },
 	{
 		path: "/skills/new",
 		name: "SkillNew",

@@ -161,7 +161,12 @@ on_session_creation = ["jarvis.chat.prewarm.warm_on_login"]
 # Keep the Agents Marketplace catalog (Jarvis Agent Listing) in lockstep with
 # the BUNDLED jarvis/agents/registry.json on every migrate (never a runtime
 # fetch — bundles are reviewed deploy artifacts, adversarial S2).
-after_migrate = ["jarvis.chat.agent_catalog.after_migrate"]
+after_migrate = [
+	"jarvis.chat.agent_catalog.after_migrate",
+	# Behavioural pattern learning: seed Jarvis Pattern Detector State rows
+	# from the detector registry (best-effort; never blocks a migrate).
+	"jarvis.learning.bootstrap.after_migrate",
+]
 
 # Scheduled Tasks
 # ---------------
@@ -179,6 +184,13 @@ scheduler_events = {
 		],
 		"*/2 * * * *": [
 			"jarvis.chat.turn_recovery.recover_pending_turns",
+		],
+		"*/15 * * * *": [
+			# Behavioural pattern learning tick. Hooks cron is app-static
+			# (per-site rows are reset on migrate), so the window is
+			# self-enforced: the tick bails on the site_config kill switch,
+			# the enabled flag, self-host and outside-window times.
+			"jarvis.learning.orchestrator.tick",
 		],
 	},
 	"hourly": [
