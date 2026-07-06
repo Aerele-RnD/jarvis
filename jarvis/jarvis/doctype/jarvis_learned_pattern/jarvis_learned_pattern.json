@@ -15,6 +15,7 @@
     "pattern_statement",
     "skill_draft",
     "draft_edited",
+    "draft_polished",
     "support_n",
     "n_rows",
     "exception_n",
@@ -42,6 +43,9 @@
     "materialized_skill",
     "last_validated_at",
     "stale_reason",
+    "counter_evidence",
+    "flags_count",
+    "flag_band_cap",
     "overlap_warning"
   ],
   "fields": [
@@ -101,6 +105,13 @@
       "fieldtype": "Check",
       "label": "Draft Edited",
       "description": "Set on edit-then-approve; the evidence line is frozen (it reflects the originally detected pattern, not the edit)."
+    },
+    {
+      "default": "0",
+      "fieldname": "draft_polished",
+      "fieldtype": "Check",
+      "label": "Draft Polished",
+      "description": "Set by the LLM polish endpoint: the polished skill_draft is not overwritten by mining/drift refresh (unlike draft_edited the evidence stays un-frozen). Cleared by the engine when the detected pattern statement materially changes, and on approve."
     },
     {
       "fieldname": "support_n",
@@ -266,6 +277,28 @@
       "fieldname": "stale_reason",
       "fieldtype": "Small Text",
       "label": "Stale Reason"
+    },
+    {
+      "fieldname": "counter_evidence",
+      "fieldtype": "Code",
+      "label": "Counter Evidence",
+      "options": "JSON",
+      "description": "Correction-loop flags from chat users: [{user, note, ts}], one entry per user (a re-flag updates that user's entry in place)."
+    },
+    {
+      "default": "0",
+      "fieldname": "flags_count",
+      "fieldtype": "Int",
+      "label": "Flags Count",
+      "description": "Total flag events (a re-flag by the same user still counts as an event). Flags from >=2 distinct users or >=3 events demote the strength band one level."
+    },
+    {
+      "fieldname": "flag_band_cap",
+      "fieldtype": "Select",
+      "label": "Flag Band Cap",
+      "options": "\nHigh\nMedium\nLow",
+      "read_only": 1,
+      "description": "Strength ceiling written by the correction loop: every pipeline write of strength_band clamps to the weaker of (computed band, this cap), so a flag-driven demotion survives the nightly refresh. Cleared on approve."
     },
     {
       "fieldname": "overlap_warning",

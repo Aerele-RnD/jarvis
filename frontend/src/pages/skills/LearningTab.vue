@@ -140,6 +140,11 @@
 							pending
 						</span>
 						<span v-else class="text-base text-ink-gray-8">Applying learned skills</span>
+						<!-- stale-but-still-pushed patterns leave the assistant on Apply (§6.5) -->
+						<span v-if="staleRemovalCount > 0" class="text-sm text-ink-gray-6">
+							· {{ staleRemovalCount }} stale pattern{{ staleRemovalCount === 1 ? "" : "s" }}
+							will be removed
+						</span>
 						<SyncPill ref="syncPill" />
 					</div>
 					<Button
@@ -278,6 +283,17 @@
 								</Tooltip>
 								<Badge v-if="row.not_applicable" variant="subtle" theme="gray" label="Not applicable" />
 								<Badge v-if="row.draft_edited" variant="subtle" theme="gray" label="Edited" />
+								<!-- correction loop (§6.5): chat users flagged this default as wrong -->
+								<Tooltip
+									v-if="row.flags_count"
+									:text="`Chat users flagged this default as wrong ${row.flags_count} time${row.flags_count === 1 ? '' : 's'}.`"
+								>
+									<Badge
+										variant="subtle"
+										theme="red"
+										:label="`${row.flags_count} flag${row.flags_count === 1 ? '' : 's'}`"
+									/>
+								</Tooltip>
 							</div>
 
 							<!-- plain-English pattern sentence -->
@@ -288,6 +304,23 @@
 								</span>
 								<span v-if="row.approved_by">· Approved by {{ row.approved_by }}</span>
 								<span v-else-if="row.reviewed_by">· Reviewed by {{ row.reviewed_by }}</span>
+							</div>
+
+							<!-- Stale banner (§6.5): drift re-validation found the habit no longer
+							     holds. Never a silent edit: the SM re-approves (Approve) or rejects;
+							     a still-pushed row is removed from the assistant on the next Apply. -->
+							<div
+								v-if="row.status === 'Stale'"
+								class="mt-2.5 flex items-start gap-2 rounded-lg border border-outline-amber-2 bg-surface-amber-1 px-3 py-2 text-sm text-ink-amber-3"
+							>
+								<FeatherIcon name="trending-down" class="mt-0.5 size-4 shrink-0" />
+								<span>
+									{{ row.stale_reason || "This pattern no longer holds in recent data." }}
+									<template v-if="row.materialized_skill">
+										Still pushed to the assistant; it will be removed on the next Apply
+										unless re-approved.
+									</template>
+								</span>
 							</div>
 
 							<!-- B-class exact-text disclosure banner (plan §6.6): learned skill
@@ -350,6 +383,14 @@
 										<div>
 											<span class="text-ink-gray-5">Exceptions</span>
 											<span class="ml-1.5 text-ink-gray-8">{{ expanded[row.name].exception_n }}</span>
+										</div>
+										<div v-if="expanded[row.name].last_validated_at">
+											<span class="text-ink-gray-5">Last validated</span>
+											<Tooltip :text="exactDate(expanded[row.name].last_validated_at)">
+												<span class="ml-1.5 text-ink-gray-8">{{
+													timeAgo(expanded[row.name].last_validated_at)
+												}}</span>
+											</Tooltip>
 										</div>
 									</div>
 
@@ -760,6 +801,8 @@ const board = reactive({ rows: [], total: 0, hasMore: false, loading: false })
 const facets = ref([])
 const queuedCount = ref(0)
 const pendingApplyCount = ref(0)
+// Stale rows still compiled into a live skill: removed on the next Apply (§6.5).
+const staleRemovalCount = ref(0)
 const reviewActivity = ref({ decided: 0, total: 0, last_by_name: "" })
 const domain = ref("")
 const boardStatus = ref("Proposed")
@@ -943,6 +986,7 @@ async function fetchBoard(mode = "reset") {
 		facets.value = (res.facets && res.facets.domain) || []
 		queuedCount.value = res.queued_count || 0
 		pendingApplyCount.value = res.pending_apply_count || 0
+		staleRemovalCount.value = res.stale_pending_removal || 0
 		reviewActivity.value = res.review_activity || { decided: 0, total: 0, last_by_name: "" }
 	} catch (e) {
 		toast.error(errMsg(e))

@@ -1,6 +1,6 @@
 """Masters/Config detector postprocess (plan section 4.2, Masters/Config).
 
-Both Tier-1 config detectors are org-wide (company=None) and multi-source, so
+The Tier-1 config detectors are org-wide (company=None) and multi-source, so
 they live entirely in postprocess functions rather than a single SQL constant:
 
   * cfg-naming-series merges three sources per doctype - realized usage (the
@@ -9,10 +9,21 @@ they live entirely in postprocess functions rather than a single SQL constant:
   * cfg-default-vs-usage compares a configured default (per plan section 4.2,
     Price List comes from the Selling Settings single, which has no is_default
     field) against realized usage, and proposes only on divergence.
+
+Tier-2 org detectors (plan section 4.4):
+
+  * cfg-custom-field-always-filled - a non-mandatory custom field that is
+    filled on nearly every submitted row is mandatory in practice. Discovered
+    identifiers (doctype + fieldname) are regex + meta validated BEFORE any
+    interpolation, so the fill SQL keeps the static-SQL guarantee.
+  * role-doctype-routing - which role actually creates/submits each core
+    doctype (owner JOIN `tabHas Role`, fractional multi-role weights). Org and
+    role level ONLY: user names never reach a candidate.
 """
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 
 # Hard per-detector row cap (plan §4.3 fix 7): a curated OOM backstop for the
@@ -211,3 +222,283 @@ def _series_current(patterndb, mode_series: str):
 		return row[0].get("current") if row else None
 	except Exception:
 		return None
+
+
+# ---------------------------------------------------------------------------
+# Tier-2: cfg-custom-field-always-filled
+# ---------------------------------------------------------------------------
+# Textual fieldtypes only: their columns are varchar/text, so the emptiness
+# CASE below never trips MariaDB strict-mode date/number coercion. Fields with
+# a configured default are excluded: the framework auto-fills them, so a ~100%
+# fill rate reflects configuration, not a user habit.
+CUSTOM_FIELD_CANDIDATES_SQL = """
+SELECT cf.dt AS dt, cf.fieldname AS fieldname, cf.fieldtype AS fieldtype, cf.label AS label,
+       cf.`default` AS field_default
+FROM `tabCustom Field` cf
+WHERE cf.reqd = 0
+  AND cf.hidden = 0
+  AND (cf.`default` IS NULL OR cf.`default` = '')
+  AND cf.fieldtype IN ('Data', 'Select', 'Link', 'Small Text', 'Text', 'Long Text', 'Phone', 'Autocomplete')
+ORDER BY cf.dt, cf.fieldname
+LIMIT 200
+"""
+
+# Frappe fieldnames are lowercase snake_case and doctype names are plain words;
+# anything else is refused BEFORE interpolation (static-SQL guarantee).
+_CF_FIELDNAME_RE = re.compile(r"^[a-z][a-z0-9_]{1,139}$")
+_CF_DOCTYPE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9 \-]{0,138}$")
+_MAX_CUSTOM_FIELDS_PROBED = 40
+
+
+def _fill_rate_sql(doctype: str, fieldname: str) -> str:
+	"""Fill-rate SQL for a VALIDATED (doctype, fieldname) pair - the caller
+	MUST have passed both through the regex + meta checks first."""
+	return (
+		"SELECT name AS unit_id, "
+		f"CASE WHEN `{fieldname}` IS NULL OR `{fieldname}` = '' THEN '__empty__' "
+		"ELSE '__filled__' END AS consequent, "
+		"DATE(creation) AS day, creation AS created "
+		f"FROM `tab{doctype}` "
+		"WHERE docstatus = 1 AND creation >= %(window_start)s "
+		f"LIMIT {HARD_ROW_LIMIT}"
+	)
+
+
+def _validated_custom_field(row) -> tuple[str, str] | None:
+	"""(doctype, fieldname) iff the discovered Custom Field row survives the
+	regex + meta validation contract (plan section 4.2): snake_case fieldname,
+	plain doctype name, a real submittable non-child doctype, and the column
+	actually present per meta/schema probe. None otherwise."""
+	import frappe
+
+	from jarvis.learning import compat
+
+	doctype, fieldname = row.get("dt"), row.get("fieldname")
+	if not doctype or not fieldname:
+		return None
+	if not _CF_DOCTYPE_RE.fullmatch(str(doctype)):
+		return None
+	if not _CF_FIELDNAME_RE.fullmatch(str(fieldname)):
+		return None
+	try:
+		meta = frappe.get_meta(doctype)
+	except Exception:
+		return None
+	# "submitted rows" (plan section 4.2): fill rate is measured on docstatus=1
+	# parents, so child tables and non-submittable masters are out of scope.
+	if meta.istable or not meta.is_submittable:
+		return None
+	if not compat.has_field(doctype, fieldname):
+		return None
+	return (str(doctype), str(fieldname))
+
+
+def postprocess_custom_field_always_filled(rows, spec, company, patterndb, params):
+	"""cfg-custom-field-always-filled (plan section 4.2): reqd=0 custom fields
+	whose fill rate on submitted rows clears the 60/0.98 gate are mandatory in
+	practice. One candidate per surviving field."""
+	from jarvis.learning.executor import evaluate_segment, month_key
+
+	try:
+		candidates = patterndb.sql_select(CUSTOM_FIELD_CANDIDATES_SQL, {})
+	except Exception:
+		return []
+
+	out = []
+	probed = 0
+	for row in candidates or []:
+		if probed >= _MAX_CUSTOM_FIELDS_PROBED:
+			break
+		if str(row.get("field_default") or "").strip():
+			continue  # configured default: the framework fills it, not users
+		validated = _validated_custom_field(row)
+		if not validated:
+			continue
+		doctype, fieldname = validated
+		probed += 1
+		try:
+			fill_rows = patterndb.timed_select(_fill_rate_sql(doctype, fieldname), params)
+		except Exception:
+			continue
+		units = {}
+		for r in fill_rows or []:
+			if r.get("unit_id"):
+				units[r["unit_id"]] = (r.get("consequent"), r.get("day"), r.get("created"))
+		if not units:
+			continue
+		k = sum(1 for cons, _d, _c in units.values() if cons == "__filled__")
+		if not k:
+			continue
+		exceptions = [
+			{"unit": uid, "value": "empty", "month": month_key(d)}
+			for uid, (cons, d, _c) in units.items()
+			if cons != "__filled__"
+		][:20]
+		raw = evaluate_segment(
+			spec,
+			antecedent_value=f"{doctype}.{fieldname}",
+			consequent_value="filled",
+			k=k,
+			n_units=len(units),
+			base_rate=0.0,
+			days=[d for _v, d, _c in units.values()],
+			created=[c for _v, _d, c in units.values()],
+			exceptions=exceptions,
+			single_antecedent=True,
+			names_party=False,
+			template="custom-field-always-filled",
+			vars={
+				"doctype": doctype,
+				"fieldname": fieldname,
+				"label": row.get("label") or fieldname,
+			},
+			extra_evidence={
+				"fill_rate": round(k / len(units), 4),
+				"fieldtype": row.get("fieldtype"),
+				"reqd": 0,
+			},
+			patterndb=patterndb,
+		)
+		if raw:
+			out.append(raw)
+	return out
+
+
+# ---------------------------------------------------------------------------
+# Tier-2: role-doctype-routing
+# ---------------------------------------------------------------------------
+# Fixed doctype whitelist (interpolation-safe, same contract as
+# NAMING_SERIES_DOCTYPES; extend deliberately, never from user input).
+ROUTING_DOCTYPES = NAMING_SERIES_DOCTYPES
+
+# Blanket roles every desk user tends to hold carry no routing signal; real
+# functional roles (incl. System Manager) stay in and the leave-segment-out
+# gap gate kills any role that dominates EVERY doctype equally. That defense
+# only exists with a "rest" to compare against, so the postprocess requires
+# >= 2 doctypes with qualifying data before proposing anything.
+_GENERIC_ROLES = frozenset({"All", "Guest", "Desk User", "System User"})
+_MIN_ROUTING_DOCTYPES = 2
+
+_HAS_ROLE_SQL = """
+SELECT hr.parent AS user, hr.role AS role
+FROM `tabHas Role` hr
+JOIN `tabRole` r ON r.name = hr.role
+WHERE hr.parenttype = 'User'
+  AND r.disabled = 0
+  AND r.desk_access = 1
+  AND hr.parent IN %(users)s
+LIMIT 100000
+"""
+
+_HAS_ROLE_CHUNK = 1000
+
+
+def _owner_usage_sql(table: str) -> str:
+	"""Owner-per-document rows for one WHITELISTED doctype (see
+	ROUTING_DOCTYPES; the table name is never user input)."""
+	return (
+		"SELECT name AS unit_id, owner AS owner, DATE(creation) AS day, creation AS created "
+		f"FROM `tab{table}` "
+		"WHERE docstatus = 1 AND creation >= %(window_start)s "
+		"AND owner IS NOT NULL AND owner NOT IN ('Administrator', 'Guest') "
+		f"LIMIT {HARD_ROW_LIMIT}"
+	)
+
+
+def postprocess_role_doctype_routing(rows, spec, company, patterndb, params):
+	"""role-doctype-routing (plan section 4.2): which role ACTUALLY creates
+	each core doctype. A document by a multi-role owner contributes 1/k weight
+	to each of the owner's k functional roles (fractional weights), so a
+	blended-role user never double-counts. Output is org/role level only -
+	no user ever appears in a candidate."""
+	from jarvis.learning import compat, stats
+	from jarvis.learning.executor import evaluate_segment
+
+	per_doctype: dict = {}
+	all_users: set = set()
+	for doctype in ROUTING_DOCTYPES:
+		if not compat.has_field(doctype, "owner"):
+			continue
+		try:
+			doc_rows = patterndb.timed_select(_owner_usage_sql(doctype), params)
+		except Exception:
+			continue
+		if doc_rows:
+			per_doctype[doctype] = doc_rows
+			all_users.update(r.get("owner") for r in doc_rows if r.get("owner"))
+	if not per_doctype:
+		return []
+
+	role_map: dict = defaultdict(list)
+	users = sorted(all_users)
+	for i in range(0, len(users), _HAS_ROLE_CHUNK):
+		chunk = users[i : i + _HAS_ROLE_CHUNK]
+		try:
+			role_rows = patterndb.sql_select(_HAS_ROLE_SQL, {"users": chunk}) or []
+		except Exception:
+			continue
+		for r in role_rows:
+			if r.get("user") and r.get("role") and r["role"] not in _GENERIC_ROLES:
+				role_map[r["user"]].append(r["role"])
+
+	counts: dict = {}
+	meta: dict = {}
+	for doctype, doc_rows in per_doctype.items():
+		weights: dict = defaultdict(float)
+		days, created = [], []
+		n_docs = 0
+		for r in doc_rows:
+			roles = role_map.get(r.get("owner")) or []
+			if not roles:
+				continue  # unattributable owner: excluded from the unit count
+			w = 1.0 / len(roles)
+			for role in roles:
+				weights[role] += w
+			n_docs += 1
+			days.append(r.get("day"))
+			created.append(r.get("created"))
+		rounded = {role: int(round(v)) for role, v in weights.items() if int(round(v)) > 0}
+		if not rounded or not n_docs:
+			continue
+		counts[doctype] = rounded
+		meta[doctype] = (days, created, n_docs)
+
+	if len(counts) < _MIN_ROUTING_DOCTYPES:
+		# With a single qualifying doctype there is no "rest" for the
+		# leave-segment-out base rate and the gap gate would be skipped, so a
+		# role that dominates the org's only active doctype (often System
+		# Manager on a small site) would propose as misleading routing.
+		return []
+
+	out = []
+	for doctype in counts:
+		lsob = stats.leave_segment_out_base_rate(counts, doctype)
+		mode = lsob["consequent"]
+		if not mode:
+			continue
+		days, created, n_docs = meta[doctype]
+		raw = evaluate_segment(
+			spec,
+			antecedent_value=doctype,
+			consequent_value=mode,
+			k=lsob["k"],
+			n_units=lsob["n_units"],
+			base_rate=lsob["base_rate"],
+			rest_k=lsob["rest_k"],
+			rest_n=lsob["rest_n"],
+			days=days,
+			created=created,
+			exceptions=[],
+			single_antecedent=False,
+			names_party=False,
+			template="role-doctype-routing",
+			vars={"doctype": doctype, "role": mode},
+			extra_evidence={
+				"weighting": "fractional multi-role (owner JOIN Has Role)",
+				"n_documents": n_docs,
+			},
+			patterndb=patterndb,
+		)
+		if raw:
+			out.append(raw)
+	return out

@@ -142,12 +142,14 @@ class TestPatternLearningE2E(FrappeTestCase):
 		try:
 			clause_fn = getattr(cs, "learned_skill_clause", None)
 			self.assertIsNotNone(clause_fn, "learned_skill_clause must exist for turn injection")
-			# a user holding Sales User sees the injection
+			# a user holding Sales User sees the injection - the Phase-2 namespace
+			# wire slug learned-<domain> verbatim, never custom-learned-<domain>
 			sales_clause = clause_fn(_user_with_role("Sales User"))
-			self.assertIn("custom-learned-selling", sales_clause)
+			self.assertIn("learned-selling", sales_clause)
+			self.assertNotIn("custom-learned-selling", sales_clause)
 			# a user without it does not
 			acct_clause = clause_fn(_user_with_role("Accounts User"))
-			self.assertNotIn("custom-learned-selling", acct_clause)
+			self.assertNotIn("learned-selling", acct_clause)
 			print("[E2E] turn injection: sales matched, accounts suppressed")
 		finally:
 			frappe.set_user("Administrator")

@@ -22,6 +22,13 @@ that survived the gates (a legitimate clean pass).
 Each candidate dict (see :func:`_finalize`) carries every ``Jarvis Learned
 Pattern`` field the engine writes plus ``antecedent_value`` /
 ``consequent_value`` bookkeeping and stamped detector/registry versions.
+
+Phase 2 statistics upgrade: candidates from the standard reduce also carry a
+one-sided enrichment ``p_value`` (Fisher's exact when any expected 2x2 cell
+is < 5 per Cochran, else G-test; also mirrored into ``evidence`` with its
+``p_value_method``). The per-detector-family BH-FDR pass over these p-values
+lives in ``jarvis.learning.fdr`` - ADDITIVE after every gate here, never a
+replacement. ``p_value`` is None when there is no comparison population.
 """
 
 from __future__ import annotations
@@ -83,6 +90,12 @@ class DetectorResult:
 	# (plan §5.6). ``None`` (a hand-built result) tells the engine to fall back to
 	# the candidates' n_rows; a real run always sets an int.
 	rows_scanned: int | None = None
+	# Candidate count BEFORE the PER_DETECTOR_CANDIDATE_CAP truncation. Drift
+	# re-validation needs it: when the unit was cap-truncated, a pattern_key
+	# missing from ``candidates`` is NOT evidence the pattern stopped holding.
+	# ``None`` (a hand-built result) means unknown - callers must be
+	# conservative. A real run always sets an int.
+	raw_candidate_count: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -96,8 +109,11 @@ def run_detector(spec: dict, company: str | None, patterndb) -> DetectorResult:
 		return DetectorResult([], f"requires app(s) not installed: {', '.join(missing_apps)}")
 
 	source = spec.get("requires_source")
-	if source:  # no Tier-1 detector needs a stream source; Phase 2 wires these.
-		return DetectorResult([], f"requires source '{source}' (Phase 2 detector)")
+	if source and not _source_available(spec):
+		# Availability check, not a blanket gate: the preflight marks the
+		# Detector State not_applicable when the source has no signal (e.g. a
+		# custom print engine writes no Access Log Print rows). Honest skip.
+		return DetectorResult([], f"source '{source}' unavailable for this site")
 
 	for dt, fname in spec.get("field_guards") or []:
 		if not compat.has_field(dt, fname):
@@ -121,7 +137,22 @@ def run_detector(spec: dict, company: str | None, patterndb) -> DetectorResult:
 	candidates = [_finalize(spec, company, r) for r in (raws or []) if r]
 	candidates = _apply_geography_guard(spec, candidates, patterndb)
 	scanned = _scanned_rows(rows, raws)
-	return DetectorResult(candidates[:PER_DETECTOR_CANDIDATE_CAP], None, rows_scanned=scanned)
+	return DetectorResult(
+		candidates[:PER_DETECTOR_CANDIDATE_CAP],
+		None,
+		rows_scanned=scanned,
+		raw_candidate_count=len(candidates),
+	)
+
+
+def _source_available(spec: dict) -> bool:
+	"""A stream-source detector runs unless the preflight/engine marked its
+	Detector State not_applicable (structural no-signal, e.g. printing bypasses
+	frappe's print system entirely). Missing state row = available (first run)."""
+	state = frappe.db.get_value(
+		"Jarvis Pattern Detector State", spec.get("id"), "not_applicable"
+	)
+	return not state
 
 
 def _scanned_rows(rows, raws) -> int:
@@ -181,6 +212,10 @@ def reduce_units(rows, spec: dict, patterndb=None) -> list:
 
 	org_default = spec.get("org_default_consequent")
 	targets = spec.get("target_consequents")
+	# The detector's own admission gate, fed to the recency guard's secondary
+	# (grandfathered-transition) condition so a recent window that no longer
+	# clears c_min diverges even while legacy volume holds the plurality.
+	c_min = float((spec.get("gates") or {}).get("c_min", 0.90))
 
 	# Recency-guard scaffolding (plan §4.1): recent_cutoff is anchored to the
 	# latest day across ALL segments; recent_counts is the leave-segment-out base
@@ -196,7 +231,7 @@ def reduce_units(rows, spec: dict, patterndb=None) -> list:
 		if mode is None or mode == "__mixed__":
 			continue
 
-		decision = _recency_decision(units, mode, recent_cutoff)
+		decision = _recency_decision(units, mode, recent_cutoff, c_min=c_min)
 		if decision and decision["recent"]:
 			# The modal VALUE flipped inside the recent window: never propose the
 			# stale full-window average. Prefer the recent behaviour if it can
@@ -224,6 +259,8 @@ def reduce_units(rows, spec: dict, patterndb=None) -> list:
 			k=lsob["k"],
 			n_units=lsob["n_units"],
 			base_rate=lsob["base_rate"],
+			rest_k=lsob["rest_k"],
+			rest_n=lsob["rest_n"],
 			days=days,
 			created=created,
 			exceptions=exceptions,
@@ -231,6 +268,8 @@ def reduce_units(rows, spec: dict, patterndb=None) -> list:
 			vars=_default_vars(spec, ant, mode),
 			template=spec.get("skill_template"),
 			recency_note=(decision["note"] if decision else None),
+			recency_changed_around=(decision["changed_around"] if decision else None),
+			n_candidate_values=_selection_breadth(targets, counts.get(ant)),
 			patterndb=patterndb,
 		)
 		if raw:
@@ -249,6 +288,8 @@ def evaluate_segment(
 	days,
 	created,
 	n_rows: int | None = None,
+	rest_k: int | None = None,
+	rest_n: int | None = None,
 	exceptions=None,
 	single_antecedent: bool = False,
 	names_party: bool | None = None,
@@ -258,6 +299,8 @@ def evaluate_segment(
 	template: str | None = None,
 	extra_evidence: dict | None = None,
 	recency_note: str | None = None,
+	recency_changed_around: str | None = None,
+	n_candidate_values: int | None = None,
 	patterndb=None,
 ) -> dict | None:
 	"""Apply the full §4.1 gate suite to one antecedent segment and return a
@@ -268,6 +311,24 @@ def evaluate_segment(
 	half-width), phrasing (only/always => 0 exceptions and n>=60), confidence
 	>= c_min, and gap >= 0.15 vs the leave-segment-out base rate (skipped for
 	single-antecedent org-level detectors, where a base rate is meaningless).
+
+	Phase 2 statistics upgrade: when the caller supplies the leave-segment-out
+	counts (``rest_k``/``rest_n``), a survivor also gets a one-sided
+	enrichment ``p_value`` (Fisher's exact when any expected cell < 5, else
+	G-test) - ADDITIVE evidence for the per-family BH-FDR pass in
+	``jarvis.learning.fdr``, never a replacement for the gates above.
+	Candidates without a comparison population (single-antecedent detectors,
+	postprocess callers that pass no rest counts) carry ``p_value=None`` and
+	pass through FDR untested.
+
+	Selection correction: when the consequent was chosen POST HOC as the
+	segment's argmax (the standard reduce), the single-value tail is optimistic
+	by up to the number of candidate values it was the max over (union bound).
+	Callers pass that count as ``n_candidate_values`` and the p-value gets a
+	within-segment Bonferroni ``p_adj = min(1.0, p * n_candidate_values)``
+	before it reaches the FDR buffer (recorded in the evidence as
+	``p_value_correction``). Pre-specified single-target detectors (and
+	postprocess callers that pass nothing) stay exact.
 	"""
 	gates = spec.get("gates") or {}
 	n_min = int(gates.get("n_min", stats.N_MIN_USUALLY))
@@ -311,6 +372,24 @@ def evaluate_segment(
 	tspread = _temporal_spread(day_list)
 	cluster = stats.cluster_exceptions(exceptions) if exceptions else None
 
+	# Phase 2 significance test (Cochran-dispatched Fisher exact / G-test)
+	# against the leave-segment-out rest. rest_n == 0 means there is no
+	# comparison population, so no test - p_value stays None (FDR pass-through).
+	p_value = None
+	p_value_method = None
+	p_value_correction = None
+	if rest_k is not None and rest_n is not None and int(rest_n) > 0 and n_units > 0:
+		p_value, p_value_method = stats.enrichment_p_value(
+			k, n_units, k + int(rest_k), n_units + int(rest_n)
+		)
+		# Within-segment Bonferroni for a post-hoc argmax consequent: testing
+		# the WINNER of V candidate values is up to V times as likely to show
+		# a small tail under the null (union bound), so correct before BH.
+		if p_value is not None and n_candidate_values and int(n_candidate_values) > 1:
+			v = int(n_candidate_values)
+			p_value = min(1.0, p_value * v)
+			p_value_correction = f"bonferroni x{v} (post-hoc consequent selection)"
+
 	# Enforcement cross-ref (plan §4.1): fires for any proposal strong enough to be
 	# phrased "always/only" - the declared phrasing OR the strict rule-of-three
 	# claim the compiler reads off the evidence (n>=60, 0 exceptions). Tier-1
@@ -339,10 +418,21 @@ def evaluate_segment(
 		"band": band,
 		"sql_shape": spec.get("sql_shape"),
 	}
+	if p_value is not None:
+		# Full float, not display-rounded: BH-FDR ranks on it and tiny tails
+		# (1e-12 vs 1e-3) must stay distinguishable in the persisted evidence.
+		evidence["p_value"] = p_value
+		evidence["p_value_method"] = p_value_method
+		if p_value_correction:
+			evidence["p_value_correction"] = p_value_correction
 	if extra_evidence:
 		evidence.update(extra_evidence)
 	if recency_note:
 		evidence["recency"] = recency_note
+		if recency_changed_around:
+			# Machine-readable divergence onset for drift re-validation
+			# (lifecycle compares it against the row's reviewed_at).
+			evidence["recency_changed_around"] = recency_changed_around
 	if enforcement:
 		evidence["enforcement_conflict"] = enforcement
 
@@ -357,6 +447,8 @@ def evaluate_segment(
 		"wilson_low": wl,
 		"gap": gap,
 		"band": band,
+		"p_value": p_value,
+		"p_value_method": p_value_method,
 		"temporal_spread": tspread,
 		"evidence": evidence,
 		"exceptions": exceptions[:20],
@@ -415,6 +507,10 @@ def _finalize(spec: dict, company: str | None, raw: dict) -> dict:
 		"confidence_pct": conf_pct,
 		"wilson_low": round(float(raw.get("wilson_low", 0.0)), 4),
 		"gap": round(float(raw.get("gap", 0.0)), 4),
+		# Top-level p_value (full float; also in evidence) is what the
+		# per-family BH-FDR pass keys on. None = untested (no comparison
+		# population) - fdr passes those through.
+		"p_value": raw.get("p_value"),
 		"strength_band": raw.get("band"),
 		"temporal_spread": raw.get("temporal_spread", {}),
 		"evidence": evidence,
@@ -487,6 +583,18 @@ def _default_vars(spec: dict, antecedent, consequent) -> dict:
 	return {ph: (antecedent if src == "antecedent" else consequent) for ph, src in vmap.items()}
 
 
+def _selection_breadth(targets, segment_counts) -> int:
+	"""How many candidate consequent values the segment's winner was selected
+	over - the within-segment Bonferroni factor for the post-hoc argmax (plan
+	§4.1 significance test). Target-constrained detectors were only ever going
+	to propose one of ``targets`` (|targets|; a single pre-specified target is
+	exact, factor 1); open detectors select over the segment's distinct
+	observed values."""
+	if targets is not None:
+		return max(len(targets), 1)
+	return max(len(segment_counts or {}), 1)
+
+
 def _effective_template(template_id, raw: dict):
 	"""Pick the strict '...-only' variant when the evidence supports an
 	always/only claim (n>=60, 0 exceptions), so the drafted wording matches the
@@ -539,10 +647,14 @@ def _recent_subset(units: dict, cutoff) -> dict:
 	return out
 
 
-def _segment_recency(units: dict, full_mode, cutoff) -> dict | None:
+def _segment_recency(units: dict, full_mode, cutoff, c_min: float | None = None) -> dict | None:
 	"""Detect a last-window divergence for one antecedent segment. Returns
 	{divergence, recent_mode, recent_n, note, changed_around} or None when the
-	segment is recency-consistent (or has no recent signal)."""
+	segment is recency-consistent (or has no recent signal). ``c_min`` (the
+	detector's own admission gate) arms the secondary grandfathered-transition
+	condition: a recent window whose confidence for the ESTABLISHED consequent
+	falls below c_min diverges even without a plurality flip or a >=0.2 share
+	shift (see stats.recency_divergence)."""
 	if cutoff is None:
 		return None
 	recent: dict = defaultdict(int)
@@ -568,6 +680,9 @@ def _segment_recency(units: dict, full_mode, cutoff) -> dict | None:
 		threshold=RECENCY_SHARE_THRESHOLD,
 		full_mode=full_mode,
 		recent_mode=recent_mode,
+		recent_n=recent_n,
+		recent_established_share=recent.get(full_mode, 0) / recent_n,
+		c_min=c_min,
 	)
 	if not div:
 		return None
@@ -582,12 +697,14 @@ def _segment_recency(units: dict, full_mode, cutoff) -> dict | None:
 	}
 
 
-def _recency_decision(units: dict, full_mode, cutoff) -> dict | None:
+def _recency_decision(units: dict, full_mode, cutoff, c_min: float | None = None) -> dict | None:
 	"""Resolve the recency guard for a segment. None => consistent (use the full
 	window). Otherwise {mode, recent, note, changed_around}: ``recent=True`` means
 	the modal VALUE flipped (prefer the recent subset); ``recent=False`` means the
-	same value but a materially shifted share (keep the full candidate, annotate)."""
-	rec = _segment_recency(units, full_mode, cutoff)
+	same value but a materially shifted share OR a recent window that fell under
+	the detector's own c_min (grandfathered transition) - keep the full candidate,
+	annotate; the stamped ``recency_changed_around`` then drives drift staling."""
+	rec = _segment_recency(units, full_mode, cutoff, c_min=c_min)
 	if not rec:
 		return None
 	flipped = rec["recent_mode"] != full_mode
@@ -616,6 +733,7 @@ def _retarget_recent(spec, ant, units, cutoff, recent_counts, *, multi, targets,
 	days = [d for _c, d, _cr in recent_units.values()]
 	created = [cr for _c, _d, cr in recent_units.values()]
 	exceptions = _exception_rows(spec, ant, recent_units, mode)
+	recent_values = {c for c, _d, _cr in recent_units.values()}
 	return evaluate_segment(
 		spec,
 		antecedent_value=ant,
@@ -623,6 +741,8 @@ def _retarget_recent(spec, ant, units, cutoff, recent_counts, *, multi, targets,
 		k=lsob["k"],
 		n_units=lsob["n_units"],
 		base_rate=lsob["base_rate"],
+		rest_k=lsob["rest_k"],
+		rest_n=lsob["rest_n"],
 		days=days,
 		created=created,
 		exceptions=exceptions,
@@ -630,6 +750,8 @@ def _retarget_recent(spec, ant, units, cutoff, recent_counts, *, multi, targets,
 		vars=_default_vars(spec, ant, mode),
 		template=spec.get("skill_template"),
 		recency_note=decision["note"],
+		recency_changed_around=decision["changed_around"],
+		n_candidate_values=_selection_breadth(targets, {v: 1 for v in recent_values}),
 		patterndb=patterndb,
 	)
 
@@ -652,11 +774,26 @@ def _apply_geography_guard(spec: dict, candidates: list, patterndb) -> list:
 	not a per-party habit (plan §4.2, mirrors acct-party-tax-template). Annotate
 	every candidate with a geography caveat and, when party state predicts the
 	template, demote the band. B-sensitivity already excludes these from batch
-	approve."""
+	approve.
+
+	State normalization + per-state sample floors are SHARED with the Tier-2
+	acct-party-tax-template guard (detectors/accounts.py): free-text states are
+	strip+casefold normalized, and a state bucket only counts toward the
+	confound verdict with >= _MIN_STATE_PARTIES distinct parties AND
+	>= _MIN_STATE_UNITS units - a one-party state is 100% "pure" by
+	construction, so a single supplier per state must never declare a
+	confound."""
 	if not candidates or spec.get("skill_template") not in GEOGRAPHY_CONFOUND_TEMPLATES:
 		return candidates
+	from jarvis.learning.detectors.accounts import (
+		_filter_confound_states,
+		_normalize_state_map,
+	)
+
 	template_by_party = {c.get("antecedent_value"): c.get("consequent_value") for c in candidates}
-	states = _party_state_map(patterndb, "Supplier", list(template_by_party))
+	units_by_party = {c.get("antecedent_value"): int(c.get("support_n") or 0) for c in candidates}
+	states = _normalize_state_map(_party_state_map(patterndb, "Supplier", list(template_by_party)))
+	states = _filter_confound_states(states, template_by_party, units_by_party)
 	confound = _state_predicts_template(states, template_by_party)
 	caveat = "may reflect supplier geography (state), not a per-supplier habit"
 	for c in candidates:
@@ -674,9 +811,14 @@ def _apply_geography_guard(spec: dict, candidates: list, patterndb) -> list:
 
 
 def _party_state_map(patterndb, link_doctype: str, parties) -> dict:
-	"""Best-effort party -> state from the linked Address. Only unambiguous
-	single-state parties are returned; any failure (missing table / version
-	drift) yields an empty map so the caller falls back to annotate-only."""
+	"""Best-effort party -> state from the linked Address. Address.state is
+	free text, so the multi-state dedup runs on NORMALIZED (strip + casefold)
+	values: a party with 'Karnataka' and 'karnataka ' addresses is ONE state,
+	not dropped as multi-state. The returned display value is the most
+	frequent original-cased variant (ties broken deterministically). Only
+	unambiguous single-state parties are returned; any failure (missing table
+	/ version drift) yields an empty map so the caller falls back to
+	annotate-only."""
 	wanted = {p for p in (parties or []) if p}
 	if not wanted or patterndb is None:
 		return {}
@@ -684,13 +826,25 @@ def _party_state_map(patterndb, link_doctype: str, parties) -> dict:
 		rows = patterndb.sql_select(_PARTY_STATE_SQL, {"dt": link_doctype})
 	except Exception:
 		return {}
+	# party -> {normalized state -> {original-cased variant -> count}}
 	acc: dict = {}
 	for r in rows or []:
 		party, state = r.get("party"), r.get("state")
 		if not party or party not in wanted or not state:
 			continue
-		acc.setdefault(party, set()).add(state)
-	return {p: next(iter(s)) for p, s in acc.items() if len(s) == 1}
+		display = str(state).strip()
+		norm = display.casefold()
+		if not norm:
+			continue
+		variants = acc.setdefault(party, {}).setdefault(norm, defaultdict(int))
+		variants[display] += 1
+	out: dict = {}
+	for party, by_norm in acc.items():
+		if len(by_norm) != 1:
+			continue  # genuinely multi-state party: ambiguous, drop
+		variants = next(iter(by_norm.values()))
+		out[party] = max(variants.items(), key=lambda kv: (kv[1], str(kv[0])))[0]
+	return out
 
 
 def _state_predicts_template(state_by_party: dict, template_by_party: dict, min_states: int = 2, purity: float = 0.8) -> bool:

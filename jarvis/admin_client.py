@@ -344,6 +344,32 @@ def post_push_agent_skills(agent_skills: list[dict]) -> dict:
 	)
 
 
+def post_push_learned_skills(learned_skills: list[dict]) -> dict:
+	"""POST the customer's compiled learned skills to admin -> fleet -> container,
+	into the SEPARATE ``learned_skills`` reconcile namespace (Behavioural Pattern
+	Learning Phase 2; adversarial S4: never let compiled behaviour bundles evict
+	the customer's own custom skills or the marketplace-agent bundles).
+
+	``learned_skills`` is the list built by
+	``jarvis.learning.compiler.build_learned_push_payload`` (each
+	``{slug, description, body}`` where ``slug`` is ``learned-<domain>``, matching
+	the agent- item shape). The fleet-agent does a FULL RECONCILE of the
+	learned_skills dir (writes the desired set, removes the rest), unions
+	``learned-*`` into the skill allowlist, then restarts the container so
+	openclaw re-scans ``workspace/skills``. An empty list is a valid "remove all
+	learned skills" reconcile.
+
+	Raises:
+		AdminAuthError, AdminUnreachableError, AdminValidationError
+		(rate-limit shares the rotate-secret bucket).
+	"""
+	return _post(
+		path="/api/method/jarvis_admin.api.tenant.push_learned_skills",
+		body={"learned_skills": learned_skills},
+		timeout_s=180,
+	)
+
+
 def get_generated_media(since_ms: int = 0) -> list[dict]:
 	"""Pull recent codex ``imagegen`` output for this customer's running tenant
 	container (admin → fleet → container disk). Returns a list of

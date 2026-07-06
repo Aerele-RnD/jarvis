@@ -405,10 +405,12 @@ class JarvisSettings(Document):
             terminal_written = True
             # A "restart" means the container may be freshly (re)provisioned
             # (rebind / reboot recovery / image upgrade) with an EMPTY
-            # custom_skills/. Re-push the customer's custom skills so a rebuilt
-            # container repopulates them from the DB - no manual re-save needed.
+            # custom_skills/ AND learned_skills/. Re-push the customer's custom
+            # skills and the compiled learned skills so a rebuilt container
+            # repopulates them from the DB - no manual re-save needed.
             if action == "restart":
                 self._resync_custom_skills_after_restart()
+                self._resync_learned_skills_after_restart()
         except admin_client.AdminAuthError as e:
             self.db_set({
                 "last_sync_at": frappe.utils.now(),
@@ -482,6 +484,37 @@ class JarvisSettings(Document):
         except Exception:
             frappe.log_error(
                 title="Jarvis: custom-skills resync after restart failed",
+                message=frappe.get_traceback(),
+            )
+
+    def _resync_learned_skills_after_restart(self) -> None:
+        """Re-push the compiled learned skills to a (re)provisioned container.
+
+        The learned-namespace sibling of ``_resync_custom_skills_after_restart``
+        (Behavioural Pattern Learning Phase 2): on a container rebuild the
+        per-container ``learned_skills/`` is empty, so the managed
+        ``Jarvis Custom Skill`` rows (``managed_by_learning=1`` - the durable
+        bench-side storage) must be re-pushed through the dedicated learned
+        chain. Enqueued (the same deduped job Apply uses) so it runs after this
+        restart and does its own container restart. No-op when there are no
+        managed rows, so customers without learned skills never pay an extra
+        restart.
+        """
+        try:
+            if not frappe.db.count("Jarvis Custom Skill", {"managed_by_learning": 1}):
+                return
+            frappe.db.set_single_value(
+                "Jarvis Settings", "learned_skills_sync_status",
+                "pending: applying learned skills", update_modified=False,
+            )
+            frappe.enqueue(
+                "jarvis.chat.learned_skills_api._enqueued_push_learned_skills",
+                queue="long", timeout=180,
+                job_id="jarvis_learned_skills_push", deduplicate=True,
+            )
+        except Exception:
+            frappe.log_error(
+                title="Jarvis: learned-skills resync after restart failed",
                 message=frappe.get_traceback(),
             )
 

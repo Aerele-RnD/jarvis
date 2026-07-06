@@ -3,10 +3,13 @@
 Sibling of ``approvals_api.py`` / ``agents_api.py`` - every endpoint is
 ``@frappe.whitelist()`` + ``frappe.only_for("System Manager")`` and, because
 behavioural pattern learning is a MANAGED-ONLY feature (plan sections 13 /
-7 T5 / 6.4), additionally refuses on self-hosted benches. The single
-exception is ``get_learning_status``: it is the probe the tab uses to decide
-whether to render the managed-only empty state, so it stays reachable on
-self-host and simply reports ``self_hosted=True``.
+7 T5 / 6.4), additionally refuses on self-hosted benches. Two exceptions:
+``get_learning_status`` is the probe the tab uses to decide whether to render
+the managed-only empty state, so it stays reachable on self-host and simply
+reports ``self_hosted=True``; and ``flag_learned_default`` (the plan-6.5
+correction loop) is deliberately open to ANY authenticated System User (the
+chat user who just watched a learned default misfire), though still
+self-host-gated and refused for Guest / portal (Website User) sessions.
 
 Board lifecycle (plan section 6.5) runs through the ``Jarvis Learned Pattern``
 state machine (``validate_transition`` in the controller). These are HUMAN
@@ -79,12 +82,30 @@ FROZEN_EVIDENCE_LABEL = (
 )
 
 # Card fields only - plain English, no raw statistics (those are drill-down).
+# stale_reason / last_validated_at / flags_count / materialized_skill ride the
+# card so the board can render the Stale banner ("will be removed on next
+# Apply" needs the live-skill pointer) and the correction-loop flag badge.
 _CARD_FIELDS = [
 	"name", "pattern_statement", "skill_draft", "strength_band", "domain",
 	"company", "sensitivity", "effective_sensitivity", "exceptions_cluster",
 	"exception_n", "not_applicable", "draft_edited", "overlap_warning",
 	"status", "surfaced", "reviewed_by", "approved_by", "creation",
+	"stale_reason", "last_validated_at", "flags_count", "materialized_skill",
 ]
+
+# Correction loop (plan 6.5): note cap, the distinct-user demotion quorum, and
+# the per-user re-flag cooldown. Demotion requires >= 2 DISTINCT users (never a
+# same-user event tally - one desk user must not be able to ratchet a shared
+# default to the floor), and a re-flag inside the cooldown window neither
+# re-demotes nor re-notifies.
+_FLAG_NOTE_MAX = 280
+_FLAG_DISTINCT_USERS = 2
+_FLAG_COOLDOWN_HOURS = 24
+_BAND_DEMOTE = {"High": "Medium", "Medium": "Low", "Low": "Low"}
+# stale_reason prefix stamped by flag-driven demotions. approve_learned_pattern
+# clears reasons with this prefix (drift-origin reasons stay - the drift pass
+# owns those).
+_FLAG_STALE_PREFIX = "flagged by"
 
 
 # --------------------------------------------------------------------------- #
@@ -232,8 +253,12 @@ def list_learned_patterns_page(
 		for k in ("not_applicable", "draft_edited", "surfaced"):
 			r[k] = int(r.get(k) or 0)
 		r["exception_n"] = int(r.get("exception_n") or 0)
+		r["flags_count"] = int(r.get("flags_count") or 0)
 		r["has_overlap_warning"] = 1 if (r.get("overlap_warning") or "").strip() else 0
 		r["creation"] = str(r.get("creation") or "")
+		r["last_validated_at"] = str(r.get("last_validated_at") or "")
+		r["stale_reason"] = r.get("stale_reason") or ""
+		r["materialized_skill"] = r.get("materialized_skill") or ""
 
 	facet_rows = frappe.db.sql(
 		f"""SELECT domain AS dv, COUNT(*) AS n
@@ -254,6 +279,7 @@ def list_learned_patterns_page(
 		"facets": facets,
 		"queued_count": _queued_count(),
 		"pending_apply_count": _pending_apply_count(),
+		"stale_pending_removal": _stale_pending_removal_count(),
 		"review_activity": _review_activity(),
 	}
 
@@ -273,10 +299,15 @@ def _pending_apply_count() -> int:
 	approved = frappe.db.count(
 		JLP, {"status": "Approved", "effective_sensitivity": "A"}
 	)
-	stale_compiled = frappe.db.count(
-		JLP, {"status": "Stale", "materialized_skill": ["is", "set"]}
-	)
-	return approved + stale_compiled
+	return approved + _stale_pending_removal_count()
+
+
+def _stale_pending_removal_count() -> int:
+	"""Stale rows still compiled into a live learned skill: their bullet is
+	removed on the next Apply (plan 6.5 - never silently). Surfaced separately
+	so the Apply bar can say "N stale will be removed"; ``apply_learned_skills``
+	clears the pointer after a successful Apply so the count drains."""
+	return frappe.db.count(JLP, {"status": "Stale", "materialized_skill": ["is", "set"]})
 
 
 def _review_activity() -> dict:
@@ -335,6 +366,7 @@ def get_learned_pattern(name: str) -> dict:
 		"pattern_statement": doc.pattern_statement or "",
 		"skill_draft": doc.skill_draft or "",
 		"draft_edited": int(doc.draft_edited or 0),
+		"draft_polished": int(doc.get("draft_polished") or 0),
 		"compiled_preview": _compiled_preview(doc),
 		"frozen_evidence_label": FROZEN_EVIDENCE_LABEL if doc.draft_edited else "",
 		# raw statistics (drill-down only)
@@ -362,6 +394,11 @@ def get_learned_pattern(name: str) -> dict:
 		"review_note": doc.review_note or "",
 		"snoozed_until": str(doc.snoozed_until or ""),
 		"stale_reason": doc.stale_reason or "",
+		"last_validated_at": str(doc.last_validated_at or ""),
+		# correction loop (plan 6.5)
+		"flags_count": int(doc.flags_count or 0),
+		"flag_band_cap": doc.get("flag_band_cap") or "",
+		"counter_evidence": _counter_evidence_list(doc.counter_evidence),
 		# run links
 		"first_seen_run": doc.first_seen_run or "",
 		"last_seen_run": doc.last_seen_run or "",
@@ -426,6 +463,14 @@ def approve_learned_pattern(name: str, edited_skill_draft: str | None = None) ->
 	if edited and edited != (doc.skill_draft or "").strip():
 		doc.skill_draft = edited
 		doc.draft_edited = 1
+
+	# Correction-loop reset (shared contract): a human approval overrides a
+	# flag-driven demotion. Clear the durable band cap (pipeline strength_band
+	# writes clamp to it) and a flag-origin stale_reason; drift-origin reasons
+	# are left for the drift pass to manage.
+	doc.flag_band_cap = ""
+	if (doc.stale_reason or "").startswith(_FLAG_STALE_PREFIX):
+		doc.stale_reason = None
 
 	now = now_datetime()
 	doc.status = "Approved"
@@ -573,10 +618,13 @@ def batch_approve(names) -> dict:
 
 
 def _apply_pending() -> bool:
+	"""True while a learned-skills push is between enqueue and its terminal
+	status (Phase-2 namespace: the un-approve gate keys off the LEARNED push -
+	learned skills no longer ride the custom-skills push)."""
 	try:
-		from jarvis.chat.custom_skills_api import get_custom_skills_sync_status
+		from jarvis.chat.learned_skills_api import get_learned_skills_sync_status
 
-		return bool(get_custom_skills_sync_status().get("pending"))
+		return bool(get_learned_skills_sync_status().get("pending"))
 	except Exception:
 		return False
 
@@ -594,7 +642,259 @@ def _apply_in_progress() -> bool:
 
 
 # --------------------------------------------------------------------------- #
-# apply / sync (learned skills ride the custom-skill push, section 6.2)
+# LLM polish (plan 5.5 Phase 2): optional one-turn draft rewrite
+# --------------------------------------------------------------------------- #
+@frappe.whitelist()
+def polish_learned_draft(name: str) -> dict:
+	"""Rewrite a Proposed/Stale pattern's ``skill_draft`` for clarity via one
+	silent gateway turn (``jarvis.learning.polish``). Requires the
+	``pattern_llm_polish`` Settings flag (default off). The turn runs AS the
+	calling System Manager - S1: never Administrator; polish re-asserts the
+	identity on top of ``_guard``.
+
+	A-class only, like approve/batch_approve: B/C drafts embed raw party names,
+	and the polish prompt is A-class-clean BY CONSTRUCTION (``polish.py``) -
+	party-named text must never reach the model turn (B/C are insight-only
+	anyway, so polishing them would only burn the monthly budget).
+
+	On success the polished text replaces ``skill_draft`` with
+	``draft_edited=0`` and ``draft_polished=1``: it is still MACHINE text
+	validated to keep the measured Evidence sentence verbatim, so the evidence
+	line is NOT frozen (only a human edit freezes it) - but the polish marker
+	stops the nightly mining/drift refresh from overwriting the polished
+	wording with the deterministic template. On any not-ok outcome (budget
+	exhausted, rejected output, gateway error) nothing is written and
+	``{ok: False, text: None, reason}`` is returned - the stored template draft
+	stands. The LearningTab "Polish with AI" button is a UI follow-up; this
+	endpoint is the contract."""
+	_guard()
+	if not frappe.utils.cint(frappe.db.get_single_value(SETTINGS, "pattern_llm_polish")):
+		frappe.throw(
+			_("LLM polish is not enabled (Jarvis Settings, Behavioural Learning)."),
+			frappe.ValidationError,
+		)
+	doc = _load_for_transition(name, ("Proposed", "Stale"), "polish")
+
+	# A-class gate, mirroring approve_learned_pattern / batch_approve.
+	if (doc.effective_sensitivity or "") != "A":
+		frappe.throw(
+			_(
+				"Pattern {0} is {1}-class (insight only); only A-class (org-level) "
+				"drafts can be polished."
+			).format(name, doc.effective_sensitivity or "B/C")
+		)
+
+	from jarvis.learning import polish
+
+	out = polish.polish_skill_draft(name, frappe.session.user)
+	if not out.get("ok"):
+		return {"ok": False, "text": None, "reason": out.get("reason") or ""}
+
+	# The gateway turn above takes seconds: never doc.save() the pre-turn
+	# snapshot (a full-document save would silently revert any concurrent
+	# update_modified=False write to this row - e.g. the stale-pointer clear in
+	# _clear_stale_materialized_pointers, or a mining re-persist). Re-verify
+	# the status still allows polish, then write ONLY the changed columns.
+	# update_modified stays at its default so a genuine concurrent SM edit is
+	# still caught by the modified-timestamp concurrency check.
+	status = frappe.db.get_value(JLP, name, "status")
+	if status not in ("Proposed", "Stale"):
+		return {
+			"ok": False,
+			"text": None,
+			"reason": f"pattern is now {status}; polish discarded",
+		}
+	frappe.db.set_value(
+		JLP,
+		name,
+		{"skill_draft": out["text"], "draft_edited": 0, "draft_polished": 1},
+	)
+	frappe.db.commit()
+	return {"ok": True, "text": out["text"]}
+
+
+# --------------------------------------------------------------------------- #
+# correction loop (plan 6.5): chat users flag a learned default as wrong
+# --------------------------------------------------------------------------- #
+def _system_user_guard() -> None:
+	"""Any authenticated DESK user may flag (deliberately NOT SM-only - the
+	whole point is the chat user's feedback); Guest and portal (Website User)
+	sessions are refused."""
+	user = frappe.session.user
+	if not user or user == "Guest":
+		frappe.throw(
+			_("You must be signed in to flag a learned default."),
+			frappe.PermissionError,
+		)
+	if frappe.db.get_value("User", user, "user_type") != "System User":
+		frappe.throw(
+			_("Only desk users can flag learned defaults."),
+			frappe.PermissionError,
+		)
+
+
+@frappe.whitelist()
+def flag_learned_default(name: str, note: str = "") -> dict:
+	"""Record "this default was wrong here" against an Active/Approved learned
+	pattern (plan 6.5 correction loop - the JLP ref in every compiled bullet is
+	the address a chat user quotes).
+
+	One counter-evidence entry per user ({user, note, ts}; a re-flag updates
+	that user's entry instead of stacking), and ``flags_count`` counts one flag
+	PER USER (a same-user re-flag updates the note, never the tally). Demotion
+	needs a genuine quorum: flags from >= 2 DISTINCT users demote
+	``strength_band`` one level, stamp the durable ``flag_band_cap`` (every
+	pipeline strength_band write clamps to the weaker of computed band and cap,
+	so the nightly mining/drift refresh cannot silently undo the demotion),
+	annotate ``stale_reason`` and send System Managers a Notification Log. A
+	re-flag inside the per-user cooldown neither re-demotes nor re-notifies, so
+	a single user can never ratchet a shared default to the floor alone. When
+	the quorum lands the pattern at Low, the row flips to Stale - the
+	compiler's existing stale exclusion stops serving it on the next Apply and
+	the board shows "will be removed"; re-approving restores it (and clears the
+	cap + reason).
+
+	TOCTOU-safe: the row is read FOR UPDATE, so concurrent flags serialize on
+	the row lock instead of losing counter increments. The chat-side UI
+	affordance on the skill badge is a follow-up; this endpoint is the
+	contract."""
+	_system_user_guard()
+	if _is_self_hosted():
+		frappe.throw(
+			_("Pattern learning is not available on self-hosted benches."),
+			frappe.ValidationError,
+		)
+
+	note = frappe.utils.strip_html_tags(note or "").strip()[:_FLAG_NOTE_MAX]
+
+	row = frappe.db.get_value(
+		JLP,
+		name,
+		["name", "status", "counter_evidence", "flags_count", "strength_band"],
+		as_dict=True,
+		for_update=True,
+	)
+	if not row:
+		frappe.throw(_("Unknown learned pattern: {0}.").format(name))
+	if row.status not in ("Approved", "Active"):
+		frappe.throw(
+			_(
+				"Pattern {0} is {1}; only Active or Approved learned defaults can be flagged."
+			).format(name, row.status)
+		)
+
+	user = frappe.session.user
+	entries = [
+		e for e in (_parse_json(row.counter_evidence, []) or [])
+		if isinstance(e, dict)
+	]
+	now = now_datetime()
+	mine = next((e for e in entries if e.get("user") == user), None)
+	in_cooldown = False
+	if mine is not None:  # dedupe: update this user's flag in place
+		in_cooldown = _within_flag_cooldown(mine.get("ts"), now)
+		mine["note"] = note
+		mine["ts"] = str(now)
+	else:
+		entries.append({"user": user, "note": note, "ts": str(now)})
+
+	# One count per user (mirrors the entry dedupe): a same-user re-flag must
+	# not inch the tally toward any threshold.
+	flags_count = int(row.flags_count or 0) + (0 if mine is not None else 1)
+	distinct_users = len({e.get("user") for e in entries if e.get("user")})
+
+	update = {"counter_evidence": frappe.as_json(entries), "flags_count": flags_count}
+	band = row.strength_band
+	status = row.status
+	demoted = False
+	if distinct_users >= _FLAG_DISTINCT_USERS and not in_cooldown:
+		new_band = _BAND_DEMOTE.get(band or "Low", "Low")
+		if new_band != band or new_band == "Low":
+			update["strength_band"] = new_band
+			# Durable cap (shared contract): mining/drift clamp their band
+			# writes to it; approve_learned_pattern clears it.
+			update["flag_band_cap"] = new_band
+			update["stale_reason"] = f"{_FLAG_STALE_PREFIX} {distinct_users} users"
+			band = new_band
+			demoted = True
+			if new_band == "Low":
+				# Floored: stop serving it. Stale rows are excluded from the
+				# next compile (Active -> Stale and Approved -> Stale are both
+				# legal transitions); an SM re-approve restores the pattern.
+				update["status"] = "Stale"
+				status = "Stale"
+	frappe.db.set_value(JLP, name, update, update_modified=False)
+	frappe.db.commit()
+
+	if demoted:
+		_notify_flag_demotion(
+			name, distinct_users, flags_count, band, staled=(status == "Stale")
+		)
+
+	return {
+		"ok": True,
+		"flags_count": flags_count,
+		"distinct_users": distinct_users,
+		"strength_band": band or "",
+		"status": status,
+		"demoted": demoted,
+	}
+
+
+def _within_flag_cooldown(prev_ts, now) -> bool:
+	"""True when this user's previous flag is younger than the cooldown window.
+	A missing/unparsable timestamp counts as recent (fail closed: no demotion
+	credit for an entry we cannot age)."""
+	if not prev_ts:
+		return True
+	try:
+		prev = frappe.utils.get_datetime(prev_ts)
+	except Exception:
+		return True
+	if not prev:
+		return True
+	return (now - prev).total_seconds() < _FLAG_COOLDOWN_HOURS * 3600
+
+
+def _notify_flag_demotion(
+	name: str, distinct_users: int, flags_count: int, band, staled: bool = False
+) -> None:
+	"""Best-effort SM notification when the flag quorum demotes a pattern
+	(shares lifecycle's Notification Log helper with drift re-validation)."""
+	try:
+		from jarvis.learning.lifecycle import notify_system_managers
+
+		statement = frappe.db.get_value(JLP, name, "pattern_statement") or name
+		tail = (
+			" and it was marked Stale - its bullet is removed from the pushed "
+			"learned skills on the next Apply"
+			if staled
+			else ""
+		)
+		notify_system_managers(
+			f"Learned pattern {name} was flagged as wrong",
+			(
+				f"Chat users flagged this learned default as wrong "
+				f"({distinct_users} user{'s' if distinct_users != 1 else ''}, "
+				f"{flags_count} flag{'s' if flags_count != 1 else ''}); its strength "
+				f"was demoted to {band}{tail}.\n\n\"{statement}\"\n\n"
+				"Review it on the Learning board - approve it again if the habit "
+				"still holds, or reject it for good."
+			),
+		)
+	except Exception:
+		pass
+
+
+def _counter_evidence_list(raw) -> list:
+	parsed = _parse_json(raw, [])
+	if not isinstance(parsed, list):
+		return []
+	return [e for e in parsed if isinstance(e, dict)]
+
+
+# --------------------------------------------------------------------------- #
+# apply / sync (dedicated learned-skills push - Phase-2 namespace, plan 13 Q5)
 # --------------------------------------------------------------------------- #
 @frappe.whitelist()
 def apply_learned_skills() -> dict:
@@ -605,17 +905,72 @@ def apply_learned_skills() -> dict:
 	_guard()
 	from jarvis.learning import compiler
 
-	return compiler.apply_learned_skills()
+	out = compiler.apply_learned_skills()
+	# Stale rows are excluded from compile, so after this Apply their old
+	# materialized_skill pointer is no longer live in the pushed body. Clearing
+	# it here (the compiler only stamps rows it compiled) is what drains the
+	# "N stale will be removed on Apply" count instead of wedging the bar.
+	_clear_stale_materialized_pointers()
+	return out
+
+
+def _clear_stale_materialized_pointers() -> None:
+	names = frappe.get_all(
+		JLP,
+		filters={"status": "Stale", "materialized_skill": ["is", "set"]},
+		pluck="name",
+	)
+	for name in names:
+		frappe.db.set_value(JLP, name, {"materialized_skill": None}, update_modified=False)
+	if names:
+		frappe.db.commit()
 
 
 @frappe.whitelist()
 def get_learned_apply_status() -> dict:
-	"""Poll the Apply - learned skills ride the same push as customer custom
-	skills, so this proxies the shared sync-status poller."""
+	"""Poll the Apply - learned skills ride their OWN dedicated push (Phase-2
+	namespace), so this proxies the learned sync-status poller
+	(``learned_skills_sync_status`` / ``learned_skills_synced_at``). Same
+	envelope shape as before ({last_sync_at, last_sync_status, pending}) plus
+	``custom_sync``: the one-time namespace-cutover Apply also enqueues a
+	custom-skills reconcile (stale ``custom-learned-*`` dir cleanup) that
+	reports to the SEPARATE custom sync pair - included here so a failed
+	cutover reconcile is visible on the board instead of fire-and-forget."""
 	_guard()
-	from jarvis.chat.custom_skills_api import get_custom_skills_sync_status
+	from jarvis.chat.learned_skills_api import get_learned_skills_sync_status
 
-	return get_custom_skills_sync_status()
+	out = get_learned_skills_sync_status()
+	out["custom_sync"] = _cutover_custom_sync_status(out)
+	return out
+
+
+# How long after a learned push the board still surfaces the custom pair (the
+# cutover's custom reconcile lands within minutes of the learned push).
+_CUTOVER_SURFACE_HOURS = 24
+
+
+def _cutover_custom_sync_status(learned: dict):
+	"""The cutover's custom reconcile outcome, or None when no recent Apply
+	could have run one. Until the compiler stamps a dedicated cutover marker in
+	Jarvis Settings, key off recency: include the custom pair whenever the
+	learned push is pending or finished inside the surface window (the polls
+	that can belong to a cutover Apply). Best-effort - never fails the poll."""
+	try:
+		if not learned.get("pending"):
+			last_raw = (learned.get("last_sync_at") or "").strip()
+			if not last_raw:
+				return None
+			last = frappe.utils.get_datetime(last_raw)
+			if not last:
+				return None
+			age = (now_datetime() - last).total_seconds()
+			if age > _CUTOVER_SURFACE_HOURS * 3600:
+				return None
+		from jarvis.chat.custom_skills_api import get_custom_skills_sync_status
+
+		return get_custom_skills_sync_status()
+	except Exception:
+		return None
 
 
 @frappe.whitelist()

@@ -458,9 +458,11 @@ def apply_custom_skills() -> dict:
 
 	Builds the payload synchronously so size/cap errors surface immediately,
 	marks a pending status, then enqueues the deduped worker (mirrors
-	``JarvisSettings.on_update``).
+	``JarvisSettings.on_update``). ``strict=True``: this is the interactive
+	endpoint - a human is present to act on the over-cap error, so raise
+	instead of truncating (the unattended worker below stays graceful).
 	"""
-	skills = build_push_payload()
+	skills = build_push_payload(strict=True)
 	frappe.db.set_single_value(
 		_SETTINGS, "custom_skills_sync_status", "pending: applying skills"
 	)
@@ -483,7 +485,10 @@ def _enqueued_push_custom_skills() -> None:
 
 	Re-builds the payload fresh (never trust a payload passed across the queue
 	boundary) and mirrors ``_sync_via_admin``'s try/except/finally so the status
-	never stays at ``pending:`` forever.
+	never stays at ``pending:`` forever. ``strict=False``: this worker also runs
+	unattended (post-restart resync), where an over-cap raise would leave a
+	rebuilt container skill-less - truncate gracefully instead (the build logs
+	the truncation loudly).
 	"""
 	from jarvis import admin_client
 	from jarvis._redis_lock import redis_lock
@@ -498,7 +503,7 @@ def _enqueued_push_custom_skills() -> None:
 
 		terminal_written = False
 		try:
-			payload = build_push_payload()
+			payload = build_push_payload(strict=False)
 			admin_client.post_push_custom_skills(skills=payload)
 			frappe.db.set_value(
 				_SETTINGS,
@@ -525,6 +530,17 @@ def _enqueued_push_custom_skills() -> None:
 		except admin_client.AdminValidationError as e:
 			_fail(f"failed: invalid: {e}")
 			terminal_written = True
+		except Exception:
+			# Graceful-resync guard: this worker also runs unattended after a
+			# container restart, so ANY exception (build, network class the
+			# admin_client doesn't translate, programmer error) must degrade to
+			# a logged terminal failure - never a skill-less container with a
+			# silent dead job. Mirrors _enqueued_push_learned_skills.
+			_fail("failed: unexpected error; see Error Log")
+			terminal_written = True
+			frappe.log_error(
+				title="Jarvis: custom-skills push failed", message=frappe.get_traceback()
+			)
 		finally:
 			if not terminal_written:
 				try:

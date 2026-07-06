@@ -5,8 +5,11 @@ PermissionError), the managed-only self-host block (and the deliberate
 get_learning_status exemption), the frozen list envelope + domain facets +
 board counters, the approve/reject/un-approve/restore/snooze lifecycle
 transitions with their TOCTOU source guards, the A-class-only batch_approve
-guard, run-now enqueue, apply delegation to the compiler, and the settings
-read/write window validation.
+guard, run-now enqueue, apply delegation to the compiler, the settings
+read/write window validation, the LLM-polish endpoint (A-class gate, column
+writes only, draft_polished marker), the correction loop's distinct-user
+quorum + per-user cooldown + durable flag_band_cap + Low-rung Stale flip, and
+the cutover custom-sync surface on the apply-status poll.
 
 unittest.TestCase with explicit commits + prefix cleanup (like
 test_feature_pages_api / test_agents_marketplace): the endpoints run raw SQL
@@ -24,6 +27,7 @@ import unittest
 from unittest import mock
 
 import frappe
+from frappe.utils import add_days, now_datetime
 
 from jarvis.chat import learned_api
 
@@ -32,6 +36,7 @@ RUN = "Jarvis Pattern Run"
 SETTINGS = "Jarvis Settings"
 
 NON_SM = "la-nonsm@example.com"
+WEB_USER = "la-webuser@example.com"
 KEY_PREFIX = "la-test-"
 
 
@@ -63,6 +68,22 @@ def _ensure_non_sm(email: str) -> str:
 	return email
 
 
+def _ensure_website_user(email: str) -> str:
+	# A portal user: the correction-loop endpoint must refuse it (System User
+	# only), unlike the deliberately weaker Website-User negative the SM-gate
+	# tests avoid (see _ensure_non_sm).
+	if not frappe.db.exists("User", email):
+		u = frappe.get_doc({
+			"doctype": "User", "email": email,
+			"first_name": "la-web", "send_welcome_email": 0, "enabled": 1,
+			"user_type": "Website User",
+		})
+		u.flags.ignore_permissions = True
+		u.insert()
+		frappe.db.commit()
+	return email
+
+
 @contextlib.contextmanager
 def _as(user: str):
 	orig = frappe.session.user
@@ -71,6 +92,21 @@ def _as(user: str):
 		yield
 	finally:
 		frappe.set_user(orig)
+
+
+@contextlib.contextmanager
+def _polish_flag(on: int):
+	"""Temporarily set the pattern_llm_polish Settings flag."""
+	orig = frappe.db.get_single_value(SETTINGS, "pattern_llm_polish")
+	frappe.db.set_single_value(SETTINGS, "pattern_llm_polish", on, update_modified=False)
+	frappe.db.commit()
+	try:
+		yield
+	finally:
+		frappe.db.set_single_value(
+			SETTINGS, "pattern_llm_polish", orig or 0, update_modified=False
+		)
+		frappe.db.commit()
 
 
 def _wipe() -> None:
@@ -299,6 +335,35 @@ class TestLearnedApi(unittest.TestCase):
 		with self.assertRaises(frappe.ValidationError):
 			learned_api.approve_learned_pattern(c)
 		self.assertEqual(frappe.db.get_value(JLP, c, "status"), "Proposed")
+
+	def test_approve_clears_flag_band_cap_and_flag_stale_reason(self):
+		# Shared contract: a human approval overrides a flag-driven demotion -
+		# the durable band cap and the flag-origin stale_reason are cleared, so
+		# the pipeline stops clamping and the board banner goes away.
+		name = _mk(
+			"fc1", status="Stale", strength_band="Low",
+			stale_reason="flagged by 2 users", flag_band_cap="Low",
+		)
+		out = learned_api.approve_learned_pattern(name)
+		self.assertEqual(out["status"], "Approved")
+		row = frappe.db.get_value(
+			JLP, name, ["flag_band_cap", "stale_reason"], as_dict=True
+		)
+		self.assertFalse(row.flag_band_cap)
+		self.assertFalse(row.stale_reason)
+
+	def test_approve_keeps_drift_stale_reason(self):
+		# Only FLAG-origin reasons are cleared on approve; a drift-origin reason
+		# stays (the drift pass owns it).
+		name = _mk(
+			"fc2", status="Stale",
+			stale_reason="confidence dropped 96% -> 71% (window 18 months)",
+		)
+		learned_api.approve_learned_pattern(name)
+		self.assertIn(
+			"confidence dropped",
+			frappe.db.get_value(JLP, name, "stale_reason") or "",
+		)
 
 	def test_acknowledge_b_class_is_terminal_and_uncounted(self):
 		before = learned_api._pending_apply_count()
@@ -597,6 +662,507 @@ class TestLearnedApi(unittest.TestCase):
 			bootstrap._readiness_count(other, other["doctype"], 18),
 			bootstrap._count_recent(other["doctype"], 18),
 		)
+
+	# ------------------------------------------------------------------ #
+	# LLM polish endpoint (plan 5.5 Phase 2)
+	# ------------------------------------------------------------------ #
+	def test_polish_requires_settings_flag(self):
+		name = _mk("po1")
+		with _polish_flag(0):
+			with self.assertRaises(frappe.ValidationError):
+				learned_api.polish_learned_draft(name)
+
+	def test_polish_refuses_non_a_class(self):
+		# B/C drafts embed raw party names; the polish prompt must stay
+		# A-class-clean by construction (polish.py), so the endpoint gates on
+		# effective_sensitivity like approve/batch_approve - and the model turn
+		# must never even start for B/C.
+		name = _mk("po2", effective_sensitivity="B")
+		with _polish_flag(1):
+			with mock.patch("jarvis.learning.polish.polish_skill_draft") as turn:
+				with self.assertRaises(frappe.ValidationError):
+					learned_api.polish_learned_draft(name)
+		turn.assert_not_called()
+
+	def test_polish_writes_only_changed_columns(self):
+		# The gateway turn is multi-second: a concurrent update_modified=False
+		# write landing mid-turn (e.g. the stale-pointer clear in
+		# _clear_stale_materialized_pointers) must survive - the old
+		# full-document doc.save() of the pre-turn snapshot reverted it.
+		name = _mk("po3", status="Stale")
+		polished = "- Polished rule. Evidence: 90% of 100 Sales Invoices since 2024-01."
+
+		def _turn(pattern_name, acting_user):
+			frappe.db.set_value(
+				JLP, pattern_name, {"materialized_skill": "learned-selling"},
+				update_modified=False,
+			)
+			return {"ok": True, "text": polished, "reason": ""}
+
+		with _polish_flag(1):
+			with mock.patch(
+				"jarvis.learning.polish.polish_skill_draft", side_effect=_turn
+			):
+				out = learned_api.polish_learned_draft(name)
+		self.assertTrue(out["ok"])
+		row = frappe.db.get_value(
+			JLP, name,
+			["skill_draft", "draft_edited", "draft_polished", "materialized_skill"],
+			as_dict=True,
+		)
+		self.assertEqual(row.skill_draft, polished)
+		self.assertEqual(int(row.draft_edited), 0)  # evidence line stays un-frozen
+		# ...but the polish marker makes the wording durable across mining/drift.
+		self.assertEqual(int(row.draft_polished), 1)
+		self.assertEqual(row.materialized_skill, "learned-selling")  # not reverted
+
+	def test_polish_discarded_when_status_changes_mid_turn(self):
+		# A concurrent decision during the turn wins: the polished text is
+		# dropped instead of resurrecting a Proposed/Stale state.
+		name = _mk("po4")
+		orig_draft = frappe.db.get_value(JLP, name, "skill_draft")
+
+		def _turn(pattern_name, acting_user):
+			frappe.db.set_value(
+				JLP, pattern_name, {"status": "Rejected"}, update_modified=False
+			)
+			return {"ok": True, "text": "- Should be discarded.", "reason": ""}
+
+		with _polish_flag(1):
+			with mock.patch(
+				"jarvis.learning.polish.polish_skill_draft", side_effect=_turn
+			):
+				out = learned_api.polish_learned_draft(name)
+		self.assertFalse(out["ok"])
+		self.assertIn("Rejected", out["reason"])
+		self.assertEqual(frappe.db.get_value(JLP, name, "skill_draft"), orig_draft)
+
+	def test_polish_not_ok_writes_nothing(self):
+		name = _mk("po5")
+		orig_draft = frappe.db.get_value(JLP, name, "skill_draft")
+		with _polish_flag(1):
+			with mock.patch(
+				"jarvis.learning.polish.polish_skill_draft",
+				return_value={
+					"ok": False, "text": None,
+					"reason": "monthly polish budget exhausted",
+				},
+			):
+				out = learned_api.polish_learned_draft(name)
+		self.assertFalse(out["ok"])
+		self.assertEqual(out["reason"], "monthly polish budget exhausted")
+		self.assertEqual(frappe.db.get_value(JLP, name, "skill_draft"), orig_draft)
+		self.assertEqual(
+			int(frappe.db.get_value(JLP, name, "draft_polished") or 0), 0
+		)
+
+	# ------------------------------------------------------------------ #
+	# correction loop (plan 6.5): flag_learned_default
+	# ------------------------------------------------------------------ #
+	def test_flag_requires_system_user(self):
+		name = _mk("fl1", status="Active")
+		web = _ensure_website_user(WEB_USER)
+		with _as(web):
+			with self.assertRaises(frappe.PermissionError):
+				learned_api.flag_learned_default(name, note="wrong here")
+		with _as("Guest"):
+			with self.assertRaises(frappe.PermissionError):
+				learned_api.flag_learned_default(name)
+		self.assertEqual(int(frappe.db.get_value(JLP, name, "flags_count") or 0), 0)
+
+	def test_flag_allowed_for_non_sm_system_user(self):
+		# Deliberately NOT SM-gated: the flag comes from the chat user who just
+		# watched a learned default misfire.
+		name = _mk("fl2", status="Active", strength_band="High")
+		with _as(self.non_sm):
+			out = learned_api.flag_learned_default(name, note="wrong for dealer X")
+		self.assertTrue(out["ok"])
+		self.assertEqual(out["flags_count"], 1)
+		self.assertEqual(out["distinct_users"], 1)
+		self.assertFalse(out["demoted"])
+
+	def test_flag_self_host_blocked(self):
+		name = _mk("fl3", status="Active")
+		with mock.patch("jarvis.selfhost.is_self_hosted", return_value=True):
+			with self.assertRaises(frappe.ValidationError):
+				learned_api.flag_learned_default(name)
+
+	def test_flag_only_on_active_or_approved(self):
+		proposed = _mk("fl4")  # Proposed
+		with self.assertRaises(frappe.ValidationError):
+			learned_api.flag_learned_default(proposed)
+		stale = _mk("fl5", status="Stale")
+		with self.assertRaises(frappe.ValidationError):
+			learned_api.flag_learned_default(stale)
+
+	def test_flag_dedupes_per_user_and_counts_once(self):
+		name = _mk("fl6", status="Active", strength_band="High")
+		learned_api.flag_learned_default(name, note="first")
+		out = learned_api.flag_learned_default(name, note="second")
+		self.assertEqual(out["flags_count"], 1)  # one count PER USER, not per event
+		self.assertEqual(out["distinct_users"], 1)
+		self.assertFalse(out["demoted"])
+		entries = json.loads(frappe.db.get_value(JLP, name, "counter_evidence"))
+		self.assertEqual(len(entries), 1)  # updated in place, never stacked
+		self.assertEqual(entries[0]["user"], "Administrator")
+		self.assertEqual(entries[0]["note"], "second")
+
+	def test_flag_single_user_never_demotes(self):
+		# The old `flags_count >= 3` OR-branch let ONE desk user ratchet a shared
+		# default down (and spam every SM); demotion now requires the genuine
+		# >= 2 DISTINCT-user quorum, however often one user re-flags.
+		name = _mk("fl7", status="Active", strength_band="High")
+		out = None
+		with mock.patch("jarvis.learning.lifecycle.notify_system_managers") as notify:
+			for _i in range(4):
+				out = learned_api.flag_learned_default(name)
+		self.assertFalse(out["demoted"])
+		self.assertEqual(out["flags_count"], 1)
+		row = frappe.db.get_value(
+			JLP, name, ["strength_band", "stale_reason", "status"], as_dict=True
+		)
+		self.assertEqual(row.strength_band, "High")
+		self.assertFalse(row.stale_reason)
+		self.assertEqual(row.status, "Active")
+		notify.assert_not_called()
+
+	def test_flag_two_distinct_users_demotes_and_notifies(self):
+		name = _mk("fl8", status="Approved", strength_band="High")
+		learned_api.flag_learned_default(name, note="admin flag")
+		try:
+			with mock.patch(
+				"frappe.utils.user.get_users_with_role", return_value=[self.non_sm]
+			):
+				with _as(self.non_sm):
+					out = learned_api.flag_learned_default(name, note="also wrong")
+			self.assertTrue(out["demoted"])
+			self.assertEqual(out["distinct_users"], 2)
+			row = frappe.db.get_value(
+				JLP, name,
+				["strength_band", "flag_band_cap", "stale_reason", "status"],
+				as_dict=True,
+			)
+			self.assertEqual(row.strength_band, "Medium")
+			# durable cap (shared contract): mining/drift band writes clamp to it
+			self.assertEqual(row.flag_band_cap, "Medium")
+			self.assertIn("flagged by 2 users", row.stale_reason)
+			self.assertEqual(row.status, "Approved")  # High->Medium: still served
+			subjects = frappe.get_all(
+				"Notification Log", filters={"for_user": self.non_sm}, pluck="subject"
+			)
+			self.assertTrue(any("flag" in (s or "").lower() for s in subjects))
+		finally:
+			frappe.db.delete("Notification Log", {"for_user": self.non_sm})
+			frappe.db.commit()
+
+	def test_flag_quorum_on_low_band_stales_the_pattern(self):
+		# The Low rung has nowhere left to demote, so the quorum flips the row
+		# to Stale: the compiler's existing stale exclusion stops serving it on
+		# the next Apply (flag demotion must affect what chat actually says).
+		name = _mk("fl9", status="Active", strength_band="Low")
+		with mock.patch("jarvis.learning.lifecycle.notify_system_managers") as notify:
+			learned_api.flag_learned_default(name, note="wrong")
+			with _as(self.non_sm):
+				out = learned_api.flag_learned_default(name, note="also wrong")
+		self.assertTrue(out["demoted"])
+		self.assertEqual(out["status"], "Stale")
+		row = frappe.db.get_value(
+			JLP, name,
+			["status", "strength_band", "flag_band_cap", "stale_reason"],
+			as_dict=True,
+		)
+		self.assertEqual(row.status, "Stale")
+		self.assertEqual(row.strength_band, "Low")
+		self.assertEqual(row.flag_band_cap, "Low")
+		self.assertIn("flagged by 2 users", row.stale_reason)
+		notify.assert_called_once()
+		# Stale rows cannot be re-flagged: the loop terminates here...
+		with self.assertRaises(frappe.ValidationError):
+			learned_api.flag_learned_default(name)
+		# ...and an SM re-approve restores it, clearing the cap + flag reason.
+		learned_api.approve_learned_pattern(name)
+		row = frappe.db.get_value(
+			JLP, name, ["status", "flag_band_cap", "stale_reason"], as_dict=True
+		)
+		self.assertEqual(row.status, "Approved")
+		self.assertFalse(row.flag_band_cap)
+		self.assertFalse(row.stale_reason)
+
+	def test_flag_cooldown_blocks_redemote_until_expiry(self):
+		# After the quorum demotes High -> Medium, an immediate re-flag by one
+		# of the same users is inside the per-user cooldown: no second rung, no
+		# second SM notification. Once that user's previous flag ages out, a
+		# re-flag re-evaluates the quorum (Medium -> Low -> Stale).
+		name = _mk("fl11", status="Active", strength_band="High")
+		with mock.patch("jarvis.learning.lifecycle.notify_system_managers") as notify:
+			learned_api.flag_learned_default(name, note="admin flag")
+			with _as(self.non_sm):
+				out = learned_api.flag_learned_default(name, note="user flag")
+			self.assertTrue(out["demoted"])
+			self.assertEqual(out["strength_band"], "Medium")
+			self.assertEqual(notify.call_count, 1)
+
+			# immediate re-flag by the same user: cooldown -> no ratchet
+			with _as(self.non_sm):
+				out = learned_api.flag_learned_default(name, note="again")
+			self.assertFalse(out["demoted"])
+			self.assertEqual(out["strength_band"], "Medium")
+			self.assertEqual(out["status"], "Active")
+			self.assertEqual(notify.call_count, 1)
+
+			# age the user's entry past the cooldown -> the re-flag demotes again
+			entries = json.loads(frappe.db.get_value(JLP, name, "counter_evidence"))
+			for e in entries:
+				if e["user"] == self.non_sm:
+					e["ts"] = str(add_days(now_datetime(), -2))
+			frappe.db.set_value(
+				JLP, name, {"counter_evidence": json.dumps(entries)},
+				update_modified=False,
+			)
+			frappe.db.commit()
+			with _as(self.non_sm):
+				out = learned_api.flag_learned_default(name, note="still wrong")
+			self.assertTrue(out["demoted"])
+			self.assertEqual(out["strength_band"], "Low")
+			self.assertEqual(out["status"], "Stale")
+			self.assertEqual(notify.call_count, 2)
+
+	def test_flag_note_sanitized_and_truncated(self):
+		name = _mk("fl10", status="Active")
+		learned_api.flag_learned_default(name, note="<b>bold</b> " + "x" * 400)
+		entries = json.loads(frappe.db.get_value(JLP, name, "counter_evidence"))
+		self.assertNotIn("<b>", entries[0]["note"])
+		self.assertLessEqual(len(entries[0]["note"]), 280)
+
+	# ------------------------------------------------------------------ #
+	# stale board surface (drift re-validation, plan 6.5)
+	# ------------------------------------------------------------------ #
+	def test_list_exposes_stale_and_flag_fields(self):
+		name = _mk(
+			"st1", status="Stale", surfaced=1, flags_count=2,
+			stale_reason="confidence dropped 96% -> 71% (window 18 months)",
+		)
+		# db.set_value: the pointer references a managed skill row that need not
+		# exist in this fixture (Link validation is an insert-time concern).
+		frappe.db.set_value(
+			JLP, name, {"materialized_skill": "learned-selling"}, update_modified=False
+		)
+		frappe.db.commit()
+
+		out = learned_api.list_learned_patterns_page(status="Stale", surfaced="all")
+		row = next(r for r in out["rows"] if r["name"] == name)
+		self.assertIn("confidence dropped", row["stale_reason"])
+		self.assertEqual(row["flags_count"], 2)
+		self.assertIn("last_validated_at", row)
+		self.assertEqual(row["materialized_skill"], "learned-selling")
+		# Stale-still-compiled surfaces as "will be removed on Apply": its own
+		# counter AND the pending-apply bar count.
+		self.assertGreaterEqual(out["stale_pending_removal"], 1)
+		self.assertGreaterEqual(out["pending_apply_count"], 1)
+
+	def test_get_exposes_validation_and_counter_evidence(self):
+		name = _mk("st2", status="Active")
+		learned_api.flag_learned_default(name, note="off for these")
+		out = learned_api.get_learned_pattern(name)
+		self.assertEqual(out["flags_count"], 1)
+		self.assertEqual(out["counter_evidence"][0]["note"], "off for these")
+		self.assertEqual(out["counter_evidence"][0]["user"], "Administrator")
+		self.assertIn("last_validated_at", out)
+
+
+class TestLearnedSkillsPush(unittest.TestCase):
+	"""The dedicated learned-skills push chain (Phase-2 namespace, plan 13 Q5):
+	sync-status lifecycle (pending -> terminal ok/failed) with a mocked
+	admin_client, the deduped enqueue contract, and the after-restart resync."""
+
+	SKILL = "Jarvis Custom Skill"
+
+	@classmethod
+	def setUpClass(cls):
+		frappe.set_user("Administrator")
+
+	def setUp(self):
+		frappe.set_user("Administrator")
+		self._sync = frappe.db.get_value(
+			SETTINGS, SETTINGS,
+			["learned_skills_synced_at", "learned_skills_sync_status"], as_dict=True,
+		) or frappe._dict()
+		self._wipe_managed()
+
+	def tearDown(self):
+		frappe.set_user("Administrator")
+		self._wipe_managed()
+		frappe.db.set_value(
+			SETTINGS, SETTINGS,
+			{
+				"learned_skills_synced_at": self._sync.get("learned_skills_synced_at"),
+				"learned_skills_sync_status": self._sync.get("learned_skills_sync_status"),
+			},
+			update_modified=False,
+		)
+		frappe.db.commit()
+
+	def _wipe_managed(self):
+		frappe.db.delete(self.SKILL, {"managed_by_learning": 1})
+		frappe.db.commit()
+
+	def _mk_managed(self, slug="learned-selling"):
+		frappe.flags.jarvis_pattern_engine = True
+		try:
+			doc = frappe.get_doc({
+				"doctype": self.SKILL,
+				"skill_name": slug,
+				"description": "Learned selling habits for this org.",
+				"instructions": "# Learned selling habits\n- test rule",
+				"enabled": 1,
+				"user_invocable": 0,
+				"managed_by_learning": 1,
+			})
+			doc.flags.ignore_permissions = True
+			doc.insert(ignore_permissions=True)
+		finally:
+			frappe.flags.jarvis_pattern_engine = False
+		frappe.db.commit()
+		return doc.name
+
+	# ------------------------------------------------------------------ #
+	# enqueue contract
+	# ------------------------------------------------------------------ #
+	def test_enqueue_marks_pending_and_dedupes(self):
+		from jarvis.chat import learned_skills_api
+
+		self._mk_managed()
+		with mock.patch("frappe.enqueue") as enq:
+			out = learned_skills_api.enqueue_learned_skills_push()
+		self.assertTrue(out["ok"])
+		self.assertEqual(out["learned_skills_sync_status"], "pending: applying learned skills")
+		self.assertEqual(out["count"], 1)
+		st = learned_skills_api.get_learned_skills_sync_status()
+		self.assertTrue(st["pending"])
+		self.assertEqual(
+			enq.call_args.args[0],
+			"jarvis.chat.learned_skills_api._enqueued_push_learned_skills",
+		)
+		kwargs = enq.call_args.kwargs
+		self.assertEqual(kwargs["job_id"], "jarvis_learned_skills_push")
+		self.assertTrue(kwargs["deduplicate"])
+		self.assertEqual(kwargs["queue"], "long")
+		self.assertEqual(kwargs["timeout"], 180)
+
+	# ------------------------------------------------------------------ #
+	# worker lifecycle: pending -> terminal ok / failed (mocked admin)
+	# ------------------------------------------------------------------ #
+	def test_push_lifecycle_terminal_ok(self):
+		from jarvis.chat import learned_skills_api
+
+		self._mk_managed()
+		# in_test -> the deduped worker runs INLINE inside enqueue.
+		with mock.patch(
+			"jarvis.admin_client.post_push_learned_skills", return_value={}
+		) as post:
+			learned_skills_api.enqueue_learned_skills_push()
+		st = learned_skills_api.get_learned_skills_sync_status()
+		self.assertFalse(st["pending"])
+		self.assertTrue(st["last_sync_status"].startswith("ok (applied 1 via admin)"))
+		self.assertTrue(st["last_sync_at"])
+		post.assert_called_once()
+		# the wire body key + item shape match the admin/fleet contract.
+		payload = post.call_args.kwargs["learned_skills"]
+		self.assertEqual(len(payload), 1)
+		self.assertEqual(payload[0]["slug"], "learned-selling")
+		self.assertEqual(sorted(payload[0].keys()), ["body", "description", "slug"])
+
+	def test_push_lifecycle_terminal_failed(self):
+		from jarvis.chat import learned_skills_api
+		from jarvis.exceptions import AdminUnreachableError
+
+		self._mk_managed()
+		with mock.patch(
+			"jarvis.admin_client.post_push_learned_skills",
+			side_effect=AdminUnreachableError("boom"),
+		):
+			learned_skills_api.enqueue_learned_skills_push()
+		st = learned_skills_api.get_learned_skills_sync_status()
+		self.assertFalse(st["pending"])  # try/finally backstop: never wedged pending
+		self.assertTrue(st["last_sync_status"].startswith("failed: admin unreachable"))
+
+	def test_apply_status_proxies_learned_sync(self):
+		# get_learned_apply_status now reads the LEARNED pair, not the custom one.
+		frappe.db.set_value(
+			SETTINGS, SETTINGS,
+			{"learned_skills_sync_status": "pending: applying learned skills"},
+			update_modified=False,
+		)
+		frappe.db.commit()
+		out = learned_api.get_learned_apply_status()
+		self.assertTrue(out["pending"])
+		self.assertEqual(out["last_sync_status"], "pending: applying learned skills")
+		# ...and the un-approve gate keys off the same pair.
+		self.assertTrue(learned_api._apply_pending())
+		# While the push is pending, the cutover's custom reconcile pair rides
+		# the envelope so a failed stale-dir cleanup is visible on the board.
+		self.assertIsInstance(out["custom_sync"], dict)
+		self.assertIn("last_sync_status", out["custom_sync"])
+
+	def test_apply_status_custom_sync_recency_window(self):
+		# A recent terminal learned sync can belong to the cutover Apply: the
+		# custom pair is included so its reconcile outcome is observable.
+		frappe.db.set_value(
+			SETTINGS, SETTINGS,
+			{
+				"learned_skills_sync_status": "ok (applied 1 via admin)",
+				"learned_skills_synced_at": now_datetime(),
+			},
+			update_modified=False,
+		)
+		frappe.db.commit()
+		out = learned_api.get_learned_apply_status()
+		self.assertFalse(out["pending"])
+		self.assertIsInstance(out["custom_sync"], dict)
+		self.assertIn("pending", out["custom_sync"])
+
+		# An old sync cannot: the envelope stays lean (custom_sync None).
+		frappe.db.set_value(
+			SETTINGS, SETTINGS,
+			{"learned_skills_synced_at": add_days(now_datetime(), -3)},
+			update_modified=False,
+		)
+		frappe.db.commit()
+		out = learned_api.get_learned_apply_status()
+		self.assertIsNone(out["custom_sync"])
+
+		# Never-pushed (empty pair) -> None as well.
+		frappe.db.set_value(
+			SETTINGS, SETTINGS,
+			{"learned_skills_sync_status": "", "learned_skills_synced_at": None},
+			update_modified=False,
+		)
+		frappe.db.commit()
+		out = learned_api.get_learned_apply_status()
+		self.assertIsNone(out["custom_sync"])
+
+	# ------------------------------------------------------------------ #
+	# after-restart resync (jarvis_settings.py)
+	# ------------------------------------------------------------------ #
+	def test_resync_after_restart_repushes_learned(self):
+		settings = frappe.get_doc(SETTINGS)
+		# no managed rows -> no-op (no extra restart for customers without them)
+		with mock.patch("frappe.enqueue") as enq:
+			settings._resync_learned_skills_after_restart()
+		enq.assert_not_called()
+		# with a managed row -> pending status + the deduped learned job
+		self._mk_managed()
+		with mock.patch("frappe.enqueue") as enq:
+			settings._resync_learned_skills_after_restart()
+		enq.assert_called_once()
+		self.assertEqual(
+			enq.call_args.args[0],
+			"jarvis.chat.learned_skills_api._enqueued_push_learned_skills",
+		)
+		self.assertEqual(enq.call_args.kwargs["job_id"], "jarvis_learned_skills_push")
+		from jarvis.chat.learned_skills_api import get_learned_skills_sync_status
+
+		self.assertTrue(get_learned_skills_sync_status()["pending"])
 
 
 if __name__ == "__main__":
