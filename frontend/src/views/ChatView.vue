@@ -1,113 +1,5 @@
 <template>
-	<div ref="rootEl" class="jv-root" :class="{ 'jv-dark': effectiveDark }" :style="paletteVars" style="--rad:8px;font-family:'Inter',system-ui,sans-serif;height:100vh;width:100%;display:flex;color:var(--text);background:var(--surface);overflow:hidden;position:relative;">
-
-		<!-- ============ SIDEBAR ============ -->
-		<aside class="jv-sidebar" :class="{ collapsed: sidebarCollapsed }" style="width:268px;flex:none;background:var(--surface-1);border-right:1px solid var(--border);display:flex;flex-direction:column;height:100%;">
-			<!-- Collapsed: slim icon rail (instead of hiding the sidebar entirely) -->
-			<div v-if="sidebarCollapsed" class="jv-rail">
-				<div class="jv-rail-logo"><svg width="16" height="16" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg></div>
-				<button class="jv-rail-btn" @click="toggleSidebar" title="Expand sidebar">
-					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18" /><path d="m11 9 3 3-3 3" /></svg>
-				</button>
-				<button class="jv-rail-btn jv-rail-new" @click="newChat" title="New chat">
-					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
-				</button>
-				<button class="jv-rail-btn" @click="toggleSidebar" title="Search chats">
-					<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
-				</button>
-				<div style="flex:1;"></div>
-				<button class="jv-rail-btn" @click="openSettings" title="Settings">
-					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
-				</button>
-				<div class="jv-rail-avatar" @click="toggleSidebar" title="Account">{{ initials }}</div>
-			</div>
-			<div style="padding:14px 14px 10px;display:flex;align-items:center;gap:9px;">
-				<div class="jv-logo" style="width:28px;height:28px;border-radius:7px;background:var(--blue);display:flex;align-items:center;justify-content:center;flex:none;box-shadow:0 1px 2px rgba(37,99,235,.35);">
-					<svg width="16" height="16" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
-				</div>
-				<div style="display:flex;flex-direction:column;line-height:1.1;">
-					<span style="font-size:14px;font-weight:600;letter-spacing:-.01em;">Jarvis</span>
-					<span style="font-size:11px;color:var(--text-3);font-weight:450;">ERPNext Assistant</span>
-				</div>
-				<div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
-					<button class="jv-iconbtn" @click="toggleSidebar" title="Collapse sidebar" style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;border-radius:6px;cursor:pointer;color:var(--text-3);flex:none;">
-						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18" /><path d="m14 9-3 3 3 3" /></svg>
-					</button>
-				</div>
-			</div>
-
-			<div style="padding:6px 12px 10px;">
-				<button class="jv-newchat" @click="newChat" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;padding:8px 11px;background:var(--blue);color:#fff;border:none;border-radius:var(--rad);font-family:inherit;font-size:13px;font-weight:550;cursor:pointer;">
-					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
-					New chat
-				</button>
-			</div>
-
-			<div style="padding:0 12px 10px;">
-				<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--surface);border:1px solid var(--border);border-radius:var(--rad);">
-					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="1.9" stroke-linecap="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
-					<input v-model="search" placeholder="Search chats" style="flex:1;border:none;outline:none;background:transparent;font-family:inherit;font-size:12.5px;color:var(--text);" />
-				</div>
-			</div>
-
-			<nav style="flex:1;overflow-y:auto;padding:2px 8px 12px;">
-				<template v-for="g in groups" :key="g.label">
-					<div style="padding:8px 8px 4px;font-size:11px;font-weight:600;color:var(--text-3);letter-spacing:.03em;text-transform:uppercase;">{{ g.label }}</div>
-					<div
-						v-for="c in g.items"
-						:key="c.name"
-						class="jv-conv"
-						:class="{ on: c.name === currentId }"
-						@click="renamingId === c.name ? null : selectConversation(c.name)"
->
-						<svg class="jv-conv-ic" width="14" height="14" viewBox="0 0 24 24" fill="none" :stroke="c.name === currentId ? 'var(--text-2)' : 'var(--text-3)'" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
-						<input v-if="renamingId === c.name" class="jv-rename-input" v-model="renameText" @click.stop @keydown.enter.stop="commitRename(c)" @keydown.esc.stop="cancelRename()" @blur="commitRename(c)" />
-						<span v-else class="jv-conv-title">{{ c.title || "New chat" }}</span>
-						<button v-if="renamingId !== c.name" class="jv-conv-more" @click.stop="toggleConvMenu(c.name)" title="Options"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></svg></button>
-						<div v-if="convMenuFor === c.name" class="jv-conv-menu" @click.stop>
-							<button class="jv-menuitem" @click="toggleStar(c)"><svg width="14" height="14" viewBox="0 0 24 24" :fill="c.starred ? 'var(--amber)' : 'none'" :stroke="c.starred ? 'var(--amber)' : 'currentColor'" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg><span>{{ c.starred ? "Remove" : "Star" }}</span></button>
-							<button class="jv-menuitem" @click="startRename(c)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg><span>Rename</span></button>
-							<button class="jv-menuitem jv-menuitem-danger" @click="deleteConv(c)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /></svg><span>Delete</span></button>
-						</div>
-					</div>
-				</template>
-				<div v-if="!conversations.length" style="padding:18px 10px;text-align:center;font-size:12.5px;color:var(--text-3);">No chats yet</div>
-			</nav>
-
-			<div class="jv-usermenu-wrap" style="position:relative;border-top:1px solid var(--border);">
-				<div v-if="userMenuOpen" style="position:absolute;bottom:calc(100% + 6px);left:12px;right:12px;background:var(--surface);border:1px solid var(--border-2);border-radius:10px;box-shadow:0 10px 28px rgba(20,20,30,.16);padding:5px;z-index:20;">
-					<button class="jv-menuitem" @click="openSettings(); userMenuOpen = false">
-						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
-						<span>Settings</span>
-					</button>
-					<button class="jv-menuitem" @click="goAccount">
-						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
-						<span>Account</span>
-					</button>
-					<!-- AI / Models nav entry sidelined: LLM config now lives on the account page.
-					     The old "/ai" (AiModels) shell + AiView.vue were removed; the usage
-					     dashboard it hosted now lives at "/monitor" (see AppSidebar's Usage entry). -->
-					<button class="jv-menuitem" @click="goDesk">
-						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /></svg>
-						<span>Switch to Desk</span>
-					</button>
-					<button class="jv-menuitem" @click="session.logout()">
-						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" /></svg>
-						<span style="color:var(--red);">Log out</span>
-					</button>
-				</div>
-				<div class="jv-usercard" @click="userMenuOpen = !userMenuOpen" style="padding:10px 12px;display:flex;align-items:center;gap:9px;cursor:pointer;">
-					<div style="width:28px;height:28px;border-radius:50%;background:#e7ddcf;color:#8a6d3b;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;flex:none;">{{ initials }}</div>
-					<div style="display:flex;flex-direction:column;line-height:1.2;min-width:0;">
-						<span style="font-size:12.5px;font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ fullName }}</span>
-						<span style="font-size:11px;color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ session.user }}</span>
-					</div>
-					<button class="jv-iconbtn" tabindex="-1" title="Account" style="margin-left:auto;flex:none;width:26px;height:26px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;border-radius:6px;cursor:pointer;pointer-events:none;">
-						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM12 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4z" /></svg>
-					</button>
-				</div>
-			</div>
-		</aside>
+	<div ref="rootEl" class="jv-root" :class="{ 'jv-dark': effectiveDark }" :style="paletteVars" style="--rad:8px;font-family:'Inter',system-ui,sans-serif;height:100%;width:100%;display:flex;color:var(--text);background:var(--surface);overflow:hidden;position:relative;">
 
 		<!-- ============ MAIN ============ -->
 		<main style="flex:1;display:flex;flex-direction:column;height:100%;min-width:0;background:var(--surface);">
@@ -119,8 +11,8 @@
 					<span style="font-size:11.5px;color:var(--text-3);">{{ headerSub }}</span>
 				</div>
 				<div style="margin-left:auto;display:flex;align-items:center;gap:8px;">
-					<!-- Save the current conversation's prompts as a reusable macro -->
-					<button v-if="canSaveAsMacro" class="jv-modelpill" @click="saveConversationAsMacro" title="Save this chat's prompts as a macro" style="display:flex;align-items:center;gap:7px;padding:5px 10px;background:var(--surface-1);border:1px solid var(--border);border-radius:20px;cursor:pointer;font-family:inherit;">
+					<!-- Save this conversation's prompts as a reusable macro (opens the /macros editor pre-filled) -->
+					<button v-if="canSaveAsMacro" class="jv-modelpill" @click="saveConversationAsMacro" title="Save this chat's prompts as a macro" style="display:flex;align-items:center;gap:6px;padding:5px 10px;background:var(--surface-1);border:1px solid var(--border);border-radius:20px;cursor:pointer;font-family:inherit;">
 						<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l14 9-14 9V3z" /></svg>
 						<span style="font-size:12px;color:var(--text-2);font-weight:500;">Save as macro</span>
 					</button>
@@ -155,24 +47,6 @@
 					</button>
 				</div>
 			</header>
-
-			<!-- ===== NOT READY: invite-to-onboarding card (replaces thread + composer) =====
-			     Shown instead of the normal chat UI when the backend reports the site
-			     hasn't finished setup — see onMounted's readiness check. System Managers
-			     get a CTA into the wizard; everyone else is told to ask their admin. The
-			     desk also shows a setup banner, so onboarding is invited, not forced. -->
-			<div v-if="notReady" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px;">
-				<div style="width:100%;max-width:480px;text-align:center;">
-					<div class="jv-logo" style="width:52px;height:52px;border-radius:13px;background:var(--blue);display:flex;align-items:center;justify-content:center;margin:0 auto 18px;box-shadow:0 4px 14px rgba(37,99,235,.28);">
-						<svg width="28" height="28" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
-					</div>
-					<h1 style="font-size:23px;font-weight:600;letter-spacing:-.02em;margin:0 0 8px;">Welcome to Jarvis</h1>
-					<p style="font-size:14.5px;color:var(--text-2);margin:0 0 26px;line-height:1.5;">Finish a quick setup to start chatting.</p>
-					<button v-if="isSystemManager" class="jv-btn jv-btn--primary" style="height:38px;padding:0 20px;font-size:13.5px;" @click="goToOnboarding">Set up Jarvis →</button>
-					<p v-else style="font-size:13.5px;color:var(--text-3);margin:0;">Ask your workspace admin to finish setting up Jarvis.</p>
-				</div>
-			</div>
-			<template v-else>
 
 			<!-- initial load: a quiet spinner so the welcome screen doesn't flash
 			     before the open conversation finishes loading on refresh -->
@@ -521,400 +395,7 @@
 					<div style="text-align:center;font-size:10.5px;color:var(--text-3);margin-top:8px;">Jarvis can make mistakes. Verify important actions before submitting to ERPNext.</div>
 				</div>
 			</div>
-
-			</template>
 		</main>
-
-		<!-- ============ RIGHT RAIL: SKILLS + MACROS (opens the center popup) ============ -->
-		<aside class="jv-skillbar">
-			<div class="jv-skillrail">
-				<button class="jv-skillrail-btn" :class="{ active: skillsModalOpen }" @click="openSkillsModal()">
-					<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 7v10l8 5 8-5V7z" /><path d="M12 22V12M12 12 4 7M12 12l8-5" /></svg>
-					<span class="jv-railtip">Skills</span>
-				</button>
-				<button class="jv-skillrail-btn" :class="{ active: macrosModalOpen }" @click="openMacrosModal()">
-					<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l14 9-14 9V3z" /><path d="M3 5v14" /></svg>
-					<span class="jv-railtip">Macros</span>
-				</button>
-				<button class="jv-skillrail-btn" :class="{ active: fileboxOpen }" @click="openFilebox()">
-					<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-6l-2 3h-4l-2-3H2" /><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" /></svg>
-					<span class="jv-railtip">File Box</span>
-				</button>
-				<button class="jv-skillrail-btn" :class="{ active: approvalsOpen }" @click="openApprovals()" style="position:relative;">
-					<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg>
-					<span v-if="approvalsBadge" style="position:absolute;top:2px;right:2px;background:var(--red,#e5484d);color:#fff;border-radius:8px;font-size:9px;line-height:1;padding:2px 4px;">{{ approvalsBadge }}</span>
-					<span class="jv-railtip">Approvals</span>
-				</button>
-				<!-- Agents Marketplace is a real routed page now (/agents), not an overlay. -->
-				<button class="jv-skillrail-btn" @click="router.push('/agents')">
-					<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="8" width="18" height="12" rx="2" /><path d="M7 8V6a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v2" /><circle cx="9" cy="14" r="1" /><circle cx="15" cy="14" r="1" /><path d="M12 2v2" /></svg>
-					<span class="jv-railtip">Agents</span>
-				</button>
-			</div>
-		</aside>
-
-		<!-- ============ SKILLS POPUP (centered) ============ -->
-		<transition name="jv-fade">
-			<div v-if="skillsModalOpen" class="jv-skills-overlay" :class="{ 'jv-page-mode': pageMode }" @click.self="closeSkillsModal">
-				<div class="jv-skills-modal">
-					<div class="jv-skills-head">
-						<div style="min-width:0;">
-							<div class="jv-skills-title">{{ skillFormOpen ? (skillReadonly ? "Skill" : (skillForm.name ? "Edit skill" : "New skill")) : "Skills" }}</div>
-							<div class="jv-skills-sub">Abilities your assistant can use — type <kbd class="jv-kbd">/</kbd> in chat to trigger one.</div>
-						</div>
-						<button v-if="!skillFormOpen" class="jv-btn jv-btn--primary jv-btn--sm" @click="newSkill">
-							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg> New
-						</button>
-						<button class="jv-btn jv-btn--icon" title="Close (Esc)" @click="closeSkillsModal">
-							<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
-						</button>
-					</div>
-					<!-- Sync status shows only while actionable: an in-flight update or a
-					     failure. The steady "up to date" line was noise (user request). -->
-					<div v-if="skillsSync.pending || skillsSync.last_sync_status.startsWith('failed')" class="jv-skills-status" :class="{ err: skillsSync.last_sync_status.startsWith('failed') }">
-						<template v-if="skillsSync.pending"><span class="jv-skill-dot spin"></span> Updating your assistant… (restarts briefly, ~30s)</template>
-						<template v-else><span class="jv-skill-dot err"></span> Couldn't update your assistant. {{ skillsSync.last_sync_status.replace("failed:", "").trim() }}</template>
-					</div>
-					<div class="jv-skills-body">
-						<!-- create / edit form -->
-						<div v-if="skillFormOpen" class="jv-skill-form">
-							<div v-if="skillError" class="jv-skill-err">{{ skillError }}</div>
-							<div v-if="skillReadonly" class="jv-ro-banner">
-								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
-								<span>Shared by <b>{{ skillSharedBy || "another user" }}</b> · read-only</span>
-							</div>
-							<label class="jv-skill-l">Name</label>
-							<input class="jv-skill-in" v-model="skillForm.skill_name" :disabled="skillReadonly || !!skillForm.name" placeholder="e.g. monthly-close" maxlength="40" />
-							<div v-if="!skillReadonly" class="jv-set-hint" style="margin:3px 0 10px;">Lowercase letters, digits and hyphens. Trigger it in chat with <kbd class="jv-kbd">/{{ skillForm.skill_name || 'name' }}</kbd>.</div>
-							<div v-else style="height:10px;"></div>
-							<label class="jv-skill-l">Description</label>
-							<input class="jv-skill-in" v-model="skillForm.description" :disabled="skillReadonly" placeholder="When should the assistant use this skill?" maxlength="500" />
-							<div v-if="!skillReadonly" class="jv-set-hint" style="margin:3px 0 10px;">A short hint so the assistant knows when this skill applies.</div>
-							<div v-else style="height:10px;"></div>
-							<label class="jv-skill-l">Instructions</label>
-							<textarea class="jv-skill-ta" v-model="skillForm.instructions" :disabled="skillReadonly" rows="9" placeholder="Markdown instructions the assistant follows when this skill runs…"></textarea>
-							<div v-if="!skillReadonly" class="jv-set-row" style="margin-top:10px;"><span>Let users trigger it with /<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Appears in the chat “/” menu</span></span><button class="jv-switch" :class="{ on: skillForm.user_invocable }" @click="skillForm.user_invocable = !skillForm.user_invocable" role="switch" :aria-checked="String(!!skillForm.user_invocable)"><span class="jv-switch-knob"></span></button></div>
-							<div v-if="!skillReadonly" class="jv-set-row"><span>Enabled<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Off = saved as a draft, not used by the assistant</span></span><button class="jv-switch" :class="{ on: skillForm.enabled }" @click="skillForm.enabled = !skillForm.enabled" role="switch" :aria-checked="String(!!skillForm.enabled)"><span class="jv-switch-knob"></span></button></div>
-							<div class="jv-skill-formfoot">
-								<button v-if="!skillReadonly" class="jv-btn jv-btn--primary" :disabled="skillSaving || skillsSync.pending" @click="saveSkill">{{ skillSaving ? "Saving…" : "Save skill" }}</button>
-								<button v-if="skillReadonly" class="jv-btn jv-btn--ghost" @click="skillFormOpen = false; skillReadonly = false">Back</button>
-								<button v-else class="jv-btn jv-btn--ghost" :disabled="skillSaving" @click="skillFormOpen = false">Cancel</button>
-								<span v-if="!skillReadonly" class="jv-skill-foothint">Saving updates your assistant automatically.</span>
-							</div>
-						</div>
-						<!-- skills list -->
-						<template v-else>
-							<div v-if="!customSkills.length" class="jv-set-empty" style="text-align:center;padding:26px 0;">No skills yet.<br />Create one to give your assistant a new ability.</div>
-							<!-- own skills: full controls + share -->
-							<div v-for="s in mySkills" :key="s.name" class="jv-skill-row">
-								<div style="min-width:0;flex:1;cursor:pointer;" @click="editSkill(s)">
-									<div class="jv-skill-name">/{{ s.skill_name }} <span v-if="!s.enabled" class="jv-skill-off">draft</span><span v-if="s.shared_count > 0" class="jv-shared-chip"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a3 3 0 1 0-2.83-4M6 12a3 3 0 1 0 0 .01M18 16a3 3 0 1 0-2.83 4M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" /></svg>Shared · {{ s.shared_count }}</span></div>
-									<div class="jv-skill-desc">{{ s.description }}</div>
-								</div>
-								<button class="jv-btn jv-btn--icon jv-ib jv-ib-accent" title="Share" @click="openShareModal(s)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" /></svg></button>
-								<button class="jv-btn jv-btn--icon jv-ib" title="Edit" @click="editSkill(s)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg></button>
-								<button class="jv-btn jv-btn--icon jv-ib jv-ib-danger" title="Delete" @click="removeSkill(s)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" /></svg></button>
-							</div>
-							<!-- shared-with-me: read-only -->
-							<template v-if="sharedSkills.length">
-								<div class="jv-share-divider">Shared with you</div>
-								<div v-for="s in sharedSkills" :key="s.name" class="jv-skill-row jv-skill-row-shared" @click="editSkill(s)" style="cursor:pointer;">
-									<span class="jv-share-lock" title="Read-only — shared with you"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg></span>
-									<div style="min-width:0;flex:1;">
-										<div class="jv-skill-name">/{{ s.skill_name }} <span class="jv-sharedby-chip"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>Shared by {{ s.shared_by }}</span></div>
-										<div class="jv-skill-desc">{{ s.description }}</div>
-									</div>
-								</div>
-							</template>
-						</template>
-					</div>
-				</div>
-			</div>
-		</transition>
-
-		<!-- ============ SHARE SKILL POPUP (centered) ============ -->
-		<transition name="jv-fade">
-			<div v-if="shareModalOpen" class="jv-skills-overlay" @click.self="closeShareModal">
-				<div class="jv-skills-modal jv-share-modal">
-					<div class="jv-skills-head">
-						<div style="min-width:0;">
-							<div class="jv-skills-title">Share “{{ shareSkill.skill_name }}”</div>
-							<div class="jv-skills-sub">They can use this skill in chat, but can’t edit or re-share it.</div>
-						</div>
-						<button class="jv-btn jv-btn--icon" title="Close (Esc)" @click="closeShareModal">
-							<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
-						</button>
-					</div>
-					<div class="jv-skills-body">
-						<div v-if="shareLoading" class="jv-set-empty" style="text-align:center;padding:30px 0;">Loading people…</div>
-						<template v-else>
-							<!-- selected users as chips -->
-							<div v-if="shareSelected.length" class="jv-share-chips">
-								<span v-for="id in shareSelected" :key="id" class="jv-share-chip">
-									<span class="jv-share-avatar">{{ _shareInitials(_shareUser(id)) }}</span>
-									<span class="jv-share-chip-name">{{ _shareUser(id).full_name }}</span>
-									<button class="jv-share-chip-x" title="Remove" @click="toggleShareUser(id)"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg></button>
-								</span>
-							</div>
-							<!-- search -->
-							<div class="jv-share-searchwrap">
-								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="1.9" stroke-linecap="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
-								<input v-model="shareSearch" class="jv-share-search" placeholder="Search people…" />
-							</div>
-							<!-- candidate list -->
-							<div v-if="!shareCandidates.length" class="jv-set-empty" style="text-align:center;padding:22px 0;">No other users to share with yet.</div>
-							<div v-else-if="!shareMatches.length" class="jv-set-empty" style="text-align:center;padding:18px 0;">No people match “{{ shareSearch }}”.</div>
-							<div v-else class="jv-share-list">
-								<button v-for="u in shareMatches" :key="u.name" class="jv-share-row" :class="{ on: isShareSelected(u.name) }" @click="toggleShareUser(u.name)">
-									<span class="jv-share-avatar">{{ _shareInitials(u) }}</span>
-									<span class="jv-share-row-info">
-										<span class="jv-share-row-name">{{ u.full_name }}</span>
-										<span class="jv-share-row-id">{{ u.name }}</span>
-									</span>
-									<svg v-if="isShareSelected(u.name)" class="jv-share-check" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
-								</button>
-							</div>
-							<div class="jv-share-helper">
-								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
-								They can use this skill in chat, but can’t edit or re-share it.
-							</div>
-							<div class="jv-skill-formfoot">
-								<button class="jv-btn jv-btn--primary" :disabled="shareSaving" @click="saveShares">{{ shareSaving ? "Saving…" : "Save" }}</button>
-								<button class="jv-btn jv-btn--ghost" :disabled="shareSaving" @click="closeShareModal">Cancel</button>
-								<span class="jv-skill-foothint">{{ shareSelected.length }} {{ shareSelected.length === 1 ? "person" : "people" }} selected</span>
-							</div>
-						</template>
-					</div>
-				</div>
-			</div>
-		</transition>
-
-		<!-- ============ MACROS POPUP (centered) ============ -->
-		<transition name="jv-fade">
-			<div v-if="fileboxOpen" class="jv-skills-overlay" :class="{ 'jv-page-mode': pageMode }" @click.self="fileboxOpen = false; _clearPageHash()">
-				<div class="jv-skills-modal">
-					<div class="jv-skills-head">
-						<div style="min-width:0;">
-							<div class="jv-skills-title">File Box</div>
-							<div class="jv-skills-sub">Drop an inbound document — invoice, receipt, PO — and Jarvis drafts it for you.</div>
-						</div>
-						<button v-if="!pageMode" class="jv-btn jv-btn--icon" title="Open as page" @click="openAsPage('filebox')">
-							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" /></svg>
-						</button>
-						<button class="jv-btn jv-btn--icon" title="Close (Esc)" @click="fileboxOpen = false; _clearPageHash()">
-							<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
-						</button>
-					</div>
-					<div class="jv-skills-body">
-						<div
-							style="border:2px dashed var(--border);border-radius:10px;padding:26px;text-align:center;cursor:pointer;margin-bottom:14px;"
-							:style="fileboxDrag ? 'border-color:var(--blue);background:var(--surface-2);' : ''"
-							@click="$refs.fileboxInput.click()"
-							@dragover.prevent="fileboxDrag = true" @dragleave="fileboxDrag = false"
-							@drop.prevent="onFileboxDrop($event)"
-						>
-							<div style="font-size:13px;color:var(--text-2);">
-								Drop files here, or click to browse<span v-if="fileboxUploading"> — {{ fileboxUploading }} uploading…</span>.<br />
-								<span style="font-size:11.5px;color:var(--text-3);">Keep adding — each file processes in the background and lands in Approvals if it needs you.</span>
-							</div>
-							<input ref="fileboxInput" type="file" multiple style="display:none" @change="onFileboxPick($event)" />
-						</div>
-						<div v-if="fileboxError" class="jv-skill-err">{{ fileboxError }}</div>
-						<div v-for="d in fileboxDropStatus.filter((x) => x.state === 'error')" :key="d.key" class="jv-skill-err" style="margin-bottom:6px;">{{ d.name }}: {{ d.error }}</div>
-						<div v-if="!fileboxItems.length" class="jv-set-empty" style="text-align:center;padding:10px 0;">Nothing processed yet.</div>
-						<div v-for="f in fileboxItems" :key="f.name" class="jv-skill-row" style="cursor:pointer;" @click="openFileboxItem(f)">
-							<div style="flex:1;min-width:0;">
-								<div style="font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ f.title.replace(/^File: /, "") }}</div>
-								<div style="font-size:11px;color:var(--text-3);">{{ new Date(f.creation).toLocaleString() }}</div>
-							</div>
-							<span style="font-size:10.5px;border-radius:7px;padding:2px 7px;flex:none;"
-								:style="f.status === 'processing' ? 'background:var(--surface-2);color:var(--text-2);'
-									: f.status === 'needs_approval' ? 'background:rgba(229,72,77,.12);color:var(--red,#e5484d);'
-									: f.status === 'error' ? 'background:rgba(229,72,77,.12);color:var(--red,#e5484d);'
-									: 'background:rgba(48,164,108,.12);color:var(--green,#30a46c);'">
-								{{ f.status === "needs_approval" ? (f.pending_approvals + " approval" + (f.pending_approvals > 1 ? "s" : "")) : f.status }}
-							</span>
-						</div>
-					</div>
-				</div>
-			</div>
-
-			<div v-if="approvalsOpen" class="jv-skills-overlay" :class="{ 'jv-page-mode': pageMode }" @click.self="approvalsOpen = false; _clearPageHash()">
-				<div class="jv-skills-modal">
-					<div class="jv-skills-head">
-						<div style="min-width:0;">
-							<div class="jv-skills-title">Approvals</div>
-							<div class="jv-skills-sub">Decisions waiting on you. Deciding resumes the chat that asked.</div>
-						</div>
-						<button v-if="!pageMode" class="jv-btn jv-btn--icon" title="Open as page" @click="openAsPage('approvals')">
-							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" /></svg>
-						</button>
-						<button class="jv-btn jv-btn--icon" title="Close (Esc)" @click="approvalsOpen = false; _clearPageHash()">
-							<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
-						</button>
-					</div>
-					<div class="jv-skills-body">
-						<div v-if="approvalsError" class="jv-skill-err">{{ approvalsError }}</div>
-						<div style="display:flex;gap:6px;margin-bottom:10px;">
-							<button class="jv-btn jv-btn--sm" :class="{ 'jv-btn--primary': approvalsView === 'Pending' }" @click="setApprovalsView('Pending')">Pending<span v-if="approvalsBadge"> ({{ approvalsBadge }})</span></button>
-							<button class="jv-btn jv-btn--sm" :class="{ 'jv-btn--primary': approvalsView === 'Decided' }" @click="setApprovalsView('Decided')">Decided</button>
-						</div>
-						<div v-if="approvalTabs.length > 1" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">
-							<button v-for="[tab, n] in approvalTabs" :key="tab" class="jv-btn jv-btn--sm"
-								:class="{ 'jv-btn--primary': approvalTab === tab }" @click="approvalTab = tab">
-								{{ tab }} <span style="opacity:.65;">({{ n }})</span>
-							</button>
-						</div>
-						<div v-if="!approvalItemsShown.length" class="jv-set-empty" style="text-align:center;padding:26px 0;">Nothing waiting on you. 🎉</div>
-						<div v-for="a in approvalItemsShown" :key="a.name" style="border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px;">
-							<div style="display:flex;gap:8px;align-items:center;">
-								<div style="font-size:13px;font-weight:600;flex:1;min-width:0;">{{ a.title }}</div>
-								<span style="font-size:10.5px;border-radius:7px;padding:2px 7px;background:var(--surface-2);color:var(--text-2);flex:none;">{{ (a.document_type || "").trim() || "Unclassified" }}</span>
-							</div>
-							<div style="font-size:12.5px;color:var(--text-2);margin:6px 0;">{{ a.question }}</div>
-							<details v-if="a.context_md" style="margin-bottom:8px;">
-								<summary style="font-size:11.5px;color:var(--text-3);cursor:pointer;">context</summary>
-								<pre style="font-size:11px;white-space:pre-wrap;max-height:180px;overflow:auto;background:var(--surface-2);border-radius:7px;padding:8px;">{{ a.context_md }}</pre>
-							</details>
-							<div v-if="a.status !== 'Pending'" style="font-size:12px;margin-bottom:4px;">
-								<b :style="a.status === 'Approved' ? 'color:var(--green,#30a46c);' : 'color:var(--red,#e5484d);'">{{ a.status }}</b>
-								— {{ a.decision }}
-								<span style="color:var(--text-3);"> · {{ a.decided_by }} · {{ a.decided_at ? new Date(a.decided_at).toLocaleString() : "" }}</span>
-							</div>
-							<div v-if="a.status === 'Pending'" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
-								<button v-for="opt in a.options" :key="opt" class="jv-btn jv-btn--sm"
-									:class="{ 'jv-btn--primary': approvalDrafts[a.name] === opt }"
-									@click="approvalDrafts[a.name] = opt">{{ opt }}</button>
-							</div>
-							<div v-if="a.status === 'Pending'" style="display:flex;gap:6px;">
-								<input v-model="approvalDrafts[a.name]" placeholder="Decision (pick an option or type)"
-									style="flex:1;font-size:12.5px;padding:6px 9px;border:1px solid var(--border);border-radius:7px;background:var(--surface-1);color:var(--text-1);" />
-								<button class="jv-btn jv-btn--primary jv-btn--sm" :disabled="!(approvalDrafts[a.name] || '').trim() || approvalsBusy" @click="doDecide(a, 1)">Approve</button>
-								<button class="jv-btn jv-btn--sm" :disabled="!(approvalDrafts[a.name] || '').trim() || approvalsBusy" @click="doDecide(a, 0)">Reject</button>
-								<button v-if="a.conversation" class="jv-btn jv-btn--sm" title="Open the chat" @click="openApprovalChat(a)">Chat</button>
-							</div>
-							<div v-if="a.status !== 'Pending' && a.conversation" style="display:flex;gap:6px;">
-								<button class="jv-btn jv-btn--sm" title="Open the chat" @click="openApprovalChat(a)">Chat</button>
-							</div>
-						</div>
-					</div>
-				</div>
-			</div>
-
-			<div v-if="macrosModalOpen" class="jv-skills-overlay" :class="{ 'jv-page-mode': pageMode }" @click.self="closeMacrosModal">
-				<div class="jv-skills-modal">
-					<div class="jv-skills-head">
-						<div style="min-width:0;">
-							<div class="jv-skills-title">Macros</div>
-							<div class="jv-skills-sub">Saved prompt sequences your assistant runs as a chain of turns.</div>
-						</div>
-						<button class="jv-btn jv-btn--primary jv-btn--sm" @click="newMacro">
-							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg> New
-						</button>
-						<button class="jv-btn jv-btn--icon" title="Close (Esc)" @click="closeMacrosModal">
-							<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
-						</button>
-					</div>
-					<div class="jv-skills-body">
-						<div v-if="macroError" class="jv-skill-err">{{ macroError }}</div>
-						<div v-if="!macros.length" class="jv-set-empty" style="text-align:center;padding:32px 0;">No macros yet.<br />Hit <strong>New</strong> to record a sequence of prompts.</div>
-						<div v-for="mm in macros" :key="mm.name" class="jv-skill-row">
-							<div style="min-width:0;flex:1;cursor:pointer;" @click="editMacro(mm)">
-								<div class="jv-skill-name" style="font-family:inherit;">{{ mm.macro_name }} <span v-if="!mm.enabled" class="jv-skill-off">draft</span></div>
-								<div class="jv-macro-sub">{{ mm.step_count || 0 }} step{{ (mm.step_count || 0) === 1 ? "" : "s" }}<span v-if="mm.merge_status === 'pending'" class="jv-macro-merged-badge jv-macro-merged-badge--pending" title="Summarizing in the background">summarizing…</span><span v-else-if="(mm.merged_prompt || '').trim()" class="jv-macro-merged-badge" title="Runs its summarized prompt as one turn">summary</span><span v-if="mm.schedule_enabled" class="jv-macro-sched"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>{{ mm.schedule_frequency || "scheduled" }}</span></div>
-							</div>
-							<button v-if="mm.merge_status === 'pending'" class="jv-btn jv-btn--sm" disabled title="The summary is being prepared — Run unlocks when it's ready"><span class="jv-merge-spin" style="width:11px;height:11px;"></span> Summarizing…</button>
-							<button v-else class="jv-btn jv-btn--primary jv-btn--sm" title="Run" @click.stop="runMacroFromList(mm)"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8V4z" /></svg> Run</button>
-							<button class="jv-btn jv-btn--icon jv-ib" title="Edit" @click.stop="editMacro(mm)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg></button>
-							<button class="jv-btn jv-btn--icon jv-ib jv-ib-danger" title="Delete" @click.stop="removeMacro(mm)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" /></svg></button>
-						</div>
-					</div>
-				</div>
-			</div>
-		</transition>
-
-		<!-- ============ MACRO EDITOR POPUP (centered) ============ -->
-		<transition name="jv-fade">
-			<div v-if="macroEditorOpen" class="jv-skills-overlay" @click.self="closeMacroEditor">
-				<div class="jv-skills-modal">
-					<div class="jv-skills-head">
-						<div style="min-width:0;">
-							<div class="jv-skills-title">{{ macroForm.name ? "Edit macro" : "New macro" }}</div>
-							<div class="jv-skills-sub">Each step runs as its own agent turn, in order.</div>
-						</div>
-						<button class="jv-btn jv-btn--icon" title="Close (Esc)" @click="closeMacroEditor">
-							<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
-						</button>
-					</div>
-					<div class="jv-skills-body">
-						<label class="jv-skill-l">Name</label>
-						<input class="jv-skill-in" v-model="macroForm.macro_name" placeholder="e.g. Monthly close" maxlength="140" />
-						<div style="height:10px;"></div>
-						<label class="jv-skill-l">Description</label>
-						<input class="jv-skill-in" v-model="macroForm.description" placeholder="What does this macro do?" maxlength="500" />
-						<div class="jv-set-row" style="margin-top:12px;"><span>Stop if a step fails<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Otherwise the chain keeps going after an error</span></span><button class="jv-switch" :class="{ on: macroForm.stop_on_error }" @click="macroForm.stop_on_error = !macroForm.stop_on_error" role="switch" :aria-checked="String(!!macroForm.stop_on_error)"><span class="jv-switch-knob"></span></button></div>
-						<div class="jv-set-row"><span>Run on a schedule<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Jarvis runs this macro automatically</span></span><button class="jv-switch" :class="{ on: macroForm.schedule_enabled }" @click="macroForm.schedule_enabled = !macroForm.schedule_enabled" role="switch" :aria-checked="String(!!macroForm.schedule_enabled)"><span class="jv-switch-knob"></span></button></div>
-						<div v-if="macroForm.schedule_enabled" class="jv-macro-sched-fields">
-							<div style="flex:1;">
-								<label class="jv-skill-l">Frequency</label>
-								<select class="jv-skill-in" v-model="macroForm.schedule_frequency"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select>
-							</div>
-							<div style="flex:1;">
-								<label class="jv-skill-l">Time</label>
-								<input type="time" class="jv-skill-in" v-model="macroForm.schedule_time" />
-							</div>
-						</div>
-						<!-- Steps stay the editable source; the summarized prompt (own tab) is what runs when set. -->
-						<div class="jv-macro-tabs">
-							<button class="jv-macro-tab" :class="{ on: macroEdTab === 'steps' }" @click="macroEdTab = 'steps'">Steps</button>
-							<button class="jv-macro-tab" :class="{ on: macroEdTab === 'summary' }" @click="macroEdTab = 'summary'">
-								Summarized prompt<span v-if="(macroForm.merged_prompt || '').trim()" class="jv-macro-tab-dot" title="A summary is set — it runs instead of the steps"></span>
-							</button>
-						</div>
-						<template v-if="macroEdTab === 'summary'">
-							<template v-if="(macroForm.merged_prompt || '').trim()">
-								<div class="jv-merge-sub" style="margin-top:10px;">This single prompt <b>runs when you hit Run</b> — the steps stay as its source. Edit freely; saving keeps your edit.</div>
-								<textarea class="jv-merge-text" style="margin-top:8px;" v-model="macroForm.merged_prompt" rows="9"></textarea>
-								<button class="jv-skill-newrow" style="margin-top:10px;margin-bottom:0;" @click="macroForm.merged_prompt = ''">✕ Remove summary — run the steps instead</button>
-							</template>
-							<div v-else class="jv-set-empty" style="margin-top:12px;">No summary yet. Saving with 2+ steps generates one automatically in the background — it lands here and becomes what runs (Run stays locked until it's ready).</div>
-						</template>
-						<template v-if="macroEdTab === 'steps'">
-						<div v-if="!macroForm.steps.length" class="jv-set-empty">No steps yet. Add one below.</div>
-						<div v-for="(st, si) in macroForm.steps" :key="si" class="jv-macro-step" :class="{ dragging: dragStepIdx === si, dragover: dragOverIdx === si && dragStepIdx !== null && dragStepIdx !== si }" @dragover.prevent="onStepDragOver(si)" @dragleave="onStepDragLeave(si)" @drop.prevent="onStepDrop(si)">
-							<div class="jv-macro-step-head">
-								<span class="jv-macro-grip" draggable="true" title="Drag to reorder" @dragstart="onStepDragStart(si, $event)" @dragend="onStepDragEnd"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.5" /><circle cx="15" cy="6" r="1.5" /><circle cx="9" cy="12" r="1.5" /><circle cx="15" cy="12" r="1.5" /><circle cx="9" cy="18" r="1.5" /><circle cx="15" cy="18" r="1.5" /></svg></span>
-								<span class="jv-macro-step-num">{{ si + 1 }}</span>
-								<input class="jv-skill-in jv-macro-step-label" v-model="st.label" placeholder="Optional label" maxlength="140" />
-								<button class="jv-btn jv-btn--icon jv-ib jv-ib-danger" title="Remove step" @click="removeMacroStep(si)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg></button>
-							</div>
-							<textarea class="jv-skill-ta" v-model="st.prompt" rows="3" placeholder="The prompt to send for this step…"></textarea>
-							<div v-if="macroSkillOptions.length" class="jv-macro-step-skills">
-								<span class="jv-macro-step-skills-l"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" /></svg>Skills</span>
-								<button v-for="s in macroSkillOptions" :key="s.name" class="jv-macro-skill-opt jv-macro-skill-opt--sm" :class="{ on: (st.skills || []).includes(s.name) }" @click="toggleStepSkill(si, s.name)" :title="s.description || s.skill_name">
-									<span v-if="(st.skills || []).includes(s.name)" class="jv-ask-tick">✓</span>/{{ s.skill_name }}<span v-if="!s.mine" class="jv-macro-skill-shared">shared</span>
-								</button>
-							</div>
-						</div>
-						<button class="jv-skill-newrow" style="margin-top:12px;margin-bottom:0;" @click="addMacroStep"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg> Add step</button>
-						</template>
-						<!-- Error sits next to Save (the body scrolls — a top-of-form message
-						     is off-screen when a long step list is open, so it was missed). -->
-						<div v-if="macroError" class="jv-skill-err" style="margin-top:12px;">{{ macroError }}</div>
-						<div class="jv-skill-formfoot">
-							<button class="jv-btn jv-btn--primary" :disabled="macroSaving" @click="saveMacro">{{ macroSaving ? "Saving…" : "Save macro" }}</button>
-							<button class="jv-btn jv-btn--ghost" :disabled="macroSaving" @click="closeMacroEditor">Cancel</button>
-						</div>
-					</div>
-				</div>
-			</div>
-		</transition>
-
-		<!-- Macro summarize happens fully in the BACKGROUND (worker applies it);
-		     the only UI is this transient notice + the Run-button gate. -->
-		<transition name="jv-fade">
-			<div v-if="mergeNotice" class="jv-merge-notice">{{ mergeNotice }}</div>
-		</transition>
 
 		<!-- ============ PROACTIVE MESSAGE TOAST (Jarvis started a chat) ============ -->
 		<transition name="jv-fade">
@@ -1203,7 +684,7 @@
 						<pre v-else-if="artifact.kind === 'text'" class="jv-artifact-text">{{ artifact.text }}</pre>
 						<div v-else-if="artifact.kind === 'loading'" class="jv-artifact-loading">Loading preview…</div>
 						<div v-else class="jv-artifact-nopreview">
-							<p>No inline preview for this file type.</p>
+							<p class="jv-preview-note">No inline preview for this file type.</p>
 							<a :href="artifact.url" :download="cvFile(artifact.cv)" class="jv-canvas-dl">Download {{ cvFile(artifact.cv) }}</a>
 						</div>
 					</div>
@@ -1311,23 +792,30 @@
 import { ref, computed, inject, onMounted, onBeforeUnmount, nextTick, watch } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import * as api from "@/api"
+import { setMacroPrefill } from "@/composables/macroPrefill"
 import { renderMarkdown } from "@/markdown"
 import JvChart from "@/charts/JvChart.vue"
-import { useTheme } from "@/composables/useTheme"
-import { displayName, initialsOf } from "@/lib/user"
+import { useShellStore } from "@/stores/shell"
+import { useJarvisTheme } from "@/theme"
+import { displayName } from "@/lib/user"
 
 const session = inject("$session")
 const socket = inject("$socket")
 const route = useRoute()
 const router = useRouter()
-const isSystemManager = !!window.is_system_manager
 
-const conversations = ref([])
+// Shared shell state (DESIGN-V3 §4): the sidebar/conversation list lives in
+// the app shell now; ChatView is the only writer of currentConvId /
+// streamingConvId and the only caller of applyRemote* (socket contract DA-04).
+const store = useShellStore()
+
 const currentId = ref(null)
 // Remember the open chat per-device so a refresh — or a duplicated tab — restores
 // it instead of jumping to whatever sorts first in the sidebar (e.g. a starred
 // chat). Also lets a duplicated tab land on the SAME in-progress conversation.
+// Also mirrors the selection into the shell store (sidebar active row).
 watch(currentId, (id) => {
+	store.currentConvId = id
 	try {
 		id ? localStorage.setItem("jarvis-last-conv", id) : localStorage.removeItem("jarvis-last-conv")
 	} catch (e) {}
@@ -1345,7 +833,6 @@ const histIdx = ref(null)
 const histDraft = ref("")
 const sending = ref(false)
 const waiting = ref(false)
-const search = ref("")
 const ui = ref({})
 // Per-conversation "auto-apply changes" (issue #186): seeded from
 // get_conversation().conversation.auto_apply on each load; the toggle reflects
@@ -1401,189 +888,36 @@ function _settleConfirm(val) {
 	_confirmResolve = null
 	if (r) r(val)
 }
-const userMenuOpen = ref(false)
 const modelMenuOpen = ref(false)
-// Collapsible sidebar (persisted per device, openclaw-style).
-// Below this width the sidebar auto-collapses to the icon rail so a narrow /
-// half-screen window doesn't let it crowd the chat.
-const SIDEBAR_NARROW_BP = 820
-const _sidebarNarrow = () => typeof window !== "undefined" && window.matchMedia(`(max-width: ${SIDEBAR_NARROW_BP}px)`).matches
-function _sidebarPref() {
-	try { return localStorage.getItem("jarvis-sidebar") === "collapsed" } catch (e) { return false }
-}
-// Initial: forced collapsed on a narrow viewport, else the saved preference.
-const sidebarCollapsed = ref(_sidebarNarrow() || _sidebarPref())
-function toggleSidebar() {
-	sidebarCollapsed.value = !sidebarCollapsed.value
-	// Only persist as the user's preference on wide screens; on a narrow window
-	// the collapse is width-driven, so a manual toggle there is temporary and
-	// must not overwrite the saved preference.
-	if (!_sidebarNarrow()) {
-		try { localStorage.setItem("jarvis-sidebar", sidebarCollapsed.value ? "collapsed" : "open") } catch (e) {}
-	}
-}
-// React to viewport width crossing the breakpoint: collapse when it goes
-// narrow, restore the saved preference when it goes wide again.
-let _sidebarMq = null
-function _applySidebarForWidth() {
-	sidebarCollapsed.value = _sidebarNarrow() ? true : _sidebarPref()
-}
-onMounted(() => {
-	if (typeof window === "undefined") return
-	_sidebarMq = window.matchMedia(`(max-width: ${SIDEBAR_NARROW_BP}px)`)
-	_sidebarMq.addEventListener("change", _applySidebarForWidth)
-})
-onBeforeUnmount(() => {
-	if (_sidebarMq) _sidebarMq.removeEventListener("change", _applySidebarForWidth)
-})
-// per-conversation ⋯ menu + inline rename (sidebar)
-const convMenuFor = ref(null)
-const renamingId = ref(null)
-const renameText = ref("")
-function toggleConvMenu(id) {
-	convMenuFor.value = convMenuFor.value === id ? null : id
-}
-async function toggleStar(c) {
-	convMenuFor.value = null
-	const next = c.starred ? 0 : 1
-	const conv = conversations.value.find((x) => x.name === c.name)
-	if (conv) conv.starred = next // optimistic — regroups instantly
-	try {
-		await api.setStar(c.name, next)
-	} catch (e) {
-		loadConversations()
-	}
-}
-function startRename(c) {
-	convMenuFor.value = null
-	renamingId.value = c.name
-	renameText.value = c.title || ""
-	nextTick(() => {
-		const el = document.querySelector(".jv-rename-input")
-		if (el) {
-			el.focus()
-			el.select()
-		}
-	})
-}
-function cancelRename() {
-	renamingId.value = null
-}
-async function commitRename(c) {
-	if (renamingId.value !== c.name) return
-	const t = renameText.value.trim()
-	renamingId.value = null
-	if (!t || t === (c.title || "")) return
-	const conv = conversations.value.find((x) => x.name === c.name)
-	if (conv) conv.title = t // optimistic
-	try {
-		await api.renameConversation(c.name, t)
-	} catch (e) {
-		loadConversations()
-	}
-}
-async function deleteConv(c) {
-	convMenuFor.value = null
-	if (!(await confirmDialog({ title: "Delete chat?", message: `Delete "${c.title || "this chat"}"? This can't be undone.`, confirmLabel: "Delete" }))) return
-	try {
-		await api.archiveConversation(c.name)
-		notify("Chat deleted", { type: "success" })
-	} catch (e) {
-		/* ignore */
-	}
-	if (currentId.value === c.name) {
-		currentId.value = null
-		messages.value = []
-	}
-	loadConversations()
-}
+// (sidebar collapse machinery, per-conversation ⋯ menu and inline rename
+// moved to the app shell — stores/shell.js + components/shell/*, §3.7)
 const modelOverride = ref("")
 
-// ---- settings panel + theme (openclaw-style console) ----
-const settingsOpen = ref(false)
+// ---- settings panel (openclaw-style console) ----
+// The overlay is bound to the SHELL's settingsOpen (D9): the user menu opens
+// it from any route via store.openSettings(router); Esc/close write through.
+const settingsOpen = computed({
+	get: () => store.settingsOpen,
+	set: (v) => {
+		store.settingsOpen = v
+	},
+})
 const settingsTab = ref("overview")
+// Load usage stats whenever the dialog opens (was openSettings()).
+watch(
+	() => store.settingsOpen,
+	async (open) => {
+		if (!open) return
+		try {
+			usage.value = await api.getUsage(currentId.value)
+		} catch (e) {
+			/* usage stays null → the section shows a dash */
+		}
+	},
+)
 
 // --- Custom skills (Skills settings tab + "/" composer menu) ---
 const customSkills = ref([])
-const skillFormOpen = ref(false)
-const skillSaving = ref(false)
-const skillError = ref("")
-const skillForm = ref({ name: "", skill_name: "", description: "", instructions: "", user_invocable: true, enabled: true })
-const skillsSync = ref({ last_sync_status: "", pending: false })
-let _skillsPoll = null
-// Read-only view of a skill someone shared with me (no editing, saving or toggles).
-const skillReadonly = ref(false)
-const skillSharedBy = ref("")
-
-// --- Skill sharing (owners share read-only use with specific users) ---
-const shareModalOpen = ref(false)
-const shareSkill = ref({ name: "", skill_name: "" })
-const shareSearch = ref("")
-const shareCandidates = ref([]) // [{name, full_name}]
-const shareSelected = ref([]) // array of user ids
-const shareLoading = ref(false)
-const shareSaving = ref(false)
-
-// Own skills vs skills shared with me (both arrive in customSkills).
-const mySkills = computed(() => customSkills.value.filter((s) => s.mine))
-const sharedSkills = computed(() => customSkills.value.filter((s) => !s.mine))
-
-// Candidate rows filtered by the search box; selected users always stay visible.
-const shareMatches = computed(() => {
-	const q = (shareSearch.value || "").trim().toLowerCase()
-	if (!q) return shareCandidates.value
-	return shareCandidates.value.filter((u) =>
-		(u.full_name || "").toLowerCase().includes(q) || (u.name || "").toLowerCase().includes(q))
-})
-
-function _shareInitials(u) {
-	const s = (u && (u.full_name || u.name) || "").trim()
-	if (!s) return "?"
-	const parts = s.split(/\s+/).filter(Boolean)
-	if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
-	return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
-}
-function _shareUser(id) {
-	return shareCandidates.value.find((u) => u.name === id) || { name: id, full_name: id }
-}
-function isShareSelected(id) {
-	return shareSelected.value.includes(id)
-}
-function toggleShareUser(id) {
-	if (shareSelected.value.includes(id)) shareSelected.value = shareSelected.value.filter((x) => x !== id)
-	else shareSelected.value = [...shareSelected.value, id]
-}
-async function openShareModal(s) {
-	shareSkill.value = { name: s.name, skill_name: s.skill_name }
-	shareSearch.value = ""
-	shareSelected.value = []
-	shareCandidates.value = []
-	shareModalOpen.value = true
-	shareLoading.value = true
-	try {
-		const [cand, shares] = await Promise.all([api.listShareableUsers(), api.getSkillShares(s.name)])
-		shareCandidates.value = cand || []
-		shareSelected.value = ((shares && shares.users) || []).map((u) => u.name)
-		// Make sure already-shared users are selectable even if not in the candidate list.
-		const known = new Set(shareCandidates.value.map((u) => u.name))
-		for (const u of ((shares && shares.users) || [])) {
-			if (!known.has(u.name)) { shareCandidates.value.push({ name: u.name, full_name: u.full_name || u.name }); known.add(u.name) }
-		}
-	} catch (e) { notify(_skillErr(e), { type: "error" }) } finally { shareLoading.value = false }
-}
-function closeShareModal() {
-	shareModalOpen.value = false
-	shareSaving.value = false
-}
-async function saveShares() {
-	shareSaving.value = true
-	try {
-		await api.shareCustomSkill(shareSkill.value.name, [...shareSelected.value])
-		await loadCustomSkills()
-		notify("Sharing updated", { type: "success" })
-		closeShareModal()
-	} catch (e) { notify(_skillErr(e), { type: "error" }); shareSaving.value = false }
-}
 
 function _skillErr(e) {
 	return (e && ((e.messages && e.messages[0]) || e.message)) || "Something went wrong."
@@ -1591,467 +925,20 @@ function _skillErr(e) {
 async function loadCustomSkills() {
 	try { customSkills.value = (await api.listCustomSkills()) || [] } catch (e) { /* keep prior */ }
 }
-async function loadSkillsSync() {
-	try {
-		const s = (await api.getCustomSkillsSyncStatus()) || {}
-		skillsSync.value = { last_sync_status: s.last_sync_status || "", pending: !!s.pending }
-	} catch (e) { /* ignore */ }
-}
-// The right skills sidebar is always present as a slim icon rail (collapsed);
-// clicking the rail expands it. openclaw-style, mirrors the left sidebar rail.
-const skillsModalOpen = ref(false)
-function openSkillsModal(openForm) {
-	skillsModalOpen.value = true
-	skillError.value = ""
-	loadCustomSkills()
-	loadSkillsSync()
-	if (openForm === true) newSkill()
-	else skillFormOpen.value = false
-}
-function closeSkillsModal() {
-	skillsModalOpen.value = false
-	skillFormOpen.value = false
-	skillReadonly.value = false
-	skillSharedBy.value = ""
-	skillError.value = ""
-}
-// Push the current skills to the assistant — the old "Apply", now run
-// automatically on save/delete. No confirm: an empty set legitimately clears
-// all custom skills (e.g. after deleting the last one).
-async function syncSkills() {
-	try {
-		await api.applyCustomSkills()
-		skillsSync.value = { last_sync_status: "pending: applying skills", pending: true }
-		if (_skillsPoll) clearInterval(_skillsPoll)
-		_skillsPoll = setInterval(async () => {
-			await loadSkillsSync()
-			if (!skillsSync.value.pending) { clearInterval(_skillsPoll); _skillsPoll = null }
-		}, 3000)
-	} catch (e) { skillError.value = _skillErr(e) }
-}
-function newSkill() {
-	skillError.value = ""
-	skillReadonly.value = false
-	skillSharedBy.value = ""
-	skillForm.value = { name: "", skill_name: "", description: "", instructions: "", user_invocable: true, enabled: true }
-	skillFormOpen.value = true
-}
-async function editSkill(s) {
-	skillError.value = ""
-	// Shared-with-me skills open read-only: no editing, saving or toggles.
-	skillReadonly.value = !s.mine
-	skillSharedBy.value = ""
-	try {
-		const full = await api.getCustomSkill(s.name)
-		skillForm.value = {
-			name: full.name, skill_name: full.skill_name, description: full.description || "",
-			instructions: full.instructions || "", user_invocable: !!full.user_invocable, enabled: !!full.enabled,
-		}
-		if (full.can_edit === 0 || !s.mine) skillReadonly.value = true
-		skillSharedBy.value = full.shared_by || s.shared_by || ""
-		skillFormOpen.value = true
-	} catch (e) { skillError.value = _skillErr(e) }
-}
-async function saveSkill() {
-	skillError.value = ""
-	skillSaving.value = true
-	try {
-		const f = skillForm.value
-		const payload = {
-			skill_name: (f.skill_name || "").trim().toLowerCase(),
-			description: f.description, instructions: f.instructions,
-			user_invocable: f.user_invocable ? 1 : 0, enabled: f.enabled ? 1 : 0,
-		}
-		if (f.name) await api.updateCustomSkill({ name: f.name, ...payload })
-		else await api.createCustomSkill(payload)
-		skillFormOpen.value = false
-		await loadCustomSkills()
-		syncSkills() // saving pushes to the assistant automatically
-	} catch (e) { skillError.value = _skillErr(e) } finally { skillSaving.value = false }
-}
-async function removeSkill(s) {
-	if (!(await confirmDialog({ title: "Delete skill?", message: `Delete “${s.skill_name}”? It will be removed from your assistant.`, confirmLabel: "Delete" }))) return
-	try {
-		await api.deleteCustomSkill(s.name)
-		await loadCustomSkills()
-		syncSkills() // deleting updates the assistant automatically
-		notify("Skill deleted", { type: "success" })
-	} catch (e) { skillError.value = _skillErr(e) }
-}
 
 // --- Macros (customer-authored prompt sequences run as chained turns) ---
 const macros = ref([])
-const macrosModalOpen = ref(false)
-// ── File Box + Approvals panes ──────────────────────────────────────────────
-const fileboxOpen = ref(false)
-const fileboxDrag = ref(false)
-const fileboxBusy = ref(false)
-const fileboxError = ref("")
-const fileboxItems = ref([])
-const approvalsOpen = ref(false)
-const approvalsBusy = ref(false)
-const approvalsError = ref("")
-const approvalItems = ref([])
-const approvalDrafts = ref({})
-const approvalsBadge = ref(0)
-// ── Page mode: #approvals / #filebox / #skills / #macros open the same
-// surface as a near-fullscreen page (more room for detail); the rail
-// buttons keep the quick popup. Closing clears the hash.
-const pageMode = ref(false)
-function _applyHashRoute() {
-	const h = (window.location.hash || "").replace("#", "")
-	pageMode.value = ["approvals", "filebox", "skills", "macros"].includes(h)
-	// State machine: exactly one surface per hash - close the others first
-	// (navigating #filebox -> #approvals used to stack both overlays).
-	fileboxOpen.value = false
-	approvalsOpen.value = false
-	skillsModalOpen.value = false
-	macrosModalOpen.value = false
-	if (h === "approvals") openApprovals()
-	else if (h === "filebox") openFilebox()
-	else if (h === "skills") openSkillsModal()
-	else if (h === "macros") openMacrosModal()
-	// Back-compat: old #agents deep links now land on the routed Agents page.
-	else if (h === "agents") router.replace("/agents")
-}
-const _hashRouteHandler = () => _applyHashRoute()
-function openAsPage(name) {
-	window.location.hash = name
-}
-function _clearPageHash() {
-	if (pageMode.value) {
-		pageMode.value = false
-		history.replaceState(null, "", window.location.pathname + window.location.search)
-	}
-}
+// (approvals badge → store.refreshApprovalsCount; legacy #hash deep-links →
+// router-level redirects, §9)
 
-async function refreshApprovalsBadge() {
-	try { approvalsBadge.value = (await api.approvalsPendingCount()) || 0 } catch (e) { /* badge is best-effort */ }
-}
-async function openFilebox() {
-	fileboxOpen.value = true
-	fileboxError.value = ""
-	try { fileboxItems.value = (await api.fileboxList()) || [] } catch (e) { fileboxError.value = "Could not load the inbound list." }
-}
-const fileboxUploading = ref(0) // in-flight drops; the box stays open and accepts more
-const fileboxDropStatus = ref([]) // per-file: {key, name, state: uploading|ok|error, error}
-async function _fileboxProcess(file) {
-	// Background-first: each file is its own async pipeline. Keep dropping -
-	// nothing blocks, nothing navigates; items appear in the inbound list as
-	// "processing" and land in Approvals if they need you.
-	if (!file) return
-	fileboxUploading.value++
-	const entry = { key: `${file.name}-${Date.now()}-${Math.random()}`, name: file.name, state: "uploading", error: "" }
-	fileboxDropStatus.value = [entry, ...fileboxDropStatus.value].slice(0, 8)
-	try {
-		const up = await api.uploadFile(file)
-		const res = await api.fileboxDrop(up.file_url, up.file_name)
-		if (!res || !res.ok) throw new Error((res && res.reason) || "drop failed")
-		entry.state = "ok"
-		fileboxItems.value = [
-			{ name: res.conversation_id, title: `File: ${up.file_name}`, creation: new Date().toISOString(), status: "processing", pending_approvals: 0 },
-			...fileboxItems.value.filter((x) => x.name !== res.conversation_id),
-		]
-		fileboxDropStatus.value = [...fileboxDropStatus.value]
-		loadConversations() // background refresh; no navigation
-	} catch (e) {
-		// Per-file error - concurrent drops no longer clobber each other.
-		entry.state = "error"
-		entry.error = e.message || String(e)
-		fileboxDropStatus.value = [...fileboxDropStatus.value]
-	} finally {
-		fileboxUploading.value--
-	}
-}
-function onFileboxDrop(ev) {
-	fileboxDrag.value = false
-	const files = (ev.dataTransfer && ev.dataTransfer.files) || []
-	for (const f of files) _fileboxProcess(f)
-}
-function onFileboxPick(ev) {
-	const files = ev.target.files || []
-	for (const f of files) _fileboxProcess(f)
-	ev.target.value = ""
-}
-async function openFileboxItem(f) {
-	fileboxOpen.value = false
-	await selectConversation(f.name)
-}
-const approvalsView = ref("Pending") // "Pending" | "Decided"
-async function _loadApprovals() {
-	approvalsError.value = ""
-	try {
-		approvalItems.value = (await api.listApprovals(approvalsView.value)) || []
-	} catch (e) { approvalsError.value = "Could not load approvals." }
-}
-async function openApprovals() {
-	approvalsOpen.value = true
-	await _loadApprovals()
-	refreshApprovalsBadge()
-}
-async function setApprovalsView(v) {
-	approvalsView.value = v
-	approvalTab.value = "All"
-	await _loadApprovals()
-}
-async function doDecide(a, approve) {
-	const decision = (approvalDrafts.value[a.name] || "").trim()
-	if (!decision) return
-	approvalsBusy.value = true
-	try {
-		await api.decideApproval(a.name, decision, approve)
-		// Background-first: the decision resumes the chat over there; stay
-		// on the board so the next approval can be handled. The per-item
-		// "Chat" button is the opt-in way in.
-		approvalItems.value = approvalItems.value.filter((x) => x.name !== a.name)
-		delete approvalDrafts.value[a.name]
-		refreshApprovalsBadge()
-		loadConversations()
-	} catch (e) {
-		approvalsError.value = `Could not record the decision: ${e.message || e}`
-	} finally {
-		approvalsBusy.value = false
-	}
-}
-// Internal tabs: group pending approvals by the business document type so a
-// busy queue can be triaged one type at a time. Empty document_type = the
-// classification itself needs deciding - its own tab.
-const approvalTab = ref("All")
-const approvalTabs = computed(() => {
-	const counts = {}
-	for (const a of approvalItems.value) {
-		const k = (a.document_type || "").trim() || "Unclassified"
-		counts[k] = (counts[k] || 0) + 1
-	}
-	return [["All", approvalItems.value.length], ...Object.entries(counts).sort((x, y) => y[1] - x[1])]
-})
-const approvalItemsShown = computed(() => {
-	if (approvalTab.value === "All") return approvalItems.value
-	return approvalItems.value.filter(
-		(a) => (((a.document_type || "").trim()) || "Unclassified") === approvalTab.value,
-	)
-})
-async function openApprovalChat(a) {
-	approvalsOpen.value = false
-	await selectConversation(a.conversation)
-}
-
-const macroEditorOpen = ref(false)
-const macroSaving = ref(false)
-const macroError = ref("")
-const macroForm = ref(_blankMacro())
 // The live macro-run banner: { run, conversation, step, total, label, status }.
 const macroRun = ref(null)
 let _macroDoneTimer = null
 
-function _blankMacro() {
-	return {
-		name: "", macro_name: "", description: "",
-		enabled: true, stop_on_error: true,
-		schedule_enabled: false, schedule_frequency: "daily", schedule_time: "09:00",
-		steps: [],
-		// The stored LLM summary — when set, run_macro runs THIS as one turn
-		// and the steps stay as the editable source. Snapshots (_orig*) let
-		// saveMacro tell "steps changed → stale summary" from a rename-only save.
-		merged_prompt: "", _origMerged: "", _origStepsJson: "",
-	}
-}
-const macroEdTab = ref("steps") // "steps" | "summary"
-// Skills taggable on a macro STEP: my own + shared-with-me, enabled only (a
-// disabled skill can't be invoked, so offering it would silently no-op).
-const macroSkillOptions = computed(() => customSkills.value.filter((s) => s.enabled))
-function toggleStepSkill(si, name) {
-	const st = macroForm.value.steps[si]
-	if (!st) return
-	if (!Array.isArray(st.skills)) st.skills = []
-	const i = st.skills.indexOf(name)
-	if (i >= 0) st.skills.splice(i, 1)
-	else st.skills.push(name)
-}
 async function loadMacros() {
 	try { macros.value = (await api.listMacros()) || [] } catch (e) { /* keep prior */ }
 }
-function openMacrosModal() {
-	macrosModalOpen.value = true
-	macroError.value = ""
-	loadMacros()
-}
-function closeMacrosModal() {
-	macrosModalOpen.value = false
-	macroError.value = ""
-}
-function closeMacroEditor() {
-	macroEditorOpen.value = false
-	macroError.value = ""
-}
-function newMacro() {
-	macroError.value = ""
-	macroForm.value = _blankMacro()
-	macroForm.value.steps = [{ label: "", prompt: "", skills: [] }]
-	macroEdTab.value = "steps"
-	loadSkillsSync() // populate the taggable-skills options
-	macroEditorOpen.value = true
-}
-async function editMacro(m) {
-	macroError.value = ""
-	try {
-		const full = await api.getMacro(m.name)
-		const steps = (Array.isArray(full.steps) ? full.steps : []).map((s) => ({ label: s.label || "", prompt: s.prompt || "", skills: Array.isArray(s.skills) ? [...s.skills] : [] }))
-		macroForm.value = {
-			name: full.name,
-			macro_name: full.macro_name || "",
-			description: full.description || "",
-			enabled: full.enabled == null ? true : !!full.enabled,
-			stop_on_error: !!full.stop_on_error,
-			schedule_enabled: !!full.schedule_enabled,
-			schedule_frequency: full.schedule_frequency || "daily",
-			schedule_time: full.schedule_time || "09:00",
-			steps,
-			merged_prompt: full.merged_prompt || "",
-			_origMerged: full.merged_prompt || "",
-			_origStepsJson: JSON.stringify(steps.filter((s) => (s.prompt || "").trim())),
-		}
-		if (!macroForm.value.steps.length) macroForm.value.steps = [{ label: "", prompt: "", skills: [] }]
-		macroEdTab.value = "steps"
-		loadSkillsSync() // populate the taggable-skills options
-		macroEditorOpen.value = true
-	} catch (e) { macroError.value = _skillErr(e) }
-}
-function addMacroStep() {
-	macroForm.value.steps.push({ label: "", prompt: "", skills: [] })
-}
-function removeMacroStep(i) {
-	macroForm.value.steps.splice(i, 1)
-}
-// Drag-to-reorder steps (premium replacement for up/down buttons). The grip
-// handle is the drag source; the whole step card is the drop target.
-const dragStepIdx = ref(null)
-const dragOverIdx = ref(null)
-function onStepDragStart(i, e) {
-	dragStepIdx.value = i
-	if (e && e.dataTransfer) {
-		e.dataTransfer.effectAllowed = "move"
-		try { e.dataTransfer.setData("text/plain", String(i)) } catch (_) { /* ignore */ }
-	}
-}
-function onStepDragOver(i) {
-	if (dragStepIdx.value !== null) dragOverIdx.value = i
-}
-function onStepDragLeave(i) {
-	if (dragOverIdx.value === i) dragOverIdx.value = null
-}
-function onStepDrop(i) {
-	const from = dragStepIdx.value
-	dragOverIdx.value = null
-	if (from === null || from === i) { dragStepIdx.value = null; return }
-	const steps = macroForm.value.steps
-	const [it] = steps.splice(from, 1)
-	steps.splice(i, 0, it)
-	dragStepIdx.value = null
-}
-function onStepDragEnd() {
-	dragStepIdx.value = null
-	dragOverIdx.value = null
-}
-async function saveMacro() {
-	macroError.value = ""
-	const f = macroForm.value
-	const steps = f.steps
-		.map((s) => ({ label: (s.label || "").trim(), prompt: (s.prompt || "").trim(), skills: Array.isArray(s.skills) ? s.skills : [] }))
-		.filter((s) => s.prompt)
-	if (!(f.macro_name || "").trim()) { macroError.value = "Give the macro a name."; return }
-	if (!steps.length) { macroError.value = "Add at least one step with a prompt."; return }
-	macroSaving.value = true
-	try {
-		const payload = {
-			macro_name: f.macro_name.trim(),
-			description: f.description || "",
-			steps,
-			enabled: f.enabled ? 1 : 0,
-			stop_on_error: f.stop_on_error ? 1 : 0,
-			schedule_enabled: f.schedule_enabled ? 1 : 0,
-			schedule_frequency: f.schedule_frequency || "daily",
-			schedule_time: f.schedule_time || "09:00",
-		}
-		// Summary handling (update only — a new macro has no summary yet): an
-		// edited summary is explicit intent → send it; a rename-only save keeps
-		// the stored one; changed steps with an untouched summary omit it → the
-		// backend clears the stale copy and the re-summarize below regenerates it.
-		const stepsTouched = JSON.stringify(steps) !== (f._origStepsJson || "")
-		const mergedTouched = (f.merged_prompt || "") !== (f._origMerged || "")
-		let sentMerged = ""
-		let savedName = f.name
-		if (f.name) {
-			const upd = { name: f.name, ...payload }
-			if (mergedTouched || !stepsTouched) {
-				upd.merged_prompt = (f.merged_prompt || "").trim()
-				sentMerged = upd.merged_prompt
-			}
-			await api.updateMacro(upd)
-		} else {
-			const r = await api.createMacro(payload)
-			savedName = r && r.data && r.data.name
-		}
-		macroEditorOpen.value = false
-		await loadMacros()
-		// Re-summarize only when the sequence actually changed (or has no
-		// summary yet) — a rename shouldn't burn an LLM turn.
-		const needsSummary = steps.length >= 2 && (stepsTouched || !f.name || !sentMerged)
-		if (savedName && needsSummary) startMacroMerge(savedName)
-	} catch (e) { macroError.value = _skillErr(e) } finally { macroSaving.value = false }
-}
 
-// --- Macro merge: every 2+ step save fires a BACKGROUND summarize turn (no
-// modal, nothing to confirm). The WORKER applies the summary to the macro when
-// the turn ends — even if this tab is gone — and pushes a `macro:merged` event.
-// Run is blocked (backend + button) while merge_status is "pending". ---
-const mergeNotice = ref("")
-let _mergeNoticeTimer = null
-function _showMergeNotice(text) {
-	mergeNotice.value = text
-	if (_mergeNoticeTimer) clearTimeout(_mergeNoticeTimer)
-	_mergeNoticeTimer = setTimeout(() => { mergeNotice.value = "" }, 6000)
-}
-
-async function startMacroMerge(name) {
-	try {
-		await api.summarizeMacro(name)
-		_showMergeNotice("Summarizing in the background — Run unlocks when the summary is ready.")
-	} catch (e) {
-		/* macro is saved either way; without a summary the steps run */
-	}
-	loadMacros() // pick up merge_status=pending for the Run-button gate
-}
-
-async function removeMacro(m) {
-	if (!(await confirmDialog({ title: "Delete macro?", message: `Delete “${m.macro_name}”? This can't be undone.`, confirmLabel: "Delete" }))) return
-	try {
-		await api.deleteMacro(m.name)
-		await loadMacros()
-		notify("Macro deleted", { type: "success" })
-	} catch (e) { macroError.value = _skillErr(e) }
-}
-async function runMacroFromList(m) {
-	macroError.value = ""
-	try {
-		const res = await api.runMacro(m.name)
-		const data = (res && res.data) || res || {}
-		macrosModalOpen.value = false
-		await loadConversations()
-		if (data.conversation) await selectConversation(data.conversation)
-		macroRun.value = {
-			run: data.macro_run,
-			conversation: data.conversation,
-			step: 0,
-			total: m.step_count || 0,
-			label: "",
-			status: "running",
-		}
-	} catch (e) {
-		macroError.value = _skillErr(e)
-		macrosModalOpen.value = true
-	}
-}
 async function stopMacro() {
 	if (!macroRun.value) return
 	try { await api.stopMacroRun(macroRun.value.run) } catch (e) { /* ignore */ }
@@ -2101,7 +988,7 @@ function setMacroRunMacro(e) { macroRunMacro.value = e.target.value; loadMacroRu
 async function openRunConversation(run) {
 	if (!run.conversation) return
 	settingsOpen.value = false
-	await loadConversations()
+	await store.loadConversations()
 	await selectConversation(run.conversation)
 }
 async function rerunFromHistory(run) {
@@ -2109,7 +996,7 @@ async function rerunFromHistory(run) {
 		const res = await api.runMacro(run.macro)
 		const data = (res && res.data) || res || {}
 		settingsOpen.value = false
-		await loadConversations()
+		await store.loadConversations()
 		if (data.conversation) await selectConversation(data.conversation)
 		macroRun.value = { run: data.macro_run, conversation: data.conversation, step: 0, total: 0, label: "", status: "running" }
 	} catch (e) { notify(_skillErr(e), { type: "error" }) }
@@ -2168,31 +1055,6 @@ watch(
 	() => settingsOpen.value && settingsTab.value === "macroruns",
 	(active) => { if (active) loadMacroRuns(true) },
 )
-// A ```jarvis-macro card's "Save as macro" button: pre-fill the editor.
-function openMacroFromCard(card) {
-	macroError.value = ""
-	macroForm.value = _blankMacro()
-	macroForm.value.macro_name = card.name || ""
-	macroForm.value.description = card.description || ""
-	macroForm.value.steps = (card.steps || []).map((s) => ({ label: s.label || "", prompt: s.prompt || "" }))
-	if (!macroForm.value.steps.length) macroForm.value.steps = [{ label: "", prompt: "" }]
-	macroEditorOpen.value = true
-}
-// Header "Save as macro": collect this chat's user prompts into the editor.
-const canSaveAsMacro = computed(
-	() => !!currentId.value && messages.value.some((m) => m.role === "user" && m.content && !m.content.startsWith("▶ Running macro")),
-)
-function saveConversationAsMacro() {
-	macroError.value = ""
-	const steps = messages.value
-		.filter((m) => m.role === "user" && m.content && !m.content.startsWith("▶ Running macro"))
-		.map((m) => ({ label: "", prompt: m.content }))
-	if (!steps.length) return
-	macroForm.value = _blankMacro()
-	macroForm.value.macro_name = currentTitle.value && currentTitle.value !== "New chat" ? currentTitle.value : ""
-	macroForm.value.steps = steps
-	macroEditorOpen.value = true
-}
 const usage = ref(null) // { estimated, chat_tokens, month_tokens, total_tokens, budget_monthly, month_label }
 // Compact token count: 1234 → "1.2k", 2_500_000 → "2.5M".
 function fmtTokens(n) {
@@ -2206,19 +1068,11 @@ const usagePct = computed(() => {
 	if (!u || !u.budget_monthly) return 0
 	return Math.min(100, Math.round((u.month_tokens / u.budget_monthly) * 100))
 })
-// theme: 'light' | 'dark' | 'system' — persisted per-device.
-// useTheme() owns localStorage, matchMedia, and cross-tab storage sync.
-const { pref: theme, prefersDark, effectiveDark, paletteVars, setTheme, toggleTheme } = useTheme()
-async function openSettings() {
-	userMenuOpen.value = false
-	modelMenuOpen.value = false
-	settingsOpen.value = true
-	try {
-		usage.value = await api.getUsage(currentId.value)
-	} catch (e) {
-		/* usage stays null → the section shows a dash */
-	}
-}
+// theme: the shared composable (module singleton, src/theme.js) replaces the
+// old private palette copy (D34). It also bridges `data-theme` onto <html>
+// for frappe-ui; the .jv-dark class + inline paletteVars below keep the jv-*
+// scoped styles untouched.
+const { theme, effectiveDark, paletteVars, setTheme, toggleTheme } = useJarvisTheme()
 // Flip "confirm before changes" for THIS conversation (issue #186). Optimistic;
 // reverts on failure. auto_apply=1 = skip confirmation (auto mode). Enabling is
 // admin-only server-side - a non-admin gets a 403, so we revert + show a note.
@@ -2235,26 +1089,6 @@ async function toggleAutoApply() {
 		convAutoApply.value = !next // revert
 		// Enabling requires System Manager; a non-admin gets a PermissionError (403).
 		if (next) autoApplyNote.value = "Only an administrator can enable auto-apply."
-	}
-}
-async function deleteChat() {
-	const id = currentId.value
-	if (!id) return
-	if (!(await confirmDialog({ title: "Delete chat?", message: "Delete this chat? It will be removed from your history.", confirmLabel: "Delete" }))) return
-	try {
-		await api.archiveConversation(id)
-		notify("Chat deleted", { type: "success" })
-	} catch (e) {
-		/* ignore — reload below reflects the true state either way */
-	}
-	settingsOpen.value = false
-	currentId.value = null
-	messages.value = []
-	await loadConversations()
-	const first = conversations.value[0]?.name
-	if (first) {
-		currentId.value = first
-		await loadConversation(first)
 	}
 }
 
@@ -2354,10 +1188,9 @@ const jarvisTools = ref([
 	"create_doc", "update_doc", "submit_doc", "cancel_doc", "amend_doc", "delete_doc",
 ])
 
-// Shared with AppSidebar via @/lib/user (see the cookie double-decode note there).
+// Shared with the shell via @/lib/user (see the cookie double-decode note there).
 const fullName = displayName(session.user)
 const firstName = computed(() => fullName.split(/\s+/)[0])
-const initials = computed(() => initialsOf(fullName))
 const greeting = computed(() => {
 	const h = new Date().getHours()
 	return h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening"
@@ -2367,7 +1200,7 @@ const modelLabel = computed(() => modelOverride.value || "Auto")
 const availableModels = computed(() => ui.value.subscription_models?.[ui.value.llm_provider] || [])
 
 const currentTitle = computed(
-	() => conversations.value.find((c) => c.name === currentId.value)?.title || "New chat",
+	() => store.conversations.find((c) => c.name === currentId.value)?.title || "New chat",
 )
 const visibleMessages = computed(() =>
 	messages.value.filter((m) => m.role === "user" || m.role === "assistant"),
@@ -2438,11 +1271,10 @@ async function clearAllHistory() {
 	clearingHistory.value = true
 	try {
 		await api.clearChatHistory()
-		conversations.value = []
 		messages.value = []
 		currentId.value = ""
 		settingsOpen.value = false
-		newChat()
+		newChat() // also reloads store.conversations
 	} catch (e) {
 		notify(_skillErr(e) || "Could not delete history", { type: "error" })
 	} finally {
@@ -2492,15 +1324,12 @@ function prettyJson(s) {
 // True only until the initial conversation load finishes — keeps the welcome
 // screen from flashing on refresh before the open chat appears.
 const booting = ref(true)
-// True when the backend reports the site hasn't finished setup yet — shows the
-// invite-to-onboarding card instead of the chat thread/composer (see onMounted).
-const notReady = ref(false)
 const showWelcome = computed(
 	() => !booting.value && (!currentId.value || visibleMessages.value.length === 0),
 )
 
 // settings/overview derived metrics (all from data we already hold)
-const convCount = computed(() => conversations.value.length)
+const convCount = computed(() => store.conversations.length)
 const msgCount = computed(() => visibleMessages.value.length)
 const toolCount = computed(() => jarvisTools.value.length)
 const sessionToolCalls = computed(() =>
@@ -2513,7 +1342,7 @@ const avgTokensPerMsg = computed(() => {
 	if (!usage.value || !n) return "—"
 	return fmtTokens(Math.round((usage.value.chat_tokens || 0) / n))
 })
-const starredCount = computed(() => conversations.value.filter((c) => c.starred).length)
+const starredCount = computed(() => store.conversations.filter((c) => c.starred).length)
 // Recent tool runs in this chat (most recent first), from the per-message run
 // metrics we already stamp on run:end.
 const recentActivity = computed(() => {
@@ -2534,35 +1363,6 @@ const canSend = computed(
 	() => (input.value.trim().length > 0 || pendingFiles.value.length > 0) && !sending.value,
 )
 const busy = computed(() => sending.value || waiting.value)
-
-const filteredConvs = computed(() => {
-	const q = search.value.trim().toLowerCase()
-	return q ? conversations.value.filter((c) => (c.title || "").toLowerCase().includes(q)) : conversations.value
-})
-const groups = computed(() => {
-	const starred = [], today = [], yest = [], earlier = []
-	const now = new Date()
-	const d0 = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
-	for (const c of filteredConvs.value) {
-		if (c.starred) {
-			starred.push(c)
-			continue
-		}
-		const raw = (c.last_active_at || c.modified || "").replace(" ", "T")
-		const t = raw ? new Date(raw) : now
-		const cd = new Date(t.getFullYear(), t.getMonth(), t.getDate()).getTime()
-		const diff = Math.round((d0 - cd) / 86400000)
-		if (diff <= 0) today.push(c)
-		else if (diff === 1) yest.push(c)
-		else earlier.push(c)
-	}
-	return [
-		{ label: "Starred", items: starred },
-		{ label: "Today", items: today },
-		{ label: "Yesterday", items: yest },
-		{ label: "Earlier", items: earlier },
-	].filter((g) => g.items.length)
-})
 
 const suggestions = [
 	{ title: "Analyse data", prompt: "Which sales orders are overdue this month?", bg: "var(--blue-bg)", icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#171717" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18 9l-5 5-3-3-4 4"/></svg>' },
@@ -2719,6 +1519,32 @@ function stepCardPage(m, dir) {
 	cardPage.value = { ...cardPage.value, [m.name]: next }
 }
 const _macroCardCache = new Map()
+// "Save as macro" — the macro editor now lives on /macros, so these stash a
+// draft (via macroPrefill) and navigate there; MacrosView opens it pre-filled.
+const canSaveAsMacro = computed(
+	() => !!currentId.value && messages.value.some((m) => m.role === "user" && m.content && !m.content.startsWith("▶ Running macro")),
+)
+function saveConversationAsMacro() {
+	const steps = messages.value
+		.filter((m) => m.role === "user" && m.content && !m.content.startsWith("▶ Running macro"))
+		.map((m) => ({ label: "", prompt: m.content }))
+	if (!steps.length) return
+	setMacroPrefill({
+		macro_name: currentTitle.value && currentTitle.value !== "New chat" ? currentTitle.value : "",
+		steps,
+	})
+	router.push("/macros/new")
+}
+// An agent-proposed ```jarvis-macro card's "Save as macro" button.
+function openMacroFromCard(card) {
+	setMacroPrefill({
+		macro_name: card.name || "",
+		description: card.description || "",
+		steps: (card.steps || []).map((s) => ({ label: s.label || "", prompt: s.prompt || "" })),
+	})
+	router.push("/macros/new")
+}
+
 function macroCardOf(m) {
 	const content = (m && m.content) || ""
 	if (!content.includes("jarvis-macro")) return null
@@ -3211,7 +2037,7 @@ async function applyDraft(submitFlag) {
 		})
 		closeDraftPanel()
 		await loadConversation(currentId.value)
-		loadConversations()
+		store.loadConversations()
 	} catch (e) {
 		p.applying = false
 		p.error = (e && e.messages && e.messages[0]) || (e && e.message) || "Could not save — check the values."
@@ -3318,7 +2144,7 @@ async function confirmPending(pa) {
 		// events; reload to be sure the transcript reflects it (same as applyDraft).
 		removePending(token)
 		await loadConversation(currentId.value)
-		loadConversations()
+		store.loadConversations()
 	} catch (e) {
 		const card = cardById()
 		if (card) card.error = (e && e.messages && e.messages[0]) || (e && e.message) || "Could not confirm."
@@ -3646,7 +2472,6 @@ watch(threadInnerEl, (el) => {
 	}
 })
 onBeforeUnmount(() => {
-	window.removeEventListener("hashchange", _hashRouteHandler)
 	if (threadRO) {
 		threadRO.disconnect()
 		threadRO = null
@@ -3724,10 +2549,6 @@ function onKey(e) {
 	}
 }
 
-async function loadConversations() {
-	refreshApprovalsBadge()
-	conversations.value = await api.listConversations()
-}
 async function loadConversation(id) {
 	if (!id) {
 		messages.value = []
@@ -3776,13 +2597,22 @@ async function loadConversation(id) {
 	// streaming=1 (crashed worker) can't lock the composer forever; live deltas +
 	// run:end clear it normally.
 	const _streaming = [...messages.value].reverse().find((m) => m.role === "assistant" && m.streaming)
+	let _resumed = false
 	if (_streaming) {
 		const fresh = _streaming.modified && new Date() - new Date(_streaming.modified.replace(" ", "T")) < 5 * 60 * 1000
 		if (fresh) {
 			sending.value = true
 			waiting.value = !((_streaming.content || "").trim())
+			store.streamingConvId = id
+			_resumed = true
 		}
 	}
+	// Reconcile the sidebar streaming dot with the fetched state: if the store
+	// still marks THIS conversation as streaming but its messages say otherwise
+	// (run ended while we were on another route, or a stale streaming=1 flag),
+	// clear it — otherwise the dot pulses forever. A dot on a DIFFERENT
+	// conversation is left alone: its live socket deltas keep it honest.
+	if (!_resumed && store.streamingConvId === id) store.streamingConvId = null
 	// A freshly opened/refreshed chat should land on the newest message and stay
 	// pinned there while late content settles; the ResizeObserver takes over.
 	pinnedToBottom.value = true
@@ -3939,6 +2769,7 @@ function resetRunState() {
 	waiting.value = false
 	activeTools.value = []
 	currentRunId.value = null
+	store.streamingConvId = null
 	pendingFiles.value = []
 	mention.value = { ...mention.value, open: false }
 	histIdx.value = null
@@ -3958,6 +2789,10 @@ async function selectConversation(id) {
 	// navigating into the run's own conversation.
 	if (macroRun.value && macroRun.value.conversation !== id) macroRun.value = null
 	currentId.value = id
+	// Selection can also start INSIDE the component (proactive toast, run
+	// history) — keep the URL coherent with the sidebar's /c/:id navigation.
+	// No-op when the route watcher initiated this call (params already match).
+	if (route.params.id !== id) router.replace("/c/" + id)
 	await loadConversation(id)
 	await nextTick()
 	autoGrow()
@@ -3969,7 +2804,10 @@ async function newChat() {
 	const conv = await api.createOrFocusEmpty()
 	currentId.value = conv?.name || conv
 	messages.value = []
-	await loadConversations()
+	// Leaving a /c/:id URL on an old conversation would make its sidebar row
+	// unclickable (same-route push is a no-op) — reset to the chat home.
+	if (route.params.id) router.replace({ name: "Chat" })
+	await store.loadConversations()
 	await nextTick()
 	inputEl.value?.focus()
 }
@@ -3981,19 +2819,6 @@ function fillInput(text) {
 		inputEl.value?.focus()
 		autoGrow()
 	})
-}
-function goDesk() {
-	window.location.assign("/app")
-}
-function goToOnboarding() {
-	// Full nav (not router.push): the onboarding-complete flow reloads to /jarvis/
-	// anyway, and a bare `window.*` in an inline @click compiles to _ctx.window
-	// (undefined) — so it must live in a script method, per goDesk/openErpDesk.
-	window.location.assign("/jarvis/onboarding")
-}
-function goAccount() {
-	userMenuOpen.value = false
-	router.push({ name: "Account" })
 }
 function openErpDesk() {
 	window.open("/app", "_blank")
@@ -4010,10 +2835,8 @@ async function selectModel(m) {
 	}
 }
 function onDocClick(e) {
-	if (!e.target.closest(".jv-usermenu-wrap")) userMenuOpen.value = false
 	if (!e.target.closest(".jv-modelmenu-wrap")) modelMenuOpen.value = false
 	if (!e.target.closest(".jv-composer")) mention.value = { ...mention.value, open: false }
-	if (!e.target.closest(".jv-conv-menu") && !e.target.closest(".jv-conv-more")) convMenuFor.value = null
 }
 async function retry(messageId) {
 	sending.value = true
@@ -4066,7 +2889,7 @@ async function send(textArg) {
 			// Adopt the server-created conversation so realtime events route to
 			// this thread, then refresh the sidebar without blocking anything.
 			currentId.value = r.conversation_id
-			loadConversations()
+			store.loadConversations()
 		}
 	} catch (e) {
 		sending.value = false
@@ -4090,14 +2913,13 @@ function onEvent(p) {
 	// first real turn). Handle it before the current-conversation guard so the
 	// sidebar updates even if the user has since switched chats.
 	if (p.kind === "conversation:renamed" && p.conversation_id) {
-		const c = conversations.value.find((x) => x.name === p.conversation_id)
-		if (c && p.title) c.title = p.title
+		store.applyRemoteRename(p.conversation_id, p.title)
 		return
 	}
 	// Jarvis started a conversation with us (proactive). Refresh the sidebar and
 	// surface a toast; handled before the current-conversation guard.
 	if (p.kind === "conversation:new" && p.conversation_id) {
-		loadConversations()
+		store.applyRemoteNew()
 		proactiveToast.value = { id: p.conversation_id, title: p.title || "Message from Jarvis", preview: p.preview || "" }
 		return
 	}
@@ -4116,17 +2938,6 @@ function onEvent(p) {
 			}
 		}
 		patchMacroRunRow(p, false) // live-advance the open run-history dashboard
-		return
-	}
-	// Background summarize finished (worker-side apply) — refresh the Run gate
-	// + badges and tell the user; handled before the current-conversation guard.
-	if (p.kind === "macro:merged") {
-		if (macrosModalOpen.value) loadMacros()
-		_showMergeNotice(
-			p.status === "ready"
-				? `Summary ready — “${p.macro_name || "macro"}” now runs as one prompt.`
-				: `“${p.macro_name || "Macro"}” keeps its step sequence (couldn't summarize).`,
-		)
 		return
 	}
 	if (p.kind === "macro:done") {
@@ -4184,6 +2995,7 @@ function onEvent(p) {
 			activeTools.value = []
 			waiting.value = true
 			statusPhase.value = "model"
+			store.streamingConvId = p.conversation_id || currentId.value
 			break
 		case "assistant:delta": {
 			waiting.value = false
@@ -4244,8 +3056,9 @@ function onEvent(p) {
 			statusPhase.value = null
 			activeTools.value = []
 			currentRunId.value = null
+			store.streamingConvId = null
 			_notifyReplyReady() // browser notification when the tab is hidden (opt-in)
-			loadConversations()
+			store.loadConversations()
 			loadConversation(currentId.value)
 			// Re-render charts after the reload settles — late re-renders can swap a
 			// freshly-rendered mermaid node back to raw source; these idle passes
@@ -4260,6 +3073,7 @@ function onEvent(p) {
 			statusPhase.value = null
 			activeTools.value = []
 			currentRunId.value = null
+			store.streamingConvId = null
 			loadConversation(currentId.value)
 			break
 	}
@@ -4279,6 +3093,7 @@ function stopRun() {
 	waiting.value = false
 	sending.value = false
 	activeTools.value = []
+	store.streamingConvId = null
 }
 
 // ---- file input ----
@@ -4459,38 +3274,58 @@ function onResync() {
 	const now = Date.now()
 	if (now - _lastResync < 2000) return // connect + visibility often co-fire
 	_lastResync = now
-	loadConversations()
+	store.loadConversations()
 	loadConversation(currentId.value)
 }
 function onVisibility() {
 	if (document.visibilityState === "visible") onResync()
 }
 
+// ---- shell contract (§3.7): New Chat requests, external navigation and
+// external deletes now arrive from outside the component. ----
+// D10 — the shell sets pendingNewChat; consume + clear it here. During boot
+// the flag is only marked (onMounted starts on the empty state instead of
+// restoring the last conversation).
+let _consumedNewChat = false
+watch(
+	() => store.pendingNewChat,
+	(v) => {
+		if (!v) return
+		store.pendingNewChat = false
+		_consumedNewChat = true
+		if (!booting.value) newChat()
+	},
+	{ immediate: true },
+)
+// Sidebar rows navigate via /c/:id — selection now happens outside the
+// component, so follow the route param.
+watch(
+	() => route.params.id,
+	(id) => {
+		if (id && id !== currentId.value) selectConversation(id)
+	},
+)
+// External archive (deleted from the sidebar): fall back to the empty
+// new-chat state when the open conversation disappears from the list.
+watch(
+	() => store.conversations,
+	(list) => {
+		if (booting.value || !currentId.value) return
+		if (!list.some((c) => c.name === currentId.value)) {
+			currentId.value = null
+			messages.value = []
+			resetRunState()
+			if (route.params.id) router.replace({ name: "Chat" })
+		}
+	},
+)
+
 onMounted(async () => {
-	// Hash page-routes: lifecycle-scoped (was a top-level anonymous listener
-	// that stacked on remount and fired before auth/bootstrap).
-	window.addEventListener("hashchange", _hashRouteHandler)
-	setTimeout(_hashRouteHandler, 400)
-	// Latency plan, Phase 1.3: the bootstrap network calls used to run as a
-	// serial awaited chain (ready → ui settings → conversations), each a full
-	// round-trip. Fire them concurrently and await in order below — the
-	// onboarding redirect check still resolves before anything is revealed,
-	// and list_conversations (which triggers the server-side prefix prewarm)
-	// now starts ~2 RTTs earlier.
-	const readyP = api.isReadyForChat().catch(() => null)
+	// Latency plan, Phase 1.3: bootstrap calls run concurrently and are
+	// awaited in order below. (The onboarding gate moved to AppShell, D11;
+	// legacy #hash deep-links moved to the router, §9.)
 	const uiP = api.getChatUiSettings().catch(() => null)
-	const convsP = loadConversations().catch(() => {})
-	// Invite, don't force: if the customer hasn't finished signup / LLM setup,
-	// show a welcome card in place of the chat thread/composer instead of
-	// redirecting into the wizard (System Managers get a "Set up Jarvis" button
-	// there; everyone else is told to ask their admin). A transient readiness
-	// check failure falls through to the normal chat rather than trapping them.
-	const r = await readyP
-	if (r && r.ready === false) {
-		notReady.value = true
-		booting.value = false // reveal the UI (show the card, not the spinner)
-		return // skip socket/tool setup — chat can't work until set up
-	}
+	const convsP = store.loadConversations().catch(() => {})
 	socket?.on("jarvis:event", onEvent)
 	socket?.on("connect", onResync)
 	document.addEventListener("visibilitychange", onVisibility)
@@ -4505,16 +3340,24 @@ onMounted(async () => {
 	loadCustomSkills()
 	try {
 		await convsP
-		// Restore the chat the user was last on (survives refresh + duplicated tab)
-		// before falling back to the first sidebar entry, so a starred chat sorting
-		// to the top never hijacks navigation away from your current chat.
-		let _stored = null
-		try { _stored = localStorage.getItem("jarvis-last-conv") } catch (e) {}
-		const _storedValid = _stored && conversations.value.some((c) => c.name === _stored)
-		const first = route.params.id || (_storedValid ? _stored : null) || conversations.value[0]?.name
-		if (first) {
-			currentId.value = first
-			await loadConversation(first)
+		if (_consumedNewChat) {
+			// New Chat was requested from another route while we booted —
+			// start on a fresh empty conversation instead of restoring.
+			_consumedNewChat = false
+			await newChat()
+		} else {
+			// Restore the chat the user was last on (survives refresh + duplicated
+			// tab) before falling back to the first sidebar entry, so a starred
+			// chat sorting to the top never hijacks navigation away from your
+			// current chat.
+			let _stored = null
+			try { _stored = localStorage.getItem("jarvis-last-conv") } catch (e) {}
+			const _storedValid = _stored && store.conversations.some((c) => c.name === _stored)
+			const first = route.params.id || (_storedValid ? _stored : null) || store.conversations[0]?.name
+			if (first) {
+				currentId.value = first
+				await loadConversation(first)
+			}
 		}
 	} finally {
 		booting.value = false // reveal welcome/thread only after the first load
@@ -4533,26 +3376,20 @@ onBeforeUnmount(() => {
 	document.removeEventListener("pointerdown", onDocClick)
 	window.removeEventListener("keydown", onGlobalKey)
 	clearInterval(_thinkTimer)
+	// ChatView is the sole writer of streamingConvId (§4 contract) and its
+	// socket handlers detach above — nothing can clear the flag once we're
+	// gone, so navigating off mid-stream would leave the sidebar dot pulsing
+	// forever. Remount reconciles from fetched state in loadConversation.
+	store.streamingConvId = null
 })
-// Global keyboard shortcuts (documented in Settings → Shortcuts).
+// Chat-surface keyboard handling (Esc closes overlays). Ctrl+Shift+O and
+// Ctrl+B are owned by the shell now (AppShell → useShortcuts, §3.1).
 function onGlobalKey(e) {
 	if (e.defaultPrevented) return
-	if (e.ctrlKey && e.shiftKey && (e.key === "O" || e.key === "o")) {
-		e.preventDefault(); newChat()
-	} else if (e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === "B" || e.key === "b")) {
-		e.preventDefault(); toggleSidebar()
-	} else if (e.key === "Escape" && confirmBox.value) {
+	if (e.key === "Escape" && confirmBox.value) {
 		_settleConfirm(false)
 	} else if (e.key === "Escape" && artifact.value) {
 		closeArtifact()
-	} else if (e.key === "Escape" && macroEditorOpen.value) {
-		closeMacroEditor()
-	} else if (e.key === "Escape" && macrosModalOpen.value) {
-		closeMacrosModal()
-	} else if (e.key === "Escape" && shareModalOpen.value) {
-		closeShareModal()
-	} else if (e.key === "Escape" && skillsModalOpen.value) {
-		closeSkillsModal()
 	} else if (e.key === "Escape" && settingsOpen.value) {
 		settingsOpen.value = false
 	}
@@ -4565,21 +3402,18 @@ function onGlobalKey(e) {
    pops white select menus and calendar popups. */
 .jv-root { color-scheme: light; }
 .jv-root.jv-dark { color-scheme: dark; }
-/* Refined Indigo brand mark (dark mode): the spark boxes — sidebar brand,
-   rail logo, empty-state hero, assistant avatars, proactive toast — trade the
-   flat accent fill for an indigo→violet gradient with a soft indigo glow.
-   !important beats the elements' inline background:var(--blue). */
+/* Refined Indigo brand mark (dark mode): the spark boxes — empty-state hero,
+   assistant avatars, proactive toast — trade the flat accent fill for an
+   indigo→violet gradient with a soft indigo glow. !important beats the
+   elements' inline background:var(--blue). */
 .jv-dark .jv-logo,
-.jv-dark .jv-rail-logo,
 .jv-dark .jv-toast-ic {
 	background: linear-gradient(135deg, #6e8bff, #8b5cf6) !important;
 	box-shadow: 0 2px 10px rgba(110, 139, 255, .35) !important;
 }
-/* primary buttons also invert to black/white on hover (depends on their base
-   color, so the white text/icon flips to the surface color). !important beats
-   the inline backgrounds on the new-chat and send buttons. */
-.jv-newchat:hover { background: var(--text) !important; color: var(--surface) !important; }
-.jv-newchat:hover svg { stroke: var(--surface) !important; }
+/* The send button inverts to black/white on hover (depends on its base color,
+   so the white icon flips to the surface color). !important beats the inline
+   background. */
 /* Send button: springy lift + arrow nudge on hover, press-in on click, and a
    one-shot pop when it becomes ready (text entered). */
 .jv-sendbtn { transition: transform .16s cubic-bezier(.34, 1.56, .64, 1), background .14s ease; }
@@ -4591,36 +3425,9 @@ function onGlobalKey(e) {
 @keyframes jv-send-pop { 0% { transform: scale(.7); } 55% { transform: scale(1.15); } 100% { transform: scale(1); } }
 .jv-sendbtn:hover:not(:disabled) { background: var(--text) !important; }
 .jv-sendbtn:hover:not(:disabled) svg { stroke: var(--surface) !important; }
-/* Collapsible sidebar: slide it off-screen (root has overflow:hidden) so the
-   chat reclaims the full width, openclaw-style. */
-.jv-sidebar { transition: width .2s ease; }
-/* Collapsed → slim icon rail: shrink to a bar and hide everything but the rail. */
-.jv-sidebar.collapsed { width: 56px !important; }
-/* `!important` is required: the sidebar header carries an inline
-   `display:flex`, which beats a plain rule and would otherwise leak the logo +
-   "ERPNext Assistant" text into (and below) the collapsed rail. */
-.jv-sidebar.collapsed > *:not(.jv-rail) { display: none !important; }
-.jv-rail { display: flex; flex-direction: column; align-items: center; gap: 7px; height: 100%; padding: 12px 0; }
-.jv-rail-logo { width: 30px; height: 30px; border-radius: 8px; background: var(--blue); display: flex; align-items: center; justify-content: center; flex: none; margin-bottom: 3px; box-shadow: 0 1px 2px rgba(37,99,235,.35); }
-.jv-rail-btn { width: 38px; height: 38px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; border-radius: 9px; cursor: pointer; color: var(--text-2); flex: none; transition: background .12s, color .12s; }
-.jv-rail-btn:hover { background: var(--surface-2); color: var(--text); }
-.jv-rail-new { background: var(--blue); color: #fff; }
-.jv-rail-new:hover { background: var(--blue); color: #fff; filter: brightness(1.08); }
-.jv-rail-avatar { width: 32px; height: 32px; border-radius: 50%; background: #e7ddcf; color: #8a6d3b; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; cursor: pointer; flex: none; }
-.jv-conv { position: relative; display: flex; align-items: center; gap: 9px; padding: 7px 9px; border-radius: 6px; cursor: pointer; margin-bottom: 1px; }
-.jv-conv:hover { background: var(--surface-2); }
-.jv-conv.on { background: var(--surface-3); }
-.jv-conv-ic { flex: none; }
-.jv-conv-title { flex: 1; min-width: 0; font-size: 13px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.jv-conv.on .jv-conv-title { color: var(--text); font-weight: 500; }
-.jv-conv-more { flex: none; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; border: none; background: transparent; border-radius: 5px; color: var(--text-3); cursor: pointer; opacity: 0; }
-.jv-conv:hover .jv-conv-more, .jv-conv-more:focus { opacity: 1; }
-.jv-conv-more:hover { background: var(--surface-3); color: var(--text); }
-.jv-conv-menu { position: absolute; top: calc(100% - 2px); right: 6px; z-index: 25; min-width: 150px; background: var(--surface); border: 1px solid var(--border-2); border-radius: 9px; box-shadow: 0 10px 28px rgba(20, 20, 30, 0.18); padding: 5px; }
 .jv-menuitem-danger { color: var(--red); }
 .jv-menuitem-danger svg { color: var(--red); }
 .jv-menuitem-danger:hover { background: var(--red-bg); }
-.jv-rename-input { flex: 1; min-width: 0; font-family: inherit; font-size: 13px; color: var(--text); background: var(--surface); border: 1px solid var(--blue); border-radius: 5px; padding: 3px 6px; outline: none; }
 .jv-suggest:hover { border-color: var(--border-2); background: var(--surface-1); }
 /* buttons invert to black/white on hover (theme-adaptive: black on light,
    white on dark) — var(--text)/var(--surface) flip, with an svg-stroke
@@ -4636,8 +3443,6 @@ function onGlobalKey(e) {
 .jv-modelpill:hover span { color: var(--surface) !important; }
 .jv-menuitem { display: flex; align-items: center; gap: 9px; width: 100%; padding: 7px 9px; border: none; background: transparent; border-radius: 7px; font-family: inherit; font-size: 12.5px; color: var(--text); cursor: pointer; text-align: left; }
 .jv-menuitem:hover, .jv-menuitem.on { background: var(--surface-1); }
-.jv-usercard { transition: background 0.12s; }
-.jv-usercard:hover { background: var(--surface-2); }
 /* black focus highlight on the composer */
 .jv-composer:focus-within { border-color: var(--text); box-shadow: 0 0 0 3px rgba(23, 23, 23, 0.07); }
 /* jump-to-latest arrow — floats just above the composer, centered */
@@ -4886,8 +3691,6 @@ function onGlobalKey(e) {
 .jv-share-check { flex: none; }
 .jv-share-helper { display: flex; align-items: center; gap: 7px; margin-top: 13px; padding: 9px 11px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 9px; font-size: 11.5px; color: var(--text-3); line-height: 1.4; }
 .jv-share-helper svg { stroke: var(--text-3); flex: none; }
-/* right sidebar: custom skills */
-.jv-skillbar { width: 52px; flex: none; height: 100%; background: var(--surface-1); border-left: 1px solid var(--border); display: flex; flex-direction: column; min-width: 0; }
 /* centered skills popup */
 .jv-skills-overlay { position: absolute; inset: 0; z-index: 62; background: rgba(15, 15, 22, 0.34); display: flex; align-items: center; justify-content: center; padding: 24px; }
 .jv-dark .jv-skills-overlay { background: rgba(0, 0, 0, 0.55); }
@@ -4905,27 +3708,11 @@ function onGlobalKey(e) {
 .jv-skill-newrow:hover svg { stroke: #fff; }
 .jv-skill-formfoot { display: flex; align-items: center; gap: 10px; margin-top: 15px; flex-wrap: wrap; }
 .jv-skill-foothint { font-size: 11px; color: var(--text-3); }
-.jv-skillrail { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 16px 0; }
-.jv-skillrail-btn { position: relative; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; background: transparent; border: 1px solid transparent; border-radius: 12px; color: var(--text-2); cursor: pointer; transition: background .14s, border-color .14s, color .14s, transform .06s; }
-.jv-skillrail-btn:hover { background: var(--surface-2); border-color: var(--border); color: var(--text); }
-.jv-skillrail-btn:active { transform: scale(.94); }
-.jv-skillrail-btn.active { background: var(--blue-bg); border-color: transparent; color: var(--blue); }
-.jv-railtip { position: absolute; right: calc(100% + 12px); top: 50%; transform: translateY(-50%) translateX(4px); background: var(--text); color: var(--surface); font-size: 11.5px; font-weight: 600; letter-spacing: .01em; padding: 4px 9px; border-radius: 7px; white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity .13s, transform .13s; box-shadow: 0 6px 18px rgba(0, 0, 0, .2); }
-.jv-skillrail-btn:hover .jv-railtip { opacity: 1; transform: translateY(-50%) translateX(0); }
-.jv-skillbar-head { flex: none; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 14px 14px 12px 16px; border-bottom: 1px solid var(--border); }
-.jv-skillbar-title { font-size: 15px; font-weight: 600; color: var(--text); letter-spacing: -.01em; }
-.jv-skillbar-sub { font-size: 11px; color: var(--text-3); margin-top: 2px; }
-.jv-skillbar-actions { flex: none; display: flex; gap: 8px; padding: 12px 16px 0; }
-.jv-skillbar-actions .jv-skill-btn { flex: 1; text-align: center; }
-.jv-skillbar-status { flex: none; display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--text-3); padding: 10px 16px 0; line-height: 1.4; }
-.jv-skillbar-status.ok { color: var(--green); }
-.jv-skillbar-status.err { color: var(--red); }
 .jv-skill-dot { width: 7px; height: 7px; border-radius: 99px; background: var(--text-3); flex: none; }
 .jv-skill-dot.ok { background: var(--green); }
 .jv-skill-dot.err { background: var(--red); }
 .jv-skill-dot.spin { border: 2px solid var(--border-2); border-top-color: var(--blue); background: transparent; width: 11px; height: 11px; animation: jv-spin .7s linear infinite; }
 @keyframes jv-spin { to { transform: rotate(360deg); } }
-.jv-skillbar-body { flex: 1; overflow-y: auto; padding: 12px 16px 18px; }
 .jv-iconbtn-bd.on { background: var(--blue-bg) !important; border-color: var(--blue) !important; }
 .jv-iconbtn-bd.on svg { stroke: var(--blue); }
 /* theme segmented control */
@@ -5087,27 +3874,6 @@ function onGlobalKey(e) {
 /* ===== Macros ===== */
 /* list rows */
 .jv-macro-sub { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-3); margin-top: 2px; }
-.jv-macro-sched { display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px; background: var(--blue-bg); color: var(--blue); border-radius: 99px; font-size: 10.5px; font-weight: 600; text-transform: capitalize; }
-/* editor step rows */
-.jv-macro-sched-fields { display: flex; gap: 12px; margin: 8px 0 4px; }
-/* macro per-STEP skill tagging: compact pill multi-select under each prompt */
-.jv-macro-step-skills { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
-.jv-macro-step-skills-l { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); margin-right: 2px; }
-.jv-macro-skill-opt { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border-2); background: var(--surface); color: var(--text-2); font-family: ui-monospace, Menlo, monospace; font-size: 12px; font-weight: 500; cursor: pointer; transition: border-color .12s, background .12s, color .12s, box-shadow .12s; }
-.jv-macro-skill-opt--sm { padding: 3px 9px; font-size: 11px; gap: 4px; }
-.jv-macro-skill-opt:hover { border-color: var(--blue); color: var(--text); }
-.jv-macro-skill-opt.on { background: var(--blue-bg); border-color: var(--blue-bd); color: var(--blue); box-shadow: 0 1px 2px rgba(20, 20, 30, .06); }
-.jv-macro-skill-shared { font-family: 'Inter', system-ui, sans-serif; font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; padding: 1px 6px; border-radius: 999px; background: var(--amber-bg); color: var(--amber); border: 1px solid var(--amber-bd); }
-.jv-macro-step { border: 1px solid var(--border); border-radius: 11px; padding: 10px; margin-top: 10px; background: var(--surface-1); transition: border-color .12s, box-shadow .12s, opacity .12s, transform .12s; }
-.jv-macro-step.dragging { opacity: .45; }
-.jv-macro-step.dragover { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-bg); }
-.jv-macro-step-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-.jv-macro-grip { flex: none; display: flex; align-items: center; justify-content: center; width: 22px; height: 26px; color: var(--text-3); cursor: grab; border-radius: 6px; transition: background .12s, color .12s; }
-.jv-macro-grip:hover { color: var(--text); background: var(--surface-2); }
-.jv-macro-grip:active { cursor: grabbing; }
-.jv-macro-step-num { flex: none; width: 20px; height: 20px; border-radius: 99px; background: var(--blue-bg); color: var(--blue); font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
-.jv-macro-step-label { flex: 1; }
-.jv-macro-step .jv-iconbtn:disabled { opacity: .35; cursor: default; }
 /* progress banner */
 .jv-macrobar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border: 1px solid var(--blue); background: var(--blue-bg); border-radius: 11px; }
 .jv-macrobar.ok { border-color: var(--green); background: var(--green-bg); }
@@ -5127,28 +3893,8 @@ function onGlobalKey(e) {
 .jv-macrocard-sub { font-size: 11.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .jv-macrocard-btn { flex: none; padding: 7px 13px; background: var(--blue); border: 1px solid var(--blue); border-radius: 8px; font-family: inherit; font-size: 12.5px; font-weight: 600; color: #fff; cursor: pointer; transition: opacity .12s; }
 .jv-macrocard-btn:hover { opacity: .9; }
-/* --- macro editor tabs (Steps | Summarized prompt) --- */
-.jv-macro-tabs { display: flex; gap: 4px; margin-top: 16px; border-bottom: 1px solid var(--border); }
-.jv-macro-tab { background: none; border: none; border-bottom: 2px solid transparent; color: var(--text-3); font-size: 12.5px; font-weight: 600; padding: 7px 10px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
-.jv-macro-tab.on { color: var(--text); border-bottom-color: var(--blue); }
-.jv-macro-tab-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
 .jv-macro-merged-badge { margin-left: 7px; font-size: 9.5px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; color: var(--green); background: var(--green-bg); border: 1px solid var(--green-bd); border-radius: 99px; padding: 1px 7px; }
 .jv-macro-merged-badge--pending { color: var(--amber); background: var(--amber-bg); border-color: var(--amber-bd); }
-
-/* --- macro merge review --- */
-.jv-merge-modal { width: min(640px, 92vw); background: var(--surface); border: 1px solid var(--border-2); border-radius: 13px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
-.jv-merge-head { display: flex; align-items: center; gap: 10px; }
-.jv-merge-head b { font-size: 15px; }
-.jv-merge-head .jv-art-close { margin-left: auto; }
-.jv-merge-pending { color: var(--text-2); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 0; }
-.jv-merge-sub { flex-basis: 100%; font-size: 12px; color: var(--text-3); }
-.jv-merge-spin { width: 14px; height: 14px; border: 2px solid var(--border-2); border-top-color: var(--blue); border-radius: 50%; animation: jv-spin 0.9s linear infinite; }
-.jv-merge-deps { display: flex; gap: 6px; flex-wrap: wrap; }
-.jv-merge-chip { font-size: 11px; font-weight: 600; color: var(--blue); background: var(--blue-bg); border: 1px solid var(--blue-bd); border-radius: 99px; padding: 3px 9px; }
-.jv-merge-text { width: 100%; box-sizing: border-box; background: var(--surface-1); border: 1px solid var(--border-2); border-radius: 9px; color: var(--text); padding: 10px 12px; font-size: 13.5px; line-height: 1.5; resize: vertical; }
-.jv-merge-keep { color: var(--text-2); background: var(--surface-1); border: 1px solid var(--border); border-radius: 9px; padding: 12px 14px; }
-.jv-merge-foot { display: flex; gap: 10px; align-items: center; }
-.jv-merge-notice { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); z-index: 60; background: var(--surface-2); border: 1px solid var(--border-2); color: var(--text); border-radius: 99px; padding: 9px 16px; font-size: 13px; box-shadow: 0 8px 28px rgba(0,0,0,.35); }
 
 /* rich action cards (doc confirm / email draft) */
 /* .jv-action must stay overflow:visible — the edit form's Link dropdown
@@ -5199,11 +3945,9 @@ function onGlobalKey(e) {
 .jv-dark .jv-iconbtn-bd:hover svg,
 .jv-dark .jv-modelpill:hover svg { stroke: var(--text) !important; }
 .jv-dark .jv-modelpill:hover span { color: var(--text) !important; }
-.jv-dark .jv-newchat:hover,
 .jv-dark .jv-sendbtn:hover:not(:disabled),
 .jv-dark .jv-confirm-yes:hover,
 .jv-dark .jv-action-primary:hover { background: var(--blue) !important; color: #fff !important; border-color: var(--blue) !important; filter: brightness(1.18); }
-.jv-dark .jv-newchat:hover svg,
 .jv-dark .jv-sendbtn:hover:not(:disabled) svg { stroke: #fff !important; }
 .jv-action-discard { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-family: inherit; font-size: 12.5px; font-weight: 600; padding: 8px 13px; border-radius: 8px; border: 1px solid var(--red-bd); background: var(--red-bg); color: var(--red); cursor: pointer; transition: background .12s, color .12s, border-color .12s; }
 .jv-action-discard:hover { background: var(--red); color: #fff; border-color: var(--red); }
@@ -5301,9 +4045,4 @@ function onGlobalKey(e) {
 .jv-slide-enter-from, .jv-slide-leave-to { opacity: 0; }
 .jv-slide-enter-from .jv-artifact-panel, .jv-slide-leave-to .jv-artifact-panel { transform: translateX(100%); }
 
-.jv-page-mode .jv-skills-modal {
-	width: min(1150px, 96vw);
-	height: 93vh;
-	max-height: 93vh;
-}
 </style>

@@ -220,3 +220,33 @@ export const setAgentRoles = (agent_slug, roles) =>
 export const setListingStatus = (agent_slug, status) =>
 	call(AG + "set_listing_status", { agent_slug, status })
 export const getAgentAdminOverview = () => call(AG + "get_agent_admin_overview")
+
+// ── Paginated feature-page lists (design §2.7) ──────────────────────────────
+// One frozen envelope for all four features:
+//   { rows, total, has_more, start, page_length[, facets] }  (facets: Approvals only)
+// `_page` normalizes the request args (search/filters/sort/paging) exactly as
+// the four backend endpoints expect; `filters` is JSON-encoded here so the SPA
+// passes a plain object and the server `frappe.parse_json`s it.
+const _page = (p = {}) => ({
+	search: p.search || "",
+	filters: JSON.stringify(p.filters || {}),
+	sort_field: p.sort_field || "",
+	sort_dir: p.sort_dir || "",
+	start: p.start || 0,
+	page_length: p.page_length || 20,
+})
+export const listCustomSkillsPage = (p) => call(SK + "list_custom_skills_page", _page(p))
+export const listMacrosPage = (p) => call(MC + "list_macros_page", _page(p))
+export const fileboxListPage = (p) => call("jarvis.chat.filebox.list_inbound_page", _page(p))
+export const listApprovalsPage = (p) => call("jarvis.chat.approvals_api.list_approvals_page", _page(p))
+
+// ── File Box FB-1: cascade delete + clear-processed + bulk delete (Q4) ──────
+// delete_inbound: owner-gated cascade (approvals + messages + File docs + the
+// conversation); refuses while the latest assistant message is streaming.
+export const fileboxDelete = (conversation) => call("jarvis.chat.filebox.delete_inbound", { conversation })
+// clear_processed_inbound: bulk-delete the caller's done|error rows → {ok, deleted}.
+export const fileboxClearProcessed = () => call("jarvis.chat.filebox.clear_processed_inbound")
+// delete_inbound_bulk (Q4): same cascade + streaming-refusal per row → {deleted, skipped}.
+// List JSON-encoded for parity with the other list-argument wrappers.
+export const fileboxDeleteBulk = (conversations) =>
+	call("jarvis.chat.filebox.delete_inbound_bulk", { conversations: JSON.stringify(conversations || []) })

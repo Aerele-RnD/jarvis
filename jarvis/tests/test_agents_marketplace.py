@@ -243,6 +243,84 @@ class TestAgentsMarketplace(unittest.TestCase):
 		finally:
 			frappe.set_user("Administrator")
 
+	def test_list_findings_returns_redetections_for_each_observing_run(self):
+		# Regression: dedupe keeps ONE Finding row per fingerprint (its `run`
+		# field stays the FIRST discovering run), so the run drill-down must
+		# return the findings each run OBSERVED — matching that run's
+		# findings_count — not just the rows it created.
+		inst_name = _install_as(self.owner, "audit-auditor")
+		frappe.set_user(self.owner)
+		try:
+			run1 = agent_runs.record_scrutiny_run(inst_name, "manual", None, self._scrutiny_result())
+			run2 = agent_runs.record_scrutiny_run(inst_name, "manual", None, self._scrutiny_result())
+			for run in (run1, run2):
+				rows = agents_api.list_findings(run=run.name)
+				self.assertEqual(len(rows), 2, f"drill-down of {run.name}")
+				self.assertEqual(
+					len(rows),
+					frappe.db.get_value(RUN, run.name, "findings_count"),
+					f"count/drill-down mismatch for {run.name}",
+				)
+			# A third run observing only ONE finding drills down to exactly it,
+			# while the earlier runs' drill-downs are unchanged (history stable).
+			only_tb = {"findings": [self._scrutiny_result()["findings"][1]]}
+			run3 = agent_runs.record_scrutiny_run(inst_name, "manual", None, only_tb)
+			self.assertEqual(
+				[r["rule_id"] for r in agents_api.list_findings(run=run3.name)], ["R-TB"]
+			)
+			self.assertEqual(len(agents_api.list_findings(run=run1.name)), 2)
+			self.assertEqual(len(agents_api.list_findings(run=run2.name)), 2)
+			# Unknown run -> empty, never an error.
+			self.assertEqual(agents_api.list_findings(run="no-such-run"), [])
+		finally:
+			frappe.set_user("Administrator")
+
+	def test_run_completion_stamps_installation_last_run_at(self):
+		from frappe.utils import now_datetime
+
+		inst_name = _install_as(self.owner, "audit-auditor")
+		# Manual-only install: last_run_at stamps on completion; next_run_at
+		# must NOT be invented for an unscheduled install.
+		frappe.db.set_value(
+			INSTALLATION, inst_name,
+			{"schedule_enabled": 0, "next_run_at": None, "last_run_at": None},
+			update_modified=False,
+		)
+		frappe.db.commit()
+		frappe.set_user(self.owner)
+		try:
+			agent_runs.record_scrutiny_run(inst_name, "manual", None, self._scrutiny_result())
+		finally:
+			frappe.set_user("Administrator")
+		inst = frappe.db.get_value(
+			INSTALLATION, inst_name, ["last_run_at", "next_run_at"], as_dict=True
+		)
+		self.assertIsNotNone(inst.last_run_at)
+		self.assertIsNone(inst.next_run_at)
+
+		# Scheduled install: completion stamps last_run_at AND recomputes a
+		# future next_run_at (the scheduler path reaches the same code).
+		frappe.db.set_value(
+			INSTALLATION, inst_name,
+			{
+				"schedule_enabled": 1, "schedule_frequency": "daily",
+				"schedule_time": "09:00:00", "last_run_at": None,
+			},
+			update_modified=False,
+		)
+		frappe.db.commit()
+		frappe.set_user(self.owner)
+		try:
+			agent_runs.record_scrutiny_run(inst_name, "scheduled", None, self._scrutiny_result())
+		finally:
+			frappe.set_user("Administrator")
+		inst = frappe.db.get_value(
+			INSTALLATION, inst_name, ["last_run_at", "next_run_at"], as_dict=True
+		)
+		self.assertIsNotNone(inst.last_run_at)
+		self.assertIsNotNone(inst.next_run_at)
+		self.assertGreater(inst.next_run_at, now_datetime())
+
 	# ------------------------------------------------------------------ #
 	# (d) catalog sync idempotency
 	# ------------------------------------------------------------------ #

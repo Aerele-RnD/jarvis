@@ -87,12 +87,20 @@ def drop_file(file_url: str, file_name: str | None = None) -> dict:
 
 @frappe.whitelist()
 def list_inbound(limit: int = 30) -> list[dict]:
-	"""Recent File-Box conversations for the pane's inbound list, with a
+	"""DEPRECATED (superseded by ``list_inbound_page``): kept for one release for
+	back-compat. Recent File-Box conversations for the pane's inbound list, with a
 	coarse status derived from live chat state - no extra bookkeeping
 	doctype to drift out of sync."""
 	rows = frappe.get_all(
 		"Jarvis Conversation",
-		filters={"title": ["like", "File: %"], "owner": frappe.session.user},
+		# Exclude Archived: archiving (a.k.a. "delete") a File-Box chat is the
+		# way to clear it from the File Box - otherwise the soft-deleted row keeps
+		# showing here because we only match on the "File: " title.
+		filters={
+			"title": ["like", "File: %"],
+			"owner": frappe.session.user,
+			"status": ["!=", "Archived"],
+		},
 		fields=["name", "title", "creation"],
 		order_by="creation desc", limit_page_length=int(limit),
 	)
@@ -142,3 +150,273 @@ def list_inbound(limit: int = 30) -> list[dict]:
 			r["status"] = "done"
 		r["pending_approvals"] = pending
 	return rows
+
+
+# --------------------------------------------------------------------------- #
+# Paginated list (frozen envelope) + FB-1 cascade delete —
+# chat-features-page-migration-design §2.4 + orchestrator Q4.
+# ADDITIVE: list_inbound (above) STAYS (deprecated). The derived status moves
+# INTO SQL so it can be filtered server-side without breaking pagination.
+# --------------------------------------------------------------------------- #
+CONV = "Jarvis Conversation"
+MSG = "Jarvis Chat Message"
+APPROVAL = "Jarvis Approval Request"
+
+_INBOUND_STATUSES = {"done", "processing", "needs_approval", "error"}
+_INBOUND_SORTABLE = {"creation": "creation", "title": "title"}
+
+# The CASE precedence replicates list_inbound's Python ladder exactly:
+# pending > no-assistant-message > streaming/recovering > error > done.
+# `%%` is the literal LIKE percent under pyformat params; `{extra}` is the only
+# str.format hole (server-built AND-clauses; never user text).
+# Both grouped subqueries (pa: pending approvals; lm: latest assistant message)
+# are CORRELATED to the owner's conversations — the owner filter is pushed
+# inside via a JOIN so they never aggregate the whole global tables (which
+# scaled with everyone's data, not the caller's). The outer WHERE keeps only
+# the owner's rows anyway, so results are identical.
+_INBOUND_INNER = """
+	SELECT c.name, c.title, c.creation,
+	       COALESCE(pa.n, 0) AS pending_approvals,
+	       CASE
+	         WHEN COALESCE(pa.n, 0) > 0                 THEN 'needs_approval'
+	         WHEN lm.conversation IS NULL               THEN 'processing'
+	         WHEN lm.streaming = 1 OR lm.recovering = 1 THEN 'processing'
+	         WHEN COALESCE(lm.error, '') != ''          THEN 'error'
+	         ELSE 'done'
+	       END AS status
+	FROM `tabJarvis Conversation` c
+	LEFT JOIN (SELECT ar.conversation, COUNT(*) n
+	           FROM `tabJarvis Approval Request` ar
+	           JOIN `tabJarvis Conversation` ac
+	             ON ac.name = ar.conversation AND ac.owner = %(me)s
+	           WHERE ar.status = 'Pending' GROUP BY ar.conversation) pa
+	  ON pa.conversation = c.name
+	LEFT JOIN (SELECT m.conversation, m.streaming, m.recovering, m.error
+	           FROM `tabJarvis Chat Message` m
+	           JOIN (SELECT mm.conversation, MAX(mm.seq) mseq
+	                 FROM `tabJarvis Chat Message` mm
+	                 JOIN `tabJarvis Conversation` mc
+	                   ON mc.name = mm.conversation AND mc.owner = %(me)s
+	                 WHERE mm.role = 'assistant' GROUP BY mm.conversation) x
+	             ON x.conversation = m.conversation AND x.mseq = m.seq
+	           WHERE m.role = 'assistant') lm ON lm.conversation = c.name
+	WHERE c.owner = %(me)s AND c.title LIKE 'File: %%' AND c.status != 'Archived'
+	{extra}
+"""
+
+
+def _lk(s: str) -> str:
+	"""Escape LIKE wildcards in user search input (``\\`` is the default escape)."""
+	return (s or "").replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _clamp_page(start, page_length) -> tuple[int, int]:
+	try:
+		start = max(0, int(start or 0))
+	except (TypeError, ValueError):
+		start = 0
+	try:
+		pl = int(page_length or 20)
+	except (TypeError, ValueError):
+		pl = 20
+	return start, max(1, min(pl, 100))
+
+
+def _load_filters(filters, allowed: set) -> dict:
+	if isinstance(filters, str):
+		if filters.strip():
+			try:
+				raw = frappe.parse_json(filters)
+			except Exception:
+				raw = {}
+		else:
+			raw = {}
+	else:
+		raw = filters or {}
+	if not isinstance(raw, dict):
+		raw = {}
+	out: dict = {}
+	for k, v in raw.items():
+		if k not in allowed:
+			frappe.throw(f"Unknown filter: {k}")
+		if v in (None, ""):
+			continue
+		out[k] = v
+	return out
+
+
+def _order_by(sort_field, sort_dir, sortable: dict, default_field, default_dir, prefix="") -> str:
+	col = sortable.get(sort_field or "")
+	if not col:
+		return f"{prefix}`{sortable[default_field]}` {default_dir}, {prefix}`name` asc"
+	d = "desc" if (sort_dir or "").lower() == "desc" else "asc"
+	return f"{prefix}`{col}` {d}, {prefix}`name` asc"
+
+
+@frappe.whitelist()
+def list_inbound_page(
+	search: str = "",
+	filters=None,
+	sort_field: str = "",
+	sort_dir: str = "",
+	start: int = 0,
+	page_length: int = 20,
+) -> dict:
+	"""Owner-scoped File-Box conversations with the derived status computed IN SQL,
+	so ``status`` filters and pagination compose. Envelope
+	``{rows, total, has_more, start, page_length}``.
+
+	Filters: ``status`` (done|processing|needs_approval|error), ``from_date`` /
+	``to_date`` (YYYY-MM-DD, inclusive; ``to_date`` implemented as ``creation <
+	to_date + 1 day``). Search matches the title. Sort: ``creation`` (default
+	desc) or ``title``."""
+	from frappe.utils import add_days, getdate
+
+	me = frappe.session.user
+	start, pl = _clamp_page(start, page_length)
+	f = _load_filters(filters, {"status", "from_date", "to_date"})
+
+	params: dict = {"me": me, "start": start, "page_length": pl}
+	extra_parts: list[str] = []
+	if search:
+		params["q"] = f"%{_lk(search)}%"
+		extra_parts.append("AND c.title LIKE %(q)s")
+	if "from_date" in f:
+		try:
+			params["from_date"] = str(getdate(f["from_date"]))
+		except Exception:
+			frappe.throw("Invalid from_date (expected YYYY-MM-DD)")
+		extra_parts.append("AND c.creation >= %(from_date)s")
+	if "to_date" in f:
+		try:
+			params["to_plus"] = str(add_days(getdate(f["to_date"]), 1))
+		except Exception:
+			frappe.throw("Invalid to_date (expected YYYY-MM-DD)")
+		extra_parts.append("AND c.creation < %(to_plus)s")
+	inner = _INBOUND_INNER.format(extra=" ".join(extra_parts))
+
+	outer = ""
+	if "status" in f:
+		if f["status"] not in _INBOUND_STATUSES:
+			frappe.throw("Invalid status filter")
+		params["status"] = f["status"]
+		outer = "WHERE t.status = %(status)s"
+
+	order = _order_by(sort_field, sort_dir, _INBOUND_SORTABLE, "creation", "desc", prefix="t.")
+
+	total = frappe.db.sql(
+		f"SELECT COUNT(*) FROM ({inner}) t {outer}", params
+	)[0][0]
+	rows = frappe.db.sql(
+		f"""SELECT t.name, t.title, t.creation, t.status, t.pending_approvals
+		FROM ({inner}) t {outer}
+		ORDER BY {order}
+		LIMIT %(page_length)s OFFSET %(start)s""",
+		params, as_dict=True,
+	)
+
+	return {
+		"rows": rows,
+		"total": total,
+		"has_more": start + len(rows) < total,
+		"start": start,
+		"page_length": pl,
+	}
+
+
+# --------------------------------------------------------------------------- #
+# FB-1 cascade delete (owner-gated; refuses while the latest assistant message
+# is streaming/recovering — orchestrator Q6).
+# --------------------------------------------------------------------------- #
+def _latest_assistant(conversation: str):
+	rows = frappe.db.sql(
+		"""SELECT streaming, recovering FROM `tabJarvis Chat Message`
+		WHERE conversation = %s AND role = 'assistant'
+		ORDER BY seq DESC LIMIT 1""",
+		(conversation,), as_dict=True,
+	)
+	return rows[0] if rows else None
+
+
+def _cascade(conversation: str) -> None:
+	"""Delete a File-Box conversation and everything hanging off it, in one call:
+	its Approval Requests (any status), Chat Messages, attached File docs (via
+	``delete_doc`` so storage is cleaned), then the conversation (force=True)."""
+	for n in frappe.get_all(APPROVAL, filters={"conversation": conversation}, pluck="name"):
+		frappe.delete_doc(APPROVAL, n, ignore_permissions=True, force=True)
+	frappe.db.delete(MSG, {"conversation": conversation})
+	for fn in frappe.get_all(
+		"File",
+		filters={"attached_to_doctype": CONV, "attached_to_name": conversation},
+		pluck="name",
+	):
+		frappe.delete_doc("File", fn, ignore_permissions=True, force=True)
+	frappe.delete_doc(CONV, conversation, ignore_permissions=True, force=True)
+
+
+def _delete_one(conversation: str) -> None:
+	"""Owner-gated cascade delete of ONE File-Box conversation. Raises on refusal:
+	not found / not permitted / not a File-Box row / still processing. All checks
+	run BEFORE any delete, so a refusal never leaves a partial delete."""
+	doc = frappe.get_doc(CONV, conversation)  # DoesNotExistError if missing
+	if doc.owner != frappe.session.user:
+		frappe.throw("Not permitted", frappe.PermissionError)
+	if not (doc.title or "").startswith("File: "):
+		frappe.throw("Not a File Box conversation")
+	last = _latest_assistant(conversation)
+	if last and (last.streaming or last.recovering):
+		frappe.throw("Still processing — stop or wait for it to finish before deleting")
+	_cascade(conversation)
+
+
+@frappe.whitelist()
+def delete_inbound(conversation: str) -> dict:
+	"""Owner-gated cascade delete of a File-Box conversation (FB-1)."""
+	_delete_one(conversation)
+	frappe.db.commit()
+	return {"ok": True}
+
+
+@frappe.whitelist()
+def delete_inbound_bulk(conversations=None) -> dict:
+	"""Bulk cascade delete (orchestrator Q4). Owner-gated per row, same cascade +
+	streaming refusal as ``delete_inbound``. Returns ``{deleted, skipped:[{
+	conversation, reason}]}`` — a bad/streaming/foreign row is skipped, not fatal."""
+	raw = frappe.parse_json(conversations) if isinstance(conversations, str) else (conversations or [])
+	convs = [str(c) for c in raw if c] if isinstance(raw, list) else []
+	deleted = 0
+	skipped: list[dict] = []
+	for conv in convs:
+		try:
+			_delete_one(conv)
+			deleted += 1
+		except frappe.PermissionError:
+			skipped.append({"conversation": conv, "reason": "not permitted"})
+		except frappe.DoesNotExistError:
+			skipped.append({"conversation": conv, "reason": "not found"})
+		except Exception as e:
+			skipped.append({"conversation": conv, "reason": str(e) or "error"})
+	frappe.db.commit()
+	return {"deleted": deleted, "skipped": skipped}
+
+
+@frappe.whitelist()
+def clear_processed_inbound() -> dict:
+	"""Bulk-delete the caller's File-Box rows whose derived status is done|error
+	(never processing/needs_approval), computed with the same status SQL."""
+	me = frappe.session.user
+	rows = frappe.db.sql(
+		f"SELECT t.name FROM ({_INBOUND_INNER.format(extra='')}) t "
+		f"WHERE t.status IN ('done', 'error')",
+		{"me": me}, as_dict=True,
+	)
+	deleted = 0
+	for r in rows:
+		try:
+			_delete_one(r.name)
+			deleted += 1
+		except Exception:
+			# done/error rows are never streaming; only a concurrent race fails.
+			continue
+	frappe.db.commit()
+	return {"ok": True, "deleted": deleted}

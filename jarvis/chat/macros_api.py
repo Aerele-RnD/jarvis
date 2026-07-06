@@ -97,6 +97,152 @@ def list_macros() -> list[dict]:
 	return macros
 
 
+# --------------------------------------------------------------------------- #
+# Paginated list (frozen envelope) — chat-features-page-migration-design §2.3.
+# ADDITIVE: list_macros (above) STAYS for the Settings → Macro-runs dropdown.
+# --------------------------------------------------------------------------- #
+_MACROS_SORTABLE = {
+	"macro_name": "macro_name", "modified": "modified",
+	"last_run_at": "last_run_at", "next_run_at": "next_run_at",
+}
+_MACROS_FILTERS = {"enabled", "schedule_enabled", "schedule_frequency"}
+_FREQUENCIES = {"daily", "weekly", "monthly"}
+
+
+def _lk(s: str) -> str:
+	"""Escape LIKE wildcards in user search input (``\\`` is the default escape)."""
+	return (s or "").replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _clamp_page(start, page_length) -> tuple[int, int]:
+	try:
+		start = max(0, int(start or 0))
+	except (TypeError, ValueError):
+		start = 0
+	try:
+		pl = int(page_length or 20)
+	except (TypeError, ValueError):
+		pl = 20
+	return start, max(1, min(pl, 100))
+
+
+def _bool01(v) -> int:
+	try:
+		iv = int(v)
+	except (TypeError, ValueError):
+		frappe.throw(_("Filter value must be 0 or 1."))
+	if iv not in (0, 1):
+		frappe.throw(_("Filter value must be 0 or 1."))
+	return iv
+
+
+def _load_filters(filters, allowed: set) -> dict:
+	if isinstance(filters, str):
+		if filters.strip():
+			try:
+				raw = frappe.parse_json(filters)
+			except Exception:
+				raw = {}
+		else:
+			raw = {}
+	else:
+		raw = filters or {}
+	if not isinstance(raw, dict):
+		raw = {}
+	out: dict = {}
+	for k, v in raw.items():
+		if k not in allowed:
+			frappe.throw(_("Unknown filter: {0}").format(k))
+		if v in (None, ""):
+			continue
+		out[k] = v
+	return out
+
+
+def _order_by(sort_field, sort_dir, sortable: dict, default_field, default_dir, prefix="") -> str:
+	col = sortable.get(sort_field or "")
+	if not col:
+		return f"{prefix}`{sortable[default_field]}` {default_dir}, {prefix}`name` asc"
+	d = "desc" if (sort_dir or "").lower() == "desc" else "asc"
+	return f"{prefix}`{col}` {d}, {prefix}`name` asc"
+
+
+@frappe.whitelist()
+def list_macros_page(
+	search: str = "",
+	filters=None,
+	sort_field: str = "",
+	sort_dir: str = "",
+	start: int = 0,
+	page_length: int = 20,
+) -> dict:
+	"""Owner-scoped macros, server-side search/filter/sort/paginate (no step
+	bodies; ``merged_prompt`` body omitted — ``has_summary`` replaces it). Envelope
+	``{rows, total, has_more, start, page_length}``."""
+	me = frappe.session.user
+	start, pl = _clamp_page(start, page_length)
+	f = _load_filters(filters, _MACROS_FILTERS)
+
+	conds = ["owner = %(me)s"]
+	params: dict = {"me": me, "start": start, "page_length": pl}
+
+	if search:
+		params["q"] = f"%{_lk(search)}%"
+		conds.append("(macro_name LIKE %(q)s OR description LIKE %(q)s)")
+	if "enabled" in f:
+		params["enabled"] = _bool01(f["enabled"])
+		conds.append("enabled = %(enabled)s")
+	if "schedule_enabled" in f:
+		params["schedule_enabled"] = _bool01(f["schedule_enabled"])
+		conds.append("schedule_enabled = %(schedule_enabled)s")
+	if "schedule_frequency" in f:
+		if f["schedule_frequency"] not in _FREQUENCIES:
+			frappe.throw(_("Invalid schedule_frequency filter."))
+		params["schedule_frequency"] = f["schedule_frequency"]
+		conds.append("schedule_frequency = %(schedule_frequency)s")
+
+	where = " AND ".join(conds)
+	order = _order_by(sort_field, sort_dir, _MACROS_SORTABLE, "macro_name", "asc")
+
+	total = frappe.db.sql(
+		f"SELECT COUNT(*) FROM `tabJarvis Macro` WHERE {where}", params
+	)[0][0]
+	rows = frappe.db.sql(
+		f"""SELECT name, macro_name, description, enabled, stop_on_error,
+		schedule_enabled, schedule_frequency, schedule_time, next_run_at,
+		last_run_at, modified, merge_status,
+		CASE WHEN TRIM(COALESCE(merged_prompt, '')) != '' THEN 1 ELSE 0 END AS has_summary
+		FROM `tabJarvis Macro`
+		WHERE {where}
+		ORDER BY {order}
+		LIMIT %(page_length)s OFFSET %(start)s""",
+		params, as_dict=True,
+	)
+
+	names = [r.name for r in rows]
+	step_counts: dict = {}
+	if names:
+		for x in frappe.db.sql(
+			"""SELECT parent, COUNT(*) n FROM `tabJarvis Macro Step`
+			WHERE parent IN %(names)s GROUP BY parent""",
+			{"names": tuple(names)}, as_dict=True,
+		):
+			step_counts[x.parent] = x.n
+	for r in rows:
+		r["step_count"] = step_counts.get(r.name, 0)
+		# Time renders as a timedelta over raw SQL; stringify for a stable payload.
+		if r.get("schedule_time") is not None:
+			r["schedule_time"] = str(r["schedule_time"])
+
+	return {
+		"rows": rows,
+		"total": total,
+		"has_more": start + len(rows) < total,
+		"start": start,
+		"page_length": pl,
+	}
+
+
 @frappe.whitelist()
 def get_macro(name: str) -> dict:
 	"""One macro incl. its ordered steps (owner-gated)."""
@@ -227,6 +373,40 @@ def delete_macro(name: str) -> dict:
 	return {"ok": True}
 
 
+@frappe.whitelist()
+def delete_macros_bulk(names: str | list | None = None) -> dict:
+	"""Bulk delete macros the caller OWNS (DESIGN-V3 §8.3 / D20). ``names`` is a
+	JSON array of macro row-names. Reuses the ``delete_macro`` path per row so
+	each macro's Run history goes first (LinkExistsError otherwise). Per-row
+	try/except: foreign rows skip with ``not owner``, one bad row never aborts
+	the batch. Returns ``{deleted, skipped: [{name, reason}]}``."""
+	raw = frappe.parse_json(names) if isinstance(names, str) else (names or [])
+	items = [str(n) for n in raw if n] if isinstance(raw, list) else []
+	me = frappe.session.user
+	deleted = 0
+	skipped: list[dict] = []
+	for n in items:
+		try:
+			doc = frappe.get_doc(MACRO, n)
+			if doc.owner != me:
+				skipped.append({"name": n, "reason": "not owner"})
+				continue
+			delete_macro(n)  # clears run history first, then the macro
+			deleted += 1
+		except frappe.DoesNotExistError:
+			skipped.append({"name": n, "reason": "not found"})
+		except frappe.PermissionError:
+			skipped.append({"name": n, "reason": "not permitted"})
+		except Exception:
+			# Never leak internal exception text to the client — log server-side.
+			frappe.log_error(
+				title="Jarvis: bulk macro delete failed", message=frappe.get_traceback()
+			)
+			skipped.append({"name": n, "reason": "error"})
+	frappe.db.commit()
+	return {"deleted": deleted, "skipped": skipped}
+
+
 # --------------------------------------------------------------------------- #
 # Run / stop
 # --------------------------------------------------------------------------- #
@@ -275,7 +455,9 @@ def list_macro_runs(status: str = "", macro: str = "", limit=30, start=0) -> dic
 	Joins the macro for its display name and computes each run's duration in
 	seconds. Optional filters: ``status`` (a run status) and ``macro`` (a macro
 	row-name). Owner-scoped in SQL so another user's runs are never returned.
-	Fetches ``limit + 1`` rows to report ``has_more`` for the SPA's Load more."""
+	Fetches ``limit + 1`` rows to report ``has_more`` for the SPA's Load more.
+	``total`` (COUNT under the same filters) rides along for the "N of M"
+	footer (DESIGN-V3 D38 — additive)."""
 	limit = max(1, min(int(limit or 30), 100))
 	start = max(0, int(start or 0))
 	conditions = ["r.owner = %(owner)s"]
@@ -287,6 +469,9 @@ def list_macro_runs(status: str = "", macro: str = "", limit=30, start=0) -> dic
 		conditions.append("r.macro = %(macro)s")
 		params["macro"] = macro
 	where = " AND ".join(conditions)
+	total = frappe.db.sql(
+		f"SELECT COUNT(*) FROM `tabJarvis Macro Run` r WHERE {where}", params
+	)[0][0]
 	rows = frappe.db.sql(
 		f"""
 		SELECT r.name, r.macro, COALESCE(m.macro_name, r.macro) AS macro_name,
@@ -304,7 +489,7 @@ def list_macro_runs(status: str = "", macro: str = "", limit=30, start=0) -> dic
 		params,
 		as_dict=True,
 	)
-	return {"runs": rows[:limit], "has_more": len(rows) > limit}
+	return {"runs": rows[:limit], "has_more": len(rows) > limit, "total": total}
 
 
 @frappe.whitelist()
