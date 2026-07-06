@@ -10,6 +10,6 @@
 		"build-frontend": "cd frontend && npm run build"
 	},
 	"dependencies": {
-		"@google/gemini-cli": "*"
+		"@google/gemini-cli": "0.49.0"
 	}
 }
