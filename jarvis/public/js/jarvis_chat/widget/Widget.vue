@@ -164,6 +164,41 @@ function readContext() {
 				doctypeLabel: `${r[1].toLowerCase()} list`,
 				label: `${r[1]} (list)`,
 			};
+		} else if (r[0] === "query-report" && r[1]) {
+			// query-report route was a dead branch pre-2026-07-06: the widget
+			// treated it like "unknown page" and stripped the context to
+			// null, so the model had to re-derive the filter set from the
+			// user's natural-language message. Capture report_name + the
+			// live filter dict from frappe.query_report (the currently-
+			// active report instance) so the backend can prepend a
+			// "[Viewing: <report> with filters {...}]" line. Defensive
+			// against report_doc being partially loaded during the SPA's
+			// initial route: falls back to just the name if get_values()
+			// isn't ready.
+			const reportName = r[1];
+			let filters = {};
+			let refDoctype = "";
+			try {
+				if (window.frappe && frappe.query_report
+					&& typeof frappe.query_report.get_values === "function") {
+					filters = frappe.query_report.get_values() || {};
+				}
+				const meta = window.frappe && frappe.query_reports
+					&& frappe.query_reports[reportName];
+				if (meta && meta.report_doc && meta.report_doc.ref_doctype) {
+					refDoctype = meta.report_doc.ref_doctype;
+				}
+			} catch (e) {
+				// keep whatever we captured; empty filters is still useful
+			}
+			context.value = {
+				doctype: refDoctype,
+				name: "",
+				report_name: reportName,
+				filters,
+				doctypeLabel: `${reportName} report`,
+				label: `Report: ${reportName}`,
+			};
 		} else {
 			context.value = null;
 		}
