@@ -200,6 +200,9 @@ def query(spec: dict, confirm_large: bool = False) -> dict:
 
 	# Joins.
 	for j in spec.get("joins") or []:
+		# SEC-003: validate the join's table-name + alias sinks.
+		_validate_doctype(j["doctype"])
+		_validate_identifier(j["alias"], "alias")
 		joined_table = frappe.qb.DocType(j["doctype"]).as_(j["alias"])
 		alias_map[j["alias"]] = (j["doctype"], joined_table)
 		on_criterion = _build_on_criterion(j["on"], alias_map)
@@ -220,9 +223,12 @@ def query(spec: dict, confirm_large: bool = False) -> dict:
 	for w in spec.get("where") or []:
 		q = q.where(_build_predicate(w, alias_map))
 
-	# GROUP BY.
+	# GROUP BY. ``allow_alias`` mirrors ORDER BY: a bare name may reference
+	# a SELECT output alias (e.g. a computed ``month`` bucket) rather than
+	# a physical column — MariaDB resolves aliases in GROUP BY. The alias
+	# still passes the SEC-003 identifier check inside ``_resolve_field``.
 	for gb in spec.get("group_by") or []:
-		q = q.groupby(_resolve_field(gb, alias_map))
+		q = q.groupby(_resolve_field(gb, alias_map, allow_alias=True))
 
 	# HAVING.
 	for h in spec.get("having") or []:
@@ -473,6 +479,66 @@ def _collect_doctypes(spec: dict) -> list[str]:
 	return out
 
 
+# ---- Identifier validation (SEC-003) --------------------------------
+
+
+# Field names and aliases must be bare SQL identifiers. pypika quotes
+# identifiers with backticks but does NOT escape a backtick/quote
+# embedded inside the identifier, so a crafted field/alias such as
+# ``foo`) UNION SELECT ... -- `` would break out of the quoting and
+# inject SQL that runs with the site's FULL DB privilege
+# (``frappe.set_user`` changes only the application user, not the DB
+# user — an injected UNION can read ``__Auth`` and bypass the tool's own
+# permission weave). Restrict every field/alias identifier to this
+# character class before it reaches pypika. DocType names are validated
+# separately — they legitimately contain spaces — via an existence check.
+_IDENTIFIER_RE = re.compile(r"^[a-zA-Z0-9_]+$")
+
+
+def _validate_identifier(value: Any, kind: str) -> None:
+	"""Reject a field/alias identifier that isn't a bare
+	``[A-Za-z0-9_]+`` token. Blocks backticks, quotes, spaces, parens,
+	semicolons, and injection payloads such as ``) UNION SELECT`` before
+	the value reaches pypika's identifier quoting."""
+	if not isinstance(value, str) or not _IDENTIFIER_RE.match(value):
+		raise InvalidArgumentError(
+			f"invalid {kind}: only letters, digits, and underscores are "
+			f"allowed (got {value!r})"
+		)
+
+
+def _validate_doctype(dt: Any) -> None:
+	"""Confirm ``dt`` is a real DocType. Real DocType names never carry
+	backticks or quotes (Frappe forbids them), so an existence check is
+	the injection guard for the table-name sink (``frappe.qb.DocType``)
+	while still permitting the spaces legitimate DocType names contain
+	(e.g. ``Sales Invoice``)."""
+	if not isinstance(dt, str) or not dt.strip():
+		raise InvalidArgumentError("DocType name must be a non-empty string")
+	try:
+		frappe.get_meta(dt)
+	except Exception:
+		raise InvalidArgumentError(f"unknown DocType: {dt!r}")
+
+
+def _validate_column(dt: str, field: str) -> None:
+	"""Validate ``field`` is a real column of DocType ``dt``. Runs the
+	identifier-syntax check first (rejects malicious characters), then
+	confirms the column exists via ``get_valid_columns()`` — which
+	includes the standard fields (name / owner / creation / modified /
+	modified_by / idx / docstatus) and, for child tables,
+	parent / parentfield / parenttype."""
+	_validate_identifier(field, "field")
+	try:
+		valid_columns = frappe.get_meta(dt).get_valid_columns()
+	except Exception:
+		raise InvalidArgumentError(f"unknown DocType: {dt!r}")
+	if field not in valid_columns:
+		raise InvalidArgumentError(
+			f"unknown column {field!r} on DocType {dt!r}"
+		)
+
+
 # ---- Translation: spec → qb expressions -----------------------------
 
 
@@ -481,7 +547,14 @@ def _build_from_and_aliases(spec: dict) -> tuple[Any, dict]:
 	The alias_map maps spec-alias → (doctype, pypika.Table) so later
 	stages can resolve ``"alias.field"`` references."""
 	from_dt = spec["from"]
+	# SEC-003: validate the table-name sink and any explicit alias before
+	# they reach pypika. The doctype-name fallback (below) is guarded by
+	# the existence check; an explicitly-supplied alias flows into
+	# ``.as_()`` and must be a bare identifier.
+	_validate_doctype(from_dt)
 	alias = spec.get("alias") or from_dt
+	if spec.get("alias"):
+		_validate_identifier(spec["alias"], "alias")
 	# ``frappe.qb.DocType("Name")`` returns a pypika Table; ``.as_(alias)``
 	# applies the alias. When the spec doesn't supply an alias we still
 	# call ``.as_()`` so the doctype name + alias_map stay symmetric.
@@ -508,6 +581,11 @@ def _resolve_field(field_ref: str, alias_map: dict, allow_alias: bool = False):
 		)
 	if "." not in field_ref:
 		if allow_alias:
+			# ORDER BY / GROUP BY may reference a SELECT output alias
+			# (e.g. total_qty) rather than a physical column, so we can
+			# only enforce SEC-003 identifier syntax here — column
+			# existence isn't knowable for an output alias.
+			_validate_identifier(field_ref, "field")
 			from pypika import Field
 			return Field(field_ref)
 		# A bare reference like "name" is ambiguous in a join; require
@@ -515,7 +593,9 @@ def _resolve_field(field_ref: str, alias_map: dict, allow_alias: bool = False):
 		if len(alias_map) == 1:
 			# Single-doctype query — the alias is unambiguous; resolve
 			# against the only table.
-			((_, table),) = list(alias_map.values())
+			((dt, table),) = list(alias_map.values())
+			# SEC-003: validate the column identifier + existence.
+			_validate_column(dt, field_ref)
 			return table[field_ref]
 		raise InvalidArgumentError(
 			f"field reference {field_ref!r} is ambiguous in a multi-table "
@@ -535,7 +615,10 @@ def _resolve_field(field_ref: str, alias_map: dict, allow_alias: bool = False):
 			f"field reference {field_ref!r} uses unknown alias {alias!r}; "
 			f"known aliases: {sorted(alias_map)}"
 		)
-	_, table = alias_map[alias]
+	dt, table = alias_map[alias]
+	# SEC-003: validate the column identifier + existence against the
+	# resolved DocType before it reaches pypika's ``table[field]`` sink.
+	_validate_column(dt, field)
 	return table[field]
 
 
@@ -594,6 +677,10 @@ def _build_select(select_spec: list, alias_map: dict) -> list:
 		if isinstance(item, str):
 			out.append(_resolve_field(item, alias_map))
 		elif isinstance(item, dict):
+			# SEC-003: the ``as`` output alias flows into pypika's
+			# ``.as_()``; validate it before it is used below.
+			if "as" in item:
+				_validate_identifier(item["as"], "alias")
 			if "expr" in item and "agg" not in item:
 				# Plain expression projection: {"expr": ..., "as": ...}
 				if "as" not in item:
@@ -865,6 +952,9 @@ def _build_exists_criterion(sub_spec: dict, outer_alias_map: dict,
 			raise InvalidArgumentError(
 				f"EXISTS sub-spec alias {j['alias']!r} collides"
 			)
+		# SEC-003: validate the sub-spec join's table-name + alias sinks.
+		_validate_doctype(j["doctype"])
+		_validate_identifier(j["alias"], "alias")
 		joined_table = frappe.qb.DocType(j["doctype"]).as_(j["alias"])
 		sub_alias_map[j["alias"]] = (j["doctype"], joined_table)
 		on_criterion = _build_on_criterion(j["on"], sub_alias_map)
