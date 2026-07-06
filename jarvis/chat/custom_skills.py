@@ -18,6 +18,11 @@ import frappe
 # stale/over-cap state can never be pushed.
 MAX_SKILLS_PER_PUSH = 25
 RESERVED_PREFIX = "custom-"
+# Genuine compiled learned rows are ALWAYS Administrator-owned (the compiler owns
+# them as Administrator). Pinning the turn-injection query to this owner is
+# defense in depth: even if a rogue row somehow carries managed_by_learning=1, it
+# is only ever injected into every user's turn when Administrator owns it.
+MANAGED_OWNER = "Administrator"
 
 # Matches a /slug token the user typed in the composer to invoke a skill.
 _INVOKE_RE = re.compile(r"(?:^|\s)/([a-z0-9]+(?:-[a-z0-9]+)*)")
@@ -102,11 +107,97 @@ def invoked_skill_clause(message: str) -> str:
 				fields=["skill_name"],
 			)
 		}
+	# Allowed Roles (plan section 6.6): a skill scoped to a role via allowed_roles
+	# is invocable by a matching-role user even without an explicit share. Purely
+	# additive - a skill with EMPTY allowed_roles is unchanged (owner/shared only),
+	# and managed learned skills are excluded here (they auto-inject, see
+	# learned_skill_clause).
+	enabled |= _role_scoped_invocable_names(me)
 	matched = sorted(s for s in slugs if s in enabled)
 	if not matched:
 		return ""
 	names = ", ".join(prefixed_slug(s) for s in matched)
 	return f"; the user invoked these skills, apply them: {names}"
+
+
+def _role_scoped_invocable_names(user: str) -> set[str]:
+	"""Bare slugs of enabled, non-managed skills whose (non-empty) allowed_roles
+	intersect ``user``'s roles. One cached role lookup + two indexed queries; no
+	per-skill N+1 (plan section 6.6)."""
+	from jarvis.learning.roles import roles_for_user
+
+	user_roles = roles_for_user(user)
+	if not user_roles:
+		return set()
+	parents = {
+		r.parent
+		for r in frappe.get_all(
+			"Jarvis Custom Skill Allowed Role",
+			filters={"parenttype": "Jarvis Custom Skill", "role": ["in", list(user_roles)]},
+			fields=["parent"],
+		)
+	}
+	if not parents:
+		return set()
+	return {
+		r.skill_name
+		for r in frappe.get_all(
+			"Jarvis Custom Skill",
+			filters={"name": ["in", list(parents)], "enabled": 1, "managed_by_learning": 0},
+			fields=["skill_name"],
+		)
+	}
+
+
+def learned_skill_clause(user: str | None = None) -> str:
+	"""Context-line clause naming the role-matched learned skills to apply this
+	turn (plan section 6.6 - the reliable deterministic activation path).
+
+	Enabled ``managed_by_learning`` skills whose ``allowed_roles`` the chat user
+	satisfies (empty = everyone; System Manager / Administrator always pass) are
+	folded into the leading ``[Context: ...]`` line as
+	``custom-learned-<domain>``, reusing the invoked-skill clause format. Portal
+	users (desk_access=0 roles) never intersect desk-role allowed_roles, so
+	learned skills self-suppress for them at this layer.
+
+	Hot path: ONE cached role lookup + two indexed queries, capped at the <=6
+	managed rows - no per-skill N+1.
+	"""
+	from jarvis.learning.roles import roles_for_user
+
+	user = user or frappe.session.user
+	managed = frappe.get_all(
+		"Jarvis Custom Skill",
+		filters={"managed_by_learning": 1, "enabled": 1, "owner": MANAGED_OWNER},
+		fields=["name", "skill_name"],
+	)
+	if not managed:
+		return ""
+
+	user_roles = roles_for_user(user)
+	privileged = user == "Administrator" or "System Manager" in user_roles
+
+	if privileged:
+		matched = [m.skill_name for m in managed]
+	else:
+		names = [m.name for m in managed]
+		roles_by_skill: dict[str, set] = {m.name: set() for m in managed}
+		for row in frappe.get_all(
+			"Jarvis Custom Skill Allowed Role",
+			filters={"parent": ["in", names], "parenttype": "Jarvis Custom Skill"},
+			fields=["parent", "role"],
+		):
+			if row.role:
+				roles_by_skill[row.parent].add(row.role)
+		matched = [
+			m.skill_name
+			for m in managed
+			if not roles_by_skill[m.name] or (roles_by_skill[m.name] & user_roles)
+		]
+	if not matched:
+		return ""
+	slugs = ", ".join(prefixed_slug(s) for s in sorted(matched))
+	return f"; apply these learned skills: {slugs}"
 
 
 def build_push_payload(owner: str | None = None) -> list[dict]:

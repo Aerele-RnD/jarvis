@@ -12,7 +12,9 @@
     "user_invocable",
     "description",
     "instructions",
-    "shared_with"
+    "shared_with",
+    "allowed_roles",
+    "managed_by_learning"
   ],
   "fields": [
     {
@@ -59,6 +61,21 @@
       "label": "Shared With",
       "options": "Jarvis Custom Skill Share",
       "description": "Users this skill is shared with (read-only for them; only the owner can edit or re-share)."
+    },
+    {
+      "fieldname": "allowed_roles",
+      "fieldtype": "Table",
+      "label": "Allowed Roles",
+      "options": "Jarvis Custom Skill Allowed Role",
+      "description": "Empty = visible to everyone. Otherwise only the owner, shared-with users and holders of one of these roles (System Manager always passes) see/invoke the skill."
+    },
+    {
+      "fieldname": "managed_by_learning",
+      "fieldtype": "Check",
+      "label": "Managed by Learning",
+      "default": "0",
+      "hidden": 1,
+      "description": "Marker only: this row is a consolidated learned-<domain> skill compiled from approved learned patterns; the learning board is its management surface."
     }
   ],
   "permissions": [

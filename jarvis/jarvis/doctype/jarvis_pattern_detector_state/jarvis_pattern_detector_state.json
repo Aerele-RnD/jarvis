@@ -1,0 +1,91 @@
+{
+  "doctype": "DocType",
+  "name": "Jarvis Pattern Detector State",
+  "module": "Jarvis",
+  "custom": 0,
+  "engine": "InnoDB",
+  "autoname": "field:detector_id",
+  "naming_rule": "By fieldname",
+  "field_order": [
+    "detector_id",
+    "enabled",
+    "last_watermark",
+    "last_full_scan_at",
+    "rows_scanned_total",
+    "data_starved",
+    "not_applicable",
+    "last_error",
+    "last_run_at"
+  ],
+  "fields": [
+    {
+      "fieldname": "detector_id",
+      "fieldtype": "Data",
+      "label": "Detector ID",
+      "reqd": 1,
+      "unique": 1,
+      "in_list_view": 1,
+      "description": "Registry id (e.g. buy-supplier-stockness). Doc name = detector_id so after_migrate seeding is idempotent."
+    },
+    {
+      "default": "1",
+      "fieldname": "enabled",
+      "fieldtype": "Check",
+      "label": "Enabled",
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "last_watermark",
+      "fieldtype": "Datetime",
+      "label": "Last Watermark",
+      "description": "Stream position for row-stream detectors (by indexed `creation`; `modified` is not indexed on log tables)."
+    },
+    {
+      "fieldname": "last_full_scan_at",
+      "fieldtype": "Datetime",
+      "label": "Last Full Scan At"
+    },
+    {
+      "default": "0",
+      "fieldname": "rows_scanned_total",
+      "fieldtype": "Int",
+      "label": "Rows Scanned Total"
+    },
+    {
+      "default": "0",
+      "fieldname": "data_starved",
+      "fieldtype": "Check",
+      "label": "Data Starved",
+      "in_list_view": 1,
+      "description": "Below the minimum-n or precision gate; more data will fix this."
+    },
+    {
+      "default": "0",
+      "fieldname": "not_applicable",
+      "fieldtype": "Check",
+      "label": "Not Applicable",
+      "description": "This site's data can never satisfy the detector (distinct from data-starved; set by the preflight or the engine)."
+    },
+    {
+      "fieldname": "last_error",
+      "fieldtype": "Small Text",
+      "label": "Last Error"
+    },
+    {
+      "fieldname": "last_run_at",
+      "fieldtype": "Datetime",
+      "label": "Last Run At"
+    }
+  ],
+  "permissions": [
+    {
+      "role": "System Manager",
+      "read": 1,
+      "report": 1,
+      "export": 1
+    }
+  ],
+  "sort_field": "detector_id",
+  "sort_order": "ASC",
+  "track_changes": 0
+}
