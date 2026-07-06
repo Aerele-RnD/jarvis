@@ -170,9 +170,12 @@ def get_conversation(conversation: str) -> dict:
 	"""
 	doc = frappe.get_doc(CONV, conversation)  # respects owner-only permission
 
+	# hidden = internal system rows (e.g. the post-apply continuation prompt):
+	# they feed the agent transcript but never render in the chat UI, so this
+	# filter covers both first load and every resync-after-gap reload.
 	messages = frappe.get_all(
 		MSG,
-		filters={"conversation": conversation},
+		filters={"conversation": conversation, "hidden": 0},
 		fields=[
 			"name", "seq", "role", "content", "streaming", "error",
 			"tool_name", "tool_args", "tool_result", "tool_status",
@@ -1010,11 +1013,14 @@ def _enqueue_turn(
 	*,
 	model_override: str | None = None,
 	thinking_override: str | None = None,
+	hidden: bool = False,
 ) -> dict:
 	"""Persist a user message + dispatch an agent turn for ``prompt`` (no
 	attachments / no auto-context). The macro engine (``jarvis.chat.macros``) uses
 	this to run one step exactly the way ``send_message`` runs a typed message —
-	same seq/session_key/dispatch path. Returns ``{run_id, message_id}``."""
+	same seq/session_key/dispatch path. ``hidden`` marks the row as an internal
+	system message the chat UI never renders (get_conversation filters it out).
+	Returns ``{run_id, message_id}``."""
 	conv_doc = frappe.get_doc(CONV, conversation)
 	if model_override:
 		conv_doc.model_override = model_override
@@ -1022,8 +1028,12 @@ def _enqueue_turn(
 		conv_doc.thinking_override = (thinking_override or "").strip().lower()
 
 	# First turn of a fresh (managed) macro conversation needs a session_key.
+	# Continuation turns skip this: they always follow an existing turn, and a
+	# missing key is created by the worker on its pooled connection anyway
+	# (turn_handler.handle_chat_send), so the human's Apply/Confirm POST never
+	# pays - or fails on - a WS handshake here.
 	from jarvis import selfhost
-	if not selfhost.is_self_hosted() and not conv_doc.session_key:
+	if not hidden and not selfhost.is_self_hosted() and not conv_doc.session_key:
 		conv_doc.session_key = _ensure_session_key(conv_doc.owner)
 
 	seq = _next_seq(conversation)
@@ -1034,6 +1044,7 @@ def _enqueue_turn(
 		"role": "user",
 		"content": prompt,
 		"streaming": 0,
+		"hidden": 1 if hidden else 0,
 	})
 	msg_doc.flags.ignore_permissions = True
 	msg_doc.insert()
@@ -1049,6 +1060,31 @@ def _enqueue_turn(
 		"run_id": run_id,
 	})
 	return {"run_id": run_id, "message_id": msg_doc.name}
+
+
+# The continuation prompt after a human Apply/Confirm. Keep the leading
+# "[System] Applied:" marker stable - the persona's multi-step plan rule keys
+# on it (jarvis-persona AGENTS.md "Changes and confirmations").
+_CONTINUATION_PROMPT = (
+	"[System] Applied: {receipt} "
+	"Continue the remaining steps of the user's request; "
+	"if none remain, briefly confirm completion."
+)
+
+
+def enqueue_continuation(conversation: str, receipt: str) -> dict:
+	"""Dispatch a follow-up agent turn after a human Apply/Confirm click
+	(multi-step plans: the agent stages the next write instead of waiting for
+	the user to type "continue").
+
+	The prompt is a HIDDEN user message carrying the receipt - including the
+	new record's name, which the agent needs for dependent steps (e.g.
+	Timesheet rows referencing just-created Tasks). Only ever triggered by a
+	human click (apply_action / confirm_tool), so the human stays the rate
+	limiter on write plans; there is no autonomous loop path here."""
+	return _enqueue_turn(
+		conversation, _CONTINUATION_PROMPT.format(receipt=receipt), hidden=True
+	)
 
 
 def _ensure_session_key(user: str, sess: OpenclawSession | None = None) -> str:

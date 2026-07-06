@@ -1964,6 +1964,10 @@ async function openDraftPanel(a) {
 	draftPanel.value = {
 		verb, doctype: a.doctype, docName: verb === "update" ? (a.name || "") : "",
 		title: a.title || "", submittable: !!meta.is_submittable,
+		// Multi-step plans: the card marks non-final steps "continue": 1; the
+		// bench then dispatches a follow-up agent turn after Apply so the agent
+		// stages the next step without the user typing "continue".
+		cont: a.continue ? 1 : 0,
 		fields, tables, applying: false, error: "", updatedToast: false,
 	}
 }
@@ -2090,6 +2094,7 @@ async function applyDraft(submitFlag) {
 		await api.applyAction({
 			verb: p.verb, doctype: p.doctype, name: p.docName || "",
 			values, submit: submitFlag ? 1 : 0, conversation: currentId.value || "",
+			continue: p.cont ? 1 : 0,
 		})
 		closeDraftPanel()
 		await loadConversation(currentId.value)

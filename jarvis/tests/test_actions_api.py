@@ -217,3 +217,90 @@ class TestApplyAction(FrappeTestCase):
 				}))
 		finally:
 			frappe.set_user("Administrator")
+
+
+class TestContinuation(FrappeTestCase):
+	"""Multi-step plans: after a human Apply/Confirm the bench dispatches a
+	follow-up agent turn (a hidden user message carrying the receipt) so the
+	agent continues the plan without the user typing "continue"."""
+
+	def _cleanup_doc(self, doctype, name):
+		self.addCleanup(lambda: frappe.delete_doc(doctype, name, force=True, ignore_permissions=True))
+
+	def _conv(self) -> str:
+		conv = _make_conversation()
+		self.addCleanup(lambda: frappe.delete_doc("Jarvis Conversation", conv, force=True, ignore_permissions=True))
+		return conv
+
+	def _messages(self, conv):
+		return frappe.get_all(
+			"Jarvis Chat Message", filters={"conversation": conv},
+			fields=["role", "content", "hidden"], order_by="seq asc",
+		)
+
+	def test_apply_with_continue_flag_dispatches_hidden_turn(self):
+		conv = self._conv()
+		with patch("jarvis.chat.api._dispatch_turn") as disp:
+			r = apply_action(frappe.as_json({
+				"verb": "create", "doctype": "ToDo",
+				"values": {"description": "continuation dispatch test"},
+				"conversation": conv, "continue": 1,
+			}))
+		self._cleanup_doc("ToDo", r["name"])
+		self.assertTrue(r["ok"])
+		self.assertEqual(disp.call_count, 1)
+		msgs = self._messages(conv)
+		# receipt pair, then the hidden continuation user message
+		self.assertEqual([m.role for m in msgs], ["tool", "assistant", "user"])
+		self.assertEqual(msgs[2].hidden, 1)
+		self.assertIn("[System] Applied:", msgs[2].content)
+		self.assertIn(r["name"], msgs[2].content)
+
+	def test_apply_without_flag_does_not_dispatch(self):
+		conv = self._conv()
+		with patch("jarvis.chat.api._dispatch_turn") as disp:
+			r = apply_action(frappe.as_json({
+				"verb": "create", "doctype": "ToDo",
+				"values": {"description": "no continuation test"},
+				"conversation": conv,
+			}))
+		self._cleanup_doc("ToDo", r["name"])
+		disp.assert_not_called()
+		# receipt pair only - no user message row
+		self.assertEqual([m.role for m in self._messages(conv)], ["tool", "assistant"])
+
+	def test_confirm_tool_dispatches_continuation(self):
+		from jarvis.chat import pending_confirm
+		from jarvis.chat.actions_api import confirm_tool
+		conv = self._conv()
+		desc = "jarvis-test-confirm-continuation-001"
+		token = pending_confirm.mint(
+			conversation=conv, owner="Administrator", tool="create_doc",
+			args={"doctype": "ToDo", "values": {"description": desc}},
+			run_id="testrun",
+		)
+		with patch("jarvis.chat.api._dispatch_turn") as disp:
+			res = confirm_tool(token, conversation=conv)
+		self.assertTrue(res["ok"])
+		created = frappe.db.get_value("ToDo", {"description": desc}, "name")
+		self.assertTrue(created)
+		self._cleanup_doc("ToDo", created)
+		self.assertEqual(disp.call_count, 1)
+		hidden = [m for m in self._messages(conv) if m.role == "user"]
+		self.assertEqual(len(hidden), 1)
+		self.assertEqual(hidden[0].hidden, 1)
+		self.assertIn("[System] Applied:", hidden[0].content)
+
+	def test_hidden_messages_excluded_from_get_conversation(self):
+		from jarvis.chat.api import _next_seq, get_conversation
+		conv = self._conv()
+		for content, hide in (("visible message", 0), ("[System] Applied: x. Continue.", 1)):
+			frappe.get_doc({
+				"doctype": "Jarvis Chat Message", "conversation": conv,
+				"seq": _next_seq(conv), "role": "user", "content": content,
+				"streaming": 0, "hidden": hide,
+			}).insert(ignore_permissions=True)
+		r = get_conversation(conv)
+		contents = [m["content"] for m in r["messages"]]
+		self.assertIn("visible message", contents)
+		self.assertNotIn("[System] Applied: x. Continue.", contents)
