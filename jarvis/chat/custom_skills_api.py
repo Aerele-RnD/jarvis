@@ -57,23 +57,209 @@ def list_custom_skills() -> list[dict]:
 		fields=["name", "skill_name", "description", "user_invocable", "enabled", "modified"],
 		order_by="skill_name asc",
 	)
+	# One grouped query for ALL own rows' share counts (was an N+1 count per
+	# skill — 123 queries at 121 skills, on every ChatView mount).
+	share_counts: dict = {}
+	own_names = [s["name"] for s in own]
+	if own_names:
+		for x in frappe.db.sql(
+			"""SELECT parent, COUNT(*) n FROM `tabJarvis Custom Skill Share`
+			WHERE parent IN %(names)s GROUP BY parent""",
+			{"names": tuple(own_names)}, as_dict=True,
+		):
+			share_counts[x.parent] = x.n
 	for s in own:
 		s["mine"] = 1
-		s["shared_count"] = frappe.db.count(SHARE, {"parent": s["name"]})
+		s["shared_count"] = share_counts.get(s["name"], 0)
 
 	shared_names = _skill_names_shared_with(me)
 	shared = []
 	if shared_names:
-		for s in frappe.get_all(
+		rows = frappe.get_all(
 			SKILL,
 			filters={"name": ["in", shared_names], "enabled": 1},
 			fields=["name", "skill_name", "description", "user_invocable", "enabled", "owner", "modified"],
 			order_by="skill_name asc",
-		):
+		)
+		# One query for the owners' display names (was a per-row lookup).
+		full_names = {
+			u.name: u.full_name
+			for u in frappe.get_all(
+				"User",
+				filters={"name": ["in", list({r.owner for r in rows})]},
+				fields=["name", "full_name"],
+			)
+		} if rows else {}
+		for s in rows:
 			s["mine"] = 0
-			s["shared_by"] = _full_name(s.pop("owner"))
+			owner = s.pop("owner")
+			s["shared_by"] = full_names.get(owner) or owner
 			shared.append(s)
 	return own + shared
+
+
+# --------------------------------------------------------------------------- #
+# Paginated list (frozen envelope) — chat-features-page-migration-design §2.2.
+# ADDITIVE: list_custom_skills (above) STAYS for the composer "/" autocomplete.
+# --------------------------------------------------------------------------- #
+_SKILLS_SORTABLE = {"skill_name": "skill_name", "modified": "modified", "enabled": "enabled"}
+_SKILLS_FILTERS = {"scope", "enabled", "user_invocable"}
+
+
+def _lk(s: str) -> str:
+	"""Escape LIKE wildcards in user search input (``\\`` is the default escape)."""
+	return (s or "").replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _clamp_page(start, page_length) -> tuple[int, int]:
+	try:
+		start = max(0, int(start or 0))
+	except (TypeError, ValueError):
+		start = 0
+	try:
+		pl = int(page_length or 20)
+	except (TypeError, ValueError):
+		pl = 20
+	return start, max(1, min(pl, 100))
+
+
+def _bool01(v) -> int:
+	try:
+		iv = int(v)
+	except (TypeError, ValueError):
+		frappe.throw(_("Filter value must be 0 or 1."))
+	if iv not in (0, 1):
+		frappe.throw(_("Filter value must be 0 or 1."))
+	return iv
+
+
+def _load_filters(filters, allowed: set) -> dict:
+	"""Parse ``filters`` (JSON string or dict), whitelist keys (unknown → throw),
+	and drop empty values (an empty value = 'not filtering'; ``0`` is kept)."""
+	if isinstance(filters, str):
+		if filters.strip():
+			try:
+				raw = frappe.parse_json(filters)
+			except Exception:
+				raw = {}
+		else:
+			raw = {}
+	else:
+		raw = filters or {}
+	if not isinstance(raw, dict):
+		raw = {}
+	out: dict = {}
+	for k, v in raw.items():
+		if k not in allowed:
+			frappe.throw(_("Unknown filter: {0}").format(k))
+		if v in (None, ""):
+			continue
+		out[k] = v
+	return out
+
+
+def _order_by(sort_field, sort_dir, sortable: dict, default_field, default_dir, prefix="") -> str:
+	"""Build a safe ORDER BY: only whitelisted columns, direction normalized to
+	asc/desc, a ``name`` tiebreak for stable OFFSET pagination. No user input is
+	ever interpolated (columns come from ``sortable``; dir is a literal)."""
+	col = sortable.get(sort_field or "")
+	if not col:
+		return f"{prefix}`{sortable[default_field]}` {default_dir}, {prefix}`name` asc"
+	d = "desc" if (sort_dir or "").lower() == "desc" else "asc"
+	return f"{prefix}`{col}` {d}, {prefix}`name` asc"
+
+
+@frappe.whitelist()
+def list_custom_skills_page(
+	search: str = "",
+	filters=None,
+	sort_field: str = "",
+	sort_dir: str = "",
+	start: int = 0,
+	page_length: int = 20,
+) -> dict:
+	"""Owner-scoped + shared-with-me skills, server-side search/filter/sort/paginate.
+
+	Visibility parity with ``list_custom_skills``: own rows (any state) UNION
+	shared-with-me rows (``enabled=1`` only) — expressed in ONE owner-scoped SQL
+	WHERE so ``page_length``/``start`` slice the real result set (never a
+	post-filtered page). Envelope: ``{rows, total, has_more, start, page_length}``.
+	"""
+	me = frappe.session.user
+	start, pl = _clamp_page(start, page_length)
+	f = _load_filters(filters, _SKILLS_FILTERS)
+	shared = tuple(_skill_names_shared_with(me))
+
+	conds: list[str] = []
+	params: dict = {"me": me, "start": start, "page_length": pl}
+
+	scope = f.get("scope")
+	if scope is not None and scope not in ("mine", "shared"):
+		frappe.throw(_("Invalid scope filter."))
+	if scope == "mine":
+		conds.append("owner = %(me)s")
+	elif scope == "shared":
+		if not shared:
+			conds.append("1=0")
+		else:
+			params["shared"] = shared
+			conds.append("(name IN %(shared)s AND enabled = 1)")
+	else:  # both
+		if shared:
+			params["shared"] = shared
+			conds.append("(owner = %(me)s OR (name IN %(shared)s AND enabled = 1))")
+		else:
+			conds.append("owner = %(me)s")
+
+	if search:
+		params["q"] = f"%{_lk(search)}%"
+		conds.append("(skill_name LIKE %(q)s OR description LIKE %(q)s)")
+	if "enabled" in f:
+		params["enabled"] = _bool01(f["enabled"])
+		conds.append("enabled = %(enabled)s")
+	if "user_invocable" in f:
+		params["user_invocable"] = _bool01(f["user_invocable"])
+		conds.append("user_invocable = %(user_invocable)s")
+
+	where = " AND ".join(conds)
+	order = _order_by(sort_field, sort_dir, _SKILLS_SORTABLE, "skill_name", "asc")
+
+	total = frappe.db.sql(
+		f"SELECT COUNT(*) FROM `tabJarvis Custom Skill` WHERE {where}", params
+	)[0][0]
+	rows = frappe.db.sql(
+		f"""SELECT name, skill_name, description, user_invocable, enabled, modified, owner
+		FROM `tabJarvis Custom Skill`
+		WHERE {where}
+		ORDER BY {order}
+		LIMIT %(page_length)s OFFSET %(start)s""",
+		params, as_dict=True,
+	)
+
+	# One grouped child query for share counts over THIS page's own rows.
+	my_names = [r.name for r in rows if r.owner == me]
+	share_counts: dict = {}
+	if my_names:
+		for x in frappe.db.sql(
+			"""SELECT parent, COUNT(*) n FROM `tabJarvis Custom Skill Share`
+			WHERE parent IN %(names)s GROUP BY parent""",
+			{"names": tuple(my_names)}, as_dict=True,
+		):
+			share_counts[x.parent] = x.n
+	for r in rows:
+		mine = 1 if r.owner == me else 0
+		r["mine"] = mine
+		r["shared_by"] = "" if mine else _full_name(r.owner)
+		r["shared_count"] = share_counts.get(r.name, 0) if mine else 0
+		r.pop("owner", None)
+
+	return {
+		"rows": rows,
+		"total": total,
+		"has_more": start + len(rows) < total,
+		"start": start,
+		"page_length": pl,
+	}
 
 
 @frappe.whitelist()
@@ -157,6 +343,43 @@ def delete_custom_skill(name: str) -> dict:
 	frappe.delete_doc(SKILL, name)  # honors if_owner permission
 	frappe.db.commit()
 	return {"ok": True}
+
+
+@frappe.whitelist()
+def delete_custom_skills_bulk(names: str | list | None = None) -> dict:
+	"""Bulk delete skills the caller OWNS (DESIGN-V3 §8.3 / D20). ``names`` is a
+	JSON array of skill row-names. Per-row try/except so one bad row never
+	aborts the batch: shared-with-me / foreign rows skip with ``not owner``.
+	One deduped skills-apply enqueue at the end (mirrors the save/delete
+	auto-apply) — only when something was actually deleted.
+	Returns ``{deleted, skipped: [{name, reason}]}``."""
+	raw = frappe.parse_json(names) if isinstance(names, str) else (names or [])
+	items = [str(n) for n in raw if n] if isinstance(raw, list) else []
+	me = frappe.session.user
+	deleted = 0
+	skipped: list[dict] = []
+	for n in items:
+		try:
+			doc = frappe.get_doc(SKILL, n)
+			if doc.owner != me:
+				skipped.append({"name": n, "reason": "not owner"})
+				continue
+			frappe.delete_doc(SKILL, n)  # same path as delete_custom_skill (if_owner)
+			deleted += 1
+		except frappe.DoesNotExistError:
+			skipped.append({"name": n, "reason": "not found"})
+		except frappe.PermissionError:
+			skipped.append({"name": n, "reason": "not permitted"})
+		except Exception:
+			# Never leak internal exception text to the client — log server-side.
+			frappe.log_error(
+				title="Jarvis: bulk skill delete failed", message=frappe.get_traceback()
+			)
+			skipped.append({"name": n, "reason": "error"})
+	frappe.db.commit()
+	if deleted:
+		apply_custom_skills()
+	return {"deleted": deleted, "skipped": skipped}
 
 
 # --------------------------------------------------------------------------- #

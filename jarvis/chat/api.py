@@ -88,6 +88,52 @@ def list_conversations() -> list[dict]:
 
 
 @frappe.whitelist()
+def search_conversations(search: str = "", start: int = 0, page_length: int = 20) -> dict:
+	"""Title-only search over the caller's ACTIVE conversations (⌘K palette,
+	DESIGN-V3 §8.2 / D40). Owner-scoped in SQL; LIKE wildcards escaped; empty
+	search returns all rows. Order: starred first, then most recently active.
+	Envelope: ``{rows, total, has_more, start, page_length}``."""
+	me = frappe.session.user
+	try:
+		start = max(0, int(start or 0))
+	except (TypeError, ValueError):
+		start = 0
+	try:
+		pl = int(page_length or 20)
+	except (TypeError, ValueError):
+		pl = 20
+	pl = max(1, min(pl, 50))
+
+	conds = ["c.owner = %(me)s", "c.status = 'Active'"]
+	params: dict = {"me": me, "start": start, "page_length": pl}
+	if search:
+		escaped = (search or "").replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+		params["q"] = f"%{escaped}%"
+		conds.append("c.title LIKE %(q)s")
+	where = " AND ".join(conds)
+
+	total = frappe.db.sql(
+		f"SELECT COUNT(*) FROM `tabJarvis Conversation` c WHERE {where}", params
+	)[0][0]
+	rows = frappe.db.sql(
+		f"""SELECT c.name, c.title, c.starred, c.last_active_at
+		FROM `tabJarvis Conversation` c
+		WHERE {where}
+		ORDER BY c.starred DESC, c.last_active_at DESC, c.name ASC
+		LIMIT %(page_length)s OFFSET %(start)s""",
+		params,
+		as_dict=True,
+	)
+	return {
+		"rows": rows,
+		"total": total,
+		"has_more": start + len(rows) < total,
+		"start": start,
+		"page_length": pl,
+	}
+
+
+@frappe.whitelist()
 def create_or_focus_empty() -> str:
 	"""Return an empty active conversation for the current user, creating
 	one only if no empty conversation already exists.
@@ -555,6 +601,10 @@ def get_chat_ui_settings() -> dict:
 		"llm_model": settings.llm_model or "",
 		"subscription_models": _SUBSCRIPTION_MODELS,
 		"default_models": _DEFAULT_MODEL,
+		# Site timezone: server datetimes are naive strings in THIS zone; the
+		# SPA feeds it to frappe-ui's setConfig("systemTimezone") so dayjsLocal
+		# renders them correctly for viewers in any browser timezone.
+		"time_zone": frappe.utils.get_system_timezone(),
 		# auto-apply is per-conversation now (issue #186); the frontend reads
 		# ``auto_apply`` from the conversation payload, not this global endpoint.
 	}

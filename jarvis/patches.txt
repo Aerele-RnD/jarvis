@@ -13,3 +13,4 @@ jarvis.patches.v1_5_drop_dev_only_operator_fields
 jarvis.patches.v1_seed_llm_models
 jarvis.patches.v1_6_rename_jarvis_approval
 jarvis.patches.v1_6_normalize_llm_preset_value
+jarvis.patches.v1_7_chat_message_page_index

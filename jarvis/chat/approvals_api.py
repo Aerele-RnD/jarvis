@@ -76,12 +76,214 @@ def list_approvals(status: str = "Pending", limit: int = 50) -> list[dict]:
 	return rows
 
 
+# --------------------------------------------------------------------------- #
+# Paginated list (frozen envelope + facets) —
+# chat-features-page-migration-design §2.5. ADDITIVE: list_approvals (above)
+# STAYS (deprecated). Non-SM scoping is a JOIN on the conversation owner (not an
+# IN(all my convs) list, which explodes at 1000s of conversations).
+# --------------------------------------------------------------------------- #
+_APPROVALS_SORTABLE = {"creation": "creation", "status": "status", "document_type": "document_type"}
+_APPROVALS_FILTERS = {"status", "document_type", "conversation"}
+_APPROVAL_STATUSES = {"Pending", "Approved", "Rejected", "Decided", "All"}
+
+
+def _lk(s: str) -> str:
+	"""Escape LIKE wildcards in user search input (``\\`` is the default escape)."""
+	return (s or "").replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _clamp_page(start, page_length) -> tuple[int, int]:
+	try:
+		start = max(0, int(start or 0))
+	except (TypeError, ValueError):
+		start = 0
+	try:
+		pl = int(page_length or 20)
+	except (TypeError, ValueError):
+		pl = 20
+	return start, max(1, min(pl, 100))
+
+
+def _load_filters(filters, allowed: set) -> dict:
+	if isinstance(filters, str):
+		if filters.strip():
+			try:
+				raw = frappe.parse_json(filters)
+			except Exception:
+				raw = {}
+		else:
+			raw = {}
+	else:
+		raw = filters or {}
+	if not isinstance(raw, dict):
+		raw = {}
+	out: dict = {}
+	for k, v in raw.items():
+		if k not in allowed:
+			frappe.throw(f"Unknown filter: {k}")
+		if v in (None, ""):
+			continue
+		out[k] = v
+	return out
+
+
+def _order_by(sort_field, sort_dir, sortable: dict, default_field, default_dir, prefix="") -> str:
+	col = sortable.get(sort_field or "")
+	if not col:
+		return f"{prefix}`{sortable[default_field]}` {default_dir}, {prefix}`name` asc"
+	d = "desc" if (sort_dir or "").lower() == "desc" else "asc"
+	return f"{prefix}`{col}` {d}, {prefix}`name` asc"
+
+
+@frappe.whitelist()
+def list_approvals_page(
+	search: str = "",
+	filters=None,
+	sort_field: str = "",
+	sort_dir: str = "",
+	start: int = 0,
+	page_length: int = 20,
+) -> dict:
+	"""Approvals visible to the caller (SM: all; non-SM: rows whose conversation
+	they own), server-side search/filter/sort/paginate + a ``document_type`` facet
+	for the triage tabs. Envelope ``{rows, total, has_more, start, page_length,
+	facets}``. Behavior-identical scoping to ``list_approvals`` but scalable."""
+	me = frappe.session.user
+	start, pl = _clamp_page(start, page_length)
+	f = _load_filters(filters, _APPROVALS_FILTERS)
+	is_sm = "System Manager" in frappe.get_roles()
+
+	if is_sm:
+		from_sql = "`tabJarvis Approval Request` a"
+	else:
+		from_sql = (
+			"`tabJarvis Approval Request` a "
+			"JOIN `tabJarvis Conversation` c "
+			"ON c.name = a.conversation AND c.owner = %(me)s"
+		)
+
+	params: dict = {"me": me, "start": start, "page_length": pl}
+
+	# `base` applies to BOTH the main query and the facet query; the
+	# document_type filter applies ONLY to the main query (facets drop it).
+	base: list[str] = []
+	status = f.get("status") or "Pending"
+	if status not in _APPROVAL_STATUSES:
+		frappe.throw("Invalid status filter")
+	if status == "Decided":
+		base.append("a.status IN ('Approved', 'Rejected')")
+	elif status != "All":
+		params["status"] = status
+		base.append("a.status = %(status)s")
+	if "conversation" in f:
+		params["conv"] = f["conversation"]
+		base.append("a.conversation = %(conv)s")
+	if search:
+		params["q"] = f"%{_lk(search)}%"
+		base.append("(a.title LIKE %(q)s OR a.question LIKE %(q)s OR a.ref_name LIKE %(q)s)")
+
+	doc_cond = None
+	if "document_type" in f:
+		dt = f["document_type"]
+		if dt == "Unclassified":
+			doc_cond = "TRIM(COALESCE(a.document_type, '')) = ''"
+		else:
+			params["dt"] = dt
+			doc_cond = "a.document_type = %(dt)s"
+
+	main_where = " AND ".join(base + ([doc_cond] if doc_cond else [])) or "1=1"
+	base_where = " AND ".join(base) or "1=1"
+	order = _order_by(sort_field, sort_dir, _APPROVALS_SORTABLE, "creation", "desc", prefix="a.")
+
+	total = frappe.db.sql(f"SELECT COUNT(*) FROM {from_sql} WHERE {main_where}", params)[0][0]
+	rows = frappe.db.sql(
+		f"""SELECT a.name, a.title, a.status, a.document_type, a.question,
+		a.context_md, a.options, a.conversation, a.ref_doctype, a.ref_name,
+		a.decision, a.decided_by, a.decided_at, a.creation
+		FROM {from_sql}
+		WHERE {main_where}
+		ORDER BY {order}
+		LIMIT %(page_length)s OFFSET %(start)s""",
+		params, as_dict=True,
+	)
+	for r in rows:
+		r["options"] = _parse_options(r.get("options"))
+
+	facet_rows = frappe.db.sql(
+		f"""SELECT COALESCE(NULLIF(TRIM(a.document_type), ''), 'Unclassified') AS dtv,
+		COUNT(*) AS n
+		FROM {from_sql}
+		WHERE {base_where}
+		GROUP BY dtv
+		ORDER BY n DESC""",
+		params, as_dict=True,
+	)
+	facets = {"document_type": [{"value": x.dtv, "count": x.n} for x in facet_rows]}
+
+	return {
+		"rows": rows,
+		"total": total,
+		"has_more": start + len(rows) < total,
+		"start": start,
+		"page_length": pl,
+		"facets": facets,
+	}
+
+
+@frappe.whitelist()
+def get_approval(name: str) -> dict:
+	"""One approval with every field the detail page renders (DESIGN-V3 §8.3).
+
+	Read gate: ``_may_act_on`` (System Manager or linked-conversation owner) —
+	additionally a DocShare-read holder (an assignee, §13 risk 8 / §14 F1) may
+	READ but gets ``can_act=0`` so the UI hides the decide controls. ``can_act``
+	mirrors what ``decide()`` would permit; the UI combines it with status."""
+	doc = frappe.get_doc(APPROVAL, name)
+	can_act = _may_act_on(doc.conversation)
+	if not can_act and not frappe.db.exists(
+		"DocShare",
+		{"share_doctype": APPROVAL, "share_name": name, "user": frappe.session.user, "read": 1},
+	):
+		frappe.throw("Not permitted", frappe.PermissionError)
+	return {
+		"name": doc.name,
+		"title": doc.title,
+		"status": doc.status,
+		"document_type": doc.document_type or "",
+		"conversation": doc.conversation,
+		"question": doc.question,
+		"context_md": doc.context_md or "",
+		"options": _parse_options(doc.options),
+		"ref_doctype": doc.ref_doctype or "",
+		"ref_name": doc.ref_name or "",
+		"decision": doc.decision or "",
+		"decided_by": doc.decided_by or "",
+		"decided_by_name": (
+			(frappe.db.get_value("User", doc.decided_by, "full_name") or doc.decided_by)
+			if doc.decided_by
+			else ""
+		),
+		"decided_at": str(doc.decided_at or ""),
+		"creation": str(doc.creation or ""),
+		"owner": doc.owner,
+		"can_act": int(can_act),
+	}
+
+
 @frappe.whitelist()
 def pending_count() -> int:
-	# Scoped like list_approvals: non-SM users count only their own.
+	# Scoped like list_approvals_page: non-SM users count only rows whose
+	# conversation they own — as a COUNT with the same JOIN semantics, never by
+	# materializing the pending list.
 	if "System Manager" in frappe.get_roles():
 		return frappe.db.count(APPROVAL, {"status": "Pending"})
-	return len(list_approvals("Pending"))
+	return frappe.db.sql(
+		"""SELECT COUNT(*) FROM `tabJarvis Approval Request` a
+		JOIN `tabJarvis Conversation` c
+		ON c.name = a.conversation AND c.owner = %(me)s
+		WHERE a.status = 'Pending'""",
+		{"me": frappe.session.user},
+	)[0][0]
 
 
 @frappe.whitelist()

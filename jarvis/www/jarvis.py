@@ -14,6 +14,10 @@ def get_context(context):
 		"site_name": str(frappe.local.site),
 		"default_route": "/jarvis",
 		"is_system_manager": "System Manager" in frappe.get_roles(),
+		# Site timezone for the SPA's dayjs config — shipping it in boot lets
+		# AppShell configure systemTimezone synchronously instead of gating the
+		# first routed render on a settings request.
+		"time_zone": frappe.utils.get_system_timezone(),
 	}
 	frappe.db.commit()
 	return context
