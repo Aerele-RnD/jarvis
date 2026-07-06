@@ -3955,6 +3955,12 @@ async function selectConversation(id) {
 	autoGrow()
 	inputEl.value?.focus()
 }
+// Surface a failed action (new chat, send, …) as an error toast. String()-coerces
+// the extracted reason so a non-string Frappe error payload can't throw inside the
+// caller's catch and re-swallow the very failure we're trying to report.
+function notifyActionError(prefix, e) {
+	notify(`${prefix} — ${String(_skillErr(e)).replace(/\.$/, "")}. Try again.`, { type: "error" })
+}
 async function newChat() {
 	// Create FIRST, mutate the UI only on success. If the backend 500s, we must
 	// not leave the user on a half-reset screen (blank draft + wiped run state
@@ -3964,8 +3970,7 @@ async function newChat() {
 	try {
 		conv = await api.createOrFocusEmpty()
 	} catch (e) {
-		const reason = _skillErr(e).replace(/\.$/, "")
-		notify(`Couldn't start a new chat — ${reason}. Try again.`, { type: "error" })
+		notifyActionError("Couldn't start a new chat", e)
 		return
 	}
 	swapDraft(null)
@@ -4060,8 +4065,7 @@ async function send(textArg) {
 	const marker = otherAtts.length ? "📎 " + otherAtts.map((a) => a.file_name).join(", ") : ""
 	const optimistic = [text, marker].filter(Boolean).join("\n\n")
 	const optCanvas = imgAtts.map((a, i) => ({ name: `tmpimg-${Date.now()}-${i}`, type: "image", file_url: a.file_url, title: a.file_name || "image" }))
-	const tmpId = `tmp-${Date.now()}`
-	messages.value = [...messages.value, { name: tmpId, role: "user", content: optimistic, canvas: optCanvas.length ? optCanvas : undefined }]
+	messages.value = [...messages.value, { name: `tmp-${Date.now()}`, role: "user", content: optimistic, canvas: optCanvas.length ? optCanvas : undefined }]
 	await nextTick()
 	scrollBottom()
 	try {
@@ -4073,20 +4077,16 @@ async function send(textArg) {
 			loadConversations()
 		}
 	} catch (e) {
-		// The send never reached the model (e.g. send_message 500s on a migration
-		// gap). Don't just stop the spinner and leave a ghost user bubble with no
-		// reply: roll the optimistic message back, restore the composer so the
-		// text/attachments aren't lost, and tell the user why nothing happened.
+		// send_message failed (e.g. a 500 on a migration gap). Stop the spinner and
+		// surface why — the fix this PR is really about is that the failure used to
+		// be silent. We deliberately do NOT roll the optimistic bubble back or refill
+		// the composer: the send is fire-and-forget, so a mid-send conversation
+		// switch would strand one thread's draft in another, and a post-ack timeout
+		// (server accepted, response dropped) would wrongly discard a live message.
+		// Leaving the bubble also keeps the attempted text visible for recovery.
 		sending.value = false
 		waiting.value = false
-		messages.value = messages.value.filter((m) => m.name !== tmpId)
-		if (fromMain) {
-			if (!input.value) input.value = text
-			if (!pendingFiles.value.length) pendingFiles.value = attachments
-			nextTick(autoGrow)
-		}
-		const reason = _skillErr(e).replace(/\.$/, "")
-		notify(`Couldn't send your message — ${reason}. Try again.`, { type: "error" })
+		notifyActionError("Couldn't send your message", e)
 	}
 }
 
