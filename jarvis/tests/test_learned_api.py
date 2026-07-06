@@ -39,13 +39,23 @@ KEY_PREFIX = "la-test-"
 # fixtures / helpers
 # --------------------------------------------------------------------------- #
 def _ensure_non_sm(email: str) -> str:
+	# A realistic unauthorized actor for these desk-admin endpoints is a System
+	# User who lacks System Manager (e.g. a Sales User), NOT a portal/Website
+	# User - a Website User is a weaker negative test and could mask a bug if an
+	# endpoint ever gated on user_type instead of the role.
 	if not frappe.db.exists("User", email):
 		u = frappe.get_doc({
 			"doctype": "User", "email": email,
 			"first_name": "la-nonsm", "send_welcome_email": 0, "enabled": 1,
+			"user_type": "System User",
+			"roles": [{"role": "Sales User"}],
 		})
 		u.flags.ignore_permissions = True
 		u.insert()
+		frappe.db.commit()
+	elif frappe.db.get_value("User", email, "user_type") != "System User":
+		# Promote a fixture left over from an older run as a Website User.
+		frappe.db.set_value("User", email, "user_type", "System User")
 		frappe.db.commit()
 	if "System Manager" in set(frappe.get_roles(email)):
 		frappe.get_doc("User", email).remove_roles("System Manager")
