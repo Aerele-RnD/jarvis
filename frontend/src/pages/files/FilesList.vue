@@ -11,6 +11,7 @@
 			:columns="columns"
 			:rows="rows"
 			:loading="loading"
+			:error="error"
 			:total="total"
 			:has-more="hasMore"
 			:quick-filters="quickFilters"
@@ -39,6 +40,68 @@
 				<Button variant="solid" label="Add Files" iconLeft="upload-cloud" @click="pickFiles" />
 			</template>
 
+			<!-- persistent drop card: click → picker, drag anywhere on the page →
+			     highlight (the root handlers drive `dragging`), drop → uploadBatch -->
+			<template #banner>
+				<div class="mb-3">
+					<div
+						role="button"
+						tabindex="0"
+						class="flex cursor-pointer flex-col items-center gap-1.5 rounded-lg border-2 border-dashed px-5 py-5 text-center transition-colors"
+						:class="
+							dragging
+								? 'border-outline-gray-4 bg-surface-gray-2'
+								: 'border-outline-gray-2 bg-surface-white hover:bg-surface-gray-1'
+						"
+						@click="pickFiles"
+						@keydown.enter.prevent="pickFiles"
+						@keydown.space.prevent="pickFiles"
+					>
+						<FeatherIcon name="upload-cloud" class="size-6 text-ink-gray-5" />
+						<div class="text-base font-medium text-ink-gray-8">
+							{{ dragging ? "Drop files to add to File Box" : "Drop files here, or click to browse"
+							}}<span v-if="uploadingCount"> — {{ uploadingCount }} uploading…</span>
+						</div>
+						<div class="max-w-2xl text-p-sm text-ink-gray-6">
+							Drop your files — single or in bulk — and leave them. Jarvis identifies each file's
+							nature and processes it in the background. If it needs your input, it asks in the
+							<!-- .stop keeps the link from also triggering the card's pickFiles
+							     (click) and from having Enter swallowed by the card's
+							     keydown.enter.prevent -->
+							<router-link
+								to="/approvals"
+								class="font-semibold text-ink-blue-3 hover:underline"
+								@click.stop
+								@keydown.enter.stop
+								>Approval Board</router-link
+							>
+							— watch for the <span class="font-semibold">red dot</span> there and answer its
+							questions.
+						</div>
+					</div>
+					<!-- per-file error chips (last 8, dismissible) -->
+					<div v-if="dropErrors.length" class="mt-2 flex flex-wrap gap-1.5">
+						<div
+							v-for="d in dropErrors"
+							:key="d.key"
+							class="flex h-6 min-w-0 items-center gap-1.5 rounded border border-outline-red-1 bg-surface-red-1 px-2 text-sm text-ink-red-4"
+						>
+							<FeatherIcon name="alert-circle" class="size-3.5 shrink-0" />
+							<span class="max-w-[280px] truncate" :title="`${d.name}: ${d.error}`">
+								{{ d.name }}: {{ d.error }}
+							</span>
+							<Button
+								variant="ghost"
+								icon="x"
+								label="Dismiss"
+								class="!h-4 !w-4"
+								@click="dismissDropError(d.key)"
+							/>
+						</div>
+					</div>
+				</div>
+			</template>
+
 			<template #cell-title="{ row }">
 				<div class="flex items-center gap-2 overflow-hidden">
 					<FeatherIcon name="file-text" class="size-4 shrink-0 text-ink-gray-5" />
@@ -62,34 +125,50 @@
 				</div>
 			</template>
 
+			<template #cell-_preview="{ row }">
+				<div class="flex w-full items-center justify-end" @click.stop.prevent>
+					<Button
+						v-if="row.file_url"
+						variant="ghost"
+						icon="eye"
+						size="sm"
+						label="Preview file"
+						:tooltip="'Preview'"
+						@click="openPreview(row)"
+					/>
+				</div>
+			</template>
+
 			<template #select-actions="{ selections, unselectAll }">
 				<Dropdown :options="[{ label: 'Delete', onClick: () => bulkDelete(selections, unselectAll) }]">
-					<Button icon="more-horizontal" variant="ghost" />
+					<Button icon="more-horizontal" variant="ghost" label="Bulk actions" />
 				</Dropdown>
 			</template>
 		</ListPage>
 
 		<input ref="fileInput" type="file" multiple class="hidden" @change="onPick" />
 
-		<!-- drag-drop overlay -->
-		<div
-			v-if="dragging"
-			class="absolute inset-0 z-10 grid place-items-center rounded-lg border-2 border-dashed border-outline-gray-3 bg-surface-white/90"
-		>
-			<div class="text-base font-medium text-ink-gray-8">Drop files to add to File Box</div>
-		</div>
+		<FilePreview
+			v-model="preview.show"
+			:file-url="preview.url"
+			:file-name="preview.name"
+			:file-type="preview.type"
+		/>
 	</div>
 </template>
 
 <script setup>
 // File Box list — DESIGN-V3 §5.7 + §15.1: search quick filter (envelope
-// `search`), drop overlay + picker upload (toast.promise batch), status quick
-// filter with ?status= deep link, date-range filter, processing poll (5s) +
-// visibilitychange refresh, bulk delete with skip reasons, Clear Processed.
+// `search`), persistent drop card (click → picker, page-wide drag highlights
+// it, drop anywhere uploads) with per-file error chips, status quick filter
+// with ?status= deep link, date-range filter, processing poll (5s) +
+// visibilitychange refresh, per-row file preview (FilePreview dialog), bulk
+// delete with skip reasons, Clear Processed.
 import { ref, computed, onMounted, onBeforeUnmount } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import { Button, Badge, FeatherIcon, Tooltip, Dropdown, toast, confirmDialog } from "frappe-ui"
 import ListPage from "@/components/list/ListPage.vue"
+import FilePreview from "@/components/FilePreview.vue"
 import { useListPage } from "@/composables/useListPage"
 import { useShellStore } from "@/stores/shell"
 import { timeAgo, exactDate } from "@/utils/datetime"
@@ -123,6 +202,7 @@ const columns = [
 	{ label: "File", key: "title", width: 3 },
 	{ label: "Status", key: "status", width: "9rem" },
 	{ label: "Added", key: "creation", width: "8rem", align: "right" },
+	{ label: "", key: "_preview", width: "3rem", align: "right" },
 ]
 // search rides the quick-filter strip (§15.1): it lives in the filters object
 // so the input stays controlled, and fetchFn moves it onto the envelope's
@@ -149,6 +229,7 @@ const {
 	total,
 	hasMore,
 	loading,
+	error,
 	filters,
 	setFilters,
 	sort,
@@ -185,6 +266,20 @@ function openChat(row) {
 	router.push("/c/" + row.name)
 }
 
+// ── per-row file preview (FilePreview dialog) ────────────────────────────────
+// rows carry file_url / file_name / file_type from list_inbound_page; rows
+// without a file_url (e.g. legacy docs) simply don't render the eye button.
+const preview = ref({ show: false, url: "", name: "", type: "" })
+function openPreview(row) {
+	if (!row.file_url) return
+	preview.value = {
+		show: true,
+		url: row.file_url,
+		name: row.file_name || stripTitle(row.title),
+		type: row.file_type || "",
+	}
+}
+
 // ── upload (picker + drag-drop) ──────────────────────────────────────────────
 const fileInput = ref(null)
 function pickFiles() {
@@ -195,11 +290,23 @@ function onPick(ev) {
 	ev.target.value = ""
 }
 
+// drop-card state: in-flight count ("{n} uploading…") + per-file error chips
+const uploadingCount = ref(0)
+const dropErrors = ref([]) // [{key, name, error}] — last 8, dismissible
+let dropErrKey = 0
+function pushDropError(name, error) {
+	dropErrors.value = [...dropErrors.value, { key: ++dropErrKey, name, error }].slice(-8)
+}
+function dismissDropError(key) {
+	dropErrors.value = dropErrors.value.filter((d) => d.key !== key)
+}
+
 async function uploadBatch(fileList) {
 	const files = Array.from(fileList || [])
 	if (!files.length) return
 	const failures = []
 	let okCount = 0
+	uploadingCount.value += files.length
 	const run = (async () => {
 		await Promise.all(
 			files.map(async (file) => {
@@ -210,6 +317,8 @@ async function uploadBatch(fileList) {
 					okCount++
 				} catch (e) {
 					failures.push({ name: file.name, error: errMsg(e) })
+				} finally {
+					uploadingCount.value = Math.max(0, uploadingCount.value - 1)
 				}
 			})
 		)
@@ -223,13 +332,13 @@ async function uploadBatch(fileList) {
 			error: () => "Upload failed",
 		})
 	} catch (e) {
-		// every file failed — the per-file toasts below carry the reasons
+		// every file failed — the per-file chips below carry the reasons
 	}
-	for (const f of failures) toast.error(`${f.name}: ${f.error}`)
+	for (const f of failures) pushDropError(f.name, f.error)
 	if (okCount) resetLoad()
 }
 
-// ── drag-drop overlay ────────────────────────────────────────────────────────
+// ── page-wide drag state (highlights the drop card; drop anywhere uploads) ───
 const dragDepth = ref(0)
 const dragging = computed(() => dragDepth.value > 0)
 function hasFiles(ev) {

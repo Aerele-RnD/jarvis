@@ -11,6 +11,11 @@
 					<span style="font-size:11.5px;color:var(--text-3);">{{ headerSub }}</span>
 				</div>
 				<div style="margin-left:auto;display:flex;align-items:center;gap:8px;">
+					<!-- "Go to Desk" — at the rightmost end of the cluster (chat only, via CSS order)
+					     (uniform with LayoutHeader across every page) -->
+					<button class="jv-iconbtn" @click="openErpDesk" title="Open ERPNext Desk" aria-label="Open ERPNext Desk" style="order:99;width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:transparent;border:1px solid var(--border);border-radius:7px;cursor:pointer;">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><path d="M15 3h6v6M10 14 21 3" /></svg>
+					</button>
 					<!-- Save this conversation's prompts as a reusable macro (opens the /macros editor pre-filled) -->
 					<button v-if="canSaveAsMacro" class="jv-modelpill" @click="saveConversationAsMacro" title="Save this chat's prompts as a macro" style="display:flex;align-items:center;gap:6px;padding:5px 10px;background:var(--surface-1);border:1px solid var(--border);border-radius:20px;cursor:pointer;font-family:inherit;">
 						<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l14 9-14 9V3z" /></svg>
@@ -38,12 +43,9 @@
 							</button>
 						</div>
 					</div>
-					<button class="jv-iconbtn-bd" @click="toggleTheme" :title="effectiveDark ? 'Switch to light theme' : 'Switch to dark theme'" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:var(--surface);border:1px solid var(--border);border-radius:7px;cursor:pointer;">
+					<button class="jv-iconbtn" @click="toggleTheme" :title="effectiveDark ? 'Switch to light theme' : 'Switch to dark theme'" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:transparent;border:1px solid var(--border);border-radius:7px;cursor:pointer;">
 						<svg v-if="effectiveDark" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
 						<svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" /></svg>
-					</button>
-					<button class="jv-iconbtn-bd" @click="openErpDesk" title="Open ERPNext Desk (new tab)" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:var(--surface);border:1px solid var(--border);border-radius:7px;cursor:pointer;">
-						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><path d="M15 3h6v6M10 14 21 3" /></svg>
 					</button>
 				</div>
 			</header>
@@ -3458,8 +3460,6 @@ function onGlobalKey(e) {
    override so the icon stays visible on the inverted background. */
 .jv-iconbtn:hover { background: var(--text) !important; color: var(--surface) !important; }
 .jv-iconbtn:hover svg { stroke: var(--surface) !important; }
-.jv-iconbtn-bd:hover { background: var(--text) !important; border-color: var(--text) !important; }
-.jv-iconbtn-bd:hover svg { stroke: var(--surface) !important; }
 .jv-ctxbtn:hover { background: var(--surface-2); }
 .jv-retry:hover { filter: brightness(0.94); }
 .jv-modelpill:hover { background: var(--text) !important; border-color: var(--text) !important; }
@@ -3737,8 +3737,6 @@ function onGlobalKey(e) {
 .jv-skill-dot.err { background: var(--red); }
 .jv-skill-dot.spin { border: 2px solid var(--border-2); border-top-color: var(--blue); background: transparent; width: 11px; height: 11px; animation: jv-spin .7s linear infinite; }
 @keyframes jv-spin { to { transform: rotate(360deg); } }
-.jv-iconbtn-bd.on { background: var(--blue-bg) !important; border-color: var(--blue) !important; }
-.jv-iconbtn-bd.on svg { stroke: var(--blue); }
 /* theme segmented control */
 .jv-seg { display: flex; gap: 6px; }
 .jv-seg button { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 11px 6px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 9px; font-family: inherit; font-size: 11.5px; font-weight: 550; color: var(--text-2); cursor: pointer; transition: border-color .12s, background .12s, color .12s; }
@@ -3960,13 +3958,11 @@ function onGlobalKey(e) {
    would flash a stark white button, so neutral buttons get a subtle elevated
    grey hover and primaries keep their colour (just brighter). */
 .jv-dark .jv-iconbtn:hover,
-.jv-dark .jv-iconbtn-bd:hover,
 .jv-dark .jv-artifact-head .jv-iconbtn:hover,
 .jv-dark .jv-modelpill:hover,
 .jv-dark .jv-confirm-no:hover,
 .jv-dark .jv-action-2nd:hover { background: var(--surface-3) !important; color: var(--text) !important; border-color: var(--border-2) !important; }
 .jv-dark .jv-iconbtn:hover svg,
-.jv-dark .jv-iconbtn-bd:hover svg,
 .jv-dark .jv-modelpill:hover svg { stroke: var(--text) !important; }
 .jv-dark .jv-modelpill:hover span { color: var(--text) !important; }
 .jv-dark .jv-sendbtn:hover:not(:disabled),

@@ -169,12 +169,35 @@ _INBOUND_SORTABLE = {"creation": "creation", "title": "title"}
 # pending > no-assistant-message > streaming/recovering > error > done.
 # `%%` is the literal LIKE percent under pyformat params; `{extra}` is the only
 # str.format hole (server-built AND-clauses; never user text).
+# VISIBILITY: a conversation is visible when the caller OWNS it, OR is TAGGED
+# on it — a `Jarvis Approval Request` of that conversation carries a DocShare
+# read grant for them (docmeta_api.toggle_share / assignment). EXISTS keeps the
+# probe boolean, so a row matching both arms never duplicates. Tagged users
+# view/preview only; delete/clear stay owner-gated (`_delete_one`).
 # Both grouped subqueries (pa: pending approvals; lm: latest assistant message)
-# are CORRELATED to the owner's conversations — the owner filter is pushed
-# inside via a JOIN so they never aggregate the whole global tables (which
-# scaled with everyone's data, not the caller's). The outer WHERE keeps only
-# the owner's rows anyway, so results are identical.
-_INBOUND_INNER = """
+# are CORRELATED to the caller's VISIBLE conversations — the same visibility
+# filter is pushed inside via a JOIN so they never aggregate the whole global
+# tables (which scaled with everyone's data, not the caller's), and so shared
+# rows keep a correct status + pending count instead of being dropped by an
+# owner-only inner scope. The outer WHERE keeps only visible rows anyway, so
+# results are identical.
+
+
+def _conv_visible(alias: str) -> str:
+	"""SQL predicate: conversation ``alias`` is visible to ``%(me)s`` — they own
+	it, or a related Jarvis Approval Request is DocShared-read to them."""
+	return (
+		f"({alias}.owner = %(me)s OR EXISTS ("
+		"SELECT 1 FROM `tabJarvis Approval Request` sa "
+		"JOIN `tabDocShare` sds "
+		"ON sds.share_doctype = 'Jarvis Approval Request' "
+		"AND sds.share_name = sa.name "
+		"AND sds.user = %(me)s AND sds.`read` = 1 "
+		f"WHERE sa.conversation = {alias}.name))"
+	)
+
+
+_INBOUND_INNER = f"""
 	SELECT c.name, c.title, c.creation,
 	       COALESCE(pa.n, 0) AS pending_approvals,
 	       CASE
@@ -188,7 +211,7 @@ _INBOUND_INNER = """
 	LEFT JOIN (SELECT ar.conversation, COUNT(*) n
 	           FROM `tabJarvis Approval Request` ar
 	           JOIN `tabJarvis Conversation` ac
-	             ON ac.name = ar.conversation AND ac.owner = %(me)s
+	             ON ac.name = ar.conversation AND {_conv_visible("ac")}
 	           WHERE ar.status = 'Pending' GROUP BY ar.conversation) pa
 	  ON pa.conversation = c.name
 	LEFT JOIN (SELECT m.conversation, m.streaming, m.recovering, m.error
@@ -196,12 +219,12 @@ _INBOUND_INNER = """
 	           JOIN (SELECT mm.conversation, MAX(mm.seq) mseq
 	                 FROM `tabJarvis Chat Message` mm
 	                 JOIN `tabJarvis Conversation` mc
-	                   ON mc.name = mm.conversation AND mc.owner = %(me)s
+	                   ON mc.name = mm.conversation AND {_conv_visible("mc")}
 	                 WHERE mm.role = 'assistant' GROUP BY mm.conversation) x
 	             ON x.conversation = m.conversation AND x.mseq = m.seq
 	           WHERE m.role = 'assistant') lm ON lm.conversation = c.name
-	WHERE c.owner = %(me)s AND c.title LIKE 'File: %%' AND c.status != 'Archived'
-	{extra}
+	WHERE {_conv_visible("c")} AND c.title LIKE 'File: %%' AND c.status != 'Archived'
+	{{extra}}
 """
 
 
@@ -262,9 +285,11 @@ def list_inbound_page(
 	start: int = 0,
 	page_length: int = 20,
 ) -> dict:
-	"""Owner-scoped File-Box conversations with the derived status computed IN SQL,
-	so ``status`` filters and pagination compose. Envelope
-	``{rows, total, has_more, start, page_length}``.
+	"""File-Box conversations visible to the caller — owned by them, or tagged to
+	them via a DocShare read grant on a related Jarvis Approval Request — with the
+	derived status computed IN SQL, so ``status`` filters and pagination compose.
+	Envelope ``{rows, total, has_more, start, page_length}``. Tagged users can
+	view; delete/clear remain owner-only.
 
 	Filters: ``status`` (done|processing|needs_approval|error), ``from_date`` /
 	``to_date`` (YYYY-MM-DD, inclusive; ``to_date`` implemented as ``creation <
@@ -314,6 +339,29 @@ def list_inbound_page(
 		LIMIT %(page_length)s OFFSET %(start)s""",
 		params, as_dict=True,
 	)
+
+	# Attach the source File so the list can offer an inline preview. Each File-Box
+	# conversation carries the dropped document as a File (drop_file, is_private=1);
+	# pick the earliest by creation. get_all bypasses File perms, but the rows are
+	# already scoped to conversations the caller may see, and the actual byte fetch
+	# (iframe/img/read_file) stays permission-gated by Frappe's file handler.
+	if rows:
+		names = [r["name"] for r in rows]
+		file_rows = frappe.get_all(
+			"File",
+			filters={"attached_to_doctype": CONV, "attached_to_name": ["in", names]},
+			fields=["attached_to_name", "file_url", "file_name"],
+			order_by="creation asc",
+		)
+		by_conv: dict = {}
+		for fr in file_rows:
+			by_conv.setdefault(fr["attached_to_name"], fr)  # earliest wins
+		for r in rows:
+			fr = by_conv.get(r["name"])
+			r["file_url"] = fr["file_url"] if fr else None
+			r["file_name"] = fr["file_name"] if fr else None
+			fn = (fr and (fr.get("file_name") or fr.get("file_url"))) or ""
+			r["file_type"] = fn.rsplit(".", 1)[-1].lower() if "." in fn else None
 
 	return {
 		"rows": rows,
@@ -402,11 +450,14 @@ def delete_inbound_bulk(conversations=None) -> dict:
 
 @frappe.whitelist()
 def clear_processed_inbound() -> dict:
-	"""Bulk-delete the caller's File-Box rows whose derived status is done|error
-	(never processing/needs_approval), computed with the same status SQL."""
+	"""Bulk-delete the caller's OWN File-Box rows whose derived status is
+	done|error (never processing/needs_approval), computed with the same status
+	SQL. Owner-only by design: the list SQL now also surfaces rows merely
+	DocShared to the caller, so the clear query pins ``c.owner = %(me)s`` via the
+	``extra`` hole — and ``_delete_one`` re-checks ownership as the backstop."""
 	me = frappe.session.user
 	rows = frappe.db.sql(
-		f"SELECT t.name FROM ({_INBOUND_INNER.format(extra='')}) t "
+		f"SELECT t.name FROM ({_INBOUND_INNER.format(extra='AND c.owner = %(me)s')}) t "
 		f"WHERE t.status IN ('done', 'error')",
 		{"me": me}, as_dict=True,
 	)

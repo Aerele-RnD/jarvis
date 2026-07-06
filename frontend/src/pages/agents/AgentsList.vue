@@ -5,152 +5,244 @@
 				<Breadcrumbs :items="[{ label: 'Agents', route: { name: 'AgentsList' } }]" />
 			</template>
 			<template #right-header>
-				<Dropdown
-					v-if="isSM"
-					:options="[{ label: 'Apply catalog changes', icon: 'upload-cloud', onClick: applyCatalog }]"
-				>
-					<Button icon="more-horizontal" variant="ghost" :tooltip="'Catalog admin'" />
-				</Dropdown>
+				<!-- SM-only apply pipeline: prominent while the catalog is dirty,
+				     SyncPill-style pending/failed states while an apply runs -->
+				<div v-if="isSM" class="flex items-center gap-2">
+					<!-- duration lives IN the badge text — tooltips are invisible to
+					     keyboard/SR users -->
+					<Badge v-if="sync.pending" theme="orange" variant="subtle">
+						<template #prefix>
+							<LoadingIndicator class="size-3" />
+						</template>
+						Applying agents — ~30s, one restart
+					</Badge>
+					<template v-else>
+						<Badge v-if="syncFailed" theme="red" variant="subtle" label="Apply failed" />
+						<Badge v-else-if="sync.dirty" theme="orange" variant="subtle" label="Changes pending" />
+						<Button
+							:variant="sync.dirty || syncFailed ? 'solid' : 'subtle'"
+							:label="syncFailed ? 'Retry apply' : 'Apply catalog changes'"
+							iconLeft="upload-cloud"
+							:loading="applying"
+							@click="applyCatalog"
+						/>
+					</template>
+				</div>
 			</template>
 		</LayoutHeader>
 
-		<!-- §15.3 — exactly 3 tabs, hash-synced (no hash = Available) -->
-		<TabBar class="shrink-0" :tabs="tabBarTabs" :model-value="tab" @update:model-value="setTab" />
+		<!-- 4 hash-synced tabs (no hash = Featured; #available/#installed/#activity) -->
+		<TabBar class="shrink-0" :tabs="TABS" :model-value="tab" @update:model-value="setTab" />
 
-		<div class="flex-1 overflow-y-auto">
-			<!-- per-tab toolbar: search + category chips filtering WITHIN the tab -->
-			<div class="flex items-center gap-2 px-5 pt-4">
+		<!-- persistent apply-failure banner: the reason must survive the toast and
+		     be reachable without hovering a badge (keyboard/SR access) -->
+		<div
+			v-if="isSM && syncFailed && !sync.pending"
+			class="mx-5 mt-3 flex shrink-0 items-start gap-2 rounded-lg border border-outline-red-1 bg-surface-red-1 px-3 py-2 text-sm text-ink-red-4"
+		>
+			<FeatherIcon name="x-circle" class="mt-0.5 size-4 shrink-0" />
+			<span>
+				Applying agents to your assistant failed<template v-if="syncFailureReason">
+					— {{ syncFailureReason }}</template
+				>. Use Retry apply to try again.
+			</span>
+		</div>
+
+		<!-- Activity: self-contained feed (own search + pagination) -->
+		<AgentActivityTab v-if="tab === 'activity'" class="min-h-0 flex-1" />
+
+		<!-- Featured / Available / Installed: search · category · sort → card grid -->
+		<template v-else>
+			<div class="flex flex-wrap items-center gap-2 px-5 pt-4">
 				<FormControl
 					type="text"
-					class="w-60 shrink-0"
+					class="w-60"
 					placeholder="Search agents"
-					:modelValue="searchInput"
-					@update:modelValue="onSearch"
+					:modelValue="search"
+					@update:modelValue="(v) => (search = v)"
 				>
 					<template #prefix>
 						<FeatherIcon name="search" class="size-4 text-ink-gray-5" />
 					</template>
 				</FormControl>
-				<!-- fade cue on the right edge while more chips hide past it -->
-				<div class="relative min-w-0 flex-1">
-					<div
-						ref="chipStrip"
-						class="flex items-center gap-2 overflow-x-auto"
-						@scroll.passive="updateChipFade"
-					>
-						<Button
-							label="All"
-							:variant="category === '' ? 'solid' : 'subtle'"
-							@click="category = ''"
-						/>
-						<Button
-							v-for="c in categories"
-							:key="c.slug"
-							:label="c.title"
-							:variant="category === c.slug ? 'solid' : 'subtle'"
-							@click="category = c.slug"
-						/>
-					</div>
-					<div
-						v-if="chipFade"
-						class="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-[var(--surface-white)]"
-					/>
-				</div>
+				<div class="flex-1" />
+				<FormControl
+					type="select"
+					class="w-52"
+					:options="categoryOptions"
+					:modelValue="category"
+					@update:modelValue="(v) => (category = v)"
+				/>
+				<FormControl
+					type="select"
+					class="w-44"
+					:options="SORT_OPTIONS"
+					:modelValue="sortChoice"
+					@update:modelValue="(v) => (sortChoice = v)"
+				/>
 			</div>
 
-			<!-- card grid (unchanged cards, no sections) -->
-			<div class="px-5 pb-8 pt-5">
-				<div v-if="loading" class="py-10 text-center text-sm text-ink-gray-5">
+			<div class="min-h-0 flex-1 overflow-y-auto px-5 pb-8 pt-4">
+				<div v-if="loading && !rows.length" class="py-10 text-center text-sm text-ink-gray-5">
 					Loading the catalog…
 				</div>
-				<div v-else-if="loadError" class="py-10 text-center text-sm text-ink-red-4">
-					{{ loadError }}
+				<div v-else-if="error && !rows.length" class="py-10 text-center text-sm text-ink-red-4">
+					{{ error }}
 				</div>
 				<div
-					v-else-if="!filtered.length"
+					v-else-if="!rows.length"
 					class="flex flex-col items-center gap-1 py-16 text-center"
 				>
 					<FeatherIcon name="cpu" class="size-7.5 text-ink-gray-5" />
-					<span class="mt-2 text-lg font-medium text-ink-gray-8">{{ emptyTitle }}</span>
-					<span class="text-p-base text-ink-gray-6">{{ emptyDescription }}</span>
+					<span class="mt-2 text-lg font-medium text-ink-gray-8">{{ emptyState.title }}</span>
+					<span class="text-p-base text-ink-gray-6">{{ emptyState.description }}</span>
+					<Button
+						v-if="emptyState.cta"
+						class="mt-3"
+						label="Browse available agents"
+						@click="setTab('available')"
+					/>
 				</div>
 
 				<div v-else class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
 					<div
-						v-for="a in filtered"
+						v-for="a in rows"
 						:key="a.agent_slug"
-						class="flex cursor-pointer gap-4 rounded-lg border p-4 transition hover:bg-surface-gray-1"
-						@click="router.push('/agents/' + a.agent_slug)"
+						role="button"
+						tabindex="0"
+						class="flex cursor-pointer flex-col rounded-lg border bg-surface-white p-4 transition hover:bg-surface-gray-1"
+						@click="openAgent(a)"
+						@keydown.enter.prevent="openAgent(a)"
+						@keydown.space.prevent="openAgent(a)"
 					>
-						<!-- letter-avatar logo (listing has no image field) -->
-						<div
-							class="grid h-12 w-12 shrink-0 place-items-center rounded-lg border bg-surface-gray-2 text-lg font-semibold text-ink-gray-6"
-						>
-							{{ logoText(a) }}
+						<div class="flex items-start gap-3">
+							<!-- letter-avatar logo (listing has no image field) -->
+							<div
+								class="grid h-11 w-11 shrink-0 place-items-center rounded-lg border bg-surface-gray-2 text-base font-semibold text-ink-gray-6"
+							>
+								{{ logoText(a) }}
+							</div>
+							<div class="min-w-0 flex-1">
+								<div class="flex items-center gap-2">
+									<span class="truncate text-base font-semibold text-ink-gray-9">
+										{{ a.title }}
+									</span>
+									<Badge
+										v-if="a.status === 'Coming Soon'"
+										class="shrink-0"
+										variant="subtle"
+										theme="blue"
+										label="Coming Soon"
+									/>
+									<Badge
+										v-else-if="a.status === 'Deprecated'"
+										class="shrink-0"
+										variant="subtle"
+										theme="red"
+										label="Deprecated"
+									/>
+								</div>
+								<div class="truncate text-sm text-ink-gray-5">
+									by {{ a.publisher || "Unknown" }}<template v-if="a.version"> · v{{ a.version }}</template>
+								</div>
+							</div>
 						</div>
-						<div class="min-w-0 flex-1">
-							<div class="flex flex-wrap items-center gap-2">
-								<span class="truncate text-lg font-semibold text-ink-gray-9">{{ a.title }}</span>
-								<Badge variant="subtle" theme="gray" :label="a.nature" />
-								<Badge
-									v-if="a.status === 'Coming Soon'"
-									variant="subtle"
-									theme="blue"
-									label="Coming Soon"
-								/>
-								<Badge
-									v-else-if="a.status === 'Deprecated'"
-									variant="subtle"
-									theme="red"
-									label="Deprecated"
-								/>
-							</div>
-							<p class="mt-1 line-clamp-2 text-base text-ink-gray-6">{{ a.description }}</p>
-							<div class="mt-2 flex items-center gap-2 text-sm">
-								<Badge variant="outline" theme="gray" :label="categoryTitle(a.category)" />
-								<span v-if="a.installed" class="flex items-center gap-1 text-ink-green-3">
-									<FeatherIcon name="check" class="size-3" />
-									Installed
-								</span>
-								<Badge
-									v-if="a.update_available"
-									variant="subtle"
-									theme="orange"
-									label="Update"
-								/>
-							</div>
-							<div v-if="!a.allowed" class="mt-1 text-sm text-ink-gray-5">
-								Available to: {{ (a.allowed_roles || []).join(", ") || "—" }} — ask your
-								administrator.
-							</div>
+
+						<p class="mt-3 line-clamp-2 min-h-10 text-base text-ink-gray-6">
+							{{ a.description }}
+						</p>
+
+						<div class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">
+							<Badge variant="outline" theme="gray" :label="categoryTitle(a.category)" />
+							<span class="flex items-center gap-1 text-ink-gray-5">
+								<FeatherIcon name="download" class="size-3.5" />
+								{{ installsLabel(a.install_count) }}
+							</span>
+							<span v-if="a.installed" class="flex items-center gap-1 text-ink-green-3">
+								<FeatherIcon name="check" class="size-3.5" />
+								Installed
+							</span>
+							<Badge
+								v-if="a.update_available"
+								variant="subtle"
+								theme="orange"
+								label="Update available"
+							/>
+						</div>
+
+						<div v-if="!a.allowed" class="mt-2 text-sm text-ink-gray-5">
+							Available to: {{ (a.allowed_roles || []).join(", ") || "—" }} — ask your
+							administrator.
 						</div>
 					</div>
 				</div>
 			</div>
-		</div>
+
+			<ListFooter
+				v-if="rows.length"
+				class="shrink-0 border-t px-5 py-2"
+				:modelValue="pageLength"
+				:options="{ rowCount: rows.length, totalCount: total }"
+				@update:modelValue="(v) => (pageLength = v)"
+				@loadMore="loadMore"
+			/>
+		</template>
+
+		<!-- leave-guard: SM with unapplied catalog changes (dirty) -->
+		<Dialog
+			v-model="leaveDialog.show"
+			:options="{ title: 'Unapplied catalog changes' }"
+			@close="resolveLeave(false)"
+		>
+			<template #body-content>
+				<p class="text-p-base text-ink-gray-6">
+					You have unapplied catalog changes. Apply them now, or leave anyway? Your changes
+					stay saved either way — they only reach the assistant after an Apply.
+				</p>
+			</template>
+			<template #actions>
+				<div class="flex items-center gap-2">
+					<Button variant="solid" label="Apply & leave" :loading="applying" @click="applyAndLeave" />
+					<Button label="Leave anyway" @click="resolveLeave(true)" />
+					<Button variant="ghost" label="Stay" @click="resolveLeave(false)" />
+				</div>
+			</template>
+		</Dialog>
 	</div>
 </template>
 
 <script setup>
-// Agents marketplace listing — /agents (DESIGN-V3 §15.3, supersedes §7.1's
-// sectioned layout). Exactly 3 hash-synced tabs (mirrors AgentDetail's
-// hash-tab pattern; no hash = Available, #installed, #featured):
-//   Available — whole catalog incl. Coming Soon; Deprecated hidden unless
-//               installed; installed rows keep the ✓ marker.
-//   Installed — only the user's installs (tab count badge), any status.
-//   Featured  — top Published by install_count (fallback: first 6 Published
-//               when all counts are zero — the tab must not be empty).
-// Every tab: search (300ms debounce, client-side) + category chips ("All" +
-// the tab's distinct categories) filtering WITHIN the tab, then the card
-// grid. One list_agents() call (D31, catalog ≈ 7). Card click →
-// /agents/:slug (always, incl. Coming Soon). SM right-header ⋯ → "Apply
-// catalog changes" (rate-limited server-side).
-import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from "vue"
-import { useRoute, useRouter } from "vue-router"
-import { Badge, Breadcrumbs, Button, Dropdown, FeatherIcon, FormControl, toast } from "frappe-ui"
+// Agents marketplace listing — /agents (DESIGN-V3 §15.3, marketplace revision).
+// Four hash-synced tabs (no hash = Featured; #available/#installed/#activity):
+//   Featured / Available / Installed — SERVER-paginated card grids via
+//     agents_api.list_agents_page (tab semantics live server-side; envelope
+//     {rows,total,has_more,...}) with a Category select + a single sort choice
+//     (Most installed / Recently updated / Name). No ratings — deliberately
+//     deferred.
+//   Activity — the owner's lifecycle feed (AgentActivityTab, self-contained).
+// SM header action: prominent "Apply catalog changes" driven by
+// get_agents_sync_status().dirty (install/uninstall/enable since the last
+// successful Apply), with SyncPill-style pending/failed polling, plus a
+// route-leave + beforeunload guard while dirty.
+import { reactive, ref, computed, watch, onMounted, onBeforeUnmount } from "vue"
+import { useRoute, useRouter, onBeforeRouteLeave } from "vue-router"
+import {
+	Badge,
+	Breadcrumbs,
+	Button,
+	Dialog,
+	FeatherIcon,
+	FormControl,
+	ListFooter,
+	LoadingIndicator,
+	toast,
+} from "frappe-ui"
 import LayoutHeader from "@/components/LayoutHeader.vue"
 import TabBar from "@/components/list/TabBar.vue"
+import AgentActivityTab from "./AgentActivityTab.vue"
+import { useListPage } from "@/composables/useListPage"
 import * as api from "@/api"
+import * as agentsApi from "@/api/agents"
 
 const route = useRoute()
 const router = useRouter()
@@ -171,72 +263,24 @@ const DOMAINS = [
 	{ slug: "analytical-review", title: "Analytical Review" },
 ]
 
-// ── data ──────────────────────────────────────────────────────────────────────
-const catalog = ref([])
-const loading = ref(true)
-const loadError = ref("")
-
-async function load() {
-	try {
-		catalog.value = (await api.listAgents()) || []
-		loadError.value = ""
-	} catch (e) {
-		loadError.value = "Could not load the agent catalog."
-	} finally {
-		loading.value = false
-	}
-}
-
-// SM probe (round-2 parity): getAgentAdminOverview succeeds only for System
-// Managers — PermissionError hides the ⋯ apply action, no noise.
-const isSM = ref(false)
-async function probeAdmin() {
-	try {
-		await api.getAgentAdminOverview()
-		isSM.value = true
-	} catch (e) {
-		isSM.value = false
-	}
-}
-
-onMounted(() => {
-	load()
-	probeAdmin()
-	chipResizeObserver = new ResizeObserver(updateChipFade)
-	if (chipStrip.value) chipResizeObserver.observe(chipStrip.value)
-	updateChipFade()
-})
-
-// ── chip-strip overflow cue (right-edge fade over the surface background) ────
-const chipStrip = ref(null)
-const chipFade = ref(false)
-let chipResizeObserver = null
-function updateChipFade() {
-	const el = chipStrip.value
-	// visible only while chips are clipped past the right edge
-	chipFade.value = !!el && el.scrollWidth - el.clientWidth - el.scrollLeft > 2
-}
-onBeforeUnmount(() => chipResizeObserver && chipResizeObserver.disconnect())
-
-// ── hash-synced tabs (AgentDetail pattern; no hash = Available) ──────────────
-const tab = ref("available")
-
-const installedCount = computed(() => catalog.value.filter((a) => a.installed).length)
-const tabBarTabs = computed(() => [
-	{ label: "Available", value: "available" },
-	// count badge only once the catalog is in — no misleading "0" flash
-	{ label: "Installed", value: "installed", count: loading.value ? null : installedCount.value },
+// ── hash-synced tabs (AgentDetail pattern; no hash = Featured) ───────────────
+const TABS = [
 	{ label: "Featured", value: "featured" },
-])
+	{ label: "Available", value: "available" },
+	{ label: "Installed", value: "installed" },
+	{ label: "Activity", value: "activity" },
+]
+const AGENT_TABS = ["featured", "available", "installed"]
 
+const tab = ref("featured")
 function applyHash() {
 	const h = (route.hash || "").replace(/^#/, "")
-	tab.value = h === "installed" || h === "featured" ? h : "available"
+	tab.value = TABS.some((t) => t.value === h) ? h : "featured"
 }
 function setTab(v) {
 	if (tab.value === v) return
 	tab.value = v
-	router.push({ hash: v === "available" ? "" : "#" + v })
+	router.push({ hash: v === "featured" ? "" : "#" + v })
 }
 applyHash()
 // back/forward restores the tab
@@ -247,93 +291,106 @@ watch(
 	}
 )
 
-// ── search (300ms debounce) + category filter, WITHIN the active tab ─────────
-const searchInput = ref("")
-const search = ref("")
-const category = ref("")
-let searchTimer = null
-function onSearch(v) {
-	searchInput.value = v
-	clearTimeout(searchTimer)
-	searchTimer = setTimeout(() => {
-		search.value = String(v || "").trim().toLowerCase()
-	}, 300)
-}
-onBeforeUnmount(() => clearTimeout(searchTimer))
+// ── catalog list: useListPage adapter over list_agents_page ─────────────────
+// The adapter closes over tab/category/sortChoice and maps useListPage's
+// {search, start, page_length} call onto the marketplace-shaped endpoint;
+// its filters/sort_field channel is unused (one category select + one sort
+// choice instead of the generic Filter/Sort kit).
+const category = ref("") // "" = all categories
+const sortChoice = ref("installs") // installs | updated | name
+const SORT_OPTIONS = [
+	{ label: "Most installed", value: "installs" },
+	{ label: "Recently updated", value: "updated" },
+	{ label: "Name (A–Z)", value: "name" },
+]
 
-// ── tab row sets (before search/category) ────────────────────────────────────
-const tabRows = computed(() => {
-	const rows = catalog.value
-	if (tab.value === "installed") {
-		// the user's installs, ANY status — Deprecated included (§15.3)
-		return rows.filter((a) => a.installed)
+const { rows, total, loading, error, search, pageLength, resetLoad, loadMore } = useListPage({
+	fetchFn: (p) => {
+		// Activity owns its own list — never hit the catalog endpoint for it
+		// (covers the mount-time fetch when deep-linked to #activity)
+		if (!AGENT_TABS.includes(tab.value)) return { rows: [], total: 0, has_more: false }
+		return agentsApi.listAgentsPage({
+			tab: tab.value,
+			category: category.value,
+			sort: sortChoice.value,
+			search: p.search,
+			start: p.start,
+			page_length: p.page_length,
+		})
+	},
+	storageKey: "agents",
+})
+
+// tab/category/sort changes refetch page 1 (search/page-length are handled
+// inside useListPage); switching TO activity is a no-op for the grid
+watch([tab, category, sortChoice], ([t]) => {
+	if (t === "activity") return
+	resetLoad()
+})
+
+// ── category select options (distinct catalog categories, DOMAINS titles) ────
+// One cheap list_agents() call feeds the distinct set — server pages can't
+// (a page only sees its slice); DOMAINS is the fallback until/if it loads.
+const catalogCategories = ref(null)
+async function loadCategories() {
+	try {
+		const all = (await api.listAgents()) || []
+		const seen = new Set()
+		const out = []
+		for (const a of all) {
+			const slug = a.category || "other"
+			if (seen.has(slug)) continue
+			seen.add(slug)
+			out.push(slug)
+		}
+		if (out.length) catalogCategories.value = out
+	} catch (e) {
+		// keep the DOMAINS fallback — the select must not break the page
+	}
+}
+const categoryOptions = computed(() => {
+	const slugs = catalogCategories.value || DOMAINS.map((d) => d.slug)
+	return [
+		{ label: "All categories", value: "" },
+		...slugs.map((s) => ({ label: categoryTitle(s), value: s })),
+	]
+})
+
+// ── empty states (per-TAB copy — "catalog is empty" only when it truly is) ───
+const filtersActive = computed(() => !!(search.value || category.value))
+const emptyState = computed(() => {
+	if (filtersActive.value) {
+		return {
+			title: "No agents match",
+			description: "Try clearing the search or category filter.",
+			cta: false,
+		}
 	}
 	if (tab.value === "featured") {
-		const published = rows.filter((a) => a.status === "Published")
-		const withCounts = published.filter((a) => (a.install_count || 0) > 0)
-		if (withCounts.length) {
-			return [...withCounts]
-				.sort((a, b) => (b.install_count || 0) - (a.install_count || 0))
-				.slice(0, 6)
+		return {
+			title: "No featured agents yet",
+			description: "Browse the Available tab for the full catalog.",
+			cta: true,
 		}
-		// all counts zero → first 6 Published; the tab must not be empty
-		return published.slice(0, 6)
 	}
-	// Available: whole catalog incl. Coming Soon; Deprecated only when installed
-	return rows.filter((a) => a.status !== "Deprecated" || a.installed)
-})
-
-// chips = "All" + the ACTIVE tab's distinct categories
-const categories = computed(() => {
-	const seen = new Set()
-	const out = []
-	for (const a of tabRows.value) {
-		const slug = a.category || "other"
-		if (seen.has(slug)) continue
-		seen.add(slug)
-		out.push({ slug, title: categoryTitle(slug) })
-	}
-	return out
-})
-
-// a chip selected on one tab may not exist on the next — snap back to All
-watch(tab, () => {
-	if (category.value && !categories.value.some((c) => c.slug === category.value)) {
-		category.value = ""
-	}
-})
-
-// chips differ per tab/catalog — scrollWidth changes without a resize event
-watch(
-	() => categories.value.length,
-	() => nextTick(updateChipFade)
-)
-
-const filtered = computed(() =>
-	tabRows.value.filter((a) => {
-		if (category.value && (a.category || "other") !== category.value) return false
-		if (search.value) {
-			const hay = `${a.title} ${a.description || ""} ${a.category || ""} ${a.agent_slug}`.toLowerCase()
-			if (!hay.includes(search.value)) return false
+	if (tab.value === "installed") {
+		return {
+			title: "You haven't installed any agents yet",
+			description: "Browse the catalog and install one to get started.",
+			cta: true,
 		}
-		return true
-	})
-)
-
-const filtersActive = computed(() => !!(search.value || category.value))
-const emptyTitle = computed(() => {
-	if (tab.value === "installed" && !tabRows.value.length) return "No agents installed yet"
-	return "No agents match"
-})
-const emptyDescription = computed(() => {
-	if (tab.value === "installed" && !tabRows.value.length) {
-		return "Browse the Available tab and install one to get started."
 	}
-	if (filtersActive.value) return "Try clearing the search or category filter."
-	return "The catalog is empty right now."
+	return {
+		title: "No agents available",
+		description: "The catalog is empty right now.",
+		cta: false,
+	}
 })
 
 // ── display helpers ──────────────────────────────────────────────────────────
+function openAgent(a) {
+	router.push("/agents/" + a.agent_slug)
+}
 function categoryTitle(slug) {
 	const d = DOMAINS.find((x) => x.slug === slug)
 	if (d) return d.title
@@ -345,14 +402,115 @@ function categoryTitle(slug) {
 function logoText(a) {
 	return String(a.title || a.agent_slug || "?").slice(0, 2).toUpperCase()
 }
+function installsLabel(n) {
+	const c = n || 0
+	return `${c} install${c === 1 ? "" : "s"}`
+}
 
-// ── SM: apply catalog changes ────────────────────────────────────────────────
+// ── SM probe (round-2 parity): getAgentAdminOverview succeeds only for System
+// Managers — PermissionError hides the apply action, no noise. ────────────────
+const isSM = ref(false)
+async function probeAdmin() {
+	try {
+		await api.getAgentAdminOverview()
+		isSM.value = true
+		await loadSyncStatus()
+		if (sync.pending) startSyncPoll()
+	} catch (e) {
+		isSM.value = false
+	}
+}
+
+// ── apply pipeline status (SyncPill pattern: 3s poll while pending) ──────────
+// dirty = the enabled set changed since the last successful Apply — drives the
+// prominent solid button, the "Changes pending" badge and the leave-guard.
+const sync = reactive({ pending: false, dirty: false, status: "" })
+const syncFailed = computed(() => (sync.status || "").startsWith("failed"))
+const syncFailureReason = computed(() =>
+	syncFailed.value ? (sync.status || "").replace(/^failed:?/, "").trim() : ""
+)
+
+let syncTimer = null
+async function loadSyncStatus() {
+	try {
+		const s = (await api.getAgentsSyncStatus()) || {}
+		sync.pending = !!s.pending
+		sync.dirty = !!s.dirty
+		sync.status = s.last_sync_status || ""
+	} catch (e) {
+		// best-effort: a transient status failure must not break the page
+	}
+}
+function startSyncPoll() {
+	if (syncTimer) return
+	syncTimer = setInterval(async () => {
+		await loadSyncStatus() // a successful apply clears dirty server-side
+		if (!sync.pending) stopSyncPoll()
+	}, 3000)
+}
+function stopSyncPoll() {
+	if (syncTimer) {
+		clearInterval(syncTimer)
+		syncTimer = null
+	}
+}
+
+const applying = ref(false)
 async function applyCatalog() {
+	if (applying.value) return false
+	applying.value = true
 	try {
 		await api.applyAgents()
 		toast.success("Applying catalog changes — ~30s, one restart")
+		sync.pending = true
+		startSyncPoll()
+		return true
 	} catch (e) {
 		toast.error(errMsg(e))
+		return false
+	} finally {
+		applying.value = false
 	}
 }
+
+// ── leave-guard: SM + dirty (unapplied catalog changes) ──────────────────────
+const leaveDialog = reactive({ show: false, next: null })
+
+onBeforeRouteLeave((to, from, next) => {
+	// drilling into /agents/:slug stays inside the agents area — don't nag
+	if (!isSM.value || !sync.dirty || String(to.path || "").startsWith("/agents")) return next()
+	leaveDialog.next = next
+	leaveDialog.show = true
+})
+
+function resolveLeave(go) {
+	const n = leaveDialog.next
+	leaveDialog.next = null // idempotent: Dialog @close re-fires after buttons
+	leaveDialog.show = false
+	if (n) n(go)
+}
+
+async function applyAndLeave() {
+	const ok = await applyCatalog()
+	// apply request failed → stay so the SM can retry (error already toasted)
+	resolveLeave(ok)
+}
+
+// hard reloads / tab close while dirty → native browser prompt
+function onBeforeUnload(e) {
+	if (isSM.value && sync.dirty) {
+		e.preventDefault()
+		e.returnValue = "" // Chrome requires returnValue to show the prompt
+	}
+}
+
+onMounted(() => {
+	probeAdmin()
+	loadCategories()
+	window.addEventListener("beforeunload", onBeforeUnload)
+})
+onBeforeUnmount(() => {
+	window.removeEventListener("beforeunload", onBeforeUnload)
+	stopSyncPoll()
+})
 </script>

@@ -381,7 +381,12 @@ def toggle_share(doctype: str, name: str, user: str, action: str = "add") -> lis
 	ASSIGNMENT-OWNED row (``notify_by_email=0``) that still backs a live
 	assignment (open ToDo) is refused — remove the assignment instead (§14 F1).
 	Skills are excluded: they keep the child-table share model that feeds the
-	sync pipeline."""
+	sync pipeline.
+
+	Approvals additionally MIRROR the read-share onto the linked conversation
+	(best-effort): Frappe gates a private File's byte-fetch on READ of the doc
+	the File is attached to — the CONVERSATION, not the approval — so without
+	the mirror a tagged user sees the approval but cannot preview its file."""
 	if doctype not in SHAREABLE_DOCTYPES:
 		frappe.throw(_("Sharing is not available on {0}.").format(doctype))
 	if action not in ("add", "remove"):
@@ -413,6 +418,33 @@ def toggle_share(doctype: str, name: str, user: str, action: str = "add") -> lis
 		frappe.db.delete(
 			"DocShare", {"share_doctype": doctype, "share_name": name, "user": user}
 		)
+
+	# Mirror the read-share onto the linked conversation so a tagged user can
+	# actually fetch the approval's file bytes (File Box list + preview).
+	# Best-effort — the mirror must never break the primary approval share.
+	if doctype == "Jarvis Approval Request":
+		try:
+			conv = doc.get("conversation")
+			if conv and frappe.db.exists("Jarvis Conversation", conv):
+				if action == "add":
+					add_docshare(
+						"Jarvis Conversation", conv, user, read=1,
+						flags={"ignore_share_permission": True},
+					)
+				else:
+					frappe.db.delete(
+						"DocShare",
+						{
+							"share_doctype": "Jarvis Conversation",
+							"share_name": conv,
+							"user": user,
+						},
+					)
+		except Exception:
+			frappe.log_error(
+				title="Jarvis: conversation share mirror failed",
+				message=frappe.get_traceback(),
+			)
 	frappe.db.commit()
 	return _shares(doctype, name, doc.owner)
 

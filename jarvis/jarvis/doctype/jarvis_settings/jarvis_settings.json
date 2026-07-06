@@ -69,6 +69,8 @@
     "custom_skills_sync_status",
     "agent_skills_synced_at",
     "agent_skills_sync_status",
+    "agent_catalog_dirty",
+    "agent_catalog_version",
     "learned_skills_synced_at",
     "learned_skills_sync_status",
     "agent_tools_section",
@@ -487,6 +489,24 @@
       "fieldname": "agent_skills_sync_status",
       "fieldtype": "Long Text",
       "label": "Agent Skills Sync Status",
+      "read_only": 1
+    },
+    {
+      "default": "0",
+      "description": "Set when an install/uninstall/enable-disable changes the enabled agent set; cleared by a successful Apply push. Surfaced as `dirty` in get_agents_sync_status.",
+      "fieldname": "agent_catalog_dirty",
+      "fieldtype": "Check",
+      "hidden": 1,
+      "label": "Agent Catalog Dirty",
+      "read_only": 1
+    },
+    {
+      "default": "0",
+      "description": "Monotonic counter bumped by every enabled-set mutation. The Apply push snapshots it before building the payload and clears the dirty flag only if it is unchanged after a successful push, so a mutation landing mid-push keeps dirty set (TOCTOU guard).",
+      "fieldname": "agent_catalog_version",
+      "fieldtype": "Int",
+      "hidden": 1,
+      "label": "Agent Catalog Version",
       "read_only": 1
     },
     {
