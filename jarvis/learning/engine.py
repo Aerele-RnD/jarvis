@@ -128,6 +128,17 @@ CORE_TXN_DOCTYPES = (
 _BAND_RANK = {"High": 0, "Medium": 1, "Low": 2}
 
 
+def weaker_of(band, cap):
+	"""Correction-loop clamp (shared field contract): every pipeline write of
+	``strength_band`` is capped at the row's ``flag_band_cap``, so a flag-driven
+	demotion survives the nightly evidence refresh instead of being silently
+	recomputed away. Returns the weaker of (computed band, cap); an empty or
+	unknown cap means no ceiling. ``approve_learned_pattern`` clears the cap."""
+	if band not in _BAND_RANK or cap not in _BAND_RANK:
+		return band
+	return cap if _BAND_RANK[cap] > _BAND_RANK[band] else band
+
+
 # --------------------------------------------------------------------------- #
 # entry point
 # --------------------------------------------------------------------------- #
@@ -239,6 +250,17 @@ def _execute(run_name: str) -> tuple[str, str]:
 	row_budget = int(_settings_value("pattern_row_budget_per_night") or DEFAULT_ROW_BUDGET)
 	started_mono = time.monotonic()
 
+	# Phase 2 per-family FDR: persist only BH survivors; additive after the
+	# executor gates (plan 4.1). Rejections are surfaced in the coverage note.
+	from jarvis.learning.fdr import DetectorFamilyBuffer
+	fdr_buffer = DetectorFamilyBuffer()
+
+	# Drift re-validation consumes the mining pass's own fresh candidates
+	# (plan 6.5) - never a second detector scan. ``drift_watch`` limits the
+	# stash to the pattern_keys drift actually compares (Approved/Active).
+	mined_units: dict = {}
+	drift_watch = _load_drift_watch()
+
 	counts = _zero_counts()
 	skipped: list = []
 	errors: list = []
@@ -258,7 +280,10 @@ def _execute(run_name: str) -> tuple[str, str]:
 		detector_id = _spec_id(spec)
 		attempted += 1
 		try:
-			unit = _read_and_persist(spec, company, run)
+			unit = _read_and_persist(
+				spec, company, run,
+				fdr_buffer=fdr_buffer, mined=mined_units, watch=drift_watch,
+			)
 		except Exception:
 			error_count += 1
 			frappe.log_error(
@@ -279,6 +304,11 @@ def _execute(run_name: str) -> tuple[str, str]:
 		counts["created"] += unit["created"]
 		counts["updated"] += unit["updated"]
 		counts["duplicates"] += unit["duplicates"]
+		# Per-candidate persist failures (guarded in _persist_survivors) keep
+		# the run alive but are counted and attributed like unit errors.
+		for perr in unit.get("persist_errors") or []:
+			error_count += 1
+			errors.append(perr)
 		if unit["skipped"]:
 			skipped.append({"detector_id": detector_id, "company": company, "reason": unit["skipped"]})
 		doctypes.update(unit["doctypes"])
@@ -307,6 +337,47 @@ def _execute(run_name: str) -> tuple[str, str]:
 		)
 		frappe.db.commit()
 
+	# Flush the last open FDR family. Partial on a pause: BH over the tests
+	# actually run is still valid; deferred units re-test next night. Guarded
+	# per survivor (mirroring the per-unit loop): one bad candidate or a
+	# transient DB fault at the very last family must never fail an otherwise-
+	# successful run or skip snapshot ingest / surfacing / drift re-validation.
+	final_family = None
+	try:
+		final_family = fdr_buffer.flush()
+	except Exception:
+		error_count += 1
+		frappe.log_error(
+			title=f"jarvis pattern learning: final FDR flush failed on {run_name}",
+			message=frappe.get_traceback(),
+		)
+		errors.append({
+			"detector_id": fdr_buffer.pending_detector_id,
+			"company": None,
+			"error": _short_error(),
+		})
+	if final_family:
+		persisted = _persist_survivors(final_family.survivors, run, final_family.detector_id)
+		for key in ("created", "updated", "duplicates"):
+			counts[key] += persisted[key]
+		for perr in persisted["errors"]:
+			error_count += 1
+			errors.append(perr)
+	try:
+		frappe.db.commit()
+	except Exception:
+		frappe.log_error(
+			title=f"jarvis pattern learning: post-flush commit failed on {run_name}",
+			message=frappe.get_traceback(),
+		)
+
+	# Access-Log snapshot ingest (plan 4.4): after mining, fence closed. Never
+	# raises (logs + returns a summary); advances the print-log watermark and
+	# folds new rows into the monthly aggregates so evidence outlives log
+	# truncation.
+	from jarvis.learning import snapshots
+	snapshots.ingest_print_log(run=run, paused=bool(paused_note))
+
 	# Surfacing (band-then-support, >=1 per domain). Wave C may override.
 	try:
 		_promote_surfaced(run_name)
@@ -316,7 +387,52 @@ def _execute(run_name: str) -> tuple[str, str]:
 			message=frappe.get_traceback(),
 		)
 
+	# Drift re-validation (plan 6.5): after mining, before finalize. Consumes
+	# the mining pass's OWN candidates (``mined_units``) - no second detector
+	# scan, no extra row-budget cost - so it also runs after a pause and
+	# covers exactly the units mined tonight; deferred units are re-checked by
+	# the run that mines them.
+	reval = None
+	try:
+		from jarvis.learning.lifecycle import revalidate_active
+
+		reval = revalidate_active(run, mined=mined_units)
+	except Exception:
+		frappe.log_error(
+			title=f"jarvis pattern learning: re-validation failed on {run_name}",
+			message=frappe.get_traceback(),
+		)
+	if reval:
+		_write_run(
+			run_name,
+			{
+				"patterns_revalidated": int(reval.get("revalidated") or 0),
+				"patterns_marked_stale": int(reval.get("staled") or 0),
+			},
+		)
+
 	status, note = _resolve_status(paused_note, attempted, error_count, skipped, errors)
+	fdr_counts = fdr_buffer.counts()
+	if fdr_counts["fdr_rejected"]:
+		fdr_note = (
+			f"{fdr_counts['fdr_rejected']} candidate(s) failed the per-detector FDR pass "
+			f"(q={fdr_buffer.q}) across {fdr_counts['families']} detector families and were not persisted."
+		)
+		note = f"{note} {fdr_note}".strip() if note else fdr_note
+	if fdr_counts.get("early_releases"):
+		cap_note = (
+			f"{fdr_counts['early_releases']} FDR family buffer soft-cap release(s) "
+			f"(cap {fdr_buffer.soft_cap}, peak buffered {fdr_counts['peak_buffered']}); "
+			f"the FDR grain narrowed for the affected detector(s)."
+		)
+		note = f"{note} {cap_note}".strip() if note else cap_note
+	if reval and reval.get("cap_deferred"):
+		drift_note = (
+			f"{reval['cap_deferred']} drift check(s) deferred: the detector's candidate "
+			f"list was cap-truncated for their unit(s), so a missing pattern is not "
+			f"evidence of drift."
+		)
+		note = f"{note} {drift_note}".strip() if note else drift_note
 	_finalize_run(
 		run_name,
 		status=status,
@@ -343,8 +459,8 @@ def _execute(run_name: str) -> tuple[str, str]:
 # --------------------------------------------------------------------------- #
 # per-unit read (fenced) + persist (unfenced)
 # --------------------------------------------------------------------------- #
-def _read_and_persist(spec, company, run) -> dict:
-	from jarvis.learning.executor import run_detector
+def _read_and_persist(spec, company, run, fdr_buffer=None, mined=None, watch=None) -> dict:
+	from jarvis.learning.executor import PER_DETECTOR_CANDIDATE_CAP, run_detector
 
 	frappe.db.commit()  # no pending writes before opening the READ ONLY fence
 	with read_only_transaction() as pdb:
@@ -352,15 +468,47 @@ def _read_and_persist(spec, company, run) -> dict:
 	# Fence closed (auto ROLLBACK); the connection is writable again.
 	norm = _normalize_detector_result(raw)
 
-	created = updated = duplicates = 0
-	for cand in norm["candidates"]:
-		outcome = _persist_candidate(cand, run)
-		if outcome == "created":
-			created += 1
-		elif outcome == "updated":
-			updated += 1
+	# Drift stash (plan 6.5): re-validation consumes THIS run's fresh
+	# candidates instead of a second full detector scan, so it costs ~0 and
+	# covers exactly the units mined tonight (paused runs included). Only the
+	# Approved/Active pattern_keys drift watches (``watch``) are kept, so the
+	# stash never holds the whole run's output in RAM. A skipped unit proves
+	# nothing and is not stashed. ``cap_truncated`` tells drift that a missing
+	# key is NOT evidence: the candidate list was cut at the per-detector cap.
+	if mined is not None and not norm["skipped"]:
+		raw_count = norm["raw_count"]
+		kept = norm["candidates"]
+		if raw_count is None:
+			cap_truncated = len(kept) >= PER_DETECTOR_CANDIDATE_CAP
 		else:
-			duplicates += 1
+			cap_truncated = int(raw_count) > len(kept)
+		tracked = (watch or {}).get((_spec_id(spec), company)) or set()
+		mined[(_spec_id(spec), company)] = {
+			"by_key": {
+				c.get("pattern_key"): c
+				for c in kept
+				if isinstance(c, dict) and c.get("pattern_key") in tracked
+			},
+			"tracked": tracked,
+			"cap_truncated": cap_truncated,
+		}
+
+	# Per-family FDR: buffer candidates per detector; a family releases (BH-
+	# filtered) when the NEXT detector's first unit arrives. Accounting: the
+	# unit's "candidates" stays the RAW found figure; created/updated reflect
+	# persisted survivors; the delta is explained in the run's coverage note.
+	to_persist = norm["candidates"]
+	persist_detector_id = _spec_id(spec)
+	if fdr_buffer is not None:
+		released = fdr_buffer.add(_spec_id(spec), norm["candidates"])
+		to_persist = list(released.survivors) if released else []
+		if released is not None:
+			# The survivors belong to the RELEASED (previous) family, not the
+			# unit that happened to trigger the release - attribute failures
+			# to the right detector.
+			persist_detector_id = released.detector_id
+
+	persisted = _persist_survivors(to_persist, run, persist_detector_id)
 
 	# Read-audit: the executor does not report doctypes_read, so derive it from
 	# the spec (base doctype + field-guard doctypes) for the run's audit record.
@@ -369,14 +517,47 @@ def _read_and_persist(spec, company, run) -> dict:
 	return {
 		"rows": norm["rows"],
 		"candidates": len(norm["candidates"]),
-		"created": created,
-		"updated": updated,
-		"duplicates": duplicates,
+		"created": persisted["created"],
+		"updated": persisted["updated"],
+		"duplicates": persisted["duplicates"],
+		"persist_errors": persisted["errors"],
 		"skipped": norm["skipped"],
 		"doctypes": doctypes,
 		"not_applicable": norm["not_applicable"],
 		"data_starved": norm["data_starved"],
 	}
+
+
+def _persist_survivors(candidates, run, detector_id) -> dict:
+	"""Persist a released FDR family's survivors ONE BY ONE: a single bad
+	candidate (validation error, lock timeout, duplicate-key race) must never
+	abort the rest of its family - and, at the post-loop flush, must never fail
+	the run or skip snapshot ingest / surfacing / drift re-validation. Failures
+	are logged under the released family's ``detector_id`` and reported back so
+	the run accounting stays truthful."""
+	created = updated = duplicates = 0
+	failures: list = []
+	for cand in candidates or []:
+		try:
+			outcome = _persist_candidate(cand, run)
+		except Exception:
+			frappe.log_error(
+				title=f"jarvis pattern persist failed: {detector_id or 'unknown detector'}",
+				message=frappe.get_traceback(),
+			)
+			failures.append({
+				"detector_id": detector_id,
+				"company": cand.get("company") if isinstance(cand, dict) else None,
+				"error": _short_error(),
+			})
+			continue
+		if outcome == "created":
+			created += 1
+		elif outcome == "updated":
+			updated += 1
+		else:
+			duplicates += 1
+	return {"created": created, "updated": updated, "duplicates": duplicates, "errors": failures}
 
 
 def _normalize_detector_result(raw) -> dict:
@@ -389,6 +570,7 @@ def _normalize_detector_result(raw) -> dict:
 		return {
 			"candidates": cands,
 			"rows": _rows_from_candidates(cands, getattr(raw, "rows_scanned", None)),
+			"raw_count": getattr(raw, "raw_candidate_count", None),
 			"skipped": getattr(raw, "skipped_reason", None) or getattr(raw, "skipped", None),
 			"doctypes": list(getattr(raw, "doctypes_read", None) or []),
 			"not_applicable": bool(getattr(raw, "not_applicable", False)),
@@ -398,6 +580,7 @@ def _normalize_detector_result(raw) -> dict:
 		return {
 			"candidates": raw,
 			"rows": sum(int(c.get("n_rows") or 0) for c in raw),
+			"raw_count": len(raw),  # a bare list is the complete candidate set
 			"skipped": None,
 			"doctypes": [],
 			"not_applicable": False,
@@ -411,6 +594,7 @@ def _normalize_detector_result(raw) -> dict:
 		return {
 			"candidates": cands,
 			"rows": int(rows or 0),
+			"raw_count": raw.get("raw_candidate_count"),
 			"skipped": raw.get("skipped"),
 			"doctypes": list(raw.get("doctypes_read") or []),
 			"not_applicable": bool(raw.get("not_applicable")),
@@ -423,6 +607,7 @@ def _empty_result() -> dict:
 	return {
 		"candidates": [],
 		"rows": 0,
+		"raw_count": 0,
 		"skipped": None,
 		"doctypes": [],
 		"not_applicable": False,
@@ -479,10 +664,19 @@ def _apply_evidence(doc, cand: dict, run, *, is_new: bool) -> None:
 	doc.detector_id = cand.get("detector_id")
 	doc.domain = cand.get("domain")
 	doc.company = cand.get("company")
-	doc.pattern_statement = (cand.get("pattern_statement") or "").strip() or "(pattern statement pending)"
+	statement = (cand.get("pattern_statement") or "").strip() or "(pattern statement pending)"
+	# A materially different statement means the detector re-measured a
+	# different pattern (antecedent/consequent changed): an LLM-polished draft
+	# described the OLD statement, so clear the marker and let the draft
+	# refresh below. An SM edit (draft_edited) always stays frozen.
+	if not is_new and doc.get("draft_polished") and (doc.pattern_statement or "").strip() != statement:
+		doc.draft_polished = 0
+	doc.pattern_statement = statement
 
-	# Never overwrite an SM-edited draft (draft_edited freezes it, plan 6.5).
-	if is_new or not doc.draft_edited:
+	# Never overwrite an SM-edited draft (draft_edited freezes it, plan 6.5)
+	# or an LLM-polished one (draft_polished - the polished wording must
+	# survive re-detection and approval; evidence below stays un-frozen).
+	if is_new or not (doc.draft_edited or doc.get("draft_polished")):
 		doc.skill_draft = (cand.get("skill_draft") or "").strip() or doc.pattern_statement
 
 	doc.support_n = _as_int(cand.get("support_n"))
@@ -491,7 +685,10 @@ def _apply_evidence(doc, cand: dict, run, *, is_new: bool) -> None:
 	doc.confidence_pct = _as_float(cand.get("confidence_pct"))
 	doc.wilson_low = _as_float(cand.get("wilson_low"))
 	doc.gap = _as_float(cand.get("gap"))
-	doc.strength_band = cand.get("strength_band")
+	# Correction-loop ceiling: clamp the recomputed band to flag_band_cap.
+	doc.strength_band = weaker_of(
+		cand.get("strength_band"), None if is_new else doc.get("flag_band_cap")
+	)
 	doc.temporal_spread = _as_json(cand.get("temporal_spread"))
 	doc.evidence = _as_json(cand.get("evidence"))
 	doc.exceptions_cluster = cand.get("exceptions_cluster")
@@ -559,6 +756,26 @@ def _promote_surfaced(run_name: str) -> None:
 # --------------------------------------------------------------------------- #
 # work units + dormant-company skip
 # --------------------------------------------------------------------------- #
+def _load_drift_watch() -> dict:
+	"""``{(detector_id, company): set(pattern_key)}`` for Approved/Active rows -
+	the only keys drift re-validation compares. The mining loop stashes just
+	these candidates (plus per-unit cap-truncation state), so the drift pass
+	needs no second detector scan and the stash stays tiny. Best-effort: an
+	empty map only means drift finds nothing to compare this run."""
+	try:
+		rows = frappe.get_all(
+			JLP,
+			filters={"status": ["in", ["Approved", "Active"]]},
+			fields=["detector_id", "company", "pattern_key"],
+		)
+	except Exception:
+		return {}
+	out: dict = {}
+	for r in rows:
+		out.setdefault((r.detector_id, r.company), set()).add(r.pattern_key)
+	return out
+
+
 def skip_dormant_companies(companies, cutoff_days: int = DORMANT_DAYS) -> list:
 	"""Drop companies with no submitted core transaction in the trailing
 	``cutoff_days`` (dormant-shell guard; Company has no disabled flag). When no

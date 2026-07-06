@@ -5,8 +5,14 @@ a site. Every count fed in here is an INDEPENDENT UNIT count (distinct
 parent documents, parties, or months as declared per detector) - never
 child-table rows; the executor enforces that upstream.
 
-Formal multiple-testing control (Fisher's exact, per-family BH-FDR) is a
-committed Phase 2 upgrade; Phase 1 ships these hard gates + human review.
+Phase 2 statistics upgrade (plan sections 2, 4.1): formal significance
+testing on the segment-vs-rest 2x2 table. :func:`fisher_exact_greater` is
+the exact one-sided enrichment p-value (hypergeometric tail, lgamma-based,
+no scipy) for small expected cells; :func:`g_test_greater` is the
+large-sample likelihood-ratio complement; :func:`enrichment_p_value`
+dispatches on Cochran's condition (any expected cell < 5 => exact test).
+The per-family BH-FDR pass over these p-values lives in
+``jarvis.learning.fdr`` and is ADDITIVE after the hard gates below.
 """
 
 from __future__ import annotations
@@ -27,6 +33,19 @@ MAX_HALF_WIDTH = 0.15
 MIN_GAP = 0.15
 VARIANCE_THRESHOLD = 0.95
 MIN_SPREAD_DAYS = 5
+
+# Cochran's condition: the large-sample G-test is trustworthy only when every
+# expected cell of the 2x2 table is at least this big; below it the exact
+# hypergeometric tail (Fisher) is used instead (plan Phase 2 statistics).
+COCHRAN_MIN_EXPECTED = 5.0
+
+# Grandfathered-transition guard (drift finding): a partial adoption ("new
+# terms for NEW deals only, legacy accounts grandfathered") keeps the recent
+# PLURALITY on the legacy value and the recent-share shift under the 0.2
+# threshold, so the primary recency conditions never fire while legacy volume
+# dominates. The secondary condition below needs at least this many recent
+# units before it may report divergence (noise floor).
+RECENCY_MIN_RECENT_UNITS = 10
 
 
 def wilson_lower_bound(k: int, n: int, z: float = 1.96) -> float:
@@ -79,7 +98,9 @@ def leave_segment_out_base_rate(counts: dict, antecedent, consequent=None) -> di
 	``counts`` is {antecedent_value: {consequent_value: unit_count}}. When
 	``consequent`` is None the target segment's mode value is used (ties
 	broken by count desc, then value string asc, deterministically).
-	Returns {consequent, k, n_units, confidence, base_rate, gap}.
+	Returns {consequent, k, n_units, confidence, base_rate, gap, rest_k,
+	rest_n}; ``rest_k``/``rest_n`` are the raw leave-segment-out counts the
+	Phase 2 significance test (:func:`enrichment_p_value`) needs.
 	``base_rate`` is 0.0 when no OTHER segment has units - sole-segment
 	sites are the variance gate's job, not a free gap win.
 	"""
@@ -93,6 +114,8 @@ def leave_segment_out_base_rate(counts: dict, antecedent, consequent=None) -> di
 			"confidence": 0.0,
 			"base_rate": 0.0,
 			"gap": 0.0,
+			"rest_k": 0,
+			"rest_n": 0,
 		}
 	if consequent is None:
 		consequent = sorted(segment.items(), key=lambda kv: (-kv[1], str(kv[0])))[0][0]
@@ -115,7 +138,121 @@ def leave_segment_out_base_rate(counts: dict, antecedent, consequent=None) -> di
 		"confidence": confidence,
 		"base_rate": base_rate,
 		"gap": confidence - base_rate,
+		"rest_k": rest_k,
+		"rest_n": rest_n,
 	}
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 significance testing (plan sections 2, 4.1: Fisher's exact on small
+# cells, G-test otherwise; consumed by the executor, then BH-FDR in fdr.py).
+#
+# The 2x2 enrichment table, in unit counts (never child rows):
+#
+#                     consequent   other      margin
+#   target segment        k         n - k       n
+#   rest of site        K - k     (N-K)-(n-k)  N - n
+#   margin                K         N - K       N
+# ---------------------------------------------------------------------------
+def fisher_exact_greater(k: int, n: int, K: int, N: int) -> float:
+	"""One-sided (enrichment) Fisher's exact p-value: the probability that the
+	segment's consequent share is at least this extreme under the null that
+	segment membership and the consequent are independent, i.e. the upper
+	hypergeometric tail P(X >= k) for X ~ Hypergeometric(N, K, n).
+
+	Pure math.lgamma log-binomials (no scipy); each tail term is computed in
+	log space and the tail is summed exactly with math.fsum, so a 10^-40 term
+	neither overflows nor drowns. Degenerate margins (K=0, K=N, n=0, n=N with
+	k at the floor) all resolve to 1.0: a table with no free cell carries no
+	evidence of enrichment.
+	"""
+	n, N, K, k = int(n), int(N), int(K), int(k)
+	if N <= 0 or n <= 0:
+		return 1.0
+	n = min(n, N)
+	K = min(max(K, 0), N)
+	hi = min(n, K)  # largest achievable k
+	k = min(max(k, 0), hi)
+	lo = max(0, n - (N - K))  # smallest achievable k
+	if k <= lo:
+		return 1.0  # the tail is the whole support
+	log_denom = _log_binom(N, n)
+	terms = [
+		math.exp(_log_binom(K, x) + _log_binom(N - K, n - x) - log_denom)
+		for x in range(k, hi + 1)
+	]
+	return min(max(math.fsum(terms), 0.0), 1.0)
+
+
+def g_test_greater(k: int, n: int, K: int, N: int) -> float:
+	"""One-sided (enrichment) G-test p-value on the same 2x2 table: the
+	large-sample likelihood-ratio complement to :func:`fisher_exact_greater`
+	when Cochran's condition holds (all expected cells >= 5).
+
+	G = 2 * sum(O * ln(O/E)) with df=1; the two-sided chi-square tail
+	(erfc(sqrt(G/2)) for df=1) is halved and directed: enrichment gets
+	p_two/2, depletion gets 1 - p_two/2, and a null table gives 0.5.
+	"""
+	n, N, K, k = int(n), int(N), int(K), int(k)
+	rest_n = N - n
+	if n <= 0 or rest_n <= 0:
+		return 1.0
+	a = min(max(k, 0), min(n, K))
+	b = n - a
+	c = K - a
+	d = rest_n - c
+	if min(b, c, d) < 0 or K <= 0 or K >= N:
+		return 1.0  # inconsistent counts or a zero-variance consequent
+
+	g = 0.0
+	for observed, row_margin, col_margin in (
+		(a, n, K),
+		(b, n, N - K),
+		(c, rest_n, K),
+		(d, rest_n, N - K),
+	):
+		expected = row_margin * col_margin / N
+		if observed > 0:
+			g += observed * math.log(observed / expected)
+	g = max(2.0 * g, 0.0)
+
+	p_two = math.erfc(math.sqrt(g / 2.0))  # chi-square df=1 survival
+	enriched = (a / n) > (c / rest_n)
+	return p_two / 2.0 if enriched else 1.0 - p_two / 2.0
+
+
+def cochran_ok(n: int, K: int, N: int, min_expected: float = COCHRAN_MIN_EXPECTED) -> bool:
+	"""Cochran's condition on the 2x2 table's margins: every expected cell
+	count under independence must be >= min_expected for the large-sample
+	G-test; otherwise the exact test is required. (Expected cells depend only
+	on the margins n, K, N - never on the observed k.)"""
+	n, K, N = int(n), int(K), int(N)
+	if N <= 0 or n <= 0 or n >= N or K <= 0 or K >= N:
+		return False
+	cells = (
+		n * K / N,
+		n * (N - K) / N,
+		(N - n) * K / N,
+		(N - n) * (N - K) / N,
+	)
+	return min(cells) >= min_expected
+
+
+def enrichment_p_value(k: int, n: int, K: int, N: int) -> tuple[float, str]:
+	"""Dispatch for the Phase 2 significance test: Fisher's exact when ANY
+	expected cell is < 5 (Cochran), else the G-test. Returns
+	``(p_value, method)`` with method in {'fisher_exact', 'g_test'}."""
+	if cochran_ok(n, K, N):
+		return (g_test_greater(k, n, K, N), "g_test")
+	return (fisher_exact_greater(k, n, K, N), "fisher_exact")
+
+
+def _log_binom(n: int, k: int) -> float:
+	"""log C(n, k) via lgamma; 0 for the empty/full choices, -inf never
+	(callers keep k within [0, n])."""
+	if k < 0 or k > n:
+		return float("-inf")
+	return math.lgamma(n + 1) - math.lgamma(k + 1) - math.lgamma(n - k + 1)
 
 
 def variance_gate(site_wide_counts: dict, threshold: float = VARIANCE_THRESHOLD) -> bool:
@@ -165,6 +302,9 @@ def recency_divergence(
 	threshold: float = 0.2,
 	full_mode=None,
 	recent_mode=None,
+	recent_n: int | None = None,
+	recent_established_share: float | None = None,
+	c_min: float | None = None,
 ) -> str | None:
 	"""Recency guard: 'recent_differs' when last-90-day behavior materially
 	diverges from the full window - propose the RECENT habit or withhold,
@@ -173,8 +313,27 @@ def recency_divergence(
 	A changed mode VALUE (pass full_mode/recent_mode) always diverges; else
 	the mode shares must differ by >= threshold. None when consistent or
 	when the recent window has no signal (last90_mode_share is None).
+
+	Secondary (grandfathered-transition) condition: even with the SAME mode
+	and a sub-threshold share shift, the recent window contradicts the
+	established habit when its confidence for the ESTABLISHED consequent
+	(``recent_established_share``) falls below the detector's own admission
+	gate (``c_min``) while the full window still passes - the "new terms for
+	new deals only, legacy accounts grandfathered" trap, where legacy volume
+	keeps the 18-month aggregate high indefinitely. Noise-safe: it needs
+	>= RECENCY_MIN_RECENT_UNITS units in the recent window (``recent_n``) and
+	all three kwargs; callers that pass none of them keep the exact original
+	behaviour.
 	"""
 	if full_mode is not None and recent_mode is not None and full_mode != recent_mode:
+		return "recent_differs"
+	if (
+		recent_n is not None
+		and int(recent_n) >= RECENCY_MIN_RECENT_UNITS
+		and recent_established_share is not None
+		and c_min is not None
+		and float(recent_established_share) < float(c_min) <= float(full_window_mode_share)
+	):
 		return "recent_differs"
 	if last90_mode_share is None:
 		return None

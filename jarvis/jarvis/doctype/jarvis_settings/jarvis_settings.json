@@ -31,6 +31,7 @@
     "llm_oauth_connected_at",
     "behavioural_learning_section",
     "pattern_learning_enabled",
+    "pattern_llm_polish",
     "pattern_window_start",
     "pattern_window_end",
     "pattern_max_proposals_per_run",
@@ -68,6 +69,8 @@
     "custom_skills_sync_status",
     "agent_skills_synced_at",
     "agent_skills_sync_status",
+    "learned_skills_synced_at",
+    "learned_skills_sync_status",
     "agent_tools_section",
     "run_query_doctype_allowlist",
     "auto_apply_changes",
@@ -227,6 +230,13 @@
       "fieldtype": "Check",
       "label": "Enable Pattern Learning",
       "default": "0"
+    },
+    {
+      "fieldname": "pattern_llm_polish",
+      "fieldtype": "Check",
+      "label": "Enable LLM Polish",
+      "default": "0",
+      "description": "Phase 2: let the reviewing System Manager rewrite a proposal's draft wording via one silent tenant-container LLM turn (never Administrator). Capped at 150 turns per site per month; over the cap or on any failure the deterministic template text is kept unchanged."
     },
     {
       "fieldname": "pattern_window_start",
@@ -477,6 +487,18 @@
       "fieldname": "agent_skills_sync_status",
       "fieldtype": "Long Text",
       "label": "Agent Skills Sync Status",
+      "read_only": 1
+    },
+    {
+      "fieldname": "learned_skills_synced_at",
+      "fieldtype": "Datetime",
+      "label": "Learned Skills Synced At",
+      "read_only": 1
+    },
+    {
+      "fieldname": "learned_skills_sync_status",
+      "fieldtype": "Long Text",
+      "label": "Learned Skills Sync Status",
       "read_only": 1
     },
     {

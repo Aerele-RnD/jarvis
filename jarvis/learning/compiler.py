@@ -1,11 +1,30 @@
-"""Domain-skill compilation + materialization (plan sections 6.2, 6.3).
+"""Domain-skill compilation + materialization (plan sections 6.2, 6.3, 13 Q5).
 
 Approved/Active learned patterns are consolidated into at most six Administrator-
 owned ``Jarvis Custom Skill`` rows - ``learned-selling/buying/stock/accounts/
-projects/org`` (wire ``custom-learned-<domain>``) - pushed through the EXISTING
-custom-skill chain. No new push path; the 25-skill bench cap is enforced by an
-apply-time pre-check only (``build_push_payload`` truncation is untouched - plan
-section 6.2).
+projects/org``. Since the Phase-2 learned namespace the WIRE is the dedicated
+learned-skills chain (``build_learned_push_payload`` ->
+``jarvis.chat.learned_skills_api`` -> admin ``push_learned_skills`` -> fleet
+``PUT /learned-skills``), with slug ``learned-<domain>`` verbatim (NO ``custom-``
+prefix) and its own <=10 cap (``LEARNED_SKILL_CAP``). The managed rows REMAIN
+``Jarvis Custom Skill`` rows as bench-side storage (role semantics stay
+bench-side - plan 13 Q5); ``build_push_payload`` excludes them, so they no
+longer count against the customer's 25 custom cap.
+
+CUTOVER (one-time): before the namespace, learned bundles rode the custom push
+as ``custom-learned-<domain>`` dirs in the container's custom_skills dir. The
+first learned apply on a bench that actually RAN Phase 1 (detected by an empty
+``learned_skills_sync_status`` PLUS pre-existing managed rows - fresh Phase-2
+tenants have nothing to clean and skip the cutover entirely) CHAINS a custom-
+skills reconcile behind the learned push: the learned worker, only after its
+push is confirmed ok, stamps ``custom_skills_sync_status`` pending and
+enqueues the GRACEFUL (strict=False) custom worker, whose full reconcile - now
+excluding managed rows - deletes those stale dirs. Never the strict
+interactive ``apply_custom_skills``: a >25-custom-skill bench must truncate
+and log, not fail the learned Apply. Chaining also means the two container
+restarts run strictly one after the other. See the CUTOVER MARKER comment in
+``_apply_learned_skills_locked`` for the exact status stamps and guarantees
+the board relies on. Steady-state applies enqueue only the learned push.
 
 PHASE-1 BODY RULE (owner decision, portal-chat finding): only ``effective_
 sensitivity == "A"`` (org-level) patterns compile into the PUSHED body. Any
@@ -23,7 +42,7 @@ before flipping Approved -> Active needs poll/callback wiring the Phase-1 apply
 does not have, so patterns flip to Active at ENQUEUE time (right after the
 deduped push job is queued). A failed push therefore leaves Active patterns
 whose text has not yet reached the container; the next apply re-pushes and the
-custom-skills sync status surfaces the failure. Accepted for Phase 1.
+learned-skills sync status surfaces the failure. Accepted for Phase 1.
 """
 
 from __future__ import annotations
@@ -53,8 +72,11 @@ DOMAINS = ("selling", "buying", "stock", "accounts", "projects", "org")
 MAX_BODY = 18000
 MAX_DESC = 500
 MAX_BULLET = 400
-# Mirrors chat.custom_skills.MAX_SKILLS_PER_PUSH; the apply pre-check gate.
-BENCH_SKILL_CAP = 25
+# Mirrors the fleet's MAX_LEARNED_SKILL_FILES / admin's _MAX_LEARNED_SKILL_FILES
+# (plan 13 Q5: dedicated learned namespace, cap 10): the apply pre-check gate.
+# Managed rows no longer ride the custom push, so the 25 custom cap is NOT
+# checked here any more.
+LEARNED_SKILL_CAP = 10
 # Rough per-bullet overhead (section headers, newline) reserved during budgeting.
 _BULLET_MARGIN = 60
 
@@ -179,13 +201,16 @@ def preview_bullet(pattern_name: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# apply (writes: upsert managed rows, flip statuses, enqueue the existing push)
+# apply (writes: upsert managed rows, flip statuses, enqueue the learned push)
 # --------------------------------------------------------------------------- #
 def apply_learned_skills() -> dict:
 	"""Recompile every domain, upsert the <=6 Administrator-owned managed rows
 	(deleting emptied domains), flip compiled Approved patterns to Active, then
-	reuse the deduped ``jarvis_custom_skills_push`` job. Cap + slug pre-checks run
-	first and abort with actionable errors (``build_push_payload`` unchanged).
+	enqueue the deduped ``jarvis_learned_skills_push`` job (the dedicated
+	learned-namespace chain - which, on the one-time cutover apply, CHAINS a
+	graceful custom reconcile after a confirmed-ok push to delete stale
+	``custom-learned-*`` dirs). Cap + slug pre-checks run first and abort with
+	actionable errors.
 
 	Single-flight: a redis lock serializes concurrent Applies and an
 	apply-in-progress marker is set BEFORE compile so ``unapprove_learned_pattern``
@@ -208,8 +233,16 @@ def apply_learned_skills() -> dict:
 
 def _apply_learned_skills_locked() -> dict:
 	compiled = compile_domain_skills()
-	_precheck_bench_cap(compiled)
+	_precheck_learned_cap(compiled)
 	_precheck_slug_ownership()
+
+	# One-time cutover detection MUST read the pre-apply state: an empty
+	# learned_skills sync status (never pushed through the learned namespace)
+	# PLUS pre-existing managed rows (this bench actually ran Phase 1) mean the
+	# container may still hold pre-namespace ``custom-learned-<domain>`` dirs
+	# from the old shared custom push. Read BEFORE the upserts below create
+	# this apply's own managed rows.
+	cutover = _is_learned_cutover()
 
 	original_user = frappe.session.user
 	prev_engine = frappe.flags.jarvis_pattern_engine
@@ -246,17 +279,69 @@ def _apply_learned_skills_locked() -> dict:
 		frappe.flags.jarvis_pattern_engine = prev_engine
 		frappe.set_user(original_user)
 
-	# Reuse the existing deduped push (do NOT touch build_push_payload).
-	from jarvis.chat.custom_skills_api import apply_custom_skills
+	# Push through the DEDICATED learned chain (deduped jarvis_learned_skills_push
+	# job; Phase-2 namespace). The worker rebuilds the payload from the managed
+	# rows just committed above.
+	#
+	# CUTOVER MARKER (one-time; the board + other agents rely on these exact
+	# status stamps): when ``cutover`` is True the LEARNED WORKER chains the
+	# stale-dir custom reconcile - this apply never calls the strict interactive
+	# ``apply_custom_skills`` (its strict=True build throws on a >25-custom-
+	# skill bench, which must never fail a learned Apply):
+	#   1. the enqueue below stamps learned_skills_sync_status='pending:
+	#      applying learned skills' (as on every apply); the worker re-stamps it
+	#      terminal (ok/failed).
+	#   2. ONLY after a confirmed-ok learned push the worker stamps
+	#      custom_skills_sync_status='pending: applying skills' and enqueues the
+	#      GRACEFUL custom worker (custom_skills_api._enqueued_push_custom_skills,
+	#      strict=False: over-cap truncates + logs). The custom worker re-stamps
+	#      the custom pair terminal - the same stamps the SPA custom apply uses,
+	#      which is what learned_api._cutover_custom_sync_status surfaces.
+	# Guarantees: the custom job is enqueued only AFTER the learned push (and
+	# its container restart) completed, so the cutover's two restarts can never
+	# overlap; if the learned push fails or is skipped, the reconcile is NOT
+	# enqueued - the stale custom-learned-* dirs (the OLD guidance) stay live
+	# until the next custom apply / restart resync runs its full reconcile
+	# (self-healing, fail-safe).
+	from jarvis.chat.learned_skills_api import enqueue_learned_skills_push
 
-	sync = apply_custom_skills()
+	sync = enqueue_learned_skills_push(chain_custom_reconcile=cutover)
+
 	return {
 		"applied_domains": sorted(applied_domains),
 		"deleted_domains": sorted(d for d in deleted_domains if d),
 		"activated": activated,
 		"skills": skill_by_domain,
 		"sync": sync,
+		"cutover": cutover,
 	}
+
+
+def _is_learned_cutover() -> bool:
+	"""True only when BOTH hold (call BEFORE upserting managed rows):
+
+	1. No learned-namespace push has ever been ATTEMPTED: the enqueue stamps
+	   ``learned_skills_sync_status`` (pending) and every worker terminal path
+	   re-stamps it (ok/failed), so an empty status == never attempted.
+	2. Pre-existing ``managed_by_learning`` rows prove this bench actually ran
+	   Phase 1 - i.e. the container may still hold pre-namespace
+	   ``custom-learned-*`` dirs that only a custom reconcile can remove. A
+	   fresh Phase-2 tenant (no managed rows before its first Apply) has
+	   nothing to clean and must NOT pay the extra custom push + restart.
+
+	Keyed off the STATUS field only: ``learned_skills_synced_at`` is a Datetime,
+	and a Datetime read back from tabSingles coerces an empty value to a truthy
+	``datetime(1,1,1)``. frappe.db.get_value (not get_single_value): the latter
+	serves a process-local cache that background status writes do not
+	invalidate, and a stale read here would re-fire (or skip) the reconcile."""
+	status = frappe.db.get_value(
+		"Jarvis Settings", "Jarvis Settings", "learned_skills_sync_status"
+	)
+	if (status or "").strip():
+		return False
+	# Positive Phase-1 evidence: this runs before the apply's upserts, so any
+	# managed row seen here predates this apply.
+	return bool(frappe.db.exists(SKILL, {"managed_by_learning": 1}))
 
 
 def _set_apply_marker(on: bool) -> None:
@@ -283,10 +368,11 @@ def apply_in_progress() -> bool:
 
 def _precheck_slug_ownership() -> None:
 	"""Abort before any write if a NON-Administrator custom skill already claims a
-	``learned-`` slug (the reserved managed-skill prefix). ``_upsert_managed_skill``
-	keys only on ``{managed_by_learning:1, skill_name}``, so a squatting customer
-	row would otherwise collide in the shared push. Belt-and-suspenders with the
-	prefix reservation (plan section 6.2)."""
+	``learned-`` slug (the reserved managed-skill prefix). Since the namespace
+	cutover the two pushes no longer share a wire (the squatter would ride the
+	custom push as ``custom-learned-*``), but a squatting row still shadows the
+	managed slug bench-side and confuses the board/clause; belt-and-suspenders
+	with the doctype's prefix reservation (plan section 6.2)."""
 	rows = frappe.get_all(
 		SKILL,
 		filters={"skill_name": ["like", "learned-%"], "owner": ["!=", MANAGED_OWNER]},
@@ -303,20 +389,56 @@ def _precheck_slug_ownership() -> None:
 		)
 
 
-def _precheck_bench_cap(compiled: dict) -> None:
-	"""Abort before any write if the resulting bench-wide enabled count would
-	exceed the 25 cap (plan section 6.2: pre-check only). Counts enabled
-	NON-managed skills + the learned domain rows we are about to (re)enable."""
-	existing = frappe.db.count(SKILL, {"enabled": 1, "managed_by_learning": 0})
+def _precheck_learned_cap(compiled: dict) -> None:
+	"""Abort before any write if the compiled domain count would exceed the
+	learned namespace's own <=10 fleet cap (plan 13 Q5: pre-check only). Managed
+	learned rows no longer ride the custom push, so they do NOT count against -
+	and are never counted with - the customer's 25 custom-skill budget."""
 	learned_rows = len(compiled)
-	if existing + learned_rows > BENCH_SKILL_CAP:
+	if learned_rows > LEARNED_SKILL_CAP:
 		frappe.throw(
 			_(
-				"Cannot apply learned skills: {0} enabled custom skill(s) plus {1} learned "
-				"domain skill(s) would exceed the {2}-skill limit for this assistant. Disable "
-				"or delete some custom skills, then apply again."
-			).format(existing, learned_rows, BENCH_SKILL_CAP)
+				"Cannot apply learned skills: {0} learned domain skill(s) would exceed the "
+				"{1}-skill learned-namespace limit for this assistant. Reject or snooze some "
+				"approved patterns to drop whole domains, then apply again."
+			).format(learned_rows, LEARNED_SKILL_CAP)
 		)
+
+
+def build_learned_push_payload() -> list[dict]:
+	"""Collect the enabled managed learned rows into the fleet push payload: a
+	list of ``{slug, description, body}`` (the agent- item shape) where ``slug``
+	is the row's ``skill_name`` verbatim (``learned-<domain>`` - NO ``custom-``
+	prefix: learned skills reconcile into the fleet's separate learned_skills
+	namespace) and ``body`` is the rendered SKILL.md whose frontmatter ``name``
+	matches the slug.
+
+	Reads the MANAGED ROWS (not a fresh compile): the rows are the bench-side
+	storage the last Apply committed, so a restart resync re-pushes exactly what
+	was applied without re-flipping any pattern statuses. Pinned to the
+	Administrator owner (same defense-in-depth as ``learned_skill_clause``).
+	An empty list is a valid "remove all learned skills" reconcile. Truncated at
+	``LEARNED_SKILL_CAP`` so a stale over-cap state can never be pushed (the
+	apply pre-check is the real gate)."""
+	from jarvis.chat.custom_skills import render_learned_skill_md
+
+	rows = frappe.get_all(
+		SKILL,
+		filters={"enabled": 1, "managed_by_learning": 1, "owner": MANAGED_OWNER},
+		fields=["skill_name", "description", "instructions"],
+		order_by="skill_name asc",
+	)
+	payload = []
+	for r in rows[:LEARNED_SKILL_CAP]:
+		slug = (r.skill_name or "").strip().lower()
+		payload.append(
+			{
+				"slug": slug,
+				"description": (r.description or "")[:MAX_DESC],
+				"body": render_learned_skill_md(slug, r.description or "", r.instructions or ""),
+			}
+		)
+	return payload
 
 
 def _upsert_managed_skill(spec: dict) -> str:

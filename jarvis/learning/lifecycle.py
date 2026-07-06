@@ -20,8 +20,14 @@ Rules (plan section 6.5):
     >180d / Superseded >90d (evidence trimmed, pattern_key kept);
   * ``overlap_warning`` is a warn-only lexical check vs the customer's own
     enabled skills;
-  * ``revalidate_active`` (drift -> Stale) is an explicit Phase-1 no-op stub
-    (the plan schedules drift for early Phase 2).
+  * ``revalidate_active`` (drift -> Stale, Phase 2 A1) compares each Approved/
+    Active pattern against the mining pass's OWN fresh candidates (the
+    engine's ``mined`` stash - no second detector scan; a legacy checker
+    re-run path remains for direct callers), refreshes the stats in place,
+    and moves undetectable / below-threshold / recency-diverged rows to Stale
+    (+ ONE summary Notification Log to System Managers). Never a silent edit:
+    Stale rows drop out of the next compile (the compiler filters Approved/
+    Active) and the board shows the reason.
 """
 
 from __future__ import annotations
@@ -236,16 +242,415 @@ def retention() -> dict:
 
 
 # --------------------------------------------------------------------------- #
-# re-validation / drift (Phase-1 no-op stub)
+# re-validation / drift (plan 6.5, Phase 2 A1)
 # --------------------------------------------------------------------------- #
-def revalidate_active(run=None) -> dict:
-	"""Phase-1 no-op. TODO(Phase 2 drift): re-run each Approved/Active pattern's
-	source checker through the READ ONLY fence, refresh stats, and move rows
-	whose ``wilson_low`` drops below threshold to Stale (+ a Notification Log to
-	the reviewing SMs); stale rules drop out of the next compile, never silently.
-	The plan schedules drift for early Phase 2; the driver may call this
-	unconditionally today and get a clean no-op."""
-	return {"revalidated": 0, "staled": 0, "stub": True}
+# A drifted pattern goes Stale when its fresh Wilson lower bound falls under
+# this hard floor, OR when its fresh confidence no longer meets the detector's
+# own c_min gate (the quantity that gate originally tested), OR when the
+# checker no longer emits its pattern_key at all (undetectable).
+STALE_WILSON_FLOOR = 0.80
+
+
+def revalidate_active(run=None, patterndb=None, mined=None) -> dict:
+	"""Nightly drift re-validation (plan 6.5): compare each Approved/Active
+	pattern against the CURRENT run's mining candidates by ``pattern_key``.
+
+	``mined`` is the engine's per-unit stash - ``{(detector_id, company):
+	{"by_key": {pattern_key: candidate}, "tracked": set(pattern_key),
+	"cap_truncated": bool}}`` - built from the same candidates mining just
+	computed, so drift costs no second detector scan, needs no extra row
+	budget, and covers exactly the units mined tonight (paused runs included).
+	Units the run did not mine (skipped, errored, deferred) are left unchecked,
+	as are pattern_keys the stash was not tracking (e.g. approved mid-run).
+	Without ``mined`` (direct/console callers) the legacy path re-runs the
+	checker once per group through ``executor.run_detector`` inside a READ ONLY
+	fence (or the caller's ``patterndb``); only that slow path re-checks the
+	analysis window per group.
+
+	  * matched: refresh the stat fields + ``last_validated_at`` in place
+	    (``skill_draft`` untouched, so an SM edit is preserved by construction;
+	    ``strength_band`` clamps to ``flag_band_cap``);
+	  * matched but carrying a recency divergence (mining stamped
+	    ``evidence.recency`` - the segment's last-90-day behaviour moved away
+	    from the full window, including a partial "new deals only" adoption
+	    with a >=0.2 recent-share shift, OR a grandfathered partial adoption
+	    where the recent window has >=10 units and its confidence for the
+	    established consequent falls below the detector's c_min while the
+	    full-window aggregate still passes - see stats.recency_divergence):
+	    -> Stale with the "behavior changed around <date>" reason, unless
+	    the row was reviewed after the divergence window opened;
+	  * matched but below threshold: -> Stale. Admission-consistent: stale only
+	    when fresh confidence < the detector's own c_min, or the fresh Wilson
+	    bound falls under min(STALE_WILSON_FLOOR, the row's stored bound) - the
+	    drift floor is never stricter than what admission/approval allowed, so
+	    an approved Low-band pattern is not staled on day one;
+	  * unmatched with the unit NOT cap-truncated: -> Stale, "no longer
+	    detectable";
+	  * unmatched but the unit hit the per-detector candidate cap: absence
+	    proves nothing - the row is left untouched and the run's coverage note
+	    reports the deferral (``cap_deferred``);
+	  * checker-version mismatch (registry spec bumped since detection): the
+	    comparison would be apples-to-oranges - leave the status, annotate the
+	    evidence, and let the nightly mining re-propose under the new version;
+	  * detector skipped/errored (missing field/app): NOT evidence of drift -
+	    the group is left unchecked.
+
+	Returns ``{revalidated, staled, version_skipped, unchecked, cap_deferred}``
+	- the engine copies revalidated/staled onto the run row counters and
+	surfaces cap_deferred in the coverage note."""
+	from jarvis.learning import registry
+
+	rows = frappe.get_all(
+		JLP,
+		filters={"status": ["in", ["Approved", "Active"]]},
+		fields=[
+			"name", "status", "detector_id", "company", "pattern_key",
+			"confidence_pct", "wilson_low", "draft_edited", "evidence",
+			"flag_band_cap", "reviewed_at",
+		],
+	)
+	out = {"revalidated": 0, "staled": 0, "version_skipped": 0, "unchecked": 0, "cap_deferred": 0}
+	if not rows:
+		return out
+
+	groups: dict = {}
+	for r in rows:
+		groups.setdefault((r.detector_id, r.company), []).append(r)
+
+	now = now_datetime()
+	staled_lines: list[str] = []
+	for (detector_id, company), patterns in groups.items():
+		if mined is None and _revalidation_window_closed(run):
+			# Respect the analysis window on the SLOW (checker-re-run) path
+			# only: the mined path does no detector SQL, so remaining groups
+			# cost row writes at most.
+			out["unchecked"] += len(patterns)
+			continue
+
+		spec = registry.get_detector(detector_id)
+		if spec is None:
+			# Detector left the registry: no checker to compare against. Never
+			# Stale on our own blindness - annotate and leave the status.
+			for row in patterns:
+				_annotate_revalidation(
+					row.name,
+					f"detector '{detector_id}' is no longer in the registry; drift compare skipped",
+					now,
+				)
+			out["unchecked"] += len(patterns)
+			continue
+
+		compare: list = []
+		for row in patterns:
+			stored = _stored_checker_version(row)
+			spec_version = spec.get("version")
+			if stored is not None and spec_version is not None and int(stored) != int(spec_version):
+				# Version guard: the checker changed since this pattern was
+				# detected - a drift comparison would be meaningless. Leave the
+				# status; the nightly mining re-proposes under the new version.
+				_annotate_revalidation(
+					row.name,
+					f"checker version changed {stored} -> {spec_version}; "
+					"awaiting re-propose by the nightly mining",
+					now,
+				)
+				out["version_skipped"] += 1
+			else:
+				compare.append(row)
+		if not compare:
+			continue
+
+		tracked = None
+		if mined is not None:
+			entry = mined.get((detector_id, company))
+			if entry is None:
+				# The run did not mine this unit (skipped / errored / deferred
+				# on a pause): proves nothing about the patterns.
+				out["unchecked"] += len(compare)
+				continue
+			by_key = entry.get("by_key") or {}
+			tracked = entry.get("tracked")
+			cap_truncated = bool(entry.get("cap_truncated"))
+		else:
+			candidates = _run_checker_once(spec, company, patterndb)
+			if candidates is None:
+				# Skip / error: the checker could not run, which proves nothing
+				# about the patterns. Leave them for the next pass.
+				out["unchecked"] += len(compare)
+				continue
+			by_key = {c.get("pattern_key"): c for c in candidates if c.get("pattern_key")}
+			from jarvis.learning.executor import PER_DETECTOR_CANDIDATE_CAP
+
+			cap_truncated = len(candidates) >= PER_DETECTOR_CANDIDATE_CAP
+
+		window_months = spec.get("window_months", 18)
+		for row in compare:
+			if tracked is not None and row.pattern_key not in tracked:
+				# The stash was not watching this key when the unit was mined
+				# (e.g. the row was approved mid-run): no evidence either way.
+				out["unchecked"] += 1
+				continue
+			cand = by_key.get(row.pattern_key)
+			if cand is None:
+				if cap_truncated:
+					# The unit's candidate list was cut at the per-detector
+					# cap: absence is NOT evidence. Leave the row untouched;
+					# the engine surfaces the deferral in the coverage note.
+					out["cap_deferred"] += 1
+					continue
+				reason = f"no longer detectable (window {window_months} months)"
+				_mark_stale(row.name, reason, now)
+				out["revalidated"] += 1
+				out["staled"] += 1
+				staled_lines.append(f"{row.name}: {reason}")
+				continue
+			_refresh_drift_stats(row.name, cand, now, band_cap=row.get("flag_band_cap"))
+			out["revalidated"] += 1
+			reason = _stale_reason(spec, row, cand, window_months)
+			if reason:
+				_mark_stale(row.name, reason, now)
+				out["staled"] += 1
+				staled_lines.append(f"{row.name}: {reason}")
+
+	if staled_lines:
+		_notify_stale(staled_lines)
+	if out["revalidated"] or out["version_skipped"]:
+		frappe.db.commit()
+	return out
+
+
+def _run_checker_once(spec, company, patterndb) -> list | None:
+	"""One fenced checker pass for a (detector, company) group. Returns the
+	candidate list, or None when the detector skipped or errored (which is NOT
+	evidence of drift). When no ``patterndb`` is supplied the READ ONLY fence is
+	opened here (commit first - the fence refuses pending writes)."""
+	from jarvis.learning.executor import run_detector
+
+	try:
+		if patterndb is not None:
+			result = run_detector(spec, company, patterndb)
+		else:
+			from jarvis.learning.readonly_db import read_only_transaction
+
+			frappe.db.commit()
+			with read_only_transaction() as pdb:
+				result = run_detector(spec, company, pdb)
+	except Exception:
+		frappe.log_error(
+			title=f"jarvis pattern re-validation failed: {spec.get('id')} / {company}",
+			message=frappe.get_traceback(),
+		)
+		return None
+	if getattr(result, "skipped_reason", None):
+		return None
+	return list(getattr(result, "candidates", None) or [])
+
+
+def _stale_reason(spec, row, cand: dict, window_months) -> str | None:
+	"""Threshold check on the FRESH numbers; None means the pattern still holds.
+
+	Admission-consistent (never stricter than what approval allowed): a matched
+	pattern stales only when
+
+	  * mining stamped a recency divergence on the candidate (the segment's
+	    recent behaviour moved away from the approved pattern - a mode flip OR
+	    a >=0.2 recent-share shift such as "new terms for new deals only") and
+	    the row was not reviewed after the divergence window opened; or
+	  * fresh confidence fell under the detector's own c_min gate (the quantity
+	    admission originally tested); or
+	  * the fresh Wilson bound fell under min(STALE_WILSON_FLOOR, the row's
+	    stored bound) - an approved Low-band pattern (admitted with wilson_low
+	    below the 0.80 floor) is NOT staled while its numbers hold; it stales
+	    only on a real regression below what it was approved with.
+	"""
+	recency = _recency_drift(row, cand)
+	if recency:
+		return f"{recency} (recent behavior diverged from the approved pattern)"
+
+	gates = spec.get("gates") or {}
+	c_min = float(gates.get("c_min", 0.90))
+	wilson = float(cand.get("wilson_low") or 0)
+	confidence = float(cand.get("confidence_pct") or 0) / 100.0
+	old_wilson = float(row.get("wilson_low") or 0)
+	if confidence < c_min:
+		old_pct = round(float(row.get("confidence_pct") or 0))
+		new_pct = round(float(cand.get("confidence_pct") or 0))
+		return (
+			f"confidence dropped {old_pct}% -> {new_pct}% "
+			f"(window {window_months} months)"
+		)
+	if wilson < min(STALE_WILSON_FLOOR, old_wilson):
+		return (
+			f"wilson lower bound dropped {round(old_wilson, 2)} -> {round(wilson, 2)} "
+			f"(window {window_months} months)"
+		)
+	return None
+
+
+def _recency_drift(row, cand: dict) -> str | None:
+	"""The mining candidate's recency-divergence note ("behavior changed around
+	<date>"), unless the row was reviewed AFTER the divergence window opened -
+	an SM who re-approved with the divergence already visible has accepted it,
+	and re-staling nightly would loop them."""
+	ev = cand.get("evidence")
+	if not isinstance(ev, dict):
+		ev = _evidence_dict(ev)
+	note = ev.get("recency")
+	if not note:
+		return None
+	changed_around = ev.get("recency_changed_around")
+	reviewed_at = row.get("reviewed_at")
+	if changed_around and reviewed_at:
+		try:
+			if get_datetime(reviewed_at) >= get_datetime(str(changed_around)):
+				return None
+		except Exception:
+			pass
+	return str(note)
+
+
+def _refresh_drift_stats(name: str, cand: dict, now, band_cap=None) -> None:
+	"""Refresh the measured stats in place. Deliberately NOT the mining upsert:
+	no skill_draft, no evidence rewrite, no status change - the drill-down shows
+	the fresh truth while the reviewed text stays exactly as approved (an
+	SM-edited draft, draft_edited=1, is preserved by construction). The band
+	write clamps to the correction loop's ``flag_band_cap`` (shared contract)."""
+	from jarvis.learning import engine as eng
+
+	update = {
+		"support_n": _coerce_int(cand.get("support_n")),
+		"n_rows": _coerce_int(cand.get("n_rows")),
+		"exception_n": _coerce_int(cand.get("exception_n")),
+		"confidence_pct": _coerce_float(cand.get("confidence_pct")),
+		"wilson_low": _coerce_float(cand.get("wilson_low")),
+		"gap": _coerce_float(cand.get("gap")),
+		"strength_band": eng.weaker_of(cand.get("strength_band"), band_cap),
+		"last_validated_at": now,
+	}
+	frappe.db.set_value(JLP, name, update, update_modified=False)
+
+
+def _coerce_int(value) -> int:
+	try:
+		return int(value) if value is not None else 0
+	except (TypeError, ValueError):
+		return 0
+
+
+def _coerce_float(value) -> float:
+	try:
+		return float(value) if value is not None else 0.0
+	except (TypeError, ValueError):
+		return 0.0
+
+
+def _mark_stale(name: str, reason: str, now) -> None:
+	doc = frappe.get_doc(JLP, name)
+	with _engine_flag():
+		doc.status = "Stale"
+		doc.stale_reason = reason[:_MAX_NOTE_LEN]
+		doc.last_validated_at = now
+		doc.save(ignore_permissions=True)
+
+
+def _stored_checker_version(row):
+	"""The checker version stamped into the pattern's evidence at detection
+	(executor writes ``detector_version``; ``checker_version`` accepted for
+	forward-compat). None when the evidence carries no stamp (legacy row) - the
+	comparison then proceeds against the current spec."""
+	ev = _evidence_dict(row.get("evidence"))
+	version = ev.get("detector_version")
+	if version is None:
+		version = ev.get("checker_version")
+	try:
+		return int(version) if version is not None else None
+	except (TypeError, ValueError):
+		return None
+
+
+def _annotate_revalidation(name: str, note: str, now) -> None:
+	ev = _evidence_dict(frappe.db.get_value(JLP, name, "evidence"))
+	ev["revalidation"] = {"note": note, "at": str(now)}
+	frappe.db.set_value(
+		JLP, name, {"evidence": frappe.as_json(ev)}, update_modified=False
+	)
+
+
+def _evidence_dict(raw) -> dict:
+	if isinstance(raw, dict):
+		return raw
+	if not raw:
+		return {}
+	try:
+		parsed = frappe.parse_json(raw)
+	except Exception:
+		return {}
+	return parsed if isinstance(parsed, dict) else {}
+
+
+def _notify_stale(staled_lines: list[str]) -> None:
+	"""ONE summary Notification Log per pass (never one per pattern - the
+	morning-1 single-notification idiom)."""
+	n = len(staled_lines)
+	subject = f"Jarvis: {n} learned pattern{'s' if n != 1 else ''} went stale"
+	shown = staled_lines[:5]
+	if n > len(shown):
+		shown.append(f"...and {n - len(shown)} more.")
+	message = (
+		"Nightly re-validation found learned patterns that no longer hold:\n"
+		+ "\n".join(f"- {line}" for line in shown)
+		+ "\n\nStale patterns are excluded from the next Apply (never silently "
+		"edited); re-approve or reject them on the Learning board."
+	)
+	notify_system_managers(subject, message)
+
+
+def notify_system_managers(subject: str, message: str) -> None:
+	"""Best-effort Notification Log to every enabled System Manager (the
+	agent_scheduler ``_notify_owner`` shape; ``get_users_with_role`` already
+	filters to enabled users and excludes Administrator). Shared by drift
+	re-validation and the correction loop (``learned_api.flag_learned_default``);
+	never raises."""
+	try:
+		from frappe.utils.user import get_users_with_role
+
+		recipients = get_users_with_role("System Manager")
+	except Exception:
+		return
+	for user in recipients:
+		if not user or user in ("Administrator", "Guest"):
+			continue
+		try:
+			frappe.get_doc({
+				"doctype": "Notification Log",
+				"for_user": user,
+				"type": "Alert",
+				"subject": subject,
+				"email_content": message,
+			}).insert(ignore_permissions=True)
+		except Exception:
+			pass
+	try:
+		frappe.db.commit()
+	except Exception:
+		pass
+
+
+def _revalidation_window_closed(run) -> bool:
+	"""True when a SCHEDULED run's analysis window has ended (manual runs bypass
+	the window, mirroring ``engine._pause_reason``)."""
+	if run is None or getattr(run, "trigger", None) == "manual":
+		return False
+	try:
+		from jarvis.learning.orchestrator import should_pause_for_window
+
+		return bool(
+			should_pause_for_window(
+				run.window_start_used, run.window_end_used, now_datetime()
+			)
+		)
+	except Exception:
+		return False
 
 
 # --------------------------------------------------------------------------- #

@@ -1,14 +1,18 @@
 """Learned-pattern lifecycle tests (plan section 6.5): dedupe / draft-freeze /
-durable-but-reversible suppression / snooze expiry / retention / overlap.
+durable-but-reversible suppression / snooze expiry / retention / overlap /
+drift re-validation (Phase 2 A1).
 """
 
 from __future__ import annotations
+
+from unittest import mock
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
 from frappe.utils import add_to_date, now_datetime
 
 from jarvis.learning import lifecycle
+from jarvis.learning.executor import DetectorResult
 
 JLP = "Jarvis Learned Pattern"
 JLP_ROLE = "Jarvis Learned Pattern Role"
@@ -102,6 +106,63 @@ class TestLifecycle(FrappeTestCase):
 		)
 		lifecycle.upsert_candidate(_candidate(skill_draft="- fresh detector text."), self.run)
 		self.assertEqual(self._row().skill_draft, "- SM edited rule.")
+
+	def test_polished_draft_survives_re_detection(self):
+		# draft_polished freezes the WORDING only: the evidence/stat refresh
+		# still lands (unlike draft_edited it does not imply a frozen evidence
+		# line), and the polished text must survive nightly mining and approval.
+		lifecycle.upsert_candidate(_candidate(), self.run)
+		name = self._row().name
+		frappe.db.set_value(
+			JLP, name, {"draft_polished": 1, "skill_draft": "- polished wording."},
+			update_modified=False,
+		)
+		out = lifecycle.upsert_candidate(
+			_candidate(skill_draft="- fresh detector text.", support_n=99), self.run
+		)
+		self.assertEqual(out, "updated")
+		row = self._row()
+		self.assertEqual(row.skill_draft, "- polished wording.")
+		self.assertEqual(row.draft_polished, 1)
+		self.assertEqual(row.support_n, 99)  # evidence still refreshed
+
+	def test_statement_change_clears_polish_and_refreshes_draft(self):
+		# A materially different pattern_statement means the detector
+		# re-measured a different pattern: the stale polish is dropped and the
+		# deterministic draft refreshes.
+		lifecycle.upsert_candidate(_candidate(), self.run)
+		name = self._row().name
+		frappe.db.set_value(
+			JLP, name, {"draft_polished": 1, "skill_draft": "- polished wording."},
+			update_modified=False,
+		)
+		lifecycle.upsert_candidate(
+			_candidate(
+				pattern_statement="Supplier ThreadCo now supplies mostly stock items.",
+				skill_draft="- fresh detector text.",
+			),
+			self.run,
+		)
+		row = self._row()
+		self.assertEqual(row.draft_polished, 0)
+		self.assertEqual(row.skill_draft, "- fresh detector text.")
+
+	def test_flag_band_cap_clamps_mining_band_write(self):
+		# Correction-loop contract: the nightly refresh must not silently
+		# revert a flag-driven demotion - the band write clamps to the cap.
+		lifecycle.upsert_candidate(_candidate(strength_band="High"), self.run)
+		name = self._row().name
+		frappe.db.set_value(
+			JLP, name, {"flag_band_cap": "Low", "strength_band": "Low"},
+			update_modified=False,
+		)
+		lifecycle.upsert_candidate(_candidate(strength_band="High"), self.run)
+		self.assertEqual(self._row().strength_band, "Low")
+
+	def test_empty_flag_band_cap_leaves_band_free(self):
+		lifecycle.upsert_candidate(_candidate(strength_band="Medium"), self.run)
+		lifecycle.upsert_candidate(_candidate(strength_band="High"), self.run)
+		self.assertEqual(self._row().strength_band, "High")
 
 	# --- suppression (durable but reversible) ------------------------------- #
 	def test_rejected_stays_suppressed_when_not_stronger(self):
@@ -200,11 +261,403 @@ class TestLifecycle(FrappeTestCase):
 		self.assertTrue((self._row().overlap_warning or "").strip())
 
 
-class TestRevalidateStub(FrappeTestCase):
-	def test_revalidate_active_is_noop_stub(self):
-		res = lifecycle.revalidate_active(None)
-		self.assertTrue(res.get("stub"))
-		self.assertEqual(res.get("staled"), 0)
+class TestRevalidateActive(FrappeTestCase):
+	"""Drift re-validation (plan 6.5, Phase 2 A1): refresh-in-place, the Stale
+	triggers (confidence drop / undetectable), the checker-version guard, the
+	skipped-detector no-op, edited-draft preservation, and the SM notification.
+
+	``run_detector`` is mocked at the executor module (revalidate imports it
+	lazily) and a sentinel ``patterndb`` is passed so no READ ONLY fence is
+	opened - these tests exercise the lifecycle logic, not the detectors."""
+
+	SM = "lc-drift-sm@example.com"
+
+	@classmethod
+	def setUpClass(cls):
+		super().setUpClass()
+		# Notification Log.for_user is a Link, so the recipient must exist
+		# (get_users_with_role is mocked; roles are irrelevant here).
+		if not frappe.db.exists("User", cls.SM):
+			u = frappe.get_doc({
+				"doctype": "User", "email": cls.SM,
+				"first_name": "lc-drift-sm", "send_welcome_email": 0, "enabled": 1,
+			})
+			u.flags.ignore_permissions = True
+			u.insert()
+			frappe.db.commit()
+
+	def setUp(self):
+		super().setUp()
+		self.run = frappe.get_doc(
+			{"doctype": RUN, "trigger": "manual", "status": "Running"}
+		).insert(ignore_permissions=True)
+		frappe.local._jarvis_overlap_index = None
+
+	def tearDown(self):
+		frappe.db.delete(JLP_ROLE, {"parenttype": JLP})
+		frappe.db.delete(JLP, {"pattern_key": ["like", "_lc-%"]})
+		frappe.db.delete("Notification Log", {"for_user": self.SM})
+		frappe.db.delete(RUN, {"name": self.run.name})
+		frappe.local._jarvis_overlap_index = None
+		frappe.db.commit()
+		super().tearDown()
+
+	def _row(self, key=KEY):
+		name = frappe.db.exists(JLP, {"pattern_key": key})
+		return frappe.get_doc(JLP, name) if name else None
+
+	def _live(self, status="Active", **over):
+		"""Insert one pattern via the engine path and move it to Approved/Active
+		(db.set_value, like the board would after review + apply)."""
+		lifecycle.upsert_candidate(_candidate(**over), self.run)
+		name = frappe.db.exists(JLP, {"pattern_key": over.get("pattern_key", KEY)})
+		frappe.db.set_value(JLP, name, {"status": status}, update_modified=False)
+		frappe.db.commit()
+		return name
+
+	def _reval(self, result):
+		with mock.patch(
+			"jarvis.learning.executor.run_detector", return_value=result
+		) as rd:
+			out = lifecycle.revalidate_active(self.run, patterndb=object())
+		return out, rd
+
+	# --- refresh in place ----------------------------------------------------- #
+	def test_matched_candidate_refreshes_stats_in_place(self):
+		self._live(status="Active")
+		fresh = _candidate(
+			support_n=60, n_rows=61, exception_n=1,
+			confidence_pct=97.0, wilson_low=0.91, gap=0.4, strength_band="High",
+		)
+		out, _rd = self._reval(DetectorResult([fresh], None))
+		row = self._row()
+		self.assertEqual(row.status, "Active")  # still healthy: no transition
+		self.assertEqual(row.support_n, 60)
+		self.assertEqual(row.exception_n, 1)
+		self.assertEqual(row.strength_band, "High")
+		self.assertAlmostEqual(row.wilson_low, 0.91, places=4)
+		self.assertTrue(row.last_validated_at)
+		self.assertEqual(out["revalidated"], 1)
+		self.assertEqual(out["staled"], 0)
+
+	def test_drift_never_touches_an_edited_draft(self):
+		name = self._live(status="Approved")
+		frappe.db.set_value(
+			JLP, name, {"draft_edited": 1, "skill_draft": "- SM edited rule."},
+			update_modified=False,
+		)
+		fresh = _candidate(support_n=80, skill_draft="- fresh detector text.")
+		self._reval(DetectorResult([fresh], None))
+		row = self._row()
+		self.assertEqual(row.skill_draft, "- SM edited rule.")
+		self.assertEqual(row.support_n, 80)  # stats still refreshed
+		self.assertEqual(row.status, "Approved")
+
+	# --- stale triggers --------------------------------------------------------#
+	def test_confidence_drop_marks_stale_and_notifies(self):
+		self._live(status="Active")
+		fresh = _candidate(confidence_pct=71.0, wilson_low=0.55, strength_band="Low")
+		with mock.patch(
+			"frappe.utils.user.get_users_with_role", return_value=[self.SM]
+		):
+			out, _rd = self._reval(DetectorResult([fresh], None))
+		row = self._row()
+		self.assertEqual(row.status, "Stale")
+		self.assertIn("confidence dropped", row.stale_reason)
+		self.assertIn("95% -> 71%", row.stale_reason)
+		self.assertAlmostEqual(row.confidence_pct, 71.0, places=1)  # fresh truth kept
+		self.assertTrue(row.last_validated_at)
+		self.assertEqual(out["staled"], 1)
+		subjects = frappe.get_all(
+			"Notification Log", filters={"for_user": self.SM}, pluck="subject"
+		)
+		self.assertTrue(any("stale" in (s or "").lower() for s in subjects))
+
+	def test_undetectable_marks_stale(self):
+		self._live(status="Approved")
+		out, _rd = self._reval(DetectorResult([], None))  # ran clean, no candidates
+		row = self._row()
+		self.assertEqual(row.status, "Stale")
+		self.assertIn("no longer detectable", row.stale_reason)
+		self.assertEqual(out["revalidated"], 1)
+		self.assertEqual(out["staled"], 1)
+
+	def test_skipped_detector_is_not_drift(self):
+		self._live(status="Active")
+		out, _rd = self._reval(DetectorResult([], "missing field Item.is_stock_item"))
+		self.assertEqual(self._row().status, "Active")
+		self.assertEqual(out["staled"], 0)
+		self.assertEqual(out["unchecked"], 1)
+
+	# --- admission-consistent thresholds (never stricter than approval) -------- #
+	def test_low_band_pattern_is_not_staled_while_its_numbers_hold(self):
+		# An approved Low-band pattern was ADMITTED with wilson_low below the
+		# 0.80 drift floor (detection gates on confidence + precision, not on
+		# wilson >= 0.80). Re-detecting it with the SAME numbers is not drift:
+		# it must never be staled on a floor stricter than admission.
+		self._live(
+			status="Active", confidence_pct=90.0, wilson_low=0.74, strength_band="Low"
+		)
+		fresh = _candidate(confidence_pct=90.0, wilson_low=0.74, strength_band="Low")
+		out, _rd = self._reval(DetectorResult([fresh], None))
+		row = self._row()
+		self.assertEqual(row.status, "Active")
+		self.assertEqual(out["staled"], 0)
+		self.assertEqual(out["revalidated"], 1)
+
+	def test_wilson_regression_stales_with_a_wilson_reason(self):
+		# Confidence holds (95% >= c_min 90%) but the Wilson bound regressed
+		# below both the floor and the stored bound: stale, and the reason must
+		# name the actual trigger - never the bogus "dropped 95% -> 95%".
+		self._live(status="Active")  # stored wilson_low 0.85
+		fresh = _candidate(confidence_pct=95.0, wilson_low=0.70, strength_band="Low")
+		with mock.patch(
+			"frappe.utils.user.get_users_with_role", return_value=[self.SM]
+		):
+			out, _rd = self._reval(DetectorResult([fresh], None))
+		row = self._row()
+		self.assertEqual(row.status, "Stale")
+		self.assertIn("wilson lower bound dropped", row.stale_reason)
+		self.assertNotIn("confidence dropped", row.stale_reason)
+		self.assertEqual(out["staled"], 1)
+
+	def test_flag_band_cap_clamps_drift_band_refresh(self):
+		# Correction-loop contract at the drift write: the refreshed band
+		# clamps to flag_band_cap so a demotion survives re-validation.
+		name = self._live(status="Active")
+		frappe.db.set_value(
+			JLP, name, {"flag_band_cap": "Low", "strength_band": "Low"},
+			update_modified=False,
+		)
+		fresh = _candidate(
+			support_n=60, confidence_pct=97.0, wilson_low=0.91, strength_band="High"
+		)
+		out, _rd = self._reval(DetectorResult([fresh], None))
+		row = self._row()
+		self.assertEqual(row.status, "Active")
+		self.assertEqual(row.strength_band, "Low")
+		self.assertEqual(row.support_n, 60)  # stats still refreshed
+		self.assertEqual(out["staled"], 0)
+
+	# --- checker-version guard ------------------------------------------------ #
+	def test_version_bump_skips_drift_compare(self):
+		# Stored checker version 0 != registry spec version (1): the comparison
+		# would be apples-to-oranges. Leave the status, annotate the evidence,
+		# and do not even run the checker for a fully version-skipped group.
+		self._live(
+			status="Active",
+			evidence={"antecedent": "ThreadCo", "detector_version": 0},
+		)
+		out, rd = self._reval(DetectorResult([], None))  # would stale if compared
+		row = self._row()
+		self.assertEqual(row.status, "Active")
+		self.assertEqual(out["version_skipped"], 1)
+		self.assertEqual(out["staled"], 0)
+		rd.assert_not_called()
+		ev = frappe.parse_json(row.evidence)
+		self.assertIn("revalidation", ev)
+		self.assertIn("version", ev["revalidation"]["note"])
+
+
+class TestRevalidateActiveMined(FrappeTestCase):
+	"""Drift re-validation over the engine's mining stash (Phase 2): no
+	``run_detector`` call at all - the pass consumes the candidates mining just
+	computed, honors cap-truncation (absence under a truncated list proves
+	nothing), skips keys the stash was not tracking, and stales matched
+	patterns whose candidate carries a recency divergence."""
+
+	DET = "buy-supplier-stockness"
+
+	def setUp(self):
+		super().setUp()
+		self.run = frappe.get_doc(
+			{"doctype": RUN, "trigger": "manual", "status": "Running"}
+		).insert(ignore_permissions=True)
+		frappe.local._jarvis_overlap_index = None
+
+	def tearDown(self):
+		frappe.db.delete(JLP_ROLE, {"parenttype": JLP})
+		frappe.db.delete(JLP, {"pattern_key": ["like", "_lc-%"]})
+		frappe.db.delete(RUN, {"name": self.run.name})
+		frappe.local._jarvis_overlap_index = None
+		frappe.db.commit()
+		super().tearDown()
+
+	def _row(self, key=KEY):
+		name = frappe.db.exists(JLP, {"pattern_key": key})
+		return frappe.get_doc(JLP, name) if name else None
+
+	def _live(self, status="Active", **over):
+		lifecycle.upsert_candidate(_candidate(**over), self.run)
+		name = frappe.db.exists(JLP, {"pattern_key": over.get("pattern_key", KEY)})
+		frappe.db.set_value(JLP, name, {"status": status}, update_modified=False)
+		frappe.db.commit()
+		return name
+
+	def _mined(self, by_key, tracked=None, cap_truncated=False):
+		return {
+			(self.DET, None): {
+				"by_key": by_key,
+				"tracked": tracked if tracked is not None else {KEY},
+				"cap_truncated": cap_truncated,
+			}
+		}
+
+	def _reval_mined(self, mined):
+		"""Run the mined path and prove the checker is never re-run."""
+		with mock.patch(
+			"jarvis.learning.executor.run_detector",
+			side_effect=AssertionError("mined path must not run the checker"),
+		), mock.patch(
+			"frappe.utils.user.get_users_with_role", return_value=[]
+		):
+			return lifecycle.revalidate_active(self.run, mined=mined)
+
+	def test_mined_match_refreshes_without_running_the_checker(self):
+		self._live(status="Active")
+		fresh = _candidate(support_n=70, confidence_pct=96.0, wilson_low=0.90)
+		out = self._reval_mined(self._mined({KEY: fresh}))
+		row = self._row()
+		self.assertEqual(row.status, "Active")
+		self.assertEqual(row.support_n, 70)
+		self.assertEqual(out["revalidated"], 1)
+		self.assertEqual(out["staled"], 0)
+
+	def test_mined_missing_key_stales_when_not_truncated(self):
+		self._live(status="Approved")
+		out = self._reval_mined(self._mined({}))
+		row = self._row()
+		self.assertEqual(row.status, "Stale")
+		self.assertIn("no longer detectable", row.stale_reason)
+		self.assertEqual(out["staled"], 1)
+
+	def test_mined_cap_truncated_unit_defers_instead_of_staling(self):
+		# The unit hit the per-detector candidate cap: a pattern_key missing
+		# from the truncated list is NOT evidence - leave the row untouched.
+		self._live(status="Active")
+		out = self._reval_mined(self._mined({}, cap_truncated=True))
+		row = self._row()
+		self.assertEqual(row.status, "Active")
+		self.assertFalse((row.stale_reason or "").strip())
+		self.assertEqual(out["cap_deferred"], 1)
+		self.assertEqual(out["staled"], 0)
+		self.assertEqual(out["revalidated"], 0)
+
+	def test_unit_not_mined_is_left_unchecked(self):
+		self._live(status="Active")
+		out = self._reval_mined({})  # the run never mined this (detector, company)
+		self.assertEqual(self._row().status, "Active")
+		self.assertEqual(out["unchecked"], 1)
+		self.assertEqual(out["staled"], 0)
+
+	def test_untracked_key_is_left_unchecked(self):
+		# The row was approved mid-run, AFTER the stash snapshot: its key was
+		# not tracked when the unit was mined, so absence proves nothing.
+		self._live(status="Approved")
+		out = self._reval_mined(self._mined({}, tracked=set()))
+		self.assertEqual(self._row().status, "Approved")
+		self.assertEqual(out["unchecked"], 1)
+		self.assertEqual(out["staled"], 0)
+
+	def test_recency_divergence_stales_matched_pattern(self):
+		# Grandfathered transition: the aggregate still clears every gate but
+		# mining stamped a recency divergence (>=0.2 recent-share shift or a
+		# mode flip) - the approved text may no longer describe current
+		# behaviour, so the pattern goes Stale with the divergence reason.
+		self._live(status="Active")
+		fresh = _candidate(
+			confidence_pct=95.0, wilson_low=0.85,
+			evidence={
+				"antecedent": "ThreadCo",
+				"recency": "behavior changed around 2026-04-01",
+				"recency_changed_around": "2026-04-01",
+			},
+		)
+		out = self._reval_mined(self._mined({KEY: fresh}))
+		row = self._row()
+		self.assertEqual(row.status, "Stale")
+		self.assertIn("behavior changed around 2026-04-01", row.stale_reason)
+		self.assertEqual(out["staled"], 1)
+
+	def test_recency_divergence_reviewed_after_onset_does_not_restale(self):
+		# The SM re-approved AFTER the divergence window opened: they accepted
+		# the recent behaviour, so the same divergence must not loop the row
+		# back to Stale every night.
+		name = self._live(status="Active")
+		frappe.db.set_value(
+			JLP, name, {"reviewed_at": now_datetime()}, update_modified=False
+		)
+		fresh = _candidate(
+			confidence_pct=95.0, wilson_low=0.85,
+			evidence={
+				"antecedent": "ThreadCo",
+				"recency": "behavior changed around 2026-04-01",
+				"recency_changed_around": "2026-04-01",
+			},
+		)
+		out = self._reval_mined(self._mined({KEY: fresh}))
+		row = self._row()
+		self.assertEqual(row.status, "Active")
+		self.assertEqual(out["staled"], 0)
+		self.assertEqual(out["revalidated"], 1)
+
+	def test_grandfathered_partial_adoption_stales_via_real_reduce(self):
+		# End-to-end drift integration WITHOUT mocking the reduce: a
+		# grandfathered transition ("new terms for NEW deals only, legacy
+		# accounts grandfathered") keeps the recent plurality on the old value
+		# and the recent-share shift under the 0.2 threshold, but the recent
+		# window falls under the detector's own c_min while the full-window
+		# aggregate still clears every admission gate. The REAL reduce must
+		# stamp the divergence on its candidate, and that candidate - fed
+		# through the mined stash - must stale the Active row.
+		from jarvis.learning import registry
+		from jarvis.learning.executor import _finalize, reduce_units
+
+		det = "buy-supplier-tax-template"  # c_min 0.95
+		spec = registry.get_detector(det)
+
+		def batch(supplier, consequent, start, count, tag):
+			rows = []
+			for i in range(count):
+				day = frappe.utils.add_days(start, i)
+				rows.append({
+					"unit_id": f"{supplier}-{tag}-{i}", "antecedent": supplier,
+					"consequent": consequent, "day": day,
+					"created": f"{day} 10:00:00",
+				})
+			return rows
+
+		rows = batch("SupGrand", "OldGST", "2025-01-01", 150, "old")
+		rows += batch("SupGrand", "OldGST", "2025-11-01", 27, "legacy")
+		rows += batch("SupGrand", "NewGST", "2025-11-28", 3, "new")
+		# ballast segment: the site-wide variance gate and the leave-segment-
+		# out base rate need a rest population
+		rows += batch("SupB", "ConstGST", "2025-06-01", 40, "ballast")
+
+		raws = reduce_units(rows, spec, None)
+		raw = next(r for r in raws if r["antecedent_value"] == "SupGrand")
+		cand = _finalize(spec, None, raw)
+		# the full-window aggregate still passes admission (177/180 = 98.3%)
+		# but the recent window (27/30 = 0.90 < 0.95) stamped the divergence
+		self.assertGreaterEqual(cand["confidence_pct"], 95.0)
+		self.assertIn("recency_changed_around", cand["evidence"])
+
+		key = "_lc-grandfather"  # tearDown cleans _lc-% rows
+		cand["pattern_key"] = key
+		self._live(status="Active", pattern_key=key, detector_id=det)
+		mined = {
+			(det, None): {
+				"by_key": {key: cand},
+				"tracked": {key},
+				"cap_truncated": False,
+			}
+		}
+		out = self._reval_mined(mined)
+		row = self._row(key)
+		self.assertEqual(row.status, "Stale")
+		self.assertIn("behavior changed around", row.stale_reason)
+		self.assertIn("recent behavior diverged", row.stale_reason)
+		self.assertEqual(out["staled"], 1)
 
 
 class TestSurfacingSortKey(FrappeTestCase):
