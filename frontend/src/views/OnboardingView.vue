@@ -880,9 +880,22 @@ onMounted(() => {
 .jv-ob-mode-name { font-size: 18px; font-weight: 700; color: var(--text); margin: 10px 0 12px; }
 .jv-ob-mode-feats { list-style: none; padding: 0; margin: 0 0 16px; flex: 1; }
 .jv-ob-mode-feats li { display: flex; gap: 7px; font-size: 13.5px; color: var(--text-2); line-height: 1.55; margin-bottom: 9px; }
-.jv-ob-tick { color: var(--blue); font-size: 11px; margin-top: 2px; flex: none; }
-.jv-ob-mode-warn { color: var(--red); margin-top: 8px; }
-.jv-ob-warn-icon { margin-right: 4px; flex: none; }
+/* Ticks get a real blue accent (the theme's --blue is near-black by design). */
+.jv-ob-tick { color: #2563eb; font-size: 11px; font-weight: 700; margin-top: 2px; flex: none; }
+.jv-dark .jv-ob-tick { color: var(--blue); }
+/* "Not included" note → danger highlight. The li.jv-ob-mode-warn selector
+   out-specifies `.jv-ob-mode-feats li` so the red actually lands (before, the
+   feats-li colour silently overrode it). */
+.jv-ob-mode-feats li.jv-ob-mode-warn {
+	color: var(--red);
+	background: var(--red-bg);
+	border: 1px solid var(--red-bd);
+	border-radius: 9px;
+	padding: 9px 11px;
+	margin-top: 12px;
+	align-items: flex-start;
+}
+.jv-ob-warn-icon { color: var(--red); margin-right: 4px; flex: none; }
 .jv-ob-mode-btn { width: 100%; margin-top: auto; }
 
 /* ---- Account — ported from desk .jo-label/.jo-input (jarvis_onboarding.js
