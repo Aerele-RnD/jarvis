@@ -10,6 +10,21 @@ import frappe
 CONV = "Jarvis Conversation"
 MSG = "Jarvis Chat Message"
 
+
+def _get_owned_conversation(conversation: str):
+	"""Load a conversation, enforcing that the caller owns it (SEC-002).
+
+	``frappe.get_doc`` performs NO permission check, so ownership is asserted
+	explicitly here. Conversations are strictly private: read and write access
+	are both owner-only. Raises ``frappe.DoesNotExistError`` when the
+	conversation does not exist and ``frappe.PermissionError`` when it belongs
+	to another user.
+	"""
+	doc = frappe.get_doc(CONV, conversation)
+	if doc.owner != frappe.session.user:
+		raise frappe.PermissionError("not your conversation")
+	return doc
+
 # Image attachments are stored as canvas items on the user message so the SPA
 # renders them inline as clickable thumbnails (same preview path as generated
 # images) instead of a bare "📎 name" marker.
@@ -165,10 +180,10 @@ def create_or_focus_empty() -> str:
 def get_conversation(conversation: str) -> dict:
 	"""Return conversation metadata + ordered messages.
 
-	Raises frappe.DoesNotExistError if the conversation does not exist or
-	the caller is not the owner.
+	Raises frappe.DoesNotExistError if the conversation does not exist, or
+	frappe.PermissionError if the caller is not the owner.
 	"""
-	doc = frappe.get_doc(CONV, conversation)  # respects owner-only permission
+	doc = _get_owned_conversation(conversation)
 
 	# hidden = internal system rows (e.g. the post-apply continuation prompt):
 	# they feed the agent transcript but never render in the chat UI, so this
@@ -219,7 +234,7 @@ def get_canvas(message: str, name: str | None = None, dark: int = 0) -> dict:
 	row = frappe.db.get_value(MSG, message, ["conversation", "canvas"], as_dict=True)
 	if not row:
 		frappe.throw(_t("message not found"), frappe.DoesNotExistError)
-	frappe.get_doc(CONV, row.conversation)  # owner-only permission check
+	_get_owned_conversation(row.conversation)  # non-owner: PermissionError
 
 	items = frappe.parse_json(row.canvas) if row.canvas else []
 	if not isinstance(items, list) or not items:
@@ -315,8 +330,8 @@ def create_conversation() -> str:
 
 @frappe.whitelist()
 def archive_conversation(conversation: str) -> dict:
-	"""Set status to archived. The openclaw-side session is left in place."""
-	doc = frappe.get_doc(CONV, conversation)
+	"""Set status to archived (owner-only). The openclaw-side session is left in place."""
+	doc = _get_owned_conversation(conversation)
 	doc.status = "Archived"
 	doc.save()
 	frappe.db.commit()
@@ -349,11 +364,11 @@ def clear_chat_history() -> dict:
 
 @frappe.whitelist()
 def rename_conversation(conversation: str, title: str) -> dict:
-	"""Rename a conversation. ``get_doc`` enforces the owner-only permission."""
+	"""Rename a conversation (owner-only, enforced explicitly)."""
 	title = (title or "").strip()[:140]
 	if not title:
 		return {"ok": False, "reason": _("title is empty")}
-	doc = frappe.get_doc(CONV, conversation)
+	doc = _get_owned_conversation(conversation)
 	doc.title = title
 	doc.save()
 	frappe.db.commit()
@@ -362,10 +377,10 @@ def rename_conversation(conversation: str, title: str) -> dict:
 
 @frappe.whitelist()
 def set_star(conversation: str, starred: str | int | bool) -> dict:
-	"""Star/unstar a conversation (owner-gated via get_doc). Starred chats are
-	listed first and grouped under 'Starred' in the sidebar."""
+	"""Star/unstar a conversation (owner-only, enforced explicitly). Starred
+	chats are listed first and grouped under 'Starred' in the sidebar."""
 	on = 1 if str(starred) in ("1", "true", "True", "on", "yes") else 0
-	doc = frappe.get_doc(CONV, conversation)
+	doc = _get_owned_conversation(conversation)
 	doc.starred = on
 	doc.save()
 	frappe.db.commit()
@@ -417,8 +432,8 @@ def send_message(
 
 	Returns {ok: True, run_id, message_id, conversation_id} on success or
 	{ok: False, reason: str} on validation failure. Raises
-	frappe.DoesNotExistError if the conversation does not exist or the
-	caller is not the owner.
+	frappe.DoesNotExistError if the conversation does not exist, or
+	frappe.PermissionError if the caller is not the owner.
 	"""
 	t0 = time.monotonic()
 	user = frappe.session.user
@@ -449,7 +464,7 @@ def send_message(
 	if (not message or not message.strip()) and not atts:
 		return {"ok": False, "reason": _("message is empty")}
 
-	conv_doc = frappe.get_doc(CONV, conversation)  # respects perms
+	conv_doc = _get_owned_conversation(conversation)
 
 	# Apply model override BEFORE enqueueing so the worker sees the new value
 	# when it loads the conversation. (If we set this after the enqueue, the
@@ -728,12 +743,18 @@ def set_conversation_model(conversation: str, model: str | None = None) -> dict:
 	Returns {"ok": True, "data": {"effective_model": <model>}} where
 	effective_model is what will be sent for the next turn - either
 	the override or the settings default.
+
+	Owner-only (SEC-002): mutates the conversation via ``db.set_value`` (which
+	bypasses permission checks), so ownership is asserted explicitly here.
 	"""
-	if not frappe.db.exists(CONV, conversation):
+	owner = frappe.db.get_value(CONV, conversation, "owner")
+	if owner is None:
 		return {"ok": False, "error": {
 			"code": "unknown_conversation",
 			"message": f"conversation {conversation!r} not found",
 		}}
+	if owner != frappe.session.user:
+		raise frappe.PermissionError("not your conversation")
 
 	settings = frappe.get_single("Jarvis Settings")
 
@@ -778,12 +799,18 @@ def set_conversation_thinking(conversation: str, thinking: str | None = None) ->
 	Empty / None clears it, so turns fall back to openclaw's default. The
 	value is plumbed as an inline /think directive in the user message, so it
 	never affects the cacheable system prefix. Returns the effective level
-	(empty resolves to "medium" for display)."""
-	if not frappe.db.exists(CONV, conversation):
+	(empty resolves to "medium" for display).
+
+	Owner-only (SEC-002): mutates the conversation via ``db.set_value`` (which
+	bypasses permission checks), so ownership is asserted explicitly here."""
+	owner = frappe.db.get_value(CONV, conversation, "owner")
+	if owner is None:
 		return {"ok": False, "error": {
 			"code": "unknown_conversation",
 			"message": f"conversation {conversation!r} not found",
 		}}
+	if owner != frappe.session.user:
+		raise frappe.PermissionError("not your conversation")
 	level = (thinking or "").strip().lower()
 	if level not in _ALLOWED_THINKING:
 		return {"ok": False, "error": {
@@ -806,10 +833,15 @@ def retry_message(message: str) -> dict:
 	turn) → (retried turn)".
 
 	Returns ``{ok: True, run_id}`` on success or ``{ok: False, reason}`` on
-	validation failure. Raises ``frappe.DoesNotExistError`` if the caller
-	doesn't own the message.
+	validation failure. Raises ``frappe.DoesNotExistError`` if the message
+	does not exist, or ``frappe.PermissionError`` if the caller does not own
+	the parent conversation.
 	"""
-	doc = frappe.get_doc(MSG, message)  # owner-only perm
+	doc = frappe.get_doc(MSG, message)
+	# Ownership is enforced on the PARENT conversation: message rows can be
+	# inserted by the RQ worker under a different session user, so the
+	# conversation's owner is the authority, not the message row's owner.
+	_get_owned_conversation(doc.conversation)
 	if doc.role != "assistant":
 		return {"ok": False, "reason": _("only assistant messages can be retried")}
 	if not doc.error:
