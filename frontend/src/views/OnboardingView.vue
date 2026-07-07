@@ -176,20 +176,29 @@
 						 second charge by showing a "Payment complete → Continue" state once
 						 payment has gone through (state.successData). ===== -->
 					<div v-else-if="state.step === 'connect'">
-						<h1 class="jv-ob-h1">Give Jarvis a brain</h1>
-						<p class="jv-ob-sub">Pick which model Jarvis should use. You can change this anytime from My Account.</p>
-						<LlmPoolEditor ref="poolRef" :editable="true" :modes="['quick']" :footerless="true" @saved="onConnected" @ready="connectReady = $event" />
-						<div v-if="state.finishing" class="jv-ob-note">Finishing setup…</div>
-						<div v-else-if="state.finishNote" class="jv-ob-note">
-							<span>{{ state.finishNote }}</span>
-							<button class="jv-ob-btn jv-ob-btn-primary" @click="forceContinue">Continue to Jarvis →</button>
-						</div>
-						<div class="jv-ob-placeholder-actions" style="margin-top:18px;">
-							<button class="jv-ob-btn" @click="goBack">← Back</button>
-							<button v-if="connectReady || savingConnect" class="jv-ob-btn jv-ob-btn-primary" :class="{ 'jv-ob-cta-ready': connectReady && !savingConnect }" :disabled="savingConnect" @click="saveConnect">
-								{{ savingConnect ? "Onboarding…" : "Onboard Jarvis" }}
-							</button>
-						</div>
+						<!-- Once onboarding succeeds we hard-reload to /jarvis/ (fresh readiness
+							 state). Show a clean full-step "setting up" screen through that
+							 transition so the reload reads as intentional, not a flicker. -->
+						<template v-if="state.finishing">
+							<h1 class="jv-ob-h1">Setting up Jarvis</h1>
+							<p class="jv-ob-sub">Bringing your workspace online, taking you to chat…</p>
+							<div class="jv-ob-spinner" aria-hidden="true"></div>
+						</template>
+						<template v-else>
+							<h1 class="jv-ob-h1">Give Jarvis a brain</h1>
+							<p class="jv-ob-sub">Pick which model Jarvis should use. You can change this anytime from My Account.</p>
+							<LlmPoolEditor ref="poolRef" :editable="true" :modes="['quick']" :footerless="true" @saved="onConnected" @ready="connectReady = $event" />
+							<div v-if="state.finishNote" class="jv-ob-note">
+								<span>{{ state.finishNote }}</span>
+								<button class="jv-ob-btn jv-ob-btn-primary" @click="forceContinue">Continue to Jarvis →</button>
+							</div>
+							<div class="jv-ob-placeholder-actions" style="margin-top:18px;">
+								<button class="jv-ob-btn" @click="goBack">← Back</button>
+								<button v-if="connectReady || savingConnect" class="jv-ob-btn jv-ob-btn-primary" :class="{ 'jv-ob-cta-ready': connectReady && !savingConnect }" :disabled="savingConnect" @click="saveConnect">
+									{{ savingConnect ? "Onboarding…" : "Onboard Jarvis" }}
+								</button>
+							</div>
+						</template>
 					</div>
 
 					<!-- ===== Self-host — ported from desk renderSelfHost + renderShResults
@@ -896,6 +905,10 @@ onMounted(() => {
 .jv-ob-cta-ready { border-color: var(--blue); animation: jvObCtaPulse 1.5s ease-out infinite; }
 .jv-ob-cta-ready:hover { animation-play-state: paused; }
 @media (prefers-reduced-motion: reduce) { .jv-ob-cta-ready { animation: none; } }
+/* "Setting up Jarvis" transition spinner (connect step, during the hard reload). */
+.jv-ob-spinner { width: 34px; height: 34px; margin: 10px auto 0; border-radius: 50%; border: 3px solid var(--border-2); border-top-color: var(--blue); animation: jvObSpin .8s linear infinite; }
+@keyframes jvObSpin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .jv-ob-spinner { animation: none; } }
 
 /* ---- mode-choice cards — ported from desk .jo-mode* (jarvis_onboarding.js
    ~1889-1898), theme tokens standing in for the desk's --jarvis-primary /
