@@ -237,7 +237,7 @@
           <button v-if="editable && (!singleMode || !(m.accounts && m.accounts.length))" @click="startConnect(m)"
                   :disabled="m._connect && m._connect.loading && !m._connect.authorizeUrl"
                   style="font-size:14px;font-weight:600;color:var(--blue);background:var(--blue-bg);border:1px solid var(--blue-bd);border-radius:8px;padding:10px 16px;cursor:pointer;">
-            {{ singleMode ? 'Connect account →' : '+ Connect account' }}
+            {{ singleMode ? 'Connect →' : '+ Connect account' }}
           </button>
         </div>
       </div>
@@ -285,7 +285,7 @@ const props = defineProps({
   // and trigger save() via a template ref (exposed below).
   footerless: { type: Boolean, default: false },
 })
-const emit = defineEmits(["saved"])
+const emit = defineEmits(["saved", "ready"])
 
 // ---- state ---------------------------------------------------------------
 const cfg = ref({ models: [], preset: "", routing_mode: "failover", proxy_active: false })
@@ -312,6 +312,16 @@ const singleMode = computed(() => modeTabs.value.length <= 1)
 // Whether any proxy-pool tab (Preset/Custom) is reachable — gates the Quick hint
 // copy so it never points at tabs that aren't there.
 const canPool = computed(() => props.modes.includes("preset") || props.modes.includes("custom"))
+// Whether the single-mode (onboarding) row is savable — an account is connected,
+// or an API key + provider/model are filled. Emitted so the host footer can
+// invite the final "Onboard Jarvis" click once the user is ready.
+const ready = computed(() => {
+  if (!singleMode.value) return false
+  const r = rows.value[0]
+  if (!r) return false
+  if (r.credentialType === "subscription") return (r.accounts || []).some((a) => a && (a.oauth_blob || a.account_ref))
+  return !!((r.provider || "").trim() && (r.model || "").trim() && ((r.apiKey || "").trim() || r.hasKey))
+})
 const credTypes = [
   { value: "subscription", label: "Chat subscription", desc: "Sign in with your ChatGPT or Gemini account." },
   { value: "api_key", label: "API key", desc: "Use your own provider key — Anthropic, OpenAI, and more." },
@@ -714,6 +724,10 @@ watch(keysByVendor, () => {
     if (e) rows.value = seedFromPreset(e)
   }
 }, { deep: true })
+
+// Tell the host (onboarding footer) when the config becomes savable so it can
+// highlight the "Onboard Jarvis" CTA.
+watch(ready, (v) => emit("ready", v), { immediate: true })
 
 onMounted(load)
 onBeforeUnmount(stopPolling)

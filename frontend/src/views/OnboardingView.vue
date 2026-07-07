@@ -183,7 +183,7 @@
 					<div v-else-if="state.step === 'connect'">
 						<h1 class="jv-ob-h1">Connect your AI</h1>
 						<p class="jv-ob-sub">Pick which model Jarvis should use. You can change this anytime from My Account.</p>
-						<LlmPoolEditor ref="poolRef" :editable="true" :modes="['quick']" :footerless="true" @saved="onConnected" />
+						<LlmPoolEditor ref="poolRef" :editable="true" :modes="['quick']" :footerless="true" @saved="onConnected" @ready="connectReady = $event" />
 						<div v-if="state.finishing" class="jv-ob-note">Finishing setup…</div>
 						<div v-else-if="state.finishNote" class="jv-ob-note">
 							<span>{{ state.finishNote }}</span>
@@ -191,8 +191,8 @@
 						</div>
 						<div class="jv-ob-placeholder-actions" style="margin-top:18px;">
 							<button class="jv-ob-btn" @click="goBack">← Back</button>
-							<button class="jv-ob-btn jv-ob-btn-primary" :disabled="savingConnect" @click="saveConnect">
-								{{ savingConnect ? "Saving…" : "Save configuration" }}
+							<button class="jv-ob-btn jv-ob-btn-primary" :class="{ 'jv-ob-cta-ready': connectReady && !savingConnect }" :disabled="savingConnect" @click="saveConnect">
+								{{ savingConnect ? "Onboarding…" : "Onboard Jarvis" }}
 							</button>
 						</div>
 					</div>
@@ -670,6 +670,9 @@ function onConnected(sync) {
 // the editor via its exposed save() method.
 const poolRef = ref(null)
 const savingConnect = ref(false)
+// True once the embedded editor reports a savable config (account connected, or
+// API key filled) — drives the "Onboard Jarvis" attention pulse.
+const connectReady = ref(false)
 async function saveConnect() {
 	if (!poolRef.value) return
 	savingConnect.value = true
@@ -888,6 +891,15 @@ onMounted(() => {
 }
 .jv-ob-btn:hover { background: var(--surface-2); }
 .jv-ob-btn-primary { border-color: var(--blue-bd); background: var(--blue-bg); color: var(--blue); }
+/* Attention pulse on the final CTA once the config is ready — a soft expanding
+   ring that invites the click. Pauses on hover; off for reduced-motion. */
+@keyframes jvObCtaPulse {
+	0% { box-shadow: 0 0 0 0 rgba(37, 99, 235, .38); }
+	70%, 100% { box-shadow: 0 0 0 7px rgba(37, 99, 235, 0); }
+}
+.jv-ob-cta-ready { border-color: var(--blue); animation: jvObCtaPulse 1.5s ease-out infinite; }
+.jv-ob-cta-ready:hover { animation-play-state: paused; }
+@media (prefers-reduced-motion: reduce) { .jv-ob-cta-ready { animation: none; } }
 
 /* ---- mode-choice cards — ported from desk .jo-mode* (jarvis_onboarding.js
    ~1889-1898), theme tokens standing in for the desk's --jarvis-primary /
