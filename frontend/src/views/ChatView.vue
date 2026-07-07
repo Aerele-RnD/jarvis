@@ -2090,13 +2090,6 @@ const draftCta = computed(() => {
 	if (!p) return ""
 	return p.verb === "update" ? `Update ${p.docName || p.doctype}` : `Create ${p.doctype}`
 })
-const draftChipSummary = computed(() => {
-	const a = activeAction.value
-	if (!a) return ""
-	const n = (a.tables || []).reduce((s, t) => s + ((t.rows || []).length), 0)
-	return n ? `${n} row${n === 1 ? "" : "s"}` : ""
-})
-
 // Summary-first: the read-only model + view for the current create/update action.
 const summaryState = ref({ key: "", model: null, view: null })
 async function ensureActionSummary(a) {
@@ -2125,15 +2118,13 @@ async function confirmSummary() {
 watch(actionFor, () => {
 	const a = activeAction.value
 	if (!(a && a.kind === "doc" && (a.verb === "create" || a.verb === "update" || !a.verb))) return
+	ensureActionSummary(a) // keep the summary card in sync with the latest action
 	if (draftPanel.value) {
-		// panel is open (user is editing) and the action re-emitted -> refresh it
+		// panel is open (user is editing) and the action re-emitted -> refresh it too
 		openDraftPanel({ verb: a.verb || "create", ...a }).then(() => {
 			if (draftPanel.value) draftPanel.value.updatedToast = true
 		})
-		return
 	}
-	// summary-first default: build the read-only summary, do NOT auto-open the panel
-	ensureActionSummary(a)
 })
 
 // --- apply wiring: draft panel create/update round-trip via apply_action ---
@@ -4375,9 +4366,6 @@ function onGlobalKey(e) {
 .jv-summary-hint { padding: 0 14px 11px; font-size: 12px; color: var(--text-3); }
 
 /* --- record draft panel --- */
-.jv-draft-chip { display: inline-flex; align-items: center; gap: 9px; margin-top: 12px; padding: 10px 14px; border: 1px solid var(--blue-bd); background: var(--blue-bg); color: var(--text); border-radius: 11px; cursor: pointer; font-size: 13.5px; }
-.jv-draft-chip svg { color: var(--blue); flex: none; }
-.jv-draft-chip-cta { color: var(--blue); font-weight: 600; margin-left: 4px; }
 .jv-draft-panel { display: flex; flex-direction: column; }
 .jv-draft-badge { font-size: 10px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; color: var(--amber); background: var(--amber-bg); border: 1px solid var(--amber-bd); border-radius: 99px; padding: 3px 9px; margin-left: 8px; }
 .jv-draft-body { flex: 1; overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 14px; }
