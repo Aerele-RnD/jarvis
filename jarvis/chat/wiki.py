@@ -14,8 +14,18 @@ Four surfaces, one merge discipline:
 - voice-note ingest (``enqueue_ingest_note`` / ``_ingest_note``): merges one
   Conversation-context ``Jarvis Voice Note`` into pages via ONE
   ``jarvis.chat.voice.openrouter_complete`` call (strict-JSON page updates).
-- SPA endpoints (list/get/save/archive) + ``apply_extracted_page_updates``,
-  the single write path shared with ``jarvis.learning.voice_facts``.
+- SPA endpoints (list/get/create/save/archive + caps/language/mirror/lint)
+  + ``apply_extracted_page_updates``, the single write path shared with
+  ``jarvis.learning.voice_facts``.
+
+Scopes (wiki v2): every read surface filters by the caller's page visibility
+(Org pages for all desk users, Role pages for holders of ``target_role``,
+User pages for ``target_user`` only; System Manager sees all) via
+``jarvis.chat.wiki_permissions``; the SPA write endpoints enforce the human
+write matrix (``can_edit_page`` / ``can_archive_page``). The extraction
+pipeline keeps its deliberate LLM-channel exception: any desk user maintains
+ORG pages through the confirm-gated tool / ingest (``ignore_permissions``
+writes behind explicit channel checks + the controller sanitizer).
 
 Merge discipline (``apply_extracted_page_updates``): ``append_md`` appends,
 ``body_md`` replaces only when the update carries no contradiction; a flagged
@@ -34,6 +44,7 @@ import frappe
 from frappe import _
 from frappe.utils import cint, now_datetime
 
+from jarvis.chat import wiki_permissions
 from jarvis.chat.events import publish_to_user
 from jarvis.jarvis.doctype.jarvis_wiki_page.jarvis_wiki_page import (
 	MAX_BODY_LEN,
@@ -127,16 +138,11 @@ def _require_system_user() -> None:
 		frappe.throw(_("Not permitted."), frappe.PermissionError)
 
 
-def _clamp_page(start, page_length) -> tuple[int, int]:
-	try:
-		start = max(0, int(start or 0))
-	except (TypeError, ValueError):
-		start = 0
-	try:
-		pl = int(page_length or 20)
-	except (TypeError, ValueError):
-		pl = 20
-	return start, max(1, min(pl, 100))
+def _clamp_paging(page, page_length) -> tuple[int, int, int]:
+	"""(page, page_length, start) — 1-based page, page_length clamped 1-100."""
+	page = max(1, cint(page) or 1)
+	pl = max(1, min(cint(page_length) or 20, 100))
+	return page, pl, (page - 1) * pl
 
 
 def is_stale(last_confirmed_at, fallback=None) -> bool:
@@ -273,9 +279,16 @@ def wiki_clause(conversation_id: str, context: dict | None = None) -> str:
 		pages = frappe.get_all(
 			WIKI,
 			filters={"slug": ["in", slugs], "status": "Active"},
-			fields=["slug", "summary"],
+			fields=["slug", "summary", "scope", "target_role", "target_user"],
 			limit_page_length=len(slugs),
 		)
+		# Scope visibility (belt and braces: entity-derived slugs are
+		# unsuffixed so only Org pages should ever match, but a clause must
+		# never inline a page the session user cannot read).
+		pages = [
+			p for p in pages
+			if wiki_permissions.can_read_page(p, frappe.session.user)
+		]
 		if not pages:
 			return ""
 		by_slug = {p.slug: p for p in pages}
@@ -546,11 +559,15 @@ def _extract_page_updates(note, entities, suggested, existing) -> list | None:
 		f"{json.dumps(existing, default=str)}"
 	)
 	try:
-		from jarvis.chat import voice
+		from jarvis.chat import knowledge_language, voice
 
+		# Org-wide knowledge-language preference (D6): extracted wiki content
+		# is written in English (translating the source) or in the source's
+		# own language, per Jarvis Settings.
+		system = _INGEST_SYSTEM + "\n\n" + knowledge_language.language_directive()
 		raw = voice.openrouter_complete(
 			[
-				{"role": "system", "content": _INGEST_SYSTEM},
+				{"role": "system", "content": system},
 				{"role": "user", "content": user_prompt},
 			],
 			max_tokens=4000,
@@ -706,64 +723,128 @@ def _merge_update_into_page(
 def list_wiki_pages_page(
 	search: str | None = None,
 	page_type: str | None = None,
-	start: int = 0,
+	scope_filter: str | None = None,
+	attention: int = 0,
+	page: int = 1,
 	page_length: int = 20,
 ) -> dict:
-	"""Active wiki pages, newest-modified first. Envelope:
-	``{rows, total, has_more, start, page_length}``; each row carries a
-	``stale`` flag (last confirmed more than 90 days ago)."""
+	"""Active wiki pages VISIBLE to the caller, newest-modified first.
+	Envelope: ``{rows, total, has_more, page, page_length}``; each row carries
+	``scope`` and a ``stale`` flag. ``scope_filter``: ``all`` (default) /
+	``org`` / ``role`` (Role pages) / ``mine`` (own User pages).
+	``attention=1`` keeps only pages needing review (contradiction flagged, or
+	last_confirmed_at missing / older than 90 days — computed in SQL). Raw SQL
+	because the visibility fragment + OR-search + a real COUNT(*) don't fit
+	get_all (``frappe.db.count`` takes no or_filters, and materializing every
+	matching name per request does not scale)."""
 	_require_system_user()
-	start, pl = _clamp_page(start, page_length)
+	user = frappe.session.user
+	page, pl, offset = _clamp_paging(page, page_length)
 
-	filters: dict = {"status": "Active"}
+	conditions = ["status = 'Active'"]
+	values: dict = {}
+	# Pre-escaped by wiki_permissions (frappe.db.escape) — no placeholders.
+	vis = (wiki_permissions.visible_scope_condition(user) or "").strip()
+	if vis:
+		conditions.append(f"({vis})")
 	if page_type:
 		if page_type not in PAGE_TYPES:
 			frappe.throw(_("Invalid page type filter."))
-		filters["page_type"] = page_type
-	kwargs: dict = {"filters": filters}
+		conditions.append("page_type = %(page_type)s")
+		values["page_type"] = page_type
+	scope_filter = (str(scope_filter).strip().lower() if scope_filter else "all")
+	if scope_filter not in ("all", "org", "role", "mine"):
+		frappe.throw(_("Invalid scope filter."))
+	if scope_filter == "org":
+		# Pre-backfill rows read as Org (scope is NULL until the patch runs).
+		conditions.append("ifnull(scope, '') in ('', 'Org')")
+	elif scope_filter == "role":
+		conditions.append("scope = 'Role'")
+	elif scope_filter == "mine":
+		conditions.append("(scope = 'User' and target_user = %(me)s)")
+		values["me"] = user
 	if search:
-		like = f"%{str(search).strip()[:140]}%"
-		kwargs["or_filters"] = [
-			["slug", "like", like],
-			["title", "like", like],
-			["summary", "like", like],
-		]
+		values["like"] = f"%{str(search).strip()[:140]}%"
+		conditions.append(
+			"(slug like %(like)s or title like %(like)s or summary like %(like)s)"
+		)
+	if cint(attention):
+		values["stale_cutoff"] = frappe.utils.add_to_date(
+			now_datetime(), days=-_STALE_DAYS
+		)
+		conditions.append(
+			"(contradiction_flag = 1 or last_confirmed_at is null"
+			" or last_confirmed_at < %(stale_cutoff)s)"
+		)
+	where = " and ".join(conditions)
 
-	total = len(frappe.get_all(WIKI, fields=["name"], limit_page_length=0, **kwargs))
-	rows = frappe.get_all(
-		WIKI,
-		fields=[
-			"name", "slug", "title", "page_type", "ref_doctype", "ref_name",
-			"summary", "status", "contradiction_flag", "last_confirmed_at",
-			"modified",
-		],
-		order_by="modified desc",
-		limit_start=start,
-		limit_page_length=pl,
-		**kwargs,
+	total = cint(frappe.db.sql(
+		f"select count(*) from `tabJarvis Wiki Page` where {where}", values
+	)[0][0])
+	values.update({"limit": pl, "offset": offset})
+	rows = frappe.db.sql(
+		f"""select name, slug, title, page_type, ifnull(scope, 'Org') as scope,
+			target_role, target_user, ref_doctype, ref_name, summary, status,
+			contradiction_flag, last_confirmed_at, modified
+		from `tabJarvis Wiki Page`
+		where {where}
+		order by modified desc
+		limit %(limit)s offset %(offset)s""",
+		values,
+		as_dict=True,
 	)
 	for r in rows:
+		r["contradiction_flag"] = cint(r.get("contradiction_flag"))
 		r["stale"] = is_stale(r.get("last_confirmed_at"), r.get("modified"))
 
 	return {
 		"rows": rows,
 		"total": total,
-		"has_more": start + len(rows) < total,
-		"start": start,
+		"has_more": offset + len(rows) < total,
+		"page": page,
 		"page_length": pl,
+	}
+
+
+@frappe.whitelist()
+def get_wiki_caps() -> dict:
+	"""The caller's wiki capabilities + the SM settings surfaced in the Wiki
+	tab header (knowledge language, last lint run)."""
+	_require_system_user()
+	user = frappe.session.user
+	from jarvis.chat import knowledge_language
+
+	lint_at = frappe.db.get_single_value(SETTINGS, "wiki_lint_last_run_at")
+	return {
+		"creatable_scopes": wiki_permissions.creatable_scopes(user),
+		"manageable_roles": wiki_permissions.manageable_roles(user),
+		"is_sm": (
+			user == "Administrator"
+			or "System Manager" in frappe.get_roles(user)
+		),
+		"knowledge_language": knowledge_language.get_knowledge_language(),
+		"wiki_lint_last_run_at": str(lint_at) if lint_at else None,
+		"wiki_lint_summary": frappe.db.get_single_value(
+			SETTINGS, "wiki_lint_summary"
+		) or None,
 	}
 
 
 @frappe.whitelist()
 def get_wiki_page(slug: str) -> dict:
 	"""One full wiki page by slug (any status — the editor can open an
-	archived page)."""
+	archived page). Invisible pages 404 as "not found" (existence is not
+	leaked); ``can_edit``/``can_archive`` are the server-computed write-matrix
+	flags the UI trusts (save/archive re-check)."""
 	_require_system_user()
+	user = frappe.session.user
 	slug = (slug or "").strip().lower()
 	name = frappe.db.get_value(WIKI, {"slug": slug}, "name")
 	if not name:
 		frappe.throw(_("Wiki page not found."))
 	doc = frappe.get_doc(WIKI, name)
+	if not wiki_permissions.can_read_page(doc, user):
+		frappe.throw(_("Wiki page not found."))
 	try:
 		sources = json.loads(doc.sources) if doc.sources else []
 	except Exception:
@@ -779,6 +860,11 @@ def get_wiki_page(slug: str) -> dict:
 		"body_md": doc.body_md,
 		"sensitivity": doc.sensitivity,
 		"status": doc.status,
+		"scope": doc.get("scope") or "Org",
+		"target_role": doc.get("target_role"),
+		"target_user": doc.get("target_user"),
+		"can_edit": bool(wiki_permissions.can_edit_page(doc, user)),
+		"can_archive": bool(wiki_permissions.can_archive_page(doc, user)),
 		"sources": sources if isinstance(sources, list) else [],
 		"last_confirmed_at": str(doc.last_confirmed_at) if doc.last_confirmed_at else None,
 		"contradiction_flag": cint(doc.contradiction_flag),
@@ -788,21 +874,100 @@ def get_wiki_page(slug: str) -> dict:
 
 
 @frappe.whitelist()
+def create_wiki_page(
+	title: str,
+	page_type: str,
+	scope: str = "Org",
+	target_role: str | None = None,
+	summary: str = "",
+	body_md: str = "",
+) -> dict:
+	"""Create one wiki page from the SPA "New page" dialog, write matrix
+	enforced (Org=SM; Role=KW Manager for a role they hold, or SM; User=the
+	caller with a KW role). The slug derives from the title
+	(``<page_type>--<scrubbed-title>``); the controller suffixes non-Org
+	slugs (``--u-…`` / ``--r-…``) so scopes never collide. Matrix denials
+	return ``{ok: False, reason}`` (the dialog shows the reason); malformed
+	input throws."""
+	_require_system_user()
+	user = frappe.session.user
+
+	title = " ".join(str(title or "").split())
+	if not title:
+		frappe.throw(_("Title is required."))
+	if page_type not in PAGE_TYPES:
+		frappe.throw(_("Invalid page type."))
+	scope = (str(scope).strip() if scope else "") or "Org"
+	if scope not in ("Org", "Role", "User"):
+		frappe.throw(_("Invalid scope."))
+
+	if scope not in wiki_permissions.creatable_scopes(user):
+		return {
+			"ok": False,
+			"reason": _("You cannot create {0}-scope wiki pages.").format(scope),
+		}
+	target_role = (str(target_role).strip() if target_role else "") or None
+	if scope == "Role":
+		if not target_role:
+			frappe.throw(_("A target role is required for Role-scope pages."))
+		if target_role not in wiki_permissions.manageable_roles(user):
+			return {
+				"ok": False,
+				"reason": _("You cannot manage wiki pages for role {0}.").format(
+					target_role
+				),
+			}
+	else:
+		target_role = None
+
+	slug = _normalize_slug(f"{page_type.lower()}--{title}")
+	if not slug:
+		return {"ok": False, "reason": _("Title does not produce a valid slug.")}
+
+	doc = frappe.get_doc({
+		"doctype": WIKI,
+		"slug": slug,
+		"title": title[:140],
+		"page_type": page_type,
+		"scope": scope,
+		"target_role": target_role,
+		"target_user": user if scope == "User" else None,
+		"summary": _clip_summary(summary),
+		"body_md": _clip_body(str(body_md or "")),
+		"status": "Active",
+		"sources": frappe.as_json([_source_entry("manual", None, user)]),
+		"last_confirmed_at": now_datetime(),
+	})
+	try:
+		doc.insert(ignore_permissions=True)
+	except frappe.DuplicateEntryError:
+		return {
+			"ok": False,
+			"reason": _("A page with this slug already exists: {0}").format(doc.slug),
+		}
+	return {"ok": True, "slug": doc.slug}
+
+
+@frappe.whitelist()
 def save_wiki_page(
 	slug: str,
 	body_md: str | None = None,
 	summary: str | None = None,
 	title: str | None = None,
 ) -> dict:
-	"""Human edit of an existing page (desk users). A saved body counts as a
-	review: it refreshes ``last_confirmed_at`` and clears the contradiction
-	flag (the human just resolved or endorsed the content)."""
+	"""Human edit of an existing page, write matrix enforced (Org=SM;
+	Role=KW Manager holding the role, or SM; User=the target user with a KW
+	role, or SM). A saved body counts as a review: it refreshes
+	``last_confirmed_at`` and clears the contradiction flag (the human just
+	resolved or endorsed the content)."""
 	_require_system_user()
 	slug = (slug or "").strip().lower()
 	name = frappe.db.get_value(WIKI, {"slug": slug}, "name")
 	if not name:
 		frappe.throw(_("Wiki page not found."))
 	doc = frappe.get_doc(WIKI, name)
+	if not wiki_permissions.can_edit_page(doc, frappe.session.user):
+		frappe.throw(_("Not permitted."), frappe.PermissionError)
 	if title is not None and str(title).strip():
 		doc.title = str(title).strip()[:140]
 	if summary is not None:
@@ -818,14 +983,52 @@ def save_wiki_page(
 
 @frappe.whitelist()
 def archive_wiki_page(slug: str) -> dict:
-	"""Retire a page (System Manager only). Archived pages drop out of the
-	list, the turn clause and read_wiki search; the slug stays reserved."""
-	frappe.only_for("System Manager")
+	"""Retire a page, write matrix enforced (``can_archive_page``: Org=SM;
+	Role=KW Manager holding the role, or SM; User per matrix). Archived pages
+	drop out of the list, the turn clause and read_wiki search; the slug
+	stays reserved."""
+	_require_system_user()
 	slug = (slug or "").strip().lower()
 	name = frappe.db.get_value(WIKI, {"slug": slug}, "name")
 	if not name:
 		frappe.throw(_("Wiki page not found."))
 	doc = frappe.get_doc(WIKI, name)
+	if not wiki_permissions.can_archive_page(doc, frappe.session.user):
+		frappe.throw(_("Not permitted."), frappe.PermissionError)
 	doc.status = "Archived"
 	doc.save(ignore_permissions=True)
 	return {"ok": True, "slug": doc.slug}
+
+
+@frappe.whitelist()
+def set_knowledge_language(value: str) -> dict:
+	"""SM-only: set the org-wide knowledge language (D6) consumed by the
+	wiki/voice-facts extraction prompts. English (default) translates source
+	material; Original keeps the source's dominant language."""
+	frappe.only_for("System Manager")
+	value = (value or "").strip()
+	if value not in ("English", "Original"):
+		frappe.throw(_("Knowledge language must be English or Original."))
+	frappe.db.set_single_value(SETTINGS, "knowledge_language", value)
+	return {"ok": True, "knowledge_language": value}
+
+
+@frappe.whitelist()
+def sync_wiki_mirror_now() -> dict:
+	"""SM-only: queue a FULL org-wiki mirror sync into the tenant container
+	workspace (same deduped job as the doc_events trigger; full=prunes strays)."""
+	frappe.only_for("System Manager")
+	from jarvis.chat import wiki_mirror
+
+	wiki_mirror.enqueue_sync(full=True)
+	return {"ok": True}
+
+
+@frappe.whitelist()
+def run_wiki_lint_now() -> dict:
+	"""SM-only: run the wiki health check (deterministic lint pass) now and
+	return its summary (also persisted on Jarvis Settings by run_lint)."""
+	frappe.only_for("System Manager")
+	from jarvis.learning import wiki_lint
+
+	return {"ok": True, "summary": wiki_lint.run_lint()}

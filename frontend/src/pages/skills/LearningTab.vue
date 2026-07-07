@@ -504,7 +504,9 @@
 										/>
 									</template>
 									<!-- B/C: insight-only in Phase 1 (never compiled/pushed), so
-									     Acknowledge (records reviewed) replaces Approve. -->
+									     Acknowledge (records reviewed) replaces Approve. "Apply to
+									     skill…" (D5) folds the insight into an org custom skill via
+									     an LLM-drafted, SM-confirmed update instead. -->
 									<template v-else>
 										<Button
 											variant="subtle"
@@ -512,6 +514,12 @@
 											:loading="acting === row.name"
 											:disabled="!!acting"
 											@click="doAcknowledge(row)"
+										/>
+										<Button
+											variant="subtle"
+											label="Apply to skill…"
+											:disabled="!!acting"
+											@click="openInsightApply(row)"
 										/>
 										<Dropdown
 											v-if="row.status === 'Proposed'"
@@ -685,6 +693,16 @@
 				</div>
 			</template>
 		</Dialog>
+
+		<!-- Apply-insight-to-skill modal (D5): self-contained — drafts an LLM
+		     skill update for a B/C insight and applies it on confirm (the server
+		     marks the pattern acknowledged with an applied-to-skill note); the
+		     board only opens it and refreshes on completion. -->
+		<InsightApplyDialog
+			v-model="insightApplyDialog.show"
+			:pattern="insightApplyDialog.row || {}"
+			@applied="afterAction"
+		/>
 	</div>
 </template>
 
@@ -716,6 +734,7 @@ import {
 } from "frappe-ui"
 import LayoutHeader from "@/components/LayoutHeader.vue"
 import SyncPill from "./SyncPill.vue"
+import InsightApplyDialog from "@/components/learning/InsightApplyDialog.vue"
 import { timeAgo, exactDate } from "@/utils/datetime"
 import {
 	listLearnedPatternsPage,
@@ -826,6 +845,7 @@ const activeChatCount = ref(null)
 const rejectDialog = reactive({ show: false, name: "", reason: "" })
 const editDialog = reactive({ show: false, name: "", draft: "" })
 const applyDialog = reactive({ show: false })
+const insightApplyDialog = reactive({ show: false, row: null })
 
 // ── display helpers ──────────────────────────────────────────────────────────
 function domainLabel(s) {
@@ -1142,6 +1162,14 @@ async function submitReject() {
 	} finally {
 		acting.value = ""
 	}
+}
+
+// insight → skill modal (D5): the dialog drafts, confirms and applies on its
+// own (incl. the "Acknowledge instead" shortcut); @applied → afterAction so
+// the board refetches and the parent badge updates.
+function openInsightApply(row) {
+	insightApplyDialog.row = row
+	insightApplyDialog.show = true
 }
 
 // edit-then-approve modal

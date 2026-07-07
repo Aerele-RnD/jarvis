@@ -461,6 +461,41 @@ def post_push_learned_skills(learned_skills: list[dict]) -> dict:
 	)
 
 
+def push_wiki_files(files: list[dict], delete: list | None = None,
+					known_paths: list | None = None) -> dict | None:
+	"""POST one batch of rendered org-wiki mirror files to admin → fleet →
+	container workspace ``wiki/`` (wiki v2 mirror; see jarvis.chat.wiki_mirror).
+
+	``files``: ``[{path, content_b64}]`` with paths RELATIVE under the wiki
+	dir (e.g. ``customers/customer--acme.md``, ``index.md``); the caller keeps
+	each batch under the fleet-agent's 256KB body cap. ``delete``: relative
+	paths to remove. ``known_paths``: full-sync reconcile — fleet prunes wiki
+	files not in the list.
+
+	NO restart (the workspace is a live RW bind mount), so admin gives this
+	relay its OWN rate bucket — it never burns the rotate-secret 20/h bucket
+	the skill pushes share.
+
+	Returns the parsed response dict (``{ok, written, deleted, pruned}``) or
+	None on ANY failure: the mirror is a derived, rebuildable copy and the
+	sync must degrade to "retry next sync" — never raise into the wiki save
+	paths or the sync worker (which also means: no negative cache; the next
+	sync should probe again immediately).
+	"""
+	try:
+		return _post(
+			path="/api/method/jarvis_admin.api.tenant.post_push_wiki_files",
+			body={"files": files, "delete": delete, "known_paths": known_paths},
+			timeout_s=60,
+		)
+	except Exception:
+		frappe.log_error(
+			title="admin_client: push_wiki_files failed",
+			message=frappe.get_traceback(),
+		)
+		return None
+
+
 def get_generated_media(since_ms: int = 0) -> list[dict]:
 	"""Pull recent codex ``imagegen`` output for this customer's running tenant
 	container (admin → fleet → container disk). Returns a list of

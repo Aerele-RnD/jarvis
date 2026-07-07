@@ -171,6 +171,9 @@ after_migrate = [
 	# Voice & Wiki: seed the Settings Check defaults (row-existence probe;
 	# an unset Check reads 0 on v16, so defaults must be materialized).
 	"jarvis.learning.voice_facts.after_migrate",
+	# Wiki v2: seed the Knowledge Wiki User/Manager roles (idempotent;
+	# best-effort). Migrate follows a fresh install, so this covers both.
+	"jarvis.learning.roles.after_migrate",
 ]
 
 # Scheduled Tasks
@@ -231,6 +234,12 @@ scheduler_events = {
 		# candidates + wiki updates (self-gating; see jarvis/learning/voice_facts.py).
 		"jarvis.learning.voice_facts.process_daily",
 	],
+	"weekly": [
+		# Wiki v2 health check: deterministic lint over Active pages
+		# (contradictions, staleness, orphans, near-duplicate titles);
+		# summary lands on the Jarvis Settings RO fields. Swallows errors.
+		"jarvis.learning.wiki_lint.scheduled_lint",
+	],
 }
 
 # Python type annotations on whitelisted endpoints
@@ -252,5 +261,29 @@ _CLEAR_SCHEMA_CACHE = "jarvis.tools.get_schema.clear_schema_cache"
 doc_events = {
 	dt: {"on_update": _CLEAR_SCHEMA_CACHE, "on_trash": _CLEAR_SCHEMA_CACHE}
 	for dt in ("DocType", "Custom Field", "Property Setter", "Workflow")
+}
+
+# Org-scope wiki pages are mirrored as markdown into the tenant container
+# workspace; every page write/delete enqueues a debounced mirror sync (the
+# handler filters to Org scope itself and no-ops when the tenant is
+# unreachable — it never raises into the save path).
+_WIKI_MIRROR_SYNC = "jarvis.chat.wiki_mirror.on_wiki_page_change"
+doc_events["Jarvis Wiki Page"] = {
+	"after_insert": _WIKI_MIRROR_SYNC,
+	"on_update": _WIKI_MIRROR_SYNC,
+	"on_trash": _WIKI_MIRROR_SYNC,
+}
+
+# ---------------------------------------------------------------------------
+# Wiki page scoping (wiki v2)
+# ---------------------------------------------------------------------------
+# Org/Role/User visibility for Jarvis Wiki Page, enforced at the ORM: list
+# queries via permission_query_conditions, per-doc access via has_permission.
+# Matrix + SQL fragments live in jarvis/chat/wiki_permissions.py.
+permission_query_conditions = {
+	"Jarvis Wiki Page": "jarvis.chat.wiki_permissions.wiki_page_query_conditions",
+}
+has_permission = {
+	"Jarvis Wiki Page": "jarvis.chat.wiki_permissions.has_wiki_page_permission",
 }
 

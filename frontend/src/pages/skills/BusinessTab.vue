@@ -14,7 +14,7 @@
 					icon="refresh-cw"
 					variant="ghost"
 					:tooltip="'Refresh'"
-					:loading="notes.loading || wiki.loading"
+					:loading="notes.loading"
 					@click="reloadAll"
 				/>
 			</template>
@@ -180,183 +180,20 @@
 					</div>
 				</section>
 
-				<!-- ══════════════ Org wiki (SM only) ══════════════ -->
-				<section v-if="status.can_process" class="rounded-lg border p-4">
-					<div class="text-base font-semibold text-ink-gray-9">Org wiki</div>
-					<div class="mt-0.5 text-sm text-ink-gray-6">
-						Pages Jarvis maintains about your customers, suppliers, items and processes —
-						referenced automatically in chat.
-					</div>
-
-					<div class="mt-3 flex flex-wrap items-center gap-2">
-						<div class="min-w-48 flex-1">
-							<FormControl
-								type="text"
-								placeholder="Search pages"
-								:modelValue="wikiSearch"
-								@update:modelValue="setWikiSearch"
-							>
-								<template #prefix>
-									<FeatherIcon name="search" class="size-4 text-ink-gray-5" />
-								</template>
-							</FormControl>
-						</div>
-						<div class="w-44">
-							<FormControl
-								type="select"
-								:options="TYPE_OPTIONS"
-								:modelValue="wikiType"
-								@update:modelValue="setWikiType"
-							/>
-						</div>
-					</div>
-
-					<div v-if="wiki.loading && !wiki.rows.length" class="py-8 text-center">
-						<LoadingIndicator class="size-5 text-ink-gray-5" />
-					</div>
-					<div
-						v-else-if="!wiki.rows.length"
-						class="mt-3 flex flex-col items-center gap-1 rounded-lg border border-dashed py-10 text-center"
-					>
-						<FeatherIcon name="book-open" class="size-6 text-ink-gray-5" />
-						<span class="mt-1 text-base font-medium text-ink-gray-8">
-							{{ wikiSearch || wikiType ? "No pages match" : "No wiki pages yet" }}
-						</span>
-						<span class="text-p-base text-ink-gray-6">
-							{{
-								wikiSearch || wikiType
-									? "Try a different search or type filter."
-									: "Jarvis builds pages from voice notes and chat conversations over time."
-							}}
-						</span>
-					</div>
-					<div v-else class="mt-2 divide-y">
-						<button
-							v-for="row in wiki.rows"
-							:key="row.slug || row.name"
-							class="flex w-full items-center justify-between gap-3 py-2.5 text-left hover:bg-surface-gray-1"
-							@click="openWikiPage(row)"
-						>
-							<div class="min-w-0 flex-1">
-								<div class="flex items-center gap-1.5">
-									<Tooltip v-if="row.stale" text="Not confirmed in 90+ days">
-										<span
-											class="size-2 shrink-0 rounded-full bg-[color:var(--ink-amber-3)]"
-										/>
-									</Tooltip>
-									<span class="truncate text-sm font-medium text-ink-gray-8">
-										{{ row.title || row.slug }}
-									</span>
-									<Badge variant="outline" theme="gray" :label="row.page_type" />
-								</div>
-								<div class="mt-0.5 flex items-center gap-2 text-sm text-ink-gray-5">
-									<span class="truncate">{{ row.slug }}</span>
-									<Tooltip v-if="wikiUpdated(row)" :text="exactDate(wikiUpdated(row))">
-										<span class="shrink-0">· updated {{ timeAgo(wikiUpdated(row)) }}</span>
-									</Tooltip>
-								</div>
+				<!-- ══════════════ Org wiki pointer ══════════════ -->
+				<section class="rounded-lg border p-4">
+					<div class="flex flex-wrap items-center justify-between gap-3">
+						<div class="min-w-0">
+							<div class="text-base font-semibold text-ink-gray-9">Org wiki has moved</div>
+							<div class="mt-0.5 text-sm text-ink-gray-6">
+								Browse and edit the pages Jarvis keeps about your business on the Wiki tab.
 							</div>
-							<FeatherIcon name="chevron-right" class="size-4 shrink-0 text-ink-gray-4" />
-						</button>
-					</div>
-
-					<div v-if="wiki.hasMore" class="mt-2 flex justify-center">
-						<Button
-							variant="subtle"
-							label="Load more"
-							:loading="wiki.loading"
-							@click="fetchWiki('more')"
-						/>
+						</div>
+						<Button variant="subtle" label="Go to Wiki" iconLeft="book-open" @click="goToWiki" />
 					</div>
 				</section>
 			</div>
 		</div>
-
-		<!-- Wiki page dialog: read view (rendered markdown) with an Edit toggle -->
-		<Dialog
-			v-model="wikiDialog.show"
-			:options="{ title: (wikiDialog.page && wikiDialog.page.title) || 'Wiki page', size: 'lg' }"
-		>
-			<template #body-content>
-				<div v-if="wikiDialog.loading" class="py-8 text-center">
-					<LoadingIndicator class="size-5 text-ink-gray-5" />
-				</div>
-				<template v-else-if="wikiDialog.page">
-					<div class="flex flex-wrap items-center gap-2 text-sm">
-						<Badge variant="outline" theme="gray" :label="wikiDialog.page.page_type" />
-						<span class="text-ink-gray-5">{{ wikiDialog.page.slug }}</span>
-						<Tooltip
-							v-if="wikiDialog.page.last_confirmed_at"
-							:text="exactDate(wikiDialog.page.last_confirmed_at)"
-						>
-							<span class="text-ink-gray-5">
-								· confirmed {{ timeAgo(wikiDialog.page.last_confirmed_at) }}
-							</span>
-						</Tooltip>
-						<Badge
-							v-if="wikiDialog.page.contradiction_flag"
-							variant="subtle"
-							theme="orange"
-							label="Contradiction flagged"
-						/>
-					</div>
-
-					<!-- mirrors the amber stale dot on the list row -->
-					<div
-						v-if="wikiDialog.page.stale"
-						class="mt-3 rounded-lg border border-outline-amber-2 bg-surface-amber-1 px-3 py-2 text-sm text-ink-amber-3"
-					>
-						Not confirmed in 90+ days
-					</div>
-
-					<p v-if="wikiDialog.page.summary" class="mt-3 text-sm text-ink-gray-6">
-						{{ wikiDialog.page.summary }}
-					</p>
-
-					<FormControl
-						v-if="wikiDialog.editing"
-						type="textarea"
-						class="mt-3"
-						label="Body (markdown)"
-						:rows="14"
-						:modelValue="wikiDialog.editBody"
-						@update:modelValue="(v) => (wikiDialog.editBody = v)"
-					/>
-					<template v-else>
-						<!-- renderMarkdown from @/markdown (escapes HTML first — safe) -->
-						<div
-							v-if="wikiDialog.page.body_md"
-							class="prose prose-sm mt-3 max-w-none"
-							v-html="wikiBodyHtml"
-						/>
-						<p v-else class="mt-3 text-sm text-ink-gray-5">No content yet.</p>
-					</template>
-				</template>
-			</template>
-			<template #actions>
-				<div v-if="wikiDialog.page" class="flex flex-wrap items-center gap-2">
-					<template v-if="wikiDialog.editing">
-						<Button
-							variant="solid"
-							label="Save"
-							:loading="wikiDialog.saving"
-							@click="saveWikiEdit"
-						/>
-						<Button label="Cancel" @click="wikiDialog.editing = false" />
-					</template>
-					<template v-else>
-						<Button variant="subtle" label="Edit" iconLeft="edit-2" @click="startWikiEdit" />
-						<Button
-							variant="subtle"
-							theme="red"
-							label="Archive"
-							:loading="wikiDialog.archiving"
-							@click="confirmArchiveWiki"
-						/>
-					</template>
-				</div>
-			</template>
-		</Dialog>
 	</div>
 </template>
 
@@ -364,15 +201,15 @@
 // BusinessTab — the "Business" tab inside the Skills page: record/type voice
 // notes about how the business runs (processed daily by the voice-facts
 // worker), review your own notes, and — for System Managers — trigger
-// processing now and browse/edit the org wiki Jarvis maintains. Access is
-// gated by the parent (SkillsPage probes get_business_status); can_process in
-// the same payload gates the two SM cards.
-import { ref, reactive, computed, onMounted, onBeforeUnmount } from "vue"
+// processing now. The org wiki moved to the Wiki tab (WikiTab.vue); a pointer
+// card links there. Access is gated by the parent (SkillsPage probes
+// get_business_status); can_process in the same payload gates the SM card.
+import { ref, reactive, computed, onMounted } from "vue"
+import { useRouter } from "vue-router"
 import {
 	Badge,
 	Breadcrumbs,
 	Button,
-	Dialog,
 	FeatherIcon,
 	FormControl,
 	LoadingIndicator,
@@ -382,7 +219,6 @@ import {
 } from "frappe-ui"
 import LayoutHeader from "@/components/LayoutHeader.vue"
 import VoiceRecorder from "@/components/VoiceRecorder.vue"
-import { renderMarkdown } from "@/markdown"
 import { timeAgo, exactDate } from "@/utils/datetime"
 import {
 	saveVoiceNote,
@@ -390,11 +226,9 @@ import {
 	deleteVoiceNote,
 	getBusinessStatus,
 	processVoiceNotesNow,
-	listWikiPagesPage,
-	getWikiPage,
-	saveWikiPage,
-	archiveWikiPage,
 } from "@/api/voice"
+
+const router = useRouter()
 
 function errMsg(e) {
 	return (e && ((e.messages && e.messages[0]) || e.message)) || "Something went wrong."
@@ -410,21 +244,6 @@ const SUGGESTIONS = [
 	"Vendor & customer quirks",
 ]
 const NOTE_THEME = { New: "blue", Processed: "green", Archived: "gray" }
-const WIKI_TYPES = [
-	"Customer",
-	"Supplier",
-	"Item",
-	"Process",
-	"Doctype",
-	"Exception",
-	"Integration",
-	"People",
-	"Org",
-]
-const TYPE_OPTIONS = [
-	{ label: "All types", value: "" },
-	...WIKI_TYPES.map((t) => ({ label: t, value: t })),
-]
 
 // ── state ────────────────────────────────────────────────────────────────────
 const status = reactive({
@@ -443,31 +262,8 @@ const deleting = ref("")
 const processing = ref(false)
 
 const notes = reactive({ rows: [], total: 0, hasMore: false, loading: false })
-const wiki = reactive({ rows: [], total: 0, hasMore: false, loading: false, loadedOnce: false })
-const wikiSearch = ref("")
-const wikiType = ref("")
-let searchTimer = null
-
-const wikiDialog = reactive({
-	show: false,
-	loading: false,
-	slug: "",
-	page: null,
-	editing: false,
-	editBody: "",
-	saving: false,
-	archiving: false,
-})
 
 const wordCount = computed(() => draft.value.trim().split(/\s+/).filter(Boolean).length)
-const wikiBodyHtml = computed(() =>
-	wikiDialog.page && wikiDialog.page.body_md ? renderMarkdown(wikiDialog.page.body_md) : ""
-)
-
-// list rows carry whichever recency field the server includes — be defensive
-function wikiUpdated(row) {
-	return row.modified || row.last_confirmed_at || row.creation || ""
-}
 
 // ── loaders ──────────────────────────────────────────────────────────────────
 async function loadStatus() {
@@ -480,7 +276,6 @@ async function loadStatus() {
 		status.last_process_status = st.last_process_status || ""
 		status.can_process = !!st.can_process
 		status.loaded = true
-		if (status.can_process && !wiki.loadedOnce) fetchWiki("reset")
 	} catch (e) {
 		// parent mounts this only after the same probe succeeded; a failure here
 		// is transient — the page stays usable (textarea + notes still load)
@@ -507,32 +302,9 @@ async function fetchNotes(mode = "reset") {
 	}
 }
 
-async function fetchWiki(mode = "reset") {
-	const append = mode === "more"
-	wiki.loading = true
-	wiki.loadedOnce = true
-	try {
-		const res = await listWikiPagesPage({
-			search: wikiSearch.value,
-			page_type: wikiType.value,
-			start: append ? wiki.rows.length : 0,
-			page_length: 20,
-		})
-		const rows = res.rows || []
-		wiki.rows = append ? [...wiki.rows, ...rows] : rows
-		wiki.total = res.total || 0
-		wiki.hasMore = !!res.has_more
-	} catch (e) {
-		toast.error(errMsg(e))
-	} finally {
-		wiki.loading = false
-	}
-}
-
 function reloadAll() {
 	loadStatus()
 	fetchNotes("reset")
-	if (status.can_process) fetchWiki("reset")
 }
 
 // ── note capture ─────────────────────────────────────────────────────────────
@@ -632,74 +404,10 @@ function processNow() {
 	})
 }
 
-// ── org wiki (SM) ────────────────────────────────────────────────────────────
-function setWikiSearch(v) {
-	wikiSearch.value = v
-	clearTimeout(searchTimer)
-	searchTimer = setTimeout(() => fetchWiki("reset"), 300)
-}
-function setWikiType(v) {
-	if (wikiType.value === v) return
-	wikiType.value = v
-	fetchWiki("reset")
-}
-
-async function openWikiPage(row) {
-	wikiDialog.slug = row.slug || row.name
-	wikiDialog.page = null
-	wikiDialog.editing = false
-	wikiDialog.loading = true
-	wikiDialog.show = true
-	try {
-		wikiDialog.page = await getWikiPage(wikiDialog.slug)
-	} catch (e) {
-		wikiDialog.show = false
-		toast.error(errMsg(e))
-	} finally {
-		wikiDialog.loading = false
-	}
-}
-
-function startWikiEdit() {
-	wikiDialog.editBody = (wikiDialog.page && wikiDialog.page.body_md) || ""
-	wikiDialog.editing = true
-}
-
-async function saveWikiEdit() {
-	wikiDialog.saving = true
-	try {
-		await saveWikiPage(wikiDialog.slug, { body_md: wikiDialog.editBody })
-		if (wikiDialog.page) wikiDialog.page.body_md = wikiDialog.editBody
-		wikiDialog.editing = false
-		toast.success("Page saved")
-		fetchWiki("reset")
-	} catch (e) {
-		toast.error(errMsg(e))
-	} finally {
-		wikiDialog.saving = false
-	}
-}
-
-function confirmArchiveWiki() {
-	confirmDialog({
-		title: "Archive this page?",
-		message:
-			"Archived pages stop appearing in this list and are no longer used as chat context. The record is kept.",
-		onConfirm: async ({ hideDialog }) => {
-			wikiDialog.archiving = true
-			try {
-				await archiveWikiPage(wikiDialog.slug)
-				hideDialog()
-				wikiDialog.show = false
-				toast.success("Page archived")
-				fetchWiki("reset")
-			} catch (e) {
-				toast.error(errMsg(e))
-			} finally {
-				wikiDialog.archiving = false
-			}
-		},
-	})
+// ── org wiki pointer ─────────────────────────────────────────────────────────
+function goToWiki() {
+	// hash swap on the same /skills route — SkillsPage's hash watcher flips the tab
+	router.push({ hash: "#wiki" })
 }
 
 // ── init ─────────────────────────────────────────────────────────────────────
@@ -707,5 +415,4 @@ onMounted(() => {
 	loadStatus()
 	fetchNotes("reset")
 })
-onBeforeUnmount(() => clearTimeout(searchTimer))
 </script>

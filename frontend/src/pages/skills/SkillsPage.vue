@@ -1,8 +1,8 @@
 <template>
 	<div class="flex h-full flex-col overflow-hidden">
-		<!-- Tab strip renders for System Managers (Skills / Learning / Business)
-		     and for regular desk users who pass the Business probe (Skills /
-		     Business). Portal/guest-ish sessions that fail both probes see
+		<!-- Tab strip renders for System Managers (Skills / Learning / Business /
+		     Wiki) and for regular desk users who pass the Business probe (Skills /
+		     Business / Wiki). Portal/guest-ish sessions that fail both probes see
 		     exactly today's Skills list with no tab chrome (zero regression).
 		     The active tab stays "skills" until a probe lands, so SkillsList
 		     mounts once and is NOT remounted when the strip later appears —
@@ -23,6 +23,7 @@
 			class="min-h-0 flex-1"
 			@changed="refreshBadge"
 		/>
+		<WikiTab v-else-if="activeTab === 'wiki'" class="min-h-0 flex-1" />
 		<BusinessTab v-else class="min-h-0 flex-1" />
 	</div>
 </template>
@@ -32,17 +33,19 @@
 // wraps the existing Skills list in a hash-synced tab shell (mirrors the
 // Agents page). Tab "Skills" renders SkillsList.vue unchanged; tab "Learning"
 // (#learning) renders the pattern-learning review board + settings; tab
-// "Business" (#business) renders the voice-notes + org-wiki surface. Learning
-// is offered to System Managers only — get_learning_status is the SM probe
-// (it throws for everyone else). Business is offered to any desk user —
-// get_business_status is the probe (403s for portal users), so the strip
-// stays hidden for them and the page behaves exactly as before.
+// "Business" (#business) renders the voice-notes surface; tab "Wiki" (#wiki)
+// renders the scope-aware org wiki list. Learning is offered to System
+// Managers only — get_learning_status is the SM probe (it throws for everyone
+// else). Business and Wiki are offered to any desk user — get_business_status
+// is the probe (403s for portal users), so the strip stays hidden for them
+// and the page behaves exactly as before.
 import { ref, computed, onMounted, watch } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import TabBar from "@/components/list/TabBar.vue"
 import SkillsList from "./SkillsList.vue"
 import LearningTab from "./LearningTab.vue"
 import BusinessTab from "./BusinessTab.vue"
+import WikiTab from "./WikiTab.vue"
 import { getLearningStatus, pendingLearnedCount } from "@/api/learning"
 import { getBusinessStatus } from "@/api/voice"
 
@@ -58,13 +61,19 @@ const tabs = computed(() => {
 	const t = [{ label: "Skills", value: "skills" }]
 	if (isSM.value)
 		t.push({ label: "Learning", value: "learning", count: learningPending.value || null })
-	if (isSM.value || businessAllowed.value) t.push({ label: "Business", value: "business" })
+	if (isSM.value || businessAllowed.value) {
+		// any desk user passes the Business probe — Wiki rides the same gate
+		// (no extra probe; portal/guest sessions never see the strip at all)
+		t.push({ label: "Business", value: "business" })
+		t.push({ label: "Wiki", value: "wiki" })
+	}
 	return t
 })
 
 // hash-synced tabs (Agents precedent; no hash = Skills). "#learning" only
-// resolves once we know the viewer is an SM and "#business" once a probe has
-// confirmed access — an unauthorized deep link falls back to the Skills tab.
+// resolves once we know the viewer is an SM, and "#business"/"#wiki" once a
+// probe has confirmed access — an unauthorized deep link falls back to the
+// Skills tab.
 // "#skills" is intentionally never used (the router keeps that legacy chat
 // deep-link mapping /jarvis/#skills → /skills untouched).
 function applyHash() {
@@ -72,12 +81,13 @@ function applyHash() {
 	if (h === "learning" && isSM.value) activeTab.value = "learning"
 	else if (h === "business" && (isSM.value || businessAllowed.value))
 		activeTab.value = "business"
+	else if (h === "wiki" && (isSM.value || businessAllowed.value)) activeTab.value = "wiki"
 	else activeTab.value = "skills"
 }
 function setTab(v) {
 	if (v === activeTab.value) return
 	if (v === "learning" && !isSM.value) return
-	if (v === "business" && !(isSM.value || businessAllowed.value)) return
+	if ((v === "business" || v === "wiki") && !(isSM.value || businessAllowed.value)) return
 	activeTab.value = v
 	router.push({ hash: v === "skills" ? "" : `#${v}` })
 }

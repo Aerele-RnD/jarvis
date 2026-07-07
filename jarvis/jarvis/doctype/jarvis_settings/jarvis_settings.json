@@ -46,6 +46,9 @@
     "wiki_nudge_cooldown_hours",
     "voice_notes_last_processed_at",
     "voice_notes_last_process_status",
+    "knowledge_language",
+    "wiki_lint_last_run_at",
+    "wiki_lint_summary",
     "system_tab",
     "deployment_section",
     "deployment_mode",
@@ -334,6 +337,27 @@
       "fieldtype": "Long Text",
       "label": "Voice Notes Last Process Status",
       "read_only": 1
+    },
+    {
+      "fieldname": "knowledge_language",
+      "fieldtype": "Select",
+      "label": "Knowledge Language",
+      "options": "English\nOriginal",
+      "default": "English",
+      "description": "Language for extracted knowledge (voice facts, wiki pages, drafted skill text). English (recommended) translates non-English input, keeping proper nouns in their original script with a Latin transliteration; Original keeps the dominant language of the source material. Chat transcription is always verbatim."
+    },
+    {
+      "fieldname": "wiki_lint_last_run_at",
+      "fieldtype": "Datetime",
+      "label": "Wiki Lint Last Run At",
+      "read_only": 1
+    },
+    {
+      "fieldname": "wiki_lint_summary",
+      "fieldtype": "Small Text",
+      "label": "Wiki Lint Summary",
+      "read_only": 1,
+      "description": "Summary of the last wiki health check (contradictions, stale, orphans, near-duplicate titles)."
     },
     {
       "fieldname": "system_tab",

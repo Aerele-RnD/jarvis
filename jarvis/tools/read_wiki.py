@@ -3,8 +3,10 @@
 ``slug`` returns ONE full page (body included); ``query`` searches Active
 pages by slug/title/summary (LIKE) plus an exact ``ref_name`` match (so
 "read the wiki on ACME Corp" finds ``customer--acme-corp`` by the record
-name) and returns compact rows. Desk (System User) sessions only; reads go
-through the normal doctype permissions (Desk User has read).
+name) and returns compact rows. Desk (System User) sessions only. Both paths
+filter by the session user's scope visibility (Org pages for everyone, Role
+pages for holders of the target role, User pages for their target user only;
+System Manager sees all) via ``jarvis.chat.wiki_permissions``.
 """
 
 import json
@@ -12,6 +14,7 @@ import json
 import frappe
 from frappe.utils import cint
 
+from jarvis.chat import wiki_permissions
 from jarvis.chat.wiki import is_stale
 from jarvis.exceptions import InvalidArgumentError, PermissionDeniedError
 
@@ -48,6 +51,10 @@ def _get_by_slug(slug: str) -> dict:
 	if not frappe.has_permission(WIKI, ptype="read", doc=name):
 		raise PermissionDeniedError(f"no read permission on {WIKI} {name}")
 	doc = frappe.get_doc(WIKI, name)
+	# Scope visibility (explicit, on top of the has_permission hook): a Role/
+	# User page is only readable by its audience.
+	if not wiki_permissions.can_read_page(doc, frappe.session.user):
+		raise PermissionDeniedError(f"no read permission on {WIKI} {name}")
 	try:
 		sources = json.loads(doc.sources) if doc.sources else []
 	except Exception:
@@ -75,19 +82,25 @@ def _search(query: str, limit: int) -> list[dict]:
 		raise InvalidArgumentError("query must not be empty")
 	if not frappe.has_permission(WIKI, ptype="read"):
 		raise PermissionDeniedError(f"no read permission on {WIKI}")
-	like = f"%{query[:140]}%"
-	rows = frappe.get_all(
-		WIKI,
-		filters={"status": "Active"},
-		or_filters=[
-			["slug", "like", like],
-			["title", "like", like],
-			["summary", "like", like],
-			["ref_name", "=", query],
-		],
-		fields=["slug", "title", "page_type", "summary", "last_confirmed_at", "modified"],
-		order_by="modified desc",
-		limit_page_length=limit,
+	# Raw SQL: the scope-visibility fragment (pre-escaped by
+	# wiki_permissions) doesn't fit get_all's filters, and post-filtering
+	# would silently shrink the LIMIT.
+	where = "status = 'Active'"
+	vis = (
+		wiki_permissions.visible_scope_condition(frappe.session.user) or ""
+	).strip()
+	if vis:
+		where += f" and ({vis})"
+	rows = frappe.db.sql(
+		f"""select slug, title, page_type, summary, last_confirmed_at, modified
+		from `tabJarvis Wiki Page`
+		where {where}
+			and (slug like %(like)s or title like %(like)s
+				or summary like %(like)s or ref_name = %(query)s)
+		order by modified desc
+		limit %(limit)s""",
+		{"like": f"%{query[:140]}%", "query": query, "limit": limit},
+		as_dict=True,
 	)
 	return [
 		{

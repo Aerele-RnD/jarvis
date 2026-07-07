@@ -60,6 +60,25 @@ export const flagLearnedDefault = (name, note = "") =>
 export const batchApprove = (names) =>
 	call(LR + "batch_approve", { names: JSON.stringify(Array.from(names || [])) })
 
+// ── insight → skill (wiki-v2 D5) ─────────────────────────────────────────────
+// B/C insights never compile into learned skills; "Apply to skill…" folds one
+// into an org custom skill instead. draft_* makes ONE LLM call server-side and
+// returns a verdict without writing ({worth_applying, reason, action:
+// "update"|"create"|"none", skill_name, before_instructions,
+// updated_instructions, new_skill}); apply_* performs the confirmed write and
+// marks the pattern acknowledged with an applied-to-skill note. The updated
+// skill rides the normal Skills-tab apply (no auto-push).
+export const draftInsightSkillUpdate = (patternName) =>
+	call(LR + "draft_insight_skill_update", { pattern_name: patternName })
+export const applyInsightSkillUpdate = (patternName, payload = {}) => {
+	const args = { pattern_name: patternName, action: payload.action || "" }
+	if (payload.skill_name) args.skill_name = payload.skill_name
+	if (payload.updated_instructions) args.updated_instructions = payload.updated_instructions
+	// dict arg JSON-encoded like batch_approve / setLearningSettings
+	if (payload.new_skill) args.new_skill = JSON.stringify(payload.new_skill)
+	return call(LR + "apply_insight_skill_update", args)
+}
+
 // ── apply / sync (learned skills ride the custom-skill push, §6.2) ───────────
 export const applyLearnedSkills = () => call(LR + "apply_learned_skills")
 // Proxies get_custom_skills_sync_status — same pill the Skills page polls.
