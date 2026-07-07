@@ -34,12 +34,10 @@
       <p class="jv-dsub-muted" style="margin:0 0 12px;">
         Your chat subscription is served directly to the provider. Refresh state lives inside your Jarvis container — if chat starts failing, re-authorize to mint fresh tokens.
       </p>
-      <table class="jv-dsub-kv">
-        <tr><td>Account</td><td>{{ status.account_email || '—' }}</td></tr>
-        <tr><td>Provider</td><td>{{ status.provider || '—' }}</td></tr>
-        <tr><td>Model</td><td>{{ status.model || '—' }}</td></tr>
-        <tr v-if="status.connected_at"><td>Connected</td><td>{{ connectedAtLabel }}</td></tr>
-      </table>
+      <div class="jv-dsub-kv"><span>Account</span><b>{{ status.account_email || '—' }}</b></div>
+      <div class="jv-dsub-kv"><span>Provider</span><b>{{ status.provider || '—' }}</b></div>
+      <div class="jv-dsub-kv"><span>Model</span><b>{{ status.model || '—' }}</b></div>
+      <div v-if="status.connected_at" class="jv-dsub-kv"><span>Connected</span><b>{{ connectedAtLabel }}</b></div>
       <div class="jv-dsub-actions" style="margin-top:14px;">
         <button v-if="editable" class="jv-dsub-btn jv-dsub-btn-ghost" :disabled="busy" @click="doDisconnect">Disconnect</button>
         <button v-if="editable" class="jv-dsub-btn jv-dsub-btn-primary" @click="startSignin">Re-authorize</button>
@@ -61,9 +59,10 @@
 </template>
 
 <script setup>
-import { ref, computed } from "vue"
+import { ref, computed, onBeforeUnmount } from "vue"
 import * as api from "@/api"
 import { errMessage as _err } from "@/lib/errors"
+import { exactDate } from "@/utils/datetime"
 
 const props = defineProps({
   // Shape from getDirectSubscriptionStatus(): { connected, provider, model,
@@ -84,15 +83,26 @@ const busy = ref(false)
 const err = ref("")
 const copied = ref(false)
 
+// Reactive clock so the "Link valid for ~N minutes" hint actually counts down.
+// Date.now() alone is non-reactive, so a computed over it would freeze at first
+// paint; nowTick is bumped by an interval that only runs while a link is live.
+const nowTick = ref(Date.now())
+let ticker = null
+function startTicker() {
+  stopTicker()
+  ticker = setInterval(() => { nowTick.value = Date.now() }, 30000)
+}
+function stopTicker() { if (ticker) { clearInterval(ticker); ticker = null } }
+onBeforeUnmount(stopTicker)
+
 const minsLeft = computed(() =>
-  expiresAt.value ? Math.max(0, Math.floor((expiresAt.value - Date.now()) / 60000)) : null,
+  expiresAt.value ? Math.max(0, Math.floor((expiresAt.value - nowTick.value) / 60000)) : null,
 )
-const connectedAtLabel = computed(() => {
-  const raw = props.status.connected_at
-  if (!raw) return "—"
-  const d = new Date(raw.replace(" ", "T"))
-  return isNaN(d.getTime()) ? String(raw) : d.toLocaleString()
-})
+// exactDate parses the server's naive datetime in the SITE timezone (via
+// frappe-ui dayjsLocal) and renders it in the viewer's zone — do NOT hand the
+// raw string to new Date(), which reads it as browser-local (wrong offset) and
+// can yield Invalid Date on strict engines for the 6-digit microsecond suffix.
+const connectedAtLabel = computed(() => exactDate(props.status.connected_at) || "—")
 
 function resetFlow() {
   flowOpen.value = false
@@ -101,6 +111,7 @@ function resetFlow() {
   expiresAt.value = 0
   pastedUrl.value = ""
   copied.value = false
+  stopTicker()
 }
 function cancelFlow() { resetFlow(); err.value = "" }
 
@@ -122,6 +133,7 @@ async function startSignin() {
     nonce.value = d.nonce
     authorizeUrl.value = d.authorize_url
     expiresAt.value = Date.now() + (Number(d.expires_in) || 0) * 1000
+    startTicker()
   } catch (e) {
     err.value = _err(e)
     flowOpen.value = false
@@ -166,16 +178,21 @@ function copyUrl() {
   const url = authorizeUrl.value
   if (!url) return
   const done = () => { copied.value = true; setTimeout(() => { copied.value = false }, 1400) }
+  const fail = () => { err.value = "Could not copy — select the URL and copy manually." }
   if (navigator.clipboard && window.isSecureContext) {
-    navigator.clipboard.writeText(url).then(done).catch(() => { err.value = "Could not copy — select the URL and copy manually." })
+    navigator.clipboard.writeText(url).then(done).catch(fail)
     return
   }
   // LAN HTTP fallback: navigator.clipboard is undefined in insecure contexts.
+  // execCommand can return false WITHOUT throwing (e.g. selection disallowed) —
+  // honour the boolean so a failed copy doesn't falsely flash "Copied ✓".
   const ta = document.createElement("textarea")
   ta.value = url; ta.style.position = "fixed"; ta.style.left = "-9999px"
   document.body.appendChild(ta); ta.focus(); ta.select()
-  try { document.execCommand("copy"); done() } catch (e) { err.value = "Could not copy — select the URL and copy manually." }
+  let ok = false
+  try { ok = document.execCommand("copy") } catch (e) { ok = false }
   document.body.removeChild(ta)
+  ok ? done() : fail()
 }
 </script>
 
@@ -202,9 +219,10 @@ function copyUrl() {
   font-size: 12px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px;
   background: var(--surface-2); color: var(--text-2);
 }
-.jv-dsub-kv { width: 100%; border-collapse: collapse; font-size: 13px; }
-.jv-dsub-kv td { padding: 5px 0; border-bottom: 1px solid var(--border); }
-.jv-dsub-kv td:first-child { color: var(--text-3); width: 120px; }
+/* Match AccountView's sibling .jv-acct-kv rows so the two cards read as one system. */
+.jv-dsub-kv { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; padding: 5px 0; border-bottom: 1px solid var(--border); }
+.jv-dsub-kv span { color: var(--text-3); }
+.jv-dsub-kv b { text-align: right; word-break: break-word; }
 .jv-dsub-hint { margin-top: 12px; font-size: 12px; color: var(--text-3); }
 .jv-dsub-err { margin-top: 10px; font-size: 13px; color: var(--red); }
 </style>

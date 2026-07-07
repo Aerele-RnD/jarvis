@@ -782,27 +782,37 @@ class TestIsDirectSubscriptionPredicate(FrappeTestCase):
 	the DIRECT re-authorize card.
 	"""
 
+	# Signature: _is_direct_subscription(auth_mode, has_models, proxy_active,
+	#                                    provider_is_oauth)
+
 	def test_connected_oauth_no_models_is_direct(self):
-		self.assertTrue(oauth_api._is_direct_subscription("oauth", False, False))
+		self.assertTrue(oauth_api._is_direct_subscription("oauth", False, False, True))
 
 	def test_legacy_subscription_value_is_direct(self):
 		# Migrated tenants may still carry the pre-REV-1 "subscription" value.
-		self.assertTrue(oauth_api._is_direct_subscription("subscription", False, False))
+		self.assertTrue(oauth_api._is_direct_subscription("subscription", False, False, True))
 
 	def test_api_key_mode_is_not_direct(self):
-		self.assertFalse(oauth_api._is_direct_subscription("api_key", False, False))
+		self.assertFalse(oauth_api._is_direct_subscription("api_key", False, False, True))
 
 	def test_empty_mode_is_not_direct(self):
 		# Pre-config default; the normal pool editor / onboarding owns it.
-		self.assertFalse(oauth_api._is_direct_subscription("", False, False))
+		self.assertFalse(oauth_api._is_direct_subscription("", False, False, True))
 
 	def test_models_present_is_not_direct(self):
-		# Rows in models[] mean the unified pool editor owns the config.
-		self.assertFalse(oauth_api._is_direct_subscription("oauth", True, False))
+		# ANY row in models[] (enabled or not) means the pool editor owns it —
+		# an all-disabled pool mid-reconfiguration must not read as direct.
+		self.assertFalse(oauth_api._is_direct_subscription("oauth", True, False, True))
 
 	def test_proxy_active_is_not_direct(self):
 		# proxy_active means they're already on the cliproxy/pool path.
-		self.assertFalse(oauth_api._is_direct_subscription("oauth", False, True))
+		self.assertFalse(oauth_api._is_direct_subscription("oauth", False, True, True))
+
+	def test_non_oauth_provider_is_not_direct(self):
+		# oauth mode left on a non-OAuth provider (e.g. Anthropic after
+		# reset_onboarding): a re-authorize card would only ever error
+		# unknown_provider, so don't classify it as direct.
+		self.assertFalse(oauth_api._is_direct_subscription("oauth", False, False, False))
 
 
 class TestGetDirectSubscriptionStatus(_OAuthApiBase):

@@ -20,6 +20,7 @@ from jarvis import admin_client, onboarding
 from jarvis.exceptions import JarvisError
 from jarvis.oauth.providers import (
 	UnknownProviderError, build_authorize_url, extract_account_id, get_provider,
+	is_oauth_provider,
 )
 
 
@@ -633,8 +634,8 @@ def disconnect() -> dict:
 _DIRECT_SUBSCRIPTION_MODES = {"oauth", "subscription"}
 
 
-def _is_direct_subscription(auth_mode: str, has_enabled_models: bool,
-                            proxy_active: bool) -> bool:
+def _is_direct_subscription(auth_mode: str, has_models: bool,
+                            proxy_active: bool, provider_is_oauth: bool) -> bool:
 	"""True when the tenant is on the legacy DIRECT chat-subscription path.
 
 	These tenants keep their LLM config in the flat ``llm_*`` / ``llm_oauth_*``
@@ -646,12 +647,23 @@ def _is_direct_subscription(auth_mode: str, has_enabled_models: bool,
 	the DIRECT re-authorize (``begin_paste_signin`` / ``complete_paste_signin``)
 	instead of silently offering only the pool editor.
 
+	``has_models`` keys on the PRESENCE of ANY ``models[]`` row (enabled or
+	not), matching ``get_llm_config``'s enabled-agnostic read — a pooled tenant
+	mid-reconfiguration with all rows disabled must NOT be misclassified as
+	direct (that would hide their real pool behind the direct card).
+
+	``provider_is_oauth`` gates on ``llm_provider`` being an OAuth-capable
+	provider: a tenant left in ``oauth`` mode with a non-OAuth provider (e.g.
+	``Anthropic`` after ``reset_onboarding``) is NOT offered a re-authorize card
+	that would only ever error ``unknown_provider``.
+
 	Pure (no DB access) so the branch logic is unit-testable without a site.
 	"""
 	return (
 		(auth_mode or "") in _DIRECT_SUBSCRIPTION_MODES
 		and not proxy_active
-		and not has_enabled_models
+		and not has_models
+		and provider_is_oauth
 	)
 
 
@@ -675,16 +687,19 @@ def get_direct_subscription_status() -> dict:
 	"""
 	frappe.only_for("System Manager")
 	settings = frappe.get_single("Jarvis Settings")
-	enabled_models = [m for m in (settings.get("models") or []) if m.enabled]
 	auth_mode = (settings.get("llm_auth_mode") or "").strip()
+	provider = settings.get("llm_provider") or ""
 	proxy_active = bool(settings.get("proxy_active"))
+	has_models = bool(settings.get("models"))
 	connected_at = settings.get("llm_oauth_connected_at")
-	is_direct = _is_direct_subscription(auth_mode, bool(enabled_models), proxy_active)
+	is_direct = _is_direct_subscription(
+		auth_mode, has_models, proxy_active, is_oauth_provider(provider),
+	)
 	return {
 		"is_direct_subscription": is_direct,
 		"connected": bool(connected_at),
 		"auth_mode": auth_mode,
-		"provider": settings.get("llm_provider") or "",
+		"provider": provider,
 		"model": settings.get("llm_model") or "",
 		"account_email": settings.get("llm_oauth_account_email") or "",
 		"connected_at": str(connected_at) if connected_at else "",

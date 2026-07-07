@@ -58,6 +58,14 @@
 
 					<div v-if="directSubLoading" class="jv-acct-muted">Loading…</div>
 
+					<!-- Probe failed/timed out: don't fall through to the pool editor
+						 (a direct tenant would see an empty pool with no re-authorize).
+						 Offer a retry instead. -->
+					<div v-else-if="directSubErr" class="jv-acct-err">
+						Couldn't load your AI connection.
+						<button class="jv-acct-linkbtn" @click="loadDirectSub">Retry</button>
+					</div>
+
 					<!-- Direct single chat-subscription: the pool editor can't see the
 						 flat-field creds, so render the DIRECT re-authorize card. The
 						 multi-model editor stays reachable behind an explicit toggle. -->
@@ -72,7 +80,9 @@
 								<p class="jv-acct-muted" style="margin:0 0 10px;">
 									A multi-model pool replaces your single direct subscription with a proxied failover pool — you’ll reconnect your account(s) below.
 								</p>
-								<LlmPoolEditor :editable="isSystemManager" @saved="onSaved" />
+								<!-- Saving here flips the tenant onto a pool (proxy_active),
+									 so re-probe direct status — not just a "Saved" flash. -->
+								<LlmPoolEditor :editable="isSystemManager" @saved="onDirectChanged" />
 							</div>
 						</div>
 					</template>
@@ -182,20 +192,32 @@ function onSaved(sync) {
 // reachable behind an explicit "advanced" toggle.
 const directSub = ref({ is_direct_subscription: false })
 const directSubLoading = ref(true)
+const directSubErr = ref("")
 const showAdvanced = ref(false)
 async function loadDirectSub() {
 	if (!isSystemManager) { directSubLoading.value = false; return }
 	directSubLoading.value = true
-	try { directSub.value = (await getDirectSubscriptionStatus()) || { is_direct_subscription: false } }
-	catch (e) { directSub.value = { is_direct_subscription: false } }
-	finally { directSubLoading.value = false }
+	directSubErr.value = ""
+	try {
+		// Race a client timeout so a hung probe can't strand the whole AI-models
+		// section on "Loading…" forever (the pool editor now renders behind it).
+		const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("timed out")), 12000))
+		directSub.value = (await Promise.race([getDirectSubscriptionStatus(), timeout])) || { is_direct_subscription: false }
+	} catch (e) {
+		// Don't silently drop a real direct-subscription tenant onto the empty
+		// pool editor (which has no re-authorize button) — surface a retryable
+		// error so they aren't left at a dead end.
+		directSub.value = { is_direct_subscription: false }
+		directSubErr.value = errMsg(e) || "Couldn't load your AI connection."
+	} finally { directSubLoading.value = false }
 }
-// After a re-authorize / disconnect: refresh the direct status + the container
-// connection card, and flash the same "Saved" note the pool editor uses.
+// After a re-authorize / disconnect (or a pool save from the advanced editor):
+// refresh the direct status + the container connection card, and flash the same
+// "Saved" note the pool editor uses. The two probes are independent → run them
+// concurrently.
 async function onDirectChanged() {
 	onSaved({ pending: true })
-	await loadDirectSub()
-	await loadConnection()
+	await Promise.all([loadDirectSub(), loadConnection()])
 }
 
 // ---- Connection -------------------------------------------------------------
