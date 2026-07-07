@@ -185,18 +185,12 @@
 
           <!-- Connected accounts -->
           <div v-if="m.accounts && m.accounts.length" style="display:flex;flex-direction:column;gap:5px;margin-bottom:8px;">
-            <div v-for="(a, ai) in m.accounts" :key="a.account_ref || ai"
-                 style="display:flex;align-items:center;gap:8px;padding:5px 9px;border:1px solid var(--green-bd);background:var(--green-bg);border-radius:6px;">
-              <span style="display:flex;align-items:center;gap:5px;font-size:12.5px;font-weight:700;color:var(--green);">
-                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>Connected
-              </span>
-              <span style="font-size:14px;color:var(--text);">{{ accountLabel(a) }}</span>
-              <span style="font-size:12px;color:var(--text-3);">{{ a.upstream || 'openai' }}</span>
-              <span style="margin-left:auto;display:flex;gap:6px;align-items:center;">
-                <button v-if="editable && !singleMode" @click="startConnect(m, ai)" title="Re-authorize this subscription — mint fresh tokens"
-                        style="border:1px solid var(--border-2);background:var(--surface);color:var(--blue);border-radius:5px;padding:3px 9px;cursor:pointer;font-size:12px;">Reconnect</button>
-                <button v-if="editable" @click="removeAccount(m, ai)" title="Remove account"
-                        style="border:1px solid var(--red-bd);background:var(--red-bg);color:var(--red);border-radius:5px;width:22px;height:22px;cursor:pointer;font-size:12px;">✕</button>
+            <div v-for="(a, ai) in m.accounts" :key="a.account_ref || ai" class="jv-status jv-status-ok">
+              <span class="jv-status-ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg></span>
+              <span class="jv-status-tx"><b>Connected</b> · {{ accountLabel(a) }}</span>
+              <span class="jv-status-acts">
+                <button v-if="editable && !singleMode" class="jv-status-act" @click="startConnect(m, ai)" title="Re-authorize — mint fresh tokens">Reconnect</button>
+                <button v-if="editable" class="jv-status-act" @click="removeAccount(m, ai)">Disconnect</button>
               </span>
             </div>
           </div>
@@ -762,6 +756,20 @@ defineExpose({ save })
 .jv-ct-tx { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .jv-ct-t { font-size: 14px; font-weight: 650; }
 .jv-ct-d { font-size: 12px; color: var(--text-3); line-height: 1.4; }
+/* Clean status pill — connected (ok) / failed (bad). Reused by the subscription
+   connected row and (later) the API-key verify result. No red ✕ — a subtle text
+   action handles disconnect. */
+.jv-status { display: flex; align-items: center; gap: 9px; padding: 10px 12px; border-radius: 9px; font-size: 13.5px; margin-bottom: 8px; }
+.jv-status-ok { border: 1px solid var(--green-bd); background: var(--green-bg); }
+.jv-status-bad { border: 1px solid var(--red-bd); background: var(--red-bg); }
+.jv-status-ic { flex: none; display: flex; color: var(--green); }
+.jv-status-bad .jv-status-ic { color: var(--red); }
+.jv-status-tx { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.jv-status-tx b { color: var(--green); font-weight: 600; }
+.jv-status-bad .jv-status-tx b { color: var(--red); }
+.jv-status-acts { margin-left: auto; display: flex; gap: 12px; flex: none; }
+.jv-status-act { background: transparent; border: 0; color: var(--text-3); font-size: 12.5px; cursor: pointer; padding: 0; }
+.jv-status-act:hover { color: var(--text); text-decoration: underline; text-underline-offset: 2px; }
 /* Lock both credential modes to the same body height in onboarding so toggling
    API key ↔ Chat subscription never resizes the card (first-impression polish). */
 .jv-single-body { min-height: 96px; }
