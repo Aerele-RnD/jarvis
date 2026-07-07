@@ -879,9 +879,12 @@ const currentId = ref(null)
 // Remember the open chat per-device so a refresh — or a duplicated tab — restores
 // it instead of jumping to whatever sorts first in the sidebar (e.g. a starred
 // chat). Also lets a duplicated tab land on the SAME in-progress conversation.
-// Also mirrors the selection into the shell store (sidebar active row).
+// Also mirrors the selection into the shell store (sidebar active row) — the
+// global notifier reads it as "the conversation on screen" on the chat home —
+// and clears the sidebar's unread dot for the conversation being opened.
 watch(currentId, (id) => {
 	store.currentConvId = id
+	if (id) store.clearUnread(id)
 	try {
 		id ? localStorage.setItem("jarvis-last-conv", id) : localStorage.removeItem("jarvis-last-conv")
 	} catch (e) {}
@@ -1297,10 +1300,21 @@ function setActivityDetail(v) {
 	try { localStorage.setItem("jarvis-activity-detail", v ? "1" : "0") } catch (e) {}
 }
 // Optional browser notification when a reply lands while the tab is hidden.
-// Per-device (localStorage); enabling asks for Notification permission.
+// Per-device (localStorage); enabling asks for Notification permission. The
+// dispatch itself moved to the app-scoped notifier (notify/globalNotifier.js,
+// attached by AppShell) so it also fires for background conversations and
+// non-chat routes — this ref is only the settings switch's state.
 const notifyEnabled = ref(typeof Notification !== "undefined" && localStorage.getItem("jarvis-notify") === "1" && Notification.permission === "granted")
+// Re-derive the switch from live permission + storage (a grant/revoke in
+// another tab, or a browser-level revoke, otherwise leaves it stale, D13).
+function recomputeNotifyEnabled() {
+	notifyEnabled.value = typeof Notification !== "undefined" && localStorage.getItem("jarvis-notify") === "1" && Notification.permission === "granted"
+}
 async function toggleNotify() {
-	if (typeof Notification === "undefined") return
+	if (typeof Notification === "undefined") {
+		notify("This browser doesn't support notifications.", { type: "error" })
+		return
+	}
 	if (notifyEnabled.value) {
 		notifyEnabled.value = false
 		try { localStorage.setItem("jarvis-notify", "0") } catch (e) {}
@@ -1313,17 +1327,12 @@ async function toggleNotify() {
 	if (perm === "granted") {
 		notifyEnabled.value = true
 		try { localStorage.setItem("jarvis-notify", "1") } catch (e) {}
+	} else {
+		// Denied: browsers won't re-prompt, so a silent no-op switch reads as
+		// broken (D8) — say what's blocking it and keep the switch off.
+		notifyEnabled.value = false
+		notify("Notifications are blocked by the browser — allow them for this site in your browser's settings, then turn this on again.", { type: "error", title: "Notifications blocked" })
 	}
-}
-function _notifyReplyReady() {
-	if (!notifyEnabled.value || !document.hidden) return
-	try {
-		const n = new Notification("Jarvis replied", {
-			body: currentTitle.value || "Your reply is ready.",
-			tag: "jarvis-reply", // collapse bursts into one notification
-		})
-		n.onclick = () => { window.focus(); n.close() }
-	} catch (e) { /* notification blocked at OS level — nothing to do */ }
 }
 
 // Danger zone: wipe every conversation + message (macros/skills untouched).
@@ -3190,7 +3199,8 @@ function onEvent(p) {
 			activeTools.value = []
 			currentRunId.value = null
 			store.streamingConvId = null
-			_notifyReplyReady() // browser notification when the tab is hidden (opt-in)
+			// (browser notification moved to the app-scoped global notifier —
+			// AppShell attaches it, so it fires on every route, not just here)
 			store.loadConversations()
 			loadConversation(currentId.value)
 			// Re-render charts after the reload settles — late re-renders can swap a
@@ -3600,7 +3610,10 @@ function onResync() {
 	loadConversation(currentId.value)
 }
 function onVisibility() {
-	if (document.visibilityState === "visible") onResync()
+	if (document.visibilityState === "visible") {
+		recomputeNotifyEnabled() // permission/storage may have changed while away
+		onResync()
+	}
 }
 
 // ---- shell contract (§3.7): New Chat requests, external navigation and

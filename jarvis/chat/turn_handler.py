@@ -419,6 +419,19 @@ def handle_chat_send(payload: dict) -> None:
 
 	conv = frappe.get_doc(CONV, conversation_id)
 	user = conv.owner
+	# User-message intake: the user replied, so any Pending chat-sourced
+	# approval materialized from a previous ```jarvis-ask fence is answered
+	# in chat now — flip it to Answered so the board never offers a stale
+	# double-answer. One indexed UPDATE; best-effort (hot path, never raises).
+	try:
+		from jarvis.chat import chat_asks
+
+		chat_asks.resolve_on_user_message(conversation_id)
+	except Exception:
+		frappe.log_error(
+			title="chat asks: resolve_on_user_message failed",
+			message=frappe.get_traceback(),
+		)
 	# Wall-clock turn start (epoch ms) - scopes codex imagegen output produced
 	# during this turn (compared against the generated image files' mtime).
 	turn_start_ms = int(time.time() * 1000)
@@ -788,6 +801,27 @@ def handle_chat_send(payload: dict) -> None:
 		# snapshot recovery can deliver the same rich outputs for a turn
 		# that finished via _finalize instead of this clean exit).
 		persist_rich_outputs(assistant_msg.name, conversation_id, user, run_id, turn_start_ms)
+
+		# Chat-ask materialization (notify-approvals design Part 2): a final
+		# reply carrying a ```jarvis-ask fence surfaces on the Approval Board
+		# so an away user finds the question. One PK read; skipped when the
+		# turn errored (a partial fence is not a real ask). Best-effort —
+		# never breaks the turn.
+		try:
+			from jarvis.chat import chat_asks
+
+			_final = frappe.db.get_value(
+				MSG, assistant_msg.name, ["content", "error"], as_dict=True
+			) or {}
+			if not _final.get("error"):
+				chat_asks.materialize_from_turn(
+					conversation_id, _final.get("content") or ""
+				)
+		except Exception:
+			frappe.log_error(
+				title="chat asks: materialize_from_turn failed",
+				message=frappe.get_traceback(),
+			)
 
 	except Exception as e:
 		# Last-resort backstop. Any exception that wasn't an

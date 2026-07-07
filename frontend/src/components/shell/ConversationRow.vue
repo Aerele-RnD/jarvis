@@ -22,6 +22,14 @@
 				v-if="store.streamingConvId === conv.name"
 				class="ml-1.5 size-1.5 shrink-0 animate-pulse rounded-full bg-blue-500"
 			/>
+			<!-- unread: a finished reply the user hasn't opened yet (global
+			     notifier marks, opening clears) — solid + slightly larger, so it
+			     reads distinctly from the pulsing streaming dot above -->
+			<span
+				v-else-if="store.unreadConvs.has(conv.name)"
+				class="ml-1.5 size-2 shrink-0 rounded-full bg-blue-500"
+				title="New reply"
+			/>
 			<Dropdown :options="menuOptions" placement="right">
 				<template #trigger>
 					<Button
@@ -39,7 +47,7 @@
 
 <script setup>
 // Recent-chats row (DESIGN-V3 §3.4): hover ⋯ menu (Star/Rename/Delete),
-// inline rename, streaming dot; click navigates to /c/:id.
+// inline rename, streaming + unread dots; click navigates to /c/:id.
 import { ref, computed, nextTick } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import { Button, Dropdown, FeatherIcon, confirmDialog } from "frappe-ui"

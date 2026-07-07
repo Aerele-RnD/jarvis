@@ -4,8 +4,10 @@
 //   - only ChatView writes currentConvId / streamingConvId
 //   - only shell components write paletteOpen / sidebar preference
 //   - both sides may call loadConversations (idempotent, in-flight de-duped)
-//   - ChatView's socket handlers are the ONLY external writers of
-//     `conversations`, and only via applyRemoteRename/applyRemoteNew (DA-04).
+//   - `conversations` is externally written only via applyRemoteRename /
+//     applyRemoteNew (DA-04) — called from ChatView's socket handlers and the
+//     AppShell-level global notifier (notify/globalNotifier.js).
+//   - unreadConvs: the global notifier marks, ChatView clears on open.
 import { reactive, ref, computed } from "vue"
 import { useStorage } from "@vueuse/core"
 import { toast } from "frappe-ui"
@@ -20,6 +22,10 @@ const conversations = ref([]) // [{name,title,last_active_at,starred,message_cou
 const conversationsLoading = ref(false)
 const currentConvId = ref(null) // written by ChatView only
 const streamingConvId = ref(null) // written by ChatView only
+// Conversations with a finished (or errored) reply the user hasn't opened yet —
+// the sidebar's unread dot (distinct from the streaming dot). Replaced
+// wholesale on every write so Set mutations stay reactive.
+const unreadConvs = ref(new Set())
 const approvalsCount = ref(0)
 const settingsOpen = ref(false) // ChatView binds its settings overlay to this
 const pendingNewChat = ref(false) // consumed + cleared by ChatView
@@ -157,6 +163,20 @@ function applyRemoteNew() {
 	}, 500)
 }
 
+// ---- unread signal (NOTIFY-APPROVALS Part 1) --------------------------------
+// The global notifier marks a conversation unread when its run ends off-screen;
+// ChatView clears it the moment that conversation is opened.
+function markUnread(id) {
+	if (!id || unreadConvs.value.has(id)) return
+	unreadConvs.value = new Set(unreadConvs.value).add(id)
+}
+function clearUnread(id) {
+	if (!id || !unreadConvs.value.has(id)) return
+	const next = new Set(unreadConvs.value)
+	next.delete(id)
+	unreadConvs.value = next
+}
+
 // reactive() unwraps the refs/computeds, so consumers read and write plain
 // properties: `store.pendingNewChat = false`, `watch(() => store.paletteOpen)`.
 const store = reactive({
@@ -165,6 +185,7 @@ const store = reactive({
 	conversationsLoading,
 	currentConvId,
 	streamingConvId,
+	unreadConvs,
 	approvalsCount,
 	settingsOpen,
 	pendingNewChat,
@@ -181,6 +202,8 @@ const store = reactive({
 	openSettings,
 	applyRemoteRename,
 	applyRemoteNew,
+	markUnread,
+	clearUnread,
 })
 
 export function useShellStore() {

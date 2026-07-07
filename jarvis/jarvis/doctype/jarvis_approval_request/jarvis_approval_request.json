@@ -8,6 +8,7 @@
  "field_order": [
   "title",
   "status",
+  "source",
   "document_type",
   "conversation",
   "question",
@@ -35,8 +36,17 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Status",
-   "options": "Pending\nApproved\nRejected",
+   "options": "Pending\nApproved\nRejected\nAnswered",
    "search_index": 1
+  },
+  {
+   "default": "File Box",
+   "description": "Where this request came from: a File Box / agent flow, or a chat jarvis-ask question materialized onto the board. Rows created before this field exist with NULL, which code treats as File Box.",
+   "fieldname": "source",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Source",
+   "options": "File Box\nChat"
   },
   {
    "description": "The business document type this decision concerns (e.g. Purchase Invoice). Blank = the document type itself is undetermined (Unclassified tab).",
@@ -108,7 +118,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-07-04 20:30:00.000000",
+ "modified": "2026-07-07 09:00:00.000000",
  "modified_by": "Administrator",
  "module": "Jarvis",
  "name": "Jarvis Approval Request",

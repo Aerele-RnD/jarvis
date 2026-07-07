@@ -44,7 +44,7 @@ def _may_act_on(conversation: str | None) -> bool:
 def list_approvals(status: str = "Pending", limit: int = 50) -> list[dict]:
 	"""Approvals visible to the current user (owner of the linked
 	conversation, or any System Manager)."""
-	if status not in ("Pending", "Approved", "Rejected", "Decided", "All"):
+	if status not in ("Pending", "Approved", "Rejected", "Answered", "Decided", "All"):
 		frappe.throw("Invalid status filter")
 	if status == "All":
 		filters = {}
@@ -87,7 +87,10 @@ def list_approvals(status: str = "Pending", limit: int = 50) -> list[dict]:
 # --------------------------------------------------------------------------- #
 _APPROVALS_SORTABLE = {"creation": "creation", "status": "status", "document_type": "document_type"}
 _APPROVALS_FILTERS = {"status", "document_type", "conversation"}
-_APPROVAL_STATUSES = {"Pending", "Approved", "Rejected", "Decided", "All"}
+# "Answered" = a chat-sourced ask the user answered IN CHAT (chat_asks.
+# resolve_on_user_message); it stays out of "Decided" (Approved/Rejected are
+# board decisions) and out of the Pending badge, but is filterable for audit.
+_APPROVAL_STATUSES = {"Pending", "Approved", "Rejected", "Answered", "Decided", "All"}
 
 
 def _lk(s: str) -> str:
@@ -151,7 +154,10 @@ def list_approvals_page(
 	they own, OR that are tagged to them via a DocShare read grant on the
 	approval itself), server-side search/filter/sort/paginate + a
 	``document_type`` facet for the triage tabs. Envelope ``{rows, total,
-	has_more, start, page_length, facets}``. Each row carries ``shared`` (0|1):
+	has_more, start, page_length, facets}`` (+ ``awaiting_reply`` on the first
+	page only — see ``_awaiting_reply``). Each row carries ``source`` ("File
+	Box"|"Chat"; NULL rows predate the field and read as File Box) and
+	``shared`` (0|1):
 	for a non-SM caller it is 1 when they do NOT own the linked conversation
 	(the row is visible only via a DocShare tag), else 0; for SM always 0.
 	Tagged users VIEW here; only the conversation owner (or SM) ACTS — see
@@ -220,7 +226,7 @@ def list_approvals_page(
 		"WHERE c.name = a.conversation AND c.owner = %(me)s)) AS shared"
 	)
 	rows = frappe.db.sql(
-		f"""SELECT a.name, a.title, a.status, a.document_type, a.question,
+		f"""SELECT a.name, a.title, a.status, a.source, a.document_type, a.question,
 		a.context_md, a.options, a.conversation, a.ref_doctype, a.ref_name,
 		a.decision, a.decided_by, a.decided_at, a.creation,
 		{shared_expr}
@@ -233,6 +239,8 @@ def list_approvals_page(
 	for r in rows:
 		r["options"] = _parse_options(r.get("options"))
 		r["shared"] = int(r.get("shared") or 0)
+		# NULL = a row from before the source field existed = File Box.
+		r["source"] = r.get("source") or "File Box"
 
 	facet_rows = frappe.db.sql(
 		f"""SELECT COALESCE(NULLIF(TRIM(a.document_type), ''), 'Unclassified') AS dtv,
@@ -245,7 +253,7 @@ def list_approvals_page(
 	)
 	facets = {"document_type": [{"value": x.dtv, "count": x.n} for x in facet_rows]}
 
-	return {
+	out = {
 		"rows": rows,
 		"total": total,
 		"has_more": start + len(rows) < total,
@@ -253,6 +261,74 @@ def list_approvals_page(
 		"page_length": pl,
 		"facets": facets,
 	}
+	# Awaiting-reply lane (notify-approvals design Part 2): prose questions
+	# never create rows, so the board derives them. First page only — the
+	# lane sits above the rail and pagination never re-renders it.
+	if start == 0:
+		out["awaiting_reply"] = _awaiting_reply(me)
+	return out
+
+
+def _awaiting_reply(me: str) -> list[dict]:
+	"""Conversations OWNED by ``me`` whose ball is in the user's court:
+	the last message is an assistant turn that ENDED cleanly (not
+	streaming/recovering/errored — the filebox.py SQL-ladder semantics)
+	and looks like a question (carries a ```jarvis-ask fence, or a "?" in
+	the last 200 chars), excluding conversations that already have a
+	Pending chat-sourced approval row (those ARE board rows). Newest
+	first, capped at 10. Rows: {conversation, title, question_excerpt,
+	last_at}."""
+	from jarvis.chat.chat_asks import question_excerpt
+
+	rows = frappe.db.sql(
+		"""SELECT c.name AS conversation, c.title, m.content, m.creation AS last_at
+		FROM `tabJarvis Conversation` c
+		JOIN (SELECT mm.conversation, MAX(mm.seq) mseq
+		      FROM `tabJarvis Chat Message` mm
+		      JOIN `tabJarvis Conversation` mc
+		        ON mc.name = mm.conversation AND mc.owner = %(me)s
+		      GROUP BY mm.conversation) x ON x.conversation = c.name
+		JOIN `tabJarvis Chat Message` m
+		  ON m.conversation = c.name AND m.seq = x.mseq
+		WHERE c.owner = %(me)s
+		AND c.status != 'Archived'
+		AND m.role = 'assistant'
+		AND m.streaming = 0
+		AND COALESCE(m.recovering, 0) = 0
+		AND COALESCE(m.error, '') = ''
+		-- a structured jarvis-ask fence always qualifies (a deliberate agent
+		-- question). A bare "?" only qualifies with real work depth — a tool
+		-- call or a genuine back-and-forth (>=2 user turns) — otherwise every
+		-- opener greeting ("...what would you like to work on?") floods the lane.
+		AND (
+		    m.content LIKE %(fence)s
+		    OR (
+		        RIGHT(m.content, 200) LIKE %(qmark)s
+		        AND (
+		            EXISTS (SELECT 1 FROM `tabJarvis Chat Message` tm
+		                    WHERE tm.conversation = c.name AND tm.role = 'tool')
+		            OR (SELECT COUNT(*) FROM `tabJarvis Chat Message` um
+		                WHERE um.conversation = c.name AND um.role = 'user') >= 2
+		        )
+		    )
+		)
+		AND NOT EXISTS (SELECT 1 FROM `tabJarvis Approval Request` ar
+		                WHERE ar.conversation = c.name
+		                AND ar.status = 'Pending' AND ar.source = 'Chat')
+		ORDER BY m.creation DESC
+		LIMIT 10""",
+		{"me": me, "fence": "%```jarvis-ask%", "qmark": "%?%"},
+		as_dict=True,
+	)
+	return [
+		{
+			"conversation": r.conversation,
+			"title": r.title or "",
+			"question_excerpt": question_excerpt(r.content),
+			"last_at": str(r.last_at or ""),
+		}
+		for r in rows
+	]
 
 
 @frappe.whitelist()
@@ -274,6 +350,8 @@ def get_approval(name: str) -> dict:
 		"name": doc.name,
 		"title": doc.title,
 		"status": doc.status,
+		# .get(): tolerant of a not-yet-migrated site; NULL = File Box.
+		"source": doc.get("source") or "File Box",
 		"document_type": doc.document_type or "",
 		"conversation": doc.conversation,
 		"question": doc.question,
@@ -364,20 +442,27 @@ def decide(name: str, decision: str, approve: int = 1) -> dict:
 		# ride only the message they were sent with, so a resumed turn can
 		# no longer SEE the pages - observed live: the agent (correctly)
 		# refused to draft rather than fabricate lines it couldn't see.
+		# Chat-sourced asks (chat_asks.materialize_from_turn) have no source
+		# document to re-show - the question came from prose, and blindly
+		# re-attaching whatever File happens to hang off the conversation
+		# would bolt an unrelated upload onto the answer. Guard on source
+		# (NULL = a pre-field row = File Box, so legacy rows keep the
+		# re-attach).
 		attachments = None
-		f = frappe.get_all(
-			"File",
-			filters={
-				"attached_to_doctype": "Jarvis Conversation",
-				"attached_to_name": doc.conversation,
-			},
-			fields=["file_url", "file_name"],
-			order_by="creation desc", limit_page_length=1,
-		)
-		if f:
-			attachments = json.dumps(
-				[{"file_url": f[0].file_url, "file_name": f[0].file_name}]
+		if (doc.get("source") or "File Box") != "Chat":
+			f = frappe.get_all(
+				"File",
+				filters={
+					"attached_to_doctype": "Jarvis Conversation",
+					"attached_to_name": doc.conversation,
+				},
+				fields=["file_url", "file_name"],
+				order_by="creation desc", limit_page_length=1,
 			)
+			if f:
+				attachments = json.dumps(
+					[{"file_url": f[0].file_url, "file_name": f[0].file_name}]
+				)
 		# The decision is durably recorded above; a resume failure must
 		# not 500 the endpoint (the SPA would re-show a decided row).
 		# send_message is owner-only (SEC-002). A System Manager may decide

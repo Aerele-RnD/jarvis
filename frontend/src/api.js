@@ -223,7 +223,9 @@ export const getAgentAdminOverview = () => call(AG + "get_agent_admin_overview")
 
 // ── Paginated feature-page lists (design §2.7) ──────────────────────────────
 // One frozen envelope for all four features:
-//   { rows, total, has_more, start, page_length[, facets] }  (facets: Approvals only)
+//   { rows, total, has_more, start, page_length[, facets] }  (facets: Approvals only;
+//   Approvals first-page responses also carry `awaiting_reply` — chat questions
+//   with no approval row behind them, rendered by ApprovalsBoard's strip)
 // `_page` normalizes the request args (search/filters/sort/paging) exactly as
 // the four backend endpoints expect; `filters` is JSON-encoded here so the SPA
 // passes a plain object and the server `frappe.parse_json`s it.
