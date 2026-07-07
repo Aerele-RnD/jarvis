@@ -146,6 +146,42 @@
 					</Tooltip>
 				</div>
 			</template>
+
+			<!-- row actions (server-computed can_archive; delete shares the archive
+			     authority server-side). @click.stop.prevent so the buttons never
+			     bubble into the row's open-dialog click (RunsTab idiom). -->
+			<template #cell-_actions="{ row }">
+				<div
+					v-if="row.can_archive"
+					class="flex w-full items-center justify-end gap-1"
+					@click.stop.prevent
+				>
+					<Button
+						v-if="!isArchivedView"
+						variant="ghost"
+						icon="archive"
+						:tooltip="'Archive'"
+						:loading="rowBusy === rowSlug(row)"
+						@click="confirmArchive(row)"
+					/>
+					<Button
+						v-else
+						variant="ghost"
+						icon="rotate-ccw"
+						:tooltip="'Restore'"
+						:loading="rowBusy === rowSlug(row)"
+						@click="doRestore(row)"
+					/>
+					<Button
+						variant="ghost"
+						theme="red"
+						icon="trash-2"
+						:tooltip="'Delete permanently'"
+						:loading="rowBusy === rowSlug(row)"
+						@click="confirmDelete(row)"
+					/>
+				</div>
+			</template>
 		</ListPage>
 
 		<WikiPageDialog
@@ -248,7 +284,9 @@
 // server-side visibility). Standard ListPage + useListPage kit (FilesList
 // precedent): server pagination, debounced search, scope / type / attention
 // quick filters. Rows open WikiPageDialog (view/edit/archive gated by the
-// server's can_edit/can_archive flags); "New page" shows for anyone whose
+// server's can_edit/can_archive flags); a trailing actions column offers
+// Archive (Restore on the Archived view) and permanent Delete inline for
+// rows the caller may manage. "New page" shows for anyone whose
 // creatable_scopes isn't empty; SMs also get the settings popover (knowledge
 // language, mirror sync, health check).
 import { reactive, ref, computed, onMounted } from "vue"
@@ -272,6 +310,9 @@ import {
 	listWikiPagesPage,
 	getWikiCaps,
 	createWikiPage,
+	archiveWikiPage,
+	restoreWikiPage,
+	deleteWikiPage,
 	setKnowledgeLanguage,
 	syncWikiMirrorNow,
 	runWikiLintNow,
@@ -347,6 +388,7 @@ const columns = [
 	{ label: "Scope", key: "scope", width: "6rem" },
 	{ label: "Summary", key: "summary", width: 4 },
 	{ label: "Updated", key: "modified", width: "8rem", align: "right" },
+	{ label: "", key: "_actions", width: "7rem", align: "right" },
 ]
 // search rides the quick-filter strip (FilesList precedent): it lives in the
 // filters object so the input stays controlled, and fetchFn moves it onto the
@@ -394,6 +436,10 @@ const {
 	},
 	storageKey: "wiki",
 })
+
+// Archive vs Restore in the actions column keys off the lifecycle view:
+// the Archived view lists only Archived pages, every other view only Active.
+const isArchivedView = computed(() => filters.attention === "archived")
 
 const emptyState = computed(() => {
 	if (filters.scope === "mine" && caps.creatable_scopes.includes("User"))
@@ -464,6 +510,56 @@ function openRow(row) {
 function openPage(slug) {
 	pageDialog.slug = slug
 	pageDialog.show = true
+}
+
+// ── row actions (archive / restore / delete) ─────────────────────────────────
+// slug of the row with an in-flight lifecycle call — one at a time is plenty
+const rowBusy = ref("")
+function rowSlug(row) {
+	return row.slug || row.name
+}
+
+async function runRowAction(row, fn, successMsg) {
+	const slug = rowSlug(row)
+	rowBusy.value = slug
+	try {
+		await fn(slug)
+		toast.success(successMsg)
+		resetLoad()
+	} catch (e) {
+		toast.error(errMsg(e))
+	} finally {
+		rowBusy.value = ""
+	}
+}
+
+function confirmArchive(row) {
+	confirmDialog({
+		title: "Archive this page?",
+		message:
+			"Archived pages stop appearing in the list and are no longer used as chat context. The record is kept.",
+		onConfirm: async ({ hideDialog }) => {
+			hideDialog()
+			await runRowAction(row, archiveWikiPage, "Page archived")
+		},
+	})
+}
+
+// no confirm: Restore is itself the escape hatch for an accidental archive
+function doRestore(row) {
+	runRowAction(row, restoreWikiPage, "Page restored")
+}
+
+function confirmDelete(row) {
+	confirmDialog({
+		title: "Delete this page permanently?",
+		message:
+			"Permanently deletes this page — archiving keeps it recoverable. This cannot be undone.",
+		onConfirm: async ({ hideDialog }) => {
+			hideDialog()
+			await runRowAction(row, deleteWikiPage, "Page deleted")
+		},
+	})
 }
 
 // ── create dialog ────────────────────────────────────────────────────────────

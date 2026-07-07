@@ -1,7 +1,7 @@
 <template>
 	<Dialog
 		v-model="show"
-		:options="{ title: (page && page.title) || 'Wiki page', size: 'lg' }"
+		:options="{ title: (page && page.title) || 'Wiki page', size: 'xl' }"
 	>
 		<template #body-content>
 			<div v-if="loading" class="py-8 text-center">
@@ -77,24 +77,28 @@
 						:modelValue="editSummary"
 						@update:modelValue="(v) => (editSummary = v)"
 					/>
-					<FormControl
-						v-if="!previewing"
-						type="textarea"
-						class="mt-3"
-						label="Body (markdown)"
-						:rows="14"
-						:modelValue="editBody"
-						@update:modelValue="(v) => (editBody = v)"
-					/>
-					<template v-else>
-						<div class="mt-3 text-xs text-ink-gray-5">Preview</div>
-						<div
-							class="prose prose-sm mt-1 max-h-[24rem] max-w-none overflow-y-auto rounded border px-3 py-2"
-							v-html="previewHtml"
+					<!-- lg+: textarea and live preview side by side (preview tracks
+					     editBody as you type); below lg the Preview button toggles
+					     between the two, exactly as before -->
+					<div class="mt-3 grid gap-4 lg:grid-cols-2">
+						<FormControl
+							type="textarea"
+							:class="previewing ? 'hidden lg:block' : ''"
+							label="Body (markdown)"
+							:rows="14"
+							:modelValue="editBody"
+							@update:modelValue="(v) => (editBody = v)"
 						/>
-					</template>
+						<div :class="previewing ? '' : 'hidden lg:block'">
+							<div class="text-xs text-ink-gray-5">Preview</div>
+							<div
+								class="prose prose-sm mt-1 max-h-[24rem] max-w-none overflow-y-auto rounded border px-3 py-2"
+								v-html="previewHtml"
+							/>
+						</div>
+					</div>
 					<Button
-						class="mt-2"
+						class="mt-2 lg:hidden"
 						variant="ghost"
 						:label="previewing ? 'Back to editing' : 'Preview'"
 						:iconLeft="previewing ? 'edit-2' : 'eye'"
@@ -149,6 +153,15 @@
 						:loading="archiving"
 						@click="restore"
 					/>
+					<Button
+						v-if="page.can_archive"
+						variant="ghost"
+						theme="red"
+						label="Delete"
+						iconLeft="trash-2"
+						:loading="deleting"
+						@click="confirmDelete"
+					/>
 				</template>
 			</div>
 		</template>
@@ -156,13 +169,14 @@
 </template>
 
 <script setup>
-// WikiPageDialog — the wiki page viewer/editor extracted from BusinessTab's
-// org-wiki dialog for the Wiki tab (design D4): rendered-markdown read view
-// with scope/attention metadata, an Edit toggle (summary + body) shown only
-// when the server-computed `can_edit` flag allows it, and Archive behind a
-// confirmDialog when `can_archive`. Fetches the page itself whenever it opens
-// (v-model true + slug); emits `refresh` after a save/archive so the owning
-// list refetches.
+// WikiPageDialog — THE full-featured wiki editor popup (size xl): rendered-
+// markdown read view with scope/attention metadata + provenance, and an Edit
+// mode (title + summary + body) shown only when the server-computed `can_edit`
+// flag allows it. Editing shows the textarea and a live rendered preview side
+// by side at lg+ (below lg a Preview button toggles between them). Archive and
+// permanent Delete each sit behind a confirmDialog when `can_archive`. Fetches
+// the page itself whenever it opens (v-model true + slug); emits `refresh`
+// after a save/archive/delete so the owning list refetches.
 import { ref, computed, watch } from "vue"
 import {
 	Badge,
@@ -176,7 +190,13 @@ import {
 } from "frappe-ui"
 import { renderMarkdown } from "@/markdown"
 import { timeAgo, exactDate } from "@/utils/datetime"
-import { getWikiPage, saveWikiPage, archiveWikiPage, restoreWikiPage } from "@/api/wiki"
+import {
+	getWikiPage,
+	saveWikiPage,
+	archiveWikiPage,
+	restoreWikiPage,
+	deleteWikiPage,
+} from "@/api/wiki"
 
 const props = defineProps({
 	modelValue: { type: Boolean, default: false },
@@ -204,6 +224,7 @@ const editSummary = ref("")
 const editBody = ref("")
 const saving = ref(false)
 const archiving = ref(false)
+const deleting = ref(false)
 
 const bodyHtml = computed(() =>
 	page.value && page.value.body_md ? renderMarkdown(page.value.body_md) : ""
@@ -324,6 +345,27 @@ function confirmArchive() {
 				toast.error(errMsg(e))
 			} finally {
 				archiving.value = false
+			}
+		},
+	})
+}
+
+function confirmDelete() {
+	confirmDialog({
+		title: "Delete this page?",
+		message: "Permanently deletes this page — archiving keeps it recoverable.",
+		onConfirm: async ({ hideDialog }) => {
+			deleting.value = true
+			try {
+				await deleteWikiPage(props.slug)
+				hideDialog()
+				show.value = false
+				toast.success("Page deleted")
+				emit("refresh")
+			} catch (e) {
+				toast.error(errMsg(e))
+			} finally {
+				deleting.value = false
 			}
 		},
 	})

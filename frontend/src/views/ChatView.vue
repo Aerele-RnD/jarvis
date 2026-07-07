@@ -852,6 +852,7 @@ import * as api from "@/api"
 import * as voice from "@/api/voice"
 import { useAudioRecorder } from "@/composables/useAudioRecorder"
 import { setMacroPrefill } from "@/composables/macroPrefill"
+import { takeChatPrefill } from "@/composables/chatPrefill"
 import { renderMarkdown } from "@/markdown"
 import JvChart from "@/charts/JvChart.vue"
 import { useShellStore } from "@/stores/shell"
@@ -3632,9 +3633,22 @@ onMounted(async () => {
 	ui.value = (await uiP) || {}
 	// Load custom skills so the "/" composer menu can offer them.
 	loadCustomSkills()
+	// "Discuss in chat" hand-off (Review tab → chatPrefill stash). Take the
+	// stash on EVERY mount — a stale prompt must never survive to pop into the
+	// composer on a later, unrelated visit — but only act on it when landing
+	// on the chat home (no /c/:id param).
+	const prefill = takeChatPrefill()
+	const applyPrefill = !route.params.id && !!(prefill && prefill.text)
 	try {
 		await convsP
-		if (_consumedNewChat) {
+		if (applyPrefill) {
+			// The prompt must land as the FIRST message of a FRESH conversation.
+			// Restoring the last conversation here would both wipe the composer
+			// (the async restore races the prefill) and risk sending a drafted
+			// governance prompt into an unrelated thread's context.
+			_consumedNewChat = false // newChat() below satisfies a pending request too
+			await newChat()
+		} else if (_consumedNewChat) {
 			// New Chat was requested from another route while we booted —
 			// start on a fresh empty conversation instead of restoring.
 			_consumedNewChat = false
@@ -3661,6 +3675,17 @@ onMounted(async () => {
 	// thread, so render the charts here once they're actually mounted.
 	await nextTick()
 	processMermaid()
+	// Apply the "Discuss in chat" prefill now that booting is false and the
+	// composer is mounted: drop the drafted prompt into the fresh conversation
+	// started above and, per the hand-off contract, send it as the user's
+	// first message (send() with no arg reads input.value — the main-composer
+	// path).
+	if (applyPrefill) {
+		input.value = prefill.text
+		await nextTick()
+		autoGrow()
+		if (prefill.autoSend) await send()
+	}
 	inputEl.value?.focus()
 })
 onBeforeUnmount(() => {

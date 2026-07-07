@@ -799,6 +799,10 @@ def list_wiki_pages_page(
 	for r in rows:
 		r["contradiction_flag"] = cint(r.get("contradiction_flag"))
 		r["stale"] = is_stale(r.get("last_confirmed_at"), r.get("modified"))
+		# per-row action flags so the list can offer edit/archive/delete
+		# without a fetch per row (cheap python over one page of dicts)
+		r["can_edit"] = bool(wiki_permissions.can_edit_page(r, user))
+		r["can_archive"] = bool(wiki_permissions.can_archive_page(r, user))
 
 	return {
 		"rows": rows,
@@ -1016,6 +1020,24 @@ def archive_wiki_page(slug: str) -> dict:
 	doc.status = "Archived"
 	doc.save(ignore_permissions=True)
 	return {"ok": True, "slug": doc.slug}
+
+
+@frappe.whitelist()
+def delete_wiki_page(slug: str) -> dict:
+	"""Permanently delete a page. Same authority as archiving (the write
+	matrix's strongest right on the page); archive remains the reversible
+	path — the SPA warns accordingly. The mirror prunes the file on the next
+	full sync (on_trash doc_event triggers one)."""
+	_require_system_user()
+	slug = (slug or "").strip().lower()
+	name = frappe.db.get_value(WIKI, {"slug": slug}, "name")
+	if not name:
+		frappe.throw(_("Wiki page not found."))
+	doc = frappe.get_doc(WIKI, name)
+	if not wiki_permissions.can_archive_page(doc, frappe.session.user):
+		frappe.throw(_("Not permitted."), frappe.PermissionError)
+	frappe.delete_doc(WIKI, name, ignore_permissions=True)
+	return {"ok": True, "slug": slug}
 
 
 @frappe.whitelist()
