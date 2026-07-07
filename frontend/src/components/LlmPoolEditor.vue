@@ -23,7 +23,7 @@
       <span :style="{fontSize:'12px',fontWeight:600,padding:'4px 11px',borderRadius:'20px',
              background: badgeMode==='proxy' ? 'var(--green-bg)' : 'var(--surface-2)',
              color: badgeMode==='proxy' ? 'var(--green)' : 'var(--text-3)'}">
-        {{ badgeMode === 'proxy' ? 'Proxy (failover)' : 'Direct' }}
+        {{ badgeLabel }}
       </span>
     </div>
 
@@ -77,7 +77,7 @@
     <!-- ================ QUICK / CUSTOM (shared rows) ================ -->
     <section v-else style="margin-bottom:18px;">
       <p v-if="llmMode==='quick'" style="font-size:14px;color:var(--text-3);margin:0 0 12px;">
-        A single model, sent directly to the provider.<template v-if="canPool"> Need multiple models with failover? Use <b>Preset</b> or <b>Custom</b>.</template><template v-else> You can add more models and automatic failover later from My Account.</template>
+        <template v-if="rows[0] && rows[0].credentialType === 'subscription'">A single chat subscription, served through the managed proxy.</template><template v-else>A single model, sent directly to the provider.</template><template v-if="canPool"> Need multiple models with failover? Use <b>Preset</b> or <b>Custom</b>.</template><template v-else> You can add more models and automatic failover later from My Account.</template>
       </p>
       <div v-else style="font-size:13px;font-weight:600;color:var(--text-2);margin-bottom:8px;letter-spacing:.03em;text-transform:uppercase;">
         Custom failover pool
@@ -401,6 +401,11 @@ const saveBlocked = computed(() => llmMode.value === "preset" && !!selectedPrese
 // Direct/Proxy badge — mirrors jarvis_account.js renderModeBadge().
 // Quick is always Direct (single model); Preset is Proxy once chosen; Custom
 // derives from the count of valid rows via the shared deriveMode helper.
+// Valid (fillable) rows — shared by the badge mode + label. A subscription row
+// needs a model id; an api_key row needs provider + model.
+const validModels = computed(() => rows.value.filter((r) => r && (
+  r.credentialType === "subscription" ? (r.model || "").trim() : ((r.provider || "").trim() && (r.model || "").trim())
+)))
 const badgeMode = computed(() => {
   // Quick is a single model: DIRECT for api_key, but a chat-subscription row
   // forces the cliproxy/proxy path (compute_proxy_active), so reflect that.
@@ -409,10 +414,17 @@ const badgeMode = computed(() => {
     return (r0 && r0.credentialType === "subscription") ? "proxy" : "direct"
   }
   if (llmMode.value === "preset") return selectedPreset.value ? "proxy" : "direct"
-  const valid = rows.value.filter((r) => r && (
-    r.credentialType === "subscription" ? (r.model || "").trim() : ((r.provider || "").trim() && (r.model || "").trim())
-  ))
-  return deriveMode(valid, null)
+  return deriveMode(validModels.value, null)
+})
+// Human label. "failover" only makes sense with ≥2 models (a preset ladder or a
+// multi-row custom pool). A lone chat subscription is still proxied (it needs
+// the cliproxy sidecar) but has nothing to fail over to, so it reads plain
+// "Proxy" rather than the misleading "Proxy (failover)".
+const badgeLabel = computed(() => {
+  if (badgeMode.value !== "proxy") return "Direct"
+  if (llmMode.value === "quick") return "Proxy"            // single model
+  if (llmMode.value === "preset") return "Proxy (failover)" // a failover ladder
+  return validModels.value.length >= 2 ? "Proxy (failover)" : "Proxy"
 })
 const syncLabel = computed(() => {
   if (sync.value.pending) return "Syncing to your agent…"
