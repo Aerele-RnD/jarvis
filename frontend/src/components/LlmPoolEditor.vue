@@ -132,7 +132,7 @@
         <!-- API-key credential. Onboarding (singleMode) lays the four fields out as
              a 2×2 grid so this view's height sits close to the subscription view —
              no jarring resize when toggling. The Account editor keeps the dense row. -->
-        <div v-if="m.credentialType!=='subscription'">
+        <div v-if="m.credentialType!=='subscription'" :class="{ 'jv-single-body': singleMode }">
           <div v-if="singleMode" class="jv-ak-grid">
             <JvCombo :model-value="m.provider" @update:model-value="(v) => { m.provider = v; onProviderChange(m) }"
                      :options="providerOptions" :editable="editable" placeholder="Provider" />
@@ -164,8 +164,7 @@
              the provider is enough: the Model ID field + rotation dropdown are
              hidden (model auto-defaults per provider), leaving just the provider
              picker + connect. The full account editor keeps all three. -->
-        <div v-else>
-          <label v-if="singleMode" style="display:block;font-size:12px;color:var(--text-2);margin-bottom:4px;">Chat subscription provider</label>
+        <div v-else :class="{ 'jv-single-body': singleMode }">
           <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
             <input v-if="!singleMode" v-model="m.model" :list="'jv-subdl-'+i" :disabled="!editable" placeholder="Model ID (e.g. gpt-5.5)"
                    style="flex:2;min-width:120px;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;" />
@@ -188,7 +187,9 @@
           <div v-if="m.accounts && m.accounts.length" style="display:flex;flex-direction:column;gap:5px;margin-bottom:8px;">
             <div v-for="(a, ai) in m.accounts" :key="a.account_ref || ai"
                  style="display:flex;align-items:center;gap:8px;padding:5px 9px;border:1px solid var(--green-bd);background:var(--green-bg);border-radius:6px;">
-              <span style="font-size:12px;font-weight:600;color:var(--green);">connected</span>
+              <span style="display:flex;align-items:center;gap:5px;font-size:12.5px;font-weight:700;color:var(--green);">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>Connected
+              </span>
               <span style="font-size:14px;color:var(--text);">{{ accountLabel(a) }}</span>
               <span style="font-size:12px;color:var(--text-3);">{{ a.upstream || 'openai' }}</span>
               <span style="margin-left:auto;display:flex;gap:6px;align-items:center;">
@@ -199,7 +200,7 @@
               </span>
             </div>
           </div>
-          <div v-else style="font-size:13px;color:var(--text-3);margin-bottom:8px;">No accounts connected yet.</div>
+          <div v-else-if="!singleMode" style="font-size:13px;color:var(--text-3);margin-bottom:8px;">No accounts connected yet.</div>
 
           <!-- Inline paste-back connect flow -->
           <div v-if="m._connect && m._connect.open"
@@ -235,8 +236,8 @@
                hide "+ Connect account" once one is connected. -->
           <button v-if="editable && (!singleMode || !(m.accounts && m.accounts.length))" @click="startConnect(m)"
                   :disabled="m._connect && m._connect.loading && !m._connect.authorizeUrl"
-                  style="font-size:14px;color:var(--blue);background:transparent;border:1px dashed var(--border-2);border-radius:7px;padding:9px 16px;cursor:pointer;">
-            + Connect account
+                  style="font-size:14px;font-weight:600;color:var(--blue);background:var(--blue-bg);border:1px solid var(--blue-bd);border-radius:8px;padding:10px 16px;cursor:pointer;">
+            {{ singleMode ? 'Connect account →' : '+ Connect account' }}
           </button>
         </div>
       </div>
@@ -312,8 +313,8 @@ const singleMode = computed(() => modeTabs.value.length <= 1)
 // copy so it never points at tabs that aren't there.
 const canPool = computed(() => props.modes.includes("preset") || props.modes.includes("custom"))
 const credTypes = [
-  { value: "api_key", label: "API key", desc: "Use your own provider key — Anthropic, OpenAI, and more." },
   { value: "subscription", label: "Chat subscription", desc: "Sign in with your ChatGPT or Gemini account." },
+  { value: "api_key", label: "API key", desc: "Use your own provider key — Anthropic, OpenAI, and more." },
 ]
 const rotationOpts = [
   { value: "sticky", label: "Sticky" },
@@ -616,6 +617,13 @@ async function load() {
       llmMode.value = props.modes[0] || "quick"
       selectedPreset.value = ""
       rows.value = rows.value.length ? [rows.value[0]] : [newRow()]
+      // Onboarding default = Chat subscription (the common path). Only flip a
+      // pristine row so a returning customer's saved API-key setup is preserved.
+      const r0 = rows.value[0]
+      if (r0 && r0.credentialType === "api_key" && !(r0.model || "").trim() &&
+          !(r0.apiKey || "").trim() && !r0.hasKey && !(r0.accounts && r0.accounts.length)) {
+        setCredType(r0, "subscription")
+      }
     } else if (!props.modes.includes(llmMode.value)) {
       llmMode.value = props.modes[0] || "quick"
       selectedPreset.value = ""
@@ -740,6 +748,9 @@ defineExpose({ save })
 .jv-ct-tx { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .jv-ct-t { font-size: 14px; font-weight: 650; }
 .jv-ct-d { font-size: 12px; color: var(--text-3); line-height: 1.4; }
+/* Lock both credential modes to the same body height in onboarding so toggling
+   API key ↔ Chat subscription never resizes the card (first-impression polish). */
+.jv-single-body { min-height: 96px; }
 /* API-key fields as a 2×2 grid in onboarding — keeps this view's height close to
    the subscription view so toggling doesn't resize the card. */
 .jv-ak-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
