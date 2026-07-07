@@ -145,6 +145,13 @@
 								</button>
 							</div>
 						</template>
+						<template v-else-if="state.successData">
+							<h1 class="jv-ob-h1">Payment complete</h1>
+							<p class="jv-ob-sub">You're all set — continue to connect your AI.</p>
+							<div class="jv-ob-placeholder-actions">
+								<button class="jv-ob-btn jv-ob-btn-primary" @click="goNext">Continue →</button>
+							</div>
+						</template>
 						<template v-else>
 							<h1 class="jv-ob-h1">Review &amp; {{ state.devActive ? "connect" : "pay" }}</h1>
 							<div class="jv-ob-summary">
@@ -170,9 +177,9 @@
 						 proxy-pool tabs + Direct/Proxy badge are intentionally hidden here to
 						 keep signup fast and decision-free; advanced pooling/failover stays
 						 available on the Account page. The component owns save_llm_pool.
-						 Desk's renderLlm has no "Back" button (only Skip/Save); mirrored here
-						 by omitting one too, since stepping back to "pay" post-payment would
-						 read as re-triggering checkout. ===== -->
+						 A "Back" button here returns to Pay; that step guards against a
+						 second charge by showing a "Payment complete → Continue" state once
+						 payment has gone through (state.successData). ===== -->
 					<div v-else-if="state.step === 'connect'">
 						<h1 class="jv-ob-h1">Connect your AI</h1>
 						<p class="jv-ob-sub">Pick which model Jarvis should use. You can change this anytime from My Account.</p>
@@ -181,6 +188,9 @@
 						<div v-else-if="state.finishNote" class="jv-ob-note">
 							<span>{{ state.finishNote }}</span>
 							<button class="jv-ob-btn jv-ob-btn-primary" @click="forceContinue">Continue to Jarvis →</button>
+						</div>
+						<div class="jv-ob-placeholder-actions" style="margin-top:18px;">
+							<button class="jv-ob-btn" @click="goBack">← Back</button>
 						</div>
 					</div>
 

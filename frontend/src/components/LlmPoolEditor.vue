@@ -88,8 +88,30 @@
       <div v-for="(m,i) in editorRows" :key="i"
            style="border:1px solid var(--border);border-radius:9px;padding:10px;margin-bottom:8px;background:var(--surface-1);">
 
+        <!-- Onboarding: two self-describing credential cards so the choice reads
+             at a glance without extra copy. The compact toggle stays for the
+             full (Account) editor's denser rows. -->
+        <div v-if="singleMode" class="jv-ct">
+          <div class="jv-ct-q">How do you want to connect?</div>
+          <div class="jv-ct-cards">
+            <button v-for="opt in credTypes" :key="opt.value" type="button"
+                    class="jv-ct-card" :class="{ on: m.credentialType===opt.value }"
+                    @click="setCredType(m, opt.value)" :disabled="!editable"
+                    :aria-pressed="m.credentialType===opt.value">
+              <span class="jv-ct-ic">
+                <svg v-if="opt.value==='api_key'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+                <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              </span>
+              <span class="jv-ct-tx">
+                <span class="jv-ct-t">{{ opt.label }}</span>
+                <span class="jv-ct-d">{{ opt.desc }}</span>
+              </span>
+            </button>
+          </div>
+        </div>
+
         <!-- Row head: credential-type toggle (+ reorder/remove in Custom) -->
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+        <div v-if="!singleMode" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
           <div style="display:inline-flex;border:1px solid var(--border);border-radius:7px;overflow:hidden;">
             <button v-for="opt in credTypes" :key="opt.value" @click="setCredType(m, opt.value)" :disabled="!editable"
                     :style="{fontSize:'12px',padding:'5px 11px',border:'none',cursor: editable ? 'pointer' : 'default',
@@ -271,8 +293,8 @@ const singleMode = computed(() => modeTabs.value.length <= 1)
 // copy so it never points at tabs that aren't there.
 const canPool = computed(() => props.modes.includes("preset") || props.modes.includes("custom"))
 const credTypes = [
-  { value: "api_key", label: "API key" },
-  { value: "subscription", label: "Chat subscription" },
+  { value: "api_key", label: "API key", desc: "Use your own provider key — Anthropic, OpenAI, and more." },
+  { value: "subscription", label: "Chat subscription", desc: "Sign in with your ChatGPT or Gemini account." },
 ]
 const rotationOpts = [
   { value: "sticky", label: "Sticky" },
@@ -669,3 +691,32 @@ watch(keysByVendor, () => {
 onMounted(load)
 onBeforeUnmount(stopPolling)
 </script>
+
+<style scoped>
+/* Onboarding credential-type cards — self-describing "API key vs Chat
+   subscription" choice. Selected state mirrors the wizard's plan cards
+   (var(--blue) ring), so it's consistent with the rest of onboarding. */
+.jv-ct { margin-bottom: 16px; }
+.jv-ct-q { font-size: 13px; font-weight: 600; color: var(--text-2); margin-bottom: 8px; }
+.jv-ct-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.jv-ct-card {
+  display: flex; align-items: flex-start; gap: 11px; text-align: left;
+  padding: 13px 14px; border: 1px solid var(--border); border-radius: 11px;
+  background: var(--surface); cursor: pointer; font: inherit; color: var(--text);
+  transition: border-color .12s, box-shadow .12s;
+}
+.jv-ct-card:hover { border-color: var(--border-2); }
+.jv-ct-card.on { border-color: var(--blue); box-shadow: 0 0 0 1px var(--blue); }
+.jv-ct-card:disabled { cursor: default; }
+.jv-ct-ic {
+  flex: none; width: 34px; height: 34px; border-radius: 9px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--surface-2); color: var(--text-2);
+}
+.jv-ct-card.on .jv-ct-ic { background: var(--blue); color: var(--surface); }
+.jv-ct-ic svg { width: 18px; height: 18px; }
+.jv-ct-tx { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.jv-ct-t { font-size: 14px; font-weight: 650; }
+.jv-ct-d { font-size: 12px; color: var(--text-3); line-height: 1.4; }
+@media (max-width: 560px) { .jv-ct-cards { grid-template-columns: 1fr; } }
+</style>
