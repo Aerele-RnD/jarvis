@@ -56,8 +56,13 @@
 					</template>
 				</section>
 
-				<!-- ===== AI models ===== -->
-				<section class="jv-acct-card">
+				<!-- Two-column below the plan card: the AI-models editor is the wide
+				     primary column; the short read-mostly cards sit in a right rail,
+				     so the page uses the full width instead of a narrow left column. -->
+				<div class="jv-acct-grid">
+
+				<!-- ===== AI models (primary config) ===== -->
+				<section class="jv-acct-card jv-acct-ai">
 					<div class="jv-acct-card-head">
 						<h2>{{ directSub.is_direct_subscription ? "Chat subscription" : "AI models" }}</h2>
 						<span v-if="savedNote" class="jv-acct-savednote">{{ savedNote }}</span>
@@ -98,6 +103,9 @@
 					<LlmPoolEditor v-else :editable="isSystemManager" @saved="onSaved" />
 				</section>
 
+				<!-- Right rail: read-mostly account summary cards. -->
+				<aside class="jv-acct-rail">
+
 				<!-- ===== Connection (proxy tenants only) =====
 					 This card reflects the container's cliproxy OAuth auth-profile.
 					 Direct tenants are already covered by DirectSubscriptionCard above,
@@ -123,6 +131,9 @@
 					<div v-else class="jv-acct-usage-line">{{ usage.tokens_in || 0 }} tokens in · {{ usage.tokens_out || 0 }} tokens out · ${{ costLabel }}</div>
 					<router-link :to="{ name: 'Monitor' }" class="jv-acct-link">View full usage →</router-link>
 				</section>
+
+				</aside>
+				</div>
 			</div>
 		</main>
 	</div>
@@ -286,11 +297,29 @@ onMounted(() => {
 	padding: 28px 32px 60px;
 }
 .jv-acct-wrap {
-	max-width: 1120px;
-	margin: 0;
+	max-width: 1400px;
+	margin: 0 auto;
 	display: flex;
 	flex-direction: column;
-	gap: 16px;
+	gap: 18px;
+}
+/* Plan card spans the full width; below it, a wide editor column + a right rail
+   of short summary cards so the page fills the width instead of leaving a big
+   empty gutter on the right. Collapses to one column on narrow viewports. */
+.jv-acct-grid {
+	display: grid;
+	grid-template-columns: minmax(0, 1.7fr) minmax(300px, 1fr);
+	gap: 18px;
+	align-items: start;
+}
+.jv-acct-rail {
+	display: flex;
+	flex-direction: column;
+	gap: 18px;
+	min-width: 0;
+}
+@media (max-width: 1000px) {
+	.jv-acct-grid { grid-template-columns: 1fr; }
 }
 .jv-acct-card {
 	border: 1px solid var(--border);
@@ -327,7 +356,7 @@ onMounted(() => {
 .jv-acct-upgrades-label { font-size: 11px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: .03em; margin-bottom: 8px; }
 .jv-acct-upgrade-grid { display: flex; flex-wrap: wrap; gap: 10px; }
 .jv-acct-upgrade-card {
-	flex: 1 1 160px;
+	flex: 0 1 240px;
 	border: 1px solid var(--border);
 	border-radius: 9px;
 	padding: 10px 12px;
