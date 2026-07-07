@@ -100,6 +100,9 @@
 								</button>
 							</template>
 							<div class="jv-msgbar">
+								<!-- sent-time: revealed with the bar on hover; its own hover
+								     (native title) gives the full day-date-month-year-time -->
+								<span v-if="msgTime(m)" class="jv-msgtime" :title="msgTimeFull(m)">{{ msgTime(m) }}</span>
 								<button class="jv-msgbtn" @click="copyMsg(m.name, m.content)" :title="copiedId === m.name ? 'Copied' : 'Copy'">
 									<svg v-if="copiedId === m.name" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
 									<svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
@@ -290,6 +293,7 @@
 									<span v-if="elapsedOf(m)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>{{ elapsedOf(m) }}s</span>
 								</div>
 								<div v-if="!m.error && m.content" class="jv-msgbar">
+									<span v-if="msgTime(m)" class="jv-msgtime" :title="msgTimeFull(m)">{{ msgTime(m) }}</span>
 									<button class="jv-msgbtn" @click="copyMsg(m.name, stripBlocks(m.content))" :title="copiedId === m.name ? 'Copied' : 'Copy'">
 										<svg v-if="copiedId === m.name" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
 										<svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
@@ -853,6 +857,8 @@ import * as voice from "@/api/voice"
 import { useAudioRecorder } from "@/composables/useAudioRecorder"
 import { setMacroPrefill } from "@/composables/macroPrefill"
 import { takeChatPrefill } from "@/composables/chatPrefill"
+// timezone-safe: naive server datetimes must go through dayjsLocal (site tz)
+import { formatDate, exactDate } from "@/utils/datetime"
 import { renderMarkdown } from "@/markdown"
 import JvChart from "@/charts/JvChart.vue"
 import { useShellStore } from "@/stores/shell"
@@ -2385,6 +2391,25 @@ function fallbackCopy(s) {
 		/* clipboard truly unavailable */
 	}
 }
+// Per-message sent-time (hover-revealed with the msgbar; full date on its own
+// hover). Server rows carry a site-tz `creation` (rendered via utils/datetime's
+// dayjsLocal path); optimistic tmp rows carry `creation_browser` (a local
+// epoch) until the server copy reconciles them.
+function msgTime(m) {
+	if (m.creation) return formatDate(m.creation, "h:mm A")
+	if (m.creation_browser)
+		return new Date(m.creation_browser).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+	return ""
+}
+function msgTimeFull(m) {
+	if (m.creation) return exactDate(m.creation)
+	if (m.creation_browser)
+		return new Date(m.creation_browser).toLocaleString([], {
+			weekday: "short", day: "numeric", month: "short", year: "numeric",
+			hour: "numeric", minute: "2-digit",
+		})
+	return ""
+}
 // Per-message Copy with a brief "copied" tick, and Edit (load a previous
 // command back into the composer to tweak and resend).
 const copiedId = ref("")
@@ -2978,7 +3003,9 @@ async function send(textArg) {
 	const marker = otherAtts.length ? "📎 " + otherAtts.map((a) => a.file_name).join(", ") : ""
 	const optimistic = [text, marker].filter(Boolean).join("\n\n")
 	const optCanvas = imgAtts.map((a, i) => ({ name: `tmpimg-${Date.now()}-${i}`, type: "image", file_url: a.file_url, title: a.file_name || "image" }))
-	messages.value = [...messages.value, { name: `tmp-${Date.now()}`, role: "user", content: optimistic, canvas: optCanvas.length ? optCanvas : undefined }]
+	// creation_browser: local send time so the hover timestamp shows before
+	// the server copy (with its site-tz creation) reconciles this tmp row
+	messages.value = [...messages.value, { name: `tmp-${Date.now()}`, role: "user", content: optimistic, creation_browser: Date.now(), canvas: optCanvas.length ? optCanvas : undefined }]
 	await nextTick()
 	scrollBottom()
 	try {
@@ -3844,8 +3871,9 @@ function onGlobalKey(e) {
 .jv-tool-io-k { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-3); margin: 9px 0 4px; }
 .jv-tool-io { margin: 0; padding: 9px 11px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; line-height: 1.5; color: var(--text); white-space: pre-wrap; word-break: break-word; overflow-x: auto; max-height: 320px; overflow-y: auto; }
 /* per-message Copy/Edit bar — revealed on hover */
-.jv-msgbar { display: flex; gap: 3px; margin-top: 5px; opacity: 0; transition: opacity .12s ease; }
+.jv-msgbar { display: flex; align-items: center; gap: 3px; margin-top: 5px; opacity: 0; transition: opacity .12s ease; }
 .jv-umsg:hover .jv-msgbar, .jv-amsg:hover .jv-msgbar { opacity: 1; }
+.jv-msgtime { font-size: 11.5px; color: var(--text-3); padding: 0 3px; cursor: default; user-select: none; }
 .jv-msgbtn { display: flex; align-items: center; justify-content: center; width: 26px; height: 26px; border: none; background: transparent; border-radius: 6px; cursor: pointer; color: var(--text-3); }
 .jv-msgbtn:hover { background: var(--surface-2); color: var(--text); }
 .jv-meta span { display: inline-flex; align-items: center; gap: 4px; }
