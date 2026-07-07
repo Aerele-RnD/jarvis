@@ -1913,8 +1913,10 @@ function _panelField(metaField, value) {
 	}
 }
 
-// Build the panel model from an action + form meta (+ live doc for updates).
-async function openDraftPanel(a) {
+// Build the draft model from an action + form meta (+ live doc for updates),
+// WITHOUT opening the panel - so the editable panel and later summary/preview
+// surfaces can share one construction path.
+async function buildDraftModel(a) {
 	if (!a || a.kind !== "doc" || !a.doctype) return
 	const verb = a.verb === "update" ? "update" : "create"
 	let meta
@@ -1969,15 +1971,22 @@ async function openDraftPanel(a) {
 			origJson: JSON.stringify(verb === "update" ? baseRows : null),
 		})
 	}
-	draftPanel.value = {
+	return {
 		verb, doctype: a.doctype, docName: verb === "update" ? (a.name || "") : "",
-		title: a.title || "", submittable: !!meta.is_submittable,
+		title: a.title || "", titleField: meta.title_field || "", submittable: !!meta.is_submittable,
 		// Multi-step plans: the card marks non-final steps "continue": 1; the
 		// bench then dispatches a follow-up agent turn after Apply so the agent
 		// stages the next step without the user typing "continue".
 		cont: a.continue ? 1 : 0,
-		fields, tables, applying: false, error: "", updatedToast: false,
+		fields, tables, tableMeta: meta.tables || {}, applying: false, error: "", updatedToast: false,
 	}
+}
+
+// Open the editable panel for an action, via the shared buildDraftModel.
+async function openDraftPanel(a) {
+	const model = await buildDraftModel(a)
+	if (!model) return
+	draftPanel.value = model
 }
 
 function _blankRow(columns) {
