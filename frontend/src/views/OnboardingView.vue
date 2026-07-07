@@ -754,8 +754,8 @@ onMounted(() => {
    light (consistent with the black/white primary), brighter blue on dark. */
 .jv-ob-bg { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
 .jv-ob-orb { position: absolute; width: min(760px, 66vw); aspect-ratio: 1; border-radius: 50%; filter: blur(14px); }
-.jv-ob-orb-tl { left: -180px; top: -170px; background: radial-gradient(circle, rgba(30, 58, 138, .17) 0%, transparent 60%); }
-.jv-ob-orb-br { right: -190px; bottom: -190px; background: radial-gradient(circle, rgba(49, 46, 129, .14) 0%, transparent 60%); }
+.jv-ob-orb-tl { left: -180px; top: -170px; background: radial-gradient(circle, rgba(30, 58, 138, .24) 0%, transparent 62%); }
+.jv-ob-orb-br { right: -190px; bottom: -190px; background: radial-gradient(circle, rgba(49, 46, 129, .20) 0%, transparent 62%); }
 .jv-dark .jv-ob-orb-tl { background: radial-gradient(circle, rgba(59, 130, 246, .22) 0%, transparent 60%); }
 .jv-dark .jv-ob-orb-br { background: radial-gradient(circle, rgba(99, 102, 241, .18) 0%, transparent 60%); }
 .jv-ob-header {
