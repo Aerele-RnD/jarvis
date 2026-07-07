@@ -576,8 +576,12 @@ async function finishConnect(m) {
     const byEmail = acct.account_email
       ? m.accounts.findIndex((a) => a.account_email && a.account_email.toLowerCase() === acct.account_email.toLowerCase())
       : -1
-    if (ri != null && ri >= 0 && ri < m.accounts.length) m.accounts.splice(ri, 1, acct)
-    else if (byEmail >= 0) m.accounts.splice(byEmail, 1, acct)
+    if (ri != null && ri >= 0 && ri < m.accounts.length) {
+      m.accounts.splice(ri, 1, acct)
+      // Reconnecting one slot but signing in as an account already held by a
+      // DIFFERENT slot would leave two identical accounts — drop the duplicate.
+      if (byEmail >= 0 && byEmail !== ri) m.accounts.splice(byEmail, 1)
+    } else if (byEmail >= 0) m.accounts.splice(byEmail, 1, acct)
     else m.accounts.push(acct)
     m._connect = blankConnect()
   } catch (e) { m._connect.loading = false; m._connect.error = _err(e) }
@@ -617,14 +621,15 @@ async function load() {
     if (selectedPreset.value) llmMode.value = "preset"
     else if (rows.value.length >= 2 || rows.value.some((r) => r.credentialType === "subscription")) llmMode.value = "custom"
     else { llmMode.value = "quick"; if (!rows.value.length) rows.value = [newRow()] }
-    // Onboarding is quick-only (singleMode): collapse to a single editable row so
-    // the editor is WYSIWYG. Quick-mode Save persists only rows[0], so keeping the
-    // rest of a seeded multi-model/preset pool around would silently drop it. Also
-    // clear any stored preset — quick can't represent one.
+    // Onboarding is quick-only (singleMode): the editor shows a single editable
+    // row (editorRows renders rows[0]) but we KEEP any seeded tail rows so a
+    // returning customer's existing failover pool round-trips through save()
+    // instead of being silently dropped. Only the preset (which quick can't
+    // represent) is cleared.
     if (singleMode.value) {
       llmMode.value = props.modes[0] || "quick"
       selectedPreset.value = ""
-      rows.value = rows.value.length ? [rows.value[0]] : [newRow()]
+      if (!rows.value.length) rows.value = [newRow()]
       // Onboarding default = Chat subscription (the common path). Only flip a
       // pristine row so a returning customer's saved API-key setup is preserved.
       const r0 = rows.value[0]
@@ -678,7 +683,9 @@ async function save() {
     savePreset = selectedPreset.value || null
   } else {
     // Quick saves a single-model pool (rows[0]); Custom saves the full pool.
-    saveModels = buildSaveModels(llmMode.value === "quick" ? rows.value.slice(0, 1) : rows.value)
+    // Exception: onboarding's singleMode keeps seeded tail rows (editorRows only
+    // renders the first) so a returning customer's existing pool isn't dropped.
+    saveModels = buildSaveModels(llmMode.value === "quick" && !singleMode.value ? rows.value.slice(0, 1) : rows.value)
     savePreset = null
   }
   // Simplified editor hides the model id, so validatePool's "Model <id> needs a

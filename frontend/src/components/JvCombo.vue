@@ -9,9 +9,10 @@
          role="button" tabindex="0" :aria-expanded="open"
          @click="onFieldClick" @keydown.down.prevent="openAnd(0)" @keydown.enter.prevent="onEnter" @keydown.esc="open = false">
       <input v-if="allowCustom" ref="inputEl" class="jvc-input" :value="modelValue"
-             :placeholder="placeholder" :disabled="!editable"
+             :id="id" :placeholder="placeholder" :disabled="!editable"
+             :autocomplete="autocomplete" :aria-required="ariaRequired ? 'true' : undefined"
              @input="onInput" @focus="open = true"
-             @keydown.down.prevent="move(1)" @keydown.up.prevent="move(-1)" @keydown.enter.prevent="onEnter" @keydown.esc="open = false" />
+             @keydown.down.prevent.stop="move(1)" @keydown.up.prevent.stop="move(-1)" @keydown.enter.prevent.stop="onEnter" @keydown.esc.stop="open = false" />
       <span v-else class="jvc-val" :class="{ 'jvc-ph': !displayLabel }">{{ displayLabel || placeholder }}</span>
       <svg class="jvc-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
     </div>
@@ -34,8 +35,16 @@ const props = defineProps({
   placeholder: { type: String, default: "" },
   editable: { type: Boolean, default: true },
   allowCustom: { type: Boolean, default: false },
+  // Passthroughs so a JvCombo can stand in for a labelled/native form field:
+  // `id` lets an external <label for> + aria-required target the input, and
+  // `autocomplete` preserves the browser's saved-value hints.
+  id: { type: String, default: undefined },
+  autocomplete: { type: String, default: undefined },
+  ariaRequired: { type: Boolean, default: false },
 })
-const emit = defineEmits(["update:modelValue"])
+// "enter" fires when the user presses Enter without picking a suggestion, so a
+// host can wire Enter-to-submit (the native <input> it replaces had that).
+const emit = defineEmits(["update:modelValue", "enter"])
 const root = ref(null)
 const inputEl = ref(null)
 const open = ref(false)
@@ -59,7 +68,9 @@ function onFieldClick() {
   if (props.allowCustom) { inputEl.value && inputEl.value.focus(); open.value = true }
   else open.value = !open.value
 }
-function onInput(e) { emit("update:modelValue", e.target.value); open.value = true }
+// Reset the highlight on every keystroke: the filtered list is recomputed from
+// the new text, so a stale `hi` would make Enter pick an unrelated option.
+function onInput(e) { emit("update:modelValue", e.target.value); open.value = true; hi.value = -1 }
 function choose(o) { emit("update:modelValue", o.value); open.value = false; hi.value = -1 }
 function move(d) {
   if (!open.value) { open.value = true; return }
@@ -67,8 +78,10 @@ function move(d) {
   if (n) hi.value = (hi.value + d + n) % n
 }
 function onEnter() {
-  if (open.value && hi.value >= 0 && filtered.value[hi.value]) choose(filtered.value[hi.value])
-  else open.value = false
+  if (open.value && hi.value >= 0 && filtered.value[hi.value]) { choose(filtered.value[hi.value]); return }
+  // No suggestion picked — keep whatever the user typed and let the host act on Enter.
+  open.value = false
+  emit("enter")
 }
 function openAnd(i) { if (props.editable) { open.value = true; hi.value = i } }
 

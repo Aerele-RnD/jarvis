@@ -77,7 +77,9 @@
 							   placeholder="you@company.com" autocomplete="email" required aria-required="true"
 							   @keydown.enter="onAccountSubmit">
 						<label class="jv-ob-label" for="jv-ob-company">Company</label>
-						<JvCombo :model-value="state.company" @update:model-value="(v) => state.company = v" allow-custom :options="state.companies" placeholder="Acme Inc." />
+						<JvCombo id="jv-ob-company" :model-value="state.company" @update:model-value="(v) => state.company = v"
+								 allow-custom aria-required autocomplete="organization" :options="state.companies"
+								 placeholder="Acme Inc." @enter="onAccountSubmit" />
 							<div class="jv-ob-err" role="alert" aria-live="polite">{{ state.accountErr }}</div>
 						<div class="jv-ob-placeholder-actions">
 							<button class="jv-ob-btn" :disabled="accountBusy" @click="goBack">← Back</button>
@@ -178,13 +180,16 @@
 					<div v-else-if="state.step === 'connect'">
 						<!-- Once onboarding succeeds we hard-reload to /jarvis/ (fresh readiness
 							 state). Show a clean full-step "setting up" screen through that
-							 transition so the reload reads as intentional, not a flicker. -->
-						<template v-if="state.finishing">
+							 transition so the reload reads as intentional, not a flicker.
+							 v-show (not v-if) so the editor stays MOUNTED while its own save()
+							 is still awaiting — a v-if here would tear it down mid-save and, on
+							 a not-ready poll, remount + refetch with a visible flash. -->
+						<div v-show="state.finishing">
 							<h1 class="jv-ob-h1">Setting up Jarvis</h1>
 							<p class="jv-ob-sub">Bringing your workspace online, taking you to chat…</p>
 							<div class="jv-ob-spinner" aria-hidden="true"></div>
-						</template>
-						<template v-else>
+						</div>
+						<div v-show="!state.finishing">
 							<h1 class="jv-ob-h1">Give Jarvis a brain</h1>
 							<p class="jv-ob-sub">Pick which model Jarvis should use. You can change this anytime from My Account.</p>
 							<LlmPoolEditor ref="poolRef" :editable="true" :modes="['quick']" :footerless="true" @saved="onConnected" @ready="connectReady = $event" />
@@ -198,7 +203,7 @@
 									{{ savingConnect ? "Onboarding…" : "Onboard Jarvis" }}
 								</button>
 							</div>
-						</template>
+						</div>
 					</div>
 
 					<!-- ===== Self-host — ported from desk renderSelfHost + renderShResults
