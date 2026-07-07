@@ -64,3 +64,28 @@ test("summarize(update): kind=update, diff rows", () => {
   assert.equal(out.kind, "update")
   assert.deepEqual(out.diff, [{ label: "Status", from: "Open", to: "Closed" }])
 })
+
+test("changedFields: empty when nothing changed (drives the No-field-changes branch)", () => {
+  const rows = changedFields({ verb: "update", fields: [{ label: "Customer", value: "Acme", orig: "Acme", changed: false }], tables: [] })
+  assert.deepEqual(rows, [])
+})
+
+test("lineItemSummary: total is null when no amount or currency column exists", () => {
+  const s = lineItemSummary({
+    fieldname: "tasks", label: "Tasks",
+    columns: [{ fieldname: "subject", label: "Subject", fieldtype: "Data" }, { fieldname: "qty", label: "Qty", fieldtype: "Float" }],
+    rows: [{ subject: "A", qty: 2 }],
+  })
+  assert.equal(s.total, null)
+  assert.equal(s.count, 1)
+})
+
+test("lineItemSummary: missing cell values render as empty string, not undefined", () => {
+  const s = lineItemSummary({
+    fieldname: "items", label: "Items",
+    columns: [{ fieldname: "item_code", label: "Item", fieldtype: "Link" }, { fieldname: "amount", label: "Amount", fieldtype: "Currency" }],
+    rows: [{ item_code: "Widget A" }],
+  })
+  assert.equal(s.rows[0].cells[0], "Widget A")
+  assert.equal(s.rows[0].cells[1], "")
+})

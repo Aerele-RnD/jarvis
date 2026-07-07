@@ -208,9 +208,10 @@
 														<span v-for="(c, ci) in row.cells" :key="ci">{{ c }}</span>
 													</div>
 												</div>
-												<div v-if="t.total != null" class="jv-summary-total">Total {{ t.total }}</div>
+												<div v-if="t.total != null" class="jv-summary-total">Total {{ t.total.toLocaleString("en-IN", { minimumFractionDigits: 2 }) }}</div>
 											</div>
 										</div>
+										<div v-else-if="summaryState.error" class="jv-summary-body jv-summary-loading">{{ summaryState.error }}</div>
 										<div v-else class="jv-summary-body jv-summary-loading">Preparing summary...</div>
 
 										<div v-if="summaryState.model && summaryState.model.error" class="jv-draft-error" style="margin:0 14px 10px">{{ summaryState.model.error }}</div>
@@ -2091,15 +2092,24 @@ const draftCta = computed(() => {
 	return p.verb === "update" ? `Update ${p.docName || p.doctype}` : `Create ${p.doctype}`
 })
 // Summary-first: the read-only model + view for the current create/update action.
-const summaryState = ref({ key: "", model: null, view: null })
+const summaryState = ref({ key: "", model: null, view: null, error: "" })
 async function ensureActionSummary(a) {
 	const key = JSON.stringify([a.verb || "create", a.doctype, a.name || "", a.fields || [], a.tables || []])
 	if (summaryState.value.key === key) return
-	summaryState.value = { key, model: null, view: null }
-	const model = await buildDraftModel({ verb: a.verb || "create", ...a })
-	if (!model) return
+	summaryState.value = { key, model: null, view: null, error: "" }
+	let model
+	try {
+		model = await buildDraftModel({ verb: a.verb || "create", ...a })
+	} catch (e) {
+		if (summaryState.value.key === key) summaryState.value = { key, model: null, view: null, error: "Could not load this draft. Tell me to try again." }
+		return
+	}
+	if (!model) {
+		if (summaryState.value.key === key) summaryState.value = { key, model: null, view: null, error: "Could not load this draft. Tell me to try again." }
+		return
+	}
 	if (summaryState.value.key !== key) return // a newer action superseded this build
-	summaryState.value = { key, model, view: summarize(model) }
+	summaryState.value = { key, model, view: summarize(model), error: "" }
 }
 function isEditVerb(a) {
 	return !!a && (!a.verb || a.verb === "create" || a.verb === "update")

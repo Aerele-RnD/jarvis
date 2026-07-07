@@ -21,6 +21,8 @@ export function changedFields(model) {
 }
 
 export function lineItemSummary(table) {
+  // Prefer a named amount column; else fall back to the first Currency column
+  // (which may be a unit rate - the total is display-only, not authoritative).
   const amountCol = table.columns.find((c) => AMOUNT_COLS.has(c.fieldname)) || table.columns.find((c) => c.fieldtype === "Currency")
   const total = amountCol
     ? table.rows.reduce((s, r) => s + (Number(r[amountCol.fieldname]) || 0), 0)
