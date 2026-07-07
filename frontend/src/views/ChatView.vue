@@ -375,8 +375,11 @@
 								<button v-if="nudge.mode === 'transcribing'" class="jv-iconbtn jv-micbtn" title="Transcribing…" disabled style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;border-radius:7px;color:var(--text-3);">
 									<svg class="jv-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2.4" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9" /></svg>
 								</button>
-								<button v-else class="jv-iconbtn jv-micbtn" :class="{ rec: nudge.mode === 'recording' }" :title="nudge.mode === 'recording' ? 'Stop and transcribe' : 'Record a voice note'" @click="nudge.mode === 'recording' ? stopNudgeMic() : startNudgeMic()" style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;border-radius:7px;cursor:pointer;color:var(--text-3);">
+								<!-- labeled, unlike the composer's dictate mic 40px below — two
+								     identical icon-only mics were indistinguishable at a glance -->
+								<button v-else class="jv-iconbtn jv-micbtn" :class="{ rec: nudge.mode === 'recording' }" :title="nudge.mode === 'recording' ? 'Stop and transcribe' : 'Record a voice note (saved for Jarvis to learn from)'" @click="nudge.mode === 'recording' ? stopNudgeMic() : startNudgeMic()" style="height:28px;display:flex;align-items:center;justify-content:center;gap:5px;background:transparent;border:none;border-radius:7px;cursor:pointer;color:var(--text-3);padding:0 8px;font-size:12.5px;font-weight:600;">
 									<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><path d="M12 19v3" /></svg>
+									<span v-if="nudge.mode !== 'recording'">Record answer</span>
 								</button>
 								<template v-if="nudge.mode === 'recording'">
 									<span class="jv-mic-live"><span class="jv-mic-dot"></span>{{ nudgeClock }}</span>
@@ -3382,6 +3385,9 @@ function dismissNudge() {
 	nudge.value = null
 	// Best-effort: the 7-day server-side snooze shouldn't block hiding the card.
 	if (n) voice.dismissWikiNudge(n.conversationId).catch(() => {})
+	// the dismissal mutes a week of nudges here — say so, once, or users
+	// won't know they opted out
+	notify("Okay — won't ask again in this chat for a week.")
 }
 
 // ---- file input ----
@@ -3873,6 +3879,11 @@ function onGlobalKey(e) {
 /* markdown content → the imported design's table look */
 .jv-md :deep(.jv-md-p) { margin: 0 0 10px; }
 .jv-md :deep(.jv-md-p:last-child) { margin-bottom: 0; }
+.jv-md :deep(.jv-md-h) { margin: 14px 0 6px; font-weight: 600; color: var(--text); }
+.jv-md :deep(h3.jv-md-h) { font-size: 15px; }
+.jv-md :deep(h4.jv-md-h) { font-size: 14px; }
+.jv-md :deep(h5.jv-md-h), .jv-md :deep(h6.jv-md-h) { font-size: 13px; }
+.jv-md :deep(.jv-md-h:first-child) { margin-top: 0; }
 .jv-md :deep(.jv-md-list) { margin: 0 0 10px; padding-left: 20px; }
 .jv-md :deep(.jv-md-list li) { margin: 2px 0; }
 .jv-md :deep(.jv-md-code) { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }

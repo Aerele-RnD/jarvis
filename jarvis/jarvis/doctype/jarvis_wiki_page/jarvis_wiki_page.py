@@ -10,6 +10,13 @@ this controller, so the slug/length invariants hold no matter who wrote.
 
 Slug grammar: alnum runs separated by single hyphens, with ``--`` reserved as
 the type separator (``customer--acme-corp``, ``doctype--sales-invoice``).
+
+Scopes (wiki v2): ``Org`` (default; every desk user), ``Role`` (holders of
+``target_role``), ``User`` (``target_user`` only). Non-Org slugs get an
+audience suffix derived at create time (``--u-<localpart>`` / ``--r-<role>``)
+so the same base slug can exist per user/role without colliding on the
+docname. Visibility is enforced in ``jarvis.chat.wiki_permissions``; this
+controller owns scope consistency and the SM-only scope-change guard.
 """
 
 import re
@@ -27,6 +34,8 @@ SLUG_RE = re.compile(r"^[a-z0-9]+(?:-{1,2}[a-z0-9]+)*$")
 MAX_SLUG_LEN = 140
 MAX_SUMMARY_LEN = 500
 MAX_BODY_LEN = 20000
+
+SCOPES = ("Org", "Role", "User")
 
 # Cached "org has >=1 Active wiki page" flag consumed by the per-turn
 # wiki_clause hot path; invalidated by every controller write below.
@@ -54,8 +63,17 @@ def _invalidate_has_pages_flag():
 
 
 class JarvisWikiPage(Document):
+	def before_insert(self):
+		# Must run BEFORE set_new_name (autoname field:slug freezes the
+		# docname right after before_insert), so the audience suffix lands
+		# in the name too. validate() runs too late for that.
+		self._normalize_scope()
+		self._apply_scope_slug_suffix()
+
 	def validate(self):
 		self._validate_slug()
+		self._validate_scope()
+		self._guard_scope_change()
 		self._sanitize_untrusted_text()
 		self._validate_lengths()
 
@@ -85,6 +103,86 @@ class JarvisWikiPage(Document):
 			for pattern, repl in _BODY_NEUTRALIZE:
 				body = pattern.sub(repl, body)
 			self.body_md = body
+
+	def _normalize_scope(self):
+		"""Fill scope defaults + drop off-scope target fields. NULL scope
+		(pre-v2 rows) reads as Org everywhere, so it normalizes to Org here."""
+		self.scope = (self.scope or "").strip() or "Org"
+		if self.scope == "User":
+			# The creator is the default audience of their own page.
+			self.target_user = self.target_user or self.owner or frappe.session.user
+			self.target_role = None
+		elif self.scope == "Role":
+			self.target_user = None
+		else:
+			self.target_role = None
+			self.target_user = None
+
+	def _validate_scope(self):
+		self._normalize_scope()
+		if self.scope not in SCOPES:
+			frappe.throw(_("Scope must be one of {0}.").format(", ".join(SCOPES)))
+		if self.scope == "Role" and not self.target_role:
+			frappe.throw(_("Role-scope pages need a Target Role."))
+		if self.scope == "User" and not self.target_user:
+			frappe.throw(_("User-scope pages need a Target User."))
+
+	def _scope_slug_suffix(self) -> str:
+		"""The audience suffix a non-Org slug must carry (empty for Org)."""
+		from jarvis.chat.entities import scrub
+
+		if self.scope == "User" and self.target_user:
+			local = scrub(str(self.target_user).split("@")[0])
+			return f"--u-{local}" if local else ""
+		if self.scope == "Role" and self.target_role:
+			role = scrub(self.target_role)
+			return f"--r-{role}" if role else ""
+		return ""
+
+	def _apply_scope_slug_suffix(self):
+		"""Create-time only: suffix non-Org slugs (``--u-<localpart>`` /
+		``--r-<role>``) so per-user/per-role pages never collide with the org
+		page (or each other) on the shared slug namespace. Skipped when the
+		caller already suffixed; base is trimmed to keep the total <= 140 and
+		grammar-valid (scrub emits alnum-and-single-hyphen runs only)."""
+		self.slug = (self.slug or "").strip().lower()
+		suffix = self._scope_slug_suffix()
+		if not self.slug or not suffix or self.slug.endswith(suffix):
+			return
+		base = self.slug[: MAX_SLUG_LEN - len(suffix)].rstrip("-")
+		self.slug = f"{base}{suffix}"
+
+	def _guard_scope_change(self):
+		"""Only a System Manager may re-scope or re-target an existing page —
+		anything else would let a page's audience be widened (or a personal
+		page hijacked) by whoever can reach a save path. Runs regardless of
+		ignore_permissions, because the SPA/tool writers save that way."""
+		if self.is_new():
+			return
+		prev = frappe.db.get_value(
+			self.doctype,
+			self.name,
+			["scope", "target_role", "target_user"],
+			as_dict=True,
+		)
+		if not prev:
+			return
+		# Pre-v2 rows carry NULL scope; loading one normalizes it to Org,
+		# which must not read as a change.
+		prev_scope = (prev.scope or "").strip() or "Org"
+		if (
+			self.scope == prev_scope
+			and (self.target_role or None) == (prev.target_role or None)
+			and (self.target_user or None) == (prev.target_user or None)
+		):
+			return
+		user = frappe.session.user
+		if user == "Administrator" or "System Manager" in frappe.get_roles(user):
+			return
+		frappe.throw(
+			_("Only a System Manager can change the scope or audience of an existing wiki page."),
+			frappe.PermissionError,
+		)
 
 	def _validate_slug(self):
 		self.slug = (self.slug or "").strip().lower()

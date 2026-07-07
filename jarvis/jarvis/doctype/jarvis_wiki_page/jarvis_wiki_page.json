@@ -10,6 +10,9 @@
     "slug",
     "title",
     "page_type",
+    "scope",
+    "target_role",
+    "target_user",
     "ref_doctype",
     "ref_name",
     "summary",
@@ -18,7 +21,8 @@
     "status",
     "sources",
     "last_confirmed_at",
-    "contradiction_flag"
+    "contradiction_flag",
+    "mirror_hash"
   ],
   "fields": [
     {
@@ -45,6 +49,34 @@
       "in_list_view": 1,
       "in_standard_filter": 1,
       "search_index": 1
+    },
+    {
+      "fieldname": "scope",
+      "fieldtype": "Select",
+      "label": "Scope",
+      "options": "Org\nRole\nUser",
+      "default": "Org",
+      "reqd": 1,
+      "in_standard_filter": 1,
+      "description": "Who can see this page. Org = every desk user; Role = holders of the target role; User = the target user only. System Managers see everything."
+    },
+    {
+      "fieldname": "target_role",
+      "fieldtype": "Link",
+      "options": "Role",
+      "label": "Target Role",
+      "depends_on": "eval:doc.scope=='Role'",
+      "mandatory_depends_on": "eval:doc.scope=='Role'",
+      "description": "Role whose holders can read this page (Role scope only)."
+    },
+    {
+      "fieldname": "target_user",
+      "fieldtype": "Link",
+      "options": "User",
+      "label": "Target User",
+      "depends_on": "eval:doc.scope=='User'",
+      "mandatory_depends_on": "eval:doc.scope=='User'",
+      "description": "The only user who can read this page (User scope only). Defaults to the creator."
     },
     {
       "fieldname": "ref_doctype",
@@ -105,14 +137,21 @@
       "fieldtype": "Check",
       "label": "Contradiction Flagged",
       "description": "Set when an extracted update contradicted the existing body; the conflicting info is appended as a flagged section, never silently overwritten."
+    },
+    {
+      "fieldname": "mirror_hash",
+      "fieldtype": "Data",
+      "label": "Mirror Hash",
+      "hidden": 1,
+      "read_only": 1,
+      "no_copy": 1,
+      "description": "sha256 of the last markdown render pushed to the container mirror (Org pages only); the mirror sync diffs against it."
     }
   ],
   "permissions": [
     {
       "role": "Desk User",
-      "read": 1,
-      "write": 1,
-      "create": 1
+      "read": 1
     },
     {
       "role": "System Manager",

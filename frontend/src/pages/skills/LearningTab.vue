@@ -84,7 +84,7 @@
 						/>
 						<Button
 							variant="subtle"
-							label="Run first analysis now"
+							:label="status.latestRun ? 'Run analysis now' : 'Run first analysis now'"
 							iconLeft="play"
 							:loading="runningNow"
 							@click="runNow"
@@ -175,7 +175,8 @@
 						v-if="reviewActivity.total"
 						class="text-sm text-ink-gray-5"
 					>
-						{{ reviewActivity.decided }} of {{ reviewActivity.total }} decided<template
+						{{ reviewActivity.decided }} of {{ reviewActivity.total }} surfaced
+						proposals decided<template
 							v-if="reviewActivity.last_by_name"
 						>
 							· last by {{ reviewActivity.last_by_name }}</template
@@ -260,7 +261,13 @@
 									:label="sensBadge(row).label"
 								/>
 								<Badge
-									v-if="isAcknowledged(row)"
+									v-if="appliedSkill(row)"
+									variant="subtle"
+									theme="green"
+									:label="`Applied to skill: ${appliedSkill(row)}`"
+								/>
+								<Badge
+									v-else-if="isAcknowledged(row)"
 									variant="subtle"
 									theme="gray"
 									label="Acknowledged"
@@ -326,8 +333,10 @@
 							<!-- B-class exact-text disclosure banner (plan §6.6): learned skill
 							     files are bench-global, so role scoping steers activation but is
 							     not a confidentiality boundary. -->
+							<!-- shown only while the row is still decidable: on terminal rows
+							     the warning is wallpaper and trains banner blindness -->
 							<div
-								v-if="row.effective_sensitivity === 'B'"
+								v-if="row.effective_sensitivity === 'B' && ['Proposed', 'Stale', 'Snoozed'].includes(row.status)"
 								class="mt-2.5 flex items-start gap-2 rounded-lg border border-outline-amber-2 bg-surface-amber-1 px-3 py-2 text-sm text-ink-amber-3"
 							>
 								<FeatherIcon name="alert-triangle" class="mt-0.5 size-4 shrink-0" />
@@ -358,8 +367,17 @@
 										{{ expanded[row.name].frozen_evidence_label }}
 									</div>
 
+									<!-- note-sourced insights have no table statistics; the zero
+									     grid reads as "no basis" when the basis is a voice note -->
+									<div
+										v-if="expanded[row.name].detector_id === 'voice-context'"
+										class="text-sm text-ink-gray-6"
+									>
+										From spoken or written business notes — table statistics don't
+										apply to this kind of insight.
+									</div>
 									<!-- raw stats -->
-									<div class="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm sm:grid-cols-3">
+									<div v-else class="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm sm:grid-cols-3">
 										<div>
 											<span class="text-ink-gray-5">Confidence</span>
 											<span class="ml-1.5 text-ink-gray-8">{{ pct(expanded[row.name].confidence_pct) }}</span>
@@ -411,7 +429,9 @@
 
 									<!-- compiled bullet preview -->
 									<div v-if="expanded[row.name].compiled_preview" class="mt-3">
-										<div class="mb-1 text-sm text-ink-gray-5">Compiled rule</div>
+										<div class="mb-1 text-sm text-ink-gray-5">{{
+											row.effective_sensitivity === "A" ? "Compiled rule" : "Suggested instruction"
+										}}</div>
 										<pre
 											class="overflow-x-auto whitespace-pre-wrap rounded border bg-surface-gray-1 px-3 py-2 text-sm text-ink-gray-8"
 										>{{ expanded[row.name].compiled_preview }}</pre>
@@ -504,7 +524,9 @@
 										/>
 									</template>
 									<!-- B/C: insight-only in Phase 1 (never compiled/pushed), so
-									     Acknowledge (records reviewed) replaces Approve. -->
+									     Acknowledge (records reviewed) replaces Approve. "Apply to
+									     skill…" (D5) folds the insight into an org custom skill via
+									     an LLM-drafted, SM-confirmed update instead. -->
 									<template v-else>
 										<Button
 											variant="subtle"
@@ -512,6 +534,12 @@
 											:loading="acting === row.name"
 											:disabled="!!acting"
 											@click="doAcknowledge(row)"
+										/>
+										<Button
+											variant="subtle"
+											label="Apply to skill…"
+											:disabled="!!acting"
+											@click="openInsightApply(row)"
 										/>
 										<Dropdown
 											v-if="row.status === 'Proposed'"
@@ -569,9 +597,13 @@
 
 					<div
 						v-if="boardStatus === 'Proposed' && queuedCount > 0"
-						class="text-sm text-ink-gray-5"
+						class="flex items-center gap-2 text-sm text-ink-gray-5"
 					>
-						{{ queuedCount }} more queued — not yet surfaced for review.
+						<span>
+							{{ queuedCount }} more queued — they surface after the next
+							analysis run.
+						</span>
+						<Button variant="ghost" label="Review them now" @click="setBoardStatus('All')" />
 					</div>
 				</section>
 			</div>
@@ -685,6 +717,16 @@
 				</div>
 			</template>
 		</Dialog>
+
+		<!-- Apply-insight-to-skill modal (D5): self-contained — drafts an LLM
+		     skill update for a B/C insight and applies it on confirm (the server
+		     marks the pattern acknowledged with an applied-to-skill note); the
+		     board only opens it and refreshes on completion. -->
+		<InsightApplyDialog
+			v-model="insightApplyDialog.show"
+			:pattern="insightApplyDialog.row || {}"
+			@applied="afterAction"
+		/>
 	</div>
 </template>
 
@@ -716,6 +758,7 @@ import {
 } from "frappe-ui"
 import LayoutHeader from "@/components/LayoutHeader.vue"
 import SyncPill from "./SyncPill.vue"
+import InsightApplyDialog from "@/components/learning/InsightApplyDialog.vue"
 import { timeAgo, exactDate } from "@/utils/datetime"
 import {
 	listLearnedPatternsPage,
@@ -826,6 +869,7 @@ const activeChatCount = ref(null)
 const rejectDialog = reactive({ show: false, name: "", reason: "" })
 const editDialog = reactive({ show: false, name: "", draft: "" })
 const applyDialog = reactive({ show: false })
+const insightApplyDialog = reactive({ show: false, row: null })
 
 // ── display helpers ──────────────────────────────────────────────────────────
 function domainLabel(s) {
@@ -872,6 +916,15 @@ function bRoles(row) {
 // payload (see the API note); falls back to plain Rejected until then.
 function isAcknowledged(row) {
 	return (row.review_note || "") === ACK_NOTE
+}
+// Mirror learned_api.APPLIED_NOTE_PREFIX: an insight folded into a custom
+// skill is terminal-Rejected + this note; render the target, not "Rejected".
+const APPLIED_NOTE_PREFIX = "Acknowledged - applied to skill: "
+function appliedSkill(row) {
+	const note = row.review_note || ""
+	return note.startsWith(APPLIED_NOTE_PREFIX)
+		? note.slice(APPLIED_NOTE_PREFIX.length)
+		: ""
 }
 function pct(v) {
 	const n = Number(v || 0)
@@ -927,6 +980,8 @@ const emptyTitle = computed(() =>
 )
 const emptyDescription = computed(() => {
 	if (boardStatus.value === "Proposed") {
+		if (queuedCount.value > 0)
+			return `Nothing surfaced yet — ${queuedCount.value} queued. They surface after the next analysis run, or use "Review them now" below.`
 		return status.enabled
 			? "Proposals appear the morning after an analysis run."
 			: "Enable behavioural learning above, then run an analysis to see proposals."
@@ -1142,6 +1197,14 @@ async function submitReject() {
 	} finally {
 		acting.value = ""
 	}
+}
+
+// insight → skill modal (D5): the dialog drafts, confirms and applies on its
+// own (incl. the "Acknowledge instead" shortcut); @applied → afterAction so
+// the board refetches and the parent badge updates.
+function openInsightApply(row) {
+	insightApplyDialog.row = row
+	insightApplyDialog.show = true
 }
 
 // edit-then-approve modal

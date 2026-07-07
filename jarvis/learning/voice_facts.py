@@ -81,6 +81,7 @@ _SETTINGS_DEFAULTS = {
 	"voice_features_enabled": 1,
 	"wiki_enabled": 1,
 	"wiki_nudge_cooldown_hours": 24,
+	"knowledge_language": "English",
 }
 
 
@@ -285,11 +286,17 @@ def _extract_batch(batch: dict) -> list | None:
 	"""ONE strict-JSON extraction call for a batch. None on call/parse failure
 	(NOT evidence of 'no facts' - the batch is retried next run)."""
 	try:
-		from jarvis.chat import voice
+		from jarvis.chat import knowledge_language, voice
 
+		# Org-wide knowledge-language preference (D6). This single boundary
+		# covers BOTH rule and context facts: context facts bypass the wiki
+		# ingest prompt (apply_extracted_page_updates writes the statements
+		# extracted here verbatim), so hooking only the wiki prompt would miss
+		# them.
+		system = _EXTRACTION_SYSTEM + "\n\n" + knowledge_language.language_directive()
 		raw = voice.openrouter_complete(
 			[
-				{"role": "system", "content": _EXTRACTION_SYSTEM},
+				{"role": "system", "content": system},
 				{"role": "user", "content": _batch_prompt(batch["notes"])},
 			]
 		)

@@ -36,6 +36,7 @@ from frappe.utils import add_days, now_datetime, today
 JLP = "Jarvis Learned Pattern"
 RUN = "Jarvis Pattern Run"
 SETTINGS = "Jarvis Settings"
+SKILL = "Jarvis Custom Skill"
 
 _DOMAINS = ("selling", "buying", "stock", "accounts", "projects", "org")
 _STRENGTHS = ("High", "Medium", "Low")
@@ -74,6 +75,12 @@ _SETTINGS_DEFAULTS = {
 # note. Keep the string stable - the frontend keys off it.
 ACK_NOTE = "Acknowledged - insight only"
 
+# Terminal disposition for a B/C insight the SM APPLIED into a custom skill
+# (design D5 "Apply to skill..."). Sibling of ACK_NOTE: stored as Rejected +
+# this prefix followed by the target skill's slug, with ``materialized_skill``
+# pointing at the skill row. Keep the prefix stable - the frontend keys off it.
+APPLIED_NOTE_PREFIX = "Acknowledged - applied to skill: "
+
 # Rendered on the board when an SM edited the draft before approving: the
 # evidence line is frozen (plan section 6.5) - it still reflects the ORIGINALLY
 # detected pattern, not the human edit, which was not re-measured.
@@ -91,6 +98,10 @@ _CARD_FIELDS = [
 	"exception_n", "not_applicable", "draft_edited", "overlap_warning",
 	"status", "surfaced", "reviewed_by", "approved_by", "creation",
 	"stale_reason", "last_validated_at", "flags_count", "materialized_skill",
+	# review_note distinguishes Acknowledged / "applied to skill" terminal
+	# states from a plain Reject - without it the board's disposition
+	# badges can never fire and every terminal row reads "Rejected".
+	"review_note",
 ]
 
 # Correction loop (plan 6.5): note cap, the distinct-user demotion quorum, and
@@ -711,6 +722,449 @@ def polish_learned_draft(name: str) -> dict:
 	)
 	frappe.db.commit()
 	return {"ok": True, "text": out["text"]}
+
+
+# --------------------------------------------------------------------------- #
+# insight -> skill (design D5): fold a B/C insight into an org custom skill
+# --------------------------------------------------------------------------- #
+# B/C insights never compile into the pushed learned skills (compiler is
+# A-only), so their only Phase-1 disposition was Acknowledge. D5 adds an SM
+# action that drafts the insight INTO an org-scope custom skill (update an
+# existing one or create a new one) via ONE strict-JSON openrouter_complete
+# call, then applies it after human confirmation.
+
+# Statuses an insight may be applied from (Snoozed rides along: applying is a
+# stronger decision than the snooze it interrupts).
+_INSIGHT_APPLY_SOURCES = ("Proposed", "Stale", "Snoozed")
+# Candidate update-targets offered to the model, and the per-candidate
+# instructions excerpt / evidence tail that ride the prompt.
+_INSIGHT_TARGET_CAP = 5
+_INSIGHT_CANDIDATE_INSTR_CHARS = 2000
+_INSIGHT_EVIDENCE_TAIL_CHARS = 1500
+
+_INSIGHT_SKILL_SYSTEM = (
+	"You review one learned business insight and decide whether it is worth "
+	"folding into the org's custom assistant skills. Output ONLY a JSON object "
+	"- no prose, no markdown fences - with exactly these keys: "
+	'"worth_applying" (boolean), "reason" (one short sentence explaining the '
+	'verdict), "action" ("update" to fold the insight into one of the offered '
+	'candidate skills, "create" to draft a new skill when the insight is '
+	'durable but fits no candidate, "none" when it is not worth applying), '
+	'"skill_name" (for "update": the chosen candidate\'s skill_name, verbatim; '
+	'otherwise ""), "updated_instructions" (for "update": the candidate\'s '
+	"FULL revised markdown instructions with the insight folded in - not a "
+	'diff; otherwise ""), "new_skill" (for "create": an object with '
+	'"skill_name" (a 3-40 character lowercase hyphen-separated slug), '
+	'"description" and "instructions"; otherwise null). Only pick "update" '
+	"targets from the offered candidates. Keep instructions concise and "
+	"actionable; never invent facts beyond the insight and the existing skill "
+	"text."
+)
+
+
+@frappe.whitelist()
+def draft_insight_skill_update(pattern_name: str) -> dict:
+	"""Draft "apply this insight to a skill" (D5). Gathers the B/C insight
+	(statement, draft bullet, evidence tail) + up to ``_INSIGHT_TARGET_CAP``
+	org-scope non-managed candidate skills (ranked by the lifecycle overlap
+	tokens, then recency) and makes ONE strict-JSON ``openrouter_complete``
+	call proposing update/create/none. Nothing is written here;
+	``apply_insight_skill_update`` is the confirm seam.
+
+	Guard/model failures return ``{ok: False, reason}`` (the dialog renders
+	them inline); only the SM/managed gate itself throws (sibling idiom). The
+	model's verdict is validated server-side - an "update" must name one of
+	the OFFERED candidates (managed/Personal rows are never offered) and stay
+	inside the doctype instruction cap."""
+	_guard()
+	doc = frappe.get_doc(JLP, pattern_name)
+	if (doc.effective_sensitivity or "") not in ("B", "C"):
+		return _draft_envelope(
+			ok=False,
+			reason=(
+				f"pattern {doc.name} is A-class; approve it to compile into the "
+				"learned skills instead of applying it to a custom skill"
+			),
+		)
+	if doc.status not in _INSIGHT_APPLY_SOURCES:
+		return _draft_envelope(
+			ok=False,
+			reason=(
+				f"pattern is {doc.status}; only "
+				f"{', '.join(_INSIGHT_APPLY_SOURCES)} insights can be applied"
+			),
+		)
+
+	candidates = _insight_skill_candidates(doc)
+	try:
+		from jarvis.chat import knowledge_language, voice
+
+		# Knowledge-language directive (D6): drafted skill text follows the
+		# org-wide English/Original preference like the other funnels.
+		system = _INSIGHT_SKILL_SYSTEM + "\n\n" + knowledge_language.language_directive()
+		raw = voice.openrouter_complete(
+			[
+				{"role": "system", "content": system},
+				{"role": "user", "content": _insight_draft_prompt(doc, candidates)},
+			],
+			max_tokens=4000,
+		)
+	except Exception as e:
+		frappe.log_error(
+			title="jarvis insight-to-skill: draft call failed",
+			message=frappe.get_traceback(),
+		)
+		return _draft_envelope(ok=False, reason=f"language model call failed: {e}")
+
+	parsed = _parse_json_object(raw)
+	if parsed is None:
+		frappe.log_error(
+			title="jarvis insight-to-skill: unparseable draft output",
+			message=(raw or "")[:2000] if isinstance(raw, str) else repr(raw)[:2000],
+		)
+		return _draft_envelope(
+			ok=False, reason="the model returned unparseable output; try again"
+		)
+	return _validated_draft(parsed, candidates)
+
+
+@frappe.whitelist()
+def apply_insight_skill_update(
+	pattern_name: str,
+	action: str,
+	skill_name: str | None = None,
+	updated_instructions: str | None = None,
+	new_skill=None,
+) -> dict:
+	"""Confirm seam for D5. Revalidates EVERYTHING server-side (the draft
+	payload sat with the client between the two calls): the SM/managed gate,
+	the B/C + source-status guards, and the target being an org-scope
+	non-managed row. Writes go through ``doc.save`` / the SPA create endpoint
+	so the doctype controller re-runs slug/cap/uniqueness validation. Then the
+	JLP is terminal-marked exactly like Acknowledge but with the applied note
+	+ the ``materialized_skill`` provenance pointer. The skill change rides
+	the normal Skills-tab apply bar afterwards - deliberately NOT auto-pushed."""
+	_guard()
+	doc = _load_for_transition(pattern_name, _INSIGHT_APPLY_SOURCES, "apply to a skill")
+	if (doc.effective_sensitivity or "") not in ("B", "C"):
+		frappe.throw(
+			_(
+				"Pattern {0} is A-class; approve it to apply, rather than folding "
+				"it into a custom skill."
+			).format(pattern_name)
+		)
+
+	action = (action or "").strip()
+	if action == "update":
+		row_name, slug = _apply_update_target(skill_name, updated_instructions)
+	elif action == "create":
+		row_name, slug = _apply_create_target(new_skill)
+	else:
+		frappe.throw(_("Nothing to apply: action must be 'update' or 'create'."))
+
+	# Terminal-mark exactly like Acknowledge (Rejected + stable note), plus
+	# provenance. Snoozed -> Rejected is not a legal transition; route through
+	# Proposed first (the un-snooze an SM would otherwise do by hand).
+	if doc.status == "Snoozed":
+		doc.status = "Proposed"
+		doc.snoozed_until = None
+		doc.save()
+	doc.status = "Rejected"
+	doc.review_note = APPLIED_NOTE_PREFIX + slug
+	doc.reviewed_by = frappe.session.user
+	doc.reviewed_at = now_datetime()
+	doc.materialized_skill = row_name
+	doc.save()
+	frappe.db.commit()
+	return {"ok": True, "skill_name": slug}
+
+
+def _draft_envelope(
+	ok: bool,
+	reason: str = "",
+	worth_applying: bool = False,
+	action: str = "none",
+	skill_name: str = "",
+	before_instructions: str = "",
+	updated_instructions: str = "",
+	new_skill: dict | None = None,
+) -> dict:
+	"""The frozen ``draft_insight_skill_update`` envelope - every key always
+	present so the dialog never branches on shape."""
+	return {
+		"ok": bool(ok),
+		"worth_applying": bool(worth_applying),
+		"reason": reason or "",
+		"action": action if action in ("update", "create", "none") else "none",
+		"skill_name": skill_name or "",
+		"before_instructions": before_instructions or "",
+		"updated_instructions": updated_instructions or "",
+		"new_skill": new_skill if isinstance(new_skill, dict) else None,
+	}
+
+
+def _insight_skill_candidates(doc) -> list[dict]:
+	"""Org-scope, enabled, non-managed custom-skill rows - the only legal
+	"update" targets (Personal and compiler-managed rows are never offered).
+	Ranked by shared lexical tokens with the insight (the lifecycle overlap
+	index's token rule), then recency; capped at ``_INSIGHT_TARGET_CAP``.
+
+	Candidates keep their FULL instructions (the prompt truncates its copy;
+	the confirm diff wants the real before-text). skill_name collisions across
+	owners keep only the best-ranked row so the model's ``skill_name`` answer
+	maps to exactly one row."""
+	rows = frappe.get_all(
+		SKILL,
+		filters={
+			"enabled": 1,
+			"managed_by_learning": 0,
+			"scope": ["in", ["Org", ""]],
+		},
+		fields=["name", "skill_name", "description", "instructions", "modified"],
+		order_by="modified desc",
+	)
+	try:
+		from jarvis.learning.lifecycle import _tokens as _overlap_tokens
+	except Exception:
+		_overlap_tokens = None
+	pat = (
+		_overlap_tokens(f"{doc.pattern_statement or ''} {doc.skill_draft or ''}")
+		if _overlap_tokens
+		else set()
+	)
+
+	scored = []
+	for r in rows:
+		score = 0
+		if pat:
+			toks = _overlap_tokens(
+				f"{(r.skill_name or '').replace('-', ' ')} {r.description or ''}"
+			)
+			score = len(pat & toks)
+		scored.append((score, r))
+	# Stable sort: rows arrive modified-desc, so ties keep recency order.
+	scored.sort(key=lambda t: -t[0])
+
+	out: list[dict] = []
+	seen: set[str] = set()
+	for _score, r in scored:
+		if r.skill_name in seen:
+			continue
+		seen.add(r.skill_name)
+		out.append(
+			{
+				"name": r.name,
+				"skill_name": r.skill_name,
+				"description": r.description or "",
+				"instructions": r.instructions or "",
+			}
+		)
+		if len(out) >= _INSIGHT_TARGET_CAP:
+			break
+	return out
+
+
+def _insight_draft_prompt(doc, candidates: list[dict]) -> str:
+	evidence = doc.evidence or ""
+	if not isinstance(evidence, str):
+		evidence = frappe.as_json(evidence)
+	tail = evidence[-_INSIGHT_EVIDENCE_TAIL_CHARS:]
+	cand_payload = [
+		{
+			"skill_name": c["skill_name"],
+			"description": c["description"],
+			"instructions": c["instructions"][:_INSIGHT_CANDIDATE_INSTR_CHARS],
+		}
+		for c in candidates
+	]
+	parts = [
+		"Insight (a learned business pattern a System Manager wants to keep):",
+		f"Statement: {doc.pattern_statement or ''}",
+		f"Draft instruction: {doc.skill_draft or ''}",
+	]
+	if tail:
+		parts.append(f"Evidence (tail): {tail}")
+	if cand_payload:
+		parts.append(
+			'Candidate skills (the ONLY valid "update" targets):\n'
+			+ json.dumps(cand_payload, default=str)
+		)
+	else:
+		parts.append('There are no candidate skills; choose "create" or "none".')
+	return "\n\n".join(parts)
+
+
+def _parse_json_object(raw) -> dict | None:
+	"""Tolerant strict-JSON object parse (the voice_facts._parse_json_array
+	pattern for a single object): strip a stray markdown fence, then fall back
+	to the outermost braces. None on anything unusable."""
+	if not raw or not isinstance(raw, str):
+		return None
+	text = raw.strip()
+	if text.startswith("```"):
+		text = text.strip("`").strip()
+		if "\n" in text:
+			first, rest = text.split("\n", 1)
+			if first.strip().lower() in ("json", ""):
+				text = rest
+	try:
+		parsed = json.loads(text)
+	except Exception:
+		lo, hi = text.find("{"), text.rfind("}")
+		if lo == -1 or hi <= lo:
+			return None
+		try:
+			parsed = json.loads(text[lo : hi + 1])
+		except Exception:
+			return None
+	return parsed if isinstance(parsed, dict) else None
+
+
+def _validated_draft(parsed: dict, candidates: list[dict]) -> dict:
+	"""Server-side validation of the model verdict - never trust the model to
+	pick a legal target or respect the doctype caps."""
+	from jarvis.jarvis.doctype.jarvis_custom_skill.jarvis_custom_skill import (
+		LEARNED_PREFIX,
+		MAX_DESC_LEN,
+		MAX_INSTR_LEN,
+		MAX_SLUG_LEN,
+		MIN_SLUG_LEN,
+		RESERVED_PREFIX,
+		SLUG_RE,
+	)
+
+	reason = " ".join(str(parsed.get("reason") or "").split())[:500]
+	action = parsed.get("action")
+	worth = bool(parsed.get("worth_applying"))
+	if not worth or action not in ("update", "create"):
+		return _draft_envelope(
+			ok=True,
+			reason=reason
+			or "The model did not find this insight worth applying to a skill.",
+		)
+
+	if action == "update":
+		slug = str(parsed.get("skill_name") or "").strip().lower()
+		cand = next((c for c in candidates if c["skill_name"] == slug), None)
+		if cand is None:
+			return _draft_envelope(
+				ok=False,
+				reason=(
+					f"the model picked '{slug or '?'}', which is not one of the "
+					"offered target skills; try again"
+				),
+			)
+		updated = str(parsed.get("updated_instructions") or "").strip()
+		if not updated:
+			return _draft_envelope(
+				ok=False, reason="the model returned no updated instructions; try again"
+			)
+		if len(updated) > MAX_INSTR_LEN:
+			return _draft_envelope(
+				ok=False,
+				reason=(
+					f"the drafted instructions exceed the {MAX_INSTR_LEN}-character "
+					"cap; try again"
+				),
+			)
+		return _draft_envelope(
+			ok=True,
+			worth_applying=True,
+			reason=reason,
+			action="update",
+			skill_name=cand["skill_name"],
+			before_instructions=cand["instructions"],
+			updated_instructions=updated,
+		)
+
+	ns = parsed.get("new_skill")
+	if not isinstance(ns, dict):
+		return _draft_envelope(
+			ok=False, reason="the model returned no new-skill draft; try again"
+		)
+	slug = str(ns.get("skill_name") or "").strip().lower()
+	desc = str(ns.get("description") or "").strip()
+	instr = str(ns.get("instructions") or "").strip()
+	problem = None
+	if not (slug and desc and instr):
+		problem = "the new-skill draft is incomplete"
+	elif not (MIN_SLUG_LEN <= len(slug) <= MAX_SLUG_LEN) or not SLUG_RE.fullmatch(slug):
+		problem = f"'{slug}' is not a valid skill slug"
+	elif slug.startswith((RESERVED_PREFIX, LEARNED_PREFIX)):
+		problem = f"'{slug}' uses a reserved skill prefix"
+	elif len(desc) > MAX_DESC_LEN or len(instr) > MAX_INSTR_LEN:
+		problem = "the new-skill draft exceeds the description/instructions caps"
+	if problem:
+		return _draft_envelope(ok=False, reason=f"{problem}; try again")
+	return _draft_envelope(
+		ok=True,
+		worth_applying=True,
+		reason=reason,
+		action="create",
+		skill_name=slug,
+		new_skill={"skill_name": slug, "description": desc, "instructions": instr},
+	)
+
+
+def _apply_update_target(skill_name, updated_instructions) -> tuple[str, str]:
+	"""Re-resolve + re-validate the update target from scratch (org-scope,
+	enabled, non-managed; Personal and learning-managed rows are refused
+	regardless of what the client sent), then save the new instructions
+	through the controller so the length caps re-run. The SM-gated save uses
+	ignore_permissions: custom-skill rows are if_owner and the target usually
+	belongs to another user."""
+	slug = (skill_name or "").strip().lower()
+	if not slug:
+		frappe.throw(_("A target skill name is required."))
+	updated = (updated_instructions or "").strip()
+	if not updated:
+		frappe.throw(_("Updated instructions are required."))
+	row = frappe.get_all(
+		SKILL,
+		filters={
+			"skill_name": slug,
+			"enabled": 1,
+			"managed_by_learning": 0,
+			"scope": ["in", ["Org", ""]],
+		},
+		fields=["name"],
+		order_by="modified desc",
+		limit=1,
+	)
+	if not row:
+		frappe.throw(
+			_(
+				"'{0}' is not an org custom skill this insight can be applied to "
+				"(personal, learning-managed, disabled or unknown skills are refused)."
+			).format(slug)
+		)
+	skill_doc = frappe.get_doc(SKILL, row[0].name)
+	skill_doc.instructions = updated
+	skill_doc.save(ignore_permissions=True)
+	return skill_doc.name, skill_doc.skill_name
+
+
+def _apply_create_target(new_skill) -> tuple[str, str]:
+	"""Create the skill through the SPA create endpoint (the controller runs
+	slug/cap/uniqueness validation; scope stays the doctype default Org and
+	``user_invocable`` the endpoint default 1). The row is owned by the acting
+	SM - the normal authored-skill ownership."""
+	ns = _parse_json(new_skill, None) if isinstance(new_skill, str) else new_skill
+	if not isinstance(ns, dict):
+		frappe.throw(
+			_(
+				"Provide the new skill as an object with skill_name, description "
+				"and instructions."
+			)
+		)
+	from jarvis.chat.custom_skills_api import create_custom_skill
+
+	out = create_custom_skill(
+		skill_name=str(ns.get("skill_name") or "").strip(),
+		description=str(ns.get("description") or "").strip(),
+		instructions=str(ns.get("instructions") or "").strip(),
+	)
+	return out["data"]["name"], out["data"]["skill_name"]
 
 
 # --------------------------------------------------------------------------- #
