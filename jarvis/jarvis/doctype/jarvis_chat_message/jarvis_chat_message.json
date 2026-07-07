@@ -23,7 +23,8 @@
     "tool_status",
     "ref_doctype",
     "ref_name",
-    "canvas"
+    "canvas",
+    "hidden"
   ],
   "fields": [
     {
@@ -144,6 +145,14 @@
       "fieldtype": "JSON",
       "label": "Canvas",
       "description": "Rich artifacts (chart/canvas) the agent rendered this turn: [{name,title,type,file_url}]."
+    },
+    {
+      "fieldname": "hidden",
+      "fieldtype": "Check",
+      "label": "Hidden",
+      "default": 0,
+      "read_only": 1,
+      "description": "Internal system message (e.g. the post-apply continuation prompt): part of the agent transcript but never rendered in the chat UI (get_conversation filters it out)."
     }
   ],
   "permissions": [

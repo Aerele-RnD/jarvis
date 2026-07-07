@@ -342,7 +342,7 @@
 						</div>
 						<div v-if="pa.error" class="jv-draft-error" style="margin:0 14px 10px">{{ pa.error }}</div>
 						<div class="jv-action-foot">
-							<button class="jv-action-primary" :disabled="pa.busy" @click="confirmPending(pa)">✓ Confirm</button>
+							<button class="jv-action-primary" :disabled="pa.busy || convStreaming" :title="convStreaming ? 'Waiting for the current reply to finish' : ''" @click="confirmPending(pa)">✓ Confirm</button>
 							<button class="jv-action-discard" :disabled="pa.busy" @click="discardPending(pa)">Discard</button>
 						</div>
 					</div>
@@ -1419,6 +1419,14 @@ const canSend = computed(
 	() => (input.value.trim().length > 0 || pendingFiles.value.length > 0) && !sending.value,
 )
 const busy = computed(() => sending.value || waiting.value)
+// A parked write's Confirm dispatches a follow-up agent turn (continuation).
+// The action:pending card is published MID-TURN (the gate parks inside the
+// model's tool callback while the parent reply is still streaming), so a click
+// then would run a second turn concurrent with the parent on the same
+// conversation. Gate Confirm on the streaming conversation, which stays set for
+// the whole run (unlike `waiting`, which clears at the first streamed token);
+// the button re-enables the instant the parent turn ends. #223 review.
+const convStreaming = computed(() => store.streamingConvId === currentId.value)
 
 const suggestions = [
 	{ title: "Analyse data", prompt: "Which sales orders are overdue this month?", bg: "var(--blue-bg)", icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#171717" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18 9l-5 5-3-3-4 4"/></svg>' },
@@ -1964,6 +1972,10 @@ async function openDraftPanel(a) {
 	draftPanel.value = {
 		verb, doctype: a.doctype, docName: verb === "update" ? (a.name || "") : "",
 		title: a.title || "", submittable: !!meta.is_submittable,
+		// Multi-step plans: the card marks non-final steps "continue": 1; the
+		// bench then dispatches a follow-up agent turn after Apply so the agent
+		// stages the next step without the user typing "continue".
+		cont: a.continue ? 1 : 0,
 		fields, tables, applying: false, error: "", updatedToast: false,
 	}
 }
@@ -2090,6 +2102,7 @@ async function applyDraft(submitFlag) {
 		await api.applyAction({
 			verb: p.verb, doctype: p.doctype, name: p.docName || "",
 			values, submit: submitFlag ? 1 : 0, conversation: currentId.value || "",
+			continue: p.cont ? 1 : 0,
 		})
 		closeDraftPanel()
 		await loadConversation(currentId.value)
@@ -2174,6 +2187,9 @@ function enqueuePending(card) {
 
 async function confirmPending(pa) {
 	if (!pa || pa.busy) return
+	// Defense in depth behind the disabled button: never dispatch a continuation
+	// turn while the parent turn is still streaming this conversation (#223).
+	if (convStreaming.value) return
 	// This confirm acts on THIS card's specific token. A realtime action:pending
 	// event or a resync can add/remove other cards while the request is in flight
 	// - only the same-token card's state is touched on resolve, so a slow older
