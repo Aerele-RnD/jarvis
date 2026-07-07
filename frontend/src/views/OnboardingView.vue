@@ -95,7 +95,7 @@
 					<!-- ===== Plan — ported from desk renderPlan (jarvis_onboarding.js ~481). ===== -->
 					<div v-else-if="state.step === 'plan'">
 						<h1 class="jv-ob-h1">Choose your plan</h1>
-						<p class="jv-ob-sub">Pay as you go, no auto-renewal. Extend anytime.</p>
+						<p class="jv-ob-sub">No auto-renewal, extend anytime.</p>
 						<div v-if="state.plansLoading" class="jv-ob-placeholder">Loading plans…</div>
 						<div v-else-if="state.plansErr" class="jv-ob-err">{{ state.plansErr }}</div>
 						<div v-else-if="!state.plans.length" class="jv-ob-placeholder">No plans are available right now. Please contact support.</div>
