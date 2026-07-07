@@ -52,10 +52,33 @@
 				<!-- ===== AI models ===== -->
 				<section class="jv-acct-card">
 					<div class="jv-acct-card-head">
-						<h2>AI models</h2>
+						<h2>{{ directSub.is_direct_subscription ? "Chat subscription" : "AI models" }}</h2>
 						<span v-if="savedNote" class="jv-acct-savednote">{{ savedNote }}</span>
 					</div>
-					<LlmPoolEditor :editable="isSystemManager" @saved="onSaved" />
+
+					<div v-if="directSubLoading" class="jv-acct-muted">Loading…</div>
+
+					<!-- Direct single chat-subscription: the pool editor can't see the
+						 flat-field creds, so render the DIRECT re-authorize card. The
+						 multi-model editor stays reachable behind an explicit toggle. -->
+					<template v-else-if="directSub.is_direct_subscription">
+						<DirectSubscriptionCard :status="directSub" :editable="isSystemManager"
+							@reauthorized="onDirectChanged" @disconnected="onDirectChanged" />
+						<div class="jv-acct-advanced" v-if="isSystemManager">
+							<button v-if="!showAdvanced" class="jv-acct-linkbtn" @click="showAdvanced = true">
+								Set up multi-model failover instead (advanced) →
+							</button>
+							<div v-else style="margin-top:14px;">
+								<p class="jv-acct-muted" style="margin:0 0 10px;">
+									A multi-model pool replaces your single direct subscription with a proxied failover pool — you’ll reconnect your account(s) below.
+								</p>
+								<LlmPoolEditor :editable="isSystemManager" @saved="onSaved" />
+							</div>
+						</div>
+					</template>
+
+					<!-- API-key / already-pooled tenants: the unified editor owns it. -->
+					<LlmPoolEditor v-else :editable="isSystemManager" @saved="onSaved" />
 				</section>
 
 				<!-- ===== Connection ===== -->
@@ -87,9 +110,10 @@
 <script setup>
 import { ref, computed, onMounted } from "vue"
 import { useTheme } from "@/composables/useTheme"
-import { getAccount, getLlmConnectionStatus, getLlmUsage } from "@/api"
+import { getAccount, getLlmConnectionStatus, getLlmUsage, getDirectSubscriptionStatus } from "@/api"
 import { statusLabel, planPriceLabel, renewalLabel } from "@/account/format.js"
 import LlmPoolEditor from "@/components/LlmPoolEditor.vue"
+import DirectSubscriptionCard from "@/components/DirectSubscriptionCard.vue"
 import AppSidebar from "@/components/AppSidebar.vue"
 import { errMessage as errMsg } from "@/lib/errors"
 
@@ -148,6 +172,32 @@ function onSaved(sync) {
 	savedTimer = setTimeout(() => { savedNote.value = "" }, 4000)
 }
 
+// ---- Direct chat-subscription (legacy flat-field OAuth path) ---------------
+// LlmPoolEditor reads only models[]; a customer who onboarded a single chat
+// subscription has an empty models[] with their creds in the flat llm_*/
+// llm_oauth_* fields, so the pool editor can neither show nor re-authorize
+// them. Probe get_direct_subscription_status: when is_direct_subscription is
+// true we render DirectSubscriptionCard (DIRECT re-authorize) instead of the
+// pool editor, keeping them off the proxy path. The multi-model editor stays
+// reachable behind an explicit "advanced" toggle.
+const directSub = ref({ is_direct_subscription: false })
+const directSubLoading = ref(true)
+const showAdvanced = ref(false)
+async function loadDirectSub() {
+	if (!isSystemManager) { directSubLoading.value = false; return }
+	directSubLoading.value = true
+	try { directSub.value = (await getDirectSubscriptionStatus()) || { is_direct_subscription: false } }
+	catch (e) { directSub.value = { is_direct_subscription: false } }
+	finally { directSubLoading.value = false }
+}
+// After a re-authorize / disconnect: refresh the direct status + the container
+// connection card, and flash the same "Saved" note the pool editor uses.
+async function onDirectChanged() {
+	onSaved({ pending: true })
+	await loadDirectSub()
+	await loadConnection()
+}
+
 // ---- Connection -------------------------------------------------------------
 const conn = ref({})
 const connLoading = ref(true)
@@ -181,6 +231,7 @@ async function loadUsage() {
 
 onMounted(() => {
 	loadAccount()
+	loadDirectSub()
 	loadConnection()
 	loadUsage()
 })
@@ -250,6 +301,8 @@ onMounted(() => {
 	text-decoration: none; padding: 5px 10px; border: 1px solid var(--blue-bd); border-radius: 6px; background: var(--blue-bg);
 }
 .jv-acct-link { display: inline-block; margin-top: 14px; font-size: 12.5px; color: var(--blue); text-decoration: none; }
+.jv-acct-advanced { margin-top: 8px; }
+.jv-acct-linkbtn { display: inline-block; margin-top: 14px; font-size: 12.5px; color: var(--blue); background: none; border: none; padding: 0; cursor: pointer; }
 .jv-acct-savednote { font-size: 12px; color: var(--green); font-weight: 500; }
 .jv-acct-kv { display: flex; justify-content: space-between; font-size: 13px; padding: 4px 0; gap: 12px; }
 .jv-acct-kv .jv-ok { color: var(--green); }

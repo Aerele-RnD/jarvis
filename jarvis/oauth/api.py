@@ -624,3 +624,68 @@ def disconnect() -> dict:
 	# the next begin call. Punch-list "disconnect() wipes entire OAuth
 	# signin cache hash" from the 2026-06-16 review.
 	return _ok({})
+
+
+# Auth modes that mean "a single chat subscription, served DIRECT via the
+# container's auth-profiles.json (codex / gemini-cli runtime)" - NOT the pooled
+# cliproxy path. "oauth" is the REV-1 canonical value; "subscription" is the
+# legacy value some migrated tenants still carry.
+_DIRECT_SUBSCRIPTION_MODES = {"oauth", "subscription"}
+
+
+def _is_direct_subscription(auth_mode: str, has_enabled_models: bool,
+                            proxy_active: bool) -> bool:
+	"""True when the tenant is on the legacy DIRECT chat-subscription path.
+
+	These tenants keep their LLM config in the flat ``llm_*`` / ``llm_oauth_*``
+	fields (the ``v1_seed_llm_models`` migration deliberately skips oauth /
+	subscription tenants) and are served by the container's
+	``auth-profiles.json``, NOT the pooled cliproxy sidecar. ``get_llm_config``
+	reads only the ``models[]`` child table, so the unified LlmPoolEditor can
+	neither see nor re-authorize them. This predicate lets the SPA fall back to
+	the DIRECT re-authorize (``begin_paste_signin`` / ``complete_paste_signin``)
+	instead of silently offering only the pool editor.
+
+	Pure (no DB access) so the branch logic is unit-testable without a site.
+	"""
+	return (
+		(auth_mode or "") in _DIRECT_SUBSCRIPTION_MODES
+		and not proxy_active
+		and not has_enabled_models
+	)
+
+
+@frappe.whitelist()
+def get_direct_subscription_status() -> dict:
+	"""Surface the flat-field DIRECT chat-subscription connection to the SPA.
+
+	The Account SPA's ``LlmPoolEditor`` is fed by ``onboarding.get_llm_config``,
+	which reads ONLY the ``models[]`` child table. Existing direct
+	chat-subscription (OAuth) tenants have an empty ``models[]`` and their
+	connection lives in the flat ``llm_*`` / ``llm_oauth_*`` fields - invisible
+	to that editor, so after the desk->SPA account migration they had no way to
+	re-authorize. This read-only endpoint lets ``AccountView`` detect such a
+	tenant and render a DIRECT re-authorize / disconnect card, WITHOUT migrating
+	them onto the proxy path (a lone subscription row in ``models[]`` would force
+	``compute_proxy_active`` true and re-architect them onto cliproxy with no
+	credential blob).
+
+	System-Manager only (matches the rest of the LLM-config surface). Never
+	returns token material - only display metadata.
+	"""
+	frappe.only_for("System Manager")
+	settings = frappe.get_single("Jarvis Settings")
+	enabled_models = [m for m in (settings.get("models") or []) if m.enabled]
+	auth_mode = (settings.get("llm_auth_mode") or "").strip()
+	proxy_active = bool(settings.get("proxy_active"))
+	connected_at = settings.get("llm_oauth_connected_at")
+	is_direct = _is_direct_subscription(auth_mode, bool(enabled_models), proxy_active)
+	return {
+		"is_direct_subscription": is_direct,
+		"connected": bool(connected_at),
+		"auth_mode": auth_mode,
+		"provider": settings.get("llm_provider") or "",
+		"model": settings.get("llm_model") or "",
+		"account_email": settings.get("llm_oauth_account_email") or "",
+		"connected_at": str(connected_at) if connected_at else "",
+	}
