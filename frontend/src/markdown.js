@@ -80,6 +80,17 @@ export function renderMarkdown(src) {
 			out.push(renderTable(tbl))
 			continue
 		}
+		// ATX headings (#–####): wiki page bodies lead with them, and a
+		// knowledge base that shows raw hashes reads as broken.
+		const heading = line.match(/^\s*(#{1,4})\s+(.*)/)
+		if (heading) {
+			flushPara()
+			flushList()
+			const level = Math.min(heading[1].length + 2, 6)
+			out.push(`<h${level} class="jv-md-h">${inline(heading[2])}</h${level}>`)
+			i++
+			continue
+		}
 		const ul = line.match(/^\s*[-*]\s+(.*)/)
 		const ol = line.match(/^\s*\d+\.\s+(.*)/)
 		if (ul || ol) {

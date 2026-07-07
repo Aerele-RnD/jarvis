@@ -1,6 +1,15 @@
 <template>
 	<div class="jv-ob-root" :class="{ 'jv-dark': dark }" :style="paletteVars">
 
+		<!-- Framing orbs: two quiet deep-blue orbs settle into the empty corners and
+			 frame the wizard without touching it. Decorative only (aria-hidden, no
+			 pointer events); deep navy in light for a calm, monochrome-consistent
+			 look, brighter on dark so they still read. -->
+		<div class="jv-ob-bg" aria-hidden="true">
+			<div class="jv-ob-orb jv-ob-orb-tl"></div>
+			<div class="jv-ob-orb jv-ob-orb-br"></div>
+		</div>
+
 		<!-- Branded header — a centered wizard reads better than a full-height
 			 empty sidebar; the logo mark keeps it unmistakably Jarvis. -->
 		<header class="jv-ob-header">
@@ -38,7 +47,7 @@
 								<ul class="jv-ob-mode-feats">
 									<li><span class="jv-ob-tick">✓</span>We host the openclaw agent for you</li>
 									<li><span class="jv-ob-tick">✓</span>Includes the Jarvis persona + Frappe skills</li>
-									<li><span class="jv-ob-tick">✓</span>Managed LLM proxy — pool your API keys &amp; chat subscriptions, with automatic failover</li>
+									<li><span class="jv-ob-tick">✓</span>Managed LLM proxy: pool your API keys &amp; chat subscriptions, with automatic failover</li>
 									<li><span class="jv-ob-tick">✓</span>Simple plan &amp; billing</li>
 								</ul>
 								<button class="jv-ob-btn jv-ob-btn-primary jv-ob-mode-btn" @click="setMode('managed')">Choose →</button>
@@ -68,12 +77,9 @@
 							   placeholder="you@company.com" autocomplete="email" required aria-required="true"
 							   @keydown.enter="onAccountSubmit">
 						<label class="jv-ob-label" for="jv-ob-company">Company</label>
-						<input id="jv-ob-company" class="jv-ob-input" type="text" v-model="state.company"
-							   placeholder="Acme Inc." autocomplete="organization" list="jv-ob-company-list" required aria-required="true"
-							   @keydown.enter="onAccountSubmit">
-						<datalist id="jv-ob-company-list">
-								<option v-for="c in state.companies" :key="c" :value="c" />
-							</datalist>
+						<JvCombo id="jv-ob-company" :model-value="state.company" @update:model-value="(v) => state.company = v"
+								 allow-custom aria-required autocomplete="organization" :options="state.companies"
+								 placeholder="Acme Inc." @enter="onAccountSubmit" />
 							<div class="jv-ob-err" role="alert" aria-live="polite">{{ state.accountErr }}</div>
 						<div class="jv-ob-placeholder-actions">
 							<button class="jv-ob-btn" :disabled="accountBusy" @click="goBack">← Back</button>
@@ -86,7 +92,7 @@
 					<!-- ===== Plan — ported from desk renderPlan (jarvis_onboarding.js ~481). ===== -->
 					<div v-else-if="state.step === 'plan'">
 						<h1 class="jv-ob-h1">Choose your plan</h1>
-						<p class="jv-ob-sub">Pay as you go — no auto-renewal. Extend anytime.</p>
+						<p class="jv-ob-sub">No auto-renewal, extend anytime.</p>
 						<div v-if="state.plansLoading" class="jv-ob-placeholder">Loading plans…</div>
 						<div v-else-if="state.plansErr" class="jv-ob-err">{{ state.plansErr }}</div>
 						<div v-else-if="!state.plans.length" class="jv-ob-placeholder">No plans are available right now. Please contact support.</div>
@@ -117,7 +123,7 @@
 					<div v-else-if="state.step === 'pay'">
 						<template v-if="state.provisioning || state.provisionErr">
 								<h1 class="jv-ob-h1">Setting up your workspace</h1>
-								<p v-if="state.provisioning" class="jv-ob-sub">Payment received — we're provisioning your Jarvis workspace. This usually takes under a minute…</p>
+								<p v-if="state.provisioning" class="jv-ob-sub">Payment received. We're provisioning your Jarvis workspace. This usually takes under a minute…</p>
 								<p v-if="state.provisionErr" class="jv-ob-err" role="alert">{{ state.provisionErr }}</p>
 								<div v-if="state.provisionErr" class="jv-ob-placeholder-actions">
 									<button class="jv-ob-btn jv-ob-btn-primary" @click="proceedAfterPay">Retry</button>
@@ -136,6 +142,13 @@
 								</button>
 							</div>
 						</template>
+						<template v-else-if="state.successData">
+							<h1 class="jv-ob-h1">Payment complete</h1>
+							<p class="jv-ob-sub">You're all set. Continue to connect your AI.</p>
+							<div class="jv-ob-placeholder-actions">
+								<button class="jv-ob-btn jv-ob-btn-primary" @click="goNext">Continue →</button>
+							</div>
+						</template>
 						<template v-else>
 							<h1 class="jv-ob-h1">Review &amp; {{ state.devActive ? "connect" : "pay" }}</h1>
 							<div class="jv-ob-summary">
@@ -144,7 +157,7 @@
 								<div class="jv-ob-row"><span>Plan</span><b>{{ selectedPlan.plan_name || "" }}</b></div>
 								<div class="jv-ob-row jv-ob-row-total"><span>Due now</span><b>{{ planPriceLabel(selectedPlan.price_inr, selectedPlan.billing_cycle) }}</b></div>
 							</div>
-							<div v-if="state.devActive" class="jv-ob-devnote">Developer mode — payment is skipped (dev signup).</div>
+							<div v-if="state.devActive" class="jv-ob-devnote">Developer mode: payment is skipped (dev signup).</div>
 							<div class="jv-ob-err">{{ state.payErr }}</div>
 							<div class="jv-ob-placeholder-actions">
 								<button class="jv-ob-btn" :disabled="state.payBusy" @click="goBack">← Back</button>
@@ -156,20 +169,40 @@
 					</div>
 
 					<!-- ===== Connect AI (managed) — embeds the shared LlmPoolEditor component
-						 (same one AiView/AccountView use). Replaces desk renderLlm's entire
-						 Quick/Preset/Custom implementation (jarvis_onboarding.js ~559-1080)
-						 verbatim — the component already owns that UI + save_llm_pool call.
-						 Desk's renderLlm has no "Back" button (only Skip/Save); mirrored here
-						 by omitting one too, since stepping back to "pay" post-payment would
-						 read as re-triggering checkout. ===== -->
+						 (same one AccountView uses), restricted to :modes="['quick']" so
+						 onboarding shows only a single direct model. The Preset/Custom
+						 proxy-pool tabs + Direct/Proxy badge are intentionally hidden here to
+						 keep signup fast and decision-free; advanced pooling/failover stays
+						 available on the Account page. The component owns save_llm_pool.
+						 A "Back" button here returns to Pay; that step guards against a
+						 second charge by showing a "Payment complete → Continue" state once
+						 payment has gone through (state.successData). ===== -->
 					<div v-else-if="state.step === 'connect'">
-						<h1 class="jv-ob-h1">Connect your AI</h1>
-						<p class="jv-ob-sub">Pick which model Jarvis should use. You can change this anytime from My Account.</p>
-						<LlmPoolEditor :editable="true" @saved="onConnected" />
-						<div v-if="state.finishing" class="jv-ob-note">Finishing setup…</div>
-						<div v-else-if="state.finishNote" class="jv-ob-note">
-							<span>{{ state.finishNote }}</span>
-							<button class="jv-ob-btn jv-ob-btn-primary" @click="forceContinue">Continue to Jarvis →</button>
+						<!-- Once onboarding succeeds we hard-reload to /jarvis/ (fresh readiness
+							 state). Show a clean full-step "setting up" screen through that
+							 transition so the reload reads as intentional, not a flicker.
+							 v-show (not v-if) so the editor stays MOUNTED while its own save()
+							 is still awaiting — a v-if here would tear it down mid-save and, on
+							 a not-ready poll, remount + refetch with a visible flash. -->
+						<div v-show="state.finishing">
+							<h1 class="jv-ob-h1">Setting up Jarvis</h1>
+							<p class="jv-ob-sub">Bringing your workspace online, taking you to chat…</p>
+							<div class="jv-ob-spinner" aria-hidden="true"></div>
+						</div>
+						<div v-show="!state.finishing">
+							<h1 class="jv-ob-h1">Give Jarvis a brain</h1>
+							<p class="jv-ob-sub">Pick which model Jarvis should use. You can change this anytime from My Account.</p>
+							<LlmPoolEditor ref="poolRef" :editable="true" :modes="['quick']" :footerless="true" @saved="onConnected" @ready="connectReady = $event" />
+							<div v-if="state.finishNote" class="jv-ob-note">
+								<span>{{ state.finishNote }}</span>
+								<button class="jv-ob-btn jv-ob-btn-primary" @click="forceContinue">Continue to Jarvis →</button>
+							</div>
+							<div class="jv-ob-placeholder-actions" style="margin-top:18px;">
+								<button class="jv-ob-btn" @click="goBack">← Back</button>
+								<button v-if="connectReady || savingConnect" class="jv-ob-btn jv-ob-btn-primary" :class="{ 'jv-ob-cta-ready': connectReady && !savingConnect }" :disabled="savingConnect" @click="saveConnect">
+									{{ savingConnect ? "Onboarding…" : "Onboard Jarvis" }}
+								</button>
+							</div>
 						</div>
 					</div>
 
@@ -180,7 +213,7 @@
 					<div v-else-if="state.step === 'selfhost'">
 						<h1 class="jv-ob-h1">Connect your openclaw</h1>
 						<p class="jv-ob-sub">Point Jarvis at <b>your own</b> openclaw server. Jarvis connects over HTTP
-							with a bearer token — no Aerele persona/skills. Validate first, then connect.</p>
+							with a bearer token. No Aerele persona/skills. Validate first, then connect.</p>
 						<label class="jv-ob-label" for="jv-ob-sh-url">openclaw URL</label>
 						<input id="jv-ob-sh-url" class="jv-ob-input" type="text" v-model="state.shUrl"
 							   placeholder="http://host.docker.internal:19060">
@@ -188,7 +221,7 @@
 						<input id="jv-ob-sh-token" class="jv-ob-input" type="password" v-model="state.shToken"
 							   placeholder="paste your openclaw gateway token" autocomplete="off">
 						<label class="jv-ob-check"><input type="checkbox" v-model="state.shStream"> Stream responses token-by-token (recommended)</label>
-						<label class="jv-ob-check"><input type="checkbox" v-model="state.shDeep"> Run deep chat test (slower — sends one message)</label>
+						<label class="jv-ob-check"><input type="checkbox" v-model="state.shDeep"> Run deep chat test (slower, sends one message)</label>
 						<div class="jv-ob-placeholder-actions" style="margin-top:14px;justify-content:flex-start">
 							<button class="jv-ob-btn" :disabled="state.shTestBusy" @click="runSelfHostTest">
 								{{ state.shTestBusy ? "Testing…" : "Test connection" }}
@@ -197,10 +230,10 @@
 						<div v-if="state.shTestBusy" class="jv-ob-note">Testing…</div>
 						<div v-else-if="state.shTestResult" class="jv-ob-sh-results">
 							<div :class="state.shTestResult.ok ? 'jv-ob-sh-ok' : 'jv-ob-sh-bad'">
-								{{ state.shTestResult.ok ? "All required checks passed." : "Some checks failed — fix them and retry." }}
+								{{ state.shTestResult.ok ? "All required checks passed." : "Some checks failed. Fix them and retry." }}
 							</div>
 							<div v-for="(c, i) in (state.shTestResult.checks || [])" :key="i" class="jv-ob-sh-check" :class="{ 'jv-ob-sh-check-adv': c.advisory }">
-								{{ c.ok ? "✅" : (c.advisory ? "⚠️" : "❌") }} <b>{{ c.check }}</b> — {{ c.detail || "" }}<span v-if="c.advisory" class="jv-ob-sh-adv-tag"> · advisory</span>
+								{{ c.ok ? "✅" : (c.advisory ? "⚠️" : "❌") }} <b>{{ c.check }}</b> · {{ c.detail || "" }}<span v-if="c.advisory" class="jv-ob-sh-adv-tag"> · advisory</span>
 							</div>
 						</div>
 						<div v-if="state.shWarning" class="jv-ob-devnote">{{ state.shWarning }}</div>
@@ -229,6 +262,7 @@ import { reactive, ref, computed, onMounted, watch } from "vue"
 import { call } from "frappe-ui"
 import { useTheme } from "@/composables/useTheme"
 import LlmPoolEditor from "@/components/LlmPoolEditor.vue"
+import JvCombo from "@/components/JvCombo.vue"
 import { STEPS_MANAGED, STEPS_SELFHOST, nextStep, prevStep, stepIndex } from "@/onboarding/steps"
 import {
 	checkSignupPaymentState, isReadyForChat,
@@ -243,7 +277,7 @@ const { effectiveDark: dark, paletteVars } = useTheme()
 
 // Mirrors jarvis_onboarding.js's STEP_NAMES (~line 212) — the 4 named steps
 // shown in managed mode. "mode" and "selfhost" have no header entry.
-const STEP_NAMES = ["Account", "Plan", "Pay", "Connect AI"]
+const STEP_NAMES = ["Account", "Plan", "Pay", "Brain"]
 
 // ---- step machine -----------------------------------------------------------
 // `state.step` is one of STEPS_MANAGED/STEPS_SELFHOST depending on `state.mode`.
@@ -494,7 +528,7 @@ async function proceedAfterPay() {
 		await _sleep(2000)
 	}
 	state.provisioning = false
-	state.provisionErr = "Your workspace is still being set up — this can take a minute. Retry when you're ready."
+	state.provisionErr = "Your workspace is still being set up. This can take a minute. Retry when you're ready."
 }
 
 async function runStartPay() {
@@ -631,7 +665,7 @@ async function afterSaveRecheckReady() {
 		window.location.assign("/jarvis/")
 		return
 	}
-	state.finishNote = "Still finishing setup — this can take a few seconds. You can continue to Jarvis now, or wait and try again."
+	state.finishNote = "Still finishing setup. This can take a few seconds. You can continue to Jarvis now, or wait and try again."
 }
 
 // ---- Connect AI (renders <LlmPoolEditor>, jarvis_onboarding.js ~559-1080
@@ -639,6 +673,20 @@ async function afterSaveRecheckReady() {
 // this is only the post-save readiness handoff. ---------------------------
 function onConnected(sync) {
 	afterSaveRecheckReady()
+}
+
+// The Connect-AI footer (Back + Save) lives here, not inside LlmPoolEditor
+// (:footerless), so it matches every other step's footer. Save is triggered on
+// the editor via its exposed save() method.
+const poolRef = ref(null)
+const savingConnect = ref(false)
+// True once the embedded editor reports a savable config (account connected, or
+// API key filled) — drives the "Onboard Jarvis" attention pulse.
+const connectReady = ref(false)
+async function saveConnect() {
+	if (!poolRef.value) return
+	savingConnect.value = true
+	try { await poolRef.value.save() } finally { savingConnect.value = false }
 }
 
 // ---- Self-host (renderSelfHost / renderShResults / runSelfHostTest /
@@ -690,7 +738,7 @@ async function onSelfHostSave() {
 			await afterSaveRecheckReady()
 		} else {
 			state.shTestResult = m.result || {}
-			state.shErr = "Validation failed — fix the checks above, then retry."
+			state.shErr = "Validation failed. Fix the checks above, then retry."
 		}
 	} catch (e) {
 		state.shSaveBusy = false
@@ -737,13 +785,23 @@ onMounted(() => {
 	color: var(--text);
 	display: flex;
 	flex-direction: column;
+	position: relative;
 }
+/* Framing orbs — fixed behind everything, decorative only. Deep navy/indigo in
+   light (consistent with the black/white primary), brighter blue on dark. */
+.jv-ob-bg { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+.jv-ob-orb { position: absolute; width: min(760px, 66vw); aspect-ratio: 1; border-radius: 50%; filter: blur(14px); }
+.jv-ob-orb-tl { left: -180px; top: -170px; background: radial-gradient(circle, rgba(30, 58, 138, .24) 0%, transparent 62%); }
+.jv-ob-orb-br { right: -190px; bottom: -190px; background: radial-gradient(circle, rgba(49, 46, 129, .20) 0%, transparent 62%); }
+.jv-dark .jv-ob-orb-tl { background: radial-gradient(circle, rgba(59, 130, 246, .22) 0%, transparent 60%); }
+.jv-dark .jv-ob-orb-br { background: radial-gradient(circle, rgba(99, 102, 241, .18) 0%, transparent 60%); }
 .jv-ob-header {
+	position: relative;
+	z-index: 1;
 	display: flex;
 	align-items: center;
 	gap: 10px;
-	padding: 16px 24px;
-	border-bottom: 1px solid var(--border);
+	padding: 18px 26px;
 	flex: none;
 }
 .jv-ob-logo {
@@ -755,6 +813,8 @@ onMounted(() => {
 .jv-ob-brand { font-size: 14px; font-weight: 600; letter-spacing: -.01em; }
 .jv-ob-setup { font-size: 12.5px; color: var(--text-3); border-left: 1px solid var(--border); padding-left: 10px; }
 .jv-ob-main {
+	position: relative;
+	z-index: 1;
 	flex: 1;
 	min-width: 0;
 	overflow-y: auto;
@@ -771,11 +831,11 @@ onMounted(() => {
 	padding: 40px 24px 64px;
 }
 .jv-ob-wrap {
-	max-width: 920px;
+	max-width: 1000px;
 	width: 100%;
 }
-.jv-ob-h1 { font-size: 28px; font-weight: 650; margin: 0 0 10px; text-align: center; }
-.jv-ob-sub { font-size: 15.5px; color: var(--text-3); margin: 0 0 30px; text-align: center; }
+.jv-ob-h1 { font-size: 32px; font-weight: 650; letter-spacing: -.02em; margin: 0 0 12px; text-align: center; }
+.jv-ob-sub { font-size: 16.5px; color: var(--text-3); margin: 0 0 34px; text-align: center; }
 
 .jv-ob-steps {
 	display: flex;
@@ -817,12 +877,17 @@ onMounted(() => {
 
 .jv-ob-body {
 	border: 1px solid var(--border);
-	border-radius: 14px;
-	padding: 48px 44px;
+	border-radius: 18px;
+	padding: 52px 56px;
 	background: var(--surface);
+	box-shadow: 0 20px 50px -24px rgba(15, 23, 42, .28), 0 4px 12px -6px rgba(15, 23, 42, .10);
 }
+.jv-dark .jv-ob-body { border-color: var(--border-2); box-shadow: 0 24px 60px -24px rgba(0, 0, 0, .6); }
 .jv-ob-placeholder { font-size: 13.5px; color: var(--text-3); margin: 0 0 20px; }
-.jv-ob-placeholder-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+/* Uniform step footer: primary action bottom-right (forward = right in an LTR
+   wizard), Back pushed to the left. Single-button footers right-align too. */
+.jv-ob-placeholder-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; align-items: center; }
+.jv-ob-placeholder-actions .jv-ob-btn:not(.jv-ob-btn-primary) { margin-right: auto; }
 .jv-ob-btn {
 	font-family: inherit;
 	font-size: 13px;
@@ -836,6 +901,19 @@ onMounted(() => {
 }
 .jv-ob-btn:hover { background: var(--surface-2); }
 .jv-ob-btn-primary { border-color: var(--blue-bd); background: var(--blue-bg); color: var(--blue); }
+/* Attention pulse on the final CTA once the config is ready — a soft expanding
+   ring that invites the click. Pauses on hover; off for reduced-motion. */
+@keyframes jvObCtaPulse {
+	0% { box-shadow: 0 0 0 0 rgba(37, 99, 235, .38); }
+	70%, 100% { box-shadow: 0 0 0 7px rgba(37, 99, 235, 0); }
+}
+.jv-ob-cta-ready { border-color: var(--blue); animation: jvObCtaPulse 1.5s ease-out infinite; }
+.jv-ob-cta-ready:hover { animation-play-state: paused; }
+@media (prefers-reduced-motion: reduce) { .jv-ob-cta-ready { animation: none; } }
+/* "Setting up Jarvis" transition spinner (connect step, during the hard reload). */
+.jv-ob-spinner { width: 34px; height: 34px; margin: 10px auto 0; border-radius: 50%; border: 3px solid var(--border-2); border-top-color: var(--blue); animation: jvObSpin .8s linear infinite; }
+@keyframes jvObSpin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .jv-ob-spinner { animation: none; } }
 
 /* ---- mode-choice cards — ported from desk .jo-mode* (jarvis_onboarding.js
    ~1889-1898), theme tokens standing in for the desk's --jarvis-primary /
@@ -855,9 +933,22 @@ onMounted(() => {
 .jv-ob-mode-name { font-size: 18px; font-weight: 700; color: var(--text); margin: 10px 0 12px; }
 .jv-ob-mode-feats { list-style: none; padding: 0; margin: 0 0 16px; flex: 1; }
 .jv-ob-mode-feats li { display: flex; gap: 7px; font-size: 13.5px; color: var(--text-2); line-height: 1.55; margin-bottom: 9px; }
-.jv-ob-tick { color: var(--blue); font-size: 11px; margin-top: 2px; flex: none; }
-.jv-ob-mode-warn { color: var(--red); margin-top: 8px; }
-.jv-ob-warn-icon { margin-right: 4px; flex: none; }
+/* Ticks get a real blue accent (the theme's --blue is near-black by design). */
+.jv-ob-tick { color: #2563eb; font-size: 11px; font-weight: 700; margin-top: 2px; flex: none; }
+.jv-dark .jv-ob-tick { color: var(--blue); }
+/* "Not included" note → danger highlight. The li.jv-ob-mode-warn selector
+   out-specifies `.jv-ob-mode-feats li` so the red actually lands (before, the
+   feats-li colour silently overrode it). */
+.jv-ob-mode-feats li.jv-ob-mode-warn {
+	color: var(--red);
+	background: var(--red-bg);
+	border: 1px solid var(--red-bd);
+	border-radius: 9px;
+	padding: 9px 11px;
+	margin-top: 12px;
+	align-items: flex-start;
+}
+.jv-ob-warn-icon { color: var(--red); margin-right: 4px; flex: none; }
 .jv-ob-mode-btn { width: 100%; margin-top: auto; }
 
 /* ---- Account — ported from desk .jo-label/.jo-input (jarvis_onboarding.js
@@ -931,8 +1022,14 @@ onMounted(() => {
 
 @media (max-width: 520px) {
 	.jv-ob-main { padding: 28px 16px 48px; }
-	.jv-ob-body { padding: 18px; }
+	.jv-ob-body { padding: 26px 20px; border-radius: 14px; }
+	.jv-ob-h1 { font-size: 25px; }
+	.jv-ob-sub { font-size: 15px; margin-bottom: 26px; }
+	.jv-ob-orb { width: min(520px, 90vw); }
 	.jv-ob-modes { grid-template-columns: 1fr; }
 	.jv-ob-plans { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+	.jv-ob-mode, .jv-ob-plan { transition: none; }
 }
 </style>

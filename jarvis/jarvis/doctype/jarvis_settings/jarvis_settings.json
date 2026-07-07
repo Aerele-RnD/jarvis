@@ -1,608 +1,647 @@
 {
-  "doctype": "DocType",
-  "name": "Jarvis Settings",
-  "module": "Jarvis",
-  "issingle": 1,
-  "custom": 0,
-  "engine": "InnoDB",
-  "field_order": [
-    "config_tab",
-    "account_section",
-    "token_budget_monthly",
-    "enabled",
-    "llm_section",
-    "models",
-    "preset",
-    "routing_mode",
-    "proxy_active",
-    "proxy_recommended",
-    "llm_provider",
-    "llm_model",
-    "llm_column_break",
-    "llm_api_key",
-    "llm_base_url",
-    "llm_advanced_section",
-    "llm_temperature",
-    "llm_max_output_tokens",
-    "vision_attachments_enabled",
-    "llm_auth_section",
-    "llm_auth_mode",
-    "llm_oauth_account_email",
-    "llm_oauth_connected_at",
-    "behavioural_learning_section",
-    "pattern_learning_enabled",
-    "pattern_llm_polish",
-    "pattern_window_start",
-    "pattern_window_end",
-    "pattern_max_proposals_per_run",
-    "pattern_row_budget_per_night",
-    "pattern_last_run_at",
-    "pattern_last_run_status",
-    "pattern_next_run_at",
-    "pattern_scan_mode",
-    "voice_wiki_section",
-    "voice_features_enabled",
-    "wiki_enabled",
-    "wiki_nudge_cooldown_hours",
-    "voice_notes_last_processed_at",
-    "voice_notes_last_process_status",
-    "system_tab",
-    "deployment_section",
-    "deployment_mode",
-    "selfhost_last_validated_at",
-    "selfhost_last_validation",
-    "selfhost_tool_user",
-    "selfhost_stream",
-    "admin_connection_section",
-    "jarvis_admin_url",
-    "jarvis_admin_api_key",
-    "jarvis_admin_api_secret",
-    "jarvis_admin_customer_email",
-    "jarvis_admin_customer_password",
-    "operator_section",
-    "agent_url",
-    "agent_token",
-    "agent_token_issued_at",
-    "agent_token_max_age_days",
-    "chat_device_id",
-    "chat_device_public_key",
-    "chat_device_private_key",
-    "chat_device_token",
-    "last_sync_section",
-    "last_sync_at",
-    "last_sync_status",
-    "custom_skills_synced_at",
-    "custom_skills_sync_status",
-    "agent_skills_synced_at",
-    "agent_skills_sync_status",
-    "agent_catalog_dirty",
-    "agent_catalog_version",
-    "learned_skills_synced_at",
-    "learned_skills_sync_status",
-    "agent_tools_section",
-    "run_query_doctype_allowlist",
-    "auto_apply_changes",
-    "developer_section",
-    "sandbox_mode"
-  ],
-  "fields": [
-    {
-      "fieldname": "config_tab",
-      "fieldtype": "Tab Break",
-      "label": "Configuration"
-    },
-    {
-      "fieldname": "account_section",
-      "fieldtype": "Section Break",
-      "label": "Account"
-    },
-    {
-      "fieldname": "token_budget_monthly",
-      "fieldtype": "Int",
-      "label": "Monthly Token Budget",
-      "default": "0",
-      "description": "0 = unlimited. Otherwise hard cap before overage billing kicks in."
-    },
-    {
-      "fieldname": "enabled",
-      "fieldtype": "Check",
-      "label": "Enabled",
-      "default": "1"
-    },
-    {
-      "fieldname": "llm_section",
-      "fieldtype": "Section Break",
-      "label": "Language Model"
-    },
-    {
-      "fieldname": "models",
-      "fieldtype": "Table",
-      "label": "LLM Models",
-      "options": "Jarvis LLM Pool Model"
-    },
-    {
-      "fieldname": "preset",
-      "fieldtype": "Data",
-      "label": "Preset"
-    },
-    {
-      "fieldname": "routing_mode",
-      "fieldtype": "Select",
-      "label": "Routing Mode",
-      "options": "\ndynamic\nfailover",
-      "default": "dynamic",
-      "description": "How the LLM pool routes requests. 'dynamic' uses cost-tier routing; 'failover' tries models in order."
-    },
-    {
-      "fieldname": "proxy_active",
-      "fieldtype": "Check",
-      "label": "Proxy Active",
-      "read_only": 1
-    },
-    {
-      "fieldname": "proxy_recommended",
-      "fieldtype": "Check",
-      "label": "Proxy Recommended",
-      "read_only": 1
-    },
-    {
-      "fieldname": "llm_provider",
-      "fieldtype": "Data",
-      "label": "Provider",
-      "read_only": 1,
-      "description": "Mirrored from models[0].provider. May hold an internal provider ID (e.g. 'openai_compat') or a display name from legacy single-model config."
-    },
-    {
-      "fieldname": "llm_model",
-      "fieldtype": "Data",
-      "label": "Model",
-      "description": "Provider-specific model identifier (e.g. claude-sonnet-4-6, gpt-4o, gemini-2.0-flash, deepseek-chat, moonshot-v1-32k, llama-3.1-70b).",
-      "read_only": 1
-    },
-    {
-      "fieldname": "llm_column_break",
-      "fieldtype": "Column Break"
-    },
-    {
-      "fieldname": "llm_api_key",
-      "fieldtype": "Password",
-      "label": "API Key",
-      "description": "API key for the chosen provider. Leave blank for local providers (Ollama, vLLM).",
-      "read_only": 1
-    },
-    {
-      "fieldname": "llm_base_url",
-      "fieldtype": "Data",
-      "label": "Base URL",
-      "description": "Only for local or OpenAI-Compatible providers (e.g. http://localhost:11434/v1 for Ollama). Leave blank for hosted providers.",
-      "read_only": 1
-    },
-    {
-      "fieldname": "llm_advanced_section",
-      "fieldtype": "Section Break",
-      "label": "Sampling",
-      "collapsible": 1
-    },
-    {
-      "fieldname": "llm_temperature",
-      "fieldtype": "Float",
-      "label": "Temperature",
-      "default": "0.2",
-      "description": "0.0 = deterministic, 1.0 = creative. 0.2 is a good default for analytical Q&A."
-    },
-    {
-      "fieldname": "llm_max_output_tokens",
-      "fieldtype": "Int",
-      "label": "Max Output Tokens",
-      "default": "4096"
-    },
-    {
-      "fieldname": "llm_auth_section",
-      "fieldtype": "Section Break",
-      "label": "LLM Authentication"
-    },
-    {
-      "fieldname": "llm_auth_mode",
-      "fieldtype": "Select",
-      "label": "Auth Mode",
-      "options": "api_key\nsubscription\noauth",
-      "default": "api_key",
-      "reqd": 1,
-      "read_only": 1
-    },
-    {
-      "fieldname": "llm_oauth_account_email",
-      "fieldtype": "Data",
-      "label": "Connected Account",
-      "read_only": 1,
-      "depends_on": "eval:doc.llm_auth_mode == 'oauth'",
-      "description": "Email of the provider account whose subscription Jarvis is using. Populated on chat-subscription sign-in; cleared on Disconnect."
-    },
-    {
-      "fieldname": "llm_oauth_connected_at",
-      "fieldtype": "Datetime",
-      "label": "Connected At",
-      "read_only": 1,
-      "depends_on": "eval:doc.llm_auth_mode == 'oauth'"
-    },
-    {
-      "fieldname": "behavioural_learning_section",
-      "fieldtype": "Section Break",
-      "label": "Behavioural Learning",
-      "collapsible": 1,
-      "depends_on": "eval:doc.deployment_mode != 'Self-Hosted'",
-      "description": "Nightly, window-bound, READ-ONLY mining of this site's history into reviewable pattern proposals. Nothing activates without System Manager approval. Managed deployments only in v1 (hidden for self-host)."
-    },
-    {
-      "fieldname": "pattern_learning_enabled",
-      "fieldtype": "Check",
-      "label": "Enable Pattern Learning",
-      "default": "0"
-    },
-    {
-      "fieldname": "pattern_llm_polish",
-      "fieldtype": "Check",
-      "label": "Enable LLM Polish",
-      "default": "0",
-      "description": "Phase 2: let the reviewing System Manager rewrite a proposal's draft wording via one silent tenant-container LLM turn (never Administrator). Capped at 150 turns per site per month; over the cap or on any failure the deterministic template text is kept unchanged."
-    },
-    {
-      "fieldname": "pattern_window_start",
-      "fieldtype": "Time",
-      "label": "Analysis Window Start",
-      "default": "01:00:00"
-    },
-    {
-      "fieldname": "pattern_window_end",
-      "fieldtype": "Time",
-      "label": "Analysis Window End",
-      "default": "05:00:00",
-      "description": "Window must be at least 1 hour. End before start is legal: the window crosses midnight."
-    },
-    {
-      "fieldname": "pattern_max_proposals_per_run",
-      "fieldtype": "Int",
-      "label": "Max Proposals per Run",
-      "default": "10"
-    },
-    {
-      "fieldname": "pattern_row_budget_per_night",
-      "fieldtype": "Int",
-      "label": "Row Scan Budget per Night",
-      "default": "500000",
-      "description": "EXPLAIN-estimated rows a nightly run may scan before remaining detectors are deferred to later nights."
-    },
-    {
-      "fieldname": "pattern_last_run_at",
-      "fieldtype": "Datetime",
-      "label": "Last Learning Run At",
-      "read_only": 1
-    },
-    {
-      "fieldname": "pattern_last_run_status",
-      "fieldtype": "Long Text",
-      "label": "Last Learning Run Status",
-      "read_only": 1
-    },
-    {
-      "fieldname": "pattern_next_run_at",
-      "fieldtype": "Datetime",
-      "label": "Next Learning Run At",
-      "read_only": 1
-    },
-    {
-      "fieldname": "pattern_scan_mode",
-      "fieldtype": "Data",
-      "label": "Learning Scan Mode",
-      "read_only": 1
-    },
-    {
-      "fieldname": "voice_wiki_section",
-      "fieldtype": "Section Break",
-      "label": "Voice & Wiki",
-      "collapsible": 1
-    },
-    {
-      "fieldname": "voice_features_enabled",
-      "fieldtype": "Check",
-      "label": "Enable Voice Features",
-      "default": "1",
-      "description": "Mic capture + speech-to-text in chat and the Business tab. Readers treat an unset value as ON (Single defaults are not backfilled on migrate)."
-    },
-    {
-      "fieldname": "wiki_enabled",
-      "fieldtype": "Check",
-      "label": "Enable Business Wiki",
-      "default": "1",
-      "description": "Business wiki pages + post-turn wiki nudges. Readers treat an unset value as ON."
-    },
-    {
-      "fieldname": "wiki_nudge_cooldown_hours",
-      "fieldtype": "Int",
-      "label": "Wiki Nudge Cooldown (hours)",
-      "default": "24",
-      "description": "Minimum gap between wiki nudges in the same conversation."
-    },
-    {
-      "fieldname": "voice_notes_last_processed_at",
-      "fieldtype": "Datetime",
-      "label": "Voice Notes Last Processed At",
-      "read_only": 1
-    },
-    {
-      "fieldname": "voice_notes_last_process_status",
-      "fieldtype": "Long Text",
-      "label": "Voice Notes Last Process Status",
-      "read_only": 1
-    },
-    {
-      "fieldname": "system_tab",
-      "fieldtype": "Tab Break",
-      "label": "System"
-    },
-    {
-      "fieldname": "deployment_section",
-      "fieldtype": "Section Break",
-      "label": "Deployment Mode"
-    },
-    {
-      "fieldname": "deployment_mode",
-      "fieldtype": "Select",
-      "label": "Deployment Mode",
-      "options": "Managed\nSelf-Hosted",
-      "default": "Managed",
-      "description": "Managed = Aerele-hosted openclaw container (persona + skills, billed). Self-Hosted = connect to your own openclaw server (you bring openclaw + LLM; no Aerele persona/skills). Switchable; chat history is preserved."
-    },
-    {
-      "fieldname": "selfhost_last_validated_at",
-      "fieldtype": "Datetime",
-      "label": "Self-Host Last Validated At",
-      "read_only": 1,
-      "depends_on": "eval:doc.deployment_mode == 'Self-Hosted'"
-    },
-    {
-      "fieldname": "selfhost_last_validation",
-      "fieldtype": "Long Text",
-      "label": "Self-Host Last Validation",
-      "read_only": 1,
-      "depends_on": "eval:doc.deployment_mode == 'Self-Hosted'",
-      "description": "JSON result of the last connection validation (per-check pass/fail)."
-    },
-    {
-      "fieldname": "selfhost_tool_user",
-      "fieldtype": "Link",
-      "options": "User",
-      "label": "Self-Host Tool User",
-      "depends_on": "eval:doc.deployment_mode == 'Self-Hosted'",
-      "description": "Frappe user whose permissions the jarvis__* (ERP) tools run under when chatting via a self-hosted openclaw. A self-hosted bench is single-tenant; defaults to whoever configured self-host."
-    },
-    {
-      "fieldname": "selfhost_stream",
-      "fieldtype": "Check",
-      "label": "Stream Self-Host Responses",
-      "default": "1",
-      "depends_on": "eval:doc.deployment_mode == 'Self-Hosted'",
-      "description": "Stream the agent's reply token-by-token over HTTP (SSE) for a responsive chat. Turn off if your openclaw (or a proxy in front of it) buffers streaming responses, in which case the full reply appears at once."
-    },
-    {
-      "fieldname": "vision_attachments_enabled",
-      "fieldtype": "Check",
-      "label": "Send Image/PDF Attachments as Vision",
-      "default": "1",
-      "description": "When on, images and PDFs the customer attaches in chat are sent to the model as native vision (the model sees them directly; PDFs are rasterized to page-images). Requires a vision-capable model (Anthropic / OpenAI / Google Gemini). Managed pool only."
-    },
-    {
-      "fieldname": "admin_connection_section",
-      "fieldtype": "Section Break",
-      "label": "Jarvis Admin Connection",
-      "description": "Populated by the signup wizard; not customer-editable."
-    },
-    {
-      "fieldname": "jarvis_admin_url",
-      "fieldtype": "Data",
-      "label": "Jarvis Admin URL",
-      "read_only": 1,
-      "description": "HTTPS URL of the Jarvis admin host. Used for signup, billing, subscription state."
-    },
-    {
-      "fieldname": "jarvis_admin_api_key",
-      "fieldtype": "Password",
-      "label": "Jarvis Admin API Key",
-      "read_only": 1,
-      "description": "Native Frappe api_key for the customer's User on the admin site. Paired with the secret below as `Authorization: token <key>:<secret>`."
-    },
-    {
-      "fieldname": "jarvis_admin_api_secret",
-      "fieldtype": "Password",
-      "label": "Jarvis Admin API Secret",
-      "read_only": 1,
-      "description": "Native Frappe api_secret paired with the API Key. Set automatically at onboarding."
-    },
-    {
-      "fieldname": "jarvis_admin_customer_email",
-      "fieldtype": "Data",
-      "label": "Jarvis Admin Customer Email",
-      "read_only": 1,
-      "description": "The customer's login (email) on the admin site. Used as the OAuth password-grant username. Set automatically at onboarding."
-    },
-    {
-      "fieldname": "jarvis_admin_customer_password",
-      "fieldtype": "Password",
-      "label": "Jarvis Admin Customer Password",
-      "read_only": 1,
-      "description": "The customer's password on the admin site, exchanged for short-lived OAuth bearer tokens (client_id `jarvis-bench`). Set automatically once the email is verified. Empty for pre-OAuth customers, which fall back to api_key:api_secret."
-    },
-    {
-      "fieldname": "operator_section",
-      "fieldtype": "Section Break",
-      "label": "Agent Operator",
-      "description": "Operator config - populated by jarvis.openclaw_bootstrap.start (dev) or the Jarvis admin signup response (prod)."
-    },
-    {
-      "fieldname": "agent_url",
-      "fieldtype": "Data",
-      "label": "Agent URL",
-      "read_only": 1,
-      "description": "WebSocket URL for the customer's openclaw agent (e.g. ws://127.0.0.1:18789 in dev; wss://<subdomain>.<admin-host>:443 in prod)"
-    },
-    {
-      "fieldname": "agent_token",
-      "fieldtype": "Password",
-      "label": "Agent Token",
-      "read_only": 1,
-      "description": "Bearer token used to authenticate the secrets.reload RPC and the chat worker's WebSocket session"
-    },
-    {
-      "fieldname": "agent_token_issued_at",
-      "fieldtype": "Datetime",
-      "label": "Agent Token Issued At",
-      "read_only": 1,
-      "description": "Timestamp of the last rotate_agent_token. C2 (2026-06-16 review): combined with agent_token_max_age_days, lets the bench enforce periodic rotation hygiene like SSH host-key / TLS-cert rotation. Empty == unbounded (legacy)."
-    },
-    {
-      "fieldname": "agent_token_max_age_days",
-      "fieldtype": "Int",
-      "label": "Agent Token Max Age (days)",
-      "default": 90,
-      "description": "Reject the bearer token if issued_at + this many days < now. Default 90 days. Set to 0 to disable expiry (not recommended). Operator rotates via the rotate_agent_token endpoint."
-    },
-    {
-      "fieldname": "chat_device_id",
-      "fieldtype": "Data",
-      "label": "Chat Device ID",
-      "read_only": 1,
-      "description": "sha256(rawPublicKey).hex - openclaw deviceId this bench was paired as. Set lazily on first chat; cleared on re-pair."
-    },
-    {
-      "fieldname": "chat_device_public_key",
-      "fieldtype": "Long Text",
-      "label": "Chat Device Public Key",
-      "read_only": 1,
-      "description": "Base64url-encoded Ed25519 public key registered with openclaw at pair time."
-    },
-    {
-      "fieldname": "chat_device_private_key",
-      "fieldtype": "Password",
-      "label": "Chat Device Private Key",
-      "read_only": 1,
-      "description": "Base64url-encoded Ed25519 private key. Never leaves this bench. Used to sign the connect challenge at every chat WS handshake."
-    },
-    {
-      "fieldname": "chat_device_token",
-      "fieldtype": "Password",
-      "label": "Chat Device Token",
-      "read_only": 1,
-      "description": "Bearer token openclaw issued at pair time. Sent in auth.deviceToken at every chat WS connect."
-    },
-    {
-      "fieldname": "last_sync_section",
-      "fieldtype": "Section Break",
-      "label": "Last Sync",
-      "collapsible": 1
-    },
-    {
-      "fieldname": "last_sync_at",
-      "fieldtype": "Datetime",
-      "label": "Last Sync At",
-      "read_only": 1
-    },
-    {
-      "fieldname": "last_sync_status",
-      "fieldtype": "Long Text",
-      "label": "Last Sync Status",
-      "read_only": 1
-    },
-    {
-      "fieldname": "custom_skills_synced_at",
-      "fieldtype": "Datetime",
-      "label": "Custom Skills Synced At",
-      "read_only": 1
-    },
-    {
-      "fieldname": "custom_skills_sync_status",
-      "fieldtype": "Long Text",
-      "label": "Custom Skills Sync Status",
-      "read_only": 1
-    },
-    {
-      "fieldname": "agent_skills_synced_at",
-      "fieldtype": "Datetime",
-      "label": "Agent Skills Synced At",
-      "read_only": 1
-    },
-    {
-      "fieldname": "agent_skills_sync_status",
-      "fieldtype": "Long Text",
-      "label": "Agent Skills Sync Status",
-      "read_only": 1
-    },
-    {
-      "default": "0",
-      "description": "Set when an install/uninstall/enable-disable changes the enabled agent set; cleared by a successful Apply push. Surfaced as `dirty` in get_agents_sync_status.",
-      "fieldname": "agent_catalog_dirty",
-      "fieldtype": "Check",
-      "hidden": 1,
-      "label": "Agent Catalog Dirty",
-      "read_only": 1
-    },
-    {
-      "default": "0",
-      "description": "Monotonic counter bumped by every enabled-set mutation. The Apply push snapshots it before building the payload and clears the dirty flag only if it is unchanged after a successful push, so a mutation landing mid-push keeps dirty set (TOCTOU guard).",
-      "fieldname": "agent_catalog_version",
-      "fieldtype": "Int",
-      "hidden": 1,
-      "label": "Agent Catalog Version",
-      "read_only": 1
-    },
-    {
-      "fieldname": "learned_skills_synced_at",
-      "fieldtype": "Datetime",
-      "label": "Learned Skills Synced At",
-      "read_only": 1
-    },
-    {
-      "fieldname": "learned_skills_sync_status",
-      "fieldtype": "Long Text",
-      "label": "Learned Skills Sync Status",
-      "read_only": 1
-    },
-    {
-      "fieldname": "agent_tools_section",
-      "fieldtype": "Section Break",
-      "label": "Agent Tool Restrictions"
-    },
-    {
-      "fieldname": "run_query_doctype_allowlist",
-      "fieldtype": "Small Text",
-      "label": "run_query DocType Allowlist",
-      "description": "Defense-in-depth restriction for the run_query agent tool. Comma- or newline-separated list of DocType names. When non-empty, run_query refuses any query referencing a DocType not on this list - even if the calling user has read permission on it through Frappe's normal permission system. Leave empty (default) to allow any DocType the user can read. Use this to lock the agent to a known-good slice of your data (e.g. 'Sales Invoice, Customer, Item, Sales Invoice Item') so a future allowlist bypass in the SQL parser still can't reach the rest of the bench."
-    },
-    {
-      "fieldname": "auto_apply_changes",
-      "fieldtype": "Check",
-      "label": "Auto-apply changes (skip confirmation)",
-      "default": "0",
-      "description": "DEPRECATED (issue #186): auto-apply is now per-conversation and admin-gated (Jarvis Conversation.auto_apply). This site-wide Single field is no longer read or written; left in place to avoid a destructive schema change."
-    },
-    {
-      "fieldname": "developer_section",
-      "fieldtype": "Section Break",
-      "label": "Developer / Sandbox"
-    },
-    {
-      "fieldname": "sandbox_mode",
-      "fieldtype": "Check",
-      "label": "Enable Sandbox Mode",
-      "default": "0",
-      "description": "When enabled, skip payment + allow the developer-onboarding shortcut (jarvis.onboarding.dev_onboard) on this site. Customer's responsibility: only flip this on a dev/test bench. Replaces the legacy <code>frappe.conf.developer_mode</code> check; that flag still works as a backwards-compat fallback for one release."
-    }
-  ],
-  "permissions": [
-    {
-      "role": "System Manager",
-      "read": 1,
-      "write": 1,
-      "create": 1
-    }
-  ]
+ "doctype": "DocType",
+ "name": "Jarvis Settings",
+ "module": "Jarvis",
+ "issingle": 1,
+ "custom": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "config_tab",
+  "account_section",
+  "token_budget_monthly",
+  "enabled",
+  "llm_section",
+  "models",
+  "preset",
+  "routing_mode",
+  "proxy_active",
+  "proxy_recommended",
+  "llm_provider",
+  "llm_model",
+  "llm_column_break",
+  "llm_api_key",
+  "llm_base_url",
+  "llm_advanced_section",
+  "llm_temperature",
+  "llm_max_output_tokens",
+  "vision_attachments_enabled",
+  "llm_auth_section",
+  "llm_auth_mode",
+  "llm_oauth_account_email",
+  "llm_oauth_connected_at",
+  "behavioural_learning_section",
+  "pattern_learning_enabled",
+  "pattern_llm_polish",
+  "pattern_window_start",
+  "pattern_window_end",
+  "pattern_max_proposals_per_run",
+  "pattern_row_budget_per_night",
+  "pattern_last_run_at",
+  "pattern_last_run_status",
+  "pattern_next_run_at",
+  "pattern_scan_mode",
+  "voice_wiki_section",
+  "voice_features_enabled",
+  "wiki_enabled",
+  "wiki_nudge_cooldown_hours",
+  "voice_notes_last_processed_at",
+  "voice_notes_last_process_status",
+  "knowledge_language",
+  "wiki_lint_last_run_at",
+  "wiki_lint_summary",
+  "wiki_mirror_last_synced_at",
+  "wiki_mirror_last_sync_status",
+  "system_tab",
+  "deployment_section",
+  "deployment_mode",
+  "selfhost_last_validated_at",
+  "selfhost_last_validation",
+  "selfhost_tool_user",
+  "selfhost_stream",
+  "admin_connection_section",
+  "jarvis_admin_url",
+  "jarvis_admin_api_key",
+  "jarvis_admin_api_secret",
+  "jarvis_admin_customer_email",
+  "jarvis_admin_customer_password",
+  "operator_section",
+  "agent_url",
+  "agent_token",
+  "agent_token_issued_at",
+  "agent_token_max_age_days",
+  "chat_device_id",
+  "chat_device_public_key",
+  "chat_device_private_key",
+  "chat_device_token",
+  "last_sync_section",
+  "last_sync_at",
+  "last_sync_status",
+  "custom_skills_synced_at",
+  "custom_skills_sync_status",
+  "agent_skills_synced_at",
+  "agent_skills_sync_status",
+  "agent_catalog_dirty",
+  "agent_catalog_version",
+  "learned_skills_synced_at",
+  "learned_skills_sync_status",
+  "agent_tools_section",
+  "run_query_doctype_allowlist",
+  "auto_apply_changes",
+  "developer_section",
+  "sandbox_mode"
+ ],
+ "fields": [
+  {
+   "fieldname": "config_tab",
+   "fieldtype": "Tab Break",
+   "label": "Configuration"
+  },
+  {
+   "fieldname": "account_section",
+   "fieldtype": "Section Break",
+   "label": "Account"
+  },
+  {
+   "fieldname": "token_budget_monthly",
+   "fieldtype": "Int",
+   "label": "Monthly Token Budget",
+   "default": "0",
+   "description": "0 = unlimited. Otherwise hard cap before overage billing kicks in."
+  },
+  {
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled",
+   "default": "1"
+  },
+  {
+   "fieldname": "llm_section",
+   "fieldtype": "Section Break",
+   "label": "Language Model"
+  },
+  {
+   "fieldname": "models",
+   "fieldtype": "Table",
+   "label": "LLM Models",
+   "options": "Jarvis LLM Pool Model"
+  },
+  {
+   "fieldname": "preset",
+   "fieldtype": "Data",
+   "label": "Preset"
+  },
+  {
+   "fieldname": "routing_mode",
+   "fieldtype": "Select",
+   "label": "Routing Mode",
+   "options": "\ndynamic\nfailover",
+   "default": "dynamic",
+   "description": "How the LLM pool routes requests. 'dynamic' uses cost-tier routing; 'failover' tries models in order."
+  },
+  {
+   "fieldname": "proxy_active",
+   "fieldtype": "Check",
+   "label": "Proxy Active",
+   "read_only": 1
+  },
+  {
+   "fieldname": "proxy_recommended",
+   "fieldtype": "Check",
+   "label": "Proxy Recommended",
+   "read_only": 1
+  },
+  {
+   "fieldname": "llm_provider",
+   "fieldtype": "Data",
+   "label": "Provider",
+   "read_only": 1,
+   "description": "Mirrored from models[0].provider. May hold an internal provider ID (e.g. 'openai_compat') or a display name from legacy single-model config."
+  },
+  {
+   "fieldname": "llm_model",
+   "fieldtype": "Data",
+   "label": "Model",
+   "description": "Provider-specific model identifier (e.g. claude-sonnet-4-6, gpt-4o, gemini-2.0-flash, deepseek-chat, moonshot-v1-32k, llama-3.1-70b).",
+   "read_only": 1
+  },
+  {
+   "fieldname": "llm_column_break",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "llm_api_key",
+   "fieldtype": "Password",
+   "label": "API Key",
+   "description": "API key for the chosen provider. Leave blank for local providers (Ollama, vLLM).",
+   "read_only": 1
+  },
+  {
+   "fieldname": "llm_base_url",
+   "fieldtype": "Data",
+   "label": "Base URL",
+   "description": "Only for local or OpenAI-Compatible providers (e.g. http://localhost:11434/v1 for Ollama). Leave blank for hosted providers.",
+   "read_only": 1
+  },
+  {
+   "fieldname": "llm_advanced_section",
+   "fieldtype": "Section Break",
+   "label": "Sampling",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "llm_temperature",
+   "fieldtype": "Float",
+   "label": "Temperature",
+   "default": "0.2",
+   "description": "0.0 = deterministic, 1.0 = creative. 0.2 is a good default for analytical Q&A."
+  },
+  {
+   "fieldname": "llm_max_output_tokens",
+   "fieldtype": "Int",
+   "label": "Max Output Tokens",
+   "default": "4096"
+  },
+  {
+   "fieldname": "llm_auth_section",
+   "fieldtype": "Section Break",
+   "label": "LLM Authentication"
+  },
+  {
+   "fieldname": "llm_auth_mode",
+   "fieldtype": "Select",
+   "label": "Auth Mode",
+   "options": "api_key\nsubscription\noauth",
+   "default": "api_key",
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "llm_oauth_account_email",
+   "fieldtype": "Data",
+   "label": "Connected Account",
+   "read_only": 1,
+   "depends_on": "eval:doc.llm_auth_mode == 'oauth'",
+   "description": "Email of the provider account whose subscription Jarvis is using. Populated on chat-subscription sign-in; cleared on Disconnect."
+  },
+  {
+   "fieldname": "llm_oauth_connected_at",
+   "fieldtype": "Datetime",
+   "label": "Connected At",
+   "read_only": 1,
+   "depends_on": "eval:doc.llm_auth_mode == 'oauth'"
+  },
+  {
+   "fieldname": "behavioural_learning_section",
+   "fieldtype": "Section Break",
+   "label": "Behavioural Learning",
+   "collapsible": 1,
+   "depends_on": "eval:doc.deployment_mode != 'Self-Hosted'",
+   "description": "Nightly, window-bound, READ-ONLY mining of this site's history into reviewable pattern proposals. Nothing activates without System Manager approval. Managed deployments only in v1 (hidden for self-host)."
+  },
+  {
+   "fieldname": "pattern_learning_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Pattern Learning",
+   "default": "0"
+  },
+  {
+   "fieldname": "pattern_llm_polish",
+   "fieldtype": "Check",
+   "label": "Enable LLM Polish",
+   "default": "0",
+   "description": "Phase 2: let the reviewing System Manager rewrite a proposal's draft wording via one silent tenant-container LLM turn (never Administrator). Capped at 150 turns per site per month; over the cap or on any failure the deterministic template text is kept unchanged."
+  },
+  {
+   "fieldname": "pattern_window_start",
+   "fieldtype": "Time",
+   "label": "Analysis Window Start",
+   "default": "01:00:00"
+  },
+  {
+   "fieldname": "pattern_window_end",
+   "fieldtype": "Time",
+   "label": "Analysis Window End",
+   "default": "05:00:00",
+   "description": "Window must be at least 1 hour. End before start is legal: the window crosses midnight."
+  },
+  {
+   "fieldname": "pattern_max_proposals_per_run",
+   "fieldtype": "Int",
+   "label": "Max Proposals per Run",
+   "default": "10"
+  },
+  {
+   "fieldname": "pattern_row_budget_per_night",
+   "fieldtype": "Int",
+   "label": "Row Scan Budget per Night",
+   "default": "500000",
+   "description": "EXPLAIN-estimated rows a nightly run may scan before remaining detectors are deferred to later nights."
+  },
+  {
+   "fieldname": "pattern_last_run_at",
+   "fieldtype": "Datetime",
+   "label": "Last Learning Run At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "pattern_last_run_status",
+   "fieldtype": "Long Text",
+   "label": "Last Learning Run Status",
+   "read_only": 1
+  },
+  {
+   "fieldname": "pattern_next_run_at",
+   "fieldtype": "Datetime",
+   "label": "Next Learning Run At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "pattern_scan_mode",
+   "fieldtype": "Data",
+   "label": "Learning Scan Mode",
+   "read_only": 1
+  },
+  {
+   "fieldname": "voice_wiki_section",
+   "fieldtype": "Section Break",
+   "label": "Voice & Wiki",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "voice_features_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Voice Features",
+   "default": "1",
+   "description": "Mic capture + speech-to-text in chat and the Business tab. Readers treat an unset value as ON (Single defaults are not backfilled on migrate)."
+  },
+  {
+   "fieldname": "wiki_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Business Wiki",
+   "default": "1",
+   "description": "Business wiki pages + post-turn wiki nudges. Readers treat an unset value as ON."
+  },
+  {
+   "fieldname": "wiki_nudge_cooldown_hours",
+   "fieldtype": "Int",
+   "label": "Wiki Nudge Cooldown (hours)",
+   "default": "24",
+   "description": "Minimum gap between wiki nudges in the same conversation."
+  },
+  {
+   "fieldname": "voice_notes_last_processed_at",
+   "fieldtype": "Datetime",
+   "label": "Voice Notes Last Processed At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "voice_notes_last_process_status",
+   "fieldtype": "Long Text",
+   "label": "Voice Notes Last Process Status",
+   "read_only": 1
+  },
+  {
+   "fieldname": "knowledge_language",
+   "fieldtype": "Select",
+   "label": "Knowledge Language",
+   "options": "English\nOriginal",
+   "default": "English",
+   "description": "Language for extracted knowledge (voice facts, wiki pages, drafted skill text). English (recommended) translates non-English input, keeping proper nouns in their original script with a Latin transliteration; Original keeps the dominant language of the source material. Chat transcription is always verbatim."
+  },
+  {
+   "fieldname": "wiki_lint_last_run_at",
+   "fieldtype": "Datetime",
+   "label": "Wiki Lint Last Run At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "wiki_lint_summary",
+   "fieldtype": "Small Text",
+   "label": "Wiki Lint Summary",
+   "read_only": 1,
+   "description": "Summary of the last wiki health check (contradictions, stale, orphans, near-duplicate titles)."
+  },
+  {
+   "fieldname": "wiki_mirror_last_synced_at",
+   "fieldtype": "Datetime",
+   "label": "Wiki Mirror Last Synced At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "wiki_mirror_last_sync_status",
+   "fieldtype": "Data",
+   "label": "Wiki Mirror Last Sync Status",
+   "read_only": 1,
+   "description": "Outcome of the last org-wiki mirror sync into the agent workspace."
+  },
+  {
+   "fieldname": "system_tab",
+   "fieldtype": "Tab Break",
+   "label": "System"
+  },
+  {
+   "fieldname": "deployment_section",
+   "fieldtype": "Section Break",
+   "label": "Deployment Mode"
+  },
+  {
+   "fieldname": "deployment_mode",
+   "fieldtype": "Select",
+   "label": "Deployment Mode",
+   "options": "Managed\nSelf-Hosted",
+   "default": "Managed",
+   "description": "Managed = Aerele-hosted openclaw container (persona + skills, billed). Self-Hosted = connect to your own openclaw server (you bring openclaw + LLM; no Aerele persona/skills). Switchable; chat history is preserved."
+  },
+  {
+   "fieldname": "selfhost_last_validated_at",
+   "fieldtype": "Datetime",
+   "label": "Self-Host Last Validated At",
+   "read_only": 1,
+   "depends_on": "eval:doc.deployment_mode == 'Self-Hosted'"
+  },
+  {
+   "fieldname": "selfhost_last_validation",
+   "fieldtype": "Long Text",
+   "label": "Self-Host Last Validation",
+   "read_only": 1,
+   "depends_on": "eval:doc.deployment_mode == 'Self-Hosted'",
+   "description": "JSON result of the last connection validation (per-check pass/fail)."
+  },
+  {
+   "fieldname": "selfhost_tool_user",
+   "fieldtype": "Link",
+   "options": "User",
+   "label": "Self-Host Tool User",
+   "depends_on": "eval:doc.deployment_mode == 'Self-Hosted'",
+   "description": "Frappe user whose permissions the jarvis__* (ERP) tools run under when chatting via a self-hosted openclaw. A self-hosted bench is single-tenant; defaults to whoever configured self-host."
+  },
+  {
+   "fieldname": "selfhost_stream",
+   "fieldtype": "Check",
+   "label": "Stream Self-Host Responses",
+   "default": "1",
+   "depends_on": "eval:doc.deployment_mode == 'Self-Hosted'",
+   "description": "Stream the agent's reply token-by-token over HTTP (SSE) for a responsive chat. Turn off if your openclaw (or a proxy in front of it) buffers streaming responses, in which case the full reply appears at once."
+  },
+  {
+   "fieldname": "vision_attachments_enabled",
+   "fieldtype": "Check",
+   "label": "Send Image/PDF Attachments as Vision",
+   "default": "1",
+   "description": "When on, images and PDFs the customer attaches in chat are sent to the model as native vision (the model sees them directly; PDFs are rasterized to page-images). Requires a vision-capable model (Anthropic / OpenAI / Google Gemini). Managed pool only."
+  },
+  {
+   "fieldname": "admin_connection_section",
+   "fieldtype": "Section Break",
+   "label": "Jarvis Admin Connection",
+   "description": "Populated by the signup wizard; not customer-editable."
+  },
+  {
+   "fieldname": "jarvis_admin_url",
+   "fieldtype": "Data",
+   "label": "Jarvis Admin URL",
+   "read_only": 1,
+   "description": "HTTPS URL of the Jarvis admin host. Used for signup, billing, subscription state."
+  },
+  {
+   "fieldname": "jarvis_admin_api_key",
+   "fieldtype": "Password",
+   "label": "Jarvis Admin API Key",
+   "read_only": 1,
+   "description": "Native Frappe api_key for the customer's User on the admin site. Paired with the secret below as `Authorization: token <key>:<secret>`."
+  },
+  {
+   "fieldname": "jarvis_admin_api_secret",
+   "fieldtype": "Password",
+   "label": "Jarvis Admin API Secret",
+   "read_only": 1,
+   "description": "Native Frappe api_secret paired with the API Key. Set automatically at onboarding."
+  },
+  {
+   "fieldname": "jarvis_admin_customer_email",
+   "fieldtype": "Data",
+   "label": "Jarvis Admin Customer Email",
+   "read_only": 1,
+   "description": "The customer's login (email) on the admin site. Used as the OAuth password-grant username. Set automatically at onboarding."
+  },
+  {
+   "fieldname": "jarvis_admin_customer_password",
+   "fieldtype": "Password",
+   "label": "Jarvis Admin Customer Password",
+   "read_only": 1,
+   "description": "The customer's password on the admin site, exchanged for short-lived OAuth bearer tokens (client_id `jarvis-bench`). Set automatically once the email is verified. Empty for pre-OAuth customers, which fall back to api_key:api_secret."
+  },
+  {
+   "fieldname": "operator_section",
+   "fieldtype": "Section Break",
+   "label": "Agent Operator",
+   "description": "Operator config - populated by jarvis.openclaw_bootstrap.start (dev) or the Jarvis admin signup response (prod)."
+  },
+  {
+   "fieldname": "agent_url",
+   "fieldtype": "Data",
+   "label": "Agent URL",
+   "read_only": 1,
+   "description": "WebSocket URL for the customer's openclaw agent (e.g. ws://127.0.0.1:18789 in dev; wss://<subdomain>.<admin-host>:443 in prod)"
+  },
+  {
+   "fieldname": "agent_token",
+   "fieldtype": "Password",
+   "label": "Agent Token",
+   "read_only": 1,
+   "description": "Bearer token used to authenticate the secrets.reload RPC and the chat worker's WebSocket session"
+  },
+  {
+   "fieldname": "agent_token_issued_at",
+   "fieldtype": "Datetime",
+   "label": "Agent Token Issued At",
+   "read_only": 1,
+   "description": "Timestamp of the last rotate_agent_token. C2 (2026-06-16 review): combined with agent_token_max_age_days, lets the bench enforce periodic rotation hygiene like SSH host-key / TLS-cert rotation. Empty == unbounded (legacy)."
+  },
+  {
+   "fieldname": "agent_token_max_age_days",
+   "fieldtype": "Int",
+   "label": "Agent Token Max Age (days)",
+   "default": 90,
+   "description": "Reject the bearer token if issued_at + this many days < now. Default 90 days. Set to 0 to disable expiry (not recommended). Operator rotates via the rotate_agent_token endpoint."
+  },
+  {
+   "fieldname": "chat_device_id",
+   "fieldtype": "Data",
+   "label": "Chat Device ID",
+   "read_only": 1,
+   "description": "sha256(rawPublicKey).hex - openclaw deviceId this bench was paired as. Set lazily on first chat; cleared on re-pair."
+  },
+  {
+   "fieldname": "chat_device_public_key",
+   "fieldtype": "Long Text",
+   "label": "Chat Device Public Key",
+   "read_only": 1,
+   "description": "Base64url-encoded Ed25519 public key registered with openclaw at pair time."
+  },
+  {
+   "fieldname": "chat_device_private_key",
+   "fieldtype": "Password",
+   "label": "Chat Device Private Key",
+   "read_only": 1,
+   "description": "Base64url-encoded Ed25519 private key. Never leaves this bench. Used to sign the connect challenge at every chat WS handshake."
+  },
+  {
+   "fieldname": "chat_device_token",
+   "fieldtype": "Password",
+   "label": "Chat Device Token",
+   "read_only": 1,
+   "description": "Bearer token openclaw issued at pair time. Sent in auth.deviceToken at every chat WS connect."
+  },
+  {
+   "fieldname": "last_sync_section",
+   "fieldtype": "Section Break",
+   "label": "Last Sync",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "last_sync_at",
+   "fieldtype": "Datetime",
+   "label": "Last Sync At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_sync_status",
+   "fieldtype": "Long Text",
+   "label": "Last Sync Status",
+   "read_only": 1
+  },
+  {
+   "fieldname": "custom_skills_synced_at",
+   "fieldtype": "Datetime",
+   "label": "Custom Skills Synced At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "custom_skills_sync_status",
+   "fieldtype": "Long Text",
+   "label": "Custom Skills Sync Status",
+   "read_only": 1
+  },
+  {
+   "fieldname": "agent_skills_synced_at",
+   "fieldtype": "Datetime",
+   "label": "Agent Skills Synced At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "agent_skills_sync_status",
+   "fieldtype": "Long Text",
+   "label": "Agent Skills Sync Status",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Set when an install/uninstall/enable-disable changes the enabled agent set; cleared by a successful Apply push. Surfaced as `dirty` in get_agents_sync_status.",
+   "fieldname": "agent_catalog_dirty",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Agent Catalog Dirty",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Monotonic counter bumped by every enabled-set mutation. The Apply push snapshots it before building the payload and clears the dirty flag only if it is unchanged after a successful push, so a mutation landing mid-push keeps dirty set (TOCTOU guard).",
+   "fieldname": "agent_catalog_version",
+   "fieldtype": "Int",
+   "hidden": 1,
+   "label": "Agent Catalog Version",
+   "read_only": 1
+  },
+  {
+   "fieldname": "learned_skills_synced_at",
+   "fieldtype": "Datetime",
+   "label": "Learned Skills Synced At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "learned_skills_sync_status",
+   "fieldtype": "Long Text",
+   "label": "Learned Skills Sync Status",
+   "read_only": 1
+  },
+  {
+   "fieldname": "agent_tools_section",
+   "fieldtype": "Section Break",
+   "label": "Agent Tool Restrictions"
+  },
+  {
+   "fieldname": "run_query_doctype_allowlist",
+   "fieldtype": "Small Text",
+   "label": "run_query DocType Allowlist",
+   "description": "Defense-in-depth restriction for the run_query agent tool. Comma- or newline-separated list of DocType names. When non-empty, run_query refuses any query referencing a DocType not on this list - even if the calling user has read permission on it through Frappe's normal permission system. Leave empty (default) to allow any DocType the user can read. Use this to lock the agent to a known-good slice of your data (e.g. 'Sales Invoice, Customer, Item, Sales Invoice Item') so a future allowlist bypass in the SQL parser still can't reach the rest of the bench."
+  },
+  {
+   "fieldname": "auto_apply_changes",
+   "fieldtype": "Check",
+   "label": "Auto-apply changes (skip confirmation)",
+   "default": "0",
+   "description": "DEPRECATED (issue #186): auto-apply is now per-conversation and admin-gated (Jarvis Conversation.auto_apply). This site-wide Single field is no longer read or written; left in place to avoid a destructive schema change."
+  },
+  {
+   "fieldname": "developer_section",
+   "fieldtype": "Section Break",
+   "label": "Developer / Sandbox"
+  },
+  {
+   "fieldname": "sandbox_mode",
+   "fieldtype": "Check",
+   "label": "Enable Sandbox Mode",
+   "default": "0",
+   "description": "When enabled, skip payment + allow the developer-onboarding shortcut (jarvis.onboarding.dev_onboard) on this site. Customer's responsibility: only flip this on a dev/test bench. Replaces the legacy <code>frappe.conf.developer_mode</code> check; that flag still works as a backwards-compat fallback for one release."
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1
+  }
+ ]
 }

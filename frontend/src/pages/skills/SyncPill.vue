@@ -8,11 +8,18 @@
 				Applying skills…
 			</Badge>
 		</Tooltip>
-		<template v-else>
+		<!-- the failure + Retry belong to whoever can act on it; to everyone
+		     else an org-wide red "Apply failed" is an unfixable-looking error -->
+		<template v-else-if="isSM">
 			<Tooltip :text="failureReason || 'Applying skills to your assistant failed.'">
 				<Badge theme="red" variant="subtle" label="Apply failed" />
 			</Tooltip>
 			<Button variant="ghost" label="Retry" :loading="applying" @click="apply" />
+		</template>
+		<template v-else>
+			<Tooltip text="The last skills sync didn't complete. An administrator can retry it; your saved changes are safe.">
+				<Badge theme="orange" variant="subtle" label="Skills sync delayed" />
+			</Tooltip>
 		</template>
 	</div>
 </template>
@@ -38,6 +45,7 @@ function errMsg(e) {
 const status = ref("") // last_sync_status: "", "pending: …", "ok …", "failed: …"
 const pending = ref(false)
 const applying = ref(false)
+const isSM = !!window.is_system_manager
 
 const failed = computed(() => (status.value || "").startsWith("failed"))
 const failureReason = computed(() =>

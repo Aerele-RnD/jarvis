@@ -1,12 +1,11 @@
-// Voice + wiki API — thin wrappers around `jarvis.chat.voice`,
-// `jarvis.chat.voice_notes_api` and `jarvis.chat.wiki`. Mirrors
-// src/api/learning.js: one `call` per endpoint. The exception is
+// Voice API — thin wrappers around `jarvis.chat.voice` and
+// `jarvis.chat.voice_notes_api` (wiki endpoints live in src/api/wiki.js).
+// Mirrors src/api/learning.js: one `call` per endpoint. The exception is
 // `transcribeAudio`, which must POST a multipart body (the recorded blob), so
 // it uses a raw fetch like src/api.js uploadFile instead of frappe-ui `call`.
 import { call } from "frappe-ui"
 
 const VN = "jarvis.chat.voice_notes_api."
-const WK = "jarvis.chat.wiki."
 
 // Server maps the blob MIME to the model's audio format; the filename only
 // helps werkzeug pick a sane extension.
@@ -79,7 +78,11 @@ export const listMyVoiceNotesPage = (p = {}) =>
 		start: p.start || 0,
 		page_length: p.page_length || 20,
 		...(p.status ? { status: p.status } : {}),
+		...(p.search ? { search: p.search } : {}),
 	})
+// owner-only, status "New" only — edited transcript re-feeds the daily sweep
+export const updateVoiceNote = (name, transcript) =>
+	call(VN + "update_voice_note", { name, transcript })
 export const deleteVoiceNote = (name) => call(VN + "delete_voice_note", { name })
 // {stt_enabled, my_notes, org_new_notes (SM only), last_processed_at,
 //  last_process_status, can_process}
@@ -88,15 +91,6 @@ export const getBusinessStatus = () => call(VN + "get_business_status")
 export const processVoiceNotesNow = () => call(VN + "process_voice_notes_now")
 
 // ── wiki ─────────────────────────────────────────────────────────────────────
-export const dismissWikiNudge = (conversation) => call(WK + "dismiss_nudge", { conversation })
-export const listWikiPagesPage = (p = {}) =>
-	call(WK + "list_wiki_pages_page", {
-		search: p.search || "",
-		page_type: p.page_type || "",
-		start: p.start || 0,
-		page_length: p.page_length || 20,
-	})
-export const getWikiPage = (slug) => call(WK + "get_wiki_page", { slug })
-// patch: any of {body_md, summary, title} — only the provided fields change.
-export const saveWikiPage = (slug, patch = {}) => call(WK + "save_wiki_page", { slug, ...patch })
-export const archiveWikiPage = (slug) => call(WK + "archive_wiki_page", { slug })
+// Wiki wrappers moved to src/api/wiki.js with the Wiki tab; the nudge dismiss
+// is re-exported so ChatView's `voice.dismissWikiNudge` keeps working.
+export { dismissWikiNudge } from "./wiki"

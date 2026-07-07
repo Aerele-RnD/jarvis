@@ -36,6 +36,17 @@ export function buildCustomModels(rows) {
 export function reorder(list, from, to) {
   const a = list.slice(); const [x] = a.splice(from, 1); a.splice(to, 0, x); return a
 }
+// Suggested chat-subscription model ids per upstream (index 0 = the default the
+// onboarding editor uses when it hides the model field). Single source of truth,
+// shared with LlmPoolEditor's datalist so the default + suggestions can't drift.
+export const SUB_MODEL_SUGGESTIONS = { openai: ["gpt-5.5", "gpt-5.4"], google: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-3.1-flash"] }
+// Default chat-subscription model for an upstream (SUB_MODEL_SUGGESTIONS[0], with
+// an openai fallback for unmapped upstreams). Onboarding hides the model field
+// (provider is enough), so the row still needs a model id for validatePool + save.
+// Pure + exported for unit tests.
+export function defaultSubscriptionModel(upstream) {
+  return (SUB_MODEL_SUGGESTIONS[upstream] || SUB_MODEL_SUGGESTIONS.openai)[0]
+}
 export function validatePool(models, preset) {
   if (!Array.isArray(models) || models.length === 0) return { ok: false, error: "Add at least one model." }
   for (const m of models) {

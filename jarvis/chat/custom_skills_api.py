@@ -228,7 +228,8 @@ def list_custom_skills_page(
 		f"SELECT COUNT(*) FROM `tabJarvis Custom Skill` WHERE {where}", params
 	)[0][0]
 	rows = frappe.db.sql(
-		f"""SELECT name, skill_name, description, user_invocable, enabled, modified, owner
+		f"""SELECT name, skill_name, description, user_invocable, enabled, modified, owner,
+			ifnull(scope, 'Org') AS scope
 		FROM `tabJarvis Custom Skill`
 		WHERE {where}
 		ORDER BY {order}

@@ -129,3 +129,34 @@ def _make_key(key: str) -> str:
 		return frappe.cache().make_key(key)
 	except Exception:
 		return key
+
+
+# --------------------------------------------------------------------------- #
+# Wiki v2 role seeding (hooks.after_migrate)
+# --------------------------------------------------------------------------- #
+# The two human wiki-editing roles (matrix in jarvis/chat/wiki_permissions.py).
+# Seeded on after_migrate because this app has no after_install channel and
+# migrate follows a fresh install anyway (same reasoning as the voice_facts
+# settings seeding). Pattern copied from jarvis_admin/install.py.
+_WIKI_ROLES = ("Knowledge Wiki User", "Knowledge Wiki Manager")
+
+
+def after_migrate() -> None:
+	"""Idempotently create the Knowledge Wiki roles (best-effort, never
+	blocks a migrate)."""
+	try:
+		created = False
+		for role_name in _WIKI_ROLES:
+			if frappe.db.exists("Role", role_name):
+				continue
+			frappe.get_doc({
+				"doctype": "Role", "role_name": role_name,
+				"desk_access": 1, "is_custom": 0,
+			}).insert(ignore_permissions=True)
+			created = True
+		if created:
+			frappe.db.commit()
+	except Exception:
+		frappe.log_error(
+			title="jarvis wiki roles seed failed", message=frappe.get_traceback()
+		)

@@ -41,6 +41,18 @@
 			<SyncPill ref="syncPill" class="mb-3" />
 		</template>
 
+		<template #cell-skill_name="{ row }">
+			<div class="flex items-center gap-2 overflow-hidden">
+				<div class="truncate text-base font-medium text-ink-gray-9">{{ row.skill_name }}</div>
+				<Tooltip
+					v-if="row.scope === 'Personal'"
+					text="Personal skill — only you; never pushed to the shared assistant"
+				>
+					<Badge variant="subtle" theme="green" label="Personal" />
+				</Tooltip>
+			</div>
+		</template>
+
 		<template #cell-owner_display="{ row }">
 			<div class="flex items-center gap-2 overflow-hidden">
 				<Avatar size="sm" :label="row.mine ? session.user || 'You' : row.shared_by || '?'" />
@@ -106,8 +118,10 @@ function errMsg(e) {
 }
 
 // ── list config ──────────────────────────────────────────────────────────────
-const SCOPE_OPTIONS = [
-	{ label: "All scopes", value: "" },
+// "Ownership", not "Scope": scope is the Org/Personal skill field (shown as a
+// badge on the Name column); this filter is about whose skills you're viewing.
+const OWNERSHIP_OPTIONS = [
+	{ label: "All skills", value: "" },
 	{ label: "Mine", value: "mine" },
 	{ label: "Shared with me", value: "shared" },
 ]
@@ -136,11 +150,11 @@ const columns = [
 // moves it onto the envelope's `search` param (§11 parity: skills search).
 const quickFilters = [
 	{ key: "search", label: "Search skills", type: "text" },
-	{ key: "scope", label: "Scope", type: "select", options: SCOPE_OPTIONS },
+	{ key: "scope", label: "Ownership", type: "select", options: OWNERSHIP_OPTIONS },
 	{ key: "enabled", label: "Status", type: "select", options: ENABLED_OPTIONS },
 ]
 const filterDefs = [
-	{ key: "scope", label: "Scope", type: "select", options: SCOPE_OPTIONS },
+	{ key: "scope", label: "Ownership", type: "select", options: OWNERSHIP_OPTIONS },
 	{ key: "enabled", label: "Status", type: "select", options: ENABLED_OPTIONS },
 	{ key: "user_invocable", label: "User invocable", type: "select", options: INVOCABLE_OPTIONS },
 ]

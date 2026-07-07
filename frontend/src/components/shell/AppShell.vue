@@ -1,7 +1,9 @@
 <template>
 	<FrappeUIProvider>
 		<div class="flex h-screen w-screen">
-			<div class="h-full border-r bg-surface-gray-1">
+			<!-- Chrome-less routes (onboarding) drop the sidebar entirely — a
+			     not-yet-onboarded customer has no app to navigate. -->
+			<div v-if="!route.meta.chromeless" class="h-full border-r bg-surface-gray-1">
 				<Sidebar />
 			</div>
 			<div class="flex flex-1 flex-col h-full overflow-auto bg-surface-white">
@@ -11,7 +13,7 @@
 				     uniform across pages and never displaces the page's primary
 				     action from the rightmost corner; chat has its own header button
 				     (ChatView openErpDesk), styled to match. -->
-				<div v-if="!route.meta.chat" class="flex border-b">
+				<div v-if="!route.meta.chat && !route.meta.chromeless" class="flex border-b">
 					<div id="app-header" class="flex-1" />
 				</div>
 				<router-view v-if="booted" />

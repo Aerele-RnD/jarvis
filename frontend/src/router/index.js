@@ -40,6 +40,9 @@ const routes = [
 		path: "/onboarding",
 		name: "Onboarding",
 		component: () => import("@/views/OnboardingView.vue"),
+		// Chrome-less: a first-run customer hasn't onboarded yet, so the full app
+		// sidebar/header (Chat/Skills/Macros/…) is noise — AppShell hides them.
+		meta: { chromeless: true },
 		beforeEnter: (to, from, next) => { next(window.is_system_manager ? undefined : { name: "Chat" }) },
 	},
 	// Usage dashboard (moved out of the old /ai shell) — System-Manager only;
