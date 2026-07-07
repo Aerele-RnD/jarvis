@@ -4347,7 +4347,7 @@ function onGlobalKey(e) {
 .jv-email-body { padding: 12px 14px 14px; font-size: 13px; line-height: 1.6; color: var(--text); white-space: pre-wrap; word-break: break-word; border-top: 1px solid var(--surface-2); }
 
 /* --- summary-first confirmation card (Task 1.3) --- */
-.jv-summary { margin-top: 12px; }
+.jv-summary { margin-top: 12px; border-color: var(--blue-bd); }
 .jv-summary-body { padding: 11px 14px; display: flex; flex-direction: column; gap: 10px; }
 .jv-summary-fields { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; }
 .jv-summary-fields dt { font-size: 10.5px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); align-self: center; }
