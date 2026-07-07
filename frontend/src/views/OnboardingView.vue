@@ -1,6 +1,14 @@
 <template>
 	<div class="jv-ob-root" :class="{ 'jv-dark': dark }" :style="paletteVars">
 
+		<!-- Ambient brand backdrop: a soft blue aura + a large blurred spark mark,
+			 fixed behind the wizard so the card reads as a focused, floating panel.
+			 Decorative only (aria-hidden, no pointer events, theme-aware opacity). -->
+		<div class="jv-ob-bg" aria-hidden="true">
+			<div class="jv-ob-glow"></div>
+			<svg class="jv-ob-mark" viewBox="0 0 24 24"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
+		</div>
+
 		<!-- Branded header — a centered wizard reads better than a full-height
 			 empty sidebar; the logo mark keeps it unmistakably Jarvis. -->
 		<header class="jv-ob-header">
@@ -739,13 +747,32 @@ onMounted(() => {
 	color: var(--text);
 	display: flex;
 	flex-direction: column;
+	position: relative;
 }
+/* Ambient brand backdrop — fixed behind everything, decorative only. */
+.jv-ob-bg { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+.jv-ob-glow {
+	position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%);
+	width: min(1300px, 135vw); aspect-ratio: 1;
+	background: radial-gradient(circle, color-mix(in srgb, var(--blue) 24%, transparent) 0%, transparent 62%);
+	opacity: .7;
+}
+/* Large enough to bleed past the card edges so the blurred spark reads as a
+   brand mark framing the wizard, not a watermark hidden behind it. */
+.jv-ob-mark {
+	position: absolute; left: 50%; top: 38%; transform: translate(-50%, -50%);
+	width: min(1120px, 116vw); height: min(1120px, 116vw); fill: var(--blue);
+	filter: blur(54px); opacity: .17;
+}
+.jv-dark .jv-ob-glow { opacity: .6; }
+.jv-dark .jv-ob-mark { opacity: .28; }
 .jv-ob-header {
+	position: relative;
+	z-index: 1;
 	display: flex;
 	align-items: center;
 	gap: 10px;
-	padding: 16px 24px;
-	border-bottom: 1px solid var(--border);
+	padding: 18px 26px;
 	flex: none;
 }
 .jv-ob-logo {
@@ -757,6 +784,8 @@ onMounted(() => {
 .jv-ob-brand { font-size: 14px; font-weight: 600; letter-spacing: -.01em; }
 .jv-ob-setup { font-size: 12.5px; color: var(--text-3); border-left: 1px solid var(--border); padding-left: 10px; }
 .jv-ob-main {
+	position: relative;
+	z-index: 1;
 	flex: 1;
 	min-width: 0;
 	overflow-y: auto;
@@ -773,11 +802,11 @@ onMounted(() => {
 	padding: 40px 24px 64px;
 }
 .jv-ob-wrap {
-	max-width: 920px;
+	max-width: 1000px;
 	width: 100%;
 }
-.jv-ob-h1 { font-size: 28px; font-weight: 650; margin: 0 0 10px; text-align: center; }
-.jv-ob-sub { font-size: 15.5px; color: var(--text-3); margin: 0 0 30px; text-align: center; }
+.jv-ob-h1 { font-size: 32px; font-weight: 650; letter-spacing: -.02em; margin: 0 0 12px; text-align: center; }
+.jv-ob-sub { font-size: 16.5px; color: var(--text-3); margin: 0 0 34px; text-align: center; }
 
 .jv-ob-steps {
 	display: flex;
@@ -819,10 +848,12 @@ onMounted(() => {
 
 .jv-ob-body {
 	border: 1px solid var(--border);
-	border-radius: 14px;
-	padding: 48px 44px;
+	border-radius: 18px;
+	padding: 52px 56px;
 	background: var(--surface);
+	box-shadow: 0 20px 50px -24px rgba(15, 23, 42, .28), 0 4px 12px -6px rgba(15, 23, 42, .10);
 }
+.jv-dark .jv-ob-body { border-color: var(--border-2); box-shadow: 0 24px 60px -24px rgba(0, 0, 0, .6); }
 .jv-ob-placeholder { font-size: 13.5px; color: var(--text-3); margin: 0 0 20px; }
 .jv-ob-placeholder-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 .jv-ob-btn {
@@ -933,8 +964,14 @@ onMounted(() => {
 
 @media (max-width: 520px) {
 	.jv-ob-main { padding: 28px 16px 48px; }
-	.jv-ob-body { padding: 18px; }
+	.jv-ob-body { padding: 26px 20px; border-radius: 14px; }
+	.jv-ob-h1 { font-size: 25px; }
+	.jv-ob-sub { font-size: 15px; margin-bottom: 26px; }
+	.jv-ob-mark { width: 340px; height: 340px; }
 	.jv-ob-modes { grid-template-columns: 1fr; }
 	.jv-ob-plans { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+	.jv-ob-mode, .jv-ob-plan { transition: none; }
 }
 </style>
