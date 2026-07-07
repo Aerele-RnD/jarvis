@@ -817,6 +817,16 @@ def get_wiki_caps() -> dict:
 	user = frappe.session.user
 	from jarvis.chat import knowledge_language
 
+	def _dt_str(value):
+		# second precision: dayjs in the SPA chokes on the 6-digit microsecond
+		# tail of str(now_datetime()) and renders nonsense ("126 years ago")
+		if not value:
+			return None
+		try:
+			return frappe.utils.get_datetime(value).strftime("%Y-%m-%d %H:%M:%S")
+		except Exception:
+			return None
+
 	lint_at = frappe.db.get_single_value(SETTINGS, "wiki_lint_last_run_at")
 	synced_at = frappe.db.get_single_value(SETTINGS, "wiki_mirror_last_synced_at")
 	return {
@@ -827,11 +837,11 @@ def get_wiki_caps() -> dict:
 			or "System Manager" in frappe.get_roles(user)
 		),
 		"knowledge_language": knowledge_language.get_knowledge_language(),
-		"wiki_lint_last_run_at": str(lint_at) if lint_at else None,
+		"wiki_lint_last_run_at": _dt_str(lint_at),
 		"wiki_lint_summary": frappe.db.get_single_value(
 			SETTINGS, "wiki_lint_summary"
 		) or None,
-		"wiki_mirror_last_synced_at": str(synced_at) if synced_at else None,
+		"wiki_mirror_last_synced_at": _dt_str(synced_at),
 		"wiki_mirror_last_sync_status": frappe.db.get_single_value(
 			SETTINGS, "wiki_mirror_last_sync_status"
 		) or None,

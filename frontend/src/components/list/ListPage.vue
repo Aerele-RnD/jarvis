@@ -57,8 +57,13 @@
 		</div>
 
 		<!-- list body -->
+		<!-- !w-full: upstream's inner wrapper is `w-max min-w-full`, which sizes
+		     the grid to max-content — long cells push trailing columns past the
+		     viewport behind a subtle inner scrollbar. Pinning to the container
+		     lets the minmax(0, Nfr) tracks compress and truncation work. -->
 		<ListView
 			v-if="rows.length"
+			class="!w-full"
 			:columns="visibleColumns"
 			:rows="rows"
 			:row-key="rowKey"

@@ -98,6 +98,16 @@
 				/>
 			</template>
 
+			<!-- persistent orientation: the teaching copy otherwise lives only in
+			     the empty state, which real first-visits on a grown wiki never see -->
+			<template #banner>
+				<p class="mb-2 text-p-sm text-ink-gray-5">
+					The wiki is the knowledge Jarvis keeps about your business — customers,
+					suppliers, processes, conventions. It grows from chat and voice notes;
+					Jarvis cites it when answering.
+				</p>
+			</template>
+
 			<template #cell-title="{ row }">
 				<div class="flex items-center gap-2 overflow-hidden">
 					<div class="truncate text-base">{{ row.title || row.slug }}</div>
@@ -156,13 +166,18 @@
 						:modelValue="createDialog.title"
 						@update:modelValue="(v) => (createDialog.title = v)"
 					/>
-					<FormControl
-						type="select"
-						label="Type"
-						:options="TYPE_SELECT_OPTIONS"
-						:modelValue="createDialog.page_type"
-						@update:modelValue="(v) => (createDialog.page_type = v)"
-					/>
+					<div class="flex flex-col gap-1">
+						<FormControl
+							type="select"
+							label="Type"
+							:options="TYPE_SELECT_OPTIONS"
+							:modelValue="createDialog.page_type"
+							@update:modelValue="(v) => (createDialog.page_type = v)"
+						/>
+						<p v-if="TYPE_HELP[createDialog.page_type]" class="text-p-sm text-ink-gray-5">
+							{{ TYPE_HELP[createDialog.page_type] }}
+						</p>
+					</div>
 					<FormControl
 						type="select"
 						label="Scope"
@@ -180,6 +195,10 @@
 							:modelValue="createDialog.target_role"
 							@update:modelValue="(v) => (createDialog.target_role = (v && v.value) || '')"
 						/>
+						<p v-if="!caps.is_sm" class="text-p-sm text-ink-gray-5">
+							You can share knowledge with roles you hold yourself; an
+							administrator can target any role.
+						</p>
 					</div>
 					<FormControl
 						type="textarea"
@@ -300,6 +319,18 @@ const TYPE_LABELS = { Org: "Org notes" }
 function typeLabel(t) {
 	return TYPE_LABELS[t] || t
 }
+// one-line explanations for the create dialog's Type select
+const TYPE_HELP = {
+	Customer: "One specific customer's quirks — payment habits, contacts, gotchas.",
+	Supplier: "One specific supplier's quirks — lead times, terms, who to call.",
+	Item: "One item or item group — variants, storage, known issues.",
+	Process: "A procedure as your org actually runs it — steps, owners, exceptions.",
+	Doctype: "Org-wide conventions on a document type, e.g. Sales Invoice habits.",
+	Exception: "A known edge case or standing workaround.",
+	Integration: "An external system your org connects to and its rules.",
+	People: "Who does what — approvers, escalation paths, contacts.",
+	Org: "General org-level facts that fit nowhere else.",
+}
 const LANGUAGE_OPTIONS = [
 	{ label: "English (recommended)", value: "English" },
 	{ label: "Original language", value: "Original" },
@@ -324,12 +355,13 @@ const quickFilters = [
 	{ key: "search", label: "Search pages", type: "text" },
 	{ key: "scope", label: "Scope", type: "select", options: SCOPE_OPTIONS },
 	{ key: "page_type", label: "Type", type: "select", options: TYPE_OPTIONS },
-	{ key: "attention", label: "Attention", type: "select", options: ATTENTION_OPTIONS },
+	// "View", not "Attention": it also carries the Archived lifecycle view
+	{ key: "attention", label: "View", type: "select", options: ATTENTION_OPTIONS },
 ]
 const filterDefs = [
 	{ key: "scope", label: "Scope", type: "select", options: SCOPE_OPTIONS },
 	{ key: "page_type", label: "Type", type: "select", options: TYPE_OPTIONS },
-	{ key: "attention", label: "Attention", type: "select", options: ATTENTION_OPTIONS },
+	{ key: "attention", label: "View", type: "select", options: ATTENTION_OPTIONS },
 ]
 
 // ── list state (server envelope; endpoint paginates by page number) ──────────

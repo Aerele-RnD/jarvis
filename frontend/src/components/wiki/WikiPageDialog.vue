@@ -40,6 +40,19 @@
 					<Badge v-if="page.stale" variant="subtle" theme="orange" label="Stale" />
 				</div>
 
+				<!-- Conflicting gets the same treatment as Stale: a badge alone is
+				     a red dead-end with no explanation or resolution path -->
+				<div
+					v-if="page.contradiction_flag"
+					class="mt-3 rounded-lg border border-outline-red-2 bg-surface-red-1 px-3 py-2 text-sm text-ink-red-4"
+				>
+					People have reported conflicting facts — look for the "Contradiction
+					flagged" section in the body below.{{
+						page.can_edit
+							? " Edit the page to keep the correct version; saving marks the conflict resolved."
+							: " A wiki manager can edit the page to resolve it."
+					}}
+				</div>
 				<!-- mirrors the amber Stale badge on the list row -->
 				<div
 					v-if="page.stale"
@@ -65,12 +78,27 @@
 						@update:modelValue="(v) => (editSummary = v)"
 					/>
 					<FormControl
+						v-if="!previewing"
 						type="textarea"
 						class="mt-3"
 						label="Body (markdown)"
 						:rows="14"
 						:modelValue="editBody"
 						@update:modelValue="(v) => (editBody = v)"
+					/>
+					<template v-else>
+						<div class="mt-3 text-xs text-ink-gray-5">Preview</div>
+						<div
+							class="prose prose-sm mt-1 max-h-[24rem] max-w-none overflow-y-auto rounded border px-3 py-2"
+							v-html="previewHtml"
+						/>
+					</template>
+					<Button
+						class="mt-2"
+						variant="ghost"
+						:label="previewing ? 'Back to editing' : 'Preview'"
+						:iconLeft="previewing ? 'edit-2' : 'eye'"
+						@click="previewing = !previewing"
 					/>
 				</template>
 				<template v-else>
@@ -170,6 +198,7 @@ const show = computed({
 const page = ref(null)
 const loading = ref(false)
 const editing = ref(false)
+const previewing = ref(false)
 const editTitle = ref("")
 const editSummary = ref("")
 const editBody = ref("")
@@ -178,6 +207,11 @@ const archiving = ref(false)
 
 const bodyHtml = computed(() =>
 	page.value && page.value.body_md ? renderMarkdown(page.value.body_md) : ""
+)
+const previewHtml = computed(() =>
+	editBody.value
+		? renderMarkdown(editBody.value)
+		: '<p class="text-ink-gray-5">Nothing to preview yet.</p>'
 )
 const updatedAt = computed(
 	() => (page.value && (page.value.modified || page.value.last_confirmed_at)) || ""
@@ -226,6 +260,7 @@ async function load() {
 }
 
 function startEdit() {
+	previewing.value = false
 	editTitle.value = (page.value && page.value.title) || ""
 	editSummary.value = (page.value && page.value.summary) || ""
 	editBody.value = (page.value && page.value.body_md) || ""
