@@ -155,7 +155,7 @@
               <span style="font-size:14px;color:var(--text);">{{ accountLabel(a) }}</span>
               <span style="font-size:12px;color:var(--text-3);">{{ a.upstream || 'openai' }}</span>
               <span style="margin-left:auto;display:flex;gap:6px;align-items:center;">
-                <button v-if="editable && !singleMode" @click="startConnect(m)" title="Re-authorize this subscription — mint fresh tokens"
+                <button v-if="editable && !singleMode" @click="startConnect(m, ai)" title="Re-authorize this subscription — mint fresh tokens"
                         style="border:1px solid var(--border-2);background:var(--surface);color:var(--blue);border-radius:5px;padding:3px 9px;cursor:pointer;font-size:12px;">Reconnect</button>
                 <button v-if="editable" @click="removeAccount(m, ai)" title="Remove account"
                         style="border:1px solid var(--red-bd);background:var(--red-bg);color:var(--red);border-radius:5px;width:22px;height:22px;cursor:pointer;font-size:12px;">✕</button>
@@ -193,7 +193,10 @@
             <div v-if="m._connect.error" style="margin-top:6px;font-size:13px;color:var(--red);">{{ m._connect.error }}</div>
           </div>
 
-          <button v-if="editable" @click="startConnect(m)"
+          <!-- Simplified onboarding editor hides rotation, so it also caps the row
+               at a single account (no unusable multi-account-without-rotation state):
+               hide "+ Connect account" once one is connected. -->
+          <button v-if="editable && (!singleMode || !(m.accounts && m.accounts.length))" @click="startConnect(m)"
                   :disabled="m._connect && m._connect.loading && !m._connect.authorizeUrl"
                   style="font-size:14px;color:var(--blue);background:transparent;border:1px dashed var(--border-2);border-radius:7px;padding:9px 16px;cursor:pointer;">
             + Connect account
@@ -228,7 +231,7 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue"
 import * as api from "@/api"
 import {
   deriveMode, reorder, presetToModels, missingVendorKeys, validatePool,
-  PROVIDER_LABELS, providerLabel, seedRowsFromConfig, defaultSubscriptionModel,
+  PROVIDER_LABELS, providerLabel, seedRowsFromConfig, defaultSubscriptionModel, SUB_MODEL_SUGGESTIONS,
 } from "@/llm/pool"
 import { errMessage as _err } from "@/lib/errors"
 
@@ -298,7 +301,6 @@ const STATIC_MODEL_SUGGESTIONS = {
   "Ollama (local)": ["qwen2.5:3b", "qwen2.5:0.5b", "llama3"],
   "OpenAI-Compatible": ["claude-sonnet-4-6", "gpt-4o", "qwen2.5:3b", "llama3"],
 }
-const SUB_MODEL_SUGGESTIONS = { openai: ["gpt-5.5", "gpt-5.4"], google: ["gemini-2.5-pro", "gemini-3.5-flash"] }
 const PROVIDER_DEFAULTS = {
   "Anthropic": { model: "claude-sonnet-4-6", baseUrl: "https://api.anthropic.com" },
   "OpenAI": { model: "gpt-4o", baseUrl: "https://api.openai.com/v1" },
@@ -364,7 +366,7 @@ const syncLabel = computed(() => {
 })
 
 // ---- helpers -------------------------------------------------------------
-function blankConnect() { return { open: false, loading: false, error: "", copied: false, nonce: "", authorizeUrl: "", pastedUrl: "" } }
+function blankConnect() { return { open: false, loading: false, error: "", copied: false, nonce: "", authorizeUrl: "", pastedUrl: "", reconnectIdx: null } }
 function presetCardStyle(entry) {
   const on = selectedPreset.value === entry.key
   return {
@@ -418,6 +420,11 @@ function setCredType(m, type) {
     // Onboarding hides the model field — default it from the chosen provider so
     // validatePool + save still have a model id.
     if (singleMode.value) m.model = defaultSubscriptionModel(m.upstream)
+  } else if (singleMode.value) {
+    // Toggling back to API key in the simplified editor: drop the subscription
+    // model id (hidden while on the subscription tab) so it doesn't linger under
+    // an API-key provider it doesn't belong to.
+    m.model = (PROVIDER_DEFAULTS[m.provider] || {}).model || ""
   }
 }
 function onProviderChange(m) {
@@ -425,10 +432,16 @@ function onProviderChange(m) {
   if (!(m.model || "").trim() && d.model) m.model = d.model
   if (!(m.baseUrl || "").trim() && d.baseUrl) m.baseUrl = d.baseUrl
 }
-// Keep the (hidden) subscription model in sync with the provider in the
-// simplified onboarding editor; a no-op elsewhere (model is user-entered).
+// Provider switch on a subscription row in the simplified onboarding editor:
+// re-default the (hidden) model AND drop any already-connected account, which is
+// provider-specific — otherwise we'd save a model bound to the wrong provider's
+// OAuth credential. A no-op elsewhere (full editor manages model/accounts itself).
 function onUpstreamChange(m) {
-  if (singleMode.value && m.credentialType === "subscription") m.model = defaultSubscriptionModel(m.upstream)
+  if (singleMode.value && m.credentialType === "subscription") {
+    m.model = defaultSubscriptionModel(m.upstream)
+    m.accounts = []
+    m._connect = blankConnect()
+  }
 }
 function move(i, d) { rows.value = reorder(rows.value, i, i + d) }
 function remove(i) { rows.value = rows.value.filter((_, j) => j !== i) }
@@ -454,13 +467,18 @@ function accountLabel(a) {
   if (l && !/^SUB_/i.test(l)) return l
   return (a && a.account_email) || "Account connected"
 }
-async function startConnect(m) {
+async function startConnect(m, reconnectIdx = null) {
   if (!m._connect) m._connect = blankConnect()
+  // Simplified editor hides the model field — make sure a subscription row always
+  // carries a model id so the connect flow never dead-ends on an unfillable field.
+  if (singleMode.value && m.credentialType === "subscription" && !(m.model || "").trim()) {
+    m.model = defaultSubscriptionModel(m.upstream)
+  }
   if (!(m.model || "").trim()) {
     m._connect = { ...blankConnect(), open: true, error: "Enter a model id before connecting an account." }
     return
   }
-  m._connect = { ...blankConnect(), open: true, loading: true }
+  m._connect = { ...blankConnect(), open: true, loading: true, reconnectIdx }
   try {
     const provider = m.upstream === "google" ? "Google" : "OpenAI"
     const res = await api.beginPoolAccountSignin(provider, m.model.trim())
@@ -496,13 +514,20 @@ async function finishConnect(m) {
       upstream: m.upstream || "openai",
       account_ref: d.account_ref,
       label: d.label || d.account_email || d.account_ref,
+      account_email: d.account_email || "",
       oauth_blob: d.oauth_blob || "",
       connected: true,
     }
-    // Re-authorizing the same account (same account_ref) refreshes it in place
-    // rather than adding a duplicate row.
-    const existing = m.accounts.findIndex((a) => a.account_ref && a.account_ref === acct.account_ref)
-    if (existing >= 0) m.accounts.splice(existing, 1, acct)
+    // Place the (re)connected account. The backend mints a fresh account_ref on
+    // every sign-in, so it can't be a dedupe key: a per-account Reconnect refreshes
+    // that exact slot (reconnectIdx); otherwise fold onto an existing account with
+    // the same email; otherwise append a new one.
+    const ri = m._connect.reconnectIdx
+    const byEmail = acct.account_email
+      ? m.accounts.findIndex((a) => a.account_email && a.account_email.toLowerCase() === acct.account_email.toLowerCase())
+      : -1
+    if (ri != null && ri >= 0 && ri < m.accounts.length) m.accounts.splice(ri, 1, acct)
+    else if (byEmail >= 0) m.accounts.splice(byEmail, 1, acct)
     else m.accounts.push(acct)
     m._connect = blankConnect()
   } catch (e) { m._connect.loading = false; m._connect.error = _err(e) }
@@ -542,9 +567,15 @@ async function load() {
     if (selectedPreset.value) llmMode.value = "preset"
     else if (rows.value.length >= 2 || rows.value.some((r) => r.credentialType === "subscription")) llmMode.value = "custom"
     else { llmMode.value = "quick"; if (!rows.value.length) rows.value = [newRow()] }
-    // Never land on a mode the host didn't allow (onboarding = quick-only): clamp
-    // to the first allowed mode and ensure it has a row to edit.
-    if (!props.modes.includes(llmMode.value)) {
+    // Onboarding is quick-only (singleMode): collapse to a single editable row so
+    // the editor is WYSIWYG. Quick-mode Save persists only rows[0], so keeping the
+    // rest of a seeded multi-model/preset pool around would silently drop it. Also
+    // clear any stored preset — quick can't represent one.
+    if (singleMode.value) {
+      llmMode.value = props.modes[0] || "quick"
+      selectedPreset.value = ""
+      rows.value = rows.value.length ? [rows.value[0]] : [newRow()]
+    } else if (!props.modes.includes(llmMode.value)) {
       llmMode.value = props.modes[0] || "quick"
       selectedPreset.value = ""
       if (!rows.value.length) rows.value = [newRow()]
@@ -592,6 +623,17 @@ async function save() {
     // Quick saves a single-model pool (rows[0]); Custom saves the full pool.
     saveModels = buildSaveModels(llmMode.value === "quick" ? rows.value.slice(0, 1) : rows.value)
     savePreset = null
+  }
+  // Simplified editor hides the model id, so validatePool's "Model <id> needs a
+  // connected account" would name a value the user never saw. Pre-check with a
+  // clear message instead.
+  if (singleMode.value && llmMode.value !== "preset") {
+    const r0 = rows.value[0]
+    if (r0 && r0.credentialType === "subscription" &&
+        !((r0.accounts || []).some((a) => a && (a.oauth_blob || a.account_ref)))) {
+      err.value = "Connect your account to continue."
+      return
+    }
   }
   const v = validatePool(saveModels, savePreset)
   if (!v.ok) { err.value = v.error; return }
