@@ -1,12 +1,19 @@
 <template>
-	<div class="jv-app" :class="{ 'jv-dark': dark }" :style="paletteVars"
-		 style="--rad:8px;font-family:'Inter',system-ui,sans-serif;display:flex;min-height:100vh;background:var(--surface);color:var(--text);">
+	<div class="jv-app flex h-full flex-col overflow-hidden" :class="{ 'jv-dark': dark }" :style="paletteVars"
+		 style="--rad:8px;font-family:'Inter',system-ui,sans-serif;background:var(--surface);color:var(--text);">
 
-		<AppSidebar />
+		<!-- Shell-integrated header: teleports into the app shell's #app-header
+		     strip (same "Open ERPNext Desk" button as every other page). There is
+		     no per-view sidebar — the app shell's Sidebar owns navigation, so the
+		     Account page sits in the same chrome as Agents / Skills / Macros. -->
+		<LayoutHeader>
+			<template #left-header>
+				<Breadcrumbs :items="[{ label: 'Account', route: { name: 'Account' } }]" />
+			</template>
+		</LayoutHeader>
 
 		<main class="jv-acct-main">
 			<div class="jv-acct-wrap">
-				<h1 class="jv-acct-h1">Account</h1>
 
 				<!-- ===== Plan & billing ===== -->
 				<section class="jv-acct-card">
@@ -122,13 +129,15 @@ import { ref, computed, onMounted } from "vue"
 import { useTheme } from "@/composables/useTheme"
 import { getAccount, getLlmConnectionStatus, getLlmUsage, getDirectSubscriptionStatus } from "@/api"
 import { statusLabel, planPriceLabel, renewalLabel } from "@/account/format.js"
+import { Breadcrumbs } from "frappe-ui"
 import LlmPoolEditor from "@/components/LlmPoolEditor.vue"
 import DirectSubscriptionCard from "@/components/DirectSubscriptionCard.vue"
-import AppSidebar from "@/components/AppSidebar.vue"
+import LayoutHeader from "@/components/LayoutHeader.vue"
 import { errMessage as errMsg } from "@/lib/errors"
 
 // Theme — shared composable: honours "jarvis-theme" pref, cross-tab sync, OS live.
-// (toggleTheme itself now lives in AppSidebar; this view only needs the palette.)
+// (The theme toggle lives in the app shell's UserMenu; this view only needs the
+// palette vars for its .jv-acct-* card styles.)
 const { effectiveDark: dark, paletteVars } = useTheme()
 
 // Route-level guard already restricts /account to System Managers; this flag
@@ -261,13 +270,14 @@ onMounted(() => {
 
 <style scoped>
 .jv-acct-main {
+	/* Scroll region inside the app shell's flex-col content column — flex:1 +
+	   min-height:0 (NOT height:100vh, which double-scrolls inside the shell). */
 	flex: 1;
 	min-width: 0;
+	min-height: 0;
 	overflow-y: auto;
-	height: 100vh;
 	padding: 28px 32px 60px;
 }
-.jv-acct-h1 { font-size: 20px; font-weight: 600; margin: 0 0 18px; }
 .jv-acct-wrap {
 	max-width: 1120px;
 	margin: 0;
