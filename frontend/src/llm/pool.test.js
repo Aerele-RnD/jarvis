@@ -2,6 +2,14 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import { deriveMode, uniqueVendors, missingVendorKeys, presetToModels, buildCustomModels, reorder, validatePool } from "./pool.js"
 import { PROVIDER_LABELS, providerLabel, providerId, seedRowsFromConfig } from "./pool.js"
+import { defaultSubscriptionModel } from "./pool.js"
+
+test("defaultSubscriptionModel: per-upstream default, openai fallback", () => {
+  assert.equal(defaultSubscriptionModel("openai"), "gpt-5.5")
+  assert.equal(defaultSubscriptionModel("google"), "gemini-2.5-pro")
+  assert.equal(defaultSubscriptionModel("unknown"), "gpt-5.5")
+  assert.equal(defaultSubscriptionModel(undefined), "gpt-5.5")
+})
 
 const LADDER = { key: "anthropic-resilient", kind: "single_vendor", vendors: ["anthropic"],
   models: [{ provider: "anthropic", model: "claude-opus-4-8", order: 0 },

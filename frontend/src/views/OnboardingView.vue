@@ -156,16 +156,18 @@
 					</div>
 
 					<!-- ===== Connect AI (managed) — embeds the shared LlmPoolEditor component
-						 (same one AiView/AccountView use). Replaces desk renderLlm's entire
-						 Quick/Preset/Custom implementation (jarvis_onboarding.js ~559-1080)
-						 verbatim — the component already owns that UI + save_llm_pool call.
+						 (same one AccountView uses), restricted to :modes="['quick']" so
+						 onboarding shows only a single direct model. The Preset/Custom
+						 proxy-pool tabs + Direct/Proxy badge are intentionally hidden here to
+						 keep signup fast and decision-free; advanced pooling/failover stays
+						 available on the Account page. The component owns save_llm_pool.
 						 Desk's renderLlm has no "Back" button (only Skip/Save); mirrored here
 						 by omitting one too, since stepping back to "pay" post-payment would
 						 read as re-triggering checkout. ===== -->
 					<div v-else-if="state.step === 'connect'">
 						<h1 class="jv-ob-h1">Connect your AI</h1>
 						<p class="jv-ob-sub">Pick which model Jarvis should use. You can change this anytime from My Account.</p>
-						<LlmPoolEditor :editable="true" @saved="onConnected" />
+						<LlmPoolEditor :editable="true" :modes="['quick']" @saved="onConnected" />
 						<div v-if="state.finishing" class="jv-ob-note">Finishing setup…</div>
 						<div v-else-if="state.finishNote" class="jv-ob-note">
 							<span>{{ state.finishNote }}</span>

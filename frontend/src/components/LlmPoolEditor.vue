@@ -8,8 +8,9 @@
   <div class="jv-llm-editor" style="font-family:inherit;color:var(--text);">
     <div v-if="err" style="color:var(--red);font-size:13px;margin-bottom:12px;">{{ err }}</div>
 
-    <!-- Setup mode tabs + derived Direct/Proxy badge -->
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
+    <!-- Setup mode tabs + derived Direct/Proxy badge — hidden when the host
+         allows only one mode (onboarding's quick-only editor). -->
+    <div v-if="!singleMode" style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
       <div role="tablist" style="display:inline-flex;border:1px solid var(--border);border-radius:9px;overflow:hidden;">
         <button v-for="t in modeTabs" :key="t.value" role="tab" :aria-selected="llmMode===t.value"
                 @click="setMode(t.value)" :disabled="!editable"
@@ -76,7 +77,7 @@
     <!-- ================ QUICK / CUSTOM (shared rows) ================ -->
     <section v-else style="margin-bottom:18px;">
       <p v-if="llmMode==='quick'" style="font-size:14px;color:var(--text-3);margin:0 0 12px;">
-        A single model, sent directly to the provider. Need multiple models with failover? Use <b>Preset</b> or <b>Custom</b>.
+        A single model, sent directly to the provider.<template v-if="canPool"> Need multiple models with failover? Use <b>Preset</b> or <b>Custom</b>.</template><template v-else> You can add more models and automatic failover later from My Account.</template>
       </p>
       <div v-else style="font-size:13px;font-weight:600;color:var(--text-2);margin-bottom:8px;letter-spacing:.03em;text-transform:uppercase;">
         Custom failover pool
@@ -124,19 +125,23 @@
                  style="flex:1.5;min-width:120px;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;" />
         </div>
 
-        <!-- Chat-subscription credential: model + upstream + rotation + accounts + connect -->
+        <!-- Chat-subscription credential. In the simplified (onboarding) editor
+             the provider is enough: the Model ID field + rotation dropdown are
+             hidden (model auto-defaults per provider), leaving just the provider
+             picker + connect. The full account editor keeps all three. -->
         <div v-else>
+          <label v-if="singleMode" style="display:block;font-size:12px;color:var(--text-2);margin-bottom:4px;">Chat subscription provider</label>
           <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
-            <input v-model="m.model" :list="'jv-subdl-'+i" :disabled="!editable" placeholder="Model ID (e.g. gpt-5.5)"
+            <input v-if="!singleMode" v-model="m.model" :list="'jv-subdl-'+i" :disabled="!editable" placeholder="Model ID (e.g. gpt-5.5)"
                    style="flex:2;min-width:120px;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;" />
-            <datalist :id="'jv-subdl-'+i">
+            <datalist v-if="!singleMode" :id="'jv-subdl-'+i">
               <option v-for="s in (SUB_MODEL_SUGGESTIONS[m.upstream] || [])" :key="s" :value="s"></option>
             </datalist>
-            <select v-model="m.upstream" :disabled="!editable" title="Upstream"
+            <select v-model="m.upstream" @change="onUpstreamChange(m)" :disabled="!editable" title="Provider"
                     style="flex:1;min-width:100px;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;">
               <option v-for="o in upstreamOpts" :key="o.value" :value="o.value">{{ o.label }}</option>
             </select>
-            <select v-model="m.rotation" :disabled="!editable" title="Account rotation"
+            <select v-if="!singleMode" v-model="m.rotation" :disabled="!editable" title="Account rotation"
                     style="flex:1.2;min-width:110px;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;">
               <option v-for="o in rotationOpts" :key="o.value" :value="o.value">{{ o.label }}</option>
             </select>
@@ -149,8 +154,12 @@
               <span style="font-size:12px;font-weight:600;color:var(--green);">connected</span>
               <span style="font-size:14px;color:var(--text);">{{ accountLabel(a) }}</span>
               <span style="font-size:12px;color:var(--text-3);">{{ a.upstream || 'openai' }}</span>
-              <button v-if="editable" @click="removeAccount(m, ai)" title="Remove account"
-                      style="margin-left:auto;border:1px solid var(--red-bd);background:var(--red-bg);color:var(--red);border-radius:5px;width:22px;height:22px;cursor:pointer;font-size:12px;">✕</button>
+              <span style="margin-left:auto;display:flex;gap:6px;align-items:center;">
+                <button v-if="editable && !singleMode" @click="startConnect(m)" title="Re-authorize this subscription — mint fresh tokens"
+                        style="border:1px solid var(--border-2);background:var(--surface);color:var(--blue);border-radius:5px;padding:3px 9px;cursor:pointer;font-size:12px;">Reconnect</button>
+                <button v-if="editable" @click="removeAccount(m, ai)" title="Remove account"
+                        style="border:1px solid var(--red-bd);background:var(--red-bg);color:var(--red);border-radius:5px;width:22px;height:22px;cursor:pointer;font-size:12px;">✕</button>
+              </span>
             </div>
           </div>
           <div v-else style="font-size:13px;color:var(--text-3);margin-bottom:8px;">No accounts connected yet.</div>
@@ -219,11 +228,18 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue"
 import * as api from "@/api"
 import {
   deriveMode, reorder, presetToModels, missingVendorKeys, validatePool,
-  PROVIDER_LABELS, providerLabel, seedRowsFromConfig,
+  PROVIDER_LABELS, providerLabel, seedRowsFromConfig, defaultSubscriptionModel,
 } from "@/llm/pool"
 import { errMessage as _err } from "@/lib/errors"
 
-const props = defineProps({ editable: { type: Boolean, default: true } })
+const props = defineProps({
+  editable: { type: Boolean, default: true },
+  // Which setup tabs to expose. Default = the full 3-mode editor (Account page).
+  // Onboarding passes ["quick"] to offer a single direct model and hide the
+  // proxy-pool Preset/Custom tabs + the Direct/Proxy badge — faster signup, no
+  // failover/pooling decisions up front (users configure that later in Account).
+  modes: { type: Array, default: () => ["quick", "preset", "custom"] },
+})
 const emit = defineEmits(["saved"])
 
 // ---- state ---------------------------------------------------------------
@@ -238,11 +254,19 @@ const saving = ref(false)
 const sync = ref({ last_sync_status: "", pending: false })
 let pollTimer = null
 
-const modeTabs = [
+const ALL_MODE_TABS = [
   { value: "quick", label: "Quick" },
   { value: "preset", label: "Preset" },
   { value: "custom", label: "Custom" },
 ]
+// Only the tabs the host allows, in canonical order.
+const modeTabs = computed(() => ALL_MODE_TABS.filter((t) => props.modes.includes(t.value)))
+// With a single allowed mode the tab bar + Direct/Proxy badge are just noise —
+// hide them and render that mode's body directly (onboarding's quick-only editor).
+const singleMode = computed(() => modeTabs.value.length <= 1)
+// Whether any proxy-pool tab (Preset/Custom) is reachable — gates the Quick hint
+// copy so it never points at tabs that aren't there.
+const canPool = computed(() => props.modes.includes("preset") || props.modes.includes("custom"))
 const credTypes = [
   { value: "api_key", label: "API key" },
   { value: "subscription", label: "Chat subscription" },
@@ -391,12 +415,20 @@ function setCredType(m, type) {
     if (!m.upstream) m.upstream = "openai"
     if (!Array.isArray(m.accounts)) m.accounts = []
     if (!m._connect) m._connect = blankConnect()
+    // Onboarding hides the model field — default it from the chosen provider so
+    // validatePool + save still have a model id.
+    if (singleMode.value) m.model = defaultSubscriptionModel(m.upstream)
   }
 }
 function onProviderChange(m) {
   const d = PROVIDER_DEFAULTS[m.provider] || {}
   if (!(m.model || "").trim() && d.model) m.model = d.model
   if (!(m.baseUrl || "").trim() && d.baseUrl) m.baseUrl = d.baseUrl
+}
+// Keep the (hidden) subscription model in sync with the provider in the
+// simplified onboarding editor; a no-op elsewhere (model is user-entered).
+function onUpstreamChange(m) {
+  if (singleMode.value && m.credentialType === "subscription") m.model = defaultSubscriptionModel(m.upstream)
 }
 function move(i, d) { rows.value = reorder(rows.value, i, i + d) }
 function remove(i) { rows.value = rows.value.filter((_, j) => j !== i) }
@@ -460,13 +492,18 @@ async function finishConnect(m) {
     }
     const d = res.data || {}
     if (!Array.isArray(m.accounts)) m.accounts = []
-    m.accounts.push({
+    const acct = {
       upstream: m.upstream || "openai",
       account_ref: d.account_ref,
       label: d.label || d.account_email || d.account_ref,
       oauth_blob: d.oauth_blob || "",
       connected: true,
-    })
+    }
+    // Re-authorizing the same account (same account_ref) refreshes it in place
+    // rather than adding a duplicate row.
+    const existing = m.accounts.findIndex((a) => a.account_ref && a.account_ref === acct.account_ref)
+    if (existing >= 0) m.accounts.splice(existing, 1, acct)
+    else m.accounts.push(acct)
     m._connect = blankConnect()
   } catch (e) { m._connect.loading = false; m._connect.error = _err(e) }
 }
@@ -505,6 +542,13 @@ async function load() {
     if (selectedPreset.value) llmMode.value = "preset"
     else if (rows.value.length >= 2 || rows.value.some((r) => r.credentialType === "subscription")) llmMode.value = "custom"
     else { llmMode.value = "quick"; if (!rows.value.length) rows.value = [newRow()] }
+    // Never land on a mode the host didn't allow (onboarding = quick-only): clamp
+    // to the first allowed mode and ensure it has a row to edit.
+    if (!props.modes.includes(llmMode.value)) {
+      llmMode.value = props.modes[0] || "quick"
+      selectedPreset.value = ""
+      if (!rows.value.length) rows.value = [newRow()]
+    }
   } catch (e) { err.value = _err(e) }
   try { sync.value = (await api.getLlmSyncStatus()) || sync.value } catch (e) { /* non-fatal */ }
   try { catalog.value = (await api.getPresetCatalog()) || [] } catch (e) { /* backend bundled fallback */ }
