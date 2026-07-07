@@ -129,22 +129,35 @@
           </div>
         </div>
 
-        <!-- API-key credential: provider (select) / model (datalist) / api_key / base_url -->
-        <div v-if="m.credentialType!=='subscription'" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-          <select v-model="m.provider" @change="onProviderChange(m)" :disabled="!editable" title="Provider"
-                  style="flex:1;min-width:120px;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;">
-            <option v-for="p in providerOptions" :key="p" :value="p">{{ p }}</option>
-          </select>
-          <input v-model="m.model" :list="'jv-dl-'+i" :disabled="!editable" placeholder="Model ID (e.g. gpt-4o)"
-                 style="flex:1.5;min-width:120px;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;" />
-          <datalist :id="'jv-dl-'+i">
-            <option v-for="s in modelSuggestionsForProvider(m.provider)" :key="s" :value="s"></option>
-          </datalist>
-          <input v-model="m.apiKey" :disabled="!editable" type="password"
-                 :placeholder="m.hasKey ? 'key set — re-enter to change' : 'API key'"
-                 style="flex:1.5;min-width:120px;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;" />
-          <input v-model="m.baseUrl" :disabled="!editable" placeholder="Base URL (OpenAI-compatible)"
-                 style="flex:1.5;min-width:120px;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;" />
+        <!-- API-key credential. Onboarding (singleMode) lays the four fields out as
+             a 2×2 grid so this view's height sits close to the subscription view —
+             no jarring resize when toggling. The Account editor keeps the dense row. -->
+        <div v-if="m.credentialType!=='subscription'">
+          <div v-if="singleMode" class="jv-ak-grid">
+            <JvCombo :model-value="m.provider" @update:model-value="(v) => { m.provider = v; onProviderChange(m) }"
+                     :options="providerOptions" :editable="editable" placeholder="Provider" />
+            <JvCombo :model-value="m.model" @update:model-value="(v) => { m.model = v }" allow-custom
+                     :options="modelSuggestionsForProvider(m.provider)" :editable="editable" placeholder="Model ID (e.g. gpt-4o)" />
+            <input v-model="m.apiKey" :disabled="!editable" type="password"
+                   :placeholder="m.hasKey ? 'key set — re-enter to change' : 'API key'" />
+            <input v-model="m.baseUrl" :disabled="!editable" placeholder="Base URL (OpenAI-compatible)" />
+          </div>
+          <div v-else style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <select v-model="m.provider" @change="onProviderChange(m)" :disabled="!editable" title="Provider"
+                    style="flex:1;min-width:120px;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;">
+              <option v-for="p in providerOptions" :key="p" :value="p">{{ p }}</option>
+            </select>
+            <input v-model="m.model" :list="'jv-dl-'+i" :disabled="!editable" placeholder="Model ID (e.g. gpt-4o)"
+                   style="flex:1.5;min-width:120px;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;" />
+            <datalist :id="'jv-dl-'+i">
+              <option v-for="s in modelSuggestionsForProvider(m.provider)" :key="s" :value="s"></option>
+            </datalist>
+            <input v-model="m.apiKey" :disabled="!editable" type="password"
+                   :placeholder="m.hasKey ? 'key set — re-enter to change' : 'API key'"
+                   style="flex:1.5;min-width:120px;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;" />
+            <input v-model="m.baseUrl" :disabled="!editable" placeholder="Base URL (OpenAI-compatible)"
+                   style="flex:1.5;min-width:120px;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;" />
+          </div>
         </div>
 
         <!-- Chat-subscription credential. In the simplified (onboarding) editor
@@ -159,7 +172,9 @@
             <datalist v-if="!singleMode" :id="'jv-subdl-'+i">
               <option v-for="s in (SUB_MODEL_SUGGESTIONS[m.upstream] || [])" :key="s" :value="s"></option>
             </datalist>
-            <select v-model="m.upstream" @change="onUpstreamChange(m)" :disabled="!editable" title="Provider"
+            <JvCombo v-if="singleMode" style="flex:1;" :model-value="m.upstream" @update:model-value="(v) => { m.upstream = v; onUpstreamChange(m) }"
+                     :options="upstreamOpts" :editable="editable" placeholder="Provider" />
+            <select v-else v-model="m.upstream" @change="onUpstreamChange(m)" :disabled="!editable" title="Provider"
                     style="flex:1;min-width:100px;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;">
               <option v-for="o in upstreamOpts" :key="o.value" :value="o.value">{{ o.label }}</option>
             </select>
@@ -232,8 +247,8 @@
       </button>
     </section>
 
-    <!-- Save bar + sync status -->
-    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+    <!-- Save bar + sync status — hidden when a host renders its own footer. -->
+    <div v-if="!footerless" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
       <button v-if="editable" @click="save" :disabled="saving || saveBlocked"
               :style="{padding:'12px 24px',background: saveBlocked ? 'var(--surface-3)' : 'var(--blue)',
                        color: saveBlocked ? 'var(--text-3)' : '#fff',border:'none',borderRadius:'9px',
@@ -256,6 +271,7 @@ import {
   PROVIDER_LABELS, providerLabel, seedRowsFromConfig, defaultSubscriptionModel, SUB_MODEL_SUGGESTIONS,
 } from "@/llm/pool"
 import { errMessage as _err } from "@/lib/errors"
+import JvCombo from "@/components/JvCombo.vue"
 
 const props = defineProps({
   editable: { type: Boolean, default: true },
@@ -264,6 +280,9 @@ const props = defineProps({
   // proxy-pool Preset/Custom tabs + the Direct/Proxy badge — faster signup, no
   // failover/pooling decisions up front (users configure that later in Account).
   modes: { type: Array, default: () => ["quick", "preset", "custom"] },
+  // Hide the built-in Save bar so a host (onboarding) can render its own footer
+  // and trigger save() via a template ref (exposed below).
+  footerless: { type: Boolean, default: false },
 })
 const emit = defineEmits(["saved"])
 
@@ -690,6 +709,9 @@ watch(keysByVendor, () => {
 
 onMounted(load)
 onBeforeUnmount(stopPolling)
+
+// Let a host (onboarding, footerless) drive Save from its own footer.
+defineExpose({ save })
 </script>
 
 <style scoped>
@@ -718,5 +740,12 @@ onBeforeUnmount(stopPolling)
 .jv-ct-tx { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .jv-ct-t { font-size: 14px; font-weight: 650; }
 .jv-ct-d { font-size: 12px; color: var(--text-3); line-height: 1.4; }
-@media (max-width: 560px) { .jv-ct-cards { grid-template-columns: 1fr; } }
+/* API-key fields as a 2×2 grid in onboarding — keeps this view's height close to
+   the subscription view so toggling doesn't resize the card. */
+.jv-ak-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.jv-ak-grid select, .jv-ak-grid input {
+  width: 100%; padding: 10px 12px; font-size: 14px; border: 1px solid var(--border);
+  border-radius: 8px; background: var(--surface); color: var(--text); font-family: inherit; box-sizing: border-box;
+}
+@media (max-width: 560px) { .jv-ct-cards, .jv-ak-grid { grid-template-columns: 1fr; } }
 </style>

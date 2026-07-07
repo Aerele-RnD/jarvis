@@ -183,7 +183,7 @@
 					<div v-else-if="state.step === 'connect'">
 						<h1 class="jv-ob-h1">Connect your AI</h1>
 						<p class="jv-ob-sub">Pick which model Jarvis should use. You can change this anytime from My Account.</p>
-						<LlmPoolEditor :editable="true" :modes="['quick']" @saved="onConnected" />
+						<LlmPoolEditor ref="poolRef" :editable="true" :modes="['quick']" :footerless="true" @saved="onConnected" />
 						<div v-if="state.finishing" class="jv-ob-note">Finishing setup…</div>
 						<div v-else-if="state.finishNote" class="jv-ob-note">
 							<span>{{ state.finishNote }}</span>
@@ -191,6 +191,9 @@
 						</div>
 						<div class="jv-ob-placeholder-actions" style="margin-top:18px;">
 							<button class="jv-ob-btn" @click="goBack">← Back</button>
+							<button class="jv-ob-btn jv-ob-btn-primary" :disabled="savingConnect" @click="saveConnect">
+								{{ savingConnect ? "Saving…" : "Save configuration" }}
+							</button>
 						</div>
 					</div>
 
@@ -662,6 +665,17 @@ function onConnected(sync) {
 	afterSaveRecheckReady()
 }
 
+// The Connect-AI footer (Back + Save) lives here, not inside LlmPoolEditor
+// (:footerless), so it matches every other step's footer. Save is triggered on
+// the editor via its exposed save() method.
+const poolRef = ref(null)
+const savingConnect = ref(false)
+async function saveConnect() {
+	if (!poolRef.value) return
+	savingConnect.value = true
+	try { await poolRef.value.save() } finally { savingConnect.value = false }
+}
+
 // ---- Self-host (renderSelfHost / renderShResults / runSelfHostTest /
 // saveSelfHost, jarvis_onboarding.js ~296-376) --------------------------------
 async function runSelfHostTest() {
@@ -857,7 +871,10 @@ onMounted(() => {
 }
 .jv-dark .jv-ob-body { border-color: var(--border-2); box-shadow: 0 24px 60px -24px rgba(0, 0, 0, .6); }
 .jv-ob-placeholder { font-size: 13.5px; color: var(--text-3); margin: 0 0 20px; }
-.jv-ob-placeholder-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+/* Uniform step footer: primary action bottom-right (forward = right in an LTR
+   wizard), Back pushed to the left. Single-button footers right-align too. */
+.jv-ob-placeholder-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; align-items: center; }
+.jv-ob-placeholder-actions .jv-ob-btn:not(.jv-ob-btn-primary) { margin-right: auto; }
 .jv-ob-btn {
 	font-family: inherit;
 	font-size: 13px;
