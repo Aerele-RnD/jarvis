@@ -196,39 +196,43 @@
           </div>
           <div v-else-if="!singleMode" style="font-size:13px;color:var(--text-3);margin-bottom:8px;">No accounts connected yet.</div>
 
-          <!-- Inline paste-back connect flow -->
-          <div v-if="m._connect && m._connect.open"
-               style="padding:10px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;margin-bottom:8px;">
-            <div v-if="m._connect.authorizeUrl" style="display:flex;flex-direction:column;gap:8px;">
-              <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                <a :href="m._connect.authorizeUrl" target="_blank" rel="noopener noreferrer"
-                   style="font-size:14px;color:var(--blue);text-decoration:none;font-weight:600;">Open sign-in ↗</a>
-                <button @click="copyAuthorizeUrl(m)" title="Copy URL"
-                        style="font-size:13px;padding:4px 10px;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:var(--surface);color:var(--text-2);">
-                  {{ m._connect.copied ? 'Copied ✓' : 'Copy' }}
-                </button>
+          <!-- Inline paste-back OAuth flow — two clear steps: open the sign-in
+               (OAuth) URL, then paste the callback URL you're redirected to. -->
+          <div v-if="m._connect && m._connect.open" class="jv-cn">
+            <div v-if="m._connect.authorizeUrl">
+              <div class="jv-cn-step">
+                <span class="jv-cn-num">1</span>
+                <div class="jv-cn-body">
+                  <div class="jv-cn-t">Sign in with your {{ m.upstream === 'google' ? 'Google' : 'OpenAI' }} account</div>
+                  <div class="jv-cn-row">
+                    <a :href="m._connect.authorizeUrl" target="_blank" rel="noopener noreferrer" class="jv-cn-open">Open sign-in ↗</a>
+                    <button @click="copyAuthorizeUrl(m)" class="jv-cn-copy">{{ m._connect.copied ? 'Copied ✓' : 'Copy link' }}</button>
+                  </div>
+                </div>
               </div>
-              <input v-model="m._connect.pastedUrl" placeholder="Paste the URL after you sign in"
-                     style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;" />
-              <div style="display:flex;gap:8px;">
-                <button @click="finishConnect(m)" :disabled="m._connect.loading"
-                        :style="{padding:'6px 14px',fontSize:'12.5px',border:'none',borderRadius:'6px',
-                                 cursor: m._connect.loading ? 'not-allowed' : 'pointer',
-                                 background:'var(--blue)',color:'#fff',opacity: m._connect.loading ? '0.6' : '1'}">
+              <div class="jv-cn-step">
+                <span class="jv-cn-num">2</span>
+                <div class="jv-cn-body">
+                  <div class="jv-cn-t">Paste the callback URL</div>
+                  <div class="jv-cn-hint">After signing in you'll see a “This site can't be reached” page — that's expected. Copy that page's full URL and paste it below.</div>
+                  <input v-model="m._connect.pastedUrl" class="jv-cn-input" placeholder="http://localhost:1455/auth/callback?code=…" @keydown.enter="finishConnect(m)" />
+                </div>
+              </div>
+              <div class="jv-cn-acts">
+                <button @click="closeConnect(m)" class="jv-cn-cancel">Cancel</button>
+                <button @click="finishConnect(m)" :disabled="m._connect.loading" class="jv-cn-connect">
                   {{ m._connect.loading ? 'Connecting…' : 'Connect' }}
                 </button>
-                <button @click="closeConnect(m)"
-                        style="padding:9px 16px;font-size:14px;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:var(--surface);color:var(--text-2);">Cancel</button>
               </div>
             </div>
-            <div v-else style="font-size:13px;color:var(--text-2);">Starting sign-in…</div>
-            <div v-if="m._connect.error" style="margin-top:6px;font-size:13px;color:var(--red);">{{ m._connect.error }}</div>
+            <div v-else class="jv-cn-loading">Starting sign-in…</div>
+            <div v-if="m._connect.error" class="jv-cn-err">{{ m._connect.error }}</div>
           </div>
 
           <!-- Simplified onboarding editor hides rotation, so it also caps the row
                at a single account (no unusable multi-account-without-rotation state):
                hide "+ Connect account" once one is connected. -->
-          <button v-if="editable && (!singleMode || !(m.accounts && m.accounts.length))" @click="startConnect(m)"
+          <button v-if="editable && !(m._connect && m._connect.open) && (!singleMode || !(m.accounts && m.accounts.length))" @click="startConnect(m)"
                   :disabled="m._connect && m._connect.loading && !m._connect.authorizeUrl"
                   style="font-size:14px;font-weight:600;color:var(--blue);background:var(--blue-bg);border:1px solid var(--blue-bd);border-radius:8px;padding:10px 16px;cursor:pointer;">
             {{ singleMode ? 'Connect →' : '+ Connect account' }}
@@ -770,6 +774,26 @@ defineExpose({ save })
 .jv-status-acts { margin-left: auto; display: flex; gap: 12px; flex: none; }
 .jv-status-act { background: transparent; border: 0; color: var(--text-3); font-size: 12.5px; cursor: pointer; padding: 0; }
 .jv-status-act:hover { color: var(--text); text-decoration: underline; text-underline-offset: 2px; }
+/* Paste-back OAuth connect panel — two numbered steps (open sign-in URL / paste
+   the callback URL), styled to match the rest of the onboarding editor. */
+.jv-cn { margin-top: 8px; padding: 15px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 11px; }
+.jv-cn-step { display: flex; gap: 10px; margin-bottom: 13px; }
+.jv-cn-num { flex: none; width: 21px; height: 21px; border-radius: 50%; background: var(--blue); color: var(--surface); font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; margin-top: 1px; }
+.jv-cn-body { flex: 1; min-width: 0; }
+.jv-cn-t { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 7px; }
+.jv-cn-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.jv-cn-open { font-size: 13px; font-weight: 600; color: var(--blue); text-decoration: none; padding: 7px 13px; border: 1px solid var(--blue-bd); background: var(--blue-bg); border-radius: 8px; }
+.jv-cn-copy { font-size: 12.5px; padding: 7px 12px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; background: var(--surface); color: var(--text-2); }
+.jv-cn-copy:hover { color: var(--text); }
+.jv-cn-hint { font-size: 12px; color: var(--text-3); line-height: 1.5; margin-bottom: 8px; }
+.jv-cn-input { width: 100%; padding: 9px 12px; font-size: 13.5px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); font-family: inherit; box-sizing: border-box; }
+.jv-cn-input:focus { outline: none; border-color: var(--blue-bd); }
+.jv-cn-acts { display: flex; justify-content: flex-end; gap: 8px; }
+.jv-cn-cancel { padding: 8px 15px; font-size: 13px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; background: var(--surface); color: var(--text-2); }
+.jv-cn-connect { padding: 8px 17px; font-size: 13px; font-weight: 600; border: 0; border-radius: 8px; cursor: pointer; background: var(--blue); color: var(--surface); }
+.jv-cn-connect:disabled { opacity: .6; cursor: not-allowed; }
+.jv-cn-loading { font-size: 13px; color: var(--text-2); }
+.jv-cn-err { margin-top: 9px; font-size: 13px; color: var(--red); }
 /* Lock both credential modes to the same body height in onboarding so toggling
    API key ↔ Chat subscription never resizes the card (first-impression polish). */
 .jv-single-body { min-height: 96px; }
