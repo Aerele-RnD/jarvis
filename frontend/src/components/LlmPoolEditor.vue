@@ -234,7 +234,7 @@
                hide "+ Connect account" once one is connected. -->
           <button v-if="editable && !(m._connect && m._connect.open) && (!singleMode || !(m.accounts && m.accounts.length))" @click="startConnect(m)"
                   :disabled="m._connect && m._connect.loading && !m._connect.authorizeUrl"
-                  style="font-size:14px;font-weight:600;color:var(--blue);background:var(--blue-bg);border:1px solid var(--blue-bd);border-radius:8px;padding:10px 16px;cursor:pointer;">
+                  style="font-size:14px;font-weight:600;color:var(--surface);background:var(--blue);border:0;border-radius:8px;padding:11px 17px;cursor:pointer;">
             {{ singleMode ? 'Sign in →' : '+ Connect account' }}
           </button>
         </div>
@@ -782,7 +782,7 @@ defineExpose({ save })
 .jv-cn-body { flex: 1; min-width: 0; }
 .jv-cn-t { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 7px; }
 .jv-cn-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.jv-cn-open { font-size: 13px; font-weight: 600; color: var(--blue); text-decoration: none; padding: 7px 13px; border: 1px solid var(--blue-bd); background: var(--blue-bg); border-radius: 8px; }
+.jv-cn-open { font-size: 13px; font-weight: 600; color: var(--surface); text-decoration: none; padding: 8px 14px; border: 0; background: var(--blue); border-radius: 8px; }
 .jv-cn-copy { font-size: 12.5px; padding: 7px 12px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; background: var(--surface); color: var(--text-2); }
 .jv-cn-copy:hover { color: var(--text); }
 .jv-cn-hint { font-size: 12px; color: var(--text-3); line-height: 1.5; margin-bottom: 8px; }
