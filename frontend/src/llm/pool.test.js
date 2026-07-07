@@ -92,6 +92,16 @@ test("validatePool: api_key model with blank key but has_key is valid (key prese
 test("validatePool: api_key model with neither key nor has_key is invalid", () => {
   assert.equal(validatePool([{ provider: "openai", model: "gpt-5.5", api_key: "" }], null).ok, false)
 })
+test("validatePool: OpenAI-Compatible / vLLM require a base_url (label or id)", () => {
+  // Claude-CLI shim path: provider set, model + key present, but no base_url.
+  assert.equal(validatePool([{ provider: "OpenAI-Compatible", model: "claude", api_key: "k" }], null).ok, false)
+  assert.equal(validatePool([{ provider: "openai_compat", model: "claude", api_key: "k" }], null).ok, false)
+  assert.equal(validatePool([{ provider: "vLLM (local)", model: "qwen", api_key: "k" }], null).ok, false)
+  // With a base_url it passes.
+  assert.equal(validatePool([{ provider: "OpenAI-Compatible", model: "claude", api_key: "k", base_url: "http://host.docker.internal:9000/openai/v1" }], null).ok, true)
+  // A normal provider is unaffected (has a default endpoint).
+  assert.equal(validatePool([{ provider: "openai", model: "gpt-5.5", api_key: "k" }], null).ok, true)
+})
 
 test("providerLabel/providerId: id⇄label round-trip for openai_compat", () => {
   assert.equal(providerLabel("openai_compat"), "OpenAI-Compatible")

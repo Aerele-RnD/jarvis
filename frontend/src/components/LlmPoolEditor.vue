@@ -402,7 +402,12 @@ const saveBlocked = computed(() => llmMode.value === "preset" && !!selectedPrese
 // Quick is always Direct (single model); Preset is Proxy once chosen; Custom
 // derives from the count of valid rows via the shared deriveMode helper.
 const badgeMode = computed(() => {
-  if (llmMode.value === "quick") return "direct"
+  // Quick is a single model: DIRECT for api_key, but a chat-subscription row
+  // forces the cliproxy/proxy path (compute_proxy_active), so reflect that.
+  if (llmMode.value === "quick") {
+    const r0 = rows.value[0]
+    return (r0 && r0.credentialType === "subscription") ? "proxy" : "direct"
+  }
   if (llmMode.value === "preset") return selectedPreset.value ? "proxy" : "direct"
   const valid = rows.value.filter((r) => r && (
     r.credentialType === "subscription" ? (r.model || "").trim() : ((r.provider || "").trim() && (r.model || "").trim())

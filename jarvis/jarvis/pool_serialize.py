@@ -197,6 +197,17 @@ def validate_models(settings) -> list:
             if not key_val:
                 errors.append(f"{label}: api_key is blank on an enabled model (would produce a dangling key_ref)")
 
+            # Custom-endpoint providers (OpenAI-Compatible shim / local vLLM) are
+            # defined by their base_url; without it build_pool_payload emits a
+            # provider with no endpoint and every turn on that model fails. The
+            # provider is already normalized to its canonical id at this point.
+            prov = (m.provider if hasattr(m, "provider") else m.get("provider", "")) or ""
+            base_url = (m.base_url if hasattr(m, "base_url") else m.get("base_url", "")) or ""
+            if prov in ("openai_compat", "vllm") and not base_url.strip():
+                errors.append(
+                    f"{label}: provider '{prov}' requires a base_url (its custom endpoint)"
+                )
+
         elif cred_type == "subscription":
             accounts = _model_accounts(m)
 
