@@ -277,6 +277,17 @@
 												@click="submitDecide(0)"
 											/>
 										</template>
+										<!-- Ignore: clear it off the board without acting — no
+										     verdict, no chat resume; reversible via Restore -->
+										<Button
+											variant="ghost"
+											label="Ignore"
+											iconLeft="bell-off"
+											:tooltip="'Dismiss without acting — the assistant is not told anything'"
+											:loading="dismissing"
+											:disabled="deciding !== null"
+											@click="submitDismiss"
+										/>
 										<div class="flex-1" />
 										<!-- tag for review — the DocShare path DocMetaPanel's
 										     "Shared with" block uses (same docmeta object, so the
@@ -336,6 +347,17 @@
 							<template v-else>
 								<div class="text-base text-ink-gray-8">{{ selected.decision }}</div>
 								<div v-if="decidedLine" class="mt-2 text-sm text-ink-gray-5">{{ decidedLine }}</div>
+								<!-- undo an accidental Ignore: back to Pending, nothing was
+								     ever told to the assistant -->
+								<Button
+									v-if="selected.status === 'Dismissed' && selected.can_act"
+									class="mt-3"
+									variant="subtle"
+									label="Restore to board"
+									iconLeft="rotate-ccw"
+									:loading="restoring"
+									@click="submitRestore"
+								/>
 							</template>
 						</DocSection>
 
@@ -408,14 +430,15 @@ function errMsg(e) {
 // ── rail config ──────────────────────────────────────────────────────────────
 // "Answered" = a chat ask the user resolved IN CHAT (chat_asks.resolve_on_
 // user_message) — filterable for audit; the sidebar badge stays Pending-only.
-const STATUS_THEME = { Pending: "orange", Approved: "green", Rejected: "red", Answered: "blue" }
+const STATUS_THEME = { Pending: "orange", Approved: "green", Rejected: "red", Answered: "blue", Dismissed: "gray" }
 const STATUS_OPTIONS = [
 	{ label: "Pending", value: "Pending" },
 	{ label: "Decided", value: "Decided" },
 	{ label: "Answered", value: "Answered" },
+	{ label: "Dismissed", value: "Dismissed" },
 	{ label: "All", value: "All" },
 ]
-const STATUS_VALUES = ["Pending", "Decided", "Answered", "All"]
+const STATUS_VALUES = ["Pending", "Decided", "Answered", "Dismissed", "All"]
 const DEFAULT_SORT = { field: "creation", dir: "desc" }
 
 // deep-link seeds (?status=, ?type= — parity with the old list page)
@@ -694,6 +717,8 @@ const tagOptions = computed(() => {
 const selectedOption = ref("")
 const note = ref("")
 const deciding = ref(null) // 1 | 0 | null
+const dismissing = ref(false)
+const restoring = ref(false)
 
 function toggleOption(opt) {
 	selectedOption.value = selectedOption.value === opt ? "" : opt
@@ -744,6 +769,62 @@ async function submitDecide(approve) {
 		toast.error(errMsg(e))
 	} finally {
 		deciding.value = null
+	}
+}
+
+// Ignore = dismiss off the board with no verdict and no chat resume. Same
+// optimistic swap as decide, but the row lands in "Dismissed".
+async function submitDismiss() {
+	if (dismissing.value || deciding.value !== null || !selected.value) return
+	dismissing.value = true
+	const id = selected.value.name
+	try {
+		await api.dismissApproval(id)
+		const r = railRows.value.find((x) => x.name === id)
+		if (r) {
+			r.status = "Dismissed"
+			r.decision = "(dismissed - no action taken)"
+		}
+		if (selected.value && selected.value.name === id) {
+			selected.value = {
+				...selected.value,
+				status: "Dismissed",
+				decision: "(dismissed - no action taken)",
+				decided_by: session.user,
+				decided_by_name: "",
+				decided_at: "",
+			}
+		}
+		note.value = ""
+		selectedOption.value = ""
+		toast.success("Ignored — the assistant was not notified")
+		store.refreshApprovalsCount()
+		if ((filters.status || "Pending") === "Pending") advanceAfterDecide(id)
+		else loadRecord(id, { keep: true })
+	} catch (e) {
+		toast.error(errMsg(e))
+	} finally {
+		dismissing.value = false
+	}
+}
+
+// Restore a dismissed request back to Pending (the undo).
+async function submitRestore() {
+	if (restoring.value || !selected.value) return
+	restoring.value = true
+	const id = selected.value.name
+	try {
+		await api.restoreApproval(id)
+		const r = railRows.value.find((x) => x.name === id)
+		if (r) r.status = "Pending"
+		toast.success("Restored to the board")
+		store.refreshApprovalsCount()
+		if ((filters.status || "Pending") === "Dismissed") advanceAfterDecide(id)
+		else loadRecord(id, { keep: true })
+	} catch (e) {
+		toast.error(errMsg(e))
+	} finally {
+		restoring.value = false
 	}
 }
 

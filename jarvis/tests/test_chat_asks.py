@@ -24,7 +24,13 @@ from unittest.mock import patch
 
 import frappe
 
-from jarvis.chat.approvals_api import decide, get_approval, list_approvals_page
+from jarvis.chat.approvals_api import (
+	decide,
+	dismiss_approval,
+	get_approval,
+	list_approvals_page,
+	restore_approval,
+)
 from jarvis.chat.chat_asks import (
 	materialize_from_turn,
 	parse_ask,
@@ -403,6 +409,68 @@ class TestDecideChatSource(unittest.TestCase):
 		attachments = sm.call_args.kwargs["attachments"]
 		self.assertTrue(attachments)
 		self.assertEqual(json.loads(attachments)[0]["file_name"], "ca-attach.txt")
+
+
+# =========================================================================== #
+# dismiss / restore — clear a request off the board without acting
+# =========================================================================== #
+class TestDismissApproval(unittest.TestCase):
+	def setUp(self):
+		frappe.set_user("Administrator")
+		_wipe_all()
+		self.conv = _mk_conv(USER_A, "ca-conv-dis")
+
+	@classmethod
+	def tearDownClass(cls):
+		frappe.set_user("Administrator")
+		_wipe_all()
+
+	def test_dismiss_never_resumes_the_chat(self):
+		ap = _mk_approval(USER_A, "ca-appr-dis", "Pending", self.conv, source="Chat")
+		with _as(USER_A), patch("jarvis.chat.api.send_message") as sm:
+			res = dismiss_approval(ap)
+		self.assertEqual(res["status"], "Dismissed")
+		self.assertEqual(frappe.db.get_value(APPROVAL, ap, "status"), "Dismissed")
+		# the whole point: the agent is told NOTHING
+		sm.assert_not_called()
+		self.assertEqual(frappe.db.get_value(APPROVAL, ap, "decided_by"), USER_A)
+
+	def test_dismiss_rejects_non_pending(self):
+		ap = _mk_approval(USER_A, "ca-appr-dis2", "Approved", self.conv, decision="yes")
+		with _as(USER_A), self.assertRaises(Exception):
+			dismiss_approval(ap)
+
+	def test_dismiss_out_of_pending_and_decided(self):
+		ap = _mk_approval(USER_A, "ca-appr-dis3", "Pending", self.conv, source="Chat")
+		with _as(USER_A):
+			dismiss_approval(ap)
+			# not in the Pending badge, not in Decided, but findable via Dismissed
+			pend = {r["name"] for r in list_approvals_page(filters={"status": "Pending"})["rows"]}
+			dec = {r["name"] for r in list_approvals_page(filters={"status": "Decided"})["rows"]}
+			dis = {r["name"] for r in list_approvals_page(filters={"status": "Dismissed"})["rows"]}
+		self.assertNotIn(ap, pend)
+		self.assertNotIn(ap, dec)
+		self.assertIn(ap, dis)
+
+	def test_restore_puts_it_back_pending(self):
+		ap = _mk_approval(USER_A, "ca-appr-dis4", "Pending", self.conv, source="Chat")
+		with _as(USER_A):
+			dismiss_approval(ap)
+			res = restore_approval(ap)
+		self.assertEqual(res["status"], "Pending")
+		self.assertEqual(frappe.db.get_value(APPROVAL, ap, "status"), "Pending")
+		self.assertFalse(frappe.db.get_value(APPROVAL, ap, "decided_by"))
+
+	def test_restore_only_from_dismissed(self):
+		ap = _mk_approval(USER_A, "ca-appr-dis5", "Approved", self.conv, decision="yes")
+		with _as(USER_A), self.assertRaises(Exception):
+			restore_approval(ap)
+
+	def test_dismiss_permission_scoped(self):
+		ap = _mk_approval(USER_A, "ca-appr-dis6", "Pending", self.conv, source="Chat")
+		# USER_B does not own the conversation and is not SM
+		with _as(USER_B), self.assertRaises(frappe.PermissionError):
+			dismiss_approval(ap)
 
 
 # =========================================================================== #

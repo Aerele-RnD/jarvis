@@ -44,7 +44,7 @@ def _may_act_on(conversation: str | None) -> bool:
 def list_approvals(status: str = "Pending", limit: int = 50) -> list[dict]:
 	"""Approvals visible to the current user (owner of the linked
 	conversation, or any System Manager)."""
-	if status not in ("Pending", "Approved", "Rejected", "Answered", "Decided", "All"):
+	if status not in ("Pending", "Approved", "Rejected", "Answered", "Dismissed", "Decided", "All"):
 		frappe.throw("Invalid status filter")
 	if status == "All":
 		filters = {}
@@ -90,7 +90,9 @@ _APPROVALS_FILTERS = {"status", "document_type", "conversation"}
 # "Answered" = a chat-sourced ask the user answered IN CHAT (chat_asks.
 # resolve_on_user_message); it stays out of "Decided" (Approved/Rejected are
 # board decisions) and out of the Pending badge, but is filterable for audit.
-_APPROVAL_STATUSES = {"Pending", "Approved", "Rejected", "Answered", "Decided", "All"}
+# "Dismissed" = cleared off the board with no action (dismiss_approval) —
+# reversible, never resumes the agent; also out of Decided and the badge.
+_APPROVAL_STATUSES = {"Pending", "Approved", "Rejected", "Answered", "Dismissed", "Decided", "All"}
 
 
 def _lk(s: str) -> str:
@@ -504,3 +506,49 @@ def decide(name: str, decision: str, approve: int = 1) -> dict:
 				if frappe.session.user != original_user:
 					frappe.set_user(original_user)
 	return {"ok": True, "status": doc.status, "resumed": resumed}
+
+
+@frappe.whitelist()
+def dismiss_approval(name: str) -> dict:
+	"""Clear a Pending request off the board WITHOUT acting on it — no
+	verdict, no chat resume. For requests the user simply doesn't want to
+	handle (a stale ask, a question they'll ignore). Terminal but reversible
+	via ``restore_approval``; unlike Reject it never tells the agent anything.
+	"""
+	doc = frappe.get_doc(APPROVAL, name)
+	if not _may_act_on(doc.conversation):
+		frappe.throw("Not permitted", frappe.PermissionError)
+	if doc.status != "Pending":
+		frappe.throw(f"Approval {name} is already {doc.status}")
+	# conditional flip: only one concurrent caller wins Pending -> Dismissed
+	frappe.db.sql(
+		"""update `tabJarvis Approval Request`
+		set status='Dismissed', decision=%s, decided_by=%s, decided_at=%s
+		where name=%s and status='Pending'""",
+		("(dismissed - no action taken)", frappe.session.user,
+		 frappe.utils.now_datetime(), name),
+	)
+	if not frappe.db.sql(
+		"select 1 from `tabJarvis Approval Request` where name=%s and status='Dismissed'",
+		(name,),
+	):
+		frappe.throw(f"Approval {name} was decided concurrently")
+	frappe.db.commit()
+	return {"ok": True, "status": "Dismissed"}
+
+
+@frappe.whitelist()
+def restore_approval(name: str) -> dict:
+	"""Put a Dismissed request back on the board (Pending). The undo for an
+	accidental dismiss."""
+	doc = frappe.get_doc(APPROVAL, name)
+	if not _may_act_on(doc.conversation):
+		frappe.throw("Not permitted", frappe.PermissionError)
+	if doc.status != "Dismissed":
+		frappe.throw(f"Only a dismissed request can be restored (this is {doc.status})")
+	frappe.db.set_value(
+		APPROVAL, name,
+		{"status": "Pending", "decision": None, "decided_by": None, "decided_at": None},
+	)
+	frappe.db.commit()
+	return {"ok": True, "status": "Pending"}
