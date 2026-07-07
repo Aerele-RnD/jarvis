@@ -1175,5 +1175,201 @@ class TestLearnedSkillsPush(unittest.TestCase):
 		self.assertTrue(get_learned_skills_sync_status()["pending"])
 
 
+class TestLearnedDecidedView(unittest.TestCase):
+	"""``view="decided"`` (Skills-page IA v2): the Review tab's Decided log.
+	Every human-touched terminal/parked status rides it (Approved / Active /
+	Rejected - incl. the Acknowledged and applied-to-skill notes - / Superseded /
+	Archived / Snoozed), ordered reviewed_at DESC with nulls last (``sort=
+	"oldest"`` flips it), ignoring the surfaced filter, with a decided-only
+	``disposition`` facet; the default view stays byte-identical.
+
+	Every list assertion scopes with ``search=`` on the fixture statements:
+	``_wipe()`` only clears ``la-test-*`` rows, deliberately tolerating
+	pre-existing decided rows on a dev site."""
+
+	@classmethod
+	def setUpClass(cls):
+		frappe.set_user("Administrator")
+
+	def setUp(self):
+		frappe.set_user("Administrator")
+		_wipe()
+
+	def tearDown(self):
+		frappe.set_user("Administrator")
+		_wipe()
+
+	def _names(self, out) -> list[str]:
+		return [r["name"] for r in out["rows"]]
+
+	def test_decided_includes_every_human_disposition(self):
+		now = now_datetime()
+		approved = _mk("dv1", status="Approved", reviewed_at=add_days(now, -1))
+		active = _mk("dv2", status="Active", reviewed_at=add_days(now, -2))
+		rejected = _mk(
+			"dv3", status="Rejected", review_note="not a real habit",
+			reviewed_at=add_days(now, -3),
+		)
+		acked = _mk(
+			"dv4", status="Rejected", review_note=learned_api.ACK_NOTE,
+			effective_sensitivity="B", reviewed_at=add_days(now, -4),
+		)
+		applied = _mk(
+			"dv5", status="Rejected",
+			review_note=learned_api.APPLIED_NOTE_PREFIX + "shipping-defaults",
+			effective_sensitivity="B", reviewed_at=add_days(now, -5),
+		)
+		snoozed = _mk("dv6", status="Snoozed", reviewed_at=add_days(now, -6))
+		superseded = _mk("dv7", status="Superseded", reviewed_at=add_days(now, -7))
+		proposed = _mk("dv8")  # pending, not decided
+		stale = _mk("dv9", status="Stale")  # machine-parked, not a decision
+
+		out = learned_api.list_learned_patterns_page(
+			view="decided", search="Statement for dv", page_length=100
+		)
+		names = self._names(out)
+		for n in (approved, active, rejected, acked, applied, snoozed, superseded):
+			self.assertIn(n, names)
+		self.assertNotIn(proposed, names)
+		self.assertNotIn(stale, names)
+
+		# The disposition badges have what they need on the CARD: review_note
+		# distinguishes Acknowledged / applied-to-skill from a plain Reject, and
+		# reviewed_by/reviewed_at feed the who/when line.
+		by_name = {r["name"]: r for r in out["rows"]}
+		self.assertEqual(by_name[acked]["review_note"], learned_api.ACK_NOTE)
+		self.assertTrue(
+			by_name[applied]["review_note"].startswith(learned_api.APPLIED_NOTE_PREFIX)
+		)
+		self.assertIn("reviewed_by", by_name[approved])
+		self.assertTrue(by_name[approved]["reviewed_at"])
+
+	def test_decided_orders_reviewed_at_desc_nulls_last(self):
+		now = now_datetime()
+		newest = _mk("do1", status="Approved", reviewed_at=now)
+		older = _mk(
+			"do2", status="Rejected", review_note="x", reviewed_at=add_days(now, -5)
+		)
+		oldest = _mk("do3", status="Snoozed", reviewed_at=add_days(now, -9))
+		undated = _mk("do4", status="Archived")  # no reviewed_at -> sorts last
+
+		# Scope to this fixture's rows via search (which keeps working under the
+		# view) so pre-existing decided rows on the site cannot interleave.
+		out = learned_api.list_learned_patterns_page(
+			view="decided", search="Statement for do", page_length=100
+		)
+		self.assertEqual(self._names(out), [newest, older, oldest, undated])
+
+	def test_decided_ignores_surfaced_filter(self):
+		unsurfaced = _mk(
+			"ds1", status="Approved", surfaced=0, reviewed_at=now_datetime()
+		)
+		out = learned_api.list_learned_patterns_page(
+			view="decided", surfaced=1, page_length=100
+		)
+		self.assertIn(unsurfaced, self._names(out))
+
+	def test_decided_overrides_status_filter(self):
+		proposed = _mk("dov1")  # would match status="Proposed"
+		decided = _mk("dov2", status="Approved", reviewed_at=now_datetime())
+		out = learned_api.list_learned_patterns_page(
+			view="decided", status="Proposed", page_length=100
+		)
+		names = self._names(out)
+		self.assertIn(decided, names)
+		self.assertNotIn(proposed, names)
+
+	def test_default_view_unchanged(self):
+		proposed = _mk("dd1")
+		decided = _mk("dd2", status="Approved", surfaced=1, reviewed_at=now_datetime())
+		# No view param; search-scoped so a dev site's own surfaced Proposed
+		# rows cannot push dd1 off the default 20-row first page.
+		out = learned_api.list_learned_patterns_page(search="Statement for dd")
+		names = self._names(out)
+		self.assertIn(proposed, names)
+		self.assertNotIn(decided, names)
+		for key in (
+			"rows", "total", "has_more", "start", "page_length", "facets",
+			"queued_count", "pending_apply_count", "review_activity",
+		):
+			self.assertIn(key, out)
+		# reviewed_at now rides the card in EVERY view (string-normalized, empty
+		# when undecided) without displacing the existing fields.
+		row = next(r for r in out["rows"] if r["name"] == proposed)
+		self.assertIn("reviewed_at", row)
+		self.assertEqual(row["reviewed_at"], "")
+		for present in ("pattern_statement", "strength_band", "domain", "status"):
+			self.assertIn(present, row)
+
+	def test_decided_disposition_filters(self):
+		now = now_datetime()
+		approved = _mk("dp1", status="Approved", reviewed_at=add_days(now, -1))
+		active = _mk("dp2", status="Active", reviewed_at=add_days(now, -2))
+		rejected = _mk(
+			"dp3", status="Rejected", review_note="not a real habit",
+			reviewed_at=add_days(now, -3),
+		)
+		acked = _mk(
+			"dp4", status="Rejected", review_note=learned_api.ACK_NOTE,
+			effective_sensitivity="B", reviewed_at=add_days(now, -4),
+		)
+		applied = _mk(
+			"dp5", status="Rejected",
+			review_note=learned_api.APPLIED_NOTE_PREFIX + "shipping-defaults",
+			effective_sensitivity="B", reviewed_at=add_days(now, -5),
+		)
+		snoozed = _mk("dp6", status="Snoozed", reviewed_at=add_days(now, -6))
+
+		def names_for(disposition):
+			return set(
+				self._names(
+					learned_api.list_learned_patterns_page(
+						view="decided", disposition=disposition,
+						search="Statement for dp", page_length=100,
+					)
+				)
+			)
+
+		# Each disposition returns EXACTLY its rows (set-equal, so a leak from
+		# any sibling disposition fails, not just a missing row).
+		self.assertEqual(names_for("approved"), {approved, active})
+		self.assertEqual(names_for("applied"), {applied})
+		self.assertEqual(names_for("acknowledged"), {acked})
+		# "rejected" = a plain human Reject: the Acknowledged / applied-to-skill
+		# terminal notes store as Rejected but must NOT ride this facet.
+		self.assertEqual(names_for("rejected"), {rejected})
+		self.assertEqual(names_for("snoozed"), {snoozed})
+
+	def test_decided_sort_oldest_flips_ordering(self):
+		now = now_datetime()
+		newest = _mk("dso1", status="Approved", reviewed_at=now)
+		older = _mk(
+			"dso2", status="Rejected", review_note="x", reviewed_at=add_days(now, -5)
+		)
+		oldest = _mk("dso3", status="Snoozed", reviewed_at=add_days(now, -9))
+		undated = _mk("dso4", status="Archived")  # no reviewed_at
+
+		out = learned_api.list_learned_patterns_page(
+			view="decided", sort="oldest", search="Statement for dso", page_length=100
+		)
+		# reviewed_at ASC, but the undated row STILL sorts last (nulls last in
+		# both directions - it has no date to be "oldest" by).
+		self.assertEqual(self._names(out), [oldest, older, newest, undated])
+
+	def test_invalid_view_rejected(self):
+		with self.assertRaises(frappe.ValidationError):
+			learned_api.list_learned_patterns_page(view="bogus")
+
+	def test_decided_invalid_disposition_and_sort_rejected(self):
+		with self.assertRaises(frappe.ValidationError):
+			learned_api.list_learned_patterns_page(view="decided", disposition="bogus")
+		with self.assertRaises(frappe.ValidationError):
+			learned_api.list_learned_patterns_page(view="decided", sort="bogus")
+
+	def test_disposition_outside_decided_view_rejected(self):
+		with self.assertRaises(frappe.ValidationError):
+			learned_api.list_learned_patterns_page(disposition="approved")
+
+
 if __name__ == "__main__":
 	unittest.main()

@@ -44,6 +44,11 @@ _STATUSES = (
 	"Proposed", "Approved", "Active", "Rejected",
 	"Snoozed", "Stale", "Superseded", "Archived",
 )
+# The Decided log (view="decided"): every human-touched terminal/parked state.
+# Stale stays out - it is machine-parked (drift/flag demotion), not a decision.
+_DECIDED_STATUSES = (
+	"Approved", "Active", "Rejected", "Superseded", "Archived", "Snoozed",
+)
 _SNOOZE_DAYS = (7, 30, 90)
 
 # The config fields the in-tab settings surface may write. The engine status
@@ -96,7 +101,8 @@ _CARD_FIELDS = [
 	"name", "pattern_statement", "skill_draft", "strength_band", "domain",
 	"company", "sensitivity", "effective_sensitivity", "exceptions_cluster",
 	"exception_n", "not_applicable", "draft_edited", "overlap_warning",
-	"status", "surfaced", "reviewed_by", "approved_by", "creation",
+	# reviewed_at rides the card for the Decided log's "who/when" line.
+	"status", "surfaced", "reviewed_by", "reviewed_at", "approved_by", "creation",
 	"stale_reason", "last_validated_at", "flags_count", "materialized_skill",
 	# review_note distinguishes Acknowledged / "applied to skill" terminal
 	# states from a plain Reject - without it the board's disposition
@@ -200,10 +206,18 @@ def list_learned_patterns_page(
 	surfaced=1,
 	start: int = 0,
 	page_length: int = 20,
+	view: str | None = None,
+	disposition: str | None = None,
+	sort: str | None = None,
 ) -> dict:
 	"""Paginated learning-board list. Envelope ``{rows, total, has_more, start,
 	page_length, facets, queued_count, pending_apply_count, review_activity}``
 	(shape parity with ``list_approvals_page`` / ``list_custom_skills_page``).
+
+	``view="decided"`` is the Review tab's Decided log: it OVERRIDES the status
+	filter with every human-touched terminal/parked state (``_DECIDED_STATUSES``),
+	ignores the surfaced filter (decided rows may never have surfaced) and orders
+	by ``reviewed_at`` DESC with nulls last. Strength/search/domain still apply.
 
 	``facets['domain']`` counts per domain UNDER the current status/surfaced/
 	strength/search view but DROPPING the domain filter itself (so the tab strip
@@ -212,6 +226,17 @@ def list_learned_patterns_page(
 	_guard()
 	start, pl = _clamp_page(start, page_length)
 
+	if view not in (None, "", "decided"):
+		frappe.throw(_("Invalid view."))
+	decided = view == "decided"
+	if disposition and not decided:
+		frappe.throw(_("disposition applies to the decided view only."))
+	if disposition and disposition not in (
+		"approved", "applied", "acknowledged", "rejected", "snoozed"
+	):
+		frappe.throw(_("Invalid disposition filter."))
+	if sort and sort not in (None, "", "newest", "oldest"):
+		frappe.throw(_("Invalid sort."))
 	if status and status != "All" and status not in _STATUSES:
 		frappe.throw(_("Invalid status filter."))
 	if strength and strength not in _STRENGTHS:
@@ -223,10 +248,26 @@ def list_learned_patterns_page(
 	# `base` = status + surfaced + strength + search (shared with the facet
 	# query). The domain condition applies to the row/total query only.
 	base: list[str] = []
-	if status and status != "All":
+	if decided:
+		params["decided_statuses"] = list(_DECIDED_STATUSES)
+		base.append("status IN %(decided_statuses)s")
+		if disposition == "approved":
+			base.append("status IN ('Approved', 'Active')")
+		elif disposition == "snoozed":
+			base.append("status = 'Snoozed'")
+		elif disposition == "applied":
+			params["applied_like"] = f"{_lk(APPLIED_NOTE_PREFIX)}%"
+			base.append("review_note LIKE %(applied_like)s")
+		elif disposition == "acknowledged":
+			params["ack_note"] = ACK_NOTE
+			base.append("review_note = %(ack_note)s")
+		elif disposition == "rejected":
+			params["ack_prefix"] = f"{_lk('Acknowledged')}%"
+			base.append("status = 'Rejected' AND ifnull(review_note, '') NOT LIKE %(ack_prefix)s")
+	elif status and status != "All":
 		params["status"] = status
 		base.append("status = %(status)s")
-	sc = _surfaced_cond(surfaced)
+	sc = _surfaced_cond(surfaced) if not decided else None
 	if sc is not None:
 		params["surfaced"] = sc
 		base.append("surfaced = %(surfaced)s")
@@ -246,6 +287,21 @@ def list_learned_patterns_page(
 	base_where = " AND ".join(base) or "1=1"
 
 	col_list = ", ".join(f"`{c}`" for c in _CARD_FIELDS)
+	# MariaDB has no NULLS LAST: `IS NULL` sorts the undated rows behind the
+	# dated ones for the Decided log; the default board keeps strength-first.
+	order_by = (
+		(
+			"(`reviewed_at` IS NULL) ASC, `reviewed_at` ASC, `creation` ASC, `name` ASC"
+			if sort == "oldest"
+			else "(`reviewed_at` IS NULL) ASC, `reviewed_at` DESC, `creation` DESC, `name` ASC"
+		)
+		if decided
+		else (
+			"CASE `strength_band` "
+			"WHEN 'High' THEN 0 WHEN 'Medium' THEN 1 WHEN 'Low' THEN 2 ELSE 3 END, "
+			"`creation` DESC, `name` ASC"
+		)
+	)
 	total = frappe.db.sql(
 		f"SELECT COUNT(*) FROM `tab{JLP}` WHERE {main_where}", params
 	)[0][0]
@@ -253,9 +309,7 @@ def list_learned_patterns_page(
 		f"""SELECT {col_list}
 		FROM `tab{JLP}`
 		WHERE {main_where}
-		ORDER BY CASE `strength_band`
-			WHEN 'High' THEN 0 WHEN 'Medium' THEN 1 WHEN 'Low' THEN 2 ELSE 3 END,
-			`creation` DESC, `name` ASC
+		ORDER BY {order_by}
 		LIMIT %(page_length)s OFFSET %(start)s""",
 		params, as_dict=True,
 	)
@@ -267,6 +321,7 @@ def list_learned_patterns_page(
 		r["flags_count"] = int(r.get("flags_count") or 0)
 		r["has_overlap_warning"] = 1 if (r.get("overlap_warning") or "").strip() else 0
 		r["creation"] = str(r.get("creation") or "")
+		r["reviewed_at"] = str(r.get("reviewed_at") or "")
 		r["last_validated_at"] = str(r.get("last_validated_at") or "")
 		r["stale_reason"] = r.get("stale_reason") or ""
 		r["materialized_skill"] = r.get("materialized_skill") or ""
@@ -1533,7 +1588,7 @@ def get_learning_status() -> dict:
 		fields=[
 			"name", "status", "trigger", "started_at", "ended_at",
 			"proposals_created", "proposals_updated", "candidates_found",
-			"coverage_note", "creation",
+			"coverage_note", "creation", "scan_mode",
 		],
 		order_by="creation desc",
 		limit=1,

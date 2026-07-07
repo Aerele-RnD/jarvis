@@ -13,6 +13,12 @@ const LR = "jarvis.chat.learned_api."
 // Flat kwargs (NOT the frozen `filters` JSON envelope the four feature lists
 // use): the endpoint takes domain/status/strength/search/surfaced directly.
 // `surfaced`: 1 (default review board) | 0 | "all" (decided tabs).
+// `view`: "" (default board) | "decided" — the Review tab's Decided log; the
+// server then OVERRIDES status with every human-touched terminal/parked state,
+// ignores `surfaced` and orders by reviewed_at (nulls last; `sort` "newest"
+// (default) | "oldest" flips it). `disposition` filters the decided view only
+// (the server refuses it elsewhere): "" | approved | applied | acknowledged |
+// rejected | snoozed.
 export const listLearnedPatternsPage = (p = {}) =>
 	call(LR + "list_learned_patterns_page", {
 		domain: p.domain || "",
@@ -22,6 +28,9 @@ export const listLearnedPatternsPage = (p = {}) =>
 		surfaced: p.surfaced == null ? 1 : p.surfaced,
 		start: p.start || 0,
 		page_length: p.page_length || 20,
+		view: p.view || "",
+		disposition: p.disposition || "",
+		sort: p.sort || "",
 	})
 
 // Full row + drill-down stats (raw n / confidence / wilson / gap), detected

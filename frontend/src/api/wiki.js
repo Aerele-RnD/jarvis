@@ -48,6 +48,9 @@ export const saveWikiPage = (slug, patch = {}) => call(WK + "save_wiki_page", { 
 export const archiveWikiPage = (slug) => call(WK + "archive_wiki_page", { slug })
 // Undoes an accidental archive (same permission as archiving).
 export const restoreWikiPage = (slug) => call(WK + "restore_wiki_page", { slug })
+// PERMANENT delete (same authority as archiving; archive is the reversible
+// path — callers warn accordingly). The mirror prunes the file on next sync.
+export const deleteWikiPage = (slug) => call(WK + "delete_wiki_page", { slug })
 
 // Chat nudge card: "don't ask again in this conversation" (7-day snooze).
 export const dismissWikiNudge = (conversation) => call(WK + "dismiss_nudge", { conversation })

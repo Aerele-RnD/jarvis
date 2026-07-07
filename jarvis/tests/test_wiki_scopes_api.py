@@ -482,6 +482,23 @@ class TestWikiSaveArchiveMatrix(_WikiScopeFixture):
 		out = wiki.archive_wiki_page(slug=slugs["org"])
 		self.assertTrue(out["ok"])
 
+	def test_delete_follows_archive_authority(self):
+		slugs = self._plant_matrix_pages()
+		# plain user: no delete on org pages
+		frappe.set_user(PLAIN_USER)
+		with self.assertRaises(frappe.PermissionError):
+			wiki.delete_wiki_page(slug=slugs["org"])
+		# KW manager may delete pages of roles they hold (same right as archive)
+		frappe.set_user(KW_MANAGER)
+		out = wiki.delete_wiki_page(slug=slugs["role"])
+		self.assertTrue(out["ok"])
+		self.assertFalse(frappe.db.exists(WIKI_DT, {"slug": slugs["role"]}))
+		# SM deletes org pages
+		frappe.set_user("Administrator")
+		out = wiki.delete_wiki_page(slug=slugs["org"])
+		self.assertTrue(out["ok"])
+		self.assertFalse(frappe.db.exists(WIKI_DT, {"slug": slugs["org"]}))
+
 	def test_restore_after_archive(self):
 		slugs = self._plant_matrix_pages()
 		frappe.set_user("Administrator")

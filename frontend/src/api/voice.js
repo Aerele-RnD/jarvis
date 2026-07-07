@@ -78,7 +78,11 @@ export const listMyVoiceNotesPage = (p = {}) =>
 		start: p.start || 0,
 		page_length: p.page_length || 20,
 		...(p.status ? { status: p.status } : {}),
+		...(p.search ? { search: p.search } : {}),
 	})
+// owner-only, status "New" only — edited transcript re-feeds the daily sweep
+export const updateVoiceNote = (name, transcript) =>
+	call(VN + "update_voice_note", { name, transcript })
 export const deleteVoiceNote = (name) => call(VN + "delete_voice_note", { name })
 // {stt_enabled, my_notes, org_new_notes (SM only), last_processed_at,
 //  last_process_status, can_process}
