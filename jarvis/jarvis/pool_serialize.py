@@ -244,6 +244,19 @@ def validate_models(settings) -> list:
                     _, parse_err = _safe_json_loads(blob_raw)
                     if parse_err:
                         errors.append(f"{label} account[{j}] ({acc_ref}): {parse_err}")
+                elif acc_ref:
+                    # An enabled subscription account with an account_ref but NO
+                    # oauth_blob would be emitted into the pool spec by
+                    # build_pool_payload with no entry in the oauth_blobs map, so
+                    # cliproxy serves a credential-less account and every chat turn
+                    # 502s despite a "connected" UI. Reject it here instead.
+                    # (A blank incoming blob for an EXISTING account is refilled
+                    # from prior_blobs in save_llm_pool before this runs, so this
+                    # only fires when there is genuinely no stored credential.)
+                    errors.append(
+                        f"{label} account[{j}] ({acc_ref}): no OAuth credential "
+                        f"stored — reconnect this account to authorize"
+                    )
 
                 # Duplicate account_ref detection
                 if acc_ref:

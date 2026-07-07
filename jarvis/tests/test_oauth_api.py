@@ -851,6 +851,8 @@ class TestGetDirectSubscriptionStatus(_OAuthApiBase):
 		self.assertEqual(out["model"], "gpt-5.5")
 		self.assertEqual(out["account_email"], "user@example.com")
 		self.assertNotEqual(out["connected_at"], "")
+		# proxy_active is surfaced so AccountView can gate the Connection card.
+		self.assertFalse(out["proxy_active"])
 
 	def test_api_key_tenant_is_not_direct(self):
 		settings = frappe.get_single("Jarvis Settings")

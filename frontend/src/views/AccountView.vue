@@ -98,8 +98,12 @@
 					<LlmPoolEditor v-else :editable="isSystemManager" @saved="onSaved" />
 				</section>
 
-				<!-- ===== Connection ===== -->
-				<section class="jv-acct-card">
+				<!-- ===== Connection (proxy tenants only) =====
+					 This card reflects the container's cliproxy OAuth auth-profile.
+					 Direct tenants are already covered by DirectSubscriptionCard above,
+					 and an api_key tenant has no OAuth profile (would misleadingly read
+					 "Not connected"), so only show it for proxy tenants. -->
+				<section v-if="directSub.proxy_active" class="jv-acct-card">
 					<h2>Connection</h2>
 					<div v-if="connLoading" class="jv-acct-muted">Checking…</div>
 					<div v-else-if="connErr" class="jv-acct-muted">Connection status is unavailable right now.</div>
@@ -221,12 +225,13 @@ async function loadDirectSub() {
 	} finally { directSubLoading.value = false }
 }
 // After a re-authorize / disconnect (or a pool save from the advanced editor):
-// refresh the direct status + the container connection card, and flash the same
-// "Saved" note the pool editor uses. The two probes are independent → run them
-// concurrently.
+// re-probe direct status, then refresh the container Connection card only if the
+// tenant is now a proxy tenant (that card is proxy-only). A direct reauth/
+// disconnect never needs it; migrating to a pool via the advanced editor does.
 async function onDirectChanged() {
 	onSaved({ pending: true })
-	await Promise.all([loadDirectSub(), loadConnection()])
+	await loadDirectSub()
+	if (directSub.value.proxy_active) await loadConnection()
 }
 
 // ---- Connection -------------------------------------------------------------
@@ -262,8 +267,10 @@ async function loadUsage() {
 
 onMounted(() => {
 	loadAccount()
-	loadDirectSub()
-	loadConnection()
+	// The Connection card is proxy-only, so fetch its status only once we know
+	// the tenant is a proxy tenant — avoids a wasted (currently failing) admin
+	// round-trip on every direct/api_key account load.
+	loadDirectSub().then(() => { if (directSub.value.proxy_active) loadConnection() })
 	loadUsage()
 })
 </script>

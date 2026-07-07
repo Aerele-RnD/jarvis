@@ -703,4 +703,9 @@ def get_direct_subscription_status() -> dict:
 		"model": settings.get("llm_model") or "",
 		"account_email": settings.get("llm_oauth_account_email") or "",
 		"connected_at": str(connected_at) if connected_at else "",
+		# Lets AccountView gate the container-OAuth "Connection" card to proxy
+		# tenants: direct tenants are covered by DirectSubscriptionCard, and an
+		# api_key tenant has no OAuth profile so the card would misleadingly read
+		# "Not connected".
+		"proxy_active": proxy_active,
 	}
