@@ -77,12 +77,7 @@
 							   placeholder="you@company.com" autocomplete="email" required aria-required="true"
 							   @keydown.enter="onAccountSubmit">
 						<label class="jv-ob-label" for="jv-ob-company">Company</label>
-						<input id="jv-ob-company" class="jv-ob-input" type="text" v-model="state.company"
-							   placeholder="Acme Inc." autocomplete="organization" list="jv-ob-company-list" required aria-required="true"
-							   @keydown.enter="onAccountSubmit">
-						<datalist id="jv-ob-company-list">
-								<option v-for="c in state.companies" :key="c" :value="c" />
-							</datalist>
+						<JvCombo :model-value="state.company" @update:model-value="(v) => state.company = v" allow-custom :options="state.companies" placeholder="Acme Inc." />
 							<div class="jv-ob-err" role="alert" aria-live="polite">{{ state.accountErr }}</div>
 						<div class="jv-ob-placeholder-actions">
 							<button class="jv-ob-btn" :disabled="accountBusy" @click="goBack">← Back</button>
@@ -181,7 +176,7 @@
 						 second charge by showing a "Payment complete → Continue" state once
 						 payment has gone through (state.successData). ===== -->
 					<div v-else-if="state.step === 'connect'">
-						<h1 class="jv-ob-h1">Connect your AI</h1>
+						<h1 class="jv-ob-h1">Give Jarvis a brain</h1>
 						<p class="jv-ob-sub">Pick which model Jarvis should use. You can change this anytime from My Account.</p>
 						<LlmPoolEditor ref="poolRef" :editable="true" :modes="['quick']" :footerless="true" @saved="onConnected" @ready="connectReady = $event" />
 						<div v-if="state.finishing" class="jv-ob-note">Finishing setup…</div>
@@ -253,6 +248,7 @@ import { reactive, ref, computed, onMounted, watch } from "vue"
 import { call } from "frappe-ui"
 import { useTheme } from "@/composables/useTheme"
 import LlmPoolEditor from "@/components/LlmPoolEditor.vue"
+import JvCombo from "@/components/JvCombo.vue"
 import { STEPS_MANAGED, STEPS_SELFHOST, nextStep, prevStep, stepIndex } from "@/onboarding/steps"
 import {
 	checkSignupPaymentState, isReadyForChat,
@@ -267,7 +263,7 @@ const { effectiveDark: dark, paletteVars } = useTheme()
 
 // Mirrors jarvis_onboarding.js's STEP_NAMES (~line 212) — the 4 named steps
 // shown in managed mode. "mode" and "selfhost" have no header entry.
-const STEP_NAMES = ["Account", "Plan", "Pay", "Connect AI"]
+const STEP_NAMES = ["Account", "Plan", "Pay", "Brain"]
 
 // ---- step machine -----------------------------------------------------------
 // `state.step` is one of STEPS_MANAGED/STEPS_SELFHOST depending on `state.mode`.
