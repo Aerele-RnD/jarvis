@@ -235,7 +235,7 @@
           <button v-if="editable && !(m._connect && m._connect.open) && (!singleMode || !(m.accounts && m.accounts.length))" @click="startConnect(m)"
                   :disabled="m._connect && m._connect.loading && !m._connect.authorizeUrl"
                   style="font-size:14px;font-weight:600;color:var(--blue);background:var(--blue-bg);border:1px solid var(--blue-bd);border-radius:8px;padding:10px 16px;cursor:pointer;">
-            {{ singleMode ? 'Connect →' : '+ Connect account' }}
+            {{ singleMode ? 'Sign in →' : '+ Connect account' }}
           </button>
         </div>
       </div>
