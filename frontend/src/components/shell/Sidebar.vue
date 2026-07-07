@@ -48,7 +48,7 @@
 					<template v-if="link.badge && !collapsed && store.approvalsCount" #right>
 						<Badge
 							:label="store.approvalsCount > 9 ? '9+' : String(store.approvalsCount)"
-							theme="gray"
+							theme="red"
 							variant="subtle"
 						/>
 					</template>

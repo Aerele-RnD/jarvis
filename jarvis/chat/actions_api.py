@@ -1,17 +1,22 @@
 """Direct apply for chat action cards (the record draft panel).
 
 The agent emits a ``jarvis-action`` block; the SPA renders it in a side-panel
-editor and posts the FINAL values here - no LLM turn in the apply path. All
-mutations route through the existing permission-checked tools
+editor and posts the FINAL values here - the apply itself never runs an LLM
+turn. All mutations route through the existing permission-checked tools
 (``jarvis.tools.create_doc`` etc.), so this module adds routing + a receipt,
 not a second write path.
+
+Multi-step plans: when the applied card carries ``continue`` (or after any
+confirmed gated write), the bench dispatches a follow-up agent turn carrying
+the receipt, so the agent stages the plan's next step without the user typing
+"continue". See ``jarvis.chat.api.enqueue_continuation``.
 """
 
 import frappe
 from frappe import _
 
 from jarvis import audit
-from jarvis.chat.api import _NON_EDIT_FIELDTYPES, _next_seq
+from jarvis.chat.api import _NON_EDIT_FIELDTYPES, _next_seq, enqueue_continuation
 from jarvis.exceptions import InvalidArgumentError
 
 MSG = "Jarvis Chat Message"
@@ -133,8 +138,14 @@ def _require_own_conversation(conversation: str) -> None:
 		frappe.throw(_("Not your conversation."), frappe.PermissionError)
 
 
+def _receipt_text(verb: str, doctype: str, name: str, submitted: int = 0) -> str:
+	if verb == "create" and submitted:
+		return f"Created and submitted {doctype} {name}."
+	return f"{_RECEIPT[verb]} {doctype} {name}."
+
+
 def _append_receipt(conversation: str, verb: str, doctype: str, name: str,
-					args: dict, submitted: int = 0) -> None:
+					args: dict, text: str) -> None:
 	"""Tool message first (feeds the SPA's docRefs → the receipt's doc id
 	linkifies to Desk), then a short assistant receipt the agent also sees in
 	the transcript on its next turn - so it never re-applies the change."""
@@ -146,9 +157,6 @@ def _append_receipt(conversation: str, verb: str, doctype: str, name: str,
 		"tool_result": frappe.as_json({"ok": True, "data": {"doctype": doctype, "name": name}}),
 		"tool_status": "completed",
 	}).insert(ignore_permissions=True)
-	text = f"{_RECEIPT[verb]} {doctype} {name}."
-	if verb == "create" and submitted:
-		text = f"Created and submitted {doctype} {name}."
 	frappe.get_doc({
 		"doctype": MSG, "conversation": conversation, "seq": _next_seq(conversation),
 		"role": "assistant", "content": text, "streaming": 0,
@@ -177,6 +185,10 @@ def apply_action(action: dict | str | None = None) -> dict:
 	conversation = (a.get("conversation") or "").strip()
 	values = a.get("values") or {}
 	do_submit = int(a.get("submit") or 0)
+	# The model marks a card "continue": 1 when it is a non-final step of a
+	# multi-step plan; the SPA forwards it. Only effect: one follow-up agent
+	# turn in the caller's own conversation - no extra write authority.
+	do_continue = int(a.get("continue") or 0)
 	if verb in _CONFIRM_VERBS:
 		raise InvalidArgumentError(
 			f"{verb!r} is a confirm-as-proposed action; approve it through the "
@@ -211,13 +223,22 @@ def apply_action(action: dict | str | None = None) -> dict:
 				 result={"doctype": doctype, "name": name})
 
 	frappe.db.commit()
+	receipt = _receipt_text(verb, doctype, name, do_submit)
 	try:
-		_append_receipt(conversation, verb, doctype, name, args, do_submit)
+		_append_receipt(conversation, verb, doctype, name, args, receipt)
 		frappe.db.commit()
 	except Exception:
 		# The mutation is already committed - a receipt hiccup must not
 		# report failure (the SPA would retry and duplicate the create).
 		frappe.log_error(title="apply_action receipt failed", message=frappe.get_traceback())
+	if do_continue:
+		try:
+			enqueue_continuation(conversation, receipt)
+		except Exception:
+			# Best-effort like the receipt: the write is committed, and the
+			# user can always nudge the agent manually if dispatch hiccups.
+			frappe.log_error(title="apply_action continuation failed",
+							 message=frappe.get_traceback())
 	slug = doctype.lower().replace(" ", "-")
 	return {"ok": True, "verb": verb, "name": name,
 			"doc_url": f"/app/{slug}/{name}"}
@@ -310,7 +331,36 @@ def confirm_tool(token: str, conversation: str | None = None) -> dict:
 			frappe.log_error(title="confirm_tool receipt failed",
 							 message=frappe.get_traceback())
 
+		# Continue the agent's plan: the model was told only "awaiting the
+		# user's confirmation" and stopped, so without this turn it never
+		# sees the real outcome (or continues a multi-step request). Always
+		# dispatched on the confirm path - there is no card to carry a
+		# continue flag here, and the post-write acknowledgment is part of
+		# the persona's write recipes. Best-effort like the receipt.
+		try:
+			enqueue_continuation(conv, _confirm_receipt_text(record, result))
+		except Exception:
+			frappe.log_error(title="confirm_tool continuation failed",
+							 message=frappe.get_traceback())
+
 	return result
+
+
+def _confirm_receipt_text(record: dict, result) -> str:
+	"""Short receipt line for the post-confirm continuation prompt: the call,
+	the created/affected record name when the result carries one, and the
+	outcome (including a bounded error message so the agent can react)."""
+	from jarvis.api import _describe_call
+
+	desc = _describe_call(record.get("tool") or "", record.get("args") or {})
+	data = result.get("data") if isinstance(result, dict) else None
+	if isinstance(data, dict) and data.get("name"):
+		desc += f" -> {data['name']}"
+	if isinstance(result, dict) and not result.get("ok"):
+		err = result.get("error") or {}
+		msg = str(err.get("message") or "")[:200] if isinstance(err, dict) else ""
+		return f"{desc} FAILED. {msg}".strip()
+	return f"{desc} succeeded."
 
 
 @frappe.whitelist()

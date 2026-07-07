@@ -1,0 +1,230 @@
+<template>
+	<div class="flex min-h-0 flex-1 flex-col overflow-hidden">
+		<!-- toolbar: search · status facet · Refresh (Approval-Board pattern) -->
+		<div class="flex items-center justify-between gap-2 border-b px-5 py-3">
+			<div class="flex flex-1 items-center gap-2 overflow-x-auto py-0.5">
+				<div class="w-60 shrink-0">
+					<FormControl
+						type="text"
+						placeholder="Search runs"
+						:modelValue="search"
+						@update:modelValue="(v) => (search = v)"
+					/>
+				</div>
+				<div class="w-40 shrink-0">
+					<FormControl
+						type="select"
+						:options="STATUS_OPTIONS"
+						:modelValue="filters.status || ''"
+						@update:modelValue="(v) => setFilter('status', v)"
+					/>
+				</div>
+			</div>
+			<Button :tooltip="'Refresh'" icon="refresh-cw" :loading="loading" @click="reload()" />
+		</div>
+
+		<div class="flex min-h-0 flex-1">
+			<!-- LEFT rail: run history on a standing gray-1 surface so the selected
+			     row's white chip + shadow reads in light mode (§15.2 pattern) -->
+			<div class="w-[360px] shrink-0 overflow-y-auto border-r bg-surface-gray-1">
+				<template v-if="rows.length">
+					<div class="flex flex-col divide-y">
+						<button
+							v-for="row in rows"
+							:key="row.name"
+							class="flex w-full items-start gap-3 px-4 py-3 text-left"
+							:class="row.name === selectedId ? 'bg-surface-selected shadow-sm' : 'hover:bg-surface-gray-2'"
+							@click="selectRun(row)"
+						>
+							<div class="min-w-0 flex-1">
+								<div class="flex min-w-0 items-center gap-1.5">
+									<Tooltip :text="exactDate(row.started_at)">
+										<span class="truncate text-base text-ink-gray-9">
+											{{ timeAgo(row.started_at) || "Queued" }}
+										</span>
+									</Tooltip>
+									<span class="shrink-0 text-sm text-ink-gray-5">
+										· {{ row.trigger || "manual" }}
+									</span>
+								</div>
+								<div class="mt-1 truncate text-sm text-ink-gray-5">
+									{{ row.findings_count || 0 }} finding{{ (row.findings_count || 0) === 1 ? "" : "s" }}
+									<span v-if="row.blocker_count" class="text-ink-red-4">
+										· {{ row.blocker_count }} blocker{{ row.blocker_count === 1 ? "" : "s" }}
+									</span>
+								</div>
+							</div>
+							<!-- partial scans carry an extra indicator so truncated coverage
+							     never blends in with clean completed runs -->
+							<Tooltip v-if="row.status === 'partial'" text="Partial scan — coverage gaps">
+								<FeatherIcon name="alert-triangle" class="mt-1 size-3.5 shrink-0 text-ink-amber-3" />
+							</Tooltip>
+							<Badge
+								class="mt-0.5 shrink-0"
+								variant="subtle"
+								:theme="STATUS_THEME[row.status] || 'gray'"
+								:label="row.status"
+							/>
+						</button>
+					</div>
+					<div class="flex items-center justify-between gap-2 border-t px-4 py-2">
+						<Button v-if="hasMore" variant="ghost" label="Load More" :loading="loading" @click="loadMore()" />
+						<div v-else />
+						<div class="text-sm text-ink-gray-5">{{ rows.length }} of {{ total }}</div>
+					</div>
+				</template>
+				<div v-else-if="loading" class="flex h-full items-center justify-center">
+					<LoadingIndicator class="size-5 text-ink-gray-5" />
+				</div>
+				<!-- persistent fetch-error state: a failed load must never read as "No runs" -->
+				<div
+					v-else-if="error"
+					class="flex h-full items-center justify-center px-6 text-center text-sm text-ink-red-4"
+				>
+					{{ error }}
+				</div>
+				<div
+					v-else
+					class="flex h-full flex-col items-center justify-center gap-3 px-6 text-center"
+				>
+					<FeatherIcon name="activity" class="size-7.5 text-ink-gray-5" />
+					<div class="flex flex-col items-center gap-1">
+						<span class="text-lg font-medium text-ink-gray-8">{{ emptyState.title }}</span>
+						<span class="text-p-base text-ink-gray-6">{{ emptyState.description }}</span>
+					</div>
+				</div>
+			</div>
+
+			<!-- RIGHT pane: the selected run's findings -->
+			<div class="flex-1 overflow-y-auto">
+				<div
+					v-if="!selectedRun"
+					class="flex h-full flex-col items-center justify-center gap-3 px-8 text-center"
+				>
+					<FeatherIcon name="clipboard" class="size-7.5 text-ink-gray-5" />
+					<div class="flex flex-col items-center gap-1">
+						<span class="text-lg font-medium text-ink-gray-8">Select a run</span>
+						<span class="text-p-base text-ink-gray-6">
+							Pick a run from the list to review its findings.
+						</span>
+					</div>
+				</div>
+				<FindingsPanel v-else :run="selectedRun" />
+			</div>
+		</div>
+	</div>
+</template>
+
+<script setup>
+// AgentRunsBoard — the Runs tab of /agents/:slug as a two-pane master-detail
+// (Approval-Board §15.2 pattern; replaces the single-pane AgentRunsTab).
+// LEFT: this owner's run history for ONE agent via useListPage →
+// list_runs_page (search / status facet, Load More + "N of M"). RIGHT:
+// FindingsPanel for the selected run. The parent's Run Now calls
+// reload({selectNewest: true}) through the exposed handle so the freshly
+// queued run is surfaced and selected even if a facet would hide it.
+import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue"
+import {
+	Badge,
+	Button,
+	FeatherIcon,
+	FormControl,
+	LoadingIndicator,
+	Tooltip,
+} from "frappe-ui"
+import FindingsPanel from "@/pages/agents/FindingsPanel.vue"
+import { useListPage } from "@/composables/useListPage"
+import { timeAgo, exactDate } from "@/utils/datetime"
+import * as apiAgents from "@/api/agents"
+
+const props = defineProps({
+	agentName: { type: String, required: true }, // listing docname (list_runs_page filter)
+})
+
+const STATUS_THEME = { running: "blue", completed: "green", partial: "orange", failed: "red" }
+const STATUS_OPTIONS = [
+	{ label: "All statuses", value: "" },
+	{ label: "Running", value: "running" },
+	{ label: "Completed", value: "completed" },
+	{ label: "Partial", value: "partial" },
+	{ label: "Failed", value: "failed" },
+]
+
+// ── rail data: useListPage + adapter onto listRunsPage's tab-less shape ──────
+const { rows, total, hasMore, loading, error, search, filters, setFilter, setFilters, resetLoad, loadMore, refreshKeep } =
+	useListPage({
+		fetchFn: (p) =>
+			apiAgents.listRunsPage({
+				agent: props.agentName,
+				status: (p.filters && p.filters.status) || "",
+				search: p.search || "",
+				sort: "recent",
+				start: p.start,
+				page_length: p.page_length,
+			}),
+		defaultSort: { field: "started_at", dir: "desc" },
+		storageKey: "agent-runs",
+	})
+
+const emptyState = computed(() => {
+	if (search.value.trim() || filters.status) {
+		return { title: "No matching runs", description: "Try a different status or search." }
+	}
+	return {
+		title: "No runs yet",
+		description: "Use Run Now or a schedule — every run lands here with its findings.",
+	}
+})
+
+// ── selection (local — runs live under the agent's hash tab, no :id route) ──
+const selectedRun = ref(null)
+const selectedId = computed(() => (selectedRun.value && selectedRun.value.name) || "")
+
+function selectRun(row) {
+	selectedRun.value = row
+}
+
+// auto-select the first row; on refresh, re-pin the selection to the fresh row
+// object so a running run's status/counters flip live in the right pane. When
+// the status/search facet excludes the selected run, fall over to the first
+// row (or clear to the placeholder) — never leave a stale run that isn't in
+// the rail.
+watch(rows, (r) => {
+	if (selectedRun.value) {
+		const again = r.find((x) => x.name === selectedRun.value.name)
+		selectedRun.value = again || r[0] || null
+	} else if (r.length) {
+		selectRun(r[0])
+	}
+})
+
+// slug switch without an unmount → hard reset (stale rows belong to the old agent)
+watch(
+	() => props.agentName,
+	() => {
+		selectedRun.value = null
+		resetLoad()
+	}
+)
+
+// Run Now lands here: refresh and select the newest run. Facets that would
+// hide a just-queued (running) run are cleared first so the jump always lands.
+async function reload(opts = {}) {
+	const selectNewest = !!(opts && opts.selectNewest)
+	if (selectNewest && (filters.status || search.value.trim())) {
+		search.value = ""
+		await setFilters({})
+	} else {
+		await resetLoad()
+	}
+	if (selectNewest && rows.value.length) selectRun(rows.value[0])
+}
+defineExpose({ reload })
+
+// freshness: refetch the loaded window on tab-visible (running → completed)
+function onVisibility() {
+	if (document.visibilityState === "visible") refreshKeep()
+}
+onMounted(() => document.addEventListener("visibilitychange", onVisibility))
+onBeforeUnmount(() => document.removeEventListener("visibilitychange", onVisibility))
+</script>

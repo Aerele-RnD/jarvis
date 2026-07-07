@@ -40,6 +40,12 @@
     "pattern_last_run_status",
     "pattern_next_run_at",
     "pattern_scan_mode",
+    "voice_wiki_section",
+    "voice_features_enabled",
+    "wiki_enabled",
+    "wiki_nudge_cooldown_hours",
+    "voice_notes_last_processed_at",
+    "voice_notes_last_process_status",
     "system_tab",
     "deployment_section",
     "deployment_mode",
@@ -69,6 +75,8 @@
     "custom_skills_sync_status",
     "agent_skills_synced_at",
     "agent_skills_sync_status",
+    "agent_catalog_dirty",
+    "agent_catalog_version",
     "learned_skills_synced_at",
     "learned_skills_sync_status",
     "agent_tools_section",
@@ -289,6 +297,45 @@
       "read_only": 1
     },
     {
+      "fieldname": "voice_wiki_section",
+      "fieldtype": "Section Break",
+      "label": "Voice & Wiki",
+      "collapsible": 1
+    },
+    {
+      "fieldname": "voice_features_enabled",
+      "fieldtype": "Check",
+      "label": "Enable Voice Features",
+      "default": "1",
+      "description": "Mic capture + speech-to-text in chat and the Business tab. Readers treat an unset value as ON (Single defaults are not backfilled on migrate)."
+    },
+    {
+      "fieldname": "wiki_enabled",
+      "fieldtype": "Check",
+      "label": "Enable Business Wiki",
+      "default": "1",
+      "description": "Business wiki pages + post-turn wiki nudges. Readers treat an unset value as ON."
+    },
+    {
+      "fieldname": "wiki_nudge_cooldown_hours",
+      "fieldtype": "Int",
+      "label": "Wiki Nudge Cooldown (hours)",
+      "default": "24",
+      "description": "Minimum gap between wiki nudges in the same conversation."
+    },
+    {
+      "fieldname": "voice_notes_last_processed_at",
+      "fieldtype": "Datetime",
+      "label": "Voice Notes Last Processed At",
+      "read_only": 1
+    },
+    {
+      "fieldname": "voice_notes_last_process_status",
+      "fieldtype": "Long Text",
+      "label": "Voice Notes Last Process Status",
+      "read_only": 1
+    },
+    {
       "fieldname": "system_tab",
       "fieldtype": "Tab Break",
       "label": "System"
@@ -487,6 +534,24 @@
       "fieldname": "agent_skills_sync_status",
       "fieldtype": "Long Text",
       "label": "Agent Skills Sync Status",
+      "read_only": 1
+    },
+    {
+      "default": "0",
+      "description": "Set when an install/uninstall/enable-disable changes the enabled agent set; cleared by a successful Apply push. Surfaced as `dirty` in get_agents_sync_status.",
+      "fieldname": "agent_catalog_dirty",
+      "fieldtype": "Check",
+      "hidden": 1,
+      "label": "Agent Catalog Dirty",
+      "read_only": 1
+    },
+    {
+      "default": "0",
+      "description": "Monotonic counter bumped by every enabled-set mutation. The Apply push snapshots it before building the payload and clears the dirty flag only if it is unchanged after a successful push, so a mutation landing mid-push keeps dirty set (TOCTOU guard).",
+      "fieldname": "agent_catalog_version",
+      "fieldtype": "Int",
+      "hidden": 1,
+      "label": "Agent Catalog Version",
       "read_only": 1
     },
     {

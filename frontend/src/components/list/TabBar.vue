@@ -1,8 +1,10 @@
 <template>
-	<div class="flex min-h-[45px] items-center gap-7.5 border-b px-5">
+	<div role="tablist" class="flex min-h-[45px] items-center gap-7.5 border-b px-5">
 		<button
 			v-for="tab in tabs"
 			:key="tab.value"
+			role="tab"
+			:aria-selected="modelValue === tab.value"
 			class="relative flex h-full min-h-[45px] items-center gap-1.5 text-base"
 			:class="modelValue === tab.value ? 'text-ink-gray-9' : 'text-ink-gray-5 hover:text-ink-gray-7'"
 			@click="$emit('update:modelValue', tab.value)"

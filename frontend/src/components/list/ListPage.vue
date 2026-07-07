@@ -93,6 +93,21 @@
 			</template>
 		</ListView>
 
+		<!-- error state (fetch failed, no rows to show) — precedes the empty state
+		     so a broken fetch isn't misreported as "no records" -->
+		<div v-else-if="error" class="relative flex-1">
+			<div
+				class="absolute left-1/2 flex w-4/12 -translate-x-1/2 flex-col items-center gap-3"
+				:style="{ top: '35%' }"
+			>
+				<FeatherIcon name="alert-circle" class="size-7.5 text-ink-red-4" />
+				<div class="flex flex-col items-center gap-1">
+					<span class="text-lg font-medium text-ink-gray-8">Couldn't load this list</span>
+					<span class="text-center text-p-base text-ink-red-4">{{ error }}</span>
+				</div>
+			</div>
+		</div>
+
 		<!-- empty state (loaded, zero rows) -->
 		<div v-else-if="!loading" class="relative flex-1">
 			<div
@@ -152,6 +167,7 @@ const props = defineProps({
 	rows: { type: Array, default: () => [] },
 	rowKey: { type: String, default: "name" },
 	loading: { type: Boolean, default: false },
+	error: { type: String, default: "" }, // fetch-failure message; shows the error state instead of the empty state
 	total: { type: Number, default: 0 },
 	hasMore: { type: Boolean, default: false },
 	quickFilters: { type: Array, default: () => [] }, // [{key,label,type,options}]

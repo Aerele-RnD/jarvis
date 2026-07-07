@@ -30,6 +30,7 @@ trigger takes the EXACT same code path as the scheduler.
 import frappe
 from frappe.utils import now_datetime
 
+from jarvis.chat.agent_activity import log_activity
 from jarvis.chat.macro_scheduler import compute_next_run
 
 INSTALLATION = "Jarvis Agent Installation"
@@ -157,6 +158,17 @@ def _launch_audit(inst, trigger: str) -> dict:
 			frappe.db.set_value(dt, name, "owner", owner, update_modified=False)
 	frappe.db.commit()
 
+	# Activity trail (best-effort, Link-free): we run under set_user(owner) /
+	# as the owner, so the feed row is owner-scoped like the run itself.
+	log_activity(
+		agent=inst.agent,
+		agent_title=listing.title,
+		installation=inst.name,
+		action="run_started",
+		run=run.name,
+		detail=f"trigger: {trigger}",
+	)
+
 	# O3: dispatch as an unattended background turn (interactive=False) so it
 	# never jumps ahead of a human's queued question.
 	result = api.send_message(
@@ -236,6 +248,18 @@ def _record_failed(row, reason: str) -> None:
 	run.insert()
 	if row.owner and row.owner != frappe.session.user:
 		frappe.db.set_value(RUN, run.name, "owner", row.owner, update_modified=False)
+	# Activity trail (best-effort, Link-free) — every other run outcome logs
+	# one; the explicit owner keeps the feed row owner-scoped even though the
+	# scheduler runs as Administrator.
+	log_activity(
+		agent=row.agent,
+		agent_title=frappe.db.get_value(LISTING, row.agent, "title"),
+		installation=row.name,
+		action="run_failed",
+		run=run.name,
+		detail=(reason or "")[:140],
+		owner=row.owner,
+	)
 	frappe.db.commit()
 
 

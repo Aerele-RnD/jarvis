@@ -223,6 +223,55 @@ def get_preset_catalog() -> list:
 	return BUNDLED_PRESET_CATALOG
 
 
+# Admin-owned speech-to-text config (voice features). Authenticated tenant
+# fetch, cached in per-site Redis so chat-UI loads / transcribe calls don't
+# pay an admin round-trip each time.
+_STT_CONFIG_PATH = "/api/method/jarvis_admin.api.tenant.get_stt_config"
+_STT_CONFIG_CACHE_KEY = "jarvis:stt_config"
+# No bench-side bust on admin key rotation/disable: the success TTL is the
+# propagation lag bound, so keep it short.
+_STT_CONFIG_TTL_S = 300
+_STT_CONFIG_MISS_TTL_S = 60
+_STT_CONFIG_MISS = {"__stt_unavailable__": True}
+
+
+def get_stt_config() -> dict | None:
+	"""Fetch the tenant's speech-to-text config from admin
+	(``{"enabled": bool, "api_key": str, "model": str}``), cache it, and
+	return None on ANY failure — voice features must degrade to
+	"not configured" rather than break callers (``get_chat_ui_settings``
+	runs on every SPA load). Failures are negative-cached briefly so a
+	slow/down admin can't make every SPA load pay a fresh round-trip.
+	Never raises."""
+	cache = frappe.cache()
+	cached = cache.get_value(_STT_CONFIG_CACHE_KEY)
+	if cached == _STT_CONFIG_MISS:
+		return None
+	if cached:
+		return cached
+	try:
+		# Short timeout: this is best-effort config on a hot endpoint; a
+		# slow admin must degrade to "not configured", not block the SPA.
+		cfg = _post(path=_STT_CONFIG_PATH, body={}, timeout_s=5)
+	except Exception:
+		cache.set_value(
+			_STT_CONFIG_CACHE_KEY, _STT_CONFIG_MISS, expires_in_sec=_STT_CONFIG_MISS_TTL_S
+		)
+		return None
+	if not isinstance(cfg, dict):
+		cache.set_value(
+			_STT_CONFIG_CACHE_KEY, _STT_CONFIG_MISS, expires_in_sec=_STT_CONFIG_MISS_TTL_S
+		)
+		return None
+	out = {
+		"enabled": bool(cfg.get("enabled")),
+		"api_key": cfg.get("api_key") or "",
+		"model": cfg.get("model") or "",
+	}
+	cache.set_value(_STT_CONFIG_CACHE_KEY, out, expires_in_sec=_STT_CONFIG_TTL_S)
+	return out
+
+
 def confirm_payment(payload: dict) -> dict:
 	"""POST Razorpay Checkout result; returns {agent_url, agent_token, tenant_status}."""
 	return _post(path="/api/method/jarvis_admin.api.tenant.confirm_payment", body=payload)

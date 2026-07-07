@@ -92,6 +92,14 @@ _TOOL_NAMES: tuple[str, ...] = (
     # eyeball get_list output. See jarvis/agents/rule_packs/.
     "compute_materiality",
     "run_scrutiny",
+    # Skill + wiki self-service (voice & wiki feature): search/read/save the
+    # customer's saved skills and org-wiki pages mid-turn. The write pair
+    # (create_custom_skill, update_wiki) is confirmation-gated in api.py.
+    "find_skills",
+    "get_skill",
+    "create_custom_skill",
+    "read_wiki",
+    "update_wiki",
 )
 
 

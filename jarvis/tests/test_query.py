@@ -1749,3 +1749,154 @@ class TestQueryExprDSLPhase4StringHelpers(FrappeTestCase):
 						"as": "x",
 					}],
 				})
+
+
+class TestQuerySqlInjectionHardening(FrappeTestCase):
+	"""SEC-003: field / alias / doctype identifiers must be validated
+	before they reach pypika, which quotes identifiers with backticks
+	but does NOT escape an embedded backtick/quote. Without this, a
+	crafted identifier from the agent-facing spec (reachable via the
+	prompt-injection chain) could break out of the quoting and inject a
+	``UNION SELECT`` that runs with the site's full DB privilege —
+	``frappe.set_user`` changes only the application user, not the DB
+	user, so the injected query can read ``__Auth`` and bypass the
+	tool's permission weave.
+	"""
+
+	def _build_sql(self, spec: dict) -> str:
+		"""Mirror of TestQueryQbTranslation._build_sql: run the full
+		pipeline, capture the resolved SQL without executing."""
+		with patch("frappe.has_permission", return_value=True), \
+		     patch("frappe.database.query.Engine") as fake_engine:
+			fake_engine.return_value.get_permission_conditions.return_value = None
+			with patch("pypika.queries.QueryBuilder.run", return_value=[]):
+				result = query(spec)
+		return result["sql"]
+
+	# ---- backtick / quote rejection --------------------------------
+
+	def test_field_with_backtick_rejected(self):
+		"""A field carrying a backtick would break out of pypika's
+		identifier quoting; reject it before it reaches the query."""
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError):
+				query({
+					"from": "DocType", "alias": "dt",
+					"select": ["dt.name`"],
+				})
+
+	def test_alias_with_backtick_rejected(self):
+		"""The FROM alias flows into pypika's ``.as_()`` sink."""
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError):
+				query({"from": "DocType", "alias": "dt`"})
+
+	# ---- ") UNION SELECT" payload rejection ------------------------
+
+	def test_field_with_union_select_payload_rejected(self):
+		"""The canonical injection payload as a WHERE field identifier."""
+		payload = "name`) UNION SELECT `password"
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError):
+				query({
+					"from": "DocType", "alias": "dt",
+					"select": ["dt.name"],
+					"where": [{"field": f"dt.{payload}", "op": "=",
+					           "value": 1}],
+				})
+
+	def test_select_output_alias_with_union_select_rejected(self):
+		"""The SELECT ``as`` output alias flows into pypika's ``.as_()``
+		sink and must be validated."""
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError):
+				query({
+					"from": "DocType",
+					"select": [{
+						"agg": "count", "field": "*",
+						"as": "n) UNION SELECT password FROM tabUser -- ",
+					}],
+				})
+
+	def test_join_alias_with_injection_rejected(self):
+		"""A JOIN alias with a space/paren payload is rejected before it
+		reaches ``.as_()``."""
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError):
+				query({
+					"from": "DocType", "alias": "dt",
+					"select": ["dt.name"],
+					"joins": [{
+						"type": "left", "doctype": "DocField",
+						"alias": "df) UNION SELECT",
+						"on": {"df.parent": "dt.name"},
+					}],
+				})
+
+	# ---- unknown column / doctype rejection ------------------------
+
+	def test_unknown_column_rejected(self):
+		"""A syntactically-valid but non-existent column is rejected via
+		``get_valid_columns()``."""
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError) as cm:
+				query({
+					"from": "DocType", "alias": "dt",
+					"select": ["dt.definitely_not_a_real_column"],
+				})
+			self.assertIn("column", str(cm.exception).lower())
+
+	def test_unknown_doctype_rejected(self):
+		"""A non-existent DocType (the table-name sink) is rejected."""
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(InvalidArgumentError) as cm:
+				query({"from": "No Such DocType XYZ"})
+			self.assertIn("doctype", str(cm.exception).lower())
+
+	# ---- over-blocking guard: legitimate queries still pass --------
+
+	def test_standard_and_real_columns_still_pass(self):
+		"""Standard Frappe columns (name/creation/idx) plus real fields
+		(issingle/module) must NOT be rejected by the column check."""
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": ["dt.name", "dt.creation", "dt.idx", "dt.module"],
+			"where": [{"field": "dt.issingle", "op": "=", "value": 1}],
+			"order_by": [{"field": "dt.name", "dir": "asc"}],
+		})
+		self.assertIn("issingle", sql)
+		self.assertIn("creation", sql)
+
+	def test_group_by_select_alias_still_pass(self):
+		"""GROUP BY referencing a SELECT output alias (not a physical
+		column) must remain valid after the identifier hardening — the
+		alias is regex-checked but not column-existence-checked."""
+		sql = self._build_sql({
+			"from": "DocType", "alias": "dt",
+			"select": [
+				{"expr": {"fn": "date_part",
+				          "args": [{"literal": "month"},
+				                   {"field": "dt.creation"}]},
+				 "as": "month"},
+				{"agg": "count", "field": "*", "as": "n"},
+			],
+			"group_by": ["month"],
+		})
+		self.assertIn("GROUP BY", sql.upper())
+
+	def test_optional_meta_column_still_pass(self):
+		"""The optional meta columns (_assign / _comments / _liked_by /
+		_user_tags / _seen) are real, queryable columns on standard
+		doctypes but are NOT returned by ``get_valid_columns()`` — they
+		must not be over-blocked by the column-existence check. Uses
+		``User`` (a non-special doctype whose get_valid_columns() takes
+		the default_fields + docfields path that omits _assign); a
+		special doctype like DocType would mask the gap because its path
+		returns the full DB column list."""
+		sql = self._build_sql({
+			"from": "User", "alias": "u",
+			"select": ["u.name"],
+			"where": [{"field": "u._assign", "op": "like",
+			           "value": "%Administrator%"}],
+		})
+		self.assertIn("_assign", sql)

@@ -79,8 +79,11 @@ def list_approvals(status: str = "Pending", limit: int = 50) -> list[dict]:
 # --------------------------------------------------------------------------- #
 # Paginated list (frozen envelope + facets) —
 # chat-features-page-migration-design §2.5. ADDITIVE: list_approvals (above)
-# STAYS (deprecated). Non-SM scoping is a JOIN on the conversation owner (not an
-# IN(all my convs) list, which explodes at 1000s of conversations).
+# STAYS (deprecated). Non-SM scoping is a pair of correlated EXISTS probes —
+# owner of the linked conversation OR an approval-level DocShare read grant
+# (tagging, docmeta_api.toggle_share) — not an IN(all my convs) list, which
+# explodes at 1000s of conversations, and not a JOIN, which would duplicate a
+# row that matches both arms.
 # --------------------------------------------------------------------------- #
 _APPROVALS_SORTABLE = {"creation": "creation", "status": "status", "document_type": "document_type"}
 _APPROVALS_FILTERS = {"status", "document_type", "conversation"}
@@ -145,28 +148,39 @@ def list_approvals_page(
 	page_length: int = 20,
 ) -> dict:
 	"""Approvals visible to the caller (SM: all; non-SM: rows whose conversation
-	they own), server-side search/filter/sort/paginate + a ``document_type`` facet
-	for the triage tabs. Envelope ``{rows, total, has_more, start, page_length,
-	facets}``. Behavior-identical scoping to ``list_approvals`` but scalable."""
+	they own, OR that are tagged to them via a DocShare read grant on the
+	approval itself), server-side search/filter/sort/paginate + a
+	``document_type`` facet for the triage tabs. Envelope ``{rows, total,
+	has_more, start, page_length, facets}``. Each row carries ``shared`` (0|1):
+	for a non-SM caller it is 1 when they do NOT own the linked conversation
+	(the row is visible only via a DocShare tag), else 0; for SM always 0.
+	Tagged users VIEW here; only the conversation owner (or SM) ACTS — see
+	``get_approval``/``decide``."""
 	me = frappe.session.user
 	start, pl = _clamp_page(start, page_length)
 	f = _load_filters(filters, _APPROVALS_FILTERS)
 	is_sm = "System Manager" in frappe.get_roles()
 
-	if is_sm:
-		from_sql = "`tabJarvis Approval Request` a"
-	else:
-		from_sql = (
-			"`tabJarvis Approval Request` a "
-			"JOIN `tabJarvis Conversation` c "
-			"ON c.name = a.conversation AND c.owner = %(me)s"
-		)
+	from_sql = "`tabJarvis Approval Request` a"
 
 	params: dict = {"me": me, "start": start, "page_length": pl}
 
 	# `base` applies to BOTH the main query and the facet query; the
 	# document_type filter applies ONLY to the main query (facets drop it).
 	base: list[str] = []
+	if not is_sm:
+		# Owner OR tagged: the caller owns the linked conversation, or holds a
+		# DocShare read grant on the approval (docmeta_api.toggle_share /
+		# assignment). EXISTS, not JOIN: a row matching BOTH arms must still
+		# appear exactly once in rows/total/facets.
+		base.append(
+			"(EXISTS (SELECT 1 FROM `tabJarvis Conversation` c "
+			"WHERE c.name = a.conversation AND c.owner = %(me)s) "
+			"OR EXISTS (SELECT 1 FROM `tabDocShare` ds "
+			"WHERE ds.share_doctype = 'Jarvis Approval Request' "
+			"AND ds.share_name = a.name "
+			"AND ds.user = %(me)s AND ds.`read` = 1))"
+		)
 	status = f.get("status") or "Pending"
 	if status not in _APPROVAL_STATUSES:
 		frappe.throw("Invalid status filter")
@@ -196,10 +210,20 @@ def list_approvals_page(
 	order = _order_by(sort_field, sort_dir, _APPROVALS_SORTABLE, "creation", "desc", prefix="a.")
 
 	total = frappe.db.sql(f"SELECT COUNT(*) FROM {from_sql} WHERE {main_where}", params)[0][0]
+	# `shared` (contract): non-SM rows the caller sees WITHOUT owning the linked
+	# conversation (i.e. only via a DocShare tag) carry 1; SM sees all rows by
+	# role, so shared is hardcoded 0 there.
+	shared_expr = (
+		"0 AS shared"
+		if is_sm
+		else "(NOT EXISTS (SELECT 1 FROM `tabJarvis Conversation` c "
+		"WHERE c.name = a.conversation AND c.owner = %(me)s)) AS shared"
+	)
 	rows = frappe.db.sql(
 		f"""SELECT a.name, a.title, a.status, a.document_type, a.question,
 		a.context_md, a.options, a.conversation, a.ref_doctype, a.ref_name,
-		a.decision, a.decided_by, a.decided_at, a.creation
+		a.decision, a.decided_by, a.decided_at, a.creation,
+		{shared_expr}
 		FROM {from_sql}
 		WHERE {main_where}
 		ORDER BY {order}
@@ -208,6 +232,7 @@ def list_approvals_page(
 	)
 	for r in rows:
 		r["options"] = _parse_options(r.get("options"))
+		r["shared"] = int(r.get("shared") or 0)
 
 	facet_rows = frappe.db.sql(
 		f"""SELECT COALESCE(NULLIF(TRIM(a.document_type), ''), 'Unclassified') AS dtv,
@@ -272,16 +297,22 @@ def get_approval(name: str) -> dict:
 
 @frappe.whitelist()
 def pending_count() -> int:
-	# Scoped like list_approvals_page: non-SM users count only rows whose
-	# conversation they own — as a COUNT with the same JOIN semantics, never by
-	# materializing the pending list.
+	# Scoped like list_approvals_page: non-SM users count rows whose
+	# conversation they own OR that carry an approval-level DocShare read grant
+	# for them (tagging) — the same EXISTS semantics as the list, never by
+	# materializing the pending list. EXISTS also keeps the COUNT exact when a
+	# row matches both arms.
 	if "System Manager" in frappe.get_roles():
 		return frappe.db.count(APPROVAL, {"status": "Pending"})
 	return frappe.db.sql(
 		"""SELECT COUNT(*) FROM `tabJarvis Approval Request` a
-		JOIN `tabJarvis Conversation` c
-		ON c.name = a.conversation AND c.owner = %(me)s
-		WHERE a.status = 'Pending'""",
+		WHERE a.status = 'Pending'
+		AND (EXISTS (SELECT 1 FROM `tabJarvis Conversation` c
+		             WHERE c.name = a.conversation AND c.owner = %(me)s)
+		     OR EXISTS (SELECT 1 FROM `tabDocShare` ds
+		                WHERE ds.share_doctype = 'Jarvis Approval Request'
+		                AND ds.share_name = a.name
+		                AND ds.user = %(me)s AND ds.`read` = 1))""",
 		{"me": frappe.session.user},
 	)[0][0]
 
@@ -349,9 +380,42 @@ def decide(name: str, decision: str, approve: int = 1) -> dict:
 			)
 		# The decision is durably recorded above; a resume failure must
 		# not 500 the endpoint (the SPA would re-show a decided row).
-		try:
-			res = send_message(conversation=doc.conversation, message=msg, attachments=attachments)
-			resumed = bool(res.get("ok"))
-		except Exception:
-			frappe.log_error(title="approval resume failed", message=frappe.get_traceback())
+		# send_message is owner-only (SEC-002). A System Manager may decide
+		# another user's approval (``_may_act_on`` gates that above), so the
+		# resume runs AS the conversation owner - the same identity hinge
+		# agents_api.run_agent_now uses. The decision itself stays attributed
+		# to the approver via decided_by on the Approval Request row.
+		from jarvis.chat.agent_scheduler import _valid_owner
+
+		conv_owner = frappe.db.get_value("Jarvis Conversation", doc.conversation, "owner")
+		original_user = frappe.session.user
+		# Fail-closed identity guard (mirrors agents_api.run_agent_now): never
+		# resume AS Administrator / Guest / a disabled user on someone else's
+		# behalf - that would run an unattended agent turn with elevated
+		# rights. A self-owned resume (owner == approver) always proceeds.
+		switch_to = conv_owner if (conv_owner and conv_owner != original_user) else None
+		if switch_to and not _valid_owner(switch_to):
+			frappe.log_error(
+				title="approval resume skipped (owner not an eligible run identity)",
+				message=(
+					f"Approval {doc.name}: conversation owner {switch_to!r} is not an "
+					f"eligible run identity (Administrator/Guest/disabled); the decision "
+					f"is recorded but the turn was not resumed."
+				),
+			)
+		else:
+			try:
+				if switch_to:
+					frappe.set_user(switch_to)
+				res = send_message(conversation=doc.conversation, message=msg, attachments=attachments)
+				resumed = bool(res.get("ok"))
+			except Exception:
+				# Restore BEFORE logging so the Error Log is attributed to the
+				# approver, not the impersonated conversation owner.
+				if frappe.session.user != original_user:
+					frappe.set_user(original_user)
+				frappe.log_error(title="approval resume failed", message=frappe.get_traceback())
+			finally:
+				if frappe.session.user != original_user:
+					frappe.set_user(original_user)
 	return {"ok": True, "status": doc.status, "resumed": resumed}

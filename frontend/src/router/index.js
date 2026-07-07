@@ -84,9 +84,11 @@ const routes = [
 		component: () => import("@/pages/approvals/ApprovalsBoard.vue"),
 	},
 	{ path: "/agents", name: "AgentsList", component: () => import("@/pages/agents/AgentsList.vue") },
-	// Legacy round-2 tab routes — static, registered BEFORE :slug (§9).
-	{ path: "/agents/mine", redirect: "/agents" },
-	{ path: "/agents/activity", redirect: "/agents" },
+	// Legacy round-2 tab routes — static, registered BEFORE :slug (§9). Point at
+	// the current hash-tabs (mine→Installed, activity→Activity); admin is now a
+	// per-agent detail tab, so it falls back to the catalog.
+	{ path: "/agents/mine", redirect: "/agents#installed" },
+	{ path: "/agents/activity", redirect: "/agents#activity" },
 	{ path: "/agents/admin", redirect: "/agents" },
 	{
 		path: "/agents/:slug",

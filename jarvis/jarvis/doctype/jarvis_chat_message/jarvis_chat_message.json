@@ -21,7 +21,10 @@
     "tool_args",
     "tool_result",
     "tool_status",
-    "canvas"
+    "ref_doctype",
+    "ref_name",
+    "canvas",
+    "hidden"
   ],
   "fields": [
     {
@@ -122,10 +125,34 @@
       "depends_on": "eval:doc.role=='tool'"
     },
     {
+      "fieldname": "ref_doctype",
+      "fieldtype": "Data",
+      "label": "Ref DocType",
+      "hidden": 1,
+      "search_index": 1,
+      "description": "Populated programmatically: the doctype this message touched (tool receipts via refs_from_tool; user rows via the viewing context). Feeds wiki entity extraction."
+    },
+    {
+      "fieldname": "ref_name",
+      "fieldtype": "Data",
+      "label": "Ref Name",
+      "hidden": 1,
+      "search_index": 1,
+      "description": "Populated programmatically: the document name paired with ref_doctype."
+    },
+    {
       "fieldname": "canvas",
       "fieldtype": "JSON",
       "label": "Canvas",
       "description": "Rich artifacts (chart/canvas) the agent rendered this turn: [{name,title,type,file_url}]."
+    },
+    {
+      "fieldname": "hidden",
+      "fieldtype": "Check",
+      "label": "Hidden",
+      "default": 0,
+      "read_only": 1,
+      "description": "Internal system message (e.g. the post-apply continuation prompt): part of the agent transcript but never rendered in the chat UI (get_conversation filters it out)."
     }
   ],
   "permissions": [

@@ -14,6 +14,7 @@
   "detail_md",
   "section",
   "effective_date",
+  "disclaimer",
   "ref_doctype",
   "ref_name",
   "amount",
@@ -72,6 +73,12 @@
    "fieldname": "effective_date",
    "fieldtype": "Date",
    "label": "Effective Date"
+  },
+  {
+   "fieldname": "disclaimer",
+   "fieldtype": "Small Text",
+   "label": "Disclaimer",
+   "description": "Statutory disclaimer carried verbatim from the rule pack (shown alongside the finding, never paraphrased)."
   },
   {
    "fieldname": "ref_doctype",

@@ -478,11 +478,28 @@ def handle_chat_send(payload: dict) -> None:
 	# Org locale (default Company country/currency + site date/number/tz) so the
 	# agent formats for the org's region instead of defaulting to US conventions.
 	locale_clause = _org_locale_clause()
+	# Personal custom skills + org wiki notes (voice & wiki feature). Both
+	# clauses are best-effort ("" on any failure — a clause bug must never
+	# break a turn) and size-capped (~700 chars combined). Lazy imports so a
+	# not-yet-reloaded RQ worker keeps serving turns before these land.
+	try:
+		from jarvis.chat.custom_skills import personal_skill_clause
+
+		personal_clause = personal_skill_clause(chat_user) or ""
+	except Exception:
+		personal_clause = ""
+	try:
+		from jarvis.chat.wiki import wiki_clause
+
+		wiki_notes_clause = wiki_clause(conversation_id, context) or ""
+	except Exception:
+		wiki_notes_clause = ""
 	user_message = (
 		# conv:<id> lets the agent link rows it creates (e.g. Jarvis Approval)
 		# back to this conversation so deciding can resume the chat.
 		f"[Context: today is {today}{locale_clause}; chat user: {chat_user}"
-		f"; conv: {conversation_id}{auto_apply}{skill_clause}{learned_clause}]"
+		f"; conv: {conversation_id}{auto_apply}{skill_clause}{learned_clause}"
+		f"{personal_clause}{wiki_notes_clause}]"
 		f"\n\n{user_message or ''}"
 	)
 
@@ -846,6 +863,29 @@ def handle_chat_send(payload: dict) -> None:
 		except Exception:
 			frappe.log_error(
 				title="chat worker: auto-title enqueue failed",
+				message=frappe.get_traceback(),
+			)
+		# Wiki nudge (voice & wiki feature): fire-and-forget short-queue job.
+		# Every gate (wiki_enabled, File Box, cooldown, dismissal, wiki-worthy
+		# entities this turn) re-checks inside the job; the cheap wiki_enabled
+		# read here just skips a pointless enqueue when the wiki is off. The
+		# nudge goes to chat_user — the turn's actual sender — not conv.owner
+		# (they diverge in shared conversations). Lazy import + best-effort:
+		# a nudge failure can never affect the completed turn.
+		try:
+			from jarvis.chat import wiki as wiki_mod
+
+			if wiki_mod.wiki_enabled():
+				frappe.enqueue(
+					"jarvis.chat.wiki.maybe_nudge",
+					queue="short",
+					conversation_id=conversation_id,
+					user=chat_user,
+					run_id=run_id,
+				)
+		except Exception:
+			frappe.log_error(
+				title="chat worker: wiki nudge enqueue failed",
 				message=frappe.get_traceback(),
 			)
 

@@ -85,3 +85,16 @@
 	--ink-gray-5: #7e7e8a;
 	--ink-gray-4: #6a6a74;
 }
+
+/* "Go to Desk" header button (LayoutHeader, variant=outline): black-inversion
+   hover so it matches the chat header's boxed icon buttons. --ink-gray-9 /
+   --surface-white invert per theme (black bg / white icon in light; the reverse
+   in dark), same feel as the chat's var(--text)/var(--surface) hover. */
+.jv-deskbtn:hover {
+	background: var(--ink-gray-9) !important;
+	border-color: var(--ink-gray-9) !important;
+	color: var(--surface-white) !important;
+}
+.jv-deskbtn:hover svg {
+	stroke: var(--surface-white) !important;
+}

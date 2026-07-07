@@ -254,10 +254,12 @@ class TestAgentsMarketplace(unittest.TestCase):
 			run1 = agent_runs.record_scrutiny_run(inst_name, "manual", None, self._scrutiny_result())
 			run2 = agent_runs.record_scrutiny_run(inst_name, "manual", None, self._scrutiny_result())
 			for run in (run1, run2):
-				rows = agents_api.list_findings(run=run.name)
+				res = agents_api.list_findings(run=run.name)
+				rows = res["rows"]
 				self.assertEqual(len(rows), 2, f"drill-down of {run.name}")
+				self.assertEqual(res["total"], 2, f"total for {run.name}")
 				self.assertEqual(
-					len(rows),
+					res["total"],
 					frappe.db.get_value(RUN, run.name, "findings_count"),
 					f"count/drill-down mismatch for {run.name}",
 				)
@@ -266,12 +268,12 @@ class TestAgentsMarketplace(unittest.TestCase):
 			only_tb = {"findings": [self._scrutiny_result()["findings"][1]]}
 			run3 = agent_runs.record_scrutiny_run(inst_name, "manual", None, only_tb)
 			self.assertEqual(
-				[r["rule_id"] for r in agents_api.list_findings(run=run3.name)], ["R-TB"]
+				[r["rule_id"] for r in agents_api.list_findings(run=run3.name)["rows"]], ["R-TB"]
 			)
-			self.assertEqual(len(agents_api.list_findings(run=run1.name)), 2)
-			self.assertEqual(len(agents_api.list_findings(run=run2.name)), 2)
-			# Unknown run -> empty, never an error.
-			self.assertEqual(agents_api.list_findings(run="no-such-run"), [])
+			self.assertEqual(agents_api.list_findings(run=run1.name)["total"], 2)
+			self.assertEqual(agents_api.list_findings(run=run2.name)["total"], 2)
+			# Unknown run -> zeroed envelope, never an error.
+			self.assertEqual(agents_api.list_findings(run="no-such-run")["total"], 0)
 		finally:
 			frappe.set_user("Administrator")
 

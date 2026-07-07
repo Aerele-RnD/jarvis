@@ -5,7 +5,12 @@
 				<Sidebar />
 			</div>
 			<div class="flex flex-1 flex-col h-full overflow-auto bg-surface-white">
-				<!-- LayoutHeader teleport target — non-chat routes only (D41) -->
+				<!-- LayoutHeader teleport target — non-chat routes only (D41).
+				     The "Go to Desk" button is rendered INSIDE LayoutHeader's right
+				     cluster (leftmost, before each page's own actions) so it is
+				     uniform across pages and never displaces the page's primary
+				     action from the rightmost corner; chat has its own header button
+				     (ChatView openErpDesk), styled to match. -->
 				<div v-if="!route.meta.chat" class="flex border-b">
 					<div id="app-header" class="flex-1" />
 				</div>

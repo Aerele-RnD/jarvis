@@ -35,7 +35,8 @@
 							{ label: 'Uninstall', icon: 'trash-2', theme: 'red', onClick: confirmUninstall },
 						]"
 					>
-						<Button icon="more-horizontal" variant="ghost" />
+						<!-- label → aria-label on icon-only buttons (frappe-ui) -->
+						<Button icon="more-horizontal" variant="ghost" label="Agent actions" />
 					</Dropdown>
 				</template>
 			</template>
@@ -49,11 +50,21 @@
 			</div>
 			<Button label="Back to Agents" @click="router.push({ name: 'AgentsList' })" />
 		</div>
-		<div v-else-if="!agent" class="flex-1" />
+		<!-- loading (AgentsList/AgentActivityTab pattern — never a blank page) -->
+		<div v-else-if="!agent" class="flex flex-1 flex-col items-center justify-center gap-2">
+			<LoadingIndicator class="size-5 text-ink-gray-5" />
+			<span class="text-sm text-ink-gray-5">Loading agent…</span>
+		</div>
 
-		<div v-else class="flex-1 overflow-y-auto">
+		<!-- runs tab pins hero+tabs and hands the remaining height to the two-pane
+		     board (its rail/pane scroll independently); other tabs page-scroll -->
+		<div
+			v-else
+			class="flex min-h-0 flex-1 flex-col"
+			:class="tab === 'runs' && installation ? 'overflow-hidden' : 'overflow-y-auto'"
+		>
 			<!-- ── hero (marketplace template, D29; de-texted per §15.4) ── -->
-			<div class="border-b bg-surface-gray-1 px-6 py-6">
+			<div class="shrink-0 border-b bg-surface-gray-1 px-6 py-6">
 				<div class="flex items-start justify-between gap-5">
 					<div class="flex min-w-0 gap-5">
 						<div
@@ -110,10 +121,10 @@
 				</div>
 			</div>
 
-			<TabBar :tabs="tabs" :modelValue="tab" @update:modelValue="setTab" />
+			<TabBar class="shrink-0" :tabs="tabs" :modelValue="tab" @update:modelValue="setTab" />
 
 			<!-- ── Overview ── -->
-			<div v-if="tab === 'overview'" class="flex">
+			<div v-if="tab === 'overview'" class="flex shrink-0">
 				<div class="max-w-3xl flex-1 px-5 py-6">
 					<!-- O1: renderMarkdown from @/markdown (escapes HTML first), NOT marked -->
 					<div v-if="descriptionHtml" class="prose prose-sm max-w-none" v-html="descriptionHtml" />
@@ -184,7 +195,10 @@
 			</div>
 
 			<!-- ── Configure (installed; §14 F3 + D28 comments) ── -->
-			<div v-else-if="tab === 'configure' && installation" class="max-w-2xl space-y-10 px-5 py-6">
+			<div
+				v-else-if="tab === 'configure' && installation"
+				class="max-w-2xl shrink-0 space-y-10 px-5 py-6"
+			>
 				<section>
 					<div class="text-base font-medium text-ink-gray-9">Schedule</div>
 					<div class="mt-3 space-y-4">
@@ -227,32 +241,17 @@
 				</section>
 			</div>
 
-			<!-- ── Runs (installed) ── -->
-			<AgentRunsTab
+			<!-- ── Runs (installed): two-pane master-detail board ── -->
+			<AgentRunsBoard
 				v-else-if="tab === 'runs' && installation"
-				ref="runsTab"
+				ref="runsBoard"
 				:agent-name="agent.name"
 			/>
 
-			<!-- ── Admin (SM only; server enforces every call) ── -->
-			<div v-else-if="tab === 'admin' && isSM" class="max-w-2xl space-y-10 px-5 py-6">
-				<section>
-					<div class="text-base font-medium text-ink-gray-9">Listing status</div>
-					<div class="mt-3 w-56">
-						<FormControl
-							type="select"
-							:options="LISTING_STATUSES"
-							:modelValue="statusDraft"
-							:disabled="statusBusy"
-							@update:modelValue="onStatusSelect"
-						/>
-					</div>
-					<div class="mt-2 text-sm text-ink-gray-5">
-						Published agents are installable; Deprecated hides the listing for
-						non-installers.
-					</div>
-				</section>
-
+			<!-- ── Admin (SM only; server enforces every call). Listing status is
+			     publisher/catalog state curated in registry.json (it reverts on the
+			     next deploy) — deliberately NOT editable here. ── -->
+			<div v-else-if="tab === 'admin' && isSM" class="max-w-2xl shrink-0 space-y-10 px-5 py-6">
 				<section>
 					<div class="text-base font-medium text-ink-gray-9">Allowed roles</div>
 					<div class="mt-2 text-sm text-ink-gray-5">
@@ -265,7 +264,13 @@
 							class="flex h-6 items-center gap-1 rounded bg-surface-gray-2 px-2 text-sm text-ink-gray-8"
 						>
 							<span class="truncate">{{ r }}</span>
-							<Button variant="ghost" icon="x" class="!h-4 !w-4" @click="removeRole(r)" />
+							<Button
+								variant="ghost"
+								icon="x"
+								class="!h-4 !w-4"
+								:label="'Remove role ' + r"
+								@click="removeRole(r)"
+							/>
 						</div>
 						<span v-if="!roleDraft.length" class="text-sm text-ink-gray-4">
 							Everyone — no restriction
@@ -344,8 +349,9 @@
 // one-line tagline · category chips; install count + Enabled switch right) →
 // hash-synced tabs. Overview (markdown description + static facts panel) ·
 // Configure (schedule / ConfigForm / CommentsSection on the installation, D28)
-// · Runs (AgentRunsTab + findings drill-down) · Admin (SM-only: listing
-// status, roles editor, installs overview for this agent).
+// · Runs (AgentRunsBoard: two-pane runs rail → findings pane) · Admin
+// (SM-only: roles editor + installs overview; listing status is registry.json
+// publisher state and intentionally has no tenant control here).
 import { ref, computed, watch, nextTick } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import {
@@ -362,6 +368,7 @@ import {
 	ListHeaderItem,
 	ListRows,
 	ListRowItem,
+	LoadingIndicator,
 	Switch,
 	TimePicker,
 	confirmDialog,
@@ -370,7 +377,7 @@ import {
 import LayoutHeader from "@/components/LayoutHeader.vue"
 import TabBar from "@/components/list/TabBar.vue"
 import CommentsSection from "@/components/doc/CommentsSection.vue"
-import AgentRunsTab from "@/pages/agents/AgentRunsTab.vue"
+import AgentRunsBoard from "@/pages/agents/AgentRunsBoard.vue"
 import ConfigForm from "@/pages/agents/ConfigForm.vue"
 import { useDocmeta } from "@/composables/useDocmeta"
 import { timeAgo, exactDate as fmtDt } from "@/utils/datetime"
@@ -404,7 +411,6 @@ const FREQUENCY_OPTIONS = [
 	{ label: "Weekly", value: "weekly" },
 	{ label: "Monthly", value: "monthly" },
 ]
-const LISTING_STATUSES = ["Draft", "Published", "Coming Soon", "Deprecated"]
 const INSTALL_COLUMNS = [
 	{ label: "Owner", key: "owner", width: 2 },
 	{ label: "Enabled", key: "enabled", width: "7rem" },
@@ -450,7 +456,7 @@ const updateAvailable = computed(
 
 // ── hash-synced tabs (useActiveTabManager pattern) ───────────────────────────
 const tab = ref("overview")
-const runsTab = ref(null)
+const runsBoard = ref(null)
 
 const tabs = computed(() => {
 	const out = [{ label: "Overview", value: "overview" }]
@@ -540,7 +546,8 @@ async function runNow() {
 		toast.success("Audit started")
 		setTab("runs")
 		await nextTick()
-		if (runsTab.value) runsTab.value.reload()
+		// jump the board to the freshly queued run (clears hiding facets)
+		if (runsBoard.value) runsBoard.value.reload({ selectNewest: true })
 		load() // refresh last_run_at etc. in the background
 	} catch (e) {
 		toast.error(errMsg(e))
@@ -553,15 +560,16 @@ function confirmUninstall() {
 	if (!installation.value) return
 	const name = installation.value.name
 	confirmDialog({
-		title: "Uninstall agent?",
-		message: `Remove “${agent.value.title}”? It leaves your assistant on the next catalog apply. Runs and findings are kept.`,
+		title: `Uninstall ${agent.value.title}?`,
+		// the backend cascade-deletes findings → runs → installation
+		message:
+			"This removes the agent and ALL of its run history and findings. This can't be undone.",
 		onConfirm: async ({ hideDialog }) => {
 			try {
 				await api.uninstallAgent(name)
 				hideDialog()
-				toast.success("Uninstalled")
-				await load()
-				setTab("overview")
+				toast.success(`${agent.value.title} uninstalled`)
+				router.push({ name: "AgentsList" })
 			} catch (e) {
 				toast.error(errMsg(e))
 			}
@@ -740,55 +748,6 @@ const adminListing = computed(() => {
 	return listings.find((l) => l.agent_slug === props.slug) || null
 })
 const installRows = computed(() => (adminListing.value && adminListing.value.installs) || [])
-
-// status select (draft snaps back unless confirmed/saved)
-const statusDraft = ref("")
-const statusBusy = ref(false)
-watch(
-	() => agent.value && agent.value.status,
-	(v) => {
-		statusDraft.value = v || ""
-	},
-	{ immediate: true }
-)
-
-function onStatusSelect(v) {
-	if (!agent.value || !v || v === agent.value.status) return
-	if (v === "Deprecated") {
-		statusDraft.value = agent.value.status // apply only on confirm
-		confirmDialog({
-			title: "Deprecate this agent?",
-			message:
-				"New installs stop and the listing is hidden from non-installers. Existing installs keep running with a Deprecated badge.",
-			onConfirm: async ({ hideDialog }) => {
-				try {
-					await doSetStatus("Deprecated")
-					hideDialog()
-				} catch (e) {
-					toast.error(errMsg(e))
-				}
-			},
-		})
-	} else {
-		statusDraft.value = v
-		doSetStatus(v).catch((e) => {
-			statusDraft.value = agent.value.status
-			toast.error(errMsg(e))
-		})
-	}
-}
-
-async function doSetStatus(status) {
-	statusBusy.value = true
-	try {
-		const r = await api.setListingStatus(props.slug, status)
-		agent.value.status = (r && r.status) || status
-		statusDraft.value = agent.value.status
-		toast.success(`${agent.value.title} → ${agent.value.status}`)
-	} finally {
-		statusBusy.value = false
-	}
-}
 
 // roles editor (Autocomplete over all_roles → chips → Save)
 const roleDraft = ref([])

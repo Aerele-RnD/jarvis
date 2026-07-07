@@ -10,6 +10,7 @@
     "skill_name",
     "enabled",
     "user_invocable",
+    "scope",
     "description",
     "instructions",
     "shared_with",
@@ -39,6 +40,14 @@
       "label": "User Invocable",
       "default": "1",
       "description": "When on, the skill can be triggered explicitly from the chat composer with a '/' command."
+    },
+    {
+      "fieldname": "scope",
+      "fieldtype": "Select",
+      "label": "Scope",
+      "options": "Org\nPersonal",
+      "default": "Org",
+      "description": "Org skills join the shared assistant catalog on Apply; Personal skills stay private to their owner and are only reachable via jarvis__find_skills / jarvis__get_skill. Empty (pre-migration rows) means Org."
     },
     {
       "fieldname": "description",
