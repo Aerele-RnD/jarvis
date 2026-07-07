@@ -38,6 +38,20 @@ LEARNED_PREFIX = "learned-"
 SKILL_DOCTYPE = "Jarvis Custom Skill"
 
 
+def _clear_personal_clause_cache(owner: str | None) -> None:
+	"""personal_skill_clause (chat/custom_skills.py) caches a per-user count of
+	enabled Personal rows for 300s; drop it on any row change so a skill saved
+	mid-conversation is announced on the owner's next turn."""
+	try:
+		from jarvis.chat.custom_skills import personal_skills_cache_key
+
+		frappe.cache().delete_value(
+			personal_skills_cache_key(owner or frappe.session.user)
+		)
+	except Exception:
+		pass
+
+
 def _managed_flag_privileged(user: str | None = None) -> bool:
 	"""True for writes allowed to touch the engine-owned ``managed_by_learning``
 	flag: the compiler (which sets ``frappe.flags.jarvis_pattern_engine``),
@@ -105,10 +119,24 @@ def _child_values(skill, fieldname: str, value_field: str, child_doctype: str) -
 class JarvisCustomSkill(Document):
 	def validate(self):
 		self._validate_slug()
+		self._validate_scope()
 		self._validate_lengths()
 		self._validate_unique_per_owner()
 		self._validate_owner_cap()
 		self._guard_managed_flag()
+
+	def on_update(self):
+		_clear_personal_clause_cache(self.owner)
+
+	def on_trash(self):
+		_clear_personal_clause_cache(self.owner)
+
+	def _validate_scope(self):
+		# NULL/empty scope == Org everywhere (pre-migration rows are never
+		# backfilled); normalize on save so new writes are explicit.
+		self.scope = (self.scope or "Org").strip()
+		if self.scope not in ("Org", "Personal"):
+			frappe.throw(_("Scope must be Org or Personal."))
 
 	def _validate_slug(self):
 		self.skill_name = (self.skill_name or "").strip().lower()

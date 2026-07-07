@@ -358,6 +358,43 @@
 					</button>
 				</transition>
 				<div style="max-width:1280px;margin:0 auto;">
+					<!-- wiki nudge: "anything worth remembering?" card (realtime wiki:nudge
+					     event, §voice/wiki). Own block ABOVE the composer so it never
+					     shifts the input while a reply is streaming. -->
+					<div v-if="nudge && nudge.conversationId === currentId" class="jv-nudge">
+						<div class="jv-nudge-head">
+							<div class="jv-nudge-q">
+								Anything worth remembering about <b>{{ nudgeLabels }}</b>?
+							</div>
+							<button class="jv-nudge-x" title="Dismiss" aria-label="Dismiss" @click="dismissNudge">
+								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+							</button>
+						</div>
+						<div v-if="nudge.mode !== 'edit'" class="jv-nudge-actions">
+							<template v-if="ui.stt_enabled && nudgeRec.supported">
+								<button v-if="nudge.mode === 'transcribing'" class="jv-iconbtn jv-micbtn" title="Transcribing…" disabled style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;border-radius:7px;color:var(--text-3);">
+									<svg class="jv-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2.4" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9" /></svg>
+								</button>
+								<button v-else class="jv-iconbtn jv-micbtn" :class="{ rec: nudge.mode === 'recording' }" :title="nudge.mode === 'recording' ? 'Stop and transcribe' : 'Record a voice note'" @click="nudge.mode === 'recording' ? stopNudgeMic() : startNudgeMic()" style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;border-radius:7px;cursor:pointer;color:var(--text-3);">
+									<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><path d="M12 19v3" /></svg>
+								</button>
+								<template v-if="nudge.mode === 'recording'">
+									<span class="jv-mic-live"><span class="jv-mic-dot"></span>{{ nudgeClock }}</span>
+									<button class="jv-mic-cancel" title="Cancel recording (Esc)" aria-label="Cancel recording" @click="cancelNudgeMic">
+										<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+									</button>
+								</template>
+							</template>
+							<button v-if="nudge.mode === 'idle'" class="jv-nudge-type" @click="typeNudge">Type instead</button>
+						</div>
+						<template v-else>
+							<textarea ref="nudgeTaEl" v-model="nudge.text" rows="3" class="jv-nudge-ta" placeholder="What should Jarvis remember?"></textarea>
+							<div class="jv-nudge-foot">
+								<button class="jv-btn jv-btn--ghost" style="height:30px;padding:0 12px;" :disabled="nudge.saving" @click="nudge.mode = 'idle'">Cancel</button>
+								<button class="jv-btn jv-btn--primary" style="height:30px;padding:0 12px;" :disabled="nudge.saving || !nudge.text.trim()" @click="saveNudgeNote">{{ nudge.saving ? "Saving…" : "Save" }}</button>
+							</div>
+						</template>
+					</div>
 					<div class="jv-composer" @dragover.prevent @dragenter.prevent="onDragEnter" @dragleave.prevent="onDragLeave" @drop.prevent="onDrop" style="position:relative;border:1.5px solid var(--text);border-radius:13px;background:var(--surface);box-shadow:0 2px 12px rgba(0,0,0,.07);padding:5px 6px 6px 6px;transition:border-color .12s,box-shadow .12s;">
 						<div v-if="dragActive" style="position:absolute;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;background:var(--blue-bg);border:2px dashed var(--blue);border-radius:13px;color:var(--blue);font-size:13px;font-weight:600;pointer-events:none;">Drop image or file to attach</div>
 						<!-- mention dropdown (@ user, / doctype·tool) -->
@@ -382,6 +419,21 @@
 						<textarea ref="inputEl" v-model="input" @input="onInput" @keydown="onKey" @paste="onPaste" rows="1" placeholder="Ask Jarvis…   @ to mention a user, / for a doctype or tool" style="width:100%;border:none;outline:none;resize:none;font-family:inherit;font-size:14px;line-height:1.5;color:var(--text);background:transparent;padding:8px 8px 4px;max-height:140px;"></textarea>
 						<input ref="fileInput" type="file" multiple style="display:none;" @change="onFilesPicked" />
 						<div style="display:flex;align-items:center;gap:6px;padding:2px 4px;">
+							<!-- dictation mic (hidden unless the backend reports STT configured) -->
+							<template v-if="ui.stt_enabled && micRec.supported">
+								<button v-if="micState === 'transcribing'" class="jv-iconbtn jv-micbtn" title="Transcribing…" disabled style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;border-radius:7px;color:var(--text-3);">
+									<svg class="jv-spin" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2.4" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9" /></svg>
+								</button>
+								<button v-else class="jv-iconbtn jv-micbtn" :class="{ rec: micState === 'recording' }" :title="micState === 'recording' ? 'Stop and transcribe' : 'Dictate (voice to text)'" @click="micState === 'recording' ? stopMic() : startMic()" style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;border-radius:7px;cursor:pointer;color:var(--text-3);">
+									<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><path d="M12 19v3" /></svg>
+								</button>
+								<template v-if="micState === 'recording'">
+									<span class="jv-mic-live"><span class="jv-mic-dot"></span>{{ micClock }}</span>
+									<button class="jv-mic-cancel" title="Cancel recording (Esc)" aria-label="Cancel recording" @click="cancelMic">
+										<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+									</button>
+								</template>
+							</template>
 							<button class="jv-iconbtn" title="Attach file" @click="pickFiles" style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;border-radius:7px;cursor:pointer;color:var(--text-3);">
 								<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a5 5 0 0 1-7.07-7.07l9.19-9.19a3.5 3.5 0 0 1 4.95 4.95l-9.2 9.19a1.5 1.5 0 0 1-2.12-2.12l8.49-8.49" /></svg>
 							</button>
@@ -794,6 +846,8 @@
 import { ref, computed, inject, onMounted, onBeforeUnmount, nextTick, watch } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import * as api from "@/api"
+import * as voice from "@/api/voice"
+import { useAudioRecorder } from "@/composables/useAudioRecorder"
 import { setMacroPrefill } from "@/composables/macroPrefill"
 import { renderMarkdown } from "@/markdown"
 import JvChart from "@/charts/JvChart.vue"
@@ -2868,6 +2922,12 @@ async function retry(messageId) {
 }
 
 async function send(textArg) {
+	// Don't race an in-flight dictation: sending now would drop the spoken
+	// words (the transcript would land after the message left the composer).
+	if (micState.value === "recording" || micState.value === "transcribing") {
+		notify("Finishing dictation…", { type: "info" })
+		return
+	}
 	const fromMain = typeof textArg !== "string"
 	const text = (fromMain ? input.value : textArg).trim()
 	const attachments = fromMain ? pendingFiles.value.slice() : []
@@ -3093,6 +3153,28 @@ function onEvent(p) {
 			setTimeout(processMermaid, 900)
 			break
 		}
+		case "wiki:nudge": {
+			// Post-turn "remember this?" prompt. Don't clobber a card the user is
+			// already recording into / editing — only replace an idle (or absent)
+			// one, or a card stranded on ANOTHER conversation than the one on
+			// screen (invisible, so its stuck recorder would otherwise block every
+			// future nudge; cancel it before taking the slot).
+			const stale =
+				nudge.value &&
+				nudge.value.conversationId !== p.conversation_id &&
+				nudge.value.conversationId !== currentId.value
+			if (stale && (nudge.value.mode === "recording" || nudge.value.mode === "transcribing")) nudgeRec.cancel()
+			if (!nudge.value || nudge.value.mode === "idle" || stale) {
+				nudge.value = {
+					conversationId: p.conversation_id,
+					entities: Array.isArray(p.entities) ? p.entities : [],
+					mode: "idle",
+					text: "",
+					saving: false,
+				}
+			}
+			break
+		}
 		case "run:error":
 			waiting.value = false
 			sending.value = false
@@ -3120,6 +3202,170 @@ function stopRun() {
 	sending.value = false
 	activeTools.value = []
 	store.streamingConvId = null
+}
+
+// ---- voice dictation (composer mic) ----
+// Hidden unless get_chat_ui_settings reports stt_enabled AND the browser has
+// MediaRecorder. micState is the UI phase; the recorder itself lives in the
+// composable (300 s hard cap enforced there — onAutoStop still transcribes).
+const micRec = useAudioRecorder({
+	onAutoStop: (r) => {
+		notify("Recording stopped at the 5-minute limit — transcribing.", { type: "info" })
+		_transcribeToInput(r)
+	},
+})
+const micState = ref("idle") // 'idle' | 'recording' | 'transcribing'
+let _micConvId = null // conversation the take was started in — transcript belongs to it
+function _fmtClock(s) {
+	return Math.floor(s / 60) + ":" + String(Math.max(0, s) % 60).padStart(2, "0")
+}
+const micClock = computed(() => _fmtClock(micRec.durationS || 0))
+async function startMic() {
+	_micConvId = currentId.value
+	await micRec.start()
+	if (micRec.state === "error") {
+		notify(micRec.error || "Couldn't start the microphone.", { type: "error" })
+		return
+	}
+	if (micRec.state === "recording") micState.value = "recording"
+}
+async function stopMic() {
+	if (micState.value !== "recording") return
+	micState.value = "transcribing"
+	const r = await micRec.stop()
+	if (!r || !r.blob || !r.blob.size) {
+		micState.value = "idle"
+		if (micRec.state === "error") notify(micRec.error || "Recording failed. Try again.", { type: "error" })
+		return
+	}
+	await _transcribeToInput(r)
+}
+async function _transcribeToInput(r) {
+	micState.value = "transcribing"
+	const forId = _micConvId
+	try {
+		const res = await voice.transcribeAudio(r.blob, { durationS: r.durationS })
+		const text = ((res && res.text) || "").trim()
+		if (!text) {
+			notify("Nothing was transcribed — try again closer to the microphone.", { type: "info" })
+		} else if (currentId.value === forId) {
+			// fillInput pattern, but APPENDING: dictation adds to any typed draft.
+			input.value = input.value.trim() ? input.value.replace(/\s+$/, "") + " " + text : text
+			nextTick(() => {
+				inputEl.value?.focus()
+				autoGrow()
+			})
+		} else if (forId) {
+			// The user switched chats mid-transcription: the words belong to the
+			// chat they were spoken in — merge into its stashed draft (swapDraft
+			// restores it when they return), never into the composer on screen.
+			const prev = drafts.value[forId] || ""
+			drafts.value[forId] = prev.trim() ? prev.replace(/\s+$/, "") + " " + text : text
+		}
+	} catch (e) {
+		notifyActionError("Couldn't transcribe audio", e)
+	} finally {
+		micState.value = "idle"
+	}
+}
+function cancelMic() {
+	micRec.cancel()
+	micState.value = "idle"
+}
+
+// ---- wiki nudge ("anything worth remembering?") ----
+// Set by the realtime `wiki:nudge` event for the on-screen conversation; the
+// card renders above the composer only while that conversation stays current.
+// ref(object) is deeply reactive, so per-field writes (mode/text/saving) stick.
+const nudge = ref(null) // { conversationId, entities: [{doctype,name,label,has_page}], mode: 'idle'|'recording'|'transcribing'|'edit', text, saving }
+const nudgeTaEl = ref(null)
+const nudgeLabels = computed(() =>
+	((nudge.value && nudge.value.entities) || []).map((e) => e.label || e.name).filter(Boolean).join(", ")
+)
+const nudgeRec = useAudioRecorder({
+	onAutoStop: (r) => {
+		notify("Recording stopped at the 5-minute limit — transcribing.", { type: "info" })
+		_nudgeTranscribe(r)
+	},
+})
+const nudgeClock = computed(() => _fmtClock(nudgeRec.durationS || 0))
+async function startNudgeMic() {
+	if (!nudge.value) return
+	await nudgeRec.start()
+	if (nudgeRec.state === "error") {
+		notify(nudgeRec.error || "Couldn't start the microphone.", { type: "error" })
+		return
+	}
+	if (nudgeRec.state === "recording" && nudge.value) nudge.value.mode = "recording"
+}
+async function stopNudgeMic() {
+	if (!nudge.value || nudge.value.mode !== "recording") return
+	nudge.value.mode = "transcribing"
+	const r = await nudgeRec.stop()
+	if (!r || !r.blob || !r.blob.size) {
+		if (nudge.value) nudge.value.mode = "idle"
+		if (nudgeRec.state === "error") notify(nudgeRec.error || "Recording failed. Try again.", { type: "error" })
+		return
+	}
+	await _nudgeTranscribe(r)
+}
+async function _nudgeTranscribe(r) {
+	if (!nudge.value) return
+	nudge.value.mode = "transcribing"
+	try {
+		const res = await voice.transcribeAudio(r.blob, { durationS: r.durationS })
+		const text = ((res && res.text) || "").trim()
+		if (!text) {
+			notify("Nothing was transcribed — try again closer to the microphone.", { type: "info" })
+			if (nudge.value) nudge.value.mode = "idle"
+			return
+		}
+		if (nudge.value) {
+			nudge.value.text = text
+			nudge.value.mode = "edit"
+			nextTick(() => nudgeTaEl.value?.focus())
+		}
+	} catch (e) {
+		notifyActionError("Couldn't transcribe audio", e)
+		if (nudge.value) nudge.value.mode = "idle"
+	}
+}
+function cancelNudgeMic() {
+	nudgeRec.cancel()
+	if (nudge.value) nudge.value.mode = "idle"
+}
+function typeNudge() {
+	if (!nudge.value) return
+	nudge.value.mode = "edit"
+	nextTick(() => nudgeTaEl.value?.focus())
+}
+async function saveNudgeNote() {
+	const n = nudge.value
+	if (!n || n.saving) return
+	const transcript = (n.text || "").trim()
+	if (!transcript) return
+	n.saving = true
+	try {
+		await voice.saveVoiceNote({
+			transcript,
+			context_type: "Conversation",
+			conversation: n.conversationId,
+			entities: JSON.stringify(n.entities || []),
+			source: "Chat Nudge",
+		})
+		notify("Noted — Jarvis will remember this", { type: "success" })
+		nudge.value = null
+	} catch (e) {
+		n.saving = false
+		notifyActionError("Couldn't save your note", e)
+	}
+}
+function dismissNudge() {
+	const n = nudge.value
+	if (n && (n.mode === "recording" || n.mode === "transcribing")) nudgeRec.cancel()
+	nudge.value = null
+	// Best-effort: the 7-day server-side snooze shouldn't block hiding the card.
+	if (n) voice.dismissWikiNudge(n.conversationId).catch(() => {})
 }
 
 // ---- file input ----
@@ -3402,6 +3648,10 @@ onBeforeUnmount(() => {
 	document.removeEventListener("pointerdown", onDocClick)
 	window.removeEventListener("keydown", onGlobalKey)
 	clearInterval(_thinkTimer)
+	// Release the mic — navigating to another route mid-take must not leave the
+	// track hot (and its duration interval ticking) behind the dead view.
+	micRec?.cancel()
+	if (nudge.value && (nudge.value.mode === "recording" || nudge.value.mode === "transcribing")) nudgeRec?.cancel()
 	// ChatView is the sole writer of streamingConvId (§4 contract) and its
 	// socket handlers detach above — nothing can clear the flag once we're
 	// gone, so navigating off mid-stream would leave the sidebar dot pulsing
@@ -3412,7 +3662,11 @@ onBeforeUnmount(() => {
 // Ctrl+B are owned by the shell now (AppShell → useShortcuts, §3.1).
 function onGlobalKey(e) {
 	if (e.defaultPrevented) return
-	if (e.key === "Escape" && confirmBox.value) {
+	if (e.key === "Escape" && micState.value === "recording") {
+		cancelMic()
+	} else if (e.key === "Escape" && nudge.value && nudge.value.mode === "recording") {
+		cancelNudgeMic()
+	} else if (e.key === "Escape" && confirmBox.value) {
 		_settleConfirm(false)
 	} else if (e.key === "Escape" && artifact.value) {
 		closeArtifact()
@@ -3516,6 +3770,25 @@ function onGlobalKey(e) {
 .jv-tool-dot.err { background: var(--red); }
 .jv-tool-dot.run { background: var(--amber); animation: jv-pulse 1s ease-in-out infinite; }
 @keyframes jv-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+/* dictation mic (composer + nudge card) — red while a take is live */
+.jv-micbtn.rec { color: var(--red) !important; }
+.jv-micbtn:disabled { cursor: default; }
+.jv-mic-live { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600; color: var(--red); font-variant-numeric: tabular-nums; }
+.jv-mic-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--red); animation: jv-pulse 1s ease-in-out infinite; flex: none; }
+.jv-mic-cancel { display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; border: none; background: transparent; border-radius: 6px; cursor: pointer; color: var(--text-3); }
+.jv-mic-cancel:hover { background: var(--surface-2); color: var(--text); }
+/* wiki nudge card — own block above the composer, never inside it */
+.jv-nudge { display: flex; flex-direction: column; gap: 8px; margin: 0 0 8px; padding: 10px 12px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; font-size: 13px; color: var(--text); }
+.jv-nudge-head { display: flex; align-items: flex-start; gap: 8px; }
+.jv-nudge-q { flex: 1; min-width: 0; line-height: 1.45; }
+.jv-nudge-x { flex: none; display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; border: none; background: transparent; border-radius: 6px; cursor: pointer; color: var(--text-3); }
+.jv-nudge-x:hover { background: var(--surface-1); color: var(--text); }
+.jv-nudge-actions { display: flex; align-items: center; gap: 6px; }
+.jv-nudge-type { border: none; background: transparent; padding: 4px 6px; font-family: inherit; font-size: 12px; color: var(--text-2); text-decoration: underline; cursor: pointer; border-radius: 6px; }
+.jv-nudge-type:hover { color: var(--text); background: var(--surface-1); }
+.jv-nudge-ta { width: 100%; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text); font-family: inherit; font-size: 13px; line-height: 1.5; padding: 8px 10px; resize: vertical; min-height: 64px; outline: none; }
+.jv-nudge-ta:focus { border-color: var(--text-3); }
+.jv-nudge-foot { display: flex; justify-content: flex-end; gap: 6px; }
 .jv-tool-name { font-weight: 550; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; }
 .jv-tool-status { margin-left: auto; font-size: 11px; color: var(--text-3); }
 .jv-tool-chev { flex: none; color: var(--text-3); transition: transform .15s ease; }

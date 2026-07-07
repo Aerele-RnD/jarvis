@@ -191,6 +191,30 @@ def _finalize(row: dict, text: str) -> None:
 			message=frappe.get_traceback(),
 		)
 
+	# A recovered turn completed like any other, so it earns the same post-
+	# turn wiki nudge as the worker's clean exit. Fire-and-forget: all gates
+	# re-check inside the short-queue job; a failure never affects recovery.
+	# Cheap pre-gate mirrors the clean-exit path so wiki-off / self-host
+	# deployments never spawn the per-turn job (owner is the only sender
+	# identity a recovered turn carries).
+	try:
+		from jarvis import selfhost
+		from jarvis.chat import wiki
+
+		if not selfhost.is_self_hosted() and wiki.wiki_enabled():
+			frappe.enqueue(
+				"jarvis.chat.wiki.maybe_nudge",
+				queue="short",
+				conversation_id=conv,
+				user=owner,
+				run_id="recovered",
+			)
+	except Exception:
+		frappe.log_error(
+			title="turn_recovery: wiki nudge enqueue failed",
+			message=frappe.get_traceback(),
+		)
+
 
 def _error(row: dict, message: str) -> None:
 	if not _conditional_clear(row["name"], {
