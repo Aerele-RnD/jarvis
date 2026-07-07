@@ -191,7 +191,7 @@
 						</div>
 						<div class="jv-ob-placeholder-actions" style="margin-top:18px;">
 							<button class="jv-ob-btn" @click="goBack">← Back</button>
-							<button class="jv-ob-btn jv-ob-btn-primary" :class="{ 'jv-ob-cta-ready': connectReady && !savingConnect }" :disabled="savingConnect" @click="saveConnect">
+							<button v-if="connectReady || savingConnect" class="jv-ob-btn jv-ob-btn-primary" :class="{ 'jv-ob-cta-ready': connectReady && !savingConnect }" :disabled="savingConnect" @click="saveConnect">
 								{{ savingConnect ? "Onboarding…" : "Onboard Jarvis" }}
 							</button>
 						</div>
