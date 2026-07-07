@@ -725,6 +725,7 @@ def list_wiki_pages_page(
 	page_type: str | None = None,
 	scope_filter: str | None = None,
 	attention: int = 0,
+	archived: int = 0,
 	page: int = 1,
 	page_length: int = 20,
 ) -> dict:
@@ -741,7 +742,9 @@ def list_wiki_pages_page(
 	user = frappe.session.user
 	page, pl, offset = _clamp_paging(page, page_length)
 
-	conditions = ["status = 'Active'"]
+	# archived=1 lists Archived pages instead (still visibility-filtered) so
+	# an accidental archive is recoverable from the SPA, not only from Desk.
+	conditions = ["status = 'Archived'" if cint(archived) else "status = 'Active'"]
 	values: dict = {}
 	# Pre-escaped by wiki_permissions (frappe.db.escape) — no placeholders.
 	vis = (wiki_permissions.visible_scope_condition(user) or "").strip()
@@ -815,6 +818,7 @@ def get_wiki_caps() -> dict:
 	from jarvis.chat import knowledge_language
 
 	lint_at = frappe.db.get_single_value(SETTINGS, "wiki_lint_last_run_at")
+	synced_at = frappe.db.get_single_value(SETTINGS, "wiki_mirror_last_synced_at")
 	return {
 		"creatable_scopes": wiki_permissions.creatable_scopes(user),
 		"manageable_roles": wiki_permissions.manageable_roles(user),
@@ -826,6 +830,10 @@ def get_wiki_caps() -> dict:
 		"wiki_lint_last_run_at": str(lint_at) if lint_at else None,
 		"wiki_lint_summary": frappe.db.get_single_value(
 			SETTINGS, "wiki_lint_summary"
+		) or None,
+		"wiki_mirror_last_synced_at": str(synced_at) if synced_at else None,
+		"wiki_mirror_last_sync_status": frappe.db.get_single_value(
+			SETTINGS, "wiki_mirror_last_sync_status"
 		) or None,
 	}
 
@@ -996,6 +1004,23 @@ def archive_wiki_page(slug: str) -> dict:
 	if not wiki_permissions.can_archive_page(doc, frappe.session.user):
 		frappe.throw(_("Not permitted."), frappe.PermissionError)
 	doc.status = "Archived"
+	doc.save(ignore_permissions=True)
+	return {"ok": True, "slug": doc.slug}
+
+
+@frappe.whitelist()
+def restore_wiki_page(slug: str) -> dict:
+	"""Undo an archive (same permission as archiving) — the SPA's escape hatch
+	for a one-click accidental archive."""
+	_require_system_user()
+	slug = (slug or "").strip().lower()
+	name = frappe.db.get_value(WIKI, {"slug": slug}, "name")
+	if not name:
+		frappe.throw(_("Wiki page not found."))
+	doc = frappe.get_doc(WIKI, name)
+	if not wiki_permissions.can_archive_page(doc, frappe.session.user):
+		frappe.throw(_("Not permitted."), frappe.PermissionError)
+	doc.status = "Active"
 	doc.save(ignore_permissions=True)
 	return {"ok": True, "slug": doc.slug}
 

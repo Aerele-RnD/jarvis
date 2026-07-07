@@ -238,12 +238,37 @@ def sync(full: bool = False) -> dict:
 	``full`` send ``known_paths`` so the fleet prunes strays (trashed pages,
 	type/dir moves). Returns a summary dict; NEVER raises into callers."""
 	try:
-		return _sync(full=bool(full))
+		result = _sync(full=bool(full))
 	except Exception:
 		frappe.log_error(
 			title="wiki mirror: sync crashed", message=frappe.get_traceback()
 		)
-		return {"ok": False, "reason": "sync crashed; see Error Log"}
+		result = {"ok": False, "reason": "sync crashed; see Error Log"}
+	_stamp_sync_status(result)
+	return result
+
+
+def _stamp_sync_status(result: dict) -> None:
+	"""Persist the outcome on Jarvis Settings so the Wiki tab can show a
+	"last synced" line — otherwise the sync is fire-and-forget and a failed
+	push surfaces nowhere in the SPA. Best-effort."""
+	try:
+		if result.get("skipped"):
+			return
+		if result.get("ok"):
+			status = f"OK — {result.get('pushed_files', 0)} file(s) pushed"
+		else:
+			status = f"Failed — {result.get('reason', 'see Error Log')}"
+		frappe.db.set_single_value(
+			SETTINGS,
+			{
+				"wiki_mirror_last_synced_at": frappe.utils.now_datetime(),
+				"wiki_mirror_last_sync_status": status[:140],
+			},
+			update_modified=False,
+		)
+	except Exception:
+		pass
 
 
 def _sync(full: bool) -> dict:

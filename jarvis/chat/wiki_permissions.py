@@ -35,8 +35,18 @@ WIKI = "Jarvis Wiki Page"
 WIKI_USER_ROLE = "Knowledge Wiki User"
 WIKI_MANAGER_ROLE = "Knowledge Wiki Manager"
 
-# Never offered as a Role-scope audience (mirrors agents_api's selectable set).
-_NON_TARGETABLE_ROLES = ("Administrator", "Guest", "All")
+# Never offered as a Role-scope audience (mirrors agents_api's selectable
+# set). Framework/blanket roles are excluded too: "Desk User" (and kin) is
+# effectively everyone with a login, so targeting it would let a KW Manager
+# publish org-wide through a side door the write matrix reserves for SMs.
+_NON_TARGETABLE_ROLES = (
+	"Administrator",
+	"Guest",
+	"All",
+	"Desk User",
+	"System Manager",
+	"Website Manager",
+)
 
 # ptypes that reveal page content; everything read-shaped maps to visibility.
 _READ_PTYPES = ("read", "select", "print", "email", "export", "share", "report")

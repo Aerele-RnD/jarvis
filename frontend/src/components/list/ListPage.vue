@@ -134,7 +134,26 @@
 			:options="{ rowCount: rows.length, totalCount: total }"
 			@update:modelValue="(v) => $emit('update:pageLength', v)"
 			@loadMore="$emit('loadMore')"
-		/>
+		>
+			<!-- own the right side: upstream ListFooter's Load More <Button> is a
+			     bare unregistered element in frappe-ui 0.1.278 (Button never
+			     imported), so paging beyond page 1 is otherwise unreachable -->
+			<template #right>
+				<div class="flex items-center">
+					<Button
+						v-if="rows.length < total"
+						label="Load More"
+						@click="$emit('loadMore')"
+					/>
+					<div v-if="rows.length < total" class="mx-3 h-[80%] border-l" />
+					<div class="flex items-center gap-1 text-base text-ink-gray-5">
+						<div>{{ rows.length }}</div>
+						<div>of</div>
+						<div>{{ total }}</div>
+					</div>
+				</div>
+			</template>
+		</ListFooter>
 	</div>
 </template>
 
@@ -196,7 +215,17 @@ const emit = defineEmits([
 // §14 F2 — ColumnsButton owns useStorage('jarvis-cols-'+storageKey) and pushes
 // the hidden-key list up; ListPage filters the visible columns from it.
 const hiddenKeys = ref([])
-const visibleColumns = computed(() => (props.columns || []).filter((c) => !hiddenKeys.value.includes(c.key)))
+// Numeric widths compile to bare `Nfr` grid tracks whose implicit minimum is
+// min-content, so one sentence-length cell stretches the whole list into
+// horizontal scroll and `truncate` never bites. minmax(0, Nfr) restores real
+// flexible tracks (and therefore working truncation) for every list.
+const visibleColumns = computed(() =>
+	(props.columns || [])
+		.filter((c) => !hiddenKeys.value.includes(c.key))
+		.map((c) =>
+			typeof c.width === "number" ? { ...c, width: `minmax(0, ${c.width}fr)` } : c
+		)
+)
 
 // ── quick filters (toolbar-left strip; selects apply immediately, text 500ms) ──
 function quickValue(qf) {

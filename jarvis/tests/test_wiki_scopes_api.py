@@ -482,6 +482,26 @@ class TestWikiSaveArchiveMatrix(_WikiScopeFixture):
 		out = wiki.archive_wiki_page(slug=slugs["org"])
 		self.assertTrue(out["ok"])
 
+	def test_restore_after_archive(self):
+		slugs = self._plant_matrix_pages()
+		frappe.set_user("Administrator")
+		wiki.archive_wiki_page(slug=slugs["org"])
+		# archived listing shows the page; active listing doesn't
+		archived = wiki.list_wiki_pages_page(archived=1, page_length=50)
+		self.assertIn(slugs["org"], [r["slug"] for r in archived["rows"]])
+		active = wiki.list_wiki_pages_page(page_length=50)
+		self.assertNotIn(slugs["org"], [r["slug"] for r in active["rows"]])
+		# restore obeys the same matrix as archive
+		frappe.set_user(PLAIN_USER)
+		with self.assertRaises(frappe.PermissionError):
+			wiki.restore_wiki_page(slug=slugs["org"])
+		frappe.set_user("Administrator")
+		out = wiki.restore_wiki_page(slug=slugs["org"])
+		self.assertTrue(out["ok"])
+		self.assertEqual(
+			frappe.db.get_value(WIKI_DT, slugs["org"], "status"), "Active"
+		)
+
 
 class TestWikiToolVisibility(_WikiScopeFixture):
 	def test_read_by_slug_honors_visibility(self):

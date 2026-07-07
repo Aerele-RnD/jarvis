@@ -10,7 +10,11 @@
 			<template v-else-if="page">
 				<!-- metadata row: type · scope (+target) · slug · updated · flags -->
 				<div class="flex flex-wrap items-center gap-2 text-sm">
-					<Badge variant="outline" theme="gray" :label="page.page_type" />
+					<Badge
+						variant="outline"
+						theme="gray"
+						:label="page.page_type === 'Org' ? 'Org notes' : page.page_type"
+					/>
 					<Badge
 						variant="subtle"
 						:theme="SCOPE_THEME[page.scope] || 'gray'"
@@ -46,6 +50,13 @@
 
 				<template v-if="editing">
 					<FormControl
+						type="text"
+						class="mt-3"
+						label="Title"
+						:modelValue="editTitle"
+						@update:modelValue="(v) => (editTitle = v)"
+					/>
+					<FormControl
 						type="textarea"
 						class="mt-3"
 						label="Summary"
@@ -73,6 +84,10 @@
 						v-html="bodyHtml"
 					/>
 					<p v-else class="mt-3 text-sm text-ink-gray-5">No content yet.</p>
+					<!-- provenance: where Jarvis learned this — earns trust and edits -->
+					<p v-if="provenance" class="mt-3 border-t pt-2 text-p-sm text-ink-gray-5">
+						{{ provenance }}
+					</p>
 				</template>
 			</template>
 		</template>
@@ -97,6 +112,14 @@
 						label="Archive"
 						:loading="archiving"
 						@click="confirmArchive"
+					/>
+					<Button
+						v-if="page.can_archive && page.status === 'Archived'"
+						variant="subtle"
+						label="Restore"
+						iconLeft="rotate-ccw"
+						:loading="archiving"
+						@click="restore"
 					/>
 				</template>
 			</div>
@@ -125,7 +148,7 @@ import {
 } from "frappe-ui"
 import { renderMarkdown } from "@/markdown"
 import { timeAgo, exactDate } from "@/utils/datetime"
-import { getWikiPage, saveWikiPage, archiveWikiPage } from "@/api/wiki"
+import { getWikiPage, saveWikiPage, archiveWikiPage, restoreWikiPage } from "@/api/wiki"
 
 const props = defineProps({
 	modelValue: { type: Boolean, default: false },
@@ -147,6 +170,7 @@ const show = computed({
 const page = ref(null)
 const loading = ref(false)
 const editing = ref(false)
+const editTitle = ref("")
 const editSummary = ref("")
 const editBody = ref("")
 const saving = ref(false)
@@ -163,6 +187,21 @@ const scopeTarget = computed(() => {
 	if (page.value.scope === "Role") return page.value.target_role || ""
 	if (page.value.scope === "User") return page.value.target_user || ""
 	return ""
+})
+// "From a voice note by X, Jul 7" — the page's latest source entry. Pages a
+// pipeline wrote (not a person) earn trust by saying where they came from.
+const provenance = computed(() => {
+	const sources = (page.value && page.value.sources) || []
+	if (!Array.isArray(sources) || !sources.length) return ""
+	const s = sources[sources.length - 1] || {}
+	const kindLabel =
+		{ voice: "a voice note", chat: "a chat conversation", edit: "a manual edit" }[
+			s.kind
+		] || (s.kind ? String(s.kind) : "a recorded source")
+	const who = s.user ? ` by ${s.user}` : ""
+	const when = s.date ? `, ${s.date}` : ""
+	const count = sources.length > 1 ? ` · ${sources.length} sources in total` : ""
+	return `Latest source: ${kindLabel}${who}${when}${count}`
 })
 
 watch(
@@ -187,6 +226,7 @@ async function load() {
 }
 
 function startEdit() {
+	editTitle.value = (page.value && page.value.title) || ""
 	editSummary.value = (page.value && page.value.summary) || ""
 	editBody.value = (page.value && page.value.body_md) || ""
 	editing.value = true
@@ -196,11 +236,13 @@ async function save() {
 	saving.value = true
 	try {
 		await saveWikiPage(props.slug, {
+			title: editTitle.value.trim() || undefined,
 			summary: editSummary.value,
 			body_md: editBody.value,
 		})
 		// a saved body counts as a review server-side — mirror that locally
 		if (page.value) {
+			if (editTitle.value.trim()) page.value.title = editTitle.value.trim()
 			page.value.summary = editSummary.value
 			page.value.body_md = editBody.value
 			page.value.contradiction_flag = 0
@@ -213,6 +255,20 @@ async function save() {
 		toast.error(errMsg(e))
 	} finally {
 		saving.value = false
+	}
+}
+
+async function restore() {
+	archiving.value = true
+	try {
+		await restoreWikiPage(props.slug)
+		if (page.value) page.value.status = "Active"
+		toast.success("Page restored")
+		emit("refresh")
+	} catch (e) {
+		toast.error(errMsg(e))
+	} finally {
+		archiving.value = false
 	}
 }
 

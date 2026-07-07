@@ -385,16 +385,22 @@ class TestWriteMatrix(WikiPermTestCase):
 		self.assertEqual(wiki_permissions.creatable_scopes(USER_PLAIN), [])
 
 	def test_manageable_roles(self):
+		# framework/blanket roles are never targetable: "Desk User" is
+		# effectively everyone with a login (an org-wide side door)
+		blocked_roles = (
+			"Administrator", "Guest", "All",
+			"Desk User", "System Manager", "Website Manager",
+		)
 		sm_roles = wiki_permissions.manageable_roles(USER_SM)
 		self.assertIn(TEST_ROLE, sm_roles)
 		self.assertIn(OTHER_ROLE, sm_roles)
-		for blocked in ("Administrator", "Guest", "All"):
+		for blocked in blocked_roles:
 			self.assertNotIn(blocked, sm_roles)
 
 		mgr_roles = wiki_permissions.manageable_roles(USER_KW_MGR)
 		self.assertIn(TEST_ROLE, mgr_roles)
 		self.assertNotIn(OTHER_ROLE, mgr_roles)
-		for blocked in ("Administrator", "Guest", "All"):
+		for blocked in blocked_roles:
 			self.assertNotIn(blocked, mgr_roles)
 
 		self.assertEqual(wiki_permissions.manageable_roles(USER_KW), [])

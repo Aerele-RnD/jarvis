@@ -17,6 +17,7 @@ export const listWikiPagesPage = (p = {}) =>
 		page_type: p.page_type || "",
 		scope_filter: p.scope_filter || "all",
 		attention: p.attention ? 1 : 0,
+		archived: p.archived ? 1 : 0,
 		page: p.page || 1,
 		page_length: p.page_length || 20,
 	})
@@ -45,6 +46,8 @@ export const createWikiPage = (p = {}) =>
 // patch: any of {body_md, summary, title} — only the provided fields change.
 export const saveWikiPage = (slug, patch = {}) => call(WK + "save_wiki_page", { slug, ...patch })
 export const archiveWikiPage = (slug) => call(WK + "archive_wiki_page", { slug })
+// Undoes an accidental archive (same permission as archiving).
+export const restoreWikiPage = (slug) => call(WK + "restore_wiki_page", { slug })
 
 // Chat nudge card: "don't ask again in this conversation" (7-day snooze).
 export const dismissWikiNudge = (conversation) => call(WK + "dismiss_nudge", { conversation })

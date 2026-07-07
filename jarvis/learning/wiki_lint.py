@@ -97,12 +97,21 @@ def _stale_pages(pages: list) -> list:
 
 def _find_orphans(pages: list) -> list:
 	"""Pages no OTHER Active Org page links to via [[slug]] (self-references
-	don't count; the generated index.md is not a page and never counts)."""
+	don't count; the generated index.md is not a page and never counts).
+
+	Young wikis have few cross-links, so "orphan" is only a signal once
+	linking is actually practiced: with fewer than 2 linking pages the check
+	would flag nearly the whole corpus (observed: 23 of 24) and read as
+	noise, so it reports nothing."""
+	linking_pages = 0
 	inbound: set[str] = set()
 	for p in pages:
-		for target in _WIKILINK_RE.findall(p.body_md or ""):
-			if target != p.name:
-				inbound.add(target)
+		targets = [t for t in _WIKILINK_RE.findall(p.body_md or "") if t != p.name]
+		if targets:
+			linking_pages += 1
+		inbound.update(targets)
+	if linking_pages < 2:
+		return []
 	return [p for p in pages if p.name not in inbound]
 
 
@@ -298,18 +307,30 @@ def _top_issues(contradictions, stale, orphans, dupe_groups) -> list[str]:
 
 
 def _summary_text(counts: dict, confirmed: dict | None, flagged: int) -> str:
+	"""Human copy, not a log line: named problems, real plurals, no pipeline
+	jargon. Reads well in the Wiki tab settings popover."""
+
+	def n(count, singular, plural=None):
+		return f"{count} {singular if count == 1 else (plural or singular + 's')}"
+
+	problems = []
+	if counts["contradictions"]:
+		problems.append(n(counts["contradictions"], "page with conflicting facts", "pages with conflicting facts"))
+	if counts["stale"]:
+		problems.append(n(counts["stale"], "page not confirmed in 90+ days", "pages not confirmed in 90+ days"))
+	if counts["orphans"]:
+		problems.append(n(counts["orphans"], "page no other page links to", "pages no other page links to"))
+	if counts["duplicate_title_groups"]:
+		problems.append(n(counts["duplicate_title_groups"], "possible duplicate title", "possible duplicate titles"))
 	text = (
-		f"Checked {counts['pages']} page(s): "
-		f"{counts['contradictions']} contradiction(s), "
-		f"{counts['stale']} stale, {counts['orphans']} orphan(s), "
-		f"{counts['duplicate_title_groups']} duplicate-title group(s)."
+		f"Checked {n(counts['pages'], 'page')}: "
+		+ ("; ".join(problems) if problems else "no problems found")
+		+ "."
 	)
-	if confirmed is None:
-		text += " LLM confirm pass skipped."
-	else:
+	if confirmed is not None:
 		text += (
-			f" LLM confirmed {len(confirmed['contradictions'])} contradiction(s)"
-			f" ({flagged} flagged) and {len(confirmed['duplicates'])} duplicate(s)."
+			f" AI double-check confirmed {len(confirmed['contradictions'])}"
+			f" conflict(s) ({flagged} flagged) and {len(confirmed['duplicates'])} duplicate(s)."
 		)
 	return text[:_MAX_SUMMARY_CHARS]
 

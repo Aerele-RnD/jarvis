@@ -98,6 +98,10 @@ _CARD_FIELDS = [
 	"exception_n", "not_applicable", "draft_edited", "overlap_warning",
 	"status", "surfaced", "reviewed_by", "approved_by", "creation",
 	"stale_reason", "last_validated_at", "flags_count", "materialized_skill",
+	# review_note distinguishes Acknowledged / "applied to skill" terminal
+	# states from a plain Reject - without it the board's disposition
+	# badges can never fire and every terminal row reads "Rejected".
+	"review_note",
 ]
 
 # Correction loop (plan 6.5): note cap, the distinct-user demotion quorum, and

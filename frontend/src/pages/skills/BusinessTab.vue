@@ -82,7 +82,15 @@
 				<section class="rounded-lg border p-4">
 					<div class="text-base font-semibold text-ink-gray-9">My notes</div>
 					<div class="mt-0.5 text-sm text-ink-gray-6">
-						Notes you've saved. Processed daily — proposals show up on the Learning tab.
+						<!-- the Learning tab is SM-only; pointing everyone at it is a dead end -->
+						<template v-if="status.can_process">
+							Notes you've saved. Usually processed within a day — proposals show up
+							on the Learning tab; wiki context may update sooner.
+						</template>
+						<template v-else>
+							Notes you've saved. Jarvis usually works them into its org knowledge
+							within a day — wiki pages may update sooner.
+						</template>
 					</div>
 
 					<div v-if="notes.loading && !notes.rows.length" class="py-8 text-center">
@@ -146,7 +154,8 @@
 					<div class="text-base font-semibold text-ink-gray-9">Processing</div>
 					<div class="mt-0.5 text-sm text-ink-gray-6">
 						Voice notes across the org are processed once a day into Learning proposals and
-						wiki updates.
+						wiki updates. Notes in any language are stored per the org's knowledge
+						language (set in the Wiki tab settings).
 					</div>
 
 					<div class="mt-3 flex flex-col gap-1.5 text-sm">
@@ -184,9 +193,9 @@
 				<section class="rounded-lg border p-4">
 					<div class="flex flex-wrap items-center justify-between gap-3">
 						<div class="min-w-0">
-							<div class="text-base font-semibold text-ink-gray-9">Org wiki has moved</div>
+							<div class="text-base font-semibold text-ink-gray-9">Browse the org wiki</div>
 							<div class="mt-0.5 text-sm text-ink-gray-6">
-								Browse and edit the pages Jarvis keeps about your business on the Wiki tab.
+								The pages Jarvis keeps about your business live on the Wiki tab.
 							</div>
 						</div>
 						<Button variant="subtle" label="Go to Wiki" iconLeft="book-open" @click="goToWiki" />

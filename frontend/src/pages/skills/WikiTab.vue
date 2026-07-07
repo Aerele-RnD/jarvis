@@ -46,7 +46,8 @@
 								@update:modelValue="changeLanguage"
 							/>
 							<p class="mt-1 text-p-sm text-ink-gray-5">
-								English translates non-English notes before they land in the wiki;
+								Applies org-wide: wiki pages, extracted business facts and
+								learned-skill drafts. English translates non-English input;
 								Original keeps the source's language.
 							</p>
 							<div class="mt-3 flex flex-col gap-2 border-t pt-3">
@@ -57,6 +58,16 @@
 									:loading="syncing"
 									@click="confirmSync"
 								/>
+								<p class="text-p-sm text-ink-gray-5">
+									<template v-if="caps.wiki_mirror_last_synced_at">
+										Last synced {{ timeAgo(caps.wiki_mirror_last_synced_at) }}<span
+											v-if="caps.wiki_mirror_last_sync_status"
+										>
+											— {{ caps.wiki_mirror_last_sync_status }}</span
+										>
+									</template>
+									<template v-else>Not synced yet.</template>
+								</p>
 								<Button
 									variant="subtle"
 									label="Run health check"
@@ -101,7 +112,7 @@
 			</template>
 
 			<template #cell-page_type="{ row }">
-				<Badge variant="outline" theme="gray" :label="row.page_type" />
+				<Badge variant="outline" theme="gray" :label="typeLabel(row.page_type)" />
 			</template>
 
 			<template #cell-scope="{ row }">
@@ -159,14 +170,17 @@
 						:modelValue="createDialog.scope"
 						@update:modelValue="(v) => (createDialog.scope = v)"
 					/>
-					<FormControl
-						v-if="createDialog.scope === 'Role'"
-						type="select"
-						label="Role"
-						:options="roleSelectOptions"
-						:modelValue="createDialog.target_role"
-						@update:modelValue="(v) => (createDialog.target_role = v)"
-					/>
+					<div v-if="createDialog.scope === 'Role'" class="flex flex-col gap-1">
+						<span class="block text-xs text-ink-gray-5">Role</span>
+						<!-- Autocomplete: SMs see every targetable role (~dozens);
+						     a plain select is unusable at that size -->
+						<Autocomplete
+							placeholder="Search roles"
+							:options="roleSelectOptions"
+							:modelValue="createDialog.target_role"
+							@update:modelValue="(v) => (createDialog.target_role = (v && v.value) || '')"
+						/>
+					</div>
 					<FormControl
 						type="textarea"
 						label="Summary (optional)"
@@ -175,21 +189,34 @@
 						:modelValue="createDialog.summary"
 						@update:modelValue="(v) => (createDialog.summary = v)"
 					/>
+					<FormControl
+						type="textarea"
+						label="Content (markdown, optional)"
+						:rows="5"
+						placeholder="What should this page say? You can also add content later."
+						:modelValue="createDialog.body_md"
+						@update:modelValue="(v) => (createDialog.body_md = v)"
+					/>
 					<p v-if="slugPreview" class="text-p-sm text-ink-gray-5">
 						Page id: {{ slugPreview }}
 					</p>
 				</div>
 			</template>
 			<template #actions>
-				<div class="flex items-center gap-2">
-					<Button
-						variant="solid"
-						label="Create"
-						:loading="createDialog.saving"
-						:disabled="!canCreate"
-						@click="doCreate"
-					/>
-					<Button label="Cancel" @click="createDialog.show = false" />
+				<div class="flex flex-col gap-1.5">
+					<div class="flex items-center gap-2">
+						<Button
+							variant="solid"
+							label="Create"
+							:loading="createDialog.saving"
+							:disabled="!canCreate"
+							@click="doCreate"
+						/>
+						<Button label="Cancel" @click="createDialog.show = false" />
+					</div>
+					<p v-if="!canCreate && createMissing" class="text-p-sm text-ink-gray-5">
+						{{ createMissing }}
+					</p>
 				</div>
 			</template>
 		</Dialog>
@@ -207,6 +234,7 @@
 // language, mirror sync, health check).
 import { reactive, ref, computed, onMounted } from "vue"
 import {
+	Autocomplete,
 	Badge,
 	Button,
 	Dialog,
@@ -216,6 +244,7 @@ import {
 	toast,
 	confirmDialog,
 } from "frappe-ui"
+import { sessionUser } from "@/data/session"
 import ListPage from "@/components/list/ListPage.vue"
 import WikiPageDialog from "@/components/wiki/WikiPageDialog.vue"
 import { useListPage } from "@/composables/useListPage"
@@ -247,11 +276,11 @@ const WIKI_TYPES = [
 ]
 const TYPE_OPTIONS = [
 	{ label: "All types", value: "" },
-	...WIKI_TYPES.map((t) => ({ label: t, value: t })),
+	...WIKI_TYPES.map((t) => ({ label: t === "Org" ? "Org notes" : t, value: t })),
 ]
 const TYPE_SELECT_OPTIONS = [
 	{ label: "Select a type", value: "" },
-	...WIKI_TYPES.map((t) => ({ label: t, value: t })),
+	...WIKI_TYPES.map((t) => ({ label: t === "Org" ? "Org notes" : t, value: t })),
 ]
 const SCOPE_THEME = { Org: "gray", Role: "blue", User: "green" }
 const SCOPE_OPTIONS = [
@@ -263,7 +292,14 @@ const SCOPE_OPTIONS = [
 const ATTENTION_OPTIONS = [
 	{ label: "All pages", value: "" },
 	{ label: "Needs attention", value: "1" },
+	{ label: "Archived", value: "archived" },
 ]
+// "Org" as a page TYPE collides visually with the "Org" scope badge one
+// column over; display it under a clearer name (stored value unchanged).
+const TYPE_LABELS = { Org: "Org notes" }
+function typeLabel(t) {
+	return TYPE_LABELS[t] || t
+}
 const LANGUAGE_OPTIONS = [
 	{ label: "English (recommended)", value: "English" },
 	{ label: "Original language", value: "Original" },
@@ -317,7 +353,8 @@ const {
 			search: f.search || p.search || "",
 			page_type: f.page_type || "",
 			scope_filter: f.scope || "all",
-			attention: f.attention ? 1 : 0,
+			attention: f.attention === "1" ? 1 : 0,
+			archived: f.attention === "archived" ? 1 : 0,
 			// kit sends a start offset; the endpoint takes a page number
 			page: Math.floor((p.start || 0) / pl) + 1,
 			page_length: pl,
@@ -327,6 +364,15 @@ const {
 })
 
 const emptyState = computed(() => {
+	if (filters.scope === "mine" && caps.creatable_scopes.includes("User"))
+		return {
+			icon: "book-open",
+			title: "No personal pages yet",
+			description:
+				'Personal pages are knowledge only you and Jarvis share — shortcuts, ' +
+				'preferences, your own working notes. Use "New page" and pick the ' +
+				'Personal scope to create your first one.',
+		}
 	if (Object.keys(filters).length)
 		return {
 			icon: "book-open",
@@ -358,6 +404,8 @@ const caps = reactive({
 	knowledge_language: "English",
 	wiki_lint_last_run_at: null,
 	wiki_lint_summary: "",
+	wiki_mirror_last_synced_at: null,
+	wiki_mirror_last_sync_status: "",
 })
 
 async function loadCaps() {
@@ -369,6 +417,8 @@ async function loadCaps() {
 		caps.knowledge_language = c.knowledge_language || "English"
 		caps.wiki_lint_last_run_at = c.wiki_lint_last_run_at || null
 		caps.wiki_lint_summary = c.wiki_lint_summary || ""
+		caps.wiki_mirror_last_synced_at = c.wiki_mirror_last_synced_at || null
+		caps.wiki_mirror_last_sync_status = c.wiki_mirror_last_sync_status || ""
 	} catch (e) {
 		// read-only view stays useful without caps (no create / SM chrome)
 	}
@@ -392,25 +442,33 @@ const createDialog = reactive({
 	scope: "Org",
 	target_role: "",
 	summary: "",
+	body_md: "",
 	saving: false,
 })
 
 const scopeSelectOptions = computed(() =>
 	(caps.creatable_scopes || []).map((s) => ({ label: SCOPE_LABELS[s] || s, value: s }))
 )
-const roleSelectOptions = computed(() => [
-	{ label: "Select a role", value: "" },
-	...(caps.manageable_roles || []).map((r) => ({ label: r, value: r })),
-])
-// Preview of the server-derived slug (`<type>--<scrubbed-title>`); the
-// controller suffixes non-Org slugs (--r-…/--u-…) so scopes never collide.
-const slugPreview = computed(() => {
-	const base = createDialog.title
+const roleSelectOptions = computed(() =>
+	(caps.manageable_roles || []).map((r) => ({ label: r, value: r }))
+)
+// Preview of the server-derived slug (`<type>--<scrubbed-title>` plus the
+// controller's audience suffix for non-Org scopes) — mirror it fully so the
+// preview never lies about the final page id.
+const scrub = (s) =>
+	String(s || "")
 		.toLowerCase()
 		.replace(/[^a-z0-9]+/g, "-")
 		.replace(/^-+|-+$/g, "")
+const slugPreview = computed(() => {
+	const base = scrub(createDialog.title)
 	if (!base || !createDialog.page_type) return ""
-	return `${createDialog.page_type.toLowerCase()}--${base}`
+	let slug = `${createDialog.page_type.toLowerCase()}--${base}`
+	if (createDialog.scope === "User")
+		slug += `--u-${scrub(String(sessionUser() || "").split("@")[0]) || "me"}`
+	else if (createDialog.scope === "Role" && createDialog.target_role)
+		slug += `--r-${scrub(createDialog.target_role)}`
+	return slug
 })
 const canCreate = computed(
 	() =>
@@ -419,6 +477,13 @@ const canCreate = computed(
 		!!createDialog.scope &&
 		(createDialog.scope !== "Role" || !!createDialog.target_role)
 )
+const createMissing = computed(() => {
+	const missing = []
+	if (!createDialog.title.trim()) missing.push("a title")
+	if (!createDialog.page_type) missing.push("a type")
+	if (createDialog.scope === "Role" && !createDialog.target_role) missing.push("a role")
+	return missing.length ? `Still needed: ${missing.join(", ")}.` : ""
+})
 
 function openCreate() {
 	createDialog.title = ""
@@ -426,6 +491,7 @@ function openCreate() {
 	createDialog.scope = caps.creatable_scopes[0] || "Org"
 	createDialog.target_role = ""
 	createDialog.summary = ""
+	createDialog.body_md = ""
 	createDialog.show = true
 }
 
@@ -438,6 +504,7 @@ async function doCreate() {
 			scope: createDialog.scope,
 			target_role: createDialog.scope === "Role" ? createDialog.target_role : "",
 			summary: createDialog.summary,
+			body_md: createDialog.body_md,
 		})
 		if (res && res.ok === false) {
 			toast.error(res.reason || "Could not create the page.")

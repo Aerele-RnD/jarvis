@@ -93,10 +93,15 @@ class WikiLintTestCase(FrappeTestCase):
 			"alpha", body=f"Links to [[{SLUG_PREFIX}--beta]] for details."
 		)
 		pages.beta = self._page("beta")
-		# contradiction via body marker (flag cleared by a human save)
+		# contradiction via body marker (flag cleared by a human save); also
+		# links beta so the corpus has >=2 linking pages — the orphan check
+		# reports nothing on younger wikis (deliberate noise gate)
 		pages.contra = self._page(
 			"contra",
-			body="Terms are 30 days.\n\n## Contradiction flagged (2026-01-01)\n\nTerms are 45 days.",
+			body=(
+				"Terms are 30 days (see [[" + SLUG_PREFIX + "--beta]])."
+				"\n\n## Contradiction flagged (2026-01-01)\n\nTerms are 45 days."
+			),
 		)
 		# contradiction via the stored flag
 		pages.flagged = self._page("flagged", contradiction_flag=1)
@@ -157,9 +162,21 @@ class TestDeterministicChecks(WikiLintTestCase):
 		selfie = self._page(
 			"selfie", body=f"I cite myself: [[{SLUG_PREFIX}--selfie]]."
 		)
+		# two real linking pages so the young-wiki orphan gate is open
+		self._page("linker-a", body=f"See [[{SLUG_PREFIX}--linker-b]].")
+		self._page("linker-b", body=f"Back to [[{SLUG_PREFIX}--linker-a]].")
 		with _mock_llm(key=""):
 			out = wiki_lint.run_lint()
 		self.assertIn(selfie.name, out["orphans"])
+
+	def test_orphans_not_reported_on_young_unlinked_wiki(self):
+		# a corpus where nobody links anybody: flagging everything as orphans
+		# is noise, so the check reports nothing
+		self._page("lone-a")
+		self._page("lone-b")
+		with _mock_llm(key=""):
+			out = wiki_lint.run_lint()
+		self.assertEqual(out["orphans"], [])
 
 	def test_settings_fields_are_stamped(self):
 		self._seed()

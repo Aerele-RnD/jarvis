@@ -88,8 +88,8 @@
 				v-if="phase === 'update' || phase === 'create'"
 				class="mt-3 text-sm text-ink-gray-5"
 			>
-				Confirming saves the skill only — the Skills tab apply bar pushes it to your
-				assistant.
+				Confirming saves the skill only — it reaches your assistant with the next
+				skills push.
 			</p>
 		</template>
 
@@ -226,16 +226,26 @@ const newSkill = computed(() => draft.new_skill || {})
 // Cheap line-level diff: a line is highlighted when its trimmed text does not
 // appear anywhere on the other side. Not a real diff (moved/duplicated lines
 // read as changes) but enough to draw the eye to what the LLM touched.
+// Single-paragraph instructions (the common case) degrade to "everything
+// changed" under a line diff, so fall back to sentence segments there.
+function segments(text, splitSentences) {
+	const s = String(text || "")
+	if (!splitSentences) return s.split("\n")
+	return s.split(/(?<=[.!?])\s+/)
+}
 function diffLines(text, otherText) {
+	const bothMultiline =
+		String(text || "").trim().includes("\n") && String(otherText || "").trim().includes("\n")
+	const bySentence = !bothMultiline
 	const other = new Set(
-		String(otherText || "")
-			.split("\n")
+		segments(otherText, bySentence)
 			.map((l) => l.trim())
 			.filter(Boolean)
 	)
-	return String(text || "")
-		.split("\n")
-		.map((line) => ({ line, changed: !!line.trim() && !other.has(line.trim()) }))
+	return segments(text, bySentence).map((line) => ({
+		line,
+		changed: !!line.trim() && !other.has(line.trim()),
+	}))
 }
 const currentLines = computed(() =>
 	diffLines(draft.before_instructions, draft.updated_instructions)
@@ -265,8 +275,8 @@ async function confirmApply() {
 			(r && r.skill_name) || draft.skill_name || newSkill.value.skill_name || "skill"
 		toast.success(
 			phase.value === "create"
-				? `Skill “${skill}” created — apply it from the Skills tab to push it to your assistant.`
-				: `Skill “${skill}” updated — apply it from the Skills tab to push it to your assistant.`
+				? `Skill “${skill}” created. It reaches your assistant with the next skills push.`
+				: `Skill “${skill}” updated. The change reaches your assistant with the next skills push.`
 		)
 		emit("applied", { skill_name: skill })
 		emit("update:modelValue", false)
