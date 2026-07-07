@@ -39,7 +39,7 @@ export function reorder(list, from, to) {
 // Suggested chat-subscription model ids per upstream (index 0 = the default the
 // onboarding editor uses when it hides the model field). Single source of truth,
 // shared with LlmPoolEditor's datalist so the default + suggestions can't drift.
-export const SUB_MODEL_SUGGESTIONS = { openai: ["gpt-5.5", "gpt-5.4"], google: ["gemini-2.5-pro", "gemini-3.5-flash"] }
+export const SUB_MODEL_SUGGESTIONS = { openai: ["gpt-5.5", "gpt-5.4"], google: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-3.1-flash"] }
 // Default chat-subscription model for an upstream (SUB_MODEL_SUGGESTIONS[0], with
 // an openai fallback for unmapped upstreams). Onboarding hides the model field
 // (provider is enough), so the row still needs a model id for validatePool + save.

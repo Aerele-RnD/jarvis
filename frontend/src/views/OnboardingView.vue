@@ -47,7 +47,7 @@
 								<ul class="jv-ob-mode-feats">
 									<li><span class="jv-ob-tick">✓</span>We host the openclaw agent for you</li>
 									<li><span class="jv-ob-tick">✓</span>Includes the Jarvis persona + Frappe skills</li>
-									<li><span class="jv-ob-tick">✓</span>Managed LLM proxy — pool your API keys &amp; chat subscriptions, with automatic failover</li>
+									<li><span class="jv-ob-tick">✓</span>Managed LLM proxy: pool your API keys &amp; chat subscriptions, with automatic failover</li>
 									<li><span class="jv-ob-tick">✓</span>Simple plan &amp; billing</li>
 								</ul>
 								<button class="jv-ob-btn jv-ob-btn-primary jv-ob-mode-btn" @click="setMode('managed')">Choose →</button>
@@ -95,7 +95,7 @@
 					<!-- ===== Plan — ported from desk renderPlan (jarvis_onboarding.js ~481). ===== -->
 					<div v-else-if="state.step === 'plan'">
 						<h1 class="jv-ob-h1">Choose your plan</h1>
-						<p class="jv-ob-sub">Pay as you go — no auto-renewal. Extend anytime.</p>
+						<p class="jv-ob-sub">Pay as you go, no auto-renewal. Extend anytime.</p>
 						<div v-if="state.plansLoading" class="jv-ob-placeholder">Loading plans…</div>
 						<div v-else-if="state.plansErr" class="jv-ob-err">{{ state.plansErr }}</div>
 						<div v-else-if="!state.plans.length" class="jv-ob-placeholder">No plans are available right now. Please contact support.</div>
@@ -126,7 +126,7 @@
 					<div v-else-if="state.step === 'pay'">
 						<template v-if="state.provisioning || state.provisionErr">
 								<h1 class="jv-ob-h1">Setting up your workspace</h1>
-								<p v-if="state.provisioning" class="jv-ob-sub">Payment received — we're provisioning your Jarvis workspace. This usually takes under a minute…</p>
+								<p v-if="state.provisioning" class="jv-ob-sub">Payment received. We're provisioning your Jarvis workspace. This usually takes under a minute…</p>
 								<p v-if="state.provisionErr" class="jv-ob-err" role="alert">{{ state.provisionErr }}</p>
 								<div v-if="state.provisionErr" class="jv-ob-placeholder-actions">
 									<button class="jv-ob-btn jv-ob-btn-primary" @click="proceedAfterPay">Retry</button>
@@ -147,7 +147,7 @@
 						</template>
 						<template v-else-if="state.successData">
 							<h1 class="jv-ob-h1">Payment complete</h1>
-							<p class="jv-ob-sub">You're all set — continue to connect your AI.</p>
+							<p class="jv-ob-sub">You're all set. Continue to connect your AI.</p>
 							<div class="jv-ob-placeholder-actions">
 								<button class="jv-ob-btn jv-ob-btn-primary" @click="goNext">Continue →</button>
 							</div>
@@ -160,7 +160,7 @@
 								<div class="jv-ob-row"><span>Plan</span><b>{{ selectedPlan.plan_name || "" }}</b></div>
 								<div class="jv-ob-row jv-ob-row-total"><span>Due now</span><b>{{ planPriceLabel(selectedPlan.price_inr, selectedPlan.billing_cycle) }}</b></div>
 							</div>
-							<div v-if="state.devActive" class="jv-ob-devnote">Developer mode — payment is skipped (dev signup).</div>
+							<div v-if="state.devActive" class="jv-ob-devnote">Developer mode: payment is skipped (dev signup).</div>
 							<div class="jv-ob-err">{{ state.payErr }}</div>
 							<div class="jv-ob-placeholder-actions">
 								<button class="jv-ob-btn" :disabled="state.payBusy" @click="goBack">← Back</button>
@@ -204,7 +204,7 @@
 					<div v-else-if="state.step === 'selfhost'">
 						<h1 class="jv-ob-h1">Connect your openclaw</h1>
 						<p class="jv-ob-sub">Point Jarvis at <b>your own</b> openclaw server. Jarvis connects over HTTP
-							with a bearer token — no Aerele persona/skills. Validate first, then connect.</p>
+							with a bearer token. No Aerele persona/skills. Validate first, then connect.</p>
 						<label class="jv-ob-label" for="jv-ob-sh-url">openclaw URL</label>
 						<input id="jv-ob-sh-url" class="jv-ob-input" type="text" v-model="state.shUrl"
 							   placeholder="http://host.docker.internal:19060">
@@ -212,7 +212,7 @@
 						<input id="jv-ob-sh-token" class="jv-ob-input" type="password" v-model="state.shToken"
 							   placeholder="paste your openclaw gateway token" autocomplete="off">
 						<label class="jv-ob-check"><input type="checkbox" v-model="state.shStream"> Stream responses token-by-token (recommended)</label>
-						<label class="jv-ob-check"><input type="checkbox" v-model="state.shDeep"> Run deep chat test (slower — sends one message)</label>
+						<label class="jv-ob-check"><input type="checkbox" v-model="state.shDeep"> Run deep chat test (slower, sends one message)</label>
 						<div class="jv-ob-placeholder-actions" style="margin-top:14px;justify-content:flex-start">
 							<button class="jv-ob-btn" :disabled="state.shTestBusy" @click="runSelfHostTest">
 								{{ state.shTestBusy ? "Testing…" : "Test connection" }}
@@ -221,10 +221,10 @@
 						<div v-if="state.shTestBusy" class="jv-ob-note">Testing…</div>
 						<div v-else-if="state.shTestResult" class="jv-ob-sh-results">
 							<div :class="state.shTestResult.ok ? 'jv-ob-sh-ok' : 'jv-ob-sh-bad'">
-								{{ state.shTestResult.ok ? "All required checks passed." : "Some checks failed — fix them and retry." }}
+								{{ state.shTestResult.ok ? "All required checks passed." : "Some checks failed. Fix them and retry." }}
 							</div>
 							<div v-for="(c, i) in (state.shTestResult.checks || [])" :key="i" class="jv-ob-sh-check" :class="{ 'jv-ob-sh-check-adv': c.advisory }">
-								{{ c.ok ? "✅" : (c.advisory ? "⚠️" : "❌") }} <b>{{ c.check }}</b> — {{ c.detail || "" }}<span v-if="c.advisory" class="jv-ob-sh-adv-tag"> · advisory</span>
+								{{ c.ok ? "✅" : (c.advisory ? "⚠️" : "❌") }} <b>{{ c.check }}</b> · {{ c.detail || "" }}<span v-if="c.advisory" class="jv-ob-sh-adv-tag"> · advisory</span>
 							</div>
 						</div>
 						<div v-if="state.shWarning" class="jv-ob-devnote">{{ state.shWarning }}</div>
@@ -518,7 +518,7 @@ async function proceedAfterPay() {
 		await _sleep(2000)
 	}
 	state.provisioning = false
-	state.provisionErr = "Your workspace is still being set up — this can take a minute. Retry when you're ready."
+	state.provisionErr = "Your workspace is still being set up. This can take a minute. Retry when you're ready."
 }
 
 async function runStartPay() {
@@ -655,7 +655,7 @@ async function afterSaveRecheckReady() {
 		window.location.assign("/jarvis/")
 		return
 	}
-	state.finishNote = "Still finishing setup — this can take a few seconds. You can continue to Jarvis now, or wait and try again."
+	state.finishNote = "Still finishing setup. This can take a few seconds. You can continue to Jarvis now, or wait and try again."
 }
 
 // ---- Connect AI (renders <LlmPoolEditor>, jarvis_onboarding.js ~559-1080
@@ -728,7 +728,7 @@ async function onSelfHostSave() {
 			await afterSaveRecheckReady()
 		} else {
 			state.shTestResult = m.result || {}
-			state.shErr = "Validation failed — fix the checks above, then retry."
+			state.shErr = "Validation failed. Fix the checks above, then retry."
 		}
 	} catch (e) {
 		state.shSaveBusy = false

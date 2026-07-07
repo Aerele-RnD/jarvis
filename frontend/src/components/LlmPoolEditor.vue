@@ -30,7 +30,7 @@
     <!-- ===================== PRESET ===================== -->
     <section v-if="llmMode==='preset'" style="margin-bottom:18px;">
       <p v-if="!catalog.length" style="font-size:14px;color:var(--text-3);margin:0 0 12px;">
-        Couldn't load presets — use <b>Quick</b> or <b>Custom</b>.
+        Couldn't load presets. Use <b>Quick</b> or <b>Custom</b>.
       </p>
       <div v-else style="max-height:440px;overflow-y:auto;padding-right:4px;">
         <!-- single_vendor presets -->
@@ -83,7 +83,7 @@
         Custom failover pool
       </div>
 
-      <div v-if="!editorRows.length" style="font-size:13px;color:var(--text-3);padding:8px 0;">No models yet — add one below.</div>
+      <div v-if="!editorRows.length" style="font-size:13px;color:var(--text-3);padding:8px 0;">No models yet. Add one below.</div>
 
       <div v-for="(m,i) in editorRows" :key="i"
            style="border:1px solid var(--border);border-radius:9px;padding:10px;margin-bottom:8px;background:var(--surface-1);">
@@ -139,7 +139,7 @@
             <JvCombo :model-value="m.model" @update:model-value="(v) => { m.model = v }" allow-custom
                      :options="modelSuggestionsForProvider(m.provider)" :editable="editable" placeholder="Model ID (e.g. gpt-4o)" />
             <input v-model="m.apiKey" :disabled="!editable" type="password"
-                   :placeholder="m.hasKey ? 'key set — re-enter to change' : 'API key'" />
+                   :placeholder="m.hasKey ? 'key set, re-enter to change' : 'API key'" />
             <input v-model="m.baseUrl" :disabled="!editable" placeholder="Base URL (OpenAI-compatible)" />
           </div>
           <div v-else style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
@@ -153,7 +153,7 @@
               <option v-for="s in modelSuggestionsForProvider(m.provider)" :key="s" :value="s"></option>
             </datalist>
             <input v-model="m.apiKey" :disabled="!editable" type="password"
-                   :placeholder="m.hasKey ? 'key set — re-enter to change' : 'API key'"
+                   :placeholder="m.hasKey ? 'key set, re-enter to change' : 'API key'"
                    style="flex:1.5;min-width:120px;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;" />
             <input v-model="m.baseUrl" :disabled="!editable" placeholder="Base URL (OpenAI-compatible)"
                    style="flex:1.5;min-width:120px;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;" />
@@ -189,7 +189,7 @@
               <span class="jv-status-ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg></span>
               <span class="jv-status-tx"><b>Connected</b> · {{ accountLabel(a) }}</span>
               <span class="jv-status-acts">
-                <button v-if="editable && !singleMode" class="jv-status-act" @click="startConnect(m, ai)" title="Re-authorize — mint fresh tokens">Reconnect</button>
+                <button v-if="editable && !singleMode" class="jv-status-act" @click="startConnect(m, ai)" title="Re-authorize to mint fresh tokens">Reconnect</button>
                 <button v-if="editable" class="jv-status-act" @click="removeAccount(m, ai)">Disconnect</button>
               </span>
             </div>
@@ -214,7 +214,7 @@
                 <span class="jv-cn-num">2</span>
                 <div class="jv-cn-body">
                   <div class="jv-cn-t">Paste the callback URL</div>
-                  <div class="jv-cn-hint">After signing in you'll see a “This site can't be reached” page — that's expected. Copy that page's full URL and paste it below.</div>
+                  <div class="jv-cn-hint">After signing in you'll see a “This site can't be reached” page. Copy that page's full URL and paste it below.</div>
                   <input v-model="m._connect.pastedUrl" class="jv-cn-input" placeholder="http://localhost:1455/auth/callback?code=…" @keydown.enter="finishConnect(m)" />
                 </div>
               </div>
@@ -322,7 +322,7 @@ const ready = computed(() => {
 })
 const credTypes = [
   { value: "subscription", label: "Chat subscription", desc: "Sign in with your ChatGPT or Gemini account." },
-  { value: "api_key", label: "API key", desc: "Use your own provider key — Anthropic, OpenAI, and more." },
+  { value: "api_key", label: "API key", desc: "Use your own provider key from Anthropic, OpenAI, and more." },
 ]
 const rotationOpts = [
   { value: "sticky", label: "Sticky" },
@@ -331,7 +331,7 @@ const rotationOpts = [
 ]
 const upstreamOpts = [
   { value: "openai", label: "OpenAI" },
-  { value: "google", label: "Google" },
+  { value: "google", label: "Google Gemini" },
 ]
 // Provider dropdown fed by the shared PROVIDER_LABELS (id⇄label). Rows store the
 // display LABEL as `provider` (matches seedRowsFromConfig + the desk page).
@@ -341,7 +341,7 @@ const providerOptions = PROVIDER_LABELS.map((p) => p.label)
 const STATIC_MODEL_SUGGESTIONS = {
   "Anthropic": ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"],
   "OpenAI": ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-4o"],
-  "Google Gemini": ["gemini-2.5-pro", "gemini-3.5-flash", "gemini-3.1-flash-lite"],
+  "Google Gemini": ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-3.1-flash"],
   "Mistral": ["mistral-large-latest", "mistral-medium-latest", "mistral-small-latest"],
   "Groq": ["llama-3.3-70b-versatile"],
   "Together AI": ["meta-llama/Llama-3.3-70B-Instruct-Turbo"],
@@ -530,14 +530,14 @@ async function startConnect(m, reconnectIdx = null) {
   }
   m._connect = { ...blankConnect(), open: true, loading: true, reconnectIdx }
   try {
-    const provider = m.upstream === "google" ? "Google" : "OpenAI"
+    const provider = m.upstream === "google" ? "Google Gemini" : "OpenAI"
     const res = await api.beginPoolAccountSignin(provider, m.model.trim())
     // Backend returns an envelope: {ok:true, data:{nonce, authorize_url, …}} or
     // {ok:false, error:{code, message}}. Unwrap data; surface errors instead of
     // hanging on "Starting sign-in…".
     if (!res || res.ok === false) {
       m._connect.loading = false
-      m._connect.error = (res && res.error && res.error.message) || "Couldn't start sign-in — try again."
+      m._connect.error = (res && res.error && res.error.message) || "Couldn't start sign-in. Try again."
       return
     }
     const d = res.data || {}
@@ -555,7 +555,7 @@ async function finishConnect(m) {
     // Same {ok, data} envelope as begin — unwrap + surface errors.
     if (!res || res.ok === false) {
       m._connect.loading = false
-      m._connect.error = (res && res.error && res.error.message) || "Couldn't connect the account — check the pasted URL and try again."
+      m._connect.error = (res && res.error && res.error.message) || "Couldn't connect the account. Check the pasted URL and try again."
       return
     }
     const d = res.data || {}
@@ -589,7 +589,7 @@ function copyAuthorizeUrl(m) {
   copyTextWithFallback(url).then(() => {
     m._connect.copied = true
     setTimeout(() => { if (m._connect) m._connect.copied = false }, 1400)
-  }).catch(() => { m._connect.error = "Could not copy — select the URL above and copy manually." })
+  }).catch(() => { m._connect.error = "Could not copy. Select the URL above and copy manually." })
 }
 
 // ---- load / save ---------------------------------------------------------
