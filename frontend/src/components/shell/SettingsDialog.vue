@@ -75,24 +75,32 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onBeforeUnmount } from "vue"
-import { useTheme } from "@/composables/useTheme"
+import { computed, defineAsyncComponent, onMounted, onBeforeUnmount } from "vue"
+import { useJarvisTheme } from "@/theme"
 import { useShellStore } from "@/stores/shell"
 import "@/assets/settings.css"
 
-import GeneralPane from "@/components/settings/GeneralPane.vue"
-import UsagePane from "@/components/settings/UsagePane.vue"
-import ActivityPane from "@/components/settings/ActivityPane.vue"
-import MacroRunsPane from "@/components/settings/MacroRunsPane.vue"
-import AppearancePane from "@/components/settings/AppearancePane.vue"
-import ShortcutsPane from "@/components/settings/ShortcutsPane.vue"
-import PlanBillingPane from "@/components/settings/PlanBillingPane.vue"
-import AiModelsPane from "@/components/settings/AiModelsPane.vue"
-import ConnectionPane from "@/components/settings/ConnectionPane.vue"
-import BillingMeteringPane from "@/components/settings/BillingMeteringPane.vue"
+// Panes are lazy: this dialog is mounted eagerly by AppShell for EVERY user, so
+// static imports would pull each pane's dependency tree (charts + usageCharts
+// for billing, LlmPoolEditor for AI models) into the initial shell bundle — even
+// for non-SM users who can never open those sections. defineAsyncComponent defers
+// each pane's code to the first time that section is opened.
+const GeneralPane = defineAsyncComponent(() => import("@/components/settings/GeneralPane.vue"))
+const UsagePane = defineAsyncComponent(() => import("@/components/settings/UsagePane.vue"))
+const ActivityPane = defineAsyncComponent(() => import("@/components/settings/ActivityPane.vue"))
+const MacroRunsPane = defineAsyncComponent(() => import("@/components/settings/MacroRunsPane.vue"))
+const AppearancePane = defineAsyncComponent(() => import("@/components/settings/AppearancePane.vue"))
+const ShortcutsPane = defineAsyncComponent(() => import("@/components/settings/ShortcutsPane.vue"))
+const PlanBillingPane = defineAsyncComponent(() => import("@/components/settings/PlanBillingPane.vue"))
+const AiModelsPane = defineAsyncComponent(() => import("@/components/settings/AiModelsPane.vue"))
+const ConnectionPane = defineAsyncComponent(() => import("@/components/settings/ConnectionPane.vue"))
+const BillingMeteringPane = defineAsyncComponent(() => import("@/components/settings/BillingMeteringPane.vue"))
 
-// Same theme wiring as AccountView — the inline paletteVars feed every jv-* var.
-const { effectiveDark: dark, paletteVars } = useTheme()
+// Theme MUST come from the same singleton the Appearance pane + header toggle
+// WRITE to (@/theme's useJarvisTheme) — @/composables/useTheme is a separate
+// module-level singleton that never reconciles same-tab, so reading it would
+// leave the dialog stuck in its page-load theme when the user toggles.
+const { effectiveDark: dark, paletteVars } = useJarvisTheme()
 const store = useShellStore()
 
 // Only the ACCOUNT & BILLING group is gated (server already enforces the

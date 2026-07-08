@@ -45,6 +45,38 @@ function clearSettingsActions() {
 	for (const k of Object.keys(settingsActions)) delete settingsActions[k]
 }
 
+// Device-local behaviour prefs (localStorage, per device). These were owned by
+// ChatView, but the settings dialog is now hoisted to the shell — a single
+// source here keeps the GeneralPane toggle and ChatView's live gating in sync
+// same-tab (a pane-local ref could not notify ChatView). The "1"/"0" encoding
+// is kept for backward compat with existing stored values.
+const activityDetail = ref(localStorage.getItem("jarvis-activity-detail") === "1")
+function setActivityDetail(v) {
+	activityDetail.value = !!v
+	try { localStorage.setItem("jarvis-activity-detail", v ? "1" : "0") } catch (e) {}
+}
+const notifyEnabled = ref(
+	typeof Notification !== "undefined" &&
+	localStorage.getItem("jarvis-notify") === "1" &&
+	Notification.permission === "granted",
+)
+async function toggleNotify() {
+	if (typeof Notification === "undefined") return
+	if (notifyEnabled.value) {
+		notifyEnabled.value = false
+		try { localStorage.setItem("jarvis-notify", "0") } catch (e) {}
+		return
+	}
+	let perm = Notification.permission
+	if (perm !== "granted") {
+		try { perm = await Notification.requestPermission() } catch (e) { perm = "denied" }
+	}
+	if (perm === "granted") {
+		notifyEnabled.value = true
+		try { localStorage.setItem("jarvis-notify", "1") } catch (e) {}
+	}
+}
+
 // Sidebar collapse: persisted preference (same localStorage key/values as
 // today — existing prefs survive, D5) + a non-persisted narrow-screen
 // override (auto-collapse at ≤820px; manual toggles there are temporary, D8).
@@ -192,6 +224,8 @@ const store = reactive({
 	settingsSection,
 	chatContext,
 	settingsActions,
+	activityDetail,
+	notifyEnabled,
 	pendingNewChat,
 	paletteOpen,
 	sidebarPref,
@@ -207,6 +241,8 @@ const store = reactive({
 	setChatContext,
 	registerSettingsActions,
 	clearSettingsActions,
+	setActivityDetail,
+	toggleNotify,
 	applyRemoteRename,
 	applyRemoteNew,
 })

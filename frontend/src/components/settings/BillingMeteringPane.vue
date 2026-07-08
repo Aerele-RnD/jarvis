@@ -62,9 +62,9 @@ import JvChart from "@/charts/JvChart.vue"
 import EChart from "@/charts/EChart.vue"
 import { budgetGaugeOption, perModelBarSpec } from "@/charts/usageCharts.js"
 import { getLlmConfig, getLlmUsage, getLlmSyncStatus } from "@/api"
-import { useTheme } from "@/composables/useTheme"
+import { useJarvisTheme } from "@/theme"
 
-const { effectiveDark: dark } = useTheme()
+const { effectiveDark: dark } = useJarvisTheme()
 
 const config = ref({ models: [], proxy_active: 0 })
 const usage = ref({ applicable: false, per_model: [], used_vs_limit: {} })

@@ -29,19 +29,19 @@
 					:class="{ on: aiTab === 'pool' }" @click="aiTab = 'pool'">API keys &amp; failover</button>
 			</div>
 
-			<!-- Chat subscription (DIRECT flat-field OAuth path). The interactive
-			     re-authorize/connect card (DirectSubscriptionCard) is not present in
-			     this SPA build, so the direct connection is shown read-only here;
-			     re-authorize / disconnect are managed from the Account page. -->
+			<!-- Chat subscription (DIRECT flat-field OAuth path), shown read-only.
+			     The interactive re-authorize/connect card (DirectSubscriptionCard)
+			     lands on this branch with PR #234; until then the connection is
+			     established/renewed through onboarding's "Connect AI" step. -->
 			<div v-if="aiTab === 'subscription'">
 				<div v-if="directSub.connected">
 					<div class="jv-acct-kv"><span>Account</span><b>{{ directSub.account_email || '—' }}</b></div>
 					<div class="jv-acct-kv"><span>Provider</span><b>{{ directSub.provider || '—' }}</b></div>
 					<div class="jv-acct-kv"><span>Model</span><b>{{ directSub.model || '—' }}</b></div>
 					<div v-if="directSub.connected_at" class="jv-acct-kv"><span>Connected</span><b>{{ connectedAtLabel }}</b></div>
-					<div class="jv-set-hint" style="margin-top:10px;">Re-authorize or disconnect this chat subscription from the Account page.</div>
+					<div class="jv-set-hint" style="margin-top:10px;">To re-authorize or disconnect this chat subscription, re-run onboarding, or switch to API keys &amp; failover.</div>
 				</div>
-				<div v-else class="jv-acct-muted">No chat subscription connected. Connect one from the Account page, or use API keys &amp; failover.</div>
+				<div v-else class="jv-acct-muted">No chat subscription connected. Connect one through onboarding, or use API keys &amp; failover.</div>
 			</div>
 
 			<!-- API keys & multi-model failover pool -->

@@ -73,7 +73,7 @@ const menuOptions = computed(() => [
 			// routes. The ACCOUNT & BILLING group is SM-only, so keep these items
 			// gated to System Managers; the dialog itself falls back to "general"
 			// if a non-SM ever reaches a gated section.
-			...(window.is_system_manager !== false
+			...(!!window.is_system_manager
 				? [
 						{ label: "Account", icon: "user", onClick: () => store.openSettings("plan") },
 						{ label: "Monitor", icon: "activity", onClick: () => store.openSettings("billing") },

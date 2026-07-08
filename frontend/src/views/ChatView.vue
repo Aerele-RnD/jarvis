@@ -1139,30 +1139,13 @@ const toolOpen = ref({})
 // Whether replies reveal which tools + skills produced them. When off, the
 // chat shows only a generic "Thinking…/Working…" indicator and hides the
 // per-reply tool/skill chips. Persisted per device.
-const showActivityDetail = ref(localStorage.getItem("jarvis-activity-detail") === "1")
-function setActivityDetail(v) {
-	showActivityDetail.value = !!v
-	try { localStorage.setItem("jarvis-activity-detail", v ? "1" : "0") } catch (e) {}
-}
-// Optional browser notification when a reply lands while the tab is hidden.
-// Per-device (localStorage); enabling asks for Notification permission.
-const notifyEnabled = ref(typeof Notification !== "undefined" && localStorage.getItem("jarvis-notify") === "1" && Notification.permission === "granted")
-async function toggleNotify() {
-	if (typeof Notification === "undefined") return
-	if (notifyEnabled.value) {
-		notifyEnabled.value = false
-		try { localStorage.setItem("jarvis-notify", "0") } catch (e) {}
-		return
-	}
-	let perm = Notification.permission
-	if (perm !== "granted") {
-		try { perm = await Notification.requestPermission() } catch (e) { perm = "denied" }
-	}
-	if (perm === "granted") {
-		notifyEnabled.value = true
-		try { localStorage.setItem("jarvis-notify", "1") } catch (e) {}
-	}
-}
+// These device prefs now live in the shell store (owned there so the hoisted
+// settings dialog's GeneralPane toggle and this view's live gating stay in sync
+// same-tab — a pane-local ref could not notify this view). This view only READS
+// them (to gate the tool-activity rows + fire notifications); the toggles are
+// driven from GeneralPane via store.setActivityDetail / store.toggleNotify.
+const showActivityDetail = computed(() => store.activityDetail)
+const notifyEnabled = computed(() => store.notifyEnabled)
 function _notifyReplyReady() {
 	if (!notifyEnabled.value || !document.hidden) return
 	try {
@@ -3642,6 +3625,11 @@ onBeforeUnmount(() => {
 // Ctrl+B are owned by the shell now (AppShell → useShortcuts, §3.1).
 function onGlobalKey(e) {
 	if (e.defaultPrevented) return
+	// The shell SettingsDialog is a foreground modal with its OWN Escape handler
+	// on the same window target; stopPropagation can't suppress a sibling
+	// listener here, so bail out entirely while it's open — otherwise this chain
+	// would ALSO close an artifact panel behind it on a single Escape.
+	if (store.settingsOpen) return
 	if (e.key === "Escape" && micState.value === "recording") {
 		cancelMic()
 	} else if (e.key === "Escape" && nudge.value && nudge.value.mode === "recording") {
@@ -3650,8 +3638,6 @@ function onGlobalKey(e) {
 		_settleConfirm(false)
 	} else if (e.key === "Escape" && artifact.value) {
 		closeArtifact()
-	} else if (e.key === "Escape" && settingsOpen.value) {
-		settingsOpen.value = false
 	}
 }
 

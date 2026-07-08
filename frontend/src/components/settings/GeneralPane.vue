@@ -111,34 +111,12 @@ function onToggleAutoApply() {
 	if (typeof fn === "function") fn()
 }
 
-// Device-local prefs (localStorage) — mirror ChatView's handlers.
-const showActivityDetail = ref(localStorage.getItem("jarvis-activity-detail") === "1")
-function setActivityDetail(v) {
-	showActivityDetail.value = !!v
-	try { localStorage.setItem("jarvis-activity-detail", v ? "1" : "0") } catch (e) {}
-}
-
-const notifyEnabled = ref(
-	typeof Notification !== "undefined" &&
-	localStorage.getItem("jarvis-notify") === "1" &&
-	Notification.permission === "granted",
-)
-async function toggleNotify() {
-	if (typeof Notification === "undefined") return
-	if (notifyEnabled.value) {
-		notifyEnabled.value = false
-		try { localStorage.setItem("jarvis-notify", "0") } catch (e) {}
-		return
-	}
-	let perm = Notification.permission
-	if (perm !== "granted") {
-		try { perm = await Notification.requestPermission() } catch (e) { perm = "denied" }
-	}
-	if (perm === "granted") {
-		notifyEnabled.value = true
-		try { localStorage.setItem("jarvis-notify", "1") } catch (e) {}
-	}
-}
+// Device-local prefs live in the shell store (single source of truth) so that
+// toggling here also updates ChatView's live gating same-tab. Read + delegate.
+const showActivityDetail = computed(() => store.activityDetail)
+function setActivityDetail(v) { store.setActivityDetail(v) }
+const notifyEnabled = computed(() => store.notifyEnabled)
+function toggleNotify() { store.toggleNotify() }
 
 // Delete all history → danger-zone action registered by ChatView.
 const clearing = ref(false)
