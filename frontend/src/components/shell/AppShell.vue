@@ -19,6 +19,7 @@
 				<router-view v-if="booted" />
 			</div>
 			<Dialogs />
+			<SettingsDialog />
 			<JarvisCommandPalette />
 		</div>
 	</FrappeUIProvider>
@@ -36,6 +37,7 @@ import { useShellStore } from "@/stores/shell"
 import { useShortcuts } from "@/composables/useShortcuts"
 import Sidebar from "./Sidebar.vue"
 import JarvisCommandPalette from "./JarvisCommandPalette.vue"
+import SettingsDialog from "./SettingsDialog.vue"
 
 const route = useRoute()
 const router = useRouter()

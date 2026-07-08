@@ -25,14 +25,6 @@ const routes = [
 		component: () => import("@/pages/skills/SkillDetail.vue"),
 		props: true,
 	},
-	// Account: plan/billing + AI models editor + connection/usage summaries —
-	// System-Manager only; guard redirects others to Chat.
-	{
-		path: "/account",
-		name: "Account",
-		component: () => import("@/views/AccountView.vue"),
-		beforeEnter: (to, from, next) => { next(window.is_system_manager ? undefined : { name: "Chat" }) },
-	},
 	// First-run wizard (managed signup or self-hosted connect) — System-Manager
 	// only; guard redirects others to Chat. Reached via the chat welcome card
 	// or the desk banner, not a forced redirect (see beforeEach below).
@@ -43,14 +35,6 @@ const routes = [
 		// Chrome-less: a first-run customer hasn't onboarded yet, so the full app
 		// sidebar/header (Chat/Skills/Macros/…) is noise — AppShell hides them.
 		meta: { chromeless: true },
-		beforeEnter: (to, from, next) => { next(window.is_system_manager ? undefined : { name: "Chat" }) },
-	},
-	// Usage dashboard (moved out of the old /ai shell) — System-Manager only;
-	// guard redirects others to Chat.
-	{
-		path: "/monitor",
-		name: "Monitor",
-		component: () => import("@/views/MonitorView.vue"),
 		beforeEnter: (to, from, next) => { next(window.is_system_manager ? undefined : { name: "Chat" }) },
 	},
 	{ path: "/macros", name: "MacrosList", component: () => import("@/pages/macros/MacrosList.vue") },
