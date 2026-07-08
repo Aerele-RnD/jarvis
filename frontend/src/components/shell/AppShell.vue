@@ -1,23 +1,32 @@
 <template>
 	<FrappeUIProvider>
 		<div class="flex h-screen w-screen">
-			<!-- Chrome-less routes (onboarding) drop the sidebar entirely — a
-			     not-yet-onboarded customer has no app to navigate. -->
-			<div v-if="!route.meta.chromeless" class="h-full border-r bg-surface-gray-1">
-				<Sidebar />
-			</div>
-			<div class="flex flex-1 flex-col h-full overflow-auto bg-surface-white">
-				<!-- LayoutHeader teleport target — non-chat routes only (D41).
-				     The "Go to Desk" button is rendered INSIDE LayoutHeader's right
-				     cluster (leftmost, before each page's own actions) so it is
-				     uniform across pages and never displaces the page's primary
-				     action from the rightmost corner; chat has its own header button
-				     (ChatView openErpDesk), styled to match. -->
-				<div v-if="!route.meta.chat && !route.meta.chromeless" class="flex border-b">
-					<div id="app-header" class="flex-1" />
+			<!-- Onboarding gate (D11-safe): when the workspace hasn't finished
+			     onboarding, block the WHOLE app with a full-screen poster — no
+			     sidebar, no header — inviting setup. A RENDERED gate, not a
+			     redirect, so it can't reintroduce the old desk↔SPA loop that the
+			     forced D11 redirect caused. The /onboarding wizard itself is
+			     exempt so the poster's "Complete setup" button can reach it. -->
+			<OnboardingGate v-if="showGate" />
+			<template v-else>
+				<!-- Chrome-less routes (onboarding) drop the sidebar entirely — a
+				     not-yet-onboarded customer has no app to navigate. -->
+				<div v-if="!route.meta.chromeless" class="h-full border-r bg-surface-gray-1">
+					<Sidebar />
 				</div>
-				<router-view v-if="booted" />
-			</div>
+				<div class="flex flex-1 flex-col h-full overflow-auto bg-surface-white">
+					<!-- LayoutHeader teleport target — non-chat routes only (D41).
+					     The "Go to Desk" button is rendered INSIDE LayoutHeader's right
+					     cluster (leftmost, before each page's own actions) so it is
+					     uniform across pages and never displaces the page's primary
+					     action from the rightmost corner; chat has its own header button
+					     (ChatView openErpDesk), styled to match. -->
+					<div v-if="!route.meta.chat && !route.meta.chromeless" class="flex border-b">
+						<div id="app-header" class="flex-1" />
+					</div>
+					<router-view v-if="booted" />
+				</div>
+			</template>
 			<Dialogs />
 			<JarvisCommandPalette />
 		</div>
@@ -28,18 +37,33 @@
 // App shell (DESIGN-V3 §3.1): persistent sidebar around every route, the
 // #app-header strip, the confirmDialog host, the ⌘K palette, the onboarding
 // gate (D11), the approvals-badge poll (D12) and the global shortcuts.
-import { onMounted, onBeforeUnmount, ref } from "vue"
+import { computed, onMounted, onBeforeUnmount, ref } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import { FrappeUIProvider, Dialogs, setConfig } from "frappe-ui"
 import * as api from "@/api"
 import { useShellStore } from "@/stores/shell"
 import { useShortcuts } from "@/composables/useShortcuts"
+import { isWorkspaceReady } from "@/onboarding/readiness.js"
 import Sidebar from "./Sidebar.vue"
 import JarvisCommandPalette from "./JarvisCommandPalette.vue"
+import OnboardingGate from "./OnboardingGate.vue"
 
 const route = useRoute()
 const router = useRouter()
 const store = useShellStore()
+
+// Onboarding gate state. `ready` starts null (unresolved) so nothing shows the
+// poster until we KNOW the workspace isn't onboarded — the router's beforeEach
+// awaits the same shared readiness promise before the first route activates, so
+// by the time a page could render, `ready` has flipped too (no chat-then-poster
+// flash). The gate covers every route except the wizard itself, so the poster's
+// button can navigate into /onboarding. On completion OnboardingView hard-
+// reloads to /jarvis/, which re-mounts this shell and re-checks readiness fresh.
+const ready = ref(null)
+isWorkspaceReady().then((r) => {
+	ready.value = r
+})
+const showGate = computed(() => ready.value === false && route.name !== "Onboarding")
 
 // Boot gate: hold the routed page (NOT the shell chrome) until systemTimezone
 // is configured — timeAgo strings render once, so a late setConfig would leave
@@ -109,14 +133,15 @@ onMounted(async () => {
 		booted.value = true
 	}
 
-	// NOTE: no onboarding force-redirect here. Policy (see router/index.js
-	// beforeEach) is "invite, don't force" — a not-ready user stays in the app
-	// and is invited to onboard via the chat welcome card + desk banner. The
-	// old D11 gate redirected not-ready users to /app/jarvis-onboarding (desk),
-	// which redirects back to /jarvis/onboarding (SPA) → AppShell re-mounts →
-	// redirect again: an infinite loop that bricked the whole SPA on any fresh
-	// (not-onboarded) site. The router beforeEach already handles the only case
-	// the policy wants (bounce a fully-onboarded user off a stale /onboarding).
+	// NOTE: no onboarding force-REDIRECT here — that path (the old D11 gate)
+	// redirected not-ready users to /app/jarvis-onboarding (desk), which
+	// redirects back to /jarvis/onboarding (SPA) → AppShell re-mounts → redirect
+	// again: an infinite loop that bricked the whole SPA on any fresh
+	// (not-onboarded) site. Instead, a not-ready workspace is gated by RENDERING
+	// the <OnboardingGate> poster in place of the sidebar + routed page (see
+	// `showGate` in setup + the template). A render can't navigate, so it can't
+	// loop. The router beforeEach still bounces a fully-onboarded user off a
+	// stale /onboarding link.
 })
 
 onBeforeUnmount(() => {

@@ -1,6 +1,5 @@
 import { createRouter, createWebHistory } from "vue-router"
-import { isReadyForChat } from "@/api.js"
-import { isOnboardComplete } from "@/onboarding/steps.js"
+import { isWorkspaceReady } from "@/onboarding/readiness.js"
 // STATIC import: the main chunk = shell + store + ChatView (chat is the app
 // home, D33); every other page is a route-level dynamic import.
 import ChatView from "@/views/ChatView.vue"
@@ -108,20 +107,18 @@ const router = createRouter({
 })
 
 // First-run guard: bounce a fully-onboarded user away from a stale
-// /onboarding link back to Chat. The readiness check hits the backend once
-// per page load — `readyPromise` caches the in-flight/resolved call so
-// repeated client-side navigations (Chat -> Account -> Chat, etc.) don't
-// re-fire it. Fail-open: if the backend call throws, treat the app as ready
-// so a flaky check never strands the user unable to reach Chat.
-let readyPromise = null
+// /onboarding link back to Chat. Readiness is resolved once per page load via
+// the shared, memoized helper (see @/onboarding/readiness.js) — the AppShell
+// onboarding gate reads the SAME promise, so the two stay consistent and only
+// one backend round-trip fires. Fail-open lives in the helper.
+//
+// The reverse direction (forcing a NOT-ready user into the wizard) is
+// deliberately NOT a redirect here: the old D11 forced redirect looped between
+// the desk and SPA onboarding pages and bricked fresh sites. Instead, AppShell
+// blocks the app with a rendered, no-sidebar poster when not ready — a render,
+// not a navigation, so it cannot loop.
 router.beforeEach(async (to) => {
-	if (!readyPromise) {
-		readyPromise = isReadyForChat().catch(() => ({ ready: true }))
-	}
-	const ready = isOnboardComplete(await readyPromise)
-	// We no longer force not-ready users into the wizard — onboarding is now
-	// invited via the chat welcome card (below) + the desk banner. Only bounce a
-	// fully-onboarded user away from a stale /onboarding link.
+	const ready = await isWorkspaceReady()
 	if (ready && to.name === "Onboarding") {
 		return { name: "Chat" }
 	}
