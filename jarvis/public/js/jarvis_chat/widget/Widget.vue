@@ -24,10 +24,9 @@
 					</div>
 				</div>
 
-				<div ref="bodyEl" class="jvw-body">
+				<div ref="bodyEl" class="jvw-body" :class="{ 'jvw-body--center': onboarded === false }">
 					<template v-if="onboarded === false">
-						<div class="jvw-welcome">
-							<div class="jvw-welcome-mk"><svg viewBox="0 0 24 24" width="20" height="20" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg></div>
+						<div class="jvw-welcome jvw-welcome--off">
 							<div class="jvw-welcome-h">You clearly need me… but you haven't onboarded me yet 🥲</div>
 							<div class="jvw-welcome-s">Finish onboarding and I'll start pulling my weight.</div>
 							<button type="button" class="jvw-onboard" @click="goOnboard">Onboard Jarvis →</button>
@@ -567,6 +566,11 @@ defineExpose({ openPanel });
 	flex-direction: column;
 	gap: 14px;
 }
+/* Empty (not-onboarded) state centers its single welcome bubble in the panel. */
+.jvw-body--center {
+	justify-content: center;
+	align-items: center;
+}
 .jvw-row {
 	display: flex;
 	gap: 9px;
@@ -649,6 +653,17 @@ defineExpose({ openPanel });
 .jvw-welcome {
 	text-align: center;
 	padding: 8px 0 4px;
+}
+/* Disconnected nudge: a single self-contained bubble, vertically centered in the
+   panel (see .jvw-body--center) — no separate brand tile (the header already
+   carries the Jarvis mark). */
+.jvw-welcome--off {
+	width: 100%;
+	max-width: 250px;
+	padding: 20px 18px;
+	border: 1px solid var(--border);
+	background: var(--surface-1);
+	border-radius: 14px;
 }
 .jvw-welcome-mk {
 	width: 38px;

@@ -13,17 +13,17 @@
     <div v-if="!singleMode" style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
       <div role="tablist" style="display:inline-flex;border:1px solid var(--border);border-radius:9px;overflow:hidden;">
         <button v-for="t in modeTabs" :key="t.value" role="tab" :aria-selected="llmMode===t.value"
-                @click="setMode(t.value)" :disabled="!editable"
+                @click="setMode(t.value)" :disabled="!editable || (t.value==='quick' && quickLocked)"
+                :title="t.value==='quick' && quickLocked ? 'Your pool has multiple models — edit them in Custom. Remove models to switch to Quick.' : ''"
                 :style="{fontSize:'14px',padding:'10px 18px',border:'none',
-                         cursor: editable ? 'pointer' : 'default',
+                         cursor: (!editable || (t.value==='quick' && quickLocked)) ? 'not-allowed' : 'pointer',
+                         opacity: (t.value==='quick' && quickLocked) ? '0.4' : '1',
                          background: llmMode===t.value ? 'var(--blue-bg)' : 'var(--surface)',
                          color: llmMode===t.value ? 'var(--blue)' : 'var(--text-3)',
                          fontWeight: llmMode===t.value ? '600' : '400'}">{{ t.label }}</button>
       </div>
-      <span :style="{fontSize:'12px',fontWeight:600,padding:'4px 11px',borderRadius:'20px',
-             background: badgeMode==='proxy' ? 'var(--green-bg)' : 'var(--surface-2)',
-             color: badgeMode==='proxy' ? 'var(--green)' : 'var(--text-3)'}">
-        {{ badgeMode === 'proxy' ? 'Proxy (failover)' : 'Direct' }}
+      <span v-if="badgeLabel" style="font-size:12px;font-weight:600;padding:4px 11px;border-radius:20px;background:var(--green-bg);color:var(--green);">
+        {{ badgeLabel }}
       </span>
     </div>
 
@@ -77,7 +77,7 @@
     <!-- ================ QUICK / CUSTOM (shared rows) ================ -->
     <section v-else style="margin-bottom:18px;">
       <p v-if="llmMode==='quick'" style="font-size:14px;color:var(--text-3);margin:0 0 12px;">
-        A single model, sent directly to the provider.<template v-if="canPool"> Need multiple models with failover? Use <b>Preset</b> or <b>Custom</b>.</template><template v-else> You can add more models and automatic failover later from My Account.</template>
+        <template v-if="rows[0] && rows[0].credentialType === 'subscription'">A single chat subscription, served through the managed proxy.</template><template v-else>A single model, sent directly to the provider.</template><template v-if="canPool"> Need multiple models with failover? Use <b>Preset</b> or <b>Custom</b>.</template><template v-else> You can add more models and automatic failover later from My Account.</template>
       </p>
       <div v-else style="font-size:13px;font-weight:600;color:var(--text-2);margin-bottom:8px;letter-spacing:.03em;text-transform:uppercase;">
         Custom failover pool
@@ -235,7 +235,7 @@
           <button v-if="editable && !(m._connect && m._connect.open) && (!singleMode || !(m.accounts && m.accounts.length))" @click="startConnect(m)"
                   :disabled="m._connect && m._connect.loading && !m._connect.authorizeUrl"
                   style="font-size:14px;font-weight:600;color:var(--surface);background:var(--blue);border:0;border-radius:8px;padding:11px 17px;cursor:pointer;">
-            {{ singleMode ? 'Sign in →' : '+ Connect account' }}
+            {{ singleMode ? 'Sign in →' : ((m.accounts && m.accounts.length) ? '+ Connect another account' : '+ Connect account') }}
           </button>
         </div>
       </div>
@@ -257,6 +257,7 @@
       <span v-if="saveBlocked && missingVendors.length" style="font-size:13px;color:var(--amber);">
         Provide keys for: {{ missingVendors.map(providerLabel).join(', ') }}
       </span>
+      <span v-else-if="dirty" style="font-size:13px;color:var(--amber);font-weight:600;">● Unsaved changes — Save configuration to apply</span>
       <span style="font-size:13px;color:var(--text-3);">{{ syncLabel }}</span>
     </div>
   </div>
@@ -295,6 +296,7 @@ const keysByVendor = ref({})
 const err = ref("")
 const saving = ref(false)
 const sync = ref({ last_sync_status: "", pending: false })
+const savedSnapshot = ref("__init__")  // savable pool as of last load/save; drives the unsaved-changes notice
 let pollTimer = null
 
 const ALL_MODE_TABS = [
@@ -381,6 +383,10 @@ function modelSuggestionsForProvider(provider) {
 // ---- derived -------------------------------------------------------------
 const isMulti = computed(() => llmMode.value === "custom")
 const editorRows = computed(() => isMulti.value ? rows.value : rows.value.slice(0, 1))
+// Quick renders only rows[0] and saving in Quick collapses the pool to that one
+// model. When a real multi-model pool exists, lock the Quick tab so a stray click
+// can't silently drop the other models — the user reduces the pool via Custom.
+const quickLocked = computed(() => rows.value.length >= 2)
 const singleVendorPresets = computed(() => catalog.value.filter((c) => c.kind === "single_vendor"))
 const crossVendorPresets = computed(() => catalog.value.filter((c) => c.kind === "cross_vendor"))
 const selectedEntry = computed(() => catalog.value.find((c) => c.key === selectedPreset.value) || null)
@@ -401,19 +407,44 @@ const saveBlocked = computed(() => llmMode.value === "preset" && !!selectedPrese
 // Direct/Proxy badge — mirrors jarvis_account.js renderModeBadge().
 // Quick is always Direct (single model); Preset is Proxy once chosen; Custom
 // derives from the count of valid rows via the shared deriveMode helper.
+// Valid (fillable) rows — shared by the badge mode + label. A subscription row
+// needs a model id; an api_key row needs provider + model.
+const validModels = computed(() => rows.value.filter((r) => r && (
+  r.credentialType === "subscription" ? (r.model || "").trim() : ((r.provider || "").trim() && (r.model || "").trim())
+)))
 const badgeMode = computed(() => {
-  if (llmMode.value === "quick") return "direct"
+  // Quick is a single model: DIRECT for api_key, but a chat-subscription row
+  // forces the cliproxy/proxy path (compute_proxy_active), so reflect that.
+  if (llmMode.value === "quick") {
+    const r0 = rows.value[0]
+    return (r0 && r0.credentialType === "subscription") ? "proxy" : "direct"
+  }
   if (llmMode.value === "preset") return selectedPreset.value ? "proxy" : "direct"
-  const valid = rows.value.filter((r) => r && (
-    r.credentialType === "subscription" ? (r.model || "").trim() : ((r.provider || "").trim() && (r.model || "").trim())
-  ))
-  return deriveMode(valid, null)
+  return deriveMode(validModels.value, null)
+})
+// Human label. "failover" only makes sense with ≥2 models (a preset ladder or a
+// multi-row custom pool). A lone chat subscription is still proxied (it needs
+// the cliproxy sidecar) but has nothing to fail over to, so it reads plain
+// "Proxy" rather than the misleading "Proxy (failover)".
+const badgeLabel = computed(() => {
+  // Only badge a real multi-model FAILOVER pool. A single model — a direct
+  // api-key OR a lone chat subscription — shows NO badge: it was just noise, and
+  // "Proxy" on a single subscription read as confusing/broken.
+  if (llmMode.value === "preset") return selectedPreset.value ? "Proxy (failover)" : ""
+  if (llmMode.value === "custom") return validModels.value.length >= 2 ? "Proxy (failover)" : ""
+  return ""  // quick = single model
 })
 const syncLabel = computed(() => {
   if (sync.value.pending) return "Syncing to your agent…"
   const s = sync.value.last_sync_status || ""
   return s ? `Last sync: ${s}` : ""
 })
+// Unsaved-changes detector: current savable pool vs the last saved snapshot.
+// Connecting an account mutates rows in memory (the fresh OAuth blob lives only
+// here until saved), so this lights up the "Unsaved changes" notice.
+const dirty = computed(() =>
+  savedSnapshot.value !== "__init__" && !saving.value && poolSnapshot() !== savedSnapshot.value
+)
 
 // ---- helpers -------------------------------------------------------------
 function blankConnect() { return { open: false, loading: false, error: "", copied: false, nonce: "", authorizeUrl: "", pastedUrl: "", reconnectIdx: null } }
@@ -584,6 +615,12 @@ async function finishConnect(m) {
     } else if (byEmail >= 0) m.accounts.splice(byEmail, 1, acct)
     else m.accounts.push(acct)
     m._connect = blankConnect()
+    // The just-minted OAuth blob lives only in memory until the pool is saved, so
+    // navigating off the page would orphan this account. In the account editor,
+    // persist immediately; if the pool isn't valid yet, save() surfaces the reason
+    // and the "Unsaved changes" notice stays up so nothing is silently lost. Skip
+    // in the footerless onboarding editor — there the host's CTA drives save.
+    if (!props.footerless) await save()
   } catch (e) { m._connect.loading = false; m._connect.error = _err(e) }
 }
 function closeConnect(m) { m._connect = blankConnect() }
@@ -642,9 +679,18 @@ async function load() {
       selectedPreset.value = ""
       if (!rows.value.length) rows.value = [newRow()]
     }
+    // Baseline for the unsaved-changes notice — the pool as just loaded is clean.
+    savedSnapshot.value = poolSnapshot()
   } catch (e) { err.value = _err(e) }
   try { sync.value = (await api.getLlmSyncStatus()) || sync.value } catch (e) { /* non-fatal */ }
   try { catalog.value = (await api.getPresetCatalog()) || [] } catch (e) { /* backend bundled fallback */ }
+}
+
+// Stable string of the savable pool + preset — the cheap key the dirty-notice
+// and snapshot reset compare against.
+function poolSnapshot() {
+  try { return JSON.stringify({ m: buildSaveModels(rows.value), p: selectedPreset.value }) }
+  catch (e) { return "" }
 }
 
 // Build the per-row backend shape save_llm_pool expects (matches AiView + desk).
