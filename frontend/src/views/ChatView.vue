@@ -223,6 +223,7 @@
 											<button class="jv-action-primary" :disabled="!summaryState.model || (summaryState.model && summaryState.model.applying) || convStreaming" :title="convStreaming ? 'Waiting for the current reply to finish' : ''" @click="confirmSummary">
 												{{ summaryState.model && summaryState.model.applying ? 'Saving...' : (activeAction.verb === 'update' ? 'Confirm update' : 'Confirm create') }}
 											</button>
+											<button class="jv-action-2nd" :disabled="!summaryState.model" @click="previewSummary">Preview</button>
 											<button class="jv-action-2nd" @click="openDraftPanel({ verb: activeAction.verb || 'create', ...activeAction })">Edit</button>
 										</div>
 										<div class="jv-summary-hint">Want a change? just tell me, e.g. "make Widget A qty 12".</div>
@@ -885,6 +886,14 @@
 				</aside>
 			</div>
 		</transition>
+		<DraftPreview
+			v-if="preview"
+			:model="preview.model"
+			:headline="preview.headline"
+			@close="preview = null"
+			@edit="onPreviewEdit"
+			@confirm="onPreviewConfirm"
+		/>
 	</div>
 </template>
 
@@ -900,6 +909,7 @@ import { takeChatPrefill } from "@/composables/chatPrefill"
 import { formatDate, exactDate } from "@/utils/datetime"
 import { renderMarkdown } from "@/markdown"
 import JvChart from "@/charts/JvChart.vue"
+import DraftPreview from "@/components/doc/DraftPreview.vue"
 import { useShellStore } from "@/stores/shell"
 import { useJarvisTheme } from "@/theme"
 import { displayName } from "@/lib/user"
@@ -2128,6 +2138,25 @@ async function confirmSummary() {
 	const model = summaryState.value.model
 	if (!model || model.applying || convStreaming.value) return
 	await applyDraft(0, model)
+}
+
+// Read-only preview: opens DraftPreview over the current summary's model.
+const preview = ref(null) // { model, headline } while the read-only preview is open
+function previewSummary() {
+	if (!summaryState.value.model) return
+	preview.value = {
+		model: summaryState.value.model,
+		headline: (summaryState.value.view && summaryState.value.view.headline) || "",
+	}
+}
+async function onPreviewConfirm() {
+	preview.value = null
+	await confirmSummary()
+}
+function onPreviewEdit() {
+	preview.value = null
+	const a = activeAction.value
+	if (a) openDraftPanel({ verb: a.verb || "create", ...a })
 }
 
 // Summary-first default (Task 1.3): a fresh create/update action builds the
