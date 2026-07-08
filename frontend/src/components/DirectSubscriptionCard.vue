@@ -47,7 +47,10 @@
 
     <!-- ===== Not connected → connect a chat subscription (DIRECT) ===== -->
     <div v-else>
-      <p class="jv-dsub-muted" style="margin:0 0 12px;">
+      <p v-if="status.is_single_subscription_pool" class="jv-dsub-muted" style="margin:0 0 12px;">
+        Your {{ status.provider || 'chat subscription' }} is currently running through the <b>proxy</b>. Sign in below to switch it to <b>direct</b> — served straight to the provider (codex), lighter, with no proxy sidecar.
+      </p>
+      <p v-else class="jv-dsub-muted" style="margin:0 0 12px;">
         Sign in with your existing ChatGPT Plus/Pro or Gemini Advanced account — no API key needed. It's served directly to the provider (codex), not through the proxy.
       </p>
       <div class="jv-dsub-pick">

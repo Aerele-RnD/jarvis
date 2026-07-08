@@ -20,9 +20,7 @@
                          color: llmMode===t.value ? 'var(--blue)' : 'var(--text-3)',
                          fontWeight: llmMode===t.value ? '600' : '400'}">{{ t.label }}</button>
       </div>
-      <span :style="{fontSize:'12px',fontWeight:600,padding:'4px 11px',borderRadius:'20px',
-             background: badgeMode==='proxy' ? 'var(--green-bg)' : 'var(--surface-2)',
-             color: badgeMode==='proxy' ? 'var(--green)' : 'var(--text-3)'}">
+      <span v-if="badgeLabel" style="font-size:12px;font-weight:600;padding:4px 11px;border-radius:20px;background:var(--green-bg);color:var(--green);">
         {{ badgeLabel }}
       </span>
     </div>
@@ -421,10 +419,12 @@ const badgeMode = computed(() => {
 // the cliproxy sidecar) but has nothing to fail over to, so it reads plain
 // "Proxy" rather than the misleading "Proxy (failover)".
 const badgeLabel = computed(() => {
-  if (badgeMode.value !== "proxy") return "Direct"
-  if (llmMode.value === "quick") return "Proxy"            // single model
-  if (llmMode.value === "preset") return "Proxy (failover)" // a failover ladder
-  return validModels.value.length >= 2 ? "Proxy (failover)" : "Proxy"
+  // Only badge a real multi-model FAILOVER pool. A single model — a direct
+  // api-key OR a lone chat subscription — shows NO badge: it was just noise, and
+  // "Proxy" on a single subscription read as confusing/broken.
+  if (llmMode.value === "preset") return selectedPreset.value ? "Proxy (failover)" : ""
+  if (llmMode.value === "custom") return validModels.value.length >= 2 ? "Proxy (failover)" : ""
+  return ""  // quick = single model
 })
 const syncLabel = computed(() => {
   if (sync.value.pending) return "Syncing to your agent…"
