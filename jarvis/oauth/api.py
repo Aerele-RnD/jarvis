@@ -403,7 +403,31 @@ def complete_paste_signin(nonce: str, redirected_url: str) -> dict:
 	blob = result["blob"]
 
 	p = get_provider(provider)
-	admin_client.post_push_oauth_blob(p["openclaw_provider"], blob)
+	# Push the OAuth blob to the container's auth-profiles.json via admin/fleet.
+	# Handle admin/session failures gracefully: a raw exception here surfaces as an
+	# opaque "Internal Server Error" in the card. The common cause is an EXPIRED
+	# bench session during the sign-in round-trip (admin_client then runs as guest
+	# and can't read the admin creds → "no api_key/secret"), or admin/fleet being
+	# unreachable while switching a proxy tenant to direct. Return a clean,
+	# actionable message and bail BEFORE save_llm_creds, so the tenant's current
+	# config is left untouched rather than half-migrated.
+	try:
+		admin_client.post_push_oauth_blob(p["openclaw_provider"], blob)
+	except admin_client.AdminAuthError as e:
+		return _err(
+			"admin_auth",
+			f"Couldn't apply the sign-in — your session or admin credentials "
+			f"aren't valid. Refresh the page (re-login if prompted) and try "
+			f"again. ({e})",
+		)
+	except (admin_client.AdminUnreachableError,
+	        admin_client.AdminValidationError,
+	        admin_client.AdminRateLimitedError) as e:
+		return _err(
+			"push_failed",
+			f"Couldn't apply the sign-in to your agent right now — try again in "
+			f"a moment. ({e})",
+		)
 	# force=True is mandatory here. The OAuth blob lives in the container's
 	# auth-profiles.json (out-of-band from Jarvis Settings), so on_update's
 	# diff classifier sees no change and skips the re-render+restart when
