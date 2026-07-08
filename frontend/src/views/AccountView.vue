@@ -64,43 +64,33 @@
 				<!-- ===== AI models (primary config) ===== -->
 				<section class="jv-acct-card jv-acct-ai">
 					<div class="jv-acct-card-head">
-						<h2>{{ directSub.is_direct_subscription ? "Chat subscription" : "AI models" }}</h2>
+						<h2>AI models</h2>
 						<span v-if="savedNote" class="jv-acct-savednote">{{ savedNote }}</span>
 					</div>
 
 					<div v-if="directSubLoading" class="jv-acct-muted">Loading…</div>
 
-					<!-- Probe failed/timed out: don't fall through to the pool editor
-						 (a direct tenant would see an empty pool with no re-authorize).
-						 Offer a retry instead. -->
 					<div v-else-if="directSubErr" class="jv-acct-err">
 						Couldn't load your AI connection.
 						<button class="jv-acct-linkbtn" @click="loadDirectSub">Retry</button>
 					</div>
 
-					<!-- Direct single chat-subscription: the pool editor can't see the
-						 flat-field creds, so render the DIRECT re-authorize card. The
-						 multi-model editor stays reachable behind an explicit toggle. -->
-					<template v-else-if="directSub.is_direct_subscription">
-						<DirectSubscriptionCard :status="directSub" :editable="isSystemManager"
-							@reauthorized="onDirectChanged" @disconnected="onDirectChanged" />
-						<div class="jv-acct-advanced" v-if="isSystemManager">
-							<button v-if="!showAdvanced" class="jv-acct-linkbtn" @click="showAdvanced = true">
-								Set up multi-model failover instead (advanced) →
-							</button>
-							<div v-else style="margin-top:14px;">
-								<p class="jv-acct-muted" style="margin:0 0 10px;">
-									A multi-model pool replaces your single direct subscription with a proxied failover pool — you’ll reconnect your account(s) below.
-								</p>
-								<!-- Saving here flips the tenant onto a pool (proxy_active),
-									 so re-probe direct status — not just a "Saved" flash. -->
-								<LlmPoolEditor :editable="isSystemManager" @saved="onDirectChanged" />
-							</div>
+					<template v-else>
+						<!-- Connection type. A single chat subscription is served DIRECT
+							 (codex, no proxy); API keys and multi-model failover pools live
+							 in the unified editor. Switching to "Chat subscription" and
+							 re-authorizing moves a pooled single subscription back to direct. -->
+						<div v-if="isSystemManager" class="jv-acct-aitabs" role="tablist">
+							<button type="button" role="tab" :aria-selected="aiTab === 'subscription'"
+								:class="{ on: aiTab === 'subscription' }" @click="aiTab = 'subscription'">Chat subscription</button>
+							<button type="button" role="tab" :aria-selected="aiTab === 'pool'"
+								:class="{ on: aiTab === 'pool' }" @click="aiTab = 'pool'">API key &amp; multi-model</button>
 						</div>
-					</template>
 
-					<!-- API-key / already-pooled tenants: the unified editor owns it. -->
-					<LlmPoolEditor v-else :editable="isSystemManager" @saved="onSaved" />
+						<DirectSubscriptionCard v-if="aiTab === 'subscription'" :status="directSub" :editable="isSystemManager"
+							@reauthorized="onDirectChanged" @disconnected="onDirectChanged" />
+						<LlmPoolEditor v-else :editable="isSystemManager" @saved="onDirectChanged" />
+					</template>
 				</section>
 
 				<!-- Right rail: read-mostly account summary cards. -->
@@ -217,7 +207,13 @@ function onSaved(sync) {
 const directSub = ref({ is_direct_subscription: false })
 const directSubLoading = ref(true)
 const directSubErr = ref("")
-const showAdvanced = ref(false)
+// "subscription" (direct codex) | "pool" (api-key / multi-model). Defaulted ONCE
+// from the stored config — a direct subscription OR a single-subscription pool
+// opens on the Chat-subscription tab (so a pooled single sub can switch to
+// direct); everything else opens on the pool editor. After that the user's tab
+// choice sticks across reloads.
+const aiTab = ref("pool")
+let aiTabInit = false
 async function loadDirectSub() {
 	if (!isSystemManager) { directSubLoading.value = false; return }
 	directSubLoading.value = true
@@ -227,6 +223,10 @@ async function loadDirectSub() {
 		// section on "Loading…" forever (the pool editor now renders behind it).
 		const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("timed out")), 12000))
 		directSub.value = (await Promise.race([getDirectSubscriptionStatus(), timeout])) || { is_direct_subscription: false }
+		if (!aiTabInit) {
+			aiTab.value = (directSub.value.is_direct_subscription || directSub.value.is_single_subscription_pool) ? "subscription" : "pool"
+			aiTabInit = true
+		}
 	} catch (e) {
 		// Don't silently drop a real direct-subscription tenant onto the empty
 		// pool editor (which has no re-authorize button) — surface a retryable
@@ -320,6 +320,27 @@ onMounted(() => {
 }
 @media (max-width: 1000px) {
 	.jv-acct-grid { grid-template-columns: 1fr; }
+}
+.jv-acct-aitabs {
+	display: inline-flex;
+	border: 1px solid var(--border);
+	border-radius: 9px;
+	overflow: hidden;
+	margin-bottom: 16px;
+}
+.jv-acct-aitabs button {
+	font-size: 13px;
+	font-weight: 500;
+	padding: 8px 16px;
+	border: none;
+	background: var(--surface);
+	color: var(--text-3);
+	cursor: pointer;
+}
+.jv-acct-aitabs button.on {
+	background: var(--blue-bg);
+	color: var(--blue);
+	font-weight: 600;
 }
 .jv-acct-card {
 	border: 1px solid var(--border);

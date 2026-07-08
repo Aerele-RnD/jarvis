@@ -10,7 +10,7 @@
   <div class="jv-dsub" style="font-family:inherit;color:var(--text);">
     <!-- ===== Paste-back flow (Screen 2) ===== -->
     <div v-if="flowOpen">
-      <p class="jv-dsub-step"><b>Step 1</b> — Sign in with your {{ status.provider || 'provider' }} account in a new tab.</p>
+      <p class="jv-dsub-step"><b>Step 1</b> — Sign in with your {{ status.provider || pickProvider }} account in a new tab.</p>
       <div class="jv-dsub-actions" style="margin-bottom:10px;">
         <a v-if="authorizeUrl" :href="authorizeUrl" target="_blank" rel="noopener noreferrer" class="jv-dsub-btn jv-dsub-btn-primary">Open sign-in URL ↗</a>
         <span v-else class="jv-dsub-muted">Starting sign-in…</span>
@@ -45,13 +45,27 @@
       <div v-if="err" class="jv-dsub-err">{{ err }}</div>
     </div>
 
-    <!-- ===== Not connected (defensive) ===== -->
+    <!-- ===== Not connected → connect a chat subscription (DIRECT) ===== -->
     <div v-else>
       <p class="jv-dsub-muted" style="margin:0 0 12px;">
-        A chat subscription is selected ({{ status.provider || 'provider' }}) but no account is connected yet.
+        Sign in with your existing ChatGPT Plus/Pro or Gemini Advanced account — no API key needed. It's served directly to the provider (codex), not through the proxy.
       </p>
-      <div class="jv-dsub-actions">
-        <button v-if="editable" class="jv-dsub-btn jv-dsub-btn-primary" @click="startSignin">Sign in with {{ status.provider || 'provider' }} →</button>
+      <div class="jv-dsub-pick">
+        <label class="jv-dsub-field">
+          <span>Provider</span>
+          <select v-model="pickProvider" class="jv-dsub-select" :disabled="!editable" @change="onPickProvider">
+            <option v-for="p in SUB_PROVIDERS" :key="p.provider" :value="p.provider">{{ p.provider }}</option>
+          </select>
+        </label>
+        <label class="jv-dsub-field">
+          <span>Default model</span>
+          <select v-model="pickModel" class="jv-dsub-select" :disabled="!editable">
+            <option v-for="m in pickModels" :key="m" :value="m">{{ m }}</option>
+          </select>
+        </label>
+      </div>
+      <div class="jv-dsub-actions" style="margin-top:12px;">
+        <button v-if="editable" class="jv-dsub-btn jv-dsub-btn-primary" :disabled="busy" @click="startSignin(pickProvider, pickModel)">Sign in with {{ pickProvider }} →</button>
       </div>
       <div v-if="err" class="jv-dsub-err">{{ err }}</div>
     </div>
@@ -73,6 +87,24 @@ const props = defineProps({
 // reauthorized: a complete_paste_signin succeeded (parent reloads status +
 // sync). disconnected: the subscription was torn down.
 const emit = defineEmits(["reauthorized", "disconnected"])
+
+// Subscription providers offered for a fresh DIRECT connect. Model lists mirror
+// jarvis/_subscription_models.py (codex/gemini-cli catalog).
+const SUB_PROVIDERS = [
+  { provider: "OpenAI", models: ["gpt-5.5", "gpt-5.4"] },
+  { provider: "Google Gemini", models: ["gemini-2.5-pro", "gemini-2.5-flash"] },
+]
+function _defaultProvider() {
+  if (SUB_PROVIDERS.some((p) => p.provider === props.status.provider)) return props.status.provider
+  const byModel = SUB_PROVIDERS.find((p) => p.models.includes(props.status.model))
+  return byModel ? byModel.provider : "OpenAI"
+}
+const pickProvider = ref(_defaultProvider())
+const pickModels = computed(() =>
+  (SUB_PROVIDERS.find((p) => p.provider === pickProvider.value) || SUB_PROVIDERS[0]).models,
+)
+const pickModel = ref(pickModels.value.includes(props.status.model) ? props.status.model : pickModels.value[0])
+function onPickProvider() { pickModel.value = pickModels.value[0] }
 
 const flowOpen = ref(false)
 const nonce = ref("")
@@ -115,15 +147,20 @@ function resetFlow() {
 }
 function cancelFlow() { resetFlow(); err.value = "" }
 
-// Re-authorize reuses the customer's already-chosen provider + model — the
-// backend coerces the model to a valid subscription model for that provider.
-async function startSignin() {
+// Start the DIRECT paste-back sign-in. Re-authorize (no args) reuses the
+// connected provider/model; a fresh connect passes the picked provider/model.
+// The backend coerces the model to a valid subscription model for the provider,
+// and complete_paste_signin clears any existing models[] pool + sets the direct
+// flat fields — so this doubles as the "switch a pooled subscription to direct".
+async function startSignin(providerOverride, modelOverride) {
   err.value = ""
   busy.value = true
   flowOpen.value = true
   authorizeUrl.value = ""
   try {
-    const res = await api.beginPasteSignin(props.status.provider || "", props.status.model || "")
+    const p = (providerOverride || props.status.provider || pickProvider.value || "").trim()
+    const m = (modelOverride || props.status.model || pickModel.value || "").trim()
+    const res = await api.beginPasteSignin(p, m)
     if (!res || res.ok === false) {
       err.value = (res && res.error && res.error.message) || "Couldn't start sign-in — try again."
       flowOpen.value = false
@@ -225,4 +262,11 @@ function copyUrl() {
 .jv-dsub-kv b { text-align: right; word-break: break-word; }
 .jv-dsub-hint { margin-top: 12px; font-size: 12px; color: var(--text-3); }
 .jv-dsub-err { margin-top: 10px; font-size: 13px; color: var(--red); }
+.jv-dsub-pick { display: flex; gap: 12px; flex-wrap: wrap; }
+.jv-dsub-field { display: flex; flex-direction: column; gap: 4px; flex: 1 1 200px; min-width: 0; }
+.jv-dsub-field span { font-size: 12px; color: var(--text-3); }
+.jv-dsub-select {
+  padding: 9px 12px; font-size: 14px; border: 1px solid var(--border);
+  border-radius: 6px; background: var(--surface); color: var(--text); font-family: inherit;
+}
 </style>

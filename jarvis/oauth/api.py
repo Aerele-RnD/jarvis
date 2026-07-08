@@ -690,10 +690,20 @@ def get_direct_subscription_status() -> dict:
 	auth_mode = (settings.get("llm_auth_mode") or "").strip()
 	provider = settings.get("llm_provider") or ""
 	proxy_active = bool(settings.get("proxy_active"))
+	enabled_models = [m for m in (settings.get("models") or []) if m.enabled]
 	has_models = bool(settings.get("models"))
 	connected_at = settings.get("llm_oauth_connected_at")
 	is_direct = _is_direct_subscription(
 		auth_mode, has_models, proxy_active, is_oauth_provider(provider),
+	)
+	# A single chat subscription stored as a proxy pool-of-one. A single
+	# subscription does NOT need cliproxy (the direct/codex auth-profiles.json
+	# path serves it), so AccountView surfaces the DIRECT "Chat subscription"
+	# option for these tenants and a re-authorize switches them off the pool.
+	is_single_subscription_pool = (
+		proxy_active
+		and len(enabled_models) == 1
+		and (enabled_models[0].credential_type or "api_key") == "subscription"
 	)
 	return {
 		"is_direct_subscription": is_direct,
@@ -708,4 +718,5 @@ def get_direct_subscription_status() -> dict:
 		# api_key tenant has no OAuth profile so the card would misleadingly read
 		# "Not connected".
 		"proxy_active": proxy_active,
+		"is_single_subscription_pool": is_single_subscription_pool,
 	}

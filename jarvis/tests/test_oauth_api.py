@@ -853,6 +853,8 @@ class TestGetDirectSubscriptionStatus(_OAuthApiBase):
 		self.assertNotEqual(out["connected_at"], "")
 		# proxy_active is surfaced so AccountView can gate the Connection card.
 		self.assertFalse(out["proxy_active"])
+		# A direct oauth tenant (no models[]) is not a single-subscription pool.
+		self.assertFalse(out["is_single_subscription_pool"])
 
 	def test_api_key_tenant_is_not_direct(self):
 		settings = frappe.get_single("Jarvis Settings")
