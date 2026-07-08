@@ -1,12 +1,12 @@
 {
 	"name": "jarvis",
 	"private": true,
-	"description": "Server-side node deps (gemini-cli for the OAuth confidential-client flow in jarvis/oauth/api.py) + Vue SPA build orchestration (the chat UI under frontend/, served at /jarvis). The scripts below are the contract Frappe Cloud's deploy pipeline picks up: `npm install` at this root triggers `postinstall` which installs the SPA's own deps, then `npm run build` delegates to the SPA's Vite build, dropping the bundle into jarvis/public/frontend/ + jarvis/www/jarvis.html. Without these scripts FC pulls the repo and never builds the SPA, so /jarvis 404s in production.",
+	"description": "Server-side node deps (gemini-cli for the OAuth confidential-client flow in jarvis/oauth/api.py) + Vue SPA build orchestration (the chat UI under frontend/, served at /jarvis). The scripts below are the contract Frappe Cloud's deploy pipeline picks up: `npm install` at this root triggers `postinstall` which installs the SPA's own deps, then `npm run build` (re)installs the SPA deps and runs its Vite build, dropping the bundle into jarvis/public/frontend/ + jarvis/www/jarvis.html. build installs first on purpose, so it is self-contained and picks up newly-added deps (e.g. wiki-graph-core) even when the deploy runs build without a fresh root install. Without these scripts FC pulls the repo and never builds the SPA, so /jarvis 404s in production.",
 	"scripts": {
 		"postinstall": "npm run install-frontend",
 		"install-frontend": "cd frontend && npm install",
 		"dev-frontend": "cd frontend && npm run dev",
-		"build": "npm run build-frontend",
+		"build": "npm run install-frontend && npm run build-frontend",
 		"build-frontend": "cd frontend && npm run build"
 	},
 	"dependencies": {
