@@ -39,6 +39,13 @@ def _ensure_user(email: str) -> str:
 	if "System Manager" in roles:
 		frappe.get_doc("User", email).remove_roles("System Manager")
 		frappe.db.commit()
+	# A real chat user holds the "Jarvis User" role (granted at onboarding /
+	# migration); it gates the chat APIs. Keep this fixture a *plain* Jarvis user
+	# (no System Manager) so the owner-scoping assertions still exercise the
+	# non-admin path, but with app access so search_conversations isn't 403'd.
+	if "Jarvis User" not in roles:
+		frappe.get_doc("User", email).add_roles("Jarvis User")
+		frappe.db.commit()
 	return email
 
 
