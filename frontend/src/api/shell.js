@@ -10,3 +10,14 @@ export const searchConversations = (params = {}) =>
 		start: params.start || 0,
 		page_length: params.page_length || 20,
 	})
+
+// Full desk search over the caller's Frappe desk (⌘K palette), delegated to
+// Frappe's own search. Returns permission-scoped groups — Lists, Reports and
+// Pages (frappe.desk.search) plus Records (frappe.utils.global_search) — each
+// item carrying a ready /app/... desk route.
+// -> { groups: [{key, title, items: [{name, label, icon, suffix, route}]}] }
+export const searchWorkspace = (params = {}) =>
+	call("jarvis.chat.api.search_workspace", {
+		search: params.search || "",
+		limit: params.limit || 6,
+	})

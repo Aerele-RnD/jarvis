@@ -21,5 +21,7 @@ const props = defineProps({
 	active: { type: Boolean, default: false },
 })
 
-const suffix = computed(() => timeAgo(props.item.last_active_at))
+// Frappe rows carry an explicit suffix (the doctype/"List"/"Report" tag); chat
+// rows fall back to a relative-time stamp.
+const suffix = computed(() => props.item.suffix ?? timeAgo(props.item.last_active_at))
 </script>
