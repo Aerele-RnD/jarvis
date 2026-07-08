@@ -277,7 +277,7 @@ const { effectiveDark: dark, paletteVars } = useTheme()
 
 // Mirrors jarvis_onboarding.js's STEP_NAMES (~line 212) — the 4 named steps
 // shown in managed mode. "mode" and "selfhost" have no header entry.
-const STEP_NAMES = ["Account", "Plan", "Pay", "Brain"]
+const STEP_NAMES = ["Account", "Plan", "Pay", "Connect"]
 
 // ---- step machine -----------------------------------------------------------
 // `state.step` is one of STEPS_MANAGED/STEPS_SELFHOST depending on `state.mode`.
