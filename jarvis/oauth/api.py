@@ -403,6 +403,12 @@ def complete_paste_signin(nonce: str, redirected_url: str) -> dict:
 	blob = result["blob"]
 
 	p = get_provider(provider)
+	# The fleet-agent's PUT /auth-profile schema is STRICT (pydantic
+	# extra_forbidden) and rejects an `id_token` field. id_token is only needed by
+	# the POOL path's CLIProxyAPI-codex reformat, NOT the DIRECT auth-profiles.json
+	# push — the blob builder keeps it for the pool flow, so strip it here or every
+	# direct push 502s with `extra_forbidden ... blob.id_token`.
+	direct_blob = {k: v for k, v in blob.items() if k != "id_token"}
 	# Push the OAuth blob to the container's auth-profiles.json via admin/fleet.
 	# Handle admin/session failures gracefully: a raw exception here surfaces as an
 	# opaque "Internal Server Error" in the card. The common cause is an EXPIRED
@@ -412,7 +418,7 @@ def complete_paste_signin(nonce: str, redirected_url: str) -> dict:
 	# actionable message and bail BEFORE save_llm_creds, so the tenant's current
 	# config is left untouched rather than half-migrated.
 	try:
-		admin_client.post_push_oauth_blob(p["openclaw_provider"], blob)
+		admin_client.post_push_oauth_blob(p["openclaw_provider"], direct_blob)
 	except admin_client.AdminAuthError as e:
 		return _err(
 			"admin_auth",
