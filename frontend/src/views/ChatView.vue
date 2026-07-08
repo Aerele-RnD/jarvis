@@ -223,6 +223,7 @@
 											<button class="jv-action-primary" :disabled="!summaryState.model || (summaryState.model && summaryState.model.applying) || convStreaming" :title="convStreaming ? 'Waiting for the current reply to finish' : ''" @click="confirmSummary">
 												{{ summaryState.model && summaryState.model.applying ? 'Saving...' : (activeAction.verb === 'update' ? 'Confirm update' : 'Confirm create') }}
 											</button>
+											<button class="jv-action-2nd" :disabled="!summaryState.model" @click="previewSummary">Preview</button>
 											<button class="jv-action-2nd" @click="openDraftPanel({ verb: activeAction.verb || 'create', ...activeAction })">Edit</button>
 										</div>
 										<div class="jv-summary-hint">Want a change? just tell me, e.g. "make Widget A qty 12".</div>
@@ -798,7 +799,7 @@
 					<div class="jv-artifact-head">
 						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></svg>
 						<span class="jv-artifact-head-title">{{ draftPanel.verb === 'update' ? 'Update' : 'New' }} {{ draftPanel.doctype }}<template v-if="draftPanel.docName"> · {{ draftPanel.docName }}</template></span>
-						<span class="jv-draft-badge">Draft — not saved</span>
+						<span class="jv-draft-badge">Draft - not saved</span>
 						<button class="jv-art-close" @click="closeDraftPanel" title="Close (draft stays in chat)" aria-label="Close">
 							<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
 						</button>
@@ -885,6 +886,15 @@
 				</aside>
 			</div>
 		</transition>
+		<DraftPreview
+			v-if="previewOpen && summaryState.model"
+			:model="summaryState.model"
+			:headline="(summaryState.view && summaryState.view.headline) || ''"
+			:disabled="convStreaming || !!(summaryState.model && summaryState.model.applying)"
+			@close="previewOpen = false"
+			@edit="onPreviewEdit"
+			@confirm="onPreviewConfirm"
+		/>
 	</div>
 </template>
 
@@ -900,6 +910,7 @@ import { takeChatPrefill } from "@/composables/chatPrefill"
 import { formatDate, exactDate } from "@/utils/datetime"
 import { renderMarkdown } from "@/markdown"
 import JvChart from "@/charts/JvChart.vue"
+import DraftPreview from "@/components/doc/DraftPreview.vue"
 import { useShellStore } from "@/stores/shell"
 import { useJarvisTheme } from "@/theme"
 import { displayName } from "@/lib/user"
@@ -2128,6 +2139,22 @@ async function confirmSummary() {
 	const model = summaryState.value.model
 	if (!model || model.applying || convStreaming.value) return
 	await applyDraft(0, model)
+}
+
+// Read-only preview: opens DraftPreview over the current summary's model.
+const previewOpen = ref(false)
+function previewSummary() {
+	if (!summaryState.value.model) return
+	previewOpen.value = true
+}
+async function onPreviewConfirm() {
+	previewOpen.value = false
+	await confirmSummary()
+}
+function onPreviewEdit() {
+	previewOpen.value = false
+	const a = activeAction.value
+	if (a) openDraftPanel({ verb: a.verb || "create", ...a })
 }
 
 // Summary-first default (Task 1.3): a fresh create/update action builds the
