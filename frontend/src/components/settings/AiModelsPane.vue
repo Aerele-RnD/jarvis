@@ -29,20 +29,15 @@
 					:class="{ on: aiTab === 'pool' }" @click="aiTab = 'pool'">API keys &amp; failover</button>
 			</div>
 
-			<!-- Chat subscription (DIRECT flat-field OAuth path), shown read-only.
-			     The interactive re-authorize/connect card (DirectSubscriptionCard)
-			     lands on this branch with PR #234; until then the connection is
-			     established/renewed through onboarding's "Connect AI" step. -->
-			<div v-if="aiTab === 'subscription'">
-				<div v-if="directSub.connected">
-					<div class="jv-acct-kv"><span>Account</span><b>{{ directSub.account_email || '—' }}</b></div>
-					<div class="jv-acct-kv"><span>Provider</span><b>{{ directSub.provider || '—' }}</b></div>
-					<div class="jv-acct-kv"><span>Model</span><b>{{ directSub.model || '—' }}</b></div>
-					<div v-if="directSub.connected_at" class="jv-acct-kv"><span>Connected</span><b>{{ connectedAtLabel }}</b></div>
-					<div class="jv-set-hint" style="margin-top:10px;">To re-authorize or disconnect this chat subscription, re-run onboarding, or switch to API keys &amp; failover.</div>
-				</div>
-				<div v-else class="jv-acct-muted">No chat subscription connected. Connect one through onboarding, or use API keys &amp; failover.</div>
-			</div>
+			<!-- Chat subscription (DIRECT flat-field OAuth path): the interactive
+			     re-authorize / disconnect / connect card. Same wiring as the old
+			     Account page (PR #234), now hosted in the dialog. -->
+			<DirectSubscriptionCard
+				v-if="aiTab === 'subscription'"
+				:status="directSub"
+				:editable="isSM"
+				@reauthorized="onDirectChanged"
+				@disconnected="onDirectChanged" />
 
 			<!-- API keys & multi-model failover pool -->
 			<LlmPoolEditor v-else :editable="isSM" @saved="onSaved" />
@@ -51,9 +46,10 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from "vue"
-import { call } from "frappe-ui"
+import { ref, onMounted } from "vue"
+import { getDirectSubscriptionStatus } from "@/api"
 import LlmPoolEditor from "@/components/LlmPoolEditor.vue"
+import DirectSubscriptionCard from "@/components/DirectSubscriptionCard.vue"
 
 // The rail already gates this section to System Managers; this flag additionally
 // gates the editor's edit affordances + which probes fire.
@@ -63,13 +59,12 @@ const isSM = !!window.is_system_manager
 const savedNote = ref("")
 let savedTimer = null
 
-// ---- Direct chat-subscription (legacy flat-field OAuth path) ---------------
+// ---- Direct chat-subscription (flat-field OAuth path) ----------------------
 // LlmPoolEditor reads only models[]; a customer who onboarded a single chat
 // subscription has an empty models[] with their creds in the flat llm_*/
 // llm_oauth_* fields, so the pool editor can neither show nor re-authorize them.
-// Probe get_direct_subscription_status to decide the default tab. (The wrapper
-// isn't in this branch's api.js, so hit the endpoint directly via frappe-ui's
-// `call` — the same primitive api.js wraps; the backend method exists.)
+// Probe getDirectSubscriptionStatus to decide the default tab; DirectSubscriptionCard
+// (PR #234) renders the interactive re-authorize / disconnect / connect card.
 const directSub = ref({ is_direct_subscription: false })
 const directSubLoading = ref(true)
 const directSubErr = ref("")
@@ -81,13 +76,6 @@ const directSubErr = ref("")
 const aiTab = ref("pool")
 let aiTabInit = false
 
-const connectedAtLabel = computed(() => {
-	const v = directSub.value.connected_at
-	if (!v) return "—"
-	const d = new Date(typeof v === "number" ? v : v)
-	return isNaN(d.getTime()) ? String(v) : d.toLocaleString()
-})
-
 async function loadDirectSub() {
 	if (!isSM) { directSubLoading.value = false; return }
 	directSubLoading.value = true
@@ -97,7 +85,7 @@ async function loadDirectSub() {
 		// "Loading…" forever (the pool editor renders behind it).
 		const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("timed out")), 12000))
 		directSub.value = (await Promise.race([
-			call("jarvis.oauth.api.get_direct_subscription_status"),
+			getDirectSubscriptionStatus(),
 			timeout,
 		])) || { is_direct_subscription: false }
 		if (!aiTabInit) {
@@ -112,6 +100,12 @@ async function loadDirectSub() {
 	} finally {
 		directSubLoading.value = false
 	}
+}
+
+// DirectSubscriptionCard emitted reauthorized/disconnected — re-probe status so
+// the fields + tab reflect the new state.
+async function onDirectChanged() {
+	await loadDirectSub()
 }
 
 // After a pool save (which can migrate direct<->pool): flash the note and
