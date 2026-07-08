@@ -13,9 +13,11 @@
     <div v-if="!singleMode" style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
       <div role="tablist" style="display:inline-flex;border:1px solid var(--border);border-radius:9px;overflow:hidden;">
         <button v-for="t in modeTabs" :key="t.value" role="tab" :aria-selected="llmMode===t.value"
-                @click="setMode(t.value)" :disabled="!editable"
+                @click="setMode(t.value)" :disabled="!editable || (t.value==='quick' && quickLocked)"
+                :title="t.value==='quick' && quickLocked ? 'Your pool has multiple models — edit them in Custom. Remove models to switch to Quick.' : ''"
                 :style="{fontSize:'14px',padding:'10px 18px',border:'none',
-                         cursor: editable ? 'pointer' : 'default',
+                         cursor: (!editable || (t.value==='quick' && quickLocked)) ? 'not-allowed' : 'pointer',
+                         opacity: (t.value==='quick' && quickLocked) ? '0.4' : '1',
                          background: llmMode===t.value ? 'var(--blue-bg)' : 'var(--surface)',
                          color: llmMode===t.value ? 'var(--blue)' : 'var(--text-3)',
                          fontWeight: llmMode===t.value ? '600' : '400'}">{{ t.label }}</button>
@@ -233,7 +235,7 @@
           <button v-if="editable && !(m._connect && m._connect.open) && (!singleMode || !(m.accounts && m.accounts.length))" @click="startConnect(m)"
                   :disabled="m._connect && m._connect.loading && !m._connect.authorizeUrl"
                   style="font-size:14px;font-weight:600;color:var(--surface);background:var(--blue);border:0;border-radius:8px;padding:11px 17px;cursor:pointer;">
-            {{ singleMode ? 'Sign in →' : '+ Connect account' }}
+            {{ singleMode ? 'Sign in →' : ((m.accounts && m.accounts.length) ? '+ Connect another account' : '+ Connect account') }}
           </button>
         </div>
       </div>
@@ -255,6 +257,7 @@
       <span v-if="saveBlocked && missingVendors.length" style="font-size:13px;color:var(--amber);">
         Provide keys for: {{ missingVendors.map(providerLabel).join(', ') }}
       </span>
+      <span v-else-if="dirty" style="font-size:13px;color:var(--amber);font-weight:600;">● Unsaved changes — Save configuration to apply</span>
       <span style="font-size:13px;color:var(--text-3);">{{ syncLabel }}</span>
     </div>
   </div>
@@ -293,6 +296,7 @@ const keysByVendor = ref({})
 const err = ref("")
 const saving = ref(false)
 const sync = ref({ last_sync_status: "", pending: false })
+const savedSnapshot = ref("__init__")  // savable pool as of last load/save; drives the unsaved-changes notice
 let pollTimer = null
 
 const ALL_MODE_TABS = [
@@ -379,6 +383,10 @@ function modelSuggestionsForProvider(provider) {
 // ---- derived -------------------------------------------------------------
 const isMulti = computed(() => llmMode.value === "custom")
 const editorRows = computed(() => isMulti.value ? rows.value : rows.value.slice(0, 1))
+// Quick renders only rows[0] and saving in Quick collapses the pool to that one
+// model. When a real multi-model pool exists, lock the Quick tab so a stray click
+// can't silently drop the other models — the user reduces the pool via Custom.
+const quickLocked = computed(() => rows.value.length >= 2)
 const singleVendorPresets = computed(() => catalog.value.filter((c) => c.kind === "single_vendor"))
 const crossVendorPresets = computed(() => catalog.value.filter((c) => c.kind === "cross_vendor"))
 const selectedEntry = computed(() => catalog.value.find((c) => c.key === selectedPreset.value) || null)
@@ -431,6 +439,12 @@ const syncLabel = computed(() => {
   const s = sync.value.last_sync_status || ""
   return s ? `Last sync: ${s}` : ""
 })
+// Unsaved-changes detector: current savable pool vs the last saved snapshot.
+// Connecting an account mutates rows in memory (the fresh OAuth blob lives only
+// here until saved), so this lights up the "Unsaved changes" notice.
+const dirty = computed(() =>
+  savedSnapshot.value !== "__init__" && !saving.value && poolSnapshot() !== savedSnapshot.value
+)
 
 // ---- helpers -------------------------------------------------------------
 function blankConnect() { return { open: false, loading: false, error: "", copied: false, nonce: "", authorizeUrl: "", pastedUrl: "", reconnectIdx: null } }
@@ -601,6 +615,12 @@ async function finishConnect(m) {
     } else if (byEmail >= 0) m.accounts.splice(byEmail, 1, acct)
     else m.accounts.push(acct)
     m._connect = blankConnect()
+    // The just-minted OAuth blob lives only in memory until the pool is saved, so
+    // navigating off the page would orphan this account. In the account editor,
+    // persist immediately; if the pool isn't valid yet, save() surfaces the reason
+    // and the "Unsaved changes" notice stays up so nothing is silently lost. Skip
+    // in the footerless onboarding editor — there the host's CTA drives save.
+    if (!props.footerless) await save()
   } catch (e) { m._connect.loading = false; m._connect.error = _err(e) }
 }
 function closeConnect(m) { m._connect = blankConnect() }
@@ -659,9 +679,18 @@ async function load() {
       selectedPreset.value = ""
       if (!rows.value.length) rows.value = [newRow()]
     }
+    // Baseline for the unsaved-changes notice — the pool as just loaded is clean.
+    savedSnapshot.value = poolSnapshot()
   } catch (e) { err.value = _err(e) }
   try { sync.value = (await api.getLlmSyncStatus()) || sync.value } catch (e) { /* non-fatal */ }
   try { catalog.value = (await api.getPresetCatalog()) || [] } catch (e) { /* backend bundled fallback */ }
+}
+
+// Stable string of the savable pool + preset — the cheap key the dirty-notice
+// and snapshot reset compare against.
+function poolSnapshot() {
+  try { return JSON.stringify({ m: buildSaveModels(rows.value), p: selectedPreset.value }) }
+  catch (e) { return "" }
 }
 
 // Build the per-row backend shape save_llm_pool expects (matches AiView + desk).
