@@ -4,6 +4,7 @@ import { computed } from "vue"
 const props = defineProps({
   model: { type: Object, required: true },
   headline: { type: String, default: "" },
+  disabled: { type: Boolean, default: false },
 })
 const emit = defineEmits(["close", "edit", "confirm"])
 
@@ -63,7 +64,7 @@ const tables = computed(() => (props.model.tables || []).filter((t) => (t.rows |
           <div v-if="!fields.length && !tables.length" class="dp-empty">No values proposed yet.</div>
         </div>
         <div class="dp-foot">
-          <button class="dp-btn dp-btn-primary" @click="emit('confirm')">{{ isUpdate ? 'Confirm update' : 'Confirm create' }}</button>
+          <button class="dp-btn dp-btn-primary" :disabled="disabled" @click="emit('confirm')">{{ isUpdate ? 'Confirm update' : 'Confirm create' }}</button>
           <button class="dp-btn" @click="emit('edit')">Edit</button>
           <button class="dp-btn" @click="emit('close')">Close</button>
         </div>
@@ -76,6 +77,7 @@ const tables = computed(() => (props.model.tables || []).filter((t) => (t.rows |
 .dp-overlay { position: absolute; inset: 0; z-index: 61; background: rgba(15, 15, 22, 0.32); display: flex; justify-content: flex-end; }
 .jv-dark .dp-overlay { background: rgba(0, 0, 0, 0.5); }
 .dp-panel { width: min(720px, 82%); height: 100%; background: var(--surface); border-left: 1px solid var(--border); display: flex; flex-direction: column; box-shadow: -14px 0 44px rgba(20, 20, 30, 0.14); }
+.dp-panel:focus { outline: none; }
 .dp-head { display: flex; align-items: center; gap: 9px; padding: 11px 12px 11px 14px; border-bottom: 1px solid var(--border); flex: none; }
 .dp-head svg { flex: none; }
 .dp-title { font-size: 14px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
@@ -104,6 +106,7 @@ const tables = computed(() => (props.model.tables || []).filter((t) => (t.rows |
 .dp-btn:hover { background: var(--surface-2); }
 .dp-btn-primary { background: var(--blue); border-color: var(--blue); color: #fff; }
 .dp-btn-primary:hover { filter: brightness(1.05); }
+.dp-btn-primary:disabled { opacity: .55; cursor: not-allowed; }
 .dp-slide-enter-active, .dp-slide-leave-active { transition: opacity .18s ease; }
 .dp-slide-enter-active .dp-panel, .dp-slide-leave-active .dp-panel { transition: transform .22s cubic-bezier(.4, 0, .2, 1); }
 .dp-slide-enter-from, .dp-slide-leave-to { opacity: 0; }

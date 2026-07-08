@@ -799,7 +799,7 @@
 					<div class="jv-artifact-head">
 						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></svg>
 						<span class="jv-artifact-head-title">{{ draftPanel.verb === 'update' ? 'Update' : 'New' }} {{ draftPanel.doctype }}<template v-if="draftPanel.docName"> · {{ draftPanel.docName }}</template></span>
-						<span class="jv-draft-badge">Draft — not saved</span>
+						<span class="jv-draft-badge">Draft - not saved</span>
 						<button class="jv-art-close" @click="closeDraftPanel" title="Close (draft stays in chat)" aria-label="Close">
 							<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
 						</button>
@@ -890,6 +890,7 @@
 			v-if="previewOpen && summaryState.model"
 			:model="summaryState.model"
 			:headline="(summaryState.view && summaryState.view.headline) || ''"
+			:disabled="convStreaming || !!(summaryState.model && summaryState.model.applying)"
 			@close="previewOpen = false"
 			@edit="onPreviewEdit"
 			@confirm="onPreviewConfirm"
