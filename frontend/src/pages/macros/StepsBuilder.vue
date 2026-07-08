@@ -100,7 +100,7 @@
 </template>
 
 <script setup>
-// StepsBuilder — the macro steps editor (DESIGN-V3 §6.3): step cards with a
+// StepsBuilder - the macro steps editor (DESIGN-V3 §6.3): step cards with a
 // drag handle (HTML5 drag-reorder, ported from round-2 MacrosView), ↑/↓
 // buttons as the accessible fallback, per-step skills chips + Autocomplete,
 // dashed "Add step" footer. v-model on the steps array; field edits mutate
@@ -118,7 +118,7 @@ const props = defineProps({
 const emit = defineEmits(["update:modelValue"])
 
 // ── per-step skills: own + shared-with-me, enabled only (a disabled skill
-//    can't be invoked — round-2 parity) ────────────────────────────────────────
+//    can't be invoked - round-2 parity) ────────────────────────────────────────
 const skillRows = ref([])
 onMounted(async () => {
 	try {
@@ -166,7 +166,7 @@ function removeStep(si) {
 	if ((st.prompt || "").trim()) {
 		confirmDialog({
 			title: "Remove step?",
-			message: `Step ${si + 1} has a prompt — remove it anyway?`,
+			message: `Step ${si + 1} has a prompt - remove it anyway?`,
 			onConfirm: ({ hideDialog }) => {
 				doRemove()
 				hideDialog()
@@ -198,7 +198,7 @@ function onDragStart(si, e) {
 		try {
 			e.dataTransfer.setData("text/plain", String(si))
 		} catch (err) {
-			// some browsers throw on setData for non-standard types — ignore
+			// some browsers throw on setData for non-standard types - ignore
 		}
 	}
 }

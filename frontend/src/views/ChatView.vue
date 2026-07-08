@@ -543,210 +543,7 @@
 			</div>
 		</transition>
 
-		<!-- ============ SETTINGS (openclaw-style console) ============ -->
-		<transition name="jv-fade">
-			<div v-if="settingsOpen" class="jv-settings-overlay" @click.self="settingsOpen = false">
-				<div class="jv-settings">
-					<div class="jv-settings-nav">
-						<div class="jv-settings-nav-title">Settings</div>
-						<button class="jv-settings-navitem" :class="{ on: settingsTab === 'overview' }" @click="settingsTab = 'overview'">
-							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
-							<span>General</span>
-						</button>
-						<button class="jv-settings-navitem" :class="{ on: settingsTab === 'usage' }" @click="settingsTab = 'usage'">
-							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18" /><rect x="7" y="10" width="3" height="7" /><rect x="13" y="6" width="3" height="11" /></svg>
-							<span>Usage</span>
-						</button>
-						<button class="jv-settings-navitem" :class="{ on: settingsTab === 'appearance' }" @click="settingsTab = 'appearance'">
-							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
-							<span>Appearance</span>
-						</button>
-						<button class="jv-settings-navitem" :class="{ on: settingsTab === 'activity' }" @click="settingsTab = 'activity'">
-							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2" /></svg>
-							<span>Activity</span>
-						</button>
-						<button class="jv-settings-navitem" :class="{ on: settingsTab === 'macroruns' }" @click="settingsTab = 'macroruns'">
-							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l14 9-14 9V3z" /></svg>
-							<span>Macro runs</span>
-						</button>
-						<button class="jv-settings-navitem" :class="{ on: settingsTab === 'shortcuts' }" @click="settingsTab = 'shortcuts'">
-							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2" /><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M6 12h.01M10 12h.01M14 12h.01M18 12h.01M7 16h10" /></svg>
-							<span>Shortcuts</span>
-						</button>
-					</div>
-					<div class="jv-settings-main">
-						<div class="jv-settings-head">
-							<span style="font-size:15px;font-weight:600;">{{ settingsTab === "appearance" ? "Appearance" : settingsTab === "activity" ? "Activity" : settingsTab === "usage" ? "Usage" : settingsTab === "shortcuts" ? "Keyboard shortcuts" : "General" }}</span>
-							<button class="jv-iconbtn" @click="settingsOpen = false" title="Close" style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;border-radius:7px;cursor:pointer;color:var(--text-3);">
-								<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
-							</button>
-						</div>
-						<div class="jv-settings-body">
-						<!-- OVERVIEW -->
-						<template v-if="settingsTab === 'overview'">
-							<div class="jv-set-sec">Connection</div>
-							<div class="jv-set-row"><span>Model</span><b>{{ modelLabel }}</b></div>
-							<div class="jv-set-row"><span>Provider</span><b>{{ ui.llm_provider || "—" }}</b></div>
-							<div class="jv-set-row"><span>Auth mode</span><b>{{ ui.llm_auth_mode || "—" }}</b></div>
-							<div class="jv-set-row"><span>Status</span><b style="color:var(--green);">Live</b></div>
-								<div class="jv-set-sec" style="margin-top:18px;">Behavior</div>
-								<div class="jv-set-row">
-									<span>Confirm before changes<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Ask before creating, updating, or submitting in this chat. Deletes, cancels, amends, and emails always ask, even with this off.</span></span>
-									<button class="jv-switch" :class="{ on: !convAutoApply }" @click="toggleAutoApply" :disabled="!currentId" role="switch" :aria-checked="String(!convAutoApply)" :title="convAutoApply ? 'Auto mode - changes apply without asking' : 'Confirm each change before it runs'">
-										<span class="jv-switch-knob"></span>
-									</button>
-								</div>
-								<div v-if="autoApplyNote" class="jv-set-row" style="padding-top:0;"><span style="font-size:11px;color:var(--amber);font-weight:500;">{{ autoApplyNote }}</span></div>
-								<div class="jv-set-row">
-									<span>Show tool activity<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Show the live tool steps + input/output above each reply. The tools count &amp; time always show below.</span></span>
-									<button class="jv-switch" :class="{ on: showActivityDetail }" @click="setActivityDetail(!showActivityDetail)" role="switch" :aria-checked="String(showActivityDetail)" title="Show the tool/skill activity under each answer">
-										<span class="jv-switch-knob"></span>
-									</button>
-								</div>
-							<div class="jv-set-row">
-								<span>Notify when a reply is ready<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Browser notification when Jarvis finishes while you're in another tab</span></span>
-								<button class="jv-switch" :class="{ on: notifyEnabled }" @click="toggleNotify" role="switch" :aria-checked="String(notifyEnabled)" title="Browser notification when a reply finishes in a background tab">
-									<span class="jv-switch-knob"></span>
-								</button>
-							</div>
-							<!-- (the Workspace counts block lived here — removed as noise; the Usage tab has it all) -->
-							<div class="jv-set-sec" style="margin-top:18px;display:flex;align-items:center;gap:7px;">Token usage <span class="jv-est">est.</span></div>
-							<div class="jv-set-row"><span>This chat</span><b>{{ usage ? fmtTokens(usage.chat_tokens) : "—" }}</b></div>
-							<div class="jv-set-row"><span>{{ usage ? usage.month_label : "This month" }}</span><b>{{ usage ? fmtTokens(usage.month_tokens) : "—" }}</b></div>
-							<div class="jv-set-row"><span>All time</span><b>{{ usage ? fmtTokens(usage.total_tokens) : "—" }}</b></div>
-							<template v-if="usage && usage.budget_monthly">
-								<div class="jv-usage-bar"><div class="jv-usage-fill" :style="{ width: usagePct + '%' }"></div></div>
-								<div class="jv-set-hint">{{ fmtTokens(usage.month_tokens) }} / {{ fmtTokens(usage.budget_monthly) }} this month · {{ usagePct }}%</div>
-							</template>
-							<div v-else class="jv-set-hint">No monthly budget set · counts are estimated from message text.</div>
-							<div class="jv-set-sec" style="margin-top:18px;color:var(--red);">Danger zone</div>
-							<div class="jv-set-row">
-								<span>Delete all chat history<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Every conversation and message, permanently. Macros and skills stay.</span></span>
-								<button class="jv-btn jv-btn--sm jv-btn-danger" :disabled="clearingHistory" @click="clearAllHistory">{{ clearingHistory ? "Deleting…" : "Delete all" }}</button>
-							</div>
-						</template>
-						<!-- USAGE -->
-						<template v-else-if="settingsTab === 'usage'">
-							<div style="font-size:12px;color:var(--text-3);margin:0 0 14px;">Estimated tokens, messages and tool activity for your workspace. <span class="jv-est">est.</span></div>
-							<div class="jv-statgrid">
-								<div class="jv-stat"><div class="jv-stat-label">Messages</div><div class="jv-stat-val">{{ msgCount }}</div><div class="jv-stat-sub">{{ userMsgCount }} you · {{ assistantMsgCount }} Jarvis</div></div>
-								<div class="jv-stat"><div class="jv-stat-label">Tool calls</div><div class="jv-stat-val">{{ sessionToolCalls }}</div><div class="jv-stat-sub">this session</div></div>
-								<div class="jv-stat"><div class="jv-stat-label">Avg tokens / msg</div><div class="jv-stat-val">{{ avgTokensPerMsg }}</div><div class="jv-stat-sub">this chat</div></div>
-								<div class="jv-stat"><div class="jv-stat-label">Conversations</div><div class="jv-stat-val">{{ convCount }}</div><div class="jv-stat-sub">{{ starredCount }} starred</div></div>
-								<div class="jv-stat"><div class="jv-stat-label">This chat</div><div class="jv-stat-val">{{ usage ? fmtTokens(usage.chat_tokens) : "—" }}</div><div class="jv-stat-sub">tokens</div></div>
-								<div class="jv-stat"><div class="jv-stat-label">{{ usage ? usage.month_label : "This month" }}</div><div class="jv-stat-val">{{ usage ? fmtTokens(usage.month_tokens) : "—" }}</div><div class="jv-stat-sub">tokens</div></div>
-								<div class="jv-stat"><div class="jv-stat-label">All time</div><div class="jv-stat-val">{{ usage ? fmtTokens(usage.total_tokens) : "—" }}</div><div class="jv-stat-sub">tokens</div></div>
-								<div class="jv-stat"><div class="jv-stat-label">Tools</div><div class="jv-stat-val">{{ toolCount }}</div><div class="jv-stat-sub">available</div></div>
-							</div>
-							<template v-if="usage && usage.budget_monthly">
-								<div class="jv-set-sec" style="margin-top:20px;">Monthly budget</div>
-								<div class="jv-usage-bar"><div class="jv-usage-fill" :style="{ width: usagePct + '%' }"></div></div>
-								<div class="jv-set-hint">{{ fmtTokens(usage.month_tokens) }} / {{ fmtTokens(usage.budget_monthly) }} this month · {{ usagePct }}%</div>
-							</template>
-							<div v-else class="jv-set-hint" style="margin-top:14px;">No monthly budget set · token counts are estimated from message text.</div>
-						</template>
-						<!-- ACTIVITY -->
-						<template v-else-if="settingsTab === 'activity'">
-							<div class="jv-set-sec">Recent tool runs</div>
-							<div v-if="!recentActivity.length" class="jv-set-empty">No tool activity in this chat yet.</div>
-							<div v-for="(a, i) in recentActivity" :key="i" class="jv-act">
-								<div class="jv-act-top">
-									<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 1 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></svg>
-									<span>{{ a.tools }} tool{{ a.tools === 1 ? "" : "s" }}</span>
-									<span class="jv-act-ms">{{ (a.ms / 1000).toFixed(1) }}s</span>
-								</div>
-								<div v-if="a.names.length" class="jv-act-names">{{ a.names.join(" · ") }}</div>
-							</div>
-						</template>
-						<!-- MACRO RUNS -->
-						<template v-else-if="settingsTab === 'macroruns'">
-							<div class="jv-statgrid">
-								<div class="jv-stat"><div class="jv-stat-label">Total runs</div><div class="jv-stat-val">{{ macroRunStats ? macroRunStats.total : "—" }}</div><div class="jv-stat-sub">all time</div></div>
-								<div class="jv-stat"><div class="jv-stat-label">Success rate</div><div class="jv-stat-val" style="color:var(--green);">{{ macroRunStats && macroRunStats.success_rate != null ? macroRunStats.success_rate + "%" : "—" }}</div><div class="jv-stat-sub">completed ÷ finished</div></div>
-								<div class="jv-stat"><div class="jv-stat-label">Running now</div><div class="jv-stat-val" style="color:var(--blue);">{{ macroRunStats ? macroRunStats.running : "—" }}</div><div class="jv-stat-sub">active</div></div>
-								<div class="jv-stat"><div class="jv-stat-label">Last run</div><div class="jv-stat-val">{{ macroRunStats && macroRunStats.last_run_at ? fmtAgo(macroRunStats.last_run_at) : "—" }}</div><div class="jv-stat-sub">&nbsp;</div></div>
-							</div>
-							<div class="jv-runfilters">
-								<div class="jv-seg jv-runchips">
-									<button v-for="s in MACRO_RUN_STATUSES" :key="s || 'all'" :class="{ on: macroRunStatus === s }" @click="setMacroRunStatus(s)">{{ s ? (s[0].toUpperCase() + s.slice(1)) : "All" }}</button>
-								</div>
-								<select class="jv-runmacrosel" :value="macroRunMacro" @change="setMacroRunMacro">
-									<option value="">All macros</option>
-									<option v-for="mm in macros" :key="mm.name" :value="mm.name">{{ mm.macro_name }}</option>
-								</select>
-							</div>
-							<div v-if="!macroRuns.length && !macroRunsLoading" class="jv-set-empty" style="text-align:center;padding:30px 0;">No macro runs yet.<br />Run a macro to see its history here.</div>
-							<div v-for="run in macroRuns" :key="run.name" class="jv-run">
-								<span class="jv-run-dot" :class="'d-' + macroRunBadge(run.status)"></span>
-								<div class="jv-run-main">
-									<div class="jv-run-top">
-										<span class="jv-run-name">{{ run.macro_name }}</span>
-										<span class="jv-run-badge" :class="'b-' + macroRunBadge(run.status)">{{ run.status }}</span>
-										<span class="jv-run-trig">
-											<svg v-if="run.trigger === 'scheduled'" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="15" rx="2" /><path d="M8 3v4M16 3v4M4 10h16" /></svg>
-											<svg v-else width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 8v4l3 2" /></svg>
-											{{ run.trigger }}
-										</span>
-									</div>
-									<div class="jv-run-meta">
-										<span class="jv-run-prog">{{ run.current_step }}/{{ run.total_steps }}</span>
-										<span class="jv-run-sep">·</span><span>{{ fmtAgo(run.started_at || run.creation) }}</span>
-										<template v-if="macroRunElapsed(run)"><span class="jv-run-sep">·</span><span>{{ macroRunElapsed(run) }}</span></template>
-									</div>
-									<div v-if="run.error" class="jv-run-err">
-										<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /><path d="M12 9v4M12 17h.01" /></svg>
-										{{ run.error }}
-									</div>
-								</div>
-								<div class="jv-run-act">
-									<button v-if="run.status === 'running' || run.status === 'queued'" class="jv-run-btn stop" @click="stopRunFromHistory(run)">Stop</button>
-									<button v-else class="jv-run-btn" @click="rerunFromHistory(run)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2v6h6M21 12a9 9 0 1 1-3-6.7L21 8" /></svg>Re-run</button>
-									<button v-if="run.conversation" class="jv-run-btn" @click="openRunConversation(run)">Open ›</button>
-								</div>
-							</div>
-							<button v-if="macroRunHasMore" class="jv-run-loadmore" :disabled="macroRunsLoading" @click="loadMacroRuns(false)">{{ macroRunsLoading ? "Loading…" : "Load more" }}</button>
-						</template>
-						<!-- SHORTCUTS -->
-						<template v-else-if="settingsTab === 'shortcuts'">
-							<div style="font-size:12px;color:var(--text-3);margin:0 0 14px;">Speed up the composer and chat.</div>
-							<div class="jv-set-sec">Composer</div>
-							<div class="jv-kbd-row"><span>Recall previous / next prompt</span><span><kbd class="jv-kbd">↑</kbd><kbd class="jv-kbd">↓</kbd></span></div>
-							<div class="jv-kbd-row"><span>Send message</span><kbd class="jv-kbd">Enter</kbd></div>
-							<div class="jv-kbd-row"><span>New line</span><span><kbd class="jv-kbd">Shift</kbd><span class="jv-kbd-plus">+</span><kbd class="jv-kbd">Enter</kbd></span></div>
-							<div class="jv-kbd-row"><span>Mention a doctype / record</span><kbd class="jv-kbd">@</kbd></div>
-							<div class="jv-set-sec" style="margin-top:20px;">Chat</div>
-							<div class="jv-kbd-row"><span>New chat</span><span><kbd class="jv-kbd">Ctrl</kbd><span class="jv-kbd-plus">+</span><kbd class="jv-kbd">Shift</kbd><span class="jv-kbd-plus">+</span><kbd class="jv-kbd">O</kbd></span></div>
-							<div class="jv-kbd-row"><span>Toggle sidebar</span><span><kbd class="jv-kbd">Ctrl</kbd><span class="jv-kbd-plus">+</span><kbd class="jv-kbd">B</kbd></span></div>
-							<div class="jv-kbd-row"><span>Close panel / cancel</span><kbd class="jv-kbd">Esc</kbd></div>
-							<div class="jv-set-hint" style="margin-top:14px;">Tip: <kbd class="jv-kbd">↑</kbd> at the start of an empty composer walks back through your earlier prompts in this chat.</div>
-						</template>
-						<!-- APPEARANCE -->
-						<template v-else>
-							<div class="jv-set-sec">Theme</div>
-							<div class="jv-seg">
-								<button :class="{ on: theme === 'light' }" @click="setTheme('light')">
-									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
-									Light
-								</button>
-								<button :class="{ on: theme === 'dark' }" @click="setTheme('dark')">
-									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" /></svg>
-									Dark
-								</button>
-								<button :class="{ on: theme === 'system' }" @click="setTheme('system')">
-									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" /><path d="M8 21h8M12 17v4" /></svg>
-									System
-								</button>
-							</div>
-							<div class="jv-set-hint">{{ theme === "system" ? (effectiveDark ? "Following system · dark" : "Following system · light") : "Saved on this device" }}</div>
-
-							<div class="jv-set-sec" style="margin-top:22px;">About</div>
-							<div class="jv-set-row"><span>Jarvis</span><b>ERPNext Assistant</b></div>
-						</template>
-					</div>
-				</div>
-				</div>
-			</div>
-		</transition>
+		<!-- SETTINGS dialog hoisted to the shell (components/shell/SettingsDialog.vue) -->
 
 		<!-- Artifact preview panel — slides in from the right (PDF in a viewer, Excel as a table) -->
 		<transition name="jv-slide">
@@ -899,7 +696,7 @@
 </template>
 
 <script setup>
-import { ref, computed, inject, onMounted, onBeforeUnmount, nextTick, watch } from "vue"
+import { ref, computed, inject, onMounted, onBeforeUnmount, onUnmounted, nextTick, watch, watchEffect } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import * as api from "@/api"
 import * as voice from "@/api/voice"
@@ -1342,30 +1139,13 @@ const toolOpen = ref({})
 // Whether replies reveal which tools + skills produced them. When off, the
 // chat shows only a generic "Thinking…/Working…" indicator and hides the
 // per-reply tool/skill chips. Persisted per device.
-const showActivityDetail = ref(localStorage.getItem("jarvis-activity-detail") === "1")
-function setActivityDetail(v) {
-	showActivityDetail.value = !!v
-	try { localStorage.setItem("jarvis-activity-detail", v ? "1" : "0") } catch (e) {}
-}
-// Optional browser notification when a reply lands while the tab is hidden.
-// Per-device (localStorage); enabling asks for Notification permission.
-const notifyEnabled = ref(typeof Notification !== "undefined" && localStorage.getItem("jarvis-notify") === "1" && Notification.permission === "granted")
-async function toggleNotify() {
-	if (typeof Notification === "undefined") return
-	if (notifyEnabled.value) {
-		notifyEnabled.value = false
-		try { localStorage.setItem("jarvis-notify", "0") } catch (e) {}
-		return
-	}
-	let perm = Notification.permission
-	if (perm !== "granted") {
-		try { perm = await Notification.requestPermission() } catch (e) { perm = "denied" }
-	}
-	if (perm === "granted") {
-		notifyEnabled.value = true
-		try { localStorage.setItem("jarvis-notify", "1") } catch (e) {}
-	}
-}
+// These device prefs now live in the shell store (owned there so the hoisted
+// settings dialog's GeneralPane toggle and this view's live gating stay in sync
+// same-tab — a pane-local ref could not notify this view). This view only READS
+// them (to gate the tool-activity rows + fire notifications); the toggles are
+// driven from GeneralPane via store.setActivityDetail / store.toggleNotify.
+const showActivityDetail = computed(() => store.activityDetail)
+const notifyEnabled = computed(() => store.notifyEnabled)
 function _notifyReplyReady() {
 	if (!notifyEnabled.value || !document.hidden) return
 	try {
@@ -3845,6 +3625,11 @@ onBeforeUnmount(() => {
 // Ctrl+B are owned by the shell now (AppShell → useShortcuts, §3.1).
 function onGlobalKey(e) {
 	if (e.defaultPrevented) return
+	// The shell SettingsDialog is a foreground modal with its OWN Escape handler
+	// on the same window target; stopPropagation can't suppress a sibling
+	// listener here, so bail out entirely while it's open — otherwise this chain
+	// would ALSO close an artifact panel behind it on a single Escape.
+	if (store.settingsOpen) return
 	if (e.key === "Escape" && micState.value === "recording") {
 		cancelMic()
 	} else if (e.key === "Escape" && nudge.value && nudge.value.mode === "recording") {
@@ -3853,10 +3638,42 @@ function onGlobalKey(e) {
 		_settleConfirm(false)
 	} else if (e.key === "Escape" && artifact.value) {
 		closeArtifact()
-	} else if (e.key === "Escape" && settingsOpen.value) {
-		settingsOpen.value = false
 	}
 }
+
+// ---- Publish chat context to the shell settings dialog ---------------------
+// The settings dialog now lives at the shell (components/shell/SettingsDialog.vue)
+// and its panes read the current conversation's live stats from the store WHILE
+// ChatView is mounted; on non-chat routes ChatView is gone and chatContext is
+// null, so those panes degrade to —/empty exactly as before.
+watchEffect(() => {
+	store.setChatContext({
+		conversationId: currentId.value,
+		sessionStats: {
+			msgCount: msgCount.value,
+			userMsgCount: userMsgCount.value,
+			assistantMsgCount: assistantMsgCount.value,
+			sessionToolCalls: sessionToolCalls.value,
+			avgTokensPerMsg: avgTokensPerMsg.value,
+			convCount: convCount.value,
+			starredCount: starredCount.value,
+			toolCount: toolCount.value,
+			recentActivity: recentActivity.value,
+		},
+		convAutoApply: convAutoApply.value,
+		autoApplyNote: autoApplyNote.value,
+		modelLabel: modelLabel.value,
+		ui: ui.value,
+	})
+})
+onMounted(() => {
+	// Actions with chat side-effects the panes invoke when a chat is active.
+	store.registerSettingsActions({ toggleAutoApply, clearAllHistory })
+})
+onUnmounted(() => {
+	store.setChatContext(null)
+	store.clearSettingsActions()
+})
 </script>
 
 <style scoped>

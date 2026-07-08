@@ -1,7 +1,7 @@
 <template>
 	<div>
 		<div v-if="!fields.length && !hasAdvanced" class="text-sm text-ink-gray-5">
-			No configuration set yet — add keys under Advanced (JSON).
+			No configuration set yet - add keys under Advanced (JSON).
 		</div>
 
 		<div v-if="fields.length" class="space-y-4">
@@ -52,7 +52,7 @@
 </template>
 
 <script setup>
-// ConfigForm — §14 F3: a real form generated from the installation's current
+// ConfigForm - §14 F3: a real form generated from the installation's current
 // config object. boolean → Switch, number → FormControl type=number, string →
 // type=text; array/object values + unknown/new keys live in a collapsed
 // "Advanced (JSON)" DocSection (mono textarea, JSON.parse-validated). Save

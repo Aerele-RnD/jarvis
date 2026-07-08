@@ -21,9 +21,61 @@ const conversationsLoading = ref(false)
 const currentConvId = ref(null) // written by ChatView only
 const streamingConvId = ref(null) // written by ChatView only
 const approvalsCount = ref(0)
-const settingsOpen = ref(false) // ChatView binds its settings overlay to this
+const settingsOpen = ref(false) // the shell SettingsDialog binds to this
+const settingsSection = ref("general") // active pane key in the settings dialog
 const pendingNewChat = ref(false) // consumed + cleared by ChatView
 const paletteOpen = ref(false)
+
+// Chat-scoped context published by ChatView WHILE MOUNTED (null otherwise), so
+// the shell-level settings panes can read the current conversation's live stats
+// and degrade gracefully (—/empty) on non-chat routes. Shape when set:
+//   { conversationId, sessionStats:{ msgCount,userMsgCount,assistantMsgCount,
+//       sessionToolCalls,avgTokensPerMsg,convCount,starredCount,toolCount,
+//       recentActivity },
+//     convAutoApply, autoApplyNote, modelLabel, ui }
+const chatContext = ref(null)
+function setChatContext(v) { chatContext.value = v }
+
+// Actions with chat side-effects, registered by ChatView while mounted so panes
+// can invoke them when present (and disable/hint when absent). ChatView
+// registers { toggleAutoApply, clearAllHistory }.
+const settingsActions = reactive({})
+function registerSettingsActions(obj) { Object.assign(settingsActions, obj || {}) }
+function clearSettingsActions() {
+	for (const k of Object.keys(settingsActions)) delete settingsActions[k]
+}
+
+// Device-local behaviour prefs (localStorage, per device). These were owned by
+// ChatView, but the settings dialog is now hoisted to the shell — a single
+// source here keeps the GeneralPane toggle and ChatView's live gating in sync
+// same-tab (a pane-local ref could not notify ChatView). The "1"/"0" encoding
+// is kept for backward compat with existing stored values.
+const activityDetail = ref(localStorage.getItem("jarvis-activity-detail") === "1")
+function setActivityDetail(v) {
+	activityDetail.value = !!v
+	try { localStorage.setItem("jarvis-activity-detail", v ? "1" : "0") } catch (e) {}
+}
+const notifyEnabled = ref(
+	typeof Notification !== "undefined" &&
+	localStorage.getItem("jarvis-notify") === "1" &&
+	Notification.permission === "granted",
+)
+async function toggleNotify() {
+	if (typeof Notification === "undefined") return
+	if (notifyEnabled.value) {
+		notifyEnabled.value = false
+		try { localStorage.setItem("jarvis-notify", "0") } catch (e) {}
+		return
+	}
+	let perm = Notification.permission
+	if (perm !== "granted") {
+		try { perm = await Notification.requestPermission() } catch (e) { perm = "denied" }
+	}
+	if (perm === "granted") {
+		notifyEnabled.value = true
+		try { localStorage.setItem("jarvis-notify", "1") } catch (e) {}
+	}
+}
 
 // Sidebar collapse: persisted preference (same localStorage key/values as
 // today — existing prefs survive, D5) + a non-persisted narrow-screen
@@ -135,11 +187,13 @@ function requestNewChat(router) {
 	if (name !== "Chat" && name !== "Conversation") router.push({ name: "Chat" })
 }
 
-// D9 — settings dialog lives inside ChatView; reach it from any route.
-function openSettings(router) {
+// D9 — the settings dialog lives at the shell now (SettingsDialog.vue), so it
+// opens over ANY route without a chat redirect. Optional `section` targets a
+// pane; a non-string arg (e.g. a legacy `router` caller not yet updated) falls
+// back to "general" so old call-sites keep opening the dialog harmlessly.
+function openSettings(section) {
 	settingsOpen.value = true
-	const name = router.currentRoute.value.name
-	if (name !== "Chat" && name !== "Conversation") router.push({ name: "Chat" })
+	settingsSection.value = typeof section === "string" && section ? section : "general"
 }
 
 // ---- socket contract (§14 DA-04) — called by ChatView's handlers only ------
@@ -167,6 +221,11 @@ const store = reactive({
 	streamingConvId,
 	approvalsCount,
 	settingsOpen,
+	settingsSection,
+	chatContext,
+	settingsActions,
+	activityDetail,
+	notifyEnabled,
 	pendingNewChat,
 	paletteOpen,
 	sidebarPref,
@@ -179,6 +238,11 @@ const store = reactive({
 	archiveConversation,
 	requestNewChat,
 	openSettings,
+	setChatContext,
+	registerSettingsActions,
+	clearSettingsActions,
+	setActivityDetail,
+	toggleNotify,
 	applyRemoteRename,
 	applyRemoteNew,
 })

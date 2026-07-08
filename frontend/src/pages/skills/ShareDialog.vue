@@ -76,7 +76,7 @@
 </template>
 
 <script setup>
-// ShareDialog — skill sharing manager (DESIGN-V3 §6.2; round-2 semantics
+// ShareDialog - skill sharing manager (DESIGN-V3 §6.2; round-2 semantics
 // ported): search over listShareableUsers, checked rows + selected chips,
 // Save replaces the whole share list via shareCustomSkill (replace semantics).
 import { ref, computed, watch } from "vue"

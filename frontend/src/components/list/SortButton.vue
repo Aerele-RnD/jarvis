@@ -32,7 +32,7 @@
 </template>
 
 <script setup>
-// SortButton — single field + direction (DESIGN-V3 §5.4, D15): plain "Sort"
+// SortButton - single field + direction (DESIGN-V3 §5.4, D15): plain "Sort"
 // button at the page default; split button (asc/desc toggle + field label +
 // ghost x reset) once a non-default sort is active. Emits update:sort {field, dir}.
 import { computed } from "vue"

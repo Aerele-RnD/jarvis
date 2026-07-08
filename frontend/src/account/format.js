@@ -1,4 +1,4 @@
-// Pure display helpers for the account/billing section. No Vue, no I/O — unit-tested.
+// Pure display helpers for the account/billing section. No Vue, no I/O - unit-tested.
 const STATUS_LABELS = {
   Active: "Active",
   "Pending Verification": "Pending verification",

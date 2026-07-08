@@ -11,7 +11,7 @@ export function initSocket() {
 	// Follow the page's own scheme instead of assuming https on portless
 	// pages: an http-only deployment (e.g. a bench exposed on port 80
 	// before TLS is set up) otherwise dials wss://host:443, which isn't
-	// listening — the socket never connects and chat only renders after a
+	// listening - the socket never connects and chat only renders after a
 	// reload. With an explicit port (local dev) the socketio process is
 	// plain http, as before.
 	const protocol = port ? "http" : window.location.protocol.replace(":", "")

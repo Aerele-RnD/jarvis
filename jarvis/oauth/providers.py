@@ -77,6 +77,19 @@ _PROVIDER_OAUTH_MAP: dict[str, dict] = {
 }
 
 
+def is_oauth_provider(label: str) -> bool:
+	"""True when ``label`` is an OAuth/chat-subscription-capable provider.
+
+	The canonical set is the keys of ``_PROVIDER_OAUTH_MAP`` — exactly the
+	providers ``begin_paste_signin`` can mint an authorize URL for. Callers use
+	this to avoid offering a "Re-authorize" affordance for a stored
+	``llm_provider`` (e.g. a non-OAuth default like ``Anthropic`` left behind by
+	``reset_onboarding``) that ``get_provider`` would reject with
+	``UnknownProviderError``.
+	"""
+	return label in _PROVIDER_OAUTH_MAP
+
+
 def get_provider(label: str) -> dict:
 	"""Look up provider metadata, including the lazy-resolved client_id +
 	client_secret. ``client_secret`` is an empty string for PKCE-only

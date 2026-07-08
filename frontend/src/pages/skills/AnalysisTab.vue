@@ -230,7 +230,7 @@
 </template>
 
 <script setup>
-// AnalysisTab — the pattern-learning settings + run telemetry, the "Analysis"
+// AnalysisTab - the pattern-learning settings + run telemetry, the "Analysis"
 // tab inside the Skills page (Skills IA v2). Split out of the old LearningTab:
 // this file owns the Settings card (enable / window / max proposals / Save),
 // the Run-now control (top-right, confirm popup, dynamic first-run label) and

@@ -6,7 +6,7 @@
 					<slot name="left-header" />
 				</div>
 				<div class="flex items-center gap-2">
-					<!-- "Go to Desk" — uniform across every page, and always the
+					<!-- "Go to Desk" - uniform across every page, and always the
 					     LEFTMOST item of the right cluster so each page's primary
 					     action keeps the rightmost corner (the design standard). -->
 					<Button

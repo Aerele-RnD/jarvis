@@ -2,7 +2,7 @@
 	<div class="flex flex-wrap items-center gap-2">
 		<template v-if="!rec.supported">
 			<span class="text-sm text-ink-gray-5">
-				Voice recording isn't supported in this browser — type your note instead.
+				Voice recording isn't supported in this browser - type your note instead.
 			</span>
 		</template>
 
@@ -23,17 +23,17 @@
 		<template v-else>
 			<Button variant="subtle" label="Record a note" iconLeft="mic" @click="begin" />
 			<span class="text-sm text-ink-gray-5">
-				Up to 5 minutes — you can edit the text before saving.
+				Up to 5 minutes - you can edit the text before saving.
 			</span>
 		</template>
 	</div>
 </template>
 
 <script setup>
-// VoiceRecorder — the Business-tab record→transcribe control. Wraps the shared
+// VoiceRecorder - the Business-tab record→transcribe control. Wraps the shared
 // useAudioRecorder composable (300 s hard cap lives there; onAutoStop still
 // transcribes) and voice.transcribeAudio, then hands the verbatim text to the
-// parent via @transcript — the parent owns the editable textarea + Save.
+// parent via @transcript - the parent owns the editable textarea + Save.
 import { ref, computed, onBeforeUnmount } from "vue"
 import { Button, toast } from "frappe-ui"
 import { useAudioRecorder } from "@/composables/useAudioRecorder"
@@ -47,7 +47,7 @@ function errMsg(e) {
 
 const rec = useAudioRecorder({
 	onAutoStop: (r) => {
-		toast.info("Recording stopped at the 5-minute limit — transcribing.")
+		toast.info("Recording stopped at the 5-minute limit - transcribing.")
 		transcribe(r)
 	},
 })
@@ -88,7 +88,7 @@ async function transcribe(r) {
 		const res = await transcribeAudio(r.blob, { durationS: r.durationS })
 		const text = ((res && res.text) || "").trim()
 		if (text) emit("transcript", text)
-		else toast.error("Nothing was transcribed — try again closer to the microphone.")
+		else toast.error("Nothing was transcribed - try again closer to the microphone.")
 	} catch (e) {
 		toast.error(errMsg(e))
 	} finally {

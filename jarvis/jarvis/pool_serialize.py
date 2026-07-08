@@ -197,6 +197,17 @@ def validate_models(settings) -> list:
             if not key_val:
                 errors.append(f"{label}: api_key is blank on an enabled model (would produce a dangling key_ref)")
 
+            # Custom-endpoint providers (OpenAI-Compatible shim / local vLLM) are
+            # defined by their base_url; without it build_pool_payload emits a
+            # provider with no endpoint and every turn on that model fails. The
+            # provider is already normalized to its canonical id at this point.
+            prov = (m.provider if hasattr(m, "provider") else m.get("provider", "")) or ""
+            base_url = (m.base_url if hasattr(m, "base_url") else m.get("base_url", "")) or ""
+            if prov in ("openai_compat", "vllm") and not base_url.strip():
+                errors.append(
+                    f"{label}: provider '{prov}' requires a base_url (its custom endpoint)"
+                )
+
         elif cred_type == "subscription":
             accounts = _model_accounts(m)
 
@@ -244,6 +255,19 @@ def validate_models(settings) -> list:
                     _, parse_err = _safe_json_loads(blob_raw)
                     if parse_err:
                         errors.append(f"{label} account[{j}] ({acc_ref}): {parse_err}")
+                elif acc_ref:
+                    # An enabled subscription account with an account_ref but NO
+                    # oauth_blob would be emitted into the pool spec by
+                    # build_pool_payload with no entry in the oauth_blobs map, so
+                    # cliproxy serves a credential-less account and every chat turn
+                    # 502s despite a "connected" UI. Reject it here instead.
+                    # (A blank incoming blob for an EXISTING account is refilled
+                    # from prior_blobs in save_llm_pool before this runs, so this
+                    # only fires when there is genuinely no stored credential.)
+                    errors.append(
+                        f"{label} account[{j}] ({acc_ref}): no OAuth credential "
+                        f"stored — reconnect this account to authorize"
+                    )
 
                 # Duplicate account_ref detection
                 if acc_ref:

@@ -1,7 +1,7 @@
-// useDocmeta — one docmeta bundle per doc page (DESIGN-V3 §6.1). The parent
+// useDocmeta - one docmeta bundle per doc page (DESIGN-V3 §6.1). The parent
 // page creates it and passes the SAME object to DocMetaPanel + CommentsSection.
 // Mutations call src/api/docmeta.js then patch `meta` locally (comments
-// append/replace; assignees/likes/shares replace from the response) — no full
+// append/replace; assignees/likes/shares replace from the response) - no full
 // reload per action. Mutation errors → toast; the initial-load error is kept
 // in `error` for the page's not-found state.
 //
@@ -144,7 +144,7 @@ export function useDocmeta(doctype, name) {
 		}
 	}
 
-	// FileUploader's success payload is the created File doc — patch locally;
+	// FileUploader's success payload is the created File doc - patch locally;
 	// callers without the payload get a plain reload.
 	function afterUpload(fileDoc) {
 		if (meta.value && fileDoc && fileDoc.name) {

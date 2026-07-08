@@ -496,6 +496,29 @@ def push_wiki_files(files: list[dict], delete: list | None = None,
 		return None
 
 
+def push_wiki_graph(payload: dict) -> dict | None:
+	"""POST the computed User/Role/Org wiki-utilization graph to admin, which
+	re-validates and upserts it into ``Jarvis Wiki Graph Snapshot`` (see
+	jarvis.chat.wiki_graph). Own rate bucket admin-side; NOT a container op.
+
+	Returns the parsed response dict or None on ANY failure — the graph is a
+	derived, rebuildable analytics copy and the sync must degrade to "retry next
+	sync", never raise into the wiki save paths or the sync worker.
+	"""
+	try:
+		return _post(
+			path="/api/method/jarvis_admin.api.tenant.post_push_wiki_graph",
+			body={"graph": payload},
+			timeout_s=60,
+		)
+	except Exception:
+		frappe.log_error(
+			title="admin_client: push_wiki_graph failed",
+			message=frappe.get_traceback(),
+		)
+		return None
+
+
 def get_generated_media(since_ms: int = 0) -> list[dict]:
 	"""Pull recent codex ``imagegen`` output for this customer's running tenant
 	container (admin → fleet → container disk). Returns a list of
