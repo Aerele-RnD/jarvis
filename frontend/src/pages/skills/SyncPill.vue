@@ -25,14 +25,14 @@
 </template>
 
 <script setup>
-// SyncPill — shared skills-apply status pill (DESIGN-V3 §5.6 + §6.2): shown by
+// SyncPill - shared skills-apply status pill (DESIGN-V3 §5.6 + §6.2): shown by
 // the Skills list banner and the skill detail header. Polls
 // getCustomSkillsSyncStatus every 3s while an apply is pending; a failed apply
 // turns the pill red with a Retry ghost button (applyCustomSkills).
 // Exposed API:
-//   apply()    — trigger an apply then poll (save/delete flows; those
+//   apply()    - trigger an apply then poll (save/delete flows; those
 //                endpoints don't enqueue an apply on their own)
-//   checkNow() — read the status and poll if pending (bulk delete — the
+//   checkNow() - read the status and poll if pending (bulk delete - the
 //                server already enqueued the apply, §8.3)
 import { ref, computed, onMounted, onBeforeUnmount } from "vue"
 import { Badge, Button, Tooltip, LoadingIndicator, toast } from "frappe-ui"

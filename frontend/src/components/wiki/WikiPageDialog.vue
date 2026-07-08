@@ -46,7 +46,7 @@
 					v-if="page.contradiction_flag"
 					class="mt-3 rounded-lg border border-outline-red-2 bg-surface-red-1 px-3 py-2 text-sm text-ink-red-4"
 				>
-					People have reported conflicting facts — look for the "Contradiction
+					People have reported conflicting facts - look for the "Contradiction
 					flagged" section in the body below.{{
 						page.can_edit
 							? " Edit the page to keep the correct version; saving marks the conflict resolved."
@@ -58,7 +58,7 @@
 					v-if="page.stale"
 					class="mt-3 rounded-lg border border-outline-amber-2 bg-surface-amber-1 px-3 py-2 text-sm text-ink-amber-3"
 				>
-					Not confirmed in 90+ days{{ page.can_edit ? " — saving an edit marks it reviewed." : "." }}
+					Not confirmed in 90+ days{{ page.can_edit ? " - saving an edit marks it reviewed." : "." }}
 				</div>
 
 				<template v-if="editing">
@@ -109,14 +109,14 @@
 					<p v-if="page.summary" class="mt-3 text-sm text-ink-gray-6">
 						{{ page.summary }}
 					</p>
-					<!-- renderMarkdown from @/markdown (escapes HTML first — safe) -->
+					<!-- renderMarkdown from @/markdown (escapes HTML first - safe) -->
 					<div
 						v-if="page.body_md"
 						class="prose prose-sm mt-3 max-w-none"
 						v-html="bodyHtml"
 					/>
 					<p v-else class="mt-3 text-sm text-ink-gray-5">No content yet.</p>
-					<!-- provenance: where Jarvis learned this — earns trust and edits -->
+					<!-- provenance: where Jarvis learned this - earns trust and edits -->
 					<p v-if="provenance" class="mt-3 border-t pt-2 text-p-sm text-ink-gray-5">
 						{{ provenance }}
 					</p>
@@ -169,7 +169,7 @@
 </template>
 
 <script setup>
-// WikiPageDialog — THE full-featured wiki editor popup (size xl): rendered-
+// WikiPageDialog - THE full-featured wiki editor popup (size xl): rendered-
 // markdown read view with scope/attention metadata + provenance, and an Edit
 // mode (title + summary + body) shown only when the server-computed `can_edit`
 // flag allows it. Editing shows the textarea and a live rendered preview side
@@ -243,7 +243,7 @@ const scopeTarget = computed(() => {
 	if (page.value.scope === "User") return page.value.target_user || ""
 	return ""
 })
-// "From a voice note by X, Jul 7" — the page's latest source entry. Pages a
+// "From a voice note by X, Jul 7" - the page's latest source entry. Pages a
 // pipeline wrote (not a person) earn trust by saying where they came from.
 const provenance = computed(() => {
 	const sources = (page.value && page.value.sources) || []
@@ -296,7 +296,7 @@ async function save() {
 			summary: editSummary.value,
 			body_md: editBody.value,
 		})
-		// a saved body counts as a review server-side — mirror that locally
+		// a saved body counts as a review server-side - mirror that locally
 		if (page.value) {
 			if (editTitle.value.trim()) page.value.title = editTitle.value.trim()
 			page.value.summary = editSummary.value
@@ -353,7 +353,7 @@ function confirmArchive() {
 function confirmDelete() {
 	confirmDialog({
 		title: "Delete this page?",
-		message: "Permanently deletes this page — archiving keeps it recoverable.",
+		message: "Permanently deletes this page - archiving keeps it recoverable.",
 		onConfirm: async ({ hideDialog }) => {
 			deleting.value = true
 			try {

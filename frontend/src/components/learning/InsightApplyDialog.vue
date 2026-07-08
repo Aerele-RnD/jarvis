@@ -17,7 +17,7 @@
 			>
 				<LoadingIndicator class="size-5 text-ink-gray-5" />
 				<span class="max-w-sm text-sm text-ink-gray-6">
-					Drafting — Jarvis is matching this insight against your custom skills and writing
+					Drafting - Jarvis is matching this insight against your custom skills and writing
 					the update. This takes a few seconds.
 				</span>
 			</div>
@@ -88,7 +88,7 @@
 				v-if="phase === 'update' || phase === 'create'"
 				class="mt-3 text-sm text-ink-gray-5"
 			>
-				Confirming saves the skill only — it reaches your assistant with the next
+				Confirming saves the skill only - it reaches your assistant with the next
 				skills push.
 			</p>
 		</template>
@@ -129,7 +129,7 @@
 </template>
 
 <script setup>
-// InsightApplyDialog — the wiki-v2 D5 "Apply to skill…" flow for B/C
+// InsightApplyDialog - the wiki-v2 D5 "Apply to skill…" flow for B/C
 // (insight-only) learned patterns. Opening drafts server-side (ONE LLM call
 // matching the insight against org custom skills) and returns a verdict:
 // update an existing skill (before/after comparison with a cheap line-diff

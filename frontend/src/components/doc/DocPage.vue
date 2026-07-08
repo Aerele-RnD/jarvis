@@ -54,10 +54,10 @@
 </template>
 
 <script setup>
-// DocPage — the detail-page frame every doc page uses (DESIGN-V3 §6.1):
+// DocPage - the detail-page frame every doc page uses (DESIGN-V3 §6.1):
 // LayoutHeader (breadcrumbs | #actions) → title row (+ status / "Not Saved"
 // badges) → #main sections → border-t → #footer comments, with the #aside
-// panel in a CRM-style Resizer (352px default, 256–480).
+// panel in a CRM-style Resizer (352px default, 256-480).
 import { computed } from "vue"
 import { useRouter } from "vue-router"
 import { Breadcrumbs, Badge, Button } from "frappe-ui"

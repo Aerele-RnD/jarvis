@@ -1,4 +1,4 @@
-// useListPage — server-envelope list state for the v3 list kit (DESIGN-V3 §5.1).
+// useListPage - server-envelope list state for the v3 list kit (DESIGN-V3 §5.1).
 // One instance per list page; feeds ListPage.vue. Wire format matches api.js
 // `_page()` ({search, filters, sort_field, sort_dir, start, page_length})
 // against the frozen envelope {rows, total, has_more, start, page_length[, facets]}.
@@ -29,7 +29,7 @@ export function useListPage({ fetchFn, defaultSort = { field: "", dir: "" }, sto
 	const sort = ref({ field: defaultSort.field || "", dir: defaultSort.dir || "" })
 	const pageLength = useStorage(`jarvis-pl-${storageKey}`, 20)
 
-	// monotonic request id — drops stale responses (same guard as ChatView.loadConversation)
+	// monotonic request id - drops stale responses (same guard as ChatView.loadConversation)
 	let reqId = 0
 
 	// mode: "reset" (page 1, replaces rows) | "more" (start=rows.length, appends)
@@ -53,7 +53,7 @@ export function useListPage({ fetchFn, defaultSort = { field: "", dir: "" }, sto
 					start: append ? rows.value.length : 0,
 					page_length: pl,
 				})) || {}
-			if (id !== reqId) return // stale — a newer request superseded this one
+			if (id !== reqId) return // stale - a newer request superseded this one
 			const nr = res.rows || []
 			rows.value = append ? [...rows.value, ...nr] : nr
 			total.value = res.total != null ? res.total : rows.value.length

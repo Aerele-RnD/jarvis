@@ -8,13 +8,13 @@
   <div class="jv-llm-editor" style="font-family:inherit;color:var(--text);">
     <div v-if="err" style="color:var(--red);font-size:13px;margin-bottom:12px;">{{ err }}</div>
 
-    <!-- Setup mode tabs + derived Direct/Proxy badge — hidden when the host
+    <!-- Setup mode tabs + derived Direct/Proxy badge - hidden when the host
          allows only one mode (onboarding's quick-only editor). -->
     <div v-if="!singleMode" style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
       <div role="tablist" style="display:inline-flex;border:1px solid var(--border);border-radius:9px;overflow:hidden;">
         <button v-for="t in modeTabs" :key="t.value" role="tab" :aria-selected="llmMode===t.value"
                 @click="setMode(t.value)" :disabled="!editable || (t.value==='quick' && quickLocked)"
-                :title="t.value==='quick' && quickLocked ? 'Your pool has multiple models — edit them in Custom. Remove models to switch to Quick.' : ''"
+                :title="t.value==='quick' && quickLocked ? 'Your pool has multiple models - edit them in Custom. Remove models to switch to Quick.' : ''"
                 :style="{fontSize:'14px',padding:'10px 18px',border:'none',
                          cursor: (!editable || (t.value==='quick' && quickLocked)) ? 'not-allowed' : 'pointer',
                          opacity: (t.value==='quick' && quickLocked) ? '0.4' : '1',
@@ -130,7 +130,7 @@
         </div>
 
         <!-- API-key credential. Onboarding (singleMode) lays the four fields out as
-             a 2×2 grid so this view's height sits close to the subscription view —
+             a 2×2 grid so this view's height sits close to the subscription view -
              no jarring resize when toggling. The Account editor keeps the dense row. -->
         <div v-if="m.credentialType!=='subscription'" :class="{ 'jv-single-body': singleMode }">
           <div v-if="singleMode" class="jv-ak-grid">
@@ -196,7 +196,7 @@
           </div>
           <div v-else-if="!singleMode" style="font-size:13px;color:var(--text-3);margin-bottom:8px;">No accounts connected yet.</div>
 
-          <!-- Inline paste-back OAuth flow — two clear steps: open the sign-in
+          <!-- Inline paste-back OAuth flow - two clear steps: open the sign-in
                (OAuth) URL, then paste the callback URL you're redirected to. -->
           <div v-if="m._connect && m._connect.open" class="jv-cn">
             <div v-if="m._connect.authorizeUrl">
@@ -246,7 +246,7 @@
       </button>
     </section>
 
-    <!-- Save bar + sync status — hidden when a host renders its own footer. -->
+    <!-- Save bar + sync status - hidden when a host renders its own footer. -->
     <div v-if="!footerless" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
       <button v-if="editable" @click="save" :disabled="saving || saveBlocked"
               :style="{padding:'12px 24px',background: saveBlocked ? 'var(--surface-3)' : 'var(--blue)',
@@ -257,7 +257,7 @@
       <span v-if="saveBlocked && missingVendors.length" style="font-size:13px;color:var(--amber);">
         Provide keys for: {{ missingVendors.map(providerLabel).join(', ') }}
       </span>
-      <span v-else-if="dirty" style="font-size:13px;color:var(--amber);font-weight:600;">● Unsaved changes — Save configuration to apply</span>
+      <span v-else-if="dirty" style="font-size:13px;color:var(--amber);font-weight:600;">● Unsaved changes - Save configuration to apply</span>
       <span style="font-size:13px;color:var(--text-3);">{{ syncLabel }}</span>
     </div>
   </div>
@@ -277,7 +277,7 @@ const props = defineProps({
   editable: { type: Boolean, default: true },
   // Which setup tabs to expose. Default = the full 3-mode editor (Account page).
   // Onboarding passes ["quick"] to offer a single direct model and hide the
-  // proxy-pool Preset/Custom tabs + the Direct/Proxy badge — faster signup, no
+  // proxy-pool Preset/Custom tabs + the Direct/Proxy badge - faster signup, no
   // failover/pooling decisions up front (users configure that later in Account).
   modes: { type: Array, default: () => ["quick", "preset", "custom"] },
   // Hide the built-in Save bar so a host (onboarding) can render its own footer
@@ -306,13 +306,13 @@ const ALL_MODE_TABS = [
 ]
 // Only the tabs the host allows, in canonical order.
 const modeTabs = computed(() => ALL_MODE_TABS.filter((t) => props.modes.includes(t.value)))
-// With a single allowed mode the tab bar + Direct/Proxy badge are just noise —
+// With a single allowed mode the tab bar + Direct/Proxy badge are just noise -
 // hide them and render that mode's body directly (onboarding's quick-only editor).
 const singleMode = computed(() => modeTabs.value.length <= 1)
-// Whether any proxy-pool tab (Preset/Custom) is reachable — gates the Quick hint
+// Whether any proxy-pool tab (Preset/Custom) is reachable - gates the Quick hint
 // copy so it never points at tabs that aren't there.
 const canPool = computed(() => props.modes.includes("preset") || props.modes.includes("custom"))
-// Whether the single-mode (onboarding) row is savable — an account is connected,
+// Whether the single-mode (onboarding) row is savable - an account is connected,
 // or an API key + provider/model are filled. Emitted so the host footer can
 // invite the final "Onboard Jarvis" click once the user is ready.
 const ready = computed(() => {
@@ -385,7 +385,7 @@ const isMulti = computed(() => llmMode.value === "custom")
 const editorRows = computed(() => isMulti.value ? rows.value : rows.value.slice(0, 1))
 // Quick renders only rows[0] and saving in Quick collapses the pool to that one
 // model. When a real multi-model pool exists, lock the Quick tab so a stray click
-// can't silently drop the other models — the user reduces the pool via Custom.
+// can't silently drop the other models - the user reduces the pool via Custom.
 const quickLocked = computed(() => rows.value.length >= 2)
 const singleVendorPresets = computed(() => catalog.value.filter((c) => c.kind === "single_vendor"))
 const crossVendorPresets = computed(() => catalog.value.filter((c) => c.kind === "cross_vendor"))
@@ -404,10 +404,10 @@ const missingVendors = computed(() => {
 })
 const saveBlocked = computed(() => llmMode.value === "preset" && !!selectedPreset.value && missingVendors.value.length > 0)
 
-// Direct/Proxy badge — mirrors jarvis_account.js renderModeBadge().
+// Direct/Proxy badge - mirrors jarvis_account.js renderModeBadge().
 // Quick is always Direct (single model); Preset is Proxy once chosen; Custom
 // derives from the count of valid rows via the shared deriveMode helper.
-// Valid (fillable) rows — shared by the badge mode + label. A subscription row
+// Valid (fillable) rows - shared by the badge mode + label. A subscription row
 // needs a model id; an api_key row needs provider + model.
 const validModels = computed(() => rows.value.filter((r) => r && (
   r.credentialType === "subscription" ? (r.model || "").trim() : ((r.provider || "").trim() && (r.model || "").trim())
@@ -427,8 +427,8 @@ const badgeMode = computed(() => {
 // the cliproxy sidecar) but has nothing to fail over to, so it reads plain
 // "Proxy" rather than the misleading "Proxy (failover)".
 const badgeLabel = computed(() => {
-  // Only badge a real multi-model FAILOVER pool. A single model — a direct
-  // api-key OR a lone chat subscription — shows NO badge: it was just noise, and
+  // Only badge a real multi-model FAILOVER pool. A single model - a direct
+  // api-key OR a lone chat subscription - shows NO badge: it was just noise, and
   // "Proxy" on a single subscription read as confusing/broken.
   if (llmMode.value === "preset") return selectedPreset.value ? "Proxy (failover)" : ""
   if (llmMode.value === "custom") return validModels.value.length >= 2 ? "Proxy (failover)" : ""
@@ -498,7 +498,7 @@ function setCredType(m, type) {
     if (!m.upstream) m.upstream = "openai"
     if (!Array.isArray(m.accounts)) m.accounts = []
     if (!m._connect) m._connect = blankConnect()
-    // Onboarding hides the model field — default it from the chosen provider so
+    // Onboarding hides the model field - default it from the chosen provider so
     // validatePool + save still have a model id.
     if (singleMode.value) m.model = defaultSubscriptionModel(m.upstream)
   } else if (singleMode.value) {
@@ -515,7 +515,7 @@ function onProviderChange(m) {
 }
 // Provider switch on a subscription row in the simplified onboarding editor:
 // re-default the (hidden) model AND drop any already-connected account, which is
-// provider-specific — otherwise we'd save a model bound to the wrong provider's
+// provider-specific - otherwise we'd save a model bound to the wrong provider's
 // OAuth credential. A no-op elsewhere (full editor manages model/accounts itself).
 function onUpstreamChange(m) {
   if (singleMode.value && m.credentialType === "subscription") {
@@ -550,7 +550,7 @@ function accountLabel(a) {
 }
 async function startConnect(m, reconnectIdx = null) {
   if (!m._connect) m._connect = blankConnect()
-  // Simplified editor hides the model field — make sure a subscription row always
+  // Simplified editor hides the model field - make sure a subscription row always
   // carries a model id so the connect flow never dead-ends on an unfillable field.
   if (singleMode.value && m.credentialType === "subscription" && !(m.model || "").trim()) {
     m.model = defaultSubscriptionModel(m.upstream)
@@ -583,7 +583,7 @@ async function finishConnect(m) {
   m._connect.loading = true; m._connect.error = ""
   try {
     const res = await api.completePoolAccountSignin(m._connect.nonce, m._connect.pastedUrl.trim())
-    // Same {ok, data} envelope as begin — unwrap + surface errors.
+    // Same {ok, data} envelope as begin - unwrap + surface errors.
     if (!res || res.ok === false) {
       m._connect.loading = false
       m._connect.error = (res && res.error && res.error.message) || "Couldn't connect the account. Check the pasted URL and try again."
@@ -610,7 +610,7 @@ async function finishConnect(m) {
     if (ri != null && ri >= 0 && ri < m.accounts.length) {
       m.accounts.splice(ri, 1, acct)
       // Reconnecting one slot but signing in as an account already held by a
-      // DIFFERENT slot would leave two identical accounts — drop the duplicate.
+      // DIFFERENT slot would leave two identical accounts - drop the duplicate.
       if (byEmail >= 0 && byEmail !== ri) m.accounts.splice(byEmail, 1)
     } else if (byEmail >= 0) m.accounts.splice(byEmail, 1, acct)
     else m.accounts.push(acct)
@@ -619,7 +619,7 @@ async function finishConnect(m) {
     // navigating off the page would orphan this account. In the account editor,
     // persist immediately; if the pool isn't valid yet, save() surfaces the reason
     // and the "Unsaved changes" notice stays up so nothing is silently lost. Skip
-    // in the footerless onboarding editor — there the host's CTA drives save.
+    // in the footerless onboarding editor - there the host's CTA drives save.
     if (!props.footerless) await save()
   } catch (e) { m._connect.loading = false; m._connect.error = _err(e) }
 }
@@ -636,7 +636,7 @@ function copyAuthorizeUrl(m) {
 // ---- load / save ---------------------------------------------------------
 // Seed the canonical rows from get_llm_config, then augment each with the
 // transient UI-only fields the editor needs (upstream + _connect). Seeded
-// accounts carry no oauth_blob (never returned by the server) — reconnect to
+// accounts carry no oauth_blob (never returned by the server) - reconnect to
 // change; they render as "connected" via their label.
 function seedRows(config) {
   return seedRowsFromConfig(config).map((r) => ({
@@ -679,14 +679,14 @@ async function load() {
       selectedPreset.value = ""
       if (!rows.value.length) rows.value = [newRow()]
     }
-    // Baseline for the unsaved-changes notice — the pool as just loaded is clean.
+    // Baseline for the unsaved-changes notice - the pool as just loaded is clean.
     savedSnapshot.value = poolSnapshot()
   } catch (e) { err.value = _err(e) }
   try { sync.value = (await api.getLlmSyncStatus()) || sync.value } catch (e) { /* non-fatal */ }
   try { catalog.value = (await api.getPresetCatalog()) || [] } catch (e) { /* backend bundled fallback */ }
 }
 
-// Stable string of the savable pool + preset — the cheap key the dirty-notice
+// Stable string of the savable pool + preset - the cheap key the dirty-notice
 // and snapshot reset compare against.
 function poolSnapshot() {
   try { return JSON.stringify({ m: buildSaveModels(rows.value), p: selectedPreset.value }) }
@@ -788,7 +788,7 @@ defineExpose({ save })
 </script>
 
 <style scoped>
-/* Onboarding credential-type cards — self-describing "API key vs Chat
+/* Onboarding credential-type cards - self-describing "API key vs Chat
    subscription" choice. Selected state mirrors the wizard's plan cards
    (var(--blue) ring), so it's consistent with the rest of onboarding. */
 .jv-ct { margin-bottom: 16px; }
@@ -813,8 +813,8 @@ defineExpose({ save })
 .jv-ct-tx { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .jv-ct-t { font-size: 14px; font-weight: 650; }
 .jv-ct-d { font-size: 12px; color: var(--text-3); line-height: 1.4; }
-/* Clean status pill — connected (ok) / failed (bad). Reused by the subscription
-   connected row and (later) the API-key verify result. No red ✕ — a subtle text
+/* Clean status pill - connected (ok) / failed (bad). Reused by the subscription
+   connected row and (later) the API-key verify result. No red ✕ - a subtle text
    action handles disconnect. */
 .jv-status { display: flex; align-items: center; gap: 9px; padding: 10px 12px; border-radius: 9px; font-size: 13.5px; margin-bottom: 8px; }
 .jv-status-ok { border: 1px solid var(--green-bd); background: var(--green-bg); }
@@ -827,7 +827,7 @@ defineExpose({ save })
 .jv-status-acts { margin-left: auto; display: flex; gap: 12px; flex: none; }
 .jv-status-act { background: transparent; border: 0; color: var(--text-3); font-size: 12.5px; cursor: pointer; padding: 0; }
 .jv-status-act:hover { color: var(--text); text-decoration: underline; text-underline-offset: 2px; }
-/* Paste-back OAuth connect panel — two numbered steps (open sign-in URL / paste
+/* Paste-back OAuth connect panel - two numbered steps (open sign-in URL / paste
    the callback URL), styled to match the rest of the onboarding editor. */
 .jv-cn { margin-top: 8px; padding: 15px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 11px; }
 .jv-cn-step { display: flex; gap: 10px; margin-bottom: 13px; }
@@ -850,7 +850,7 @@ defineExpose({ save })
 /* Lock both credential modes to the same body height in onboarding so toggling
    API key ↔ Chat subscription never resizes the card (first-impression polish). */
 .jv-single-body { min-height: 96px; }
-/* API-key fields as a 2×2 grid in onboarding — keeps this view's height close to
+/* API-key fields as a 2×2 grid in onboarding - keeps this view's height close to
    the subscription view so toggling doesn't resize the card. */
 .jv-ak-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
 .jv-ak-grid select, .jv-ak-grid input {

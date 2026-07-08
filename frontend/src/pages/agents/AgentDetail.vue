@@ -50,7 +50,7 @@
 			</div>
 			<Button label="Back to Agents" @click="router.push({ name: 'AgentsList' })" />
 		</div>
-		<!-- loading (AgentsList/AgentActivityTab pattern — never a blank page) -->
+		<!-- loading (AgentsList/AgentActivityTab pattern - never a blank page) -->
 		<div v-else-if="!agent" class="flex flex-1 flex-col items-center justify-center gap-2">
 			<LoadingIndicator class="size-5 text-ink-gray-5" />
 			<span class="text-sm text-ink-gray-5">Loading agent…</span>
@@ -116,7 +116,7 @@
 					</div>
 				</div>
 				<div v-if="!agent.allowed" class="mt-3 text-sm text-ink-gray-5">
-					Available to: {{ (agent.allowed_roles || []).join(", ") || "—" }} — ask your
+					Available to: {{ (agent.allowed_roles || []).join(", ") || "-" }} - ask your
 					administrator.
 				</div>
 			</div>
@@ -161,7 +161,7 @@
 					<div>
 						<div class="text-sm font-medium text-ink-gray-5">Version</div>
 						<div class="mt-1 flex flex-wrap items-center gap-2 text-base text-ink-gray-8">
-							<span>{{ agent.version && agent.version !== "0.0.0" ? "v" + agent.version : "—" }}</span>
+							<span>{{ agent.version && agent.version !== "0.0.0" ? "v" + agent.version : "-" }}</span>
 							<Badge v-if="updateAvailable" variant="subtle" theme="orange" label="Update available" />
 						</div>
 						<div v-if="updateAvailable" class="mt-1 text-sm text-ink-gray-5">
@@ -170,7 +170,7 @@
 					</div>
 					<div>
 						<div class="text-sm font-medium text-ink-gray-5">Validated FY</div>
-						<div class="mt-1 text-base text-ink-gray-8">{{ agent.validated_for_fy || "—" }}</div>
+						<div class="mt-1 text-base text-ink-gray-8">{{ agent.validated_for_fy || "-" }}</div>
 					</div>
 					<div>
 						<div class="text-sm font-medium text-ink-gray-5">Allowed roles</div>
@@ -250,7 +250,7 @@
 
 			<!-- ── Admin (SM only; server enforces every call). Listing status is
 			     publisher/catalog state curated in registry.json (it reverts on the
-			     next deploy) — deliberately NOT editable here. ── -->
+			     next deploy) - deliberately NOT editable here. ── -->
 			<div v-else-if="tab === 'admin' && isSM" class="max-w-2xl shrink-0 space-y-10 px-5 py-6">
 				<section>
 					<div class="text-base font-medium text-ink-gray-9">Allowed roles</div>
@@ -273,7 +273,7 @@
 							/>
 						</div>
 						<span v-if="!roleDraft.length" class="text-sm text-ink-gray-4">
-							Everyone — no restriction
+							Everyone - no restriction
 						</span>
 					</div>
 					<div class="mt-3 w-72">
@@ -329,10 +329,10 @@
 								:label="row.enabled ? 'Enabled' : 'Disabled'"
 							/>
 							<div v-else-if="column.key === 'last_run_at'" class="truncate text-base">
-								{{ row.last_run_at ? timeAgo(row.last_run_at) : "—" }}
+								{{ row.last_run_at ? timeAgo(row.last_run_at) : "-" }}
 							</div>
 							<div v-else-if="column.key === 'sync_status'" class="truncate text-base">
-								{{ row.sync_status || "—" }}
+								{{ row.sync_status || "-" }}
 							</div>
 							<ListRowItem v-else :column="column" :row="row" :item="item" :align="align" />
 						</template>
@@ -344,7 +344,7 @@
 </template>
 
 <script setup>
-// Agent detail — /agents/:slug (DESIGN-V3 §7.2, D29/D30 + §14 F3/O1 + §15.4).
+// Agent detail - /agents/:slug (DESIGN-V3 §7.2, D29/D30 + §14 F3/O1 + §15.4).
 // Marketplace template: de-texted hero (logo · name · one meta line ·
 // one-line tagline · category chips; install count + Enabled switch right) →
 // hash-synced tabs. Overview (markdown description + static facts panel) ·
@@ -442,7 +442,7 @@ watch(
 )
 
 const installation = computed(() => (agent.value && agent.value.installation) || null)
-// §8.3: all_roles is present only in the SM payload — the Admin-tab signal
+// §8.3: all_roles is present only in the SM payload - the Admin-tab signal
 const isSM = computed(() => Array.isArray(agent.value && agent.value.all_roles))
 const updateAvailable = computed(
 	() =>
@@ -497,7 +497,7 @@ const canInstall = computed(
 const installTooltip = computed(() => {
 	if (!agent.value || canInstall.value) return ""
 	if (!agent.value.allowed)
-		return "Restricted to: " + ((agent.value.allowed_roles || []).join(", ") || "—")
+		return "Restricted to: " + ((agent.value.allowed_roles || []).join(", ") || "-")
 	return agent.value.status === "Coming Soon" ? "Coming soon" : "Not available to install"
 })
 
@@ -532,7 +532,7 @@ const runDisabled = computed(
 const runTooltip = computed(() => {
 	if (!agent.value || !installation.value) return ""
 	if (agent.value.nature !== "Auditor")
-		return "Operators draft through the Approval Board — no on-demand runs"
+		return "Operators draft through the Approval Board - no on-demand runs"
 	if (!installation.value.enabled) return "Enable the agent first"
 	if (!agent.value.allowed) return "Your roles do not permit this agent"
 	return "Run this audit now"
@@ -595,7 +595,7 @@ async function setEnabled(v) {
 const logoText = computed(() =>
 	String((agent.value && agent.value.title) || props.slug || "?").slice(0, 2).toUpperCase()
 )
-// §15.4 — ONE meta line: "by {publisher} · v{version}" (badges follow inline)
+// §15.4 - ONE meta line: "by {publisher} · v{version}" (badges follow inline)
 const heroMetaText = computed(() => {
 	const parts = ["by " + ((agent.value && agent.value.publisher) || "Jarvis")]
 	if (agent.value && agent.value.version && agent.value.version !== "0.0.0") {
@@ -603,14 +603,14 @@ const heroMetaText = computed(() => {
 	}
 	return parts.join(" · ")
 })
-// §15.4 — one-line tagline: first non-empty description line, heading markers
+// §15.4 - one-line tagline: first non-empty description line, heading markers
 // stripped; the full markdown renders only in the Overview tab
 const tagline = computed(() => {
 	const d = (agent.value && agent.value.description) || ""
 	const line = d.split("\n").find((l) => l.trim()) || ""
 	return line.replace(/^#{1,6}\s+/, "").trim()
 })
-// O1 — renderMarkdown (jv-md-* classes are global via the main chunk)
+// O1 - renderMarkdown (jv-md-* classes are global via the main chunk)
 const descriptionHtml = computed(() =>
 	agent.value && agent.value.description ? renderMarkdown(agent.value.description) : ""
 )
@@ -638,7 +638,7 @@ const defaultScheduleText = computed(() => {
 		s = {}
 	}
 	const freq = String(s.schedule_frequency || "").toLowerCase()
-	if (!freq) return "None — runs on demand."
+	if (!freq) return "None - runs on demand."
 	return s.schedule_enabled ? `On by default · ${freq}` : `Off by default · suggested ${freq}`
 })
 function categoryTitle(slug) {
@@ -788,7 +788,7 @@ async function saveRoles() {
 		toast.success(
 			agent.value.allowed_roles.length
 				? "Roles saved"
-				: "Restriction cleared — available to everyone"
+				: "Restriction cleared - available to everyone"
 		)
 		load() // refresh allowed/lock state
 	} catch (e) {

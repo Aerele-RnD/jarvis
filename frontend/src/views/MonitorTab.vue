@@ -5,7 +5,7 @@
       <section class="jv-mon-card">
         <h3>Status</h3>
         <div class="jv-mon-kv"><span>Mode</span><b>{{ config.proxy_active ? "Proxy" : "Direct" }}</b></div>
-        <div class="jv-mon-kv"><span>Sync</span><b>{{ sync.last_sync_status || "—" }}</b></div>
+        <div class="jv-mon-kv"><span>Sync</span><b>{{ sync.last_sync_status || "-" }}</b></div>
         <div v-if="sync.last_sync_at" class="jv-mon-kv"><span>Last sync</span><b>{{ sync.last_sync_at }}</b></div>
       </section>
 
@@ -77,7 +77,7 @@ const gaugeOption = computed(() => {
 })
 const expiresLabel = computed(() => {
   const ms = conn.value.oauth_expires_at
-  return ms ? new Date(Number(ms)).toLocaleString() : "—"
+  return ms ? new Date(Number(ms)).toLocaleString() : "-"
 })
 
 async function load(fetchFn, target) {

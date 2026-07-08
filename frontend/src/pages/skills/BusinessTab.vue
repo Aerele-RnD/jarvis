@@ -30,7 +30,7 @@
 							Tell Jarvis about your business
 						</div>
 						<div class="mt-0.5 text-sm text-ink-gray-6">
-							Record or type notes about how your business runs — Jarvis processes them daily
+							Record or type notes about how your business runs - Jarvis processes them daily
 							into learned defaults and wiki knowledge it uses in chat.
 						</div>
 
@@ -48,7 +48,7 @@
 						<div class="mt-4">
 							<VoiceRecorder v-if="status.stt_enabled" @transcript="onTranscript" />
 							<span v-else-if="status.loaded" class="text-sm text-ink-gray-5">
-								Voice transcription isn't enabled on this site — type your note below.
+								Voice transcription isn't enabled on this site - type your note below.
 							</span>
 						</div>
 
@@ -110,9 +110,9 @@
 </template>
 
 <script setup>
-// BusinessTab — the "Business" tab inside the Skills page, now two panes:
+// BusinessTab - the "Business" tab inside the Skills page, now two panes:
 // left is the capture card (record/type voice notes about how the business
-// runs — processed daily by the voice-facts worker), right is NotesPane
+// runs - processed daily by the voice-facts worker), right is NotesPane
 // (search / status filter / paginate / edit-while-New / delete your own
 // notes; the SM "Process notes now" control and sweep telemetry moved into
 // that pane's header). The org wiki lives on the Wiki tab (WikiTab.vue); a
@@ -174,7 +174,7 @@ async function loadStatus() {
 		status.loaded = true
 	} catch (e) {
 		// parent mounts this only after the same probe succeeded; a failure here
-		// is transient — the page stays usable (textarea + notes still load)
+		// is transient - the page stays usable (textarea + notes still load)
 		status.loaded = true
 	}
 }
@@ -201,7 +201,7 @@ async function saveNote() {
 	try {
 		await saveVoiceNote({ transcript, context_type: "Business", source: "Business Tab" })
 		draft.value = ""
-		toast.success("Saved — processed daily")
+		toast.success("Saved - processed daily")
 		notesPane.value?.reload()
 		loadStatus()
 	} catch (e) {
@@ -213,7 +213,7 @@ async function saveNote() {
 
 function confirmDiscardDraft() {
 	// a tiny draft clears instantly; anything substantial (possibly minutes of
-	// dictation) gets a confirm — Discard sits right next to Save
+	// dictation) gets a confirm - Discard sits right next to Save
 	if (draft.value.trim().length <= 15) {
 		draft.value = ""
 		return
@@ -230,7 +230,7 @@ function confirmDiscardDraft() {
 
 // ── org wiki pointer ─────────────────────────────────────────────────────────
 function goToWiki() {
-	// hash swap on the same /skills route — SkillsPage's hash watcher flips the tab
+	// hash swap on the same /skills route - SkillsPage's hash watcher flips the tab
 	router.push({ hash: "#wiki" })
 }
 

@@ -4,7 +4,7 @@
 // timezone differs from the site's. frappe-ui's dayjsLocal() parses in
 // setConfig("systemTimezone") (fed from get_chat_ui_settings.time_zone in
 // AppShell) and converts to the browser zone; without the config it falls
-// back to plain dayjs() — today's behavior.
+// back to plain dayjs() - today's behavior.
 import { dayjsLocal } from "frappe-ui"
 
 export function timeAgo(d) {

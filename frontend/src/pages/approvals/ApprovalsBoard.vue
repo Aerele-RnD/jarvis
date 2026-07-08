@@ -6,7 +6,7 @@
 			</template>
 		</LayoutHeader>
 
-		<!-- toolbar (§15.2): search · status · type facets · Refresh — no
+		<!-- toolbar (§15.2): search · status · type facets · Refresh - no
 		     Filter/Sort/Columns; the split view IS the workflow -->
 		<div class="flex items-center justify-between gap-2 border-b px-5 py-3">
 			<div class="flex flex-1 items-center gap-2 overflow-x-auto py-0.5">
@@ -179,7 +179,7 @@
 					<div class="mt-4">
 						<!-- 3. context -->
 						<DocSection v-if="selected.context_md" label="Context">
-							<!-- O1: renderMarkdown from @/markdown (escapes HTML first — safe) -->
+							<!-- O1: renderMarkdown from @/markdown (escapes HTML first - safe) -->
 							<div class="prose prose-sm max-w-none" v-html="contextHtml" />
 						</DocSection>
 
@@ -187,7 +187,7 @@
 						<DocSection label="Decision" :collapsible="false">
 							<template v-if="selected.status === 'Pending'">
 								<div v-if="selected.can_act">
-									<!-- the LLM's options are varied per chat — selectable chips;
+									<!-- the LLM's options are varied per chat - selectable chips;
 									     hidden when they merely restate Approve/Reject -->
 									<div v-if="showOptionChips" class="flex flex-wrap gap-2">
 										<Button
@@ -201,7 +201,7 @@
 									<FormControl
 										type="textarea"
 										:class="showOptionChips ? 'mt-3' : ''"
-										placeholder="Add a note — optional"
+										placeholder="Add a note - optional"
 										:modelValue="note"
 										@update:modelValue="(v) => (note = v)"
 									/>
@@ -223,7 +223,7 @@
 											@click="submitDecide(0)"
 										/>
 										<div class="flex-1" />
-										<!-- tag for review — the DocShare path DocMetaPanel's
+										<!-- tag for review - the DocShare path DocMetaPanel's
 										     "Shared with" block uses (same docmeta object, so the
 										     Record details block stays in sync) -->
 										<Popover placement="bottom-end">
@@ -267,11 +267,11 @@
 										</Popover>
 									</div>
 									<div class="mt-2 text-sm text-ink-gray-5">
-										Tag a colleague to view and comment — only you (or an admin) can approve.
+										Tag a colleague to view and comment - only you (or an admin) can approve.
 									</div>
 								</div>
 								<div v-else class="text-sm text-ink-gray-5">
-									Waiting for a decision — comment below and @mention someone who can approve.
+									Waiting for a decision - comment below and @mention someone who can approve.
 								</div>
 							</template>
 							<template v-else>
@@ -280,7 +280,7 @@
 							</template>
 						</DocSection>
 
-						<!-- 5. comments — the "tag someone to approve" surface -->
+						<!-- 5. comments - the "tag someone to approve" surface -->
 						<div class="border-t py-4">
 							<CommentsSection :docmeta="docmeta" :can-comment="true" />
 						</div>
@@ -299,10 +299,10 @@
 </template>
 
 <script setup>
-// Approval Board — two-pane master-detail (DESIGN-V3 §15.2, supersedes
+// Approval Board - two-pane master-detail (DESIGN-V3 §15.2, supersedes
 // §5.8/§6.4). LEFT: envelope-fed inbox rail (search/status/type facets,
 // Load More + "N of M", auto-select first row). RIGHT: the action pane for
-// the selected approval — question + meta, Context markdown, varied option
+// the selected approval - question + meta, Context markdown, varied option
 // chips + note + Approve/Reject, CommentsSection (mentions), collapsed
 // DocMetaPanel. Row click → router.replace('/approvals/'+id); both approval
 // routes render this board.
@@ -351,7 +351,7 @@ const STATUS_OPTIONS = [
 const STATUS_VALUES = ["Pending", "Decided", "All"]
 const DEFAULT_SORT = { field: "creation", dir: "desc" }
 
-// deep-link seeds (?status=, ?type= — parity with the old list page)
+// deep-link seeds (?status=, ?type= - parity with the old list page)
 const initialStatus = STATUS_VALUES.includes(route.query.status) ? route.query.status : "Pending"
 const initialType = typeof route.query.type === "string" ? route.query.type : ""
 
@@ -414,7 +414,7 @@ function setQuick(key, value) {
 	syncQuery()
 }
 // keep ?status=/?type= in the URL so deep links preserve the view (D32);
-// Pending is the default — keep the URL clean for it.
+// Pending is the default - keep the URL clean for it.
 function syncQuery() {
 	const q = { ...route.query }
 	const status = filters.status || "Pending"
@@ -430,18 +430,18 @@ function docType(row) {
 }
 
 // ── selection (right pane always reads the full record via get_approval,
-//    incl. can_act — the rail row is never enough) ─────────────────────────────
+//    incl. can_act - the rail row is never enough) ─────────────────────────────
 const selectedId = ref("")
 const selected = ref(null)
 const paneError = ref("")
-let paneReq = 0 // monotonic — stale responses dropped
+let paneReq = 0 // monotonic - stale responses dropped
 
 const docmeta = useDocmeta("Jarvis Approval Request", selectedId)
 
 // deep-link seed: a routed :id beyond the loaded page still gets a rail row,
 // built from the get_approval payload and pinned on top. The computed drops
-// the seed the moment the real row shows up (page 1 or Load More) — dedupe
-// for free — and never mutates `rows`, so Load More's start offset stays true.
+// the seed the moment the real row shows up (page 1 or Load More) - dedupe
+// for free - and never mutates `rows`, so Load More's start offset stays true.
 const seedTargetId = typeof route.params.id === "string" ? route.params.id : ""
 let seedWanted = !!seedTargetId
 const seedRow = ref(null)
@@ -450,7 +450,7 @@ const railRows = computed(() => {
 	if (!seed || rows.value.some((r) => r.name === seed.name)) return rows.value
 	return [seed, ...rows.value]
 })
-// the seed sits outside the server's filtered total — count it explicitly
+// the seed sits outside the server's filtered total - count it explicitly
 const railTotal = computed(() => total.value + (railRows.value.length - rows.value.length))
 
 function select(id) {
@@ -494,7 +494,7 @@ async function loadRecord(id, { keep = false } = {}) {
 
 function onRowClick(row) {
 	select(row.name)
-	// replace, not push — selection must not spam browser history
+	// replace, not push - selection must not spam browser history
 	router.replace({ name: "ApprovalDetail", params: { id: row.name }, query: route.query })
 }
 
@@ -517,7 +517,7 @@ const refUrl = computed(() => {
 const contextHtml = computed(() =>
 	selected.value && selected.value.context_md ? renderMarkdown(selected.value.context_md) : ""
 )
-// options may arrive parsed (list) or as the raw JSON string — be defensive
+// options may arrive parsed (list) or as the raw JSON string - be defensive
 const options = computed(() => {
 	const raw = selected.value && selected.value.options
 	if (Array.isArray(raw)) return raw.map(String)
@@ -558,7 +558,7 @@ const decidedLine = computed(() => {
 // Sharing IS tagging: same DocShare path as DocMetaPanel's "Shared with" block
 // (docmeta.toggleShare), surfaced next to the Decision buttons so it's
 // discoverable. The backend makes shared approvals visible on the tagged
-// user's board; can_act stays owner/SM-only — tagged users view and comment.
+// user's board; can_act stays owner/SM-only - tagged users view and comment.
 const shares = computed(() => (docmeta.meta && docmeta.meta.shares) || [])
 const shareUsers = ref([])
 let shareUsersLoaded = false
@@ -602,7 +602,7 @@ async function submitDecide(approve) {
 	if (deciding.value !== null || !selected.value) return
 	deciding.value = approve
 	const noteText = note.value.trim()
-	// decide() requires non-empty decision text — Approve sends the selected
+	// decide() requires non-empty decision text - Approve sends the selected
 	// option chip, else the note, else the verdict word; Reject sends the note
 	// or the verdict word (the picked option was what got refused)
 	const text = approve ? selectedOption.value || noteText || "Approved" : noteText || "Rejected"
@@ -628,10 +628,10 @@ async function submitDecide(approve) {
 		}
 		selectedOption.value = ""
 		note.value = ""
-		toast.success((approve ? "Approved" : "Rejected") + (res.resumed ? " — conversation resumed" : ""))
+		toast.success((approve ? "Approved" : "Rejected") + (res.resumed ? " - conversation resumed" : ""))
 		store.refreshApprovalsCount()
 		if ((filters.status || "Pending") === "Pending") {
-			// the decided row no longer matches the Pending quick-filter —
+			// the decided row no longer matches the Pending quick-filter -
 			// drop it and move the selection along so triage keeps flowing
 			advanceAfterDecide(id)
 		} else {
@@ -673,7 +673,7 @@ function advanceAfterDecide(id) {
 	}
 }
 
-// ── selection wiring (after every ref it touches exists — the immediate
+// ── selection wiring (after every ref it touches exists - the immediate
 //    watcher fires during setup) ───────────────────────────────────────────────
 // route :id → selection (deep links, back/forward); absent id keeps the
 // current selection (breadcrumb click doesn't blank the pane)

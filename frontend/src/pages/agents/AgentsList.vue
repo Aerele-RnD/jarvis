@@ -8,13 +8,13 @@
 				<!-- SM-only apply pipeline: prominent while the catalog is dirty,
 				     SyncPill-style pending/failed states while an apply runs -->
 				<div v-if="isSM" class="flex items-center gap-2">
-					<!-- duration lives IN the badge text — tooltips are invisible to
+					<!-- duration lives IN the badge text - tooltips are invisible to
 					     keyboard/SR users -->
 					<Badge v-if="sync.pending" theme="orange" variant="subtle">
 						<template #prefix>
 							<LoadingIndicator class="size-3" />
 						</template>
-						Applying agents — ~30s, one restart
+						Applying agents - ~30s, one restart
 					</Badge>
 					<template v-else>
 						<Badge v-if="syncFailed" theme="red" variant="subtle" label="Apply failed" />
@@ -43,7 +43,7 @@
 			<FeatherIcon name="x-circle" class="mt-0.5 size-4 shrink-0" />
 			<span>
 				Applying agents to your assistant failed<template v-if="syncFailureReason">
-					— {{ syncFailureReason }}</template
+					- {{ syncFailureReason }}</template
 				>. Use Retry apply to try again.
 			</span>
 		</div>
@@ -171,7 +171,7 @@
 						</div>
 
 						<div v-if="!a.allowed" class="mt-2 text-sm text-ink-gray-5">
-							Available to: {{ (a.allowed_roles || []).join(", ") || "—" }} — ask your
+							Available to: {{ (a.allowed_roles || []).join(", ") || "-" }} - ask your
 							administrator.
 						</div>
 					</div>
@@ -197,7 +197,7 @@
 			<template #body-content>
 				<p class="text-p-base text-ink-gray-6">
 					You have unapplied catalog changes. Apply them now, or leave anyway? Your changes
-					stay saved either way — they only reach the assistant after an Apply.
+					stay saved either way - they only reach the assistant after an Apply.
 				</p>
 			</template>
 			<template #actions>
@@ -212,14 +212,14 @@
 </template>
 
 <script setup>
-// Agents marketplace listing — /agents (DESIGN-V3 §15.3, marketplace revision).
+// Agents marketplace listing - /agents (DESIGN-V3 §15.3, marketplace revision).
 // Four hash-synced tabs (no hash = Featured; #available/#installed/#activity):
-//   Featured / Available / Installed — SERVER-paginated card grids via
+//   Featured / Available / Installed - SERVER-paginated card grids via
 //     agents_api.list_agents_page (tab semantics live server-side; envelope
 //     {rows,total,has_more,...}) with a Category select + a single sort choice
-//     (Most installed / Recently updated / Name). No ratings — deliberately
+//     (Most installed / Recently updated / Name). No ratings - deliberately
 //     deferred.
-//   Activity — the owner's lifecycle feed (AgentActivityTab, self-contained).
+//   Activity - the owner's lifecycle feed (AgentActivityTab, self-contained).
 // SM header action: prominent "Apply catalog changes" driven by
 // get_agents_sync_status().dirty (install/uninstall/enable since the last
 // successful Apply), with SyncPill-style pending/failed polling, plus a
@@ -301,12 +301,12 @@ const sortChoice = ref("installs") // installs | updated | name
 const SORT_OPTIONS = [
 	{ label: "Most installed", value: "installs" },
 	{ label: "Recently updated", value: "updated" },
-	{ label: "Name (A–Z)", value: "name" },
+	{ label: "Name (A-Z)", value: "name" },
 ]
 
 const { rows, total, loading, error, search, pageLength, resetLoad, loadMore } = useListPage({
 	fetchFn: (p) => {
-		// Activity owns its own list — never hit the catalog endpoint for it
+		// Activity owns its own list - never hit the catalog endpoint for it
 		// (covers the mount-time fetch when deep-linked to #activity)
 		if (!AGENT_TABS.includes(tab.value)) return { rows: [], total: 0, has_more: false }
 		return agentsApi.listAgentsPage({
@@ -329,7 +329,7 @@ watch([tab, category, sortChoice], ([t]) => {
 })
 
 // ── category select options (distinct catalog categories, DOMAINS titles) ────
-// One cheap list_agents() call feeds the distinct set — server pages can't
+// One cheap list_agents() call feeds the distinct set - server pages can't
 // (a page only sees its slice); DOMAINS is the fallback until/if it loads.
 const catalogCategories = ref(null)
 async function loadCategories() {
@@ -345,7 +345,7 @@ async function loadCategories() {
 		}
 		if (out.length) catalogCategories.value = out
 	} catch (e) {
-		// keep the DOMAINS fallback — the select must not break the page
+		// keep the DOMAINS fallback - the select must not break the page
 	}
 }
 const categoryOptions = computed(() => {
@@ -356,7 +356,7 @@ const categoryOptions = computed(() => {
 	]
 })
 
-// ── empty states (per-TAB copy — "catalog is empty" only when it truly is) ───
+// ── empty states (per-TAB copy - "catalog is empty" only when it truly is) ───
 const filtersActive = computed(() => !!(search.value || category.value))
 const emptyState = computed(() => {
 	if (filtersActive.value) {
@@ -408,7 +408,7 @@ function installsLabel(n) {
 }
 
 // ── SM probe (round-2 parity): getAgentAdminOverview succeeds only for System
-// Managers — PermissionError hides the apply action, no noise. ────────────────
+// Managers - PermissionError hides the apply action, no noise. ────────────────
 const isSM = ref(false)
 async function probeAdmin() {
 	try {
@@ -422,7 +422,7 @@ async function probeAdmin() {
 }
 
 // ── apply pipeline status (SyncPill pattern: 3s poll while pending) ──────────
-// dirty = the enabled set changed since the last successful Apply — drives the
+// dirty = the enabled set changed since the last successful Apply - drives the
 // prominent solid button, the "Changes pending" badge and the leave-guard.
 const sync = reactive({ pending: false, dirty: false, status: "" })
 const syncFailed = computed(() => (sync.status || "").startsWith("failed"))
@@ -461,7 +461,7 @@ async function applyCatalog() {
 	applying.value = true
 	try {
 		await api.applyAgents()
-		toast.success("Applying catalog changes — ~30s, one restart")
+		toast.success("Applying catalog changes - ~30s, one restart")
 		sync.pending = true
 		startSyncPoll()
 		return true
@@ -477,7 +477,7 @@ async function applyCatalog() {
 const leaveDialog = reactive({ show: false, next: null })
 
 onBeforeRouteLeave((to, from, next) => {
-	// drilling into /agents/:slug stays inside the agents area — don't nag
+	// drilling into /agents/:slug stays inside the agents area - don't nag
 	if (!isSM.value || !sync.dirty || String(to.path || "").startsWith("/agents")) return next()
 	leaveDialog.next = next
 	leaveDialog.show = true

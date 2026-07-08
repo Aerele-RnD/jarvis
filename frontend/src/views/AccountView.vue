@@ -4,7 +4,7 @@
 
 		<!-- Shell-integrated header: teleports into the app shell's #app-header
 		     strip (same "Open ERPNext Desk" button as every other page). There is
-		     no per-view sidebar — the app shell's Sidebar owns navigation, so the
+		     no per-view sidebar - the app shell's Sidebar owns navigation, so the
 		     Account page sits in the same chrome as Agents / Skills / Macros. -->
 		<LayoutHeader>
 			<template #left-header>
@@ -39,7 +39,7 @@
 							</ul>
 						</template>
 
-						<!-- Upgrade / Renew — deep-links to the existing Desk billing flow
+						<!-- Upgrade / Renew - deep-links to the existing Desk billing flow
 							 (Razorpay checkout). No new payment logic in this phase; the
 							 wizard-driven upgrade UI is a Phase-2 item. -->
 						<div v-if="upgradePlans.length" class="jv-acct-upgrades">
@@ -103,7 +103,7 @@
 					</template>
 				</section>
 
-				<!-- ===== Usage (compact — full dashboard lives on the Monitor tab) ===== -->
+				<!-- ===== Usage (compact - full dashboard lives on the Monitor tab) ===== -->
 				<section class="jv-acct-card">
 					<h2>Usage<span v-if="usage.applicable && usage.period" class="jv-acct-sub"> · {{ usage.period }}</span></h2>
 					<div v-if="usageLoading" class="jv-acct-muted">Loading…</div>
@@ -127,7 +127,7 @@ import DirectSubscriptionCard from "@/components/DirectSubscriptionCard.vue"
 import LayoutHeader from "@/components/LayoutHeader.vue"
 import { errMessage as errMsg } from "@/lib/errors"
 
-// Theme — shared composable: honours "jarvis-theme" pref, cross-tab sync, OS live.
+// Theme - shared composable: honours "jarvis-theme" pref, cross-tab sync, OS live.
 // (The theme toggle lives in the app shell's UserMenu; this view only needs the
 // palette vars for its .jv-acct-* card styles.)
 const { effectiveDark: dark, paletteVars } = useTheme()
@@ -178,7 +178,7 @@ async function loadAccount() {
 const savedNote = ref("")
 let savedTimer = null
 function onSaved(sync) {
-	savedNote.value = sync && sync.pending ? "Saved — syncing…" : "Saved"
+	savedNote.value = sync && sync.pending ? "Saved - syncing…" : "Saved"
 	clearTimeout(savedTimer)
 	savedTimer = setTimeout(() => { savedNote.value = "" }, 4000)
 }
@@ -195,7 +195,7 @@ const directSub = ref({ is_direct_subscription: false })
 const directSubLoading = ref(true)
 const directSubErr = ref("")
 // "subscription" (direct codex) | "pool" (api-key / multi-model). Defaulted ONCE
-// from the stored config — a direct subscription OR a single-subscription pool
+// from the stored config - a direct subscription OR a single-subscription pool
 // opens on the Chat-subscription tab (so a pooled single sub can switch to
 // direct); everything else opens on the pool editor. After that the user's tab
 // choice sticks across reloads.
@@ -216,7 +216,7 @@ async function loadDirectSub() {
 		}
 	} catch (e) {
 		// Don't silently drop a real direct-subscription tenant onto the empty
-		// pool editor (which has no re-authorize button) — surface a retryable
+		// pool editor (which has no re-authorize button) - surface a retryable
 		// error so they aren't left at a dead end.
 		directSub.value = { is_direct_subscription: false }
 		directSubErr.value = errMsg(e) || "Couldn't load your AI connection."
@@ -238,7 +238,7 @@ const connLoading = ref(true)
 const connErr = ref("")
 const expiresLabel = computed(() => {
 	const ms = conn.value.oauth_expires_at
-	return ms ? new Date(Number(ms)).toLocaleString() : "—"
+	return ms ? new Date(Number(ms)).toLocaleString() : "-"
 })
 async function loadConnection() {
 	if (!isSystemManager) { connLoading.value = false; return }
@@ -266,7 +266,7 @@ async function loadUsage() {
 onMounted(() => {
 	loadAccount()
 	// The Connection card is proxy-only, so fetch its status only once we know
-	// the tenant is a proxy tenant — avoids a wasted (currently failing) admin
+	// the tenant is a proxy tenant - avoids a wasted (currently failing) admin
 	// round-trip on every direct/api_key account load.
 	loadDirectSub().then(() => { if (directSub.value.proxy_active) loadConnection() })
 	loadUsage()
@@ -275,7 +275,7 @@ onMounted(() => {
 
 <style scoped>
 .jv-acct-main {
-	/* Scroll region inside the app shell's flex-col content column — flex:1 +
+	/* Scroll region inside the app shell's flex-col content column - flex:1 +
 	   min-height:0 (NOT height:100vh, which double-scrolls inside the shell). */
 	flex: 1;
 	min-width: 0;

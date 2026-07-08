@@ -10,7 +10,7 @@ import { session, requireLogin } from "./data/session"
 import "./index.css"
 import "./main.css"
 
-// Bounce to Frappe login if there's no session (cookie) — same auth as Desk.
+// Bounce to Frappe login if there's no session (cookie) - same auth as Desk.
 requireLogin()
 
 setConfig("resourceFetcher", frappeRequest)
@@ -19,7 +19,7 @@ const app = createApp(App)
 app.use(resourcesPlugin)
 app.use(router)
 
-// `?nosocket` skips the realtime connection — handy for headless screenshots,
+// `?nosocket` skips the realtime connection - handy for headless screenshots,
 // where an open websocket otherwise keeps the page from ever going idle.
 const socket = window.location.search.includes("nosocket") ? null : initSocket()
 app.provide("$socket", socket)

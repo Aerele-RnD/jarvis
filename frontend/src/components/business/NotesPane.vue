@@ -7,12 +7,12 @@
 				<div class="mt-0.5 text-sm text-ink-gray-6">
 					<!-- the Review tab is SM-only; pointing everyone at it is a dead end -->
 					<template v-if="canProcess">
-						Notes you've saved. Usually processed within a day — proposals show
+						Notes you've saved. Usually processed within a day - proposals show
 						up on the Review tab; wiki context may update sooner.
 					</template>
 					<template v-else>
 						Notes you've saved. Jarvis usually works them into its org knowledge
-						within a day — wiki pages may update sooner.
+						within a day - wiki pages may update sooner.
 					</template>
 				</div>
 			</div>
@@ -116,7 +116,7 @@
 					</div>
 				</div>
 				<div class="flex shrink-0 items-center">
-					<!-- only New notes are editable — the edited transcript re-feeds
+					<!-- only New notes are editable - the edited transcript re-feeds
 					     the daily sweep; Processed/Archived text is already consumed -->
 					<Button
 						v-if="row.status === 'New'"
@@ -175,7 +175,7 @@
 </template>
 
 <script setup>
-// NotesPane — the right pane of the Business tab: the caller's own voice
+// NotesPane - the right pane of the Business tab: the caller's own voice
 // notes with server-side search (300ms debounce), a status filter, real
 // Load More pagination, edit-while-New and delete. For System Managers the
 // old Processing card collapses into this pane's header: "Process notes now"
@@ -235,7 +235,7 @@ const editDialog = reactive({ show: false, name: "", text: "", saving: false })
 const filtered = computed(() => !!(search.value.trim() || statusFilter.value))
 
 // ── loader ───────────────────────────────────────────────────────────────────
-// monotonic request id — drops stale responses (the useListPage idiom): the
+// monotonic request id - drops stale responses (the useListPage idiom): the
 // debounced search fetch, the immediate status-filter fetch and the parent's
 // reload() can be in flight at once; only the newest may render.
 let reqId = 0
@@ -251,7 +251,7 @@ async function fetchNotes(mode = "reset") {
 			status: statusFilter.value || undefined,
 			search: search.value.trim() || undefined,
 		})
-		if (id !== reqId) return // stale — a newer request superseded this one
+		if (id !== reqId) return // stale - a newer request superseded this one
 		const rows = res.rows || []
 		notes.rows = append ? [...notes.rows, ...rows] : rows
 		notes.total = res.total || 0
@@ -279,7 +279,7 @@ watch(search, () => {
 watch(statusFilter, () => fetchNotes("reset"))
 onBeforeUnmount(() => clearTimeout(searchTimer))
 
-// ── edit (New notes only — server enforces owner + status) ───────────────────
+// ── edit (New notes only - server enforces owner + status) ───────────────────
 function openEdit(row) {
 	editDialog.name = row.name
 	editDialog.text = row.transcript || row.excerpt || ""
@@ -311,7 +311,7 @@ function confirmDeleteNote(row) {
 		message:
 			row.status === "Processed"
 				? "This removes the note from your list. Knowledge Jarvis already extracted from it is kept."
-				: "This note hasn't been processed yet — Jarvis won't learn from it if you delete it now.",
+				: "This note hasn't been processed yet - Jarvis won't learn from it if you delete it now.",
 		onConfirm: async ({ hideDialog }) => {
 			await doDeleteNote(row)
 			hideDialog()
