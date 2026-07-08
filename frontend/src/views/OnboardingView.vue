@@ -660,11 +660,15 @@ async function afterSaveRecheckReady() {
 	state.finishNote = ""
 	state.finishing = true
 	const ready = await waitUntilReady()
-	state.finishing = false
 	if (ready) {
+		// Keep the "Setting up Jarvis" spinner up THROUGH the full-page reload.
+		// Flipping finishing off first re-shows the "Give Jarvis a brain" editor
+		// for a frame before the browser navigates — the flicker/rerender users
+		// saw on the final click. Leave it on; location.assign tears the page down.
 		window.location.assign("/jarvis/")
 		return
 	}
+	state.finishing = false
 	state.finishNote = "Still finishing setup. This can take a few seconds. You can continue to Jarvis now, or wait and try again."
 }
 
