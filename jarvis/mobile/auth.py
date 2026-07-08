@@ -16,8 +16,10 @@ System-Manager gated AND rotates the secret on every call.
 """
 
 import json
+import socket
 from base64 import b64encode
 from io import BytesIO
+from urllib.parse import urlparse
 
 import frappe
 
@@ -55,17 +57,42 @@ def get_mobile_token() -> dict:
 	return {"api_key": doc.api_key, "api_secret": secret, "site": frappe.local.site}
 
 
+def _lan_ip() -> str | None:
+	"""Best-effort primary LAN IP of this host (opens a UDP socket, sends nothing)."""
+	try:
+		s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+		try:
+			s.connect(("8.8.8.8", 80))
+			return s.getsockname()[0]
+		finally:
+			s.close()
+	except Exception:
+		return None
+
+
 def _pairing_payload() -> dict:
 	"""Non-secret site connection details the phone needs to reach this site."""
+	dev = bool(frappe.conf.get("developer_mode"))
 	# In dev/self-host the realtime server listens on its own port; in production
 	# it rides the site origin, so no port is advertised.
-	port = None
-	if frappe.conf.get("developer_mode"):
-		port = frappe.conf.get("socketio_port")
+	port = frappe.conf.get("socketio_port") if dev else None
+
+	site = frappe.utils.get_url()
+	# Dev foolproofing: if the web was opened at localhost/.localhost/127.0.0.1,
+	# the phone can't reach that host — swap in the laptop's LAN IP so the scanned
+	# URL is reachable. Dev-only; production hostnames are never touched.
+	if dev:
+		parsed = urlparse(site)
+		host = parsed.hostname or ""
+		if host in ("127.0.0.1", "localhost") or host.endswith(".localhost"):
+			lan = _lan_ip()
+			if lan:
+				suffix = f":{parsed.port}" if parsed.port else ""
+				site = f"{parsed.scheme}://{lan}{suffix}"
 
 	return {
 		"v": PAIRING_PAYLOAD_VERSION,
-		"site": frappe.utils.get_url(),
+		"site": site,
 		"name": frappe.local.site,
 		"port": port,
 		# The web user's login id, so the phone can prefill the email field
