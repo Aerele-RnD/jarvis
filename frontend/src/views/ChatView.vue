@@ -887,10 +887,10 @@
 			</div>
 		</transition>
 		<DraftPreview
-			v-if="preview"
-			:model="preview.model"
-			:headline="preview.headline"
-			@close="preview = null"
+			v-if="previewOpen && summaryState.model"
+			:model="summaryState.model"
+			:headline="(summaryState.view && summaryState.view.headline) || ''"
+			@close="previewOpen = false"
 			@edit="onPreviewEdit"
 			@confirm="onPreviewConfirm"
 		/>
@@ -2141,20 +2141,17 @@ async function confirmSummary() {
 }
 
 // Read-only preview: opens DraftPreview over the current summary's model.
-const preview = ref(null) // { model, headline } while the read-only preview is open
+const previewOpen = ref(false)
 function previewSummary() {
 	if (!summaryState.value.model) return
-	preview.value = {
-		model: summaryState.value.model,
-		headline: (summaryState.value.view && summaryState.value.view.headline) || "",
-	}
+	previewOpen.value = true
 }
 async function onPreviewConfirm() {
-	preview.value = null
+	previewOpen.value = false
 	await confirmSummary()
 }
 function onPreviewEdit() {
-	preview.value = null
+	previewOpen.value = false
 	const a = activeAction.value
 	if (a) openDraftPanel({ verb: a.verb || "create", ...a })
 }

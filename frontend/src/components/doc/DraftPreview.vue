@@ -74,6 +74,7 @@ const tables = computed(() => (props.model.tables || []).filter((t) => (t.rows |
 
 <style scoped>
 .dp-overlay { position: absolute; inset: 0; z-index: 61; background: rgba(15, 15, 22, 0.32); display: flex; justify-content: flex-end; }
+.jv-dark .dp-overlay { background: rgba(0, 0, 0, 0.5); }
 .dp-panel { width: min(720px, 82%); height: 100%; background: var(--surface); border-left: 1px solid var(--border); display: flex; flex-direction: column; box-shadow: -14px 0 44px rgba(20, 20, 30, 0.14); }
 .dp-head { display: flex; align-items: center; gap: 9px; padding: 11px 12px 11px 14px; border-bottom: 1px solid var(--border); flex: none; }
 .dp-head svg { flex: none; }
