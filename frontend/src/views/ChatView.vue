@@ -245,7 +245,7 @@
 									<button class="jv-confirm-yes" @click="answerConfirm(true, confirmLabel(m))">Confirm</button>
 								</div>
 								<!-- interactive clarifying questions (Claude-style cards; one Submit) -->
-								<div v-else-if="askFor === m.name && activeAsk" class="jv-ask">
+								<div v-else-if="askFor === m.name && activeAsk" class="jv-ask" :class="{ 'jv-ask--form': askIsForm }">
 									<div v-for="(q, qi) in activeAsk.questions" :key="qi" class="jv-ask-q">
 										<div class="jv-ask-qt"><span class="jv-ask-num">{{ qi + 1 }}</span>{{ q.q }}</div>
 										<!-- yes/no, with optional custom labels (e.g. Approve / Reject) -->
@@ -2381,6 +2381,12 @@ const askSel = ref({}) // qIdx -> string (single/yesno/date/datetime/text/link) 
 const askOther = ref({}) // qIdx -> free-text (option types only)
 const askLink = ref({}) // qIdx -> { q, items, open } for link-type record search
 const _FIELD_TYPES = ["date", "datetime", "link", "text"]
+// An ask whose questions are ALL field-type reads better as a compact mini-form
+// (no numbered badges, no dividers) than as a numbered question list.
+const askIsForm = computed(() => {
+	const spec = activeAsk.value
+	return !!spec && spec.questions.length > 0 && spec.questions.every((q) => _FIELD_TYPES.includes(q.type))
+})
 // Reset the draft whenever a new question set appears (new message asks).
 watch(askFor, () => {
 	askSel.value = {}
@@ -4282,6 +4288,10 @@ function onGlobalKey(e) {
 .jv-ask-q:last-of-type { border-bottom: 0; padding-bottom: 4px; margin-bottom: 4px; }
 .jv-ask-qt { display: flex; align-items: flex-start; gap: 8px; font-size: 13.5px; font-weight: 600; color: var(--text); margin-bottom: 9px; line-height: 1.4; }
 .jv-ask-num { flex: none; width: 19px; height: 19px; border-radius: 99px; background: var(--blue-bg); color: var(--blue); font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; margin-top: 1px; }
+.jv-ask--form .jv-ask-num { display: none; }
+.jv-ask--form .jv-ask-q { border-bottom: 0; padding-bottom: 11px; margin-bottom: 11px; }
+.jv-ask--form .jv-ask-q:last-of-type { padding-bottom: 0; margin-bottom: 0; }
+.jv-ask--form .jv-ask-qt { font-size: 10.5px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); margin-bottom: 6px; }
 .jv-ask-opts { display: flex; flex-wrap: wrap; gap: 7px; }
 .jv-ask-opt { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 9px; font-family: inherit; font-size: 12.5px; font-weight: 500; color: var(--text-2); cursor: pointer; transition: border-color .12s, background .12s, color .12s; }
 .jv-ask-opt:hover { border-color: var(--border-2); color: var(--text); }
