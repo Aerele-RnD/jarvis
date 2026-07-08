@@ -60,7 +60,11 @@
 			"#" + NUDGE_ID + " .jvn-name{font-size:11px;font-weight:600;color:var(--text-muted,#8a8aa0);margin-bottom:3px;}" +
 			"#" + NUDGE_ID + " .jvn-btn{display:inline-flex;align-items:center;gap:6px;margin-top:10px;background:var(--text-color,#16181d);color:var(--fg-color,#fff);border:0;border-radius:8px;padding:7px 13px;font-size:12.5px;font-weight:600;text-decoration:none;cursor:pointer;}" +
 			"#" + NUDGE_ID + " .jvn-x{position:absolute;top:-9px;right:-9px;width:22px;height:22px;border-radius:50%;background:var(--card-bg,#fff);border:1px solid var(--border-color,#e6e6ee);color:var(--text-muted,#6b6b80);font-size:13px;line-height:1;cursor:pointer;box-shadow:0 2px 6px rgba(20,20,40,.14);display:flex;align-items:center;justify-content:center;}" +
-			"#" + NUDGE_ID + " .jvn-tail{align-self:flex-end;margin:-2px 16px 0 0;width:14px;height:14px;background:var(--card-bg,#fff);border-right:1px solid var(--border-color,#e6e6ee);border-bottom:1px solid var(--border-color,#e6e6ee);transform:rotate(45deg);opacity:0;animation:jvNudgeIn .32s ease .5s forwards;}";
+			// Speech tail: a small oval + a trailing smaller oval that drift down
+			// toward the launcher, so it reads as a soft cloud puff rather than the
+			// old hard rotated square.
+			"#" + NUDGE_ID + " .jvn-tail{position:relative;align-self:flex-end;margin:4px 34px 0 0;width:15px;height:11px;border-radius:50%;background:var(--card-bg,#fff);border:1px solid var(--border-color,#e6e6ee);box-shadow:0 4px 12px -6px rgba(20,20,40,.2);opacity:0;animation:jvNudgeIn .32s ease .5s forwards;}" +
+			"#" + NUDGE_ID + " .jvn-tail::after{content:'';position:absolute;right:-10px;bottom:-8px;width:8px;height:7px;border-radius:50%;background:var(--card-bg,#fff);border:1px solid var(--border-color,#e6e6ee);box-shadow:0 4px 12px -6px rgba(20,20,40,.2);}";
 		document.head.appendChild(st);
 	}
 
@@ -94,7 +98,7 @@
 			var n = document.createElement("div"); n.className = "jvn-name"; n.textContent = "Jarvis"; b.appendChild(n);
 
 			var t = document.createElement("div");
-			t.textContent = "Hey 👋 I'm Jarvis. Set me up and I'll handle the ERP busywork. I can draft quotes, chase invoices, pull reports, and automate your workflows.";
+			t.textContent = "Hey 👋 I'm Jarvis. Set me up and I'll handle the ERP busywork like quotes, invoices, and reports.";
 			b.appendChild(t);
 
 			var cta = document.createElement("a");
