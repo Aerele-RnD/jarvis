@@ -68,17 +68,29 @@ class OpenclawUnreachableError(JarvisError):
     """Raised when the openclaw gateway can't be reached (WS handshake
     failed, container down).
 
-    Sprint-3 (2026-06-16 review): may carry a structured ``code`` taken
-    from openclaw's rejection payload (``device-not-paired``,
-    ``token-mismatch``, ``signature-invalid``, etc.). Downstream
-    classifiers (e.g. _is_stale_pairing) should branch on this
-    attribute, not on a substring match of the message. ``code`` is
-    None when the error didn't originate from an openclaw response
-    (e.g. network-level WS open failure)."""
+    May carry the openclaw connect-rejection envelope so downstream
+    classifiers (e.g. ``_is_stale_pairing``) can branch on structured
+    fields instead of substring-matching the message:
 
-    def __init__(self, message: str, *, code: str | None = None):
+    - ``code`` - the COARSE top-level ``error.code`` (e.g.
+      ``INVALID_REQUEST``, ``UNAVAILABLE``). Note the gateway reports a
+      device-token mismatch under ``INVALID_REQUEST``; the precise reason
+      is in the detail fields below, NOT here.
+    - ``detail_code`` - ``error.details.code`` (e.g.
+      ``AUTH_DEVICE_TOKEN_MISMATCH``, ``AUTH_SCOPE_MISMATCH``). This is the
+      reliable recover-signal for stale pairing.
+    - ``auth_reason`` - ``error.details.authReason`` (underscore wire form,
+      e.g. ``device_token_mismatch``).
+
+    All three are None when the error didn't originate from an openclaw
+    response (e.g. a network-level WS open failure)."""
+
+    def __init__(self, message: str, *, code: str | None = None,
+                 detail_code: str | None = None, auth_reason: str | None = None):
         super().__init__(message)
         self.code = code
+        self.detail_code = detail_code
+        self.auth_reason = auth_reason
 
 
 class OpenclawReloadFailedError(JarvisError):

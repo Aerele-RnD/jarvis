@@ -122,20 +122,33 @@ _CLIENT_MODE = "backend"
 _ROLE = "operator"
 _PLATFORM = "linux"  # informational; only affects the v3 signature payload
 
-# openclaw rejection codes that indicate the customer's stored pairing
-# is stale for the CURRENT container (typically because admin re-provisioned
-# the tenant and the new container has no record of this deviceId). On
-# any of these we wipe + re-pair once. OTHER rejection codes
-# (signature-invalid, scope-mismatch, etc.) are programming bugs / config
-# errors and must NOT trigger a retry - that'd hide the bug behind silent
-# re-pair attempts that destroy valid credentials.
+# A stale-pairing rejection means the customer's stored device token no longer
+# matches the CURRENT container (typically admin re-provisioned the tenant and
+# the new container has no record of this deviceId). On these we wipe + re-pair
+# once. Scope/rate failures and signature/client-bug rejections are NOT fixable
+# by re-pairing and must NOT trigger it - that'd churn valid credentials.
 #
-# Sprint-3 (2026-06-16 review): we used to substring-match on
-# ``str(err).lower()`` which would false-positive any future error
-# embedding one of these tokens in its message text (think log lines,
-# diagnostic dumps, partial-match codes like ``device-not-paired-yet``).
-# The classifier now reads the structured ``.code`` attribute populated
-# at the raise site from openclaw's response envelope.
+# THE RELIABLE SIGNAL IS ``error.details.code``, NOT the top-level code. The
+# gateway reports this rejection with a coarse top-level ``error.code =
+# "INVALID_REQUEST"`` and the precise reason under
+# ``error.details.code = "AUTH_DEVICE_TOKEN_MISMATCH"``. Because the bench
+# always presents an explicit device token, the gateway collapses every
+# recoverable device-token failure (not-paired / token-missing / token-revoked /
+# token-mismatch / role-missing) into that single detail code, so matching it is
+# both correct AND complete. Scope/rate map to AUTH_SCOPE_MISMATCH /
+# AUTH_RATE_LIMITED (excluded), and the device-SIGNATURE path is a different
+# shape (client bug, excluded).
+_STALE_PAIRING_DETAIL_CODE = "AUTH_DEVICE_TOKEN_MISMATCH"
+# Secondary signal: the underscore wire ``authReason`` (used if a future gateway
+# ever ships the detail code absent). NOT the hyphenated fine-grained reasons -
+# those are collapsed server-side and never reach the wire on this path.
+_STALE_PAIRING_AUTH_REASON = "device_token_mismatch"
+# Legacy top-level ``.code`` set. DEAD against the current gateway: its
+# top-level error.code enum is {NOT_LINKED, NOT_PAIRED, AGENT_TIMEOUT,
+# INVALID_REQUEST, APPROVAL_NOT_FOUND, UNAVAILABLE} - none of these hyphenated
+# values can appear there, so this never matched a real rejection. Kept only as
+# a harmless defensive fallback if a future gateway promotes a fine-grained code
+# to the top level.
 _STALE_PAIRING_CODES = frozenset({
 	"device-not-paired",
 	"token-mismatch",
@@ -145,16 +158,57 @@ _STALE_PAIRING_CODES = frozenset({
 
 
 def _is_stale_pairing(err: Exception) -> bool:
-	"""Return True iff ``err`` is an OpenclawUnreachableError whose
-	openclaw error.code is in the stale-pairing set.
+	"""Return True iff ``err`` is a recoverable stale device-pairing rejection
+	that a wipe + re-pair can fix.
 
-	Strictly typed: an error WITHOUT a ``.code`` attribute (network-level
-	failure, programmer bug) never triggers the repair path. The previous
-	substring check would have caught these falsely if their message
-	happened to contain one of the marker strings.
+	Primary signal: openclaw's structured ``error.details.code ==
+	"AUTH_DEVICE_TOKEN_MISMATCH"``. Secondary: the underscore wire
+	``authReason == "device_token_mismatch"``. We deliberately do NOT recover on
+	scope/rate failures (AUTH_SCOPE_MISMATCH / AUTH_RATE_LIMITED) or the separate
+	device-signature path - re-pairing can't fix those and would churn creds. An
+	error without these structured markers (network failure, programmer bug)
+	never triggers repair.
 	"""
-	code = getattr(err, "code", None)
-	return code in _STALE_PAIRING_CODES
+	if getattr(err, "detail_code", None) == _STALE_PAIRING_DETAIL_CODE:
+		return True
+	if getattr(err, "auth_reason", None) == _STALE_PAIRING_AUTH_REASON:
+		return True
+	# Legacy defensive fallback (see _STALE_PAIRING_CODES above).
+	return getattr(err, "code", None) in _STALE_PAIRING_CODES
+
+
+# Cross-turn re-pair cooldown. Per-connect the repair loop is bounded
+# (allow_repair flips to False on the retry), but across turns nothing stops a
+# tenant whose pairing keeps diverging (e.g. agent_url points at a different
+# container than admin re-pairs) from re-pairing on EVERY turn - silent
+# credential churn plus gateway auth-rate-limiter pressure. After a re-pair we
+# mark a short cooldown (keyed by gateway_url, stable across keypair rotation);
+# if we hit stale-pairing again within it, we skip the re-pair and surface the
+# error loudly so ops can spot the divergence.
+_REPAIR_COOLDOWN_SECONDS = 300
+
+
+def _repair_cooldown_key(gateway_url: str) -> str:
+	return f"jarvis_chat_repair_cooldown:{gateway_url}"
+
+
+def _repair_on_cooldown(gateway_url: str) -> bool:
+	import frappe
+	try:
+		return bool(frappe.cache().get_value(_repair_cooldown_key(gateway_url)))
+	except Exception:
+		return False  # cache hiccup must never block a legitimate repair
+
+
+def _mark_repair_attempted(gateway_url: str) -> None:
+	import frappe
+	try:
+		frappe.cache().set_value(
+			_repair_cooldown_key(gateway_url), "1",
+			expires_in_sec=_REPAIR_COOLDOWN_SECONDS,
+		)
+	except Exception:
+		pass
 
 
 def _chat_final_text(payload: dict) -> str | None:
@@ -248,7 +302,23 @@ class OpenclawSession:
 			try: ws.close()
 			except Exception: pass
 			if allow_repair and _is_stale_pairing(e):
+				if _repair_on_cooldown(gateway_url):
+					# A re-pair already ran for this gateway within the cooldown
+					# and we're STILL rejected - re-pairing isn't fixing it.
+					# Surface loudly instead of churning credentials every turn.
+					_logger.warning(
+						"OpenclawSession.connect: re-pair ran recently but the "
+						"gateway still rejects device pairing (%s) - not re-pairing "
+						"again to avoid credential churn. Likely a divergence "
+						"(agent_url points at a different/older container, or the "
+						"container's device store keeps resetting). Run "
+						"jarvis.chat.device.rotate_chat_device on the site or check "
+						"the tenant's container assignment. gateway=%s",
+						e, gateway_url,
+					)
+					raise
 				cls._repair_and_reconnect(gateway_url, stale_device_id=creds.device_id)
+				_mark_repair_attempted(gateway_url)
 				return cls._attempt_connect(gateway_url, allow_repair=False)
 			raise
 		except Exception:
@@ -707,9 +777,16 @@ class OpenclawSession:
 			if _is_response_frame(frame, connect_id):
 				if not frame.get("ok"):
 					err = frame.get("error") or {}
+					# The precise auth reason rides in error.details, NOT the
+					# coarse top-level code (which is INVALID_REQUEST for a device
+					# -token mismatch). Capture both so _is_stale_pairing can
+					# branch on the structured detail.
+					details = err.get("details") or {}
 					raise OpenclawUnreachableError(
 						f"connect rejected: {err.get('code', '?')}: {err.get('message', '')}",
 						code=err.get("code"),
+						detail_code=details.get("code"),
+						auth_reason=details.get("authReason"),
 					)
 				return
 		raise OpenclawUnreachableError("no connect response before timeout")

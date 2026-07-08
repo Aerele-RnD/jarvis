@@ -28,7 +28,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from frappe.tests.utils import FrappeTestCase
 
 from jarvis.chat.device import ChatDeviceCredentials
-from jarvis.chat.openclaw_client import OpenclawSession
+from jarvis.chat.openclaw_client import OpenclawSession, _is_stale_pairing
 from jarvis.exceptions import OpenclawUnreachableError
 
 
@@ -377,17 +377,25 @@ class TestSelfHealOnStalePairing(FrappeTestCase):
 	that, clear local creds, re-pair via ensure_paired, and retry the WS
 	once. A second stale signal is a real failure (no infinite loop)."""
 
+	def setUp(self):
+		# The cross-turn re-pair cooldown is keyed by gateway_url in shared
+		# Redis; clear it so a prior test's repair doesn't suppress this one's.
+		import frappe
+		from jarvis.chat.openclaw_client import _repair_cooldown_key
+		frappe.cache().delete_value(_repair_cooldown_key("ws://t"))
+
 	def _build_two_ws(self, first_reject_marker: str, second_ok: bool):
-		"""Return two scripted WS instances: first one rejects connect with
-		`first_reject_marker` in the error message; second one accepts."""
+		"""Return two scripted WS instances: first rejects connect with
+		`first_reject_marker` as the LEGACY top-level error.code; second accepts.
+
+		Note: the real gateway reports a device-token mismatch as
+		error.code="INVALID_REQUEST" with the reason under error.details.code
+		("AUTH_DEVICE_TOKEN_MISMATCH") - exercised by the *_real_wire_* tests
+		below. These legacy-shaped fixtures only exercise the defensive
+		top-level-.code fallback in _is_stale_pairing."""
 		first_sent: list = []
 		second_sent: list = []
 
-		# Sprint-3 (2026-06-16 review): openclaw's rejection payload puts
-		# the marker in error.code, not error.message. The classifier on
-		# the client side now reads the structured code rather than
-		# substring-matching the message text, so the scripted fixture
-		# must place the marker accordingly.
 		def _first_nack():
 			req_id = first.sent[-1]["id"]
 			return _frame({"type": "res", "id": req_id, "ok": False,
@@ -459,10 +467,9 @@ class TestSelfHealOnStalePairing(FrappeTestCase):
 		device-signature-invalid means our client code is broken; clearing
 		creds won't help and the operator needs to see the original error.
 
-		Sprint-3 (2026-06-16): the classifier now reads the structured
-		``code`` attribute, not the message. Putting the marker in
-		``error.code`` is the production wire shape; this test pins that
-		signature-invalid is NOT in the stale-pairing code set."""
+		The classifier reads structured fields, never the message. This marker
+		is neither the stale-pairing detail code nor in the legacy fallback set,
+		so it is NOT stale-pairing."""
 		creds = _make_creds()
 
 		def _nack():
@@ -513,6 +520,139 @@ class TestSelfHealOnStalePairing(FrappeTestCase):
 			"path - we read the structured error.code",
 		)
 
+	# --- Real gateway wire shape: error.code=INVALID_REQUEST + error.details ---
+
+	def _connect_rejecting_with(self, error: dict, *, second_ok: bool | None):
+		"""Connect against a first WS that rejects with the given `error`
+		object. If second_ok is None only one WS is scripted (no retry
+		expected); else a second WS accepts (True) or rejects (False).
+		Returns (clear_called, ensure_calls, raised)."""
+		def _first_nack():
+			return _frame({"type": "res", "id": first.sent[-1]["id"],
+						   "ok": False, "error": error})
+
+		first = _ScriptedWS([_challenge(), _first_nack])
+		ws_list = [first]
+		if second_ok is not None:
+			def _second():
+				rid = second.sent[-1]["id"]
+				return _frame({"type": "res", "id": rid, "ok": second_ok,
+							   "error": error, "payload": {}})
+			second = _ScriptedWS([_challenge(), _second])
+			ws_list.append(second)
+
+		ws_iter = iter(ws_list)
+		clear_called: list = []
+		ensure_calls: list = []
+		creds = _make_creds()
+
+		def _ensure():
+			ensure_calls.append(True)
+			return creds
+
+		raised = None
+		try:
+			with patch("jarvis.chat.openclaw_client.websocket.create_connection",
+					   side_effect=lambda *a, **kw: next(ws_iter)), \
+				 patch("jarvis.chat.openclaw_client.ensure_paired", side_effect=_ensure), \
+				 patch("jarvis.chat.openclaw_client.clear_credentials",
+					   side_effect=lambda: clear_called.append(True)):
+				sess = OpenclawSession.connect("ws://t")
+				sess.close()
+		except OpenclawUnreachableError as e:
+			raised = e
+		return clear_called, ensure_calls, raised
+
+	def test_real_wire_device_token_mismatch_triggers_repair(self):
+		"""The production shape: top-level INVALID_REQUEST with the reason in
+		error.details.code=AUTH_DEVICE_TOKEN_MISMATCH must wipe + re-pair once."""
+		err = {"code": "INVALID_REQUEST",
+			   "message": "unauthorized: device token mismatch (rotate/reissue device token)",
+			   "details": {"code": "AUTH_DEVICE_TOKEN_MISMATCH",
+						   "authReason": "device_token_mismatch"}}
+		clears, ensure_calls, raised = self._connect_rejecting_with(err, second_ok=True)
+		self.assertEqual(len(clears), 1)
+		self.assertEqual(len(ensure_calls), 2)
+		self.assertIsNone(raised)
+
+	def test_real_wire_scope_mismatch_does_not_repair(self):
+		"""A scope/config problem is not fixable by re-pairing - surface it."""
+		err = {"code": "INVALID_REQUEST", "message": "unauthorized: scope",
+			   "details": {"code": "AUTH_SCOPE_MISMATCH", "authReason": "scope_mismatch"}}
+		clears, _, raised = self._connect_rejecting_with(err, second_ok=None)
+		self.assertFalse(clears, "scope mismatch must NOT trigger a re-pair")
+		self.assertIsNotNone(raised)
+
+	def test_real_wire_rate_limited_does_not_repair(self):
+		err = {"code": "INVALID_REQUEST", "message": "rate limited",
+			   "details": {"code": "AUTH_RATE_LIMITED", "authReason": "rate_limited"}}
+		clears, _, raised = self._connect_rejecting_with(err, second_ok=None)
+		self.assertFalse(clears, "rate limiting must NOT trigger a re-pair (would worsen it)")
+		self.assertIsNotNone(raised)
+
+	def test_bare_invalid_request_without_details_does_not_repair(self):
+		"""INVALID_REQUEST with no pairing detail is a generic bad request,
+		not stale pairing - must not churn credentials."""
+		err = {"code": "INVALID_REQUEST", "message": "bad request"}
+		clears, _, raised = self._connect_rejecting_with(err, second_ok=None)
+		self.assertFalse(clears)
+		self.assertIsNotNone(raised)
+
+	def test_auth_reason_underscore_is_stale_when_detail_code_absent(self):
+		"""Secondary signal: the underscore authReason still classifies as
+		stale if the gateway ever omits details.code."""
+		err = {"code": "INVALID_REQUEST", "message": "device token mismatch",
+			   "details": {"authReason": "device_token_mismatch"}}
+		clears, _, raised = self._connect_rejecting_with(err, second_ok=True)
+		self.assertEqual(len(clears), 1)
+		self.assertIsNone(raised)
+
+	def test_repair_skipped_when_on_cooldown(self):
+		"""If a re-pair already ran for this gateway within the cooldown and we
+		are STILL rejected, skip the re-pair and surface the error (no churn)."""
+		from jarvis.chat.openclaw_client import _mark_repair_attempted
+		_mark_repair_attempted("ws://t")  # simulate a very recent repair
+		err = {"code": "INVALID_REQUEST", "message": "device token mismatch",
+			   "details": {"code": "AUTH_DEVICE_TOKEN_MISMATCH"}}
+		# Only one WS scripted: with the cooldown active, no repair + retry happens.
+		clears, ensure_calls, raised = self._connect_rejecting_with(err, second_ok=None)
+		self.assertFalse(clears, "cooldown must suppress the re-pair")
+		self.assertEqual(len(ensure_calls), 1, "no second attempt while on cooldown")
+		self.assertIsNotNone(raised)
+
+
+class TestStalePairingClassifier(FrappeTestCase):
+	"""Unit tests for _is_stale_pairing against the structured error fields."""
+
+	def _err(self, **kw):
+		return OpenclawUnreachableError("connect rejected", **kw)
+
+	def test_detail_code_device_token_mismatch_is_stale(self):
+		self.assertTrue(_is_stale_pairing(
+			self._err(code="INVALID_REQUEST", detail_code="AUTH_DEVICE_TOKEN_MISMATCH")))
+
+	def test_scope_and_rate_detail_codes_not_stale(self):
+		self.assertFalse(_is_stale_pairing(
+			self._err(code="INVALID_REQUEST", detail_code="AUTH_SCOPE_MISMATCH")))
+		self.assertFalse(_is_stale_pairing(
+			self._err(code="INVALID_REQUEST", detail_code="AUTH_RATE_LIMITED")))
+
+	def test_bare_invalid_request_not_stale(self):
+		self.assertFalse(_is_stale_pairing(self._err(code="INVALID_REQUEST")))
+
+	def test_underscore_auth_reason_is_stale(self):
+		self.assertTrue(_is_stale_pairing(
+			self._err(code="INVALID_REQUEST", auth_reason="device_token_mismatch")))
+
+	def test_legacy_top_level_code_still_stale(self):
+		# Defensive fallback path stays green even though the live gateway
+		# never emits these as a top-level code.
+		self.assertTrue(_is_stale_pairing(self._err(code="device-not-paired")))
+
+	def test_plain_error_never_stale(self):
+		self.assertFalse(_is_stale_pairing(OpenclawUnreachableError("network down")))
+		self.assertFalse(_is_stale_pairing(RuntimeError("nope")))
+
 
 class TestRepairConvoyCollapse(FrappeTestCase):
 	"""Sprint-2 (2026-06-16): N concurrent workers all observe a stale
@@ -524,15 +664,22 @@ class TestRepairConvoyCollapse(FrappeTestCase):
 	collapses the convoy: one worker pairs, the rest detect the new
 	device_id on disk and skip the wipe."""
 
+	def setUp(self):
+		import frappe
+		from jarvis.chat.openclaw_client import _repair_cooldown_key
+		frappe.cache().delete_value(_repair_cooldown_key("ws://t"))
+
 	def _build_stale_then_ok(self) -> tuple[_ScriptedWS, _ScriptedWS]:
-		"""Two scripted WS: first rejects with device-not-paired, second
+		"""Two scripted WS: first rejects with a stale-pairing signal, second
 		accepts. Caller wires per-test patches on top."""
 		first = _ScriptedWS([_challenge(), None])
 		second = _ScriptedWS([_challenge(), None])
 		first._frames[1] = lambda: _frame({
 			"type": "res", "id": first.sent[-1]["id"], "ok": False,
-			# Sprint-3: marker in code, not message - matches openclaw's wire shape.
-			"error": {"code": "device-not-paired", "message": "stale"},
+			# Real gateway wire shape: coarse INVALID_REQUEST + the reason under
+			# error.details.code (AUTH_DEVICE_TOKEN_MISMATCH).
+			"error": {"code": "INVALID_REQUEST", "message": "device token mismatch",
+					  "details": {"code": "AUTH_DEVICE_TOKEN_MISMATCH"}},
 		})
 		second._frames[1] = lambda: _frame({
 			"type": "res", "id": second.sent[-1]["id"], "ok": True, "payload": {},
