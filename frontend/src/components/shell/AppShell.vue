@@ -32,6 +32,7 @@
 				</div>
 			</template>
 			<Dialogs />
+			<SettingsDialog />
 			<JarvisCommandPalette />
 		</div>
 	</FrappeUIProvider>
@@ -50,6 +51,7 @@ import { useShortcuts } from "@/composables/useShortcuts"
 import { needsOnboarding } from "@/onboarding/readiness.js"
 import Sidebar from "./Sidebar.vue"
 import JarvisCommandPalette from "./JarvisCommandPalette.vue"
+import SettingsDialog from "./SettingsDialog.vue"
 import OnboardingGate from "./OnboardingGate.vue"
 
 const route = useRoute()
