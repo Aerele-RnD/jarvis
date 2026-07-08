@@ -1067,3 +1067,132 @@ def run_wiki_lint_now() -> dict:
 	from jarvis.learning import wiki_lint
 
 	return {"ok": True, "summary": wiki_lint.run_lint()}
+
+
+@frappe.whitelist()
+def get_wiki_graph() -> dict:
+	"""Caller-scoped Obsidian-style graph for the tenant Knowledge Graph SPA:
+	``{nodes, edges, counts}`` over ONLY the Active pages the caller may see.
+
+	R3 isolation invariant: this is the SINGLE server-side enforcement point.
+	Pages outside the caller's scope-visibility never enter the node set, so the
+	client's TF-IDF/structural similarity (which runs over the received set only)
+	cannot surface an unseen page, and links to unseen pages drop by construction.
+	Page nodes carry ``title`` + ``summary`` for the client-side TF-IDF."""
+	_require_system_user()
+	from jarvis.chat import wiki_graph
+
+	where = "status = 'Active'"
+	vis = (wiki_permissions.visible_scope_condition(frappe.session.user) or "").strip()
+	if vis:
+		where += f" and ({vis})"
+	fields = ", ".join(f"`{f}`" for f in [*wiki_graph._PAGE_FIELDS, "summary"])
+	pages = frappe.db.sql(
+		f"select {fields} from `tabJarvis Wiki Page` where {where} "
+		"order by modified desc limit %(lim)s",
+		{"lim": wiki_graph.MAX_PAGES},
+		as_dict=True,
+	)
+	return wiki_graph._build_graph_from_pages(pages, include_content=True)
+
+
+@frappe.whitelist()
+def get_wiki_graph_history() -> list:
+	"""Measured Knowledge-Evolution series: the daily ORG-WIDE graph totals
+	recorded by ``wiki_graph.record_history_snapshot`` (one row/day). Powers the
+	Evolution tab's real timeline (page + link growth, orphan decline).
+
+	System Manager only, unlike ``get_wiki_graph``: these are org-wide aggregates
+	over ALL pages (no scope filter), so a scoped user could learn totals about
+	pages they can't see. Non-SM callers get ``[]``; the Evolution tab falls back
+	to reconstructing growth from the caller's own visible pages' creation dates
+	— same fallback used when the daily job hasn't recorded a day yet."""
+	_require_system_user()
+	if "System Manager" not in frappe.get_roles():
+		return []
+	if not frappe.db.table_exists("Jarvis Wiki Graph History"):
+		return []
+	rows = frappe.get_all(
+		"Jarvis Wiki Graph History",
+		fields=["snapshot_date", "pages", "links", "orphans", "stale", "contradictions"],
+		order_by="snapshot_date asc",
+		limit=1000,
+	)
+	return [
+		{
+			"date": str(r.snapshot_date),
+			"pages": r.pages or 0,
+			"links": r.links or 0,
+			"orphans": r.orphans or 0,
+			"stale": r.stale or 0,
+			"contradictions": r.contradictions or 0,
+		}
+		for r in rows
+	]
+
+
+def _parse_manual_links(raw) -> list:
+	"""manual_links JSON → a clean, deduped list of slug strings (NULL/junk → [])."""
+	try:
+		arr = json.loads(raw) if isinstance(raw, str) else (raw or [])
+	except Exception:
+		return []
+	if not isinstance(arr, list):
+		return []
+	out = []
+	for t in arr:
+		s = str(t or "").strip().lower()
+		if s and s not in out:
+			out.append(s)
+	return out
+
+
+@frappe.whitelist()
+def add_wiki_link(slug: str, target_slug: str) -> dict:
+	"""Curate a ``[[link]]`` from ``slug`` → ``target_slug``, stored OUT of
+	``body_md`` in ``manual_links``.
+
+	- R1 durable: the manual store survives LLM re-ingestion (which full-replaces
+	  body_md); this write never touches body_md.
+	- R2 idempotent: the store is an exact-slug list, so no ``[[foo]]`` vs
+	  ``[[foobar]]`` confusion and a repeat is a no-op.
+	- R2 concurrency-safe: the read locks the row (``for_update``), so it sees the
+	  latest committed value (not this transaction's REPEATABLE READ snapshot) and
+	  blocks concurrent adders until we commit — no retry loop needed.
+	- R3 permission-checked BOTH ends: caller must be able to EDIT ``slug`` and
+	  READ ``target_slug`` — a link can neither be added by an unauthorized user
+	  nor point at a page they can't see (and a non-visible target reads as
+	  not-found so its existence isn't disclosed)."""
+	_require_system_user()
+	slug = (slug or "").strip().lower()
+	target = (target_slug or "").strip().lower()
+	if not slug or not target:
+		frappe.throw(_("slug and target_slug are required."))
+	if slug == target:
+		frappe.throw(_("A page cannot link to itself."))
+
+	name = frappe.db.get_value(WIKI, {"slug": slug}, "name")
+	if not name:
+		frappe.throw(_("Wiki page not found."))
+	if not wiki_permissions.can_edit_page(frappe.get_doc(WIKI, name), frappe.session.user):
+		frappe.throw(_("Not permitted."), frappe.PermissionError)
+
+	target_name = frappe.db.get_value(WIKI, {"slug": target}, "name")
+	if not target_name or not wiki_permissions.can_read_page(
+		frappe.get_doc(WIKI, target_name), frappe.session.user
+	):
+		# Don't disclose a page the caller can't see.
+		frappe.throw(_("Target page not found."))
+
+	# Locking read: blocks until any concurrent add_wiki_link on this row commits,
+	# then returns the latest value (a plain read under REPEATABLE READ would
+	# keep replaying this transaction's original snapshot on every retry).
+	raw = frappe.db.get_value(WIKI, name, "manual_links", for_update=True)
+	links = _parse_manual_links(raw)
+	if target in links:
+		return {"ok": True, "slug": slug, "already": True, "manual_links": links}
+	links.append(target)
+	# set_value bumps modified/modified_by so a concurrent doc.save() built on the
+	# stale doc raises TimestampMismatch instead of silently clobbering (R1).
+	frappe.db.set_value(WIKI, name, "manual_links", json.dumps(links))
+	return {"ok": True, "slug": slug, "manual_links": links}

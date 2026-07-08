@@ -52,6 +52,18 @@ export const restoreWikiPage = (slug) => call(WK + "restore_wiki_page", { slug }
 // Chat nudge card: "don't ask again in this conversation" (7-day snooze).
 export const dismissWikiNudge = (conversation) => call(WK + "dismiss_nudge", { conversation })
 
+// ── Knowledge Graph ───────────────────────────────────────────────────────────
+// Caller-scoped {nodes, edges, counts} over ONLY the pages the viewer may see
+// (server-enforced isolation); page nodes carry title+summary for client TF-IDF.
+export const getWikiGraph = () => call(WK + "get_wiki_graph")
+// Curate a [[link]] slug→target, stored out-of-body (durable), idempotent,
+// concurrency-safe, permission-checked both ends. → {ok, manual_links, already?}
+export const addWikiLink = (slug, targetSlug) =>
+	call(WK + "add_wiki_link", { slug, target_slug: targetSlug })
+// Measured daily graph totals [{date, pages, links, orphans, ...}] for the
+// Evolution tab; [] until the daily snapshot job has recorded a day.
+export const getWikiGraphHistory = () => call(WK + "get_wiki_graph_history")
+
 // ── SM-only header extras ─────────────────────────────────────────────────────
 export const setKnowledgeLanguage = (value) => call(WK + "set_knowledge_language", { value })
 // Queues a FULL org-wiki mirror sync into the agent workspace. → {ok: true}
