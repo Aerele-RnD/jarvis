@@ -101,10 +101,9 @@
 					 Direct tenants are already covered by DirectSubscriptionCard above,
 					 and an api_key tenant has no OAuth profile (would misleadingly read
 					 "Not connected"), so only show it for proxy tenants. -->
-				<section v-if="directSub.proxy_active" class="jv-acct-card">
+				<section v-if="directSub.proxy_active && !connErr" class="jv-acct-card">
 					<h2>Connection</h2>
 					<div v-if="connLoading" class="jv-acct-muted">Checking…</div>
-					<div v-else-if="connErr" class="jv-acct-muted">Connection status is unavailable right now.</div>
 					<template v-else>
 						<div class="jv-acct-kv"><span>Status</span><b :class="conn.auth_present ? 'jv-ok' : 'jv-warn'">{{ conn.auth_present ? "Connected" : "Not connected" }}</b></div>
 						<div v-if="conn.default_model" class="jv-acct-kv"><span>Model</span><b>{{ conn.default_model }}</b></div>
@@ -114,11 +113,10 @@
 
 				<!-- ===== Usage (compact — full dashboard lives on the Monitor tab) ===== -->
 				<section class="jv-acct-card">
-					<h2>Usage<span v-if="usage.period" class="jv-acct-sub"> · {{ usage.period }}</span></h2>
+					<h2>Usage<span v-if="usage.applicable && usage.period" class="jv-acct-sub"> · {{ usage.period }}</span></h2>
 					<div v-if="usageLoading" class="jv-acct-muted">Loading…</div>
-					<div v-else-if="usageErr" class="jv-acct-muted">Usage data is unavailable right now.</div>
-					<div v-else-if="!usage.applicable" class="jv-acct-muted">Usage metering applies to multi-model (proxy) setups.</div>
-					<div v-else class="jv-acct-usage-line">{{ usage.tokens_in || 0 }} tokens in · {{ usage.tokens_out || 0 }} tokens out · ${{ costLabel }}</div>
+					<div v-else-if="usage.applicable && !usageErr" class="jv-acct-usage-line">{{ usage.tokens_in || 0 }} tokens in · {{ usage.tokens_out || 0 }} tokens out · ${{ costLabel }}</div>
+					<div v-else-if="!usage.applicable" class="jv-acct-muted">Metering is available on multi-model (proxy) setups.</div>
 					<router-link :to="{ name: 'Monitor' }" class="jv-acct-link">View full usage →</router-link>
 				</section>
 
