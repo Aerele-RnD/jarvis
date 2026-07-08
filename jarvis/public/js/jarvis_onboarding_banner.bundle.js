@@ -56,7 +56,6 @@
 			"font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;display:flex;flex-direction:column;gap:8px;}" +
 			"#" + NUDGE_ID + " .jvn-row{display:flex;opacity:0;animation:jvNudgeIn .32s cubic-bezier(.2,.7,.3,1) forwards;}" +
 			"#" + NUDGE_ID + " .jvn-row.r1{animation-delay:.05s;}" +
-			"#" + NUDGE_ID + " .jvn-row.r2{animation-delay:.42s;}" +   // staggered — feels like a 2nd message
 			"#" + NUDGE_ID + " .jvn-bubble{position:relative;background:var(--card-bg,#fff);border:1px solid var(--border-color,#e6e6ee);border-radius:14px;padding:10px 13px;font-size:13px;line-height:1.45;color:var(--text-color,#20232e);box-shadow:0 6px 22px -8px rgba(20,20,40,.22);}" +
 			"#" + NUDGE_ID + " .jvn-name{font-size:11px;font-weight:600;color:var(--text-muted,#8a8aa0);margin-bottom:3px;}" +
 			"#" + NUDGE_ID + " .jvn-btn{display:inline-flex;align-items:center;gap:6px;margin-top:10px;background:var(--text-color,#16181d);color:var(--fg-color,#fff);border:0;border-radius:8px;padding:7px 13px;font-size:12.5px;font-weight:600;text-decoration:none;cursor:pointer;}" +
@@ -81,17 +80,8 @@
 		wrap.setAttribute("role", "complementary");
 		wrap.setAttribute("aria-label", "Set up Jarvis");
 
-		// Bubble 1 — greeting.
+		// Single bubble — greeting + pitch + CTA + dismiss.
 		wrap.appendChild(bubbleRow("r1", function () {
-			var b = document.createElement("div");
-			b.className = "jvn-bubble";
-			var n = document.createElement("div"); n.className = "jvn-name"; n.textContent = "Jarvis"; b.appendChild(n);
-			var t = document.createElement("div"); t.textContent = "Hey 👋 I'm Jarvis."; b.appendChild(t);
-			return b;
-		}));
-
-		// Bubble 2 — pitch + CTA + dismiss.
-		wrap.appendChild(bubbleRow("r2", function () {
 			var b = document.createElement("div");
 			b.className = "jvn-bubble";
 
@@ -101,8 +91,10 @@
 			x.addEventListener("click", dismiss);
 			b.appendChild(x);
 
+			var n = document.createElement("div"); n.className = "jvn-name"; n.textContent = "Jarvis"; b.appendChild(n);
+
 			var t = document.createElement("div");
-			t.textContent = "Set me up and I'll handle the ERP busywork — draft quotes, chase invoices, pull reports, and automate your workflows.";
+			t.textContent = "Hey 👋 I'm Jarvis. Set me up and I'll handle the ERP busywork. I can draft quotes, chase invoices, pull reports, and automate your workflows.";
 			b.appendChild(t);
 
 			var cta = document.createElement("a");
