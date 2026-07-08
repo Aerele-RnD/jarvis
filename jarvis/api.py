@@ -5,6 +5,7 @@ import frappe
 from jarvis._http import validate_bearer as _validate_bearer  # noqa: F401 (kept for callers in mcp.py)
 from jarvis._plugin_auth import PluginAuthError, validate_plugin_request
 from jarvis.exceptions import InvalidArgumentError, JarvisError
+from jarvis.permissions import has_jarvis_access
 from jarvis.tools.registry import dispatch
 from jarvis import audit
 
@@ -91,6 +92,13 @@ def call_tool(tool: str, args: dict | str | None = None) -> dict:
 				f"session references unknown user: {plugin_user}",
 			)
 
+		# Role gate: the resolved acting user must hold Jarvis access
+		# ("Jarvis User" or "System Manager"; Administrator implicit). The
+		# plugin token/HMAC auth only proves the call came from openclaw - it
+		# does not grant the mapped user permission to drive Jarvis tools.
+		if not has_jarvis_access(plugin_user):
+			raise frappe.PermissionError
+
 		# C2 stretch (2026-06-16 review): bind session_key -> bench's
 		# device_id at session-create time, verify on every call. If the
 		# bench has re-paired since this session was created (operator
@@ -133,6 +141,13 @@ def call_tool(tool: str, args: dict | str | None = None) -> dict:
 	if frappe.session.user == "Guest":
 		frappe.local.response.http_status_code = 401
 		return _error("AuthenticationError", "authentication required")
+
+	# Same app-access gate as the plugin path (defense in depth): a logged-in
+	# user without Jarvis access can't drive Jarvis tools even by POSTing
+	# call_tool directly. Per-DocType perms still apply beneath this.
+	if not has_jarvis_access():
+		frappe.local.response.http_status_code = 403
+		return _error("PermissionError", "you do not have access to Jarvis")
 
 	return _dispatch_current_user(tool, args)
 

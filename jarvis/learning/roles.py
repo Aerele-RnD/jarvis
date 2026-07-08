@@ -140,10 +140,15 @@ def _make_key(key: str) -> str:
 # settings seeding). Pattern copied from jarvis_admin/install.py.
 _WIKI_ROLES = ("Knowledge Wiki User", "Knowledge Wiki Manager")
 
+# The app-access role (jarvis/permissions.py). is_custom=1 because it is a
+# Jarvis-owned custom role, not a fixture; desk_access=1 because Jarvis chat is
+# a Desk page. Seeded here so the role exists before the grant patch runs.
+_JARVIS_ACCESS_ROLE = "Jarvis User"
+
 
 def after_migrate() -> None:
-	"""Idempotently create the Knowledge Wiki roles (best-effort, never
-	blocks a migrate)."""
+	"""Idempotently create the Knowledge Wiki roles and the Jarvis User role
+	(best-effort, never blocks a migrate)."""
 	try:
 		created = False
 		for role_name in _WIKI_ROLES:
@@ -152,6 +157,12 @@ def after_migrate() -> None:
 			frappe.get_doc({
 				"doctype": "Role", "role_name": role_name,
 				"desk_access": 1, "is_custom": 0,
+			}).insert(ignore_permissions=True)
+			created = True
+		if not frappe.db.exists("Role", _JARVIS_ACCESS_ROLE):
+			frappe.get_doc({
+				"doctype": "Role", "role_name": _JARVIS_ACCESS_ROLE,
+				"desk_access": 1, "is_custom": 1,
 			}).insert(ignore_permissions=True)
 			created = True
 		if created:

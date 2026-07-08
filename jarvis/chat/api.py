@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import frappe
 
+from jarvis.permissions import require_jarvis_access
+
 CONV = "Jarvis Conversation"
 MSG = "Jarvis Chat Message"
 
@@ -70,6 +72,7 @@ def list_tools() -> list[str]:
 	plugin registers one ``jarvis__<name>`` per entry). Drives the chat's
 	"Tools available" count + the ``/tool`` autocomplete so they track the
 	registry instead of a hardcoded SPA list that drifts."""
+	require_jarvis_access()
 	from jarvis.tools.registry import list_tools as _registry_list_tools
 	return _registry_list_tools()
 
@@ -81,6 +84,7 @@ def list_conversations() -> list[dict]:
 	Each row includes ``message_count`` so the UI can identify empty
 	conversations (used by ``create_or_focus_empty``).
 	"""
+	require_jarvis_access()
 	# Chat page loaded: warm the openclaw prefix cache in the background
 	# (best-effort, debounced) so the first turn of a new chat skips the cold
 	# provider prefill. Never blocks or fails this read.
@@ -108,6 +112,7 @@ def search_conversations(search: str = "", start: int = 0, page_length: int = 20
 	DESIGN-V3 §8.2 / D40). Owner-scoped in SQL; LIKE wildcards escaped; empty
 	search returns all rows. Order: starred first, then most recently active.
 	Envelope: ``{rows, total, has_more, start, page_length}``."""
+	require_jarvis_access()
 	me = frappe.session.user
 	try:
 		start = max(0, int(start or 0))
@@ -156,6 +161,7 @@ def create_or_focus_empty() -> str:
 	Prevents the "click New Chat repeatedly => orphan empty rows" failure
 	mode. The most-recently-active empty conversation wins.
 	"""
+	require_jarvis_access()
 	user = frappe.session.user
 	empty = frappe.db.sql(
 		"""
@@ -183,6 +189,7 @@ def get_conversation(conversation: str) -> dict:
 	Raises frappe.DoesNotExistError if the conversation does not exist, or
 	frappe.PermissionError if the caller is not the owner.
 	"""
+	require_jarvis_access()
 	doc = _get_owned_conversation(conversation)
 
 	# hidden = internal system rows (e.g. the post-apply continuation prompt):
@@ -229,6 +236,7 @@ def get_canvas(message: str, name: str | None = None, dark: int = 0) -> dict:
 	a minimal HTML shell. ``dark`` themes the SVG shell (and the frame bg the
 	SPA renders behind it) so the preview page follows the app's dark mode.
 	"""
+	require_jarvis_access()
 	from frappe import _ as _t
 
 	row = frappe.db.get_value(MSG, message, ["conversation", "canvas"], as_dict=True)
@@ -298,6 +306,7 @@ def preview_file(file_url: str) -> dict:
 	rendered by the panel directly from the file URL, so this is only called for
 	the non-inline ("file") types. Permission-gated through ``read_file`` (needs
 	File read perm on the private File — the user's own chat artifact)."""
+	require_jarvis_access()
 	if not file_url:
 		return {"kind": "binary"}
 	from jarvis.tools.read_file import read_file
@@ -318,6 +327,7 @@ def preview_file(file_url: str) -> dict:
 @frappe.whitelist()
 def create_conversation() -> str:
 	"""Create an empty conversation owned by the current user; return its name."""
+	require_jarvis_access()
 	doc = frappe.get_doc({
 		"doctype": CONV,
 		"title": "New chat",
@@ -331,6 +341,7 @@ def create_conversation() -> str:
 @frappe.whitelist()
 def archive_conversation(conversation: str) -> dict:
 	"""Set status to archived (owner-only). The openclaw-side session is left in place."""
+	require_jarvis_access()
 	doc = _get_owned_conversation(conversation)
 	doc.status = "Archived"
 	doc.save()
@@ -344,6 +355,7 @@ def clear_chat_history() -> dict:
 	(the settings "Danger zone" action). Macros, skills and settings are
 	untouched; macro-run history rows survive but drop their (now deleted)
 	conversation reference."""
+	require_jarvis_access()
 	user = frappe.session.user
 	names = frappe.get_all(CONV, filters={"owner": user}, pluck="name")
 	if not names:
@@ -365,6 +377,7 @@ def clear_chat_history() -> dict:
 @frappe.whitelist()
 def rename_conversation(conversation: str, title: str) -> dict:
 	"""Rename a conversation (owner-only, enforced explicitly)."""
+	require_jarvis_access()
 	title = (title or "").strip()[:140]
 	if not title:
 		return {"ok": False, "reason": _("title is empty")}
@@ -379,6 +392,7 @@ def rename_conversation(conversation: str, title: str) -> dict:
 def set_star(conversation: str, starred: str | int | bool) -> dict:
 	"""Star/unstar a conversation (owner-only, enforced explicitly). Starred
 	chats are listed first and grouped under 'Starred' in the sidebar."""
+	require_jarvis_access()
 	on = 1 if str(starred) in ("1", "true", "True", "on", "yes") else 0
 	doc = _get_owned_conversation(conversation)
 	doc.starred = on
@@ -435,6 +449,7 @@ def send_message(
 	frappe.DoesNotExistError if the conversation does not exist, or
 	frappe.PermissionError if the caller is not the owner.
 	"""
+	require_jarvis_access()
 	t0 = time.monotonic()
 	user = frappe.session.user
 
@@ -614,6 +629,7 @@ def get_chat_ui_settings() -> dict:
 	register a single model at signup and there's no multi-model UI
 	for them yet (see spec § Out of scope).
 	"""
+	require_jarvis_access()
 	settings = frappe.get_single("Jarvis Settings")
 	# Lazy import: keeps this hot endpoint's module import light and avoids
 	# a jarvis.chat.api <-> jarvis.chat.voice cycle.
@@ -666,6 +682,7 @@ def set_auto_apply(conversation: str, value: str | int | bool) -> dict:
 	Writes ``auto_apply`` on the CONVERSATION row (not the deprecated site-wide
 	Jarvis Settings Single). Returns ``{ok, data: {auto_apply: on}}``.
 	"""
+	require_jarvis_access()
 	on = 1 if str(value) in ("1", "true", "True", "on", "yes") else 0
 	owner = frappe.db.get_value(CONV, conversation, "owner")
 	if owner is None:
@@ -699,6 +716,7 @@ def get_usage(conversation: str | None = None) -> dict:
 	(content + tool args/results), not real API token counts, which openclaw
 	doesn't expose. Owner-scoped: only the caller's own conversations.
 	"""
+	require_jarvis_access()
 	from frappe.utils import get_datetime, get_first_day, now_datetime
 
 	user = frappe.session.user
@@ -747,6 +765,7 @@ def set_conversation_model(conversation: str, model: str | None = None) -> dict:
 	Owner-only (SEC-002): mutates the conversation via ``db.set_value`` (which
 	bypasses permission checks), so ownership is asserted explicitly here.
 	"""
+	require_jarvis_access()
 	owner = frappe.db.get_value(CONV, conversation, "owner")
 	if owner is None:
 		return {"ok": False, "error": {
@@ -785,6 +804,7 @@ def warm_session() -> dict:
 	new-chat first turn skips the cold prefill. Best-effort; always ok. The
 	chat UI calls this on open. Self-hosted and unconfigured benches no-op.
 	Runs in a background RQ job so the gunicorn web worker is not blocked."""
+	require_jarvis_access()
 	frappe.enqueue(
 		"jarvis.chat.prewarm.warm_prefix",
 		queue="short",
@@ -803,6 +823,7 @@ def set_conversation_thinking(conversation: str, thinking: str | None = None) ->
 
 	Owner-only (SEC-002): mutates the conversation via ``db.set_value`` (which
 	bypasses permission checks), so ownership is asserted explicitly here."""
+	require_jarvis_access()
 	owner = frappe.db.get_value(CONV, conversation, "owner")
 	if owner is None:
 		return {"ok": False, "error": {
@@ -837,6 +858,7 @@ def retry_message(message: str) -> dict:
 	does not exist, or ``frappe.PermissionError`` if the caller does not own
 	the parent conversation.
 	"""
+	require_jarvis_access()
 	doc = frappe.get_doc(MSG, message)
 	# Ownership is enforced on the PARENT conversation: message rows can be
 	# inserted by the RQ worker under a different session user, so the
@@ -1213,6 +1235,7 @@ def get_doctype_fields(doctype: str) -> dict:
 	Returns only editable, data-bearing fields (layout/display fieldtypes are
 	dropped). Read-only structural info — gated on the caller being able to read
 	the DocType so it can't be used to enumerate arbitrary schemas."""
+	require_jarvis_access()
 	doctype = (doctype or "").strip()
 	if not doctype or not frappe.db.exists("DocType", doctype):
 		return {"ok": False, "reason": _("unknown doctype"), "fields": []}
