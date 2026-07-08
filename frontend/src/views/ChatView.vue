@@ -188,7 +188,7 @@
 										<div v-if="summaryState.view" class="jv-summary-body">
 											<div v-if="summaryState.view.headline" class="jv-summary-headline">{{ summaryState.view.headline }}</div>
 											<dl v-if="summaryState.view.kind === 'create'" class="jv-summary-fields">
-												<template v-for="r in summaryState.view.rows" :key="r.label">
+												<template v-for="(r, i) in summaryState.view.rows" :key="i">
 													<dt>{{ r.label }}</dt><dd>{{ r.value }}</dd>
 												</template>
 											</dl>
