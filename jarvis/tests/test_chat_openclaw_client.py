@@ -193,6 +193,30 @@ class TestConnect(FrappeTestCase):
 			with self.assertRaises(OpenclawUnreachableError):
 				OpenclawSession.connect("")
 
+	def test_ws_open_retries_network_failure_then_returns(self):
+		# A cold / recreating container refuses the first attempts, then accepts;
+		# the WS open rides it out instead of failing the first turn.
+		sentinel = object()
+		cc = MagicMock(side_effect=[OSError("timed out"), OSError("connection refused"), sentinel])
+		with patch("jarvis.chat.openclaw_client.websocket.create_connection", cc), \
+			 patch("jarvis.chat.openclaw_client.time.sleep") as sleep:
+			ws = OpenclawSession._open_ws_with_retry("ws://t")
+		self.assertIs(ws, sentinel)
+		self.assertEqual(cc.call_count, 3)
+		self.assertEqual(sleep.call_count, 2)
+
+	def test_ws_open_gives_up_after_deadline(self):
+		# Deadline 0 -> the first failure is terminal (no retry) and the error
+		# carries the "starting up" hint instead of the raw timeout.
+		cc = MagicMock(side_effect=OSError("timed out"))
+		with patch("jarvis.chat.openclaw_client.websocket.create_connection", cc), \
+			 patch("jarvis.chat.openclaw_client.time.sleep"), \
+			 patch("jarvis.chat.openclaw_client.CONNECT_OPEN_DEADLINE_SECONDS", 0):
+			with self.assertRaises(OpenclawUnreachableError) as cm:
+				OpenclawSession._open_ws_with_retry("ws://t")
+		self.assertEqual(cc.call_count, 1)
+		self.assertIn("starting up", str(cm.exception))
+
 
 # --- TestCreateSession ----------------------------------------------------
 

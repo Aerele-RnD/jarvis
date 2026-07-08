@@ -77,6 +77,17 @@ from jarvis.exceptions import OpenclawUnreachableError
 
 CONNECT_TIMEOUT_SECONDS = 10
 
+# A dormant / just-recreated container's gateway is unreachable for ~10-30s
+# while `compose up -d` recreates it (see jarvis/api.py rotate_agent_token) or
+# while a rotated-dormant container spins back up. A single 10s connect with no
+# retry guarantees a first-turn failure ("WS open failed: Connection timed out")
+# against a cold container, so we retry the WS OPEN - network-level failures
+# only, NOT handshake/auth - until a total deadline, sleeping briefly between
+# attempts. A warm container connects on the first attempt (no added latency);
+# only a genuinely cold/dormant one pays the retry window.
+CONNECT_OPEN_DEADLINE_SECONDS = 25
+CONNECT_OPEN_RETRY_BACKOFF_SECONDS = 2.0
+
 # openclaw v2026.6.8 (issue #29385) enforces gateway.controlUi.allowedOrigins on
 # LAN binds since v2026.2.26 and no longer honors a "*" wildcard: a
 # `--bind lan` gateway seeds ["http://localhost:18789", "http://127.0.0.1:18789"]
@@ -228,15 +239,7 @@ class OpenclawSession:
 		t_pair_start = time.monotonic()
 		creds = ensure_paired()
 		t_pair_done = time.monotonic()
-		try:
-			ws = websocket.create_connection(
-				gateway_url, timeout=CONNECT_TIMEOUT_SECONDS,
-				# Origin must be in openclaw's controlUi.allowedOrigins, which the
-				# LAN-bound gateway enforces + seeds (see _GATEWAY_ORIGIN).
-				origin=_GATEWAY_ORIGIN,
-			)
-		except (websocket.WebSocketException, OSError) as e:
-			raise OpenclawUnreachableError(f"WS open failed: {e}") from e
+		ws = cls._open_ws_with_retry(gateway_url)
 		t_ws_done = time.monotonic()
 
 		try:
@@ -262,6 +265,38 @@ class OpenclawSession:
 			gateway_url,
 		)
 		return cls(ws, creds)
+
+	@classmethod
+	def _open_ws_with_retry(cls, gateway_url: str):
+		"""Open the gateway WebSocket, retrying network-level failures.
+
+		Only the WS OPEN phase (DNS + TCP + TLS + upgrade) is retried, and only
+		for network-level failures (WebSocketException / OSError, e.g. a connect
+		timeout or refused connection) - so a dormant / recreating container
+		(unreachable ~10-30s) does not fail the user's first turn. Handshake and
+		auth failures happen later and are NOT retried here. Retries stop once
+		CONNECT_OPEN_DEADLINE_SECONDS has elapsed; a warm gateway returns on the
+		first attempt.
+		"""
+		deadline = time.monotonic() + CONNECT_OPEN_DEADLINE_SECONDS
+		attempt = 0
+		while True:
+			attempt += 1
+			try:
+				return websocket.create_connection(
+					gateway_url, timeout=CONNECT_TIMEOUT_SECONDS,
+					# Origin must be in openclaw's controlUi.allowedOrigins, which
+					# the LAN-bound gateway enforces + seeds (see _GATEWAY_ORIGIN).
+					origin=_GATEWAY_ORIGIN,
+				)
+			except (websocket.WebSocketException, OSError) as e:
+				if time.monotonic() >= deadline:
+					raise OpenclawUnreachableError(
+						f"WS open failed after {attempt} attempt(s) in "
+						f"{CONNECT_OPEN_DEADLINE_SECONDS}s - the assistant may be "
+						f"starting up; please try again in a moment ({e})"
+					) from e
+				time.sleep(CONNECT_OPEN_RETRY_BACKOFF_SECONDS)
 
 	@classmethod
 	def _repair_and_reconnect(cls, gateway_url: str, *, stale_device_id: str) -> None:
