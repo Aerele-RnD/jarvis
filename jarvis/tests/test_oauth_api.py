@@ -526,12 +526,15 @@ class TestExchangeCodeErrorParsing(_OAuthApiBase):
 		self.assertEqual(ctx.exception.code, "token_exchange_failed")
 
 
-class TestCompletePasteSigninRetainsIdToken(_OAuthApiBase):
-	"""Task 1: the openclaw blob pushed by complete_paste_signin must retain
-	the id_token returned by the token exchange. It's used to derive the
-	email then was previously dropped from the blob; a downstream reformat to
-	CLIProxyAPI-codex format needs it. Harmless to the existing DIRECT push
-	(openclaw ignores unknown blob keys)."""
+class TestCompletePasteSigninStripsIdToken(_OAuthApiBase):
+	"""The fleet-agent's PUT /auth-profile schema is strict (pydantic
+	extra_forbidden) and REJECTS an ``id_token`` field, so the DIRECT push
+	from complete_paste_signin must strip it — otherwise every direct
+	(re)authorize 502s with ``extra_forbidden ... blob.id_token`` (the
+	2026-07 direct-reauthorize outage). The earlier assumption that openclaw
+	"ignores unknown blob keys" was wrong against the live agent. The blob
+	builder still retains id_token for the POOL path's CLIProxyAPI-codex
+	reformat; only this direct auth-profiles.json push drops it."""
 
 	def _seed(self, provider="OpenAI", model="gpt-5.5"):
 		nonce = "i_" + ("d" * 46)
@@ -548,7 +551,7 @@ class TestCompletePasteSigninRetainsIdToken(_OAuthApiBase):
 	@patch("jarvis.oauth.api.onboarding.save_llm_creds")
 	@patch("jarvis.oauth.api.admin_client.post_push_oauth_blob")
 	@patch("jarvis.oauth.api._exchange_code")
-	def test_pushed_blob_carries_id_token(self, mock_exchange, mock_push, mock_save):
+	def test_pushed_blob_strips_id_token(self, mock_exchange, mock_push, mock_save):
 		access_jwt = _jwt({
 			"https://api.openai.com/auth": {"chatgpt_account_id": "acct-idt"},
 		})
@@ -569,8 +572,12 @@ class TestCompletePasteSigninRetainsIdToken(_OAuthApiBase):
 		self.assertTrue(out["ok"], msg=str(out))
 		mock_push.assert_called_once()
 		blob = mock_push.call_args.args[1]
-		self.assertIn("id_token", blob)
-		self.assertEqual(blob["id_token"], "ID.TOKEN.XYZ")
+		# id_token stripped so the fleet /auth-profile schema accepts the push…
+		self.assertNotIn("id_token", blob)
+		# …but the rest of the OAuth blob still rides along untouched.
+		self.assertEqual(blob["refresh"], "RT")
+		self.assertEqual(blob["email"], "manager@acme.com")
+		self.assertEqual(blob["accountId"], "acct-idt")
 
 
 class TestBeginPoolAccountSignin(_OAuthApiBase):
@@ -769,3 +776,96 @@ class TestPoolSigninScope(_OAuthApiBase):
 		out = oauth_api.begin_pool_account_signin("Google Gemini", "gemini-2.5-pro")
 		url = out["data"]["authorize_url"]
 		self.assertIn("cloud-platform", url)  # the normal gemini-cli scope set
+
+
+class TestIsDirectSubscriptionPredicate(FrappeTestCase):
+	"""Pure branch logic for _is_direct_subscription (no DB access).
+
+	A "direct chat-subscription" tenant onboarded a single OAuth subscription
+	that is served by the container's auth-profiles.json (codex/gemini-cli
+	runtime), NOT the pooled cliproxy sidecar. Their creds live in the flat
+	llm_*/llm_oauth_* fields with an empty models[] (v1_seed_llm_models skips
+	them), so the pool editor can't see them and AccountView must fall back to
+	the DIRECT re-authorize card.
+	"""
+
+	# Signature: _is_direct_subscription(auth_mode, has_models, proxy_active,
+	#                                    provider_is_oauth)
+
+	def test_connected_oauth_no_models_is_direct(self):
+		self.assertTrue(oauth_api._is_direct_subscription("oauth", False, False, True))
+
+	def test_legacy_subscription_value_is_direct(self):
+		# Migrated tenants may still carry the pre-REV-1 "subscription" value.
+		self.assertTrue(oauth_api._is_direct_subscription("subscription", False, False, True))
+
+	def test_api_key_mode_is_not_direct(self):
+		self.assertFalse(oauth_api._is_direct_subscription("api_key", False, False, True))
+
+	def test_empty_mode_is_not_direct(self):
+		# Pre-config default; the normal pool editor / onboarding owns it.
+		self.assertFalse(oauth_api._is_direct_subscription("", False, False, True))
+
+	def test_models_present_is_not_direct(self):
+		# ANY row in models[] (enabled or not) means the pool editor owns it —
+		# an all-disabled pool mid-reconfiguration must not read as direct.
+		self.assertFalse(oauth_api._is_direct_subscription("oauth", True, False, True))
+
+	def test_proxy_active_is_not_direct(self):
+		# proxy_active means they're already on the cliproxy/pool path.
+		self.assertFalse(oauth_api._is_direct_subscription("oauth", False, True, True))
+
+	def test_non_oauth_provider_is_not_direct(self):
+		# oauth mode left on a non-OAuth provider (e.g. Anthropic after
+		# reset_onboarding): a re-authorize card would only ever error
+		# unknown_provider, so don't classify it as direct.
+		self.assertFalse(oauth_api._is_direct_subscription("oauth", False, False, False))
+
+
+class TestGetDirectSubscriptionStatus(_OAuthApiBase):
+	"""Integration: the endpoint reflects the flat-field DIRECT connection."""
+
+	@classmethod
+	def setUpClass(cls):
+		super().setUpClass()
+		settings = frappe.get_single("Jarvis Settings")
+		cls._extra = {"proxy_active": settings.proxy_active}
+
+	@classmethod
+	def tearDownClass(cls):
+		settings = frappe.get_single("Jarvis Settings")
+		for f, v in cls._extra.items():
+			settings.db_set(f, v, update_modified=False)
+		frappe.db.commit()
+		super().tearDownClass()
+
+	def test_reflects_connected_direct_oauth(self):
+		settings = frappe.get_single("Jarvis Settings")
+		# The real direct-tenant shape requires an empty models[] table.
+		if settings.get("models"):
+			self.skipTest("Jarvis Settings.models is non-empty in this environment")
+		settings.db_set("proxy_active", 0, update_modified=False)
+		settings.db_set("llm_auth_mode", "oauth", update_modified=False)
+		settings.db_set("llm_provider", "OpenAI", update_modified=False)
+		settings.db_set("llm_model", "gpt-5.5", update_modified=False)
+		settings.db_set("llm_oauth_account_email", "user@example.com", update_modified=False)
+		settings.db_set("llm_oauth_connected_at", frappe.utils.now_datetime(), update_modified=False)
+		out = oauth_api.get_direct_subscription_status()
+		self.assertTrue(out["is_direct_subscription"])
+		self.assertTrue(out["connected"])
+		self.assertEqual(out["auth_mode"], "oauth")
+		self.assertEqual(out["provider"], "OpenAI")
+		self.assertEqual(out["model"], "gpt-5.5")
+		self.assertEqual(out["account_email"], "user@example.com")
+		self.assertNotEqual(out["connected_at"], "")
+		# proxy_active is surfaced so AccountView can gate the Connection card.
+		self.assertFalse(out["proxy_active"])
+		# A direct oauth tenant (no models[]) is not a single-subscription pool.
+		self.assertFalse(out["is_single_subscription_pool"])
+
+	def test_api_key_tenant_is_not_direct(self):
+		settings = frappe.get_single("Jarvis Settings")
+		settings.db_set("proxy_active", 0, update_modified=False)
+		settings.db_set("llm_auth_mode", "api_key", update_modified=False)
+		out = oauth_api.get_direct_subscription_status()
+		self.assertFalse(out["is_direct_subscription"])

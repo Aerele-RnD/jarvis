@@ -153,6 +153,27 @@ export const beginPoolAccountSignin = (provider, model) =>
 export const completePoolAccountSignin = (nonce, redirectedUrl) =>
 	call("jarvis.oauth.api.complete_pool_account_signin", { nonce, redirected_url: redirectedUrl })
 
+// --- DIRECT single chat-subscription (legacy flat-field path) ---------------
+// Existing customers who onboarded a single chat subscription keep their creds
+// in the flat llm_*/llm_oauth_* fields (NOT the models[] pool). get_llm_config
+// can't see them, so AccountView probes this to decide whether to render the
+// DIRECT re-authorize card instead of the pool editor. Returns
+// { is_direct_subscription, connected, auth_mode, provider, model,
+//   account_email, connected_at }.
+export const getDirectSubscriptionStatus = () =>
+	call("jarvis.oauth.api.get_direct_subscription_status")
+// DIRECT paste-back re-authorize: begin → { ok, data:{nonce, authorize_url,
+// expires_in} }; complete pushes the fresh blob to the container's
+// auth-profiles.json + rewrites the flat fields (force restart). These write
+// Jarvis Settings — unlike the pool "capture-only" variants above.
+export const beginPasteSignin = (provider, model) =>
+	call("jarvis.oauth.api.begin_paste_signin", { provider, model })
+export const completePasteSignin = (nonce, redirectedUrl) =>
+	call("jarvis.oauth.api.complete_paste_signin", { nonce, redirected_url: redirectedUrl })
+// Tear down the direct subscription (clears the container profile + flat fields,
+// flips bench back to api_key). Returns { ok } / { ok:false, error }.
+export const disconnectSubscription = () => call("jarvis.oauth.api.disconnect")
+
 // --- LLM Monitor (System-Manager gated server-side). Real Bifrost usage, NOT the getUsage estimate. ---
 export const getLlmUsage = () => call("jarvis.account.get_llm_usage")
 export const getLlmConnectionStatus = () => call("jarvis.account.get_llm_connection_status")
