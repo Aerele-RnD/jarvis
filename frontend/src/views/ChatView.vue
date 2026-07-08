@@ -179,14 +179,53 @@
 										     not a dead end while every container upgrades. -->
 										<div class="jv-legacy-note">{{ LEGACY_GATE_NOTE }}</div>
 									</div>
-									<!-- create/update → compact chip; the side panel is the editor -->
-									<div v-else-if="!activeAction.verb || activeAction.verb === 'create' || activeAction.verb === 'update'"
-									     class="jv-draft-chip" role="button" tabindex="0"
-									     @click="openDraftPanel({ verb: activeAction.verb || 'create', ...activeAction })"
-									     @keydown.enter="openDraftPanel({ verb: activeAction.verb || 'create', ...activeAction })">
-										<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></svg>
-										<span><b>{{ activeAction.doctype }}</b> draft<template v-if="draftChipSummary"> · {{ draftChipSummary }}</template></span>
-										<span class="jv-draft-chip-cta">Open editor</span>
+									<!-- create/update → read-only summary/diff card (Task 1.3); Edit opens the full panel -->
+									<div v-else-if="isEditVerb(activeAction)" class="jv-action jv-summary">
+										<div class="jv-action-head">
+											<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+											<span class="jv-action-title">
+												{{ activeAction.verb === 'update' ? 'Update' : 'Create' }} {{ activeAction.doctype }}<template v-if="summaryState.model && summaryState.model.docName"> · {{ summaryState.model.docName }}</template>
+											</span>
+										</div>
+
+										<div v-if="summaryState.view" class="jv-summary-body">
+											<div v-if="summaryState.view.headline" class="jv-summary-headline">{{ summaryState.view.headline }}</div>
+											<dl v-if="summaryState.view.kind === 'create'" class="jv-summary-fields">
+												<template v-for="(r, i) in summaryState.view.rows" :key="i">
+													<dt>{{ r.label }}</dt><dd>{{ r.value }}</dd>
+												</template>
+											</dl>
+											<div v-else class="jv-summary-diff">
+												<div v-for="d in summaryState.view.diff" :key="d.label" class="jv-summary-diffrow">
+													<span class="jv-summary-difflbl">{{ d.label }}</span>
+													<span class="jv-summary-from">{{ d.from || '(empty)' }}</span>
+													<span class="jv-summary-arrow">-&gt;</span>
+													<span class="jv-summary-to">{{ d.to || '(empty)' }}</span>
+												</div>
+												<div v-if="!summaryState.view.diff.length" class="jv-summary-nochange">No field changes.</div>
+											</div>
+
+											<div v-for="t in summaryState.view.tables" :key="t.fieldname" class="jv-summary-table">
+												<div class="jv-summary-table-h">{{ t.label }} ({{ t.count }})</div>
+												<div class="jv-summary-rows">
+													<div v-for="(row, i) in t.rows" :key="i" class="jv-summary-row">
+														<span v-for="(c, ci) in row.cells" :key="ci">{{ c }}</span>
+													</div>
+												</div>
+											</div>
+										</div>
+										<div v-else-if="summaryState.error" class="jv-summary-body jv-summary-loading">{{ summaryState.error }}</div>
+										<div v-else class="jv-summary-body jv-summary-loading">Preparing summary...</div>
+
+										<div v-if="summaryState.model && summaryState.model.error" class="jv-draft-error" style="margin:0 14px 10px">{{ summaryState.model.error }}</div>
+
+										<div class="jv-action-foot">
+											<button class="jv-action-primary" :disabled="!summaryState.model || (summaryState.model && summaryState.model.applying) || convStreaming" :title="convStreaming ? 'Waiting for the current reply to finish' : ''" @click="confirmSummary">
+												{{ summaryState.model && summaryState.model.applying ? 'Saving...' : (activeAction.verb === 'update' ? 'Confirm update' : 'Confirm create') }}
+											</button>
+											<button class="jv-action-2nd" @click="openDraftPanel({ verb: activeAction.verb || 'create', ...activeAction })">Edit</button>
+										</div>
+										<div class="jv-summary-hint">Want a change? just tell me, e.g. "make Widget A qty 12".</div>
 									</div>
 									<!-- submit/cancel/delete/amend are gated writes (issue #186): the real
 									     confirmation is the action:pending card rendered below the thread,
@@ -864,6 +903,7 @@ import JvChart from "@/charts/JvChart.vue"
 import { useShellStore } from "@/stores/shell"
 import { useJarvisTheme } from "@/theme"
 import { displayName } from "@/lib/user"
+import { summarize } from "@/lib/actionSummary"
 
 const session = inject("$session")
 const socket = inject("$socket")
@@ -1923,8 +1963,10 @@ function _panelField(metaField, value) {
 	}
 }
 
-// Build the panel model from an action + form meta (+ live doc for updates).
-async function openDraftPanel(a) {
+// Build the draft model from an action + form meta (+ live doc for updates),
+// WITHOUT opening the panel - so the editable panel and later summary/preview
+// surfaces can share one construction path.
+async function buildDraftModel(a) {
 	if (!a || a.kind !== "doc" || !a.doctype) return
 	const verb = a.verb === "update" ? "update" : "create"
 	let meta
@@ -1979,15 +2021,22 @@ async function openDraftPanel(a) {
 			origJson: JSON.stringify(verb === "update" ? baseRows : null),
 		})
 	}
-	draftPanel.value = {
+	return {
 		verb, doctype: a.doctype, docName: verb === "update" ? (a.name || "") : "",
-		title: a.title || "", submittable: !!meta.is_submittable,
+		title: a.title || "", titleField: meta.title_field || "", submittable: !!meta.is_submittable,
 		// Multi-step plans: the card marks non-final steps "continue": 1; the
 		// bench then dispatches a follow-up agent turn after Apply so the agent
 		// stages the next step without the user typing "continue".
 		cont: a.continue ? 1 : 0,
-		fields, tables, applying: false, error: "", updatedToast: false,
+		fields, tables, tableMeta: meta.tables || {}, applying: false, error: "", updatedToast: false,
 	}
+}
+
+// Open the editable panel for an action, via the shared buildDraftModel.
+async function openDraftPanel(a) {
+	const model = await buildDraftModel(a)
+	if (!model) return
+	draftPanel.value = model
 }
 
 function _blankRow(columns) {
@@ -2052,21 +2101,48 @@ const draftCta = computed(() => {
 	if (!p) return ""
 	return p.verb === "update" ? `Update ${p.docName || p.doctype}` : `Create ${p.doctype}`
 })
-const draftChipSummary = computed(() => {
-	const a = activeAction.value
-	if (!a) return ""
-	const n = (a.tables || []).reduce((s, t) => s + ((t.rows || []).length), 0)
-	return n ? `${n} row${n === 1 ? "" : "s"}` : ""
-})
+// Summary-first: the read-only model + view for the current create/update action.
+const summaryState = ref({ key: "", model: null, view: null, error: "" })
+async function ensureActionSummary(a) {
+	const key = JSON.stringify([a.verb || "create", a.doctype, a.name || "", a.fields || [], a.tables || []])
+	if (summaryState.value.key === key) return
+	summaryState.value = { key, model: null, view: null, error: "" }
+	let model
+	try {
+		model = await buildDraftModel({ verb: a.verb || "create", ...a })
+	} catch (e) {
+		if (summaryState.value.key === key) summaryState.value = { key, model: null, view: null, error: "Could not load this draft. Tell me to try again." }
+		return
+	}
+	if (!model) {
+		if (summaryState.value.key === key) summaryState.value = { key, model: null, view: null, error: "Could not load this draft. Tell me to try again." }
+		return
+	}
+	if (summaryState.value.key !== key) return // a newer action superseded this build
+	summaryState.value = { key, model, view: summarize(model, a), error: "" }
+}
+function isEditVerb(a) {
+	return !!a && (!a.verb || a.verb === "create" || a.verb === "update")
+}
+async function confirmSummary() {
+	const model = summaryState.value.model
+	if (!model || model.applying || convStreaming.value) return
+	await applyDraft(0, model)
+}
 
-// Auto-open on a fresh create/update action (also fires when loading an old
-// conversation that ends on a pending draft — that draft IS still pending).
+// Summary-first default (Task 1.3): a fresh create/update action builds the
+// read-only summary card, NOT the editable panel. If the panel is already
+// open (the user clicked Edit) and the action re-emits, refresh it in place
+// - this also covers loading an old conversation that ends on a pending
+// draft while mid-edit.
 watch(actionFor, () => {
 	const a = activeAction.value
-	if (a && a.kind === "doc" && (a.verb === "create" || a.verb === "update" || !a.verb)) {
-		const wasOpen = !!draftPanel.value
+	if (!(a && a.kind === "doc" && (a.verb === "create" || a.verb === "update" || !a.verb))) return
+	ensureActionSummary(a) // keep the summary card in sync with the latest action
+	if (draftPanel.value) {
+		// panel is open (user is editing) and the action re-emitted -> refresh it too
 		openDraftPanel({ verb: a.verb || "create", ...a }).then(() => {
-			if (wasOpen && draftPanel.value) draftPanel.value.updatedToast = true
+			if (draftPanel.value) draftPanel.value.updatedToast = true
 		})
 	}
 })
@@ -2091,8 +2167,8 @@ function _coerceRow(t, r) {
 	return out
 }
 
-async function applyDraft(submitFlag) {
-	const p = draftPanel.value
+async function applyDraft(submitFlag, model = draftPanel.value) {
+	const p = model
 	if (!p || p.applying) return
 	const values = {}
 	for (const f of p.fields) {
@@ -4344,10 +4420,26 @@ function onGlobalKey(e) {
 .jv-email-subj { color: var(--text); font-weight: 600; }
 .jv-email-body { padding: 12px 14px 14px; font-size: 13px; line-height: 1.6; color: var(--text); white-space: pre-wrap; word-break: break-word; border-top: 1px solid var(--surface-2); }
 
+/* --- summary-first confirmation card (Task 1.3) --- */
+.jv-summary { margin-top: 12px; border-color: var(--blue-bd); }
+.jv-summary-body { padding: 11px 14px; display: flex; flex-direction: column; gap: 10px; }
+.jv-summary-headline { font-size: 13.5px; font-weight: 600; color: var(--text); }
+.jv-summary-fields { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; }
+.jv-summary-fields dt { font-size: 10.5px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); align-self: center; }
+.jv-summary-fields dd { margin: 0; font-size: 13.5px; color: var(--text); }
+.jv-summary-diffrow { display: flex; align-items: baseline; gap: 8px; font-size: 13px; padding: 3px 0; flex-wrap: wrap; }
+.jv-summary-difflbl { font-weight: 600; color: var(--text-2); min-width: 120px; }
+.jv-summary-from { color: var(--text-3); text-decoration: line-through; }
+.jv-summary-arrow { color: var(--text-3); }
+.jv-summary-to { color: var(--green); font-weight: 600; }
+.jv-summary-nochange, .jv-summary-loading { font-size: 12.5px; color: var(--text-3); }
+.jv-summary-table { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.jv-summary-table-h { padding: 7px 10px; background: var(--surface-2); font-size: 12px; font-weight: 650; color: var(--text-2); }
+.jv-summary-row { display: flex; gap: 12px; padding: 5px 10px; font-size: 12.5px; color: var(--text); border-top: 1px solid var(--border); }
+.jv-summary-row span:first-child { flex: 1; }
+.jv-summary-hint { padding: 0 14px 11px; font-size: 12px; color: var(--text-3); }
+
 /* --- record draft panel --- */
-.jv-draft-chip { display: inline-flex; align-items: center; gap: 9px; margin-top: 12px; padding: 10px 14px; border: 1px solid var(--blue-bd); background: var(--blue-bg); color: var(--text); border-radius: 11px; cursor: pointer; font-size: 13.5px; }
-.jv-draft-chip svg { color: var(--blue); flex: none; }
-.jv-draft-chip-cta { color: var(--blue); font-weight: 600; margin-left: 4px; }
 .jv-draft-panel { display: flex; flex-direction: column; }
 .jv-draft-badge { font-size: 10px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; color: var(--amber); background: var(--amber-bg); border: 1px solid var(--amber-bd); border-radius: 99px; padding: 3px 9px; margin-left: 8px; }
 .jv-draft-body { flex: 1; overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 14px; }
