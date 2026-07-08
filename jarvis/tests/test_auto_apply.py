@@ -16,6 +16,7 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 
 from jarvis import api
+from jarvis.permissions import ensure_jarvis_user_role
 from jarvis.chat import openclaw_session_pool
 from jarvis.chat.api import create_conversation, send_message, set_auto_apply
 from jarvis.chat.worker import run_agent_turn
@@ -36,6 +37,7 @@ def _ensure_non_admin_user() -> None:
 	every real chat user does, granted at onboarding/migration) but NOT System
 	Manager — so the gating tests still exercise the non-admin path while getting
 	past the chat-API app-access gate. Idempotent."""
+	ensure_jarvis_user_role()  # the test site may not have run after_migrate
 	if frappe.db.exists("User", NON_ADMIN_USER):
 		if "System Manager" in frappe.get_roles(NON_ADMIN_USER):
 			frappe.get_doc("User", NON_ADMIN_USER).remove_roles("System Manager")
