@@ -37,6 +37,10 @@ export const getUsage = (conversation) =>
 	call("jarvis.chat.api.get_usage", { conversation: conversation || "" })
 export const isReadyForChat = () => call("jarvis.account.is_ready_for_chat")
 
+// --- Mobile app onboarding: QR the phone scans to learn the site connection
+// details (no secret — just where to reach this site). ---
+export const getPairingQr = () => call("jarvis.mobile.auth.get_pairing_qr")
+
 // --- Custom skills (customer-authored, pushed to the container) ---
 const SK = "jarvis.chat.custom_skills_api."
 export const listCustomSkills = () => call(SK + "list_custom_skills")

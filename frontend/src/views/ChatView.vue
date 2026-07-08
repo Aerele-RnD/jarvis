@@ -43,6 +43,10 @@
 							</button>
 						</div>
 					</div>
+					<!-- Connect phone: shows a QR the mobile app scans to onboard -->
+					<button class="jv-iconbtn" @click="showConnect = true" title="Connect phone" aria-label="Connect phone" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:transparent;border:1px solid var(--border);border-radius:7px;cursor:pointer;">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2" width="10" height="20" rx="2" /><path d="M11 18h2" /></svg>
+					</button>
 					<button class="jv-iconbtn" @click="toggleTheme" :title="effectiveDark ? 'Switch to light theme' : 'Switch to dark theme'" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:transparent;border:1px solid var(--border);border-radius:7px;cursor:pointer;">
 						<svg v-if="effectiveDark" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
 						<svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" /></svg>
@@ -895,6 +899,8 @@
 			@edit="onPreviewEdit"
 			@confirm="onPreviewConfirm"
 		/>
+
+		<ConnectPhoneDialog v-model="showConnect" />
 	</div>
 </template>
 
@@ -910,6 +916,7 @@ import { takeChatPrefill } from "@/composables/chatPrefill"
 import { formatDate, exactDate } from "@/utils/datetime"
 import { renderMarkdown } from "@/markdown"
 import JvChart from "@/charts/JvChart.vue"
+import ConnectPhoneDialog from "@/components/ConnectPhoneDialog.vue"
 import DraftPreview from "@/components/doc/DraftPreview.vue"
 import { useShellStore } from "@/stores/shell"
 import { useJarvisTheme } from "@/theme"
@@ -1006,6 +1013,7 @@ function _settleConfirm(val) {
 	if (r) r(val)
 }
 const modelMenuOpen = ref(false)
+const showConnect = ref(false)
 // (sidebar collapse machinery, per-conversation ⋯ menu and inline rename
 // moved to the app shell — stores/shell.js + components/shell/*, §3.7)
 const modelOverride = ref("")
