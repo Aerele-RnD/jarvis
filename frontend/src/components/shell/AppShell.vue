@@ -1,13 +1,17 @@
 <template>
 	<FrappeUIProvider>
 		<div class="flex h-screen w-screen">
-			<!-- Onboarding gate (D11-safe): when the workspace hasn't finished
+			<!-- Hold a neutral surface until the onboarding verdict resolves AND a
+			     route commits — prevents both a sidebar flash on fresh sites and a
+			     poster flicker on a not-ready /onboarding deep-link. -->
+			<div v-if="!shellReady" class="flex-1 bg-surface-white" />
+			<!-- Onboarding gate (D11-safe): when the workspace has never finished
 			     onboarding, block the WHOLE app with a full-screen poster — no
 			     sidebar, no header — inviting setup. A RENDERED gate, not a
 			     redirect, so it can't reintroduce the old desk↔SPA loop that the
 			     forced D11 redirect caused. The /onboarding wizard itself is
 			     exempt so the poster's "Complete setup" button can reach it. -->
-			<OnboardingGate v-if="showGate" />
+			<OnboardingGate v-else-if="showGate" />
 			<template v-else>
 				<!-- Chrome-less routes (onboarding) drop the sidebar entirely — a
 				     not-yet-onboarded customer has no app to navigate. -->
@@ -43,7 +47,7 @@ import { FrappeUIProvider, Dialogs, setConfig } from "frappe-ui"
 import * as api from "@/api"
 import { useShellStore } from "@/stores/shell"
 import { useShortcuts } from "@/composables/useShortcuts"
-import { isWorkspaceReady } from "@/onboarding/readiness.js"
+import { needsOnboarding } from "@/onboarding/readiness.js"
 import Sidebar from "./Sidebar.vue"
 import JarvisCommandPalette from "./JarvisCommandPalette.vue"
 import OnboardingGate from "./OnboardingGate.vue"
@@ -52,18 +56,25 @@ const route = useRoute()
 const router = useRouter()
 const store = useShellStore()
 
-// Onboarding gate state. `ready` starts null (unresolved) so nothing shows the
-// poster until we KNOW the workspace isn't onboarded — the router's beforeEach
-// awaits the same shared readiness promise before the first route activates, so
-// by the time a page could render, `ready` has flipped too (no chat-then-poster
-// flash). The gate covers every route except the wizard itself, so the poster's
-// button can navigate into /onboarding. On completion OnboardingView hard-
-// reloads to /jarvis/, which re-mounts this shell and re-checks readiness fresh.
-const ready = ref(null)
-isWorkspaceReady().then((r) => {
-	ready.value = r
+// Onboarding gate state. `gatedOnboarding` starts null (unresolved). We render
+// NOTHING but a neutral surface until BOTH the verdict has resolved AND a route
+// has committed (`shellReady`), so we never flash the sidebar/app chrome before
+// knowing whether to show the poster (else a fresh site briefly shows an empty
+// sidebar), and never flash the poster on a not-ready /onboarding deep-link
+// before the wizard mounts (route.name is momentarily undefined). The router's
+// beforeEach awaits the same shared readiness promise, so onboarded users see
+// the sidebar + their page appear together — the hold costs them nothing.
+//
+// Only a workspace that has NEVER onboarded is gated (needsOnboarding) — a
+// merely-degraded but already-onboarded workspace (e.g. expired LLM creds) is
+// NOT ejected from its chat/data and keeps /account reachable to recover.
+const gatedOnboarding = ref(null)
+needsOnboarding().then((v) => {
+	gatedOnboarding.value = v
 })
-const showGate = computed(() => ready.value === false && route.name !== "Onboarding")
+const shellReady = computed(() => gatedOnboarding.value !== null && !!route.name)
+// The wizard route is exempt so the poster's button can navigate into it.
+const showGate = computed(() => gatedOnboarding.value === true && route.name !== "Onboarding")
 
 // Boot gate: hold the routed page (NOT the shell chrome) until systemTimezone
 // is configured — timeAgo strings render once, so a late setConfig would leave

@@ -13,11 +13,7 @@
 		</div>
 
 		<div class="jv-gate-card">
-			<div class="jv-gate-logo">
-				<svg width="28" height="28" viewBox="0 0 24 24" fill="#fff">
-					<path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" />
-				</svg>
-			</div>
+			<JarvisMark :size="56" :radius="14" class="jv-gate-logo" />
 
 			<h1 class="jv-gate-title">Finish setting up Jarvis</h1>
 
@@ -42,14 +38,18 @@
 
 <script setup>
 import { useRouter } from "vue-router"
+import JarvisMark from "@/components/JarvisMark.vue"
 
 const router = useRouter()
 
-// Onboarding is System-Manager-only (route beforeEnter). Mirror UserMenu's
-// leniency (`!== false`) so the setup button still shows on the vite dev server
-// where the boot flag is never injected; a genuine non-SM user (flag === false)
-// gets the "ask your administrator" copy and no dead-end button.
-const isSystemManager = window.is_system_manager !== false
+// The /onboarding route's beforeEnter gate is a STRICT truthy check
+// (`window.is_system_manager ? … : Chat`). Match it exactly here — a lenient
+// `!== false` would show the "Complete setup" button on the vite dev server
+// (flag undefined), but the click would bounce straight back off the route
+// guard to Chat and re-trigger the poster: a dead-end. So the button appears
+// only when it can actually reach the wizard; a non-SM (or dev) user gets the
+// "ask your administrator" copy instead.
+const isSystemManager = !!window.is_system_manager
 
 function goOnboard() {
 	router.push({ name: "Onboarding" })
@@ -109,12 +109,6 @@ function switchToDesk() {
 }
 
 .jv-gate-logo {
-	display: grid;
-	place-items: center;
-	width: 56px;
-	height: 56px;
-	border-radius: 14px;
-	background: linear-gradient(135deg, #6e8bff, #8b5cf6);
 	box-shadow: 0 8px 24px rgba(110, 92, 246, 0.28);
 	margin-bottom: 24px;
 }
