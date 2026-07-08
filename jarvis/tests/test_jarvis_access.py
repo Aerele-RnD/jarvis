@@ -20,11 +20,12 @@ from frappe.tests.utils import FrappeTestCase
 from jarvis.chat.api import list_conversations
 from jarvis.permissions import (
 	JARVIS_ACCESS_ROLES,
+	JARVIS_USER_ROLE,
 	has_jarvis_access,
 	require_jarvis_access,
 )
 
-JARVIS_ROLE = "Jarvis User"
+JARVIS_ROLE = JARVIS_USER_ROLE
 
 # One throwaway user per role shape under test.
 USER_JARVIS = "jarvis-access-juser@example.test"

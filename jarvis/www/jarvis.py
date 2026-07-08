@@ -23,7 +23,8 @@ def get_context(context):
 		"site_name": str(frappe.local.site),
 		"default_route": "/jarvis",
 		"is_system_manager": "System Manager" in frappe.get_roles(),
-		"has_jarvis_access": bool(has_jarvis_access()),
+		# NOTE: no `has_jarvis_access` boot flag — the guard above already
+		# redirected anyone without access, so it would always be True here.
 		# Site timezone for the SPA's dayjs config — shipping it in boot lets
 		# AppShell configure systemTimezone synchronously instead of gating the
 		# first routed render on a settings request.

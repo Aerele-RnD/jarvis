@@ -449,7 +449,13 @@ def send_message(
 	frappe.DoesNotExistError if the conversation does not exist, or
 	frappe.PermissionError if the caller is not the owner.
 	"""
-	require_jarvis_access()
+	# NO require_jarvis_access() here: send_message is invoked under
+	# frappe.set_user(owner) by delegated/system flows (agent_scheduler,
+	# approvals resume), where the impersonated owner may not hold the role — a
+	# gate here would silently break those resumes. It is already owner-only
+	# (SEC-002, validate_can_send below), and reaching it requires a conversation
+	# created through the gated create_* endpoints; human access is enforced at
+	# the SPA route + desk page.
 	t0 = time.monotonic()
 	user = frappe.session.user
 

@@ -92,12 +92,13 @@ def call_tool(tool: str, args: dict | str | None = None) -> dict:
 				f"session references unknown user: {plugin_user}",
 			)
 
-		# Role gate: the resolved acting user must hold Jarvis access
-		# ("Jarvis User" or "System Manager"; Administrator implicit). The
-		# plugin token/HMAC auth only proves the call came from openclaw - it
-		# does not grant the mapped user permission to drive Jarvis tools.
-		if not has_jarvis_access(plugin_user):
-			raise frappe.PermissionError
+		# NOTE: no Jarvis-access role gate on the plugin path. It is
+		# machine-authenticated (token/HMAC proves the call came from openclaw),
+		# and `plugin_user` is either the real chat user — already gated when they
+		# started the conversation — or, in self-hosted mode, the non-privileged
+		# self-host tool BOT (which legitimately never holds the role). Gating
+		# here rejected every self-hosted tool call. Per-DocType perms still apply
+		# under _dispatch_from_session.
 
 		# C2 stretch (2026-06-16 review): bind session_key -> bench's
 		# device_id at session-create time, verify on every call. If the

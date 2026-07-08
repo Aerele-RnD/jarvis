@@ -24,6 +24,8 @@ from __future__ import annotations
 import frappe
 from frappe.utils import cint
 
+from jarvis.permissions import JARVIS_USER_ROLE, ensure_jarvis_user_role
+
 _DT_CACHE_KEY = "jarvis_learning_roles_for_doctype"
 _CACHE_TTL_S = 300
 
@@ -140,12 +142,6 @@ def _make_key(key: str) -> str:
 # settings seeding). Pattern copied from jarvis_admin/install.py.
 _WIKI_ROLES = ("Knowledge Wiki User", "Knowledge Wiki Manager")
 
-# The app-access role (jarvis/permissions.py). is_custom=1 because it is a
-# Jarvis-owned custom role, not a fixture; desk_access=1 because Jarvis chat is
-# a Desk page. Seeded here so the role exists before the grant patch runs.
-_JARVIS_ACCESS_ROLE = "Jarvis User"
-
-
 def after_migrate() -> None:
 	"""Idempotently create the Knowledge Wiki roles and the Jarvis User role
 	(best-effort, never blocks a migrate)."""
@@ -159,11 +155,10 @@ def after_migrate() -> None:
 				"desk_access": 1, "is_custom": 0,
 			}).insert(ignore_permissions=True)
 			created = True
-		if not frappe.db.exists("Role", _JARVIS_ACCESS_ROLE):
-			frappe.get_doc({
-				"doctype": "Role", "role_name": _JARVIS_ACCESS_ROLE,
-				"desk_access": 1, "is_custom": 1,
-			}).insert(ignore_permissions=True)
+		# The app-access role — definition lives in jarvis/permissions.py (single
+		# source of truth), seeded here so it exists before the grant patch runs.
+		if not frappe.db.exists("Role", JARVIS_USER_ROLE):
+			ensure_jarvis_user_role()
 			created = True
 		if created:
 			frappe.db.commit()
