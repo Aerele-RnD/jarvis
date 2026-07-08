@@ -429,6 +429,19 @@ _DESTRUCTIVE = frozenset({"delete_doc", "cancel_doc", "amend_doc", "send_email"}
 # default-unrestricted allowlist under auto-apply + a prompt injection would be
 # an unconfirmed arbitrary whitelisted method call, so it never fast-paths.
 _AUTO_APPLYABLE = frozenset({"create_doc", "update_doc"})
+# Gated writes we dry-run in the sandbox AT PARK TIME and BLOCK on if the dry-run
+# fails, so a deterministic failure (missing mandatory field, bad link, no create
+# permission) is returned to the model BEFORE a confirmation card is shown instead
+# of surfacing after the human confirms a doomed card. Preview and confirm build
+# the same doc as the same exec_user, so a preview failure faithfully predicts the
+# confirm failure. Scoped to the build-from-args create/update pair - the reported
+# mandatory-field case. submit_doc/cancel_doc/delete_doc/amend_doc are _PREVIEWABLE
+# too and are STILL dry-run at park via _pending_preview, but keep the legacy
+# park-with-note: their failures are state-based (already exists, docstatus, link
+# integrity) and dry-running them fires on_submit/on_cancel hooks - extending the
+# block to them is a separate, larger change. run_method is never sandbox-run at
+# park at all (its target's inline non-DB side effects would fire unconfirmed).
+_DRY_RUN_ON_PARK = frozenset({"create_doc", "update_doc"})
 
 
 def _as_bool(value) -> bool:
@@ -456,6 +469,19 @@ def _run_preview(tool: str, args: dict) -> dict:
 				 "hooks (inline HTTP calls in on_submit / on_cancel) are "
 				 "not sandboxed by preview."),
 	}
+
+
+def _preview_error(e: Exception) -> dict:
+	"""Translate a sandboxed dry-run exception into the model-facing error
+	envelope. NEVER audited: a dry-run commits nothing, so there is no write to
+	record. Shared by the model-facing ``preview=True`` path and the park gate's
+	pre-park validation so both classify the same exceptions identically."""
+	if isinstance(e, JarvisError):
+		return _error(type(e).__name__, str(e))
+	if isinstance(e, frappe.PermissionError):
+		return _error("PermissionDeniedError", str(e) or "permission denied")
+	# frappe.ValidationError (incl. MandatoryError) / frappe.DuplicateEntryError
+	return _error("InvalidArgumentError", str(e) or type(e).__name__)
 
 
 def _gate_context(conversation: str | None) -> tuple[str, str]:
@@ -617,12 +643,9 @@ def _run_tool(tool: str, raw_args: dict | str | None,
 		# is committed, so there is no write to record.
 		try:
 			return {"ok": True, "data": _run_preview(tool, args)}
-		except JarvisError as e:
-			return _error(type(e).__name__, str(e))
-		except frappe.PermissionError as e:
-			return _error("PermissionDeniedError", str(e) or "permission denied")
-		except (frappe.ValidationError, frappe.DuplicateEntryError) as e:
-			return _error("InvalidArgumentError", str(e) or type(e).__name__)
+		except (JarvisError, frappe.PermissionError, frappe.ValidationError,
+				frappe.DuplicateEntryError) as e:
+			return _preview_error(e)
 
 	# Write-safety confirmation gate (issue #186): a gated write is NEVER
 	# executed on the model path. Park it - build a preview, mint a single-use
@@ -688,7 +711,25 @@ def _run_tool(tool: str, raw_args: dict | str | None,
 				as_dict=True) or {}
 			if flags.get("auto_apply") or flags.get("file_box"):
 				return dispatch_confirmed(tool, args)
-		preview = _pending_preview(tool, args)
+		# Validate BEFORE parking. For a create/update (build-from-args) write,
+		# run the real call in the rollback sandbox now: a deterministic failure
+		# (missing mandatory field, bad link, no create permission) means the
+		# confirmed write would fail identically - preview and confirm build the
+		# same doc as the same exec_user - so return the error to the model NOW
+		# instead of showing a confirmation card that dies on click. clear_messages
+		# so the validation msgprint does not leak into the turn (mirrors
+		# preview_doc). Every other gated write (submit/cancel/delete/amend get a
+		# sandboxed preview; send_email/run_method/create_custom_skill/update_wiki
+		# a described-intent one) parks via _pending_preview exactly as before.
+		if tool in _DRY_RUN_ON_PARK:
+			try:
+				preview = _run_preview(tool, args)
+			except (JarvisError, frappe.PermissionError,
+					frappe.ValidationError, frappe.DuplicateEntryError) as e:
+				frappe.clear_messages()
+				return _preview_error(e)
+		else:
+			preview = _pending_preview(tool, args)
 		token = pending_confirm.mint(conversation=conv, owner=owner_user,
 									 tool=tool, args=args, run_id=run_id,
 									 exec_user=exec_user)

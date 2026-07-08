@@ -84,6 +84,48 @@ class TestGateParks(FrappeTestCase):
 		self.assertIsNotNone(captured.get("token"))
 
 
+class TestGatePreValidatesBeforePark(FrappeTestCase):
+	"""A dry-runnable gated write is validated in the sandbox BEFORE the
+	confirmation card is minted. A deterministic failure (e.g. a missing
+	mandatory field) is returned to the model immediately instead of parking a
+	card that would die on click - the confirmed write is the SAME call as the
+	same user, so a preview failure is a faithful predictor."""
+
+	def test_gated_create_missing_mandatory_returns_error_not_park(self):
+		# ToDo.description is mandatory. Pass a non-empty values dict that omits
+		# it (an empty dict is refused earlier by _validate_create_args).
+		patcher, captured = _spy_mint()
+		with patch("jarvis.chat.events.publish_to_user") as pub, patcher:
+			r = api._run_tool("create_doc", {
+				"doctype": "ToDo", "values": {"priority": "Medium"},
+			})
+			# No confirmation card was published either.
+			self.assertFalse(pub.called)
+		# Model-facing validation error, NOT the park shape.
+		self.assertFalse(r["ok"])
+		self.assertEqual(r["error"]["code"], "InvalidArgumentError")
+		self.assertIn("description", r["error"]["message"].lower())
+		# Did NOT park: no token minted (and the error envelope + no publish
+		# above prove nothing was parked or executed).
+		self.assertIsNone(captured.get("token"))
+
+	def test_valid_gated_create_still_parks(self):
+		# Regression guard: a preview that VALIDATES cleanly still parks a card
+		# with the sandboxed dry-run shape and mints a token.
+		desc = "jarvis-test-gate-prevalidate-valid-011"
+		patcher, captured = _spy_mint()
+		with patcher:
+			r = api._run_tool("create_doc", {
+				"doctype": "ToDo", "values": {"description": desc},
+			})
+		self.assertTrue(r["ok"])
+		self.assertEqual(r["data"]["status"], "pending_confirmation")
+		self.assertTrue(r["data"]["preview"]["preview"])
+		self.assertIn("would", r["data"]["preview"])
+		self.assertIsNotNone(captured.get("token"))
+		self.assertFalse(frappe.db.exists("ToDo", {"description": desc}))
+
+
 class TestNonGatedWriteRunsImmediately(FrappeTestCase):
 	def test_add_comment_executes_immediately(self):
 		# add_comment is a write but NOT gated - it must run inline, no park.
