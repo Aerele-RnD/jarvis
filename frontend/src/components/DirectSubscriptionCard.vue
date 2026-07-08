@@ -10,7 +10,7 @@
   <div class="jv-dsub" style="font-family:inherit;color:var(--text);">
     <!-- ===== Paste-back flow (Screen 2) ===== -->
     <div v-if="flowOpen">
-      <p class="jv-dsub-step"><b>Step 1</b> — Sign in with your {{ status.provider || pickProvider }} account in a new tab.</p>
+      <p class="jv-dsub-step"><b>Step 1</b> - Sign in with your {{ status.provider || pickProvider }} account in a new tab.</p>
       <div class="jv-dsub-actions" style="margin-bottom:10px;">
         <a v-if="authorizeUrl" :href="authorizeUrl" target="_blank" rel="noopener noreferrer" class="jv-dsub-btn jv-dsub-btn-primary">Open sign-in URL ↗</a>
         <span v-else class="jv-dsub-muted">Starting sign-in…</span>
@@ -19,7 +19,7 @@
         <code class="jv-dsub-url" :title="authorizeUrl">{{ authorizeUrl }}</code>
         <button type="button" class="jv-dsub-btn jv-dsub-btn-ghost" @click="copyUrl">{{ copied ? 'Copied ✓' : 'Copy' }}</button>
       </div>
-      <p class="jv-dsub-step" style="margin-top:14px;"><b>Step 2</b> — After you click Authorize, your browser shows a “This site can’t be reached” page. <b>That’s expected.</b> Copy the URL from the address bar (starts with <code>http://localhost:1455/auth/callback?code=…</code>) and paste it here:</p>
+      <p class="jv-dsub-step" style="margin-top:14px;"><b>Step 2</b> - After you click Authorize, your browser shows a “This site can’t be reached” page. <b>That’s expected.</b> Copy the URL from the address bar (starts with <code>http://localhost:1455/auth/callback?code=…</code>) and paste it here:</p>
       <textarea v-model="pastedUrl" rows="3" class="jv-dsub-input" placeholder="Paste the URL from the error page here"></textarea>
       <div class="jv-dsub-actions" style="margin-top:10px;">
         <button class="jv-dsub-btn jv-dsub-btn-ghost" @click="cancelFlow">Cancel</button>
@@ -32,11 +32,11 @@
     <!-- ===== Connected (Screen 3) ===== -->
     <div v-else-if="status.connected">
       <p class="jv-dsub-muted" style="margin:0 0 12px;">
-        Your chat subscription is served directly to the provider. Refresh state lives inside your Jarvis container — if chat starts failing, re-authorize to mint fresh tokens.
+        Your chat subscription is served directly to the provider. Refresh state lives inside your Jarvis container - if chat starts failing, re-authorize to mint fresh tokens.
       </p>
-      <div class="jv-dsub-kv"><span>Account</span><b>{{ status.account_email || '—' }}</b></div>
-      <div class="jv-dsub-kv"><span>Provider</span><b>{{ status.provider || '—' }}</b></div>
-      <div class="jv-dsub-kv"><span>Model</span><b>{{ status.model || '—' }}</b></div>
+      <div class="jv-dsub-kv"><span>Account</span><b>{{ status.account_email || '-' }}</b></div>
+      <div class="jv-dsub-kv"><span>Provider</span><b>{{ status.provider || '-' }}</b></div>
+      <div class="jv-dsub-kv"><span>Model</span><b>{{ status.model || '-' }}</b></div>
       <div v-if="status.connected_at" class="jv-dsub-kv"><span>Connected</span><b>{{ connectedAtLabel }}</b></div>
       <div class="jv-dsub-actions" style="margin-top:14px;">
         <button v-if="editable" class="jv-dsub-btn jv-dsub-btn-ghost" :disabled="busy" @click="doDisconnect">Disconnect</button>
@@ -48,10 +48,10 @@
     <!-- ===== Not connected → connect a chat subscription (DIRECT) ===== -->
     <div v-else>
       <p v-if="status.is_single_subscription_pool" class="jv-dsub-muted" style="margin:0 0 12px;">
-        Your {{ status.provider || 'chat subscription' }} is currently running through the <b>proxy</b>. Sign in below to switch it to <b>direct</b> — served straight to the provider (codex), lighter, with no proxy sidecar.
+        Your {{ status.provider || 'chat subscription' }} is currently running through the <b>proxy</b>. Sign in below to switch it to <b>direct</b> - served straight to the provider (codex), lighter, with no proxy sidecar.
       </p>
       <p v-else class="jv-dsub-muted" style="margin:0 0 12px;">
-        Sign in with your existing ChatGPT Plus/Pro or Gemini Advanced account — no API key needed. It's served directly to the provider (codex), not through the proxy.
+        Sign in with your existing ChatGPT Plus/Pro or Gemini Advanced account - no API key needed. It's served directly to the provider (codex), not through the proxy.
       </p>
       <div class="jv-dsub-pick">
         <label class="jv-dsub-field">
@@ -134,10 +134,10 @@ const minsLeft = computed(() =>
   expiresAt.value ? Math.max(0, Math.floor((expiresAt.value - nowTick.value) / 60000)) : null,
 )
 // exactDate parses the server's naive datetime in the SITE timezone (via
-// frappe-ui dayjsLocal) and renders it in the viewer's zone — do NOT hand the
+// frappe-ui dayjsLocal) and renders it in the viewer's zone - do NOT hand the
 // raw string to new Date(), which reads it as browser-local (wrong offset) and
 // can yield Invalid Date on strict engines for the 6-digit microsecond suffix.
-const connectedAtLabel = computed(() => exactDate(props.status.connected_at) || "—")
+const connectedAtLabel = computed(() => exactDate(props.status.connected_at) || "-")
 
 function resetFlow() {
   flowOpen.value = false
@@ -154,7 +154,7 @@ function cancelFlow() { resetFlow(); err.value = "" }
 // connected provider/model; a fresh connect passes the picked provider/model.
 // The backend coerces the model to a valid subscription model for the provider,
 // and complete_paste_signin clears any existing models[] pool + sets the direct
-// flat fields — so this doubles as the "switch a pooled subscription to direct".
+// flat fields - so this doubles as the "switch a pooled subscription to direct".
 async function startSignin(providerOverride, modelOverride) {
   err.value = ""
   busy.value = true
@@ -165,7 +165,7 @@ async function startSignin(providerOverride, modelOverride) {
     const m = (modelOverride || props.status.model || pickModel.value || "").trim()
     const res = await api.beginPasteSignin(p, m)
     if (!res || res.ok === false) {
-      err.value = (res && res.error && res.error.message) || "Couldn't start sign-in — try again."
+      err.value = (res && res.error && res.error.message) || "Couldn't start sign-in - try again."
       flowOpen.value = false
       return
     }
@@ -190,7 +190,7 @@ async function submitPasted() {
     if (!res || res.ok === false) {
       const code = (res && res.error && res.error.code) || ""
       err.value = `${code ? code + ": " : ""}${(res && res.error && res.error.message) || "Sign-in failed."}`
-      // A dead nonce can't be retried — drop back to the connected screen.
+      // A dead nonce can't be retried - drop back to the connected screen.
       if (code === "expired" || code === "unknown_nonce") resetFlow()
       return
     }
@@ -218,13 +218,13 @@ function copyUrl() {
   const url = authorizeUrl.value
   if (!url) return
   const done = () => { copied.value = true; setTimeout(() => { copied.value = false }, 1400) }
-  const fail = () => { err.value = "Could not copy — select the URL and copy manually." }
+  const fail = () => { err.value = "Could not copy - select the URL and copy manually." }
   if (navigator.clipboard && window.isSecureContext) {
     navigator.clipboard.writeText(url).then(done).catch(fail)
     return
   }
   // LAN HTTP fallback: navigator.clipboard is undefined in insecure contexts.
-  // execCommand can return false WITHOUT throwing (e.g. selection disallowed) —
+  // execCommand can return false WITHOUT throwing (e.g. selection disallowed) -
   // honour the boolean so a failed copy doesn't falsely flash "Copied ✓".
   const ta = document.createElement("textarea")
   ta.value = url; ta.style.position = "fixed"; ta.style.left = "-9999px"

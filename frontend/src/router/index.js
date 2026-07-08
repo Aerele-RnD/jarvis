@@ -25,7 +25,7 @@ const routes = [
 		component: () => import("@/pages/skills/SkillDetail.vue"),
 		props: true,
 	},
-	// Account: plan/billing + AI models editor + connection/usage summaries —
+	// Account: plan/billing + AI models editor + connection/usage summaries -
 	// System-Manager only; guard redirects others to Chat.
 	{
 		path: "/account",
@@ -33,7 +33,7 @@ const routes = [
 		component: () => import("@/views/AccountView.vue"),
 		beforeEnter: (to, from, next) => { next(window.is_system_manager ? undefined : { name: "Chat" }) },
 	},
-	// First-run wizard (managed signup or self-hosted connect) — System-Manager
+	// First-run wizard (managed signup or self-hosted connect) - System-Manager
 	// only; guard redirects others to Chat. Reached via the chat welcome card
 	// or the desk banner, not a forced redirect (see beforeEach below).
 	{
@@ -41,11 +41,11 @@ const routes = [
 		name: "Onboarding",
 		component: () => import("@/views/OnboardingView.vue"),
 		// Chrome-less: a first-run customer hasn't onboarded yet, so the full app
-		// sidebar/header (Chat/Skills/Macros/…) is noise — AppShell hides them.
+		// sidebar/header (Chat/Skills/Macros/…) is noise - AppShell hides them.
 		meta: { chromeless: true },
 		beforeEnter: (to, from, next) => { next(window.is_system_manager ? undefined : { name: "Chat" }) },
 	},
-	// Usage dashboard (moved out of the old /ai shell) — System-Manager only;
+	// Usage dashboard (moved out of the old /ai shell) - System-Manager only;
 	// guard redirects others to Chat.
 	{
 		path: "/monitor",
@@ -75,7 +75,7 @@ const routes = [
 	{ path: "/files", name: "FilesList", component: () => import("@/pages/files/FilesList.vue") },
 	// §15.2: both approval routes render the two-pane board (the :id row is
 	// selected in place); names kept so nav highlighting + router.push targets
-	// keep working. The board reads route.params itself — no props.
+	// keep working. The board reads route.params itself - no props.
 	{
 		path: "/approvals",
 		name: "ApprovalsList",
@@ -87,7 +87,7 @@ const routes = [
 		component: () => import("@/pages/approvals/ApprovalsBoard.vue"),
 	},
 	{ path: "/agents", name: "AgentsList", component: () => import("@/pages/agents/AgentsList.vue") },
-	// Legacy round-2 tab routes — static, registered BEFORE :slug (§9). Point at
+	// Legacy round-2 tab routes - static, registered BEFORE :slug (§9). Point at
 	// the current hash-tabs (mine→Installed, activity→Activity); admin is now a
 	// per-agent detail tab, so it falls back to the catalog.
 	{ path: "/agents/mine", redirect: "/agents#installed" },
@@ -109,7 +109,7 @@ const router = createRouter({
 
 // First-run guard: bounce a fully-onboarded user away from a stale
 // /onboarding link back to Chat. The readiness check hits the backend once
-// per page load — `readyPromise` caches the in-flight/resolved call so
+// per page load - `readyPromise` caches the in-flight/resolved call so
 // repeated client-side navigations (Chat -> Account -> Chat, etc.) don't
 // re-fire it. Fail-open: if the backend call throws, treat the app as ready
 // so a flaky check never strands the user unable to reach Chat.
@@ -119,7 +119,7 @@ router.beforeEach(async (to) => {
 		readyPromise = isReadyForChat().catch(() => ({ ready: true }))
 	}
 	const ready = isOnboardComplete(await readyPromise)
-	// We no longer force not-ready users into the wizard — onboarding is now
+	// We no longer force not-ready users into the wizard - onboarding is now
 	// invited via the chat welcome card (below) + the desk banner. Only bounce a
 	// fully-onboarded user away from a stale /onboarding link.
 	if (ready && to.name === "Onboarding") {

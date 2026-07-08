@@ -44,7 +44,7 @@
 <script setup>
 // ⌘K palette (DESIGN-V3 §3.5), rebuilt on plain frappe-ui Dialog. The stock
 // CommandPalette in 0.1.278 nests a bare <template> element at its root, which
-// Vue renders as an inert native <template> — its whole Dialog subtree never
+// Vue renders as an inert native <template> - its whole Dialog subtree never
 // mounts (no [role=dialog], no errors), so ⌘K and the sidebar Search rows did
 // nothing. Same anatomy as the stock component: search input + grouped list,
 // ↑/↓/Enter keyboard navigation, Esc closes (Dialog's own handling). Opens via
@@ -75,7 +75,7 @@ const searching = ref(false)
 const activeIndex = ref(0)
 
 // Focus the input once the Dialog's portal content is in the DOM (reka-ui's
-// autofocus usually lands on it anyway — this covers re-opens reliably).
+// autofocus usually lands on it anyway - this covers re-opens reliably).
 watch(open, (v) => {
 	if (v) nextTick(() => inputEl.value?.focus())
 })
@@ -197,7 +197,7 @@ function select(item) {
 	else router.push("/c/" + item.name)
 }
 
-// after-leave (Dialog's overlay finished its exit) — wipe for the next open.
+// after-leave (Dialog's overlay finished its exit) - wipe for the next open.
 function reset() {
 	clearTimeout(_debounce)
 	_seq++ // invalidate any in-flight search

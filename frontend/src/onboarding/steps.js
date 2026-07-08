@@ -1,5 +1,5 @@
 // Pure step-progression helpers for the onboarding wizard. No Vue, no API
-// calls — kept pure so they're cheap to unit-test with node --test (see
+// calls - kept pure so they're cheap to unit-test with node --test (see
 // steps.test.js) and reusable from both the wizard component and the
 // router's first-run guard.
 
@@ -20,7 +20,7 @@ export function prevStep(steps, cur) {
 }
 
 // jarvis.account.is_ready_for_chat (jarvis/account.py) returns
-// {ready: bool, reason: str|None} — reason is one of "signup" /
+// {ready: bool, reason: str|None} - reason is one of "signup" /
 // "llm_credentials" / "selfhost_connection" when not ready, null when ready.
 // Onboarding is "complete" (chat-ready) exactly when `ready` is true.
 export function isOnboardComplete(readyResp) {

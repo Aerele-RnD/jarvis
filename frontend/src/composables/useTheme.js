@@ -2,14 +2,14 @@ import { ref, computed, onMounted, onBeforeUnmount } from "vue"
 import { LIGHT_VARS, DARK_VARS, isDark } from "@/theme"
 
 /**
- * Shared theme composable — single source of truth for the "jarvis-theme"
+ * Shared theme composable - single source of truth for the "jarvis-theme"
  * localStorage preference across ChatView, AiView, AccountView/AppSidebar,
  * and any future views.
  *
  * The underlying refs are module-level singletons (not re-created per call)
  * so that when a view and a child component (e.g. AccountView + AppSidebar)
  * both call useTheme() on the same page, toggling in one instantly re-themes
- * the other — the browser's "storage" event only fires for *other* tabs, so
+ * the other - the browser's "storage" event only fires for *other* tabs, so
  * per-instance refs would otherwise fall out of sync within a single page.
  *
  * Exposes: pref, prefersDark, effectiveDark, paletteVars, setTheme, toggleTheme.
@@ -22,7 +22,7 @@ const paletteVars = computed(() => (effectiveDark.value ? DARK_VARS : LIGHT_VARS
 function setTheme(t) {
 	pref.value = t
 	try { localStorage.setItem("jarvis-theme", t) } catch (e) {
-		/* private mode / storage disabled — keep the in-memory choice */
+		/* private mode / storage disabled - keep the in-memory choice */
 	}
 }
 // Quick toggle: flip between light and dark (drops out of 'system').

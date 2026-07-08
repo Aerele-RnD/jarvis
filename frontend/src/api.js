@@ -68,7 +68,7 @@ export const stopMacroRun = (run) => call(MC + "stop_macro_run", { run })
 export const listMacroRuns = (params) => call(MC + "list_macro_runs", params || {})
 export const macroRunStats = () => call(MC + "macro_run_stats")
 // Background summarize: fired after every 2+ step save; the WORKER applies the
-// summary when the turn ends (macro:merged event) — no client round-trip needed.
+// summary when the turn ends (macro:merged event) - no client round-trip needed.
 // Run is gated on merge_status while pending.
 export const summarizeMacro = (name) => call(MC + "summarize_macro", { name })
 export const setConversationModel = (conversation, model) =>
@@ -94,7 +94,7 @@ export const listPendingConfirmations = (conversation) =>
 
 export async function sendMessage(conversation, message, modelOverride, attachments, context) {
 	// Empty conversation is allowed: the backend creates (or focuses) an empty
-	// conversation itself and returns its id as `conversation_id` — saves the
+	// conversation itself and returns its id as `conversation_id` - saves the
 	// SPA a createOrFocusEmpty round-trip before the first send (latency plan).
 	const args = { conversation: conversation || "", message }
 	if (modelOverride) args.model_override = modelOverride
@@ -125,7 +125,7 @@ export const saveLlmPool = (models, preset = null, routingMode = "failover") =>
 
 // --- Onboarding wizard (managed signup + self-hosted connect) ---
 // Arg names mirror the real backend signatures (jarvis/onboarding.py,
-// jarvis/account.py, jarvis/selfhost.py) — verified against the desk wizard's
+// jarvis/account.py, jarvis/selfhost.py) - verified against the desk wizard's
 // frappe.call usage in jarvis/jarvis/page/jarvis_onboarding/jarvis_onboarding.js.
 export const listPlans = () => call("jarvis.onboarding.list_plans")
 export const getAccountDefaults = () => call("jarvis.onboarding.get_account_defaults")
@@ -165,7 +165,7 @@ export const getDirectSubscriptionStatus = () =>
 // DIRECT paste-back re-authorize: begin → { ok, data:{nonce, authorize_url,
 // expires_in} }; complete pushes the fresh blob to the container's
 // auth-profiles.json + rewrites the flat fields (force restart). These write
-// Jarvis Settings — unlike the pool "capture-only" variants above.
+// Jarvis Settings - unlike the pool "capture-only" variants above.
 export const beginPasteSignin = (provider, model) =>
 	call("jarvis.oauth.api.begin_paste_signin", { provider, model })
 export const completePasteSignin = (nonce, redirectedUrl) =>
@@ -234,7 +234,7 @@ export const listAgentRuns = (agent, limit) =>
 export const listAgentFindings = (p) => call(AG + "list_findings", p || {})
 export const setFindingState = (finding, state) =>
 	call(AG + "set_finding_state", { finding, state })
-// Role gating + listing admin (System Manager only — the server enforces it;
+// Role gating + listing admin (System Manager only - the server enforces it;
 // the SPA merely probes getAgentAdminOverview and hides the Admin tab on 403).
 export const setAgentRoles = (agent_slug, roles) =>
 	call(AG + "set_agent_roles", { agent_slug, roles: JSON.stringify(roles || []) })

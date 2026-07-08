@@ -63,7 +63,7 @@
 										Last synced {{ timeAgo(caps.wiki_mirror_last_synced_at) }}<span
 											v-if="caps.wiki_mirror_last_sync_status"
 										>
-											— {{ caps.wiki_mirror_last_sync_status }}</span
+											- {{ caps.wiki_mirror_last_sync_status }}</span
 										>
 									</template>
 									<template v-else>Not synced yet.</template>
@@ -81,7 +81,7 @@
 									Last health check {{ timeAgo(caps.wiki_lint_last_run_at) }}<span
 										v-if="caps.wiki_lint_summary"
 									>
-										— {{ caps.wiki_lint_summary }}</span
+										- {{ caps.wiki_lint_summary }}</span
 									>
 								</template>
 								<template v-else>Health check hasn't run yet.</template>
@@ -102,7 +102,7 @@
 			     the empty state, which real first-visits on a grown wiki never see -->
 			<template #banner>
 				<p class="mb-2 text-p-sm text-ink-gray-5">
-					The wiki is the knowledge Jarvis keeps about your business — customers,
+					The wiki is the knowledge Jarvis keeps about your business - customers,
 					suppliers, processes, conventions. It grows from chat and voice notes;
 					Jarvis cites it when answering.
 				</p>
@@ -279,7 +279,7 @@
 </template>
 
 <script setup>
-// WikiTab — the "Wiki" tab inside the Skills page (design D4): the org-wide
+// WikiTab - the "Wiki" tab inside the Skills page (design D4): the org-wide
 // knowledge base Jarvis maintains, now scope-aware (Org / Role / User pages,
 // server-side visibility). Standard ListPage + useListPage kit (FilesList
 // precedent): server pagination, debounced search, scope / type / attention
@@ -362,14 +362,14 @@ function typeLabel(t) {
 }
 // one-line explanations for the create dialog's Type select
 const TYPE_HELP = {
-	Customer: "One specific customer's quirks — payment habits, contacts, gotchas.",
-	Supplier: "One specific supplier's quirks — lead times, terms, who to call.",
-	Item: "One item or item group — variants, storage, known issues.",
-	Process: "A procedure as your org actually runs it — steps, owners, exceptions.",
+	Customer: "One specific customer's quirks - payment habits, contacts, gotchas.",
+	Supplier: "One specific supplier's quirks - lead times, terms, who to call.",
+	Item: "One item or item group - variants, storage, known issues.",
+	Process: "A procedure as your org actually runs it - steps, owners, exceptions.",
 	Doctype: "Org-wide conventions on a document type, e.g. Sales Invoice habits.",
 	Exception: "A known edge case or standing workaround.",
 	Integration: "An external system your org connects to and its rules.",
-	People: "Who does what — approvers, escalation paths, contacts.",
+	People: "Who does what - approvers, escalation paths, contacts.",
 	Org: "General org-level facts that fit nowhere else.",
 }
 const LANGUAGE_OPTIONS = [
@@ -377,9 +377,9 @@ const LANGUAGE_OPTIONS = [
 	{ label: "Original language", value: "Original" },
 ]
 const SCOPE_LABELS = {
-	Org: "Org — visible to everyone",
-	Role: "Role — people holding a role",
-	User: "Personal — just me",
+	Org: "Org - visible to everyone",
+	Role: "Role - people holding a role",
+	User: "Personal - just me",
 }
 
 const columns = [
@@ -447,7 +447,7 @@ const emptyState = computed(() => {
 			icon: "book-open",
 			title: "No personal pages yet",
 			description:
-				'Personal pages are knowledge only you and Jarvis share — shortcuts, ' +
+				'Personal pages are knowledge only you and Jarvis share - shortcuts, ' +
 				'preferences, your own working notes. Use "New page" and pick the ' +
 				'Personal scope to create your first one.',
 		}
@@ -461,7 +461,7 @@ const emptyState = computed(() => {
 		icon: "book-open",
 		title: "No wiki pages yet",
 		description:
-			"The wiki is the knowledge base Jarvis keeps about your business — customers, " +
+			"The wiki is the knowledge base Jarvis keeps about your business - customers, " +
 			"suppliers, items and processes. It grows on its own as people answer chat " +
 			"nudges and record voice notes on the Business tab; pages appear here as " +
 			"Jarvis learns.",
@@ -469,8 +469,8 @@ const emptyState = computed(() => {
 })
 
 function scopeTooltip(row) {
-	if (row.scope === "Role") return `Visible to people with role: ${row.target_role || "—"}`
-	if (row.scope === "User") return `Personal page — visible only to ${row.target_user || "its owner"}`
+	if (row.scope === "Role") return `Visible to people with role: ${row.target_role || "-"}`
+	if (row.scope === "User") return `Personal page - visible only to ${row.target_user || "its owner"}`
 	return "Visible to everyone"
 }
 
@@ -513,7 +513,7 @@ function openPage(slug) {
 }
 
 // ── row actions (archive / restore / delete) ─────────────────────────────────
-// slug of the row with an in-flight lifecycle call — one at a time is plenty
+// slug of the row with an in-flight lifecycle call - one at a time is plenty
 const rowBusy = ref("")
 function rowSlug(row) {
 	return row.slug || row.name
@@ -554,7 +554,7 @@ function confirmDelete(row) {
 	confirmDialog({
 		title: "Delete this page permanently?",
 		message:
-			"Permanently deletes this page — archiving keeps it recoverable. This cannot be undone.",
+			"Permanently deletes this page - archiving keeps it recoverable. This cannot be undone.",
 		onConfirm: async ({ hideDialog }) => {
 			hideDialog()
 			await runRowAction(row, deleteWikiPage, "Page deleted")
@@ -581,7 +581,7 @@ const roleSelectOptions = computed(() =>
 	(caps.manageable_roles || []).map((r) => ({ label: r, value: r }))
 )
 // Preview of the server-derived slug (`<type>--<scrubbed-title>` plus the
-// controller's audience suffix for non-Org scopes) — mirror it fully so the
+// controller's audience suffix for non-Org scopes) - mirror it fully so the
 // preview never lies about the final page id.
 const scrub = (s) =>
 	String(s || "")

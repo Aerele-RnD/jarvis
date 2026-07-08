@@ -46,7 +46,7 @@
 				<div class="truncate text-base font-medium text-ink-gray-9">{{ row.skill_name }}</div>
 				<Tooltip
 					v-if="row.scope === 'Personal'"
-					text="Personal skill — only you; never pushed to the shared assistant"
+					text="Personal skill - only you; never pushed to the shared assistant"
 				>
 					<Badge variant="subtle" theme="green" label="Personal" />
 				</Tooltip>
@@ -68,7 +68,7 @@
 					theme="gray"
 					:label="`${row.shared_count} user${row.shared_count === 1 ? '' : 's'}`"
 				/>
-				<span v-else class="text-base text-ink-gray-4">—</span>
+				<span v-else class="text-base text-ink-gray-4">-</span>
 			</div>
 		</template>
 
@@ -97,7 +97,7 @@
 </template>
 
 <script setup>
-// Skills list — DESIGN-V3 §5.6: scope/enabled quick filters, sync-pill banner
+// Skills list - DESIGN-V3 §5.6: scope/enabled quick filters, sync-pill banner
 // (apply pipeline status, 3s poll while pending), bulk delete with skip
 // reasons (owner-only rows), rows → /skills/:id, New Skill → /skills/new.
 import { ref } from "vue"
@@ -180,7 +180,7 @@ const {
 	loadMore,
 } = useListPage({
 	fetchFn: (p) => {
-		// the backend whitelists filter keys and throws on "search" — strip it
+		// the backend whitelists filter keys and throws on "search" - strip it
 		// out of filters and send it as the envelope's search param instead
 		const { search: q, ...rest } = p.filters || {}
 		return api.listCustomSkillsPage({ ...p, search: q || p.search || "", filters: rest })
@@ -220,7 +220,7 @@ function bulkDelete(selections, unselectAll) {
 				unselectAll()
 				hideDialog()
 				resetLoad()
-				// the server enqueued one skills-apply at the end (§8.3) — show it
+				// the server enqueued one skills-apply at the end (§8.3) - show it
 				syncPill.value && syncPill.value.checkNow()
 			} catch (e) {
 				toast.error(errMsg(e))

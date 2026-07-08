@@ -4,7 +4,7 @@
 
 export function readCookie(name) {
   // URLSearchParams already percent-decodes the value (handles %25, %20, %2B).
-  // Do NOT decodeURIComponent the result again — a display name containing a
+  // Do NOT decodeURIComponent the result again - a display name containing a
   // literal '%' is stored as '%25', URLSearchParams turns it back into a bare
   // '%', and a second decodeURIComponent('%…') throws URIError, blanking every
   // page that embeds the sidebar.

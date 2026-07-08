@@ -20,7 +20,7 @@ test("stepIndex", () => {
 })
 
 // jarvis.account.is_ready_for_chat returns {ready: bool, reason: str|None}
-// (see jarvis/account.py::is_ready_for_chat) — isOnboardComplete reads the
+// (see jarvis/account.py::is_ready_for_chat) - isOnboardComplete reads the
 // real `ready` field, so this doubles as a real-shape regression test.
 test("isOnboardComplete reads readiness", () => {
 	assert.equal(isOnboardComplete({ ready: true, reason: null }), true)

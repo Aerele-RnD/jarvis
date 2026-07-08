@@ -1,4 +1,4 @@
-<!-- Themed select / combobox — a CSS-styleable replacement for native <select>
+<!-- Themed select / combobox - a CSS-styleable replacement for native <select>
      and <input list=datalist>, whose popups can't be styled to match the app.
      `options` accepts strings or {value,label}. `allowCustom` makes it a
      free-text combobox (type your own value, filtered suggestions); otherwise
@@ -79,7 +79,7 @@ function move(d) {
 }
 function onEnter() {
   if (open.value && hi.value >= 0 && filtered.value[hi.value]) { choose(filtered.value[hi.value]); return }
-  // No suggestion picked — keep whatever the user typed and let the host act on Enter.
+  // No suggestion picked - keep whatever the user typed and let the host act on Enter.
   open.value = false
   emit("enter")
 }

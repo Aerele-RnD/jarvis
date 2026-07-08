@@ -26,7 +26,7 @@
 // Mention plumbing lives at module level, shared by every composer instance
 // on the page. We deliberately do NOT use TextEditor's :mentions prop:
 // frappe-ui 0.1.278's suggestion renderer is incompatible with
-// @tiptap/suggestion 3.x — onStart now fires with empty items BEFORE the
+// @tiptap/suggestion 3.x - onStart now fires with empty items BEFORE the
 // async items() fetch, the empty SuggestionList (v-if="items.length")
 // renders a comment node so VueRenderer.element is null, tippy creation is
 // skipped, and onUpdate only repositions an existing popup. Net effect: the
@@ -142,11 +142,11 @@ const CommentMention = Mention.configure({
 </script>
 
 <script setup>
-// CommentComposer — async-loaded comment editor (DESIGN-V3 §6.1, D33): the
+// CommentComposer - async-loaded comment editor (DESIGN-V3 §6.1, D33): the
 // frappe-ui TextEditor (tiptap + prosemirror) stays isolated in THIS chunk so
 // list/detail pages don't pay for it until the user actually comments; editor
 // styles are imported here only. Ctrl/⌘+Enter submits. Mention rendering
-// only — no mention notifications this wave (stated non-goal).
+// only - no mention notifications this wave (stated non-goal).
 import "frappe-ui/editor-style.css"
 import { ref, computed, onMounted } from "vue"
 import { TextEditor, Button } from "frappe-ui"

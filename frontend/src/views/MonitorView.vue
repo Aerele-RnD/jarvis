@@ -2,7 +2,7 @@
 	<div class="jv-app flex h-full flex-col overflow-hidden" :class="{ 'jv-dark': dark }" :style="paletteVars"
 		 style="background:var(--surface);color:var(--text);">
 
-		<!-- Shell-integrated header — no per-view sidebar; the app shell's Sidebar
+		<!-- Shell-integrated header - no per-view sidebar; the app shell's Sidebar
 		     owns navigation, same chrome as Agents / Skills / Macros / Account. -->
 		<LayoutHeader>
 			<template #left-header>
@@ -22,6 +22,6 @@ import { Breadcrumbs } from "frappe-ui"
 import LayoutHeader from "@/components/LayoutHeader.vue"
 import MonitorTab from "@/views/MonitorTab.vue"
 
-// Theme — shared composable: honours "jarvis-theme" pref, cross-tab sync, OS live.
+// Theme - shared composable: honours "jarvis-theme" pref, cross-tab sync, OS live.
 const { effectiveDark: dark, paletteVars } = useTheme()
 </script>

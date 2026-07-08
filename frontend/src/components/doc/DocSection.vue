@@ -30,7 +30,7 @@
 </template>
 
 <script setup>
-// DocSection — CRM CollapsibleSection port (DESIGN-V3 §6.1): chevron header
+// DocSection - CRM CollapsibleSection port (DESIGN-V3 §6.1): chevron header
 // (rotate-90 when open), max-height transition, sections separated by border-t
 // (first:border-t-0). #header-suffix is additive (status badges next to the
 // label, e.g. macro "Summarized prompt").

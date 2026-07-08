@@ -1,13 +1,13 @@
 <template>
 	<FrappeUIProvider>
 		<div class="flex h-screen w-screen">
-			<!-- Chrome-less routes (onboarding) drop the sidebar entirely — a
+			<!-- Chrome-less routes (onboarding) drop the sidebar entirely - a
 			     not-yet-onboarded customer has no app to navigate. -->
 			<div v-if="!route.meta.chromeless" class="h-full border-r bg-surface-gray-1">
 				<Sidebar />
 			</div>
 			<div class="flex flex-1 flex-col h-full overflow-auto bg-surface-white">
-				<!-- LayoutHeader teleport target — non-chat routes only (D41).
+				<!-- LayoutHeader teleport target - non-chat routes only (D41).
 				     The "Go to Desk" button is rendered INSIDE LayoutHeader's right
 				     cluster (leftmost, before each page's own actions) so it is
 				     uniform across pages and never displaces the page's primary
@@ -42,7 +42,7 @@ const router = useRouter()
 const store = useShellStore()
 
 // Boot gate: hold the routed page (NOT the shell chrome) until systemTimezone
-// is configured — timeAgo strings render once, so a late setConfig would leave
+// is configured - timeAgo strings render once, so a late setConfig would leave
 // stale future-tense timestamps on the first paint. Production boot injects
 // window.time_zone via jinjaBootData (www/jarvis.py), so this is synchronous;
 // the awaited getChatUiSettings read in onMounted is only the dev-server /
@@ -53,7 +53,7 @@ if (typeof window !== "undefined" && window.time_zone) {
 	booted.value = true
 }
 
-// Global shortcuts (§3.1). ⌘K moved here from the stock CommandPalette —
+// Global shortcuts (§3.1). ⌘K moved here from the stock CommandPalette -
 // JarvisCommandPalette is now built on plain Dialog and owns no keys itself
 // (the stock component never mounted its Dialog subtree; DA-06 died with it).
 useShortcuts([
@@ -98,19 +98,19 @@ onMounted(async () => {
 	// Fallback only (vite dev server serves index.html without the jinja boot
 	// injection, and older cached shells may miss the key): fetch the timezone
 	// the old way before revealing the routed page. In production this branch
-	// never runs — booted flipped synchronously in setup above.
+	// never runs - booted flipped synchronously in setup above.
 	if (!booted.value) {
 		try {
 			const res = await api.getChatUiSettings()
 			if (res?.time_zone) setConfig("systemTimezone", res.time_zone)
 		} catch {
-			// fall through — dayjsLocal degrades to browser-local parsing
+			// fall through - dayjsLocal degrades to browser-local parsing
 		}
 		booted.value = true
 	}
 
 	// NOTE: no onboarding force-redirect here. Policy (see router/index.js
-	// beforeEach) is "invite, don't force" — a not-ready user stays in the app
+	// beforeEach) is "invite, don't force" - a not-ready user stays in the app
 	// and is invited to onboard via the chat welcome card + desk banner. The
 	// old D11 gate redirected not-ready users to /app/jarvis-onboarding (desk),
 	// which redirects back to /jarvis/onboarding (SPA) → AppShell re-mounts →
