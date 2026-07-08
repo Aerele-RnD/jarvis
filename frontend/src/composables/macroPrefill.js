@@ -1,7 +1,7 @@
 import { ref } from "vue"
 
 // Cross-view hand-off for "Save as macro". The chat (ChatView) no longer hosts
-// the macro editor — it lives on /macros. So the chat's "Save as macro" actions
+// the macro editor - it lives on /macros. So the chat's "Save as macro" actions
 // stash a draft macro here and router.push("/macros"); MacrosView consumes it
 // ONCE on mount and opens its editor pre-filled. Shape:
 //   { macro_name?: string, description?: string, steps: [{ label?, prompt, skills? }] }

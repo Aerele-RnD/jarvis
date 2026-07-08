@@ -81,7 +81,7 @@
 </template>
 
 <script setup>
-// FilterButton — fixed per-page filter popover (DESIGN-V3 §5.3, D14):
+// FilterButton - fixed per-page filter popover (DESIGN-V3 §5.3, D14):
 // equals-selects + one date-range only; emits a plain {key: value} object
 // (daterange contributes from_date/to_date keys). Count-chip split trigger,
 // CRM popover anatomy ("Where/And <field> is <control>").

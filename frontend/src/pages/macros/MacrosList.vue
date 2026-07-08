@@ -57,26 +57,26 @@
 					label="Summarizing…"
 				/>
 				<Badge v-else-if="row.has_summary" variant="subtle" theme="gray" label="Summarized" />
-				<span v-else class="text-base text-ink-gray-4">—</span>
+				<span v-else class="text-base text-ink-gray-4">-</span>
 			</template>
 
 			<template #cell-schedule="{ row }">
 				<div v-if="row.schedule_enabled" class="truncate text-base">{{ scheduleLabel(row) }}</div>
-				<span v-else class="text-base text-ink-gray-4">—</span>
+				<span v-else class="text-base text-ink-gray-4">-</span>
 			</template>
 
 			<template #cell-last_run_at="{ row }">
 				<Tooltip v-if="row.last_run_at" :text="exactDate(row.last_run_at)">
 					<div class="truncate text-base">{{ timeAgo(row.last_run_at) }}</div>
 				</Tooltip>
-				<span v-else class="text-base text-ink-gray-4">—</span>
+				<span v-else class="text-base text-ink-gray-4">-</span>
 			</template>
 
 			<template #cell-next_run_at="{ row }">
 				<Tooltip v-if="row.next_run_at" :text="exactDate(row.next_run_at)">
 					<div class="truncate text-base">{{ timeAgo(row.next_run_at) }}</div>
 				</Tooltip>
-				<span v-else class="text-base text-ink-gray-4">—</span>
+				<span v-else class="text-base text-ink-gray-4">-</span>
 			</template>
 
 			<template #cell-_run="{ row }">
@@ -88,7 +88,7 @@
 						:disabled="row.merge_status === 'pending' || !!runningRow"
 						:tooltip="
 							row.merge_status === 'pending'
-								? 'Summarizing… — Run unlocks when the summary is ready'
+								? 'Summarizing… - Run unlocks when the summary is ready'
 								: 'Run'
 						"
 						@click="runRow(row)"
@@ -109,7 +109,7 @@
 </template>
 
 <script setup>
-// Macros list — DESIGN-V3 §5.9: TabBar (Macros | Runs) synced to /macros vs
+// Macros list - DESIGN-V3 §5.9: TabBar (Macros | Runs) synced to /macros vs
 // /macros/runs, envelope list with enabled/schedule quick filters, summary +
 // schedule badge cells, inline ghost Run cell (gated while summarizing), bulk
 // delete (incl. run history) and macro:merged live refresh.
@@ -233,7 +233,7 @@ async function runRow(row) {
 		const res = await api.runMacro(row.name)
 		const data = (res && res.data) || res || {}
 		toast.success(`Running “${row.macro_name || row.name}”`)
-		// hand off to the chat — the live macro banner is ChatView's machinery
+		// hand off to the chat - the live macro banner is ChatView's machinery
 		if (data.conversation) router.push("/c/" + data.conversation)
 	} catch (e) {
 		toast.error(errMsg(e))
@@ -242,7 +242,7 @@ async function runRow(row) {
 	}
 }
 
-// ── bulk delete (run history goes too — server side, per row) ────────────────
+// ── bulk delete (run history goes too - server side, per row) ────────────────
 function bulkDelete(selections, unselectAll) {
 	const names = Array.from(selections || [])
 	if (!names.length) return
@@ -278,7 +278,7 @@ function onEvent(p) {
 	if (!p || p.kind !== "macro:merged") return
 	refreshKeep()
 	if (p.status === "ready") {
-		toast.success(`Summary ready — “${p.macro_name || "macro"}” now runs as one prompt.`)
+		toast.success(`Summary ready - “${p.macro_name || "macro"}” now runs as one prompt.`)
 	} else {
 		toast.create({
 			message: `“${p.macro_name || "Macro"}” keeps its step sequence (couldn't summarize).`,

@@ -73,7 +73,7 @@
 						/>
 					</div>
 
-					<!-- pane header: honest math up front — the tab badge counts surfaced
+					<!-- pane header: honest math up front - the tab badge counts surfaced
 					     proposals only, but queued rows are fully actionable here too, so
 					     both numbers are said out loud (site-wide, filter-independent) -->
 					<div class="flex flex-wrap items-center justify-between gap-2">
@@ -180,19 +180,19 @@
 							<FeatherIcon name="alert-triangle" class="mt-0.5 size-4 shrink-0" />
 							<span>
 								Rows marked <b>B</b> contain exact text every chat user on this
-								site can read once approved — expand a row for its role details.
+								site can read once approved - expand a row for its role details.
 							</span>
 						</div>
 						<template v-for="group in rowGroups" :key="group.key">
 							<!-- queued divider: not-yet-surfaced Proposed rows ride the same
 							     fetch (surfaced=all, partitioned client-side) and keep full
-							     actions — no separate "Review them now" detour anymore -->
+							     actions - no separate "Review them now" detour anymore -->
 							<div
 								v-if="group.key === 'queued'"
 								class="mt-1 flex items-center gap-2 text-sm text-ink-gray-5"
 							>
 								<span class="h-px flex-1 border-t"></span>
-								<span>Queued — surfaces after the next analysis run</span>
+								<span>Queued - surfaces after the next analysis run</span>
 								<span class="h-px flex-1 border-t"></span>
 							</div>
 
@@ -334,7 +334,7 @@
 											v-if="expanded[row.name].detector_id === 'voice-context'"
 											class="text-sm text-ink-gray-6"
 										>
-											From spoken or written business notes — table statistics don't
+											From spoken or written business notes - table statistics don't
 											apply to this kind of insight.
 										</div>
 										<!-- raw stats -->
@@ -587,7 +587,7 @@
 						v-if="boardStatus === 'Proposed' && queuedCount > 0 && !queuedVisible"
 						class="text-sm text-ink-gray-5"
 					>
-						{{ queuedCount }} queued proposal{{ queuedCount === 1 ? "" : "s" }} site-wide —
+						{{ queuedCount }} queued proposal{{ queuedCount === 1 ? "" : "s" }} site-wide -
 						they surface after the next analysis run.<template v-if="board.hasMore">
 							Load more to see them here.</template
 						>
@@ -719,7 +719,7 @@
 										v-if="dExpanded[row.name].detector_id === 'voice-context'"
 										class="text-sm text-ink-gray-6"
 									>
-										From spoken or written business notes — table statistics don't
+										From spoken or written business notes - table statistics don't
 										apply to this kind of insight.
 									</div>
 									<div v-else class="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
@@ -857,7 +857,7 @@
 		>
 			<template #body-content>
 				<p class="text-sm text-ink-gray-6">
-					Rejected patterns are hidden but reversible — you can restore them from the Rejected
+					Rejected patterns are hidden but reversible - you can restore them from the Rejected
 					filter later.
 				</p>
 				<FormControl
@@ -890,7 +890,7 @@
 		>
 			<template #body-content>
 				<p class="text-sm text-ink-gray-6">
-					Your edit is used verbatim in the compiled skill. The evidence line stays frozen — it
+					Your edit is used verbatim in the compiled skill. The evidence line stays frozen - it
 					still reflects the originally detected pattern, which was not re-measured.
 				</p>
 				<FormControl
@@ -959,7 +959,7 @@
 			</template>
 		</Dialog>
 
-		<!-- Apply-insight-to-skill modal (D5): self-contained — drafts an LLM
+		<!-- Apply-insight-to-skill modal (D5): self-contained - drafts an LLM
 		     skill update for a B/C insight and applies it on confirm (the server
 		     marks the pattern acknowledged with an applied-to-skill note); the
 		     board only opens it and refreshes on completion. -->
@@ -972,9 +972,9 @@
 </template>
 
 <script setup>
-// ReviewTab — the pattern decision queue, the "Review" tab inside the Skills
+// ReviewTab - the pattern decision queue, the "Review" tab inside the Skills
 // page (Skills IA v2). Two panes at xl+ (stacked below): LEFT "To review" owns
-// the Apply bar (learned skills ride the shared custom-skill push — the
+// the Apply bar (learned skills ride the shared custom-skill push - the
 // SyncPill pattern), a debounced search + status select, domain facet chips,
 // the review board of plain-English cards with strength/sensitivity chips,
 // caveat badges, an expandable drill-down (raw stats + roles + compiled bullet
@@ -985,7 +985,7 @@
 // surfaced rows only. RIGHT "Decided" is a compact log (view="decided"):
 // one-line rows (excerpt + disposition badge + who/when) with its own search /
 // disposition / newest-oldest sort and click-to-expand drill-down. Each
-// actionable row gets "Discuss in chat" — a prefilled prompt stashed via
+// actionable row gets "Discuss in chat" - a prefilled prompt stashed via
 // chatPrefill with autoSend, so ChatView opens a FRESH conversation and sends
 // it as the first message. Both fetchers use the useListPage monotonic-reqId
 // guard so reset/load-more/search races never interleave. Settings + run
@@ -1043,7 +1043,7 @@ const STATUS_OPTIONS = [
 	{ label: "Rejected", value: "Rejected" },
 	{ label: "All", value: "All" },
 ]
-// Decided-log disposition filter — server-validated slugs (decided view only).
+// Decided-log disposition filter - server-validated slugs (decided view only).
 const DISPOSITION_OPTIONS = [
 	{ label: "All", value: "" },
 	{ label: "Approved", value: "approved" },
@@ -1111,7 +1111,7 @@ const decided = reactive({
 })
 
 const expanded = reactive({}) // board drill-down: name -> detail | "loading"
-// Decided drill-down cache — separate from `expanded` so a pattern visible in
+// Decided drill-down cache - separate from `expanded` so a pattern visible in
 // both panes at once never couples its open/close state across surfaces.
 const dExpanded = reactive({}) // name -> detail | "loading"
 const selected = ref(new Set())
@@ -1219,7 +1219,7 @@ function deskUrl(doctype, name) {
 	const dt = String(doctype).toLowerCase().replace(/ /g, "-")
 	return `/app/${dt}/${encodeURIComponent(name)}`
 }
-// exceptions items may be strings or {doctype,name,label,...} — render defensively
+// exceptions items may be strings or {doctype,name,label,...} - render defensively
 function exLabel(ex) {
 	if (ex == null) return ""
 	if (typeof ex === "string") return ex
@@ -1254,7 +1254,7 @@ const hasActionableB = computed(() =>
 
 // The pane-header "N to review": surfaced Proposed = review_activity.total
 // (surfaced ∈ Proposed/Approved/Rejected/Snoozed) minus .decided (the latter
-// three) — the same number the tab badge shows, kept honest next to the
+// three) - the same number the tab badge shows, kept honest next to the
 // site-wide queued count.
 const toReviewCount = computed(() =>
 	Math.max((reviewActivity.value.total || 0) - (reviewActivity.value.decided || 0), 0)
@@ -1270,10 +1270,10 @@ const emptyTitle = computed(() => {
 })
 const emptyDescription = computed(() => {
 	if (boardSearch.value.trim())
-		return "Nothing matches your search — try different words or clear it."
+		return "Nothing matches your search - try different words or clear it."
 	if (boardStatus.value === "Proposed") {
 		if (queuedCount.value > 0)
-			return `Nothing under this filter — ${queuedCount.value} queued site-wide. Queued proposals appear in this list; try clearing the domain filter.`
+			return `Nothing under this filter - ${queuedCount.value} queued site-wide. Queued proposals appear in this list; try clearing the domain filter.`
 		return status.enabled
 			? "Proposals appear the morning after an analysis run."
 			: "Enable behavioural learning on the Analysis tab, then run an analysis to see proposals."
@@ -1303,8 +1303,8 @@ function mergeRows(prev, next, append) {
 	return [...prev, ...next.filter((r) => !seen.has(r.name))]
 }
 
-// monotonic request ids (the useListPage idiom): a reset racing a load-more —
-// or two debounced searches — must not interleave; stale responses are dropped.
+// monotonic request ids (the useListPage idiom): a reset racing a load-more -
+// or two debounced searches - must not interleave; stale responses are dropped.
 let boardReq = 0
 async function fetchBoard(mode = "reset") {
 	const id = ++boardReq
@@ -1322,7 +1322,7 @@ async function fetchBoard(mode = "reset") {
 			start: append ? board.rows.length : 0,
 			page_length: 20,
 		})
-		if (id !== boardReq) return // stale — a newer request superseded this one
+		if (id !== boardReq) return // stale - a newer request superseded this one
 		board.rows = mergeRows(board.rows, res.rows || [], append)
 		board.total = res.total || 0
 		board.hasMore = !!res.has_more
@@ -1356,7 +1356,7 @@ async function fetchDecided(mode = "reset") {
 			start: append ? decided.rows.length : 0,
 			page_length: 20,
 		})
-		if (id !== decidedReq) return // stale — a newer request superseded this one
+		if (id !== decidedReq) return // stale - a newer request superseded this one
 		decided.rows = mergeRows(decided.rows, res.rows || [], append)
 		decided.total = res.total || 0
 		decided.hasMore = !!res.has_more
@@ -1395,7 +1395,7 @@ function toggleDecidedSort() {
 	fetchDecided("reset")
 }
 
-// debounced searches (300ms — the NotesPane / useListPage idiom)
+// debounced searches (300ms - the NotesPane / useListPage idiom)
 let boardSearchTimer = null
 watch(boardSearch, () => {
 	clearTimeout(boardSearchTimer)
@@ -1442,7 +1442,7 @@ async function toggleDecidedExpand(name) {
 // Builds a prefilled prompt (pattern statement + evidence excerpt + suggested
 // instruction + the weigh-it ask) and stashes it via the chatPrefill composable
 // with autoSend: ChatView opens a FRESH conversation and sends it as the first
-// message — the drafted prompt never lands in an old thread's composer. Uses
+// message - the drafted prompt never lands in an old thread's composer. Uses
 // the drill-down detail when it is already loaded; falls back to card fields
 // (no extra fetch).
 function buildDiscussPrompt(row, detail) {

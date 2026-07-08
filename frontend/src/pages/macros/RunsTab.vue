@@ -74,7 +74,7 @@
 				</template>
 				<template v-else-if="column.key === 'duration'">
 					<div class="truncate text-base">
-						{{ row.duration_s != null ? fmtDuration(row.duration_s) : "—" }}
+						{{ row.duration_s != null ? fmtDuration(row.duration_s) : "-" }}
 					</div>
 				</template>
 				<template v-else-if="column.key === 'steps'">
@@ -134,7 +134,7 @@
 </template>
 
 <script setup>
-// RunsTab — the /macros/runs dashboard (DESIGN-V3 §5.9): stat cards from
+// RunsTab - the /macros/runs dashboard (DESIGN-V3 §5.9): stat cards from
 // macro_run_stats, status/macro filters, runs table rendered with the stock
 // ListView pieces (no selection), Stop / open-chat row actions, load-more
 // footer, and live socket updates (macro:progress / macro:done → silent
@@ -221,14 +221,14 @@ const totalCount = computed(() => {
 const statCards = computed(() => {
 	const s = stats.value || {}
 	return [
-		{ label: "Total runs", value: s.total != null ? s.total : "—" },
-		{ label: "Success rate", value: s.success_rate != null ? `${s.success_rate}%` : "—" },
-		{ label: "Running now", value: s.running != null ? s.running : "—" },
-		{ label: "Last run", value: s.last_run_at ? timeAgo(s.last_run_at) : "—" },
+		{ label: "Total runs", value: s.total != null ? s.total : "-" },
+		{ label: "Success rate", value: s.success_rate != null ? `${s.success_rate}%` : "-" },
+		{ label: "Running now", value: s.running != null ? s.running : "-" },
+		{ label: "Last run", value: s.last_run_at ? timeAgo(s.last_run_at) : "-" },
 	]
 })
 
-// ── data (monotonic request id — stale responses dropped, like useListPage) ──
+// ── data (monotonic request id - stale responses dropped, like useListPage) ──
 let reqId = 0
 
 // mode: "reset" (page 1, replaces) | "more" (appends) | "keep" (silent window refetch)

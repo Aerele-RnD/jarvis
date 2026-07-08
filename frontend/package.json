@@ -15,7 +15,8 @@
     "mermaid": "^11.15.0",
     "socket.io-client": "^4.7.5",
     "vue": "^3.4.21",
-    "vue-router": "^4.3.0"
+    "vue-router": "^4.3.0",
+    "wiki-graph-core": "file:../wiki-graph-core"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.0.4",

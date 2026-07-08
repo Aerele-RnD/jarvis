@@ -3,7 +3,7 @@
 export function deriveMode(models, preset) {
   const list = Array.isArray(models) ? models : []
   // A chat-subscription model needs the cliproxy sidecar, which only the proxy
-  // path provisions — so even a single subscription is "proxy". (#200 review #1)
+  // path provisions - so even a single subscription is "proxy". (#200 review #1)
   const hasSubscription = list.some(
     (m) => m && (m.subscription || m.credentialType === "subscription" || m.credential_type === "subscription"),
   )
@@ -64,7 +64,7 @@ export function validatePool(models, preset) {
     }
     // API-key model.
     if (!(m.provider || "").trim() || !(m.model || "").trim()) return { ok: false, error: "Every model needs a provider and a model id." }
-    // Custom-endpoint providers ARE their base_url — an OpenAI-Compatible shim
+    // Custom-endpoint providers ARE their base_url - an OpenAI-Compatible shim
     // (e.g. a Claude-CLI gateway) or a local vLLM with no base_url would push a
     // provider that routes nowhere, and both validators used to let it through.
     const pid = _ID_BY_LABEL[m.provider] || (m.provider || "").trim().toLowerCase()
@@ -101,7 +101,7 @@ export const PROVIDER_LABELS = [
 const _LABEL_BY_ID = Object.fromEntries(PROVIDER_LABELS.map(p => [p.id, p.label]))
 const _ID_BY_LABEL = Object.fromEntries(PROVIDER_LABELS.map(p => [p.label, p.id]))
 // Custom-endpoint providers whose whole identity IS the base_url (no default
-// endpoint) — validatePool requires one for these (mirrors validate_models).
+// endpoint) - validatePool requires one for these (mirrors validate_models).
 const NEEDS_BASE_URL = new Set(["openai_compat", "vllm"])
 export function providerLabel(id) { return _LABEL_BY_ID[id] || id || "" }
 export function providerId(label) { return _ID_BY_LABEL[label] || label || "" }

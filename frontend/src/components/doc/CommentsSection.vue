@@ -40,7 +40,7 @@
 				</div>
 			</div>
 		</div>
-		<div v-else class="text-sm text-ink-gray-5">No comments yet — be the first to add one.</div>
+		<div v-else class="text-sm text-ink-gray-5">No comments yet - be the first to add one.</div>
 
 		<template v-if="canComment">
 			<button
@@ -66,12 +66,12 @@
 </template>
 
 <script setup>
-// CommentsSection — the doc-page comment stream (DESIGN-V3 §6.1): asc by
+// CommentsSection - the doc-page comment stream (DESIGN-V3 §6.1): asc by
 // creation, own-comment edit (inline composer) / delete (confirm), comment
-// HTML sanitized with DOMPurify (§14 O2 — TextEditor output rendered via
+// HTML sanitized with DOMPurify (§14 O2 - TextEditor output rendered via
 // v-html). The composer is a defineAsyncComponent behind a click-to-reveal
-// placeholder, so the tiptap chunk (~280KB gzip) never loads — let alone
-// leaks into list/detail chunks (D33) — unless the user actually comments
+// placeholder, so the tiptap chunk (~280KB gzip) never loads - let alone
+// leaks into list/detail chunks (D33) - unless the user actually comments
 // or edits.
 import { ref, computed, defineAsyncComponent } from "vue"
 import { Avatar, Badge, Button, Dropdown, Tooltip, confirmDialog } from "frappe-ui"
@@ -143,7 +143,7 @@ async function saveEdit(c, html) {
 
 <style>
 /* Mention chips inside rendered comments. Mirrors frappe-ui's mention
-   style.css, which only ships with the lazy composer chunk — comments with
+   style.css, which only ships with the lazy composer chunk - comments with
    mentions must render styled even before the composer is ever opened. */
 .prose .mention {
 	font-weight: 600;
