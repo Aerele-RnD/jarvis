@@ -1,14 +1,22 @@
 // frontend/src/lib/actionSummary.test.js
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { identifyingFields, changedFields, lineItemSummary, summarize } from "./actionSummary.js"
+import { proposedFields, changedFields, lineItemSummary, summarize } from "./actionSummary.js"
 
-const createModel = {
-  verb: "create", doctype: "Sales Order", title: "Sales Order", titleField: "customer",
+const createAction = {
+  kind: "doc", verb: "create", doctype: "Sales Order", summary: "Sales Order - Acme, 2 items, total 1,100",
   fields: [
-    { fieldname: "customer", label: "Customer", value: "Acme Corp", orig: "", changed: false, reqd: 1, fieldtype: "Link" },
-    { fieldname: "delivery_date", label: "Delivery Date", value: "2026-08-01", orig: "", changed: false, reqd: 1, fieldtype: "Date" },
-    { fieldname: "note", label: "Note", value: "", orig: "", changed: false, reqd: 0, fieldtype: "Small Text" },
+    { label: "Customer", value: "Acme Corp" },
+    { label: "Delivery Date", value: "2026-08-01" },
+    { label: "Note", value: "" },
+  ],
+  tables: [{ fieldname: "items", rows: [{ item_code: "Widget A" }, { item_code: "Widget B" }] }],
+}
+const createModel = {
+  verb: "create", doctype: "Sales Order",
+  fields: [
+    { fieldname: "customer", label: "Customer", value: "Acme Corp", orig: "", changed: false },
+    { fieldname: "delivery_date", label: "Delivery Date", value: "2026-08-01", orig: "", changed: false },
   ],
   tables: [{
     fieldname: "items", label: "Items",
@@ -16,76 +24,74 @@ const createModel = {
       { fieldname: "item_code", label: "Item", fieldtype: "Link" },
       { fieldname: "qty", label: "Qty", fieldtype: "Float" },
       { fieldname: "rate", label: "Rate", fieldtype: "Currency" },
-      { fieldname: "amount", label: "Amount", fieldtype: "Currency" },
     ],
-    rows: [
-      { item_code: "Widget A", qty: 10, rate: 50, amount: 500 },
-      { item_code: "Widget B", qty: 5, rate: 120, amount: 600 },
-    ],
+    rows: [{ item_code: "Widget A", qty: 10, rate: 50 }, { item_code: "Widget B", qty: 5, rate: 120 }],
   }],
-  tableMeta: {},
 }
 
-test("identifyingFields: title field first, then required, drops empties", () => {
-  const rows = identifyingFields(createModel)
-  assert.equal(rows[0].fieldname, "customer")
-  assert.ok(rows.every((r) => String(r.value).trim() !== ""))
-  assert.ok(!rows.some((r) => r.fieldname === "note")) // empty non-required dropped
+test("proposedFields: the fields the model set, non-empty, as label -> value", () => {
+  const rows = proposedFields(createAction)
+  assert.deepEqual(rows, [
+    { label: "Customer", value: "Acme Corp" },
+    { label: "Delivery Date", value: "2026-08-01" },
+  ]) // empty Note dropped, no schema-driven ranking
 })
 
-test("changedFields: only changed fields, as from -> to", () => {
-  const updateModel = {
-    verb: "update", fields: [
-      { label: "Status", value: "Closed", orig: "Open", changed: true },
-      { label: "Customer", value: "Acme", orig: "Acme", changed: false },
-    ], tables: [],
-  }
-  const rows = changedFields(updateModel)
+test("proposedFields: empty or missing fields array yields empty list", () => {
+  assert.deepEqual(proposedFields({}), [])
+  assert.deepEqual(proposedFields({ fields: [] }), [])
+})
+
+test("changedFields: only changed fields, as from -> to (update diff, unchanged)", () => {
+  const rows = changedFields({ verb: "update", fields: [
+    { label: "Status", value: "Closed", orig: "Open", changed: true },
+    { label: "Customer", value: "Acme", orig: "Acme", changed: false },
+  ] })
   assert.deepEqual(rows, [{ label: "Status", from: "Open", to: "Closed" }])
 })
 
-test("lineItemSummary: count, compact rows, currency total when an amount column exists", () => {
+test("lineItemSummary: count + compact rows + column labels, and NO total field", () => {
   const s = lineItemSummary(createModel.tables[0])
   assert.equal(s.count, 2)
-  assert.equal(s.total, 1100)
   assert.equal(s.rows.length, 2)
   assert.equal(s.rows[0].cells[0], "Widget A")
+  assert.deepEqual(s.columns, ["Item", "Qty", "Rate"])
+  assert.ok(!("total" in s)) // no code-computed total any more
 })
 
-test("summarize(create): kind=create, has identifying rows and tables", () => {
-  const out = summarize(createModel)
-  assert.equal(out.kind, "create")
-  assert.ok(out.rows.length >= 2)
-  assert.equal(out.tables[0].count, 2)
-})
-
-test("summarize(update): kind=update, diff rows", () => {
-  const out = summarize({ verb: "update", fields: [{ label: "Status", value: "Closed", orig: "Open", changed: true }], tables: [] })
-  assert.equal(out.kind, "update")
-  assert.deepEqual(out.diff, [{ label: "Status", from: "Open", to: "Closed" }])
-})
-
-test("changedFields: empty when nothing changed (drives the No-field-changes branch)", () => {
-  const rows = changedFields({ verb: "update", fields: [{ label: "Customer", value: "Acme", orig: "Acme", changed: false }], tables: [] })
-  assert.deepEqual(rows, [])
-})
-
-test("lineItemSummary: total is null when no amount or currency column exists", () => {
-  const s = lineItemSummary({
-    fieldname: "tasks", label: "Tasks",
-    columns: [{ fieldname: "subject", label: "Subject", fieldtype: "Data" }, { fieldname: "qty", label: "Qty", fieldtype: "Float" }],
-    rows: [{ subject: "A", qty: 2 }],
-  })
-  assert.equal(s.total, null)
-  assert.equal(s.count, 1)
-})
-
-test("lineItemSummary: missing cell values render as empty string, not undefined", () => {
+test("lineItemSummary: missing cell values render as empty string", () => {
   const s = lineItemSummary({
     fieldname: "items", label: "Items",
-    columns: [{ fieldname: "item_code", label: "Item", fieldtype: "Link" }, { fieldname: "amount", label: "Amount", fieldtype: "Currency" }],
+    columns: [{ fieldname: "item_code", label: "Item", fieldtype: "Link" }, { fieldname: "qty", label: "Qty", fieldtype: "Float" }],
     rows: [{ item_code: "Widget A" }],
   })
-  assert.equal(s.rows[0].cells[0], "Widget A")
   assert.equal(s.rows[0].cells[1], "")
+})
+
+test("summarize(create): kind=create, headline from action.summary, rows from proposed fields", () => {
+  const out = summarize(createModel, createAction)
+  assert.equal(out.kind, "create")
+  assert.equal(out.headline, "Sales Order - Acme, 2 items, total 1,100")
+  assert.deepEqual(out.rows, [
+    { label: "Customer", value: "Acme Corp" },
+    { label: "Delivery Date", value: "2026-08-01" },
+  ])
+  assert.equal(out.tables[0].count, 2)
+  assert.ok(!("total" in out.tables[0]))
+})
+
+test("summarize(create): headline is empty string when the model provides no summary", () => {
+  const out = summarize(createModel, { ...createAction, summary: undefined })
+  assert.equal(out.headline, "")
+  assert.ok(out.rows.length >= 1) // proposed fields still render (graceful default)
+})
+
+test("summarize(update): kind=update, mechanical diff, headline optional", () => {
+  const out = summarize(
+    { verb: "update", fields: [{ label: "Status", value: "Closed", orig: "Open", changed: true }], tables: [] },
+    { verb: "update", doctype: "Sales Order", fields: [], summary: "Closing SO-0001" },
+  )
+  assert.equal(out.kind, "update")
+  assert.equal(out.headline, "Closing SO-0001")
+  assert.deepEqual(out.diff, [{ label: "Status", from: "Open", to: "Closed" }])
 })

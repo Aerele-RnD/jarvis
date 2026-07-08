@@ -186,8 +186,9 @@
 										</div>
 
 										<div v-if="summaryState.view" class="jv-summary-body">
+											<div v-if="summaryState.view.headline" class="jv-summary-headline">{{ summaryState.view.headline }}</div>
 											<dl v-if="summaryState.view.kind === 'create'" class="jv-summary-fields">
-												<template v-for="r in summaryState.view.rows" :key="r.fieldname">
+												<template v-for="r in summaryState.view.rows" :key="r.label">
 													<dt>{{ r.label }}</dt><dd>{{ r.value }}</dd>
 												</template>
 											</dl>
@@ -208,7 +209,6 @@
 														<span v-for="(c, ci) in row.cells" :key="ci">{{ c }}</span>
 													</div>
 												</div>
-												<div v-if="t.total != null" class="jv-summary-total">Total {{ t.total.toLocaleString("en-IN", { minimumFractionDigits: 2 }) }}</div>
 											</div>
 										</div>
 										<div v-else-if="summaryState.error" class="jv-summary-body jv-summary-loading">{{ summaryState.error }}</div>
@@ -2109,7 +2109,7 @@ async function ensureActionSummary(a) {
 		return
 	}
 	if (summaryState.value.key !== key) return // a newer action superseded this build
-	summaryState.value = { key, model, view: summarize(model), error: "" }
+	summaryState.value = { key, model, view: summarize(model, a), error: "" }
 }
 function isEditVerb(a) {
 	return !!a && (!a.verb || a.verb === "create" || a.verb === "update")
@@ -4359,6 +4359,7 @@ function onGlobalKey(e) {
 /* --- summary-first confirmation card (Task 1.3) --- */
 .jv-summary { margin-top: 12px; border-color: var(--blue-bd); }
 .jv-summary-body { padding: 11px 14px; display: flex; flex-direction: column; gap: 10px; }
+.jv-summary-headline { font-size: 13.5px; font-weight: 600; color: var(--text); }
 .jv-summary-fields { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; }
 .jv-summary-fields dt { font-size: 10.5px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); align-self: center; }
 .jv-summary-fields dd { margin: 0; font-size: 13.5px; color: var(--text); }
@@ -4372,7 +4373,6 @@ function onGlobalKey(e) {
 .jv-summary-table-h { padding: 7px 10px; background: var(--surface-2); font-size: 12px; font-weight: 650; color: var(--text-2); }
 .jv-summary-row { display: flex; gap: 12px; padding: 5px 10px; font-size: 12.5px; color: var(--text); border-top: 1px solid var(--border); }
 .jv-summary-row span:first-child { flex: 1; }
-.jv-summary-total { padding: 6px 10px; text-align: right; font-size: 12.5px; font-weight: 650; color: var(--text); border-top: 1px solid var(--border); }
 .jv-summary-hint { padding: 0 14px 11px; font-size: 12px; color: var(--text-3); }
 
 /* --- record draft panel --- */

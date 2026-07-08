@@ -1,17 +1,13 @@
 // frontend/src/lib/actionSummary.js
 // Pure display helpers for the summary-first confirmation card. No Vue, no DOM.
+// Summarization is MODEL-DRIVEN: the card renders the fields the model proposed and
+// an optional model-written headline. It imposes no opinion on which fields matter
+// or what to total - that is the model's job, since it knows the doctype.
 
-const AMOUNT_COLS = new Set(["amount", "net_amount", "base_amount", "total"])
-
-export function identifyingFields(model, limit = 6) {
-  const nonEmpty = (f) => String(f.value ?? "").trim() !== ""
-  const seen = new Set()
-  const picked = []
-  const push = (f) => { if (f && nonEmpty(f) && !seen.has(f.fieldname)) { seen.add(f.fieldname); picked.push(f) } }
-  push(model.fields.find((f) => f.fieldname === model.titleField))
-  model.fields.filter((f) => f.reqd).forEach(push)
-  model.fields.forEach(push) // fill remaining non-empty up to limit
-  return picked.slice(0, limit).map((f) => ({ fieldname: f.fieldname, label: f.label, value: f.value }))
+export function proposedFields(action) {
+  return (action.fields || [])
+    .filter((f) => String(f.value ?? "").trim() !== "")
+    .map((f) => ({ label: f.label, value: f.value }))
 }
 
 export function changedFields(model) {
@@ -21,26 +17,20 @@ export function changedFields(model) {
 }
 
 export function lineItemSummary(table) {
-  // Prefer a named amount column; else fall back to the first Currency column
-  // (which may be a unit rate - the total is display-only, not authoritative).
-  const amountCol = table.columns.find((c) => AMOUNT_COLS.has(c.fieldname)) || table.columns.find((c) => c.fieldtype === "Currency")
-  const total = amountCol
-    ? table.rows.reduce((s, r) => s + (Number(r[amountCol.fieldname]) || 0), 0)
-    : null
   return {
     fieldname: table.fieldname,
     label: table.label,
     count: table.rows.length,
     columns: table.columns.map((c) => c.label),
     rows: table.rows.map((r) => ({ cells: table.columns.map((c) => r[c.fieldname] ?? "") })),
-    total,
   }
 }
 
-export function summarize(model) {
-  const tables = (model.tables || []).map(lineItemSummary)
+export function summarize(model, action = {}) {
+  const headline = String(action.summary ?? "").trim()
+  const tables = (model.tables || []).filter((t) => (t.rows || []).length).map(lineItemSummary)
   if (model.verb === "update") {
-    return { kind: "update", diff: changedFields(model), rows: [], tables }
+    return { kind: "update", headline, diff: changedFields(model), tables }
   }
-  return { kind: "create", rows: identifyingFields(model), diff: [], tables }
+  return { kind: "create", headline, rows: proposedFields(action), tables }
 }
