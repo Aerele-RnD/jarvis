@@ -1,4 +1,4 @@
-// Learning-board API (plan §6.4) — thin wrappers around
+// Learning-board API (plan §6.4) - thin wrappers around
 // `jarvis.chat.learned_api.*`, the SM-gated + managed-only endpoints behind the
 // Skills-page "Learning" tab. Mirrors src/api/skills.js: one `call` per
 // endpoint; list/settings/batch args are JSON-encoded where the server
@@ -13,7 +13,7 @@ const LR = "jarvis.chat.learned_api."
 // Flat kwargs (NOT the frozen `filters` JSON envelope the four feature lists
 // use): the endpoint takes domain/status/strength/search/surfaced directly.
 // `surfaced`: 1 (default review board) | 0 | "all" (decided tabs).
-// `view`: "" (default board) | "decided" — the Review tab's Decided log; the
+// `view`: "" (default board) | "decided" - the Review tab's Decided log; the
 // server then OVERRIDES status with every human-touched terminal/parked state,
 // ignores `surfaced` and orders by reviewed_at (nulls last; `sort` "newest"
 // (default) | "oldest" flips it). `disposition` filters the decided view only
@@ -37,7 +37,7 @@ export const listLearnedPatternsPage = (p = {}) =>
 // roles, compiled-bullet preview, exceptions (SM may see named parties), runs.
 export const getLearnedPattern = (name) => call(LR + "get_learned_pattern", { name })
 
-// ── lifecycle transitions (§6.5) — human SM actions, TOCTOU-safe server-side ──
+// ── lifecycle transitions (§6.5) - human SM actions, TOCTOU-safe server-side ──
 // Proposed→Approved (or Stale→Approved). Passing an edited draft freezes the
 // evidence line (draft_edited=1); omit it to approve as-drafted.
 export const approveLearnedPattern = (name, editedSkillDraft) =>
@@ -52,7 +52,7 @@ export const rejectLearnedPattern = (name, reason) =>
 	call(LR + "reject_learned_pattern", { name, reason })
 // B/C insight-only disposition (Phase 1): records that the SM read the insight
 // and dismisses it (stored server-side as a terminal Rejected + a stable note).
-// A-class rows are refused server-side — they must be Approved to reach the
+// A-class rows are refused server-side - they must be Approved to reach the
 // container. Wired to the "Acknowledge (insight only)" card action.
 export const acknowledgeLearnedPattern = (name) =>
 	call(LR + "acknowledge_learned_pattern", { name })
@@ -90,7 +90,7 @@ export const applyInsightSkillUpdate = (patternName, payload = {}) => {
 
 // ── apply / sync (learned skills ride the custom-skill push, §6.2) ───────────
 export const applyLearnedSkills = () => call(LR + "apply_learned_skills")
-// Proxies get_custom_skills_sync_status — same pill the Skills page polls.
+// Proxies get_custom_skills_sync_status - same pill the Skills page polls.
 export const getLearnedApplyStatus = () => call(LR + "get_learned_apply_status")
 // Board badge: surfaced patterns still awaiting a decision.
 export const pendingLearnedCount = () => call(LR + "pending_learned_count")
@@ -103,6 +103,6 @@ export const getLearningSettings = (includePreflight = 0) =>
 	call(LR + "get_learning_settings", { include_preflight: includePreflight ? 1 : 0 })
 export const setLearningSettings = (payload) =>
 	call(LR + "set_learning_settings", { payload: JSON.stringify(payload || {}) })
-// SM-only but NOT self-host-gated — the probe the tab uses to render the
+// SM-only but NOT self-host-gated - the probe the tab uses to render the
 // managed-only empty state (reports {self_hosted, enabled, last/next run, ...}).
 export const getLearningStatus = () => call(LR + "get_learning_status")

@@ -113,11 +113,56 @@ def reset_onboarding() -> dict:
 	"""
 	_dev_guard()
 	s = frappe.get_single(SETTINGS)
+
+	# Tear down the container's OAuth auth-profile FIRST — before the field loop
+	# below wipes jarvis_admin_api_key / agent_url / agent_token (after which the
+	# bench can no longer reach the container). The real access/refresh tokens
+	# live in the container's auth-profiles.json (the bench only holds metadata),
+	# so without this the old codex tokens linger and openclaw keeps serving the
+	# OLD chat even after a "reset". Best-effort + non-fatal: a dev reset must
+	# still succeed when admin/fleet is down, the tenant was already purged, or
+	# nothing was connected. Only attempted when a container is actually wired up.
+	if (s.get("agent_url") or "").strip():
+		try:
+			from jarvis import admin_client
+			admin_client.post_subscription_disconnect()
+		except Exception:
+			frappe.logger().info(
+				"reset_onboarding: container subscription_disconnect skipped/failed (non-fatal)"
+			)
+
 	for field in _RESET_CLEAR_FIELDS:
 		s.db_set(field, "")
 		if field in _PASSWORD_FIELDS:
 			remove_encrypted_password(SETTINGS, SETTINGS, field)
+
+	# Clear the OAuth / pool CONNECTION state the field loop misses. Previously
+	# reset left llm_auth_mode="oauth" + llm_oauth_connected_at set + the models[]
+	# pool + proxy flags intact, so the bench still reported the old subscription
+	# as connected and a subsequent onboard reused it. Wipe it all for a true
+	# clean slate. db_set (not save) so on_update never fires mid-reset.
+	s.db_set("llm_auth_mode", "")
+	s.db_set("llm_oauth_account_email", "")
+	s.db_set("llm_oauth_connected_at", None)
+	s.db_set("preset", "")
+	s.db_set("proxy_active", 0)
+	s.db_set("proxy_recommended", 0)
+	# Clear the models[] pool via a direct child-row delete rather than
+	# s.set("models", []) + save(), so Jarvis Settings.on_update
+	# (validate_models / admin pool-sync) does NOT fire during the reset.
+	frappe.db.delete("Jarvis LLM Pool Model", {
+		"parent": SETTINGS,
+		"parenttype": SETTINGS,
+		"parentfield": "models",
+	})
+
 	# Select field - must hold a valid option; reset to default.
 	s.db_set("llm_provider", "Anthropic")
 	frappe.db.commit()
-	return {"ok": True, "data": {"cleared_fields": list(_RESET_CLEAR_FIELDS) + ["llm_provider"]}}
+	_extra_cleared = [
+		"llm_auth_mode", "llm_oauth_account_email", "llm_oauth_connected_at",
+		"preset", "proxy_active", "proxy_recommended", "models",
+	]
+	return {"ok": True, "data": {
+		"cleared_fields": list(_RESET_CLEAR_FIELDS) + _extra_cleared + ["llm_provider"],
+	}}

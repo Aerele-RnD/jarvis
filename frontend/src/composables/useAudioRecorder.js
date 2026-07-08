@@ -1,4 +1,4 @@
-// useAudioRecorder — shared MediaRecorder wrapper for the composer mic, the
+// useAudioRecorder - shared MediaRecorder wrapper for the composer mic, the
 // wiki-nudge card and the Business-tab recorder. One instance per surface.
 //
 // Returned as reactive() (house style, like useDocmeta) so consumers read
@@ -7,14 +7,14 @@
 //   state:     'idle' | 'recording' | 'stopped' | 'error'
 //   error:     friendly message when state === 'error' (mic denied, no mic, …)
 //   durationS: elapsed whole seconds while recording
-//   start():   Promise<void> — requests the mic; on denial → state 'error'
+//   start():   Promise<void> - requests the mic; on denial → state 'error'
 //   stop():    Promise<{blob, mimeType, durationS} | null>
 //   cancel():  discard the take (no blob), release the mic
 //   supported: false on browsers without getUserMedia/MediaRecorder
 //
 // Recordings hard-stop at 300 s (the server rejects longer clips). When the
-// cap fires without a user stop() in flight, the result is stashed — a later
-// stop() resolves with it — and opts.onAutoStop(result) is invoked so the UI
+// cap fires without a user stop() in flight, the result is stashed - a later
+// stop() resolves with it - and opts.onAutoStop(result) is invoked so the UI
 // can transcribe immediately and tell the user why recording ended.
 import { reactive, ref } from "vue"
 
@@ -134,7 +134,7 @@ export function useAudioRecorder(opts = {}) {
 				settle = null
 				r(result)
 			} else if (autoStopped && typeof opts.onAutoStop === "function") {
-				// hit the 300 s cap with no stop() waiting — the callback owns
+				// hit the 300 s cap with no stop() waiting - the callback owns
 				// the take (stashing it too would risk a double transcribe).
 				opts.onAutoStop(result)
 			} else {

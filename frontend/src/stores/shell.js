@@ -1,4 +1,4 @@
-// Shared shell state (DESIGN-V3 §4) — a module-scope singleton, house style
+// Shared shell state (DESIGN-V3 §4) - a module-scope singleton, house style
 // (no pinia). The shell (Sidebar/UserMenu/palette) and ChatView both consume
 // it; write ownership is split by contract:
 //   - only ChatView writes currentConvId / streamingConvId
@@ -26,7 +26,7 @@ const pendingNewChat = ref(false) // consumed + cleared by ChatView
 const paletteOpen = ref(false)
 
 // Sidebar collapse: persisted preference (same localStorage key/values as
-// today — existing prefs survive, D5) + a non-persisted narrow-screen
+// today - existing prefs survive, D5) + a non-persisted narrow-screen
 // override (auto-collapse at ≤820px; manual toggles there are temporary, D8).
 const sidebarPref = useStorage("jarvis-sidebar", "open") // 'open' | 'collapsed'
 const _narrow = ref(false)
@@ -107,7 +107,7 @@ async function toggleStar(name) {
 	const conv = conversations.value.find((c) => c.name === name)
 	if (!conv) return
 	const next = conv.starred ? 0 : 1
-	conv.starred = next // optimistic — regroups instantly
+	conv.starred = next // optimistic - regroups instantly
 	try {
 		await api.setStar(name, next)
 	} catch (e) {
@@ -128,21 +128,21 @@ async function archiveConversation(name) {
 	}
 }
 
-// D10 — New Chat from any route: one mechanism for on-chat and cross-route.
+// D10 - New Chat from any route: one mechanism for on-chat and cross-route.
 function requestNewChat(router) {
 	pendingNewChat.value = true
 	const name = router.currentRoute.value.name
 	if (name !== "Chat" && name !== "Conversation") router.push({ name: "Chat" })
 }
 
-// D9 — settings dialog lives inside ChatView; reach it from any route.
+// D9 - settings dialog lives inside ChatView; reach it from any route.
 function openSettings(router) {
 	settingsOpen.value = true
 	const name = router.currentRoute.value.name
 	if (name !== "Chat" && name !== "Conversation") router.push({ name: "Chat" })
 }
 
-// ---- socket contract (§14 DA-04) — called by ChatView's handlers only ------
+// ---- socket contract (§14 DA-04) - called by ChatView's handlers only ------
 function applyRemoteRename(name, title) {
 	const conv = conversations.value.find((c) => c.name === name)
 	if (conv && title) conv.title = title

@@ -4,14 +4,14 @@
 		<!-- ============ MAIN ============ -->
 		<main style="flex:1;display:flex;flex-direction:column;height:100%;min-width:0;background:var(--surface);">
 			<header style="height:52px;flex:none;border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 18px;gap:12px;">
-				<!-- (no expand button here — the collapsed rail's top button already expands;
+				<!-- (no expand button here - the collapsed rail's top button already expands;
 				     two visible "Expand sidebar" controls was confusing) -->
 				<div style="display:flex;flex-direction:column;line-height:1.15;min-width:0;">
 					<span style="font-size:14px;font-weight:600;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ currentTitle }}</span>
 					<span style="font-size:11.5px;color:var(--text-3);">{{ headerSub }}</span>
 				</div>
 				<div style="margin-left:auto;display:flex;align-items:center;gap:8px;">
-					<!-- "Go to Desk" — at the rightmost end of the cluster (chat only, via CSS order)
+					<!-- "Go to Desk" - at the rightmost end of the cluster (chat only, via CSS order)
 					     (uniform with LayoutHeader across every page) -->
 					<button class="jv-iconbtn" @click="openErpDesk" title="Open ERPNext Desk" aria-label="Open ERPNext Desk" style="order:99;width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:transparent;border:1px solid var(--border);border-radius:7px;cursor:pointer;">
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><path d="M15 3h6v6M10 14 21 3" /></svg>
@@ -82,7 +82,7 @@
 					<div v-if="macroRun && macroRun.conversation === currentId" class="jv-macrobar" :class="{ ok: macroRun.status === 'completed', err: macroRun.status === 'failed', stopped: macroRun.status === 'stopped' }">
 						<template v-if="macroRun.status === 'running'">
 							<span class="jv-macrobar-dot spin"></span>
-							<span class="jv-macrobar-txt">Running macro — step {{ macroRun.step }}/{{ macroRun.total }}<template v-if="macroRun.label">: {{ macroRun.label }}</template></span>
+							<span class="jv-macrobar-txt">Running macro - step {{ macroRun.step }}/{{ macroRun.total }}<template v-if="macroRun.label">: {{ macroRun.label }}</template></span>
 							<button class="jv-macrobar-stop" @click="stopMacro">Stop</button>
 						</template>
 						<template v-else-if="macroRun.status === 'completed'"><span class="jv-macrobar-chip">✓ Macro completed</span></template>
@@ -119,7 +119,7 @@
 							</div>
 							<div style="flex:1;min-width:0;">
 								<!-- Activity: the tool calls (with input + output) that produced
-								     this answer — openclaw-style, collapsible. -->
+								     this answer - openclaw-style, collapsible. -->
 								<div v-if="showActivityDetail && (activityByAssistant[m.name] || []).length" class="jv-activity">
 									<button class="jv-activity-head" @click="toggleActivity(m.name)" :aria-expanded="!!isActivityOpen(m.name)">
 										<svg class="jv-activity-chev" :class="{ open: isActivityOpen(m.name) }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6" /></svg>
@@ -286,10 +286,10 @@
 											<div v-for="(f, fi) in c.fields" :key="fi" class="jv-card-field"><span class="jv-card-k">{{ f.label }}</span><span class="jv-card-v">{{ f.value }}</span></div>
 										</div>
 									</div>
-									<!-- long lists paginate — an endless horizontal scroll loses your place -->
+									<!-- long lists paginate - an endless horizontal scroll loses your place -->
 									<div v-if="cardsOf(m).cards.length > CARD_PAGE_SIZE" class="jv-cards-pager">
 										<button class="jv-cards-pgbtn" :disabled="cardPageOf(m) === 0" @click="stepCardPage(m, -1)" aria-label="Previous cards">‹</button>
-										<span class="jv-cards-pginfo">{{ cardPageOf(m) * CARD_PAGE_SIZE + 1 }}–{{ Math.min((cardPageOf(m) + 1) * CARD_PAGE_SIZE, cardsOf(m).cards.length) }} of {{ cardsOf(m).cards.length }}</span>
+										<span class="jv-cards-pginfo">{{ cardPageOf(m) * CARD_PAGE_SIZE + 1 }}-{{ Math.min((cardPageOf(m) + 1) * CARD_PAGE_SIZE, cardsOf(m).cards.length) }} of {{ cardsOf(m).cards.length }}</span>
 										<button class="jv-cards-pgbtn" :disabled="(cardPageOf(m) + 1) * CARD_PAGE_SIZE >= cardsOf(m).cards.length" @click="stepCardPage(m, 1)" aria-label="Next cards">›</button>
 									</div>
 								</div>
@@ -419,7 +419,7 @@
 								<button v-if="nudge.mode === 'transcribing'" class="jv-iconbtn jv-micbtn" title="Transcribing…" disabled style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;border-radius:7px;color:var(--text-3);">
 									<svg class="jv-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2.4" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9" /></svg>
 								</button>
-								<!-- labeled, unlike the composer's dictate mic 40px below — two
+								<!-- labeled, unlike the composer's dictate mic 40px below - two
 								     identical icon-only mics were indistinguishable at a glance -->
 								<button v-else class="jv-iconbtn jv-micbtn" :class="{ rec: nudge.mode === 'recording' }" :title="nudge.mode === 'recording' ? 'Stop and transcribe' : 'Record a voice note (saved for Jarvis to learn from)'" @click="nudge.mode === 'recording' ? stopNudgeMic() : startNudgeMic()" style="height:28px;display:flex;align-items:center;justify-content:center;gap:5px;background:transparent;border:none;border-radius:7px;cursor:pointer;color:var(--text-3);padding:0 8px;font-size:12.5px;font-weight:600;">
 									<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><path d="M12 19v3" /></svg>
@@ -586,8 +586,8 @@
 						<template v-if="settingsTab === 'overview'">
 							<div class="jv-set-sec">Connection</div>
 							<div class="jv-set-row"><span>Model</span><b>{{ modelLabel }}</b></div>
-							<div class="jv-set-row"><span>Provider</span><b>{{ ui.llm_provider || "—" }}</b></div>
-							<div class="jv-set-row"><span>Auth mode</span><b>{{ ui.llm_auth_mode || "—" }}</b></div>
+							<div class="jv-set-row"><span>Provider</span><b>{{ ui.llm_provider || "-" }}</b></div>
+							<div class="jv-set-row"><span>Auth mode</span><b>{{ ui.llm_auth_mode || "-" }}</b></div>
 							<div class="jv-set-row"><span>Status</span><b style="color:var(--green);">Live</b></div>
 								<div class="jv-set-sec" style="margin-top:18px;">Behavior</div>
 								<div class="jv-set-row">
@@ -609,11 +609,11 @@
 									<span class="jv-switch-knob"></span>
 								</button>
 							</div>
-							<!-- (the Workspace counts block lived here — removed as noise; the Usage tab has it all) -->
+							<!-- (the Workspace counts block lived here - removed as noise; the Usage tab has it all) -->
 							<div class="jv-set-sec" style="margin-top:18px;display:flex;align-items:center;gap:7px;">Token usage <span class="jv-est">est.</span></div>
-							<div class="jv-set-row"><span>This chat</span><b>{{ usage ? fmtTokens(usage.chat_tokens) : "—" }}</b></div>
-							<div class="jv-set-row"><span>{{ usage ? usage.month_label : "This month" }}</span><b>{{ usage ? fmtTokens(usage.month_tokens) : "—" }}</b></div>
-							<div class="jv-set-row"><span>All time</span><b>{{ usage ? fmtTokens(usage.total_tokens) : "—" }}</b></div>
+							<div class="jv-set-row"><span>This chat</span><b>{{ usage ? fmtTokens(usage.chat_tokens) : "-" }}</b></div>
+							<div class="jv-set-row"><span>{{ usage ? usage.month_label : "This month" }}</span><b>{{ usage ? fmtTokens(usage.month_tokens) : "-" }}</b></div>
+							<div class="jv-set-row"><span>All time</span><b>{{ usage ? fmtTokens(usage.total_tokens) : "-" }}</b></div>
 							<template v-if="usage && usage.budget_monthly">
 								<div class="jv-usage-bar"><div class="jv-usage-fill" :style="{ width: usagePct + '%' }"></div></div>
 								<div class="jv-set-hint">{{ fmtTokens(usage.month_tokens) }} / {{ fmtTokens(usage.budget_monthly) }} this month · {{ usagePct }}%</div>
@@ -633,9 +633,9 @@
 								<div class="jv-stat"><div class="jv-stat-label">Tool calls</div><div class="jv-stat-val">{{ sessionToolCalls }}</div><div class="jv-stat-sub">this session</div></div>
 								<div class="jv-stat"><div class="jv-stat-label">Avg tokens / msg</div><div class="jv-stat-val">{{ avgTokensPerMsg }}</div><div class="jv-stat-sub">this chat</div></div>
 								<div class="jv-stat"><div class="jv-stat-label">Conversations</div><div class="jv-stat-val">{{ convCount }}</div><div class="jv-stat-sub">{{ starredCount }} starred</div></div>
-								<div class="jv-stat"><div class="jv-stat-label">This chat</div><div class="jv-stat-val">{{ usage ? fmtTokens(usage.chat_tokens) : "—" }}</div><div class="jv-stat-sub">tokens</div></div>
-								<div class="jv-stat"><div class="jv-stat-label">{{ usage ? usage.month_label : "This month" }}</div><div class="jv-stat-val">{{ usage ? fmtTokens(usage.month_tokens) : "—" }}</div><div class="jv-stat-sub">tokens</div></div>
-								<div class="jv-stat"><div class="jv-stat-label">All time</div><div class="jv-stat-val">{{ usage ? fmtTokens(usage.total_tokens) : "—" }}</div><div class="jv-stat-sub">tokens</div></div>
+								<div class="jv-stat"><div class="jv-stat-label">This chat</div><div class="jv-stat-val">{{ usage ? fmtTokens(usage.chat_tokens) : "-" }}</div><div class="jv-stat-sub">tokens</div></div>
+								<div class="jv-stat"><div class="jv-stat-label">{{ usage ? usage.month_label : "This month" }}</div><div class="jv-stat-val">{{ usage ? fmtTokens(usage.month_tokens) : "-" }}</div><div class="jv-stat-sub">tokens</div></div>
+								<div class="jv-stat"><div class="jv-stat-label">All time</div><div class="jv-stat-val">{{ usage ? fmtTokens(usage.total_tokens) : "-" }}</div><div class="jv-stat-sub">tokens</div></div>
 								<div class="jv-stat"><div class="jv-stat-label">Tools</div><div class="jv-stat-val">{{ toolCount }}</div><div class="jv-stat-sub">available</div></div>
 							</div>
 							<template v-if="usage && usage.budget_monthly">
@@ -661,10 +661,10 @@
 						<!-- MACRO RUNS -->
 						<template v-else-if="settingsTab === 'macroruns'">
 							<div class="jv-statgrid">
-								<div class="jv-stat"><div class="jv-stat-label">Total runs</div><div class="jv-stat-val">{{ macroRunStats ? macroRunStats.total : "—" }}</div><div class="jv-stat-sub">all time</div></div>
-								<div class="jv-stat"><div class="jv-stat-label">Success rate</div><div class="jv-stat-val" style="color:var(--green);">{{ macroRunStats && macroRunStats.success_rate != null ? macroRunStats.success_rate + "%" : "—" }}</div><div class="jv-stat-sub">completed ÷ finished</div></div>
-								<div class="jv-stat"><div class="jv-stat-label">Running now</div><div class="jv-stat-val" style="color:var(--blue);">{{ macroRunStats ? macroRunStats.running : "—" }}</div><div class="jv-stat-sub">active</div></div>
-								<div class="jv-stat"><div class="jv-stat-label">Last run</div><div class="jv-stat-val">{{ macroRunStats && macroRunStats.last_run_at ? fmtAgo(macroRunStats.last_run_at) : "—" }}</div><div class="jv-stat-sub">&nbsp;</div></div>
+								<div class="jv-stat"><div class="jv-stat-label">Total runs</div><div class="jv-stat-val">{{ macroRunStats ? macroRunStats.total : "-" }}</div><div class="jv-stat-sub">all time</div></div>
+								<div class="jv-stat"><div class="jv-stat-label">Success rate</div><div class="jv-stat-val" style="color:var(--green);">{{ macroRunStats && macroRunStats.success_rate != null ? macroRunStats.success_rate + "%" : "-" }}</div><div class="jv-stat-sub">completed ÷ finished</div></div>
+								<div class="jv-stat"><div class="jv-stat-label">Running now</div><div class="jv-stat-val" style="color:var(--blue);">{{ macroRunStats ? macroRunStats.running : "-" }}</div><div class="jv-stat-sub">active</div></div>
+								<div class="jv-stat"><div class="jv-stat-label">Last run</div><div class="jv-stat-val">{{ macroRunStats && macroRunStats.last_run_at ? fmtAgo(macroRunStats.last_run_at) : "-" }}</div><div class="jv-stat-sub">&nbsp;</div></div>
 							</div>
 							<div class="jv-runfilters">
 								<div class="jv-seg jv-runchips">
@@ -748,7 +748,7 @@
 			</div>
 		</transition>
 
-		<!-- Artifact preview panel — slides in from the right (PDF in a viewer, Excel as a table) -->
+		<!-- Artifact preview panel - slides in from the right (PDF in a viewer, Excel as a table) -->
 		<transition name="jv-slide">
 			<div v-if="artifact" class="jv-artifact-overlay" @click.self="closeArtifact">
 				<aside class="jv-artifact-panel" ref="artifactPanelEl" tabindex="-1">
@@ -792,7 +792,7 @@
 				</aside>
 			</div>
 		</transition>
-		<!-- Record draft panel — the agent's proposed create/update, fully editable, applied directly -->
+		<!-- Record draft panel - the agent's proposed create/update, fully editable, applied directly -->
 		<transition name="jv-slide">
 			<div v-if="draftPanel" class="jv-artifact-overlay" @click.self="closeDraftPanel">
 				<aside class="jv-artifact-panel jv-draft-panel" tabindex="-1">
@@ -819,7 +819,7 @@
 										<div v-if="draftLink.open && draftLink.key === 'f:' + f.fieldname && draftLink.items.length"
 										     class="jv-action-linkmenu" :class="{ up: draftLink.up }">
 											<button v-for="it in draftLink.items" :key="it.value" @mousedown.prevent="pickDraftLink((v) => { f.value = v }, it)">
-												<b>{{ it.value }}</b><span v-if="it.label"> — {{ it.label }}</span>
+												<b>{{ it.value }}</b><span v-if="it.label"> - {{ it.label }}</span>
 											</button>
 										</div>
 									</template>
@@ -855,7 +855,7 @@
 													<div v-if="draftLink.open && draftLink.key === 't:' + ti + ':' + ri + ':' + c.fieldname && draftLink.items.length"
 													     class="jv-action-linkmenu" :class="{ up: draftLink.up }">
 														<button v-for="it in draftLink.items" :key="it.value" @mousedown.prevent="pickDraftLink((v) => { r[c.fieldname] = v }, it)">
-															<b>{{ it.value }}</b><span v-if="it.label"> — {{ it.label }}</span>
+															<b>{{ it.value }}</b><span v-if="it.label"> - {{ it.label }}</span>
 														</button>
 													</div>
 												</template>
@@ -873,7 +873,7 @@
 							</div>
 							<button class="jv-draft-addrow" @click="addDraftRow(ti)">＋ Add row</button>
 						</div>
-						<div v-if="draftTotals" class="jv-draft-totals">{{ draftTotals }} <span class="jv-draft-est">(estimate — ERPNext computes final totals)</span></div>
+						<div v-if="draftTotals" class="jv-draft-totals">{{ draftTotals }} <span class="jv-draft-est">(estimate - ERPNext computes final totals)</span></div>
 						<div v-if="draftPanel.error" class="jv-draft-error">{{ draftPanel.error }}</div>
 					</div>
 					<div class="jv-draft-foot">
@@ -927,7 +927,7 @@ const router = useRouter()
 const store = useShellStore()
 
 const currentId = ref(null)
-// Remember the open chat per-device so a refresh — or a duplicated tab — restores
+// Remember the open chat per-device so a refresh - or a duplicated tab - restores
 // it instead of jumping to whatever sorts first in the sidebar (e.g. a starred
 // chat). Also lets a duplicated tab land on the SAME in-progress conversation.
 // Also mirrors the selection into the shell store (sidebar active row).
@@ -962,7 +962,7 @@ const threadInnerEl = ref(null)
 const rootEl = ref(null)
 // Jump-to-latest arrow: shown when the thread is scrolled up away from the newest
 // message. `pinnedToBottom` tracks whether we should auto-stick to the bottom as
-// content grows (streaming replies, late-loading images/charts) — true until the
+// content grows (streaming replies, late-loading images/charts) - true until the
 // user deliberately scrolls up.
 const showScrollDown = ref(false)
 const pinnedToBottom = ref(true)
@@ -970,7 +970,7 @@ const pinnedToBottom = ref(true)
 // ---- Reusable notifier + confirm dialog ------------------------------------
 // notify("Deleted", { type: "success" }) drops a lightweight toast that stacks
 // bottom-right and auto-dismisses. confirmDialog({...}) shows a centered confirm
-// modal and resolves true/false — a drop-in replacement for the native
+// modal and resolves true/false - a drop-in replacement for the native
 // window.confirm() used across destructive actions (delete chat/skill/macro).
 // Both are intentionally generic so any new call site can reuse them.
 const notes = ref([])
@@ -1007,7 +1007,7 @@ function _settleConfirm(val) {
 }
 const modelMenuOpen = ref(false)
 // (sidebar collapse machinery, per-conversation ⋯ menu and inline rename
-// moved to the app shell — stores/shell.js + components/shell/*, §3.7)
+// moved to the app shell - stores/shell.js + components/shell/*, §3.7)
 const modelOverride = ref("")
 
 // ---- settings panel (openclaw-style console) ----
@@ -1150,7 +1150,7 @@ function fmtDuration(sec) {
 	const h = Math.floor(m / 60)
 	return `${h}h ${m % 60}m`
 }
-// Elapsed for a run that hasn't finished (running/queued) — shows "· 18s".
+// Elapsed for a run that hasn't finished (running/queued) - shows "· 18s".
 function macroRunElapsed(run) {
 	if (run.duration_s != null || !run.started_at) return fmtDuration(run.duration_s)
 	const t = new Date(String(run.started_at).replace(" ", "T")).getTime()
@@ -1225,7 +1225,7 @@ const failedCount = computed(() => activeTools.value.filter((t) => t.status === 
 // Real progress instead of a blanket "Thinking…": phase transitions come from
 // the run's realtime events (run:start → tool:start/end → assistant:delta).
 // Faithful by construction: tool phrases derive from the tool NAME plus
-// openclaw's own arg summary (tool_title, e.g. "get_list Sales Invoice") —
+// openclaw's own arg summary (tool_title, e.g. "get_list Sales Invoice") -
 // nothing is invented client-side.
 const statusPhase = ref(null) // 'model' | 'analyzing' | null
 const TOOL_PHRASES = {
@@ -1290,7 +1290,7 @@ const liveStatus = computed(() => {
 	if (waiting.value || sending.value || statusPhase.value === "model") return "Talking to the model…"
 	return thinkingWord.value
 })
-const runMeta = ref({}) // { [message_id]: { ms, tools, names } } — survives reloads
+const runMeta = ref({}) // { [message_id]: { ms, tools, names } } - survives reloads
 const canvasContent = ref({}) // { `${msgName}::${canvasName}`: srcdoc html (html/svg) | data-url (pdf/image/file) }
 const pendingFiles = ref([]) // [{ file_url, file_name }] attachments to send
 const uploading = ref(false)
@@ -1324,7 +1324,7 @@ const visibleMessages = computed(() =>
 )
 // Group role=tool messages under the assistant turn they belong to, so each
 // answer can show an expandable "Activity" list of the tool calls (with input
-// + output) that produced it — openclaw-style. Tool rows follow their
+// + output) that produced it - openclaw-style. Tool rows follow their
 // assistant placeholder in seq order, so we attach to the most recent
 // assistant message and reset on each user message.
 const activityByAssistant = computed(() => {
@@ -1374,7 +1374,7 @@ function _notifyReplyReady() {
 			tag: "jarvis-reply", // collapse bursts into one notification
 		})
 		n.onclick = () => { window.focus(); n.close() }
-	} catch (e) { /* notification blocked at OS level — nothing to do */ }
+	} catch (e) { /* notification blocked at OS level - nothing to do */ }
 }
 
 // Danger zone: wipe every conversation + message (macros/skills untouched).
@@ -1428,7 +1428,7 @@ function activityNames(assistantName) {
 	return (activityByAssistant.value[assistantName] || [])
 		.map((t) => toolLabel(t.tool_name)).join(", ")
 }
-// args/result are stored as JSON strings — pretty-print, and trim very large
+// args/result are stored as JSON strings - pretty-print, and trim very large
 // payloads so a 10k-row result doesn't blow up the chat.
 function prettyJson(s) {
 	if (s == null || s === "") return ""
@@ -1438,7 +1438,7 @@ function prettyJson(s) {
 	try { out = JSON.stringify(v, null, 2) } catch (e) { out = String(s) }
 	return out.length > 4000 ? out.slice(0, 4000) + "\n… (truncated)" : out
 }
-// True only until the initial conversation load finishes — keeps the welcome
+// True only until the initial conversation load finishes - keeps the welcome
 // screen from flashing on refresh before the open chat appears.
 const booting = ref(true)
 const showWelcome = computed(
@@ -1456,7 +1456,7 @@ const userMsgCount = computed(() => visibleMessages.value.filter((m) => m.role =
 const assistantMsgCount = computed(() => visibleMessages.value.filter((m) => m.role === "assistant").length)
 const avgTokensPerMsg = computed(() => {
 	const n = msgCount.value
-	if (!usage.value || !n) return "—"
+	if (!usage.value || !n) return "-"
 	return fmtTokens(Math.round((usage.value.chat_tokens || 0) / n))
 })
 const starredCount = computed(() => store.conversations.filter((c) => c.starred).length)
@@ -1624,7 +1624,7 @@ function cardsOf(m) {
 	return res
 }
 // Card-strip pagination: past a page of cards the horizontal scroll loses your
-// place, so long lists page instead (‹ 1–6 of 50 ›). Page index per message.
+// place, so long lists page instead (‹ 1-6 of 50 ›). Page index per message.
 const CARD_PAGE_SIZE = 6
 const cardPage = ref({}) // message name -> 0-based page
 function cardPageOf(m) {
@@ -1644,7 +1644,7 @@ function stepCardPage(m, dir) {
 	cardPage.value = { ...cardPage.value, [m.name]: next }
 }
 const _macroCardCache = new Map()
-// "Save as macro" — the macro editor now lives on /macros, so these stash a
+// "Save as macro" - the macro editor now lives on /macros, so these stash a
 // draft (via macroPrefill) and navigate there; MacrosView opens it pre-filled.
 const canSaveAsMacro = computed(
 	() => !!currentId.value && messages.value.some((m) => m.role === "user" && m.content && !m.content.startsWith("▶ Running macro")),
@@ -1805,7 +1805,7 @@ const docNameRegex = computed(() => {
 	try {
 		return new RegExp(`(?<![\\w-])(${names.map(_escapeRegex).join("|")})(?![\\w-])`, "g")
 	} catch (e) {
-		return null // e.g. a browser without lookbehind — degrade to no links
+		return null // e.g. a browser without lookbehind - degrade to no links
 	}
 })
 const _deskSlug = (dt) => dt.toLowerCase().replace(/ /g, "-")
@@ -1829,7 +1829,7 @@ function linkifyDocs(html) {
 		})
 	})
 }
-// The last assistant message (finished, turn idle) decides which card is live —
+// The last assistant message (finished, turn idle) decides which card is live -
 // once the user clicks, a new message lands and the card retires automatically.
 const _lastAssistant = computed(() => {
 	if (busy.value) return null
@@ -1851,9 +1851,9 @@ function actionSend(text) {
 }
 function answerConfirm(ok, label) {
 	// Echo the card's own wording so the transcript reads like what the user
-	// clicked ("Yes — Confirm and save") instead of a canned "go ahead".
+	// clicked ("Yes - Confirm and save") instead of a canned "go ahead".
 	const l = (label || "").trim()
-	send(ok ? (l ? `Yes — ${l}` : "Yes, go ahead.") : "No, cancel that.")
+	send(ok ? (l ? `Yes - ${l}` : "Yes, go ahead.") : "No, cancel that.")
 }
 
 // --- Field-control helpers shared by the confirm card and the record draft
@@ -1937,7 +1937,7 @@ async function _formMeta(doctype) {
 }
 
 // Native date/time inputs REQUIRE canonical values (yyyy-mm-dd / yyyy-mm-ddThh:mm);
-// anything else — "2026-07-10 00:00:00", "10-07-2026" — renders the input EMPTY,
+// anything else - "2026-07-10 00:00:00", "10-07-2026" - renders the input EMPTY,
 // which read as "the date isn't picking". Normalize whatever the agent/doc gave us.
 function _normDateVal(fieldtype, v) {
 	const s = String(v == null ? "" : v).trim()
@@ -2222,7 +2222,7 @@ async function applyDraft(submitFlag, model = draftPanel.value) {
 		store.loadConversations()
 	} catch (e) {
 		p.applying = false
-		p.error = (e && e.messages && e.messages[0]) || (e && e.message) || "Could not save — check the values."
+		p.error = (e && e.messages && e.messages[0]) || (e && e.message) || "Could not save - check the values."
 	}
 }
 
@@ -2412,7 +2412,7 @@ function pickSingle(i, opt) {
 	askSel.value = { ...askSel.value, [i]: opt }
 }
 // Option BUTTONS (single/yesno) toggle: clicking the picked option again
-// unselects it, and picking one clears the "Other…" text (they're exclusive —
+// unselects it, and picking one clears the "Other…" text (they're exclusive -
 // both being sent as the answer was a reported bug).
 function toggleSingle(i, opt) {
 	const cur = askSel.value[i]
@@ -2457,7 +2457,7 @@ function submitAsk() {
 		const v = askSel.value[i]
 		const other = (askOther.value[i] || "").trim()
 		if (Array.isArray(v)) ans.push(...v)
-		// Single-answer questions: a typed "Other…" IS the answer — never send
+		// Single-answer questions: a typed "Other…" IS the answer - never send
 		// both it and a leftover pick (the UI keeps them exclusive; this is the
 		// belt-and-braces for stale state).
 		else if (v != null && v !== "" && !other) ans.push(v)
@@ -2472,7 +2472,7 @@ function copyText(t) {
 	const s = t || ""
 	// navigator.clipboard only exists in a secure context (https / localhost).
 	// Over plain http (e.g. jarvis-test.localhost) it's undefined, so the old
-	// `navigator.clipboard?.writeText` silently did nothing — that's why Copy
+	// `navigator.clipboard?.writeText` silently did nothing - that's why Copy
 	// "didn't work". Fall back to the legacy execCommand path in that case.
 	try {
 		if (navigator.clipboard && window.isSecureContext) {
@@ -2542,7 +2542,7 @@ function editCommand(m) {
 	})
 }
 // Cached render payload for an artifact: HTML srcdoc (html/svg) or a base64
-// data-url (pdf/image/file). Keyed by `${msgName}::${canvasName}::${theme}` —
+// data-url (pdf/image/file). Keyed by `${msgName}::${canvasName}::${theme}` -
 // the theme is in the key because the backend themes the srcdoc shell (dark
 // preview bg), so a toggle refetches instead of showing the stale scheme.
 function cvOf(m, cv) {
@@ -2620,7 +2620,7 @@ async function openArtifact(m, cv) {
 async function ensureCanvas(m) {
 	if (!m || !Array.isArray(m.canvas) || !m.canvas.length) return
 	for (const cv of m.canvas) {
-		// pdf / image / file render from file_url directly — only html/svg need
+		// pdf / image / file render from file_url directly - only html/svg need
 		// the fetched srcdoc content.
 		if (cv.file_url && cv.type !== "html" && cv.type !== "svg") continue
 		const dark = effectiveDark.value ? 1 : 0
@@ -2662,7 +2662,7 @@ function jumpToBottom() {
 	scrollBottom(true)
 }
 // Keep the thread pinned to the newest message while its content is still
-// settling — streaming text, plus images/charts/mermaid that finish loading
+// settling - streaming text, plus images/charts/mermaid that finish loading
 // *after* the initial scrollBottom() and would otherwise leave a freshly
 // refreshed chat parked mid-thread (the "10 messages, opens at the top" bug).
 // A ResizeObserver on the inner content re-pins on every growth, but only while
@@ -2717,7 +2717,7 @@ function onKey(e) {
 			return
 		}
 	}
-	// Up/Down: recall sent prompts — only when the caret is at the very start
+	// Up/Down: recall sent prompts - only when the caret is at the very start
 	// (Up) or end (Down) so it doesn't fight normal multi-line editing.
 	const el = e.target
 	if (e.key === "ArrowUp" && (input.value === "" || el.selectionStart === 0) && promptHistory.value.length) {
@@ -2772,7 +2772,7 @@ async function loadConversation(id) {
 	// Stale-response guard: if the user navigated to a different conversation
 	// while this request was in flight, drop the result. Without this, a slow
 	// get_conversation response clobbers the conversation you actually switched
-	// to with the wrong (or empty) messages — and only a page refresh, which
+	// to with the wrong (or empty) messages - and only a page refresh, which
 	// does a single clean load, would put it right. (Root cause of "open a
 	// chat, switch away and back, it shows empty until I refresh".)
 	if (currentId.value !== id) return
@@ -2820,7 +2820,7 @@ async function loadConversation(id) {
 	// Reconcile the sidebar streaming dot with the fetched state: if the store
 	// still marks THIS conversation as streaming but its messages say otherwise
 	// (run ended while we were on another route, or a stale streaming=1 flag),
-	// clear it — otherwise the dot pulses forever. A dot on a DIFFERENT
+	// clear it - otherwise the dot pulses forever. A dot on a DIFFERENT
 	// conversation is left alone: its live socket deltas keep it honest.
 	if (!_resumed && store.streamingConvId === id) store.streamingConvId = null
 	// A freshly opened/refreshed chat should land on the newest message and stay
@@ -2836,7 +2836,7 @@ async function loadConversation(id) {
 // Lazy-loads mermaid so it never bloats the initial bundle; only runs on
 // finalized messages (mid-stream mermaid source is incomplete and would error).
 let _mermaid = null
-// Vibrant, high-contrast categorical palette for pie/bar slices — distinct
+// Vibrant, high-contrast categorical palette for pie/bar slices - distinct
 // hues that stay legible with white section labels in both light and dark.
 // (The app's own palette is near-monochrome, which is why the old "neutral"
 // mermaid theme rendered charts as washed-out grays.)
@@ -2873,7 +2873,7 @@ async function _renderMermaid() {
 	} catch (e) {
 		return
 	}
-	// Re-initialize each run so the palette tracks the active light/dark theme —
+	// Re-initialize each run so the palette tracks the active light/dark theme -
 	// mermaid snapshots its theme at init, so a one-time init would freeze it.
 	const dark = effectiveDark.value
 	const pie = Object.fromEntries(MERMAID_PALETTE.map((c, i) => [`pie${i + 1}`, c]))
@@ -2995,12 +2995,12 @@ async function selectConversation(id) {
 	if (id === currentId.value) return
 	swapDraft(id)
 	resetRunState()
-	// Don't let the macro banner leak across conversations — clear it unless we're
+	// Don't let the macro banner leak across conversations - clear it unless we're
 	// navigating into the run's own conversation.
 	if (macroRun.value && macroRun.value.conversation !== id) macroRun.value = null
 	currentId.value = id
 	// Selection can also start INSIDE the component (proactive toast, run
-	// history) — keep the URL coherent with the sidebar's /c/:id navigation.
+	// history) - keep the URL coherent with the sidebar's /c/:id navigation.
 	// No-op when the route watcher initiated this call (params already match).
 	if (route.params.id !== id) router.replace("/c/" + id)
 	await loadConversation(id)
@@ -3012,12 +3012,12 @@ async function selectConversation(id) {
 // the extracted reason so a non-string Frappe error payload can't throw inside the
 // caller's catch and re-swallow the very failure we're trying to report.
 function notifyActionError(prefix, e) {
-	notify(`${prefix} — ${String(_skillErr(e)).replace(/\.$/, "")}. Try again.`, { type: "error" })
+	notify(`${prefix} - ${String(_skillErr(e)).replace(/\.$/, "")}. Try again.`, { type: "error" })
 }
 async function newChat() {
 	// Create FIRST, mutate the UI only on success. If the backend 500s, we must
 	// not leave the user on a half-reset screen (blank draft + wiped run state
-	// but still the old conversation) with no feedback — surface why and bail,
+	// but still the old conversation) with no feedback - surface why and bail,
 	// keeping them exactly where they were.
 	let conv
 	try {
@@ -3031,7 +3031,7 @@ async function newChat() {
 	currentId.value = conv?.name || conv
 	messages.value = []
 	// Leaving a /c/:id URL on an old conversation would make its sidebar row
-	// unclickable (same-route push is a no-op) — reset to the chat home.
+	// unclickable (same-route push is a no-op) - reset to the chat home.
 	if (route.params.id) router.replace({ name: "Chat" })
 	await store.loadConversations()
 	await nextTick()
@@ -3099,7 +3099,7 @@ async function send(textArg) {
 	}
 	// No awaited pre-flight for a brand-new chat (latency plan, Phase 1.3):
 	// the backend's send_message creates/focuses the empty conversation
-	// itself and returns conversation_id — two fewer round-trips before the
+	// itself and returns conversation_id - two fewer round-trips before the
 	// first message even leaves the browser. The sidebar refresh happens
 	// after the send resolves, off the critical path.
 	const isNewConv = !currentId.value
@@ -3127,7 +3127,7 @@ async function send(textArg) {
 		}
 	} catch (e) {
 		// send_message failed (e.g. a 500 on a migration gap). Stop the spinner and
-		// surface why — the fix this PR is really about is that the failure used to
+		// surface why - the fix this PR is really about is that the failure used to
 		// be silent. We deliberately do NOT roll the optimistic bubble back or refill
 		// the composer: the send is fire-and-forget, so a mid-send conversation
 		// switch would strand one thread's draft in another, and a post-ack timeout
@@ -3243,7 +3243,7 @@ function onEvent(p) {
 			waiting.value = false
 			statusPhase.value = null
 			// Upsert: the message may not be loaded yet when the first delta
-			// arrives — add it so streaming text shows immediately (the bug fix).
+			// arrives - add it so streaming text shows immediately (the bug fix).
 			let m = messages.value.find((x) => x.name === p.message_id)
 			if (!m) {
 				m = { name: p.message_id, role: "assistant", content: "", streaming: true }
@@ -3271,7 +3271,7 @@ function onEvent(p) {
 			break
 		}
 		case "canvas": {
-			// Agent produced a chart/canvas this turn — attach + render inline.
+			// Agent produced a chart/canvas this turn - attach + render inline.
 			const cm = messages.value.find((x) => x.name === p.message_id)
 			if (cm) {
 				cm.canvas = p.items
@@ -3302,7 +3302,7 @@ function onEvent(p) {
 			_notifyReplyReady() // browser notification when the tab is hidden (opt-in)
 			store.loadConversations()
 			loadConversation(currentId.value)
-			// Re-render charts after the reload settles — late re-renders can swap a
+			// Re-render charts after the reload settles - late re-renders can swap a
 			// freshly-rendered mermaid node back to raw source; these idle passes
 			// (mutex-guarded, no-op when nothing's pending) catch that race.
 			setTimeout(processMermaid, 300)
@@ -3311,7 +3311,7 @@ function onEvent(p) {
 		}
 		case "wiki:nudge": {
 			// Post-turn "remember this?" prompt. Don't clobber a card the user is
-			// already recording into / editing — only replace an idle (or absent)
+			// already recording into / editing - only replace an idle (or absent)
 			// one, or a card stranded on ANOTHER conversation than the one on
 			// screen (invisible, so its stuck recorder would otherwise block every
 			// future nudge; cancel it before taking the slot).
@@ -3363,15 +3363,15 @@ function stopRun() {
 // ---- voice dictation (composer mic) ----
 // Hidden unless get_chat_ui_settings reports stt_enabled AND the browser has
 // MediaRecorder. micState is the UI phase; the recorder itself lives in the
-// composable (300 s hard cap enforced there — onAutoStop still transcribes).
+// composable (300 s hard cap enforced there - onAutoStop still transcribes).
 const micRec = useAudioRecorder({
 	onAutoStop: (r) => {
-		notify("Recording stopped at the 5-minute limit — transcribing.", { type: "info" })
+		notify("Recording stopped at the 5-minute limit - transcribing.", { type: "info" })
 		_transcribeToInput(r)
 	},
 })
 const micState = ref("idle") // 'idle' | 'recording' | 'transcribing'
-let _micConvId = null // conversation the take was started in — transcript belongs to it
+let _micConvId = null // conversation the take was started in - transcript belongs to it
 function _fmtClock(s) {
 	return Math.floor(s / 60) + ":" + String(Math.max(0, s) % 60).padStart(2, "0")
 }
@@ -3403,7 +3403,7 @@ async function _transcribeToInput(r) {
 		const res = await voice.transcribeAudio(r.blob, { durationS: r.durationS })
 		const text = ((res && res.text) || "").trim()
 		if (!text) {
-			notify("Nothing was transcribed — try again closer to the microphone.", { type: "info" })
+			notify("Nothing was transcribed - try again closer to the microphone.", { type: "info" })
 		} else if (currentId.value === forId) {
 			// fillInput pattern, but APPENDING: dictation adds to any typed draft.
 			input.value = input.value.trim() ? input.value.replace(/\s+$/, "") + " " + text : text
@@ -3413,7 +3413,7 @@ async function _transcribeToInput(r) {
 			})
 		} else if (forId) {
 			// The user switched chats mid-transcription: the words belong to the
-			// chat they were spoken in — merge into its stashed draft (swapDraft
+			// chat they were spoken in - merge into its stashed draft (swapDraft
 			// restores it when they return), never into the composer on screen.
 			const prev = drafts.value[forId] || ""
 			drafts.value[forId] = prev.trim() ? prev.replace(/\s+$/, "") + " " + text : text
@@ -3440,7 +3440,7 @@ const nudgeLabels = computed(() =>
 )
 const nudgeRec = useAudioRecorder({
 	onAutoStop: (r) => {
-		notify("Recording stopped at the 5-minute limit — transcribing.", { type: "info" })
+		notify("Recording stopped at the 5-minute limit - transcribing.", { type: "info" })
 		_nudgeTranscribe(r)
 	},
 })
@@ -3472,7 +3472,7 @@ async function _nudgeTranscribe(r) {
 		const res = await voice.transcribeAudio(r.blob, { durationS: r.durationS })
 		const text = ((res && res.text) || "").trim()
 		if (!text) {
-			notify("Nothing was transcribed — try again closer to the microphone.", { type: "info" })
+			notify("Nothing was transcribed - try again closer to the microphone.", { type: "info" })
 			if (nudge.value) nudge.value.mode = "idle"
 			return
 		}
@@ -3509,7 +3509,7 @@ async function saveNudgeNote() {
 			entities: JSON.stringify(n.entities || []),
 			source: "Chat Nudge",
 		})
-		notify("Noted — Jarvis will remember this", { type: "success" })
+		notify("Noted - Jarvis will remember this", { type: "success" })
 		nudge.value = null
 	} catch (e) {
 		n.saving = false
@@ -3522,9 +3522,9 @@ function dismissNudge() {
 	nudge.value = null
 	// Best-effort: the 7-day server-side snooze shouldn't block hiding the card.
 	if (n) voice.dismissWikiNudge(n.conversationId).catch(() => {})
-	// the dismissal mutes a week of nudges here — say so, once, or users
+	// the dismissal mutes a week of nudges here - say so, once, or users
 	// won't know they opted out
-	notify("Okay — won't ask again in this chat for a week.")
+	notify("Okay - won't ask again in this chat for a week.")
 }
 
 // ---- file input ----
@@ -3714,7 +3714,7 @@ function onVisibility() {
 
 // ---- shell contract (§3.7): New Chat requests, external navigation and
 // external deletes now arrive from outside the component. ----
-// D10 — the shell sets pendingNewChat; consume + clear it here. During boot
+// D10 - the shell sets pendingNewChat; consume + clear it here. During boot
 // the flag is only marked (onMounted starts on the empty state instead of
 // restoring the last conversation).
 let _consumedNewChat = false
@@ -3728,7 +3728,7 @@ watch(
 	},
 	{ immediate: true },
 )
-// Sidebar rows navigate via /c/:id — selection now happens outside the
+// Sidebar rows navigate via /c/:id - selection now happens outside the
 // component, so follow the route param.
 watch(
 	() => route.params.id,
@@ -3770,8 +3770,8 @@ onMounted(async () => {
 	// Load custom skills so the "/" composer menu can offer them.
 	loadCustomSkills()
 	// "Discuss in chat" hand-off (Review tab → chatPrefill stash). Take the
-	// stash on EVERY mount — a stale prompt must never survive to pop into the
-	// composer on a later, unrelated visit — but only act on it when landing
+	// stash on EVERY mount - a stale prompt must never survive to pop into the
+	// composer on a later, unrelated visit - but only act on it when landing
 	// on the chat home (no /c/:id param).
 	const prefill = takeChatPrefill()
 	const applyPrefill = !route.params.id && !!(prefill && prefill.text)
@@ -3785,7 +3785,7 @@ onMounted(async () => {
 			_consumedNewChat = false // newChat() below satisfies a pending request too
 			await newChat()
 		} else if (_consumedNewChat) {
-			// New Chat was requested from another route while we booted —
+			// New Chat was requested from another route while we booted -
 			// start on a fresh empty conversation instead of restoring.
 			_consumedNewChat = false
 			await newChat()
@@ -3807,14 +3807,14 @@ onMounted(async () => {
 		booting.value = false // reveal welcome/thread only after the first load
 	}
 	// The thread (and its chart skeletons) only enter the DOM now that booting is
-	// false — loadConversation's earlier processMermaid pass ran against an empty
+	// false - loadConversation's earlier processMermaid pass ran against an empty
 	// thread, so render the charts here once they're actually mounted.
 	await nextTick()
 	processMermaid()
 	// Apply the "Discuss in chat" prefill now that booting is false and the
 	// composer is mounted: drop the drafted prompt into the fresh conversation
 	// started above and, per the hand-off contract, send it as the user's
-	// first message (send() with no arg reads input.value — the main-composer
+	// first message (send() with no arg reads input.value - the main-composer
 	// path).
 	if (applyPrefill) {
 		input.value = prefill.text
@@ -3831,12 +3831,12 @@ onBeforeUnmount(() => {
 	document.removeEventListener("pointerdown", onDocClick)
 	window.removeEventListener("keydown", onGlobalKey)
 	clearInterval(_thinkTimer)
-	// Release the mic — navigating to another route mid-take must not leave the
+	// Release the mic - navigating to another route mid-take must not leave the
 	// track hot (and its duration interval ticking) behind the dead view.
 	micRec?.cancel()
 	if (nudge.value && (nudge.value.mode === "recording" || nudge.value.mode === "transcribing")) nudgeRec?.cancel()
 	// ChatView is the sole writer of streamingConvId (§4 contract) and its
-	// socket handlers detach above — nothing can clear the flag once we're
+	// socket handlers detach above - nothing can clear the flag once we're
 	// gone, so navigating off mid-stream would leave the sidebar dot pulsing
 	// forever. Remount reconciles from fetched state in loadConversation.
 	store.streamingConvId = null
@@ -3861,12 +3861,12 @@ function onGlobalKey(e) {
 
 <style scoped>
 /* Native form controls (select dropdowns, date/time pickers, scrollbars)
-   follow the app theme instead of the OS default — without this, a dark app
+   follow the app theme instead of the OS default - without this, a dark app
    pops white select menus and calendar popups. */
 .jv-root { color-scheme: light; }
 .jv-root.jv-dark { color-scheme: dark; }
-/* Refined Indigo brand mark (dark mode): the spark boxes — empty-state hero,
-   assistant avatars, proactive toast — trade the flat accent fill for an
+/* Refined Indigo brand mark (dark mode): the spark boxes - empty-state hero,
+   assistant avatars, proactive toast - trade the flat accent fill for an
    indigo→violet gradient with a soft indigo glow. !important beats the
    elements' inline background:var(--blue). */
 .jv-dark .jv-logo,
@@ -3893,7 +3893,7 @@ function onGlobalKey(e) {
 .jv-menuitem-danger:hover { background: var(--red-bg); }
 .jv-suggest:hover { border-color: var(--border-2); background: var(--surface-1); }
 /* buttons invert to black/white on hover (theme-adaptive: black on light,
-   white on dark) — var(--text)/var(--surface) flip, with an svg-stroke
+   white on dark) - var(--text)/var(--surface) flip, with an svg-stroke
    override so the icon stays visible on the inverted background. */
 .jv-iconbtn:hover { background: var(--text) !important; color: var(--surface) !important; }
 .jv-iconbtn:hover svg { stroke: var(--surface) !important; }
@@ -3906,7 +3906,7 @@ function onGlobalKey(e) {
 .jv-menuitem:hover, .jv-menuitem.on { background: var(--surface-1); }
 /* black focus highlight on the composer */
 .jv-composer:focus-within { border-color: var(--text); box-shadow: 0 0 0 3px rgba(23, 23, 23, 0.07); }
-/* jump-to-latest arrow — floats just above the composer, centered */
+/* jump-to-latest arrow - floats just above the composer, centered */
 .jv-scrolldown {
 	position: absolute;
 	left: 50%;
@@ -3953,14 +3953,14 @@ function onGlobalKey(e) {
 .jv-tool-dot.err { background: var(--red); }
 .jv-tool-dot.run { background: var(--amber); animation: jv-pulse 1s ease-in-out infinite; }
 @keyframes jv-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
-/* dictation mic (composer + nudge card) — red while a take is live */
+/* dictation mic (composer + nudge card) - red while a take is live */
 .jv-micbtn.rec { color: var(--red) !important; }
 .jv-micbtn:disabled { cursor: default; }
 .jv-mic-live { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600; color: var(--red); font-variant-numeric: tabular-nums; }
 .jv-mic-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--red); animation: jv-pulse 1s ease-in-out infinite; flex: none; }
 .jv-mic-cancel { display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; border: none; background: transparent; border-radius: 6px; cursor: pointer; color: var(--text-3); }
 .jv-mic-cancel:hover { background: var(--surface-2); color: var(--text); }
-/* wiki nudge card — own block above the composer, never inside it */
+/* wiki nudge card - own block above the composer, never inside it */
 .jv-nudge { display: flex; flex-direction: column; gap: 8px; margin: 0 0 8px; padding: 10px 12px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; font-size: 13px; color: var(--text); }
 .jv-nudge-head { display: flex; align-items: flex-start; gap: 8px; }
 .jv-nudge-q { flex: 1; min-width: 0; line-height: 1.45; }
@@ -3979,7 +3979,7 @@ function onGlobalKey(e) {
 .jv-tool-detail { padding: 4px 11px 11px; border-top: 1px solid var(--border); }
 .jv-tool-io-k { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-3); margin: 9px 0 4px; }
 .jv-tool-io { margin: 0; padding: 9px 11px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; line-height: 1.5; color: var(--text); white-space: pre-wrap; word-break: break-word; overflow-x: auto; max-height: 320px; overflow-y: auto; }
-/* per-message Copy/Edit bar — revealed on hover */
+/* per-message Copy/Edit bar - revealed on hover */
 .jv-msgbar { display: flex; align-items: center; gap: 3px; margin-top: 5px; opacity: 0; transition: opacity .12s ease; }
 .jv-umsg:hover .jv-msgbar, .jv-amsg:hover .jv-msgbar { opacity: 1; }
 .jv-msgtime { font-size: 11.5px; color: var(--text-3); padding: 0 3px; cursor: default; user-select: none; }
@@ -4022,7 +4022,7 @@ function onGlobalKey(e) {
 .jv-btn-danger:disabled { opacity: .6; }
 .jv-md :deep(.jv-mermaid) { position: relative; margin: 8px 0 12px; text-align: center; overflow-x: auto; }
 .jv-md :deep(.jv-mermaid svg) { max-width: 100%; height: auto; }
-/* skeleton shimmer while a chart hasn't rendered to SVG yet (no data-rendered) —
+/* skeleton shimmer while a chart hasn't rendered to SVG yet (no data-rendered) -
    hides the raw mermaid source so the user never sees the markup flash. */
 .jv-md :deep(.jv-mermaid:not([data-rendered])) { min-height: 196px; color: transparent !important; user-select: none; overflow: hidden; border-radius: 10px; border: 1px solid var(--border); background: var(--surface-1); }
 .jv-md :deep(.jv-mermaid:not([data-rendered])) * { color: transparent !important; }
@@ -4385,7 +4385,7 @@ function onGlobalKey(e) {
 .jv-macro-merged-badge--pending { color: var(--amber); background: var(--amber-bg); border-color: var(--amber-bd); }
 
 /* rich action cards (doc confirm / email draft) */
-/* .jv-action must stay overflow:visible — the edit form's Link dropdown
+/* .jv-action must stay overflow:visible - the edit form's Link dropdown
    (.jv-action-linkmenu, position:absolute) would be CLIPPED to the card
    otherwise, leaving a sliver you have to scroll inside. The rounded corners
    are preserved by rounding the footer's own bottom edge instead. */
@@ -4527,7 +4527,7 @@ function onGlobalKey(e) {
 .jv-artifact-frame { flex: 1; width: 100%; border: 0; background: #fff; }
 /* Dark preview: the frame behind html/svg srcdoc follows the app surface (the
    srcdoc itself is themed by get_canvas's dark param); PDFs keep the white
-   frame — pages are white paper either way. */
+   frame - pages are white paper either way. */
 .jv-dark .jv-artifact-frame:not([title="PDF preview"]) { background: var(--surface-1); }
 .jv-artifact-img { max-width: 100%; height: auto; margin: auto; padding: 16px; }
 .jv-artifact-text { margin: 0; padding: 16px; font-size: 12.5px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; color: var(--text); font-family: ui-monospace, "SF Mono", Menlo, monospace; }

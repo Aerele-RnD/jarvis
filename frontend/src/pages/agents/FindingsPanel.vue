@@ -41,7 +41,7 @@
 		>
 			<FeatherIcon name="alert-triangle" class="mt-0.5 size-4 shrink-0" />
 			<span>
-				Partial scan — {{ coverageNote }}. Treat gaps as unreviewed, not clean.
+				Partial scan - {{ coverageNote }}. Treat gaps as unreviewed, not clean.
 			</span>
 		</div>
 
@@ -87,7 +87,7 @@
 			</div>
 			<div class="mt-2 divide-y overflow-hidden rounded-lg border">
 				<div v-for="f in group.rows" :key="f.name">
-					<!-- collapsed row (div, not button — it hosts the state select);
+					<!-- collapsed row (div, not button - it hosts the state select);
 					     role/tabindex + enter/space keep it keyboard-operable -->
 					<div
 						role="button"
@@ -110,7 +110,7 @@
 							:label="severityBadgeLabel(f.severity)"
 						/>
 						<span class="w-20 shrink-0 truncate font-mono text-sm text-ink-gray-5">
-							{{ f.rule_id || "—" }}
+							{{ f.rule_id || "-" }}
 						</span>
 						<span class="min-w-0 flex-1 truncate text-base text-ink-gray-8">
 							{{ f.title }}
@@ -139,10 +139,10 @@
 						</div>
 					</div>
 
-					<!-- expanded: the recorded detail — detail_md, the referenced
+					<!-- expanded: the recorded detail - detail_md, the referenced
 					     document, the statutory caveat, and the finding actions -->
 					<div v-if="isExpanded(f.name)" class="border-t bg-surface-gray-1 px-4 py-3">
-						<!-- O1: renderMarkdown from @/markdown (escapes HTML first — safe) -->
+						<!-- O1: renderMarkdown from @/markdown (escapes HTML first - safe) -->
 						<div
 							v-if="f.detail_md"
 							class="prose prose-sm max-w-none"
@@ -196,7 +196,7 @@
 			</div>
 		</div>
 
-		<!-- coverage honesty: the page cap must never be silent — always say how
+		<!-- coverage honesty: the page cap must never be silent - always say how
 		     much of the run is on screen, and offer the rest -->
 		<div v-if="rows.length" class="mt-4 flex items-center justify-between gap-2">
 			<Button
@@ -213,14 +213,14 @@
 </template>
 
 <script setup>
-// FindingsPanel — the right pane of AgentRunsBoard (DESIGN-V3 §7.2): the
+// FindingsPanel - the right pane of AgentRunsBoard (DESIGN-V3 §7.2): the
 // selected run's findings, grouped by severity (blocker → warning → note),
 // each row expandable to the recorded detail_md (markdown), the referenced
 // document, and the statutory caveat (section/effective_date/disclaimer).
 // A partial run always carries a coverage-honesty banner. Actions per finding:
 // Discuss in chat (take_finding_to_chat → /c/:id), Open document, and the
 // open/acknowledged/resolved state select → setFindingState (optimistic).
-// No remediation text is ever fabricated — only what the run persisted.
+// No remediation text is ever fabricated - only what the run persisted.
 import { ref, computed, watch } from "vue"
 import { useRouter } from "vue-router"
 import {
@@ -286,7 +286,7 @@ const expanded = ref(new Set())
 const runLabel = computed(() =>
 	props.run && props.run.started_at ? timeAgo(props.run.started_at) : props.run.name
 )
-// a failed run shows ONLY the red failed banner — never the amber partial one
+// a failed run shows ONLY the red failed banner - never the amber partial one
 const coverageWarning = computed(
 	() =>
 		props.run.status === "partial" ||
@@ -298,7 +298,7 @@ const coverageNote = computed(() => {
 	return note.replace(/[.\s]+$/, "") || "some records were not reviewed"
 })
 const emptyText = computed(() => {
-	if (props.run.status === "running") return "Run in progress — findings appear when it completes."
+	if (props.run.status === "running") return "Run in progress - findings appear when it completes."
 	if (props.run.status === "failed") return "This run recorded no findings."
 	return `No ${stateFilter.value ? stateFilter.value + " " : ""}findings for this run.`
 })
@@ -331,7 +331,7 @@ function severityBadgeLabel(sev) {
 	return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
-// monotonic request id — rapid rail clicks must not land stale findings
+// monotonic request id - rapid rail clicks must not land stale findings
 let reqId = 0
 async function load({ append = false } = {}) {
 	if (!props.run || !props.run.name) return
@@ -380,7 +380,7 @@ function loadMore() {
 
 // reload on run switch AND on status flip (a re-pinned running run that just
 // completed now has a findings snapshot to show). Watch the name/status
-// STRINGS, not the run object — the rail re-pins a fresh row object on every
+// STRINGS, not the run object - the rail re-pins a fresh row object on every
 // refresh and object identity alone must not re-fetch findings.
 watch(
 	[() => props.run && props.run.name, () => props.run && props.run.status],
@@ -423,7 +423,7 @@ async function moveFinding(f, state) {
 		await api.setFindingState(f.name, state)
 		toast.success(`Finding ${state}`)
 		// reconcile with the active state-filter chip: a finding moved OUT of
-		// the filtered state leaves the visible list (and its counts) at once —
+		// the filtered state leaves the visible list (and its counts) at once -
 		// acknowledging while viewing "Open" must not leave a stale row
 		if (stateFilter.value && state !== stateFilter.value) {
 			rows.value = rows.value.filter((r) => r.name !== f.name)
@@ -473,7 +473,7 @@ function refUrl(row) {
 	const dt = String(row.ref_doctype || "").toLowerCase().replace(/ /g, "-")
 	return `/app/${dt}/${encodeURIComponent(row.ref_name)}`
 }
-// "Statutory basis: {section} (effective {date}). {disclaimer}" — only the
+// "Statutory basis: {section} (effective {date}). {disclaimer}" - only the
 // pieces the run recorded
 function caveatText(f) {
 	const bits = []

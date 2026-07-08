@@ -40,7 +40,7 @@
 						:disabled="!isNew || saving"
 						:description="
 							isNew
-								? `Lowercase letters, digits and hyphens — trigger it in chat with /${form.skill_name || 'name'}.`
+								? `Lowercase letters, digits and hyphens - trigger it in chat with /${form.skill_name || 'name'}.`
 								: 'Skill names can\'t be changed after creation.'
 						"
 						@update:modelValue="(v) => (form.skill_name = v)"
@@ -119,7 +119,7 @@
 				</template>
 			</DocMetaPanel>
 
-			<!-- shared-with-me: read-only info card (no docmeta — the docmeta read
+			<!-- shared-with-me: read-only info card (no docmeta - the docmeta read
 			     gate covers owner/SM/DocShare only; child-table shares would 403) -->
 			<div v-else-if="skill && !canEdit" class="m-5 space-y-3 rounded-md border p-4">
 				<div class="flex items-center gap-2">
@@ -127,7 +127,7 @@
 					<div class="text-base font-medium text-ink-gray-8">{{ sharedBy || "Another user" }}</div>
 				</div>
 				<div class="text-sm text-ink-gray-5">
-					Shared with you · read-only. Use /{{ form.skill_name }} in chat — you can’t edit or
+					Shared with you · read-only. Use /{{ form.skill_name }} in chat - you can’t edit or
 					re-share it.
 				</div>
 				<div v-if="skill.modified" class="text-sm text-ink-gray-5">
@@ -265,7 +265,7 @@ async function init() {
 		seed(full)
 		if (full.can_edit) {
 			docmeta.value = useDocmeta(DOCTYPE, props.id)
-			// created outside setup (async load / post-create replace) — fetch
+			// created outside setup (async load / post-create replace) - fetch
 			// explicitly rather than relying on the composable's auto-load
 			if (docmeta.value && typeof docmeta.value.reload === "function") docmeta.value.reload()
 			loadShares()

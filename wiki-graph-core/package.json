@@ -1,0 +1,16 @@
+{
+  "name": "wiki-graph-core",
+  "version": "0.1.0",
+  "description": "Shared Vue3 knowledge-graph component set + pure analysis (graphology). Consumed by the tenant (jarvis) and admin (jarvis_admin) Vite builds — one canonical source, no drift. Self-contained (own runtime deps); consumers dedupe vue.",
+  "type": "module",
+  "main": "index.js",
+  "module": "index.js",
+  "sideEffects": ["*.vue"],
+  "dependencies": {
+    "3d-force-graph": "^1.80.0",
+    "graphology": "^0.25.4",
+    "graphology-communities-louvain": "^2.0.2",
+    "graphology-metrics": "^2.4.0",
+    "vue": "^3.4.0"
+  }
+}

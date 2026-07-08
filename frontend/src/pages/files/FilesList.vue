@@ -60,10 +60,10 @@
 						<FeatherIcon name="upload-cloud" class="size-6 text-ink-gray-5" />
 						<div class="text-base font-medium text-ink-gray-8">
 							{{ dragging ? "Drop files to add to File Box" : "Drop files here, or click to browse"
-							}}<span v-if="uploadingCount"> — {{ uploadingCount }} uploading…</span>
+							}}<span v-if="uploadingCount"> - {{ uploadingCount }} uploading…</span>
 						</div>
 						<div class="max-w-2xl text-p-sm text-ink-gray-6">
-							Drop your files — single or in bulk — and leave them. Jarvis identifies each file's
+							Drop your files - single or in bulk - and leave them. Jarvis identifies each file's
 							nature and processes it in the background. If it needs your input, it asks in the
 							<!-- .stop keeps the link from also triggering the card's pickFiles
 							     (click) and from having Enter swallowed by the card's
@@ -75,7 +75,7 @@
 								@keydown.enter.stop
 								>Approval Board</router-link
 							>
-							— watch for the <span class="font-semibold">red dot</span> there and answer its
+							- watch for the <span class="font-semibold">red dot</span> there and answer its
 							questions.
 						</div>
 					</div>
@@ -158,7 +158,7 @@
 </template>
 
 <script setup>
-// File Box list — DESIGN-V3 §5.7 + §15.1: search quick filter (envelope
+// File Box list - DESIGN-V3 §5.7 + §15.1: search quick filter (envelope
 // `search`), persistent drop card (click → picker, page-wide drag highlights
 // it, drop anywhere uploads) with per-file error chips, status quick filter
 // with ?status= deep link, date-range filter, processing poll (5s) +
@@ -240,7 +240,7 @@ const {
 	refreshKeep,
 } = useListPage({
 	fetchFn: (p) => {
-		// the backend whitelists filter keys and throws on "search" — strip it
+		// the backend whitelists filter keys and throws on "search" - strip it
 		// out of filters and send it as the envelope's search param instead
 		const { search: q, ...rest } = p.filters || {}
 		return api.fileboxListPage({ ...p, search: q || p.search || "", filters: rest })
@@ -292,7 +292,7 @@ function onPick(ev) {
 
 // drop-card state: in-flight count ("{n} uploading…") + per-file error chips
 const uploadingCount = ref(0)
-const dropErrors = ref([]) // [{key, name, error}] — last 8, dismissible
+const dropErrors = ref([]) // [{key, name, error}] - last 8, dismissible
 let dropErrKey = 0
 function pushDropError(name, error) {
 	dropErrors.value = [...dropErrors.value, { key: ++dropErrKey, name, error }].slice(-8)
@@ -332,7 +332,7 @@ async function uploadBatch(fileList) {
 			error: () => "Upload failed",
 		})
 	} catch (e) {
-		// every file failed — the per-file chips below carry the reasons
+		// every file failed - the per-file chips below carry the reasons
 	}
 	for (const f of failures) pushDropError(f.name, f.error)
 	if (okCount) resetLoad()

@@ -237,6 +237,13 @@ scheduler_events = {
 		# Daily voice-note sweep: mine New voice notes into learned-pattern
 		# candidates + wiki updates (self-gating; see jarvis/learning/voice_facts.py).
 		"jarvis.learning.voice_facts.process_daily",
+		# Daily push of the User/Role/Org wiki-utilization graph to admin (the
+		# DB-only scope/role tiers; admin overlays telemetry activity). Not on
+		# every wiki save — too chatty for an analytics view.
+		"jarvis.chat.wiki_graph.sync",
+		# Daily append of org-wide graph totals to Jarvis Wiki Graph History (one
+		# row/day) — the measured Knowledge-Evolution series for the Evolution tab.
+		"jarvis.chat.wiki_graph.record_history_snapshot",
 	],
 	"weekly": [
 		# Wiki v2 health check: deterministic lint over Active pages

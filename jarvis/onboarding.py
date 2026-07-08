@@ -250,6 +250,15 @@ def save_llm_pool(models, preset: str | None = None, routing_mode: str = "failov
 
 	s.preset = preset
 	s.routing_mode = routing_mode
+	# A models[]-based config never uses the flat direct-OAuth fields (a pooled
+	# chat subscription's creds live in models[].subscription_accounts, served by
+	# cliproxy — not auth-profiles.json). Clear any stale direct chat-subscription
+	# display state left over from a prior DIRECT connection so
+	# get_direct_subscription_status / the account UI can't later misread it as a
+	# live direct connection after the tenant migrated to a pool. auth_mode is
+	# re-mirrored from models[0] by on_update.
+	s.llm_oauth_account_email = ""
+	s.llm_oauth_connected_at = None
 	# save() -> on_update -> _on_update_unified_llm: validate_models (throws),
 	# compute_proxy_active, mirror models[0], enqueue pool/creds sync.
 	s.save(ignore_permissions=True)

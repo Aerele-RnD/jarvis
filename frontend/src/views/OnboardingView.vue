@@ -10,7 +10,7 @@
 			<div class="jv-ob-orb jv-ob-orb-br"></div>
 		</div>
 
-		<!-- Branded header — a centered wizard reads better than a full-height
+		<!-- Branded header - a centered wizard reads better than a full-height
 			 empty sidebar; the logo mark keeps it unmistakably Jarvis. -->
 		<header class="jv-ob-header">
 			<div class="jv-ob-logo"><svg width="18" height="18" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg></div>
@@ -21,7 +21,7 @@
 		<main class="jv-ob-main">
 			<div class="jv-ob-center">
 			<div class="jv-ob-wrap">
-				<!-- ===== step indicator — managed mode only, mirrors desk renderSteps
+				<!-- ===== step indicator - managed mode only, mirrors desk renderSteps
 					 (jarvis_onboarding.js ~213: STEP_NAMES = Account/Plan/Pay/Connect AI).
 					 Hidden on the mode-choice screen and for self-host (single step). ===== -->
 				<div v-if="state.mode === 'managed' && state.step !== 'mode'" class="jv-ob-steps">
@@ -34,7 +34,7 @@
 					</template>
 				</div>
 
-				<!-- ===== step area — placeholder panels; Tasks 3-5 replace these ===== -->
+				<!-- ===== step area - placeholder panels; Tasks 3-5 replace these ===== -->
 				<div class="jv-ob-body">
 					<div v-if="state.step === 'mode'">
 						<h1 class="jv-ob-h1">How do you want to run Jarvis?</h1>
@@ -66,7 +66,7 @@
 						</div>
 					</div>
 
-					<!-- ===== Account — ported from desk renderAccount (jarvis_onboarding.js
+					<!-- ===== Account - ported from desk renderAccount (jarvis_onboarding.js
 						 ~378). No Company Link-control (desk falls back to a plain input
 						 anyway when make_control throws); validation matches desk verbatim. ===== -->
 					<div v-else-if="state.step === 'account'">
@@ -89,7 +89,7 @@
 						</div>
 					</div>
 
-					<!-- ===== Plan — ported from desk renderPlan (jarvis_onboarding.js ~481). ===== -->
+					<!-- ===== Plan - ported from desk renderPlan (jarvis_onboarding.js ~481). ===== -->
 					<div v-else-if="state.step === 'plan'">
 						<h1 class="jv-ob-h1">Choose your plan</h1>
 						<p class="jv-ob-sub">No auto-renewal, extend anytime.</p>
@@ -116,7 +116,7 @@
 						</template>
 					</div>
 
-					<!-- ===== Pay — ported from desk renderPay + renderVerifyEmail + startPay/
+					<!-- ===== Pay - ported from desk renderPay + renderVerifyEmail + startPay/
 						 openCheckout/devOnboard (jarvis_onboarding.js ~515, ~1575-1682). The
 						 Razorpay options/handler fields below are lifted verbatim; see
 						 task-4-report.md for the field-by-field comparison. ===== -->
@@ -168,7 +168,7 @@
 						</template>
 					</div>
 
-					<!-- ===== Connect AI (managed) — embeds the shared LlmPoolEditor component
+					<!-- ===== Connect AI (managed) - embeds the shared LlmPoolEditor component
 						 (same one AccountView uses), restricted to :modes="['quick']" so
 						 onboarding shows only a single direct model. The Preset/Custom
 						 proxy-pool tabs + Direct/Proxy badge are intentionally hidden here to
@@ -182,7 +182,7 @@
 							 state). Show a clean full-step "setting up" screen through that
 							 transition so the reload reads as intentional, not a flicker.
 							 v-show (not v-if) so the editor stays MOUNTED while its own save()
-							 is still awaiting — a v-if here would tear it down mid-save and, on
+							 is still awaiting - a v-if here would tear it down mid-save and, on
 							 a not-ready poll, remount + refetch with a visible flash. -->
 						<div v-show="state.finishing">
 							<h1 class="jv-ob-h1">Setting up Jarvis</h1>
@@ -206,10 +206,10 @@
 						</div>
 					</div>
 
-					<!-- ===== Self-host — ported from desk renderSelfHost + renderShResults
+					<!-- ===== Self-host - ported from desk renderSelfHost + renderShResults
 						 (jarvis_onboarding.js ~296-376). Field names/args match
 						 test_connection / save_self_hosted verbatim (base_url, token, deep,
-						 stream) — see api.js's testSelfHostConnection/saveSelfHosted. ===== -->
+						 stream) - see api.js's testSelfHostConnection/saveSelfHosted. ===== -->
 					<div v-else-if="state.step === 'selfhost'">
 						<h1 class="jv-ob-h1">Connect your openclaw</h1>
 						<p class="jv-ob-sub">Point Jarvis at <b>your own</b> openclaw server. Jarvis connects over HTTP
@@ -275,13 +275,13 @@ import { errMessage as errMsg } from "@/lib/errors"
 const { effectiveDark: dark, paletteVars } = useTheme()
 
 
-// Mirrors jarvis_onboarding.js's STEP_NAMES (~line 212) — the 4 named steps
+// Mirrors jarvis_onboarding.js's STEP_NAMES (~line 212) - the 4 named steps
 // shown in managed mode. "mode" and "selfhost" have no header entry.
-const STEP_NAMES = ["Account", "Plan", "Pay", "Brain"]
+const STEP_NAMES = ["Account", "Plan", "Pay", "Connect"]
 
 // ---- step machine -----------------------------------------------------------
 // `state.step` is one of STEPS_MANAGED/STEPS_SELFHOST depending on `state.mode`.
-// Kept intentionally small here — Tasks 3-5 add fields as their panels need
+// Kept intentionally small here - Tasks 3-5 add fields as their panels need
 // them (email/company/plan choice/etc.), same shape as the desk `state` object.
 const state = reactive({
 	mode: null, step: "mode",
@@ -290,7 +290,7 @@ const state = reactive({
 	// plan (renderPlan)
 	plans: [], planName: null, plansLoading: false, plansErr: "",
 	// pay (renderPay / renderVerifyEmail / startPay / openCheckout / devOnboard)
-	payPhase: "review", // "review" | "verify" — mirrors desk's step-3 vs "check your email" sub-screen
+	payPhase: "review", // "review" | "verify" - mirrors desk's step-3 vs "check your email" sub-screen
 	payErr: "", payBusy: false,
 	devActive: null, // UX-only mirror of desk's boot-time `dev`; null until probed on entering "pay"
 	successData: null,
@@ -313,7 +313,7 @@ const selectedPlan = computed(() => state.plans.find((p) => p.name === state.pla
 
 // 1-based position within the 4 named managed steps (Account=1 … Connect AI=4),
 // matching desk's `state.step` numbering used by renderSteps/STEP_NAMES. Index
-// 0 ("mode") intentionally renders as 0 — the header is hidden for that step.
+// 0 ("mode") intentionally renders as 0 - the header is hidden for that step.
 const managedStepNum = computed(() => stepIndex(steps.value, state.step))
 
 function goNext() {
@@ -324,7 +324,7 @@ function goBack() {
 }
 // Entry point from the mode-choice screen: record the choice, then advance
 // to that track's first real step ("account" for managed, "selfhost" for
-// self-host) — mirrors desk's `state.mode = "managed"; go(1)` on mode pick.
+// self-host) - mirrors desk's `state.mode = "managed"; go(1)` on mode pick.
 function setMode(m) {
 	state.mode = m
 	goNext()
@@ -334,7 +334,7 @@ function setMode(m) {
 // Desk's boot (jarvis_onboarding.js bootRender, ~1699) only checks
 // is_onboarded/is_ready_for_chat to decide wizard-vs-completion-card; the
 // router's first-run guard (Task 1) already does that before this view ever
-// mounts. What desk does NOT do at boot is poll check_signup_payment_state —
+// mounts. What desk does NOT do at boot is poll check_signup_payment_state -
 // that's only called interactively from the "verify your email" screen
 // (jarvis_onboarding.js ~1615). So there's no literal desk boot-time
 // reconcile to mirror for "signup started but not finished, then the tab
@@ -345,21 +345,21 @@ function setMode(m) {
 // case) poll check_signup_payment_state to see whether there's a live
 // order/verification to resume. Fails open on any error (no admin URL
 // configured yet, not a System Manager, admin API unreachable are all
-// expected on a genuine first run) — falls back to the default "mode" step.
+// expected on a genuine first run) - falls back to the default "mode" step.
 //
 // RESOLVED (was a CONCERN in task-2-report.md, "revisit once Task 4 builds
 // the real pay panel"): check_signup_payment_state is, on desk, ONLY ever
 // called from the "check your email" screen (renderVerifyEmail's "I've
-// verified" button, jarvis_onboarding.js ~1612) — never from a fresh
+// verified" button, jarvis_onboarding.js ~1612) - never from a fresh
 // pay-review screen. So EITHER truthy result here (a live razorpay_order_id,
 // or still-pending_verification) maps to that same desk sub-screen, not to
-// the plan-review screen (which would re-call start_signup — untested for
+// the plan-review screen (which would re-call start_signup - untested for
 // idempotency and not a real desk code path) and not to "account" (a plain
 // mis-mapping in the original scaffold). onVerifyCheck() below re-polls
 // check_signup_payment_state itself and branches on the same two fields, so
 // landing here in "verify" phase re-derives the correct next action either
 // way. Known gap: email/company/plan text are blank on a resumed session
-// (never persisted) until the customer re-verifies — cosmetic only, doesn't
+// (never persisted) until the customer re-verifies - cosmetic only, doesn't
 // block the resume.
 async function reconcileMidFlightSignup() {
 	try {
@@ -375,7 +375,7 @@ async function reconcileMidFlightSignup() {
 			state.step = "connect"
 			return
 		}
-		// reason === "signup" (or call failed) — no completed signup yet, but
+		// reason === "signup" (or call failed) - no completed signup yet, but
 		// one may still be mid-flight (started, awaiting verification/payment).
 		const pay = await checkSignupPaymentState()
 		if (pay && (pay.razorpay_order_id || pay.pending_verification)) {
@@ -383,9 +383,9 @@ async function reconcileMidFlightSignup() {
 			state.step = "pay"
 			state.payPhase = "verify"
 		}
-		// else: nothing in flight — leave the default "mode" step.
+		// else: nothing in flight - leave the default "mode" step.
 	} catch (e) {
-		// Fail-open — never block the wizard from rendering.
+		// Fail-open - never block the wizard from rendering.
 	}
 }
 
@@ -458,7 +458,7 @@ function ensureRazorpayLoaded() {
 }
 
 // Probe `jarvis.dev.is_dev_mode_active` once on entering the Pay step, purely
-// for the heading/button copy — the SPA's boot payload (jarvis/www/jarvis.py)
+// for the heading/button copy - the SPA's boot payload (jarvis/www/jarvis.py)
 // doesn't carry an equivalent of desk's boot-time `frappe.boot.jarvis_sandbox_mode`,
 // so this RPC stands in for that cosmetic read. Preload the checkout script
 // unconditionally (harmless if unused) rather than gating it on this same
@@ -475,7 +475,7 @@ async function enterPayStep() {
 
 // Click handler for the single Pay/Dev-signup button. Server-authoritative
 // branch: re-query is_dev_mode_active at CLICK time, not the cached
-// state.devActive — mirrors desk's explicit anti-staleness comment
+// state.devActive - mirrors desk's explicit anti-staleness comment
 // (jarvis_onboarding.js ~532-554): a stale "false" must never let this
 // silently skip payment when sandbox mode was actually flipped on, and a
 // stale cached "true" must never skip a real charge either.
@@ -487,7 +487,7 @@ async function onPayClick() {
 		const r = await call("jarvis.dev.is_dev_mode_active")
 		isDev = !!(r && r.data && r.data.active)
 	} catch (e) {
-		// Server unreachable — fall back to the best-effort cosmetic value,
+		// Server unreachable - fall back to the best-effort cosmetic value,
 		// same as desk's catch branch.
 	}
 	if (isDev) await runDevOnboard()
@@ -508,7 +508,7 @@ async function runDevOnboard() {
 function _sleep(ms) { return new Promise((r) => setTimeout(r, ms)) }
 
 // Provisioning gate: after pay, the openclaw container is still spinning up.
-// Don't enter Connect-AI until it's running — otherwise save_llm_pool there has
+// Don't enter Connect-AI until it's running - otherwise save_llm_pool there has
 // no container to configure. If pay already returned a running tenant, advance
 // immediately; otherwise poll sync_connection until the container is ready.
 async function proceedAfterPay() {
@@ -524,7 +524,7 @@ async function proceedAfterPay() {
 				goNext()
 				return
 			}
-		} catch (e) { /* transient admin/agent hiccup — keep polling */ }
+		} catch (e) { /* transient admin/agent hiccup - keep polling */ }
 		await _sleep(2000)
 	}
 	state.provisioning = false
@@ -571,7 +571,7 @@ async function onVerifyCheck() {
 	}
 }
 
-// Razorpay Checkout — options object + success handler ported verbatim from
+// Razorpay Checkout - options object + success handler ported verbatim from
 // desk openCheckout (jarvis_onboarding.js ~1646-1676). See task-4-report.md
 // for the field-by-field comparison against the desk source.
 async function openCheckout(d) {
@@ -603,7 +603,7 @@ async function openCheckout(d) {
 				state.payErr = errMsg(e)
 			})
 		},
-		// Razorpay dismiss (customer closed Checkout without paying) — same
+		// Razorpay dismiss (customer closed Checkout without paying) - same
 		// message as desk's modal.ondismiss, shown inline instead of via
 		// frappe.show_alert (no toast primitive on this surface yet).
 		modal: {
@@ -619,7 +619,7 @@ async function openCheckout(d) {
 // ---- post-save readiness recheck (Connect-AI + self-host) ------------------
 // CRITICAL: the router's first-run guard (router/index.js) caches its
 // is_ready_for_chat probe in a module-level `readyPromise` for the lifetime
-// of the page — it never invalidates mid-session. So a plain
+// of the page - it never invalidates mid-session. So a plain
 // `router.push({ name: "Chat" })` right after completing onboarding would
 // read that STALE "not ready" cache and bounce straight back to
 // /onboarding. Both completion paths (onConnected below and
@@ -629,17 +629,17 @@ async function openCheckout(d) {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 // Poll is_ready_for_chat a few times (short backoff) rather than trusting a
-// single check — the save itself (pool save or self-host connect) can
+// single check - the save itself (pool save or self-host connect) can
 // return before whatever it kicked off (e.g. proxy provisioning) is fully
 // reflected. Fails closed (returns false) on a persistent error; callers
-// treat "not ready yet" as advisory, not fatal — see finishNote below.
+// treat "not ready yet" as advisory, not fatal - see finishNote below.
 async function waitUntilReady(attempts = 5, delayMs = 800) {
 	for (let i = 0; i < attempts; i++) {
 		try {
 			const r = await isReadyForChat()
 			if (r && r.ready) return true
 		} catch (e) {
-			// keep retrying — transient network hiccups shouldn't strand the user
+			// keep retrying - transient network hiccups shouldn't strand the user
 		}
 		if (i < attempts - 1) await sleep(delayMs)
 	}
@@ -660,16 +660,20 @@ async function afterSaveRecheckReady() {
 	state.finishNote = ""
 	state.finishing = true
 	const ready = await waitUntilReady()
-	state.finishing = false
 	if (ready) {
+		// Keep the "Setting up Jarvis" spinner up THROUGH the full-page reload.
+		// Flipping finishing off first re-shows the "Give Jarvis a brain" editor
+		// for a frame before the browser navigates - the flicker/rerender users
+		// saw on the final click. Leave it on; location.assign tears the page down.
 		window.location.assign("/jarvis/")
 		return
 	}
+	state.finishing = false
 	state.finishNote = "Still finishing setup. This can take a few seconds. You can continue to Jarvis now, or wait and try again."
 }
 
 // ---- Connect AI (renders <LlmPoolEditor>, jarvis_onboarding.js ~559-1080
-// renderLlm) — the component itself owns Quick/Preset/Custom + save_llm_pool;
+// renderLlm) - the component itself owns Quick/Preset/Custom + save_llm_pool;
 // this is only the post-save readiness handoff. ---------------------------
 function onConnected(sync) {
 	afterSaveRecheckReady()
@@ -681,7 +685,7 @@ function onConnected(sync) {
 const poolRef = ref(null)
 const savingConnect = ref(false)
 // True once the embedded editor reports a savable config (account connected, or
-// API key filled) — drives the "Onboard Jarvis" attention pulse.
+// API key filled) - drives the "Onboard Jarvis" attention pulse.
 const connectReady = ref(false)
 async function saveConnect() {
 	if (!poolRef.value) return
@@ -732,7 +736,7 @@ async function onSelfHostSave() {
 		const m = r || {}
 		state.shSaveBusy = false
 		if (m.ok) {
-			// Advisory only (e.g. no Self-Host Tool User set yet) — the connection
+			// Advisory only (e.g. no Self-Host Tool User set yet) - the connection
 			// itself is already saved, so this doesn't block the readiness recheck.
 			if (m.warning) state.shWarning = m.warning
 			await afterSaveRecheckReady()
@@ -746,7 +750,7 @@ async function onSelfHostSave() {
 	}
 }
 
-// Enter-step triggers: load the plan list on reaching "plan" (defensive —
+// Enter-step triggers: load the plan list on reaching "plan" (defensive -
 // normally already loaded by onAccountSubmit, but also covers a reconcile
 // that lands directly on "plan"), and probe dev-mode + preload Razorpay on
 // reaching "pay".
@@ -787,7 +791,7 @@ onMounted(() => {
 	flex-direction: column;
 	position: relative;
 }
-/* Framing orbs — fixed behind everything, decorative only. Deep navy/indigo in
+/* Framing orbs - fixed behind everything, decorative only. Deep navy/indigo in
    light (consistent with the black/white primary), brighter blue on dark. */
 .jv-ob-bg { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
 .jv-ob-orb { position: absolute; width: min(760px, 66vw); aspect-ratio: 1; border-radius: 50%; filter: blur(14px); }
@@ -901,7 +905,7 @@ onMounted(() => {
 }
 .jv-ob-btn:hover { background: var(--surface-2); }
 .jv-ob-btn-primary { border-color: var(--blue-bd); background: var(--blue-bg); color: var(--blue); }
-/* Attention pulse on the final CTA once the config is ready — a soft expanding
+/* Attention pulse on the final CTA once the config is ready - a soft expanding
    ring that invites the click. Pauses on hover; off for reduced-motion. */
 @keyframes jvObCtaPulse {
 	0% { box-shadow: 0 0 0 0 rgba(37, 99, 235, .38); }
@@ -915,7 +919,7 @@ onMounted(() => {
 @keyframes jvObSpin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .jv-ob-spinner { animation: none; } }
 
-/* ---- mode-choice cards — ported from desk .jo-mode* (jarvis_onboarding.js
+/* ---- mode-choice cards - ported from desk .jo-mode* (jarvis_onboarding.js
    ~1889-1898), theme tokens standing in for the desk's --jarvis-primary /
    --card-bg / --border-color. ---- */
 .jv-ob-modes { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 6px; }
@@ -951,7 +955,7 @@ onMounted(() => {
 .jv-ob-warn-icon { color: var(--red); margin-right: 4px; flex: none; }
 .jv-ob-mode-btn { width: 100%; margin-top: auto; }
 
-/* ---- Account — ported from desk .jo-label/.jo-input (jarvis_onboarding.js
+/* ---- Account - ported from desk .jo-label/.jo-input (jarvis_onboarding.js
    ~378 renderAccount). ---- */
 .jv-ob-label { display: block; font-size: 12.5px; font-weight: 600; color: var(--text-2); margin: 14px 0 6px; }
 .jv-ob-label:first-of-type { margin-top: 0; }
@@ -969,7 +973,7 @@ onMounted(() => {
 .jv-ob-input:focus { outline: none; border-color: var(--blue-bd); }
 .jv-ob-err { font-size: 12.5px; color: var(--red); min-height: 1em; margin: 10px 0; }
 
-/* ---- Plan — ported from desk .jo-plans/.jo-plan (jarvis_onboarding.js ~481
+/* ---- Plan - ported from desk .jo-plans/.jo-plan (jarvis_onboarding.js ~481
    renderPlan). ---- */
 .jv-ob-plans { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 4px 0 20px; }
 .jv-ob-plan {
@@ -997,7 +1001,7 @@ onMounted(() => {
 .jv-ob-plan-feats li { display: flex; gap: 7px; font-size: 12px; color: var(--text-2); line-height: 1.5; margin-bottom: 5px; }
 .jv-ob-muted { color: var(--text-3); }
 
-/* ---- Pay — ported from desk .jo-summary/.jo-row/.jo-devnote
+/* ---- Pay - ported from desk .jo-summary/.jo-row/.jo-devnote
    (jarvis_onboarding.js ~515 renderPay). ---- */
 .jv-ob-summary { border: 1px solid var(--border); border-radius: 10px; padding: 4px 14px; margin: 4px 0 14px; }
 .jv-ob-row { display: flex; justify-content: space-between; align-items: baseline; padding: 9px 0; font-size: 13px; color: var(--text-3); border-bottom: 1px solid var(--border); }
@@ -1007,7 +1011,7 @@ onMounted(() => {
 .jv-ob-row-total b { font-size: 15px; }
 .jv-ob-devnote { font-size: 12.5px; color: var(--amber); background: var(--amber-bg); border: 1px solid var(--amber-bd); border-radius: 8px; padding: 8px 12px; margin-bottom: 14px; }
 
-/* ---- Self-host — ported from desk .jo-check/.jo-sh-* (jarvis_onboarding.js
+/* ---- Self-host - ported from desk .jo-check/.jo-sh-* (jarvis_onboarding.js
    ~296-376 renderSelfHost/renderShResults). ---- */
 .jv-ob-check { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text); margin-top: 8px; cursor: pointer; }
 .jv-ob-sh-results { margin: 14px 0 4px; font-size: 12.5px; line-height: 1.7; }

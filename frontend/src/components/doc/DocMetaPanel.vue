@@ -19,7 +19,7 @@
 		</div>
 
 		<div class="divide-y">
-			<!-- 2. assignees — not offered on skills (§14 DA-09) -->
+			<!-- 2. assignees - not offered on skills (§14 DA-09) -->
 			<div v-if="showAssignees" class="px-5 py-4">
 				<div class="flex items-center justify-between">
 					<div class="text-sm text-ink-gray-5">Assignees</div>
@@ -119,7 +119,7 @@
 				<div v-if="uploadHint" class="mt-2 text-xs text-ink-gray-5">{{ uploadHint }}</div>
 			</div>
 
-			<!-- 4. shared with (§14 F1) — DocShare block for Macro/Approval/Agent
+			<!-- 4. shared with (§14 F1) - DocShare block for Macro/Approval/Agent
 			     Installation; skills replace it with their child-table block via #extra -->
 			<div v-if="showShares" class="px-5 py-4">
 				<div class="flex items-center justify-between">
@@ -186,7 +186,7 @@
 </template>
 
 <script setup>
-// DocMetaPanel — the right-panel doctype blocks (DESIGN-V3 §6.1 + §14 F1/DA-09):
+// DocMetaPanel - the right-panel doctype blocks (DESIGN-V3 §6.1 + §14 F1/DA-09):
 // docname/like row · assignees (hidden on skills) · attachments · shared-with
 // (Macro/Approval/Agent Installation) · #extra · byline. All mutations go
 // through the shared useDocmeta object passed in by the page.
@@ -276,7 +276,7 @@ function confirmDeleteAttachment(f) {
 }
 
 // O3: stock upload_file can reject (mimetype allowlist for website users,
-// if_owner write on approvals) — surface the server message as a toast and
+// if_owner write on approvals) - surface the server message as a toast and
 // show the allowed-types caveat as an inline hint.
 const uploadHint = ref("")
 function onUploadError(e) {

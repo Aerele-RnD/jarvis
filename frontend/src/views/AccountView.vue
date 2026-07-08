@@ -1,12 +1,19 @@
 <template>
-	<div class="jv-app" :class="{ 'jv-dark': dark }" :style="paletteVars"
-		 style="--rad:8px;font-family:'Inter',system-ui,sans-serif;display:flex;min-height:100vh;background:var(--surface);color:var(--text);">
+	<div class="jv-app flex h-full flex-col overflow-hidden" :class="{ 'jv-dark': dark }" :style="paletteVars"
+		 style="--rad:8px;font-family:'Inter',system-ui,sans-serif;background:var(--surface);color:var(--text);">
 
-		<AppSidebar />
+		<!-- Shell-integrated header: teleports into the app shell's #app-header
+		     strip (same "Open ERPNext Desk" button as every other page). There is
+		     no per-view sidebar - the app shell's Sidebar owns navigation, so the
+		     Account page sits in the same chrome as Agents / Skills / Macros. -->
+		<LayoutHeader>
+			<template #left-header>
+				<Breadcrumbs :items="[{ label: 'Account', route: { name: 'Account' } }]" />
+			</template>
+		</LayoutHeader>
 
 		<main class="jv-acct-main">
 			<div class="jv-acct-wrap">
-				<h1 class="jv-acct-h1">Account</h1>
 
 				<!-- ===== Plan & billing ===== -->
 				<section class="jv-acct-card">
@@ -32,7 +39,7 @@
 							</ul>
 						</template>
 
-						<!-- Upgrade / Renew — deep-links to the existing Desk billing flow
+						<!-- Upgrade / Renew - deep-links to the existing Desk billing flow
 							 (Razorpay checkout). No new payment logic in this phase; the
 							 wizard-driven upgrade UI is a Phase-2 item. -->
 						<div v-if="upgradePlans.length" class="jv-acct-upgrades">
@@ -49,20 +56,46 @@
 					</template>
 				</section>
 
-				<!-- ===== AI models ===== -->
-				<section class="jv-acct-card">
+				<!-- ===== AI models (primary config) ===== -->
+				<section class="jv-acct-card jv-acct-ai">
 					<div class="jv-acct-card-head">
 						<h2>AI models</h2>
 						<span v-if="savedNote" class="jv-acct-savednote">{{ savedNote }}</span>
 					</div>
-					<LlmPoolEditor :editable="isSystemManager" @saved="onSaved" />
+
+					<div v-if="directSubLoading" class="jv-acct-muted">Loading…</div>
+
+					<div v-else-if="directSubErr" class="jv-acct-err">
+						Couldn't load your AI connection.
+						<button class="jv-acct-linkbtn" @click="loadDirectSub">Retry</button>
+					</div>
+
+					<template v-else>
+						<!-- Connection type. A single chat subscription is served DIRECT
+							 (codex, no proxy); API keys and multi-model failover pools live
+							 in the unified editor. Switching to "Chat subscription" and
+							 re-authorizing moves a pooled single subscription back to direct. -->
+						<div v-if="isSystemManager" class="jv-acct-aitabs" role="tablist">
+							<button type="button" role="tab" :aria-selected="aiTab === 'subscription'"
+								:class="{ on: aiTab === 'subscription' }" @click="aiTab = 'subscription'">Chat subscription</button>
+							<button type="button" role="tab" :aria-selected="aiTab === 'pool'"
+								:class="{ on: aiTab === 'pool' }" @click="aiTab = 'pool'">API keys &amp; failover</button>
+						</div>
+
+						<DirectSubscriptionCard v-if="aiTab === 'subscription'" :status="directSub" :editable="isSystemManager"
+							@reauthorized="onDirectChanged" @disconnected="onDirectChanged" />
+						<LlmPoolEditor v-else :editable="isSystemManager" @saved="onDirectChanged" />
+					</template>
 				</section>
 
-				<!-- ===== Connection ===== -->
-				<section class="jv-acct-card">
+				<!-- ===== Connection (proxy tenants only) =====
+					 This card reflects the container's cliproxy OAuth auth-profile.
+					 Direct tenants are already covered by DirectSubscriptionCard above,
+					 and an api_key tenant has no OAuth profile (would misleadingly read
+					 "Not connected"), so only show it for proxy tenants. -->
+				<section v-if="directSub.proxy_active && !connErr" class="jv-acct-card">
 					<h2>Connection</h2>
 					<div v-if="connLoading" class="jv-acct-muted">Checking…</div>
-					<div v-else-if="connErr" class="jv-acct-muted">Connection status is unavailable right now.</div>
 					<template v-else>
 						<div class="jv-acct-kv"><span>Status</span><b :class="conn.auth_present ? 'jv-ok' : 'jv-warn'">{{ conn.auth_present ? "Connected" : "Not connected" }}</b></div>
 						<div v-if="conn.default_model" class="jv-acct-kv"><span>Model</span><b>{{ conn.default_model }}</b></div>
@@ -70,13 +103,12 @@
 					</template>
 				</section>
 
-				<!-- ===== Usage (compact — full dashboard lives on the Monitor tab) ===== -->
+				<!-- ===== Usage (compact - full dashboard lives on the Monitor tab) ===== -->
 				<section class="jv-acct-card">
-					<h2>Usage<span v-if="usage.period" class="jv-acct-sub"> · {{ usage.period }}</span></h2>
+					<h2>Usage<span v-if="usage.applicable && usage.period" class="jv-acct-sub"> · {{ usage.period }}</span></h2>
 					<div v-if="usageLoading" class="jv-acct-muted">Loading…</div>
-					<div v-else-if="usageErr" class="jv-acct-muted">Usage data is unavailable right now.</div>
-					<div v-else-if="!usage.applicable" class="jv-acct-muted">Usage metering applies to multi-model (proxy) setups.</div>
-					<div v-else class="jv-acct-usage-line">{{ usage.tokens_in || 0 }} tokens in · {{ usage.tokens_out || 0 }} tokens out · ${{ costLabel }}</div>
+					<div v-else-if="usage.applicable && !usageErr" class="jv-acct-usage-line">{{ usage.tokens_in || 0 }} tokens in · {{ usage.tokens_out || 0 }} tokens out · ${{ costLabel }}</div>
+					<div v-else-if="!usage.applicable" class="jv-acct-muted">Metering is available on multi-model (proxy) setups.</div>
 					<router-link :to="{ name: 'Monitor' }" class="jv-acct-link">View full usage →</router-link>
 				</section>
 			</div>
@@ -87,14 +119,17 @@
 <script setup>
 import { ref, computed, onMounted } from "vue"
 import { useTheme } from "@/composables/useTheme"
-import { getAccount, getLlmConnectionStatus, getLlmUsage } from "@/api"
+import { getAccount, getLlmConnectionStatus, getLlmUsage, getDirectSubscriptionStatus } from "@/api"
 import { statusLabel, planPriceLabel, renewalLabel } from "@/account/format.js"
+import { Breadcrumbs } from "frappe-ui"
 import LlmPoolEditor from "@/components/LlmPoolEditor.vue"
-import AppSidebar from "@/components/AppSidebar.vue"
+import DirectSubscriptionCard from "@/components/DirectSubscriptionCard.vue"
+import LayoutHeader from "@/components/LayoutHeader.vue"
 import { errMessage as errMsg } from "@/lib/errors"
 
-// Theme — shared composable: honours "jarvis-theme" pref, cross-tab sync, OS live.
-// (toggleTheme itself now lives in AppSidebar; this view only needs the palette.)
+// Theme - shared composable: honours "jarvis-theme" pref, cross-tab sync, OS live.
+// (The theme toggle lives in the app shell's UserMenu; this view only needs the
+// palette vars for its .jv-acct-* card styles.)
 const { effectiveDark: dark, paletteVars } = useTheme()
 
 // Route-level guard already restricts /account to System Managers; this flag
@@ -143,9 +178,58 @@ async function loadAccount() {
 const savedNote = ref("")
 let savedTimer = null
 function onSaved(sync) {
-	savedNote.value = sync && sync.pending ? "Saved — syncing…" : "Saved"
+	savedNote.value = sync && sync.pending ? "Saved - syncing…" : "Saved"
 	clearTimeout(savedTimer)
 	savedTimer = setTimeout(() => { savedNote.value = "" }, 4000)
+}
+
+// ---- Direct chat-subscription (legacy flat-field OAuth path) ---------------
+// LlmPoolEditor reads only models[]; a customer who onboarded a single chat
+// subscription has an empty models[] with their creds in the flat llm_*/
+// llm_oauth_* fields, so the pool editor can neither show nor re-authorize
+// them. Probe get_direct_subscription_status: when is_direct_subscription is
+// true we render DirectSubscriptionCard (DIRECT re-authorize) instead of the
+// pool editor, keeping them off the proxy path. The multi-model editor stays
+// reachable behind an explicit "advanced" toggle.
+const directSub = ref({ is_direct_subscription: false })
+const directSubLoading = ref(true)
+const directSubErr = ref("")
+// "subscription" (direct codex) | "pool" (api-key / multi-model). Defaulted ONCE
+// from the stored config - a direct subscription OR a single-subscription pool
+// opens on the Chat-subscription tab (so a pooled single sub can switch to
+// direct); everything else opens on the pool editor. After that the user's tab
+// choice sticks across reloads.
+const aiTab = ref("pool")
+let aiTabInit = false
+async function loadDirectSub() {
+	if (!isSystemManager) { directSubLoading.value = false; return }
+	directSubLoading.value = true
+	directSubErr.value = ""
+	try {
+		// Race a client timeout so a hung probe can't strand the whole AI-models
+		// section on "Loading…" forever (the pool editor now renders behind it).
+		const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("timed out")), 12000))
+		directSub.value = (await Promise.race([getDirectSubscriptionStatus(), timeout])) || { is_direct_subscription: false }
+		if (!aiTabInit) {
+			aiTab.value = (directSub.value.is_direct_subscription || directSub.value.is_single_subscription_pool) ? "subscription" : "pool"
+			aiTabInit = true
+		}
+	} catch (e) {
+		// Don't silently drop a real direct-subscription tenant onto the empty
+		// pool editor (which has no re-authorize button) - surface a retryable
+		// error so they aren't left at a dead end.
+		directSub.value = { is_direct_subscription: false }
+		directSubErr.value = errMsg(e) || "Couldn't load your AI connection."
+	} finally { directSubLoading.value = false }
+}
+// After a re-authorize / disconnect (or a pool save from the advanced editor):
+// re-probe direct status, then refresh the container Connection card only if the
+// tenant is now a proxy tenant (that card is proxy-only). A direct reauth/
+// disconnect never needs it; migrating to a pool via the advanced editor does.
+async function onDirectChanged() {
+	onSaved({ pending: true })
+	await loadDirectSub()
+	if (directSub.value.proxy_active) await loadConnection()
 }
 
 // ---- Connection -------------------------------------------------------------
@@ -154,7 +238,7 @@ const connLoading = ref(true)
 const connErr = ref("")
 const expiresLabel = computed(() => {
 	const ms = conn.value.oauth_expires_at
-	return ms ? new Date(Number(ms)).toLocaleString() : "—"
+	return ms ? new Date(Number(ms)).toLocaleString() : "-"
 })
 async function loadConnection() {
 	if (!isSystemManager) { connLoading.value = false; return }
@@ -181,26 +265,70 @@ async function loadUsage() {
 
 onMounted(() => {
 	loadAccount()
-	loadConnection()
+	// The Connection card is proxy-only, so fetch its status only once we know
+	// the tenant is a proxy tenant - avoids a wasted (currently failing) admin
+	// round-trip on every direct/api_key account load.
+	loadDirectSub().then(() => { if (directSub.value.proxy_active) loadConnection() })
 	loadUsage()
 })
 </script>
 
 <style scoped>
 .jv-acct-main {
+	/* Scroll region inside the app shell's flex-col content column - flex:1 +
+	   min-height:0 (NOT height:100vh, which double-scrolls inside the shell). */
 	flex: 1;
 	min-width: 0;
+	min-height: 0;
 	overflow-y: auto;
-	height: 100vh;
 	padding: 28px 32px 60px;
 }
-.jv-acct-h1 { font-size: 20px; font-weight: 600; margin: 0 0 18px; }
 .jv-acct-wrap {
-	max-width: 1120px;
-	margin: 0;
+	/* One clean, centered column of full-width cards. */
+	max-width: 1040px;
+	margin: 0 auto;
 	display: flex;
 	flex-direction: column;
-	gap: 16px;
+	gap: 18px;
+}
+/* Plan card spans the full width; below it, a wide editor column + a right rail
+   of short summary cards so the page fills the width instead of leaving a big
+   empty gutter on the right. Collapses to one column on narrow viewports. */
+.jv-acct-grid {
+	display: grid;
+	grid-template-columns: minmax(0, 1.7fr) minmax(300px, 1fr);
+	gap: 18px;
+	align-items: start;
+}
+.jv-acct-rail {
+	display: flex;
+	flex-direction: column;
+	gap: 18px;
+	min-width: 0;
+}
+@media (max-width: 1000px) {
+	.jv-acct-grid { grid-template-columns: 1fr; }
+}
+.jv-acct-aitabs {
+	display: inline-flex;
+	border: 1px solid var(--border);
+	border-radius: 9px;
+	overflow: hidden;
+	margin-bottom: 16px;
+}
+.jv-acct-aitabs button {
+	font-size: 13px;
+	font-weight: 500;
+	padding: 8px 16px;
+	border: none;
+	background: var(--surface);
+	color: var(--text-3);
+	cursor: pointer;
+}
+.jv-acct-aitabs button.on {
+	background: var(--blue-bg);
+	color: var(--blue);
+	font-weight: 600;
 }
 .jv-acct-card {
 	border: 1px solid var(--border);
@@ -237,7 +365,7 @@ onMounted(() => {
 .jv-acct-upgrades-label { font-size: 11px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: .03em; margin-bottom: 8px; }
 .jv-acct-upgrade-grid { display: flex; flex-wrap: wrap; gap: 10px; }
 .jv-acct-upgrade-card {
-	flex: 1 1 160px;
+	flex: 0 1 240px;
 	border: 1px solid var(--border);
 	border-radius: 9px;
 	padding: 10px 12px;
@@ -250,6 +378,8 @@ onMounted(() => {
 	text-decoration: none; padding: 5px 10px; border: 1px solid var(--blue-bd); border-radius: 6px; background: var(--blue-bg);
 }
 .jv-acct-link { display: inline-block; margin-top: 14px; font-size: 12.5px; color: var(--blue); text-decoration: none; }
+.jv-acct-advanced { margin-top: 8px; }
+.jv-acct-linkbtn { display: inline-block; margin-top: 14px; font-size: 12.5px; color: var(--blue); background: none; border: none; padding: 0; cursor: pointer; }
 .jv-acct-savednote { font-size: 12px; color: var(--green); font-weight: 500; }
 .jv-acct-kv { display: flex; justify-content: space-between; font-size: 13px; padding: 4px 0; gap: 12px; }
 .jv-acct-kv .jv-ok { color: var(--green); }

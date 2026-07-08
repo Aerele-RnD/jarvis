@@ -31,7 +31,7 @@
 </template>
 
 <script setup>
-// ColumnsButton — column show/hide with per-page persistence (DESIGN-V3 §14 F2):
+// ColumnsButton - column show/hide with per-page persistence (DESIGN-V3 §14 F2):
 // checkbox list over all columns + "Reset to default"; hidden keys persist in
 // useStorage('jarvis-cols-'+storageKey). No width editing / no reorder this wave.
 // Emits update:hidden (immediately on mount and on every change) so ListPage

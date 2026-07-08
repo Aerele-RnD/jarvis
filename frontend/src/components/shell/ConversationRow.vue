@@ -78,7 +78,7 @@ function cancelRename() {
 }
 function commitRename() {
 	if (!renaming.value) return
-	renaming.value = false // clear first — Enter also fires blur
+	renaming.value = false // clear first - Enter also fires blur
 	const t = renameText.value.trim()
 	if (!t || t === (props.conv.title || "")) return
 	store.renameConversation(props.conv.name, t)
@@ -95,7 +95,7 @@ const menuOptions = computed(() => [
 	{ label: "Delete", icon: "trash-2", theme: "red", onClick: confirmDelete },
 ])
 
-// ConfirmDialog renders `message` with v-html — escape the user-authored title.
+// ConfirmDialog renders `message` with v-html - escape the user-authored title.
 function esc(s) {
 	return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]))
 }

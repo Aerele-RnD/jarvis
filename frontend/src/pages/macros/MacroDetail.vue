@@ -15,7 +15,7 @@
 				:loading="running"
 				:disabled="mergePending || running"
 				:tooltip="
-					mergePending ? 'Summarizing… — Run unlocks when the summary is ready' : 'Run this macro now'
+					mergePending ? 'Summarizing… - Run unlocks when the summary is ready' : 'Run this macro now'
 				"
 				@click="run"
 			/>
@@ -48,13 +48,13 @@
 					<Switch
 						v-model="form.enabled"
 						label="Enabled"
-						description="Off = saved as a draft — it won't run and stays out of the chat run menu."
+						description="Off = saved as a draft - it won't run and stays out of the chat run menu."
 						:disabled="saving"
 					/>
 					<Switch
 						v-model="form.stop_on_error"
 						label="Stop on error"
-						description="Stop the chain if a step fails — otherwise it keeps going after an error."
+						description="Stop the chain if a step fails - otherwise it keeps going after an error."
 						:disabled="saving"
 					/>
 				</div>
@@ -107,7 +107,7 @@
 					type="textarea"
 					:rows="9"
 					class="font-mono"
-					placeholder="No summary yet — saving 2+ steps generates one in the background."
+					placeholder="No summary yet - saving 2+ steps generates one in the background."
 					description="When present, runs use this prompt instead of the steps."
 					:modelValue="form.merged_prompt"
 					:disabled="saving || mergePending"
@@ -201,7 +201,7 @@ const form = reactive({
 // Saved-state copy for the dirty compare (set by seed). MUST be a ref: on
 // /macros/:id the dirty computed first evaluates while the load is in flight,
 // and with a plain variable the `!snapshot` short-circuit would track zero
-// reactive deps — the computed caches false and never re-runs, so Save never
+// reactive deps - the computed caches false and never re-runs, so Save never
 // enables on existing macros.
 const snapshot = ref(null)
 
@@ -395,13 +395,13 @@ async function save() {
 			await api.updateMacro(upd)
 		}
 		// Re-summarize only when the sequence actually changed (or has no summary
-		// yet) — a rename shouldn't burn an LLM turn.
+		// yet) - a rename shouldn't burn an LLM turn.
 		const needsSummary = steps.length >= 2 && (stepsTouched || props.isNew || !sentMerged)
 		if (savedName && needsSummary) {
 			try {
 				await api.summarizeMacro(savedName)
 				toast.create({
-					message: "Summarizing in the background — Run unlocks when the summary is ready.",
+					message: "Summarizing in the background - Run unlocks when the summary is ready.",
 					type: "info",
 				})
 			} catch (e) {
@@ -430,7 +430,7 @@ async function run() {
 		const res = await api.runMacro(props.id)
 		const data = (res && res.data) || res || {}
 		toast.success("Macro started")
-		// hand off to the chat — the live macro banner is ChatView's machinery
+		// hand off to the chat - the live macro banner is ChatView's machinery
 		if (data.conversation) router.push("/c/" + data.conversation)
 	} catch (e) {
 		toast.error(errMsg(e))
@@ -444,7 +444,7 @@ async function resummarize() {
 		await api.summarizeMacro(props.id)
 		mergeStatus.value = "pending"
 		toast.create({
-			message: "Summarizing in the background — Run unlocks when the summary is ready.",
+			message: "Summarizing in the background - Run unlocks when the summary is ready.",
 			type: "info",
 		})
 	} catch (e) {
@@ -475,10 +475,10 @@ function onEvent(p) {
 	if (!p || p.kind !== "macro:merged" || props.isNew || p.macro !== props.id) return
 	refreshMergeFields()
 	if (p.status === "ready") {
-		toast.success("Summary ready — this macro now runs as one prompt.")
+		toast.success("Summary ready - this macro now runs as one prompt.")
 	} else {
 		toast.create({
-			message: "Couldn't summarize — the steps run as a sequence.",
+			message: "Couldn't summarize - the steps run as a sequence.",
 			type: "info",
 		})
 	}

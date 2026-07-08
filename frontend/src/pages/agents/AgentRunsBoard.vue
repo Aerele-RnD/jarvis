@@ -56,7 +56,7 @@
 							</div>
 							<!-- partial scans carry an extra indicator so truncated coverage
 							     never blends in with clean completed runs -->
-							<Tooltip v-if="row.status === 'partial'" text="Partial scan — coverage gaps">
+							<Tooltip v-if="row.status === 'partial'" text="Partial scan - coverage gaps">
 								<FeatherIcon name="alert-triangle" class="mt-1 size-3.5 shrink-0 text-ink-amber-3" />
 							</Tooltip>
 							<Badge
@@ -116,7 +116,7 @@
 </template>
 
 <script setup>
-// AgentRunsBoard — the Runs tab of /agents/:slug as a two-pane master-detail
+// AgentRunsBoard - the Runs tab of /agents/:slug as a two-pane master-detail
 // (Approval-Board §15.2 pattern; replaces the single-pane AgentRunsTab).
 // LEFT: this owner's run history for ONE agent via useListPage →
 // list_runs_page (search / status facet, Load More + "N of M"). RIGHT:
@@ -172,11 +172,11 @@ const emptyState = computed(() => {
 	}
 	return {
 		title: "No runs yet",
-		description: "Use Run Now or a schedule — every run lands here with its findings.",
+		description: "Use Run Now or a schedule - every run lands here with its findings.",
 	}
 })
 
-// ── selection (local — runs live under the agent's hash tab, no :id route) ──
+// ── selection (local - runs live under the agent's hash tab, no :id route) ──
 const selectedRun = ref(null)
 const selectedId = computed(() => (selectedRun.value && selectedRun.value.name) || "")
 
@@ -187,7 +187,7 @@ function selectRun(row) {
 // auto-select the first row; on refresh, re-pin the selection to the fresh row
 // object so a running run's status/counters flip live in the right pane. When
 // the status/search facet excludes the selected run, fall over to the first
-// row (or clear to the placeholder) — never leave a stale run that isn't in
+// row (or clear to the placeholder) - never leave a stale run that isn't in
 // the rail.
 watch(rows, (r) => {
 	if (selectedRun.value) {

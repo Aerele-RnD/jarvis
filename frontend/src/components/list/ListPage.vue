@@ -58,7 +58,7 @@
 
 		<!-- list body -->
 		<!-- !w-full: upstream's inner wrapper is `w-max min-w-full`, which sizes
-		     the grid to max-content — long cells push trailing columns past the
+		     the grid to max-content - long cells push trailing columns past the
 		     viewport behind a subtle inner scrollbar. Pinning to the container
 		     lets the minmax(0, Nfr) tracks compress and truncation work. -->
 		<ListView
@@ -98,7 +98,7 @@
 			</template>
 		</ListView>
 
-		<!-- error state (fetch failed, no rows to show) — precedes the empty state
+		<!-- error state (fetch failed, no rows to show) - precedes the empty state
 		     so a broken fetch isn't misreported as "no records" -->
 		<div v-else-if="error" class="relative flex-1">
 			<div
@@ -163,7 +163,7 @@
 </template>
 
 <script setup>
-// ListPage — the standard list frame (DESIGN-V3 §5.2 + §14 F2/DA-08):
+// ListPage - the standard list frame (DESIGN-V3 §5.2 + §14 F2/DA-08):
 // LayoutHeader breadcrumbs → toolbar (quick filters · Refresh/Filter/Sort/Columns)
 // → banner slot → frappe-ui ListView composition → ListFooter load-more.
 import { ref, computed, onBeforeUnmount } from "vue"
@@ -205,7 +205,7 @@ const props = defineProps({
 	getRowRoute: { type: Function, default: null },
 	onRowClick: { type: Function, default: null },
 	emptyState: { type: Object, default: () => ({}) }, // {title, description, icon?}
-	storageKey: { type: String, default: "" }, // §14 F2 — column show/hide persistence
+	storageKey: { type: String, default: "" }, // §14 F2 - column show/hide persistence
 })
 
 const emit = defineEmits([
@@ -217,7 +217,7 @@ const emit = defineEmits([
 	"update:selections",
 ])
 
-// §14 F2 — ColumnsButton owns useStorage('jarvis-cols-'+storageKey) and pushes
+// §14 F2 - ColumnsButton owns useStorage('jarvis-cols-'+storageKey) and pushes
 // the hidden-key list up; ListPage filters the visible columns from it.
 const hiddenKeys = ref([])
 // Numeric widths compile to bare `Nfr` grid tracks whose implicit minimum is
