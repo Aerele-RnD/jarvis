@@ -79,7 +79,7 @@
 							<button type="button" role="tab" :aria-selected="aiTab === 'subscription'"
 								:class="{ on: aiTab === 'subscription' }" @click="aiTab = 'subscription'">Chat subscription</button>
 							<button type="button" role="tab" :aria-selected="aiTab === 'pool'"
-								:class="{ on: aiTab === 'pool' }" @click="aiTab = 'pool'">API key &amp; multi-model</button>
+								:class="{ on: aiTab === 'pool' }" @click="aiTab = 'pool'">API keys &amp; failover</button>
 						</div>
 
 						<DirectSubscriptionCard v-if="aiTab === 'subscription'" :status="directSub" :editable="isSystemManager"
