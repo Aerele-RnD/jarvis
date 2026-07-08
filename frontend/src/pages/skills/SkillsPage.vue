@@ -29,6 +29,7 @@
 			@changed="refreshBadge"
 		/>
 		<WikiTab v-else-if="activeTab === 'wiki'" class="min-h-0 flex-1" />
+		<KnowledgeGraph v-else-if="activeTab === 'graph'" class="min-h-0 flex-1" />
 		<BusinessTab v-else class="min-h-0 flex-1" />
 	</div>
 </template>
@@ -55,6 +56,8 @@ import AnalysisTab from "./AnalysisTab.vue"
 import ReviewTab from "./ReviewTab.vue"
 import BusinessTab from "./BusinessTab.vue"
 import WikiTab from "./WikiTab.vue"
+import KnowledgeGraph from "@/pages/wiki/KnowledgeGraph.vue"
+import { renderer3dEnabled } from "wiki-graph-core"
 import { getLearningStatus, pendingLearnedCount } from "@/api/learning"
 import { getBusinessStatus } from "@/api/voice"
 
@@ -65,6 +68,9 @@ const isSM = ref(false)
 const businessAllowed = ref(false)
 const learningPending = ref(0)
 const activeTab = ref("skills")
+// Knowledge Graph tab is behind the per-surface renderer flag (R10, default off);
+// flip via localStorage.wg3d = "on" until the 3D renderer soaks in prod.
+const graph3dOn = renderer3dEnabled()
 
 const tabs = computed(() => {
 	const t = [{ label: "Skills", value: "skills" }]
@@ -73,6 +79,7 @@ const tabs = computed(() => {
 		// (no extra probe; portal/guest sessions never see the strip at all)
 		t.push({ label: "Business", value: "business" })
 		t.push({ label: "Wiki", value: "wiki" })
+		if (graph3dOn) t.push({ label: "Knowledge Graph", value: "graph" })
 	}
 	if (isSM.value) {
 		t.push({ label: "Analysis", value: "analysis" })
@@ -99,12 +106,14 @@ function applyHash() {
 	} else if (h === "business" && (isSM.value || businessAllowed.value))
 		activeTab.value = "business"
 	else if (h === "wiki" && (isSM.value || businessAllowed.value)) activeTab.value = "wiki"
+	else if (h === "graph" && graph3dOn && (isSM.value || businessAllowed.value)) activeTab.value = "graph"
 	else activeTab.value = "skills"
 }
 function setTab(v) {
 	if (v === activeTab.value) return
 	if ((v === "analysis" || v === "review") && !isSM.value) return
 	if ((v === "business" || v === "wiki") && !(isSM.value || businessAllowed.value)) return
+	if (v === "graph" && !(graph3dOn && (isSM.value || businessAllowed.value))) return
 	activeTab.value = v
 	router.push({ hash: v === "skills" ? "" : `#${v}` })
 }
