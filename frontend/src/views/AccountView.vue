@@ -56,11 +56,6 @@
 					</template>
 				</section>
 
-				<!-- Two-column below the plan card: the AI-models editor is the wide
-				     primary column; the short read-mostly cards sit in a right rail,
-				     so the page uses the full width instead of a narrow left column. -->
-				<div class="jv-acct-grid">
-
 				<!-- ===== AI models (primary config) ===== -->
 				<section class="jv-acct-card jv-acct-ai">
 					<div class="jv-acct-card-head">
@@ -93,9 +88,6 @@
 					</template>
 				</section>
 
-				<!-- Right rail: read-mostly account summary cards. -->
-				<aside class="jv-acct-rail">
-
 				<!-- ===== Connection (proxy tenants only) =====
 					 This card reflects the container's cliproxy OAuth auth-profile.
 					 Direct tenants are already covered by DirectSubscriptionCard above,
@@ -119,9 +111,6 @@
 					<div v-else-if="!usage.applicable" class="jv-acct-muted">Metering is available on multi-model (proxy) setups.</div>
 					<router-link :to="{ name: 'Monitor' }" class="jv-acct-link">View full usage →</router-link>
 				</section>
-
-				</aside>
-				</div>
 			</div>
 		</main>
 	</div>
@@ -295,7 +284,8 @@ onMounted(() => {
 	padding: 28px 32px 60px;
 }
 .jv-acct-wrap {
-	max-width: 1400px;
+	/* One clean, centered column of full-width cards. */
+	max-width: 1040px;
 	margin: 0 auto;
 	display: flex;
 	flex-direction: column;
