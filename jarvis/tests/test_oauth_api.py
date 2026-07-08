@@ -526,12 +526,15 @@ class TestExchangeCodeErrorParsing(_OAuthApiBase):
 		self.assertEqual(ctx.exception.code, "token_exchange_failed")
 
 
-class TestCompletePasteSigninRetainsIdToken(_OAuthApiBase):
-	"""Task 1: the openclaw blob pushed by complete_paste_signin must retain
-	the id_token returned by the token exchange. It's used to derive the
-	email then was previously dropped from the blob; a downstream reformat to
-	CLIProxyAPI-codex format needs it. Harmless to the existing DIRECT push
-	(openclaw ignores unknown blob keys)."""
+class TestCompletePasteSigninStripsIdToken(_OAuthApiBase):
+	"""The fleet-agent's PUT /auth-profile schema is strict (pydantic
+	extra_forbidden) and REJECTS an ``id_token`` field, so the DIRECT push
+	from complete_paste_signin must strip it — otherwise every direct
+	(re)authorize 502s with ``extra_forbidden ... blob.id_token`` (the
+	2026-07 direct-reauthorize outage). The earlier assumption that openclaw
+	"ignores unknown blob keys" was wrong against the live agent. The blob
+	builder still retains id_token for the POOL path's CLIProxyAPI-codex
+	reformat; only this direct auth-profiles.json push drops it."""
 
 	def _seed(self, provider="OpenAI", model="gpt-5.5"):
 		nonce = "i_" + ("d" * 46)
@@ -548,7 +551,7 @@ class TestCompletePasteSigninRetainsIdToken(_OAuthApiBase):
 	@patch("jarvis.oauth.api.onboarding.save_llm_creds")
 	@patch("jarvis.oauth.api.admin_client.post_push_oauth_blob")
 	@patch("jarvis.oauth.api._exchange_code")
-	def test_pushed_blob_carries_id_token(self, mock_exchange, mock_push, mock_save):
+	def test_pushed_blob_strips_id_token(self, mock_exchange, mock_push, mock_save):
 		access_jwt = _jwt({
 			"https://api.openai.com/auth": {"chatgpt_account_id": "acct-idt"},
 		})
@@ -569,8 +572,12 @@ class TestCompletePasteSigninRetainsIdToken(_OAuthApiBase):
 		self.assertTrue(out["ok"], msg=str(out))
 		mock_push.assert_called_once()
 		blob = mock_push.call_args.args[1]
-		self.assertIn("id_token", blob)
-		self.assertEqual(blob["id_token"], "ID.TOKEN.XYZ")
+		# id_token stripped so the fleet /auth-profile schema accepts the push…
+		self.assertNotIn("id_token", blob)
+		# …but the rest of the OAuth blob still rides along untouched.
+		self.assertEqual(blob["refresh"], "RT")
+		self.assertEqual(blob["email"], "manager@acme.com")
+		self.assertEqual(blob["accountId"], "acct-idt")
 
 
 class TestBeginPoolAccountSignin(_OAuthApiBase):

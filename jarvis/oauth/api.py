@@ -370,9 +370,10 @@ def _exchange_and_build_blob(entry: dict, redirected_url: str):
 		"email": email,
 		"accountId": extract_account_id(provider, access_token),
 		"clientId": p["client_id"],
-		# Retain the id_token: a downstream reformat to CLIProxyAPI-codex
-		# format needs it. Harmless to the DIRECT push path, which ignores
-		# unknown blob keys.
+		# Retain the id_token: the POOL path's CLIProxyAPI-codex reformat needs
+		# it. The DIRECT auth-profile push must strip it first, though — the
+		# fleet-agent schema rejects unknown keys (extra_forbidden); see
+		# complete_paste_signin's direct_blob.
 		"id_token": tokens.get("id_token") or "",
 	}
 	return {"provider": provider, "model": model, "email": email, "blob": blob}, None
