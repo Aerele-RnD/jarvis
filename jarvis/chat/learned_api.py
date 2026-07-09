@@ -623,7 +623,7 @@ def restore_rejected_pattern(name: str) -> dict:
 
 
 @frappe.whitelist()
-def snooze_learned_pattern(name: str, days=30) -> dict:
+def snooze_learned_pattern(name: str, days: int = 30) -> dict:
 	"""Proposed->Snoozed for 7/30/90 days (dismiss-for-now, section 6.4)."""
 	_guard()
 	try:
@@ -1508,7 +1508,7 @@ def run_pattern_analysis_now() -> dict:
 # settings + status (the in-tab config surface, section 6.4)
 # --------------------------------------------------------------------------- #
 @frappe.whitelist()
-def get_learning_settings(include_preflight=0) -> dict:
+def get_learning_settings(include_preflight: int = 0) -> dict:
 	"""Read the ``pattern_*`` config the tab exposes (SM only). ``include_preflight``
 	runs the (potentially expensive) enablement readiness probe lazily - only when
 	the caller asks (e.g. the enable modal)."""
@@ -1539,7 +1539,7 @@ def get_learning_settings(include_preflight=0) -> dict:
 
 
 @frappe.whitelist()
-def set_learning_settings(payload=None) -> dict:
+def set_learning_settings(payload: str | dict | None = None) -> dict:
 	"""Write the ``pattern_*`` config via the Settings doc so window validation
 	runs (>=1h, wrap-aware - plan section 5.1). Only the config fields are
 	writable; the engine status quartet is engine-owned. Unknown keys are

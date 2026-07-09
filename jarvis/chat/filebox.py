@@ -426,7 +426,7 @@ def delete_inbound(conversation: str) -> dict:
 
 
 @frappe.whitelist()
-def delete_inbound_bulk(conversations=None) -> dict:
+def delete_inbound_bulk(conversations: str | list | None = None) -> dict:
 	"""Bulk cascade delete (orchestrator Q4). Owner-gated per row, same cascade +
 	streaming refusal as ``delete_inbound``. Returns ``{deleted, skipped:[{
 	conversation, reason}]}`` — a bad/streaming/foreign row is skipped, not fatal."""

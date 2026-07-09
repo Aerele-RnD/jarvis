@@ -172,7 +172,7 @@ def _order_by(sort_field, sort_dir, sortable: dict, default_field, default_dir, 
 @frappe.whitelist()
 def list_custom_skills_page(
 	search: str = "",
-	filters=None,
+	filters: str | dict | None = None,
 	sort_field: str = "",
 	sort_dir: str = "",
 	start: int = 0,
@@ -415,7 +415,7 @@ def get_skill_shares(name: str) -> dict:
 
 
 @frappe.whitelist()
-def share_custom_skill(name: str, users=None) -> dict:
+def share_custom_skill(name: str, users: str | list | None = None) -> dict:
 	"""Replace a skill's share list with ``users`` (a JSON array or list of user
 	ids). Owner only. Recipients get read-only use; they can never re-share."""
 	doc = frappe.get_doc(SKILL, name)

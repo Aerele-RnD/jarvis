@@ -170,7 +170,7 @@ def _order_by(sort_field, sort_dir, sortable: dict, default_field, default_dir, 
 @frappe.whitelist()
 def list_macros_page(
 	search: str = "",
-	filters=None,
+	filters: str | dict | None = None,
 	sort_field: str = "",
 	sort_dir: str = "",
 	start: int = 0,
@@ -286,12 +286,12 @@ def _step_skills(step) -> list[str]:
 def create_macro(
 	macro_name: str,
 	description: str = "",
-	steps=None,
+	steps: str | list | None = None,
 	enabled: int = 1,
 	stop_on_error: int = 1,
 	schedule_enabled: int = 0,
 	schedule_frequency: str = "daily",
-	schedule_time=None,
+	schedule_time: str | None = None,
 ) -> dict:
 	"""Create a macro. Validation (name/steps/caps) runs in the doctype validate().
 	Per-step tagged skills arrive INSIDE each step dict (``steps[].skills``)."""
@@ -316,12 +316,12 @@ def update_macro(
 	name: str,
 	macro_name: str | None = None,
 	description: str | None = None,
-	steps=None,
+	steps: str | list | None = None,
 	enabled: int | None = None,
 	stop_on_error: int | None = None,
 	schedule_enabled: int | None = None,
 	schedule_frequency: str | None = None,
-	schedule_time=None,
+	schedule_time: str | None = None,
 	merged_prompt: str | None = None,
 ) -> dict:
 	"""Update provided fields of a macro (owner-gated). When ``steps`` is given it
@@ -449,7 +449,7 @@ _RUN_STATUSES = {"queued", "running", "completed", "failed", "stopped"}
 
 
 @frappe.whitelist()
-def list_macro_runs(status: str = "", macro: str = "", limit=30, start=0) -> dict:
+def list_macro_runs(status: str = "", macro: str = "", limit: int = 30, start: int = 0) -> dict:
 	"""The current user's macro runs, newest-first, for the history dashboard.
 
 	Joins the macro for its display name and computes each run's duration in
