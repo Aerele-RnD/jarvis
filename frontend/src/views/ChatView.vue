@@ -68,19 +68,19 @@
 					<h1 style="font-size:23px;font-weight:600;letter-spacing:-.02em;margin:0 0 6px;">{{ greeting }}, {{ firstName }}</h1>
 					<p style="font-size:14.5px;color:var(--text-2);margin:0 0 26px;line-height:1.5;">Ask about your ERP data, run a workflow, or draft something. Jarvis is connected to your <strong style="color:var(--text);font-weight:600;">ERPNext</strong> instance.</p>
 					<div style="display:grid;grid-template-columns:1fr 1fr;gap:11px;text-align:left;">
-						<div v-for="s in suggestions" :key="s.title" class="jv-suggest" @click="fillInput(s.prompt)" style="display:flex;gap:11px;padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:10px;cursor:pointer;transition:border-color .12s,background .12s;">
-							<div :style="{ width:'30px',height:'30px',flex:'none',borderRadius:'8px',background:s.bg,display:'flex',alignItems:'center',justifyContent:'center' }" v-html="s.icon"></div>
+						<button v-for="s in suggestions" :key="s.title" type="button" class="jv-suggest" @click="fillInput(s.prompt)" style="display:flex;gap:11px;padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:10px;cursor:pointer;transition:border-color .12s,background .12s;text-align:left;font-family:inherit;color:inherit;width:100%;">
+							<div :style="{ width:'30px',height:'30px',flex:'none',borderRadius:'8px',background:s.bg,color:s.fg,display:'flex',alignItems:'center',justifyContent:'center' }" v-html="s.icon"></div>
 							<div>
 								<div style="font-size:13.5px;font-weight:550;margin-bottom:2px;">{{ s.title }}</div>
 								<div style="font-size:12.5px;color:var(--text-3);line-height:1.4;">{{ s.prompt }}</div>
 							</div>
-						</div>
+						</button>
 					</div>
 				</div>
 			</div>
 
 			<!-- ===== CONVERSATION ===== -->
-			<div v-else ref="threadEl" @scroll.passive="onThreadScroll" style="flex:1;overflow-y:auto;">
+			<div v-else ref="threadEl" @scroll.passive="onThreadScroll" role="log" aria-label="Conversation with Jarvis" style="flex:1;overflow-y:auto;">
 				<div ref="threadInnerEl" style="max-width:1280px;margin:0 auto;padding:26px 40px 36px;display:flex;flex-direction:column;gap:26px;">
 					<!-- macro run progress banner -->
 					<div v-if="macroRun && macroRun.conversation === currentId" class="jv-macrobar" :class="{ ok: macroRun.status === 'completed', err: macroRun.status === 'failed', stopped: macroRun.status === 'stopped' }">
@@ -153,11 +153,11 @@
 										</div>
 									</div>
 								</div>
-								<div v-if="m.error" style="border:1px solid var(--red-bd);border-radius:11px;background:var(--red-bg);padding:13px 15px;display:flex;align-items:flex-start;gap:10px;">
+								<div v-if="m.error" role="alert" style="border:1px solid var(--red-bd);border-radius:11px;background:var(--red-bg);padding:13px 15px;display:flex;align-items:flex-start;gap:10px;">
 									<svg width="17" height="17" style="margin-top:1px;flex:none;" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><path d="M12 9v4M12 17h.01" /></svg>
 									<div style="flex:1;">
-										<div style="font-size:13.5px;font-weight:600;color:#b42318;">Something went wrong</div>
-										<div style="font-size:12.5px;color:#9a3a30;margin-top:2px;line-height:1.5;">{{ m.error }}</div>
+										<div style="font-size:13.5px;font-weight:600;color:var(--red);">Something went wrong</div>
+										<div style="font-size:12.5px;color:var(--text-2);margin-top:2px;line-height:1.5;">{{ m.error }}</div>
 										<button class="jv-retry" @click="retry(m.name)" style="margin-top:10px;display:flex;align-items:center;gap:6px;padding:6px 12px;background:var(--red);color:#fff;border:none;border-radius:7px;font-family:inherit;font-size:12px;font-weight:550;cursor:pointer;">Retry</button>
 									</div>
 								</div>
@@ -366,13 +366,13 @@
 								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
 								<span>{{ doneCount }} tool{{ doneCount === 1 ? "" : "s" }} done<template v-if="failedCount"> · {{ failedCount }} failed</template></span>
 							</div>
-							<div v-if="!showActivityDetail || (waiting && !currentTool) || (!currentTool && statusPhase)" style="display:flex;align-items:center;gap:7px;padding-top:4px;">
-								<span style="display:flex;gap:4px;">
-									<span style="width:6px;height:6px;border-radius:50%;background:var(--text-3);animation:jv-dot 1.1s infinite;"></span>
-									<span style="width:6px;height:6px;border-radius:50%;background:var(--text-3);animation:jv-dot 1.1s infinite .18s;"></span>
-									<span style="width:6px;height:6px;border-radius:50%;background:var(--text-3);animation:jv-dot 1.1s infinite .36s;"></span>
+							<div v-if="!showActivityDetail || (waiting && !currentTool) || (!currentTool && statusPhase)" role="status" aria-live="polite" style="display:flex;align-items:center;gap:7px;padding-top:4px;">
+								<span style="display:flex;gap:4px;" aria-hidden="true">
+									<span class="jv-tdot"></span>
+									<span class="jv-tdot" style="animation-delay:.18s;"></span>
+									<span class="jv-tdot" style="animation-delay:.36s;"></span>
 								</span>
-								<span style="font-size:12px;color:var(--text-3);">{{ liveStatus }}</span>
+								<span style="font-size:12px;color:var(--text-3);">{{ liveStatus }}<span v-if="liveElapsedLabel" aria-hidden="true" style="opacity:.75;"> · {{ liveElapsedLabel }}</span></span>
 							</div>
 						</div>
 					</div>
@@ -526,6 +526,8 @@
 			</div>
 		</transition>
 
+		<!-- screen-reader-only announcements: turn completion / failure -->
+		<div class="jv-sr" role="status" aria-live="polite">{{ srMessage }}</div>
 		<!-- ============ NOTIFIER (reusable toasts: "Deleted", etc.) ============ -->
 		<div class="jv-notes" aria-live="polite">
 			<transition-group name="jv-note">
@@ -803,6 +805,13 @@ function notify(message, opts = {}) {
 function dismissNote(id) {
 	notes.value = notes.value.filter((n) => n.id !== id)
 }
+// Announce to screen readers via the visually-hidden live region. Clears first
+// so an identical repeated message (e.g. two "Jarvis replied." in a row) still
+// re-announces.
+function announceSR(msg) {
+	srMessage.value = ""
+	nextTick(() => { srMessage.value = msg })
+}
 const confirmBox = ref(null) // { title, message, confirmLabel, cancelLabel, danger }
 let _confirmResolve = null
 function confirmDialog(opts = {}) {
@@ -1030,8 +1039,12 @@ async function toggleAutoApply() {
 
 // Phase 1: streaming/metrics, live tool activity, file input, mentions, stop
 const runStartMs = ref(0)
+const nowMs = ref(0) // ticks every 1s while busy → drives the live elapsed timer
 const currentRunId = ref(null)
 const stoppedRunId = ref(null)
+const stoppedMsgIds = ref(new Set()) // assistant rows the user stopped — ignore later (incl. "recovered") events for them
+const currentMsgId = ref(null) // in-flight assistant row id (from run:start) — lets Stop pin the reply even before the first token
+const srMessage = ref("") // visually-hidden aria-live text (turn completion / failure) for screen readers
 const activeTools = ref([]) // [{ id, name, status }] for the in-flight run
 // Live activity shows ONE tool at a time: the most-recently-started tool that's
 // still running, plus a compact count of the ones already finished this turn.
@@ -1106,8 +1119,16 @@ function toolPhrase(tool) {
 const liveStatus = computed(() => {
 	if (currentTool.value) return toolPhrase(currentTool.value)
 	if (statusPhase.value === "analyzing") return "Analyzing the results…"
-	if (waiting.value || sending.value || statusPhase.value === "model") return "Talking to the model…"
+	if (waiting.value || sending.value || statusPhase.value === "model") return "Working on it…"
 	return thinkingWord.value
+})
+// Live elapsed timer shown next to the status line so a long turn reads as
+// "still working" (time ticking) rather than a frozen spinner. Hidden for the
+// first few seconds so quick turns don't flash a "0s".
+const liveElapsedLabel = computed(() => {
+	if (!busy.value || !runStartMs.value || !nowMs.value) return ""
+	const s = (nowMs.value - runStartMs.value) / 1000
+	return s >= 3 ? fmtDuration(s) : ""
 })
 const runMeta = ref({}) // { [message_id]: { ms, tools, names } } — survives reloads
 const canvasContent = ref({}) // { `${msgName}::${canvasName}`: srcdoc html (html/svg) | data-url (pdf/image/file) }
@@ -1296,10 +1317,10 @@ const busy = computed(() => sending.value || waiting.value)
 const convStreaming = computed(() => store.streamingConvId === currentId.value)
 
 const suggestions = [
-	{ title: "Analyse data", prompt: "Which sales orders are overdue this month?", bg: "var(--blue-bg)", icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#171717" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18 9l-5 5-3-3-4 4"/></svg>' },
-	{ title: "Take an action", prompt: "Create a new Sales Order", bg: "var(--green-bg)", icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>' },
-	{ title: "Search records", prompt: "Search for a customer or contact", bg: "var(--amber-bg)", icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>' },
-	{ title: "Draft content", prompt: "Write a follow-up email to a lead", bg: "#f3eefe", icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>' },
+	{ title: "Analyse data", prompt: "Which sales orders are overdue this month?", bg: "var(--blue-bg)", fg: "var(--blue)", icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18 9l-5 5-3-3-4 4"/></svg>' },
+	{ title: "Take an action", prompt: "Draft a document for me to review", bg: "var(--green-bg)", fg: "var(--green)", icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>' },
+	{ title: "Search records", prompt: "Search for a customer or contact", bg: "var(--amber-bg)", fg: "var(--amber)", icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>' },
+	{ title: "Draft content", prompt: "Write a follow-up email to a lead", bg: "rgba(139,92,246,.12)", fg: "#8b5cf6", icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>' },
 ]
 
 // Inline action blocks the agent emits: a rich ```jarvis-action JSON card (a doc
@@ -2899,6 +2920,9 @@ function onDocClick(e) {
 async function retry(messageId) {
 	sending.value = true
 	waiting.value = true
+	runStartMs.value = 0
+	nowMs.value = 0
+	currentMsgId.value = null
 	try {
 		await api.retryMessage(messageId)
 	} catch (e) {
@@ -2938,6 +2962,9 @@ async function send(textArg) {
 	sending.value = true
 	waiting.value = true
 	stoppedRunId.value = null
+	runStartMs.value = 0
+	nowMs.value = 0
+	currentMsgId.value = null
 	const isImgAtt = (a) => /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(a.file_name || a.file_url || "")
 	const imgAtts = attachments.filter(isImgAtt)
 	const otherAtts = attachments.filter((a) => !isImgAtt(a))
@@ -3055,6 +3082,7 @@ function onEvent(p) {
 	}
 	if (p.conversation_id !== currentId.value) return
 	if (p.run_id && p.run_id === stoppedRunId.value) return // user stopped this run
+	if (p.message_id && stoppedMsgIds.value.has(p.message_id)) return // …incl. a later "recovered" run for a stopped reply
 	switch (p.kind) {
 		case "run:recovering":
 			// openclaw hit a context overflow and is auto-compacting + retrying;
@@ -3065,7 +3093,9 @@ function onEvent(p) {
 			break
 		case "run:start":
 			currentRunId.value = p.run_id
+			currentMsgId.value = p.message_id
 			runStartMs.value = Date.now()
+			nowMs.value = Date.now()
 			activeTools.value = []
 			waiting.value = true
 			statusPhase.value = "model"
@@ -3133,6 +3163,7 @@ function onEvent(p) {
 			store.streamingConvId = null
 			// (browser notification moved to the app-scoped global notifier —
 			// AppShell attaches it, so it fires on every route, not just here)
+			announceSR("Jarvis replied.")
 			store.loadConversations()
 			loadConversation(currentId.value)
 			// Re-render charts after the reload settles — late re-renders can swap a
@@ -3171,6 +3202,7 @@ function onEvent(p) {
 			activeTools.value = []
 			currentRunId.value = null
 			store.streamingConvId = null
+			announceSR("That didn't go through. See the error in the chat.")
 			loadConversation(currentId.value)
 			break
 	}
@@ -3182,15 +3214,18 @@ function stopRun() {
 	// (The server-side turn still finishes; reopening the chat shows the full
 	// reply.)
 	if (currentRunId.value) stoppedRunId.value = currentRunId.value
+	if (currentMsgId.value) stoppedMsgIds.value.add(currentMsgId.value)
 	const m = [...messages.value].reverse().find((x) => x.role === "assistant" && x.streaming)
 	if (m) {
 		m.streaming = false
-		if (!m.content) m.content = "_(stopped)_"
+		if (m.name) stoppedMsgIds.value.add(m.name)
+		if (!m.content) m.content = "_Stopped. Jarvis may still finish this in the background - reopen the chat to see the full reply._"
 	}
 	waiting.value = false
 	sending.value = false
 	activeTools.value = []
 	store.streamingConvId = null
+	notify("Stopped here - Jarvis may still be finishing in the background.")
 }
 
 // ---- voice dictation (composer mic) ----
@@ -3598,7 +3633,10 @@ onMounted(async () => {
 	api.listTools().then((t) => { if (Array.isArray(t) && t.length) jarvisTools.value = t }).catch(() => {})
 	document.addEventListener("pointerdown", onDocClick)
 	window.addEventListener("keydown", onGlobalKey)
-	_thinkTimer = setInterval(() => { thinkTick.value = busy.value ? thinkTick.value + 1 : 0 }, 2200)
+	_thinkTimer = setInterval(() => {
+		thinkTick.value = busy.value ? thinkTick.value + 1 : 0
+		if (busy.value) nowMs.value = Date.now()
+	}, 1000)
 	ui.value = (await uiP) || {}
 	// Load custom skills so the "/" composer menu can offer them.
 	loadCustomSkills()
@@ -3864,6 +3902,21 @@ onUnmounted(() => {
 .jv-tooldone { color: var(--text-3); font-size: 12px; }
 .jv-spin { animation: jv-spin 0.8s linear infinite; }
 @keyframes jv-spin { to { transform: rotate(360deg); } }
+/* thinking dots — classed so reduced-motion can disable them (UX #13) */
+.jv-tdot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-3); animation: jv-dot 1.1s infinite; }
+/* visually-hidden live region for screen-reader announcements (UX #5) */
+.jv-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+/* visible keyboard focus (UX #15) */
+.jv-suggest:focus-visible, .jv-sendbtn:focus-visible, .jv-iconbtn:focus-visible, .jv-msgbtn:focus-visible, .jv-retry:focus-visible, .jv-modelpill:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+/* honor reduced-motion on the chat surface (UX #13) */
+@media (prefers-reduced-motion: reduce) {
+	.jv-spin { animation: none; }
+	.jv-tdot { animation: none; opacity: .55; }
+	.jv-tool-dot.run, .jv-mic-dot { animation: none; }
+	.jv-sendbtn.ready { animation: none; }
+	.jv-md :deep(.jv-mermaid:not([data-rendered]))::after { animation: none; }
+	.jv-settings, .jv-skills-modal, .jv-cdialog { animation: none; }
+}
 
 /* inline canvas/chart artifacts (rendered sandboxed) */
 .jv-canvas { margin-top: 12px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface); }
