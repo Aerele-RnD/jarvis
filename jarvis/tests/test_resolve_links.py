@@ -4,7 +4,7 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 
 from jarvis.exceptions import InvalidArgumentError
-from jarvis.tools.resolve_links import resolve_links
+from jarvis.tools.resolve_links import _resolve_one, resolve_links
 
 
 class TestResolveLinks(FrappeTestCase):
@@ -54,6 +54,45 @@ class TestResolveLinks(FrappeTestCase):
 		):
 			res = resolve_links("ToDo", {"allocated_to": "Administrator"})
 		self.assertEqual(self._link(res, "allocated_to")["status"], "unchecked")
+
+	def test_exact_check_is_permission_scoped(self):
+		"""A record that exists but is not readable by the caller (ToDo is
+		read-scoped to allocated_to/assigned_by via get_permission_query_conditions)
+		must not be reported "exact", even though the coarse doctype-level read
+		gate passes for the "All" role. Otherwise the exact check becomes an
+		existence oracle over records the user cannot read."""
+		other_todo = frappe.get_doc(
+			{
+				"doctype": "ToDo",
+				"description": "resolve_links permission-scope probe",
+				"allocated_to": "Administrator",
+			}
+		).insert(ignore_permissions=True)
+
+		uname = "resolve_links_perm_test@example.com"
+		if not frappe.db.exists("User", uname):
+			frappe.get_doc(
+				{
+					"doctype": "User",
+					"email": uname,
+					"first_name": "PermTest",
+					"send_welcome_email": 0,
+					"roles": [{"role": "Desk User"}],
+				}
+			).insert(ignore_permissions=True)
+
+		orig_user = frappe.session.user
+		try:
+			frappe.set_user(uname)
+			# Sanity: the coarse doctype-level gate passes (role "All" grants
+			# read on ToDo) -- the leak can only be caught downstream, by the
+			# exact-check query itself being permission-scoped.
+			self.assertTrue(frappe.has_permission("ToDo", ptype="read"))
+			rec = _resolve_one("allocated_to", "ToDo", other_todo.name, 5)
+		finally:
+			frappe.set_user(orig_user)
+
+		self.assertNotEqual(rec["status"], "exact")
 
 	def test_empty_values_rejected(self):
 		with self.assertRaises(InvalidArgumentError):

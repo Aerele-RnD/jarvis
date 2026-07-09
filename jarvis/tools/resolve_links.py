@@ -91,7 +91,12 @@ def _resolve_one(field: str, target_dt: str, value: str, limit: int) -> dict:
 		rec["status"] = "unchecked"
 		return rec
 	try:
-		if frappe.db.exists(target_dt, value):
+		# frappe.db.exists is permission-unaware; it would confirm existence of
+		# records the user cannot actually read (if_owner / user-permission
+		# restricted doctypes). Use get_list, like _candidates, so an existing
+		# but unreadable record falls through to candidates/missing instead of
+		# leaking as "exact".
+		if frappe.get_list(target_dt, filters={"name": value}, limit=1):
 			rec["status"] = "exact"
 			return rec
 	except Exception:
