@@ -66,11 +66,16 @@ def _summarize(doc, caller_values: dict) -> dict:
     # server_filled = differs from a bare new_doc, so zero-defaults don't
     # masquerade as auto-fill.
     baseline = frappe.new_doc(doc.doctype)
+    has_permlevel_read = doc.get_permlevel_access("read")
     resolved: dict = {}
     server_filled: list[str] = []
     empty_fields: list[str] = []
     for df in doc.meta.fields:
         if df.fieldtype not in _HEADER_TYPES:
+            continue
+        if df.permlevel and df.permlevel not in has_permlevel_read:
+            # Caller can't read this field at its permlevel - never echo its
+            # value (caller-supplied or server/hook-computed) back to them.
             continue
         name = df.fieldname
         val = doc.get(name)

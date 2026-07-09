@@ -77,6 +77,7 @@ def create_doc(doctype: str, values: dict) -> dict:
         doc.set(field, value)
     _set_title_from_title_field(doc)
     doc.insert()  # runs DocType validate() + on_insert hooks; sets autoname
+    doc.apply_fieldlevel_read_permissions()
     return doc.as_dict()
 
 

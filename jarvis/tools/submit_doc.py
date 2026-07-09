@@ -71,4 +71,5 @@ def submit_doc(doctype: str, name: str) -> dict:
         )
 
     doc.submit()  # runs validate() + on_submit hooks; sets docstatus=1
+    doc.apply_fieldlevel_read_permissions()
     return doc.as_dict()
