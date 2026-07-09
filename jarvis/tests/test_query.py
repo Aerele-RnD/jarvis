@@ -1900,3 +1900,300 @@ class TestQuerySqlInjectionHardening(FrappeTestCase):
 			           "value": "%Administrator%"}],
 		})
 		self.assertIn("_assign", sql)
+
+
+class TestQueryPermlevelFieldACL(FrappeTestCase):
+	"""F2: the column resolver must enforce field-level (permlevel) read
+	permission, mirroring frappe.get_list's apply_fieldlevel_read_permissions
+	(frappe/model/db_query.py -> frappe.model.get_permitted_fields).
+
+	Pre-fix, ``_validate_column`` only proved a column EXISTED
+	(``get_valid_columns()``), never that the caller could READ it. A user
+	with plain doctype read but no elevated-permlevel role could
+	select / filter / order / group-by / having / join-on / EXISTS any
+	permlevel>0 field. These tests prove:
+
+	- A restricted user (permlevel-0 role only) is DENIED on a permlevel>0
+	  field in every field position that funnels through the resolver.
+	- A permlevel-0 field still works for that restricted user (no
+	  over-blocking).
+	- A privileged user (permlevel-1 role) can read the restricted field.
+	- Child-table fields are gated via the base/FROM doctype's permissions
+	  (parenttype), exactly as apply_fieldlevel_read_permissions does.
+
+	Fixture mirrors test_permlevel_leak.py: one header doctype + one child
+	table doctype, each with a permlevel-0 and a permlevel-1 field; a base
+	role (permlevel-0 grants only) and a priv role (adds permlevel-1 read).
+
+	Note on child-table tests: ``frappe.has_permission(<child>, "read")``
+	with no parent context returns False for non-admins (Frappe's
+	has_child_permission), so the query tool's DocType-level gate (step 3)
+	would block a non-admin child-table join for an unrelated reason. Those
+	tests patch ``frappe.has_permission`` to isolate the *field-level* ACL,
+	while still running as the real restricted / privileged user so the
+	role-driven permlevel resolution is exercised for real.
+	"""
+
+	PARENT_DT = "JV Query Permlevel Parent"
+	CHILD_DT = "JV Query Permlevel Child"
+	F_PUBLIC = "public_field"
+	F_RESTRICTED = "restricted_field"
+	CF_PUBLIC = "child_public"
+	CF_RESTRICTED = "child_restricted"
+	ROLE_BASE = "JQP Base Role"
+	ROLE_PRIV = "JQP Priv Role"
+	USER_RESTRICTED = "jqp-restricted@example.com"
+	USER_PRIVILEGED = "jqp-privileged@example.com"
+
+	@staticmethod
+	def _ensure_role(name: str) -> None:
+		if not frappe.db.exists("Role", name):
+			frappe.get_doc({
+				"doctype": "Role", "role_name": name, "desk_access": 1, "is_custom": 1,
+			}).insert(ignore_permissions=True)
+
+	@staticmethod
+	def _ensure_user(email: str, roles: tuple) -> None:
+		if not frappe.db.exists("User", email):
+			frappe.get_doc({
+				"doctype": "User",
+				"email": email,
+				"first_name": email.split("@")[0],
+				"send_welcome_email": 0,
+				"enabled": 1,
+				"user_type": "System User",
+			}).insert(ignore_permissions=True)
+		user = frappe.get_doc("User", email)
+		if "System Manager" in frappe.get_roles(email):
+			user.remove_roles("System Manager")
+		missing = [r for r in roles if r not in frappe.get_roles(email)]
+		if missing:
+			user.add_roles(*missing)
+
+	@classmethod
+	def _ensure_doctypes(cls) -> None:
+		from frappe.core.doctype.doctype.test_doctype import new_doctype
+
+		for dt in (cls.PARENT_DT, cls.CHILD_DT):
+			if frappe.db.exists("DocType", dt):
+				frappe.delete_doc("DocType", dt, force=True, ignore_permissions=True)
+		# Child table (istable) — its own permissions are irrelevant to the
+		# field ACL (the parent's permissions govern child fields), but it
+		# must exist before the parent references it.
+		new_doctype(
+			name=cls.CHILD_DT,
+			custom=1,
+			istable=1,
+			fields=[
+				{"label": "Child Public", "fieldname": cls.CF_PUBLIC,
+				 "fieldtype": "Data", "permlevel": 0},
+				{"label": "Child Restricted", "fieldname": cls.CF_RESTRICTED,
+				 "fieldtype": "Data", "permlevel": 1},
+			],
+			permissions=[],
+		).insert()
+		new_doctype(
+			name=cls.PARENT_DT,
+			custom=1,
+			fields=[
+				{"label": "Public Field", "fieldname": cls.F_PUBLIC,
+				 "fieldtype": "Data", "permlevel": 0},
+				{"label": "Restricted Field", "fieldname": cls.F_RESTRICTED,
+				 "fieldtype": "Data", "permlevel": 1},
+				{"label": "Items", "fieldname": "items", "fieldtype": "Table",
+				 "options": cls.CHILD_DT},
+			],
+			permissions=[
+				{"role": cls.ROLE_BASE, "permlevel": 0, "read": 1, "write": 1, "create": 1},
+				{"role": cls.ROLE_PRIV, "permlevel": 0, "read": 1, "write": 1, "create": 1},
+				{"role": cls.ROLE_PRIV, "permlevel": 1, "read": 1, "write": 1},
+			],
+		).insert()
+
+	@classmethod
+	def setUpClass(cls):
+		super().setUpClass()
+		frappe.set_user("Administrator")
+		cls._ensure_role(cls.ROLE_BASE)
+		cls._ensure_role(cls.ROLE_PRIV)
+		cls._ensure_doctypes()
+		cls._ensure_user(cls.USER_RESTRICTED, (cls.ROLE_BASE,))
+		cls._ensure_user(cls.USER_PRIVILEGED, (cls.ROLE_PRIV,))
+		frappe.db.commit()
+		# Warm the meta cache for the fixture doctypes. The run-tests harness
+		# on this site can hit a pre-existing infinite get_meta recursion when
+		# cold-loading a doctype's meta (client_cache not persisting mid-load,
+		# unrelated to this fix — it also flakes existing Sales Invoice / User
+		# tests). Warming here keeps the child-table tests off that path.
+		frappe.get_meta(cls.PARENT_DT)
+		frappe.get_meta(cls.CHILD_DT)
+
+	def setUp(self):
+		super().setUp()
+		frappe.set_user("Administrator")
+		# Ensure the shared per-site allowlist doesn't pre-empt the
+		# field-level check with an allowlist rejection.
+		settings = frappe.get_single("Jarvis Settings")
+		settings.run_query_doctype_allowlist = ""
+		settings.save(ignore_permissions=True)
+		frappe.db.commit()
+		frappe.clear_document_cache("Jarvis Settings")
+
+	def tearDown(self):
+		frappe.set_user("Administrator")
+		super().tearDown()
+
+	# ---- header-doctype field positions (run fully real) -----------
+
+	def test_restricted_cannot_select_permlevel_field(self):
+		frappe.set_user(self.USER_RESTRICTED)
+		with self.assertRaises(PermissionDeniedError) as cm:
+			query({
+				"from": self.PARENT_DT, "alias": "p",
+				"select": ["p.public_field", "p.restricted_field"],
+			})
+		self.assertIn("restricted_field", str(cm.exception))
+
+	def test_restricted_cannot_filter_permlevel_field(self):
+		frappe.set_user(self.USER_RESTRICTED)
+		with self.assertRaises(PermissionDeniedError):
+			query({
+				"from": self.PARENT_DT, "alias": "p",
+				"select": ["p.public_field"],
+				"where": [{"field": "p.restricted_field", "op": "=", "value": "x"}],
+			})
+
+	def test_restricted_cannot_order_by_permlevel_field(self):
+		frappe.set_user(self.USER_RESTRICTED)
+		with self.assertRaises(PermissionDeniedError):
+			query({
+				"from": self.PARENT_DT, "alias": "p",
+				"select": ["p.public_field"],
+				"order_by": [{"field": "p.restricted_field", "dir": "asc"}],
+			})
+
+	def test_restricted_cannot_group_by_permlevel_field(self):
+		frappe.set_user(self.USER_RESTRICTED)
+		with self.assertRaises(PermissionDeniedError):
+			query({
+				"from": self.PARENT_DT, "alias": "p",
+				"select": ["p.public_field"],
+				"group_by": ["p.restricted_field"],
+			})
+
+	def test_restricted_cannot_having_permlevel_field(self):
+		frappe.set_user(self.USER_RESTRICTED)
+		with self.assertRaises(PermissionDeniedError):
+			query({
+				"from": self.PARENT_DT, "alias": "p",
+				"select": ["p.public_field"],
+				"group_by": ["p.public_field"],
+				"having": [{"field": "p.restricted_field", "op": "=", "value": "x"}],
+			})
+
+	def test_restricted_can_select_public_field(self):
+		"""Over-block guard: a permlevel-0 field still works for the
+		restricted user (runs fully real end-to-end)."""
+		frappe.set_user(self.USER_RESTRICTED)
+		result = query({
+			"from": self.PARENT_DT, "alias": "p",
+			"select": ["p.name", "p.public_field"],
+		})
+		self.assertIn("rows", result)
+
+	def test_privileged_can_select_permlevel_field(self):
+		frappe.set_user(self.USER_PRIVILEGED)
+		result = query({
+			"from": self.PARENT_DT, "alias": "p",
+			"select": ["p.name", "p.public_field", "p.restricted_field"],
+		})
+		self.assertIn("rows", result)
+
+	# ---- child-table field positions (parenttype resolution) -------
+
+	def test_restricted_cannot_select_child_permlevel_field(self):
+		"""Child-table permlevel field is gated via the base/FROM doctype's
+		permissions (parenttype), mirroring
+		apply_fieldlevel_read_permissions' parenttype=self.doctype."""
+		frappe.set_user(self.USER_RESTRICTED)
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(PermissionDeniedError) as cm:
+				query({
+					"from": self.PARENT_DT, "alias": "p",
+					"joins": [{
+						"type": "left", "doctype": self.CHILD_DT, "alias": "c",
+						"on": {"c.parent": "p.name"},
+					}],
+					"select": ["p.name", "c.child_restricted"],
+				})
+		self.assertIn("child_restricted", str(cm.exception))
+
+	def test_restricted_can_select_child_public_field(self):
+		frappe.set_user(self.USER_RESTRICTED)
+		with patch("frappe.has_permission", return_value=True), \
+		     patch("frappe.database.query.Engine") as fake_engine, \
+		     patch("pypika.queries.QueryBuilder.run", return_value=[]):
+			fake_engine.return_value.get_permission_conditions.return_value = None
+			result = query({
+				"from": self.PARENT_DT, "alias": "p",
+				"joins": [{
+					"type": "left", "doctype": self.CHILD_DT, "alias": "c",
+					"on": {"c.parent": "p.name"},
+				}],
+				"select": ["p.name", "c.child_public"],
+			})
+		self.assertIn("rows", result)
+
+	def test_privileged_can_select_child_permlevel_field(self):
+		frappe.set_user(self.USER_PRIVILEGED)
+		with patch("frappe.has_permission", return_value=True), \
+		     patch("frappe.database.query.Engine") as fake_engine, \
+		     patch("pypika.queries.QueryBuilder.run", return_value=[]):
+			fake_engine.return_value.get_permission_conditions.return_value = None
+			result = query({
+				"from": self.PARENT_DT, "alias": "p",
+				"joins": [{
+					"type": "left", "doctype": self.CHILD_DT, "alias": "c",
+					"on": {"c.parent": "p.name"},
+				}],
+				"select": ["p.name", "c.child_restricted"],
+			})
+		self.assertIn("rows", result)
+
+	# ---- join ON + EXISTS positions --------------------------------
+
+	def test_restricted_cannot_join_on_permlevel_field(self):
+		"""A permlevel>0 field used in a JOIN ... ON clause is gated too."""
+		frappe.set_user(self.USER_RESTRICTED)
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(PermissionDeniedError) as cm:
+				query({
+					"from": self.PARENT_DT, "alias": "p",
+					"joins": [{
+						"type": "left", "doctype": self.CHILD_DT, "alias": "c",
+						"on": {"c.child_restricted": "p.restricted_field"},
+					}],
+					"select": ["p.name"],
+				})
+		# The lhs (c.child_restricted) resolves first, so the error names it.
+		self.assertIn("child_restricted", str(cm.exception))
+
+	def test_restricted_cannot_reference_permlevel_field_in_exists(self):
+		"""A permlevel>0 field inside an EXISTS sub-spec WHERE is gated."""
+		frappe.set_user(self.USER_RESTRICTED)
+		with patch("frappe.has_permission", return_value=True):
+			with self.assertRaises(PermissionDeniedError):
+				query({
+					"from": self.PARENT_DT, "alias": "p",
+					"select": ["p.name"],
+					"where": [{
+						"op": "exists",
+						"value": {
+							"from": self.PARENT_DT, "alias": "p2",
+							"where": [{
+								"field": "p2.restricted_field", "op": "=",
+								"value": "x",
+							}],
+						},
+					}],
+				})
