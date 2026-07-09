@@ -1,5 +1,13 @@
 <template>
 	<div class="kg flex h-full flex-col overflow-hidden">
+		<LayoutHeader>
+			<template #left-header>
+				<Breadcrumbs :items="breadcrumbs" />
+			</template>
+			<template #right-header>
+				<Button icon="refresh-cw" :tooltip="'Refresh'" :loading="!state.loaded" @click="load" />
+			</template>
+		</LayoutHeader>
 		<div class="kg-head">
 			<h5>Knowledge Graph</h5>
 			<span v-if="state.loaded && pageCount" class="text-muted">{{ pageCount }} pages · {{ linkCount }} links</span>
@@ -29,9 +37,9 @@
 			</div>
 			<div class="kg-side">
 				<DetailPanel :node="state.selected" :metrics="state.analysis.metrics"
-					:communities="state.analysis.communities" @focus="(id) => (state.focus = id)" />
+					:communities="state.analysis.communities" :show-actions="false" @focus="(id) => (state.focus = id)" />
 				<AnalysisTabs :analysis="state.analysis" :nodes="baseData.nodes" :actions="state.actions"
-					:history="state.history" :can-act="true" @pick="pickId" @add-link="onAddLink" />
+					:history="state.history" :can-act="false" :show-priority="false" :show-actions-tab="false" @pick="pickId" />
 			</div>
 		</div>
 
@@ -45,11 +53,18 @@
 // four analysis tabs. Productive loop: accept a suggested connection → add_wiki_link
 // (durable, out-of-body) → refetch → the edge appears.
 import { reactive, computed, watch, onMounted } from "vue"
+import { Breadcrumbs, Button } from "frappe-ui"
+import LayoutHeader from "@/components/LayoutHeader.vue"
 import {
 	Graph3D, FilterBar, DetailPanel, AnalysisTabs, ExclusionRules,
 	runAnalysis, computeActions, overlayFilter, egoGraph, searchGraph,
 } from "wiki-graph-core"
-import { getWikiGraph, addWikiLink, getWikiGraphHistory } from "@/api/wiki"
+import { getWikiGraph, getWikiGraphHistory } from "@/api/wiki"
+
+// Same breadcrumb + persistent "Open ERPNext Desk" top bar the other Skills
+// tabs get; LayoutHeader supplies the ⧉ button, so the graph tab no longer
+// needs its own inline one.
+const breadcrumbs = [{ label: "Skills", route: { name: "SkillsList" } }, { label: "Knowledge Graph" }]
 
 const PAGE_TYPES = ["Customer", "Supplier", "Item", "Process", "Doctype", "Exception", "Integration", "People", "Org"]
 
@@ -128,21 +143,6 @@ function pickId(id) {
 	const n = (state.data.nodes || []).find((x) => x.id === id)
 	if (n) state.selected = n
 }
-async function onAddLink(s) {
-	const a = String(s.a || "").replace(/^page:/, "")
-	const b = String(s.b || "").replace(/^page:/, "")
-	if (!a || !b) return
-	state.toast = `Linking ${s.aLabel} ↔ ${s.bLabel}…`
-	try {
-		await addWikiLink(a, b)
-		state.toast = "Link added ✓"
-		await load()
-	} catch (e) {
-		state.toast = (e && e.message) ? `Couldn't add link: ${e.message}` : "Couldn't add link"
-	}
-	setTimeout(() => { state.toast = "" }, 2000)
-}
-
 watch(() => state.excluded, recompute)
 onMounted(load)
 </script>
@@ -150,7 +150,11 @@ onMounted(load)
 <style scoped>
 .kg { padding: 4px 2px; }
 .kg-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; }
-.kg-layout { display: grid; grid-template-columns: 1fr 340px; gap: 16px; }
+.kg-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; }
+/* min-width:0 lets the graph column shrink to its track — without it the
+   3d-force-graph canvas (an explicit-pixel-width element) forces the column
+   wider than the viewport and shoves the side panel off-screen. */
+.kg-main { min-width: 0; }
 .kg-side { display: flex; flex-direction: column; gap: 14px; overflow-y: auto; }
 .kg-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 6px; }
 .kg-excl { margin-bottom: 8px; }
@@ -163,5 +167,8 @@ onMounted(load)
 .kg-skel { height: 60vh; border-radius: 8px; background: var(--control-bg, #f3f4f6); animation: kg-pulse 1.4s ease-in-out infinite; }
 @keyframes kg-pulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 0.9; } }
 .kg-toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #222; color: #fff; padding: 8px 16px; border-radius: 8px; font-size: 13px; z-index: 50; }
-@media (max-width: 1100px) { .kg-layout { grid-template-columns: 1fr; } }
+/* Only stack (panel below the graph) on genuinely narrow screens. The old
+   1100px breakpoint hid the analysis panel off-screen on ordinary
+   retina-scaled laptop widths — it read as "the panel is missing". */
+@media (max-width: 760px) { .kg-layout { grid-template-columns: 1fr; } }
 </style>
