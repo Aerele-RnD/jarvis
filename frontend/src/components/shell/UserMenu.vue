@@ -68,17 +68,6 @@ const menuOptions = computed(() => [
 		hideLabel: true,
 		items: [
 			{ label: "Settings", icon: "settings", onClick: () => store.openSettings() },
-			// Account/Monitor now open the unified settings dialog to the right
-			// section instead of navigating to the (deleted) /account + /monitor
-			// routes. The ACCOUNT & BILLING group is SM-only, so keep these items
-			// gated to System Managers; the dialog itself falls back to "general"
-			// if a non-SM ever reaches a gated section.
-			...(!!window.is_system_manager
-				? [
-						{ label: "Account", icon: "user", onClick: () => store.openSettings("plan") },
-						{ label: "Monitor", icon: "activity", onClick: () => store.openSettings("billing") },
-					]
-				: []),
 			{
 				label: "Switch to Desk",
 				icon: "grid",
