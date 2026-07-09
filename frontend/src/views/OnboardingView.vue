@@ -265,7 +265,7 @@ import LlmPoolEditor from "@/components/LlmPoolEditor.vue"
 import JvCombo from "@/components/JvCombo.vue"
 import { STEPS_MANAGED, STEPS_SELFHOST, nextStep, prevStep, stepIndex } from "@/onboarding/steps"
 import {
-	checkSignupPaymentState, isReadyForChat,
+	checkSignupPaymentState, isReadyForChat, getLlmSyncStatus,
 	listPlans, startSignup, finishPayment, devOnboard,
 	saveSelfHosted, testSelfHostConnection, getAccountDefaults, syncConnection,
 } from "@/api"
@@ -656,12 +656,41 @@ function forceContinue() {
 	window.location.assign("/jarvis/")
 }
 
-// Shared tail for both completion paths: poll for readiness, then either
-// auto-reload (the common case) or leave a "still finishing" note with a
-// manual continue button so the user is never stuck staring at a spinner.
+// First-time provisioning runs in a background job whose budget is minutes
+// (cold container provision + proxy sidecars), not seconds. Readiness only
+// flips once that job APPLIES the pool, so before probing is_ready_for_chat
+// we follow the job itself: poll get_llm_sync_status until it leaves
+// "pending:". Bounded above the backend's own 600s job budget - the backend
+// guarantees a terminal status (durable ok/failed) within it, so this loop
+// can't spin forever. Returns the terminal sync dict, or null on timeout.
+async function waitForSyncTerminal(maxMs = 11 * 60 * 1000, intervalMs = 3000) {
+	const deadline = Date.now() + maxMs
+	for (;;) {
+		try {
+			const s = await getLlmSyncStatus()
+			if (s && !s.pending) return s
+		} catch (e) {
+			// transient network hiccups shouldn't strand the user
+		}
+		if (Date.now() >= deadline) return null
+		await sleep(intervalMs)
+	}
+}
+
+// Shared tail for both completion paths: wait for the provisioning sync to
+// reach a terminal state, then poll for readiness, then either auto-reload
+// (the common case) or leave a "still finishing" note with a manual continue
+// button so the user is never stuck staring at a spinner.
 async function afterSaveRecheckReady() {
 	state.finishNote = ""
 	state.finishing = true
+	const sync = await waitForSyncTerminal()
+	const status = ((sync && sync.last_sync_status) || "").trim()
+	if (status.startsWith("failed") || status.startsWith("skipped")) {
+		state.finishing = false
+		state.finishNote = `Setup hit a problem (${status}). Check the AI connection and save again - or continue to Jarvis and retry from Settings.`
+		return
+	}
 	const ready = await waitUntilReady()
 	if (ready) {
 		// Keep the "Setting up Jarvis" spinner up THROUGH the full-page reload.

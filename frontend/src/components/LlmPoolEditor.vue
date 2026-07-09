@@ -650,6 +650,15 @@ function seedRows(config) {
 async function load() {
   err.value = ""
   try {
+    // A sync may already be in flight when the editor mounts (page reload
+    // mid-provisioning, wizard resume via reason llm_pool_provisioning).
+    // Seed the status AND start the poller for a pending one - polling only
+    // from save() left a resumed session staring at a permanent "Syncing…"
+    // banner that never picked up the background job's ok/failed flip.
+    try {
+      sync.value = (await api.getLlmSyncStatus()) || sync.value
+      if (sync.value && sync.value.pending) startPolling()
+    } catch (e) { /* status is advisory - never block the editor */ }
     cfg.value = (await api.getLlmConfig()) || cfg.value
     rows.value = seedRows(cfg.value)
     selectedPreset.value = cfg.value.preset || ""

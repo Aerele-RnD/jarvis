@@ -15,6 +15,26 @@ LLM_FIELDS_TRIGGERING_SYNC = (
 # value migrated tenants might still carry.
 _CONTAINER_OWNED_MODES = {"oauth", "subscription"}
 
+# Shared budget for the admin-sync background jobs (single-model + pool).
+# One constant, three consumers, one invariant chain:
+#
+#   RQ envelope > worst-case work it wraps, AND lock TTL >= RQ envelope.
+#
+# Worst-case pool work: <=60s redis-lock wait + up to 3 POST attempts x 120s
+# admin HTTP budget (post_update_llm_pool) + 2x5s retry sleeps ~= 430s.
+# Worst-case single-model work: <=60s lock wait + 90s admin HTTP budget +
+# the post-restart skills resyncs. 600s clears both with headroom, so the
+# rq SIGALRM (JobTimeoutException) only fires on something genuinely
+# wedged - not on a routine cold provision (JARVIS-2026-07-08, fault c).
+#
+# The lock TTL must be >= the RQ envelope: the TTL bounds how long a
+# CRASHED holder can block others, but a healthy holder may legitimately
+# run right up to its SIGALRM - a shorter TTL would expire mid-run and
+# let a second sync mutate the container in parallel with the first,
+# exactly the interleaving the lock exists to prevent.
+ADMIN_SYNC_RQ_TIMEOUT_S = 600
+ADMIN_SYNC_LOCK_TIMEOUT_S = ADMIN_SYNC_RQ_TIMEOUT_S
+
 
 class JarvisSettings(Document):
     def before_validate(self):
@@ -302,16 +322,12 @@ class JarvisSettings(Document):
         self.db_set("last_sync_status", "pending: provisioning container (pool)",
                     update_modified=False)
         run_inline = bool(frappe.flags.in_test or frappe.flags.run_admin_sync_inline)
-        # RQ envelope must exceed the work it wraps or the SIGALRM fires on
-        # every cold provision (JARVIS-2026-07-08, fault c): redis lock wait
-        # (<=60s) + up to 3 POST attempts where the admin call's own HTTP
-        # budget is 120s (post_update_llm_pool) + 5s inter-attempt sleeps.
-        # 300s clears one full slow attempt + a retry with headroom.
+        # Budget rationale lives on ADMIN_SYNC_RQ_TIMEOUT_S.
         frappe.enqueue(
             "jarvis.jarvis.doctype.jarvis_settings.jarvis_settings"
             "._enqueued_sync_via_admin_pool",
             queue="long",
-            timeout=300,
+            timeout=ADMIN_SYNC_RQ_TIMEOUT_S,
             enqueue_after_commit=not run_inline,
             now=run_inline,
             job_id="jarvis_settings_sync:pool",
@@ -351,15 +367,12 @@ class JarvisSettings(Document):
         # fired. Different actions still both enqueue (one "reload" and
         # one "restart" are not the same op) but the in-worker Redis
         # lock makes them run serially, not interleaved.
-        # 300s for the same reason as the pool enqueue: lock wait (<=60s) +
-        # admin HTTP budget (90s default) + the post-restart custom/learned
-        # skills resync must all fit inside the RQ envelope, or the
-        # JobTimeoutException path is exercised on every slow provision.
+        # Budget rationale lives on ADMIN_SYNC_RQ_TIMEOUT_S.
         frappe.enqueue(
             "jarvis.jarvis.doctype.jarvis_settings.jarvis_settings"
             "._enqueued_sync_via_admin",
             queue="long",
-            timeout=300,
+            timeout=ADMIN_SYNC_RQ_TIMEOUT_S,
             enqueue_after_commit=not run_inline,
             now=run_inline,
             job_id=f"jarvis_settings_sync:{action}",
@@ -411,6 +424,13 @@ class JarvisSettings(Document):
                 "last_sync_at": frappe.utils.now(),
                 "last_sync_status": f"ok ({resolved_action} via admin)",
             })
+            # Commit EVERY terminal status (ok and each failed branch), not
+            # just the finally-backstop: the rq SIGALRM can fire at any
+            # later point in this job (log_error, lock release, skills
+            # resync), and execute_job's rollback would silently revert an
+            # uncommitted terminal write back to "pending:" - the stuck
+            # status this whole block exists to prevent.
+            frappe.db.commit()
             terminal_written = True
             # A "restart" means the container may be freshly (re)provisioned
             # (rebind / reboot recovery / image upgrade) with an EMPTY
@@ -425,6 +445,7 @@ class JarvisSettings(Document):
                 "last_sync_at": frappe.utils.now(),
                 "last_sync_status": f"failed: auth: {e}",
             })
+            frappe.db.commit()
             terminal_written = True
             frappe.log_error(
                 title="Jarvis: admin auth failed",
@@ -435,6 +456,7 @@ class JarvisSettings(Document):
                 "last_sync_at": frappe.utils.now(),
                 "last_sync_status": f"failed: admin unreachable: {e}",
             })
+            frappe.db.commit()
             terminal_written = True
             frappe.log_error(
                 title="Jarvis: admin unreachable",
@@ -447,6 +469,7 @@ class JarvisSettings(Document):
                 "last_sync_at": frappe.utils.now(),
                 "last_sync_status": f"failed: rate-limited; {retry_str}",
             })
+            frappe.db.commit()
             terminal_written = True
             frappe.logger().info(
                 f"admin_client: rate-limited; retry_after={retry}s"
@@ -617,7 +640,7 @@ def _post_pool_with_retry(spec, api_keys, oauth_blobs):
     raise last
 
 
-def _enqueued_sync_via_admin_pool() -> None:
+def _enqueued_sync_via_admin_pool(retry_left: int = 1) -> None:
     """Background-queue wrapper for the proxy (pool) sync path.
 
     Re-reads Jarvis Settings at run time and rebuilds the pool payload via
@@ -633,19 +656,57 @@ def _enqueued_sync_via_admin_pool() -> None:
     - Redis lock prevents parallel pool + creds calls racing on the container.
     - AdminRateLimitedError writes a terminal failure with retry hint.
     - try/finally backstop ensures the status never sticks at "pending:".
+
+    ``retry_left``: losing the lock race must not strand a FRESH tenant on a
+    terminal "failed: skipped" (their first pool apply would never happen and
+    is_ready_for_chat would gate them out of chat indefinitely). On the first
+    lock loss we re-enqueue ONE follow-up run under its own job_id with a
+    longer lock wait; only a second loss is terminal.
     """
     import frappe as _frappe
     from jarvis._redis_lock import redis_lock
     from jarvis import admin_client
     from jarvis.jarvis.pool_serialize import build_pool_payload
 
-    with redis_lock("jarvis_settings_admin_sync", timeout_s=120, blocking_timeout_s=60.0) as acquired:
+    with redis_lock(
+        "jarvis_settings_admin_sync",
+        # TTL must cover a healthy holder running to its rq SIGALRM - see
+        # ADMIN_SYNC_LOCK_TIMEOUT_S. A 120s TTL under a 600s job would
+        # expire mid-run and admit a concurrent container mutation.
+        timeout_s=ADMIN_SYNC_LOCK_TIMEOUT_S,
+        # The retry run tolerates a long-held sibling lock: it may wait up
+        # to half the RQ envelope, leaving the other half for its own work.
+        blocking_timeout_s=(ADMIN_SYNC_RQ_TIMEOUT_S / 2.0) if retry_left <= 0 else 60.0,
+    ) as acquired:
         if not acquired:
+            settings = _frappe.get_single("Jarvis Settings")
+            if retry_left > 0:
+                _frappe.logger().warning(
+                    "jarvis_settings: pool admin sync lost the lock race; "
+                    "scheduling one retry",
+                )
+                settings.db_set(
+                    "last_sync_status",
+                    "pending: waiting for a concurrent sync to finish (will retry)",
+                    update_modified=False,
+                )
+                # Own job_id: the primary job (jarvis_settings_sync:pool) is
+                # THIS still-running job, so re-enqueueing under the same id
+                # would be dedup-dropped and the retry would never run.
+                _frappe.enqueue(
+                    "jarvis.jarvis.doctype.jarvis_settings.jarvis_settings"
+                    "._enqueued_sync_via_admin_pool",
+                    queue="long",
+                    timeout=ADMIN_SYNC_RQ_TIMEOUT_S,
+                    job_id="jarvis_settings_sync:pool:retry",
+                    deduplicate=True,
+                    retry_left=0,
+                )
+                return
             _frappe.logger().warning(
                 "jarvis_settings: skipping pool admin sync; "
-                "another worker held the lock past blocking timeout",
+                "another worker held the lock past blocking timeout (retry exhausted)",
             )
-            settings = _frappe.get_single("Jarvis Settings")
             settings.db_set(
                 "last_sync_status",
                 "failed: skipped (concurrent sync did not finish in time)",
@@ -687,12 +748,16 @@ def _enqueued_sync_via_admin_pool() -> None:
                 # first sync is still pending/failed has no working pool.
                 "llm_pool_synced_at": _frappe.utils.now(),
             })
+            # Commit every terminal write - matching _sync_via_admin; see
+            # the comment there. Also makes llm_pool_synced_at durable.
+            _frappe.db.commit()
             terminal_written = True
         except admin_client.AdminAuthError as e:
             settings.db_set({
                 "last_sync_at": _frappe.utils.now(),
                 "last_sync_status": f"failed: auth: {e}",
             })
+            frappe.db.commit()
             terminal_written = True
             _frappe.log_error(
                 title="Jarvis: admin auth failed (pool sync)",
@@ -703,6 +768,7 @@ def _enqueued_sync_via_admin_pool() -> None:
                 "last_sync_at": _frappe.utils.now(),
                 "last_sync_status": f"failed: admin unreachable: {e}",
             })
+            frappe.db.commit()
             terminal_written = True
             _frappe.log_error(
                 title="Jarvis: admin unreachable (pool sync)",
@@ -715,6 +781,7 @@ def _enqueued_sync_via_admin_pool() -> None:
                 "last_sync_at": _frappe.utils.now(),
                 "last_sync_status": f"failed: rate-limited; {retry_str}",
             })
+            frappe.db.commit()
             terminal_written = True
             _frappe.logger().info(
                 f"admin_client: pool sync rate-limited; retry_after={retry}s"
@@ -724,6 +791,7 @@ def _enqueued_sync_via_admin_pool() -> None:
                 "last_sync_at": _frappe.utils.now(),
                 "last_sync_status": f"failed: validation: {e}",
             })
+            _frappe.db.commit()
             terminal_written = True
             _frappe.log_error(
                 title="Jarvis: admin validation failed (pool sync)",
@@ -770,7 +838,14 @@ def _enqueued_sync_via_admin(action: str) -> None:
     """
     from jarvis._redis_lock import redis_lock
 
-    with redis_lock("jarvis_settings_admin_sync", timeout_s=120, blocking_timeout_s=60.0) as acquired:
+    with redis_lock(
+        "jarvis_settings_admin_sync",
+        # TTL must cover a healthy holder running to its rq SIGALRM - see
+        # ADMIN_SYNC_LOCK_TIMEOUT_S. A 120s TTL under a 600s job would
+        # expire mid-run and admit a concurrent container mutation.
+        timeout_s=ADMIN_SYNC_LOCK_TIMEOUT_S,
+        blocking_timeout_s=60.0,
+    ) as acquired:
         if not acquired:
             # Couldn't get the lock within 60s: an earlier sync is
             # apparently stuck. Log + bail; the failed status field

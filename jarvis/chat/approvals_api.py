@@ -143,7 +143,7 @@ def _order_by(sort_field, sort_dir, sortable: dict, default_field, default_dir, 
 @frappe.whitelist()
 def list_approvals_page(
 	search: str = "",
-	filters=None,
+	filters: str | dict | None = None,
 	sort_field: str = "",
 	sort_dir: str = "",
 	start: int = 0,

@@ -78,18 +78,21 @@ def is_ready_for_chat() -> dict:
 	# Pool mode: proxy_active is config INTENT, derived and committed at
 	# save time BEFORE the async pool sync runs - it does not prove the
 	# container ever received the pool. Gate on evidence of a successful
-	# apply instead: llm_pool_synced_at (stamped by the pool-sync job on
-	# every "ok") or a current "ok" status (covers tenants provisioned
-	# before the marker field existed). A pool that has EVER applied stays
-	# ready through a later re-save's transient pending/failed - the
-	# container keeps serving its previous config. A fresh tenant whose
-	# FIRST sync is still pending or failed is NOT ready: sending them to
-	# chat guarantees failing turns while onboarding still shows
-	# "provisioning" (JARVIS-2026-07-08 split-brain).
+	# apply instead: llm_pool_synced_at, stamped by the pool-sync job on
+	# every "ok" (tenants provisioned before the field existed are
+	# backfilled by patch v1_10). A pool that has EVER applied stays ready
+	# through a later re-save's transient pending/failed - the container
+	# keeps serving its previous config. A fresh tenant whose FIRST sync
+	# is still pending or failed is NOT ready: sending them to chat
+	# guarantees failing turns while onboarding still shows "provisioning"
+	# (JARVIS-2026-07-08 split-brain).
+	#
+	# Deliberately NOT a last_sync_status check: that field is shared with
+	# the single-model sync, so a stale legacy "ok (reload via admin)" from
+	# a queued creds job could falsely open the gate for a never-applied
+	# pool.
 	if getattr(settings, "proxy_active", 0):
-		synced = bool(getattr(settings, "llm_pool_synced_at", None))
-		status = (getattr(settings, "last_sync_status", "") or "").strip()
-		if synced or status.startswith("ok"):
+		if getattr(settings, "llm_pool_synced_at", None):
 			return {"ready": True, "reason": None}
 		return {"ready": False, "reason": "llm_pool_provisioning"}
 

@@ -318,7 +318,7 @@ def get_installations() -> list[dict]:
 # admin surface (System Manager ONLY — every check server-side)
 # --------------------------------------------------------------------------- #
 @frappe.whitelist()
-def set_agent_roles(agent_slug: str, roles=None) -> dict:
+def set_agent_roles(agent_slug: str, roles: str | list | None = None) -> dict:
 	"""Restrict an agent listing to a set of Roles. System Manager only.
 
 	``roles`` is a JSON array of Role names; ``[]`` clears the restriction
@@ -525,7 +525,7 @@ def set_schedule(
 	installation: str,
 	schedule_enabled: int | None = None,
 	schedule_frequency: str | None = None,
-	schedule_time=None,
+	schedule_time: str | None = None,
 ) -> dict:
 	"""Set an installed agent's audit schedule — pure DB write (O6: no restart).
 	Recomputes ``next_run_at`` when the schedule is enabled."""
