@@ -16,6 +16,31 @@ MAX_LIMIT = 1000
 # 2026-06-22 outage that motivated this.
 ROW_GUARD = 200
 
+_CHILD_TABLE_FIELDTYPES = ("Table", "Table MultiSelect")
+
+
+def _child_table_parents(doctype: str) -> list[str]:
+    """DocTypes that own ``doctype`` as a child table (via a Table field).
+
+    Frappe derives a child DocType's read permission from its parent, so when a
+    caller queries a child table without a parent we surface the candidate
+    parents to point them at ``parent_doctype``. Reads schema metadata via
+    ``frappe.get_all`` (permissions bypassed) - ``DocField`` is itself a child
+    table, so ``get_list`` here would hit the very wall we are explaining.
+    Checks both standard fields (``DocField``) and ``Custom Field`` (``dt``).
+    """
+    parents = frappe.get_all(
+        "DocField",
+        filters={"fieldtype": ["in", _CHILD_TABLE_FIELDTYPES], "options": doctype},
+        pluck="parent",
+    )
+    parents += frappe.get_all(
+        "Custom Field",
+        filters={"fieldtype": ["in", _CHILD_TABLE_FIELDTYPES], "options": doctype},
+        pluck="dt",
+    )
+    return list(dict.fromkeys(parents))
+
 
 def get_list(
     doctype: str,
@@ -24,11 +49,22 @@ def get_list(
     order_by: str | None = None,
     limit: int = 20,
     confirm_large: bool = False,
+    parent_doctype: str | None = None,
 ) -> list[dict]:
     """List documents with filters.
 
     Frappe's get_list applies per-user record permissions automatically.
     We additionally enforce DocType-level read permission and cap the limit.
+
+    Child (Table) DocTypes have no permissions of their own - Frappe derives
+    their access from a parent DocType. To read child rows (e.g. a Timesheet's
+    ``time_logs``) pass ``parent_doctype`` (the owning DocType) and usually
+    filter by ``parent``; permission is then derived from the parent. Calling
+    get_list on a child DocType without ``parent_doctype`` raises
+    ``InvalidArgumentError``. Note child tables lack parent-only fields (e.g.
+    employee/date live on ``Timesheet``, not ``Timesheet Detail``) - to filter
+    or aggregate by those, query the parent with a join via the ``query`` tool
+    or use ``run_report``.
 
     Row guard: results above ``ROW_GUARD`` (200) rows raise
     ``ResultTooLargeError`` unless ``confirm_large=True``. The agent
@@ -41,7 +77,21 @@ def get_list(
     if limit <= 0 or limit > MAX_LIMIT:
         raise InvalidArgumentError(f"limit must be between 1 and {MAX_LIMIT}")
 
-    if not frappe.has_permission(doctype, ptype="read"):
+    if frappe.get_meta(doctype).istable:
+        if not parent_doctype:
+            parents = _child_table_parents(doctype)
+            hint = f" (e.g. parent_doctype='{parents[0]}')" if parents else ""
+            raise InvalidArgumentError(
+                f"'{doctype}' is a child table; pass parent_doctype{hint} and filter by "
+                f"parent, or query its parent with a join via the `query` tool / use "
+                f"run_report. Child tables lack parent-only fields like employee/date."
+            )
+    else:
+        # parent_doctype only makes sense for child tables; drop a stray value so
+        # it never turns a normal query into a "DocType <x> not found" error.
+        parent_doctype = None
+
+    if not frappe.has_permission(doctype, ptype="read", parent_doctype=parent_doctype):
         raise PermissionDeniedError(f"no read permission on {doctype}")
 
     rows = frappe.get_list(
@@ -50,6 +100,7 @@ def get_list(
         filters=filters or {},
         order_by=order_by,
         limit=limit,
+        parent_doctype=parent_doctype,
     )
     if len(rows) > ROW_GUARD and not confirm_large:
         raise ResultTooLargeError(
