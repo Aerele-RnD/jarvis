@@ -8,8 +8,11 @@ name: CI base image
 #
 # This workflow does not change ci.yml. It only publishes the image.
 #
-# On pull_request the image is BUILT but NOT PUSHED, so a PR touching the Dockerfile proves the
-# build still works without mutating the published tag.
+# Order is build -> smoke-test -> push, never build+push -> smoke-test: `:v16` is a mutable tag
+# that every PR run will pull, so it must never receive an image that has not passed the gate.
+#
+# On pull_request the image is BUILT and TESTED but NOT PUSHED, so a PR touching the Dockerfile
+# proves the build still works without mutating the published tag.
 
 on:
   schedule:
@@ -26,17 +29,24 @@ on:
       - ".github/workflows/ci-base-image.yml"
 
 concurrency:
-  # Keyed on ref so a PR build never cancels the nightly publish.
+  # Keyed on ref so a PR build never cancels the nightly publish. Only PR builds are cancellable:
+  # a cancelled run reads as neutral rather than failed, so cancelling a publish would silently
+  # leave `:v16` stale with nothing marked red — the same reasoning ci.yml uses to protect main.
   group: ci-base-image-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
+  # packages: write is needed only by the final `docker push` step, and only on non-PR runs.
+  # GitHub forces GITHUB_TOKEN read-only for fork-originated `pull_request` runs regardless of
+  # this block, so a fork PR cannot publish even though it re-runs this workflow's own file.
   contents: read
   packages: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Longer than ci.yml's 45: this builds everything ci.yml builds, plus a throwaway mariadb,
+    # a full erpnext+hrms site install, and the dump. Locally the whole build is ~25 min.
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -60,15 +70,25 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: docker/build-push-action@v6
+      # Build once, into the local docker daemon. Nothing is pushed here — publishing an image
+      # before validating it would put a broken `:v16` in front of every PR, and the smoke test
+      # below could only report the damage after the fact.
+      #
+      # `load: true` is what lets the smoke test run the *exact* artifact that gets pushed,
+      # instead of a second `docker build` producing a different image with different labels.
+      - name: Build image
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: .github/docker/Dockerfile.ci-base
-          push: ${{ github.event_name != 'pull_request' }}
-          # :v16 is the tag ci.yml will pin. The run-numbered tag gives you a rollback target.
+          push: false
+          load: true
+          # :v16 is the tag ci.yml will pin. run_id (not run_number) is the rollback target:
+          # run_number restarts if the workflow is renamed, so old numbered tags could be
+          # silently overwritten by a new incarnation. run_id is unique for the repo, forever.
           tags: |
             ghcr.io/aerele-rnd/jarvis-ci-base:v16
-            ghcr.io/aerele-rnd/jarvis-ci-base:v16-${{ github.run_number }}
+            ghcr.io/aerele-rnd/jarvis-ci-base:v16-${{ github.run_id }}
           build-args: |
             FRAPPE_SHA=${{ steps.shas.outputs.frappe }}
             ERPNEXT_SHA=${{ steps.shas.outputs.erpnext }}
@@ -76,13 +96,12 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Fails the build if the seeded dump is missing or suspiciously small, rather than
-      # publishing an image whose ci.yml consumer would fail later at `bench new-site`.
+      # Gate. A build can exit 0 and still produce a useless image — e.g. an upstream change that
+      # installs fewer doctypes, or a dump truncated by a full disk. The Dockerfile's own `test -s`
+      # only proves the dump is non-empty.
       - name: Smoke-test the built image
         run: |
-          docker build --target final -t ci-base-probe \
-            -f .github/docker/Dockerfile.ci-base .
-          docker run --rm ci-base-probe bash -lc '
+          docker run --rm ghcr.io/aerele-rnd/jarvis-ci-base:v16 bash -lc '
             set -e
             test -s /opt/ci/test_site.sql
             bytes=$(stat -c%s /opt/ci/test_site.sql)
@@ -98,3 +117,10 @@ jobs:
             /opt/frappe-bench/env/bin/python -c "import coverage, gevent; print(\"test deps OK\")"
             test "$(id -u)" = "1001"
           '
+
+      # Only now, and never from a pull_request.
+      - name: Push
+        if: github.event_name != 'pull_request'
+        run: |
+          docker push ghcr.io/aerele-rnd/jarvis-ci-base:v16
+          docker push ghcr.io/aerele-rnd/jarvis-ci-base:v16-${{ github.run_id }}
