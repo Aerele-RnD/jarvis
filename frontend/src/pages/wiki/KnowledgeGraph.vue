@@ -33,7 +33,7 @@
 				<DetailPanel :node="state.selected" :metrics="state.analysis.metrics"
 					:communities="state.analysis.communities" :show-actions="false" @focus="(id) => (state.focus = id)" />
 				<AnalysisTabs :analysis="state.analysis" :nodes="baseData.nodes" :actions="state.actions"
-					:history="state.history" :can-act="true" :show-priority="false" @pick="pickId" @add-link="onAddLink" />
+					:history="state.history" :can-act="false" :show-priority="false" @pick="pickId" />
 			</div>
 		</div>
 
@@ -52,7 +52,7 @@ import {
 	Graph3D, FilterBar, DetailPanel, AnalysisTabs, ExclusionRules,
 	runAnalysis, computeActions, overlayFilter, egoGraph, searchGraph,
 } from "wiki-graph-core"
-import { getWikiGraph, addWikiLink, getWikiGraphHistory } from "@/api/wiki"
+import { getWikiGraph, getWikiGraphHistory } from "@/api/wiki"
 
 const PAGE_TYPES = ["Customer", "Supplier", "Item", "Process", "Doctype", "Exception", "Integration", "People", "Org"]
 
@@ -133,21 +133,6 @@ function pickId(id) {
 	const n = (state.data.nodes || []).find((x) => x.id === id)
 	if (n) state.selected = n
 }
-async function onAddLink(s) {
-	const a = String(s.a || "").replace(/^page:/, "")
-	const b = String(s.b || "").replace(/^page:/, "")
-	if (!a || !b) return
-	state.toast = `Linking ${s.aLabel} ↔ ${s.bLabel}…`
-	try {
-		await addWikiLink(a, b)
-		state.toast = "Link added ✓"
-		await load()
-	} catch (e) {
-		state.toast = (e && e.message) ? `Couldn't add link: ${e.message}` : "Couldn't add link"
-	}
-	setTimeout(() => { state.toast = "" }, 2000)
-}
-
 watch(() => state.excluded, recompute)
 onMounted(load)
 </script>
