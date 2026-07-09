@@ -238,7 +238,7 @@
 								<span v-else></span>
 								<!-- The ONLY gradient button in the whole flow. -->
 								<button v-if="connectReady || savingConnect" class="jv-ob-btn jv-ob-btn-grad" :disabled="savingConnect" @click="saveConnect">
-									{{ savingConnect ? "Connecting…" : "Connect & Finish →" }}
+									{{ savingConnect ? "Connecting…" : "Start Chatting →" }}
 								</button>
 							</div>
 						</section>
@@ -1102,6 +1102,13 @@ onMounted(async () => {
    visible border) has higher specificity than .jv-ob-btn-grad, so without this
    the gradient button turns white with a border on hover. */
 .jv-ob-btn-grad:hover:not(:disabled) { background: linear-gradient(135deg, #6e8bff, #8b5cf6); border-color: transparent; color: #fff; transform: translateY(-1px); box-shadow: 0 10px 26px rgba(110, 92, 246, .4); }
+/* Gentle pulsing glow on the final CTA so it's obvious where to click. Excluded
+   on :hover (the hover shadow takes over) and disabled during save. */
+@keyframes jv-ob-cta-pulse {
+	0%, 100% { box-shadow: 0 6px 20px rgba(110, 92, 246, .3); }
+	50%      { box-shadow: 0 8px 30px rgba(110, 92, 246, .6); }
+}
+.jv-ob-btn-grad:not(:disabled):not(:hover) { animation: jv-ob-cta-pulse 1.8s ease-in-out infinite; }
 /* small ghost variant (inline Retry next to an error message) */
 .jv-ob-btn-sm { height: 28px; padding: 0 12px; font-size: 12px; border-radius: 8px; margin-left: 8px; }
 
@@ -1222,5 +1229,6 @@ onMounted(async () => {
 	.jv-ob-screen { animation: none; }
 	.jv-ob-plan, .jv-ob-btn, .jv-ob-form :deep(.jvc-field) { transition: none; }
 	.jv-ob-spinner { animation: none; }
+	.jv-ob-btn-grad { animation: none; }
 }
 </style>
