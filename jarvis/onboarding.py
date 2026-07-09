@@ -162,11 +162,16 @@ def get_preset_catalog() -> list:
 
 
 @frappe.whitelist()
-def save_llm_pool(models, preset: str | None = None, routing_mode: str = "failover") -> dict:
+def save_llm_pool(models: str | list, preset: str | None = None, routing_mode: str = "failover") -> dict:
 	"""Write the customer's multi-model LLM pool into Jarvis Settings.models[]
 	(+ preset, routing_mode) and let the existing on_update pipeline validate
 	(validate_models), derive proxy_active, mirror models[0] into legacy llm_*,
 	and sync DIRECT (/llm-creds) vs PROXY (/llm-pool) via admin.
+
+	``models`` MUST stay annotated: with Frappe's
+	``require_type_annotated_api_methods`` enforced (declared in hooks.py),
+	an un-annotated whitelisted param 500s the request before the body runs
+	(JARVIS-2026-07-08 incident, fault a).
 
 	System-Manager-gated. routing_mode is always 'failover' in v1. preset is an
 	admin-catalog key or None; validated against the fetched catalog."""

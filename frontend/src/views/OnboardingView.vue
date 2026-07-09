@@ -265,7 +265,7 @@ import LlmPoolEditor from "@/components/LlmPoolEditor.vue"
 import JvCombo from "@/components/JvCombo.vue"
 import { STEPS_MANAGED, STEPS_SELFHOST, nextStep, prevStep, stepIndex } from "@/onboarding/steps"
 import {
-	checkSignupPaymentState, isReadyForChat,
+	checkSignupPaymentState, isReadyForChat, getLlmSyncStatus,
 	listPlans, startSignup, finishPayment, devOnboard,
 	saveSelfHosted, testSelfHostConnection, getAccountDefaults, syncConnection,
 } from "@/api"
@@ -369,8 +369,11 @@ async function reconcileMidFlightSignup() {
 			state.step = "selfhost"
 			return
 		}
-		if (ready && ready.reason === "llm_credentials") {
-			// Signup + payment already done; only the AI connection is missing.
+		if (ready && (ready.reason === "llm_credentials" || ready.reason === "llm_pool_provisioning")) {
+			// Signup + payment already done; only the AI connection is missing
+			// (llm_credentials) or a configured pool never finished its first
+			// apply (llm_pool_provisioning) - both resume at the connect step,
+			// whose sync-status poller shows the pending/failed state.
 			state.mode = "managed"
 			state.step = "connect"
 			return
@@ -653,12 +656,69 @@ function forceContinue() {
 	window.location.assign("/jarvis/")
 }
 
-// Shared tail for both completion paths: poll for readiness, then either
-// auto-reload (the common case) or leave a "still finishing" note with a
-// manual continue button so the user is never stuck staring at a spinner.
-async function afterSaveRecheckReady() {
+// First-time provisioning runs in a background job whose budget is minutes
+// (cold container provision + proxy sidecars), not seconds. Readiness only
+// flips once that job APPLIES the pool, so before probing is_ready_for_chat
+// we follow the job itself: poll get_llm_sync_status until it leaves
+// "pending:". The ceiling is a UX bound, not a correctness guarantee: it
+// clears the backend's 600s job envelope (ADMIN_SYNC_RQ_TIMEOUT_S) plus one
+// lock-loss retry hop; a pathological retry chain can honestly outlast it,
+// in which case the caller falls through to the "still finishing" note with
+// a manual continue - never a hard block. Returns the terminal sync dict,
+// or null on timeout.
+async function waitForSyncTerminal(maxMs = 15 * 60 * 1000, intervalMs = 3000) {
+	const deadline = Date.now() + maxMs
+	for (;;) {
+		try {
+			const s = await getLlmSyncStatus()
+			if (s && !s.pending) return s
+		} catch (e) {
+			// transient network hiccups shouldn't strand the user
+		}
+		if (Date.now() >= deadline) return null
+		await sleep(intervalMs)
+	}
+}
+
+// Shared tail for both completion paths: optionally follow an in-flight
+// provisioning sync to a terminal state, then poll for readiness, then
+// either auto-reload (the common case) or leave a "still finishing" note
+// with a manual continue button so the user is never stuck on a spinner.
+//
+// followSync is ONLY for the managed pool path (save_llm_pool writes a
+// "pending:" status synchronously before returning, so a sync from THIS
+// save is observable as pending right now). The self-host save never
+// touches last_sync_status, and a no-op / container-owned managed save
+// enqueues nothing - in both cases the field may hold a STALE terminal
+// "failed:" (or a stale "pending:" from an abandoned earlier attempt),
+// which must not block an actually-ready tenant. Hence: only follow a
+// sync we can see in flight, and never gate the self-host path on this
+// field at all.
+async function afterSaveRecheckReady({ followSync = false } = {}) {
 	state.finishNote = ""
 	state.finishing = true
+	if (followSync) {
+		// save_llm_pool writes "pending:" synchronously before its response,
+		// and onConnected only fires after a successful save - so whatever
+		// this probe reads is THIS save's sync: still pending (follow it to
+		// terminal) or already terminal (a fast failure, e.g. an immediate
+		// auth error - which must surface its actionable status, not fall
+		// through to a generic "still finishing" note that hides the
+		// diagnostic the status field already carries).
+		let terminal = null
+		try {
+			const s0 = await getLlmSyncStatus()
+			terminal = s0 && s0.pending ? await waitForSyncTerminal() : s0
+		} catch (e) {
+			// status probe is advisory - fall through to the readiness poll
+		}
+		const status = ((terminal && terminal.last_sync_status) || "").trim()
+		if (status.startsWith("failed") || status.startsWith("skipped")) {
+			state.finishing = false
+			state.finishNote = `Setup hit a problem (${status}). Check the AI connection and save again - or continue to Jarvis and retry from Settings.`
+			return
+		}
+	}
 	const ready = await waitUntilReady()
 	if (ready) {
 		// Keep the "Setting up Jarvis" spinner up THROUGH the full-page reload.
@@ -676,7 +736,7 @@ async function afterSaveRecheckReady() {
 // renderLlm) - the component itself owns Quick/Preset/Custom + save_llm_pool;
 // this is only the post-save readiness handoff. ---------------------------
 function onConnected(sync) {
-	afterSaveRecheckReady()
+	afterSaveRecheckReady({ followSync: true })
 }
 
 // The Connect-AI footer (Back + Save) lives here, not inside LlmPoolEditor
