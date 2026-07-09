@@ -425,17 +425,20 @@ class TestSelfHealOnStalePairing(FrappeTestCase):
 			ensure_paired_calls.append(True)
 			return creds
 
-		# _repair_and_reconnect's convoy guard reads the REAL site's
-		# Jarvis Settings.chat_device_id; on a dev site with a live
-		# pairing it differs from the test creds' device_id and the
-		# guard skips the wipe ("another worker already re-paired").
-		# Pin it to "no winner yet" so these tests are hermetic instead
-		# of depending on whatever the local site happens to hold.
+		# _repair_and_reconnect's convoy guards read the REAL site's
+		# Jarvis Settings (chat_device_id + chat_device_token); on a dev
+		# site with a live pairing they differ from the test creds and
+		# the guards skip the wipe ("another worker already re-paired" /
+		# "a peer already adopted a rotated token"). Pin both to "no
+		# winner yet" so these tests are hermetic instead of depending
+		# on whatever the local site happens to hold.
 		with patch("jarvis.chat.openclaw_client.websocket.create_connection",
 				   side_effect=lambda *a, **kw: next(ws_iter)), \
 			 patch("jarvis.chat.openclaw_client.ensure_paired",
 				   side_effect=_fake_ensure_paired), \
 			 patch("jarvis.chat.openclaw_client._persisted_device_id",
+				   return_value=""), \
+			 patch("jarvis.chat.openclaw_client._persisted_device_token",
 				   return_value=""), \
 			 patch("jarvis.chat.openclaw_client.clear_credentials",
 				   side_effect=_fake_clear):
@@ -489,6 +492,34 @@ class TestSelfHealOnStalePairing(FrappeTestCase):
 		sess, clears, ensure_calls = self._connect_with_two_ws(first_ws, second_ws)
 		self.assertEqual(len(clears), 1)
 		self.assertEqual(len(ensure_calls), 2)
+		sess.close()
+
+	def test_peer_adopted_rotation_skips_the_wipe_but_still_retries(self):
+		"""A gateway token ROTATION keeps the device_id, so when worker B
+		is rejected (it signed with the pre-rotation token) while worker A
+		already adopted the reissued token, the repair path must NOT wipe
+		the healed pairing - but must still retry with fresh creds."""
+		first_ws, second_ws = self._build_two_ws(
+			"", second_ok=True, first_error=self._WIRE_AUTH_REJECTION,
+		)
+		ws_iter = iter([first_ws, second_ws])
+		creds = _make_creds()
+		clear_called: list = []
+		with patch("jarvis.chat.openclaw_client.websocket.create_connection",
+				   side_effect=lambda *a, **kw: next(ws_iter)), \
+			 patch("jarvis.chat.openclaw_client.ensure_paired",
+				   return_value=creds), \
+			 patch("jarvis.chat.openclaw_client._persisted_device_id",
+				   return_value=creds.device_id), \
+			 patch("jarvis.chat.openclaw_client._persisted_device_token",
+				   return_value="tok-rotated-by-peer"), \
+			 patch("jarvis.chat.openclaw_client.clear_credentials",
+				   side_effect=lambda: clear_called.append(True)):
+			sess = OpenclawSession.connect("ws://t")
+		self.assertFalse(
+			clear_called,
+			"a pairing healed by a peer's token adoption must not be wiped",
+		)
 		sess.close()
 
 	def test_invalid_request_without_auth_details_does_not_trigger_repair(self):
@@ -661,6 +692,31 @@ class TestReissuedTokenAdoption(FrappeTestCase):
 		self.assertEqual(sess._creds.device_token, "tok-rotated")
 		sess.close()
 
+	def test_malformed_hello_ok_payload_never_fails_the_connect(self):
+		"""A successful connect must tolerate ANY hello-ok payload shape
+		(pre-adoption behavior ignored the payload entirely): payload as a
+		list, auth as a scalar, deviceToken as a non-string."""
+		creds = _make_creds()
+		for payload in (["unexpected"], {"auth": True}, {"auth": "tok"},
+						{"auth": {"deviceToken": 42}}, None, "str"):
+			def _ok(payload=payload):
+				req_id = ws.sent[-1]["id"]
+				return _frame({"type": "res", "id": req_id, "ok": True,
+							   "payload": payload})
+
+			ws = _ScriptedWS([_challenge(), _ok])
+			update_mock = MagicMock(return_value=True)
+			with patch("jarvis.chat.openclaw_client.websocket.create_connection",
+					   return_value=ws), \
+				 patch("jarvis.chat.openclaw_client.ensure_paired",
+					   return_value=creds), \
+				 patch("jarvis.chat.openclaw_client.update_device_token",
+					   update_mock):
+				sess = OpenclawSession.connect("ws://t")
+			update_mock.assert_not_called()
+			self.assertEqual(sess._creds.device_token, creds.device_token)
+			sess.close()
+
 
 class TestRepairConvoyCollapse(FrappeTestCase):
 	"""Sprint-2 (2026-06-16): N concurrent workers all observe a stale
@@ -725,7 +781,9 @@ class TestRepairConvoyCollapse(FrappeTestCase):
 			 patch("jarvis.chat.openclaw_client.clear_credentials",
 				   side_effect=lambda: clear_called.append(True)), \
 			 patch("jarvis.chat.openclaw_client._persisted_device_id",
-				   return_value=stale_creds.device_id):
+				   return_value=stale_creds.device_id), \
+			 patch("jarvis.chat.openclaw_client._persisted_device_token",
+				   return_value=stale_creds.device_token):
 			sess = OpenclawSession.connect("ws://t")
 		self.assertEqual(len(clear_called), 1,
 			"lock-holder must wipe + re-pair when persisted id matches stale")

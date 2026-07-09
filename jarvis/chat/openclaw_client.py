@@ -219,6 +219,21 @@ def _persisted_device_id() -> str:
 		return ""
 
 
+def _persisted_device_token() -> str:
+	"""Read of Jarvis Settings.chat_device_token (Password field).
+
+	Used by the repair path to detect "a peer already adopted a gateway-
+	reissued token for this same device" - the device_id alone can't,
+	because a token rotation keeps the device_id. Returns "" when
+	unreadable (the caller treats empty as "nothing newer, proceed")."""
+	import frappe
+	try:
+		s = frappe.get_single("Jarvis Settings")
+		return (s.get_password("chat_device_token", raise_exception=False) or "").strip()
+	except Exception:
+		return ""
+
+
 class OpenclawSession:
 	"""Direct WebSocket session to one tenant's openclaw gateway.
 
@@ -275,7 +290,10 @@ class OpenclawSession:
 			try: ws.close()
 			except Exception: pass
 			if allow_repair and _is_stale_pairing(e):
-				cls._repair_and_reconnect(gateway_url, stale_device_id=creds.device_id)
+				cls._repair_and_reconnect(
+					gateway_url, stale_device_id=creds.device_id,
+					stale_device_token=creds.device_token,
+				)
 				return cls._attempt_connect(gateway_url, allow_repair=False)
 			raise
 		except Exception:
@@ -360,7 +378,10 @@ class OpenclawSession:
 		return dataclasses.replace(creds, device_token=reissued_token)
 
 	@classmethod
-	def _repair_and_reconnect(cls, gateway_url: str, *, stale_device_id: str) -> None:
+	def _repair_and_reconnect(
+		cls, gateway_url: str, *, stale_device_id: str,
+		stale_device_token: str = "",
+	) -> None:
 		"""Serialize the clear+re-pair window after a stale-pairing rejection.
 
 		Sprint-2 (2026-06-16 review): with N concurrent chat workers
@@ -394,6 +415,17 @@ class OpenclawSession:
 			if current and current != stale_device_id:
 				# Another worker already re-paired while we waited. Don't
 				# wipe their work; let the caller re-read.
+				return
+			# A gateway token ROTATION keeps the device_id, so the id check
+			# alone can't see that a peer just adopted the reissued token
+			# (hello-ok auth.deviceToken) while our rejected connect was in
+			# flight with the pre-rotation token. If the persisted token
+			# moved on from the one we presented, the pairing is already
+			# healed - retrying with the fresh creds beats destroying them
+			# and paying a full re-pair round-trip.
+			persisted_token = _persisted_device_token()
+			if stale_device_token and persisted_token \
+					and persisted_token != stale_device_token:
 				return
 			clear_credentials()
 			# Don't prime ensure_paired() here: the caller's next
@@ -667,9 +699,11 @@ class OpenclawSession:
 			if ftype == "res" and frame.get("id") == agent_id:
 				if not frame.get("ok"):
 					err = frame.get("error") or {}
+					details = err.get("details")
 					raise OpenclawUnreachableError(
 						f"agent rejected: {err.get('code', '?')}: {err.get('message', '')}",
 						code=err.get("code"),
+						details=details if isinstance(details, dict) else None,
 					)
 				active_run_id = (frame.get("payload") or {}).get("runId")
 				got_ack = True
@@ -782,8 +816,12 @@ class OpenclawSession:
 						code=err.get("code"),
 						details=details if isinstance(details, dict) else None,
 					)
-				auth = (frame.get("payload") or {}).get("auth") or {}
-				reissued = auth.get("deviceToken")
+				# Shape-defensive: a successful connect must NEVER fail on
+				# an unexpected hello-ok payload (pre-change behavior was to
+				# ignore the payload entirely).
+				payload = frame.get("payload")
+				auth = payload.get("auth") if isinstance(payload, dict) else None
+				reissued = auth.get("deviceToken") if isinstance(auth, dict) else None
 				if isinstance(reissued, str) and reissued \
 						and reissued != creds.device_token:
 					return reissued
@@ -811,9 +849,11 @@ class OpenclawSession:
 			if _is_response_frame(frame, req_id):
 				if not frame.get("ok"):
 					err = frame.get("error") or {}
+					details = err.get("details")
 					raise OpenclawUnreachableError(
 						f"{method} rejected: {err.get('code', '?')}: {err.get('message', '')}",
 						code=err.get("code"),
+						details=details if isinstance(details, dict) else None,
 					)
 				return frame
 		raise OpenclawUnreachableError(f"{method} timed out")

@@ -291,6 +291,32 @@ class TestUpdateDeviceToken(_SettingsSnapshotMixin, FrappeTestCase):
 			"tok-rotated",
 		)
 
+	def test_lock_unavailable_skips_persist(self):
+		"""Redis lock unavailable -> return False without touching Settings;
+		the check-then-write must never run unserialized against a
+		concurrent re-pair (it could mix the new device's identity with
+		the old device's rotated token)."""
+		from contextlib import contextmanager
+
+		s = frappe.get_single("Jarvis Settings")
+		s.db_set("chat_device_id", "dev-1")
+		s.db_set("chat_device_token", "tok-old")
+		frappe.db.commit()
+
+		@contextmanager
+		def _unavailable_lock(*a, **kw):
+			yield False
+
+		with patch("jarvis._redis_lock.redis_lock", _unavailable_lock):
+			self.assertFalse(
+				chat_device.update_device_token("tok-rotated", device_id="dev-1"),
+			)
+		s = frappe.get_single("Jarvis Settings")
+		self.assertEqual(
+			s.get_password("chat_device_token", raise_exception=False),
+			"tok-old",
+		)
+
 	def test_refuses_when_pairing_moved_on(self):
 		s = frappe.get_single("Jarvis Settings")
 		s.db_set("chat_device_id", "dev-2-fresh")
