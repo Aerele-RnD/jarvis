@@ -4,6 +4,9 @@
 			<template #left-header>
 				<Breadcrumbs :items="breadcrumbs" />
 			</template>
+			<template #right-header>
+				<Button icon="refresh-cw" :tooltip="'Refresh'" :loading="!state.loaded" @click="load" />
+			</template>
 		</LayoutHeader>
 		<div class="kg-head">
 			<h5>Knowledge Graph</h5>
@@ -50,7 +53,7 @@
 // four analysis tabs. Productive loop: accept a suggested connection → add_wiki_link
 // (durable, out-of-body) → refetch → the edge appears.
 import { reactive, computed, watch, onMounted } from "vue"
-import { Breadcrumbs } from "frappe-ui"
+import { Breadcrumbs, Button } from "frappe-ui"
 import LayoutHeader from "@/components/LayoutHeader.vue"
 import {
 	Graph3D, FilterBar, DetailPanel, AnalysisTabs, ExclusionRules,
