@@ -68,6 +68,17 @@ def poll_oauth_refresh_status() -> None:
 			message=frappe.get_traceback(),
 		)
 		return
+	except admin_client.AdminValidationError as e:
+		# Admin answered, but can't tell us anything authoritative: the 409
+		# NoRunningTenant case (container mid-restart after a creds/skills
+		# push, or a lapsed subscription). Ambiguous by the same argument as
+		# AdminUnreachableError above - a stopped container hasn't "lost" its
+		# profile - so log and skip rather than flipping to oauth_expired.
+		# Left uncaught this raised out of the scheduled job every hour.
+		frappe.logger().info(
+			"oauth_refresh_poll: admin could not report status; skipping (%s)", e,
+		)
+		return
 	except admin_client.AdminRateLimitedError as e:
 		retry = e.retry_after_seconds or 0
 		frappe.logger().info(

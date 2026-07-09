@@ -127,3 +127,18 @@ class TestOauthRefreshPoll(_PollTestCase):
 		# Unchanged.
 		self.assertEqual(s.last_sync_status, "ok (restart via admin)")
 		self.assertEqual(s.llm_oauth_account_email, "connected@example.com")
+
+	def test_admin_validation_error_skips_without_flip_and_does_not_raise(self):
+		"""409 NoRunningTenant (container mid-restart, lapsed subscription)
+		arrives as AdminValidationError. It is ambiguous for the same reason
+		AdminUnreachableError is - a stopped container hasn't lost its profile
+		- so it must not flip. It also must not escape: uncaught, it raised out
+		of the hourly scheduled job."""
+		from jarvis.exceptions import AdminValidationError
+		with patch("jarvis.admin_client.post_llm_auth_status",
+		           side_effect=AdminValidationError("NoRunningTenant")):
+			poll_oauth_refresh_status()  # must not raise
+		s = frappe.get_single("Jarvis Settings")
+		# Unchanged.
+		self.assertEqual(s.last_sync_status, "ok (restart via admin)")
+		self.assertEqual(s.llm_oauth_account_email, "connected@example.com")
