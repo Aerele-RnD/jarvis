@@ -71,6 +71,7 @@ const inputEl = ref(null)
 const listEl = ref(null)
 const searchQuery = ref("")
 const results = ref([])
+const frappeGroups = ref([])
 const searching = ref(false)
 const activeIndex = ref(0)
 
@@ -88,17 +89,26 @@ watch(searchQuery, (q) => {
 	if (!query) {
 		searching.value = false
 		results.value = []
+		frappeGroups.value = []
 		return
 	}
 	searching.value = true
 	_debounce = setTimeout(async () => {
 		const seq = ++_seq
 		try {
-			const r = await apiShell.searchConversations({ search: query, page_length: 20 })
+			// Conversation titles + the Frappe desk (records/reports) in parallel.
+			const [conv, ws] = await Promise.all([
+				apiShell.searchConversations({ search: query, page_length: 20 }),
+				apiShell.searchWorkspace({ search: query, limit: 6 }),
+			])
 			if (seq !== _seq) return // stale response
-			results.value = (r && r.rows) || []
+			results.value = (conv && conv.rows) || []
+			frappeGroups.value = (ws && ws.groups) || []
 		} catch (e) {
-			if (seq === _seq) results.value = []
+			if (seq === _seq) {
+				results.value = []
+				frappeGroups.value = []
+			}
 		} finally {
 			if (seq === _seq) searching.value = false
 		}
@@ -149,6 +159,10 @@ const groups = computed(() => {
 		? [{ name: "-loading", label: "Searching…", icon: "loader", disabled: true }]
 		: results.value.map(chatItem)
 	if (chats.length) out.push({ title: "Chats", items: chats })
+	// Frappe desk results (Lists / Records / Reports) after the chats.
+	for (const g of frappeGroups.value) {
+		if (g.items && g.items.length) out.push({ title: g.title, items: g.items })
+	}
 	return out
 })
 
@@ -194,6 +208,8 @@ function select(item) {
 	if (!item || item.disabled) return
 	open.value = false
 	if (item.action) item.action()
+	// Frappe desk records/reports open in a new tab so the chat isn't lost.
+	else if (item.route) window.open(item.route, "_blank", "noopener")
 	else router.push("/c/" + item.name)
 }
 
@@ -203,6 +219,7 @@ function reset() {
 	_seq++ // invalidate any in-flight search
 	searchQuery.value = ""
 	results.value = []
+	frappeGroups.value = []
 	searching.value = false
 	activeIndex.value = 0
 }

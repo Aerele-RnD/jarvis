@@ -35,7 +35,13 @@ export async function isWorkspaceReady() {
 // working workspace out of its chat + data over a recoverable credential
 // problem is wrong — that case stays on the existing invite/banner path and
 // keeps /account reachable so an admin can reauthorize.
-const NOT_ONBOARDED_REASONS = new Set(["signup", "selfhost_connection"])
+// "llm_pool_provisioning" also belongs here: a pool is configured but its
+// FIRST apply never succeeded (llm_pool_synced_at never stamped) - the
+// workspace has never had a working AI connection, so chat can only fail;
+// the poster routes back to setup. Unlike llm_credentials this cannot fire
+// on an established workspace: once a pool applies ONCE the marker is
+// permanent.
+const NOT_ONBOARDED_REASONS = new Set(["signup", "selfhost_connection", "llm_pool_provisioning"])
 
 // True only when the workspace has NOT completed onboarding at all — the single
 // case the full-screen gate poster is for. A ready workspace, a fail-open

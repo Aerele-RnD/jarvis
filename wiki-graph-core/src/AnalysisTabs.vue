@@ -1,7 +1,7 @@
 <template>
 	<div class="wg-tabs">
 		<!-- Priority review cards -->
-		<div class="wg-prio">
+		<div class="wg-prio" v-if="showPriority">
 			<div class="wg-card"><span class="wg-card-n">{{ hubName }}</span><span class="wg-card-l">top hub</span></div>
 			<div class="wg-card"><span class="wg-card-n">{{ brokerName }}</span><span class="wg-card-l">key bridge</span></div>
 			<div class="wg-card" :class="{ warn: staleN }"><span class="wg-card-n">{{ staleN }}</span><span class="wg-card-l">to fix</span></div>
@@ -18,7 +18,7 @@
 			<SuggestPanel v-else-if="tab === 'similar'" :lists="analysis.lists" :communities="analysis.communities"
 				:can-add-link="canAct" @pick="$emit('pick', $event)" @add-link="$emit('add-link', $event)" />
 			<EvolutionTab v-else-if="tab === 'evolution'" :nodes="nodes" :history="history" />
-			<ActionsTab v-else :actions="actions" :can-act="canAct"
+			<ActionsTab v-else-if="tab === 'actions'" :actions="actions" :can-act="canAct"
 				@pick="$emit('pick', $event)" @add-link="$emit('add-link', $event)" />
 		</div>
 	</div>
@@ -42,18 +42,25 @@ export default {
 		actions: { type: Object, default: () => ({ stale: [], orphans: [], busFactor: [], duplicates: [], suggest: [] }) },
 		history: { type: Array, default: () => [] },
 		canAct: { type: Boolean, default: false },
+		// Priority-card strip (top hub / bridge / to-fix / orphans). On for the
+		// operator graph; the tenant graph turns it off for a cleaner surface.
+		showPriority: { type: Boolean, default: true },
+		// Actions tab (operator curation surface). Off for the tenant graph.
+		showActionsTab: { type: Boolean, default: true },
 	},
 	emits: ["pick", "add-link"],
 	data() {
-		return {
-			tab: "structure",
-			TABS: [
-				{ v: "structure", label: "Structure" }, { v: "similar", label: "Similar" },
-				{ v: "evolution", label: "Evolution" }, { v: "actions", label: "Actions" },
-			],
-		};
+		return { tab: "structure" };
 	},
 	computed: {
+		TABS() {
+			const t = [
+				{ v: "structure", label: "Structure" }, { v: "similar", label: "Similar" },
+				{ v: "evolution", label: "Evolution" },
+			];
+			if (this.showActionsTab) t.push({ v: "actions", label: "Actions" });
+			return t;
+		},
 		lists() { return this.analysis.lists || {}; },
 		hubName() { return (this.lists.hubs && this.lists.hubs[0] && (this.lists.hubs[0].label || this.lists.hubs[0].slug)) || "—"; },
 		brokerName() { return (this.lists.brokers && this.lists.brokers[0] && (this.lists.brokers[0].label || this.lists.brokers[0].slug)) || "—"; },

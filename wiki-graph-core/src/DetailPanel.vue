@@ -17,7 +17,7 @@
 			<tr v-if="node.debt"><td>Knowledge debt</td><td class="warn">hot + stale</td></tr>
 			<tr v-if="m.orphan"><td>Orphan</td><td class="warn">no links</td></tr>
 		</table>
-		<div class="wg-actions" v-if="node.kind === 'page'">
+		<div class="wg-actions" v-if="showActions && node.kind === 'page'">
 			<button class="wg-act" @click="$emit('focus', node.id)">Focus</button>
 			<button class="wg-act" v-if="siteUrl" @click="openPage">Open page ↗</button>
 			<button class="wg-act" @click="copySlug">Copy slug</button>
@@ -34,6 +34,9 @@ export default {
 		metrics: { type: Object, default: () => ({}) },
 		communities: { type: Object, default: () => ({}) },
 		siteUrl: { type: String, default: null },
+		// Focus / Copy slug / Open page actions. On for the operator graph; the
+		// tenant graph turns them off for a read-only detail view.
+		showActions: { type: Boolean, default: true },
 	},
 	emits: ["focus"],
 	computed: {

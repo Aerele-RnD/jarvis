@@ -76,6 +76,7 @@
   "last_sync_section",
   "last_sync_at",
   "last_sync_status",
+  "llm_pool_synced_at",
   "custom_skills_synced_at",
   "custom_skills_sync_status",
   "agent_skills_synced_at",
@@ -549,6 +550,13 @@
    "fieldname": "last_sync_status",
    "fieldtype": "Long Text",
    "label": "Last Sync Status",
+   "read_only": 1
+  },
+  {
+   "description": "Set when a pool (proxy) config was last APPLIED to the container via admin. Distinguishes a provisioned pool from one whose first sync is still pending/failed - is_ready_for_chat gates on it.",
+   "fieldname": "llm_pool_synced_at",
+   "fieldtype": "Datetime",
+   "label": "LLM Pool Synced At",
    "read_only": 1
   },
   {

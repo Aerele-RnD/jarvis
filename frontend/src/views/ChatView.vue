@@ -43,6 +43,10 @@
 							</button>
 						</div>
 					</div>
+					<!-- Connect phone: shows a QR the mobile app scans to onboard -->
+					<button class="jv-iconbtn" @click="showConnect = true" title="Connect phone" aria-label="Connect phone" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:transparent;border:1px solid var(--border);border-radius:7px;cursor:pointer;">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2" width="10" height="20" rx="2" /><path d="M11 18h2" /></svg>
+					</button>
 					<button class="jv-iconbtn" @click="toggleTheme" :title="effectiveDark ? 'Switch to light theme' : 'Switch to dark theme'" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:transparent;border:1px solid var(--border);border-radius:7px;cursor:pointer;">
 						<svg v-if="effectiveDark" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
 						<svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" /></svg>
@@ -262,9 +266,9 @@
 										<input v-else-if="q.type === 'text'" type="text" class="jv-ask-field" :value="askSel[qi] || ''" @input="pickSingle(qi, $event.target.value)" placeholder="Type your answer…" @keydown.enter.prevent />
 										<!-- link: search a record of the given DocType -->
 										<div v-else-if="q.type === 'link'" class="jv-ask-link">
-											<input type="text" class="jv-ask-field" :value="(askLink[qi] && askLink[qi].q != null) ? askLink[qi].q : (askSel[qi] || '')" @input="onLinkSearch(qi, q.doctype, $event.target.value)" @focus="onLinkSearch(qi, q.doctype, (askLink[qi] && askLink[qi].q) || '')" :placeholder="'Search ' + (q.doctype || 'records') + '…'" @keydown.enter.prevent />
+											<input type="text" class="jv-ask-field" :value="(askLink[qi] && askLink[qi].q != null) ? askLink[qi].q : (askSel[qi] || '')" @input="onLinkSearch(qi, q.doctype, $event.target.value)" @focus="onLinkSearch(qi, q.doctype, (askLink[qi] && askLink[qi].q) || '')" :placeholder="'Search ' + (q.doctype || 'records') + '…'" @blur="closeAskLink(qi)" @keydown.enter.prevent />
 											<div v-if="askLink[qi] && askLink[qi].open && (askLink[qi].items || []).length" class="jv-ask-linkmenu">
-												<button v-for="(it, ii) in askLink[qi].items" :key="ii" @click="pickLink(qi, it)"><b>{{ it.value }}</b><span v-if="it.label"> · {{ it.label }}</span></button>
+												<button v-for="(it, ii) in askLink[qi].items" :key="ii" @mousedown.prevent="pickLink(qi, it)"><b>{{ it.value }}</b><span v-if="it.label"> · {{ it.label }}</span></button>
 											</div>
 										</div>
 										<!-- Other free-text only for choice questions -->
@@ -330,7 +334,7 @@
 								</div>
 								<div v-if="!m.error && !m.streaming && (toolCountOf(m) || elapsedOf(m))" class="jv-meta">
 									<span v-if="toolCountOf(m)" :title="activityNames(m.name)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 1 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></svg>{{ toolCountOf(m) }} tool{{ toolCountOf(m) === 1 ? "" : "s" }}</span>
-									<span v-if="elapsedOf(m)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>{{ elapsedOf(m) }}s</span>
+									<span v-if="elapsedOf(m)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>{{ elapsedLabel(m) }}</span>
 								</div>
 								<div v-if="!m.error && m.content" class="jv-msgbar">
 									<span v-if="msgTime(m)" class="jv-msgtime" :title="msgTimeFull(m)">{{ msgTime(m) }}</span>
@@ -692,6 +696,8 @@
 			@edit="onPreviewEdit"
 			@confirm="onPreviewConfirm"
 		/>
+
+		<ConnectPhoneDialog v-model="showConnect" />
 	</div>
 </template>
 
@@ -707,6 +713,7 @@ import { takeChatPrefill } from "@/composables/chatPrefill"
 import { formatDate, exactDate } from "@/utils/datetime"
 import { renderMarkdown } from "@/markdown"
 import JvChart from "@/charts/JvChart.vue"
+import ConnectPhoneDialog from "@/components/ConnectPhoneDialog.vue"
 import DraftPreview from "@/components/doc/DraftPreview.vue"
 import { useShellStore } from "@/stores/shell"
 import { useJarvisTheme } from "@/theme"
@@ -803,6 +810,7 @@ function _settleConfirm(val) {
 	if (r) r(val)
 }
 const modelMenuOpen = ref(false)
+const showConnect = ref(false)
 // (sidebar collapse machinery, per-conversation ⋯ menu and inline rename
 // moved to the app shell — stores/shell.js + components/shell/*, §3.7)
 const modelOverride = ref("")
@@ -1196,6 +1204,17 @@ function elapsedOf(m) {
 		if (d >= 0 && d < 1800) return d.toFixed(1)
 	}
 	return ""
+}
+// Response-duration label: keeps the sub-minute look (e.g. "12.4s") but rolls
+// over to minutes once it passes 60s (e.g. "1m 5s" / "2m").
+function elapsedLabel(m) {
+	const raw = elapsedOf(m)
+	if (!raw) return ""
+	const sec = parseFloat(raw)
+	if (sec < 60) return `${raw}s`
+	const total = Math.round(sec)
+	const mm = Math.floor(total / 60), ss = total % 60
+	return ss ? `${mm}m ${ss}s` : `${mm}m`
 }
 // Open state falls back to the pref until the user explicitly toggles a turn.
 function isActivityOpen(name) {
@@ -2187,6 +2206,13 @@ async function onLinkSearch(i, doctype, val) {
 function pickLink(i, item) {
 	askSel.value = { ...askSel.value, [i]: item.value }
 	askLink.value = { ...askLink.value, [i]: { q: item.value, items: [], open: false } }
+}
+// Hide the record dropdown when the field loses focus (clicking elsewhere on
+// the screen / tabbing away). @mousedown.prevent on the result buttons lets a
+// pick land before the blur fires.
+function closeAskLink(i) {
+	const cur = askLink.value[i]
+	if (cur && cur.open) askLink.value = { ...askLink.value, [i]: { ...cur, open: false } }
 }
 function pickSingle(i, opt) {
 	askSel.value = { ...askSel.value, [i]: opt }
@@ -3835,8 +3861,6 @@ onUnmounted(() => {
 .jv-md :deep(pre) { max-width: 100%; overflow-x: auto; }
 .jv-md :deep(img) { max-width: 100%; height: auto; }
 .jv-cards, .jv-action, .jv-email { min-width: 0; max-width: 100%; }
-.jv-btn-danger { color: #fff; background: var(--red); border-color: var(--red); }
-.jv-btn-danger:disabled { opacity: .6; }
 .jv-md :deep(.jv-mermaid) { position: relative; margin: 8px 0 12px; text-align: center; overflow-x: auto; }
 .jv-md :deep(.jv-mermaid svg) { max-width: 100%; height: auto; }
 /* skeleton shimmer while a chart hasn't rendered to SVG yet (no data-rendered) —
@@ -3946,6 +3970,12 @@ onUnmounted(() => {
 .jv-btn--danger { background: var(--red); border-color: var(--red); color: #fff; box-shadow: 0 1px 2px rgba(220, 38, 38, .14); }
 .jv-btn--danger:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(220, 38, 38, .24); }
 .jv-btn--danger svg { stroke: #fff; }
+/* Soft/outline danger for the settings "Danger zone": clearly visible on the
+   white theme (tinted fill + red text + red border), filling solid red on
+   hover. Dedicated class so the solid .jv-btn--danger (confirm dialog) is left
+   as-is. */
+.jv-btn--danger-soft { background: var(--red-bg); border-color: var(--red-bd); color: var(--red); }
+.jv-btn--danger-soft:hover { background: var(--red); border-color: var(--red); color: #fff; }
 .jv-btn--sm { height: 32px; padding: 0 12px; font-size: 12px; border-radius: 9px; }
 .jv-btn--icon { width: 32px; height: 32px; padding: 0; border-radius: 9px; color: var(--text-3); }
 .jv-btn--icon:hover { background: var(--surface-2); color: var(--text); transform: none; }
@@ -4118,11 +4148,11 @@ onUnmounted(() => {
 .jv-ask-field:focus { border-color: var(--blue); }
 .jv-ask-link { position: relative; }
 .jv-ask-linkmenu { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 20; background: var(--surface); border: 1px solid var(--border-2); border-radius: 9px; box-shadow: 0 8px 24px rgba(20, 20, 30, .14); padding: 4px; max-height: 220px; overflow-y: auto; }
-.jv-ask-linkmenu button { display: block; width: 100%; text-align: left; padding: 7px 9px; background: transparent; border: none; border-radius: 6px; font-family: inherit; font-size: 12.5px; color: var(--text-2); cursor: pointer; }
+.jv-ask-linkmenu button { display: block; width: 100%; text-align: left; padding: 7px 9px; background: transparent; border: none; border-radius: 6px; font-family: inherit; font-size: 12.5px; color: var(--text-2); cursor: pointer; white-space: normal; overflow-wrap: anywhere; }
 .jv-ask-linkmenu button:hover { background: var(--surface-2); color: var(--text); }
 .jv-ask-other { width: 100%; box-sizing: border-box; margin-top: 8px; padding: 7px 10px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; font-family: inherit; font-size: 12.5px; color: var(--text); outline: none; }
 .jv-ask-other:focus { border-color: var(--blue); }
-.jv-ask-foot { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+.jv-ask-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 14px; }
 .jv-ask-submit { padding: 8px 16px; background: var(--blue); border: 1px solid var(--blue); border-radius: 8px; font-family: inherit; font-size: 13px; font-weight: 600; color: #fff; cursor: pointer; transition: opacity .12s; }
 .jv-ask-submit:hover { opacity: .9; }
 .jv-ask-submit:disabled { opacity: .45; cursor: default; }

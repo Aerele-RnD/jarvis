@@ -279,7 +279,7 @@ def _order_by(sort_field, sort_dir, sortable: dict, default_field, default_dir, 
 @frappe.whitelist()
 def list_inbound_page(
 	search: str = "",
-	filters=None,
+	filters: str | dict | None = None,
 	sort_field: str = "",
 	sort_dir: str = "",
 	start: int = 0,
@@ -426,7 +426,7 @@ def delete_inbound(conversation: str) -> dict:
 
 
 @frappe.whitelist()
-def delete_inbound_bulk(conversations=None) -> dict:
+def delete_inbound_bulk(conversations: str | list | None = None) -> dict:
 	"""Bulk cascade delete (orchestrator Q4). Owner-gated per row, same cascade +
 	streaming refusal as ``delete_inbound``. Returns ``{deleted, skipped:[{
 	conversation, reason}]}`` — a bad/streaming/foreign row is skipped, not fatal."""

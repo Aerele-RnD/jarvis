@@ -84,6 +84,48 @@ class TestGateParks(FrappeTestCase):
 		self.assertIsNotNone(captured.get("token"))
 
 
+class TestGatePreValidatesBeforePark(FrappeTestCase):
+	"""A dry-runnable gated write is validated in the sandbox BEFORE the
+	confirmation card is minted. A deterministic failure (e.g. a missing
+	mandatory field) is returned to the model immediately instead of parking a
+	card that would die on click - the confirmed write is the SAME call as the
+	same user, so a preview failure is a faithful predictor."""
+
+	def test_gated_create_missing_mandatory_returns_error_not_park(self):
+		# ToDo.description is mandatory. Pass a non-empty values dict that omits
+		# it (an empty dict is refused earlier by _validate_create_args).
+		patcher, captured = _spy_mint()
+		with patch("jarvis.chat.events.publish_to_user") as pub, patcher:
+			r = api._run_tool("create_doc", {
+				"doctype": "ToDo", "values": {"priority": "Medium"},
+			})
+			# No confirmation card was published either.
+			self.assertFalse(pub.called)
+		# Model-facing validation error, NOT the park shape.
+		self.assertFalse(r["ok"])
+		self.assertEqual(r["error"]["code"], "InvalidArgumentError")
+		self.assertIn("description", r["error"]["message"].lower())
+		# Did NOT park: no token minted (and the error envelope + no publish
+		# above prove nothing was parked or executed).
+		self.assertIsNone(captured.get("token"))
+
+	def test_valid_gated_create_still_parks(self):
+		# Regression guard: a preview that VALIDATES cleanly still parks a card
+		# with the sandboxed dry-run shape and mints a token.
+		desc = "jarvis-test-gate-prevalidate-valid-011"
+		patcher, captured = _spy_mint()
+		with patcher:
+			r = api._run_tool("create_doc", {
+				"doctype": "ToDo", "values": {"description": desc},
+			})
+		self.assertTrue(r["ok"])
+		self.assertEqual(r["data"]["status"], "pending_confirmation")
+		self.assertTrue(r["data"]["preview"]["preview"])
+		self.assertIn("would", r["data"]["preview"])
+		self.assertIsNotNone(captured.get("token"))
+		self.assertFalse(frappe.db.exists("ToDo", {"description": desc}))
+
+
 class TestNonGatedWriteRunsImmediately(FrappeTestCase):
 	def test_add_comment_executes_immediately(self):
 		# add_comment is a write but NOT gated - it must run inline, no park.
@@ -283,6 +325,14 @@ class TestConfirmSelfHostOwnerBinding(FrappeTestCase):
 			acting["user"] = frappe.session.user
 			return {"name": "TODO-FAKE"}
 
+		# Snapshot the browser cookie session's sid + data BEFORE confirm. A bare
+		# frappe.set_user(exec_user) would gut both and end-of-request
+		# Session.update would poison this sid's Redis cache -> the operator gets
+		# logged out. impersonate must leave sid + data untouched.
+		before_sid = frappe.session.sid
+		before_data = frappe.session.data
+		frappe.session.data.csrf_token = "SENTINEL-SH-020"
+
 		with patch("jarvis.selfhost.is_self_hosted", return_value=True), \
 				patch("jarvis.api._selfhost_tool_user", return_value=tool_user), \
 				patch("jarvis.api.dispatch", side_effect=_spy_dispatch):
@@ -292,6 +342,12 @@ class TestConfirmSelfHostOwnerBinding(FrappeTestCase):
 		self.assertEqual(acting["user"], tool_user)
 		# The confirming session user is restored after dispatch.
 		self.assertEqual(frappe.session.user, operator)
+		# The browser cookie session survives: sid + data (incl. the sentinel)
+		# are the ORIGINAL objects, so end-of-request Session.update re-persists
+		# the operator's real session instead of logging them out.
+		self.assertEqual(frappe.session.sid, before_sid)
+		self.assertIs(frappe.session.data, before_data)
+		self.assertEqual(frappe.session.data.csrf_token, "SENTINEL-SH-020")
 		# Single use.
 		again = confirm_tool(token)
 		self.assertFalse(again["ok"])
@@ -326,9 +382,19 @@ class TestConfirmSelfHostOwnerBinding(FrappeTestCase):
 				conversation="", owner=session_user, tool="create_doc",
 				args={"doctype": "ToDo", "values": {"description": desc_ok}},
 				run_id="")
+			# Managed mode: owner == exec == session user, so confirm_tool's
+			# impersonate no-ops - but the cookie session must STILL survive
+			# intact (a bare unconditional frappe.set_user would gut it even for
+			# the same user and log the operator out).
+			before_sid = frappe.session.sid
+			before_data = frappe.session.data
+			frappe.session.data.csrf_token = "SENTINEL-MANAGED-022"
 			res = confirm_tool(ok_token)
 			self.assertTrue(res["ok"])
 			self.assertTrue(frappe.db.exists("ToDo", {"description": desc_ok}))
+			self.assertEqual(frappe.session.sid, before_sid)
+			self.assertIs(frappe.session.data, before_data)
+			self.assertEqual(frappe.session.data.csrf_token, "SENTINEL-MANAGED-022")
 
 			# Token minted under a DIFFERENT owner -> rejected, not executed.
 			bad_token = pending_confirm.mint(
