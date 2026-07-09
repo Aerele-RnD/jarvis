@@ -16,12 +16,6 @@ _SNAPSHOTTED_FIELDS = (
 	"agent_url", "agent_token",
 )
 
-# A System User who is NOT a System Manager: the realistic caller these gates
-# exist to stop. A Website User is a weaker test - plenty of code paths reject
-# those for unrelated reasons.
-NON_SM_USER = "account-gate-staff@test.invalid"
-WEBSITE_USER = "account-gate-portal@test.invalid"
-
 
 def _snapshot_settings() -> dict:
 	s = frappe.get_single("Jarvis Settings")
@@ -104,92 +98,22 @@ class TestAccountWrappers(FrappeTestCase):
 		self.assertIn("downgrade not supported", str(cm.exception))
 
 
-class TestAccountEndpointsAreSystemManagerOnly(FrappeTestCase):
-	"""get_account and preview_upgrade were whitelisted but ungated.
+class TestAccountGatesFailClosed(FrappeTestCase):
+	"""get_account and preview_upgrade are System-Manager-only.
 
-	The only thing keeping non-admins out was presentation: SettingsDialog
-	hides the ACCOUNT & BILLING rail group, and the /jarvis-account desk page
-	declares roles=["System Manager"]. Neither constrains a direct
-	/api/method/jarvis.account.get_account call, so any authenticated user
-	could read the account's plan, subscription status and validity - and
-	price upgrades, one admin round-trip per request.
-
-	start_upgrade was gated in the 2026-06-16 review; these two are its read
-	siblings and were missed.
+	The rejection itself is covered by the canonical parametrized sweep in
+	test_role_gates.py (both endpoints are entries in GATED_ENDPOINTS, which
+	asserts Guest is refused and Administrator is not). This class adds the one
+	property that sweep cannot express: the gate must run BEFORE _surface()
+	reaches admin_client, so an unauthorised caller can neither leak the
+	payload into admin's logs nor burn an admin request per attempt.
 	"""
-
-	@classmethod
-	def setUpClass(cls):
-		super().setUpClass()
-		if not frappe.db.exists("User", NON_SM_USER):
-			frappe.get_doc({
-				"doctype": "User", "email": NON_SM_USER,
-				"first_name": "Account Gate Staff",
-				"user_type": "System User", "send_welcome_email": 0,
-			}).insert(ignore_permissions=True)
-		if not frappe.db.exists("User", WEBSITE_USER):
-			frappe.get_doc({
-				"doctype": "User", "email": WEBSITE_USER,
-				"first_name": "Account Gate Portal",
-				"user_type": "Website User", "send_welcome_email": 0,
-			}).insert(ignore_permissions=True)
-		# Site role defaults / hooks can hand out System Manager. Strip it, or
-		# this whole class would silently assert nothing.
-		u = frappe.get_doc("User", NON_SM_USER)
-		u.remove_roles("System Manager")
-		u.save(ignore_permissions=True)
-		frappe.db.commit()
-
-	@classmethod
-	def tearDownClass(cls):
-		frappe.set_user("Administrator")
-		for user in (NON_SM_USER, WEBSITE_USER):
-			frappe.delete_doc("User", user, ignore_permissions=True, force=True)
-		frappe.db.commit()
-		super().tearDownClass()
-
-	def setUp(self):
-		frappe.set_user("Administrator")
 
 	def tearDown(self):
 		frappe.set_user("Administrator")
 
-	def test_the_fixture_user_really_lacks_system_manager(self):
-		"""Guard the guard: if the site hands this user System Manager, every
-		rejection test below would pass for the wrong reason."""
-		roles = frappe.get_roles(NON_SM_USER)
-		self.assertNotIn("System Manager", roles)
-
-	def test_get_account_rejects_non_system_manager(self):
-		frappe.set_user(NON_SM_USER)
-		with self.assertRaises(frappe.PermissionError):
-			account.get_account()
-
-	def test_preview_upgrade_rejects_non_system_manager(self):
-		frappe.set_user(NON_SM_USER)
-		with self.assertRaises(frappe.PermissionError):
-			account.preview_upgrade("plan-pro")
-
-	def test_get_account_rejects_website_user(self):
-		frappe.set_user(WEBSITE_USER)
-		with self.assertRaises(frappe.PermissionError):
-			account.get_account()
-
-	def test_get_account_rejects_guest(self):
-		frappe.set_user("Guest")
-		with self.assertRaises(frappe.PermissionError):
-			account.get_account()
-
-	def test_preview_upgrade_rejects_guest(self):
-		frappe.set_user("Guest")
-		with self.assertRaises(frappe.PermissionError):
-			account.preview_upgrade("plan-pro")
-
 	def test_rejection_happens_before_any_admin_round_trip(self):
-		"""Fail closed: the gate must run before _surface() calls admin. A
-		gate placed after the round-trip would still leak the payload into
-		admin's logs and burn a request per unauthorised caller."""
-		frappe.set_user(NON_SM_USER)
+		frappe.set_user("Guest")
 		with patch.object(admin_client, "get_account_summary") as get_summary, \
 				patch.object(admin_client, "preview_upgrade") as prev:
 			with self.assertRaises(frappe.PermissionError):
@@ -198,14 +122,3 @@ class TestAccountEndpointsAreSystemManagerOnly(FrappeTestCase):
 				account.preview_upgrade("plan-pro")
 		get_summary.assert_not_called()
 		prev.assert_not_called()
-
-	def test_system_manager_still_allowed(self):
-		"""The gate must not break the legitimate caller."""
-		frappe.set_user("Administrator")
-		self.assertIn("System Manager", frappe.get_roles("Administrator"))
-		fake = {"subscription_status": "Active", "plan": {"name": "p1"},
-				"days_remaining": 12, "upgrade_plans": []}
-		with patch.object(admin_client, "get_account_summary", return_value=fake):
-			self.assertEqual(account.get_account(), fake)
-		with patch.object(admin_client, "preview_upgrade", return_value={"prorated_inr": 1}):
-			self.assertEqual(account.preview_upgrade("plan-pro"), {"prorated_inr": 1})
