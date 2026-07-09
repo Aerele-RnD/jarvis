@@ -302,11 +302,16 @@ class JarvisSettings(Document):
         self.db_set("last_sync_status", "pending: provisioning container (pool)",
                     update_modified=False)
         run_inline = bool(frappe.flags.in_test or frappe.flags.run_admin_sync_inline)
+        # RQ envelope must exceed the work it wraps or the SIGALRM fires on
+        # every cold provision (JARVIS-2026-07-08, fault c): redis lock wait
+        # (<=60s) + up to 3 POST attempts where the admin call's own HTTP
+        # budget is 120s (post_update_llm_pool) + 5s inter-attempt sleeps.
+        # 300s clears one full slow attempt + a retry with headroom.
         frappe.enqueue(
             "jarvis.jarvis.doctype.jarvis_settings.jarvis_settings"
             "._enqueued_sync_via_admin_pool",
             queue="long",
-            timeout=120,
+            timeout=300,
             enqueue_after_commit=not run_inline,
             now=run_inline,
             job_id="jarvis_settings_sync:pool",
@@ -346,11 +351,15 @@ class JarvisSettings(Document):
         # fired. Different actions still both enqueue (one "reload" and
         # one "restart" are not the same op) but the in-worker Redis
         # lock makes them run serially, not interleaved.
+        # 300s for the same reason as the pool enqueue: lock wait (<=60s) +
+        # admin HTTP budget (90s default) + the post-restart custom/learned
+        # skills resync must all fit inside the RQ envelope, or the
+        # JobTimeoutException path is exercised on every slow provision.
         frappe.enqueue(
             "jarvis.jarvis.doctype.jarvis_settings.jarvis_settings"
             "._enqueued_sync_via_admin",
             queue="long",
-            timeout=120,
+            timeout=300,
             enqueue_after_commit=not run_inline,
             now=run_inline,
             job_id=f"jarvis_settings_sync:{action}",
@@ -445,15 +454,23 @@ class JarvisSettings(Document):
         finally:
             # Final backstop: if a non-Admin* exception path blew through
             # (network exception class admin_client doesn't translate,
-            # programmer error, etc.) the status would otherwise stay
-            # 'pending: ...' indefinitely. Flip it to a terminal failure
-            # so the UI poller stops spinning.
+            # rq JobTimeoutException, programmer error, etc.) the status
+            # would otherwise stay 'pending: ...' indefinitely. Flip it to
+            # a terminal failure so the UI poller stops spinning.
+            #
+            # The commit is load-bearing (JARVIS-2026-07-08, fault c): the
+            # exception keeps propagating after this finally, and Frappe's
+            # execute_job catches it with frappe.db.rollback() - an
+            # UNcommitted status write here is silently undone and the
+            # status sticks at "pending:" forever. Committing makes the
+            # terminal write durable before the rollback runs.
             if not terminal_written:
                 try:
                     self.db_set({
                         "last_sync_at": frappe.utils.now(),
                         "last_sync_status": "failed: unexpected error; see Error Log",
                     })
+                    frappe.db.commit()
                 except Exception:
                     # If even the status write fails, swallow - we're
                     # already in an error path and re-raising would mask
@@ -662,6 +679,13 @@ def _enqueued_sync_via_admin_pool() -> None:
             settings.db_set({
                 "last_sync_at": _frappe.utils.now(),
                 "last_sync_status": f"ok ({resolved_action} via admin)",
+                # Durable "this pool has been APPLIED to the container at
+                # least once" marker. is_ready_for_chat gates pool tenants
+                # on it: proxy_active alone is config INTENT (committed
+                # synchronously at save, before this job runs) and must not
+                # be read as provisioning success - a fresh tenant whose
+                # first sync is still pending/failed has no working pool.
+                "llm_pool_synced_at": _frappe.utils.now(),
             })
             terminal_written = True
         except admin_client.AdminAuthError as e:
@@ -706,12 +730,20 @@ def _enqueued_sync_via_admin_pool() -> None:
                 message=_frappe.get_traceback(),
             )
         finally:
+            # Commit is load-bearing - see the matching backstop in
+            # _sync_via_admin. Without it, a propagating exception (rq
+            # JobTimeoutException in particular: the pool POST alone may
+            # consume the whole HTTP budget) reaches execute_job's
+            # frappe.db.rollback() and the terminal write is undone,
+            # pinning the UI poller on "pending:" forever
+            # (JARVIS-2026-07-08, fault c).
             if not terminal_written:
                 try:
                     settings.db_set({
                         "last_sync_at": _frappe.utils.now(),
                         "last_sync_status": "failed: unexpected error; see Error Log",
                     })
+                    _frappe.db.commit()
                 except Exception:
                     pass
 

@@ -369,8 +369,11 @@ async function reconcileMidFlightSignup() {
 			state.step = "selfhost"
 			return
 		}
-		if (ready && ready.reason === "llm_credentials") {
-			// Signup + payment already done; only the AI connection is missing.
+		if (ready && (ready.reason === "llm_credentials" || ready.reason === "llm_pool_provisioning")) {
+			// Signup + payment already done; only the AI connection is missing
+			// (llm_credentials) or a configured pool never finished its first
+			// apply (llm_pool_provisioning) - both resume at the connect step,
+			// whose sync-status poller shows the pending/failed state.
 			state.mode = "managed"
 			state.step = "connect"
 			return

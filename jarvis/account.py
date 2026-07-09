@@ -40,9 +40,10 @@ def is_ready_for_chat() -> dict:
 	render the chat surface or redirect the customer to /jarvis-onboarding.
 
 	Stricter than ``is_onboarded`` - signup (admin api_key) AND a usable LLM
-	credential for the active ``llm_auth_mode`` must be in place. Pool-pending
-	customers count as ready here (the chat surface has its own waiting state
-	while the tenant is being provisioned).
+	credential for the active ``llm_auth_mode`` must be in place. A pool
+	tenant mid-RE-save still counts as ready (the container keeps serving
+	its previous config), but a pool whose FIRST apply never succeeded does
+	not.
 
 	Returns ``{ready: bool, reason: str | None}`` where ``reason`` is one of:
 
@@ -52,6 +53,9 @@ def is_ready_for_chat() -> dict:
 	  auth mode are missing. api_key mode needs llm_api_key + llm_provider +
 	  llm_model; subscription / oauth modes need llm_oauth_connected_at
 	  (the timestamp set when the oauth grant completes).
+	- ``"llm_pool_provisioning"`` - a pool is configured (proxy_active) but
+	  no sync has ever applied it to the container (first sync pending or
+	  failed).
 	- ``None`` when ``ready`` is True.
 	"""
 	from jarvis import selfhost
@@ -71,9 +75,23 @@ def is_ready_for_chat() -> dict:
 	if not admin_api_key:
 		return {"ready": False, "reason": "signup"}
 
-	# Pool mode: proxy_active means the pool is provisioned → ready.
+	# Pool mode: proxy_active is config INTENT, derived and committed at
+	# save time BEFORE the async pool sync runs - it does not prove the
+	# container ever received the pool. Gate on evidence of a successful
+	# apply instead: llm_pool_synced_at (stamped by the pool-sync job on
+	# every "ok") or a current "ok" status (covers tenants provisioned
+	# before the marker field existed). A pool that has EVER applied stays
+	# ready through a later re-save's transient pending/failed - the
+	# container keeps serving its previous config. A fresh tenant whose
+	# FIRST sync is still pending or failed is NOT ready: sending them to
+	# chat guarantees failing turns while onboarding still shows
+	# "provisioning" (JARVIS-2026-07-08 split-brain).
 	if getattr(settings, "proxy_active", 0):
-		return {"ready": True, "reason": None}
+		synced = bool(getattr(settings, "llm_pool_synced_at", None))
+		status = (getattr(settings, "last_sync_status", "") or "").strip()
+		if synced or status.startswith("ok"):
+			return {"ready": True, "reason": None}
+		return {"ready": False, "reason": "llm_pool_provisioning"}
 
 	auth_mode = (getattr(settings, "llm_auth_mode", "") or "api_key").strip()
 
