@@ -5,8 +5,11 @@ The underlying helper sums GL entries against the customer's
 receivable accounts and optionally adds open Sales Orders' invoiceable
 balance - the same calculation as the Customer Credit Limit check.
 
-Customer read perm is enforced before delegating so a user who can't
-read the customer can't probe their outstanding balance.
+Customer read perm AND Company read perm (honors Company User
+Permissions) are enforced before delegating, so a user who can't read
+the customer - or who is restricted to a different company - can't
+probe an outstanding balance outside what they can see. The underlying
+helper itself applies no company-level permission filter.
 """
 from __future__ import annotations
 
@@ -38,6 +41,8 @@ def get_customer_outstanding(
         raise InvalidArgumentError(f"unknown Company: {company}")
     if not frappe.has_permission("Customer", "read", doc=customer):
         raise PermissionDeniedError(f"no read permission on Customer {customer}")
+    if not frappe.has_permission("Company", "read", doc=company):
+        raise PermissionDeniedError(f"no read permission on Company {company}")
 
     from erpnext.selling.doctype.customer.customer import (
         get_customer_outstanding as _gco,

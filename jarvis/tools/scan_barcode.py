@@ -5,11 +5,16 @@ workflows where the agent receives a raw scanned value and needs to
 know what item it is, what serial / batch is implied, and what
 warehouse the scan happened in.
 
-Read-only - no DB writes, just a lookup. Permission gating is the
-underlying helper's responsibility (it consults Item / Serial No /
-Batch read perms).
+Read-only - no DB writes, just a lookup. The underlying erpnext helper
+performs NO permission checks of its own (verified by reading
+``erpnext.stock.utils.scan_barcode``: it looks Item Barcode / Serial No /
+Batch up via raw ``frappe.db.get_value``, never ``frappe.has_permission``)
+- this wrapper explicitly checks Item / Serial No / Batch read permission
+on whatever the scan resolved before returning it.
 """
 from __future__ import annotations
+
+import frappe
 
 from jarvis.exceptions import InvalidArgumentError
 
@@ -29,7 +34,17 @@ def scan_barcode(search_value: str) -> dict:
     # or a dict depending on the ERPNext release; normalise to a JSON-
     # friendly dict either way.
     if hasattr(result, "__dict__"):
-        return {k: v for k, v in vars(result).items() if not k.startswith("_")}
-    if isinstance(result, dict):
-        return result
-    return {"raw": result}
+        result = {k: v for k, v in vars(result).items() if not k.startswith("_")}
+    elif not isinstance(result, dict):
+        result = {"raw": result}
+
+    item_code = result.get("item_code")
+    if item_code:
+        frappe.has_permission("Item", "read", doc=item_code, throw=True)
+    serial_no = result.get("serial_no")
+    if serial_no:
+        frappe.has_permission("Serial No", "read", doc=serial_no, throw=True)
+    batch_no = result.get("batch_no")
+    if batch_no:
+        frappe.has_permission("Batch", "read", doc=batch_no, throw=True)
+    return result

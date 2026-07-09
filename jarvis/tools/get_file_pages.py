@@ -39,7 +39,10 @@ def get_file_pages(
 
     fdoc = _resolve_file(file_url, filename)
     if not frappe.has_permission("File", "read", doc=fdoc.name):
-        raise PermissionDeniedError(f"no read permission on file {fdoc.file_name!r}")
+        # Generic on purpose - see read_file._resolve_file / F12 in
+        # audit-findings.md: do not echo the resolved file's real name back
+        # to a caller who isn't permitted to read it.
+        raise PermissionDeniedError("no matching file found")
 
     first_page = max(1, int(first_page or 1))
     max_pages = max(1, min(int(max_pages or _DEFAULT_PAGES), _MAX_PAGES_PER_CALL))

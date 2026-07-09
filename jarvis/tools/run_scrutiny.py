@@ -10,9 +10,16 @@ be REPRODUCIBLE (same data -> same hits, re-runnable by a peer reviewer)
 and a real ledger is far larger than one chat turn can read, so the
 filtering happens set-based in the DB.
 
-Read-only over ERP data. Runs under the calling user's Frappe identity,
-so it can only see accounts the user is permitted to (company-level
-perms + the standard GL Entry query). Statutory rules
+Read-only over ERP data. Every rule evaluator runs raw ``frappe.db.sql``
+against GL Entry / Account / Supplier - NOT the standard GL Entry query -
+so Frappe's ORM-level permission filtering never applies to those rows.
+Before any evaluator runs, this tool explicitly checks the calling user
+has ``GL Entry`` read permission and ``Company`` read permission on the
+resolved company (``frappe.has_permission(..., throw=True)``, which
+honors Company User Permissions); a caller who fails either check is
+denied before a single query executes. Those two checks are the entire
+permission gate - they are doctype/company-level, not per-account or
+per-transaction filtered the way ``frappe.get_list`` would be. Statutory rules
 (``status == "needs_legal_review"``) are SKIPPED unless
 ``include_unreviewed`` is set, and every statutory finding carries its
 section + effective_date + disclaimer.
@@ -610,6 +617,13 @@ def run_scrutiny(
     persist (this runs under the caller's identity)."""
     pack = _load_pack(rule_pack)
     scope = _resolve_scope(company, fiscal_year, from_date, to_date)
+
+    # Every evaluator below runs raw SQL over GL Entry/Account/Supplier -
+    # Frappe's ORM permission layer never sees these queries, so the gate
+    # has to be explicit: GL Entry read (doctype-level) and Company read
+    # on the resolved company (honors Company User Permissions).
+    frappe.has_permission("GL Entry", "read", throw=True)
+    frappe.has_permission("Company", "read", doc=scope["company"], throw=True)
 
     materiality = None
     if engagement_config:

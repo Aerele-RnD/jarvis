@@ -19,12 +19,14 @@ The ERPNext computations themselves are tested upstream.
 """
 from __future__ import annotations
 
+import contextlib
 from datetime import date as _date
 from unittest.mock import patch
 
+import frappe
 from frappe.tests.utils import FrappeTestCase
 
-from jarvis.exceptions import InvalidArgumentError
+from jarvis.exceptions import InvalidArgumentError, PermissionDeniedError
 from jarvis.tools.get_balance_on import get_balance_on
 from jarvis.tools.get_customer_outstanding import get_customer_outstanding
 from jarvis.tools.get_exchange_rate import get_exchange_rate
@@ -288,3 +290,252 @@ class TestGetItemisedTaxBreakup(FrappeTestCase):
         self.assertEqual(out["doctype"], "Sales Invoice")
         self.assertEqual(out["name"], "SINV-001")
         self.assertEqual(out["itemised_tax"], {"_T-Item": {"VAT - X": 18.0}})
+
+
+# ---------------------------------------------------------------------
+# Real permission-path regression tests (F13/F14/F15/F16 - see
+# .superpowers/sdd/audit-findings.md). Unlike the envelope tests above
+# (which patch frappe.has_permission/frappe.db.exists to pin the boundary
+# contract without heavy master-data), these exercise real
+# frappe.has_permission decisions against real users/roles/records so the
+# permission checks the fix added are proven end to end, not just wired.
+# ---------------------------------------------------------------------
+
+PERM_COMPANY_A = "_JPL Perm Company A"
+PERM_COMPANY_B = "_JPL Perm Company B"
+PERM_ITEM_GROUP = "_JPL Perm Test Item Group"
+PERM_UOM = "_JPL Perm Nos"
+PERM_ITEM = "_JPL Perm Test Item"
+PERM_CUSTOMER = "_JPL Perm Test Customer"
+ROLE_NO_GRANTS = "JPL Perm No Grants Role"
+USER_NO_GRANTS = "jpl-perm-no-grants@example.com"
+USER_ITEM_READER = "jpl-perm-item-reader@example.com"
+# Sales User grants role-level Customer + Company read, but this user is
+# additionally scoped by a Company User Permission to PERM_COMPANY_A only -
+# exactly the "restricted via a Company User Permission" case the audit
+# findings call out.
+USER_COMPANY_SCOPED = "jpl-perm-company-scoped@example.com"
+
+
+def _ensure_role(name: str) -> None:
+    if not frappe.db.exists("Role", name):
+        frappe.get_doc({
+            "doctype": "Role", "role_name": name, "desk_access": 1, "is_custom": 1,
+        }).insert(ignore_permissions=True)
+
+
+def _ensure_user(email: str, roles: tuple) -> None:
+    if not frappe.db.exists("User", email):
+        frappe.get_doc({
+            "doctype": "User",
+            "email": email,
+            "first_name": email.split("@")[0],
+            "send_welcome_email": 0,
+            "enabled": 1,
+            "user_type": "System User",
+        }).insert(ignore_permissions=True)
+    user = frappe.get_doc("User", email)
+    if "System Manager" in frappe.get_roles(email):
+        user.remove_roles("System Manager")
+    missing = [r for r in roles if r not in frappe.get_roles(email)]
+    if missing:
+        user.add_roles(*missing)
+
+
+def _ensure_company(name: str, abbr: str) -> None:
+    if frappe.db.exists("Company", name):
+        return
+    # Skip default chart-of-accounts / warehouse / tax-template creation -
+    # this fixture only needs a Company row for permission checks, not a
+    # functioning ledger, and CI sites may be missing the fixtures those
+    # hooks depend on (e.g. Warehouse Type "Transit").
+    frappe.local.flags.ignore_chart_of_accounts = True
+    try:
+        frappe.get_doc({
+            "doctype": "Company",
+            "company_name": name,
+            "abbr": abbr,
+            "default_currency": "INR",
+            "country": "India",
+        }).insert(ignore_permissions=True)
+    finally:
+        frappe.local.flags.ignore_chart_of_accounts = False
+
+
+def _ensure_item(name: str) -> None:
+    if frappe.db.exists("Item", name):
+        return
+    if not frappe.db.exists("Item Group", PERM_ITEM_GROUP):
+        frappe.get_doc({
+            "doctype": "Item Group", "item_group_name": PERM_ITEM_GROUP, "is_group": 0,
+        }).insert(ignore_permissions=True)
+    if not frappe.db.exists("UOM", PERM_UOM):
+        frappe.get_doc({"doctype": "UOM", "uom_name": PERM_UOM}).insert(ignore_permissions=True)
+    frappe.get_doc({
+        "doctype": "Item", "item_code": name, "item_name": name,
+        "item_group": PERM_ITEM_GROUP, "stock_uom": PERM_UOM,
+    }).insert(ignore_permissions=True)
+
+
+def _ensure_customer(name: str) -> str:
+    existing = frappe.db.exists("Customer", {"customer_name": name})
+    if existing:
+        return existing
+    doc = frappe.get_doc({
+        "doctype": "Customer", "customer_name": name, "customer_type": "Company",
+    })
+    doc.insert(ignore_permissions=True)
+    return doc.name
+
+
+def _ensure_user_permission(user: str, allow: str, for_value: str) -> None:
+    if frappe.db.exists("User Permission", {"user": user, "allow": allow, "for_value": for_value}):
+        return
+    frappe.get_doc({
+        "doctype": "User Permission", "user": user, "allow": allow, "for_value": for_value,
+    }).insert(ignore_permissions=True)
+
+
+@contextlib.contextmanager
+def _as(user: str):
+    orig = frappe.session.user
+    frappe.set_user(user)
+    try:
+        yield
+    finally:
+        frappe.set_user(orig)
+
+
+class CrossCompanyPermTestCase(FrappeTestCase):
+    """Shared fixture for the F13/F14/F15/F16 permission-path tests."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        frappe.set_user("Administrator")
+        # Roles/users are cheap, harmless to leave committed (reused
+        # idempotently across runs, mirrors test_permlevel_leak.py).
+        _ensure_role(ROLE_NO_GRANTS)
+        _ensure_user(USER_NO_GRANTS, roles=(ROLE_NO_GRANTS,))
+        _ensure_user(USER_ITEM_READER, roles=("Stock User",))
+        _ensure_user(USER_COMPANY_SCOPED, roles=("Sales User",))
+        frappe.db.commit()
+        # Company/Item/Customer/User Permission are NOT committed - unlike
+        # roles/users, a leftover Company row changes production inference
+        # elsewhere (e.g. run_scrutiny._resolve_scope's "single Company on
+        # the site" fallback), so these must vanish via FrappeTestCase's
+        # automatic per-class rollback rather than persist across test
+        # modules. They're still visible within this class's own
+        # transaction (same DB connection), which is all these tests need.
+        _ensure_company(PERM_COMPANY_A, "JPLA")
+        _ensure_company(PERM_COMPANY_B, "JPLB")
+        _ensure_item(PERM_ITEM)
+        cls.customer = _ensure_customer(PERM_CUSTOMER)
+        _ensure_user_permission(USER_COMPANY_SCOPED, "Company", PERM_COMPANY_A)
+
+    def setUp(self):
+        super().setUp()
+        frappe.set_user("Administrator")
+
+    def tearDown(self):
+        frappe.set_user("Administrator")
+        super().tearDown()
+
+
+class TestScanBarcodePermissionGate(CrossCompanyPermTestCase):
+    """F16: scan_barcode must gate on Item read permission - the
+    underlying erpnext helper performs none itself."""
+
+    def test_restricted_user_denied(self):
+        with _as(USER_NO_GRANTS), patch(
+            "erpnext.stock.utils.scan_barcode",
+            return_value={"item_code": PERM_ITEM, "barcode": "012"},
+        ), self.assertRaises(frappe.PermissionError):
+            scan_barcode("012")
+
+    def test_item_reader_still_succeeds(self):
+        with _as(USER_ITEM_READER), patch(
+            "erpnext.stock.utils.scan_barcode",
+            return_value={"item_code": PERM_ITEM, "barcode": "012"},
+        ):
+            out = scan_barcode("012")
+        self.assertEqual(out["item_code"], PERM_ITEM)
+
+
+class TestGetCustomerOutstandingCompanyPermission(CrossCompanyPermTestCase):
+    """F13: company must be permission-checked, not just the customer."""
+
+    def test_company_scoped_user_denied_for_other_company(self):
+        with _as(USER_COMPANY_SCOPED), patch(
+            "erpnext.selling.doctype.customer.customer.get_customer_outstanding",
+            return_value=2500.0,
+        ), self.assertRaises(PermissionDeniedError):
+            get_customer_outstanding(self.customer, PERM_COMPANY_B)
+
+    def test_company_scoped_user_allowed_for_own_company(self):
+        with _as(USER_COMPANY_SCOPED), patch(
+            "erpnext.selling.doctype.customer.customer.get_customer_outstanding",
+            return_value=2500.0,
+        ):
+            out = get_customer_outstanding(self.customer, PERM_COMPANY_A)
+        self.assertEqual(out["outstanding"], 2500.0)
+
+
+class TestGetPartyDashboardInfoCompanyStrip(CrossCompanyPermTestCase):
+    """F14: dashboard entries for companies the caller can't read must be
+    stripped, not just gated on the party itself."""
+
+    def test_company_scoped_user_only_sees_own_company_entry(self):
+        with _as(USER_COMPANY_SCOPED), patch(
+            "erpnext.accounts.party.get_dashboard_info",
+            return_value=[
+                {"company": PERM_COMPANY_A, "total_unpaid": 100},
+                {"company": PERM_COMPANY_B, "total_unpaid": 999},
+            ],
+        ):
+            out = get_party_dashboard_info("Customer", self.customer)
+        companies = [d["company"] for d in out["dashboard"]]
+        self.assertEqual(companies, [PERM_COMPANY_A])
+
+    def test_unrestricted_user_sees_every_company_entry(self):
+        # No Company User Permission at all -> role-level Company read
+        # (granted broadly to most ERP roles) is unrestricted, so both
+        # entries must survive the strip.
+        with _as("Administrator"), patch(
+            "erpnext.accounts.party.get_dashboard_info",
+            return_value=[
+                {"company": PERM_COMPANY_A, "total_unpaid": 100},
+                {"company": PERM_COMPANY_B, "total_unpaid": 999},
+            ],
+        ):
+            out = get_party_dashboard_info("Customer", self.customer)
+        companies = {d["company"] for d in out["dashboard"]}
+        self.assertEqual(companies, {PERM_COMPANY_A, PERM_COMPANY_B})
+
+
+class TestGetBalanceOnCompanyPermission(CrossCompanyPermTestCase):
+    """F15: an explicit company must be permission-checked, and party-only
+    mode (which otherwise sums across every company) must not silently
+    blend in companies a restricted caller can't read."""
+
+    def test_company_scoped_user_denied_for_other_company(self):
+        with _as(USER_COMPANY_SCOPED), self.assertRaises(PermissionDeniedError):
+            get_balance_on(account=None, party_type="Customer", party=self.customer, company=PERM_COMPANY_B)
+
+    def test_company_scoped_user_allowed_for_own_company(self):
+        with _as(USER_COMPANY_SCOPED), patch(
+            "erpnext.accounts.utils.get_balance_on", return_value=500.0,
+        ):
+            out = get_balance_on(party_type="Customer", party=self.customer, company=PERM_COMPANY_A)
+        self.assertEqual(out["balance"], 500.0)
+
+    def test_company_scoped_user_must_pass_company_in_party_only_mode(self):
+        with _as(USER_COMPANY_SCOPED), self.assertRaises(InvalidArgumentError):
+            get_balance_on(party_type="Customer", party=self.customer)
+
+    def test_unrestricted_user_party_only_mode_still_works(self):
+        with _as("Administrator"), patch(
+            "erpnext.accounts.utils.get_balance_on", return_value=750.0,
+        ):
+            out = get_balance_on(party_type="Customer", party=self.customer)
+        self.assertEqual(out["balance"], 750.0)
