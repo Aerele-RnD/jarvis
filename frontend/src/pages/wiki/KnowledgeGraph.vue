@@ -1,10 +1,13 @@
 <template>
 	<div class="kg flex h-full flex-col overflow-hidden">
+		<LayoutHeader>
+			<template #left-header>
+				<Breadcrumbs :items="breadcrumbs" />
+			</template>
+		</LayoutHeader>
 		<div class="kg-head">
 			<h5>Knowledge Graph</h5>
 			<span v-if="state.loaded && pageCount" class="text-muted">{{ pageCount }} pages · {{ linkCount }} links</span>
-			<Button class="kg-desk" variant="outline" size="sm" icon="external-link"
-				:tooltip="'Open ERPNext Desk'" @click="openDesk" />
 		</div>
 
 		<div v-if="!state.loaded" class="kg-skel"></div>
@@ -47,12 +50,18 @@
 // four analysis tabs. Productive loop: accept a suggested connection → add_wiki_link
 // (durable, out-of-body) → refetch → the edge appears.
 import { reactive, computed, watch, onMounted } from "vue"
-import { Button } from "frappe-ui"
+import { Breadcrumbs } from "frappe-ui"
+import LayoutHeader from "@/components/LayoutHeader.vue"
 import {
 	Graph3D, FilterBar, DetailPanel, AnalysisTabs, ExclusionRules,
 	runAnalysis, computeActions, overlayFilter, egoGraph, searchGraph,
 } from "wiki-graph-core"
 import { getWikiGraph, getWikiGraphHistory } from "@/api/wiki"
+
+// Same breadcrumb + persistent "Open ERPNext Desk" top bar the other Skills
+// tabs get; LayoutHeader supplies the ⧉ button, so the graph tab no longer
+// needs its own inline one.
+const breadcrumbs = [{ label: "Skills", route: { name: "SkillsList" } }, { label: "Knowledge Graph" }]
 
 const PAGE_TYPES = ["Customer", "Supplier", "Item", "Process", "Doctype", "Exception", "Integration", "People", "Org"]
 
@@ -126,8 +135,6 @@ async function load() {
 	}
 }
 
-// Same "Open ERPNext Desk" affordance the other tabs inherit from LayoutHeader.
-function openDesk() { window.open("/app", "_blank") }
 function onNode(node) { state.selected = node }
 function pickId(id) {
 	const n = (state.data.nodes || []).find((x) => x.id === id)
@@ -140,7 +147,6 @@ onMounted(load)
 <style scoped>
 .kg { padding: 4px 2px; }
 .kg-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; }
-.kg-desk { margin-left: auto; align-self: center; }
 .kg-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; }
 /* min-width:0 lets the graph column shrink to its track — without it the
    3d-force-graph canvas (an explicit-pixel-width element) forces the column
