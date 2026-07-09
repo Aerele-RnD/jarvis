@@ -72,7 +72,7 @@
 </template>
 
 <script setup>
-// Agent activity feed — the Agents page's 4th tab. Self-contained: owns its
+// Agent activity feed - the Agents page's 4th tab. Self-contained: owns its
 // useListPage bound to list_agent_activity_page (owner-scoped, newest first),
 // its own debounced search and its own ListFooter, so AgentsList only mounts
 // it when #activity is active (lazy first fetch via useListPage's onMounted).
@@ -107,7 +107,7 @@ function actionColor(a) {
 }
 
 // useListPage adapter: {search, start, page_length} → listAgentActivityPage
-// (its filters/sort_field don't apply — the feed is fixed newest-first)
+// (its filters/sort_field don't apply - the feed is fixed newest-first)
 const { rows, total, loading, error, search, pageLength, loadMore } = useListPage({
 	fetchFn: (p) =>
 		listAgentActivityPage({ search: p.search, start: p.start, page_length: p.page_length }),

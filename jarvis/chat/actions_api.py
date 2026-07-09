@@ -16,6 +16,7 @@ import frappe
 from frappe import _
 
 from jarvis import audit
+from jarvis._session import impersonate
 from jarvis.chat.api import _NON_EDIT_FIELDTYPES, _next_seq, enqueue_continuation
 from jarvis.exceptions import InvalidArgumentError
 
@@ -283,7 +284,9 @@ def confirm_tool(token: str, conversation: str | None = None) -> dict:
 	Execution scope (#6): the confirmed write executes AS the stored
 	``exec_user`` (the scoped model-execution identity - the tool user in
 	self-host), so a confirm can never exceed the model path's permission scope.
-	The original session user is always restored in a finally.
+	The switch goes through ``impersonate`` (session-safe), so the confirming
+	browser session's sid + data are always restored - a bare ``frappe.set_user``
+	would gut the cookie session and log the user out.
 	"""
 	if frappe.session.user == "Guest":
 		raise frappe.PermissionError("authentication required")
@@ -310,14 +313,12 @@ def confirm_tool(token: str, conversation: str | None = None) -> dict:
 	# the confirming session user afterwards no matter what. exec_user defaults
 	# to the owner for tokens minted before this field existed.
 	exec_user = record.get("exec_user") or record.get("owner") or frappe.session.user
-	original = frappe.session.user
-	frappe.set_user(exec_user)
-	try:
+	# impersonate is session-safe: a bare frappe.set_user here would gut the
+	# browser's cookie session (sid + data) and log the confirming user out.
+	with impersonate(exec_user):
 		# Same envelope + audit as an inline write - dispatch_confirmed bypasses
 		# the gate so the stored call actually executes instead of parking again.
 		result = api.dispatch_confirmed(record["tool"], record["args"])
-	finally:
-		frappe.set_user(original)
 
 	# Leave a transcript receipt (#7) so a confirmed delete/submit/email shows on
 	# reload, matching the inline model-write path's tool card. Best-effort: the

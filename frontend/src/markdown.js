@@ -1,4 +1,4 @@
-// Compact GFM renderer — enough for agent replies: paragraphs, bold/italic,
+// Compact GFM renderer - enough for agent replies: paragraphs, bold/italic,
 // inline code, links, bullet/number lists, and pipe tables (rendered into the
 // imported design's table look via the .jv-md classes in ChatView's styles).
 function esc(s) {
@@ -51,7 +51,7 @@ export function renderMarkdown(src) {
 	}
 	while (i < lines.length) {
 		const line = lines[i]
-		// fenced code block: ``` or ```lang — mermaid renders as a diagram,
+		// fenced code block: ``` or ```lang - mermaid renders as a diagram,
 		// everything else as a styled code block.
 		const fence = line.match(/^\s*```\s*([\w-]*)\s*$/)
 		if (fence) {
@@ -80,7 +80,7 @@ export function renderMarkdown(src) {
 			out.push(renderTable(tbl))
 			continue
 		}
-		// ATX headings (#–####): wiki page bodies lead with them, and a
+		// ATX headings (#-####): wiki page bodies lead with them, and a
 		// knowledge base that shows raw hashes reads as broken.
 		const heading = line.match(/^\s*(#{1,4})\s+(.*)/)
 		if (heading) {

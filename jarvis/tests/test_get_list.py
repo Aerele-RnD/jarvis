@@ -57,6 +57,21 @@ class TestGetList(FrappeTestCase):
                     "territory": "_Test Territory",
                 }).insert(ignore_permissions=True)
 
+        # Child-table (istable) fixture: a Contact with an email row. Contact
+        # (parent) owns "Contact Email" (child) via its ``email_ids`` Table
+        # field - a core Frappe pair, so the child-table tests need no ERPNext
+        # Timesheet setup while exercising the same istable mechanism.
+        contact_fn = "Jarvis TS Contact"
+        existing = frappe.db.get_value("Contact", {"first_name": contact_fn})
+        if existing:
+            cls.contact_name = existing
+        else:
+            cls.contact_name = frappe.get_doc({
+                "doctype": "Contact",
+                "first_name": contact_fn,
+                "email_ids": [{"email_id": "jarvis-ts@example.com", "is_primary": 1}],
+            }).insert(ignore_permissions=True).name
+
     def test_returns_rows(self):
         rows = get_list(
             doctype="Customer",
@@ -133,3 +148,60 @@ class TestGetList(FrappeTestCase):
                 get_list(doctype="Customer", fields=["name"])
         finally:
             frappe.set_user("Administrator")
+
+    def test_child_table_without_parent_doctype_errors(self):
+        """A direct get_list on a child (istable) DocType with no parent_doctype
+        must raise a clear InvalidArgumentError that names the parent - not the
+        opaque 'no read permission' the old code produced."""
+        with self.assertRaises(InvalidArgumentError) as cm:
+            get_list(doctype="Contact Email", fields=["email_id"])
+        msg = str(cm.exception)
+        self.assertIn("child table", msg)
+        self.assertIn("parent_doctype", msg)
+        self.assertIn("Contact", msg)  # the discovered owning DocType
+
+    def test_child_table_with_parent_doctype_reads_rows(self):
+        """With parent_doctype supplied the child rows are readable (here as
+        Administrator - proves the arg is forwarded and the query runs)."""
+        rows = get_list(
+            doctype="Contact Email",
+            fields=["parent", "email_id"],
+            filters={"parent": self.contact_name},
+            parent_doctype="Contact",
+        )
+        self.assertIn("jarvis-ts@example.com", {r["email_id"] for r in rows})
+
+    def test_child_table_permission_derived_from_parent(self):
+        """A user who cannot read the parent DocType is denied the child rows
+        even with parent_doctype set - access derives from the parent, so this
+        is not a permission bypass. Uses the reported Timesheet Detail / Timesheet
+        pair: Timesheet is role-restricted, and the perm check fires before any
+        rows are fetched so no Timesheet needs to exist."""
+        user_email = "childless@example.com"
+        if not frappe.db.exists("User", user_email):
+            frappe.get_doc({
+                "doctype": "User",
+                "email": user_email,
+                "first_name": "Childless",
+                "send_welcome_email": 0,
+            }).insert(ignore_permissions=True)
+        frappe.set_user(user_email)
+        try:
+            with self.assertRaises(PermissionDeniedError):
+                get_list(
+                    doctype="Timesheet Detail",
+                    fields=["activity_type"],
+                    parent_doctype="Timesheet",
+                )
+        finally:
+            frappe.set_user("Administrator")
+
+    def test_parent_doctype_harmless_for_non_child(self):
+        """Passing parent_doctype on a normal (non-child) DocType is ignored."""
+        rows = get_list(
+            doctype="Customer",
+            fields=["name"],
+            filters={"customer_name": ["like", "Jarvis List%"]},
+            parent_doctype="Anything",
+        )
+        self.assertEqual({r["name"] for r in rows}, {"Jarvis List A", "Jarvis List B"})

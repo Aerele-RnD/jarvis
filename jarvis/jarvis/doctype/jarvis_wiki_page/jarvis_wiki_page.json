@@ -22,6 +22,7 @@
     "sources",
     "last_confirmed_at",
     "contradiction_flag",
+    "manual_links",
     "mirror_hash"
   ],
   "fields": [
@@ -137,6 +138,12 @@
       "fieldtype": "Check",
       "label": "Contradiction Flagged",
       "description": "Set when an extracted update contradicted the existing body; the conflicting info is appended as a flagged section, never silently overwritten."
+    },
+    {
+      "fieldname": "manual_links",
+      "fieldtype": "JSON",
+      "label": "Manual Links",
+      "description": "Human-curated [[link]] target slugs kept OUT of body_md so LLM re-ingestion (which full-replaces the body) can't clobber them. Unioned into the graph's links-to edges."
     },
     {
       "fieldname": "mirror_hash",

@@ -20,6 +20,7 @@ from jarvis import admin_client, onboarding
 from jarvis.exceptions import JarvisError
 from jarvis.oauth.providers import (
 	UnknownProviderError, build_authorize_url, extract_account_id, get_provider,
+	is_oauth_provider,
 )
 
 
@@ -369,9 +370,10 @@ def _exchange_and_build_blob(entry: dict, redirected_url: str):
 		"email": email,
 		"accountId": extract_account_id(provider, access_token),
 		"clientId": p["client_id"],
-		# Retain the id_token: a downstream reformat to CLIProxyAPI-codex
-		# format needs it. Harmless to the DIRECT push path, which ignores
-		# unknown blob keys.
+		# Retain the id_token: the POOL path's CLIProxyAPI-codex reformat needs
+		# it. The DIRECT auth-profile push must strip it first, though — the
+		# fleet-agent schema rejects unknown keys (extra_forbidden); see
+		# complete_paste_signin's direct_blob.
 		"id_token": tokens.get("id_token") or "",
 	}
 	return {"provider": provider, "model": model, "email": email, "blob": blob}, None
@@ -402,7 +404,37 @@ def complete_paste_signin(nonce: str, redirected_url: str) -> dict:
 	blob = result["blob"]
 
 	p = get_provider(provider)
-	admin_client.post_push_oauth_blob(p["openclaw_provider"], blob)
+	# The fleet-agent's PUT /auth-profile schema is STRICT (pydantic
+	# extra_forbidden) and rejects an `id_token` field. id_token is only needed by
+	# the POOL path's CLIProxyAPI-codex reformat, NOT the DIRECT auth-profiles.json
+	# push — the blob builder keeps it for the pool flow, so strip it here or every
+	# direct push 502s with `extra_forbidden ... blob.id_token`.
+	direct_blob = {k: v for k, v in blob.items() if k != "id_token"}
+	# Push the OAuth blob to the container's auth-profiles.json via admin/fleet.
+	# Handle admin/session failures gracefully: a raw exception here surfaces as an
+	# opaque "Internal Server Error" in the card. The common cause is an EXPIRED
+	# bench session during the sign-in round-trip (admin_client then runs as guest
+	# and can't read the admin creds → "no api_key/secret"), or admin/fleet being
+	# unreachable while switching a proxy tenant to direct. Return a clean,
+	# actionable message and bail BEFORE save_llm_creds, so the tenant's current
+	# config is left untouched rather than half-migrated.
+	try:
+		admin_client.post_push_oauth_blob(p["openclaw_provider"], direct_blob)
+	except admin_client.AdminAuthError as e:
+		return _err(
+			"admin_auth",
+			f"Couldn't apply the sign-in — your session or admin credentials "
+			f"aren't valid. Refresh the page (re-login if prompted) and try "
+			f"again. ({e})",
+		)
+	except (admin_client.AdminUnreachableError,
+	        admin_client.AdminValidationError,
+	        admin_client.AdminRateLimitedError) as e:
+		return _err(
+			"push_failed",
+			f"Couldn't apply the sign-in to your agent right now — try again in "
+			f"a moment. ({e})",
+		)
 	# force=True is mandatory here. The OAuth blob lives in the container's
 	# auth-profiles.json (out-of-band from Jarvis Settings), so on_update's
 	# diff classifier sees no change and skips the re-render+restart when
@@ -624,3 +656,98 @@ def disconnect() -> dict:
 	# the next begin call. Punch-list "disconnect() wipes entire OAuth
 	# signin cache hash" from the 2026-06-16 review.
 	return _ok({})
+
+
+# Auth modes that mean "a single chat subscription, served DIRECT via the
+# container's auth-profiles.json (codex / gemini-cli runtime)" - NOT the pooled
+# cliproxy path. "oauth" is the REV-1 canonical value; "subscription" is the
+# legacy value some migrated tenants still carry.
+_DIRECT_SUBSCRIPTION_MODES = {"oauth", "subscription"}
+
+
+def _is_direct_subscription(auth_mode: str, has_models: bool,
+                            proxy_active: bool, provider_is_oauth: bool) -> bool:
+	"""True when the tenant is on the legacy DIRECT chat-subscription path.
+
+	These tenants keep their LLM config in the flat ``llm_*`` / ``llm_oauth_*``
+	fields (the ``v1_seed_llm_models`` migration deliberately skips oauth /
+	subscription tenants) and are served by the container's
+	``auth-profiles.json``, NOT the pooled cliproxy sidecar. ``get_llm_config``
+	reads only the ``models[]`` child table, so the unified LlmPoolEditor can
+	neither see nor re-authorize them. This predicate lets the SPA fall back to
+	the DIRECT re-authorize (``begin_paste_signin`` / ``complete_paste_signin``)
+	instead of silently offering only the pool editor.
+
+	``has_models`` keys on the PRESENCE of ANY ``models[]`` row (enabled or
+	not), matching ``get_llm_config``'s enabled-agnostic read — a pooled tenant
+	mid-reconfiguration with all rows disabled must NOT be misclassified as
+	direct (that would hide their real pool behind the direct card).
+
+	``provider_is_oauth`` gates on ``llm_provider`` being an OAuth-capable
+	provider: a tenant left in ``oauth`` mode with a non-OAuth provider (e.g.
+	``Anthropic`` after ``reset_onboarding``) is NOT offered a re-authorize card
+	that would only ever error ``unknown_provider``.
+
+	Pure (no DB access) so the branch logic is unit-testable without a site.
+	"""
+	return (
+		(auth_mode or "") in _DIRECT_SUBSCRIPTION_MODES
+		and not proxy_active
+		and not has_models
+		and provider_is_oauth
+	)
+
+
+@frappe.whitelist()
+def get_direct_subscription_status() -> dict:
+	"""Surface the flat-field DIRECT chat-subscription connection to the SPA.
+
+	The Account SPA's ``LlmPoolEditor`` is fed by ``onboarding.get_llm_config``,
+	which reads ONLY the ``models[]`` child table. Existing direct
+	chat-subscription (OAuth) tenants have an empty ``models[]`` and their
+	connection lives in the flat ``llm_*`` / ``llm_oauth_*`` fields - invisible
+	to that editor, so after the desk->SPA account migration they had no way to
+	re-authorize. This read-only endpoint lets ``AccountView`` detect such a
+	tenant and render a DIRECT re-authorize / disconnect card, WITHOUT migrating
+	them onto the proxy path (a lone subscription row in ``models[]`` would force
+	``compute_proxy_active`` true and re-architect them onto cliproxy with no
+	credential blob).
+
+	System-Manager only (matches the rest of the LLM-config surface). Never
+	returns token material - only display metadata.
+	"""
+	frappe.only_for("System Manager")
+	settings = frappe.get_single("Jarvis Settings")
+	auth_mode = (settings.get("llm_auth_mode") or "").strip()
+	provider = settings.get("llm_provider") or ""
+	proxy_active = bool(settings.get("proxy_active"))
+	enabled_models = [m for m in (settings.get("models") or []) if m.enabled]
+	has_models = bool(settings.get("models"))
+	connected_at = settings.get("llm_oauth_connected_at")
+	is_direct = _is_direct_subscription(
+		auth_mode, has_models, proxy_active, is_oauth_provider(provider),
+	)
+	# A single chat subscription stored as a proxy pool-of-one. A single
+	# subscription does NOT need cliproxy (the direct/codex auth-profiles.json
+	# path serves it), so AccountView surfaces the DIRECT "Chat subscription"
+	# option for these tenants and a re-authorize switches them off the pool.
+	is_single_subscription_pool = (
+		proxy_active
+		and len(enabled_models) == 1
+		and (enabled_models[0].credential_type or "api_key") == "subscription"
+	)
+	return {
+		"is_direct_subscription": is_direct,
+		"connected": bool(connected_at),
+		"auth_mode": auth_mode,
+		"provider": provider,
+		"model": settings.get("llm_model") or "",
+		"account_email": settings.get("llm_oauth_account_email") or "",
+		"connected_at": str(connected_at) if connected_at else "",
+		# Lets AccountView gate the container-OAuth "Connection" card to proxy
+		# tenants: direct tenants are covered by DirectSubscriptionCard, and an
+		# api_key tenant has no OAuth profile so the card would misleadingly read
+		# "Not connected".
+		"proxy_active": proxy_active,
+		"is_single_subscription_pool": is_single_subscription_pool,
+	}

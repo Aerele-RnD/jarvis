@@ -24,12 +24,22 @@ _TOOL_NAMES: tuple[str, ...] = (
     "get_schema",
     "get_doc",
     "get_list",
+    # Creation context assembler: field map (mandatory/auto/readonly) + the
+    # existing records most similar to the one being created, so the agent
+    # decides field values from real examples instead of interrogating the
+    # user. Read-only; picks no values. See jarvis-persona AGENTS.md.
+    "get_creation_context",
+    # Link-resolution for the create flow: which referenced records exist,
+    # which have near-matches to reuse, which are missing (feed create_docs).
+    "resolve_links",
     "run_report",
     "get_report_filters",
     "run_method",
     "query",
     "update_doc",
     "create_doc",
+    # Batch, atomic create for a doc's missing dependencies (one gated card).
+    "create_docs",
     "preview_doc",
     "submit_doc",
     "cancel_doc",

@@ -1647,16 +1647,24 @@ class TestFT2ValidateMirrorTiming(_RT3SettingsTestCase):
                 self.fail(f"Fresh tenant save raised ValidationError unexpectedly: {exc}")
 
     def test_proxy_active_pool_is_ready_for_chat(self):
-        """proxy_active=1 (without llm_oauth_connected_at) → is_ready_for_chat returns ready."""
+        """proxy_active=1 + an APPLIED pool (status ok) → ready.
+
+        proxy_active alone no longer suffices: it is config intent, committed
+        at save time BEFORE the async sync runs. Evidence of a successful
+        apply (llm_pool_synced_at, or an 'ok' status for tenants provisioned
+        before that marker existed) is what opens the gate.
+        """
         settings = frappe.get_single("Jarvis Settings")
         settings.db_set("proxy_active", 1, update_modified=False)
         settings.db_set("llm_oauth_connected_at", None, update_modified=False)
+        settings.db_set("llm_pool_synced_at", frappe.utils.now(),
+                        update_modified=False)
         frappe.db.commit()
 
         from jarvis.account import is_ready_for_chat
         result = is_ready_for_chat()
         self.assertTrue(result.get("ready"),
-                        f"proxy_active=1 must make is_ready_for_chat return ready=True; got: {result}")
+                        f"an applied pool must make is_ready_for_chat return ready=True; got: {result}")
 
 
 # ---------------------------------------------------------------------------
@@ -2077,3 +2085,333 @@ class TestFT4bValidateModelsNeverRaises(_RT3SettingsTestCase):
             ),
             f"Expected a clean 'decryption error' / 'cannot read' error string; got: {errors}",
         )
+
+
+# ---------------------------------------------------------------------------
+# JARVIS-2026-07-08 onboarding-audit fixes: durable sync status + honest
+# pool readiness. (Faults (a)/(c) of the incident + the split-brain gate.)
+# ---------------------------------------------------------------------------
+
+from unittest.mock import patch  # noqa: E402
+
+
+class TestOnboardingAuditFixes(_RT3SettingsTestCase):
+    """Pins the incident-class behaviors:
+
+    1. A NON-Admin* exception in the pool sync worker (rq JobTimeoutException,
+       programmer error, ...) leaves a terminal 'failed:' status that SURVIVES
+       the frappe.db.rollback() Frappe's execute_job performs on any job
+       exception - previously the finally-backstop write was uncommitted and
+       rolled back with it, pinning the UI poller on 'pending:' forever.
+    2. A successful pool sync stamps llm_pool_synced_at.
+    3. is_ready_for_chat treats proxy_active as intent, not provisioning
+       success: a never-applied pool is NOT ready (reason
+       llm_pool_provisioning); an ever-applied pool stays ready through a
+       later re-save's transient pending/failed.
+    4. The sync jobs' RQ envelopes (300s) exceed the admin HTTP budgets they
+       wrap (120s pool / 90s single-model + lock waits + retries).
+    """
+
+    def _seed_pool(self):
+        """Two api_key models -> proxy_active=1, sync job enqueued (mocked ok)."""
+        settings = frappe.get_single("Jarvis Settings")
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-4o",
+                       tier="strong", order=0,
+                       api_key="sk-audit-key-1",
+                       base_url="https://api.openai.com")
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-3.5-turbo",
+                       tier="cheap", order=1,
+                       api_key="sk-audit-key-2",
+                       base_url="https://api.openai.com")
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   return_value={"action": "pool_update"}):
+            settings.save()
+
+    @staticmethod
+    def _as_background_job():
+        """Simulate execute_job's worker context: _commit_terminal_sync_status
+        commits ONLY when frappe.local.job is set (the real-worker signal), so
+        durability tests must fake it - and everything else in the suite runs
+        WITHOUT it, preserving FrappeTestCase transaction isolation."""
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _ctx():
+            prior = getattr(frappe.local, "job", None)
+            frappe.local.job = frappe._dict(method="test")
+            try:
+                yield
+            finally:
+                frappe.local.job = prior
+
+        return _ctx()
+
+    def test_unexpected_pool_sync_error_status_survives_rollback(self):
+        """RuntimeError (stand-in for rq JobTimeoutException - both take the
+        non-Admin* path) -> finally writes 'failed: unexpected error' AND
+        commits it, so execute_job's rollback can't undo it."""
+        self._seed_pool()
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("last_sync_status", "pending: provisioning container (pool)",
+                        update_modified=False)
+        frappe.db.commit()
+
+        with patch(
+            "jarvis.jarvis.doctype.jarvis_settings.jarvis_settings._post_pool_with_retry",
+            side_effect=RuntimeError("job timeout simulation"),
+        ), self._as_background_job():
+            with self.assertRaises(RuntimeError):
+                _enqueued_sync_via_admin_pool()
+
+        # Simulate Frappe's execute_job exception handler.
+        frappe.db.rollback()
+
+        status = frappe.db.get_single_value("Jarvis Settings", "last_sync_status") or ""
+        self.assertTrue(
+            status.startswith("failed: unexpected error"),
+            "the terminal failure status must survive the job-runner rollback "
+            f"(was the finally-backstop committed?); got: {status!r}",
+        )
+
+    def test_pool_sync_ok_stamps_llm_pool_synced_at(self):
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("llm_pool_synced_at", None, update_modified=False)
+        frappe.db.commit()
+
+        self._seed_pool()
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   return_value={"action": "pool_update"}):
+            _enqueued_sync_via_admin_pool()
+
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertTrue(settings.llm_pool_synced_at,
+                        "a successful pool apply must stamp llm_pool_synced_at")
+        self.assertTrue((settings.last_sync_status or "").startswith("ok"),
+                        f"expected ok status, got: {settings.last_sync_status!r}")
+
+    # -- is_ready_for_chat gate ------------------------------------------
+
+    def _set_pool_gate_state(self, *, synced_at, status):
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("proxy_active", 1, update_modified=False)
+        settings.db_set("llm_pool_synced_at", synced_at, update_modified=False)
+        settings.db_set("last_sync_status", status, update_modified=False)
+        frappe.db.commit()
+
+    def test_never_applied_pool_pending_is_not_ready(self):
+        from jarvis.account import is_ready_for_chat
+        self._set_pool_gate_state(
+            synced_at=None, status="pending: provisioning container (pool)")
+        result = is_ready_for_chat()
+        self.assertFalse(result.get("ready"),
+                         f"a never-applied pool must not be chat-ready; got: {result}")
+        self.assertEqual(result.get("reason"), "llm_pool_provisioning")
+
+    def test_never_applied_pool_failed_is_not_ready(self):
+        from jarvis.account import is_ready_for_chat
+        self._set_pool_gate_state(
+            synced_at=None, status="failed: unexpected error; see Error Log")
+        result = is_ready_for_chat()
+        self.assertFalse(result.get("ready"))
+        self.assertEqual(result.get("reason"), "llm_pool_provisioning")
+
+    def test_ever_applied_pool_stays_ready_through_resave_pending(self):
+        """A tenant whose pool applied once keeps chatting on the container's
+        previous config while a re-save is mid-sync - must NOT be bounced to
+        onboarding over a transient pending/failed."""
+        from jarvis.account import is_ready_for_chat
+        self._set_pool_gate_state(
+            synced_at=frappe.utils.now(),
+            status="pending: provisioning container (pool)")
+        self.assertTrue(is_ready_for_chat().get("ready"))
+        self._set_pool_gate_state(
+            synced_at=frappe.utils.now(),
+            status="failed: rate-limited; retry_after=90s")
+        self.assertTrue(is_ready_for_chat().get("ready"))
+
+    def test_legacy_ok_status_alone_does_not_open_the_gate(self):
+        """last_sync_status is SHARED with the single-model sync: a stale
+        'ok (reload via admin)' from a queued legacy creds job must not make
+        a never-applied pool look ready. Only the marker counts."""
+        from jarvis.account import is_ready_for_chat
+        self._set_pool_gate_state(
+            synced_at=None, status="ok (reload via admin)")
+        result = is_ready_for_chat()
+        self.assertFalse(result.get("ready"))
+        self.assertEqual(result.get("reason"), "llm_pool_provisioning")
+
+    def test_backfill_patch_grandfathers_pre_marker_tenants(self):
+        """Tenants provisioned before llm_pool_synced_at existed are
+        grandfathered by patch v1_10 (marker backfilled from last_sync_at
+        when the pool demonstrably applied), NOT by a status heuristic in
+        the gate."""
+        from jarvis.account import is_ready_for_chat
+        from jarvis.patches.v1_10_backfill_llm_pool_synced_at import execute
+
+        self._set_pool_gate_state(
+            synced_at=None, status="ok (pool_update via admin)")
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("last_sync_at", frappe.utils.now(), update_modified=False)
+        frappe.db.commit()
+
+        execute()
+
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertTrue(settings.llm_pool_synced_at,
+                        "patch must backfill the marker for an applied pool")
+        self.assertTrue(is_ready_for_chat().get("ready"))
+
+    def test_backfill_patch_stamps_even_non_ok_pool_tenants(self):
+        """Grandfathering is unconditional for pre-marker pool tenants: an
+        established tenant whose LATEST re-save is transiently pending/failed
+        at migrate time (container still serving the applied pool) was
+        chat-ready before the deploy and must stay so after it."""
+        from jarvis.patches.v1_10_backfill_llm_pool_synced_at import execute
+        self._set_pool_gate_state(
+            synced_at=None, status="failed: admin unreachable: transient")
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("last_sync_at", frappe.utils.now(), update_modified=False)
+        frappe.db.commit()
+        execute()
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertTrue(settings.llm_pool_synced_at,
+                        "pre-marker pool tenants must be grandfathered unconditionally")
+
+    def test_backfill_patch_skips_never_synced_pools(self):
+        """A pre-marker pool tenant whose sync NEVER completed (last_sync_at
+        empty) has a demonstrably never-applied pool - stamping would
+        permanently disarm the llm_pool_provisioning gate for a tenant whose
+        chat has never worked."""
+        from jarvis.patches.v1_10_backfill_llm_pool_synced_at import execute
+        self._set_pool_gate_state(
+            synced_at=None, status="failed: admin unreachable: since creation")
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("last_sync_at", None, update_modified=False)
+        frappe.db.commit()
+        execute()
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertFalse(settings.llm_pool_synced_at,
+                         "never-synced pools must not be grandfathered")
+
+    def test_backfill_patch_skips_non_pool_tenants(self):
+        from jarvis.patches.v1_10_backfill_llm_pool_synced_at import execute
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("proxy_active", 0, update_modified=False)
+        settings.db_set("llm_pool_synced_at", None, update_modified=False)
+        frappe.db.commit()
+        execute()
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertFalse(settings.llm_pool_synced_at,
+                         "direct tenants must not be stamped")
+
+    def test_pool_sync_ok_status_survives_rollback(self):
+        """The OK terminal write (status + marker) must be committed too: an
+        rq SIGALRM can fire AFTER the ok db_set but before job end, and the
+        job-runner rollback would otherwise revert a SUCCESSFUL apply back
+        to 'pending:' forever."""
+        self._seed_pool()
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("last_sync_status", "pending: provisioning container (pool)",
+                        update_modified=False)
+        settings.db_set("llm_pool_synced_at", None, update_modified=False)
+        frappe.db.commit()
+
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   return_value={"action": "pool_update"}), \
+             self._as_background_job():
+            _enqueued_sync_via_admin_pool()
+        frappe.db.rollback()
+
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertTrue((settings.last_sync_status or "").startswith("ok"),
+                        f"ok status must survive rollback; got {settings.last_sync_status!r}")
+        self.assertTrue(settings.llm_pool_synced_at,
+                        "llm_pool_synced_at must survive rollback")
+
+    def test_lock_loss_schedules_one_retry_then_terminal(self):
+        """Losing the sync lock must not strand a fresh tenant on a terminal
+        'failed: skipped' - first loss re-enqueues one retry under its own
+        job_id; only the retry's loss is terminal."""
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _never_acquired(*_a, **_kw):
+            yield False
+
+        captured = []
+        with patch("jarvis._redis_lock.redis_lock", _never_acquired), \
+             patch("frappe.enqueue", side_effect=lambda *a, **kw: captured.append(kw)):
+            _enqueued_sync_via_admin_pool(retry_left=1)
+        status = frappe.db.get_single_value("Jarvis Settings", "last_sync_status") or ""
+        self.assertTrue(status.startswith("pending: waiting for a concurrent sync"),
+                        f"first lock loss must stay pending-with-retry; got {status!r}")
+        self.assertEqual(len(captured), 1, "exactly one retry must be enqueued")
+        # Per-level prefix + per-chain random suffix (two overlapping chains
+        # at the same level must not dedup-collide and drop one).
+        self.assertTrue(
+            (captured[0].get("job_id") or "").startswith("jarvis_settings_sync:pool:retry:0:"),
+            f"unexpected retry job_id: {captured[0].get('job_id')!r}",
+        )
+        self.assertEqual(captured[0].get("retry_left"), 0)
+
+        captured.clear()
+        with patch("jarvis._redis_lock.redis_lock", _never_acquired), \
+             patch("frappe.enqueue", side_effect=lambda *a, **kw: captured.append(kw)):
+            _enqueued_sync_via_admin_pool(retry_left=0)
+        status = frappe.db.get_single_value("Jarvis Settings", "last_sync_status") or ""
+        self.assertTrue(status.startswith("failed: skipped"),
+                        f"retry exhaustion must be terminal; got {status!r}")
+        self.assertFalse(captured, "no further retries after exhaustion")
+
+    # -- RQ envelope budgets ----------------------------------------------
+
+    def test_sync_enqueues_share_the_budget_constant(self):
+        """BOTH sync enqueues (pool + single-model) must use
+        ADMIN_SYNC_RQ_TIMEOUT_S - and the constant itself must clear the
+        worst-case work it wraps (~430s: 60s lock wait + 3x120s pool POST
+        attempts + sleeps). Tuning either enqueue away from the shared
+        budget re-arms the JARVIS-2026-07-08 stuck-pending trigger."""
+        from unittest.mock import patch as _patch
+        from jarvis.jarvis.doctype.jarvis_settings.jarvis_settings import (
+            ADMIN_SYNC_LOCK_TIMEOUT_S, ADMIN_SYNC_RQ_TIMEOUT_S,
+        )
+
+        from jarvis.jarvis.doctype.jarvis_settings.jarvis_settings import (
+            ADMIN_SYNC_LOCK_RETRIES,
+            ADMIN_SYNC_PRIMARY_LOCK_WAIT_S,
+            ADMIN_SYNC_RETRY_LOCK_WAIT_S,
+        )
+
+        self.assertGreaterEqual(ADMIN_SYNC_RQ_TIMEOUT_S, 440,
+                                "RQ envelope must exceed worst-case sync work (~430s)")
+        self.assertGreaterEqual(ADMIN_SYNC_LOCK_TIMEOUT_S, ADMIN_SYNC_RQ_TIMEOUT_S,
+                                "lock TTL must cover a holder running to its SIGALRM")
+        # A dead (SIGKILLed) holder blocks for the full TTL; the retry chain's
+        # cumulative wait must outlive it or a fresh tenant's first sync can
+        # exhaust every attempt against a corpse.
+        cumulative_wait = (ADMIN_SYNC_PRIMARY_LOCK_WAIT_S
+                           + ADMIN_SYNC_LOCK_RETRIES * ADMIN_SYNC_RETRY_LOCK_WAIT_S)
+        self.assertGreater(cumulative_wait, ADMIN_SYNC_LOCK_TIMEOUT_S,
+                           "retry-chain cumulative lock wait must outlive a dead holder's TTL")
+        # And the per-attempt wait must not eat the work budget: wait + POST
+        # work (~370s: 3x120 + sleeps, lock wait excluded) must fit the envelope.
+        self.assertLessEqual(ADMIN_SYNC_RETRY_LOCK_WAIT_S + 380, ADMIN_SYNC_RQ_TIMEOUT_S,
+                             "retry lock wait + worst-case POST work must fit the RQ envelope")
+
+        settings = frappe.get_single("Jarvis Settings")
+        captured = []
+
+        def _capture_enqueue(*args, **kwargs):
+            captured.append(kwargs)
+
+        with patch("frappe.enqueue", side_effect=_capture_enqueue):
+            settings.db_set("last_sync_status", "", update_modified=False)
+            settings._enqueue_pool_sync()
+            with _patch.object(type(settings), "_classify_llm_change",
+                               return_value="restart"):
+                settings._on_update_single_model_legacy()
+        self.assertEqual(len(captured), 2)
+        for kw in captured:
+            self.assertEqual(kw.get("timeout"), ADMIN_SYNC_RQ_TIMEOUT_S)

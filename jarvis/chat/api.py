@@ -5,7 +5,11 @@ The browser talks to these from the /jarvis chat SPA (apps/jarvis/frontend).
 
 from __future__ import annotations
 
+from urllib.parse import quote
+
 import frappe
+
+from jarvis.permissions import require_jarvis_access
 
 CONV = "Jarvis Conversation"
 MSG = "Jarvis Chat Message"
@@ -70,6 +74,7 @@ def list_tools() -> list[str]:
 	plugin registers one ``jarvis__<name>`` per entry). Drives the chat's
 	"Tools available" count + the ``/tool`` autocomplete so they track the
 	registry instead of a hardcoded SPA list that drifts."""
+	require_jarvis_access()
 	from jarvis.tools.registry import list_tools as _registry_list_tools
 	return _registry_list_tools()
 
@@ -81,6 +86,7 @@ def list_conversations() -> list[dict]:
 	Each row includes ``message_count`` so the UI can identify empty
 	conversations (used by ``create_or_focus_empty``).
 	"""
+	require_jarvis_access()
 	# Chat page loaded: warm the openclaw prefix cache in the background
 	# (best-effort, debounced) so the first turn of a new chat skips the cold
 	# provider prefill. Never blocks or fails this read.
@@ -108,6 +114,7 @@ def search_conversations(search: str = "", start: int = 0, page_length: int = 20
 	DESIGN-V3 §8.2 / D40). Owner-scoped in SQL; LIKE wildcards escaped; empty
 	search returns all rows. Order: starred first, then most recently active.
 	Envelope: ``{rows, total, has_more, start, page_length}``."""
+	require_jarvis_access()
 	me = frappe.session.user
 	try:
 		start = max(0, int(start or 0))
@@ -148,6 +155,260 @@ def search_conversations(search: str = "", start: int = 0, page_length: int = 20
 	}
 
 
+# ---------------------------------------------------------------------------
+# ⌘K palette — full Frappe desk search (delegated to Frappe's own search).
+# ---------------------------------------------------------------------------
+# Beyond conversations, the palette runs the caller's query through Frappe's
+# OWN whitelisted search — there is deliberately no bespoke matcher here. Each
+# item carries a ready ``/app/...`` desk route the SPA opens in a new tab:
+#   * Lists   — matching doctypes,   via ``frappe.desk.search.search_widget``
+#   * Reports — matching reports,    via ``frappe.desk.search.search_widget``
+#   * Pages   — matching desk pages, via ``frappe.desk.search.search_widget``
+#   * Records — matching documents,  via ``frappe.utils.global_search.search``
+# Permission scoping is Frappe's own: ``search_widget`` honours the target
+# doctype's read perms; ``global_search`` is scoped to global-search-enabled +
+# readable doctypes and re-checks ``has_permission`` per hit. Lists additionally
+# intersect ``get_can_read`` because the DocType search runs ignore_permissions
+# upstream. Matching is therefore Frappe's substring/relevance search — the
+# old client-agnostic shortcuts ('sinv' -> Sales Invoice) no longer apply.
+
+_WS_GROUP_LIMIT = 6
+
+
+def _desk_slug(doctype: str) -> str:
+	"""Desk URL slug for a doctype, mirroring ``frappe.router.slug`` in the
+	desk JS: lowercase with spaces hyphenated. ``Sales Order`` -> ``sales-order``."""
+	return (doctype or "").lower().replace(" ", "-")
+
+
+def _fuzzy_score(pattern: str, text: str) -> float:
+	"""Subsequence fuzzy score in the spirit of Desk's awesomebar matcher: every
+	character of ``pattern`` must appear in ``text`` in order or the score is 0
+	(so "usr" matches "User"). Exact / prefix / substring hits are boosted so
+	they outrank looser subsequence hits; within the subsequence path,
+	word-start and consecutive matches score higher and gaps penalise.
+	Case-insensitive. Higher is better."""
+	if not pattern:
+		return 0.0
+	p = pattern.lower().strip()
+	t = (text or "").lower()
+	if not p or not t:
+		return 0.0
+	# Intuitive cases first, ranked strongest -> weakest, shorter targets higher.
+	if t == p:
+		return 1000.0
+	if t.startswith(p):
+		return 600.0 - len(t)
+	sub = t.find(p)
+	if sub != -1:
+		return 400.0 - sub - len(t) * 0.1
+	# General subsequence match with position-aware scoring.
+	score = 0.0
+	ti = 0
+	prev = -2
+	for ch in p:
+		found = t.find(ch, ti)
+		if found == -1:
+			return 0.0  # not a subsequence -> no match
+		if found == 0 or not t[found - 1].isalnum():
+			score += 12.0  # start of a word
+		if found == prev + 1:
+			score += 8.0  # consecutive with the previous match
+		score -= (found - ti)  # gap penalty
+		prev = found
+		ti = found + 1
+	score -= len(t) * 0.05  # mild preference for shorter targets
+	return score if score > 0 else 0.5  # a real subsequence still counts
+
+
+def _search_lists(search: str, limit: int) -> list[dict]:
+	"""Doctype navigation, fuzzy-matched like Desk's awesomebar (so "usr" ->
+	User, "custmr" -> Customer). Scores every doctype the caller can read against
+	``search`` with ``_fuzzy_score``, ranks, drops child tables, and keeps the
+	top ``limit``. Singles route to their form; others to the list."""
+	scored = []
+	for dt in frappe.get_user().get_can_read():
+		s = _fuzzy_score(search, dt)
+		if s > 0:
+			scored.append((s, dt))
+	if not scored:
+		return []
+	scored.sort(key=lambda x: x[0], reverse=True)
+	# Resolve istable/issingle only for the strongest matches (a few extra so
+	# dropping child tables still leaves room for `limit` real hits).
+	candidates = scored[: limit * 3]
+	meta = {
+		r["name"]: r
+		for r in frappe.get_all(
+			"DocType",
+			filters={"name": ["in", [dt for _s, dt in candidates]]},
+			fields=["name", "issingle", "istable"],
+		)
+	}
+	out: list[dict] = []
+	for _s, dt in candidates:
+		m = meta.get(dt)
+		if not m or m.get("istable"):
+			continue
+		single = m.get("issingle")
+		out.append(
+			{
+				"name": f"list::{dt}",
+				"label": dt,
+				"icon": "settings" if single else "list",
+				"suffix": "Single" if single else "List",
+				"route": f"/app/{_desk_slug(dt)}",
+			}
+		)
+		if len(out) >= limit:
+			break
+	return out
+
+
+def _report_route(name: str, report_type: str | None, ref_doctype: str | None) -> str:
+	"""Desk route for a report by its type. Report Builder opens on its
+	ref doctype's report view; Query/Script reports open in the report viewer."""
+	q = quote(str(name), safe="")
+	if report_type == "Report Builder" and ref_doctype:
+		return f"/app/{_desk_slug(ref_doctype)}/view/report/{q}"
+	return f"/app/query-report/{q}"
+
+
+def _search_reports(search: str, limit: int) -> list[dict]:
+	"""Reports, fuzzy-matched (subsequence) over their names, scoped to the
+	caller's Report read perm via ``frappe.get_list``. Disabled reports are
+	excluded by the ``disabled`` filter."""
+	try:
+		rows = frappe.get_list(
+			"Report",
+			filters={"disabled": 0},
+			fields=["name", "report_type", "ref_doctype"],
+			limit_page_length=0,
+		)
+	except frappe.PermissionError:
+		return []
+	scored = []
+	for r in rows:
+		s = _fuzzy_score(search, r.get("name") or "")
+		if s > 0:
+			scored.append((s, r))
+	scored.sort(key=lambda x: x[0], reverse=True)
+	out: list[dict] = []
+	for _s, r in scored[:limit]:
+		nm = r.get("name")
+		out.append(
+			{
+				"name": f"report::{nm}",
+				"label": nm,
+				"icon": "bar-chart-2",
+				"suffix": "Report",
+				"route": _report_route(nm, r.get("report_type"), r.get("ref_doctype")),
+			}
+		)
+	return out
+
+
+def _search_pages(search: str, limit: int) -> list[dict]:
+	"""Desk Pages, fuzzy-matched (subsequence) over title + name, scoped to the
+	caller's Page read perm via ``frappe.get_list``. Routed to ``/app/<page>``."""
+	try:
+		rows = frappe.get_list(
+			"Page", fields=["name", "title"], limit_page_length=0
+		)
+	except frappe.PermissionError:
+		return []
+	scored = []
+	for r in rows:
+		s = max(
+			_fuzzy_score(search, r.get("title") or ""),
+			_fuzzy_score(search, r.get("name") or ""),
+		)
+		if s > 0:
+			scored.append((s, r))
+	scored.sort(key=lambda x: x[0], reverse=True)
+	out: list[dict] = []
+	for _s, r in scored[:limit]:
+		nm = r.get("name")
+		out.append(
+			{
+				"name": f"page::{nm}",
+				"label": r.get("title") or nm,
+				"icon": "layout",
+				"suffix": "Page",
+				"route": f"/app/{nm}",
+			}
+		)
+	return out
+
+
+def _search_records(search: str, limit: int) -> list[dict]:
+	"""Actual document matches via Frappe global search — full-text over
+	``__global_search``. ``frappe.utils.global_search.search`` is already scoped
+	to global-search-enabled doctypes the caller can read and re-checks
+	``has_permission`` per hit; here we only dedupe and map to desk routes."""
+	from frappe.utils.global_search import search as global_search
+
+	try:
+		hits = global_search(text=search, limit=limit) or []
+	except Exception:
+		frappe.clear_messages()
+		return []
+	out: list[dict] = []
+	seen: set = set()
+	for r in hits:
+		dt, nm = r.get("doctype"), r.get("name")
+		if not dt or not nm or (dt, nm) in seen:
+			continue
+		seen.add((dt, nm))
+		out.append(
+			{
+				"name": f"record::{dt}::{nm}",
+				"label": r.get("title") or nm,
+				"icon": "file-text",
+				"suffix": dt,
+				"route": f"/app/{_desk_slug(dt)}/{quote(str(nm), safe='')}",
+			}
+		)
+		if len(out) >= limit:
+			break
+	return out
+
+
+@frappe.whitelist()
+def search_workspace(search: str = "", limit: int = 6) -> dict:
+	"""Full desk search over the caller's Frappe desk for the ⌘K palette,
+	delegated entirely to Frappe's own search (no bespoke matcher):
+
+	  * Lists   — matching doctypes,   via ``frappe.desk.search.search_widget``
+	  * Reports — matching reports,    via ``frappe.desk.search.search_widget``
+	  * Pages   — matching desk pages, via ``frappe.desk.search.search_widget``
+	  * Records — matching documents,  via ``frappe.utils.global_search.search``
+
+	Each item carries a ready ``/app/...`` desk route. Permission scoping is
+	Frappe's own (see the helpers). Empty search yields no groups; the palette
+	owns chats/nav.
+	Envelope: ``{groups: [{key, title, items: [{name,label,icon,suffix,route}]}]}``.
+	"""
+	search = (search or "").strip()
+	if not search:
+		return {"groups": []}
+	try:
+		limit = max(1, min(int(limit or _WS_GROUP_LIMIT), 20))
+	except (TypeError, ValueError):
+		limit = _WS_GROUP_LIMIT
+
+	groups: list[dict] = []
+	for key, title, items in (
+		("lists", "Lists", _search_lists(search, limit)),
+		("reports", "Reports", _search_reports(search, limit)),
+		("pages", "Pages", _search_pages(search, limit)),
+		("records", "Records", _search_records(search, limit)),
+	):
+		if items:
+			groups.append({"key": key, "title": title, "items": items})
+	return {"groups": groups}
+
+
 @frappe.whitelist()
 def create_or_focus_empty() -> str:
 	"""Return an empty active conversation for the current user, creating
@@ -156,6 +417,7 @@ def create_or_focus_empty() -> str:
 	Prevents the "click New Chat repeatedly => orphan empty rows" failure
 	mode. The most-recently-active empty conversation wins.
 	"""
+	require_jarvis_access()
 	user = frappe.session.user
 	empty = frappe.db.sql(
 		"""
@@ -183,6 +445,7 @@ def get_conversation(conversation: str) -> dict:
 	Raises frappe.DoesNotExistError if the conversation does not exist, or
 	frappe.PermissionError if the caller is not the owner.
 	"""
+	require_jarvis_access()
 	doc = _get_owned_conversation(conversation)
 
 	# hidden = internal system rows (e.g. the post-apply continuation prompt):
@@ -229,6 +492,7 @@ def get_canvas(message: str, name: str | None = None, dark: int = 0) -> dict:
 	a minimal HTML shell. ``dark`` themes the SVG shell (and the frame bg the
 	SPA renders behind it) so the preview page follows the app's dark mode.
 	"""
+	require_jarvis_access()
 	from frappe import _ as _t
 
 	row = frappe.db.get_value(MSG, message, ["conversation", "canvas"], as_dict=True)
@@ -298,6 +562,7 @@ def preview_file(file_url: str) -> dict:
 	rendered by the panel directly from the file URL, so this is only called for
 	the non-inline ("file") types. Permission-gated through ``read_file`` (needs
 	File read perm on the private File — the user's own chat artifact)."""
+	require_jarvis_access()
 	if not file_url:
 		return {"kind": "binary"}
 	from jarvis.tools.read_file import read_file
@@ -318,6 +583,7 @@ def preview_file(file_url: str) -> dict:
 @frappe.whitelist()
 def create_conversation() -> str:
 	"""Create an empty conversation owned by the current user; return its name."""
+	require_jarvis_access()
 	doc = frappe.get_doc({
 		"doctype": CONV,
 		"title": "New chat",
@@ -331,6 +597,7 @@ def create_conversation() -> str:
 @frappe.whitelist()
 def archive_conversation(conversation: str) -> dict:
 	"""Set status to archived (owner-only). The openclaw-side session is left in place."""
+	require_jarvis_access()
 	doc = _get_owned_conversation(conversation)
 	doc.status = "Archived"
 	doc.save()
@@ -344,6 +611,7 @@ def clear_chat_history() -> dict:
 	(the settings "Danger zone" action). Macros, skills and settings are
 	untouched; macro-run history rows survive but drop their (now deleted)
 	conversation reference."""
+	require_jarvis_access()
 	user = frappe.session.user
 	names = frappe.get_all(CONV, filters={"owner": user}, pluck="name")
 	if not names:
@@ -365,6 +633,7 @@ def clear_chat_history() -> dict:
 @frappe.whitelist()
 def rename_conversation(conversation: str, title: str) -> dict:
 	"""Rename a conversation (owner-only, enforced explicitly)."""
+	require_jarvis_access()
 	title = (title or "").strip()[:140]
 	if not title:
 		return {"ok": False, "reason": _("title is empty")}
@@ -379,6 +648,7 @@ def rename_conversation(conversation: str, title: str) -> dict:
 def set_star(conversation: str, starred: str | int | bool) -> dict:
 	"""Star/unstar a conversation (owner-only, enforced explicitly). Starred
 	chats are listed first and grouped under 'Starred' in the sidebar."""
+	require_jarvis_access()
 	on = 1 if str(starred) in ("1", "true", "True", "on", "yes") else 0
 	doc = _get_owned_conversation(conversation)
 	doc.starred = on
@@ -435,6 +705,13 @@ def send_message(
 	frappe.DoesNotExistError if the conversation does not exist, or
 	frappe.PermissionError if the caller is not the owner.
 	"""
+	# NO require_jarvis_access() here: send_message is invoked under
+	# frappe.set_user(owner) by delegated/system flows (agent_scheduler,
+	# approvals resume), where the impersonated owner may not hold the role — a
+	# gate here would silently break those resumes. It is already owner-only
+	# (SEC-002, validate_can_send below), and reaching it requires a conversation
+	# created through the gated create_* endpoints; human access is enforced at
+	# the SPA route + desk page.
 	t0 = time.monotonic()
 	user = frappe.session.user
 
@@ -614,6 +891,7 @@ def get_chat_ui_settings() -> dict:
 	register a single model at signup and there's no multi-model UI
 	for them yet (see spec § Out of scope).
 	"""
+	require_jarvis_access()
 	settings = frappe.get_single("Jarvis Settings")
 	# Lazy import: keeps this hot endpoint's module import light and avoids
 	# a jarvis.chat.api <-> jarvis.chat.voice cycle.
@@ -666,6 +944,7 @@ def set_auto_apply(conversation: str, value: str | int | bool) -> dict:
 	Writes ``auto_apply`` on the CONVERSATION row (not the deprecated site-wide
 	Jarvis Settings Single). Returns ``{ok, data: {auto_apply: on}}``.
 	"""
+	require_jarvis_access()
 	on = 1 if str(value) in ("1", "true", "True", "on", "yes") else 0
 	owner = frappe.db.get_value(CONV, conversation, "owner")
 	if owner is None:
@@ -699,6 +978,7 @@ def get_usage(conversation: str | None = None) -> dict:
 	(content + tool args/results), not real API token counts, which openclaw
 	doesn't expose. Owner-scoped: only the caller's own conversations.
 	"""
+	require_jarvis_access()
 	from frappe.utils import get_datetime, get_first_day, now_datetime
 
 	user = frappe.session.user
@@ -747,6 +1027,7 @@ def set_conversation_model(conversation: str, model: str | None = None) -> dict:
 	Owner-only (SEC-002): mutates the conversation via ``db.set_value`` (which
 	bypasses permission checks), so ownership is asserted explicitly here.
 	"""
+	require_jarvis_access()
 	owner = frappe.db.get_value(CONV, conversation, "owner")
 	if owner is None:
 		return {"ok": False, "error": {
@@ -785,6 +1066,7 @@ def warm_session() -> dict:
 	new-chat first turn skips the cold prefill. Best-effort; always ok. The
 	chat UI calls this on open. Self-hosted and unconfigured benches no-op.
 	Runs in a background RQ job so the gunicorn web worker is not blocked."""
+	require_jarvis_access()
 	frappe.enqueue(
 		"jarvis.chat.prewarm.warm_prefix",
 		queue="short",
@@ -803,6 +1085,7 @@ def set_conversation_thinking(conversation: str, thinking: str | None = None) ->
 
 	Owner-only (SEC-002): mutates the conversation via ``db.set_value`` (which
 	bypasses permission checks), so ownership is asserted explicitly here."""
+	require_jarvis_access()
 	owner = frappe.db.get_value(CONV, conversation, "owner")
 	if owner is None:
 		return {"ok": False, "error": {
@@ -837,6 +1120,7 @@ def retry_message(message: str) -> dict:
 	does not exist, or ``frappe.PermissionError`` if the caller does not own
 	the parent conversation.
 	"""
+	require_jarvis_access()
 	doc = frappe.get_doc(MSG, message)
 	# Ownership is enforced on the PARENT conversation: message rows can be
 	# inserted by the RQ worker under a different session user, so the
@@ -1213,6 +1497,7 @@ def get_doctype_fields(doctype: str) -> dict:
 	Returns only editable, data-bearing fields (layout/display fieldtypes are
 	dropped). Read-only structural info — gated on the caller being able to read
 	the DocType so it can't be used to enumerate arbitrary schemas."""
+	require_jarvis_access()
 	doctype = (doctype or "").strip()
 	if not doctype or not frappe.db.exists("DocType", doctype):
 		return {"ok": False, "reason": _("unknown doctype"), "fields": []}

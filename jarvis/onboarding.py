@@ -56,10 +56,9 @@ def _require_https_site_url() -> None:
 		# frappe.throw (not a bare raise) so the wizard surfaces the message
 		# instead of a generic "Something went wrong".
 		frappe.throw(
-			f"Production onboarding requires this site to be served over "
-			f"https:// (currently {url}). Put the site behind TLS, or enable "
-			f"Sandbox Mode (Jarvis Settings -> Developer section) for a "
-			f"dev/sandbox install.",
+			"Live onboarding needs an HTTPS site. Enable Sandbox Mode in "
+			"Jarvis Settings → Developer to onboard here, or serve the site "
+			"over HTTPS.",
 			frappe.ValidationError,
 		)
 
@@ -162,11 +161,16 @@ def get_preset_catalog() -> list:
 
 
 @frappe.whitelist()
-def save_llm_pool(models, preset: str | None = None, routing_mode: str = "failover") -> dict:
+def save_llm_pool(models: str | list, preset: str | None = None, routing_mode: str = "failover") -> dict:
 	"""Write the customer's multi-model LLM pool into Jarvis Settings.models[]
 	(+ preset, routing_mode) and let the existing on_update pipeline validate
 	(validate_models), derive proxy_active, mirror models[0] into legacy llm_*,
 	and sync DIRECT (/llm-creds) vs PROXY (/llm-pool) via admin.
+
+	``models`` MUST stay annotated: with Frappe's
+	``require_type_annotated_api_methods`` enforced (declared in hooks.py),
+	an un-annotated whitelisted param 500s the request before the body runs
+	(JARVIS-2026-07-08 incident, fault a).
 
 	System-Manager-gated. routing_mode is always 'failover' in v1. preset is an
 	admin-catalog key or None; validated against the fetched catalog."""
@@ -250,6 +254,15 @@ def save_llm_pool(models, preset: str | None = None, routing_mode: str = "failov
 
 	s.preset = preset
 	s.routing_mode = routing_mode
+	# A models[]-based config never uses the flat direct-OAuth fields (a pooled
+	# chat subscription's creds live in models[].subscription_accounts, served by
+	# cliproxy — not auth-profiles.json). Clear any stale direct chat-subscription
+	# display state left over from a prior DIRECT connection so
+	# get_direct_subscription_status / the account UI can't later misread it as a
+	# live direct connection after the tenant migrated to a pool. auth_mode is
+	# re-mirrored from models[0] by on_update.
+	s.llm_oauth_account_email = ""
+	s.llm_oauth_connected_at = None
 	# save() -> on_update -> _on_update_unified_llm: validate_models (throws),
 	# compute_proxy_active, mirror models[0], enqueue pool/creds sync.
 	s.save(ignore_permissions=True)

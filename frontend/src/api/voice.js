@@ -1,4 +1,4 @@
-// Voice API — thin wrappers around `jarvis.chat.voice` and
+// Voice API - thin wrappers around `jarvis.chat.voice` and
 // `jarvis.chat.voice_notes_api` (wiki endpoints live in src/api/wiki.js).
 // Mirrors src/api/learning.js: one `call` per endpoint. The exception is
 // `transcribeAudio`, which must POST a multipart body (the recorded blob), so
@@ -70,7 +70,7 @@ export async function transcribeAudio(blob, { durationS = 0 } = {}) {
 
 // ── voice notes (Business tab + chat nudge share these) ──────────────────────
 // p: {transcript, context_type, conversation, entities (JSON string),
-//     duration_s, source} — server defaults context_type "Business" /
+//     duration_s, source} - server defaults context_type "Business" /
 // source "Business Tab" when omitted. → {name}
 export const saveVoiceNote = (p = {}) => call(VN + "save_voice_note", p)
 export const listMyVoiceNotesPage = (p = {}) =>
@@ -80,7 +80,7 @@ export const listMyVoiceNotesPage = (p = {}) =>
 		...(p.status ? { status: p.status } : {}),
 		...(p.search ? { search: p.search } : {}),
 	})
-// owner-only, status "New" only — edited transcript re-feeds the daily sweep
+// owner-only, status "New" only - edited transcript re-feeds the daily sweep
 export const updateVoiceNote = (name, transcript) =>
 	call(VN + "update_voice_note", { name, transcript })
 export const deleteVoiceNote = (name) => call(VN + "delete_voice_note", { name })

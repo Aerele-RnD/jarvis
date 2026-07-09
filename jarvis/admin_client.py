@@ -496,6 +496,29 @@ def push_wiki_files(files: list[dict], delete: list | None = None,
 		return None
 
 
+def push_wiki_graph(payload: dict) -> dict | None:
+	"""POST the computed User/Role/Org wiki-utilization graph to admin, which
+	re-validates and upserts it into ``Jarvis Wiki Graph Snapshot`` (see
+	jarvis.chat.wiki_graph). Own rate bucket admin-side; NOT a container op.
+
+	Returns the parsed response dict or None on ANY failure — the graph is a
+	derived, rebuildable analytics copy and the sync must degrade to "retry next
+	sync", never raise into the wiki save paths or the sync worker.
+	"""
+	try:
+		return _post(
+			path="/api/method/jarvis_admin.api.tenant.post_push_wiki_graph",
+			body={"graph": payload},
+			timeout_s=60,
+		)
+	except Exception:
+		frappe.log_error(
+			title="admin_client: push_wiki_graph failed",
+			message=frappe.get_traceback(),
+		)
+		return None
+
+
 def get_generated_media(since_ms: int = 0) -> list[dict]:
 	"""Pull recent codex ``imagegen`` output for this customer's running tenant
 	container (admin → fleet → container disk). Returns a list of
@@ -559,13 +582,17 @@ def post_llm_auth_status() -> dict:
 	profile."
 
 	Returns:
-	    Same shape as the admin endpoint:
-	    {"ok": True,
-	     "data": {"auth_profile_present": bool,
-	              "profile_ids": [...],
-	              "default_model": str,
-	              "openai_profile_expires_ms": int | None}}
+	    ``_post`` already unwraps the admin's ``data`` envelope, so this is
+	    the inner dict itself (not ``{"ok": ..., "data": ...}``):
+	    {"auth_profile_present": bool,
+	     "profile_ids": [...],
+	     "default_model": str,
+	     "openai_profile_expires_ms": int | None}
 	    Never includes token material.
+
+	    ``auth_profile_present`` is provider-aware: admin recomputes it from
+	    the tenant's llm_provider rather than trusting the fleet-agent's
+	    OpenAI-only flag.
 
 	Raises AdminAuthError / AdminUnreachableError / AdminValidationError
 	in the same shape as the other admin_client methods.

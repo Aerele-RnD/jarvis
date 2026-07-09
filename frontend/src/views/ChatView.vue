@@ -43,6 +43,10 @@
 							</button>
 						</div>
 					</div>
+					<!-- Connect phone: shows a QR the mobile app scans to onboard -->
+					<button class="jv-iconbtn" @click="showConnect = true" title="Connect phone" aria-label="Connect phone" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:transparent;border:1px solid var(--border);border-radius:7px;cursor:pointer;">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2" width="10" height="20" rx="2" /><path d="M11 18h2" /></svg>
+					</button>
 					<button class="jv-iconbtn" @click="toggleTheme" :title="effectiveDark ? 'Switch to light theme' : 'Switch to dark theme'" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:transparent;border:1px solid var(--border);border-radius:7px;cursor:pointer;">
 						<svg v-if="effectiveDark" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
 						<svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" /></svg>
@@ -92,7 +96,7 @@
 					<template v-for="m in visibleMessages" :key="m.name">
 						<!-- user -->
 						<div v-if="m.role === 'user'" class="jv-umsg" style="display:flex;flex-direction:column;align-items:flex-end;">
-							<div v-if="m.content" style="max-width:78%;background:var(--surface-2);border:1px solid var(--border);border-radius:14px 14px 4px 14px;padding:10px 14px;font-size:14px;line-height:1.5;color:var(--text);white-space:pre-wrap;">{{ m.content }}</div>
+							<div v-if="m.content" style="max-width:78%;min-width:0;background:var(--surface-2);border:1px solid var(--border);border-radius:14px 14px 4px 14px;padding:10px 14px;font-size:14px;line-height:1.5;color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere;">{{ m.content }}</div>
 							<!-- attached images → same clickable thumbnail + preview as generated ones -->
 							<template v-for="cv in (m.canvas || [])" :key="cv.name">
 								<button v-if="cv.type === 'image' && cv.file_url" class="jv-img-artifact" @click="openArtifact(m, cv)" :title="'Open ' + cv.title" style="margin-top:8px;cursor:zoom-in;">
@@ -101,14 +105,15 @@
 							</template>
 							<div class="jv-msgbar">
 								<!-- sent-time: revealed with the bar on hover; its own hover
-								     (native title) gives the full day-date-month-year-time -->
+								     (native title) gives the full day-date-month-year-time.
+								     Order: time → edit → copy (edit before copy). -->
 								<span v-if="msgTime(m)" class="jv-msgtime" :title="msgTimeFull(m)">{{ msgTime(m) }}</span>
+								<button class="jv-msgbtn" @click="editCommand(m)" title="Edit & resend">
+									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
+								</button>
 								<button class="jv-msgbtn" @click="copyMsg(m.name, m.content)" :title="copiedId === m.name ? 'Copied' : 'Copy'">
 									<svg v-if="copiedId === m.name" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
 									<svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
-								</button>
-								<button class="jv-msgbtn" @click="editCommand(m)" title="Edit & resend">
-									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
 								</button>
 							</div>
 						</div>
@@ -179,14 +184,54 @@
 										     not a dead end while every container upgrades. -->
 										<div class="jv-legacy-note">{{ LEGACY_GATE_NOTE }}</div>
 									</div>
-									<!-- create/update → compact chip; the side panel is the editor -->
-									<div v-else-if="!activeAction.verb || activeAction.verb === 'create' || activeAction.verb === 'update'"
-									     class="jv-draft-chip" role="button" tabindex="0"
-									     @click="openDraftPanel({ verb: activeAction.verb || 'create', ...activeAction })"
-									     @keydown.enter="openDraftPanel({ verb: activeAction.verb || 'create', ...activeAction })">
-										<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></svg>
-										<span><b>{{ activeAction.doctype }}</b> draft<template v-if="draftChipSummary"> · {{ draftChipSummary }}</template></span>
-										<span class="jv-draft-chip-cta">Open editor</span>
+									<!-- create/update → read-only summary/diff card (Task 1.3); Edit opens the full panel -->
+									<div v-else-if="isEditVerb(activeAction)" class="jv-action jv-summary">
+										<div class="jv-action-head">
+											<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+											<span class="jv-action-title">
+												{{ activeAction.verb === 'update' ? 'Update' : 'Create' }} {{ activeAction.doctype }}<template v-if="summaryState.model && summaryState.model.docName"> · {{ summaryState.model.docName }}</template>
+											</span>
+										</div>
+
+										<div v-if="summaryState.view" class="jv-summary-body">
+											<div v-if="summaryState.view.headline" class="jv-summary-headline">{{ summaryState.view.headline }}</div>
+											<dl v-if="summaryState.view.kind === 'create'" class="jv-summary-fields">
+												<template v-for="(r, i) in summaryState.view.rows" :key="i">
+													<dt>{{ r.label }}</dt><dd>{{ r.value }}</dd>
+												</template>
+											</dl>
+											<div v-else class="jv-summary-diff">
+												<div v-for="d in summaryState.view.diff" :key="d.label" class="jv-summary-diffrow">
+													<span class="jv-summary-difflbl">{{ d.label }}</span>
+													<span class="jv-summary-from">{{ d.from || '(empty)' }}</span>
+													<span class="jv-summary-arrow">-&gt;</span>
+													<span class="jv-summary-to">{{ d.to || '(empty)' }}</span>
+												</div>
+												<div v-if="!summaryState.view.diff.length" class="jv-summary-nochange">No field changes.</div>
+											</div>
+
+											<div v-for="t in summaryState.view.tables" :key="t.fieldname" class="jv-summary-table">
+												<div class="jv-summary-table-h">{{ t.label }} ({{ t.count }})</div>
+												<div class="jv-summary-rows">
+													<div v-for="(row, i) in t.rows" :key="i" class="jv-summary-row">
+														<span v-for="(c, ci) in row.cells" :key="ci">{{ c }}</span>
+													</div>
+												</div>
+											</div>
+										</div>
+										<div v-else-if="summaryState.error" class="jv-summary-body jv-summary-loading">{{ summaryState.error }}</div>
+										<div v-else class="jv-summary-body jv-summary-loading">Preparing summary...</div>
+
+										<div v-if="summaryState.model && summaryState.model.error" class="jv-draft-error" style="margin:0 14px 10px">{{ summaryState.model.error }}</div>
+
+										<div class="jv-action-foot">
+											<button class="jv-action-primary" :disabled="!summaryState.model || (summaryState.model && summaryState.model.applying) || convStreaming" :title="convStreaming ? 'Waiting for the current reply to finish' : ''" @click="confirmSummary">
+												{{ summaryState.model && summaryState.model.applying ? 'Saving...' : (activeAction.verb === 'update' ? 'Confirm update' : 'Confirm create') }}
+											</button>
+											<button class="jv-action-2nd" :disabled="!summaryState.model" @click="previewSummary">Preview</button>
+											<button class="jv-action-2nd" @click="openDraftPanel({ verb: activeAction.verb || 'create', ...activeAction })">Edit</button>
+										</div>
+										<div class="jv-summary-hint">Want a change? just tell me, e.g. "make Widget A qty 12".</div>
 									</div>
 									<!-- submit/cancel/delete/amend are gated writes (issue #186): the real
 									     confirmation is the action:pending card rendered below the thread,
@@ -205,7 +250,7 @@
 									<button class="jv-confirm-yes" @click="answerConfirm(true, confirmLabel(m))">Confirm</button>
 								</div>
 								<!-- interactive clarifying questions (Claude-style cards; one Submit) -->
-								<div v-else-if="askFor === m.name && activeAsk" class="jv-ask">
+								<div v-else-if="askFor === m.name && activeAsk" class="jv-ask" :class="{ 'jv-ask--form': askIsForm }">
 									<div v-for="(q, qi) in activeAsk.questions" :key="qi" class="jv-ask-q">
 										<div class="jv-ask-qt"><span class="jv-ask-num">{{ qi + 1 }}</span>{{ q.q }}</div>
 										<!-- yes/no, with optional custom labels (e.g. Approve / Reject) -->
@@ -222,9 +267,9 @@
 										<input v-else-if="q.type === 'text'" type="text" class="jv-ask-field" :value="askSel[qi] || ''" @input="pickSingle(qi, $event.target.value)" placeholder="Type your answer…" @keydown.enter.prevent />
 										<!-- link: search a record of the given DocType -->
 										<div v-else-if="q.type === 'link'" class="jv-ask-link">
-											<input type="text" class="jv-ask-field" :value="(askLink[qi] && askLink[qi].q != null) ? askLink[qi].q : (askSel[qi] || '')" @input="onLinkSearch(qi, q.doctype, $event.target.value)" @focus="onLinkSearch(qi, q.doctype, (askLink[qi] && askLink[qi].q) || '')" :placeholder="'Search ' + (q.doctype || 'records') + '…'" @keydown.enter.prevent />
+											<input type="text" class="jv-ask-field" :value="(askLink[qi] && askLink[qi].q != null) ? askLink[qi].q : (askSel[qi] || '')" @input="onLinkSearch(qi, q.doctype, $event.target.value)" @focus="onLinkSearch(qi, q.doctype, (askLink[qi] && askLink[qi].q) || '')" :placeholder="'Search ' + (q.doctype || 'records') + '…'" @blur="closeAskLink(qi)" @keydown.enter.prevent />
 											<div v-if="askLink[qi] && askLink[qi].open && (askLink[qi].items || []).length" class="jv-ask-linkmenu">
-												<button v-for="(it, ii) in askLink[qi].items" :key="ii" @click="pickLink(qi, it)"><b>{{ it.value }}</b><span v-if="it.label"> · {{ it.label }}</span></button>
+												<button v-for="(it, ii) in askLink[qi].items" :key="ii" @mousedown.prevent="pickLink(qi, it)"><b>{{ it.value }}</b><span v-if="it.label"> · {{ it.label }}</span></button>
 											</div>
 										</div>
 										<!-- Other free-text only for choice questions -->
@@ -288,9 +333,10 @@
 								<div v-if="skillsUsedOf(m).length" class="jv-skillused">
 									<span v-for="(sk, si) in skillsUsedOf(m)" :key="si" class="jv-skillused-chip" :title="'This reply used the ' + sk + ' skill'"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 7v10l8 5 8-5V7z" /><path d="M12 22V12M12 12 4 7M12 12l8-5" /></svg>{{ sk }}</span>
 								</div>
+								<div class="jv-metabar">
 								<div v-if="!m.error && !m.streaming && (toolCountOf(m) || elapsedOf(m))" class="jv-meta">
 									<span v-if="toolCountOf(m)" :title="activityNames(m.name)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 1 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></svg>{{ toolCountOf(m) }} tool{{ toolCountOf(m) === 1 ? "" : "s" }}</span>
-									<span v-if="elapsedOf(m)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>{{ elapsedOf(m) }}s</span>
+									<span v-if="elapsedOf(m)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>{{ elapsedLabel(m) }}</span>
 								</div>
 								<div v-if="!m.error && m.content" class="jv-msgbar">
 									<span v-if="msgTime(m)" class="jv-msgtime" :title="msgTimeFull(m)">{{ msgTime(m) }}</span>
@@ -298,6 +344,7 @@
 										<svg v-if="copiedId === m.name" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
 										<svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
 									</button>
+								</div>
 								</div>
 							</div>
 						</div>
@@ -342,7 +389,15 @@
 						<div class="jv-pending-body">
 							<div v-if="pendingSummaryOf(pa)" class="jv-pending-summary">{{ pendingSummaryOf(pa) }}</div>
 							<div v-if="pendingNoteOf(pa)" class="jv-pending-note">{{ pendingNoteOf(pa) }}</div>
-							<pre v-if="pendingPreviewOf(pa)" class="jv-pending-preview">{{ pendingPreviewOf(pa) }}</pre>
+							<ul v-if="pendingBatchOf(pa)" class="jv-pending-batch">
+								<li v-for="(a, i) in pendingBatchOf(pa).actions" :key="'a' + i">
+									Create <b>{{ a.doctype }}</b> "{{ a.name }}"
+								</li>
+								<li v-for="(n, i) in pendingBatchOf(pa).notes" :key="'n' + i" class="jv-pending-batch-note">
+									{{ n }}
+								</li>
+							</ul>
+							<pre v-else-if="pendingPreviewOf(pa)" class="jv-pending-preview">{{ pendingPreviewOf(pa) }}</pre>
 						</div>
 						<div v-if="pa.error" class="jv-draft-error" style="margin:0 14px 10px">{{ pa.error }}</div>
 						<div class="jv-action-foot">
@@ -503,210 +558,7 @@
 			</div>
 		</transition>
 
-		<!-- ============ SETTINGS (openclaw-style console) ============ -->
-		<transition name="jv-fade">
-			<div v-if="settingsOpen" class="jv-settings-overlay" @click.self="settingsOpen = false">
-				<div class="jv-settings">
-					<div class="jv-settings-nav">
-						<div class="jv-settings-nav-title">Settings</div>
-						<button class="jv-settings-navitem" :class="{ on: settingsTab === 'overview' }" @click="settingsTab = 'overview'">
-							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
-							<span>General</span>
-						</button>
-						<button class="jv-settings-navitem" :class="{ on: settingsTab === 'usage' }" @click="settingsTab = 'usage'">
-							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18" /><rect x="7" y="10" width="3" height="7" /><rect x="13" y="6" width="3" height="11" /></svg>
-							<span>Usage</span>
-						</button>
-						<button class="jv-settings-navitem" :class="{ on: settingsTab === 'appearance' }" @click="settingsTab = 'appearance'">
-							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
-							<span>Appearance</span>
-						</button>
-						<button class="jv-settings-navitem" :class="{ on: settingsTab === 'activity' }" @click="settingsTab = 'activity'">
-							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2" /></svg>
-							<span>Activity</span>
-						</button>
-						<button class="jv-settings-navitem" :class="{ on: settingsTab === 'macroruns' }" @click="settingsTab = 'macroruns'">
-							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l14 9-14 9V3z" /></svg>
-							<span>Macro runs</span>
-						</button>
-						<button class="jv-settings-navitem" :class="{ on: settingsTab === 'shortcuts' }" @click="settingsTab = 'shortcuts'">
-							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2" /><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M6 12h.01M10 12h.01M14 12h.01M18 12h.01M7 16h10" /></svg>
-							<span>Shortcuts</span>
-						</button>
-					</div>
-					<div class="jv-settings-main">
-						<div class="jv-settings-head">
-							<span style="font-size:15px;font-weight:600;">{{ settingsTab === "appearance" ? "Appearance" : settingsTab === "activity" ? "Activity" : settingsTab === "usage" ? "Usage" : settingsTab === "shortcuts" ? "Keyboard shortcuts" : "General" }}</span>
-							<button class="jv-iconbtn" @click="settingsOpen = false" title="Close" style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;border-radius:7px;cursor:pointer;color:var(--text-3);">
-								<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
-							</button>
-						</div>
-						<div class="jv-settings-body">
-						<!-- OVERVIEW -->
-						<template v-if="settingsTab === 'overview'">
-							<div class="jv-set-sec">Connection</div>
-							<div class="jv-set-row"><span>Model</span><b>{{ modelLabel }}</b></div>
-							<div class="jv-set-row"><span>Provider</span><b>{{ ui.llm_provider || "—" }}</b></div>
-							<div class="jv-set-row"><span>Auth mode</span><b>{{ ui.llm_auth_mode || "—" }}</b></div>
-							<div class="jv-set-row"><span>Status</span><b style="color:var(--green);">Live</b></div>
-								<div class="jv-set-sec" style="margin-top:18px;">Behavior</div>
-								<div class="jv-set-row">
-									<span>Confirm before changes<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Ask before creating, updating, or submitting in this chat. Deletes, cancels, amends, and emails always ask, even with this off.</span></span>
-									<button class="jv-switch" :class="{ on: !convAutoApply }" @click="toggleAutoApply" :disabled="!currentId" role="switch" :aria-checked="String(!convAutoApply)" :title="convAutoApply ? 'Auto mode - changes apply without asking' : 'Confirm each change before it runs'">
-										<span class="jv-switch-knob"></span>
-									</button>
-								</div>
-								<div v-if="autoApplyNote" class="jv-set-row" style="padding-top:0;"><span style="font-size:11px;color:var(--amber);font-weight:500;">{{ autoApplyNote }}</span></div>
-								<div class="jv-set-row">
-									<span>Show tool activity<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Show the live tool steps + input/output above each reply. The tools count &amp; time always show below.</span></span>
-									<button class="jv-switch" :class="{ on: showActivityDetail }" @click="setActivityDetail(!showActivityDetail)" role="switch" :aria-checked="String(showActivityDetail)" title="Show the tool/skill activity under each answer">
-										<span class="jv-switch-knob"></span>
-									</button>
-								</div>
-							<div class="jv-set-row">
-								<span>Notify when a reply is ready<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Browser notification when Jarvis finishes while you're in another tab</span></span>
-								<button class="jv-switch" :class="{ on: notifyEnabled }" @click="toggleNotify" role="switch" :aria-checked="String(notifyEnabled)" title="Browser notification when a reply finishes in a background tab">
-									<span class="jv-switch-knob"></span>
-								</button>
-							</div>
-							<!-- (the Workspace counts block lived here — removed as noise; the Usage tab has it all) -->
-							<div class="jv-set-sec" style="margin-top:18px;display:flex;align-items:center;gap:7px;">Token usage <span class="jv-est">est.</span></div>
-							<div class="jv-set-row"><span>This chat</span><b>{{ usage ? fmtTokens(usage.chat_tokens) : "—" }}</b></div>
-							<div class="jv-set-row"><span>{{ usage ? usage.month_label : "This month" }}</span><b>{{ usage ? fmtTokens(usage.month_tokens) : "—" }}</b></div>
-							<div class="jv-set-row"><span>All time</span><b>{{ usage ? fmtTokens(usage.total_tokens) : "—" }}</b></div>
-							<template v-if="usage && usage.budget_monthly">
-								<div class="jv-usage-bar"><div class="jv-usage-fill" :style="{ width: usagePct + '%' }"></div></div>
-								<div class="jv-set-hint">{{ fmtTokens(usage.month_tokens) }} / {{ fmtTokens(usage.budget_monthly) }} this month · {{ usagePct }}%</div>
-							</template>
-							<div v-else class="jv-set-hint">No monthly budget set · counts are estimated from message text.</div>
-							<div class="jv-set-sec" style="margin-top:18px;color:var(--red);">Danger zone</div>
-							<div class="jv-set-row">
-								<span>Delete all chat history<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Every conversation and message, permanently. Macros and skills stay.</span></span>
-								<button class="jv-btn jv-btn--sm jv-btn-danger" :disabled="clearingHistory" @click="clearAllHistory">{{ clearingHistory ? "Deleting…" : "Delete all" }}</button>
-							</div>
-						</template>
-						<!-- USAGE -->
-						<template v-else-if="settingsTab === 'usage'">
-							<div style="font-size:12px;color:var(--text-3);margin:0 0 14px;">Estimated tokens, messages and tool activity for your workspace. <span class="jv-est">est.</span></div>
-							<div class="jv-statgrid">
-								<div class="jv-stat"><div class="jv-stat-label">Messages</div><div class="jv-stat-val">{{ msgCount }}</div><div class="jv-stat-sub">{{ userMsgCount }} you · {{ assistantMsgCount }} Jarvis</div></div>
-								<div class="jv-stat"><div class="jv-stat-label">Tool calls</div><div class="jv-stat-val">{{ sessionToolCalls }}</div><div class="jv-stat-sub">this session</div></div>
-								<div class="jv-stat"><div class="jv-stat-label">Avg tokens / msg</div><div class="jv-stat-val">{{ avgTokensPerMsg }}</div><div class="jv-stat-sub">this chat</div></div>
-								<div class="jv-stat"><div class="jv-stat-label">Conversations</div><div class="jv-stat-val">{{ convCount }}</div><div class="jv-stat-sub">{{ starredCount }} starred</div></div>
-								<div class="jv-stat"><div class="jv-stat-label">This chat</div><div class="jv-stat-val">{{ usage ? fmtTokens(usage.chat_tokens) : "—" }}</div><div class="jv-stat-sub">tokens</div></div>
-								<div class="jv-stat"><div class="jv-stat-label">{{ usage ? usage.month_label : "This month" }}</div><div class="jv-stat-val">{{ usage ? fmtTokens(usage.month_tokens) : "—" }}</div><div class="jv-stat-sub">tokens</div></div>
-								<div class="jv-stat"><div class="jv-stat-label">All time</div><div class="jv-stat-val">{{ usage ? fmtTokens(usage.total_tokens) : "—" }}</div><div class="jv-stat-sub">tokens</div></div>
-								<div class="jv-stat"><div class="jv-stat-label">Tools</div><div class="jv-stat-val">{{ toolCount }}</div><div class="jv-stat-sub">available</div></div>
-							</div>
-							<template v-if="usage && usage.budget_monthly">
-								<div class="jv-set-sec" style="margin-top:20px;">Monthly budget</div>
-								<div class="jv-usage-bar"><div class="jv-usage-fill" :style="{ width: usagePct + '%' }"></div></div>
-								<div class="jv-set-hint">{{ fmtTokens(usage.month_tokens) }} / {{ fmtTokens(usage.budget_monthly) }} this month · {{ usagePct }}%</div>
-							</template>
-							<div v-else class="jv-set-hint" style="margin-top:14px;">No monthly budget set · token counts are estimated from message text.</div>
-						</template>
-						<!-- ACTIVITY -->
-						<template v-else-if="settingsTab === 'activity'">
-							<div class="jv-set-sec">Recent tool runs</div>
-							<div v-if="!recentActivity.length" class="jv-set-empty">No tool activity in this chat yet.</div>
-							<div v-for="(a, i) in recentActivity" :key="i" class="jv-act">
-								<div class="jv-act-top">
-									<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 1 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></svg>
-									<span>{{ a.tools }} tool{{ a.tools === 1 ? "" : "s" }}</span>
-									<span class="jv-act-ms">{{ (a.ms / 1000).toFixed(1) }}s</span>
-								</div>
-								<div v-if="a.names.length" class="jv-act-names">{{ a.names.join(" · ") }}</div>
-							</div>
-						</template>
-						<!-- MACRO RUNS -->
-						<template v-else-if="settingsTab === 'macroruns'">
-							<div class="jv-statgrid">
-								<div class="jv-stat"><div class="jv-stat-label">Total runs</div><div class="jv-stat-val">{{ macroRunStats ? macroRunStats.total : "—" }}</div><div class="jv-stat-sub">all time</div></div>
-								<div class="jv-stat"><div class="jv-stat-label">Success rate</div><div class="jv-stat-val" style="color:var(--green);">{{ macroRunStats && macroRunStats.success_rate != null ? macroRunStats.success_rate + "%" : "—" }}</div><div class="jv-stat-sub">completed ÷ finished</div></div>
-								<div class="jv-stat"><div class="jv-stat-label">Running now</div><div class="jv-stat-val" style="color:var(--blue);">{{ macroRunStats ? macroRunStats.running : "—" }}</div><div class="jv-stat-sub">active</div></div>
-								<div class="jv-stat"><div class="jv-stat-label">Last run</div><div class="jv-stat-val">{{ macroRunStats && macroRunStats.last_run_at ? fmtAgo(macroRunStats.last_run_at) : "—" }}</div><div class="jv-stat-sub">&nbsp;</div></div>
-							</div>
-							<div class="jv-runfilters">
-								<div class="jv-seg jv-runchips">
-									<button v-for="s in MACRO_RUN_STATUSES" :key="s || 'all'" :class="{ on: macroRunStatus === s }" @click="setMacroRunStatus(s)">{{ s ? (s[0].toUpperCase() + s.slice(1)) : "All" }}</button>
-								</div>
-								<select class="jv-runmacrosel" :value="macroRunMacro" @change="setMacroRunMacro">
-									<option value="">All macros</option>
-									<option v-for="mm in macros" :key="mm.name" :value="mm.name">{{ mm.macro_name }}</option>
-								</select>
-							</div>
-							<div v-if="!macroRuns.length && !macroRunsLoading" class="jv-set-empty" style="text-align:center;padding:30px 0;">No macro runs yet.<br />Run a macro to see its history here.</div>
-							<div v-for="run in macroRuns" :key="run.name" class="jv-run">
-								<span class="jv-run-dot" :class="'d-' + macroRunBadge(run.status)"></span>
-								<div class="jv-run-main">
-									<div class="jv-run-top">
-										<span class="jv-run-name">{{ run.macro_name }}</span>
-										<span class="jv-run-badge" :class="'b-' + macroRunBadge(run.status)">{{ run.status }}</span>
-										<span class="jv-run-trig">
-											<svg v-if="run.trigger === 'scheduled'" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="15" rx="2" /><path d="M8 3v4M16 3v4M4 10h16" /></svg>
-											<svg v-else width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 8v4l3 2" /></svg>
-											{{ run.trigger }}
-										</span>
-									</div>
-									<div class="jv-run-meta">
-										<span class="jv-run-prog">{{ run.current_step }}/{{ run.total_steps }}</span>
-										<span class="jv-run-sep">·</span><span>{{ fmtAgo(run.started_at || run.creation) }}</span>
-										<template v-if="macroRunElapsed(run)"><span class="jv-run-sep">·</span><span>{{ macroRunElapsed(run) }}</span></template>
-									</div>
-									<div v-if="run.error" class="jv-run-err">
-										<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /><path d="M12 9v4M12 17h.01" /></svg>
-										{{ run.error }}
-									</div>
-								</div>
-								<div class="jv-run-act">
-									<button v-if="run.status === 'running' || run.status === 'queued'" class="jv-run-btn stop" @click="stopRunFromHistory(run)">Stop</button>
-									<button v-else class="jv-run-btn" @click="rerunFromHistory(run)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2v6h6M21 12a9 9 0 1 1-3-6.7L21 8" /></svg>Re-run</button>
-									<button v-if="run.conversation" class="jv-run-btn" @click="openRunConversation(run)">Open ›</button>
-								</div>
-							</div>
-							<button v-if="macroRunHasMore" class="jv-run-loadmore" :disabled="macroRunsLoading" @click="loadMacroRuns(false)">{{ macroRunsLoading ? "Loading…" : "Load more" }}</button>
-						</template>
-						<!-- SHORTCUTS -->
-						<template v-else-if="settingsTab === 'shortcuts'">
-							<div style="font-size:12px;color:var(--text-3);margin:0 0 14px;">Speed up the composer and chat.</div>
-							<div class="jv-set-sec">Composer</div>
-							<div class="jv-kbd-row"><span>Recall previous / next prompt</span><span><kbd class="jv-kbd">↑</kbd><kbd class="jv-kbd">↓</kbd></span></div>
-							<div class="jv-kbd-row"><span>Send message</span><kbd class="jv-kbd">Enter</kbd></div>
-							<div class="jv-kbd-row"><span>New line</span><span><kbd class="jv-kbd">Shift</kbd><span class="jv-kbd-plus">+</span><kbd class="jv-kbd">Enter</kbd></span></div>
-							<div class="jv-kbd-row"><span>Mention a doctype / record</span><kbd class="jv-kbd">@</kbd></div>
-							<div class="jv-set-sec" style="margin-top:20px;">Chat</div>
-							<div class="jv-kbd-row"><span>New chat</span><span><kbd class="jv-kbd">Ctrl</kbd><span class="jv-kbd-plus">+</span><kbd class="jv-kbd">Shift</kbd><span class="jv-kbd-plus">+</span><kbd class="jv-kbd">O</kbd></span></div>
-							<div class="jv-kbd-row"><span>Toggle sidebar</span><span><kbd class="jv-kbd">Ctrl</kbd><span class="jv-kbd-plus">+</span><kbd class="jv-kbd">B</kbd></span></div>
-							<div class="jv-kbd-row"><span>Close panel / cancel</span><kbd class="jv-kbd">Esc</kbd></div>
-							<div class="jv-set-hint" style="margin-top:14px;">Tip: <kbd class="jv-kbd">↑</kbd> at the start of an empty composer walks back through your earlier prompts in this chat.</div>
-						</template>
-						<!-- APPEARANCE -->
-						<template v-else>
-							<div class="jv-set-sec">Theme</div>
-							<div class="jv-seg">
-								<button :class="{ on: theme === 'light' }" @click="setTheme('light')">
-									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
-									Light
-								</button>
-								<button :class="{ on: theme === 'dark' }" @click="setTheme('dark')">
-									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" /></svg>
-									Dark
-								</button>
-								<button :class="{ on: theme === 'system' }" @click="setTheme('system')">
-									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" /><path d="M8 21h8M12 17v4" /></svg>
-									System
-								</button>
-							</div>
-							<div class="jv-set-hint">{{ theme === "system" ? (effectiveDark ? "Following system · dark" : "Following system · light") : "Saved on this device" }}</div>
-
-							<div class="jv-set-sec" style="margin-top:22px;">About</div>
-							<div class="jv-set-row"><span>Jarvis</span><b>ERPNext Assistant</b></div>
-						</template>
-					</div>
-				</div>
-				</div>
-			</div>
-		</transition>
+		<!-- SETTINGS dialog hoisted to the shell (components/shell/SettingsDialog.vue) -->
 
 		<!-- Artifact preview panel — slides in from the right (PDF in a viewer, Excel as a table) -->
 		<transition name="jv-slide">
@@ -759,7 +611,7 @@
 					<div class="jv-artifact-head">
 						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></svg>
 						<span class="jv-artifact-head-title">{{ draftPanel.verb === 'update' ? 'Update' : 'New' }} {{ draftPanel.doctype }}<template v-if="draftPanel.docName"> · {{ draftPanel.docName }}</template></span>
-						<span class="jv-draft-badge">Draft — not saved</span>
+						<span class="jv-draft-badge">Draft - not saved</span>
 						<button class="jv-art-close" @click="closeDraftPanel" title="Close (draft stays in chat)" aria-label="Close">
 							<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
 						</button>
@@ -846,11 +698,22 @@
 				</aside>
 			</div>
 		</transition>
+		<DraftPreview
+			v-if="previewOpen && summaryState.model"
+			:model="summaryState.model"
+			:headline="(summaryState.view && summaryState.view.headline) || ''"
+			:disabled="convStreaming || !!(summaryState.model && summaryState.model.applying)"
+			@close="previewOpen = false"
+			@edit="onPreviewEdit"
+			@confirm="onPreviewConfirm"
+		/>
+
+		<ConnectPhoneDialog v-model="showConnect" />
 	</div>
 </template>
 
 <script setup>
-import { ref, computed, inject, onMounted, onBeforeUnmount, nextTick, watch } from "vue"
+import { ref, computed, inject, onMounted, onBeforeUnmount, onUnmounted, nextTick, watch, watchEffect } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import * as api from "@/api"
 import * as voice from "@/api/voice"
@@ -861,9 +724,12 @@ import { takeChatPrefill } from "@/composables/chatPrefill"
 import { formatDate, exactDate } from "@/utils/datetime"
 import { renderMarkdown } from "@/markdown"
 import JvChart from "@/charts/JvChart.vue"
+import ConnectPhoneDialog from "@/components/ConnectPhoneDialog.vue"
+import DraftPreview from "@/components/doc/DraftPreview.vue"
 import { useShellStore } from "@/stores/shell"
 import { useJarvisTheme } from "@/theme"
 import { displayName } from "@/lib/user"
+import { summarize, batchFromPreview } from "@/lib/actionSummary"
 
 const session = inject("$session")
 const socket = inject("$socket")
@@ -958,6 +824,7 @@ function _settleConfirm(val) {
 	if (r) r(val)
 }
 const modelMenuOpen = ref(false)
+const showConnect = ref(false)
 // (sidebar collapse machinery, per-conversation ⋯ menu and inline rename
 // moved to the app shell — stores/shell.js + components/shell/*, §3.7)
 const modelOverride = ref("")
@@ -1294,46 +1161,16 @@ const toolOpen = ref({})
 // Whether replies reveal which tools + skills produced them. When off, the
 // chat shows only a generic "Thinking…/Working…" indicator and hides the
 // per-reply tool/skill chips. Persisted per device.
-const showActivityDetail = ref(localStorage.getItem("jarvis-activity-detail") === "1")
-function setActivityDetail(v) {
-	showActivityDetail.value = !!v
-	try { localStorage.setItem("jarvis-activity-detail", v ? "1" : "0") } catch (e) {}
-}
-// Optional browser notification when a reply lands while the tab is hidden.
-// Per-device (localStorage); enabling asks for Notification permission. The
-// dispatch itself moved to the app-scoped notifier (notify/globalNotifier.js,
-// attached by AppShell) so it also fires for background conversations and
-// non-chat routes — this ref is only the settings switch's state.
-const notifyEnabled = ref(typeof Notification !== "undefined" && localStorage.getItem("jarvis-notify") === "1" && Notification.permission === "granted")
-// Re-derive the switch from live permission + storage (a grant/revoke in
-// another tab, or a browser-level revoke, otherwise leaves it stale, D13).
-function recomputeNotifyEnabled() {
-	notifyEnabled.value = typeof Notification !== "undefined" && localStorage.getItem("jarvis-notify") === "1" && Notification.permission === "granted"
-}
-async function toggleNotify() {
-	if (typeof Notification === "undefined") {
-		notify("This browser doesn't support notifications.", { type: "error" })
-		return
-	}
-	if (notifyEnabled.value) {
-		notifyEnabled.value = false
-		try { localStorage.setItem("jarvis-notify", "0") } catch (e) {}
-		return
-	}
-	let perm = Notification.permission
-	if (perm !== "granted") {
-		try { perm = await Notification.requestPermission() } catch (e) { perm = "denied" }
-	}
-	if (perm === "granted") {
-		notifyEnabled.value = true
-		try { localStorage.setItem("jarvis-notify", "1") } catch (e) {}
-	} else {
-		// Denied: browsers won't re-prompt, so a silent no-op switch reads as
-		// broken (D8) — say what's blocking it and keep the switch off.
-		notifyEnabled.value = false
-		notify("Notifications are blocked by the browser — allow them for this site in your browser's settings, then turn this on again.", { type: "error", title: "Notifications blocked" })
-	}
-}
+// These device prefs now live in the shell store (owned there so the hoisted
+// settings dialog's GeneralPane toggle and this view's live gating stay in sync
+// same-tab — a pane-local ref could not notify this view). This view only READS
+// them (to gate the tool-activity rows); the toggles are driven from GeneralPane
+// via store.setActivityDetail / store.toggleNotify. The actual notification
+// dispatch on reply-ready no longer lives here — it moved to the app-scoped
+// notifier (notify/globalNotifier.js, attached by AppShell) so it also fires
+// for background conversations and non-chat routes.
+const showActivityDetail = computed(() => store.activityDetail)
+const notifyEnabled = computed(() => store.notifyEnabled)
 
 // Danger zone: wipe every conversation + message (macros/skills untouched).
 const clearingHistory = ref(false)
@@ -1374,6 +1211,17 @@ function elapsedOf(m) {
 		if (d >= 0 && d < 1800) return d.toFixed(1)
 	}
 	return ""
+}
+// Response-duration label: keeps the sub-minute look (e.g. "12.4s") but rolls
+// over to minutes once it passes 60s (e.g. "1m 5s" / "2m").
+function elapsedLabel(m) {
+	const raw = elapsedOf(m)
+	if (!raw) return ""
+	const sec = parseFloat(raw)
+	if (sec < 60) return `${raw}s`
+	const total = Math.round(sec)
+	const mm = Math.floor(total / 60), ss = total % 60
+	return ss ? `${mm}m ${ss}s` : `${mm}m`
 }
 // Open state falls back to the pref until the user explicitly toggles a turn.
 function isActivityOpen(name) {
@@ -1932,8 +1780,10 @@ function _panelField(metaField, value) {
 	}
 }
 
-// Build the panel model from an action + form meta (+ live doc for updates).
-async function openDraftPanel(a) {
+// Build the draft model from an action + form meta (+ live doc for updates),
+// WITHOUT opening the panel - so the editable panel and later summary/preview
+// surfaces can share one construction path.
+async function buildDraftModel(a) {
 	if (!a || a.kind !== "doc" || !a.doctype) return
 	const verb = a.verb === "update" ? "update" : "create"
 	let meta
@@ -1988,15 +1838,22 @@ async function openDraftPanel(a) {
 			origJson: JSON.stringify(verb === "update" ? baseRows : null),
 		})
 	}
-	draftPanel.value = {
+	return {
 		verb, doctype: a.doctype, docName: verb === "update" ? (a.name || "") : "",
-		title: a.title || "", submittable: !!meta.is_submittable,
+		title: a.title || "", titleField: meta.title_field || "", submittable: !!meta.is_submittable,
 		// Multi-step plans: the card marks non-final steps "continue": 1; the
 		// bench then dispatches a follow-up agent turn after Apply so the agent
 		// stages the next step without the user typing "continue".
 		cont: a.continue ? 1 : 0,
-		fields, tables, applying: false, error: "", updatedToast: false,
+		fields, tables, tableMeta: meta.tables || {}, applying: false, error: "", updatedToast: false,
 	}
+}
+
+// Open the editable panel for an action, via the shared buildDraftModel.
+async function openDraftPanel(a) {
+	const model = await buildDraftModel(a)
+	if (!model) return
+	draftPanel.value = model
 }
 
 function _blankRow(columns) {
@@ -2061,21 +1918,64 @@ const draftCta = computed(() => {
 	if (!p) return ""
 	return p.verb === "update" ? `Update ${p.docName || p.doctype}` : `Create ${p.doctype}`
 })
-const draftChipSummary = computed(() => {
-	const a = activeAction.value
-	if (!a) return ""
-	const n = (a.tables || []).reduce((s, t) => s + ((t.rows || []).length), 0)
-	return n ? `${n} row${n === 1 ? "" : "s"}` : ""
-})
+// Summary-first: the read-only model + view for the current create/update action.
+const summaryState = ref({ key: "", model: null, view: null, error: "" })
+async function ensureActionSummary(a) {
+	const key = JSON.stringify([a.verb || "create", a.doctype, a.name || "", a.fields || [], a.tables || []])
+	if (summaryState.value.key === key) return
+	summaryState.value = { key, model: null, view: null, error: "" }
+	let model
+	try {
+		model = await buildDraftModel({ verb: a.verb || "create", ...a })
+	} catch (e) {
+		if (summaryState.value.key === key) summaryState.value = { key, model: null, view: null, error: "Could not load this draft. Tell me to try again." }
+		return
+	}
+	if (!model) {
+		if (summaryState.value.key === key) summaryState.value = { key, model: null, view: null, error: "Could not load this draft. Tell me to try again." }
+		return
+	}
+	if (summaryState.value.key !== key) return // a newer action superseded this build
+	summaryState.value = { key, model, view: summarize(model, a), error: "" }
+}
+function isEditVerb(a) {
+	return !!a && (!a.verb || a.verb === "create" || a.verb === "update")
+}
+async function confirmSummary() {
+	const model = summaryState.value.model
+	if (!model || model.applying || convStreaming.value) return
+	await applyDraft(0, model)
+}
 
-// Auto-open on a fresh create/update action (also fires when loading an old
-// conversation that ends on a pending draft — that draft IS still pending).
+// Read-only preview: opens DraftPreview over the current summary's model.
+const previewOpen = ref(false)
+function previewSummary() {
+	if (!summaryState.value.model) return
+	previewOpen.value = true
+}
+async function onPreviewConfirm() {
+	previewOpen.value = false
+	await confirmSummary()
+}
+function onPreviewEdit() {
+	previewOpen.value = false
+	const a = activeAction.value
+	if (a) openDraftPanel({ verb: a.verb || "create", ...a })
+}
+
+// Summary-first default (Task 1.3): a fresh create/update action builds the
+// read-only summary card, NOT the editable panel. If the panel is already
+// open (the user clicked Edit) and the action re-emits, refresh it in place
+// - this also covers loading an old conversation that ends on a pending
+// draft while mid-edit.
 watch(actionFor, () => {
 	const a = activeAction.value
-	if (a && a.kind === "doc" && (a.verb === "create" || a.verb === "update" || !a.verb)) {
-		const wasOpen = !!draftPanel.value
+	if (!(a && a.kind === "doc" && (a.verb === "create" || a.verb === "update" || !a.verb))) return
+	ensureActionSummary(a) // keep the summary card in sync with the latest action
+	if (draftPanel.value) {
+		// panel is open (user is editing) and the action re-emitted -> refresh it too
 		openDraftPanel({ verb: a.verb || "create", ...a }).then(() => {
-			if (wasOpen && draftPanel.value) draftPanel.value.updatedToast = true
+			if (draftPanel.value) draftPanel.value.updatedToast = true
 		})
 	}
 })
@@ -2100,8 +2000,8 @@ function _coerceRow(t, r) {
 	return out
 }
 
-async function applyDraft(submitFlag) {
-	const p = draftPanel.value
+async function applyDraft(submitFlag, model = draftPanel.value) {
+	const p = model
 	if (!p || p.applying) return
 	const values = {}
 	for (const f of p.fields) {
@@ -2181,6 +2081,12 @@ function pendingPreviewOf(pa) {
 	const w = pv.would
 	if (w == null) return ""
 	return typeof w === "string" ? w : prettyJson(w)
+}
+// A create_docs card renders as bullet lines (creates + reuse notes) rather than
+// a raw JSON dump. Returns null for every other tool, so the <pre> fallback runs.
+function pendingBatchOf(pa) {
+	if (!pa || pa.tool !== "create_docs") return null
+	return batchFromPreview(pa.preview)
 }
 // Drop one card from the queue by its token (confirm-success / discard / expiry).
 function removePending(token) {
@@ -2287,6 +2193,12 @@ const askSel = ref({}) // qIdx -> string (single/yesno/date/datetime/text/link) 
 const askOther = ref({}) // qIdx -> free-text (option types only)
 const askLink = ref({}) // qIdx -> { q, items, open } for link-type record search
 const _FIELD_TYPES = ["date", "datetime", "link", "text"]
+// An ask whose questions are ALL field-type reads better as a compact mini-form
+// (no numbered badges, no dividers) than as a numbered question list.
+const askIsForm = computed(() => {
+	const spec = activeAsk.value
+	return !!spec && spec.questions.length > 0 && spec.questions.every((q) => _FIELD_TYPES.includes(q.type))
+})
 // Reset the draft whenever a new question set appears (new message asks).
 watch(askFor, () => {
 	askSel.value = {}
@@ -2307,6 +2219,13 @@ async function onLinkSearch(i, doctype, val) {
 function pickLink(i, item) {
 	askSel.value = { ...askSel.value, [i]: item.value }
 	askLink.value = { ...askLink.value, [i]: { q: item.value, items: [], open: false } }
+}
+// Hide the record dropdown when the field loses focus (clicking elsewhere on
+// the screen / tabbing away). @mousedown.prevent on the result buttons lets a
+// pick land before the blur fires.
+function closeAskLink(i) {
+	const cur = askLink.value[i]
+	if (cur && cur.open) askLink.value = { ...askLink.value, [i]: { ...cur, open: false } }
 }
 function pickSingle(i, opt) {
 	askSel.value = { ...askSel.value, [i]: opt }
@@ -2400,18 +2319,31 @@ function fallbackCopy(s) {
 		/* clipboard truly unavailable */
 	}
 }
-// Per-message sent-time (hover-revealed with the msgbar; full date on its own
+// Per-message timestamp (hover-revealed with the msgbar; full date on its own
 // hover). Server rows carry a site-tz `creation` (rendered via utils/datetime's
 // dayjsLocal path); optimistic tmp rows carry `creation_browser` (a local
 // epoch) until the server copy reconciles them.
+//
+// An assistant row's `creation` is stamped at run start (≈ the user's send
+// time), so showing it makes the reply look like it landed the instant the
+// question was sent. The reply's real "appeared on screen" moment is its
+// `modified` — the timestamp of the final streamed-content write (the same
+// span elapsedOf() treats as the generation duration). So replies show
+// `modified`; user rows keep `creation` (their send time).
+function msgStamp(m) {
+	if (m.role === "assistant" && m.modified) return m.modified
+	return m.creation
+}
 function msgTime(m) {
-	if (m.creation) return formatDate(m.creation, "h:mm A")
+	const ts = msgStamp(m)
+	if (ts) return formatDate(ts, "h:mm A")
 	if (m.creation_browser)
 		return new Date(m.creation_browser).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
 	return ""
 }
 function msgTimeFull(m) {
-	if (m.creation) return exactDate(m.creation)
+	const ts = msgStamp(m)
+	if (ts) return exactDate(ts)
 	if (m.creation_browser)
 		return new Date(m.creation_browser).toLocaleString([], {
 			weekday: "short", day: "numeric", month: "short", year: "numeric",
@@ -3610,10 +3542,7 @@ function onResync() {
 	loadConversation(currentId.value)
 }
 function onVisibility() {
-	if (document.visibilityState === "visible") {
-		recomputeNotifyEnabled() // permission/storage may have changed while away
-		onResync()
-	}
+	if (document.visibilityState === "visible") onResync()
 }
 
 // ---- shell contract (§3.7): New Chat requests, external navigation and
@@ -3749,6 +3678,11 @@ onBeforeUnmount(() => {
 // Ctrl+B are owned by the shell now (AppShell → useShortcuts, §3.1).
 function onGlobalKey(e) {
 	if (e.defaultPrevented) return
+	// The shell SettingsDialog is a foreground modal with its OWN Escape handler
+	// on the same window target; stopPropagation can't suppress a sibling
+	// listener here, so bail out entirely while it's open — otherwise this chain
+	// would ALSO close an artifact panel behind it on a single Escape.
+	if (store.settingsOpen) return
 	if (e.key === "Escape" && micState.value === "recording") {
 		cancelMic()
 	} else if (e.key === "Escape" && nudge.value && nudge.value.mode === "recording") {
@@ -3757,10 +3691,42 @@ function onGlobalKey(e) {
 		_settleConfirm(false)
 	} else if (e.key === "Escape" && artifact.value) {
 		closeArtifact()
-	} else if (e.key === "Escape" && settingsOpen.value) {
-		settingsOpen.value = false
 	}
 }
+
+// ---- Publish chat context to the shell settings dialog ---------------------
+// The settings dialog now lives at the shell (components/shell/SettingsDialog.vue)
+// and its panes read the current conversation's live stats from the store WHILE
+// ChatView is mounted; on non-chat routes ChatView is gone and chatContext is
+// null, so those panes degrade to —/empty exactly as before.
+watchEffect(() => {
+	store.setChatContext({
+		conversationId: currentId.value,
+		sessionStats: {
+			msgCount: msgCount.value,
+			userMsgCount: userMsgCount.value,
+			assistantMsgCount: assistantMsgCount.value,
+			sessionToolCalls: sessionToolCalls.value,
+			avgTokensPerMsg: avgTokensPerMsg.value,
+			convCount: convCount.value,
+			starredCount: starredCount.value,
+			toolCount: toolCount.value,
+			recentActivity: recentActivity.value,
+		},
+		convAutoApply: convAutoApply.value,
+		autoApplyNote: autoApplyNote.value,
+		modelLabel: modelLabel.value,
+		ui: ui.value,
+	})
+})
+onMounted(() => {
+	// Actions with chat side-effects the panes invoke when a chat is active.
+	store.registerSettingsActions({ toggleAutoApply, clearAllHistory })
+})
+onUnmounted(() => {
+	store.setChatContext(null)
+	store.clearSettingsActions()
+})
 </script>
 
 <style scoped>
@@ -3839,7 +3805,9 @@ function onGlobalKey(e) {
 /* response metrics (tools · time) */
 .jv-skillused { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
 .jv-skillused-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px 2px 7px; background: var(--blue-bg); border: 1px solid var(--blue); border-radius: 20px; font-size: 11px; font-weight: 600; color: var(--blue); }
-.jv-meta { display: flex; align-items: center; gap: 14px; margin-top: 9px; font-size: 11px; color: var(--text-3); }
+.jv-meta { display: flex; align-items: center; gap: 14px; margin-top: 0; font-size: 11px; color: var(--text-3); }
+.jv-metabar { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; margin-top: 9px; }
+.jv-metabar:empty { display: none; }
 /* Tool activity (openclaw-style): collapsible list of tool calls with I/O */
 .jv-activity { margin: 0 0 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-1); overflow: hidden; }
 .jv-activity-head { display: flex; align-items: center; gap: 7px; width: 100%; padding: 7px 11px; background: transparent; border: none; cursor: pointer; font-family: inherit; font-size: 12px; color: var(--text-2); text-align: left; }
@@ -3884,7 +3852,7 @@ function onGlobalKey(e) {
 .jv-tool-io-k { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-3); margin: 9px 0 4px; }
 .jv-tool-io { margin: 0; padding: 9px 11px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; line-height: 1.5; color: var(--text); white-space: pre-wrap; word-break: break-word; overflow-x: auto; max-height: 320px; overflow-y: auto; }
 /* per-message Copy/Edit bar — revealed on hover */
-.jv-msgbar { display: flex; align-items: center; gap: 3px; margin-top: 5px; opacity: 0; transition: opacity .12s ease; }
+.jv-msgbar { display: flex; align-items: center; gap: 3px; margin-top: 0; opacity: 0; transition: opacity .12s ease; }
 .jv-umsg:hover .jv-msgbar, .jv-amsg:hover .jv-msgbar { opacity: 1; }
 .jv-msgtime { font-size: 11.5px; color: var(--text-3); padding: 0 3px; cursor: default; user-select: none; }
 .jv-msgbtn { display: flex; align-items: center; justify-content: center; width: 26px; height: 26px; border: none; background: transparent; border-radius: 6px; cursor: pointer; color: var(--text-3); }
@@ -3917,13 +3885,11 @@ function onGlobalKey(e) {
 /* Narrow-window resilience: without min-width:0 a flex child refuses to shrink
    below its content, so on minimize the layout "breaks"; wide content (tables,
    code) must scroll INSIDE its own box, never squeeze the text around it. */
-.jv-md { min-width: 0; max-width: 100%; overflow-wrap: break-word; }
+.jv-md { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
 .jv-md :deep(table) { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
 .jv-md :deep(pre) { max-width: 100%; overflow-x: auto; }
 .jv-md :deep(img) { max-width: 100%; height: auto; }
 .jv-cards, .jv-action, .jv-email { min-width: 0; max-width: 100%; }
-.jv-btn-danger { color: #fff; background: var(--red); border-color: var(--red); }
-.jv-btn-danger:disabled { opacity: .6; }
 .jv-md :deep(.jv-mermaid) { position: relative; margin: 8px 0 12px; text-align: center; overflow-x: auto; }
 .jv-md :deep(.jv-mermaid svg) { max-width: 100%; height: auto; }
 /* skeleton shimmer while a chart hasn't rendered to SVG yet (no data-rendered) —
@@ -3952,7 +3918,7 @@ function onGlobalKey(e) {
 .jv-md :deep(.jv-md-h:first-child) { margin-top: 0; }
 .jv-md :deep(.jv-md-list) { margin: 0 0 10px; padding-left: 20px; }
 .jv-md :deep(.jv-md-list li) { margin: 2px 0; }
-.jv-md :deep(.jv-md-code) { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.jv-md :deep(.jv-md-code) { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
 .jv-md :deep(.jv-md-link) { color: var(--blue); text-decoration: none; font-weight: 500; }
 /* Auto-linked document IDs → open the record in ERPNext Desk. Dashed underline
    marks them as record links, distinct from plain markdown links. */
@@ -4033,6 +3999,12 @@ function onGlobalKey(e) {
 .jv-btn--danger { background: var(--red); border-color: var(--red); color: #fff; box-shadow: 0 1px 2px rgba(220, 38, 38, .14); }
 .jv-btn--danger:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(220, 38, 38, .24); }
 .jv-btn--danger svg { stroke: #fff; }
+/* Soft/outline danger for the settings "Danger zone": clearly visible on the
+   white theme (tinted fill + red text + red border), filling solid red on
+   hover. Dedicated class so the solid .jv-btn--danger (confirm dialog) is left
+   as-is. */
+.jv-btn--danger-soft { background: var(--red-bg); border-color: var(--red-bd); color: var(--red); }
+.jv-btn--danger-soft:hover { background: var(--red); border-color: var(--red); color: #fff; }
 .jv-btn--sm { height: 32px; padding: 0 12px; font-size: 12px; border-radius: 9px; }
 .jv-btn--icon { width: 32px; height: 32px; padding: 0; border-radius: 9px; color: var(--text-3); }
 .jv-btn--icon:hover { background: var(--surface-2); color: var(--text); transform: none; }
@@ -4192,6 +4164,10 @@ function onGlobalKey(e) {
 .jv-ask-q:last-of-type { border-bottom: 0; padding-bottom: 4px; margin-bottom: 4px; }
 .jv-ask-qt { display: flex; align-items: flex-start; gap: 8px; font-size: 13.5px; font-weight: 600; color: var(--text); margin-bottom: 9px; line-height: 1.4; }
 .jv-ask-num { flex: none; width: 19px; height: 19px; border-radius: 99px; background: var(--blue-bg); color: var(--blue); font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; margin-top: 1px; }
+.jv-ask--form .jv-ask-num { display: none; }
+.jv-ask--form .jv-ask-q { border-bottom: 0; padding-bottom: 11px; margin-bottom: 11px; }
+.jv-ask--form .jv-ask-q:last-of-type { padding-bottom: 0; margin-bottom: 0; }
+.jv-ask--form .jv-ask-qt { font-size: 10.5px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); margin-bottom: 6px; }
 .jv-ask-opts { display: flex; flex-wrap: wrap; gap: 7px; }
 .jv-ask-opt { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 9px; font-family: inherit; font-size: 12.5px; font-weight: 500; color: var(--text-2); cursor: pointer; transition: border-color .12s, background .12s, color .12s; }
 .jv-ask-opt:hover { border-color: var(--border-2); color: var(--text); }
@@ -4201,11 +4177,11 @@ function onGlobalKey(e) {
 .jv-ask-field:focus { border-color: var(--blue); }
 .jv-ask-link { position: relative; }
 .jv-ask-linkmenu { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 20; background: var(--surface); border: 1px solid var(--border-2); border-radius: 9px; box-shadow: 0 8px 24px rgba(20, 20, 30, .14); padding: 4px; max-height: 220px; overflow-y: auto; }
-.jv-ask-linkmenu button { display: block; width: 100%; text-align: left; padding: 7px 9px; background: transparent; border: none; border-radius: 6px; font-family: inherit; font-size: 12.5px; color: var(--text-2); cursor: pointer; }
+.jv-ask-linkmenu button { display: block; width: 100%; text-align: left; padding: 7px 9px; background: transparent; border: none; border-radius: 6px; font-family: inherit; font-size: 12.5px; color: var(--text-2); cursor: pointer; white-space: normal; overflow-wrap: anywhere; }
 .jv-ask-linkmenu button:hover { background: var(--surface-2); color: var(--text); }
 .jv-ask-other { width: 100%; box-sizing: border-box; margin-top: 8px; padding: 7px 10px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; font-family: inherit; font-size: 12.5px; color: var(--text); outline: none; }
 .jv-ask-other:focus { border-color: var(--blue); }
-.jv-ask-foot { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+.jv-ask-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 14px; }
 .jv-ask-submit { padding: 8px 16px; background: var(--blue); border: 1px solid var(--blue); border-radius: 8px; font-family: inherit; font-size: 13px; font-weight: 600; color: #fff; cursor: pointer; transition: opacity .12s; }
 .jv-ask-submit:hover { opacity: .9; }
 .jv-ask-submit:disabled { opacity: .45; cursor: default; }
@@ -4346,6 +4322,9 @@ function onGlobalKey(e) {
 .jv-pending-summary { font-size: 13.5px; line-height: 1.5; color: var(--text); }
 .jv-pending-note { font-size: 12px; line-height: 1.45; color: var(--text-3); }
 .jv-pending-preview { margin: 0; padding: 9px 11px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; line-height: 1.5; color: var(--text); white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow-y: auto; }
+.jv-pending-batch { margin: 0 14px 8px; padding-left: 18px; font-size: 12.5px; color: var(--text-2); }
+.jv-pending-batch li { margin: 2px 0; }
+.jv-pending-batch-note { list-style: none; margin-left: -18px; color: var(--text-3); }
 .jv-action-primary:disabled, .jv-action-discard:disabled { opacity: .55; cursor: default; }
 /* rollout-window note shown for a legacy gated-write / email card whose own
    action button was removed (issue #186, #12/#13). */
@@ -4357,10 +4336,26 @@ function onGlobalKey(e) {
 .jv-email-subj { color: var(--text); font-weight: 600; }
 .jv-email-body { padding: 12px 14px 14px; font-size: 13px; line-height: 1.6; color: var(--text); white-space: pre-wrap; word-break: break-word; border-top: 1px solid var(--surface-2); }
 
+/* --- summary-first confirmation card (Task 1.3) --- */
+.jv-summary { margin-top: 12px; border-color: var(--blue-bd); }
+.jv-summary-body { padding: 11px 14px; display: flex; flex-direction: column; gap: 10px; }
+.jv-summary-headline { font-size: 13.5px; font-weight: 600; color: var(--text); }
+.jv-summary-fields { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; }
+.jv-summary-fields dt { font-size: 10.5px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); align-self: center; }
+.jv-summary-fields dd { margin: 0; font-size: 13.5px; color: var(--text); }
+.jv-summary-diffrow { display: flex; align-items: baseline; gap: 8px; font-size: 13px; padding: 3px 0; flex-wrap: wrap; }
+.jv-summary-difflbl { font-weight: 600; color: var(--text-2); min-width: 120px; }
+.jv-summary-from { color: var(--text-3); text-decoration: line-through; }
+.jv-summary-arrow { color: var(--text-3); }
+.jv-summary-to { color: var(--green); font-weight: 600; }
+.jv-summary-nochange, .jv-summary-loading { font-size: 12.5px; color: var(--text-3); }
+.jv-summary-table { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.jv-summary-table-h { padding: 7px 10px; background: var(--surface-2); font-size: 12px; font-weight: 650; color: var(--text-2); }
+.jv-summary-row { display: flex; gap: 12px; padding: 5px 10px; font-size: 12.5px; color: var(--text); border-top: 1px solid var(--border); }
+.jv-summary-row span:first-child { flex: 1; }
+.jv-summary-hint { padding: 0 14px 11px; font-size: 12px; color: var(--text-3); }
+
 /* --- record draft panel --- */
-.jv-draft-chip { display: inline-flex; align-items: center; gap: 9px; margin-top: 12px; padding: 10px 14px; border: 1px solid var(--blue-bd); background: var(--blue-bg); color: var(--text); border-radius: 11px; cursor: pointer; font-size: 13.5px; }
-.jv-draft-chip svg { color: var(--blue); flex: none; }
-.jv-draft-chip-cta { color: var(--blue); font-weight: 600; margin-left: 4px; }
 .jv-draft-panel { display: flex; flex-direction: column; }
 .jv-draft-badge { font-size: 10px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; color: var(--amber); background: var(--amber-bg); border: 1px solid var(--amber-bd); border-radius: 99px; padding: 3px 9px; margin-left: 8px; }
 .jv-draft-body { flex: 1; overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 14px; }

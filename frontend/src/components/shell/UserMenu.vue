@@ -42,7 +42,6 @@
 // Sidebar header (DESIGN-V3 §3.2.1): brand + session user, HD's UserMenu
 // pattern. Dropdown: Settings (D9) · Switch to Desk · Toggle theme · Log out.
 import { computed, inject } from "vue"
-import { useRouter } from "vue-router"
 import { Dropdown, FeatherIcon } from "frappe-ui"
 import { useShellStore } from "@/stores/shell"
 import { useJarvisTheme } from "@/theme"
@@ -52,7 +51,6 @@ defineProps({
 })
 
 const store = useShellStore()
-const router = useRouter()
 const session = inject("$session")
 const { effectiveDark, toggleTheme } = useJarvisTheme()
 
@@ -69,16 +67,7 @@ const menuOptions = computed(() => [
 		group: "Menu",
 		hideLabel: true,
 		items: [
-			{ label: "Settings", icon: "settings", onClick: () => store.openSettings(router) },
-			// Account/Monitor ship on main (llm-proxy UI) — the routes exist only
-			// once this branch merges with it, so gate on the router. Monitor is
-			// SM-only there; www/jarvis.py (main side) boots is_system_manager.
-			...(router.hasRoute("Account")
-				? [{ label: "Account", icon: "user", onClick: () => router.push({ name: "Account" }) }]
-				: []),
-			...(router.hasRoute("Monitor") && window.is_system_manager !== false
-				? [{ label: "Monitor", icon: "activity", onClick: () => router.push({ name: "Monitor" }) }]
-				: []),
+			{ label: "Settings", icon: "settings", onClick: () => store.openSettings() },
 			{
 				label: "Switch to Desk",
 				icon: "grid",

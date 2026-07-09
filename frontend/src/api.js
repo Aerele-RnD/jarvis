@@ -37,6 +37,10 @@ export const getUsage = (conversation) =>
 	call("jarvis.chat.api.get_usage", { conversation: conversation || "" })
 export const isReadyForChat = () => call("jarvis.account.is_ready_for_chat")
 
+// --- Mobile app onboarding: QR the phone scans to learn the site connection
+// details (no secret — just where to reach this site). ---
+export const getPairingQr = () => call("jarvis.mobile.auth.get_pairing_qr")
+
 // --- Custom skills (customer-authored, pushed to the container) ---
 const SK = "jarvis.chat.custom_skills_api."
 export const listCustomSkills = () => call(SK + "list_custom_skills")
@@ -68,7 +72,7 @@ export const stopMacroRun = (run) => call(MC + "stop_macro_run", { run })
 export const listMacroRuns = (params) => call(MC + "list_macro_runs", params || {})
 export const macroRunStats = () => call(MC + "macro_run_stats")
 // Background summarize: fired after every 2+ step save; the WORKER applies the
-// summary when the turn ends (macro:merged event) — no client round-trip needed.
+// summary when the turn ends (macro:merged event) - no client round-trip needed.
 // Run is gated on merge_status while pending.
 export const summarizeMacro = (name) => call(MC + "summarize_macro", { name })
 export const setConversationModel = (conversation, model) =>
@@ -94,7 +98,7 @@ export const listPendingConfirmations = (conversation) =>
 
 export async function sendMessage(conversation, message, modelOverride, attachments, context) {
 	// Empty conversation is allowed: the backend creates (or focuses) an empty
-	// conversation itself and returns its id as `conversation_id` — saves the
+	// conversation itself and returns its id as `conversation_id` - saves the
 	// SPA a createOrFocusEmpty round-trip before the first send (latency plan).
 	const args = { conversation: conversation || "", message }
 	if (modelOverride) args.model_override = modelOverride
@@ -125,7 +129,7 @@ export const saveLlmPool = (models, preset = null, routingMode = "failover") =>
 
 // --- Onboarding wizard (managed signup + self-hosted connect) ---
 // Arg names mirror the real backend signatures (jarvis/onboarding.py,
-// jarvis/account.py, jarvis/selfhost.py) — verified against the desk wizard's
+// jarvis/account.py, jarvis/selfhost.py) - verified against the desk wizard's
 // frappe.call usage in jarvis/jarvis/page/jarvis_onboarding/jarvis_onboarding.js.
 export const listPlans = () => call("jarvis.onboarding.list_plans")
 export const getAccountDefaults = () => call("jarvis.onboarding.get_account_defaults")
@@ -152,6 +156,27 @@ export const beginPoolAccountSignin = (provider, model) =>
 // complete is capture-only → { account_ref, label, oauth_blob, account_email }
 export const completePoolAccountSignin = (nonce, redirectedUrl) =>
 	call("jarvis.oauth.api.complete_pool_account_signin", { nonce, redirected_url: redirectedUrl })
+
+// --- DIRECT single chat-subscription (legacy flat-field path) ---------------
+// Existing customers who onboarded a single chat subscription keep their creds
+// in the flat llm_*/llm_oauth_* fields (NOT the models[] pool). get_llm_config
+// can't see them, so AccountView probes this to decide whether to render the
+// DIRECT re-authorize card instead of the pool editor. Returns
+// { is_direct_subscription, connected, auth_mode, provider, model,
+//   account_email, connected_at }.
+export const getDirectSubscriptionStatus = () =>
+	call("jarvis.oauth.api.get_direct_subscription_status")
+// DIRECT paste-back re-authorize: begin → { ok, data:{nonce, authorize_url,
+// expires_in} }; complete pushes the fresh blob to the container's
+// auth-profiles.json + rewrites the flat fields (force restart). These write
+// Jarvis Settings - unlike the pool "capture-only" variants above.
+export const beginPasteSignin = (provider, model) =>
+	call("jarvis.oauth.api.begin_paste_signin", { provider, model })
+export const completePasteSignin = (nonce, redirectedUrl) =>
+	call("jarvis.oauth.api.complete_paste_signin", { nonce, redirected_url: redirectedUrl })
+// Tear down the direct subscription (clears the container profile + flat fields,
+// flips bench back to api_key). Returns { ok } / { ok:false, error }.
+export const disconnectSubscription = () => call("jarvis.oauth.api.disconnect")
 
 // --- LLM Monitor (System-Manager gated server-side). Real Bifrost usage, NOT the getUsage estimate. ---
 export const getLlmUsage = () => call("jarvis.account.get_llm_usage")
@@ -218,7 +243,7 @@ export const listAgentRuns = (agent, limit) =>
 export const listAgentFindings = (p) => call(AG + "list_findings", p || {})
 export const setFindingState = (finding, state) =>
 	call(AG + "set_finding_state", { finding, state })
-// Role gating + listing admin (System Manager only — the server enforces it;
+// Role gating + listing admin (System Manager only - the server enforces it;
 // the SPA merely probes getAgentAdminOverview and hides the Admin tab on 403).
 export const setAgentRoles = (agent_slug, roles) =>
 	call(AG + "set_agent_roles", { agent_slug, roles: JSON.stringify(roles || []) })

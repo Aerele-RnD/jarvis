@@ -7,6 +7,6 @@
   "title": "Jarvis Chat",
   "roles": [
     {"role": "System Manager"},
-    {"role": "All"}
+    {"role": "Jarvis User"}
   ]
 }

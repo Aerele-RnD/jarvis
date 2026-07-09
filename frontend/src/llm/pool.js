@@ -3,7 +3,7 @@
 export function deriveMode(models, preset) {
   const list = Array.isArray(models) ? models : []
   // A chat-subscription model needs the cliproxy sidecar, which only the proxy
-  // path provisions — so even a single subscription is "proxy". (#200 review #1)
+  // path provisions - so even a single subscription is "proxy". (#200 review #1)
   const hasSubscription = list.some(
     (m) => m && (m.subscription || m.credentialType === "subscription" || m.credential_type === "subscription"),
   )
@@ -36,6 +36,17 @@ export function buildCustomModels(rows) {
 export function reorder(list, from, to) {
   const a = list.slice(); const [x] = a.splice(from, 1); a.splice(to, 0, x); return a
 }
+// Suggested chat-subscription model ids per upstream (index 0 = the default the
+// onboarding editor uses when it hides the model field). Single source of truth,
+// shared with LlmPoolEditor's datalist so the default + suggestions can't drift.
+export const SUB_MODEL_SUGGESTIONS = { openai: ["gpt-5.5", "gpt-5.4"], google: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-3.1-flash"] }
+// Default chat-subscription model for an upstream (SUB_MODEL_SUGGESTIONS[0], with
+// an openai fallback for unmapped upstreams). Onboarding hides the model field
+// (provider is enough), so the row still needs a model id for validatePool + save.
+// Pure + exported for unit tests.
+export function defaultSubscriptionModel(upstream) {
+  return (SUB_MODEL_SUGGESTIONS[upstream] || SUB_MODEL_SUGGESTIONS.openai)[0]
+}
 export function validatePool(models, preset) {
   if (!Array.isArray(models) || models.length === 0) return { ok: false, error: "Add at least one model." }
   for (const m of models) {
@@ -53,6 +64,13 @@ export function validatePool(models, preset) {
     }
     // API-key model.
     if (!(m.provider || "").trim() || !(m.model || "").trim()) return { ok: false, error: "Every model needs a provider and a model id." }
+    // Custom-endpoint providers ARE their base_url - an OpenAI-Compatible shim
+    // (e.g. a Claude-CLI gateway) or a local vLLM with no base_url would push a
+    // provider that routes nowhere, and both validators used to let it through.
+    const pid = _ID_BY_LABEL[m.provider] || (m.provider || "").trim().toLowerCase()
+    if (NEEDS_BASE_URL.has(pid) && !(m.base_url || "").trim()) {
+      return { ok: false, error: `Model ${m.model}: ${m.provider} needs a Base URL (its custom endpoint).` }
+    }
     // A freshly-entered key OR a previously-saved key (has_key; merged back on save).
     if (!(m.api_key || "").trim() && !m.has_key) return { ok: false, error: `Model ${m.model} needs an API key.` }
   }
@@ -82,6 +100,9 @@ export const PROVIDER_LABELS = [
 ]
 const _LABEL_BY_ID = Object.fromEntries(PROVIDER_LABELS.map(p => [p.id, p.label]))
 const _ID_BY_LABEL = Object.fromEntries(PROVIDER_LABELS.map(p => [p.label, p.id]))
+// Custom-endpoint providers whose whole identity IS the base_url (no default
+// endpoint) - validatePool requires one for these (mirrors validate_models).
+const NEEDS_BASE_URL = new Set(["openai_compat", "vllm"])
 export function providerLabel(id) { return _LABEL_BY_ID[id] || id || "" }
 export function providerId(label) { return _ID_BY_LABEL[label] || label || "" }
 

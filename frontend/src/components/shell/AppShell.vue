@@ -1,22 +1,38 @@
 <template>
 	<FrappeUIProvider>
 		<div class="flex h-screen w-screen">
-			<div class="h-full border-r bg-surface-gray-1">
-				<Sidebar />
-			</div>
-			<div class="flex flex-1 flex-col h-full overflow-auto bg-surface-white">
-				<!-- LayoutHeader teleport target — non-chat routes only (D41).
-				     The "Go to Desk" button is rendered INSIDE LayoutHeader's right
-				     cluster (leftmost, before each page's own actions) so it is
-				     uniform across pages and never displaces the page's primary
-				     action from the rightmost corner; chat has its own header button
-				     (ChatView openErpDesk), styled to match. -->
-				<div v-if="!route.meta.chat" class="flex border-b">
-					<div id="app-header" class="flex-1" />
+			<!-- Hold a neutral surface until the onboarding verdict resolves AND a
+			     route commits — prevents both a sidebar flash on fresh sites and a
+			     poster flicker on a not-ready /onboarding deep-link. -->
+			<div v-if="!shellReady" class="flex-1 bg-surface-white" />
+			<!-- Onboarding gate (D11-safe): when the workspace has never finished
+			     onboarding, block the WHOLE app with a full-screen poster — no
+			     sidebar, no header — inviting setup. A RENDERED gate, not a
+			     redirect, so it can't reintroduce the old desk↔SPA loop that the
+			     forced D11 redirect caused. The /onboarding wizard itself is
+			     exempt so the poster's "Complete setup" button can reach it. -->
+			<OnboardingGate v-else-if="showGate" />
+			<template v-else>
+				<!-- Chrome-less routes (onboarding) drop the sidebar entirely — a
+				     not-yet-onboarded customer has no app to navigate. -->
+				<div v-if="!route.meta.chromeless" class="h-full shrink-0 border-r bg-surface-gray-1">
+					<Sidebar />
 				</div>
-				<router-view v-if="booted" />
-			</div>
+				<div class="flex flex-1 flex-col h-full overflow-auto bg-surface-white">
+					<!-- LayoutHeader teleport target — non-chat routes only (D41).
+					     The "Go to Desk" button is rendered INSIDE LayoutHeader's right
+					     cluster (leftmost, before each page's own actions) so it is
+					     uniform across pages and never displaces the page's primary
+					     action from the rightmost corner; chat has its own header button
+					     (ChatView openErpDesk), styled to match. -->
+					<div v-if="!route.meta.chat && !route.meta.chromeless" class="flex border-b">
+						<div id="app-header" class="flex-1" />
+					</div>
+					<router-view v-if="booted" />
+				</div>
+			</template>
 			<Dialogs />
+			<SettingsDialog />
 			<JarvisCommandPalette />
 			<NotifyToaster />
 		</div>
@@ -29,7 +45,7 @@
 // gate (D11), the approvals-badge poll (D12), the global notifier (attention
 // signals for background conversations/routes, NOTIFY-APPROVALS Part 1) and
 // the global shortcuts.
-import { onMounted, onBeforeUnmount, ref, inject } from "vue"
+import { computed, onMounted, onBeforeUnmount, ref, inject } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import { FrappeUIProvider, Dialogs, setConfig } from "frappe-ui"
 import * as api from "@/api"
@@ -37,8 +53,11 @@ import { useShellStore } from "@/stores/shell"
 import { useShortcuts } from "@/composables/useShortcuts"
 import { attachGlobalNotifier } from "@/notify/globalNotifier"
 import NotifyToaster from "@/notify/NotifyToaster.vue"
+import { needsOnboarding } from "@/onboarding/readiness.js"
 import Sidebar from "./Sidebar.vue"
 import JarvisCommandPalette from "./JarvisCommandPalette.vue"
+import SettingsDialog from "./SettingsDialog.vue"
+import OnboardingGate from "./OnboardingGate.vue"
 
 const route = useRoute()
 const router = useRouter()
@@ -47,6 +66,26 @@ const store = useShellStore()
 // null under ?nosocket) — the global notifier listens on it for the whole
 // session, independent of which route is mounted.
 const socket = inject("$socket")
+
+// Onboarding gate state. `gatedOnboarding` starts null (unresolved). We render
+// NOTHING but a neutral surface until BOTH the verdict has resolved AND a route
+// has committed (`shellReady`), so we never flash the sidebar/app chrome before
+// knowing whether to show the poster (else a fresh site briefly shows an empty
+// sidebar), and never flash the poster on a not-ready /onboarding deep-link
+// before the wizard mounts (route.name is momentarily undefined). The router's
+// beforeEach awaits the same shared readiness promise, so onboarded users see
+// the sidebar + their page appear together — the hold costs them nothing.
+//
+// Only a workspace that has NEVER onboarded is gated (needsOnboarding) — a
+// merely-degraded but already-onboarded workspace (e.g. expired LLM creds) is
+// NOT ejected from its chat/data and keeps /account reachable to recover.
+const gatedOnboarding = ref(null)
+needsOnboarding().then((v) => {
+	gatedOnboarding.value = v
+})
+const shellReady = computed(() => gatedOnboarding.value !== null && !!route.name)
+// The wizard route is exempt so the poster's button can navigate into it.
+const showGate = computed(() => gatedOnboarding.value === true && route.name !== "Onboarding")
 
 // Boot gate: hold the routed page (NOT the shell chrome) until systemTimezone
 // is configured — timeAgo strings render once, so a late setConfig would leave
@@ -123,14 +162,15 @@ onMounted(async () => {
 		booted.value = true
 	}
 
-	// NOTE: no onboarding force-redirect here. Policy (see router/index.js
-	// beforeEach) is "invite, don't force" — a not-ready user stays in the app
-	// and is invited to onboard via the chat welcome card + desk banner. The
-	// old D11 gate redirected not-ready users to /app/jarvis-onboarding (desk),
-	// which redirects back to /jarvis/onboarding (SPA) → AppShell re-mounts →
-	// redirect again: an infinite loop that bricked the whole SPA on any fresh
-	// (not-onboarded) site. The router beforeEach already handles the only case
-	// the policy wants (bounce a fully-onboarded user off a stale /onboarding).
+	// NOTE: no onboarding force-REDIRECT here — that path (the old D11 gate)
+	// redirected not-ready users to /app/jarvis-onboarding (desk), which
+	// redirects back to /jarvis/onboarding (SPA) → AppShell re-mounts → redirect
+	// again: an infinite loop that bricked the whole SPA on any fresh
+	// (not-onboarded) site. Instead, a not-ready workspace is gated by RENDERING
+	// the <OnboardingGate> poster in place of the sidebar + routed page (see
+	// `showGate` in setup + the template). A render can't navigate, so it can't
+	// loop. The router beforeEach still bounces a fully-onboarded user off a
+	// stale /onboarding link.
 })
 
 onBeforeUnmount(() => {

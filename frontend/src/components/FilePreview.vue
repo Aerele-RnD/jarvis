@@ -109,7 +109,7 @@
 </template>
 
 <script setup>
-// FilePreview — reusable file preview dialog (extracted from ChatView's
+// FilePreview - reusable file preview dialog (extracted from ChatView's
 // artifact panel, rebuilt in the current token system). Routing:
 // pdf → same-origin iframe, image → <img>, html/svg → sandboxed srcdoc
 // iframe (raw file fetched over the session cookie), everything else →
@@ -125,7 +125,7 @@ const props = defineProps({
 	fileName: { type: String, default: "" },
 	// extension ("pdf", "xlsx", …) or mime type ("application/pdf", …)
 	fileType: { type: String, default: "" },
-	// spec asks for "lg", but frappe-ui's lg is max-w-lg (32rem) — too narrow
+	// spec asks for "lg", but frappe-ui's lg is max-w-lg (32rem) - too narrow
 	// for PDFs and sheets, so the default is 4xl; pass size="lg" to shrink it.
 	size: { type: String, default: "4xl" },
 })

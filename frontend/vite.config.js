@@ -19,6 +19,9 @@ export default defineConfig({
 		alias: {
 			"@": path.resolve(__dirname, "src"),
 		},
+		// wiki-graph-core is a self-contained file: package (own vue in its
+		// node_modules); dedupe keeps a single Vue instance shared with the app.
+		dedupe: ["vue"],
 	},
 	optimizeDeps: {
 		include: ["frappe-ui > feather-icons", "showdown", "engine.io-client"],

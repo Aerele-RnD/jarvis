@@ -14,7 +14,7 @@
 	list-style: revert;
 }
 /* 2. @tailwindcss/forms restyles native selects (appearance:none + preset
-      chevron at right .44rem); jv selects keep their own look — give the text
+      chevron at right .44rem); jv selects keep their own look - give the text
       room under the injected chevron */
 .jv-root select {
 	padding-right: 1.75rem;
@@ -29,7 +29,7 @@
 [data-theme="dark"] .jv-root img {
 	filter: none;
 }
-/* 5. the one bare <p> (artifact no-preview note) loses UA margin — ChatView
+/* 5. the one bare <p> (artifact no-preview note) loses UA margin - ChatView
       carries class="jv-preview-note"; compensation: */
 .jv-preview-note {
 	margin: revert;

@@ -203,7 +203,7 @@ def list_learned_patterns_page(
 	status: str = "Proposed",
 	strength: str | None = None,
 	search: str | None = None,
-	surfaced=1,
+	surfaced: int | str = 1,
 	start: int = 0,
 	page_length: int = 20,
 	view: str | None = None,
@@ -623,7 +623,7 @@ def restore_rejected_pattern(name: str) -> dict:
 
 
 @frappe.whitelist()
-def snooze_learned_pattern(name: str, days=30) -> dict:
+def snooze_learned_pattern(name: str, days: int | str = 30) -> dict:
 	"""Proposed->Snoozed for 7/30/90 days (dismiss-for-now, section 6.4)."""
 	_guard()
 	try:
@@ -647,7 +647,7 @@ def snooze_learned_pattern(name: str, days=30) -> dict:
 
 
 @frappe.whitelist()
-def batch_approve(names) -> dict:
+def batch_approve(names: str | list) -> dict:
 	"""Approve many at once - A-class ONLY. If ANY named row has an effective
 	sensitivity of B or C, the WHOLE batch is refused (B needs individual
 	disclosure; C is insight-only) - plan sections 4.1 / 6.4."""
@@ -889,7 +889,7 @@ def apply_insight_skill_update(
 	action: str,
 	skill_name: str | None = None,
 	updated_instructions: str | None = None,
-	new_skill=None,
+	new_skill: str | dict | None = None,
 ) -> dict:
 	"""Confirm seam for D5. Revalidates EVERYTHING server-side (the draft
 	payload sat with the client between the two calls): the SM/managed gate,
@@ -1508,7 +1508,7 @@ def run_pattern_analysis_now() -> dict:
 # settings + status (the in-tab config surface, section 6.4)
 # --------------------------------------------------------------------------- #
 @frappe.whitelist()
-def get_learning_settings(include_preflight=0) -> dict:
+def get_learning_settings(include_preflight: int | str = 0) -> dict:
 	"""Read the ``pattern_*`` config the tab exposes (SM only). ``include_preflight``
 	runs the (potentially expensive) enablement readiness probe lazily - only when
 	the caller asks (e.g. the enable modal)."""
@@ -1539,7 +1539,7 @@ def get_learning_settings(include_preflight=0) -> dict:
 
 
 @frappe.whitelist()
-def set_learning_settings(payload=None) -> dict:
+def set_learning_settings(payload: str | dict | None = None) -> dict:
 	"""Write the ``pattern_*`` config via the Settings doc so window validation
 	runs (>=1h, wrap-aware - plan section 5.1). Only the config fields are
 	writable; the engine status quartet is engine-owned. Unknown keys are

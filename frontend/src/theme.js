@@ -61,7 +61,7 @@ function _start() {
 	const mq = window.matchMedia("(prefers-color-scheme: dark)")
 	prefersDark.value = mq.matches
 	mq.addEventListener("change", (e) => { prefersDark.value = e.matches })
-	// Singleton watcher (never stopped — lives for the page's lifetime).
+	// Singleton watcher (never stopped - lives for the page's lifetime).
 	watch(effectiveDark, applyTheme)
 	applyTheme()
 }

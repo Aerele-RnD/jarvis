@@ -20,7 +20,7 @@
 </template>
 
 <script setup>
-// TabBar — underline tabs strip (DESIGN-V3 §5.5); used by MacrosList (B5) and
+// TabBar - underline tabs strip (DESIGN-V3 §5.5); used by MacrosList (B5) and
 // AgentDetail (B6). Active tab = ink-gray-9 text + 2px underline bar.
 import { Badge } from "frappe-ui"
 

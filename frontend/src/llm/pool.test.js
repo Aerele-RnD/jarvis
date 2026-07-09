@@ -2,6 +2,14 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import { deriveMode, uniqueVendors, missingVendorKeys, presetToModels, buildCustomModels, reorder, validatePool } from "./pool.js"
 import { PROVIDER_LABELS, providerLabel, providerId, seedRowsFromConfig } from "./pool.js"
+import { defaultSubscriptionModel } from "./pool.js"
+
+test("defaultSubscriptionModel: per-upstream default, openai fallback", () => {
+  assert.equal(defaultSubscriptionModel("openai"), "gpt-5.5")
+  assert.equal(defaultSubscriptionModel("google"), "gemini-2.5-pro")
+  assert.equal(defaultSubscriptionModel("unknown"), "gpt-5.5")
+  assert.equal(defaultSubscriptionModel(undefined), "gpt-5.5")
+})
 
 const LADDER = { key: "anthropic-resilient", kind: "single_vendor", vendors: ["anthropic"],
   models: [{ provider: "anthropic", model: "claude-opus-4-8", order: 0 },
@@ -83,6 +91,16 @@ test("validatePool: api_key model with blank key but has_key is valid (key prese
 })
 test("validatePool: api_key model with neither key nor has_key is invalid", () => {
   assert.equal(validatePool([{ provider: "openai", model: "gpt-5.5", api_key: "" }], null).ok, false)
+})
+test("validatePool: OpenAI-Compatible / vLLM require a base_url (label or id)", () => {
+  // Claude-CLI shim path: provider set, model + key present, but no base_url.
+  assert.equal(validatePool([{ provider: "OpenAI-Compatible", model: "claude", api_key: "k" }], null).ok, false)
+  assert.equal(validatePool([{ provider: "openai_compat", model: "claude", api_key: "k" }], null).ok, false)
+  assert.equal(validatePool([{ provider: "vLLM (local)", model: "qwen", api_key: "k" }], null).ok, false)
+  // With a base_url it passes.
+  assert.equal(validatePool([{ provider: "OpenAI-Compatible", model: "claude", api_key: "k", base_url: "http://host.docker.internal:9000/openai/v1" }], null).ok, true)
+  // A normal provider is unaffected (has a default endpoint).
+  assert.equal(validatePool([{ provider: "openai", model: "gpt-5.5", api_key: "k" }], null).ok, true)
 })
 
 test("providerLabel/providerId: id⇄label round-trip for openai_compat", () => {
