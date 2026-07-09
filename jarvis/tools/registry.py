@@ -38,6 +38,8 @@ _TOOL_NAMES: tuple[str, ...] = (
     "query",
     "update_doc",
     "create_doc",
+    # Batch, atomic create for a doc's missing dependencies (one gated card).
+    "create_docs",
     "preview_doc",
     "submit_doc",
     "cancel_doc",
