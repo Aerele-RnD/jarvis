@@ -81,7 +81,10 @@
       <p v-if="llmMode==='quick' && !singleMode" style="font-size:14px;color:var(--text-3);margin:0 0 12px;">
         <template v-if="rows[0] && rows[0].credentialType === 'subscription'">A single chat subscription, served through the managed proxy.</template><template v-else>A single model, sent directly to the provider.</template><template v-if="canPool"> Need multiple models with failover? Use <b>Preset</b> or <b>Custom</b>.</template><template v-else> You can add more models and automatic failover later from My Account.</template>
       </p>
-      <div v-else style="font-size:13px;font-weight:600;color:var(--text-2);margin-bottom:8px;letter-spacing:.03em;text-transform:uppercase;">
+      <!-- "Custom failover pool" is the section heading for the multi-model
+           Account editor only. Onboarding (singleMode) shows neither this nor the
+           hint line above - the step's own head + method cards carry the context. -->
+      <div v-else-if="!singleMode" style="font-size:13px;font-weight:600;color:var(--text-2);margin-bottom:8px;letter-spacing:.03em;text-transform:uppercase;">
         Custom failover pool
       </div>
 
@@ -169,16 +172,17 @@
              hidden (model auto-defaults per provider), leaving just the provider
              picker + connect. The full account editor keeps all three. -->
         <div v-else :class="{ 'jv-single-body': singleMode }">
-          <!-- Onboarding: labeled compact "Provider & model" select (preview
-               .fieldlab + .sel-provider). Displays "Provider · model" - the model
-               is auto-defaulted per provider (hidden field, see onUpstreamChange). -->
+          <!-- Onboarding: just a Provider select. A chat subscription runs one
+               fixed model per provider (auto-defaulted per onUpstreamChange /
+               startConnect), so the model is not a user choice here - it is set
+               behind the scenes and editable later in Settings → Account. -->
           <div v-if="singleMode" class="jv-pick">
-            <div class="jv-fieldlab">Provider &amp; model</div>
+            <div class="jv-fieldlab">Provider</div>
             <!-- Same-value guard: onUpstreamChange drops connected accounts (they
                  are provider-specific), so reselecting the CURRENT provider must
                  be a no-op rather than wiping a finished OAuth connect. -->
             <JvCombo :model-value="m.upstream" @update:model-value="(v) => { if (v === m.upstream) return; m.upstream = v; onUpstreamChange(m) }"
-                     :options="subUpstreamOpts(m)" :editable="editable" placeholder="Provider" />
+                     :options="upstreamOpts" :editable="editable" placeholder="Provider" />
           </div>
           <div v-else style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
             <input v-model="m.model" :list="'jv-subdl-'+i" :disabled="!editable" placeholder="Model ID (e.g. gpt-5.5)"
@@ -402,16 +406,6 @@ const upstreamOpts = [
   { value: "openai", label: "OpenAI" },
   { value: "google", label: "Google Gemini" },
 ]
-// Onboarding's compact "Provider & model" select shows "Provider · model"
-// (preview .sel-provider, e.g. "OpenAI · gpt-5.5"). The active upstream shows
-// the row's ACTUAL model id (a returning customer may have saved a non-default
-// one); the other option previews the default onUpstreamChange would apply.
-function subUpstreamOpts(m) {
-  return upstreamOpts.map((o) => ({
-    value: o.value,
-    label: `${o.label} · ${(m.upstream === o.value && (m.model || "").trim()) || defaultSubscriptionModel(o.value)}`,
-  }))
-}
 // Provider dropdown fed by the shared PROVIDER_LABELS (id⇄label). Rows store the
 // display LABEL as `provider` (matches seedRowsFromConfig + the desk page).
 const providerOptions = PROVIDER_LABELS.map((p) => p.label)
@@ -641,7 +635,7 @@ async function startConnect(m, reconnectIdx = null) {
   m._connect = { ...blankConnect(), open: true, loading: true, reconnectIdx, pastedUrl: (m._connect.pastedUrl || "") }
   // Open the sign-in tab SYNCHRONOUSLY, inside this click, so the browser treats
   // it as user-initiated. A window.open() after the await below loses the user
-  // gesture and gets popup-blocked — which is why "Open sign-in" used to need a
+  // gesture and gets popup-blocked, which is why "Open sign-in" used to need a
   // second click (the first only fetched the URL). We navigate this blank tab
   // once the authorize URL resolves; if it was blocked (win === null) the visible
   // "Open sign-in ↗" link is still there for the user to click manually.

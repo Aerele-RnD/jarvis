@@ -218,8 +218,8 @@
 								</div>
 								<div v-show="!state.finishing">
 									<div class="jv-ob-head">
-										<h1>Connect Your AI</h1>
-										<p>Pick which AI powers Jarvis. You can change this anytime from Settings.</p>
+										<h1>Give Jarvis a Brain</h1>
+										<p>Pick which AI powers Jarvis. You can change this anytime from Settings → Account.</p>
 									</div>
 									<div class="jv-ob-connect">
 										<LlmPoolEditor ref="poolRef" :editable="true" :modes="['quick']" :footerless="true" @saved="onConnected" @ready="connectReady = $event" />
@@ -336,7 +336,7 @@ const FRAME_SUBS = {
 	plan: "Choose Your Plan",
 	details: "Your Details",
 	pay: "Review & Pay",
-	connect: "Connect Your AI",
+	connect: "Give Jarvis a Brain",
 	selfhost: "Self-hosted setup",
 }
 
