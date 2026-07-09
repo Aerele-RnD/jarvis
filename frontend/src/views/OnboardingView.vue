@@ -45,10 +45,11 @@
 									<p>Start free. Upgrade or extend anytime, with no auto-renewal.</p>
 								</div>
 								<div v-if="state.plansLoading" class="jv-ob-placeholder">Loading plans…</div>
-								<div v-else-if="state.plansErr" class="jv-ob-err">
-									{{ state.plansErr }}
-									<button class="jv-ob-btn jv-ob-btn-sm" @click="loadPlansSafe">Retry</button>
-								</div>
+								<Banner v-else-if="state.plansErr" type="error" :message="state.plansErr">
+									<template #action>
+										<button class="jv-ob-btn jv-ob-btn-sm" @click="loadPlansSafe">Retry</button>
+									</template>
+								</Banner>
 								<div v-else-if="!state.plans.length" class="jv-ob-placeholder">No plans are available right now. Please contact support.</div>
 								<div v-else class="jv-ob-plans" role="radiogroup" aria-label="Plan">
 									<div v-for="p in state.plans" :key="p.name" class="jv-ob-plan"
@@ -122,7 +123,7 @@
 											   placeholder="33ABCDE1234F1Z5" @keydown.enter="onDetailsSubmit">
 									</div>
 								</div>
-								<div class="jv-ob-err jv-ob-err-center" role="alert" aria-live="polite">{{ state.detailsErr }}</div>
+								<Banner v-if="state.detailsErr" type="error" :message="state.detailsErr" role="alert" aria-live="polite" />
 							</div>
 							<div class="jv-ob-foot">
 								<button class="jv-ob-back" @click="goBack">← Back</button>
@@ -140,7 +141,7 @@
 										<p v-if="state.provisioning">Payment received. We're provisioning your Jarvis workspace. This usually takes under a minute…</p>
 									</div>
 									<div v-if="state.provisioning" class="jv-ob-spinner" aria-hidden="true"></div>
-									<p v-if="state.provisionErr" class="jv-ob-err jv-ob-err-center" role="alert">{{ state.provisionErr }}</p>
+									<Banner v-if="state.provisionErr" type="error" :message="state.provisionErr" role="alert" />
 								</div>
 								<div v-if="state.provisionErr" class="jv-ob-foot jv-ob-foot-end">
 									<button class="jv-ob-btn jv-ob-btn-primary" @click="proceedAfterPay">Retry</button>
@@ -155,7 +156,7 @@
 											to continue to payment.</p>
 									</div>
 									<p class="jv-ob-hint">The link expires in 24 hours. Check your spam folder if it doesn't arrive.</p>
-									<div class="jv-ob-err jv-ob-err-center">{{ state.payErr }}</div>
+									<Banner v-if="state.payErr" type="error" :message="state.payErr" />
 								</div>
 								<div class="jv-ob-foot jv-ob-foot-end">
 									<button class="jv-ob-btn jv-ob-btn-primary" :disabled="state.payBusy" @click="onVerifyCheck">
@@ -191,7 +192,7 @@
 										Secured by Razorpay · cards, UPI &amp; netbanking
 									</div>
 									<div v-if="state.devActive" class="jv-ob-devnote">Developer mode: payment is skipped (dev signup).</div>
-									<div class="jv-ob-err jv-ob-err-center">{{ state.payErr }}</div>
+									<Banner v-if="state.payErr" type="error" :message="state.payErr" />
 								</div>
 								<div class="jv-ob-foot">
 									<button class="jv-ob-back" :disabled="state.payBusy" @click="goBack">← Back</button>
@@ -226,10 +227,11 @@
 									<div class="jv-ob-connect">
 										<LlmPoolEditor ref="poolRef" :editable="true" :modes="['quick']" :footerless="true" @saved="onConnected" @ready="connectReady = $event" />
 									</div>
-									<div v-if="state.finishNote" class="jv-ob-note">
-										<span>{{ state.finishNote }}</span>
-										<button class="jv-ob-btn jv-ob-btn-primary" @click="forceContinue">Continue to Jarvis →</button>
-									</div>
+									<Banner v-if="state.finishNote" type="info" :message="state.finishNote">
+										<template #action>
+											<button class="jv-ob-btn jv-ob-btn-primary" @click="forceContinue">Continue to Jarvis →</button>
+										</template>
+									</Banner>
 								</div>
 							</div>
 							<div v-if="!state.finishing" class="jv-ob-foot">
@@ -278,13 +280,14 @@
 											{{ c.ok ? "✅" : (c.advisory ? "⚠️" : "❌") }} <b>{{ c.check }}</b> · {{ c.detail || "" }}<span v-if="c.advisory" class="jv-ob-sh-adv-tag"> · advisory</span>
 										</div>
 									</div>
-									<div v-if="state.shWarning" class="jv-ob-devnote">{{ state.shWarning }}</div>
-									<div class="jv-ob-err" role="alert" aria-live="polite">{{ state.shErr }}</div>
+									<Banner v-if="state.shWarning" type="warning" :message="state.shWarning" />
+									<Banner v-if="state.shErr" type="error" :message="state.shErr" role="alert" aria-live="polite" />
 									<div v-if="state.finishing" class="jv-ob-note">Finishing setup…</div>
-									<div v-else-if="state.finishNote" class="jv-ob-note">
-										<span>{{ state.finishNote }}</span>
-										<button class="jv-ob-btn jv-ob-btn-primary" @click="forceContinue">Continue to Jarvis →</button>
-									</div>
+									<Banner v-else-if="state.finishNote" type="info" :message="state.finishNote">
+										<template #action>
+											<button class="jv-ob-btn jv-ob-btn-primary" @click="forceContinue">Continue to Jarvis →</button>
+										</template>
+									</Banner>
 								</div>
 							</div>
 							<div class="jv-ob-foot">
@@ -311,6 +314,7 @@ import { useTheme } from "@/composables/useTheme"
 import LlmPoolEditor from "@/components/LlmPoolEditor.vue"
 import JvCombo from "@/components/JvCombo.vue"
 import JarvisMark from "@/components/JarvisMark.vue"
+import Banner from "@/components/Banner.vue"
 import TourIntro from "@/onboarding/TourIntro.vue"
 import SetupNeuralNet from "@/onboarding/SetupNeuralNet.vue"
 import { STEPS_MANAGED, STEPS_SELFHOST, nextStep, prevStep } from "@/onboarding/steps"
