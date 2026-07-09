@@ -214,7 +214,9 @@
 										<h1>Setting up Jarvis</h1>
 										<p>Bringing your workspace online, taking you to chat…</p>
 									</div>
-									<div class="jv-ob-spinner" aria-hidden="true"></div>
+									<div class="jv-ob-setup-net">
+										<SetupNeuralNet :dark="dark" />
+									</div>
 								</div>
 								<div v-show="!state.finishing">
 									<div class="jv-ob-head">
@@ -310,6 +312,7 @@ import LlmPoolEditor from "@/components/LlmPoolEditor.vue"
 import JvCombo from "@/components/JvCombo.vue"
 import JarvisMark from "@/components/JarvisMark.vue"
 import TourIntro from "@/onboarding/TourIntro.vue"
+import SetupNeuralNet from "@/onboarding/SetupNeuralNet.vue"
 import { STEPS_MANAGED, STEPS_SELFHOST, nextStep, prevStep } from "@/onboarding/steps"
 import { inr, planAmount, planSuffix } from "@/account/format"
 import {
@@ -1021,7 +1024,7 @@ onMounted(async () => {
 
 /* ---- brand header (preview .brand). The glyph is the shared JarvisMark
    component (gradient owned there); only the header's drop shadow is local. ---- */
-.jv-ob-brand { display: flex; align-items: center; gap: 10px; align-self: flex-start; margin-bottom: 8px; }
+.jv-ob-brand { display: flex; align-items: center; justify-content: center; gap: 10px; align-self: center; margin-bottom: 8px; }
 .jv-ob-brand :deep(.jv-mark) { box-shadow: 0 4px 14px rgba(110, 92, 246, .3); }
 .jv-ob-brand-name { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
 .jv-ob-brand-sub { font-size: 12.5px; color: var(--text-3); border-left: 1px solid var(--border); padding-left: 11px; }
@@ -1117,9 +1120,14 @@ onMounted(async () => {
 .jv-ob-err-center { text-align: center; }
 .jv-ob-hint { font-size: 13px; color: var(--text-3); text-align: center; margin: 0; }
 
-/* "Setting up" transition spinner (pay provisioning + connect finishing). */
+/* "Setting up" transition spinner (pay provisioning only - the connect
+   finishing state uses the neural-net animation below). */
 .jv-ob-spinner { width: 34px; height: 34px; margin: 10px auto 0; border-radius: 50%; border: 3px solid var(--border-2); border-top-color: var(--blue); animation: jvObSpin .8s linear infinite; }
 @keyframes jvObSpin { to { transform: rotate(360deg); } }
+
+/* "Setting up Jarvis" finishing state: neural-net animation replacing the
+   spinner. Needs real height for the canvas to render into. */
+.jv-ob-setup-net { position: relative; width: 100%; min-height: 380px; flex: 1; margin-top: 8px; }
 
 /* ---- Plan cards (preview .plans/.plan) ---- */
 .jv-ob-plans { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
