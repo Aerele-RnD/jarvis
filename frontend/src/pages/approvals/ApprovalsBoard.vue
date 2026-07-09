@@ -43,6 +43,35 @@
 			     selected row's white chip + shadow reads in light mode (CRM
 			     sidebar pattern; dark gray-1 ≠ surface-selected per §2.5) -->
 			<div class="w-[360px] shrink-0 overflow-y-auto border-r bg-surface-gray-1">
+				<!-- "Waiting for your reply" strip (notify-approvals Part 3): prose
+				     questions the agent asked in chat — derived server-side
+				     (envelope.awaiting_reply, page 1 only), no approval row behind
+				     them, so the answer happens in the conversation. Hidden when
+				     empty; refreshes with every normal list refresh. -->
+				<div v-if="awaitingReply.length" class="border-b">
+					<div class="px-4 pb-1 pt-3 text-2xs font-medium uppercase tracking-wide text-ink-gray-4">
+						Waiting for your reply
+					</div>
+					<div class="flex flex-col divide-y">
+						<button
+							v-for="w in awaitingReply"
+							:key="w.conversation"
+							class="flex w-full items-start gap-3 px-4 py-2.5 text-left hover:bg-surface-gray-2"
+							@click="openConversation(w.conversation)"
+						>
+							<FeatherIcon name="message-circle" class="mt-1 size-3.5 shrink-0 text-ink-gray-5" />
+							<div class="min-w-0 flex-1">
+								<div class="truncate text-base text-ink-gray-9">{{ w.title || w.conversation }}</div>
+								<div class="mt-0.5 truncate text-sm text-ink-gray-6">{{ w.question_excerpt }}</div>
+								<div class="mt-1 flex items-center gap-2">
+									<Tooltip :text="exactDate(w.last_at)">
+										<span class="whitespace-nowrap text-sm text-ink-gray-5">{{ timeAgo(w.last_at) }}</span>
+									</Tooltip>
+								</div>
+							</div>
+						</button>
+					</div>
+				</div>
 				<template v-if="railRows.length">
 					<div class="flex flex-col divide-y">
 						<button
@@ -55,6 +84,12 @@
 							<div class="min-w-0 flex-1">
 								<div class="truncate text-base text-ink-gray-9">{{ row.title || row.name }}</div>
 								<div class="mt-1 flex items-center gap-2">
+									<!-- source: Chat blue / File Box gray (NULL = File Box) -->
+									<Badge
+										variant="subtle"
+										:theme="sourceOf(row) === 'Chat' ? 'blue' : 'gray'"
+										:label="sourceOf(row)"
+									/>
 									<Badge variant="subtle" theme="gray" :label="docType(row)" />
 									<Tooltip v-if="row.shared" text="Shared with you for review">
 										<Badge variant="subtle" theme="blue" label="Shared" />
@@ -78,14 +113,20 @@
 						<div class="text-sm text-ink-gray-5">{{ railRows.length }} of {{ railTotal }}</div>
 					</div>
 				</template>
-				<div v-else-if="!loading" class="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+				<!-- h-full centering only when the strip isn't occupying the column —
+				     otherwise the 100%-height block would force the rail to scroll -->
+				<div
+					v-else-if="!loading"
+					class="flex flex-col items-center justify-center gap-3 px-6 text-center"
+					:class="awaitingReply.length ? 'py-16' : 'h-full'"
+				>
 					<FeatherIcon :name="emptyState.icon" class="size-7.5 text-ink-gray-5" />
 					<div class="flex flex-col items-center gap-1">
 						<span class="text-lg font-medium text-ink-gray-8">{{ emptyState.title }}</span>
 						<span class="text-p-base text-ink-gray-6">{{ emptyState.description }}</span>
 					</div>
 				</div>
-				<div v-else class="flex h-full items-center justify-center">
+				<div v-else class="flex items-center justify-center" :class="awaitingReply.length ? 'py-16' : 'h-full'">
 					<LoadingIndicator class="size-5 text-ink-gray-5" />
 				</div>
 			</div>
@@ -199,28 +240,53 @@
 										/>
 									</div>
 									<FormControl
+										v-if="!chatAnswerOnly"
 										type="textarea"
 										:class="showOptionChips ? 'mt-3' : ''"
 										placeholder="Add a note - optional"
 										:modelValue="note"
 										@update:modelValue="(v) => (note = v)"
 									/>
-									<div class="mt-3 flex items-center gap-2">
+									<div class="flex items-center gap-2" :class="chatAnswerOnly ? '' : 'mt-3'">
+										<!-- chat asks without options are free-form questions: a
+										     verdict decide() would be meaningless — answer in the
+										     conversation instead (decide resumes chat only for
+										     options-bearing rows) -->
 										<Button
+											v-if="chatAnswerOnly"
 											variant="solid"
-											theme="green"
-											label="Approve"
-											:loading="deciding === 1"
-											:disabled="deciding !== null"
-											@click="submitDecide(1)"
+											label="Answer in chat"
+											iconLeft="message-circle"
+											@click="openChat"
 										/>
+										<template v-else>
+											<Button
+												variant="solid"
+												theme="green"
+												label="Approve"
+												:loading="deciding === 1"
+												:disabled="deciding !== null"
+												@click="submitDecide(1)"
+											/>
+											<Button
+												variant="subtle"
+												theme="red"
+												label="Reject"
+												:loading="deciding === 0"
+												:disabled="deciding !== null"
+												@click="submitDecide(0)"
+											/>
+										</template>
+										<!-- Ignore: clear it off the board without acting — no
+										     verdict, no chat resume; reversible via Restore -->
 										<Button
-											variant="subtle"
-											theme="red"
-											label="Reject"
-											:loading="deciding === 0"
+											variant="ghost"
+											label="Ignore"
+											iconLeft="bell-off"
+											:tooltip="'Dismiss without acting — the assistant is not told anything'"
+											:loading="dismissing"
 											:disabled="deciding !== null"
-											@click="submitDecide(0)"
+											@click="submitDismiss"
 										/>
 										<div class="flex-1" />
 										<!-- tag for review - the DocShare path DocMetaPanel's
@@ -267,7 +333,11 @@
 										</Popover>
 									</div>
 									<div class="mt-2 text-sm text-ink-gray-5">
-										Tag a colleague to view and comment - only you (or an admin) can approve.
+										{{
+											chatAnswerOnly
+												? "This question needs a longer answer — continue in chat."
+												: "Tag a colleague to view and comment — only you (or an admin) can approve."
+										}}
 									</div>
 								</div>
 								<div v-else class="text-sm text-ink-gray-5">
@@ -277,6 +347,17 @@
 							<template v-else>
 								<div class="text-base text-ink-gray-8">{{ selected.decision }}</div>
 								<div v-if="decidedLine" class="mt-2 text-sm text-ink-gray-5">{{ decidedLine }}</div>
+								<!-- undo an accidental Ignore: back to Pending, nothing was
+								     ever told to the assistant -->
+								<Button
+									v-if="selected.status === 'Dismissed' && selected.can_act"
+									class="mt-3"
+									variant="subtle"
+									label="Restore to board"
+									iconLeft="rotate-ccw"
+									:loading="restoring"
+									@click="submitRestore"
+								/>
 							</template>
 						</DocSection>
 
@@ -306,6 +387,11 @@
 // chips + note + Approve/Reject, CommentsSection (mentions), collapsed
 // DocMetaPanel. Row click → router.replace('/approvals/'+id); both approval
 // routes render this board.
+// notify-approvals Part 3: source badge on rail rows (Chat blue / File Box
+// gray; NULL = File Box), a "Waiting for your reply" strip above the rail
+// (envelope.awaiting_reply — prose questions with no row behind them),
+// chat-sourced option-less rows hand off to the conversation ("Answer in
+// chat") instead of Approve/Reject, and the status filter gains "Answered".
 import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import {
@@ -342,18 +428,37 @@ function errMsg(e) {
 }
 
 // ── rail config ──────────────────────────────────────────────────────────────
-const STATUS_THEME = { Pending: "orange", Approved: "green", Rejected: "red" }
+// "Answered" = a chat ask the user resolved IN CHAT (chat_asks.resolve_on_
+// user_message) — filterable for audit; the sidebar badge stays Pending-only.
+const STATUS_THEME = { Pending: "orange", Approved: "green", Rejected: "red", Answered: "blue", Dismissed: "gray" }
 const STATUS_OPTIONS = [
 	{ label: "Pending", value: "Pending" },
 	{ label: "Decided", value: "Decided" },
+	{ label: "Answered", value: "Answered" },
+	{ label: "Dismissed", value: "Dismissed" },
 	{ label: "All", value: "All" },
 ]
-const STATUS_VALUES = ["Pending", "Decided", "All"]
+const STATUS_VALUES = ["Pending", "Decided", "Answered", "Dismissed", "All"]
 const DEFAULT_SORT = { field: "creation", dir: "desc" }
 
 // deep-link seeds (?status=, ?type= - parity with the old list page)
 const initialStatus = STATUS_VALUES.includes(route.query.status) ? route.query.status : "Pending"
 const initialType = typeof route.query.type === "string" ? route.query.type : ""
+
+// ── awaiting-reply strip (notify-approvals Part 3) ───────────────────────────
+// Prose questions never create approval rows — the server derives them into
+// the envelope (`awaiting_reply`, first page only). Captured via a fetchFn tap
+// so the strip refreshes with every normal list refresh (reset/keep both hit
+// start=0, and replacing with an empty array hides the strip); Load More
+// responses don't carry the key and leave it alone.
+const awaitingReply = ref([])
+let awaitReq = 0 // monotonic — stale responses dropped (paneReq idiom)
+async function fetchApprovals(p) {
+	const id = ++awaitReq
+	const res = (await api.listApprovalsPage(p)) || {}
+	if (id === awaitReq && Array.isArray(res.awaiting_reply)) awaitingReply.value = res.awaiting_reply
+	return res
+}
 
 const {
 	rows,
@@ -368,7 +473,7 @@ const {
 	loadMore,
 	refreshKeep,
 } = useListPage({
-	fetchFn: (p) => api.listApprovalsPage(p),
+	fetchFn: fetchApprovals,
 	defaultSort: DEFAULT_SORT,
 	storageKey: "approvals",
 	initialFilters: { status: initialStatus, ...(initialType ? { document_type: initialType } : {}) },
@@ -429,6 +534,11 @@ function docType(row) {
 	return (row.document_type || "").trim() || "Unclassified"
 }
 
+// NULL/absent source predates the field — reads as File Box (backend contract)
+function sourceOf(row) {
+	return row && row.source === "Chat" ? "Chat" : "File Box"
+}
+
 // ── selection (right pane always reads the full record via get_approval,
 //    incl. can_act - the rail row is never enough) ─────────────────────────────
 const selectedId = ref("")
@@ -478,6 +588,7 @@ async function loadRecord(id, { keep = false } = {}) {
 				name: rec.name,
 				title: rec.title,
 				status: rec.status,
+				source: rec.source || "File Box",
 				document_type: rec.document_type || "",
 				creation: rec.creation,
 			}
@@ -502,6 +613,11 @@ function openChat() {
 	if (selected.value && selected.value.conversation) {
 		router.push("/c/" + selected.value.conversation)
 	}
+}
+
+// awaiting-reply strip rows answer in the conversation itself
+function openConversation(conversation) {
+	if (conversation) router.push("/c/" + conversation)
 }
 
 // ── right-pane helpers ────────────────────────────────────────────────────────
@@ -547,6 +663,14 @@ const showOptionChips = computed(() => {
 	}
 	return true
 })
+// Chat-sourced asks with NO options can't be verdict-decided — the answer is
+// free-form prose, so the board hands off to the conversation ("Answer in
+// chat"). Gate on options PRESENCE, not chip visibility: a chat row whose two
+// options merely restate Approve/Reject keeps the plain Approve/Reject
+// buttons (decide() already resumes the conversation with the decision).
+const chatAnswerOnly = computed(
+	() => !!selected.value && sourceOf(selected.value) === "Chat" && !options.value.length
+)
 const decidedLine = computed(() => {
 	const s = selected.value
 	if (!s || !s.decided_by) return ""
@@ -593,6 +717,8 @@ const tagOptions = computed(() => {
 const selectedOption = ref("")
 const note = ref("")
 const deciding = ref(null) // 1 | 0 | null
+const dismissing = ref(false)
+const restoring = ref(false)
 
 function toggleOption(opt) {
 	selectedOption.value = selectedOption.value === opt ? "" : opt
@@ -643,6 +769,62 @@ async function submitDecide(approve) {
 		toast.error(errMsg(e))
 	} finally {
 		deciding.value = null
+	}
+}
+
+// Ignore = dismiss off the board with no verdict and no chat resume. Same
+// optimistic swap as decide, but the row lands in "Dismissed".
+async function submitDismiss() {
+	if (dismissing.value || deciding.value !== null || !selected.value) return
+	dismissing.value = true
+	const id = selected.value.name
+	try {
+		await api.dismissApproval(id)
+		const r = railRows.value.find((x) => x.name === id)
+		if (r) {
+			r.status = "Dismissed"
+			r.decision = "(dismissed - no action taken)"
+		}
+		if (selected.value && selected.value.name === id) {
+			selected.value = {
+				...selected.value,
+				status: "Dismissed",
+				decision: "(dismissed - no action taken)",
+				decided_by: session.user,
+				decided_by_name: "",
+				decided_at: "",
+			}
+		}
+		note.value = ""
+		selectedOption.value = ""
+		toast.success("Ignored — the assistant was not notified")
+		store.refreshApprovalsCount()
+		if ((filters.status || "Pending") === "Pending") advanceAfterDecide(id)
+		else loadRecord(id, { keep: true })
+	} catch (e) {
+		toast.error(errMsg(e))
+	} finally {
+		dismissing.value = false
+	}
+}
+
+// Restore a dismissed request back to Pending (the undo).
+async function submitRestore() {
+	if (restoring.value || !selected.value) return
+	restoring.value = true
+	const id = selected.value.name
+	try {
+		await api.restoreApproval(id)
+		const r = railRows.value.find((x) => x.name === id)
+		if (r) r.status = "Pending"
+		toast.success("Restored to the board")
+		store.refreshApprovalsCount()
+		if ((filters.status || "Pending") === "Dismissed") advanceAfterDecide(id)
+		else loadRecord(id, { keep: true })
+	} catch (e) {
+		toast.error(errMsg(e))
+	} finally {
+		restoring.value = false
 	}
 }
 

@@ -745,9 +745,12 @@ const currentId = ref(null)
 // Remember the open chat per-device so a refresh — or a duplicated tab — restores
 // it instead of jumping to whatever sorts first in the sidebar (e.g. a starred
 // chat). Also lets a duplicated tab land on the SAME in-progress conversation.
-// Also mirrors the selection into the shell store (sidebar active row).
+// Also mirrors the selection into the shell store (sidebar active row) — the
+// global notifier reads it as "the conversation on screen" on the chat home —
+// and clears the sidebar's unread dot for the conversation being opened.
 watch(currentId, (id) => {
 	store.currentConvId = id
+	if (id) store.clearUnread(id)
 	try {
 		id ? localStorage.setItem("jarvis-last-conv", id) : localStorage.removeItem("jarvis-last-conv")
 	} catch (e) {}
@@ -1161,20 +1164,13 @@ const toolOpen = ref({})
 // These device prefs now live in the shell store (owned there so the hoisted
 // settings dialog's GeneralPane toggle and this view's live gating stay in sync
 // same-tab — a pane-local ref could not notify this view). This view only READS
-// them (to gate the tool-activity rows + fire notifications); the toggles are
-// driven from GeneralPane via store.setActivityDetail / store.toggleNotify.
+// them (to gate the tool-activity rows); the toggles are driven from GeneralPane
+// via store.setActivityDetail / store.toggleNotify. The actual notification
+// dispatch on reply-ready no longer lives here — it moved to the app-scoped
+// notifier (notify/globalNotifier.js, attached by AppShell) so it also fires
+// for background conversations and non-chat routes.
 const showActivityDetail = computed(() => store.activityDetail)
 const notifyEnabled = computed(() => store.notifyEnabled)
-function _notifyReplyReady() {
-	if (!notifyEnabled.value || !document.hidden) return
-	try {
-		const n = new Notification("Jarvis replied", {
-			body: currentTitle.value || "Your reply is ready.",
-			tag: "jarvis-reply", // collapse bursts into one notification
-		})
-		n.onclick = () => { window.focus(); n.close() }
-	} catch (e) { /* notification blocked at OS level — nothing to do */ }
-}
 
 // Danger zone: wipe every conversation + message (macros/skills untouched).
 const clearingHistory = ref(false)
@@ -3135,7 +3131,8 @@ function onEvent(p) {
 			activeTools.value = []
 			currentRunId.value = null
 			store.streamingConvId = null
-			_notifyReplyReady() // browser notification when the tab is hidden (opt-in)
+			// (browser notification moved to the app-scoped global notifier —
+			// AppShell attaches it, so it fires on every route, not just here)
 			store.loadConversations()
 			loadConversation(currentId.value)
 			// Re-render charts after the reload settles — late re-renders can swap a
