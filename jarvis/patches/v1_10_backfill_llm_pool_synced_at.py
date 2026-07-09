@@ -9,11 +9,17 @@ pool re-save (the save flips last_sync_status to "pending:", so the
 one-shot "current status is ok" signal disappears exactly when they need
 it).
 
-Backfill rule: a pool tenant (proxy_active=1) whose last_sync_status
-currently starts with "ok" demonstrably has an applied pool - stamp the
-marker with last_sync_at (or now as a fallback). Tenants mid-sync or in a
-failed state at migrate time are left empty; their next successful sync
-stamps it.
+Backfill rule: EVERY pre-marker pool tenant (proxy_active=1) is stamped.
+The patch's job is grandfathering, not retroactive enforcement: before
+this deploy the gate was proxy_active alone, so every existing pool
+tenant - including one whose LATEST re-save happens to be transiently
+"pending:"/"failed:" at migrate time while the container keeps serving
+the previously applied pool - was chat-ready. Conditioning the stamp on
+a current "ok" status would demote exactly those working tenants to
+"never provisioned" mid-upgrade (onboarding banner, wizard shove). A
+truly never-applied pre-marker pool tenant is theoretical (the old gate
+let them into chat anyway); the honest gate applies to tenants created
+AFTER this deploy, whose marker lifecycle starts clean.
 
 Reads go through the document API, NOT frappe.db.get_single_value: the
 latter coerces an EMPTY Datetime single to the truthy sentinel
@@ -29,9 +35,6 @@ def execute():
 	if not settings.proxy_active:
 		return
 	if settings.llm_pool_synced_at:
-		return
-	status = (settings.last_sync_status or "").strip()
-	if not status.startswith("ok"):
 		return
 	synced_at = settings.last_sync_at or frappe.utils.now()
 	frappe.db.set_single_value("Jarvis Settings", "llm_pool_synced_at", synced_at)

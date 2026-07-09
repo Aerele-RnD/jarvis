@@ -660,10 +660,13 @@ function forceContinue() {
 // (cold container provision + proxy sidecars), not seconds. Readiness only
 // flips once that job APPLIES the pool, so before probing is_ready_for_chat
 // we follow the job itself: poll get_llm_sync_status until it leaves
-// "pending:". Bounded above the backend's own 600s job budget - the backend
-// guarantees a terminal status (durable ok/failed) within it, so this loop
-// can't spin forever. Returns the terminal sync dict, or null on timeout.
-async function waitForSyncTerminal(maxMs = 11 * 60 * 1000, intervalMs = 3000) {
+// "pending:". The ceiling is a UX bound, not a correctness guarantee: it
+// clears the backend's 600s job envelope (ADMIN_SYNC_RQ_TIMEOUT_S) plus one
+// lock-loss retry hop; a pathological retry chain can honestly outlast it,
+// in which case the caller falls through to the "still finishing" note with
+// a manual continue - never a hard block. Returns the terminal sync dict,
+// or null on timeout.
+async function waitForSyncTerminal(maxMs = 15 * 60 * 1000, intervalMs = 3000) {
 	const deadline = Date.now() + maxMs
 	for (;;) {
 		try {
@@ -677,19 +680,40 @@ async function waitForSyncTerminal(maxMs = 11 * 60 * 1000, intervalMs = 3000) {
 	}
 }
 
-// Shared tail for both completion paths: wait for the provisioning sync to
-// reach a terminal state, then poll for readiness, then either auto-reload
-// (the common case) or leave a "still finishing" note with a manual continue
-// button so the user is never stuck staring at a spinner.
-async function afterSaveRecheckReady() {
+// Shared tail for both completion paths: optionally follow an in-flight
+// provisioning sync to a terminal state, then poll for readiness, then
+// either auto-reload (the common case) or leave a "still finishing" note
+// with a manual continue button so the user is never stuck on a spinner.
+//
+// followSync is ONLY for the managed pool path (save_llm_pool writes a
+// "pending:" status synchronously before returning, so a sync from THIS
+// save is observable as pending right now). The self-host save never
+// touches last_sync_status, and a no-op / container-owned managed save
+// enqueues nothing - in both cases the field may hold a STALE terminal
+// "failed:" (or a stale "pending:" from an abandoned earlier attempt),
+// which must not block an actually-ready tenant. Hence: only follow a
+// sync we can see in flight, and never gate the self-host path on this
+// field at all.
+async function afterSaveRecheckReady({ followSync = false } = {}) {
 	state.finishNote = ""
 	state.finishing = true
-	const sync = await waitForSyncTerminal()
-	const status = ((sync && sync.last_sync_status) || "").trim()
-	if (status.startsWith("failed") || status.startsWith("skipped")) {
-		state.finishing = false
-		state.finishNote = `Setup hit a problem (${status}). Check the AI connection and save again - or continue to Jarvis and retry from Settings.`
-		return
+	if (followSync) {
+		let inFlight = false
+		try {
+			const s0 = await getLlmSyncStatus()
+			inFlight = !!(s0 && s0.pending)
+		} catch (e) {
+			// status probe is advisory - fall through to the readiness poll
+		}
+		if (inFlight) {
+			const sync = await waitForSyncTerminal()
+			const status = ((sync && sync.last_sync_status) || "").trim()
+			if (status.startsWith("failed") || status.startsWith("skipped")) {
+				state.finishing = false
+				state.finishNote = `Setup hit a problem (${status}). Check the AI connection and save again - or continue to Jarvis and retry from Settings.`
+				return
+			}
+		}
 	}
 	const ready = await waitUntilReady()
 	if (ready) {
@@ -708,7 +732,7 @@ async function afterSaveRecheckReady() {
 // renderLlm) - the component itself owns Quick/Preset/Custom + save_llm_pool;
 // this is only the post-save readiness handoff. ---------------------------
 function onConnected(sync) {
-	afterSaveRecheckReady()
+	afterSaveRecheckReady({ followSync: true })
 }
 
 // The Connect-AI footer (Back + Save) lives here, not inside LlmPoolEditor

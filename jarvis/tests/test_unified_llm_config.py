@@ -2129,6 +2129,25 @@ class TestOnboardingAuditFixes(_RT3SettingsTestCase):
                    return_value={"action": "pool_update"}):
             settings.save()
 
+    @staticmethod
+    def _as_background_job():
+        """Simulate execute_job's worker context: _commit_terminal_sync_status
+        commits ONLY when frappe.local.job is set (the real-worker signal), so
+        durability tests must fake it - and everything else in the suite runs
+        WITHOUT it, preserving FrappeTestCase transaction isolation."""
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _ctx():
+            prior = getattr(frappe.local, "job", None)
+            frappe.local.job = frappe._dict(method="test")
+            try:
+                yield
+            finally:
+                frappe.local.job = prior
+
+        return _ctx()
+
     def test_unexpected_pool_sync_error_status_survives_rollback(self):
         """RuntimeError (stand-in for rq JobTimeoutException - both take the
         non-Admin* path) -> finally writes 'failed: unexpected error' AND
@@ -2142,7 +2161,7 @@ class TestOnboardingAuditFixes(_RT3SettingsTestCase):
         with patch(
             "jarvis.jarvis.doctype.jarvis_settings.jarvis_settings._post_pool_with_retry",
             side_effect=RuntimeError("job timeout simulation"),
-        ):
+        ), self._as_background_job():
             with self.assertRaises(RuntimeError):
                 _enqueued_sync_via_admin_pool()
 
@@ -2244,14 +2263,32 @@ class TestOnboardingAuditFixes(_RT3SettingsTestCase):
                         "patch must backfill the marker for an applied pool")
         self.assertTrue(is_ready_for_chat().get("ready"))
 
-    def test_backfill_patch_skips_unapplied_pools(self):
+    def test_backfill_patch_stamps_even_non_ok_pool_tenants(self):
+        """Grandfathering is unconditional for pre-marker pool tenants: an
+        established tenant whose LATEST re-save is transiently pending/failed
+        at migrate time (container still serving the applied pool) was
+        chat-ready before the deploy and must stay so after it."""
         from jarvis.patches.v1_10_backfill_llm_pool_synced_at import execute
         self._set_pool_gate_state(
-            synced_at=None, status="pending: provisioning container (pool)")
+            synced_at=None, status="failed: admin unreachable: transient")
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("last_sync_at", frappe.utils.now(), update_modified=False)
+        frappe.db.commit()
+        execute()
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertTrue(settings.llm_pool_synced_at,
+                        "pre-marker pool tenants must be grandfathered unconditionally")
+
+    def test_backfill_patch_skips_non_pool_tenants(self):
+        from jarvis.patches.v1_10_backfill_llm_pool_synced_at import execute
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("proxy_active", 0, update_modified=False)
+        settings.db_set("llm_pool_synced_at", None, update_modified=False)
+        frappe.db.commit()
         execute()
         settings = frappe.get_single("Jarvis Settings")
         self.assertFalse(settings.llm_pool_synced_at,
-                         "a mid-sync/never-applied pool must not be backfilled")
+                         "direct tenants must not be stamped")
 
     def test_pool_sync_ok_status_survives_rollback(self):
         """The OK terminal write (status + marker) must be committed too: an
@@ -2266,7 +2303,8 @@ class TestOnboardingAuditFixes(_RT3SettingsTestCase):
         frappe.db.commit()
 
         with patch("jarvis.admin_client.post_update_llm_pool",
-                   return_value={"action": "pool_update"}):
+                   return_value={"action": "pool_update"}), \
+             self._as_background_job():
             _enqueued_sync_via_admin_pool()
         frappe.db.rollback()
 
@@ -2294,7 +2332,7 @@ class TestOnboardingAuditFixes(_RT3SettingsTestCase):
         self.assertTrue(status.startswith("pending: waiting for a concurrent sync"),
                         f"first lock loss must stay pending-with-retry; got {status!r}")
         self.assertEqual(len(captured), 1, "exactly one retry must be enqueued")
-        self.assertEqual(captured[0].get("job_id"), "jarvis_settings_sync:pool:retry")
+        self.assertEqual(captured[0].get("job_id"), "jarvis_settings_sync:pool:retry:0")
         self.assertEqual(captured[0].get("retry_left"), 0)
 
         captured.clear()
@@ -2319,10 +2357,27 @@ class TestOnboardingAuditFixes(_RT3SettingsTestCase):
             ADMIN_SYNC_LOCK_TIMEOUT_S, ADMIN_SYNC_RQ_TIMEOUT_S,
         )
 
+        from jarvis.jarvis.doctype.jarvis_settings.jarvis_settings import (
+            ADMIN_SYNC_LOCK_RETRIES,
+            ADMIN_SYNC_PRIMARY_LOCK_WAIT_S,
+            ADMIN_SYNC_RETRY_LOCK_WAIT_S,
+        )
+
         self.assertGreaterEqual(ADMIN_SYNC_RQ_TIMEOUT_S, 440,
                                 "RQ envelope must exceed worst-case sync work (~430s)")
         self.assertGreaterEqual(ADMIN_SYNC_LOCK_TIMEOUT_S, ADMIN_SYNC_RQ_TIMEOUT_S,
                                 "lock TTL must cover a holder running to its SIGALRM")
+        # A dead (SIGKILLed) holder blocks for the full TTL; the retry chain's
+        # cumulative wait must outlive it or a fresh tenant's first sync can
+        # exhaust every attempt against a corpse.
+        cumulative_wait = (ADMIN_SYNC_PRIMARY_LOCK_WAIT_S
+                           + ADMIN_SYNC_LOCK_RETRIES * ADMIN_SYNC_RETRY_LOCK_WAIT_S)
+        self.assertGreater(cumulative_wait, ADMIN_SYNC_LOCK_TIMEOUT_S,
+                           "retry-chain cumulative lock wait must outlive a dead holder's TTL")
+        # And the per-attempt wait must not eat the work budget: wait + POST
+        # work (~370s: 3x120 + sleeps, lock wait excluded) must fit the envelope.
+        self.assertLessEqual(ADMIN_SYNC_RETRY_LOCK_WAIT_S + 380, ADMIN_SYNC_RQ_TIMEOUT_S,
+                             "retry lock wait + worst-case POST work must fit the RQ envelope")
 
         settings = frappe.get_single("Jarvis Settings")
         captured = []
