@@ -1,6 +1,7 @@
 // Compact GFM renderer - enough for agent replies: paragraphs, bold/italic,
-// inline code, links, bullet/number lists, and pipe tables (rendered into the
-// imported design's table look via the .jv-md classes in ChatView's styles).
+// strikethrough, inline code, links, nested bullet/number lists, blockquotes,
+// and pipe tables (rendered into the imported design's table look via the
+// .jv-md classes in ChatView's styles).
 function esc(s) {
 	return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]))
 }
@@ -8,6 +9,7 @@ function esc(s) {
 function inline(s) {
 	let t = esc(s)
 	t = t.replace(/`([^`]+)`/g, '<code class="jv-md-code">$1</code>')
+	t = t.replace(/~~([^~]+)~~/g, "<del>$1</del>")
 	t = t.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
 	t = t.replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>")
 	t = t.replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener" class="jv-md-link">$1</a>')
@@ -30,23 +32,45 @@ function renderTable(rows) {
 	return h + "</tbody></table></div>"
 }
 
+// Build (possibly nested) list HTML from a run of list-item lines, nesting by
+// leading-space indent. A deeper indent nests inside the current item; a mixed
+// bullet/number type at the same indent starts a fresh sibling list.
+function renderListBlock(items) {
+	let html = ""
+	const stack = [] // [{ indent, tag }], innermost last
+	for (const it of items) {
+		while (stack.length && it.indent < stack[stack.length - 1].indent) {
+			html += `</li></${stack.pop().tag}>`
+		}
+		const top = stack[stack.length - 1]
+		if (top && it.indent === top.indent) {
+			if (top.tag !== it.tag) {
+				html += `</li></${stack.pop().tag}>`
+				html += `<${it.tag} class="jv-md-list"><li>`
+				stack.push({ indent: it.indent, tag: it.tag })
+			} else {
+				html += "</li><li>"
+			}
+		} else {
+			html += `<${it.tag} class="jv-md-list"><li>`
+			stack.push({ indent: it.indent, tag: it.tag })
+		}
+		html += inline(it.text)
+	}
+	while (stack.length) html += `</li></${stack.pop().tag}>`
+	return html
+}
+
 export function renderMarkdown(src) {
 	if (!src) return ""
 	const lines = String(src).replace(/\r\n/g, "\n").split("\n")
 	const out = []
 	let i = 0
 	let para = []
-	let list = null
 	const flushPara = () => {
 		if (para.length) {
 			out.push(`<p class="jv-md-p">${inline(para.join(" "))}</p>`)
 			para = []
-		}
-	}
-	const flushList = () => {
-		if (list) {
-			out.push(`<${list.tag} class="jv-md-list">${list.items.map((x) => `<li>${inline(x)}</li>`).join("")}</${list.tag}>`)
-			list = null
 		}
 	}
 	while (i < lines.length) {
@@ -56,7 +80,6 @@ export function renderMarkdown(src) {
 		const fence = line.match(/^\s*```\s*([\w-]*)\s*$/)
 		if (fence) {
 			flushPara()
-			flushList()
 			const lang = (fence[1] || "").toLowerCase()
 			const body = []
 			i++
@@ -73,7 +96,6 @@ export function renderMarkdown(src) {
 		// table: a header row followed by a |---| separator
 		if (/\|/.test(line) && i + 1 < lines.length && /^\s*\|?[\s:-]+\|[\s:|-]*$/.test(lines[i + 1])) {
 			flushPara()
-			flushList()
 			const tbl = [line, lines[i + 1]]
 			i += 2
 			while (i < lines.length && /\|/.test(lines[i]) && lines[i].trim()) tbl.push(lines[i++])
@@ -85,36 +107,43 @@ export function renderMarkdown(src) {
 		const heading = line.match(/^\s*(#{1,4})\s+(.*)/)
 		if (heading) {
 			flushPara()
-			flushList()
 			const level = Math.min(heading[1].length + 2, 6)
 			out.push(`<h${level} class="jv-md-h">${inline(heading[2])}</h${level}>`)
 			i++
 			continue
 		}
-		const ul = line.match(/^\s*[-*]\s+(.*)/)
-		const ol = line.match(/^\s*\d+\.\s+(.*)/)
-		if (ul || ol) {
+		// blockquote: one or more consecutive `>` lines.
+		if (/^\s*>\s?/.test(line)) {
 			flushPara()
-			const tag = ul ? "ul" : "ol"
-			if (!list || list.tag !== tag) {
-				flushList()
-				list = { tag, items: [] }
+			const q = []
+			while (i < lines.length && /^\s*>\s?/.test(lines[i])) {
+				q.push(lines[i].replace(/^\s*>\s?/, ""))
+				i++
 			}
-			list.items.push((ul || ol)[1])
-			i++
+			out.push(`<blockquote class="jv-md-quote">${inline(q.join(" "))}</blockquote>`)
+			continue
+		}
+		// bullet / numbered lists, indent-nested.
+		if (/^(\s*)([-*]|\d+\.)\s+/.test(line)) {
+			flushPara()
+			const items = []
+			while (i < lines.length) {
+				const m = lines[i].match(/^(\s*)([-*]|\d+\.)\s+(.*)/)
+				if (!m) break
+				items.push({ indent: m[1].length, tag: /\d/.test(m[2]) ? "ol" : "ul", text: m[3] })
+				i++
+			}
+			out.push(renderListBlock(items))
 			continue
 		}
 		if (!line.trim()) {
 			flushPara()
-			flushList()
 			i++
 			continue
 		}
-		flushList()
 		para.push(line.trim())
 		i++
 	}
 	flushPara()
-	flushList()
 	return out.join("\n")
 }

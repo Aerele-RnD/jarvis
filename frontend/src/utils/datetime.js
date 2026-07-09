@@ -18,3 +18,18 @@ export function exactDate(d) {
 export function formatDate(d, fmt) {
 	return d ? dayjsLocal(String(d)).format(fmt || "MMM D, YYYY") : ""
 }
+
+// Day-bucket label for chat day separators, timezone-safe like the rest of this
+// module. Accepts a naive site-tz string (creation/modified) or a browser Date /
+// ms number (optimistic rows). "Today" / "Yesterday" / weekday within a week /
+// "D MMMM" beyond.
+export function dayLabel(d) {
+	if (d == null || d === "") return ""
+	const dj = dayjsLocal(d)
+	if (!dj || typeof dj.isValid !== "function" || !dj.isValid()) return ""
+	const diff = dayjsLocal().startOf("day").diff(dj.startOf("day"), "day")
+	if (diff === 0) return "Today"
+	if (diff === 1) return "Yesterday"
+	if (diff > 1 && diff < 7) return dj.format("dddd")
+	return dj.format("D MMMM")
+}
