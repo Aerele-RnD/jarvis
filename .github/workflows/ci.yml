@@ -43,8 +43,12 @@ jobs:
       options: --user 1001
       env:
         HOME: /home/ci
-      # Works whether the package is public or private: it is linked to this repo, so GITHUB_TOKEN
-      # can pull it either way, and credentials are ignored for a public image.
+      # The package is currently PRIVATE. It is linked to this repo, so GITHUB_TOKEN + `packages:
+      # read` pulls it on same-repo runs (verified). Credentials are harmless once it is public.
+      #
+      # Fork PRs are the gap: their GITHUB_TOKEN is forced read-only and scoped to the fork, and
+      # pulling a private GHCR package with it is unreliable. If this repo ever takes an external
+      # PR, make the package public — that path needs no credentials at all.
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -72,6 +76,20 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: app
+
+      - name: Record what this run actually tested against
+        working-directory: /opt/frappe-bench
+        run: |
+          # :v16 is a mutable tag, rebuilt nightly. Two runs an hour apart can therefore test
+          # against different upstream commits, and the tag is overwritten before you could go
+          # look. Without this, a green check is unauditable after the fact.
+          {
+            echo "### Baked upstream revisions"
+            echo
+            for app in frappe erpnext hrms; do
+              echo "- ${app}: \`$(git -C "apps/${app}" rev-parse HEAD)\`"
+            done
+          } | tee -a "${GITHUB_STEP_SUMMARY}"
 
       - name: Point the baked bench at the service containers
         working-directory: /opt/frappe-bench
@@ -121,7 +139,12 @@ jobs:
         run: |
           # Cheap guard against a silently-stale or partial image: if erpnext/hrms did not come
           # back from the dump, the tier-2 tests would fail later in a much more confusing way.
-          apps=$(bench --site test_site execute frappe.get_installed_apps 2>&1 | tail -1)
+          #
+          # Take the JSON line specifically, and leave stderr on the console. Merging stderr into
+          # stdout and taking `tail -1` would capture any late warning (e.g. a ResourceWarning at
+          # interpreter teardown) instead of the JSON, and fail a perfectly healthy site.
+          apps=$(bench --site test_site execute frappe.get_installed_apps | grep -m1 '^\[') || {
+            echo "could not parse installed apps from 'bench execute' output"; exit 1; }
           echo "installed apps: ${apps}"
           for a in frappe erpnext hrms jarvis; do
             echo "${apps}" | grep -q "\"${a}\"" || { echo "missing app: ${a}"; exit 1; }
