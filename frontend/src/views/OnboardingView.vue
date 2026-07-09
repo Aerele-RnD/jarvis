@@ -1096,9 +1096,12 @@ onMounted(async () => {
 .jv-ob-btn:active { transform: scale(.98); }
 .jv-ob-btn:disabled { opacity: .55; cursor: default; transform: none; }
 .jv-ob-btn-primary { background: var(--blue); border-color: transparent; color: #fff; box-shadow: 0 2px 10px rgba(20, 20, 30, .16); }
-.jv-ob-btn-primary:hover:not(:disabled) { background: var(--blue); color: #fff; transform: translateY(-1px); box-shadow: 0 8px 22px rgba(20, 20, 30, .22); }
+.jv-ob-btn-primary:hover:not(:disabled) { background: var(--blue); border-color: transparent; color: #fff; transform: translateY(-1px); box-shadow: 0 8px 22px rgba(20, 20, 30, .22); }
 .jv-ob-btn-grad { background: linear-gradient(135deg, #6e8bff, #8b5cf6); border-color: transparent; color: #fff; box-shadow: 0 6px 20px rgba(110, 92, 246, .32); }
-.jv-ob-btn-grad:hover:not(:disabled) { color: #fff; transform: translateY(-1px); box-shadow: 0 10px 26px rgba(110, 92, 246, .4); }
+/* Re-declare background + border here: the base .jv-ob-btn:hover (surface-2 bg,
+   visible border) has higher specificity than .jv-ob-btn-grad, so without this
+   the gradient button turns white with a border on hover. */
+.jv-ob-btn-grad:hover:not(:disabled) { background: linear-gradient(135deg, #6e8bff, #8b5cf6); border-color: transparent; color: #fff; transform: translateY(-1px); box-shadow: 0 10px 26px rgba(110, 92, 246, .4); }
 /* small ghost variant (inline Retry next to an error message) */
 .jv-ob-btn-sm { height: 28px; padding: 0 12px; font-size: 12px; border-radius: 8px; margin-left: 8px; }
 

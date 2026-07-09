@@ -639,6 +639,14 @@ async function startConnect(m, reconnectIdx = null) {
   // Carry any already-typed callback URL across the reset: re-opening sign-in
   // (e.g. Reconnect, or retrying after an error) must not wipe pasted text.
   m._connect = { ...blankConnect(), open: true, loading: true, reconnectIdx, pastedUrl: (m._connect.pastedUrl || "") }
+  // Open the sign-in tab SYNCHRONOUSLY, inside this click, so the browser treats
+  // it as user-initiated. A window.open() after the await below loses the user
+  // gesture and gets popup-blocked — which is why "Open sign-in" used to need a
+  // second click (the first only fetched the URL). We navigate this blank tab
+  // once the authorize URL resolves; if it was blocked (win === null) the visible
+  // "Open sign-in ↗" link is still there for the user to click manually.
+  let win = null
+  try { win = window.open("about:blank", "_blank"); if (win) win.opener = null } catch (e) { win = null }
   try {
     const provider = m.upstream === "google" ? "Google Gemini" : "OpenAI"
     const res = await api.beginPoolAccountSignin(provider, m.model.trim())
@@ -648,13 +656,15 @@ async function startConnect(m, reconnectIdx = null) {
     if (!res || res.ok === false) {
       m._connect.loading = false
       m._connect.error = (res && res.error && res.error.message) || "Couldn't start sign-in. Try again."
+      if (win) win.close()
       return
     }
     const d = res.data || {}
     m._connect.nonce = d.nonce
     m._connect.authorizeUrl = d.authorize_url
     m._connect.loading = false
-  } catch (e) { m._connect.loading = false; m._connect.error = _err(e) }
+    if (win && d.authorize_url) win.location.href = d.authorize_url
+  } catch (e) { m._connect.loading = false; m._connect.error = _err(e); if (win) win.close() }
 }
 async function finishConnect(m) {
   if (!m._connect || !m._connect.nonce) return
