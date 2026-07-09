@@ -20,7 +20,7 @@ from jarvis.tools.run_scrutiny import (
     _resolve_threshold,
     run_scrutiny,
 )
-from jarvis.exceptions import InvalidArgumentError
+from jarvis.exceptions import InvalidArgumentError, PermissionDeniedError
 
 _MARKETPLACE_PACK = "/home/vignesh/jarvis/jarvis-agent-marketplace/rules/scrutiny-pack.json"
 _BENCH_PACK = os.path.join(
@@ -316,6 +316,14 @@ USER_NO_GRANTS = "jpl-scrutiny-no-grants@example.com"
 # the "restricted via a Company User Permission" case the audit findings
 # call out (a company-restricted user asking for a DIFFERENT company).
 USER_COMPANY_SCOPED = "jpl-scrutiny-company-scoped@example.com"
+# ERPNext's stock "Auditor" role: granted GL Entry read (via role
+# permission), but only Company "select" (not "read") - no Company User
+# Permission at all. This is exactly the over-block Fix 1 addresses: an
+# audit-agent user in this role must be able to run_scrutiny.
+USER_AUDITOR = "jpl-scrutiny-auditor@example.com"
+# A role with read on plenty of ERP doctypes but NOT GL Entry - must still
+# be denied by the GL Entry read gate, unaffected by the company-scope fix.
+USER_NON_GL = "jpl-scrutiny-sales@example.com"
 
 
 def _ensure_role(name: str) -> None:
@@ -404,6 +412,8 @@ class TestRunScrutinyPermissionGate(FrappeTestCase):
         _ensure_role(ROLE_NO_GRANTS)
         _ensure_user(USER_NO_GRANTS, roles=(ROLE_NO_GRANTS,))
         _ensure_user(USER_COMPANY_SCOPED, roles=("Accounts User",))
+        _ensure_user(USER_AUDITOR, roles=("Auditor",))
+        _ensure_user(USER_NON_GL, roles=("Sales User",))
         frappe.db.commit()
         # Company/User Permission are NOT committed - a leftover Company
         # row changes production inference elsewhere (this very file's
@@ -432,7 +442,10 @@ class TestRunScrutinyPermissionGate(FrappeTestCase):
             )
 
     def test_company_scoped_user_denied_for_other_company(self):
-        with _as(USER_COMPANY_SCOPED), self.assertRaises(frappe.PermissionError):
+        # Company scoping is enforced via the Company User Permission, not
+        # a Company-doctype read check (Fix 1) - the denial is now a
+        # jarvis PermissionDeniedError, not frappe.PermissionError.
+        with _as(USER_COMPANY_SCOPED), self.assertRaises(PermissionDeniedError):
             run_scrutiny(
                 rule_pack=_trivial_pack(), company=SCRUTINY_COMPANY_B,
                 from_date="2026-01-01", to_date="2026-12-31",
@@ -446,3 +459,25 @@ class TestRunScrutinyPermissionGate(FrappeTestCase):
             )
         self.assertEqual(res["scope"]["company"], SCRUTINY_COMPANY_A)
         self.assertEqual(res["skipped_unsupported"], [])
+
+    def test_auditor_role_can_run_without_company_user_permission(self):
+        # Auditor has GL Entry read but only Company "select" (not "read")
+        # and no Company User Permission scoping it - under the old
+        # Company-doctype-read gate this was denied entirely (the bug Fix 1
+        # addresses); under the fix it must succeed, unrestricted.
+        with _as(USER_AUDITOR):
+            res = run_scrutiny(
+                rule_pack=_trivial_pack(), company=SCRUTINY_COMPANY_A,
+                from_date="2026-01-01", to_date="2026-12-31",
+            )
+        self.assertEqual(res["scope"]["company"], SCRUTINY_COMPANY_A)
+        self.assertEqual(res["skipped_unsupported"], [])
+
+    def test_non_gl_role_still_denied(self):
+        # A role with no GL Entry read at all (e.g. Sales User) must still
+        # be denied - the company-scope rework must not loosen this gate.
+        with _as(USER_NON_GL), self.assertRaises(frappe.PermissionError):
+            run_scrutiny(
+                rule_pack=_trivial_pack(), company=SCRUTINY_COMPANY_A,
+                from_date="2026-01-01", to_date="2026-12-31",
+            )

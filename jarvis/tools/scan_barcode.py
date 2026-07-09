@@ -8,9 +8,10 @@ warehouse the scan happened in.
 Read-only - no DB writes, just a lookup. The underlying erpnext helper
 performs NO permission checks of its own (verified by reading
 ``erpnext.stock.utils.scan_barcode``: it looks Item Barcode / Serial No /
-Batch up via raw ``frappe.db.get_value``, never ``frappe.has_permission``)
-- this wrapper explicitly checks Item / Serial No / Batch read permission
-on whatever the scan resolved before returning it.
+Batch / Warehouse up via raw ``frappe.db.get_value`` /
+``frappe.get_cached_value``, never ``frappe.has_permission``) - this
+wrapper explicitly checks Item / Serial No / Batch / Warehouse read
+permission on whatever the scan resolved before returning it.
 """
 from __future__ import annotations
 
@@ -47,4 +48,7 @@ def scan_barcode(search_value: str) -> dict:
     batch_no = result.get("batch_no")
     if batch_no:
         frappe.has_permission("Batch", "read", doc=batch_no, throw=True)
+    warehouse = result.get("warehouse")
+    if warehouse:
+        frappe.has_permission("Warehouse", "read", doc=warehouse, throw=True)
     return result

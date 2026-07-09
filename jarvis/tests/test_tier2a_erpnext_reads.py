@@ -307,6 +307,7 @@ PERM_ITEM_GROUP = "_JPL Perm Test Item Group"
 PERM_UOM = "_JPL Perm Nos"
 PERM_ITEM = "_JPL Perm Test Item"
 PERM_CUSTOMER = "_JPL Perm Test Customer"
+PERM_WAREHOUSE = "_JPL Perm Test Warehouse"
 ROLE_NO_GRANTS = "JPL Perm No Grants Role"
 USER_NO_GRANTS = "jpl-perm-no-grants@example.com"
 USER_ITEM_READER = "jpl-perm-item-reader@example.com"
@@ -377,6 +378,17 @@ def _ensure_item(name: str) -> None:
     }).insert(ignore_permissions=True)
 
 
+def _ensure_warehouse(name: str, company: str) -> str:
+    existing = frappe.db.exists("Warehouse", {"warehouse_name": name, "company": company})
+    if existing:
+        return existing
+    doc = frappe.get_doc({
+        "doctype": "Warehouse", "warehouse_name": name, "company": company,
+    })
+    doc.insert(ignore_permissions=True)
+    return doc.name
+
+
 def _ensure_customer(name: str) -> str:
     existing = frappe.db.exists("Customer", {"customer_name": name})
     if existing:
@@ -431,6 +443,7 @@ class CrossCompanyPermTestCase(FrappeTestCase):
         _ensure_company(PERM_COMPANY_B, "JPLB")
         _ensure_item(PERM_ITEM)
         cls.customer = _ensure_customer(PERM_CUSTOMER)
+        cls.warehouse = _ensure_warehouse(PERM_WAREHOUSE, PERM_COMPANY_A)
         _ensure_user_permission(USER_COMPANY_SCOPED, "Company", PERM_COMPANY_A)
 
     def setUp(self):
@@ -443,8 +456,8 @@ class CrossCompanyPermTestCase(FrappeTestCase):
 
 
 class TestScanBarcodePermissionGate(CrossCompanyPermTestCase):
-    """F16: scan_barcode must gate on Item read permission - the
-    underlying erpnext helper performs none itself."""
+    """F16: scan_barcode must gate on Item / Warehouse read permission -
+    the underlying erpnext helper performs none itself."""
 
     def test_restricted_user_denied(self):
         with _as(USER_NO_GRANTS), patch(
@@ -460,6 +473,25 @@ class TestScanBarcodePermissionGate(CrossCompanyPermTestCase):
         ):
             out = scan_barcode("012")
         self.assertEqual(out["item_code"], PERM_ITEM)
+
+    def test_restricted_user_denied_for_warehouse_match(self):
+        # The erpnext helper's Warehouse branch (scanning a warehouse name
+        # itself, e.g. a bin-location barcode) returns {"warehouse": ...}
+        # with no permission check of its own - this must be gated too.
+        with _as(USER_NO_GRANTS), patch(
+            "erpnext.stock.utils.scan_barcode",
+            return_value={"warehouse": self.warehouse},
+        ), self.assertRaises(frappe.PermissionError):
+            scan_barcode("WH-012")
+
+    def test_warehouse_reader_still_succeeds_for_warehouse_match(self):
+        # Stock User has role-level Warehouse read.
+        with _as(USER_ITEM_READER), patch(
+            "erpnext.stock.utils.scan_barcode",
+            return_value={"warehouse": self.warehouse},
+        ):
+            out = scan_barcode("WH-012")
+        self.assertEqual(out["warehouse"], self.warehouse)
 
 
 class TestGetCustomerOutstandingCompanyPermission(CrossCompanyPermTestCase):
