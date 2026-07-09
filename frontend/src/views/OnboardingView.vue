@@ -15,7 +15,7 @@
 
 					<!-- brand header: JarvisMark + name + per-step subtitle (preview .brand) -->
 					<div class="jv-ob-brand">
-						<span class="jv-ob-logo"><svg width="17" height="17" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg></span>
+						<JarvisMark :size="30" :radius="8" />
 						<span class="jv-ob-brand-name">Jarvis</span>
 						<span class="jv-ob-brand-sub">{{ frameSub }}</span>
 					</div>
@@ -45,19 +45,21 @@
 									<p>Start free. Upgrade or extend anytime, with no auto-renewal.</p>
 								</div>
 								<div v-if="state.plansLoading" class="jv-ob-placeholder">Loading plans…</div>
-								<div v-else-if="state.plansErr" class="jv-ob-err">{{ state.plansErr }}</div>
+								<div v-else-if="state.plansErr" class="jv-ob-err">
+									{{ state.plansErr }}
+									<button class="jv-ob-btn jv-ob-btn-sm" @click="loadPlansSafe">Retry</button>
+								</div>
 								<div v-else-if="!state.plans.length" class="jv-ob-placeholder">No plans are available right now. Please contact support.</div>
 								<div v-else class="jv-ob-plans" role="radiogroup" aria-label="Plan">
-									<div v-for="(p, i) in state.plans" :key="p.name" class="jv-ob-plan"
+									<div v-for="p in state.plans" :key="p.name" class="jv-ob-plan"
 										 :class="{ sel: state.planName === p.name }" role="radio"
 										 :aria-checked="state.planName === p.name" tabindex="0"
 										 @click="state.planName = p.name"
 										 @keydown.enter.prevent="state.planName = p.name"
 										 @keydown.space.prevent="state.planName = p.name">
-										<div v-if="i === popularIndex" class="jv-ob-plan-tag">Popular</div>
 										<div class="jv-ob-plan-rd"></div>
 										<div class="jv-ob-plan-nm">{{ p.plan_name }}</div>
-										<div class="jv-ob-plan-pr">{{ planAmount(p) }}<span v-if="planSuffix(p)"> {{ planSuffix(p) }}</span></div>
+										<div class="jv-ob-plan-pr">{{ planAmount(p.price_inr) }}<span v-if="planSuffix(p.price_inr, p.billing_cycle)"> {{ planSuffix(p.price_inr, p.billing_cycle) }}</span></div>
 										<div class="jv-ob-plan-cyc">{{ planCycleLabel(p) }}</div>
 										<ul>
 											<li v-for="(f, k) in planFeatures(p)" :key="k"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>{{ f }}</li>
@@ -89,7 +91,7 @@
 											   @keydown.enter="onDetailsSubmit">
 									</div>
 									<div class="jv-ob-field">
-										<label for="jv-ob-contact">Contact number</label>
+										<label for="jv-ob-contact">Contact number <span class="jv-ob-opt">(optional)</span></label>
 										<input id="jv-ob-contact" class="jv-ob-inp" type="tel" v-model="state.contact"
 											   placeholder="+91 98765 43210" autocomplete="tel"
 											   @keydown.enter="onDetailsSubmit">
@@ -101,14 +103,15 @@
 												 placeholder="Acme Inc." @enter="onDetailsSubmit" />
 									</div>
 									<div class="jv-ob-sec-label">Billing</div>
+									<div class="jv-ob-sec-hint">Billing details are kept with your account for upcoming invoicing.</div>
 									<div class="jv-ob-field jv-ob-field-full">
-										<label for="jv-ob-addr">Billing address</label>
+										<label for="jv-ob-addr">Billing address <span class="jv-ob-opt">(optional)</span></label>
 										<input id="jv-ob-addr" class="jv-ob-inp" type="text" v-model="state.billingAddress"
 											   placeholder="Street, area" autocomplete="street-address"
 											   @keydown.enter="onDetailsSubmit">
 									</div>
 									<div class="jv-ob-field">
-										<label for="jv-ob-city">City</label>
+										<label for="jv-ob-city">City <span class="jv-ob-opt">(optional)</span></label>
 										<input id="jv-ob-city" class="jv-ob-inp" type="text" v-model="state.city"
 											   placeholder="Chennai" autocomplete="address-level2"
 											   @keydown.enter="onDetailsSubmit">
@@ -175,7 +178,7 @@
 								<div class="jv-ob-body">
 									<div class="jv-ob-head">
 										<h1>Review &amp; Pay</h1>
-										<p>Confirm the details below. You'll complete payment securely via Razorpay.</p>
+										<p>{{ isFreePlan ? "Confirm the details below." : "Confirm the details below. You'll complete payment securely via Razorpay." }}</p>
 									</div>
 									<div class="jv-ob-rev">
 										<div class="jv-ob-rev-row"><span>Plan</span><b>{{ planRowLabel }}</b></div>
@@ -183,7 +186,7 @@
 										<div class="jv-ob-rev-row"><span>Billed to</span><b>{{ state.email }}</b></div>
 										<div class="jv-ob-rev-row jv-ob-rev-total"><span>Due today</span><b>{{ dueTodayLabel }}</b></div>
 									</div>
-									<div class="jv-ob-rev-note">
+									<div v-if="!isFreePlan" class="jv-ob-rev-note">
 										<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
 										Secured by Razorpay · cards, UPI &amp; netbanking
 									</div>
@@ -228,7 +231,11 @@
 								</div>
 							</div>
 							<div v-if="!state.finishing" class="jv-ob-foot">
-								<button class="jv-ob-back" @click="goBack">← Back</button>
+								<!-- No Back on a reconciled resume: signup/payment already completed
+									 in a previous session, so there is no local pay/review context to
+									 go back to (re-running startSignup there would double-sign-up). -->
+								<button v-if="!state.reconciledConnect" class="jv-ob-back" :disabled="savingConnect" @click="goBack">← Back</button>
+								<span v-else></span>
 								<!-- The ONLY gradient button in the whole flow. -->
 								<button v-if="connectReady || savingConnect" class="jv-ob-btn jv-ob-btn-grad" :disabled="savingConnect" @click="saveConnect">
 									{{ savingConnect ? "Connecting…" : "Connect & Finish →" }}
@@ -279,9 +286,11 @@
 								</div>
 							</div>
 							<div class="jv-ob-foot">
-								<button class="jv-ob-back" :disabled="state.shSaveBusy" @click="backFromSelfhost">← Back</button>
-								<button class="jv-ob-btn jv-ob-btn-primary" :disabled="state.shSaveBusy" @click="onSelfHostSave">
-									{{ state.shSaveBusy ? "Connecting…" : "Connect →" }}
+								<!-- Stay disabled through the post-save readiness poll (finishing) too;
+									 both flags drop on the failure paths so retry stays possible. -->
+								<button class="jv-ob-back" :disabled="state.shSaveBusy || state.finishing" @click="backFromSelfhost">← Back</button>
+								<button class="jv-ob-btn jv-ob-btn-primary" :disabled="state.shSaveBusy || state.finishing" @click="onSelfHostSave">
+									{{ state.shSaveBusy || state.finishing ? "Connecting…" : "Connect →" }}
 								</button>
 							</div>
 						</section>
@@ -299,8 +308,10 @@ import { call } from "frappe-ui"
 import { useTheme } from "@/composables/useTheme"
 import LlmPoolEditor from "@/components/LlmPoolEditor.vue"
 import JvCombo from "@/components/JvCombo.vue"
+import JarvisMark from "@/components/JarvisMark.vue"
 import TourIntro from "@/onboarding/TourIntro.vue"
 import { STEPS_MANAGED, STEPS_SELFHOST, nextStep, prevStep } from "@/onboarding/steps"
+import { inr, planAmount, planSuffix } from "@/account/format"
 import {
 	checkSignupPaymentState, isReadyForChat,
 	listPlans, startSignup, finishPayment, devOnboard,
@@ -350,6 +361,11 @@ const state = reactive({
 	// pay (renderPay / renderVerifyEmail / startPay / openCheckout / devOnboard)
 	payPhase: "review", // "review" | "verify" - mirrors desk's step-3 vs "check your email" sub-screen
 	payErr: "", payBusy: false,
+	// True when reconcile landed us directly on "connect" (signup + payment
+	// completed in an earlier session): there is no local plan/email/company
+	// context, so Back to Review & Pay is hidden (it would re-run start_signup
+	// with empty args).
+	reconciledConnect: false,
 	devActive: null, // UX-only mirror of desk's boot-time `dev`; null until probed on entering "pay"
 	successData: null,
 	// provisioning gate: after pay, the openclaw container is still spinning up.
@@ -370,16 +386,20 @@ const selectedPlan = computed(() => state.plans.find((p) => p.name === state.pla
 const railIndex = computed(() => RAIL.findIndex((r) => r.id === state.step))
 const frameSub = computed(() => FRAME_SUBS[state.step] || "Set up your workspace")
 
-// "Popular" highlight: the middle plan when the catalog has 3+ entries (the
-// admin catalog has no recommended flag; preview tags the middle card).
-const popularIndex = computed(() => (state.plans.length >= 3 ? Math.floor(state.plans.length / 2) : -1))
+// No "Popular" tag: the admin plan catalog carries no recommended/popular
+// flag, and fabricating one positionally (e.g. always the middle card) would
+// mislabel whatever plan happens to sit there. Reintroduce only if the
+// catalog grows a real flag.
+
+// Free-plan detection drives the Review & Pay copy: no Razorpay promise, no
+// lock note, "Free" in the total row.
+const isFreePlan = computed(() => (Number(selectedPlan.value.price_inr) || 0) <= 0)
 
 // Pay CTA copy: dev signup in sandbox; "Pay ₹X →" for a paid plan; plain
 // sign-up for a free one.
 const payCta = computed(() => {
 	if (state.devActive) return "Dev signup & connect"
-	const n = Number(selectedPlan.value.price_inr) || 0
-	return n > 0 ? `Pay ₹${n.toLocaleString("en-IN")} →` : "Sign up →"
+	return isFreePlan.value ? "Sign up →" : `Pay ${inr(selectedPlan.value.price_inr)} →`
 })
 
 // Review-card labels (preview .rev): "Pro · Monthly" plan row and a plain
@@ -389,7 +409,7 @@ const planRowLabel = computed(() => {
 	if (!p.plan_name) return ""
 	return p.billing_cycle ? `${p.plan_name} · ${p.billing_cycle}` : p.plan_name
 })
-const dueTodayLabel = computed(() => `₹${(Number(selectedPlan.value.price_inr) || 0).toLocaleString("en-IN")}`)
+const dueTodayLabel = computed(() => planAmount(selectedPlan.value.price_inr))
 
 function goNext() {
 	state.step = nextStep(steps.value, state.step)
@@ -447,8 +467,11 @@ async function reconcileMidFlightSignup() {
 		}
 		if (ready && ready.reason === "llm_credentials") {
 			// Signup + payment already done; only the AI connection is missing.
+			// Mark the resume so the Connect step hides Back (no local signup
+			// context to return to - see state.reconciledConnect).
 			state.mode = "managed"
 			state.step = "connect"
+			state.reconciledConnect = true
 			return
 		}
 		// reason === "signup" (or call failed) - no completed signup yet, but
@@ -475,28 +498,25 @@ async function loadPlans() {
 		state.plansLoading = false
 	}
 }
+// Error-surfacing wrapper shared by the step-entry watch, the Retry button on
+// a failed load, and the intro-tour prefetch.
+function loadPlansSafe() {
+	loadPlans().catch((e) => { state.plansErr = errMsg(e) })
+}
 // Feature list parsing matches desk's renderPlan card body verbatim.
 function planFeatures(p) {
 	return String((p && p.features) || "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
 }
-// Preview renders the price as a big amount with a small muted "/mo" suffix
-// (₹3,999 <span>/mo</span>) instead of one uniform string. Same cycle→suffix
-// rule as account/format.js planPriceLabel (everything non-annual is monthly).
-function planAmount(p) {
-	const n = Number(p && p.price_inr) || 0
-	return n > 0 ? `₹${n.toLocaleString("en-IN")}` : "Free"
-}
-function planSuffix(p) {
-	const n = Number(p && p.price_inr) || 0
-	if (n <= 0) return ""
-	return (p.billing_cycle || "").toLowerCase() === "annual" ? "/yr" : "/mo"
-}
+// The price renders as a big amount with a small muted "/mo" suffix
+// (₹3,999 <span>/mo</span>) via the shared planAmount/planSuffix helpers
+// from account/format.js (same semantics as planPriceLabel there).
 // Cycle line under the price, per the approved preview copy ("Billed monthly"
-// on paid cards, "For trying Jarvis" on the free one).
+// on paid cards, "For trying Jarvis" on the free one). Copy-only, but keyed
+// off the shared suffix helper so the cycle rule can't drift.
 function planCycleLabel(p) {
-	const n = Number(p && p.price_inr) || 0
-	if (n <= 0) return "For trying Jarvis"
-	return (p.billing_cycle || "").toLowerCase() === "annual" ? "Billed annually" : "Billed monthly"
+	const suffix = planSuffix(p && p.price_inr, p && p.billing_cycle)
+	if (!suffix) return "For trying Jarvis"
+	return suffix === "/yr" ? "Billed annually" : "Billed monthly"
 }
 function onPlanContinue() {
 	if (!state.planName) return
@@ -506,7 +526,28 @@ function onPlanContinue() {
 // ---- Details (Your Details) -------------------------------------------------
 // Validation matches the old Account step verbatim: email regex + non-empty
 // company. The contact/billing fields are collected but not (yet) submitted -
-// see the TODO(backend) note on `state` above.
+// see the TODO(backend) note on `state` above. Until the backend accepts
+// them, they're persisted to localStorage on submit so they survive reloads
+// and can be backfilled once the signup contract carries them.
+const BILLING_LS_KEY = "jarvis-onboarding-billing"
+function persistBillingDetails() {
+	try {
+		window.localStorage.setItem(BILLING_LS_KEY, JSON.stringify({
+			contact: state.contact, billingAddress: state.billingAddress,
+			city: state.city, gstin: state.gstin,
+		}))
+	} catch (e) { /* storage full/blocked - purely best-effort */ }
+}
+// Restore on mount; never overwrites something the user already typed.
+function restoreBillingDetails() {
+	try {
+		const d = JSON.parse(window.localStorage.getItem(BILLING_LS_KEY) || "{}")
+		if (d.contact && !state.contact) state.contact = d.contact
+		if (d.billingAddress && !state.billingAddress) state.billingAddress = d.billingAddress
+		if (d.city && !state.city) state.city = d.city
+		if (d.gstin && !state.gstin) state.gstin = d.gstin
+	} catch (e) { /* corrupt entry - ignore */ }
+}
 function onDetailsSubmit() {
 	state.detailsErr = ""
 	state.email = (state.email || "").trim()
@@ -519,6 +560,7 @@ function onDetailsSubmit() {
 		state.detailsErr = "Company name is required."
 		return
 	}
+	persistBillingDetails()
 	// Entering Review & Pay fresh from Details: reset the pay sub-state.
 	state.payPhase = "review"
 	state.payErr = ""
@@ -574,6 +616,13 @@ async function enterPayStep() {
 // stale cached "true" must never skip a real charge either.
 async function onPayClick() {
 	state.payErr = ""
+	// Guard against a signup with empty args: on a reconciled resume (or any
+	// state loss) there is no local plan/email/company, and startSignup(email,
+	// company, null) would create a broken signup upstream.
+	if (!state.planName || !state.email || !state.company) {
+		state.payErr = "Your signup details are missing. Please go back and pick a plan and enter your details again."
+		return
+	}
 	state.payBusy = true
 	let isDev = !!state.devActive
 	try {
@@ -847,7 +896,7 @@ async function onSelfHostSave() {
 // preload Razorpay on reaching "pay".
 watch(() => state.step, (s) => {
 	if (s === "plan" && !state.plans.length && !state.plansLoading) {
-		loadPlans().catch((e) => { state.plansErr = errMsg(e) })
+		loadPlansSafe()
 	}
 	if (s === "pay") enterPayStep()
 })
@@ -865,9 +914,14 @@ async function prefillAccount() {
 	} catch (e) { /* no-op: keep the placeholders */ }
 }
 
-onMounted(() => {
-	reconcileMidFlightSignup()
+onMounted(async () => {
 	prefillAccount()
+	restoreBillingDetails()
+	await reconcileMidFlightSignup()
+	// Prefetch the plan catalog behind the intro tour so the Plan step rarely
+	// first-paints in its loading state. Reconciled resumes land past "plan"
+	// and skip it (the step-entry watch still covers every other path).
+	if (state.step === "intro" && !state.plans.length && !state.plansLoading) loadPlansSafe()
 })
 </script>
 
@@ -905,14 +959,10 @@ onMounted(() => {
 }
 .jv-ob-wrap { max-width: 1080px; width: 100%; display: flex; flex-direction: column; align-items: center; }
 
-/* ---- brand header (preview .brand) ---- */
+/* ---- brand header (preview .brand). The glyph is the shared JarvisMark
+   component (gradient owned there); only the header's drop shadow is local. ---- */
 .jv-ob-brand { display: flex; align-items: center; gap: 10px; align-self: flex-start; margin-bottom: 8px; }
-.jv-ob-logo {
-	width: 30px; height: 30px; flex: none; border-radius: 8px;
-	display: grid; place-items: center;
-	background: linear-gradient(135deg, #6e8bff, #8b5cf6);
-	box-shadow: 0 4px 14px rgba(110, 92, 246, .3);
-}
+.jv-ob-brand :deep(.jv-mark) { box-shadow: 0 4px 14px rgba(110, 92, 246, .3); }
 .jv-ob-brand-name { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
 .jv-ob-brand-sub { font-size: 12.5px; color: var(--text-3); border-left: 1px solid var(--border); padding-left: 11px; }
 
@@ -989,6 +1039,8 @@ onMounted(() => {
 .jv-ob-btn-primary:hover:not(:disabled) { background: var(--blue); color: #fff; transform: translateY(-1px); box-shadow: 0 8px 22px rgba(20, 20, 30, .22); }
 .jv-ob-btn-grad { background: linear-gradient(135deg, #6e8bff, #8b5cf6); border-color: transparent; color: #fff; box-shadow: 0 6px 20px rgba(110, 92, 246, .32); }
 .jv-ob-btn-grad:hover:not(:disabled) { color: #fff; transform: translateY(-1px); box-shadow: 0 10px 26px rgba(110, 92, 246, .4); }
+/* small ghost variant (inline Retry next to an error message) */
+.jv-ob-btn-sm { height: 28px; padding: 0 12px; font-size: 12px; border-radius: 8px; margin-left: 8px; }
 
 .jv-ob-placeholder { font-size: 13.5px; color: var(--text-3); margin: 0 0 20px; text-align: center; }
 .jv-ob-err { font-size: 12.5px; color: var(--red); min-height: 1em; margin: 10px 0 0; }
@@ -1049,6 +1101,7 @@ onMounted(() => {
 	font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
 	color: var(--text-3); margin: 6px 0 -4px;
 }
+.jv-ob-sec-hint { grid-column: 1 / -1; font-size: 12px; color: var(--text-3); margin: 0 0 -6px; }
 /* JvCombo (Company) restyled to match the preview's .inp fields: 42px, 10px
    radius, border-2 border, and the same 3px focus ring (focus-within because
    the ring belongs on the wrapper, the caret sits in the inner input). */

@@ -174,7 +174,10 @@
                is auto-defaulted per provider (hidden field, see onUpstreamChange). -->
           <div v-if="singleMode" class="jv-pick">
             <div class="jv-fieldlab">Provider &amp; model</div>
-            <JvCombo :model-value="m.upstream" @update:model-value="(v) => { m.upstream = v; onUpstreamChange(m) }"
+            <!-- Same-value guard: onUpstreamChange drops connected accounts (they
+                 are provider-specific), so reselecting the CURRENT provider must
+                 be a no-op rather than wiping a finished OAuth connect. -->
+            <JvCombo :model-value="m.upstream" @update:model-value="(v) => { if (v === m.upstream) return; m.upstream = v; onUpstreamChange(m) }"
                      :options="subUpstreamOpts(m)" :editable="editable" placeholder="Provider" />
           </div>
           <div v-else style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
@@ -239,8 +242,15 @@
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
                     <p>After you approve, the browser shows a <b>&ldquo;This site can&rsquo;t be reached&rdquo;</b> page. That&rsquo;s expected: copy the <b>full URL from the address bar</b> (<kbd>⌘/Ctrl</kbd>+<kbd>L</kbd>, then <kbd>⌘/Ctrl</kbd>+<kbd>C</kbd>) and paste it below.</p>
                   </div>
-                  <input v-model="m._connect.pastedUrl" class="jv-paste" :disabled="!editable"
-                         placeholder="http://localhost:1455/auth/callback?code=…" @keydown.enter="finishConnect(m)" />
+                  <!-- Disabled until step 1 minted an authorize URL: a URL pasted
+                       before sign-in has no nonce to pair with (finishConnect
+                       would no-op), a silent dead-end. -->
+                  <input v-model="m._connect.pastedUrl" class="jv-paste"
+                         :disabled="!editable || !(m._connect && m._connect.authorizeUrl)"
+                         :placeholder="m._connect && m._connect.authorizeUrl
+                           ? 'http://localhost:1455/auth/callback?code=…'
+                           : 'Complete step 1 first, then paste the URL here'"
+                         @keydown.enter="finishConnect(m)" />
                   <div v-if="m._connect && m._connect.authorizeUrl" class="jv-cacts">
                     <button type="button" class="jv-cbtn jv-cbtn-ghost" @click="closeConnect(m)">Cancel</button>
                     <button type="button" class="jv-cbtn jv-cbtn-primary" :disabled="m._connect.loading" @click="finishConnect(m)">
@@ -626,7 +636,9 @@ async function startConnect(m, reconnectIdx = null) {
     m._connect = { ...blankConnect(), open: true, error: "Enter a model id before connecting an account." }
     return
   }
-  m._connect = { ...blankConnect(), open: true, loading: true, reconnectIdx }
+  // Carry any already-typed callback URL across the reset: re-opening sign-in
+  // (e.g. Reconnect, or retrying after an error) must not wipe pasted text.
+  m._connect = { ...blankConnect(), open: true, loading: true, reconnectIdx, pastedUrl: (m._connect.pastedUrl || "") }
   try {
     const provider = m.upstream === "google" ? "Google Gemini" : "OpenAI"
     const res = await api.beginPoolAccountSignin(provider, m.model.trim())
