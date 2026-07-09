@@ -3,255 +3,305 @@
 
 		<!-- Framing orbs: two quiet deep-blue orbs settle into the empty corners and
 			 frame the wizard without touching it. Decorative only (aria-hidden, no
-			 pointer events); deep navy in light for a calm, monochrome-consistent
-			 look, brighter on dark so they still read. -->
+			 pointer events). -->
 		<div class="jv-ob-bg" aria-hidden="true">
 			<div class="jv-ob-orb jv-ob-orb-tl"></div>
 			<div class="jv-ob-orb jv-ob-orb-br"></div>
 		</div>
 
-		<!-- Branded header - a centered wizard reads better than a full-height
-			 empty sidebar; the logo mark keeps it unmistakably Jarvis. -->
-		<header class="jv-ob-header">
-			<div class="jv-ob-logo"><svg width="18" height="18" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg></div>
-			<span class="jv-ob-brand">Jarvis</span>
-			<span class="jv-ob-setup">Set up your workspace</span>
-		</header>
-
 		<main class="jv-ob-main">
 			<div class="jv-ob-center">
-			<div class="jv-ob-wrap">
-				<!-- ===== step indicator - managed mode only, mirrors desk renderSteps
-					 (jarvis_onboarding.js ~213: STEP_NAMES = Account/Plan/Pay/Connect AI).
-					 Hidden on the mode-choice screen and for self-host (single step). ===== -->
-				<div v-if="state.mode === 'managed' && state.step !== 'mode'" class="jv-ob-steps">
-					<template v-for="(name, i) in STEP_NAMES" :key="name">
-						<span class="jv-ob-step" :class="{ done: i + 1 < managedStepNum, active: i + 1 === managedStepNum }">
-							<span class="jv-ob-step-dot">{{ i + 1 < managedStepNum ? "✓" : i + 1 }}</span>
-							<span class="jv-ob-step-label">{{ name }}</span>
-						</span>
-						<span v-if="i < STEP_NAMES.length - 1" class="jv-ob-step-line" :class="{ done: i + 1 < managedStepNum }"></span>
-					</template>
-				</div>
+				<div class="jv-ob-wrap">
 
-				<!-- ===== step area - placeholder panels; Tasks 3-5 replace these ===== -->
-				<div class="jv-ob-body">
-					<div v-if="state.step === 'mode'">
-						<h1 class="jv-ob-h1">How do you want to run Jarvis?</h1>
-						<p class="jv-ob-sub">Choose where the openclaw agent runs. You can switch later from My Account.</p>
-						<!-- Ported verbatim from desk renderModeChoice (jarvis_onboarding.js ~262). -->
-						<div class="jv-ob-modes">
-							<div class="jv-ob-mode">
-								<div class="jv-ob-mode-icon">☁</div>
-								<div class="jv-ob-mode-name">Managed</div>
-								<ul class="jv-ob-mode-feats">
-									<li><span class="jv-ob-tick">✓</span>We host the openclaw agent for you</li>
-									<li><span class="jv-ob-tick">✓</span>Includes the Jarvis persona + Frappe skills</li>
-									<li><span class="jv-ob-tick">✓</span>Managed LLM proxy: pool your API keys &amp; chat subscriptions, with automatic failover</li>
-									<li><span class="jv-ob-tick">✓</span>Simple plan &amp; billing</li>
-								</ul>
-								<button class="jv-ob-btn jv-ob-btn-primary jv-ob-mode-btn" @click="setMode('managed')">Choose →</button>
-							</div>
-							<div class="jv-ob-mode">
-								<div class="jv-ob-mode-icon">🖥</div>
-								<div class="jv-ob-mode-name">Self-hosted</div>
-								<ul class="jv-ob-mode-feats">
-									<li><span class="jv-ob-tick">✓</span>Bring your own openclaw server</li>
-									<li><span class="jv-ob-tick">✓</span>Bring your own LLM</li>
-									<li><span class="jv-ob-tick">✓</span>Open-source · bring your own persona &amp; skills</li>
-									<li class="jv-ob-mode-warn"><span class="jv-ob-warn-icon">⚠</span>Not included: the Jarvis persona + Frappe skill packs, the managed LLM proxy (pooling &amp; failover), and managed updates &amp; support.</li>
-								</ul>
-								<button class="jv-ob-btn jv-ob-mode-btn" @click="setMode('selfhost')">Choose →</button>
-							</div>
-						</div>
+					<!-- brand header: JarvisMark + name + per-step subtitle (preview .brand) -->
+					<div class="jv-ob-brand">
+						<JarvisMark :size="30" :radius="8" />
+						<span class="jv-ob-brand-name">Jarvis</span>
+						<span class="jv-ob-brand-sub">{{ frameSub }}</span>
 					</div>
 
-					<!-- ===== Account - ported from desk renderAccount (jarvis_onboarding.js
-						 ~378). No Company Link-control (desk falls back to a plain input
-						 anyway when make_control throws); validation matches desk verbatim. ===== -->
-					<div v-else-if="state.step === 'account'">
-						<h1 class="jv-ob-h1">Create your account</h1>
-						<p class="jv-ob-sub">We'll set up Jarvis for this site.</p>
-						<label class="jv-ob-label" for="jv-ob-email">Work email</label>
-						<input id="jv-ob-email" class="jv-ob-input" type="email" v-model="state.email"
-							   placeholder="you@company.com" autocomplete="email" required aria-required="true"
-							   @keydown.enter="onAccountSubmit">
-						<label class="jv-ob-label" for="jv-ob-company">Company</label>
-						<JvCombo id="jv-ob-company" :model-value="state.company" @update:model-value="(v) => state.company = v"
-								 allow-custom aria-required autocomplete="organization" :options="state.companies"
-								 placeholder="Acme Inc." @enter="onAccountSubmit" />
-							<div class="jv-ob-err" role="alert" aria-live="polite">{{ state.accountErr }}</div>
-						<div class="jv-ob-placeholder-actions">
-							<button class="jv-ob-btn" :disabled="accountBusy" @click="goBack">← Back</button>
-							<button class="jv-ob-btn jv-ob-btn-primary" :disabled="accountBusy" @click="onAccountSubmit">
-								{{ accountBusy ? "Working…" : "Continue →" }}
-							</button>
-						</div>
-					</div>
-
-					<!-- ===== Plan - ported from desk renderPlan (jarvis_onboarding.js ~481). ===== -->
-					<div v-else-if="state.step === 'plan'">
-						<h1 class="jv-ob-h1">Choose your plan</h1>
-						<p class="jv-ob-sub">No auto-renewal, extend anytime.</p>
-						<div v-if="state.plansLoading" class="jv-ob-placeholder">Loading plans…</div>
-						<div v-else-if="state.plansErr" class="jv-ob-err">{{ state.plansErr }}</div>
-						<div v-else-if="!state.plans.length" class="jv-ob-placeholder">No plans are available right now. Please contact support.</div>
-						<template v-else>
-							<div class="jv-ob-plans">
-								<div v-for="p in state.plans" :key="p.name" class="jv-ob-plan"
-									 :class="{ selected: state.planName === p.name }" @click="state.planName = p.name">
-									<div class="jv-ob-plan-badge">✓</div>
-									<div class="jv-ob-plan-name">{{ p.plan_name }}</div>
-									<div class="jv-ob-plan-price">{{ planPriceLabel(p.price_inr, p.billing_cycle) }}</div>
-									<ul class="jv-ob-plan-feats">
-										<li v-for="(f, i) in planFeatures(p)" :key="i"><span class="jv-ob-tick">✓</span>{{ f }}</li>
-										<li v-if="!planFeatures(p).length" class="jv-ob-muted">{{ p.billing_cycle }} plan</li>
-									</ul>
-								</div>
-							</div>
-							<div class="jv-ob-placeholder-actions">
-								<button class="jv-ob-btn" @click="goBack">← Back</button>
-								<button class="jv-ob-btn jv-ob-btn-primary" :disabled="!state.planName" @click="onPlanContinue">Continue →</button>
-							</div>
+					<!-- step rail: Plan · Details · Pay · Connect. Hidden on the intro
+						 tour (chromeless) and on the single-step self-host track. -->
+					<div v-if="railIndex >= 0" class="jv-ob-steps">
+						<template v-for="(s, i) in RAIL" :key="s.id">
+							<span class="jv-ob-step" :class="{ done: i < railIndex, active: i === railIndex }">
+								<span class="jv-ob-step-dot">{{ i < railIndex ? "✓" : i + 1 }}</span>{{ s.label }}
+							</span>
+							<span v-if="i < RAIL.length - 1" class="jv-ob-step-line" :class="{ done: i < railIndex }"></span>
 						</template>
 					</div>
 
-					<!-- ===== Pay - ported from desk renderPay + renderVerifyEmail + startPay/
-						 openCheckout/devOnboard (jarvis_onboarding.js ~515, ~1575-1682). The
-						 Razorpay options/handler fields below are lifted verbatim; see
-						 task-4-report.md for the field-by-field comparison. ===== -->
-					<div v-else-if="state.step === 'pay'">
-						<template v-if="state.provisioning || state.provisionErr">
-								<h1 class="jv-ob-h1">Setting up your workspace</h1>
-								<p v-if="state.provisioning" class="jv-ob-sub">Payment received. We're provisioning your Jarvis workspace. This usually takes under a minute…</p>
-								<p v-if="state.provisionErr" class="jv-ob-err" role="alert">{{ state.provisionErr }}</p>
-								<div v-if="state.provisionErr" class="jv-ob-placeholder-actions">
+					<div class="jv-ob-panel">
+
+						<!-- ===== Intro tour (fresh starts only; reconcile routes mid-flight
+							 signups straight to the right step, past the tour) ===== -->
+						<TourIntro v-if="state.step === 'intro'" @finish="startWizard" @skip="startWizard" />
+
+						<!-- ===== Choose Your Plan ===== -->
+						<section v-else-if="state.step === 'plan'" class="jv-ob-screen">
+							<div class="jv-ob-body">
+								<div class="jv-ob-head">
+									<h1>Choose Your Plan</h1>
+									<p>Start free. Upgrade or extend anytime, with no auto-renewal.</p>
+								</div>
+								<div v-if="state.plansLoading" class="jv-ob-placeholder">Loading plans…</div>
+								<Banner v-else-if="state.plansErr" type="error" :message="state.plansErr">
+									<template #action>
+										<button class="jv-ob-btn jv-ob-btn-sm" @click="loadPlansSafe">Retry</button>
+									</template>
+								</Banner>
+								<div v-else-if="!state.plans.length" class="jv-ob-placeholder">No plans are available right now. Please contact support.</div>
+								<div v-else class="jv-ob-plans" role="radiogroup" aria-label="Plan">
+									<div v-for="p in state.plans" :key="p.name" class="jv-ob-plan"
+										 :class="{ sel: state.planName === p.name }" role="radio"
+										 :aria-checked="state.planName === p.name" tabindex="0"
+										 @click="state.planName = p.name"
+										 @keydown.enter.prevent="state.planName = p.name"
+										 @keydown.space.prevent="state.planName = p.name">
+										<div class="jv-ob-plan-rd"></div>
+										<div class="jv-ob-plan-nm">{{ p.plan_name }}</div>
+										<div class="jv-ob-plan-pr">{{ planAmount(p.price_inr) }}<span v-if="planSuffix(p.price_inr, p.billing_cycle)"> {{ planSuffix(p.price_inr, p.billing_cycle) }}</span></div>
+										<div class="jv-ob-plan-cyc">{{ planCycleLabel(p) }}</div>
+										<ul>
+											<li v-for="(f, k) in planFeatures(p)" :key="k"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>{{ f }}</li>
+											<li v-if="!planFeatures(p).length" class="jv-ob-muted">{{ p.billing_cycle }} plan</li>
+										</ul>
+									</div>
+								</div>
+							</div>
+							<div class="jv-ob-foot">
+								<button class="jv-ob-back" @click="goBack">← Back to tour</button>
+								<button class="jv-ob-link" @click="enterSelfhost">Self-hosted? Connect your own openclaw</button>
+								<button class="jv-ob-btn jv-ob-btn-primary" :disabled="!state.planName" @click="onPlanContinue">Continue →</button>
+							</div>
+						</section>
+
+						<!-- ===== Your Details ===== -->
+						<section v-else-if="state.step === 'details'" class="jv-ob-screen">
+							<div class="jv-ob-body">
+								<div class="jv-ob-head">
+									<h1>Your Details</h1>
+									<p>We'll set Jarvis up for this workspace and send receipts here.</p>
+								</div>
+								<div class="jv-ob-form">
+									<div class="jv-ob-sec-label">Account</div>
+									<div class="jv-ob-field">
+										<label for="jv-ob-email">Work email</label>
+										<input id="jv-ob-email" class="jv-ob-inp" type="email" v-model="state.email"
+											   placeholder="you@company.com" autocomplete="email" required aria-required="true"
+											   @keydown.enter="onDetailsSubmit">
+									</div>
+									<div class="jv-ob-field">
+										<label for="jv-ob-contact">Contact number <span class="jv-ob-opt">(optional)</span></label>
+										<input id="jv-ob-contact" class="jv-ob-inp" type="tel" v-model="state.contact"
+											   placeholder="+91 98765 43210" autocomplete="tel"
+											   @keydown.enter="onDetailsSubmit">
+									</div>
+									<div class="jv-ob-field jv-ob-field-full">
+										<label for="jv-ob-company">Company</label>
+										<JvCombo id="jv-ob-company" :model-value="state.company" @update:model-value="(v) => state.company = v"
+												 allow-custom aria-required autocomplete="organization" :options="state.companies"
+												 placeholder="Acme Inc." @enter="onDetailsSubmit" />
+									</div>
+									<div class="jv-ob-sec-label">Billing</div>
+									<div class="jv-ob-sec-hint">Billing details are kept with your account for upcoming invoicing.</div>
+									<div class="jv-ob-field jv-ob-field-full">
+										<label for="jv-ob-addr">Billing address <span class="jv-ob-opt">(optional)</span></label>
+										<input id="jv-ob-addr" class="jv-ob-inp" type="text" v-model="state.billingAddress"
+											   placeholder="Street, area" autocomplete="street-address"
+											   @keydown.enter="onDetailsSubmit">
+									</div>
+									<div class="jv-ob-field">
+										<label for="jv-ob-city">City <span class="jv-ob-opt">(optional)</span></label>
+										<input id="jv-ob-city" class="jv-ob-inp" type="text" v-model="state.city"
+											   placeholder="Chennai" autocomplete="address-level2"
+											   @keydown.enter="onDetailsSubmit">
+									</div>
+									<div class="jv-ob-field">
+										<label for="jv-ob-gstin">GSTIN <span class="jv-ob-opt">(optional)</span></label>
+										<input id="jv-ob-gstin" class="jv-ob-inp" type="text" v-model="state.gstin"
+											   placeholder="33ABCDE1234F1Z5" @keydown.enter="onDetailsSubmit">
+									</div>
+								</div>
+								<Banner v-if="state.detailsErr" type="error" :message="state.detailsErr" role="alert" aria-live="polite" />
+							</div>
+							<div class="jv-ob-foot">
+								<button class="jv-ob-back" @click="goBack">← Back</button>
+								<button class="jv-ob-btn jv-ob-btn-primary" @click="onDetailsSubmit">Continue →</button>
+							</div>
+						</section>
+
+						<!-- ===== Review & Pay (renderPay / renderVerifyEmail / startPay /
+							 openCheckout / devOnboard preserved verbatim in behavior) ===== -->
+						<section v-else-if="state.step === 'pay'" class="jv-ob-screen">
+							<template v-if="state.provisioning || state.provisionErr">
+								<div class="jv-ob-body">
+									<div class="jv-ob-head">
+										<h1>Setting up your workspace</h1>
+										<p v-if="state.provisioning">Payment received. We're provisioning your Jarvis workspace. This usually takes under a minute…</p>
+									</div>
+									<div v-if="state.provisioning" class="jv-ob-spinner" aria-hidden="true"></div>
+									<Banner v-if="state.provisionErr" type="error" :message="state.provisionErr" role="alert" />
+								</div>
+								<div v-if="state.provisionErr" class="jv-ob-foot jv-ob-foot-end">
 									<button class="jv-ob-btn jv-ob-btn-primary" @click="proceedAfterPay">Retry</button>
 								</div>
 							</template>
 							<template v-else-if="state.payPhase === 'verify'">
-							<h1 class="jv-ob-h1">Check your email</h1>
-							<p class="jv-ob-sub">We sent a confirmation link to <b>{{ state.email || "your email" }}</b>.
-								Click the link to verify your address, then come back here and click the button below
-								to continue to payment.</p>
-							<p class="jv-ob-sub">The link expires in 24 hours. Check your spam folder if it doesn't arrive.</p>
-							<div class="jv-ob-err">{{ state.payErr }}</div>
-							<div class="jv-ob-placeholder-actions">
-								<button class="jv-ob-btn jv-ob-btn-primary" :disabled="state.payBusy" @click="onVerifyCheck">
-									{{ state.payBusy ? "Working…" : "I've verified my email →" }}
-								</button>
-							</div>
-						</template>
-						<template v-else-if="state.successData">
-							<h1 class="jv-ob-h1">Payment complete</h1>
-							<p class="jv-ob-sub">You're all set. Continue to connect your AI.</p>
-							<div class="jv-ob-placeholder-actions">
-								<button class="jv-ob-btn jv-ob-btn-primary" @click="goNext">Continue →</button>
-							</div>
-						</template>
-						<template v-else>
-							<h1 class="jv-ob-h1">Review &amp; {{ state.devActive ? "connect" : "pay" }}</h1>
-							<div class="jv-ob-summary">
-								<div class="jv-ob-row"><span>Email</span><b>{{ state.email }}</b></div>
-								<div class="jv-ob-row"><span>Company</span><b>{{ state.company }}</b></div>
-								<div class="jv-ob-row"><span>Plan</span><b>{{ selectedPlan.plan_name || "" }}</b></div>
-								<div class="jv-ob-row jv-ob-row-total"><span>Due now</span><b>{{ planPriceLabel(selectedPlan.price_inr, selectedPlan.billing_cycle) }}</b></div>
-							</div>
-							<div v-if="state.devActive" class="jv-ob-devnote">Developer mode: payment is skipped (dev signup).</div>
-							<div class="jv-ob-err">{{ state.payErr }}</div>
-							<div class="jv-ob-placeholder-actions">
-								<button class="jv-ob-btn" :disabled="state.payBusy" @click="goBack">← Back</button>
-								<button class="jv-ob-btn jv-ob-btn-primary" :disabled="state.payBusy" @click="onPayClick">
-									{{ state.payBusy ? "Working…" : (state.devActive ? "Dev signup & connect" : "Sign up & pay →") }}
-								</button>
-							</div>
-						</template>
-					</div>
+								<div class="jv-ob-body">
+									<div class="jv-ob-head">
+										<h1>Check your email</h1>
+										<p>We sent a confirmation link to <b>{{ state.email || "your email" }}</b>.
+											Click the link to verify your address, then come back here and click the button below
+											to continue to payment.</p>
+									</div>
+									<p class="jv-ob-hint">The link expires in 24 hours. Check your spam folder if it doesn't arrive.</p>
+									<Banner v-if="state.payErr" type="error" :message="state.payErr" />
+								</div>
+								<div class="jv-ob-foot jv-ob-foot-end">
+									<button class="jv-ob-btn jv-ob-btn-primary" :disabled="state.payBusy" @click="onVerifyCheck">
+										{{ state.payBusy ? "Working…" : "I've verified my email →" }}
+									</button>
+								</div>
+							</template>
+							<template v-else-if="state.successData">
+								<div class="jv-ob-body">
+									<div class="jv-ob-head">
+										<h1>Payment complete</h1>
+										<p>You're all set. Continue to connect your AI.</p>
+									</div>
+								</div>
+								<div class="jv-ob-foot jv-ob-foot-end">
+									<button class="jv-ob-btn jv-ob-btn-primary" @click="goNext">Continue →</button>
+								</div>
+							</template>
+							<template v-else>
+								<div class="jv-ob-body">
+									<div class="jv-ob-head">
+										<h1>Review &amp; Pay</h1>
+										<p>{{ isFreePlan ? "Confirm the details below." : "Confirm the details below. You'll complete payment securely via Razorpay." }}</p>
+									</div>
+									<div class="jv-ob-rev">
+										<div class="jv-ob-rev-row"><span>Plan</span><b>{{ planRowLabel }}</b></div>
+										<div class="jv-ob-rev-row"><span>Company</span><b>{{ state.company }}</b></div>
+										<div class="jv-ob-rev-row"><span>Billed to</span><b>{{ state.email }}</b></div>
+										<div class="jv-ob-rev-row jv-ob-rev-total"><span>Due today</span><b>{{ dueTodayLabel }}</b></div>
+									</div>
+									<div v-if="!isFreePlan" class="jv-ob-rev-note">
+										<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
+										Secured by Razorpay · cards, UPI &amp; netbanking
+									</div>
+									<div v-if="state.devActive" class="jv-ob-devnote">Developer mode: payment is skipped (dev signup).</div>
+									<Banner v-if="state.payErr" type="error" :message="state.payErr" />
+								</div>
+								<div class="jv-ob-foot">
+									<button class="jv-ob-back" :disabled="state.payBusy" @click="goBack">← Back</button>
+									<button class="jv-ob-btn jv-ob-btn-primary" :disabled="state.payBusy" @click="onPayClick">
+										{{ state.payBusy ? "Working…" : payCta }}
+									</button>
+								</div>
+							</template>
+						</section>
 
-					<!-- ===== Connect AI (managed) - embeds the shared LlmPoolEditor component
-						 (same one AccountView uses), restricted to :modes="['quick']" so
-						 onboarding shows only a single direct model. The Preset/Custom
-						 proxy-pool tabs + Direct/Proxy badge are intentionally hidden here to
-						 keep signup fast and decision-free; advanced pooling/failover stays
-						 available on the Account page. The component owns save_llm_pool.
-						 A "Back" button here returns to Pay; that step guards against a
-						 second charge by showing a "Payment complete → Continue" state once
-						 payment has gone through (state.successData). ===== -->
-					<div v-else-if="state.step === 'connect'">
-						<!-- Once onboarding succeeds we hard-reload to /jarvis/ (fresh readiness
-							 state). Show a clean full-step "setting up" screen through that
-							 transition so the reload reads as intentional, not a flicker.
+						<!-- ===== Connect Your AI (managed) - embeds the shared LlmPoolEditor
+							 (same one AccountView uses), :modes="['quick']". The component owns
+							 save_llm_pool; this step is the post-save readiness handoff.
 							 v-show (not v-if) so the editor stays MOUNTED while its own save()
-							 is still awaiting - a v-if here would tear it down mid-save and, on
-							 a not-ready poll, remount + refetch with a visible flash. -->
-						<div v-show="state.finishing">
-							<h1 class="jv-ob-h1">Setting up Jarvis</h1>
-							<p class="jv-ob-sub">Bringing your workspace online, taking you to chat…</p>
-							<div class="jv-ob-spinner" aria-hidden="true"></div>
-						</div>
-						<div v-show="!state.finishing">
-							<h1 class="jv-ob-h1">Give Jarvis a brain</h1>
-							<p class="jv-ob-sub">Pick which model Jarvis should use. You can change this anytime from My Account.</p>
-							<LlmPoolEditor ref="poolRef" :editable="true" :modes="['quick']" :footerless="true" @saved="onConnected" @ready="connectReady = $event" />
-							<div v-if="state.finishNote" class="jv-ob-note">
-								<span>{{ state.finishNote }}</span>
-								<button class="jv-ob-btn jv-ob-btn-primary" @click="forceContinue">Continue to Jarvis →</button>
+							 is still awaiting. ===== -->
+						<section v-else-if="state.step === 'connect'" class="jv-ob-screen">
+							<div class="jv-ob-body">
+								<div v-show="state.finishing">
+									<div class="jv-ob-head">
+										<h1>Setting up Jarvis</h1>
+										<p>Bringing your workspace online, taking you to chat…</p>
+									</div>
+									<div class="jv-ob-setup-net">
+										<SetupNeuralNet :dark="dark" />
+									</div>
+								</div>
+								<div v-show="!state.finishing">
+									<div class="jv-ob-head">
+										<h1>Give Jarvis a Brain</h1>
+										<p>Pick which AI powers Jarvis. You can change this anytime from Settings → Account.</p>
+									</div>
+									<div class="jv-ob-connect">
+										<LlmPoolEditor ref="poolRef" :editable="true" :modes="['quick']" :footerless="true" @saved="onConnected" @ready="connectReady = $event" />
+									</div>
+									<Banner v-if="state.finishNote" type="info" :message="state.finishNote">
+										<template #action>
+											<button class="jv-ob-btn jv-ob-btn-primary" @click="forceContinue">Continue to Jarvis →</button>
+										</template>
+									</Banner>
+								</div>
 							</div>
-							<div class="jv-ob-placeholder-actions" style="margin-top:18px;">
-								<button class="jv-ob-btn" @click="goBack">← Back</button>
-								<button v-if="connectReady || savingConnect" class="jv-ob-btn jv-ob-btn-primary" :class="{ 'jv-ob-cta-ready': connectReady && !savingConnect }" :disabled="savingConnect" @click="saveConnect">
-									{{ savingConnect ? "Onboarding…" : "Onboard Jarvis" }}
+							<div v-if="!state.finishing" class="jv-ob-foot">
+								<!-- No Back on a reconciled resume: signup/payment already completed
+									 in a previous session, so there is no local pay/review context to
+									 go back to (re-running startSignup there would double-sign-up). -->
+								<button v-if="!state.reconciledConnect" class="jv-ob-back" :disabled="savingConnect" @click="goBack">← Back</button>
+								<span v-else></span>
+								<!-- The ONLY gradient button in the whole flow. -->
+								<button v-if="connectReady || savingConnect" class="jv-ob-btn jv-ob-btn-grad" :disabled="savingConnect" @click="saveConnect">
+									{{ savingConnect ? "Connecting…" : "Start Chatting →" }}
 								</button>
 							</div>
-						</div>
-					</div>
+						</section>
 
-					<!-- ===== Self-host - ported from desk renderSelfHost + renderShResults
-						 (jarvis_onboarding.js ~296-376). Field names/args match
-						 test_connection / save_self_hosted verbatim (base_url, token, deep,
-						 stream) - see api.js's testSelfHostConnection/saveSelfHosted. ===== -->
-					<div v-else-if="state.step === 'selfhost'">
-						<h1 class="jv-ob-h1">Connect your openclaw</h1>
-						<p class="jv-ob-sub">Point Jarvis at <b>your own</b> openclaw server. Jarvis connects over HTTP
-							with a bearer token. No Aerele persona/skills. Validate first, then connect.</p>
-						<label class="jv-ob-label" for="jv-ob-sh-url">openclaw URL</label>
-						<input id="jv-ob-sh-url" class="jv-ob-input" type="text" v-model="state.shUrl"
-							   placeholder="http://host.docker.internal:19060">
-						<label class="jv-ob-label" for="jv-ob-sh-token">Gateway token</label>
-						<input id="jv-ob-sh-token" class="jv-ob-input" type="password" v-model="state.shToken"
-							   placeholder="paste your openclaw gateway token" autocomplete="off">
-						<label class="jv-ob-check"><input type="checkbox" v-model="state.shStream"> Stream responses token-by-token (recommended)</label>
-						<label class="jv-ob-check"><input type="checkbox" v-model="state.shDeep"> Run deep chat test (slower, sends one message)</label>
-						<div class="jv-ob-placeholder-actions" style="margin-top:14px;justify-content:flex-start">
-							<button class="jv-ob-btn" :disabled="state.shTestBusy" @click="runSelfHostTest">
-								{{ state.shTestBusy ? "Testing…" : "Test connection" }}
-							</button>
-						</div>
-						<div v-if="state.shTestBusy" class="jv-ob-note">Testing…</div>
-						<div v-else-if="state.shTestResult" class="jv-ob-sh-results">
-							<div :class="state.shTestResult.ok ? 'jv-ob-sh-ok' : 'jv-ob-sh-bad'">
-								{{ state.shTestResult.ok ? "All required checks passed." : "Some checks failed. Fix them and retry." }}
+						<!-- ===== Self-host (reached via the quiet Plan-step link; logic
+							 unchanged, field names/args match test_connection /
+							 save_self_hosted verbatim) ===== -->
+						<section v-else-if="state.step === 'selfhost'" class="jv-ob-screen">
+							<div class="jv-ob-body">
+								<div class="jv-ob-head">
+									<h1>Connect your openclaw</h1>
+									<p>Point Jarvis at <b>your own</b> openclaw server. Jarvis connects over HTTP
+										with a bearer token. No Aerele persona/skills. Validate first, then connect.</p>
+								</div>
+								<div class="jv-ob-sh">
+									<label class="jv-ob-label" for="jv-ob-sh-url">openclaw URL</label>
+									<input id="jv-ob-sh-url" class="jv-ob-inp" type="text" v-model="state.shUrl"
+										   placeholder="http://host.docker.internal:19060">
+									<label class="jv-ob-label" for="jv-ob-sh-token">Gateway token</label>
+									<input id="jv-ob-sh-token" class="jv-ob-inp" type="password" v-model="state.shToken"
+										   placeholder="paste your openclaw gateway token" autocomplete="off">
+									<label class="jv-ob-check"><input type="checkbox" v-model="state.shStream"> Stream responses token-by-token (recommended)</label>
+									<label class="jv-ob-check"><input type="checkbox" v-model="state.shDeep"> Run deep chat test (slower, sends one message)</label>
+									<div class="jv-ob-sh-actions">
+										<button class="jv-ob-btn" :disabled="state.shTestBusy" @click="runSelfHostTest">
+											{{ state.shTestBusy ? "Testing…" : "Test connection" }}
+										</button>
+									</div>
+									<div v-if="state.shTestBusy" class="jv-ob-note">Testing…</div>
+									<div v-else-if="state.shTestResult" class="jv-ob-sh-results">
+										<div :class="state.shTestResult.ok ? 'jv-ob-sh-ok' : 'jv-ob-sh-bad'">
+											{{ state.shTestResult.ok ? "All required checks passed." : "Some checks failed. Fix them and retry." }}
+										</div>
+										<div v-for="(c, i) in (state.shTestResult.checks || [])" :key="i" class="jv-ob-sh-check" :class="{ 'jv-ob-sh-check-adv': c.advisory }">
+											{{ c.ok ? "✅" : (c.advisory ? "⚠️" : "❌") }} <b>{{ c.check }}</b> · {{ c.detail || "" }}<span v-if="c.advisory" class="jv-ob-sh-adv-tag"> · advisory</span>
+										</div>
+									</div>
+									<Banner v-if="state.shWarning" type="warning" :message="state.shWarning" />
+									<Banner v-if="state.shErr" type="error" :message="state.shErr" role="alert" aria-live="polite" />
+									<div v-if="state.finishing" class="jv-ob-note">Finishing setup…</div>
+									<Banner v-else-if="state.finishNote" type="info" :message="state.finishNote">
+										<template #action>
+											<button class="jv-ob-btn jv-ob-btn-primary" @click="forceContinue">Continue to Jarvis →</button>
+										</template>
+									</Banner>
+								</div>
 							</div>
-							<div v-for="(c, i) in (state.shTestResult.checks || [])" :key="i" class="jv-ob-sh-check" :class="{ 'jv-ob-sh-check-adv': c.advisory }">
-								{{ c.ok ? "✅" : (c.advisory ? "⚠️" : "❌") }} <b>{{ c.check }}</b> · {{ c.detail || "" }}<span v-if="c.advisory" class="jv-ob-sh-adv-tag"> · advisory</span>
+							<div class="jv-ob-foot">
+								<!-- Stay disabled through the post-save readiness poll (finishing) too;
+									 both flags drop on the failure paths so retry stays possible. -->
+								<button class="jv-ob-back" :disabled="state.shSaveBusy || state.finishing" @click="backFromSelfhost">← Back</button>
+								<button class="jv-ob-btn jv-ob-btn-primary" :disabled="state.shSaveBusy || state.finishing" @click="onSelfHostSave">
+									{{ state.shSaveBusy || state.finishing ? "Connecting…" : "Connect →" }}
+								</button>
 							</div>
-						</div>
-						<div v-if="state.shWarning" class="jv-ob-devnote">{{ state.shWarning }}</div>
-						<div class="jv-ob-err" role="alert" aria-live="polite">{{ state.shErr }}</div>
-						<div v-if="state.finishing" class="jv-ob-note">Finishing setup…</div>
-						<div v-else-if="state.finishNote" class="jv-ob-note">
-							<span>{{ state.finishNote }}</span>
-							<button class="jv-ob-btn jv-ob-btn-primary" @click="forceContinue">Continue to Jarvis →</button>
-						</div>
-						<div class="jv-ob-placeholder-actions">
-							<button class="jv-ob-btn" :disabled="state.shSaveBusy" @click="goBack">← Back</button>
-							<button class="jv-ob-btn jv-ob-btn-primary" :disabled="state.shSaveBusy" @click="onSelfHostSave">
-								{{ state.shSaveBusy ? "Connecting…" : "Connect →" }}
-							</button>
-						</div>
+						</section>
+
 					</div>
 				</div>
-			</div>
 			</div>
 		</main>
 	</div>
@@ -263,42 +313,73 @@ import { call } from "frappe-ui"
 import { useTheme } from "@/composables/useTheme"
 import LlmPoolEditor from "@/components/LlmPoolEditor.vue"
 import JvCombo from "@/components/JvCombo.vue"
-import { STEPS_MANAGED, STEPS_SELFHOST, nextStep, prevStep, stepIndex } from "@/onboarding/steps"
+import JarvisMark from "@/components/JarvisMark.vue"
+import Banner from "@/components/Banner.vue"
+import TourIntro from "@/onboarding/TourIntro.vue"
+import SetupNeuralNet from "@/onboarding/SetupNeuralNet.vue"
+import { STEPS_MANAGED, STEPS_SELFHOST, nextStep, prevStep } from "@/onboarding/steps"
+import { inr, planAmount, planSuffix } from "@/account/format"
 import {
 	checkSignupPaymentState, isReadyForChat, getLlmSyncStatus,
 	listPlans, startSignup, finishPayment, devOnboard,
 	saveSelfHosted, testSelfHostConnection, getAccountDefaults, syncConnection,
 } from "@/api"
-import { planPriceLabel } from "@/account/format.js"
 import { errMessage as errMsg } from "@/lib/errors"
 
 const { effectiveDark: dark, paletteVars } = useTheme()
 
+// The 4 named wizard steps shown on the rail. The intro tour and the
+// self-host track are chromeless (no rail entry).
+const RAIL = [
+	{ id: "plan", label: "Plan" },
+	{ id: "details", label: "Details" },
+	{ id: "pay", label: "Pay" },
+	{ id: "connect", label: "Connect" },
+]
 
-// Mirrors jarvis_onboarding.js's STEP_NAMES (~line 212) - the 4 named steps
-// shown in managed mode. "mode" and "selfhost" have no header entry.
-const STEP_NAMES = ["Account", "Plan", "Pay", "Connect"]
+// Frame subtitle next to the brand mark, mirroring the active step's title.
+const FRAME_SUBS = {
+	intro: "Meet your ERPNext assistant",
+	plan: "Choose Your Plan",
+	details: "Your Details",
+	pay: "Review & Pay",
+	connect: "Give Jarvis a Brain",
+	selfhost: "Self-hosted setup",
+}
 
 // ---- step machine -----------------------------------------------------------
-// `state.step` is one of STEPS_MANAGED/STEPS_SELFHOST depending on `state.mode`.
-// Kept intentionally small here - Tasks 3-5 add fields as their panels need
-// them (email/company/plan choice/etc.), same shape as the desk `state` object.
+// `state.step` walks STEPS_MANAGED (intro → plan → details → pay → connect);
+// the self-host track is a side branch entered from the Plan step's quiet link
+// (enterSelfhost/backFromSelfhost below) and via reconcile.
 const state = reactive({
-	mode: null, step: "mode",
-	// account (renderAccount)
-	email: "", company: "", companies: [], accountErr: "",
-	// plan (renderPlan)
+	mode: "managed", step: "intro",
+	// details (Your Details step)
+	email: "", company: "", companies: [], detailsErr: "",
+	// Collected by the redesign but NOT submitted yet:
+	// jarvis.onboarding.start_signup(email, company, plan) and
+	// admin_client.signup(email, company_name, plan, coupon=None) accept no
+	// contact/billing kwargs, and the admin-side signup contract is external
+	// to this repo. Threading them through would break the API contract.
+	// TODO(backend): pass contact + billingAddress/city/gstin through
+	// start_signup → admin signup once those endpoints accept them.
+	contact: "", billingAddress: "", city: "", gstin: "",
+	// plan (Choose Your Plan step)
 	plans: [], planName: null, plansLoading: false, plansErr: "",
 	// pay (renderPay / renderVerifyEmail / startPay / openCheckout / devOnboard)
 	payPhase: "review", // "review" | "verify" - mirrors desk's step-3 vs "check your email" sub-screen
 	payErr: "", payBusy: false,
+	// True when reconcile landed us directly on "connect" (signup + payment
+	// completed in an earlier session): there is no local plan/email/company
+	// context, so Back to Review & Pay is hidden (it would re-run start_signup
+	// with empty args).
+	reconciledConnect: false,
 	devActive: null, // UX-only mirror of desk's boot-time `dev`; null until probed on entering "pay"
 	successData: null,
 	// provisioning gate: after pay, the openclaw container is still spinning up.
-	// We block entry to the Connect-AI step until it's running (else save_llm_pool
+	// We block entry to the Connect step until it's running (else save_llm_pool
 	// has no container to configure).
 	provisioning: false, provisionErr: "",
-	// post-save readiness recheck (Connect-AI + self-host both funnel through
+	// post-save readiness recheck (Connect + self-host both funnel through
 	// afterSaveRecheckReady/forceContinue below)
 	finishing: false, finishNote: "",
 	// self-host (renderSelfHost / renderShResults, jarvis_onboarding.js ~296-376)
@@ -306,15 +387,36 @@ const state = reactive({
 	shTestBusy: false, shTestResult: null, shSaveBusy: false,
 	shErr: "", shWarning: "",
 })
-const accountBusy = ref(false)
 
 const steps = computed(() => (state.mode === "selfhost" ? STEPS_SELFHOST : STEPS_MANAGED))
 const selectedPlan = computed(() => state.plans.find((p) => p.name === state.planName) || {})
+const railIndex = computed(() => RAIL.findIndex((r) => r.id === state.step))
+const frameSub = computed(() => FRAME_SUBS[state.step] || "Set up your workspace")
 
-// 1-based position within the 4 named managed steps (Account=1 … Connect AI=4),
-// matching desk's `state.step` numbering used by renderSteps/STEP_NAMES. Index
-// 0 ("mode") intentionally renders as 0 - the header is hidden for that step.
-const managedStepNum = computed(() => stepIndex(steps.value, state.step))
+// No "Popular" tag: the admin plan catalog carries no recommended/popular
+// flag, and fabricating one positionally (e.g. always the middle card) would
+// mislabel whatever plan happens to sit there. Reintroduce only if the
+// catalog grows a real flag.
+
+// Free-plan detection drives the Review & Pay copy: no Razorpay promise, no
+// lock note, "Free" in the total row.
+const isFreePlan = computed(() => (Number(selectedPlan.value.price_inr) || 0) <= 0)
+
+// Pay CTA copy: dev signup in sandbox; "Pay ₹X →" for a paid plan; plain
+// sign-up for a free one.
+const payCta = computed(() => {
+	if (state.devActive) return "Dev signup & connect"
+	return isFreePlan.value ? "Sign up →" : `Pay ${inr(selectedPlan.value.price_inr)} →`
+})
+
+// Review-card labels (preview .rev): "Pro · Monthly" plan row and a plain
+// amount in the emphasized total row.
+const planRowLabel = computed(() => {
+	const p = selectedPlan.value
+	if (!p.plan_name) return ""
+	return p.billing_cycle ? `${p.plan_name} · ${p.billing_cycle}` : p.plan_name
+})
+const dueTodayLabel = computed(() => planAmount(selectedPlan.value.price_inr))
 
 function goNext() {
 	state.step = nextStep(steps.value, state.step)
@@ -322,45 +424,46 @@ function goNext() {
 function goBack() {
 	state.step = prevStep(steps.value, state.step)
 }
-// Entry point from the mode-choice screen: record the choice, then advance
-// to that track's first real step ("account" for managed, "selfhost" for
-// self-host) - mirrors desk's `state.mode = "managed"; go(1)` on mode pick.
-function setMode(m) {
-	state.mode = m
-	goNext()
+// Intro tour exits (CTA / advancing past the last slide / Skip tour) all land
+// on the Plan step.
+function startWizard() {
+	state.step = "plan"
+}
+// Self-host is a side branch off the Plan step, not a rail step. Entering and
+// leaving it flips `state.mode` so `steps` (and goNext from a reconciled
+// selfhost resume) stay coherent.
+function enterSelfhost() {
+	state.mode = "selfhost"
+	state.step = "selfhost"
+}
+function backFromSelfhost() {
+	state.mode = "managed"
+	state.step = "plan"
 }
 
 // ---- on-mount reconcile: resume a mid-flight signup ------------------------
-// Desk's boot (jarvis_onboarding.js bootRender, ~1699) only checks
-// is_onboarded/is_ready_for_chat to decide wizard-vs-completion-card; the
-// router's first-run guard (Task 1) already does that before this view ever
-// mounts. What desk does NOT do at boot is poll check_signup_payment_state -
-// that's only called interactively from the "verify your email" screen
-// (jarvis_onboarding.js ~1615). So there's no literal desk boot-time
-// reconcile to mirror for "signup started but not finished, then the tab
-// was closed/reloaded".
+// A mid-flight signup must land on the right step, NOT the intro tour - the
+// tour shows only for a fresh, not-started onboarding (the default "intro"
+// step stands when nothing below matches).
 //
-// Best-effort reconcile for that gap: use is_ready_for_chat's `reason` to
-// pick the right track/step, then (for the managed "signup not done yet"
-// case) poll check_signup_payment_state to see whether there's a live
-// order/verification to resume. Fails open on any error (no admin URL
-// configured yet, not a System Manager, admin API unreachable are all
-// expected on a genuine first run) - falls back to the default "mode" step.
+// Best-effort reconcile: use is_ready_for_chat's `reason` to pick the right
+// track/step, then (for the managed "signup not done yet" case) poll
+// check_signup_payment_state to see whether there's a live order/verification
+// to resume. Fails open on any error (no admin URL configured yet, not a
+// System Manager, admin API unreachable are all expected on a genuine first
+// run) - falls back to the default "intro" step.
 //
-// RESOLVED (was a CONCERN in task-2-report.md, "revisit once Task 4 builds
-// the real pay panel"): check_signup_payment_state is, on desk, ONLY ever
-// called from the "check your email" screen (renderVerifyEmail's "I've
-// verified" button, jarvis_onboarding.js ~1612) - never from a fresh
-// pay-review screen. So EITHER truthy result here (a live razorpay_order_id,
-// or still-pending_verification) maps to that same desk sub-screen, not to
-// the plan-review screen (which would re-call start_signup - untested for
-// idempotency and not a real desk code path) and not to "account" (a plain
-// mis-mapping in the original scaffold). onVerifyCheck() below re-polls
+// check_signup_payment_state is, on desk, ONLY ever called from the "check
+// your email" screen (renderVerifyEmail's "I've verified" button,
+// jarvis_onboarding.js ~1612) - never from a fresh pay-review screen. So
+// EITHER truthy result here (a live razorpay_order_id, or still-
+// pending_verification) maps to that same desk sub-screen, not to the review
+// screen (which would re-call start_signup - untested for idempotency and not
+// a real desk code path). onVerifyCheck() below re-polls
 // check_signup_payment_state itself and branches on the same two fields, so
 // landing here in "verify" phase re-derives the correct next action either
 // way. Known gap: email/company/plan text are blank on a resumed session
-// (never persisted) until the customer re-verifies - cosmetic only, doesn't
-// block the resume.
+// (never persisted) until the customer re-verifies - cosmetic only.
 async function reconcileMidFlightSignup() {
 	try {
 		const ready = await isReadyForChat()
@@ -373,9 +476,12 @@ async function reconcileMidFlightSignup() {
 			// Signup + payment already done; only the AI connection is missing
 			// (llm_credentials) or a configured pool never finished its first
 			// apply (llm_pool_provisioning) - both resume at the connect step,
-			// whose sync-status poller shows the pending/failed state.
+			// whose sync-status poller shows the pending/failed state. Mark the
+			// resume so the Connect step hides Back (no local signup context to
+			// return to - see state.reconciledConnect).
 			state.mode = "managed"
 			state.step = "connect"
+			state.reconciledConnect = true
 			return
 		}
 		// reason === "signup" (or call failed) - no completed signup yet, but
@@ -386,40 +492,13 @@ async function reconcileMidFlightSignup() {
 			state.step = "pay"
 			state.payPhase = "verify"
 		}
-		// else: nothing in flight - leave the default "mode" step.
+		// else: nothing in flight - leave the default "intro" step (fresh start).
 	} catch (e) {
 		// Fail-open - never block the wizard from rendering.
 	}
 }
 
-// ---- Account (renderAccount, jarvis_onboarding.js ~378) --------------------
-// Validation matches desk verbatim: email regex + non-empty company. Desk
-// also loads the plan list before advancing (loadPlansThen) so step 2 never
-// shows a loading flash; mirrored here as a same-click await.
-async function onAccountSubmit() {
-	state.accountErr = ""
-	state.email = (state.email || "").trim()
-	state.company = (state.company || "").trim()
-	if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(state.email)) {
-		state.accountErr = "Enter a valid email address."
-		return
-	}
-	if (!state.company) {
-		state.accountErr = "Company name is required."
-		return
-	}
-	accountBusy.value = true
-	try {
-		if (!state.plans.length) await loadPlans()
-		goNext()
-	} catch (e) {
-		state.accountErr = "Couldn't load plans: " + errMsg(e)
-	} finally {
-		accountBusy.value = false
-	}
-}
-
-// ---- Plan (renderPlan, jarvis_onboarding.js ~481) ---------------------------
+// ---- Plan (Choose Your Plan) ------------------------------------------------
 async function loadPlans() {
 	state.plansErr = ""
 	state.plansLoading = true
@@ -429,12 +508,70 @@ async function loadPlans() {
 		state.plansLoading = false
 	}
 }
+// Error-surfacing wrapper shared by the step-entry watch, the Retry button on
+// a failed load, and the intro-tour prefetch.
+function loadPlansSafe() {
+	loadPlans().catch((e) => { state.plansErr = errMsg(e) })
+}
 // Feature list parsing matches desk's renderPlan card body verbatim.
 function planFeatures(p) {
 	return String((p && p.features) || "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
 }
+// The price renders as a big amount with a small muted "/mo" suffix
+// (₹3,999 <span>/mo</span>) via the shared planAmount/planSuffix helpers
+// from account/format.js (same semantics as planPriceLabel there).
+// Cycle line under the price, per the approved preview copy ("Billed monthly"
+// on paid cards, "For trying Jarvis" on the free one). Copy-only, but keyed
+// off the shared suffix helper so the cycle rule can't drift.
+function planCycleLabel(p) {
+	const suffix = planSuffix(p && p.price_inr, p && p.billing_cycle)
+	if (!suffix) return "For trying Jarvis"
+	return suffix === "/yr" ? "Billed annually" : "Billed monthly"
+}
 function onPlanContinue() {
 	if (!state.planName) return
+	goNext()
+}
+
+// ---- Details (Your Details) -------------------------------------------------
+// Validation matches the old Account step verbatim: email regex + non-empty
+// company. The contact/billing fields are collected but not (yet) submitted -
+// see the TODO(backend) note on `state` above. Until the backend accepts
+// them, they're persisted to localStorage on submit so they survive reloads
+// and can be backfilled once the signup contract carries them.
+const BILLING_LS_KEY = "jarvis-onboarding-billing"
+function persistBillingDetails() {
+	try {
+		window.localStorage.setItem(BILLING_LS_KEY, JSON.stringify({
+			contact: state.contact, billingAddress: state.billingAddress,
+			city: state.city, gstin: state.gstin,
+		}))
+	} catch (e) { /* storage full/blocked - purely best-effort */ }
+}
+// Restore on mount; never overwrites something the user already typed.
+function restoreBillingDetails() {
+	try {
+		const d = JSON.parse(window.localStorage.getItem(BILLING_LS_KEY) || "{}")
+		if (d.contact && !state.contact) state.contact = d.contact
+		if (d.billingAddress && !state.billingAddress) state.billingAddress = d.billingAddress
+		if (d.city && !state.city) state.city = d.city
+		if (d.gstin && !state.gstin) state.gstin = d.gstin
+	} catch (e) { /* corrupt entry - ignore */ }
+}
+function onDetailsSubmit() {
+	state.detailsErr = ""
+	state.email = (state.email || "").trim()
+	state.company = (state.company || "").trim()
+	if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(state.email)) {
+		state.detailsErr = "Enter a valid email address."
+		return
+	}
+	if (!state.company) {
+		state.detailsErr = "Company name is required."
+		return
+	}
+	persistBillingDetails()
+	// Entering Review & Pay fresh from Details: reset the pay sub-state.
 	state.payPhase = "review"
 	state.payErr = ""
 	goNext()
@@ -442,6 +579,11 @@ function onPlanContinue() {
 
 // ---- Pay (renderPay / renderVerifyEmail / startPay / openCheckout /
 // devOnboard, jarvis_onboarding.js ~515 & ~1575-1682) ------------------------
+// Signup fires at the Details → Pay boundary via this step's single CTA:
+// the customer reviews, clicks once, and that click runs the dev-mode check →
+// devOnboard | startSignup → verify-email/checkout branches EXACTLY as the
+// desk flow does. start_signup is deliberately NOT fired on step entry: it is
+// not idempotent-tested, and Back-then-Continue would re-call it.
 
 // Lazy-load the Razorpay Checkout script (mirrors desk's page-load
 // `frappe.require("https://checkout.razorpay.com/v1/checkout.js")`, ~line 18)
@@ -484,6 +626,13 @@ async function enterPayStep() {
 // stale cached "true" must never skip a real charge either.
 async function onPayClick() {
 	state.payErr = ""
+	// Guard against a signup with empty args: on a reconciled resume (or any
+	// state loss) there is no local plan/email/company, and startSignup(email,
+	// company, null) would create a broken signup upstream.
+	if (!state.planName || !state.email || !state.company) {
+		state.payErr = "Your signup details are missing. Please go back and pick a plan and enter your details again."
+		return
+	}
 	state.payBusy = true
 	let isDev = !!state.devActive
 	try {
@@ -511,7 +660,7 @@ async function runDevOnboard() {
 function _sleep(ms) { return new Promise((r) => setTimeout(r, ms)) }
 
 // Provisioning gate: after pay, the openclaw container is still spinning up.
-// Don't enter Connect-AI until it's running - otherwise save_llm_pool there has
+// Don't enter Connect until it's running - otherwise save_llm_pool there has
 // no container to configure. If pay already returned a running tenant, advance
 // immediately; otherwise poll sync_connection until the container is ready.
 async function proceedAfterPay() {
@@ -619,7 +768,7 @@ async function openCheckout(d) {
 	rz.open()
 }
 
-// ---- post-save readiness recheck (Connect-AI + self-host) ------------------
+// ---- post-save readiness recheck (Connect + self-host) ----------------------
 // CRITICAL: the router's first-run guard (router/index.js) caches its
 // is_ready_for_chat probe in a module-level `readyPromise` for the lifetime
 // of the page - it never invalidates mid-session. So a plain
@@ -722,9 +871,8 @@ async function afterSaveRecheckReady({ followSync = false } = {}) {
 	const ready = await waitUntilReady()
 	if (ready) {
 		// Keep the "Setting up Jarvis" spinner up THROUGH the full-page reload.
-		// Flipping finishing off first re-shows the "Give Jarvis a brain" editor
-		// for a frame before the browser navigates - the flicker/rerender users
-		// saw on the final click. Leave it on; location.assign tears the page down.
+		// Flipping finishing off first re-shows the editor for a frame before
+		// the browser navigates. Leave it on; location.assign tears the page down.
 		window.location.assign("/jarvis/")
 		return
 	}
@@ -732,20 +880,20 @@ async function afterSaveRecheckReady({ followSync = false } = {}) {
 	state.finishNote = "Still finishing setup. This can take a few seconds. You can continue to Jarvis now, or wait and try again."
 }
 
-// ---- Connect AI (renders <LlmPoolEditor>, jarvis_onboarding.js ~559-1080
-// renderLlm) - the component itself owns Quick/Preset/Custom + save_llm_pool;
-// this is only the post-save readiness handoff. ---------------------------
+// ---- Connect (renders <LlmPoolEditor>) - the component itself owns
+// Quick/Preset/Custom + save_llm_pool; this is only the post-save readiness
+// handoff. ---------------------------------------------------------------
 function onConnected(sync) {
 	afterSaveRecheckReady({ followSync: true })
 }
 
-// The Connect-AI footer (Back + Save) lives here, not inside LlmPoolEditor
-// (:footerless), so it matches every other step's footer. Save is triggered on
-// the editor via its exposed save() method.
+// The Connect footer (Back + Connect & Finish) lives here, not inside
+// LlmPoolEditor (:footerless), so it matches every other step's footer. Save
+// is triggered on the editor via its exposed save() method.
 const poolRef = ref(null)
 const savingConnect = ref(false)
-// True once the embedded editor reports a savable config (account connected, or
-// API key filled) - drives the "Onboard Jarvis" attention pulse.
+// True once the embedded editor reports a savable config (account connected,
+// or API key filled) - gates the Connect & Finish button.
 const connectReady = ref(false)
 async function saveConnect() {
 	if (!poolRef.value) return
@@ -810,21 +958,20 @@ async function onSelfHostSave() {
 	}
 }
 
-// Enter-step triggers: load the plan list on reaching "plan" (defensive -
-// normally already loaded by onAccountSubmit, but also covers a reconcile
-// that lands directly on "plan"), and probe dev-mode + preload Razorpay on
-// reaching "pay".
+// Enter-step triggers: load the plan list on reaching "plan" (first entry
+// from the tour, or a "Back" from selfhost/details), and probe dev-mode +
+// preload Razorpay on reaching "pay".
 watch(() => state.step, (s) => {
 	if (s === "plan" && !state.plans.length && !state.plansLoading) {
-		loadPlans().catch((e) => { state.plansErr = errMsg(e) })
+		loadPlansSafe()
 	}
 	if (s === "pay") enterPayStep()
 })
 
-// Prefill the Account step from what the site already knows (caller's email +
-// default/sole company; datalist for several) so the customer doesn't retype it.
-// Backend-sourced because the SPA has no frappe.defaults. Never overwrites a
-// value the user already typed; silent on any failure.
+// Prefill the Details step from what the site already knows (caller's email +
+// default/sole company; options list for several) so the customer doesn't
+// retype it. Backend-sourced because the SPA has no frappe.defaults. Never
+// overwrites a value the user already typed; silent on any failure.
 async function prefillAccount() {
 	try {
 		const d = (await getAccountDefaults()) || {}
@@ -834,18 +981,23 @@ async function prefillAccount() {
 	} catch (e) { /* no-op: keep the placeholders */ }
 }
 
-onMounted(() => {
-	reconcileMidFlightSignup()
+onMounted(async () => {
 	prefillAccount()
+	restoreBillingDetails()
+	await reconcileMidFlightSignup()
+	// Prefetch the plan catalog behind the intro tour so the Plan step rarely
+	// first-paints in its loading state. Reconciled resumes land past "plan"
+	// and skip it (the step-entry watch still covers every other path).
+	if (state.step === "intro" && !state.plans.length && !state.plansLoading) loadPlansSafe()
 })
 </script>
 
 <style scoped>
 .jv-ob-root {
-	--rad: 8px;
+	--rad: 10px;
 	font-family: 'Inter', system-ui, sans-serif;
 	min-height: 100vh;
-	background: var(--surface);
+	background: var(--surface-1);
 	color: var(--text);
 	display: flex;
 	flex-direction: column;
@@ -859,30 +1011,8 @@ onMounted(() => {
 .jv-ob-orb-br { right: -190px; bottom: -190px; background: radial-gradient(circle, rgba(49, 46, 129, .20) 0%, transparent 62%); }
 .jv-dark .jv-ob-orb-tl { background: radial-gradient(circle, rgba(59, 130, 246, .22) 0%, transparent 60%); }
 .jv-dark .jv-ob-orb-br { background: radial-gradient(circle, rgba(99, 102, 241, .18) 0%, transparent 60%); }
-.jv-ob-header {
-	position: relative;
-	z-index: 1;
-	display: flex;
-	align-items: center;
-	gap: 10px;
-	padding: 18px 26px;
-	flex: none;
-}
-.jv-ob-logo {
-	width: 28px; height: 28px; flex: none;
-	border-radius: 7px; background: var(--blue);
-	display: flex; align-items: center; justify-content: center;
-	box-shadow: 0 1px 2px rgba(37, 99, 235, .35);
-}
-.jv-ob-brand { font-size: 14px; font-weight: 600; letter-spacing: -.01em; }
-.jv-ob-setup { font-size: 12.5px; color: var(--text-3); border-left: 1px solid var(--border); padding-left: 10px; }
-.jv-ob-main {
-	position: relative;
-	z-index: 1;
-	flex: 1;
-	min-width: 0;
-	overflow-y: auto;
-}
+
+.jv-ob-main { position: relative; z-index: 1; flex: 1; min-width: 0; overflow-y: auto; }
 /* Fills the viewport so the card centers vertically when short; when a step is
    taller than the viewport it grows and the card top-aligns (scrolls from top,
    no cutoff). */
@@ -892,188 +1022,202 @@ onMounted(() => {
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	padding: 40px 24px 64px;
+	padding: 26px 20px 60px;
 }
-.jv-ob-wrap {
-	max-width: 1000px;
-	width: 100%;
-}
-.jv-ob-h1 { font-size: 32px; font-weight: 650; letter-spacing: -.02em; margin: 0 0 12px; text-align: center; }
-.jv-ob-sub { font-size: 16.5px; color: var(--text-3); margin: 0 0 34px; text-align: center; }
+.jv-ob-wrap { max-width: 1080px; width: 100%; display: flex; flex-direction: column; align-items: center; }
 
-.jv-ob-steps {
-	display: flex;
-	align-items: center;
-	margin-bottom: 28px;
-}
-.jv-ob-step {
-	display: flex;
-	align-items: center;
-	gap: 7px;
-	font-size: 12.5px;
-	font-weight: 500;
-	color: var(--text-3);
-}
-.jv-ob-step.active { color: var(--text); font-weight: 600; }
-.jv-ob-step.done { color: var(--text-2); }
+/* ---- brand header (preview .brand). The glyph is the shared JarvisMark
+   component (gradient owned there); only the header's drop shadow is local. ---- */
+.jv-ob-brand { display: flex; align-items: center; justify-content: center; gap: 10px; align-self: center; margin-bottom: 8px; }
+.jv-ob-brand :deep(.jv-mark) { box-shadow: 0 4px 14px rgba(110, 92, 246, .3); }
+.jv-ob-brand-name { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+.jv-ob-brand-sub { font-size: 12.5px; color: var(--text-3); border-left: 1px solid var(--border); padding-left: 11px; }
+
+/* ---- step rail (preview .steps) ---- */
+.jv-ob-steps { display: flex; align-items: center; margin: 16px 0 22px; width: 100%; max-width: 720px; }
+.jv-ob-step { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 500; color: var(--text-3); white-space: nowrap; }
 .jv-ob-step-dot {
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	width: 20px;
-	height: 20px;
-	border-radius: 50%;
-	border: 1px solid var(--border-2);
-	background: var(--surface);
-	font-size: 11px;
-	flex: none;
+	width: 22px; height: 22px; border-radius: 50%;
+	display: grid; place-items: center;
+	font-size: 11px; font-weight: 600; flex: none;
+	border: 1.5px solid var(--border-2); background: var(--surface); color: var(--text-3);
 }
-.jv-ob-step.active .jv-ob-step-dot { border-color: var(--blue); color: var(--blue); }
-.jv-ob-step.done .jv-ob-step-dot { border-color: var(--green-bd); background: var(--green-bg); color: var(--green); }
-.jv-ob-step-line {
-	flex: 1;
-	height: 1px;
-	background: var(--border);
-	margin: 0 8px;
-	min-width: 16px;
-}
+.jv-ob-step.done .jv-ob-step-dot { background: var(--green-bg); border-color: var(--green-bd); color: var(--green); }
+.jv-ob-step.active { color: var(--text); }
+.jv-ob-step.active .jv-ob-step-dot { background: var(--blue); border-color: var(--blue); color: #fff; }
+.jv-ob-step-line { flex: 1; height: 1.5px; background: var(--border); margin: 0 12px; min-width: 24px; }
 .jv-ob-step-line.done { background: var(--green-bd); }
 
-.jv-ob-body {
+/* ---- panel + shared step body/foot (preview .panel/.body/.foot) ---- */
+.jv-ob-panel {
+	width: 100%;
+	background: var(--surface);
 	border: 1px solid var(--border);
 	border-radius: 18px;
-	padding: 52px 56px;
-	background: var(--surface);
-	box-shadow: 0 20px 50px -24px rgba(15, 23, 42, .28), 0 4px 12px -6px rgba(15, 23, 42, .10);
+	box-shadow: 0 24px 70px rgba(20, 20, 30, .16);
+	overflow: hidden;
 }
-.jv-dark .jv-ob-body { border-color: var(--border-2); box-shadow: 0 24px 60px -24px rgba(0, 0, 0, .6); }
-.jv-ob-placeholder { font-size: 13.5px; color: var(--text-3); margin: 0 0 20px; }
-/* Uniform step footer: primary action bottom-right (forward = right in an LTR
-   wizard), Back pushed to the left. Single-button footers right-align too. */
-.jv-ob-placeholder-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; align-items: center; }
-.jv-ob-placeholder-actions .jv-ob-btn:not(.jv-ob-btn-primary) { margin-right: auto; }
+.jv-dark .jv-ob-panel { box-shadow: 0 24px 70px rgba(0, 0, 0, .5); }
+.jv-ob-screen { animation: jvObFade .25s ease; }
+@keyframes jvObFade {
+	from { opacity: 0; transform: translateY(6px); }
+	to { opacity: 1; transform: none; }
+}
+/* min-height keeps every step's dialog the same size; shorter content
+   top-aligns inside it. The tour matches at 624px (TourIntro.vue). */
+.jv-ob-body { padding: 34px 40px 30px; min-height: 540px; box-sizing: border-box; }
+.jv-ob-head { text-align: center; margin-bottom: 24px; }
+.jv-ob-head h1 { font-size: 24px; font-weight: 660; letter-spacing: -.01em; margin: 0 0 7px; text-wrap: balance; }
+.jv-ob-head p { font-size: 14px; color: var(--text-2); margin: 0; }
+.jv-ob-foot {
+	display: flex; align-items: center; justify-content: space-between; gap: 12px;
+	padding: 18px 40px 26px; border-top: 1px solid var(--border);
+}
+.jv-ob-foot-end { justify-content: flex-end; }
+.jv-ob-back { font-size: 13px; color: var(--text-2); background: none; border: none; cursor: pointer; font-family: inherit; display: inline-flex; align-items: center; gap: 6px; padding: 4px 2px; }
+.jv-ob-back:hover { color: var(--text); }
+.jv-ob-back:disabled { opacity: .5; cursor: default; }
+/* quiet self-host link on the Plan footer */
+.jv-ob-link { font-size: 12.5px; color: var(--text-3); background: none; border: none; cursor: pointer; font-family: inherit; text-decoration: underline; text-underline-offset: 3px; padding: 4px 2px; }
+.jv-ob-link:hover { color: var(--text-2); }
+
+/* keyboard focus. Text inputs are excluded: .jv-ob-inp:focus (and the combo's
+   focus-within) already draw the preview's 3px ring, so the outline would
+   double up. */
+.jv-ob-root button:focus-visible,
+.jv-ob-root input[type="checkbox"]:focus-visible,
+.jv-ob-root [tabindex]:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+/* ---- buttons: black/white system (--blue = near-black light / indigo dark).
+   The ONLY gradient button in the flow is Connect & Finish. ---- */
 .jv-ob-btn {
-	font-family: inherit;
-	font-size: 13px;
-	font-weight: 600;
-	padding: 8px 14px;
-	border-radius: 8px;
+	display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+	height: 40px; padding: 0 20px; border-radius: 11px;
 	border: 1px solid var(--border-2);
-	background: var(--surface);
-	color: var(--text);
-	cursor: pointer;
+	font-family: inherit; font-size: 13.5px; font-weight: 600; line-height: 1;
+	cursor: pointer; white-space: nowrap;
+	background: var(--surface); color: var(--text-2);
+	transition: transform .12s, box-shadow .15s, background .15s, border-color .15s;
 }
-.jv-ob-btn:hover { background: var(--surface-2); }
-.jv-ob-btn-primary { border-color: var(--blue-bd); background: var(--blue-bg); color: var(--blue); }
-/* Attention pulse on the final CTA once the config is ready - a soft expanding
-   ring that invites the click. Pauses on hover; off for reduced-motion. */
-@keyframes jvObCtaPulse {
-	0% { box-shadow: 0 0 0 0 rgba(37, 99, 235, .38); }
-	70%, 100% { box-shadow: 0 0 0 7px rgba(37, 99, 235, 0); }
+.jv-ob-btn:hover { background: var(--surface-2); color: var(--text); border-color: var(--border); }
+.jv-ob-btn:active { transform: scale(.98); }
+.jv-ob-btn:disabled { opacity: .55; cursor: default; transform: none; }
+.jv-ob-btn-primary { background: var(--blue); border-color: transparent; color: #fff; box-shadow: 0 2px 10px rgba(20, 20, 30, .16); }
+.jv-ob-btn-primary:hover:not(:disabled) { background: var(--blue); border-color: transparent; color: #fff; transform: translateY(-1px); box-shadow: 0 8px 22px rgba(20, 20, 30, .22); }
+.jv-ob-btn-grad { background: linear-gradient(135deg, #6e8bff, #8b5cf6); border-color: transparent; color: #fff; box-shadow: 0 6px 20px rgba(110, 92, 246, .32); }
+/* Re-declare background + border here: the base .jv-ob-btn:hover (surface-2 bg,
+   visible border) has higher specificity than .jv-ob-btn-grad, so without this
+   the gradient button turns white with a border on hover. */
+.jv-ob-btn-grad:hover:not(:disabled) { background: linear-gradient(135deg, #6e8bff, #8b5cf6); border-color: transparent; color: #fff; transform: translateY(-1px); box-shadow: 0 10px 26px rgba(110, 92, 246, .4); }
+/* Gentle pulsing glow on the final CTA so it's obvious where to click. Excluded
+   on :hover (the hover shadow takes over) and disabled during save. */
+@keyframes jv-ob-cta-pulse {
+	0%, 100% { box-shadow: 0 6px 20px rgba(110, 92, 246, .3); }
+	50%      { box-shadow: 0 8px 30px rgba(110, 92, 246, .6); }
 }
-.jv-ob-cta-ready { border-color: var(--blue); animation: jvObCtaPulse 1.5s ease-out infinite; }
-.jv-ob-cta-ready:hover { animation-play-state: paused; }
-@media (prefers-reduced-motion: reduce) { .jv-ob-cta-ready { animation: none; } }
-/* "Setting up Jarvis" transition spinner (connect step, during the hard reload). */
+.jv-ob-btn-grad:not(:disabled):not(:hover) { animation: jv-ob-cta-pulse 1.8s ease-in-out infinite; }
+/* small ghost variant (inline Retry next to an error message) */
+.jv-ob-btn-sm { height: 28px; padding: 0 12px; font-size: 12px; border-radius: 8px; margin-left: 8px; }
+
+.jv-ob-placeholder { font-size: 13.5px; color: var(--text-3); margin: 0 0 20px; text-align: center; }
+.jv-ob-err { font-size: 12.5px; color: var(--red); min-height: 1em; margin: 10px 0 0; }
+.jv-ob-err-center { text-align: center; }
+.jv-ob-hint { font-size: 13px; color: var(--text-3); text-align: center; margin: 0; }
+
+/* "Setting up" transition spinner (pay provisioning only - the connect
+   finishing state uses the neural-net animation below). */
 .jv-ob-spinner { width: 34px; height: 34px; margin: 10px auto 0; border-radius: 50%; border: 3px solid var(--border-2); border-top-color: var(--blue); animation: jvObSpin .8s linear infinite; }
 @keyframes jvObSpin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .jv-ob-spinner { animation: none; } }
 
-/* ---- mode-choice cards - ported from desk .jo-mode* (jarvis_onboarding.js
-   ~1889-1898), theme tokens standing in for the desk's --jarvis-primary /
-   --card-bg / --border-color. ---- */
-.jv-ob-modes { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 6px; }
-.jv-ob-mode {
-	display: flex;
-	flex-direction: column;
-	border: 1px solid var(--border);
-	border-radius: 12px;
-	padding: 24px 22px;
-	background: var(--surface-1);
-	transition: border-color .15s, transform .1s;
-}
-.jv-ob-mode:hover { border-color: var(--blue-bd); transform: translateY(-1px); }
-.jv-ob-mode-icon { font-size: 30px; line-height: 1; }
-.jv-ob-mode-name { font-size: 18px; font-weight: 700; color: var(--text); margin: 10px 0 12px; }
-.jv-ob-mode-feats { list-style: none; padding: 0; margin: 0 0 16px; flex: 1; }
-.jv-ob-mode-feats li { display: flex; gap: 7px; font-size: 13.5px; color: var(--text-2); line-height: 1.55; margin-bottom: 9px; }
-/* Ticks get a real blue accent (the theme's --blue is near-black by design). */
-.jv-ob-tick { color: #2563eb; font-size: 11px; font-weight: 700; margin-top: 2px; flex: none; }
-.jv-dark .jv-ob-tick { color: var(--blue); }
-/* "Not included" note → danger highlight. The li.jv-ob-mode-warn selector
-   out-specifies `.jv-ob-mode-feats li` so the red actually lands (before, the
-   feats-li colour silently overrode it). */
-.jv-ob-mode-feats li.jv-ob-mode-warn {
-	color: var(--red);
-	background: var(--red-bg);
-	border: 1px solid var(--red-bd);
-	border-radius: 9px;
-	padding: 9px 11px;
-	margin-top: 12px;
-	align-items: flex-start;
-}
-.jv-ob-warn-icon { color: var(--red); margin-right: 4px; flex: none; }
-.jv-ob-mode-btn { width: 100%; margin-top: auto; }
+/* "Setting up Jarvis" finishing state: neural-net animation replacing the
+   spinner. Needs real height for the canvas to render into. */
+.jv-ob-setup-net { position: relative; width: 100%; min-height: 380px; flex: 1; margin-top: 8px; }
 
-/* ---- Account - ported from desk .jo-label/.jo-input (jarvis_onboarding.js
-   ~378 renderAccount). ---- */
-.jv-ob-label { display: block; font-size: 12.5px; font-weight: 600; color: var(--text-2); margin: 14px 0 6px; }
-.jv-ob-label:first-of-type { margin-top: 0; }
-.jv-ob-input {
-	width: 100%;
-	font-family: inherit;
-	font-size: 13.5px;
-	padding: 9px 12px;
-	border-radius: 8px;
-	border: 1px solid var(--border-2);
-	background: var(--surface);
-	color: var(--text);
-	box-sizing: border-box;
-}
-.jv-ob-input:focus { outline: none; border-color: var(--blue-bd); }
-.jv-ob-err { font-size: 12.5px; color: var(--red); min-height: 1em; margin: 10px 0; }
-
-/* ---- Plan - ported from desk .jo-plans/.jo-plan (jarvis_onboarding.js ~481
-   renderPlan). ---- */
-.jv-ob-plans { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 4px 0 20px; }
+/* ---- Plan cards (preview .plans/.plan) ---- */
+.jv-ob-plans { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
 .jv-ob-plan {
-	position: relative;
-	border: 1px solid var(--border);
-	border-radius: 12px;
-	padding: 16px 16px 14px;
-	background: var(--surface-1);
-	cursor: pointer;
-	transition: border-color .15s, transform .1s;
+	border: 1.5px solid var(--border); border-radius: 14px; padding: 20px 18px;
+	background: var(--surface); cursor: pointer; position: relative;
+	transition: border-color .15s, box-shadow .15s, transform .15s;
 }
-.jv-ob-plan:hover { border-color: var(--blue-bd); transform: translateY(-1px); }
-.jv-ob-plan.selected { border-color: var(--blue); box-shadow: 0 0 0 1px var(--blue); }
-.jv-ob-plan-badge {
-	position: absolute; top: 10px; right: 10px;
+.jv-ob-plan:hover { border-color: var(--border-2); transform: translateY(-2px); box-shadow: 0 10px 26px rgba(20, 20, 30, .08); }
+.jv-ob-plan.sel { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-bg); }
+.jv-ob-plan-tag {
+	position: absolute; top: -10px; left: 18px;
+	font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
+	color: var(--blue); background: var(--blue-bg); border: 1px solid var(--blue-bd);
+	border-radius: 99px; padding: 3px 9px;
+}
+.jv-ob-plan-nm { font-size: 15px; font-weight: 600; }
+.jv-ob-plan-pr { font-size: 26px; font-weight: 680; margin: 10px 0 2px; letter-spacing: -.02em; }
+.jv-ob-plan-pr span { font-size: 13px; font-weight: 500; color: var(--text-3); letter-spacing: 0; }
+.jv-ob-plan-cyc { font-size: 12px; color: var(--text-3); }
+.jv-ob-plan ul { list-style: none; margin: 16px 0 0; padding: 0; display: grid; gap: 8px; }
+.jv-ob-plan li { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; color: var(--text-2); }
+.jv-ob-plan li svg { color: var(--green); flex: none; margin-top: 1px; }
+.jv-ob-plan-rd {
+	position: absolute; top: 18px; right: 18px;
 	width: 18px; height: 18px; border-radius: 50%;
-	display: flex; align-items: center; justify-content: center;
-	font-size: 10px; color: transparent; background: var(--surface-2);
-	border: 1px solid var(--border-2);
+	border: 1.5px solid var(--border-2); display: grid; place-items: center;
 }
-.jv-ob-plan.selected .jv-ob-plan-badge { color: var(--blue); border-color: var(--blue); background: var(--blue-bg); }
-.jv-ob-plan-name { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
-.jv-ob-plan-price { font-size: 13px; color: var(--text-2); margin-bottom: 10px; }
-.jv-ob-plan-feats { list-style: none; padding: 0; margin: 0; }
-.jv-ob-plan-feats li { display: flex; gap: 7px; font-size: 12px; color: var(--text-2); line-height: 1.5; margin-bottom: 5px; }
+.jv-ob-plan.sel .jv-ob-plan-rd { border-color: var(--blue); background: var(--blue); }
+.jv-ob-plan.sel .jv-ob-plan-rd::after { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #fff; }
 .jv-ob-muted { color: var(--text-3); }
 
-/* ---- Pay - ported from desk .jo-summary/.jo-row/.jo-devnote
-   (jarvis_onboarding.js ~515 renderPay). ---- */
-.jv-ob-summary { border: 1px solid var(--border); border-radius: 10px; padding: 4px 14px; margin: 4px 0 14px; }
-.jv-ob-row { display: flex; justify-content: space-between; align-items: baseline; padding: 9px 0; font-size: 13px; color: var(--text-3); border-bottom: 1px solid var(--border); }
-.jv-ob-row:last-child { border-bottom: none; }
-.jv-ob-row b { color: var(--text); font-weight: 600; }
-.jv-ob-row-total { font-size: 13.5px; }
-.jv-ob-row-total b { font-size: 15px; }
-.jv-ob-devnote { font-size: 12.5px; color: var(--amber); background: var(--amber-bg); border: 1px solid var(--amber-bd); border-radius: 8px; padding: 8px 12px; margin-bottom: 14px; }
+/* ---- Details form (preview .form/.field/.sec-label) ---- */
+.jv-ob-form { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 18px; max-width: 620px; margin: 0 auto; }
+.jv-ob-field { display: flex; flex-direction: column; gap: 6px; }
+.jv-ob-field-full { grid-column: 1 / -1; }
+.jv-ob-field label { font-size: 12.5px; font-weight: 550; color: var(--text-2); }
+.jv-ob-opt { color: var(--text-3); font-weight: 400; }
+.jv-ob-inp {
+	height: 42px; border: 1px solid var(--border-2); border-radius: 10px;
+	background: var(--surface); padding: 0 13px;
+	font-family: inherit; font-size: 13.5px; color: var(--text);
+	width: 100%; box-sizing: border-box;
+}
+.jv-ob-inp::placeholder { color: var(--text-3); }
+.jv-ob-inp:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-bg); }
+.jv-ob-sec-label {
+	grid-column: 1 / -1;
+	font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
+	color: var(--text-3); margin: 6px 0 -4px;
+}
+.jv-ob-sec-hint { grid-column: 1 / -1; font-size: 12px; color: var(--text-3); margin: 0 0 -6px; }
+/* JvCombo (Company) restyled to match the preview's .inp fields: 42px, 10px
+   radius, border-2 border, and the same 3px focus ring (focus-within because
+   the ring belongs on the wrapper, the caret sits in the inner input). */
+.jv-ob-form :deep(.jvc-field) {
+	min-height: 42px; padding: 0 13px; gap: 8px;
+	border-color: var(--border-2); border-radius: 10px;
+	font-size: 13.5px;
+	transition: border-color .15s, box-shadow .15s;
+}
+.jv-ob-form :deep(.jvc-field:hover) { border-color: var(--border-2); }
+.jv-ob-form :deep(.jvc-field:focus-within),
+.jv-ob-form :deep(.jvc-field.jvc-open) { border-color: var(--border-2); }
+.jv-ob-form :deep(.jvc-input::placeholder) { color: var(--text-3); }
 
-/* ---- Self-host - ported from desk .jo-check/.jo-sh-* (jarvis_onboarding.js
-   ~296-376 renderSelfHost/renderShResults). ---- */
-.jv-ob-check { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text); margin-top: 8px; cursor: pointer; }
+/* ---- Review & Pay (preview .rev) ---- */
+.jv-ob-rev { max-width: 560px; margin: 0 auto; border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+.jv-ob-rev-row { display: flex; justify-content: space-between; gap: 12px; padding: 13px 18px; font-size: 13.5px; border-bottom: 1px solid var(--border); }
+.jv-ob-rev-row:last-child { border-bottom: 0; }
+.jv-ob-rev-row span { color: var(--text-3); }
+.jv-ob-rev-row b { font-weight: 600; }
+.jv-ob-rev-total { background: var(--surface-1); font-size: 15px; }
+.jv-ob-rev-total b { font-size: 17px; }
+.jv-ob-rev-note { max-width: 560px; margin: 14px auto 0; font-size: 12px; color: var(--text-3); text-align: center; display: flex; align-items: center; justify-content: center; gap: 7px; }
+.jv-ob-devnote { font-size: 12.5px; color: var(--amber); background: var(--amber-bg); border: 1px solid var(--amber-bd); border-radius: 8px; padding: 8px 12px; margin: 14px auto 0; max-width: 560px; }
+
+/* ---- Connect ---- */
+.jv-ob-connect { max-width: 640px; margin: 0 auto; }
+
+/* ---- Self-host (logic unchanged; light restyle to the new frame) ---- */
+.jv-ob-sh { max-width: 620px; margin: 0 auto; }
+.jv-ob-label { display: block; font-size: 12.5px; font-weight: 550; color: var(--text-2); margin: 14px 0 6px; }
+.jv-ob-sh .jv-ob-label:first-of-type { margin-top: 0; }
+.jv-ob-check { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text); margin-top: 10px; cursor: pointer; }
+.jv-ob-sh-actions { display: flex; margin-top: 14px; }
 .jv-ob-sh-results { margin: 14px 0 4px; font-size: 12.5px; line-height: 1.7; }
 .jv-ob-sh-check { color: var(--text); }
 .jv-ob-sh-check-adv { color: var(--text-3); }
@@ -1081,19 +1225,22 @@ onMounted(() => {
 .jv-ob-sh-ok { color: var(--green); font-weight: 600; margin-bottom: 4px; }
 .jv-ob-sh-bad { color: var(--red); font-weight: 600; margin-bottom: 4px; }
 
-/* ---- Connect-AI / self-host post-save readiness note (afterSaveRecheckReady). ---- */
-.jv-ob-note { font-size: 12.5px; color: var(--text-3); margin-top: 14px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+/* ---- Connect / self-host post-save readiness note (afterSaveRecheckReady). ---- */
+.jv-ob-note { font-size: 12.5px; color: var(--text-3); margin-top: 14px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: center; }
 
-@media (max-width: 520px) {
-	.jv-ob-main { padding: 28px 16px 48px; }
-	.jv-ob-body { padding: 26px 20px; border-radius: 14px; }
-	.jv-ob-h1 { font-size: 25px; }
-	.jv-ob-sub { font-size: 15px; margin-bottom: 26px; }
-	.jv-ob-orb { width: min(520px, 90vw); }
-	.jv-ob-modes { grid-template-columns: 1fr; }
+@media (max-width: 820px) {
+	.jv-ob-body { min-height: 0; padding: 26px 22px 22px; }
+	.jv-ob-foot { padding: 14px 22px 20px; }
 	.jv-ob-plans { grid-template-columns: 1fr; }
+	.jv-ob-form { grid-template-columns: 1fr; }
+	.jv-ob-orb { width: min(520px, 90vw); }
+	.jv-ob-head h1 { font-size: 21px; }
+	.jv-ob-foot { flex-wrap: wrap; }
 }
 @media (prefers-reduced-motion: reduce) {
-	.jv-ob-mode, .jv-ob-plan { transition: none; }
+	.jv-ob-screen { animation: none; }
+	.jv-ob-plan, .jv-ob-btn, .jv-ob-form :deep(.jvc-field) { transition: none; }
+	.jv-ob-spinner { animation: none; }
+	.jv-ob-btn-grad { animation: none; }
 }
 </style>
