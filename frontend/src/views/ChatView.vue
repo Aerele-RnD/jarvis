@@ -96,7 +96,7 @@
 					<template v-for="m in visibleMessages" :key="m.name">
 						<!-- user -->
 						<div v-if="m.role === 'user'" class="jv-umsg" style="display:flex;flex-direction:column;align-items:flex-end;">
-							<div v-if="m.content" style="max-width:78%;background:var(--surface-2);border:1px solid var(--border);border-radius:14px 14px 4px 14px;padding:10px 14px;font-size:14px;line-height:1.5;color:var(--text);white-space:pre-wrap;">{{ m.content }}</div>
+							<div v-if="m.content" style="max-width:78%;min-width:0;background:var(--surface-2);border:1px solid var(--border);border-radius:14px 14px 4px 14px;padding:10px 14px;font-size:14px;line-height:1.5;color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere;">{{ m.content }}</div>
 							<!-- attached images → same clickable thumbnail + preview as generated ones -->
 							<template v-for="cv in (m.canvas || [])" :key="cv.name">
 								<button v-if="cv.type === 'image' && cv.file_url" class="jv-img-artifact" @click="openArtifact(m, cv)" :title="'Open ' + cv.title" style="margin-top:8px;cursor:zoom-in;">
@@ -105,14 +105,15 @@
 							</template>
 							<div class="jv-msgbar">
 								<!-- sent-time: revealed with the bar on hover; its own hover
-								     (native title) gives the full day-date-month-year-time -->
+								     (native title) gives the full day-date-month-year-time.
+								     Order: time → edit → copy (edit before copy). -->
 								<span v-if="msgTime(m)" class="jv-msgtime" :title="msgTimeFull(m)">{{ msgTime(m) }}</span>
+								<button class="jv-msgbtn" @click="editCommand(m)" title="Edit & resend">
+									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
+								</button>
 								<button class="jv-msgbtn" @click="copyMsg(m.name, m.content)" :title="copiedId === m.name ? 'Copied' : 'Copy'">
 									<svg v-if="copiedId === m.name" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
 									<svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
-								</button>
-								<button class="jv-msgbtn" @click="editCommand(m)" title="Edit & resend">
-									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
 								</button>
 							</div>
 						</div>
@@ -332,6 +333,7 @@
 								<div v-if="skillsUsedOf(m).length" class="jv-skillused">
 									<span v-for="(sk, si) in skillsUsedOf(m)" :key="si" class="jv-skillused-chip" :title="'This reply used the ' + sk + ' skill'"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 7v10l8 5 8-5V7z" /><path d="M12 22V12M12 12 4 7M12 12l8-5" /></svg>{{ sk }}</span>
 								</div>
+								<div class="jv-metabar">
 								<div v-if="!m.error && !m.streaming && (toolCountOf(m) || elapsedOf(m))" class="jv-meta">
 									<span v-if="toolCountOf(m)" :title="activityNames(m.name)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 1 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></svg>{{ toolCountOf(m) }} tool{{ toolCountOf(m) === 1 ? "" : "s" }}</span>
 									<span v-if="elapsedOf(m)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>{{ elapsedLabel(m) }}</span>
@@ -342,6 +344,7 @@
 										<svg v-if="copiedId === m.name" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
 										<svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
 									</button>
+								</div>
 								</div>
 							</div>
 						</div>
@@ -386,7 +389,15 @@
 						<div class="jv-pending-body">
 							<div v-if="pendingSummaryOf(pa)" class="jv-pending-summary">{{ pendingSummaryOf(pa) }}</div>
 							<div v-if="pendingNoteOf(pa)" class="jv-pending-note">{{ pendingNoteOf(pa) }}</div>
-							<pre v-if="pendingPreviewOf(pa)" class="jv-pending-preview">{{ pendingPreviewOf(pa) }}</pre>
+							<ul v-if="pendingBatchOf(pa)" class="jv-pending-batch">
+								<li v-for="(a, i) in pendingBatchOf(pa).actions" :key="'a' + i">
+									Create <b>{{ a.doctype }}</b> "{{ a.name }}"
+								</li>
+								<li v-for="(n, i) in pendingBatchOf(pa).notes" :key="'n' + i" class="jv-pending-batch-note">
+									{{ n }}
+								</li>
+							</ul>
+							<pre v-else-if="pendingPreviewOf(pa)" class="jv-pending-preview">{{ pendingPreviewOf(pa) }}</pre>
 						</div>
 						<div v-if="pa.error" class="jv-draft-error" style="margin:0 14px 10px">{{ pa.error }}</div>
 						<div class="jv-action-foot">
@@ -718,7 +729,7 @@ import DraftPreview from "@/components/doc/DraftPreview.vue"
 import { useShellStore } from "@/stores/shell"
 import { useJarvisTheme } from "@/theme"
 import { displayName } from "@/lib/user"
-import { summarize } from "@/lib/actionSummary"
+import { summarize, batchFromPreview } from "@/lib/actionSummary"
 
 const session = inject("$session")
 const socket = inject("$socket")
@@ -2075,6 +2086,12 @@ function pendingPreviewOf(pa) {
 	if (w == null) return ""
 	return typeof w === "string" ? w : prettyJson(w)
 }
+// A create_docs card renders as bullet lines (creates + reuse notes) rather than
+// a raw JSON dump. Returns null for every other tool, so the <pre> fallback runs.
+function pendingBatchOf(pa) {
+	if (!pa || pa.tool !== "create_docs") return null
+	return batchFromPreview(pa.preview)
+}
 // Drop one card from the queue by its token (confirm-success / discard / expiry).
 function removePending(token) {
 	if (!token) return
@@ -2306,18 +2323,31 @@ function fallbackCopy(s) {
 		/* clipboard truly unavailable */
 	}
 }
-// Per-message sent-time (hover-revealed with the msgbar; full date on its own
+// Per-message timestamp (hover-revealed with the msgbar; full date on its own
 // hover). Server rows carry a site-tz `creation` (rendered via utils/datetime's
 // dayjsLocal path); optimistic tmp rows carry `creation_browser` (a local
 // epoch) until the server copy reconciles them.
+//
+// An assistant row's `creation` is stamped at run start (≈ the user's send
+// time), so showing it makes the reply look like it landed the instant the
+// question was sent. The reply's real "appeared on screen" moment is its
+// `modified` — the timestamp of the final streamed-content write (the same
+// span elapsedOf() treats as the generation duration). So replies show
+// `modified`; user rows keep `creation` (their send time).
+function msgStamp(m) {
+	if (m.role === "assistant" && m.modified) return m.modified
+	return m.creation
+}
 function msgTime(m) {
-	if (m.creation) return formatDate(m.creation, "h:mm A")
+	const ts = msgStamp(m)
+	if (ts) return formatDate(ts, "h:mm A")
 	if (m.creation_browser)
 		return new Date(m.creation_browser).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
 	return ""
 }
 function msgTimeFull(m) {
-	if (m.creation) return exactDate(m.creation)
+	const ts = msgStamp(m)
+	if (ts) return exactDate(ts)
 	if (m.creation_browser)
 		return new Date(m.creation_browser).toLocaleString([], {
 			weekday: "short", day: "numeric", month: "short", year: "numeric",
@@ -3778,7 +3808,9 @@ onUnmounted(() => {
 /* response metrics (tools · time) */
 .jv-skillused { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
 .jv-skillused-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px 2px 7px; background: var(--blue-bg); border: 1px solid var(--blue); border-radius: 20px; font-size: 11px; font-weight: 600; color: var(--blue); }
-.jv-meta { display: flex; align-items: center; gap: 14px; margin-top: 9px; font-size: 11px; color: var(--text-3); }
+.jv-meta { display: flex; align-items: center; gap: 14px; margin-top: 0; font-size: 11px; color: var(--text-3); }
+.jv-metabar { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; margin-top: 9px; }
+.jv-metabar:empty { display: none; }
 /* Tool activity (openclaw-style): collapsible list of tool calls with I/O */
 .jv-activity { margin: 0 0 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-1); overflow: hidden; }
 .jv-activity-head { display: flex; align-items: center; gap: 7px; width: 100%; padding: 7px 11px; background: transparent; border: none; cursor: pointer; font-family: inherit; font-size: 12px; color: var(--text-2); text-align: left; }
@@ -3823,7 +3855,7 @@ onUnmounted(() => {
 .jv-tool-io-k { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-3); margin: 9px 0 4px; }
 .jv-tool-io { margin: 0; padding: 9px 11px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; line-height: 1.5; color: var(--text); white-space: pre-wrap; word-break: break-word; overflow-x: auto; max-height: 320px; overflow-y: auto; }
 /* per-message Copy/Edit bar — revealed on hover */
-.jv-msgbar { display: flex; align-items: center; gap: 3px; margin-top: 5px; opacity: 0; transition: opacity .12s ease; }
+.jv-msgbar { display: flex; align-items: center; gap: 3px; margin-top: 0; opacity: 0; transition: opacity .12s ease; }
 .jv-umsg:hover .jv-msgbar, .jv-amsg:hover .jv-msgbar { opacity: 1; }
 .jv-msgtime { font-size: 11.5px; color: var(--text-3); padding: 0 3px; cursor: default; user-select: none; }
 .jv-msgbtn { display: flex; align-items: center; justify-content: center; width: 26px; height: 26px; border: none; background: transparent; border-radius: 6px; cursor: pointer; color: var(--text-3); }
@@ -3856,7 +3888,7 @@ onUnmounted(() => {
 /* Narrow-window resilience: without min-width:0 a flex child refuses to shrink
    below its content, so on minimize the layout "breaks"; wide content (tables,
    code) must scroll INSIDE its own box, never squeeze the text around it. */
-.jv-md { min-width: 0; max-width: 100%; overflow-wrap: break-word; }
+.jv-md { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
 .jv-md :deep(table) { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
 .jv-md :deep(pre) { max-width: 100%; overflow-x: auto; }
 .jv-md :deep(img) { max-width: 100%; height: auto; }
@@ -3889,7 +3921,7 @@ onUnmounted(() => {
 .jv-md :deep(.jv-md-h:first-child) { margin-top: 0; }
 .jv-md :deep(.jv-md-list) { margin: 0 0 10px; padding-left: 20px; }
 .jv-md :deep(.jv-md-list li) { margin: 2px 0; }
-.jv-md :deep(.jv-md-code) { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.jv-md :deep(.jv-md-code) { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
 .jv-md :deep(.jv-md-link) { color: var(--blue); text-decoration: none; font-weight: 500; }
 /* Auto-linked document IDs → open the record in ERPNext Desk. Dashed underline
    marks them as record links, distinct from plain markdown links. */
@@ -4293,6 +4325,9 @@ onUnmounted(() => {
 .jv-pending-summary { font-size: 13.5px; line-height: 1.5; color: var(--text); }
 .jv-pending-note { font-size: 12px; line-height: 1.45; color: var(--text-3); }
 .jv-pending-preview { margin: 0; padding: 9px 11px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; line-height: 1.5; color: var(--text); white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow-y: auto; }
+.jv-pending-batch { margin: 0 14px 8px; padding-left: 18px; font-size: 12.5px; color: var(--text-2); }
+.jv-pending-batch li { margin: 2px 0; }
+.jv-pending-batch-note { list-style: none; margin-left: -18px; color: var(--text-3); }
 .jv-action-primary:disabled, .jv-action-discard:disabled { opacity: .55; cursor: default; }
 /* rollout-window note shown for a legacy gated-write / email card whose own
    action button was removed (issue #186, #12/#13). */

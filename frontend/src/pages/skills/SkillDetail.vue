@@ -35,6 +35,7 @@
 					<FormControl
 						type="text"
 						label="Name"
+						required
 						placeholder="e.g. monthly-close"
 						:modelValue="form.skill_name"
 						:disabled="!isNew || saving"
@@ -48,6 +49,7 @@
 					<FormControl
 						type="textarea"
 						label="Description"
+						required
 						:rows="2"
 						placeholder="When should the assistant use this skill?"
 						description="A short hint so the assistant knows when this skill applies."
@@ -71,6 +73,10 @@
 			</DocSection>
 
 			<DocSection label="Instructions">
+				<template #header-suffix>
+					<span class="text-ink-red-3 select-none" aria-hidden="true">*</span>
+					<span class="sr-only">(required)</span>
+				</template>
 				<FormControl
 					type="textarea"
 					:rows="14"
@@ -146,6 +152,39 @@
 		:skill="{ name: id, skill_name: form.skill_name }"
 		@saved="loadShares"
 	/>
+
+	<!-- Discard-changes confirm — styled with the chat SPA's jv-* design system
+	     (palette vars + overlay + jv-btn) to match the Settings dialog. -->
+	<div
+		v-if="discardOpen"
+		class="jv-settings-overlay jv-root"
+		:class="{ 'jv-dark': dark }"
+		:style="paletteVars"
+		@click.self="resolveDiscard(false)"
+		@keydown.esc="resolveDiscard(false)"
+	>
+		<div class="jv-confirm" role="alertdialog" aria-modal="true" aria-labelledby="discard-title">
+			<div class="jv-confirm-head">
+				<span class="jv-confirm-icon" aria-hidden="true">
+					<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+						<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+						<line x1="12" y1="9" x2="12" y2="13" />
+						<line x1="12" y1="17" x2="12.01" y2="17" />
+					</svg>
+				</span>
+				<h2 id="discard-title" class="jv-confirm-title">Discard unsaved changes?</h2>
+			</div>
+			<p class="jv-confirm-msg">Your edits to this skill haven’t been saved and will be lost.</p>
+			<div class="jv-confirm-actions">
+				<button ref="cancelBtn" type="button" class="jv-btn jv-btn--ghost" @click="resolveDiscard(false)">
+					Cancel
+				</button>
+				<button type="button" class="jv-btn jv-btn--danger" @click="resolveDiscard(true)">
+					Discard changes
+				</button>
+			</div>
+		</div>
+	</div>
 </template>
 
 <script setup>
@@ -153,7 +192,7 @@
 // share this component (isNew prop). Explicit Save (D21) with dirty guard,
 // read-only mode for shared-with-me skills, DocMetaPanel + child-table
 // Shared-with block (#extra) + ShareDialog, sync pill on save/delete.
-import { ref, reactive, computed, watch, shallowRef } from "vue"
+import { ref, reactive, computed, watch, shallowRef, nextTick } from "vue"
 import { useRouter, onBeforeRouteLeave } from "vue-router"
 import {
 	Button,
@@ -174,6 +213,8 @@ import { useDocmeta } from "@/composables/useDocmeta"
 import SyncPill from "./SyncPill.vue"
 import ShareDialog from "./ShareDialog.vue"
 import { timeAgo } from "@/utils/datetime"
+import { useJarvisTheme } from "@/theme"
+import "@/assets/settings.css" // shared jv-* primitives (overlay, jv-btn) for the discard dialog
 import * as api from "@/api"
 
 const props = defineProps({
@@ -182,6 +223,9 @@ const props = defineProps({
 })
 
 const router = useRouter()
+// Chat-SPA theme (jv-* palette vars + dark flag) so the discard dialog matches
+// the chat surface / Settings dialog rather than frappe-ui's default styling.
+const { effectiveDark: dark, paletteVars } = useJarvisTheme()
 const DOCTYPE = "Jarvis Custom Skill"
 const FIELDS = ["skill_name", "description", "instructions", "user_invocable", "enabled"]
 
@@ -202,7 +246,7 @@ const form = reactive({
 	user_invocable: true,
 	enabled: true,
 })
-let snapshot = { ...form } // saved-state copy for the dirty compare
+const snapshot = ref({ ...form }) // saved-state copy (ref so `dirty` recomputes when reset after save)
 
 const docmeta = shallowRef(null) // useDocmeta instance (own skills only)
 const shares = ref([]) // [{name, full_name}]
@@ -219,7 +263,7 @@ function normalize(v) {
 }
 const dirty = computed(() => {
 	if (!canEdit.value) return false
-	return FIELDS.some((k) => normalize(form[k]) !== normalize(snapshot[k]))
+	return FIELDS.some((k) => normalize(form[k]) !== normalize(snapshot.value[k]))
 })
 
 const pageTitle = computed(() =>
@@ -241,7 +285,7 @@ function seed(data) {
 	form.instructions = data.instructions || ""
 	form.user_invocable = !!data.user_invocable
 	form.enabled = !!data.enabled
-	snapshot = { ...form }
+	snapshot.value = { ...form }
 }
 
 let bypassGuard = false
@@ -297,6 +341,14 @@ async function save() {
 		toast.error("Skill name is required.")
 		return
 	}
+	if (!(form.description || "").trim()) {
+		toast.error("Description is required.")
+		return
+	}
+	if (!(form.instructions || "").trim()) {
+		toast.error("Instructions are required.")
+		return
+	}
 	saving.value = true
 	try {
 		const payload = {
@@ -309,7 +361,7 @@ async function save() {
 		if (props.isNew) {
 			const res = (await api.createCustomSkill(payload)) || {}
 			const newName = (res.data && res.data.name) || ""
-			snapshot = { ...form } // clean before navigating (leave guard)
+			snapshot.value = { ...form } // clean before navigating (leave guard)
 			syncPill.value && syncPill.value.apply() // saving updates the assistant
 			toast.success("Saved")
 			if (newName) router.replace("/skills/" + newName)
@@ -317,10 +369,10 @@ async function save() {
 			// send only the changed fields
 			const changed = {}
 			for (const k of FIELDS) {
-				if (normalize(form[k]) !== normalize(snapshot[k])) changed[k] = payload[k]
+				if (normalize(form[k]) !== normalize(snapshot.value[k])) changed[k] = payload[k]
 			}
 			await api.updateCustomSkill({ name: props.id, ...changed })
-			snapshot = { ...form }
+			snapshot.value = { ...form }
 			skill.value = { ...skill.value, ...payload }
 			syncPill.value && syncPill.value.apply()
 			toast.success("Saved")
@@ -353,20 +405,79 @@ function confirmDelete() {
 }
 
 // ── dirty guard (D21) ────────────────────────────────────────────────────────
+// Custom discard dialog (instead of frappe-ui confirmDialog) so we get an
+// explicit Cancel action alongside Discard, both aligned on one row.
+const discardOpen = ref(false)
+const cancelBtn = ref(null)
+let pendingNext = null
+
 onBeforeRouteLeave((to, from, next) => {
 	if (bypassGuard || !dirty.value) return next()
-	let decided = false
-	confirmDialog({
-		title: "Discard unsaved changes?",
-		message: "Your edits to this skill will be lost.",
-		onConfirm: ({ hideDialog }) => {
-			decided = true
-			hideDialog()
-			next()
-		},
-		onCancel: () => {
-			if (!decided) next(false)
-		},
-	})
+	pendingNext = next
+	discardOpen.value = true
+	// Focus the safe default so Enter/Esc land on it (Esc bubbles to the overlay).
+	nextTick(() => cancelBtn.value?.focus())
 })
+
+// Resolve the pending navigation: proceed=true leaves the page, false stays.
+// Idempotent — closing via X/backdrop and a button click can't double-resolve.
+function resolveDiscard(proceed) {
+	discardOpen.value = false
+	const next = pendingNext
+	pendingNext = null
+	if (next) next(proceed ? undefined : false)
+}
 </script>
+
+<style scoped>
+/* Compact confirm panel — mirrors the chat SPA / Settings dialog surface,
+   radius, shadow and pop-in. Colours resolve from the jv-* palette vars set
+   inline on the overlay root (:style="paletteVars"); jv-popin + the jv-btn
+   button styles come from the shared @/assets/settings.css. */
+.jv-confirm {
+	width: 384px;
+	max-width: 100%;
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: 14px;
+	box-shadow: 0 24px 70px rgba(20, 20, 30, 0.28);
+	padding: 20px 20px 16px;
+	animation: jv-popin 0.16s ease;
+	font-family: "Inter", system-ui, sans-serif;
+}
+.jv-confirm-head {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	margin-bottom: 11px;
+}
+.jv-confirm-icon {
+	flex: none;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 32px;
+	height: 32px;
+	border-radius: 9px;
+	background: var(--red-bg);
+	border: 1px solid var(--red-bd);
+	color: var(--red);
+}
+.jv-confirm-title {
+	margin: 0;
+	font-size: 15px;
+	font-weight: 650;
+	color: var(--text);
+}
+.jv-confirm-msg {
+	margin: 0 0 18px;
+	font-size: 13px;
+	line-height: 1.5;
+	color: var(--text-2);
+}
+.jv-confirm-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+}
+</style>

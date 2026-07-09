@@ -581,3 +581,97 @@ class TestListPendingConfirmations(FrappeTestCase):
 				list_pending_confirmations()
 		finally:
 			frappe.set_user(original)
+
+
+class TestCreateDocsGate(FrappeTestCase):
+	def test_create_docs_parks_one_card_and_dry_runs_batch(self):
+		patcher, captured = _spy_mint()
+		with patcher:
+			r = api._run_tool(
+				"create_docs",
+				{
+					"docs": [
+						{"doctype": "ToDo", "values": {"description": "jarvis-gate-a"}},
+						{"doctype": "ToDo", "values": {"description": "jarvis-gate-b"}},
+					]
+				},
+			)
+		self.assertTrue(r["ok"])
+		self.assertEqual(r["data"]["status"], "pending_confirmation")
+		self.assertEqual(r["data"]["tool"], "create_docs")
+		# The dry-run preview lists both creates; nothing was committed.
+		would = r["data"]["preview"]["would"]
+		self.assertEqual(len(would["created"]), 2)
+		self.assertFalse(frappe.db.exists("ToDo", {"description": "jarvis-gate-a"}))
+		# Exactly one token for the whole batch.
+		self.assertIsNotNone(pending_confirm.peek(captured["token"]))
+		self.assertNotIn(captured["token"], frappe.as_json(r))
+
+	def test_create_docs_is_gated_but_not_auto_applyable(self):
+		# Locked decision: masters are never created without the batch card, so
+		# create_docs never fast-paths under auto_apply / file_box.
+		self.assertIn("create_docs", api._GATED_WRITES)
+		self.assertNotIn("create_docs", api._AUTO_APPLYABLE)
+
+	def test_create_docs_bad_batch_bounces_at_park(self):
+		# A deterministic failure (bad link on the 2nd doc) returns an error to
+		# the model instead of parking a doomed card.
+		r = api._run_tool(
+			"create_docs",
+			{
+				"docs": [
+					{"doctype": "ToDo", "values": {"description": "jarvis-gate-ok"}},
+					{
+						"doctype": "ToDo",
+						"values": {
+							"description": "jarvis-gate-bad",
+							"assigned_by": "no-such-user@invalid.example",
+						},
+					},
+				]
+			},
+		)
+		self.assertFalse(r["ok"])
+		self.assertFalse(frappe.db.exists("ToDo", {"description": "jarvis-gate-ok"}))
+
+	def test_create_docs_resync_preview_is_dry_run_not_described(self):
+		# Regression: the LIVE park path (_run_tool) builds the batch preview
+		# via _DRY_RUN_ON_PARK's direct _run_preview call, so it always worked.
+		# But the RESYNC path (list_pending_confirmations, hit on every
+		# conversation load / socket reconnect) rebuilds the preview via
+		# api._pending_preview, which routes on _PREVIEWABLE membership alone.
+		# If create_docs is missing from _PREVIEWABLE, _pending_preview
+		# short-circuits to a described-intent dict with no ``would`` - the
+		# batch card renders blank after a reload and a human would confirm
+		# master creation blind.
+		from jarvis.chat.actions_api import list_pending_confirmations
+
+		patcher, captured = _spy_mint()
+		with patcher:
+			r = api._run_tool(
+				"create_docs",
+				{
+					"docs": [
+						{"doctype": "ToDo", "values": {"description": "jarvis-resync-a"}},
+						{"doctype": "ToDo", "values": {"description": "jarvis-resync-b"}},
+					]
+				},
+			)
+		self.assertTrue(r["ok"])
+		self.assertEqual(r["data"]["status"], "pending_confirmation")
+		token = captured["token"]
+
+		# Simulate a reload/reconnect: the resync endpoint rebuilds the card's
+		# preview independently of the original park-time preview.
+		resynced = list_pending_confirmations()
+		items = [i for i in resynced["data"]["pending"] if i["token"] == token]
+		self.assertEqual(len(items), 1)
+		preview = items[0]["preview"]
+		self.assertTrue(
+			preview.get("preview"),
+			f"resync preview degraded to described-intent (blank batch card): {preview}",
+		)
+		self.assertNotIn("described", preview)
+		would = preview.get("would") or {}
+		self.assertEqual(len(would.get("created", [])), 2)
+		self.assertFalse(frappe.db.exists("ToDo", {"description": "jarvis-resync-a"}))

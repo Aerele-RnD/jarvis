@@ -1,7 +1,8 @@
 <template>
 	<div
-		class="relative flex h-full flex-col transition-all duration-300 ease-in-out"
-		:class="collapsed ? 'w-12' : 'w-[220px]'"
+		class="relative flex h-full flex-col ease-in-out"
+		:class="[resizing ? '' : 'transition-all duration-300', collapsed ? 'w-12' : '']"
+		:style="collapsed ? undefined : { width: sidebarWidth + 'px' }"
 	>
 		<!-- 1. brand + user menu -->
 		<div class="p-2">
@@ -117,6 +118,31 @@
 				</template>
 			</SidebarLink>
 		</div>
+
+		<!-- 6. drag-to-resize handle (expanded only): grab the right edge to set
+		     the width, double-click to reset. The collapsed rail is a fixed 48px,
+		     so the handle is hidden there. -->
+		<div
+			v-if="!collapsed"
+			class="group absolute inset-y-0 right-0 z-20 flex w-2.5 translate-x-1/2 cursor-col-resize items-center justify-center"
+			role="separator"
+			aria-orientation="vertical"
+			title="Drag to resize · double-click to reset"
+			@mousedown.prevent="startResize"
+			@dblclick="resetWidth"
+		>
+			<!-- full-height hairline: appears on hover / while dragging -->
+			<span
+				class="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 transition-colors"
+				:class="resizing ? 'bg-surface-gray-4' : 'bg-transparent group-hover:bg-surface-gray-4'"
+			/>
+			<!-- grip pill: always faintly visible so the edge reads as adjustable,
+			     solid on hover / while dragging -->
+			<span
+				class="relative h-7 w-1 rounded-full bg-surface-gray-4 transition-opacity"
+				:class="resizing ? 'opacity-100' : 'opacity-30 group-hover:opacity-100'"
+			/>
+		</div>
 	</div>
 </template>
 
@@ -125,7 +151,7 @@
 // user menu · New Chat/Search · nav links (Approvals badge, D12) · recent
 // chats (starred pinned, capped 50, D6/D7) · collapse toggle (persisted via
 // the store; ≤820px auto-collapse, D8).
-import { computed } from "vue"
+import { computed, ref, onBeforeUnmount } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import { Badge, FeatherIcon, KeyboardShortcut } from "frappe-ui"
 import { useShellStore } from "@/stores/shell"
@@ -141,6 +167,41 @@ const collapsed = computed(() => store.sidebarCollapsed)
 function toggleCollapse() {
 	store.sidebarCollapsed = !store.sidebarCollapsed
 }
+
+// ── drag-to-resize (expanded width, persisted in the store, D5-adjacent) ──────
+// The store getter/setter clamps to [SIDEBAR_MIN_W, SIDEBAR_MAX_W], so we can
+// feed it raw deltas. `resizing` suppresses the width transition mid-drag so the
+// edge tracks the cursor 1:1 instead of lagging behind the 300ms ease.
+const sidebarWidth = computed(() => store.sidebarWidth)
+const resizing = ref(false)
+let startX = 0
+let startW = 0
+
+function startResize(e) {
+	if (e.button !== 0 || collapsed.value) return
+	resizing.value = true
+	startX = e.clientX
+	startW = store.sidebarWidth
+	window.addEventListener("mousemove", onResize)
+	window.addEventListener("mouseup", stopResize)
+	document.body.style.userSelect = "none"
+	document.body.style.cursor = "col-resize"
+}
+function onResize(e) {
+	store.sidebarWidth = startW + (e.clientX - startX)
+}
+function stopResize() {
+	if (!resizing.value) return
+	resizing.value = false
+	window.removeEventListener("mousemove", onResize)
+	window.removeEventListener("mouseup", stopResize)
+	document.body.style.userSelect = ""
+	document.body.style.cursor = ""
+}
+function resetWidth() {
+	store.sidebarWidth = 220
+}
+onBeforeUnmount(stopResize)
 
 const navLinks = [
 	{

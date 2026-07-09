@@ -582,13 +582,17 @@ def post_llm_auth_status() -> dict:
 	profile."
 
 	Returns:
-	    Same shape as the admin endpoint:
-	    {"ok": True,
-	     "data": {"auth_profile_present": bool,
-	              "profile_ids": [...],
-	              "default_model": str,
-	              "openai_profile_expires_ms": int | None}}
+	    ``_post`` already unwraps the admin's ``data`` envelope, so this is
+	    the inner dict itself (not ``{"ok": ..., "data": ...}``):
+	    {"auth_profile_present": bool,
+	     "profile_ids": [...],
+	     "default_model": str,
+	     "openai_profile_expires_ms": int | None}
 	    Never includes token material.
+
+	    ``auth_profile_present`` is provider-aware: admin recomputes it from
+	    the tenant's llm_provider rather than trusting the fleet-agent's
+	    OpenAI-only flag.
 
 	Raises AdminAuthError / AdminUnreachableError / AdminValidationError
 	in the same shape as the other admin_client methods.
