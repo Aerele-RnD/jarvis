@@ -33,7 +33,7 @@
 				<DetailPanel :node="state.selected" :metrics="state.analysis.metrics"
 					:communities="state.analysis.communities" :show-actions="false" @focus="(id) => (state.focus = id)" />
 				<AnalysisTabs :analysis="state.analysis" :nodes="baseData.nodes" :actions="state.actions"
-					:history="state.history" :can-act="false" :show-priority="false" @pick="pickId" />
+					:history="state.history" :can-act="false" :show-priority="false" :show-actions-tab="false" @pick="pickId" />
 			</div>
 		</div>
 

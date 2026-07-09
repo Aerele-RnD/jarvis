@@ -18,7 +18,7 @@
 			<SuggestPanel v-else-if="tab === 'similar'" :lists="analysis.lists" :communities="analysis.communities"
 				:can-add-link="canAct" @pick="$emit('pick', $event)" @add-link="$emit('add-link', $event)" />
 			<EvolutionTab v-else-if="tab === 'evolution'" :nodes="nodes" :history="history" />
-			<ActionsTab v-else :actions="actions" :can-act="canAct"
+			<ActionsTab v-else-if="tab === 'actions'" :actions="actions" :can-act="canAct"
 				@pick="$emit('pick', $event)" @add-link="$emit('add-link', $event)" />
 		</div>
 	</div>
@@ -45,18 +45,22 @@ export default {
 		// Priority-card strip (top hub / bridge / to-fix / orphans). On for the
 		// operator graph; the tenant graph turns it off for a cleaner surface.
 		showPriority: { type: Boolean, default: true },
+		// Actions tab (operator curation surface). Off for the tenant graph.
+		showActionsTab: { type: Boolean, default: true },
 	},
 	emits: ["pick", "add-link"],
 	data() {
-		return {
-			tab: "structure",
-			TABS: [
-				{ v: "structure", label: "Structure" }, { v: "similar", label: "Similar" },
-				{ v: "evolution", label: "Evolution" }, { v: "actions", label: "Actions" },
-			],
-		};
+		return { tab: "structure" };
 	},
 	computed: {
+		TABS() {
+			const t = [
+				{ v: "structure", label: "Structure" }, { v: "similar", label: "Similar" },
+				{ v: "evolution", label: "Evolution" },
+			];
+			if (this.showActionsTab) t.push({ v: "actions", label: "Actions" });
+			return t;
+		},
 		lists() { return this.analysis.lists || {}; },
 		hubName() { return (this.lists.hubs && this.lists.hubs[0] && (this.lists.hubs[0].label || this.lists.hubs[0].slug)) || "—"; },
 		brokerName() { return (this.lists.brokers && this.lists.brokers[0] && (this.lists.brokers[0].label || this.lists.brokers[0].slug)) || "—"; },
