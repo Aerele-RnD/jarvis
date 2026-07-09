@@ -76,23 +76,30 @@
 
     <!-- ================ QUICK / CUSTOM (shared rows) ================ -->
     <section v-else style="margin-bottom:18px;">
-      <p v-if="llmMode==='quick'" style="font-size:14px;color:var(--text-3);margin:0 0 12px;">
+      <!-- Onboarding (singleMode) drops this hint line: the step's own subtitle
+           ("Pick which AI powers Jarvis…") already covers it, per the preview. -->
+      <p v-if="llmMode==='quick' && !singleMode" style="font-size:14px;color:var(--text-3);margin:0 0 12px;">
         <template v-if="rows[0] && rows[0].credentialType === 'subscription'">A single chat subscription, served through the managed proxy.</template><template v-else>A single model, sent directly to the provider.</template><template v-if="canPool"> Need multiple models with failover? Use <b>Preset</b> or <b>Custom</b>.</template><template v-else> You can add more models and automatic failover later from My Account.</template>
       </p>
-      <div v-else style="font-size:13px;font-weight:600;color:var(--text-2);margin-bottom:8px;letter-spacing:.03em;text-transform:uppercase;">
+      <!-- "Custom failover pool" is the section heading for the multi-model
+           Account editor only. Onboarding (singleMode) shows neither this nor the
+           hint line above - the step's own head + method cards carry the context. -->
+      <div v-else-if="!singleMode" style="font-size:13px;font-weight:600;color:var(--text-2);margin-bottom:8px;letter-spacing:.03em;text-transform:uppercase;">
         Custom failover pool
       </div>
 
       <div v-if="!editorRows.length" style="font-size:13px;color:var(--text-3);padding:8px 0;">No models yet. Add one below.</div>
 
+      <!-- Onboarding (singleMode) renders the connect content directly on the
+           panel (preview .connect has no wrapper card); the Account editor keeps
+           its bordered row cards. -->
       <div v-for="(m,i) in editorRows" :key="i"
-           style="border:1px solid var(--border);border-radius:9px;padding:10px;margin-bottom:8px;background:var(--surface-1);">
+           :style="singleMode ? {} : { border: '1px solid var(--border)', borderRadius: '9px', padding: '10px', marginBottom: '8px', background: 'var(--surface-1)' }">
 
         <!-- Onboarding: two self-describing credential cards so the choice reads
              at a glance without extra copy. The compact toggle stays for the
              full (Account) editor's denser rows. -->
         <div v-if="singleMode" class="jv-ct">
-          <div class="jv-ct-q">How do you want to connect?</div>
           <div class="jv-ct-cards">
             <button v-for="opt in credTypes" :key="opt.value" type="button"
                     class="jv-ct-card" :class="{ on: m.credentialType===opt.value }"
@@ -165,19 +172,29 @@
              hidden (model auto-defaults per provider), leaving just the provider
              picker + connect. The full account editor keeps all three. -->
         <div v-else :class="{ 'jv-single-body': singleMode }">
-          <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
-            <input v-if="!singleMode" v-model="m.model" :list="'jv-subdl-'+i" :disabled="!editable" placeholder="Model ID (e.g. gpt-5.5)"
+          <!-- Onboarding: just a Provider select. A chat subscription runs one
+               fixed model per provider (auto-defaulted per onUpstreamChange /
+               startConnect), so the model is not a user choice here - it is set
+               behind the scenes and editable later in Settings → Account. -->
+          <div v-if="singleMode" class="jv-pick">
+            <div class="jv-fieldlab">Provider</div>
+            <!-- Same-value guard: onUpstreamChange drops connected accounts (they
+                 are provider-specific), so reselecting the CURRENT provider must
+                 be a no-op rather than wiping a finished OAuth connect. -->
+            <JvCombo :model-value="m.upstream" @update:model-value="(v) => { if (v === m.upstream) return; m.upstream = v; onUpstreamChange(m) }"
+                     :options="upstreamOpts" :editable="editable" placeholder="Provider" />
+          </div>
+          <div v-else style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
+            <input v-model="m.model" :list="'jv-subdl-'+i" :disabled="!editable" placeholder="Model ID (e.g. gpt-5.5)"
                    style="flex:2;min-width:120px;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;" />
-            <datalist v-if="!singleMode" :id="'jv-subdl-'+i">
+            <datalist :id="'jv-subdl-'+i">
               <option v-for="s in (SUB_MODEL_SUGGESTIONS[m.upstream] || [])" :key="s" :value="s"></option>
             </datalist>
-            <JvCombo v-if="singleMode" style="flex:1;" :model-value="m.upstream" @update:model-value="(v) => { m.upstream = v; onUpstreamChange(m) }"
-                     :options="upstreamOpts" :editable="editable" placeholder="Provider" />
-            <select v-else v-model="m.upstream" @change="onUpstreamChange(m)" :disabled="!editable" title="Provider"
+            <select v-model="m.upstream" @change="onUpstreamChange(m)" :disabled="!editable" title="Provider"
                     style="flex:1;min-width:100px;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;">
               <option v-for="o in upstreamOpts" :key="o.value" :value="o.value">{{ o.label }}</option>
             </select>
-            <select v-if="!singleMode" v-model="m.rotation" :disabled="!editable" title="Account rotation"
+            <select v-model="m.rotation" :disabled="!editable" title="Account rotation"
                     style="flex:1.2;min-width:110px;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;">
               <option v-for="o in rotationOpts" :key="o.value" :value="o.value">{{ o.label }}</option>
             </select>
@@ -196,9 +213,64 @@
           </div>
           <div v-else-if="!singleMode" style="font-size:13px;color:var(--text-3);margin-bottom:8px;">No accounts connected yet.</div>
 
+          <!-- Onboarding: the two connect steps on a connected vertical spine
+               (preview .csteps), always visible until an account is connected.
+               Same handlers as the account editor's panel below: startConnect
+               fetches the authorize URL (step 1's button turns into the real
+               sign-in link), finishConnect submits the pasted callback URL. -->
+          <template v-if="singleMode && !(m.accounts && m.accounts.length)">
+            <div class="jv-cdivider"></div>
+            <div class="jv-csteps">
+              <div class="jv-cstep">
+                <div class="jv-cnum">1</div>
+                <div class="jv-cbody">
+                  <div class="jv-ctit">Sign in with {{ m.upstream === 'google' ? 'Google' : 'OpenAI' }}</div>
+                  <div class="jv-cdesc">Opens {{ m.upstream === 'google' ? 'Google' : 'OpenAI' }} in a new tab. Approve access, then come back here.</div>
+                  <div class="jv-crow">
+                    <template v-if="m._connect && m._connect.authorizeUrl">
+                      <a :href="m._connect.authorizeUrl" target="_blank" rel="noopener noreferrer" class="jv-cbtn jv-cbtn-primary">Open sign-in ↗</a>
+                      <button type="button" class="jv-cbtn jv-cbtn-ghost" @click="copyAuthorizeUrl(m)">{{ m._connect.copied ? 'Copied ✓' : 'Copy link' }}</button>
+                    </template>
+                    <button v-else type="button" class="jv-cbtn jv-cbtn-primary"
+                            :disabled="!editable || (m._connect && m._connect.loading)" @click="startConnect(m)">
+                      {{ m._connect && m._connect.loading ? 'Starting sign-in…' : 'Open sign-in ↗' }}
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div class="jv-cstep" :class="{ 'jv-pending': !(m._connect && m._connect.authorizeUrl) }">
+                <div class="jv-cnum">2</div>
+                <div class="jv-cbody">
+                  <div class="jv-ctit">Paste the callback URL</div>
+                  <div class="jv-callout">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
+                    <p>After you approve, the browser shows a <b>&ldquo;This site can&rsquo;t be reached&rdquo;</b> page. That&rsquo;s expected: copy the <b>full URL from the address bar</b> (<kbd>⌘/Ctrl</kbd>+<kbd>L</kbd>, then <kbd>⌘/Ctrl</kbd>+<kbd>C</kbd>) and paste it below.</p>
+                  </div>
+                  <!-- Disabled until step 1 minted an authorize URL: a URL pasted
+                       before sign-in has no nonce to pair with (finishConnect
+                       would no-op), a silent dead-end. -->
+                  <input v-model="m._connect.pastedUrl" class="jv-paste"
+                         :disabled="!editable || !(m._connect && m._connect.authorizeUrl)"
+                         :placeholder="m._connect && m._connect.authorizeUrl
+                           ? 'http://localhost:1455/auth/callback?code=…'
+                           : 'Complete step 1 first, then paste the URL here'"
+                         @keydown.enter="finishConnect(m)" />
+                  <div v-if="m._connect && m._connect.authorizeUrl" class="jv-cacts">
+                    <button type="button" class="jv-cbtn jv-cbtn-ghost" @click="closeConnect(m)">Cancel</button>
+                    <button type="button" class="jv-cbtn jv-cbtn-primary" :disabled="m._connect.loading" @click="finishConnect(m)">
+                      {{ m._connect.loading ? 'Connecting…' : 'Connect' }}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div v-if="m._connect && m._connect.error" class="jv-cn-err">{{ m._connect.error }}</div>
+          </template>
+
           <!-- Inline paste-back OAuth flow - two clear steps: open the sign-in
-               (OAuth) URL, then paste the callback URL you're redirected to. -->
-          <div v-if="m._connect && m._connect.open" class="jv-cn">
+               (OAuth) URL, then paste the callback URL you're redirected to.
+               (Account editor only; onboarding renders the spine above.) -->
+          <div v-if="!singleMode && m._connect && m._connect.open" class="jv-cn">
             <div v-if="m._connect.authorizeUrl">
               <div class="jv-cn-step">
                 <span class="jv-cn-num">1</span>
@@ -229,13 +301,12 @@
             <div v-if="m._connect.error" class="jv-cn-err">{{ m._connect.error }}</div>
           </div>
 
-          <!-- Simplified onboarding editor hides rotation, so it also caps the row
-               at a single account (no unusable multi-account-without-rotation state):
-               hide "+ Connect account" once one is connected. -->
-          <button v-if="editable && !(m._connect && m._connect.open) && (!singleMode || !(m.accounts && m.accounts.length))" @click="startConnect(m)"
+          <!-- Account editor's connect entry point (onboarding's spine above owns
+               startConnect there). -->
+          <button v-if="editable && !singleMode && !(m._connect && m._connect.open)" @click="startConnect(m)"
                   :disabled="m._connect && m._connect.loading && !m._connect.authorizeUrl"
                   style="font-size:14px;font-weight:600;color:var(--surface);background:var(--blue);border:0;border-radius:8px;padding:11px 17px;cursor:pointer;">
-            {{ singleMode ? 'Sign in →' : ((m.accounts && m.accounts.length) ? '+ Connect another account' : '+ Connect account') }}
+            {{ (m.accounts && m.accounts.length) ? '+ Connect another account' : '+ Connect account' }}
           </button>
         </div>
       </div>
@@ -323,8 +394,8 @@ const ready = computed(() => {
   return !!((r.provider || "").trim() && (r.model || "").trim() && ((r.apiKey || "").trim() || r.hasKey))
 })
 const credTypes = [
-  { value: "subscription", label: "Chat subscription", desc: "Sign in with your ChatGPT or Gemini account." },
-  { value: "api_key", label: "API key", desc: "Use your own provider key from Anthropic, OpenAI, and more." },
+  { value: "subscription", label: "Chat subscription", desc: "Sign in with your ChatGPT or Gemini plan" },
+  { value: "api_key", label: "API key", desc: "Bring your own key from OpenAI, Anthropic and more" },
 ]
 const rotationOpts = [
   { value: "sticky", label: "Sticky" },
@@ -559,7 +630,17 @@ async function startConnect(m, reconnectIdx = null) {
     m._connect = { ...blankConnect(), open: true, error: "Enter a model id before connecting an account." }
     return
   }
-  m._connect = { ...blankConnect(), open: true, loading: true, reconnectIdx }
+  // Carry any already-typed callback URL across the reset: re-opening sign-in
+  // (e.g. Reconnect, or retrying after an error) must not wipe pasted text.
+  m._connect = { ...blankConnect(), open: true, loading: true, reconnectIdx, pastedUrl: (m._connect.pastedUrl || "") }
+  // Open the sign-in tab SYNCHRONOUSLY, inside this click, so the browser treats
+  // it as user-initiated. A window.open() after the await below loses the user
+  // gesture and gets popup-blocked, which is why "Open sign-in" used to need a
+  // second click (the first only fetched the URL). We navigate this blank tab
+  // once the authorize URL resolves; if it was blocked (win === null) the visible
+  // "Open sign-in ↗" link is still there for the user to click manually.
+  let win = null
+  try { win = window.open("about:blank", "_blank"); if (win) win.opener = null } catch (e) { win = null }
   try {
     const provider = m.upstream === "google" ? "Google Gemini" : "OpenAI"
     const res = await api.beginPoolAccountSignin(provider, m.model.trim())
@@ -569,13 +650,15 @@ async function startConnect(m, reconnectIdx = null) {
     if (!res || res.ok === false) {
       m._connect.loading = false
       m._connect.error = (res && res.error && res.error.message) || "Couldn't start sign-in. Try again."
+      if (win) win.close()
       return
     }
     const d = res.data || {}
     m._connect.nonce = d.nonce
     m._connect.authorizeUrl = d.authorize_url
     m._connect.loading = false
-  } catch (e) { m._connect.loading = false; m._connect.error = _err(e) }
+    if (win && d.authorize_url) win.location.href = d.authorize_url
+  } catch (e) { m._connect.loading = false; m._connect.error = _err(e); if (win) win.close() }
 }
 async function finishConnect(m) {
   if (!m._connect || !m._connect.nonce) return
@@ -796,31 +879,106 @@ defineExpose({ save })
 </script>
 
 <style scoped>
-/* Onboarding credential-type cards - self-describing "API key vs Chat
-   subscription" choice. Selected state mirrors the wizard's plan cards
-   (var(--blue) ring), so it's consistent with the rest of onboarding. */
-.jv-ct { margin-bottom: 16px; }
-.jv-ct-q { font-size: 13px; font-weight: 600; color: var(--text-2); margin-bottom: 8px; }
-.jv-ct-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+/* Onboarding method cards (preview .method/.m-opt): sel = blue border + 3px
+   ring; icon tile flips from neutral to blue tint when selected. Preview's
+   --accent maps to the app's --blue (and -bg/-bd). */
+.jv-ct { margin-bottom: 20px; }
+.jv-ct-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .jv-ct-card {
-  display: flex; align-items: flex-start; gap: 11px; text-align: left;
-  padding: 13px 14px; border: 1px solid var(--border); border-radius: 11px;
+  display: flex; align-items: flex-start; gap: 12px; text-align: left;
+  padding: 15px 16px; border: 1.5px solid var(--border); border-radius: 12px;
   background: var(--surface); cursor: pointer; font: inherit; color: var(--text);
-  transition: border-color .12s, box-shadow .12s;
+  transition: border-color .15s, box-shadow .15s;
 }
-.jv-ct-card:hover { border-color: var(--border-2); }
-.jv-ct-card.on { border-color: var(--blue); box-shadow: 0 0 0 1px var(--blue); }
+.jv-ct-card.on { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-bg); }
 .jv-ct-card:disabled { cursor: default; }
 .jv-ct-ic {
   flex: none; width: 34px; height: 34px; border-radius: 9px;
-  display: flex; align-items: center; justify-content: center;
-  background: var(--surface-2); color: var(--text-2);
+  display: grid; place-items: center;
+  background: var(--surface-2); border: 1px solid var(--border); color: var(--text-2);
 }
-.jv-ct-card.on .jv-ct-ic { background: var(--blue); color: var(--surface); }
-.jv-ct-ic svg { width: 18px; height: 18px; }
+.jv-ct-card.on .jv-ct-ic { background: var(--blue-bg); border-color: var(--blue-bd); color: var(--blue); }
+.jv-ct-ic svg { width: 17px; height: 17px; stroke-width: 1.8; }
 .jv-ct-tx { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.jv-ct-t { font-size: 14px; font-weight: 650; }
+.jv-ct-t { font-size: 13.5px; font-weight: 600; }
 .jv-ct-d { font-size: 12px; color: var(--text-3); line-height: 1.4; }
+/* Labeled compact "Provider & model" select (preview .fieldlab/.sel-provider):
+   40px field, 10px radius, border-2 border, same 3px focus ring as the rest of
+   the wizard's inputs. */
+.jv-fieldlab { font-size: 12px; font-weight: 550; color: var(--text-2); margin-bottom: 6px; }
+.jv-pick :deep(.jvc-field) {
+  min-height: 40px; padding: 0 14px;
+  border-color: var(--border-2); border-radius: 10px; font-size: 13.5px;
+  transition: border-color .15s, box-shadow .15s;
+}
+.jv-pick :deep(.jvc-field:hover) { border-color: var(--border-2); }
+.jv-pick :deep(.jvc-field:focus-within),
+.jv-pick :deep(.jvc-field.jvc-open) { border-color: var(--border-2); }
+/* The two connect steps on a connected vertical spine (preview .csteps): no
+   shade boxes, a 1.5px line joins the numbered dots; step 2 reads pending
+   (neutral dot) until the sign-in URL exists. */
+.jv-cdivider { height: 1px; background: var(--border); margin: 20px 0 18px; }
+.jv-cstep { position: relative; display: flex; gap: 14px; padding: 2px 0 22px; }
+.jv-cstep:last-child { padding-bottom: 4px; }
+.jv-cstep:not(:last-child)::before { content: ""; position: absolute; left: 12.5px; top: 32px; bottom: 4px; width: 1.5px; background: var(--border); }
+.jv-cnum {
+  width: 26px; height: 26px; border-radius: 50%; box-sizing: border-box;
+  background: var(--blue); color: #fff;
+  display: grid; place-items: center; font-size: 12.5px; font-weight: 600;
+  flex: none; position: relative; z-index: 1;
+}
+.jv-cstep.jv-pending .jv-cnum { background: var(--surface-2); color: var(--text-3); border: 1.5px solid var(--border-2); }
+.jv-cbody { flex: 1; min-width: 0; }
+.jv-ctit { font-size: 13.5px; font-weight: 600; margin-bottom: 3px; }
+.jv-cdesc { font-size: 12.5px; color: var(--text-3); line-height: 1.45; margin-bottom: 11px; }
+.jv-crow { display: flex; gap: 9px; flex-wrap: wrap; }
+/* Small in-step buttons (preview .btn--sm on .btn--primary/.btn--ghost). */
+.jv-cbtn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  height: 34px; padding: 0 13px; border-radius: 9px;
+  border: 1px solid transparent;
+  font-family: inherit; font-size: 12.5px; font-weight: 600; line-height: 1;
+  cursor: pointer; white-space: nowrap; text-decoration: none;
+  transition: transform .12s, box-shadow .15s, background .15s, border-color .15s;
+}
+.jv-cbtn:active { transform: scale(.98); }
+/* The Open sign-in control is an <a>, which the wizard's button-scoped
+   focus-visible rule misses - give both spine controls their own outline. */
+.jv-cbtn:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.jv-cbtn:disabled { opacity: .55; cursor: default; transform: none; }
+.jv-cbtn-primary { background: var(--blue); color: #fff; box-shadow: 0 2px 10px rgba(20, 20, 30, .16); }
+.jv-cbtn-primary:hover:not(:disabled) { color: #fff; transform: translateY(-1px); box-shadow: 0 8px 22px rgba(20, 20, 30, .22); }
+.jv-cbtn-ghost { background: var(--surface); border-color: var(--border-2); color: var(--text-2); }
+.jv-cbtn-ghost:hover:not(:disabled) { background: var(--surface-2); color: var(--text); border-color: var(--border); }
+/* ONE amber callout: the "This site can't be reached is expected" guidance with
+   the inline kbd shortcut hint (preview .callout). */
+.jv-callout {
+  display: flex; gap: 9px; align-items: flex-start;
+  background: var(--amber-bg); border: 1px solid var(--amber-bd);
+  border-radius: 9px; padding: 9px 12px; margin-bottom: 10px;
+}
+.jv-callout svg { color: var(--amber); flex: none; margin-top: 1px; }
+.jv-callout p { margin: 0; font-size: 12px; color: var(--text-2); line-height: 1.5; }
+.jv-callout b { color: var(--text); font-weight: 600; }
+.jv-callout kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px; background: var(--surface);
+  border: 1px solid var(--amber-bd); border-radius: 4px; padding: 0 4px;
+}
+/* Dashed mono paste input; focus solidifies the border + shows the wizard's
+   3px ring (preview .paste). */
+.jv-paste {
+  width: 100%; height: 44px; box-sizing: border-box;
+  border: 1.5px dashed var(--border-2); border-radius: 11px;
+  background: var(--surface-1); padding: 0 14px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px; color: var(--text);
+  transition: border-color .15s, background .15s;
+}
+.jv-paste::placeholder { color: var(--text-3); }
+.jv-paste:focus { outline: none; border-style: solid; border-color: var(--blue); background: var(--surface); box-shadow: 0 0 0 3px var(--blue-bg); }
+.jv-paste:disabled { opacity: .55; }
+.jv-cacts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
 /* Clean status pill - connected (ok) / failed (bad). Reused by the subscription
    connected row and (later) the API-key verify result. No red ✕ - a subtle text
    action handles disconnect. */
@@ -859,11 +1017,29 @@ defineExpose({ save })
    API key ↔ Chat subscription never resizes the card (first-impression polish). */
 .jv-single-body { min-height: 96px; }
 /* API-key fields as a 2×2 grid in onboarding - keeps this view's height close to
-   the subscription view so toggling doesn't resize the card. */
-.jv-ak-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
-.jv-ak-grid select, .jv-ak-grid input {
-  width: 100%; padding: 10px 12px; font-size: 14px; border: 1px solid var(--border);
-  border-radius: 8px; background: var(--surface); color: var(--text); font-family: inherit; box-sizing: border-box;
+   the subscription view so toggling doesn't resize the card. Fields match the
+   wizard's inputs (42px, 10px radius, border-2, 3px focus ring). */
+.jv-ak-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.jv-ak-grid input {
+  width: 100%; height: 42px; padding: 0 13px; font-size: 13.5px;
+  border: 1px solid var(--border-2); border-radius: 10px;
+  background: var(--surface); color: var(--text); font-family: inherit; box-sizing: border-box;
 }
-@media (max-width: 560px) { .jv-ct-cards, .jv-ak-grid { grid-template-columns: 1fr; } }
+.jv-ak-grid input::placeholder { color: var(--text-3); }
+.jv-ak-grid input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-bg); }
+.jv-ak-grid :deep(.jvc-field) {
+  min-height: 42px; padding: 0 13px;
+  border-color: var(--border-2); border-radius: 10px; font-size: 13.5px;
+  transition: border-color .15s, box-shadow .15s;
+}
+.jv-ak-grid :deep(.jvc-field:hover) { border-color: var(--border-2); }
+.jv-ak-grid :deep(.jvc-field:focus-within),
+.jv-ak-grid :deep(.jvc-field.jvc-open) { border-color: var(--border-2); }
+.jv-ak-grid :deep(.jvc-input::placeholder) { color: var(--text-3); }
+/* Preview stacks .method at 820px - the same breakpoint as the wizard's other grids. */
+@media (max-width: 820px) { .jv-ct-cards, .jv-ak-grid { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) {
+  .jv-ct-card, .jv-cbtn, .jv-paste,
+  .jv-pick :deep(.jvc-field), .jv-ak-grid :deep(.jvc-field) { transition: none; }
+}
 </style>
