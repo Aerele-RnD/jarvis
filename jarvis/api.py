@@ -422,8 +422,8 @@ _WRITE_TOOLS = frozenset({
 	"create_custom_skill", "update_wiki",
 })
 _PREVIEWABLE = frozenset({
-	"create_doc", "update_doc", "submit_doc", "cancel_doc", "amend_doc",
-	"delete_doc", "run_method",
+	"create_doc", "create_docs", "update_doc", "submit_doc", "cancel_doc",
+	"amend_doc", "delete_doc", "run_method",
 })
 # Writes that MUST get a human confirmation before executing (issue #186).
 # The lighter mutators in _WRITE_TOOLS (comments/tags/share/assign/attach/
