@@ -157,6 +157,10 @@ onMounted(load)
 .kg-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; }
 .kg-desk { margin-left: auto; align-self: center; }
 .kg-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; }
+/* min-width:0 lets the graph column shrink to its track — without it the
+   3d-force-graph canvas (an explicit-pixel-width element) forces the column
+   wider than the viewport and shoves the side panel off-screen. */
+.kg-main { min-width: 0; }
 .kg-side { display: flex; flex-direction: column; gap: 14px; overflow-y: auto; }
 .kg-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 6px; }
 .kg-excl { margin-bottom: 8px; }
