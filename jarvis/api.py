@@ -4,6 +4,7 @@ import frappe
 
 from jarvis._http import validate_bearer as _validate_bearer  # noqa: F401 (kept for callers in mcp.py)
 from jarvis._plugin_auth import PluginAuthError, validate_plugin_request
+from jarvis._session import impersonate
 from jarvis.exceptions import InvalidArgumentError, JarvisError
 from jarvis.tools.registry import dispatch
 from jarvis import audit
@@ -175,9 +176,9 @@ def _dispatch_from_session(
 	"""Run the dispatch under ``user``, then attribute the tool call to the
 	chat session so the UI sees it.
 	"""
-	original = frappe.session.user
-	frappe.set_user(user)
-	try:
+	# impersonate is session-safe: a bare frappe.set_user in this HTTP path
+	# would gut the caller's cookie session sid + data and log them out.
+	with impersonate(user):
 		# Parse args up front so persist_and_publish gets the same
 		# dict shape the tool ran against (or the empty dict on a
 		# malformed-args rejection).
@@ -202,8 +203,6 @@ def _dispatch_from_session(
 			session_key=session_key, tool=tool, args=parsed_args, result=result,
 		)
 		return result
-	finally:
-		frappe.set_user(original)
 
 
 def _persist_and_publish_tool_call(
@@ -255,11 +254,11 @@ def persist_tool_receipt(conv_name: str, tool: str, args: dict, result: dict) ->
 	except Exception:
 		ref_doctype = ref_name = None
 
-	# Run as the conversation owner so DocType perms allow it
+	# Run as the conversation owner so DocType perms allow it. impersonate is
+	# session-safe (a bare frappe.set_user in this HTTP path would gut the
+	# caller's cookie session sid + data and log them out).
 	conv_owner = frappe.db.get_value("Jarvis Conversation", conv_name, "owner")
-	original = frappe.session.user
-	frappe.set_user(conv_owner)
-	try:
+	with impersonate(conv_owner):
 		from jarvis.chat.api import _next_seq
 		seq = _next_seq(conv_name)
 		doc = frappe.get_doc({
@@ -291,8 +290,6 @@ def persist_tool_receipt(conv_name: str, tool: str, args: dict, result: dict) ->
 		# canvas field + publish a canvas event so it renders inline - the
 		# same surface the agent's own canvas files use.
 		_maybe_attach_artifact(conv_name, conv_owner, result)
-	finally:
-		frappe.set_user(original)
 
 
 def _maybe_attach_artifact(conv_name: str, user: str, result: dict) -> None:

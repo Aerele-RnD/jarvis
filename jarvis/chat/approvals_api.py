@@ -13,6 +13,8 @@ import json
 
 import frappe
 
+from jarvis._session import impersonate
+
 APPROVAL = "Jarvis Approval Request"
 
 
@@ -405,17 +407,15 @@ def decide(name: str, decision: str, approve: int = 1) -> dict:
 			)
 		else:
 			try:
-				if switch_to:
-					frappe.set_user(switch_to)
-				res = send_message(conversation=doc.conversation, message=msg, attachments=attachments)
+				# impersonate is session-safe (a bare frappe.set_user in this
+				# HTTP path would gut the approver's cookie session and log them
+				# out) and no-ops when switch_to is None (self-owned resume).
+				with impersonate(switch_to):
+					res = send_message(
+						conversation=doc.conversation, message=msg, attachments=attachments)
 				resumed = bool(res.get("ok"))
 			except Exception:
-				# Restore BEFORE logging so the Error Log is attributed to the
-				# approver, not the impersonated conversation owner.
-				if frappe.session.user != original_user:
-					frappe.set_user(original_user)
+				# impersonate's finally already restored the approver, so the
+				# Error Log is attributed to them, not the conversation owner.
 				frappe.log_error(title="approval resume failed", message=frappe.get_traceback())
-			finally:
-				if frappe.session.user != original_user:
-					frappe.set_user(original_user)
 	return {"ok": True, "status": doc.status, "resumed": resumed}
