@@ -581,3 +581,55 @@ class TestListPendingConfirmations(FrappeTestCase):
 				list_pending_confirmations()
 		finally:
 			frappe.set_user(original)
+
+
+class TestCreateDocsGate(FrappeTestCase):
+	def test_create_docs_parks_one_card_and_dry_runs_batch(self):
+		patcher, captured = _spy_mint()
+		with patcher:
+			r = api._run_tool(
+				"create_docs",
+				{
+					"docs": [
+						{"doctype": "ToDo", "values": {"description": "jarvis-gate-a"}},
+						{"doctype": "ToDo", "values": {"description": "jarvis-gate-b"}},
+					]
+				},
+			)
+		self.assertTrue(r["ok"])
+		self.assertEqual(r["data"]["status"], "pending_confirmation")
+		self.assertEqual(r["data"]["tool"], "create_docs")
+		# The dry-run preview lists both creates; nothing was committed.
+		would = r["data"]["preview"]["would"]
+		self.assertEqual(len(would["created"]), 2)
+		self.assertFalse(frappe.db.exists("ToDo", {"description": "jarvis-gate-a"}))
+		# Exactly one token for the whole batch.
+		self.assertIsNotNone(pending_confirm.peek(captured["token"]))
+		self.assertNotIn(captured["token"], frappe.as_json(r))
+
+	def test_create_docs_is_gated_but_not_auto_applyable(self):
+		# Locked decision: masters are never created without the batch card, so
+		# create_docs never fast-paths under auto_apply / file_box.
+		self.assertIn("create_docs", api._GATED_WRITES)
+		self.assertNotIn("create_docs", api._AUTO_APPLYABLE)
+
+	def test_create_docs_bad_batch_bounces_at_park(self):
+		# A deterministic failure (bad link on the 2nd doc) returns an error to
+		# the model instead of parking a doomed card.
+		r = api._run_tool(
+			"create_docs",
+			{
+				"docs": [
+					{"doctype": "ToDo", "values": {"description": "jarvis-gate-ok"}},
+					{
+						"doctype": "ToDo",
+						"values": {
+							"description": "jarvis-gate-bad",
+							"assigned_by": "no-such-user@invalid.example",
+						},
+					},
+				]
+			},
+		)
+		self.assertFalse(r["ok"])
+		self.assertFalse(frappe.db.exists("ToDo", {"description": "jarvis-gate-ok"}))

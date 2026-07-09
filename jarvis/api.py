@@ -413,7 +413,7 @@ def _parse_args(args: dict | str | None) -> dict:
 # Mutating tools: audited on every call, and the only tools that accept
 # ``preview`` (a dry-run with every DB write rolled back).
 _WRITE_TOOLS = frozenset({
-	"create_doc", "update_doc", "submit_doc", "cancel_doc", "amend_doc",
+	"create_doc", "create_docs", "update_doc", "submit_doc", "cancel_doc", "amend_doc",
 	"delete_doc", "run_method",
 	"send_email", "add_comment", "update_comment", "share_doc", "unshare_doc",
 	"assign_to", "unassign_from", "add_tag", "remove_tag",
@@ -429,7 +429,7 @@ _PREVIEWABLE = frozenset({
 # The lighter mutators in _WRITE_TOOLS (comments/tags/share/assign/attach/
 # dashboard-create) are intentionally NOT gated - they never fire the card.
 _GATED_WRITES = frozenset({
-	"create_doc", "update_doc", "submit_doc", "cancel_doc",
+	"create_doc", "create_docs", "update_doc", "submit_doc", "cancel_doc",
 	"amend_doc", "delete_doc", "run_method", "send_email",
 	"create_custom_skill", "update_wiki",
 })
@@ -454,7 +454,12 @@ _AUTO_APPLYABLE = frozenset({"create_doc", "update_doc"})
 # integrity) and dry-running them fires on_submit/on_cancel hooks - extending the
 # block to them is a separate, larger change. run_method is never sandbox-run at
 # park at all (its target's inline non-DB side effects would fire unconfirmed).
-_DRY_RUN_ON_PARK = frozenset({"create_doc", "update_doc"})
+#
+# create_docs joins the build-from-args creates: its whole batch is dry-run in
+# the sandbox at park, so a bad link / missing mandatory in ANY item bounces to
+# the model instead of a doomed card. Deliberately NOT in _AUTO_APPLYABLE - the
+# batch card is the human checkpoint against duplicate masters.
+_DRY_RUN_ON_PARK = frozenset({"create_doc", "create_docs", "update_doc"})
 
 
 def _as_bool(value) -> bool:
