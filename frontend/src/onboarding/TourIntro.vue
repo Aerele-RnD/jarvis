@@ -75,9 +75,10 @@
 					<div class="mock-body">
 						<div class="m-side" v-html="sideHtml('Skills')"></div>
 						<div class="m-main">
-							<div class="m-row"><span class="pill">core</span><div class="t"></div><div class="meta"></div></div>
-							<div class="m-row"><span class="pill">sales</span><div class="t"></div><div class="meta"></div></div>
-							<div class="m-row"><span class="pill amber">custom</span><div class="t"></div><div class="meta"></div></div>
+							<div class="m-row"><span class="pill">core</span><div class="t">Customer ledger lookup</div><div class="meta"></div></div>
+							<div class="m-row"><span class="pill">sales</span><div class="t">Sales order follow-up</div><div class="meta"></div></div>
+							<div class="m-row"><span class="pill amber">custom</span><div class="t">Invoice data entry</div><div class="meta"></div></div>
+							<div class="m-row"><span class="pill amber">custom</span><div class="t">GST reconciliation</div><div class="meta"></div></div>
 							<div class="m-row m-row-dashed"><span class="m-row-cta">＋ New skill</span></div>
 						</div>
 					</div>
@@ -96,10 +97,10 @@
 					<div class="mock-body">
 						<div class="m-side" v-html="sideHtml('Macros')"></div>
 						<div class="m-main">
-							<div class="m-row"><span class="pill amber">running</span><div class="t"></div><div class="meta"></div></div>
-							<div class="m-row"><span class="pill">done</span><div class="t"></div><div class="meta"></div></div>
-							<div class="m-row"><span class="pill">done</span><div class="t"></div><div class="meta"></div></div>
-							<div class="m-row"><span class="pill">done</span><div class="t"></div><div class="meta"></div></div>
+							<div class="m-row"><span class="pill amber">running</span><div class="t">Month-end close</div><div class="meta"></div></div>
+							<div class="m-row"><span class="pill">done</span><div class="t">Daily AR reminders</div><div class="meta"></div></div>
+							<div class="m-row"><span class="pill">done</span><div class="t">Sync price list</div><div class="meta"></div></div>
+							<div class="m-row"><span class="pill">done</span><div class="t">Weekly sales digest</div><div class="meta"></div></div>
 						</div>
 					</div>
 				</div>
@@ -203,10 +204,9 @@ const NAV_ICONS = {
 	"Skills": '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
 	"Macros": '<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
 	"File Box": '<polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
-	"Approval Board": '<polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',
 	"Agents": '<rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/>',
 }
-const NAV_ORDER = ["Chat", "Skills", "Macros", "File Box", "Approval Board", "Agents"]
+const NAV_ORDER = ["Chat", "Skills", "Macros", "File Box", "Agents"]
 
 function sideHtml(active) {
 	return (
@@ -214,7 +214,8 @@ function sideHtml(active) {
 		`<div class="m-act">${FI('<path d="M12 5v14M5 12h14"/>')}New Chat</div>` +
 		`<div class="m-act">${FI('<circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>')}Search Chat</div>` +
 		NAV_ORDER.map((n) => `<div class="m-nav${n === active ? " on" : ""}">${FI(NAV_ICONS[n])}${n}</div>`).join("") +
-		'<div class="m-recent">Recent chats</div>'
+		'<div class="m-recent">Recent chats</div>' +
+		'<div class="m-recent-item">Overdue sales orders</div>'
 	)
 }
 </script>
@@ -319,6 +320,7 @@ button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .m-side :deep(.m-nav svg) { flex: none; color: var(--text-3); }
 .m-side :deep(.m-nav.on svg) { color: var(--text); }
 .m-side :deep(.m-recent) { font-size: 8px; color: var(--text-3); padding: 7px 7px 0; }
+.m-side :deep(.m-recent-item) { font-size: 9.5px; color: var(--text-2); padding: 4px 7px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* ---- welcome mock ---- */
 .m-welcome { text-align: center; padding-top: 10px; }
@@ -351,7 +353,7 @@ button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .m-row { display: flex; align-items: center; gap: 9px; padding: 8px 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); margin-bottom: 7px; }
 .m-row .pill { font-size: 9px; font-weight: 600; padding: 2px 7px; border-radius: 99px; background: var(--green-bg); color: var(--green); border: 1px solid var(--green-bd); flex: none; }
 .m-row .pill.amber { background: var(--amber-bg); color: var(--amber); border-color: var(--amber-bd); }
-.m-row .t { height: 7px; width: 40%; border-radius: 4px; background: var(--surface-3); }
+.m-row .t { flex: 1; min-width: 0; font-size: 10px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .m-row .fname { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 9.5px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .m-row .meta { margin-left: auto; height: 6px; width: 52px; border-radius: 4px; background: var(--surface-2); flex: none; }
 .m-row-dashed { border-style: dashed; justify-content: center; }
