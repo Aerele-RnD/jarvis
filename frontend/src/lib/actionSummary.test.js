@@ -1,7 +1,7 @@
 // frontend/src/lib/actionSummary.test.js
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { proposedFields, changedFields, lineItemSummary, summarize } from "./actionSummary.js"
+import { proposedFields, changedFields, lineItemSummary, summarize, batchFromPreview } from "./actionSummary.js"
 
 const createAction = {
   kind: "doc", verb: "create", doctype: "Sales Order", summary: "Sales Order - Acme, 2 items, total 1,100",
@@ -94,4 +94,24 @@ test("summarize(update): kind=update, mechanical diff, headline optional", () =>
   assert.equal(out.kind, "update")
   assert.equal(out.headline, "Closing SO-0001")
   assert.deepEqual(out.diff, [{ label: "Status", from: "Open", to: "Closed" }])
+})
+
+test("batchFromPreview: created records -> action lines, notes filtered", () => {
+  const out = batchFromPreview({
+    would: {
+      created: [{ doctype: "Item", name: "Widget" }, { doctype: "Customer", name: "Acme" }],
+      notes: ["Reuse existing Supplier 'Globex' for your 'Globe'", ""],
+    },
+  })
+  assert.deepEqual(out.actions, [
+    { doctype: "Item", name: "Widget" },
+    { doctype: "Customer", name: "Acme" },
+  ])
+  assert.deepEqual(out.notes, ["Reuse existing Supplier 'Globex' for your 'Globe'"])
+})
+
+test("batchFromPreview: non-batch or empty preview -> null", () => {
+  assert.equal(batchFromPreview({ would: "SomeDocName" }), null)
+  assert.equal(batchFromPreview({ described: true }), null)
+  assert.equal(batchFromPreview(null), null)
 })

@@ -34,3 +34,18 @@ export function summarize(model, action = {}) {
   }
   return { kind: "create", headline, rows: proposedFields(action), tables }
 }
+
+// A create_docs batch parks one card. Its dry-run preview carries the created
+// records ({doctype, name}) and the model's reuse notes. Turn that into the flat
+// action lines the pending card renders as bullets. Pure; returns null when the
+// preview is not a batch (a single-doc dry-run, or a described-intent card).
+export function batchFromPreview(preview) {
+  const would = preview && preview.would
+  if (!would || typeof would !== "object" || !Array.isArray(would.created)) return null
+  return {
+    actions: would.created.map((d) => ({ doctype: d.doctype, name: d.name })),
+    notes: Array.isArray(would.notes)
+      ? would.notes.filter((n) => String(n ?? "").trim() !== "")
+      : [],
+  }
+}
