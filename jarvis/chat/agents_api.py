@@ -16,6 +16,7 @@ Enable / schedule are pure DB writes (no container restart — O6); only Apply
 import frappe
 from frappe import _
 
+from jarvis._session import impersonate
 from jarvis.chat.agent_activity import log_activity
 from jarvis.chat.agent_catalog import build_agent_push_payload
 from jarvis.chat.filebox import _clamp_page, _lk
@@ -671,14 +672,13 @@ def run_agent_now(installation: str) -> dict:
 		frappe.throw(_("Cannot run this audit as the installation's owner (identity guard)."))
 
 	original_user = frappe.session.user
-	try:
+	# impersonate is session-safe (a bare frappe.set_user in this HTTP path
+	# would gut the caller's cookie session and log them out) and no-ops when
+	# the owner IS the caller (self-owned manual run).
+	with impersonate(doc.owner if doc.owner != original_user else None):
 		if doc.owner != original_user:
-			frappe.set_user(doc.owner)
 			doc = frappe.get_doc(INSTALLATION, installation)  # re-fetch under owner
 		result = _launch_audit(doc, trigger="manual")
-	finally:
-		if frappe.session.user != original_user:
-			frappe.set_user(original_user)
 	return {"ok": True, "data": result}
 
 
