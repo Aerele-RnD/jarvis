@@ -74,11 +74,20 @@ class OpenclawUnreachableError(JarvisError):
     classifiers (e.g. _is_stale_pairing) should branch on this
     attribute, not on a substring match of the message. ``code`` is
     None when the error didn't originate from an openclaw response
-    (e.g. network-level WS open failure)."""
+    (e.g. network-level WS open failure).
 
-    def __init__(self, message: str, *, code: str | None = None):
+    2026-07-09: also carries ``details`` - openclaw's ``error.details``
+    object. Connect AUTH failures arrive with the GENERIC error.code
+    "INVALID_REQUEST" and the machine-readable reason only in
+    ``details.authReason`` (e.g. "device_token_mismatch"), so ``code``
+    alone cannot distinguish an auth rejection from any other
+    malformed-request rejection."""
+
+    def __init__(self, message: str, *, code: str | None = None,
+                 details: dict | None = None):
         super().__init__(message)
         self.code = code
+        self.details = details
 
 
 class OpenclawReloadFailedError(JarvisError):

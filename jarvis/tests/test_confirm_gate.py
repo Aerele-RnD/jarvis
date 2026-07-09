@@ -325,6 +325,14 @@ class TestConfirmSelfHostOwnerBinding(FrappeTestCase):
 			acting["user"] = frappe.session.user
 			return {"name": "TODO-FAKE"}
 
+		# Snapshot the browser cookie session's sid + data BEFORE confirm. A bare
+		# frappe.set_user(exec_user) would gut both and end-of-request
+		# Session.update would poison this sid's Redis cache -> the operator gets
+		# logged out. impersonate must leave sid + data untouched.
+		before_sid = frappe.session.sid
+		before_data = frappe.session.data
+		frappe.session.data.csrf_token = "SENTINEL-SH-020"
+
 		with patch("jarvis.selfhost.is_self_hosted", return_value=True), \
 				patch("jarvis.api._selfhost_tool_user", return_value=tool_user), \
 				patch("jarvis.api.dispatch", side_effect=_spy_dispatch):
@@ -334,6 +342,12 @@ class TestConfirmSelfHostOwnerBinding(FrappeTestCase):
 		self.assertEqual(acting["user"], tool_user)
 		# The confirming session user is restored after dispatch.
 		self.assertEqual(frappe.session.user, operator)
+		# The browser cookie session survives: sid + data (incl. the sentinel)
+		# are the ORIGINAL objects, so end-of-request Session.update re-persists
+		# the operator's real session instead of logging them out.
+		self.assertEqual(frappe.session.sid, before_sid)
+		self.assertIs(frappe.session.data, before_data)
+		self.assertEqual(frappe.session.data.csrf_token, "SENTINEL-SH-020")
 		# Single use.
 		again = confirm_tool(token)
 		self.assertFalse(again["ok"])
@@ -368,9 +382,19 @@ class TestConfirmSelfHostOwnerBinding(FrappeTestCase):
 				conversation="", owner=session_user, tool="create_doc",
 				args={"doctype": "ToDo", "values": {"description": desc_ok}},
 				run_id="")
+			# Managed mode: owner == exec == session user, so confirm_tool's
+			# impersonate no-ops - but the cookie session must STILL survive
+			# intact (a bare unconditional frappe.set_user would gut it even for
+			# the same user and log the operator out).
+			before_sid = frappe.session.sid
+			before_data = frappe.session.data
+			frappe.session.data.csrf_token = "SENTINEL-MANAGED-022"
 			res = confirm_tool(ok_token)
 			self.assertTrue(res["ok"])
 			self.assertTrue(frappe.db.exists("ToDo", {"description": desc_ok}))
+			self.assertEqual(frappe.session.sid, before_sid)
+			self.assertIs(frappe.session.data, before_data)
+			self.assertEqual(frappe.session.data.csrf_token, "SENTINEL-MANAGED-022")
 
 			# Token minted under a DIFFERENT owner -> rejected, not executed.
 			bad_token = pending_confirm.mint(

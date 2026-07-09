@@ -653,10 +653,13 @@ class TestEnqueuedSyncRedisLock(_SettingsSingletonTestCase):
         # the happy path and yielded into the sync.
         self.assertEqual(len(sync_called), 1)
 
-    def test_lock_contention_writes_skipped_status_and_no_admin_call(self):
+    def test_lock_contention_schedules_retry_and_no_admin_call(self):
         """If a prior worker is still holding the lock past blocking timeout,
-        the late arrival logs + writes a 'failed: skipped' status. It must
-        NOT call admin (the in-flight one is in charge)."""
+        the late arrival must NOT call admin (the in-flight one is in
+        charge) and must NOT terminal-fail: a sibling sync may now hold the
+        lock legitimately for minutes (600s envelope), and terminally
+        dropping this sync would silently lose a credential change. First
+        loss -> pending + one retry enqueued under a per-level job_id."""
         from jarvis.jarvis.doctype.jarvis_settings.jarvis_settings import (
             _enqueued_sync_via_admin,
         )
@@ -668,10 +671,40 @@ class TestEnqueuedSyncRedisLock(_SettingsSingletonTestCase):
         def _held(*_a, **_kw):
             yield False
 
+        captured = []
         with patch("jarvis._redis_lock.redis_lock", side_effect=_held), \
+             patch("frappe.enqueue", side_effect=lambda *a, **kw: captured.append(kw)), \
              patch("jarvis.admin_client.post_rotate_llm_secret") as admin_mock:
             _enqueued_sync_via_admin("reload")
         admin_mock.assert_not_called()
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertIn("pending: waiting for a concurrent sync",
+                      settings.last_sync_status or "")
+        self.assertEqual(len(captured), 1)
+        self.assertTrue(
+            (captured[0].get("job_id") or "").startswith("jarvis_settings_sync:reload:retry:3:"),
+            f"unexpected retry job_id: {captured[0].get('job_id')!r}",
+        )
+        self.assertEqual(captured[0].get("retry_left"), 3)
+
+    def test_lock_contention_retries_exhausted_is_terminal(self):
+        """Only the LAST retry's loss writes the terminal 'failed: skipped'."""
+        from jarvis.jarvis.doctype.jarvis_settings.jarvis_settings import (
+            _enqueued_sync_via_admin,
+        )
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _held(*_a, **_kw):
+            yield False
+
+        captured = []
+        with patch("jarvis._redis_lock.redis_lock", side_effect=_held), \
+             patch("frappe.enqueue", side_effect=lambda *a, **kw: captured.append(kw)), \
+             patch("jarvis.admin_client.post_rotate_llm_secret") as admin_mock:
+            _enqueued_sync_via_admin("reload", retry_left=0)
+        admin_mock.assert_not_called()
+        self.assertFalse(captured, "no further retries after exhaustion")
         settings = frappe.get_single("Jarvis Settings")
         self.assertIn("failed", settings.last_sync_status or "")
         self.assertIn("skipped", settings.last_sync_status or "")
