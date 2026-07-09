@@ -3,6 +3,8 @@
 		<div class="kg-head">
 			<h5>Knowledge Graph</h5>
 			<span v-if="state.loaded && pageCount" class="text-muted">{{ pageCount }} pages · {{ linkCount }} links</span>
+			<Button class="kg-desk" variant="outline" size="sm" icon="external-link"
+				:tooltip="'Open ERPNext Desk'" @click="openDesk" />
 		</div>
 
 		<div v-if="!state.loaded" class="kg-skel"></div>
@@ -45,6 +47,7 @@
 // four analysis tabs. Productive loop: accept a suggested connection → add_wiki_link
 // (durable, out-of-body) → refetch → the edge appears.
 import { reactive, computed, watch, onMounted } from "vue"
+import { Button } from "frappe-ui"
 import {
 	Graph3D, FilterBar, DetailPanel, AnalysisTabs, ExclusionRules,
 	runAnalysis, computeActions, overlayFilter, egoGraph, searchGraph,
@@ -123,6 +126,8 @@ async function load() {
 	}
 }
 
+// Same "Open ERPNext Desk" affordance the other tabs inherit from LayoutHeader.
+function openDesk() { window.open("/app", "_blank") }
 function onNode(node) { state.selected = node }
 function pickId(id) {
 	const n = (state.data.nodes || []).find((x) => x.id === id)
@@ -150,7 +155,8 @@ onMounted(load)
 <style scoped>
 .kg { padding: 4px 2px; }
 .kg-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; }
-.kg-layout { display: grid; grid-template-columns: 1fr 340px; gap: 16px; }
+.kg-desk { margin-left: auto; align-self: center; }
+.kg-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; }
 .kg-side { display: flex; flex-direction: column; gap: 14px; overflow-y: auto; }
 .kg-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 6px; }
 .kg-excl { margin-bottom: 8px; }
@@ -163,5 +169,8 @@ onMounted(load)
 .kg-skel { height: 60vh; border-radius: 8px; background: var(--control-bg, #f3f4f6); animation: kg-pulse 1.4s ease-in-out infinite; }
 @keyframes kg-pulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 0.9; } }
 .kg-toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #222; color: #fff; padding: 8px 16px; border-radius: 8px; font-size: 13px; z-index: 50; }
-@media (max-width: 1100px) { .kg-layout { grid-template-columns: 1fr; } }
+/* Only stack (panel below the graph) on genuinely narrow screens. The old
+   1100px breakpoint hid the analysis panel off-screen on ordinary
+   retina-scaled laptop widths — it read as "the panel is missing". */
+@media (max-width: 760px) { .kg-layout { grid-template-columns: 1fr; } }
 </style>
