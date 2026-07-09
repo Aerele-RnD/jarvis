@@ -90,10 +90,16 @@ def _summarize(doc, caller_values: dict) -> dict:
         elif _norm(val) != _norm(baseline.get(name)):
             resolved[name] = val
             server_filled.append(name)
+    # Same permlevel guard as the header loop above: a tenant can customize
+    # any of these totals to permlevel>0, and its server-computed value must
+    # not leak to a caller who can't read that permlevel.
+    allowed_permlevels = (0, *has_permlevel_read)
     totals = {
         f: doc.get(f)
         for f in _TOTAL_FIELDS
-        if doc.meta.has_field(f) and doc.get(f) is not None
+        if doc.meta.has_field(f)
+        and doc.get(f) is not None
+        and doc.meta.get_field(f).permlevel in allowed_permlevels
     }
     return {
         "valid": True,

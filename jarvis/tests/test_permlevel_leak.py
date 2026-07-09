@@ -45,11 +45,13 @@ from jarvis.tools.update_doc import update_doc
 DT_NAME = "JV Permlevel Test"
 FIELD_PUBLIC = "public_field"
 FIELD_RESTRICTED = "restricted_field"
+FIELD_TOTAL = "grand_total"
 ROLE_BASE = "JPL Permlevel Base Role"
 ROLE_PRIV = "JPL Permlevel Priv Role"
 USER_RESTRICTED = "jpl-permlevel-restricted@example.com"
 USER_PRIVILEGED = "jpl-permlevel-privileged@example.com"
 SECRET_VALUE = "top-secret-value"
+SECRET_TOTAL = 918273.0
 
 
 def _ensure_role(name: str) -> None:
@@ -99,6 +101,13 @@ def _ensure_doctype() -> None:
 				"fieldtype": "Data",
 				"permlevel": 1,
 				"default": SECRET_VALUE,
+			},
+			{
+				"label": "Grand Total",
+				"fieldname": FIELD_TOTAL,
+				"fieldtype": "Currency",
+				"permlevel": 1,
+				"default": str(SECRET_TOTAL),
 			},
 		],
 		permissions=[
@@ -311,3 +320,25 @@ class TestPreviewDocPermlevelLeak(PermlevelLeakTestCase):
 			)
 		self.assertTrue(result["valid"])
 		self.assertEqual(result["resolved"][FIELD_RESTRICTED], "guessed-value")
+
+
+class TestPreviewDocTotalsPermlevelLeak(PermlevelLeakTestCase):
+	"""F10 completion: `_summarize()`'s `totals` dict comprehension (the
+	`_TOTAL_FIELDS` net_total/total_taxes_and_charges/grand_total/
+	rounded_total) did an unguarded `doc.get(f)` with no permlevel filter,
+	unlike `resolved`/`server_filled`. A tenant who customizes one of those
+	fields to permlevel>0 (fixture: `grand_total`, default SECRET_TOTAL) had
+	its real server-computed value leak to a restricted caller via `totals`
+	even though the same field is correctly withheld from `resolved`."""
+
+	def test_restricted_user_does_not_see_restricted_total(self):
+		with _as(USER_RESTRICTED):
+			result = preview_doc(DT_NAME, {FIELD_PUBLIC: "visible"})
+		self.assertTrue(result["valid"])
+		self.assertNotIn(FIELD_TOTAL, result["totals"])
+
+	def test_privileged_user_sees_restricted_total(self):
+		with _as(USER_PRIVILEGED):
+			result = preview_doc(DT_NAME, {FIELD_PUBLIC: "visible"})
+		self.assertTrue(result["valid"])
+		self.assertEqual(float(result["totals"][FIELD_TOTAL]), SECRET_TOTAL)
