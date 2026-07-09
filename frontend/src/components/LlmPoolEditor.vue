@@ -913,7 +913,7 @@ defineExpose({ save })
 }
 .jv-pick :deep(.jvc-field:hover) { border-color: var(--border-2); }
 .jv-pick :deep(.jvc-field:focus-within),
-.jv-pick :deep(.jvc-field.jvc-open) { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-bg); }
+.jv-pick :deep(.jvc-field.jvc-open) { border-color: var(--border-2); }
 /* The two connect steps on a connected vertical spine (preview .csteps): no
    shade boxes, a 1.5px line joins the numbered dots; step 2 reads pending
    (neutral dot) until the sign-in URL exists. */
@@ -1034,7 +1034,7 @@ defineExpose({ save })
 }
 .jv-ak-grid :deep(.jvc-field:hover) { border-color: var(--border-2); }
 .jv-ak-grid :deep(.jvc-field:focus-within),
-.jv-ak-grid :deep(.jvc-field.jvc-open) { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-bg); }
+.jv-ak-grid :deep(.jvc-field.jvc-open) { border-color: var(--border-2); }
 .jv-ak-grid :deep(.jvc-input::placeholder) { color: var(--text-3); }
 /* Preview stacks .method at 820px - the same breakpoint as the wizard's other grids. */
 @media (max-width: 820px) { .jv-ct-cards, .jv-ak-grid { grid-template-columns: 1fr; } }

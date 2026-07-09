@@ -1176,7 +1176,7 @@ onMounted(async () => {
 }
 .jv-ob-form :deep(.jvc-field:hover) { border-color: var(--border-2); }
 .jv-ob-form :deep(.jvc-field:focus-within),
-.jv-ob-form :deep(.jvc-field.jvc-open) { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-bg); }
+.jv-ob-form :deep(.jvc-field.jvc-open) { border-color: var(--border-2); }
 .jv-ob-form :deep(.jvc-input::placeholder) { color: var(--text-3); }
 
 /* ---- Review & Pay (preview .rev) ---- */
