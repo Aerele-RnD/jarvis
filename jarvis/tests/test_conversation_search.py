@@ -18,6 +18,7 @@ import frappe
 from frappe.utils import now_datetime
 
 from jarvis.chat.api import search_conversations
+from jarvis.permissions import ensure_jarvis_user_role
 
 USER_A = "cs-user-a@example.com"
 USER_B = "cs-user-b@example.com"
@@ -38,6 +39,14 @@ def _ensure_user(email: str) -> str:
 	roles = set(frappe.get_roles(email))
 	if "System Manager" in roles:
 		frappe.get_doc("User", email).remove_roles("System Manager")
+		frappe.db.commit()
+	# A real chat user holds the "Jarvis User" role (granted at onboarding /
+	# migration); it gates the chat APIs. Keep this fixture a *plain* Jarvis user
+	# (no System Manager) so the owner-scoping assertions still exercise the
+	# non-admin path, but with app access so search_conversations isn't 403'd.
+	ensure_jarvis_user_role()  # the test site may not have run after_migrate
+	if "Jarvis User" not in roles:
+		frappe.get_doc("User", email).add_roles("Jarvis User")
 		frappe.db.commit()
 	return email
 
