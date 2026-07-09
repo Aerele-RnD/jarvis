@@ -10,13 +10,14 @@ error and would otherwise commit the partial inserts). Order matters — put a
 dependency before the doc that links it.
 """
 
+from collections import deque
+
 import frappe
 
 from jarvis.exceptions import InvalidArgumentError
 from jarvis.tools.create_doc import _set_title_from_title_field, _validate_create_args
 
 _MAX_BATCH = 20
-_SAVEPOINT = "jarvis_create_docs"
 
 
 def create_docs(docs: list, notes: list | None = None) -> dict:
@@ -42,7 +43,19 @@ def create_docs(docs: list, notes: list | None = None) -> dict:
 		_validate_create_args(item.get("doctype"), values if isinstance(values, dict) else {})
 
 	created = []
-	frappe.db.savepoint(_SAVEPOINT)
+	sp = "jcd_" + frappe.generate_hash(length=10)
+	# frappe.db.rollback(save_point=...) only issues ROLLBACK TO SAVEPOINT — it
+	# does not clear the before/after-commit or after-rollback callback queues.
+	# So on failure, callbacks queued by the docs that got inserted-then-rolled-
+	# back would otherwise survive and fire on the request's real commit. Snapshot
+	# here and restore only on failure; on success the queues are left alone so
+	# the (real, kept) docs' callbacks fire normally.
+	saved_queues = {
+		name: tuple(getattr(frappe.db, name)._functions)
+		for name in ("before_commit", "after_commit", "after_rollback")
+		if hasattr(frappe.db, name)
+	}
+	frappe.db.savepoint(sp)
 	try:
 		for item in docs:
 			doc = frappe.new_doc(item["doctype"])
@@ -54,6 +67,8 @@ def create_docs(docs: list, notes: list | None = None) -> dict:
 	except Exception:
 		# The caller (_dispatch_and_wrap / dispatch_confirmed) catches and would
 		# commit at request end, so undo the partial batch here.
-		frappe.db.rollback(save_point=_SAVEPOINT)
+		frappe.db.rollback(save_point=sp)
+		for name, functions in saved_queues.items():
+			getattr(frappe.db, name)._functions = deque(functions)
 		raise
 	return {"created": created, "notes": list(notes) if isinstance(notes, list) else []}

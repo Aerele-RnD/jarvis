@@ -57,3 +57,30 @@ class TestCreateDocs(FrappeTestCase):
 	def test_notes_default_empty(self):
 		out = create_docs([{"doctype": "ToDo", "values": {"description": "jarvis-batch-n"}}])
 		self.assertEqual(out["notes"], [])
+
+	def test_failed_batch_leaves_no_queued_side_effects(self):
+		# frappe.db.rollback(save_point=...) rolls back the rows but does NOT
+		# clear the commit/rollback callback queues. Without the fix, the first
+		# (successfully-inserted-then-rolled-back) doc's queued after_commit
+		# callbacks survive and would fire on the request's real commit.
+		before = len(frappe.db.after_commit._functions)
+		with self.assertRaises(Exception):
+			create_docs(
+				[
+					{"doctype": "ToDo", "values": {"description": "jarvis-batch-cbq-ok"}},
+					{
+						"doctype": "ToDo",
+						"values": {
+							"description": "jarvis-batch-cbq-bad",
+							"assigned_by": "no-such-user@invalid.example",
+						},
+					},
+				]
+			)
+		self.assertEqual(len(frappe.db.after_commit._functions), before)
+		self.assertFalse(frappe.db.exists("ToDo", {"description": "jarvis-batch-cbq-ok"}))
+
+	def test_batch_cap_rejected(self):
+		docs = [{"doctype": "ToDo", "values": {"description": f"jarvis-batch-cap-{i}"}} for i in range(21)]
+		with self.assertRaises(InvalidArgumentError):
+			create_docs(docs)
