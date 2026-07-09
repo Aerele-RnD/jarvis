@@ -8,8 +8,10 @@ whitelisted actions. Runs under the calling user's identity
 ``@frappe.whitelist()`` gate and permission checks apply.
 
 Consequential by default: it can mutate. The persona confirms before
-calling it, ``api._run_tool`` audits it, and it supports ``preview``
-(dry-run with DB writes rolled back).
+calling it and ``api._run_tool`` audits it. ``preview`` is NOT honored for
+this tool: it is one of ``api._GATED_WRITES``, so ``preview=True`` is always
+rejected with an InvalidArgumentError rather than dry-run - the call always
+parks for human confirmation instead.
 """
 import fnmatch
 import inspect

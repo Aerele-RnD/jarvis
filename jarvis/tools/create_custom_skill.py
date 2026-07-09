@@ -2,10 +2,12 @@
 
 The agent captures a procedure the user just walked it through and saves it
 as a skill owned by the session user. Defaults to scope=Personal (private,
-never pushed to the shared container catalog); scope=Org rows join the
-shared catalog only after an admin clicks Apply. This tool NEVER triggers a
-push/apply itself — Apply restarts the container and stays a deliberate
-human action.
+never pushed to the shared container catalog). scope=Org rows are visible to
+other users immediately via jarvis__find_skills/jarvis__get_skill (subject
+to allowed_roles/shared_with — see user_can_use_skill); they only join the
+/slug-invocable CONTAINER catalog after an admin clicks Apply on the Skills
+page. This tool NEVER triggers a push/apply itself — Apply restarts the
+container and stays a deliberate human action.
 
 Confirmation-gated in jarvis/api.py (_GATED_WRITES): the model path parks
 the call behind a human confirm card.
@@ -63,9 +65,10 @@ def create_custom_skill(
 
     if scope == "Org":
         note = (
-            "Saved. Org-scope skills reach the assistant's skill catalog only "
-            "after an admin clicks Apply on the Skills page; until then recall "
-            "it with jarvis__find_skills / jarvis__get_skill."
+            "Saved. Org-scope skills are discoverable and usable by other users "
+            "right away via jarvis__find_skills / jarvis__get_skill (subject to "
+            "allowed_roles/shared_with); they only join the /slug-invocable "
+            "container catalog after an admin clicks Apply on the Skills page."
         )
     else:
         note = (

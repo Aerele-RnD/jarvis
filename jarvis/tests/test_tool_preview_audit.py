@@ -7,7 +7,7 @@ from unittest.mock import patch
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
-from jarvis import api
+from jarvis import api, audit
 
 
 # These exercise the model-facing preview BRANCH in _run_tool. Every real
@@ -139,3 +139,70 @@ class TestWriteAudit(FrappeTestCase):
         self.assertTrue(r["ok"])
         self.assertTrue(r["data"]["preview"])
         self.assertFalse(frappe.db.exists("ToDo", {"description": sentinel}))
+
+
+class TestAuditRedaction(FrappeTestCase):
+    """F6: _scrub only redacted keys EXACTLY equal to a fixed literal set, so
+    compound secret field names (llm_api_key, agent_token, smtp_password...)
+    were logged in plaintext. Fixed via substring match + per-doctype
+    Password-fieldtype lookup (frappe.get_meta(doctype).get_password_fields())."""
+
+    def test_compound_secret_keys_are_redacted(self):
+        # Substring match: none of these equal a literal in the old fixed set,
+        # but each contains "key"/"token"/"password".
+        scrubbed = audit._scrub({
+            "llm_api_key": "sk-super-secret",
+            "agent_token": "tok-abc123",
+            "smtp_password": "hunter2",
+            "ordinary_field": "keep me",
+            "description": "not a secret",
+        })
+        self.assertEqual(scrubbed["llm_api_key"], "[REDACTED]")
+        self.assertEqual(scrubbed["agent_token"], "[REDACTED]")
+        self.assertEqual(scrubbed["smtp_password"], "[REDACTED]")
+        self.assertEqual(scrubbed["ordinary_field"], "keep me")
+        self.assertEqual(scrubbed["description"], "not a secret")
+
+    def test_nested_and_list_secrets_are_redacted(self):
+        scrubbed = audit._scrub({
+            "changes": {"jarvis_admin_api_secret": "x", "title": "y"},
+            "users": [{"webhook_secret": "z", "name": "ok"}],
+        })
+        self.assertEqual(scrubbed["changes"]["jarvis_admin_api_secret"], "[REDACTED]")
+        self.assertEqual(scrubbed["changes"]["title"], "y")
+        self.assertEqual(scrubbed["users"][0]["webhook_secret"], "[REDACTED]")
+        self.assertEqual(scrubbed["users"][0]["name"], "ok")
+
+    def test_record_redacts_update_doc_changes_for_real_doctype(self):
+        # End-to-end through record(): args shaped like a real update_doc call
+        # against Jarvis Settings, whose Password-fieldtype fields include
+        # llm_api_key/agent_token/smtp_password-style compound names.
+        captured = {}
+
+        class _FakeLogger:
+            def info(self, msg):
+                captured["msg"] = msg
+
+            def error(self, msg):
+                captured["err"] = msg
+
+        with patch("frappe.logger", return_value=_FakeLogger()):
+            audit.record(
+                tool="update_doc",
+                args={
+                    "doctype": "Jarvis Settings",
+                    "name": "Jarvis Settings",
+                    "changes": {
+                        "llm_api_key": "sk-live-should-not-leak",
+                        "agent_token": "tok-should-not-leak",
+                        "default_model": "gpt-5",
+                    },
+                },
+                ok=True,
+            )
+        self.assertIn("msg", captured)
+        logged = captured["msg"]
+        self.assertNotIn("sk-live-should-not-leak", logged)
+        self.assertNotIn("tok-should-not-leak", logged)
+        self.assertIn("[REDACTED]", logged)
+        self.assertIn("gpt-5", logged)  # ordinary field passes through
