@@ -237,6 +237,28 @@ def clear_credentials() -> None:
 	frappe.db.commit()
 
 
+def update_device_token(new_token: str, *, device_id: str) -> bool:
+	"""Persist a gateway-REISSUED device token for the current pairing.
+
+	openclaw's hello-ok can carry a rotated ``auth.deviceToken`` (the
+	gateway replaces the stored token whenever the existing entry no
+	longer lines up with the connect's scopes/issuer). The rotation is
+	already durable on the gateway side by the time the client sees
+	hello-ok, so a bench that keeps signing with the pair-time token
+	fails every FOLLOWING connect with "device token mismatch".
+
+	Guarded on ``device_id``: if another worker re-paired while this
+	connect was in flight, Jarvis Settings now holds a DIFFERENT
+	device's credentials, and the rotated token of the old device must
+	not overwrite them. Returns True when persisted."""
+	settings = frappe.get_single("Jarvis Settings")
+	if (settings.chat_device_id or "").strip() != device_id:
+		return False
+	settings.db_set("chat_device_token", new_token)
+	frappe.db.commit()
+	return True
+
+
 def _normalize_metadata(value: str) -> str:
 	"""Mirrors openclaw's normalizeDeviceMetadataForAuth: trim + ASCII lowercase
 	(only [A-Z] → [a-z]; Unicode left alone, matching the deterministic

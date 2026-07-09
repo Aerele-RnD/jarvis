@@ -41,7 +41,7 @@ _logger = logging.getLogger(__name__)
 
 from jarvis.chat.device import (
 	ChatDeviceCredentials, build_payload_v3, clear_credentials,
-	ensure_paired, sign_payload,
+	ensure_paired, sign_payload, update_device_token,
 )
 from jarvis.chat.events import parse_event
 
@@ -143,18 +143,45 @@ _STALE_PAIRING_CODES = frozenset({
 	"device-id-mismatch",
 })
 
+# openclaw's ACTUAL wire shape for device-token auth failures (verified
+# 2026-07-09 against the ghcr.io/openclaw/openclaw image from 2026-06-16
+# AND current :latest, plus a live reproduction against a running
+# gateway): connect is rejected with the GENERIC ``error.code``
+# "INVALID_REQUEST" and the machine-readable reason lives in
+# ``error.details.authReason``. The gateway maps EVERY explicit-
+# deviceToken auth failure - device not paired (container replaced /
+# state reset), token mismatch (gateway rotated the stored token),
+# token revoked - to the single coarse reason "device_token_mismatch"
+# ("unauthorized: device token mismatch (rotate/reissue device token)").
+# The hyphenated reasons in _STALE_PAIRING_CODES are openclaw's INTERNAL
+# verifyDeviceToken results; they never reach the wire as error.code, so
+# the code-only classifier alone never fired and the self-heal below was
+# dead code - a replaced tenant container permanently broke chat
+# (2026-07-08 post-deploy regression). _STALE_PAIRING_CODES is kept as a
+# belt-and-braces layer in case a future openclaw promotes the internal
+# reasons to wire codes.
+_STALE_PAIRING_AUTH_REASONS = frozenset({
+	"device_token_mismatch",
+})
+
 
 def _is_stale_pairing(err: Exception) -> bool:
-	"""Return True iff ``err`` is an OpenclawUnreachableError whose
-	openclaw error.code is in the stale-pairing set.
+	"""Return True iff ``err`` is an OpenclawUnreachableError that openclaw
+	classified as a stale device pairing - either via error.code (internal
+	reason set) or via error.details.authReason (the real wire shape for
+	connect auth failures, see _STALE_PAIRING_AUTH_REASONS above).
 
-	Strictly typed: an error WITHOUT a ``.code`` attribute (network-level
-	failure, programmer bug) never triggers the repair path. The previous
-	substring check would have caught these falsely if their message
-	happened to contain one of the marker strings.
+	Strictly typed: an error WITHOUT a ``.code``/``.details`` attribute
+	(network-level failure, programmer bug) never triggers the repair
+	path, and neither does a marker string embedded in the message text.
 	"""
 	code = getattr(err, "code", None)
-	return code in _STALE_PAIRING_CODES
+	if code in _STALE_PAIRING_CODES:
+		return True
+	details = getattr(err, "details", None)
+	if not isinstance(details, dict):
+		return False
+	return details.get("authReason") in _STALE_PAIRING_AUTH_REASONS
 
 
 def _chat_final_text(payload: dict) -> str | None:
@@ -243,7 +270,7 @@ class OpenclawSession:
 		t_ws_done = time.monotonic()
 
 		try:
-			cls._handshake(ws, creds)
+			reissued_token = cls._handshake(ws, creds)
 		except OpenclawUnreachableError as e:
 			try: ws.close()
 			except Exception: pass
@@ -255,6 +282,8 @@ class OpenclawSession:
 			try: ws.close()
 			except Exception: pass
 			raise
+		if reissued_token:
+			creds = cls._adopt_reissued_token(creds, reissued_token)
 		t_handshake_done = time.monotonic()
 		_logger.info(
 			"OpenclawSession.connect: pair_ms=%d ws_open_ms=%d handshake_ms=%d total_ms=%d gateway=%s",
@@ -297,6 +326,38 @@ class OpenclawSession:
 						f"starting up; please try again in a moment ({e})"
 					) from e
 				time.sleep(CONNECT_OPEN_RETRY_BACKOFF_SECONDS)
+
+	@classmethod
+	def _adopt_reissued_token(
+		cls, creds: ChatDeviceCredentials, reissued_token: str,
+	) -> ChatDeviceCredentials:
+		"""Adopt a device token the gateway rotated at connect (hello-ok
+		``auth.deviceToken``). The rotation is already persisted gateway-
+		side, so we persist our half too; failing that, we still use the
+		fresh token in-memory for this session and let the stale-pairing
+		self-heal recover the NEXT connect (a persistence hiccup must not
+		fail the user's current turn)."""
+		import dataclasses
+		try:
+			persisted = update_device_token(
+				reissued_token, device_id=creds.device_id,
+			)
+			if not persisted:
+				# Another worker re-paired while we were connecting;
+				# Settings holds a newer device's creds. Ours still work
+				# for THIS session - don't clobber theirs.
+				_logger.warning(
+					"gateway reissued device token for %s but Settings "
+					"moved to a different pairing; kept in-memory only",
+					creds.device_id,
+				)
+		except Exception:
+			_logger.warning(
+				"failed to persist reissued device token for %s; kept "
+				"in-memory only (self-heal will re-pair on next connect)",
+				creds.device_id, exc_info=True,
+			)
+		return dataclasses.replace(creds, device_token=reissued_token)
 
 	@classmethod
 	def _repair_and_reconnect(cls, gateway_url: str, *, stale_device_id: str) -> None:
@@ -652,8 +713,16 @@ class OpenclawSession:
 	# -- internals --------------------------------------------------------
 
 	@classmethod
-	def _handshake(cls, ws: websocket.WebSocket, creds: ChatDeviceCredentials) -> None:
-		"""Receive connect.challenge → sign v3 payload → send connect → expect hello-ok."""
+	def _handshake(cls, ws: websocket.WebSocket, creds: ChatDeviceCredentials) -> str | None:
+		"""Receive connect.challenge → sign v3 payload → send connect → expect hello-ok.
+
+		Returns the REISSUED device token from hello-ok's ``auth.deviceToken``
+		when the gateway rotated it (None otherwise). openclaw's gateway
+		replaces the stored device token at connect whenever the existing
+		entry no longer lines up with the requested scopes/issuer; the new
+		token is already durable on the gateway side when hello-ok arrives,
+		so the caller MUST adopt it or every following connect fails with
+		"device token mismatch"."""
 		deadline = time.monotonic() + CONNECT_TIMEOUT_SECONDS
 
 		# 1. Wait for the challenge event.
@@ -707,11 +776,18 @@ class OpenclawSession:
 			if _is_response_frame(frame, connect_id):
 				if not frame.get("ok"):
 					err = frame.get("error") or {}
+					details = err.get("details")
 					raise OpenclawUnreachableError(
 						f"connect rejected: {err.get('code', '?')}: {err.get('message', '')}",
 						code=err.get("code"),
+						details=details if isinstance(details, dict) else None,
 					)
-				return
+				auth = (frame.get("payload") or {}).get("auth") or {}
+				reissued = auth.get("deviceToken")
+				if isinstance(reissued, str) and reissued \
+						and reissued != creds.device_token:
+					return reissued
+				return None
 		raise OpenclawUnreachableError("no connect response before timeout")
 
 	def _send(self, method: str, params: dict) -> str:

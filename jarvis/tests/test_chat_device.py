@@ -268,6 +268,45 @@ class TestRotateChatDevice(_SettingsSnapshotMixin, FrappeTestCase):
 		self.assertEqual(s2.get_password("chat_device_token"), "tok-old")
 
 
+class TestUpdateDeviceToken(_SettingsSnapshotMixin, FrappeTestCase):
+	"""update_device_token persists a gateway-REISSUED device token, but
+	only for the pairing Settings still holds - a concurrent re-pair by
+	another worker must never be clobbered by the old device's rotation."""
+
+	def setUp(self):
+		_clear_settings()
+
+	def test_persists_for_current_pairing(self):
+		s = frappe.get_single("Jarvis Settings")
+		s.db_set("chat_device_id", "dev-1")
+		s.db_set("chat_device_token", "tok-old")
+		frappe.db.commit()
+
+		self.assertTrue(
+			chat_device.update_device_token("tok-rotated", device_id="dev-1"),
+		)
+		s = frappe.get_single("Jarvis Settings")
+		self.assertEqual(
+			s.get_password("chat_device_token", raise_exception=False),
+			"tok-rotated",
+		)
+
+	def test_refuses_when_pairing_moved_on(self):
+		s = frappe.get_single("Jarvis Settings")
+		s.db_set("chat_device_id", "dev-2-fresh")
+		s.db_set("chat_device_token", "tok-fresh")
+		frappe.db.commit()
+
+		self.assertFalse(
+			chat_device.update_device_token("tok-rotated", device_id="dev-1-old"),
+		)
+		s = frappe.get_single("Jarvis Settings")
+		self.assertEqual(
+			s.get_password("chat_device_token", raise_exception=False),
+			"tok-fresh",
+		)
+
+
 class TestSigning(FrappeTestCase):
 	def test_build_payload_v3_format(self):
 		out = chat_device.build_payload_v3(
