@@ -104,6 +104,24 @@ const sidebarCollapsed = computed({
 	},
 })
 
+// Sidebar width when expanded: persisted per device, drag-resizable via the
+// handle in Sidebar.vue. Clamped to [MIN, MAX]; the collapsed rail (48px) is
+// fixed and unaffected. Reads clamp too, so a stale/hand-edited value can't
+// wedge the rail off-screen.
+const SIDEBAR_MIN_W = 180
+const SIDEBAR_MAX_W = 460
+const _sidebarWidth = useStorage("jarvis-sidebar-width", 220)
+const clampSidebarWidth = (n) =>
+	Math.min(SIDEBAR_MAX_W, Math.max(SIDEBAR_MIN_W, Math.round(Number(n) || 220)))
+const sidebarWidth = computed({
+	get() {
+		return clampSidebarWidth(_sidebarWidth.value)
+	},
+	set(v) {
+		_sidebarWidth.value = clampSidebarWidth(v)
+	},
+})
+
 // ---- actions (all errors → toast; never throw to callers) -------------------
 let _convsInflight = null
 async function loadConversations() {
@@ -230,6 +248,9 @@ const store = reactive({
 	paletteOpen,
 	sidebarPref,
 	sidebarCollapsed,
+	sidebarWidth,
+	SIDEBAR_MIN_W,
+	SIDEBAR_MAX_W,
 	// actions
 	loadConversations,
 	refreshApprovalsCount,

@@ -15,7 +15,7 @@
 			<template v-else>
 				<!-- Chrome-less routes (onboarding) drop the sidebar entirely — a
 				     not-yet-onboarded customer has no app to navigate. -->
-				<div v-if="!route.meta.chromeless" class="h-full border-r bg-surface-gray-1">
+				<div v-if="!route.meta.chromeless" class="h-full shrink-0 border-r bg-surface-gray-1">
 					<Sidebar />
 				</div>
 				<div class="flex flex-1 flex-col h-full overflow-auto bg-surface-white">
