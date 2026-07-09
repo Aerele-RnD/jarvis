@@ -77,6 +77,51 @@ class TestWriteAudit(FrappeTestCase):
         self.assertFalse(r["ok"])
         self.assertFalse(rec.called)
 
+    def test_run_scrutiny_write_is_audited(self):
+        # F24: run_scrutiny's optional persistence path (installation arg)
+        # inserts real Jarvis Agent Run/Finding rows but was absent from
+        # _WRITE_TOOLS, so the write left no audit trail. dispatch is
+        # mocked so this asserts the wiring, not run_scrutiny's own logic.
+        with patch("jarvis.api.dispatch", return_value={"ok": True}) as disp, \
+                patch("jarvis.api.audit.record") as rec:
+            r = api._run_tool("run_scrutiny", {"company": "_Test Company"})
+        self.assertTrue(disp.called)
+        self.assertTrue(r["ok"])
+        self.assertTrue(rec.called)
+        self.assertEqual(rec.call_args.kwargs["tool"], "run_scrutiny")
+        self.assertTrue(rec.call_args.kwargs["ok"])
+
+    def test_download_pdf_write_is_audited(self):
+        # F25: download_pdf inserts a new File doc (and attaches it to the
+        # source record) but was absent from _WRITE_TOOLS.
+        with patch("jarvis.api.dispatch", return_value={"file_url": "/private/files/x.pdf"}), \
+                patch("jarvis.api.audit.record") as rec:
+            r = api._run_tool("download_pdf", {"doctype": "ToDo", "name": "x"})
+        self.assertTrue(r["ok"])
+        self.assertTrue(rec.called)
+        self.assertEqual(rec.call_args.kwargs["tool"], "download_pdf")
+        self.assertTrue(rec.call_args.kwargs["ok"])
+
+    def test_export_excel_write_is_audited(self):
+        # F25: export_excel inserts a new File doc but was absent from
+        # _WRITE_TOOLS.
+        with patch("jarvis.api.dispatch", return_value={"file_url": "/private/files/x.xlsx"}), \
+                patch("jarvis.api.audit.record") as rec:
+            r = api._run_tool("export_excel", {"doctype": "ToDo"})
+        self.assertTrue(r["ok"])
+        self.assertTrue(rec.called)
+        self.assertEqual(rec.call_args.kwargs["tool"], "export_excel")
+        self.assertTrue(rec.call_args.kwargs["ok"])
+
+    def test_run_scrutiny_download_pdf_export_excel_are_write_but_not_gated(self):
+        # These need auditing (real DB writes), not a confirmation card - not
+        # user-facing mutations the model should have to get a human click
+        # for. NOT in _GATED_WRITES/_AUTO_APPLYABLE.
+        for tool in ("run_scrutiny", "download_pdf", "export_excel"):
+            self.assertIn(tool, api._WRITE_TOOLS)
+            self.assertNotIn(tool, api._GATED_WRITES)
+            self.assertNotIn(tool, api._AUTO_APPLYABLE)
+
     def test_preview_sandboxes_a_tool_that_commits(self):
         # The core fix: even when the dispatched tool calls frappe.db.commit()
         # internally, preview must not persist anything.

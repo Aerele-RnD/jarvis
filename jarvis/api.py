@@ -420,18 +420,32 @@ _WRITE_TOOLS = frozenset({
 	"follow_document", "unfollow_document", "attach_to_doc",
 	"create_dashboard_chart", "create_dashboard",
 	"create_custom_skill", "update_wiki",
+	# Audited but NOT gated (see _GATED_WRITES comment below): run_scrutiny's
+	# optional persistence path inserts Jarvis Agent Run/Finding rows, and
+	# download_pdf/export_excel both insert a File doc (download_pdf also
+	# attaches it) - real DB writes that need an audit trail, not a
+	# confirmation card (audit-findings.md F24/F25).
+	"run_scrutiny", "download_pdf", "export_excel",
 })
 _PREVIEWABLE = frozenset({
 	"create_doc", "create_docs", "update_doc", "submit_doc", "cancel_doc",
 	"amend_doc", "delete_doc", "run_method",
 })
 # Writes that MUST get a human confirmation before executing (issue #186).
-# The lighter mutators in _WRITE_TOOLS (comments/tags/share/assign/attach/
-# dashboard-create) are intentionally NOT gated - they never fire the card.
+# The lighter mutators in _WRITE_TOOLS (comments/tags/attach/dashboard-create)
+# are intentionally NOT gated - they never fire the card. share_doc/assign_to
+# WERE in that "lighter" bucket but their own descriptors promise "ALWAYS
+# confirm" (share_doc: re-share/everyone=true grants; assign_to: emails a
+# third party) - audit-findings.md F17/F20/F23 - so they now gate too. Neither
+# is in _PREVIEWABLE/_DRY_RUN_ON_PARK: no side-effect-free sandbox preview is
+# meaningful for a share grant or a ToDo+notification email, so both fall
+# through to the described-intent park path (like send_email) rather than a
+# sandboxed dry-run.
 _GATED_WRITES = frozenset({
 	"create_doc", "create_docs", "update_doc", "submit_doc", "cancel_doc",
 	"amend_doc", "delete_doc", "run_method", "send_email",
 	"create_custom_skill", "update_wiki",
+	"share_doc", "assign_to",
 })
 # Irreversible/consequential subset - gated even when a user has auto-apply
 # on (Task 4 uses this; define it here so the sets live together).
