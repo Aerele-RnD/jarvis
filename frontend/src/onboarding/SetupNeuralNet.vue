@@ -215,14 +215,27 @@ function start() {
 	}
 }
 
-function onResize() {
-	readColors()
-	layout()
+let ro = null
+let started = false
+
+// This component lives inside a v-show container, so it MOUNTS hidden
+// (display:none -> 0x0) and getBoundingClientRect reads 0 in onMounted; a window
+// resize never fires on the v-show reveal. A ResizeObserver DOES fire when the
+// element goes 0 -> visible, so we (re)layout then. First real size starts the
+// animation (plays the intro); later resizes just re-lay-out. Reduced-motion has
+// no loop, so it redraws its single static frame on any real-size change.
+function measure() {
+	const el = rootEl.value
+	if (!el) return
+	const r = el.getBoundingClientRect()
+	if (r.width < 2 || r.height < 2) return
+	if (!started || reduced) { started = true; start() }
+	else { readColors(); layout() }
 }
 
 function onReducedMotionChange(e) {
 	reduced = e.matches
-	start()
+	if (started) start()
 }
 
 onMounted(() => {
@@ -232,13 +245,16 @@ onMounted(() => {
 	mq = window.matchMedia("(prefers-reduced-motion: reduce)")
 	reduced = mq.matches
 	mq.addEventListener("change", onReducedMotionChange)
-	window.addEventListener("resize", onResize)
-	start()
+	ro = new ResizeObserver(measure)
+	ro.observe(rootEl.value)
+	window.addEventListener("resize", measure)
+	measure()
 })
 
 onBeforeUnmount(() => {
 	cancelAnimationFrame(raf)
-	window.removeEventListener("resize", onResize)
+	if (ro) { ro.disconnect(); ro = null }
+	window.removeEventListener("resize", measure)
 	if (mq) mq.removeEventListener("change", onReducedMotionChange)
 })
 
