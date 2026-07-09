@@ -1,7 +1,7 @@
 <template>
 	<div class="wg-tabs">
 		<!-- Priority review cards -->
-		<div class="wg-prio">
+		<div class="wg-prio" v-if="showPriority">
 			<div class="wg-card"><span class="wg-card-n">{{ hubName }}</span><span class="wg-card-l">top hub</span></div>
 			<div class="wg-card"><span class="wg-card-n">{{ brokerName }}</span><span class="wg-card-l">key bridge</span></div>
 			<div class="wg-card" :class="{ warn: staleN }"><span class="wg-card-n">{{ staleN }}</span><span class="wg-card-l">to fix</span></div>
@@ -42,6 +42,9 @@ export default {
 		actions: { type: Object, default: () => ({ stale: [], orphans: [], busFactor: [], duplicates: [], suggest: [] }) },
 		history: { type: Array, default: () => [] },
 		canAct: { type: Boolean, default: false },
+		// Priority-card strip (top hub / bridge / to-fix / orphans). On for the
+		// operator graph; the tenant graph turns it off for a cleaner surface.
+		showPriority: { type: Boolean, default: true },
 	},
 	emits: ["pick", "add-link"],
 	data() {

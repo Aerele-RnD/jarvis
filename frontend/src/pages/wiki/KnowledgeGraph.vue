@@ -31,9 +31,9 @@
 			</div>
 			<div class="kg-side">
 				<DetailPanel :node="state.selected" :metrics="state.analysis.metrics"
-					:communities="state.analysis.communities" @focus="(id) => (state.focus = id)" />
+					:communities="state.analysis.communities" :show-actions="false" @focus="(id) => (state.focus = id)" />
 				<AnalysisTabs :analysis="state.analysis" :nodes="baseData.nodes" :actions="state.actions"
-					:history="state.history" :can-act="true" @pick="pickId" @add-link="onAddLink" />
+					:history="state.history" :can-act="true" :show-priority="false" @pick="pickId" @add-link="onAddLink" />
 			</div>
 		</div>
 
