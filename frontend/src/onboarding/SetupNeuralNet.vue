@@ -251,10 +251,12 @@ watch(() => props.dark, () => {
 </script>
 
 <style scoped>
+/* Fill the wrapper via absolute inset (NOT height:100%): the parent
+   .jv-ob-setup-net uses min-height, and % heights don't resolve against
+   min-height, so height:100% collapsed the canvas to 0px and nothing drew. */
 .jv-setup-net {
-	position: relative;
-	width: 100%;
-	height: 100%;
+	position: absolute;
+	inset: 0;
 }
 .jv-setup-net canvas {
 	position: absolute;
