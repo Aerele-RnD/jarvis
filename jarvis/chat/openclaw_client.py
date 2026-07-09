@@ -480,6 +480,22 @@ class OpenclawSession:
 		res = self._request("chat.send", params, timeout_s=timeout_s)
 		return res.get("payload") or {}
 
+	def chat_abort(
+		self, session_key: str, run_id: str | None = None,
+		*, timeout_s: float = CONNECT_TIMEOUT_SECONDS,
+	) -> dict:
+		"""Abort in-flight run(s) on a session (openclaw chat.abort). With no
+		run_id, aborts ALL active runs on the session (safe here: one active run
+		per conversation). The gateway authorizes this from any connection
+		presenting the shared device id + operator scope, so the web process can
+		abort a run the RQ worker started - the two coordinate via the gateway's
+		broadcast (the worker's blocked relay receives the aborted event and
+		terminates)."""
+		params: dict = {"sessionKey": session_key}
+		if run_id:
+			params["runId"] = run_id
+		return self._request("chat.abort", params, timeout_s=timeout_s)
+
 	def subscribe_session(
 		self, session_key: str, *, timeout_s: float = CONNECT_TIMEOUT_SECONDS,
 	) -> dict:

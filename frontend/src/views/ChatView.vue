@@ -97,6 +97,10 @@
 						<!-- user -->
 						<div v-if="m.role === 'user'" class="jv-umsg" style="display:flex;flex-direction:column;align-items:flex-end;">
 							<div v-if="m.content" style="max-width:78%;min-width:0;background:var(--surface-2);border:1px solid var(--border);border-radius:14px 14px 4px 14px;padding:10px 14px;font-size:14px;line-height:1.5;color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere;">{{ m.content }}</div>
+							<div v-if="m.failed" style="display:flex;align-items:center;gap:8px;margin-top:4px;font-size:11.5px;color:var(--red);">
+								<span>Not sent</span>
+								<button @click="resendFailed(m)" style="background:none;border:none;color:var(--blue);font:inherit;cursor:pointer;padding:0;text-decoration:underline;">Retry</button>
+							</div>
 							<!-- attached images → same clickable thumbnail + preview as generated ones -->
 							<template v-for="cv in (m.canvas || [])" :key="cv.name">
 								<button v-if="cv.type === 'image' && cv.file_url" class="jv-img-artifact" @click="openArtifact(m, cv)" :title="'Open ' + cv.title" style="margin-top:8px;cursor:zoom-in;">
@@ -156,9 +160,13 @@
 								<div v-if="m.error" role="alert" style="border:1px solid var(--red-bd);border-radius:11px;background:var(--red-bg);padding:13px 15px;display:flex;align-items:flex-start;gap:10px;">
 									<svg width="17" height="17" style="margin-top:1px;flex:none;" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><path d="M12 9v4M12 17h.01" /></svg>
 									<div style="flex:1;">
-										<div style="font-size:13.5px;font-weight:600;color:var(--red);">Something went wrong</div>
-										<div style="font-size:12.5px;color:var(--text-2);margin-top:2px;line-height:1.5;">{{ m.error }}</div>
-										<button class="jv-retry" @click="retry(m.name)" style="margin-top:10px;display:flex;align-items:center;gap:6px;padding:6px 12px;background:var(--red);color:#fff;border:none;border-radius:7px;font-family:inherit;font-size:12px;font-weight:550;cursor:pointer;">Retry</button>
+										<div style="font-size:13.5px;font-weight:600;color:var(--red);">{{ errorInfo(m).headline }}</div>
+										<div v-if="errorInfo(m).noChange" style="font-size:12px;color:var(--text-2);margin-top:3px;">No changes were made to your data.</div>
+										<details style="margin-top:4px;">
+											<summary style="font-size:11.5px;color:var(--text-3);cursor:pointer;">Show details</summary>
+											<div style="font-size:12px;color:var(--text-2);margin-top:4px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;">{{ m.error }}</div>
+										</details>
+										<button class="jv-retry" @click="retry(m.name)" :disabled="retrying" :style="{ marginTop:'10px', display:'inline-flex', alignItems:'center', gap:'6px', padding:'6px 12px', background:'var(--red)', color:'#fff', border:'none', borderRadius:'7px', fontFamily:'inherit', fontSize:'12px', fontWeight:'550', cursor: retrying ? 'default' : 'pointer', opacity: retrying ? 0.6 : 1 }">{{ retrying ? "Retrying…" : "Retry" }}</button>
 									</div>
 								</div>
 								<div v-else class="jv-md" style="font-size:14px;line-height:1.6;color:var(--text);" v-html="render(m.content)"></div>
@@ -373,6 +381,21 @@
 									<span class="jv-tdot" style="animation-delay:.36s;"></span>
 								</span>
 								<span style="font-size:12px;color:var(--text-3);">{{ liveStatus }}<span v-if="liveElapsedLabel" aria-hidden="true" style="opacity:.75;"> · {{ liveElapsedLabel }}</span></span>
+							</div>
+						</div>
+					</div>
+
+					<!-- recovery: a parked turn finishing in the background (connection
+					     hiccup / compaction). The composer stays UNLOCKED and the answer
+					     lands later via the recovery path — fixes the silent limbo. -->
+					<div v-if="recovering" style="display:flex;gap:12px;">
+						<div class="jv-logo" style="width:28px;height:28px;flex:none;border-radius:7px;background:var(--blue);display:flex;align-items:center;justify-content:center;margin-top:2px;">
+							<svg width="15" height="15" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
+						</div>
+						<div style="flex:1;min-width:0;padding-top:3px;">
+							<div role="status" aria-live="polite" style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text-3);">
+								<svg class="jv-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="2.4" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9" /></svg>
+								<span>{{ recoveringLabel }}</span>
 							</div>
 						</div>
 					</div>
@@ -1044,6 +1067,9 @@ const currentRunId = ref(null)
 const stoppedRunId = ref(null)
 const stoppedMsgIds = ref(new Set()) // assistant rows the user stopped — ignore later (incl. "recovered") events for them
 const currentMsgId = ref(null) // in-flight assistant row id (from run:start) — lets Stop pin the reply even before the first token
+const errorMeta = ref({}) // { [message_id]: { code, changed_data } } from a live run:error (not persisted; a refresh falls back to classifying the error string)
+const recovering = ref(null) // { message_id, reason } while a turn is parked for background recovery — the composer stays UNLOCKED so the user isn't trapped
+const retrying = ref(false) // guards the error-card Retry against a double-enqueue while one is in flight
 const srMessage = ref("") // visually-hidden aria-live text (turn completion / failure) for screen readers
 const activeTools = ref([]) // [{ id, name, status }] for the in-flight run
 // Live activity shows ONE tool at a time: the most-recently-started tool that's
@@ -1117,11 +1143,42 @@ function toolPhrase(tool) {
 	return tpl + "…"
 }
 const liveStatus = computed(() => {
+	if (statusPhase.value === "waking") return "Waking up your assistant…"
 	if (currentTool.value) return toolPhrase(currentTool.value)
 	if (statusPhase.value === "analyzing") return "Analyzing the results…"
 	if (waiting.value || sending.value || statusPhase.value === "model") return "Working on it…"
 	return thinkingWord.value
 })
+// Recovery banner copy: compaction (context overflow, retrying) vs a connection
+// hiccup. Both mean "still working, in the background" — not an error.
+const recoveringLabel = computed(() =>
+	recovering.value && recovering.value.reason === "compacting"
+		? "That was a big one — reorganizing the conversation and retrying…"
+		: "Reconnecting — your answer will appear here when it's ready.",
+)
+// Failure taxonomy → a plain-language headline. The raw string still shows
+// behind "Show details". `code` comes from the live run:error event; a refresh
+// (which only has the persisted string) classifies it here.
+const ERROR_HEADLINES = {
+	unreachable: "I couldn't reach the assistant",
+	timeout: "That took too long",
+	provider: "The model is busy right now",
+	"recovery-expired": "This took too long, so I stopped waiting",
+	internal: "Something went wrong",
+}
+function classifyErrorCode(raw) {
+	const low = (raw || "").toLowerCase()
+	if (low.includes("ws open failed") || low.includes("unreachable") || low.includes("connection timed out")) return "unreachable"
+	if (low.includes("recovery window")) return "recovery-expired"
+	if (low.includes("timed out") || low.includes("timeout") || low.includes("deadline")) return "timeout"
+	if (["quota", "rate limit", "cooldown", "overloaded", "insufficient", "credit", "billing"].some((k) => low.includes(k))) return "provider"
+	return "internal"
+}
+function errorInfo(m) {
+	const meta = errorMeta.value[m.name] || {}
+	const code = meta.code || classifyErrorCode(m.error)
+	return { headline: ERROR_HEADLINES[code] || "Something went wrong", noChange: meta.changed_data === false }
+}
 // Live elapsed timer shown next to the status line so a long turn reads as
 // "still working" (time ticking) rather than a frozen spinner. Hidden for the
 // first few seconds so quick turns don't flash a "0s".
@@ -2659,11 +2716,25 @@ async function loadConversation(id) {
 	// to every tab) instead of a frozen blank reply. Freshness-guarded so a stale
 	// streaming=1 (crashed worker) can't lock the composer forever; live deltas +
 	// run:end clear it normally.
+	recovering.value = null
 	const _streaming = [...messages.value].reverse().find((m) => m.role === "assistant" && m.streaming)
 	let _resumed = false
 	if (_streaming) {
 		const fresh = _streaming.modified && new Date() - new Date(_streaming.modified.replace(" ", "T")) < 5 * 60 * 1000
-		if (fresh) {
+		if (fresh && _streaming.recovering) {
+			// Parked for background recovery: show the recovering banner but fully
+			// UNLOCK the composer (clear the whole in-flight state we may have
+			// resumed into) so a socket-drop-during-recovery resync doesn't rebuild
+			// the locked-spinner limbo. The answer lands via the recovery path.
+			recovering.value = { message_id: _streaming.name, reason: "interrupted" }
+			sending.value = false
+			waiting.value = false
+			statusPhase.value = null
+			activeTools.value = []
+			currentRunId.value = null
+			store.streamingConvId = null
+			_resumed = true
+		} else if (fresh) {
 			sending.value = true
 			waiting.value = !((_streaming.content || "").trim())
 			store.streamingConvId = id
@@ -2918,17 +2989,41 @@ function onDocClick(e) {
 	if (!e.target.closest(".jv-composer")) mention.value = { ...mention.value, open: false }
 }
 async function retry(messageId) {
+	if (retrying.value) return
+	retrying.value = true
 	sending.value = true
 	waiting.value = true
 	runStartMs.value = 0
 	nowMs.value = 0
 	currentMsgId.value = null
 	try {
-		await api.retryMessage(messageId)
+		const r = await api.retryMessage(messageId)
+		if (r && r.ok === false) {
+			// e.g. the single-flight guard ("a reply is already in progress").
+			sending.value = false
+			waiting.value = false
+			notify(r.reason || "Couldn't retry that.", { type: "error" })
+		}
 	} catch (e) {
 		sending.value = false
 		waiting.value = false
+		notifyActionError("Couldn't retry that", e)
+	} finally {
+		retrying.value = false
 	}
+}
+
+function resendFailed(m) {
+	// Re-send a message whose POST failed. Guard FIRST so we never drop the
+	// bubble when we can't actually resend: bail if a turn or dictation is
+	// active, or if there's no plain text (e.g. an attachment-only message,
+	// whose file can't be re-attached from the bubble). Then swap the failed
+	// bubble for a fresh optimistic one via send().
+	if (sending.value || micState.value === "recording" || micState.value === "transcribing") return
+	const txt = (m.content || "").replace(/\n*📎[^\n]*$/, "").trim()
+	if (!txt) return
+	messages.value = messages.value.filter((x) => x.name !== m.name)
+	send(txt)
 }
 
 async function send(textArg) {
@@ -2973,11 +3068,24 @@ async function send(textArg) {
 	const optCanvas = imgAtts.map((a, i) => ({ name: `tmpimg-${Date.now()}-${i}`, type: "image", file_url: a.file_url, title: a.file_name || "image" }))
 	// creation_browser: local send time so the hover timestamp shows before
 	// the server copy (with its site-tz creation) reconciles this tmp row
-	messages.value = [...messages.value, { name: `tmp-${Date.now()}`, role: "user", content: optimistic, creation_browser: Date.now(), canvas: optCanvas.length ? optCanvas : undefined }]
+	const tmpName = `tmp-${Date.now()}`
+	messages.value = [...messages.value, { name: tmpName, role: "user", content: optimistic, creation_browser: Date.now(), canvas: optCanvas.length ? optCanvas : undefined }]
 	await nextTick()
 	scrollBottom()
 	try {
 		const r = await api.sendMessage(currentId.value || "", text, undefined, attachments)
+		if (r && r.ok === false) {
+			// The server rejected the send (e.g. the single-flight guard:
+			// "a reply is already in progress"). Nothing was persisted, so drop
+			// the optimistic bubble and surface the reason — otherwise the spinner
+			// would hang forever (no run:start / run:error is coming).
+			messages.value = messages.value.filter((x) => x.name !== tmpName)
+			if (fromMain && !input.value) input.value = text
+			sending.value = false
+			waiting.value = false
+			notify(r.reason || "Couldn't send your message.", { type: "error" })
+			return
+		}
 		if (isNewConv && r?.conversation_id) {
 			// Adopt the server-created conversation so realtime events route to
 			// this thread, then refresh the sidebar without blocking anything.
@@ -2985,13 +3093,12 @@ async function send(textArg) {
 			store.loadConversations()
 		}
 	} catch (e) {
-		// send_message failed (e.g. a 500 on a migration gap). Stop the spinner and
-		// surface why — the fix this PR is really about is that the failure used to
-		// be silent. We deliberately do NOT roll the optimistic bubble back or refill
-		// the composer: the send is fire-and-forget, so a mid-send conversation
-		// switch would strand one thread's draft in another, and a post-ack timeout
-		// (server accepted, response dropped) would wrongly discard a live message.
-		// Leaving the bubble also keeps the attempted text visible for recovery.
+		// send_message threw (e.g. a 500). Stop the spinner and mark the bubble
+		// as not-sent with an inline Retry, instead of leaving it looking
+		// delivered. We keep the bubble (a post-ack timeout may have actually
+		// delivered it; a mid-send conversation switch shouldn't strand a draft).
+		const b = messages.value.find((x) => x.name === tmpName)
+		if (b) b.failed = true
 		sending.value = false
 		waiting.value = false
 		notifyActionError("Couldn't send your message", e)
@@ -3085,15 +3192,28 @@ function onEvent(p) {
 	if (p.message_id && stoppedMsgIds.value.has(p.message_id)) return // …incl. a later "recovered" run for a stopped reply
 	switch (p.kind) {
 		case "run:recovering":
-			// openclaw hit a context overflow and is auto-compacting + retrying;
-			// the worker parked the turn for snapshot recovery. Keep the
-			// indicator alive - the answer lands via recovery shortly.
-			waiting.value = true
-			statusPhase.value = "model"
+			// A managed turn was parked for background recovery (a connection
+			// hiccup, or openclaw auto-compacting on context overflow). Don't trap
+			// the user behind a locked spinner: unlock the composer and show a
+			// distinct "still working" banner. The answer lands later via the
+			// recovery path (assistant:delta + run:end, run_id "recovered").
+			recovering.value = { message_id: p.message_id, reason: p.reason || "interrupted" }
+			waiting.value = false
+			sending.value = false
+			statusPhase.value = null
+			activeTools.value = []
+			currentRunId.value = null
+			store.streamingConvId = null
+			break
+		case "run:status":
+			// Lightweight progress signal (e.g. waking a cold container) between
+			// run:start and the first token — keeps the connect window honest.
+			if (p.status === "waking") statusPhase.value = "waking"
 			break
 		case "run:start":
 			currentRunId.value = p.run_id
 			currentMsgId.value = p.message_id
+			recovering.value = null
 			runStartMs.value = Date.now()
 			nowMs.value = Date.now()
 			activeTools.value = []
@@ -3104,6 +3224,7 @@ function onEvent(p) {
 		case "assistant:delta": {
 			waiting.value = false
 			statusPhase.value = null
+			recovering.value = null
 			// Upsert: the message may not be loaded yet when the first delta
 			// arrives — add it so streaming text shows immediately (the bug fix).
 			let m = messages.value.find((x) => x.name === p.message_id)
@@ -3163,6 +3284,7 @@ function onEvent(p) {
 			store.streamingConvId = null
 			// (browser notification moved to the app-scoped global notifier —
 			// AppShell attaches it, so it fires on every route, not just here)
+			recovering.value = null
 			announceSR("Jarvis replied.")
 			store.loadConversations()
 			loadConversation(currentId.value)
@@ -3196,6 +3318,10 @@ function onEvent(p) {
 			break
 		}
 		case "run:error":
+			if (p.message_id) {
+				errorMeta.value = { ...errorMeta.value, [p.message_id]: { code: p.code || "", changed_data: p.changed_data } }
+			}
+			recovering.value = null
 			waiting.value = false
 			sending.value = false
 			statusPhase.value = null
@@ -3209,23 +3335,27 @@ function onEvent(p) {
 }
 
 function stopRun() {
-	// No backend cancel endpoint yet, so this stops the UI: ignore further
-	// events for this run, drop the spinner, and mark the reply interrupted.
-	// (The server-side turn still finishes; reopening the chat shows the full
-	// reply.)
+	// Actually abort the run (openclaw chat.abort via stop_run) - best-effort:
+	// if the abort can't be delivered, the turn finishes server-side and the UI
+	// stop still stands. We also mute this run's events + pin the reply so a
+	// later recovery can't overwrite the stopped state.
+	const cid = currentId.value
+	const rid = currentRunId.value
 	if (currentRunId.value) stoppedRunId.value = currentRunId.value
 	if (currentMsgId.value) stoppedMsgIds.value.add(currentMsgId.value)
 	const m = [...messages.value].reverse().find((x) => x.role === "assistant" && x.streaming)
 	if (m) {
 		m.streaming = false
 		if (m.name) stoppedMsgIds.value.add(m.name)
-		if (!m.content) m.content = "_Stopped. Jarvis may still finish this in the background - reopen the chat to see the full reply._"
+		if (!m.content) m.content = "_Stopped._"
 	}
 	waiting.value = false
 	sending.value = false
 	activeTools.value = []
 	store.streamingConvId = null
-	notify("Stopped here - Jarvis may still be finishing in the background.")
+	recovering.value = null
+	if (cid) api.stopRun(cid, rid).catch(() => {})
+	notify("Stopped.")
 }
 
 // ---- voice dictation (composer mic) ----
