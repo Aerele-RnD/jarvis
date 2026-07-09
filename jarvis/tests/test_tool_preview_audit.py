@@ -206,3 +206,54 @@ class TestAuditRedaction(FrappeTestCase):
         self.assertNotIn("tok-should-not-leak", logged)
         self.assertIn("[REDACTED]", logged)
         self.assertIn("gpt-5", logged)  # ordinary field passes through
+
+    def test_password_fields_includes_child_table_password_fields(self):
+        # F6 completion: _password_fields previously called the nonexistent
+        # frappe.get_meta(doctype).get_password_fields(), which raised
+        # AttributeError, was swallowed by a bare except, and returned an
+        # empty set on every call - the whole meta-lookup redaction layer was
+        # dead. Real Password fields whose names don't contain a
+        # _SECRET_KEYS substring (subscription_accounts on the child doctype
+        # Jarvis LLM Pool Model, wired via the models Table field on Jarvis
+        # Settings) must be discovered.
+        fields = audit._password_fields("Jarvis Settings")
+        self.assertTrue(fields)  # proves the meta layer isn't dead
+        self.assertIn("subscription_accounts", fields)
+
+    def test_record_redacts_child_table_password_field_not_caught_by_substring(self):
+        # End-to-end through record(): subscription_accounts is a Password
+        # field on the Jarvis LLM Pool Model child doctype (reached via the
+        # models Table field on Jarvis Settings) and contains none of
+        # password/pwd/secret/token/key, so this only passes if the meta
+        # layer (not the substring layer) is doing real work.
+        captured = {}
+
+        class _FakeLogger:
+            def info(self, msg):
+                captured["msg"] = msg
+
+            def error(self, msg):
+                captured["err"] = msg
+
+        with patch("frappe.logger", return_value=_FakeLogger()):
+            audit.record(
+                tool="update_doc",
+                args={
+                    "doctype": "Jarvis Settings",
+                    "name": "Jarvis Settings",
+                    "changes": {
+                        "models": [
+                            {
+                                "provider": "openai",
+                                "subscription_accounts": "SECRET-OAUTH-BLOB",
+                            }
+                        ],
+                    },
+                },
+                ok=True,
+            )
+        self.assertIn("msg", captured)
+        logged = captured["msg"]
+        self.assertNotIn("SECRET-OAUTH-BLOB", logged)
+        self.assertIn("[REDACTED]", logged)
+        self.assertIn("openai", logged)  # ordinary field passes through

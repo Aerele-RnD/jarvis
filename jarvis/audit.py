@@ -70,17 +70,34 @@ def _ref(args, result):
 
 
 def _password_fields(doctype) -> frozenset:
-    """Password-fieldtype field names for ``doctype``, lowercased. Best-effort
-    (an unknown/bad doctype yields an empty set, never raises) - a defense-in-
-    depth layer alongside the substring match, so a Password field whose name
-    doesn't contain any of the generic ``_SECRET_KEYS`` substrings still
-    redacts, and it can never drift from the real schema."""
+    """Password-fieldtype field names for ``doctype``, lowercased, UNIONed with
+    the Password-fieldtype field names of every child table doctype (one level
+    deep) - a defense-in-depth layer alongside the substring match, so a
+    Password field whose name doesn't contain any of the generic
+    ``_SECRET_KEYS`` substrings still redacts (e.g. ``subscription_accounts``
+    on the ``Jarvis LLM Pool Model`` child table, reached via the ``models``
+    Table field on ``Jarvis Settings``), and it can never drift from the real
+    schema. Best-effort: an unknown/bad doctype yields an empty set, never
+    raises, but the lookup itself must not silently swallow a real bug - only
+    the per-doctype meta fetch is guarded, not the whole function."""
     if not doctype:
         return frozenset()
     try:
-        return frozenset(f.lower() for f in frappe.get_meta(doctype).get_password_fields())
+        meta = frappe.get_meta(doctype)
     except Exception:
         return frozenset()
+    names = {df.fieldname.lower() for df in meta.fields if df.fieldtype == "Password"}
+    for df in meta.fields:
+        if df.fieldtype != "Table" or not df.options:
+            continue
+        try:
+            child_meta = frappe.get_meta(df.options)
+        except Exception:
+            continue
+        names.update(
+            cf.fieldname.lower() for cf in child_meta.fields if cf.fieldtype == "Password"
+        )
+    return frozenset(names)
 
 
 def _is_secret_key(key: str, extra_keys: frozenset) -> bool:
