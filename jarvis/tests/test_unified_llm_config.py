@@ -2279,6 +2279,22 @@ class TestOnboardingAuditFixes(_RT3SettingsTestCase):
         self.assertTrue(settings.llm_pool_synced_at,
                         "pre-marker pool tenants must be grandfathered unconditionally")
 
+    def test_backfill_patch_skips_never_synced_pools(self):
+        """A pre-marker pool tenant whose sync NEVER completed (last_sync_at
+        empty) has a demonstrably never-applied pool - stamping would
+        permanently disarm the llm_pool_provisioning gate for a tenant whose
+        chat has never worked."""
+        from jarvis.patches.v1_10_backfill_llm_pool_synced_at import execute
+        self._set_pool_gate_state(
+            synced_at=None, status="failed: admin unreachable: since creation")
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("last_sync_at", None, update_modified=False)
+        frappe.db.commit()
+        execute()
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertFalse(settings.llm_pool_synced_at,
+                         "never-synced pools must not be grandfathered")
+
     def test_backfill_patch_skips_non_pool_tenants(self):
         from jarvis.patches.v1_10_backfill_llm_pool_synced_at import execute
         settings = frappe.get_single("Jarvis Settings")
@@ -2332,7 +2348,12 @@ class TestOnboardingAuditFixes(_RT3SettingsTestCase):
         self.assertTrue(status.startswith("pending: waiting for a concurrent sync"),
                         f"first lock loss must stay pending-with-retry; got {status!r}")
         self.assertEqual(len(captured), 1, "exactly one retry must be enqueued")
-        self.assertEqual(captured[0].get("job_id"), "jarvis_settings_sync:pool:retry:0")
+        # Per-level prefix + per-chain random suffix (two overlapping chains
+        # at the same level must not dedup-collide and drop one).
+        self.assertTrue(
+            (captured[0].get("job_id") or "").startswith("jarvis_settings_sync:pool:retry:0:"),
+            f"unexpected retry job_id: {captured[0].get('job_id')!r}",
+        )
         self.assertEqual(captured[0].get("retry_left"), 0)
 
         captured.clear()

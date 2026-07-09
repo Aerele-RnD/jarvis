@@ -698,21 +698,25 @@ async function afterSaveRecheckReady({ followSync = false } = {}) {
 	state.finishNote = ""
 	state.finishing = true
 	if (followSync) {
-		let inFlight = false
+		// save_llm_pool writes "pending:" synchronously before its response,
+		// and onConnected only fires after a successful save - so whatever
+		// this probe reads is THIS save's sync: still pending (follow it to
+		// terminal) or already terminal (a fast failure, e.g. an immediate
+		// auth error - which must surface its actionable status, not fall
+		// through to a generic "still finishing" note that hides the
+		// diagnostic the status field already carries).
+		let terminal = null
 		try {
 			const s0 = await getLlmSyncStatus()
-			inFlight = !!(s0 && s0.pending)
+			terminal = s0 && s0.pending ? await waitForSyncTerminal() : s0
 		} catch (e) {
 			// status probe is advisory - fall through to the readiness poll
 		}
-		if (inFlight) {
-			const sync = await waitForSyncTerminal()
-			const status = ((sync && sync.last_sync_status) || "").trim()
-			if (status.startsWith("failed") || status.startsWith("skipped")) {
-				state.finishing = false
-				state.finishNote = `Setup hit a problem (${status}). Check the AI connection and save again - or continue to Jarvis and retry from Settings.`
-				return
-			}
+		const status = ((terminal && terminal.last_sync_status) || "").trim()
+		if (status.startsWith("failed") || status.startsWith("skipped")) {
+			state.finishing = false
+			state.finishNote = `Setup hit a problem (${status}). Check the AI connection and save again - or continue to Jarvis and retry from Settings.`
+			return
 		}
 	}
 	const ready = await waitUntilReady()

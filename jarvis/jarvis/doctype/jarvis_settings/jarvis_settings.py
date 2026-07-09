@@ -41,9 +41,14 @@ ADMIN_SYNC_LOCK_TIMEOUT_S = ADMIN_SYNC_RQ_TIMEOUT_S
 # exceed the TTL or a fresh tenant's first sync can exhaust every attempt
 # against a corpse and strand on a terminal "failed: skipped". Chain:
 # primary 60s + 4 retries x 150s = 660s > 600s TTL. Each retry runs in its
-# own fresh RQ envelope, and per-attempt wait (150s) + worst-case work
-# (~430s) = 580s stays inside the 600s envelope - the wait must never eat
-# the work budget.
+# own fresh RQ envelope, and per-attempt lock wait + POST-ONLY work must
+# fit that envelope. POST-only worst case (lock wait excluded - the wait
+# is the other term of the sum): pool = 3x120s attempts + 2x5s sleeps
+# = 370s; single-model = 90s + skills resyncs. So 150s + 370s = 520s
+# <= 600s. These are the SAME figures the budget test in
+# test_unified_llm_config.TestOnboardingAuditFixes asserts - tune the
+# waits and the test together, and against the POOL figure (the larger
+# of the two paths).
 ADMIN_SYNC_PRIMARY_LOCK_WAIT_S = 60.0
 ADMIN_SYNC_RETRY_LOCK_WAIT_S = 150.0
 ADMIN_SYNC_LOCK_RETRIES = 4
@@ -60,9 +65,62 @@ def _commit_terminal_sync_status() -> None:
     execute_job: there is no rollback to defeat there, and committing would
     break FrappeTestCase transaction isolation (leaking every fixture write
     of the calling test). frappe.local.job is set exclusively by
-    execute_job, so it is the exact "real worker" signal to gate on."""
-    if getattr(frappe.local, "job", None):
+    execute_job, so it is the exact "real worker" signal to gate on.
+
+    Also commits under frappe.flags.in_migrate: when Redis is down during
+    a bench migrate, frappe.enqueue falls back to frappe.call - outside
+    execute_job, so frappe.local.job is unset - yet a later exception in
+    the same migrate transaction would roll the terminal write back.
+    Committing mid-migrate is normal (the patch runner itself commits
+    between patches)."""
+    if getattr(frappe.local, "job", None) or frappe.flags.in_migrate:
         frappe.db.commit()
+
+
+def _sync_lock_wait_s(retry_left: int) -> float:
+    """Lock wait for a sync attempt: short primary, longer retries."""
+    return (
+        ADMIN_SYNC_PRIMARY_LOCK_WAIT_S
+        if retry_left >= ADMIN_SYNC_LOCK_RETRIES
+        else ADMIN_SYNC_RETRY_LOCK_WAIT_S
+    )
+
+
+def _schedule_sync_lock_retry(*, method: str, job_base: str, retry_left: int,
+                              **enqueue_kwargs) -> None:
+    """Shared lock-loss retry scheduling for BOTH sync workers.
+
+    One implementation so the retry-chain length, waits, status message,
+    and job-id scheme can never silently diverge between the pool and the
+    single-model paths (divergence re-arms the "stranded on failed:
+    skipped" failure for whichever path missed the tuning).
+
+    Writes the retry-pending status, then enqueues the next chain level:
+    - Per-LEVEL job id: this still-running job holds its own id, so
+      reusing it would be dedup-dropped and the chain would stop.
+    - Per-CHAIN random suffix: two independently-triggered chains can
+      reach the same level while the earlier one's job is still
+      queued/started; a level-only id would dedup-drop the newer chain's
+      retry, stranding its "pending: waiting..." status with no job
+      working on it. Uniqueness makes an occasional duplicate run instead
+      - harmless: workers re-read CURRENT settings and serialize on the
+      redis lock.
+    """
+    settings = frappe.get_single("Jarvis Settings")
+    settings.db_set(
+        "last_sync_status",
+        "pending: waiting for a concurrent sync to finish (will retry)",
+        update_modified=False,
+    )
+    frappe.enqueue(
+        method,
+        queue="long",
+        timeout=ADMIN_SYNC_RQ_TIMEOUT_S,
+        job_id=f"{job_base}:retry:{retry_left - 1}:{frappe.generate_hash(length=6)}",
+        deduplicate=True,
+        retry_left=retry_left - 1,
+        **enqueue_kwargs,
+    )
 
 
 class JarvisSettings(Document):
@@ -705,11 +763,7 @@ def _enqueued_sync_via_admin_pool(retry_left: int = ADMIN_SYNC_LOCK_RETRIES) -> 
         # ADMIN_SYNC_LOCK_TIMEOUT_S. A 120s TTL under a 600s job would
         # expire mid-run and admit a concurrent container mutation.
         timeout_s=ADMIN_SYNC_LOCK_TIMEOUT_S,
-        blocking_timeout_s=(
-            ADMIN_SYNC_PRIMARY_LOCK_WAIT_S
-            if retry_left >= ADMIN_SYNC_LOCK_RETRIES
-            else ADMIN_SYNC_RETRY_LOCK_WAIT_S
-        ),
+        blocking_timeout_s=_sync_lock_wait_s(retry_left),
     ) as acquired:
         if not acquired:
             settings = _frappe.get_single("Jarvis Settings")
@@ -718,23 +772,11 @@ def _enqueued_sync_via_admin_pool(retry_left: int = ADMIN_SYNC_LOCK_RETRIES) -> 
                     "jarvis_settings: pool admin sync lost the lock race; "
                     "scheduling retry (%d left)", retry_left - 1,
                 )
-                settings.db_set(
-                    "last_sync_status",
-                    "pending: waiting for a concurrent sync to finish (will retry)",
-                    update_modified=False,
-                )
-                # Own PER-LEVEL job_id: this still-running job holds its own
-                # id, and a later retry level holds ITS id while enqueueing
-                # the next - reusing any live id would be dedup-dropped and
-                # the chain would silently stop.
-                _frappe.enqueue(
-                    "jarvis.jarvis.doctype.jarvis_settings.jarvis_settings"
-                    "._enqueued_sync_via_admin_pool",
-                    queue="long",
-                    timeout=ADMIN_SYNC_RQ_TIMEOUT_S,
-                    job_id=f"jarvis_settings_sync:pool:retry:{retry_left - 1}",
-                    deduplicate=True,
-                    retry_left=retry_left - 1,
+                _schedule_sync_lock_retry(
+                    method="jarvis.jarvis.doctype.jarvis_settings.jarvis_settings"
+                           "._enqueued_sync_via_admin_pool",
+                    job_base="jarvis_settings_sync:pool",
+                    retry_left=retry_left,
                 )
                 return
             _frappe.logger().warning(
@@ -878,11 +920,7 @@ def _enqueued_sync_via_admin(action: str, retry_left: int = ADMIN_SYNC_LOCK_RETR
         # ADMIN_SYNC_LOCK_TIMEOUT_S. A 120s TTL under a 600s job would
         # expire mid-run and admit a concurrent container mutation.
         timeout_s=ADMIN_SYNC_LOCK_TIMEOUT_S,
-        blocking_timeout_s=(
-            ADMIN_SYNC_PRIMARY_LOCK_WAIT_S
-            if retry_left >= ADMIN_SYNC_LOCK_RETRIES
-            else ADMIN_SYNC_RETRY_LOCK_WAIT_S
-        ),
+        blocking_timeout_s=_sync_lock_wait_s(retry_left),
     ) as acquired:
         if not acquired:
             settings = frappe.get_single("Jarvis Settings")
@@ -897,20 +935,12 @@ def _enqueued_sync_via_admin(action: str, retry_left: int = ADMIN_SYNC_LOCK_RETR
                     "jarvis_settings: admin sync (action=%s) lost the lock "
                     "race; scheduling retry (%d left)", action, retry_left - 1,
                 )
-                settings.db_set(
-                    "last_sync_status",
-                    "pending: waiting for a concurrent sync to finish (will retry)",
-                    update_modified=False,
-                )
-                frappe.enqueue(
-                    "jarvis.jarvis.doctype.jarvis_settings.jarvis_settings"
-                    "._enqueued_sync_via_admin",
-                    queue="long",
-                    timeout=ADMIN_SYNC_RQ_TIMEOUT_S,
-                    job_id=f"jarvis_settings_sync:{action}:retry:{retry_left - 1}",
-                    deduplicate=True,
+                _schedule_sync_lock_retry(
+                    method="jarvis.jarvis.doctype.jarvis_settings.jarvis_settings"
+                           "._enqueued_sync_via_admin",
+                    job_base=f"jarvis_settings_sync:{action}",
+                    retry_left=retry_left,
                     action=action,
-                    retry_left=retry_left - 1,
                 )
                 return
             frappe.logger().warning(

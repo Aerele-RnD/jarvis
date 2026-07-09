@@ -681,7 +681,10 @@ class TestEnqueuedSyncRedisLock(_SettingsSingletonTestCase):
         self.assertIn("pending: waiting for a concurrent sync",
                       settings.last_sync_status or "")
         self.assertEqual(len(captured), 1)
-        self.assertEqual(captured[0].get("job_id"), "jarvis_settings_sync:reload:retry:3")
+        self.assertTrue(
+            (captured[0].get("job_id") or "").startswith("jarvis_settings_sync:reload:retry:3:"),
+            f"unexpected retry job_id: {captured[0].get('job_id')!r}",
+        )
         self.assertEqual(captured[0].get("retry_left"), 3)
 
     def test_lock_contention_retries_exhausted_is_terminal(self):

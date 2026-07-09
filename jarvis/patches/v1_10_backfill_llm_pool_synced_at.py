@@ -9,17 +9,24 @@ pool re-save (the save flips last_sync_status to "pending:", so the
 one-shot "current status is ok" signal disappears exactly when they need
 it).
 
-Backfill rule: EVERY pre-marker pool tenant (proxy_active=1) is stamped.
-The patch's job is grandfathering, not retroactive enforcement: before
-this deploy the gate was proxy_active alone, so every existing pool
-tenant - including one whose LATEST re-save happens to be transiently
-"pending:"/"failed:" at migrate time while the container keeps serving
-the previously applied pool - was chat-ready. Conditioning the stamp on
-a current "ok" status would demote exactly those working tenants to
-"never provisioned" mid-upgrade (onboarding banner, wizard shove). A
-truly never-applied pre-marker pool tenant is theoretical (the old gate
-let them into chat anyway); the honest gate applies to tenants created
-AFTER this deploy, whose marker lifecycle starts clean.
+Backfill rule: every pre-marker pool tenant (proxy_active=1) whose sync
+has EVER reached a terminal state (last_sync_at set) is stamped. The
+patch's job is grandfathering, not retroactive enforcement: before this
+deploy the gate was proxy_active alone, so an existing pool tenant whose
+LATEST re-save happens to be transiently "pending:"/"failed:" at migrate
+time - while the container keeps serving the previously applied pool -
+was chat-ready and must stay so. Conditioning the stamp on a current
+"ok" status would demote exactly those working tenants to "never
+provisioned" mid-upgrade (onboarding banner, wizard shove).
+
+The one tenant NOT stamped: last_sync_at empty, i.e. no sync ever
+completed - their pool has demonstrably never been applied, chat has
+never worked, and stamping would permanently mark the broken pool as
+ready and permanently disarm the llm_pool_provisioning gate for them.
+Leaving them unstamped routes them to the onboarding poster, which is an
+improvement over their pre-deploy state (a chat surface where every
+turn failed), not a regression. Their marker sets on the first
+successful sync.
 
 Reads go through the document API, NOT frappe.db.get_single_value: the
 latter coerces an EMPTY Datetime single to the truthy sentinel
@@ -36,5 +43,7 @@ def execute():
 		return
 	if settings.llm_pool_synced_at:
 		return
-	synced_at = settings.last_sync_at or frappe.utils.now()
-	frappe.db.set_single_value("Jarvis Settings", "llm_pool_synced_at", synced_at)
+	if not settings.last_sync_at:
+		# No sync ever completed: nothing to grandfather (see module doc).
+		return
+	frappe.db.set_single_value("Jarvis Settings", "llm_pool_synced_at", settings.last_sync_at)
