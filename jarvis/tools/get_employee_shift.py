@@ -3,7 +3,7 @@
 Wraps ``hrms.hr.doctype.shift_assignment.shift_assignment.get_employee_shift``.
 Walks Shift Assignment records (date-bounded) + the employee's default
 shift in priority order; falls back to "no shift assigned" without
-raising. Returns the resolved Shift Type doc.
+raising. Returns the resolved shift details as a plain dict.
 
 The agent uses this for attendance / OT / roster questions where
 the answer depends on shift start + end times that vary day-to-day.
@@ -40,12 +40,14 @@ def get_employee_shift(
     date_to_use = for_date or frappe.utils.today()
     shift = _ges(
         employee=employee,
-        for_date=date_to_use,
+        for_timestamp=date_to_use,
         consider_default_shift=bool(consider_default_shift),
     )
-    # Helper returns a Document or None; expose as dict for JSON envelope.
+    # Helper always returns a plain dict (`shift_details or {}`) - never a
+    # Document, never None. Collapse the falsy "nothing found" {} to None
+    # for a cleaner envelope instead of calling a nonexistent .as_dict().
     return {
-        "shift": shift.as_dict() if shift else None,
+        "shift": dict(shift) if shift else None,
         "employee": employee,
         "for_date": date_to_use,
     }
