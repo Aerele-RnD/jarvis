@@ -10,18 +10,19 @@ rows by hand will miss.
 Permission gating: the underlying helper checks Account read perm
 internally unless ``ignore_account_permission`` is set, which we do
 NOT expose to the agent (callers can't override perm checks). It applies
-NO company-level filter of its own, so this wrapper additionally checks
-Company read perm (honors Company User Permissions) whenever ``company``
-is supplied, and - in party-only mode, where the balance is otherwise
-summed across every company in the bench - requires an explicit,
-permission-checked ``company`` from a caller who is restricted to
-specific companies.
+NO company-level filter of its own, so this wrapper additionally gates
+``company`` by Company User Permission scope (not Company-doctype read
+- see ``jarvis.tools._company_scope``) whenever ``company`` is supplied,
+and - in party-only mode, where the balance is otherwise summed across
+every company in the bench - requires an explicit, permission-checked
+``company`` from a caller who is restricted to specific companies.
 """
 from __future__ import annotations
 
 import frappe
 
-from jarvis.exceptions import InvalidArgumentError, PermissionDeniedError
+from jarvis.exceptions import InvalidArgumentError
+from jarvis.tools._company_scope import assert_company_permitted
 
 
 def get_balance_on(
@@ -51,8 +52,7 @@ def get_balance_on(
         raise InvalidArgumentError(f"unknown {party_type}: {party}")
 
     if company:
-        if not frappe.has_permission("Company", "read", doc=company):
-            raise PermissionDeniedError(f"no read permission on Company {company}")
+        assert_company_permitted(company)
     elif party_type and party and not account:
         # Party-only mode sums the balance across every company in the
         # bench (the underlying helper applies no company filter here at

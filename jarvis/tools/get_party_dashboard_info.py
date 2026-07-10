@@ -18,6 +18,7 @@ from jarvis.exceptions import (
     InvalidArgumentError,
     PermissionDeniedError,
 )
+from jarvis.tools._company_scope import is_company_permitted
 
 _VALID_PARTY_TYPES = ("Customer", "Supplier")
 
@@ -53,9 +54,10 @@ def get_party_dashboard_info(
     # company-level permission filter of its own - so a caller restricted
     # to one company via a Company User Permission would otherwise see
     # every other company that party has ever transacted with. Strip
-    # entries for companies the caller can't read.
+    # entries for companies outside the caller's Company User Permission
+    # scope (see jarvis.tools._company_scope - not Company-doctype read).
     if isinstance(dashboard, list):
-        dashboard = [d for d in dashboard if frappe.has_permission("Company", "read", doc=d.get("company"))]
+        dashboard = [d for d in dashboard if is_company_permitted(d.get("company"))]
     return {
         "dashboard": dashboard,
         "party_type": party_type,
