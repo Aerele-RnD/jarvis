@@ -27,6 +27,7 @@ Safety bounds:
 """
 
 import frappe
+from frappe.model.workflow import can_cancel_document, get_workflow_name
 
 from jarvis.exceptions import InvalidArgumentError, PermissionDeniedError
 from jarvis.tools import require_doctype_and_name
@@ -38,7 +39,9 @@ def cancel_doc(doctype: str, name: str) -> dict:
     Returns the cancelled document as a dict (with ``docstatus: 2``).
     Raises:
       - InvalidArgumentError on empty args, non-submittable DocType,
-        or wrong starting docstatus (Draft or already Cancelled)
+        a workflow-governed DocType that models cancellation (advance via
+        apply_workflow_action), or wrong starting docstatus (Draft or
+        already Cancelled)
       - PermissionDeniedError when the calling user lacks cancel
       - frappe.DoesNotExistError when the record doesn't exist
       - frappe.ValidationError from the DocType's on_cancel hook
@@ -50,6 +53,19 @@ def cancel_doc(doctype: str, name: str) -> dict:
         raise InvalidArgumentError(
             f"{doctype} is not submittable - cancellation only applies to "
             f"docstatus-tracked DocTypes"
+        )
+
+    # When a workflow models a cancel path (a transition into a docstatus=2
+    # state), cancelling must go through that action, not a direct cancel.
+    # get_workflow_name MUST short-circuit first: can_cancel_document assumes an
+    # active workflow exists and errors otherwise. Workflows with no cancel path
+    # still allow a plain cancel (Desk shows the Cancel button there too).
+    if get_workflow_name(doctype) and not can_cancel_document(doctype):
+        raise InvalidArgumentError(
+            f"{doctype} is governed by a Workflow that models cancellation as a "
+            f"state transition; use apply_workflow_action instead of cancelling "
+            f"directly. Use get_workflow_transitions to see the actions "
+            f"available to you."
         )
 
     if not frappe.has_permission(doctype, ptype="cancel", doc=name):

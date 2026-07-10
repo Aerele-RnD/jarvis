@@ -29,6 +29,7 @@ Safety bounds:
 """
 
 import frappe
+from frappe.model.workflow import get_workflow_name
 
 from jarvis.exceptions import InvalidArgumentError, PermissionDeniedError
 from jarvis.tools import require_doctype_and_name
@@ -40,6 +41,7 @@ def submit_doc(doctype: str, name: str) -> dict:
     Returns the submitted document as a dict, including the new
     ``docstatus: 1``. Raises:
       - InvalidArgumentError on empty args, non-submittable DocType,
+        a workflow-governed DocType (advance via apply_workflow_action),
         or wrong starting docstatus
       - PermissionDeniedError when the calling user lacks submit on the record
       - frappe.DoesNotExistError when the record doesn't exist
@@ -52,6 +54,17 @@ def submit_doc(doctype: str, name: str) -> dict:
         raise InvalidArgumentError(
             f"{doctype} is not submittable - submit only applies to "
             f"docstatus-tracked DocTypes"
+        )
+
+    # A workflow-governed doctype must advance through its state machine, not a
+    # direct submit (which would jump the doc straight to a submitted state,
+    # skipping approval steps). Desk hides the Submit button here too.
+    if get_workflow_name(doctype):
+        raise InvalidArgumentError(
+            f"{doctype} is governed by a Workflow; advance it with "
+            f"apply_workflow_action (e.g. Approve/Reject) instead of "
+            f"submitting directly. Use get_workflow_transitions to see the "
+            f"actions available to you."
         )
 
     if not frappe.has_permission(doctype, ptype="submit", doc=name):

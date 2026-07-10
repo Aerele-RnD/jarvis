@@ -415,7 +415,7 @@ def _parse_args(args: dict | str | None) -> dict:
 # ``preview`` (a dry-run with every DB write rolled back).
 _WRITE_TOOLS = frozenset({
 	"create_doc", "create_docs", "update_doc", "submit_doc", "cancel_doc", "amend_doc",
-	"delete_doc", "run_method",
+	"delete_doc", "run_method", "apply_workflow_action",
 	"send_email", "add_comment", "update_comment", "share_doc", "unshare_doc",
 	"assign_to", "unassign_from", "add_tag", "remove_tag",
 	"follow_document", "unfollow_document", "attach_to_doc",
@@ -444,13 +444,13 @@ _PREVIEWABLE = frozenset({
 # sandboxed dry-run.
 _GATED_WRITES = frozenset({
 	"create_doc", "create_docs", "update_doc", "submit_doc", "cancel_doc",
-	"amend_doc", "delete_doc", "run_method", "send_email",
+	"amend_doc", "delete_doc", "run_method", "apply_workflow_action", "send_email",
 	"create_custom_skill", "update_wiki",
 	"share_doc", "assign_to",
 })
 # Irreversible/consequential subset - gated even when a user has auto-apply
 # on (Task 4 uses this; define it here so the sets live together).
-_DESTRUCTIVE = frozenset({"delete_doc", "cancel_doc", "amend_doc", "send_email"})
+_DESTRUCTIVE = frozenset({"delete_doc", "cancel_doc", "amend_doc", "send_email", "apply_workflow_action"})
 # Writes that auto-apply may fast-path without a confirmation click. Strictly
 # the reversible create/update pair, per spec. submit_doc, run_method and every
 # _DESTRUCTIVE tool ALWAYS park even with auto-apply on: run_method's
@@ -544,7 +544,7 @@ def _describe_call(tool: str, args: dict) -> str:
 	a = args if isinstance(args, dict) else {}
 	parts = [tool]
 	for key in ("doctype", "name", "docname", "target_doctype", "target_name",
-				"method", "recipients", "to", "subject"):
+				"method", "action", "recipients", "to", "subject"):
 		val = a.get(key)
 		if val:
 			parts.append(f"{key}={val}")
