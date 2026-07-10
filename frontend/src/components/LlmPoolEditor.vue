@@ -29,8 +29,10 @@
         <span class="jv-pool-badge">{{ i + 1 }}</span>
         <span class="jv-flist-chip">{{ sourceChip(row) }}</span>
         <span class="jv-flist-model">{{ row.model || row.provider || '—' }}</span>
+        <span v-if="row.credentialType!=='subscription' && row.hasKey" style="font-size:11px;color:var(--text-3);">key set</span>
         <span class="jv-pool-dot" :class="'jv-pool-dot--' + accountHealth(row).level" aria-hidden="true"></span>
         <span v-if="accountHealth(row).label" class="jv-pool-acct-health" :class="'jv-pool-acct-health--' + accountHealth(row).level" :title="accountHealth(row).title">{{ accountHealth(row).label }}</span>
+        <!-- Reorder + [Edit][Reconnect|Replace key][Remove], always right-aligned. -->
         <span class="jv-flist-acts">
           <button @click="move(i,-1)" :disabled="!editable || i===0" title="Up" class="jv-pool-iconbtn">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg>
@@ -38,11 +40,208 @@
           <button @click="move(i,1)" :disabled="!editable || i===rows.length-1" title="Down" class="jv-pool-iconbtn">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
           </button>
-          <button v-if="editable" @click="remove(i)" class="jv-btn jv-btn--sm jv-btn--ghost">Remove</button>
+          <button v-if="editable" @click="openEdit(i)" class="jv-btn jv-btn--sm jv-btn--ghost">Edit</button>
+          <button v-if="editable && row.credentialType==='subscription'" @click="quickReconnect(i)" class="jv-btn jv-btn--sm jv-btn--ghost">Reconnect</button>
+          <button v-else-if="editable" @click="openEdit(i)" class="jv-btn jv-btn--sm jv-btn--ghost">Replace key</button>
+          <button v-if="editable" @click="remove(i)" class="jv-btn jv-btn--sm jv-btn--ghost jv-pool-disc">Remove</button>
         </span>
       </div>
 
-      <button v-if="editable" class="jv-btn jv-btn--sm jv-btn--primary">+ Add model</button>
+      <button v-if="editable && !panel.open" @click="openAdd" class="jv-btn jv-btn--sm jv-btn--primary">+ Add model</button>
+
+      <!-- Master-detail config section: Add/Edit a single row, or (add-mode
+           only) apply a preset that replaces the whole pool. Field markup +
+           connect flow are reused verbatim from the account editor's former
+           per-row layout; only the panel container is new. -->
+      <div v-if="panel.open" class="jv-cfgpanel">
+        <div class="jv-cfgpanel-head">
+          <div class="jv-cfgpanel-title">{{ panel.mode === 'add' ? 'Add a model' : 'Edit model' }}</div>
+        </div>
+
+        <div class="jv-pool-segct" role="group" aria-label="Source" style="margin-bottom:12px;">
+          <button type="button" class="jv-pool-segbtn" :class="{ on: panel.source==='subscription' }"
+                  :disabled="!editable" @click="setPanelSource('subscription')">Chat subscription</button>
+          <button type="button" class="jv-pool-segbtn" :class="{ on: panel.source==='api_key' }"
+                  :disabled="!editable" @click="setPanelSource('api_key')">API key</button>
+          <button v-if="panel.mode==='add'" type="button" class="jv-pool-segbtn" :class="{ on: panel.source==='preset' }"
+                  :disabled="!editable" @click="setPanelSource('preset')">From a preset</button>
+        </div>
+
+        <!-- API-key source -->
+        <div v-if="panel.source==='api_key' && panelRow">
+          <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+            <div class="jv-pool-field" style="flex:1;min-width:120px;">
+              <label class="jv-pool-lab">Provider</label>
+              <select v-model="panelRow.provider" @change="onProviderChange(panelRow)" :disabled="!editable" title="Provider"
+                      style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;">
+                <option v-for="p in providerOptions" :key="p" :value="p">{{ p }}</option>
+              </select>
+            </div>
+            <div class="jv-pool-field" style="flex:1.5;min-width:120px;">
+              <label class="jv-pool-lab">Model</label>
+              <input v-model="panelRow.model" list="jv-cfg-dl" :disabled="!editable" placeholder="Model ID (e.g. gpt-4o)"
+                     style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;" />
+              <datalist id="jv-cfg-dl">
+                <option v-for="s in modelSuggestionsForProvider(panelRow.provider)" :key="s" :value="s"></option>
+              </datalist>
+            </div>
+            <div class="jv-pool-field" style="flex:1.5;min-width:120px;">
+              <label class="jv-pool-lab">API key</label>
+              <input v-model="panelRow.apiKey" :disabled="!editable" type="password"
+                     :placeholder="panelRow.hasKey ? 'key set, re-enter to change' : 'API key'"
+                     style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;" />
+            </div>
+            <div class="jv-pool-field" style="flex:1.5;min-width:120px;">
+              <label class="jv-pool-lab">Base URL (optional)</label>
+              <input v-model="panelRow.baseUrl" :disabled="!editable" placeholder="Base URL (OpenAI-compatible)"
+                     style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Chat-subscription source -->
+        <div v-else-if="panel.source==='subscription' && panelRow">
+          <div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:8px;flex-wrap:wrap;">
+            <div class="jv-pool-field" style="flex:2;min-width:120px;">
+              <label class="jv-pool-lab">Model</label>
+              <input v-model="panelRow.model" list="jv-cfg-subdl" :disabled="!editable" placeholder="Model ID (e.g. gpt-5.5)"
+                     style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;" />
+              <datalist id="jv-cfg-subdl">
+                <option v-for="s in (SUB_MODEL_SUGGESTIONS[panelRow.upstream] || [])" :key="s" :value="s"></option>
+              </datalist>
+            </div>
+            <div class="jv-pool-field" style="flex:1;min-width:100px;">
+              <label class="jv-pool-lab">Provider</label>
+              <select v-model="panelRow.upstream" @change="onUpstreamChange(panelRow)" :disabled="!editable" title="Provider"
+                      style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;">
+                <option v-for="o in upstreamOpts" :key="o.value" :value="o.value">{{ o.label }}</option>
+              </select>
+            </div>
+            <div class="jv-pool-field" style="flex:1.2;min-width:110px;">
+              <label class="jv-pool-lab">Account rotation</label>
+              <select v-model="panelRow.rotation" :disabled="!editable" title="Account rotation"
+                      style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;">
+                <option v-for="o in rotationOpts" :key="o.value" :value="o.value">{{ o.label }}</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Connected accounts (markup reused verbatim from the former
+               per-row layout). -->
+          <div v-if="panelRow.accounts && panelRow.accounts.length" class="jv-pool-accts">
+            <div class="jv-pool-lab">Connected accounts ({{ panelRow.accounts.length }})</div>
+            <div class="jv-pool-acctlist">
+              <div v-for="(a, ai) in panelRow.accounts" :key="a.account_ref || ai" class="jv-pool-acctchip">
+                <span class="jv-pool-avatar">{{ (accountLabel(a) || '?').charAt(0).toUpperCase() }}</span>
+                <span class="jv-pool-accttx">{{ accountLabel(a) }}</span>
+                <span class="jv-pool-dot" :class="'jv-pool-dot--' + accountHealth(panelRow).level" aria-hidden="true"></span>
+                <span v-if="accountHealth(panelRow).label" class="jv-pool-acct-health" :class="'jv-pool-acct-health--' + accountHealth(panelRow).level" :title="accountHealth(panelRow).title">{{ accountHealth(panelRow).label }}</span>
+                <span class="jv-pool-acctacts">
+                  <button v-if="editable" class="jv-btn jv-btn--sm jv-btn--ghost" @click="startConnect(panelRow, ai)" title="Re-authorize to mint fresh tokens">Reconnect</button>
+                  <button v-if="editable" class="jv-btn jv-btn--sm jv-btn--ghost jv-pool-disc" @click="removeAccount(panelRow, ai)">Disconnect</button>
+                </span>
+              </div>
+              <button v-if="editable && !(panelRow._connect && panelRow._connect.open)" @click="startConnect(panelRow)"
+                      :disabled="panelRow._connect && panelRow._connect.loading && !panelRow._connect.authorizeUrl"
+                      class="jv-pool-addrow">
+                + Add account
+              </button>
+            </div>
+          </div>
+          <div v-else style="font-size:13px;color:var(--text-3);margin-bottom:8px;">No accounts connected yet.</div>
+
+          <!-- Paste-back OAuth connect panel (reused verbatim). -->
+          <div v-if="panelRow._connect && panelRow._connect.open" class="jv-cn">
+            <div v-if="panelRow._connect.authorizeUrl">
+              <div class="jv-cn-step">
+                <span class="jv-cn-num">1</span>
+                <div class="jv-cn-body">
+                  <div class="jv-cn-t">Sign in with your {{ panelRow.upstream === 'google' ? 'Google' : 'OpenAI' }} account</div>
+                  <div class="jv-cn-row">
+                    <a :href="panelRow._connect.authorizeUrl" target="_blank" rel="noopener noreferrer" class="jv-cn-open">Open sign-in ↗</a>
+                    <button @click="copyAuthorizeUrl(panelRow)" class="jv-cn-copy">{{ panelRow._connect.copied ? 'Copied ✓' : 'Copy link' }}</button>
+                  </div>
+                </div>
+              </div>
+              <div class="jv-cn-step">
+                <span class="jv-cn-num">2</span>
+                <div class="jv-cn-body">
+                  <div class="jv-cn-t">Paste the callback URL</div>
+                  <div class="jv-cn-hint">After signing in you'll see a “This site can't be reached” page. Copy that page's full URL and paste it below.</div>
+                  <input v-model="panelRow._connect.pastedUrl" class="jv-cn-input" placeholder="http://localhost:1455/auth/callback?code=…" @keydown.enter="finishConnect(panelRow)" />
+                </div>
+              </div>
+              <div class="jv-cn-acts">
+                <button @click="closeConnect(panelRow)" class="jv-cn-cancel">Cancel</button>
+                <button @click="finishConnect(panelRow)" :disabled="panelRow._connect.loading" class="jv-cn-connect">
+                  {{ panelRow._connect.loading ? 'Connecting…' : 'Connect' }}
+                </button>
+              </div>
+            </div>
+            <div v-else class="jv-cn-loading">Starting sign-in…</div>
+            <div v-if="panelRow._connect.error" class="jv-cn-err">{{ panelRow._connect.error }}</div>
+          </div>
+
+          <button v-if="editable && !(panelRow._connect && panelRow._connect.open) && !(panelRow.accounts && panelRow.accounts.length)"
+                  @click="startConnect(panelRow)"
+                  :disabled="panelRow._connect && panelRow._connect.loading && !panelRow._connect.authorizeUrl"
+                  class="jv-btn jv-btn--sm jv-btn--primary">
+            + Connect account
+          </button>
+        </div>
+
+        <!-- From a preset (add-mode only) - picking a card replaces the whole
+             pool, same as the account editor's former Preset tab, just
+             relocated here (selectPreset/missingVendors/saveBlocked reused
+             verbatim). -->
+        <div v-else-if="panel.source==='preset'">
+          <p v-if="!catalog.length" style="font-size:14px;color:var(--text-3);margin:0 0 12px;">
+            Couldn't load presets. Use <b>Chat subscription</b> or <b>API key</b>.
+          </p>
+          <div v-else style="max-height:360px;overflow-y:auto;padding-right:4px;">
+            <div v-if="singleVendorPresets.length" style="margin-bottom:10px;">
+              <div style="font-size:13px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.03em;margin-bottom:9px;">Single-vendor resilience</div>
+              <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;">
+                <button v-for="entry in singleVendorPresets" :key="entry.key"
+                        @click="selectPreset(entry)" :disabled="!editable" :style="presetCardStyle(entry)">
+                  <div style="font-size:14px;font-weight:600;">{{ entry.label }}</div>
+                  <div style="font-size:13px;color:var(--text-2);margin-top:4px;line-height:1.45;">{{ entry.blurb }}</div>
+                </button>
+              </div>
+            </div>
+            <div v-if="crossVendorPresets.length">
+              <div style="font-size:13px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.03em;margin:14px 0 9px;">Cross-vendor strategies</div>
+              <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;">
+                <button v-for="entry in crossVendorPresets" :key="entry.key"
+                        @click="selectPreset(entry)" :disabled="!editable" :style="presetCardStyle(entry)">
+                  <div style="font-size:14px;font-weight:600;">{{ entry.label }}</div>
+                  <div style="font-size:13px;color:var(--text-2);margin-top:4px;line-height:1.45;">{{ entry.blurb }}</div>
+                </button>
+              </div>
+            </div>
+          </div>
+          <div v-if="selectedPreset && vendorsForPreset.length"
+               style="margin-top:12px;padding:12px;background:var(--amber-bg);border:1px solid var(--amber-bd);border-radius:8px;">
+            <div style="font-size:13px;color:var(--amber);font-weight:600;margin-bottom:8px;">
+              Provide API keys for this preset:
+            </div>
+            <div v-for="vendor in vendorsForPreset" :key="vendor" style="margin-bottom:8px;">
+              <label :style="{fontSize:'12px',color:'var(--text-2)',display:'block',marginBottom:'3px'}">
+                {{ providerLabel(vendor) }} API key<span v-if="missingVendors.includes(vendor)" style="color:var(--red)"> *</span>
+              </label>
+              <input :value="keysByVendor[vendor] || ''" @input="keysByVendor[vendor] = $event.target.value"
+                     type="password" :disabled="!editable" :placeholder="providerLabel(vendor) + ' API key'"
+                     style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;" />
+            </div>
+          </div>
+        </div>
+
+        <div class="jv-cfgpanel-acts">
+          <button type="button" class="jv-btn jv-btn--sm jv-btn--ghost" @click="closePanel">
+            {{ panel.source==='preset' ? 'Done' : (panel.mode==='add' ? 'Cancel' : 'Close') }}
+          </button>
+        </div>
+      </div>
     </section>
 
     <!-- ================ QUICK / CUSTOM (shared rows) ================ -->
@@ -577,6 +776,56 @@ function sourceChip(row) {
   return "API key · " + (row.provider || "—")
 }
 
+// ---- master-detail config section (!singleMode only) --------------------
+// panel: which row is being added/edited, and which source tab is active.
+// "preset" only applies in add-mode - picking a card replaces the whole pool
+// (selectPreset, reused verbatim) rather than editing panelRow.
+const panel = ref({ open: false, mode: "add", index: -1, source: "subscription" })
+const panelRow = computed(() => rows.value[panel.value.index] || null)
+function isRowEmpty(r) {
+  if (!r) return true
+  if (r.credentialType === "subscription") return !((r.accounts || []).length)
+  return !((r.model || "").trim()) && !((r.apiKey || "").trim()) && !r.hasKey
+}
+// Append a blank row up-front (not on a later "commit") so finishConnect's
+// !footerless auto-save - which can fire while this panel is still open -
+// already includes it instead of silently dropping an in-progress connect.
+function openAdd() {
+  const r = { ...newRow(), order: rows.value.length }
+  rows.value = [...rows.value, r]
+  panel.value = { open: true, mode: "add", index: rows.value.length - 1, source: r.credentialType === "subscription" ? "subscription" : "api_key" }
+}
+function openEdit(i) {
+  const r = rows.value[i]
+  if (!r) return
+  panel.value = { open: true, mode: "edit", index: i, source: r.credentialType === "subscription" ? "subscription" : "api_key" }
+}
+// List row's "Reconnect" shortcut: open the panel AND jump straight into the
+// sign-in flow (re-using the first account's slot if one exists) instead of
+// making the user find "+ Add account" inside the panel themselves.
+function quickReconnect(i) {
+  const r = rows.value[i]
+  if (!r) return
+  openEdit(i)
+  startConnect(r, (r.accounts && r.accounts.length) ? 0 : null)
+}
+function setPanelSource(src) {
+  panel.value.source = src
+  if (src === "preset") return
+  const r = panelRow.value
+  if (r) setCredType(r, src)
+}
+// Closing the panel (Cancel/Done/Close) - an add-row that was opened but
+// never filled in (no preset picked) is dropped so an abandoned "+ Add
+// model" doesn't leave a dead row in the pool.
+function closePanel() {
+  const idx = panel.value.index
+  if (panel.value.mode === "add" && panel.value.source !== "preset" && idx >= 0 && idx < rows.value.length && isRowEmpty(rows.value[idx])) {
+    rows.value = rows.value.filter((_, j) => j !== idx)
+  }
+  panel.value = { open: false, mode: "add", index: -1, source: "subscription" }
+}
+
 function newRow() {
   return {
     provider: providerOptions[0] || "Anthropic", model: "", apiKey: "", baseUrl: "", hasKey: false,
@@ -1066,6 +1315,11 @@ defineExpose({ save })
 }
 .jv-flist-model { font-size: 13.5px; color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jv-flist-acts { margin-left: auto; display: flex; gap: 6px; align-items: center; flex: none; }
+/* Master-detail config section (add/edit a row, or apply a preset). */
+.jv-cfgpanel { border: 1px solid var(--border-2); border-radius: 11px; padding: 14px; margin: 4px 0 14px; background: var(--surface); }
+.jv-cfgpanel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.jv-cfgpanel-title { font-size: 13.5px; font-weight: 700; color: var(--text); }
+.jv-cfgpanel-acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 
 /* Onboarding method cards (preview .method/.m-opt): sel = blue border + 3px
    ring; icon tile flips from neutral to blue tint when selected. Preview's
