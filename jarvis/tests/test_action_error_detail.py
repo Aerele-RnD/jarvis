@@ -169,6 +169,45 @@ class TestDispatchAndWrapEnrichment(FrappeTestCase):
 			with self.assertRaises(ValueError):
 				api._dispatch_and_wrap("update_doc", {"doctype": "X"}, is_write=True)
 
+	def test_savepoint_rolls_back_partial_write_on_known_failure(self):
+		# A tool that half-applied (wrote a row) before raising a KNOWN error must
+		# be undone before the {ok:false} envelope is returned - else Frappe's
+		# end-of-request commit would persist the partial write (e.g. a submit
+		# whose on_submit hook throws after docstatus=1 was written).
+		marker = "jarvis-sp-rollback-marker"
+		frappe.local.conf["disable_global_search"] = 1
+		self.addCleanup(lambda: frappe.local.conf.pop("disable_global_search", None))
+
+		def half_apply(tool, args):
+			frappe.get_doc({"doctype": "ToDo", "description": marker}).insert(ignore_permissions=True)
+			raise frappe.ValidationError("blew up after writing")
+
+		with patch("jarvis.api.dispatch", side_effect=half_apply):
+			env = api._dispatch_and_wrap("update_doc", {"doctype": "ToDo"}, is_write=True)
+		self.assertFalse(env["ok"])
+		self.assertEqual(env["error"]["code"], "InvalidArgumentError")
+		self.assertFalse(frappe.db.exists("ToDo", {"description": marker}))
+
+	def test_savepoint_keeps_write_on_success(self):
+		# The savepoint must NOT undo a successful write (it is released, not
+		# rolled back) - the row persists in the transaction as before.
+		marker = "jarvis-sp-success-marker"
+		frappe.local.conf["disable_global_search"] = 1
+		self.addCleanup(lambda: frappe.local.conf.pop("disable_global_search", None))
+		self.addCleanup(
+			lambda: frappe.db.exists("ToDo", {"description": marker})
+			and frappe.db.delete("ToDo", {"description": marker})
+		)
+
+		def apply_ok(tool, args):
+			doc = frappe.get_doc({"doctype": "ToDo", "description": marker}).insert(ignore_permissions=True)
+			return {"name": doc.name}
+
+		with patch("jarvis.api.dispatch", side_effect=apply_ok):
+			env = api._dispatch_and_wrap("update_doc", {"doctype": "ToDo"}, is_write=True)
+		self.assertTrue(env["ok"])
+		self.assertTrue(frappe.db.exists("ToDo", {"description": marker}))
+
 
 class TestApplyActionContract(FrappeTestCase):
 	def setUp(self):
