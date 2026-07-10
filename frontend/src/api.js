@@ -107,6 +107,12 @@ export async function sendMessage(conversation, message, modelOverride, attachme
 	return call("jarvis.chat.api.send_message", args)
 }
 
+// Actually abort a running turn (openclaw chat.abort) — best-effort; on failure
+// the UI stop stands and the turn finishes server-side.
+export async function stopRun(conversation, runId) {
+	return call("jarvis.chat.api.stop_run", { conversation, run_id: runId || "" })
+}
+
 // Mentions: reuse Frappe's built-in Link-field search (no custom backend).
 export const searchLink = (doctype, txt) =>
 	call("frappe.desk.search.search_link", { doctype, txt: txt || "", page_length: 8 })

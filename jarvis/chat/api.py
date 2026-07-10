@@ -455,7 +455,7 @@ def get_conversation(conversation: str) -> dict:
 		MSG,
 		filters={"conversation": conversation, "hidden": 0},
 		fields=[
-			"name", "seq", "role", "content", "streaming", "error",
+			"name", "seq", "role", "content", "streaming", "error", "recovering",
 			"tool_name", "tool_args", "tool_result", "tool_status",
 			"canvas", "creation", "modified",
 		],
@@ -666,6 +666,43 @@ from jarvis.chat.policy import validate_can_send
 from jarvis.chat.openclaw_client import OpenclawSession
 
 
+_INFLIGHT_FRESH_SECONDS = 180
+
+
+def _conversation_busy(conversation: str) -> bool:
+	"""True when a fresh, actively-streaming turn is already in flight on this
+	conversation - a server-side single-flight guard so a second tab, a
+	double-click, or a retry racing a live turn can't start a concurrent turn on
+	the same openclaw session. A parked-for-recovery row does NOT count (the
+	composer is intentionally unlocked while recovering), and a stale streaming
+	row from a crashed worker ages out of the freshness window (stale_scan
+	finalizes it) so it never blocks sends forever."""
+	rows = frappe.db.sql(
+		"""SELECT streaming, recovering, modified FROM `tabJarvis Chat Message`
+		WHERE conversation = %s AND role = 'assistant'
+		ORDER BY seq DESC LIMIT 1""",
+		(conversation,),
+		as_dict=True,
+	)
+	if not rows:
+		return False
+	r = rows[0]
+	if not r.get("streaming") or r.get("recovering"):
+		return False
+	# Freshness from the newest row of ANY role: a tool-heavy turn streams no
+	# assistant text for a while, so the assistant row's own `modified` can look
+	# stale mid-run; tool rows keep the conversation's latest modified current.
+	last_mod = frappe.db.sql(
+		"""SELECT MAX(modified) FROM `tabJarvis Chat Message` WHERE conversation = %s""",
+		(conversation,),
+	)
+	last = last_mod and last_mod[0][0]
+	if not last:
+		return False
+	age = (frappe.utils.now_datetime() - frappe.utils.get_datetime(last)).total_seconds()
+	return age < _INFLIGHT_FRESH_SECONDS
+
+
 @frappe.whitelist()
 def send_message(
 	conversation: str | None = None, message: str = "", model_override: str | None = None,
@@ -742,6 +779,13 @@ def send_message(
 		return {"ok": False, "reason": _("message is empty")}
 
 	conv_doc = _get_owned_conversation(conversation)
+
+	# Single-flight guard: reject a second concurrent turn on the same
+	# conversation (extra tab / double-send / a retry racing a live turn) -
+	# they would otherwise run in parallel on the same openclaw session. Placed
+	# after ownership so the reject is clean (no user row inserted yet).
+	if _conversation_busy(conversation):
+		return {"ok": False, "reason": _("a reply is already in progress - hang on a moment")}
 
 	# Apply model override BEFORE enqueueing so the worker sees the new value
 	# when it loads the conversation. (If we set this after the enqueue, the
@@ -1126,6 +1170,8 @@ def retry_message(message: str) -> dict:
 	# inserted by the RQ worker under a different session user, so the
 	# conversation's owner is the authority, not the message row's owner.
 	_get_owned_conversation(doc.conversation)
+	if _conversation_busy(doc.conversation):
+		return {"ok": False, "reason": _("a reply is already in progress - hang on a moment")}
 	if doc.role != "assistant":
 		return {"ok": False, "reason": _("only assistant messages can be retried")}
 	if not doc.error:
@@ -1161,6 +1207,37 @@ def retry_message(message: str) -> dict:
 	}
 	_dispatch_turn(payload)
 	return {"ok": True, "run_id": run_id}
+
+
+@frappe.whitelist()
+def stop_run(conversation: str, run_id: str | None = None) -> dict:
+	"""Actually abort a running turn (openclaw chat.abort), not just hide it in
+	the UI. The gateway authorizes the abort from this web process (shared device
+	id + operator scope) even though the RQ worker started the run. Best-effort:
+	on any failure the Stop button's honest "still finishing in the background"
+	behaviour still applies. No-op on self-hosted (the HTTP surface has no
+	abort RPC) - the UI stop stands alone there."""
+	require_jarvis_access()
+	conv = _get_owned_conversation(conversation)
+	from jarvis.chat import selfhost
+
+	if selfhost.is_self_hosted():
+		return {"ok": False, "reason": _("stop isn't available on this connection yet")}
+	if not conv.session_key:
+		return {"ok": True}  # nothing running yet
+	settings = frappe.get_cached_doc("Jarvis Settings")
+	gateway_url = (
+		(settings.agent_url or "").replace("http://", "ws://").replace("https://", "wss://")
+	)
+	from jarvis.chat import openclaw_session_pool
+
+	try:
+		with openclaw_session_pool.checkout(gateway_url) as sess:
+			sess.chat_abort(conv.session_key, run_id or None)
+	except Exception as e:
+		frappe.log_error(title="jarvis stop_run", message=str(e))
+		return {"ok": False, "reason": _("couldn't reach the assistant to stop it")}
+	return {"ok": True}
 
 
 def _next_seq(conversation: str) -> int:
