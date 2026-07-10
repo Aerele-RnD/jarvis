@@ -97,19 +97,20 @@ def _resolve_file(file_url: str | None, filename: str | None):
             raise InvalidArgumentError(f"no file found for url {file_url!r}")
         return frappe.get_doc("File", name)
     if filename:
-        # frappe.get_list (not get_all) applies File's permission-query
-        # condition so candidates are already permission-scoped, but that
-        # condition is only an approximation (doctype-level: "attached to a
-        # doctype you can generally read"), not the row-level has_permission
-        # check File actually enforces - so we still verify each candidate
-        # explicitly and pick the first (most recent) one that passes. This
-        # closes the F12 hole where frappe.get_all (no permission filtering
-        # at all) + a substring LIKE fallback could hand back a private File
-        # attached to a record the caller has no access to.
-        candidates = frappe.get_list(
+        # Gather name-matching candidates unfiltered, then gate EACH with the
+        # row-level has_permission check File actually enforces, returning the
+        # first (most recent) one the caller may read. This closes the F12 hole
+        # (the old code picked the most-recent match with NO permission check,
+        # so a private File the caller couldn't access could be handed back)
+        # while still letting a user read their OWN file: we deliberately do NOT
+        # pre-filter with get_list, because File's permission-query condition is
+        # a coarse, environment-sensitive approximation (attached-doc based) that
+        # can exclude a caller's own unattached private file - the per-candidate
+        # has_permission below is the authoritative gate.
+        candidates = frappe.get_all(
             "File", filters={"file_name": filename}, fields=["name"],
             order_by="creation desc", limit=20,
-        ) or frappe.get_list(
+        ) or frappe.get_all(
             "File", filters={"file_name": ["like", f"%{filename}%"]}, fields=["name"],
             order_by="creation desc", limit=20,
         )
