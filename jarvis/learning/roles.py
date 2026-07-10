@@ -180,6 +180,14 @@ def after_migrate() -> None:
 	migrate)."""
 	try:
 		created = False
+		# Backfill the Personalisation Settings Single defaults first, before the
+		# role loop. Order is irrelevant (this is an idempotent Settings backfill,
+		# not a role op) — placing it here keeps this function's diff away from the
+		# JARVIS_USER_ROLE block, which a sibling branch also extends to seed the
+		# same "Jarvis Admin" role; non-adjacent edits 3-way-merge cleanly and the
+		# duplicate seed is a harmless no-op either way (both are exists-guarded).
+		if _seed_personalise_settings_defaults():
+			created = True
 		for role_name in _WIKI_ROLES + _PERSONALISE_ROLES:
 			if frappe.db.exists("Role", role_name):
 				continue
@@ -192,8 +200,6 @@ def after_migrate() -> None:
 		# source of truth), seeded here so it exists before the grant patch runs.
 		if not frappe.db.exists("Role", JARVIS_USER_ROLE):
 			ensure_jarvis_user_role()
-			created = True
-		if _seed_personalise_settings_defaults():
 			created = True
 		if created:
 			frappe.db.commit()
