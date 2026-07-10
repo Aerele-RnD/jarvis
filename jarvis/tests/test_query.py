@@ -2166,6 +2166,51 @@ class TestQueryPermlevelFieldACL(FrappeTestCase):
 			})
 		self.assertIn("rows", result)
 
+	# ---- DocType-level gate: child perm derived from a parent ------
+	# These exercise step 3's child-table branch with the REAL has_permission
+	# (not the patched gate above), proving a non-admin who can read the parent
+	# is not falsely denied on the child. _child_table_parents is patched so the
+	# derivation does not issue a DB query through the mocked Engine.
+
+	def test_restricted_can_query_child_via_readable_parent(self):
+		"""A restricted user who can read the parent passes the DocType gate
+		for the child: has_permission(child) is False without a parent, so the
+		gate derives permission from a readable owning parent (mirrors
+		get_list) instead of failing closed."""
+		frappe.set_user(self.USER_RESTRICTED)
+		with patch(
+			"jarvis.tools.get_list._child_table_parents",
+			return_value=[self.PARENT_DT],
+		), patch("frappe.database.query.Engine") as fake_engine, \
+		     patch("pypika.queries.QueryBuilder.run", return_value=[]):
+			fake_engine.return_value.get_permission_conditions.return_value = None
+			result = query({
+				"from": self.PARENT_DT, "alias": "p",
+				"joins": [{
+					"type": "left", "doctype": self.CHILD_DT, "alias": "c",
+					"on": {"c.parent": "p.name"},
+				}],
+				"select": ["p.name", "c.child_public"],
+			})
+		self.assertIn("rows", result)
+
+	def test_child_with_no_readable_parent_is_denied(self):
+		"""When no owning parent the caller can read is derivable, the child
+		read is a genuine denial (the gate does not silently allow it). The
+		PermissionDeniedError is raised in step 3, before any query translation,
+		so no Engine/run patch is needed."""
+		frappe.set_user(self.USER_RESTRICTED)
+		with patch("jarvis.tools.get_list._child_table_parents", return_value=[]):
+			with self.assertRaises(PermissionDeniedError):
+				query({
+					"from": self.PARENT_DT, "alias": "p",
+					"joins": [{
+						"type": "left", "doctype": self.CHILD_DT, "alias": "c",
+						"on": {"c.parent": "p.name"},
+					}],
+					"select": ["p.name", "c.child_public"],
+				})
+
 	# ---- join ON + EXISTS positions --------------------------------
 
 	def test_restricted_cannot_join_on_permlevel_field(self):

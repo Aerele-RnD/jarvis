@@ -187,12 +187,33 @@ def query(spec: dict, confirm_large: bool = False) -> dict:
 	# Step 2: collect all referenced DocTypes for the permission gates.
 	doctypes = _collect_doctypes(spec)
 
-	# Step 3: DocType-level read permission gate (mirrors run_query).
+	# Step 3: DocType-level read permission gate (mirrors run_query). The plain
+	# has_permission check comes first and is the only thing on the happy path -
+	# no meta or schema lookup - so a readable DocType (or the mocked gate in
+	# tests) never triggers the child-table derivation below, and an unknown
+	# DocType still falls through to the downstream translation error rather than
+	# a DoesNotExistError here.
 	for dt in doctypes:
-		if not frappe.has_permission(dt, ptype="read"):
-			raise PermissionDeniedError(
-				f"no read permission on referenced DocType: {dt}"
-			)
+		if frappe.has_permission(dt, ptype="read"):
+			continue
+		# Denied by the plain check. For a CHILD (istable) DocType that is a false
+		# negative: child DocTypes carry no permissions of their own, so
+		# has_child_permission returns False for every non-admin without a parent -
+		# which broke every join/read referencing a child table. Mirror get_list:
+		# allow the child if the caller can read one of its owning parents
+		# (parent_doctype-derived permission). Only reached on an actual denial, so
+		# the get_meta / get_all derivation stays off the hot path.
+		if frappe.get_meta(dt).istable:
+			from jarvis.tools.get_list import _child_table_parents
+
+			parents = _child_table_parents(dt)
+			if any(
+				frappe.has_permission(dt, ptype="read", parent_doctype=p) for p in parents
+			):
+				continue
+		raise PermissionDeniedError(
+			f"no read permission on referenced DocType: {dt}"
+		)
 
 	# Step 4: per-site DocType allowlist (defense-in-depth).
 	allowlist = _load_doctype_allowlist()
