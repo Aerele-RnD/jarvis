@@ -578,15 +578,31 @@ def get_llm_sync_status() -> dict:
 	Returns:
 	    A dict with ``last_sync_at`` (ISO string or ""), ``last_sync_status``
 	    (e.g. ``pending: provisioning container``, ``ok (restart via admin)``,
-	    ``failed: admin unreachable: ...``), and a convenience boolean
-	    ``pending`` for client-side branching.
+	    ``failed: admin unreachable: ...``), a convenience boolean
+	    ``pending`` for client-side branching, ``subscription_status`` (one
+	    of ``verified``/``unverified``/``unchecked``/``not_applicable``, or
+	    ``""`` if the pool sync worker never wrote one - e.g. no pool sync
+	    has run yet, or the fleet is on a pre-warnings contract), and
+	    ``warnings`` - a list of ``{"code": str, "message": str}`` dicts
+	    from the last pool apply (empty list when none). A corrupt/empty
+	    stored ``last_sync_warnings`` value degrades to ``[]`` rather than
+	    ever 500ing this poller.
 	"""
 	s = frappe.get_single("Jarvis Settings")
 	status = s.get("last_sync_status") or ""
+	raw_warnings = s.get("last_sync_warnings") or "[]"
+	try:
+		warnings = json.loads(raw_warnings)
+		if not isinstance(warnings, list):
+			warnings = []
+	except (ValueError, TypeError):
+		warnings = []
 	return {
 		"last_sync_at": str(s.get("last_sync_at") or ""),
 		"last_sync_status": status,
 		"pending": status.startswith("pending:"),
+		"subscription_status": s.get("last_subscription_status") or "",
+		"warnings": warnings,
 	}
 
 
