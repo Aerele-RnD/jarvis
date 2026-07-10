@@ -62,10 +62,18 @@ def _load_private_key(b64u: str) -> Ed25519PrivateKey:
 
 def _save_credentials(*, settings_doc, private_key_b64u: str, public_key_b64u: str,
 					  device_id: str, device_token: str) -> None:
+	# chat_device_private_key / chat_device_token are Password fields; db_set
+	# writes exactly what it's given straight into tabSingles with no
+	# encryption (only Document.save()'s _save_passwords path encrypts a
+	# Password field). set_settings_password encrypts into __Auth first and
+	# db_sets only a mask, so the private key + bearer token never sit in
+	# plaintext in the Single's row.
+	from jarvis._password_utils import set_settings_password
+
 	settings_doc.db_set("chat_device_id", device_id)
 	settings_doc.db_set("chat_device_public_key", public_key_b64u)
-	settings_doc.db_set("chat_device_private_key", private_key_b64u)
-	settings_doc.db_set("chat_device_token", device_token)
+	set_settings_password(settings_doc, "chat_device_private_key", private_key_b64u)
+	set_settings_password(settings_doc, "chat_device_token", device_token)
 	frappe.db.commit()
 
 
@@ -229,11 +237,21 @@ def rotate_chat_device() -> dict:
 def clear_credentials() -> None:
 	"""Wipe persisted chat-device creds. Called when openclaw rejects an
 	existing pairing (token revoked, device not paired, etc.) so the next
-	chat attempt regenerates."""
+	chat attempt regenerates.
+
+	chat_device_private_key / chat_device_token are Password fields:
+	db_set(field, "") only blanks the masked placeholder in tabSingles - the
+	__Auth row still holds the prior secret, so get_password() would keep
+	returning the just-revoked key/token after a "clear" (same footgun
+	documented on jarvis/dev.py's _PASSWORD_FIELDS). clear_settings_password
+	drops the __Auth row too so the fields actually read as cleared."""
+	from jarvis._password_utils import clear_settings_password
+
 	settings = frappe.get_single("Jarvis Settings")
-	for field in ("chat_device_id", "chat_device_public_key",
-				  "chat_device_private_key", "chat_device_token"):
-		settings.db_set(field, "")
+	settings.db_set("chat_device_id", "")
+	settings.db_set("chat_device_public_key", "")
+	clear_settings_password(settings, "chat_device_private_key")
+	clear_settings_password(settings, "chat_device_token")
 	frappe.db.commit()
 
 
@@ -257,7 +275,15 @@ def update_device_token(new_token: str, *, device_id: str) -> bool:
 	token). Lock unavailable -> skip the persist (return False): the
 	stale-pairing self-heal recovers the next connect, which beats
 	risking the interleave. Returns True when persisted."""
+	from jarvis._password_utils import set_settings_password
 	from jarvis._redis_lock import redis_lock
+
+	# A falsy token is never persisted: set_settings_password no-ops on a
+	# falsy value, so proceeding would return True without writing anything
+	# - violating the "Returns True when persisted" contract above. Reject
+	# up front, before taking the repair lock.
+	if not new_token:
+		return False
 
 	with redis_lock(
 		"chat_device_pair_repair", timeout_s=30, blocking_timeout_s=5.0,
@@ -267,7 +293,10 @@ def update_device_token(new_token: str, *, device_id: str) -> bool:
 		settings = frappe.get_single("Jarvis Settings")
 		if (settings.chat_device_id or "").strip() != device_id:
 			return False
-		settings.db_set("chat_device_token", new_token)
+		# chat_device_token is a Password field - db_set would write the
+		# rotated bearer straight into tabSingles as plaintext; encrypt it
+		# into __Auth first (see _password_utils module docstring).
+		set_settings_password(settings, "chat_device_token", new_token)
 		frappe.db.commit()
 		return True
 

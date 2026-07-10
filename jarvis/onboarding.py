@@ -102,14 +102,25 @@ def _surface(fn, *args, **kwargs):
 
 def write_connection(data: dict) -> None:
 	"""Persist native admin credentials + container connection into Jarvis
-	Settings via db_set (no on_update creds-push retrigger during onboarding)."""
+	Settings via db_set (no on_update creds-push retrigger during onboarding).
+
+	The four Password fields (jarvis_admin_api_key/_secret,
+	jarvis_admin_customer_password, agent_token) go through
+	set_settings_password instead of a bare db_set: db_set writes exactly what
+	it's given straight into tabSingles with no encryption (only
+	Document.save()'s _save_passwords path encrypts a Password field), so a
+	bare db_set of a real secret sat there in plaintext. set_settings_password
+	encrypts into __Auth first, then db_sets only the mask - preserving the
+	"no on_update retrigger" property this function exists for."""
 	if not isinstance(data, dict):
 		return
+	from jarvis._password_utils import set_settings_password
+
 	s = frappe.get_single("Jarvis Settings")
 	if data.get("api_key"):
-		s.db_set("jarvis_admin_api_key", data["api_key"])
+		set_settings_password(s, "jarvis_admin_api_key", data["api_key"])
 	if data.get("api_secret"):
-		s.db_set("jarvis_admin_api_secret", data["api_secret"])
+		set_settings_password(s, "jarvis_admin_api_secret", data["api_secret"])
 	# OAuth password-grant credentials. ``customer`` is the admin-side login
 	# (email, the grant username); ``customer_password`` is the durable secret
 	# the bench exchanges for short-lived bearer tokens. The email arrives in
@@ -118,11 +129,11 @@ def write_connection(data: dict) -> None:
 	if data.get("customer"):
 		s.db_set("jarvis_admin_customer_email", data["customer"])
 	if data.get("customer_password"):
-		s.db_set("jarvis_admin_customer_password", data["customer_password"])
+		set_settings_password(s, "jarvis_admin_customer_password", data["customer_password"])
 	if data.get("agent_url"):
 		s.db_set("agent_url", data["agent_url"])
 	if data.get("agent_token"):
-		s.db_set("agent_token", data["agent_token"])
+		set_settings_password(s, "agent_token", data["agent_token"])
 
 
 @frappe.whitelist()
@@ -567,15 +578,31 @@ def get_llm_sync_status() -> dict:
 	Returns:
 	    A dict with ``last_sync_at`` (ISO string or ""), ``last_sync_status``
 	    (e.g. ``pending: provisioning container``, ``ok (restart via admin)``,
-	    ``failed: admin unreachable: ...``), and a convenience boolean
-	    ``pending`` for client-side branching.
+	    ``failed: admin unreachable: ...``), a convenience boolean
+	    ``pending`` for client-side branching, ``subscription_status`` (one
+	    of ``verified``/``unverified``/``unchecked``/``not_applicable``, or
+	    ``""`` if the pool sync worker never wrote one - e.g. no pool sync
+	    has run yet, or the fleet is on a pre-warnings contract), and
+	    ``warnings`` - a list of ``{"code": str, "message": str}`` dicts
+	    from the last pool apply (empty list when none). A corrupt/empty
+	    stored ``last_sync_warnings`` value degrades to ``[]`` rather than
+	    ever 500ing this poller.
 	"""
 	s = frappe.get_single("Jarvis Settings")
 	status = s.get("last_sync_status") or ""
+	raw_warnings = s.get("last_sync_warnings") or "[]"
+	try:
+		warnings = json.loads(raw_warnings)
+		if not isinstance(warnings, list):
+			warnings = []
+	except (ValueError, TypeError):
+		warnings = []
 	return {
 		"last_sync_at": str(s.get("last_sync_at") or ""),
 		"last_sync_status": status,
 		"pending": status.startswith("pending:"),
+		"subscription_status": s.get("last_subscription_status") or "",
+		"warnings": warnings,
 	}
 
 

@@ -62,10 +62,18 @@ class _SettingsSnapshotMixin:
 
 
 def _clear_settings():
-	"""Wipe chat_device_* between tests so each one starts unpaired."""
+	"""Wipe chat_device_* between tests so each one starts unpaired.
+
+	The Password fields need their __Auth rows dropped too: the production
+	write path stores the secret in __Auth (masked column), so a column-only
+	db_set("") would let get_password resurrect a previous test's secret."""
+	from frappe.utils.password import remove_encrypted_password
+
 	s = frappe.get_single("Jarvis Settings")
 	for f in (*_SNAPSHOT_PLAIN_FIELDS, *_SNAPSHOT_PASSWORD_FIELDS):
 		s.db_set(f, "")
+	for f in _SNAPSHOT_PASSWORD_FIELDS:
+		remove_encrypted_password("Jarvis Settings", "Jarvis Settings", f)
 	frappe.db.commit()
 
 
@@ -330,6 +338,28 @@ class TestUpdateDeviceToken(_SettingsSnapshotMixin, FrappeTestCase):
 		self.assertEqual(
 			s.get_password("chat_device_token", raise_exception=False),
 			"tok-fresh",
+		)
+
+	def test_falsy_token_returns_false_without_persist(self):
+		"""A falsy reissued token must return False and never touch
+		Settings: set_settings_password no-ops on falsy values, so
+		proceeding would have claimed True while persisting nothing -
+		violating the 'Returns True when persisted' contract."""
+		s = frappe.get_single("Jarvis Settings")
+		s.db_set("chat_device_id", "dev-1")
+		s.db_set("chat_device_token", "tok-old")
+		frappe.db.commit()
+
+		with patch("jarvis._password_utils.set_settings_password") as mock_set:
+			self.assertFalse(
+				chat_device.update_device_token("", device_id="dev-1"),
+			)
+		mock_set.assert_not_called()
+		s = frappe.get_single("Jarvis Settings")
+		self.assertEqual(
+			s.get_password("chat_device_token", raise_exception=False),
+			"tok-old",
+			"stored token must be untouched by a falsy reissue",
 		)
 
 

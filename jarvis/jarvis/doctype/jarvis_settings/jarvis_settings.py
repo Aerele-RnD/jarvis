@@ -175,6 +175,17 @@ class JarvisSettings(Document):
         # Plain Select field - direct change comparison via has_value_changed.
         self.flags.llm_auth_mode_changed = bool(self.has_value_changed("llm_auth_mode"))
 
+        # Pool change-detection snapshot (see _pool_state_snapshot). Captured
+        # HERE - before _validate()'s _save_passwords masks freshly-typed child
+        # row secrets to '*'*len(value) - because a new api_key of the SAME
+        # LENGTH as the old one would otherwise mask to an identical string by
+        # on_update time, and a real key rotation would compare as "unchanged"
+        # (the pool sync would be skipped and the container would keep serving
+        # the revoked key). At validate() time a freshly-typed key is still
+        # plaintext, which never equals the stored mask, so any newly-supplied
+        # secret reliably reads as a change.
+        self.flags.pool_state_snapshot = self._pool_state_snapshot(self)
+
         self._validate_auth_mode_requirements()
         self._validate_pattern_window()
 
@@ -372,7 +383,24 @@ class JarvisSettings(Document):
             # Jarvis Settings at run time so no snapshot is needed here.
             # validate_models() already ran above (Step 1) so we know the
             # current config is clean before enqueuing.
-            self._enqueue_pool_sync()
+            #
+            # Diff gate (pool analog of _classify_llm_change): every save of
+            # this Single lands here when proxy_active - including saves that
+            # touch nothing pool-related (sandbox toggles, pattern-learning
+            # windows, chat-device writes through save()) - and each one
+            # re-POSTed the FULL pool spec + secrets to admin. Skip the
+            # enqueue only when all three hold: a before-doc exists, the
+            # pool-relevant snapshot is identical, and the last sync ended
+            # "ok" (a failed sync must stay retryable by re-saving). When
+            # skipping, last_sync_status is left untouched (no "pending:"
+            # write - nothing was enqueued to complete it).
+            if self._pool_sync_is_redundant():
+                frappe.logger().debug(
+                    "jarvis_settings: skipping pool sync enqueue; "
+                    "pool state unchanged and last sync ok"
+                )
+            else:
+                self._enqueue_pool_sync()
         else:
             # Single-model path (1 model, no preset): reset any stale proxy
             # flags so UI/workers don't think the tenant is still in pool mode.
@@ -389,6 +417,89 @@ class JarvisSettings(Document):
             # The legacy fields are now mirrored, so _classify_llm_change
             # will correctly see any structural change.
             self._on_update_single_model_legacy()
+
+    @staticmethod
+    def _pool_state_snapshot(doc) -> tuple:
+        """Comparable snapshot of the pool-RELEVANT state of a settings doc.
+
+        Covers exactly the inputs that feed the admin pool push:
+        ``preset`` + ``routing_mode`` (read by compute_proxy_active /
+        build_pool_payload) and, per models[] child row, every field
+        build_pool_payload serializes: provider, model, base_url, tier,
+        order, credential_type, enabled, rotation, plus the two row
+        secrets - api_key and subscription_accounts (the JSON string
+        holding account_ref/upstream/label/oauth_blob per account).
+        Timestamps/metadata (modified, name, idx) are deliberately
+        excluded so a no-op re-save compares equal.
+
+        Secrets are compared BY VALUE AS STORED on the row - an untouched
+        DB-loaded row carries the '*'-mask, so mask == mask reads as
+        unchanged, while a freshly-typed plaintext secret differs from any
+        mask and reads as changed (see the validate() comment for why the
+        current doc's snapshot must be captured pre-masking). They are
+        sha256-digested into the snapshot rather than embedded raw so a
+        stray log/repr of doc.flags can never leak a live credential.
+        """
+        import hashlib
+
+        def _get(row, field):
+            if hasattr(row, "get"):
+                return row.get(field)
+            return getattr(row, field, None)
+
+        def _digest(value) -> str:
+            value = value or ""
+            if not value:
+                return ""
+            return hashlib.sha256(str(value).encode("utf-8")).hexdigest()
+
+        rows = []
+        for m in (doc.get("models") or []):
+            rows.append((
+                (_get(m, "provider") or ""),
+                (_get(m, "model") or ""),
+                (_get(m, "base_url") or ""),
+                (_get(m, "tier") or "strong"),
+                int(_get(m, "order") or 0),
+                (_get(m, "credential_type") or "api_key"),
+                1 if _get(m, "enabled") else 0,
+                (_get(m, "rotation") or ""),
+                _digest(_get(m, "api_key")),
+                _digest(_get(m, "subscription_accounts")),
+            ))
+        return (
+            (doc.get("preset") or ""),
+            (doc.get("routing_mode") or ""),
+            tuple(rows),
+        )
+
+    def _pool_sync_is_redundant(self) -> bool:
+        """True iff this save changes nothing the pool push would transmit
+        AND the container is already in a known-good state.
+
+        Skip conditions (ALL must hold; anything unknown falls through to
+        "not redundant" so the sync always errs toward firing):
+        - no caller-forced sync (flags.force_admin_sync - the same
+          save_llm_creds(force=True) override the legacy diff gate honors),
+        - a doc_before_save exists (first-ever save always syncs),
+        - validate() captured a snapshot for the current doc (a save path
+          that skipped validate - flags.ignore_validate - always syncs),
+        - the snapshots compare equal,
+        - last_sync_status starts with "ok": a prior failed/pending/skipped
+          sync means the container may not hold the current pool, so an
+          unchanged re-save is the operator's retry lever and must enqueue.
+        """
+        if self.flags.get("force_admin_sync"):
+            return False
+        before = self.get_doc_before_save()
+        if before is None:
+            return False
+        current = self.flags.get("pool_state_snapshot")
+        if current is None:
+            return False
+        if current != self._pool_state_snapshot(before):
+            return False
+        return (self.get("last_sync_status") or "").startswith("ok")
 
     def _enqueue_pool_sync(self) -> None:
         """Enqueue the pool-sync admin call for the proxy path.
@@ -702,6 +813,17 @@ _POOL_SYNC_RETRIES = 3
 _POOL_SYNC_RETRY_DELAY_S = 5
 
 
+def _cleared_subscription_status_fields() -> dict:
+    """Merge into a FAILED pool-worker db_set() dict so a stale
+    subscription_status/warnings pair from a PRIOR successful apply can't
+    linger next to a `failed:` status the next poll reads. Never merged into
+    the "ok (...)" success write, nor into a skip path where the container's
+    last real apply is still the truth (the pre-enqueue redundant-sync skip,
+    or the run-time "no longer proxy-valid" skip - neither one touched the
+    container, so whatever it's currently running is unchanged)."""
+    return {"last_subscription_status": "", "last_sync_warnings": "[]"}
+
+
 def _post_pool_with_retry(spec, api_keys, oauth_blobs):
     """post_update_llm_pool, retrying only the transient AdminUnreachableError.
     Re-raises the last unreachable error after exhausting retries; other Admin*
@@ -744,6 +866,18 @@ def _enqueued_sync_via_admin_pool(retry_left: int = ADMIN_SYNC_LOCK_RETRIES) -> 
     - AdminRateLimitedError writes a terminal failure with retry hint.
     - try/finally backstop ensures the status never sticks at "pending:".
 
+    Apply-warning propagation (2026-07-10): the admin response to a
+    successful apply also carries ``subscription_status`` and ``warnings``
+    (e.g. a subscription credential that loaded but failed an upstream
+    probe). Both are persisted alongside the "ok (...)" write into
+    ``last_subscription_status`` / ``last_sync_warnings`` and are CLEARED on
+    every failed/skipped-on-retries-exhausted terminal write so a stale
+    warning from a prior successful apply never lingers next to a
+    "failed:" status. The run-time "no longer proxy-valid" skip below
+    leaves them untouched, like the pre-enqueue redundant-sync skip: the
+    container itself was never touched, so its last real apply is still
+    the truth.
+
     ``retry_left``: losing the lock race must not strand a FRESH tenant on a
     terminal "failed: skipped" (their first pool apply would never happen and
     is_ready_for_chat would gate them out of chat indefinitely). Each loss
@@ -783,9 +917,14 @@ def _enqueued_sync_via_admin_pool(retry_left: int = ADMIN_SYNC_LOCK_RETRIES) -> 
                 "jarvis_settings: skipping pool admin sync; "
                 "another worker held the lock past blocking timeout (retries exhausted)",
             )
+            # Terminal "failed:" write - clear any stale warnings/subscription_status
+            # from a prior successful apply alongside it (see
+            # _cleared_subscription_status_fields).
             settings.db_set(
-                "last_sync_status",
-                "failed: skipped (concurrent sync did not finish in time)",
+                {
+                    "last_sync_status": "failed: skipped (concurrent sync did not finish in time)",
+                    **_cleared_subscription_status_fields(),
+                },
                 update_modified=False,
             )
             return
@@ -823,7 +962,19 @@ def _enqueued_sync_via_admin_pool(retry_left: int = ADMIN_SYNC_LOCK_RETRIES) -> 
                 # be read as provisioning success - a fresh tenant whose
                 # first sync is still pending/failed has no working pool.
                 "llm_pool_synced_at": _frappe.utils.now(),
+                # subscription_status/warnings ride the SAME PUT response as
+                # action/result (contract docs: fleet-agent llm-pool). A
+                # fleet still on the pre-warnings contract (1.9) reports
+                # neither key, so this always lands "" / "[]" - never raise
+                # on their absence, and never assume result is a dict beyond
+                # what `or {}` above already guarantees.
+                "last_subscription_status": str(result.get("subscription_status") or ""),
+                "last_sync_warnings": _frappe.as_json(result.get("warnings") or []),
             })
+            # last_sync_status MUST keep starting with the literal "ok" -
+            # _pool_sync_is_redundant() gates its dedup skip on
+            # startswith("ok"); a warned-but-applied pool is still an "ok"
+            # apply and must stay skippable on an unchanged re-save.
             # Commit every terminal write - matching _sync_via_admin; see
             # the comment there. Also makes llm_pool_synced_at durable.
             _commit_terminal_sync_status()
@@ -832,6 +983,7 @@ def _enqueued_sync_via_admin_pool(retry_left: int = ADMIN_SYNC_LOCK_RETRIES) -> 
             settings.db_set({
                 "last_sync_at": _frappe.utils.now(),
                 "last_sync_status": f"failed: auth: {e}",
+                **_cleared_subscription_status_fields(),
             })
             _commit_terminal_sync_status()
             terminal_written = True
@@ -843,6 +995,7 @@ def _enqueued_sync_via_admin_pool(retry_left: int = ADMIN_SYNC_LOCK_RETRIES) -> 
             settings.db_set({
                 "last_sync_at": _frappe.utils.now(),
                 "last_sync_status": f"failed: admin unreachable: {e}",
+                **_cleared_subscription_status_fields(),
             })
             _commit_terminal_sync_status()
             terminal_written = True
@@ -856,6 +1009,7 @@ def _enqueued_sync_via_admin_pool(retry_left: int = ADMIN_SYNC_LOCK_RETRIES) -> 
             settings.db_set({
                 "last_sync_at": _frappe.utils.now(),
                 "last_sync_status": f"failed: rate-limited; {retry_str}",
+                **_cleared_subscription_status_fields(),
             })
             _commit_terminal_sync_status()
             terminal_written = True
@@ -866,6 +1020,7 @@ def _enqueued_sync_via_admin_pool(retry_left: int = ADMIN_SYNC_LOCK_RETRIES) -> 
             settings.db_set({
                 "last_sync_at": _frappe.utils.now(),
                 "last_sync_status": f"failed: validation: {e}",
+                **_cleared_subscription_status_fields(),
             })
             _commit_terminal_sync_status()
             terminal_written = True
@@ -886,6 +1041,7 @@ def _enqueued_sync_via_admin_pool(retry_left: int = ADMIN_SYNC_LOCK_RETRIES) -> 
                     settings.db_set({
                         "last_sync_at": _frappe.utils.now(),
                         "last_sync_status": "failed: unexpected error; see Error Log",
+                        **_cleared_subscription_status_fields(),
                     })
                     _commit_terminal_sync_status()
                 except Exception:
