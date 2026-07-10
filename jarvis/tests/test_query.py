@@ -2196,12 +2196,11 @@ class TestQueryPermlevelFieldACL(FrappeTestCase):
 
 	def test_child_with_no_readable_parent_is_denied(self):
 		"""When no owning parent the caller can read is derivable, the child
-		read is a genuine denial (the gate does not silently allow it)."""
+		read is a genuine denial (the gate does not silently allow it). The
+		PermissionDeniedError is raised in step 3, before any query translation,
+		so no Engine/run patch is needed."""
 		frappe.set_user(self.USER_RESTRICTED)
-		with patch(
-			"jarvis.tools.get_list._child_table_parents", return_value=[],
-		), patch("frappe.database.query.Engine"), \
-		     patch("pypika.queries.QueryBuilder.run", return_value=[]):
+		with patch("jarvis.tools.get_list._child_table_parents", return_value=[]):
 			with self.assertRaises(PermissionDeniedError):
 				query({
 					"from": self.PARENT_DT, "alias": "p",
