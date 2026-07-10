@@ -228,7 +228,6 @@ function sideHtml(active) {
 	min-height: 604px;
 	display: grid;
 	grid-template-rows: 1fr auto;
-	font-family: 'Inter', system-ui, sans-serif;
 	color: var(--text);
 }
 .tour-stage { position: relative; overflow: hidden; display: flex; flex-direction: column; }
@@ -253,13 +252,13 @@ function sideHtml(active) {
 }
 
 /* keyboard focus */
-button:focus-visible { outline: 2px solid var(--border-2); outline-offset: 2px; }
+button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 
 /* ---- copy column ---- */
 .slide-copy .eyebrow {
 	display: inline-flex; align-items: center; gap: 7px;
-	font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
-	color: var(--blue); background: var(--blue-bg); border: 1px solid var(--blue-bd);
+	font-size: 12px; font-weight: 500;
+	color: var(--text-2); background: var(--surface-2);
 	border-radius: 99px; padding: 4px 11px; margin-bottom: 16px;
 }
 .slide-copy h2 { font-size: 30px; font-weight: 680; line-height: 1.12; letter-spacing: -.02em; margin: 0 0 12px; text-wrap: balance; }
@@ -284,8 +283,8 @@ button:focus-visible { outline: 2px solid var(--border-2); outline-offset: 2px; 
 	cursor: pointer; white-space: nowrap;
 	transition: background-color .15s ease, color .15s ease, border-color .15s ease;
 }
-.btn--primary { background: var(--blue); border-color: var(--blue); color: #fff; }
-.btn--primary:hover { background: color-mix(in srgb, var(--blue) 88%, #fff); border-color: color-mix(in srgb, var(--blue) 88%, #fff); }
+.btn--primary { background: var(--text); border-color: var(--text); color: var(--surface); }
+.btn--primary:hover { background: var(--text-2); border-color: var(--text-2); }
 .btn--ghost { background: var(--surface-2); border-color: transparent; color: var(--text); }
 .btn--ghost:hover { background: var(--surface-3); color: var(--text); }
 .btn--sm { height: 32px; padding: 0 12px; font-size: 12.5px; border-radius: 8px; }
@@ -323,7 +322,7 @@ button:focus-visible { outline: 2px solid var(--border-2); outline-offset: 2px; 
 
 /* suggestion-card icon tints (semantic, replaces inline emoji colors) */
 .m-sugg .mi { display: inline-flex; }
-.m-sugg .mi-blue { color: #1579d0; }
+.m-sugg .mi-blue { color: var(--link); }
 .m-sugg .mi-green { color: var(--green); }
 .m-sugg .mi-amber { color: var(--amber); }
 .m-sugg .mi-violet { color: var(--text-3); }

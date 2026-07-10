@@ -233,7 +233,9 @@
 									 go back to (re-running startSignup there would double-sign-up). -->
 								<button v-if="!state.reconciledConnect" class="jv-ob-back" :disabled="savingConnect" @click="goBack"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6" /></svg>Back</button>
 								<span v-else></span>
-								<button v-if="connectReady || savingConnect" class="jv-ob-btn jv-ob-btn-grad" :disabled="savingConnect" @click="saveConnect">
+								<!-- Always rendered; disabled until the editor reports a savable config,
+									 so the step never shows without a primary action. -->
+								<button class="jv-ob-btn jv-ob-btn-grad" :disabled="!connectReady || savingConnect" @click="saveConnect">
 									{{ savingConnect ? "Connecting…" : "Start chatting" }}
 								</button>
 							</div>
@@ -1065,7 +1067,7 @@ onMounted(async () => {
 /* keyboard focus (text inputs draw their own focus border) */
 .jv-ob-root button:focus-visible,
 .jv-ob-root input[type="checkbox"]:focus-visible,
-.jv-ob-root [tabindex]:focus-visible { outline: 2px solid var(--border-2); outline-offset: 2px; }
+.jv-ob-root [tabindex]:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 
 /* ---- buttons (design.md §3.1): solid near-black primary, subtle secondary,
    colour-shift hover only. The finishing CTA (.jv-ob-btn-grad class name kept
@@ -1081,10 +1083,8 @@ onMounted(async () => {
 }
 .jv-ob-btn:hover { background: var(--surface-3); }
 .jv-ob-btn:disabled { opacity: .5; cursor: default; }
-.jv-ob-btn-primary { background: var(--blue); border-color: var(--blue); color: #fff; }
-.jv-ob-btn-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--blue) 88%, #fff); border-color: color-mix(in srgb, var(--blue) 88%, #fff); color: #fff; }
-.jv-ob-btn-grad { background: var(--blue); border-color: var(--blue); color: #fff; }
-.jv-ob-btn-grad:hover:not(:disabled) { background: color-mix(in srgb, var(--blue) 88%, #fff); border-color: color-mix(in srgb, var(--blue) 88%, #fff); color: #fff; }
+.jv-ob-btn-primary, .jv-ob-btn-grad { background: var(--text); border-color: var(--text); color: var(--surface); }
+.jv-ob-btn-primary:hover:not(:disabled), .jv-ob-btn-grad:hover:not(:disabled) { background: var(--text-2); border-color: var(--text-2); color: var(--surface); }
 /* small variant (inline Retry next to an error message) */
 .jv-ob-btn-sm { height: 28px; padding: 0 12px; font-size: 12.5px; border-radius: 8px; margin-left: 8px; }
 
@@ -1144,7 +1144,7 @@ onMounted(async () => {
 }
 .jv-ob-inp::placeholder { color: var(--text-3); }
 .jv-ob-inp:hover { border-color: var(--text-3); }
-.jv-ob-inp:focus { outline: none; border-color: var(--text-3); box-shadow: 0 0 1px rgba(0, 0, 0, .33), 0 1px 3px rgba(0, 0, 0, .14); }
+.jv-ob-inp:focus { outline: none; border-color: var(--text); box-shadow: 0 0 0 3px var(--surface-2); }
 .jv-ob-sec-label {
 	grid-column: 1 / -1;
 	font-size: 14px; font-weight: 600;
@@ -1161,7 +1161,7 @@ onMounted(async () => {
 }
 .jv-ob-form :deep(.jvc-field:hover) { border-color: var(--text-3); }
 .jv-ob-form :deep(.jvc-field:focus-within),
-.jv-ob-form :deep(.jvc-field.jvc-open) { border-color: var(--text-3); box-shadow: 0 0 1px rgba(0, 0, 0, .33), 0 1px 3px rgba(0, 0, 0, .14); }
+.jv-ob-form :deep(.jvc-field.jvc-open) { border-color: var(--text); box-shadow: 0 0 0 3px var(--surface-2); }
 .jv-ob-form :deep(.jvc-input::placeholder) { color: var(--text-3); }
 
 /* ---- Review & pay ---- */

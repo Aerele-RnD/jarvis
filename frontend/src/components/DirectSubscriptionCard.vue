@@ -247,9 +247,9 @@ function copyUrl() {
   transition: background-color .15s ease, color .15s ease, border-color .15s ease;
 }
 .jv-dsub-btn:disabled { opacity: .5; cursor: not-allowed; }
-.jv-dsub-btn-primary { background: var(--blue); color: #fff; border-color: var(--blue); }
-.jv-dsub-btn-primary:hover { background: color-mix(in srgb, var(--blue) 88%, #fff); border-color: color-mix(in srgb, var(--blue) 88%, #fff); }
-.jv-dsub-btn-primary svg { stroke: #fff; }
+.jv-dsub-btn-primary { background: var(--text); color: var(--surface); border-color: var(--text); }
+.jv-dsub-btn-primary:hover { background: var(--text-2); border-color: var(--text-2); }
+.jv-dsub-btn-primary svg { stroke: var(--surface); }
 .jv-dsub-btn-ghost { background: var(--surface-2); color: var(--text); }
 .jv-dsub-btn-ghost:hover { background: var(--surface-3); }
 .jv-dsub-input {

@@ -14,8 +14,9 @@
    ========================================================================== */
 
 /* ===== settings panel (centered modal with a left section rail) ===== */
-.jv-settings-overlay { position: absolute; inset: 0; z-index: 60; background: rgba(0, 0, 0, 0.27); display: flex; align-items: center; justify-content: center; padding: 24px; }
-.jv-dark .jv-settings-overlay { background: rgba(0, 0, 0, 0.72); }
+.jv-settings-overlay { position: fixed; inset: 0; z-index: 60; background: rgba(0, 0, 0, 0.27); display: flex; align-items: center; justify-content: center; padding: 24px; }
+/* the hoisted dialog puts .jv-dark on the overlay root itself */
+.jv-settings-overlay.jv-dark { background: rgba(0, 0, 0, 0.72); }
 .jv-settings { width: 900px; max-width: 100%; height: 560px; max-height: 88vh; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; display: flex; overflow: hidden; box-shadow: 0 0 1px rgba(0, 0, 0, .2), 0 24px 30px -8px rgba(0, 0, 0, .1); animation: jv-popin 0.1s ease-out; }
 @keyframes jv-popin { from { transform: scale(0.98); opacity: 0.5; } to { transform: scale(1); opacity: 1; } }
 .jv-settings-nav { width: 224px; flex: none; background: var(--surface-1); border-right: 1px solid var(--border); padding: 8px; display: flex; flex-direction: column; gap: 3px; overflow-y: auto; }
@@ -24,7 +25,7 @@
 .jv-settings-navitem svg { color: var(--text-3); flex: none; }
 .jv-settings-navitem:hover { background: var(--surface-2); color: var(--text); }
 .jv-settings-navitem.on { background: var(--surface); color: var(--text); box-shadow: 0 0 1px rgba(0, 0, 0, .33), 0 1px 3px rgba(0, 0, 0, .14); }
-.jv-dark .jv-settings-navitem.on { background: var(--surface-3); box-shadow: none; }
+.jv-dark .jv-settings-navitem.on { background: var(--surface-3); box-shadow: 0 0 0 1px var(--border-2); }
 .jv-settings-navitem.on svg { color: var(--text); }
 .jv-settings-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 /* Pane-owned header (design.md §4.1): title + optional description left, ghost
@@ -57,15 +58,19 @@
 /* toggle switch — on-state is near-black (frappe Switch), not green */
 .jv-switch { width: 38px; height: 22px; flex: none; border: none; border-radius: 11px; background: var(--surface-3); position: relative; cursor: pointer; padding: 0; transition: background .15s; }
 .jv-switch.on { background: var(--text); }
-.jv-switch-knob { position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: var(--surface); box-shadow: 0 1px 2px rgba(0, 0, 0, .25); transition: left .15s; }
+.jv-switch-knob { position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .25); transition: left .15s; }
 .jv-switch.on .jv-switch-knob { left: 18px; }
+/* dark: the ON track is near-white (var(--text)), so the knob flips dark */
+.jv-dark .jv-switch.on .jv-switch-knob { background: var(--surface); }
 
-/* segmented control (Appearance) — gray track, active = raised chip */
-.jv-seg { display: inline-flex; align-items: center; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 2px; gap: 2px; }
-.jv-seg button { display: flex; align-items: center; gap: 6px; padding: 5px 12px; background: transparent; border: none; border-radius: 8px; font-family: inherit; font-size: 13px; font-weight: 420; color: var(--text-3); cursor: pointer; transition: background-color .15s ease, color .15s ease, box-shadow .15s ease; }
-.jv-seg button:hover { color: var(--text-2); background: var(--surface-3); }
-.jv-seg button.on { background: var(--surface); color: var(--text); box-shadow: 0 0 1px rgba(0, 0, 0, .33), 0 1px 3px rgba(0, 0, 0, .14); }
-.jv-dark .jv-seg button.on { background: var(--surface-3); box-shadow: none; }
+/* segmented control — one recipe for Appearance (.jv-seg), macro-run filters
+   (.jv-runchips) and the AI-models tabs (.jv-acct-aitabs): gray track, active
+   = raised chip (design.md §3.5) */
+.jv-seg, .jv-runchips, .jv-acct-aitabs { display: inline-flex; align-items: center; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 2px; gap: 2px; }
+.jv-seg button, .jv-runchips button, .jv-acct-aitabs button { display: flex; align-items: center; gap: 6px; padding: 5px 12px; background: transparent; border: none; border-radius: 8px; font-family: inherit; font-size: 13px; font-weight: 420; color: var(--text-3); cursor: pointer; transition: background-color .15s ease, color .15s ease, box-shadow .15s ease; }
+.jv-seg button:hover, .jv-runchips button:hover, .jv-acct-aitabs button:hover { color: var(--text-2); background: var(--surface-3); }
+.jv-seg button.on, .jv-runchips button.on, .jv-acct-aitabs button.on { background: var(--surface); color: var(--text); box-shadow: 0 0 1px rgba(0, 0, 0, .33), 0 1px 3px rgba(0, 0, 0, .14); }
+.jv-dark .jv-seg button.on, .jv-dark .jv-runchips button.on, .jv-dark .jv-acct-aitabs button.on { background: var(--surface-3); box-shadow: none; }
 .jv-seg button svg { color: var(--text-3); }
 .jv-seg button.on svg { color: var(--text); }
 
@@ -78,11 +83,6 @@
 
 /* macro run history dashboard (Macro runs) */
 .jv-runfilters { display: flex; align-items: center; gap: 10px; margin: 12px 0 6px; flex-wrap: wrap; }
-.jv-runchips { display: inline-flex; align-items: center; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 2px; gap: 2px; }
-.jv-runchips button { font-family: inherit; font-size: 13px; font-weight: 420; padding: 4px 11px; border-radius: 8px; color: var(--text-3); cursor: pointer; border: none; background: transparent; transition: background-color .15s ease, color .15s ease, box-shadow .15s ease; }
-.jv-runchips button:hover { color: var(--text-2); background: var(--surface-3); }
-.jv-runchips button.on { background: var(--surface); color: var(--text); box-shadow: 0 0 1px rgba(0, 0, 0, .33), 0 1px 3px rgba(0, 0, 0, .14); }
-.jv-dark .jv-runchips button.on { background: var(--surface-3); box-shadow: none; }
 .jv-runmacrosel { margin-left: auto; font-family: inherit; font-size: 13px; color: var(--text-2); background: var(--surface-1); border: 1px solid var(--border-2); border-radius: 8px; padding: 5px 10px; cursor: pointer; outline: none; transition: border-color .15s ease, background-color .15s ease; }
 .jv-runmacrosel:focus { background: var(--surface); border-color: var(--text-3); }
 .jv-run { display: flex; align-items: flex-start; gap: 11px; padding: 12px 2px; border-bottom: 1px solid var(--surface-2); }
@@ -91,7 +91,6 @@
 .jv-run-dot.d-ok { background: var(--green); }
 .jv-run-dot.d-err { background: var(--red); }
 .jv-run-dot.d-run { background: var(--blue); }
-.jv-dark .jv-run-dot.d-run { background: var(--blue); }
 .jv-run-dot.d-stop { background: var(--text-3); }
 .jv-run-main { flex: 1; min-width: 0; }
 .jv-run-top { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
@@ -99,8 +98,7 @@
 .jv-run-badge { font-size: 11px; font-weight: 420; padding: 2px 8px; border-radius: 999px; text-transform: capitalize; }
 .jv-run-badge.b-ok { background: var(--green-bg); color: var(--green); }
 .jv-run-badge.b-err { background: var(--red-bg); color: var(--red); }
-.jv-run-badge.b-run { background: var(--blue-bg); color: #1579d0; }
-.jv-dark .jv-run-badge.b-run { color: var(--blue); }
+.jv-run-badge.b-run { background: var(--blue-bg); color: var(--link); }
 .jv-run-badge.b-stop { background: var(--surface-2); color: var(--text-3); }
 .jv-run-trig { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-3); }
 .jv-run-meta { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-3); margin-top: 4px; flex-wrap: wrap; }
@@ -126,16 +124,14 @@
 .jv-btn { flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid transparent; background: transparent; font-family: inherit; font-size: 13px; font-weight: 500; line-height: 1; white-space: nowrap; cursor: pointer; user-select: none; transition: background-color .15s ease, color .15s ease, border-color .15s ease; }
 .jv-btn:disabled { opacity: .5; cursor: default; pointer-events: none; }
 .jv-btn svg { flex: none; }
-.jv-btn--primary { background: var(--blue); border-color: var(--blue); color: #fff; }
-.jv-btn--primary:hover { background: color-mix(in srgb, var(--blue) 88%, #fff); border-color: color-mix(in srgb, var(--blue) 88%, #fff); }
-.jv-btn--primary svg { stroke: #fff; }
+.jv-btn--primary { background: var(--text); border-color: var(--text); color: var(--surface); }
+.jv-btn--primary:hover { background: var(--text-2); border-color: var(--text-2); }
+.jv-btn--primary svg { stroke: var(--surface); }
 .jv-btn--ghost { background: var(--surface-2); border-color: transparent; color: var(--text); }
 .jv-btn--ghost:hover { background: var(--surface-3); }
-.jv-btn--outline { background: var(--surface); border-color: var(--border-2); color: var(--text); }
-.jv-btn--outline:hover { border-color: var(--text-3); }
-.jv-btn--danger { background: var(--red-bg); border-color: transparent; color: var(--red); }
-.jv-btn--danger:hover { background: var(--red-bd); }
-.jv-btn--danger svg { stroke: var(--red); }
+.jv-btn--danger { background: var(--red); border-color: var(--red); color: #fff; }
+.jv-btn--danger:hover { background: color-mix(in srgb, var(--red) 88%, #000); border-color: color-mix(in srgb, var(--red) 88%, #000); }
+.jv-btn--danger svg { stroke: #fff; }
 .jv-btn--sm { height: 28px; padding: 0 10px; font-size: 12.5px; border-radius: 8px; }
 .jv-btn--icon { width: 28px; height: 28px; padding: 0; border-radius: 8px; color: var(--text-3); background: transparent; }
 .jv-btn--icon:hover { background: var(--surface-2); color: var(--text); }
@@ -181,8 +177,7 @@
 .jv-acct-btn-sm { display: flex; align-items: center; justify-content: center; width: 100%; height: 28px; font-size: 12.5px; font-weight: 500; color: var(--text); text-decoration: none; border-radius: 8px; background: var(--surface-2); transition: background-color .15s ease; }
 .jv-acct-btn-sm:hover { background: var(--surface-3); }
 /* manage-billing: a plain text link (design.md §4.2) */
-.jv-acct-link { display: inline-flex; align-items: center; gap: 5px; margin-top: 18px; font-size: 13px; color: #1579d0; text-decoration: none; }
-.jv-dark .jv-acct-link { color: var(--blue); }
+.jv-acct-link { display: inline-flex; align-items: center; gap: 5px; margin-top: 18px; font-size: 13px; color: var(--link); text-decoration: none; }
 .jv-acct-link:hover { text-decoration: underline; }
 .jv-acct-link svg { flex: none; }
 .jv-acct-savednote { font-size: 12px; color: var(--text-3); font-weight: 420; }
@@ -207,19 +202,12 @@
 .jv-mon-retry { display: inline-flex; align-items: center; margin-left: 6px; height: 24px; border: none; background: var(--surface-2); color: var(--text); border-radius: 8px; padding: 0 10px; font-size: 12px; font-weight: 500; font-family: inherit; cursor: pointer; transition: background-color .15s ease; }
 .jv-mon-retry:hover { background: var(--surface-3); }
 
-/* ===== AI-models segmented tabs — same raised-chip recipe as jv-seg ===== */
-.jv-acct-aitabs { display: inline-flex; align-items: center; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 2px; gap: 2px; margin-bottom: 14px; }
-.jv-acct-aitabs button { font-family: inherit; font-size: 13px; font-weight: 420; padding: 5px 12px; border-radius: 8px; color: var(--text-3); cursor: pointer; border: none; background: transparent; transition: background-color .15s ease, color .15s ease, box-shadow .15s ease; }
-.jv-acct-aitabs button:hover { color: var(--text-2); background: var(--surface-3); }
-.jv-acct-aitabs button.on { background: var(--surface); color: var(--text); box-shadow: 0 0 1px rgba(0, 0, 0, .33), 0 1px 3px rgba(0, 0, 0, .14); }
-.jv-dark .jv-acct-aitabs button.on { background: var(--surface-3); box-shadow: none; }
+/* AI-models tabs share the segmented recipe above; only the margin is local. */
+.jv-acct-aitabs { margin-bottom: 14px; }
 
 /* Rail group headers — 12px medium, sentence case (design.md §2.3; no uppercase). */
 .jv-settings-group { font-size: 12px; font-weight: 500; color: var(--text-3); padding: 14px 8px 5px; display: flex; align-items: center; gap: 6px; }
 
-/* The overlay mounts at the shell, so it must be viewport-fixed. */
-.jv-settings-overlay { position: fixed; }
-.jv-settings-overlay.jv-dark { background: rgba(0, 0, 0, 0.72); }
 
 /* Connection status colouring — ConnectionPane uses jv-ok/jv-warn inside a
    jv-mon-kv row. */
