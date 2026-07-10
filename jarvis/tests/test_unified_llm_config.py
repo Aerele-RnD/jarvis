@@ -2415,3 +2415,129 @@ class TestOnboardingAuditFixes(_RT3SettingsTestCase):
         self.assertEqual(len(captured), 2)
         for kw in captured:
             self.assertEqual(kw.get("timeout"), ADMIN_SYNC_RQ_TIMEOUT_S)
+
+
+# ---------------------------------------------------------------------------
+# Pool-sync change detection: the pool analog of _classify_llm_change.
+#
+# Before this gate, EVERY save of Jarvis Settings while proxy_active - sandbox
+# toggles, pattern-learning windows, any unrelated field - re-POSTed the full
+# pool spec + secrets to admin. on_update now skips _enqueue_pool_sync only
+# when (a) a doc_before_save exists, (b) the pool-relevant snapshot
+# (_pool_state_snapshot) is identical, and (c) last_sync_status starts with
+# "ok" - so a failed sync stays retryable by re-saving.
+# ---------------------------------------------------------------------------
+
+class TestPoolSyncChangeDetection(_RT3SettingsTestCase):
+
+    def setUp(self):
+        super().setUp()
+        self._clear_models()
+        _reset_settings()
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("preset", "", update_modified=False)
+        settings.db_set("proxy_active", 0, update_modified=False)
+        settings.db_set("proxy_recommended", 0, update_modified=False)
+        frappe.db.commit()
+
+    def _save_two_model_pool(self):
+        """Establish a synced 2-model pool: proxy_active=1, status 'ok ...'."""
+        from unittest.mock import patch
+
+        settings = frappe.get_single("Jarvis Settings")
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-4o",
+                       tier="strong", order=0,
+                       api_key="sk-diff-key-1",
+                       base_url="https://api.openai.com")
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-3.5-turbo",
+                       tier="cheap", order=1,
+                       api_key="sk-diff-key-2",
+                       base_url="https://api.openai.com")
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   return_value={"action": "pool_update"}):
+            settings.save()
+        settings = frappe.get_single("Jarvis Settings")
+        # Pre-condition shared by every test here: the pool applied cleanly.
+        assert (settings.last_sync_status or "").startswith("ok"), \
+            f"fixture: expected ok status, got {settings.last_sync_status!r}"
+        return settings
+
+    # ------------------------------------------------------------------ #
+    # (a) no-change save -> NO enqueue, status left alone
+    # ------------------------------------------------------------------ #
+
+    def test_unchanged_save_skips_pool_sync_enqueue(self):
+        """A save that changes nothing pool-relevant while the last sync is
+        'ok ...' must NOT enqueue a pool sync, and must leave
+        last_sync_status untouched (no 'pending:' write)."""
+        from unittest.mock import patch
+
+        self._save_two_model_pool()
+        settings = frappe.get_single("Jarvis Settings")
+        status_before = settings.last_sync_status
+
+        with patch.object(type(settings), "_enqueue_pool_sync") as mock_enqueue:
+            settings.save()
+
+        mock_enqueue.assert_not_called()
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertEqual(settings.last_sync_status, status_before,
+                         "skipping must leave last_sync_status alone")
+
+    # ------------------------------------------------------------------ #
+    # (b) pool-relevant change -> enqueue fires
+    # ------------------------------------------------------------------ #
+
+    def test_model_row_change_enqueues_pool_sync(self):
+        from unittest.mock import patch
+
+        self._save_two_model_pool()
+        settings = frappe.get_single("Jarvis Settings")
+        settings.models[1].model = "gpt-4o-mini"
+
+        with patch.object(type(settings), "_enqueue_pool_sync") as mock_enqueue:
+            settings.save()
+
+        mock_enqueue.assert_called_once()
+
+    def test_same_length_api_key_rotation_enqueues_pool_sync(self):
+        """Regression guard for the snapshot's capture point: a freshly-typed
+        api_key of the SAME LENGTH as the old one masks to an identical
+        '*'*len string by on_update time, so a snapshot taken there would
+        read the rotation as 'unchanged' and silently drop the push. The
+        snapshot is captured in validate() (pre-masking), where the new
+        plaintext never equals the stored mask."""
+        from unittest.mock import patch
+
+        self._save_two_model_pool()
+        settings = frappe.get_single("Jarvis Settings")
+        # Same length as the stored "sk-diff-key-1".
+        settings.models[0].api_key = "sk-diff-key-9"
+
+        with patch.object(type(settings), "_enqueue_pool_sync") as mock_enqueue:
+            settings.save()
+
+        mock_enqueue.assert_called_once()
+
+    # ------------------------------------------------------------------ #
+    # (c) unchanged save while last sync FAILED -> still enqueues (retry)
+    # ------------------------------------------------------------------ #
+
+    def test_unchanged_save_with_failed_status_still_enqueues(self):
+        """A failed sync must always be retryable by re-saving, even with an
+        identical pool config."""
+        from unittest.mock import patch
+
+        self._save_two_model_pool()
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("last_sync_status", "failed: admin unreachable: boom",
+                        update_modified=False)
+        frappe.db.commit()
+
+        settings = frappe.get_single("Jarvis Settings")
+        with patch.object(type(settings), "_enqueue_pool_sync") as mock_enqueue:
+            settings.save()
+
+        mock_enqueue.assert_called_once()
