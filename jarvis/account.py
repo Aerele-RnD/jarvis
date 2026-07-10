@@ -153,13 +153,28 @@ def get_llm_connection_status() -> dict:
 
 @frappe.whitelist()
 def get_account() -> dict:
-	"""Plan + validity + upgrade-eligible plans for the account page."""
+	"""Plan + validity + upgrade-eligible plans for the account page.
+
+	System-Manager only, like its siblings above. Until now the only gate was
+	the UI: SettingsDialog hides the ACCOUNT & BILLING rail group from non-SM
+	users, and the /jarvis-account desk page carries roles=["System Manager"].
+	Neither stops a direct /api/method call, so any authenticated user could
+	read the account's plan, subscription status and validity.
+	"""
+	frappe.only_for("System Manager")
 	return _surface(admin_client.get_account_summary)
 
 
 @frappe.whitelist()
 def preview_upgrade(target_plan: str) -> dict:
-	"""Prorated amount for the upgrade modal's per-plan cards."""
+	"""Prorated amount for the upgrade modal's per-plan cards.
+
+	Same gate as ``start_upgrade`` below: this is the read half of the same
+	billing transaction, reachable only from the SM-only desk page, and it
+	spends an admin round-trip per call. Whoever may not upgrade the plan has
+	no business pricing the upgrade either.
+	"""
+	frappe.only_for("System Manager")
 	return _surface(admin_client.preview_upgrade, target_plan)
 
 
