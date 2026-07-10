@@ -235,7 +235,8 @@
               <div v-for="(a, ai) in m.accounts" :key="a.account_ref || ai" class="jv-pool-acctchip">
                 <span class="jv-pool-avatar">{{ (accountLabel(a) || '?').charAt(0).toUpperCase() }}</span>
                 <span class="jv-pool-accttx">{{ accountLabel(a) }}</span>
-                <span class="jv-pool-dot" aria-hidden="true"></span>
+                <span class="jv-pool-dot" :class="'jv-pool-dot--' + accountHealth(m).level" aria-hidden="true"></span>
+                <span v-if="accountHealth(m).label" class="jv-pool-acct-health" :class="'jv-pool-acct-health--' + accountHealth(m).level" :title="accountHealth(m).title">{{ accountHealth(m).label }}</span>
                 <span class="jv-pool-acctacts">
                   <button v-if="editable && !singleMode" class="jv-btn jv-btn--sm jv-btn--ghost" @click="startConnect(m, ai)" title="Re-authorize to mint fresh tokens">Reconnect</button>
                   <button v-if="editable" class="jv-btn jv-btn--sm jv-btn--ghost jv-pool-disc" @click="removeAccount(m, ai)">Disconnect</button>
@@ -368,7 +369,9 @@
         Provide keys for: {{ missingVendors.map(providerLabel).join(', ') }}
       </span>
       <span v-else-if="dirty" style="font-size:13px;color:var(--amber);font-weight:600;">● Unsaved changes - Save configuration to apply</span>
-      <span style="font-size:13px;color:var(--text-3);">{{ syncLabel }}</span>
+      <span v-else-if="applyStatus.kind !== 'idle'" class="jv-pool-syncpill" :class="'jv-pool-syncpill--' + applyStatus.kind">
+        <span class="jv-pool-syncpill-ic" aria-hidden="true"></span>{{ applyStatus.text }}
+      </span>
     </div>
   </div>
 </template>
@@ -405,7 +408,7 @@ const selectedPreset = ref("")
 const keysByVendor = ref({})
 const err = ref("")
 const saving = ref(false)
-const sync = ref({ last_sync_status: "", pending: false })
+const sync = ref({ last_sync_status: "", pending: false, subscription_status: "", warnings: [] })
 const savedSnapshot = ref("__init__")  // savable pool as of last load/save; drives the unsaved-changes notice
 let pollTimer = null
 
@@ -544,10 +547,20 @@ const badgeLabel = computed(() => {
   if (llmMode.value === "custom") return validModels.value.length >= 2 ? "Proxy (failover)" : ""
   return ""  // quick = single model
 })
-const syncLabel = computed(() => {
-  if (sync.value.pending) return "Syncing to your agent…"
+// Save-bar status pill (Option A - "honest model health"). Reflects the outcome
+// of the most recent apply, including any per-account subscription warnings the
+// backend surfaced (e.g. a chat subscription that rejected a test request).
+const applyStatus = computed(() => {
+  if (sync.value.pending) return { kind: "pending", text: "Applying to your agent…" }
   const s = sync.value.last_sync_status || ""
-  return s ? `Last sync: ${s}` : ""
+  if (s.startsWith("failed")) return { kind: "failed", text: "Sync failed — try again" }
+  if (s.startsWith("ok")) {
+    let n = Array.isArray(sync.value.warnings) ? sync.value.warnings.length : 0
+    if (n === 0 && sync.value.subscription_status === "unverified") n = 1
+    if (n > 0) return { kind: "warn", text: `Applied · ${n} model${n > 1 ? "s" : ""} need${n > 1 ? "" : "s"} attention` }
+    return { kind: "ok", text: "Applied" }
+  }
+  return { kind: "idle", text: "" }
 })
 // Unsaved-changes detector: current savable pool vs the last saved snapshot.
 // Connecting an account mutates rows in memory (the fresh OAuth blob lives only
@@ -657,6 +670,38 @@ function accountLabel(a) {
   const l = (a && a.label) || ""
   if (l && !/^SUB_/i.test(l)) return l
   return (a && a.account_email) || "Account connected"
+}
+function firstWarningMessage() {
+  return (sync.value.warnings && sync.value.warnings[0] && sync.value.warnings[0].message) || ""
+}
+// Option A "honest model health": the connected-account dot + label for a model
+// row. Subscriptions reflect the fleet's last subscription-probe result;
+// api-key rows stay a quiet green (a saved key is validated at save time, not
+// probed live). Onboarding (singleMode) never shows this - always neutral.
+function accountHealth(m) {
+  if (singleMode.value) return { level: "neutral" }
+  if (!m || m.credentialType !== "subscription") return { level: "ok" }
+  // Config changed but not yet (re)applied - the last probe result no longer
+  // describes what's about to be saved, so don't assert a stale health.
+  if (dirty.value || sync.value.pending) return { level: "neutral" }
+  const status = sync.value.subscription_status
+  if (status === "unverified") {
+    return {
+      level: "warn",
+      label: "Not accepting requests",
+      title: firstWarningMessage() || "This subscription rejected a test request — reconnect to restore chat.",
+    }
+  }
+  if (status === "unchecked") {
+    return {
+      level: "unchecked",
+      label: "Not verified yet",
+      title: "We couldn't confirm this subscription is active — it will be re-checked on the next apply.",
+    }
+  }
+  // "verified", "not_applicable", "", or undefined (backend without the field) -
+  // all degrade to today's quiet green.
+  return { level: "ok" }
 }
 async function startConnect(m, reconnectIdx = null) {
   if (!m._connect) m._connect = blankConnect()
@@ -973,6 +1018,15 @@ defineExpose({ save })
 }
 .jv-pool-accttx { font-size: 12.5px; color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jv-pool-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+/* Option A "honest model health" - dot color reflects the fleet's last
+   subscription probe. --ok/--neutral both render the pre-existing green so a
+   backend without the field (or a config mid-edit) looks exactly as before. */
+.jv-pool-dot--ok, .jv-pool-dot--neutral { background: var(--green); }
+.jv-pool-dot--warn { background: var(--amber); }
+.jv-pool-dot--unchecked { background: var(--text-3); }
+.jv-pool-acct-health { flex: none; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.jv-pool-acct-health--warn { color: var(--amber); }
+.jv-pool-acct-health--unchecked { color: var(--text-3); }
 .jv-pool-acctacts { margin-left: auto; display: flex; gap: 6px; flex: none; }
 .jv-pool-disc { color: var(--red); }
 .jv-pool-disc:hover:not(:disabled) { color: var(--red); border-color: var(--red-bd); background: var(--red-bg); }
@@ -986,8 +1040,33 @@ defineExpose({ save })
 }
 .jv-pool-addrow:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
 .jv-pool-addrow:disabled { opacity: .5; cursor: default; }
+/* Save-bar apply-status pill (Option A "honest model health") - reflects the
+   outcome of the last apply once there are no unsaved edits sitting on top
+   of it. Same quiet weight as the rest of this settings UI. */
+.jv-pool-syncpill {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12.5px; font-weight: 600; padding: 3px 10px;
+  border-radius: 999px; border: 1px solid transparent;
+}
+.jv-pool-syncpill-ic { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 10px; }
+.jv-pool-syncpill--ok { color: var(--green); background: var(--green-bg); border-color: var(--green-bd); }
+.jv-pool-syncpill--ok .jv-pool-syncpill-ic::before { content: "✓"; }
+.jv-pool-syncpill--warn { color: var(--amber); background: var(--amber-bg); border-color: var(--amber-bd); }
+.jv-pool-syncpill--warn .jv-pool-syncpill-ic::before { content: "⚠"; }
+.jv-pool-syncpill--failed { color: var(--red); background: var(--red-bg); border-color: var(--red-bd); }
+.jv-pool-syncpill--failed .jv-pool-syncpill-ic::before { content: "⚠"; }
+.jv-pool-syncpill--pending { color: var(--text-3); background: transparent; }
+.jv-pool-syncpill--pending .jv-pool-syncpill-ic {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--text-3);
+  animation: jv-pool-pulse 1.1s ease-in-out infinite;
+}
+@keyframes jv-pool-pulse {
+  0%, 100% { opacity: .35; }
+  50% { opacity: 1; }
+}
 @media (prefers-reduced-motion: reduce) {
   .jv-pool-segbtn, .jv-pool-iconbtn, .jv-pool-addrow { transition: none; }
+  .jv-pool-syncpill--pending .jv-pool-syncpill-ic { animation: none; opacity: .7; }
 }
 
 /* Onboarding method cards (preview .method/.m-opt): sel = blue border + 3px
