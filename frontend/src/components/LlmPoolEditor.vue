@@ -97,6 +97,13 @@
                      style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;" />
             </div>
           </div>
+          <!-- Resilient-by-default (API KEYS ONLY): expands this provider into
+               its full single-vendor failover chain on close, sharing the
+               same key. Add-mode only. -->
+          <label v-if="panel.mode==='add'" style="display:flex;align-items:center;gap:8px;margin-top:11px;font-size:13px;color:var(--text-2);cursor:pointer;">
+            <input type="checkbox" v-model="panel.addBackups" :disabled="!editable" />
+            Add backup models automatically (recommended)
+          </label>
         </div>
 
         <!-- Chat-subscription source -->
@@ -551,7 +558,7 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue"
 import * as api from "@/api"
 import {
   deriveMode, reorder, presetToModels, missingVendorKeys, validatePool,
-  PROVIDER_LABELS, providerLabel, seedRowsFromConfig, defaultSubscriptionModel, SUB_MODEL_SUGGESTIONS,
+  PROVIDER_LABELS, providerLabel, providerId, seedRowsFromConfig, defaultSubscriptionModel, SUB_MODEL_SUGGESTIONS,
 } from "@/llm/pool"
 import { errMessage as _err } from "@/lib/errors"
 import JvCombo from "@/components/JvCombo.vue"
@@ -780,7 +787,7 @@ function sourceChip(row) {
 // panel: which row is being added/edited, and which source tab is active.
 // "preset" only applies in add-mode - picking a card replaces the whole pool
 // (selectPreset, reused verbatim) rather than editing panelRow.
-const panel = ref({ open: false, mode: "add", index: -1, source: "subscription" })
+const panel = ref({ open: false, mode: "add", index: -1, source: "subscription", addBackups: true })
 const panelRow = computed(() => rows.value[panel.value.index] || null)
 function isRowEmpty(r) {
   if (!r) return true
@@ -793,12 +800,38 @@ function isRowEmpty(r) {
 function openAdd() {
   const r = { ...newRow(), order: rows.value.length }
   rows.value = [...rows.value, r]
-  panel.value = { open: true, mode: "add", index: rows.value.length - 1, source: r.credentialType === "subscription" ? "subscription" : "api_key" }
+  panel.value = { open: true, mode: "add", index: rows.value.length - 1, source: r.credentialType === "subscription" ? "subscription" : "api_key", addBackups: true }
 }
 function openEdit(i) {
   const r = rows.value[i]
   if (!r) return
-  panel.value = { open: true, mode: "edit", index: i, source: r.credentialType === "subscription" ? "subscription" : "api_key" }
+  panel.value = { open: true, mode: "edit", index: i, source: r.credentialType === "subscription" ? "subscription" : "api_key", addBackups: true }
+}
+// Resilient-by-default (API KEYS ONLY - no subscription presets exist and
+// multi-model-per-account is unconfirmed for cliproxy, so subscriptions never
+// auto-add backups). Finds the catalog's single-vendor preset for this
+// provider, if any.
+function vendorSinglePreset(provider) {
+  const pid = providerId(provider)
+  return catalog.value.find((c) => c.kind === "single_vendor" && (c.models || []).length > 0 && (c.models || []).every((m) => m.provider === pid))
+}
+// Expand a freshly-added api_key row into its provider's full single-vendor
+// failover chain, sharing the same key - additive only (never touches other
+// rows), and only for models not already present for this provider.
+function expandApiKeyBackups(r) {
+  const preset = vendorSinglePreset(r.provider)
+  if (!preset) return
+  const models = presetToModels(preset, {})
+  const existing = new Set(rows.value.filter((x) => x.credentialType === "api_key" && x.provider === r.provider).map((x) => x.model))
+  const toAdd = models.filter((m) => m.model !== r.model && !existing.has(m.model))
+  if (!toAdd.length) return
+  const base = rows.value.length
+  const extra = toAdd.map((m, i) => ({
+    provider: r.provider, model: m.model, apiKey: r.apiKey, baseUrl: r.baseUrl, hasKey: false,
+    credentialType: "api_key", rotation: "sticky", upstream: "openai",
+    accounts: [], _connect: blankConnect(), order: base + i,
+  }))
+  rows.value = [...rows.value, ...extra]
 }
 // List row's "Reconnect" shortcut: open the panel AND jump straight into the
 // sign-in flow (re-using the first account's slot if one exists) instead of
@@ -820,10 +853,18 @@ function setPanelSource(src) {
 // model" doesn't leave a dead row in the pool.
 function closePanel() {
   const idx = panel.value.index
+  const r = rows.value[idx]
+  // Add-mode api_key row, checkbox on, filled in: expand into the vendor's
+  // resilience chain before the empty-row cleanup below (a freshly-expanded
+  // row is never "empty").
+  if (panel.value.mode === "add" && panel.value.source === "api_key" && panel.value.addBackups &&
+      r && (r.provider || "").trim() && ((r.apiKey || "").trim() || r.hasKey)) {
+    expandApiKeyBackups(r)
+  }
   if (panel.value.mode === "add" && panel.value.source !== "preset" && idx >= 0 && idx < rows.value.length && isRowEmpty(rows.value[idx])) {
     rows.value = rows.value.filter((_, j) => j !== idx)
   }
-  panel.value = { open: false, mode: "add", index: -1, source: "subscription" }
+  panel.value = { open: false, mode: "add", index: -1, source: "subscription", addBackups: true }
 }
 
 function newRow() {
