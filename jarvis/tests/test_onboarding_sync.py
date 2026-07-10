@@ -470,3 +470,57 @@ class TestGetLlmSyncStatus(FrappeTestCase):
 		self.assertIn("last_sync_at", out)
 		self.assertIn("last_sync_status", out)
 		self.assertIn("pending", out)
+		self.assertIn("subscription_status", out)
+		self.assertIn("warnings", out)
+
+	# -- Apply-warning propagation (subscription_status + warnings) -------
+
+	def test_returns_parsed_warnings_and_subscription_status(self):
+		"""The pool sync worker stores warnings as a JSON array string;
+		get_llm_sync_status must hand back a parsed list of dicts, plus
+		the raw subscription_status string, to the SPA poller."""
+		s = frappe.get_single("Jarvis Settings")
+		s.db_set("last_subscription_status", "unverified", update_modified=False)
+		s.db_set(
+			"last_sync_warnings",
+			'[{"code": "subscription_unverified", "message": "probe failed"}]',
+			update_modified=False,
+		)
+		frappe.db.commit()
+		out = onboarding.get_llm_sync_status()
+		self.assertEqual(out["subscription_status"], "unverified")
+		self.assertEqual(
+			out["warnings"],
+			[{"code": "subscription_unverified", "message": "probe failed"}],
+		)
+
+	def test_empty_warnings_and_subscription_status_default_cleanly(self):
+		"""No pool sync has run yet (or the fleet is on a pre-warnings
+		contract) - both fields are empty and must degrade to "" / []
+		rather than raise."""
+		s = frappe.get_single("Jarvis Settings")
+		s.db_set("last_subscription_status", "", update_modified=False)
+		s.db_set("last_sync_warnings", "", update_modified=False)
+		frappe.db.commit()
+		out = onboarding.get_llm_sync_status()
+		self.assertEqual(out["subscription_status"], "")
+		self.assertEqual(out["warnings"], [])
+
+	def test_corrupt_warnings_json_degrades_to_empty_list(self):
+		"""A malformed last_sync_warnings value must never 500 this poller -
+		it must degrade to an empty list."""
+		s = frappe.get_single("Jarvis Settings")
+		s.db_set("last_sync_warnings", "{not valid json", update_modified=False)
+		frappe.db.commit()
+		out = onboarding.get_llm_sync_status()
+		self.assertEqual(out["warnings"], [])
+
+	def test_non_list_warnings_json_degrades_to_empty_list(self):
+		"""Valid JSON that isn't a list (e.g. a stray object) must also
+		degrade to [] - the SPA always expects a list of {code, message}."""
+		s = frappe.get_single("Jarvis Settings")
+		s.db_set("last_sync_warnings", '{"code": "x", "message": "y"}',
+		         update_modified=False)
+		frappe.db.commit()
+		out = onboarding.get_llm_sync_status()
+		self.assertEqual(out["warnings"], [])
