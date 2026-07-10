@@ -28,6 +28,8 @@ import frappe
 import requests
 from frappe.utils import now_datetime
 
+from jarvis._password_utils import set_settings_password
+
 # Timeouts (seconds). Reachability is snappy; the deep chat ping tolerates a
 # slow reasoning model.
 _REACHABLE_TIMEOUT = 8
@@ -326,7 +328,20 @@ def save_self_hosted(base_url: str, token: str, deep: int | str = 0,
     s = frappe.get_single("Jarvis Settings")
     s.db_set("deployment_mode", "Self-Hosted")
     s.db_set("agent_url", base)
-    s.db_set("agent_token", (token or "").strip())
+    # agent_token is a Password field - db_set would write the customer's
+    # openclaw bearer token straight into tabSingles as plaintext; encrypt it
+    # into __Auth first (see _password_utils module docstring). This site was
+    # missed by the original plaintext-write audit (jarvis/onboarding.py,
+    # jarvis/chat/device.py, jarvis/api.py) - self-hosted benches wrote a
+    # customer-supplied token in the clear. A BLANK token (no-auth openclaw
+    # that validated clean) clears the field + its __Auth row, matching the
+    # old db_set("") semantics - a stale bearer must not linger.
+    cleaned_token = (token or "").strip()
+    if cleaned_token:
+        set_settings_password(s, "agent_token", cleaned_token)
+    else:
+        from jarvis._password_utils import clear_settings_password
+        clear_settings_password(s, "agent_token")
     s.db_set("selfhost_stream", 1 if str(stream) in ("1", "true", "True") else 0)
     s.db_set("selfhost_last_validated_at", now_datetime())
     s.db_set("selfhost_last_validation", json.dumps(result))

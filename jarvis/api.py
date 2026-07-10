@@ -906,9 +906,14 @@ def rotate_agent_token() -> dict:
 	# Admin succeeded -> the container is now running against new_token.
 	# Persist it locally so the bench's future plugin-auth validations
 	# match what the container holds.
+	from jarvis._password_utils import set_settings_password
+
 	settings = frappe.get_single("Jarvis Settings")
 	now = frappe.utils.now()
-	settings.db_set("agent_token", new_token)
+	# agent_token is a Password field - db_set would write the rotated
+	# secret straight into tabSingles as plaintext; encrypt it into __Auth
+	# first (see _password_utils module docstring).
+	set_settings_password(settings, "agent_token", new_token)
 	# C2 time-bound: stamp issued_at so plugin_auth's expiry check has
 	# a reference point. Tolerate the column not existing yet on a
 	# pre-migration deploy state.
