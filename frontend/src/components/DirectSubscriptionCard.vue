@@ -240,10 +240,13 @@ function copyUrl() {
 .jv-dsub-step { font-size: 13px; color: var(--text-2); margin: 0 0 8px; line-height: 1.5; }
 .jv-dsub-muted { font-size: 13px; color: var(--text-3); }
 .jv-dsub-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+/* Sized to match the jv-btn jv-btn--sm compact convention used elsewhere in
+   the settings panes (e.g. AiModelsPane's own Retry button, GeneralPane's
+   Delete-all) — Reconnect/Disconnect were previously oversized (13px/8x16). */
 .jv-dsub-btn {
-  font-size: 13px; font-weight: 600; padding: 8px 16px; border-radius: 7px;
+  font-size: 12px; font-weight: 600; height: 32px; padding: 0 12px; border-radius: 9px;
   cursor: pointer; border: 1px solid var(--border); text-decoration: none;
-  display: inline-flex; align-items: center;
+  display: inline-flex; align-items: center; justify-content: center; line-height: 1;
 }
 .jv-dsub-btn:disabled { opacity: .6; cursor: not-allowed; }
 .jv-dsub-btn-primary { background: var(--blue); color: #fff; border-color: var(--blue); }

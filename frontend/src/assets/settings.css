@@ -194,8 +194,13 @@
 /* Dark scrim also resolves when .jv-dark is applied to the overlay root itself
    (the hoisted dialog puts jv-dark on the overlay, not an ancestor). */
 .jv-settings-overlay.jv-dark { background: rgba(0, 0, 0, 0.55); }
-/* Widened dialog + roomier grouped rail. */
-.jv-settings { width: 900px; }
+/* Widened + taller dialog (11 nav items across 3 groups + denser panes no
+   longer fit the original 900x560 box) + roomier grouped rail. Uses the
+   width: min(px, vw) idiom already established by DraftPreview/ChatView's
+   .dp-panel / .jv-artifact-panel and OnboardingView's .jv-ob-orb, so it scales
+   down gracefully instead of clipping on small viewports (base rule above
+   still carries max-width: 100% / max-height: 88vh as a hard fallback). */
+.jv-settings { width: min(1120px, 92vw); height: min(82vh, 940px); }
 .jv-settings-nav { width: 230px; }
 /* Grouped-rail section headers. */
 .jv-settings-group { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); padding: 14px 10px 5px; display: flex; align-items: center; gap: 6px; }

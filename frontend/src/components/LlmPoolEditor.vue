@@ -305,7 +305,7 @@
                startConnect there). -->
           <button v-if="editable && !singleMode && !(m._connect && m._connect.open)" @click="startConnect(m)"
                   :disabled="m._connect && m._connect.loading && !m._connect.authorizeUrl"
-                  style="font-size:14px;font-weight:600;color:var(--surface);background:var(--blue);border:0;border-radius:8px;padding:11px 17px;cursor:pointer;">
+                  class="jv-btn jv-btn--sm jv-btn--primary">
             {{ (m.accounts && m.accounts.length) ? '+ Connect another account' : '+ Connect account' }}
           </button>
         </div>
