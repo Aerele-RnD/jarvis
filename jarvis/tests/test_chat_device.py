@@ -340,6 +340,28 @@ class TestUpdateDeviceToken(_SettingsSnapshotMixin, FrappeTestCase):
 			"tok-fresh",
 		)
 
+	def test_falsy_token_returns_false_without_persist(self):
+		"""A falsy reissued token must return False and never touch
+		Settings: set_settings_password no-ops on falsy values, so
+		proceeding would have claimed True while persisting nothing -
+		violating the 'Returns True when persisted' contract."""
+		s = frappe.get_single("Jarvis Settings")
+		s.db_set("chat_device_id", "dev-1")
+		s.db_set("chat_device_token", "tok-old")
+		frappe.db.commit()
+
+		with patch("jarvis._password_utils.set_settings_password") as mock_set:
+			self.assertFalse(
+				chat_device.update_device_token("", device_id="dev-1"),
+			)
+		mock_set.assert_not_called()
+		s = frappe.get_single("Jarvis Settings")
+		self.assertEqual(
+			s.get_password("chat_device_token", raise_exception=False),
+			"tok-old",
+			"stored token must be untouched by a falsy reissue",
+		)
+
 
 class TestSigning(FrappeTestCase):
 	def test_build_payload_v3_format(self):
