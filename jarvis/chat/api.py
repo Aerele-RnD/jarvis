@@ -9,6 +9,7 @@ from urllib.parse import quote
 
 import frappe
 
+from jarvis.chat.usage import current_month_key as _usage_month_key
 from jarvis.permissions import require_jarvis_access
 
 CONV = "Jarvis Conversation"
@@ -969,10 +970,13 @@ def _est_tokens(text: str | None) -> int:
 	return (len(text) + 3) // 4
 
 
-def _measured_usage(user: str) -> dict:
+def _measured_usage(user: str) -> dict | None:
 	"""Real per-turn token usage for ``user`` from the ``Jarvis User Settings``
-	row (design section 3). All zeros / None when no row exists. Rollover-aware:
-	a stale ``usage_month`` reads as 0 tokens for the current month."""
+	row (design section 3). Rollover-aware: a stale ``usage_month`` reads as 0
+	tokens for the current month. No row yet: all zeros on managed (recording
+	simply hasn't started), but ``None`` on self-hosted — that mode records
+	nothing in v1, and the SPA hides the "Measured usage" block on None rather
+	than showing a forever-zero meter."""
 	measured = {
 		"month_tokens": 0,
 		"month_input_tokens": 0,
@@ -992,9 +996,10 @@ def _measured_usage(user: str) -> dict:
 		as_dict=True,
 	)
 	if not row:
-		return measured
-	current_month = frappe.utils.now_datetime().strftime("%Y-%m")
-	stale = row.usage_month != current_month
+		from jarvis import selfhost
+
+		return None if selfhost.is_self_hosted() else measured
+	stale = row.usage_month != _usage_month_key()
 	measured.update({
 		"month_tokens": 0 if stale else int(row.month_tokens or 0),
 		"month_input_tokens": 0 if stale else int(row.month_input_tokens or 0),

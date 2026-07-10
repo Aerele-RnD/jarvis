@@ -44,9 +44,11 @@ def _over_monthly_limit(user: str) -> bool:
 		limit = int(row.monthly_token_limit or 0)
 		if limit <= 0:
 			return False
-		# Stale month ⇒ this month's usage hasn't started ⇒ 0 used.
-		current_month = frappe.utils.now_datetime().strftime("%Y-%m")
-		used = int(row.month_tokens or 0) if row.usage_month == current_month else 0
+		# Stale month ⇒ this month's usage hasn't started ⇒ 0 used. One shared
+		# bucket-key helper (jarvis.chat.usage) so writer and gate can't drift.
+		from jarvis.chat.usage import current_month_key
+
+		used = int(row.month_tokens or 0) if row.usage_month == current_month_key() else 0
 		return used >= limit
 	except Exception:
 		frappe.log_error(

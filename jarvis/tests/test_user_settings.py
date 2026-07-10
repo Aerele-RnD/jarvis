@@ -356,15 +356,23 @@ class TestAdminSync(_UsageTestBase):
 	def test_refreshes_snapshots_without_accumulating(self):
 		_make_session("agent:sa", USER_A)
 		_make_session("agent:sb", USER_B)
+		# sa carries the gateway's updatedAt (ms epoch) → last_usage_at must be
+		# converted from THAT stamp, not sync time; sb has none → last_usage_at
+		# stays untouched (an idle session must not look freshly active).
+		updated_ms = 1700000000000  # 2023-11-14T22:13:20Z
 		rows = [
-			{"key": "agent:sa", "totalTokens": 500, "totalTokensFresh": True},
+			{"key": "agent:sa", "totalTokens": 500, "totalTokensFresh": True,
+				"updatedAt": updated_ms},
 			{"key": "agent:sb", "totalTokens": 300, "totalTokensFresh": True},
 			{"key": "agent:unknown", "totalTokens": 999},
 		]
 		self._patch_gateway(_FakeSess(rows))
 		out = user_settings_api.admin_sync_usage()
 		self.assertTrue(out["ok"])
-		self.assertEqual(out["data"]["sessions"], 3)
+		# 3 gateway rows, but only the 2 mapped to a Jarvis Chat Session count
+		# as synced (the pane renders these two counters verbatim).
+		self.assertEqual(out["data"]["synced_sessions"], 2)
+		self.assertEqual(out["data"]["users_updated"], 2)
 		self.assertIn(USER_A, out["data"]["users"])
 		self.assertIn(USER_B, out["data"]["users"])
 		# Snapshot fields refreshed.
@@ -373,6 +381,16 @@ class TestAdminSync(_UsageTestBase):
 		)
 		self.assertEqual(
 			frappe.db.get_value(SESSION, {"session_key": "agent:sb"}, "last_total_tokens"), 300
+		)
+		# updatedAt → last_usage_at conversion (naive system-tz, like Frappe).
+		from datetime import datetime as _dt
+
+		self.assertEqual(
+			frappe.db.get_value(SESSION, {"session_key": "agent:sa"}, "last_usage_at"),
+			_dt.fromtimestamp(updated_ms / 1000),
+		)
+		self.assertIsNone(
+			frappe.db.get_value(SESSION, {"session_key": "agent:sb"}, "last_usage_at")
 		)
 		# last_synced_at stamped; counters NOT accumulated (sync never counts).
 		a = frappe.db.get_value(
@@ -470,3 +488,44 @@ class TestEnforcement(_UsageTestBase):
 		out = send_message(conversation="JCONV-does-not-matter", message="hi")
 		self.assertFalse(out["ok"])
 		self.assertEqual(out["reason"], "usage_limit")
+
+
+# --------------------------------------------------------------------------- #
+# 7. get_usage()'s "measured" block — managed zeros vs self-hosted None
+# --------------------------------------------------------------------------- #
+class TestMeasuredUsage(_UsageTestBase):
+	def test_no_row_managed_returns_zeros(self):
+		from jarvis import selfhost as _sh
+		from jarvis.chat.api import _measured_usage
+
+		with patch.object(_sh, "is_self_hosted", return_value=False):
+			m = _measured_usage(USER_A)
+		self.assertIsNotNone(m)
+		self.assertEqual(m["month_tokens"], 0)
+		self.assertEqual(m["monthly_token_limit"], 0)
+
+	def test_no_row_self_hosted_returns_none(self):
+		"""Self-hosted records nothing in v1 — the SPA hides the measured block
+		on None instead of showing a forever-zero meter."""
+		from jarvis import selfhost as _sh
+		from jarvis.chat.api import _measured_usage
+
+		with patch.object(_sh, "is_self_hosted", return_value=True):
+			self.assertIsNone(_measured_usage(USER_A))
+
+	def test_existing_row_wins_even_self_hosted(self):
+		from jarvis import selfhost as _sh
+		from jarvis.chat.api import _measured_usage
+
+		usage.get_or_create_user_settings(USER_A)
+		frappe.db.set_value(
+			USETT, {"user": USER_A},
+			{"usage_month": usage.current_month_key(), "month_tokens": 42,
+				"total_tokens": 42},
+			update_modified=False,
+		)
+		frappe.db.commit()
+		with patch.object(_sh, "is_self_hosted", return_value=True):
+			m = _measured_usage(USER_A)
+		self.assertEqual(m["month_tokens"], 42)
+		self.assertEqual(m["total_tokens"], 42)

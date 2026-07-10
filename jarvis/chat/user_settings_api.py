@@ -164,4 +164,14 @@ def admin_sync_usage() -> dict:
 		return {"ok": False, "reason": "gateway_unreachable"}
 
 	summary = usage.refresh_session_snapshots(rows)
-	return {"ok": True, "data": {"users": summary, "sessions": len(rows or [])}}
+	# synced_sessions counts rows that actually mapped to a known chat session
+	# (prewarm/throwaway gateway sessions don't); the admin pane renders these
+	# two counters verbatim.
+	return {
+		"ok": True,
+		"data": {
+			"synced_sessions": sum(b.get("sessions", 0) for b in summary.values()),
+			"users_updated": len(summary),
+			"users": summary,
+		},
+	}

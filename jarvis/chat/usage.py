@@ -20,6 +20,8 @@ Three entry points:
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import frappe
 
 USER_SETTINGS = "Jarvis User Settings"
@@ -161,10 +163,12 @@ def refresh_session_snapshots(rows: list[dict]) -> dict:
 	WITHOUT accumulating counters (the "sync from agent" endpoint).
 
 	For every gateway row that maps to a known ``Jarvis Chat Session``, snapshot
-	``last_total_tokens`` (= context size) and ``last_usage_at``; stamp the
-	owning user's ``Jarvis User Settings.last_synced_at``. Returns a per-user
-	summary ``{user: {sessions, last_total_tokens}}`` for the admin UI. Best
-	effort per row; a malformed row is skipped, never raised."""
+	``last_total_tokens`` (= context size) and — when the row carries the
+	gateway's ``updatedAt`` (ms epoch) — ``last_usage_at`` from THAT stamp, not
+	sync time (an idle session must not look freshly active after a sweep).
+	Stamps the owning user's ``Jarvis User Settings.last_synced_at``. Returns a
+	per-user summary ``{user: {sessions, last_total_tokens}}`` for the admin UI.
+	Best effort per row; a malformed row is skipped, never raised."""
 	summary: dict[str, dict] = {}
 	now = frappe.utils.now_datetime()
 	touched_users: set[str] = set()
@@ -181,14 +185,27 @@ def refresh_session_snapshots(rows: list[dict]) -> dict:
 			if not user:
 				continue
 			context_tokens = int(row.get("totalTokens") or 0)
-			frappe.db.sql(
-				"""
-				UPDATE `tabJarvis Chat Session`
-				SET last_total_tokens = %(ctx)s, last_usage_at = %(now)s
-				WHERE session_key = %(session_key)s
-				""",
-				{"ctx": context_tokens, "now": now, "session_key": session_key},
-			)
+			updated_ms = row.get("updatedAt")
+			if updated_ms:
+				# Naive system-tz datetime, matching how Frappe stores Datetime.
+				last_at = datetime.fromtimestamp(int(updated_ms) / 1000)
+				frappe.db.sql(
+					"""
+					UPDATE `tabJarvis Chat Session`
+					SET last_total_tokens = %(ctx)s, last_usage_at = %(at)s
+					WHERE session_key = %(session_key)s
+					""",
+					{"ctx": context_tokens, "at": last_at, "session_key": session_key},
+				)
+			else:
+				frappe.db.sql(
+					"""
+					UPDATE `tabJarvis Chat Session`
+					SET last_total_tokens = %(ctx)s
+					WHERE session_key = %(session_key)s
+					""",
+					{"ctx": context_tokens, "session_key": session_key},
+				)
 			touched_users.add(user)
 			bucket = summary.setdefault(
 				user, {"sessions": 0, "last_total_tokens": 0}
