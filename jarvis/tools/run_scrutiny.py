@@ -45,9 +45,9 @@ import os
 from decimal import Decimal
 
 import frappe
-from frappe.core.doctype.user_permission.user_permission import get_user_permissions
 
-from jarvis.exceptions import InvalidArgumentError, PermissionDeniedError
+from jarvis.exceptions import InvalidArgumentError
+from jarvis.tools._company_scope import assert_company_permitted
 
 _PACK_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "agents", "rule_packs")
 INSTALLATION_DT = "Jarvis Agent Installation"
@@ -632,20 +632,15 @@ def run_scrutiny(
     # Frappe's ORM permission layer never sees these queries, so the gate
     # has to be explicit. GL Entry read (doctype-level) keeps non-financial
     # roles out entirely. Cross-company scoping is enforced via Company
-    # User Permissions, NOT Company-doctype read: ERPNext's "Auditor" role
-    # has GL Entry read but only "select" (not "read") on Company, so
-    # gating on Company read would deny a legitimate audit user outright.
-    # No Company User Permission -> not company-restricted -> allowed
-    # (already gated by the GL Entry check above). A Company User
-    # Permission for a DIFFERENT company than the one requested -> denied.
+    # User Permissions, NOT Company-doctype read (jarvis.tools._company_scope):
+    # ERPNext's "Auditor" role has GL Entry read but only "select" (not
+    # "read") on Company, so gating on Company read would deny a
+    # legitimate audit user outright. No Company User Permission -> not
+    # company-restricted -> allowed (already gated by the GL Entry check
+    # above). A Company User Permission for a DIFFERENT company than the
+    # one requested -> denied.
     frappe.has_permission("GL Entry", "read", throw=True)
-    company_scope = get_user_permissions(frappe.session.user).get("Company")
-    if company_scope:
-        allowed_companies = {up.get("doc") for up in company_scope}
-        if scope["company"] not in allowed_companies:
-            raise PermissionDeniedError(
-                f"no access to company {scope['company']!r} (restricted by Company User Permission)"
-            )
+    assert_company_permitted(scope["company"])
 
     materiality = None
     if engagement_config:

@@ -316,6 +316,14 @@ USER_ITEM_READER = "jpl-perm-item-reader@example.com"
 # exactly the "restricted via a Company User Permission" case the audit
 # findings call out.
 USER_COMPANY_SCOPED = "jpl-perm-company-scoped@example.com"
+# ERPNext's stock "Auditor" role (GL Entry read, Company "select" only -
+# not "read") combined with "Sales Manager" (Customer read, no Company
+# permission of any kind) for party read - together, real stock roles
+# that add up to GL/party read with NO Company read anywhere and no
+# Company User Permission at all. This is exactly the over-block Fix A
+# addresses: gating on Company-doctype read (rather than Company User
+# Permission scope) would deny this combination outright.
+USER_AUDITOR_LIKE = "jpl-perm-auditor-like@example.com"
 
 
 def _ensure_role(name: str) -> None:
@@ -431,6 +439,7 @@ class CrossCompanyPermTestCase(FrappeTestCase):
         _ensure_user(USER_NO_GRANTS, roles=(ROLE_NO_GRANTS,))
         _ensure_user(USER_ITEM_READER, roles=("Stock User",))
         _ensure_user(USER_COMPANY_SCOPED, roles=("Sales User",))
+        _ensure_user(USER_AUDITOR_LIKE, roles=("Auditor", "Sales Manager"))
         frappe.db.commit()
         # Company/Item/Customer/User Permission are NOT committed - unlike
         # roles/users, a leftover Company row changes production inference
@@ -571,3 +580,36 @@ class TestGetBalanceOnCompanyPermission(CrossCompanyPermTestCase):
         ):
             out = get_balance_on(party_type="Customer", party=self.customer)
         self.assertEqual(out["balance"], 750.0)
+
+
+class TestAuditorLikeCompanyScope(CrossCompanyPermTestCase):
+    """Fix A: company scoping must be by Company User Permission, not
+    Company-doctype read - so a real, non-Administrator user with GL/party
+    read but NO Company read anywhere (like ERPNext's stock "Auditor"
+    role) and no Company User Permission is allowed, not denied. Using
+    Administrator wouldn't catch a regression here (Administrator bypasses
+    frappe.has_permission entirely), so USER_AUDITOR_LIKE genuinely lacks
+    Company read via any of its roles - see the constant's docstring."""
+
+    def test_get_customer_outstanding_allowed_without_company_read(self):
+        with _as(USER_AUDITOR_LIKE), patch(
+            "erpnext.selling.doctype.customer.customer.get_customer_outstanding",
+            return_value=42.0,
+        ):
+            out = get_customer_outstanding(self.customer, PERM_COMPANY_A)
+        self.assertEqual(out["outstanding"], 42.0)
+
+    def test_get_party_dashboard_info_keeps_entry_without_company_read(self):
+        with _as(USER_AUDITOR_LIKE), patch(
+            "erpnext.accounts.party.get_dashboard_info",
+            return_value=[{"company": PERM_COMPANY_A, "total_unpaid": 10}],
+        ):
+            out = get_party_dashboard_info("Customer", self.customer)
+        self.assertEqual([d["company"] for d in out["dashboard"]], [PERM_COMPANY_A])
+
+    def test_get_balance_on_allowed_without_company_read(self):
+        with _as(USER_AUDITOR_LIKE), patch(
+            "erpnext.accounts.utils.get_balance_on", return_value=333.0,
+        ):
+            out = get_balance_on(party_type="Customer", party=self.customer, company=PERM_COMPANY_A)
+        self.assertEqual(out["balance"], 333.0)
