@@ -56,7 +56,10 @@ function clearSettingsActions() {
 // source here keeps the GeneralPane toggle and ChatView's live gating in sync
 // same-tab (a pane-local ref could not notify ChatView). The "1"/"0" encoding
 // is kept for backward compat with existing stored values.
-const activityDetail = ref(localStorage.getItem("jarvis-activity-detail") === "1")
+// Default ON for new/unset devices — the live tool trace is the product's best
+// trust signal, so hide it only when the user has explicitly turned it off ("0").
+const _storedActivityDetail = localStorage.getItem("jarvis-activity-detail")
+const activityDetail = ref(_storedActivityDetail === null ? true : _storedActivityDetail === "1")
 function setActivityDetail(v) {
 	activityDetail.value = !!v
 	try { localStorage.setItem("jarvis-activity-detail", v ? "1" : "0") } catch (e) {}

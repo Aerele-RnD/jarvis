@@ -32,6 +32,13 @@ body {
 ::-webkit-scrollbar-track {
 	background: transparent;
 }
+/* dark-mode scrollbar (the light thumb was hardcoded) */
+:root[data-theme="dark"] ::-webkit-scrollbar-thumb {
+	background-color: #3a3a45;
+}
+:root[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+	background-color: #4a4a55;
+}
 @keyframes jv-dot {
 	0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
 	30% { transform: translateY(-4px); opacity: 1; }
