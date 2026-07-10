@@ -1,14 +1,6 @@
 <template>
 	<div class="jv-ob-root" :class="{ 'jv-dark': dark }" :style="paletteVars">
 
-		<!-- Framing orbs: two quiet deep-blue orbs settle into the empty corners and
-			 frame the wizard without touching it. Decorative only (aria-hidden, no
-			 pointer events). -->
-		<div class="jv-ob-bg" aria-hidden="true">
-			<div class="jv-ob-orb jv-ob-orb-tl"></div>
-			<div class="jv-ob-orb jv-ob-orb-br"></div>
-		</div>
-
 		<main class="jv-ob-main">
 			<div class="jv-ob-center">
 				<div class="jv-ob-wrap">
@@ -20,16 +12,17 @@
 						<span class="jv-ob-brand-sub">{{ frameSub }}</span>
 					</div>
 
-					<!-- step rail: Plan · Details · Pay · Connect. Hidden on the intro
-						 tour (chromeless) and on the single-step self-host track. -->
-					<div v-if="railIndex >= 0" class="jv-ob-steps">
-						<template v-for="(s, i) in RAIL" :key="s.id">
-							<span class="jv-ob-step" :class="{ done: i < railIndex, active: i === railIndex }">
-								<span class="jv-ob-step-dot">{{ i < railIndex ? "✓" : i + 1 }}</span>{{ s.label }}
-							</span>
-							<span v-if="i < RAIL.length - 1" class="jv-ob-step-line" :class="{ done: i < railIndex }"></span>
-						</template>
+				<!-- step rail: flat progress segments with labels (design.md §4.3 —
+					 no numbered circles, no connector lines). Hidden on the intro
+					 tour (chromeless) and on the single-step self-host track. -->
+				<div v-if="railIndex >= 0" class="jv-ob-steps" role="list" aria-label="Setup steps">
+					<div v-for="(s, i) in RAIL" :key="s.id" role="listitem" class="jv-ob-step"
+						 :class="{ done: i < railIndex, active: i === railIndex }"
+						 :aria-current="i === railIndex ? 'step' : undefined">
+						<span class="jv-ob-step-label">{{ s.label }}</span>
+						<span class="jv-ob-step-bar"></span>
 					</div>
+				</div>
 
 					<div class="jv-ob-panel">
 
@@ -41,7 +34,7 @@
 						<section v-else-if="state.step === 'plan'" class="jv-ob-screen">
 							<div class="jv-ob-body">
 								<div class="jv-ob-head">
-									<h1>Choose Your Plan</h1>
+									<h1>Choose your plan</h1>
 									<p>Start free. Upgrade or extend anytime, with no auto-renewal.</p>
 								</div>
 								<div v-if="state.plansLoading" class="jv-ob-placeholder">Loading plans…</div>
@@ -70,9 +63,9 @@
 								</div>
 							</div>
 							<div class="jv-ob-foot">
-								<button class="jv-ob-back" @click="goBack">← Back to tour</button>
+								<button class="jv-ob-back" @click="goBack"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6" /></svg>Back to tour</button>
 								<button class="jv-ob-link" @click="enterSelfhost">Self-hosted? Connect your own openclaw</button>
-								<button class="jv-ob-btn jv-ob-btn-primary" :disabled="!state.planName" @click="onPlanContinue">Continue →</button>
+								<button class="jv-ob-btn jv-ob-btn-primary" :disabled="!state.planName" @click="onPlanContinue">Continue</button>
 							</div>
 						</section>
 
@@ -80,7 +73,7 @@
 						<section v-else-if="state.step === 'details'" class="jv-ob-screen">
 							<div class="jv-ob-body">
 								<div class="jv-ob-head">
-									<h1>Your Details</h1>
+									<h1>Your details</h1>
 									<p>We'll set Jarvis up for this workspace and send receipts here.</p>
 								</div>
 								<div class="jv-ob-form">
@@ -126,8 +119,8 @@
 								<Banner v-if="state.detailsErr" type="error" :message="state.detailsErr" role="alert" aria-live="polite" />
 							</div>
 							<div class="jv-ob-foot">
-								<button class="jv-ob-back" @click="goBack">← Back</button>
-								<button class="jv-ob-btn jv-ob-btn-primary" @click="onDetailsSubmit">Continue →</button>
+								<button class="jv-ob-back" @click="goBack"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6" /></svg>Back</button>
+								<button class="jv-ob-btn jv-ob-btn-primary" @click="onDetailsSubmit">Continue</button>
 							</div>
 						</section>
 
@@ -160,7 +153,7 @@
 								</div>
 								<div class="jv-ob-foot jv-ob-foot-end">
 									<button class="jv-ob-btn jv-ob-btn-primary" :disabled="state.payBusy" @click="onVerifyCheck">
-										{{ state.payBusy ? "Working…" : "I've verified my email →" }}
+										{{ state.payBusy ? "Working…" : "I've verified my email" }}
 									</button>
 								</div>
 							</template>
@@ -172,13 +165,13 @@
 									</div>
 								</div>
 								<div class="jv-ob-foot jv-ob-foot-end">
-									<button class="jv-ob-btn jv-ob-btn-primary" @click="goNext">Continue →</button>
+									<button class="jv-ob-btn jv-ob-btn-primary" @click="goNext">Continue</button>
 								</div>
 							</template>
 							<template v-else>
 								<div class="jv-ob-body">
 									<div class="jv-ob-head">
-										<h1>Review &amp; Pay</h1>
+										<h1>Review &amp; pay</h1>
 										<p>{{ isFreePlan ? "Confirm the details below." : "Confirm the details below. You'll complete payment securely via Razorpay." }}</p>
 									</div>
 									<div class="jv-ob-rev">
@@ -195,7 +188,7 @@
 									<Banner v-if="state.payErr" type="error" :message="state.payErr" />
 								</div>
 								<div class="jv-ob-foot">
-									<button class="jv-ob-back" :disabled="state.payBusy" @click="goBack">← Back</button>
+									<button class="jv-ob-back" :disabled="state.payBusy" @click="goBack"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6" /></svg>Back</button>
 									<button class="jv-ob-btn jv-ob-btn-primary" :disabled="state.payBusy" @click="onPayClick">
 										{{ state.payBusy ? "Working…" : payCta }}
 									</button>
@@ -221,15 +214,15 @@
 								</div>
 								<div v-show="!state.finishing">
 									<div class="jv-ob-head">
-										<h1>Give Jarvis a Brain</h1>
-										<p>Pick which AI powers Jarvis. You can change this anytime from Settings → Account.</p>
+										<h1>Give Jarvis a brain</h1>
+										<p>Pick which AI powers Jarvis. You can change this anytime in Settings → AI models.</p>
 									</div>
 									<div class="jv-ob-connect">
 										<LlmPoolEditor ref="poolRef" :editable="true" :modes="['quick']" :footerless="true" @saved="onConnected" @ready="connectReady = $event" />
 									</div>
 									<Banner v-if="state.finishNote" type="info" :message="state.finishNote">
 										<template #action>
-											<button class="jv-ob-btn jv-ob-btn-primary" @click="forceContinue">Continue to Jarvis →</button>
+											<button class="jv-ob-btn jv-ob-btn-primary" @click="forceContinue">Continue to Jarvis</button>
 										</template>
 									</Banner>
 								</div>
@@ -238,11 +231,10 @@
 								<!-- No Back on a reconciled resume: signup/payment already completed
 									 in a previous session, so there is no local pay/review context to
 									 go back to (re-running startSignup there would double-sign-up). -->
-								<button v-if="!state.reconciledConnect" class="jv-ob-back" :disabled="savingConnect" @click="goBack">← Back</button>
+								<button v-if="!state.reconciledConnect" class="jv-ob-back" :disabled="savingConnect" @click="goBack"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6" /></svg>Back</button>
 								<span v-else></span>
-								<!-- The ONLY gradient button in the whole flow. -->
 								<button v-if="connectReady || savingConnect" class="jv-ob-btn jv-ob-btn-grad" :disabled="savingConnect" @click="saveConnect">
-									{{ savingConnect ? "Connecting…" : "Start Chatting →" }}
+									{{ savingConnect ? "Connecting…" : "Start chatting" }}
 								</button>
 							</div>
 						</section>
@@ -276,16 +268,19 @@
 										<div :class="state.shTestResult.ok ? 'jv-ob-sh-ok' : 'jv-ob-sh-bad'">
 											{{ state.shTestResult.ok ? "All required checks passed." : "Some checks failed. Fix them and retry." }}
 										</div>
-										<div v-for="(c, i) in (state.shTestResult.checks || [])" :key="i" class="jv-ob-sh-check" :class="{ 'jv-ob-sh-check-adv': c.advisory }">
-											{{ c.ok ? "✅" : (c.advisory ? "⚠️" : "❌") }} <b>{{ c.check }}</b> · {{ c.detail || "" }}<span v-if="c.advisory" class="jv-ob-sh-adv-tag"> · advisory</span>
-										</div>
+					<div v-for="(c, i) in (state.shTestResult.checks || [])" :key="i" class="jv-ob-sh-check" :class="{ 'jv-ob-sh-check-adv': c.advisory }">
+							<svg v-if="c.ok" class="jv-ob-sh-ic jv-ob-sh-ic-ok" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="m9 12 2 2 4-4" /></svg>
+							<svg v-else-if="c.advisory" class="jv-ob-sh-ic jv-ob-sh-ic-adv" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h16.9a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /><path d="M12 9v4M12 17h.01" /></svg>
+							<svg v-else class="jv-ob-sh-ic jv-ob-sh-ic-bad" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="m15 9-6 6M9 9l6 6" /></svg>
+							<span><b>{{ c.check }}</b> · {{ c.detail || "" }}<span v-if="c.advisory" class="jv-ob-sh-adv-tag"> · advisory</span></span>
+						</div>
 									</div>
 									<Banner v-if="state.shWarning" type="warning" :message="state.shWarning" />
 									<Banner v-if="state.shErr" type="error" :message="state.shErr" role="alert" aria-live="polite" />
 									<div v-if="state.finishing" class="jv-ob-note">Finishing setup…</div>
 									<Banner v-else-if="state.finishNote" type="info" :message="state.finishNote">
 										<template #action>
-											<button class="jv-ob-btn jv-ob-btn-primary" @click="forceContinue">Continue to Jarvis →</button>
+											<button class="jv-ob-btn jv-ob-btn-primary" @click="forceContinue">Continue to Jarvis</button>
 										</template>
 									</Banner>
 								</div>
@@ -293,9 +288,9 @@
 							<div class="jv-ob-foot">
 								<!-- Stay disabled through the post-save readiness poll (finishing) too;
 									 both flags drop on the failure paths so retry stays possible. -->
-								<button class="jv-ob-back" :disabled="state.shSaveBusy || state.finishing" @click="backFromSelfhost">← Back</button>
+								<button class="jv-ob-back" :disabled="state.shSaveBusy || state.finishing" @click="backFromSelfhost"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6" /></svg>Back</button>
 								<button class="jv-ob-btn jv-ob-btn-primary" :disabled="state.shSaveBusy || state.finishing" @click="onSelfHostSave">
-									{{ state.shSaveBusy || state.finishing ? "Connecting…" : "Connect →" }}
+									{{ state.shSaveBusy || state.finishing ? "Connecting…" : "Connect" }}
 								</button>
 							</div>
 						</section>
@@ -340,10 +335,10 @@ const RAIL = [
 // Frame subtitle next to the brand mark, mirroring the active step's title.
 const FRAME_SUBS = {
 	intro: "Meet your ERPNext assistant",
-	plan: "Choose Your Plan",
-	details: "Your Details",
-	pay: "Review & Pay",
-	connect: "Give Jarvis a Brain",
+	plan: "Choose your plan",
+	details: "Your details",
+	pay: "Review & pay",
+	connect: "Give Jarvis a brain",
 	selfhost: "Self-hosted setup",
 }
 
@@ -406,7 +401,7 @@ const isFreePlan = computed(() => (Number(selectedPlan.value.price_inr) || 0) <=
 // sign-up for a free one.
 const payCta = computed(() => {
 	if (state.devActive) return "Dev signup & connect"
-	return isFreePlan.value ? "Sign up →" : `Pay ${inr(selectedPlan.value.price_inr)} →`
+	return isFreePlan.value ? "Sign up" : `Pay ${inr(selectedPlan.value.price_inr)}`
 })
 
 // Review-card labels (preview .rev): "Pro · Monthly" plan row and a plain
@@ -993,9 +988,10 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+/* Styling follows design.md (§4.3 onboarding & wizards): flat neutral surfaces,
+   near-black solid CTAs, colour-shift-only hover, no decorative motion. */
 .jv-ob-root {
-	--rad: 10px;
-	font-family: 'Inter', system-ui, sans-serif;
+	--rad: 8px;
 	min-height: 100vh;
 	background: var(--surface-1);
 	color: var(--text);
@@ -1003,14 +999,6 @@ onMounted(async () => {
 	flex-direction: column;
 	position: relative;
 }
-/* Framing orbs - fixed behind everything, decorative only. Deep navy/indigo in
-   light (consistent with the black/white primary), brighter blue on dark. */
-.jv-ob-bg { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
-.jv-ob-orb { position: absolute; width: min(760px, 66vw); aspect-ratio: 1; border-radius: 50%; filter: blur(14px); }
-.jv-ob-orb-tl { left: -180px; top: -170px; background: radial-gradient(circle, rgba(30, 58, 138, .24) 0%, transparent 62%); }
-.jv-ob-orb-br { right: -190px; bottom: -190px; background: radial-gradient(circle, rgba(49, 46, 129, .20) 0%, transparent 62%); }
-.jv-dark .jv-ob-orb-tl { background: radial-gradient(circle, rgba(59, 130, 246, .22) 0%, transparent 60%); }
-.jv-dark .jv-ob-orb-br { background: radial-gradient(circle, rgba(99, 102, 241, .18) 0%, transparent 60%); }
 
 .jv-ob-main { position: relative; z-index: 1; flex: 1; min-width: 0; overflow-y: auto; }
 /* Fills the viewport so the card centers vertically when short; when a step is
@@ -1026,204 +1014,186 @@ onMounted(async () => {
 }
 .jv-ob-wrap { max-width: 1080px; width: 100%; display: flex; flex-direction: column; align-items: center; }
 
-/* ---- brand header (preview .brand). The glyph is the shared JarvisMark
-   component (gradient owned there); only the header's drop shadow is local. ---- */
+/* ---- brand header: the mark is the one sanctioned brand asset (design.md
+   §2.2); no glow shadow around it. ---- */
 .jv-ob-brand { display: flex; align-items: center; justify-content: center; gap: 10px; align-self: center; margin-bottom: 8px; }
-.jv-ob-brand :deep(.jv-mark) { box-shadow: 0 4px 14px rgba(110, 92, 246, .3); }
-.jv-ob-brand-name { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
-.jv-ob-brand-sub { font-size: 12.5px; color: var(--text-3); border-left: 1px solid var(--border); padding-left: 11px; }
+.jv-ob-brand-name { font-size: 15px; font-weight: 600; }
+.jv-ob-brand-sub { font-size: 13px; color: var(--text-3); border-left: 1px solid var(--border); padding-left: 11px; }
 
-/* ---- step rail (preview .steps) ---- */
-.jv-ob-steps { display: flex; align-items: center; margin: 16px 0 22px; width: 100%; max-width: 720px; }
-.jv-ob-step { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 500; color: var(--text-3); white-space: nowrap; }
-.jv-ob-step-dot {
-	width: 22px; height: 22px; border-radius: 50%;
-	display: grid; place-items: center;
-	font-size: 11px; font-weight: 600; flex: none;
-	border: 1.5px solid var(--border-2); background: var(--surface); color: var(--text-3);
-}
-.jv-ob-step.done .jv-ob-step-dot { background: var(--green-bg); border-color: var(--green-bd); color: var(--green); }
-.jv-ob-step.active { color: var(--text); }
-.jv-ob-step.active .jv-ob-step-dot { background: var(--blue); border-color: var(--blue); color: #fff; }
-.jv-ob-step-line { flex: 1; height: 1.5px; background: var(--border); margin: 0 12px; min-width: 24px; }
-.jv-ob-step-line.done { background: var(--green-bd); }
+/* ---- step rail: labelled flat segments (design.md §4.3) ---- */
+.jv-ob-steps { display: flex; align-items: stretch; gap: 8px; margin: 16px 0 22px; width: 100%; max-width: 720px; }
+.jv-ob-step { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+.jv-ob-step-label { font-size: 12.5px; font-weight: 420; color: var(--text-3); }
+.jv-ob-step.active .jv-ob-step-label { color: var(--text); font-weight: 500; }
+.jv-ob-step.done .jv-ob-step-label { color: var(--text-2); }
+.jv-ob-step-bar { height: 4px; border-radius: 999px; background: var(--surface-3); }
+.jv-ob-step.done .jv-ob-step-bar, .jv-ob-step.active .jv-ob-step-bar { background: var(--text); }
 
-/* ---- panel + shared step body/foot (preview .panel/.body/.foot) ---- */
+/* ---- panel + shared step body/foot ---- */
 .jv-ob-panel {
 	width: 100%;
 	background: var(--surface);
 	border: 1px solid var(--border);
-	border-radius: 18px;
-	box-shadow: 0 24px 70px rgba(20, 20, 30, .16);
+	border-radius: 16px;
+	box-shadow: 0 0 1px rgba(0, 0, 0, .2), 0 24px 30px -8px rgba(0, 0, 0, .1);
 	overflow: hidden;
 }
-.jv-dark .jv-ob-panel { box-shadow: 0 24px 70px rgba(0, 0, 0, .5); }
-.jv-ob-screen { animation: jvObFade .25s ease; }
+.jv-ob-screen { animation: jvObFade .15s ease-out; }
 @keyframes jvObFade {
-	from { opacity: 0; transform: translateY(6px); }
-	to { opacity: 1; transform: none; }
+	from { opacity: 0; }
+	to { opacity: 1; }
 }
 /* min-height keeps every step's dialog the same size; shorter content
-   top-aligns inside it. The tour matches at 624px (TourIntro.vue). */
-.jv-ob-body { padding: 34px 40px 30px; min-height: 540px; box-sizing: border-box; }
+   top-aligns inside it. The tour matches at 604px (TourIntro.vue). */
+.jv-ob-body { padding: 32px 40px 28px; min-height: 520px; box-sizing: border-box; }
 .jv-ob-head { text-align: center; margin-bottom: 24px; }
-.jv-ob-head h1 { font-size: 24px; font-weight: 660; letter-spacing: -.01em; margin: 0 0 7px; text-wrap: balance; }
-.jv-ob-head p { font-size: 14px; color: var(--text-2); margin: 0; }
+.jv-ob-head h1 { font-size: 20px; font-weight: 600; margin: 0 0 7px; text-wrap: balance; }
+.jv-ob-head p { font-size: 14px; line-height: 1.5; color: var(--text-2); margin: 0; }
 .jv-ob-foot {
 	display: flex; align-items: center; justify-content: space-between; gap: 12px;
-	padding: 18px 40px 26px; border-top: 1px solid var(--border);
+	padding: 16px 40px 22px; border-top: 1px solid var(--border);
 }
 .jv-ob-foot-end { justify-content: flex-end; }
-.jv-ob-back { font-size: 13px; color: var(--text-2); background: none; border: none; cursor: pointer; font-family: inherit; display: inline-flex; align-items: center; gap: 6px; padding: 4px 2px; }
-.jv-ob-back:hover { color: var(--text); }
+.jv-ob-back { font-size: 13px; font-weight: 420; color: var(--text-2); background: none; border: none; cursor: pointer; font-family: inherit; display: inline-flex; align-items: center; gap: 4px; padding: 6px 8px; border-radius: 8px; transition: background-color .15s ease, color .15s ease; }
+.jv-ob-back svg { flex: none; color: var(--text-3); }
+.jv-ob-back:hover { color: var(--text); background: var(--surface-2); }
 .jv-ob-back:disabled { opacity: .5; cursor: default; }
-/* quiet self-host link on the Plan footer */
+/* quiet self-host link on the Plan footer — links look like links */
 .jv-ob-link { font-size: 12.5px; color: var(--text-3); background: none; border: none; cursor: pointer; font-family: inherit; text-decoration: underline; text-underline-offset: 3px; padding: 4px 2px; }
 .jv-ob-link:hover { color: var(--text-2); }
 
-/* keyboard focus. Text inputs are excluded: .jv-ob-inp:focus (and the combo's
-   focus-within) already draw the preview's 3px ring, so the outline would
-   double up. */
+/* keyboard focus (text inputs draw their own focus border) */
 .jv-ob-root button:focus-visible,
 .jv-ob-root input[type="checkbox"]:focus-visible,
-.jv-ob-root [tabindex]:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.jv-ob-root [tabindex]:focus-visible { outline: 2px solid var(--border-2); outline-offset: 2px; }
 
-/* ---- buttons: black/white system (--blue = near-black light / indigo dark).
-   The ONLY gradient button in the flow is Connect & Finish. ---- */
+/* ---- buttons (design.md §3.1): solid near-black primary, subtle secondary,
+   colour-shift hover only. The finishing CTA (.jv-ob-btn-grad class name kept
+   for the template) is the same solid primary as everywhere else. ---- */
 .jv-ob-btn {
 	display: inline-flex; align-items: center; justify-content: center; gap: 7px;
-	height: 40px; padding: 0 20px; border-radius: 11px;
-	border: 1px solid var(--border-2);
-	font-family: inherit; font-size: 13.5px; font-weight: 600; line-height: 1;
+	height: 36px; padding: 0 16px; border-radius: 8px;
+	border: 1px solid transparent;
+	font-family: inherit; font-size: 13.5px; font-weight: 500; line-height: 1;
 	cursor: pointer; white-space: nowrap;
-	background: var(--surface); color: var(--text-2);
-	transition: transform .12s, box-shadow .15s, background .15s, border-color .15s;
+	background: var(--surface-2); color: var(--text);
+	transition: background-color .15s ease, color .15s ease, border-color .15s ease;
 }
-.jv-ob-btn:hover { background: var(--surface-2); color: var(--text); border-color: var(--border); }
-.jv-ob-btn:active { transform: scale(.98); }
-.jv-ob-btn:disabled { opacity: .55; cursor: default; transform: none; }
-.jv-ob-btn-primary { background: var(--blue); border-color: transparent; color: #fff; box-shadow: 0 2px 10px rgba(20, 20, 30, .16); }
-.jv-ob-btn-primary:hover:not(:disabled) { background: var(--blue); border-color: transparent; color: #fff; transform: translateY(-1px); box-shadow: 0 8px 22px rgba(20, 20, 30, .22); }
-.jv-ob-btn-grad { background: linear-gradient(135deg, #6e8bff, #8b5cf6); border-color: transparent; color: #fff; box-shadow: 0 6px 20px rgba(110, 92, 246, .32); }
-/* Re-declare background + border here: the base .jv-ob-btn:hover (surface-2 bg,
-   visible border) has higher specificity than .jv-ob-btn-grad, so without this
-   the gradient button turns white with a border on hover. */
-.jv-ob-btn-grad:hover:not(:disabled) { background: linear-gradient(135deg, #6e8bff, #8b5cf6); border-color: transparent; color: #fff; transform: translateY(-1px); box-shadow: 0 10px 26px rgba(110, 92, 246, .4); }
-/* Gentle pulsing glow on the final CTA so it's obvious where to click. Excluded
-   on :hover (the hover shadow takes over) and disabled during save. */
-@keyframes jv-ob-cta-pulse {
-	0%, 100% { box-shadow: 0 6px 20px rgba(110, 92, 246, .3); }
-	50%      { box-shadow: 0 8px 30px rgba(110, 92, 246, .6); }
-}
-.jv-ob-btn-grad:not(:disabled):not(:hover) { animation: jv-ob-cta-pulse 1.8s ease-in-out infinite; }
-/* small ghost variant (inline Retry next to an error message) */
-.jv-ob-btn-sm { height: 28px; padding: 0 12px; font-size: 12px; border-radius: 8px; margin-left: 8px; }
+.jv-ob-btn:hover { background: var(--surface-3); }
+.jv-ob-btn:disabled { opacity: .5; cursor: default; }
+.jv-ob-btn-primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+.jv-ob-btn-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--blue) 88%, #fff); border-color: color-mix(in srgb, var(--blue) 88%, #fff); color: #fff; }
+.jv-ob-btn-grad { background: var(--blue); border-color: var(--blue); color: #fff; }
+.jv-ob-btn-grad:hover:not(:disabled) { background: color-mix(in srgb, var(--blue) 88%, #fff); border-color: color-mix(in srgb, var(--blue) 88%, #fff); color: #fff; }
+/* small variant (inline Retry next to an error message) */
+.jv-ob-btn-sm { height: 28px; padding: 0 12px; font-size: 12.5px; border-radius: 8px; margin-left: 8px; }
 
 .jv-ob-placeholder { font-size: 13.5px; color: var(--text-3); margin: 0 0 20px; text-align: center; }
 .jv-ob-err { font-size: 12.5px; color: var(--red); min-height: 1em; margin: 10px 0 0; }
 .jv-ob-err-center { text-align: center; }
-.jv-ob-hint { font-size: 13px; color: var(--text-3); text-align: center; margin: 0; }
+.jv-ob-hint { font-size: 13px; line-height: 1.5; color: var(--text-3); text-align: center; margin: 0; }
 
 /* "Setting up" transition spinner (pay provisioning only - the connect
    finishing state uses the neural-net animation below). */
-.jv-ob-spinner { width: 34px; height: 34px; margin: 10px auto 0; border-radius: 50%; border: 3px solid var(--border-2); border-top-color: var(--blue); animation: jvObSpin .8s linear infinite; }
+.jv-ob-spinner { width: 32px; height: 32px; margin: 10px auto 0; border-radius: 50%; border: 3px solid var(--surface-3); border-top-color: var(--text); animation: jvObSpin .8s linear infinite; }
 @keyframes jvObSpin { to { transform: rotate(360deg); } }
 
 /* "Setting up Jarvis" finishing state: neural-net animation replacing the
    spinner. Needs real height for the canvas to render into. */
 .jv-ob-setup-net { position: relative; width: 100%; min-height: 380px; flex: 1; margin-top: 8px; }
 
-/* ---- Plan cards (preview .plans/.plan) ---- */
-.jv-ob-plans { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+/* ---- Plan cards: selectable radio cards; selection is a dark ring, hover is
+   a background tint — never motion (design.md §4.2). ---- */
+.jv-ob-plans { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
 .jv-ob-plan {
-	border: 1.5px solid var(--border); border-radius: 14px; padding: 20px 18px;
+	border: 1px solid var(--border); border-radius: 10px; padding: 18px;
 	background: var(--surface); cursor: pointer; position: relative;
-	transition: border-color .15s, box-shadow .15s, transform .15s;
+	transition: border-color .15s ease, background-color .15s ease, box-shadow .15s ease;
 }
-.jv-ob-plan:hover { border-color: var(--border-2); transform: translateY(-2px); box-shadow: 0 10px 26px rgba(20, 20, 30, .08); }
-.jv-ob-plan.sel { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-bg); }
-.jv-ob-plan-tag {
-	position: absolute; top: -10px; left: 18px;
-	font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
-	color: var(--blue); background: var(--blue-bg); border: 1px solid var(--blue-bd);
-	border-radius: 99px; padding: 3px 9px;
-}
-.jv-ob-plan-nm { font-size: 15px; font-weight: 600; }
-.jv-ob-plan-pr { font-size: 26px; font-weight: 680; margin: 10px 0 2px; letter-spacing: -.02em; }
-.jv-ob-plan-pr span { font-size: 13px; font-weight: 500; color: var(--text-3); letter-spacing: 0; }
-.jv-ob-plan-cyc { font-size: 12px; color: var(--text-3); }
-.jv-ob-plan ul { list-style: none; margin: 16px 0 0; padding: 0; display: grid; gap: 8px; }
-.jv-ob-plan li { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; color: var(--text-2); }
+.jv-ob-plan:hover { background: var(--surface-1); border-color: var(--border-2); }
+.jv-ob-plan.sel { border-color: var(--text); box-shadow: 0 0 0 1px var(--text); }
+.jv-ob-plan-nm { font-size: 14px; font-weight: 500; }
+.jv-ob-plan-pr { font-size: 22px; font-weight: 500; margin: 10px 0 2px; }
+.jv-ob-plan-pr span { font-size: 13px; font-weight: 420; color: var(--text-3); }
+.jv-ob-plan-cyc { font-size: 12.5px; color: var(--text-3); }
+.jv-ob-plan ul { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 8px; }
+.jv-ob-plan li { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; line-height: 1.4; color: var(--text-2); }
 .jv-ob-plan li svg { color: var(--green); flex: none; margin-top: 1px; }
 .jv-ob-plan-rd {
-	position: absolute; top: 18px; right: 18px;
-	width: 18px; height: 18px; border-radius: 50%;
-	border: 1.5px solid var(--border-2); display: grid; place-items: center;
+	position: absolute; top: 16px; right: 16px;
+	width: 16px; height: 16px; border-radius: 50%;
+	border: 1px solid var(--border-2); display: grid; place-items: center;
+	transition: border-color .15s ease, background-color .15s ease;
 }
-.jv-ob-plan.sel .jv-ob-plan-rd { border-color: var(--blue); background: var(--blue); }
-.jv-ob-plan.sel .jv-ob-plan-rd::after { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #fff; }
+.jv-ob-plan.sel .jv-ob-plan-rd { border-color: var(--text); background: var(--text); }
+.jv-ob-plan.sel .jv-ob-plan-rd::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--surface); }
 .jv-ob-muted { color: var(--text-3); }
 
-/* ---- Details form (preview .form/.field/.sec-label) ---- */
-.jv-ob-form { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 18px; max-width: 620px; margin: 0 auto; }
+/* ---- Details form (design.md §3.4 mapped to the page context) ---- */
+.jv-ob-form { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 16px; max-width: 620px; margin: 0 auto; }
 .jv-ob-field { display: flex; flex-direction: column; gap: 6px; }
 .jv-ob-field-full { grid-column: 1 / -1; }
-.jv-ob-field label { font-size: 12.5px; font-weight: 550; color: var(--text-2); }
-.jv-ob-opt { color: var(--text-3); font-weight: 400; }
+.jv-ob-field label { font-size: 12px; font-weight: 420; color: var(--text-3); }
+.jv-ob-opt { color: var(--text-3); font-weight: 420; }
 .jv-ob-inp {
-	height: 42px; border: 1px solid var(--border-2); border-radius: 10px;
-	background: var(--surface); padding: 0 13px;
+	height: 32px; border: 1px solid var(--border-2); border-radius: 8px;
+	background: var(--surface); padding: 0 10px;
 	font-family: inherit; font-size: 13.5px; color: var(--text);
 	width: 100%; box-sizing: border-box;
+	transition: border-color .15s ease, box-shadow .15s ease;
 }
 .jv-ob-inp::placeholder { color: var(--text-3); }
-.jv-ob-inp:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-bg); }
+.jv-ob-inp:hover { border-color: var(--text-3); }
+.jv-ob-inp:focus { outline: none; border-color: var(--text-3); box-shadow: 0 0 1px rgba(0, 0, 0, .33), 0 1px 3px rgba(0, 0, 0, .14); }
 .jv-ob-sec-label {
 	grid-column: 1 / -1;
-	font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
-	color: var(--text-3); margin: 6px 0 -4px;
+	font-size: 14px; font-weight: 600;
+	color: var(--text); margin: 8px 0 -4px;
 }
-.jv-ob-sec-hint { grid-column: 1 / -1; font-size: 12px; color: var(--text-3); margin: 0 0 -6px; }
-/* JvCombo (Company) restyled to match the preview's .inp fields: 42px, 10px
-   radius, border-2 border, and the same 3px focus ring (focus-within because
-   the ring belongs on the wrapper, the caret sits in the inner input). */
+.jv-ob-sec-hint { grid-column: 1 / -1; font-size: 12px; line-height: 1.5; color: var(--text-3); margin: 0 0 -6px; }
+/* JvCombo (Company) matched to the input recipe above (focus-within because
+   the border belongs on the wrapper, the caret sits in the inner input). */
 .jv-ob-form :deep(.jvc-field) {
-	min-height: 42px; padding: 0 13px; gap: 8px;
-	border-color: var(--border-2); border-radius: 10px;
+	min-height: 32px; padding: 0 10px; gap: 8px;
+	border-color: var(--border-2); border-radius: 8px;
 	font-size: 13.5px;
-	transition: border-color .15s, box-shadow .15s;
+	transition: border-color .15s ease, box-shadow .15s ease;
 }
-.jv-ob-form :deep(.jvc-field:hover) { border-color: var(--border-2); }
+.jv-ob-form :deep(.jvc-field:hover) { border-color: var(--text-3); }
 .jv-ob-form :deep(.jvc-field:focus-within),
-.jv-ob-form :deep(.jvc-field.jvc-open) { border-color: var(--border-2); }
+.jv-ob-form :deep(.jvc-field.jvc-open) { border-color: var(--text-3); box-shadow: 0 0 1px rgba(0, 0, 0, .33), 0 1px 3px rgba(0, 0, 0, .14); }
 .jv-ob-form :deep(.jvc-input::placeholder) { color: var(--text-3); }
 
-/* ---- Review & Pay (preview .rev) ---- */
-.jv-ob-rev { max-width: 560px; margin: 0 auto; border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
-.jv-ob-rev-row { display: flex; justify-content: space-between; gap: 12px; padding: 13px 18px; font-size: 13.5px; border-bottom: 1px solid var(--border); }
+/* ---- Review & pay ---- */
+.jv-ob-rev { max-width: 560px; margin: 0 auto; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.jv-ob-rev-row { display: flex; justify-content: space-between; gap: 12px; padding: 12px 16px; font-size: 13.5px; border-bottom: 1px solid var(--border); }
 .jv-ob-rev-row:last-child { border-bottom: 0; }
 .jv-ob-rev-row span { color: var(--text-3); }
-.jv-ob-rev-row b { font-weight: 600; }
-.jv-ob-rev-total { background: var(--surface-1); font-size: 15px; }
-.jv-ob-rev-total b { font-size: 17px; }
+.jv-ob-rev-row b { font-weight: 500; }
+.jv-ob-rev-total { background: var(--surface-1); }
+.jv-ob-rev-total b { font-size: 15px; font-weight: 600; }
 .jv-ob-rev-note { max-width: 560px; margin: 14px auto 0; font-size: 12px; color: var(--text-3); text-align: center; display: flex; align-items: center; justify-content: center; gap: 7px; }
 .jv-ob-devnote { font-size: 12.5px; color: var(--amber); background: var(--amber-bg); border: 1px solid var(--amber-bd); border-radius: 8px; padding: 8px 12px; margin: 14px auto 0; max-width: 560px; }
 
 /* ---- Connect ---- */
 .jv-ob-connect { max-width: 640px; margin: 0 auto; }
 
-/* ---- Self-host (logic unchanged; light restyle to the new frame) ---- */
+/* ---- Self-host (logic unchanged) ---- */
 .jv-ob-sh { max-width: 620px; margin: 0 auto; }
-.jv-ob-label { display: block; font-size: 12.5px; font-weight: 550; color: var(--text-2); margin: 14px 0 6px; }
+.jv-ob-label { display: block; font-size: 12px; font-weight: 420; color: var(--text-3); margin: 14px 0 6px; }
 .jv-ob-sh .jv-ob-label:first-of-type { margin-top: 0; }
-.jv-ob-check { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text); margin-top: 10px; cursor: pointer; }
+.jv-ob-check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); margin-top: 10px; cursor: pointer; }
 .jv-ob-sh-actions { display: flex; margin-top: 14px; }
-.jv-ob-sh-results { margin: 14px 0 4px; font-size: 12.5px; line-height: 1.7; }
-.jv-ob-sh-check { color: var(--text); }
+.jv-ob-sh-results { margin: 14px 0 4px; font-size: 12.5px; line-height: 1.6; }
+.jv-ob-sh-check { display: flex; align-items: flex-start; gap: 7px; color: var(--text); padding: 2px 0; }
 .jv-ob-sh-check-adv { color: var(--text-3); }
+.jv-ob-sh-ic { flex: none; margin-top: 2px; }
+.jv-ob-sh-ic-ok { color: var(--green); }
+.jv-ob-sh-ic-adv { color: var(--amber); }
+.jv-ob-sh-ic-bad { color: var(--red); }
 .jv-ob-sh-adv-tag { color: var(--text-3); font-style: italic; }
-.jv-ob-sh-ok { color: var(--green); font-weight: 600; margin-bottom: 4px; }
-.jv-ob-sh-bad { color: var(--red); font-weight: 600; margin-bottom: 4px; }
+.jv-ob-sh-ok { color: var(--green); font-weight: 500; margin-bottom: 4px; }
+.jv-ob-sh-bad { color: var(--red); font-weight: 500; margin-bottom: 4px; }
 
 /* ---- Connect / self-host post-save readiness note (afterSaveRecheckReady). ---- */
 .jv-ob-note { font-size: 12.5px; color: var(--text-3); margin-top: 14px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: center; }
@@ -1233,14 +1203,12 @@ onMounted(async () => {
 	.jv-ob-foot { padding: 14px 22px 20px; }
 	.jv-ob-plans { grid-template-columns: 1fr; }
 	.jv-ob-form { grid-template-columns: 1fr; }
-	.jv-ob-orb { width: min(520px, 90vw); }
-	.jv-ob-head h1 { font-size: 21px; }
+	.jv-ob-head h1 { font-size: 18px; }
 	.jv-ob-foot { flex-wrap: wrap; }
 }
 @media (prefers-reduced-motion: reduce) {
 	.jv-ob-screen { animation: none; }
-	.jv-ob-plan, .jv-ob-btn, .jv-ob-form :deep(.jvc-field) { transition: none; }
+	.jv-ob-plan, .jv-ob-btn, .jv-ob-inp, .jv-ob-form :deep(.jvc-field) { transition: none; }
 	.jv-ob-spinner { animation: none; }
-	.jv-ob-btn-grad { animation: none; }
 }
 </style>

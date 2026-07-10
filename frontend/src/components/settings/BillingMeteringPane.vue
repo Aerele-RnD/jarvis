@@ -48,10 +48,9 @@
         </template>
       </section>
 
-      <section class="jv-mon-card jv-mon-soon">
-        <h3>Request log &amp; failover history</h3>
-        <div class="jv-mon-note">Coming soon.</div>
-      </section>
+      <!-- "Request log & failover history" placeholder removed — no "coming
+           soon" cards in the language (design.md §5 #18); the section returns
+           when the feature ships. -->
     </div>
   </div>
 </template>

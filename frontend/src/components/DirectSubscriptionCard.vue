@@ -10,20 +10,20 @@
   <div class="jv-dsub" style="font-family:inherit;color:var(--text);">
     <!-- ===== Paste-back flow (Screen 2) ===== -->
     <div v-if="flowOpen">
-      <p class="jv-dsub-step"><b>Step 1</b> - Sign in with your {{ status.provider || pickProvider }} account in a new tab.</p>
+      <p class="jv-dsub-step"><b>1.</b> Sign in with your {{ status.provider || pickProvider }} account in a new tab.</p>
       <div class="jv-dsub-actions" style="margin-bottom:10px;">
-        <a v-if="authorizeUrl" :href="authorizeUrl" target="_blank" rel="noopener noreferrer" class="jv-dsub-btn jv-dsub-btn-primary">Open sign-in URL ↗</a>
+        <a v-if="authorizeUrl" :href="authorizeUrl" target="_blank" rel="noopener noreferrer" class="jv-dsub-btn jv-dsub-btn-primary">Open sign-in URL <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><path d="M15 3h6v6" /><path d="M10 14 21 3" /></svg></a>
         <span v-else class="jv-dsub-muted">Starting sign-in…</span>
       </div>
       <div v-if="authorizeUrl" class="jv-dsub-urlrow">
         <code class="jv-dsub-url" :title="authorizeUrl">{{ authorizeUrl }}</code>
-        <button type="button" class="jv-dsub-btn jv-dsub-btn-ghost" @click="copyUrl">{{ copied ? 'Copied ✓' : 'Copy' }}</button>
+        <button type="button" class="jv-dsub-btn jv-dsub-btn-ghost" @click="copyUrl">{{ copied ? 'Copied' : 'Copy' }}</button>
       </div>
-      <p class="jv-dsub-step" style="margin-top:14px;"><b>Step 2</b> - After you click Authorize, your browser shows a “This site can’t be reached” page. <b>That’s expected.</b> Copy the URL from the address bar (starts with <code>http://localhost:1455/auth/callback?code=…</code>) and paste it here:</p>
+      <p class="jv-dsub-step" style="margin-top:14px;"><b>2.</b> After you click Authorize, your browser shows a “This site can’t be reached” page. <b>That’s expected.</b> Copy the URL from the address bar (starts with <code>http://localhost:1455/auth/callback?code=…</code>) and paste it here:</p>
       <textarea v-model="pastedUrl" rows="3" class="jv-dsub-input" placeholder="Paste the URL from the error page here"></textarea>
       <div class="jv-dsub-actions" style="margin-top:10px;">
         <button class="jv-dsub-btn jv-dsub-btn-ghost" @click="cancelFlow">Cancel</button>
-        <button class="jv-dsub-btn jv-dsub-btn-primary" :disabled="busy" @click="submitPasted">{{ busy ? 'Connecting…' : 'Submit →' }}</button>
+        <button class="jv-dsub-btn jv-dsub-btn-primary" :disabled="busy" @click="submitPasted">{{ busy ? 'Connecting…' : 'Submit' }}</button>
       </div>
       <div v-if="minsLeft !== null" class="jv-dsub-hint">Link valid for ~{{ minsLeft }} minute{{ minsLeft === 1 ? '' : 's' }}.</div>
       <div v-if="err" class="jv-dsub-err">{{ err }}</div>
@@ -68,7 +68,7 @@
         </label>
       </div>
       <div class="jv-dsub-actions" style="margin-top:12px;">
-        <button v-if="editable" class="jv-dsub-btn jv-dsub-btn-primary" :disabled="busy" @click="startSignin(pickProvider, pickModel)">Sign in with {{ pickProvider }} →</button>
+        <button v-if="editable" class="jv-dsub-btn jv-dsub-btn-primary" :disabled="busy" @click="startSignin(pickProvider, pickModel)">Sign in with {{ pickProvider }}</button>
       </div>
       <div v-if="err" class="jv-dsub-err">{{ err }}</div>
     </div>
@@ -241,22 +241,26 @@ function copyUrl() {
 .jv-dsub-muted { font-size: 13px; color: var(--text-3); }
 .jv-dsub-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 .jv-dsub-btn {
-  font-size: 13px; font-weight: 600; padding: 8px 16px; border-radius: 7px;
-  cursor: pointer; border: 1px solid var(--border); text-decoration: none;
-  display: inline-flex; align-items: center;
+  font-size: 13px; font-weight: 500; height: 32px; padding: 0 12px; border-radius: 8px;
+  cursor: pointer; border: 1px solid transparent; text-decoration: none;
+  display: inline-flex; align-items: center; gap: 6px; font-family: inherit;
+  transition: background-color .15s ease, color .15s ease, border-color .15s ease;
 }
-.jv-dsub-btn:disabled { opacity: .6; cursor: not-allowed; }
+.jv-dsub-btn:disabled { opacity: .5; cursor: not-allowed; }
 .jv-dsub-btn-primary { background: var(--blue); color: #fff; border-color: var(--blue); }
-.jv-dsub-btn-ghost { background: var(--surface); color: var(--text-2); }
+.jv-dsub-btn-primary:hover { background: color-mix(in srgb, var(--blue) 88%, #fff); border-color: color-mix(in srgb, var(--blue) 88%, #fff); }
+.jv-dsub-btn-primary svg { stroke: #fff; }
+.jv-dsub-btn-ghost { background: var(--surface-2); color: var(--text); }
+.jv-dsub-btn-ghost:hover { background: var(--surface-3); }
 .jv-dsub-input {
   width: 100%; box-sizing: border-box; padding: 9px 12px; font-size: 14px;
-  border: 1px solid var(--border); border-radius: 6px; background: var(--surface);
+  border: 1px solid var(--border-2); border-radius: 8px; background: var(--surface);
   color: var(--text); font-family: inherit; resize: vertical;
 }
 .jv-dsub-urlrow { display: flex; gap: 8px; align-items: center; }
 .jv-dsub-url {
   flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: 12px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px;
+  font-size: 12px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px;
   background: var(--surface-2); color: var(--text-2);
 }
 /* Match AccountView's sibling .jv-acct-kv rows so the two cards read as one system. */
@@ -269,7 +273,7 @@ function copyUrl() {
 .jv-dsub-field { display: flex; flex-direction: column; gap: 4px; flex: 1 1 200px; min-width: 0; }
 .jv-dsub-field span { font-size: 12px; color: var(--text-3); }
 .jv-dsub-select {
-  padding: 9px 12px; font-size: 14px; border: 1px solid var(--border);
-  border-radius: 6px; background: var(--surface); color: var(--text); font-family: inherit;
+  padding: 7px 12px; font-size: 13px; border: 1px solid var(--border-2);
+  border-radius: 8px; background: var(--surface); color: var(--text); font-family: inherit;
 }
 </style>
