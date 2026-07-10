@@ -93,7 +93,8 @@
 						<template v-else-if="macroRun.status === 'failed'"><span class="jv-macrobar-chip">✗ Macro failed</span></template>
 						<template v-else-if="macroRun.status === 'stopped'"><span class="jv-macrobar-chip">⏹ Macro stopped</span></template>
 					</div>
-					<template v-for="m in visibleMessages" :key="m.name">
+					<template v-for="(m, mi) in visibleMessages" :key="m.name">
+						<div v-if="dayDividers[mi]" class="jv-daydivider"><span>{{ dayDividers[mi] }}</span></div>
 						<!-- user -->
 						<div v-if="m.role === 'user'" class="jv-umsg" style="display:flex;flex-direction:column;align-items:flex-end;">
 							<div v-if="m.content" class="jv-ububble" style="max-width:78%;min-width:0;background:var(--surface-2);border:1px solid var(--border);border-radius:14px 14px 4px 14px;padding:10px 14px;font-size:14px;line-height:1.5;color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere;">{{ m.content }}</div>
@@ -746,7 +747,7 @@ import { useAudioRecorder } from "@/composables/useAudioRecorder"
 import { setMacroPrefill } from "@/composables/macroPrefill"
 import { takeChatPrefill } from "@/composables/chatPrefill"
 // timezone-safe: naive server datetimes must go through dayjsLocal (site tz)
-import { formatDate, exactDate } from "@/utils/datetime"
+import { formatDate, exactDate, dayLabel } from "@/utils/datetime"
 import { renderMarkdown } from "@/markdown"
 import JvChart from "@/charts/JvChart.vue"
 import ConnectPhoneDialog from "@/components/ConnectPhoneDialog.vue"
@@ -2429,6 +2430,29 @@ function msgTimeFull(m) {
 		})
 	return ""
 }
+// Day bucket for a message (timezone-safe via dayLabel), for the "Today /
+// Yesterday / 3 July" separators between message groups (UX #23). Empty for a
+// dateless streaming placeholder.
+function msgDay(m) {
+	return dayLabel(msgStamp(m) || (m.creation_browser ? new Date(m.creation_browser) : null))
+}
+// Precompute a divider label per visible message in ONE pass: a label shows only
+// on the first message of a new day. A dateless row (streaming placeholder) is
+// skipped without resetting the running day, so it can't split a day group.
+const dayDividers = computed(() => {
+	const out = []
+	let prev = null
+	for (const m of visibleMessages.value) {
+		const d = msgDay(m)
+		if (d && d !== prev) {
+			out.push(d)
+			prev = d
+		} else {
+			out.push("")
+		}
+	}
+	return out
+})
 // Per-message Copy with a brief "copied" tick, and Edit (load a previous
 // command back into the composer to tweak and resend).
 const copiedId = ref("")
@@ -4116,6 +4140,12 @@ onUnmounted(() => {
 .jv-md :deep(.jv-md-list) { margin: 0 0 10px; padding-left: 20px; }
 .jv-md :deep(.jv-md-list li) { margin: 2px 0; }
 .jv-md :deep(.jv-md-code) { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.jv-md :deep(.jv-md-list .jv-md-list) { margin: 2px 0; }
+.jv-md :deep(.jv-md-quote) { margin: 0 0 10px; padding: 2px 0 2px 12px; border-left: 3px solid var(--border-2); color: var(--text-2); }
+.jv-md :deep(del) { opacity: .65; }
+/* day separators between message groups (UX #23) */
+.jv-daydivider { display: flex; align-items: center; justify-content: center; margin: 6px 0 2px; }
+.jv-daydivider span { font-size: 11px; font-weight: 550; color: var(--text-3); background: var(--surface-1); border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; }
 .jv-md :deep(.jv-md-link) { color: var(--blue); text-decoration: none; font-weight: 500; }
 /* Auto-linked document IDs → open the record in ERPNext Desk. Dashed underline
    marks them as record links, distinct from plain markdown links. */
