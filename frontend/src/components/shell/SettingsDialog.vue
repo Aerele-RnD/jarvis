@@ -114,10 +114,15 @@ const UsageAdminPane = defineAsyncComponent(() => import("@/components/settings/
 const { effectiveDark: dark, paletteVars } = useJarvisTheme()
 const store = useShellStore()
 
-// ACCOUNT & BILLING is gated on System Manager; ADMINISTRATION is gated on
+// ACCOUNT & BILLING is shown to System Managers; ADMINISTRATION is shown on
 // window.is_jarvis_admin (true for System Managers too — see design doc §2).
-// Both are UX-only gates; the server enforces the real permission on every
-// underlying endpoint regardless of what the client hides.
+// This rail is presentation, NOT a security boundary - each endpoint must gate
+// itself, because /api/method is reachable directly.
+// Server-enforced today: get_account, preview_upgrade, start_upgrade,
+// get_llm_usage, get_llm_connection_status, get_llm_config, and the
+// user_settings_api admin_* endpoints (require_jarvis_admin).
+// Still ungated: onboarding.get_llm_sync_status (OnboardingView needs it before
+// roles settle) and oauth.api.get_direct_subscription_status.
 const isSM = !!window.is_system_manager
 const isAdmin = !!window.is_jarvis_admin
 

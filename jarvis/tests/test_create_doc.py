@@ -69,6 +69,8 @@ class TestCreateDocValidation(FrappeTestCase):
 					self._values[f] = v
 				def insert(self):
 					pass
+				def apply_fieldlevel_read_permissions(self):
+					pass
 				def as_dict(self):
 					return {"doctype": dt, "name": "generated", **self._values}
 			return _Stub()

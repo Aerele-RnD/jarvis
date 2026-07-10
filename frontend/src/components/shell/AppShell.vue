@@ -34,6 +34,7 @@
 			<Dialogs />
 			<SettingsDialog />
 			<JarvisCommandPalette />
+			<NotifyToaster />
 		</div>
 	</FrappeUIProvider>
 </template>
@@ -41,13 +42,17 @@
 <script setup>
 // App shell (DESIGN-V3 §3.1): persistent sidebar around every route, the
 // #app-header strip, the confirmDialog host, the ⌘K palette, the onboarding
-// gate (D11), the approvals-badge poll (D12) and the global shortcuts.
-import { computed, onMounted, onBeforeUnmount, ref } from "vue"
+// gate (D11), the approvals-badge poll (D12), the global notifier (attention
+// signals for background conversations/routes, NOTIFY-APPROVALS Part 1) and
+// the global shortcuts.
+import { computed, onMounted, onBeforeUnmount, ref, inject } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import { FrappeUIProvider, Dialogs, setConfig } from "frappe-ui"
 import * as api from "@/api"
 import { useShellStore } from "@/stores/shell"
 import { useShortcuts } from "@/composables/useShortcuts"
+import { attachGlobalNotifier } from "@/notify/globalNotifier"
+import NotifyToaster from "@/notify/NotifyToaster.vue"
 import { needsOnboarding } from "@/onboarding/readiness.js"
 import Sidebar from "./Sidebar.vue"
 import JarvisCommandPalette from "./JarvisCommandPalette.vue"
@@ -57,6 +62,10 @@ import OnboardingGate from "./OnboardingGate.vue"
 const route = useRoute()
 const router = useRouter()
 const store = useShellStore()
+// The same shared socket ChatView injects (main.js provides it app-wide;
+// null under ?nosocket) — the global notifier listens on it for the whole
+// session, independent of which route is mounted.
+const socket = inject("$socket")
 
 // Onboarding gate state. `gatedOnboarding` starts null (unresolved). We render
 // NOTHING but a neutral surface until BOTH the verdict has resolved AND a route
@@ -124,9 +133,16 @@ function onVisibility() {
 }
 const removeAfterEach = router.afterEach(() => store.refreshApprovalsCount())
 
+// Global notifier: one app-scoped jarvis:event listener (attached below,
+// detached on unmount) that turns background run:end / run:error /
+// action:pending / approval:new / conversation:new into browser notifications
+// (hidden tab), toasts (visible but elsewhere) and sidebar unread dots.
+let _detachNotifier = null
+
 onMounted(async () => {
 	document.addEventListener("visibilitychange", onVisibility)
 	if (document.visibilityState === "visible") startInterval()
+	_detachNotifier = attachGlobalNotifier({ socket, router })
 
 	// Sidebar fills without ChatView needing to be mounted (§3.1).
 	store.loadConversations()
@@ -162,5 +178,6 @@ onBeforeUnmount(() => {
 	clearTimeout(_visTimer)
 	stopInterval()
 	removeAfterEach()
+	if (_detachNotifier) _detachNotifier()
 })
 </script>

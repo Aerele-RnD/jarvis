@@ -419,6 +419,19 @@ def handle_chat_send(payload: dict) -> None:
 
 	conv = frappe.get_doc(CONV, conversation_id)
 	user = conv.owner
+	# User-message intake: the user replied, so any Pending chat-sourced
+	# approval materialized from a previous ```jarvis-ask fence is answered
+	# in chat now — flip it to Answered so the board never offers a stale
+	# double-answer. One indexed UPDATE; best-effort (hot path, never raises).
+	try:
+		from jarvis.chat import chat_asks
+
+		chat_asks.resolve_on_user_message(conversation_id)
+	except Exception:
+		frappe.log_error(
+			title="chat asks: resolve_on_user_message failed",
+			message=frappe.get_traceback(),
+		)
 	# Wall-clock turn start (epoch ms) - scopes codex imagegen output produced
 	# during this turn (compared against the generated image files' mtime).
 	turn_start_ms = int(time.time() * 1000)
@@ -524,15 +537,22 @@ def handle_chat_send(payload: dict) -> None:
 	# instead, so user_message stays unprefixed and the OpenAI prefix
 	# cache the warm-up populates is never busted by a varying prefix.
 
-	def _publish_run_error(err: str) -> None:
+	def _publish_run_error(err: str, *, changed_data=None, code=None, exc=None) -> None:
+		# changed_data: pass False only when we KNOW nothing was written (a
+		# pre-ack failure - the run never started). The SPA turns that into a
+		# "No changes were made to your data" reassurance; omit it when unknown.
 		_mark_errored(assistant_msg.name, err)
-		_publish_to_user(user, {
+		payload = {
 			"kind": "run:error",
 			"conversation_id": conversation_id,
 			"message_id": assistant_msg.name,
 			"run_id": run_id,
 			"error": err,
-		})
+			"code": code or _classify_error(err, exc),
+		}
+		if changed_data is not None:
+			payload["changed_data"] = bool(changed_data)
+		_publish_to_user(user, payload)
 
 	try:
 		tool_msg_by_call_id: dict[str, str] = {}
@@ -623,7 +643,7 @@ def handle_chat_send(payload: dict) -> None:
 					base_url, token, sh_message, model="openclaw", stream=stream_pref,
 				))
 			except OpenclawUnreachableError as e:
-				_publish_run_error(str(e))
+				_publish_run_error(str(e), changed_data=False, exc=e)
 				_advance_macro(conversation_id, errored=True)
 				return
 			finally:
@@ -640,6 +660,18 @@ def handle_chat_send(payload: dict) -> None:
 				"http://", "ws://"
 			).replace("https://", "wss://")
 			effective_model, oauth_provider_id = _resolve_model_and_provider(conv)
+			if not conv.session_key:
+				# First turn of this conversation pays session-create and is the
+				# most cold-start-prone (a dormant container takes ~10-25s to
+				# wake). Tell the user we're waking the assistant so the connect
+				# window reads as progress rather than a dead spinner.
+				_publish_to_user(user, {
+					"kind": "run:status",
+					"conversation_id": conversation_id,
+					"message_id": assistant_msg.name,
+					"run_id": run_id,
+					"status": "waking",
+				})
 			try:
 				t_checkout = time.monotonic()
 				with openclaw_session_pool.checkout(gateway_url) as sess:
@@ -760,7 +792,7 @@ def handle_chat_send(payload: dict) -> None:
 				# still active, openclaw's content-based dedupe already returns
 				# in_flight for the identical resend, so true double-runs are
 				# confined to the ghost-run-already-finished case.
-				_publish_run_error(str(e))
+				_publish_run_error(str(e), changed_data=False, exc=e)
 				_advance_macro(conversation_id, errored=True)
 				return
 
@@ -784,7 +816,28 @@ def handle_chat_send(payload: dict) -> None:
 						"conversation_id": conversation_id,
 						"message_id": assistant_msg.name,
 						"run_id": run_id,
+						"reason": "compacting",
 					})
+					return
+				if terminal.get("state") == "aborted":
+					# User hit Stop -> stop_run -> openclaw chat.abort. Finalize as a
+					# clean stop: keep whatever streamed, no error. Publish run:end so
+					# OTHER tabs (which never muted this run) also unlock - the
+					# stopping tab mutes it via stoppedRunId. A reload then shows the
+					# partial reply, not an error card for a deliberate stop. (Ordered
+					# after the overflow check - the two terminal states are mutually
+					# exclusive, and the overflow branch stays first for its test.)
+					if not (frappe.db.get_value(MSG, assistant_msg.name, "content") or "").strip():
+						frappe.db.set_value(MSG, assistant_msg.name, "content", "_Stopped._")
+					frappe.db.set_value(MSG, assistant_msg.name, "streaming", 0)
+					frappe.db.commit()
+					_publish_to_user(user, {
+						"kind": "run:end",
+						"conversation_id": conversation_id,
+						"message_id": assistant_msg.name,
+						"run_id": run_id,
+					})
+					_advance_macro(conversation_id, errored=True)
 					return
 				_publish_run_error(err_text)
 				_advance_macro(conversation_id, errored=True)
@@ -793,7 +846,18 @@ def handle_chat_send(payload: dict) -> None:
 				# Deadline, transport drop, or exhausted stream after a
 				# successful ack: openclaw still owns the turn and persists
 				# the result. Park for snapshot recovery. NEVER a false error.
+				# Publish a recovering event so the UI shows a clear
+				# "reconnecting, your answer will appear here" state and
+				# unlocks the composer, instead of a silent, locked spinner
+				# that can sit for up to the recovery ceiling.
 				_mark_recovering(assistant_msg.name)
+				_publish_to_user(user, {
+					"kind": "run:recovering",
+					"conversation_id": conversation_id,
+					"message_id": assistant_msg.name,
+					"run_id": run_id,
+					"reason": terminal.get("reason") or "interrupted",
+				})
 				_try_recover_now(conversation_id)
 				return
 			# relay:final - authoritative text beats the batcher tail.
@@ -808,6 +872,27 @@ def handle_chat_send(payload: dict) -> None:
 		# snapshot recovery can deliver the same rich outputs for a turn
 		# that finished via _finalize instead of this clean exit).
 		persist_rich_outputs(assistant_msg.name, conversation_id, user, run_id, turn_start_ms)
+
+		# Chat-ask materialization (notify-approvals design Part 2): a final
+		# reply carrying a ```jarvis-ask fence surfaces on the Approval Board
+		# so an away user finds the question. One PK read; skipped when the
+		# turn errored (a partial fence is not a real ask). Best-effort —
+		# never breaks the turn.
+		try:
+			from jarvis.chat import chat_asks
+
+			_final = frappe.db.get_value(
+				MSG, assistant_msg.name, ["content", "error"], as_dict=True
+			) or {}
+			if not _final.get("error"):
+				chat_asks.materialize_from_turn(
+					conversation_id, _final.get("content") or ""
+				)
+		except Exception:
+			frappe.log_error(
+				title="chat asks: materialize_from_turn failed",
+				message=frappe.get_traceback(),
+			)
 
 	except Exception as e:
 		# Last-resort backstop. Any exception that wasn't an
@@ -829,6 +914,7 @@ def handle_chat_send(payload: dict) -> None:
 				"run_id": run_id,
 				# Don't leak full str(e) - the operator-safe identifier is
 				# the exception class; the full traceback is in Error Log.
+				"code": "internal",
 				"error": f"{type(e).__name__}",
 			})
 		except Exception:
@@ -1212,6 +1298,25 @@ def _create_assistant_placeholder(conv) -> "frappe.model.document.Document":
 	return msg
 
 
+def _classify_error(err_text: str, exc=None) -> str:
+	"""Map a raw error into a small operator-facing taxonomy code the SPA turns
+	into a plain-language headline. The raw text still travels as ``error`` and
+	shows behind a "Show details" disclosure - this only picks the headline."""
+	code = getattr(exc, "code", None)
+	if code == "turn-timeout":
+		return "timeout"
+	low = (err_text or "").lower()
+	if isinstance(exc, OpenclawUnreachableError) or "ws open failed" in low or "unreachable" in low:
+		return "unreachable"
+	if "recovery window" in low:
+		return "recovery-expired"
+	if "timed out" in low or "timeout" in low or "deadline" in low:
+		return "timeout"
+	if any(k in low for k in ("quota", "rate limit", "rate-limit", "cooldown", "overloaded", "insufficient", "credit", "billing")):
+		return "provider"
+	return "internal"
+
+
 def _mark_errored(assistant_msg_name: str, error: str) -> None:
 	frappe.db.set_value(MSG, assistant_msg_name, {
 		"streaming": 0,
@@ -1330,6 +1435,7 @@ def _handle_event_inner(
 					"conversation_id": conversation_id,
 					"message_id": assistant_msg_name,
 					"run_id": run_id,
+					"reason": "compacting",
 				})
 				return
 			_mark_errored(assistant_msg_name, err_text)
@@ -1338,6 +1444,7 @@ def _handle_event_inner(
 				"conversation_id": conversation_id,
 				"message_id": assistant_msg_name,
 				"run_id": run_id,
+				"code": _classify_error(err_text),
 				"error": event.get("error"),
 			})
 		# lifecycle start is a no-op (we already published run:start)

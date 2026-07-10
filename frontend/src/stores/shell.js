@@ -4,8 +4,10 @@
 //   - only ChatView writes currentConvId / streamingConvId
 //   - only shell components write paletteOpen / sidebar preference
 //   - both sides may call loadConversations (idempotent, in-flight de-duped)
-//   - ChatView's socket handlers are the ONLY external writers of
-//     `conversations`, and only via applyRemoteRename/applyRemoteNew (DA-04).
+//   - `conversations` is externally written only via applyRemoteRename /
+//     applyRemoteNew (DA-04) — called from ChatView's socket handlers and the
+//     AppShell-level global notifier (notify/globalNotifier.js).
+//   - unreadConvs: the global notifier marks, ChatView clears on open.
 import { reactive, ref, computed } from "vue"
 import { useStorage } from "@vueuse/core"
 import { toast } from "frappe-ui"
@@ -20,6 +22,10 @@ const conversations = ref([]) // [{name,title,last_active_at,starred,message_cou
 const conversationsLoading = ref(false)
 const currentConvId = ref(null) // written by ChatView only
 const streamingConvId = ref(null) // written by ChatView only
+// Conversations with a finished (or errored) reply the user hasn't opened yet —
+// the sidebar's unread dot (distinct from the streaming dot). Replaced
+// wholesale on every write so Set mutations stay reactive.
+const unreadConvs = ref(new Set())
 const approvalsCount = ref(0)
 const settingsOpen = ref(false) // the shell SettingsDialog binds to this
 const settingsSection = ref("general") // active pane key in the settings dialog
@@ -53,7 +59,12 @@ function clearSettingsActions() {
 // server is the roaming source of truth once GeneralPane's onMounted fetches
 // get_my_settings and calls syncSettingsFromServer below. The "1"/"0"
 // encoding is kept for backward compat with existing stored values.
-const activityDetail = ref(localStorage.getItem("jarvis-activity-detail") === "1")
+// Default ON for new/unset devices — the live tool trace is the product's best
+// trust signal, so hide it only when the user has explicitly turned it off
+// ("0"). The server-side default matches (Jarvis User Settings.activity_detail
+// defaults to 1) so the first get_my_settings sync can't flip a fresh device.
+const _storedActivityDetail = localStorage.getItem("jarvis-activity-detail")
+const activityDetail = ref(_storedActivityDetail === null ? true : _storedActivityDetail === "1")
 // `persist:false` is used only by syncSettingsFromServer, to apply a value
 // that already came FROM the server without immediately POSTing it back.
 function setActivityDetail(v, { persist = true } = {}) {
@@ -257,6 +268,20 @@ function applyRemoteNew() {
 	}, 500)
 }
 
+// ---- unread signal (NOTIFY-APPROVALS Part 1) --------------------------------
+// The global notifier marks a conversation unread when its run ends off-screen;
+// ChatView clears it the moment that conversation is opened.
+function markUnread(id) {
+	if (!id || unreadConvs.value.has(id)) return
+	unreadConvs.value = new Set(unreadConvs.value).add(id)
+}
+function clearUnread(id) {
+	if (!id || !unreadConvs.value.has(id)) return
+	const next = new Set(unreadConvs.value)
+	next.delete(id)
+	unreadConvs.value = next
+}
+
 // reactive() unwraps the refs/computeds, so consumers read and write plain
 // properties: `store.pendingNewChat = false`, `watch(() => store.paletteOpen)`.
 const store = reactive({
@@ -265,6 +290,7 @@ const store = reactive({
 	conversationsLoading,
 	currentConvId,
 	streamingConvId,
+	unreadConvs,
 	approvalsCount,
 	settingsOpen,
 	settingsSection,
@@ -295,6 +321,8 @@ const store = reactive({
 	syncSettingsFromServer,
 	applyRemoteRename,
 	applyRemoteNew,
+	markUnread,
+	clearUnread,
 })
 
 export function useShellStore() {

@@ -118,9 +118,10 @@ class TestLazyCreation(_UsageTestBase):
 		self.assertEqual(doc.user, USER_A)
 		# owner must be the settings user even though Administrator triggered it.
 		self.assertEqual(frappe.db.get_value(USETT, doc.name, "owner"), USER_A)
-		# Defaults.
+		# Defaults. activity_detail defaults ON to match the SPA's default for
+		# fresh devices (upstream/main product decision — see stores/shell.js).
 		self.assertEqual(frappe.utils.cint(doc.notify_enabled), 1)
-		self.assertEqual(frappe.utils.cint(doc.activity_detail), 0)
+		self.assertEqual(frappe.utils.cint(doc.activity_detail), 1)
 		self.assertEqual(frappe.utils.cint(doc.monthly_token_limit), 0)
 
 	def test_idempotent(self):

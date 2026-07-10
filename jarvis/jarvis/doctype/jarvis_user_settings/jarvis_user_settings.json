@@ -49,7 +49,7 @@
       "fieldname": "activity_detail",
       "fieldtype": "Check",
       "label": "Show Activity Detail",
-      "default": "0"
+      "default": "1"
     },
     {
       "fieldname": "limit_section",

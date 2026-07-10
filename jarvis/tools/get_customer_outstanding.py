@@ -5,8 +5,12 @@ The underlying helper sums GL entries against the customer's
 receivable accounts and optionally adds open Sales Orders' invoiceable
 balance - the same calculation as the Customer Credit Limit check.
 
-Customer read perm is enforced before delegating so a user who can't
-read the customer can't probe their outstanding balance.
+Customer read perm is enforced before delegating, and the company is
+gated by Company User Permission scope (not Company-doctype read - see
+``jarvis.tools._company_scope``), so a user who can't read the customer
+- or who is restricted to a different company - can't probe an
+outstanding balance outside what they can see. The underlying helper
+itself applies no company-level permission filter.
 """
 from __future__ import annotations
 
@@ -16,6 +20,7 @@ from jarvis.exceptions import (
     InvalidArgumentError,
     PermissionDeniedError,
 )
+from jarvis.tools._company_scope import assert_company_permitted
 
 
 def get_customer_outstanding(
@@ -38,6 +43,7 @@ def get_customer_outstanding(
         raise InvalidArgumentError(f"unknown Company: {company}")
     if not frappe.has_permission("Customer", "read", doc=customer):
         raise PermissionDeniedError(f"no read permission on Customer {customer}")
+    assert_company_permitted(company)
 
     from erpnext.selling.doctype.customer.customer import (
         get_customer_outstanding as _gco,

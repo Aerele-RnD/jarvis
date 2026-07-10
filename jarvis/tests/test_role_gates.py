@@ -36,6 +36,11 @@ GATED_ENDPOINTS = [
 	("jarvis.onboarding", "get_llm_config", {}),
 	("jarvis.onboarding", "get_account_defaults", {}),
 	("jarvis.account", "start_upgrade", {"target_plan": "team_monthly"}),
+	# The read half of the same billing surface. Both were whitelisted but
+	# ungated: the settings rail and the desk page's roles=["System Manager"]
+	# are presentation, and neither constrains a direct /api/method call.
+	("jarvis.account", "get_account", {}),
+	("jarvis.account", "preview_upgrade", {"target_plan": "team_monthly"}),
 	("jarvis.account", "get_llm_usage", {}),
 	("jarvis.account", "get_llm_connection_status", {}),
 	("jarvis.oauth.api", "begin_paste_signin", {"provider": "OpenAI", "model": "gpt-5.5"}),

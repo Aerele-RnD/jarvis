@@ -13,8 +13,8 @@ import { ref, computed, watch } from "vue"
 export const LIGHT_VARS = {
 	"--surface": "#ffffff", "--surface-1": "#f7f7f8", "--surface-2": "#f1f1f3", "--surface-3": "#ececef",
 	"--border": "#e8e8ec", "--border-2": "#dfdfe4",
-	"--text": "#171717", "--text-2": "#4a4a4f", "--text-3": "#83838b",
-	"--blue": "#171717", "--blue-bg": "#eff4ff", "--blue-bd": "#d6e2fb",
+	"--text": "#171717", "--text-2": "#4a4a4f", "--text-3": "#6d6d76",
+	"--blue": "#4f46e5", "--blue-bg": "#eff4ff", "--blue-bd": "#d6e2fb",
 	"--green": "#16a34a", "--green-bg": "#edf8f0", "--green-bd": "#cdeed8",
 	"--red": "#dc2626", "--red-bg": "#fdf0ef", "--red-bd": "#f5d4d1",
 	"--amber": "#d97706", "--amber-bg": "#fdf6ec", "--amber-bd": "#f3e2c2",

@@ -96,3 +96,29 @@ class TestAccountWrappers(FrappeTestCase):
 			with self.assertRaises(frappe.ValidationError) as cm:
 				account.preview_upgrade("plan-cheap")
 		self.assertIn("downgrade not supported", str(cm.exception))
+
+
+class TestAccountGatesFailClosed(FrappeTestCase):
+	"""get_account and preview_upgrade are System-Manager-only.
+
+	The rejection itself is covered by the canonical parametrized sweep in
+	test_role_gates.py (both endpoints are entries in GATED_ENDPOINTS, which
+	asserts Guest is refused and Administrator is not). This class adds the one
+	property that sweep cannot express: the gate must run BEFORE _surface()
+	reaches admin_client, so an unauthorised caller can neither leak the
+	payload into admin's logs nor burn an admin request per attempt.
+	"""
+
+	def tearDown(self):
+		frappe.set_user("Administrator")
+
+	def test_rejection_happens_before_any_admin_round_trip(self):
+		frappe.set_user("Guest")
+		with patch.object(admin_client, "get_account_summary") as get_summary, \
+				patch.object(admin_client, "preview_upgrade") as prev:
+			with self.assertRaises(frappe.PermissionError):
+				account.get_account()
+			with self.assertRaises(frappe.PermissionError):
+				account.preview_upgrade("plan-pro")
+		get_summary.assert_not_called()
+		prev.assert_not_called()

@@ -69,4 +69,5 @@ def cancel_doc(doctype: str, name: str) -> dict:
         )
 
     doc.cancel()  # runs on_cancel hooks; sets docstatus=2
+    doc.apply_fieldlevel_read_permissions()
     return doc.as_dict()

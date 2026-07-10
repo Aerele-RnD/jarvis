@@ -66,11 +66,16 @@ def _summarize(doc, caller_values: dict) -> dict:
     # server_filled = differs from a bare new_doc, so zero-defaults don't
     # masquerade as auto-fill.
     baseline = frappe.new_doc(doc.doctype)
+    has_permlevel_read = doc.get_permlevel_access("read")
     resolved: dict = {}
     server_filled: list[str] = []
     empty_fields: list[str] = []
     for df in doc.meta.fields:
         if df.fieldtype not in _HEADER_TYPES:
+            continue
+        if df.permlevel and df.permlevel not in has_permlevel_read:
+            # Caller can't read this field at its permlevel - never echo its
+            # value (caller-supplied or server/hook-computed) back to them.
             continue
         name = df.fieldname
         val = doc.get(name)
@@ -85,10 +90,16 @@ def _summarize(doc, caller_values: dict) -> dict:
         elif _norm(val) != _norm(baseline.get(name)):
             resolved[name] = val
             server_filled.append(name)
+    # Same permlevel guard as the header loop above: a tenant can customize
+    # any of these totals to permlevel>0, and its server-computed value must
+    # not leak to a caller who can't read that permlevel.
+    allowed_permlevels = (0, *has_permlevel_read)
     totals = {
         f: doc.get(f)
         for f in _TOTAL_FIELDS
-        if doc.meta.has_field(f) and doc.get(f) is not None
+        if doc.meta.has_field(f)
+        and doc.get(f) is not None
+        and doc.meta.get_field(f).permlevel in allowed_permlevels
     }
     return {
         "valid": True,
