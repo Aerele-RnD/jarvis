@@ -21,3 +21,4 @@ jarvis.patches.v1_0.grant_jarvis_user_role
 jarvis.patches.v1_11_greeting_cadence
 jarvis.patches.v1_0.revoke_jarvis_user_from_website_users
 jarvis.patches.v1_12_skill_scope_ladder
+jarvis.patches.v1_13_encrypt_plaintext_settings_passwords
