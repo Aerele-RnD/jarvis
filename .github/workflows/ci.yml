@@ -1,17 +1,22 @@
 name: CI
 
-# Runs the jarvis customer-app test suite inside a real Frappe bench on every PR/push.
+# Runs the jarvis test suite inside ghcr.io/aerele-rnd/jarvis-ci-base:v16, which already carries a
+# built bench with frappe + erpnext + hrms (version-16) and /opt/ci/test_site.sql — a dump of a
+# site with all three installed. Everything this job does is jarvis-specific.
 #
-# jarvis's tier-2 tools tests do mock.patch("erpnext...") and mock.patch("hrms..."), which
-# IMPORT those modules — so both erpnext AND hrms (version-16) must be installed, or those
-# tests error. (This is why the suite can't run fully green on a bench that lacks hrms.)
+# It used to build that environment from scratch on every run: ~5m26s of a ~7m21s run, byte-for-byte
+# identical every time. Two things dominated it:
 #
-# Mirrors the hardened jarvis_admin workflow. erpnext install makes this job slow, hence the
-# 45-min timeout and cancel-in-progress on non-main only.
+#   - `--skip-assets` gates build_assets() but NOT `yarn install`, which bench runs whenever an app
+#     has a package.json. ~120s/run of npm work the Python suite never reads.
+#   - `install-app erpnext hrms jarvis` cost 116s, of which jarvis was 2.5s.
+#
+# The from-scratch build still runs nightly in ci-nightly.yml, so upstream version-16 breakage is
+# caught within a day — it just no longer sits in the PR critical path. If that job is red and this
+# one is green, suspect upstream rather than the PR.
 
 on:
-  workflow_dispatch:   # allow manual runs
-  # Run on PRs to ANY base branch, and pushes to main.
+  workflow_dispatch:
   pull_request:
   push:
     branches: [main]
@@ -21,31 +26,47 @@ concurrency:
   # Never auto-cancel a main run (cancelled reads as neutral, not failed → hides regressions).
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
-# Least privilege: this job only reads the repo + fetches public apps; it never writes.
 permissions:
   contents: read
+  packages: read   # to pull the base image from GHCR
 
 jobs:
   tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 25
+
+    container:
+      image: ghcr.io/aerele-rnd/jarvis-ci-base:v16
+      # bench hard-exits as root (bench/cli.py -> change_uid: "You should not run this command as
+      # root", exit 1). Actions job containers run as root by default. uid 1001 is both the `ci`
+      # user baked into the image and the runner user that owns the mounted workspace.
+      options: --user 1001
+      env:
+        HOME: /home/ci
+      # The package is currently PRIVATE. It is linked to this repo, so GITHUB_TOKEN + `packages:
+      # read` pulls it on same-repo runs (verified). Credentials are harmless once it is public.
+      #
+      # Fork PRs are the gap: their GITHUB_TOKEN is forced read-only and scoped to the fork, and
+      # pulling a private GHCR package with it is unreliable. If this repo ever takes an external
+      # PR, make the package public — that path needs no credentials at all.
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
 
     services:
+      # Under `container:`, services are reachable by service id rather than 127.0.0.1, and the
+      # `ports:` mappings the from-scratch workflow needs are unnecessary here.
       mariadb:
         image: mariadb:10.11
         env:
           MARIADB_ROOT_PASSWORD: root
           # Passwordless mysql@localhost user so `healthcheck.sh --su-mysql --connect` works.
           MARIADB_MYSQL_LOCALHOST_USER: "1"
-        ports:
-          - 3306:3306
         options: >-
           --health-cmd="healthcheck.sh --su-mysql --connect --innodb_initialized"
           --health-interval=5s --health-timeout=5s --health-retries=20 --health-start-period=40s
       redis:
         image: redis:7
-        ports:
-          - 6379:6379
         options: >-
           --health-cmd="redis-cli ping"
           --health-interval=5s --health-timeout=5s --health-retries=10
@@ -56,58 +77,84 @@ jobs:
         with:
           path: app
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"   # matches the bench (frappe 16.24 / py3.14)
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24"   # frappe version-16 requires node >= 24
-
-      - name: System deps
+      - name: Record what this run actually tested against
+        working-directory: /opt/frappe-bench
         run: |
-          sudo apt-get update
-          sudo apt-get install -y mariadb-client
-          sudo npm install -g yarn
-          pip install "frappe-bench>=5.29,<6"
+          # :v16 is a mutable tag, rebuilt nightly. Two runs an hour apart can therefore test
+          # against different upstream commits, and the tag is overwritten before you could go
+          # look. Without this, a green check is unauditable after the fact.
+          {
+            echo "### Baked upstream revisions"
+            echo
+            for app in frappe erpnext hrms; do
+              echo "- ${app}: \`$(git -C "apps/${app}" rev-parse HEAD)\`"
+            done
+          } | tee -a "${GITHUB_STEP_SUMMARY}"
 
-      - name: Init bench
+      - name: Point the baked bench at the service containers
+        working-directory: /opt/frappe-bench
         run: |
-          bench init --skip-redis-config-generation \
-            --frappe-branch version-16 \
-            --python "$(which python)" \
-            frappe-bench
-          cd frappe-bench
-          bench set-config -g db_host 127.0.0.1
-          bench set-config -g redis_cache "redis://127.0.0.1:6379/0"
-          bench set-config -g redis_queue "redis://127.0.0.1:6379/1"
-          bench set-config -g redis_socketio "redis://127.0.0.1:6379/2"
+          bench set-config -g db_host mariadb
+          # Distinct Redis DB indices per role — Frappe assumes cache/queue/socketio do not share
+          # a keyspace.
+          bench set-config -g redis_cache "redis://redis:6379/0"
+          bench set-config -g redis_queue "redis://redis:6379/1"
+          bench set-config -g redis_socketio "redis://redis:6379/2"
 
-      - name: Get apps (erpnext + hrms + jarvis)
-        working-directory: frappe-bench
+      - name: Add jarvis to the bench
+        working-directory: /opt/frappe-bench
         run: |
-          # --skip-assets: backend tests never use the JS bundles; skip erpnext/hrms builds.
-          bench get-app --branch version-16 --skip-assets erpnext
-          bench get-app --branch version-16 --skip-assets hrms
-          bench get-app "${GITHUB_WORKSPACE}/app" --skip-assets
+          cp -r "${GITHUB_WORKSPACE}/app" apps/jarvis
+          # Deliberately NOT `bench get-app`: that runs `yarn install --check-files` whenever
+          # package.json exists (bench/app.py), which here pulls @google/gemini-cli and, via
+          # postinstall, the whole Vue SPA's deps — 24s the Python suite never reads.
+          ./env/bin/pip install -e apps/jarvis
+          if ! grep -qxF jarvis sites/apps.txt; then
+            # apps.txt ships as "frappe\nerpnext\nhrms" with NO trailing newline. A naive append
+            # yields "hrmsjarvis" and frappe dies with ModuleNotFoundError: No module named
+            # 'hrmsjarvis'. Verified against the real image; do not remove this guard.
+            [ -z "$(tail -c1 sites/apps.txt)" ] || echo >> sites/apps.txt
+            echo jarvis >> sites/apps.txt
+          fi
 
-      - name: Create test site + install apps
-        working-directory: frappe-bench
+      - name: Create test site from the baked dump
+        working-directory: /opt/frappe-bench
         run: |
+          # --source-sql (frappe/commands/site.py) creates the DB + user + site_config.json and
+          # loads the dump, which already has frappe/erpnext/hrms installed. Replaces ~113s of
+          # `install-app erpnext hrms` with a ~6s restore. `bench` defines no new-site of its own,
+          # so this forwards to frappe's, which is where --source-sql lives.
           bench new-site test_site \
-            --db-host 127.0.0.1 \
+            --db-host mariadb \
             --mariadb-user-host-login-scope='%' \
             --mariadb-root-password root \
             --db-root-username root \
-            --admin-password admin
-          bench --site test_site install-app erpnext hrms jarvis
+            --admin-password admin \
+            --source-sql /opt/ci/test_site.sql
+          bench --site test_site install-app jarvis
           bench --site test_site set-config allow_tests true
 
-      - name: Run tests + coverage
-        working-directory: frappe-bench
+      - name: Assert the restored site is what we think it is
+        working-directory: /opt/frappe-bench
         run: |
-          # gevent: needed by jarvis/realtime/handlers.py (socketio_backend=python) and its tests.
-          ./env/bin/pip install coverage gevent
+          # Cheap guard against a silently-stale or partial image: if erpnext/hrms did not come
+          # back from the dump, the tier-2 tests would fail later in a much more confusing way.
+          #
+          # Take the JSON line specifically, and leave stderr on the console. Merging stderr into
+          # stdout and taking `tail -1` would capture any late warning (e.g. a ResourceWarning at
+          # interpreter teardown) instead of the JSON, and fail a perfectly healthy site.
+          apps=$(bench --site test_site execute frappe.get_installed_apps | grep -m1 '^\[') || {
+            echo "could not parse installed apps from 'bench execute' output"; exit 1; }
+          echo "installed apps: ${apps}"
+          for a in frappe erpnext hrms jarvis; do
+            echo "${apps}" | grep -q "\"${a}\"" || { echo "missing app: ${a}"; exit 1; }
+          done
+
+      - name: Run tests + coverage
+        working-directory: /opt/frappe-bench
+        run: |
+          # coverage + gevent are already in the image's venv (gevent is needed by
+          # jarvis/realtime/handlers.py with socketio_backend=python, and its tests).
           bench --site test_site run-tests --app jarvis --coverage
           # Enforced coverage floor. Baseline on 2026-07-02 was 87% (incl. test files, with
           # the 9 quarantined tests skipped). Ratchet UP over time; never down.
