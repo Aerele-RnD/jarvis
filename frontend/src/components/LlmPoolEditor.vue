@@ -717,7 +717,11 @@ const missingVendors = computed(() => {
   const e = selectedEntry.value
   return e ? missingVendorKeys(e, keysByVendor.value) : []
 })
-const saveBlocked = computed(() => llmMode.value === "preset" && !!selectedPreset.value && missingVendors.value.length > 0)
+// Not llmMode-gated: llmMode is always "custom" for the settings (!singleMode)
+// editor now (Quick/Preset tabs are gone), so this only needs to ask "is a
+// preset currently selected (via selectPreset, reused verbatim by the
+// config-section's 'From a preset' source) with vendor keys still missing?"
+const saveBlocked = computed(() => !!selectedPreset.value && missingVendors.value.length > 0)
 
 // Direct/Proxy badge - mirrors jarvis_account.js renderModeBadge().
 // Quick is always Direct (single model); Preset is Proxy once chosen; Custom
@@ -1394,8 +1398,10 @@ defineExpose({ save })
 .jv-flist-row {
   display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
   border: 1px solid var(--border); border-radius: 9px; padding: 9px 11px; margin-bottom: 8px;
-  background: var(--surface-1);
+  background: var(--surface-1); transition: border-color .15s;
 }
+.jv-flist-row:hover { border-color: var(--border-2); }
+@media (prefers-reduced-motion: reduce) { .jv-flist-row { transition: none; } }
 .jv-flist-chip {
   flex: none; font-size: 11.5px; font-weight: 600; color: var(--text-2);
   background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px;
