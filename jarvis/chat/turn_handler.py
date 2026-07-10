@@ -742,11 +742,7 @@ def handle_chat_send(payload: dict) -> None:
 						try:
 							from jarvis.chat import usage as _usage
 
-							_rows = sess.list_sessions()
-							_row = next(
-								(r for r in _rows if r.get("key") == conv.session_key),
-								None,
-							)
+							_row = _usage.fetch_fresh_session_row(sess, conv.session_key)
 							if _row:
 								_usage.record_turn_usage(conv.session_key, _row)
 						except Exception:

@@ -84,7 +84,7 @@ async function loadUsers() {
 			loadError.value = true
 			return
 		}
-		const rows = (res && res.data && res.data.users) || []
+		const rows = (res && res.data) || []
 		// _limitDraft is the editable copy the number input binds to; kept
 		// separate from monthly_token_limit so the Save button can tell when
 		// the row is dirty (and revert cleanly if the request fails).

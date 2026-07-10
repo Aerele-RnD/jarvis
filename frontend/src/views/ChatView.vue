@@ -2955,6 +2955,21 @@ async function send(textArg) {
 	scrollBottom()
 	try {
 		const r = await api.sendMessage(currentId.value || "", text, undefined, attachments)
+		if (r && r.ok === false) {
+			// send_message validated and rejected the turn (e.g. over the monthly
+			// usage cap) — no exception was thrown, so the catch below never runs.
+			// Reset exactly the state it resets; leave the optimistic bubble in
+			// place for the same reason the catch does (see comment below).
+			sending.value = false
+			waiting.value = false
+			notify(
+				r.reason === "usage_limit"
+					? "Monthly usage limit reached. Ask your Jarvis admin to raise your limit."
+					: String(r.reason || "Something went wrong."),
+				{ type: "error" }
+			)
+			return
+		}
 		if (isNewConv && r?.conversation_id) {
 			// Adopt the server-created conversation so realtime events route to
 			// this thread, then refresh the sidebar without blocking anything.

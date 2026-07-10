@@ -316,6 +316,44 @@ class TestRecordTurnUsage(_UsageTestBase):
 
 
 # --------------------------------------------------------------------------- #
+# 4b. fetch_fresh_session_row — bounded freshness retry (live-reproduced gap:
+#    a session's first completed run can read back stale on the first poll)
+# --------------------------------------------------------------------------- #
+class _PollingSess:
+	"""Fake gateway session whose list_sessions() returns a different rows
+	list on each call, so the poll loop can be observed call-by-call."""
+
+	def __init__(self, rows_by_call):
+		self._rows_by_call = rows_by_call
+		self.calls = 0
+
+	def list_sessions(self):
+		idx = min(self.calls, len(self._rows_by_call) - 1)
+		self.calls += 1
+		return self._rows_by_call[idx]
+
+
+class TestFetchFreshSessionRow(_UsageTestBase):
+	def test_retries_until_fresh(self):
+		stale = {"key": "agent:poll", "totalTokensFresh": False, "inputTokens": 1, "outputTokens": 1}
+		fresh = {"key": "agent:poll", "totalTokensFresh": True, "inputTokens": 5, "outputTokens": 3}
+		sess = _PollingSess([[stale], [fresh]])
+		with patch("jarvis.chat.usage.time.sleep", return_value=None) as mock_sleep:
+			row = usage.fetch_fresh_session_row(sess, "agent:poll")
+		self.assertEqual(row, fresh)
+		self.assertEqual(sess.calls, 2)
+		mock_sleep.assert_called_once()
+
+	def test_never_fresh_returns_last_row_after_attempts(self):
+		stale = {"key": "agent:neverfresh", "totalTokensFresh": False, "inputTokens": 1, "outputTokens": 1}
+		sess = _PollingSess([[stale]])
+		with patch("jarvis.chat.usage.time.sleep", return_value=None):
+			row = usage.fetch_fresh_session_row(sess, "agent:neverfresh", attempts=3)
+		self.assertEqual(row, stale)
+		self.assertEqual(sess.calls, 3)
+
+
+# --------------------------------------------------------------------------- #
 # 5. admin_sync_usage — snapshot refresh, no accumulation, unreachable
 # --------------------------------------------------------------------------- #
 class _FakeSess:

@@ -20,6 +20,7 @@ Three entry points:
 
 from __future__ import annotations
 
+import time
 from datetime import datetime
 
 import frappe
@@ -63,6 +64,42 @@ def get_or_create_user_settings(user: str):
 		# the unique constraint on ``user`` (and the field:user autoname) is the
 		# guard. Read the winner's row.
 		return frappe.get_doc(USER_SETTINGS, {"user": user})
+
+
+def fetch_fresh_session_row(
+	sess, session_key: str, attempts: int = 3, delay_s: float = 1.5
+) -> dict | None:
+	"""Poll the gateway's ``sessions.list`` (via the already-checked-out ``sess``)
+	for a FRESH row for ``session_key``, retrying up to ``attempts`` times.
+
+	Live-reproduced gap: a session's FIRST completed run can still read back
+	``totalTokensFresh=False`` (or null token fields) at the exact moment the
+	turn handler checks, and since snapshots overwrite rather than accumulate,
+	that turn's usage is then lost forever — not just delayed. Retrying a
+	bounded number of times inside the same checkout closes that window
+	without holding the pooled connection indefinitely.
+
+	Returns the first row that is both present and fresh (has a non-null
+	``inputTokens`` or ``outputTokens``). If no attempt ever produces a fresh
+	row, returns the LAST row seen anyway (``record_turn_usage``'s own
+	freshness gate will just no-op it, same as before this retry existed) and
+	logs once so the miss is visible instead of silently dropped.
+	"""
+	row: dict | None = None
+	for attempt in range(attempts):
+		rows = sess.list_sessions()
+		row = next((r for r in rows if r.get("key") == session_key), None)
+		if row and row.get("totalTokensFresh") and (
+			row.get("inputTokens") is not None or row.get("outputTokens") is not None
+		):
+			return row
+		if attempt < attempts - 1:
+			time.sleep(delay_s)
+	frappe.log_error(
+		title="jarvis usage: session row never went fresh (turn usage lost)",
+		message=f"session_key={session_key!r} last row={row!r}",
+	)
+	return row
 
 
 def record_turn_usage(session_key: str, row: dict | None) -> None:
@@ -217,12 +254,28 @@ def refresh_session_snapshots(rows: list[dict]) -> dict:
 				title="jarvis usage: snapshot refresh row failed",
 				message=frappe.get_traceback(),
 			)
-	for user in touched_users:
+	if touched_users:
+		# Batched: one query to find which touched users already have a
+		# settings row (create only the missing ones), then a single UPDATE
+		# for last_synced_at instead of a get_or_create + db.set_value pair
+		# per touched user.
 		try:
-			get_or_create_user_settings(user)
-			frappe.db.set_value(
-				USER_SETTINGS, {"user": user}, "last_synced_at", now,
-				update_modified=False,
+			existing = set(
+				frappe.get_all(
+					USER_SETTINGS,
+					filters={"user": ["in", list(touched_users)]},
+					pluck="user",
+				)
+			)
+			for user in touched_users - existing:
+				get_or_create_user_settings(user)
+			frappe.db.sql(
+				"""
+				UPDATE `tabJarvis User Settings`
+				SET last_synced_at = %(now)s
+				WHERE user IN %(users)s
+				""",
+				{"now": now, "users": tuple(touched_users)},
 			)
 		except Exception:
 			frappe.log_error(

@@ -89,16 +89,25 @@ def admin_list_user_usage() -> dict:
 			"total_tokens", "last_usage_at", "last_synced_at",
 		],
 	)
-	enabled = set(
-		frappe.get_all("User", filters={"enabled": 1}, pluck="name")
-	)
+	# One batched query for both "is this user enabled" and full_name, instead
+	# of an enabled-set query plus a frappe.db.get_value per row (N+1). Only
+	# enabled users are returned, same as before: a user missing from
+	# user_map (disabled, or deleted) is skipped below.
+	user_map = {
+		u.name: u.full_name
+		for u in frappe.get_all(
+			"User",
+			filters={"name": ["in", [r.user for r in rows]], "enabled": 1},
+			fields=["name", "full_name"],
+		)
+	}
 	out = []
 	for r in rows:
-		if r.user not in enabled:
+		if r.user not in user_map:
 			continue
 		out.append({
 			"user": r.user,
-			"full_name": frappe.db.get_value("User", r.user, "full_name") or r.user,
+			"full_name": user_map[r.user] or r.user,
 			"monthly_token_limit": cint(r.monthly_token_limit),
 			"usage_month": r.usage_month,
 			"month_tokens": _month_tokens_effective(r.usage_month, r.month_tokens),
