@@ -126,9 +126,12 @@ class TestResolveFileByFilenamePermissionAware(ReadFilePermTestCase):
         self.assertIn("no matching file found", message)
 
     def test_owner_still_reads_own_file_by_filename(self):
-        _make_file("owner-report.txt", b"hello owner", USER_CALLER)
+        # Frappe hash-suffixes file_name on collision (a File named
+        # "owner-report.txt" may already exist earlier in the full suite),
+        # so search by the ACTUAL stored name, not the requested one.
+        f = _make_file("owner-report.txt", b"hello owner", USER_CALLER)
         with _as(USER_CALLER):
-            out = read_file(filename="owner-report.txt")
+            out = read_file(filename=f.file_name)
         self.assertEqual(out["text"], "hello owner")
 
     def test_owner_still_reads_own_file_by_url(self):
