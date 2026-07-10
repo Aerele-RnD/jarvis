@@ -84,6 +84,85 @@ class TestGateParks(FrappeTestCase):
 		self.assertIsNotNone(captured.get("token"))
 
 
+class TestShareAssignGatedWrites(FrappeTestCase):
+	"""F17/F20 (share_doc) + F23 (assign_to): their own docstrings/descriptors
+	say "ALWAYS confirm" (share_doc: re-share/everyone=true is a permission
+	escalation; assign_to: a person gets a notification email) but neither
+	tool was in _GATED_WRITES, so a model-path call fired immediately with no
+	human confirmation - the exact prompt-injection escalation risk their own
+	authors documented as requiring a gate. Both now park like send_email:
+	described-intent preview, never sandbox-executed."""
+
+	def test_share_doc_and_assign_to_are_gated_not_auto_applyable(self):
+		self.assertIn("share_doc", api._GATED_WRITES)
+		self.assertIn("assign_to", api._GATED_WRITES)
+		self.assertNotIn("share_doc", api._AUTO_APPLYABLE)
+		self.assertNotIn("assign_to", api._AUTO_APPLYABLE)
+
+	def test_share_doc_parks_described_and_does_not_execute(self):
+		todo = frappe.get_doc({
+			"doctype": "ToDo", "description": "jarvis-test-share-gate-target",
+		}).insert(ignore_permissions=True)
+		patcher, captured = _spy_mint()
+		with patch("jarvis.api.dispatch") as disp, patcher:
+			r = api._run_tool("share_doc", {
+				"doctype": "ToDo", "name": todo.name,
+				"user": "jarvis-share-gate-target@example.com", "share": True,
+			})
+			# The gate parks BEFORE any dispatch: share_doc never fired.
+			self.assertFalse(disp.called)
+		self.assertTrue(r["ok"])
+		self.assertEqual(r["data"]["status"], "pending_confirmation")
+		self.assertEqual(r["data"]["tool"], "share_doc")
+		preview = r["data"]["preview"]
+		# Not previewable (no side-effect-free sandbox dry-run for a share
+		# grant) - described intent, like send_email.
+		self.assertFalse(preview["preview"])
+		self.assertTrue(preview["described"])
+		self.assertIn("summary", preview)
+		self.assertIsNotNone(captured.get("token"))
+		self.assertFalse(frappe.db.exists("DocShare", {
+			"share_doctype": "ToDo", "share_name": todo.name,
+			"user": "jarvis-share-gate-target@example.com",
+		}))
+
+	def test_assign_to_parks_described_and_does_not_execute(self):
+		todo = frappe.get_doc({
+			"doctype": "ToDo", "description": "jarvis-test-assign-gate-target",
+		}).insert(ignore_permissions=True)
+		patcher, captured = _spy_mint()
+		with patch("jarvis.api.dispatch") as disp, patcher:
+			r = api._run_tool("assign_to", {
+				"doctype": "ToDo", "name": todo.name, "user": "Administrator",
+			})
+			# The gate parks BEFORE any dispatch: assign_to never fired, so no
+			# ToDo/notification is created for the confirmation-less call.
+			self.assertFalse(disp.called)
+		self.assertTrue(r["ok"])
+		self.assertEqual(r["data"]["status"], "pending_confirmation")
+		self.assertEqual(r["data"]["tool"], "assign_to")
+		preview = r["data"]["preview"]
+		self.assertFalse(preview["preview"])
+		self.assertTrue(preview["described"])
+		self.assertIn("summary", preview)
+		self.assertIsNotNone(captured.get("token"))
+
+
+class TestDryRunOnParkInvariant(FrappeTestCase):
+	"""api.py's comment above _DRY_RUN_ON_PARK documents an invariant: every
+	tool dry-run at park time must also be _PREVIEWABLE, or the LIVE park
+	path (a real sandboxed dry-run) and the RESYNC path (_pending_preview,
+	which routes purely on _PREVIEWABLE membership) diverge - a reload/
+	reconnect would silently degrade a real dry-run card to a blind
+	described-intent one (see test_create_docs_resync_preview_is_dry_run_
+	not_described below for the concrete failure mode this guards against).
+	This asserts the invariant holds as a standing regression guard, since
+	nothing else in the module enforces it structurally."""
+
+	def test_dry_run_on_park_is_subset_of_previewable(self):
+		self.assertTrue(api._DRY_RUN_ON_PARK.issubset(api._PREVIEWABLE))
+
+
 class TestGatePreValidatesBeforePark(FrappeTestCase):
 	"""A dry-runnable gated write is validated in the sandbox BEFORE the
 	confirmation card is minted. A deterministic failure (e.g. a missing

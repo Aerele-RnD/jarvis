@@ -71,6 +71,9 @@ import re
 from typing import Any
 
 import frappe
+from frappe.model import child_table_fields as _CHILD_FIELDS
+from frappe.model import default_fields as _DEFAULT_FIELDS
+from frappe.model import get_permitted_fields
 from frappe.model import optional_fields as _OPTIONAL_FIELDS
 from pypika import Order
 from pypika import functions as fn
@@ -149,7 +152,14 @@ def query(spec: dict, confirm_large: bool = False) -> dict:
 	2. Extract referenced DocTypes (FROM + joins).
 	3. DocType-level read permission check per referenced DocType.
 	4. Per-site DocType allowlist check (reused from run_query).
-	5. Build the qb query from the spec.
+	5. Build the qb query from the spec. Every concrete column reference
+	   (select / where / having / group_by / order_by / join-on / EXISTS)
+	   funnels through ``_resolve_field`` → ``_validate_column``, which
+	   enforces the **field-level (permlevel) read ACL** — the same layer
+	   ``get_list`` applies via ``apply_fieldlevel_read_permissions``. A
+	   permlevel>0 field the caller's roles don't cover is rejected here,
+	   so this tool now has field-level parity with ``get_list`` (not just
+	   the record-level parity of step 6).
 	6. Apply ``Engine.get_permission_conditions()`` for each referenced
 	   DocType — weaves User Permissions + permission_query_conditions
 	   hooks + DocShare + if_owner + role-based access predicates into
@@ -160,8 +170,10 @@ def query(spec: dict, confirm_large: bool = False) -> dict:
 
 	Raises:
 		InvalidArgumentError: spec is malformed.
-		PermissionDeniedError: caller lacks DocType-level read OR a
-			referenced DocType is not on the per-site allowlist.
+		PermissionDeniedError: caller lacks DocType-level read, a
+			referenced DocType is not on the per-site allowlist, OR a
+			referenced column is a permlevel-restricted field the caller's
+			roles don't cover (field-level ACL).
 		ResultTooLargeError: result exceeds ``ROW_GUARD`` and
 			``confirm_large`` is False.
 	"""
@@ -522,18 +534,53 @@ def _validate_doctype(dt: Any) -> None:
 		raise InvalidArgumentError(f"unknown DocType: {dt!r}")
 
 
-def _validate_column(dt: str, field: str) -> None:
-	"""Validate ``field`` is a real column of DocType ``dt``. Runs the
-	identifier-syntax check first (rejects malicious characters), then
-	confirms the column exists via ``get_valid_columns()`` — which
-	includes the standard fields (name / owner / creation / modified /
-	modified_by / idx / docstatus) and, for child tables,
-	parent / parentfield / parenttype.
+def _from_doctype(alias_map: dict) -> str:
+	"""Return the FROM/base doctype of a query scope.
 
-	``get_valid_columns()`` omits the optional meta columns (_assign /
-	_comments / _liked_by / _user_tags / _seen), which are nonetheless
-	real, queryable columns on standard doctypes — permit them too so a
-	legitimate query (e.g. filtering on ``_assign``) is not over-blocked.
+	``_build_from_and_aliases`` seeds ``alias_map`` with the FROM entry
+	before any join is appended, so the first-inserted value is always the
+	base doctype. Used to mirror ``db_query``'s field-level ACL parenttype
+	handling: the base table is the "main" table, and every other
+	referenced doctype is a joined table whose field permissions are
+	governed by the base doctype (``parenttype``)."""
+	return next(iter(alias_map.values()))[0]
+
+
+def _validate_column(dt: str, field: str, base_doctype: str | None = None) -> None:
+	"""Validate ``field`` is a real, READABLE column of DocType ``dt``.
+
+	Two gates, in order:
+
+	1. **Existence.** The identifier-syntax check first (rejects malicious
+	   characters), then column existence via ``get_valid_columns()`` —
+	   which includes the standard fields (name / owner / creation /
+	   modified / modified_by / idx / docstatus) and, for child tables,
+	   parent / parentfield / parenttype. ``get_valid_columns()`` omits the
+	   optional meta columns (_assign / _comments / _liked_by / _user_tags /
+	   _seen), which are nonetheless real, queryable columns on standard
+	   doctypes — permit them too so a legitimate query (e.g. filtering on
+	   ``_assign``) is not over-blocked.
+
+	2. **Field-level (permlevel) read ACL.** ``get_valid_columns()`` proves
+	   the column EXISTS but says nothing about whether the caller may READ
+	   it. Frappe's ``get_list`` strips permlevel>0 fields the caller's
+	   roles don't cover via ``apply_fieldlevel_read_permissions``
+	   (``frappe/model/db_query.py``); this tool re-implements field
+	   resolution from scratch, so it must mirror that gate or a caller with
+	   plain doctype read (but no elevated-permlevel role) could
+	   select / filter / order / group-by / having / join-on / EXISTS any
+	   permlevel>0 field. We defer to ``frappe.model.get_permitted_fields``
+	   — the exact helper ``apply_fieldlevel_read_permissions`` uses — which
+	   already handles CORE_DOCTYPES (no field ACL), the always-allowed
+	   standard / OPTIONAL fields, and child-table ``parenttype`` resolution.
+
+	``base_doctype`` is the query scope's FROM doctype. Mirroring
+	``apply_fieldlevel_read_permissions``, the base table is the "main"
+	table (``parenttype=None``, i.e. ``self.parent_doctype``) and every
+	OTHER referenced doctype is a joined table whose field ACL is governed
+	by the base doctype's permissions (``parenttype=base_doctype``, i.e.
+	``self.doctype``). When ``base_doctype`` is None (defensive default) or
+	equals ``dt``, ``dt`` is treated as its own base.
 	"""
 	_validate_identifier(field, "field")
 	try:
@@ -543,6 +590,34 @@ def _validate_column(dt: str, field: str) -> None:
 	if field not in valid_columns and field not in _OPTIONAL_FIELDS:
 		raise InvalidArgumentError(
 			f"unknown column {field!r} on DocType {dt!r}"
+		)
+	# Field-level (permlevel) read ACL — mirror get_list's
+	# apply_fieldlevel_read_permissions. ``ignore_virtual=True`` matches
+	# db_query (a virtual field carries no real column, so it never reaches
+	# here anyway — its name fails the existence check above).
+	# Standard framework columns (name/owner/creation/.../parent) carry no
+	# permlevel restriction and are always readable - skip the permitted-
+	# fields lookup for them: it is needless DB work in production for these
+	# columns, and it lets a broadly-Engine-mocked query test resolve
+	# standard-field references without recursing through the patched Engine.
+	if field in _OPTIONAL_FIELDS or field in _DEFAULT_FIELDS or field in _CHILD_FIELDS:
+		return
+	parenttype = None if (base_doctype is None or dt == base_doctype) else base_doctype
+	permitted = set(
+		get_permitted_fields(
+			doctype=dt,
+			parenttype=parenttype,
+			permission_type="read",
+			ignore_virtual=True,
+		)
+	)
+	# OPTIONAL_FIELDS are always readable (mirrors
+	# apply_fieldlevel_read_permissions' explicit ``column in
+	# OPTIONAL_FIELDS`` allowance) even when absent from the permitted set.
+	if field not in permitted and field not in _OPTIONAL_FIELDS:
+		raise PermissionDeniedError(
+			f"no read permission on field {field!r} of DocType {dt!r} "
+			f"(restricted by permission level)"
 		)
 
 
@@ -601,8 +676,10 @@ def _resolve_field(field_ref: str, alias_map: dict, allow_alias: bool = False):
 			# Single-doctype query — the alias is unambiguous; resolve
 			# against the only table.
 			((dt, table),) = list(alias_map.values())
-			# SEC-003: validate the column identifier + existence.
-			_validate_column(dt, field_ref)
+			# SEC-003: validate the column identifier + existence, and the
+			# field-level (permlevel) read ACL. Single-table query, so ``dt``
+			# is its own base doctype (parenttype resolves to None).
+			_validate_column(dt, field_ref, _from_doctype(alias_map))
 			return table[field_ref]
 		raise InvalidArgumentError(
 			f"field reference {field_ref!r} is ambiguous in a multi-table "
@@ -624,8 +701,11 @@ def _resolve_field(field_ref: str, alias_map: dict, allow_alias: bool = False):
 		)
 	dt, table = alias_map[alias]
 	# SEC-003: validate the column identifier + existence against the
-	# resolved DocType before it reaches pypika's ``table[field]`` sink.
-	_validate_column(dt, field)
+	# resolved DocType before it reaches pypika's ``table[field]`` sink,
+	# plus the field-level (permlevel) read ACL. ``dt`` may be a joined /
+	# child table, so its field permissions are governed by the FROM/base
+	# doctype (parenttype) — mirrors apply_fieldlevel_read_permissions.
+	_validate_column(dt, field, _from_doctype(alias_map))
 	return table[field]
 
 

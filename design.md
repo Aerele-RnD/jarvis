@@ -121,7 +121,8 @@ this is the mapping (use it when porting, never when writing new UI):
 | `--surface-1` / `--surface-2` / `--surface-3` | `bg-surface-gray-1` / `-2` / `-3` | wells, hovers, active |
 | `--border` / `--border-2` | `border-outline-gray-1` / `-2` | hairline / stronger |
 | `--text` / `--text-2` / `--text-3` | `text-ink-gray-9` / `-7` / `-5` | |
-| `--blue` | **`bg-surface-gray-7` (light)** — it is literally `#171717` | the name lies; it's the black CTA color. In dark it becomes indigo `#6e8bff`, which has no semantic equivalent — replace with the gray-solid recipe |
+| `--blue` / `--blue-bg` / `--blue-bd` | indigo accent (`bg-surface-blue-*`) | indigo (`#4f46e5` light · `#6e8bff` dark) — an accent, **not** the CTA color. This design language reads near-black CTAs from `--text` and links/info from `--link`, so `--blue` only survives on a few focus rings, the running-status dot, and a tour mock bubble. (Historically `--blue` was `#171717`; `main` repointed light `--blue` to indigo, so never treat it as the black CTA color.) |
+| `--link` | `text-ink-blue-link` | link + info text (`#1579d0` light · `#6e8bff` dark) — the sanctioned blue for links, `b-run` badges, and info states |
 | `--green` / `--green-bg` / `--green-bd` | `text-ink-green-*` / `bg-surface-green-2` / `border-outline-green-*` | |
 | `--red`, `--amber` families | red / amber semantic ramps | |
 | brand purple `#8b5cf6`, gradients, glow rgba | **no equivalent — delete from chrome and controls on rewrite** | untokenized; violates §1.1–1.3 |
@@ -558,7 +559,7 @@ Each "Don't" is live in the Jarvis codebase today (settings dialog, onboarding, 
 | 8 | `<a>` styled as buttons (`jv-acct-btn-sm`), buttons styled as links (`jv-ob-link`) | Buttons are `Button`; links are `text-ink-blue-link`/underline text |
 | 9 | Custom 42px inputs, native selects/checkboxes, hand-rolled `.jv-switch` | frappe-ui `FormControl`/`Switch`; 28px inputs, gray-fill→white-on-focus |
 | 10 | Massive inline `:style` objects and inline-styled close button + `!important` hover patches | Tailwind semantic utility classes; no inline styles, no `!important` |
-| 11 | `paletteVars` inline vars + `.jv-dark` class; two theme singletons; `--blue` that is black | `<html data-theme>` + semantic tokens; one `useJarvisTheme()` singleton |
+| 11 | `paletteVars` inline vars + `.jv-dark` class; two theme singletons; `--blue` misnamed (indigo accent, not the CTA color — CTAs read `--text`) | `<html data-theme>` + semantic tokens; one `useJarvisTheme()` singleton |
 | 12 | 10px uppercase group headers, 8.5px `sm-tag` micro-pill | 12px `font-medium text-ink-gray-5` group labels; `Badge size="sm"` minimum 11px |
 | 13 | Hand-pasted SVG path data per nav item | `FeatherIcon`/Lucide components at `size-4` |
 | 14 | `window.confirm()` for disconnect | frappe-ui `confirmDialog` / red-solid Dialog action |

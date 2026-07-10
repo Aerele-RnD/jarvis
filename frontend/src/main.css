@@ -32,6 +32,13 @@ body {
 ::-webkit-scrollbar-track {
 	background: transparent;
 }
+/* dark-mode scrollbar (the light thumb was hardcoded) */
+:root[data-theme="dark"] ::-webkit-scrollbar-thumb {
+	background-color: #3a3a45;
+}
+:root[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+	background-color: #4a4a55;
+}
 @keyframes jv-dot {
 	0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
 	30% { transform: translateY(-4px); opacity: 1; }
@@ -41,9 +48,9 @@ body {
 	to { opacity: 1; transform: translateY(0); }
 }
 @keyframes jv-pulse {
-	0% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.35); }
-	70% { box-shadow: 0 0 0 12px rgba(37, 99, 235, 0); }
-	100% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0); }
+	0% { box-shadow: 0 0 0 0 rgba(79, 70, 229, 0.35); }
+	70% { box-shadow: 0 0 0 12px rgba(79, 70, 229, 0); }
+	100% { box-shadow: 0 0 0 0 rgba(79, 70, 229, 0); }
 }
 @keyframes jv-pop {
 	from { opacity: 0; transform: translateY(12px) scale(0.98); }

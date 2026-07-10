@@ -62,26 +62,26 @@
 			<!-- ===== WELCOME ===== -->
 			<div v-else-if="showWelcome" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px;">
 				<div style="width:100%;max-width:680px;text-align:center;">
-					<div class="jv-logo" style="width:52px;height:52px;border-radius:13px;background:var(--blue);display:flex;align-items:center;justify-content:center;margin:0 auto 18px;box-shadow:0 4px 14px rgba(37,99,235,.28);">
+					<div class="jv-logo" style="width:54px;height:54px;border-radius:14px;background:linear-gradient(135deg,var(--blue),#8b5cf6);display:flex;align-items:center;justify-content:center;margin:0 auto 18px;box-shadow:0 8px 22px rgba(79,70,229,.32);">
 						<svg width="28" height="28" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
 					</div>
-					<h1 style="font-size:23px;font-weight:600;letter-spacing:-.02em;margin:0 0 6px;">{{ greeting }}, {{ firstName }}</h1>
+					<h1 class="jv-welcome-h1" style="font-size:30px;font-weight:640;letter-spacing:-.03em;margin:0 0 8px;overflow-wrap:anywhere;">{{ greeting }}, {{ firstName }}</h1>
 					<p style="font-size:14.5px;color:var(--text-2);margin:0 0 26px;line-height:1.5;">Ask about your ERP data, run a workflow, or draft something. Jarvis is connected to your <strong style="color:var(--text);font-weight:600;">ERPNext</strong> instance.</p>
-					<div style="display:grid;grid-template-columns:1fr 1fr;gap:11px;text-align:left;">
-						<div v-for="s in suggestions" :key="s.title" class="jv-suggest" @click="fillInput(s.prompt)" style="display:flex;gap:11px;padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:10px;cursor:pointer;transition:border-color .12s,background .12s;">
-							<div :style="{ width:'30px',height:'30px',flex:'none',borderRadius:'8px',background:s.bg,display:'flex',alignItems:'center',justifyContent:'center' }" v-html="s.icon"></div>
+					<div class="jv-welcome-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:11px;text-align:left;">
+						<button v-for="s in suggestions" :key="s.title" type="button" class="jv-suggest" @click="fillInput(s.prompt)" style="display:flex;gap:11px;padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:10px;cursor:pointer;transition:border-color .12s,background .12s;text-align:left;font-family:inherit;color:inherit;width:100%;">
+							<div :style="{ width:'30px',height:'30px',flex:'none',borderRadius:'8px',background:s.bg,color:s.fg,display:'flex',alignItems:'center',justifyContent:'center' }" v-html="s.icon"></div>
 							<div>
 								<div style="font-size:13.5px;font-weight:550;margin-bottom:2px;">{{ s.title }}</div>
 								<div style="font-size:12.5px;color:var(--text-3);line-height:1.4;">{{ s.prompt }}</div>
 							</div>
-						</div>
+						</button>
 					</div>
 				</div>
 			</div>
 
 			<!-- ===== CONVERSATION ===== -->
-			<div v-else ref="threadEl" @scroll.passive="onThreadScroll" style="flex:1;overflow-y:auto;">
-				<div ref="threadInnerEl" style="max-width:1280px;margin:0 auto;padding:26px 40px 36px;display:flex;flex-direction:column;gap:26px;">
+			<div v-else ref="threadEl" @scroll.passive="onThreadScroll" role="log" aria-label="Conversation with Jarvis" style="flex:1;overflow-y:auto;">
+				<div ref="threadInnerEl" class="jv-thread-inner" style="max-width:1280px;margin:0 auto;padding:26px 40px 36px;display:flex;flex-direction:column;gap:26px;">
 					<!-- macro run progress banner -->
 					<div v-if="macroRun && macroRun.conversation === currentId" class="jv-macrobar" :class="{ ok: macroRun.status === 'completed', err: macroRun.status === 'failed', stopped: macroRun.status === 'stopped' }">
 						<template v-if="macroRun.status === 'running'">
@@ -93,10 +93,15 @@
 						<template v-else-if="macroRun.status === 'failed'"><span class="jv-macrobar-chip">✗ Macro failed</span></template>
 						<template v-else-if="macroRun.status === 'stopped'"><span class="jv-macrobar-chip">⏹ Macro stopped</span></template>
 					</div>
-					<template v-for="m in visibleMessages" :key="m.name">
+					<template v-for="(m, mi) in visibleMessages" :key="m.name">
+						<div v-if="dayDividers[mi]" class="jv-daydivider"><span>{{ dayDividers[mi] }}</span></div>
 						<!-- user -->
 						<div v-if="m.role === 'user'" class="jv-umsg" style="display:flex;flex-direction:column;align-items:flex-end;">
-							<div v-if="m.content" style="max-width:78%;min-width:0;background:var(--surface-2);border:1px solid var(--border);border-radius:14px 14px 4px 14px;padding:10px 14px;font-size:14px;line-height:1.5;color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere;">{{ m.content }}</div>
+							<div v-if="m.content" class="jv-ububble" style="max-width:78%;min-width:0;background:var(--surface-2);border:1px solid var(--border);border-radius:14px 14px 4px 14px;padding:10px 14px;font-size:14px;line-height:1.5;color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere;">{{ m.content }}</div>
+							<div v-if="m.failed" style="display:flex;align-items:center;gap:8px;margin-top:4px;font-size:11.5px;color:var(--red);">
+								<span>Not sent</span>
+								<button @click="resendFailed(m)" style="background:none;border:none;color:var(--blue);font:inherit;cursor:pointer;padding:0;text-decoration:underline;">Retry</button>
+							</div>
 							<!-- attached images → same clickable thumbnail + preview as generated ones -->
 							<template v-for="cv in (m.canvas || [])" :key="cv.name">
 								<button v-if="cv.type === 'image' && cv.file_url" class="jv-img-artifact" @click="openArtifact(m, cv)" :title="'Open ' + cv.title" style="margin-top:8px;cursor:zoom-in;">
@@ -153,12 +158,16 @@
 										</div>
 									</div>
 								</div>
-								<div v-if="m.error" style="border:1px solid var(--red-bd);border-radius:11px;background:var(--red-bg);padding:13px 15px;display:flex;align-items:flex-start;gap:10px;">
+								<div v-if="m.error" role="alert" style="border:1px solid var(--red-bd);border-radius:11px;background:var(--red-bg);padding:13px 15px;display:flex;align-items:flex-start;gap:10px;">
 									<svg width="17" height="17" style="margin-top:1px;flex:none;" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><path d="M12 9v4M12 17h.01" /></svg>
 									<div style="flex:1;">
-										<div style="font-size:13.5px;font-weight:600;color:#b42318;">Something went wrong</div>
-										<div style="font-size:12.5px;color:#9a3a30;margin-top:2px;line-height:1.5;">{{ m.error }}</div>
-										<button class="jv-retry" @click="retry(m.name)" style="margin-top:10px;display:flex;align-items:center;gap:6px;padding:6px 12px;background:var(--red);color:#fff;border:none;border-radius:7px;font-family:inherit;font-size:12px;font-weight:550;cursor:pointer;">Retry</button>
+										<div style="font-size:13.5px;font-weight:600;color:var(--red);">{{ errorInfo(m).headline }}</div>
+										<div v-if="errorInfo(m).noChange" style="font-size:12px;color:var(--text-2);margin-top:3px;">No changes were made to your data.</div>
+										<details style="margin-top:4px;">
+											<summary style="font-size:11.5px;color:var(--text-3);cursor:pointer;">Show details</summary>
+											<div style="font-size:12px;color:var(--text-2);margin-top:4px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;">{{ m.error }}</div>
+										</details>
+										<button class="jv-retry" @click="retry(m.name)" :disabled="retrying" :style="{ marginTop:'10px', display:'inline-flex', alignItems:'center', gap:'6px', padding:'6px 12px', background:'var(--red)', color:'#fff', border:'none', borderRadius:'7px', fontFamily:'inherit', fontSize:'12px', fontWeight:'550', cursor: retrying ? 'default' : 'pointer', opacity: retrying ? 0.6 : 1 }">{{ retrying ? "Retrying…" : "Retry" }}</button>
 									</div>
 								</div>
 								<div v-else class="jv-md" style="font-size:14px;line-height:1.6;color:var(--text);" v-html="render(m.content)"></div>
@@ -359,20 +368,35 @@
 							<!-- the single tool running right now -->
 							<div v-if="showActivityDetail && currentTool" :key="currentTool.id" class="jv-toolrow">
 								<svg class="jv-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2.4" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9" /></svg>
-								<span>{{ toolPhrase(currentTool) }} <b>({{ currentTool.name }})</b></span>
+								<span>{{ toolPhrase(currentTool) }} <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:11px;color:var(--blue);">{{ currentTool.name }}</span></span>
 							</div>
 							<!-- compact tally of tools finished this turn -->
 							<div v-if="showActivityDetail && doneCount" class="jv-toolrow jv-tooldone">
 								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
 								<span>{{ doneCount }} tool{{ doneCount === 1 ? "" : "s" }} done<template v-if="failedCount"> · {{ failedCount }} failed</template></span>
 							</div>
-							<div v-if="!showActivityDetail || (waiting && !currentTool) || (!currentTool && statusPhase)" style="display:flex;align-items:center;gap:7px;padding-top:4px;">
-								<span style="display:flex;gap:4px;">
-									<span style="width:6px;height:6px;border-radius:50%;background:var(--text-3);animation:jv-dot 1.1s infinite;"></span>
-									<span style="width:6px;height:6px;border-radius:50%;background:var(--text-3);animation:jv-dot 1.1s infinite .18s;"></span>
-									<span style="width:6px;height:6px;border-radius:50%;background:var(--text-3);animation:jv-dot 1.1s infinite .36s;"></span>
+							<div v-if="!showActivityDetail || (waiting && !currentTool) || (!currentTool && statusPhase)" role="status" aria-live="polite" style="display:flex;align-items:center;gap:7px;padding-top:4px;">
+								<span style="display:flex;gap:4px;" aria-hidden="true">
+									<span class="jv-tdot"></span>
+									<span class="jv-tdot" style="animation-delay:.18s;"></span>
+									<span class="jv-tdot" style="animation-delay:.36s;"></span>
 								</span>
-								<span style="font-size:12px;color:var(--text-3);">{{ liveStatus }}</span>
+								<span style="font-size:12px;color:var(--text-3);">{{ liveStatus }}<span v-if="liveElapsedLabel" aria-hidden="true" style="opacity:.75;"> · {{ liveElapsedLabel }}</span></span>
+							</div>
+						</div>
+					</div>
+
+					<!-- recovery: a parked turn finishing in the background (connection
+					     hiccup / compaction). The composer stays UNLOCKED and the answer
+					     lands later via the recovery path — fixes the silent limbo. -->
+					<div v-if="recovering" style="display:flex;gap:12px;">
+						<div class="jv-logo" style="width:28px;height:28px;flex:none;border-radius:7px;background:var(--blue);display:flex;align-items:center;justify-content:center;margin-top:2px;">
+							<svg width="15" height="15" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
+						</div>
+						<div style="flex:1;min-width:0;padding-top:3px;">
+							<div role="status" aria-live="polite" style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text-3);">
+								<svg class="jv-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="2.4" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9" /></svg>
+								<span>{{ recoveringLabel }}</span>
 							</div>
 						</div>
 					</div>
@@ -409,7 +433,7 @@
 			</div>
 
 			<!-- ===== COMPOSER ===== -->
-			<div style="position:relative;flex:none;padding:12px 40px 16px;border-top:1px solid var(--border);background:var(--surface);">
+			<div class="jv-composer-wrap" style="position:relative;flex:none;padding:12px 40px 16px;border-top:1px solid var(--border);background:var(--surface);">
 				<!-- floats just above the composer; jumps the thread to the newest message -->
 				<transition name="jv-sd">
 					<button v-if="showScrollDown && !showWelcome && !booting" class="jv-scrolldown" @click="jumpToBottom" title="Jump to latest" aria-label="Jump to latest message">
@@ -526,6 +550,8 @@
 			</div>
 		</transition>
 
+		<!-- screen-reader-only announcements: turn completion / failure -->
+		<div class="jv-sr" role="status" aria-live="polite">{{ srMessage }}</div>
 		<!-- ============ NOTIFIER (reusable toasts: "Deleted", etc.) ============ -->
 		<div class="jv-notes" aria-live="polite">
 			<transition-group name="jv-note">
@@ -721,7 +747,7 @@ import { useAudioRecorder } from "@/composables/useAudioRecorder"
 import { setMacroPrefill } from "@/composables/macroPrefill"
 import { takeChatPrefill } from "@/composables/chatPrefill"
 // timezone-safe: naive server datetimes must go through dayjsLocal (site tz)
-import { formatDate, exactDate } from "@/utils/datetime"
+import { formatDate, exactDate, dayLabel } from "@/utils/datetime"
 import { renderMarkdown } from "@/markdown"
 import JvChart from "@/charts/JvChart.vue"
 import ConnectPhoneDialog from "@/components/ConnectPhoneDialog.vue"
@@ -802,6 +828,13 @@ function notify(message, opts = {}) {
 }
 function dismissNote(id) {
 	notes.value = notes.value.filter((n) => n.id !== id)
+}
+// Announce to screen readers via the visually-hidden live region. Clears first
+// so an identical repeated message (e.g. two "Jarvis replied." in a row) still
+// re-announces.
+function announceSR(msg) {
+	srMessage.value = ""
+	nextTick(() => { srMessage.value = msg })
 }
 const confirmBox = ref(null) // { title, message, confirmLabel, cancelLabel, danger }
 let _confirmResolve = null
@@ -1030,8 +1063,15 @@ async function toggleAutoApply() {
 
 // Phase 1: streaming/metrics, live tool activity, file input, mentions, stop
 const runStartMs = ref(0)
+const nowMs = ref(0) // ticks every 1s while busy → drives the live elapsed timer
 const currentRunId = ref(null)
 const stoppedRunId = ref(null)
+const stoppedMsgIds = ref(new Set()) // assistant rows the user stopped — ignore later (incl. "recovered") events for them
+const currentMsgId = ref(null) // in-flight assistant row id (from run:start) — lets Stop pin the reply even before the first token
+const errorMeta = ref({}) // { [message_id]: { code, changed_data } } from a live run:error (not persisted; a refresh falls back to classifying the error string)
+const recovering = ref(null) // { message_id, reason } while a turn is parked for background recovery — the composer stays UNLOCKED so the user isn't trapped
+const retrying = ref(false) // guards the error-card Retry against a double-enqueue while one is in flight
+const srMessage = ref("") // visually-hidden aria-live text (turn completion / failure) for screen readers
 const activeTools = ref([]) // [{ id, name, status }] for the in-flight run
 // Live activity shows ONE tool at a time: the most-recently-started tool that's
 // still running, plus a compact count of the ones already finished this turn.
@@ -1104,10 +1144,49 @@ function toolPhrase(tool) {
 	return tpl + "…"
 }
 const liveStatus = computed(() => {
+	if (statusPhase.value === "waking") return "Waking up your assistant…"
 	if (currentTool.value) return toolPhrase(currentTool.value)
 	if (statusPhase.value === "analyzing") return "Analyzing the results…"
-	if (waiting.value || sending.value || statusPhase.value === "model") return "Talking to the model…"
+	if (waiting.value || sending.value || statusPhase.value === "model") return "Working on it…"
 	return thinkingWord.value
+})
+// Recovery banner copy: compaction (context overflow, retrying) vs a connection
+// hiccup. Both mean "still working, in the background" — not an error.
+const recoveringLabel = computed(() =>
+	recovering.value && recovering.value.reason === "compacting"
+		? "That was a big one — reorganizing the conversation and retrying…"
+		: "Reconnecting — your answer will appear here when it's ready.",
+)
+// Failure taxonomy → a plain-language headline. The raw string still shows
+// behind "Show details". `code` comes from the live run:error event; a refresh
+// (which only has the persisted string) classifies it here.
+const ERROR_HEADLINES = {
+	unreachable: "I couldn't reach the assistant",
+	timeout: "That took too long",
+	provider: "The model is busy right now",
+	"recovery-expired": "This took too long, so I stopped waiting",
+	internal: "Something went wrong",
+}
+function classifyErrorCode(raw) {
+	const low = (raw || "").toLowerCase()
+	if (low.includes("ws open failed") || low.includes("unreachable") || low.includes("connection timed out")) return "unreachable"
+	if (low.includes("recovery window")) return "recovery-expired"
+	if (low.includes("timed out") || low.includes("timeout") || low.includes("deadline")) return "timeout"
+	if (["quota", "rate limit", "cooldown", "overloaded", "insufficient", "credit", "billing"].some((k) => low.includes(k))) return "provider"
+	return "internal"
+}
+function errorInfo(m) {
+	const meta = errorMeta.value[m.name] || {}
+	const code = meta.code || classifyErrorCode(m.error)
+	return { headline: ERROR_HEADLINES[code] || "Something went wrong", noChange: meta.changed_data === false }
+}
+// Live elapsed timer shown next to the status line so a long turn reads as
+// "still working" (time ticking) rather than a frozen spinner. Hidden for the
+// first few seconds so quick turns don't flash a "0s".
+const liveElapsedLabel = computed(() => {
+	if (!busy.value || !runStartMs.value || !nowMs.value) return ""
+	const s = (nowMs.value - runStartMs.value) / 1000
+	return s >= 3 ? fmtDuration(s) : ""
 })
 const runMeta = ref({}) // { [message_id]: { ms, tools, names } } — survives reloads
 const canvasContent = ref({}) // { `${msgName}::${canvasName}`: srcdoc html (html/svg) | data-url (pdf/image/file) }
@@ -1296,10 +1375,10 @@ const busy = computed(() => sending.value || waiting.value)
 const convStreaming = computed(() => store.streamingConvId === currentId.value)
 
 const suggestions = [
-	{ title: "Analyse data", prompt: "Which sales orders are overdue this month?", bg: "var(--blue-bg)", icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#171717" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18 9l-5 5-3-3-4 4"/></svg>' },
-	{ title: "Take an action", prompt: "Create a new Sales Order", bg: "var(--green-bg)", icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>' },
-	{ title: "Search records", prompt: "Search for a customer or contact", bg: "var(--amber-bg)", icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>' },
-	{ title: "Draft content", prompt: "Write a follow-up email to a lead", bg: "#f3eefe", icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>' },
+	{ title: "Analyse data", prompt: "Which sales orders are overdue this month?", bg: "var(--blue-bg)", fg: "var(--blue)", icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18 9l-5 5-3-3-4 4"/></svg>' },
+	{ title: "Take an action", prompt: "Draft a document for me to review", bg: "var(--green-bg)", fg: "var(--green)", icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>' },
+	{ title: "Search records", prompt: "Search for a customer or contact", bg: "var(--amber-bg)", fg: "var(--amber)", icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>' },
+	{ title: "Draft content", prompt: "Write a follow-up email to a lead", bg: "rgba(139,92,246,.12)", fg: "#8b5cf6", icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>' },
 ]
 
 // Inline action blocks the agent emits: a rich ```jarvis-action JSON card (a doc
@@ -2351,6 +2430,29 @@ function msgTimeFull(m) {
 		})
 	return ""
 }
+// Day bucket for a message (timezone-safe via dayLabel), for the "Today /
+// Yesterday / 3 July" separators between message groups (UX #23). Empty for a
+// dateless streaming placeholder.
+function msgDay(m) {
+	return dayLabel(msgStamp(m) || (m.creation_browser ? new Date(m.creation_browser) : null))
+}
+// Precompute a divider label per visible message in ONE pass: a label shows only
+// on the first message of a new day. A dateless row (streaming placeholder) is
+// skipped without resetting the running day, so it can't split a day group.
+const dayDividers = computed(() => {
+	const out = []
+	let prev = null
+	for (const m of visibleMessages.value) {
+		const d = msgDay(m)
+		if (d && d !== prev) {
+			out.push(d)
+			prev = d
+		} else {
+			out.push("")
+		}
+	}
+	return out
+})
 // Per-message Copy with a brief "copied" tick, and Edit (load a previous
 // command back into the composer to tweak and resend).
 const copiedId = ref("")
@@ -2638,11 +2740,25 @@ async function loadConversation(id) {
 	// to every tab) instead of a frozen blank reply. Freshness-guarded so a stale
 	// streaming=1 (crashed worker) can't lock the composer forever; live deltas +
 	// run:end clear it normally.
+	recovering.value = null
 	const _streaming = [...messages.value].reverse().find((m) => m.role === "assistant" && m.streaming)
 	let _resumed = false
 	if (_streaming) {
 		const fresh = _streaming.modified && new Date() - new Date(_streaming.modified.replace(" ", "T")) < 5 * 60 * 1000
-		if (fresh) {
+		if (fresh && _streaming.recovering) {
+			// Parked for background recovery: show the recovering banner but fully
+			// UNLOCK the composer (clear the whole in-flight state we may have
+			// resumed into) so a socket-drop-during-recovery resync doesn't rebuild
+			// the locked-spinner limbo. The answer lands via the recovery path.
+			recovering.value = { message_id: _streaming.name, reason: "interrupted" }
+			sending.value = false
+			waiting.value = false
+			statusPhase.value = null
+			activeTools.value = []
+			currentRunId.value = null
+			store.streamingConvId = null
+			_resumed = true
+		} else if (fresh) {
 			sending.value = true
 			waiting.value = !((_streaming.content || "").trim())
 			store.streamingConvId = id
@@ -2897,14 +3013,41 @@ function onDocClick(e) {
 	if (!e.target.closest(".jv-composer")) mention.value = { ...mention.value, open: false }
 }
 async function retry(messageId) {
+	if (retrying.value) return
+	retrying.value = true
 	sending.value = true
 	waiting.value = true
+	runStartMs.value = 0
+	nowMs.value = 0
+	currentMsgId.value = null
 	try {
-		await api.retryMessage(messageId)
+		const r = await api.retryMessage(messageId)
+		if (r && r.ok === false) {
+			// e.g. the single-flight guard ("a reply is already in progress").
+			sending.value = false
+			waiting.value = false
+			notify(r.reason || "Couldn't retry that.", { type: "error" })
+		}
 	} catch (e) {
 		sending.value = false
 		waiting.value = false
+		notifyActionError("Couldn't retry that", e)
+	} finally {
+		retrying.value = false
 	}
+}
+
+function resendFailed(m) {
+	// Re-send a message whose POST failed. Guard FIRST so we never drop the
+	// bubble when we can't actually resend: bail if a turn or dictation is
+	// active, or if there's no plain text (e.g. an attachment-only message,
+	// whose file can't be re-attached from the bubble). Then swap the failed
+	// bubble for a fresh optimistic one via send().
+	if (sending.value || micState.value === "recording" || micState.value === "transcribing") return
+	const txt = (m.content || "").replace(/\n*📎[^\n]*$/, "").trim()
+	if (!txt) return
+	messages.value = messages.value.filter((x) => x.name !== m.name)
+	send(txt)
 }
 
 async function send(textArg) {
@@ -2938,6 +3081,9 @@ async function send(textArg) {
 	sending.value = true
 	waiting.value = true
 	stoppedRunId.value = null
+	runStartMs.value = 0
+	nowMs.value = 0
+	currentMsgId.value = null
 	const isImgAtt = (a) => /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(a.file_name || a.file_url || "")
 	const imgAtts = attachments.filter(isImgAtt)
 	const otherAtts = attachments.filter((a) => !isImgAtt(a))
@@ -2946,11 +3092,24 @@ async function send(textArg) {
 	const optCanvas = imgAtts.map((a, i) => ({ name: `tmpimg-${Date.now()}-${i}`, type: "image", file_url: a.file_url, title: a.file_name || "image" }))
 	// creation_browser: local send time so the hover timestamp shows before
 	// the server copy (with its site-tz creation) reconciles this tmp row
-	messages.value = [...messages.value, { name: `tmp-${Date.now()}`, role: "user", content: optimistic, creation_browser: Date.now(), canvas: optCanvas.length ? optCanvas : undefined }]
+	const tmpName = `tmp-${Date.now()}`
+	messages.value = [...messages.value, { name: tmpName, role: "user", content: optimistic, creation_browser: Date.now(), canvas: optCanvas.length ? optCanvas : undefined }]
 	await nextTick()
 	scrollBottom()
 	try {
 		const r = await api.sendMessage(currentId.value || "", text, undefined, attachments)
+		if (r && r.ok === false) {
+			// The server rejected the send (e.g. the single-flight guard:
+			// "a reply is already in progress"). Nothing was persisted, so drop
+			// the optimistic bubble and surface the reason — otherwise the spinner
+			// would hang forever (no run:start / run:error is coming).
+			messages.value = messages.value.filter((x) => x.name !== tmpName)
+			if (fromMain && !input.value) input.value = text
+			sending.value = false
+			waiting.value = false
+			notify(r.reason || "Couldn't send your message.", { type: "error" })
+			return
+		}
 		if (isNewConv && r?.conversation_id) {
 			// Adopt the server-created conversation so realtime events route to
 			// this thread, then refresh the sidebar without blocking anything.
@@ -2958,13 +3117,12 @@ async function send(textArg) {
 			store.loadConversations()
 		}
 	} catch (e) {
-		// send_message failed (e.g. a 500 on a migration gap). Stop the spinner and
-		// surface why — the fix this PR is really about is that the failure used to
-		// be silent. We deliberately do NOT roll the optimistic bubble back or refill
-		// the composer: the send is fire-and-forget, so a mid-send conversation
-		// switch would strand one thread's draft in another, and a post-ack timeout
-		// (server accepted, response dropped) would wrongly discard a live message.
-		// Leaving the bubble also keeps the attempted text visible for recovery.
+		// send_message threw (e.g. a 500). Stop the spinner and mark the bubble
+		// as not-sent with an inline Retry, instead of leaving it looking
+		// delivered. We keep the bubble (a post-ack timeout may have actually
+		// delivered it; a mid-send conversation switch shouldn't strand a draft).
+		const b = messages.value.find((x) => x.name === tmpName)
+		if (b) b.failed = true
 		sending.value = false
 		waiting.value = false
 		notifyActionError("Couldn't send your message", e)
@@ -3055,17 +3213,33 @@ function onEvent(p) {
 	}
 	if (p.conversation_id !== currentId.value) return
 	if (p.run_id && p.run_id === stoppedRunId.value) return // user stopped this run
+	if (p.message_id && stoppedMsgIds.value.has(p.message_id)) return // …incl. a later "recovered" run for a stopped reply
 	switch (p.kind) {
 		case "run:recovering":
-			// openclaw hit a context overflow and is auto-compacting + retrying;
-			// the worker parked the turn for snapshot recovery. Keep the
-			// indicator alive - the answer lands via recovery shortly.
-			waiting.value = true
-			statusPhase.value = "model"
+			// A managed turn was parked for background recovery (a connection
+			// hiccup, or openclaw auto-compacting on context overflow). Don't trap
+			// the user behind a locked spinner: unlock the composer and show a
+			// distinct "still working" banner. The answer lands later via the
+			// recovery path (assistant:delta + run:end, run_id "recovered").
+			recovering.value = { message_id: p.message_id, reason: p.reason || "interrupted" }
+			waiting.value = false
+			sending.value = false
+			statusPhase.value = null
+			activeTools.value = []
+			currentRunId.value = null
+			store.streamingConvId = null
+			break
+		case "run:status":
+			// Lightweight progress signal (e.g. waking a cold container) between
+			// run:start and the first token — keeps the connect window honest.
+			if (p.status === "waking") statusPhase.value = "waking"
 			break
 		case "run:start":
 			currentRunId.value = p.run_id
+			currentMsgId.value = p.message_id
+			recovering.value = null
 			runStartMs.value = Date.now()
+			nowMs.value = Date.now()
 			activeTools.value = []
 			waiting.value = true
 			statusPhase.value = "model"
@@ -3074,6 +3248,7 @@ function onEvent(p) {
 		case "assistant:delta": {
 			waiting.value = false
 			statusPhase.value = null
+			recovering.value = null
 			// Upsert: the message may not be loaded yet when the first delta
 			// arrives — add it so streaming text shows immediately (the bug fix).
 			let m = messages.value.find((x) => x.name === p.message_id)
@@ -3133,6 +3308,8 @@ function onEvent(p) {
 			store.streamingConvId = null
 			// (browser notification moved to the app-scoped global notifier —
 			// AppShell attaches it, so it fires on every route, not just here)
+			recovering.value = null
+			announceSR("Jarvis replied.")
 			store.loadConversations()
 			loadConversation(currentId.value)
 			// Re-render charts after the reload settles — late re-renders can swap a
@@ -3165,32 +3342,44 @@ function onEvent(p) {
 			break
 		}
 		case "run:error":
+			if (p.message_id) {
+				errorMeta.value = { ...errorMeta.value, [p.message_id]: { code: p.code || "", changed_data: p.changed_data } }
+			}
+			recovering.value = null
 			waiting.value = false
 			sending.value = false
 			statusPhase.value = null
 			activeTools.value = []
 			currentRunId.value = null
 			store.streamingConvId = null
+			announceSR("That didn't go through. See the error in the chat.")
 			loadConversation(currentId.value)
 			break
 	}
 }
 
 function stopRun() {
-	// No backend cancel endpoint yet, so this stops the UI: ignore further
-	// events for this run, drop the spinner, and mark the reply interrupted.
-	// (The server-side turn still finishes; reopening the chat shows the full
-	// reply.)
+	// Actually abort the run (openclaw chat.abort via stop_run) - best-effort:
+	// if the abort can't be delivered, the turn finishes server-side and the UI
+	// stop still stands. We also mute this run's events + pin the reply so a
+	// later recovery can't overwrite the stopped state.
+	const cid = currentId.value
+	const rid = currentRunId.value
 	if (currentRunId.value) stoppedRunId.value = currentRunId.value
+	if (currentMsgId.value) stoppedMsgIds.value.add(currentMsgId.value)
 	const m = [...messages.value].reverse().find((x) => x.role === "assistant" && x.streaming)
 	if (m) {
 		m.streaming = false
-		if (!m.content) m.content = "_(stopped)_"
+		if (m.name) stoppedMsgIds.value.add(m.name)
+		if (!m.content) m.content = "_Stopped._"
 	}
 	waiting.value = false
 	sending.value = false
 	activeTools.value = []
 	store.streamingConvId = null
+	recovering.value = null
+	if (cid) api.stopRun(cid, rid).catch(() => {})
+	notify("Stopped.")
 }
 
 // ---- voice dictation (composer mic) ----
@@ -3598,7 +3787,10 @@ onMounted(async () => {
 	api.listTools().then((t) => { if (Array.isArray(t) && t.length) jarvisTools.value = t }).catch(() => {})
 	document.addEventListener("pointerdown", onDocClick)
 	window.addEventListener("keydown", onGlobalKey)
-	_thinkTimer = setInterval(() => { thinkTick.value = busy.value ? thinkTick.value + 1 : 0 }, 2200)
+	_thinkTimer = setInterval(() => {
+		thinkTick.value = busy.value ? thinkTick.value + 1 : 0
+		if (busy.value) nowMs.value = Date.now()
+	}, 1000)
 	ui.value = (await uiP) || {}
 	// Load custom skills so the "/" composer menu can offer them.
 	loadCustomSkills()
@@ -3864,6 +4056,35 @@ onUnmounted(() => {
 .jv-tooldone { color: var(--text-3); font-size: 12px; }
 .jv-spin { animation: jv-spin 0.8s linear infinite; }
 @keyframes jv-spin { to { transform: rotate(360deg); } }
+/* thinking dots — classed so reduced-motion can disable them (UX #13) */
+.jv-tdot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-3); animation: jv-dot 1.1s infinite; }
+/* visually-hidden live region for screen-reader announcements (UX #5) */
+.jv-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+/* visible keyboard focus (UX #15) */
+.jv-suggest:focus-visible, .jv-sendbtn:focus-visible, .jv-iconbtn:focus-visible, .jv-msgbtn:focus-visible, .jv-retry:focus-visible, .jv-modelpill:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+/* honor reduced-motion on the chat surface (UX #13) */
+@media (prefers-reduced-motion: reduce) {
+	.jv-spin { animation: none; }
+	.jv-tdot { animation: none; opacity: .55; }
+	.jv-tool-dot.run, .jv-mic-dot { animation: none; }
+	.jv-sendbtn.ready { animation: none; }
+	.jv-md :deep(.jv-mermaid:not([data-rendered]))::after { animation: none; }
+	.jv-settings, .jv-skills-modal, .jv-cdialog { animation: none; }
+}
+/* mobile layout (UX #12): the chat had fixed 40px desktop paddings + a 2-col
+   welcome grid; inline styles win over class rules, so these override with
+   !important. The "Connect phone" QR flow ships people straight here. */
+@media (max-width: 640px) {
+	.jv-thread-inner { padding: 22px 16px 28px !important; }
+	.jv-composer-wrap { padding: 10px 14px 14px !important; }
+	.jv-welcome-grid { grid-template-columns: 1fr !important; }
+	.jv-welcome-h1 { font-size: 24px !important; }
+	.jv-ububble { max-width: 92% !important; }
+}
+/* touch devices can't hover, so always show per-message actions/timestamps */
+@media (hover: none) {
+	.jv-msgbar { opacity: 1 !important; }
+}
 
 /* inline canvas/chart artifacts (rendered sandboxed) */
 .jv-canvas { margin-top: 12px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface); }
@@ -3919,6 +4140,12 @@ onUnmounted(() => {
 .jv-md :deep(.jv-md-list) { margin: 0 0 10px; padding-left: 20px; }
 .jv-md :deep(.jv-md-list li) { margin: 2px 0; }
 .jv-md :deep(.jv-md-code) { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.jv-md :deep(.jv-md-list .jv-md-list) { margin: 2px 0; }
+.jv-md :deep(.jv-md-quote) { margin: 0 0 10px; padding: 2px 0 2px 12px; border-left: 3px solid var(--border-2); color: var(--text-2); }
+.jv-md :deep(del) { opacity: .65; }
+/* day separators between message groups (UX #23) */
+.jv-daydivider { display: flex; align-items: center; justify-content: center; margin: 6px 0 2px; }
+.jv-daydivider span { font-size: 11px; font-weight: 550; color: var(--text-3); background: var(--surface-1); border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; }
 .jv-md :deep(.jv-md-link) { color: var(--blue); text-decoration: none; font-weight: 500; }
 /* Auto-linked document IDs → open the record in ERPNext Desk. Dashed underline
    marks them as record links, distinct from plain markdown links. */
@@ -4039,7 +4266,7 @@ onUnmounted(() => {
 .jv-share-chip-name { font-weight: 500; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jv-share-chip-x { flex: none; width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; border: none; background: transparent; border-radius: 50%; color: var(--text-3); cursor: pointer; padding: 0; transition: background .12s, color .12s; }
 .jv-share-chip-x:hover { background: var(--red-bg); color: var(--red); }
-.jv-share-avatar { flex: none; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--blue); color: #fff; font-size: 10.5px; font-weight: 600; letter-spacing: .01em; box-shadow: 0 1px 2px rgba(37, 99, 235, .3); }
+.jv-share-avatar { flex: none; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--blue); color: #fff; font-size: 10.5px; font-weight: 600; letter-spacing: .01em; box-shadow: 0 1px 2px rgba(79, 70, 229, .3); }
 .jv-share-searchwrap { display: flex; align-items: center; gap: 8px; padding: 8px 11px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 9px; margin-bottom: 10px; }
 .jv-share-searchwrap:focus-within { border-color: var(--blue); }
 .jv-share-search { flex: 1; border: none; outline: none; background: transparent; font-family: inherit; font-size: 13px; color: var(--text); }

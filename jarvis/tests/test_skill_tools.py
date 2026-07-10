@@ -270,6 +270,30 @@ class TestCreateCustomSkill(SkillToolsTestCase):
 		self.assertEqual(out["scope"], "Org")
 		self.assertIn("Apply", out["note"])
 
+	def test_org_scope_note_matches_actual_find_skills_visibility(self):
+		# F19: the note used to say Org skills "reach the assistant's skill
+		# catalog only after an admin clicks Apply" - factually false, since
+		# find_skills/get_skill already surface an Org row to every user right
+		# away (see TestFindSkills.test_org_row_visible_to_everyone below).
+		# There is no per-row 'applied'/'reviewed' flag anywhere in the
+		# doctype or the Apply flow (chat/custom_skills.py build_push_payload)
+		# to gate that discovery path on, so the note is corrected instead of
+		# inventing a gate. Lock the corrected wording + matching behavior
+		# together so they can't silently drift apart again.
+		with _as(OWNER):
+			out = create_custom_skill(
+				f"{PFX}-mk-org-note", "sttool mk org note desc", "mk org note body",
+				scope="Org",
+			)
+		note = out["note"]
+		self.assertIn("right away", note)
+		self.assertIn("jarvis__find_skills", note)
+		self.assertNotIn("only after an admin clicks Apply", note)
+
+		with _as(PEER):
+			found = find_skills("mk org note desc")
+			self.assertIn(f"{PFX}-mk-org-note", [s["skill_name"] for s in found["skills"]])
+
 	def test_invalid_scope_rejected(self):
 		with _as(OWNER):
 			with self.assertRaises(InvalidArgumentError):

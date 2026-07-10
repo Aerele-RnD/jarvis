@@ -134,20 +134,87 @@ class TestAttachToDocEnvelope(FrappeTestCase):
     def test_calls_add_attachments_and_returns_envelope(self):
         user_name = frappe.db.get_value("User", filters={}, fieldname="name")
         file_url = "/private/files/some-attached.pdf"
+        source_file_name = "source-File-1"
+
+        # Signature-faithful fake: distinguishes the "resolve docname from
+        # url" lookup from the "find the newly-attached File" lookup by
+        # filters, instead of a single return_value that would mask
+        # whichever value the tool actually passes to add_attachments.
+        # Anything else (e.g. the tool's own frappe.db.exists("User", ...),
+        # which delegates through get_value) falls through to the real
+        # lookup - args/kwargs are forwarded verbatim so defaults like
+        # fieldname="name" aren't clobbered.
+        _real_get_value = frappe.db.get_value
+
+        def _fake_get_value(doctype, *args, **kwargs):
+            filters = args[0] if args else kwargs.get("filters")
+            if doctype == "File" and isinstance(filters, dict) and "attached_to_doctype" in filters:
+                return "attached-File-99"
+            if doctype == "File" and filters == {"file_url": file_url}:
+                return source_file_name
+            return _real_get_value(doctype, *args, **kwargs)
 
         with patch(
             "frappe.utils.file_manager.add_attachments",
         ) as add_a, patch(
-            "frappe.db.get_value", return_value="attached-File-99",
+            "frappe.db.get_value", side_effect=_fake_get_value,
         ):
             out = attach_to_doc(file_url, "User", user_name)
 
-        add_a.assert_called_once_with("User", user_name, [file_url])
+        # add_attachments needs the File DOCNAME resolved from file_url,
+        # never the raw url - passing the url raises DoesNotExistError
+        # (add_attachments looks the entry up by File.name).
+        add_a.assert_called_once_with("User", user_name, [source_file_name])
         self.assertEqual(set(out.keys()), {
             "file_url", "target_doctype", "target_name", "attached_file_name",
         })
         self.assertEqual(out["file_url"], file_url)
         self.assertEqual(out["attached_file_name"], "attached-File-99")
+
+    def test_raises_invalid_argument_when_file_url_unresolvable(self):
+        user_name = frappe.db.get_value("User", filters={}, fieldname="name")
+        missing_url = "/private/files/does-not-exist.pdf"
+        _real_get_value = frappe.db.get_value
+
+        def _fake_get_value(doctype, *args, **kwargs):
+            filters = args[0] if args else kwargs.get("filters")
+            if doctype == "File" and filters == {"file_url": missing_url}:
+                return None
+            return _real_get_value(doctype, *args, **kwargs)
+
+        with patch("frappe.db.get_value", side_effect=_fake_get_value):
+            with self.assertRaises(InvalidArgumentError):
+                attach_to_doc(missing_url, "User", user_name)
+
+
+class TestAttachToDocRealFlow(FrappeTestCase):
+    """End-to-end regression for F11: a real File's file_url must resolve
+    to its docname and actually attach, with no mocking of
+    add_attachments/save_url. Pre-fix this raises frappe.DoesNotExistError
+    because add_attachments is handed the url instead of the docname."""
+
+    def test_real_file_url_resolves_and_attaches(self):
+        target_name = frappe.db.get_value("User", filters={}, fieldname="name")
+
+        source = frappe.get_doc({
+            "doctype": "File",
+            "file_name": "attach-to-doc-real-test.txt",
+            "content": b"hello from attach_to_doc real-flow test",
+            "is_private": 1,
+        })
+        source.insert(ignore_permissions=True)
+        self.addCleanup(lambda: frappe.delete_doc("File", source.name, force=True, ignore_permissions=True))
+
+        out = attach_to_doc(source.file_url, "User", target_name)
+
+        self.assertIsNotNone(out["attached_file_name"])
+        attached = frappe.get_doc("File", out["attached_file_name"])
+        self.addCleanup(
+            lambda: frappe.delete_doc("File", attached.name, force=True, ignore_permissions=True),
+        )
+        self.assertEqual(attached.attached_to_doctype, "User")
+        self.assertEqual(attached.attached_to_name, target_name)
+        self.assertEqual(attached.file_url, source.file_url)
 
 
 # ---------------------------------------------------------------------
