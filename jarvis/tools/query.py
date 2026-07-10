@@ -187,8 +187,32 @@ def query(spec: dict, confirm_large: bool = False) -> dict:
 	# Step 2: collect all referenced DocTypes for the permission gates.
 	doctypes = _collect_doctypes(spec)
 
-	# Step 3: DocType-level read permission gate (mirrors run_query).
+	# Step 3: DocType-level read permission gate (mirrors run_query). Child
+	# (istable) DocTypes carry no permissions of their own - Frappe derives them
+	# from a parent - so a plain has_permission(child) returns False for every
+	# non-admin, which broke every join/read that references a child table.
+	# Mirror get_list: allow a child table if the caller can read at least one of
+	# its owning parents (parent_doctype-derived permission) - so a join to a
+	# readable parent works; a child whose parents are all unreadable is a
+	# genuine denial. Row-level permission_query_conditions still apply below.
+	from jarvis.tools.get_list import _child_table_parents
+
 	for dt in doctypes:
+		if frappe.get_meta(dt).istable:
+			parents = _child_table_parents(dt)
+			if parents:
+				if not any(
+					frappe.has_permission(dt, ptype="read", parent_doctype=p) for p in parents
+				):
+					raise PermissionDeniedError(
+						f"no read permission on referenced child table: {dt} "
+						f"(no readable parent among {parents})"
+					)
+				continue
+			# No owning parent is derivable (e.g. a core meta table like DocField,
+			# whose parent Table field is not itself introspectable via DocField).
+			# Fall through to the plain child-permission check rather than failing
+			# closed on a child we cannot trace to a parent.
 		if not frappe.has_permission(dt, ptype="read"):
 			raise PermissionDeniedError(
 				f"no read permission on referenced DocType: {dt}"
