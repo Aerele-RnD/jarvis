@@ -231,7 +231,7 @@
 										<div v-else-if="summaryState.error" class="jv-summary-body jv-summary-loading">{{ summaryState.error }}</div>
 										<div v-else class="jv-summary-body jv-summary-loading">Preparing summary...</div>
 
-										<div v-if="summaryState.model && summaryState.model.error" class="jv-draft-error" style="margin:0 14px 10px">{{ summaryState.model.error }}</div>
+										<div v-if="summaryState.model && summaryState.model.error" style="margin:0 14px 10px"><ActionError :error="summaryState.model.error" /></div>
 
 										<div class="jv-action-foot">
 											<button class="jv-action-primary" :disabled="!summaryState.model || (summaryState.model && summaryState.model.applying) || convStreaming" :title="convStreaming ? 'Waiting for the current reply to finish' : ''" @click="confirmSummary">
@@ -423,10 +423,10 @@
 							</ul>
 							<pre v-else-if="pendingPreviewOf(pa)" class="jv-pending-preview">{{ pendingPreviewOf(pa) }}</pre>
 						</div>
-						<div v-if="pa.error" class="jv-draft-error" style="margin:0 14px 10px">{{ pa.error }}</div>
+						<div v-if="pa.error" style="margin:0 14px 10px"><ActionError :error="pa.error" /></div>
 						<div class="jv-action-foot">
-							<button class="jv-action-primary" :disabled="pa.busy || convStreaming" :title="convStreaming ? 'Waiting for the current reply to finish' : ''" @click="confirmPending(pa)">✓ Confirm</button>
-							<button class="jv-action-discard" :disabled="pa.busy" @click="discardPending(pa)">Discard</button>
+							<button v-if="!pa.spent" class="jv-action-primary" :disabled="pa.busy || convStreaming" :title="convStreaming ? 'Waiting for the current reply to finish' : ''" @click="confirmPending(pa)">✓ Confirm</button>
+							<button class="jv-action-discard" :disabled="pa.busy" @click="discardPending(pa)">{{ pa.spent ? "Dismiss" : "Discard" }}</button>
 						</div>
 					</div>
 				</div>
@@ -712,7 +712,7 @@
 							<button class="jv-draft-addrow" @click="addDraftRow(ti)">＋ Add row</button>
 						</div>
 						<div v-if="draftTotals" class="jv-draft-totals">{{ draftTotals }} <span class="jv-draft-est">(estimate — ERPNext computes final totals)</span></div>
-						<div v-if="draftPanel.error" class="jv-draft-error">{{ draftPanel.error }}</div>
+						<div v-if="draftPanel.error" style="margin-top:10px"><ActionError :error="draftPanel.error" /></div>
 					</div>
 					<div class="jv-draft-foot">
 						<button class="jv-action-discard" @click="discardDraft">Discard</button>
@@ -752,6 +752,7 @@ import { renderMarkdown } from "@/markdown"
 import JvChart from "@/charts/JvChart.vue"
 import ConnectPhoneDialog from "@/components/ConnectPhoneDialog.vue"
 import DraftPreview from "@/components/doc/DraftPreview.vue"
+import ActionError from "@/components/ActionError.vue"
 import { useShellStore } from "@/stores/shell"
 import { useJarvisTheme } from "@/theme"
 import { displayName } from "@/lib/user"
@@ -2095,19 +2096,27 @@ async function applyDraft(submitFlag, model = draftPanel.value) {
 			values[t.fieldname] = rows
 		}
 	}
-	p.applying = true; p.error = ""
+	p.applying = true; p.error = null
 	try {
-		await api.applyAction({
+		const r = await api.applyAction({
 			verb: p.verb, doctype: p.doctype, name: p.docName || "",
 			values, submit: submitFlag ? 1 : 0, conversation: currentId.value || "",
 			continue: p.cont ? 1 : 0,
 		})
+		if (r && r.ok === false) {
+			// apply_action now returns the enriched {ok:false, error} envelope
+			// (rich detail + hint, and nothing was saved) instead of throwing a
+			// raw Frappe 403/417. Keep the panel open so the values are editable.
+			p.applying = false
+			p.error = r.error || { message: "Could not save — check the values." }
+			return
+		}
 		closeDraftPanel()
 		await loadConversation(currentId.value)
 		store.loadConversations()
 	} catch (e) {
 		p.applying = false
-		p.error = (e && e.messages && e.messages[0]) || (e && e.message) || "Could not save — check the values."
+		p.error = { message: (e && e.messages && e.messages[0]) || (e && e.message) || "Could not save — check the values." }
 	}
 }
 
@@ -2185,7 +2194,8 @@ function enqueuePending(card) {
 		preview: card.preview || null,
 		run_id: card.run_id || null,
 		busy: false,
-		error: "",
+		error: null,
+		spent: false,
 	})
 }
 
@@ -2201,7 +2211,7 @@ async function confirmPending(pa) {
 	// guard, R1/Task7).
 	const token = pa.token
 	const cardById = () => pendingActions.value.find((x) => x.token === token)
-	pa.busy = true; pa.error = ""
+	pa.busy = true; pa.error = null
 	try {
 		const r = await api.confirmTool(token, pa.conversation || currentId.value || "")
 		if (r && r.ok === false) {
@@ -2212,8 +2222,14 @@ async function confirmPending(pa) {
 				notify("That confirmation expired - ask Jarvis to try again.", { type: "error" })
 				return
 			}
+			// The token was consumed before dispatch, so this card is SPENT even
+			// though the tool itself failed. Show the enriched reason and retire
+			// the Confirm button (a second click could only ever "expire").
 			const card = cardById()
-			if (card) card.error = (r.error && r.error.message) || "Could not run this action."
+			if (card) {
+				card.error = r.error || { message: "Could not run this action." }
+				card.spent = true
+			}
 			return
 		}
 		// Success - the executed result surfaces via the turn's normal tool/stream
@@ -2223,7 +2239,7 @@ async function confirmPending(pa) {
 		store.loadConversations()
 	} catch (e) {
 		const card = cardById()
-		if (card) card.error = (e && e.messages && e.messages[0]) || (e && e.message) || "Could not confirm."
+		if (card) card.error = { message: (e && e.messages && e.messages[0]) || (e && e.message) || "Could not confirm." }
 	} finally {
 		const card = cardById()
 		if (card) card.busy = false
@@ -4606,7 +4622,6 @@ onUnmounted(() => {
 .jv-draft-addrow { align-self: flex-start; margin-top: 8px; background: none; border: none; color: var(--blue); font-weight: 600; font-size: 12.5px; cursor: pointer; padding: 4px 2px; }
 .jv-draft-totals { font-size: 12.5px; color: var(--text-2); font-variant-numeric: tabular-nums; }
 .jv-draft-est { color: var(--text-3); font-size: 11px; }
-.jv-draft-error { font-size: 12.5px; color: var(--red); background: var(--red-bg); border: 1px solid var(--red-bd); border-radius: 8px; padding: 8px 11px; white-space: pre-wrap; }
 .jv-draft-foot { display: flex; gap: 10px; align-items: center; padding: 12px 16px; border-top: 1px solid var(--border); }
 @media (max-width: 700px) { .jv-draft-fields { grid-template-columns: 1fr; } }
 
