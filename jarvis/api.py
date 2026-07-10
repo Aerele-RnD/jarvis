@@ -701,8 +701,22 @@ def _dispatch_and_wrap(tool: str, args: dict, is_write: bool) -> dict:
 	"""Dispatch + translate exceptions into the ``{ok, data}`` / ``{ok, error}``
 	envelope + audit write tools. This is the shared core of ``_run_tool``'s
 	execute path, reused verbatim by ``confirm_tool`` so a confirmed write runs
-	through the exact same translation + audit as an inline one."""
+	through the exact same translation + audit as an inline one.
+
+	A write is scoped in a SAVEPOINT so a KNOWN failure is rolled back before we
+	RETURN the ``{ok:false}`` envelope. Frappe commits any endpoint that returns
+	normally (frappe/app.py), so without this a tool that half-applied before
+	raising - e.g. a submit whose ``on_submit`` hook throws AFTER ``docstatus=1``
+	was written - would be persisted at end-of-request. Rolling back to the
+	savepoint (not a full rollback) undoes ONLY this tool, leaving the caller's
+	surrounding writes intact (``confirm_tool``'s failure receipt/continuation,
+	the model path's tool-call row). Unexpected exceptions re-raise unchanged:
+	Frappe's handler does a full request rollback (nothing persists, no envelope,
+	no traceback to the client)."""
 	mark = _msglog_mark()
+	sp = f"jarvis_{frappe.generate_hash(length=10)}" if is_write else None
+	if sp:
+		frappe.db.savepoint(sp)
 	try:
 		data = dispatch(tool, args)
 	except Exception as e:
@@ -712,11 +726,24 @@ def _dispatch_and_wrap(tool: str, args: dict, is_write: bool) -> dict:
 				audit.record(tool=tool, args=args, ok=False,
 							 error_code=type(e).__name__, error_message=str(e))
 			raise
+		if sp:
+			# Undo this tool's partial writes. Guard against a tool that committed
+			# mid-op (the savepoint would be gone) so we never turn a clean tool
+			# failure into a 500.
+			try:
+				frappe.db.rollback(save_point=sp)
+			except Exception:
+				pass
 		if is_write:
 			err_obj = envelope["error"]
 			audit.record(tool=tool, args=args, ok=False,
 						 error_code=err_obj["code"], error_message=err_obj["message"])
 		return envelope
+	if sp:
+		try:
+			frappe.db.release_savepoint(sp)
+		except Exception:
+			pass
 	if is_write:
 		audit.record(tool=tool, args=args, ok=True, result=data)
 	return {"ok": True, "data": data}
