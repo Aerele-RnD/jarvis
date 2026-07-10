@@ -62,12 +62,12 @@
 			<!-- ===== WELCOME ===== -->
 			<div v-else-if="showWelcome" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px;">
 				<div style="width:100%;max-width:680px;text-align:center;">
-					<div class="jv-logo" style="width:52px;height:52px;border-radius:13px;background:var(--blue);display:flex;align-items:center;justify-content:center;margin:0 auto 18px;box-shadow:0 4px 14px rgba(37,99,235,.28);">
+					<div class="jv-logo" style="width:54px;height:54px;border-radius:14px;background:linear-gradient(135deg,var(--blue),#8b5cf6);display:flex;align-items:center;justify-content:center;margin:0 auto 18px;box-shadow:0 8px 22px rgba(79,70,229,.32);">
 						<svg width="28" height="28" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
 					</div>
-					<h1 style="font-size:23px;font-weight:600;letter-spacing:-.02em;margin:0 0 6px;">{{ greeting }}, {{ firstName }}</h1>
+					<h1 class="jv-welcome-h1" style="font-size:30px;font-weight:640;letter-spacing:-.03em;margin:0 0 8px;overflow-wrap:anywhere;">{{ greeting }}, {{ firstName }}</h1>
 					<p style="font-size:14.5px;color:var(--text-2);margin:0 0 26px;line-height:1.5;">Ask about your ERP data, run a workflow, or draft something. Jarvis is connected to your <strong style="color:var(--text);font-weight:600;">ERPNext</strong> instance.</p>
-					<div style="display:grid;grid-template-columns:1fr 1fr;gap:11px;text-align:left;">
+					<div class="jv-welcome-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:11px;text-align:left;">
 						<button v-for="s in suggestions" :key="s.title" type="button" class="jv-suggest" @click="fillInput(s.prompt)" style="display:flex;gap:11px;padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:10px;cursor:pointer;transition:border-color .12s,background .12s;text-align:left;font-family:inherit;color:inherit;width:100%;">
 							<div :style="{ width:'30px',height:'30px',flex:'none',borderRadius:'8px',background:s.bg,color:s.fg,display:'flex',alignItems:'center',justifyContent:'center' }" v-html="s.icon"></div>
 							<div>
@@ -81,7 +81,7 @@
 
 			<!-- ===== CONVERSATION ===== -->
 			<div v-else ref="threadEl" @scroll.passive="onThreadScroll" role="log" aria-label="Conversation with Jarvis" style="flex:1;overflow-y:auto;">
-				<div ref="threadInnerEl" style="max-width:1280px;margin:0 auto;padding:26px 40px 36px;display:flex;flex-direction:column;gap:26px;">
+				<div ref="threadInnerEl" class="jv-thread-inner" style="max-width:1280px;margin:0 auto;padding:26px 40px 36px;display:flex;flex-direction:column;gap:26px;">
 					<!-- macro run progress banner -->
 					<div v-if="macroRun && macroRun.conversation === currentId" class="jv-macrobar" :class="{ ok: macroRun.status === 'completed', err: macroRun.status === 'failed', stopped: macroRun.status === 'stopped' }">
 						<template v-if="macroRun.status === 'running'">
@@ -96,7 +96,7 @@
 					<template v-for="m in visibleMessages" :key="m.name">
 						<!-- user -->
 						<div v-if="m.role === 'user'" class="jv-umsg" style="display:flex;flex-direction:column;align-items:flex-end;">
-							<div v-if="m.content" style="max-width:78%;min-width:0;background:var(--surface-2);border:1px solid var(--border);border-radius:14px 14px 4px 14px;padding:10px 14px;font-size:14px;line-height:1.5;color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere;">{{ m.content }}</div>
+							<div v-if="m.content" class="jv-ububble" style="max-width:78%;min-width:0;background:var(--surface-2);border:1px solid var(--border);border-radius:14px 14px 4px 14px;padding:10px 14px;font-size:14px;line-height:1.5;color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere;">{{ m.content }}</div>
 							<div v-if="m.failed" style="display:flex;align-items:center;gap:8px;margin-top:4px;font-size:11.5px;color:var(--red);">
 								<span>Not sent</span>
 								<button @click="resendFailed(m)" style="background:none;border:none;color:var(--blue);font:inherit;cursor:pointer;padding:0;text-decoration:underline;">Retry</button>
@@ -367,7 +367,7 @@
 							<!-- the single tool running right now -->
 							<div v-if="showActivityDetail && currentTool" :key="currentTool.id" class="jv-toolrow">
 								<svg class="jv-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2.4" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9" /></svg>
-								<span>{{ toolPhrase(currentTool) }} <b>({{ currentTool.name }})</b></span>
+								<span>{{ toolPhrase(currentTool) }} <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:11px;color:var(--blue);">{{ currentTool.name }}</span></span>
 							</div>
 							<!-- compact tally of tools finished this turn -->
 							<div v-if="showActivityDetail && doneCount" class="jv-toolrow jv-tooldone">
@@ -432,7 +432,7 @@
 			</div>
 
 			<!-- ===== COMPOSER ===== -->
-			<div style="position:relative;flex:none;padding:12px 40px 16px;border-top:1px solid var(--border);background:var(--surface);">
+			<div class="jv-composer-wrap" style="position:relative;flex:none;padding:12px 40px 16px;border-top:1px solid var(--border);background:var(--surface);">
 				<!-- floats just above the composer; jumps the thread to the newest message -->
 				<transition name="jv-sd">
 					<button v-if="showScrollDown && !showWelcome && !booting" class="jv-scrolldown" @click="jumpToBottom" title="Jump to latest" aria-label="Jump to latest message">
@@ -4047,6 +4047,20 @@ onUnmounted(() => {
 	.jv-md :deep(.jv-mermaid:not([data-rendered]))::after { animation: none; }
 	.jv-settings, .jv-skills-modal, .jv-cdialog { animation: none; }
 }
+/* mobile layout (UX #12): the chat had fixed 40px desktop paddings + a 2-col
+   welcome grid; inline styles win over class rules, so these override with
+   !important. The "Connect phone" QR flow ships people straight here. */
+@media (max-width: 640px) {
+	.jv-thread-inner { padding: 22px 16px 28px !important; }
+	.jv-composer-wrap { padding: 10px 14px 14px !important; }
+	.jv-welcome-grid { grid-template-columns: 1fr !important; }
+	.jv-welcome-h1 { font-size: 24px !important; }
+	.jv-ububble { max-width: 92% !important; }
+}
+/* touch devices can't hover, so always show per-message actions/timestamps */
+@media (hover: none) {
+	.jv-msgbar { opacity: 1 !important; }
+}
 
 /* inline canvas/chart artifacts (rendered sandboxed) */
 .jv-canvas { margin-top: 12px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface); }
@@ -4222,7 +4236,7 @@ onUnmounted(() => {
 .jv-share-chip-name { font-weight: 500; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jv-share-chip-x { flex: none; width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; border: none; background: transparent; border-radius: 50%; color: var(--text-3); cursor: pointer; padding: 0; transition: background .12s, color .12s; }
 .jv-share-chip-x:hover { background: var(--red-bg); color: var(--red); }
-.jv-share-avatar { flex: none; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--blue); color: #fff; font-size: 10.5px; font-weight: 600; letter-spacing: .01em; box-shadow: 0 1px 2px rgba(37, 99, 235, .3); }
+.jv-share-avatar { flex: none; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--blue); color: #fff; font-size: 10.5px; font-weight: 600; letter-spacing: .01em; box-shadow: 0 1px 2px rgba(79, 70, 229, .3); }
 .jv-share-searchwrap { display: flex; align-items: center; gap: 8px; padding: 8px 11px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 9px; margin-bottom: 10px; }
 .jv-share-searchwrap:focus-within { border-color: var(--blue); }
 .jv-share-search { flex: 1; border: none; outline: none; background: transparent; font-family: inherit; font-size: 13px; color: var(--text); }
