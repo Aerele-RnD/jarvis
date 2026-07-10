@@ -5,8 +5,12 @@ here. run_scrutiny is integration-validated against a live GL (see the
 build validation); its pure helpers (threshold binding, pack loading)
 are covered here.
 """
+import contextlib
 import os
 import unittest
+
+import frappe
+from frappe.tests.utils import FrappeTestCase
 
 from jarvis.tools.compute_materiality import compute_materiality
 from jarvis.tools.run_scrutiny import (
@@ -16,7 +20,7 @@ from jarvis.tools.run_scrutiny import (
     _resolve_threshold,
     run_scrutiny,
 )
-from jarvis.exceptions import InvalidArgumentError
+from jarvis.exceptions import InvalidArgumentError, PermissionDeniedError
 
 _MARKETPLACE_PACK = "/home/vignesh/jarvis/jarvis-agent-marketplace/rules/scrutiny-pack.json"
 _BENCH_PACK = os.path.join(
@@ -292,3 +296,188 @@ class TestRunScrutinyLive(unittest.TestCase):
             touched | evaluated_clean,
             {"FPA-EXPENSE-VARIANCE-YOY", "FPA-PL-YOY-SWING"},
         )
+
+
+# ---------------------------------------------------------------------------
+# F5 (see .superpowers/sdd/audit-findings.md): run_scrutiny ran every
+# evaluator via raw frappe.db.sql with NO frappe.has_permission check
+# anywhere in the file, so any role could pull full GL/Account/Supplier data
+# for any company. These tests exercise the real permission decision (not a
+# mocked one) against real users/roles/company records, unlike the classes
+# above which pin the pure/live-GL behavior.
+# ---------------------------------------------------------------------------
+
+SCRUTINY_COMPANY_A = "_JPL Scrutiny Company A"
+SCRUTINY_COMPANY_B = "_JPL Scrutiny Company B"
+ROLE_NO_GRANTS = "JPL Scrutiny No Grants Role"
+USER_NO_GRANTS = "jpl-scrutiny-no-grants@example.com"
+# Accounts User grants role-level GL Entry + Company read, but this user is
+# additionally scoped by a Company User Permission to SCRUTINY_COMPANY_A -
+# the "restricted via a Company User Permission" case the audit findings
+# call out (a company-restricted user asking for a DIFFERENT company).
+USER_COMPANY_SCOPED = "jpl-scrutiny-company-scoped@example.com"
+# ERPNext's stock "Auditor" role: granted GL Entry read (via role
+# permission), but only Company "select" (not "read") - no Company User
+# Permission at all. This is exactly the over-block Fix 1 addresses: an
+# audit-agent user in this role must be able to run_scrutiny.
+USER_AUDITOR = "jpl-scrutiny-auditor@example.com"
+# A role with read on plenty of ERP doctypes but NOT GL Entry - must still
+# be denied by the GL Entry read gate, unaffected by the company-scope fix.
+USER_NON_GL = "jpl-scrutiny-sales@example.com"
+
+
+def _ensure_role(name: str) -> None:
+    if not frappe.db.exists("Role", name):
+        frappe.get_doc({
+            "doctype": "Role", "role_name": name, "desk_access": 1, "is_custom": 1,
+        }).insert(ignore_permissions=True)
+
+
+def _ensure_user(email: str, roles: tuple) -> None:
+    if not frappe.db.exists("User", email):
+        frappe.get_doc({
+            "doctype": "User",
+            "email": email,
+            "first_name": email.split("@")[0],
+            "send_welcome_email": 0,
+            "enabled": 1,
+            "user_type": "System User",
+        }).insert(ignore_permissions=True)
+    user = frappe.get_doc("User", email)
+    if "System Manager" in frappe.get_roles(email):
+        user.remove_roles("System Manager")
+    missing = [r for r in roles if r not in frappe.get_roles(email)]
+    if missing:
+        user.add_roles(*missing)
+
+
+def _ensure_company(name: str, abbr: str) -> None:
+    if frappe.db.exists("Company", name):
+        return
+    # Skip default chart-of-accounts / warehouse / tax-template creation -
+    # this fixture only needs a Company row for permission checks, not a
+    # functioning ledger, and CI sites may be missing the fixtures those
+    # hooks depend on (e.g. Warehouse Type "Transit").
+    frappe.local.flags.ignore_chart_of_accounts = True
+    try:
+        frappe.get_doc({
+            "doctype": "Company",
+            "company_name": name,
+            "abbr": abbr,
+            "default_currency": "INR",
+            "country": "India",
+        }).insert(ignore_permissions=True)
+    finally:
+        frappe.local.flags.ignore_chart_of_accounts = False
+
+
+def _ensure_user_permission(user: str, allow: str, for_value: str) -> None:
+    if frappe.db.exists("User Permission", {"user": user, "allow": allow, "for_value": for_value}):
+        return
+    frappe.get_doc({
+        "doctype": "User Permission", "user": user, "allow": allow, "for_value": for_value,
+    }).insert(ignore_permissions=True)
+
+
+@contextlib.contextmanager
+def _as(user: str):
+    orig = frappe.session.user
+    frappe.set_user(user)
+    try:
+        yield
+    finally:
+        frappe.set_user(orig)
+
+
+def _trivial_pack():
+    # tb_balance_check just sums debit/credit over the (empty) GL for the
+    # company - no seeded ledger data needed to exercise the permission
+    # gate, which fires before any SQL runs.
+    return {"pack_id": "inline-perm-test", "rules": [
+        {"rule_id": "T-TB", "kind": "tb_balance_check", "params": {}, "severity": "note",
+         "domain": "audit", "status": "active", "statement": "trial balance check"},
+    ]}
+
+
+class TestRunScrutinyPermissionGate(FrappeTestCase):
+    """F5: run_scrutiny must gate on GL Entry read + Company read before
+    running any raw SQL."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        frappe.set_user("Administrator")
+        # Roles/users are cheap, harmless to leave committed (reused
+        # idempotently across runs, mirrors test_permlevel_leak.py).
+        _ensure_role(ROLE_NO_GRANTS)
+        _ensure_user(USER_NO_GRANTS, roles=(ROLE_NO_GRANTS,))
+        _ensure_user(USER_COMPANY_SCOPED, roles=("Accounts User",))
+        _ensure_user(USER_AUDITOR, roles=("Auditor",))
+        _ensure_user(USER_NON_GL, roles=("Sales User",))
+        frappe.db.commit()
+        # Company/User Permission are NOT committed - a leftover Company
+        # row changes production inference elsewhere (this very file's
+        # TestRunScrutinyLive picks "the single Company on the site" as a
+        # default), so these must vanish via FrappeTestCase's automatic
+        # per-class rollback rather than persist across test modules.
+        # They're still visible within this class's own transaction (same
+        # DB connection), which is all these tests need.
+        _ensure_company(SCRUTINY_COMPANY_A, "JPLSA")
+        _ensure_company(SCRUTINY_COMPANY_B, "JPLSB")
+        _ensure_user_permission(USER_COMPANY_SCOPED, "Company", SCRUTINY_COMPANY_A)
+
+    def setUp(self):
+        super().setUp()
+        frappe.set_user("Administrator")
+
+    def tearDown(self):
+        frappe.set_user("Administrator")
+        super().tearDown()
+
+    def test_restricted_user_denied_before_any_query(self):
+        with _as(USER_NO_GRANTS), self.assertRaises(frappe.PermissionError):
+            run_scrutiny(
+                rule_pack=_trivial_pack(), company=SCRUTINY_COMPANY_A,
+                from_date="2026-01-01", to_date="2026-12-31",
+            )
+
+    def test_company_scoped_user_denied_for_other_company(self):
+        # Company scoping is enforced via the Company User Permission, not
+        # a Company-doctype read check (Fix 1) - the denial is now a
+        # jarvis PermissionDeniedError, not frappe.PermissionError.
+        with _as(USER_COMPANY_SCOPED), self.assertRaises(PermissionDeniedError):
+            run_scrutiny(
+                rule_pack=_trivial_pack(), company=SCRUTINY_COMPANY_B,
+                from_date="2026-01-01", to_date="2026-12-31",
+            )
+
+    def test_company_scoped_user_still_succeeds_for_own_company(self):
+        with _as(USER_COMPANY_SCOPED):
+            res = run_scrutiny(
+                rule_pack=_trivial_pack(), company=SCRUTINY_COMPANY_A,
+                from_date="2026-01-01", to_date="2026-12-31",
+            )
+        self.assertEqual(res["scope"]["company"], SCRUTINY_COMPANY_A)
+        self.assertEqual(res["skipped_unsupported"], [])
+
+    def test_auditor_role_can_run_without_company_user_permission(self):
+        # Auditor has GL Entry read but only Company "select" (not "read")
+        # and no Company User Permission scoping it - under the old
+        # Company-doctype-read gate this was denied entirely (the bug Fix 1
+        # addresses); under the fix it must succeed, unrestricted.
+        with _as(USER_AUDITOR):
+            res = run_scrutiny(
+                rule_pack=_trivial_pack(), company=SCRUTINY_COMPANY_A,
+                from_date="2026-01-01", to_date="2026-12-31",
+            )
+        self.assertEqual(res["scope"]["company"], SCRUTINY_COMPANY_A)
+        self.assertEqual(res["skipped_unsupported"], [])
+
+    def test_non_gl_role_still_denied(self):
+        # A role with no GL Entry read at all (e.g. Sales User) must still
+        # be denied - the company-scope rework must not loosen this gate.
+        with _as(USER_NON_GL), self.assertRaises(frappe.PermissionError):
+            run_scrutiny(
+                rule_pack=_trivial_pack(), company=SCRUTINY_COMPANY_A,
+                from_date="2026-01-01", to_date="2026-12-31",
+            )

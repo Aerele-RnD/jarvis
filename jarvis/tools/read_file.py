@@ -57,7 +57,11 @@ def read_file(
     """
     fdoc = _resolve_file(file_url, filename)
     if not frappe.has_permission("File", "read", doc=fdoc.name):
-        raise PermissionDeniedError(f"no read permission on file {fdoc.file_name!r}")
+        # Generic on purpose - do not echo the resolved file's real name back
+        # to a caller who isn't permitted to read it (see F12 in
+        # audit-findings.md: that would confirm the existence/name of a
+        # private file the caller has no other way to see).
+        raise PermissionDeniedError("no matching file found")
 
     ext = (fdoc.file_name or "").rsplit(".", 1)[-1].lower() if "." in (fdoc.file_name or "") else ""
     # encodings=[] -> raw bytes; skip Frappe's text-encoding guess loop, which
@@ -93,16 +97,30 @@ def _resolve_file(file_url: str | None, filename: str | None):
             raise InvalidArgumentError(f"no file found for url {file_url!r}")
         return frappe.get_doc("File", name)
     if filename:
-        rows = frappe.get_all(
+        # Gather name-matching candidates unfiltered, then gate EACH with the
+        # row-level has_permission check File actually enforces, returning the
+        # first (most recent) one the caller may read. This closes the F12 hole
+        # (the old code picked the most-recent match with NO permission check,
+        # so a private File the caller couldn't access could be handed back)
+        # while still letting a user read their OWN file: we deliberately do NOT
+        # pre-filter with get_list, because File's permission-query condition is
+        # a coarse, environment-sensitive approximation (attached-doc based) that
+        # can exclude a caller's own unattached private file - the per-candidate
+        # has_permission below is the authoritative gate.
+        candidates = frappe.get_all(
             "File", filters={"file_name": filename}, fields=["name"],
-            order_by="creation desc", limit=1,
+            order_by="creation desc", limit=20,
         ) or frappe.get_all(
             "File", filters={"file_name": ["like", f"%{filename}%"]}, fields=["name"],
-            order_by="creation desc", limit=1,
+            order_by="creation desc", limit=20,
         )
-        if not rows:
-            raise InvalidArgumentError(f"no file found named {filename!r}")
-        return frappe.get_doc("File", rows[0].name)
+        for row in candidates:
+            if frappe.has_permission("File", "read", doc=row.name):
+                return frappe.get_doc("File", row.name)
+        # Generic on purpose - covers both "nothing matched" and "something
+        # matched but you can't read it"; the latter must not confirm the
+        # existence/name of a private file the caller can't otherwise see.
+        raise InvalidArgumentError("no matching file found")
     raise InvalidArgumentError("pass file_url or filename to identify the attachment")
 
 

@@ -80,4 +80,5 @@ def amend_doc(doctype: str, name: str) -> dict:
     new_doc.amended_from = source.name
     new_doc.docstatus = 0
     new_doc.insert()  # runs validate(); autoname appends suffix
+    new_doc.apply_fieldlevel_read_permissions()
     return new_doc.as_dict()

@@ -74,4 +74,5 @@ def update_doc(doctype: str, name: str, changes: dict) -> dict:
     for field, value in changes.items():
         doc.set(field, value)
     doc.save()  # runs DocType validate() and on_update hooks
+    doc.apply_fieldlevel_read_permissions()
     return doc.as_dict()

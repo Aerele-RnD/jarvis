@@ -7,8 +7,10 @@ invoice PDF to the related Customer doc"). Without this tool the agent
 would have to re-render the PDF, doubling the storage cost and creating
 a content-hash mismatch in the File doctype's dedup table.
 
-The underlying ``frappe.utils.file_manager.add_attachments`` accepts a
-file_url OR a File doc name; we forward whichever the agent supplies.
+The underlying ``frappe.utils.file_manager.add_attachments`` needs the
+source File's **doc name**, not its url, so this tool resolves the
+docname from the agent-supplied ``file_url`` first (same pattern as
+``read_file.py``'s ``_resolve_file``).
 
 Permission contract: **write** permission on the target record (a user
 who can't write to the doc can't add an attachment to it, mirroring the
@@ -50,9 +52,17 @@ def attach_to_doc(
             f"no write permission on {target_doctype} {target_name}",
         )
 
+    # add_attachments (and File's own permission check inside it) resolves
+    # its `attachments` entries by File.name, never by file_url - look the
+    # docname up first (same pattern as read_file.py::_resolve_file) or
+    # every call raises DoesNotExistError.
+    source_file_name = frappe.db.get_value("File", {"file_url": file_url}, "name")
+    if not source_file_name:
+        raise InvalidArgumentError(f"no file found for url {file_url!r}")
+
     from frappe.utils.file_manager import add_attachments
 
-    add_attachments(target_doctype, target_name, [file_url])
+    add_attachments(target_doctype, target_name, [source_file_name])
 
     # add_attachments doesn't return a handle; look up the file the
     # caller just attached so the agent can confirm which File doc id

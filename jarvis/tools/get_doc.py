@@ -18,4 +18,5 @@ def get_doc(doctype: str, name: str) -> dict:
         raise PermissionDeniedError(f"no read permission on {doctype} {name}")
 
     doc = frappe.get_doc(doctype, name)
+    doc.apply_fieldlevel_read_permissions()
     return doc.as_dict(no_default_fields=False)

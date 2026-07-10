@@ -28,8 +28,9 @@ def get_party_dashboard_info(
     loyalty_program: str | None = None,
 ) -> dict:
     """Return ``{dashboard, party_type, party}`` where ``dashboard`` is
-    the raw per-company list ERPNext renders on the form (each entry
-    has billing_this_year, total_unpaid, currency, etc.).
+    the per-company list ERPNext renders on the form (each entry has
+    billing_this_year, total_unpaid, currency, etc.), stripped down to
+    only the companies the caller can read.
     """
     if party_type not in _VALID_PARTY_TYPES:
         raise InvalidArgumentError(
@@ -47,6 +48,14 @@ def get_party_dashboard_info(
     dashboard = _gdi(
         party_type=party_type, party=party, loyalty_program=loyalty_program,
     )
+    # The underlying helper builds this breakdown with frappe.get_all
+    # (ignore_permissions=True) and raw frappe.qb GL Entry queries - no
+    # company-level permission filter of its own - so a caller restricted
+    # to one company via a Company User Permission would otherwise see
+    # every other company that party has ever transacted with. Strip
+    # entries for companies the caller can't read.
+    if isinstance(dashboard, list):
+        dashboard = [d for d in dashboard if frappe.has_permission("Company", "read", doc=d.get("company"))]
     return {
         "dashboard": dashboard,
         "party_type": party_type,

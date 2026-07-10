@@ -10,9 +10,25 @@ be REPRODUCIBLE (same data -> same hits, re-runnable by a peer reviewer)
 and a real ledger is far larger than one chat turn can read, so the
 filtering happens set-based in the DB.
 
-Read-only over ERP data. Runs under the calling user's Frappe identity,
-so it can only see accounts the user is permitted to (company-level
-perms + the standard GL Entry query). Statutory rules
+Read-only over ERP data. Every rule evaluator runs raw ``frappe.db.sql``
+against GL Entry / Account / Supplier - NOT the standard GL Entry query -
+so Frappe's ORM-level permission filtering never applies to those rows.
+Before any evaluator runs, this tool explicitly checks the calling user
+has ``GL Entry`` read permission (``frappe.has_permission(..., throw=True)``)
+- this is what keeps non-financial roles (Sales User, Employee, ...) out
+- and, separately, that the resolved company is not excluded by a
+``Company`` **User Permission** scope. The company check deliberately
+does NOT require ``Company``-doctype read: ERPNext's own "Auditor" role
+is granted ``GL Entry`` read but only ``select`` (not ``read``) on
+``Company``, so gating on Company-doctype read would lock out a
+legitimate audit-agent user entirely. A caller with no Company User
+Permission is not company-restricted at all (the GL Entry check already
+gates who may run this tool); a caller WITH one may only scrutinize a
+company inside that scope - a user restricted to Company A cannot pass
+``company="Company B"``. A caller who fails either check is denied
+before a single query executes. These two checks are the entire
+permission gate - they are doctype/company-level, not per-account or
+per-transaction filtered the way ``frappe.get_list`` would be. Statutory rules
 (``status == "needs_legal_review"``) are SKIPPED unless
 ``include_unreviewed`` is set, and every statutory finding carries its
 section + effective_date + disclaimer.
@@ -29,8 +45,9 @@ import os
 from decimal import Decimal
 
 import frappe
+from frappe.core.doctype.user_permission.user_permission import get_user_permissions
 
-from jarvis.exceptions import InvalidArgumentError
+from jarvis.exceptions import InvalidArgumentError, PermissionDeniedError
 
 _PACK_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "agents", "rule_packs")
 INSTALLATION_DT = "Jarvis Agent Installation"
@@ -610,6 +627,25 @@ def run_scrutiny(
     persist (this runs under the caller's identity)."""
     pack = _load_pack(rule_pack)
     scope = _resolve_scope(company, fiscal_year, from_date, to_date)
+
+    # Every evaluator below runs raw SQL over GL Entry/Account/Supplier -
+    # Frappe's ORM permission layer never sees these queries, so the gate
+    # has to be explicit. GL Entry read (doctype-level) keeps non-financial
+    # roles out entirely. Cross-company scoping is enforced via Company
+    # User Permissions, NOT Company-doctype read: ERPNext's "Auditor" role
+    # has GL Entry read but only "select" (not "read") on Company, so
+    # gating on Company read would deny a legitimate audit user outright.
+    # No Company User Permission -> not company-restricted -> allowed
+    # (already gated by the GL Entry check above). A Company User
+    # Permission for a DIFFERENT company than the one requested -> denied.
+    frappe.has_permission("GL Entry", "read", throw=True)
+    company_scope = get_user_permissions(frappe.session.user).get("Company")
+    if company_scope:
+        allowed_companies = {up.get("doc") for up in company_scope}
+        if scope["company"] not in allowed_companies:
+            raise PermissionDeniedError(
+                f"no access to company {scope['company']!r} (restricted by Company User Permission)"
+            )
 
     materiality = None
     if engagement_config:
