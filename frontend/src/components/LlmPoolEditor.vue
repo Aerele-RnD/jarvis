@@ -8,74 +8,45 @@
   <div class="jv-llm-editor" style="font-family:inherit;color:var(--text);">
     <div v-if="err" style="color:var(--red);font-size:13px;margin-bottom:12px;">{{ err }}</div>
 
-    <!-- Setup mode tabs + derived Direct/Proxy badge - hidden when the host
-         allows only one mode (onboarding's quick-only editor). -->
-    <div v-if="!singleMode" style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
-      <div role="tablist" style="display:inline-flex;border:1px solid var(--border);border-radius:9px;overflow:hidden;">
-        <button v-for="t in modeTabs" :key="t.value" role="tab" :aria-selected="llmMode===t.value"
-                @click="setMode(t.value)" :disabled="!editable || (t.value==='quick' && quickLocked)"
-                :title="t.value==='quick' && quickLocked ? 'Your pool has multiple models - edit them in Custom. Remove models to switch to Quick.' : ''"
-                :style="{fontSize:'14px',padding:'10px 18px',border:'none',
-                         cursor: (!editable || (t.value==='quick' && quickLocked)) ? 'not-allowed' : 'pointer',
-                         opacity: (t.value==='quick' && quickLocked) ? '0.4' : '1',
-                         background: llmMode===t.value ? 'var(--blue-bg)' : 'var(--surface)',
-                         color: llmMode===t.value ? 'var(--blue)' : 'var(--text-3)',
-                         fontWeight: llmMode===t.value ? '600' : '400'}">{{ t.label }}</button>
-      </div>
-      <span v-if="badgeLabel" style="font-size:12px;font-weight:600;padding:4px 11px;border-radius:20px;background:var(--green-bg);color:var(--green);">
-        {{ badgeLabel }}
-      </span>
-    </div>
-
-    <!-- ===================== PRESET ===================== -->
-    <section v-if="llmMode==='preset'" style="margin-bottom:18px;">
-      <p v-if="!catalog.length" style="font-size:14px;color:var(--text-3);margin:0 0 12px;">
-        Couldn't load presets. Use <b>Quick</b> or <b>Custom</b>.
-      </p>
-      <div v-else style="max-height:440px;overflow-y:auto;padding-right:4px;">
-        <!-- single_vendor presets -->
-        <div v-if="singleVendorPresets.length" style="margin-bottom:10px;">
-          <div style="font-size:13px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.03em;margin-bottom:9px;">Single-vendor resilience</div>
-          <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;">
-            <button v-for="entry in singleVendorPresets" :key="entry.key"
-                    @click="selectPreset(entry)" :disabled="!editable" :style="presetCardStyle(entry)">
-              <div style="font-size:14px;font-weight:600;">{{ entry.label }}</div>
-              <div style="font-size:13px;color:var(--text-2);margin-top:4px;line-height:1.45;">{{ entry.blurb }}</div>
-            </button>
-          </div>
+    <!-- ============================================================
+         UNIFIED FAILOVER LIST + CONFIG SECTION (!singleMode only - the
+         Account/Settings editor). Onboarding never reaches this branch
+         (singleMode forces llmMode==='quick' below). Phase 1: read list
+         only; config section arrives in phase 2. ============================================================ -->
+    <section v-if="!singleMode" style="margin-bottom:18px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap;">
+        <div style="font-size:13px;font-weight:600;color:var(--text-2);letter-spacing:.03em;text-transform:uppercase;">
+          AI models<span class="jv-pool-heading-suffix"> · tried in order</span>
         </div>
-        <!-- cross_vendor presets -->
-        <div v-if="crossVendorPresets.length">
-          <div style="font-size:13px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.03em;margin:14px 0 9px;">Cross-vendor strategies</div>
-          <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;">
-            <button v-for="entry in crossVendorPresets" :key="entry.key"
-                    @click="selectPreset(entry)" :disabled="!editable" :style="presetCardStyle(entry)">
-              <div style="font-size:14px;font-weight:600;">{{ entry.label }}</div>
-              <div style="font-size:13px;color:var(--text-2);margin-top:4px;line-height:1.45;">{{ entry.blurb }}</div>
-            </button>
-          </div>
-        </div>
+        <span v-if="badgeLabel" style="font-size:12px;font-weight:600;padding:4px 11px;border-radius:20px;background:var(--green-bg);color:var(--green);">
+          {{ badgeLabel }}
+        </span>
       </div>
 
-      <!-- Progressive vendor key fields for the chosen preset (all-or-nothing) -->
-      <div v-if="selectedPreset && vendorsForPreset.length"
-           style="margin-top:12px;padding:12px;background:var(--amber-bg);border:1px solid var(--amber-bd);border-radius:8px;">
-        <div style="font-size:13px;color:var(--amber);font-weight:600;margin-bottom:8px;">
-          Provide API keys for this preset:
-        </div>
-        <div v-for="vendor in vendorsForPreset" :key="vendor" style="margin-bottom:8px;">
-          <label :style="{fontSize:'12px',color:'var(--text-2)',display:'block',marginBottom:'3px'}">
-            {{ providerLabel(vendor) }} API key<span v-if="missingVendors.includes(vendor)" style="color:var(--red)"> *</span>
-          </label>
-          <input :value="keysByVendor[vendor] || ''" @input="keysByVendor[vendor] = $event.target.value"
-                 type="password" :disabled="!editable" :placeholder="providerLabel(vendor) + ' API key'"
-                 style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;" />
-        </div>
+      <div v-if="!rows.length" style="font-size:13px;color:var(--text-3);padding:8px 0;">No models yet. Add one below.</div>
+
+      <div v-for="(row, i) in rows" :key="i" class="jv-flist-row">
+        <span class="jv-pool-badge">{{ i + 1 }}</span>
+        <span class="jv-flist-chip">{{ sourceChip(row) }}</span>
+        <span class="jv-flist-model">{{ row.model || row.provider || '—' }}</span>
+        <span class="jv-pool-dot" :class="'jv-pool-dot--' + accountHealth(row).level" aria-hidden="true"></span>
+        <span v-if="accountHealth(row).label" class="jv-pool-acct-health" :class="'jv-pool-acct-health--' + accountHealth(row).level" :title="accountHealth(row).title">{{ accountHealth(row).label }}</span>
+        <span class="jv-flist-acts">
+          <button @click="move(i,-1)" :disabled="!editable || i===0" title="Up" class="jv-pool-iconbtn">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg>
+          </button>
+          <button @click="move(i,1)" :disabled="!editable || i===rows.length-1" title="Down" class="jv-pool-iconbtn">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+          <button v-if="editable" @click="remove(i)" class="jv-btn jv-btn--sm jv-btn--ghost">Remove</button>
+        </span>
       </div>
+
+      <button v-if="editable" class="jv-btn jv-btn--sm jv-btn--primary">+ Add model</button>
     </section>
 
     <!-- ================ QUICK / CUSTOM (shared rows) ================ -->
-    <section v-else style="margin-bottom:18px;">
+    <section v-if="singleMode" style="margin-bottom:18px;">
       <!-- Onboarding (singleMode) drops this hint line: the step's own subtitle
            ("Pick which AI powers Jarvis…") already covers it, per the preview. -->
       <p v-if="llmMode==='quick' && !singleMode" style="font-size:14px;color:var(--text-3);margin:0 0 12px;">
@@ -598,6 +569,14 @@ function copyTextWithFallback(text) {
   })
 }
 
+// Compact "source" label for a list row (unified failover list, !singleMode
+// only) - e.g. "Subscription · OpenAI" / "API key · Anthropic".
+function sourceChip(row) {
+  if (!row) return ""
+  if (row.credentialType === "subscription") return "Subscription · " + (row.upstream === "google" ? "Google" : "OpenAI")
+  return "API key · " + (row.provider || "—")
+}
+
 function newRow() {
   return {
     provider: providerOptions[0] || "Anthropic", model: "", apiKey: "", baseUrl: "", hasKey: false,
@@ -841,8 +820,12 @@ async function load() {
           !(r0.apiKey || "").trim() && !r0.hasKey && !(r0.accounts && r0.accounts.length)) {
         setCredType(r0, "subscription")
       }
-    } else if (!props.modes.includes(llmMode.value)) {
-      llmMode.value = props.modes[0] || "quick"
+    } else {
+      // Settings (!singleMode) editor: always the unified failover-list view -
+      // Quick/Preset tabs are gone, "From a preset" now lives inside the
+      // config-section add flow (seedFromPreset/selectPreset), so llmMode never
+      // needs to be "preset" or "quick" here.
+      llmMode.value = "custom"
       selectedPreset.value = ""
       if (!rows.value.length) rows.value = [newRow()]
     }
@@ -1068,6 +1051,21 @@ defineExpose({ save })
   .jv-pool-segbtn, .jv-pool-iconbtn, .jv-pool-addrow { transition: none; }
   .jv-pool-syncpill--pending .jv-pool-syncpill-ic { animation: none; opacity: .7; }
 }
+
+/* Unified failover list row (!singleMode only) - order badge, source chip,
+   model id, health dot, RIGHT-ALIGNED actions cluster. */
+.jv-flist-row {
+  display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
+  border: 1px solid var(--border); border-radius: 9px; padding: 9px 11px; margin-bottom: 8px;
+  background: var(--surface-1);
+}
+.jv-flist-chip {
+  flex: none; font-size: 11.5px; font-weight: 600; color: var(--text-2);
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px;
+  padding: 3px 9px; white-space: nowrap;
+}
+.jv-flist-model { font-size: 13.5px; color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jv-flist-acts { margin-left: auto; display: flex; gap: 6px; align-items: center; flex: none; }
 
 /* Onboarding method cards (preview .method/.m-opt): sel = blue border + 3px
    ring; icon tile flips from neutral to blue tint when selected. Preview's
