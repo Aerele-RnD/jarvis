@@ -1,6 +1,17 @@
 <template>
 	<div class="jv-settings-body">
-		<div style="font-size:12px;color:var(--text-3);margin:0 0 14px;">Estimated tokens, messages and tool activity for your workspace. <span class="jv-est">est.</span></div>
+		<template v-if="measured">
+			<div class="jv-set-sec">Measured usage</div>
+			<div class="jv-set-row"><span>{{ usage.month_label || "This month" }}</span><b>{{ fmtTokens(measured.month_tokens) }}</b></div>
+			<div class="jv-set-row"><span>All time</span><b>{{ fmtTokens(measured.total_tokens) }}</b></div>
+			<div v-if="measured.last_usage_at" class="jv-set-row"><span>Last activity</span><b>{{ timeAgo(measured.last_usage_at) }}</b></div>
+			<template v-if="measured.monthly_token_limit > 0">
+				<div class="jv-usage-bar"><div class="jv-usage-fill" :style="{ width: measuredPct + '%' }"></div></div>
+				<div class="jv-set-hint">{{ fmtTokens(measured.month_tokens) }} / {{ fmtTokens(measured.monthly_token_limit) }} this month · {{ measuredPct }}%</div>
+			</template>
+			<div v-else class="jv-set-hint">No monthly limit set on your account.</div>
+		</template>
+		<div style="font-size:12px;color:var(--text-3);margin-bottom:14px;" :style="{ marginTop: measured ? '20px' : '0' }">Estimated tokens, messages and tool activity for your workspace. <span class="jv-est">est.</span></div>
 		<div class="jv-statgrid">
 			<div class="jv-stat"><div class="jv-stat-label">Messages</div><div class="jv-stat-val">{{ s ? s.msgCount : "—" }}</div><div class="jv-stat-sub">{{ s ? `${s.userMsgCount} you · ${s.assistantMsgCount} Jarvis` : "no chat" }}</div></div>
 			<div class="jv-stat"><div class="jv-stat-label">Tool calls</div><div class="jv-stat-val">{{ s ? s.sessionToolCalls : "—" }}</div><div class="jv-stat-sub">this session</div></div>
@@ -23,12 +34,23 @@
 <script setup>
 import { ref, computed, onMounted, watch } from "vue"
 import { useShellStore } from "@/stores/shell"
+import { timeAgo } from "@/utils/datetime"
 import * as api from "@/api"
 
 const shell = useShellStore()
 const s = computed(() => shell.chatContext?.sessionStats || null)
 
 const usage = ref(null)
+
+// Real (gateway-recorded) usage, added to get_usage()'s response (design doc
+// §6). null until the backend ships it or the user has no recorded usage yet
+// (self-hosted tenants stay null in v1 — no recording on that path).
+const measured = computed(() => (usage.value && usage.value.measured) || null)
+const measuredPct = computed(() => {
+	const m = measured.value
+	if (!m || !m.monthly_token_limit) return 0
+	return Math.min(100, Math.round((Number(m.month_tokens || 0) / Number(m.monthly_token_limit)) * 100))
+})
 
 async function loadUsage() {
 	try {

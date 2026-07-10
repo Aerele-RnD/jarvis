@@ -730,6 +730,30 @@ def handle_chat_send(payload: dict) -> None:
 						terminal = _consume_relay(sess.relay_turn_events(
 							conv.session_key, ack.get("runId") or run_id,
 						))
+					# Real usage accounting (design section 3): a genuinely
+					# completed run leaves fresh last-run token counts on the
+					# gateway's sessions.list row. Read them NOW, while `sess` is
+					# still checked out, and record this turn's delta. Only on
+					# relay:final (a cached completed-replay or a parked
+					# interrupt/error must NOT re-count). Delegated to
+					# jarvis.chat.usage; wrapped so usage accounting can never
+					# break the turn.
+					if terminal.get("kind") == "relay:final":
+						try:
+							from jarvis.chat import usage as _usage
+
+							_rows = sess.list_sessions()
+							_row = next(
+								(r for r in _rows if r.get("key") == conv.session_key),
+								None,
+							)
+							if _row:
+								_usage.record_turn_usage(conv.session_key, _row)
+						except Exception:
+							frappe.log_error(
+								title="chat: usage record hook failed",
+								message=frappe.get_traceback(),
+							)
 			except OpenclawUnreachableError as e:
 				# Pre-ack only (relay_turn_events never raises): the run never
 				# started, so this is a real, retriable error. Gray zone: a

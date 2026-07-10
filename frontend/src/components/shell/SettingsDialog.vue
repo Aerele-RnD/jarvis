@@ -57,6 +57,16 @@
 							<span>Billing &amp; metering</span>
 						</button>
 					</template>
+
+					<!-- ADMINISTRATION (Jarvis Admin role, or System Manager — server
+					     re-checks require_jarvis_admin() independently either way) -->
+					<template v-if="isAdmin">
+						<div class="jv-settings-group">Administration<span class="sm-tag">Admin</span></div>
+						<button class="jv-settings-navitem" :class="{ on: section === 'usageadmin' }" @click="go('usageadmin')">
+							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg>
+							<span>User usage</span>
+						</button>
+					</template>
 				</div>
 
 				<!-- ===== main ===== -->
@@ -95,6 +105,7 @@ const PlanBillingPane = defineAsyncComponent(() => import("@/components/settings
 const AiModelsPane = defineAsyncComponent(() => import("@/components/settings/AiModelsPane.vue"))
 const ConnectionPane = defineAsyncComponent(() => import("@/components/settings/ConnectionPane.vue"))
 const BillingMeteringPane = defineAsyncComponent(() => import("@/components/settings/BillingMeteringPane.vue"))
+const UsageAdminPane = defineAsyncComponent(() => import("@/components/settings/UsageAdminPane.vue"))
 
 // Theme MUST come from the same singleton the Appearance pane + header toggle
 // WRITE to (@/theme's useJarvisTheme) — @/composables/useTheme is a separate
@@ -103,11 +114,15 @@ const BillingMeteringPane = defineAsyncComponent(() => import("@/components/sett
 const { effectiveDark: dark, paletteVars } = useJarvisTheme()
 const store = useShellStore()
 
-// Only the ACCOUNT & BILLING group is gated (server already enforces the
-// underlying endpoints). Non-SM users see WORKSPACE only.
+// ACCOUNT & BILLING is gated on System Manager; ADMINISTRATION is gated on
+// window.is_jarvis_admin (true for System Managers too — see design doc §2).
+// Both are UX-only gates; the server enforces the real permission on every
+// underlying endpoint regardless of what the client hides.
 const isSM = !!window.is_system_manager
+const isAdmin = !!window.is_jarvis_admin
 
-const GATED = ["plan", "aimodels", "connection", "billing"]
+const GATED_SM = ["plan", "aimodels", "connection", "billing"]
+const GATED_ADMIN = ["usageadmin"]
 const PANES = {
 	general: GeneralPane,
 	usage: UsagePane,
@@ -119,6 +134,7 @@ const PANES = {
 	aimodels: AiModelsPane,
 	connection: ConnectionPane,
 	billing: BillingMeteringPane,
+	usageadmin: UsageAdminPane,
 }
 const LABELS = {
 	general: "General",
@@ -131,13 +147,16 @@ const LABELS = {
 	aimodels: "AI models",
 	connection: "Connection",
 	billing: "Billing & metering",
+	usageadmin: "User usage",
 }
 
-// Guard: a gated section requested by a non-SM user falls back to General.
+// Guard: a gated section requested by a non-SM/non-admin user falls back to
+// General.
 const section = computed(() => {
 	const s = store.settingsSection
 	if (!PANES[s]) return "general"
-	if (GATED.includes(s) && !isSM) return "general"
+	if (GATED_SM.includes(s) && !isSM) return "general"
+	if (GATED_ADMIN.includes(s) && !isAdmin) return "general"
 	return s
 })
 const pane = computed(() => PANES[section.value])

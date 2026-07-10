@@ -969,6 +969,44 @@ def _est_tokens(text: str | None) -> int:
 	return (len(text) + 3) // 4
 
 
+def _measured_usage(user: str) -> dict:
+	"""Real per-turn token usage for ``user`` from the ``Jarvis User Settings``
+	row (design section 3). All zeros / None when no row exists. Rollover-aware:
+	a stale ``usage_month`` reads as 0 tokens for the current month."""
+	measured = {
+		"month_tokens": 0,
+		"month_input_tokens": 0,
+		"month_output_tokens": 0,
+		"total_tokens": 0,
+		"monthly_token_limit": 0,
+		"usage_month": None,
+		"last_usage_at": None,
+	}
+	row = frappe.db.get_value(
+		"Jarvis User Settings",
+		{"user": user},
+		[
+			"usage_month", "month_input_tokens", "month_output_tokens",
+			"month_tokens", "total_tokens", "monthly_token_limit", "last_usage_at",
+		],
+		as_dict=True,
+	)
+	if not row:
+		return measured
+	current_month = frappe.utils.now_datetime().strftime("%Y-%m")
+	stale = row.usage_month != current_month
+	measured.update({
+		"month_tokens": 0 if stale else int(row.month_tokens or 0),
+		"month_input_tokens": 0 if stale else int(row.month_input_tokens or 0),
+		"month_output_tokens": 0 if stale else int(row.month_output_tokens or 0),
+		"total_tokens": int(row.total_tokens or 0),
+		"monthly_token_limit": int(row.monthly_token_limit or 0),
+		"usage_month": row.usage_month,
+		"last_usage_at": row.last_usage_at,
+	})
+	return measured
+
+
 @frappe.whitelist()
 def get_usage(conversation: str | None = None) -> dict:
 	"""Estimated token usage for the current user — this chat, this month, and
@@ -993,6 +1031,11 @@ def get_usage(conversation: str | None = None) -> dict:
 		"budget_monthly": budget,
 		"month_label": now_datetime().strftime("%B %Y"),
 	}
+	# Real (measured) usage from the caller's Jarvis User Settings row (design
+	# section 3). Distinct from the chars/4 estimate above: these are recorded
+	# per-turn token deltas. No lazy create on this read path — a missing row =
+	# all zeros. Rollover-aware: a stale usage_month means 0 tokens this month.
+	out["measured"] = _measured_usage(user)
 	if not convs:
 		return out
 

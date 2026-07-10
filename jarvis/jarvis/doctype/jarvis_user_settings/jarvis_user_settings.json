@@ -1,0 +1,176 @@
+{
+  "doctype": "DocType",
+  "name": "Jarvis User Settings",
+  "module": "Jarvis",
+  "issingle": 0,
+  "custom": 0,
+  "engine": "InnoDB",
+  "autoname": "field:user",
+  "field_order": [
+    "user",
+    "prefs_section",
+    "notify_enabled",
+    "activity_detail",
+    "limit_section",
+    "monthly_token_limit",
+    "usage_section",
+    "usage_month",
+    "month_input_tokens",
+    "month_output_tokens",
+    "month_tokens",
+    "total_tokens",
+    "last_usage_at",
+    "last_synced_at"
+  ],
+  "fields": [
+    {
+      "fieldname": "user",
+      "fieldtype": "Link",
+      "label": "User",
+      "options": "User",
+      "reqd": 1,
+      "unique": 1,
+      "in_list_view": 1,
+      "in_standard_filter": 1,
+      "description": "Frappe user these settings belong to (one row per user)."
+    },
+    {
+      "fieldname": "prefs_section",
+      "fieldtype": "Section Break",
+      "label": "Chat Preferences"
+    },
+    {
+      "fieldname": "notify_enabled",
+      "fieldtype": "Check",
+      "label": "Notifications Enabled",
+      "default": "1"
+    },
+    {
+      "fieldname": "activity_detail",
+      "fieldtype": "Check",
+      "label": "Show Activity Detail",
+      "default": "0"
+    },
+    {
+      "fieldname": "limit_section",
+      "fieldtype": "Section Break",
+      "label": "Usage Limit"
+    },
+    {
+      "fieldname": "monthly_token_limit",
+      "fieldtype": "Int",
+      "label": "Monthly Token Limit",
+      "permlevel": 1,
+      "default": "0",
+      "description": "Per-user monthly token cap. 0 = unlimited. Admins only."
+    },
+    {
+      "fieldname": "usage_section",
+      "fieldtype": "Section Break",
+      "label": "Usage"
+    },
+    {
+      "fieldname": "usage_month",
+      "fieldtype": "Data",
+      "label": "Usage Month",
+      "permlevel": 1,
+      "read_only": 1,
+      "no_copy": 1,
+      "description": "Month (YYYY-MM) the month_* counters currently accumulate into."
+    },
+    {
+      "fieldname": "month_input_tokens",
+      "fieldtype": "Int",
+      "label": "Month Input Tokens",
+      "permlevel": 1,
+      "read_only": 1,
+      "no_copy": 1
+    },
+    {
+      "fieldname": "month_output_tokens",
+      "fieldtype": "Int",
+      "label": "Month Output Tokens",
+      "permlevel": 1,
+      "read_only": 1,
+      "no_copy": 1
+    },
+    {
+      "fieldname": "month_tokens",
+      "fieldtype": "Int",
+      "label": "Month Tokens",
+      "permlevel": 1,
+      "read_only": 1,
+      "no_copy": 1
+    },
+    {
+      "fieldname": "total_tokens",
+      "fieldtype": "Int",
+      "label": "Total Tokens",
+      "permlevel": 1,
+      "read_only": 1,
+      "no_copy": 1
+    },
+    {
+      "fieldname": "last_usage_at",
+      "fieldtype": "Datetime",
+      "label": "Last Usage At",
+      "permlevel": 1,
+      "read_only": 1,
+      "no_copy": 1
+    },
+    {
+      "fieldname": "last_synced_at",
+      "fieldtype": "Datetime",
+      "label": "Last Synced At",
+      "permlevel": 1,
+      "read_only": 1,
+      "no_copy": 1,
+      "description": "When admin_sync_usage last refreshed per-session snapshots."
+    }
+  ],
+  "permissions": [
+    {
+      "role": "All",
+      "permlevel": 0,
+      "read": 1,
+      "write": 1,
+      "if_owner": 1
+    },
+    {
+      "role": "All",
+      "permlevel": 1,
+      "read": 1
+    },
+    {
+      "role": "System Manager",
+      "permlevel": 0,
+      "read": 1,
+      "write": 1,
+      "create": 1,
+      "delete": 1
+    },
+    {
+      "role": "System Manager",
+      "permlevel": 1,
+      "read": 1,
+      "write": 1
+    },
+    {
+      "role": "Jarvis Admin",
+      "permlevel": 0,
+      "read": 1,
+      "write": 1,
+      "create": 1,
+      "delete": 1
+    },
+    {
+      "role": "Jarvis Admin",
+      "permlevel": 1,
+      "read": 1,
+      "write": 1
+    }
+  ],
+  "sort_field": "modified",
+  "sort_order": "DESC",
+  "track_changes": 0
+}

@@ -147,9 +147,16 @@ class WikiPermTestCase(FrappeTestCase):
 # --------------------------------------------------------------------------- #
 class TestScopeModel(WikiPermTestCase):
 	def test_wiki_roles_seeded_idempotently(self):
+		from jarvis.permissions import JARVIS_ADMIN_ROLE, JARVIS_USER_ROLE
+
 		learning_roles.after_migrate()
 		learning_roles.after_migrate()
-		for role in (wiki_permissions.WIKI_USER_ROLE, wiki_permissions.WIKI_MANAGER_ROLE):
+		# after_migrate seeds the wiki roles AND the app-access / tenant-admin
+		# roles (jarvis.permissions), all idempotent + desk-access.
+		for role in (
+			wiki_permissions.WIKI_USER_ROLE, wiki_permissions.WIKI_MANAGER_ROLE,
+			JARVIS_USER_ROLE, JARVIS_ADMIN_ROLE,
+		):
 			self.assertTrue(frappe.db.exists("Role", role))
 			self.assertEqual(
 				frappe.db.get_value("Role", role, "desk_access"), 1, role

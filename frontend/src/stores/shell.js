@@ -45,15 +45,27 @@ function clearSettingsActions() {
 	for (const k of Object.keys(settingsActions)) delete settingsActions[k]
 }
 
-// Device-local behaviour prefs (localStorage, per device). These were owned by
-// ChatView, but the settings dialog is now hoisted to the shell — a single
-// source here keeps the GeneralPane toggle and ChatView's live gating in sync
-// same-tab (a pane-local ref could not notify ChatView). The "1"/"0" encoding
-// is kept for backward compat with existing stored values.
+// Device-local behaviour prefs. These were owned by ChatView, but the
+// settings dialog is now hoisted to the shell — a single source here keeps
+// the GeneralPane toggle and ChatView's live gating in sync same-tab (a
+// pane-local ref could not notify ChatView). localStorage is the boot-time
+// cache (renders instantly, no network wait); `Jarvis User Settings` on the
+// server is the roaming source of truth once GeneralPane's onMounted fetches
+// get_my_settings and calls syncSettingsFromServer below. The "1"/"0"
+// encoding is kept for backward compat with existing stored values.
 const activityDetail = ref(localStorage.getItem("jarvis-activity-detail") === "1")
-function setActivityDetail(v) {
+// `persist:false` is used only by syncSettingsFromServer, to apply a value
+// that already came FROM the server without immediately POSTing it back.
+function setActivityDetail(v, { persist = true } = {}) {
 	activityDetail.value = !!v
 	try { localStorage.setItem("jarvis-activity-detail", v ? "1" : "0") } catch (e) {}
+	if (persist) {
+		// Fire-and-forget: never blocks the toggle UI; failure surfaces as a
+		// toast (same as renameConversation/toggleStar below) but the local
+		// (localStorage-cached) value already stuck, so the UI stays correct.
+		api.updateMySettings({ activity_detail: activityDetail.value ? 1 : 0 })
+			.catch((e) => toast.error(errMsg(e)))
+	}
 }
 const notifyEnabled = ref(
 	typeof Notification !== "undefined" &&
@@ -65,6 +77,7 @@ async function toggleNotify() {
 	if (notifyEnabled.value) {
 		notifyEnabled.value = false
 		try { localStorage.setItem("jarvis-notify", "0") } catch (e) {}
+		api.updateMySettings({ notify_enabled: 0 }).catch((e) => toast.error(errMsg(e)))
 		return
 	}
 	let perm = Notification.permission
@@ -74,6 +87,21 @@ async function toggleNotify() {
 	if (perm === "granted") {
 		notifyEnabled.value = true
 		try { localStorage.setItem("jarvis-notify", "1") } catch (e) {}
+		api.updateMySettings({ notify_enabled: 1 }).catch((e) => toast.error(errMsg(e)))
+	}
+}
+// Called by GeneralPane's onMounted (get_my_settings) once the server row is
+// known. Never persists back (persist:false) — this IS the server's value.
+// notify_enabled is ANDed with the live browser permission: the server field
+// is account-level intent, but a device that never granted Notification
+// permission still can't fire one, so local state must reflect that.
+function syncSettingsFromServer(data) {
+	if (!data) return
+	if (data.activity_detail !== undefined) setActivityDetail(!!data.activity_detail, { persist: false })
+	if (data.notify_enabled !== undefined) {
+		const allowed = typeof Notification !== "undefined" && Notification.permission === "granted"
+		notifyEnabled.value = !!data.notify_enabled && allowed
+		try { localStorage.setItem("jarvis-notify", notifyEnabled.value ? "1" : "0") } catch (e) {}
 	}
 }
 
@@ -264,6 +292,7 @@ const store = reactive({
 	clearSettingsActions,
 	setActivityDetail,
 	toggleNotify,
+	syncSettingsFromServer,
 	applyRemoteRename,
 	applyRemoteNew,
 })

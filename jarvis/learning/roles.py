@@ -24,7 +24,12 @@ from __future__ import annotations
 import frappe
 from frappe.utils import cint
 
-from jarvis.permissions import JARVIS_USER_ROLE, ensure_jarvis_user_role
+from jarvis.permissions import (
+	JARVIS_ADMIN_ROLE,
+	JARVIS_USER_ROLE,
+	ensure_jarvis_admin_role,
+	ensure_jarvis_user_role,
+)
 
 _DT_CACHE_KEY = "jarvis_learning_roles_for_doctype"
 _CACHE_TTL_S = 300
@@ -159,6 +164,11 @@ def after_migrate() -> None:
 		# source of truth), seeded here so it exists before the grant patch runs.
 		if not frappe.db.exists("Role", JARVIS_USER_ROLE):
 			ensure_jarvis_user_role()
+			created = True
+		# The tenant-admin role (design section 2), same single-source-of-truth
+		# definition in jarvis/permissions.py. Idempotent.
+		if not frappe.db.exists("Role", JARVIS_ADMIN_ROLE):
+			ensure_jarvis_admin_role()
 			created = True
 		if created:
 			frappe.db.commit()

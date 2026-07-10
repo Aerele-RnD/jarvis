@@ -48,6 +48,14 @@ GATED_ENDPOINTS = [
 	("jarvis.oauth.api", "complete_pool_account_signin",
 		{"nonce": "x" * 48, "redirected_url": "http://localhost:1455/auth/callback?code=A&state=B"}),
 	("jarvis.oauth.api", "disconnect", {}),
+	# Tenant-admin usage endpoints (design section 4) — gated by
+	# require_jarvis_admin. A non-admin caller must be refused; admin_set_user_limit
+	# needs an existing user so Administrator gets past the gate into the body
+	# (Administrator always exists) rather than tripping the unknown_user guard.
+	("jarvis.chat.user_settings_api", "admin_list_user_usage", {}),
+	("jarvis.chat.user_settings_api", "admin_set_user_limit",
+		{"user": "Administrator", "monthly_token_limit": 0}),
+	("jarvis.chat.user_settings_api", "admin_sync_usage", {}),
 ]
 
 
