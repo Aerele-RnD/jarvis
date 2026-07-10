@@ -114,9 +114,9 @@
 .jv-btn:active { transform: scale(.97); }
 .jv-btn:disabled { opacity: .5; cursor: default; pointer-events: none; box-shadow: none; transform: none; }
 .jv-btn svg { flex: none; }
-.jv-btn--primary { background: var(--blue); border-color: var(--blue); color: #fff; box-shadow: 0 1px 2px rgba(20, 20, 30, .12); }
+.jv-btn--primary { background: var(--blue); border-color: var(--blue); color: var(--blue-fg); box-shadow: 0 1px 2px rgba(20, 20, 30, .12); }
 .jv-btn--primary:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(20, 20, 30, .18); }
-.jv-btn--primary svg { stroke: #fff; }
+.jv-btn--primary svg { stroke: var(--blue-fg); }
 .jv-btn--ghost { background: var(--surface); border-color: var(--border-2); color: var(--text-2); }
 .jv-btn--ghost:hover { background: var(--surface-2); border-color: var(--border); color: var(--text); transform: translateY(-1px); }
 .jv-btn--danger { background: var(--red); border-color: var(--red); color: #fff; box-shadow: 0 1px 2px rgba(220, 38, 38, .14); }

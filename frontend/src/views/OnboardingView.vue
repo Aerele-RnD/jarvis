@@ -1044,7 +1044,7 @@ onMounted(async () => {
 }
 .jv-ob-step.done .jv-ob-step-dot { background: var(--green-bg); border-color: var(--green-bd); color: var(--green); }
 .jv-ob-step.active { color: var(--text); }
-.jv-ob-step.active .jv-ob-step-dot { background: var(--blue); border-color: var(--blue); color: #fff; }
+.jv-ob-step.active .jv-ob-step-dot { background: var(--blue); border-color: var(--blue); color: var(--blue-fg); }
 .jv-ob-step-line { flex: 1; height: 1.5px; background: var(--border); margin: 0 12px; min-width: 24px; }
 .jv-ob-step-line.done { background: var(--green-bd); }
 
@@ -1088,7 +1088,8 @@ onMounted(async () => {
 .jv-ob-root input[type="checkbox"]:focus-visible,
 .jv-ob-root [tabindex]:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 
-/* ---- buttons: black/white system (--blue = near-black light / indigo dark).
+/* ---- buttons: black/white system (--blue = near-black light / near-white
+   dark, paired with --blue-fg for on-accent text/icon contrast).
    The ONLY gradient button in the flow is Connect & Finish. ---- */
 .jv-ob-btn {
 	display: inline-flex; align-items: center; justify-content: center; gap: 7px;
@@ -1102,8 +1103,8 @@ onMounted(async () => {
 .jv-ob-btn:hover { background: var(--surface-2); color: var(--text); border-color: var(--border); }
 .jv-ob-btn:active { transform: scale(.98); }
 .jv-ob-btn:disabled { opacity: .55; cursor: default; transform: none; }
-.jv-ob-btn-primary { background: var(--blue); border-color: transparent; color: #fff; box-shadow: 0 2px 10px rgba(20, 20, 30, .16); }
-.jv-ob-btn-primary:hover:not(:disabled) { background: var(--blue); border-color: transparent; color: #fff; transform: translateY(-1px); box-shadow: 0 8px 22px rgba(20, 20, 30, .22); }
+.jv-ob-btn-primary { background: var(--blue); border-color: transparent; color: var(--blue-fg); box-shadow: 0 2px 10px rgba(20, 20, 30, .16); }
+.jv-ob-btn-primary:hover:not(:disabled) { background: var(--blue); border-color: transparent; color: var(--blue-fg); transform: translateY(-1px); box-shadow: 0 8px 22px rgba(20, 20, 30, .22); }
 .jv-ob-btn-grad { background: linear-gradient(135deg, #6e8bff, #8b5cf6); border-color: transparent; color: #fff; box-shadow: 0 6px 20px rgba(110, 92, 246, .32); }
 /* Re-declare background + border here: the base .jv-ob-btn:hover (surface-2 bg,
    visible border) has higher specificity than .jv-ob-btn-grad, so without this
@@ -1161,7 +1162,7 @@ onMounted(async () => {
 	border: 1.5px solid var(--border-2); display: grid; place-items: center;
 }
 .jv-ob-plan.sel .jv-ob-plan-rd { border-color: var(--blue); background: var(--blue); }
-.jv-ob-plan.sel .jv-ob-plan-rd::after { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #fff; }
+.jv-ob-plan.sel .jv-ob-plan-rd::after { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--blue-fg); }
 .jv-ob-muted { color: var(--text-3); }
 
 /* ---- Details form (preview .form/.field/.sec-label) ---- */

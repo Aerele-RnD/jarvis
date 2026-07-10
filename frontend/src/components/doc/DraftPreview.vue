@@ -104,7 +104,7 @@ const tables = computed(() => (props.model.tables || []).filter((t) => (t.rows |
 .dp-foot { display: flex; align-items: center; gap: 8px; padding: 11px 14px; border-top: 1px solid var(--border); background: var(--surface-1); flex: none; }
 .dp-btn { padding: 8px 14px; border-radius: 8px; font-size: 13px; font-weight: 600; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
 .dp-btn:hover { background: var(--surface-2); }
-.dp-btn-primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+.dp-btn-primary { background: var(--blue); border-color: var(--blue); color: var(--blue-fg); }
 .dp-btn-primary:hover { filter: brightness(1.05); }
 .dp-btn-primary:disabled { opacity: .55; cursor: not-allowed; }
 .dp-slide-enter-active, .dp-slide-leave-active { transition: opacity .18s ease; }

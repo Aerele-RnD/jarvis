@@ -249,7 +249,7 @@ function copyUrl() {
   display: inline-flex; align-items: center; justify-content: center; line-height: 1;
 }
 .jv-dsub-btn:disabled { opacity: .6; cursor: not-allowed; }
-.jv-dsub-btn-primary { background: var(--blue); color: #fff; border-color: var(--blue); }
+.jv-dsub-btn-primary { background: var(--blue); color: var(--blue-fg); border-color: var(--blue); }
 .jv-dsub-btn-ghost { background: var(--surface); color: var(--text-2); }
 .jv-dsub-input {
   width: 100%; box-sizing: border-box; padding: 9px 12px; font-size: 14px;

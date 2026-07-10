@@ -285,7 +285,7 @@ button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 	transition: transform .12s, box-shadow .15s, background .15s, border-color .15s;
 }
 .btn:active { transform: scale(.98); }
-.btn--primary { background: var(--blue); color: #fff; box-shadow: 0 2px 10px rgba(20, 20, 30, .16); }
+.btn--primary { background: var(--blue); color: var(--blue-fg); box-shadow: 0 2px 10px rgba(20, 20, 30, .16); }
 .btn--primary:hover { transform: translateY(-1px); box-shadow: 0 8px 22px rgba(20, 20, 30, .22); }
 .btn--ghost { background: var(--surface); border-color: var(--border-2); color: var(--text-2); }
 .btn--ghost:hover { background: var(--surface-2); color: var(--text); border-color: var(--border); }
@@ -335,7 +335,7 @@ button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 
 /* ---- chat mock ---- */
 .cb { max-width: 74%; padding: 8px 11px; border-radius: 12px; font-size: 11.5px; line-height: 1.4; margin-bottom: 9px; }
-.cb.u { margin-left: auto; background: var(--blue); color: #fff; border-bottom-right-radius: 4px; }
+.cb.u { margin-left: auto; background: var(--blue); color: var(--blue-fg); border-bottom-right-radius: 4px; }
 .cb.a { background: var(--surface-2); color: var(--text-2); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
 .cb.tool {
 	display: inline-flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--text-3);
