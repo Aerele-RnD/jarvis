@@ -62,10 +62,18 @@ class _SettingsSnapshotMixin:
 
 
 def _clear_settings():
-	"""Wipe chat_device_* between tests so each one starts unpaired."""
+	"""Wipe chat_device_* between tests so each one starts unpaired.
+
+	The Password fields need their __Auth rows dropped too: the production
+	write path stores the secret in __Auth (masked column), so a column-only
+	db_set("") would let get_password resurrect a previous test's secret."""
+	from frappe.utils.password import remove_encrypted_password
+
 	s = frappe.get_single("Jarvis Settings")
 	for f in (*_SNAPSHOT_PLAIN_FIELDS, *_SNAPSHOT_PASSWORD_FIELDS):
 		s.db_set(f, "")
+	for f in _SNAPSHOT_PASSWORD_FIELDS:
+		remove_encrypted_password("Jarvis Settings", "Jarvis Settings", f)
 	frappe.db.commit()
 
 

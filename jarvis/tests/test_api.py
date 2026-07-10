@@ -497,6 +497,11 @@ class TestRotateAgentTokenEndpoint(FrappeTestCase):
 
 	@classmethod
 	def tearDownClass(cls):
+		# A successful rotation stores the token in __Auth (masked column);
+		# drop that row so a stale rotated token can't shadow the restored
+		# value via get_password's __Auth fallback in later suites.
+		from frappe.utils.password import remove_encrypted_password
+		remove_encrypted_password("Jarvis Settings", "Jarvis Settings", "agent_token")
 		settings = frappe.get_single("Jarvis Settings")
 		settings.db_set("agent_token", cls._original_token)
 		frappe.db.commit()
@@ -505,7 +510,9 @@ class TestRotateAgentTokenEndpoint(FrappeTestCase):
 	def setUp(self):
 		# rotate_agent_token requires System Manager; tests run as Admin.
 		frappe.set_user("Administrator")
-		# Reset to a known starting token.
+		# Reset to a known starting token (column write shadows any __Auth
+		# row a prior test's rotation left - get_password short-circuits on
+		# a non-masked column value).
 		settings = frappe.get_single("Jarvis Settings")
 		settings.db_set("agent_token", "before-rotation-token")
 		frappe.db.commit()

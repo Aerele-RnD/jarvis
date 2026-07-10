@@ -102,14 +102,25 @@ def _surface(fn, *args, **kwargs):
 
 def write_connection(data: dict) -> None:
 	"""Persist native admin credentials + container connection into Jarvis
-	Settings via db_set (no on_update creds-push retrigger during onboarding)."""
+	Settings via db_set (no on_update creds-push retrigger during onboarding).
+
+	The four Password fields (jarvis_admin_api_key/_secret,
+	jarvis_admin_customer_password, agent_token) go through
+	set_settings_password instead of a bare db_set: db_set writes exactly what
+	it's given straight into tabSingles with no encryption (only
+	Document.save()'s _save_passwords path encrypts a Password field), so a
+	bare db_set of a real secret sat there in plaintext. set_settings_password
+	encrypts into __Auth first, then db_sets only the mask - preserving the
+	"no on_update retrigger" property this function exists for."""
 	if not isinstance(data, dict):
 		return
+	from jarvis._password_utils import set_settings_password
+
 	s = frappe.get_single("Jarvis Settings")
 	if data.get("api_key"):
-		s.db_set("jarvis_admin_api_key", data["api_key"])
+		set_settings_password(s, "jarvis_admin_api_key", data["api_key"])
 	if data.get("api_secret"):
-		s.db_set("jarvis_admin_api_secret", data["api_secret"])
+		set_settings_password(s, "jarvis_admin_api_secret", data["api_secret"])
 	# OAuth password-grant credentials. ``customer`` is the admin-side login
 	# (email, the grant username); ``customer_password`` is the durable secret
 	# the bench exchanges for short-lived bearer tokens. The email arrives in
@@ -118,11 +129,11 @@ def write_connection(data: dict) -> None:
 	if data.get("customer"):
 		s.db_set("jarvis_admin_customer_email", data["customer"])
 	if data.get("customer_password"):
-		s.db_set("jarvis_admin_customer_password", data["customer_password"])
+		set_settings_password(s, "jarvis_admin_customer_password", data["customer_password"])
 	if data.get("agent_url"):
 		s.db_set("agent_url", data["agent_url"])
 	if data.get("agent_token"):
-		s.db_set("agent_token", data["agent_token"])
+		set_settings_password(s, "agent_token", data["agent_token"])
 
 
 @frappe.whitelist()

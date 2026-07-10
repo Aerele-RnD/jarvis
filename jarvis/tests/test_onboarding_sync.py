@@ -10,11 +10,21 @@ from jarvis import onboarding
 
 def _set_token(value, secret="secret"):
 	"""Set both native credentials for tests that exercise the authenticated
-	admin path. value="" clears them (simulates 'not onboarded')."""
+	admin path. value="" clears them (simulates 'not onboarded').
+
+	Clearing must also drop the __Auth rows: the production write path
+	(write_connection -> set_settings_password) stores the secret in __Auth
+	with a masked column, so a column-only db_set("") would let get_password
+	fall back to a previous test's __Auth value."""
+	from frappe.utils.password import remove_encrypted_password
+
 	s = frappe.get_single("Jarvis Settings")
 	s.db_set("jarvis_admin_api_key", value)
 	s.db_set("jarvis_admin_api_secret", secret if value else "")
 	s.db_set("agent_url", "")
+	if not value:
+		remove_encrypted_password("Jarvis Settings", "Jarvis Settings", "jarvis_admin_api_key")
+		remove_encrypted_password("Jarvis Settings", "Jarvis Settings", "jarvis_admin_api_secret")
 	frappe.db.commit()
 
 
@@ -40,7 +50,17 @@ def _snapshot_settings() -> dict:
 
 
 def _restore_settings(snap: dict) -> None:
+	"""Restore the snapshot. Password fields also get their __Auth row
+	dropped: the production write path stores secrets there (masked column),
+	and restoring only the column would leave a test's secret readable via
+	get_password's __Auth fallback in the NEXT test. The snapshot value
+	itself is written to the column (get_password short-circuits on a
+	non-masked column value), matching this helper's original semantics."""
+	from frappe.utils.password import remove_encrypted_password
+
 	for f, v in snap.items():
+		if f.endswith(("_key", "_secret", "_token", "_password")):
+			remove_encrypted_password("Jarvis Settings", "Jarvis Settings", f)
 		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", f, v)
 	frappe.db.commit()
 
