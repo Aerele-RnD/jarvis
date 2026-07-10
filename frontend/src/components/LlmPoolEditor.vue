@@ -23,7 +23,23 @@
         </span>
       </div>
 
-      <div v-if="!rows.length" style="font-size:13px;color:var(--text-3);padding:8px 0;">No models yet. Add one below.</div>
+      <!-- Legacy DIRECT chat-subscription (flat-field OAuth, no proxy) - not
+           part of rows.value/the failover pool, so no order badge/reorder. -->
+      <div v-if="showDirectRow" class="jv-flist-row">
+        <span class="jv-flist-chip">Direct</span>
+        <span class="jv-flist-model">{{ directStatus.model || directStatus.provider || 'Chat subscription' }}</span>
+        <span v-if="directStatus.account_email" style="font-size:11px;color:var(--text-3);">{{ directStatus.account_email }}</span>
+        <span class="jv-pool-dot jv-pool-dot--ok" aria-hidden="true"></span>
+        <span class="jv-flist-acts">
+          <button v-if="editable" @click="directPanelOpen = !directPanelOpen" class="jv-btn jv-btn--sm jv-btn--ghost">{{ directPanelOpen ? 'Close' : 'Reconnect' }}</button>
+          <button v-if="editable" @click="removeDirect" class="jv-btn jv-btn--sm jv-btn--ghost jv-pool-disc">Remove</button>
+        </span>
+      </div>
+      <div v-if="showDirectRow && directPanelOpen" class="jv-cfgpanel">
+        <DirectSubscriptionCard :status="directStatus" :editable="editable" @reauthorized="onDirectCardChanged" @disconnected="onDirectCardChanged" />
+      </div>
+
+      <div v-if="!rows.length && !showDirectRow" style="font-size:13px;color:var(--text-3);padding:8px 0;">No models yet. Add one below.</div>
 
       <div v-for="(row, i) in rows" :key="i" class="jv-flist-row">
         <span class="jv-pool-badge">{{ i + 1 }}</span>
@@ -562,6 +578,7 @@ import {
 } from "@/llm/pool"
 import { errMessage as _err } from "@/lib/errors"
 import JvCombo from "@/components/JvCombo.vue"
+import DirectSubscriptionCard from "@/components/DirectSubscriptionCard.vue"
 
 const props = defineProps({
   editable: { type: Boolean, default: true },
@@ -573,8 +590,16 @@ const props = defineProps({
   // Hide the built-in Save bar so a host (onboarding) can render its own footer
   // and trigger save() via a template ref (exposed below).
   footerless: { type: Boolean, default: false },
+  // getDirectSubscriptionStatus() payload from the host (AiModelsPane), for a
+  // tenant on the legacy flat-field DIRECT path (empty models[], creds live
+  // outside this editor's config). null/absent = no direct subscription -
+  // never passed by onboarding, which has nothing to probe yet. Only
+  // is_direct_subscription synthesizes a row here; a merely-pooled single
+  // subscription (is_single_subscription_pool) already renders as a normal
+  // row via rows.value and needs no special-casing.
+  directStatus: { type: Object, default: null },
 })
-const emit = defineEmits(["saved", "ready"])
+const emit = defineEmits(["saved", "ready", "direct-changed"])
 
 // ---- state ---------------------------------------------------------------
 const cfg = ref({ models: [], preset: "", routing_mode: "failover", proxy_active: false })
@@ -865,6 +890,28 @@ function closePanel() {
     rows.value = rows.value.filter((_, j) => j !== idx)
   }
   panel.value = { open: false, mode: "add", index: -1, source: "subscription", addBackups: true }
+}
+
+// ---- direct subscription (legacy flat-field path) as a list row ---------
+// !singleMode only - onboarding never passes directStatus. Rendered OUTSIDE
+// rows.value/save() entirely (verdict §3: never round-trip a direct row
+// through save_llm_pool, which would migrate direct -> proxy); DirectSubscriptionCard
+// keeps owning the actual reauthorize/disconnect flow, unchanged.
+const showDirectRow = computed(() => !singleMode.value && !!(props.directStatus && props.directStatus.is_direct_subscription))
+const directPanelOpen = ref(false)
+watch(() => props.directStatus, (v) => { if (!v || !v.is_direct_subscription) directPanelOpen.value = false })
+function onDirectCardChanged() {
+  directPanelOpen.value = false
+  emit("direct-changed")
+}
+async function removeDirect() {
+  if (!window.confirm("Disconnect the chat subscription? Jarvis chat will stop working until you reconnect.")) return
+  try {
+    const res = await api.disconnectSubscription()
+    if (!res || res.ok === false) { err.value = (res && res.error && res.error.message) || "Disconnect failed."; return }
+    directPanelOpen.value = false
+    emit("direct-changed")
+  } catch (e) { err.value = _err(e) }
 }
 
 function newRow() {
