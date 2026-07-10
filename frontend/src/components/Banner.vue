@@ -31,12 +31,16 @@
 		<div class="jv-banner-bd">
 			<template v-if="title">
 				<div class="jv-banner-tt">{{ title }}</div>
-				<div class="jv-banner-ms">{{ message }}</div>
+				<div v-if="message" class="jv-banner-ms">{{ message }}</div>
 			</template>
 			<!-- No title: the message reads as the primary line so a message-only
 				 banner (the common case here) doesn't look like a blank card with a
 				 muted second line. -->
 			<div v-else class="jv-banner-tt">{{ message }}</div>
+			<!-- Optional extra body (hint line, a details expander): renders nothing
+				 when no default slot is passed, so existing message-only callers are
+				 unaffected. -->
+			<slot />
 		</div>
 		<div v-if="$slots.action" class="jv-banner-act">
 			<slot name="action" />

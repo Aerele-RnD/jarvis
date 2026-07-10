@@ -202,20 +202,48 @@ def apply_action(action: dict | str | None = None) -> dict:
 		raise InvalidArgumentError("conversation is required")
 	_require_own_conversation(conversation)
 
-	if verb == "create":
-		from jarvis.tools.create_doc import create_doc
-		res = create_doc(doctype, values)
-		name = res.get("name")
-		if do_submit:
-			# Submit of the JUST-created draft the human authored (the same
-			# payload they saw) - low risk, kept as part of the draft-editor UX.
-			from jarvis.tools.submit_doc import submit_doc
-			submit_doc(doctype, name)
-		args = {"doctype": doctype, "values": values}
-	else:  # update
-		from jarvis.tools.update_doc import update_doc
-		update_doc(doctype, name, values)
-		args = {"doctype": doctype, "name": name, "changes": values}
+	from jarvis import api
+
+	# The audit/receipt args, built up front (independent of the write outcome);
+	# a create fills in its real `name` after insert. For create the args are
+	# {doctype, values}; for update {doctype, name, changes}.
+	args = ({"doctype": doctype, "values": values} if verb == "create"
+			else {"doctype": doctype, "name": name, "changes": values})
+
+	# Surface a failed apply through the SAME {ok:false, error} envelope the
+	# model/confirm paths use (rich detail + hint), instead of leaking Frappe's
+	# raw 403/417 to the SPA. ``mark`` lets _translate_write_error harvest only
+	# the reason THIS write logged.
+	mark = api._msglog_mark()
+	try:
+		if verb == "create":
+			from jarvis.tools.create_doc import create_doc
+			res = create_doc(doctype, values)
+			name = res.get("name")
+			if do_submit:
+				# Submit of the JUST-created draft the human authored (the same
+				# payload they saw) - low risk, kept as part of the draft-editor UX.
+				from jarvis.tools.submit_doc import submit_doc
+				submit_doc(doctype, name)
+		else:  # update
+			from jarvis.tools.update_doc import update_doc
+			update_doc(doctype, name, values)
+	except Exception as e:
+		envelope = api._translate_write_error(e, mark)
+		if envelope is None:
+			# Unexpected - audit + re-raise so a real bug still surfaces as a 500
+			# (never enveloped, never leaks a traceback to the client).
+			audit.record(tool=f"apply_action.{verb}_doc", args=args, ok=False,
+						 error_code=type(e).__name__, error_message=str(e))
+			raise
+		# A RETURNED envelope makes Frappe commit at end-of-request; roll back so
+		# a partial create+submit (create ok, submit failed) leaves NO changes -
+		# the SPA's "No changes were saved" line stays truthful.
+		frappe.db.rollback()
+		err_obj = envelope["error"]
+		audit.record(tool=f"apply_action.{verb}_doc", args=args, ok=False,
+					 error_code=err_obj["code"], error_message=err_obj["message"])
+		return envelope
 
 	# Audit as a human-authored write, distinct from a model tool call. The
 	# actor (frappe.session.user) is captured by audit.record; the tool label
