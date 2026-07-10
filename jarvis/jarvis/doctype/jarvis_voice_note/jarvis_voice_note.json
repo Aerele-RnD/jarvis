@@ -7,10 +7,15 @@
   "engine": "InnoDB",
   "autoname": "hash",
   "field_order": [
+    "kind",
     "transcript",
     "duration_s",
+    "attachment",
+    "url",
+    "extracted_text",
     "context_type",
     "conversation",
+    "question",
     "entities",
     "source",
     "status",
@@ -19,15 +24,45 @@
   ],
   "fields": [
     {
+      "fieldname": "kind",
+      "fieldtype": "Select",
+      "label": "Kind",
+      "options": "Text\nVoice\nAttachment\nLink",
+      "default": "Text",
+      "in_list_view": 1,
+      "in_standard_filter": 1,
+      "description": "How this note was captured. Voice = recorder transcript; for Attachment/Link, transcript stays the user's own words/caption (optional) while extracted_text holds the server-extracted content."
+    },
+    {
       "fieldname": "transcript",
       "fieldtype": "Long Text",
       "label": "Transcript",
-      "reqd": 1
+      "description": "Required for Text/Voice notes (the user's own words); optional caption for Attachment/Link notes."
     },
     {
       "fieldname": "duration_s",
       "fieldtype": "Int",
       "label": "Duration (s)"
+    },
+    {
+      "fieldname": "attachment",
+      "fieldtype": "Attach",
+      "label": "Attachment",
+      "description": "Private file for Attachment-kind notes."
+    },
+    {
+      "fieldname": "url",
+      "fieldtype": "Data",
+      "label": "URL",
+      "description": "Source link for Link-kind notes; must be http(s). Server-fetched at capture with SSRF guards (jarvis.chat.link_fetch, Wave B1); the fetched, readability-stripped text lands in extracted_text."
+    },
+    {
+      "fieldname": "extracted_text",
+      "fieldtype": "Long Text",
+      "label": "Extracted Text",
+      "read_only": 1,
+      "hidden": 1,
+      "description": "Server-extracted content for Attachment/Link notes (readability-stripped page text, or bounded document text extraction). The daily sweep and immediate-ingest path read extracted_text || transcript."
     },
     {
       "fieldname": "context_type",
@@ -46,6 +81,13 @@
       "description": "Required for Conversation-context notes; optional provenance for Business notes captured from a chat nudge."
     },
     {
+      "fieldname": "question",
+      "fieldtype": "Link",
+      "label": "Question",
+      "options": "Jarvis Personalise Question",
+      "description": "Set when this note was captured as the answer to a Personalise question."
+    },
+    {
       "fieldname": "entities",
       "fieldtype": "JSON",
       "label": "Entities",
@@ -55,7 +97,7 @@
       "fieldname": "source",
       "fieldtype": "Select",
       "label": "Source",
-      "options": "Business Tab\nChat Nudge",
+      "options": "Business Tab\nChat Nudge\nPersonalise",
       "default": "Business Tab"
     },
     {

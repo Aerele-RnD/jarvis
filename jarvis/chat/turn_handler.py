@@ -510,9 +510,18 @@ def handle_chat_send(payload: dict) -> None:
 	user_message = (
 		# conv:<id> lets the agent link rows it creates (e.g. Jarvis Approval)
 		# back to this conversation so deciding can resume the chat.
+		#
+		# Clause ORDER is a safety invariant (Skills-area rework, DESIGN.md
+		# section 6 / research/ux-permissions.md §4.4): the org/role/learned and
+		# wiki clauses are emitted BEFORE the personal clause, and the personal
+		# clause itself carries "(applies to you; org guidance takes priority on
+		# conflict)" — so a user's personal skills never silently outrank org/role
+		# guidance inside their own turn. Do NOT move personal_clause ahead of
+		# learned_clause/wiki_notes_clause. Explicit /slug invocation
+		# (skill_clause) stays intentional and is not demoted.
 		f"[Context: today is {today}{locale_clause}; chat user: {chat_user}"
 		f"; conv: {conversation_id}{auto_apply}{skill_clause}{learned_clause}"
-		f"{personal_clause}{wiki_notes_clause}]"
+		f"{wiki_notes_clause}{personal_clause}]"
 		f"\n\n{user_message or ''}"
 	)
 

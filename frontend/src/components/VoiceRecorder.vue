@@ -1,9 +1,38 @@
 <template>
 	<div class="flex flex-wrap items-center gap-2">
 		<template v-if="!rec.supported">
-			<span class="text-sm text-ink-gray-5">
+			<Button
+				v-if="compact"
+				variant="ghost"
+				icon="mic-off"
+				:disabled="true"
+				:tooltip="'Voice recording is not supported in this browser'"
+			/>
+			<span v-else class="text-sm text-ink-gray-5">
 				Voice recording isn't supported in this browser - type your note instead.
 			</span>
+		</template>
+
+		<!-- compact (embedded in the composer toolbar): icon-only, minimal chrome -->
+		<template v-else-if="compact">
+			<template v-if="phase === 'recording'">
+				<Button variant="solid" theme="red" icon="square" :tooltip="'Stop'" @click="finish" />
+				<span
+					class="inline-flex items-center gap-1.5 rounded-full bg-surface-gray-2 px-2 py-0.5 text-xs text-ink-gray-7"
+				>
+					<span class="size-1.5 animate-pulse rounded-full bg-surface-red-5" />
+					{{ clock }}
+				</span>
+				<Button variant="ghost" icon="x" :tooltip="'Cancel'" @click="discard" />
+			</template>
+			<Button
+				v-else-if="phase === 'transcribing'"
+				variant="ghost"
+				:loading="true"
+				:disabled="true"
+				:tooltip="'Transcribing…'"
+			/>
+			<Button v-else variant="ghost" icon="mic" :tooltip="'Record'" @click="begin" />
 		</template>
 
 		<template v-else-if="phase === 'recording'">
@@ -38,6 +67,15 @@ import { ref, computed, onBeforeUnmount } from "vue"
 import { Button, toast } from "frappe-ui"
 import { useAudioRecorder } from "@/composables/useAudioRecorder"
 import { transcribeAudio } from "@/api/voice"
+
+defineProps({
+	// Compact/embedded mode for the Personalise ChatComposer toolbar: icon-only
+	// mic (idle), a minimal Stop + m:ss pill + Cancel cluster (recording), and a
+	// loading icon-button (transcribing) - no helper sentences. Default false
+	// keeps the standalone Business-tab rendering byte-for-byte. All recording/
+	// transcribe logic and the @transcript(text, durationS) emit are identical.
+	compact: { type: Boolean, default: false },
+})
 
 const emit = defineEmits(["transcript"])
 
@@ -87,7 +125,10 @@ async function transcribe(r) {
 	try {
 		const res = await transcribeAudio(r.blob, { durationS: r.durationS })
 		const text = ((res && res.text) || "").trim()
-		if (text) emit("transcript", text)
+		// Second arg carries the recording length so consumers can tag the
+		// note kind as Voice (Personalise composer); older handlers that take
+		// only (text) simply ignore it.
+		if (text) emit("transcript", text, r.durationS || 0)
 		else toast.error("Nothing was transcribed - try again closer to the microphone.")
 	} catch (e) {
 		toast.error(errMsg(e))
