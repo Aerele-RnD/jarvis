@@ -15,11 +15,9 @@
 
 /* ===== settings panel (centered modal with a left section rail) ===== */
 .jv-settings-overlay { position: fixed; inset: 0; z-index: 60; background: rgba(0, 0, 0, 0.27); display: flex; align-items: center; justify-content: center; padding: 24px; }
-/* the hoisted dialog puts .jv-dark on the overlay root itself */
-.jv-settings-overlay.jv-dark { background: rgba(0, 0, 0, 0.72); }
 .jv-settings { width: 900px; max-width: 100%; height: 560px; max-height: 88vh; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; display: flex; overflow: hidden; box-shadow: 0 0 1px rgba(0, 0, 0, .2), 0 24px 30px -8px rgba(0, 0, 0, .1); animation: jv-popin 0.1s ease-out; }
 @keyframes jv-popin { from { transform: scale(0.98); opacity: 0.5; } to { transform: scale(1); opacity: 1; } }
-.jv-settings-nav { width: 224px; flex: none; background: var(--surface-1); border-right: 1px solid var(--border); padding: 8px; display: flex; flex-direction: column; gap: 3px; overflow-y: auto; }
+.jv-settings-nav { width: 230px; flex: none; background: var(--surface-1); border-right: 1px solid var(--border); padding: 8px; display: flex; flex-direction: column; gap: 3px; overflow-y: auto; }
 .jv-settings-nav-title { font-size: 15px; font-weight: 600; color: var(--text); padding: 6px 8px 10px; }
 .jv-settings-navitem { display: flex; align-items: center; gap: 8px; width: 100%; height: 28px; padding: 0 8px; border: none; background: transparent; border-radius: 8px; font-family: inherit; font-size: 13px; font-weight: 420; color: var(--text-2); cursor: pointer; text-align: left; transition: background-color .15s ease, color .15s ease; }
 .jv-settings-navitem svg { color: var(--text-3); flex: none; }
@@ -217,3 +215,11 @@
 /* Header close icon-button — quiet ghost hover (no colour inversion). */
 .jv-iconbtn { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; border-radius: 8px; cursor: pointer; color: var(--text-3); transition: background-color .15s ease, color .15s ease; }
 .jv-iconbtn:hover { background: var(--surface-2); color: var(--text); }
+
+/* ===== geometry/scrim overrides — kept textually identical to the
+   pre-restyle file so in-flight settings PRs (#278 dialog resize) merge
+   cleanly in either order; being last, these win the cascade. ===== */
+.jv-settings-overlay.jv-dark { background: rgba(0, 0, 0, 0.55); }
+/* Widened dialog + roomier grouped rail. */
+.jv-settings { width: 900px; }
+.jv-settings-nav { width: 230px; }

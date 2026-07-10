@@ -240,17 +240,19 @@ function copyUrl() {
 .jv-dsub-step { font-size: 13px; color: var(--text-2); margin: 0 0 8px; line-height: 1.5; }
 .jv-dsub-muted { font-size: 13px; color: var(--text-3); }
 .jv-dsub-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+/* Sized to match the jv-btn jv-btn--sm compact convention used elsewhere in
+   the settings panes (e.g. AiModelsPane's own Retry button, GeneralPane's
+   Delete-all) — Reconnect/Disconnect were previously oversized (13px/8x16). */
 .jv-dsub-btn {
-  font-size: 13px; font-weight: 500; height: 32px; padding: 0 12px; border-radius: 8px;
-  cursor: pointer; border: 1px solid transparent; text-decoration: none;
-  display: inline-flex; align-items: center; gap: 6px; font-family: inherit;
-  transition: background-color .15s ease, color .15s ease, border-color .15s ease;
+  font-size: 12px; font-weight: 600; height: 32px; padding: 0 12px; border-radius: 9px;
+  cursor: pointer; border: 1px solid var(--border); text-decoration: none;
+  display: inline-flex; align-items: center; justify-content: center; line-height: 1;
 }
 .jv-dsub-btn:disabled { opacity: .5; cursor: not-allowed; }
-.jv-dsub-btn-primary { background: var(--text); color: var(--surface); border-color: var(--text); }
+.jv-dsub-btn-primary { background: var(--text); color: var(--surface); border-color: var(--text); gap: 6px; font-family: inherit; transition: background-color .15s ease, border-color .15s ease; }
 .jv-dsub-btn-primary:hover { background: var(--text-2); border-color: var(--text-2); }
 .jv-dsub-btn-primary svg { stroke: var(--surface); }
-.jv-dsub-btn-ghost { background: var(--surface-2); color: var(--text); }
+.jv-dsub-btn-ghost { background: var(--surface-2); color: var(--text); border-color: transparent; font-family: inherit; transition: background-color .15s ease; }
 .jv-dsub-btn-ghost:hover { background: var(--surface-3); }
 .jv-dsub-input {
   width: 100%; box-sizing: border-box; padding: 9px 12px; font-size: 14px;
