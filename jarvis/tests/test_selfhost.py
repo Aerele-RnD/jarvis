@@ -226,6 +226,25 @@ class TestSaveSelfHostedToolUser(unittest.TestCase):
         self.assertEqual(fake.selfhost_tool_user, "carol@example.com")
         self.assertNotIn("warning", out)
 
+    def test_blank_token_clears_stored_secret_via_module_seam(self):
+        """A blank token (no-auth openclaw that validated clean) must route
+        through the MODULE-LEVEL clear_settings_password seam - never
+        set_settings_password - so this fully-mocked suite can intercept it
+        and a real __Auth delete is never performed against the DB."""
+        fake = _FakeSettings(selfhost_tool_user="carol@example.com")
+        validation = {"ok": True, "checks": [], "openclaw_version": None, "models": ["openclaw"]}
+        with mock.patch("jarvis.selfhost.validate_connection", return_value=validation), \
+                mock.patch("jarvis.selfhost.set_settings_password") as set_mock, \
+                mock.patch("jarvis.selfhost.clear_settings_password") as clear_mock, \
+                mock.patch("jarvis.selfhost.frappe") as fr:
+            fr.get_single.return_value = fake
+            fr.session.user = "alice@example.com"
+            fr.db.get_value.return_value = 1
+            out = selfhost.save_self_hosted("http://host:19060", "")
+        self.assertTrue(out["ok"])
+        clear_mock.assert_called_once_with(fake, "agent_token")
+        set_mock.assert_not_called()
+
 
 class TestSelfhostToolUserResolver(unittest.TestCase):
     """Use-time guard: _selfhost_tool_user refuses Administrator/Guest/disabled,

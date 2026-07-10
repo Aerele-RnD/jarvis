@@ -42,6 +42,8 @@ masked-with-__Auth, both of which the branches above leave unchanged.
 import frappe
 from frappe.utils.password import remove_encrypted_password, set_encrypted_password
 
+from jarvis._password_utils import _MASK
+
 SETTINGS = "Jarvis Settings"
 
 # Every Password-fieldtype field on Jarvis Settings (jarvis_settings.json).
@@ -72,5 +74,5 @@ def execute():
 		if _is_dummy_password(raw):
 			continue
 		set_encrypted_password(SETTINGS, SETTINGS, raw, field)
-		frappe.db.set_single_value(SETTINGS, field, "*" * 10, update_modified=False)
+		frappe.db.set_single_value(SETTINGS, field, _MASK, update_modified=False)
 	frappe.db.commit()

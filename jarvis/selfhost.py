@@ -28,7 +28,7 @@ import frappe
 import requests
 from frappe.utils import now_datetime
 
-from jarvis._password_utils import set_settings_password
+from jarvis._password_utils import clear_settings_password, set_settings_password
 
 # Timeouts (seconds). Reachability is snappy; the deep chat ping tolerates a
 # slow reasoning model.
@@ -340,7 +340,6 @@ def save_self_hosted(base_url: str, token: str, deep: int | str = 0,
     if cleaned_token:
         set_settings_password(s, "agent_token", cleaned_token)
     else:
-        from jarvis._password_utils import clear_settings_password
         clear_settings_password(s, "agent_token")
     s.db_set("selfhost_stream", 1 if str(stream) in ("1", "true", "True") else 0)
     s.db_set("selfhost_last_validated_at", now_datetime())

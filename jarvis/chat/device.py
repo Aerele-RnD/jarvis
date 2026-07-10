@@ -278,6 +278,13 @@ def update_device_token(new_token: str, *, device_id: str) -> bool:
 	from jarvis._password_utils import set_settings_password
 	from jarvis._redis_lock import redis_lock
 
+	# A falsy token is never persisted: set_settings_password no-ops on a
+	# falsy value, so proceeding would return True without writing anything
+	# - violating the "Returns True when persisted" contract above. Reject
+	# up front, before taking the repair lock.
+	if not new_token:
+		return False
+
 	with redis_lock(
 		"chat_device_pair_repair", timeout_s=30, blocking_timeout_s=5.0,
 	) as acquired:
