@@ -71,6 +71,8 @@ import re
 from typing import Any
 
 import frappe
+from frappe.model import child_table_fields as _CHILD_FIELDS
+from frappe.model import default_fields as _DEFAULT_FIELDS
 from frappe.model import get_permitted_fields
 from frappe.model import optional_fields as _OPTIONAL_FIELDS
 from pypika import Order
@@ -593,6 +595,13 @@ def _validate_column(dt: str, field: str, base_doctype: str | None = None) -> No
 	# apply_fieldlevel_read_permissions. ``ignore_virtual=True`` matches
 	# db_query (a virtual field carries no real column, so it never reaches
 	# here anyway — its name fails the existence check above).
+	# Standard framework columns (name/owner/creation/.../parent) carry no
+	# permlevel restriction and are always readable - skip the permitted-
+	# fields lookup for them: it is needless DB work in production for these
+	# columns, and it lets a broadly-Engine-mocked query test resolve
+	# standard-field references without recursing through the patched Engine.
+	if field in _OPTIONAL_FIELDS or field in _DEFAULT_FIELDS or field in _CHILD_FIELDS:
+		return
 	parenttype = None if (base_doctype is None or dt == base_doctype) else base_doctype
 	permitted = set(
 		get_permitted_fields(

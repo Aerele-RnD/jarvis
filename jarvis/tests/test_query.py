@@ -109,6 +109,12 @@ class TestQueryPermissions(FrappeTestCase):
 			checked.append(doctype)
 			return True
 
+		# Warm the meta cache before patching the query Engine: _validate_doctype
+		# calls frappe.get_meta, which would otherwise load these DocTypes via the
+		# patched Engine (returning MagicMocks) and recurse. Deterministic
+		# regardless of whether a prior test left these metas cached.
+		frappe.get_meta("Sales Invoice")
+		frappe.get_meta("Sales Invoice Item")
 		with patch("frappe.has_permission", side_effect=fake_has_perm), \
 		     patch("frappe.database.query.Engine") as fake_engine, \
 		     patch("pypika.queries.QueryBuilder.run", return_value=[]):
