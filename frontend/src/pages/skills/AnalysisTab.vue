@@ -72,7 +72,7 @@
 						/>
 						<FormControl
 							type="number"
-							label="Max proposals / run"
+							label="Max findings / run"
 							:modelValue="settings.pattern_max_proposals_per_run"
 							@update:modelValue="(v) => (settings.pattern_max_proposals_per_run = v)"
 						/>
@@ -138,7 +138,8 @@
 						<span class="mt-1 text-base font-medium text-ink-gray-8">No analysis runs yet</span>
 						<span class="max-w-sm text-p-base text-ink-gray-6">
 							Run your first analysis to mine this site's history for behavioural patterns.
-							Findings land on the Review tab.
+							Findings become Personalise questions for the people involved; anything
+							skill-shaped also lands pending in Review.
 						</span>
 					</div>
 
@@ -201,13 +202,13 @@
 								<div class="text-lg font-semibold text-ink-gray-9">
 									{{ intOr(status.latestRun.proposals_created, 0) }}
 								</div>
-								<div class="text-sm text-ink-gray-6">Proposals created</div>
+								<div class="text-sm text-ink-gray-6">Findings surfaced</div>
 							</div>
 							<div class="rounded-lg border bg-surface-gray-1 px-3 py-2">
 								<div class="text-lg font-semibold text-ink-gray-9">
 									{{ intOr(status.latestRun.proposals_updated, 0) }}
 								</div>
-								<div class="text-sm text-ink-gray-6">Proposals updated</div>
+								<div class="text-sm text-ink-gray-6">Findings updated</div>
 							</div>
 						</div>
 
@@ -218,10 +219,37 @@
 						</div>
 
 						<div class="text-sm text-ink-gray-6">
-							New proposals surface on the
-							<button class="text-ink-gray-8 underline" @click="goReview">Review tab</button>
-							once the run finishes.
+							Findings become Personalise questions for the people involved once the run
+							finishes; anything skill-shaped also lands pending in
+							<button class="text-ink-gray-8 underline" @click="goReview">Review</button>.
 						</div>
+					</div>
+				</section>
+
+				<!-- ══════════════ Personalisation questions pointer ══════════════ -->
+				<!-- Discoverability for the gear-gated Settings dialog (DESIGN.md §6
+				     ADOPTED: "gear on Personalise (admin-only) AND a link card on
+				     Analysis tab"). This card only navigates the hash — the gear on
+				     PersonaliseTab.vue is what actually opens the dialog (its
+				     `settingsOpen` ref lives there, not here); see this file's report
+				     note on why that's the deliberately simple wiring. -->
+				<section class="rounded-lg border p-4 lg:col-span-2">
+					<div class="flex flex-wrap items-center justify-between gap-3">
+						<div class="min-w-0">
+							<div class="text-base font-semibold text-ink-gray-9">
+								Personalisation questions
+							</div>
+							<div class="mt-0.5 text-sm text-ink-gray-6">
+								Configure what Jarvis asks your team — org-wide, per role, or one person at a
+								time — on the Personalise tab.
+							</div>
+						</div>
+						<Button
+							variant="subtle"
+							label="Go to Personalise"
+							iconLeft="settings"
+							@click="goPersonalise"
+						/>
 					</div>
 				</section>
 			</div>
@@ -371,6 +399,18 @@ function goReview() {
 	router.push({ hash: "#review" })
 }
 
+// Pointer card affordance only (DESIGN.md §6 ADOPTED: "Settings discoverability
+// - gear on Personalise (admin-only) AND a link card on Analysis tab"). This
+// deliberately just switches the Skills-page hash tab; it does NOT also open
+// the Settings dialog itself - PersonaliseTab.vue owns that gear + its
+// `settingsOpen` ref, and reaching into a sibling tab's local state from here
+// would mean inventing a NEW cross-component channel for one convenience
+// click (the brief explicitly says not to over-engineer this). The user sees
+// the same admin-only gear on arrival and opens Settings from there.
+function goPersonalise() {
+	router.push({ hash: "#personalise" })
+}
+
 // ── settings actions ─────────────────────────────────────────────────────────
 async function saveSettings() {
 	savingSettings.value = true
@@ -401,7 +441,7 @@ function runNow() {
 	confirmDialog({
 		title: "Run analysis now?",
 		message:
-			"Runs a full pattern analysis immediately, bypassing the nightly window. It scans this site's history and can add database load during business hours. New proposals appear on the Review tab once the run finishes.",
+			"Runs a full pattern analysis immediately, bypassing the nightly window. It scans this site's history and can add database load during business hours. New findings become Personalise questions once the run finishes; skill-shaped ones land pending on the Review tab.",
 		onConfirm: async ({ hideDialog }) => {
 			runningNow.value = true
 			try {

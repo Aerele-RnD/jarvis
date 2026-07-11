@@ -77,15 +77,38 @@
 					<span class="text-ink-red-3 select-none" aria-hidden="true">*</span>
 					<span class="sr-only">(required)</span>
 				</template>
-				<FormControl
-					type="textarea"
-					:rows="14"
-					class="font-mono [&_textarea]:min-h-[320px]"
-					placeholder="Markdown instructions the assistant follows when this skill runs…"
-					description="Markdown instructions the model follows when this skill runs."
-					:modelValue="form.instructions"
-					:disabled="readonly"
-					@update:modelValue="(v) => (form.instructions = v)"
+				<!-- lg+: textarea and live rendered preview side by side (preview
+				     tracks form.instructions as you type); below lg a Preview button
+				     toggles between them - exactly WikiPageDialog.vue:80-107's pattern,
+				     replicated here for the Instructions markdown (goal item 1). -->
+				<div class="grid gap-4 lg:grid-cols-2">
+					<FormControl
+						type="textarea"
+						:rows="14"
+						:class="[
+							'font-mono [&_textarea]:min-h-[320px]',
+							previewingInstructions ? 'hidden lg:block' : '',
+						]"
+						placeholder="Markdown instructions the assistant follows when this skill runs…"
+						description="Markdown instructions the model follows when this skill runs."
+						:modelValue="form.instructions"
+						:disabled="readonly"
+						@update:modelValue="(v) => (form.instructions = v)"
+					/>
+					<div :class="previewingInstructions ? '' : 'hidden lg:block'">
+						<div class="text-xs text-ink-gray-5">Preview</div>
+						<div
+							class="prose prose-sm mt-1 min-h-[320px] max-w-none overflow-y-auto rounded border px-3 py-2"
+							v-html="instructionsPreviewHtml"
+						/>
+					</div>
+				</div>
+				<Button
+					class="mt-2 lg:hidden"
+					variant="ghost"
+					:label="previewingInstructions ? 'Back to editing' : 'Preview'"
+					:iconLeft="previewingInstructions ? 'edit-2' : 'eye'"
+					@click="previewingInstructions = !previewingInstructions"
 				/>
 			</DocSection>
 		</template>
@@ -212,6 +235,7 @@ import CommentsSection from "@/components/doc/CommentsSection.vue"
 import { useDocmeta } from "@/composables/useDocmeta"
 import SyncPill from "./SyncPill.vue"
 import ShareDialog from "./ShareDialog.vue"
+import { renderMarkdown } from "@/markdown"
 import { timeAgo } from "@/utils/datetime"
 import { useJarvisTheme } from "@/theme"
 import "@/assets/settings.css" // shared jv-* primitives (overlay, jv-btn) for the discard dialog
@@ -256,6 +280,15 @@ const syncPill = ref(null)
 const canEdit = computed(() => props.isNew || !!(skill.value && skill.value.can_edit))
 const readonly = computed(() => !canEdit.value || saving.value)
 const sharedBy = computed(() => (skill.value && skill.value.shared_by) || "")
+
+// Instructions markdown preview (goal item 1) - mirrors WikiPageDialog's
+// `previewing`/`previewHtml` pair exactly, scoped to this one field.
+const previewingInstructions = ref(false)
+const instructionsPreviewHtml = computed(() =>
+	form.instructions
+		? renderMarkdown(form.instructions)
+		: '<p class="text-ink-gray-5">Nothing to preview yet.</p>'
+)
 
 function normalize(v) {
 	if (typeof v === "boolean") return v ? 1 : 0

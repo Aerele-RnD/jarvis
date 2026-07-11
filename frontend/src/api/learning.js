@@ -106,3 +106,15 @@ export const setLearningSettings = (payload) =>
 // SM-only but NOT self-host-gated - the probe the tab uses to render the
 // managed-only empty state (reports {self_hosted, enabled, last/next run, ...}).
 export const getLearningStatus = () => call(LR + "get_learning_status")
+
+// ── Review-tab access probe (Skills-area rework, DESIGN.md §6/§6b) ──────────
+// Reviewer-set role check ONLY (Jarvis Skill Reviewer | Jarvis Admin | System
+// Manager | Administrator), NOT self-host-gated - mirrors `getLearningStatus`
+// so ReviewTab can still render its managed-only empty state on a
+// self-hosted bench. Review visibility is a SEPARATE gate from Analysis now
+// (SkillsPage's tab strip uses the collapsed `get_skills_area_caps` probe for
+// that; this one is for ReviewTab's own reviewer-only affordances - e.g.
+// "Ask the user" follow-ups, promotion decisions). Reports
+// {self_hosted, pending_promotions, pending_patterns} so the tab's two queue-
+// type chips render their counts without a second round-trip.
+export const getReviewAccess = () => call(LR + "get_review_access")

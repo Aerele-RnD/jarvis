@@ -237,6 +237,13 @@ scheduler_events = {
 		# Daily voice-note sweep: mine New voice notes into learned-pattern
 		# candidates + wiki updates (self-gating; see jarvis/learning/voice_facts.py).
 		"jarvis.learning.voice_facts.process_daily",
+		# Skills-area rework (DESIGN.md section 3): daily backstops for the
+		# Personalise question bank. materialize_questions_daily mints questions
+		# for Proposed learned-pattern findings that missed the immediate
+		# lifecycle hook (per-user daily cap + dedupe); materialize_rule_questions
+		# fans admin-authored question rules out to in-scope users (uncapped).
+		"jarvis.learning.questions.materialize_questions_daily",
+		"jarvis.learning.questions.materialize_rule_questions",
 		# Daily push of the User/Role/Org wiki-utilization graph to admin (the
 		# DB-only scope/role tiers; admin overlays telemetry activity). Not on
 		# every wiki save — too chatty for an analytics view.
@@ -283,6 +290,14 @@ doc_events["Jarvis Wiki Page"] = {
 	"after_insert": _WIKI_MIRROR_SYNC,
 	"on_update": _WIKI_MIRROR_SYNC,
 	"on_trash": _WIKI_MIRROR_SYNC,
+}
+
+# Skills-area rework (DESIGN.md section 3): an active Personalise question rule
+# (re)materializes its questions to in-scope users on save, in addition to the
+# daily sweep. The handler enqueues a deduped after-commit job (never blocks the
+# save, inactive rules no-op).
+doc_events["Jarvis Personalise Question Rule"] = {
+	"on_update": "jarvis.learning.questions.on_rule_update",
 }
 
 # ---------------------------------------------------------------------------

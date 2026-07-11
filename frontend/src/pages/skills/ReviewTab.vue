@@ -42,6 +42,25 @@
 			<div class="mx-auto grid w-full max-w-7xl grid-cols-1 gap-6 px-5 py-5 xl:grid-cols-5">
 				<!-- ══════════════ LEFT · To review ══════════════ -->
 				<section class="flex min-w-0 flex-col gap-4 xl:col-span-3">
+					<!-- queue-type chips (Skills-area rework): additive, at the top of the
+					     LEFT pane, same Button chip idiom as the domain facets below. The
+					     accepted two-pane structure is otherwise untouched. The Promotions
+					     count is its Pending list total (seeded from the access probe). -->
+					<div class="flex flex-wrap items-center gap-2">
+						<Button
+							label="Skill candidates"
+							:variant="queueType === 'candidates' ? 'solid' : 'subtle'"
+							@click="setQueueType('candidates')"
+						/>
+						<Button
+							:label="promo.total ? `Promotions · ${promo.total}` : 'Promotions'"
+							:variant="queueType === 'promotions' ? 'solid' : 'subtle'"
+							@click="setQueueType('promotions')"
+						/>
+					</div>
+
+					<!-- ────────── Skill candidates (the existing board, unchanged) ────────── -->
+					<template v-if="queueType === 'candidates'">
 					<!-- Apply bar. Stays mounted while an apply is in flight (applyActive)
 					     even after the pending count hits 0, so the SyncPill's push
 					     progress / failure never unmounts mid-push. -->
@@ -265,6 +284,22 @@
 
 								<!-- plain-English pattern sentence -->
 								<p class="mt-2.5 text-base text-ink-gray-9">{{ row.pattern_statement }}</p>
+
+								<!-- linked Personalise question (Skills-area rework): the reviewer
+								     decides with the human context - did the user answer the question
+								     this pattern raised, and what did they say. Enriched server-side
+								     (question_status / question_answer_excerpt), never a per-row fetch. -->
+								<div v-if="row.question_status" class="mt-2">
+									<div class="flex items-center gap-1.5 text-sm text-ink-gray-6">
+										<FeatherIcon name="message-circle" class="size-3.5 shrink-0" />
+										<span>Asked the user · {{ row.question_status }}</span>
+									</div>
+									<div
+										v-if="row.question_answer_excerpt"
+										class="mt-1.5 rounded bg-surface-gray-1 px-3 py-2 text-sm italic text-ink-gray-7"
+									>“{{ row.question_answer_excerpt }}”</div>
+								</div>
+
 								<div class="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-ink-gray-5">
 									<span v-if="row.exception_n">
 										{{ row.exception_n }} known exception{{ row.exception_n === 1 ? "" : "s" }}
@@ -464,7 +499,19 @@
 												:disabled="!!acting"
 												@click="doApprove(row)"
 											/>
+											<!-- direct skill edit (Skills-area rework): once the learned
+											     skill exists, edit it directly (SkillDetail); before that,
+											     Edit-and-approve tweaks the compiled draft as today. -->
 											<Button
+												v-if="row.materialized_skill"
+												variant="subtle"
+												label="Edit skill…"
+												iconLeft="edit-3"
+												:disabled="!!acting"
+												@click="editSkill(row)"
+											/>
+											<Button
+												v-else
 												variant="subtle"
 												label="Edit &amp; approve"
 												:disabled="!!acting"
@@ -484,11 +531,19 @@
 												@click="openReject(row)"
 											/>
 											<Button
+												v-if="row.question_status"
+												variant="subtle"
+												label="Ask the user"
+												iconLeft="help-circle"
+												:disabled="!!acting"
+												@click="openAsk(row.name)"
+											/>
+											<Button
 												variant="ghost"
-												label="Discuss in chat"
+												label="Go to chat"
 												iconLeft="message-circle"
 												:disabled="!!acting"
-												@click="discussInChat(row)"
+												@click="goToChat('pattern', row.name, row)"
 											/>
 										</template>
 										<!-- B/C: insight-only in Phase 1 (never compiled/pushed), so
@@ -523,11 +578,19 @@
 												@click="openReject(row)"
 											/>
 											<Button
+												v-if="row.question_status"
+												variant="subtle"
+												label="Ask the user"
+												iconLeft="help-circle"
+												:disabled="!!acting"
+												@click="openAsk(row.name)"
+											/>
+											<Button
 												variant="ghost"
-												label="Discuss in chat"
+												label="Go to chat"
 												iconLeft="message-circle"
 												:disabled="!!acting"
-												@click="discussInChat(row)"
+												@click="goToChat('pattern', row.name, row)"
 											/>
 											<span class="text-sm text-ink-gray-5">
 												Insight only in Phase 1: recorded as reviewed, not pushed to the assistant.
@@ -592,6 +655,143 @@
 							Load more to see them here.</template
 						>
 					</div>
+					</template>
+
+					<!-- ────────── Promotions (wiki User→Role/Org publish requests) ────────── -->
+					<template v-else>
+						<div class="min-w-0">
+							<div class="text-base font-semibold text-ink-gray-9">Promotions</div>
+							<div class="text-sm text-ink-gray-5">
+								Requests to publish a personal page to a role or the whole org
+							</div>
+						</div>
+
+						<div v-if="promo.loading && !promo.rows.length" class="py-10 text-center">
+							<LoadingIndicator class="size-5 text-ink-gray-5" />
+						</div>
+						<div
+							v-else-if="!promo.rows.length"
+							class="flex flex-col items-center gap-1 rounded-lg border border-dashed py-14 text-center"
+						>
+							<FeatherIcon name="git-pull-request" class="size-7 text-ink-gray-5" />
+							<span class="mt-1 text-base font-medium text-ink-gray-8">
+								No promotion requests
+							</span>
+							<span class="text-p-base text-ink-gray-6">
+								Users can request promoting their personal pages from the Wiki.
+							</span>
+						</div>
+
+						<div v-else class="flex flex-col gap-3">
+							<div
+								v-for="p in promo.rows"
+								:key="`promo-${p.name}`"
+								class="rounded-lg border p-4"
+							>
+								<!-- page title + from→to scope -->
+								<div class="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+									<span class="text-base font-medium text-ink-gray-9">{{ p.page_title }}</span>
+									<span class="flex items-center gap-1.5">
+										<Badge variant="subtle" theme="gray" :label="p.from_scope || 'User'" />
+										<FeatherIcon name="arrow-right" class="size-3.5 text-ink-gray-5" />
+										<Badge variant="subtle" theme="blue" :label="toScopeLabel(p)" />
+									</span>
+								</div>
+
+								<!-- requester + when -->
+								<div class="mt-2 flex flex-wrap items-center gap-2 text-sm text-ink-gray-6">
+									<Avatar size="sm" :label="p.requested_by_name || p.requested_by || '?'" />
+									<span>{{ p.requested_by_name || p.requested_by }}</span>
+									<template v-if="p.created">
+										<span class="text-ink-gray-4">·</span>
+										<Tooltip :text="exactDate(p.created)">
+											<span>{{ timeAgo(p.created) }}</span>
+										</Tooltip>
+									</template>
+								</div>
+
+								<!-- requester's why -->
+								<p v-if="p.note" class="mt-2 text-sm text-ink-gray-7">{{ p.note }}</p>
+
+								<!-- body excerpt (expandable: un-clamps the excerpt) -->
+								<div v-if="p.body_excerpt" class="mt-2">
+									<div
+										class="whitespace-pre-wrap rounded bg-surface-gray-1 px-3 py-2 text-sm text-ink-gray-7"
+										:class="promoExpanded[p.name] ? '' : 'line-clamp-3'"
+									>{{ p.body_excerpt }}</div>
+									<button
+										v-if="p.body_excerpt.length > 160"
+										class="mt-1 text-sm text-ink-gray-6 hover:text-ink-gray-8"
+										@click="togglePromoBody(p.name)"
+									>
+										{{ promoExpanded[p.name] ? "Show less" : "Show more" }}
+									</button>
+								</div>
+
+								<!-- actions -->
+								<div class="mt-3 flex flex-wrap items-center gap-2 border-t pt-3">
+									<template v-if="p.status === 'Pending'">
+										<Button
+											variant="solid"
+											theme="green"
+											label="Approve"
+											:loading="promoActing === p.name"
+											:disabled="!!promoActing"
+											@click="approvePromotion(p)"
+										/>
+										<Button
+											variant="subtle"
+											theme="red"
+											label="Reject"
+											:disabled="!!promoActing"
+											@click="openPromoReject(p)"
+										/>
+										<Button
+											variant="subtle"
+											label="Ask the user"
+											iconLeft="help-circle"
+											:disabled="!!promoActing"
+											@click="openAsk(p.name)"
+										/>
+										<Button
+											variant="ghost"
+											label="Go to chat"
+											iconLeft="message-circle"
+											:disabled="!!promoActing"
+											@click="goToChat('promotion', p.name)"
+										/>
+									</template>
+									<template v-else>
+										<Badge
+											variant="subtle"
+											:theme="p.status === 'Approved' ? 'green' : 'red'"
+											:label="p.status"
+										/>
+										<Button
+											variant="ghost"
+											label="Go to chat"
+											iconLeft="message-circle"
+											@click="goToChat('promotion', p.name)"
+										/>
+									</template>
+								</div>
+							</div>
+
+							<!-- N of M + load more -->
+							<div class="flex flex-col items-center gap-2 pt-1">
+								<span class="text-sm text-ink-gray-5">
+									{{ promo.rows.length }} of {{ promo.total }}
+								</span>
+								<Button
+									v-if="promo.hasMore"
+									variant="subtle"
+									label="Load more"
+									:loading="promo.loading"
+									@click="fetchPromotions('more')"
+								/>
+							</div>
+						</div>
+					</template>
 				</section>
 
 				<!-- ══════════════ RIGHT · Decided log ══════════════ -->
@@ -968,6 +1168,70 @@
 			:pattern="insightApplyDialog.row || {}"
 			@applied="afterAction"
 		/>
+
+		<!-- "Ask the user" follow-up modal (Skills-area rework): the ask is
+		     delivered generically - the user sees an ordinary org question, never
+		     the reviewer's name. Shared by pattern + promotion cards. -->
+		<Dialog v-model="askDialog.show" :options="{ title: 'Ask the user', size: 'md' }">
+			<template #body-content>
+				<p class="text-sm text-ink-gray-6">
+					The user will see this as an ordinary question from your organisation — no
+					reviewer name. It lands in their Personalise questions.
+				</p>
+				<FormControl
+					type="textarea"
+					class="mt-3"
+					label="What would you like to ask?"
+					:rows="4"
+					placeholder="e.g. Should this also apply to rush orders?"
+					:modelValue="askDialog.ask"
+					@update:modelValue="(v) => (askDialog.ask = v)"
+				/>
+			</template>
+			<template #actions>
+				<div class="flex items-center gap-2">
+					<Button
+						variant="solid"
+						label="Send"
+						:loading="askDialog.sending"
+						@click="submitAsk"
+					/>
+					<Button label="Cancel" :disabled="askDialog.sending" @click="askDialog.show = false" />
+				</div>
+			</template>
+		</Dialog>
+
+		<!-- Promotion reject modal (Skills-area rework): mirrors the pattern reject
+		     modal. The requester's personal page stays intact; the reason (optional)
+		     becomes the decision note they can act on. -->
+		<Dialog v-model="promoReject.show" :options="{ title: 'Reject promotion', size: 'md' }">
+			<template #body-content>
+				<p class="text-sm text-ink-gray-6">
+					The requester's personal page stays intact. Let them know why this won't be
+					published — they can revise and request again.
+				</p>
+				<FormControl
+					type="textarea"
+					class="mt-3"
+					label="Reason (optional)"
+					placeholder="Why not publish this to the wider audience?"
+					:modelValue="promoReject.reason"
+					@update:modelValue="(v) => (promoReject.reason = v)"
+				/>
+			</template>
+			<template #actions>
+				<div class="flex items-center gap-2">
+					<Button
+						variant="solid"
+						theme="red"
+						label="Reject"
+						:loading="promoActing === (promoReject.p && promoReject.p.name)"
+						@click="submitPromoReject"
+					/>
+					<Button label="Cancel" @click="promoReject.show = false" />
+				</div>
+			</template>
+		</Dialog>
 	</div>
 </template>
 
@@ -993,6 +1257,7 @@
 // self_hosted → this renders the managed-only empty state.
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from "vue"
 import {
+	Avatar,
 	Badge,
 	Breadcrumbs,
 	Button,
@@ -1003,6 +1268,7 @@ import {
 	FormControl,
 	LoadingIndicator,
 	Tooltip,
+	confirmDialog,
 	toast,
 } from "frappe-ui"
 import { useRouter } from "vue-router"
@@ -1011,6 +1277,7 @@ import SyncPill from "./SyncPill.vue"
 import InsightApplyDialog from "@/components/learning/InsightApplyDialog.vue"
 import { timeAgo, exactDate } from "@/utils/datetime"
 import { setChatPrefill } from "@/composables/chatPrefill"
+import { getSkillsAreaCaps } from "@/api/personalise"
 import {
 	listLearnedPatternsPage,
 	getLearnedPattern,
@@ -1025,6 +1292,18 @@ import {
 	getLearnedApplyStatus,
 	getLearningStatus,
 } from "@/api/learning"
+// Skills-area rework additions (DESIGN.md §6b): the reviewer-only bindings live
+// in their own module so this wave never edits F1's learning.js. getReviewAccess
+// is the tab's own probe (reviewer set, decoupled from the Analysis probe);
+// the rest power the Promotions queue, the server "Go to chat" bundle and the
+// "Ask the user" follow-up.
+import {
+	getReviewAccess,
+	listPromotionRequestsPage,
+	decidePromotion,
+	goToChatContext,
+	triggerFollowupQuestion,
+} from "@/api/review"
 
 const emit = defineEmits(["changed"])
 const router = useRouter()
@@ -1133,6 +1412,23 @@ const rejectDialog = reactive({ show: false, name: "", reason: "" })
 const editDialog = reactive({ show: false, name: "", draft: "" })
 const applyDialog = reactive({ show: false })
 const insightApplyDialog = reactive({ show: false, row: null })
+
+// ── Skills-area rework state ──────────────────────────────────────────────────
+// LEFT-pane queue-type chips (additive; the accepted two-pane structure is
+// unchanged). "candidates" = the existing skill-candidate board; "promotions" =
+// the new wiki-promotion queue rendered with the same card rhythm.
+const queueType = ref("candidates")
+// Promotion queue: its own reqId-guarded envelope + Pending count for the chip.
+// Seeded from the get_review_access probe so the chip reads before the list is
+// fetched (lazily, the first time the Promotions chip is opened).
+const promo = reactive({ rows: [], total: 0, hasMore: false, loading: false })
+const promoLoaded = ref(false)
+const promoActing = ref("") // promotion request name currently deciding
+const promoExpanded = reactive({}) // name -> bool (un-clamp the body excerpt)
+const promoReject = reactive({ show: false, p: null, reason: "" })
+// "Ask the user" follow-up dialog, shared by pattern + promotion cards. `name`
+// is the review-item name (a Jarvis Learned Pattern or a promotion request).
+const askDialog = reactive({ show: false, name: "", ask: "", sending: false })
 
 // ── display helpers ──────────────────────────────────────────────────────────
 function domainLabel(s) {
@@ -1282,17 +1578,153 @@ const emptyDescription = computed(() => {
 })
 
 // ── loaders ──────────────────────────────────────────────────────────────────
+// Review visibility is DECOUPLED from Analysis now (DESIGN.md §6): the tab's own
+// probe is get_review_access (reviewer set, self-host aware), NOT
+// get_learning_status (which is admin-gated and 403s a plain reviewer). It also
+// seeds the Promotions chip count so the queue reads before its list loads.
 async function loadStatus() {
 	try {
-		const st = await getLearningStatus()
+		const st = await getReviewAccess()
 		selfHosted.value = !!st.self_hosted
-		status.enabled = !!st.enabled
-		status.nextRunAt = st.next_run_at || ""
+		promo.total = st.pending_promotions || 0
 	} catch (e) {
-		// parent mounts this only for SMs; a failure here means no access
+		// parent mounts this only for the reviewer set; a failure here = no access
 		selfHosted.value = false
 		toast.error(errMsg(e))
 	}
+	// Best-effort Analysis niceties for reviewers who ALSO hold the admin role:
+	// the empty-state "enable learning" copy + the Apply dialog's quiet-window
+	// hint. Gate on the caps probe first so a plain reviewer never fires the
+	// admin-only endpoint at all (a deliberate 403 still logs as a console /
+	// network error - QA flagged the noise).
+	try {
+		const c = await getSkillsAreaCaps()
+		if (!c || !c.analysis) return
+		const ls = await getLearningStatus()
+		status.enabled = !!ls.enabled
+		status.nextRunAt = ls.next_run_at || ""
+	} catch (e) {
+		// reviewer without Analysis access - degrade quietly
+	}
+}
+
+// ── promotions queue (Skills-area rework) ────────────────────────────────────
+// Own monotonic reqId guard (the board/decided idiom): a reset racing a
+// load-more never interleaves. Fetched lazily the first time the Promotions chip
+// is opened; refreshed after every decide.
+let promoReq = 0
+async function fetchPromotions(mode = "reset") {
+	const id = ++promoReq
+	const append = mode === "more"
+	promo.loading = true
+	try {
+		const res = await listPromotionRequestsPage({
+			status: "Pending",
+			start: append ? promo.rows.length : 0,
+			page_length: 20,
+		})
+		if (id !== promoReq) return // stale - a newer request superseded this one
+		promo.rows = mergeRows(promo.rows, res.rows || [], append)
+		promo.total = res.total || 0
+		promo.hasMore = !!res.has_more
+		promoLoaded.value = true
+	} catch (e) {
+		if (id !== promoReq) return
+		toast.error(errMsg(e))
+	} finally {
+		if (id === promoReq) promo.loading = false
+	}
+}
+function setQueueType(v) {
+	if (queueType.value === v) return
+	queueType.value = v
+	if (v === "promotions" && !promoLoaded.value) fetchPromotions("reset")
+}
+function togglePromoBody(name) {
+	promoExpanded[name] = !promoExpanded[name]
+}
+function toScopeLabel(p) {
+	return p.to_scope === "Role" ? `Role: ${p.target_role || "—"}` : p.to_scope || "Org"
+}
+// The decision is irreversible from the user's side, so Approve confirms with
+// the concrete visibility implication (who can now read the page).
+function approvePromotion(p) {
+	const target = p.to_scope === "Role" ? `Role: ${p.target_role || "—"}` : "Org"
+	const who = p.to_scope === "Role" ? "that role" : "everyone"
+	confirmDialog({
+		title: "Approve promotion?",
+		message:
+			`This publishes “${p.page_title}” to ${target} — visible to ${who}. ` +
+			"The requester's personal page stays intact.",
+		onConfirm: async ({ hideDialog }) => {
+			hideDialog()
+			await decidePromo(p, 1, "")
+		},
+	})
+}
+function openPromoReject(p) {
+	promoReject.p = p
+	promoReject.reason = ""
+	promoReject.show = true
+}
+async function submitPromoReject() {
+	if (!promoReject.p) return
+	const ok = await decidePromo(promoReject.p, 0, (promoReject.reason || "").trim())
+	if (ok) promoReject.show = false
+}
+async function decidePromo(p, approve, note) {
+	promoActing.value = p.name
+	try {
+		const r = await decidePromotion(p.name, approve, note)
+		if (r && r.ok === false) {
+			toast.error(r.reason || "Could not decide this promotion.")
+			return false
+		}
+		toast.success(approve ? "Promotion approved" : "Promotion rejected")
+		fetchPromotions("reset")
+		emit("changed")
+		return true
+	} catch (e) {
+		toast.error(errMsg(e))
+		return false
+	} finally {
+		promoActing.value = ""
+	}
+}
+
+// ── "Ask the user" follow-up (Skills-area rework) ────────────────────────────
+// Opens the shared dialog for a review-item name (a pattern or a promotion). The
+// server rephrases the ask into a generic-tone question inserted into that user's
+// bank - no reviewer attribution ever shown to the user (DESIGN.md §6).
+function openAsk(name) {
+	askDialog.name = name
+	askDialog.ask = ""
+	askDialog.show = true
+}
+async function submitAsk() {
+	const ask = (askDialog.ask || "").trim()
+	if (!ask) {
+		toast.error("Enter what you would like to ask the user.")
+		return
+	}
+	askDialog.sending = true
+	try {
+		await triggerFollowupQuestion(askDialog.name, ask)
+		toast.success("Added to their questions")
+		askDialog.show = false
+	} catch (e) {
+		toast.error(errMsg(e))
+	} finally {
+		askDialog.sending = false
+	}
+}
+
+// Deep-link into the skill editor (SkillDetail already edits it): the direct
+// "skills updatable from Review" path for an A-class pattern whose learned skill
+// is already materialized. A-class rows with no skill yet keep Edit-and-approve.
+function editSkill(row) {
+	if (!row.materialized_skill) return
+	router.push({ name: "SkillDetail", params: { id: row.materialized_skill } })
 }
 
 // append dedupes by name so a reset racing a load-more can never mint duplicate
@@ -1480,13 +1912,31 @@ function buildDiscussPrompt(row, detail) {
 	if (text.length > 1200) text = text.slice(0, 1199).trimEnd() + "…"
 	return text
 }
-function discussInChat(row) {
-	const d = expanded[row.name]
-	setChatPrefill({
-		text: buildDiscussPrompt(row, d && d !== "loading" ? d : null),
-		autoSend: true,
-	})
-	router.push("/")
+// "Go to chat" (Skills-area rework): prefer the server-assembled background
+// bundle (go_to_chat_context - richer: origin, the linked question + the user's
+// answer, who the user is + roles, the approval implication, a unified diff).
+// On ANY endpoint error for a pattern, fall back SILENTLY to the client-built
+// buildDiscussPrompt (no toast) so the reviewer is never blocked; promotions have
+// no client fallback, so a failure there surfaces an error toast.
+async function goToChat(kind, name, patternRow) {
+	try {
+		const res = await goToChatContext(kind, name)
+		const text = (res && res.prompt) || ""
+		if (!text) throw new Error("empty bundle")
+		setChatPrefill({ text, autoSend: true })
+		router.push("/")
+	} catch (e) {
+		if (kind === "pattern" && patternRow) {
+			const d = expanded[patternRow.name]
+			setChatPrefill({
+				text: buildDiscussPrompt(patternRow, d && d !== "loading" ? d : null),
+				autoSend: true,
+			})
+			router.push("/")
+			return
+		}
+		toast.error(errMsg(e))
+	}
 }
 
 // ── selection / batch ────────────────────────────────────────────────────────

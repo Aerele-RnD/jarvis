@@ -261,7 +261,16 @@ def personal_skill_clause(user: str | None = None) -> str:
 		count = 0
 	if not count:
 		return ""
-	return f"; {count} personal skill(s) saved - search with jarvis__find_skills"
+	# Precedence tag (Skills-area rework, DESIGN.md section 6): personal skills
+	# augment ONLY this user's own turns and must yield to org/role guidance on
+	# conflict. The turn_handler emits this clause AFTER the org/role/learned/wiki
+	# clauses so the ordering reinforces the same rule. Explicit /slug invocation
+	# stays intentional (invoked_skill_clause is not demoted).
+	return (
+		f"; {count} personal skill(s) saved "
+		"(applies to you; org guidance takes priority on conflict) "
+		"- search with jarvis__find_skills"
+	)
 
 
 def build_push_payload(owner: str | None = None, strict: bool = False) -> list[dict]:

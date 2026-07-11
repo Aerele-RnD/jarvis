@@ -51,6 +51,9 @@
   "wiki_lint_summary",
   "wiki_mirror_last_synced_at",
   "wiki_mirror_last_sync_status",
+  "personalise_section",
+  "personalise_daily_question_cap",
+  "personalise_enabled",
   "system_tab",
   "deployment_section",
   "deployment_mode",
@@ -374,6 +377,27 @@
    "label": "Wiki Mirror Last Sync Status",
    "read_only": 1,
    "description": "Outcome of the last org-wiki mirror sync into the agent workspace."
+  },
+  {
+   "fieldname": "personalise_section",
+   "fieldtype": "Section Break",
+   "label": "Personalisation",
+   "collapsible": 1,
+   "description": "Skills-area Personalise tab: per-user Question bank + free-capture Notes (DESIGN.md section 2.5). Gated System Manager | Administrator | Jarvis Admin for editing; readers should treat an unset personalise_enabled as ON, same convention as voice_features_enabled/wiki_enabled above."
+  },
+  {
+   "fieldname": "personalise_daily_question_cap",
+   "fieldtype": "Int",
+   "label": "Daily Question Cap",
+   "default": "5",
+   "description": "Max learning/chat-pattern questions materialized per user per day. Org-rule questions (Jarvis Personalise Question Rule) and reviewer follow-up questions are never capped by this."
+  },
+  {
+   "fieldname": "personalise_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Personalisation",
+   "default": "1",
+   "description": "Master toggle for the Personalise tab: question materialization, free-capture notes, and question-rule sweeps. Readers treat an unset value as ON (Single defaults are not backfilled on migrate; seeded by jarvis.learning.roles.after_migrate)."
   },
   {
    "fieldname": "system_tab",
