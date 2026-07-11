@@ -269,18 +269,6 @@
 
     <!-- ================ QUICK / CUSTOM (shared rows) ================ -->
     <section v-if="singleMode" style="margin-bottom:18px;">
-      <!-- Onboarding (singleMode) drops this hint line: the step's own subtitle
-           ("Pick which AI powers Jarvis…") already covers it, per the preview. -->
-      <p v-if="llmMode==='quick' && !singleMode" style="font-size:14px;color:var(--text-3);margin:0 0 12px;">
-        <template v-if="rows[0] && rows[0].credentialType === 'subscription'">A single chat subscription, served through the managed proxy.</template><template v-else>A single model, sent directly to the provider.</template><template v-if="canPool"> Need multiple models with failover? Use <b>Preset</b> or <b>Custom</b>.</template><template v-else> You can add more models and automatic failover later from My Account.</template>
-      </p>
-      <!-- "Custom failover pool" is the section heading for the multi-model
-           Account editor only. Onboarding (singleMode) shows neither this nor the
-           hint line above - the step's own head + method cards carry the context. -->
-      <div v-else-if="!singleMode" style="font-size:13px;font-weight:600;color:var(--text-2);margin-bottom:8px;letter-spacing:.03em;text-transform:uppercase;">
-        Custom failover pool<span class="jv-pool-heading-suffix"> · tried in order</span>
-      </div>
-
       <div v-if="!editorRows.length" style="font-size:13px;color:var(--text-3);padding:8px 0;">No models yet. Add one below.</div>
 
       <!-- Onboarding (singleMode) renders the connect content directly on the
@@ -310,32 +298,6 @@
           </div>
         </div>
 
-        <!-- Row head: failover-order badge, credential-type segmented control
-             (+ reorder/remove in Custom). -->
-        <div v-if="!singleMode" class="jv-pool-rowhead">
-          <span class="jv-pool-badge">{{ i + 1 }}</span>
-          <div class="jv-pool-segct" role="group" aria-label="Credential type">
-            <button v-for="opt in credTypes" :key="opt.value" type="button" class="jv-pool-segbtn"
-                    :class="{ on: m.credentialType===opt.value }"
-                    @click="setCredType(m, opt.value)" :disabled="!editable" :aria-pressed="m.credentialType===opt.value">
-              <svg v-if="opt.value==='api_key'" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
-              <svg v-else viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-              <span>{{ opt.label }}</span>
-            </button>
-          </div>
-          <div v-if="isMulti" style="margin-left:auto;display:flex;gap:6px;">
-            <button @click="move(i,-1)" :disabled="!editable || i===0" title="Up" class="jv-pool-iconbtn">
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg>
-            </button>
-            <button @click="move(i,1)" :disabled="!editable || i===editorRows.length-1" title="Down" class="jv-pool-iconbtn">
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
-            </button>
-            <button @click="remove(i)" :disabled="!editable" title="Remove" class="jv-pool-iconbtn jv-pool-iconbtn--danger">
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6h16z"/></svg>
-            </button>
-          </div>
-        </div>
-
         <!-- API-key credential. Onboarding (singleMode) lays the four fields out as
              a 2×2 grid so this view's height sits close to the subscription view -
              no jarring resize when toggling. The Account editor keeps the dense row. -->
@@ -348,34 +310,6 @@
             <input v-model="m.apiKey" :disabled="!editable" type="password"
                    :placeholder="m.hasKey ? 'key set, re-enter to change' : 'API key'" />
             <input v-model="m.baseUrl" :disabled="!editable" placeholder="Base URL (OpenAI-compatible)" />
-          </div>
-          <div v-else style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
-            <div class="jv-pool-field" style="flex:1;min-width:120px;">
-              <label class="jv-pool-lab">Provider</label>
-              <select v-model="m.provider" @change="onProviderChange(m)" :disabled="!editable" title="Provider"
-                      style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;">
-                <option v-for="p in providerOptions" :key="p" :value="p">{{ p }}</option>
-              </select>
-            </div>
-            <div class="jv-pool-field" style="flex:1.5;min-width:120px;">
-              <label class="jv-pool-lab">Model</label>
-              <input v-model="m.model" :list="'jv-dl-'+i" :disabled="!editable" placeholder="Model ID (e.g. gpt-4o)"
-                     style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;" />
-              <datalist :id="'jv-dl-'+i">
-                <option v-for="s in modelSuggestionsForProvider(m.provider)" :key="s" :value="s"></option>
-              </datalist>
-            </div>
-            <div class="jv-pool-field" style="flex:1.5;min-width:120px;">
-              <label class="jv-pool-lab">API key</label>
-              <input v-model="m.apiKey" :disabled="!editable" type="password"
-                     :placeholder="m.hasKey ? 'key set, re-enter to change' : 'API key'"
-                     style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;" />
-            </div>
-            <div class="jv-pool-field" style="flex:1.5;min-width:120px;">
-              <label class="jv-pool-lab">Base URL (optional)</label>
-              <input v-model="m.baseUrl" :disabled="!editable" placeholder="Base URL (OpenAI-compatible)"
-                     style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;" />
-            </div>
           </div>
         </div>
 
@@ -395,30 +329,6 @@
                  be a no-op rather than wiping a finished OAuth connect. -->
             <JvCombo :model-value="m.upstream" @update:model-value="(v) => { if (v === m.upstream) return; m.upstream = v; onUpstreamChange(m) }"
                      :options="upstreamOpts" :editable="editable" placeholder="Provider" />
-          </div>
-          <div v-else style="display:flex;gap:8px;align-items:flex-end;margin-bottom:8px;flex-wrap:wrap;">
-            <div class="jv-pool-field" style="flex:2;min-width:120px;">
-              <label class="jv-pool-lab">Model</label>
-              <input v-model="m.model" :list="'jv-subdl-'+i" :disabled="!editable" placeholder="Model ID (e.g. gpt-5.5)"
-                     style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;" />
-              <datalist :id="'jv-subdl-'+i">
-                <option v-for="s in (SUB_MODEL_SUGGESTIONS[m.upstream] || [])" :key="s" :value="s"></option>
-              </datalist>
-            </div>
-            <div class="jv-pool-field" style="flex:1;min-width:100px;">
-              <label class="jv-pool-lab">Provider</label>
-              <select v-model="m.upstream" @change="onUpstreamChange(m)" :disabled="!editable" title="Provider"
-                      style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;">
-                <option v-for="o in upstreamOpts" :key="o.value" :value="o.value">{{ o.label }}</option>
-              </select>
-            </div>
-            <div class="jv-pool-field" style="flex:1.2;min-width:110px;">
-              <label class="jv-pool-lab">Account rotation</label>
-              <select v-model="m.rotation" :disabled="!editable" title="Account rotation"
-                      style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;">
-                <option v-for="o in rotationOpts" :key="o.value" :value="o.value">{{ o.label }}</option>
-              </select>
-            </div>
           </div>
 
           <!-- Connected accounts -->
@@ -498,50 +408,6 @@
             <div v-if="m._connect && m._connect.error" class="jv-cn-err">{{ m._connect.error }}</div>
           </template>
 
-          <!-- Inline paste-back OAuth flow - two clear steps: open the sign-in
-               (OAuth) URL, then paste the callback URL you're redirected to.
-               (Account editor only; onboarding renders the spine above.) -->
-          <div v-if="!singleMode && m._connect && m._connect.open" class="jv-cn">
-            <div v-if="m._connect.authorizeUrl">
-              <div class="jv-cn-step">
-                <span class="jv-cn-num">1</span>
-                <div class="jv-cn-body">
-                  <div class="jv-cn-t">Sign in with your {{ m.upstream === 'google' ? 'Google' : 'OpenAI' }} account</div>
-                  <div class="jv-cn-row">
-                    <a :href="m._connect.authorizeUrl" target="_blank" rel="noopener noreferrer" class="jv-cn-open">Open sign-in ↗</a>
-                    <button @click="copyAuthorizeUrl(m)" class="jv-cn-copy">{{ m._connect.copied ? 'Copied ✓' : 'Copy link' }}</button>
-                  </div>
-                </div>
-              </div>
-              <div class="jv-cn-step">
-                <span class="jv-cn-num">2</span>
-                <div class="jv-cn-body">
-                  <div class="jv-cn-t">Paste the callback URL</div>
-                  <div class="jv-cn-hint">After signing in you'll see a “This site can't be reached” page. Copy that page's full URL and paste it below.</div>
-                  <input v-model="m._connect.pastedUrl" class="jv-cn-input" placeholder="http://localhost:1455/auth/callback?code=…" @keydown.enter="finishConnect(m)" />
-                </div>
-              </div>
-              <div class="jv-cn-acts">
-                <button @click="closeConnect(m)" class="jv-cn-cancel">Cancel</button>
-                <button @click="finishConnect(m)" :disabled="m._connect.loading" class="jv-cn-connect">
-                  {{ m._connect.loading ? 'Connecting…' : 'Connect' }}
-                </button>
-              </div>
-            </div>
-            <div v-else class="jv-cn-loading">Starting sign-in…</div>
-            <div v-if="m._connect.error" class="jv-cn-err">{{ m._connect.error }}</div>
-          </div>
-
-          <!-- Account editor's connect entry point (onboarding's spine above owns
-               startConnect there). Zero-accounts only - once an account exists,
-               the equivalent trigger lives inline as the dashed "+ Add account"
-               row at the end of the chip list above. -->
-          <button v-if="editable && !singleMode && !(m._connect && m._connect.open) && !(m.accounts && m.accounts.length)"
-                  @click="startConnect(m)"
-                  :disabled="m._connect && m._connect.loading && !m._connect.authorizeUrl"
-                  class="jv-btn jv-btn--sm jv-btn--primary">
-            + Connect account
-          </button>
         </div>
       </div>
 
@@ -624,9 +490,6 @@ const modeTabs = computed(() => ALL_MODE_TABS.filter((t) => props.modes.includes
 // With a single allowed mode the tab bar + Direct/Proxy badge are just noise -
 // hide them and render that mode's body directly (onboarding's quick-only editor).
 const singleMode = computed(() => modeTabs.value.length <= 1)
-// Whether any proxy-pool tab (Preset/Custom) is reachable - gates the Quick hint
-// copy so it never points at tabs that aren't there.
-const canPool = computed(() => props.modes.includes("preset") || props.modes.includes("custom"))
 // Whether the single-mode (onboarding) row is savable - an account is connected,
 // or an API key + provider/model are filled. Emitted so the host footer can
 // invite the final "Onboard Jarvis" click once the user is ready.
@@ -698,10 +561,6 @@ function modelSuggestionsForProvider(provider) {
 // ---- derived -------------------------------------------------------------
 const isMulti = computed(() => llmMode.value === "custom")
 const editorRows = computed(() => isMulti.value ? rows.value : rows.value.slice(0, 1))
-// Quick renders only rows[0] and saving in Quick collapses the pool to that one
-// model. When a real multi-model pool exists, lock the Quick tab so a stray click
-// can't silently drop the other models - the user reduces the pool via Custom.
-const quickLocked = computed(() => rows.value.length >= 2)
 const singleVendorPresets = computed(() => catalog.value.filter((c) => c.kind === "single_vendor"))
 const crossVendorPresets = computed(() => catalog.value.filter((c) => c.kind === "cross_vendor"))
 const selectedEntry = computed(() => catalog.value.find((c) => c.key === selectedPreset.value) || null)
@@ -923,14 +782,6 @@ function newRow() {
     provider: providerOptions[0] || "Anthropic", model: "", apiKey: "", baseUrl: "", hasKey: false,
     credentialType: "api_key", rotation: "sticky", upstream: "openai",
     accounts: [], _connect: blankConnect(), order: 0,
-  }
-}
-
-function setMode(m) {
-  llmMode.value = m
-  if (m !== "preset") {
-    selectedPreset.value = ""
-    if (!rows.value.length) rows.value = [newRow()]
   }
 }
 
