@@ -365,18 +365,20 @@
               <div class="jv-cstep">
                 <div class="jv-cnum">1</div>
                 <div class="jv-cbody">
-                  <div class="jv-ctit">Sign in with {{ m.upstream === 'google' ? 'Google' : 'OpenAI' }}</div>
-                  <div class="jv-cdesc">Opens {{ m.upstream === 'google' ? 'Google' : 'OpenAI' }} in a new tab. Approve access, then come back here.</div>
-                  <div class="jv-crow">
-                    <template v-if="m._connect && m._connect.authorizeUrl">
-                      <a :href="m._connect.authorizeUrl" target="_blank" rel="noopener noreferrer" class="jv-cbtn jv-cbtn-primary">Open sign-in ↗</a>
-                      <button type="button" class="jv-cbtn jv-cbtn-ghost" @click="copyAuthorizeUrl(m)">{{ m._connect.copied ? 'Copied ✓' : 'Copy link' }}</button>
-                    </template>
-                    <button v-else type="button" class="jv-cbtn jv-cbtn-primary"
-                            :disabled="!editable || (m._connect && m._connect.loading)" @click="startConnect(m)">
-                      {{ m._connect && m._connect.loading ? 'Starting sign-in…' : 'Open sign-in ↗' }}
-                    </button>
+                  <div class="jv-chead">
+                    <div class="jv-ctit">Sign in with {{ m.upstream === 'google' ? 'Google' : 'OpenAI' }}</div>
+                    <div class="jv-crow">
+                      <template v-if="m._connect && m._connect.authorizeUrl">
+                        <a :href="m._connect.authorizeUrl" target="_blank" rel="noopener noreferrer" class="jv-cbtn jv-cbtn-primary">Open sign-in ↗</a>
+                        <button type="button" class="jv-cbtn jv-cbtn-ghost" @click="copyAuthorizeUrl(m)">{{ m._connect.copied ? 'Copied ✓' : 'Copy link' }}</button>
+                      </template>
+                      <button v-else type="button" class="jv-cbtn jv-cbtn-primary"
+                              :disabled="!editable || (m._connect && m._connect.loading)" @click="startConnect(m)">
+                        {{ m._connect && m._connect.loading ? 'Starting sign-in…' : 'Open sign-in ↗' }}
+                      </button>
+                    </div>
                   </div>
+                  <div class="jv-cdesc">Opens {{ m.upstream === 'google' ? 'Google' : 'OpenAI' }} in a new tab. Approve access, then come back here.</div>
                 </div>
               </div>
               <div class="jv-cstep" :class="{ 'jv-pending': !(m._connect && m._connect.authorizeUrl) }">
@@ -1317,7 +1319,10 @@ defineExpose({ save })
 .jv-cstep.jv-pending .jv-cnum { background: var(--surface-2); color: var(--text-3); border: 1.5px solid var(--border-2); }
 .jv-cbody { flex: 1; min-width: 0; }
 .jv-ctit { font-size: 13.5px; font-weight: 600; margin-bottom: 3px; }
-.jv-cdesc { font-size: 12.5px; color: var(--text-3); line-height: 1.45; margin-bottom: 11px; }
+/* Step-1 header row: title left, sign-in action(s) right on the same line. */
+.jv-chead { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+.jv-chead .jv-ctit { margin-bottom: 0; }
+.jv-cdesc { font-size: 12.5px; color: var(--text-3); line-height: 1.45; margin-bottom: 0; }
 .jv-crow { display: flex; justify-content: flex-end; gap: 9px; flex-wrap: wrap; }
 /* Small in-step buttons (preview .btn--sm on .btn--primary/.btn--ghost). */
 .jv-cbtn {
