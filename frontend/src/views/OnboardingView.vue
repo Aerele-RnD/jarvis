@@ -255,7 +255,7 @@
 								<div class="jv-ob-head">
 									<h1>Connect your openclaw</h1>
 									<p>Point Jarvis at <b>your own</b> openclaw server. Jarvis connects over HTTP
-										with a bearer token. No Aerele persona/skills. Validate first, then connect.</p>
+										with a bearer token. No managed persona/skills. Validate first, then connect.</p>
 								</div>
 								<div class="jv-ob-sh">
 									<label class="jv-ob-label" for="jv-ob-sh-url">openclaw URL</label>

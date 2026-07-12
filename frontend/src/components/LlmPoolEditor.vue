@@ -1178,7 +1178,7 @@ defineExpose({ save })
 .jv-pool-field { display: flex; flex-direction: column; min-width: 0; }
 .jv-pool-lab { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; color: var(--text-3); margin-bottom: 3px; }
 /* Connected-accounts chip list. */
-.jv-pool-accts { margin-bottom: 8px; }
+.jv-pool-accts { margin-top: 16px; margin-bottom: 8px; }
 .jv-pool-accts > .jv-pool-lab { margin-bottom: 6px; }
 .jv-pool-acctlist { display: flex; flex-direction: column; gap: 6px; }
 .jv-pool-acctchip {
@@ -1318,7 +1318,7 @@ defineExpose({ save })
 .jv-cbody { flex: 1; min-width: 0; }
 .jv-ctit { font-size: 13.5px; font-weight: 600; margin-bottom: 3px; }
 .jv-cdesc { font-size: 12.5px; color: var(--text-3); line-height: 1.45; margin-bottom: 11px; }
-.jv-crow { display: flex; gap: 9px; flex-wrap: wrap; }
+.jv-crow { display: flex; justify-content: flex-end; gap: 9px; flex-wrap: wrap; }
 /* Small in-step buttons (preview .btn--sm on .btn--primary/.btn--ghost). */
 .jv-cbtn {
   display: inline-flex; align-items: center; justify-content: center; gap: 7px;

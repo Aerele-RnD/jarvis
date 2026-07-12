@@ -134,9 +134,6 @@
 					<h2>Put specialists to work in the background.</h2>
 					<p>Install expert-built ERPNext agents, or build your own custom agents for your team’s workflows. They watch and surface findings before you ask.</p>
 					<p class="final-call"><mark>Ready to see it on your data? Onboard Jarvis and explore everything hands-on. It takes about two minutes.</mark></p>
-					<div class="final-cta">
-						<button class="btn btn--primary btn--lg" @click="$emit('finish')">Onboard Jarvis →</button>
-					</div>
 				</div>
 				<div class="mock">
 					<div class="mock-bar"><i></i><i></i><i></i><span>Agents</span></div>
@@ -144,10 +141,31 @@
 						<div class="m-side" v-html="sideHtml('Agents')"></div>
 						<div class="m-main">
 							<div class="m-grid">
-								<div class="m-card"><div class="ico">🔎</div><div class="nm">Ledger Scrutiny</div><div class="ds">Analytical review &amp; audit checks on your books</div><span class="m-inst on">Installed</span></div>
-								<div class="m-card"><div class="ico">💰</div><div class="nm">AR Follow-up</div><div class="ds">Chases overdue receivables, drafts reminders</div><span class="m-inst">Install</span></div>
-								<div class="m-card"><div class="ico">📅</div><div class="nm">Month-end Close</div><div class="ds">Runs your closing checklist on schedule</div><span class="m-inst">Install</span></div>
-								<div class="m-card dashed"><div class="ico ico-plain">＋</div><div class="nm">Build custom</div><div class="ds">An agent for your own workflow</div></div>
+								<div class="m-card">
+									<div class="m-card-top">
+										<div class="av">LS</div>
+										<div class="m-card-id"><div class="nm">Ledger Scrutiny</div><div class="by">by Jarvis · v1.4</div></div>
+									</div>
+									<div class="ds">Analytical review &amp; audit checks on your books</div>
+									<div class="m-meta"><span class="cat">Audit</span><span class="ins">↓ 128</span><span class="ok">✓ Installed</span></div>
+								</div>
+								<div class="m-card">
+									<div class="m-card-top">
+										<div class="av">AR</div>
+										<div class="m-card-id"><div class="nm">AR Follow-up</div><div class="by">by Jarvis · v1.1</div></div>
+									</div>
+									<div class="ds">Chases overdue receivables, drafts reminders</div>
+									<div class="m-meta"><span class="cat">Collections</span><span class="ins">↓ 94</span></div>
+								</div>
+								<div class="m-card">
+									<div class="m-card-top">
+										<div class="av">MC</div>
+										<div class="m-card-id"><div class="nm">Month-end Close</div><div class="by">by Jarvis · v2.0</div></div>
+									</div>
+									<div class="ds">Runs your closing checklist on schedule</div>
+									<div class="m-meta"><span class="cat">Close</span><span class="ins">↓ 76</span></div>
+								</div>
+								<div class="m-card dashed"><div class="ico-plain">＋</div><div class="nm">Build custom</div><div class="ds">An agent for your own workflow</div></div>
 							</div>
 						</div>
 					</div>
@@ -166,6 +184,7 @@
 				<button v-if="!isLast" class="skip" @click="$emit('skip')">Skip tour</button>
 				<button class="btn btn--ghost btn--sm" :style="{ visibility: cur === 0 ? 'hidden' : 'visible' }" @click="step(-1)">Back</button>
 				<button v-if="!isLast" class="btn btn--primary btn--sm" @click="step(1)">Next</button>
+				<button v-else class="btn btn--primary btn--sm" @click="$emit('finish')">Onboard Jarvis →</button>
 			</div>
 		</div>
 	</div>
@@ -359,16 +378,22 @@ button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .m-row-dashed { border-style: dashed; justify-content: center; }
 .m-row-cta { font-size: 10px; font-weight: 600; color: var(--text-2); }
 
-/* ---- agents mock ---- */
-.m-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
-.m-card { border: 1px solid var(--border); border-radius: 9px; background: var(--surface); padding: 10px; }
-.m-card .ico { width: 22px; height: 22px; border-radius: 7px; background: var(--blue-bg); border: 1px solid var(--blue-bd); margin-bottom: 7px; display: grid; place-items: center; font-size: 11px; }
-.m-card .ico-plain { background: var(--surface-2); border-color: var(--border); }
-.m-card .nm { font-size: 10.5px; font-weight: 600; color: var(--text); margin-bottom: 2px; }
-.m-card .ds { font-size: 8.5px; color: var(--text-3); line-height: 1.35; }
-.m-card.dashed { border-style: dashed; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 4px; }
-.m-inst { display: inline-block; margin-top: 8px; font-size: 9px; font-weight: 600; padding: 3px 8px; border-radius: 6px; background: var(--text); color: var(--surface); }
-.m-inst.on { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-bd); }
+/* ---- agents mock (mirrors the real AgentsList card: letter avatar,
+   by {publisher} · v{version}, then a category + installs + Installed meta row) ---- */
+.m-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.m-card { border: 1px solid var(--border); border-radius: 9px; background: var(--surface); padding: 9px; display: flex; flex-direction: column; }
+.m-card-top { display: flex; align-items: flex-start; gap: 7px; }
+.m-card .av { width: 20px; height: 20px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); display: grid; place-items: center; font-size: 8px; font-weight: 700; color: var(--text-2); flex: none; }
+.m-card-id { min-width: 0; flex: 1; }
+.m-card .nm { font-size: 10px; font-weight: 600; color: var(--text); line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-card .by { font-size: 7.5px; color: var(--text-3); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-card .ds { font-size: 8.5px; color: var(--text-3); line-height: 1.35; margin-top: 6px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.m-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: auto; padding-top: 7px; }
+.m-meta .cat { font-size: 7.5px; font-weight: 600; color: var(--text-2); border: 1px solid var(--border-2); border-radius: 99px; padding: 1.5px 6px; }
+.m-meta .ins { display: inline-flex; align-items: center; gap: 2px; font-size: 8px; color: var(--text-3); }
+.m-meta .ok { display: inline-flex; align-items: center; gap: 2px; font-size: 8px; font-weight: 600; color: var(--green); }
+.m-card .ico-plain { width: 20px; height: 20px; border-radius: 6px; background: var(--surface-2); border: 1px solid var(--border); display: grid; place-items: center; font-size: 11px; color: var(--text-2); margin-bottom: 5px; }
+.m-card.dashed { border-style: dashed; align-items: center; justify-content: center; text-align: center; gap: 3px; }
 
 /* ---- footer: dots + nav ---- */
 .tour-foot { display: flex; align-items: center; justify-content: space-between; padding: 16px 44px 26px; border-top: 1px solid var(--border); background: var(--surface); }
