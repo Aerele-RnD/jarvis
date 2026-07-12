@@ -225,7 +225,7 @@
 										<p>Pick which AI powers Jarvis. You can change this anytime from Settings → Account.</p>
 									</div>
 									<div class="jv-ob-connect">
-										<LlmPoolEditor ref="poolRef" :editable="true" :modes="['quick']" :footerless="true" @saved="onConnected" @ready="connectReady = $event" />
+										<LlmPoolEditor ref="poolRef" :editable="true" :modes="['quick']" :footerless="true" @saved="onConnected" @ready="onEditorReady" />
 									</div>
 									<Banner v-if="state.finishNote" type="info" :message="state.finishNote">
 										<template #action>
@@ -240,10 +240,18 @@
 									 go back to (re-running startSignup there would double-sign-up). -->
 								<button v-if="!state.reconciledConnect" class="jv-ob-back" :disabled="savingConnect" @click="goBack">← Back</button>
 								<span v-else></span>
-								<!-- The ONLY gradient button in the whole flow. -->
-								<button v-if="connectReady || savingConnect" class="jv-ob-btn jv-ob-btn-grad" :disabled="savingConnect" @click="saveConnect">
-									{{ savingConnect ? "Connecting…" : "Start Chatting →" }}
-								</button>
+								<!-- Two-phase: Connect runs the real apply; once it succeeds we
+									 confirm "Connected" and reveal Start Chatting (the ONLY
+									 gradient button in the whole flow) which just navigates. -->
+								<div class="jv-ob-connect-acts">
+									<template v-if="connected">
+										<span class="jv-ob-connected"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Connected</span>
+										<button class="jv-ob-btn jv-ob-btn-grad" @click="startChatting">Start Chatting →</button>
+									</template>
+									<button v-else-if="connectReady || savingConnect" class="jv-ob-btn jv-ob-btn-grad" :disabled="savingConnect" @click="saveConnect">
+										{{ savingConnect ? "Connecting…" : "Connect →" }}
+									</button>
+								</div>
 							</div>
 						</section>
 
@@ -870,10 +878,11 @@ async function afterSaveRecheckReady({ followSync = false } = {}) {
 	}
 	const ready = await waitUntilReady()
 	if (ready) {
-		// Keep the "Setting up Jarvis" spinner up THROUGH the full-page reload.
-		// Flipping finishing off first re-shows the editor for a frame before
-		// the browser navigates. Leave it on; location.assign tears the page down.
-		window.location.assign("/jarvis/")
+		// Apply succeeded and the tenant is ready: confirm "Connected" and reveal
+		// the Start Chatting button (which navigates) instead of auto-jumping, so
+		// the user gets an explicit connected state before entering chat.
+		state.finishing = false
+		connected.value = true
 		return
 	}
 	state.finishing = false
@@ -893,12 +902,27 @@ function onConnected(sync) {
 const poolRef = ref(null)
 const savingConnect = ref(false)
 // True once the embedded editor reports a savable config (account connected,
-// or API key filled) - gates the Connect & Finish button.
+// or API key filled) - gates the Connect button.
 const connectReady = ref(false)
+// True after Connect (the real apply) has succeeded - reveals Start Chatting.
+const connected = ref(false)
+// Readiness can drop back to false if the user clears a required field after
+// connecting; in that case make them re-Connect rather than Start Chatting a
+// config that was never re-applied.
+function onEditorReady(v) {
+	connectReady.value = v
+	if (!v) connected.value = false
+}
 async function saveConnect() {
 	if (!poolRef.value) return
+	connected.value = false
 	savingConnect.value = true
 	try { await poolRef.value.save() } finally { savingConnect.value = false }
+}
+// Start Chatting is now a pure navigation - the pool was already applied by
+// Connect (afterSaveRecheckReady flips `connected` once the tenant goes ready).
+function startChatting() {
+	window.location.assign("/jarvis/")
 }
 
 // ---- Self-host (renderSelfHost / renderShResults / runSelfHostTest /
@@ -1074,6 +1098,10 @@ onMounted(async () => {
 	padding: 18px 40px 26px; border-top: 1px solid var(--border);
 }
 .jv-ob-foot-end { justify-content: flex-end; }
+/* Connect step: the connected confirmation + Start Chatting share the right side. */
+.jv-ob-connect-acts { display: flex; align-items: center; gap: 14px; }
+.jv-ob-connected { display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; font-weight: 600; color: var(--green); }
+.jv-ob-connected svg { color: var(--green); }
 .jv-ob-back { font-size: 13px; color: var(--text-2); background: none; border: none; cursor: pointer; font-family: inherit; display: inline-flex; align-items: center; gap: 6px; padding: 4px 2px; }
 .jv-ob-back:hover { color: var(--text); }
 .jv-ob-back:disabled { opacity: .5; cursor: default; }
