@@ -413,11 +413,9 @@
         </div>
       </div>
 
-      <div v-if="isMulti && editable" style="display:flex;justify-content:flex-end;">
-        <button @click="addModel" class="jv-btn jv-btn--sm jv-btn--primary">
-          + Add model
-        </button>
-      </div>
+      <button v-if="isMulti && editable" @click="addModel" class="jv-btn jv-btn--sm jv-btn--ghost">
+        + Add model
+      </button>
     </section>
 
     <!-- Save bar + sync status - hidden when a host renders its own footer. -->
@@ -429,7 +427,7 @@
       <span v-else-if="applyStatus.kind !== 'idle'" class="jv-pool-syncpill" :class="'jv-pool-syncpill--' + applyStatus.kind">
         <span class="jv-pool-syncpill-ic" aria-hidden="true"></span>{{ applyStatus.text }}
       </span>
-      <button v-if="editable" @click="save" :disabled="saving || saveBlocked" class="jv-btn jv-btn--sm jv-btn--primary">
+      <button v-if="editable" @click="save" :disabled="saving || saveBlocked" class="jv-btn jv-btn--primary">
         {{ saving ? 'Saving…' : 'Save configuration' }}
       </button>
     </div>
