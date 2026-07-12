@@ -421,8 +421,8 @@
     <!-- Save bar + sync status - hidden when a host renders its own footer. -->
     <div v-if="!footerless" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
       <button v-if="editable" @click="save" :disabled="saving || saveBlocked"
-              :style="{padding:'12px 24px',background: saveBlocked ? 'var(--surface-3)' : 'var(--blue)',
-                       color: saveBlocked ? 'var(--text-3)' : 'var(--blue-fg)',border:'none',borderRadius:'9px',
+              :style="{padding:'12px 24px',background: saveBlocked ? 'var(--surface-3)' : 'var(--text)',
+                       color: saveBlocked ? 'var(--text-3)' : 'var(--surface)',border:'none',borderRadius:'9px',
                        cursor: saveBlocked ? 'not-allowed' : 'pointer',fontSize:'15px',fontWeight:'600'}">
         {{ saving ? 'Saving…' : 'Save configuration' }}
       </button>
@@ -1161,7 +1161,7 @@ defineExpose({ save })
 }
 .jv-pool-segbtn:last-child { border-right: none; }
 .jv-pool-segbtn svg { flex: none; }
-.jv-pool-segbtn.on { background: var(--blue); color: var(--blue-fg); font-weight: 600; }
+.jv-pool-segbtn.on { background: var(--text); color: var(--surface); font-weight: 600; }
 .jv-pool-segbtn:disabled { cursor: default; opacity: .6; }
 /* Reorder / remove icon buttons (replace the ▲/▼/✕ glyph squares). */
 .jv-pool-iconbtn {
@@ -1312,7 +1312,7 @@ defineExpose({ save })
 .jv-cstep:not(:last-child)::before { content: ""; position: absolute; left: 12.5px; top: 32px; bottom: 4px; width: 1.5px; background: var(--border); }
 .jv-cnum {
   width: 26px; height: 26px; border-radius: 50%; box-sizing: border-box;
-  background: var(--blue); color: var(--blue-fg);
+  background: var(--text); color: var(--surface);
   display: grid; place-items: center; font-size: 12.5px; font-weight: 600;
   flex: none; position: relative; z-index: 1;
 }
@@ -1338,8 +1338,8 @@ defineExpose({ save })
    focus-visible rule misses - give both spine controls their own outline. */
 .jv-cbtn:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .jv-cbtn:disabled { opacity: .55; cursor: default; transform: none; }
-.jv-cbtn-primary { background: var(--blue); color: var(--blue-fg); box-shadow: 0 2px 10px rgba(20, 20, 30, .16); }
-.jv-cbtn-primary:hover:not(:disabled) { color: var(--blue-fg); transform: translateY(-1px); box-shadow: 0 8px 22px rgba(20, 20, 30, .22); }
+.jv-cbtn-primary { background: var(--text); color: var(--surface); box-shadow: 0 2px 10px rgba(20, 20, 30, .16); }
+.jv-cbtn-primary:hover:not(:disabled) { color: var(--surface); transform: translateY(-1px); box-shadow: 0 8px 22px rgba(20, 20, 30, .22); }
 .jv-cbtn-ghost { background: var(--surface); border-color: var(--border-2); color: var(--text-2); }
 .jv-cbtn-ghost:hover:not(:disabled) { background: var(--surface-2); color: var(--text); border-color: var(--border); }
 /* ONE amber callout: the "This site can't be reached is expected" guidance with
