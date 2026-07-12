@@ -1,8 +1,8 @@
 <template>
   <div class="jv-settings-body">
+    <!-- The dialog header already titles this pane — no duplicate heading here
+         (design.md §4.1). -->
     <section class="jv-mon-card">
-      <h3>Connection</h3>
-
       <div v-if="!isSystemManager" class="jv-mon-note">
         Connection details are available to System Managers only.
       </div>

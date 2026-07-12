@@ -23,24 +23,49 @@
 					</button>
 					<!-- Model picker: switch the LLM model for this conversation -->
 					<div class="jv-modelmenu-wrap" style="position:relative;">
-						<button class="jv-modelpill" @click="modelMenuOpen = !modelMenuOpen" :title="availableModels.length ? 'Switch model' : 'Connected to ERPNext'" style="display:flex;align-items:center;gap:7px;padding:5px 10px;background:var(--surface-1);border:1px solid var(--border);border-radius:20px;cursor:pointer;font-family:inherit;">
+						<button class="jv-modelpill" @click="modelMenuOpen = !modelMenuOpen" title="Model and effort" style="display:flex;align-items:center;gap:7px;padding:5px 10px;background:var(--surface-1);border:1px solid var(--border);border-radius:20px;cursor:pointer;font-family:inherit;">
 							<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3" /><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5" /><path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3" /></svg>
 							<span style="font-size:12px;color:var(--text-2);font-weight:500;">{{ modelLabel }}</span>
+								<span v-if="thinkingOverride" style="font-size:11px;color:var(--text-3);font-weight:450;">· {{ thinkingOverride }}</span>
 							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg>
 						</button>
-						<div v-if="modelMenuOpen && availableModels.length" style="position:absolute;top:calc(100% + 6px);right:0;min-width:198px;background:var(--surface);border:1px solid var(--border-2);border-radius:10px;box-shadow:0 8px 24px rgba(20,20,30,.14);padding:5px;z-index:30;">
-							<!-- Auto: its own separate option (let Jarvis pick), divided from the explicit models -->
-							<button class="jv-menuitem" :class="{ on: !modelOverride }" @click="selectModel('')">
-								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex:none;"><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8" /></svg>
-								<span style="flex:1;">Auto <span style="color:var(--text-3);font-weight:450;">· {{ ui.llm_model || "default" }}</span></span>
-								<svg v-if="!modelOverride" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;"><path d="M20 6 9 17l-5-5" /></svg>
-							</button>
-							<div style="height:1px;background:var(--border);margin:5px 2px;"></div>
-							<div style="padding:3px 9px 6px;font-size:10px;color:var(--text-3);font-weight:600;text-transform:uppercase;letter-spacing:.03em;">Model · {{ ui.llm_provider }}</div>
-							<button v-for="m in availableModels" :key="m" class="jv-menuitem" :class="{ on: m === modelOverride }" @click="selectModel(m)">
-								<span style="flex:1;">{{ m }}</span>
-								<svg v-if="m === modelOverride" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;"><path d="M20 6 9 17l-5-5" /></svg>
-							</button>
+						<div v-if="modelMenuOpen" style="position:absolute;top:calc(100% + 6px);right:0;min-width:224px;background:var(--surface);border:1px solid var(--border-2);border-radius:10px;box-shadow:0 8px 24px rgba(20,20,30,.14);padding:5px;z-index:30;">
+							<!-- Effort first: it is the control that always applies, even when the
+								     customer has exactly one configured model. Levels come from the server
+								     (thinking_levels) because Jarvis Conversation.thinking_override is a
+								     Select - offering a level it rejects would fail the save. -->
+								<div style="padding:3px 9px 6px;font-size:10px;color:var(--text-3);font-weight:600;text-transform:uppercase;letter-spacing:.03em;">Effort</div>
+								<button class="jv-menuitem" :class="{ on: !thinkingOverride }" @click="selectThinking('')">
+									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex:none;"><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8" /></svg>
+									<span style="flex:1;">Auto</span>
+									<svg v-if="!thinkingOverride" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;"><path d="M20 6 9 17l-5-5" /></svg>
+								</button>
+								<button v-for="lvl in thinkingLevels" :key="lvl" class="jv-menuitem" :class="{ on: lvl === thinkingOverride }" @click="selectThinking(lvl)">
+									<span style="flex:1;text-transform:capitalize;">{{ lvl }}</span>
+									<svg v-if="lvl === thinkingOverride" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;"><path d="M20 6 9 17l-5-5" /></svg>
+								</button>
+							<template v-if="pickableModels.length">
+								<!-- Auto: let Jarvis pick, divided from the explicit models. Clearing the pin
+								     is openclaw's "/model default": the session stops overriding the configured
+								     primary and inherits it again. -->
+								<button class="jv-menuitem" :class="{ on: !modelOverride }" @click="selectModel('')">
+									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex:none;"><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8" /></svg>
+									<span style="flex:1;">Auto <span style="color:var(--text-3);font-weight:450;">· {{ ui.llm_model || "default" }}</span></span>
+									<svg v-if="!modelOverride" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;"><path d="M20 6 9 17l-5-5" /></svg>
+								</button>
+								<!-- One group per provider, but only labelled by provider when the customer
+								     actually has more than one. A subscription pool stores provider="" on every
+								     row, so a single flat "Model" header is the honest rendering there. -->
+								<template v-for="g in modelsByProvider" :key="g.provider">
+									<div style="height:1px;background:var(--border);margin:5px 2px;"></div>
+									<div style="padding:3px 9px 6px;font-size:10px;color:var(--text-3);font-weight:600;text-transform:uppercase;letter-spacing:.03em;">{{ showProviders ? g.provider : "Model" }}</div>
+									<button v-for="r in g.models" :key="g.provider + '/' + r.model" class="jv-menuitem" :class="{ on: r.model === modelOverride }" @click="selectModel(r.model)">
+										<span style="flex:1;">{{ r.model }}</span>
+										<span v-if="r.tier" style="font-size:10px;color:var(--text-3);margin-right:6px;">{{ r.tier }}</span>
+										<svg v-if="r.model === modelOverride" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;"><path d="M20 6 9 17l-5-5" /></svg>
+									</button>
+								</template>
+							</template>
 						</div>
 					</div>
 					<!-- Connect phone: shows a QR the mobile app scans to onboard -->
@@ -53,6 +78,28 @@
 					</button>
 				</div>
 			</header>
+
+			<!-- recurring every-third-new-chat business-note banner. Lives at the top of
+			     the chat area (booting/welcome/thread all render below it) so it never
+			     crowds the composer or the send button. "Maybe later" just hides the card
+			     client-side for this chat - the cadence itself is the snooze, so it comes
+			     back on the next multiple-of-three chat with no follow-up question. "Don't
+			     ask again" is the durable, permanent, server-side dismiss. -->
+			<div v-if="bizGreeting.show" class="jv-greeting-banner">
+				<div class="jv-nudge" style="margin:0;">
+					<div class="jv-nudge-head">
+						<div class="jv-nudge-q"><b>Tell me how your business runs</b> and I will use it in every answer.</div>
+						<button class="jv-nudge-x" title="Maybe later" aria-label="Maybe later" @click="greetingLater">
+							<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+						</button>
+					</div>
+					<div class="jv-nudge-actions">
+						<button class="jv-btn jv-btn--primary" style="height:30px;padding:0 12px;" @click="greetingShowMeWhere">Add business notes<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14" /><path d="m13 6 6 6-6 6" /></svg></button>
+						<button class="jv-nudge-type" @click="greetingLater">Maybe later</button>
+						<button class="jv-nudge-type" @click="greetingNeverAsk">Don't ask again</button>
+					</div>
+				</div>
+			</div>
 
 			<!-- initial load: a quiet spinner so the welcome screen doesn't flash
 			     before the open conversation finishes loading on refresh -->
@@ -231,7 +278,7 @@
 										<div v-else-if="summaryState.error" class="jv-summary-body jv-summary-loading">{{ summaryState.error }}</div>
 										<div v-else class="jv-summary-body jv-summary-loading">Preparing summary...</div>
 
-										<div v-if="summaryState.model && summaryState.model.error" class="jv-draft-error" style="margin:0 14px 10px">{{ summaryState.model.error }}</div>
+										<div v-if="summaryState.model && summaryState.model.error" style="margin:0 14px 10px"><ActionError :error="summaryState.model.error" /></div>
 
 										<div class="jv-action-foot">
 											<button class="jv-action-primary" :disabled="!summaryState.model || (summaryState.model && summaryState.model.applying) || convStreaming" :title="convStreaming ? 'Waiting for the current reply to finish' : ''" @click="confirmSummary">
@@ -423,10 +470,10 @@
 							</ul>
 							<pre v-else-if="pendingPreviewOf(pa)" class="jv-pending-preview">{{ pendingPreviewOf(pa) }}</pre>
 						</div>
-						<div v-if="pa.error" class="jv-draft-error" style="margin:0 14px 10px">{{ pa.error }}</div>
+						<div v-if="pa.error" style="margin:0 14px 10px"><ActionError :error="pa.error" /></div>
 						<div class="jv-action-foot">
-							<button class="jv-action-primary" :disabled="pa.busy || convStreaming" :title="convStreaming ? 'Waiting for the current reply to finish' : ''" @click="confirmPending(pa)">✓ Confirm</button>
-							<button class="jv-action-discard" :disabled="pa.busy" @click="discardPending(pa)">Discard</button>
+							<button v-if="!pa.spent" class="jv-action-primary" :disabled="pa.busy || convStreaming" :title="convStreaming ? 'Waiting for the current reply to finish' : ''" @click="confirmPending(pa)">✓ Confirm</button>
+							<button class="jv-action-discard" :disabled="pa.busy" @click="discardPending(pa)">{{ pa.spent ? "Dismiss" : "Discard" }}</button>
 						</div>
 					</div>
 				</div>
@@ -712,7 +759,7 @@
 							<button class="jv-draft-addrow" @click="addDraftRow(ti)">＋ Add row</button>
 						</div>
 						<div v-if="draftTotals" class="jv-draft-totals">{{ draftTotals }} <span class="jv-draft-est">(estimate — ERPNext computes final totals)</span></div>
-						<div v-if="draftPanel.error" class="jv-draft-error">{{ draftPanel.error }}</div>
+						<div v-if="draftPanel.error" style="margin-top:10px"><ActionError :error="draftPanel.error" /></div>
 					</div>
 					<div class="jv-draft-foot">
 						<button class="jv-action-discard" @click="discardDraft">Discard</button>
@@ -752,6 +799,7 @@ import { renderMarkdown } from "@/markdown"
 import JvChart from "@/charts/JvChart.vue"
 import ConnectPhoneDialog from "@/components/ConnectPhoneDialog.vue"
 import DraftPreview from "@/components/doc/DraftPreview.vue"
+import ActionError from "@/components/ActionError.vue"
 import { useShellStore } from "@/stores/shell"
 import { useJarvisTheme } from "@/theme"
 import { displayName } from "@/lib/user"
@@ -861,6 +909,49 @@ const showConnect = ref(false)
 // (sidebar collapse machinery, per-conversation ⋯ menu and inline rename
 // moved to the app shell — stores/shell.js + components/shell/*, §3.7)
 const modelOverride = ref("")
+// Reasoning effort for this conversation. "" = inherit Jarvis Settings.
+const thinkingOverride = ref("")
+
+// ---- recurring business-note greeting banner ----
+// Fires on every third genuinely-new chat (server-counted) while the user has
+// no Business voice note and hasn't dismissed it. No conversation of its own,
+// no snooze state: the cadence itself IS the "maybe later" - the card just
+// comes back on the next multiple-of-three chat. The server owns eligibility;
+// this only tracks what to draw for the current mount.
+const bizGreeting = ref({ show: false })
+
+// Probe on mount and again after every genuinely-new chat. Never blocks chat:
+// a failure just means no card.
+async function probeGreeting() {
+	try {
+		const res = await api.maybeGreet()
+		bizGreeting.value = { show: !!res?.show_card }
+	} catch (e) {
+		/* greeting is never load-bearing */
+	}
+}
+
+function greetingShowMeWhere() {
+	router.push({ path: "/skills", hash: "#business" })
+}
+
+// "Maybe later" hides instantly, then records the current cadence tick on the
+// server so a refresh can't re-show a card the user just closed. Fire-and-
+// forget: if the call fails the worst case is the old behaviour (card back on
+// refresh), never a blocked click.
+function greetingLater() {
+	bizGreeting.value = { ...bizGreeting.value, show: false }
+	api.hideGreeting().catch(() => {})
+}
+
+async function greetingNeverAsk() {
+	bizGreeting.value = { ...bizGreeting.value, show: false }
+	try {
+		await api.dismissGreeting()
+	} catch (e) {
+		/* ignore */
+	}
+}
 
 // ---- settings panel (openclaw-style console) ----
 // The overlay is bound to the SHELL's settingsOpen (D9): the user menu opens
@@ -1213,6 +1304,45 @@ const greeting = computed(() => {
 // Empty override = "Auto": the backend falls back to Jarvis Settings.llm_model.
 const modelLabel = computed(() => modelOverride.value || "Auto")
 const availableModels = computed(() => ui.value.subscription_models?.[ui.value.llm_provider] || [])
+
+// Effort levels the SERVER accepts. Never hard-code these: Jarvis Conversation
+// .thinking_override is a Select limited to low/medium/high, and offering a
+// level it rejects (openclaw itself also knows xhigh/max) would fail the save.
+const thinkingLevels = computed(() => ui.value.thinking_levels || ["low", "medium", "high"])
+const thinkingLabel = computed(() => thinkingOverride.value || "auto")
+
+// The pickable models: the configured LLM pool when present, else the
+// provider's subscription allowlist. Deduped on provider+model because a
+// subscription pool legitimately holds one row per ACCOUNT, not per model.
+const pickableModels = computed(() => {
+	const pool = ui.value.pool_models || []
+	if (pool.length) {
+		const seen = new Set()
+		const out = []
+		for (const r of pool) {
+			const key = `${r.provider}/${r.model}`
+			if (seen.has(key)) continue
+			seen.add(key)
+			out.push(r)
+		}
+		return out
+	}
+	return availableModels.value.map((m) => ({ provider: ui.value.llm_provider || "", model: m, tier: "" }))
+})
+
+// Show the provider grouping only when the customer actually has a choice.
+// A subscription pool stores provider="" on every row, so without this the
+// menu would render a "Provider" header above a single blank group.
+const showProviders = computed(() => !!ui.value.multi_provider)
+const modelsByProvider = computed(() => {
+	const groups = new Map()
+	for (const r of pickableModels.value) {
+		const p = r.provider || ui.value.llm_provider || "default"
+		if (!groups.has(p)) groups.set(p, [])
+		groups.get(p).push(r)
+	}
+	return [...groups.entries()].map(([provider, models]) => ({ provider, models }))
+})
 
 const currentTitle = computed(
 	() => store.conversations.find((c) => c.name === currentId.value)?.title || "New chat",
@@ -1651,8 +1781,30 @@ function confirmLabel(m) {
 	const mt = ((m && m.content) || "").match(_CONFIRM_RE)
 	return mt ? mt[1].trim() : ""
 }
+// render() is memoized so an unrelated re-render of this monolithic component
+// (e.g. flipping the model menu) does NOT re-parse markdown for every visible
+// message. Correctness: (a) render still reads docNameRegex.value, so Vue's
+// dependency tracking is unchanged — when a tool call adds a doc ref, docNameRegex
+// recomputes to a NEW RegExp instance, the identity check swaps in a fresh cache,
+// and stale linkification is impossible; (b) a streaming message's content changes
+// every tick, so it cache-misses exactly as today — no regression, while stable
+// messages become O(1) map hits on menu toggles; (c) the 800-entry clear caps
+// memory across long conversations. Keyed on the raw text string deliberately:
+// identical content in two messages renders identically.
+let _renderCacheRegex = undefined
+let _renderCache = new Map()
 function render(text) {
-	return linkifyDocs(renderMarkdown(stripBlocks(text)))
+	const re = docNameRegex.value
+	if (re !== _renderCacheRegex) {
+		_renderCacheRegex = re
+		_renderCache = new Map()
+	}
+	const hit = _renderCache.get(text)
+	if (hit !== undefined) return hit
+	const out = linkifyDocs(renderMarkdown(stripBlocks(text)))
+	if (_renderCache.size >= 800) _renderCache.clear()
+	_renderCache.set(text, out)
+	return out
 }
 // {document name → DocType} harvested from THIS conversation's tool calls
 // (get_doc / create_doc / get_list / update_doc / …). We only ever linkify IDs
@@ -2095,19 +2247,27 @@ async function applyDraft(submitFlag, model = draftPanel.value) {
 			values[t.fieldname] = rows
 		}
 	}
-	p.applying = true; p.error = ""
+	p.applying = true; p.error = null
 	try {
-		await api.applyAction({
+		const r = await api.applyAction({
 			verb: p.verb, doctype: p.doctype, name: p.docName || "",
 			values, submit: submitFlag ? 1 : 0, conversation: currentId.value || "",
 			continue: p.cont ? 1 : 0,
 		})
+		if (r && r.ok === false) {
+			// apply_action now returns the enriched {ok:false, error} envelope
+			// (rich detail + hint, and nothing was saved) instead of throwing a
+			// raw Frappe 403/417. Keep the panel open so the values are editable.
+			p.applying = false
+			p.error = r.error || { message: "Could not save — check the values." }
+			return
+		}
 		closeDraftPanel()
 		await loadConversation(currentId.value)
 		store.loadConversations()
 	} catch (e) {
 		p.applying = false
-		p.error = (e && e.messages && e.messages[0]) || (e && e.message) || "Could not save — check the values."
+		p.error = { message: (e && e.messages && e.messages[0]) || (e && e.message) || "Could not save — check the values." }
 	}
 }
 
@@ -2185,7 +2345,8 @@ function enqueuePending(card) {
 		preview: card.preview || null,
 		run_id: card.run_id || null,
 		busy: false,
-		error: "",
+		error: null,
+		spent: false,
 	})
 }
 
@@ -2201,7 +2362,7 @@ async function confirmPending(pa) {
 	// guard, R1/Task7).
 	const token = pa.token
 	const cardById = () => pendingActions.value.find((x) => x.token === token)
-	pa.busy = true; pa.error = ""
+	pa.busy = true; pa.error = null
 	try {
 		const r = await api.confirmTool(token, pa.conversation || currentId.value || "")
 		if (r && r.ok === false) {
@@ -2212,8 +2373,14 @@ async function confirmPending(pa) {
 				notify("That confirmation expired - ask Jarvis to try again.", { type: "error" })
 				return
 			}
+			// The token was consumed before dispatch, so this card is SPENT even
+			// though the tool itself failed. Show the enriched reason and retire
+			// the Confirm button (a second click could only ever "expire").
 			const card = cardById()
-			if (card) card.error = (r.error && r.error.message) || "Could not run this action."
+			if (card) {
+				card.error = r.error || { message: "Could not run this action." }
+				card.spent = true
+			}
 			return
 		}
 		// Success - the executed result surfaces via the turn's normal tool/stream
@@ -2223,7 +2390,7 @@ async function confirmPending(pa) {
 		store.loadConversations()
 	} catch (e) {
 		const card = cardById()
-		if (card) card.error = (e && e.messages && e.messages[0]) || (e && e.message) || "Could not confirm."
+		if (card) card.error = { message: (e && e.messages && e.messages[0]) || (e && e.message) || "Could not confirm." }
 	} finally {
 		const card = cardById()
 		if (card) card.busy = false
@@ -2697,6 +2864,7 @@ async function loadConversation(id) {
 	if (!id) {
 		messages.value = []
 		modelOverride.value = ""
+		thinkingOverride.value = ""
 		promptHistory.value = []
 		histIdx.value = null
 		histDraft.value = ""
@@ -2711,7 +2879,11 @@ async function loadConversation(id) {
 	// chat, switch away and back, it shows empty until I refresh".)
 	if (currentId.value !== id) return
 	messages.value = d?.messages || []
-	modelOverride.value = d?.model_override || ""
+	// get_conversation returns {conversation: {...}, messages: [...]}. Reading
+	// d.model_override (one level too high) silently yielded undefined, so a
+	// saved pin always rendered as "Auto" after a reload.
+	modelOverride.value = d?.conversation?.model_override || ""
+	thinkingOverride.value = d?.conversation?.thinking_override || ""
 	// Per-conversation auto-apply + a fresh confirm-card slate for this chat
 	// (issue #186): a pending write from another conversation must not linger.
 	convAutoApply.value = !!(d?.conversation && d.conversation.auto_apply)
@@ -2982,6 +3154,9 @@ async function newChat() {
 	// unclickable (same-route push is a no-op) — reset to the chat home.
 	if (route.params.id) router.replace({ name: "Chat" })
 	await store.loadConversations()
+	// A genuinely-new chat may have just moved the server-side counter onto a
+	// multiple of three - re-probe, but never await it (must never block chat).
+	probeGreeting()
 	await nextTick()
 	inputEl.value?.focus()
 }
@@ -2999,12 +3174,30 @@ function openErpDesk() {
 }
 async function selectModel(m) {
 	modelMenuOpen.value = false
+	const prev = modelOverride.value
 	modelOverride.value = m
 	if (currentId.value) {
 		try {
-			await api.setConversationModel(currentId.value, m)
+			const res = await api.setConversationModel(currentId.value, m)
+			// The server rejects a model the customer has not configured. Roll the
+			// pill back rather than showing a pin the next turn will not honour.
+			if (res && res.ok === false) modelOverride.value = prev
 		} catch (e) {
-			/* ignore */
+			modelOverride.value = prev
+		}
+	}
+}
+
+async function selectThinking(level) {
+	modelMenuOpen.value = false
+	const prev = thinkingOverride.value
+	thinkingOverride.value = level
+	if (currentId.value) {
+		try {
+			const res = await api.setConversationThinking(currentId.value, level)
+			if (res && res.ok === false) thinkingOverride.value = prev
+		} catch (e) {
+			thinkingOverride.value = prev
 		}
 	}
 }
@@ -3842,6 +4035,10 @@ onMounted(async () => {
 	// thread, so render the charts here once they're actually mounted.
 	await nextTick()
 	processMermaid()
+	// After boot, never during it: probeGreeting only reads state (it never
+	// creates anything), but the banner should draw only once the restored
+	// conversation/welcome screen above has settled.
+	probeGreeting()
 	// Apply the "Discuss in chat" prefill now that booting is false and the
 	// composer is mounted: drop the drafted prompt into the fresh conversation
 	// started above and, per the hand-off contract, send it as the user's
@@ -4032,6 +4229,8 @@ onUnmounted(() => {
 .jv-mic-cancel:hover { background: var(--surface-2); color: var(--text); }
 /* wiki nudge card — own block above the composer, never inside it */
 .jv-nudge { display: flex; flex-direction: column; gap: 8px; margin: 0 0 8px; padding: 10px 12px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; font-size: 13px; color: var(--text); }
+/* business-note greeting banner — top of the chat area, never over the composer */
+.jv-greeting-banner { max-width: 1280px; margin: 0 auto; width: 100%; padding: 12px 40px 0; }
 .jv-nudge-head { display: flex; align-items: flex-start; gap: 8px; }
 .jv-nudge-q { flex: 1; min-width: 0; line-height: 1.45; }
 .jv-nudge-x { flex: none; display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; border: none; background: transparent; border-radius: 6px; cursor: pointer; color: var(--text-3); }
@@ -4083,6 +4282,7 @@ onUnmounted(() => {
 @media (max-width: 640px) {
 	.jv-thread-inner { padding: 22px 16px 28px !important; }
 	.jv-composer-wrap { padding: 10px 14px 14px !important; }
+	.jv-greeting-banner { padding: 10px 14px 0 !important; }
 	.jv-welcome-grid { grid-template-columns: 1fr !important; }
 	.jv-welcome-h1 { font-size: 24px !important; }
 	.jv-ububble { max-width: 92% !important; }
@@ -4612,7 +4812,6 @@ onUnmounted(() => {
 .jv-draft-addrow { align-self: flex-start; margin-top: 8px; background: none; border: none; color: var(--blue); font-weight: 600; font-size: 12.5px; cursor: pointer; padding: 4px 2px; }
 .jv-draft-totals { font-size: 12.5px; color: var(--text-2); font-variant-numeric: tabular-nums; }
 .jv-draft-est { color: var(--text-3); font-size: 11px; }
-.jv-draft-error { font-size: 12.5px; color: var(--red); background: var(--red-bg); border: 1px solid var(--red-bd); border-radius: 8px; padding: 8px 11px; white-space: pre-wrap; }
 .jv-draft-foot { display: flex; gap: 10px; align-items: center; padding: 12px 16px; border-top: 1px solid var(--border); }
 @media (max-width: 700px) { .jv-draft-fields { grid-template-columns: 1fr; } }
 

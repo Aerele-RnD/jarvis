@@ -94,6 +94,21 @@ export const macroRunStats = () => call(MC + "macro_run_stats")
 export const summarizeMacro = (name) => call(MC + "summarize_macro", { name })
 export const setConversationModel = (conversation, model) =>
 	call("jarvis.chat.api.set_conversation_model", { conversation, model: model || "" })
+// Reasoning effort. "" clears the override, so the turn inherits Jarvis Settings.
+// The server maps this onto openclaw's "/think <level>" directive.
+export const setConversationThinking = (conversation, thinking) =>
+	call("jarvis.chat.api.set_conversation_thinking", { conversation, thinking: thinking || "" })
+
+// --- Recurring business-note greeting banner ---
+// maybe_greet takes no user argument on purpose: it always acts on the session
+// user, so one user can never trigger a greeting for another. All gating
+// (every-third-chat cadence / dismissed / has-notes) lives on the server.
+const GR = "jarvis.chat.greeting."
+export const maybeGreet = () => call(GR + "maybe_greet")
+// "Maybe later" / the card's X: hides for the rest of the current cadence tick
+// (survives refresh); the card returns on the next multiple-of-three chat.
+export const hideGreeting = () => call(GR + "hide_greeting")
+export const dismissGreeting = () => call(GR + "dismiss_greeting")
 
 // --- Record draft panel (direct apply, no LLM in the loop) ---
 const AC = "jarvis.chat.actions_api."

@@ -10,21 +10,21 @@
 		<!-- Behavior -->
 		<div class="jv-set-sec" style="margin-top:18px;">Behavior</div>
 		<div class="jv-set-row">
-			<span>Confirm before changes<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Ask before creating, updating, or submitting in this chat. Deletes, cancels, amends, and emails always ask, even with this off.</span></span>
+			<span>Confirm before changes<br /><span class="jv-set-sub">Ask before creating, updating, or submitting in this chat. Deletes, cancels, amends, and emails always ask, even with this off.</span></span>
 			<button class="jv-switch" :class="{ on: !convAutoApply }" @click="onToggleAutoApply" :disabled="!hasConversation" role="switch" :aria-checked="String(!convAutoApply)" :title="convAutoApply ? 'Auto mode - changes apply without asking' : 'Confirm each change before it runs'">
 				<span class="jv-switch-knob"></span>
 			</button>
 		</div>
-		<div v-if="!hasConversation" class="jv-set-row" style="padding-top:0;"><span style="font-size:11px;color:var(--text-3);font-weight:400;">Open a conversation to change this — it's set per chat.</span></div>
+		<div v-if="!hasConversation" class="jv-set-row" style="padding-top:0;"><span class="jv-set-sub">Open a conversation to change this — it's set per chat.</span></div>
 		<div v-else-if="autoApplyNote" class="jv-set-row" style="padding-top:0;"><span style="font-size:11px;color:var(--amber);font-weight:500;">{{ autoApplyNote }}</span></div>
 		<div class="jv-set-row">
-			<span>Show tool activity<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Show the live tool steps + input/output above each reply. The tools count &amp; time always show below.</span></span>
+			<span>Show tool activity<br /><span class="jv-set-sub">Show the live tool steps + input/output above each reply. The tools count &amp; time always show below.</span></span>
 			<button class="jv-switch" :class="{ on: showActivityDetail }" @click="setActivityDetail(!showActivityDetail)" role="switch" :aria-checked="String(showActivityDetail)" title="Show the tool/skill activity under each answer">
 				<span class="jv-switch-knob"></span>
 			</button>
 		</div>
 		<div class="jv-set-row">
-			<span>Notify when a reply is ready<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Browser notification when Jarvis finishes while you're in another tab</span></span>
+			<span>Notify when a reply is ready<br /><span class="jv-set-sub">Browser notification when Jarvis finishes while you're in another tab</span></span>
 			<button class="jv-switch" :class="{ on: notifyEnabled }" @click="toggleNotify" role="switch" :aria-checked="String(notifyEnabled)" title="Browser notification when a reply finishes in a background tab">
 				<span class="jv-switch-knob"></span>
 			</button>
@@ -42,9 +42,11 @@
 		<div v-else class="jv-set-hint">No monthly budget set · counts are estimated from message text.</div>
 
 		<!-- Danger zone -->
-		<div class="jv-set-sec" style="margin-top:18px;color:var(--red);">Danger zone</div>
+		<!-- Danger zone: plain heading; the button is red-subtle, the action
+		     itself confirms before deleting (design.md §4.1). -->
+		<div class="jv-set-sec" style="margin-top:22px;">Danger zone</div>
 		<div class="jv-set-row">
-			<span>Delete all chat history<br /><span style="font-size:11px;color:var(--text-3);font-weight:400;">Every conversation and message, permanently. Macros and skills stay.</span></span>
+			<span>Delete all chat history<br /><span class="jv-set-sub">Every conversation and message, permanently. Macros and skills stay.</span></span>
 			<button class="jv-btn jv-btn--sm jv-btn-danger" :disabled="clearing || !canClear" @click="onClearAllHistory">{{ clearing ? "Deleting…" : "Delete all" }}</button>
 		</div>
 	</div>

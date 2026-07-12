@@ -1,0 +1,121 @@
+{
+  "doctype": "DocType",
+  "name": "Jarvis Wiki Promotion Request",
+  "module": "Jarvis",
+  "issingle": 0,
+  "custom": 0,
+  "engine": "InnoDB",
+  "autoname": "format:JWPR-{#####}",
+  "naming_rule": "Expression",
+  "field_order": [
+    "page",
+    "from_scope",
+    "to_scope",
+    "target_role",
+    "body_snapshot",
+    "note",
+    "status",
+    "reviewer",
+    "decided_at",
+    "decision_note"
+  ],
+  "fields": [
+    {
+      "fieldname": "page",
+      "fieldtype": "Link",
+      "label": "Page",
+      "options": "Jarvis Wiki Page",
+      "reqd": 1,
+      "in_list_view": 1,
+      "in_standard_filter": 1,
+      "search_index": 1,
+      "description": "The User-scope wiki page this request asks to promote."
+    },
+    {
+      "fieldname": "from_scope",
+      "fieldtype": "Select",
+      "label": "From Scope",
+      "options": "Org\nRole\nUser",
+      "reqd": 1,
+      "description": "Snapshot of the page's scope at request time (User in practice for v1 - a requester can only act on their own User-scope page)."
+    },
+    {
+      "fieldname": "to_scope",
+      "fieldtype": "Select",
+      "label": "To Scope",
+      "options": "Org\nRole\nUser",
+      "reqd": 1,
+      "in_list_view": 1,
+      "in_standard_filter": 1,
+      "description": "Requested target scope. Must be Role or Org - promotion only ever widens visibility."
+    },
+    {
+      "fieldname": "target_role",
+      "fieldtype": "Link",
+      "label": "Target Role",
+      "options": "Role",
+      "depends_on": "eval:doc.to_scope=='Role'",
+      "mandatory_depends_on": "eval:doc.to_scope=='Role'"
+    },
+    {
+      "fieldname": "body_snapshot",
+      "fieldtype": "Long Text",
+      "label": "Body Snapshot",
+      "description": "The page's body_md at request time, frozen so the reviewer can diff it against the current target page even if the source page keeps changing in the meantime."
+    },
+    {
+      "fieldname": "note",
+      "fieldtype": "Small Text",
+      "label": "Note",
+      "description": "The requester's why - shown to the reviewer."
+    },
+    {
+      "fieldname": "status",
+      "fieldtype": "Select",
+      "label": "Status",
+      "options": "Pending\nApproved\nRejected",
+      "default": "Pending",
+      "in_list_view": 1,
+      "in_standard_filter": 1,
+      "search_index": 1
+    },
+    {
+      "fieldname": "reviewer",
+      "fieldtype": "Link",
+      "label": "Reviewer",
+      "options": "User",
+      "read_only": 1,
+      "description": "Reviewer who decided this request (Approved/Rejected)."
+    },
+    {
+      "fieldname": "decided_at",
+      "fieldtype": "Datetime",
+      "label": "Decided At",
+      "read_only": 1
+    },
+    {
+      "fieldname": "decision_note",
+      "fieldtype": "Small Text",
+      "label": "Decision Note",
+      "read_only": 1
+    }
+  ],
+  "permissions": [
+    {
+      "role": "All",
+      "read": 1,
+      "create": 1,
+      "if_owner": 1
+    },
+    {
+      "role": "System Manager",
+      "read": 1,
+      "write": 1,
+      "create": 1,
+      "delete": 1
+    }
+  ],
+  "sort_field": "creation",
+  "sort_order": "DESC",
+  "track_changes": 1
+}

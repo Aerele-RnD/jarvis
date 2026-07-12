@@ -10,7 +10,7 @@
 			<!-- slide 1 · welcome -->
 			<div v-if="cur === 0" class="slide">
 				<div class="slide-copy">
-					<span class="eyebrow">✦ Welcome</span>
+					<span class="eyebrow">Welcome</span>
 					<h2>Harness AI agents inside your ERPNext.</h2>
 					<p>Jarvis is an AI teammate that lives in your ERP. Ask a question, hand off a task, or let it watch the books, all in plain language.</p>
 					<ul class="pts">
@@ -31,10 +31,10 @@
 								<div class="m-welcome-sub">Ask about your ERP data, run a workflow, or draft something.</div>
 							</div>
 							<div class="m-sugg-grid">
-								<div class="m-sugg"><b style="color:#6e8bff">📈</b><div><i>Analyse data</i><u>Which sales orders are overdue?</u></div></div>
-								<div class="m-sugg"><b style="color:var(--green)">＋</b><div><i>Take an action</i><u>Create a new Sales Order</u></div></div>
-								<div class="m-sugg"><b style="color:var(--amber)">🔍</b><div><i>Search records</i><u>Find a customer or contact</u></div></div>
-								<div class="m-sugg"><b style="color:#8b5cf6">✎</b><div><i>Draft content</i><u>Follow-up email to a lead</u></div></div>
+								<div class="m-sugg"><b class="mi mi-blue"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d='M3 3v18h18' /><path d='m19 9-5 5-4-4-3 3' /></svg></b><div><i>Analyse data</i><u>Which sales orders are overdue?</u></div></div>
+								<div class="m-sugg"><b class="mi mi-green"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d='M12 5v14M5 12h14' /></svg></b><div><i>Take an action</i><u>Create a new Sales Order</u></div></div>
+								<div class="m-sugg"><b class="mi mi-amber"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx='11' cy='11' r='8' /><path d='m21 21-4.35-4.35' /></svg></b><div><i>Search records</i><u>Find a customer or contact</u></div></div>
+								<div class="m-sugg"><b class="mi mi-violet"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d='M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z' /></svg></b><div><i>Draft content</i><u>Follow-up email to a lead</u></div></div>
 							</div>
 							<div class="composer">Ask Jarvis…  @ to mention a user, / for a doctype or tool</div>
 						</div>
@@ -79,7 +79,7 @@
 							<div class="m-row"><span class="pill">sales</span><div class="t">Sales order follow-up</div><div class="meta"></div></div>
 							<div class="m-row"><span class="pill amber">custom</span><div class="t">Invoice data entry</div><div class="meta"></div></div>
 							<div class="m-row"><span class="pill amber">custom</span><div class="t">GST reconciliation</div><div class="meta"></div></div>
-							<div class="m-row m-row-dashed"><span class="m-row-cta">＋ New skill</span></div>
+							<div class="m-row m-row-dashed"><span class="m-row-cta"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d='M12 5v14M5 12h14' /></svg> New skill</span></div>
 						</div>
 					</div>
 				</div>
@@ -121,7 +121,7 @@
 							<div class="m-row"><span class="pill amber">reading</span><span class="fname">INV-ACME-0921.pdf</span><div class="meta"></div></div>
 							<div class="m-row"><span class="pill">extracted</span><span class="fname">bank-stmt-jun.pdf</span><div class="meta"></div></div>
 							<div class="m-row"><span class="pill">filed</span><span class="fname">price-list-q3.xlsx</span><div class="meta"></div></div>
-							<div class="m-row m-row-dashed"><span class="m-row-cta">⇪ Drop a file or browse</span></div>
+							<div class="m-row m-row-dashed"><span class="m-row-cta"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4' /><path d='m17 8-5-5-5 5' /><path d='M12 3v12' /></svg> Drop a file or browse</span></div>
 						</div>
 					</div>
 				</div>
@@ -134,6 +134,9 @@
 					<h2>Put specialists to work in the background.</h2>
 					<p>Install expert-built ERPNext agents, or build your own custom agents for your team’s workflows. They watch and surface findings before you ask.</p>
 					<p class="final-call"><mark>Ready to see it on your data? Onboard Jarvis and explore everything hands-on. It takes about two minutes.</mark></p>
+					<div class="final-cta">
+						<button class="btn btn--primary btn--lg" @click="$emit('finish')">Onboard Jarvis</button>
+					</div>
 				</div>
 				<div class="mock">
 					<div class="mock-bar"><i></i><i></i><i></i><span>Agents</span></div>
@@ -141,31 +144,10 @@
 						<div class="m-side" v-html="sideHtml('Agents')"></div>
 						<div class="m-main">
 							<div class="m-grid">
-								<div class="m-card">
-									<div class="m-card-top">
-										<div class="av">LS</div>
-										<div class="m-card-id"><div class="nm">Ledger Scrutiny</div><div class="by">by Jarvis · v1.4</div></div>
-									</div>
-									<div class="ds">Analytical review &amp; audit checks on your books</div>
-									<div class="m-meta"><span class="cat">Audit</span><span class="ins">↓ 128</span><span class="ok">✓ Installed</span></div>
-								</div>
-								<div class="m-card">
-									<div class="m-card-top">
-										<div class="av">AR</div>
-										<div class="m-card-id"><div class="nm">AR Follow-up</div><div class="by">by Jarvis · v1.1</div></div>
-									</div>
-									<div class="ds">Chases overdue receivables, drafts reminders</div>
-									<div class="m-meta"><span class="cat">Collections</span><span class="ins">↓ 94</span></div>
-								</div>
-								<div class="m-card">
-									<div class="m-card-top">
-										<div class="av">MC</div>
-										<div class="m-card-id"><div class="nm">Month-end Close</div><div class="by">by Jarvis · v2.0</div></div>
-									</div>
-									<div class="ds">Runs your closing checklist on schedule</div>
-									<div class="m-meta"><span class="cat">Close</span><span class="ins">↓ 76</span></div>
-								</div>
-								<div class="m-card dashed"><div class="ico-plain">＋</div><div class="nm">Build custom</div><div class="ds">An agent for your own workflow</div></div>
+								<div class="m-card"><div class="ico"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx='11' cy='11' r='8' /><path d='m21 21-4.35-4.35' /></svg></div><div class="nm">Ledger Scrutiny</div><div class="ds">Analytical review &amp; audit checks on your books</div><span class="m-inst on">Installed</span></div>
+								<div class="m-card"><div class="ico"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx='12' cy='12' r='8' /><path d='M14.8 9A2 2 0 0 0 13 8h-2a2 2 0 0 0 0 4h2a2 2 0 0 1 0 4h-2a2 2 0 0 1-1.8-1' /><path d='M12 6v2m0 8v2' /></svg></div><div class="nm">AR Follow-up</div><div class="ds">Chases overdue receivables, drafts reminders</div><span class="m-inst">Install</span></div>
+								<div class="m-card"><div class="ico"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x='3' y='4' width='18' height='18' rx='2' /><path d='M16 2v4M8 2v4M3 10h18' /></svg></div><div class="nm">Month-end Close</div><div class="ds">Runs your closing checklist on schedule</div><span class="m-inst">Install</span></div>
+								<div class="m-card dashed"><div class="ico ico-plain"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d='M12 5v14M5 12h14' /></svg></div><div class="nm">Build custom</div><div class="ds">An agent for your own workflow</div></div>
 							</div>
 						</div>
 					</div>
@@ -184,7 +166,6 @@
 				<button v-if="!isLast" class="skip" @click="$emit('skip')">Skip tour</button>
 				<button class="btn btn--ghost btn--sm" :style="{ visibility: cur === 0 ? 'hidden' : 'visible' }" @click="step(-1)">Back</button>
 				<button v-if="!isLast" class="btn btn--primary btn--sm" @click="step(1)">Next</button>
-				<button v-else class="btn btn--primary btn--sm" @click="$emit('finish')">Onboard Jarvis →</button>
 			</div>
 		</div>
 	</div>
@@ -244,10 +225,9 @@ function sideHtml(active) {
    ~624px) so the dialog never jumps between steps; relaxed on mobile. */
 .tour {
 	position: relative;
-	min-height: 624px;
+	min-height: 604px;
 	display: grid;
 	grid-template-rows: 1fr auto;
-	font-family: 'Inter', system-ui, sans-serif;
 	color: var(--text);
 }
 .tour-stage { position: relative; overflow: hidden; display: flex; flex-direction: column; }
@@ -277,19 +257,19 @@ button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 /* ---- copy column ---- */
 .slide-copy .eyebrow {
 	display: inline-flex; align-items: center; gap: 7px;
-	font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
-	color: var(--blue); background: var(--blue-bg); border: 1px solid var(--blue-bd);
+	font-size: 12px; font-weight: 500;
+	color: var(--text-2); background: var(--surface-2);
 	border-radius: 99px; padding: 4px 11px; margin-bottom: 16px;
 }
 .slide-copy h2 { font-size: 30px; font-weight: 680; line-height: 1.12; letter-spacing: -.02em; margin: 0 0 12px; text-wrap: balance; }
 .slide-copy p { font-size: 15px; line-height: 1.55; color: var(--text-2); margin: 0; max-width: 42ch; }
 .slide-copy .pts { list-style: none; margin: 18px 0 0; padding: 0; display: grid; gap: 9px; }
 .slide-copy .pts li { display: flex; gap: 9px; align-items: flex-start; font-size: 13.5px; color: var(--text-2); }
-.slide-copy .pts svg { color: #6e8bff; flex: none; margin-top: 1px; }
+.slide-copy .pts svg { color: var(--green); flex: none; margin-top: 1px; }
 /* highlighted closing invitation on the final slide */
 .final-call { margin-top: 18px !important; font-size: 14.5px !important; line-height: 1.7 !important; }
 .final-call mark {
-	background: linear-gradient(120deg, var(--blue-bg), color-mix(in srgb, #8b5cf6 14%, var(--blue-bg)));
+	background: var(--surface-2);
 	color: var(--text); padding: 3px 7px; border-radius: 6px;
 	-webkit-box-decoration-break: clone; box-decoration-break: clone; font-weight: 550;
 }
@@ -298,23 +278,22 @@ button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 /* ---- buttons (local to the tour; the wizard steps have their own) ---- */
 .btn {
 	display: inline-flex; align-items: center; justify-content: center; gap: 7px;
-	height: 40px; padding: 0 20px; border-radius: 11px; border: 1px solid transparent;
-	font-family: inherit; font-size: 13.5px; font-weight: 600; line-height: 1;
+	height: 36px; padding: 0 16px; border-radius: 8px; border: 1px solid transparent;
+	font-family: inherit; font-size: 13.5px; font-weight: 500; line-height: 1;
 	cursor: pointer; white-space: nowrap;
-	transition: transform .12s, box-shadow .15s, background .15s, border-color .15s;
+	transition: background-color .15s ease, color .15s ease, border-color .15s ease;
 }
-.btn:active { transform: scale(.98); }
-.btn--primary { background: var(--blue); color: var(--blue-fg); box-shadow: 0 2px 10px rgba(20, 20, 30, .16); }
-.btn--primary:hover { transform: translateY(-1px); box-shadow: 0 8px 22px rgba(20, 20, 30, .22); }
-.btn--ghost { background: var(--surface); border-color: var(--border-2); color: var(--text-2); }
-.btn--ghost:hover { background: var(--surface-2); color: var(--text); border-color: var(--border); }
-.btn--sm { height: 34px; padding: 0 13px; font-size: 12.5px; border-radius: 9px; }
-.btn--lg { height: 46px; padding: 0 26px; font-size: 14.5px; border-radius: 12px; }
+.btn--primary { background: var(--text); border-color: var(--text); color: var(--surface); }
+.btn--primary:hover { background: var(--text-2); border-color: var(--text-2); }
+.btn--ghost { background: var(--surface-2); border-color: transparent; color: var(--text); }
+.btn--ghost:hover { background: var(--surface-3); color: var(--text); }
+.btn--sm { height: 32px; padding: 0 12px; font-size: 12.5px; border-radius: 8px; }
+.btn--lg { height: 38px; padding: 0 20px; font-size: 14px; border-radius: 8px; }
 
 /* ---- mock "device" framing each product surface ---- */
 .mock {
 	border: 1px solid var(--border); border-radius: 14px; background: var(--surface-1);
-	overflow: hidden; box-shadow: 0 18px 50px rgba(20, 20, 30, .14); aspect-ratio: 16/11;
+	overflow: hidden; box-shadow: 0 0 1px rgba(0, 0, 0, .2), 0 12px 24px -6px rgba(0, 0, 0, .08); aspect-ratio: 16/11;
 }
 .mock-bar { display: flex; align-items: center; gap: 6px; padding: 9px 12px; border-bottom: 1px solid var(--border); background: var(--surface); }
 .mock-bar i { width: 9px; height: 9px; border-radius: 50%; background: var(--border-2); }
@@ -341,6 +320,15 @@ button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .m-side :deep(.m-recent) { font-size: 8px; color: var(--text-3); padding: 7px 7px 0; }
 .m-side :deep(.m-recent-item) { font-size: 9.5px; color: var(--text-2); padding: 4px 7px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
+/* suggestion-card icon tints (semantic, replaces inline emoji colors) */
+.m-sugg .mi { display: inline-flex; }
+.m-sugg .mi-blue { color: var(--link); }
+.m-sugg .mi-green { color: var(--green); }
+.m-sugg .mi-amber { color: var(--amber); }
+.m-sugg .mi-violet { color: var(--text-3); }
+.m-row-cta { display: inline-flex; align-items: center; gap: 5px; }
+.m-row-cta svg { color: var(--text-3); }
+
 /* ---- welcome mock ---- */
 .m-welcome { text-align: center; padding-top: 10px; }
 .m-welcome-mk { width: 30px; height: 30px; border-radius: 8px; background: var(--text); display: grid; place-items: center; margin: 0 auto 8px; }
@@ -354,7 +342,7 @@ button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 
 /* ---- chat mock ---- */
 .cb { max-width: 74%; padding: 8px 11px; border-radius: 12px; font-size: 11.5px; line-height: 1.4; margin-bottom: 9px; }
-.cb.u { margin-left: auto; background: var(--blue); color: var(--blue-fg); border-bottom-right-radius: 4px; }
+.cb.u { margin-left: auto; background: var(--blue); color: #fff; border-bottom-right-radius: 4px; }
 .cb.a { background: var(--surface-2); color: var(--text-2); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
 .cb.tool {
 	display: inline-flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--text-3);
@@ -378,28 +366,22 @@ button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .m-row-dashed { border-style: dashed; justify-content: center; }
 .m-row-cta { font-size: 10px; font-weight: 600; color: var(--text-2); }
 
-/* ---- agents mock (mirrors the real AgentsList card: letter avatar,
-   by {publisher} · v{version}, then a category + installs + Installed meta row) ---- */
-.m-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.m-card { border: 1px solid var(--border); border-radius: 9px; background: var(--surface); padding: 9px; display: flex; flex-direction: column; }
-.m-card-top { display: flex; align-items: flex-start; gap: 7px; }
-.m-card .av { width: 20px; height: 20px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); display: grid; place-items: center; font-size: 8px; font-weight: 700; color: var(--text-2); flex: none; }
-.m-card-id { min-width: 0; flex: 1; }
-.m-card .nm { font-size: 10px; font-weight: 600; color: var(--text); line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.m-card .by { font-size: 7.5px; color: var(--text-3); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.m-card .ds { font-size: 8.5px; color: var(--text-3); line-height: 1.35; margin-top: 6px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.m-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: auto; padding-top: 7px; }
-.m-meta .cat { font-size: 7.5px; font-weight: 600; color: var(--text-2); border: 1px solid var(--border-2); border-radius: 99px; padding: 1.5px 6px; }
-.m-meta .ins { display: inline-flex; align-items: center; gap: 2px; font-size: 8px; color: var(--text-3); }
-.m-meta .ok { display: inline-flex; align-items: center; gap: 2px; font-size: 8px; font-weight: 600; color: var(--green); }
-.m-card .ico-plain { width: 20px; height: 20px; border-radius: 6px; background: var(--surface-2); border: 1px solid var(--border); display: grid; place-items: center; font-size: 11px; color: var(--text-2); margin-bottom: 5px; }
-.m-card.dashed { border-style: dashed; align-items: center; justify-content: center; text-align: center; gap: 3px; }
+/* ---- agents mock ---- */
+.m-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.m-card { border: 1px solid var(--border); border-radius: 9px; background: var(--surface); padding: 10px; }
+.m-card .ico { width: 22px; height: 22px; border-radius: 7px; background: var(--blue-bg); border: 1px solid var(--blue-bd); margin-bottom: 7px; display: grid; place-items: center; font-size: 11px; }
+.m-card .ico-plain { background: var(--surface-2); border-color: var(--border); }
+.m-card .nm { font-size: 10.5px; font-weight: 600; color: var(--text); margin-bottom: 2px; }
+.m-card .ds { font-size: 8.5px; color: var(--text-3); line-height: 1.35; }
+.m-card.dashed { border-style: dashed; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 4px; }
+.m-inst { display: inline-block; margin-top: 8px; font-size: 9px; font-weight: 600; padding: 3px 8px; border-radius: 6px; background: var(--text); color: var(--surface); }
+.m-inst.on { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-bd); }
 
 /* ---- footer: dots + nav ---- */
 .tour-foot { display: flex; align-items: center; justify-content: space-between; padding: 16px 44px 26px; border-top: 1px solid var(--border); background: var(--surface); }
 .dots { display: flex; gap: 7px; }
 .dots button { width: 8px; height: 8px; border-radius: 99px; border: none; background: var(--border-2); cursor: pointer; padding: 0; transition: width .2s, background .2s; }
-.dots button.on { width: 22px; background: var(--blue); }
+.dots button.on { width: 22px; background: var(--text); }
 .tour-nav { display: flex; gap: 10px; align-items: center; }
 .skip { font-size: 12.5px; color: var(--text-3); background: none; border: none; cursor: pointer; font-family: inherit; }
 .skip:hover { color: var(--text-2); }

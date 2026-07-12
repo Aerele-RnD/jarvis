@@ -5,6 +5,7 @@ The browser talks to these from the /jarvis chat SPA (apps/jarvis/frontend).
 
 from __future__ import annotations
 
+import json
 from urllib.parse import quote
 
 import frappe
@@ -436,6 +437,16 @@ def create_or_focus_empty() -> str:
 	)
 	if empty:
 		return empty[0][0]
+	# Count only genuinely-new interactive chats toward the business-greeting
+	# cadence (every third new chat surfaces the card). Hooked here rather than
+	# in create_conversation() so unattended File Box drops don't count. A
+	# counter failure must never break chat creation.
+	try:
+		from jarvis.chat.greeting import increment_new_chat_count
+
+		increment_new_chat_count(user)
+	except Exception as e:
+		frappe.log_error(title="jarvis greeting count", message=str(e))
 	return create_conversation()
 
 
@@ -476,6 +487,8 @@ def get_conversation(conversation: str) -> dict:
 			"status": doc.status,
 			"session_key": doc.session_key,
 			"model_override": doc.model_override or "",
+			# "" means inherit Jarvis Settings; the picker renders that as "Auto".
+			"thinking_override": doc.thinking_override or "",
 			"auto_apply": int(doc.auto_apply or 0),
 			"last_active_at": doc.last_active_at,
 		},
@@ -949,12 +962,87 @@ def get_chat_ui_settings() -> dict:
 	# pages into pure consumers of jarvis/_subscription_models.py.
 	# Punch-list "_SUBSCRIPTION_MODELS duplicated 4-5 times" from
 	# the 2026-06-16 cross-repo review.
+	# LLM pool projection for the model/provider picker. ONLY the four display
+	# fields (provider, model, tier, order) reach the browser: ``Jarvis LLM Pool
+	# Model`` also carries ``api_key`` and ``subscription_accounts`` as Password
+	# fields, which must never leave the server. Iterating the child rows (not
+	# get_all) keeps this on the already cached Single doc.
+	#
+	# Display-provider derivation: subscription-mode rows store provider="" BY
+	# DESIGN — the write pipeline omits it to dodge a Bifrost subscription-field
+	# conflict (see pool_serialize.py). So a subscription row's provider is derived
+	# at READ time from its accounts' ``upstream`` (e.g. "openai" / "google"). A
+	# row whose accounts share one upstream yields one entry; a mixed-upstream row
+	# yields one entry per upstream so every provider still surfaces. The decrypted
+	# accounts blob NEVER leaves this function — only the derived upstream strings
+	# enter the response, and the blob is never logged.
+	pool = []
+	for m in settings.models or []:
+		if not (m.enabled and (m.model or "").strip()):
+			continue
+		explicit = (m.provider or "").strip()
+		if explicit:
+			row_providers = [explicit]
+		elif (m.credential_type or "") == "subscription":
+			ups: list[str] = []
+			try:
+				blob = m.get_password("subscription_accounts", raise_exception=False)
+				accounts = json.loads(blob or "[]")
+				seen = {
+					(a.get("upstream") or "").strip()
+					for a in accounts
+					if isinstance(a, dict)
+				}
+				ups = sorted(seen - {""})
+			except Exception:
+				ups = []
+			row_providers = ups or [""]
+		else:
+			row_providers = [""]
+		for prov in row_providers:
+			pool.append(
+				{
+					"provider": prov,
+					"model": (m.model or "").strip(),
+					"tier": m.tier or "",
+					"order": int(m.order or 0),
+				}
+			)
+
+	# Collapse duplicates by (provider, model), keeping the lowest-order row — this
+	# site's two identical subscription rows (both openai/gpt-5.5) become one entry.
+	deduped: dict[tuple[str, str], dict] = {}
+	for r in pool:
+		key = (r["provider"], r["model"])
+		if key not in deduped or r["order"] < deduped[key]["order"]:
+			deduped[key] = r
+	pool = sorted(deduped.values(), key=lambda r: (r["order"], r["model"]))
+
+	# The provider control is worth showing only when the customer actually has a
+	# choice: >= 2 DISTINCT NON-EMPTY derived providers. A single-provider
+	# subscription customer (even with several accounts of that one provider) gets
+	# providers==[] and the UI hides the provider group.
+	providers = sorted({r["provider"] for r in pool if r["provider"]})
+
 	return {
 		"llm_auth_mode": settings.llm_auth_mode or "api_key",
 		"llm_provider": settings.llm_provider or "",
 		"llm_model": settings.llm_model or "",
 		"subscription_models": _SUBSCRIPTION_MODELS,
 		"default_models": _DEFAULT_MODEL,
+		# Model/provider/effort picker (see ChatView.vue). ``pool`` is the
+		# configured multi-provider catalogue; ``providers`` is empty for a
+		# single-provider customer and the UI hides the provider group then.
+		"pool_models": pool,
+		"providers": providers,
+		"multi_provider": len(providers) > 1,
+		# Effort levels. Deliberately mirrors ``_ALLOWED_THINKING`` minus the
+		# empty "auto" entry, which the UI renders separately. openclaw itself
+		# accepts more levels (off/minimal/xhigh/adaptive/max), but
+		# ``Jarvis Conversation.thinking_override`` is a Select limited to
+		# low/medium/high - offering a level the Select rejects would fail the
+		# save, so this list stays pinned to the DocType.
+		"thinking_levels": ["low", "medium", "high"],
 		# Site timezone: server datetimes are naive strings in THIS zone; the
 		# SPA feeds it to frappe-ui's setConfig("systemTimezone") so dayjsLocal
 		# renders them correctly for viewers in any browser timezone.
@@ -1137,13 +1225,24 @@ def set_conversation_model(conversation: str, model: str | None = None) -> dict:
 		frappe.db.commit()
 		return {"ok": True, "data": {"effective_model": settings.llm_model or ""}}
 
-	allowed = _SUBSCRIPTION_MODELS.get(settings.llm_provider, [])
+	# A pin must name a model the customer actually has. Two sources, unioned:
+	# the provider's subscription allowlist, and every enabled row of the LLM
+	# pool (Jarvis Settings.models). The pool matters because a subscription
+	# customer stores llm_provider="", for which _SUBSCRIPTION_MODELS yields []
+	# - so before this union EVERY pin was rejected as "unknown_model" and the
+	# picker could not set a model at all.
+	allowed = set(_SUBSCRIPTION_MODELS.get(settings.llm_provider, []))
+	allowed |= {
+		(m.model or "").strip()
+		for m in (settings.models or [])
+		if m.enabled and (m.model or "").strip()
+	}
 	if model not in allowed:
 		return {"ok": False, "error": {
 			"code": "unknown_model",
 			"message": (
 				f"{model!r} is not a recognized model for {settings.llm_provider!r}. "
-				f"Allowed: {allowed!r}"
+				f"Allowed: {sorted(allowed)!r}"
 			),
 		}}
 

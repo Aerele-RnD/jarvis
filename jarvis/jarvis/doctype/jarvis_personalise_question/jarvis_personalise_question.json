@@ -1,0 +1,127 @@
+{
+  "doctype": "DocType",
+  "name": "Jarvis Personalise Question",
+  "module": "Jarvis",
+  "issingle": 0,
+  "custom": 0,
+  "engine": "InnoDB",
+  "autoname": "hash",
+  "field_order": [
+    "user",
+    "question",
+    "context_md",
+    "origin",
+    "status",
+    "source_pattern",
+    "source_config",
+    "asked_by",
+    "answer_note",
+    "answered_at",
+    "ignored_at"
+  ],
+  "fields": [
+    {
+      "fieldname": "user",
+      "fieldtype": "Link",
+      "label": "User",
+      "options": "User",
+      "reqd": 1,
+      "in_standard_filter": 1,
+      "search_index": 1,
+      "description": "The target user this question is for. Owner-visibility (if_owner) is enforced by stamping doc.owner from this field at insert, regardless of which identity performs the insert (e.g. the pattern-learning engine running as Administrator) - see the controller docstring."
+    },
+    {
+      "fieldname": "question",
+      "fieldtype": "Small Text",
+      "label": "Question",
+      "reqd": 1,
+      "in_list_view": 1,
+      "description": "Generic-tone text shown to the user (never names a reviewer, even for reviewer-originated follow-ups)."
+    },
+    {
+      "fieldname": "context_md",
+      "fieldtype": "Long Text",
+      "label": "Context (Markdown)",
+      "description": "What Jarvis found - shown in the answer panel alongside the question."
+    },
+    {
+      "fieldname": "origin",
+      "fieldtype": "Select",
+      "label": "Origin",
+      "options": "Behavioural Learning\nFrom your organisation\nFrom your chat patterns\nFrom your reviewer",
+      "reqd": 1,
+      "in_list_view": 1,
+      "in_standard_filter": 1
+    },
+    {
+      "fieldname": "status",
+      "fieldtype": "Select",
+      "label": "Status",
+      "options": "Unanswered\nAnswered\nIgnored\nDeleted",
+      "default": "Unanswered",
+      "in_list_view": 1,
+      "in_standard_filter": 1,
+      "search_index": 1,
+      "description": "Deleted is a soft-delete: rows are marked, never hard-removed, and every list/probe endpoint must exclude them explicitly (see the controller docstring)."
+    },
+    {
+      "fieldname": "source_pattern",
+      "fieldtype": "Link",
+      "label": "Source Pattern",
+      "options": "Jarvis Learned Pattern",
+      "description": "Provenance: the learned-pattern row this question was materialized from (Behavioural Learning / From your chat patterns origins). Mirrors Jarvis Learned Pattern.materialized_skill's back-link idiom."
+    },
+    {
+      "fieldname": "source_config",
+      "fieldtype": "Link",
+      "label": "Source Config",
+      "options": "Jarvis Personalise Question Rule",
+      "description": "Provenance: the admin-configured rule this question was materialized from (From your organisation origin)."
+    },
+    {
+      "fieldname": "asked_by",
+      "fieldtype": "Link",
+      "label": "Asked By",
+      "options": "User",
+      "read_only": 1,
+      "description": "Reviewer who triggered a follow-up question (From your reviewer origin). Stored for audit only - never surfaced in the UI (the origin badge stays generic; see the reviewer-anonymity decision in DESIGN.md section 6)."
+    },
+    {
+      "fieldname": "answer_note",
+      "fieldtype": "Link",
+      "label": "Answer Note",
+      "options": "Jarvis Voice Note",
+      "description": "The Note this question's answer created. A re-answer replaces this link; the previous note is kept, just no longer referenced from here."
+    },
+    {
+      "fieldname": "answered_at",
+      "fieldtype": "Datetime",
+      "label": "Answered At"
+    },
+    {
+      "fieldname": "ignored_at",
+      "fieldtype": "Datetime",
+      "label": "Ignored At"
+    }
+  ],
+  "permissions": [
+    {
+      "role": "All",
+      "read": 1,
+      "write": 1,
+      "create": 1,
+      "delete": 1,
+      "if_owner": 1
+    },
+    {
+      "role": "System Manager",
+      "read": 1,
+      "write": 1,
+      "create": 1,
+      "delete": 1
+    }
+  ],
+  "sort_field": "creation",
+  "sort_order": "DESC",
+  "track_changes": 1
+}

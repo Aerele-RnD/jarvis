@@ -45,6 +45,11 @@ _TOOL_NAMES: tuple[str, ...] = (
     "cancel_doc",
     "delete_doc",
     "amend_doc",
+    # Workflow (state-machine) support: read the actions the current user may
+    # take on a doc, then apply one. apply_workflow_action is gated in api.py;
+    # submit_doc/cancel_doc refuse workflow-governed doctypes and point here.
+    "get_workflow_transitions",
+    "apply_workflow_action",
     # Tier 1 artifact producers: hand the agent a file/URL the customer
     # can act on, instead of a wall of JSON.
     "download_pdf",
