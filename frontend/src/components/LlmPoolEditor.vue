@@ -413,19 +413,15 @@
         </div>
       </div>
 
-      <button v-if="isMulti && editable" @click="addModel" class="jv-btn jv-btn--sm jv-btn--primary">
-        + Add model
-      </button>
+      <div v-if="isMulti && editable" style="display:flex;justify-content:flex-end;">
+        <button @click="addModel" class="jv-btn jv-btn--sm jv-btn--primary">
+          + Add model
+        </button>
+      </div>
     </section>
 
     <!-- Save bar + sync status - hidden when a host renders its own footer. -->
-    <div v-if="!footerless" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-      <button v-if="editable" @click="save" :disabled="saving || saveBlocked"
-              :style="{padding:'12px 24px',background: saveBlocked ? 'var(--surface-3)' : 'var(--text)',
-                       color: saveBlocked ? 'var(--text-3)' : 'var(--surface)',border:'none',borderRadius:'9px',
-                       cursor: saveBlocked ? 'not-allowed' : 'pointer',fontSize:'15px',fontWeight:'600'}">
-        {{ saving ? 'Saving…' : 'Save configuration' }}
-      </button>
+    <div v-if="!footerless" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:flex-end;">
       <span v-if="saveBlocked && missingVendors.length" style="font-size:13px;color:var(--amber);">
         Provide keys for: {{ missingVendors.map(providerLabel).join(', ') }}
       </span>
@@ -433,6 +429,12 @@
       <span v-else-if="applyStatus.kind !== 'idle'" class="jv-pool-syncpill" :class="'jv-pool-syncpill--' + applyStatus.kind">
         <span class="jv-pool-syncpill-ic" aria-hidden="true"></span>{{ applyStatus.text }}
       </span>
+      <button v-if="editable" @click="save" :disabled="saving || saveBlocked"
+              :style="{padding:'12px 24px',background: saveBlocked ? 'var(--surface-3)' : 'var(--text)',
+                       color: saveBlocked ? 'var(--text-3)' : 'var(--surface)',border:'none',borderRadius:'9px',
+                       cursor: saveBlocked ? 'not-allowed' : 'pointer',fontSize:'15px',fontWeight:'600'}">
+        {{ saving ? 'Saving…' : 'Save configuration' }}
+      </button>
     </div>
   </div>
 </template>
