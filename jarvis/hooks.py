@@ -369,3 +369,36 @@ has_permission.update({
 	"Jarvis Personalise Question": "jarvis.chat.personalise_permissions.has_personalise_question_permission",
 })
 
+# ---------------------------------------------------------------------------
+# File Box / Macros / Agents scoping (security review PART 3)
+# ---------------------------------------------------------------------------
+# TASK 22: File is a GLOBAL doctype. Core already registers a permissive
+# permission_query_conditions["File"]; Frappe ANDs the hooks, so the Jarvis
+# fragment ONLY restricts rows attached to Jarvis Conversation (owner / linked-
+# conversation-owner) and lets every non-Jarvis file (avatars, print formats,
+# other doctypes' attachments) through. NO has_permission["File"] hook — core's
+# per-doc byte deferral already protects the bytes; a second hook could break it.
+# TASK 23/24: Jarvis Macro / Macro Run scoped by the row owner at the ORM (Run's
+# owner is the macro owner by construction); the create arm of the Macro Run hook
+# also blocks attaching a run to another user's macro/conversation.
+# TASK 29: the four owner/installer-scoped agent doctypes (Installation, Run,
+# Finding, Activity). The Listing catalog stays All-readable (no owner hook); its
+# skill_bundle IP is permlevel-guarded (TASK 33) instead.
+permission_query_conditions.update({
+	"File": "jarvis.chat.file_permissions.file_query_conditions",
+	"Jarvis Macro": "jarvis.chat.macro_permissions.macro_query_conditions",
+	"Jarvis Macro Run": "jarvis.chat.macro_permissions.macro_run_query_conditions",
+	"Jarvis Agent Installation": "jarvis.chat.agent_permissions.installation_query_conditions",
+	"Jarvis Agent Run": "jarvis.chat.agent_permissions.run_query_conditions",
+	"Jarvis Agent Finding": "jarvis.chat.agent_permissions.finding_query_conditions",
+	"Jarvis Agent Activity": "jarvis.chat.agent_permissions.activity_query_conditions",
+})
+has_permission.update({
+	"Jarvis Macro": "jarvis.chat.macro_permissions.has_macro_permission",
+	"Jarvis Macro Run": "jarvis.chat.macro_permissions.has_macro_run_permission",
+	"Jarvis Agent Installation": "jarvis.chat.agent_permissions.has_installation_permission",
+	"Jarvis Agent Run": "jarvis.chat.agent_permissions.has_run_permission",
+	"Jarvis Agent Finding": "jarvis.chat.agent_permissions.has_finding_permission",
+	"Jarvis Agent Activity": "jarvis.chat.agent_permissions.has_activity_permission",
+})
+

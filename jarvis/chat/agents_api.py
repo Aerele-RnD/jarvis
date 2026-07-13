@@ -251,7 +251,10 @@ def get_agent(agent_slug: str) -> dict:
 		"tools_required": listing.tools_required,
 		"min_apps": listing.min_apps,
 		"rule_pack": listing.rule_pack,
-		"skill_bundle": listing.skill_bundle,
+		# skill_bundle deliberately omitted (PART 3 TASK 33): it is proprietary
+		# vendor IP (the full agent SKILL.md rule-pack) and is now permlevel-1
+		# (SM-only). A normal Jarvis User's detail page never needs it; SM / the
+		# engine read it via generic REST / get_doc.
 		"default_schedule": listing.default_schedule,
 		"validated_for_fy": listing.validated_for_fy,
 		"allowed_roles": [row.role for row in (listing.allowed_roles or [])],
@@ -818,8 +821,14 @@ def list_findings(
 
 	filters = {"owner": me}
 	if run:
-		run_row = frappe.db.get_value(RUN, run, ["agent", "creation", "status"], as_dict=True)
-		if not run_row or run_row.status not in ("completed", "partial"):
+		# TASK 32 (AGENTS-4): fetch owner alongside and gate it — this raw
+		# get_value bypasses perms, so without the owner check a foreign run id is
+		# an existence/metadata oracle. A run the caller does not own returns empty
+		# (identical to an unknown run), never leaking that it exists.
+		run_row = frappe.db.get_value(RUN, run, ["agent", "creation", "status", "owner"], as_dict=True)
+		if not run_row or run_row.owner != me:
+			return _empty()
+		if run_row.status not in ("completed", "partial"):
 			# unknown / failed / still-running runs recorded no findings snapshot
 			# (findings_count is 0 there too — the drill-down must match).
 			return _empty()
@@ -1011,12 +1020,23 @@ def get_agents_sync_status() -> dict:
 
 
 @frappe.whitelist()
-@require_jarvis_user
 def apply_agents() -> dict:
 	"""Push all ENABLED installed agent bundles to the container (one restart).
 	Explicit action. Builds the payload synchronously (surfaces size/cap errors
 	immediately), marks pending, then enqueues the deduped redis-locked worker —
-	mirrors ``custom_skills_api.apply_custom_skills``."""
+	mirrors ``custom_skills_api.apply_custom_skills``.
+
+	Reviewer/admin-gated (security review PART 3 TASK 30): a bench-wide push
+	reconciles + RESTARTS the shared container for EVERY user and builds a payload
+	of EVERY owner's enabled agent bundles, so a plain Jarvis User (which every
+	backfilled user holds) must not be able to trigger it (DoS). Gated with the
+	skill-reviewer set (Jarvis Skill Reviewer / Jarvis Admin / System Manager),
+	mirroring ``apply_custom_skills`` — deliberately NOT stacked under
+	@require_jarvis_user, since a reviewer/admin may hold neither Jarvis User nor
+	System Manager."""
+	from jarvis.permissions import require_skill_reviewer
+
+	require_skill_reviewer()
 	_rate_limit_apply()
 	payload = build_agent_push_payload()
 	frappe.db.set_single_value(_SETTINGS, "agent_skills_sync_status", "pending: applying agents")
