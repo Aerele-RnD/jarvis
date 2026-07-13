@@ -1383,7 +1383,24 @@ const currentTitle = computed(
 	() => store.conversations.find((c) => c.name === currentId.value)?.title || "New chat",
 )
 const visibleMessages = computed(() =>
-	messages.value.filter((m) => m.role === "user" || m.role === "assistant"),
+	messages.value.filter((m) => {
+		if (m.role !== "user" && m.role !== "assistant") return false
+		// Hide a blank streaming placeholder. The live "Working on it…" indicator
+		// below the thread already renders the assistant logo + status for the
+		// in-flight turn; after a refresh or tab-switch the server's still-empty
+		// streaming row loads alongside it, so drawing both showed the assistant
+		// logo twice (once blank, once beside the status). A placeholder that has
+		// text, an error, or a canvas is a real reply and always renders.
+		if (
+			m.role === "assistant" &&
+			m.streaming &&
+			!(m.content || "").trim() &&
+			!m.error &&
+			!(m.canvas && m.canvas.length)
+		)
+			return false
+		return true
+	}),
 )
 // Group role=tool messages under the assistant turn they belong to, so each
 // answer can show an expandable "Activity" list of the tool calls (with input
