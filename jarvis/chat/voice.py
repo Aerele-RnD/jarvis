@@ -17,6 +17,7 @@ import base64
 import time
 
 import frappe
+from jarvis.permissions import require_jarvis_user
 import requests
 from frappe import _
 from frappe.utils import cint
@@ -199,6 +200,7 @@ def _audio_format(content_type: str | None) -> str:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def transcribe_audio() -> dict:
 	"""Transcribe one recorded clip (multipart field ``audio`` + form
 	``duration_s``). Desk (System User) only; bytes are size/duration capped

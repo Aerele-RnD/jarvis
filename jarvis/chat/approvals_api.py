@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 
 import frappe
+from jarvis.permissions import require_jarvis_user
 
 from jarvis._session import impersonate
 
@@ -43,6 +44,7 @@ def _may_act_on(conversation: str | None) -> bool:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def list_approvals(status: str = "Pending", limit: int = 50) -> list[dict]:
 	"""Approvals visible to the current user (owner of the linked
 	conversation, or any System Manager)."""
@@ -146,6 +148,7 @@ def _order_by(sort_field, sort_dir, sortable: dict, default_field, default_dir, 
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def list_approvals_page(
 	search: str = "",
 	filters: str | dict | None = None,
@@ -378,6 +381,7 @@ def get_approval(name: str) -> dict:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def pending_count() -> int:
 	# Scoped like list_approvals_page: non-SM users count rows whose
 	# conversation they own OR that carry an approval-level DocShare read grant
@@ -497,7 +501,13 @@ def decide(name: str, decision: str, approve: int = 1) -> dict:
 				# impersonate is session-safe (a bare frappe.set_user in this
 				# HTTP path would gut the approver's cookie session and log them
 				# out) and no-ops when switch_to is None (self-owned resume).
-				with impersonate(switch_to):
+				# delegated_send() marks this as a trusted server re-entry so the
+				# resume clears send_message's Jarvis-access gate and the now
+				# role-gated Message create perm even when the conversation owner
+				# does not hold the Jarvis User role.
+				from jarvis.permissions import delegated_send
+
+				with impersonate(switch_to), delegated_send():
 					res = send_message(
 						conversation=doc.conversation, message=msg, attachments=attachments)
 				resumed = bool(res.get("ok"))

@@ -141,8 +141,7 @@
    "create": 1,
    "read": 1,
    "write": 1,
-   "if_owner": 1,
-   "role": "All"
+   "role": "Jarvis User"
   }
  ],
  "sort_field": "creation",

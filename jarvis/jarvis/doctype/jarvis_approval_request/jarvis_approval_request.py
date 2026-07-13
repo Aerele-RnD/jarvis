@@ -36,6 +36,17 @@ class JarvisApprovalRequest(Document):
 		):
 			return
 		decider = self.decided_by or frappe.session.user
+		# TASK 4: the trace comment is an ignore_permissions write attributed to
+		# the decider on a user-controllable ref_doctype/ref_name. Do not plant
+		# an attributed comment on a document the decider cannot access — that
+		# would be a permission-bypass write driven by attacker-chosen fields.
+		# Skip the trace (the decision itself is still recorded) when the decider
+		# lacks read+write on the target.
+		if not (
+			frappe.has_permission(self.ref_doctype, "read", self.ref_name, user=decider)
+			and frappe.has_permission(self.ref_doctype, "write", self.ref_name, user=decider)
+		):
+			return
 		comment = frappe.get_doc({
 			"doctype": "Comment",
 			"comment_type": "Comment",

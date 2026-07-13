@@ -30,6 +30,11 @@ _SEARCH_MAX = 140
 
 
 def _require_system_user() -> None:
+	# System User AND Jarvis access (TASK 6/8): these voice/personalise
+	# endpoints are part of the chat surface, so they require the Jarvis User
+	# role (or System Manager), not merely a Desk login.
+	from jarvis.permissions import require_jarvis_access
+
 	user = frappe.session.user
 	if not user or user == "Guest":
 		frappe.throw(_("Not permitted."), frappe.PermissionError)
@@ -37,6 +42,7 @@ def _require_system_user() -> None:
 		return
 	if frappe.db.get_value("User", user, "user_type") != "System User":
 		frappe.throw(_("Not permitted."), frappe.PermissionError)
+	require_jarvis_access(user)
 
 
 def _single(field: str):

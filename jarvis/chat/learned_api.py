@@ -832,12 +832,13 @@ def _apply_pending() -> bool:
 	"""True while a learned-skills push is between enqueue and its terminal
 	status (Phase-2 namespace: the un-approve gate keys off the LEARNED push -
 	learned skills no longer ride the custom-skills push)."""
-	try:
-		from jarvis.chat.learned_skills_api import get_learned_skills_sync_status
+	# Undecorated read (a Jarvis Settings poll the reviewer is authorized to see):
+	# do NOT swallow errors here — the old bare except masked the @require_jarvis_user
+	# PermissionError and silently returned "not pending", weakening the mid-push
+	# un-approve guard for reviewer-only users (security review TASK 21).
+	from jarvis.chat.learned_skills_api import _learned_sync_status
 
-		return bool(get_learned_skills_sync_status().get("pending"))
-	except Exception:
-		return False
+	return bool(_learned_sync_status().get("pending"))
 
 
 def _apply_in_progress() -> bool:
@@ -1357,9 +1358,12 @@ def _apply_create_target(new_skill) -> tuple[str, str]:
 				"and instructions."
 			)
 		)
-	from jarvis.chat.custom_skills_api import create_custom_skill
+	from jarvis.chat.custom_skills_api import _create_custom_skill_impl
 
-	out = create_custom_skill(
+	# Call the undecorated impl: this reviewer path is already authorized by
+	# _guard() (_REVIEWER_ROLES), and a reviewer/admin may lack the Jarvis User
+	# role that the @require_jarvis_user HTTP wrapper on create_custom_skill needs.
+	out = _create_custom_skill_impl(
 		skill_name=str(ns.get("skill_name") or "").strip(),
 		description=str(ns.get("description") or "").strip(),
 		instructions=str(ns.get("instructions") or "").strip(),
@@ -1591,9 +1595,9 @@ def get_learned_apply_status() -> dict:
 	reports to the SEPARATE custom sync pair - included here so a failed
 	cutover reconcile is visible on the board instead of fire-and-forget."""
 	_guard()
-	from jarvis.chat.learned_skills_api import get_learned_skills_sync_status
+	from jarvis.chat.learned_skills_api import _learned_sync_status
 
-	out = get_learned_skills_sync_status()
+	out = _learned_sync_status()
 	out["custom_sync"] = _cutover_custom_sync_status(out)
 	return out
 
@@ -1620,9 +1624,9 @@ def _cutover_custom_sync_status(learned: dict):
 			age = (now_datetime() - last).total_seconds()
 			if age > _CUTOVER_SURFACE_HOURS * 3600:
 				return None
-		from jarvis.chat.custom_skills_api import get_custom_skills_sync_status
+		from jarvis.chat.custom_skills_api import _custom_sync_status
 
-		return get_custom_skills_sync_status()
+		return _custom_sync_status()
 	except Exception:
 		return None
 

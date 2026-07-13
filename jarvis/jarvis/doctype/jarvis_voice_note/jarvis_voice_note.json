@@ -126,7 +126,7 @@
   ],
   "permissions": [
     {
-      "role": "All",
+      "role": "Jarvis User",
       "read": 1,
       "write": 1,
       "create": 1,

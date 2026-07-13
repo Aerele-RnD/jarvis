@@ -14,6 +14,7 @@ Enable / schedule are pure DB writes (no container restart — O6); only Apply
 """
 
 import frappe
+from jarvis.permissions import require_jarvis_user
 from frappe import _
 
 from jarvis._session import impersonate
@@ -86,6 +87,7 @@ def _allowed_roles_map() -> dict[str, list[str]]:
 # catalog + install state (read)
 # --------------------------------------------------------------------------- #
 @frappe.whitelist()
+@require_jarvis_user
 def list_agents() -> list[dict]:
 	"""The full catalog plus THIS owner's install/enable/schedule state per
 	agent. Read-only — the catalog is visible to every logged-in user. Each row
@@ -158,6 +160,7 @@ def _enriched_catalog() -> list[dict]:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def list_agents_page(
 	tab: str = "available",
 	category: str | None = None,
@@ -225,6 +228,7 @@ def list_agents_page(
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def get_agent(agent_slug: str) -> dict:
 	"""One listing + the CURRENT user's installation for the agent detail page
 	(DESIGN-V3 §8.3 / D39). Any authenticated user may read (listing perms =
@@ -290,6 +294,7 @@ def get_agent(agent_slug: str) -> dict:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def get_installations() -> list[dict]:
 	"""This owner's installations, with the linked listing title/nature/status."""
 	me = frappe.session.user
@@ -452,6 +457,7 @@ def _mark_catalog_dirty() -> None:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def install_agent(agent_slug: str) -> dict:
 	"""Install a Published agent for the current user. The doctype validate()
 	enforces the per-owner cap + (owner, agent) uniqueness. Role-gated: a user
@@ -699,6 +705,7 @@ def _count(doctype: str, filters: dict, or_filters: list | None = None) -> int:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def list_runs(agent: str | None = None, limit: int = 50) -> list[dict]:
 	"""This owner's run history (optionally filtered to one agent)."""
 	me = frappe.session.user
@@ -719,6 +726,7 @@ def list_runs(agent: str | None = None, limit: int = 50) -> list[dict]:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def list_runs_page(
 	agent: str | None = None,
 	status: str | None = None,
@@ -771,6 +779,7 @@ def list_runs_page(
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def list_findings(
 	run: str | None = None,
 	state: str | None = None,
@@ -883,6 +892,7 @@ def set_finding_state(finding: str, state: str) -> dict:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def list_agent_activity_page(
 	agent: str | None = None,
 	action: str | None = None,
@@ -985,6 +995,7 @@ def take_finding_to_chat(finding: str) -> dict:
 # Apply (explicit push to the container, via admin -> fleet) + status poller
 # --------------------------------------------------------------------------- #
 @frappe.whitelist()
+@require_jarvis_user
 def get_agents_sync_status() -> dict:
 	"""Lightweight poller mirroring get_custom_skills_sync_status."""
 	s = frappe.get_single(_SETTINGS)
@@ -1000,6 +1011,7 @@ def get_agents_sync_status() -> dict:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def apply_agents() -> dict:
 	"""Push all ENABLED installed agent bundles to the container (one restart).
 	Explicit action. Builds the payload synchronously (surfaces size/cap errors

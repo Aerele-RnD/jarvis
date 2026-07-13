@@ -66,6 +66,14 @@ def _ensure_user(email: str) -> str:
 	if frappe.db.get_value("User", email, "user_type") != "System User":
 		frappe.db.set_value("User", email, "user_type", "System User", update_modified=False)
 		frappe.clear_cache(user=email)
+	# Personalise is a chat-surface feature: its shared guard now requires the
+	# Jarvis User role (security review TASK 6/8). Grant it so the fixtures pass
+	# the gate (SM/Admin fixtures already satisfy it via their own roles).
+	from jarvis.permissions import ensure_jarvis_user_role
+
+	ensure_jarvis_user_role()
+	if "Jarvis User" not in set(frappe.get_roles(email)):
+		frappe.get_doc("User", email).add_roles("Jarvis User")
 	frappe.db.commit()
 	return email
 

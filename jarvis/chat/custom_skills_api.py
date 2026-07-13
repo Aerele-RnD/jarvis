@@ -13,6 +13,7 @@ and flip the status to a terminal ``ok ...`` / ``failed: ...`` the SPA polls.
 """
 
 import frappe
+from jarvis.permissions import require_jarvis_user
 from frappe import _
 
 from jarvis.chat.custom_skills import build_push_payload
@@ -44,6 +45,7 @@ def _skill_names_shared_with(user: str) -> list[str]:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def list_custom_skills() -> list[dict]:
 	"""The current user's own skills PLUS skills shared with them (read-only).
 
@@ -170,6 +172,7 @@ def _order_by(sort_field, sort_dir, sortable: dict, default_field, default_dir, 
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def list_custom_skills_page(
 	search: str = "",
 	filters: str | dict | None = None,
@@ -264,6 +267,7 @@ def list_custom_skills_page(
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def get_custom_skill(name: str) -> dict:
 	"""Return one skill incl. the full markdown instructions. Readable by the
 	owner (editable) or a user it's shared with (read-only). ``can_edit`` tells
@@ -288,6 +292,7 @@ def get_custom_skill(name: str) -> dict:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def create_custom_skill(
 	skill_name: str,
 	description: str,
@@ -296,6 +301,24 @@ def create_custom_skill(
 	enabled: int = 1,
 ) -> dict:
 	"""Create a skill. Validation (slug/caps) runs in the doctype's validate()."""
+	return _create_custom_skill_impl(
+		skill_name, description, instructions, user_invocable, enabled
+	)
+
+
+def _create_custom_skill_impl(
+	skill_name: str,
+	description: str,
+	instructions: str,
+	user_invocable: int = 1,
+	enabled: int = 1,
+) -> dict:
+	"""Undecorated core of :func:`create_custom_skill`. Split out so a trusted
+	server caller already authorized by its own gate can create a skill without
+	re-tripping the ``@require_jarvis_user`` HTTP gate on the wrapper: the reviewer
+	insight-apply path (``learned_api._apply_create_target``) is gated on
+	``_REVIEWER_ROLES``, which admits a Jarvis Skill Reviewer / Jarvis Admin who
+	holds neither Jarvis User nor System Manager."""
 	doc = frappe.get_doc(
 		{
 			"doctype": SKILL,
@@ -312,6 +335,7 @@ def create_custom_skill(
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def update_custom_skill(
 	name: str,
 	skill_name: str | None = None,
@@ -338,6 +362,7 @@ def update_custom_skill(
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def delete_custom_skill(name: str) -> dict:
 	"""Delete a skill row (owner-gated). The delete only propagates to the
 	container on the next Apply (the fleet endpoint does a full reconcile)."""
@@ -347,6 +372,7 @@ def delete_custom_skill(name: str) -> dict:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def delete_custom_skills_bulk(names: str | list | None = None) -> dict:
 	"""Bulk delete skills the caller OWNS (DESIGN-V3 §8.3 / D20). ``names`` is a
 	JSON array of skill row-names. Per-row try/except so one bad row never
@@ -388,6 +414,7 @@ def delete_custom_skills_bulk(names: str | list | None = None) -> dict:
 # use — they cannot edit, disable, delete, or re-share it)
 # --------------------------------------------------------------------------- #
 @frappe.whitelist()
+@require_jarvis_user
 def list_shareable_users() -> list[dict]:
 	"""Users the current user can share a skill with (staff on this bench,
 	excluding self + Guest). Feeds the share multiselect."""
@@ -402,6 +429,7 @@ def list_shareable_users() -> list[dict]:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def get_skill_shares(name: str) -> dict:
 	"""Return who a skill is currently shared with (owner only)."""
 	doc = frappe.get_doc(SKILL, name)
@@ -442,8 +470,18 @@ def share_custom_skill(name: str, users: str | list | None = None) -> dict:
 # Apply (explicit push to the container, via admin → fleet)
 # --------------------------------------------------------------------------- #
 @frappe.whitelist()
+@require_jarvis_user
 def get_custom_skills_sync_status() -> dict:
 	"""Lightweight poller mirroring onboarding.get_llm_sync_status."""
+	return _custom_sync_status()
+
+
+def _custom_sync_status() -> dict:
+	"""Undecorated core of :func:`get_custom_skills_sync_status`. Split out so the
+	reviewer Apply board (``learned_api._cutover_custom_sync_status``, reached from
+	``get_learned_apply_status`` under ``_REVIEWER_ROLES``) can read the custom sync
+	pair without tripping the ``@require_jarvis_user`` HTTP gate — a read of two
+	``Jarvis Settings`` fields the reviewer is already authorized to see."""
 	s = frappe.get_single(_SETTINGS)
 	status = s.get("custom_skills_sync_status") or ""
 	return {
@@ -454,6 +492,7 @@ def get_custom_skills_sync_status() -> dict:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def apply_custom_skills() -> dict:
 	"""Push all enabled skills to the assistant (one restart). Explicit action.
 

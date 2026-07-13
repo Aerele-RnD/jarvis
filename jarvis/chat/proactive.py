@@ -13,6 +13,7 @@ customer" action) just call :func:`start_conversation`. A trivial demo trigger
 import frappe
 
 from jarvis.chat.events import publish_to_user
+from jarvis.permissions import require_jarvis_access
 
 CONV = "Jarvis Conversation"
 MSG = "Jarvis Chat Message"
@@ -69,7 +70,14 @@ def start_conversation(message: str, *, title: str | None = None, user: str | No
 
 @frappe.whitelist()
 def demo_proactive(message: str | None = None, title: str | None = None) -> dict:
-	"""Test trigger: Jarvis proactively messages the current user."""
+	"""Test trigger: Jarvis proactively messages the current user.
+
+	Gated (PART 1 TASK 1): this whitelisted endpoint hands the caller an OWNED
+	conversation (via start_conversation's ignore_permissions insert) and could
+	otherwise seed a chat for a user without Jarvis access. ``start_conversation``
+	itself stays ungated — it is the internal seam the scheduler/doc-event/admin
+	triggers call directly."""
+	require_jarvis_access()
 	return start_conversation(
 		message
 		or "Hi! Your monthly close is due in 3 days. Want me to prepare a draft "
