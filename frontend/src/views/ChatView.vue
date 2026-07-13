@@ -4364,10 +4364,13 @@ onUnmounted(() => {
 .jv-md :deep(.jv-md-table tr:last-child td) { border-bottom: 0; }
 
 /* ===== settings panel (slide-over console) ===== */
-/* settings: centered modal (Claude-style) with a left section nav */
-.jv-settings-overlay { position: absolute; inset: 0; z-index: 60; background: rgba(15, 15, 22, 0.34); display: flex; align-items: center; justify-content: center; padding: 24px; }
-.jv-dark .jv-settings-overlay { background: rgba(0, 0, 0, 0.55); }
-.jv-settings { width: 760px; max-width: 100%; height: 560px; max-height: 88vh; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; display: flex; overflow: hidden; box-shadow: 0 24px 70px rgba(20, 20, 30, 0.28); animation: jv-popin 0.16s ease; }
+/* The settings modal's CSS lived here (.jv-settings-overlay / .jv-settings, a
+   760px shell) until the dialog was HOISTED to components/shell/SettingsDialog.vue
+   — see the template note near the top of this file. These rules are <style scoped>,
+   so once ChatView stopped rendering the dialog they matched nothing: edits to them
+   silently did nothing while the live styles came from @/assets/settings.css.
+   Removed rather than left as a decoy. Style the dialog in assets/settings.css.
+   (jv-popin STAYS — .jv-skills-modal / .jv-cdialog still animate with it.) */
 @keyframes jv-popin { from { transform: scale(0.97); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 .jv-settings-nav { width: 196px; flex: none; background: var(--surface-1); border-right: 1px solid var(--border); padding: 14px 10px; display: flex; flex-direction: column; gap: 2px; }
 .jv-settings-nav-title { font-size: 15px; font-weight: 700; color: var(--text); padding: 4px 10px 12px; }
