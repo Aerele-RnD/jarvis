@@ -159,6 +159,17 @@
                 <option v-for="o in upstreamOpts" :key="o.value" :value="o.value">{{ o.label }}</option>
               </select>
             </div>
+            <!-- Connect lives in the grid's second column: it right-aligns the action
+                 (consistent with every other confirm action in this pane) and fills the
+                 column the model field used to occupy, instead of hanging under the form. -->
+            <div v-if="editable && !(panelRow._connect && panelRow._connect.open) && !(panelRow.accounts && panelRow.accounts.length)"
+                 class="jv-cfg-actioncell">
+              <button @click="startConnect(panelRow)"
+                      :disabled="panelRow._connect && panelRow._connect.loading && !panelRow._connect.authorizeUrl"
+                      class="jv-btn jv-btn--primary">
+                + Connect account
+              </button>
+            </div>
           </div>
 
           <!-- Connected accounts (markup reused verbatim from the former
@@ -183,7 +194,9 @@
               </button>
             </div>
           </div>
-          <div v-else style="font-size:13px;color:var(--text-3);margin-bottom:8px;">No accounts connected yet.</div>
+          <!-- ("No accounts connected yet." removed: the Connect account button in the
+               grid above already says the account is missing; the sentence only
+               restated it.) -->
 
           <!-- Paste-back OAuth connect panel (reused verbatim). -->
           <div v-if="panelRow._connect && panelRow._connect.open" class="jv-cn">
@@ -217,12 +230,6 @@
             <div v-if="panelRow._connect.error" class="jv-cn-err">{{ panelRow._connect.error }}</div>
           </div>
 
-          <button v-if="editable && !(panelRow._connect && panelRow._connect.open) && !(panelRow.accounts && panelRow.accounts.length)"
-                  @click="startConnect(panelRow)"
-                  :disabled="panelRow._connect && panelRow._connect.loading && !panelRow._connect.authorizeUrl"
-                  class="jv-btn jv-btn--sm jv-btn--primary">
-            + Connect account
-          </button>
         </div>
 
         <!-- From a preset (add-mode only) - picking a card replaces the whole
@@ -1315,7 +1322,14 @@ defineExpose({ save })
 .jv-cfg-inp:focus { outline: none; border-color: var(--text-3); box-shadow: none; }
 .jv-cfg-inp:disabled { opacity: .6; cursor: default; }
 .jv-pool-opt { font-weight: 400; color: var(--text-3); }
-@media (max-width: 720px) { .jv-cfg-grid { grid-template-columns: 1fr; } }
+/* Action occupying a grid column (Connect account): right-aligned, and bottom-aligned
+   with the field beside it so it sits on the input's baseline, not the label's. */
+.jv-cfg-actioncell { display: flex; justify-content: flex-end; align-items: flex-end; }
+@media (max-width: 720px) {
+  .jv-cfg-grid { grid-template-columns: 1fr; }
+  /* Stacked: keep the action on the right rather than stretching it full width. */
+  .jv-cfg-actioncell { justify-content: flex-end; }
+}
 
 /* "Soon" tag on the not-yet-shipped preset tab. */
 .jv-pool-segbtn--soon { cursor: default; opacity: .55; }
