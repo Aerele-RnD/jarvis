@@ -268,10 +268,17 @@
 
 											<div v-for="t in summaryState.view.tables" :key="t.fieldname" class="jv-summary-table">
 												<div class="jv-summary-table-h">{{ t.label }} ({{ t.count }})</div>
-												<div class="jv-summary-rows">
-													<div v-for="(row, i) in t.rows" :key="i" class="jv-summary-row">
-														<span v-for="(c, ci) in row.cells" :key="ci">{{ c }}</span>
-													</div>
+												<div class="jv-summary-gridwrap">
+													<table class="jv-summary-grid">
+														<thead v-if="t.columns && t.columns.length">
+															<tr><th v-for="(col, ci) in t.columns" :key="ci">{{ col }}</th></tr>
+														</thead>
+														<tbody>
+															<tr v-for="(row, i) in t.rows" :key="i">
+																<td v-for="(c, ci) in row.cells" :key="ci">{{ c }}</td>
+															</tr>
+														</tbody>
+													</table>
 												</div>
 											</div>
 										</div>
@@ -4846,9 +4853,12 @@ onUnmounted(() => {
 .jv-summary-to { color: var(--green); font-weight: 600; }
 .jv-summary-nochange, .jv-summary-loading { font-size: 12.5px; color: var(--text-3); }
 .jv-summary-table { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-.jv-summary-table-h { padding: 7px 10px; background: var(--surface-2); font-size: 12px; font-weight: 650; color: var(--text-2); }
-.jv-summary-row { display: flex; gap: 12px; padding: 5px 10px; font-size: 12.5px; color: var(--text); border-top: 1px solid var(--border); }
-.jv-summary-row span:first-child { flex: 1; }
+.jv-summary-table-h { padding: 7px 10px; background: var(--surface-2); font-size: 12px; font-weight: 650; color: var(--text-2); border-bottom: 1px solid var(--border); }
+.jv-summary-gridwrap { overflow-x: auto; }
+.jv-summary-grid { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.jv-summary-grid th { text-align: left; padding: 6px 10px; color: var(--text-3); font-weight: 600; font-size: 10.5px; letter-spacing: .05em; text-transform: uppercase; white-space: nowrap; background: var(--surface-1); border-bottom: 1px solid var(--border); }
+.jv-summary-grid td { padding: 5px 10px; color: var(--text); white-space: nowrap; border-bottom: 1px solid var(--border); }
+.jv-summary-grid tbody tr:last-child td { border-bottom: none; }
 .jv-summary-hint { padding: 0 14px 11px; font-size: 12px; color: var(--text-3); }
 
 /* --- record draft panel --- */
