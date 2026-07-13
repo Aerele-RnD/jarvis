@@ -459,6 +459,11 @@ def _upsert_managed_skill(spec: dict) -> str:
 	doc.user_invocable = 0
 	doc.enabled = 1
 	doc.managed_by_learning = 1
+	# Managed learned rows are org-effect (role-gated at runtime by
+	# learned_skill_clause via allowed_roles); pin scope=Org so the new
+	# private-first User default (security review PART 2 TASK 10) never applies to
+	# them. The engine flag is set here, so the scope guard admits the write.
+	doc.scope = "Org"
 	doc.set("allowed_roles", [{"role": r} for r in spec["allowed_roles"]])
 	doc.save(ignore_permissions=True) if existing else doc.insert(ignore_permissions=True)
 	return doc.name

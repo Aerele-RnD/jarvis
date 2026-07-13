@@ -215,7 +215,7 @@
 // share this component (isNew prop). Explicit Save (D21) with dirty guard,
 // read-only mode for shared-with-me skills, DocMetaPanel + child-table
 // Shared-with block (#extra) + ShareDialog, sync pill on save/delete.
-import { ref, reactive, computed, watch, shallowRef, nextTick } from "vue"
+import { ref, reactive, computed, watch, shallowRef, nextTick, onMounted } from "vue"
 import { useRouter, onBeforeRouteLeave } from "vue-router"
 import {
 	Button,
@@ -235,6 +235,7 @@ import CommentsSection from "@/components/doc/CommentsSection.vue"
 import { useDocmeta } from "@/composables/useDocmeta"
 import SyncPill from "./SyncPill.vue"
 import ShareDialog from "./ShareDialog.vue"
+import { getSkillsAreaCaps } from "@/api/personalise"
 import { renderMarkdown } from "@/markdown"
 import { timeAgo } from "@/utils/datetime"
 import { useJarvisTheme } from "@/theme"
@@ -276,6 +277,20 @@ const docmeta = shallowRef(null) // useDocmeta instance (own skills only)
 const shares = ref([]) // [{name, full_name}]
 const shareOpen = ref(false)
 const syncPill = ref(null)
+
+// Only a reviewer/admin may push the shared container (apply is reviewer-gated -
+// security review PART 2 TASK 12). New skills default to private (User) scope
+// and are NEVER pushed, so for an ordinary user apply-on-save is both pointless
+// and a hard 403 (a scary red toast). Gate every apply on this signal.
+const isReviewer = ref(false)
+onMounted(async () => {
+	try {
+		const caps = await getSkillsAreaCaps()
+		isReviewer.value = !!(caps && caps.review)
+	} catch {
+		isReviewer.value = false
+	}
+})
 
 const canEdit = computed(() => props.isNew || !!(skill.value && skill.value.can_edit))
 const readonly = computed(() => !canEdit.value || saving.value)
@@ -395,7 +410,9 @@ async function save() {
 			const res = (await api.createCustomSkill(payload)) || {}
 			const newName = (res.data && res.data.name) || ""
 			snapshot.value = { ...form } // clean before navigating (leave guard)
-			syncPill.value && syncPill.value.apply() // saving updates the assistant
+			// Reviewers only: a new skill is private (User) scope and never pushed,
+			// so ordinary users need no apply (and would 403 on the gated endpoint).
+			if (isReviewer.value) syncPill.value && syncPill.value.apply()
 			toast.success("Saved")
 			if (newName) router.replace("/skills/" + newName)
 		} else {
@@ -407,7 +424,8 @@ async function save() {
 			await api.updateCustomSkill({ name: props.id, ...changed })
 			snapshot.value = { ...form }
 			skill.value = { ...skill.value, ...payload }
-			syncPill.value && syncPill.value.apply()
+			// Reviewers only (see create branch): the shared push is reviewer-gated.
+			if (isReviewer.value) syncPill.value && syncPill.value.apply()
 			toast.success("Saved")
 		}
 	} catch (e) {
@@ -424,8 +442,9 @@ function confirmDelete() {
 		onConfirm: async ({ hideDialog }) => {
 			try {
 				await api.deleteCustomSkill(props.id)
-				// reconcile the container; the list's pill picks up the pending state
-				await api.applyCustomSkills().catch(() => {})
+				// reconcile the container only for reviewers (apply is gated); a
+				// deleted private skill never affected the shared push anyway.
+				if (isReviewer.value) await api.applyCustomSkills().catch(() => {})
 				bypassGuard = true
 				hideDialog()
 				toast.success("Skill deleted")

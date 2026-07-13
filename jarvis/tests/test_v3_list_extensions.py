@@ -42,13 +42,22 @@ def _ensure_user(email: str) -> str:
 			"doctype": "User", "email": email,
 			"first_name": email.split("@")[0],
 			"send_welcome_email": 0, "enabled": 1,
+			"user_type": "System User",
 		})
 		u.flags.ignore_permissions = True
 		u.insert()
 		frappe.db.commit()
-	roles = set(frappe.get_roles(email))
-	if "System Manager" in roles:
+	if frappe.db.get_value("User", email, "user_type") != "System User":
+		frappe.db.set_value("User", email, "user_type", "System User")
+		frappe.db.commit()
+	if "System Manager" in set(frappe.get_roles(email)):
 		frappe.get_doc("User", email).remove_roles("System Manager")
+		frappe.db.commit()
+	# The Jarvis User role is what the @require_jarvis_user endpoint decorators
+	# require (security review PART 1 TASK 8); a realistic non-SM Jarvis caller
+	# holds it.
+	if "Jarvis User" not in set(frappe.get_roles(email)):
+		frappe.get_doc("User", email).add_roles("Jarvis User")
 		frappe.db.commit()
 	return email
 
@@ -124,6 +133,11 @@ class TestSkillsBulkDelete(unittest.TestCase):
 		frappe.set_user("Administrator")
 		_ensure_user(USER_A)
 		_ensure_user(USER_B)
+		# USER_A owns + deletes the fixture skills; the bulk-delete reconcile is
+		# now reviewer-gated (security review PART 2 TASK 12), so give USER_A the
+		# reviewer role to exercise the (deduped) apply path.
+		if "Jarvis Skill Reviewer" not in set(frappe.get_roles(USER_A)):
+			frappe.get_doc("User", USER_A).add_roles("Jarvis Skill Reviewer")
 
 	def setUp(self):
 		frappe.set_user("Administrator")
@@ -133,12 +147,13 @@ class TestSkillsBulkDelete(unittest.TestCase):
 		self.b_shared = _mk_skill(USER_B, "v3-skill-b-shared", shared_with=[USER_A])
 		self.b_priv = _mk_skill(USER_B, "v3-skill-b-priv")
 		# Stub the apply pipeline (it talks to the admin service) and count calls.
+		# delete_custom_skills_bulk calls the undecorated _apply_custom_skills_impl.
 		self.apply_calls = []
-		self._orig_apply = custom_skills_api.apply_custom_skills
-		custom_skills_api.apply_custom_skills = lambda: self.apply_calls.append(1)
+		self._orig_apply = custom_skills_api._apply_custom_skills_impl
+		custom_skills_api._apply_custom_skills_impl = lambda: self.apply_calls.append(1)
 
 	def tearDown(self):
-		custom_skills_api.apply_custom_skills = self._orig_apply
+		custom_skills_api._apply_custom_skills_impl = self._orig_apply
 		frappe.set_user("Administrator")
 		_wipe()
 

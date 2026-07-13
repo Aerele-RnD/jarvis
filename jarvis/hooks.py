@@ -337,3 +337,22 @@ has_permission.update({
 	"Jarvis Voice Note": "jarvis.chat.chat_permissions.has_voice_note_permission",
 })
 
+# ---------------------------------------------------------------------------
+# Skills / Personalise scoping (security review PART 2)
+# ---------------------------------------------------------------------------
+# TASK 13: Jarvis Custom Skill visibility (owner OR scope=Org OR scope=Role
+# role-match OR shared-with) at the ORM, so the four hand-rolled read surfaces
+# (generic REST, SPA list/get, plugin find/get) can never disagree. Matrix +
+# SQL fragment live in jarvis/chat/skill_permissions.py (reuses the controller's
+# user_can_use_skill rule).
+# TASK 17: Jarvis Personalise Question scoped on the `user` field (not `owner`)
+# so generic REST matches the API's user-based scoping and survives drift.
+permission_query_conditions.update({
+	"Jarvis Custom Skill": "jarvis.chat.skill_permissions.skill_query_conditions",
+	"Jarvis Personalise Question": "jarvis.chat.personalise_permissions.personalise_question_query_conditions",
+})
+has_permission.update({
+	"Jarvis Custom Skill": "jarvis.chat.skill_permissions.has_skill_permission",
+	"Jarvis Personalise Question": "jarvis.chat.personalise_permissions.has_personalise_question_permission",
+})
+

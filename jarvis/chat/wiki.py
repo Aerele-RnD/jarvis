@@ -897,6 +897,17 @@ def apply_promotion(
 	decision_note. Idempotent: a non-Pending request is a no-op."""
 	reviewer = reviewer or frappe.session.user
 	req = frappe.get_doc(PROMO, request_name)
+	# Security review PART 2 TASK 19: four-eyes / separation of duties. A user
+	# holding BOTH a Knowledge-Wiki role (so they could author + request) and a
+	# reviewer role must not approve their OWN promotion request. Bounded (the
+	# widened content is their own page) but promotion is an org-wide effect, so
+	# it needs a second pair of eyes. Checked before the TOCTOU claim so a
+	# self-approval never mutates the target page.
+	if reviewer == (req.owner or "") and reviewer != "Administrator":
+		frappe.throw(
+			_("You cannot approve your own promotion request; another reviewer must decide it."),
+			frappe.PermissionError,
+		)
 	# TOCTOU-safe claim: re-read the status under a row lock (for_update) before
 	# the merge, so two concurrent approvals (two reviewers, or a double-submit)
 	# can never both pass the Pending check and double-append body_snapshot into
