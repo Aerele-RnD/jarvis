@@ -165,18 +165,19 @@
                        :editable="editable" placeholder="Provider"
                        @update:model-value="(v) => { panelRow.upstream = upstreamValueOf(v); onUpstreamChange(panelRow) }" />
             </div>
-            <!-- Connect lives in the grid's second column: it right-aligns the action
-                 (consistent with every other confirm action in this pane) and fills the
-                 column the model field used to occupy, instead of hanging under the form. -->
-            <div v-if="editable && !(panelRow._connect && panelRow._connect.open) && !(panelRow.accounts && panelRow.accounts.length)"
-                 class="jv-cfg-actioncell">
-              <button @click="startConnect(panelRow)"
-                      :disabled="panelRow._connect && panelRow._connect.loading && !panelRow._connect.authorizeUrl"
-                      class="jv-btn jv-btn--primary">
-                + Connect account
-              </button>
-            </div>
           </div>
+
+          <!-- Connect sits WHERE THE ACCOUNT WILL APPEAR, not beside the Provider
+               field: it is an account action, so clicking it should materialize the
+               account in the same place. It also reuses .jv-pool-addrow, the exact
+               affordance shown once accounts exist ("+ Add account"), so the control
+               is the same shape at 0 accounts and at N. -->
+          <button v-if="editable && !(panelRow._connect && panelRow._connect.open) && !(panelRow.accounts && panelRow.accounts.length)"
+                  @click="startConnect(panelRow)"
+                  :disabled="panelRow._connect && panelRow._connect.loading && !panelRow._connect.authorizeUrl"
+                  class="jv-pool-addrow jv-pool-addrow--block">
+            + Connect account
+          </button>
 
           <!-- Connected accounts (markup reused verbatim from the former
                per-row layout). -->
@@ -1268,6 +1269,9 @@ defineExpose({ save })
 }
 .jv-pool-addrow:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
 .jv-pool-addrow:disabled { opacity: .5; cursor: default; }
+/* At ZERO accounts this row is the pane's primary next step, not a trailing "add
+   one more" on an existing list, so it takes the field height (40px) and body type. */
+.jv-pool-addrow--block { height: 40px; font-size: 13px; margin-top: 2px; }
 /* Save-bar apply-status pill (Option A "honest model health") - reflects the
    outcome of the last apply once there are no unsaved edits sitting on top
    of it. Same quiet weight as the rest of this settings UI. */
@@ -1341,14 +1345,7 @@ defineExpose({ save })
 .jv-cfg-grid :deep(.jvc-field:focus-within) { border-color: var(--text-3); }
 .jv-cfg-inp:disabled { opacity: .6; cursor: default; }
 .jv-pool-opt { font-weight: 400; color: var(--text-3); }
-/* Action occupying a grid column (Connect account): right-aligned, and bottom-aligned
-   with the field beside it so it sits on the input's baseline, not the label's. */
-.jv-cfg-actioncell { display: flex; justify-content: flex-end; align-items: flex-end; }
-@media (max-width: 720px) {
-  .jv-cfg-grid { grid-template-columns: 1fr; }
-  /* Stacked: keep the action on the right rather than stretching it full width. */
-  .jv-cfg-actioncell { justify-content: flex-end; }
-}
+@media (max-width: 720px) { .jv-cfg-grid { grid-template-columns: 1fr; } }
 
 /* "Soon" tag on the not-yet-shipped preset tab. */
 .jv-pool-segbtn--soon { cursor: default; opacity: .55; }
