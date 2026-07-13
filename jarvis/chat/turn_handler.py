@@ -507,6 +507,25 @@ def handle_chat_send(payload: dict) -> None:
 		wiki_notes_clause = wiki_clause(conversation_id, context) or ""
 	except Exception:
 		wiki_notes_clause = ""
+	# Deferred agent-correction notes (e.g. a discarded action the agent's
+	# in-container memory still believes is pending): fold them into the TRUSTED
+	# [Context: ...] line so the correction reaches the agent on THIS turn without
+	# firing an extra turn. Each carries model-proposed structural text (a record
+	# name), so neutralize it - single line, no backticks, brackets disarmed - so
+	# it can't break out of the bracket or forge a system line. Read now; the queue
+	# is cleared only after a successful send (below), so a failed dispatch
+	# re-delivers instead of silently dropping the veto.
+	from jarvis.chat import agent_notes
+
+	drained_notes = agent_notes.read(conv)
+	drained_ids = [e["id"] for e in drained_notes]
+	notes_clause = ""
+	if drained_notes:
+		safe_notes = "; ".join(
+			_safe_label_name(e["text"]).replace("[", "(").replace("]", ")")
+			for e in drained_notes
+		)
+		notes_clause = f"; notes: {safe_notes}"
 	user_message = (
 		# conv:<id> lets the agent link rows it creates (e.g. Jarvis Approval)
 		# back to this conversation so deciding can resume the chat.
@@ -521,7 +540,7 @@ def handle_chat_send(payload: dict) -> None:
 		# (skill_clause) stays intentional and is not demoted.
 		f"[Context: today is {today}{locale_clause}; chat user: {chat_user}"
 		f"; conv: {conversation_id}{auto_apply}{skill_clause}{learned_clause}"
-		f"{wiki_notes_clause}{personal_clause}]"
+		f"{wiki_notes_clause}{personal_clause}{notes_clause}]"
 		f"\n\n{user_message or ''}"
 	)
 
@@ -651,6 +670,13 @@ def handle_chat_send(payload: dict) -> None:
 				_consume(openclaw_http_client.stream_agent_turn(
 					base_url, token, sh_message, model="openclaw", stream=stream_pref,
 				))
+				# Delivered (the stream ran to completion) - drop exactly the notes
+				# we folded in (by id), so the correction is delivered once, not
+				# re-nagged, without clobbering a discard appended mid-turn or one a
+				# concurrent continuation delivered. An Unreachable failure raises
+				# before this, keeping them for retry.
+				if drained_notes:
+					agent_notes.clear(conversation_id, drained_ids)
 			except OpenclawUnreachableError as e:
 				_publish_run_error(str(e), changed_data=False, exc=e)
 				_advance_macro(conversation_id, errored=True)
@@ -757,6 +783,14 @@ def handle_chat_send(payload: dict) -> None:
 						attachments=managed_attachments,
 						timeout_s=min(ack_timeout, 180.0),
 					) or {}
+					# chat.send delivered our message (incl. any drained notes) -
+					# drop exactly the notes we folded in (by id), so the correction
+					# is delivered once, not re-nagged, without clobbering a discard
+					# appended mid-turn or one a concurrent continuation delivered. A
+					# pre-ack failure raises OpenclawUnreachableError below instead of
+					# reaching here, leaving the notes for retry.
+					if drained_notes:
+						agent_notes.clear(conversation_id, drained_ids)
 					if ack.get("status") == "ok":
 						# Cached replay of a completed run (same run_id
 						# re-enqueued after the worker died post-completion).

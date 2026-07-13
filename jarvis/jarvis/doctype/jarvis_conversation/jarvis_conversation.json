@@ -14,7 +14,8 @@
   "auto_apply",
   "status",
   "last_active_at",
-  "starred"
+  "starred",
+  "pending_agent_notes"
  ],
  "fields": [
   {
@@ -85,6 +86,15 @@
    "fieldtype": "Check",
    "label": "Starred",
    "default": "0"
+  },
+  {
+   "fieldname": "pending_agent_notes",
+   "fieldtype": "Long Text",
+   "label": "Pending Agent Notes",
+   "hidden": 1,
+   "no_copy": 1,
+   "read_only": 1,
+   "description": "Server-set queue (JSON list of strings) of deferred bench-authored notes to fold into the NEXT outgoing turn's [Context: ...] bracket - e.g. 'the user declined the pending submit on SINV-0001; it was NOT performed'. Drained and cleared by turn_handler after a successful chat.send, so a discarded action corrects the agent's in-container session memory the next time it acts, without firing an extra turn."
   }
  ],
  "permissions": [
