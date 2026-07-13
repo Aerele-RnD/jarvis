@@ -22,7 +22,7 @@ from frappe.utils import cint
 
 from jarvis.chat import voice_notes_api
 from jarvis.learning import voice_facts
-from jarvis.permissions import JARVIS_USER_ROLE
+from jarvis.permissions import JARVIS_USER_ROLE, ensure_jarvis_user_role
 
 NOTE = "Jarvis Voice Note"
 JLP = "Jarvis Learned Pattern"
@@ -66,6 +66,7 @@ def _ensure_user(email: str, roles: tuple = ()) -> str:
 	# meant to be able to REACH Jarvis — what varies is whether they're an admin —
 	# so all of them get Jarvis User, and the System-Manager-only distinction that
 	# these tests turn on is preserved by the roles argument below.
+	ensure_jarvis_user_role()
 	user.add_roles(JARVIS_USER_ROLE)
 	if roles:
 		user.add_roles(*roles)

@@ -16,7 +16,7 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 
 from jarvis.chat import voice_notes_api
-from jarvis.permissions import JARVIS_USER_ROLE
+from jarvis.permissions import JARVIS_USER_ROLE, ensure_jarvis_user_role
 
 NOTE = "Jarvis Voice Note"
 
@@ -53,6 +53,7 @@ def _ensure_user(email: str) -> str:
 	# ordinary, non-admin Jarvis users — which is exactly the Jarvis User role — so
 	# grant it rather than escalating them to System Manager, whose broad
 	# permissions would hide the owner-scoping these tests exist to prove.
+	ensure_jarvis_user_role()
 	if JARVIS_USER_ROLE not in frappe.get_roles(email):
 		frappe.get_doc("User", email).add_roles(JARVIS_USER_ROLE)
 		frappe.clear_cache(user=email)

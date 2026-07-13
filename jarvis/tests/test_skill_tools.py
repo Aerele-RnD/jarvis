@@ -21,7 +21,7 @@ from jarvis.chat.custom_skills import (
 	prefixed_slug,
 )
 from jarvis.exceptions import InvalidArgumentError, PermissionDeniedError
-from jarvis.permissions import JARVIS_USER_ROLE
+from jarvis.permissions import JARVIS_USER_ROLE, ensure_jarvis_user_role
 from jarvis.tools.create_custom_skill import create_custom_skill
 from jarvis.tools.find_skills import find_skills
 from jarvis.tools.get_skill import get_skill
@@ -70,6 +70,7 @@ def _ensure_system_user(email: str) -> str:
 	non-owner/peer scoping assertions — so without the role they are refused
 	before reaching the logic under test.
 	"""
+	ensure_jarvis_user_role()
 	if not frappe.db.exists("User", email):
 		u = frappe.get_doc({
 			"doctype": "User", "email": email,
