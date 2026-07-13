@@ -26,8 +26,7 @@
       <!-- Say plainly what this list DOES. "tried in order" alone doesn't tell a
            customer why they'd want more than one model. -->
       <p class="jv-flist-help">
-        Jarvis uses the first model that answers. If one fails or hits its limit, it falls back
-        to the next automatically. Reorder them with the arrows.
+        If a model fails or hits its limit, Jarvis falls back to the next one automatically.
       </p>
 
       <!-- Legacy DIRECT chat-subscription (flat-field OAuth, no proxy) - not
