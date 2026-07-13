@@ -47,7 +47,7 @@
       <div v-for="(row, i) in rows" :key="i" class="jv-flist-row">
         <span class="jv-pool-badge">{{ i + 1 }}</span>
         <span class="jv-flist-chip">{{ sourceChip(row) }}</span>
-        <span class="jv-flist-model">{{ row.model || row.provider || '—' }}</span>
+        <span class="jv-flist-model" :class="{ 'jv-flist-model--unset': !row.model }">{{ rowModelLabel(row) }}</span>
         <span v-if="row.credentialType!=='subscription' && row.hasKey" style="font-size:11px;color:var(--text-3);">key set</span>
         <span class="jv-pool-dot" :class="'jv-pool-dot--' + accountHealth(row).level" aria-hidden="true"></span>
         <span v-if="accountHealth(row).label" class="jv-pool-acct-health" :class="'jv-pool-acct-health--' + accountHealth(row).level" :title="accountHealth(row).title">{{ accountHealth(row).label }}</span>
@@ -96,38 +96,41 @@
                   :disabled="!editable" @click="setPanelSource('subscription')">Chat subscription</button>
           <button type="button" class="jv-pool-segbtn" :class="{ on: panel.source==='api_key' }"
                   :disabled="!editable" @click="setPanelSource('api_key')">API key</button>
-          <button v-if="panel.mode==='add'" type="button" class="jv-pool-segbtn" :class="{ on: panel.source==='preset' }"
-                  :disabled="!editable" @click="setPanelSource('preset')">From a preset</button>
+          <!-- Presets are NOT shipping yet: shown but disabled, so the capability is
+               discoverable without being clickable. Keep setPanelSource('preset')
+               and the preset branch below intact - re-enabling is just dropping the
+               `disabled` and the tag. -->
+          <button v-if="panel.mode==='add'" type="button" class="jv-pool-segbtn jv-pool-segbtn--soon"
+                  disabled title="Coming soon">From a preset<span class="jv-soon">Soon</span></button>
         </div>
 
         <!-- API-key source -->
         <div v-if="panel.source==='api_key' && panelRow">
-          <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
-            <div class="jv-pool-field" style="flex:1;min-width:120px;">
+          <!-- 2x2 grid, not four fields crammed across one row: the flex ratios
+               (1 / 1.5 / 1.5 / 1.5) produced four different widths and read as
+               noise. Provider first, since it decides the model suggestions. -->
+          <div class="jv-cfg-grid">
+            <div class="jv-pool-field">
               <label class="jv-pool-lab">Provider</label>
-              <select v-model="panelRow.provider" @change="onProviderChange(panelRow)" :disabled="!editable" title="Provider"
-                      style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;">
+              <select v-model="panelRow.provider" @change="onProviderChange(panelRow)" :disabled="!editable" title="Provider" class="jv-cfg-inp">
                 <option v-for="p in providerOptions" :key="p" :value="p">{{ p }}</option>
               </select>
             </div>
-            <div class="jv-pool-field" style="flex:1.5;min-width:120px;">
+            <div class="jv-pool-field">
               <label class="jv-pool-lab">Model</label>
-              <input v-model="panelRow.model" list="jv-cfg-dl" :disabled="!editable" placeholder="Model ID (e.g. gpt-4o)"
-                     style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;" />
+              <input v-model="panelRow.model" list="jv-cfg-dl" :disabled="!editable" placeholder="Model ID (e.g. gpt-4o)" class="jv-cfg-inp" />
               <datalist id="jv-cfg-dl">
                 <option v-for="s in modelSuggestionsForProvider(panelRow.provider)" :key="s" :value="s"></option>
               </datalist>
             </div>
-            <div class="jv-pool-field" style="flex:1.5;min-width:120px;">
+            <div class="jv-pool-field">
               <label class="jv-pool-lab">API key</label>
               <input v-model="panelRow.apiKey" :disabled="!editable" type="password"
-                     :placeholder="panelRow.hasKey ? 'key set, re-enter to change' : 'API key'"
-                     style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;" />
+                     :placeholder="panelRow.hasKey ? 'key set, re-enter to change' : 'API key'" class="jv-cfg-inp" />
             </div>
-            <div class="jv-pool-field" style="flex:1.5;min-width:120px;">
-              <label class="jv-pool-lab">Base URL (optional)</label>
-              <input v-model="panelRow.baseUrl" :disabled="!editable" placeholder="Base URL (OpenAI-compatible)"
-                     style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;" />
+            <div class="jv-pool-field">
+              <label class="jv-pool-lab">Base URL <span class="jv-pool-opt">(optional)</span></label>
+              <input v-model="panelRow.baseUrl" :disabled="!editable" placeholder="Base URL (OpenAI-compatible)" class="jv-cfg-inp" />
             </div>
           </div>
           <!-- Resilient-by-default (API KEYS ONLY): expands this provider into
@@ -141,28 +144,24 @@
 
         <!-- Chat-subscription source -->
         <div v-else-if="panel.source==='subscription' && panelRow">
-          <div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:8px;flex-wrap:wrap;">
-            <div class="jv-pool-field" style="flex:2;min-width:120px;">
-              <label class="jv-pool-lab">Model</label>
-              <input v-model="panelRow.model" list="jv-cfg-subdl" :disabled="!editable" placeholder="Model ID (e.g. gpt-5.5)"
-                     style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;" />
-              <datalist id="jv-cfg-subdl">
-                <option v-for="s in (SUB_MODEL_SUGGESTIONS[panelRow.upstream] || [])" :key="s" :value="s"></option>
-              </datalist>
-            </div>
-            <div class="jv-pool-field" style="flex:1;min-width:100px;">
+          <!-- Provider first, then Model: you pick the plan you own, and that decides
+               which model IDs are even valid (the datalist is keyed off upstream).
+               Account rotation is deliberately NOT exposed - it only means anything
+               once a pool has several accounts on one provider, and it defaults to
+               "sticky" in the schema, so panelRow.rotation still round-trips. -->
+          <div class="jv-cfg-grid" style="margin-bottom:10px;">
+            <div class="jv-pool-field">
               <label class="jv-pool-lab">Provider</label>
-              <select v-model="panelRow.upstream" @change="onUpstreamChange(panelRow)" :disabled="!editable" title="Provider"
-                      style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;">
+              <select v-model="panelRow.upstream" @change="onUpstreamChange(panelRow)" :disabled="!editable" title="Provider" class="jv-cfg-inp">
                 <option v-for="o in upstreamOpts" :key="o.value" :value="o.value">{{ o.label }}</option>
               </select>
             </div>
-            <div class="jv-pool-field" style="flex:1.2;min-width:110px;">
-              <label class="jv-pool-lab">Account rotation</label>
-              <select v-model="panelRow.rotation" :disabled="!editable" title="Account rotation"
-                      style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;">
-                <option v-for="o in rotationOpts" :key="o.value" :value="o.value">{{ o.label }}</option>
-              </select>
+            <div class="jv-pool-field">
+              <label class="jv-pool-lab">Model</label>
+              <input v-model="panelRow.model" list="jv-cfg-subdl" :disabled="!editable" placeholder="Model ID (e.g. gpt-5.5)" class="jv-cfg-inp" />
+              <datalist id="jv-cfg-subdl">
+                <option v-for="s in (SUB_MODEL_SUGGESTIONS[panelRow.upstream] || [])" :key="s" :value="s"></option>
+              </datalist>
             </div>
           </div>
 
@@ -703,8 +702,15 @@ function isRowEmpty(r) {
 // already includes it instead of silently dropping an in-progress connect.
 function openAdd() {
   const r = { ...newRow(), order: rows.value.length }
+  // Open a NEW row on Chat subscription. newRow() seeds credentialType "api_key"
+  // (it is the shape the row object defaults to), which meant "+ Add a model"
+  // always landed on the API-key tab regardless of what the customer already had.
+  // Subscription is the path most customers take -- sign in with a plan they own,
+  // no key to paste -- so it is the better first stop. (It has never followed the
+  // last row's type; that would be unpredictable.)
+  setCredType(r, "subscription")
   rows.value = [...rows.value, r]
-  panel.value = { open: true, mode: "add", index: rows.value.length - 1, source: r.credentialType === "subscription" ? "subscription" : "api_key", addBackups: true }
+  panel.value = { open: true, mode: "add", index: rows.value.length - 1, source: "subscription", addBackups: true }
 }
 function openEdit(i) {
   const r = rows.value[i]
@@ -791,6 +797,19 @@ async function removeDirect() {
     directPanelOpen.value = false
     emit("direct-changed")
   } catch (e) { err.value = _err(e) }
+}
+
+// What the list row shows in the model cell.
+// This used to be `row.model || row.provider || '—'`, which was wrong for a
+// SUBSCRIPTION row: newRow() seeds `provider` with providerOptions[0] ("Anthropic")
+// because that field belongs to the api-key shape, and it is never cleared when the
+// row is switched to a subscription. So a row whose chip correctly read
+// "Subscription · OpenAI" displayed the model "Anthropic" -- a provider name, in the
+// model column, for the wrong provider. Never fall back to `provider` here.
+function rowModelLabel(row) {
+  if (row.model) return row.model
+  if (row.credentialType === "subscription") return "Model not set"
+  return row.provider || "—"
 }
 
 function newRow() {
@@ -1275,10 +1294,37 @@ defineExpose({ save })
 }
 .jv-flist-model { font-size: 13.5px; color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jv-flist-acts { margin-left: auto; display: flex; gap: 6px; align-items: center; flex: none; }
+/* An unset model reads as a placeholder, not as a real model id. */
+.jv-flist-model--unset { color: var(--text-3); font-style: italic; }
 
 /* ---- explainer + add affordance + failover nudge (settings editor only) ----
    Flat neutral surfaces, monochrome accent, no decorative colour: the only hue in
    this pane stays semantic (the green Applied pill, the red Remove). */
+/* ---- config panel fields -----------------------------------------------
+   One grid + one input class, replacing per-field inline styles and flex ratios
+   (1 / 1.5 / 1.5 / 1.5) that gave every field a different width. Two even columns
+   read as a form; four uneven ones read as clutter. */
+.jv-cfg-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 14px; align-items: end; }
+.jv-cfg-inp {
+  width: 100%; padding: 9px 12px; font-size: 14px; font-family: inherit;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface); color: var(--text); box-sizing: border-box;
+  transition: border-color .15s ease;
+}
+.jv-cfg-inp:hover:not(:disabled) { border-color: var(--border-2); }
+.jv-cfg-inp:focus { outline: none; border-color: var(--text-3); box-shadow: none; }
+.jv-cfg-inp:disabled { opacity: .6; cursor: default; }
+.jv-pool-opt { font-weight: 400; color: var(--text-3); }
+@media (max-width: 720px) { .jv-cfg-grid { grid-template-columns: 1fr; } }
+
+/* "Soon" tag on the not-yet-shipped preset tab. */
+.jv-pool-segbtn--soon { cursor: default; opacity: .55; }
+.jv-soon {
+  margin-left: 6px; padding: 1px 6px; border-radius: 20px;
+  background: var(--surface-3); color: var(--text-3);
+  font-size: 10px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase;
+}
+
 /* Dashed "the next row goes here" affordance — same language as the New skill /
    Drop a file rows. Full width so it anchors the list instead of floating. */
 .jv-flist-add {
