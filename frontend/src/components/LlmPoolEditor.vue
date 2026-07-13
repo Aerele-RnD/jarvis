@@ -14,20 +14,17 @@
          (singleMode forces llmMode==='quick' below). Phase 1: read list
          only; config section arrives in phase 2. ============================================================ -->
     <section v-if="!singleMode" style="margin-bottom:18px;">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap;">
-        <div style="font-size:13px;font-weight:600;color:var(--text-2);letter-spacing:.03em;text-transform:uppercase;">
-          AI models<span class="jv-pool-heading-suffix"> · tried in order</span>
-        </div>
-        <span v-if="badgeLabel" style="font-size:12px;font-weight:600;padding:4px 11px;border-radius:20px;background:var(--green-bg);color:var(--green);">
+      <!-- No section heading and no explainer here: the dialog already titles this
+           pane ("AI models" / "The AI connection that powers Jarvis."), so an
+           uppercase "AI MODELS" repeated below it was pure duplication. The failover
+           behaviour is surfaced where it's actionable instead: on the "No backup yet"
+           card, which self-hides once a second model exists.
+           The badge stays - it only appears for a real multi-model failover pool. -->
+      <div v-if="badgeLabel" style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap;">
+        <span style="font-size:12px;font-weight:600;padding:4px 11px;border-radius:20px;background:var(--green-bg);color:var(--green);">
           {{ badgeLabel }}
         </span>
       </div>
-
-      <!-- Say plainly what this list DOES. "tried in order" alone doesn't tell a
-           customer why they'd want more than one model. -->
-      <p class="jv-flist-help">
-        If a model fails or hits its limit, Jarvis falls back to the next one automatically.
-      </p>
 
       <!-- Legacy DIRECT chat-subscription (flat-field OAuth, no proxy) - not
            part of rows.value/the failover pool, so no order badge/reorder. -->
@@ -1160,7 +1157,6 @@ defineExpose({ save })
 /* ===== Account editor (!singleMode) row redesign - "Option A: refine in
    place". Onboarding's singleMode cards below are untouched; these jv-pool-*
    classes are new and only ever rendered from the !singleMode branches. ===== */
-.jv-pool-heading-suffix { text-transform: none; font-weight: 400; font-size: 11px; letter-spacing: normal; color: var(--text-3); }
 .jv-pool-rowhead { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 /* 1-based failover-order badge. */
 .jv-pool-badge {
@@ -1283,10 +1279,6 @@ defineExpose({ save })
 /* ---- explainer + add affordance + failover nudge (settings editor only) ----
    Flat neutral surfaces, monochrome accent, no decorative colour: the only hue in
    this pane stays semantic (the green Applied pill, the red Remove). */
-.jv-flist-help {
-  font-size: 12.5px; line-height: 1.55; color: var(--text-3);
-  margin: -2px 0 12px; max-width: 74ch;
-}
 /* Dashed "the next row goes here" affordance — same language as the New skill /
    Drop a file rows. Full width so it anchors the list instead of floating. */
 .jv-flist-add {

@@ -33,7 +33,7 @@
    min() guards a short viewport: a bare height/min-height BEATS max-height in the
    cascade, so on a landscape phone the dialog would grow past the screen.
    Below 720px the fixed rail can't fit — see the stacking media query at the end. */
-.jv-settings { width: 1080px; max-width: 100%; height: min(620px, 88vh); max-height: 88vh; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; display: flex; overflow: hidden; box-shadow: 0 0 1px rgba(0, 0, 0, .2), 0 24px 30px -8px rgba(0, 0, 0, .1); animation: jv-popin 0.1s ease-out; }
+.jv-settings { width: 1080px; max-width: 100%; height: min(680px, 88vh); max-height: 88vh; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; display: flex; overflow: hidden; box-shadow: 0 0 1px rgba(0, 0, 0, .2), 0 24px 30px -8px rgba(0, 0, 0, .1); animation: jv-popin 0.1s ease-out; }
 @keyframes jv-popin { from { transform: scale(0.98); opacity: 0.5; } to { transform: scale(1); opacity: 1; } }
 .jv-settings-nav { width: 230px; flex: none; background: var(--surface-1); border-right: 1px solid var(--border); padding: 8px; display: flex; flex-direction: column; gap: 3px; overflow-y: auto; }
 .jv-settings-nav-title { font-size: 15px; font-weight: 600; color: var(--text); padding: 6px 8px 10px; }
