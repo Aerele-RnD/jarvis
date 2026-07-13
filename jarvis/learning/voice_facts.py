@@ -542,6 +542,13 @@ def _persist_rule_facts(rule_facts: list[dict]) -> dict:
 				stats["duplicates"] += 1
 			if outcome in ("created", "updated"):
 				_surface(cand["pattern_key"])
+				# Security review PART 2 TASK 16: a rule fact drawn (even partly)
+				# from a PRIVATE Personalise answer note carries personal nuances;
+				# stamp the pattern so a reviewer promoting it org-wide is warned to
+				# scrub them (the owner did not request the promotion). Sticky once
+				# set — a mixed-cohort pattern stays flagged (conservative).
+				if fact.get("personalise_users"):
+					_flag_personalise_origin(cand["pattern_key"])
 
 		frappe.db.set_value(
 			RUN,
@@ -566,6 +573,18 @@ def _persist_rule_facts(rule_facts: list[dict]) -> dict:
 		frappe.flags.jarvis_pattern_engine = prev_flag
 		frappe.set_user(original_user)
 	return stats
+
+
+def _flag_personalise_origin(pattern_key: str) -> None:
+	"""Stamp ``personalise_origin=1`` on the JLP for ``pattern_key`` (idempotent,
+	sticky). Security review PART 2 TASK 16 provenance."""
+	row = frappe.db.get_value(
+		JLP, {"pattern_key": pattern_key}, ["name", "personalise_origin"], as_dict=True
+	)
+	if row and not row.personalise_origin:
+		frappe.db.set_value(
+			JLP, row.name, {"personalise_origin": 1}, update_modified=False
+		)
 
 
 def _surface(pattern_key: str) -> None:

@@ -67,3 +67,20 @@ class JarvisVoiceNote(Document):
 			frappe.throw(
 				_("A Conversation-context voice note must link a conversation.")
 			)
+		# Cross-link ownership guard (security review TASK 5): a note may only
+		# reference a conversation the caller OWNS. if_owner blocks cross-user
+		# READS, but without this a user could still link attacker content into
+		# another user's conversation namespace (and its wiki-ingest pipeline).
+		# Server writers (ignore_permissions — the API endpoints already verify
+		# ownership before insert) and Administrator are exempt.
+		if self.conversation and not (
+			self.flags.ignore_permissions or frappe.session.user == "Administrator"
+		):
+			owner = frappe.db.get_value(
+				"Jarvis Conversation", self.conversation, "owner"
+			)
+			if owner and owner != frappe.session.user:
+				frappe.throw(
+					_("You can only attach notes to your own conversations."),
+					frappe.PermissionError,
+				)

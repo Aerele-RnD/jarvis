@@ -13,6 +13,7 @@ the receipt, so the agent stages the plan's next step without the user typing
 """
 
 import frappe
+from jarvis.permissions import require_jarvis_user
 from frappe import _
 
 from jarvis import audit
@@ -53,6 +54,7 @@ def _child_columns(child_doctype: str) -> list[dict]:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def get_doctype_form_meta(doctype: str) -> dict:
 	"""Form metadata for the draft panel: main fields INCLUDING Table fields,
 	plus per-table child columns - one call, so the panel never fans out.
@@ -89,6 +91,7 @@ def get_doctype_form_meta(doctype: str) -> dict:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def load_doc(doctype: str, name: str) -> dict:
 	"""Current values of one document (main fields + child rows restricted to
 	the form-meta columns) so the panel can pre-fill an update draft. Gated on
@@ -167,6 +170,7 @@ def _append_receipt(conversation: str, verb: str, doctype: str, name: str,
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def apply_action(action: dict | str | None = None) -> dict:
 	"""Apply a human-authored draft-panel edit: create or update ONLY, with the
 	values the human deliberately entered before applying. Runs as the session
@@ -283,6 +287,7 @@ _INVALID_CONFIRM = {
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def confirm_tool(token: str, conversation: str | None = None) -> dict:
 	"""Execute a parked mutating tool call after the human clicked Confirm.
 
@@ -393,6 +398,7 @@ def _confirm_receipt_text(record: dict, result) -> str:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def list_pending_confirmations(conversation: str | None = None) -> dict:
 	"""Re-surface the caller's OWN currently-parked confirmation cards after a
 	reload/reconnect (issue #186, enables R3's fix for #3).

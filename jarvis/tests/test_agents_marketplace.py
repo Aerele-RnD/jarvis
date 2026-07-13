@@ -42,6 +42,9 @@ def _give_role(email: str, role_name: str) -> None:
 
 
 def _ensure_user(email: str) -> str:
+	from jarvis.permissions import ensure_jarvis_user_role
+
+	ensure_jarvis_user_role()
 	if not frappe.db.exists("User", email):
 		u = frappe.get_doc({
 			"doctype": "User",
@@ -49,9 +52,19 @@ def _ensure_user(email: str) -> str:
 			"first_name": email.split("@")[0],
 			"send_welcome_email": 0,
 			"enabled": 1,
+			"user_type": "System User",
 		})
 		u.flags.ignore_permissions = True
 		u.insert()
+		frappe.db.commit()
+	if frappe.db.get_value("User", email, "user_type") != "System User":
+		frappe.db.set_value("User", email, "user_type", "System User", update_modified=False)
+		frappe.clear_cache(user=email)
+	# The agents endpoints are chat-surface: they now require the Jarvis User
+	# role (security review TASK 8). Grant it so the fixtures reach the
+	# agent-specific allowed_roles / owner gates they actually test.
+	if "Jarvis User" not in set(frappe.get_roles(email)):
+		frappe.get_doc("User", email).add_roles("Jarvis User")
 		frappe.db.commit()
 	return email
 

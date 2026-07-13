@@ -41,8 +41,12 @@ def _engine_flag():
 
 
 def _ensure_non_sm(email: str) -> str:
-	"""A logged-in user with no System Manager role (created inside the test
-	transaction, so it is rolled back with everything else)."""
+	"""A logged-in Jarvis User with NO System Manager role (created inside the
+	test transaction, so it is rolled back with everything else). The Jarvis User
+	role is what now grants Custom Skill create at the doctype layer (security
+	review PART 2 TASK 13 replaced the old `All` grant), so a realistic non-SM
+	author holds it — the point of these tests is that even a role-holding author
+	cannot forge the managed flag / learned slug."""
 	if not frappe.db.exists("User", email):
 		u = frappe.get_doc({
 			"doctype": "User", "email": email,
@@ -50,8 +54,11 @@ def _ensure_non_sm(email: str) -> str:
 		})
 		u.flags.ignore_permissions = True
 		u.insert(ignore_permissions=True)
+	udoc = frappe.get_doc("User", email)
 	if "System Manager" in set(frappe.get_roles(email)):
-		frappe.get_doc("User", email).remove_roles("System Manager")
+		udoc.remove_roles("System Manager")
+	if "Jarvis User" not in set(frappe.get_roles(email)):
+		udoc.add_roles("Jarvis User")
 	return email
 
 

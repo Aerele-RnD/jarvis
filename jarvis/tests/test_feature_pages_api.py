@@ -48,19 +48,31 @@ APPROVAL = "Jarvis Approval Request"
 # module fixtures / helpers
 # --------------------------------------------------------------------------- #
 def _ensure_user(email: str) -> str:
+	from jarvis.permissions import ensure_jarvis_user_role
+
+	ensure_jarvis_user_role()
 	if not frappe.db.exists("User", email):
 		u = frappe.get_doc({
 			"doctype": "User", "email": email,
 			"first_name": email.split("@")[0],
 			"send_welcome_email": 0, "enabled": 1,
+			"user_type": "System User",
 		})
 		u.flags.ignore_permissions = True
 		u.insert()
 		frappe.db.commit()
-	# Guarantee these test users are NOT System Managers (non-SM scoping path).
+	if frappe.db.get_value("User", email, "user_type") != "System User":
+		frappe.db.set_value("User", email, "user_type", "System User", update_modified=False)
+		frappe.clear_cache(user=email)
+	# Guarantee these test users are NOT System Managers (non-SM scoping path)
+	# but DO hold the Jarvis User role (the approvals endpoints are chat-surface
+	# and now require it — security review TASK 8).
 	roles = set(frappe.get_roles(email))
 	if "System Manager" in roles:
 		frappe.get_doc("User", email).remove_roles("System Manager")
+		frappe.db.commit()
+	if "Jarvis User" not in roles:
+		frappe.get_doc("User", email).add_roles("Jarvis User")
 		frappe.db.commit()
 	return email
 

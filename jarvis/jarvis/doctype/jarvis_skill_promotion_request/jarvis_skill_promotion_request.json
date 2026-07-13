@@ -1,18 +1,18 @@
 {
   "doctype": "DocType",
-  "name": "Jarvis Wiki Promotion Request",
+  "name": "Jarvis Skill Promotion Request",
   "module": "Jarvis",
   "issingle": 0,
   "custom": 0,
   "engine": "InnoDB",
-  "autoname": "format:JWPR-{#####}",
+  "autoname": "format:JSPR-{#####}",
   "naming_rule": "Expression",
   "field_order": [
-    "page",
+    "skill",
+    "skill_name",
     "from_scope",
     "to_scope",
     "target_role",
-    "body_snapshot",
     "note",
     "status",
     "reviewer",
@@ -21,29 +21,37 @@
   ],
   "fields": [
     {
-      "fieldname": "page",
+      "fieldname": "skill",
       "fieldtype": "Link",
-      "label": "Page",
-      "options": "Jarvis Wiki Page",
+      "label": "Skill",
+      "options": "Jarvis Custom Skill",
       "reqd": 1,
       "in_list_view": 1,
       "in_standard_filter": 1,
       "search_index": 1,
-      "description": "The User-scope wiki page this request asks to promote."
+      "description": "The User/Role-scope custom skill this request asks to promote."
+    },
+    {
+      "fieldname": "skill_name",
+      "fieldtype": "Data",
+      "label": "Skill Name",
+      "read_only": 1,
+      "in_list_view": 1,
+      "description": "The skill's authored slug at request time (for the reviewer board)."
     },
     {
       "fieldname": "from_scope",
       "fieldtype": "Select",
       "label": "From Scope",
-      "options": "Org\nRole\nUser",
+      "options": "User\nRole\nOrg",
       "reqd": 1,
-      "description": "Snapshot of the page's scope at request time (User in practice for v1 - a requester can only act on their own User-scope page)."
+      "description": "Snapshot of the skill's scope at request time."
     },
     {
       "fieldname": "to_scope",
       "fieldtype": "Select",
       "label": "To Scope",
-      "options": "Org\nRole\nUser",
+      "options": "Role\nOrg",
       "reqd": 1,
       "in_list_view": 1,
       "in_standard_filter": 1,
@@ -56,12 +64,6 @@
       "options": "Role",
       "depends_on": "eval:doc.to_scope=='Role'",
       "mandatory_depends_on": "eval:doc.to_scope=='Role'"
-    },
-    {
-      "fieldname": "body_snapshot",
-      "fieldtype": "Long Text",
-      "label": "Body Snapshot",
-      "description": "The page's body_md at request time, frozen so the reviewer can diff it against the current target page even if the source page keeps changing in the meantime."
     },
     {
       "fieldname": "note",

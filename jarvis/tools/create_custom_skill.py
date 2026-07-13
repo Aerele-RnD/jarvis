@@ -1,13 +1,15 @@
 """Save a new skill (Jarvis Custom Skill row) from chat.
 
 The agent captures a procedure the user just walked it through and saves it
-as a skill owned by the session user. Defaults to scope=Personal (private,
-never pushed to the shared container catalog). scope=Org rows are visible to
-other users immediately via jarvis__find_skills/jarvis__get_skill (subject
-to allowed_roles/shared_with — see user_can_use_skill); they only join the
-/slug-invocable CONTAINER catalog after an admin clicks Apply on the Skills
-page. This tool NEVER triggers a push/apply itself — Apply restarts the
-container and stays a deliberate human action.
+as a skill owned by the session user. The skill is ALWAYS created private
+(scope=User): a bench-wide (Org) or role-shared (Role) skill can only be minted
+by a reviewer through the promotion workflow, never by the agent in one call
+(security review PART 2 TASK 10 — this tool used to accept scope="Org"
+directly, letting the agent mint a bench-wide skill with no reviewer gate). A
+private skill is reached via jarvis__find_skills / jarvis__get_skill and is
+never pushed to the shared container catalog. This tool NEVER triggers a
+push/apply itself — Apply restarts the container and stays a deliberate human
+action.
 
 Confirmation-gated in jarvis/api.py (_GATED_WRITES): the model path parks
 the call behind a human confirm card.
@@ -20,25 +22,27 @@ from jarvis.exceptions import InvalidArgumentError
 from jarvis.tools.find_skills import _require_system_user
 
 SKILL = "Jarvis Custom Skill"
-_SCOPES = ("Org", "Personal")
 
 
 def create_custom_skill(
     skill_name: str,
     description: str,
     instructions: str,
-    scope: str = "Personal",
+    scope: str = "User",
     user_invocable: int = 1,
 ) -> dict:
-    """Insert a skill row as the session user; the DocType controller enforces
-    the slug grammar, length caps, per-owner uniqueness/cap and the reserved
-    ``custom-``/``learned-`` prefixes. Returns ``{name, skill_name, scope,
-    note}``."""
+    """Insert a PRIVATE (User-scope) skill row as the session user; the DocType
+    controller enforces the slug grammar, length caps, per-owner uniqueness/cap,
+    the reserved ``custom-``/``learned-`` prefixes and the scope guard. The
+    ``scope`` argument is capped at User — a request for Role/Org is honored as a
+    private skill (promotion is reviewer-gated). Returns ``{name, skill_name,
+    scope, note}``."""
     _require_system_user()
 
-    scope = (scope or "Personal").strip().capitalize()
-    if scope not in _SCOPES:
-        raise InvalidArgumentError("scope must be 'Org' or 'Personal'")
+    # Cap at User regardless of what the model asked for: widening is
+    # reviewer-only (the controller would reject a non-reviewer's Role/Org
+    # create anyway; capping here keeps the agent path from 403-ing on itself).
+    requested = (scope or "User").strip().capitalize()
 
     ui = user_invocable
     if isinstance(ui, str):
@@ -50,7 +54,7 @@ def create_custom_skill(
             "skill_name": skill_name,
             "description": description,
             "instructions": instructions,
-            "scope": scope,
+            "scope": "User",
             "user_invocable": 1 if ui else 0,
             "enabled": 1,
         }
@@ -63,22 +67,19 @@ def create_custom_skill(
         # classify them identically.
         raise InvalidArgumentError(str(e) or type(e).__name__)
 
-    if scope == "Org":
-        note = (
-            "Saved. Org-scope skills are discoverable and usable by other users "
-            "right away via jarvis__find_skills / jarvis__get_skill (subject to "
-            "allowed_roles/shared_with); they only join the /slug-invocable "
-            "container catalog after an admin clicks Apply on the Skills page."
-        )
-    else:
-        note = (
-            "Saved as a personal skill: private to its owner and never pushed "
-            "to the shared catalog; recall it with jarvis__find_skills / "
-            "jarvis__get_skill."
+    note = (
+        "Saved as a private skill: only you can use it and it is never pushed "
+        "to the shared catalog; recall it with jarvis__find_skills / "
+        "jarvis__get_skill."
+    )
+    if requested in ("Org", "Role"):
+        note += (
+            " Making it visible to your role or the whole org needs a reviewer "
+            "to approve a promotion request."
         )
     return {
         "name": doc.name,
         "skill_name": doc.skill_name,
-        "scope": doc.scope or "Org",
+        "scope": doc.scope or "User",
         "note": note,
     }

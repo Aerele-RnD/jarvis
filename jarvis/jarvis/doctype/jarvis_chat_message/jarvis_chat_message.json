@@ -88,7 +88,8 @@
       "label": "Openclaw Seq Watermark",
       "read_only": 1,
       "hidden": 1,
-      "description": "Highest openclaw transcript seq observed before this turn's chat.send; snapshot recovery only finalizes from strictly newer assistant messages."
+      "permlevel": 1,
+      "description": "Highest openclaw transcript seq observed before this turn's chat.send; snapshot recovery only finalizes from strictly newer assistant messages. permlevel 1 (server-only; TASK 9): written by the worker via frappe.db.set_value / read via raw SQL, so no user can read/set the watermark through generic REST."
     },
     {
       "fieldname": "was_recovered",
@@ -157,12 +158,24 @@
   ],
   "permissions": [
     {
-      "role": "All",
+      "role": "Jarvis User",
       "read": 1,
       "write": 1,
       "create": 1,
-      "delete": 1,
-      "if_owner": 1
+      "delete": 1
+    },
+    {
+      "role": "System Manager",
+      "read": 1,
+      "write": 1,
+      "create": 1,
+      "delete": 1
+    },
+    {
+      "role": "System Manager",
+      "permlevel": 1,
+      "read": 1,
+      "write": 1
     }
   ],
   "sort_field": "seq",

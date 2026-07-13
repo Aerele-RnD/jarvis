@@ -313,3 +313,46 @@ has_permission = {
 	"Jarvis Wiki Page": "jarvis.chat.wiki_permissions.has_wiki_page_permission",
 }
 
+# ---------------------------------------------------------------------------
+# Chat doctype ownership scoping (security review PART 1, TASK 7)
+# ---------------------------------------------------------------------------
+# Row-level owner scoping for the chat doctypes at the ORM, so generic REST
+# (/api/resource, frappe.client.*, reportview) and every future endpoint
+# inherit it automatically instead of relying on a hand-rolled owner check in
+# each whitelisted function. Conversation/Voice scope by the row owner;
+# Message/Approval scope by the LINKED conversation's owner (+ DocShare for
+# Approval). Matrix + SQL fragments live in jarvis/chat/chat_permissions.py.
+# The doctype permission rows carry role "Jarvis User" (not "All"), so the role
+# is genuinely load-bearing: revoking it denies all four via REST.
+permission_query_conditions.update({
+	"Jarvis Conversation": "jarvis.chat.chat_permissions.conversation_query_conditions",
+	"Jarvis Chat Message": "jarvis.chat.chat_permissions.message_query_conditions",
+	"Jarvis Approval Request": "jarvis.chat.chat_permissions.approval_query_conditions",
+	"Jarvis Voice Note": "jarvis.chat.chat_permissions.voice_note_query_conditions",
+})
+has_permission.update({
+	"Jarvis Conversation": "jarvis.chat.chat_permissions.has_conversation_permission",
+	"Jarvis Chat Message": "jarvis.chat.chat_permissions.has_message_permission",
+	"Jarvis Approval Request": "jarvis.chat.chat_permissions.has_approval_permission",
+	"Jarvis Voice Note": "jarvis.chat.chat_permissions.has_voice_note_permission",
+})
+
+# ---------------------------------------------------------------------------
+# Skills / Personalise scoping (security review PART 2)
+# ---------------------------------------------------------------------------
+# TASK 13: Jarvis Custom Skill visibility (owner OR scope=Org OR scope=Role
+# role-match OR shared-with) at the ORM, so the four hand-rolled read surfaces
+# (generic REST, SPA list/get, plugin find/get) can never disagree. Matrix +
+# SQL fragment live in jarvis/chat/skill_permissions.py (reuses the controller's
+# user_can_use_skill rule).
+# TASK 17: Jarvis Personalise Question scoped on the `user` field (not `owner`)
+# so generic REST matches the API's user-based scoping and survives drift.
+permission_query_conditions.update({
+	"Jarvis Custom Skill": "jarvis.chat.skill_permissions.skill_query_conditions",
+	"Jarvis Personalise Question": "jarvis.chat.personalise_permissions.personalise_question_query_conditions",
+})
+has_permission.update({
+	"Jarvis Custom Skill": "jarvis.chat.skill_permissions.has_skill_permission",
+	"Jarvis Personalise Question": "jarvis.chat.personalise_permissions.has_personalise_question_permission",
+})
+
