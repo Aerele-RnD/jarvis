@@ -446,6 +446,30 @@ defineExpose({ openPanel });
 	font-family: "Inter", system-ui, -apple-system, sans-serif;
 }
 
+/* Follow the Desk theme. Frappe's theme switcher stamps data-theme="dark" on
+   <html>, which is an ancestor of this body-mounted widget, so the launcher +
+   panel flip to the "Refined Indigo" dark palette (same values as the SPA's
+   theme.js DARK_VARS) instead of staying a white card on a dark Desk. The
+   accent becomes the indigo brand blue so the FAB, avatar tiles and send button
+   stay visible against dark surfaces. */
+:global([data-theme="dark"]) .jvw-root {
+	--surface: #16161a;
+	--surface-1: #1d1d22;
+	--surface-2: #26262d;
+	--surface-3: #30303a;
+	--border: #2c2c34;
+	--border-2: #3a3a45;
+	--text: #ededf2;
+	--text-2: #b6b6c0;
+	--text-3: #7e7e8a;
+	--accent: #6e8bff;
+	--green: #34d399;
+	--green-bg: #15271f;
+	--red: #f87171;
+	--red-bg: #2a1818;
+	--red-bd: #4a2a2a;
+}
+
 .jvw-launch {
 	position: fixed;
 	bottom: 22px;
@@ -603,7 +627,7 @@ defineExpose({ openPanel });
 .jvw-bub-err {
 	flex: 1;
 	font-size: 12px;
-	color: #b42318;
+	color: var(--red);
 	background: var(--red-bg);
 	border: 1px solid var(--red-bd);
 	border-radius: 4px 11px 11px 11px;
