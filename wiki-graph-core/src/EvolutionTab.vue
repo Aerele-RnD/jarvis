@@ -108,7 +108,7 @@ export default {
 .wg-evo { padding: 4px 2px; }
 .wg-evo-head { display: flex; justify-content: space-between; align-items: center; font-size: 12px; margin-bottom: 6px; }
 .wg-evo-mode { font-size: 10px; text-transform: uppercase; letter-spacing: 0.03em; border-radius: 8px; padding: 1px 7px; }
-.wg-evo-mode.meas { background: #e6f0ff; color: #2f6fd0; }
+.wg-evo-mode.meas { background: var(--surface-blue-2, #e6f0ff); color: var(--ink-blue-3, #2f6fd0); }
 .wg-evo-mode.est { background: var(--control-bg, #f0f1f3); color: var(--text-muted, #888); }
 .wg-evo-svg { width: 100%; height: 90px; }
 .wg-evo-axis { display: flex; justify-content: space-between; font-size: 10px; margin-top: 2px; }
