@@ -777,15 +777,31 @@
 							</div>
 							<button class="jv-draft-addrow" @click="addDraftRow(ti)">＋ Add row</button>
 						</div>
-						<div v-if="draftTotals" class="jv-draft-totals">{{ draftTotals }} <span class="jv-draft-est">(estimate — ERPNext computes final totals)</span></div>
+						<div v-if="draftTotals" class="jv-draft-totals">
+							<div class="jv-draft-total-fld">
+								<label>Total Qty</label>
+								<div class="jv-draft-total-ctl">
+									<input class="jv-action-input jv-draft-total-input" :value="draftTotals.qty" readonly tabindex="-1" aria-readonly="true" />
+									<svg class="jv-draft-total-lock" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
+								</div>
+							</div>
+							<div v-if="draftTotals.hasAmt" class="jv-draft-total-fld">
+								<label>Est. Total</label>
+								<div class="jv-draft-total-ctl">
+									<input class="jv-action-input jv-draft-total-input" :value="draftTotals.amount" readonly tabindex="-1" aria-readonly="true" />
+									<svg class="jv-draft-total-lock" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
+								</div>
+							</div>
+							<p class="jv-draft-est">Auto-calculated · ERPNext computes the final totals.</p>
+						</div>
 						<div v-if="draftPanel.error" style="margin-top:10px"><ActionError :error="draftPanel.error" /></div>
 					</div>
 					<div class="jv-draft-foot">
-						<button class="jv-action-discard" @click="discardDraft">Discard</button>
-						<button v-if="draftPanel.submittable && draftPanel.verb === 'create'" class="jv-action-2nd" style="margin-left:auto" :disabled="draftPanel.applying" @click="applyDraft(1)">Create &amp; Submit</button>
-						<button class="jv-action-primary" :style="draftPanel.submittable && draftPanel.verb === 'create' ? '' : 'margin-left:auto'" :disabled="draftPanel.applying" @click="applyDraft(0)">
+						<button v-if="draftPanel.submittable && draftPanel.verb === 'create'" class="jv-action-2nd" :disabled="draftPanel.applying" @click="applyDraft(1)">Create &amp; Submit</button>
+						<button class="jv-action-primary" :disabled="draftPanel.applying" @click="applyDraft(0)">
 							{{ draftPanel.applying ? 'Saving…' : draftCta }}
 						</button>
+						<button class="jv-action-discard" @click="discardDraft">Discard</button>
 					</div>
 				</aside>
 			</div>
@@ -2202,9 +2218,13 @@ function closeDraftLink() {
 }
 
 // est. totals: any grid with qty (+rate) columns
+// Auto-derived, read-only totals for the edit panel: sum the line-item qty and
+// qty×rate across every child table that has a `qty` column. Returns a
+// structured object (not a string) so the UI can render each figure as its own
+// read-only field; null when there's nothing to total.
 const draftTotals = computed(() => {
 	const p = draftPanel.value
-	if (!p) return ""
+	if (!p) return null
 	let qty = 0, amt = 0, hasQty = false, hasAmt = false
 	for (const t of p.tables) {
 		const q = t.columns.find((c) => c.fieldname === "qty")
@@ -2217,8 +2237,12 @@ const draftTotals = computed(() => {
 			if (r) { hasAmt = true; amt += n * (parseFloat(row.rate) || 0) }
 		}
 	}
-	if (!hasQty) return ""
-	return `Total qty ${qty}` + (hasAmt ? ` · Est. total ${amt.toLocaleString("en-IN", { minimumFractionDigits: 2 })}` : "")
+	if (!hasQty) return null
+	return {
+		qty: qty.toLocaleString("en-IN"),
+		amount: amt.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+		hasAmt,
+	}
 })
 const draftCta = computed(() => {
 	const p = draftPanel.value
@@ -4889,8 +4913,15 @@ onUnmounted(() => {
 .jv-grid-del { background: none; border: none; color: var(--text-3); cursor: pointer; padding: 4px 6px; border-radius: 6px; }
 .jv-grid-del:hover { color: var(--red); background: var(--red-bg); }
 .jv-draft-addrow { align-self: flex-start; margin-top: 8px; background: none; border: none; color: var(--blue); font-weight: 600; font-size: 12.5px; cursor: pointer; padding: 4px 2px; }
-.jv-draft-totals { font-size: 12.5px; color: var(--text-2); font-variant-numeric: tabular-nums; }
-.jv-draft-est { color: var(--text-3); font-size: 11px; }
+.jv-draft-totals { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 14px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-1); }
+.jv-draft-total-fld { display: flex; flex-direction: column; flex: 1 1 130px; min-width: 120px; }
+.jv-draft-total-fld label { display: block; font-size: 10.5px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); margin-bottom: 4px; }
+.jv-draft-total-ctl { position: relative; }
+/* read-only: muted fill, no caret, a lock glyph — clearly not an editable field */
+.jv-draft-total-input { width: 100%; box-sizing: border-box; background: var(--surface-2); color: var(--text); font-weight: 650; font-variant-numeric: tabular-nums; cursor: default; padding-right: 28px; }
+.jv-draft-total-input:focus { border-color: var(--border-2); box-shadow: none; }
+.jv-draft-total-lock { position: absolute; right: 9px; top: 50%; transform: translateY(-50%); color: var(--text-3); pointer-events: none; }
+.jv-draft-est { flex-basis: 100%; margin: 0; color: var(--text-3); font-size: 11px; }
 .jv-draft-foot { display: flex; gap: 10px; align-items: center; padding: 12px 16px; border-top: 1px solid var(--border); }
 @media (max-width: 700px) { .jv-draft-fields { grid-template-columns: 1fr; } }
 
