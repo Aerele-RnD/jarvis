@@ -635,7 +635,7 @@
 
 		<!-- Artifact preview panel — slides in from the right (PDF in a viewer, Excel as a table) -->
 		<transition name="jv-slide">
-			<div v-if="artifact" class="jv-artifact-overlay" @click.self="closeArtifact">
+			<div v-if="artifact" class="jv-artifact-overlay" @mousedown="onOverlayMouseDown" @click.self="onOverlayBackdropClick(closeArtifact)">
 				<aside class="jv-artifact-panel" ref="artifactPanelEl" tabindex="-1">
 					<div class="jv-artifact-head">
 						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></svg>
@@ -679,8 +679,20 @@
 		</transition>
 		<!-- Record draft panel — the agent's proposed create/update, fully editable, applied directly -->
 		<transition name="jv-slide">
-			<div v-if="draftPanel" class="jv-artifact-overlay" @click.self="closeDraftPanel">
-				<aside class="jv-artifact-panel jv-draft-panel" tabindex="-1">
+			<div v-if="draftPanel" class="jv-artifact-overlay" @mousedown="onOverlayMouseDown" @click.self="onOverlayBackdropClick(closeDraftPanel)">
+				<aside
+					ref="draftPanelEl"
+					class="jv-artifact-panel jv-draft-panel"
+					:class="{ 'jv-draft-panel-resizing': draftResizing }"
+					:style="{ width: draftPanelWidth + 'px' }"
+					tabindex="-1"
+				>
+					<div
+						class="jv-draft-resizer"
+						:class="{ 'jv-draft-resizer-active': draftResizing }"
+						title="Drag to resize"
+						@mousedown.prevent="startDraftResize"
+					/>
 					<div class="jv-artifact-head">
 						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></svg>
 						<span class="jv-artifact-head-title">{{ draftPanel.verb === 'update' ? 'Update' : 'New' }} {{ draftPanel.doctype }}<template v-if="draftPanel.docName"> · {{ draftPanel.docName }}</template></span>
@@ -1960,6 +1972,63 @@ function _checkToYesNo(v) {
 // --- Record draft panel: the action JSON is the draft; edits are local; apply
 // posts to actions_api (no LLM round-trip). ---
 const draftPanel = ref(null)
+
+// Resizable edit panel — drag the inner (left) edge. Clamped to [min, max],
+// snaps to the default within +/-10px, width persisted to localStorage. Scoped
+// to the draft panel only (the artifact viewer shares .jv-artifact-panel but
+// keeps its CSS width, since this width is applied inline on the draft aside).
+const DRAFT_DEFAULT_WIDTH = 720
+const DRAFT_MIN_WIDTH = 440
+const DRAFT_WIDTH_KEY = "jarvis-draftpanel-width"
+const draftMaxWidth = () => Math.min(1100, Math.round(window.innerWidth * 0.92))
+const clampDraftWidth = (w) => Math.min(draftMaxWidth(), Math.max(DRAFT_MIN_WIDTH, w))
+const _storedDraftW = Number(localStorage.getItem(DRAFT_WIDTH_KEY))
+const draftPanelWidth = ref(clampDraftWidth(_storedDraftW || DRAFT_DEFAULT_WIDTH))
+const draftPanelEl = ref(null)
+const draftResizing = ref(false)
+let _draftPanelRight = 0
+
+function onDraftResizeMove(e) {
+	draftResizing.value = true
+	let w = _draftPanelRight - e.clientX
+	if (w > DRAFT_DEFAULT_WIDTH - 10 && w < DRAFT_DEFAULT_WIDTH + 10) w = DRAFT_DEFAULT_WIDTH
+	draftPanelWidth.value = clampDraftWidth(w)
+}
+function onDraftResizeUp() {
+	document.body.classList.remove("jv-col-resizing")
+	localStorage.setItem(DRAFT_WIDTH_KEY, String(draftPanelWidth.value))
+	draftResizing.value = false
+	document.removeEventListener("mousemove", onDraftResizeMove)
+	document.removeEventListener("mouseup", onDraftResizeUp)
+}
+function startDraftResize() {
+	// capture the panel's right edge so width is correct regardless of overlay offset
+	_draftPanelRight = draftPanelEl.value ? draftPanelEl.value.getBoundingClientRect().right : window.innerWidth
+	document.body.classList.add("jv-col-resizing")
+	document.addEventListener("mousemove", onDraftResizeMove)
+	document.addEventListener("mouseup", onDraftResizeUp)
+}
+onBeforeUnmount(() => {
+	document.removeEventListener("mousemove", onDraftResizeMove)
+	document.removeEventListener("mouseup", onDraftResizeUp)
+})
+
+// Backdrop-click dismiss must ignore the tail of an in-panel drag. When a resize
+// drag starts on a panel's handle (inside the panel) and the mouse is released
+// over the dimmed backdrop — which is exactly what stretching the panel does —
+// the browser dispatches the `click` on the common ancestor of the down/up
+// targets, i.e. the overlay. A bare @click.self would then read that
+// drag-release as an outside-click and close the panel. Gate the close on the
+// press ALSO having started on the backdrop (recorded on the overlay's own
+// mousedown; @click.self already guarantees the release resolved to it).
+let _overlayPressOnBackdrop = false
+function onOverlayMouseDown(e) {
+	_overlayPressOnBackdrop = e.target === e.currentTarget
+}
+function onOverlayBackdropClick(close) {
+	if (_overlayPressOnBackdrop) close()
+}
+
 // one shared link-search menu for panel inputs, keyed "f:<fieldname>" or "t:<ti>:<ri>:<col>"
 const draftLink = ref({ key: "", items: [], open: false, up: false })
 const _formMetaCache = {}
@@ -4783,7 +4852,13 @@ onUnmounted(() => {
 .jv-summary-hint { padding: 0 14px 11px; font-size: 12px; color: var(--text-3); }
 
 /* --- record draft panel --- */
-.jv-draft-panel { display: flex; flex-direction: column; }
+.jv-draft-panel { position: relative; max-width: 92vw; display: flex; flex-direction: column; }
+/* Drag handle on the inner (left) edge; 1px rule that lights up on hover/drag. */
+.jv-draft-resizer { position: absolute; left: 0; top: 0; z-index: 3; height: 100%; width: 8px; margin-left: -4px; cursor: col-resize; }
+.jv-draft-resizer::before { content: ""; position: absolute; left: 4px; top: 0; height: 100%; width: 1px; background: var(--blue); opacity: 0; transition: opacity .15s ease; }
+.jv-draft-resizer:hover::before, .jv-draft-resizer-active::before { opacity: 1; }
+.jv-draft-panel-resizing { user-select: none; }
+:global(body.jv-col-resizing) { cursor: col-resize; user-select: none; }
 .jv-draft-badge { font-size: 10px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; color: var(--amber); background: var(--amber-bg); border: 1px solid var(--amber-bd); border-radius: 99px; padding: 3px 9px; margin-left: 8px; }
 .jv-draft-body { flex: 1; overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 14px; }
 .jv-draft-toast { font-size: 12px; color: var(--blue); background: var(--blue-bg); border: 1px solid var(--blue-bd); border-radius: 8px; padding: 7px 11px; }
