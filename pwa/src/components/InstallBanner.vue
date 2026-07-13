@@ -1,36 +1,36 @@
 <script setup>
-import { onMounted, onUnmounted, ref } from "vue"
+import { computed, onMounted, ref } from "vue"
+import { installPrompt, isStandalone } from "../install"
 
 // "Add Jarvis to your home screen." Two different worlds:
-//  - Chrome/Android fires beforeinstallprompt, which we stash and replay on tap.
+//  - Chrome/Android fires beforeinstallprompt. That event is captured in
+//    src/install.js at module load, NOT here: it can fire in the same tick the
+//    app mounts, so a listener in onMounted loses the race and the banner never
+//    appears on a warm refresh. This component only reads the stashed event.
 //  - iOS Safari has no such event and never will; Add to Home Screen is a manual
 //    menu action, so there we can only tell the user where it is.
 const DISMISS_KEY = "jarvis.install.dismissed"
 
-const prompt = ref(null)
-const show = ref(false)
+const dismissed = ref(false)
 const isIos = ref(false)
 
-function standalone() {
-	return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true
-}
-
-function onBeforeInstall(e) {
-	e.preventDefault()
-	prompt.value = e
-	show.value = true
-}
+// Show when we either hold a real prompt (Chrome) or know we're on iOS, unless
+// the user closed it or the app is already installed.
+const show = computed(
+	() => !dismissed.value && !isStandalone() && (!!installPrompt.value || isIos.value),
+)
 
 async function install() {
-	if (!prompt.value) return
-	prompt.value.prompt()
-	await prompt.value.userChoice
-	prompt.value = null
-	show.value = false
+	const e = installPrompt.value
+	if (!e) return
+	e.prompt()
+	await e.userChoice
+	// The event is single-use: once prompted it cannot be replayed.
+	installPrompt.value = null
 }
 
 function dismiss() {
-	show.value = false
+	dismissed.value = true
 	// Durable: a banner the user closed must not come back on every reload.
 	try {
 		localStorage.setItem(DISMISS_KEY, "1")
@@ -40,24 +40,16 @@ function dismiss() {
 }
 
 onMounted(() => {
-	let dismissed = false
 	try {
-		dismissed = localStorage.getItem(DISMISS_KEY) === "1"
+		dismissed.value = localStorage.getItem(DISMISS_KEY) === "1"
 	} catch {
 		/* ignore */
 	}
-	if (dismissed || standalone()) return
-
-	window.addEventListener("beforeinstallprompt", onBeforeInstall)
-
-	// iOS: no event to wait for, so decide from the UA and just show the hint.
 	const ua = window.navigator.userAgent
 	if (/iPhone|iPad|iPod/.test(ua) && /Safari/.test(ua) && !/CriOS|FxiOS/.test(ua)) {
 		isIos.value = true
-		show.value = true
 	}
 })
-onUnmounted(() => window.removeEventListener("beforeinstallprompt", onBeforeInstall))
 </script>
 
 <template>
