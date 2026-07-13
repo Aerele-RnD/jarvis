@@ -419,7 +419,7 @@
     </section>
 
     <!-- Save bar + sync status - hidden when a host renders its own footer. -->
-    <div v-if="!footerless" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:flex-end;">
+    <div v-if="!footerless" class="jv-pool-savebar" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:flex-end;">
       <span v-if="saveBlocked && missingVendors.length" style="font-size:13px;color:var(--amber);">
         Provide keys for: {{ missingVendors.map(providerLabel).join(', ') }}
       </span>

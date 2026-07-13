@@ -4,7 +4,11 @@
 	     Chat-subscription | API-keys/failover control, a brief save note, and a
 	     retryable load. The dialog root supplies paletteVars + .jv-dark, so the
 	     shared jv-* classes resolve here without a local palette wrapper. -->
-	<div class="jv-settings-body">
+	<!-- jv-pane-fill: the left rail (~516px) floors the dialog height, but this
+	     pane's content is only ~164px, so ~276px would sit as dead white space.
+	     Fill the column and let the Save bar sink to the bottom (see settings.css)
+	     so that space reads as a footer, matching the onboarding wizard. -->
+	<div class="jv-settings-body jv-pane-fill">
 		<!-- brief save acknowledgement (the editors persist themselves) -->
 		<div v-if="savedNote" style="display:flex;justify-content:flex-end;margin-bottom:8px;">
 			<span class="jv-acct-savednote">{{ savedNote }}</span>

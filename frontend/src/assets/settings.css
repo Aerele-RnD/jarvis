@@ -43,6 +43,17 @@
 .jv-settings-head-title { font-size: 16px; font-weight: 600; color: var(--text); line-height: 1.2; }
 .jv-settings-head-desc { font-size: 13px; line-height: 1.5; color: var(--text-3); margin-top: 4px; }
 .jv-settings-body { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 24px 28px; }
+/* Panes whose content is much shorter than the dialog. The dialog height cannot
+   shrink to fit them: the left rail (~516px of nav items) is the floor, while the
+   AI-models pane is only ~164px -- leaving ~276px of dead white space. So fill the
+   column and let the pane's action bar sink to the bottom, turning that space into
+   a footer (the same anchored-actions pattern the onboarding wizard uses).
+   margin-top:auto is inert outside a flex column, so the same editor rendered in
+   AccountView (normal flow) is unaffected, and onboarding never renders the bar at
+   all (:footerless). */
+.jv-pane-fill { display: flex; flex-direction: column; }
+.jv-pane-fill > .jv-llm-editor { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.jv-pane-fill .jv-pool-savebar { margin-top: auto; padding-top: 16px; border-top: 1px solid var(--border); }
 .jv-set-sec { font-size: 14px; font-weight: 600; color: var(--text); margin: 0 0 6px; }
 .jv-set-sub { font-size: 12px; line-height: 1.5; color: var(--text-3); font-weight: 420; }
 /* usage stat cards */
