@@ -110,18 +110,21 @@
                (1 / 1.5 / 1.5 / 1.5) produced four different widths and read as
                noise. Provider first, since it decides the model suggestions. -->
           <div class="jv-cfg-grid">
+            <!-- JvCombo, not a native <select>/<datalist>: the OS renders those with
+                 its own popup (dark, system-styled), which is why this panel looked
+                 nothing like onboarding. JvCombo is the app's dropdown and is already
+                 what onboarding uses, so both surfaces now render identically. -->
             <div class="jv-pool-field">
               <label class="jv-pool-lab">Provider</label>
-              <select v-model="panelRow.provider" @change="onProviderChange(panelRow)" :disabled="!editable" title="Provider" class="jv-cfg-inp">
-                <option v-for="p in providerOptions" :key="p" :value="p">{{ p }}</option>
-              </select>
+              <JvCombo :model-value="panelRow.provider" :options="providerOptions" :editable="editable"
+                       placeholder="Provider"
+                       @update:model-value="(v) => { panelRow.provider = v; onProviderChange(panelRow) }" />
             </div>
             <div class="jv-pool-field">
               <label class="jv-pool-lab">Model</label>
-              <input v-model="panelRow.model" list="jv-cfg-dl" :disabled="!editable" placeholder="Model ID (e.g. gpt-4o)" class="jv-cfg-inp" />
-              <datalist id="jv-cfg-dl">
-                <option v-for="s in modelSuggestionsForProvider(panelRow.provider)" :key="s" :value="s"></option>
-              </datalist>
+              <JvCombo :model-value="panelRow.model" :options="modelSuggestionsForProvider(panelRow.provider)"
+                       :editable="editable" allow-custom placeholder="Model ID (e.g. gpt-4o)"
+                       @update:model-value="(v) => { panelRow.model = v }" />
             </div>
             <div class="jv-pool-field">
               <label class="jv-pool-lab">API key</label>
@@ -153,11 +156,14 @@
                Account rotation is likewise not exposed - it only matters once one
                provider has several accounts, and defaults to "sticky" in the schema. -->
           <div class="jv-cfg-grid" style="margin-bottom:10px;">
+            <!-- JvCombo works in display LABELS, but a row stores `upstream` as the
+                 VALUE ("openai"/"google") that the pool spec requires - hence the
+                 label<->value bridge, rather than leaking "OpenAI" into the spec. -->
             <div class="jv-pool-field">
               <label class="jv-pool-lab">Provider</label>
-              <select v-model="panelRow.upstream" @change="onUpstreamChange(panelRow)" :disabled="!editable" title="Provider" class="jv-cfg-inp">
-                <option v-for="o in upstreamOpts" :key="o.value" :value="o.value">{{ o.label }}</option>
-              </select>
+              <JvCombo :model-value="upstreamLabelOf(panelRow.upstream)" :options="upstreamLabels"
+                       :editable="editable" placeholder="Provider"
+                       @update:model-value="(v) => { panelRow.upstream = upstreamValueOf(v); onUpstreamChange(panelRow) }" />
             </div>
             <!-- Connect lives in the grid's second column: it right-aligns the action
                  (consistent with every other confirm action in this pane) and fills the
@@ -529,6 +535,12 @@ const upstreamOpts = [
   { value: "openai", label: "OpenAI" },
   { value: "google", label: "Google Gemini" },
 ]
+// JvCombo speaks display LABELS; a row stores `upstream` as the VALUE the pool spec
+// requires ("openai" / "google"). Bridge the two rather than letting "OpenAI" reach
+// the spec (the fleet validates upstream against openai|anthropic|google and 422s).
+const upstreamLabels = upstreamOpts.map((o) => o.label)
+const upstreamLabelOf = (v) => (upstreamOpts.find((o) => o.value === v) || {}).label || ""
+const upstreamValueOf = (l) => (upstreamOpts.find((o) => o.label === l) || {}).value || l
 // Provider dropdown fed by the shared PROVIDER_LABELS (id⇄label). Rows store the
 // display LABEL as `provider` (matches seedRowsFromConfig + the desk page).
 const providerOptions = PROVIDER_LABELS.map((p) => p.label)
@@ -1312,14 +1324,21 @@ defineExpose({ save })
    (1 / 1.5 / 1.5 / 1.5) that gave every field a different width. Two even columns
    read as a form; four uneven ones read as clutter. */
 .jv-cfg-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 14px; align-items: end; }
-.jv-cfg-inp {
-  width: 100%; padding: 9px 12px; font-size: 14px; font-family: inherit;
+/* The dropdowns are JvCombo (the app's own), NOT native <select> — a native one is
+   drawn by the OS with its own popup, which is exactly why this panel used to look
+   nothing like onboarding. These metrics keep the plain inputs (API key, Base URL)
+   dimensionally identical to a .jvc-field so the grid reads as ONE control set. */
+.jv-cfg-inp,
+.jv-cfg-grid :deep(.jvc-field) {
+  width: 100%; min-height: 40px; padding: 9px 12px; font-size: 14px; font-family: inherit;
   border: 1px solid var(--border); border-radius: 8px;
   background: var(--surface); color: var(--text); box-sizing: border-box;
   transition: border-color .15s ease;
 }
-.jv-cfg-inp:hover:not(:disabled) { border-color: var(--border-2); }
+.jv-cfg-inp:hover:not(:disabled),
+.jv-cfg-grid :deep(.jvc-field:hover) { border-color: var(--border-2); }
 .jv-cfg-inp:focus { outline: none; border-color: var(--text-3); box-shadow: none; }
+.jv-cfg-grid :deep(.jvc-field:focus-within) { border-color: var(--text-3); }
 .jv-cfg-inp:disabled { opacity: .6; cursor: default; }
 .jv-pool-opt { font-weight: 400; color: var(--text-3); }
 /* Action occupying a grid column (Connect account): right-aligned, and bottom-aligned
