@@ -83,14 +83,13 @@ defineProps({
 .jv-banner--warning .jv-banner-ic { background: var(--surface); color: var(--amber); border: 1px solid var(--amber-bd); }
 .jv-banner--warning .jv-banner-tt { color: var(--amber); }
 
-/* The app palette has no dedicated --info token (only --blue, which doubles
-   as the near-black primary-button color in light mode) - fall back to the
-   preview's own info blue so the banner still reads as "informational"
-   rather than "black/disabled" if --info is ever added upstream, this picks
-   it up for free. */
+/* Info uses the theme's accent (--blue: indigo in light, lighter blue in dark),
+   matching how the success/warning variants use --green/--amber. The old
+   var(--info, #6e8bff) hardcoded the dark-mode blue into BOTH themes because
+   --info was never defined. */
 .jv-banner--info { background: var(--blue-bg); border: 1px solid var(--blue-bd); }
-.jv-banner--info .jv-banner-ic { background: var(--surface); color: var(--info, #6e8bff); border: 1px solid var(--blue-bd); }
-.jv-banner--info .jv-banner-tt { color: var(--info, #6e8bff); }
+.jv-banner--info .jv-banner-ic { background: var(--surface); color: var(--blue); border: 1px solid var(--blue-bd); }
+.jv-banner--info .jv-banner-tt { color: var(--blue); }
 
 .jv-banner--success { background: var(--green-bg); border: 1px solid var(--green-bd); }
 .jv-banner--success .jv-banner-ic { background: var(--surface); color: var(--green); border: 1px solid var(--green-bd); }

@@ -60,6 +60,7 @@ import {
 	runAnalysis, computeActions, overlayFilter, egoGraph, searchGraph,
 } from "wiki-graph-core"
 import { getWikiGraph, getWikiGraphHistory } from "@/api/wiki"
+import { useJarvisTheme } from "@/theme"
 
 // Same breadcrumb + persistent "Open ERPNext Desk" top bar the other Skills
 // tabs get; LayoutHeader supplies the ⧉ button, so the graph tab no longer
@@ -77,7 +78,10 @@ const state = reactive({
 	mode: "kind", overlay: "knowledge", search: "", focus: null, toast: "",
 	excluded: readExcluded(),
 })
-const dark = document.documentElement.getAttribute("data-theme") === "dark"
+// Reactive theme so the 3D graph re-colours on a live light/dark toggle. Reading
+// data-theme once at setup left the canvas stuck on the theme that was active
+// when the page mounted.
+const { effectiveDark: dark } = useJarvisTheme()
 
 function readExcluded() {
 	try { return JSON.parse(localStorage.getItem("wg-excl") || "[]") } catch (_) { return [] }
@@ -148,7 +152,24 @@ onMounted(load)
 </script>
 
 <style scoped>
-.kg { padding: 4px 2px; }
+/* The wiki-graph-core child components (FilterBar, ExclusionRules, DetailPanel,
+   AnalysisTabs + its panels) style themselves via legacy var names that were
+   never defined anywhere, so they always fell back to hardcoded LIGHT literals
+   and ignored dark mode. They were built to inherit these from a host: define
+   them here on the page root, mapped to the frappe-ui semantic tokens that
+   auto-flip under [data-theme="dark"]. Custom properties inherit across Vue
+   scoped-style boundaries, so every descendant picks these up.
+   --bg-blue is intentionally left to its own #4c9aff fallback: it is used as a
+   solid fill with white text AND as accent text, and reads correctly on both
+   themes — remapping it to a --surface-blue-* token would wash out one theme. */
+.kg {
+	padding: 4px 2px;
+	--card-bg: var(--surface-white);
+	--border-color: var(--outline-gray-2);
+	--control-bg: var(--surface-gray-2);
+	--text-muted: var(--ink-gray-5);
+	--text-color: var(--ink-gray-9);
+}
 .kg-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; }
 .kg-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; }
 /* min-width:0 lets the graph column shrink to its track — without it the
@@ -158,15 +179,21 @@ onMounted(load)
 .kg-side { display: flex; flex-direction: column; gap: 14px; overflow-y: auto; }
 .kg-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 6px; }
 .kg-excl { margin-bottom: 8px; }
-.kg-search { font-size: 12px; padding: 4px 10px; border: 1px solid var(--border-color, #d1d8dd); border-radius: 6px; min-width: 180px; }
-.kg-focus { font-size: 12px; background: var(--bg-blue, #4c9aff); color: #fff; border-radius: 10px; padding: 1px 10px; }
+/* Themed via the frappe-ui semantic tokens (this page renders under the
+   data-theme app shell, not a jv-root). The old var(--border-color / --bg-blue /
+   --card-bg / --control-bg) names were never defined, so every rule fell back to
+   its hardcoded light value and the page ignored dark mode. */
+.kg-search { font-size: 12px; padding: 4px 10px; border: 1px solid var(--outline-gray-2); border-radius: 6px; min-width: 180px; background: var(--surface-white); color: var(--ink-gray-9); }
+.kg-focus { font-size: 12px; background: var(--surface-blue-2); color: #fff; border-radius: 10px; padding: 1px 10px; }
 .kg-focus a { color: #fff; text-decoration: underline; }
-.kg-err { color: #d9534f; padding: 16px 0; }
+.kg-err { color: var(--ink-red-4); padding: 16px 0; }
 .kg-empty { padding: 24px 4px; font-size: 13px; }
-.kg-btn { font-size: 12px; padding: 3px 10px; border: 1px solid var(--border-color, #d1d8dd); border-radius: 6px; background: var(--card-bg, #fff); cursor: pointer; margin-left: 8px; }
-.kg-skel { height: 60vh; border-radius: 8px; background: var(--control-bg, #f3f4f6); animation: kg-pulse 1.4s ease-in-out infinite; }
+.kg-btn { font-size: 12px; padding: 3px 10px; border: 1px solid var(--outline-gray-2); border-radius: 6px; background: var(--surface-white); color: var(--ink-gray-9); cursor: pointer; margin-left: 8px; }
+.kg-skel { height: 60vh; border-radius: 8px; background: var(--surface-gray-2); animation: kg-pulse 1.4s ease-in-out infinite; }
 @keyframes kg-pulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 0.9; } }
-.kg-toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #222; color: #fff; padding: 8px 16px; border-radius: 8px; font-size: 13px; z-index: 50; }
+/* inverted bubble: surface-gray-7 is dark in light mode / light in dark mode, so
+   the toast stays legible against either background */
+.kg-toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--surface-gray-7); color: var(--surface-white); padding: 8px 16px; border-radius: 8px; font-size: 13px; z-index: 50; }
 /* Only stack (panel below the graph) on genuinely narrow screens. The old
    1100px breakpoint hid the analysis panel off-screen on ordinary
    retina-scaled laptop widths — it read as "the panel is missing". */
