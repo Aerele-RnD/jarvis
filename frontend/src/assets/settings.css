@@ -22,15 +22,18 @@
    a one-item pane from collapsing; max-height keeps tall panes on screen -- they
    scroll inside .jv-settings-body, which needs min-height:0 (below) to do so now
    that the parent no longer has a definite height. */
-/* 1080px is a CAP, not a fixed size: max-width resolves against the overlay's
-   content box (100vw - 48px), so the dialog shrinks fluidly with the viewport
+/* FIXED height on purpose. An earlier pass made this height:auto so short panes
+   could shrink — but that made the dialog jump every time you picked a different
+   nav item, which is worse than a little empty space. It is a stable frame: panes
+   fill it, and .jv-settings-body scrolls when a pane is taller.
+   Width 1080px is a CAP, not a fixed size: max-width resolves against the overlay's
+   content box (100vw - 48px), so the dialog still shrinks fluidly with the viewport
    (measured: 1280->1058, 1024->956, 768->706). A px cap is deliberate — a settings
    dialog stretched across a 4K monitor is unreadable.
-   min-height is min()'d against the max: a bare `min-height: 420px` BEATS
-   `max-height` in the cascade, so on a short viewport (landscape phone) the dialog
-   would grow past the screen. Below 720px the fixed rail can't fit — see the
-   stacking media query at the end of this file. */
-.jv-settings { width: 1080px; max-width: 100%; height: auto; min-height: min(420px, 88vh); max-height: 88vh; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; display: flex; overflow: hidden; box-shadow: 0 0 1px rgba(0, 0, 0, .2), 0 24px 30px -8px rgba(0, 0, 0, .1); animation: jv-popin 0.1s ease-out; }
+   min() guards a short viewport: a bare height/min-height BEATS max-height in the
+   cascade, so on a landscape phone the dialog would grow past the screen.
+   Below 720px the fixed rail can't fit — see the stacking media query at the end. */
+.jv-settings { width: 1080px; max-width: 100%; height: min(620px, 88vh); max-height: 88vh; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; display: flex; overflow: hidden; box-shadow: 0 0 1px rgba(0, 0, 0, .2), 0 24px 30px -8px rgba(0, 0, 0, .1); animation: jv-popin 0.1s ease-out; }
 @keyframes jv-popin { from { transform: scale(0.98); opacity: 0.5; } to { transform: scale(1); opacity: 1; } }
 .jv-settings-nav { width: 230px; flex: none; background: var(--surface-1); border-right: 1px solid var(--border); padding: 8px; display: flex; flex-direction: column; gap: 3px; overflow-y: auto; }
 .jv-settings-nav-title { font-size: 15px; font-weight: 600; color: var(--text); padding: 6px 8px 10px; }
@@ -266,7 +269,7 @@
    Placed at the very end so it outranks BOTH .jv-settings blocks above. */
 @media (max-width: 720px) {
 	.jv-settings-overlay { padding: 12px; }
-	.jv-settings { width: 100%; flex-direction: column; min-height: 0; max-height: 92vh; border-radius: 14px; }
+	.jv-settings { width: 100%; flex-direction: column; height: 92vh; max-height: 92vh; border-radius: 14px; }
 	.jv-settings-nav {
 		width: 100%; flex: none; flex-direction: row; align-items: center; gap: 6px;
 		padding: 8px 10px; overflow-x: auto; overflow-y: hidden;

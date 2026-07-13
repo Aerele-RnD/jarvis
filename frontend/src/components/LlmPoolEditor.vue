@@ -23,6 +23,14 @@
         </span>
       </div>
 
+      <!-- Say plainly what this list DOES. "tried in order" alone doesn't tell a
+           customer why they'd want more than one model. -->
+      <p class="jv-flist-help">
+        Jarvis uses the first model that answers. If one is unavailable, rate-limited or out of
+        credit, it falls back to the next in this list automatically — so chat keeps working.
+        Reorder them with the arrows.
+      </p>
+
       <!-- Legacy DIRECT chat-subscription (flat-field OAuth, no proxy) - not
            part of rows.value/the failover pool, so no order badge/reorder. -->
       <div v-if="showDirectRow" class="jv-flist-row">
@@ -63,7 +71,21 @@
         </span>
       </div>
 
-      <button v-if="editable && !panel.open" @click="openAdd" class="jv-btn jv-btn--sm jv-btn--primary">+ Add model</button>
+      <!-- Dashed add-row rather than a small solid button: it reads as "the next
+           row goes here", fills the column, and matches the add affordances used
+           elsewhere in the product (New skill / Drop a file). -->
+      <button v-if="editable && !panel.open" @click="openAdd" class="jv-flist-add">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>
+        Add a model
+      </button>
+
+      <!-- A single model has nothing to fall back to. Name the consequence instead
+           of leaving the customer to infer it from "tried in order". -->
+      <div v-if="editable && !panel.open && rows.length === 1 && !showDirectRow" class="jv-flist-hint">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 16v-4M12 8h.01" /></svg>
+        <span><b>No backup yet.</b> With a single model, an outage or a hit rate limit stops chat.
+        Add a second — a chat subscription or an API key — and Jarvis switches over automatically.</span>
+      </div>
 
       <!-- Master-detail config section: Add/Edit a single row, or (add-mode
            only) apply a preset that replaces the whole pool. Field markup +
@@ -1259,6 +1281,38 @@ defineExpose({ save })
 }
 .jv-flist-model { font-size: 13.5px; color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jv-flist-acts { margin-left: auto; display: flex; gap: 6px; align-items: center; flex: none; }
+
+/* ---- explainer + add affordance + failover nudge (settings editor only) ----
+   Flat neutral surfaces, monochrome accent, no decorative colour: the only hue in
+   this pane stays semantic (the green Applied pill, the red Remove). */
+.jv-flist-help {
+  font-size: 12.5px; line-height: 1.55; color: var(--text-3);
+  margin: -2px 0 12px; max-width: 74ch;
+}
+/* Dashed "the next row goes here" affordance — same language as the New skill /
+   Drop a file rows. Full width so it anchors the list instead of floating. */
+.jv-flist-add {
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  width: 100%; margin-top: 10px; padding: 11px 12px;
+  border: 1px dashed var(--border-2); border-radius: 10px;
+  background: transparent; color: var(--text-2);
+  font-family: inherit; font-size: 13px; font-weight: 550; line-height: 1;
+  cursor: pointer;
+  transition: border-color .15s ease, background-color .15s ease, color .15s ease;
+}
+.jv-flist-add:hover:not(:disabled) { border-color: var(--text-3); background: var(--surface-1); color: var(--text); }
+.jv-flist-add:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.jv-flist-add svg { color: var(--text-3); flex: none; }
+.jv-flist-add:hover svg { color: var(--text); }
+/* Consequence-first nudge shown while the pool has no fallback. */
+.jv-flist-hint {
+  display: flex; align-items: flex-start; gap: 9px;
+  margin-top: 14px; padding: 11px 13px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--surface-1);
+  font-size: 12.5px; line-height: 1.55; color: var(--text-2);
+}
+.jv-flist-hint svg { flex: none; margin-top: 1px; color: var(--text-3); }
+.jv-flist-hint b { color: var(--text); font-weight: 600; }
 /* Master-detail config section (add/edit a row, or apply a preset). */
 .jv-cfgpanel { border: 1px solid var(--border-2); border-radius: 11px; padding: 14px; margin: 4px 0 14px; background: var(--surface); }
 .jv-cfgpanel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
