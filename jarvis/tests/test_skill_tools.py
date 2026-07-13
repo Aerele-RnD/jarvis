@@ -21,6 +21,7 @@ from jarvis.chat.custom_skills import (
 	prefixed_slug,
 )
 from jarvis.exceptions import InvalidArgumentError, PermissionDeniedError
+from jarvis.permissions import JARVIS_USER_ROLE, ensure_jarvis_user_role
 from jarvis.tools.create_custom_skill import create_custom_skill
 from jarvis.tools.find_skills import find_skills
 from jarvis.tools.get_skill import get_skill
@@ -61,18 +62,29 @@ def _engine_flag():
 
 
 def _ensure_system_user(email: str) -> str:
-	"""A non-SM System User (realistic tool caller)."""
+	"""A non-SM System User (realistic tool caller).
+
+	Carries the Jarvis User role: since the chat permission hardening (#284) the
+	skill tools gate on System Manager or Jarvis User, and these fixtures are
+	deliberately NOT System Managers — that is the whole point of the
+	non-owner/peer scoping assertions — so without the role they are refused
+	before reaching the logic under test.
+	"""
+	ensure_jarvis_user_role()
 	if not frappe.db.exists("User", email):
 		u = frappe.get_doc({
 			"doctype": "User", "email": email,
 			"first_name": "sttool", "send_welcome_email": 0, "enabled": 1,
 			"user_type": "System User",
-			"roles": [{"role": "Sales User"}],
+			"roles": [{"role": "Sales User"}, {"role": JARVIS_USER_ROLE}],
 		})
 		u.flags.ignore_permissions = True
 		u.insert(ignore_permissions=True)
 	elif frappe.db.get_value("User", email, "user_type") != "System User":
 		frappe.db.set_value("User", email, "user_type", "System User")
+	if JARVIS_USER_ROLE not in set(frappe.get_roles(email)):
+		frappe.get_doc("User", email).add_roles(JARVIS_USER_ROLE)
+		frappe.clear_cache(user=email)
 	if "System Manager" in set(frappe.get_roles(email)):
 		frappe.get_doc("User", email).remove_roles("System Manager")
 	return email

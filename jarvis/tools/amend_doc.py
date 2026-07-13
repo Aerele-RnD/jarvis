@@ -34,22 +34,34 @@ import frappe
 
 from jarvis.exceptions import InvalidArgumentError, PermissionDeniedError
 from jarvis.tools import require_doctype_and_name
+from jarvis.tools._bulk import run_atomic_batch
 
 
-def amend_doc(doctype: str, name: str) -> dict:
-    """Create a new Draft from a Cancelled document.
+def amend_doc(doctype: str, name: str | None = None, names: list | None = None) -> dict:
+    """Create a new Draft from a Cancelled document - or a whole batch.
 
-    Returns the inserted Draft as a dict, including its new ``name`` and
-    the ``amended_from`` link back to the source. Raises:
-      - InvalidArgumentError on empty args, non-submittable DocType, or
-        wrong source state (must be Cancelled)
-      - PermissionDeniedError when the calling user lacks amend
-      - frappe.DoesNotExistError when the source record doesn't exist
-      - frappe.ValidationError if the copied data fails the DocType's
-        validate() on insert
+    Single: returns the inserted Draft as a dict, including its new ``name``
+    and the ``amended_from`` link back to the source.
+    Batch (``names``): returns ``{"doctype","amended":[{source, name}],"count"}``,
+    each amend in ONE atomic savepoint. Raises:
+      - InvalidArgumentError on empty args, non-submittable DocType, or wrong
+        source state (must be Cancelled)
+      - PermissionDeniedError when the calling user lacks amend on a record
+      - frappe.DoesNotExistError when a source record doesn't exist
+      - frappe.ValidationError if copied data fails a DocType's validate()
     """
-    require_doctype_and_name(doctype, name)
+    if names is not None:
+        return _amend_batch(doctype, names)
 
+    require_doctype_and_name(doctype, name)
+    new_doc = _amend_one(doctype, name)
+    new_doc.apply_fieldlevel_read_permissions()
+    return new_doc.as_dict()
+
+
+def _amend_one(doctype: str, name: str) -> "frappe.model.document.Document":
+    """Guards + amend for ONE doc. Returns the new Draft Document. Shared by
+    the single and batch paths so the guards never drift."""
     meta = frappe.get_meta(doctype)
     if not meta.is_submittable:
         raise InvalidArgumentError(
@@ -80,5 +92,20 @@ def amend_doc(doctype: str, name: str) -> dict:
     new_doc.amended_from = source.name
     new_doc.docstatus = 0
     new_doc.insert()  # runs validate(); autoname appends suffix
-    new_doc.apply_fieldlevel_read_permissions()
-    return new_doc.as_dict()
+    return new_doc
+
+
+def _amend_batch(doctype: str, names: list) -> dict:
+    """Amend every Cancelled name atomically. If any fails, the whole batch
+    rolls back and no new drafts are created."""
+    if not doctype:
+        raise InvalidArgumentError("doctype is required")
+    if not isinstance(names, list) or not names:
+        raise InvalidArgumentError("names must be a non-empty list of document names")
+
+    def _do(name: str) -> dict:
+        new_doc = _amend_one(doctype, name)
+        return {"source": name, "name": new_doc.name}
+
+    amended = run_atomic_batch(names, _do, label=lambda n: n)
+    return {"doctype": doctype, "amended": amended, "count": len(amended)}

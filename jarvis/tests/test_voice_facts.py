@@ -22,6 +22,7 @@ from frappe.utils import cint
 
 from jarvis.chat import voice_notes_api
 from jarvis.learning import voice_facts
+from jarvis.permissions import JARVIS_USER_ROLE, ensure_jarvis_user_role
 
 NOTE = "Jarvis Voice Note"
 JLP = "Jarvis Learned Pattern"
@@ -60,10 +61,18 @@ def _ensure_user(email: str, roles: tuple = ()) -> str:
 		frappe.db.set_value("User", email, "user_type", "System User", update_modified=False)
 		frappe.clear_cache(user=email)
 		user = frappe.get_doc("User", email)
+	# Jarvis access is a ROLE now (chat permission hardening, #284): the voice
+	# endpoints gate on System Manager or Jarvis User. Every fixture user here is
+	# meant to be able to REACH Jarvis — what varies is whether they're an admin —
+	# so all of them get Jarvis User, and the System-Manager-only distinction that
+	# these tests turn on is preserved by the roles argument below.
+	ensure_jarvis_user_role()
+	user.add_roles(JARVIS_USER_ROLE)
 	if roles:
 		user.add_roles(*roles)
 	elif "System Manager" in frappe.get_roles(email):
 		user.remove_roles("System Manager")
+	frappe.clear_cache(user=email)
 	frappe.db.commit()
 	return email
 
@@ -76,6 +85,22 @@ def _as(user: str):
 		yield
 	finally:
 		frappe.set_user(orig)
+
+
+@contextlib.contextmanager
+def _enforcing_permissions():
+	"""Make ``frappe.only_for`` actually enforce.
+
+	``only_for`` returns early when ``frappe.flags.in_test`` is set, so a
+	role-gate built on it is a no-op for the whole suite — asserting against it
+	without clearing the flag tests nothing. Scoped to the single call under
+	test; the flag is restored afterwards."""
+	prev = frappe.flags.in_test
+	frappe.flags.in_test = False
+	try:
+		yield
+	finally:
+		frappe.flags.in_test = prev
 
 
 @contextlib.contextmanager
@@ -539,7 +564,13 @@ class TestVoiceNotesApi(VoiceFactsTestCase):
 		self.assertGreaterEqual(st_sm["org_new_notes"], 1)
 
 	def test_process_now_is_sm_gated_and_dedupes(self):
-		with _as(USER_A), self.assertRaises(frappe.PermissionError):
+		# The gate is frappe.only_for("System Manager"), which SHORT-CIRCUITS when
+		# frappe.flags.in_test is set — so under a plain test run it enforces
+		# nothing. This assertion used to pass only because the fixture user was
+		# role-less and blew up earlier for an unrelated reason; now that USER_A is
+		# a proper (non-admin) Jarvis user, the flag has to come off for the test
+		# to exercise the gate at all.
+		with _as(USER_A), _enforcing_permissions(), self.assertRaises(frappe.PermissionError):
 			voice_notes_api.process_voice_notes_now()
 
 		with _as(USER_SM):
