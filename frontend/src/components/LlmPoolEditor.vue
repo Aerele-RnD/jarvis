@@ -72,7 +72,7 @@
            an EMPTY SLOT the content will fill -- which is what "+ Connect account"
            is, inside the panel, where the account itself then appears. Ghost, not
            primary: Save configuration stays the pane's single primary action. -->
-      <button v-if="editable && !panel.open" @click="openAdd" class="jv-btn jv-btn--ghost jv-flist-addbtn">
+      <button v-if="editable && !panel.open" @click="openAdd" class="jv-btn jv-btn--primary jv-flist-addbtn">
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>
         Add a model
       </button>
@@ -172,14 +172,17 @@
 
           <!-- Connect sits WHERE THE ACCOUNT WILL APPEAR, not beside the Provider
                field: it is an account action, so clicking it should materialize the
-               account in the same place. It also reuses .jv-pool-addrow, the exact
-               affordance shown once accounts exist ("+ Add account"), so the control
-               is the same shape at 0 accounts and at N. -->
+               account in the same place.
+               PRIMARY, uniform with "+ Add a model": with no account connected this is
+               the panel's required next step (the pool cannot save without one). The
+               two never coexist - Add-a-model shows only when the panel is CLOSED,
+               Connect only when it is OPEN - so two primaries never compete. -->
           <button v-if="editable && !(panelRow._connect && panelRow._connect.open) && !(panelRow.accounts && panelRow.accounts.length)"
                   @click="startConnect(panelRow)"
                   :disabled="panelRow._connect && panelRow._connect.loading && !panelRow._connect.authorizeUrl"
-                  class="jv-pool-addrow jv-pool-addrow--block">
-            + Connect account
+                  class="jv-btn jv-btn--primary jv-flist-addbtn">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>
+            Connect account
           </button>
 
           <!-- Connected accounts (markup reused verbatim from the former
@@ -197,9 +200,13 @@
                   <button v-if="editable" class="jv-btn jv-btn--sm jv-btn--ghost jv-pool-disc" @click="removeAccount(panelRow, ai)">Disconnect</button>
                 </span>
               </div>
+              <!-- Ghost, not primary: an account already exists, so adding a SECOND is
+                   optional. It also sits beside Reconnect / Disconnect, which are ghosts.
+                   (Primary is reserved for the required next step -- Connect account when
+                   there is none, and Save configuration.) -->
               <button v-if="editable && !(panelRow._connect && panelRow._connect.open)" @click="startConnect(panelRow)"
                       :disabled="panelRow._connect && panelRow._connect.loading && !panelRow._connect.authorizeUrl"
-                      class="jv-pool-addrow">
+                      class="jv-btn jv-btn--sm jv-btn--ghost">
                 + Add account
               </button>
             </div>
@@ -1272,9 +1279,6 @@ defineExpose({ save })
 }
 .jv-pool-addrow:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
 .jv-pool-addrow:disabled { opacity: .5; cursor: default; }
-/* At ZERO accounts this row is the pane's primary next step, not a trailing "add
-   one more" on an existing list, so it takes the field height (40px) and body type. */
-.jv-pool-addrow--block { height: 40px; font-size: 13px; margin-top: 2px; }
 /* Save-bar apply-status pill (Option A "honest model health") - reflects the
    outcome of the last apply once there are no unsaved edits sitting on top
    of it. Same quiet weight as the rest of this settings UI. */
