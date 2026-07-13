@@ -2450,6 +2450,60 @@ class TestOnboardingAuditFixes(_RT3SettingsTestCase):
             f"dedup gate; got {settings.last_sync_status!r}",
         )
 
+    def test_noop_reapply_does_not_clobber_the_last_real_verdict(self):
+        """A NO-OP apply (contract 1.10 `unchanged: true`) must LEAVE the previous
+        verdict alone.
+
+        The no-op path is side-effect-free by contract, so the fleet deliberately
+        runs no probe there (a 1-token completion is a side effect) and reports
+        subscription_status "unchecked" with warnings []. Persisting those would
+        DISCARD the last real apply's verdict:
+
+          * a healthy "verified" silently decays to "unchecked" -- reads as a
+            regression the customer never caused (this is exactly what was seen
+            live: a redundant re-save turned a working ChatGPT subscription into
+            "unchecked"), and
+          * far worse, a genuine `model_unreachable` / `subscription_unverified`
+            warning is CLEARED, so a dead model looks healthy again after any
+            redundant re-save.
+
+        Nothing about the running pool changed, so the previous verdict still
+        describes it exactly.
+        """
+        self._seed_pool()
+        warnings = [{"code": "model_unreachable",
+                     "message": "claude-sonnet-4-6: the upstream rejected a "
+                                "1-token probe"}]
+        # 1) a REAL apply lands a definitive verdict + a real warning
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   return_value={"action": "pool-applied",
+                                 "subscription_status": "verified",
+                                 "warnings": warnings}):
+            _enqueued_sync_via_admin_pool()
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertEqual(settings.last_subscription_status, "verified")
+        self.assertEqual(json.loads(settings.last_sync_warnings), warnings)
+
+        # 2) a redundant re-save -> fleet short-circuits: unchanged, no probe
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   return_value={"action": "pool-applied",
+                                 "unchanged": True,
+                                 "subscription_status": "unchecked",
+                                 "warnings": []}):
+            _enqueued_sync_via_admin_pool()
+
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertEqual(
+            settings.last_subscription_status, "verified",
+            "a no-op must not downgrade a verified subscription to 'unchecked'",
+        )
+        self.assertEqual(
+            json.loads(settings.last_sync_warnings), warnings,
+            "a no-op must not CLEAR a real warning -- that hides a dead model",
+        )
+        # the sync itself still succeeded, and the dedup gate's "ok" prefix holds
+        self.assertTrue((settings.last_sync_status or "").startswith("ok"))
+
     def test_pool_sync_contract_1_9_response_defaults_to_empty(self):
         """A fleet on the pre-warnings contract (1.9) reports neither key -
         must default to "" / "[]" without raising (result is never assumed

@@ -952,7 +952,7 @@ def _enqueued_sync_via_admin_pool(retry_left: int = ADMIN_SYNC_LOCK_RETRIES) -> 
         try:
             result = _post_pool_with_retry(spec, api_keys, oauth_blobs) or {}
             resolved_action = result.get("action", "pool_update")
-            settings.db_set({
+            _synced = {
                 "last_sync_at": _frappe.utils.now(),
                 "last_sync_status": f"ok ({resolved_action} via admin)",
                 # Durable "this pool has been APPLIED to the container at
@@ -962,15 +962,32 @@ def _enqueued_sync_via_admin_pool(retry_left: int = ADMIN_SYNC_LOCK_RETRIES) -> 
                 # be read as provisioning success - a fresh tenant whose
                 # first sync is still pending/failed has no working pool.
                 "llm_pool_synced_at": _frappe.utils.now(),
-                # subscription_status/warnings ride the SAME PUT response as
-                # action/result (contract docs: fleet-agent llm-pool). A
-                # fleet still on the pre-warnings contract (1.9) reports
-                # neither key, so this always lands "" / "[]" - never raise
-                # on their absence, and never assume result is a dict beyond
-                # what `or {}` above already guarantees.
-                "last_subscription_status": str(result.get("subscription_status") or ""),
-                "last_sync_warnings": _frappe.as_json(result.get("warnings") or []),
-            })
+            }
+            # A NO-OP apply (contract 1.10's ``unchanged: true``) changed nothing and,
+            # BY DESIGN, ran no probe: a 1-token completion is a side effect and that
+            # path is side-effect-free, so the fleet reports subscription_status
+            # "unchecked" and warnings [].
+            #
+            # Persisting those would DISCARD the verdict from the last real apply.
+            # A healthy "verified" silently decays to "unchecked" (which reads as a
+            # regression the customer did not cause) and -- far worse -- a genuine
+            # ``model_unreachable`` / ``subscription_unverified`` warning gets CLEARED,
+            # so a dead model looks healthy again after any redundant re-save.
+            #
+            # Nothing about the running pool changed, so the previous verdict still
+            # describes it exactly. Leave both fields alone. (Same reasoning as the
+            # two skip paths above, which also leave them untouched: the container was
+            # never touched, so its last real apply is still the truth.)
+            #
+            # subscription_status/warnings ride the SAME PUT response as action/result
+            # (contract docs: fleet-agent llm-pool). A fleet still on the pre-warnings
+            # contract (1.9) reports neither key, so this lands "" / "[]" - never raise
+            # on their absence, and never assume result is a dict beyond what the
+            # `or {}` above already guarantees.
+            if not result.get("unchanged"):
+                _synced["last_subscription_status"] = str(result.get("subscription_status") or "")
+                _synced["last_sync_warnings"] = _frappe.as_json(result.get("warnings") or [])
+            settings.db_set(_synced)
             # last_sync_status MUST keep starting with the literal "ok" -
             # _pool_sync_is_redundant() gates its dedup skip on
             # startswith("ok"); a warned-but-applied pool is still an "ok"
