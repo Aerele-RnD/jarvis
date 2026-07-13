@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+		<title>Jarvis — offline</title>
+		<meta name="theme-color" content="#F4F4F5" media="(prefers-color-scheme: light)" />
+		<meta name="theme-color" content="#0F0F0F" media="(prefers-color-scheme: dark)" />
+		<style>
+			:root {
+				--bg: #f4f4f5;
+				--card: #fff;
+				--border: #eaeaea;
+				--ink9: #171717;
+				--ink5: #7c7c7c;
+				--accent: #7154f5;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--bg: #0f0f0f;
+					--card: #1c1c1c;
+					--border: #282828;
+					--ink9: #f8f8f8;
+					--ink5: #808080;
+					--accent: #8269f8;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				min-height: 100dvh;
+				display: grid;
+				place-items: center;
+				padding: 24px;
+				background: var(--bg);
+				color: var(--ink9);
+				font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+			}
+			.card {
+				width: 100%;
+				max-width: 340px;
+				text-align: center;
+			}
+			.mark {
+				width: 56px;
+				height: 56px;
+				margin: 0 auto 18px;
+				display: grid;
+				place-items: center;
+				border-radius: 16px;
+				background: linear-gradient(140deg, #8b7cf7, #6a56e8);
+				color: #fff;
+				font-weight: 700;
+				font-size: 22px;
+			}
+			h1 {
+				margin: 0 0 8px;
+				font-size: 18px;
+				font-weight: 600;
+			}
+			p {
+				margin: 0 0 22px;
+				font-size: 14px;
+				line-height: 1.55;
+				color: var(--ink5);
+			}
+			button {
+				width: 100%;
+				padding: 12px 16px;
+				border: 0;
+				border-radius: 10px;
+				background: var(--accent);
+				color: #fff;
+				font-size: 15px;
+				font-weight: 600;
+				font-family: inherit;
+				cursor: pointer;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="card">
+			<div class="mark">J</div>
+			<h1>You're offline</h1>
+			<!-- Honest about the constraint: Jarvis reasons and reads your ERP data
+			     server-side, so there is no useful offline mode to fake. -->
+			<p>Jarvis needs a connection to reach your workspace. Your chats are safe — they're stored on your bench, not on this phone.</p>
+			<button onclick="location.reload()">Try again</button>
+		</div>
+	</body>
+</html>
