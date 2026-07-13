@@ -34,6 +34,22 @@ def _full_name(user: str) -> str:
 	return frappe.db.get_value("User", user, "full_name") or user
 
 
+def _require_skill_owner(doc, action: str = "modify") -> None:
+	"""Raise a CLEAR PermissionError unless the caller owns the skill (or is a
+	System Manager / Administrator — matching skill_permissions.has_skill_permission
+	write rule). The ORM hook denies a non-owner write anyway, but the framework's
+	generic message is opaque; the user-facing SPA write endpoints surface this
+	instead (security review PART 2 TASK E1)."""
+	me = frappe.session.user
+	if me == "Administrator" or (doc.get("owner") or "") == me:
+		return
+	if "System Manager" in frappe.get_roles(me):
+		return
+	frappe.throw(
+		_("You can only {0} your own skills.").format(action), frappe.PermissionError
+	)
+
+
 def _skill_names_shared_with(user: str) -> list[str]:
 	"""Skill row-names shared with ``user`` (child-table lookup, perm-free)."""
 	return [
@@ -356,6 +372,7 @@ def update_custom_skill(
 ) -> dict:
 	"""Update provided fields of a skill (owner-gated)."""
 	doc = frappe.get_doc(SKILL, name)
+	_require_skill_owner(doc, "edit")
 	if skill_name is not None:
 		doc.skill_name = skill_name
 	if description is not None:
@@ -376,7 +393,8 @@ def update_custom_skill(
 def delete_custom_skill(name: str) -> dict:
 	"""Delete a skill row (owner-gated). The delete only propagates to the
 	container on the next Apply (the fleet endpoint does a full reconcile)."""
-	frappe.delete_doc(SKILL, name)  # honors if_owner permission
+	_require_skill_owner(frappe.get_doc(SKILL, name), "delete")
+	frappe.delete_doc(SKILL, name)  # ORM hook also enforces owner-only delete
 	frappe.db.commit()
 	return {"ok": True}
 
@@ -491,9 +509,10 @@ PROMO = "Jarvis Skill Promotion Request"
 _SCOPE_RANK = {"User": 0, "Personal": 0, "Role": 1, "Org": 2}
 
 
-def _notify_skill_reviewers() -> None:
+def _notify_skill_reviewers(request_name: str | None = None) -> None:
 	"""Best-effort nudge to the skill-reviewer set that a promotion request
-	landed. Never breaks the request on failure."""
+	landed. Carries the request name so the reviewer client can deep-link to it.
+	Never breaks the request on failure."""
 	try:
 		from frappe.utils.user import get_users_with_role
 		from jarvis.chat.events import publish_to_user
@@ -505,9 +524,12 @@ def _notify_skill_reviewers() -> None:
 				users |= set(get_users_with_role(role))
 			except Exception:
 				pass
+		payload = {"kind": "review:pending", "queue": "skill_promotion"}
+		if request_name:
+			payload["request"] = request_name
 		for u in sorted(users):
 			if u and u not in ("Administrator", "Guest"):
-				publish_to_user(u, {"kind": "review:pending", "queue": "skill_promotion"})
+				publish_to_user(u, payload)
 	except Exception:
 		pass
 
@@ -553,7 +575,7 @@ def request_skill_promotion(
 	})
 	req.insert(ignore_permissions=True)
 	frappe.db.commit()
-	_notify_skill_reviewers()
+	_notify_skill_reviewers(req.name)
 	return {"ok": True, "request": req.name, "skill": doc.skill_name}
 
 
@@ -602,6 +624,92 @@ def decide_skill_promotion(request_name: str, approve: int | str, note: str = ""
 	req.save(ignore_permissions=True)
 	frappe.db.commit()
 	return out
+
+
+_PROMO_STATUSES = ("Pending", "Approved", "Rejected")
+
+
+@frappe.whitelist()
+def list_skill_promotion_requests(
+	status: str = "Pending",
+	search: str = "",
+	start: int = 0,
+	page_length: int = 20,
+) -> dict:
+	"""Reviewer discovery queue for skill promotion requests. The doctype perms
+	are ``All: read+if_owner`` (so a requester sees only their OWN requests) — a
+	reviewer holding only Jarvis Skill Reviewer would get [] from generic
+	get_list. So this reviewer-gated raw-SQL list sidesteps the doctype-perm limit
+	exactly as ``learned_api.list_promotion_requests_page`` does for the wiki
+	queue. Envelope parity: ``{rows, total, has_more, start, page_length}``.
+	Requester full name resolved via one batched lookup."""
+	from jarvis.permissions import require_skill_reviewer
+
+	require_skill_reviewer()
+	start, pl = _clamp_page(start, page_length)
+	if status and status != "All" and status not in _PROMO_STATUSES:
+		frappe.throw(_("Invalid status filter."))
+
+	params: dict = {"start": start, "page_length": pl}
+	conds: list[str] = []
+	if status and status != "All":
+		params["status"] = status
+		conds.append("status = %(status)s")
+	if search:
+		params["q"] = f"%{_lk(search)}%"
+		conds.append("(skill_name LIKE %(q)s OR note LIKE %(q)s)")
+	where = " AND ".join(conds) or "1=1"
+
+	total = frappe.db.sql(
+		f"SELECT COUNT(*) FROM `tab{PROMO}` WHERE {where}", params
+	)[0][0]
+	rows = frappe.db.sql(
+		f"""SELECT name, skill, skill_name, from_scope, to_scope, target_role,
+			note, status, owner, creation, reviewer, decided_at, decision_note
+		FROM `tab{PROMO}`
+		WHERE {where}
+		ORDER BY creation DESC, name ASC
+		LIMIT %(page_length)s OFFSET %(start)s""",
+		params, as_dict=True,
+	)
+
+	owner_names = list({r["owner"] for r in rows if r.get("owner")})
+	fullnames = {
+		u.name: u.full_name
+		for u in (
+			frappe.get_all(
+				"User", filters={"name": ["in", owner_names]}, fields=["name", "full_name"]
+			)
+			if owner_names
+			else []
+		)
+	}
+	out_rows = [
+		{
+			"name": r["name"],
+			"skill": r.get("skill") or "",
+			"skill_name": r.get("skill_name") or "",
+			"from_scope": r.get("from_scope") or "",
+			"to_scope": r.get("to_scope") or "",
+			"target_role": r.get("target_role") or "",
+			"note": r.get("note") or "",
+			"status": r.get("status") or "",
+			"requested_by": r.get("owner") or "",
+			"requested_by_name": fullnames.get(r.get("owner")) or (r.get("owner") or ""),
+			"created": str(r.get("creation") or ""),
+			"reviewer": r.get("reviewer") or "",
+			"decided_at": str(r.get("decided_at") or ""),
+			"decision_note": r.get("decision_note") or "",
+		}
+		for r in rows
+	]
+	return {
+		"rows": out_rows,
+		"total": total,
+		"has_more": start + len(out_rows) < total,
+		"start": start,
+		"page_length": pl,
+	}
 
 
 # --------------------------------------------------------------------------- #

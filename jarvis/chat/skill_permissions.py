@@ -91,11 +91,19 @@ def has_skill_permission(doc, ptype: str = "read", user: str | None = None) -> b
 		return True
 	if ptype == "create":
 		return True
-	if ptype in _READ_PTYPES:
+	if ptype in _READ_PTYPES or ptype is None:
+		# ptype is None when Frappe builds the FULL perm dict (get_doc_permissions);
+		# resolve it as read-visibility so a visible skill isn't wrongly denied to a
+		# non-owner (the actual write/delete op re-checks with an explicit ptype).
 		from jarvis.jarvis.doctype.jarvis_custom_skill.jarvis_custom_skill import (
 			user_can_use_skill,
 		)
 
 		return user_can_use_skill(doc, user)
-	# write / delete / submit / cancel / amend: owner only.
+	# write / delete / submit / cancel / amend: owner only. This branch MUST return
+	# a bool (never frappe.throw) — get_doc_permissions calls this hook for every
+	# ptype while building a doc's perm dict, so a throw here would break plain
+	# reads. The clear user-facing "you can only edit your own skills" message is
+	# raised by the SPA write endpoints (custom_skills_api._require_skill_owner);
+	# generic REST writes fall back to Frappe's "does not have access" message.
 	return (doc.get("owner") or "") == user

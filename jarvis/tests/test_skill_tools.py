@@ -99,7 +99,7 @@ def _sweep_fixture_skills():
 
 def _make_skill(owner: str, skill_name: str, description: str, *,
 				scope: str = "Org", shared_with=None, allowed_roles=None,
-				enabled: int = 1):
+				target_role=None, enabled: int = 1):
 	"""Insert a row through the real doctype as ``owner`` (child tables can't
 	be passed through the tool). The engine flag lets the fixture mint a
 	Role/Org row directly (the reviewer-gated creation path is tested elsewhere)."""
@@ -110,6 +110,7 @@ def _make_skill(owner: str, skill_name: str, description: str, *,
 			"description": description,
 			"instructions": f"instructions for {skill_name}",
 			"scope": scope,
+			"target_role": target_role,
 			"enabled": enabled,
 			"user_invocable": 1,
 			"shared_with": [{"user": u} for u in (shared_with or [])],
@@ -256,6 +257,33 @@ class TestGetSkill(SkillToolsTestCase):
 		with _as(PEER):
 			with self.assertRaises(PermissionDeniedError):
 				get_skill(f"{PFX}-role-only")
+
+	def test_role_scope_visible_to_target_role_holder(self):
+		# TASK 13 fix C: a scope=Role skill whose target_role the caller holds is
+		# findable + fetchable through the tools (the tool SELECTs must carry
+		# target_role, else the whole User->Role promotion tier is dead). PEER
+		# holds "Sales User".
+		_make_skill(
+			OWNER, f"{PFX}-role-tier", "sttool role tier steps",
+			scope="Role", target_role="Sales User",
+		)
+		with _as(PEER):
+			names = [s["skill_name"] for s in find_skills("role tier")["skills"]]
+			self.assertIn(f"{PFX}-role-tier", names)
+			got = get_skill(f"{PFX}-role-tier")
+			self.assertEqual(got["scope"], "Role")
+			self.assertEqual(got["instructions"], f"instructions for {PFX}-role-tier")
+
+	def test_role_scope_denied_to_non_target_role_holder(self):
+		# A Role skill targeting a role the caller does NOT hold is invisible.
+		_make_skill(
+			OWNER, f"{PFX}-role-tier-x", "sttool role tier x steps",
+			scope="Role", target_role="Accounts Manager",
+		)
+		with _as(PEER):  # PEER holds Sales User, not Accounts Manager
+			self.assertEqual(find_skills("role tier x")["count"], 0)
+			with self.assertRaises(PermissionDeniedError):
+				get_skill(f"{PFX}-role-tier-x")
 
 	def test_own_row_preferred_over_same_named_foreign_row(self):
 		# skill_name is unique per owner, not globally.

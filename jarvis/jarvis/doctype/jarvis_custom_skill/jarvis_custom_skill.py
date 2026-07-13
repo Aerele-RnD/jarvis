@@ -237,9 +237,17 @@ class JarvisCustomSkill(Document):
 			return
 		if self._scope_change_authorized():
 			return
+		# Owner-initiated NARROWING (strictly fewer viewers down the User<Role<Org
+		# ladder) is always safe — it reduces exposure — so the owner may
+		# self-demote without a reviewer (e.g. un-publish an Org skill back to
+		# private). WIDENING and lateral Role re-targeting stay reviewer-gated.
+		rank = {"User": 0, "Role": 1, "Org": 2}
+		is_owner = (self.owner or "") == frappe.session.user
+		if is_owner and rank.get(self.scope, 2) < rank.get(prev_scope, 2):
+			return
 		frappe.throw(
-			_("Only a reviewer can change the scope or audience of an existing "
-			  "skill. Request a promotion instead."),
+			_("Only a reviewer can widen the scope or change the audience of an "
+			  "existing skill. Request a promotion instead."),
 			frappe.PermissionError,
 		)
 

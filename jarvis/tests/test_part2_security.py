@@ -175,6 +175,27 @@ class TestScopeCreationGuard(Part2Base):
 		self.assertEqual(out["scope"], "User")
 		self.assertEqual(frappe.db.get_value(SKILL, out["name"], "scope"), "User")
 
+	def test_owner_can_narrow_own_scope(self):
+		# TASK E2: narrowing (Org->User) reduces visibility, so the owner may
+		# self-demote without a reviewer; only widening stays reviewer-gated.
+		skill = _mk_skill(USER_A, f"{PFX}-narrow", scope="Org")
+		with _as(USER_A):
+			doc = frappe.get_doc(SKILL, skill.name)
+			doc.scope = "User"
+			doc.save()
+		self.assertEqual(frappe.db.get_value(SKILL, skill.name, "scope"), "User")
+
+	def test_non_owner_update_gets_clear_message(self):
+		# TASK E1: a non-owner write is denied with a CLEAR message (not an
+		# empty-string PermissionError).
+		from jarvis.chat import custom_skills_api
+
+		skill = _mk_skill(USER_B, f"{PFX}-e1", scope="Org")
+		with _as(USER_A):
+			with self.assertRaises(frappe.PermissionError) as ctx:
+				custom_skills_api.update_custom_skill(name=skill.name, description="hax")
+		self.assertIn("your own skills", str(ctx.exception))
+
 
 class TestSkillOrmHook(Part2Base):
 	"""TASK 13: generic-REST (get_list) returns the SAME visibility set as the
@@ -282,6 +303,27 @@ class TestSkillPromotionWorkflow(Part2Base):
 		with _as(USER_B):
 			with self.assertRaises(frappe.PermissionError):
 				custom_skills_api.decide_skill_promotion(req["request"], 1)
+
+	def test_reviewer_discovers_pending_requests(self):
+		# TASK D: a reviewer-only user must be able to SEE pending requests (the
+		# doctype perms are owner-scoped, so a reviewer needs the gated list
+		# endpoint to discover a JSPR they didn't create).
+		from jarvis.chat import custom_skills_api
+
+		skill = _mk_skill(USER_A, f"{PFX}-discover", scope="User")
+		with _as(USER_A):
+			req = custom_skills_api.request_skill_promotion(skill.name, "Org")
+		with _as(REVIEWER):
+			res = custom_skills_api.list_skill_promotion_requests(status="Pending")
+		names = [r["name"] for r in res["rows"]]
+		self.assertIn(req["request"], names)
+		row = next(r for r in res["rows"] if r["name"] == req["request"])
+		self.assertEqual(row["requested_by"], USER_A)
+		self.assertEqual(row["to_scope"], "Org")
+		# A plain (non-reviewer) user cannot list the queue.
+		with _as(USER_B):
+			with self.assertRaises(frappe.PermissionError):
+				custom_skills_api.list_skill_promotion_requests()
 
 
 class TestWikiPromotionRequestLeak(Part2Base):
