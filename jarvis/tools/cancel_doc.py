@@ -1,4 +1,4 @@
-"""Cancel a submitted Frappe document.
+"""Cancel a submitted Frappe document - one, or a whole batch.
 
 Inverse of submit. Moves docstatus 1 → 2 and fires the DocType's
 ``on_cancel`` hooks. In ERPNext that typically creates **reversal
@@ -10,20 +10,23 @@ entries** rather than deleting anything:
 - Sales/Purchase Order cancel → releases reserved stock
 
 A cancelled document keeps its row + history. To "undo a cancel" the
-business workflow is **amend**: Frappe creates a new Draft copy with the
-same data so it can be edited and re-submitted. Amend is a separate tool
-(not yet built).
+business workflow is **amend**.
 
-Safety bounds:
+Two shapes:
+
+- **Single:** ``cancel_doc(doctype, name)`` -> the cancelled doc as a dict.
+- **Batch:** ``cancel_doc(doctype, names=[...])`` -> a lean
+  ``{"doctype","cancelled":[name,...],"count":N}``, every cancel in ONE atomic
+  savepoint (a single confirmation card; all-or-nothing).
+
+Safety bounds (per doc):
 
 - DocType must be submittable.
+- A workflow that models a cancel path is refused (advance via the workflow).
 - Calling user must have ``cancel`` permission on the record.
-- Doc must be in Submitted state (``docstatus == 1``). Draft (0) and
-  already-Cancelled (2) are refused with clear errors.
-- ``doc.cancel()`` runs ``on_cancel`` hooks, which may themselves fail
-  (e.g., trying to cancel an invoice that's already partly paid raises a
-  Frappe ValidationError); those propagate unchanged so the agent surfaces
-  the real reason.
+- Doc must be in Submitted state (``docstatus == 1``).
+- ``doc.cancel()`` runs ``on_cancel`` hooks, which may themselves fail; those
+  propagate unchanged so the agent surfaces the real reason.
 """
 
 import frappe
@@ -31,23 +34,12 @@ from frappe.model.workflow import can_cancel_document, get_workflow_name
 
 from jarvis.exceptions import InvalidArgumentError, PermissionDeniedError
 from jarvis.tools import require_doctype_and_name
+from jarvis.tools._bulk import run_atomic_batch
 
 
-def cancel_doc(doctype: str, name: str) -> dict:
-    """Cancel a Submitted document.
-
-    Returns the cancelled document as a dict (with ``docstatus: 2``).
-    Raises:
-      - InvalidArgumentError on empty args, non-submittable DocType,
-        a workflow-governed DocType that models cancellation (advance via
-        apply_workflow_action), or wrong starting docstatus (Draft or
-        already Cancelled)
-      - PermissionDeniedError when the calling user lacks cancel
-      - frappe.DoesNotExistError when the record doesn't exist
-      - frappe.ValidationError from the DocType's on_cancel hook
-    """
-    require_doctype_and_name(doctype, name)
-
+def _cancel_one(doctype: str, name: str) -> "frappe.model.document.Document":
+    """Guards + cancel for ONE doc. Returns the cancelled Document. Shared by
+    the single and batch paths so the guards never drift."""
     meta = frappe.get_meta(doctype)
     if not meta.is_submittable:
         raise InvalidArgumentError(
@@ -85,5 +77,42 @@ def cancel_doc(doctype: str, name: str) -> dict:
         )
 
     doc.cancel()  # runs on_cancel hooks; sets docstatus=2
+    return doc
+
+
+def cancel_doc(doctype: str, name: str | None = None, names: list | None = None) -> dict:
+    """Cancel a Submitted document - or a whole batch when ``names`` is given.
+
+    Single: returns the cancelled document as a dict (with ``docstatus: 2``).
+    Batch: returns ``{"doctype","cancelled":[name,...],"count":N}``.
+
+    Raises:
+      - InvalidArgumentError on empty args, non-submittable DocType, a
+        workflow-governed DocType that models cancellation, or wrong docstatus
+      - PermissionDeniedError when the calling user lacks cancel
+      - frappe.DoesNotExistError when a record doesn't exist
+      - frappe.ValidationError from a DocType's on_cancel hook
+    """
+    if names is not None:
+        return _cancel_batch(doctype, names)
+
+    require_doctype_and_name(doctype, name)
+    doc = _cancel_one(doctype, name)
     doc.apply_fieldlevel_read_permissions()
     return doc.as_dict()
+
+
+def _cancel_batch(doctype: str, names: list) -> dict:
+    """Cancel every name atomically. If any fails, the whole batch rolls back
+    and nothing is cancelled (all-or-nothing)."""
+    if not doctype:
+        raise InvalidArgumentError("doctype is required")
+    if not isinstance(names, list) or not names:
+        raise InvalidArgumentError("names must be a non-empty list of document names")
+
+    def _do(name: str) -> str:
+        _cancel_one(doctype, name)
+        return name
+
+    cancelled = run_atomic_batch(names, _do, label=lambda n: n)
+    return {"doctype": doctype, "cancelled": cancelled, "count": len(cancelled)}
