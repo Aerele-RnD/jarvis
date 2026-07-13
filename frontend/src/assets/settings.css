@@ -22,7 +22,7 @@
    a one-item pane from collapsing; max-height keeps tall panes on screen -- they
    scroll inside .jv-settings-body, which needs min-height:0 (below) to do so now
    that the parent no longer has a definite height. */
-.jv-settings { width: 900px; max-width: 100%; height: auto; min-height: 420px; max-height: 88vh; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; display: flex; overflow: hidden; box-shadow: 0 0 1px rgba(0, 0, 0, .2), 0 24px 30px -8px rgba(0, 0, 0, .1); animation: jv-popin 0.1s ease-out; }
+.jv-settings { width: 1080px; max-width: 100%; height: auto; min-height: 420px; max-height: 88vh; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; display: flex; overflow: hidden; box-shadow: 0 0 1px rgba(0, 0, 0, .2), 0 24px 30px -8px rgba(0, 0, 0, .1); animation: jv-popin 0.1s ease-out; }
 @keyframes jv-popin { from { transform: scale(0.98); opacity: 0.5; } to { transform: scale(1); opacity: 1; } }
 .jv-settings-nav { width: 230px; flex: none; background: var(--surface-1); border-right: 1px solid var(--border); padding: 8px; display: flex; flex-direction: column; gap: 3px; overflow-y: auto; }
 .jv-settings-nav-title { font-size: 15px; font-weight: 600; color: var(--text); padding: 6px 8px 10px; }
@@ -243,5 +243,8 @@
    cleanly in either order; being last, these win the cascade. ===== */
 .jv-settings-overlay.jv-dark { background: rgba(0, 0, 0, 0.55); }
 /* Widened dialog + roomier grouped rail. */
-.jv-settings { width: 900px; }
+/* NOTE: this block is LAST, so it wins the cascade over the .jv-settings rule at
+   the top of the file. Any width change must be made in BOTH places or it will
+   appear to do nothing. */
+.jv-settings { width: 1080px; }
 .jv-settings-nav { width: 230px; }
