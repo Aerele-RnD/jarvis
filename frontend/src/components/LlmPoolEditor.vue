@@ -26,9 +26,8 @@
       <!-- Say plainly what this list DOES. "tried in order" alone doesn't tell a
            customer why they'd want more than one model. -->
       <p class="jv-flist-help">
-        Jarvis uses the first model that answers. If one is unavailable, rate-limited or out of
-        credit, it falls back to the next in this list automatically — so chat keeps working.
-        Reorder them with the arrows.
+        Jarvis uses the first model that answers. If one fails or hits its limit, it falls back
+        to the next automatically. Reorder them with the arrows.
       </p>
 
       <!-- Legacy DIRECT chat-subscription (flat-field OAuth, no proxy) - not
@@ -83,8 +82,8 @@
            of leaving the customer to infer it from "tried in order". -->
       <div v-if="editable && !panel.open && rows.length === 1 && !showDirectRow" class="jv-flist-hint">
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 16v-4M12 8h.01" /></svg>
-        <span><b>No backup yet.</b> With a single model, an outage or a hit rate limit stops chat.
-        Add a second — a chat subscription or an API key — and Jarvis switches over automatically.</span>
+        <span><b>No backup yet.</b> If this model fails or hits its limit, chat stops.
+        Add a second one and Jarvis switches over automatically.</span>
       </div>
 
       <!-- Master-detail config section: Add/Edit a single row, or (add-mode
