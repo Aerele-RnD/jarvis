@@ -792,14 +792,19 @@ function expandApiKeyBackups(r) {
   }))
   rows.value = [...rows.value, ...extra]
 }
-// List row's "Reconnect" shortcut: open the panel AND jump straight into the
-// sign-in flow (re-using the first account's slot if one exists) instead of
-// making the user find "+ Add account" inside the panel themselves.
+// List row's "Reconnect" shortcut: open the panel with the sign-in steps ready
+// (re-using the first account's slot if one exists) instead of making the user
+// find "+ Add account" inside the panel themselves.
+//
+// It used to call startConnect here, which fires OAuth immediately -- so Reconnect
+// hurled you at the provider's login before you saw a single instruction. Same bug
+// as "+ Connect account" had. It now opens the panel; step 1's "Open sign-in" starts
+// OAuth, inside that click (which is what keeps the popup-blocker fix working).
 function quickReconnect(i) {
   const r = rows.value[i]
   if (!r) return
   openEdit(i)
-  startConnect(r, (r.accounts && r.accounts.length) ? 0 : null)
+  openConnectPanel(r, (r.accounts && r.accounts.length) ? 0 : null)
 }
 function setPanelSource(src) {
   panel.value.source = src
