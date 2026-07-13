@@ -66,10 +66,13 @@
         </span>
       </div>
 
-      <!-- Dashed add-row rather than a small solid button: it reads as "the next
-           row goes here", fills the column, and matches the add affordances used
-           elsewhere in the product (New skill / Drop a file). -->
-      <button v-if="editable && !panel.open" @click="openAdd" class="jv-flist-add">
+      <!-- A real .jv-btn, not a dashed row: this is a LIST ACTION that opens the
+           config panel, so it belongs to the same button system as the row actions
+           (Edit / Reconnect / Remove) and Save. The dashed treatment is reserved for
+           an EMPTY SLOT the content will fill -- which is what "+ Connect account"
+           is, inside the panel, where the account itself then appears. Ghost, not
+           primary: Save configuration stays the pane's single primary action. -->
+      <button v-if="editable && !panel.open" @click="openAdd" class="jv-btn jv-btn--ghost jv-flist-addbtn">
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>
         Add a model
       </button>
@@ -1355,21 +1358,12 @@ defineExpose({ save })
   font-size: 10px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase;
 }
 
-/* Dashed "the next row goes here" affordance — same language as the New skill /
-   Drop a file rows. Full width so it anchors the list instead of floating. */
-.jv-flist-add {
-  display: flex; align-items: center; justify-content: center; gap: 7px;
-  width: 100%; margin-top: 10px; padding: 11px 12px;
-  border: 1px dashed var(--border-2); border-radius: 10px;
-  background: transparent; color: var(--text-2);
-  font-family: inherit; font-size: 13px; font-weight: 550; line-height: 1;
-  cursor: pointer;
-  transition: border-color .15s ease, background-color .15s ease, color .15s ease;
-}
-.jv-flist-add:hover:not(:disabled) { border-color: var(--text-3); background: var(--surface-1); color: var(--text); }
-.jv-flist-add:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
-.jv-flist-add svg { color: var(--text-3); flex: none; }
-.jv-flist-add:hover svg { color: var(--text); }
+/* "+ Add a model" is a .jv-btn (see the template note): only its spacing and the
+   plus glyph's tint are local. Everything else — height, radius, type, hover — comes
+   from the shared button system, so it can never drift from Edit / Remove / Save. */
+.jv-flist-addbtn { margin-top: 10px; gap: 6px; }
+.jv-flist-addbtn svg { color: var(--text-3); flex: none; }
+.jv-flist-addbtn:hover:not(:disabled) svg { color: var(--text); }
 /* Consequence-first nudge shown while the pool has no fallback. */
 .jv-flist-hint {
   display: flex; align-items: flex-start; gap: 9px;
