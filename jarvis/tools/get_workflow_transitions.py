@@ -1,4 +1,4 @@
-"""List the Workflow transitions available to the current user for a doc.
+"""List the Workflow transitions available to the current user for a doc (or a batch).
 
 Frappe DocTypes can be governed by a **Workflow** (a state machine: e.g.
 Leave Application *Applied -> Approved / Rejected*). You advance such a doc by
@@ -7,12 +7,15 @@ are available depends on the current state, the acting user's roles, each
 transition's condition, and the self-approval rule.
 
 This is the READ half of workflow support: it tells the agent (and the user)
-the doc's current state and exactly which actions THIS user may take next, so
+each doc's current state and exactly which actions THIS user may take next, so
 the agent never guesses. The WRITE half is ``apply_workflow_action``.
 
-Pure read - enforces read permission and reuses Frappe's own user-aware
-``get_transitions`` (roles + condition) plus ``has_approval_access`` (the
-self-approval rule the engine omits from ``get_transitions``).
+Batch shape (``names=[...]``) powers approval-queue triage: "which of these 20
+leave applications can I approve right now?" in one call.
+
+Pure read - enforces read permission per record and reuses Frappe's own
+user-aware ``get_transitions`` (roles + condition) plus ``has_approval_access``
+(the self-approval rule the engine omits from ``get_transitions``).
 """
 
 import frappe
@@ -26,24 +29,31 @@ from frappe.model.workflow import (
 
 from jarvis.exceptions import InvalidArgumentError, PermissionDeniedError
 from jarvis.tools import require_doctype_and_name
+from jarvis.tools._bulk import _MAX_BATCH
 
 
-def get_workflow_transitions(doctype: str, name: str) -> dict:
+def get_workflow_transitions(doctype: str, name: str | None = None, names: list | None = None) -> dict:
     """Return the current workflow state + the actions available to the caller.
 
-    Shape when the DocType has no active workflow:
+    Single shape when the DocType has no active workflow:
         {"doctype", "name", "has_workflow": False}
-
-    Shape when it does:
+    Single shape when it does:
         {"doctype", "name", "has_workflow": True, "workflow", "state_field",
          "current_state", "available_actions": [{"action", "next_state"}, ...]}
+    Batch (``names``): {"doctype", "results": [<single shape>, ...], "count"}.
 
     ``available_actions`` is filtered to what THIS user may do now (role +
-    condition + self-approval); an empty list means no forward move exists from
-    here for this user (terminal / cancelled / no-role / unset state).
+    condition + self-approval).
     """
-    require_doctype_and_name(doctype, name)
+    if names is not None:
+        return _gwt_batch(doctype, names)
 
+    require_doctype_and_name(doctype, name)
+    return _gwt_one(doctype, name)
+
+
+def _gwt_one(doctype: str, name: str) -> dict:
+    """Existence + per-record read-permission check, then the transitions."""
     if not frappe.db.exists(doctype, name):
         raise InvalidArgumentError(f"unknown {doctype}: {name}")
 
@@ -94,3 +104,16 @@ def get_workflow_transitions(doctype: str, name: str) -> dict:
         if has_approval_access(user, doc, t)
     ]
     return {**base, "current_state": current_state, "available_actions": available}
+
+
+def _gwt_batch(doctype: str, names: list) -> dict:
+    if not doctype:
+        raise InvalidArgumentError("doctype is required")
+    if not isinstance(names, list) or not names:
+        raise InvalidArgumentError("names must be a non-empty list of document names")
+    if len(names) > _MAX_BATCH:
+        raise InvalidArgumentError(f"too many names in one batch (max {_MAX_BATCH})")
+
+    # Pure read - no savepoint. Each doc gets its own read-permission check.
+    results = [_gwt_one(doctype, n) for n in names]
+    return {"doctype": doctype, "results": results, "count": len(results)}

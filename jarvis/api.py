@@ -476,6 +476,39 @@ _AUTO_APPLYABLE = frozenset({"create_doc", "update_doc"})
 # batch card is the human checkpoint against duplicate masters.
 _DRY_RUN_ON_PARK = frozenset({"create_doc", "create_docs", "update_doc"})
 
+# Batch payload keys: a call carrying a non-empty list under any of these is a
+# BULK call (many targets in one gated card), not a single-doc write.
+_BULK_ARG_KEYS = ("names", "updates", "docs", "messages")
+
+
+def _is_bulk_call(args) -> bool:
+	"""True when a tool call carries a batch payload. Used to (1) keep a bulk
+	create_doc/update_doc from auto-applying - a batch always parks behind the
+	card - and (2) route consequential bulk writes to the described-intent
+	preview instead of a sandbox dry-run that would fire on_submit / on_cancel
+	hooks N times at park."""
+	if not isinstance(args, dict):
+		return False
+	return any(isinstance(args.get(k), list) and args.get(k) for k in _BULK_ARG_KEYS)
+
+
+def _bulk_targets(args: dict) -> list:
+	"""Display names for a batch call: ``names[]`` directly, else the per-item
+	name / recipients / doctype from ``updates`` / ``messages`` / ``docs``."""
+	if isinstance(args.get("names"), list):
+		return list(args["names"])
+	for key in ("updates", "messages"):
+		items = args.get(key)
+		if isinstance(items, list):
+			return [
+				(it.get("name") or it.get("recipients") or "?")
+				for it in items if isinstance(it, dict)
+			]
+	docs = args.get("docs")
+	if isinstance(docs, list):
+		return [it.get("doctype", "?") for it in docs if isinstance(it, dict)]
+	return []
+
 
 def _as_bool(value) -> bool:
 	"""Coerce an agent-supplied flag to bool. A JSON client may send the
@@ -542,6 +575,21 @@ def _describe_call(tool: str, args: dict) -> str:
 	whose write cannot be dry-run (send_email) or whose preview was
 	unavailable. No secrets: only structural fields are surfaced."""
 	a = args if isinstance(args, dict) else {}
+	if _is_bulk_call(a):
+		# Batch card: verb + count + doctype/action + a few targets, so a parked
+		# "cancel_doc count=6 doctype=Purchase Order ..." reads clearly (and the
+		# reload-resync path via list_pending_confirmations shows the same).
+		targets = _bulk_targets(a)
+		parts = [tool, f"count={len(targets)}"]
+		for key in ("doctype", "action"):
+			if a.get(key):
+				parts.append(f"{key}={a[key]}")
+		shown = ", ".join(str(t) for t in targets[:10])
+		if len(targets) > 10:
+			shown += f", +{len(targets) - 10} more"
+		if shown:
+			parts.append(f"targets=[{shown}]")
+		return " ".join(str(p) for p in parts)
 	parts = [tool]
 	for key in ("doctype", "name", "docname", "target_doctype", "target_name",
 				"method", "action", "recipients", "to", "subject"):
@@ -570,7 +618,15 @@ def _pending_preview(tool: str, args: dict) -> dict:
 	# be returned to the model. Route it to the described-intent path (like
 	# send_email) so parking a run_method never executes it - the real call
 	# runs only on confirm.
-	if tool not in _PREVIEWABLE or tool == "run_method":
+	# A BULK submit/cancel/delete/amend routes to described-intent: sandbox-
+	# running the batch would fire on_submit / on_cancel hooks - incl. non-
+	# rollback-able inline side effects (e-invoice / webhook HTTP) - once per doc,
+	# N times, at PARK. Bulk create/update/create_docs stay SANDBOXED even here
+	# (the resync path reaches _pending_preview directly, bypassing the
+	# _DRY_RUN_ON_PARK branch): they are _DRY_RUN_ON_PARK - rolled back, no
+	# consequential hooks - so exclude them from the bulk described routing.
+	if (tool not in _PREVIEWABLE or tool == "run_method"
+			or (_is_bulk_call(args) and tool not in _DRY_RUN_ON_PARK)):
 		return described
 	try:
 		return _run_preview(tool, args)
@@ -803,7 +859,8 @@ def _run_tool(tool: str, raw_args: dict | str | None,
 	# its own preview via _pending_preview - the model never needs (nor is
 	# allowed) preview=True on a gated write.
 	if (isinstance(args, dict) and _as_bool(args.get("preview"))
-			and tool not in _GATED_WRITES):
+			and tool not in _GATED_WRITES
+			and not (is_write and _is_bulk_call(args))):
 		if tool not in _PREVIEWABLE:
 			return _error("InvalidArgumentError",
 						  f"preview is not supported for {tool}")
@@ -822,7 +879,12 @@ def _run_tool(tool: str, raw_args: dict | str | None,
 	# then run the stored call via ``dispatch_confirmed``. CRITICAL: the token
 	# is stored, not returned - the model must not see it. It is delivered to
 	# the UI out-of-band below, over the realtime channel (Task 3).
-	if tool in _GATED_WRITES:
+	# A BULK write ALWAYS gates - even a normally-ungated light write (add_tag /
+	# add_comment / follow / unshare / unassign): a 20-record mass mutation is a
+	# batch the human should confirm, and the plugin/persona promise exactly one
+	# card for it. Non-_PREVIEWABLE bulk writes get a described-intent card via
+	# _pending_preview (no sandbox); single calls to these tools are unchanged.
+	if tool in _GATED_WRITES or (is_write and _is_bulk_call(args)):
 		from jarvis.chat import events, pending_confirm
 
 		# preview=True on a gated write is a category error (issue #186, #14):
@@ -867,7 +929,10 @@ def _run_tool(tool: str, raw_args: dict | str | None,
 		# owner comparison against owner_user (itself read from this same conv
 		# a few lines up) would just be comparing one DB read to another read of
 		# the identical field, not a real access-control boundary.
-		if conv and tool in _AUTO_APPLYABLE:
+		# A bulk create/update (docs[] / updates[]) NEVER fast-paths - the batch
+		# card is the human checkpoint against a 20-doc mistake; only a single
+		# reversible create/update may auto-apply.
+		if conv and tool in _AUTO_APPLYABLE and not _is_bulk_call(args):
 			# Two direct-apply paths for reversible create/update (destructive
 			# tools above are excluded and always park): admin-enabled
 			# auto_apply, OR a File Box conversation - an unattended directed
