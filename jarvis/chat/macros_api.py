@@ -247,6 +247,7 @@ def list_macros_page(
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def get_macro(name: str) -> dict:
 	"""One macro incl. its ordered steps (owner-gated)."""
 	doc = frappe.get_doc(MACRO, name)
@@ -316,6 +317,7 @@ def create_macro(
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def update_macro(
 	name: str,
 	macro_name: str | None = None,
@@ -364,6 +366,7 @@ def update_macro(
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def delete_macro(name: str) -> dict:
 	"""Delete a macro row (owner-gated). Its Macro Run history rows link the
 	macro and would block the delete (LinkExistsError), so they go first — they
@@ -434,6 +437,7 @@ def stop_macro_run(run: str) -> dict:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def get_macro_run(run: str) -> dict:
 	"""Current state of a run (for polling as a socketio fallback)."""
 	doc = frappe.get_doc(RUN, run)
@@ -564,6 +568,7 @@ def _own_conversation(conversation: str) -> None:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def summarize_macro(name: str) -> dict:
 	"""Kick off the merge: throwaway archived conversation + one agent turn
 	that invokes /macro-merge over the macro's steps. Returns the conversation
@@ -636,6 +641,7 @@ def get_macro_merge(conversation: str) -> dict:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def apply_macro_merge(name: str, merged_prompt: str, conversation: str = "") -> dict:
 	"""Store ``merged_prompt`` (possibly user-edited) on the macro. The step
 	sequence STAYS as the editable source of truth — but when a merged prompt
@@ -660,6 +666,7 @@ def apply_macro_merge(name: str, merged_prompt: str, conversation: str = "") -> 
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def clear_macro_merge(name: str) -> dict:
 	"""Remove the stored merged prompt so the step sequence runs again."""
 	doc = frappe.get_doc(MACRO, name)

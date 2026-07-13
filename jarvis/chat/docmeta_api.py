@@ -36,7 +36,7 @@ from __future__ import annotations
 import json
 
 import frappe
-from jarvis.permissions import require_jarvis_user
+from jarvis.permissions import has_jarvis_access, require_jarvis_user
 from frappe import _
 from frappe.desk.form import assign_to as _assign_to
 from frappe.share import add_docshare
@@ -217,12 +217,19 @@ def _open_todo_exists(doctype: str, name: str, user: str) -> bool:
 
 
 def _validate_target_user(user: str) -> str:
-	"""Assign/share target must be a real, enabled, non-Guest user."""
+	"""Assign/share target must be a real, enabled, non-Guest user WHO CAN REACH
+	JARVIS. TASK 27 (TAG-01): a share/assign grants a DocShare-read that Part-1's
+	approval scoping honors as visibility, so the target must be confined to the
+	Jarvis population — otherwise a Website/portal (or any non-Jarvis) user could
+	be handed visibility into a Jarvis Approval Request / Macro / Agent
+	Installation they must never reach."""
 	user = (user or "").strip()
 	if not user or user == "Guest":
 		frappe.throw(_("Invalid user."))
 	if not frappe.db.get_value("User", user, "enabled"):
 		frappe.throw(_("Invalid user."))
+	if not has_jarvis_access(user):
+		frappe.throw(_("You can only share or assign to Jarvis users."))
 	return user
 
 
@@ -258,6 +265,28 @@ def get_docmeta(doctype: str, name: str) -> dict:
 # --------------------------------------------------------------------------- #
 # comments (direct inserts/updates AFTER the gate — §14 DA-03)
 # --------------------------------------------------------------------------- #
+def _strip_mention_spans(content: str) -> str:
+	"""TASK 28 (TAG-02): neutralize @mention markup before insert.
+	``Comment.after_insert`` -> ``notify_mentions`` emails/notifies every
+	``class="mention"`` target of the comment (and thus the doc's title). On these
+	Jarvis boards a DocShare-tagged NON-owner could otherwise forge a mention and
+	leak a sensitive approval title ("SECRET payroll approve $840k") to an
+	arbitrary third party. Access to these docs is granted via ``toggle_share``,
+	never via @mention, so mention-NOTIFY is not a needed feature here — unwrap
+	each mention element to its plain text so the comment still reads naturally
+	(e.g. "@Carol") but triggers no notification."""
+	if not content or "mention" not in content:
+		return content
+	from bs4 import BeautifulSoup
+
+	soup = BeautifulSoup(content, "html.parser")
+	changed = False
+	for el in soup.find_all(class_="mention"):
+		el.unwrap()
+		changed = True
+	return str(soup) if changed else content
+
+
 @frappe.whitelist()
 @require_jarvis_user
 def add_comment(doctype: str, name: str, content: str) -> dict:
@@ -270,6 +299,7 @@ def add_comment(doctype: str, name: str, content: str) -> dict:
 	content = (content or "").strip()
 	if not content:
 		frappe.throw(_("Comment is empty."))
+	content = _strip_mention_spans(content)
 	comment = frappe.get_doc({
 		"doctype": "Comment",
 		"comment_type": "Comment",

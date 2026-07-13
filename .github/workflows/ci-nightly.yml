@@ -104,6 +104,10 @@ jobs:
             --admin-password admin
           bench --site test_site install-app erpnext hrms jarvis
           bench --site test_site set-config allow_tests true
+          # Full suite creates far more than Frappe's default 60-users/60-min limit
+          # (throttle_user_creation); raise it so no mid-suite fixture insert hits
+          # "Throttled". -p stores an INT (a string limit breaks the count>limit compare).
+          bench --site test_site set-config -p throttle_user_limit 100000
 
       - name: Run tests + coverage
         working-directory: frappe-bench

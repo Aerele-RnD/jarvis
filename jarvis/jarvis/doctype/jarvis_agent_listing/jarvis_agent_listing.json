@@ -99,7 +99,8 @@
    "fieldname": "skill_bundle",
    "fieldtype": "Long Text",
    "label": "Skill Bundle (JSON)",
-   "description": "JSON list of {path, body} SKILL.md payloads pushed to the container on Apply."
+   "permlevel": 1,
+   "description": "JSON list of {path, body} SKILL.md payloads pushed to the container on Apply. permlevel 1 (SM-only; PART 3 TASK 33): the proprietary agent rule-pack is vendor IP, so a normal Jarvis User cannot read it via generic REST / get_agent. The catalog seed writes it via ignore_permissions and the engine reads it via get_doc (both bypass permlevel)."
   },
   {
    "fieldname": "default_schedule",
@@ -144,7 +145,13 @@
   },
   {
    "read": 1,
-   "role": "All"
+   "role": "Jarvis User"
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
   }
  ],
  "sort_field": "modified",

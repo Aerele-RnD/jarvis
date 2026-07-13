@@ -339,6 +339,7 @@ def _awaiting_reply(me: str) -> list[dict]:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def get_approval(name: str) -> dict:
 	"""One approval with every field the detail page renders (DESIGN-V3 §8.3).
 
@@ -404,6 +405,7 @@ def pending_count() -> int:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def decide(name: str, decision: str, approve: int = 1) -> dict:
 	"""Record the decision and resume the linked conversation.
 
@@ -519,6 +521,7 @@ def decide(name: str, decision: str, approve: int = 1) -> dict:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def dismiss_approval(name: str) -> dict:
 	"""Clear a Pending request off the board WITHOUT acting on it — no
 	verdict, no chat resume. For requests the user simply doesn't want to
@@ -548,6 +551,7 @@ def dismiss_approval(name: str) -> dict:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def restore_approval(name: str) -> dict:
 	"""Put a Dismissed request back on the board (Pending). The undo for an
 	accidental dismiss."""
