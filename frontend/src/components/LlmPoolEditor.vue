@@ -144,24 +144,20 @@
 
         <!-- Chat-subscription source -->
         <div v-else-if="panel.source==='subscription' && panelRow">
-          <!-- Provider first, then Model: you pick the plan you own, and that decides
-               which model IDs are even valid (the datalist is keyed off upstream).
-               Account rotation is deliberately NOT exposed - it only means anything
-               once a pool has several accounts on one provider, and it defaults to
-               "sticky" in the schema, so panelRow.rotation still round-trips. -->
+          <!-- Provider is the ONLY field for a chat subscription. There is no model
+               picker: a plan grants you its model, so asking a customer to type a
+               model id was busywork and an easy way to enter an invalid one. The id
+               is derived from the provider (setCredType / onUpstreamChange), which
+               validatePool + save still require. Onboarding already worked this way;
+               the settings editor now matches it.
+               Account rotation is likewise not exposed - it only matters once one
+               provider has several accounts, and defaults to "sticky" in the schema. -->
           <div class="jv-cfg-grid" style="margin-bottom:10px;">
             <div class="jv-pool-field">
               <label class="jv-pool-lab">Provider</label>
               <select v-model="panelRow.upstream" @change="onUpstreamChange(panelRow)" :disabled="!editable" title="Provider" class="jv-cfg-inp">
                 <option v-for="o in upstreamOpts" :key="o.value" :value="o.value">{{ o.label }}</option>
               </select>
-            </div>
-            <div class="jv-pool-field">
-              <label class="jv-pool-lab">Model</label>
-              <input v-model="panelRow.model" list="jv-cfg-subdl" :disabled="!editable" placeholder="Model ID (e.g. gpt-5.5)" class="jv-cfg-inp" />
-              <datalist id="jv-cfg-subdl">
-                <option v-for="s in (SUB_MODEL_SUGGESTIONS[panelRow.upstream] || [])" :key="s" :value="s"></option>
-              </datalist>
             </div>
           </div>
 
@@ -455,7 +451,7 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue"
 import * as api from "@/api"
 import {
   deriveMode, reorder, presetToModels, missingVendorKeys, validatePool,
-  PROVIDER_LABELS, providerLabel, providerId, seedRowsFromConfig, defaultSubscriptionModel, SUB_MODEL_SUGGESTIONS,
+  PROVIDER_LABELS, providerLabel, providerId, seedRowsFromConfig, defaultSubscriptionModel,
 } from "@/llm/pool"
 import { errMessage as _err } from "@/lib/errors"
 import JvCombo from "@/components/JvCombo.vue"
@@ -519,11 +515,9 @@ const credTypes = [
   { value: "subscription", label: "Chat subscription", desc: "Sign in with your ChatGPT or Gemini plan" },
   { value: "api_key", label: "API key", desc: "Bring your own key from OpenAI, Anthropic and more" },
 ]
-const rotationOpts = [
-  { value: "sticky", label: "Sticky" },
-  { value: "round_robin", label: "Round robin" },
-  { value: "least_used", label: "Least used" },
-]
+// (rotationOpts removed with the Account-rotation select. The VALUE still ships:
+// newRow()/setCredType seed rotation:"sticky", matching the schema default. Restore
+// this list if the control ever comes back.)
 const upstreamOpts = [
   { value: "openai", label: "OpenAI" },
   { value: "google", label: "Google Gemini" },
@@ -827,9 +821,12 @@ function setCredType(m, type) {
     if (!m.upstream) m.upstream = "openai"
     if (!Array.isArray(m.accounts)) m.accounts = []
     if (!m._connect) m._connect = blankConnect()
-    // Onboarding hides the model field - default it from the chosen provider so
-    // validatePool + save still have a model id.
-    if (singleMode.value) m.model = defaultSubscriptionModel(m.upstream)
+    // The model field is hidden for chat subscriptions in BOTH editors now (a plan
+    // grants its model; typing a model id was busywork and an easy way to enter an
+    // invalid one). validatePool + save still REQUIRE a model id, so derive it from
+    // the chosen provider. Dropping this would make every subscription save fail
+    // validation with "model is required".
+    m.model = defaultSubscriptionModel(m.upstream)
   } else if (singleMode.value) {
     // Toggling back to API key in the simplified editor: drop the subscription
     // model id (hidden while on the subscription tab) so it doesn't linger under
@@ -847,11 +844,14 @@ function onProviderChange(m) {
 // provider-specific - otherwise we'd save a model bound to the wrong provider's
 // OAuth credential. A no-op elsewhere (full editor manages model/accounts itself).
 function onUpstreamChange(m) {
-  if (singleMode.value && m.credentialType === "subscription") {
-    m.model = defaultSubscriptionModel(m.upstream)
-    m.accounts = []
-    m._connect = blankConnect()
-  }
+  if (m.credentialType !== "subscription") return
+  // Was gated on singleMode; the settings editor now hides the model field too, so
+  // it needs the same derivation. Changing provider must also clear the accounts:
+  // an OAuth account is authorized against ONE provider, so keeping OpenAI accounts
+  // on a row switched to Anthropic would ship a pool whose credentials can't serve it.
+  m.model = defaultSubscriptionModel(m.upstream)
+  m.accounts = []
+  m._connect = blankConnect()
 }
 function move(i, d) { rows.value = reorder(rows.value, i, i + d) }
 function remove(i) { rows.value = rows.value.filter((_, j) => j !== i) }
