@@ -307,6 +307,39 @@ class TestApprovalForgery(Part3Base):
 			with self.assertRaises(frappe.PermissionError):
 				doc._guard_decided_fields()
 
+	def test_owner_can_read_but_not_write_decided_fields(self):
+		# FIX 2: permlevel-1 on the decided fields closed WRITE (forgery) but also
+		# stripped READ via the perm-checked frappe.client.get path for a non-SM
+		# owner. A permlevel-1 READ-only Jarvis User row restores read WITHOUT
+		# reopening write or row-level scoping.
+		conv = _mk_conv(USER_A)
+		appr = _mk_approval(USER_A, conversation=conv, status="Pending")
+		# Server stamp (raw set_value, exactly like decide()'s SQL — bypasses
+		# permlevel), then the owner reads it back through the perm-checked door.
+		frappe.db.set_value(APPROVAL, appr.name, {
+			"status": "Approved", "decision": "ok", "decided_by": USER_A,
+		}, update_modified=False)
+		frappe.db.commit()
+
+		# (c) owner CAN now read status/decision/decided_by via client.get.
+		with _as(USER_A):
+			got = frappe.client.get(APPROVAL, appr.name)
+		self.assertEqual(got.get("status"), "Approved")
+		self.assertEqual(got.get("decision"), "ok")
+		self.assertEqual(got.get("decided_by"), USER_A)
+
+		# (b) owner still CANNOT write the decided fields (permlevel-1 write is
+		# SM-only): the set_value is stripped, status stays Approved.
+		with _as(USER_A):
+			frappe.client.set_value(APPROVAL, appr.name, "status", "Rejected")
+		self.assertEqual(frappe.db.get_value(APPROVAL, appr.name, "status"), "Approved")
+
+		# (a) a non-owner still cannot read the row at all (row-level scoping via
+		# has_approval_permission is unaffected by the permlevel READ grant).
+		with _as(USER_B):
+			with self.assertRaises(frappe.PermissionError):
+				frappe.client.get(APPROVAL, appr.name)
+
 	def test_real_decide_stamps_fields(self):
 		conv = _mk_conv(USER_A)
 		appr = _mk_approval(USER_A, conversation=conv)

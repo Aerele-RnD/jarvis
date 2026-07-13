@@ -1020,6 +1020,25 @@ def get_agents_sync_status() -> dict:
 
 
 @frappe.whitelist()
+@require_jarvis_user
+def get_agents_caps() -> dict:
+	"""Lightweight capability probe for the Agents SPA (PART 3 remediation).
+
+	``review`` is the skill-reviewer set (Jarvis Skill Reviewer / Jarvis Admin /
+	System Manager) — exactly what ``apply_agents`` requires — so it drives the
+	Apply-catalog button's visibility, decoupled from the SM-only cross-owner
+	``get_agent_admin_overview``. ``admin`` stays the System-Manager gate for the
+	admin-only roles editor / cross-owner data. Any Jarvis User may call this and
+	simply gets ``{review: False, admin: False}`` (no button)."""
+	from jarvis.permissions import is_skill_reviewer
+
+	return {
+		"review": bool(is_skill_reviewer()),
+		"admin": "System Manager" in frappe.get_roles(frappe.session.user),
+	}
+
+
+@frappe.whitelist()
 def apply_agents() -> dict:
 	"""Push all ENABLED installed agent bundles to the container (one restart).
 	Explicit action. Builds the payload synchronously (surfaces size/cap errors

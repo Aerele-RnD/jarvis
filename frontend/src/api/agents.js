@@ -17,6 +17,13 @@ export const getAgent = (agent_slug) =>
 // fetchFn that maps its ({search, filters, sort_field, ...}) call onto these.
 const AG = "jarvis.chat.agents_api."
 
+// PART 3 remediation — lightweight capability probe. `review` (skill-reviewer
+// set: Jarvis Skill Reviewer | Jarvis Admin | System Manager) is what
+// apply_agents() actually requires, so it drives the Apply-catalog button —
+// decoupled from the SM-only get_agent_admin_overview cross-owner admin data.
+// -> { review: 0|1, admin: 0|1 }
+export const getAgentsCaps = () => call(AG + "get_agents_caps")
+
 // tab: featured|available|installed · sort: installs|updated|name
 export const listAgentsPage = (p = {}) =>
 	call(AG + "list_agents_page", {
