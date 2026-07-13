@@ -42,6 +42,7 @@ _GATE_DECORATOR = "require_jarvis_user"
 _GUARD_CALL_SUBSTRS = (
 	"require_jarvis_access",
 	"require_jarvis_user",
+	"require_skill_reviewer",  # PART 2 TASK 12: skill-reviewer/admin gate (org-wide apply)
 	"_require_system_user",
 	"only_for",  # frappe.only_for(...) — an SM/role gate, stricter than Jarvis User
 	"_guard",  # learned_api._guard / _admin_guard (reviewer/admin role gate)

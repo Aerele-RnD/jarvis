@@ -46,6 +46,20 @@ def _as(user: str):
 		frappe.set_user(orig)
 
 
+@contextlib.contextmanager
+def _engine_flag():
+	"""Bypass the scope-creation guard (security review PART 2 TASK 10) for a
+	fixture that needs a pre-existing Role/Org skill owned by a NON-reviewer —
+	the creation guard itself is covered by TestCreateCustomSkill; these tests
+	exercise the VISIBILITY of already-scoped rows."""
+	prev = frappe.flags.jarvis_pattern_engine
+	frappe.flags.jarvis_pattern_engine = True
+	try:
+		yield
+	finally:
+		frappe.flags.jarvis_pattern_engine = prev
+
+
 def _ensure_system_user(email: str) -> str:
 	"""A non-SM System User (realistic tool caller)."""
 	if not frappe.db.exists("User", email):
@@ -87,8 +101,9 @@ def _make_skill(owner: str, skill_name: str, description: str, *,
 				scope: str = "Org", shared_with=None, allowed_roles=None,
 				enabled: int = 1):
 	"""Insert a row through the real doctype as ``owner`` (child tables can't
-	be passed through the tool)."""
-	with _as(owner):
+	be passed through the tool). The engine flag lets the fixture mint a
+	Role/Org row directly (the reviewer-gated creation path is tested elsewhere)."""
+	with _as(owner), _engine_flag():
 		doc = frappe.get_doc({
 			"doctype": SKILL,
 			"skill_name": skill_name,
@@ -100,7 +115,7 @@ def _make_skill(owner: str, skill_name: str, description: str, *,
 			"shared_with": [{"user": u} for u in (shared_with or [])],
 			"allowed_roles": [{"role": r} for r in (allowed_roles or [])],
 		})
-		doc.insert()
+		doc.insert(ignore_permissions=True)
 	return doc
 
 
@@ -142,7 +157,9 @@ class TestFindSkills(SkillToolsTestCase):
 			mine = find_skills("marker alpha")
 			self.assertEqual(
 				[s["skill_name"] for s in mine["skills"]], [f"{PFX}-priv-alpha"])
-			self.assertEqual(mine["skills"][0]["scope"], "Personal")
+			# The tool now creates private (User-scope) skills — the ladder's
+			# rename of "Personal" (security review PART 2 TASK 10).
+			self.assertEqual(mine["skills"][0]["scope"], "User")
 		with _as(PEER):
 			theirs = find_skills("marker alpha")
 			self.assertEqual(theirs["count"], 0)
@@ -213,7 +230,7 @@ class TestGetSkill(SkillToolsTestCase):
 				out = get_skill(query_name)
 				self.assertEqual(out["skill_name"], f"{PFX}-fetch-me")
 				self.assertEqual(out["instructions"], "fetch body")
-				self.assertEqual(out["scope"], "Personal")
+				self.assertEqual(out["scope"], "User")
 				self.assertEqual(out["enabled"], 1)
 
 	def test_unknown_skill_is_invalid_argument(self):
@@ -250,55 +267,41 @@ class TestGetSkill(SkillToolsTestCase):
 
 
 class TestCreateCustomSkill(SkillToolsTestCase):
-	def test_creates_personal_by_default_with_note(self):
+	def test_creates_private_by_default_with_note(self):
 		with _as(OWNER):
 			out = create_custom_skill(
 				f"{PFX}-mk-default", "sttool mk desc", "mk body")
-		self.assertEqual(out["scope"], "Personal")
+		self.assertEqual(out["scope"], "User")
 		self.assertEqual(out["skill_name"], f"{PFX}-mk-default")
 		self.assertIn("note", out)
 		row = frappe.db.get_value(
 			SKILL, out["name"], ["owner", "scope", "enabled"], as_dict=True)
 		self.assertEqual(row.owner, OWNER)
-		self.assertEqual(row.scope, "Personal")
+		self.assertEqual(row.scope, "User")
 		self.assertEqual(int(row.enabled), 1)
 
-	def test_org_scope_note_mentions_apply(self):
+	def test_org_scope_request_is_capped_to_user(self):
+		# Security review PART 2 TASK 10: the tool no longer mints a bench-wide
+		# (Org) skill in one agent call. A scope="Org" request is honored as a
+		# PRIVATE skill and the note explains promotion is reviewer-gated.
 		with _as(OWNER):
 			out = create_custom_skill(
 				f"{PFX}-mk-org", "sttool mk org desc", "mk org body", scope="Org")
-		self.assertEqual(out["scope"], "Org")
-		self.assertIn("Apply", out["note"])
+		self.assertEqual(out["scope"], "User")
+		self.assertIn("reviewer", out["note"].lower())
+		# The capped skill is private: a peer cannot see it via find_skills.
+		with _as(PEER):
+			found = find_skills("mk org desc")
+			self.assertNotIn(
+				f"{PFX}-mk-org", [s["skill_name"] for s in found["skills"]])
 
-	def test_org_scope_note_matches_actual_find_skills_visibility(self):
-		# F19: the note used to say Org skills "reach the assistant's skill
-		# catalog only after an admin clicks Apply" - factually false, since
-		# find_skills/get_skill already surface an Org row to every user right
-		# away (see TestFindSkills.test_org_row_visible_to_everyone below).
-		# There is no per-row 'applied'/'reviewed' flag anywhere in the
-		# doctype or the Apply flow (chat/custom_skills.py build_push_payload)
-		# to gate that discovery path on, so the note is corrected instead of
-		# inventing a gate. Lock the corrected wording + matching behavior
-		# together so they can't silently drift apart again.
+	def test_unknown_scope_is_capped_not_rejected(self):
+		# The scope arg is advisory (always capped to User), so an unrecognized
+		# value is not an error — it just yields a private skill.
 		with _as(OWNER):
 			out = create_custom_skill(
-				f"{PFX}-mk-org-note", "sttool mk org note desc", "mk org note body",
-				scope="Org",
-			)
-		note = out["note"]
-		self.assertIn("right away", note)
-		self.assertIn("jarvis__find_skills", note)
-		self.assertNotIn("only after an admin clicks Apply", note)
-
-		with _as(PEER):
-			found = find_skills("mk org note desc")
-			self.assertIn(f"{PFX}-mk-org-note", [s["skill_name"] for s in found["skills"]])
-
-	def test_invalid_scope_rejected(self):
-		with _as(OWNER):
-			with self.assertRaises(InvalidArgumentError):
-				create_custom_skill(
-					f"{PFX}-mk-badscope", "d", "i", scope="Team")
+				f"{PFX}-mk-badscope", "d", "i", scope="Team")
+		self.assertEqual(out["scope"], "User")
 
 	def test_slug_and_cap_violations_surface_as_jarvis_errors(self):
 		with _as(OWNER):
@@ -384,7 +387,7 @@ class TestRegistryAndClassification(SkillToolsTestCase):
 				"description": "sttool registry marker",
 				"instructions": "registry body",
 			})
-			self.assertEqual(created["scope"], "Personal")
+			self.assertEqual(created["scope"], "User")
 
 			found = dispatch("find_skills", {"query": "registry marker", "limit": 5})
 			self.assertEqual(

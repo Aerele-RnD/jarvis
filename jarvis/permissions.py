@@ -26,6 +26,35 @@ import frappe
 JARVIS_USER_ROLE = "Jarvis User"
 JARVIS_ACCESS_ROLES = ("System Manager", JARVIS_USER_ROLE)
 
+# Reviewer set authorized for org-wide skill / pattern / wiki effects (security
+# review PART 2, TASK 15 — RATIFIED). Housed in this lightweight module (no heavy
+# imports) so the Jarvis Custom Skill controller / skill_permissions can import it
+# without pulling in the learned_api import graph. Keep in sync with
+# jarvis.chat.learned_api._REVIEWER_ROLES.
+JARVIS_REVIEWER_ROLES = ("Jarvis Skill Reviewer", "Jarvis Admin", "System Manager")
+
+
+def is_skill_reviewer(user: str | None = None) -> bool:
+	"""True iff ``user`` may authorize org-wide skill effects: promote a Custom
+	Skill up the User→Role→Org scope ladder, or apply skills bench-wide.
+	``Administrator`` always passes. Defaults to the current session user."""
+	user = user or frappe.session.user
+	if user == "Administrator":
+		return True
+	return bool(set(JARVIS_REVIEWER_ROLES) & set(frappe.get_roles(user)))
+
+
+def require_skill_reviewer(user: str | None = None) -> None:
+	"""Raise ``frappe.PermissionError`` unless ``user`` is a skill reviewer
+	(Jarvis Skill Reviewer / Jarvis Admin / System Manager; Administrator
+	implicit). Whitelisted endpoints call this to gate org-wide skill effects."""
+	if not is_skill_reviewer(user):
+		frappe.throw(
+			"This action needs a Jarvis Skill Reviewer, Jarvis Admin or System "
+			"Manager role.",
+			frappe.PermissionError,
+		)
+
 
 def ensure_jarvis_user_role() -> None:
 	"""Idempotently create the ``Jarvis User`` role (desk-access). Shared by the

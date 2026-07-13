@@ -39,8 +39,10 @@ def _visible(row, user: str, user_roles: list[str]) -> bool:
         user_can_use_skill,
     )
 
-    if (row.get("scope") or "Org") == "Personal" and (row.get("owner") or "") != user:
-        return False
+    # Single visibility rule shared with the ORM hook + SPA (security review
+    # PART 2 TASK 13): owner OR shared OR scope=Org (unless role-narrowed) OR
+    # scope=Role role-match. User-scope rows are owner-only inside the helper, so
+    # the old "Personal is owner-only" special case is subsumed.
     return user_can_use_skill(row, user, user_roles)
 
 
