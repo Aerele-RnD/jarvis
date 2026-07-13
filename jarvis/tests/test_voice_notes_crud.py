@@ -16,6 +16,7 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 
 from jarvis.chat import voice_notes_api
+from jarvis.permissions import JARVIS_USER_ROLE
 
 NOTE = "Jarvis Voice Note"
 
@@ -45,6 +46,15 @@ def _ensure_user(email: str) -> str:
 	# User on the very first run — not just a stale fixture from an earlier run.
 	if frappe.db.get_value("User", email, "user_type") != "System User":
 		frappe.db.set_value("User", email, "user_type", "System User", update_modified=False)
+		frappe.clear_cache(user=email)
+	# Jarvis access is a ROLE now (chat permission hardening, #284): the voice
+	# endpoints gate on System Manager or Jarvis User, so a role-less fixture is
+	# rejected before it reaches the logic under test. These users are meant to be
+	# ordinary, non-admin Jarvis users — which is exactly the Jarvis User role — so
+	# grant it rather than escalating them to System Manager, whose broad
+	# permissions would hide the owner-scoping these tests exist to prove.
+	if JARVIS_USER_ROLE not in frappe.get_roles(email):
+		frappe.get_doc("User", email).add_roles(JARVIS_USER_ROLE)
 		frappe.clear_cache(user=email)
 	frappe.db.commit()
 	return email
