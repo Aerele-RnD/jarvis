@@ -142,8 +142,11 @@
 					</div>
 					<template v-for="(m, mi) in visibleMessages" :key="m.name">
 						<div v-if="dayDividers[mi]" class="jv-daydivider"><span>{{ dayDividers[mi] }}</span></div>
+						<!-- receipt chip: a confirmed / discarded / failed gated write, shown
+						     inline in place of the confirmation card that used to vanish -->
+						<ReceiptChip v-if="m.role === 'tool'" :message="m" />
 						<!-- user -->
-						<div v-if="m.role === 'user'" class="jv-umsg" style="display:flex;flex-direction:column;align-items:flex-end;">
+						<div v-else-if="m.role === 'user'" class="jv-umsg" style="display:flex;flex-direction:column;align-items:flex-end;">
 							<div v-if="m.content" class="jv-ububble" style="max-width:78%;min-width:0;background:var(--surface-2);border:1px solid var(--border);border-radius:14px 14px 4px 14px;padding:10px 14px;font-size:14px;line-height:1.5;color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere;">{{ m.content }}</div>
 							<div v-if="m.failed" style="display:flex;align-items:center;gap:8px;margin-top:4px;font-size:11.5px;color:var(--red);">
 								<span>Not sent</span>
@@ -479,8 +482,8 @@
 						</div>
 						<div v-if="pa.error" style="margin:0 14px 10px"><ActionError :error="pa.error" /></div>
 						<div class="jv-action-foot">
-							<button v-if="!pa.spent" class="jv-action-primary" :disabled="pa.busy || convStreaming" :title="convStreaming ? 'Waiting for the current reply to finish' : ''" @click="confirmPending(pa)">✓ Confirm</button>
-							<button class="jv-action-discard" :disabled="pa.busy" @click="discardPending(pa)">{{ pa.spent ? "Dismiss" : "Discard" }}</button>
+							<button class="jv-action-primary" :disabled="pa.busy || convStreaming" :title="convStreaming ? 'Waiting for the current reply to finish' : ''" @click="confirmPending(pa)">✓ Confirm</button>
+							<button class="jv-action-discard" :disabled="pa.busy" @click="discardPending(pa)">Discard</button>
 						</div>
 					</div>
 				</div>
@@ -835,6 +838,7 @@ import JvChart from "@/charts/JvChart.vue"
 import ConnectPhoneDialog from "@/components/ConnectPhoneDialog.vue"
 import DraftPreview from "@/components/doc/DraftPreview.vue"
 import ActionError from "@/components/ActionError.vue"
+import ReceiptChip from "@/components/ReceiptChip.vue"
 import { useShellStore } from "@/stores/shell"
 import { useJarvisTheme } from "@/theme"
 import { displayName } from "@/lib/user"
@@ -1384,6 +1388,10 @@ const currentTitle = computed(
 )
 const visibleMessages = computed(() =>
 	messages.value.filter((m) => {
+		// Receipt-chip rows (a confirmed / discarded / failed gated write) render
+		// inline in the thread; every OTHER role=tool row belongs to the collapsed
+		// Activity accordion, not the main thread.
+		if (m.role === "tool") return !!m.action_outcome
 		if (m.role !== "user" && m.role !== "assistant") return false
 		// Hide a blank streaming placeholder. The live "Working on it…" indicator
 		// below the thread already renders the assistant logo + status for the
@@ -1413,7 +1421,8 @@ const activityByAssistant = computed(() => {
 	for (const m of messages.value) {
 		if (m.role === "user") cur = null
 		else if (m.role === "assistant") { cur = m.name; if (!map[cur]) map[cur] = [] }
-		else if (m.role === "tool" && cur) (map[cur] || (map[cur] = [])).push(m)
+		// action_outcome rows are receipt chips shown inline, not accordion tool calls.
+		else if (m.role === "tool" && cur && !m.action_outcome) (map[cur] || (map[cur] = [])).push(m)
 	}
 	return map
 })
@@ -1922,10 +1931,17 @@ function linkifyDocs(html) {
 // once the user clicks, a new message lands and the card retires automatically.
 const _lastAssistant = computed(() => {
 	if (busy.value) return null
-	// visibleMessages excludes tool rows; the assistant reply has a LOWER seq than
-	// the tool calls it spawned, so the raw messages array ends on a tool message.
+	// visibleMessages now also carries receipt-chip tool rows (a confirmed /
+	// discarded / failed gated write), and a discard fires no continuation, so a
+	// chip can be the tail. Scan back past any trailing tool rows to the real
+	// last turn message before deciding which assistant owns the live card.
 	const vm = visibleMessages.value
-	const last = vm[vm.length - 1]
+	let last = null
+	for (let i = vm.length - 1; i >= 0; i--) {
+		if (vm[i].role === "tool") continue
+		last = vm[i]
+		break
+	}
 	return last && last.role === "assistant" && !last.streaming ? last : null
 })
 const activeAction = computed(() => (_lastAssistant.value ? actionOf(_lastAssistant.value) : null))
@@ -2463,7 +2479,6 @@ function enqueuePending(card) {
 		run_id: card.run_id || null,
 		busy: false,
 		error: null,
-		spent: false,
 	})
 }
 
@@ -2490,14 +2505,12 @@ async function confirmPending(pa) {
 				notify("That confirmation expired - ask Jarvis to try again.", { type: "error" })
 				return
 			}
-			// The token was consumed before dispatch, so this card is SPENT even
-			// though the tool itself failed. Show the enriched reason and retire
-			// the Confirm button (a second click could only ever "expire").
-			const card = cardById()
-			if (card) {
-				card.error = r.error || { message: "Could not run this action." }
-				card.spent = true
-			}
+			// The token was consumed and the tool failed; confirm_tool already
+			// persisted a durable "failed" receipt chip. Drop the card and reload
+			// so the chip shows in the thread instead of a lingering spent card.
+			removePending(token)
+			await loadConversation(currentId.value)
+			store.loadConversations()
 			return
 		}
 		// Success - the executed result surfaces via the turn's normal tool/stream
@@ -2513,10 +2526,25 @@ async function confirmPending(pa) {
 		if (card) card.busy = false
 	}
 }
-// Local-only dismiss: the parked token expires server-side; no backend call and
-// no model-visible message (the card is authoritative, not a chat approval).
-function discardPending(pa) {
-	removePending(pa && pa.token)
+// Dismiss: consume the token server-side (closes the 15-min replay window and
+// stops the card re-surfacing on reload), leave a durable "discarded" receipt
+// chip, and queue a note so the agent's next turn learns it was vetoed. Fires NO
+// agent turn. Best-effort: even if the call fails, the card drops locally (the
+// token TTL-expires) - only the chip would be missing.
+async function discardPending(pa) {
+	if (!pa || pa.busy) return
+	const token = pa.token
+	const conv = pa.conversation || currentId.value || ""
+	pa.busy = true
+	try {
+		await api.dismissTool(token, conv)
+	} catch (e) {
+		// Swallow - drop the card regardless (the token self-expires server-side).
+	}
+	removePending(token)
+	// Re-fetch so the durable "discarded" chip shows in the thread.
+	await loadConversation(currentId.value)
+	store.loadConversations()
 }
 
 // Resync (R3 fix for #3): re-fetch the current conversation's live parked

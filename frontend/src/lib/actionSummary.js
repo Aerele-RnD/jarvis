@@ -49,3 +49,144 @@ export function batchFromPreview(preview) {
       : [],
   }
 }
+
+// ── Post-action receipt chips ───────────────────────────────────────────────
+// A gated write, once the user clicks Confirm or Discard, is replaced by a
+// DURABLE receipt chip instead of the card vanishing. These pure helpers turn
+// the tool + args + structured result into the chip's one-liner + target links,
+// for all three outcomes (confirmed / discarded / failed), single and bulk. The
+// verb table + result shapes mirror jarvis/tools/*.py and api._describe_call.
+
+const RECEIPT_VERB = {
+  submit_doc: { past: "Submitted", present: "submit" },
+  cancel_doc: { past: "Cancelled", present: "cancel" },
+  delete_doc: { past: "Deleted", present: "delete" },
+  update_doc: { past: "Updated", present: "update" },
+  create_doc: { past: "Created", present: "create" },
+  create_docs: { past: "Created", present: "create" },
+  amend_doc: { past: "Amended", present: "amend" },
+  apply_workflow_action: { past: "Applied", present: "apply" },
+  send_email: { past: "Emailed", present: "email" },
+}
+
+function pluralize(word, n) {
+  if (n === 1 || !word) return word
+  return /[^aeiou]y$/i.test(word) ? word.slice(0, -1) + "ies" : word + "s"
+}
+
+export function docUrl(doctype, name) {
+  if (!doctype || !name) return ""
+  return `/app/${String(doctype).toLowerCase().replace(/ /g, "-")}/${encodeURIComponent(name)}`
+}
+
+// How many records the call targeted, read from the args shape (a bulk arg is a
+// non-empty list; anything else is a single call).
+function argCount(args) {
+  for (const k of ["names", "updates", "docs", "messages"]) {
+    if (Array.isArray(args[k])) return args[k].length
+  }
+  // A single send_email to several addresses: count the recipients so a
+  // discarded/failed one-email chip reads "3 recipients", not "1".
+  if (Array.isArray(args.recipients)) return args.recipients.length
+  return 1
+}
+
+// The affected record names: from the structured result for a real execution,
+// else from the args (discarded — nothing ran; or a failed write whose {ok:false}
+// envelope carried no names).
+function receiptNames(tool, args, data, outcome) {
+  if (outcome !== "discarded") {
+    for (const k of ["submitted", "cancelled", "updated", "deleted"]) {
+      if (Array.isArray(data[k])) return data[k].slice()
+    }
+    if (Array.isArray(data.created)) return data.created.map((d) => d && d.name).filter(Boolean)
+    if (Array.isArray(data.amended)) return data.amended.map((d) => d && d.name).filter(Boolean)
+    if (Array.isArray(data.results)) return data.results.map((d) => d && d.name).filter(Boolean)
+    if (Array.isArray(data.sent))
+      return data.sent.map((d) => (d && (d.recipients || d.name)) || "").filter(Boolean)
+    if (tool === "send_email" && data.recipients) return [].concat(data.recipients)
+    if (data.name) return [data.name]
+    if (outcome === "confirmed") return []
+  }
+  if (Array.isArray(args.names)) return args.names.slice()
+  if (Array.isArray(args.updates)) return args.updates.map((u) => u && u.name).filter(Boolean)
+  if (Array.isArray(args.docs)) return args.docs.map((d) => d && d.name).filter(Boolean)
+  if (Array.isArray(args.messages))
+    return args.messages.map((m) => (m && (m.recipients || m.name)) || "").filter(Boolean)
+  if (args.name) return [args.name]
+  if (args.recipients) return [].concat(args.recipients)
+  return []
+}
+
+// The render-ready receipt: { outcome, icon, tone, title, subject, doctype,
+// action, count, targets:[{name,url}], error }.
+export function receiptView(tool, args, result, outcome) {
+  args = args || {}
+  const data = (result && typeof result === "object" && result.data) || {}
+  const verb = RECEIPT_VERB[tool] || { past: "Ran", present: "run" }
+  const isEmail = tool === "send_email"
+  const names = receiptNames(tool, args, data, outcome)
+  const doctype =
+    data.doctype ||
+    args.doctype ||
+    (Array.isArray(data.created) && data.created[0] && data.created[0].doctype) ||
+    (Array.isArray(args.docs) && args.docs[0] && args.docs[0].doctype) ||
+    "record"
+  const action = args.action || data.action || ""
+  const count =
+    outcome === "confirmed" && typeof data.count === "number"
+      ? data.count
+      : outcome === "confirmed"
+        ? names.length || argCount(args)
+        : argCount(args)
+
+  // Target links (create keeps each row's own doctype; email targets have no doc).
+  let targets
+  if (Array.isArray(data.created)) {
+    targets = data.created
+      .filter((d) => d && d.name)
+      .map((d) => ({ name: d.name, url: docUrl(d.doctype || doctype, d.name) }))
+  } else if (isEmail) {
+    targets = names.map((n) => ({ name: n, url: "" }))
+  } else {
+    targets = names.map((n) => ({ name: n, url: docUrl(doctype, n) }))
+  }
+
+  let subject
+  if (isEmail) {
+    subject = `${count} ${count === 1 ? "recipient" : "recipients"}`
+  } else if (count === 1 && names.length === 1) {
+    subject = `${doctype} ${names[0]}`
+  } else if (count === 1) {
+    subject = `a ${doctype}`
+  } else {
+    subject = `${count} ${pluralize(doctype, count)}`
+  }
+  const wfPrefix = tool === "apply_workflow_action" && action ? `'${action}' to ` : ""
+
+  let icon, tone, title
+  let error = ""
+  if (outcome === "discarded") {
+    icon = "discarded"
+    tone = "muted"
+    title = `Discarded — did not ${verb.present} ${wfPrefix}${subject}`
+  } else if (outcome === "failed") {
+    icon = "failed"
+    tone = "danger"
+    error = (result && result.error && result.error.message) || ""
+    title =
+      count > 1
+        ? `Failed — none of the ${count} ${pluralize(doctype, count)} were ${verb.past.toLowerCase()}`
+        : `Failed — ${subject} was not ${verb.past.toLowerCase()}`
+  } else {
+    icon = "confirmed"
+    tone = "success"
+    title = `${verb.past} ${wfPrefix}${subject}`
+  }
+  return { outcome, icon, tone, title, subject, doctype, action, count, targets, error }
+}
+
+// Convenience one-liner (tests / plain-text contexts).
+export function receiptText(tool, args, result, outcome) {
+  return receiptView(tool, args, result, outcome).title
+}

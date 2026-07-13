@@ -3,13 +3,13 @@ import json
 import frappe
 from frappe.utils import strip_html
 
+from jarvis import audit
 from jarvis._http import validate_bearer as _validate_bearer  # noqa: F401 (kept for callers in mcp.py)
 from jarvis._plugin_auth import PluginAuthError, validate_plugin_request
 from jarvis._session import impersonate
 from jarvis.exceptions import InvalidArgumentError, JarvisError
 from jarvis.permissions import has_jarvis_access
 from jarvis.tools.registry import dispatch
-from jarvis import audit
 
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
@@ -250,26 +250,42 @@ def _persist_and_publish_tool_call(
 	persist_tool_receipt(conv_name, tool, args, result)
 
 
-def persist_tool_receipt(conv_name: str, tool: str, args: dict, result: dict) -> None:
+def persist_tool_receipt(conv_name: str, tool: str, args: dict, result: dict | None,
+						 *, action_outcome: str | None = None) -> None:
 	"""Write a role=tool Jarvis Chat Message receipt into ``conv_name`` and
 	publish the realtime tool:result event, running as the conversation owner so
 	DocType perms allow the insert. Shared by the inline model-write path
 	(``_persist_and_publish_tool_call``) and the confirmed-write path
 	(``confirm_tool`` -> ``dispatch_confirmed``) so a confirmed delete/submit/
-	email leaves the same transcript trace the SPA already renders (fixes #7)."""
-	status = "completed" if result.get("ok") else "error"
+	email leaves the same transcript trace the SPA already renders (fixes #7).
+
+	``action_outcome`` marks a row that came from a confirmation card so the SPA
+	renders it as an inline receipt chip instead of an Activity-accordion tool
+	row: "confirmed" (ran ok), "failed" (confirmed but errored), or "discarded"
+	(the user declined - nothing ran, so ``result`` may be None/empty). Ordinary
+	inline tool calls pass None and render unchanged."""
+	result = result or {}
+	discarded = action_outcome == "discarded"
+	if discarded:
+		# Nothing executed; the chip renders off action_outcome, and tool_status
+		# stays empty (a valid Select option) rather than a misleading completed/error.
+		status = ""
+	else:
+		status = "completed" if result.get("ok") else "error"
 
 	# Entity stamping (org wiki): which doc this call touched, so wiki nudges
 	# can read a turn's entities off the receipt rows. Lazy + guarded: a
-	# missing/broken entities module must never break receipts.
+	# missing/broken entities module must never break receipts. Skipped for a
+	# discard - it touched no document.
 	ref_doctype = ref_name = None
-	try:
-		from jarvis.chat.entities import refs_from_tool
-		# refs_from_tool expects the tool's raw data, not the {ok, data} envelope.
-		ref_doctype, ref_name = refs_from_tool(
-			args, result.get("data") if isinstance(result, dict) else None)
-	except Exception:
-		ref_doctype = ref_name = None
+	if not discarded:
+		try:
+			from jarvis.chat.entities import refs_from_tool
+			# refs_from_tool expects the tool's raw data, not the {ok, data} envelope.
+			ref_doctype, ref_name = refs_from_tool(
+				args, result.get("data") if isinstance(result, dict) else None)
+		except Exception:
+			ref_doctype = ref_name = None
 
 	# Run as the conversation owner so DocType perms allow it. impersonate is
 	# session-safe (a bare frappe.set_user in this HTTP path would gut the
@@ -285,11 +301,12 @@ def persist_tool_receipt(conv_name: str, tool: str, args: dict, result: dict) ->
 			"role": "tool",
 			"tool_name": tool,
 			"tool_args": frappe.as_json(args),
-			"tool_result": frappe.as_json(result),
+			"tool_result": frappe.as_json(result) if result else None,
 			"tool_status": status,
+			"action_outcome": action_outcome or None,
 			"ref_doctype": ref_doctype,
 			"ref_name": ref_name,
-			"content": f"{tool} → {status}",
+			"content": f"{tool} → {action_outcome or status}",
 		})
 		doc.insert(ignore_permissions=True)
 		frappe.db.commit()
@@ -301,6 +318,7 @@ def persist_tool_receipt(conv_name: str, tool: str, args: dict, result: dict) ->
 			args=args,
 			result=result,
 			status=status,
+			action_outcome=action_outcome,
 		)
 		# Generation: if the tool produced a file artifact (download_pdf,
 		# export_excel, …), attach it to the in-flight assistant message's
@@ -368,8 +386,13 @@ def publish_realtime_tool_result(
 	args: dict,
 	result: dict,
 	status: str,
+	action_outcome: str | None = None,
 ) -> None:
-	"""Wrapper around frappe.publish_realtime so tests can mock at this seam."""
+	"""Wrapper around frappe.publish_realtime so tests can mock at this seam.
+
+	``action_outcome`` (confirmed/discarded/failed) rides along so the SPA can
+	render the row as a receipt chip immediately, without waiting for a full
+	transcript reload."""
 	frappe.publish_realtime(
 		"jarvis:event",
 		{
@@ -380,6 +403,7 @@ def publish_realtime_tool_result(
 			"args": args,
 			"result": result,
 			"status": status,
+			"action_outcome": action_outcome,
 		},
 		user=user,
 	)

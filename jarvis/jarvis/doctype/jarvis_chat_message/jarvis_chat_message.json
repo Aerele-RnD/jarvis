@@ -21,6 +21,7 @@
     "tool_args",
     "tool_result",
     "tool_status",
+    "action_outcome",
     "ref_doctype",
     "ref_name",
     "canvas",
@@ -124,6 +125,15 @@
       "label": "Tool Status",
       "options": "\nrunning\ncompleted\nerror",
       "depends_on": "eval:doc.role=='tool'"
+    },
+    {
+      "fieldname": "action_outcome",
+      "fieldtype": "Select",
+      "label": "Action Outcome",
+      "options": "\nconfirmed\ndiscarded\nfailed",
+      "read_only": 1,
+      "depends_on": "eval:doc.role=='tool'",
+      "description": "Set on tool rows that originated from a confirmation card: 'confirmed' (user clicked Confirm and the write ran), 'discarded' (user declined - nothing ran), or 'failed' (confirmed but the write errored/rolled back). Non-empty => the SPA renders this row as an inline receipt chip instead of an Activity-accordion tool row. Empty on ordinary (non-carded) tool calls."
     },
     {
       "fieldname": "ref_doctype",
