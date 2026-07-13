@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<!-- viewport-fit=cover + the env(safe-area-inset-*) padding in index.css is
+		     what keeps the composer off the iPhone home indicator in standalone mode. -->
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no"
+		/>
+		<title>Jarvis</title>
+
+		<!-- iOS has no beforeinstallprompt and ignores the manifest's display mode;
+		     Add to Home Screen only goes full-bleed with these. -->
+		<meta name="apple-mobile-web-app-capable" content="yes" />
+		<meta name="apple-mobile-web-app-title" content="Jarvis" />
+		<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+		<meta name="mobile-web-app-capable" content="yes" />
+
+		<!-- Tints the Android status bar / desktop title bar to match the app chrome. -->
+		<meta name="theme-color" content="#F4F4F5" media="(prefers-color-scheme: light)" />
+		<meta name="theme-color" content="#0F0F0F" media="(prefers-color-scheme: dark)" />
+
+		<link rel="icon" type="image/png" sizes="192x192" href="/assets/jarvis/manifest/icon-192.png" />
+		<link rel="apple-touch-icon" href="/assets/jarvis/manifest/apple-touch-180.png" />
+	</head>
+	<body>
+		<div id="app"></div>
+		<script type="module" src="/src/main.js"></script>
+	</body>
+</html>

@@ -1,0 +1,165 @@
+/* frappe-ui/style.css = Inter + @tailwind base/components/utilities (same entry
+   the desktop SPA uses, so the two surfaces share a type + reset baseline). */
+@import "frappe-ui/style.css";
+
+/* Jarvis palette — ported verbatim from the mobile app's design tokens
+   (jarvis_mobile/src/theme/tokens.ts) so the PWA and the native app are the
+   same product, not two lookalikes. Light is the default; dark follows the OS. */
+:root {
+	--bg: #f4f4f5;
+	--card: #ffffff;
+	--card2: #f3f3f3;
+	--card3: #ededed;
+	--menu-bar: #fbfbfb;
+	--border: #eaeaea;
+	--border2: #e2e2e2;
+	--ink9: #171717;
+	--ink8: #383838;
+	--ink7: #525252;
+	--ink6: #5c5c5c;
+	--ink5: #7c7c7c;
+	--ink4: #999999;
+	--ink3: #c7c7c7;
+	--accent: #8269f8;
+	--accent-solid: #7154f5;
+	--accent-bg: #eceafb;
+	--green: #218352;
+	--red: #cc2929;
+	--red-bg: #ffe7e7;
+	--inv-bg: #171717;
+	--inv-ink: #ffffff;
+	--scrim: rgba(20, 20, 22, 0.34);
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--bg: #0f0f0f;
+		--card: #1c1c1c;
+		--card2: #232323;
+		--card3: #2b2b2b;
+		--menu-bar: #141414;
+		--border: #282828;
+		--border2: #343434;
+		--ink9: #f8f8f8;
+		--ink8: #d4d4d4;
+		--ink7: #afafaf;
+		--ink6: #999999;
+		--ink5: #808080;
+		--ink4: #6e6e6e;
+		--ink3: #4a4a4a;
+		--accent: #9e8bfa;
+		--accent-solid: #8269f8;
+		--accent-bg: #1d1934;
+		--green: #58c08e;
+		--red: #eb4d52;
+		--red-bg: #361515;
+		--inv-bg: #f8f8f8;
+		--inv-ink: #0f0f0f;
+		--scrim: rgba(0, 0, 0, 0.55);
+	}
+}
+
+html,
+body,
+#app {
+	height: 100%;
+}
+
+html {
+	/* Without this the UA paints a light scrollbar/form chrome over a dark app. */
+	color-scheme: light dark;
+}
+
+body {
+	margin: 0;
+	background: var(--bg);
+	color: var(--ink9);
+	/* A phone app scrolls its panes, never the document — otherwise the whole
+	   shell (bar + composer) drifts with the content. */
+	overflow: hidden;
+	overscroll-behavior-y: none;
+	-webkit-tap-highlight-color: transparent;
+}
+
+/* A phone app scrolls its panes, never the document. The shell owns the top
+   safe area (rather than each screen's bar) so anything stacked up there — the
+   install strip, then the bar — clears the notch without double padding. */
+.jv-app {
+	display: flex;
+	flex-direction: column;
+	height: 100dvh;
+	overflow: hidden;
+	padding-top: env(safe-area-inset-top);
+}
+
+/* The composer clears the home indicator. */
+.jv-safe-bottom {
+	padding-bottom: env(safe-area-inset-bottom);
+}
+
+.jv-bar {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 10px 12px;
+	background: var(--menu-bar);
+	border-bottom: 1px solid var(--border);
+	flex: none;
+}
+
+.jv-icon-btn {
+	display: grid;
+	place-items: center;
+	width: 38px;
+	height: 38px;
+	border-radius: 10px;
+	color: var(--ink7);
+	background: transparent;
+	border: 0;
+	flex: none;
+	cursor: pointer;
+}
+.jv-icon-btn:active {
+	background: var(--card3);
+}
+
+.jv-title {
+	font-size: 16px;
+	font-weight: 600;
+	color: var(--ink9);
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.jv-scroll {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	-webkit-overflow-scrolling: touch;
+}
+
+.jv-empty {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 10px;
+	height: 100%;
+	padding: 32px 28px;
+	text-align: center;
+	color: var(--ink5);
+}
+
+/* Brand mark — the same violet gradient as the native app's BrandMark. */
+.jv-mark {
+	display: grid;
+	place-items: center;
+	border-radius: 12px;
+	background: linear-gradient(140deg, #8b7cf7, #6a56e8);
+	color: #fff;
+	font-weight: 700;
+	flex: none;
+}

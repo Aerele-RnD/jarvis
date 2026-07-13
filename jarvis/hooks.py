@@ -147,9 +147,22 @@ app_include_js = ["jarvis_immersive.bundle.js", "jarvis_widget.bundle.js", "jarv
 # Separate frappe-ui Vue SPA (apps/jarvis/frontend) served at /jarvis. The
 # catch-all routes every /jarvis/* deep link to the www/jarvis page so the
 # SPA's vue-router (history mode) can handle them.
+#
+# The mobile PWA (apps/jarvis/pwa) gets the same treatment at /jarvis-mobile.
+# Both rules are needed: the bare route serves the shell, the catch-all keeps a
+# refresh on a deep link (e.g. /jarvis-mobile/c/<id>) from 404ing. The page
+# itself is www/jarvis_mobile.html — underscored, because a hyphen is not a
+# legal Python module name and the page has a .py controller.
 website_route_rules = [
 	{"from_route": "/jarvis/<path:app_path>", "to_route": "jarvis"},
+	{"from_route": "/jarvis-mobile", "to_route": "jarvis_mobile"},
+	{"from_route": "/jarvis-mobile/<path:app_path>", "to_route": "jarvis_mobile"},
 ]
+
+# Serves the PWA's service worker at the root-level /jarvis-mobile.sw.js, which
+# is the only way it can claim a scope covering the app. See jarvis/pwa.py — the
+# route is deliberately outside the /jarvis-mobile/ catch-all above.
+page_renderer = ["jarvis.pwa.ServiceWorkerRenderer"]
 
 # The agents marketplace lives at the SPA route /jarvis/agents; keep the
 # friendlier top-level /jarvis-agents spelling working as a redirect.
