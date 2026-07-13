@@ -75,6 +75,10 @@ def _ensure_system_user(email: str) -> str:
 		frappe.db.set_value("User", email, "user_type", "System User")
 	if "System Manager" in set(frappe.get_roles(email)):
 		frappe.get_doc("User", email).remove_roles("System Manager")
+	# Part-1 gate: reaching Jarvis needs the Jarvis User role (a fresh test user
+	# created after migrate never got the grant patch's backfill).
+	if "Jarvis User" not in set(frappe.get_roles(email)):
+		frappe.get_doc("User", email).add_roles("Jarvis User")
 	return email
 
 

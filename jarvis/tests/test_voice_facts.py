@@ -64,6 +64,10 @@ def _ensure_user(email: str, roles: tuple = ()) -> str:
 		user.add_roles(*roles)
 	elif "System Manager" in frappe.get_roles(email):
 		user.remove_roles("System Manager")
+	# Part-1 gate: the voice endpoints require the Jarvis User role (a fresh test
+	# user created after migrate never got the grant patch's backfill).
+	if "Jarvis User" not in frappe.get_roles(email):
+		user.add_roles("Jarvis User")
 	frappe.db.commit()
 	return email
 

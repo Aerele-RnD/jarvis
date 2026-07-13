@@ -928,7 +928,10 @@ class TestListRoleOptions(PersonaliseApiTestCase):
 		self.assertNotIn("All", roles)
 		# System Manager is an enabled desk role, so it IS offered.
 		self.assertIn("System Manager", roles)
-		self.assertEqual(roles, sorted(roles))
+		# list_role_options orders via SQL (MariaDB's case-INSENSITIVE collation);
+		# assert the same, so ambient cross-module roles that differ only by case
+		# (e.g. "Jarvis…" vs "JPL…") don't spuriously fail this ordering check.
+		self.assertEqual(roles, sorted(roles, key=str.lower))
 
 	def test_disabled_role_is_excluded(self):
 		role_name = "Persapi Disabled Role"

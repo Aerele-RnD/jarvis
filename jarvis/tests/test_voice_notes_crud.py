@@ -46,6 +46,10 @@ def _ensure_user(email: str) -> str:
 	if frappe.db.get_value("User", email, "user_type") != "System User":
 		frappe.db.set_value("User", email, "user_type", "System User", update_modified=False)
 		frappe.clear_cache(user=email)
+	# Part-1 gate: the voice endpoints require the Jarvis User role (a fresh test
+	# user created after migrate never got the grant patch's backfill).
+	if "Jarvis User" not in frappe.get_roles(email):
+		frappe.get_doc("User", email).add_roles("Jarvis User")
 	frappe.db.commit()
 	return email
 

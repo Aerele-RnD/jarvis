@@ -85,7 +85,12 @@ def _ensure_non_sm(email: str) -> str:
 	)
 	if "System Manager" in set(frappe.get_roles(email)):
 		frappe.get_doc("User", email).remove_roles("System Manager")
-		frappe.db.commit()
+	# Part-1 gate: a non-SM Jarvis user still needs the Jarvis User role to pass
+	# the access gate before hitting the SM-only polish checks (a fresh test user
+	# created after migrate never got the grant patch's backfill).
+	if "Jarvis User" not in set(frappe.get_roles(email)):
+		frappe.get_doc("User", email).add_roles("Jarvis User")
+	frappe.db.commit()
 	return email
 
 
