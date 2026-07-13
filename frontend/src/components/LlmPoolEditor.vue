@@ -178,8 +178,7 @@
                two never coexist - Add-a-model shows only when the panel is CLOSED,
                Connect only when it is OPEN - so two primaries never compete. -->
           <button v-if="editable && !(panelRow._connect && panelRow._connect.open) && !(panelRow.accounts && panelRow.accounts.length)"
-                  @click="startConnect(panelRow)"
-                  :disabled="panelRow._connect && panelRow._connect.loading && !panelRow._connect.authorizeUrl"
+                  @click="openConnectPanel(panelRow)"
                   class="jv-btn jv-btn--primary jv-flist-addbtn">
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>
             Connect account
@@ -196,7 +195,7 @@
                 <span class="jv-pool-dot" :class="'jv-pool-dot--' + accountHealth(panelRow).level" aria-hidden="true"></span>
                 <span v-if="accountHealth(panelRow).label" class="jv-pool-acct-health" :class="'jv-pool-acct-health--' + accountHealth(panelRow).level" :title="accountHealth(panelRow).title">{{ accountHealth(panelRow).label }}</span>
                 <span class="jv-pool-acctacts">
-                  <button v-if="editable" class="jv-btn jv-btn--sm jv-btn--ghost" @click="startConnect(panelRow, ai)" title="Re-authorize to mint fresh tokens">Reconnect</button>
+                  <button v-if="editable" class="jv-btn jv-btn--sm jv-btn--ghost" @click="openConnectPanel(panelRow, ai)" title="Re-authorize to mint fresh tokens">Reconnect</button>
                   <button v-if="editable" class="jv-btn jv-btn--sm jv-btn--ghost jv-pool-disc" @click="removeAccount(panelRow, ai)">Disconnect</button>
                 </span>
               </div>
@@ -204,8 +203,7 @@
                    optional. It also sits beside Reconnect / Disconnect, which are ghosts.
                    (Primary is reserved for the required next step -- Connect account when
                    there is none, and Save configuration.) -->
-              <button v-if="editable && !(panelRow._connect && panelRow._connect.open)" @click="startConnect(panelRow)"
-                      :disabled="panelRow._connect && panelRow._connect.loading && !panelRow._connect.authorizeUrl"
+              <button v-if="editable && !(panelRow._connect && panelRow._connect.open)" @click="openConnectPanel(panelRow)"
                       class="jv-btn jv-btn--sm jv-btn--ghost">
                 + Add account
               </button>
@@ -215,36 +213,63 @@
                grid above already says the account is missing; the sentence only
                restated it.) -->
 
-          <!-- Paste-back OAuth connect panel (reused verbatim). -->
-          <div v-if="panelRow._connect && panelRow._connect.open" class="jv-cn">
-            <div v-if="panelRow._connect.authorizeUrl">
-              <div class="jv-cn-step">
-                <span class="jv-cn-num">1</span>
-                <div class="jv-cn-body">
-                  <div class="jv-cn-t">Sign in with your {{ panelRow.upstream === 'google' ? 'Google' : 'OpenAI' }} account</div>
-                  <div class="jv-cn-row">
-                    <a :href="panelRow._connect.authorizeUrl" target="_blank" rel="noopener noreferrer" class="jv-cn-open">Open sign-in ↗</a>
-                    <button @click="copyAuthorizeUrl(panelRow)" class="jv-cn-copy">{{ panelRow._connect.copied ? 'Copied ✓' : 'Copy link' }}</button>
+          <!-- OAuth connect: the SAME two-step spine onboarding renders (jv-csteps).
+               It used to be a different panel that only appeared AFTER startConnect had
+               already fired -- and startConnect opens the sign-in tab synchronously (it
+               must, to keep the click's user gesture and survive popup blockers). So the
+               customer was thrown at ChatGPT the instant they clicked "Connect account",
+               and only THEN saw a panel telling them to "Open sign-in". Backwards.
+               Now the steps appear FIRST and step 1's button is what starts OAuth, exactly
+               as in onboarding. Step 2 stays pending until step 1 mints the authorize URL:
+               a callback URL pasted before sign-in has no nonce to pair with, so
+               finishConnect would silently no-op. -->
+          <div v-if="panelRow._connect && panelRow._connect.open" class="jv-csteps">
+            <div class="jv-cstep">
+              <div class="jv-cnum">1</div>
+              <div class="jv-cbody">
+                <div class="jv-chead">
+                  <div class="jv-ctit">Sign in with {{ panelRow.upstream === 'google' ? 'Google' : 'OpenAI' }}</div>
+                  <div class="jv-crow">
+                    <template v-if="panelRow._connect.authorizeUrl">
+                      <a :href="panelRow._connect.authorizeUrl" target="_blank" rel="noopener noreferrer" class="jv-cbtn jv-cbtn-primary">Open sign-in ↗</a>
+                      <button type="button" class="jv-cbtn jv-cbtn-ghost" @click="copyAuthorizeUrl(panelRow)">{{ panelRow._connect.copied ? 'Copied ✓' : 'Copy link' }}</button>
+                    </template>
+                    <button v-else type="button" class="jv-cbtn jv-cbtn-primary"
+                            :disabled="!editable || panelRow._connect.loading"
+                            @click="startConnect(panelRow, panelRow._connect.reconnectIdx)">
+                      {{ panelRow._connect.loading ? 'Starting sign-in…' : 'Open sign-in ↗' }}
+                    </button>
                   </div>
                 </div>
-              </div>
-              <div class="jv-cn-step">
-                <span class="jv-cn-num">2</span>
-                <div class="jv-cn-body">
-                  <div class="jv-cn-t">Paste the callback URL</div>
-                  <div class="jv-cn-hint">After signing in you'll see a “This site can't be reached” page. Copy that page's full URL and paste it below.</div>
-                  <input v-model="panelRow._connect.pastedUrl" class="jv-cn-input" placeholder="http://localhost:1455/auth/callback?code=…" @keydown.enter="finishConnect(panelRow)" />
-                </div>
-              </div>
-              <div class="jv-cn-acts">
-                <button @click="closeConnect(panelRow)" class="jv-cn-cancel">Cancel</button>
-                <button @click="finishConnect(panelRow)" :disabled="panelRow._connect.loading" class="jv-cn-connect">
-                  {{ panelRow._connect.loading ? 'Connecting…' : 'Connect' }}
-                </button>
+                <div class="jv-cdesc">Opens {{ panelRow.upstream === 'google' ? 'Google' : 'OpenAI' }} in a new tab. Approve access, then come back here.</div>
               </div>
             </div>
-            <div v-else class="jv-cn-loading">Starting sign-in…</div>
+            <div class="jv-cstep" :class="{ 'jv-pending': !panelRow._connect.authorizeUrl }">
+              <div class="jv-cnum">2</div>
+              <div class="jv-cbody">
+                <div class="jv-ctit">Paste the callback URL</div>
+                <div class="jv-callout">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
+                  <p>After you approve, the browser shows a <b>&ldquo;This site can&rsquo;t be reached&rdquo;</b> page. That&rsquo;s expected: copy the <b>full URL from the address bar</b> (<kbd>⌘/Ctrl</kbd>+<kbd>L</kbd>, then <kbd>⌘/Ctrl</kbd>+<kbd>C</kbd>) and paste it below.</p>
+                </div>
+                <input v-model="panelRow._connect.pastedUrl" class="jv-paste"
+                       :disabled="!editable || !panelRow._connect.authorizeUrl"
+                       :placeholder="panelRow._connect.authorizeUrl
+                         ? 'http://localhost:1455/auth/callback?code=…'
+                         : 'Complete step 1 first, then paste the URL here'"
+                       @keydown.enter="finishConnect(panelRow)" />
+              </div>
+            </div>
             <div v-if="panelRow._connect.error" class="jv-cn-err">{{ panelRow._connect.error }}</div>
+            <!-- Actions right-aligned, like every other confirm action in this pane. -->
+            <div class="jv-cn-acts">
+              <button @click="closeConnect(panelRow)" class="jv-btn jv-btn--ghost">Cancel</button>
+              <button @click="finishConnect(panelRow)"
+                      :disabled="panelRow._connect.loading || !panelRow._connect.authorizeUrl || !(panelRow._connect.pastedUrl || '').trim()"
+                      class="jv-btn jv-btn--primary">
+                {{ panelRow._connect.loading ? 'Connecting…' : 'Connect' }}
+              </button>
+            </div>
           </div>
 
         </div>
@@ -939,6 +964,23 @@ function accountHealth(m) {
   // all degrade to today's quiet green.
   return { level: "ok" }
 }
+// Open the connect panel WITHOUT starting OAuth.
+//
+// "+ Connect account" / "+ Add account" / "Reconnect" used to call startConnect
+// directly. startConnect opens the sign-in tab SYNCHRONOUSLY inside the click -- it
+// has to, or the window.open after its await loses the user gesture and gets
+// popup-blocked. The side effect was a jarring flow: the customer clicked "Connect
+// account" and was thrown straight at ChatGPT, then came back to a panel telling them
+// to "Open sign-in" -- an action they had already, involuntarily, taken.
+//
+// So these buttons now just REVEAL the two-step spine (the same one onboarding shows
+// up front), and step 1's "Open sign-in" is what actually starts OAuth. The tab still
+// opens inside that click, so the popup-blocker fix is preserved.
+function openConnectPanel(m, reconnectIdx = null) {
+  const carried = (m._connect && m._connect.pastedUrl) || ""
+  m._connect = { ...blankConnect(), open: true, reconnectIdx, pastedUrl: carried }
+}
+
 async function startConnect(m, reconnectIdx = null) {
   if (!m._connect) m._connect = blankConnect()
   // Simplified editor hides the model field - make sure a subscription row always
@@ -1502,23 +1544,10 @@ defineExpose({ save })
 .jv-status-act:hover { color: var(--text); text-decoration: underline; text-underline-offset: 2px; }
 /* Paste-back OAuth connect panel - two numbered steps (open sign-in URL / paste
    the callback URL), styled to match the rest of the onboarding editor. */
-.jv-cn { margin-top: 8px; padding: 15px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 11px; }
-.jv-cn-step { display: flex; gap: 10px; margin-bottom: 13px; }
-.jv-cn-num { flex: none; width: 21px; height: 21px; border-radius: 50%; background: var(--blue); color: var(--surface); font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; margin-top: 1px; }
-.jv-cn-body { flex: 1; min-width: 0; }
-.jv-cn-t { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 7px; }
-.jv-cn-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.jv-cn-open { font-size: 13px; font-weight: 600; color: var(--surface); text-decoration: none; padding: 8px 14px; border: 0; background: var(--blue); border-radius: 8px; }
-.jv-cn-copy { font-size: 12.5px; padding: 7px 12px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; background: var(--surface); color: var(--text-2); }
-.jv-cn-copy:hover { color: var(--text); }
-.jv-cn-hint { font-size: 12px; color: var(--text-3); line-height: 1.5; margin-bottom: 8px; }
-.jv-cn-input { width: 100%; padding: 9px 12px; font-size: 13.5px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); font-family: inherit; box-sizing: border-box; }
-.jv-cn-input:focus { outline: none; border-color: var(--blue-bd); }
 .jv-cn-acts { display: flex; justify-content: flex-end; gap: 8px; }
-.jv-cn-cancel { padding: 8px 15px; font-size: 13px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; background: var(--surface); color: var(--text-2); }
-.jv-cn-connect { padding: 8px 17px; font-size: 13px; font-weight: 600; border: 0; border-radius: 8px; cursor: pointer; background: var(--blue); color: var(--surface); }
-.jv-cn-connect:disabled { opacity: .6; cursor: not-allowed; }
-.jv-cn-loading { font-size: 13px; color: var(--text-2); }
+/* The old .jv-cn* connect panel is GONE: settings now renders the same .jv-csteps
+   spine as onboarding, so there is one connect flow, not two that drift apart.
+   Only -err and -acts survive (still used by that spine). */
 .jv-cn-err { margin-top: 9px; font-size: 13px; color: var(--red); }
 /* Lock both credential modes to the same body height in onboarding so toggling
    API key ↔ Chat subscription never resizes the card (first-impression polish). */
