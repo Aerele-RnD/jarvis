@@ -9,6 +9,8 @@ Verifies:
 - Subscription Account upstream options do NOT contain 'anthropic'
 """
 
+import json
+
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
@@ -2415,3 +2417,283 @@ class TestOnboardingAuditFixes(_RT3SettingsTestCase):
         self.assertEqual(len(captured), 2)
         for kw in captured:
             self.assertEqual(kw.get("timeout"), ADMIN_SYNC_RQ_TIMEOUT_S)
+
+    # -- Apply-warning propagation (subscription_status + warnings) -------
+    #
+    # The fleet-agent's PUT /v1/containers/{name}/llm-pool response carries
+    # subscription_status + warnings alongside action/result. Persisted into
+    # last_subscription_status / last_sync_warnings so the SPA (via
+    # onboarding.get_llm_sync_status) can surface a subscription that loaded
+    # but failed an upstream probe, instead of showing a blanket "ok".
+
+    def test_pool_sync_persists_subscription_status_and_warnings(self):
+        """A successful apply that reports subscription_status/warnings must
+        persist both, and last_sync_status must still start with the
+        literal "ok" - _pool_sync_is_redundant()'s dedup gate depends on
+        that exact prefix, so warnings must never be encoded into it."""
+        self._seed_pool()
+        warnings = [{"code": "subscription_unverified",
+                    "message": "cliproxy loaded the credential but the "
+                               "upstream rejected a 1-token probe"}]
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   return_value={"action": "pool_update",
+                                 "subscription_status": "unverified",
+                                 "warnings": warnings}):
+            _enqueued_sync_via_admin_pool()
+
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertEqual(settings.last_subscription_status, "unverified")
+        self.assertEqual(json.loads(settings.last_sync_warnings), warnings)
+        self.assertTrue(
+            (settings.last_sync_status or "").startswith("ok"),
+            f"warned-but-applied sync must still read 'ok ...' for the "
+            f"dedup gate; got {settings.last_sync_status!r}",
+        )
+
+    def test_noop_reapply_does_not_clobber_the_last_real_verdict(self):
+        """A NO-OP apply (contract 1.10 `unchanged: true`) must LEAVE the previous
+        verdict alone.
+
+        The no-op path is side-effect-free by contract, so the fleet deliberately
+        runs no probe there (a 1-token completion is a side effect) and reports
+        subscription_status "unchecked" with warnings []. Persisting those would
+        DISCARD the last real apply's verdict:
+
+          * a healthy "verified" silently decays to "unchecked" -- reads as a
+            regression the customer never caused (this is exactly what was seen
+            live: a redundant re-save turned a working ChatGPT subscription into
+            "unchecked"), and
+          * far worse, a genuine `model_unreachable` / `subscription_unverified`
+            warning is CLEARED, so a dead model looks healthy again after any
+            redundant re-save.
+
+        Nothing about the running pool changed, so the previous verdict still
+        describes it exactly.
+        """
+        self._seed_pool()
+        warnings = [{"code": "model_unreachable",
+                     "message": "claude-sonnet-4-6: the upstream rejected a "
+                                "1-token probe"}]
+        # 1) a REAL apply lands a definitive verdict + a real warning
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   return_value={"action": "pool-applied",
+                                 "subscription_status": "verified",
+                                 "warnings": warnings}):
+            _enqueued_sync_via_admin_pool()
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertEqual(settings.last_subscription_status, "verified")
+        self.assertEqual(json.loads(settings.last_sync_warnings), warnings)
+
+        # 2) a redundant re-save -> fleet short-circuits: unchanged, no probe
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   return_value={"action": "pool-applied",
+                                 "unchanged": True,
+                                 "subscription_status": "unchecked",
+                                 "warnings": []}):
+            _enqueued_sync_via_admin_pool()
+
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertEqual(
+            settings.last_subscription_status, "verified",
+            "a no-op must not downgrade a verified subscription to 'unchecked'",
+        )
+        self.assertEqual(
+            json.loads(settings.last_sync_warnings), warnings,
+            "a no-op must not CLEAR a real warning -- that hides a dead model",
+        )
+        # the sync itself still succeeded, and the dedup gate's "ok" prefix holds
+        self.assertTrue((settings.last_sync_status or "").startswith("ok"))
+
+    def test_pool_sync_contract_1_9_response_defaults_to_empty(self):
+        """A fleet on the pre-warnings contract (1.9) reports neither key -
+        must default to "" / "[]" without raising (result is never assumed
+        to carry these keys)."""
+        self._seed_pool()
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   return_value={"action": "pool_update"}):
+            _enqueued_sync_via_admin_pool()
+
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertEqual(settings.last_subscription_status, "")
+        self.assertEqual(settings.last_sync_warnings, "[]")
+
+    def test_failed_pool_sync_clears_stale_subscription_status_and_warnings(self):
+        """A FAILED sync must clear both fields even when a PRIOR successful
+        apply had set them - a stale 'verified' status must not linger next
+        to a 'failed:' status the poller reads as broken."""
+        from jarvis.exceptions import AdminUnreachableError
+
+        self._seed_pool()
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   return_value={"action": "pool_update",
+                                 "subscription_status": "verified",
+                                 "warnings": []}):
+            _enqueued_sync_via_admin_pool()
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertEqual(settings.last_subscription_status, "verified")
+
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   side_effect=AdminUnreachableError("boom")):
+            _enqueued_sync_via_admin_pool()
+
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertTrue((settings.last_sync_status or "").startswith("failed:"))
+        self.assertEqual(settings.last_subscription_status, "",
+                         "a failed sync must clear the stale subscription_status")
+        self.assertEqual(settings.last_sync_warnings, "[]",
+                         "a failed sync must clear stale warnings")
+
+    def test_redundant_skip_leaves_subscription_status_and_warnings_untouched(self):
+        """The pre-enqueue redundant-sync skip (_pool_sync_is_redundant) must
+        leave subscription_status/warnings untouched, exactly like it leaves
+        last_sync_status untouched - the container's last real apply is
+        still the truth, nothing was pushed to it this time."""
+        self._seed_pool()
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   return_value={"action": "pool_update",
+                                 "subscription_status": "verified",
+                                 "warnings": [{"code": "x", "message": "y"}]}):
+            _enqueued_sync_via_admin_pool()
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertEqual(settings.last_subscription_status, "verified")
+        status_before = settings.last_subscription_status
+        warnings_before = settings.last_sync_warnings
+
+        # An unrelated re-save (no pool-relevant change, last sync "ok")
+        # must skip the enqueue entirely (_pool_sync_is_redundant) and
+        # leave both fields exactly as the last real apply left them.
+        # Mirrors TestPoolSyncChangeDetection's mock seam (patch
+        # _enqueue_pool_sync itself, not the admin call it would make).
+        with patch.object(type(settings), "_enqueue_pool_sync") as mock_enqueue:
+            settings.save()
+        mock_enqueue.assert_not_called()
+
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertEqual(settings.last_subscription_status, status_before)
+        self.assertEqual(settings.last_sync_warnings, warnings_before)
+
+
+# ---------------------------------------------------------------------------
+# Pool-sync change detection: the pool analog of _classify_llm_change.
+#
+# Before this gate, EVERY save of Jarvis Settings while proxy_active - sandbox
+# toggles, pattern-learning windows, any unrelated field - re-POSTed the full
+# pool spec + secrets to admin. on_update now skips _enqueue_pool_sync only
+# when (a) a doc_before_save exists, (b) the pool-relevant snapshot
+# (_pool_state_snapshot) is identical, and (c) last_sync_status starts with
+# "ok" - so a failed sync stays retryable by re-saving.
+# ---------------------------------------------------------------------------
+
+class TestPoolSyncChangeDetection(_RT3SettingsTestCase):
+
+    def setUp(self):
+        super().setUp()
+        self._clear_models()
+        _reset_settings()
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("preset", "", update_modified=False)
+        settings.db_set("proxy_active", 0, update_modified=False)
+        settings.db_set("proxy_recommended", 0, update_modified=False)
+        frappe.db.commit()
+
+    def _save_two_model_pool(self):
+        """Establish a synced 2-model pool: proxy_active=1, status 'ok ...'."""
+        from unittest.mock import patch
+
+        settings = frappe.get_single("Jarvis Settings")
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-4o",
+                       tier="strong", order=0,
+                       api_key="sk-diff-key-1",
+                       base_url="https://api.openai.com")
+        _add_model_row(settings,
+                       provider="openai_compat", model="gpt-3.5-turbo",
+                       tier="cheap", order=1,
+                       api_key="sk-diff-key-2",
+                       base_url="https://api.openai.com")
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   return_value={"action": "pool_update"}):
+            settings.save()
+        settings = frappe.get_single("Jarvis Settings")
+        # Pre-condition shared by every test here: the pool applied cleanly.
+        assert (settings.last_sync_status or "").startswith("ok"), \
+            f"fixture: expected ok status, got {settings.last_sync_status!r}"
+        return settings
+
+    # ------------------------------------------------------------------ #
+    # (a) no-change save -> NO enqueue, status left alone
+    # ------------------------------------------------------------------ #
+
+    def test_unchanged_save_skips_pool_sync_enqueue(self):
+        """A save that changes nothing pool-relevant while the last sync is
+        'ok ...' must NOT enqueue a pool sync, and must leave
+        last_sync_status untouched (no 'pending:' write)."""
+        from unittest.mock import patch
+
+        self._save_two_model_pool()
+        settings = frappe.get_single("Jarvis Settings")
+        status_before = settings.last_sync_status
+
+        with patch.object(type(settings), "_enqueue_pool_sync") as mock_enqueue:
+            settings.save()
+
+        mock_enqueue.assert_not_called()
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertEqual(settings.last_sync_status, status_before,
+                         "skipping must leave last_sync_status alone")
+
+    # ------------------------------------------------------------------ #
+    # (b) pool-relevant change -> enqueue fires
+    # ------------------------------------------------------------------ #
+
+    def test_model_row_change_enqueues_pool_sync(self):
+        from unittest.mock import patch
+
+        self._save_two_model_pool()
+        settings = frappe.get_single("Jarvis Settings")
+        settings.models[1].model = "gpt-4o-mini"
+
+        with patch.object(type(settings), "_enqueue_pool_sync") as mock_enqueue:
+            settings.save()
+
+        mock_enqueue.assert_called_once()
+
+    def test_same_length_api_key_rotation_enqueues_pool_sync(self):
+        """Regression guard for the snapshot's capture point: a freshly-typed
+        api_key of the SAME LENGTH as the old one masks to an identical
+        '*'*len string by on_update time, so a snapshot taken there would
+        read the rotation as 'unchanged' and silently drop the push. The
+        snapshot is captured in validate() (pre-masking), where the new
+        plaintext never equals the stored mask."""
+        from unittest.mock import patch
+
+        self._save_two_model_pool()
+        settings = frappe.get_single("Jarvis Settings")
+        # Same length as the stored "sk-diff-key-1".
+        settings.models[0].api_key = "sk-diff-key-9"
+
+        with patch.object(type(settings), "_enqueue_pool_sync") as mock_enqueue:
+            settings.save()
+
+        mock_enqueue.assert_called_once()
+
+    # ------------------------------------------------------------------ #
+    # (c) unchanged save while last sync FAILED -> still enqueues (retry)
+    # ------------------------------------------------------------------ #
+
+    def test_unchanged_save_with_failed_status_still_enqueues(self):
+        """A failed sync must always be retryable by re-saving, even with an
+        identical pool config."""
+        from unittest.mock import patch
+
+        self._save_two_model_pool()
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("last_sync_status", "failed: admin unreachable: boom",
+                        update_modified=False)
+        frappe.db.commit()
+
+        settings = frappe.get_single("Jarvis Settings")
+        with patch.object(type(settings), "_enqueue_pool_sync") as mock_enqueue:
+            settings.save()
+
+        mock_enqueue.assert_called_once()

@@ -82,6 +82,8 @@
   "last_sync_at",
   "last_sync_status",
   "llm_pool_synced_at",
+  "last_subscription_status",
+  "last_sync_warnings",
   "custom_skills_synced_at",
   "custom_skills_sync_status",
   "agent_skills_synced_at",
@@ -595,6 +597,22 @@
    "fieldname": "llm_pool_synced_at",
    "fieldtype": "Datetime",
    "label": "LLM Pool Synced At",
+   "read_only": 1
+  },
+  {
+   "description": "fleet-agent's subscription_status from the last pool apply: verified | unverified | unchecked | not_applicable. Empty when the fleet didn't report one (older contract) or the last sync failed. Backend-only - the SPA reads this via get_llm_sync_status, not the form.",
+   "fieldname": "last_subscription_status",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Last Subscription Status",
+   "read_only": 1
+  },
+  {
+   "description": "JSON array of {code, message} warnings from the last pool apply (e.g. a subscription that loaded but failed a probe). '[]' when none. Backend-only - the SPA reads this via get_llm_sync_status, not the form.",
+   "fieldname": "last_sync_warnings",
+   "fieldtype": "Long Text",
+   "hidden": 1,
+   "label": "Last Sync Warnings",
    "read_only": 1
   },
   {
