@@ -101,6 +101,13 @@ class Part4Base(FrappeTestCase):
 		# Deterministic baseline for the permlevel-fence read/write assertions.
 		frappe.db.set_value(
 			SETTINGS, SETTINGS, "agent_url", "ws://p4-baseline", update_modified=False)
+		# Behavioural learning is managed-only; the Settings validate() throws
+		# "available on managed plans only" when pattern_learning_enabled is on AND
+		# the site is self-hosted. The permlevel-fence tests save Jarvis Settings, so
+		# disable it here to keep that unrelated plan-gate from firing on a
+		# self-hosted test site (it is off in CI's baked dump, on locally).
+		frappe.db.set_value(
+			SETTINGS, SETTINGS, "pattern_learning_enabled", 0, update_modified=False)
 		frappe.db.commit()
 
 	@classmethod
