@@ -19,6 +19,8 @@ import time
 import frappe
 import requests
 
+from jarvis import _test_guard
+
 from jarvis.exceptions import (
 	AdminAuthError,
 	AdminRateLimitedError,
@@ -675,7 +677,10 @@ def _oauth_token_request(admin_url: str, grant: dict) -> dict | None:
 	"""
 	payload = {**grant, "client_id": _OAUTH_CLIENT_ID, "scope": _OAUTH_SCOPE}
 	url = admin_url + _OAUTH_TOKEN_PATH
-	_assert_outbound_allowed(url)
+	# admin_client has TWO ways out; guarding only _do_post would leave this one free.
+	_blocked = _test_guard.blocked_reason(url, _test_guard.ALLOW_ADMIN)
+	if _blocked:
+		raise AdminUnreachableError(_blocked)
 	try:
 		resp = requests.post(
 			url,
@@ -895,55 +900,12 @@ def _envelope_error_message(envelope) -> str:
 	return _scrub_secrets(err.get("message") or "")
 
 
-# ── test-safety guard ────────────────────────────────────────────────────────
-# Opt-in flag for the rare test that genuinely means to exercise the real transport.
-# Nothing in the ordinary suite sets it.
-ALLOW_REAL_ADMIN_CALLS_FLAG = "allow_real_admin_calls"
-
-
-def _assert_outbound_allowed(url: str) -> None:
-	"""Refuse to make a REAL admin/fleet call from inside a test run.
-
-	Jarvis Settings.on_update deliberately runs the admin sync INLINE under
-	``frappe.flags.in_test`` (see jarvis_settings._enqueue_pool_sync: "so tests see the
-	final status without polling"), and this module is that sync's transport.
-
-	On CI that is harmless -- no admin server answers, so the call fails and the test
-	sees an error status. On a DEVELOPER'S BENCH it is not harmless at all: jarvis.admin
-	is running, the fleet-agent is running, and the call SUCCEEDS. A test that saves
-	Jarvis Settings therefore pushes its FIXTURE pool to whatever tenant the bench is
-	pointed at -- rewriting that tenant's bifrost config, tearing down its cliproxy via
-	``--remove-orphans``, and DELETING the OAuth token blob from disk. There is no undo:
-	Frappe keeps no Version history for a Single, and the child table is left empty.
-
-	Not hypothetical. On 2026-07-14 ``bench --site site.jarvis run-tests --app jarvis``
-	destroyed a live tenant's LLM pool and an OAuth subscription credential that could
-	not be recovered, and left behind a ``models=[] with proxy_active=1`` state that was
-	then misdiagnosed for hours as an on_update ordering race. It was never a race. It
-	was a test run.
-
-	CI was only ever safe BY ACCIDENT. This makes it safe BY CONSTRUCTION, everywhere.
-
-	Raises AdminUnreachableError -- deliberately the SAME exception a real connection
-	failure raises -- so a local run behaves exactly as CI already does, and every
-	existing caller's error handling applies unchanged.
-	"""
-	if not frappe.flags.get("in_test"):
-		return
-	if frappe.flags.get(ALLOW_REAL_ADMIN_CALLS_FLAG):
-		return
-	raise AdminUnreachableError(
-		"BLOCKED: a test tried to make a real call to admin/the fleet "
-		f"({url!r}). The admin sync runs INLINE under test, so this would push test "
-		"fixtures to whatever tenant this bench points at -- rewriting its LLM pool and "
-		"destroying OAuth credentials, with no undo. Mock jarvis.admin_client in your "
-		f"test, or set frappe.flags.{ALLOW_REAL_ADMIN_CALLS_FLAG} = True if you really "
-		"mean to call out."
-	)
-
-
 def _do_post(url: str, body: dict, headers: dict, timeout_s: int, admin_url: str) -> dict:
-	_assert_outbound_allowed(url)
+	# Test-safety: never reach a real admin/fleet from a test. See jarvis._test_guard --
+	# an unguarded test run destroyed a live tenant's pool and OAuth blob on 2026-07-14.
+	_blocked = _test_guard.blocked_reason(url, _test_guard.ALLOW_ADMIN)
+	if _blocked:
+		raise AdminUnreachableError(_blocked)
 	try:
 		resp = requests.post(url, json=body, headers=headers, timeout=timeout_s)
 	except (requests.ConnectionError, requests.Timeout) as e:

@@ -275,15 +275,15 @@ class OpenclawSession:
 		# Companion to admin_client._assert_outbound_allowed. See that docstring: on
 		# 2026-07-14 an unguarded test run destroyed a live tenant's LLM pool and an
 		# unrecoverable OAuth credential.
-		# Local import: this module is deliberately frappe-free at the top level (it is a
-		# transport), and the existing code already reaches for frappe this way.
-		import frappe
-		if frappe.flags.get("in_test") and not frappe.flags.get("allow_real_openclaw_calls"):
-			raise OpenclawUnreachableError(
-				"BLOCKED: a test tried to open a real openclaw gateway connection "
-				f"({gateway_url!r}). Mock OpenclawSession.connect, or set "
-				"frappe.flags.allow_real_openclaw_calls = True if you really mean it."
-			)
+		# Test-safety: a test that forgot to mock this would talk to the developer's LIVE
+		# openclaw container -- mutating session state via sessions.patch, appending to its
+		# durable transcript, and burning real tokens from the customer's LLM quota, all
+		# while passing green. Local import: this module is deliberately frappe-free at the
+		# top level (it is a transport).
+		from jarvis import _test_guard
+		_blocked = _test_guard.blocked_reason(gateway_url, _test_guard.ALLOW_OPENCLAW)
+		if _blocked:
+			raise OpenclawUnreachableError(_blocked)
 
 		# Two-shot self-heal for tenant re-provisioning: on the first attempt
 		# we use whatever paired creds the customer has; if openclaw rejects

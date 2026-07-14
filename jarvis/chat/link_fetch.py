@@ -77,6 +77,8 @@ import certifi
 import urllib3
 from bs4 import BeautifulSoup
 
+from jarvis import _test_guard
+
 # ``fetch_and_extract``'s frozen defaults (DESIGN.md 6b: "max_bytes=1MB,
 # timeout=10").
 MAX_BYTES_DEFAULT = 1 * 1024 * 1024
@@ -287,6 +289,10 @@ def _open_pinned(parsed, ip: str, timeout: int):
 			timeout=pool_timeout,
 			retries=False,
 		)
+	# Test-safety: a test here would fetch a live URL off the open internet.
+	_blocked = _test_guard.blocked_reason(f"link-fetch:{hostname}", _test_guard.ALLOW_OUTBOUND)
+	if _blocked:
+		raise LinkFetchError(_blocked)
 	resp = pool.urlopen(
 		"GET",
 		target,

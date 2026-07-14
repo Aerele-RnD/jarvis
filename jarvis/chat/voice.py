@@ -17,6 +17,8 @@ import base64
 import time
 
 import frappe
+
+from jarvis import _test_guard
 from jarvis.permissions import require_jarvis_user
 import requests
 from frappe import _
@@ -147,6 +149,10 @@ def openrouter_complete(
 	last_error = ""
 	for _attempt in range(2):
 		try:
+			# Test-safety: a test here would burn REAL STT quota. See jarvis._test_guard.
+			_blocked = _test_guard.blocked_reason("stt", _test_guard.ALLOW_OUTBOUND)
+			if _blocked:
+				raise frappe.ValidationError(_blocked)
 			resp = requests.post(
 				_OPENROUTER_URL, json=payload, headers=headers,
 				timeout=(_CONNECT_TIMEOUT_S, timeout),

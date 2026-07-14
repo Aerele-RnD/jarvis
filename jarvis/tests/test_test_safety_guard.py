@@ -89,3 +89,44 @@ class TestOpenclawConnectGuard(FrappeTestCase):
 
 if __name__ == "__main__":
 	unittest.main()
+
+
+class TestTheGuardIsOnEVERYEgress(FrappeTestCase):
+	"""A guard with holes gives false confidence. The app has SIX ways onto the network;
+	all six route through jarvis._test_guard, so there is one policy and one place to
+	reason about it."""
+
+	EGRESS_MODULES = [
+		"jarvis.admin_client",       # rewrites the tenant pool, deletes OAuth blobs
+		"jarvis.chat.openclaw_client",  # mutates live session state, burns LLM quota
+		"jarvis.oauth.api",          # exchanges/refreshes REAL provider tokens
+		"jarvis.chat.voice",         # burns real STT quota
+		"jarvis.selfhost",           # probes a real customer LLM endpoint
+		"jarvis.chat.link_fetch",    # fetches arbitrary URLs off the open internet
+	]
+
+	def test_every_module_that_can_reach_the_network_consults_the_guard(self):
+		import importlib
+		import inspect
+
+		for name in self.EGRESS_MODULES:
+			mod = importlib.import_module(name)
+			src = inspect.getsource(mod)
+			self.assertIn(
+				"_test_guard", src,
+				f"{name} can reach the network but does not consult jarvis._test_guard. "
+				"A new egress must be guarded, or the suite can touch a live tenant again.",
+			)
+
+	def test_the_guard_is_inert_outside_a_test_run(self):
+		"""Production must be untouched. frappe.flags.in_test is set by the test runner
+		and by nothing else -- if this ever fired in prod it would break every real
+		customer sync."""
+		from jarvis import _test_guard
+
+		saved = frappe.flags.get("in_test")
+		try:
+			frappe.flags.in_test = False
+			self.assertIsNone(_test_guard.blocked_reason("http://admin/x"))
+		finally:
+			frappe.flags.in_test = saved

@@ -26,6 +26,8 @@ import json
 
 import frappe
 import requests
+
+from jarvis import _test_guard
 from frappe.utils import now_datetime
 
 from jarvis._password_utils import clear_settings_password, set_settings_password
@@ -93,6 +95,9 @@ def validate_connection(base_url: str, token: str, *, deep: bool = False) -> dic
 
     # 2. Reachable (unauthenticated health endpoint)
     try:
+        _blocked = _test_guard.blocked_reason("selfhost", _test_guard.ALLOW_OUTBOUND)
+        if _blocked:
+            raise ValueError(_blocked)
         r = requests.get(f"{base}/healthz", timeout=_REACHABLE_TIMEOUT)
         checks.append(_check(
             "reachable", r.status_code == 200,
@@ -104,6 +109,9 @@ def validate_connection(base_url: str, token: str, *, deep: bool = False) -> dic
 
     # 3 + 4. Auth + LLM-ready via the OpenAI-compatible models list.
     try:
+        _blocked = _test_guard.blocked_reason("selfhost", _test_guard.ALLOW_OUTBOUND)
+        if _blocked:
+            raise ValueError(_blocked)
         r = requests.get(f"{base}/v1/models", headers=headers, timeout=_AUTH_TIMEOUT)
         if r.status_code in (401, 403):
             checks.append(_check("auth", False, f"GET /v1/models -> HTTP {r.status_code} (bad token)"))
@@ -131,6 +139,9 @@ def validate_connection(base_url: str, token: str, *, deep: bool = False) -> dic
     # 5. Optional deep test: a real (tiny) chat round-trip.
     if deep:
         try:
+            _blocked = _test_guard.blocked_reason("selfhost", _test_guard.ALLOW_OUTBOUND)
+            if _blocked:
+                raise ValueError(_blocked)
             r = requests.post(
                 f"{base}/v1/chat/completions", headers=headers,
                 json={"model": "openclaw",
@@ -242,6 +253,9 @@ def probe_tool_callback(base_url: str, token: str) -> dict:
     prompt = ('Call the jarvis__get_schema tool with doctype "User" now, '
               "then reply with the single word DONE.")
     try:
+        _blocked = _test_guard.blocked_reason("selfhost", _test_guard.ALLOW_OUTBOUND)
+        if _blocked:
+            raise ValueError(_blocked)
         requests.post(
             f"{base}/v1/chat/completions", headers=headers,
             json={"model": "openclaw",
