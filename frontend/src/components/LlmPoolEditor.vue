@@ -51,18 +51,27 @@
         <span v-if="row.credentialType!=='subscription' && row.hasKey" style="font-size:11px;color:var(--text-3);">key set</span>
         <span class="jv-pool-dot" :class="'jv-pool-dot--' + accountHealth(row).level" aria-hidden="true"></span>
         <span v-if="accountHealth(row).label" class="jv-pool-acct-health" :class="'jv-pool-acct-health--' + accountHealth(row).level" :title="accountHealth(row).title">{{ accountHealth(row).label }}</span>
-        <!-- Reorder + [Edit][Reconnect|Replace key][Remove], always right-aligned. -->
+        <!-- Reorder + [Edit][Reconnect|Replace key][Remove], always right-aligned.
+             Reorder and Remove are DISABLED while the config panel is open: the panel
+             tracks its target row by ARRAY INDEX (panel.index), so mutating the array
+             underneath it silently repoints it at a different row. Concretely: open
+             Edit on row 2, start OAuth, then reorder row 1 while the sign-in tab is up
+             -- the pasted callback would attach the new account to the OTHER model and
+             auto-save it. Edit/Reconnect stay live: they RE-SET panel.index, so they
+             cannot desync it. -->
         <span class="jv-flist-acts">
-          <button @click="move(i,-1)" :disabled="!editable || i===0" title="Up" class="jv-pool-iconbtn">
+          <button @click="move(i,-1)" :disabled="!editable || panel.open || i===0" title="Up" class="jv-pool-iconbtn">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg>
           </button>
-          <button @click="move(i,1)" :disabled="!editable || i===rows.length-1" title="Down" class="jv-pool-iconbtn">
+          <button @click="move(i,1)" :disabled="!editable || panel.open || i===rows.length-1" title="Down" class="jv-pool-iconbtn">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
           </button>
           <button v-if="editable" @click="openEdit(i)" class="jv-btn jv-btn--sm jv-btn--ghost">Edit</button>
           <button v-if="editable && row.credentialType==='subscription'" @click="quickReconnect(i)" class="jv-btn jv-btn--sm jv-btn--ghost">Reconnect</button>
           <button v-else-if="editable" @click="openEdit(i)" class="jv-btn jv-btn--sm jv-btn--ghost">Replace key</button>
-          <button v-if="editable" @click="remove(i)" class="jv-btn jv-btn--sm jv-btn--ghost jv-pool-disc">Remove</button>
+          <button v-if="editable" @click="remove(i)" :disabled="panel.open"
+                  :title="panel.open ? 'Close the editor below first' : undefined"
+                  class="jv-btn jv-btn--sm jv-btn--ghost jv-pool-disc">Remove</button>
         </span>
       </div>
 
@@ -164,9 +173,16 @@
                  label<->value bridge, rather than leaking "OpenAI" into the spec. -->
             <div class="jv-pool-field">
               <label class="jv-pool-lab">Provider</label>
+              <!-- The same-value guard is LOAD-BEARING. JvCombo.choose() emits
+                   update:model-value unconditionally, even when you re-pick the option
+                   that is already selected -- and onUpstreamChange() drops every
+                   connected account (an OAuth account is authorized against ONE
+                   provider). Without this, clicking "OpenAI" on a row already set to
+                   OpenAI silently DISCONNECTS a working subscription. The onboarding
+                   combo below carries the same guard for the same reason. -->
               <JvCombo :model-value="upstreamLabelOf(panelRow.upstream)" :options="upstreamLabels"
                        :editable="editable" placeholder="Provider"
-                       @update:model-value="(v) => { panelRow.upstream = upstreamValueOf(v); onUpstreamChange(panelRow) }" />
+                       @update:model-value="(v) => { const nv = upstreamValueOf(v); if (nv === panelRow.upstream) return; panelRow.upstream = nv; onUpstreamChange(panelRow) }" />
             </div>
           </div>
 
@@ -887,10 +903,13 @@ function setCredType(m, type) {
     // the chosen provider. Dropping this would make every subscription save fail
     // validation with "model is required".
     m.model = defaultSubscriptionModel(m.upstream)
-  } else if (singleMode.value) {
-    // Toggling back to API key in the simplified editor: drop the subscription
-    // model id (hidden while on the subscription tab) so it doesn't linger under
-    // an API-key provider it doesn't belong to.
+  } else {
+    // Toggling back to API key: drop the subscription's model id so it doesn't
+    // linger under an API-key provider it does not belong to (a "gpt-5.5" left on
+    // an Anthropic api-key row saves a provider/model mismatch that only fails at
+    // the upstream). This used to be gated on singleMode -- but the SETTINGS editor
+    // hides the subscription model field too, so it needs the same reset; without it
+    // the stale id is invisible AND unsavable-by-hand.
     m.model = (PROVIDER_DEFAULTS[m.provider] || {}).model || ""
   }
 }
@@ -950,6 +969,16 @@ function accountHealth(m) {
   // Config changed but not yet (re)applied - the last probe result no longer
   // describes what's about to be saved, so don't assert a stale health.
   if (dirty.value || sync.value.pending) return { level: "neutral" }
+  // sync.subscription_status is POOL-WIDE, not per-row: the fleet probes the pool's
+  // subscription credential and returns ONE verdict. Painting it on every subscription
+  // row is only honest when there is exactly one -- with two, a single "unverified"
+  // would flag the healthy row too, and a "verified" would vouch for a row that was
+  // never probed. Attribute it only when it can only mean this row; otherwise stay
+  // neutral rather than assert something we did not measure.
+  // (The fleet gained per-model verdicts in contract 1.11 -- once model_statuses is
+  // plumbed through admin -> customer, key off that and drop this guard.)
+  const subRows = rows.value.filter((r) => r.credentialType === "subscription")
+  if (subRows.length > 1) return { level: "neutral" }
   const status = sync.value.subscription_status
   if (status === "unverified") {
     return {
@@ -1089,12 +1118,28 @@ function copyAuthorizeUrl(m) {
 // accounts carry no oauth_blob (never returned by the server) - reconnect to
 // change; they render as "connected" via their label.
 function seedRows(config) {
-  return seedRowsFromConfig(config).map((r) => ({
-    ...r,
-    upstream: (r.accounts && r.accounts[0] && r.accounts[0].upstream) || "openai",
-    accounts: (r.accounts || []).map((a) => ({ ...a, oauth_blob: "" })),
-    _connect: blankConnect(),
-  }))
+  return seedRowsFromConfig(config).map((r) => {
+    const upstream = (r.accounts && r.accounts[0] && r.accounts[0].upstream) || "openai"
+    // Backfill a missing model id on a STORED subscription row.
+    //
+    // The subscription model field was removed from both editors: the id is derived
+    // in setCredType/onUpstreamChange. But neither of those fires for a row that
+    // merely LOADS from get_llm_config -- so a stored row with an empty model (legacy
+    // data, or a pool written before the id was required) would render "Model not set"
+    // with NO field to type one into, and every Save would then fail validatePool's
+    // "Every model needs a model id" with no way out. Derive it here, on the same rule
+    // the editors use, so such a row is repairable instead of permanently stuck.
+    const model = (r.credentialType === "subscription" && !(r.model || "").trim())
+      ? defaultSubscriptionModel(upstream)
+      : r.model
+    return {
+      ...r,
+      model,
+      upstream,
+      accounts: (r.accounts || []).map((a) => ({ ...a, oauth_blob: "" })),
+      _connect: blankConnect(),
+    }
+  })
 }
 
 async function load() {
