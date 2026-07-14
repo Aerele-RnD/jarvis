@@ -2,20 +2,18 @@ frappe.ui.form.on("Jarvis Settings", {
 	refresh(frm) {
 		if (frm.is_new()) return;
 
+		// Diagnostics now return only a redacted connectivity verdict
+		// ({ok, kind, connected}) — the admin_url / customer status / agent_url
+		// details were removed (PART 4 REVISED TASK 34-R redaction). Show a clean
+		// pass/fail verdict with no URL/status detail.
 		frm.add_custom_button(__("Test Admin Connection"), () => {
 			frappe.call({
 				method: "jarvis.diagnostics.ping_admin",
 			}).then((r) => {
 				const m = r.message || {};
 				if (m.ok) {
-					const conn = m.connection || {};
-					frappe.msgprint({
-						title: __("Admin Reachable"),
-						message: __("Admin URL: {0}<br>Customer status: {1}<br>Agent URL: {2}", [
-							m.admin_url || "?",
-							conn.status || "?",
-							conn.agent_url || "?",
-						]),
+					frappe.show_alert({
+						message: __("Admin reachable"),
 						indicator: "green",
 					});
 				} else {
@@ -35,7 +33,7 @@ frappe.ui.form.on("Jarvis Settings", {
 				const m = r.message || {};
 				if (m.ok) {
 					frappe.show_alert({
-						message: __("Agent Reachable at {0}", [m.agent_url || "?"]),
+						message: __("Agent reachable"),
 						indicator: "green",
 					});
 				} else {
@@ -125,9 +123,18 @@ frappe.ui.form.on("Jarvis Settings", {
 		}, __("Diagnostics"));
 
 		// ---- Self-Hosted openclaw -----------------------------------------
-		frm.add_custom_button(__("Configure Self-Hosted openclaw"), () => {
-			openSelfHostDialog(frm);
-		}, __("Deployment"));
+		// Self-host connect funnels into save_self_hosted / test_connection, which
+		// stay System-Manager-ONLY (owner trust-boundary decision #3). A
+		// Jarvis-Admin-not-SM now reaches this form (TASK 46 grants the admin tier
+		// a Jarvis Settings perm row) but must NOT see a connect button that
+		// dead-ends in a 403 — gate the entry point on System Manager so self-host
+		// config is SM-only end-to-end. ("Switch to Managed" below stays visible:
+		// switch_to_managed is require_jarvis_admin per TASK 45.)
+		if (frappe.user.has_role("System Manager")) {
+			frm.add_custom_button(__("Configure Self-Hosted openclaw"), () => {
+				openSelfHostDialog(frm);
+			}, __("Deployment"));
+		}
 
 		if ((frm.doc.deployment_mode || "Managed") === "Self-Hosted") {
 			frm.add_custom_button(__("Switch to Managed"), () => {

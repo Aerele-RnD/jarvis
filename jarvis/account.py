@@ -16,6 +16,7 @@ import frappe
 
 from jarvis import admin_client
 from jarvis.onboarding import _surface
+from jarvis.permissions import require_jarvis_admin
 
 
 @frappe.whitelist()
@@ -124,7 +125,7 @@ def get_llm_usage() -> dict:
 	"""Real, curated Bifrost usage for the Monitor tab (System-Manager only,
 	spec 7). DIRECT tenants (proxy_active=0, no Bifrost) short-circuit to the
 	empty shape — no pointless admin round-trip."""
-	frappe.only_for("System Manager")
+	require_jarvis_admin()
 	settings = frappe.get_single("Jarvis Settings")
 	if not getattr(settings, "proxy_active", 0):
 		return {"applicable": False, "period": None, "tokens_in": 0, "tokens_out": 0,
@@ -140,7 +141,7 @@ def get_llm_connection_status() -> dict:
 	"""Connection card for the Monitor tab: auth profile present + OAuth expiry.
 	Wrapper over admin_client.post_llm_auth_status, remapped to the customer
 	contract field names. Never returns token material. System-Manager only."""
-	frappe.only_for("System Manager")
+	require_jarvis_admin()
 	raw = _surface(admin_client.post_llm_auth_status) or {}
 	data = raw.get("data", raw) or {}
 	return {
@@ -161,7 +162,7 @@ def get_account() -> dict:
 	Neither stops a direct /api/method call, so any authenticated user could
 	read the account's plan, subscription status and validity.
 	"""
-	frappe.only_for("System Manager")
+	require_jarvis_admin()
 	return _surface(admin_client.get_account_summary)
 
 
@@ -174,7 +175,7 @@ def preview_upgrade(target_plan: str) -> dict:
 	spends an admin round-trip per call. Whoever may not upgrade the plan has
 	no business pricing the upgrade either.
 	"""
-	frappe.only_for("System Manager")
+	require_jarvis_admin()
 	return _surface(admin_client.preview_upgrade, target_plan)
 
 
@@ -186,5 +187,5 @@ def start_upgrade(target_plan: str) -> dict:
 	review): initiates a billing transaction tied to the site's admin
 	account; non-admin staff shouldn't be able to upgrade the plan.
 	"""
-	frappe.only_for("System Manager")
+	require_jarvis_admin()
 	return _surface(admin_client.start_upgrade, target_plan)

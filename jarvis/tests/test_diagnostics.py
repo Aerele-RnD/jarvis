@@ -32,7 +32,15 @@ class TestPingAdmin(FrappeTestCase):
 				   return_value={"status": "active", "agent_url": "ws://localhost:19200"}):
 			out = diagnostics.ping_admin()
 		self.assertTrue(out["ok"])
-		self.assertEqual(out["connection"]["status"], "active")
+		self.assertEqual(out["kind"], "ok")
+		self.assertTrue(out["connected"])
+		# Security review PART 4 TASK 34-R: the admin get_connection payload carries
+		# the container agent_token + operator URLs; ping_admin consumes it to prove
+		# reachability but must NEVER return it (to ANY role). Assert the redaction.
+		self.assertNotIn("connection", out)
+		self.assertNotIn("admin_url", out)
+		self.assertNotIn("agent_url", out)
+		self.assertNotIn("agent_token", out)
 
 	def test_auth_failure_returns_kind_auth(self):
 		from jarvis.exceptions import AdminAuthError
@@ -96,6 +104,9 @@ class TestPingOpenclaw(FrappeTestCase):
 			out = diagnostics.ping_openclaw()
 		p.assert_called_once_with("ws://h:1", "t")
 		self.assertTrue(out["ok"])
+		# PART 4 TASK 34-R: the endpoint agent_url is an operator-disclosure surface
+		# and is dropped from the response.
+		self.assertNotIn("agent_url", out)
 
 	def test_unreachable(self):
 		from jarvis.exceptions import OpenclawUnreachableError

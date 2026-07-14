@@ -37,9 +37,10 @@
 						<span>Shortcuts</span>
 					</button>
 
-					<!-- ACCOUNT & BILLING (System Managers only — the rail and the server
-					     both gate it, so no badge is needed) -->
-					<template v-if="isSM">
+					<!-- ACCOUNT & BILLING (the tenant-admin tier — System Manager OR
+					     Jarvis Admin; PART 4 REVISED TASK 49(c). The rail and the server
+					     both gate it (require_jarvis_admin), so no badge is needed) -->
+					<template v-if="isSM || isAdmin">
 						<div class="jv-settings-group">Account &amp; billing</div>
 						<button class="jv-settings-navitem" :class="{ on: section === 'plan' }" @click="go('plan')">
 							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" /><path d="M1 10h22" /></svg>
@@ -180,7 +181,9 @@ const DESCRIPTIONS = {
 const section = computed(() => {
 	const s = store.settingsSection
 	if (!PANES[s]) return "general"
-	if (GATED_SM.includes(s) && !isSM) return "general"
+	// PART 4 REVISED TASK 49(c): ACCOUNT & BILLING panes are tenant-admin tier
+	// (SM OR Jarvis Admin), matching the widened require_jarvis_admin endpoints.
+	if (GATED_SM.includes(s) && !(isSM || isAdmin)) return "general"
 	if (GATED_ADMIN.includes(s) && !isAdmin) return "general"
 	return s
 })

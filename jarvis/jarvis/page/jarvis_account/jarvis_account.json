@@ -6,5 +6,5 @@
  "module": "Jarvis",
  "standard": "Yes",
  "system_page": 0,
- "roles": [{ "role": "System Manager" }]
+ "roles": [{ "role": "System Manager" }, { "role": "Jarvis Admin" }]
 }

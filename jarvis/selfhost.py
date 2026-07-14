@@ -29,6 +29,7 @@ import requests
 from frappe.utils import now_datetime
 
 from jarvis._password_utils import clear_settings_password, set_settings_password
+from jarvis.permissions import require_jarvis_admin
 
 # Timeouts (seconds). Reachability is snappy; the deep chat ping tolerates a
 # slow reasoning model.
@@ -369,8 +370,10 @@ def switch_to_managed() -> dict:
     """Switch back to Managed mode. Re-syncs the managed connection from admin
     if the bench was onboarded; otherwise just flips the flag.
 
-    System Manager only."""
-    frappe.only_for("System Manager")
+    Jarvis Admin / System Manager (PART 4 REVISED, TASK 45 — the deployment-mode
+    toggle is tenant administration, not the operator connection secret; the
+    save_self_hosted / test_connection operator writes STAY SM-only)."""
+    require_jarvis_admin()
     s = frappe.get_single("Jarvis Settings")
     s.db_set("deployment_mode", "Managed")
     frappe.db.commit()
@@ -385,12 +388,24 @@ def switch_to_managed() -> dict:
 
 @frappe.whitelist()
 def get_status() -> dict:
-    """Deployment status for the account/settings UI. System Manager only."""
-    frappe.only_for("System Manager")
+    """Deployment status for the account/settings UI. Jarvis Admin / System
+    Manager (PART 4 REVISED, TASK 45).
+
+    SECURITY (Part-4 review finding A): ``agent_url`` is one of the six
+    permlevel-1 operator/connection fields fenced SM-only in Jarvis Settings
+    (TASK 46) and redacted from ``ping_openclaw`` (TASK 34-R). It must NOT be
+    disclosed to a Jarvis-Admin-not-SM through this widened endpoint, so it is
+    included ONLY for a System Manager / Administrator — mirroring the ping
+    redaction. (deployment_mode / validated_at / stream are not operator fields
+    and stay visible to the whole admin tier.)"""
+    require_jarvis_admin()
     s = frappe.get_single("Jarvis Settings")
+    is_sm = ("System Manager" in frappe.get_roles()) or (
+        frappe.session.user == "Administrator")
     return {
         "deployment_mode": s.deployment_mode or "Managed",
-        "agent_url": (s.agent_url or "") if (s.deployment_mode == "Self-Hosted") else "",
+        "agent_url": (s.agent_url or "")
+        if (is_sm and s.deployment_mode == "Self-Hosted") else "",
         "validated_at": str(s.selfhost_last_validated_at or ""),
         "stream": (s.selfhost_stream is None) or bool(s.selfhost_stream),
     }

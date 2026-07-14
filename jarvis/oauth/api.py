@@ -18,6 +18,7 @@ import requests
 
 from jarvis import admin_client, onboarding
 from jarvis.exceptions import JarvisError
+from jarvis.permissions import require_jarvis_admin
 from jarvis.oauth.providers import (
 	UnknownProviderError, build_authorize_url, extract_account_id, get_provider,
 	is_oauth_provider,
@@ -220,7 +221,7 @@ def begin_paste_signin(provider: str, model: str) -> dict:
 	another logged-in System Manager can't complete an in-flight sign-in
 	that someone else started.
 	"""
-	frappe.only_for("System Manager")
+	require_jarvis_admin()
 	return _begin_signin(provider, model, pool=False)
 
 
@@ -236,7 +237,7 @@ def begin_pool_account_signin(provider: str, model: str) -> dict:
 	caller (see ``complete_pool_account_signin``) instead of writing creds
 	to Jarvis Settings / pushing to the container.
 	"""
-	frappe.only_for("System Manager")
+	require_jarvis_admin()
 	return _begin_signin(provider, model, pool=True)
 
 
@@ -389,7 +390,7 @@ def complete_paste_signin(nonce: str, redirected_url: str) -> dict:
 	someone else started. Sprint-1 Important from the 2026-06-16 code
 	review.
 	"""
-	frappe.only_for("System Manager")
+	require_jarvis_admin()
 	entry, err = _validate_signin_nonce(nonce)
 	if err:
 		return err
@@ -482,7 +483,7 @@ def complete_pool_account_signin(nonce: str, redirected_url: str) -> dict:
 	``account_ref`` is a freshly generated ``SUB_<hex>`` id that satisfies
 	``^[A-Za-z0-9_-]{1,64}$`` and ``oauth_blob`` is the JSON-encoded blob.
 	"""
-	frappe.only_for("System Manager")
+	require_jarvis_admin()
 	entry, err = _validate_signin_nonce(nonce)
 	if err:
 		return err
@@ -635,7 +636,7 @@ def disconnect() -> dict:
 	code review): writes Jarvis Settings, ends an active subscription
 	connection.
 	"""
-	frappe.only_for("System Manager")
+	require_jarvis_admin()
 	try:
 		admin_client.post_subscription_disconnect()
 	except (admin_client.AdminUnreachableError,
@@ -716,7 +717,7 @@ def get_direct_subscription_status() -> dict:
 	System-Manager only (matches the rest of the LLM-config surface). Never
 	returns token material - only display metadata.
 	"""
-	frappe.only_for("System Manager")
+	require_jarvis_admin()
 	settings = frappe.get_single("Jarvis Settings")
 	auth_mode = (settings.get("llm_auth_mode") or "").strip()
 	provider = settings.get("llm_provider") or ""
