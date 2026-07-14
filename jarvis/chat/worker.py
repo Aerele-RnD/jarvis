@@ -47,6 +47,7 @@ from jarvis.chat.turn_handler import (
 	_resolve_model_and_provider,
 	_to_managed_attachments,
 	_vision_enabled,
+	POOL_VIRTUAL_MODEL,
 	handle_chat_send,
 )
 
@@ -74,6 +75,7 @@ __all__ = [
 	"_resolve_model_and_provider",
 	"_to_managed_attachments",
 	"_vision_enabled",
+	"POOL_VIRTUAL_MODEL",
 ]
 
 

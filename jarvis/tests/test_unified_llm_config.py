@@ -1875,9 +1875,19 @@ class TestFT5ChatWorkerPoolAwareness(_RT3SettingsTestCase):
                             "proxy_active", 1, update_modified=False)
         frappe.db.commit()
 
-    def test_pool_mode_resolves_empty_model_for_pool_routing(self):
-        """proxy_active=1, no model_override → _resolve_model_and_provider returns ('', None)."""
-        from jarvis.chat.worker import _resolve_model_and_provider
+    def test_pool_mode_with_no_pin_names_the_pool_explicitly(self):
+        """proxy_active=1, no model_override → the POOL'S VIRTUAL MODEL, not ''.
+
+        This used to return '' ("send nothing"), and the caller only issues
+        sessions.patch when the model is truthy -- so a session that had ONCE been
+        pinned stayed pinned FOREVER. Selecting "Auto" wrote model_override='' to the
+        DB and flipped the pill back to "Auto", while openclaw went right on calling
+        the old model, because nothing ever told it otherwise.
+
+        Clearing a pin is session state on openclaw's side: it has to be an explicit
+        instruction, not the absence of one. (jarvis#299)
+        """
+        from jarvis.chat.worker import _resolve_model_and_provider, POOL_VIRTUAL_MODEL
 
         self._set_proxy_active([
             {"provider": "openai_compat", "model": "gpt-4o", "tier": "strong", "order": 0, "api_key": "sk-p1"},
@@ -1886,10 +1896,30 @@ class TestFT5ChatWorkerPoolAwareness(_RT3SettingsTestCase):
 
         conv = self._make_conv(model_override="")
         effective_model, provider = _resolve_model_and_provider(conv)
-        self.assertEqual(effective_model, "",
-                         f"Pool mode with no override must return '' for model; got: {effective_model!r}")
+        self.assertEqual(effective_model, POOL_VIRTUAL_MODEL,
+                         "Pool mode with no pin must RESET the session to the pool's "
+                         f"virtual model, not send nothing; got: {effective_model!r}")
+        self.assertTrue(
+            bool(effective_model),
+            "must be truthy, or turn_handler skips sessions.patch and the stale pin sticks")
         self.assertIsNone(provider,
                           f"Pool mode must return None provider; got: {provider!r}")
+
+    def test_pool_mode_unknown_pin_falls_back_to_the_pool(self):
+        """A model_override naming a model that is NOT in the enabled pool (stale pin
+        left behind after the customer removed that model) must reset to the pool, not
+        leak the dead name through to openclaw."""
+        from jarvis.chat.worker import _resolve_model_and_provider, POOL_VIRTUAL_MODEL
+
+        self._set_proxy_active([
+            {"provider": "openai_compat", "model": "gpt-4o", "tier": "strong", "order": 0, "api_key": "sk-p1"},
+            {"provider": "openai_compat", "model": "gpt-3.5-turbo", "tier": "cheap", "order": 1, "api_key": "sk-p2"},
+        ])
+
+        conv = self._make_conv(model_override="a-model-the-customer-deleted")
+        effective_model, provider = _resolve_model_and_provider(conv)
+        self.assertEqual(effective_model, POOL_VIRTUAL_MODEL)
+        self.assertIsNone(provider)
 
     def test_pool_mode_validates_override_against_enabled_models(self):
         """proxy_active=1, model_override in enabled models → override returned."""

@@ -246,12 +246,22 @@ _PROVIDER_LABEL_TO_OPENCLAW_ID = {
 }
 
 
+# The virtual model the fleet configures openclaw with whenever the proxy is active
+# (jarvis-fleet-agent compose.render_openclaw_config(model="jarvis-pool")). Bifrost
+# expands it into the pool's failover chain via its catch-all routing rule.
+#
+# The customer plane has to know this name because CLEARING a pin has to be an explicit
+# instruction, not an omission -- see _resolve_model_and_provider. The coupling is soft:
+# llm_proxy's catch-all rule matches `true`, so even if the fleet renamed the virtual
+# model, an unrecognised id would still fall through to the pool chain rather than break.
+POOL_VIRTUAL_MODEL = "jarvis-pool"
+
+
 def _resolve_model_and_provider(conv) -> tuple[str, str | None]:
 	"""Return (effective_model, openclaw_provider_id_or_None) for this conv.
 
-	Pool mode (proxy_active=1): let Bifrost route. Return empty model unless
-	conv.model_override matches an enabled pool model name (validated override).
-	Direct mode: use conv.model_override or settings.llm_model.
+	Pool mode (proxy_active=1): the pinned model, or the pool's virtual model when no
+	pin is set. Direct mode: use conv.model_override or settings.llm_model.
 	"""
 	settings = frappe.get_single("Jarvis Settings")
 
@@ -264,7 +274,15 @@ def _resolve_model_and_provider(conv) -> tuple[str, str | None]:
 		override = (conv.model_override or "").strip()
 		if override and override in enabled_names:
 			return override, None  # Validated override accepted
-		return "", None  # Let Bifrost/pool route
+
+		# NO PIN -> name the pool explicitly. Returning "" here used to mean "send
+		# nothing", and the caller only issues sessions.patch when the model is truthy --
+		# so a session that had ONCE been pinned stayed pinned FOREVER. Selecting "Auto"
+		# wrote model_override="" to the DB, the pill flipped back to "Auto", and openclaw
+		# went right on calling the old model, because nothing ever told it otherwise.
+		# The pin is session state on openclaw's side; clearing it has to be an explicit
+		# instruction, not the absence of one. (jarvis#299)
+		return POOL_VIRTUAL_MODEL, None
 
 	effective_model = (conv.model_override or settings.llm_model or "")
 	provider = (
