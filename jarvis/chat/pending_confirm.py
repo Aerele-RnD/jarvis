@@ -21,9 +21,8 @@ import json
 import pickle
 import secrets
 
-import redis.exceptions
-
 import frappe
+import redis.exceptions
 
 _TTL_S = 900  # 15 min; a confirmation token the user must click within
 _PREFIX = "jarvis:pending_confirm:"
@@ -52,12 +51,18 @@ def args_hash(tool: str, args: dict) -> str:
 
 
 def mint(*, conversation: str, owner: str, tool: str, args: dict, run_id: str,
-		 exec_user: str | None = None) -> str:
+		 exec_user: str | None = None, preview: dict | None = None) -> str:
 	"""Store a pending call and return a fresh single-use token
 	(secrets.token_urlsafe(24)). The stored record carries conversation,
 	owner, tool, args (the full dict - this is the authoritative payload
-	that will execute), args_hash, run_id, exec_user. TTL _TTL_S. Returns
-	the token.
+	that will execute), args_hash, run_id, exec_user, preview. TTL _TTL_S.
+	Returns the token.
+
+	``preview`` is the park-time confirmation preview (dry-run "would" doc or
+	described-intent dict). It is stored so the resync endpoint can return it
+	verbatim instead of RE-running the dry-run - re-running fires unsandboxed
+	on_submit/on_cancel side effects on every reload/reconnect (F2). Tokens
+	minted before this field existed simply carry no ``preview``.
 
 	``owner`` is the CONVERSATION OWNER - the human who sees the card, clicks
 	Confirm, and whose browser is subscribed. Delivery + binding + confirm all
@@ -76,6 +81,7 @@ def mint(*, conversation: str, owner: str, tool: str, args: dict, run_id: str,
 		"args": args,
 		"args_hash": args_hash(tool, args),
 		"run_id": run_id,
+		"preview": preview,
 	}
 	frappe.cache().set_value(_key(token), record, expires_in_sec=_TTL_S)
 	# Index the token under its owner so list_for_owner can re-surface it. Best
@@ -102,10 +108,13 @@ def peek(token: str) -> dict | None:
 
 def consume(token: str, *, owner: str, conversation: str) -> dict | None:
 	"""Validate AND atomically single-use-consume. Returns the stored record
-	ONLY when: token exists, record.owner == owner, record.conversation ==
-	conversation. On success the token is deleted BEFORE returning (single
-	use - a second consume returns None). On any mismatch returns None and
-	does NOT delete (so a wrong-owner probe cannot burn a legitimate token).
+	ONLY when: token exists, record.owner == owner, and (when the record has a
+	non-empty stored conversation) record.conversation == conversation. A record
+	whose stored conversation is "" carries no conversation binding and passes
+	that check for any caller conversation (owner + single-use still hold). On
+	success the token is deleted BEFORE returning (single use - a second consume
+	returns None). On any mismatch returns None and does NOT delete (so a
+	wrong-owner probe cannot burn a legitimate token).
 
 	Atomicity: ownership is checked first with a plain (non-destructive)
 	read, so a mismatched call never touches the stored key. Only once
@@ -122,7 +131,19 @@ def consume(token: str, *, owner: str, conversation: str) -> dict | None:
 	record = frappe.cache().get_value(_key(token), use_local_cache=False)
 	if not record:
 		return None
-	if record.get("owner") != owner or record.get("conversation") != conversation:
+	# Owner is the real security boundary and is always enforced.
+	if record.get("owner") != owner:
+		return None
+	# Conversation is a SECONDARY replay guard, not the boundary. A token minted
+	# without a resolvable conversation ("" - a managed session_key->conversation
+	# lookup miss, or self-host ambiguous concurrency) carries no conversation
+	# binding, so an owner-matched consume must still succeed even when the caller
+	# passes its current conversation id. Without this skip such a card is
+	# delivered to the owner but EVERY Confirm click fails here and shows a
+	# misleading "expired" toast (the card is un-confirmable for its full TTL).
+	# When a conversation WAS bound, it is still enforced.
+	stored_conv = record.get("conversation")
+	if stored_conv and stored_conv != conversation:
 		return None
 
 	full_key = frappe.cache().make_key(_key(token))
@@ -161,7 +182,8 @@ def list_for_owner(owner: str, conversation: str | None = None) -> list[dict]:
 	  - prunes dead members (token record expired/consumed) from the index,
 	  - filters to records whose stored owner matches ``owner`` (defense in
 	    depth - never returns another user's token),
-	  - filters to ``conversation`` when one is given.
+	  - filters to ``conversation`` when one is given, EXCEPT conversation-less
+	    records ("") which carry no binding and surface under any filter (F1).
 
 	Never returns another user's tokens. Used by the resync endpoint so the SPA
 	can re-surface confirmation cards after a reload/reconnect.
@@ -186,7 +208,13 @@ def list_for_owner(owner: str, conversation: str | None = None) -> list[dict]:
 			continue
 		if record.get("owner") != owner:
 			continue
-		if conversation is not None and record.get("conversation") != conversation:
+		# A conversation-less record ("" - see consume/F1) carries no binding, so
+		# surface it under ANY conversation filter: otherwise the card is
+		# confirmable while its live event is on screen but VANISHES on reload
+		# (resync drops it) for the full TTL - the SPA re-binds it to the current
+		# conversation. Bound records are still filtered to the asked conversation.
+		rec_conv = record.get("conversation")
+		if conversation is not None and rec_conv and rec_conv != conversation:
 			continue
 		out.append({**record, "token": token})
 	if dead:

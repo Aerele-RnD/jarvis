@@ -142,6 +142,19 @@ def _require_own_conversation(conversation: str) -> None:
 		frappe.throw(_("Not your conversation."), frappe.PermissionError)
 
 
+def _owns_conversation(conversation: str) -> bool:
+	"""Soft ownership check: True iff the current session user owns
+	``conversation``. Used to gate the conversation-less-token receipt +
+	continuation attach (F1): the fallback ``passed_conv`` is client-supplied, so
+	a caller could otherwise point a confirm/dismiss of their OWN conversation-
+	less token at another user's conversation and inject a receipt chip +
+	continuation turn there. Unlike ``_require_own_conversation`` this returns
+	False instead of raising - the write has already executed, so a non-owned
+	target must be skipped gracefully, not turned into a post-write 500."""
+	return bool(conversation) and frappe.db.get_value(
+		CONV, conversation, "owner") == frappe.session.user
+
+
 def _receipt_text(verb: str, doctype: str, name: str, submitted: int = 0) -> str:
 	if verb == "create" and submitted:
 		return f"Created and submitted {doctype} {name}."
@@ -355,9 +368,15 @@ def confirm_tool(token: str, conversation: str | None = None) -> dict:
 
 	# Leave a transcript receipt (#7) so a confirmed delete/submit/email shows on
 	# reload, matching the inline model-write path's tool card. Best-effort: the
-	# write already committed, so a receipt hiccup must not report failure. Needs
-	# a resolved conversation to attach to (self-host with no conv binding skips).
+	# write already committed, so a receipt hiccup must not report failure.
+	# Attach to the conversation the click came from (``passed_conv``) when the
+	# token itself was minted conversation-less (F1: a managed session_key lookup
+	# miss / self-host ambiguous concurrency), but only when the caller OWNS that
+	# conversation (passed_conv is client-supplied - never inject into another
+	# user's chat). A true headless caller with no owned conversation just skips.
 	conv = record.get("conversation")
+	if not conv and _owns_conversation(passed_conv):
+		conv = passed_conv
 	if conv:
 		ok = isinstance(result, dict) and bool(result.get("ok"))
 		# Leave a durable receipt CHIP (#7 / receipt-chips): action_outcome makes
@@ -459,7 +478,12 @@ def dismiss_tool(token: str, conversation: str | None = None) -> dict:
 
 	tool = record.get("tool") or ""
 	args = record.get("args") or {}
+	# Attach the discarded chip + veto note to the conversation the click came
+	# from when the token was minted conversation-less (F1), but only when the
+	# caller OWNS that conversation (passed_conv is client-supplied).
 	conv = record.get("conversation")
+	if not conv and _owns_conversation(passed_conv):
+		conv = passed_conv
 	if conv:
 		# Durable "discarded" chip: what the user declined, in their transcript.
 		try:
@@ -493,21 +517,35 @@ def list_pending_confirmations(conversation: str | None = None) -> dict:
 	if frappe.session.user == "Guest":
 		raise frappe.PermissionError("authentication required")
 
-	from jarvis.api import _describe_call, _pending_preview
+	from jarvis.api import _describe_call
 	from jarvis.chat import pending_confirm
 
 	conv = (conversation or "").strip() or None
 	records = pending_confirm.list_for_owner(frappe.session.user, conversation=conv)
 	items = []
 	for r in records:
-		tool = r.get("tool")
-		args = r.get("args") or {}
-		items.append({
-			"token": r.get("token"),
-			"tool": tool,
-			"preview": _pending_preview(tool, args),
-			"summary": _describe_call(tool, args),
-			"conversation": r.get("conversation"),
-			"run_id": r.get("run_id"),
-		})
+		# Per-record guard (F3): a single malformed record must NOT 500 the whole
+		# endpoint - that would blind resync of EVERY card until TTL. Skip + log
+		# the bad one; surface the rest.
+		try:
+			tool = r.get("tool")
+			args = r.get("args") or {}
+			items.append({
+				"token": r.get("token"),
+				"tool": tool,
+				# Return the PARK-TIME preview verbatim (F2). Recomputing it here
+				# via _pending_preview re-runs the sandboxed dry-run, whose inline
+				# on_submit/on_cancel side effects are NOT sandboxed and would
+				# re-fire on every reload/reconnect/tab-wake/post-confirm. Tokens
+				# minted before preview was stored carry None (summary still
+				# describes the action); no dry-run is ever run on this path.
+				"preview": r.get("preview"),
+				"summary": _describe_call(tool, args),
+				"conversation": r.get("conversation"),
+				"run_id": r.get("run_id"),
+			})
+		except Exception:
+			frappe.log_error(
+				title="list_pending_confirmations record skipped",
+				message=frappe.get_traceback())
 	return {"ok": True, "data": {"pending": items}}

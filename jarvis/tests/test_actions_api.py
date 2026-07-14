@@ -354,3 +354,152 @@ class TestContinuation(FrappeTestCase):
 		self.assertEqual(hidden[0].content.count("`"), 2)
 		# Sanity: the endpoint itself never raises on a failed inner write.
 		self.assertIn("ok", res)
+
+
+class TestConfirmEmptyConversationToken(FrappeTestCase):
+	"""F1: a gated write parked with an unresolvable conversation ("" - managed
+	session_key->conversation lookup miss / self-host ambiguous concurrency) is
+	delivered to and rendered by the owner, so it must still be confirmable /
+	discardable, and its receipt + continuation must attach to the conversation
+	the click came from (the SPA's current id, passed in)."""
+
+	def _conv(self) -> str:
+		conv = _make_conversation()
+		self.addCleanup(lambda: frappe.delete_doc(
+			"Jarvis Conversation", conv, force=True, ignore_permissions=True))
+		return conv
+
+	def _roles(self, conv):
+		return [m.role for m in frappe.get_all(
+			"Jarvis Chat Message", filters={"conversation": conv},
+			fields=["role"], order_by="seq asc")]
+
+	def test_confirm_empty_conv_token_executes_and_attaches_receipt(self):
+		from jarvis.chat import pending_confirm
+		from jarvis.chat.actions_api import confirm_tool
+		conv = self._conv()
+		desc = "jarvis-test-empty-conv-confirm-001"
+		token = pending_confirm.mint(
+			conversation="", owner="Administrator", tool="create_doc",
+			args={"doctype": "ToDo", "values": {"description": desc}}, run_id="")
+		with patch("jarvis.chat.api._dispatch_turn") as disp:
+			res = confirm_tool(token, conversation=conv)
+		# Before F1 this returned InvalidConfirmation ("expired on click"); now
+		# it executes.
+		self.assertTrue(res["ok"])
+		created = frappe.db.get_value("ToDo", {"description": desc}, "name")
+		self.assertTrue(created)
+		self.addCleanup(lambda: frappe.delete_doc(
+			"ToDo", created, force=True, ignore_permissions=True))
+		# Receipt chip (role=tool) + continuation attached to the passed conv.
+		self.assertIn("tool", self._roles(conv))
+		self.assertEqual(disp.call_count, 1)
+
+	def test_discard_empty_conv_token_leaves_chip(self):
+		from jarvis.chat import pending_confirm
+		from jarvis.chat.actions_api import dismiss_tool
+		conv = self._conv()
+		token = pending_confirm.mint(
+			conversation="", owner="Administrator", tool="delete_doc",
+			args={"doctype": "ToDo", "name": "no-such-todo"}, run_id="")
+		res = dismiss_tool(token, conversation=conv)
+		# Before F1 this consumed nothing and returned already_handled with no
+		# chip; now it discards and leaves a durable chip on the passed conv.
+		self.assertEqual(res["data"]["status"], "discarded")
+		self.assertIn("tool", self._roles(conv))
+
+	def test_confirm_empty_conv_token_does_not_attach_to_unowned_conversation(self):
+		"""F1 hardening: passed_conv is client-supplied. A conversation-less
+		token must NOT inject a receipt chip / continuation turn into a
+		conversation the confirming user does not own. The write still executes
+		(the token is owner-matched); only the attach is skipped."""
+		from jarvis.chat import pending_confirm
+		from jarvis.chat.actions_api import confirm_tool
+		other = _make_conversation()
+		frappe.db.set_value("Jarvis Conversation", other, "owner", "someone@else.invalid")
+		self.addCleanup(lambda: frappe.delete_doc(
+			"Jarvis Conversation", other, force=True, ignore_permissions=True))
+		desc = "jarvis-test-empty-conv-unowned-001"
+		token = pending_confirm.mint(
+			conversation="", owner="Administrator", tool="create_doc",
+			args={"doctype": "ToDo", "values": {"description": desc}}, run_id="")
+		with patch("jarvis.chat.api._dispatch_turn") as disp:
+			res = confirm_tool(token, conversation=other)
+		self.assertTrue(res["ok"])  # the write still executes
+		created = frappe.db.get_value("ToDo", {"description": desc}, "name")
+		self.assertTrue(created)
+		self.addCleanup(lambda: frappe.delete_doc(
+			"ToDo", created, force=True, ignore_permissions=True))
+		# Nothing injected into the unowned conversation, no continuation fired.
+		self.assertEqual(self._roles(other), [])
+		disp.assert_not_called()
+
+	def test_discard_empty_conv_token_does_not_attach_to_unowned_conversation(self):
+		"""F1 hardening (dismiss twin): a conversation-less token discarded with
+		another user's conversation id must consume the token but inject no
+		chip/note there."""
+		from jarvis.chat import pending_confirm
+		from jarvis.chat.actions_api import dismiss_tool
+		other = _make_conversation()
+		frappe.db.set_value("Jarvis Conversation", other, "owner", "someone@else.invalid")
+		self.addCleanup(lambda: frappe.delete_doc(
+			"Jarvis Conversation", other, force=True, ignore_permissions=True))
+		token = pending_confirm.mint(
+			conversation="", owner="Administrator", tool="delete_doc",
+			args={"doctype": "ToDo", "name": "no-such-todo"}, run_id="")
+		res = dismiss_tool(token, conversation=other)
+		self.assertEqual(res["data"]["status"], "discarded")  # token consumed
+		self.assertEqual(self._roles(other), [])  # nothing injected
+
+
+class TestListPendingConfirmations(FrappeTestCase):
+	"""F2/F3: resync returns the park-time preview verbatim (no side-effecting
+	dry-run recompute) and one bad record cannot 500 the whole endpoint."""
+
+	def _conv(self) -> str:
+		conv = _make_conversation()
+		self.addCleanup(lambda: frappe.delete_doc(
+			"Jarvis Conversation", conv, force=True, ignore_permissions=True))
+		return conv
+
+	def test_returns_stored_preview_without_rerunning_dry_run(self):
+		from jarvis.chat import pending_confirm
+		from jarvis.chat.actions_api import list_pending_confirmations
+		conv = self._conv()
+		stored = {"preview": True, "would": {"doctype": "ToDo", "sentinel": "park-time"}}
+		pending_confirm.mint(
+			conversation=conv, owner="Administrator", tool="submit_doc",
+			args={"doctype": "ToDo", "name": "x"}, run_id="", preview=stored)
+		# The dry-run (whose on_submit/on_cancel side effects are unsandboxed)
+		# must NOT be re-run on resync.
+		with patch("jarvis.api._run_preview") as rp:
+			r = list_pending_confirmations(conversation=conv)
+		rp.assert_not_called()
+		items = r["data"]["pending"]
+		self.assertEqual(len(items), 1)
+		self.assertEqual(items[0]["preview"], stored)
+
+	def test_one_bad_record_does_not_blind_the_endpoint(self):
+		from jarvis.chat import pending_confirm
+		from jarvis.chat.actions_api import list_pending_confirmations
+		conv = self._conv()
+		pending_confirm.mint(
+			conversation=conv, owner="Administrator", tool="submit_doc",
+			args={"doctype": "ToDo", "name": "a"}, run_id="", preview={"described": True})
+		pending_confirm.mint(
+			conversation=conv, owner="Administrator", tool="submit_doc",
+			args={"doctype": "ToDo", "name": "b"}, run_id="", preview={"described": True})
+
+		calls = {"n": 0}
+
+		def _boom(tool, args):
+			calls["n"] += 1
+			if calls["n"] == 1:
+				raise RuntimeError("boom building this record's summary")
+			return "ok-summary"
+
+		with patch("jarvis.api._describe_call", side_effect=_boom):
+			r = list_pending_confirmations(conversation=conv)
+		# One record raised; the endpoint still returns ok with the other card.
+		self.assertTrue(r["ok"])
+		self.assertEqual(len(r["data"]["pending"]), 1)

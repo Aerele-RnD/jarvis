@@ -81,6 +81,29 @@ class TestExecUser(FrappeTestCase):
 		self.assertEqual(pending_confirm.peek(token)["exec_user"], OWNER)
 
 
+class TestPreview(FrappeTestCase):
+	def test_preview_stored_and_returned(self):
+		"""F2: the park-time preview is stored so resync can return it verbatim
+		(instead of re-running the side-effecting dry-run)."""
+		preview = {"preview": True, "would": {"doctype": "Task", "subject": "hi"}}
+		token = pending_confirm.mint(
+			conversation=CONV, owner=OWNER, tool=TOOL, args=ARGS, run_id=RUN_ID,
+			preview=preview,
+		)
+		self.assertEqual(pending_confirm.peek(token)["preview"], preview)
+		# consume returns it too.
+		self.assertEqual(
+			pending_confirm.consume(token, owner=OWNER, conversation=CONV)["preview"],
+			preview,
+		)
+
+	def test_preview_defaults_to_none(self):
+		token = pending_confirm.mint(
+			conversation=CONV, owner=OWNER, tool=TOOL, args=ARGS, run_id=RUN_ID,
+		)
+		self.assertIsNone(pending_confirm.peek(token).get("preview"))
+
+
 class TestListForOwner(FrappeTestCase):
 	_A = "owner-a@example.invalid"
 	_B = "owner-b@example.invalid"
@@ -114,6 +137,19 @@ class TestListForOwner(FrappeTestCase):
 		self._mint(self._A, "conv-a2", "fc-2")
 		got = pending_confirm.list_for_owner(self._A, conversation="conv-a1")
 		self.assertEqual([r["token"] for r in got], [t1])
+
+	def test_conversationless_record_surfaces_under_any_filter(self):
+		"""F1: a token minted without a resolvable conversation ("") carries no
+		binding, so resync (which always passes the SPA's current conversation)
+		must still return it - else the card is confirmable live but lost on
+		reload for its TTL. A bound record is still filtered out."""
+		t_unbound = self._mint(self._A, "", "cl-unbound")
+		self._mint(self._A, "conv-other", "cl-bound")
+		got = {r["token"] for r in pending_confirm.list_for_owner(
+			self._A, conversation="conv-current")}
+		self.assertIn(t_unbound, got)  # surfaces despite the filter
+		# The bound record for a different conversation is still excluded.
+		self.assertEqual(len(got), 1)
 
 	def test_excludes_expired_and_consumed(self):
 		t_live = self._mint(self._A, "conv-a1", "ex-live")
@@ -193,6 +229,32 @@ class TestConsume(FrappeTestCase):
 		)
 		record = pending_confirm.consume(token, owner=OWNER, conversation=CONV)
 		self.assertIsNotNone(record)
+
+	def test_empty_stored_conversation_is_confirmable_by_owner(self):
+		"""F1: a token minted with an unresolvable conversation ("") carries no
+		conversation binding, so an owner-matched consume must still succeed even
+		when the caller passes its current (non-empty) conversation id. Regression
+		for the managed session_key-miss / self-host ambiguous-concurrency case
+		where the card was delivered but every Confirm click failed the
+		conversation check and showed a misleading 'expired' toast."""
+		token = pending_confirm.mint(
+			conversation="", owner=OWNER, tool=TOOL, args=ARGS, run_id=RUN_ID)
+		record = pending_confirm.consume(token, owner=OWNER, conversation="conv-current")
+		self.assertIsNotNone(record)
+		self.assertEqual(record["tool"], TOOL)
+
+	def test_empty_stored_conversation_still_enforces_owner(self):
+		"""F1: owner is still the real boundary for a conversation-less token."""
+		token = pending_confirm.mint(
+			conversation="", owner=OWNER, tool=TOOL, args=ARGS, run_id=RUN_ID)
+		self.assertIsNone(
+			pending_confirm.consume(
+				token, owner="intruder@example.invalid", conversation="conv-current")
+		)
+		# Not burned - the real owner can still consume it.
+		self.assertIsNotNone(
+			pending_confirm.consume(token, owner=OWNER, conversation="conv-current")
+		)
 
 	def test_unknown_token_returns_none(self):
 		self.assertIsNone(
