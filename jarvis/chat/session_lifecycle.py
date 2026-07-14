@@ -21,9 +21,20 @@ conversation lazily creates a fresh session through the existing
 
 The daily ``rotate_dormant_sessions`` cron:
 
-1. DORMANT: conversations idle past ``DORMANT_DAYS`` with a session_key
-   and no in-flight rows -> delete the gateway session, clear
-   ``conv.session_key``, drop the ``Jarvis Chat Session`` lookup rows.
+1. EXPIRE: conversations idle past the configured retention window
+   (Jarvis Settings.conversation_retention_days; 0 disables) and not
+   starred, with no in-flight rows -> free the openclaw session (delete
+   gateway session, clear ``conv.session_key``, drop ``Jarvis Chat
+   Session`` lookup rows) and, for still-``Active`` chats, archive them:
+   set ``status = Archived`` + ``auto_expired`` + ``expired_at`` and push
+   a ``conversation:expired`` realtime event so an open tab drops the row.
+   A reversible soft-delete - a separate follow-on purge permanently
+   deletes archived chats later. (Reason we don't hard-delete here: a
+   Jarvis Conversation is referenced by five doctypes + File blobs, so a
+   safe delete needs a full dependency cascade we keep out of the cron.)
+   Already user-archived chats that still hold a session are session-freed
+   only (no status change, no event) so their working context is reclaimed
+   too. Starred chats are fully exempt - kept, session and all.
 2. ORPHANS: gateway sessions in the chat namespace that no conversation
    references (title/prewarm throwaways, deleted conversations) and that
    have been inactive past ``ORPHAN_GRACE_HOURS`` -> delete, plus any
@@ -46,9 +57,36 @@ CONV = "Jarvis Conversation"
 MSG = "Jarvis Chat Message"
 CHAT_SESSION = "Jarvis Chat Session"
 
-# A conversation idle this long gets its session rotated. Matches the
-# fleet's archive_retention_days default so there is one retention story.
-DORMANT_DAYS = 30
+# Retention: a conversation idle this long is archived (hidden) and its
+# openclaw session freed. Configurable per-tenant via
+# Jarvis Settings.conversation_retention_days; these are the fallbacks a
+# reader applies. DEFAULT is used when the Single field is unset (Single
+# defaults are NOT backfilled on migrate, so None must read as 30, not 0 -
+# 0 means "keep forever"). MIN is a defensive floor mirroring the settings
+# validator, so a value that slipped in below it can't mass-archive.
+DEFAULT_RETENTION_DAYS = 30
+MIN_RETENTION_DAYS = 7
+
+
+def _retention_days() -> int:
+	"""Effective idle-retention window in days. 0 => disabled (keep forever).
+
+	Read the RAW tabSingles value, not ``get_single_value``: the latter casts an
+	unset Int Single field to 0, which is indistinguishable from an explicit 0
+	(=disabled). The raw value is None when the field was never set (Single
+	defaults are not backfilled on migrate) -> the 30-day default (on by
+	default). An explicit '0' stays 0 (never)."""
+	rows = frappe.db.sql(
+		"SELECT value FROM `tabSingles` "
+		"WHERE doctype = 'Jarvis Settings' AND field = 'conversation_retention_days'"
+	)
+	raw = rows[0][0] if rows else None
+	if raw is None or raw == "":
+		return DEFAULT_RETENTION_DAYS
+	days = frappe.utils.cint(raw)
+	if days <= 0:
+		return 0
+	return max(days, MIN_RETENTION_DAYS)
 
 # An unreferenced gateway session younger than this is skipped: it may be
 # an in-flight title/prewarm throwaway, or a conversation whose freshly
@@ -65,9 +103,10 @@ _CHAT_NAMESPACE_MARKER = ":dashboard:"
 
 
 def rotate_dormant_sessions() -> dict:
-	"""Daily cron: rotate dormant conversation sessions and reap orphaned
-	throwaway sessions. Returns a summary dict (also logged) so a manual
-	``bench execute`` run shows what happened."""
+	"""Daily cron: archive conversations past the idle-retention window (freeing
+	their openclaw session) and reap orphaned throwaway sessions. Returns a
+	summary dict (also logged) so a manual ``bench execute`` run shows what
+	happened. (Name kept for the scheduler entry in hooks.py.)"""
 	from jarvis import selfhost
 
 	if selfhost.is_self_hosted():
@@ -81,7 +120,7 @@ def rotate_dormant_sessions() -> dict:
 
 	from jarvis.chat.openclaw_client import OpenclawSession
 
-	summary = {"dormant_rotated": 0, "orphans_reaped": 0, "skipped": 0, "errors": 0}
+	summary = {"archived": 0, "sessions_freed": 0, "orphans_reaped": 0, "skipped": 0, "errors": 0}
 	budget = BATCH_MAX
 	try:
 		sess = OpenclawSession.connect(gateway_url)
@@ -92,7 +131,7 @@ def rotate_dormant_sessions() -> dict:
 		)
 		return {"skipped": "connect failed"}
 	try:
-		budget = _rotate_dormant(sess, budget, summary)
+		budget = _expire_dormant(sess, budget, summary)
 		if budget > 0:
 			_reap_orphans(sess, budget, summary)
 	finally:
@@ -104,16 +143,25 @@ def rotate_dormant_sessions() -> dict:
 	return summary
 
 
-def _rotate_dormant(sess, budget: int, summary: dict) -> int:
-	"""Part 1: conversations idle past DORMANT_DAYS. Returns leftover
-	budget for the orphan sweep."""
-	cutoff = frappe.utils.add_to_date(frappe.utils.now_datetime(), days=-DORMANT_DAYS)
+def _expire_dormant(sess, budget: int, summary: dict) -> int:
+	"""Part 1: conversations idle past the retention window. Frees the openclaw
+	session and archives still-``Active`` chats (marking ``auto_expired`` +
+	``expired_at`` and pushing a ``conversation:expired`` event); already
+	user-archived chats that still hold a session are session-freed only.
+	Starred chats are exempt entirely. Returns leftover budget for the orphan
+	sweep. Retention disabled (0) is a no-op that keeps the whole budget."""
+	days = _retention_days()
+	if days <= 0:
+		return budget  # retention disabled - keep chats forever
+	cutoff = frappe.utils.add_to_date(frappe.utils.now_datetime(), days=-days)
 	rows = frappe.db.sql(
 		"""
-		SELECT c.name, c.session_key
+		SELECT c.name, c.owner, c.session_key, c.status
 		FROM `tabJarvis Conversation` c
-		WHERE c.session_key IS NOT NULL AND c.session_key != ''
+		WHERE c.starred = 0
 		  AND c.last_active_at IS NOT NULL AND c.last_active_at < %(cutoff)s
+		  AND (c.status = 'Active'
+		       OR (c.session_key IS NOT NULL AND c.session_key != ''))
 		  AND NOT EXISTS (
 			SELECT 1 FROM `tabJarvis Chat Message` m
 			WHERE m.conversation = c.name
@@ -125,31 +173,73 @@ def _rotate_dormant(sess, budget: int, summary: dict) -> int:
 		{"cutoff": cutoff, "limit": budget},
 		as_dict=True,
 	)
+	now = frappe.utils.now_datetime()
 	for row in rows:
 		if budget <= 0:
 			break  # defensive; the SQL LIMIT already bounds rows to budget
 		budget -= 1
-		# Per-row isolation (turn_recovery's loop pattern): one bad row
-		# must never abort the rest of the batch, and a failure between
-		# the gateway delete and the local commit must not strand the
-		# sweep - the idempotent not-found handling in
-		# _delete_gateway_session lets the next run finish the cleanup.
+		# Per-row isolation (turn_recovery's loop pattern): one bad row must
+		# never abort the batch, and a failure between the gateway delete and
+		# the local commit must not strand the sweep - the idempotent not-found
+		# handling in _delete_gateway_session lets the next run finish cleanup.
 		try:
-			if _delete_gateway_session(sess, row.session_key, summary):
-				# Only detach the bench side once the gateway side is
-				# gone. NULL, not "": session_key is UNIQUE and two ""
-				# rows would collide.
-				frappe.db.set_value(CONV, row.name, "session_key", None)
+			has_session = bool(row.session_key)
+			# Free the openclaw session FIRST; only detach the bench side once
+			# the gateway side is gone, else a crash would strand a live session
+			# under a nulled key. A gateway-delete failure leaves the row intact
+			# for next run (do NOT archive it - archiving would hide it from the
+			# only sweep that re-selects it, stranding the session forever).
+			if has_session and not _delete_gateway_session(sess, row.session_key, summary):
+				# NOTE (follow-up): a row whose gateway delete PERMANENTLY fails is
+				# the oldest, so ORDER BY last_active_at ASC re-selects it at the
+				# front every run, consuming a batch slot; >= BATCH_MAX such corpses
+				# would starve healthy archiving. Inherited from the rotate sweep - a
+				# last_expire_error_at cooldown column is the planned guard.
+				continue
+			# Only Active chats transition to Archived; an already user-archived
+			# chat is session-freed only (its status/marker stay the user's).
+			archived = row.status == "Active"
+			updates = {}
+			if has_session:
+				# NULL, not "": session_key is UNIQUE and two "" rows collide.
+				updates["session_key"] = None
+			if archived:
+				updates.update({"status": "Archived", "auto_expired": 1, "expired_at": now})
+			# Conversation update before the lookup-row delete so a per-row
+			# failure at the primary (conversation) write skips cleanly with no
+			# partial detach (mirrors the original rotate ordering).
+			if updates:
+				frappe.db.set_value(CONV, row.name, updates)
+			if has_session:
 				frappe.db.delete(CHAT_SESSION, {"session_key": row.session_key})
-				frappe.db.commit()
-				summary["dormant_rotated"] += 1
+				summary["sessions_freed"] += 1
+			frappe.db.commit()
+			if archived:
+				summary["archived"] += 1
+				_notify_expired(row.name, row.owner)
 		except Exception:
+			# Discard any partial write from this row (e.g. the conversation
+			# update landed but the lookup-row delete then failed) so it can't
+			# ride to the NEXT row's commit; the idempotent gateway delete lets
+			# the next run finish cleanly. Rollback before log_error.
+			frappe.db.rollback()
 			frappe.log_error(
-				title="session_lifecycle: dormant row cleanup failed",
+				title="session_lifecycle: expire row failed",
 				message=f"conversation={row.name}\n{frappe.get_traceback()}",
 			)
 			summary["errors"] += 1
 	return budget
+
+
+def _notify_expired(conversation: str, owner: str) -> None:
+	"""Best-effort realtime nudge so an open tab drops the archived row instead
+	of showing a ghost that 404s on click. Never fatal to the sweep."""
+	try:
+		from jarvis.chat.events import publish_to_user
+
+		publish_to_user(owner, {"kind": "conversation:expired", "conversation_id": conversation})
+	except Exception:
+		pass
 
 
 def _reap_orphans(sess, budget: int, summary: dict) -> None:

@@ -15,7 +15,9 @@
   "status",
   "last_active_at",
   "starred",
-  "pending_agent_notes"
+  "pending_agent_notes",
+  "auto_expired",
+  "expired_at"
  ],
  "fields": [
   {
@@ -95,6 +97,25 @@
    "no_copy": 1,
    "read_only": 1,
    "description": "Server-set queue (JSON list of strings) of deferred bench-authored notes to fold into the NEXT outgoing turn's [Context: ...] bracket - e.g. 'the user declined the pending submit on SINV-0001; it was NOT performed'. Drained and cleared by turn_handler after a successful chat.send, so a discarded action corrects the agent's in-container session memory the next time it acts, without firing an extra turn."
+  },
+  {
+   "fieldname": "auto_expired",
+   "fieldtype": "Check",
+   "label": "Auto Expired",
+   "hidden": 1,
+   "no_copy": 1,
+   "read_only": 1,
+   "default": "0",
+   "description": "Set by the retention sweep (jarvis.chat.session_lifecycle) when this conversation was archived for exceeding the idle retention limit (Jarvis Settings.conversation_retention_days) - distinguishes a retention-expired chat from a user-archived one, and marks it for the follow-on permanent purge. Never set for a user-initiated archive."
+  },
+  {
+   "fieldname": "expired_at",
+   "fieldtype": "Datetime",
+   "label": "Expired At",
+   "hidden": 1,
+   "no_copy": 1,
+   "read_only": 1,
+   "description": "When the retention sweep archived this conversation. Drives the follow-on hard-purge horizon (permanently delete archived chats expired longer than a second, longer window)."
   }
  ],
  "permissions": [
