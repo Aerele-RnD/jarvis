@@ -8,6 +8,13 @@ __pycache__/
 # Node
 node_modules/
 **/node_modules/
+# ...and again WITHOUT the trailing slash: the patterns above only match
+# DIRECTORIES, so a node_modules *symlink* (e.g. one created to share deps
+# with a git worktree) is a file and slips straight past them — it then gets
+# committed, and checking that commit out elsewhere replaces the real
+# node_modules with a symlink pointing at itself.
+node_modules
+**/node_modules
 jarvis/public/node_modules/
 jarvis/public/node_modules
 # Root yarn.lock has no production role here (the frontend has its own
