@@ -762,3 +762,181 @@ class TestCreateDocsGate(FrappeTestCase):
 		would = preview.get("would") or {}
 		self.assertEqual(len(would.get("created", [])), 2)
 		self.assertFalse(frappe.db.exists("ToDo", {"description": "jarvis-resync-a"}))
+
+
+class TestBulkBatchCapAtPark(FrappeTestCase):
+	"""F16: a bulk gated write over the shared max (20) bounces at PARK with a
+	split-and-sequence instruction - before any card is minted - so an over-size
+	batch never reaches a doomed confirmation card. create/update/create_docs
+	already bounced via their park-time dry-run; this also closes the
+	consequential bulk writes (submit/cancel/delete/amend/workflow) which take a
+	described preview with NO dry-run and would otherwise only fail at execution."""
+
+	def test_oversize_bulk_bounces_before_any_card(self):
+		names = [f"TD-{i:04d}" for i in range(21)]  # 21 > _MAX_BATCH (20)
+		patcher, captured = _spy_mint()
+		with patch("jarvis.chat.events.publish_to_user") as pub, patcher:
+			r = api._run_tool("submit_doc", {"doctype": "ToDo", "names": names})
+			self.assertFalse(pub.called)  # no card published
+		self.assertFalse(r["ok"])
+		self.assertEqual(r["error"]["code"], "InvalidArgumentError")
+		self.assertIn("too many records", r["error"]["message"])
+		self.assertIsNone(captured.get("token"))  # nothing minted
+
+	def test_at_limit_bulk_still_parks(self):
+		names = [f"TD-{i:04d}" for i in range(20)]  # exactly the max
+		patcher, captured = _spy_mint()
+		with patcher:
+			r = api._run_tool("submit_doc", {"doctype": "ToDo", "names": names})
+		self.assertEqual(r["data"]["status"], "pending_confirmation")
+		self.assertIsNotNone(captured.get("token"))
+
+
+class TestSequentialConfirmationGuard(FrappeTestCase):
+	"""F16: at most ONE live confirmation card per conversation. A second gated
+	park while one is pending in the SAME conversation is refused (the model is
+	told to stop), so batches confirm strictly one at a time; a different
+	conversation is unaffected; a stray conversation-less token does not block;
+	once the pending token clears, the next batch parks."""
+
+	def setUp(self):
+		# Redis is NOT rolled back / flushed by FrappeTestCase and a parked token
+		# lives 15 min, so a token minted by a PRIOR run of this suite would trip
+		# the very guard under test (a leftover card in the same conversation).
+		# Clear this owner's pending-confirm index so each run starts clean, the
+		# same way TestListPendingConfirmations isolates its own owner.
+		frappe.cache().delete_value(
+			pending_confirm._OWNER_PREFIX + frappe.session.user)
+
+	def tearDown(self):
+		for name in frappe.get_all(
+				CONV, filters={"title": "confirm-gate test"}, pluck="name"):
+			frappe.delete_doc(CONV, name, force=True, ignore_permissions=True)
+		frappe.db.delete("ToDo", {"description": ["like", "seq-e2e-%"]})
+		frappe.db.commit()
+
+	def test_second_park_in_same_conversation_is_refused(self):
+		conv = "seq-guard-conv-100"
+		patcher1, cap1 = _spy_mint()
+		with patcher1:
+			r1 = api._run_tool(
+				"create_doc", {"doctype": "ToDo", "values": {"description": "seq-1"}},
+				conversation=conv)
+		self.assertEqual(r1["data"]["status"], "pending_confirmation")
+		self.assertIsNotNone(cap1.get("token"))
+
+		patcher2, cap2 = _spy_mint()
+		with patch("jarvis.chat.events.publish_to_user") as pub, patcher2:
+			r2 = api._run_tool(
+				"create_doc", {"doctype": "ToDo", "values": {"description": "seq-2"}},
+				conversation=conv)
+			self.assertFalse(pub.called)  # no second card published
+		self.assertFalse(r2["ok"])
+		self.assertEqual(r2["error"]["code"], "ConfirmationPendingError")
+		self.assertIsNone(cap2.get("token"))  # no second token minted
+
+	def test_pending_card_does_not_block_a_different_conversation(self):
+		with _spy_mint()[0]:
+			a = api._run_tool(
+				"create_doc", {"doctype": "ToDo", "values": {"description": "seq-A"}},
+				conversation="seq-guard-conv-A")
+		self.assertEqual(a["data"]["status"], "pending_confirmation")
+		patcher_b, cap_b = _spy_mint()
+		with patcher_b:
+			b = api._run_tool(
+				"create_doc", {"doctype": "ToDo", "values": {"description": "seq-B"}},
+				conversation="seq-guard-conv-B")
+		self.assertEqual(b["data"]["status"], "pending_confirmation")
+		self.assertIsNotNone(cap_b.get("token"))
+
+	def test_stray_conversation_less_token_does_not_block(self):
+		# A conversation-less token for the same owner (a rare session-resolution
+		# miss) must NOT block a legitimate new card - the guard matches the
+		# conversation STRICTLY (list_for_owner surfaces conv-less under any filter).
+		pending_confirm.mint(
+			conversation="", owner=frappe.session.user, exec_user=frappe.session.user,
+			tool="delete_doc", args={"doctype": "ToDo", "name": "x"}, run_id="")
+		patcher, cap = _spy_mint()
+		with patcher:
+			r = api._run_tool(
+				"create_doc", {"doctype": "ToDo", "values": {"description": "seq-cl"}},
+				conversation="seq-guard-conv-CL")
+		self.assertEqual(r["data"]["status"], "pending_confirmation")
+		self.assertIsNotNone(cap.get("token"))
+
+	def test_next_batch_parks_after_pending_confirmed(self):
+		# End-to-end: confirm batch 1 (runs the write + consumes its token), then a
+		# second gated park in the same conversation succeeds - the continuation
+		# turn's next batch. Real conversation so confirm_tool's receipt attaches.
+		owner = frappe.session.user
+		conv = _make_conv(owner)
+		patcher1, cap1 = _spy_mint()
+		with patcher1:
+			r1 = api._run_tool(
+				"create_doc", {"doctype": "ToDo", "values": {"description": "seq-e2e-1"}},
+				conversation=conv)
+		self.assertEqual(r1["data"]["status"], "pending_confirmation")
+		with patch("jarvis.chat.api._dispatch_turn"):
+			res = confirm_tool(cap1["token"], conversation=conv)
+		self.assertTrue(res["ok"])
+		# Batch 2 now parks - no pending card left in this conversation.
+		patcher2, cap2 = _spy_mint()
+		with patcher2:
+			r2 = api._run_tool(
+				"create_doc", {"doctype": "ToDo", "values": {"description": "seq-e2e-2"}},
+				conversation=conv)
+		self.assertEqual(r2["data"]["status"], "pending_confirmation")
+		self.assertIsNotNone(cap2.get("token"))
+
+
+class TestConvLessTokenIsolation(FrappeTestCase):
+	"""F1 follow-up (Codex/Fable adversarial review of #305): a conversation-less
+	token is confirmable in whatever chat the owner is viewing, but WHAT executes
+	is determined SOLELY by the token - never by the confirming conversation.
+	Confirming in an unrelated conversation runs exactly the stored write,
+	owner-scoped + single-use. This bounds the conv-less wart to receipt/
+	continuation PLACEMENT, never to which (or whose) data is written."""
+
+	def test_conv_less_token_runs_only_its_own_write_from_another_chat(self):
+		owner = frappe.session.user
+		desc = "jarvis-test-convless-isolation-060"
+		token = pending_confirm.mint(
+			conversation="", owner=owner, exec_user=owner, tool="create_doc",
+			args={"doctype": "ToDo", "values": {"description": desc}}, run_id="")
+		# Confirm from an unrelated conversation the owner is viewing.
+		with patch("jarvis.chat.api._dispatch_turn"):
+			res = confirm_tool(token, conversation="an-unrelated-conv")
+		self.assertTrue(res["ok"])
+		# Exactly the token's write ran - nothing else.
+		self.assertTrue(frappe.db.exists("ToDo", {"description": desc}))
+		# Single use: cannot be re-confirmed from any conversation.
+		self.assertFalse(confirm_tool(token, conversation="an-unrelated-conv")["ok"])
+
+	def test_conv_less_token_stays_owner_scoped(self):
+		# The owner boundary still holds for a conv-less token: a different user
+		# cannot confirm it, and the attempt does not burn it.
+		owner = frappe.session.user
+		desc = "jarvis-test-convless-isolation-061"
+		token = pending_confirm.mint(
+			conversation="", owner=owner, exec_user=owner, tool="create_doc",
+			args={"doctype": "ToDo", "values": {"description": desc}}, run_id="")
+		other = "jarvis-convless-other@example.com"
+		if not frappe.db.exists("User", other):
+			frappe.get_doc({
+				"doctype": "User", "email": other, "first_name": "Other",
+				"send_welcome_email": 0, "user_type": "System User",
+			}).insert(ignore_permissions=True)
+		if "Jarvis User" not in set(frappe.get_roles(other)):
+			frappe.get_doc("User", other).add_roles("Jarvis User")
+		original = frappe.session.user
+		frappe.set_user(other)
+		try:
+			res = confirm_tool(token, conversation="whatever")
+		finally:
+			frappe.set_user(original)
+		self.assertFalse(res["ok"])
+		self.assertEqual(res["error"]["type"], "InvalidConfirmation")
+		self.assertFalse(frappe.db.exists("ToDo", {"description": desc}))
+		# The real owner can still confirm it (not burned by the wrong-owner try).
+		with patch("jarvis.chat.api._dispatch_turn"):
+			self.assertTrue(confirm_tool(token, conversation="mine")["ok"])
