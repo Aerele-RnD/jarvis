@@ -4,6 +4,7 @@ import { useRouter } from "vue-router"
 import AppDrawer from "./components/AppDrawer.vue"
 import InstallBanner from "./components/InstallBanner.vue"
 import { store } from "./store"
+import { sessionUser } from "./router"
 
 const socket = inject("$socket")
 const router = useRouter()
@@ -24,6 +25,9 @@ function onEvent(p) {
 // socket was down are simply gone. Refetch on reconnect and on tab-wake rather
 // than trusting the stream — the same contract the desktop SPA follows.
 function onResync() {
+	// Behind the login screen there is nothing to resync, and asking would just
+	// log a 403 on every tab-wake.
+	if (!sessionUser()) return
 	store.loadConversations()
 	if (router.currentRoute.value.name === "Chat") window.dispatchEvent(new Event("jv:resync"))
 }
