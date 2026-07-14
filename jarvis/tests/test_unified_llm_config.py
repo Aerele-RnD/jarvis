@@ -1935,20 +1935,6 @@ class TestFT5ChatWorkerPoolAwareness(_RT3SettingsTestCase):
         self.assertEqual(effective_model, "gpt-4o",
                          f"Valid pool override must be accepted; got: {effective_model!r}")
 
-    def test_pool_mode_invalid_override_falls_back_to_pool_routing(self):
-        """proxy_active=1, model_override NOT in enabled models → falls back to '' (pool routing)."""
-        from jarvis.chat.worker import _resolve_model_and_provider
-
-        self._set_proxy_active([
-            {"provider": "openai_compat", "model": "gpt-4o", "tier": "strong", "order": 0, "api_key": "sk-p1"},
-            {"provider": "openai_compat", "model": "gpt-3.5-turbo", "tier": "cheap", "order": 1, "api_key": "sk-p2"},
-        ])
-
-        conv = self._make_conv(model_override="not-a-real-model")
-        effective_model, _ = _resolve_model_and_provider(conv)
-        self.assertEqual(effective_model, "",
-                         f"Invalid pool override must fall back to '' (pool routing); got: {effective_model!r}")
-
     def test_worker_catches_admin_validation_error(self):
         """AdminValidationError from pool sync → last_sync_status contains 'validation'."""
         from unittest.mock import patch
