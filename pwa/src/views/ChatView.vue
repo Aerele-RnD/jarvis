@@ -417,6 +417,7 @@ function onEvent(p) {
 				preview: p.preview ?? null,
 				conversation: conv,
 				run_id: p.run_id,
+				expires_at: p.expires_at ?? null,
 			})
 			scrollToBottom()
 			break
