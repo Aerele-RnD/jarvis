@@ -1067,7 +1067,7 @@ onMounted(async () => {
 /* keyboard focus (text inputs draw their own focus border) */
 .jv-ob-root button:focus-visible,
 .jv-ob-root input[type="checkbox"]:focus-visible,
-.jv-ob-root [tabindex]:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.jv-ob-root [tabindex]:focus-visible { outline: 2px solid var(--cta); outline-offset: 2px; }
 
 /* ---- buttons (design.md §3.1): solid near-black primary, subtle secondary,
    colour-shift hover only. The finishing CTA (.jv-ob-btn-grad class name kept

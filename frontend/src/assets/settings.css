@@ -121,7 +121,7 @@
 .jv-run-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; }
 .jv-run-dot.d-ok { background: var(--green); }
 .jv-run-dot.d-err { background: var(--red); }
-.jv-run-dot.d-run { background: var(--blue); }
+.jv-run-dot.d-run { background: var(--cta); }
 .jv-run-dot.d-stop { background: var(--text-3); }
 .jv-run-main { flex: 1; min-width: 0; }
 .jv-run-top { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
@@ -129,7 +129,7 @@
 .jv-run-badge { font-size: 11px; font-weight: 420; padding: 2px 8px; border-radius: 999px; text-transform: capitalize; }
 .jv-run-badge.b-ok { background: var(--green-bg); color: var(--green); }
 .jv-run-badge.b-err { background: var(--red-bg); color: var(--red); }
-.jv-run-badge.b-run { background: var(--blue-bg); color: var(--link); }
+.jv-run-badge.b-run { background: var(--cta-bg); color: var(--link); }
 .jv-run-badge.b-stop { background: var(--surface-2); color: var(--text-3); }
 .jv-run-trig { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-3); }
 .jv-run-meta { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-3); margin-top: 4px; flex-wrap: wrap; }

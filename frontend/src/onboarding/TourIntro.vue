@@ -252,7 +252,7 @@ function sideHtml(active) {
 }
 
 /* keyboard focus */
-button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+button:focus-visible { outline: 2px solid var(--cta); outline-offset: 2px; }
 
 /* ---- copy column ---- */
 .slide-copy .eyebrow {
@@ -341,7 +341,10 @@ button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 
 /* ---- chat mock ---- */
 .cb { max-width: 74%; padding: 8px 11px; border-radius: 12px; font-size: 11.5px; line-height: 1.4; margin-bottom: 9px; }
-.cb.u { margin-left: auto; background: var(--blue); color: #fff; border-bottom-right-radius: 4px; }
+/* --cta/--cta INVERTS by theme (near-black light, near-white dark), so the
+   foreground must come from its paired token. A hard-coded #fff here rendered
+   white-on-near-white (1.18:1) in dark mode after #294 repointed the fill. */
+.cb.u { margin-left: auto; background: var(--cta); color: var(--cta-fg); border-bottom-right-radius: 4px; }
 .cb.a { background: var(--surface-2); color: var(--text-2); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
 .cb.tool {
 	display: inline-flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--text-3);
@@ -368,7 +371,7 @@ button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 /* ---- agents mock ---- */
 .m-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
 .m-card { border: 1px solid var(--border); border-radius: 9px; background: var(--surface); padding: 10px; }
-.m-card .ico { width: 22px; height: 22px; border-radius: 7px; background: var(--blue-bg); border: 1px solid var(--blue-bd); margin-bottom: 7px; display: grid; place-items: center; font-size: 11px; }
+.m-card .ico { width: 22px; height: 22px; border-radius: 7px; background: var(--cta-bg); border: 1px solid var(--cta-bd); margin-bottom: 7px; display: grid; place-items: center; font-size: 11px; }
 .m-card .ico-plain { background: var(--surface-2); border-color: var(--border); }
 .m-card .nm { font-size: 10.5px; font-weight: 600; color: var(--text); margin-bottom: 2px; }
 .m-card .ds { font-size: 8.5px; color: var(--text-3); line-height: 1.35; }

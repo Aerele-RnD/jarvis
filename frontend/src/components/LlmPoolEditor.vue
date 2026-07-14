@@ -721,9 +721,9 @@ function presetCardStyle(entry) {
   const on = selectedPreset.value === entry.key
   return {
     padding: "14px 16px", fontSize: "14px", cursor: props.editable ? "pointer" : "default", borderRadius: "10px", textAlign: "left",
-    border: on ? "2px solid var(--blue)" : "1px solid var(--border)",
-    background: on ? "var(--blue-bg)" : "var(--surface)",
-    color: on ? "var(--blue)" : "var(--text)",
+    border: on ? "2px solid var(--cta)" : "1px solid var(--border)",
+    background: on ? "var(--cta-bg)" : "var(--surface)",
+    color: on ? "var(--cta)" : "var(--text)",
     opacity: entry.enabled === false ? "0.45" : "1",
     fontWeight: on ? "600" : "400",
   }
@@ -1335,7 +1335,7 @@ defineExpose({ save })
 /* 1-based failover-order badge. */
 .jv-pool-badge {
   flex: none; width: 22px; height: 22px; border-radius: 6px;
-  background: var(--blue-bg); color: var(--blue); font-size: 11.5px; font-weight: 700;
+  background: var(--cta-bg); color: var(--cta); font-size: 11.5px; font-weight: 700;
   display: grid; place-items: center;
 }
 /* Credential-type segmented control (replaces the old pale text-pair toggle). */
@@ -1377,7 +1377,7 @@ defineExpose({ save })
 }
 .jv-pool-avatar {
   flex: none; width: 22px; height: 22px; border-radius: 50%;
-  background: var(--blue-bg); color: var(--blue); font-size: 10.5px; font-weight: 700;
+  background: var(--cta-bg); color: var(--cta); font-size: 10.5px; font-weight: 700;
   display: grid; place-items: center;
 }
 .jv-pool-accttx { font-size: 12.5px; color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1510,7 +1510,7 @@ defineExpose({ save })
 
 /* Onboarding method cards (preview .method/.m-opt): sel = blue border + 3px
    ring; icon tile flips from neutral to blue tint when selected. Preview's
-   --accent maps to the app's --blue (and -bg/-bd). */
+   --accent maps to the app's --cta (and -bg/-bd). */
 .jv-ct { margin-bottom: 20px; }
 .jv-ct-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .jv-ct-card {
@@ -1519,14 +1519,14 @@ defineExpose({ save })
   background: var(--surface); cursor: pointer; font: inherit; color: var(--text);
   transition: border-color .15s, box-shadow .15s;
 }
-.jv-ct-card.on { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-bg); }
+.jv-ct-card.on { border-color: var(--cta); box-shadow: 0 0 0 3px var(--cta-bg); }
 .jv-ct-card:disabled { cursor: default; }
 .jv-ct-ic {
   flex: none; width: 34px; height: 34px; border-radius: 9px;
   display: grid; place-items: center;
   background: var(--surface-2); border: 1px solid var(--border); color: var(--text-2);
 }
-.jv-ct-card.on .jv-ct-ic { background: var(--blue-bg); border-color: var(--blue-bd); color: var(--blue); }
+.jv-ct-card.on .jv-ct-ic { background: var(--cta-bg); border-color: var(--cta-bd); color: var(--cta); }
 .jv-ct-ic svg { width: 17px; height: 17px; stroke-width: 1.8; }
 .jv-ct-tx { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .jv-ct-t { font-size: 13.5px; font-weight: 600; }
@@ -1576,7 +1576,7 @@ defineExpose({ save })
 .jv-cbtn:active { transform: scale(.98); }
 /* The Open sign-in control is an <a>, which the wizard's button-scoped
    focus-visible rule misses - give both spine controls their own outline. */
-.jv-cbtn:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.jv-cbtn:focus-visible { outline: 2px solid var(--cta); outline-offset: 2px; }
 .jv-cbtn:disabled { opacity: .55; cursor: default; transform: none; }
 .jv-cbtn-primary { background: var(--text); color: var(--surface); box-shadow: 0 2px 10px rgba(20, 20, 30, .16); }
 .jv-cbtn-primary:hover:not(:disabled) { color: var(--surface); transform: translateY(-1px); box-shadow: 0 8px 22px rgba(20, 20, 30, .22); }
@@ -1608,7 +1608,7 @@ defineExpose({ save })
   transition: border-color .15s, background .15s;
 }
 .jv-paste::placeholder { color: var(--text-3); }
-.jv-paste:focus { outline: none; border-style: solid; border-color: var(--blue); background: var(--surface); box-shadow: 0 0 0 3px var(--blue-bg); }
+.jv-paste:focus { outline: none; border-style: solid; border-color: var(--cta); background: var(--surface); box-shadow: 0 0 0 3px var(--cta-bg); }
 .jv-paste:disabled { opacity: .55; }
 .jv-cacts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
 /* Clean status pill - connected (ok) / failed (bad). Reused by the subscription
@@ -1645,7 +1645,7 @@ defineExpose({ save })
   background: var(--surface); color: var(--text); font-family: inherit; box-sizing: border-box;
 }
 .jv-ak-grid input::placeholder { color: var(--text-3); }
-.jv-ak-grid input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-bg); }
+.jv-ak-grid input:focus { outline: none; border-color: var(--cta); box-shadow: 0 0 0 3px var(--cta-bg); }
 .jv-ak-grid :deep(.jvc-field) {
   min-height: 42px; padding: 0 13px;
   border-color: var(--border-2); border-radius: 10px; font-size: 13.5px;

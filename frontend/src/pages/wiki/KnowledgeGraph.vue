@@ -28,7 +28,10 @@
 					<FilterBar :mode="state.mode" :overlay="state.overlay" :shown="pageCount" :total="rawPageCount"
 						@update:mode="(v) => (state.mode = v)" @update:overlay="(v) => (state.overlay = v)" />
 					<input class="kg-search" type="text" placeholder="Search nodes…" v-model="state.search" />
-					<span v-if="state.focus" class="kg-focus">Focused · <a href="#" @click.prevent="state.focus = null">clear</a></span>
+					<span v-if="state.focus" class="kg-focus">
+						<Badge theme="blue" variant="subtle" size="sm" label="Focused" />
+						<Button variant="ghost" size="sm" label="Clear" @click="state.focus = null" />
+					</span>
 				</div>
 				<ExclusionRules class="kg-excl" :page-types="pageTypes" :excluded="state.excluded"
 					@update:excluded="onExclude" />
@@ -53,7 +56,7 @@
 // four analysis tabs. Productive loop: accept a suggested connection → add_wiki_link
 // (durable, out-of-body) → refetch → the edge appears.
 import { reactive, computed, watch, onMounted } from "vue"
-import { Breadcrumbs, Button } from "frappe-ui"
+import { Badge, Breadcrumbs, Button } from "frappe-ui"
 import LayoutHeader from "@/components/LayoutHeader.vue"
 import {
 	Graph3D, FilterBar, DetailPanel, AnalysisTabs, ExclusionRules,
@@ -184,8 +187,14 @@ onMounted(load)
    --card-bg / --control-bg) names were never defined, so every rule fell back to
    its hardcoded light value and the page ignored dark mode. */
 .kg-search { font-size: 12px; padding: 4px 10px; border: 1px solid var(--outline-gray-2); border-radius: 6px; min-width: 180px; background: var(--surface-white); color: var(--ink-gray-9); }
-.kg-focus { font-size: 12px; background: var(--surface-blue-2); color: #fff; border-radius: 10px; padding: 1px 10px; }
-.kg-focus a { color: #fff; text-decoration: underline; }
+/* Was a hand-rolled pill: `background: var(--surface-blue-2); color: #fff`. But
+   --surface-blue-2 is the PALE badge tint (#E6F4FF light), meant to pair with
+   dark ink — white on it is 1.12:1, i.e. invisible, in the default theme. Rather
+   than hand-tune another bespoke colour pair, this now uses the house components:
+   a frappe-ui Badge (the §3.6 badge recipe, consistent with every other badge in
+   the app) plus a real ghost Button for the action — which also makes "clear"
+   keyboard-operable and focus-ringed, unlike the <a href="#"> it replaced. */
+.kg-focus { display: inline-flex; align-items: center; gap: 4px; }
 .kg-err { color: var(--ink-red-4); padding: 16px 0; }
 .kg-empty { padding: 24px 4px; font-size: 13px; }
 .kg-btn { font-size: 12px; padding: 3px 10px; border: 1px solid var(--outline-gray-2); border-radius: 6px; background: var(--surface-white); color: var(--ink-gray-9); cursor: pointer; margin-left: 8px; }

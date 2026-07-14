@@ -3,7 +3,7 @@
 		<div class="jv-statgrid">
 			<div class="jv-stat"><div class="jv-stat-label">Total runs</div><div class="jv-stat-val">{{ macroRunStats ? macroRunStats.total : "—" }}</div><div class="jv-stat-sub">all time</div></div>
 			<div class="jv-stat"><div class="jv-stat-label">Success rate</div><div class="jv-stat-val" style="color:var(--green);">{{ macroRunStats && macroRunStats.success_rate != null ? macroRunStats.success_rate + "%" : "—" }}</div><div class="jv-stat-sub">completed ÷ finished</div></div>
-			<div class="jv-stat"><div class="jv-stat-label">Running now</div><div class="jv-stat-val" style="color:var(--blue);">{{ macroRunStats ? macroRunStats.running : "—" }}</div><div class="jv-stat-sub">active</div></div>
+			<div class="jv-stat"><div class="jv-stat-label">Running now</div><div class="jv-stat-val" style="color:var(--cta);">{{ macroRunStats ? macroRunStats.running : "—" }}</div><div class="jv-stat-sub">active</div></div>
 			<div class="jv-stat"><div class="jv-stat-label">Last run</div><div class="jv-stat-val">{{ macroRunStats && macroRunStats.last_run_at ? fmtAgo(macroRunStats.last_run_at) : "—" }}</div><div class="jv-stat-sub">&nbsp;</div></div>
 		</div>
 		<div class="jv-runfilters">
