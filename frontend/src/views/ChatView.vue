@@ -3493,6 +3493,13 @@ function onEvent(p) {
 		proactiveToast.value = { id: p.conversation_id, title: p.title || "Message from Jarvis", preview: p.preview || "" }
 		return
 	}
+	// The retention sweep archived an idle conversation (session_lifecycle). Drop
+	// it from the sidebar; handled before the current-conversation guard so an open
+	// tab updates even if the user has since switched chats.
+	if (p.kind === "conversation:expired" && p.conversation_id) {
+		store.applyRemoteExpired(p.conversation_id)
+		return
+	}
 	// Macro-run events use `conversation` (not conversation_id) and are handled
 	// before the current-conversation guard so the banner tracks the run.
 	if (p.kind === "macro:progress") {

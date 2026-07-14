@@ -177,6 +177,23 @@ class JarvisSettings(Document):
 
         self._validate_auth_mode_requirements()
         self._validate_pattern_window()
+        self._validate_conversation_retention()
+
+    def _validate_conversation_retention(self):
+        """Retention floor. The daily sweep archives idle chats past this many
+        days, so a fumbled tiny value would mass-archive on the very next cron
+        (the batch cap only spreads that over days). 0 disables (keep forever);
+        otherwise require >= 7. Unset is left untouched - readers default it to
+        30 (Single defaults are not backfilled on migrate)."""
+        raw = getattr(self, "conversation_retention_days", None)
+        if raw in (None, ""):
+            return
+        days = frappe.utils.cint(raw)
+        if days != 0 and days < 7:
+            frappe.throw(
+                "Auto-archive idle chats after must be 0 (never) or at least 7 days.",
+                frappe.ValidationError,
+            )
 
     def _validate_pattern_window(self):
         """Behavioural-learning window must be at least 1 hour when enabled.
@@ -355,8 +372,9 @@ class JarvisSettings(Document):
             # (it bypasses Frappe's __Auth encryption). Use set_encrypted_password
             # so the secret is stored in the __Auth table, never in plaintext.
             if cred_type == "api_key":
-                from jarvis.jarvis.pool_serialize import _get_password
                 from frappe.utils.password import set_encrypted_password
+
+                from jarvis.jarvis.pool_serialize import _get_password
                 api_key_val = _get_password(m0, "api_key")
                 if api_key_val:
                     set_encrypted_password(
@@ -707,7 +725,9 @@ def _post_pool_with_retry(spec, api_keys, oauth_blobs):
     Re-raises the last unreachable error after exhausting retries; other Admin*
     errors propagate immediately (not retried)."""
     import time as _time
+
     import frappe as _frappe
+
     from jarvis import admin_client
 
     last = None
@@ -753,8 +773,9 @@ def _enqueued_sync_via_admin_pool(retry_left: int = ADMIN_SYNC_LOCK_RETRIES) -> 
     terminal.
     """
     import frappe as _frappe
-    from jarvis._redis_lock import redis_lock
+
     from jarvis import admin_client
+    from jarvis._redis_lock import redis_lock
     from jarvis.jarvis.pool_serialize import build_pool_payload
 
     with redis_lock(
@@ -796,7 +817,7 @@ def _enqueued_sync_via_admin_pool(retry_left: int = ADMIN_SYNC_LOCK_RETRIES) -> 
 
         # Re-validate: the config may have changed between enqueue and run.
         # If no longer proxy-valid, skip the push.
-        from jarvis.jarvis.pool_serialize import validate_models, compute_proxy_active
+        from jarvis.jarvis.pool_serialize import compute_proxy_active, validate_models
         revalidation_errors = validate_models(settings)
         if revalidation_errors or not compute_proxy_active(settings):
             reason = "; ".join(revalidation_errors) if revalidation_errors else "not proxy_active"

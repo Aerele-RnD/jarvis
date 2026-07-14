@@ -229,6 +229,14 @@ function applyRemoteRename(name, title) {
 	if (conv && title) conv.title = title
 }
 
+// The retention sweep (session_lifecycle) archived an idle conversation
+// server-side. Mirror the local removal so an open sidebar drops the row instead
+// of leaving a ghost that 404s on click; if it's the open chat, ChatView's store
+// watcher reacts to the removal.
+function applyRemoteExpired(name) {
+	conversations.value = conversations.value.filter((c) => c.name !== name)
+}
+
 let _remoteNewTimer = null
 function applyRemoteNew() {
 	if (_remoteNewTimer) return
@@ -289,6 +297,7 @@ const store = reactive({
 	setActivityDetail,
 	toggleNotify,
 	applyRemoteRename,
+	applyRemoteExpired,
 	applyRemoteNew,
 	markUnread,
 	clearUnread,
