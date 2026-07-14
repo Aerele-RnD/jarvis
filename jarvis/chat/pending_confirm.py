@@ -20,6 +20,7 @@ import hashlib
 import json
 import pickle
 import secrets
+import time
 
 import frappe
 import redis.exceptions
@@ -51,7 +52,8 @@ def args_hash(tool: str, args: dict) -> str:
 
 
 def mint(*, conversation: str, owner: str, tool: str, args: dict, run_id: str,
-		 exec_user: str | None = None, preview: dict | None = None) -> str:
+		 exec_user: str | None = None, preview: dict | None = None,
+		 expires_at: int | None = None) -> str:
 	"""Store a pending call and return a fresh single-use token
 	(secrets.token_urlsafe(24)). The stored record carries conversation,
 	owner, tool, args (the full dict - this is the authoritative payload
@@ -82,6 +84,11 @@ def mint(*, conversation: str, owner: str, tool: str, args: dict, run_id: str,
 		"args_hash": args_hash(tool, args),
 		"run_id": run_id,
 		"preview": preview,
+		# Wall-clock expiry (epoch seconds) so the SPA can show a real countdown
+		# and distinguish a genuine TTL lapse from other confirm failures (F15).
+		# Defaults to now + TTL when the caller does not pass one, so every record
+		# carries it (the resync payload reads it straight off the record).
+		"expires_at": expires_at if expires_at is not None else int(time.time()) + _TTL_S,
 	}
 	frappe.cache().set_value(_key(token), record, expires_in_sec=_TTL_S)
 	# Index the token under its owner so list_for_owner can re-surface it. Best

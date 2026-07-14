@@ -940,3 +940,34 @@ class TestConvLessTokenIsolation(FrappeTestCase):
 		# The real owner can still confirm it (not burned by the wrong-owner try).
 		with patch("jarvis.chat.api._dispatch_turn"):
 			self.assertTrue(confirm_tool(token, conversation="mine")["ok"])
+
+
+class TestConfirmCardWiring(FrappeTestCase):
+	"""F9/F15 wiring: the gate attaches a render-ready ``card`` + ``expires_at`` to
+	the stored/published preview, the model-facing return omits the ``card`` (UX,
+	not model context), and the resync payload carries ``expires_at``."""
+
+	def test_gate_attaches_card_and_expiry_and_strips_card_from_model_return(self):
+		patcher, captured = _spy_mint()
+		with patcher:
+			r = api._run_tool("create_doc", {
+				"doctype": "ToDo", "values": {"description": "card-wire-1"}})
+		self.assertEqual(r["data"]["status"], "pending_confirmation")
+		# Model-facing preview: present, but WITHOUT the human card.
+		self.assertNotIn("card", r["data"]["preview"])
+		# The stored/published preview DOES carry the card, and expires_at is set.
+		kw = captured["kwargs"]
+		self.assertEqual(kw["preview"]["card"]["kind"], "create")
+		self.assertIsInstance(kw["expires_at"], int)
+		self.assertGreater(kw["expires_at"], 0)
+
+	def test_resync_payload_carries_expires_at(self):
+		from jarvis.chat import pending_confirm
+		from jarvis.chat.actions_api import list_pending_confirmations
+		owner = frappe.session.user
+		pending_confirm.mint(
+			conversation="cardwire-conv", owner=owner, exec_user=owner,
+			tool="delete_doc", args={"doctype": "ToDo", "name": "X"}, run_id="")
+		items = list_pending_confirmations(conversation="cardwire-conv")["data"]["pending"]
+		self.assertTrue(items)
+		self.assertIsInstance(items[0]["expires_at"], int)
