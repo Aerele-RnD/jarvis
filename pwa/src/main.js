@@ -9,9 +9,14 @@ import { initSocket } from "./socket"
 // same tick the app mounts, so capturing it from a component's onMounted loses
 // the race on a warm refresh and the install offer silently disappears.
 import "./install"
+import { applyTheme } from "./lib/theme"
 import "./index.css"
 
 setConfig("resourceFetcher", frappeRequest)
+
+// Before mount: applying the saved theme after the first paint would flash the
+// wrong palette, which on an OLED phone is very visible.
+applyTheme()
 
 const app = createApp(App)
 app.use(resourcesPlugin)

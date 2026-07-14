@@ -68,6 +68,61 @@ const title = computed(
 const model = computed(() => conversation.value?.model_override || settings.value?.llm_model || "")
 const micEnabled = computed(() => !!settings.value?.stt_enabled)
 
+// The pickable models, exactly as the desktop ChatView derives them: the
+// configured LLM pool when there is one, else the provider's subscription
+// allowlist. Deduped on provider+model, because a subscription pool holds one
+// row per ACCOUNT, not per model — without that the same model appears once per
+// connected account.
+//
+// Deliberately NOT gated on llm_auth_mode: the live value here is
+// "subscription", not "oauth" (the docstring in get_chat_ui_settings is stale),
+// and gating on it hid the picker entirely.
+const models = computed(() => {
+	const s = settings.value
+	if (!s) return []
+	const pool = s.pool_models || []
+	if (pool.length) {
+		const seen = new Set()
+		const out = []
+		for (const r of pool) {
+			const key = `${r.provider}/${r.model}`
+			if (!r.model || seen.has(key)) continue
+			seen.add(key)
+			out.push(r.model)
+		}
+		return out
+	}
+	return s.subscription_models?.[s.llm_provider] || []
+})
+const thinkingLevels = computed(() => settings.value?.thinking_levels || ["low", "medium", "high"])
+// "" = inherit the workspace default, which is what a chat starts as.
+const chosenModel = computed(() => conversation.value?.model_override || "")
+const chosenThinking = computed(() => conversation.value?.thinking_override || "")
+
+async function pickModel(m) {
+	menuError.value = ""
+	const prev = conversation.value?.model_override || ""
+	if (conversation.value) conversation.value.model_override = m
+	try {
+		await api.setConversationModel(convId.value, m)
+	} catch (e) {
+		if (conversation.value) conversation.value.model_override = prev
+		menuError.value = e?.message || "Couldn't switch the model."
+	}
+}
+
+async function pickThinking(level) {
+	menuError.value = ""
+	const prev = conversation.value?.thinking_override || ""
+	if (conversation.value) conversation.value.thinking_override = level
+	try {
+		await api.setConversationThinking(convId.value, level)
+	} catch (e) {
+		if (conversation.value) conversation.value.thinking_override = prev
+		menuError.value = e?.message || "Couldn't change the effort level."
+	}
+}
+
 // Everything the agent's raw text carries, unpacked once per message. Done here
 // rather than in the template: the template would re-run it on every render, and
 // markdown + JSON parsing per message per frame is exactly how a chat thread
@@ -580,6 +635,40 @@ onUnmounted(() => {
 			</template>
 
 			<template v-else>
+				<!-- Model, for THIS chat. Auto = follow the workspace default, so a
+				     user who never touches it keeps tracking the admin's choice. -->
+				<div v-if="models.length" class="jv-picker">
+					<div class="jv-picker-label">Model</div>
+					<div class="jv-chips">
+						<button class="jv-chip" :class="{ 'is-on': !chosenModel }" @click="pickModel('')">Auto</button>
+						<button
+							v-for="m in models"
+							:key="m"
+							class="jv-chip"
+							:class="{ 'is-on': chosenModel === m }"
+							@click="pickModel(m)"
+						>
+							{{ m }}
+						</button>
+					</div>
+				</div>
+
+				<div class="jv-picker">
+					<div class="jv-picker-label">Effort</div>
+					<div class="jv-chips">
+						<button class="jv-chip is-effort" :class="{ 'is-on': !chosenThinking }" @click="pickThinking('')">Auto</button>
+						<button
+							v-for="l in thinkingLevels"
+							:key="l"
+							class="jv-chip is-effort"
+							:class="{ 'is-on': chosenThinking === l }"
+							@click="pickThinking(l)"
+						>
+							{{ l }}
+						</button>
+					</div>
+				</div>
+
 				<button class="jv-row-btn" @click="toggleStar">
 					<svg viewBox="0 0 24 24" width="19" height="19" :fill="starred ? 'var(--amber-dot)' : 'none'" :stroke="starred ? 'var(--amber-dot)' : 'currentColor'" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
 						<path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1z" />
@@ -808,6 +897,45 @@ onUnmounted(() => {
 /* chat options sheet */
 .jv-menu {
 	padding: 4px 14px 18px;
+}
+.jv-picker {
+	padding: 10px 2px;
+	border-bottom: 1px solid var(--border);
+}
+.jv-picker-label {
+	margin-bottom: 8px;
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.4px;
+	text-transform: uppercase;
+	color: var(--ink5);
+}
+.jv-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+.jv-chip {
+	padding: 7px 12px;
+	border: 1px solid var(--border2);
+	border-radius: 999px;
+	background: var(--card);
+	color: var(--ink7);
+	font: inherit;
+	font-size: 13px;
+	cursor: pointer;
+}
+/* Effort levels arrive lowercase and read better capitalised. Model IDs must
+   NOT be touched — capitalising turns "gpt-5.5" into "Gpt-5.5", which is not
+   the name of anything. */
+.jv-chip.is-effort {
+	text-transform: capitalize;
+}
+.jv-chip.is-on {
+	background: var(--accent-bg);
+	border-color: transparent;
+	color: var(--accent);
+	font-weight: 600;
 }
 .jv-menu-title {
 	padding: 6px 2px 10px;

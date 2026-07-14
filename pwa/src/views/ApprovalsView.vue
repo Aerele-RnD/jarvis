@@ -1,6 +1,7 @@
 <script setup>
 import { onMounted, ref } from "vue"
 import { useRouter } from "vue-router"
+import AppBar from "../components/AppBar.vue"
 import { renderMarkdown } from "@shared/markdown.js"
 import * as api from "../api"
 import { store } from "../store"
@@ -61,14 +62,7 @@ onMounted(load)
 </script>
 
 <template>
-	<div class="jv-bar">
-		<button class="jv-icon-btn" aria-label="Back" @click="router.push('/')">
-			<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
-				<path d="m15 18-6-6 6-6" />
-			</svg>
-		</button>
-		<div class="jv-title">Approvals</div>
-	</div>
+	<AppBar title="Approvals" />
 
 	<div class="jv-scroll">
 		<div v-if="!loaded" class="jv-empty">Loading…</div>

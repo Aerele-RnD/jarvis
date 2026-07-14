@@ -22,9 +22,18 @@ export const setStar = (conversation, starred) =>
 export const setAutoApply = (conversation, value) =>
 	call(CHAT + "set_auto_apply", { conversation, value: value ? 1 : 0 })
 
-// Model name for the chat header + whether the mic is allowed to appear (STT is
-// off unless the admin configured a transcription key).
+// Model name for the chat header, the model/effort pickers, and whether the mic
+// is allowed to appear (STT is off unless the admin configured a transcription
+// key).
 export const getChatUiSettings = () => call(CHAT + "get_chat_ui_settings")
+
+// Per-conversation overrides. "" means "inherit Jarvis Settings" — the picker
+// renders that as Auto, so a user who never touches it keeps following the
+// bench default when the admin changes it.
+export const setConversationModel = (conversation, model) =>
+	call(CHAT + "set_conversation_model", { conversation, model: model || "" })
+export const setConversationThinking = (conversation, thinking) =>
+	call(CHAT + "set_conversation_thinking", { conversation, thinking: thinking || "" })
 
 // An empty `conversation` is allowed: the backend creates (or focuses) the
 // user's empty conversation and returns its id as `conversation_id`, which
@@ -48,6 +57,42 @@ export const getCanvas = (message, name = "", dark = 0) =>
 export const previewFile = (file_url) => call(CHAT + "preview_file", { file_url })
 
 export const listCustomSkills = () => call("jarvis.chat.custom_skills_api.list_custom_skills")
+
+// ── Business (Personalise): what the agent knows about how you work ─────────
+// Notes are captured typed or dictated and processed into learned defaults and
+// the org wiki. Same endpoints as the web's Personalise tab.
+const VN = "jarvis.chat.voice_notes_api."
+export const getBusinessStatus = () => call(VN + "get_business_status")
+export const listVoiceNotes = (start = 0, page_length = 20, search = "") =>
+	call(VN + "list_my_voice_notes_page", { start, page_length, ...(search ? { search } : {}) })
+export const saveVoiceNote = (transcript, duration_s = 0) =>
+	call(VN + "save_voice_note", {
+		transcript,
+		context_type: "Business",
+		duration_s,
+		// The bench records where a note came from; "Mobile" is what the native app
+		// sends, and this surface is the same thing in a browser.
+		source: "Mobile",
+	})
+export const deleteVoiceNote = (name) => call(VN + "delete_voice_note", { name })
+
+// ── File Box: drop a document, get a chat that has already read it ──────────
+export const listInbound = (start = 0, page_length = 20, search = "") =>
+	call("jarvis.chat.filebox.list_inbound_page", {
+		search,
+		filters: "{}",
+		sort_field: "modified",
+		sort_dir: "desc",
+		start,
+		page_length,
+	})
+export const dropFile = (file_url, file_name) =>
+	call("jarvis.chat.filebox.drop_file", { file_url, ...(file_name ? { file_name } : {}) })
+
+// ── Macros: a saved sequence of prompts, run on demand ──────────────────────
+const MACRO = "jarvis.chat.macros_api."
+export const listMacros = () => call(MACRO + "list_macros")
+export const runMacro = (name) => call(MACRO + "run_macro", { name })
 
 // ── Write approvals (the write-safety gate) ─────────────────────────────────
 // A tool that would change ERP data is parked server-side and announced as an

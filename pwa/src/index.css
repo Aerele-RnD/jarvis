@@ -35,8 +35,13 @@
 	--scrim: rgba(20, 20, 22, 0.34);
 }
 
+/* Dark, as one reusable block.
+   - Applied by the OS preference, UNLESS the user pinned light in Settings.
+   - Applied outright when the user pinned dark.
+   The pin is a data-theme attribute on <html> (lib/theme.js), so a theme change
+   is one attribute write and costs no re-render. */
 @media (prefers-color-scheme: dark) {
-	:root {
+	:root:not([data-theme="light"]) {
 		--bg: #0f0f0f;
 		--card: #1c1c1c;
 		--card2: #232323;
@@ -65,6 +70,40 @@
 		--inv-ink: #0f0f0f;
 		--scrim: rgba(0, 0, 0, 0.55);
 	}
+}
+
+:root[data-theme="dark"] {
+	--bg: #0f0f0f;
+	--card: #1c1c1c;
+	--card2: #232323;
+	--card3: #2b2b2b;
+	--menu-bar: #141414;
+	--border: #282828;
+	--border2: #343434;
+	--ink9: #f8f8f8;
+	--ink8: #d4d4d4;
+	--ink7: #afafaf;
+	--ink6: #999999;
+	--ink5: #808080;
+	--ink4: #6e6e6e;
+	--ink3: #4a4a4a;
+	--accent: #9e8bfa;
+	--accent-solid: #8269f8;
+	--accent-bg: #1d1934;
+	--green: #58c08e;
+	--green-bg: #0b2e1c;
+	--red: #eb4d52;
+	--red-bg: #361515;
+	--amber: #e7a13b;
+	--amber-bg: #2e2206;
+	--amber-dot: #e37d00;
+	--inv-bg: #f8f8f8;
+	--inv-ink: #0f0f0f;
+	--scrim: rgba(0, 0, 0, 0.55);
+	color-scheme: dark;
+}
+:root[data-theme="light"] {
+	color-scheme: light;
 }
 
 html,

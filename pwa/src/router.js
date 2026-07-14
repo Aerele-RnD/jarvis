@@ -8,8 +8,12 @@ const routes = [
 	{ path: "/", name: "Chats", component: ChatsView },
 	{ path: "/login", name: "Login", component: () => import("./views/LoginView.vue") },
 	{ path: "/c/:id", name: "Chat", component: () => import("./views/ChatView.vue"), props: true },
+	{ path: "/business", name: "Business", component: () => import("./views/BusinessView.vue") },
+	{ path: "/files", name: "FileBox", component: () => import("./views/FileBoxView.vue") },
+	{ path: "/macros", name: "Macros", component: () => import("./views/MacrosView.vue") },
 	{ path: "/approvals", name: "Approvals", component: () => import("./views/ApprovalsView.vue") },
 	{ path: "/skills", name: "Skills", component: () => import("./views/SkillsView.vue") },
+	{ path: "/settings", name: "Settings", component: () => import("./views/SettingsView.vue") },
 	{ path: "/account", name: "Account", component: () => import("./views/AccountView.vue") },
 	{ path: "/:pathMatch(.*)*", redirect: "/" },
 ]
