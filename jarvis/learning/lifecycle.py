@@ -113,22 +113,48 @@ def upsert_candidate(candidate: dict, run) -> str:
 
 	existing = frappe.db.exists(JLP, {"pattern_key": pattern_key})
 	if not existing:
-		return _insert_new(candidate, run, eng)
+		result = _insert_new(candidate, run, eng)
+	else:
+		status = frappe.db.get_value(JLP, existing, "status")
+		if status in TERMINAL_SKIP_STATUSES:
+			frappe.db.set_value(JLP, existing, {"last_seen_run": run.name}, update_modified=False)
+			result = "duplicate"
+		elif status == "Rejected":
+			result = _handle_rejected(existing, candidate, run, eng)
+		else:
+			# Proposed / Approved / Active / Snoozed / Stale: refresh evidence in place.
+			doc = frappe.get_doc(JLP, existing)
+			with _engine_flag():
+				eng._apply_evidence(doc, candidate, run, is_new=False)
+				_set_overlap(doc)
+				doc.save(ignore_permissions=True)
+			result = "updated"
 
-	status = frappe.db.get_value(JLP, existing, "status")
-	if status in TERMINAL_SKIP_STATUSES:
-		frappe.db.set_value(JLP, existing, {"last_seen_run": run.name}, update_modified=False)
-		return "duplicate"
-	if status == "Rejected":
-		return _handle_rejected(existing, candidate, run, eng)
+	# Skills-area rework (DESIGN.md section 3): the moment a learned-pattern row
+	# is freshly created (fresh insert OR a Rejected row re-proposed), route the
+	# finding to the identifiable user(s) as a Personalise question. Best-effort
+	# and cap/dedupe-guarded inside the router; it never breaks the engine.
+	if result == "created":
+		_maybe_materialize_question(pattern_key)
+	return result
 
-	# Proposed / Approved / Active / Snoozed / Stale: refresh evidence in place.
-	doc = frappe.get_doc(JLP, existing)
-	with _engine_flag():
-		eng._apply_evidence(doc, candidate, run, is_new=False)
-		_set_overlap(doc)
-		doc.save(ignore_permissions=True)
-	return "updated"
+
+def _maybe_materialize_question(pattern_key: str) -> None:
+	"""Best-effort hook into the Personalise question router (Wave B1). Resolves
+	the freshly-touched JLP row by its unique pattern_key and hands it off; any
+	failure is logged and swallowed so the learning engine never breaks."""
+	try:
+		name = frappe.db.get_value(JLP, {"pattern_key": pattern_key}, "name")
+		if not name:
+			return
+		from jarvis.learning import questions
+
+		questions.maybe_materialize_for_pattern(name)
+	except Exception:
+		frappe.log_error(
+			title="jarvis personalise: pattern question hook failed",
+			message=frappe.get_traceback(),
+		)
 
 
 def _insert_new(candidate: dict, run, eng, *, status: str = "Proposed", note: str | None = None) -> str:

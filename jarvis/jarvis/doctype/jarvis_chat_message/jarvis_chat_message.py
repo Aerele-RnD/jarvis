@@ -9,8 +9,41 @@ chat session.
 """
 
 import frappe
+from frappe import _
 from frappe.model.document import Document
 
 
 class JarvisChatMessage(Document):
-	pass
+	def validate(self):
+		self._validate_conversation_owner()
+
+	def _validate_conversation_owner(self):
+		"""Cross-link ownership guard (security review TASK 2).
+
+		A chat message must belong to a conversation the acting user owns.
+		``if_owner`` on the message row's OWN owner does not prevent injecting a
+		row into another user's conversation (the row owner is trivially the
+		creator on insert; ``api.get_conversation`` treats the CONVERSATION owner
+		as the authority, so an injected row would surface in the victim's
+		transcript). The ``has_permission`` hook
+		(``jarvis.chat.chat_permissions.has_message_permission``) is the primary
+		ORM control; this validate is defense-in-depth on every write path.
+
+		Server context: the worker, tool dispatch (``impersonate(owner)``),
+		scheduler and approval-resume writers insert assistant/tool/system rows
+		with ``ignore_permissions=True`` (as the impersonated owner or
+		Administrator) — those are trusted and skipped. Administrator bypasses
+		perms entirely.
+		"""
+		if self.flags.ignore_permissions or frappe.session.user == "Administrator":
+			return
+		if not self.conversation:
+			return
+		owner = frappe.db.get_value(
+			"Jarvis Conversation", self.conversation, "owner"
+		)
+		if owner and owner != frappe.session.user:
+			frappe.throw(
+				_("You can only post messages to your own conversations."),
+				frappe.PermissionError,
+			)

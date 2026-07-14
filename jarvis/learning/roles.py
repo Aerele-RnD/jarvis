@@ -147,12 +147,53 @@ def _make_key(key: str) -> str:
 # settings seeding). Pattern copied from jarvis_admin/install.py.
 _WIKI_ROLES = ("Knowledge Wiki User", "Knowledge Wiki Manager")
 
+# --------------------------------------------------------------------------- #
+# Skills-area rework role seeding (DESIGN.md section 1 / 6 OQ-1)
+# --------------------------------------------------------------------------- #
+# Two bench-side roles for the Personalise/Analysis/Review split:
+#   - "Jarvis Admin": org-level Jarvis administration (Personalisation
+#     Settings, the Analysis tab, question-rule config, caps). The owner
+#     named this role explicitly (3x) despite a same-named Role already
+#     existing on the SEPARATE jarvis_admin SaaS control-plane site — that
+#     role lives on a different Frappe site entirely and is not reachable
+#     from a customer bench, so there is no technical collision, only a
+#     naming one. Document the distinction wherever this role is gated.
+#   - "Jarvis Skill Reviewer": Review-tab actions (decide patterns,
+#     promotions, skill updates from review, trigger follow-up questions).
+# Both seeded with the exact idempotent idiom already used for the
+# Knowledge Wiki roles above (same after_migrate hook, same insert shape).
+_PERSONALISE_ROLES = ("Jarvis Admin", "Jarvis Skill Reviewer")
+
+# Personalisation Settings (Jarvis Settings Single) Check/Int defaults, seeded
+# on migrate for the same reason as voice_facts._SETTINGS_DEFAULTS: v16's
+# frappe.db.get_single_value casts an unset field via cint(), so BOTH an
+# unset Check (personalise_enabled) and an unset Int
+# (personalise_daily_question_cap) silently read back as 0 — not the JSON
+# defaults of 1 / 5 — until a tabSingles row exists for that field. Kept in
+# sync with jarvis_settings.json's Personalisation section defaults.
+_PERSONALISE_SETTINGS = "Jarvis Settings"
+_PERSONALISE_SETTINGS_DEFAULTS = {
+	"personalise_daily_question_cap": 5,
+	"personalise_enabled": 1,
+}
+
+
 def after_migrate() -> None:
-	"""Idempotently create the Knowledge Wiki roles and the Jarvis User role
-	(best-effort, never blocks a migrate)."""
+	"""Idempotently create the Knowledge Wiki roles, the Skills-area
+	Personalise/Review roles, and the Jarvis User role, and backfill the
+	Personalisation Settings Single defaults (best-effort, never blocks a
+	migrate)."""
 	try:
 		created = False
-		for role_name in _WIKI_ROLES:
+		# Backfill the Personalisation Settings Single defaults first, before the
+		# role loop. Order is irrelevant (this is an idempotent Settings backfill,
+		# not a role op) — placing it here keeps this function's diff away from the
+		# JARVIS_USER_ROLE block, which a sibling branch also extends to seed the
+		# same "Jarvis Admin" role; non-adjacent edits 3-way-merge cleanly and the
+		# duplicate seed is a harmless no-op either way (both are exists-guarded).
+		if _seed_personalise_settings_defaults():
+			created = True
+		for role_name in _WIKI_ROLES + _PERSONALISE_ROLES:
 			if frappe.db.exists("Role", role_name):
 				continue
 			frappe.get_doc({
@@ -176,3 +217,24 @@ def after_migrate() -> None:
 		frappe.log_error(
 			title="jarvis wiki roles seed failed", message=frappe.get_traceback()
 		)
+
+
+def _seed_personalise_settings_defaults() -> bool:
+	"""Row-existence probe (not a value test — see the module comment above):
+	a loaded Check/Int field on a Single coerces an unset row to 0, which is
+	indistinguishable from "admin turned it off / down to zero". Returns True
+	iff at least one field was backfilled."""
+	existing = {
+		r[0]
+		for r in frappe.db.sql(
+			"select field from tabSingles where doctype=%s and field in %s",
+			(_PERSONALISE_SETTINGS, tuple(_PERSONALISE_SETTINGS_DEFAULTS)),
+		)
+	}
+	updates = {
+		f: v for f, v in _PERSONALISE_SETTINGS_DEFAULTS.items() if f not in existing
+	}
+	if not updates:
+		return False
+	frappe.db.set_single_value(_PERSONALISE_SETTINGS, updates, update_modified=False)
+	return True

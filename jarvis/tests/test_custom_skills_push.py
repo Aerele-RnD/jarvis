@@ -40,6 +40,9 @@ def _mk(suffix, *, owner=OWNER, enabled=1, managed=0, skill_name=None):
 		"instructions": "body",
 		"enabled": enabled,
 		"user_invocable": 0,
+		# Org scope: only Org skills join the shared container push (security
+		# review PART 2 TASK 10 made User the default, which is never pushed).
+		"scope": "Org",
 		"managed_by_learning": managed,
 	})
 	# db_insert stamps owner with the session user unless creation is already

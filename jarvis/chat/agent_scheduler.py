@@ -170,12 +170,18 @@ def _launch_audit(inst, trigger: str) -> dict:
 	)
 
 	# O3: dispatch as an unattended background turn (interactive=False) so it
-	# never jumps ahead of a human's queued question.
-	result = api.send_message(
-		conversation=conv.name,
-		message=_audit_prompt(listing, inst, trigger),
-		background=1,
-	)
+	# never jumps ahead of a human's queued question. delegated_send() marks
+	# this as a trusted server re-entry so send_message's Jarvis-access gate
+	# (and the now role-gated Message create perm) accept it even when the
+	# impersonated owner does not hold the Jarvis User role.
+	from jarvis.permissions import delegated_send
+
+	with delegated_send():
+		result = api.send_message(
+			conversation=conv.name,
+			message=_audit_prompt(listing, inst, trigger),
+			background=1,
+		)
 	if not result.get("ok"):
 		raise RuntimeError(f"send_message refused: {result.get('reason')}")
 	return {"run": run.name, "conversation": conv.name}

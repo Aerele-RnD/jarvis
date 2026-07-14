@@ -21,6 +21,7 @@ from jarvis.chat.custom_skills import (
 	prefixed_slug,
 )
 from jarvis.exceptions import InvalidArgumentError, PermissionDeniedError
+from jarvis.permissions import JARVIS_USER_ROLE, ensure_jarvis_user_role
 from jarvis.tools.create_custom_skill import create_custom_skill
 from jarvis.tools.find_skills import find_skills
 from jarvis.tools.get_skill import get_skill
@@ -46,19 +47,44 @@ def _as(user: str):
 		frappe.set_user(orig)
 
 
+@contextlib.contextmanager
+def _engine_flag():
+	"""Bypass the scope-creation guard (security review PART 2 TASK 10) for a
+	fixture that needs a pre-existing Role/Org skill owned by a NON-reviewer —
+	the creation guard itself is covered by TestCreateCustomSkill; these tests
+	exercise the VISIBILITY of already-scoped rows."""
+	prev = frappe.flags.jarvis_pattern_engine
+	frappe.flags.jarvis_pattern_engine = True
+	try:
+		yield
+	finally:
+		frappe.flags.jarvis_pattern_engine = prev
+
+
 def _ensure_system_user(email: str) -> str:
-	"""A non-SM System User (realistic tool caller)."""
+	"""A non-SM System User (realistic tool caller).
+
+	Carries the Jarvis User role: since the chat permission hardening (#284) the
+	skill tools gate on System Manager or Jarvis User, and these fixtures are
+	deliberately NOT System Managers — that is the whole point of the
+	non-owner/peer scoping assertions — so without the role they are refused
+	before reaching the logic under test.
+	"""
+	ensure_jarvis_user_role()
 	if not frappe.db.exists("User", email):
 		u = frappe.get_doc({
 			"doctype": "User", "email": email,
 			"first_name": "sttool", "send_welcome_email": 0, "enabled": 1,
 			"user_type": "System User",
-			"roles": [{"role": "Sales User"}],
+			"roles": [{"role": "Sales User"}, {"role": JARVIS_USER_ROLE}],
 		})
 		u.flags.ignore_permissions = True
 		u.insert(ignore_permissions=True)
 	elif frappe.db.get_value("User", email, "user_type") != "System User":
 		frappe.db.set_value("User", email, "user_type", "System User")
+	if JARVIS_USER_ROLE not in set(frappe.get_roles(email)):
+		frappe.get_doc("User", email).add_roles(JARVIS_USER_ROLE)
+		frappe.clear_cache(user=email)
 	if "System Manager" in set(frappe.get_roles(email)):
 		frappe.get_doc("User", email).remove_roles("System Manager")
 	return email
@@ -85,22 +111,24 @@ def _sweep_fixture_skills():
 
 def _make_skill(owner: str, skill_name: str, description: str, *,
 				scope: str = "Org", shared_with=None, allowed_roles=None,
-				enabled: int = 1):
+				target_role=None, enabled: int = 1):
 	"""Insert a row through the real doctype as ``owner`` (child tables can't
-	be passed through the tool)."""
-	with _as(owner):
+	be passed through the tool). The engine flag lets the fixture mint a
+	Role/Org row directly (the reviewer-gated creation path is tested elsewhere)."""
+	with _as(owner), _engine_flag():
 		doc = frappe.get_doc({
 			"doctype": SKILL,
 			"skill_name": skill_name,
 			"description": description,
 			"instructions": f"instructions for {skill_name}",
 			"scope": scope,
+			"target_role": target_role,
 			"enabled": enabled,
 			"user_invocable": 1,
 			"shared_with": [{"user": u} for u in (shared_with or [])],
 			"allowed_roles": [{"role": r} for r in (allowed_roles or [])],
 		})
-		doc.insert()
+		doc.insert(ignore_permissions=True)
 	return doc
 
 
@@ -142,7 +170,9 @@ class TestFindSkills(SkillToolsTestCase):
 			mine = find_skills("marker alpha")
 			self.assertEqual(
 				[s["skill_name"] for s in mine["skills"]], [f"{PFX}-priv-alpha"])
-			self.assertEqual(mine["skills"][0]["scope"], "Personal")
+			# The tool now creates private (User-scope) skills — the ladder's
+			# rename of "Personal" (security review PART 2 TASK 10).
+			self.assertEqual(mine["skills"][0]["scope"], "User")
 		with _as(PEER):
 			theirs = find_skills("marker alpha")
 			self.assertEqual(theirs["count"], 0)
@@ -213,7 +243,7 @@ class TestGetSkill(SkillToolsTestCase):
 				out = get_skill(query_name)
 				self.assertEqual(out["skill_name"], f"{PFX}-fetch-me")
 				self.assertEqual(out["instructions"], "fetch body")
-				self.assertEqual(out["scope"], "Personal")
+				self.assertEqual(out["scope"], "User")
 				self.assertEqual(out["enabled"], 1)
 
 	def test_unknown_skill_is_invalid_argument(self):
@@ -240,6 +270,33 @@ class TestGetSkill(SkillToolsTestCase):
 			with self.assertRaises(PermissionDeniedError):
 				get_skill(f"{PFX}-role-only")
 
+	def test_role_scope_visible_to_target_role_holder(self):
+		# TASK 13 fix C: a scope=Role skill whose target_role the caller holds is
+		# findable + fetchable through the tools (the tool SELECTs must carry
+		# target_role, else the whole User->Role promotion tier is dead). PEER
+		# holds "Sales User".
+		_make_skill(
+			OWNER, f"{PFX}-role-tier", "sttool role tier steps",
+			scope="Role", target_role="Sales User",
+		)
+		with _as(PEER):
+			names = [s["skill_name"] for s in find_skills("role tier")["skills"]]
+			self.assertIn(f"{PFX}-role-tier", names)
+			got = get_skill(f"{PFX}-role-tier")
+			self.assertEqual(got["scope"], "Role")
+			self.assertEqual(got["instructions"], f"instructions for {PFX}-role-tier")
+
+	def test_role_scope_denied_to_non_target_role_holder(self):
+		# A Role skill targeting a role the caller does NOT hold is invisible.
+		_make_skill(
+			OWNER, f"{PFX}-role-tier-x", "sttool role tier x steps",
+			scope="Role", target_role="Accounts Manager",
+		)
+		with _as(PEER):  # PEER holds Sales User, not Accounts Manager
+			self.assertEqual(find_skills("role tier x")["count"], 0)
+			with self.assertRaises(PermissionDeniedError):
+				get_skill(f"{PFX}-role-tier-x")
+
 	def test_own_row_preferred_over_same_named_foreign_row(self):
 		# skill_name is unique per owner, not globally.
 		_make_skill(OWNER, f"{PFX}-dup-name", "sttool dup owner copy")
@@ -250,55 +307,41 @@ class TestGetSkill(SkillToolsTestCase):
 
 
 class TestCreateCustomSkill(SkillToolsTestCase):
-	def test_creates_personal_by_default_with_note(self):
+	def test_creates_private_by_default_with_note(self):
 		with _as(OWNER):
 			out = create_custom_skill(
 				f"{PFX}-mk-default", "sttool mk desc", "mk body")
-		self.assertEqual(out["scope"], "Personal")
+		self.assertEqual(out["scope"], "User")
 		self.assertEqual(out["skill_name"], f"{PFX}-mk-default")
 		self.assertIn("note", out)
 		row = frappe.db.get_value(
 			SKILL, out["name"], ["owner", "scope", "enabled"], as_dict=True)
 		self.assertEqual(row.owner, OWNER)
-		self.assertEqual(row.scope, "Personal")
+		self.assertEqual(row.scope, "User")
 		self.assertEqual(int(row.enabled), 1)
 
-	def test_org_scope_note_mentions_apply(self):
+	def test_org_scope_request_is_capped_to_user(self):
+		# Security review PART 2 TASK 10: the tool no longer mints a bench-wide
+		# (Org) skill in one agent call. A scope="Org" request is honored as a
+		# PRIVATE skill and the note explains promotion is reviewer-gated.
 		with _as(OWNER):
 			out = create_custom_skill(
 				f"{PFX}-mk-org", "sttool mk org desc", "mk org body", scope="Org")
-		self.assertEqual(out["scope"], "Org")
-		self.assertIn("Apply", out["note"])
+		self.assertEqual(out["scope"], "User")
+		self.assertIn("reviewer", out["note"].lower())
+		# The capped skill is private: a peer cannot see it via find_skills.
+		with _as(PEER):
+			found = find_skills("mk org desc")
+			self.assertNotIn(
+				f"{PFX}-mk-org", [s["skill_name"] for s in found["skills"]])
 
-	def test_org_scope_note_matches_actual_find_skills_visibility(self):
-		# F19: the note used to say Org skills "reach the assistant's skill
-		# catalog only after an admin clicks Apply" - factually false, since
-		# find_skills/get_skill already surface an Org row to every user right
-		# away (see TestFindSkills.test_org_row_visible_to_everyone below).
-		# There is no per-row 'applied'/'reviewed' flag anywhere in the
-		# doctype or the Apply flow (chat/custom_skills.py build_push_payload)
-		# to gate that discovery path on, so the note is corrected instead of
-		# inventing a gate. Lock the corrected wording + matching behavior
-		# together so they can't silently drift apart again.
+	def test_unknown_scope_is_capped_not_rejected(self):
+		# The scope arg is advisory (always capped to User), so an unrecognized
+		# value is not an error — it just yields a private skill.
 		with _as(OWNER):
 			out = create_custom_skill(
-				f"{PFX}-mk-org-note", "sttool mk org note desc", "mk org note body",
-				scope="Org",
-			)
-		note = out["note"]
-		self.assertIn("right away", note)
-		self.assertIn("jarvis__find_skills", note)
-		self.assertNotIn("only after an admin clicks Apply", note)
-
-		with _as(PEER):
-			found = find_skills("mk org note desc")
-			self.assertIn(f"{PFX}-mk-org-note", [s["skill_name"] for s in found["skills"]])
-
-	def test_invalid_scope_rejected(self):
-		with _as(OWNER):
-			with self.assertRaises(InvalidArgumentError):
-				create_custom_skill(
-					f"{PFX}-mk-badscope", "d", "i", scope="Team")
+				f"{PFX}-mk-badscope", "d", "i", scope="Team")
+		self.assertEqual(out["scope"], "User")
 
 	def test_slug_and_cap_violations_surface_as_jarvis_errors(self):
 		with _as(OWNER):
@@ -384,7 +427,7 @@ class TestRegistryAndClassification(SkillToolsTestCase):
 				"description": "sttool registry marker",
 				"instructions": "registry body",
 			})
-			self.assertEqual(created["scope"], "Personal")
+			self.assertEqual(created["scope"], "User")
 
 			found = dispatch("find_skills", {"query": "registry marker", "limit": 5})
 			self.assertEqual(

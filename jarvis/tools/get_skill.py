@@ -35,7 +35,9 @@ def get_skill(skill_name: str) -> dict:
         filters={"skill_name": ["in", sorted(candidates)]},
         fields=[
             "name", "owner", "skill_name", "description", "instructions",
-            "scope", "enabled", "user_invocable",
+            # target_role is REQUIRED for user_can_use_skill to admit a Role-scope
+            # skill's role-holder (security review PART 2 TASK 13).
+            "scope", "target_role", "enabled", "user_invocable",
         ],
     )
     if not rows:

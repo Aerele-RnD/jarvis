@@ -1,14 +1,15 @@
 import json
 
 import frappe
+from frappe.utils import strip_html
 
+from jarvis import audit
 from jarvis._http import validate_bearer as _validate_bearer  # noqa: F401 (kept for callers in mcp.py)
 from jarvis._plugin_auth import PluginAuthError, validate_plugin_request
 from jarvis._session import impersonate
 from jarvis.exceptions import InvalidArgumentError, JarvisError
 from jarvis.permissions import has_jarvis_access
 from jarvis.tools.registry import dispatch
-from jarvis import audit
 
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
@@ -249,26 +250,42 @@ def _persist_and_publish_tool_call(
 	persist_tool_receipt(conv_name, tool, args, result)
 
 
-def persist_tool_receipt(conv_name: str, tool: str, args: dict, result: dict) -> None:
+def persist_tool_receipt(conv_name: str, tool: str, args: dict, result: dict | None,
+						 *, action_outcome: str | None = None) -> None:
 	"""Write a role=tool Jarvis Chat Message receipt into ``conv_name`` and
 	publish the realtime tool:result event, running as the conversation owner so
 	DocType perms allow the insert. Shared by the inline model-write path
 	(``_persist_and_publish_tool_call``) and the confirmed-write path
 	(``confirm_tool`` -> ``dispatch_confirmed``) so a confirmed delete/submit/
-	email leaves the same transcript trace the SPA already renders (fixes #7)."""
-	status = "completed" if result.get("ok") else "error"
+	email leaves the same transcript trace the SPA already renders (fixes #7).
+
+	``action_outcome`` marks a row that came from a confirmation card so the SPA
+	renders it as an inline receipt chip instead of an Activity-accordion tool
+	row: "confirmed" (ran ok), "failed" (confirmed but errored), or "discarded"
+	(the user declined - nothing ran, so ``result`` may be None/empty). Ordinary
+	inline tool calls pass None and render unchanged."""
+	result = result or {}
+	discarded = action_outcome == "discarded"
+	if discarded:
+		# Nothing executed; the chip renders off action_outcome, and tool_status
+		# stays empty (a valid Select option) rather than a misleading completed/error.
+		status = ""
+	else:
+		status = "completed" if result.get("ok") else "error"
 
 	# Entity stamping (org wiki): which doc this call touched, so wiki nudges
 	# can read a turn's entities off the receipt rows. Lazy + guarded: a
-	# missing/broken entities module must never break receipts.
+	# missing/broken entities module must never break receipts. Skipped for a
+	# discard - it touched no document.
 	ref_doctype = ref_name = None
-	try:
-		from jarvis.chat.entities import refs_from_tool
-		# refs_from_tool expects the tool's raw data, not the {ok, data} envelope.
-		ref_doctype, ref_name = refs_from_tool(
-			args, result.get("data") if isinstance(result, dict) else None)
-	except Exception:
-		ref_doctype = ref_name = None
+	if not discarded:
+		try:
+			from jarvis.chat.entities import refs_from_tool
+			# refs_from_tool expects the tool's raw data, not the {ok, data} envelope.
+			ref_doctype, ref_name = refs_from_tool(
+				args, result.get("data") if isinstance(result, dict) else None)
+		except Exception:
+			ref_doctype = ref_name = None
 
 	# Run as the conversation owner so DocType perms allow it. impersonate is
 	# session-safe (a bare frappe.set_user in this HTTP path would gut the
@@ -284,11 +301,12 @@ def persist_tool_receipt(conv_name: str, tool: str, args: dict, result: dict) ->
 			"role": "tool",
 			"tool_name": tool,
 			"tool_args": frappe.as_json(args),
-			"tool_result": frappe.as_json(result),
+			"tool_result": frappe.as_json(result) if result else None,
 			"tool_status": status,
+			"action_outcome": action_outcome or None,
 			"ref_doctype": ref_doctype,
 			"ref_name": ref_name,
-			"content": f"{tool} → {status}",
+			"content": f"{tool} → {action_outcome or status}",
 		})
 		doc.insert(ignore_permissions=True)
 		frappe.db.commit()
@@ -300,6 +318,7 @@ def persist_tool_receipt(conv_name: str, tool: str, args: dict, result: dict) ->
 			args=args,
 			result=result,
 			status=status,
+			action_outcome=action_outcome,
 		)
 		# Generation: if the tool produced a file artifact (download_pdf,
 		# export_excel, …), attach it to the in-flight assistant message's
@@ -367,8 +386,13 @@ def publish_realtime_tool_result(
 	args: dict,
 	result: dict,
 	status: str,
+	action_outcome: str | None = None,
 ) -> None:
-	"""Wrapper around frappe.publish_realtime so tests can mock at this seam."""
+	"""Wrapper around frappe.publish_realtime so tests can mock at this seam.
+
+	``action_outcome`` (confirmed/discarded/failed) rides along so the SPA can
+	render the row as a receipt chip immediately, without waiting for a full
+	transcript reload."""
 	frappe.publish_realtime(
 		"jarvis:event",
 		{
@@ -379,6 +403,7 @@ def publish_realtime_tool_result(
 			"args": args,
 			"result": result,
 			"status": status,
+			"action_outcome": action_outcome,
 		},
 		user=user,
 	)
@@ -414,7 +439,7 @@ def _parse_args(args: dict | str | None) -> dict:
 # ``preview`` (a dry-run with every DB write rolled back).
 _WRITE_TOOLS = frozenset({
 	"create_doc", "create_docs", "update_doc", "submit_doc", "cancel_doc", "amend_doc",
-	"delete_doc", "run_method",
+	"delete_doc", "run_method", "apply_workflow_action",
 	"send_email", "add_comment", "update_comment", "share_doc", "unshare_doc",
 	"assign_to", "unassign_from", "add_tag", "remove_tag",
 	"follow_document", "unfollow_document", "attach_to_doc",
@@ -443,13 +468,13 @@ _PREVIEWABLE = frozenset({
 # sandboxed dry-run.
 _GATED_WRITES = frozenset({
 	"create_doc", "create_docs", "update_doc", "submit_doc", "cancel_doc",
-	"amend_doc", "delete_doc", "run_method", "send_email",
+	"amend_doc", "delete_doc", "run_method", "apply_workflow_action", "send_email",
 	"create_custom_skill", "update_wiki",
 	"share_doc", "assign_to",
 })
 # Irreversible/consequential subset - gated even when a user has auto-apply
 # on (Task 4 uses this; define it here so the sets live together).
-_DESTRUCTIVE = frozenset({"delete_doc", "cancel_doc", "amend_doc", "send_email"})
+_DESTRUCTIVE = frozenset({"delete_doc", "cancel_doc", "amend_doc", "send_email", "apply_workflow_action"})
 # Writes that auto-apply may fast-path without a confirmation click. Strictly
 # the reversible create/update pair, per spec. submit_doc, run_method and every
 # _DESTRUCTIVE tool ALWAYS park even with auto-apply on: run_method's
@@ -474,6 +499,39 @@ _AUTO_APPLYABLE = frozenset({"create_doc", "update_doc"})
 # the model instead of a doomed card. Deliberately NOT in _AUTO_APPLYABLE - the
 # batch card is the human checkpoint against duplicate masters.
 _DRY_RUN_ON_PARK = frozenset({"create_doc", "create_docs", "update_doc"})
+
+# Batch payload keys: a call carrying a non-empty list under any of these is a
+# BULK call (many targets in one gated card), not a single-doc write.
+_BULK_ARG_KEYS = ("names", "updates", "docs", "messages")
+
+
+def _is_bulk_call(args) -> bool:
+	"""True when a tool call carries a batch payload. Used to (1) keep a bulk
+	create_doc/update_doc from auto-applying - a batch always parks behind the
+	card - and (2) route consequential bulk writes to the described-intent
+	preview instead of a sandbox dry-run that would fire on_submit / on_cancel
+	hooks N times at park."""
+	if not isinstance(args, dict):
+		return False
+	return any(isinstance(args.get(k), list) and args.get(k) for k in _BULK_ARG_KEYS)
+
+
+def _bulk_targets(args: dict) -> list:
+	"""Display names for a batch call: ``names[]`` directly, else the per-item
+	name / recipients / doctype from ``updates`` / ``messages`` / ``docs``."""
+	if isinstance(args.get("names"), list):
+		return list(args["names"])
+	for key in ("updates", "messages"):
+		items = args.get(key)
+		if isinstance(items, list):
+			return [
+				(it.get("name") or it.get("recipients") or "?")
+				for it in items if isinstance(it, dict)
+			]
+	docs = args.get("docs")
+	if isinstance(docs, list):
+		return [it.get("doctype", "?") for it in docs if isinstance(it, dict)]
+	return []
 
 
 def _as_bool(value) -> bool:
@@ -541,9 +599,24 @@ def _describe_call(tool: str, args: dict) -> str:
 	whose write cannot be dry-run (send_email) or whose preview was
 	unavailable. No secrets: only structural fields are surfaced."""
 	a = args if isinstance(args, dict) else {}
+	if _is_bulk_call(a):
+		# Batch card: verb + count + doctype/action + a few targets, so a parked
+		# "cancel_doc count=6 doctype=Purchase Order ..." reads clearly (and the
+		# reload-resync path via list_pending_confirmations shows the same).
+		targets = _bulk_targets(a)
+		parts = [tool, f"count={len(targets)}"]
+		for key in ("doctype", "action"):
+			if a.get(key):
+				parts.append(f"{key}={a[key]}")
+		shown = ", ".join(str(t) for t in targets[:10])
+		if len(targets) > 10:
+			shown += f", +{len(targets) - 10} more"
+		if shown:
+			parts.append(f"targets=[{shown}]")
+		return " ".join(str(p) for p in parts)
 	parts = [tool]
 	for key in ("doctype", "name", "docname", "target_doctype", "target_name",
-				"method", "recipients", "to", "subject"):
+				"method", "action", "recipients", "to", "subject"):
 		val = a.get(key)
 		if val:
 			parts.append(f"{key}={val}")
@@ -569,7 +642,15 @@ def _pending_preview(tool: str, args: dict) -> dict:
 	# be returned to the model. Route it to the described-intent path (like
 	# send_email) so parking a run_method never executes it - the real call
 	# runs only on confirm.
-	if tool not in _PREVIEWABLE or tool == "run_method":
+	# A BULK submit/cancel/delete/amend routes to described-intent: sandbox-
+	# running the batch would fire on_submit / on_cancel hooks - incl. non-
+	# rollback-able inline side effects (e-invoice / webhook HTTP) - once per doc,
+	# N times, at PARK. Bulk create/update/create_docs stay SANDBOXED even here
+	# (the resync path reaches _pending_preview directly, bypassing the
+	# _DRY_RUN_ON_PARK branch): they are _DRY_RUN_ON_PARK - rolled back, no
+	# consequential hooks - so exclude them from the bulk described routing.
+	if (tool not in _PREVIEWABLE or tool == "run_method"
+			or (_is_bulk_call(args) and tool not in _DRY_RUN_ON_PARK)):
 		return described
 	try:
 		return _run_preview(tool, args)
@@ -581,33 +662,168 @@ def _pending_preview(tool: str, args: dict) -> dict:
 		return described
 
 
+# --- Enriched write-error translation (shared by the model/confirm path here
+# and the human draft-apply path in chat.actions_api) ---------------------------
+#
+# A failed ERP write surfaces as flat "permission denied" today because the useful
+# reason is generated by Frappe and then discarded: a record-level PermissionError
+# is raised BARE (str(e) == "") with the human text in ``frappe.flags.error_message``,
+# and the specific blocker (e.g. a User Permission on a link value) is msgprinted
+# into ``frappe.local.message_log`` by ``has_permission``'s check-log decorator.
+# We HARVEST that safe reason at the catch site rather than re-running the check
+# (the unsaved doc is gone by then, and has_permission(debug=True) emits
+# developer-oriented allowed-doc dumps). Harvesting message_log also keeps
+# Frappe's masking: on a doctype-level denial ``check_doctype_permission`` swaps
+# in a fresh log, so the record-level specifics (which linked value blocked it)
+# are discarded - ``detail`` at most names the doctype the caller asked for.
+
+# "what you can do" lines, keyed by the wire ``code``. Deliberately tiny.
+_ERROR_HINTS = {
+	"PermissionDeniedError": (
+		"You don't have access to do this. If you believe you should, ask your "
+		"administrator to review your permissions."
+	),
+	"InvalidArgumentError": (
+		"Some of the values need attention - check the highlighted fields and "
+		"try again."
+	),
+}
+# Frappe's User-Permission link denial reads "...not allowed to access this X
+# record because it is linked to Y '...' in field Z" - a more specific hint than
+# the generic role-permission one.
+_USER_PERM_HINT = (
+	"Your access is limited to specific records by a User Permission. Ask your "
+	"administrator to review your User Permissions for this record."
+)
+
+
+def _msglog_mark() -> int:
+	"""Snapshot the current message_log length, so a failure branch can harvest
+	only the reasons THIS operation logged."""
+	log = getattr(frappe.local, "message_log", None)
+	return len(log) if log else 0
+
+
+def _harvest_reason(mark: int) -> str:
+	"""User-safe reason text Frappe accumulated in message_log during a failed
+	write (has_permission check-logs, throw() messages). HTML-stripped, joined,
+	~500-char capped. REMOVES the harvested entries so they don't also ride out
+	as ``_server_messages`` (double-surfacing). Empty when nothing was logged -
+	e.g. a doctype-level denial where Frappe masks the reason."""
+	log = getattr(frappe.local, "message_log", None)
+	if not log or len(log) <= mark:
+		return ""
+	parts = []
+	for entry in log[mark:]:
+		raw = entry.get("message") if isinstance(entry, dict) else entry
+		text = strip_html(str(raw or "")).strip()
+		if text:
+			parts.append(text)
+	del log[mark:]  # pop harvested entries so they don't become _server_messages
+	return " ".join(parts)[:500]
+
+
+def _flags_message() -> str:
+	"""The human-facing text Frappe stashes in ``flags.error_message`` (set by
+	``raise_no_permission_to`` for a bare PermissionError), HTML-stripped."""
+	return strip_html(str(frappe.flags.get("error_message") or "")).strip()
+
+
+def _hint_for(code: str, detail: str) -> str:
+	if code == "PermissionDeniedError" and (
+		"linked to" in detail.lower() or "not allowed to access" in detail.lower()
+	):
+		return _USER_PERM_HINT
+	return _ERROR_HINTS.get(code, "")
+
+
+def _duplicate_message(e: Exception) -> str:
+	"""A DuplicateEntryError's ``str(e)`` is a ``(doctype, name, IntegrityError)``
+	args repr - internal table/key + driver text. Build a clean user-facing line
+	from its args instead of surfacing that repr."""
+	args = getattr(e, "args", ()) or ()
+	doctype = args[0] if len(args) > 0 else ""
+	name = args[1] if len(args) > 1 else ""
+	if doctype and name:
+		return f"A {doctype} named '{name}' already exists."
+	if doctype:
+		return f"That {doctype} already exists."
+	return "A record with these values already exists."
+
+
+def _translate_write_error(e: Exception, mark: int) -> dict | None:
+	"""Enriched ``{ok:false, error}`` envelope for a KNOWN write-path exception,
+	promoting Frappe's discarded reason into ``message``/``detail``/``hint``.
+	Returns ``None`` for an unexpected exception - the caller MUST re-raise it so
+	a real bug still surfaces as a 500 (never enveloped, never leaks a traceback).
+	``mark`` is a ``_msglog_mark()`` taken before the write ran."""
+	if isinstance(e, JarvisError):
+		code, message = type(e).__name__, strip_html(str(e)).strip()
+	elif isinstance(e, frappe.PermissionError):
+		code = "PermissionDeniedError"
+		message = strip_html(str(e)).strip() or _flags_message() or "permission denied"
+	elif isinstance(e, frappe.DuplicateEntryError):
+		# str(e) here is an args-tuple repr, not a message - clean it up.
+		code, message = "InvalidArgumentError", _duplicate_message(e)
+	elif isinstance(e, frappe.ValidationError):
+		code = "InvalidArgumentError"
+		message = strip_html(str(e)).strip() or _flags_message() or type(e).__name__
+	else:
+		return None
+	detail = _harvest_reason(mark)
+	# Don't repeat the message under "Show details".
+	if detail and detail == strip_html(message).strip():
+		detail = ""
+	return _error(code, message, detail=detail, hint=_hint_for(code, detail))
+
+
 def _dispatch_and_wrap(tool: str, args: dict, is_write: bool) -> dict:
 	"""Dispatch + translate exceptions into the ``{ok, data}`` / ``{ok, error}``
 	envelope + audit write tools. This is the shared core of ``_run_tool``'s
 	execute path, reused verbatim by ``confirm_tool`` so a confirmed write runs
-	through the exact same translation + audit as an inline one."""
+	through the exact same translation + audit as an inline one.
+
+	A write is scoped in a SAVEPOINT so a KNOWN failure is rolled back before we
+	RETURN the ``{ok:false}`` envelope. Frappe commits any endpoint that returns
+	normally (frappe/app.py), so without this a tool that half-applied before
+	raising - e.g. a submit whose ``on_submit`` hook throws AFTER ``docstatus=1``
+	was written - would be persisted at end-of-request. Rolling back to the
+	savepoint (not a full rollback) undoes ONLY this tool, leaving the caller's
+	surrounding writes intact (``confirm_tool``'s failure receipt/continuation,
+	the model path's tool-call row). Unexpected exceptions re-raise unchanged:
+	Frappe's handler does a full request rollback (nothing persists, no envelope,
+	no traceback to the client)."""
+	mark = _msglog_mark()
+	sp = f"jarvis_{frappe.generate_hash(length=10)}" if is_write else None
+	if sp:
+		frappe.db.savepoint(sp)
 	try:
 		data = dispatch(tool, args)
-	except JarvisError as e:
-		if is_write:
-			audit.record(tool=tool, args=args, ok=False,
-						 error_code=type(e).__name__, error_message=str(e))
-		return _error(type(e).__name__, str(e))
-	except frappe.PermissionError as e:
-		if is_write:
-			audit.record(tool=tool, args=args, ok=False,
-						 error_code="PermissionDeniedError", error_message=str(e))
-		return _error("PermissionDeniedError", str(e) or "permission denied")
-	except (frappe.ValidationError, frappe.DuplicateEntryError) as e:
-		if is_write:
-			audit.record(tool=tool, args=args, ok=False,
-						 error_code="InvalidArgumentError", error_message=str(e))
-		return _error("InvalidArgumentError", str(e) or type(e).__name__)
 	except Exception as e:
+		envelope = _translate_write_error(e, mark)
+		if envelope is None:  # unexpected - audit then re-raise to Frappe (500)
+			if is_write:
+				audit.record(tool=tool, args=args, ok=False,
+							 error_code=type(e).__name__, error_message=str(e))
+			raise
+		if sp:
+			# Undo this tool's partial writes. Guard against a tool that committed
+			# mid-op (the savepoint would be gone) so we never turn a clean tool
+			# failure into a 500.
+			try:
+				frappe.db.rollback(save_point=sp)
+			except Exception:
+				pass
 		if is_write:
+			err_obj = envelope["error"]
 			audit.record(tool=tool, args=args, ok=False,
-						 error_code=type(e).__name__, error_message=str(e))
-		raise
+						 error_code=err_obj["code"], error_message=err_obj["message"])
+		return envelope
+	if sp:
+		try:
+			frappe.db.release_savepoint(sp)
+		except Exception:
+			pass
 	if is_write:
 		audit.record(tool=tool, args=args, ok=True, result=data)
 	return {"ok": True, "data": data}
@@ -667,7 +883,8 @@ def _run_tool(tool: str, raw_args: dict | str | None,
 	# its own preview via _pending_preview - the model never needs (nor is
 	# allowed) preview=True on a gated write.
 	if (isinstance(args, dict) and _as_bool(args.get("preview"))
-			and tool not in _GATED_WRITES):
+			and tool not in _GATED_WRITES
+			and not (is_write and _is_bulk_call(args))):
 		if tool not in _PREVIEWABLE:
 			return _error("InvalidArgumentError",
 						  f"preview is not supported for {tool}")
@@ -686,7 +903,12 @@ def _run_tool(tool: str, raw_args: dict | str | None,
 	# then run the stored call via ``dispatch_confirmed``. CRITICAL: the token
 	# is stored, not returned - the model must not see it. It is delivered to
 	# the UI out-of-band below, over the realtime channel (Task 3).
-	if tool in _GATED_WRITES:
+	# A BULK write ALWAYS gates - even a normally-ungated light write (add_tag /
+	# add_comment / follow / unshare / unassign): a 20-record mass mutation is a
+	# batch the human should confirm, and the plugin/persona promise exactly one
+	# card for it. Non-_PREVIEWABLE bulk writes get a described-intent card via
+	# _pending_preview (no sandbox); single calls to these tools are unchanged.
+	if tool in _GATED_WRITES or (is_write and _is_bulk_call(args)):
 		from jarvis.chat import events, pending_confirm
 
 		# preview=True on a gated write is a category error (issue #186, #14):
@@ -731,7 +953,10 @@ def _run_tool(tool: str, raw_args: dict | str | None,
 		# owner comparison against owner_user (itself read from this same conv
 		# a few lines up) would just be comparing one DB read to another read of
 		# the identical field, not a real access-control boundary.
-		if conv and tool in _AUTO_APPLYABLE:
+		# A bulk create/update (docs[] / updates[]) NEVER fast-paths - the batch
+		# card is the human checkpoint against a 20-doc mistake; only a single
+		# reversible create/update may auto-apply.
+		if conv and tool in _AUTO_APPLYABLE and not _is_bulk_call(args):
 			# Two direct-apply paths for reversible create/update (destructive
 			# tools above are excluded and always park): admin-enabled
 			# auto_apply, OR a File Box conversation - an unattended directed

@@ -520,6 +520,9 @@ class TestApplyLearnedSkills(FrappeTestCase):
 			"instructions": "y",
 			"enabled": 1,
 			"user_invocable": 0,
+			# Org scope: only Org skills join the shared push (TASK 10 made User the
+			# default, which is never pushed).
+			"scope": "Org",
 			"managed_by_learning": 0,
 		})
 		d.owner = "Administrator"
@@ -593,6 +596,8 @@ class TestApplyLearnedSkills(FrappeTestCase):
 				"instructions": "y",
 				"enabled": 1,
 				"user_invocable": 0,
+				# Org scope: only Org skills join the shared push (TASK 10).
+				"scope": "Org",
 				"managed_by_learning": 0,
 			})
 			d.creation = d.modified = frappe.utils.now()

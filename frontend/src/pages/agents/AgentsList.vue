@@ -5,9 +5,11 @@
 				<Breadcrumbs :items="[{ label: 'Agents', route: { name: 'AgentsList' } }]" />
 			</template>
 			<template #right-header>
-				<!-- SM-only apply pipeline: prominent while the catalog is dirty,
-				     SyncPill-style pending/failed states while an apply runs -->
-				<div v-if="isSM" class="flex items-center gap-2">
+				<!-- Reviewer/SM apply pipeline: prominent while the catalog is dirty,
+				     SyncPill-style pending/failed states while an apply runs.
+				     Gated on the skill-reviewer capability (what apply_agents needs),
+				     NOT the SM-only cross-owner admin overview. -->
+				<div v-if="canApply" class="flex items-center gap-2">
 					<!-- duration lives IN the badge text - tooltips are invisible to
 					     keyboard/SR users -->
 					<Badge v-if="sync.pending" theme="orange" variant="subtle">
@@ -37,7 +39,7 @@
 		<!-- persistent apply-failure banner: the reason must survive the toast and
 		     be reachable without hovering a badge (keyboard/SR access) -->
 		<div
-			v-if="isSM && syncFailed && !sync.pending"
+			v-if="canApply && syncFailed && !sync.pending"
 			class="mx-5 mt-3 flex shrink-0 items-start gap-2 rounded-lg border border-outline-red-1 bg-surface-red-1 px-3 py-2 text-sm text-ink-red-4"
 		>
 			<FeatherIcon name="x-circle" class="mt-0.5 size-4 shrink-0" />
@@ -220,10 +222,12 @@
 //     (Most installed / Recently updated / Name). No ratings - deliberately
 //     deferred.
 //   Activity - the owner's lifecycle feed (AgentActivityTab, self-contained).
-// SM header action: prominent "Apply catalog changes" driven by
+// Reviewer/SM header action: prominent "Apply catalog changes" driven by
 // get_agents_sync_status().dirty (install/uninstall/enable since the last
 // successful Apply), with SyncPill-style pending/failed polling, plus a
-// route-leave + beforeunload guard while dirty.
+// route-leave + beforeunload guard while dirty. Gated on the skill-reviewer
+// capability (get_agents_caps().review) since apply_agents needs the reviewer
+// set, not System Manager.
 import { reactive, ref, computed, watch, onMounted, onBeforeUnmount } from "vue"
 import { useRoute, useRouter, onBeforeRouteLeave } from "vue-router"
 import {
@@ -407,17 +411,23 @@ function installsLabel(n) {
 	return `${c} install${c === 1 ? "" : "s"}`
 }
 
-// ── SM probe (round-2 parity): getAgentAdminOverview succeeds only for System
-// Managers - PermissionError hides the apply action, no noise. ────────────────
-const isSM = ref(false)
-async function probeAdmin() {
+// ── Reviewer capability probe (PART 3 remediation): apply_agents needs the
+// skill-reviewer set (Jarvis Skill Reviewer | Jarvis Admin | System Manager),
+// NOT System Manager. get_agents_caps().review drives the Apply button so a
+// reviewer-only System User (no SM) can see and use it; a plain Jarvis User
+// gets review=false and no button. Decoupled from the SM-only cross-owner
+// getAgentAdminOverview data. ─────────────────────────────────────────────────
+const canApply = ref(false)
+async function probeCaps() {
 	try {
-		await api.getAgentAdminOverview()
-		isSM.value = true
-		await loadSyncStatus()
-		if (sync.pending) startSyncPoll()
+		const caps = (await agentsApi.getAgentsCaps()) || {}
+		canApply.value = !!caps.review
+		if (canApply.value) {
+			await loadSyncStatus()
+			if (sync.pending) startSyncPoll()
+		}
 	} catch (e) {
-		isSM.value = false
+		canApply.value = false
 	}
 }
 
@@ -473,12 +483,12 @@ async function applyCatalog() {
 	}
 }
 
-// ── leave-guard: SM + dirty (unapplied catalog changes) ──────────────────────
+// ── leave-guard: can-apply + dirty (unapplied catalog changes) ───────────────
 const leaveDialog = reactive({ show: false, next: null })
 
 onBeforeRouteLeave((to, from, next) => {
 	// drilling into /agents/:slug stays inside the agents area - don't nag
-	if (!isSM.value || !sync.dirty || String(to.path || "").startsWith("/agents")) return next()
+	if (!canApply.value || !sync.dirty || String(to.path || "").startsWith("/agents")) return next()
 	leaveDialog.next = next
 	leaveDialog.show = true
 })
@@ -498,14 +508,14 @@ async function applyAndLeave() {
 
 // hard reloads / tab close while dirty → native browser prompt
 function onBeforeUnload(e) {
-	if (isSM.value && sync.dirty) {
+	if (canApply.value && sync.dirty) {
 		e.preventDefault()
 		e.returnValue = "" // Chrome requires returnValue to show the prompt
 	}
 }
 
 onMounted(() => {
-	probeAdmin()
+	probeCaps()
 	loadCategories()
 	window.addEventListener("beforeunload", onBeforeUnload)
 })

@@ -29,8 +29,27 @@ def run_due_macros() -> None:
 	if not due:
 		return
 
+	from jarvis.permissions import has_jarvis_access
+
 	original_user = frappe.session.user
 	for m in due:
+		# MAC-1 (security review PART 3, TASK 23): never run a macro whose owner
+		# has lost Jarvis access (demoted System User, or a Website/portal owner) —
+		# the scheduled turn would otherwise execute jarvis__* tools as an identity
+		# categorically barred from Jarvis. Advance the schedule so it does not busy
+		# re-fire, but skip the run.
+		if not has_jarvis_access(m.owner):
+			frappe.db.set_value(
+				MACRO,
+				m.name,
+				{
+					"last_run_at": now,
+					"next_run_at": compute_next_run(m.schedule_frequency, m.schedule_time, from_dt=now),
+				},
+				update_modified=False,
+			)
+			frappe.db.commit()
+			continue
 		try:
 			frappe.set_user(m.owner)
 			from jarvis.chat import macros

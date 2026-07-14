@@ -1,0 +1,56 @@
+// Review-tab API (Skills-area rework, DESIGN.md §6b) - thin wrappers around the
+// reviewer-set endpoints in `jarvis.chat.learned_api.*` that are NEW with the
+// rework: the wiki-promotion queue, the server-assembled "Go to chat" bundle and
+// the reviewer follow-up-question trigger. Kept in their own module (not
+// src/api/learning.js, which F1 owns) so the two waves never touch the same
+// file. Mirrors src/api/learning.js: one `call` per endpoint, flat kwargs.
+//
+// `getReviewAccess` is re-exported from ./learning (F1 defines it there) so
+// ReviewTab imports its probe and its promotion/follow-up bindings from a single
+// module - the same re-export idiom src/api/voice.js uses for `dismissWikiNudge`.
+import { call } from "frappe-ui"
+
+const LR = "jarvis.chat.learned_api."
+
+// Reviewer-set + self-host-aware access probe: {self_hosted, pending_promotions,
+// pending_patterns}. Defined in F1's learning.js; surfaced here so the Review tab
+// has one import site for every reviewer-only binding.
+export { getReviewAccess } from "./learning"
+
+// ── wiki-promotion queue (DESIGN.md 2.4 / 6b) ────────────────────────────────
+// Paginated `Jarvis Wiki Promotion Request` list, envelope parity with
+// listLearnedPatternsPage ({rows, total, has_more, start, page_length}). Rows:
+// {name, page, page_title, from_scope, to_scope, target_role, requested_by,
+//  requested_by_name, note, body_excerpt, status, created}. `status` "Pending"
+// (default) | "Approved" | "Rejected" | "All".
+export const listPromotionRequestsPage = (p = {}) =>
+	call(LR + "list_promotion_requests_page", {
+		status: p.status || "Pending",
+		search: p.search || "",
+		start: p.start || 0,
+		page_length: p.page_length || 20,
+	})
+
+// Approve (approve truthy) or reject (falsy) a promotion request. On approve the
+// server merges the frozen body_snapshot into the Role/Org target page (the
+// source User page stays intact); a `note` is stored as the decision note.
+// Returns {ok, status} on success or {ok:false, reason} for a stale/non-Pending
+// request. approve is coerced to 1/0 for the server's cint().
+export const decidePromotion = (name, approve, note = "") =>
+	call(LR + "decide_promotion", { name, approve: approve ? 1 : 0, note })
+
+// Server-assembled background bundle the reviewer carries into a fresh chat via
+// chatPrefill (richer than the client buildDiscussPrompt: origin, the linked
+// question + the user's answer, who the user is + roles, the approval
+// implication, a unified diff). `kind` in {"pattern", "promotion"}; `name` is the
+// Jarvis Learned Pattern or Jarvis Wiki Promotion Request. Returns {prompt}.
+export const goToChatContext = (kind, name) =>
+	call(LR + "go_to_chat_context", { kind, name })
+
+// Rephrase a reviewer's ask into ONE generic-tone Personalise question and insert
+// it into the target user's bank (origin "From your organisation" - the user
+// never sees reviewer attribution). `name` is the Jarvis Learned Pattern (target
+// = its linked question's user, else the evidence owner) OR the Jarvis Wiki
+// Promotion Request (target = the requester). Returns {ok, name, question}.
+export const triggerFollowupQuestion = (name, ask) =>
+	call(LR + "trigger_followup_question", { name, ask })

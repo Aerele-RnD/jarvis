@@ -9,6 +9,7 @@ commit). Execution itself lives in ``jarvis.chat.macros``.
 import re
 
 import frappe
+from jarvis.permissions import require_jarvis_user
 from frappe import _
 
 MACRO = "Jarvis Macro"
@@ -80,6 +81,7 @@ def _clean_step_skills(skills) -> list[str]:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def list_macros() -> list[dict]:
 	"""The current user's macros (no step bodies), newest first, with a count."""
 	macros = frappe.get_all(
@@ -168,6 +170,7 @@ def _order_by(sort_field, sort_dir, sortable: dict, default_field, default_dir, 
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def list_macros_page(
 	search: str = "",
 	filters: str | dict | None = None,
@@ -244,6 +247,7 @@ def list_macros_page(
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def get_macro(name: str) -> dict:
 	"""One macro incl. its ordered steps (owner-gated)."""
 	doc = frappe.get_doc(MACRO, name)
@@ -283,6 +287,7 @@ def _step_skills(step) -> list[str]:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def create_macro(
 	macro_name: str,
 	description: str = "",
@@ -312,6 +317,7 @@ def create_macro(
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def update_macro(
 	name: str,
 	macro_name: str | None = None,
@@ -360,6 +366,7 @@ def update_macro(
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def delete_macro(name: str) -> dict:
 	"""Delete a macro row (owner-gated). Its Macro Run history rows link the
 	macro and would block the delete (LinkExistsError), so they go first — they
@@ -374,6 +381,7 @@ def delete_macro(name: str) -> dict:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def delete_macros_bulk(names: str | list | None = None) -> dict:
 	"""Bulk delete macros the caller OWNS (DESIGN-V3 §8.3 / D20). ``names`` is a
 	JSON array of macro row-names. Reuses the ``delete_macro`` path per row so
@@ -411,6 +419,7 @@ def delete_macros_bulk(names: str | list | None = None) -> dict:
 # Run / stop
 # --------------------------------------------------------------------------- #
 @frappe.whitelist()
+@require_jarvis_user
 def run_macro(name: str) -> dict:
 	"""Start a macro now (manual trigger). Returns the run + conversation."""
 	from jarvis.chat import macros
@@ -419,6 +428,7 @@ def run_macro(name: str) -> dict:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def stop_macro_run(run: str) -> dict:
 	"""Stop an in-progress run (owner-gated)."""
 	from jarvis.chat import macros
@@ -427,6 +437,7 @@ def stop_macro_run(run: str) -> dict:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def get_macro_run(run: str) -> dict:
 	"""Current state of a run (for polling as a socketio fallback)."""
 	doc = frappe.get_doc(RUN, run)
@@ -449,6 +460,7 @@ _RUN_STATUSES = {"queued", "running", "completed", "failed", "stopped"}
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def list_macro_runs(status: str = "", macro: str = "", limit: int | str = 30, start: int | str = 0) -> dict:
 	"""The current user's macro runs, newest-first, for the history dashboard.
 
@@ -493,6 +505,7 @@ def list_macro_runs(status: str = "", macro: str = "", limit: int | str = 30, st
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def macro_run_stats() -> dict:
 	"""Summary tiles for the dashboard: counts per status, success rate, and the
 	last run time — all owner-scoped. Success rate = completed / (completed +
@@ -555,6 +568,7 @@ def _own_conversation(conversation: str) -> None:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def summarize_macro(name: str) -> dict:
 	"""Kick off the merge: throwaway archived conversation + one agent turn
 	that invokes /macro-merge over the macro's steps. Returns the conversation
@@ -594,6 +608,7 @@ def summarize_macro(name: str) -> dict:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def get_macro_merge(conversation: str) -> dict:
 	"""Poll target for the merge turn: pending → ready(merge)/error."""
 	_own_conversation(conversation)
@@ -626,6 +641,7 @@ def get_macro_merge(conversation: str) -> dict:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def apply_macro_merge(name: str, merged_prompt: str, conversation: str = "") -> dict:
 	"""Store ``merged_prompt`` (possibly user-edited) on the macro. The step
 	sequence STAYS as the editable source of truth — but when a merged prompt
@@ -650,6 +666,7 @@ def apply_macro_merge(name: str, merged_prompt: str, conversation: str = "") -> 
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def clear_macro_merge(name: str) -> dict:
 	"""Remove the stored merged prompt so the step sequence runs again."""
 	doc = frappe.get_doc(MACRO, name)
@@ -663,6 +680,7 @@ def clear_macro_merge(name: str) -> dict:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def discard_macro_merge(conversation: str) -> dict:
 	"""Delete the throwaway merge conversation + its messages (Keep sequence /
 	unmergeable / error paths). Best-effort: if a link blocks the delete the

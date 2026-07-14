@@ -59,7 +59,13 @@ WIKI = "Jarvis Wiki Page"
 CONV = "Jarvis Conversation"
 MSG = "Jarvis Chat Message"
 NOTE = "Jarvis Voice Note"
+PROMO = "Jarvis Wiki Promotion Request"
 SETTINGS = "Jarvis Settings"
+
+# Reviewer set (DESIGN.md sections 1/6): who a new Review item pings. Kept in
+# lockstep with jarvis.chat.learned_api's reviewer guard; Administrator holds
+# every role but is a service identity, so it (and Guest) never gets a badge.
+_REVIEWER_ROLES = ("Jarvis Skill Reviewer", "Jarvis Admin", "System Manager")
 
 PAGE_TYPES = (
 	"Customer", "Supplier", "Item", "Process", "Doctype",
@@ -169,6 +175,40 @@ def _normalize_slug(slug) -> str:
 		s = "--".join(halves)
 	s = s[:MAX_SLUG_LEN].rstrip("-")
 	return s if SLUG_RE.match(s) else ""
+
+
+def _suffix_slug(base_slug, suffix: str) -> str:
+	"""Apply an audience suffix to a base slug the SAME way the Jarvis Wiki Page
+	controller's ``_apply_scope_slug_suffix`` does (idempotent; base trimmed to
+	keep the total <= MAX_SLUG_LEN and grammar-valid), so callers can resolve a
+	scoped page by its stored docname without a LIKE probe."""
+	base = _normalize_slug(base_slug)
+	if not base or not suffix or base.endswith(suffix):
+		return base
+	base = base[: MAX_SLUG_LEN - len(suffix)].rstrip("-")
+	return f"{base}{suffix}"
+
+
+def user_scope_slug(base_slug, user: str) -> str:
+	"""The audience-suffixed slug a User-scope page for ``user`` gets
+	(``<base>--u-<localpart>``), mirroring the controller exactly."""
+	from jarvis.chat.entities import scrub
+
+	local = scrub(str(user or "").split("@")[0])
+	if not local:
+		return _normalize_slug(base_slug)
+	return _suffix_slug(base_slug, f"--u-{local}")
+
+
+def role_scope_slug(base_slug, role: str) -> str:
+	"""The audience-suffixed slug a Role-scope page for ``role`` gets
+	(``<base>--r-<role>``), mirroring the controller exactly."""
+	from jarvis.chat.entities import scrub
+
+	scrubbed = scrub(role)
+	if not scrubbed:
+		return _normalize_slug(base_slug)
+	return _suffix_slug(base_slug, f"--r-{scrubbed}")
 
 
 def _clip_summary(summary) -> str | None:
@@ -606,7 +646,12 @@ def _parse_updates(raw: str) -> list | None:
 # the shared write path
 # --------------------------------------------------------------------------- #
 def apply_extracted_page_updates(
-	updates, source: str, user: str | None, ref: str | None = None
+	updates,
+	source: str,
+	user: str | None,
+	ref: str | None = None,
+	default_scope: str | None = None,
+	target_user: str | None = None,
 ) -> tuple[int, int]:
 	"""Create/update wiki pages from extracted updates (the note ingest above
 	and ``jarvis.learning.voice_facts`` both land here). At most
@@ -619,6 +664,12 @@ def apply_extracted_page_updates(
 	(``{date, kind, ref, user}``): ``kind=source`` names the pipeline
 	("voice"), ``ref`` the originating row (the voice note name), ``user``
 	the human whose statement produced the update.
+
+	Scope (Skills-area rework part 3): ``default_scope="User"`` +
+	``target_user`` forks the extracted content to that user's OWN User-scope
+	page (audience-suffixed slug, invisible to others) instead of the Org page.
+	A per-update ``scope``/``target_user`` overrides the defaults. Both args
+	default to None, which preserves today's Org behavior byte-for-byte.
 	"""
 	if not isinstance(updates, list):
 		return 0, 0
@@ -628,7 +679,7 @@ def apply_extracted_page_updates(
 		if not isinstance(update, dict):
 			continue
 		try:
-			if _apply_one_update(update, source, user, ref):
+			if _apply_one_update(update, source, user, ref, default_scope, target_user):
 				applied += 1
 		except Exception:
 			failed += 1
@@ -639,20 +690,41 @@ def apply_extracted_page_updates(
 
 
 def _apply_one_update(
-	update: dict, source: str, user: str | None, ref: str | None
+	update: dict,
+	source: str,
+	user: str | None,
+	ref: str | None,
+	default_scope: str | None = None,
+	target_user: str | None = None,
 ) -> bool:
 	slug = _normalize_slug(update.get("slug"))
 	if not slug:
 		return False
 
-	name = frappe.db.get_value(WIKI, {"slug": slug}, "name")
+	# Scope resolution: a per-update value wins over the call default. Only
+	# Org/User are supported on this extraction path (Role pages are widened
+	# only through the reviewed promotion handler); an unknown value falls back
+	# to Org. User scope needs an unambiguous target user.
+	scope = (str(update.get("scope") or default_scope or "").strip()) or "Org"
+	tuser = (update.get("target_user") or target_user) if scope == "User" else None
+	if scope == "User" and not tuser:
+		return False
+	if scope != "User":
+		scope = "Org"
+
+	# User pages carry the controller's audience suffix in their docname, so a
+	# scope-aware lookup must probe the SUFFIXED slug (a base-slug lookup would
+	# miss the personal page and mint a duplicate).
+	lookup_slug = user_scope_slug(slug, tuser) if scope == "User" else slug
+
+	name = frappe.db.get_value(WIKI, {"slug": lookup_slug}, "name")
 	if not name:
 		title = " ".join(str(update.get("title") or "").split())
 		page_type = (update.get("page_type") or "").strip()
 		if not title or page_type not in PAGE_TYPES:
 			return False  # can't create a page without an identity
 		body = str(update.get("body_md") or update.get("append_md") or "").strip()
-		doc = frappe.get_doc({
+		fields = {
 			"doctype": WIKI,
 			"slug": slug,
 			"title": title[:140],
@@ -664,13 +736,21 @@ def _apply_one_update(
 			"status": "Active",
 			"sources": frappe.as_json([_source_entry(source, ref, user)]),
 			"last_confirmed_at": now_datetime(),
-		})
+		}
+		if scope == "User":
+			# The controller suffixes the slug (--u-<local>) in before_insert.
+			fields["scope"] = "User"
+			fields["target_user"] = tuser
+		doc = frappe.get_doc(fields)
 		try:
 			doc.insert(ignore_permissions=True)
 			return True
 		except frappe.DuplicateEntryError:
-			# The slug appeared concurrently — merge into it instead.
-			name = frappe.db.get_value(WIKI, {"slug": slug}, "name")
+			# The slug appeared concurrently — merge into it instead (the stored
+			# docname is the suffixed slug for User scope).
+			name = frappe.db.get_value(WIKI, {"slug": lookup_slug}, "name") or frappe.db.get_value(
+				WIKI, {"slug": doc.slug}, "name"
+			)
 			if not name:
 				raise
 
@@ -714,6 +794,217 @@ def _merge_update_into_page(
 	doc.last_confirmed_at = now_datetime()
 	doc.save(ignore_permissions=True)
 	return True
+
+
+# --------------------------------------------------------------------------- #
+# personalisation realtime receipts (Skills-area rework)
+# --------------------------------------------------------------------------- #
+def publish_personalise_processed(owner: str, note: str, pages) -> None:
+	"""Async "added to your wiki" receipt after a Personalise note ingests
+	(DESIGN.md 6b): ``{kind:"personalise:processed", note, pages:[{slug,title}]}``.
+	Best-effort; a realtime failure never breaks the ingest worker."""
+	try:
+		publish_to_user(
+			owner,
+			{"kind": "personalise:processed", "note": note, "pages": list(pages or [])},
+		)
+	except Exception:
+		pass
+
+
+def _reviewer_users() -> list[str]:
+	"""Enabled users in the reviewer set (Skill Reviewer / Jarvis Admin / SM),
+	excluding the Administrator/Guest service identities."""
+	from frappe.utils.user import get_users_with_role
+
+	users: set[str] = set()
+	for role in _REVIEWER_ROLES:
+		try:
+			users |= set(get_users_with_role(role))
+		except Exception:
+			pass
+	return sorted(u for u in users if u and u not in ("Administrator", "Guest"))
+
+
+def _publish_review_pending(queue: str) -> None:
+	"""Nudge the reviewer set that a new Review item landed
+	(``{kind:"review:pending", queue}``). Best-effort per user."""
+	try:
+		for u in _reviewer_users():
+			publish_to_user(u, {"kind": "review:pending", "queue": queue})
+	except Exception:
+		pass
+
+
+# --------------------------------------------------------------------------- #
+# wiki promotion (User page -> Role/Org, via the Review board)
+# --------------------------------------------------------------------------- #
+@frappe.whitelist()
+def request_wiki_promotion(
+	page: str, to_scope: str, target_role: str = "", note: str = ""
+) -> dict:
+	"""Ask a reviewer to widen one of the caller's OWN User-scope wiki pages to
+	Role/Org visibility (Skills-area rework part 3). Snapshots the body into a
+	Pending ``Jarvis Wiki Promotion Request`` and pings the reviewer set — the
+	page itself is untouched; promotion is a request, never a self-service
+	scope switch. ``page`` accepts a docname or a slug."""
+	_require_system_user()
+	user = frappe.session.user
+
+	page = (page or "").strip()
+	name = page if page and frappe.db.exists(WIKI, page) else (
+		frappe.db.get_value(WIKI, {"slug": page.lower()}, "name") if page else None
+	)
+	if not name:
+		frappe.throw(_("Wiki page not found."))
+	doc = frappe.get_doc(WIKI, name)
+
+	if (doc.get("scope") or "Org") != "User":
+		frappe.throw(_("Only your personal (User-scope) pages can be promoted."))
+	if doc.get("target_user") != user and user != "Administrator":
+		frappe.throw(_("You can only promote your own personal pages."), frappe.PermissionError)
+
+	to_scope = (to_scope or "").strip()
+	if to_scope not in ("Role", "Org"):
+		frappe.throw(_("Promotion target must be Role or Org."))
+	target_role = (str(target_role).strip() if target_role else "") or None
+	if to_scope == "Role" and not target_role:
+		frappe.throw(_("Promoting to Role scope needs a target role."))
+
+	req = frappe.get_doc({
+		"doctype": PROMO,
+		"page": doc.name,
+		"from_scope": "User",
+		"to_scope": to_scope,
+		"target_role": target_role if to_scope == "Role" else None,
+		"body_snapshot": doc.body_md or "",
+		"note": (note or "").strip()[:140] or None,
+		"status": "Pending",
+	})
+	req.insert(ignore_permissions=True)
+	_publish_review_pending("promotion")
+	return {"ok": True, "request": req.name, "page": doc.slug}
+
+
+def apply_promotion(
+	request_name: str, approve, note: str = "", reviewer: str | None = None
+) -> dict:
+	"""Decide a promotion request (called by ``jarvis.chat.learned_api``, which
+	owns the reviewer gate — this is NOT whitelisted). On approve, merge the
+	frozen body_snapshot into the Role/Org target page (audience-suffix slug
+	rules respected; append-with-provenance, never overwriting the source User
+	page). Stamps the request Approved/Rejected + reviewer + decided_at +
+	decision_note. Idempotent: a non-Pending request is a no-op."""
+	reviewer = reviewer or frappe.session.user
+	req = frappe.get_doc(PROMO, request_name)
+	# Security review PART 2 TASK 19: four-eyes / separation of duties. A user
+	# holding BOTH a Knowledge-Wiki role (so they could author + request) and a
+	# reviewer role must not approve their OWN promotion request. Bounded (the
+	# widened content is their own page) but promotion is an org-wide effect, so
+	# it needs a second pair of eyes. Checked before the TOCTOU claim so a
+	# self-approval never mutates the target page.
+	if reviewer == (req.owner or "") and reviewer != "Administrator":
+		frappe.throw(
+			_("You cannot approve your own promotion request; another reviewer must decide it."),
+			frappe.PermissionError,
+		)
+	# TOCTOU-safe claim: re-read the status under a row lock (for_update) before
+	# the merge, so two concurrent approvals (two reviewers, or a double-submit)
+	# can never both pass the Pending check and double-append body_snapshot into
+	# the target page. The lock is held until this transaction commits (req.save
+	# below); mirrors the for_update transition idiom learned_api already uses.
+	status = frappe.db.get_value(PROMO, request_name, "status", for_update=True)
+	if status != "Pending":
+		return {"ok": False, "reason": _("Already {0}.").format((status or req.status or "").lower())}
+
+	approved = bool(cint(approve))
+	out: dict = {"ok": True, "status": "Approved" if approved else "Rejected"}
+	if approved:
+		out["slug"] = _promote_body_into_target(req, reviewer)
+
+	req.status = "Approved" if approved else "Rejected"
+	req.reviewer = reviewer
+	req.decided_at = now_datetime()
+	req.decision_note = (note or "").strip()[:140] or None
+	req.flags.ignore_permissions = True
+	req.save(ignore_permissions=True)
+	frappe.db.commit()
+	return out
+
+
+def _base_slug_of(page) -> str:
+	"""Recover the base slug (strip the ``--u-<local>`` audience suffix) the
+	promotion re-suffixes for the target scope."""
+	from jarvis.chat.entities import scrub
+
+	slug = page.slug
+	tuser = page.get("target_user")
+	if (page.get("scope") or "Org") == "User" and tuser:
+		local = scrub(str(tuser).split("@")[0])
+		suffix = f"--u-{local}"
+		if local and slug.endswith(suffix):
+			return slug[: -len(suffix)].rstrip("-")
+	return slug
+
+
+def _promote_body_into_target(req, reviewer: str) -> str:
+	"""Create-or-append the frozen body into the target-scope page, respecting
+	the audience-suffix slug rules. Append-only (human-approved), with a
+	provenance sources entry — the source User page stays intact."""
+	src = frappe.get_doc(WIKI, req.page)
+	base = _base_slug_of(src)
+	to_scope = req.to_scope
+	if to_scope == "Role":
+		target_slug = role_scope_slug(base, req.target_role)
+	else:
+		target_slug = _normalize_slug(base)
+
+	body = (req.body_snapshot or "").strip()
+	stamp = now_datetime().strftime("%Y-%m-%d")
+	section = f"## Promoted from a personal note ({stamp})\n\n{body}" if body else ""
+
+	name = frappe.db.get_value(WIKI, {"slug": target_slug}, "name")
+	if name:
+		doc = frappe.get_doc(WIKI, name)
+		existing = (doc.body_md or "").strip()
+		doc.body_md = _clip_body(f"{existing}\n\n{section}".strip() if existing else section)
+		append_source(doc, "promotion", req.name, reviewer)
+		doc.last_confirmed_at = now_datetime()
+		doc.save(ignore_permissions=True)
+		return doc.slug
+
+	fields = {
+		"doctype": WIKI,
+		"slug": base,
+		"title": src.title,
+		"page_type": src.page_type,
+		"scope": to_scope,
+		"target_role": req.target_role if to_scope == "Role" else None,
+		"summary": src.summary,
+		"body_md": _clip_body(body),
+		"status": "Active",
+		"sources": frappe.as_json([_source_entry("promotion", req.name, reviewer)]),
+		"last_confirmed_at": now_datetime(),
+	}
+	doc = frappe.get_doc(fields)
+	try:
+		doc.insert(ignore_permissions=True)
+		return doc.slug
+	except frappe.DuplicateEntryError:
+		# The target appeared concurrently (controller may have suffixed it):
+		# fall back to appending into whichever docname now exists.
+		name = frappe.db.get_value(WIKI, {"slug": doc.slug}, "name") or frappe.db.get_value(
+			WIKI, {"slug": target_slug}, "name"
+		)
+		if not name:
+			raise
+		doc = frappe.get_doc(WIKI, name)
+		existing = (doc.body_md or "").strip()
+		doc.body_md = _clip_body(f"{existing}\n\n{section}".strip() if existing else section)
+		append_source(doc, "promotion", req.name, reviewer)
+		doc.last_confirmed_at = now_datetime()
+		doc.save(ignore_permissions=True)
+		return doc.slug
 
 
 # --------------------------------------------------------------------------- #

@@ -94,6 +94,21 @@ export const macroRunStats = () => call(MC + "macro_run_stats")
 export const summarizeMacro = (name) => call(MC + "summarize_macro", { name })
 export const setConversationModel = (conversation, model) =>
 	call("jarvis.chat.api.set_conversation_model", { conversation, model: model || "" })
+// Reasoning effort. "" clears the override, so the turn inherits Jarvis Settings.
+// The server maps this onto openclaw's "/think <level>" directive.
+export const setConversationThinking = (conversation, thinking) =>
+	call("jarvis.chat.api.set_conversation_thinking", { conversation, thinking: thinking || "" })
+
+// --- Recurring business-note greeting banner ---
+// maybe_greet takes no user argument on purpose: it always acts on the session
+// user, so one user can never trigger a greeting for another. All gating
+// (every-third-chat cadence / dismissed / has-notes) lives on the server.
+const GR = "jarvis.chat.greeting."
+export const maybeGreet = () => call(GR + "maybe_greet")
+// "Maybe later" / the card's X: hides for the rest of the current cadence tick
+// (survives refresh); the card returns on the next multiple-of-three chat.
+export const hideGreeting = () => call(GR + "hide_greeting")
+export const dismissGreeting = () => call(GR + "dismiss_greeting")
 
 // --- Record draft panel (direct apply, no LLM in the loop) ---
 const AC = "jarvis.chat.actions_api."
@@ -107,6 +122,13 @@ export const applyAction = (action) => call(AC + "apply_action", { action: JSON.
 // is gone.
 export const confirmTool = (token, conversation) =>
 	call(AC + "confirm_tool", { token, conversation: conversation || "" })
+// Discard a parked ERP write by its one-time token: consumes the token (so it
+// can't replay or re-surface on reload), leaves a durable "discarded" receipt
+// chip in the transcript, and queues a note so the agent's next turn learns it
+// was vetoed. Returns {ok, data:{status:"discarded"|"already_handled"}}; the SPA
+// drops the card either way.
+export const dismissTool = (token, conversation) =>
+	call(AC + "dismiss_tool", { token, conversation: conversation || "" })
 // Resync (issue #186, R3 fix for #3): re-surface the caller's own currently
 // parked confirmation cards after a reload/reconnect. Returns
 // {ok, data:{pending:[{token, tool, preview, summary, conversation, run_id}]}}.

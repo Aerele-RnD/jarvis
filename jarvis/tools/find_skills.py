@@ -39,8 +39,10 @@ def _visible(row, user: str, user_roles: list[str]) -> bool:
         user_can_use_skill,
     )
 
-    if (row.get("scope") or "Org") == "Personal" and (row.get("owner") or "") != user:
-        return False
+    # Single visibility rule shared with the ORM hook + SPA (security review
+    # PART 2 TASK 13): owner OR shared OR scope=Org (unless role-narrowed) OR
+    # scope=Role role-match. User-scope rows are owner-only inside the helper, so
+    # the old "Personal is owner-only" special case is subsumed.
     return user_can_use_skill(row, user, user_roles)
 
 
@@ -61,7 +63,11 @@ def find_skills(query: str, limit: int = 10) -> dict:
     limit = max(1, min(limit, _MAX_LIMIT))
 
     rows = frappe.db.sql(
-        """SELECT name, owner, skill_name, description, scope, managed_by_learning
+        # target_role is REQUIRED for user_can_use_skill to admit a Role-scope
+        # skill's role-holder (security review PART 2 TASK 13); omitting it made
+        # the whole User->Role promotion tier dead through this tool.
+        """SELECT name, owner, skill_name, description, scope, target_role,
+               managed_by_learning
         FROM `tabJarvis Custom Skill`
         WHERE enabled = 1 AND (skill_name LIKE %(q)s OR description LIKE %(q)s)
         ORDER BY skill_name ASC, name ASC

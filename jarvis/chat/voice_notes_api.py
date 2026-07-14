@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import frappe
 from frappe import _
+from frappe.query_builder import DocType, Order
 
 NOTE = "Jarvis Voice Note"
 CONV = "Jarvis Conversation"
@@ -30,6 +31,11 @@ _SEARCH_MAX = 140
 
 
 def _require_system_user() -> None:
+	# System User AND Jarvis access (TASK 6/8): these voice/personalise
+	# endpoints are part of the chat surface, so they require the Jarvis User
+	# role (or System Manager), not merely a Desk login.
+	from jarvis.permissions import require_jarvis_access
+
 	user = frappe.session.user
 	if not user or user == "Guest":
 		frappe.throw(_("Not permitted."), frappe.PermissionError)
@@ -37,6 +43,7 @@ def _require_system_user() -> None:
 		return
 	if frappe.db.get_value("User", user, "user_type") != "System User":
 		frappe.throw(_("Not permitted."), frappe.PermissionError)
+	require_jarvis_access(user)
 
 
 def _single(field: str):
@@ -181,13 +188,33 @@ def list_my_voice_notes_page(
 		filters["transcript"] = ["like", f"%{_lk(search)}%"]
 
 	total = frappe.db.count(NOTE, filters)
-	rows = frappe.get_all(
-		NOTE,
-		filters=filters,
-		fields=["name", "transcript", "context_type", "status", "creation", "conversation"],
-		order_by="creation desc, name asc",
-		limit_start=start,
-		limit_page_length=pl,
+
+	# Rows go through the SAME query builder as the count above, and not
+	# frappe.get_all, because the two disagree about an escaped LIKE pattern.
+	# get_all's DatabaseQuery runs the value through db.escape, which doubles the
+	# backslash: the `\%` that _lk emits to mean "a literal percent sign" reaches
+	# SQL as `\\%` — a literal BACKSLASH followed by anything — so it matches
+	# nothing. db.count (query builder) escapes it correctly and matches.
+	# The result was a search for a term containing % or _ reporting "1 result"
+	# while returning an empty list. There is no pattern that satisfies both
+	# paths (doubling it by hand only breaks the count too), so the rows query is
+	# expressed in the builder that gets it right.
+	t = DocType(NOTE)
+	q = (
+		frappe.qb.from_(t)
+		.select(t.name, t.transcript, t.context_type, t.status, t.creation, t.conversation)
+		.where(t.owner == frappe.session.user)
+	)
+	if status:
+		q = q.where(t.status == status)
+	if search:
+		q = q.where(t.transcript.like(f"%{_lk(search)}%"))
+	rows = (
+		q.orderby(t.creation, order=Order.desc)
+		.orderby(t.name, order=Order.asc)
+		.limit(pl)
+		.offset(start)
+		.run(as_dict=True)
 	)
 	for r in rows:
 		r["excerpt"] = (r.get("transcript") or "")[:_EXCERPT_LEN]

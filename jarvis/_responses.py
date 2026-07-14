@@ -29,9 +29,21 @@ def ok(data: dict | list | None) -> dict:
 	return {"ok": True, "data": data}
 
 
-def err(code: str, message: str) -> dict:
+def err(code: str, message: str, *, detail: str = "", hint: str = "") -> dict:
 	"""Failure envelope. ``code`` is the stable identifier the bench
 	client maps onto a Python exception (FleetError, InvalidArgument,
 	NoRunningTenant, etc.). ``message`` is short user-safe text - NEVER
-	include traceback content or secrets (token bytes, paths)."""
-	return {"ok": False, "error": {"code": code, "message": message}}
+	include traceback content or secrets (token bytes, paths).
+
+	``detail`` and ``hint`` are OPTIONAL enrichment for the human-facing
+	chat UI (a specific safe reason + a "what you can do" line). They are
+	added to ``error`` only when non-empty, so an un-enriched failure keeps
+	the exact ``{"code", "message"}`` shape every existing consumer branches
+	on. Same secret-safety rule as ``message`` - callers must pass only
+	user-safe text (see ``jarvis.api._translate_write_error``)."""
+	error = {"code": code, "message": message}
+	if detail:
+		error["detail"] = detail
+	if hint:
+		error["hint"] = hint
+	return {"ok": False, "error": error}
