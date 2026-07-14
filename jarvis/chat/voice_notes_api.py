@@ -18,6 +18,8 @@ import frappe
 from frappe import _
 from frappe.query_builder import DocType, Order
 
+from jarvis.permissions import has_jarvis_admin_access, require_jarvis_admin
+
 NOTE = "Jarvis Voice Note"
 CONV = "Jarvis Conversation"
 _SETTINGS = "Jarvis Settings"
@@ -281,7 +283,9 @@ def get_business_status() -> dict:
 	(for System Managers) the org-wide New backlog + last sweep outcome."""
 	_require_system_user()
 	me = frappe.session.user
-	is_sm = "System Manager" in frappe.get_roles(me)
+	# PART 4 REVISED, TASK 49(d): a Jarvis Admin sees the org backlog + "process
+	# now" affordance (process_voice_notes_now is widened to admit them).
+	is_sm = has_jarvis_admin_access(me)
 
 	stt_enabled = False
 	try:
@@ -306,10 +310,10 @@ def get_business_status() -> dict:
 
 @frappe.whitelist()
 def process_voice_notes_now() -> dict:
-	"""SM-only: run the daily voice-facts sweep now (same deduped background
-	job). Returns ``{"ok": True}`` or ``{"ok": False, "reason": ...}`` when a
-	sweep is already queued or running."""
-	frappe.only_for("System Manager")
+	"""Jarvis Admin / System Manager (PART 4 REVISED, TASK 45): run the daily
+	voice-facts sweep now (same deduped background job). Returns ``{"ok": True}``
+	or ``{"ok": False, "reason": ...}`` when a sweep is already queued or running."""
+	require_jarvis_admin()
 	from jarvis.learning import voice_facts
 
 	return voice_facts.enqueue_process_now()

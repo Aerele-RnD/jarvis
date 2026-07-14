@@ -34,7 +34,8 @@ const routes = [
 		// Chrome-less: a first-run customer hasn't onboarded yet, so the full app
 		// sidebar/header (Chat/Skills/Macros/…) is noise — AppShell hides them.
 		meta: { chromeless: true },
-		beforeEnter: (to, from, next) => { next(window.is_system_manager ? undefined : { name: "Chat" }) },
+		// PART 4 REVISED TASK 49(c): a Jarvis Admin (not necessarily SM) may onboard.
+		beforeEnter: (to, from, next) => { next((window.is_system_manager || window.is_jarvis_admin) ? undefined : { name: "Chat" }) },
 	},
 	{ path: "/macros", name: "MacrosList", component: () => import("@/pages/macros/MacrosList.vue") },
 	{

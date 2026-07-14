@@ -172,6 +172,33 @@ def require_jarvis_admin(user: str | None = None) -> None:
 		)
 
 
+def grant_onboarding_admin(user: str | None = None) -> None:
+	"""Grant ``Jarvis Admin`` to the onboarding/paying user (security review
+	PART 4 REVISED, TASK 44/48).
+
+	Grants ONLY ``Jarvis Admin`` — NOT ``Jarvis User`` — because
+	:data:`JARVIS_ACCESS_ROLES` already includes ``Jarvis Admin``, so a user
+	holding only ``Jarvis Admin`` still passes :func:`has_jarvis_access` and every
+	``@require_jarvis_user`` endpoint (they are not locked out of the chat surface
+	they administer).
+
+	The role name AND the target-user resolution are server-hardcoded (no
+	caller-supplied role), so the ``ignore_permissions`` insert carries NO
+	privilege-escalation vector. Idempotent — a no-op when the role is already
+	held; never grants to Administrator / Guest."""
+	ensure_jarvis_admin_role()
+	user = user or frappe.session.user
+	if not user or user in ("Administrator", "Guest"):
+		return
+	if not frappe.db.exists(
+		"Has Role", {"parenttype": "User", "parent": user, "role": JARVIS_ADMIN_ROLE}
+	):
+		frappe.get_doc({
+			"doctype": "Has Role", "parenttype": "User",
+			"parentfield": "roles", "parent": user, "role": JARVIS_ADMIN_ROLE,
+		}).insert(ignore_permissions=True)
+
+
 def require_jarvis_user(fn):
 	"""Decorator form of :func:`require_jarvis_access` for whitelisted chat
 	endpoints (PART 1 TASK 8).

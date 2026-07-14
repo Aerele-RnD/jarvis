@@ -34,10 +34,11 @@
 import { ref, computed, onMounted } from "vue"
 import { getLlmConnectionStatus } from "@/api"
 
-// SM-only endpoint (server enforces `only_for("System Manager")`); the rail
-// already gates this pane, but guard the fetch so a non-SM never fires a
-// doomed request and sees a clear note instead.
-const isSystemManager = !!window.is_system_manager
+// Admin-tier endpoint (server enforces `require_jarvis_admin`); the rail already
+// gates this pane, but guard the fetch so a non-admin never fires a doomed
+// request and sees a clear note instead. PART 4 REVISED TASK 49(c): widened to
+// the Jarvis Admin tenant-admin tier.
+const isSystemManager = !!(window.is_system_manager || window.is_jarvis_admin)
 
 const conn = ref({})
 const loading = ref(true)

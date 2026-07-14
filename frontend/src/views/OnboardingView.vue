@@ -64,7 +64,7 @@
 							</div>
 							<div class="jv-ob-foot">
 								<button class="jv-ob-back" @click="goBack"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6" /></svg>Back to tour</button>
-								<button class="jv-ob-link" @click="enterSelfhost">Self-hosted? Connect your own openclaw</button>
+								<button v-if="canSelfHost" class="jv-ob-link" @click="enterSelfhost">Self-hosted? Connect your own openclaw</button>
 								<button class="jv-ob-btn jv-ob-btn-primary" :disabled="!state.planName" @click="onPlanContinue">Continue</button>
 							</div>
 						</section>
@@ -325,6 +325,13 @@ import { errMessage as errMsg } from "@/lib/errors"
 
 const { effectiveDark: dark, paletteVars } = useTheme()
 
+// Self-host connect (save_self_hosted / test_connection) stays System-Manager-
+// ONLY (owner trust-boundary decision). Managed onboarding is widened to the
+// Jarvis Admin tier, but the self-host side-branch entry point + its auto-
+// reconcile must be hidden/short-circuited for a Jarvis-Admin-not-SM so they
+// never land on a step whose save 403s. NOT `|| window.is_jarvis_admin`.
+const canSelfHost = !!window.is_system_manager
+
 // The 4 named wizard steps shown on the rail. The intro tour and the
 // self-host track are chromeless (no rail entry).
 const RAIL = [
@@ -464,7 +471,10 @@ function backFromSelfhost() {
 async function reconcileMidFlightSignup() {
 	try {
 		const ready = await isReadyForChat()
-		if (ready && ready.reason === "selfhost_connection") {
+		if (ready && ready.reason === "selfhost_connection" && canSelfHost) {
+			// Self-host connect is SM-only; a Jarvis-Admin-not-SM must not be
+			// routed into the selfhost step (its save 403s). Fall through to the
+			// default step for them.
 			state.mode = "selfhost"
 			state.step = "selfhost"
 			return

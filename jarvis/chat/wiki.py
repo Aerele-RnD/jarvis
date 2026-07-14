@@ -54,6 +54,9 @@ from jarvis.jarvis.doctype.jarvis_wiki_page.jarvis_wiki_page import (
 	WIKI_HAS_PAGES_CACHE_KEY,
 )
 from jarvis.learning.sanitizer import scan_instruction_injection
+from jarvis.permissions import (
+	JARVIS_REVIEWER_ROLES, has_jarvis_admin_access, require_jarvis_admin,
+)
 
 WIKI = "Jarvis Wiki Page"
 CONV = "Jarvis Conversation"
@@ -62,10 +65,10 @@ NOTE = "Jarvis Voice Note"
 PROMO = "Jarvis Wiki Promotion Request"
 SETTINGS = "Jarvis Settings"
 
-# Reviewer set (DESIGN.md sections 1/6): who a new Review item pings. Kept in
-# lockstep with jarvis.chat.learned_api's reviewer guard; Administrator holds
-# every role but is a service identity, so it (and Guest) never gets a badge.
-_REVIEWER_ROLES = ("Jarvis Skill Reviewer", "Jarvis Admin", "System Manager")
+# Reviewer set (DESIGN.md sections 1/6): who a new Review item pings. Single
+# source of truth in jarvis.permissions (PART 4 REVISED, TASK 50); Administrator
+# holds every role but is a service identity, so it (and Guest) never gets a badge.
+_REVIEWER_ROLES = JARVIS_REVIEWER_ROLES
 
 PAGE_TYPES = (
 	"Customer", "Supplier", "Item", "Process", "Doctype",
@@ -1350,10 +1353,11 @@ def restore_wiki_page(slug: str) -> dict:
 
 @frappe.whitelist()
 def set_knowledge_language(value: str) -> dict:
-	"""SM-only: set the org-wide knowledge language (D6) consumed by the
-	wiki/voice-facts extraction prompts. English (default) translates source
-	material; Original keeps the source's dominant language."""
-	frappe.only_for("System Manager")
+	"""Jarvis Admin / System Manager (PART 4 REVISED, TASK 45): set the org-wide
+	knowledge language (D6) consumed by the wiki/voice-facts extraction prompts.
+	English (default) translates source material; Original keeps the source's
+	dominant language."""
+	require_jarvis_admin()
 	value = (value or "").strip()
 	if value not in ("English", "Original"):
 		frappe.throw(_("Knowledge language must be English or Original."))
@@ -1363,9 +1367,10 @@ def set_knowledge_language(value: str) -> dict:
 
 @frappe.whitelist()
 def sync_wiki_mirror_now() -> dict:
-	"""SM-only: queue a FULL org-wiki mirror sync into the tenant container
-	workspace (same deduped job as the doc_events trigger; full=prunes strays)."""
-	frappe.only_for("System Manager")
+	"""Jarvis Admin / System Manager (PART 4 REVISED, TASK 45): queue a FULL
+	org-wiki mirror sync into the tenant container workspace (same deduped job as
+	the doc_events trigger; full=prunes strays)."""
+	require_jarvis_admin()
 	from jarvis.chat import wiki_mirror
 
 	wiki_mirror.enqueue_sync(full=True)
@@ -1374,9 +1379,10 @@ def sync_wiki_mirror_now() -> dict:
 
 @frappe.whitelist()
 def run_wiki_lint_now() -> dict:
-	"""SM-only: run the wiki health check (deterministic lint pass) now and
-	return its summary (also persisted on Jarvis Settings by run_lint)."""
-	frappe.only_for("System Manager")
+	"""Jarvis Admin / System Manager (PART 4 REVISED, TASK 45): run the wiki
+	health check (deterministic lint pass) now and return its summary (also
+	persisted on Jarvis Settings by run_lint)."""
+	require_jarvis_admin()
 	from jarvis.learning import wiki_lint
 
 	return {"ok": True, "summary": wiki_lint.run_lint()}
@@ -1415,13 +1421,14 @@ def get_wiki_graph_history() -> list:
 	recorded by ``wiki_graph.record_history_snapshot`` (one row/day). Powers the
 	Evolution tab's real timeline (page + link growth, orphan decline).
 
-	System Manager only, unlike ``get_wiki_graph``: these are org-wide aggregates
-	over ALL pages (no scope filter), so a scoped user could learn totals about
-	pages they can't see. Non-SM callers get ``[]``; the Evolution tab falls back
-	to reconstructing growth from the caller's own visible pages' creation dates
-	— same fallback used when the daily job hasn't recorded a day yet."""
+	Jarvis Admin / System Manager, unlike ``get_wiki_graph``: these are org-wide
+	aggregates over ALL pages (no scope filter), so a scoped user could learn
+	totals about pages they can't see. Non-admin callers get ``[]``; the Evolution
+	tab falls back to reconstructing growth from the caller's own visible pages'
+	creation dates — same fallback used when the daily job hasn't recorded a day
+	yet (PART 4 REVISED, TASK 45)."""
 	_require_system_user()
-	if "System Manager" not in frappe.get_roles():
+	if not has_jarvis_admin_access():
 		return []
 	if not frappe.db.table_exists("Jarvis Wiki Graph History"):
 		return []

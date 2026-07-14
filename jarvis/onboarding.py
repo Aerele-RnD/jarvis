@@ -11,6 +11,7 @@ from jarvis.exceptions import (
 	AdminAuthError, AdminRateLimitedError, AdminUnreachableError,
 	AdminValidationError,
 )
+from jarvis.permissions import grant_onboarding_admin, require_jarvis_admin
 
 
 def _require_admin_url() -> None:
@@ -146,7 +147,7 @@ def sync_connection() -> dict:
 	scheduler runs as Administrator which bypasses only_for. Sprint-1 Important
 	from the 2026-06-16 code review.
 	"""
-	frappe.only_for("System Manager")
+	require_jarvis_admin()
 	settings = frappe.get_single("Jarvis Settings")
 	api_key = settings.get_password("jarvis_admin_api_key", raise_exception=False) or ""
 	api_secret = settings.get_password("jarvis_admin_api_secret", raise_exception=False) or ""
@@ -185,7 +186,7 @@ def save_llm_pool(models: str | list, preset: str | None = None, routing_mode: s
 
 	System-Manager-gated. routing_mode is always 'failover' in v1. preset is an
 	admin-catalog key or None; validated against the fetched catalog."""
-	frappe.only_for("System Manager")
+	require_jarvis_admin()
 	if isinstance(models, str):
 		models = json.loads(models)
 	if not isinstance(models, list) or not models:
@@ -313,7 +314,7 @@ def start_signup(email: str, company: str, plan: str) -> dict:
 	    magic link. Either shape persists api_key + api_secret on the
 	    bench so the poll endpoint can authenticate.
 	"""
-	frappe.only_for("System Manager")
+	require_jarvis_admin()
 	_require_admin_url()
 	_require_https_site_url()
 	data = _surface(admin_client.signup, email, company, plan)
@@ -329,6 +330,13 @@ def start_signup(email: str, company: str, plan: str) -> dict:
 			"customer": data.get("customer", ""),
 			"customer_password": data.get("customer_password", ""),
 		})
+	# PART 4 REVISED, TASK 48: the onboarding user becomes a Jarvis Admin. Grant
+	# here (after the admin signup call + connection write succeed) as the EARLY
+	# durable stamp that survives the multi-session email-verify flow. Idempotent
+	# with the finish_payment grant. On a fresh bench nobody holds Jarvis Admin,
+	# so the require_jarvis_admin gate above still requires the first onboarder to
+	# be the SM site owner — a plain Jarvis User is rejected before reaching here.
+	grant_onboarding_admin()
 	return data
 
 
@@ -344,7 +352,7 @@ def get_account_defaults() -> dict:
 	because the SPA has no ``frappe.defaults``. System-Manager only (the onboarding
 	route is SM-gated).
 	"""
-	frappe.only_for("System Manager")
+	require_jarvis_admin()
 	user = frappe.session.user
 	email = (frappe.db.get_value("User", user, "email") or user) if user and user != "Guest" else ""
 
@@ -378,7 +386,7 @@ def check_signup_payment_state() -> dict:
 	Gated on System Manager for the same reason as start_signup: this is
 	part of the same paid-signup flow on the customer's bench.
 	"""
-	frappe.only_for("System Manager")
+	require_jarvis_admin()
 	_require_admin_url()
 	data = _surface(admin_client.get_signup_payment_state)
 	# On the verified poll (email confirmed) admin delivers the customer's
@@ -396,11 +404,15 @@ def finish_payment(payload: dict | str) -> dict:
 	Gated on System Manager: writes container connection (agent_url,
 	agent_token) into Jarvis Settings.
 	"""
-	frappe.only_for("System Manager")
+	require_jarvis_admin()
 	if isinstance(payload, str):
 		payload = json.loads(payload)
 	data = _surface(admin_client.confirm_payment, payload)
 	write_connection(data)
+	# PART 4 REVISED, TASK 48: the AUTHORITATIVE "onboarding AND paying" grant —
+	# make the paying user a Jarvis Admin once payment confirms and the connection
+	# is written. Idempotent with the start_signup grant.
+	grant_onboarding_admin()
 	return data
 
 
@@ -412,7 +424,7 @@ def renew() -> dict:
 	Gated on System Manager: initiates a billing transaction tied to the
 	site's admin account.
 	"""
-	frappe.only_for("System Manager")
+	require_jarvis_admin()
 	return _surface(admin_client.renew)
 
 
@@ -446,7 +458,7 @@ def save_llm_creds(provider: str, model: str, api_key: str = "",
 	to an attacker-controlled URL and exfiltrate chat context through
 	future LLM calls.
 	"""
-	frappe.only_for("System Manager")
+	require_jarvis_admin()
 	if not provider or not model:
 		raise frappe.ValidationError("provider and model are required")
 	if auth_mode not in {"api_key", "oauth"}:
@@ -525,7 +537,7 @@ def get_llm_config() -> dict:
 	preset, routing_mode, derived proxy_active. Reads models[] (NOT the legacy
 	llm_* mirrors). Never returns api_key secrets — only a has_key boolean.
 	System-Manager-only (spec 7)."""
-	frappe.only_for("System Manager")
+	require_jarvis_admin()
 	from jarvis.jarvis.pool_serialize import _model_accounts
 	s = frappe.get_single("Jarvis Settings")
 	models = []
@@ -625,6 +637,9 @@ def dev_onboard(email: str, company: str, plan: str) -> dict:
 
 	Gated on System Manager in addition to the sandbox_mode check.
 	"""
+	# STAYS SM-only (PART 4 REVISED, TASK 48): the dev-onboard shortcut GATE is
+	# deliberately NOT widened to the Jarvis Admin tier — it is a sandbox/dev
+	# escape hatch (SM + sandbox_mode). Only the grant below matches the paid path.
 	frappe.only_for("System Manager")
 	from jarvis.dev import is_sandbox_mode
 	if not is_sandbox_mode():
@@ -636,4 +651,7 @@ def dev_onboard(email: str, company: str, plan: str) -> dict:
 	_require_admin_url()
 	data = _surface(admin_client.dev_signup, email, company, plan)
 	write_connection(data)
+	# PART 4 REVISED, TASK 48: sandbox parity with the paid path — grant the dev
+	# onboarder Jarvis Admin. The GATE above stays SM + sandbox.
+	grant_onboarding_admin()
 	return data

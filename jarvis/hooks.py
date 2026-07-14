@@ -402,3 +402,23 @@ has_permission.update({
 	"Jarvis Agent Activity": "jarvis.chat.agent_permissions.has_activity_permission",
 })
 
+# ---------------------------------------------------------------------------
+# Per-user settings / usage scoping (security review PART 4 REVISED, TASK 52)
+# ---------------------------------------------------------------------------
+# Jarvis User Settings (#278) was role:"All" + if_owner with no ORM hook — the
+# anti-pattern Parts 1-3 eliminated. The doctype rows are now "Jarvis User"
+# (role load-bearing, no portal-user reach), and this hook keys row scoping on
+# the `user` field (matching the API's user-based scoping, surviving owner/user
+# drift). The admin tier (SM / Jarvis Admin / Administrator) is unrestricted so
+# generic REST (frappe.get_list / /api/resource) of Jarvis User Settings returns
+# every row for an admin. (The admin usage board's admin_list_user_usage uses
+# frappe.get_all, which hardcodes ignore_permissions=True and therefore sees all
+# rows regardless of this hook — the admin bypass here matters for the
+# permission-checked frappe.get_list / generic-REST surface, not for that fn.)
+permission_query_conditions.update({
+	"Jarvis User Settings": "jarvis.chat.user_settings_permissions.user_settings_query_conditions",
+})
+has_permission.update({
+	"Jarvis User Settings": "jarvis.chat.user_settings_permissions.has_user_settings_permission",
+})
+

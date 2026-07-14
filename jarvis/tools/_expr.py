@@ -208,6 +208,18 @@ def _build_date_add(args: list, dialect: str) -> Term:
 	``unit`` is a literal from the same set as date_part.
 	"""
 	x, n, unit = args
+	# SECURITY (security review PART 4, TASK 35): ``n`` is registered as an
+	# unconstrained ``literal`` (accepts any scalar), and the MariaDB path below
+	# interpolates it RAW into an ``fn.LiteralValue`` (unescaped SQL) — the sqlite
+	# path also f-strings it after ``n * multiplier``. Coerce + validate to an
+	# integer FIRST, before the dialect branch, so a string payload (e.g.
+	# "1 YEAR)) UNION SELECT ... FROM `__Auth` -- ") can never break out of the
+	# INTERVAL expression. This is the load-bearing fix; the only raw-literal
+	# interpolation site in this module (grep-audited: line 230 below).
+	try:
+		n = int(n)
+	except (TypeError, ValueError):
+		raise InvalidArgumentError("date_add(x, n, unit): n must be an integer")
 	unit = unit.lower()
 	if unit == "fiscal_year":
 		raise InvalidArgumentError(

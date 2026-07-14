@@ -9,6 +9,8 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
+from jarvis.permissions import has_jarvis_admin_access
+
 
 class JarvisConversation(Document):
 	def before_insert(self):
@@ -50,9 +52,11 @@ class JarvisConversation(Document):
 		if was_on:
 			return  # already on - no transition, nothing to gate
 
-		if "System Manager" not in frappe.get_roles(frappe.session.user):
+		# PART 4 REVISED, TASK 45: the admin tier (Jarvis Admin / System Manager),
+		# matching the widened set_auto_apply enable gate.
+		if not has_jarvis_admin_access(frappe.session.user):
 			frappe.throw(
-				_("Enabling auto-apply requires the System Manager role."),
+				_("Enabling auto-apply requires a Jarvis Admin or System Manager role."),
 				frappe.PermissionError,
 			)
 
@@ -69,8 +73,9 @@ class JarvisConversation(Document):
 		previous = self.get_doc_before_save()
 		if previous and bool(previous.file_box):
 			return
-		if "System Manager" not in frappe.get_roles(frappe.session.user):
+		# PART 4 REVISED, TASK 45: the admin tier (Jarvis Admin / System Manager).
+		if not has_jarvis_admin_access(frappe.session.user):
 			frappe.throw(
-				_("Enabling File Box mode requires the System Manager role."),
+				_("Enabling File Box mode requires a Jarvis Admin or System Manager role."),
 				frappe.PermissionError,
 			)

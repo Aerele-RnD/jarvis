@@ -14,6 +14,7 @@ from jarvis.chat.usage import current_month_key as _usage_month_key
 from jarvis.permissions import (
 	has_jarvis_access,
 	require_jarvis_access,
+	require_jarvis_admin,
 	require_jarvis_user,
 )
 
@@ -1094,8 +1095,9 @@ def set_auto_apply(conversation: str, value: str | int | bool) -> dict:
 	- Owner-only: the conversation must belong to the caller
 	  (``frappe.session.user == conv.owner``), else PermissionError. Jarvis
 	  Conversation is owner-guarded, so per-conversation == per-user.
-	- ENABLING requires the System Manager role (``frappe.only_for`` -> 403 for
-	  non-admins). DISABLING is always allowed for the owner.
+	- ENABLING requires the Jarvis Admin / System Manager tier
+	  (``require_jarvis_admin`` -> 403 for a plain Jarvis User; PART 4 REVISED,
+	  TASK 45). DISABLING is always allowed for the owner.
 
 	Writes ``auto_apply`` on the CONVERSATION row (not the deprecated site-wide
 	Jarvis Settings Single). Returns ``{ok, data: {auto_apply: on}}``.
@@ -1109,7 +1111,7 @@ def set_auto_apply(conversation: str, value: str | int | bool) -> dict:
 		raise frappe.PermissionError("not your conversation")
 	# Enabling is admin-only; disabling is always allowed for the owner.
 	if on:
-		frappe.only_for("System Manager")
+		require_jarvis_admin()
 	frappe.db.set_value(CONV, conversation, "auto_apply", on, update_modified=False)
 	frappe.db.commit()
 	return {"ok": True, "data": {"auto_apply": on}}
