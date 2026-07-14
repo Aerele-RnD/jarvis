@@ -4,7 +4,13 @@
 
 /* Jarvis palette — ported verbatim from the mobile app's design tokens
    (jarvis_mobile/src/theme/tokens.ts) so the PWA and the native app are the
-   same product, not two lookalikes. Light is the default; dark follows the OS. */
+   same product, not two lookalikes. Light is the default; dark follows the OS.
+
+   Dark is a WARM CHARCOAL (#262624 / #30302E), not black. The app moved off the
+   near-black palette and this file was ported before that; the two drifted, and
+   the phone ended up rendering a pitch-black app next to a charcoal one. If
+   tokens.ts changes again, re-port both blocks below rather than hand-editing a
+   value — they are generated from it. */
 :root {
 	--bg: #f4f4f5;
 	--card: #ffffff;
@@ -35,36 +41,75 @@
 	--scrim: rgba(20, 20, 22, 0.34);
 }
 
+/* Dark, as one reusable block.
+   - Applied by the OS preference, UNLESS the user pinned light in Settings.
+   - Applied outright when the user pinned dark.
+   The pin is a data-theme attribute on <html> (lib/theme.js), so a theme change
+   is one attribute write and costs no re-render. */
 @media (prefers-color-scheme: dark) {
-	:root {
-		--bg: #0f0f0f;
-		--card: #1c1c1c;
-		--card2: #232323;
-		--card3: #2b2b2b;
-		--menu-bar: #141414;
-		--border: #282828;
-		--border2: #343434;
-		--ink9: #f8f8f8;
-		--ink8: #d4d4d4;
-		--ink7: #afafaf;
-		--ink6: #999999;
-		--ink5: #808080;
-		--ink4: #6e6e6e;
-		--ink3: #4a4a4a;
+	:root:not([data-theme="light"]) {
+		--bg: #262624;
+		--card: #30302e;
+		--card2: #3a3a37;
+		--card3: #454440;
+		--menu-bar: #1f1e1d;
+		--border: #3e3e3a;
+		--border2: #4a4945;
+		--ink9: #faf9f5;
+		--ink8: #e2e0d8;
+		--ink7: #c6c3b9;
+		--ink6: #ada99f;
+		--ink5: #949089;
+		--ink4: #807c72;
+		--ink3: #605d56;
 		--accent: #9e8bfa;
 		--accent-solid: #8269f8;
-		--accent-bg: #1d1934;
-		--green: #58c08e;
-		--green-bg: #0b2e1c;
-		--red: #eb4d52;
-		--red-bg: #361515;
-		--amber: #e7a13b;
-		--amber-bg: #2e2206;
+		--accent-bg: #2f2a4a;
+		--green: #5fc894;
+		--green-bg: #21362a;
+		--red: #f0595e;
+		--red-bg: #3d2624;
+		--amber: #e8a845;
+		--amber-bg: #3a2c1c;
 		--amber-dot: #e37d00;
-		--inv-bg: #f8f8f8;
-		--inv-ink: #0f0f0f;
-		--scrim: rgba(0, 0, 0, 0.55);
+		--inv-bg: #f5f4ee;
+		--inv-ink: #262624;
+		--scrim: rgba(0,0,0,0.6);
 	}
+}
+
+:root[data-theme="dark"] {
+	--bg: #262624;
+	--card: #30302e;
+	--card2: #3a3a37;
+	--card3: #454440;
+	--menu-bar: #1f1e1d;
+	--border: #3e3e3a;
+	--border2: #4a4945;
+	--ink9: #faf9f5;
+	--ink8: #e2e0d8;
+	--ink7: #c6c3b9;
+	--ink6: #ada99f;
+	--ink5: #949089;
+	--ink4: #807c72;
+	--ink3: #605d56;
+	--accent: #9e8bfa;
+	--accent-solid: #8269f8;
+	--accent-bg: #2f2a4a;
+	--green: #5fc894;
+	--green-bg: #21362a;
+	--red: #f0595e;
+	--red-bg: #3d2624;
+	--amber: #e8a845;
+	--amber-bg: #3a2c1c;
+	--amber-dot: #e37d00;
+	--inv-bg: #f5f4ee;
+	--inv-ink: #262624;
+	--scrim: rgba(0,0,0,0.6);
+	color-scheme: dark;
+}
+:root[data-theme="light"] {
+	color-scheme: light;
 }
 
 html,
