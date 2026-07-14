@@ -24,8 +24,12 @@
 	--accent-solid: #7154f5;
 	--accent-bg: #eceafb;
 	--green: #218352;
+	--green-bg: #e4faeb;
 	--red: #cc2929;
 	--red-bg: #ffe7e7;
+	--amber: #b35309;
+	--amber-bg: #fff7d3;
+	--amber-dot: #db7706;
 	--inv-bg: #171717;
 	--inv-ink: #ffffff;
 	--scrim: rgba(20, 20, 22, 0.34);
@@ -51,8 +55,12 @@
 		--accent-solid: #8269f8;
 		--accent-bg: #1d1934;
 		--green: #58c08e;
+		--green-bg: #0b2e1c;
 		--red: #eb4d52;
 		--red-bg: #361515;
+		--amber: #e7a13b;
+		--amber-bg: #2e2206;
+		--amber-dot: #e37d00;
 		--inv-bg: #f8f8f8;
 		--inv-ink: #0f0f0f;
 		--scrim: rgba(0, 0, 0, 0.55);
@@ -95,6 +103,11 @@ body {
 /* The composer clears the home indicator. */
 .jv-safe-bottom {
 	padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Overlays (the drawer) escape .jv-app's padding, so they own the notch. */
+.jv-safe-top {
+	padding-top: env(safe-area-inset-top);
 }
 
 .jv-bar {

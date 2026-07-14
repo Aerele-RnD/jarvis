@@ -4,11 +4,20 @@ import { store } from "../store"
 
 const router = useRouter()
 
-// Mirrors the native app's Drawer. Approvals are deliberately absent: they are
-// answered inside the chat where they arise (the same call the mobile app made
-// when it dropped its Approvals tab).
+// Two kinds of approval, and they are not the same thing:
+//  - a parked WRITE (action:pending) is answered in the chat that raised it —
+//    the context is the conversation, so that is where the card stays;
+//  - a Jarvis Approval is the agent stopping to ASK a human, and it can outlive
+//    the chat session. That queue needs a home you can reach from anywhere,
+//    which is here.
 const links = [
 	{ label: "Chats", to: "/", icon: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" },
+	{
+		label: "Approvals",
+		to: "/approvals",
+		icon: "M9 12l2 2 4-4M12 3l7 4v5c0 4.4-3 8.3-7 9-4-0.7-7-4.6-7-9V7z",
+		badge: true,
+	},
 	{ label: "Skills", to: "/skills", icon: "M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" },
 	{ label: "Account", to: "/account", icon: "M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z" },
 ]
@@ -38,6 +47,9 @@ function go(to) {
 							<path :d="l.icon" />
 						</svg>
 						{{ l.label }}
+						<span v-if="l.badge && store.pendingApprovals" class="jv-drawer-count">
+							{{ store.pendingApprovals }}
+						</span>
 					</button>
 				</nav>
 
@@ -112,6 +124,17 @@ function go(to) {
 	height: 19px;
 	flex: none;
 	color: var(--ink5);
+}
+.jv-drawer-count {
+	margin-left: auto;
+	min-width: 20px;
+	padding: 2px 6px;
+	border-radius: 999px;
+	background: var(--amber-dot);
+	color: #fff;
+	font-size: 11px;
+	font-weight: 600;
+	text-align: center;
 }
 .jv-drawer-foot {
 	margin: 8px;
