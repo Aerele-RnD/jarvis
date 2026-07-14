@@ -250,9 +250,10 @@ def personal_skill_clause(user: str | None = None) -> str:
 	count = cache.get_value(key)
 	if count is None:
 		# Exact scope match: NULL/empty scope rows are Org and never counted.
+		# "User" is the scope-ladder spelling of the old "Personal" (TASK 10).
 		count = frappe.db.count(
 			"Jarvis Custom Skill",
-			{"owner": user, "enabled": 1, "scope": "Personal"},
+			{"owner": user, "enabled": 1, "scope": "User"},
 		)
 		cache.set_value(key, int(count or 0), expires_in_sec=PERSONAL_CLAUSE_TTL_S)
 	try:
@@ -281,10 +282,21 @@ def build_push_payload(owner: str | None = None, strict: bool = False) -> list[d
 	only to scope tests). An empty list is a valid "remove all custom skills"
 	reconcile.
 
-	Personal-scope rows are EXCLUDED: they exist only for their owner (reached
-	via the find_skills/get_skill tools), never for the shared container
-	catalog, and must not eat into the 25-skill push budget. NULL/empty scope
-	(pre-migration rows) means Org and IS pushed.
+	User- AND Role-scope rows are EXCLUDED: User rows exist only for their owner
+	(reached via the find_skills/get_skill tools) and Role rows only for
+	role-holders; neither belongs in the shared container catalog nor may eat
+	into the 25-skill push budget. NULL/empty scope (pre-migration rows) means
+	Org and IS pushed.
+
+	Role-restricted bodies are kept off the shared blob (security review PART 2
+	TASK 11): an Org row narrowed by ``allowed_roles`` is a role-restricted skill
+	whose full instructions would otherwise be physically written to the shared,
+	role-BLIND container and be readable + auto-activatable by every user's agent
+	(a mass-exfil vector). So this push carries ONLY skills visible to EVERYONE —
+	Org scope with NO ``allowed_roles``. Role-restricted skills stay reachable via
+	the role-gated ``jarvis__find_skills`` / ``jarvis__get_skill`` tools; restoring
+	their /slug container activation needs a per-role workspace mount in the
+	fleet-agent (a follow-up outside the bench).
 
 	Managed learned rows (``managed_by_learning=1``) are EXCLUDED: since the
 	Phase-2 learned namespace they ride their own push
@@ -306,7 +318,7 @@ def build_push_payload(owner: str | None = None, strict: bool = False) -> list[d
 	  ``frappe.log_error`` a loud warning naming the dropped slugs, so the
 	  truncation is never silent again.
 	"""
-	# ("in", ("Org", "")) — not ("!=", "Personal") — because db_query wraps the
+	# ("in", ("Org", "")) — not ("!=", "User") — because db_query wraps the
 	# "in" operator in ifnull(scope, ''), so legacy NULL-scope rows match ''.
 	filters = {"enabled": 1, "managed_by_learning": 0, "scope": ("in", ("Org", ""))}
 	if owner:
@@ -314,9 +326,23 @@ def build_push_payload(owner: str | None = None, strict: bool = False) -> list[d
 	rows = frappe.get_all(
 		"Jarvis Custom Skill",
 		filters=filters,
-		fields=["skill_name", "description", "user_invocable", "instructions"],
+		fields=["name", "skill_name", "description", "user_invocable", "instructions"],
 		order_by="skill_name asc",
 	)
+	# TASK 11: drop role-restricted Org rows (any with allowed_roles) so a
+	# role-scoped body is never written to the shared, role-blind container.
+	restricted = {
+		r.parent
+		for r in frappe.get_all(
+			"Jarvis Custom Skill Allowed Role",
+			filters={
+				"parenttype": "Jarvis Custom Skill",
+				"parent": ["in", [r.name for r in rows] or [""]],
+			},
+			fields=["parent"],
+		)
+	}
+	rows = [r for r in rows if r.name not in restricted]
 	if len(rows) > MAX_SKILLS_PER_PUSH:
 		if strict:
 			frappe.throw(

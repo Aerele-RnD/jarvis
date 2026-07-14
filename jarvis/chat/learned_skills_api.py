@@ -41,6 +41,7 @@ Entry points:
 from __future__ import annotations
 
 import frappe
+from jarvis.permissions import require_jarvis_user
 
 _SETTINGS = "Jarvis Settings"
 _PUSH_JOB_ID = "jarvis_learned_skills_push"
@@ -50,8 +51,19 @@ _PENDING_STATUS = "pending: applying learned skills"
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def get_learned_skills_sync_status() -> dict:
 	"""Lightweight poller mirroring ``get_custom_skills_sync_status``."""
+	return _learned_sync_status()
+
+
+def _learned_sync_status() -> dict:
+	"""Undecorated core of :func:`get_learned_skills_sync_status`. Split out so the
+	reviewer-facing Apply board — ``learned_api.get_learned_apply_status`` and
+	``learned_api._apply_pending``, both gated on ``_REVIEWER_ROLES`` which admits a
+	reviewer / admin who lacks Jarvis User / System Manager — can read the sync
+	status without tripping the ``@require_jarvis_user`` HTTP gate. It is a read of
+	two ``Jarvis Settings`` fields the reviewer is already authorized to see."""
 	s = frappe.get_single(_SETTINGS)
 	status = s.get("learned_skills_sync_status") or ""
 	return {

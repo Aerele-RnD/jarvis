@@ -46,7 +46,8 @@
     "counter_evidence",
     "flags_count",
     "flag_band_cap",
-    "overlap_warning"
+    "overlap_warning",
+    "personalise_origin"
   ],
   "fields": [
     {
@@ -305,6 +306,14 @@
       "fieldtype": "Small Text",
       "label": "Overlap Warning",
       "description": "Lexical overlap with a customer-authored skill (warn-only)."
+    },
+    {
+      "fieldname": "personalise_origin",
+      "fieldtype": "Check",
+      "label": "Personalise Origin",
+      "default": "0",
+      "read_only": 1,
+      "description": "Security review PART 2 TASK 16: a contribution to this pattern came from a user's PRIVATE Personalise answer note. A reviewer promoting it org-wide must scrub personal names/nuances first (a non-blocking warning is shown on the board), since the owner did not themselves request the promotion."
     }
   ],
   "permissions": [

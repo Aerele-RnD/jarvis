@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from "vue"
+import { ref, computed, onBeforeUnmount } from "vue"
 
 const props = defineProps({
   model: { type: Object, required: true },
@@ -23,12 +23,78 @@ const fields = computed(() =>
   }),
 )
 const tables = computed(() => (props.model.tables || []).filter((t) => (t.rows || []).length))
+
+// Resizable width - drag the left (inner) edge. Mirrors Resizer.vue's behaviour:
+// clamp to [min, max], snap to the default within +/-10px, persist to localStorage.
+const DEFAULT_WIDTH = 720
+const MIN_WIDTH = 440
+const STORAGE_KEY = "jarvis-draftpreview-width"
+const maxWidth = () => Math.min(1100, Math.round(window.innerWidth * 0.92))
+const clampWidth = (w) => Math.min(maxWidth(), Math.max(MIN_WIDTH, w))
+
+const stored = Number(localStorage.getItem(STORAGE_KEY))
+const panelWidth = ref(clampWidth(stored || DEFAULT_WIDTH))
+const resizing = ref(false)
+const panelEl = ref(null)
+let panelRight = 0
+
+function onMove(e) {
+  resizing.value = true
+  let w = panelRight - e.clientX
+  if (w > DEFAULT_WIDTH - 10 && w < DEFAULT_WIDTH + 10) w = DEFAULT_WIDTH
+  panelWidth.value = clampWidth(w)
+}
+function onUp() {
+  document.body.classList.remove("dp-resizing-body")
+  localStorage.setItem(STORAGE_KEY, String(panelWidth.value))
+  resizing.value = false
+  document.removeEventListener("mousemove", onMove)
+  document.removeEventListener("mouseup", onUp)
+}
+function startResize() {
+  // capture the panel's right edge so the width is correct regardless of any
+  // horizontal offset of the overlay from the window edge
+  panelRight = panelEl.value ? panelEl.value.getBoundingClientRect().right : window.innerWidth
+  document.body.classList.add("dp-resizing-body")
+  document.addEventListener("mousemove", onMove)
+  document.addEventListener("mouseup", onUp)
+}
+
+// Backdrop-click dismiss must ignore the tail of an in-panel drag. Stretching
+// the panel starts the mousedown on the resize handle (inside the panel) and
+// releases the mouse over the dimmed backdrop, so the browser fires the `click`
+// on their common ancestor — the overlay. A bare @click.self would read that
+// drag-release as an outside-click and close the panel. Only close when the
+// press ALSO started on the backdrop.
+let pressOnBackdrop = false
+function onOverlayDown(e) {
+  pressOnBackdrop = e.target === e.currentTarget
+}
+function onOverlayClick() {
+  if (pressOnBackdrop) emit("close")
+}
+onBeforeUnmount(() => {
+  document.removeEventListener("mousemove", onMove)
+  document.removeEventListener("mouseup", onUp)
+})
 </script>
 
 <template>
   <transition name="dp-slide" appear>
-    <div class="dp-overlay" @click.self="emit('close')">
-      <aside class="dp-panel" tabindex="-1">
+    <div class="dp-overlay" @mousedown="onOverlayDown" @click.self="onOverlayClick">
+      <aside
+        ref="panelEl"
+        class="dp-panel"
+        :class="{ 'dp-panel-resizing': resizing }"
+        :style="{ width: panelWidth + 'px' }"
+        tabindex="-1"
+      >
+        <div
+          class="dp-resizer"
+          :class="{ 'dp-resizer-active': resizing }"
+          title="Drag to resize"
+          @mousedown.prevent="startResize"
+        />
         <div class="dp-head">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></svg>
           <span class="dp-title">{{ docTitle }}</span>
@@ -76,8 +142,14 @@ const tables = computed(() => (props.model.tables || []).filter((t) => (t.rows |
 <style scoped>
 .dp-overlay { position: absolute; inset: 0; z-index: 61; background: rgba(15, 15, 22, 0.32); display: flex; justify-content: flex-end; }
 .jv-dark .dp-overlay { background: rgba(0, 0, 0, 0.5); }
-.dp-panel { width: min(720px, 82%); height: 100%; background: var(--surface); border-left: 1px solid var(--border); display: flex; flex-direction: column; box-shadow: -14px 0 44px rgba(20, 20, 30, 0.14); }
+.dp-panel { position: relative; max-width: 92vw; height: 100%; background: var(--surface); border-left: 1px solid var(--border); display: flex; flex-direction: column; box-shadow: -14px 0 44px rgba(20, 20, 30, 0.14); }
 .dp-panel:focus { outline: none; }
+/* Drag handle on the inner (left) edge; 1px rule that lights up on hover/drag. */
+.dp-resizer { position: absolute; left: 0; top: 0; z-index: 3; height: 100%; width: 8px; margin-left: -4px; cursor: col-resize; }
+.dp-resizer::before { content: ""; position: absolute; left: 4px; top: 0; height: 100%; width: 1px; background: var(--blue); opacity: 0; transition: opacity .15s ease; }
+.dp-resizer:hover::before, .dp-resizer-active::before { opacity: 1; }
+.dp-panel-resizing { user-select: none; }
+:global(body.dp-resizing-body) { cursor: col-resize; user-select: none; }
 .dp-head { display: flex; align-items: center; gap: 9px; padding: 11px 12px 11px 14px; border-bottom: 1px solid var(--border); flex: none; }
 .dp-head svg { flex: none; }
 .dp-title { font-size: 14px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }

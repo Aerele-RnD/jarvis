@@ -11,6 +11,7 @@
     "enabled",
     "user_invocable",
     "scope",
+    "target_role",
     "description",
     "instructions",
     "shared_with",
@@ -45,9 +46,18 @@
       "fieldname": "scope",
       "fieldtype": "Select",
       "label": "Scope",
-      "options": "Org\nPersonal",
-      "default": "Org",
-      "description": "Org skills join the shared assistant catalog on Apply; Personal skills stay private to their owner and are only reachable via jarvis__find_skills / jarvis__get_skill. Empty (pre-migration rows) means Org."
+      "options": "User\nRole\nOrg",
+      "default": "User",
+      "description": "Scope ladder (security review PART 2 TASK 10, mirrors Jarvis Wiki Page). User = private to the owner (default; reached via jarvis__find_skills / jarvis__get_skill, never pushed to the shared catalog). Role = holders of Target Role. Org = everyone; joins the shared assistant catalog on Apply. Widening (User->Role->Org) is reviewer-approved only. Empty (pre-migration rows) means Org."
+    },
+    {
+      "fieldname": "target_role",
+      "fieldtype": "Link",
+      "label": "Target Role",
+      "options": "Role",
+      "depends_on": "eval:doc.scope=='Role'",
+      "mandatory_depends_on": "eval:doc.scope=='Role'",
+      "description": "Required for Role-scope skills: the single role whose holders may see/invoke this skill (the Wiki-parallel audience field)."
     },
     {
       "fieldname": "description",
@@ -89,12 +99,18 @@
   ],
   "permissions": [
     {
-      "role": "All",
+      "role": "Jarvis User",
       "read": 1,
       "write": 1,
       "create": 1,
-      "delete": 1,
-      "if_owner": 1
+      "delete": 1
+    },
+    {
+      "role": "System Manager",
+      "read": 1,
+      "write": 1,
+      "create": 1,
+      "delete": 1
     }
   ],
   "sort_field": "skill_name",

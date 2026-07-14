@@ -48,10 +48,19 @@ def desk_action(check_user_arg: str | None = None):
 	"""
 	def _deco(fn):
 		@wraps(fn)
-		def _wrapped(doctype: str, name: str, *args, **kwargs):
-			require_doctype_and_name(doctype, name)
-			if not frappe.db.exists(doctype, name):
-				raise InvalidArgumentError(f"unknown {doctype}: {name}")
+		def _wrapped(doctype: str, name: str | None = None, *args, **kwargs):
+			# Bulk overload: a call carrying a non-empty ``names`` list validates
+			# each record (existence + per-record permission) inside the tool's
+			# own atomic batch, so the decorator only enforces the doctype +
+			# the single shared user arg here - not the (absent) single name.
+			names = kwargs.get("names")
+			if isinstance(names, list) and names:
+				if not doctype:
+					raise InvalidArgumentError("doctype is required")
+			else:
+				require_doctype_and_name(doctype, name)
+				if not frappe.db.exists(doctype, name):
+					raise InvalidArgumentError(f"unknown {doctype}: {name}")
 			if check_user_arg:
 				# Look up the user-id arg positionally or by keyword.
 				# Per-tool signatures put it at varying positions

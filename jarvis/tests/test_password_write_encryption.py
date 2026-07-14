@@ -280,7 +280,7 @@ class TestV111EncryptPlaintextPatch(_SecretsSnapshotTestCase):
 	"""The v1_11 migration: plaintext column values move to __Auth + mask."""
 
 	def _execute_patch(self):
-		from jarvis.patches import v1_11_encrypt_plaintext_settings_passwords as patch_mod
+		from jarvis.patches import v1_13_encrypt_plaintext_settings_passwords as patch_mod
 		patch_mod.execute()
 
 	def test_plaintext_values_are_encrypted_and_masked(self):

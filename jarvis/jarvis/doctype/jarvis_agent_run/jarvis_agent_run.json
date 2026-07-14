@@ -116,7 +116,7 @@
   {
    "if_owner": 1,
    "read": 1,
-   "role": "All"
+   "role": "Jarvis User"
   }
  ],
  "sort_field": "creation",

@@ -14,7 +14,10 @@
   "auto_apply",
   "status",
   "last_active_at",
-  "starred"
+  "starred",
+  "pending_agent_notes",
+  "auto_expired",
+  "expired_at"
  ],
  "fields": [
   {
@@ -30,8 +33,9 @@
    "fieldtype": "Data",
    "label": "Openclaw Session Key",
    "unique": 1,
+   "permlevel": 1,
    "in_standard_filter": 1,
-   "description": "Populated on first agent turn; reused for subsequent turns in this conversation."
+   "description": "Populated on first agent turn; reused for subsequent turns in this conversation. permlevel 1 (server-only; TASK 9): the session_key->user map is impersonation-sensitive, so even the owner cannot read/write it via generic REST. The worker sets it via frappe.db.set_value (bypasses permlevel)."
   },
   {
    "fieldname": "model_override",
@@ -84,16 +88,58 @@
    "fieldtype": "Check",
    "label": "Starred",
    "default": "0"
+  },
+  {
+   "fieldname": "pending_agent_notes",
+   "fieldtype": "Long Text",
+   "label": "Pending Agent Notes",
+   "hidden": 1,
+   "no_copy": 1,
+   "read_only": 1,
+   "description": "Server-set queue (JSON list of strings) of deferred bench-authored notes to fold into the NEXT outgoing turn's [Context: ...] bracket - e.g. 'the user declined the pending submit on SINV-0001; it was NOT performed'. Drained and cleared by turn_handler after a successful chat.send, so a discarded action corrects the agent's in-container session memory the next time it acts, without firing an extra turn."
+  },
+  {
+   "fieldname": "auto_expired",
+   "fieldtype": "Check",
+   "label": "Auto Expired",
+   "hidden": 1,
+   "no_copy": 1,
+   "read_only": 1,
+   "default": "0",
+   "description": "Set by the retention sweep (jarvis.chat.session_lifecycle) when this conversation was archived for exceeding the idle retention limit (Jarvis Settings.conversation_retention_days) - distinguishes a retention-expired chat from a user-archived one, and marks it for the follow-on permanent purge. Never set for a user-initiated archive."
+  },
+  {
+   "fieldname": "expired_at",
+   "fieldtype": "Datetime",
+   "label": "Expired At",
+   "hidden": 1,
+   "no_copy": 1,
+   "read_only": 1,
+   "description": "When the retention sweep archived this conversation. Drives the follow-on hard-purge horizon (permanently delete archived chats expired longer than a second, longer window)."
   }
  ],
  "permissions": [
   {
-   "role": "All",
+   "role": "Jarvis User",
    "read": 1,
    "write": 1,
    "create": 1,
    "delete": 1,
    "if_owner": 1
+  },
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1,
+   "if_owner": 1
+  },
+  {
+   "role": "System Manager",
+   "permlevel": 1,
+   "read": 1,
+   "write": 1
   }
  ],
  "sort_field": "last_active_at",

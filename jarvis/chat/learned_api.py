@@ -153,6 +153,14 @@ ACK_NOTE = "Acknowledged - insight only"
 # pointing at the skill row. Keep the prefix stable - the frontend keys off it.
 APPLIED_NOTE_PREFIX = "Acknowledged - applied to skill: "
 
+# Non-blocking warning shown to a reviewer promoting a personalise-origin pattern
+# org-wide (security review PART 2 TASK 16): the content came from a user's
+# PRIVATE note, so personal nuances must be scrubbed before it becomes org-wide.
+_SCRUB_WARNING = (
+	"This came from a user's private note - remove personal names and nuances "
+	"before making it org-wide."
+)
+
 # Rendered on the board when an SM edited the draft before approving: the
 # evidence line is frozen (plan section 6.5) - it still reflects the ORIGINALLY
 # detected pattern, not the human edit, which was not re-measured.
@@ -171,6 +179,9 @@ _CARD_FIELDS = [
 	# reviewed_at rides the card for the Decided log's "who/when" line.
 	"status", "surfaced", "reviewed_by", "reviewed_at", "approved_by", "creation",
 	"stale_reason", "last_validated_at", "flags_count", "materialized_skill",
+	# personalise_origin drives the scrub-personal-nuances warning on the promote
+	# action (security review PART 2 TASK 16).
+	"personalise_origin",
 	# review_note distinguishes Acknowledged / "applied to skill" terminal
 	# states from a plain Reject - without it the board's disposition
 	# badges can never fire and every terminal row reads "Rejected".
@@ -421,6 +432,13 @@ def list_learned_patterns_page(
 		r["exception_n"] = int(r.get("exception_n") or 0)
 		r["flags_count"] = int(r.get("flags_count") or 0)
 		r["has_overlap_warning"] = 1 if (r.get("overlap_warning") or "").strip() else 0
+		# TASK 16: a personalise-origin pattern is org-promoted by a reviewer, not
+		# the owner, so the promote action must warn them to scrub personal
+		# names/nuances first. Non-blocking; the board shows the flag + message.
+		r["personalise_origin"] = int(r.get("personalise_origin") or 0)
+		r["scrub_warning"] = (
+			_SCRUB_WARNING if r["personalise_origin"] else ""
+		)
 		r["creation"] = str(r.get("creation") or "")
 		r["reviewed_at"] = str(r.get("reviewed_at") or "")
 		r["last_validated_at"] = str(r.get("last_validated_at") or "")
@@ -690,7 +708,13 @@ def approve_learned_pattern(name: str, edited_skill_draft: str | None = None) ->
 	doc.reviewed_at = now
 	doc.save()
 	frappe.db.commit()
-	return {"ok": True, "status": doc.status, "draft_edited": int(doc.draft_edited or 0)}
+	out = {"ok": True, "status": doc.status, "draft_edited": int(doc.draft_edited or 0)}
+	# TASK 16: an A-class approve compiles the pattern into the org-wide
+	# learned-<domain> skill every user gets; if it drew from a private
+	# Personalise note, surface the scrub warning so the reviewer can act on it.
+	if doc.personalise_origin:
+		out["scrub_warning"] = _SCRUB_WARNING
+	return out
 
 
 @frappe.whitelist()
@@ -832,12 +856,13 @@ def _apply_pending() -> bool:
 	"""True while a learned-skills push is between enqueue and its terminal
 	status (Phase-2 namespace: the un-approve gate keys off the LEARNED push -
 	learned skills no longer ride the custom-skills push)."""
-	try:
-		from jarvis.chat.learned_skills_api import get_learned_skills_sync_status
+	# Undecorated read (a Jarvis Settings poll the reviewer is authorized to see):
+	# do NOT swallow errors here — the old bare except masked the @require_jarvis_user
+	# PermissionError and silently returned "not pending", weakening the mid-push
+	# un-approve guard for reviewer-only users (security review TASK 21).
+	from jarvis.chat.learned_skills_api import _learned_sync_status
 
-		return bool(get_learned_skills_sync_status().get("pending"))
-	except Exception:
-		return False
+	return bool(_learned_sync_status().get("pending"))
 
 
 def _apply_in_progress() -> bool:
@@ -1076,7 +1101,12 @@ def apply_insight_skill_update(
 	doc.materialized_skill = row_name
 	doc.save()
 	frappe.db.commit()
-	return {"ok": True, "skill_name": slug}
+	out = {"ok": True, "skill_name": slug}
+	# TASK 16: folding a personalise-origin insight into a shared/org skill
+	# carries the same scrub obligation; surface the warning to the reviewer.
+	if doc.personalise_origin:
+		out["scrub_warning"] = _SCRUB_WARNING
+	return out
 
 
 def _draft_envelope(
@@ -1357,12 +1387,21 @@ def _apply_create_target(new_skill) -> tuple[str, str]:
 				"and instructions."
 			)
 		)
-	from jarvis.chat.custom_skills_api import create_custom_skill
+	from jarvis.chat.custom_skills_api import _create_custom_skill_impl
 
-	out = create_custom_skill(
+	# Call the undecorated impl: this reviewer path is already authorized by
+	# _guard() (_REVIEWER_ROLES), and a reviewer/admin may lack the Jarvis User
+	# role that the @require_jarvis_user HTTP wrapper on create_custom_skill needs.
+	# scope="Org" (the reviewer authors an org-effect skill, not a private one —
+	# the new default is User) + ignore_permissions so a reviewer without the
+	# Jarvis User doctype-create perm still lands the row; the controller's scope
+	# guard admits them as a reviewer either way (security review PART 2 TASK 10).
+	out = _create_custom_skill_impl(
 		skill_name=str(ns.get("skill_name") or "").strip(),
 		description=str(ns.get("description") or "").strip(),
 		instructions=str(ns.get("instructions") or "").strip(),
+		scope="Org",
+		ignore_permissions=True,
 	)
 	return out["data"]["name"], out["data"]["skill_name"]
 
@@ -1591,9 +1630,9 @@ def get_learned_apply_status() -> dict:
 	reports to the SEPARATE custom sync pair - included here so a failed
 	cutover reconcile is visible on the board instead of fire-and-forget."""
 	_guard()
-	from jarvis.chat.learned_skills_api import get_learned_skills_sync_status
+	from jarvis.chat.learned_skills_api import _learned_sync_status
 
-	out = get_learned_skills_sync_status()
+	out = _learned_sync_status()
 	out["custom_sync"] = _cutover_custom_sync_status(out)
 	return out
 
@@ -1620,9 +1659,9 @@ def _cutover_custom_sync_status(learned: dict):
 			age = (now_datetime() - last).total_seconds()
 			if age > _CUTOVER_SURFACE_HOURS * 3600:
 				return None
-		from jarvis.chat.custom_skills_api import get_custom_skills_sync_status
+		from jarvis.chat.custom_skills_api import _custom_sync_status
 
-		return get_custom_skills_sync_status()
+		return _custom_sync_status()
 	except Exception:
 		return None
 

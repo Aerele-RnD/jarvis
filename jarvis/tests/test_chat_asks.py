@@ -61,18 +61,30 @@ def _ask(q="Which supplier is this from?", type="single", options=("Acme", "Glob
 # module fixtures / helpers
 # --------------------------------------------------------------------------- #
 def _ensure_user(email: str) -> str:
+	from jarvis.permissions import ensure_jarvis_user_role
+
+	ensure_jarvis_user_role()
 	if not frappe.db.exists("User", email):
 		u = frappe.get_doc({
 			"doctype": "User", "email": email,
 			"first_name": email.split("@")[0],
 			"send_welcome_email": 0, "enabled": 1,
+			"user_type": "System User",
 		})
 		u.flags.ignore_permissions = True
 		u.insert()
 		frappe.db.commit()
+	if frappe.db.get_value("User", email, "user_type") != "System User":
+		frappe.db.set_value("User", email, "user_type", "System User", update_modified=False)
+		frappe.clear_cache(user=email)
 	roles = set(frappe.get_roles(email))
 	if "System Manager" in roles:
 		frappe.get_doc("User", email).remove_roles("System Manager")
+		frappe.db.commit()
+	# Approvals endpoints are chat-surface: now require the Jarvis User role
+	# (security review TASK 8).
+	if "Jarvis User" not in roles:
+		frappe.get_doc("User", email).add_roles("Jarvis User")
 		frappe.db.commit()
 	return email
 

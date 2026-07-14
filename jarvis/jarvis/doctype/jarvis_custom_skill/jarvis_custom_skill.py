@@ -35,6 +35,9 @@ RESERVED_PREFIX = "custom-"
 # sets ``frappe.flags.jarvis_pattern_engine``) or Administrator may author it.
 LEARNED_PREFIX = "learned-"
 
+# Scope ladder (security review PART 2 TASK 10), mirroring Jarvis Wiki Page.
+SCOPES = ("User", "Role", "Org")
+
 SKILL_DOCTYPE = "Jarvis Custom Skill"
 
 
@@ -65,15 +68,23 @@ def _managed_flag_privileged(user: str | None = None) -> bool:
 
 
 def user_can_use_skill(skill, user: str | None = None, user_roles: list[str] | None = None) -> bool:
-	"""Allowed-Roles visibility rule (pattern-learning plan section 6.6).
+	"""Scope-ladder visibility rule (security review PART 2 TASK 13; the single
+	rule every read path — generic REST via the ORM hook, the SPA list/get, the
+	plugin find/get tools — now agrees on).
 
-	A user may see/invoke a skill iff they are the owner, are in
-	``shared_with``, ``allowed_roles`` is empty (= everyone), or their roles
-	intersect ``allowed_roles``. System Manager (and Administrator) always
-	passes. ``skill`` may be a Document or any dict-like row; when the row
-	does not carry the child tables (e.g. a ``frappe.get_all`` row) they are
-	fetched by parent name. Instruction-level enforcement only - the skill
-	files stay readable in the shared container.
+	A user may see/invoke a skill iff they are the owner, are in ``shared_with``,
+	or the skill's scope admits them:
+
+	  * ``User``  — owner only (private).
+	  * ``Role``  — holders of ``target_role`` (or, for compiler-managed rows /
+	    legacy multi-role narrowing, an ``allowed_roles`` intersection).
+	  * ``Org``   — everyone, UNLESS ``allowed_roles`` is set (managed learned
+	    rows + legacy "Org narrowed by roles"), in which case role-match.
+
+	System Manager (and Administrator) always passes. ``skill`` may be a Document
+	or any dict-like row; child tables absent from a ``frappe.get_all`` row are
+	fetched by parent name. Instruction-level enforcement — see TASK 11 for why
+	role-restricted bodies must ALSO be kept off the shared container push.
 	"""
 	user = user or frappe.session.user
 	if user == "Administrator":
@@ -86,10 +97,27 @@ def user_can_use_skill(skill, user: str | None = None, user_roles: list[str] | N
 		return True
 	if user in _child_values(skill, "shared_with", "user", "Jarvis Custom Skill Share"):
 		return True
-	allowed = _child_values(skill, "allowed_roles", "role", "Jarvis Custom Skill Allowed Role")
+	# NULL/empty scope == Org (pre-migration rows); "Personal" is the pre-ladder
+	# spelling of User (safe until the migration backfills the DB).
+	scope = (skill.get("scope") or "Org").strip() or "Org"
+	if scope == "Personal":
+		scope = "User"
+	roles = set(user_roles)
+	if scope == "User":
+		# Private: owner/shared/SM already handled above.
+		return False
+	allowed = set(
+		_child_values(skill, "allowed_roles", "role", "Jarvis Custom Skill Allowed Role")
+	)
+	if scope == "Role":
+		target_role = (skill.get("target_role") or "").strip()
+		if target_role and target_role in roles:
+			return True
+		return bool(allowed & roles)
+	# Org (or legacy empty): everyone unless narrowed by allowed_roles.
 	if not allowed:
 		return True
-	return bool(set(allowed) & set(user_roles))
+	return bool(allowed & roles)
 
 
 def _child_values(skill, fieldname: str, value_field: str, child_doctype: str) -> list[str]:
@@ -120,6 +148,8 @@ class JarvisCustomSkill(Document):
 	def validate(self):
 		self._validate_slug()
 		self._validate_scope()
+		self._guard_new_scope()
+		self._guard_scope_change()
 		self._validate_lengths()
 		self._validate_unique_per_owner()
 		self._validate_owner_cap()
@@ -132,11 +162,94 @@ class JarvisCustomSkill(Document):
 		_clear_personal_clause_cache(self.owner)
 
 	def _validate_scope(self):
-		# NULL/empty scope == Org everywhere (pre-migration rows are never
-		# backfilled); normalize on save so new writes are explicit.
-		self.scope = (self.scope or "Org").strip()
-		if self.scope not in ("Org", "Personal"):
-			frappe.throw(_("Scope must be Org or Personal."))
+		# Scope ladder {User, Role, Org} (security review PART 2 TASK 10). NEW rows
+		# default to User (private-first); pre-migration rows carry legacy scopes,
+		# so a blank scope on an EXISTING row reads as Org (its historical meaning)
+		# while a blank scope on a fresh insert defaults to User. "Personal" is the
+		# pre-ladder spelling of User.
+		raw = (self.scope or "").strip()
+		if raw == "Personal":
+			raw = "User"
+		if not raw:
+			raw = "User" if self.is_new() else "Org"
+		self.scope = raw
+		if self.scope not in SCOPES:
+			frappe.throw(_("Scope must be one of {0}.").format(", ".join(SCOPES)))
+		if self.scope == "Role":
+			self.target_role = (self.target_role or "").strip() or None
+			if not self.target_role:
+				frappe.throw(_("Role-scope skills need a Target Role."))
+			# allowed_roles stays meaningful for compiler-managed rows only; an
+			# authored Role skill's audience is target_role.
+		elif self.scope == "User":
+			# A private skill has no role audience — clear both so a stray
+			# allowed_roles/target_role can never leak it to role-holders (TASK 13
+			# U1: no silent Personal+roles no-op).
+			self.target_role = None
+			if not frappe.flags.jarvis_pattern_engine:
+				self.set("allowed_roles", [])
+		else:  # Org
+			self.target_role = None
+
+	def _scope_change_authorized(self) -> bool:
+		"""Who may WIDEN a skill's scope (mint or promote it to Role/Org): the
+		learning compiler (engine flag), Administrator, or a skill reviewer
+		(Jarvis Skill Reviewer / Jarvis Admin / System Manager — TASK 15 set).
+		A normal owner may only ever create/keep a User-scope skill; widening is
+		reviewer-gated (the promotion workflow), never a self-service field flip."""
+		if frappe.flags.jarvis_pattern_engine:
+			return True
+		from jarvis.permissions import is_skill_reviewer
+
+		return is_skill_reviewer(frappe.session.user)
+
+	def _guard_new_scope(self):
+		"""Block a non-reviewer from CREATING a skill directly at Role/Org scope
+		(the [E1]/[O1] self-service org-escalation the review flagged) — closes the
+		generic-REST insert + the create_custom_skill tool's scope arg at the
+		controller, so it holds no matter which door the insert comes through.
+		New skills default to User; Role/Org creation needs the reviewer set."""
+		if not self.is_new():
+			return
+		if self.scope in ("Role", "Org") and not self._scope_change_authorized():
+			frappe.throw(
+				_("New skills are private (User scope); promoting to Role or Org "
+				  "needs a reviewer's approval."),
+				frappe.PermissionError,
+			)
+
+	def _guard_scope_change(self):
+		"""Only a reviewer (or the compiler) may re-scope or re-target an EXISTING
+		skill — anything else would let an owner widen their own skill bench-wide
+		via a save path (SPA, frappe.client.set_value, a raw controller write).
+		Runs regardless of ignore_permissions, exactly like the Wiki page guard
+		(jarvis_wiki_page._guard_scope_change), because the reviewer promotion
+		writes save with ignore_permissions=True."""
+		if self.is_new():
+			return
+		prev = frappe.db.get_value(
+			self.doctype, self.name, ["scope", "target_role"], as_dict=True
+		)
+		if not prev:
+			return
+		prev_scope = (prev.scope or "").strip() or "Org"
+		if self.scope == prev_scope and (self.target_role or None) == (prev.target_role or None):
+			return
+		if self._scope_change_authorized():
+			return
+		# Owner-initiated NARROWING (strictly fewer viewers down the User<Role<Org
+		# ladder) is always safe — it reduces exposure — so the owner may
+		# self-demote without a reviewer (e.g. un-publish an Org skill back to
+		# private). WIDENING and lateral Role re-targeting stay reviewer-gated.
+		rank = {"User": 0, "Role": 1, "Org": 2}
+		is_owner = (self.owner or "") == frappe.session.user
+		if is_owner and rank.get(self.scope, 2) < rank.get(prev_scope, 2):
+			return
+		frappe.throw(
+			_("Only a reviewer can widen the scope or change the audience of an "
+			  "existing skill. Request a promotion instead."),
+			frappe.PermissionError,
+		)
 
 	def _validate_slug(self):
 		self.skill_name = (self.skill_name or "").strip().lower()

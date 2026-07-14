@@ -133,6 +133,12 @@ jobs:
             --source-sql /opt/ci/test_site.sql
           bench --site test_site install-app jarvis
           bench --site test_site set-config allow_tests true
+          # The full suite creates far more than Frappe's default 60-users/60-min
+          # limit (throttle_user_creation), so a mid-suite fixture insert otherwise
+          # hits "Throttled" (flaky, depends on which module crosses the threshold).
+          # -p stores an INT: throttle_user_creation compares count > limit, and a
+          # string limit raises "TypeError: '>' not supported between int and str".
+          bench --site test_site set-config -p throttle_user_limit 100000
 
       - name: Assert the restored site is what we think it is
         working-directory: /opt/frappe-bench

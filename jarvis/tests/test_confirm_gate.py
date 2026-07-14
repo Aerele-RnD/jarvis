@@ -257,8 +257,12 @@ class TestConfirmTool(FrappeTestCase):
 		if not frappe.db.exists("User", other):
 			frappe.get_doc({
 				"doctype": "User", "email": other, "first_name": "Other",
-				"send_welcome_email": 0,
+				"send_welcome_email": 0, "user_type": "System User",
 			}).insert(ignore_permissions=True)
+		# confirm_tool is @require_jarvis_user-gated; a realistic non-owner caller
+		# holds the role, so the owner-mismatch (not the role gate) is what rejects.
+		if "Jarvis User" not in set(frappe.get_roles(other)):
+			frappe.get_doc("User", other).add_roles("Jarvis User")
 
 		original = frappe.session.user
 		frappe.set_user(other)
@@ -583,8 +587,12 @@ class TestListPendingConfirmations(FrappeTestCase):
 		if not frappe.db.exists("User", email):
 			frappe.get_doc({
 				"doctype": "User", "email": email, "first_name": "LP",
-				"send_welcome_email": 0,
+				"send_welcome_email": 0, "user_type": "System User",
 			}).insert(ignore_permissions=True)
+		# list_pending_confirmations is @require_jarvis_user-gated; the owner
+		# caller needs the role to reach the owner-scoped listing.
+		if "Jarvis User" not in set(frappe.get_roles(email)):
+			frappe.get_doc("User", email).add_roles("Jarvis User")
 		return email
 
 	def setUp(self):

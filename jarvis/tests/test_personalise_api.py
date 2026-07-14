@@ -66,6 +66,14 @@ def _ensure_user(email: str) -> str:
 	if frappe.db.get_value("User", email, "user_type") != "System User":
 		frappe.db.set_value("User", email, "user_type", "System User", update_modified=False)
 		frappe.clear_cache(user=email)
+	# Personalise is a chat-surface feature: its shared guard now requires the
+	# Jarvis User role (security review TASK 6/8). Grant it so the fixtures pass
+	# the gate (SM/Admin fixtures already satisfy it via their own roles).
+	from jarvis.permissions import ensure_jarvis_user_role
+
+	ensure_jarvis_user_role()
+	if "Jarvis User" not in set(frappe.get_roles(email)):
+		frappe.get_doc("User", email).add_roles("Jarvis User")
 	frappe.db.commit()
 	return email
 
@@ -920,7 +928,14 @@ class TestListRoleOptions(PersonaliseApiTestCase):
 		self.assertNotIn("All", roles)
 		# System Manager is an enabled desk role, so it IS offered.
 		self.assertIn("System Manager", roles)
-		self.assertEqual(roles, sorted(roles))
+		# Sorted the way the endpoint sorts: `ORDER BY name asc` under MariaDB's
+		# case-insensitive collation, which is NOT Python's case-sensitive order.
+		# With roles named both "Jarvis …" and "JPL …" present (the full suite
+		# creates both), the DB yields Jarvis→JPL while a bare sorted() demands
+		# JPL→Jarvis, because every uppercase letter sorts before any lowercase
+		# one. Compare case-insensitively so this asserts the endpoint's real
+		# contract rather than an ASCII accident.
+		self.assertEqual(roles, sorted(roles, key=str.lower))
 
 	def test_disabled_role_is_excluded(self):
 		role_name = "Persapi Disabled Role"

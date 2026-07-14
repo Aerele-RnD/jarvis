@@ -122,6 +122,13 @@ export const applyAction = (action) => call(AC + "apply_action", { action: JSON.
 // is gone.
 export const confirmTool = (token, conversation) =>
 	call(AC + "confirm_tool", { token, conversation: conversation || "" })
+// Discard a parked ERP write by its one-time token: consumes the token (so it
+// can't replay or re-surface on reload), leaves a durable "discarded" receipt
+// chip in the transcript, and queues a note so the agent's next turn learns it
+// was vetoed. Returns {ok, data:{status:"discarded"|"already_handled"}}; the SPA
+// drops the card either way.
+export const dismissTool = (token, conversation) =>
+	call(AC + "dismiss_tool", { token, conversation: conversation || "" })
 // Resync (issue #186, R3 fix for #3): re-surface the caller's own currently
 // parked confirmation cards after a reload/reconnect. Returns
 // {ok, data:{pending:[{token, tool, preview, summary, conversation, run_id}]}}.

@@ -20,6 +20,7 @@ from __future__ import annotations
 import random
 
 import frappe
+from jarvis.permissions import require_jarvis_user
 from frappe.utils import add_days, now_datetime
 
 SECOND_USER = "seed-userb@example.com"
@@ -296,6 +297,7 @@ def _wipe_varied(user: str) -> None:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def seed_varied_approvals(user: str) -> dict:
 	"""Seed ~6 currently-PENDING approvals with genuinely varied 3+ option
 	payloads (see ``_VARIED_PENDING``) so the varied-chip decide UI is
@@ -351,6 +353,7 @@ def _seed_for(owner: str, share_to: str | None, scale: str) -> None:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def seed_feature_pages(user: str) -> dict:
 	"""Seed the four feature pages for ``user`` at scale, plus a small scoping
 	dataset for a second user. DEV ONLY. Not called by tests (tests build their

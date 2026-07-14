@@ -147,9 +147,22 @@ app_include_js = ["jarvis_immersive.bundle.js", "jarvis_widget.bundle.js", "jarv
 # Separate frappe-ui Vue SPA (apps/jarvis/frontend) served at /jarvis. The
 # catch-all routes every /jarvis/* deep link to the www/jarvis page so the
 # SPA's vue-router (history mode) can handle them.
+#
+# The mobile PWA (apps/jarvis/pwa) gets the same treatment at /jarvis-mobile.
+# Both rules are needed: the bare route serves the shell, the catch-all keeps a
+# refresh on a deep link (e.g. /jarvis-mobile/c/<id>) from 404ing. The page
+# itself is www/jarvis_mobile.html — underscored, because a hyphen is not a
+# legal Python module name and the page has a .py controller.
 website_route_rules = [
 	{"from_route": "/jarvis/<path:app_path>", "to_route": "jarvis"},
+	{"from_route": "/jarvis-mobile", "to_route": "jarvis_mobile"},
+	{"from_route": "/jarvis-mobile/<path:app_path>", "to_route": "jarvis_mobile"},
 ]
+
+# Serves the PWA's service worker at the root-level /jarvis-mobile.sw.js, which
+# is the only way it can claim a scope covering the app. See jarvis/pwa.py — the
+# route is deliberately outside the /jarvis-mobile/ catch-all above.
+page_renderer = ["jarvis.pwa.ServiceWorkerRenderer"]
 
 # The agents marketplace lives at the SPA route /jarvis/agents; keep the
 # friendlier top-level /jarvis-agents spelling working as a redirect.
@@ -312,4 +325,80 @@ permission_query_conditions = {
 has_permission = {
 	"Jarvis Wiki Page": "jarvis.chat.wiki_permissions.has_wiki_page_permission",
 }
+
+# ---------------------------------------------------------------------------
+# Chat doctype ownership scoping (security review PART 1, TASK 7)
+# ---------------------------------------------------------------------------
+# Row-level owner scoping for the chat doctypes at the ORM, so generic REST
+# (/api/resource, frappe.client.*, reportview) and every future endpoint
+# inherit it automatically instead of relying on a hand-rolled owner check in
+# each whitelisted function. Conversation/Voice scope by the row owner;
+# Message/Approval scope by the LINKED conversation's owner (+ DocShare for
+# Approval). Matrix + SQL fragments live in jarvis/chat/chat_permissions.py.
+# The doctype permission rows carry role "Jarvis User" (not "All"), so the role
+# is genuinely load-bearing: revoking it denies all four via REST.
+permission_query_conditions.update({
+	"Jarvis Conversation": "jarvis.chat.chat_permissions.conversation_query_conditions",
+	"Jarvis Chat Message": "jarvis.chat.chat_permissions.message_query_conditions",
+	"Jarvis Approval Request": "jarvis.chat.chat_permissions.approval_query_conditions",
+	"Jarvis Voice Note": "jarvis.chat.chat_permissions.voice_note_query_conditions",
+})
+has_permission.update({
+	"Jarvis Conversation": "jarvis.chat.chat_permissions.has_conversation_permission",
+	"Jarvis Chat Message": "jarvis.chat.chat_permissions.has_message_permission",
+	"Jarvis Approval Request": "jarvis.chat.chat_permissions.has_approval_permission",
+	"Jarvis Voice Note": "jarvis.chat.chat_permissions.has_voice_note_permission",
+})
+
+# ---------------------------------------------------------------------------
+# Skills / Personalise scoping (security review PART 2)
+# ---------------------------------------------------------------------------
+# TASK 13: Jarvis Custom Skill visibility (owner OR scope=Org OR scope=Role
+# role-match OR shared-with) at the ORM, so the four hand-rolled read surfaces
+# (generic REST, SPA list/get, plugin find/get) can never disagree. Matrix +
+# SQL fragment live in jarvis/chat/skill_permissions.py (reuses the controller's
+# user_can_use_skill rule).
+# TASK 17: Jarvis Personalise Question scoped on the `user` field (not `owner`)
+# so generic REST matches the API's user-based scoping and survives drift.
+permission_query_conditions.update({
+	"Jarvis Custom Skill": "jarvis.chat.skill_permissions.skill_query_conditions",
+	"Jarvis Personalise Question": "jarvis.chat.personalise_permissions.personalise_question_query_conditions",
+})
+has_permission.update({
+	"Jarvis Custom Skill": "jarvis.chat.skill_permissions.has_skill_permission",
+	"Jarvis Personalise Question": "jarvis.chat.personalise_permissions.has_personalise_question_permission",
+})
+
+# ---------------------------------------------------------------------------
+# File Box / Macros / Agents scoping (security review PART 3)
+# ---------------------------------------------------------------------------
+# TASK 22: File is a GLOBAL doctype. Core already registers a permissive
+# permission_query_conditions["File"]; Frappe ANDs the hooks, so the Jarvis
+# fragment ONLY restricts rows attached to Jarvis Conversation (owner / linked-
+# conversation-owner) and lets every non-Jarvis file (avatars, print formats,
+# other doctypes' attachments) through. NO has_permission["File"] hook — core's
+# per-doc byte deferral already protects the bytes; a second hook could break it.
+# TASK 23/24: Jarvis Macro / Macro Run scoped by the row owner at the ORM (Run's
+# owner is the macro owner by construction); the create arm of the Macro Run hook
+# also blocks attaching a run to another user's macro/conversation.
+# TASK 29: the four owner/installer-scoped agent doctypes (Installation, Run,
+# Finding, Activity). The Listing catalog stays All-readable (no owner hook); its
+# skill_bundle IP is permlevel-guarded (TASK 33) instead.
+permission_query_conditions.update({
+	"File": "jarvis.chat.file_permissions.file_query_conditions",
+	"Jarvis Macro": "jarvis.chat.macro_permissions.macro_query_conditions",
+	"Jarvis Macro Run": "jarvis.chat.macro_permissions.macro_run_query_conditions",
+	"Jarvis Agent Installation": "jarvis.chat.agent_permissions.installation_query_conditions",
+	"Jarvis Agent Run": "jarvis.chat.agent_permissions.run_query_conditions",
+	"Jarvis Agent Finding": "jarvis.chat.agent_permissions.finding_query_conditions",
+	"Jarvis Agent Activity": "jarvis.chat.agent_permissions.activity_query_conditions",
+})
+has_permission.update({
+	"Jarvis Macro": "jarvis.chat.macro_permissions.has_macro_permission",
+	"Jarvis Macro Run": "jarvis.chat.macro_permissions.has_macro_run_permission",
+	"Jarvis Agent Installation": "jarvis.chat.agent_permissions.has_installation_permission",
+	"Jarvis Agent Run": "jarvis.chat.agent_permissions.has_run_permission",
+	"Jarvis Agent Finding": "jarvis.chat.agent_permissions.has_finding_permission",
+	"Jarvis Agent Activity": "jarvis.chat.agent_permissions.has_activity_permission",
+})
 

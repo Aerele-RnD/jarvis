@@ -54,6 +54,8 @@
   "personalise_section",
   "personalise_daily_question_cap",
   "personalise_enabled",
+  "chat_history_section",
+  "conversation_retention_days",
   "system_tab",
   "deployment_section",
   "deployment_mode",
@@ -400,6 +402,18 @@
    "label": "Enable Personalisation",
    "default": "1",
    "description": "Master toggle for the Personalise tab: question materialization, free-capture notes, and question-rule sweeps. Readers treat an unset value as ON (Single defaults are not backfilled on migrate; seeded by jarvis.learning.roles.after_migrate)."
+  },
+  {
+   "fieldname": "chat_history_section",
+   "fieldtype": "Section Break",
+   "label": "Chat History"
+  },
+  {
+   "fieldname": "conversation_retention_days",
+   "fieldtype": "Int",
+   "label": "Auto-archive idle chats after (days)",
+   "default": "30",
+   "description": "A chat you have not opened for this many days is automatically archived (hidden from your list) and its agent working-memory freed. Starred chats are never touched. Minimum 7; set to 0 to keep chats forever. Default 30. Archived chats are retained (not destroyed) and recoverable by support; a separate purge permanently deletes them later. Readers treat an unset value as 30 (Single defaults are not backfilled on migrate)."
   },
   {
    "fieldname": "system_tab",

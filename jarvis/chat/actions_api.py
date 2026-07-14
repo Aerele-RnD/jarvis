@@ -19,6 +19,7 @@ from jarvis import audit
 from jarvis._session import impersonate
 from jarvis.chat.api import _NON_EDIT_FIELDTYPES, _next_seq, enqueue_continuation
 from jarvis.exceptions import InvalidArgumentError
+from jarvis.permissions import require_jarvis_user
 
 MSG = "Jarvis Chat Message"
 CONV = "Jarvis Conversation"
@@ -53,6 +54,7 @@ def _child_columns(child_doctype: str) -> list[dict]:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def get_doctype_form_meta(doctype: str) -> dict:
 	"""Form metadata for the draft panel: main fields INCLUDING Table fields,
 	plus per-table child columns - one call, so the panel never fans out.
@@ -89,6 +91,7 @@ def get_doctype_form_meta(doctype: str) -> dict:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def load_doc(doctype: str, name: str) -> dict:
 	"""Current values of one document (main fields + child rows restricted to
 	the form-meta columns) so the panel can pre-fill an update draft. Gated on
@@ -167,6 +170,7 @@ def _append_receipt(conversation: str, verb: str, doctype: str, name: str,
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def apply_action(action: dict | str | None = None) -> dict:
 	"""Apply a human-authored draft-panel edit: create or update ONLY, with the
 	values the human deliberately entered before applying. Runs as the session
@@ -283,6 +287,7 @@ _INVALID_CONFIRM = {
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def confirm_tool(token: str, conversation: str | None = None) -> dict:
 	"""Execute a parked mutating tool call after the human clicked Confirm.
 
@@ -319,8 +324,8 @@ def confirm_tool(token: str, conversation: str | None = None) -> dict:
 	if frappe.session.user == "Guest":
 		raise frappe.PermissionError("authentication required")
 
-	from jarvis.chat import pending_confirm
 	from jarvis import api
+	from jarvis.chat import pending_confirm
 
 	token = (token or "").strip()
 	record = pending_confirm.peek(token)
@@ -354,8 +359,16 @@ def confirm_tool(token: str, conversation: str | None = None) -> dict:
 	# a resolved conversation to attach to (self-host with no conv binding skips).
 	conv = record.get("conversation")
 	if conv:
+		ok = isinstance(result, dict) and bool(result.get("ok"))
+		# Leave a durable receipt CHIP (#7 / receipt-chips): action_outcome makes
+		# the SPA render it inline as "✓ confirmed" / "✗ failed" instead of a
+		# buried Activity-accordion row, so the confirmation card is replaced by a
+		# persistent summary rather than vanishing.
 		try:
-			api.persist_tool_receipt(conv, record["tool"], record["args"], result)
+			api.persist_tool_receipt(
+				conv, record["tool"], record["args"], result,
+				action_outcome="confirmed" if ok else "failed",
+			)
 		except Exception:
 			frappe.log_error(title="confirm_tool receipt failed",
 							 message=frappe.get_traceback())
@@ -365,9 +378,11 @@ def confirm_tool(token: str, conversation: str | None = None) -> dict:
 		# sees the real outcome (or continues a multi-step request). Always
 		# dispatched on the confirm path - there is no card to carry a
 		# continue flag here, and the post-write acknowledgment is part of
-		# the persona's write recipes. Best-effort like the receipt.
+		# the persona's write recipes. On failure the rolled-back-write scaffold
+		# makes the agent explain + stop instead of auto-retrying. Best-effort.
 		try:
-			enqueue_continuation(conv, _confirm_receipt_text(record, result))
+			enqueue_continuation(
+				conv, _confirm_receipt_text(record, result), failed=not ok)
 		except Exception:
 			frappe.log_error(title="confirm_tool continuation failed",
 							 message=frappe.get_traceback())
@@ -392,7 +407,79 @@ def _confirm_receipt_text(record: dict, result) -> str:
 	return f"{desc} succeeded."
 
 
+def _dismiss_note(tool: str, args: dict) -> str:
+	"""The deferred agent-correction note for a discarded action: bench truth
+	(not user speech) that overrides the stale ``pending_confirmation`` result
+	still sitting in the agent's in-container session memory. Folded into the
+	NEXT turn's ``[Context: ...]`` bracket by turn_handler, so no extra agent
+	turn fires now."""
+	from jarvis.api import _describe_call
+
+	return (f"the user declined the pending action ({_describe_call(tool, args)}); "
+			"it was NOT performed - do not assume it ran, and do not retry unless asked")
+
+
 @frappe.whitelist()
+@require_jarvis_user
+def dismiss_tool(token: str, conversation: str | None = None) -> dict:
+	"""Discard a parked gated write after the human clicked Discard.
+
+	Owner-bound + single-use exactly like ``confirm_tool`` but it runs NOTHING:
+	it consumes the token (closing the 15-min replay window and stopping the card
+	from re-surfacing on reload), leaves a durable "discarded" receipt chip in the
+	transcript, and queues a deferred note so the agent's next turn learns the
+	action was vetoed - the bench never replays tool rows to the agent, so a
+	persisted row alone would not reach its in-container memory. Fires NO agent
+	turn: the user just said no; let them speak next.
+
+	A benign no-op when the token is already consumed/expired (a Confirm in
+	another tab won the race, or the 15-min TTL lapsed): returns ok with
+	``already_handled`` so the SPA silently drops the card. Human cookie-session
+	only.
+	"""
+	if frappe.session.user == "Guest":
+		raise frappe.PermissionError("authentication required")
+
+	from jarvis import api
+	from jarvis.chat import pending_confirm
+
+	token = (token or "").strip()
+	record = pending_confirm.peek(token)
+	if not record:
+		return {"ok": True, "data": {"status": "already_handled"}}
+
+	# Same owner + conversation binding as confirm_tool: consume atomically so a
+	# concurrent Confirm and Discard cannot both win.
+	passed_conv = (conversation or "").strip()
+	guard_conv = passed_conv if passed_conv else record.get("conversation")
+	record = pending_confirm.consume(
+		token, owner=frappe.session.user, conversation=guard_conv)
+	if not record:
+		return {"ok": True, "data": {"status": "already_handled"}}
+
+	tool = record.get("tool") or ""
+	args = record.get("args") or {}
+	conv = record.get("conversation")
+	if conv:
+		# Durable "discarded" chip: what the user declined, in their transcript.
+		try:
+			api.persist_tool_receipt(conv, tool, args, None, action_outcome="discarded")
+		except Exception:
+			frappe.log_error(title="dismiss_tool receipt failed",
+							 message=frappe.get_traceback())
+		# Correct the agent's stale pending_confirmation memory on its next turn.
+		try:
+			from jarvis.chat import agent_notes
+			agent_notes.append(conv, _dismiss_note(tool, args))
+		except Exception:
+			frappe.log_error(title="dismiss_tool note failed",
+							 message=frappe.get_traceback())
+
+	return {"ok": True, "data": {"status": "discarded", "tool": tool}}
+
+
+@frappe.whitelist()
+@require_jarvis_user
 def list_pending_confirmations(conversation: str | None = None) -> dict:
 	"""Re-surface the caller's OWN currently-parked confirmation cards after a
 	reload/reconnect (issue #186, enables R3's fix for #3).
@@ -406,8 +493,8 @@ def list_pending_confirmations(conversation: str | None = None) -> dict:
 	if frappe.session.user == "Guest":
 		raise frappe.PermissionError("authentication required")
 
+	from jarvis.api import _describe_call, _pending_preview
 	from jarvis.chat import pending_confirm
-	from jarvis.api import _pending_preview, _describe_call
 
 	conv = (conversation or "").strip() or None
 	records = pending_confirm.list_for_owner(frappe.session.user, conversation=conv)

@@ -34,15 +34,21 @@ class TestJarvisConversationDocType(FrappeTestCase):
 		self.assertIn("Archived", options)
 
 	def test_owner_can_read_own_only(self):
-		"""Permissions are owner-only (no role grants global read)."""
+		"""Permissions are owner-only and role-gated (security review TASK 7):
+		read at permlevel 0 is granted only to "Jarvis User"/"System Manager"
+		(NOT ``role: "All"``) and is ``if_owner`` scoped. The permlevel-1 row
+		(session_key protection, TASK 9) is SM-only and correctly carries no
+		``if_owner`` (permlevel rows are not owner-scoped)."""
 		meta = frappe.get_meta(DOCTYPE)
+		base_read_roles = {p.role for p in meta.permissions if p.read and (p.permlevel or 0) == 0}
+		self.assertNotIn("All", base_read_roles, "conversation read must not be granted to 'All'")
+		self.assertEqual(base_read_roles, {"Jarvis User", "System Manager"})
 		for perm in meta.permissions:
-			# Any read permission must be scoped: if_owner=1
-			if perm.read:
+			if perm.read and (perm.permlevel or 0) == 0:
 				self.assertEqual(
 					perm.if_owner,
 					1,
-					f"role {perm.role} has read without if_owner",
+					f"role {perm.role} has permlevel-0 read without if_owner",
 				)
 
 	def test_before_insert_sets_last_active_at(self):

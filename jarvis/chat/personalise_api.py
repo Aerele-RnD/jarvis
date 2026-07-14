@@ -40,6 +40,7 @@ from __future__ import annotations
 import json
 
 import frappe
+from jarvis.permissions import require_jarvis_user
 from frappe import _
 from frappe.utils import cint, now_datetime
 
@@ -94,10 +95,13 @@ _ATTACHMENT_BINARY_EXT = {
 # voice_notes_api._require_system_user / learned_api._guard / _lk)
 # --------------------------------------------------------------------------- #
 def _require_system_user() -> None:
-	"""Desk-user gate: Guest rejected, Administrator always allowed, else the
-	caller must be a System User. Verbatim clone of
+	"""Chat-surface gate: Guest rejected, Administrator always allowed, else the
+	caller must be a System User AND hold Jarvis access (the Jarvis User role or
+	System Manager - TASK 6/8). Mirrors
 	``voice_notes_api._require_system_user`` - Personalise is Desk-SPA only,
 	same as the Business tab it replaces."""
+	from jarvis.permissions import require_jarvis_access
+
 	user = frappe.session.user
 	if not user or user == "Guest":
 		frappe.throw(_("Not permitted."), frappe.PermissionError)
@@ -105,6 +109,7 @@ def _require_system_user() -> None:
 		return
 	if frappe.db.get_value("User", user, "user_type") != "System User":
 		frappe.throw(_("Not permitted."), frappe.PermissionError)
+	require_jarvis_access(user)
 
 
 def _admin_guard() -> None:
@@ -724,6 +729,7 @@ def get_note(name: str) -> dict:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def delete_note(name: str) -> dict:
 	"""Owner-only delete. Alias of ``voice_notes_api.delete_voice_note``
 	(DESIGN.md 6b: "delete_note exists as delete_voice_note; alias ok") kept

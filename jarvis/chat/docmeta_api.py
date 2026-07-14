@@ -36,6 +36,7 @@ from __future__ import annotations
 import json
 
 import frappe
+from jarvis.permissions import has_jarvis_access, require_jarvis_user
 from frappe import _
 from frappe.desk.form import assign_to as _assign_to
 from frappe.share import add_docshare
@@ -216,12 +217,19 @@ def _open_todo_exists(doctype: str, name: str, user: str) -> bool:
 
 
 def _validate_target_user(user: str) -> str:
-	"""Assign/share target must be a real, enabled, non-Guest user."""
+	"""Assign/share target must be a real, enabled, non-Guest user WHO CAN REACH
+	JARVIS. TASK 27 (TAG-01): a share/assign grants a DocShare-read that Part-1's
+	approval scoping honors as visibility, so the target must be confined to the
+	Jarvis population — otherwise a Website/portal (or any non-Jarvis) user could
+	be handed visibility into a Jarvis Approval Request / Macro / Agent
+	Installation they must never reach."""
 	user = (user or "").strip()
 	if not user or user == "Guest":
 		frappe.throw(_("Invalid user."))
 	if not frappe.db.get_value("User", user, "enabled"):
 		frappe.throw(_("Invalid user."))
+	if not has_jarvis_access(user):
+		frappe.throw(_("You can only share or assign to Jarvis users."))
 	return user
 
 
@@ -229,6 +237,7 @@ def _validate_target_user(user: str) -> str:
 # read bundle
 # --------------------------------------------------------------------------- #
 @frappe.whitelist()
+@require_jarvis_user
 def get_docmeta(doctype: str, name: str) -> dict:
 	"""The doc-page metadata bundle (§8.1 as amended by §14 F1) in one round trip."""
 	doc = _get_gated(doctype, name)
@@ -256,7 +265,30 @@ def get_docmeta(doctype: str, name: str) -> dict:
 # --------------------------------------------------------------------------- #
 # comments (direct inserts/updates AFTER the gate — §14 DA-03)
 # --------------------------------------------------------------------------- #
+def _strip_mention_spans(content: str) -> str:
+	"""TASK 28 (TAG-02): neutralize @mention markup before insert.
+	``Comment.after_insert`` -> ``notify_mentions`` emails/notifies every
+	``class="mention"`` target of the comment (and thus the doc's title). On these
+	Jarvis boards a DocShare-tagged NON-owner could otherwise forge a mention and
+	leak a sensitive approval title ("SECRET payroll approve $840k") to an
+	arbitrary third party. Access to these docs is granted via ``toggle_share``,
+	never via @mention, so mention-NOTIFY is not a needed feature here — unwrap
+	each mention element to its plain text so the comment still reads naturally
+	(e.g. "@Carol") but triggers no notification."""
+	if not content or "mention" not in content:
+		return content
+	from bs4 import BeautifulSoup
+
+	soup = BeautifulSoup(content, "html.parser")
+	changed = False
+	for el in soup.find_all(class_="mention"):
+		el.unwrap()
+		changed = True
+	return str(soup) if changed else content
+
+
 @frappe.whitelist()
+@require_jarvis_user
 def add_comment(doctype: str, name: str, content: str) -> dict:
 	"""Add a comment (read-gated, matching desk's 'read is enough to comment').
 
@@ -267,6 +299,7 @@ def add_comment(doctype: str, name: str, content: str) -> dict:
 	content = (content or "").strip()
 	if not content:
 		frappe.throw(_("Comment is empty."))
+	content = _strip_mention_spans(content)
 	comment = frappe.get_doc({
 		"doctype": "Comment",
 		"comment_type": "Comment",
@@ -292,6 +325,7 @@ def _comment_gated(comment: str):
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def update_comment(comment: str, content: str) -> dict:
 	"""Edit a comment's HTML (author or System Manager only)."""
 	doc = _comment_gated(comment)
@@ -305,6 +339,7 @@ def update_comment(comment: str, content: str) -> dict:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def delete_comment(comment: str) -> None:
 	"""Delete a comment (author or System Manager only)."""
 	_comment_gated(comment)
@@ -316,6 +351,7 @@ def delete_comment(comment: str) -> None:
 # assignment (ToDo + DocShare read-grant — D23, §14 DA-09)
 # --------------------------------------------------------------------------- #
 @frappe.whitelist()
+@require_jarvis_user
 def toggle_assignment(doctype: str, name: str, user: str, action: str = "add") -> list[dict]:
 	"""Assign/unassign ``user`` on the doc (write-gated: owner / approval-
 	conversation-owner / SM). Returns the fresh assignees list.
@@ -373,6 +409,7 @@ def toggle_assignment(doctype: str, name: str, user: str, action: str = "add") -
 # sharing (DocShare read — §14 F1)
 # --------------------------------------------------------------------------- #
 @frappe.whitelist()
+@require_jarvis_user
 def toggle_share(doctype: str, name: str, user: str, action: str = "add") -> list[dict]:
 	"""Share/unshare the doc with ``user`` (write-gated). Returns the fresh
 	shares list. Explicit shares carry the ``notify_by_email=1`` marker (see the
@@ -453,6 +490,7 @@ def toggle_share(doctype: str, name: str, user: str, action: str = "add") -> lis
 # like (direct _liked_by update — §14 DA-03)
 # --------------------------------------------------------------------------- #
 @frappe.whitelist()
+@require_jarvis_user
 def toggle_like(doctype: str, name: str, like: int = 1) -> list[str]:
 	"""Like (``like=1``) / unlike (``like=0``) the doc for the current user.
 	Read-gated. Mirrors desk semantics (``_liked_by`` JSON + a "Like" Comment
@@ -506,6 +544,7 @@ def _set_liked_by(doctype: str, name: str, liked_by: list[str]) -> None:
 # attachments (upload rides stock /api/method/upload_file; delete is gated here)
 # --------------------------------------------------------------------------- #
 @frappe.whitelist()
+@require_jarvis_user
 def delete_attachment(doctype: str, name: str, file: str) -> None:
 	"""Delete an attachment of the doc (write-gated). The File must actually be
 	attached to this doc — a foreign file name is refused."""

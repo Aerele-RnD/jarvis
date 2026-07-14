@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 
 import frappe
+from jarvis.permissions import require_jarvis_user
 
 INBOUND_PROMPT = (
 	"This file arrived through the File Box - process it as an inbound "
@@ -31,6 +32,7 @@ INBOUND_PROMPT = (
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def drop_file(file_url: str, file_name: str | None = None) -> dict:
 	"""Create a conversation for an uploaded file and kick off processing."""
 	file_url = (file_url or "").strip()
@@ -86,6 +88,7 @@ def drop_file(file_url: str, file_name: str | None = None) -> dict:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def list_inbound(limit: int = 30) -> list[dict]:
 	"""DEPRECATED (superseded by ``list_inbound_page``): kept for one release for
 	back-compat. Recent File-Box conversations for the pane's inbound list, with a
@@ -277,6 +280,7 @@ def _order_by(sort_field, sort_dir, sortable: dict, default_field, default_dir, 
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def list_inbound_page(
 	search: str = "",
 	filters: str | dict | None = None,
@@ -418,6 +422,7 @@ def _delete_one(conversation: str) -> None:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def delete_inbound(conversation: str) -> dict:
 	"""Owner-gated cascade delete of a File-Box conversation (FB-1)."""
 	_delete_one(conversation)
@@ -426,6 +431,7 @@ def delete_inbound(conversation: str) -> dict:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def delete_inbound_bulk(conversations: str | list | None = None) -> dict:
 	"""Bulk cascade delete (orchestrator Q4). Owner-gated per row, same cascade +
 	streaming refusal as ``delete_inbound``. Returns ``{deleted, skipped:[{
@@ -449,6 +455,7 @@ def delete_inbound_bulk(conversations: str | list | None = None) -> dict:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def clear_processed_inbound() -> dict:
 	"""Bulk-delete the caller's OWN File-Box rows whose derived status is
 	done|error (never processing/needs_approval), computed with the same status

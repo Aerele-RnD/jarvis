@@ -104,7 +104,6 @@
     {
       "role": "All",
       "read": 1,
-      "create": 1,
       "if_owner": 1
     },
     {

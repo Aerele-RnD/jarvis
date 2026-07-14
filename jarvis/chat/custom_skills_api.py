@@ -13,6 +13,7 @@ and flip the status to a terminal ``ok ...`` / ``failed: ...`` the SPA polls.
 """
 
 import frappe
+from jarvis.permissions import require_jarvis_user
 from frappe import _
 
 from jarvis.chat.custom_skills import build_push_payload
@@ -33,6 +34,22 @@ def _full_name(user: str) -> str:
 	return frappe.db.get_value("User", user, "full_name") or user
 
 
+def _require_skill_owner(doc, action: str = "modify") -> None:
+	"""Raise a CLEAR PermissionError unless the caller owns the skill (or is a
+	System Manager / Administrator — matching skill_permissions.has_skill_permission
+	write rule). The ORM hook denies a non-owner write anyway, but the framework's
+	generic message is opaque; the user-facing SPA write endpoints surface this
+	instead (security review PART 2 TASK E1)."""
+	me = frappe.session.user
+	if me == "Administrator" or (doc.get("owner") or "") == me:
+		return
+	if "System Manager" in frappe.get_roles(me):
+		return
+	frappe.throw(
+		_("You can only {0} your own skills.").format(action), frappe.PermissionError
+	)
+
+
 def _skill_names_shared_with(user: str) -> list[str]:
 	"""Skill row-names shared with ``user`` (child-table lookup, perm-free)."""
 	return [
@@ -44,6 +61,7 @@ def _skill_names_shared_with(user: str) -> list[str]:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def list_custom_skills() -> list[dict]:
 	"""The current user's own skills PLUS skills shared with them (read-only).
 
@@ -170,6 +188,7 @@ def _order_by(sort_field, sort_dir, sortable: dict, default_field, default_dir, 
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def list_custom_skills_page(
 	search: str = "",
 	filters: str | dict | None = None,
@@ -264,6 +283,7 @@ def list_custom_skills_page(
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def get_custom_skill(name: str) -> dict:
 	"""Return one skill incl. the full markdown instructions. Readable by the
 	owner (editable) or a user it's shared with (read-only). ``can_edit`` tells
@@ -288,6 +308,7 @@ def get_custom_skill(name: str) -> dict:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def create_custom_skill(
 	skill_name: str,
 	description: str,
@@ -296,22 +317,51 @@ def create_custom_skill(
 	enabled: int = 1,
 ) -> dict:
 	"""Create a skill. Validation (slug/caps) runs in the doctype's validate()."""
-	doc = frappe.get_doc(
-		{
-			"doctype": SKILL,
-			"skill_name": skill_name,
-			"description": description,
-			"instructions": instructions,
-			"user_invocable": int(user_invocable or 0),
-			"enabled": int(enabled or 0),
-		}
+	return _create_custom_skill_impl(
+		skill_name, description, instructions, user_invocable, enabled
 	)
-	doc.insert()
+
+
+def _create_custom_skill_impl(
+	skill_name: str,
+	description: str,
+	instructions: str,
+	user_invocable: int = 1,
+	enabled: int = 1,
+	scope: str | None = None,
+	ignore_permissions: bool = False,
+) -> dict:
+	"""Undecorated core of :func:`create_custom_skill`. Split out so a trusted
+	server caller already authorized by its own gate can create a skill without
+	re-tripping the ``@require_jarvis_user`` HTTP gate on the wrapper: the reviewer
+	insight-apply path (``learned_api._apply_create_target``) is gated on
+	``_REVIEWER_ROLES``, which admits a Jarvis Skill Reviewer / Jarvis Admin who
+	holds neither Jarvis User nor System Manager.
+
+	``scope`` is only accepted from trusted server callers (the reviewer
+	insight-apply passes ``scope="Org"``); a blank scope defaults to User
+	(private-first — security review PART 2 TASK 10). ``ignore_permissions``
+	skips the doctype create-perm check for reviewer callers who may lack the
+	Jarvis User role that the doctype now requires (the controller's own scope
+	guard still runs and admits them as reviewers)."""
+	fields = {
+		"doctype": SKILL,
+		"skill_name": skill_name,
+		"description": description,
+		"instructions": instructions,
+		"user_invocable": int(user_invocable or 0),
+		"enabled": int(enabled or 0),
+	}
+	if scope:
+		fields["scope"] = scope
+	doc = frappe.get_doc(fields)
+	doc.insert(ignore_permissions=bool(ignore_permissions))
 	frappe.db.commit()
 	return {"ok": True, "data": {"name": doc.name, "skill_name": doc.skill_name}}
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def update_custom_skill(
 	name: str,
 	skill_name: str | None = None,
@@ -322,6 +372,7 @@ def update_custom_skill(
 ) -> dict:
 	"""Update provided fields of a skill (owner-gated)."""
 	doc = frappe.get_doc(SKILL, name)
+	_require_skill_owner(doc, "edit")
 	if skill_name is not None:
 		doc.skill_name = skill_name
 	if description is not None:
@@ -338,15 +389,18 @@ def update_custom_skill(
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def delete_custom_skill(name: str) -> dict:
 	"""Delete a skill row (owner-gated). The delete only propagates to the
 	container on the next Apply (the fleet endpoint does a full reconcile)."""
-	frappe.delete_doc(SKILL, name)  # honors if_owner permission
+	_require_skill_owner(frappe.get_doc(SKILL, name), "delete")
+	frappe.delete_doc(SKILL, name)  # ORM hook also enforces owner-only delete
 	frappe.db.commit()
 	return {"ok": True}
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def delete_custom_skills_bulk(names: str | list | None = None) -> dict:
 	"""Bulk delete skills the caller OWNS (DESIGN-V3 §8.3 / D20). ``names`` is a
 	JSON array of skill row-names. Per-row try/except so one bad row never
@@ -378,8 +432,15 @@ def delete_custom_skills_bulk(names: str | list | None = None) -> dict:
 			)
 			skipped.append({"name": n, "reason": "error"})
 	frappe.db.commit()
+	# Only a reviewer's delete reconciles the shared catalog (TASK 12): a plain
+	# Jarvis User's rows are User/Role-scope and never in the shared push, so
+	# their delete changes nothing there and must not trigger a bench-wide
+	# restart. A reviewer deleting an Org skill DOES need the reconcile.
 	if deleted:
-		apply_custom_skills()
+		from jarvis.permissions import is_skill_reviewer
+
+		if is_skill_reviewer(me):
+			_apply_custom_skills_impl()
 	return {"deleted": deleted, "skipped": skipped}
 
 
@@ -388,6 +449,7 @@ def delete_custom_skills_bulk(names: str | list | None = None) -> dict:
 # use — they cannot edit, disable, delete, or re-share it)
 # --------------------------------------------------------------------------- #
 @frappe.whitelist()
+@require_jarvis_user
 def list_shareable_users() -> list[dict]:
 	"""Users the current user can share a skill with (staff on this bench,
 	excluding self + Guest). Feeds the share multiselect."""
@@ -402,6 +464,7 @@ def list_shareable_users() -> list[dict]:
 
 
 @frappe.whitelist()
+@require_jarvis_user
 def get_skill_shares(name: str) -> dict:
 	"""Return who a skill is currently shared with (owner only)."""
 	doc = frappe.get_doc(SKILL, name)
@@ -439,11 +502,232 @@ def share_custom_skill(name: str, users: str | list | None = None) -> dict:
 
 
 # --------------------------------------------------------------------------- #
+# Scope promotion (User -> Role -> Org) — reviewer-gated widening workflow
+# (security review PART 2 TASK 10, mirrors the wiki promotion machinery).
+# --------------------------------------------------------------------------- #
+PROMO = "Jarvis Skill Promotion Request"
+_SCOPE_RANK = {"User": 0, "Personal": 0, "Role": 1, "Org": 2}
+
+
+def _notify_skill_reviewers(request_name: str | None = None) -> None:
+	"""Best-effort nudge to the skill-reviewer set that a promotion request
+	landed. Carries the request name so the reviewer client can deep-link to it.
+	Never breaks the request on failure."""
+	try:
+		from frappe.utils.user import get_users_with_role
+		from jarvis.chat.events import publish_to_user
+		from jarvis.permissions import JARVIS_REVIEWER_ROLES
+
+		users: set = set()
+		for role in JARVIS_REVIEWER_ROLES:
+			try:
+				users |= set(get_users_with_role(role))
+			except Exception:
+				pass
+		payload = {"kind": "review:pending", "queue": "skill_promotion"}
+		if request_name:
+			payload["request"] = request_name
+		for u in sorted(users):
+			if u and u not in ("Administrator", "Guest"):
+				publish_to_user(u, payload)
+	except Exception:
+		pass
+
+
+@frappe.whitelist()
+@require_jarvis_user
+def request_skill_promotion(
+	name: str, to_scope: str, target_role: str = "", note: str = ""
+) -> dict:
+	"""Ask a reviewer to widen one of the caller's OWN skills up the scope ladder
+	(User->Role->Org). Files a Pending ``Jarvis Skill Promotion Request`` and
+	pings the reviewer set — the skill itself is untouched; promotion is a
+	request, never a self-service scope switch (the controller's scope guard
+	rejects a self-service widen anyway)."""
+	me = frappe.session.user
+	doc = frappe.get_doc(SKILL, name)
+	if doc.owner != me and me != "Administrator":
+		frappe.throw(_("You can only promote your own skills."), frappe.PermissionError)
+	if doc.get("managed_by_learning"):
+		frappe.throw(_("Learned skills are managed by the learning board, not promotion."))
+
+	from_scope = (doc.scope or "Org").strip() or "Org"
+	if from_scope == "Personal":
+		from_scope = "User"
+	to_scope = (to_scope or "").strip()
+	if to_scope not in ("Role", "Org"):
+		frappe.throw(_("Promotion target must be Role or Org."))
+	if _SCOPE_RANK.get(to_scope, 0) <= _SCOPE_RANK.get(from_scope, 0):
+		frappe.throw(_("Promotion can only widen a skill's scope."))
+	target_role = (str(target_role).strip() if target_role else "") or None
+	if to_scope == "Role" and not target_role:
+		frappe.throw(_("Promoting to Role scope needs a target role."))
+
+	req = frappe.get_doc({
+		"doctype": PROMO,
+		"skill": doc.name,
+		"skill_name": doc.skill_name,
+		"from_scope": from_scope,
+		"to_scope": to_scope,
+		"target_role": target_role if to_scope == "Role" else None,
+		"note": (note or "").strip()[:140] or None,
+		"status": "Pending",
+	})
+	req.insert(ignore_permissions=True)
+	frappe.db.commit()
+	_notify_skill_reviewers(req.name)
+	return {"ok": True, "request": req.name, "skill": doc.skill_name}
+
+
+@frappe.whitelist()
+def decide_skill_promotion(request_name: str, approve: int | str, note: str = "") -> dict:
+	"""Approve or reject a skill promotion request. Reviewer-gated
+	(``require_skill_reviewer``) + four-eyes (a reviewer cannot approve their own
+	request). On approve, widen the skill's scope in place under the reviewer's
+	authority (``ignore_permissions``; the controller ``_guard_scope_change``
+	admits a reviewer). TOCTOU-safe: the status is re-read under a row lock, and
+	the widening is re-validated against the LIVE skill scope, so two concurrent
+	approvals can't double-apply. The promoted Org skill joins the shared catalog
+	on the next explicit Apply (never auto-pushed here)."""
+	from jarvis.permissions import require_skill_reviewer
+
+	require_skill_reviewer()
+	reviewer = frappe.session.user
+	req = frappe.get_doc(PROMO, request_name)
+	if reviewer == (req.owner or "") and reviewer != "Administrator":
+		frappe.throw(
+			_("You cannot approve your own promotion request; another reviewer must decide it."),
+			frappe.PermissionError,
+		)
+	status = frappe.db.get_value(PROMO, request_name, "status", for_update=True)
+	if status != "Pending":
+		return {"ok": False, "reason": _("Already {0}.").format((status or "").lower())}
+
+	approved = str(approve).strip().lower() in ("1", "true", "yes", "on")
+	out: dict = {"ok": True, "status": "Approved" if approved else "Rejected"}
+	if approved:
+		skill = frappe.get_doc(SKILL, req.skill)
+		live = (skill.scope or "Org").strip() or "Org"
+		if live == "Personal":
+			live = "User"
+		if _SCOPE_RANK.get(req.to_scope, 0) <= _SCOPE_RANK.get(live, 0):
+			frappe.throw(_("The skill is already at or above the requested scope."))
+		skill.scope = req.to_scope
+		skill.target_role = req.target_role if req.to_scope == "Role" else None
+		skill.save(ignore_permissions=True)
+		out["skill"] = skill.skill_name
+
+	req.status = "Approved" if approved else "Rejected"
+	req.reviewer = reviewer
+	req.decided_at = frappe.utils.now_datetime()
+	req.decision_note = (note or "").strip()[:140] or None
+	req.save(ignore_permissions=True)
+	frappe.db.commit()
+	return out
+
+
+_PROMO_STATUSES = ("Pending", "Approved", "Rejected")
+
+
+@frappe.whitelist()
+def list_skill_promotion_requests(
+	status: str = "Pending",
+	search: str = "",
+	start: int = 0,
+	page_length: int = 20,
+) -> dict:
+	"""Reviewer discovery queue for skill promotion requests. The doctype perms
+	are ``All: read+if_owner`` (so a requester sees only their OWN requests) — a
+	reviewer holding only Jarvis Skill Reviewer would get [] from generic
+	get_list. So this reviewer-gated raw-SQL list sidesteps the doctype-perm limit
+	exactly as ``learned_api.list_promotion_requests_page`` does for the wiki
+	queue. Envelope parity: ``{rows, total, has_more, start, page_length}``.
+	Requester full name resolved via one batched lookup."""
+	from jarvis.permissions import require_skill_reviewer
+
+	require_skill_reviewer()
+	start, pl = _clamp_page(start, page_length)
+	if status and status != "All" and status not in _PROMO_STATUSES:
+		frappe.throw(_("Invalid status filter."))
+
+	params: dict = {"start": start, "page_length": pl}
+	conds: list[str] = []
+	if status and status != "All":
+		params["status"] = status
+		conds.append("status = %(status)s")
+	if search:
+		params["q"] = f"%{_lk(search)}%"
+		conds.append("(skill_name LIKE %(q)s OR note LIKE %(q)s)")
+	where = " AND ".join(conds) or "1=1"
+
+	total = frappe.db.sql(
+		f"SELECT COUNT(*) FROM `tab{PROMO}` WHERE {where}", params
+	)[0][0]
+	rows = frappe.db.sql(
+		f"""SELECT name, skill, skill_name, from_scope, to_scope, target_role,
+			note, status, owner, creation, reviewer, decided_at, decision_note
+		FROM `tab{PROMO}`
+		WHERE {where}
+		ORDER BY creation DESC, name ASC
+		LIMIT %(page_length)s OFFSET %(start)s""",
+		params, as_dict=True,
+	)
+
+	owner_names = list({r["owner"] for r in rows if r.get("owner")})
+	fullnames = {
+		u.name: u.full_name
+		for u in (
+			frappe.get_all(
+				"User", filters={"name": ["in", owner_names]}, fields=["name", "full_name"]
+			)
+			if owner_names
+			else []
+		)
+	}
+	out_rows = [
+		{
+			"name": r["name"],
+			"skill": r.get("skill") or "",
+			"skill_name": r.get("skill_name") or "",
+			"from_scope": r.get("from_scope") or "",
+			"to_scope": r.get("to_scope") or "",
+			"target_role": r.get("target_role") or "",
+			"note": r.get("note") or "",
+			"status": r.get("status") or "",
+			"requested_by": r.get("owner") or "",
+			"requested_by_name": fullnames.get(r.get("owner")) or (r.get("owner") or ""),
+			"created": str(r.get("creation") or ""),
+			"reviewer": r.get("reviewer") or "",
+			"decided_at": str(r.get("decided_at") or ""),
+			"decision_note": r.get("decision_note") or "",
+		}
+		for r in rows
+	]
+	return {
+		"rows": out_rows,
+		"total": total,
+		"has_more": start + len(out_rows) < total,
+		"start": start,
+		"page_length": pl,
+	}
+
+
+# --------------------------------------------------------------------------- #
 # Apply (explicit push to the container, via admin → fleet)
 # --------------------------------------------------------------------------- #
 @frappe.whitelist()
+@require_jarvis_user
 def get_custom_skills_sync_status() -> dict:
 	"""Lightweight poller mirroring onboarding.get_llm_sync_status."""
+	return _custom_sync_status()
+
+
+def _custom_sync_status() -> dict:
+	"""Undecorated core of :func:`get_custom_skills_sync_status`. Split out so the
+	reviewer Apply board (``learned_api._cutover_custom_sync_status``, reached from
+	``get_learned_apply_status`` under ``_REVIEWER_ROLES``) can read the custom sync
+	pair without tripping the ``@require_jarvis_user`` HTTP gate — a read of two
+	``Jarvis Settings`` fields the reviewer is already authorized to see."""
 	s = frappe.get_single(_SETTINGS)
 	status = s.get("custom_skills_sync_status") or ""
 	return {
@@ -457,12 +741,31 @@ def get_custom_skills_sync_status() -> dict:
 def apply_custom_skills() -> dict:
 	"""Push all enabled skills to the assistant (one restart). Explicit action.
 
+	Reviewer/admin-gated (security review PART 2 TASK 12): a bench-wide push
+	reconciles + RESTARTS the shared container for EVERY user, so a plain Jarvis
+	User (which every backfilled user holds) must not be able to trigger it (DoS +
+	it is what forces any Org skill out to all pods). Gated with the skill-reviewer
+	set (Jarvis Skill Reviewer / Jarvis Admin / System Manager) — deliberately NOT
+	stacked under @require_jarvis_user, since a reviewer/admin may hold neither
+	Jarvis User nor System Manager.
+
 	Builds the payload synchronously so size/cap errors surface immediately,
 	marks a pending status, then enqueues the deduped worker (mirrors
 	``JarvisSettings.on_update``). ``strict=True``: this is the interactive
 	endpoint - a human is present to act on the over-cap error, so raise
 	instead of truncating (the unattended worker below stays graceful).
 	"""
+	from jarvis.permissions import require_skill_reviewer
+
+	require_skill_reviewer()
+	return _apply_custom_skills_impl()
+
+
+def _apply_custom_skills_impl() -> dict:
+	"""Undecorated core of :func:`apply_custom_skills`. Split out so a caller
+	already authorized by its own gate can reconcile the shared catalog without
+	re-checking the reviewer gate (the bulk-delete path only invokes it for a
+	reviewer)."""
 	skills = build_push_payload(strict=True)
 	frappe.db.set_single_value(
 		_SETTINGS, "custom_skills_sync_status", "pending: applying skills"

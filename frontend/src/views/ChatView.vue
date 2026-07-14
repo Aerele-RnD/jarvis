@@ -142,8 +142,11 @@
 					</div>
 					<template v-for="(m, mi) in visibleMessages" :key="m.name">
 						<div v-if="dayDividers[mi]" class="jv-daydivider"><span>{{ dayDividers[mi] }}</span></div>
+						<!-- receipt chip: a confirmed / discarded / failed gated write, shown
+						     inline in place of the confirmation card that used to vanish -->
+						<ReceiptChip v-if="m.role === 'tool'" :message="m" />
 						<!-- user -->
-						<div v-if="m.role === 'user'" class="jv-umsg" style="display:flex;flex-direction:column;align-items:flex-end;">
+						<div v-else-if="m.role === 'user'" class="jv-umsg" style="display:flex;flex-direction:column;align-items:flex-end;">
 							<div v-if="m.content" class="jv-ububble" style="max-width:78%;min-width:0;background:var(--surface-2);border:1px solid var(--border);border-radius:14px 14px 4px 14px;padding:10px 14px;font-size:14px;line-height:1.5;color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere;">{{ m.content }}</div>
 							<div v-if="m.failed" style="display:flex;align-items:center;gap:8px;margin-top:4px;font-size:11.5px;color:var(--red);">
 								<span>Not sent</span>
@@ -268,10 +271,17 @@
 
 											<div v-for="t in summaryState.view.tables" :key="t.fieldname" class="jv-summary-table">
 												<div class="jv-summary-table-h">{{ t.label }} ({{ t.count }})</div>
-												<div class="jv-summary-rows">
-													<div v-for="(row, i) in t.rows" :key="i" class="jv-summary-row">
-														<span v-for="(c, ci) in row.cells" :key="ci">{{ c }}</span>
-													</div>
+												<div class="jv-summary-gridwrap">
+													<table class="jv-summary-grid">
+														<thead v-if="t.columns && t.columns.length">
+															<tr><th v-for="(col, ci) in t.columns" :key="ci">{{ col }}</th></tr>
+														</thead>
+														<tbody>
+															<tr v-for="(row, i) in t.rows" :key="i">
+																<td v-for="(c, ci) in row.cells" :key="ci">{{ c }}</td>
+															</tr>
+														</tbody>
+													</table>
 												</div>
 											</div>
 										</div>
@@ -472,8 +482,8 @@
 						</div>
 						<div v-if="pa.error" style="margin:0 14px 10px"><ActionError :error="pa.error" /></div>
 						<div class="jv-action-foot">
-							<button v-if="!pa.spent" class="jv-action-primary" :disabled="pa.busy || convStreaming" :title="convStreaming ? 'Waiting for the current reply to finish' : ''" @click="confirmPending(pa)">✓ Confirm</button>
-							<button class="jv-action-discard" :disabled="pa.busy" @click="discardPending(pa)">{{ pa.spent ? "Dismiss" : "Discard" }}</button>
+							<button class="jv-action-primary" :disabled="pa.busy || convStreaming" :title="convStreaming ? 'Waiting for the current reply to finish' : ''" @click="confirmPending(pa)">✓ Confirm</button>
+							<button class="jv-action-discard" :disabled="pa.busy" @click="discardPending(pa)">Discard</button>
 						</div>
 					</div>
 				</div>
@@ -635,7 +645,7 @@
 
 		<!-- Artifact preview panel — slides in from the right (PDF in a viewer, Excel as a table) -->
 		<transition name="jv-slide">
-			<div v-if="artifact" class="jv-artifact-overlay" @click.self="closeArtifact">
+			<div v-if="artifact" class="jv-artifact-overlay" @mousedown="onOverlayMouseDown" @click.self="onOverlayBackdropClick(closeArtifact)">
 				<aside class="jv-artifact-panel" ref="artifactPanelEl" tabindex="-1">
 					<div class="jv-artifact-head">
 						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></svg>
@@ -679,8 +689,20 @@
 		</transition>
 		<!-- Record draft panel — the agent's proposed create/update, fully editable, applied directly -->
 		<transition name="jv-slide">
-			<div v-if="draftPanel" class="jv-artifact-overlay" @click.self="closeDraftPanel">
-				<aside class="jv-artifact-panel jv-draft-panel" tabindex="-1">
+			<div v-if="draftPanel" class="jv-artifact-overlay" @mousedown="onOverlayMouseDown" @click.self="onOverlayBackdropClick(closeDraftPanel)">
+				<aside
+					ref="draftPanelEl"
+					class="jv-artifact-panel jv-draft-panel"
+					:class="{ 'jv-draft-panel-resizing': draftResizing }"
+					:style="{ width: draftPanelWidth + 'px' }"
+					tabindex="-1"
+				>
+					<div
+						class="jv-draft-resizer"
+						:class="{ 'jv-draft-resizer-active': draftResizing }"
+						title="Drag to resize"
+						@mousedown.prevent="startDraftResize"
+					/>
 					<div class="jv-artifact-head">
 						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></svg>
 						<span class="jv-artifact-head-title">{{ draftPanel.verb === 'update' ? 'Update' : 'New' }} {{ draftPanel.doctype }}<template v-if="draftPanel.docName"> · {{ draftPanel.docName }}</template></span>
@@ -758,15 +780,31 @@
 							</div>
 							<button class="jv-draft-addrow" @click="addDraftRow(ti)">＋ Add row</button>
 						</div>
-						<div v-if="draftTotals" class="jv-draft-totals">{{ draftTotals }} <span class="jv-draft-est">(estimate — ERPNext computes final totals)</span></div>
+						<div v-if="draftTotals" class="jv-draft-totals">
+							<div class="jv-draft-total-fld">
+								<label>Total Qty</label>
+								<div class="jv-draft-total-ctl">
+									<input class="jv-action-input jv-draft-total-input" :value="draftTotals.qty" readonly tabindex="-1" aria-readonly="true" />
+									<svg class="jv-draft-total-lock" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
+								</div>
+							</div>
+							<div v-if="draftTotals.hasAmt" class="jv-draft-total-fld">
+								<label>Est. Total</label>
+								<div class="jv-draft-total-ctl">
+									<input class="jv-action-input jv-draft-total-input" :value="draftTotals.amount" readonly tabindex="-1" aria-readonly="true" />
+									<svg class="jv-draft-total-lock" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
+								</div>
+							</div>
+							<p class="jv-draft-est">Auto-calculated · ERPNext computes the final totals.</p>
+						</div>
 						<div v-if="draftPanel.error" style="margin-top:10px"><ActionError :error="draftPanel.error" /></div>
 					</div>
 					<div class="jv-draft-foot">
-						<button class="jv-action-discard" @click="discardDraft">Discard</button>
-						<button v-if="draftPanel.submittable && draftPanel.verb === 'create'" class="jv-action-2nd" style="margin-left:auto" :disabled="draftPanel.applying" @click="applyDraft(1)">Create &amp; Submit</button>
-						<button class="jv-action-primary" :style="draftPanel.submittable && draftPanel.verb === 'create' ? '' : 'margin-left:auto'" :disabled="draftPanel.applying" @click="applyDraft(0)">
+						<button v-if="draftPanel.submittable && draftPanel.verb === 'create'" class="jv-action-2nd" :disabled="draftPanel.applying" @click="applyDraft(1)">Create &amp; Submit</button>
+						<button class="jv-action-primary" :disabled="draftPanel.applying" @click="applyDraft(0)">
 							{{ draftPanel.applying ? 'Saving…' : draftCta }}
 						</button>
+						<button class="jv-action-discard" @click="discardDraft">Discard</button>
 					</div>
 				</aside>
 			</div>
@@ -800,6 +838,7 @@ import JvChart from "@/charts/JvChart.vue"
 import ConnectPhoneDialog from "@/components/ConnectPhoneDialog.vue"
 import DraftPreview from "@/components/doc/DraftPreview.vue"
 import ActionError from "@/components/ActionError.vue"
+import ReceiptChip from "@/components/ReceiptChip.vue"
 import { useShellStore } from "@/stores/shell"
 import { useJarvisTheme } from "@/theme"
 import { displayName } from "@/lib/user"
@@ -1348,7 +1387,28 @@ const currentTitle = computed(
 	() => store.conversations.find((c) => c.name === currentId.value)?.title || "New chat",
 )
 const visibleMessages = computed(() =>
-	messages.value.filter((m) => m.role === "user" || m.role === "assistant"),
+	messages.value.filter((m) => {
+		// Receipt-chip rows (a confirmed / discarded / failed gated write) render
+		// inline in the thread; every OTHER role=tool row belongs to the collapsed
+		// Activity accordion, not the main thread.
+		if (m.role === "tool") return !!m.action_outcome
+		if (m.role !== "user" && m.role !== "assistant") return false
+		// Hide a blank streaming placeholder. The live "Working on it…" indicator
+		// below the thread already renders the assistant logo + status for the
+		// in-flight turn; after a refresh or tab-switch the server's still-empty
+		// streaming row loads alongside it, so drawing both showed the assistant
+		// logo twice (once blank, once beside the status). A placeholder that has
+		// text, an error, or a canvas is a real reply and always renders.
+		if (
+			m.role === "assistant" &&
+			m.streaming &&
+			!(m.content || "").trim() &&
+			!m.error &&
+			!(m.canvas && m.canvas.length)
+		)
+			return false
+		return true
+	}),
 )
 // Group role=tool messages under the assistant turn they belong to, so each
 // answer can show an expandable "Activity" list of the tool calls (with input
@@ -1361,7 +1421,8 @@ const activityByAssistant = computed(() => {
 	for (const m of messages.value) {
 		if (m.role === "user") cur = null
 		else if (m.role === "assistant") { cur = m.name; if (!map[cur]) map[cur] = [] }
-		else if (m.role === "tool" && cur) (map[cur] || (map[cur] = [])).push(m)
+		// action_outcome rows are receipt chips shown inline, not accordion tool calls.
+		else if (m.role === "tool" && cur && !m.action_outcome) (map[cur] || (map[cur] = [])).push(m)
 	}
 	return map
 })
@@ -1870,10 +1931,17 @@ function linkifyDocs(html) {
 // once the user clicks, a new message lands and the card retires automatically.
 const _lastAssistant = computed(() => {
 	if (busy.value) return null
-	// visibleMessages excludes tool rows; the assistant reply has a LOWER seq than
-	// the tool calls it spawned, so the raw messages array ends on a tool message.
+	// visibleMessages now also carries receipt-chip tool rows (a confirmed /
+	// discarded / failed gated write), and a discard fires no continuation, so a
+	// chip can be the tail. Scan back past any trailing tool rows to the real
+	// last turn message before deciding which assistant owns the live card.
 	const vm = visibleMessages.value
-	const last = vm[vm.length - 1]
+	let last = null
+	for (let i = vm.length - 1; i >= 0; i--) {
+		if (vm[i].role === "tool") continue
+		last = vm[i]
+		break
+	}
 	return last && last.role === "assistant" && !last.streaming ? last : null
 })
 const activeAction = computed(() => (_lastAssistant.value ? actionOf(_lastAssistant.value) : null))
@@ -1960,6 +2028,63 @@ function _checkToYesNo(v) {
 // --- Record draft panel: the action JSON is the draft; edits are local; apply
 // posts to actions_api (no LLM round-trip). ---
 const draftPanel = ref(null)
+
+// Resizable edit panel — drag the inner (left) edge. Clamped to [min, max],
+// snaps to the default within +/-10px, width persisted to localStorage. Scoped
+// to the draft panel only (the artifact viewer shares .jv-artifact-panel but
+// keeps its CSS width, since this width is applied inline on the draft aside).
+const DRAFT_DEFAULT_WIDTH = 720
+const DRAFT_MIN_WIDTH = 440
+const DRAFT_WIDTH_KEY = "jarvis-draftpanel-width"
+const draftMaxWidth = () => Math.min(1100, Math.round(window.innerWidth * 0.92))
+const clampDraftWidth = (w) => Math.min(draftMaxWidth(), Math.max(DRAFT_MIN_WIDTH, w))
+const _storedDraftW = Number(localStorage.getItem(DRAFT_WIDTH_KEY))
+const draftPanelWidth = ref(clampDraftWidth(_storedDraftW || DRAFT_DEFAULT_WIDTH))
+const draftPanelEl = ref(null)
+const draftResizing = ref(false)
+let _draftPanelRight = 0
+
+function onDraftResizeMove(e) {
+	draftResizing.value = true
+	let w = _draftPanelRight - e.clientX
+	if (w > DRAFT_DEFAULT_WIDTH - 10 && w < DRAFT_DEFAULT_WIDTH + 10) w = DRAFT_DEFAULT_WIDTH
+	draftPanelWidth.value = clampDraftWidth(w)
+}
+function onDraftResizeUp() {
+	document.body.classList.remove("jv-col-resizing")
+	localStorage.setItem(DRAFT_WIDTH_KEY, String(draftPanelWidth.value))
+	draftResizing.value = false
+	document.removeEventListener("mousemove", onDraftResizeMove)
+	document.removeEventListener("mouseup", onDraftResizeUp)
+}
+function startDraftResize() {
+	// capture the panel's right edge so width is correct regardless of overlay offset
+	_draftPanelRight = draftPanelEl.value ? draftPanelEl.value.getBoundingClientRect().right : window.innerWidth
+	document.body.classList.add("jv-col-resizing")
+	document.addEventListener("mousemove", onDraftResizeMove)
+	document.addEventListener("mouseup", onDraftResizeUp)
+}
+onBeforeUnmount(() => {
+	document.removeEventListener("mousemove", onDraftResizeMove)
+	document.removeEventListener("mouseup", onDraftResizeUp)
+})
+
+// Backdrop-click dismiss must ignore the tail of an in-panel drag. When a resize
+// drag starts on a panel's handle (inside the panel) and the mouse is released
+// over the dimmed backdrop — which is exactly what stretching the panel does —
+// the browser dispatches the `click` on the common ancestor of the down/up
+// targets, i.e. the overlay. A bare @click.self would then read that
+// drag-release as an outside-click and close the panel. Gate the close on the
+// press ALSO having started on the backdrop (recorded on the overlay's own
+// mousedown; @click.self already guarantees the release resolved to it).
+let _overlayPressOnBackdrop = false
+function onOverlayMouseDown(e) {
+	_overlayPressOnBackdrop = e.target === e.currentTarget
+}
+function onOverlayBackdropClick(close) {
+	if (_overlayPressOnBackdrop) close()
+}
+
 // one shared link-search menu for panel inputs, keyed "f:<fieldname>" or "t:<ti>:<ri>:<col>"
 const draftLink = ref({ key: "", items: [], open: false, up: false })
 const _formMetaCache = {}
@@ -2126,9 +2251,13 @@ function closeDraftLink() {
 }
 
 // est. totals: any grid with qty (+rate) columns
+// Auto-derived, read-only totals for the edit panel: sum the line-item qty and
+// qty×rate across every child table that has a `qty` column. Returns a
+// structured object (not a string) so the UI can render each figure as its own
+// read-only field; null when there's nothing to total.
 const draftTotals = computed(() => {
 	const p = draftPanel.value
-	if (!p) return ""
+	if (!p) return null
 	let qty = 0, amt = 0, hasQty = false, hasAmt = false
 	for (const t of p.tables) {
 		const q = t.columns.find((c) => c.fieldname === "qty")
@@ -2141,8 +2270,12 @@ const draftTotals = computed(() => {
 			if (r) { hasAmt = true; amt += n * (parseFloat(row.rate) || 0) }
 		}
 	}
-	if (!hasQty) return ""
-	return `Total qty ${qty}` + (hasAmt ? ` · Est. total ${amt.toLocaleString("en-IN", { minimumFractionDigits: 2 })}` : "")
+	if (!hasQty) return null
+	return {
+		qty: qty.toLocaleString("en-IN"),
+		amount: amt.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+		hasAmt,
+	}
 })
 const draftCta = computed(() => {
 	const p = draftPanel.value
@@ -2346,7 +2479,6 @@ function enqueuePending(card) {
 		run_id: card.run_id || null,
 		busy: false,
 		error: null,
-		spent: false,
 	})
 }
 
@@ -2373,14 +2505,12 @@ async function confirmPending(pa) {
 				notify("That confirmation expired - ask Jarvis to try again.", { type: "error" })
 				return
 			}
-			// The token was consumed before dispatch, so this card is SPENT even
-			// though the tool itself failed. Show the enriched reason and retire
-			// the Confirm button (a second click could only ever "expire").
-			const card = cardById()
-			if (card) {
-				card.error = r.error || { message: "Could not run this action." }
-				card.spent = true
-			}
+			// The token was consumed and the tool failed; confirm_tool already
+			// persisted a durable "failed" receipt chip. Drop the card and reload
+			// so the chip shows in the thread instead of a lingering spent card.
+			removePending(token)
+			await loadConversation(currentId.value)
+			store.loadConversations()
 			return
 		}
 		// Success - the executed result surfaces via the turn's normal tool/stream
@@ -2396,10 +2526,25 @@ async function confirmPending(pa) {
 		if (card) card.busy = false
 	}
 }
-// Local-only dismiss: the parked token expires server-side; no backend call and
-// no model-visible message (the card is authoritative, not a chat approval).
-function discardPending(pa) {
-	removePending(pa && pa.token)
+// Dismiss: consume the token server-side (closes the 15-min replay window and
+// stops the card re-surfacing on reload), leave a durable "discarded" receipt
+// chip, and queue a note so the agent's next turn learns it was vetoed. Fires NO
+// agent turn. Best-effort: even if the call fails, the card drops locally (the
+// token TTL-expires) - only the chip would be missing.
+async function discardPending(pa) {
+	if (!pa || pa.busy) return
+	const token = pa.token
+	const conv = pa.conversation || currentId.value || ""
+	pa.busy = true
+	try {
+		await api.dismissTool(token, conv)
+	} catch (e) {
+		// Swallow - drop the card regardless (the token self-expires server-side).
+	}
+	removePending(token)
+	// Re-fetch so the durable "discarded" chip shows in the thread.
+	await loadConversation(currentId.value)
+	store.loadConversations()
 }
 
 // Resync (R3 fix for #3): re-fetch the current conversation's live parked
@@ -3352,6 +3497,13 @@ function onEvent(p) {
 	if (p.kind === "conversation:new" && p.conversation_id) {
 		store.applyRemoteNew()
 		proactiveToast.value = { id: p.conversation_id, title: p.title || "Message from Jarvis", preview: p.preview || "" }
+		return
+	}
+	// The retention sweep archived an idle conversation (session_lifecycle). Drop
+	// it from the sidebar; handled before the current-conversation guard so an open
+	// tab updates even if the user has since switched chats.
+	if (p.kind === "conversation:expired" && p.conversation_id) {
+		store.applyRemoteExpired(p.conversation_id)
 		return
 	}
 	// Macro-run events use `conversation` (not conversation_id) and are handled
@@ -4786,13 +4938,22 @@ onUnmounted(() => {
 .jv-summary-to { color: var(--green); font-weight: 600; }
 .jv-summary-nochange, .jv-summary-loading { font-size: 12.5px; color: var(--text-3); }
 .jv-summary-table { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-.jv-summary-table-h { padding: 7px 10px; background: var(--surface-2); font-size: 12px; font-weight: 650; color: var(--text-2); }
-.jv-summary-row { display: flex; gap: 12px; padding: 5px 10px; font-size: 12.5px; color: var(--text); border-top: 1px solid var(--border); }
-.jv-summary-row span:first-child { flex: 1; }
+.jv-summary-table-h { padding: 7px 10px; background: var(--surface-2); font-size: 12px; font-weight: 650; color: var(--text-2); border-bottom: 1px solid var(--border); }
+.jv-summary-gridwrap { overflow-x: auto; }
+.jv-summary-grid { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.jv-summary-grid th { text-align: left; padding: 6px 10px; color: var(--text-3); font-weight: 600; font-size: 10.5px; letter-spacing: .05em; text-transform: uppercase; white-space: nowrap; background: var(--surface-1); border-bottom: 1px solid var(--border); }
+.jv-summary-grid td { padding: 5px 10px; color: var(--text); white-space: nowrap; border-bottom: 1px solid var(--border); }
+.jv-summary-grid tbody tr:last-child td { border-bottom: none; }
 .jv-summary-hint { padding: 0 14px 11px; font-size: 12px; color: var(--text-3); }
 
 /* --- record draft panel --- */
-.jv-draft-panel { display: flex; flex-direction: column; }
+.jv-draft-panel { position: relative; max-width: 92vw; display: flex; flex-direction: column; }
+/* Drag handle on the inner (left) edge; 1px rule that lights up on hover/drag. */
+.jv-draft-resizer { position: absolute; left: 0; top: 0; z-index: 3; height: 100%; width: 8px; margin-left: -4px; cursor: col-resize; }
+.jv-draft-resizer::before { content: ""; position: absolute; left: 4px; top: 0; height: 100%; width: 1px; background: var(--blue); opacity: 0; transition: opacity .15s ease; }
+.jv-draft-resizer:hover::before, .jv-draft-resizer-active::before { opacity: 1; }
+.jv-draft-panel-resizing { user-select: none; }
+:global(body.jv-col-resizing) { cursor: col-resize; user-select: none; }
 .jv-draft-badge { font-size: 10px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; color: var(--amber); background: var(--amber-bg); border: 1px solid var(--amber-bd); border-radius: 99px; padding: 3px 9px; margin-left: 8px; }
 .jv-draft-body { flex: 1; overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 14px; }
 .jv-draft-toast { font-size: 12px; color: var(--blue); background: var(--blue-bg); border: 1px solid var(--blue-bd); border-radius: 8px; padding: 7px 11px; }
@@ -4813,8 +4974,15 @@ onUnmounted(() => {
 .jv-grid-del { background: none; border: none; color: var(--text-3); cursor: pointer; padding: 4px 6px; border-radius: 6px; }
 .jv-grid-del:hover { color: var(--red); background: var(--red-bg); }
 .jv-draft-addrow { align-self: flex-start; margin-top: 8px; background: none; border: none; color: var(--blue); font-weight: 600; font-size: 12.5px; cursor: pointer; padding: 4px 2px; }
-.jv-draft-totals { font-size: 12.5px; color: var(--text-2); font-variant-numeric: tabular-nums; }
-.jv-draft-est { color: var(--text-3); font-size: 11px; }
+.jv-draft-totals { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 14px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-1); }
+.jv-draft-total-fld { display: flex; flex-direction: column; flex: 1 1 130px; min-width: 120px; }
+.jv-draft-total-fld label { display: block; font-size: 10.5px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); margin-bottom: 4px; }
+.jv-draft-total-ctl { position: relative; }
+/* read-only: muted fill, no caret, a lock glyph — clearly not an editable field */
+.jv-draft-total-input { width: 100%; box-sizing: border-box; background: var(--surface-2); color: var(--text); font-weight: 650; font-variant-numeric: tabular-nums; cursor: default; padding-right: 28px; }
+.jv-draft-total-input:focus { border-color: var(--border-2); box-shadow: none; }
+.jv-draft-total-lock { position: absolute; right: 9px; top: 50%; transform: translateY(-50%); color: var(--text-3); pointer-events: none; }
+.jv-draft-est { flex-basis: 100%; margin: 0; color: var(--text-3); font-size: 11px; }
 .jv-draft-foot { display: flex; gap: 10px; align-items: center; padding: 12px 16px; border-top: 1px solid var(--border); }
 @media (max-width: 700px) { .jv-draft-fields { grid-template-columns: 1fr; } }
 
