@@ -2,15 +2,12 @@ import { reactive } from "vue"
 import * as api from "./api"
 
 // One small shared store: the conversation list is read by the chats screen and
-// written by the chat screen (a reply retitles the chat), the drawer is opened
-// from whichever screen is on top, and the pending-approval count has to be
-// visible from anywhere — an approval the agent is waiting on is not something
-// the user should have to go looking for.
+// the drawer, and written by the chat screen (a reply retitles the chat). The
+// drawer is opened from whichever screen is on top.
 export const store = reactive({
 	drawerOpen: false,
 	conversations: [],
 	loaded: false,
-	pendingApprovals: 0,
 
 	async loadConversations() {
 		try {
@@ -22,15 +19,6 @@ export const store = reactive({
 			console.error("Jarvis PWA: failed to load conversations", e)
 		} finally {
 			this.loaded = true
-		}
-	},
-
-	async loadPendingCount() {
-		try {
-			const n = await api.pendingApprovalsCount()
-			this.pendingApprovals = Number(n) || 0
-		} catch {
-			/* a badge is not worth an error state */
 		}
 	},
 

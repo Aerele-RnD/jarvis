@@ -64,6 +64,40 @@ export function parseCards(content) {
 	}
 }
 
+const ACTION_RE = /```jarvis-action[ \t]*\n([\s\S]*?)```/
+
+/**
+ * ```jarvis-action``` → the document the agent is PROPOSING to write.
+ *
+ * This is the other half of the write story. For create/update the agent does
+ * not call a tool at all: it emits this card and waits for a human to apply it.
+ * Strip it without rendering it (which is what this surface used to do) and the
+ * agent can describe the record it wants to make while the user has no button
+ * to make it — the write is simply unreachable from the phone.
+ *
+ * Shape: {kind:"doc", verb, doctype, name?, title?, fields:[{label,value}]}
+ * or    {kind:"email", to, subject, body}.
+ */
+export function parseAction(content) {
+	if (!content || !content.includes("jarvis-action")) return null
+	const mt = content.match(ACTION_RE)
+	if (!mt) return null
+	try {
+		const a = JSON.parse(mt[1].trim())
+		if (!a || typeof a !== "object") return null
+		if (Array.isArray(a.fields)) {
+			a.fields = a.fields.map((f) => ({
+				label: String(f.label || ""),
+				value: f.value == null ? "" : String(f.value),
+			}))
+		}
+		return a
+	} catch {
+		// Mid-stream the JSON is still arriving — render nothing until it parses.
+		return null
+	}
+}
+
 /** ```jarvis-skill``` → the skill names that shaped this reply. */
 export function parseSkillsUsed(content) {
 	if (!content || !content.includes("jarvis-skill")) return []

@@ -4,15 +4,17 @@ import ChatsView from "./views/ChatsView.vue"
 // history base = the route Frappe serves the shell at. The catch-all rule in
 // hooks.py ("/jarvis-mobile/<path:app_path>") hands every deep link back to the
 // same page, so a refresh on /jarvis-mobile/c/<id> resolves here rather than 404ing.
+//
+// The destinations are the native app's, and only those: New chat, Chats,
+// Business, File Box, plus the account and settings pages the drawer's foot
+// opens. Write approvals are answered in the chat that raised them.
 const routes = [
 	{ path: "/", name: "Chats", component: ChatsView },
 	{ path: "/login", name: "Login", component: () => import("./views/LoginView.vue") },
+	{ path: "/c/new", name: "NewChat", component: () => import("./views/NewChatView.vue") },
 	{ path: "/c/:id", name: "Chat", component: () => import("./views/ChatView.vue"), props: true },
 	{ path: "/business", name: "Business", component: () => import("./views/BusinessView.vue") },
 	{ path: "/files", name: "FileBox", component: () => import("./views/FileBoxView.vue") },
-	{ path: "/macros", name: "Macros", component: () => import("./views/MacrosView.vue") },
-	{ path: "/approvals", name: "Approvals", component: () => import("./views/ApprovalsView.vue") },
-	{ path: "/skills", name: "Skills", component: () => import("./views/SkillsView.vue") },
 	{ path: "/settings", name: "Settings", component: () => import("./views/SettingsView.vue") },
 	{ path: "/account", name: "Account", component: () => import("./views/AccountView.vue") },
 	{ path: "/:pathMatch(.*)*", redirect: "/" },

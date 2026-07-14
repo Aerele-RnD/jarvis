@@ -6,8 +6,9 @@ import { useRouter } from "vue-router"
 import { renderMarkdown } from "@shared/markdown.js"
 import * as api from "../api"
 import { store } from "../store"
-import { parseCards, parseCharts, parseSkillsUsed, stripAgentBlocks, toolStatus } from "../lib/blocks"
+import { parseAction, parseCards, parseCharts, parseSkillsUsed, stripAgentBlocks, toolStatus } from "../lib/blocks"
 import { spanBetween } from "../lib/time"
+import ActionCard from "../components/ActionCard.vue"
 import ChartCard from "../components/ChartCard.vue"
 import Composer from "../components/Composer.vue"
 import DecisionCard from "../components/DecisionCard.vue"
@@ -60,6 +61,10 @@ const autoApply = ref(false)
 
 const scroller = ref(null)
 const composer = ref(null)
+// An action card is a live offer, not history: only the newest assistant turn
+// may still be applied. Scrolling back to last week's proposal and tapping
+// Create would write a record the user has long since moved on from.
+const dismissedActions = ref(new Set())
 
 const sending = computed(() => !!live.value || sendBusy.value)
 const title = computed(
@@ -67,61 +72,6 @@ const title = computed(
 )
 const model = computed(() => conversation.value?.model_override || settings.value?.llm_model || "")
 const micEnabled = computed(() => !!settings.value?.stt_enabled)
-
-// The pickable models, exactly as the desktop ChatView derives them: the
-// configured LLM pool when there is one, else the provider's subscription
-// allowlist. Deduped on provider+model, because a subscription pool holds one
-// row per ACCOUNT, not per model — without that the same model appears once per
-// connected account.
-//
-// Deliberately NOT gated on llm_auth_mode: the live value here is
-// "subscription", not "oauth" (the docstring in get_chat_ui_settings is stale),
-// and gating on it hid the picker entirely.
-const models = computed(() => {
-	const s = settings.value
-	if (!s) return []
-	const pool = s.pool_models || []
-	if (pool.length) {
-		const seen = new Set()
-		const out = []
-		for (const r of pool) {
-			const key = `${r.provider}/${r.model}`
-			if (!r.model || seen.has(key)) continue
-			seen.add(key)
-			out.push(r.model)
-		}
-		return out
-	}
-	return s.subscription_models?.[s.llm_provider] || []
-})
-const thinkingLevels = computed(() => settings.value?.thinking_levels || ["low", "medium", "high"])
-// "" = inherit the workspace default, which is what a chat starts as.
-const chosenModel = computed(() => conversation.value?.model_override || "")
-const chosenThinking = computed(() => conversation.value?.thinking_override || "")
-
-async function pickModel(m) {
-	menuError.value = ""
-	const prev = conversation.value?.model_override || ""
-	if (conversation.value) conversation.value.model_override = m
-	try {
-		await api.setConversationModel(convId.value, m)
-	} catch (e) {
-		if (conversation.value) conversation.value.model_override = prev
-		menuError.value = e?.message || "Couldn't switch the model."
-	}
-}
-
-async function pickThinking(level) {
-	menuError.value = ""
-	const prev = conversation.value?.thinking_override || ""
-	if (conversation.value) conversation.value.thinking_override = level
-	try {
-		await api.setConversationThinking(convId.value, level)
-	} catch (e) {
-		if (conversation.value) conversation.value.thinking_override = prev
-		menuError.value = e?.message || "Couldn't change the effort level."
-	}
-}
 
 // Everything the agent's raw text carries, unpacked once per message. Done here
 // rather than in the template: the template would re-run it on every render, and
@@ -136,13 +86,15 @@ const view = (m) => {
 		html,
 		cards,
 		charts,
+		action: parseAction(content),
 		skills: parseSkillsUsed(content),
 		took: spanBetween(m.creation, m.modified),
 		// A turn can end with nothing to show: the runtime aborts a stalled model
 		// call and writes an empty assistant row. With no prose, no cards, no
 		// canvas and no error text, the thread would render a blank gap and the
 		// user would be left wondering whether anything happened at all.
-		empty: !html && !cards && !charts.length && !m.error && !(m.canvas || []).length,
+		empty:
+			!html && !cards && !charts.length && !parseAction(content) && !m.error && !(m.canvas || []).length,
 	}
 }
 
@@ -181,6 +133,17 @@ const items = computed(() => {
 	}
 	return out
 })
+
+const lastAssistantKey = computed(() => {
+	const assistants = items.value.filter((i) => i.type === "assistant" && i.msg)
+	return assistants.length ? assistants[assistants.length - 1].key : ""
+})
+
+// The write leaves a receipt in the conversation, so reload rather than guess.
+function onActionApplied() {
+	load()
+	store.loadConversations()
+}
 
 function toolsTitle(msgs) {
 	const dur = spanBetween(msgs[0]?.creation, msgs[msgs.length - 1]?.modified || msgs[msgs.length - 1]?.creation, 1)
@@ -264,11 +227,13 @@ async function send() {
 	await scrollToBottom(true)
 
 	try {
-		const res = await api.sendMessage(
-			convId.value,
-			text,
-			ready.map((a) => ({ file_url: a.file_url, file_name: a.name })),
-		)
+		// No model/effort override here: an existing chat keeps whatever it was
+		// started with (the backend falls back to the workspace default). The
+		// device's preference applies when a chat is CREATED, on the new-chat
+		// screen — same rule as the native app.
+		const res = await api.sendMessage(convId.value, text, {
+			attachments: ready.map((a) => ({ file_url: a.file_url, file_name: a.name })),
+		})
 		if (res?.ok === false) {
 			sendBusy.value = false
 			errorBanner.value = res.reason || "Couldn't send that message."
@@ -553,6 +518,13 @@ onUnmounted(() => {
 					<div v-else-if="it.view.empty" class="jv-msg-error">
 						Jarvis didn't return a reply for this turn. Try asking again.
 					</div>
+					<ActionCard
+						v-if="it.view.action && it.key === lastAssistantKey && !dismissedActions.has(it.key)"
+						:action="it.view.action"
+						:conversation="convId"
+						@applied="onActionApplied"
+						@dismissed="dismissedActions.add(it.key)"
+					/>
 					<RecordCards v-if="it.view.cards" :data="it.view.cards" />
 					<ChartCard v-for="(c, ci) in it.view.charts" :key="ci" :spec="c" />
 					<SkillChips :names="it.view.skills" />
@@ -635,40 +607,6 @@ onUnmounted(() => {
 			</template>
 
 			<template v-else>
-				<!-- Model, for THIS chat. Auto = follow the workspace default, so a
-				     user who never touches it keeps tracking the admin's choice. -->
-				<div v-if="models.length" class="jv-picker">
-					<div class="jv-picker-label">Model</div>
-					<div class="jv-chips">
-						<button class="jv-chip" :class="{ 'is-on': !chosenModel }" @click="pickModel('')">Auto</button>
-						<button
-							v-for="m in models"
-							:key="m"
-							class="jv-chip"
-							:class="{ 'is-on': chosenModel === m }"
-							@click="pickModel(m)"
-						>
-							{{ m }}
-						</button>
-					</div>
-				</div>
-
-				<div class="jv-picker">
-					<div class="jv-picker-label">Effort</div>
-					<div class="jv-chips">
-						<button class="jv-chip is-effort" :class="{ 'is-on': !chosenThinking }" @click="pickThinking('')">Auto</button>
-						<button
-							v-for="l in thinkingLevels"
-							:key="l"
-							class="jv-chip is-effort"
-							:class="{ 'is-on': chosenThinking === l }"
-							@click="pickThinking(l)"
-						>
-							{{ l }}
-						</button>
-					</div>
-				</div>
-
 				<button class="jv-row-btn" @click="toggleStar">
 					<svg viewBox="0 0 24 24" width="19" height="19" :fill="starred ? 'var(--amber-dot)' : 'none'" :stroke="starred ? 'var(--amber-dot)' : 'currentColor'" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
 						<path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1z" />
@@ -897,45 +835,6 @@ onUnmounted(() => {
 /* chat options sheet */
 .jv-menu {
 	padding: 4px 14px 18px;
-}
-.jv-picker {
-	padding: 10px 2px;
-	border-bottom: 1px solid var(--border);
-}
-.jv-picker-label {
-	margin-bottom: 8px;
-	font-size: 11px;
-	font-weight: 600;
-	letter-spacing: 0.4px;
-	text-transform: uppercase;
-	color: var(--ink5);
-}
-.jv-chips {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 6px;
-}
-.jv-chip {
-	padding: 7px 12px;
-	border: 1px solid var(--border2);
-	border-radius: 999px;
-	background: var(--card);
-	color: var(--ink7);
-	font: inherit;
-	font-size: 13px;
-	cursor: pointer;
-}
-/* Effort levels arrive lowercase and read better capitalised. Model IDs must
-   NOT be touched — capitalising turns "gpt-5.5" into "Gpt-5.5", which is not
-   the name of anything. */
-.jv-chip.is-effort {
-	text-transform: capitalize;
-}
-.jv-chip.is-on {
-	background: var(--accent-bg);
-	border-color: transparent;
-	color: var(--accent);
-	font-weight: 600;
 }
 .jv-menu-title {
 	padding: 6px 2px 10px;

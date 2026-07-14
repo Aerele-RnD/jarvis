@@ -13,26 +13,8 @@ defineProps({ title: { type: String, required: true } })
 			<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
 				<path d="M3 6h18M3 12h18M3 18h18" />
 			</svg>
-			<span v-if="store.pendingApprovals" class="jv-badge" />
 		</button>
 		<div class="jv-title">{{ title }}</div>
 		<slot name="actions" />
 	</div>
 </template>
-
-<style scoped>
-.jv-icon-btn {
-	position: relative;
-}
-/* A parked write is waiting behind the drawer — say so on the button that opens it. */
-.jv-badge {
-	position: absolute;
-	top: 7px;
-	right: 7px;
-	width: 8px;
-	height: 8px;
-	border-radius: 999px;
-	background: var(--amber-dot);
-	border: 2px solid var(--menu-bar);
-}
-</style>
