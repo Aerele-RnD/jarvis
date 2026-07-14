@@ -1081,7 +1081,13 @@ onMounted(async () => {
 	background: var(--surface-2); color: var(--text);
 	transition: background-color .15s ease, color .15s ease, border-color .15s ease;
 }
-.jv-ob-btn:hover { background: var(--surface-3); }
+/* :not(:disabled) is REQUIRED here. Without it this rule (specificity 0,2,0)
+   outranks .jv-ob-btn-grad/.jv-ob-btn-primary (0,1,0) on hover, repainting a
+   DISABLED primary button's background to near-white --surface-3 while its
+   color stays var(--surface) (white) -> white-on-white, the button vanishes
+   under the cursor. Hit live on the Connect step's "Start chatting" while it
+   was still disabled. */
+.jv-ob-btn:hover:not(:disabled) { background: var(--surface-3); }
 .jv-ob-btn:disabled { opacity: .5; cursor: default; }
 .jv-ob-btn-primary, .jv-ob-btn-grad { background: var(--text); border-color: var(--text); color: var(--surface); }
 .jv-ob-btn-primary:hover:not(:disabled), .jv-ob-btn-grad:hover:not(:disabled) { background: var(--text-2); border-color: var(--text-2); color: var(--surface); }

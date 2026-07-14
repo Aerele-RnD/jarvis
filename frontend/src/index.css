@@ -53,8 +53,15 @@
 	box-shadow: none;
 }
 /* forms-plugin focus ring (blue box-shadow ring + blue border) suppressed on
-   the chat surface; jv rules define their own :focus looks. */
-.jv-root :where(input:not([type="checkbox"]):not([type="radio"]), textarea, select):focus {
+   the chat surface; jv rules define their own :focus looks.
+   .jv-ob-root (onboarding/wizard) MUST be listed too: it is a separate root, so
+   scoping this to .jv-root alone left every onboarding input — including the
+   JvCombo model/provider pickers and the API-key/Base-URL fields — painting the
+   forms-plugin's BLUE focus ring, which contradicts the monochrome accent. Note
+   the plugin rings via box-shadow + border-color, not outline, so a component's
+   `outline: none` does not suppress it. */
+.jv-root :where(input:not([type="checkbox"]):not([type="radio"]), textarea, select):focus,
+.jv-ob-root :where(input:not([type="checkbox"]):not([type="radio"]), textarea, select):focus {
 	outline: revert;
 	box-shadow: none;
 	border-color: revert;

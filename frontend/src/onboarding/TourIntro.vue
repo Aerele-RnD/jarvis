@@ -127,16 +127,15 @@
 				</div>
 			</div>
 
-			<!-- slide 6 · agents (final: single in-copy CTA, footer Next/Skip hidden) -->
+			<!-- slide 6 · agents (final: the Onboard Jarvis CTA lives in the footer's
+				 Next slot, so it sits bottom-right like every other slide's advance
+				 button; Skip is hidden here). -->
 			<div v-else class="slide">
 				<div class="slide-copy">
 					<span class="eyebrow">Agents</span>
 					<h2>Put specialists to work in the background.</h2>
 					<p>Install expert-built ERPNext agents, or build your own custom agents for your team’s workflows. They watch and surface findings before you ask.</p>
 					<p class="final-call"><mark>Ready to see it on your data? Onboard Jarvis and explore everything hands-on. It takes about two minutes.</mark></p>
-					<div class="final-cta">
-						<button class="btn btn--primary btn--lg" @click="$emit('finish')">Onboard Jarvis</button>
-					</div>
 				</div>
 				<div class="mock">
 					<div class="mock-bar"><i></i><i></i><i></i><span>Agents</span></div>
@@ -166,6 +165,7 @@
 				<button v-if="!isLast" class="skip" @click="$emit('skip')">Skip tour</button>
 				<button class="btn btn--ghost btn--sm" :style="{ visibility: cur === 0 ? 'hidden' : 'visible' }" @click="step(-1)">Back</button>
 				<button v-if="!isLast" class="btn btn--primary btn--sm" @click="step(1)">Next</button>
+				<button v-else class="btn btn--primary btn--sm" @click="$emit('finish')">Onboard Jarvis</button>
 			</div>
 		</div>
 	</div>
@@ -273,7 +273,6 @@ button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 	color: var(--text); padding: 3px 7px; border-radius: 6px;
 	-webkit-box-decoration-break: clone; box-decoration-break: clone; font-weight: 550;
 }
-.final-cta { margin-top: 16px; }
 
 /* ---- buttons (local to the tour; the wizard steps have their own) ---- */
 .btn {

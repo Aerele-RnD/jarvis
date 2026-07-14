@@ -4,7 +4,11 @@
 	     Chat-subscription | API-keys/failover control, a brief save note, and a
 	     retryable load. The dialog root supplies paletteVars + .jv-dark, so the
 	     shared jv-* classes resolve here without a local palette wrapper. -->
-	<div class="jv-settings-body">
+	<!-- jv-pane-fill: the left rail (~516px) floors the dialog height, but this
+	     pane's content is only ~164px, so ~276px would sit as dead white space.
+	     Fill the column and let the Save bar sink to the bottom (see settings.css)
+	     so that space reads as a footer, matching the onboarding wizard. -->
+	<div class="jv-settings-body jv-pane-fill">
 		<!-- brief save acknowledgement (the editors persist themselves) -->
 		<div v-if="savedNote" style="display:flex;justify-content:flex-end;margin-bottom:8px;">
 			<span class="jv-acct-savednote">{{ savedNote }}</span>
@@ -18,29 +22,14 @@
 		</div>
 
 		<template v-else>
-			<!-- Connection type. A single chat subscription is served DIRECT (codex,
-			     no proxy); API keys and multi-model failover pools live in the unified
-			     editor. Switching to "Chat subscription" and re-authorizing moves a
-			     pooled single subscription back to direct. -->
-			<div v-if="isSM" class="jv-acct-aitabs" role="tablist">
-				<button type="button" role="tab" :aria-selected="aiTab === 'subscription'"
-					:class="{ on: aiTab === 'subscription' }" @click="aiTab = 'subscription'">Chat subscription</button>
-				<button type="button" role="tab" :aria-selected="aiTab === 'pool'"
-					:class="{ on: aiTab === 'pool' }" @click="aiTab = 'pool'">API keys &amp; failover</button>
-			</div>
-
-			<!-- Chat subscription (DIRECT flat-field OAuth path): the interactive
-			     re-authorize / disconnect / connect card. Same wiring as the old
-			     Account page (PR #234), now hosted in the dialog. -->
-			<DirectSubscriptionCard
-				v-if="aiTab === 'subscription'"
-				:status="directSub"
-				:editable="isSM"
-				@reauthorized="onDirectChanged"
-				@disconnected="onDirectChanged" />
-
-			<!-- API keys & multi-model failover pool -->
-			<LlmPoolEditor v-else :editable="isSM" @saved="onSaved" />
+			<!-- Unified failover-list editor: a chat subscription, API keys, and
+			     multi-model failover pools all live in one list + master-detail
+			     config section. A legacy DIRECT (flat-field, no-proxy) subscription
+			     is probed above and passed down as directStatus - LlmPoolEditor
+			     synthesizes a read-oriented row for it (Reconnect embeds
+			     DirectSubscriptionCard inline; Remove disconnects) without ever
+			     round-tripping it through save_llm_pool. -->
+			<LlmPoolEditor :editable="isSM" :directStatus="directSub" @saved="onSaved" @direct-changed="onDirectChanged" />
 		</template>
 	</div>
 </template>
@@ -49,7 +38,6 @@
 import { ref, onMounted } from "vue"
 import { getDirectSubscriptionStatus } from "@/api"
 import LlmPoolEditor from "@/components/LlmPoolEditor.vue"
-import DirectSubscriptionCard from "@/components/DirectSubscriptionCard.vue"
 
 // The rail already gates this section to System Managers; this flag additionally
 // gates the editor's edit affordances + which probes fire.
@@ -60,21 +48,16 @@ const savedNote = ref("")
 let savedTimer = null
 
 // ---- Direct chat-subscription (flat-field OAuth path) ----------------------
-// LlmPoolEditor reads only models[]; a customer who onboarded a single chat
-// subscription has an empty models[] with their creds in the flat llm_*/
-// llm_oauth_* fields, so the pool editor can neither show nor re-authorize them.
-// Probe getDirectSubscriptionStatus to decide the default tab; DirectSubscriptionCard
-// (PR #234) renders the interactive re-authorize / disconnect / connect card.
+// LlmPoolEditor's rows.value reads only models[]; a customer who onboarded a
+// single chat subscription has an empty models[] with their creds in the flat
+// llm_*/llm_oauth_* fields, so the pool editor can neither show nor
+// re-authorize them from rows.value alone. Probe getDirectSubscriptionStatus
+// and hand the result down as :directStatus - LlmPoolEditor synthesizes a
+// row for it (embedding DirectSubscriptionCard inline) when
+// is_direct_subscription is true.
 const directSub = ref({ is_direct_subscription: false })
 const directSubLoading = ref(true)
 const directSubErr = ref("")
-
-// "subscription" (direct codex) | "pool" (api-key / multi-model). Defaulted ONCE
-// from the stored config — a direct subscription OR a single-subscription pool
-// opens on the Chat-subscription tab; everything else opens on the pool editor.
-// After that the user's tab choice sticks.
-const aiTab = ref("pool")
-let aiTabInit = false
 
 async function loadDirectSub() {
 	if (!isSM) { directSubLoading.value = false; return }
@@ -88,10 +71,6 @@ async function loadDirectSub() {
 			getDirectSubscriptionStatus(),
 			timeout,
 		])) || { is_direct_subscription: false }
-		if (!aiTabInit) {
-			aiTab.value = (directSub.value.is_direct_subscription || directSub.value.is_single_subscription_pool) ? "subscription" : "pool"
-			aiTabInit = true
-		}
 	} catch (e) {
 		// Don't silently drop a real direct-subscription tenant onto the empty
 		// pool editor — surface a retryable error instead of a dead end.
@@ -102,14 +81,17 @@ async function loadDirectSub() {
 	}
 }
 
-// DirectSubscriptionCard emitted reauthorized/disconnected — re-probe status so
-// the fields + tab reflect the new state.
+// LlmPoolEditor's embedded DirectSubscriptionCard emitted direct-changed
+// (reauthorized/disconnected) — re-probe status so the synthesized row
+// reflects the new state.
 async function onDirectChanged() {
 	await loadDirectSub()
 }
 
-// After a pool save (which can migrate direct<->pool): flash the note and
-// re-probe direct status. aiTab is already initialised, so the tab won't jump.
+// After a pool save: flash the note and re-probe direct status (a save can't
+// migrate direct<->pool anymore - the unified editor never round-trips the
+// synthesized direct row through save_llm_pool - but re-probing stays cheap
+// insurance against drift).
 async function onSaved(sync) {
 	savedNote.value = sync && sync.pending ? "Saved — syncing…" : "Saved"
 	clearTimeout(savedTimer)

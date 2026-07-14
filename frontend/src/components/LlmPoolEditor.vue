@@ -8,86 +8,328 @@
   <div class="jv-llm-editor" style="font-family:inherit;color:var(--text);">
     <div v-if="err" style="color:var(--red);font-size:13px;margin-bottom:12px;">{{ err }}</div>
 
-    <!-- Setup mode tabs + derived Direct/Proxy badge - hidden when the host
-         allows only one mode (onboarding's quick-only editor). -->
-    <div v-if="!singleMode" style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
-      <div role="tablist" style="display:inline-flex;border:1px solid var(--border);border-radius:9px;overflow:hidden;">
-        <button v-for="t in modeTabs" :key="t.value" role="tab" :aria-selected="llmMode===t.value"
-                @click="setMode(t.value)" :disabled="!editable || (t.value==='quick' && quickLocked)"
-                :title="t.value==='quick' && quickLocked ? 'Your pool has multiple models - edit them in Custom. Remove models to switch to Quick.' : ''"
-                :style="{fontSize:'14px',padding:'10px 18px',border:'none',
-                         cursor: (!editable || (t.value==='quick' && quickLocked)) ? 'not-allowed' : 'pointer',
-                         opacity: (t.value==='quick' && quickLocked) ? '0.4' : '1',
-                         background: llmMode===t.value ? 'var(--blue-bg)' : 'var(--surface)',
-                         color: llmMode===t.value ? 'var(--blue)' : 'var(--text-3)',
-                         fontWeight: llmMode===t.value ? '600' : '400'}">{{ t.label }}</button>
-      </div>
-      <span v-if="badgeLabel" style="font-size:12px;font-weight:600;padding:4px 11px;border-radius:20px;background:var(--green-bg);color:var(--green);">
-        {{ badgeLabel }}
-      </span>
-    </div>
-
-    <!-- ===================== PRESET ===================== -->
-    <section v-if="llmMode==='preset'" style="margin-bottom:18px;">
-      <p v-if="!catalog.length" style="font-size:14px;color:var(--text-3);margin:0 0 12px;">
-        Couldn't load presets. Use <b>Quick</b> or <b>Custom</b>.
-      </p>
-      <div v-else style="max-height:440px;overflow-y:auto;padding-right:4px;">
-        <!-- single_vendor presets -->
-        <div v-if="singleVendorPresets.length" style="margin-bottom:10px;">
-          <div style="font-size:13px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.03em;margin-bottom:9px;">Single-vendor resilience</div>
-          <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;">
-            <button v-for="entry in singleVendorPresets" :key="entry.key"
-                    @click="selectPreset(entry)" :disabled="!editable" :style="presetCardStyle(entry)">
-              <div style="font-size:14px;font-weight:600;">{{ entry.label }}</div>
-              <div style="font-size:13px;color:var(--text-2);margin-top:4px;line-height:1.45;">{{ entry.blurb }}</div>
-            </button>
-          </div>
-        </div>
-        <!-- cross_vendor presets -->
-        <div v-if="crossVendorPresets.length">
-          <div style="font-size:13px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.03em;margin:14px 0 9px;">Cross-vendor strategies</div>
-          <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;">
-            <button v-for="entry in crossVendorPresets" :key="entry.key"
-                    @click="selectPreset(entry)" :disabled="!editable" :style="presetCardStyle(entry)">
-              <div style="font-size:14px;font-weight:600;">{{ entry.label }}</div>
-              <div style="font-size:13px;color:var(--text-2);margin-top:4px;line-height:1.45;">{{ entry.blurb }}</div>
-            </button>
-          </div>
-        </div>
+    <!-- ============================================================
+         UNIFIED FAILOVER LIST + CONFIG SECTION (!singleMode only - the
+         Account/Settings editor). Onboarding never reaches this branch
+         (singleMode forces llmMode==='quick' below). Phase 1: read list
+         only; config section arrives in phase 2. ============================================================ -->
+    <section v-if="!singleMode" style="margin-bottom:18px;">
+      <!-- No section heading and no explainer here: the dialog already titles this
+           pane ("AI models" / "The AI connection that powers Jarvis."), so an
+           uppercase "AI MODELS" repeated below it was pure duplication. The failover
+           behaviour is surfaced where it's actionable instead: on the "No backup yet"
+           card, which self-hides once a second model exists.
+           The badge stays - it only appears for a real multi-model failover pool. -->
+      <div v-if="badgeLabel" style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap;">
+        <span style="font-size:12px;font-weight:600;padding:4px 11px;border-radius:20px;background:var(--green-bg);color:var(--green);">
+          {{ badgeLabel }}
+        </span>
       </div>
 
-      <!-- Progressive vendor key fields for the chosen preset (all-or-nothing) -->
-      <div v-if="selectedPreset && vendorsForPreset.length"
-           style="margin-top:12px;padding:12px;background:var(--amber-bg);border:1px solid var(--amber-bd);border-radius:8px;">
-        <div style="font-size:13px;color:var(--amber);font-weight:600;margin-bottom:8px;">
-          Provide API keys for this preset:
+      <!-- Legacy DIRECT chat-subscription (flat-field OAuth, no proxy) - not
+           part of rows.value/the failover pool, so no order badge/reorder. -->
+      <div v-if="showDirectRow" class="jv-flist-row">
+        <span class="jv-flist-chip">Direct</span>
+        <span class="jv-flist-model">{{ directStatus.model || directStatus.provider || 'Chat subscription' }}</span>
+        <span v-if="directStatus.account_email" style="font-size:11px;color:var(--text-3);">{{ directStatus.account_email }}</span>
+        <span class="jv-pool-dot jv-pool-dot--ok" aria-hidden="true"></span>
+        <span class="jv-flist-acts">
+          <button v-if="editable" @click="directPanelOpen = !directPanelOpen" class="jv-btn jv-btn--sm jv-btn--ghost">{{ directPanelOpen ? 'Close' : 'Reconnect' }}</button>
+          <button v-if="editable" @click="removeDirect" class="jv-btn jv-btn--sm jv-btn--ghost jv-pool-disc">Remove</button>
+        </span>
+      </div>
+      <div v-if="showDirectRow && directPanelOpen" class="jv-cfgpanel">
+        <DirectSubscriptionCard :status="directStatus" :editable="editable" @reauthorized="onDirectCardChanged" @disconnected="onDirectCardChanged" />
+      </div>
+
+      <div v-if="!rows.length && !showDirectRow" style="font-size:13px;color:var(--text-3);padding:8px 0;">No models yet. Add one below.</div>
+
+      <div v-for="(row, i) in rows" :key="i" class="jv-flist-row">
+        <span class="jv-pool-badge">{{ i + 1 }}</span>
+        <span class="jv-flist-chip">{{ sourceChip(row) }}</span>
+        <span class="jv-flist-model" :class="{ 'jv-flist-model--unset': !row.model }">{{ rowModelLabel(row) }}</span>
+        <span v-if="row.credentialType!=='subscription' && row.hasKey" style="font-size:11px;color:var(--text-3);">key set</span>
+        <span class="jv-pool-dot" :class="'jv-pool-dot--' + accountHealth(row).level" aria-hidden="true"></span>
+        <span v-if="accountHealth(row).label" class="jv-pool-acct-health" :class="'jv-pool-acct-health--' + accountHealth(row).level" :title="accountHealth(row).title">{{ accountHealth(row).label }}</span>
+        <!-- Reorder + [Edit][Reconnect|Replace key][Remove], always right-aligned. -->
+        <span class="jv-flist-acts">
+          <button @click="move(i,-1)" :disabled="!editable || i===0" title="Up" class="jv-pool-iconbtn">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg>
+          </button>
+          <button @click="move(i,1)" :disabled="!editable || i===rows.length-1" title="Down" class="jv-pool-iconbtn">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+          <button v-if="editable" @click="openEdit(i)" class="jv-btn jv-btn--sm jv-btn--ghost">Edit</button>
+          <button v-if="editable && row.credentialType==='subscription'" @click="quickReconnect(i)" class="jv-btn jv-btn--sm jv-btn--ghost">Reconnect</button>
+          <button v-else-if="editable" @click="openEdit(i)" class="jv-btn jv-btn--sm jv-btn--ghost">Replace key</button>
+          <button v-if="editable" @click="remove(i)" class="jv-btn jv-btn--sm jv-btn--ghost jv-pool-disc">Remove</button>
+        </span>
+      </div>
+
+      <!-- A real .jv-btn, not a dashed row: this is a LIST ACTION that opens the
+           config panel, so it belongs to the same button system as the row actions
+           (Edit / Reconnect / Remove) and Save. The dashed treatment is reserved for
+           an EMPTY SLOT the content will fill -- which is what "+ Connect account"
+           is, inside the panel, where the account itself then appears. Ghost, not
+           primary: Save configuration stays the pane's single primary action. -->
+      <button v-if="editable && !panel.open" @click="openAdd" class="jv-btn jv-btn--primary jv-flist-addbtn">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>
+        Add a model
+      </button>
+
+      <!-- A single model has nothing to fall back to. Name the consequence instead
+           of leaving the customer to infer it from "tried in order". -->
+      <div v-if="editable && !panel.open && rows.length === 1 && !showDirectRow" class="jv-flist-hint">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 16v-4M12 8h.01" /></svg>
+        <span><b>No backup yet.</b> If this model fails or hits its limit, chat stops.
+        Add a second one and Jarvis switches over automatically.</span>
+      </div>
+
+      <!-- Master-detail config section: Add/Edit a single row, or (add-mode
+           only) apply a preset that replaces the whole pool. Field markup +
+           connect flow are reused verbatim from the account editor's former
+           per-row layout; only the panel container is new. -->
+      <div v-if="panel.open" class="jv-cfgpanel">
+        <div class="jv-cfgpanel-head">
+          <div class="jv-cfgpanel-title">{{ panel.mode === 'add' ? 'Add a model' : 'Edit model' }}</div>
         </div>
-        <div v-for="vendor in vendorsForPreset" :key="vendor" style="margin-bottom:8px;">
-          <label :style="{fontSize:'12px',color:'var(--text-2)',display:'block',marginBottom:'3px'}">
-            {{ providerLabel(vendor) }} API key<span v-if="missingVendors.includes(vendor)" style="color:var(--red)"> *</span>
+
+        <div class="jv-pool-segct" role="group" aria-label="Source" style="margin-bottom:12px;">
+          <button type="button" class="jv-pool-segbtn" :class="{ on: panel.source==='subscription' }"
+                  :disabled="!editable" @click="setPanelSource('subscription')">Chat subscription</button>
+          <button type="button" class="jv-pool-segbtn" :class="{ on: panel.source==='api_key' }"
+                  :disabled="!editable" @click="setPanelSource('api_key')">API key</button>
+          <!-- Presets are NOT shipping yet: shown but disabled, so the capability is
+               discoverable without being clickable. Keep setPanelSource('preset')
+               and the preset branch below intact - re-enabling is just dropping the
+               `disabled` and the tag. -->
+          <button v-if="panel.mode==='add'" type="button" class="jv-pool-segbtn jv-pool-segbtn--soon"
+                  disabled title="Coming soon">From a preset<span class="jv-soon">Soon</span></button>
+        </div>
+
+        <!-- API-key source -->
+        <div v-if="panel.source==='api_key' && panelRow">
+          <!-- 2x2 grid, not four fields crammed across one row: the flex ratios
+               (1 / 1.5 / 1.5 / 1.5) produced four different widths and read as
+               noise. Provider first, since it decides the model suggestions. -->
+          <div class="jv-cfg-grid">
+            <!-- JvCombo, not a native <select>/<datalist>: the OS renders those with
+                 its own popup (dark, system-styled), which is why this panel looked
+                 nothing like onboarding. JvCombo is the app's dropdown and is already
+                 what onboarding uses, so both surfaces now render identically. -->
+            <div class="jv-pool-field">
+              <label class="jv-pool-lab">Provider</label>
+              <JvCombo :model-value="panelRow.provider" :options="providerOptions" :editable="editable"
+                       placeholder="Provider"
+                       @update:model-value="(v) => { panelRow.provider = v; onProviderChange(panelRow) }" />
+            </div>
+            <div class="jv-pool-field">
+              <label class="jv-pool-lab">Model</label>
+              <JvCombo :model-value="panelRow.model" :options="modelSuggestionsForProvider(panelRow.provider)"
+                       :editable="editable" allow-custom placeholder="Model ID (e.g. gpt-4o)"
+                       @update:model-value="(v) => { panelRow.model = v }" />
+            </div>
+            <div class="jv-pool-field">
+              <label class="jv-pool-lab">API key</label>
+              <input v-model="panelRow.apiKey" :disabled="!editable" type="password"
+                     :placeholder="panelRow.hasKey ? 'key set, re-enter to change' : 'API key'" class="jv-cfg-inp" />
+            </div>
+            <div class="jv-pool-field">
+              <label class="jv-pool-lab">Base URL <span class="jv-pool-opt">(optional)</span></label>
+              <input v-model="panelRow.baseUrl" :disabled="!editable" placeholder="Base URL (OpenAI-compatible)" class="jv-cfg-inp" />
+            </div>
+          </div>
+          <!-- Resilient-by-default (API KEYS ONLY): expands this provider into
+               its full single-vendor failover chain on close, sharing the
+               same key. Add-mode only. -->
+          <label v-if="panel.mode==='add'" style="display:flex;align-items:center;gap:8px;margin-top:11px;font-size:13px;color:var(--text-2);cursor:pointer;">
+            <input type="checkbox" v-model="panel.addBackups" :disabled="!editable" />
+            Add backup models automatically (recommended)
           </label>
-          <input :value="keysByVendor[vendor] || ''" @input="keysByVendor[vendor] = $event.target.value"
-                 type="password" :disabled="!editable" :placeholder="providerLabel(vendor) + ' API key'"
-                 style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;" />
+        </div>
+
+        <!-- Chat-subscription source -->
+        <div v-else-if="panel.source==='subscription' && panelRow">
+          <!-- Provider is the ONLY field for a chat subscription. There is no model
+               picker: a plan grants you its model, so asking a customer to type a
+               model id was busywork and an easy way to enter an invalid one. The id
+               is derived from the provider (setCredType / onUpstreamChange), which
+               validatePool + save still require. Onboarding already worked this way;
+               the settings editor now matches it.
+               Account rotation is likewise not exposed - it only matters once one
+               provider has several accounts, and defaults to "sticky" in the schema. -->
+          <div class="jv-cfg-grid" style="margin-bottom:10px;">
+            <!-- JvCombo works in display LABELS, but a row stores `upstream` as the
+                 VALUE ("openai"/"google") that the pool spec requires - hence the
+                 label<->value bridge, rather than leaking "OpenAI" into the spec. -->
+            <div class="jv-pool-field">
+              <label class="jv-pool-lab">Provider</label>
+              <JvCombo :model-value="upstreamLabelOf(panelRow.upstream)" :options="upstreamLabels"
+                       :editable="editable" placeholder="Provider"
+                       @update:model-value="(v) => { panelRow.upstream = upstreamValueOf(v); onUpstreamChange(panelRow) }" />
+            </div>
+          </div>
+
+          <!-- Connect sits WHERE THE ACCOUNT WILL APPEAR, not beside the Provider
+               field: it is an account action, so clicking it should materialize the
+               account in the same place.
+               PRIMARY, uniform with "+ Add a model": with no account connected this is
+               the panel's required next step (the pool cannot save without one). The
+               two never coexist - Add-a-model shows only when the panel is CLOSED,
+               Connect only when it is OPEN - so two primaries never compete. -->
+          <button v-if="editable && !(panelRow._connect && panelRow._connect.open) && !(panelRow.accounts && panelRow.accounts.length)"
+                  @click="openConnectPanel(panelRow)"
+                  class="jv-btn jv-btn--primary jv-flist-addbtn">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>
+            Connect account
+          </button>
+
+          <!-- Connected accounts (markup reused verbatim from the former
+               per-row layout). -->
+          <div v-if="panelRow.accounts && panelRow.accounts.length" class="jv-pool-accts">
+            <div class="jv-pool-lab">Connected accounts ({{ panelRow.accounts.length }})</div>
+            <div class="jv-pool-acctlist">
+              <div v-for="(a, ai) in panelRow.accounts" :key="a.account_ref || ai" class="jv-pool-acctchip">
+                <span class="jv-pool-avatar">{{ (accountLabel(a) || '?').charAt(0).toUpperCase() }}</span>
+                <span class="jv-pool-accttx">{{ accountLabel(a) }}</span>
+                <span class="jv-pool-dot" :class="'jv-pool-dot--' + accountHealth(panelRow).level" aria-hidden="true"></span>
+                <span v-if="accountHealth(panelRow).label" class="jv-pool-acct-health" :class="'jv-pool-acct-health--' + accountHealth(panelRow).level" :title="accountHealth(panelRow).title">{{ accountHealth(panelRow).label }}</span>
+                <span class="jv-pool-acctacts">
+                  <button v-if="editable" class="jv-btn jv-btn--sm jv-btn--ghost" @click="openConnectPanel(panelRow, ai)" title="Re-authorize to mint fresh tokens">Reconnect</button>
+                  <button v-if="editable" class="jv-btn jv-btn--sm jv-btn--ghost jv-pool-disc" @click="removeAccount(panelRow, ai)">Disconnect</button>
+                </span>
+              </div>
+              <!-- Ghost, not primary: an account already exists, so adding a SECOND is
+                   optional. It also sits beside Reconnect / Disconnect, which are ghosts.
+                   (Primary is reserved for the required next step -- Connect account when
+                   there is none, and Save configuration.) -->
+              <button v-if="editable && !(panelRow._connect && panelRow._connect.open)" @click="openConnectPanel(panelRow)"
+                      class="jv-btn jv-btn--sm jv-btn--ghost">
+                + Add account
+              </button>
+            </div>
+          </div>
+          <!-- ("No accounts connected yet." removed: the Connect account button in the
+               grid above already says the account is missing; the sentence only
+               restated it.) -->
+
+          <!-- OAuth connect: the SAME two-step spine onboarding renders (jv-csteps).
+               It used to be a different panel that only appeared AFTER startConnect had
+               already fired -- and startConnect opens the sign-in tab synchronously (it
+               must, to keep the click's user gesture and survive popup blockers). So the
+               customer was thrown at ChatGPT the instant they clicked "Connect account",
+               and only THEN saw a panel telling them to "Open sign-in". Backwards.
+               Now the steps appear FIRST and step 1's button is what starts OAuth, exactly
+               as in onboarding. Step 2 stays pending until step 1 mints the authorize URL:
+               a callback URL pasted before sign-in has no nonce to pair with, so
+               finishConnect would silently no-op. -->
+          <div v-if="panelRow._connect && panelRow._connect.open" class="jv-csteps">
+            <div class="jv-cstep">
+              <div class="jv-cnum">1</div>
+              <div class="jv-cbody">
+                <div class="jv-chead">
+                  <div class="jv-ctit">Sign in with {{ panelRow.upstream === 'google' ? 'Google' : 'OpenAI' }}</div>
+                  <div class="jv-crow">
+                    <template v-if="panelRow._connect.authorizeUrl">
+                      <a :href="panelRow._connect.authorizeUrl" target="_blank" rel="noopener noreferrer" class="jv-cbtn jv-cbtn-primary">Open sign-in ↗</a>
+                      <button type="button" class="jv-cbtn jv-cbtn-ghost" @click="copyAuthorizeUrl(panelRow)">{{ panelRow._connect.copied ? 'Copied ✓' : 'Copy link' }}</button>
+                    </template>
+                    <button v-else type="button" class="jv-cbtn jv-cbtn-primary"
+                            :disabled="!editable || panelRow._connect.loading"
+                            @click="startConnect(panelRow, panelRow._connect.reconnectIdx)">
+                      {{ panelRow._connect.loading ? 'Starting sign-in…' : 'Open sign-in ↗' }}
+                    </button>
+                  </div>
+                </div>
+                <div class="jv-cdesc">Opens {{ panelRow.upstream === 'google' ? 'Google' : 'OpenAI' }} in a new tab. Approve access, then come back here.</div>
+              </div>
+            </div>
+            <div class="jv-cstep" :class="{ 'jv-pending': !panelRow._connect.authorizeUrl }">
+              <div class="jv-cnum">2</div>
+              <div class="jv-cbody">
+                <div class="jv-ctit">Paste the callback URL</div>
+                <div class="jv-callout">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
+                  <p>After you approve, the browser shows a <b>&ldquo;This site can&rsquo;t be reached&rdquo;</b> page. That&rsquo;s expected: copy the <b>full URL from the address bar</b> (<kbd>⌘/Ctrl</kbd>+<kbd>L</kbd>, then <kbd>⌘/Ctrl</kbd>+<kbd>C</kbd>) and paste it below.</p>
+                </div>
+                <input v-model="panelRow._connect.pastedUrl" class="jv-paste"
+                       :disabled="!editable || !panelRow._connect.authorizeUrl"
+                       :placeholder="panelRow._connect.authorizeUrl
+                         ? 'http://localhost:1455/auth/callback?code=…'
+                         : 'Complete step 1 first, then paste the URL here'"
+                       @keydown.enter="finishConnect(panelRow)" />
+              </div>
+            </div>
+            <div v-if="panelRow._connect.error" class="jv-cn-err">{{ panelRow._connect.error }}</div>
+            <!-- Actions right-aligned, like every other confirm action in this pane. -->
+            <div class="jv-cn-acts">
+              <button @click="closeConnect(panelRow)" class="jv-btn jv-btn--ghost">Cancel</button>
+              <button @click="finishConnect(panelRow)"
+                      :disabled="panelRow._connect.loading || !panelRow._connect.authorizeUrl || !(panelRow._connect.pastedUrl || '').trim()"
+                      class="jv-btn jv-btn--primary">
+                {{ panelRow._connect.loading ? 'Connecting…' : 'Connect' }}
+              </button>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- From a preset (add-mode only) - picking a card replaces the whole
+             pool, same as the account editor's former Preset tab, just
+             relocated here (selectPreset/missingVendors/saveBlocked reused
+             verbatim). -->
+        <div v-else-if="panel.source==='preset'">
+          <p v-if="!catalog.length" style="font-size:14px;color:var(--text-3);margin:0 0 12px;">
+            Couldn't load presets. Use <b>Chat subscription</b> or <b>API key</b>.
+          </p>
+          <div v-else style="max-height:360px;overflow-y:auto;padding-right:4px;">
+            <div v-if="singleVendorPresets.length" style="margin-bottom:10px;">
+              <div style="font-size:13px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.03em;margin-bottom:9px;">Single-vendor resilience</div>
+              <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;">
+                <button v-for="entry in singleVendorPresets" :key="entry.key"
+                        @click="selectPreset(entry)" :disabled="!editable" :style="presetCardStyle(entry)">
+                  <div style="font-size:14px;font-weight:600;">{{ entry.label }}</div>
+                  <div style="font-size:13px;color:var(--text-2);margin-top:4px;line-height:1.45;">{{ entry.blurb }}</div>
+                </button>
+              </div>
+            </div>
+            <div v-if="crossVendorPresets.length">
+              <div style="font-size:13px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.03em;margin:14px 0 9px;">Cross-vendor strategies</div>
+              <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;">
+                <button v-for="entry in crossVendorPresets" :key="entry.key"
+                        @click="selectPreset(entry)" :disabled="!editable" :style="presetCardStyle(entry)">
+                  <div style="font-size:14px;font-weight:600;">{{ entry.label }}</div>
+                  <div style="font-size:13px;color:var(--text-2);margin-top:4px;line-height:1.45;">{{ entry.blurb }}</div>
+                </button>
+              </div>
+            </div>
+          </div>
+          <div v-if="selectedPreset && vendorsForPreset.length"
+               style="margin-top:12px;padding:12px;background:var(--amber-bg);border:1px solid var(--amber-bd);border-radius:8px;">
+            <div style="font-size:13px;color:var(--amber);font-weight:600;margin-bottom:8px;">
+              Provide API keys for this preset:
+            </div>
+            <div v-for="vendor in vendorsForPreset" :key="vendor" style="margin-bottom:8px;">
+              <label :style="{fontSize:'12px',color:'var(--text-2)',display:'block',marginBottom:'3px'}">
+                {{ providerLabel(vendor) }} API key<span v-if="missingVendors.includes(vendor)" style="color:var(--red)"> *</span>
+              </label>
+              <input :value="keysByVendor[vendor] || ''" @input="keysByVendor[vendor] = $event.target.value"
+                     type="password" :disabled="!editable" :placeholder="providerLabel(vendor) + ' API key'"
+                     style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;" />
+            </div>
+          </div>
+        </div>
+
+        <div class="jv-cfgpanel-acts">
+          <button type="button" class="jv-btn jv-btn--sm jv-btn--ghost" @click="closePanel">
+            {{ panel.source==='preset' ? 'Done' : (panel.mode==='add' ? 'Cancel' : 'Close') }}
+          </button>
         </div>
       </div>
     </section>
 
     <!-- ================ QUICK / CUSTOM (shared rows) ================ -->
-    <section v-else style="margin-bottom:18px;">
-      <!-- Onboarding (singleMode) drops this hint line: the step's own subtitle
-           ("Pick which AI powers Jarvis…") already covers it, per the preview. -->
-      <p v-if="llmMode==='quick' && !singleMode" style="font-size:14px;color:var(--text-3);margin:0 0 12px;">
-        <template v-if="rows[0] && rows[0].credentialType === 'subscription'">A single chat subscription, served through the managed proxy.</template><template v-else>A single model, sent directly to the provider.</template><template v-if="canPool"> Need multiple models with failover? Use <b>Preset</b> or <b>Custom</b>.</template><template v-else> You can add more models and automatic failover later from My Account.</template>
-      </p>
-      <!-- "Custom failover pool" is the section heading for the multi-model
-           Account editor only. Onboarding (singleMode) shows neither this nor the
-           hint line above - the step's own head + method cards carry the context. -->
-      <div v-else-if="!singleMode" style="font-size:13px;font-weight:600;color:var(--text-2);margin-bottom:8px;letter-spacing:.03em;text-transform:uppercase;">
-        Custom failover pool<span class="jv-pool-heading-suffix"> · tried in order</span>
-      </div>
-
+    <section v-if="singleMode" style="margin-bottom:18px;">
       <div v-if="!editorRows.length" style="font-size:13px;color:var(--text-3);padding:8px 0;">No models yet. Add one below.</div>
 
       <!-- Onboarding (singleMode) renders the connect content directly on the
@@ -117,32 +359,6 @@
           </div>
         </div>
 
-        <!-- Row head: failover-order badge, credential-type segmented control
-             (+ reorder/remove in Custom). -->
-        <div v-if="!singleMode" class="jv-pool-rowhead">
-          <span class="jv-pool-badge">{{ i + 1 }}</span>
-          <div class="jv-pool-segct" role="group" aria-label="Credential type">
-            <button v-for="opt in credTypes" :key="opt.value" type="button" class="jv-pool-segbtn"
-                    :class="{ on: m.credentialType===opt.value }"
-                    @click="setCredType(m, opt.value)" :disabled="!editable" :aria-pressed="m.credentialType===opt.value">
-              <svg v-if="opt.value==='api_key'" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
-              <svg v-else viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-              <span>{{ opt.label }}</span>
-            </button>
-          </div>
-          <div v-if="isMulti" style="margin-left:auto;display:flex;gap:6px;">
-            <button @click="move(i,-1)" :disabled="!editable || i===0" title="Up" class="jv-pool-iconbtn">
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg>
-            </button>
-            <button @click="move(i,1)" :disabled="!editable || i===editorRows.length-1" title="Down" class="jv-pool-iconbtn">
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
-            </button>
-            <button @click="remove(i)" :disabled="!editable" title="Remove" class="jv-pool-iconbtn jv-pool-iconbtn--danger">
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6h16z"/></svg>
-            </button>
-          </div>
-        </div>
-
         <!-- API-key credential. Onboarding (singleMode) lays the four fields out as
              a 2×2 grid so this view's height sits close to the subscription view -
              no jarring resize when toggling. The Account editor keeps the dense row. -->
@@ -155,34 +371,6 @@
             <input v-model="m.apiKey" :disabled="!editable" type="password"
                    :placeholder="m.hasKey ? 'key set, re-enter to change' : 'API key'" />
             <input v-model="m.baseUrl" :disabled="!editable" placeholder="Base URL (OpenAI-compatible)" />
-          </div>
-          <div v-else style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
-            <div class="jv-pool-field" style="flex:1;min-width:120px;">
-              <label class="jv-pool-lab">Provider</label>
-              <select v-model="m.provider" @change="onProviderChange(m)" :disabled="!editable" title="Provider"
-                      style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;">
-                <option v-for="p in providerOptions" :key="p" :value="p">{{ p }}</option>
-              </select>
-            </div>
-            <div class="jv-pool-field" style="flex:1.5;min-width:120px;">
-              <label class="jv-pool-lab">Model</label>
-              <input v-model="m.model" :list="'jv-dl-'+i" :disabled="!editable" placeholder="Model ID (e.g. gpt-4o)"
-                     style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;" />
-              <datalist :id="'jv-dl-'+i">
-                <option v-for="s in modelSuggestionsForProvider(m.provider)" :key="s" :value="s"></option>
-              </datalist>
-            </div>
-            <div class="jv-pool-field" style="flex:1.5;min-width:120px;">
-              <label class="jv-pool-lab">API key</label>
-              <input v-model="m.apiKey" :disabled="!editable" type="password"
-                     :placeholder="m.hasKey ? 'key set, re-enter to change' : 'API key'"
-                     style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;" />
-            </div>
-            <div class="jv-pool-field" style="flex:1.5;min-width:120px;">
-              <label class="jv-pool-lab">Base URL (optional)</label>
-              <input v-model="m.baseUrl" :disabled="!editable" placeholder="Base URL (OpenAI-compatible)"
-                     style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;" />
-            </div>
           </div>
         </div>
 
@@ -203,30 +391,6 @@
             <JvCombo :model-value="m.upstream" @update:model-value="(v) => { if (v === m.upstream) return; m.upstream = v; onUpstreamChange(m) }"
                      :options="upstreamOpts" :editable="editable" placeholder="Provider" />
           </div>
-          <div v-else style="display:flex;gap:8px;align-items:flex-end;margin-bottom:8px;flex-wrap:wrap;">
-            <div class="jv-pool-field" style="flex:2;min-width:120px;">
-              <label class="jv-pool-lab">Model</label>
-              <input v-model="m.model" :list="'jv-subdl-'+i" :disabled="!editable" placeholder="Model ID (e.g. gpt-5.5)"
-                     style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;" />
-              <datalist :id="'jv-subdl-'+i">
-                <option v-for="s in (SUB_MODEL_SUGGESTIONS[m.upstream] || [])" :key="s" :value="s"></option>
-              </datalist>
-            </div>
-            <div class="jv-pool-field" style="flex:1;min-width:100px;">
-              <label class="jv-pool-lab">Provider</label>
-              <select v-model="m.upstream" @change="onUpstreamChange(m)" :disabled="!editable" title="Provider"
-                      style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;">
-                <option v-for="o in upstreamOpts" :key="o.value" :value="o.value">{{ o.label }}</option>
-              </select>
-            </div>
-            <div class="jv-pool-field" style="flex:1.2;min-width:110px;">
-              <label class="jv-pool-lab">Account rotation</label>
-              <select v-model="m.rotation" :disabled="!editable" title="Account rotation"
-                      style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;">
-                <option v-for="o in rotationOpts" :key="o.value" :value="o.value">{{ o.label }}</option>
-              </select>
-            </div>
-          </div>
 
           <!-- Connected accounts -->
           <div v-if="m.accounts && m.accounts.length" class="jv-pool-accts">
@@ -235,7 +399,8 @@
               <div v-for="(a, ai) in m.accounts" :key="a.account_ref || ai" class="jv-pool-acctchip">
                 <span class="jv-pool-avatar">{{ (accountLabel(a) || '?').charAt(0).toUpperCase() }}</span>
                 <span class="jv-pool-accttx">{{ accountLabel(a) }}</span>
-                <span class="jv-pool-dot" aria-hidden="true"></span>
+                <span class="jv-pool-dot" :class="'jv-pool-dot--' + accountHealth(m).level" aria-hidden="true"></span>
+                <span v-if="accountHealth(m).label" class="jv-pool-acct-health" :class="'jv-pool-acct-health--' + accountHealth(m).level" :title="accountHealth(m).title">{{ accountHealth(m).label }}</span>
                 <span class="jv-pool-acctacts">
                   <button v-if="editable && !singleMode" class="jv-btn jv-btn--sm jv-btn--ghost" @click="startConnect(m, ai)" title="Re-authorize to mint fresh tokens">Reconnect</button>
                   <button v-if="editable" class="jv-btn jv-btn--sm jv-btn--ghost jv-pool-disc" @click="removeAccount(m, ai)">Disconnect</button>
@@ -261,18 +426,20 @@
               <div class="jv-cstep">
                 <div class="jv-cnum">1</div>
                 <div class="jv-cbody">
-                  <div class="jv-ctit">Sign in with {{ m.upstream === 'google' ? 'Google' : 'OpenAI' }}</div>
-                  <div class="jv-cdesc">Opens {{ m.upstream === 'google' ? 'Google' : 'OpenAI' }} in a new tab. Approve access, then come back here.</div>
-                  <div class="jv-crow">
-                    <template v-if="m._connect && m._connect.authorizeUrl">
-                      <a :href="m._connect.authorizeUrl" target="_blank" rel="noopener noreferrer" class="jv-cbtn jv-cbtn-primary">Open sign-in ↗</a>
-                      <button type="button" class="jv-cbtn jv-cbtn-ghost" @click="copyAuthorizeUrl(m)">{{ m._connect.copied ? 'Copied ✓' : 'Copy link' }}</button>
-                    </template>
-                    <button v-else type="button" class="jv-cbtn jv-cbtn-primary"
-                            :disabled="!editable || (m._connect && m._connect.loading)" @click="startConnect(m)">
-                      {{ m._connect && m._connect.loading ? 'Starting sign-in…' : 'Open sign-in ↗' }}
-                    </button>
+                  <div class="jv-chead">
+                    <div class="jv-ctit">Sign in with {{ m.upstream === 'google' ? 'Google' : 'OpenAI' }}</div>
+                    <div class="jv-crow">
+                      <template v-if="m._connect && m._connect.authorizeUrl">
+                        <a :href="m._connect.authorizeUrl" target="_blank" rel="noopener noreferrer" class="jv-cbtn jv-cbtn-primary">Open sign-in ↗</a>
+                        <button type="button" class="jv-cbtn jv-cbtn-ghost" @click="copyAuthorizeUrl(m)">{{ m._connect.copied ? 'Copied ✓' : 'Copy link' }}</button>
+                      </template>
+                      <button v-else type="button" class="jv-cbtn jv-cbtn-primary"
+                              :disabled="!editable || (m._connect && m._connect.loading)" @click="startConnect(m)">
+                        {{ m._connect && m._connect.loading ? 'Starting sign-in…' : 'Open sign-in ↗' }}
+                      </button>
+                    </div>
                   </div>
+                  <div class="jv-cdesc">Opens {{ m.upstream === 'google' ? 'Google' : 'OpenAI' }} in a new tab. Approve access, then come back here.</div>
                 </div>
               </div>
               <div class="jv-cstep" :class="{ 'jv-pending': !(m._connect && m._connect.authorizeUrl) }">
@@ -304,71 +471,26 @@
             <div v-if="m._connect && m._connect.error" class="jv-cn-err">{{ m._connect.error }}</div>
           </template>
 
-          <!-- Inline paste-back OAuth flow - two clear steps: open the sign-in
-               (OAuth) URL, then paste the callback URL you're redirected to.
-               (Account editor only; onboarding renders the spine above.) -->
-          <div v-if="!singleMode && m._connect && m._connect.open" class="jv-cn">
-            <div v-if="m._connect.authorizeUrl">
-              <div class="jv-cn-step">
-                <span class="jv-cn-num">1</span>
-                <div class="jv-cn-body">
-                  <div class="jv-cn-t">Sign in with your {{ m.upstream === 'google' ? 'Google' : 'OpenAI' }} account</div>
-                  <div class="jv-cn-row">
-                    <a :href="m._connect.authorizeUrl" target="_blank" rel="noopener noreferrer" class="jv-cn-open">Open sign-in ↗</a>
-                    <button @click="copyAuthorizeUrl(m)" class="jv-cn-copy">{{ m._connect.copied ? 'Copied ✓' : 'Copy link' }}</button>
-                  </div>
-                </div>
-              </div>
-              <div class="jv-cn-step">
-                <span class="jv-cn-num">2</span>
-                <div class="jv-cn-body">
-                  <div class="jv-cn-t">Paste the callback URL</div>
-                  <div class="jv-cn-hint">After signing in you'll see a “This site can't be reached” page. Copy that page's full URL and paste it below.</div>
-                  <input v-model="m._connect.pastedUrl" class="jv-cn-input" placeholder="http://localhost:1455/auth/callback?code=…" @keydown.enter="finishConnect(m)" />
-                </div>
-              </div>
-              <div class="jv-cn-acts">
-                <button @click="closeConnect(m)" class="jv-cn-cancel">Cancel</button>
-                <button @click="finishConnect(m)" :disabled="m._connect.loading" class="jv-cn-connect">
-                  {{ m._connect.loading ? 'Connecting…' : 'Connect' }}
-                </button>
-              </div>
-            </div>
-            <div v-else class="jv-cn-loading">Starting sign-in…</div>
-            <div v-if="m._connect.error" class="jv-cn-err">{{ m._connect.error }}</div>
-          </div>
-
-          <!-- Account editor's connect entry point (onboarding's spine above owns
-               startConnect there). Zero-accounts only - once an account exists,
-               the equivalent trigger lives inline as the dashed "+ Add account"
-               row at the end of the chip list above. -->
-          <button v-if="editable && !singleMode && !(m._connect && m._connect.open) && !(m.accounts && m.accounts.length)"
-                  @click="startConnect(m)"
-                  :disabled="m._connect && m._connect.loading && !m._connect.authorizeUrl"
-                  class="jv-btn jv-btn--sm jv-btn--primary">
-            + Connect account
-          </button>
         </div>
       </div>
 
-      <button v-if="isMulti && editable" @click="addModel" class="jv-btn jv-btn--sm jv-btn--primary">
+      <button v-if="isMulti && editable" @click="addModel" class="jv-btn jv-btn--sm jv-btn--ghost">
         + Add model
       </button>
     </section>
 
     <!-- Save bar + sync status - hidden when a host renders its own footer. -->
-    <div v-if="!footerless" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-      <button v-if="editable" @click="save" :disabled="saving || saveBlocked"
-              :style="{padding:'12px 24px',background: saveBlocked ? 'var(--surface-3)' : 'var(--blue)',
-                       color: saveBlocked ? 'var(--text-3)' : '#fff',border:'none',borderRadius:'9px',
-                       cursor: saveBlocked ? 'not-allowed' : 'pointer',fontSize:'15px',fontWeight:'600'}">
-        {{ saving ? 'Saving…' : 'Save configuration' }}
-      </button>
+    <div v-if="!footerless" class="jv-pool-savebar" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:flex-end;">
       <span v-if="saveBlocked && missingVendors.length" style="font-size:13px;color:var(--amber);">
         Provide keys for: {{ missingVendors.map(providerLabel).join(', ') }}
       </span>
       <span v-else-if="dirty" style="font-size:13px;color:var(--amber);font-weight:600;">● Unsaved changes - Save configuration to apply</span>
-      <span style="font-size:13px;color:var(--text-3);">{{ syncLabel }}</span>
+      <span v-else-if="applyStatus.kind !== 'idle'" class="jv-pool-syncpill" :class="'jv-pool-syncpill--' + applyStatus.kind">
+        <span class="jv-pool-syncpill-ic" aria-hidden="true"></span>{{ applyStatus.text }}
+      </span>
+      <button v-if="editable" @click="save" :disabled="saving || saveBlocked" class="jv-btn jv-btn--primary">
+        {{ saving ? 'Saving…' : 'Save configuration' }}
+      </button>
     </div>
   </div>
 </template>
@@ -378,10 +500,11 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue"
 import * as api from "@/api"
 import {
   deriveMode, reorder, presetToModels, missingVendorKeys, validatePool,
-  PROVIDER_LABELS, providerLabel, seedRowsFromConfig, defaultSubscriptionModel, SUB_MODEL_SUGGESTIONS,
+  PROVIDER_LABELS, providerLabel, providerId, seedRowsFromConfig, defaultSubscriptionModel,
 } from "@/llm/pool"
 import { errMessage as _err } from "@/lib/errors"
 import JvCombo from "@/components/JvCombo.vue"
+import DirectSubscriptionCard from "@/components/DirectSubscriptionCard.vue"
 
 const props = defineProps({
   editable: { type: Boolean, default: true },
@@ -393,8 +516,16 @@ const props = defineProps({
   // Hide the built-in Save bar so a host (onboarding) can render its own footer
   // and trigger save() via a template ref (exposed below).
   footerless: { type: Boolean, default: false },
+  // getDirectSubscriptionStatus() payload from the host (AiModelsPane), for a
+  // tenant on the legacy flat-field DIRECT path (empty models[], creds live
+  // outside this editor's config). null/absent = no direct subscription -
+  // never passed by onboarding, which has nothing to probe yet. Only
+  // is_direct_subscription synthesizes a row here; a merely-pooled single
+  // subscription (is_single_subscription_pool) already renders as a normal
+  // row via rows.value and needs no special-casing.
+  directStatus: { type: Object, default: null },
 })
-const emit = defineEmits(["saved", "ready"])
+const emit = defineEmits(["saved", "ready", "direct-changed"])
 
 // ---- state ---------------------------------------------------------------
 const cfg = ref({ models: [], preset: "", routing_mode: "failover", proxy_active: false })
@@ -405,7 +536,7 @@ const selectedPreset = ref("")
 const keysByVendor = ref({})
 const err = ref("")
 const saving = ref(false)
-const sync = ref({ last_sync_status: "", pending: false })
+const sync = ref({ last_sync_status: "", pending: false, subscription_status: "", warnings: [] })
 const savedSnapshot = ref("__init__")  // savable pool as of last load/save; drives the unsaved-changes notice
 let pollTimer = null
 
@@ -419,9 +550,6 @@ const modeTabs = computed(() => ALL_MODE_TABS.filter((t) => props.modes.includes
 // With a single allowed mode the tab bar + Direct/Proxy badge are just noise -
 // hide them and render that mode's body directly (onboarding's quick-only editor).
 const singleMode = computed(() => modeTabs.value.length <= 1)
-// Whether any proxy-pool tab (Preset/Custom) is reachable - gates the Quick hint
-// copy so it never points at tabs that aren't there.
-const canPool = computed(() => props.modes.includes("preset") || props.modes.includes("custom"))
 // Whether the single-mode (onboarding) row is savable - an account is connected,
 // or an API key + provider/model are filled. Emitted so the host footer can
 // invite the final "Onboard Jarvis" click once the user is ready.
@@ -436,15 +564,19 @@ const credTypes = [
   { value: "subscription", label: "Chat subscription", desc: "Sign in with your ChatGPT or Gemini plan" },
   { value: "api_key", label: "API key", desc: "Bring your own key from OpenAI, Anthropic and more" },
 ]
-const rotationOpts = [
-  { value: "sticky", label: "Sticky" },
-  { value: "round_robin", label: "Round robin" },
-  { value: "least_used", label: "Least used" },
-]
+// (rotationOpts removed with the Account-rotation select. The VALUE still ships:
+// newRow()/setCredType seed rotation:"sticky", matching the schema default. Restore
+// this list if the control ever comes back.)
 const upstreamOpts = [
   { value: "openai", label: "OpenAI" },
   { value: "google", label: "Google Gemini" },
 ]
+// JvCombo speaks display LABELS; a row stores `upstream` as the VALUE the pool spec
+// requires ("openai" / "google"). Bridge the two rather than letting "OpenAI" reach
+// the spec (the fleet validates upstream against openai|anthropic|google and 422s).
+const upstreamLabels = upstreamOpts.map((o) => o.label)
+const upstreamLabelOf = (v) => (upstreamOpts.find((o) => o.value === v) || {}).label || ""
+const upstreamValueOf = (l) => (upstreamOpts.find((o) => o.label === l) || {}).value || l
 // Provider dropdown fed by the shared PROVIDER_LABELS (id⇄label). Rows store the
 // display LABEL as `provider` (matches seedRowsFromConfig + the desk page).
 const providerOptions = PROVIDER_LABELS.map((p) => p.label)
@@ -493,10 +625,6 @@ function modelSuggestionsForProvider(provider) {
 // ---- derived -------------------------------------------------------------
 const isMulti = computed(() => llmMode.value === "custom")
 const editorRows = computed(() => isMulti.value ? rows.value : rows.value.slice(0, 1))
-// Quick renders only rows[0] and saving in Quick collapses the pool to that one
-// model. When a real multi-model pool exists, lock the Quick tab so a stray click
-// can't silently drop the other models - the user reduces the pool via Custom.
-const quickLocked = computed(() => rows.value.length >= 2)
 const singleVendorPresets = computed(() => catalog.value.filter((c) => c.kind === "single_vendor"))
 const crossVendorPresets = computed(() => catalog.value.filter((c) => c.kind === "cross_vendor"))
 const selectedEntry = computed(() => catalog.value.find((c) => c.key === selectedPreset.value) || null)
@@ -512,7 +640,11 @@ const missingVendors = computed(() => {
   const e = selectedEntry.value
   return e ? missingVendorKeys(e, keysByVendor.value) : []
 })
-const saveBlocked = computed(() => llmMode.value === "preset" && !!selectedPreset.value && missingVendors.value.length > 0)
+// Not llmMode-gated: llmMode is always "custom" for the settings (!singleMode)
+// editor now (Quick/Preset tabs are gone), so this only needs to ask "is a
+// preset currently selected (via selectPreset, reused verbatim by the
+// config-section's 'From a preset' source) with vendor keys still missing?"
+const saveBlocked = computed(() => !!selectedPreset.value && missingVendors.value.length > 0)
 
 // Direct/Proxy badge - mirrors jarvis_account.js renderModeBadge().
 // Quick is always Direct (single model); Preset is Proxy once chosen; Custom
@@ -544,10 +676,20 @@ const badgeLabel = computed(() => {
   if (llmMode.value === "custom") return validModels.value.length >= 2 ? "Proxy (failover)" : ""
   return ""  // quick = single model
 })
-const syncLabel = computed(() => {
-  if (sync.value.pending) return "Syncing to your agent…"
+// Save-bar status pill (Option A - "honest model health"). Reflects the outcome
+// of the most recent apply, including any per-account subscription warnings the
+// backend surfaced (e.g. a chat subscription that rejected a test request).
+const applyStatus = computed(() => {
+  if (sync.value.pending) return { kind: "pending", text: "Applying to your agent…" }
   const s = sync.value.last_sync_status || ""
-  return s ? `Last sync: ${s}` : ""
+  if (s.startsWith("failed")) return { kind: "failed", text: "Sync failed — try again" }
+  if (s.startsWith("ok")) {
+    let n = Array.isArray(sync.value.warnings) ? sync.value.warnings.length : 0
+    if (n === 0 && sync.value.subscription_status === "unverified") n = 1
+    if (n > 0) return { kind: "warn", text: `Applied · ${n} model${n > 1 ? "s" : ""} need${n > 1 ? "" : "s"} attention` }
+    return { kind: "ok", text: "Applied" }
+  }
+  return { kind: "idle", text: "" }
 })
 // Unsaved-changes detector: current savable pool vs the last saved snapshot.
 // Connecting an account mutates rows in memory (the fresh OAuth blob lives only
@@ -585,19 +727,150 @@ function copyTextWithFallback(text) {
   })
 }
 
+// Compact "source" label for a list row (unified failover list, !singleMode
+// only) - e.g. "Subscription · OpenAI" / "API key · Anthropic".
+function sourceChip(row) {
+  if (!row) return ""
+  if (row.credentialType === "subscription") return "Subscription · " + (row.upstream === "google" ? "Google" : "OpenAI")
+  return "API key · " + (row.provider || "—")
+}
+
+// ---- master-detail config section (!singleMode only) --------------------
+// panel: which row is being added/edited, and which source tab is active.
+// "preset" only applies in add-mode - picking a card replaces the whole pool
+// (selectPreset, reused verbatim) rather than editing panelRow.
+const panel = ref({ open: false, mode: "add", index: -1, source: "subscription", addBackups: true })
+const panelRow = computed(() => rows.value[panel.value.index] || null)
+function isRowEmpty(r) {
+  if (!r) return true
+  if (r.credentialType === "subscription") return !((r.accounts || []).length)
+  return !((r.model || "").trim()) && !((r.apiKey || "").trim()) && !r.hasKey
+}
+// Append a blank row up-front (not on a later "commit") so finishConnect's
+// !footerless auto-save - which can fire while this panel is still open -
+// already includes it instead of silently dropping an in-progress connect.
+function openAdd() {
+  const r = { ...newRow(), order: rows.value.length }
+  // Open a NEW row on Chat subscription. newRow() seeds credentialType "api_key"
+  // (it is the shape the row object defaults to), which meant "+ Add a model"
+  // always landed on the API-key tab regardless of what the customer already had.
+  // Subscription is the path most customers take -- sign in with a plan they own,
+  // no key to paste -- so it is the better first stop. (It has never followed the
+  // last row's type; that would be unpredictable.)
+  setCredType(r, "subscription")
+  rows.value = [...rows.value, r]
+  panel.value = { open: true, mode: "add", index: rows.value.length - 1, source: "subscription", addBackups: true }
+}
+function openEdit(i) {
+  const r = rows.value[i]
+  if (!r) return
+  panel.value = { open: true, mode: "edit", index: i, source: r.credentialType === "subscription" ? "subscription" : "api_key", addBackups: true }
+}
+// Resilient-by-default (API KEYS ONLY - no subscription presets exist and
+// multi-model-per-account is unconfirmed for cliproxy, so subscriptions never
+// auto-add backups). Finds the catalog's single-vendor preset for this
+// provider, if any.
+function vendorSinglePreset(provider) {
+  const pid = providerId(provider)
+  return catalog.value.find((c) => c.kind === "single_vendor" && (c.models || []).length > 0 && (c.models || []).every((m) => m.provider === pid))
+}
+// Expand a freshly-added api_key row into its provider's full single-vendor
+// failover chain, sharing the same key - additive only (never touches other
+// rows), and only for models not already present for this provider.
+function expandApiKeyBackups(r) {
+  const preset = vendorSinglePreset(r.provider)
+  if (!preset) return
+  const models = presetToModels(preset, {})
+  const existing = new Set(rows.value.filter((x) => x.credentialType === "api_key" && x.provider === r.provider).map((x) => x.model))
+  const toAdd = models.filter((m) => m.model !== r.model && !existing.has(m.model))
+  if (!toAdd.length) return
+  const base = rows.value.length
+  const extra = toAdd.map((m, i) => ({
+    provider: r.provider, model: m.model, apiKey: r.apiKey, baseUrl: r.baseUrl, hasKey: false,
+    credentialType: "api_key", rotation: "sticky", upstream: "openai",
+    accounts: [], _connect: blankConnect(), order: base + i,
+  }))
+  rows.value = [...rows.value, ...extra]
+}
+// List row's "Reconnect" shortcut: open the panel with the sign-in steps ready
+// (re-using the first account's slot if one exists) instead of making the user
+// find "+ Add account" inside the panel themselves.
+//
+// It used to call startConnect here, which fires OAuth immediately -- so Reconnect
+// hurled you at the provider's login before you saw a single instruction. Same bug
+// as "+ Connect account" had. It now opens the panel; step 1's "Open sign-in" starts
+// OAuth, inside that click (which is what keeps the popup-blocker fix working).
+function quickReconnect(i) {
+  const r = rows.value[i]
+  if (!r) return
+  openEdit(i)
+  openConnectPanel(r, (r.accounts && r.accounts.length) ? 0 : null)
+}
+function setPanelSource(src) {
+  panel.value.source = src
+  if (src === "preset") return
+  const r = panelRow.value
+  if (r) setCredType(r, src)
+}
+// Closing the panel (Cancel/Done/Close) - an add-row that was opened but
+// never filled in (no preset picked) is dropped so an abandoned "+ Add
+// model" doesn't leave a dead row in the pool.
+function closePanel() {
+  const idx = panel.value.index
+  const r = rows.value[idx]
+  // Add-mode api_key row, checkbox on, filled in: expand into the vendor's
+  // resilience chain before the empty-row cleanup below (a freshly-expanded
+  // row is never "empty").
+  if (panel.value.mode === "add" && panel.value.source === "api_key" && panel.value.addBackups &&
+      r && (r.provider || "").trim() && ((r.apiKey || "").trim() || r.hasKey)) {
+    expandApiKeyBackups(r)
+  }
+  if (panel.value.mode === "add" && panel.value.source !== "preset" && idx >= 0 && idx < rows.value.length && isRowEmpty(rows.value[idx])) {
+    rows.value = rows.value.filter((_, j) => j !== idx)
+  }
+  panel.value = { open: false, mode: "add", index: -1, source: "subscription", addBackups: true }
+}
+
+// ---- direct subscription (legacy flat-field path) as a list row ---------
+// !singleMode only - onboarding never passes directStatus. Rendered OUTSIDE
+// rows.value/save() entirely (verdict §3: never round-trip a direct row
+// through save_llm_pool, which would migrate direct -> proxy); DirectSubscriptionCard
+// keeps owning the actual reauthorize/disconnect flow, unchanged.
+const showDirectRow = computed(() => !singleMode.value && !!(props.directStatus && props.directStatus.is_direct_subscription))
+const directPanelOpen = ref(false)
+watch(() => props.directStatus, (v) => { if (!v || !v.is_direct_subscription) directPanelOpen.value = false })
+function onDirectCardChanged() {
+  directPanelOpen.value = false
+  emit("direct-changed")
+}
+async function removeDirect() {
+  if (!window.confirm("Disconnect the chat subscription? Jarvis chat will stop working until you reconnect.")) return
+  try {
+    const res = await api.disconnectSubscription()
+    if (!res || res.ok === false) { err.value = (res && res.error && res.error.message) || "Disconnect failed."; return }
+    directPanelOpen.value = false
+    emit("direct-changed")
+  } catch (e) { err.value = _err(e) }
+}
+
+// What the list row shows in the model cell.
+// This used to be `row.model || row.provider || '—'`, which was wrong for a
+// SUBSCRIPTION row: newRow() seeds `provider` with providerOptions[0] ("Anthropic")
+// because that field belongs to the api-key shape, and it is never cleared when the
+// row is switched to a subscription. So a row whose chip correctly read
+// "Subscription · OpenAI" displayed the model "Anthropic" -- a provider name, in the
+// model column, for the wrong provider. Never fall back to `provider` here.
+function rowModelLabel(row) {
+  if (row.model) return row.model
+  if (row.credentialType === "subscription") return "Model not set"
+  return row.provider || "—"
+}
+
 function newRow() {
   return {
     provider: providerOptions[0] || "Anthropic", model: "", apiKey: "", baseUrl: "", hasKey: false,
     credentialType: "api_key", rotation: "sticky", upstream: "openai",
     accounts: [], _connect: blankConnect(), order: 0,
-  }
-}
-
-function setMode(m) {
-  llmMode.value = m
-  if (m !== "preset") {
-    selectedPreset.value = ""
-    if (!rows.value.length) rows.value = [newRow()]
   }
 }
 
@@ -608,9 +881,12 @@ function setCredType(m, type) {
     if (!m.upstream) m.upstream = "openai"
     if (!Array.isArray(m.accounts)) m.accounts = []
     if (!m._connect) m._connect = blankConnect()
-    // Onboarding hides the model field - default it from the chosen provider so
-    // validatePool + save still have a model id.
-    if (singleMode.value) m.model = defaultSubscriptionModel(m.upstream)
+    // The model field is hidden for chat subscriptions in BOTH editors now (a plan
+    // grants its model; typing a model id was busywork and an easy way to enter an
+    // invalid one). validatePool + save still REQUIRE a model id, so derive it from
+    // the chosen provider. Dropping this would make every subscription save fail
+    // validation with "model is required".
+    m.model = defaultSubscriptionModel(m.upstream)
   } else if (singleMode.value) {
     // Toggling back to API key in the simplified editor: drop the subscription
     // model id (hidden while on the subscription tab) so it doesn't linger under
@@ -628,11 +904,14 @@ function onProviderChange(m) {
 // provider-specific - otherwise we'd save a model bound to the wrong provider's
 // OAuth credential. A no-op elsewhere (full editor manages model/accounts itself).
 function onUpstreamChange(m) {
-  if (singleMode.value && m.credentialType === "subscription") {
-    m.model = defaultSubscriptionModel(m.upstream)
-    m.accounts = []
-    m._connect = blankConnect()
-  }
+  if (m.credentialType !== "subscription") return
+  // Was gated on singleMode; the settings editor now hides the model field too, so
+  // it needs the same derivation. Changing provider must also clear the accounts:
+  // an OAuth account is authorized against ONE provider, so keeping OpenAI accounts
+  // on a row switched to Anthropic would ship a pool whose credentials can't serve it.
+  m.model = defaultSubscriptionModel(m.upstream)
+  m.accounts = []
+  m._connect = blankConnect()
 }
 function move(i, d) { rows.value = reorder(rows.value, i, i + d) }
 function remove(i) { rows.value = rows.value.filter((_, j) => j !== i) }
@@ -658,6 +937,55 @@ function accountLabel(a) {
   if (l && !/^SUB_/i.test(l)) return l
   return (a && a.account_email) || "Account connected"
 }
+function firstWarningMessage() {
+  return (sync.value.warnings && sync.value.warnings[0] && sync.value.warnings[0].message) || ""
+}
+// Option A "honest model health": the connected-account dot + label for a model
+// row. Subscriptions reflect the fleet's last subscription-probe result;
+// api-key rows stay a quiet green (a saved key is validated at save time, not
+// probed live). Onboarding (singleMode) never shows this - always neutral.
+function accountHealth(m) {
+  if (singleMode.value) return { level: "neutral" }
+  if (!m || m.credentialType !== "subscription") return { level: "ok" }
+  // Config changed but not yet (re)applied - the last probe result no longer
+  // describes what's about to be saved, so don't assert a stale health.
+  if (dirty.value || sync.value.pending) return { level: "neutral" }
+  const status = sync.value.subscription_status
+  if (status === "unverified") {
+    return {
+      level: "warn",
+      label: "Not accepting requests",
+      title: firstWarningMessage() || "This subscription rejected a test request — reconnect to restore chat.",
+    }
+  }
+  if (status === "unchecked") {
+    return {
+      level: "unchecked",
+      label: "Not verified yet",
+      title: "We couldn't confirm this subscription is active — it will be re-checked on the next apply.",
+    }
+  }
+  // "verified", "not_applicable", "", or undefined (backend without the field) -
+  // all degrade to today's quiet green.
+  return { level: "ok" }
+}
+// Open the connect panel WITHOUT starting OAuth.
+//
+// "+ Connect account" / "+ Add account" / "Reconnect" used to call startConnect
+// directly. startConnect opens the sign-in tab SYNCHRONOUSLY inside the click -- it
+// has to, or the window.open after its await loses the user gesture and gets
+// popup-blocked. The side effect was a jarring flow: the customer clicked "Connect
+// account" and was thrown straight at ChatGPT, then came back to a panel telling them
+// to "Open sign-in" -- an action they had already, involuntarily, taken.
+//
+// So these buttons now just REVEAL the two-step spine (the same one onboarding shows
+// up front), and step 1's "Open sign-in" is what actually starts OAuth. The tab still
+// opens inside that click, so the popup-blocker fix is preserved.
+function openConnectPanel(m, reconnectIdx = null) {
+  const carried = (m._connect && m._connect.pastedUrl) || ""
+  m._connect = { ...blankConnect(), open: true, reconnectIdx, pastedUrl: carried }
+}
+
 async function startConnect(m, reconnectIdx = null) {
   if (!m._connect) m._connect = blankConnect()
   // Simplified editor hides the model field - make sure a subscription row always
@@ -796,8 +1124,12 @@ async function load() {
           !(r0.apiKey || "").trim() && !r0.hasKey && !(r0.accounts && r0.accounts.length)) {
         setCredType(r0, "subscription")
       }
-    } else if (!props.modes.includes(llmMode.value)) {
-      llmMode.value = props.modes[0] || "quick"
+    } else {
+      // Settings (!singleMode) editor: always the unified failover-list view -
+      // Quick/Preset tabs are gone, "From a preset" now lives inside the
+      // config-section add flow (seedFromPreset/selectPreset), so llmMode never
+      // needs to be "preset" or "quick" here.
+      llmMode.value = "custom"
       selectedPreset.value = ""
       if (!rows.value.length) rows.value = [newRow()]
     }
@@ -921,7 +1253,6 @@ defineExpose({ save })
 /* ===== Account editor (!singleMode) row redesign - "Option A: refine in
    place". Onboarding's singleMode cards below are untouched; these jv-pool-*
    classes are new and only ever rendered from the !singleMode branches. ===== */
-.jv-pool-heading-suffix { text-transform: none; font-weight: 400; font-size: 11px; letter-spacing: normal; color: var(--text-3); }
 .jv-pool-rowhead { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 /* 1-based failover-order badge. */
 .jv-pool-badge {
@@ -939,7 +1270,7 @@ defineExpose({ save })
 }
 .jv-pool-segbtn:last-child { border-right: none; }
 .jv-pool-segbtn svg { flex: none; }
-.jv-pool-segbtn.on { background: var(--blue); color: #fff; font-weight: 600; }
+.jv-pool-segbtn.on { background: var(--text); color: var(--surface); font-weight: 600; }
 .jv-pool-segbtn:disabled { cursor: default; opacity: .6; }
 /* Reorder / remove icon buttons (replace the ▲/▼/✕ glyph squares). */
 .jv-pool-iconbtn {
@@ -958,7 +1289,7 @@ defineExpose({ save })
 .jv-pool-field { display: flex; flex-direction: column; min-width: 0; }
 .jv-pool-lab { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; color: var(--text-3); margin-bottom: 3px; }
 /* Connected-accounts chip list. */
-.jv-pool-accts { margin-bottom: 8px; }
+.jv-pool-accts { margin-top: 16px; margin-bottom: 8px; }
 .jv-pool-accts > .jv-pool-lab { margin-bottom: 6px; }
 .jv-pool-acctlist { display: flex; flex-direction: column; gap: 6px; }
 .jv-pool-acctchip {
@@ -973,6 +1304,15 @@ defineExpose({ save })
 }
 .jv-pool-accttx { font-size: 12.5px; color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jv-pool-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+/* Option A "honest model health" - dot color reflects the fleet's last
+   subscription probe. --ok/--neutral both render the pre-existing green so a
+   backend without the field (or a config mid-edit) looks exactly as before. */
+.jv-pool-dot--ok, .jv-pool-dot--neutral { background: var(--green); }
+.jv-pool-dot--warn { background: var(--amber); }
+.jv-pool-dot--unchecked { background: var(--text-3); }
+.jv-pool-acct-health { flex: none; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.jv-pool-acct-health--warn { color: var(--amber); }
+.jv-pool-acct-health--unchecked { color: var(--text-3); }
 .jv-pool-acctacts { margin-left: auto; display: flex; gap: 6px; flex: none; }
 .jv-pool-disc { color: var(--red); }
 .jv-pool-disc:hover:not(:disabled) { color: var(--red); border-color: var(--red-bd); background: var(--red-bg); }
@@ -986,9 +1326,109 @@ defineExpose({ save })
 }
 .jv-pool-addrow:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
 .jv-pool-addrow:disabled { opacity: .5; cursor: default; }
+/* Save-bar apply-status pill (Option A "honest model health") - reflects the
+   outcome of the last apply once there are no unsaved edits sitting on top
+   of it. Same quiet weight as the rest of this settings UI. */
+.jv-pool-syncpill {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12.5px; font-weight: 600; padding: 3px 10px;
+  border-radius: 999px; border: 1px solid transparent;
+}
+.jv-pool-syncpill-ic { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 10px; }
+.jv-pool-syncpill--ok { color: var(--green); background: var(--green-bg); border-color: var(--green-bd); }
+.jv-pool-syncpill--ok .jv-pool-syncpill-ic::before { content: "✓"; }
+.jv-pool-syncpill--warn { color: var(--amber); background: var(--amber-bg); border-color: var(--amber-bd); }
+.jv-pool-syncpill--warn .jv-pool-syncpill-ic::before { content: "⚠"; }
+.jv-pool-syncpill--failed { color: var(--red); background: var(--red-bg); border-color: var(--red-bd); }
+.jv-pool-syncpill--failed .jv-pool-syncpill-ic::before { content: "⚠"; }
+.jv-pool-syncpill--pending { color: var(--text-3); background: transparent; }
+.jv-pool-syncpill--pending .jv-pool-syncpill-ic {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--text-3);
+  animation: jv-pool-pulse 1.1s ease-in-out infinite;
+}
+@keyframes jv-pool-pulse {
+  0%, 100% { opacity: .35; }
+  50% { opacity: 1; }
+}
 @media (prefers-reduced-motion: reduce) {
   .jv-pool-segbtn, .jv-pool-iconbtn, .jv-pool-addrow { transition: none; }
+  .jv-pool-syncpill--pending .jv-pool-syncpill-ic { animation: none; opacity: .7; }
 }
+
+/* Unified failover list row (!singleMode only) - order badge, source chip,
+   model id, health dot, RIGHT-ALIGNED actions cluster. */
+.jv-flist-row {
+  display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
+  border: 1px solid var(--border); border-radius: 9px; padding: 9px 11px; margin-bottom: 8px;
+  background: var(--surface-1); transition: border-color .15s;
+}
+.jv-flist-row:hover { border-color: var(--border-2); }
+@media (prefers-reduced-motion: reduce) { .jv-flist-row { transition: none; } }
+.jv-flist-chip {
+  flex: none; font-size: 11.5px; font-weight: 600; color: var(--text-2);
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px;
+  padding: 3px 9px; white-space: nowrap;
+}
+.jv-flist-model { font-size: 13.5px; color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jv-flist-acts { margin-left: auto; display: flex; gap: 6px; align-items: center; flex: none; }
+/* An unset model reads as a placeholder, not as a real model id. */
+.jv-flist-model--unset { color: var(--text-3); font-style: italic; }
+
+/* ---- explainer + add affordance + failover nudge (settings editor only) ----
+   Flat neutral surfaces, monochrome accent, no decorative colour: the only hue in
+   this pane stays semantic (the green Applied pill, the red Remove). */
+/* ---- config panel fields -----------------------------------------------
+   One grid + one input class, replacing per-field inline styles and flex ratios
+   (1 / 1.5 / 1.5 / 1.5) that gave every field a different width. Two even columns
+   read as a form; four uneven ones read as clutter. */
+.jv-cfg-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 14px; align-items: end; }
+/* The dropdowns are JvCombo (the app's own), NOT native <select> — a native one is
+   drawn by the OS with its own popup, which is exactly why this panel used to look
+   nothing like onboarding. These metrics keep the plain inputs (API key, Base URL)
+   dimensionally identical to a .jvc-field so the grid reads as ONE control set. */
+.jv-cfg-inp,
+.jv-cfg-grid :deep(.jvc-field) {
+  width: 100%; min-height: 40px; padding: 9px 12px; font-size: 14px; font-family: inherit;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface); color: var(--text); box-sizing: border-box;
+  transition: border-color .15s ease;
+}
+.jv-cfg-inp:hover:not(:disabled),
+.jv-cfg-grid :deep(.jvc-field:hover) { border-color: var(--border-2); }
+.jv-cfg-inp:focus { outline: none; border-color: var(--text-3); box-shadow: none; }
+.jv-cfg-grid :deep(.jvc-field:focus-within) { border-color: var(--text-3); }
+.jv-cfg-inp:disabled { opacity: .6; cursor: default; }
+.jv-pool-opt { font-weight: 400; color: var(--text-3); }
+@media (max-width: 720px) { .jv-cfg-grid { grid-template-columns: 1fr; } }
+
+/* "Soon" tag on the not-yet-shipped preset tab. */
+.jv-pool-segbtn--soon { cursor: default; opacity: .55; }
+.jv-soon {
+  margin-left: 6px; padding: 1px 6px; border-radius: 20px;
+  background: var(--surface-3); color: var(--text-3);
+  font-size: 10px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase;
+}
+
+/* "+ Add a model" is a .jv-btn (see the template note): only its spacing and the
+   plus glyph's tint are local. Everything else — height, radius, type, hover — comes
+   from the shared button system, so it can never drift from Edit / Remove / Save. */
+.jv-flist-addbtn { margin-top: 10px; gap: 6px; }
+.jv-flist-addbtn svg { color: var(--text-3); flex: none; }
+.jv-flist-addbtn:hover:not(:disabled) svg { color: var(--text); }
+/* Consequence-first nudge shown while the pool has no fallback. */
+.jv-flist-hint {
+  display: flex; align-items: flex-start; gap: 9px;
+  margin-top: 14px; padding: 11px 13px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--surface-1);
+  font-size: 12.5px; line-height: 1.55; color: var(--text-2);
+}
+.jv-flist-hint svg { flex: none; margin-top: 1px; color: var(--text-3); }
+.jv-flist-hint b { color: var(--text); font-weight: 600; }
+/* Master-detail config section (add/edit a row, or apply a preset). */
+.jv-cfgpanel { border: 1px solid var(--border-2); border-radius: 11px; padding: 14px; margin: 4px 0 14px; background: var(--surface); }
+.jv-cfgpanel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.jv-cfgpanel-title { font-size: 13.5px; font-weight: 700; color: var(--text); }
+.jv-cfgpanel-acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 
 /* Onboarding method cards (preview .method/.m-opt): sel = blue border + 3px
    ring; icon tile flips from neutral to blue tint when selected. Preview's
@@ -1034,15 +1474,18 @@ defineExpose({ save })
 .jv-cstep:not(:last-child)::before { content: ""; position: absolute; left: 12.5px; top: 32px; bottom: 4px; width: 1.5px; background: var(--border); }
 .jv-cnum {
   width: 26px; height: 26px; border-radius: 50%; box-sizing: border-box;
-  background: var(--blue); color: #fff;
+  background: var(--text); color: var(--surface);
   display: grid; place-items: center; font-size: 12.5px; font-weight: 600;
   flex: none; position: relative; z-index: 1;
 }
 .jv-cstep.jv-pending .jv-cnum { background: var(--surface-2); color: var(--text-3); border: 1.5px solid var(--border-2); }
 .jv-cbody { flex: 1; min-width: 0; }
 .jv-ctit { font-size: 13.5px; font-weight: 600; margin-bottom: 3px; }
-.jv-cdesc { font-size: 12.5px; color: var(--text-3); line-height: 1.45; margin-bottom: 11px; }
-.jv-crow { display: flex; gap: 9px; flex-wrap: wrap; }
+/* Step-1 header row: title left, sign-in action(s) right on the same line. */
+.jv-chead { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+.jv-chead .jv-ctit { margin-bottom: 0; }
+.jv-cdesc { font-size: 12.5px; color: var(--text-3); line-height: 1.45; margin-bottom: 0; }
+.jv-crow { display: flex; justify-content: flex-end; gap: 9px; flex-wrap: wrap; }
 /* Small in-step buttons (preview .btn--sm on .btn--primary/.btn--ghost). */
 .jv-cbtn {
   display: inline-flex; align-items: center; justify-content: center; gap: 7px;
@@ -1057,8 +1500,8 @@ defineExpose({ save })
    focus-visible rule misses - give both spine controls their own outline. */
 .jv-cbtn:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .jv-cbtn:disabled { opacity: .55; cursor: default; transform: none; }
-.jv-cbtn-primary { background: var(--blue); color: #fff; box-shadow: 0 2px 10px rgba(20, 20, 30, .16); }
-.jv-cbtn-primary:hover:not(:disabled) { color: #fff; transform: translateY(-1px); box-shadow: 0 8px 22px rgba(20, 20, 30, .22); }
+.jv-cbtn-primary { background: var(--text); color: var(--surface); box-shadow: 0 2px 10px rgba(20, 20, 30, .16); }
+.jv-cbtn-primary:hover:not(:disabled) { color: var(--surface); transform: translateY(-1px); box-shadow: 0 8px 22px rgba(20, 20, 30, .22); }
 .jv-cbtn-ghost { background: var(--surface); border-color: var(--border-2); color: var(--text-2); }
 .jv-cbtn-ghost:hover:not(:disabled) { background: var(--surface-2); color: var(--text); border-color: var(--border); }
 /* ONE amber callout: the "This site can't be reached is expected" guidance with
@@ -1106,23 +1549,10 @@ defineExpose({ save })
 .jv-status-act:hover { color: var(--text); text-decoration: underline; text-underline-offset: 2px; }
 /* Paste-back OAuth connect panel - two numbered steps (open sign-in URL / paste
    the callback URL), styled to match the rest of the onboarding editor. */
-.jv-cn { margin-top: 8px; padding: 15px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 11px; }
-.jv-cn-step { display: flex; gap: 10px; margin-bottom: 13px; }
-.jv-cn-num { flex: none; width: 21px; height: 21px; border-radius: 50%; background: var(--blue); color: var(--surface); font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; margin-top: 1px; }
-.jv-cn-body { flex: 1; min-width: 0; }
-.jv-cn-t { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 7px; }
-.jv-cn-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.jv-cn-open { font-size: 13px; font-weight: 600; color: var(--surface); text-decoration: none; padding: 8px 14px; border: 0; background: var(--blue); border-radius: 8px; }
-.jv-cn-copy { font-size: 12.5px; padding: 7px 12px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; background: var(--surface); color: var(--text-2); }
-.jv-cn-copy:hover { color: var(--text); }
-.jv-cn-hint { font-size: 12px; color: var(--text-3); line-height: 1.5; margin-bottom: 8px; }
-.jv-cn-input { width: 100%; padding: 9px 12px; font-size: 13.5px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); font-family: inherit; box-sizing: border-box; }
-.jv-cn-input:focus { outline: none; border-color: var(--blue-bd); }
 .jv-cn-acts { display: flex; justify-content: flex-end; gap: 8px; }
-.jv-cn-cancel { padding: 8px 15px; font-size: 13px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; background: var(--surface); color: var(--text-2); }
-.jv-cn-connect { padding: 8px 17px; font-size: 13px; font-weight: 600; border: 0; border-radius: 8px; cursor: pointer; background: var(--blue); color: var(--surface); }
-.jv-cn-connect:disabled { opacity: .6; cursor: not-allowed; }
-.jv-cn-loading { font-size: 13px; color: var(--text-2); }
+/* The old .jv-cn* connect panel is GONE: settings now renders the same .jv-csteps
+   spine as onboarding, so there is one connect flow, not two that drift apart.
+   Only -err and -acts survive (still used by that spine). */
 .jv-cn-err { margin-top: 9px; font-size: 13px; color: var(--red); }
 /* Lock both credential modes to the same body height in onboarding so toggling
    API key ↔ Chat subscription never resizes the card (first-impression polish). */
