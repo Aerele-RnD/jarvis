@@ -260,6 +260,31 @@ class OpenclawSession:
 		if not gateway_url:
 			raise OpenclawUnreachableError("agent_url not set on Jarvis Settings")
 
+		# Test-safety: never open a REAL gateway socket from inside a test run.
+		#
+		# The chat tests all mock this classmethod -- but a test that FORGETS to would
+		# silently talk to the developer's live openclaw container: mutating the session's
+		# model via sessions.patch, appending to its durable transcript, and burning real
+		# tokens from the customer's LLM quota on every turn. Nothing about that failure
+		# is visible; the test just passes.
+		#
+		# Raises OpenclawUnreachableError -- the SAME error an absent gateway raises -- so
+		# a mis-mocked test fails the way it already fails on CI (where no container is
+		# running), instead of quietly succeeding against production.
+		#
+		# Companion to admin_client._assert_outbound_allowed. See that docstring: on
+		# 2026-07-14 an unguarded test run destroyed a live tenant's LLM pool and an
+		# unrecoverable OAuth credential.
+		# Local import: this module is deliberately frappe-free at the top level (it is a
+		# transport), and the existing code already reaches for frappe this way.
+		import frappe
+		if frappe.flags.get("in_test") and not frappe.flags.get("allow_real_openclaw_calls"):
+			raise OpenclawUnreachableError(
+				"BLOCKED: a test tried to open a real openclaw gateway connection "
+				f"({gateway_url!r}). Mock OpenclawSession.connect, or set "
+				"frappe.flags.allow_real_openclaw_calls = True if you really mean it."
+			)
+
 		# Two-shot self-heal for tenant re-provisioning: on the first attempt
 		# we use whatever paired creds the customer has; if openclaw rejects
 		# with a "your pairing is stale" marker (typical when admin replaced
