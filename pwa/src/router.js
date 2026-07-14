@@ -13,6 +13,7 @@ const routes = [
 	{ path: "/login", name: "Login", component: () => import("./views/LoginView.vue") },
 	{ path: "/c/new", name: "NewChat", component: () => import("./views/NewChatView.vue") },
 	{ path: "/c/:id", name: "Chat", component: () => import("./views/ChatView.vue"), props: true },
+	{ path: "/notifications", name: "Notifications", component: () => import("./views/NotificationsView.vue") },
 	{ path: "/business", name: "Business", component: () => import("./views/BusinessView.vue") },
 	{ path: "/files", name: "FileBox", component: () => import("./views/FileBoxView.vue") },
 	{ path: "/settings", name: "Settings", component: () => import("./views/SettingsView.vue") },

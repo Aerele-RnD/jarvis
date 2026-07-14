@@ -6,6 +6,7 @@ import InstallBanner from "./components/InstallBanner.vue"
 import { store } from "./store"
 import { sessionUser } from "./router"
 import { prefs } from "./lib/prefs"
+import { recordEvent } from "./lib/notifications"
 
 const socket = inject("$socket")
 const router = useRouter()
@@ -35,6 +36,8 @@ function notify(title, body, conversationId) {
 // the user walked away from the phone waiting for.
 function onEvent(p) {
 	const conv = p.conversation_id || p.conversation
+	// The bell's feed: every event is recorded whether or not it also buzzes.
+	recordEvent(p)
 
 	if (p.kind === "conversation:renamed" && p.conversation_id) {
 		store.applyRename(p.conversation_id, p.title)

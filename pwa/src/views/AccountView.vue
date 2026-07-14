@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from "vue"
 import { call } from "frappe-ui"
 import AppBar from "../components/AppBar.vue"
 import * as api from "../api"
+import { resetFeed } from "../lib/notifications"
 
 // Account, as the native app has it: who you are, what you're on, what you've
 // used, and the way out. No link to the desktop workspace — this IS the app.
@@ -60,6 +61,9 @@ async function signOut() {
 	} catch {
 		// Session may already be gone; leave for the login screen either way.
 	}
+	// The feed is this person's task history — the next user of this browser must
+	// not inherit it, or its unread badge.
+	resetFeed()
 	// In-scope: an installed app must not end its session by throwing the user
 	// into a browser tab.
 	window.location.href = "/jarvis-mobile/login"

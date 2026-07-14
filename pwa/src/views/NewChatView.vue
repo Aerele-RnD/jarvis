@@ -4,6 +4,7 @@ import { useRouter } from "vue-router"
 import * as api from "../api"
 import { store } from "../store"
 import { EFFORT, prefs, setPrefs, thinkingOf } from "../lib/prefs"
+import { feed } from "../lib/notifications"
 import Sheet from "../components/Sheet.vue"
 
 // New chat: the hero screen, not an empty thread with a chat bar bolted to the
@@ -164,6 +165,16 @@ onUnmounted(() => attachments.value.forEach((a) => a.preview && URL.revokeObject
 				<path d="M3 6h18M3 12h18M3 18h18" />
 			</svg>
 		</button>
+		<span class="jv-spacer" />
+		<!-- Same place as the native app: the bell lives on the new-chat header
+		     only. It is where you land when you come back to the app, which is
+		     exactly when you want to know what happened while you were gone. -->
+		<button class="jv-icon-btn" aria-label="Notifications" @click="router.push('/notifications')">
+			<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+				<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0" />
+			</svg>
+			<span v-if="feed.unread" class="jv-bell-dot" />
+		</button>
 	</div>
 
 	<div class="jv-hero">
@@ -302,6 +313,21 @@ onUnmounted(() => attachments.value.forEach((a) => a.preview && URL.revokeObject
 .jv-bar.is-bare {
 	background: transparent;
 	border-bottom: 0;
+}
+.jv-icon-btn {
+	position: relative;
+}
+/* Unread work is waiting. A count would be false precision — the feed is
+   assembled from live events, so "some" is the only honest number. */
+.jv-bell-dot {
+	position: absolute;
+	top: 8px;
+	right: 8px;
+	width: 8px;
+	height: 8px;
+	border-radius: 999px;
+	background: var(--accent);
+	border: 2px solid var(--bg);
 }
 .jv-hero {
 	flex: 1;
