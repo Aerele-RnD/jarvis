@@ -246,12 +246,22 @@ _PROVIDER_LABEL_TO_OPENCLAW_ID = {
 }
 
 
+# The virtual model the fleet configures openclaw with whenever the proxy is active
+# (jarvis-fleet-agent compose.render_openclaw_config(model="jarvis-pool")). Bifrost
+# expands it into the pool's failover chain via its catch-all routing rule.
+#
+# The customer plane has to know this name because CLEARING a pin has to be an explicit
+# instruction, not an omission -- see _resolve_model_and_provider. The coupling is soft:
+# llm_proxy's catch-all rule matches `true`, so even if the fleet renamed the virtual
+# model, an unrecognised id would still fall through to the pool chain rather than break.
+POOL_VIRTUAL_MODEL = "jarvis-pool"
+
+
 def _resolve_model_and_provider(conv) -> tuple[str, str | None]:
 	"""Return (effective_model, openclaw_provider_id_or_None) for this conv.
 
-	Pool mode (proxy_active=1): let Bifrost route. Return empty model unless
-	conv.model_override matches an enabled pool model name (validated override).
-	Direct mode: use conv.model_override or settings.llm_model.
+	Pool mode (proxy_active=1): the pinned model, or the pool's virtual model when no
+	pin is set. Direct mode: use conv.model_override or settings.llm_model.
 	"""
 	settings = frappe.get_single("Jarvis Settings")
 
@@ -273,6 +283,39 @@ def _resolve_model_and_provider(conv) -> tuple[str, str | None]:
 		else None
 	)
 	return effective_model, provider
+
+
+def _session_model_for(conv) -> tuple[str, str | None]:
+	"""The model to PATCH THE SESSION to -- a different question from
+	_resolve_model_and_provider's, and the distinction is the whole fix.
+
+	_resolve_model_and_provider answers "what model does this conversation want", where
+	"" means "no opinion, let the agent's configured default stand". Two other callers
+	rely on exactly that: the auto-title job (chat/title.py) and pattern-polish
+	(learning/polish.py) run THROWAWAY one-shot gateway turns and pass the result straight
+	through as an inline modelOverride, where "" correctly means "omit the field". Handing
+	them a concrete "jarvis-pool" would push an explicit override down a code path they
+	have never exercised, and a rejection there degrades silently -- crude titles, raw
+	unpolished patterns -- because both callers swallow their exceptions.
+
+	The SESSION patch is stateful in a way those one-shots are not. openclaw remembers a
+	session's model across turns (it holds the history server-side), so here "no opinion"
+	CANNOT mean "send nothing" -- that is precisely the bug: handle_chat_send only issues
+	sessions.patch when the model is truthy, so a conversation that had ONCE been pinned
+	was never walked back. Selecting "Auto" wrote model_override="" and flipped the pill,
+	while openclaw went on calling the old model forever.
+
+	So here, and ONLY here, an unpinned pool conversation must NAME the pool. (jarvis#299)
+	"""
+	model, provider = _resolve_model_and_provider(conv)
+	if model:
+		return model, provider
+	settings = frappe.get_single("Jarvis Settings")
+	if getattr(settings, "proxy_active", 0):
+		return POOL_VIRTUAL_MODEL, None
+	# Direct mode already resolves to settings.llm_model, so "" here means the site has
+	# no model configured at all -- nothing useful to patch. Unchanged behaviour.
+	return model, provider
 
 
 def _thinking_prefix(thinking_override: str | None) -> str:
@@ -694,7 +737,7 @@ def handle_chat_send(payload: dict) -> None:
 			gateway_url = (settings.agent_url or "").replace(
 				"http://", "ws://"
 			).replace("https://", "wss://")
-			effective_model, oauth_provider_id = _resolve_model_and_provider(conv)
+			effective_model, oauth_provider_id = _session_model_for(conv)
 			if not conv.session_key:
 				# First turn of this conversation pays session-create and is the
 				# most cold-start-prone (a dormant container takes ~10-25s to
