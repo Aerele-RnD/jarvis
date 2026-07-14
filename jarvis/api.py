@@ -1039,9 +1039,21 @@ def _run_tool(tool: str, raw_args: dict | str | None,
 				return _preview_error(e)
 		else:
 			preview = _pending_preview(tool, args)
+		# Render-ready confirmation summary (F9) + wall-clock expiry (F15), attached
+		# ONCE here at park: F2 stores the preview in the token record and resync
+		# returns it verbatim, so the card + expiry ride the event, the record, and
+		# every resync identically (never rebuilt -> cannot diverge). build_card
+		# returns None for uncovered shapes; the SPA falls back to the raw preview.
+		import time
+
+		from jarvis.chat import confirm_card
+		if isinstance(preview, dict):
+			preview["card"] = confirm_card.build_card(tool, args, preview)
+		expires_at = int(time.time()) + pending_confirm._TTL_S
 		token = pending_confirm.mint(conversation=conv, owner=owner_user,
 									 tool=tool, args=args, run_id=run_id,
-									 exec_user=exec_user, preview=preview)
+									 exec_user=exec_user, preview=preview,
+									 expires_at=expires_at)
 		# Deliver the token to the human's UI out-of-band, over the realtime
 		# channel, NEVER via the function return below - the model must never
 		# see it. Published to the OWNER (the subscribed browser), not the acting
@@ -1058,14 +1070,20 @@ def _run_tool(tool: str, raw_args: dict | str | None,
 				"conversation": conv,
 				"run_id": run_id,
 				"summary": _describe_call(tool, args),
+				"expires_at": expires_at,
 			})
 		except Exception:
 			frappe.log_error(
 				title="action:pending publish failed",
 				message=frappe.get_traceback(),
 			)
+		# The model-facing return carries the raw preview but NOT the human ``card``
+		# (it is duplicate UX for the model's context; the model gets tool + args +
+		# would already).
+		model_preview = ({k: v for k, v in preview.items() if k != "card"}
+						 if isinstance(preview, dict) else preview)
 		return {"ok": True, "data": {
-			"status": "pending_confirmation", "preview": preview, "tool": tool,
+			"status": "pending_confirmation", "preview": model_preview, "tool": tool,
 		}}
 
 	return _dispatch_and_wrap(tool, args, is_write)

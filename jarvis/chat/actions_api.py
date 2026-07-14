@@ -543,6 +543,7 @@ def list_pending_confirmations(conversation: str | None = None) -> dict:
 				"summary": _describe_call(tool, args),
 				"conversation": r.get("conversation"),
 				"run_id": r.get("run_id"),
+				"expires_at": r.get("expires_at"),
 			})
 		except Exception:
 			frappe.log_error(
