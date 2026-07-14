@@ -1,7 +1,9 @@
 <script setup>
 import { computed, ref, watch } from "vue"
 import { renderMarkdown } from "@shared/markdown.js"
+import { pendingCardOf, pendingExpiry } from "@shared/lib/actionSummary.js"
 import Sheet from "./Sheet.vue"
+import PendingCard from "./PendingCard.vue"
 import * as api from "../api"
 
 // Approve / deny a parked write.
@@ -30,6 +32,18 @@ watch(
 const summary = computed(
 	() => props.action?.summary || props.action?.tool || "Approve this change",
 )
+
+// F9: the server-built "what will change" card (null -> fall back to previewHtml).
+const card = computed(() => pendingCardOf({ preview: props.action?.preview }))
+// Raw dry-run JSON for the card's Details expander; empty for described-intent
+// previews or when there is no dry-run doc.
+const rawDetails = computed(() => {
+	const pv = props.action?.preview
+	if (!pv || typeof pv === "string" || pv.described || pv.would == null) return ""
+	return typeof pv.would === "string" ? pv.would : JSON.stringify(pv.would, null, 2)
+})
+// F15: the server's wall-clock expiry (epoch seconds) for this parked token.
+const expired = computed(() => pendingExpiry(props.action?.expires_at, Date.now()).expired)
 
 // The preview is either a ready-made string or {note, would} — `described` means
 // the note already says it all and the payload dump would just be noise.
@@ -62,7 +76,11 @@ async function approve() {
 			// The token is single-use and short-lived: a stale card must say so
 			// rather than look like a failure the user can retry.
 			if (r.error?.type === "InvalidConfirmation") {
-				error.value = "This confirmation is no longer valid — ask Jarvis to try again."
+				// InvalidConfirmation is deliberately opaque; use the card's own
+				// wall-clock expiry to say the right thing (F15).
+				error.value = pendingExpiry(props.action?.expires_at, Date.now()).expired
+					? "This confirmation expired — tell Jarvis the action again to retry it."
+					: "Couldn't confirm — it may have been handled elsewhere. Refresh, or ask Jarvis to try again."
 				state.value = "review"
 				emit("resolved", props.action.token, "expired")
 				return
@@ -110,13 +128,15 @@ async function approve() {
 						<span class="jv-dtool">{{ props.action.tool }}</span>
 					</div>
 					<div class="jv-dsummary">{{ summary }}</div>
-					<div v-if="previewHtml" class="jv-dpreview" v-html="previewHtml" />
+					<PendingCard v-if="card" :card="card" :details="rawDetails" class="jv-dcard" />
+					<div v-else-if="previewHtml" class="jv-dpreview" v-html="previewHtml" />
+					<div v-if="expired" class="jv-dexpired">This confirmation expired — tell Jarvis the action again to retry it.</div>
 					<div v-if="error" class="jv-derror">{{ error }}</div>
 				</div>
 
 				<div class="jv-dactions">
 					<button class="jv-btn is-ghost" :disabled="state === 'busy'" @click="deny">Deny</button>
-					<button class="jv-btn is-primary jv-dapprove" :disabled="state === 'busy'" @click="approve">
+					<button class="jv-btn is-primary jv-dapprove" :disabled="state === 'busy' || expired" @click="approve">
 						<span v-if="state === 'busy'" class="jv-spinner" />
 						<span v-else>Approve</span>
 					</button>
@@ -184,6 +204,8 @@ async function approve() {
 	background: var(--card2);
 	font-size: 12px;
 }
+.jv-dcard { margin-top: 12px; }
+.jv-dexpired { margin-top: 12px; padding: 11px; border-radius: 10px; background: var(--card2); color: var(--ink5); font-size: 12.5px; line-height: 1.45; }
 .jv-derror {
 	margin-top: 12px;
 	padding: 11px;
