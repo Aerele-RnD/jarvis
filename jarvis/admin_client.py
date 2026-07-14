@@ -50,6 +50,25 @@ _OAUTH_EXPIRY_SKEW_S = 60
 # (~15min) access token; on entry expiry we re-mint with the password grant.
 _OAUTH_CACHE_TTL_S = 24 * 60 * 60
 
+# The admin control-plane app namespace. SWITCH TO V2: v2 is now the default
+# control plane. Every admin /api/method path is built under this namespace via
+# _m(). Pin a bench back to v1 with `set-config jarvis_admin_app jarvis_admin`.
+# Read fresh via frappe.conf each call so a config change is honored without a
+# worker restart — same rationale as _admin_url()'s fresh frappe.conf read.
+# (Deliberately does NOT cover _OAUTH_TOKEN_PATH, which is Frappe-native and
+# un-namespaced.)
+_DEFAULT_ADMIN_APP = "jarvis_admin_v2"
+
+
+def _admin_app() -> str:
+	return (frappe.conf.get("jarvis_admin_app") or "").strip() or _DEFAULT_ADMIN_APP
+
+
+def _m(dotted: str) -> str:
+	"""Build an admin /api/method path under the configured admin-app namespace.
+	e.g. _m("api.tenant.renew") -> "/api/method/jarvis_admin_v2.api.tenant.renew"."""
+	return f"/api/method/{_admin_app()}.{dotted}"
+
 # Cap on the cross-boundary message length. Long messages (e.g. a Frappe
 # 500 with a 10KB traceback that happens to embed a token mid-frame) get
 # truncated at the admin_client edge so they can't blow up
@@ -151,7 +170,7 @@ def signup(email: str, company_name: str, plan: str, coupon: str | None = None) 
 			"frappe_site_url": frappe.utils.get_url()}
 	if coupon:
 		body["coupon"] = coupon
-	return _post_guest(path="/api/method/jarvis_admin.billing.signup.signup", body=body)
+	return _post_guest(path=_m("billing.signup.signup"), body=body)
 
 
 def get_signup_payment_state() -> dict:
@@ -170,7 +189,7 @@ def get_signup_payment_state() -> dict:
 	wizard polls this on a "I've verified my email" button click.
 	"""
 	return _post(
-		path="/api/method/jarvis_admin.billing.signup.get_signup_payment_state",
+		path=_m("billing.signup.get_signup_payment_state"),
 		body={},
 	)
 
@@ -178,19 +197,20 @@ def get_signup_payment_state() -> dict:
 def dev_signup(email: str, company_name: str, plan: str) -> dict:
 	"""Razorpay-free dev signup. Returns admin's flat dict incl. api_key + api_secret + connection."""
 	return _post_guest(
-		path="/api/method/jarvis_admin.billing.signup.dev_force_signup",
+		path=_m("billing.signup.dev_force_signup"),
 		body={"email": email, "company_name": company_name, "plan": plan,
 			  "frappe_site_url": frappe.utils.get_url()},
 	)
 
 
 def get_plans() -> list:
-	return _post_guest(path="/api/method/jarvis_admin.billing.signup.get_plans", body={})
+	return _post_guest(path=_m("billing.signup.get_plans"), body={})
 
 
 # Admin-owned preset catalog (spec 3.3). Guest-safe fetch (get_plans pattern),
 # cached in per-site Redis, bundled fallback so onboarding never hard-fails.
-_PRESET_CATALOG_PATH = "/api/method/jarvis_admin.billing.catalog.get_preset_catalog"
+# The path is built per-call via _m() so the admin-app namespace override is
+# honored (a module-level constant binds at import and can't read config).
 _PRESET_CATALOG_CACHE_KEY = "jarvis:preset_catalog"
 _PRESET_CATALOG_TTL_S = 6 * 60 * 60
 
@@ -205,7 +225,7 @@ def get_preset_catalog() -> list:
 	if cached:
 		return cached
 	try:
-		catalog = _post_guest(path=_PRESET_CATALOG_PATH, body={})
+		catalog = _post_guest(path=_m("billing.catalog.get_preset_catalog"), body={})
 	except Exception:
 		# "Never raises": onboarding's preset step must degrade to the bundled
 		# catalog on ANY failure, not just the Admin* family. A scheme-less
@@ -225,8 +245,9 @@ def get_preset_catalog() -> list:
 
 # Admin-owned speech-to-text config (voice features). Authenticated tenant
 # fetch, cached in per-site Redis so chat-UI loads / transcribe calls don't
-# pay an admin round-trip each time.
-_STT_CONFIG_PATH = "/api/method/jarvis_admin.api.tenant.get_stt_config"
+# pay an admin round-trip each time. The path is built per-call via _m() so the
+# admin-app namespace override is honored (a module-level constant binds at
+# import and can't read config).
 _STT_CONFIG_CACHE_KEY = "jarvis:stt_config"
 # No bench-side bust on admin key rotation/disable: the success TTL is the
 # propagation lag bound, so keep it short.
@@ -252,7 +273,7 @@ def get_stt_config() -> dict | None:
 	try:
 		# Short timeout: this is best-effort config on a hot endpoint; a
 		# slow admin must degrade to "not configured", not block the SPA.
-		cfg = _post(path=_STT_CONFIG_PATH, body={}, timeout_s=5)
+		cfg = _post(path=_m("api.tenant.get_stt_config"), body={}, timeout_s=5)
 	except Exception:
 		cache.set_value(
 			_STT_CONFIG_CACHE_KEY, _STT_CONFIG_MISS, expires_in_sec=_STT_CONFIG_MISS_TTL_S
@@ -274,18 +295,23 @@ def get_stt_config() -> dict | None:
 
 def confirm_payment(payload: dict) -> dict:
 	"""POST Razorpay Checkout result; returns {agent_url, agent_token, tenant_status}."""
-	return _post(path="/api/method/jarvis_admin.api.tenant.confirm_payment", body=payload)
+	return _post(path=_m("api.tenant.confirm_payment"), body=payload)
 
 
-def get_connection() -> dict:
-	"""Fetch the assigned container connection (fallback / scheduled sync)."""
-	return _post(path="/api/method/jarvis_admin.api.tenant.get_connection", body={})
+def get_connection(*, timeout_s: int = DEFAULT_TIMEOUT_S) -> dict:
+	"""Fetch the assigned container connection (fallback / scheduled sync).
+
+	``timeout_s`` is keyword-only and defaults to DEFAULT_TIMEOUT_S=90 so existing
+	callers are unaffected. The chat-readiness gate (jarvis.account) passes a
+	short 8s budget so a slow admin can't stall the SPA/boot path.
+	"""
+	return _post(path=_m("api.tenant.get_connection"), body={}, timeout_s=timeout_s)
 
 
 def renew() -> dict:
 	"""Existing customer pays again to extend (manual one-shot). Returns admin's
 	data dict {razorpay_order_id, razorpay_key_id, amount_inr} for Checkout."""
-	return _post(path="/api/method/jarvis_admin.api.tenant.renew", body={})
+	return _post(path=_m("api.tenant.renew"), body={})
 
 
 def post_update_llm_creds(
@@ -301,7 +327,7 @@ def post_update_llm_creds(
 	# Ship the site's installed apps so admin persists them and the fleet-agent
 	# scopes the tenant's persona skill families (e.g. no hrms app -> no hrms-*).
 	return _post(
-		path="/api/method/jarvis_admin.api.tenant.update_llm_creds",
+		path=_m("api.tenant.update_llm_creds"),
 		body={
 			"provider": provider, "model": model,
 			"base_url": base_url, "api_key": api_key,
@@ -322,7 +348,7 @@ def post_rotate_llm_secret(secret: str) -> dict:
 		AdminAuthError, AdminUnreachableError, AdminValidationError as usual.
 	"""
 	return _post(
-		path="/api/method/jarvis_admin.api.tenant.rotate_llm_secret",
+		path=_m("api.tenant.rotate_llm_secret"),
 		body={"secret": secret},
 	)
 
@@ -346,7 +372,7 @@ def post_rotate_agent_token(new_token: str) -> dict:
 	    (shares the rotate-secret 20/h bucket).
 	"""
 	return _post(
-		path="/api/method/jarvis_admin.api.tenant.rotate_agent_token",
+		path=_m("api.tenant.rotate_agent_token"),
 		body={"new_token": new_token},
 		timeout_s=180,
 	)
@@ -374,7 +400,7 @@ def post_push_oauth_blob(provider: str, blob: dict) -> dict:
 		(rate-limit shares rotate-secret's 20/h bucket).
 	"""
 	return _post(
-		path="/api/method/jarvis_admin.api.tenant.push_oauth_blob",
+		path=_m("api.tenant.push_oauth_blob"),
 		body={"provider": provider, "blob": blob},
 		timeout_s=180,
 	)
@@ -398,7 +424,7 @@ def post_push_custom_skills(skills: list[dict]) -> dict:
 		(rate-limit shares the rotate-secret bucket).
 	"""
 	return _post(
-		path="/api/method/jarvis_admin.api.tenant.push_custom_skills",
+		path=_m("api.tenant.push_custom_skills"),
 		body={"skills": skills},
 		timeout_s=180,
 	)
@@ -429,7 +455,7 @@ def post_push_agent_skills(agent_skills: list[dict]) -> dict:
 		(rate-limit shares the rotate-secret bucket).
 	"""
 	return _post(
-		path="/api/method/jarvis_admin.api.tenant.push_agent_skills",
+		path=_m("api.tenant.push_agent_skills"),
 		body={"agent_skills": agent_skills},
 		timeout_s=180,
 	)
@@ -455,7 +481,7 @@ def post_push_learned_skills(learned_skills: list[dict]) -> dict:
 		(rate-limit shares the rotate-secret bucket).
 	"""
 	return _post(
-		path="/api/method/jarvis_admin.api.tenant.push_learned_skills",
+		path=_m("api.tenant.push_learned_skills"),
 		body={"learned_skills": learned_skills},
 		timeout_s=180,
 	)
@@ -484,7 +510,7 @@ def push_wiki_files(files: list[dict], delete: list | None = None,
 	"""
 	try:
 		return _post(
-			path="/api/method/jarvis_admin.api.tenant.post_push_wiki_files",
+			path=_m("api.tenant.post_push_wiki_files"),
 			body={"files": files, "delete": delete, "known_paths": known_paths},
 			timeout_s=60,
 		)
@@ -507,7 +533,7 @@ def push_wiki_graph(payload: dict) -> dict | None:
 	"""
 	try:
 		return _post(
-			path="/api/method/jarvis_admin.api.tenant.post_push_wiki_graph",
+			path=_m("api.tenant.post_push_wiki_graph"),
 			body={"graph": payload},
 			timeout_s=60,
 		)
@@ -530,7 +556,7 @@ def get_generated_media(since_ms: int = 0) -> list[dict]:
 	# _post already unwraps the admin's ``data`` envelope, so the response here
 	# is the ``{"media": [...]}`` dict itself (not ``{"data": {"media": ...}}``).
 	resp = _post(
-		path="/api/method/jarvis_admin.api.tenant.fetch_generated_media",
+		path=_m("api.tenant.fetch_generated_media"),
 		body={"since_ms": int(since_ms or 0)},
 		timeout_s=60,
 	)
@@ -543,7 +569,7 @@ def post_subscription_disconnect() -> dict:
 	Idempotent - a tenant in api_key mode is a no-op success.
 	"""
 	return _post(
-		path="/api/method/jarvis_admin.api.tenant.subscription_disconnect",
+		path=_m("api.tenant.subscription_disconnect"),
 		body={},
 	)
 
@@ -563,7 +589,7 @@ def post_update_llm_pool(*, spec: dict, api_keys: dict, oauth_blobs: dict) -> di
 		AdminAuthError, AdminUnreachableError, AdminValidationError
 	"""
 	return _post(
-		path="/api/method/jarvis_admin.api.tenant.update_llm_pool",
+		path=_m("api.tenant.update_llm_pool"),
 		body={"spec": spec, "api_keys": api_keys, "oauth_blobs": oauth_blobs},
 		timeout_s=120,
 	)
@@ -598,7 +624,7 @@ def post_llm_auth_status() -> dict:
 	in the same shape as the other admin_client methods.
 	"""
 	return _post(
-		path="/api/method/jarvis_admin.api.tenant.llm_auth_status",
+		path=_m("api.tenant.llm_auth_status"),
 		body={},
 	)
 
@@ -607,7 +633,7 @@ def get_llm_usage() -> dict:
 	"""Curated real Bifrost usage for the customer's tenant (monitor tab).
 	Chain: fleet-agent /llm-usage -> admin api.tenant.get_llm_usage -> here.
 	Raises AdminAuthError / AdminUnreachableError / AdminValidationError."""
-	return _post(path="/api/method/jarvis_admin.api.tenant.get_llm_usage", body={})
+	return _post(path=_m("api.tenant.get_llm_usage"), body={})
 
 
 def pair_chat_device(public_key: str, device_id: str,
@@ -626,7 +652,7 @@ def pair_chat_device(public_key: str, device_id: str,
 	DEFAULT_TIMEOUT_S=90s; that's the absolute upper bound on this call.
 	"""
 	return _post(
-		path="/api/method/jarvis_admin.api.tenant.pair_chat_device",
+		path=_m("api.tenant.pair_chat_device"),
 		body={
 			"public_key": public_key,
 			"device_id": device_id,
@@ -639,7 +665,7 @@ def get_account_summary() -> dict:
 	"""Fetch the customer's plan + validity + upgrade-eligible plans. Used by
 	the /jarvis-account page to render plan summary and the upgrade picker."""
 	return _post(
-		path="/api/method/jarvis_admin.api.account.get_account_summary",
+		path=_m("api.account.get_account_summary"),
 		body={},
 	)
 
@@ -649,7 +675,7 @@ def preview_upgrade(target_plan: str) -> dict:
 	created). Used by the upgrade plan picker so each plan card shows the
 	live-computed amount before the customer commits."""
 	return _post(
-		path="/api/method/jarvis_admin.api.account.preview_upgrade",
+		path=_m("api.account.preview_upgrade"),
 		body={"target_plan": target_plan},
 	)
 
@@ -660,7 +686,7 @@ def start_upgrade(target_plan: str) -> dict:
 	target_plan}). The order's notes carry the upgrade intent for
 	confirm_payment to pick up after Razorpay Checkout completes."""
 	return _post(
-		path="/api/method/jarvis_admin.api.account.start_upgrade",
+		path=_m("api.account.start_upgrade"),
 		body={"target_plan": target_plan},
 	)
 
