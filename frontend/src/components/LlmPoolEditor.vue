@@ -44,14 +44,23 @@
 
       <div v-if="!rows.length && !showDirectRow" style="font-size:13px;color:var(--text-3);padding:8px 0;">No models yet. Add one below.</div>
 
-      <div v-for="(row, i) in rows" :key="i" class="jv-flist-row">
+      <div v-for="(row, i) in rows" :key="row._uid ?? i" class="jv-flist-row">
         <span class="jv-pool-badge">{{ i + 1 }}</span>
         <span class="jv-flist-chip">{{ sourceChip(row) }}</span>
         <span class="jv-flist-model" :class="{ 'jv-flist-model--unset': !row.model }">{{ rowModelLabel(row) }}</span>
         <span v-if="row.credentialType!=='subscription' && row.hasKey" style="font-size:11px;color:var(--text-3);">key set</span>
         <span class="jv-pool-dot" :class="'jv-pool-dot--' + accountHealth(row).level" aria-hidden="true"></span>
         <span v-if="accountHealth(row).label" class="jv-pool-acct-health" :class="'jv-pool-acct-health--' + accountHealth(row).level" :title="accountHealth(row).title">{{ accountHealth(row).label }}</span>
-        <!-- Reorder + [Edit][Reconnect|Replace key][Remove], always right-aligned. -->
+        <!-- Reorder + [Edit][Reconnect|Replace key][Remove], always right-aligned.
+             All stay LIVE while the config panel is open. The panel used to track its
+             target row by ARRAY INDEX, so reordering or removing underneath it silently
+             repointed it at a different row (open Edit on row 2, start OAuth, reorder
+             row 1 while the sign-in tab is up -- the pasted callback attached the new
+             account to the OTHER model and auto-saved it). Disabling the buttons closed
+             that hole but dead-ended the customer: a pool whose only invalid row is a
+             blank seeded one could not be saved OR emptied while the panel was open.
+             The panel now tracks its row by IDENTITY (panel.uid -> row._uid), so the
+             array can be mutated freely and the panel always follows its own row. -->
         <span class="jv-flist-acts">
           <button @click="move(i,-1)" :disabled="!editable || i===0" title="Up" class="jv-pool-iconbtn">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg>
@@ -62,7 +71,8 @@
           <button v-if="editable" @click="openEdit(i)" class="jv-btn jv-btn--sm jv-btn--ghost">Edit</button>
           <button v-if="editable && row.credentialType==='subscription'" @click="quickReconnect(i)" class="jv-btn jv-btn--sm jv-btn--ghost">Reconnect</button>
           <button v-else-if="editable" @click="openEdit(i)" class="jv-btn jv-btn--sm jv-btn--ghost">Replace key</button>
-          <button v-if="editable" @click="remove(i)" class="jv-btn jv-btn--sm jv-btn--ghost jv-pool-disc">Remove</button>
+          <button v-if="editable" @click="remove(i)"
+                  class="jv-btn jv-btn--sm jv-btn--ghost jv-pool-disc">Remove</button>
         </span>
       </div>
 
@@ -164,9 +174,16 @@
                  label<->value bridge, rather than leaking "OpenAI" into the spec. -->
             <div class="jv-pool-field">
               <label class="jv-pool-lab">Provider</label>
+              <!-- The same-value guard is LOAD-BEARING. JvCombo.choose() emits
+                   update:model-value unconditionally, even when you re-pick the option
+                   that is already selected -- and onUpstreamChange() drops every
+                   connected account (an OAuth account is authorized against ONE
+                   provider). Without this, clicking "OpenAI" on a row already set to
+                   OpenAI silently DISCONNECTS a working subscription. The onboarding
+                   combo below carries the same guard for the same reason. -->
               <JvCombo :model-value="upstreamLabelOf(panelRow.upstream)" :options="upstreamLabels"
                        :editable="editable" placeholder="Provider"
-                       @update:model-value="(v) => { panelRow.upstream = upstreamValueOf(v); onUpstreamChange(panelRow) }" />
+                       @update:model-value="(v) => { const nv = upstreamValueOf(v); if (nv === panelRow.upstream) return; panelRow.upstream = nv; onUpstreamChange(panelRow) }" />
             </div>
           </div>
 
@@ -739,8 +756,15 @@ function sourceChip(row) {
 // panel: which row is being added/edited, and which source tab is active.
 // "preset" only applies in add-mode - picking a card replaces the whole pool
 // (selectPreset, reused verbatim) rather than editing panelRow.
-const panel = ref({ open: false, mode: "add", index: -1, source: "subscription", addBackups: true })
-const panelRow = computed(() => rows.value[panel.value.index] || null)
+// The panel targets its row by IDENTITY (uid), never by array index: reorder and
+// remove mutate `rows` while the panel is open, and an index would silently repoint
+// it at a neighbour mid-OAuth. _uid is a client-only handle -- buildSaveModels maps
+// explicit fields, so it never reaches the payload.
+const panel = ref({ open: false, mode: "add", uid: null, source: "subscription", addBackups: true })
+const panelRow = computed(() => rows.value.find((r) => r._uid === panel.value.uid) || null)
+// A removed panel row leaves panelRow null; close rather than render a headless panel.
+watch(panelRow, (r) => { if (panel.value.open && !r) panel.value = closedPanel() })
+function closedPanel() { return { open: false, mode: "add", uid: null, source: "subscription", addBackups: true } }
 function isRowEmpty(r) {
   if (!r) return true
   if (r.credentialType === "subscription") return !((r.accounts || []).length)
@@ -759,12 +783,12 @@ function openAdd() {
   // last row's type; that would be unpredictable.)
   setCredType(r, "subscription")
   rows.value = [...rows.value, r]
-  panel.value = { open: true, mode: "add", index: rows.value.length - 1, source: "subscription", addBackups: true }
+  panel.value = { open: true, mode: "add", uid: r._uid, source: "subscription", addBackups: true }
 }
 function openEdit(i) {
   const r = rows.value[i]
   if (!r) return
-  panel.value = { open: true, mode: "edit", index: i, source: r.credentialType === "subscription" ? "subscription" : "api_key", addBackups: true }
+  panel.value = { open: true, mode: "edit", uid: r._uid, source: r.credentialType === "subscription" ? "subscription" : "api_key", addBackups: true }
 }
 // Resilient-by-default (API KEYS ONLY - no subscription presets exist and
 // multi-model-per-account is unconfirmed for cliproxy, so subscriptions never
@@ -786,6 +810,7 @@ function expandApiKeyBackups(r) {
   if (!toAdd.length) return
   const base = rows.value.length
   const extra = toAdd.map((m, i) => ({
+    _uid: nextUid(),
     provider: r.provider, model: m.model, apiKey: r.apiKey, baseUrl: r.baseUrl, hasKey: false,
     credentialType: "api_key", rotation: "sticky", upstream: "openai",
     accounts: [], _connect: blankConnect(), order: base + i,
@@ -816,8 +841,7 @@ function setPanelSource(src) {
 // never filled in (no preset picked) is dropped so an abandoned "+ Add
 // model" doesn't leave a dead row in the pool.
 function closePanel() {
-  const idx = panel.value.index
-  const r = rows.value[idx]
+  const r = panelRow.value
   // Add-mode api_key row, checkbox on, filled in: expand into the vendor's
   // resilience chain before the empty-row cleanup below (a freshly-expanded
   // row is never "empty").
@@ -825,10 +849,10 @@ function closePanel() {
       r && (r.provider || "").trim() && ((r.apiKey || "").trim() || r.hasKey)) {
     expandApiKeyBackups(r)
   }
-  if (panel.value.mode === "add" && panel.value.source !== "preset" && idx >= 0 && idx < rows.value.length && isRowEmpty(rows.value[idx])) {
-    rows.value = rows.value.filter((_, j) => j !== idx)
+  if (panel.value.mode === "add" && panel.value.source !== "preset" && r && isRowEmpty(r)) {
+    rows.value = rows.value.filter((x) => x._uid !== r._uid)
   }
-  panel.value = { open: false, mode: "add", index: -1, source: "subscription", addBackups: true }
+  panel.value = closedPanel()
 }
 
 // ---- direct subscription (legacy flat-field path) as a list row ---------
@@ -866,8 +890,14 @@ function rowModelLabel(row) {
   return row.provider || "—"
 }
 
+// Monotonic client-only row handle. Every row that can reach the failover list gets
+// one so the config panel can hold a stable reference across reorder/remove.
+let _uidSeq = 0
+function nextUid() { return ++_uidSeq }
+
 function newRow() {
   return {
+    _uid: nextUid(),
     provider: providerOptions[0] || "Anthropic", model: "", apiKey: "", baseUrl: "", hasKey: false,
     credentialType: "api_key", rotation: "sticky", upstream: "openai",
     accounts: [], _connect: blankConnect(), order: 0,
@@ -887,10 +917,13 @@ function setCredType(m, type) {
     // the chosen provider. Dropping this would make every subscription save fail
     // validation with "model is required".
     m.model = defaultSubscriptionModel(m.upstream)
-  } else if (singleMode.value) {
-    // Toggling back to API key in the simplified editor: drop the subscription
-    // model id (hidden while on the subscription tab) so it doesn't linger under
-    // an API-key provider it doesn't belong to.
+  } else {
+    // Toggling back to API key: drop the subscription's model id so it doesn't
+    // linger under an API-key provider it does not belong to (a "gpt-5.5" left on
+    // an Anthropic api-key row saves a provider/model mismatch that only fails at
+    // the upstream). This used to be gated on singleMode -- but the SETTINGS editor
+    // hides the subscription model field too, so it needs the same reset; without it
+    // the stale id is invisible AND unsavable-by-hand.
     m.model = (PROVIDER_DEFAULTS[m.provider] || {}).model || ""
   }
 }
@@ -950,6 +983,16 @@ function accountHealth(m) {
   // Config changed but not yet (re)applied - the last probe result no longer
   // describes what's about to be saved, so don't assert a stale health.
   if (dirty.value || sync.value.pending) return { level: "neutral" }
+  // sync.subscription_status is POOL-WIDE, not per-row: the fleet probes the pool's
+  // subscription credential and returns ONE verdict. Painting it on every subscription
+  // row is only honest when there is exactly one -- with two, a single "unverified"
+  // would flag the healthy row too, and a "verified" would vouch for a row that was
+  // never probed. Attribute it only when it can only mean this row; otherwise stay
+  // neutral rather than assert something we did not measure.
+  // (The fleet gained per-model verdicts in contract 1.11 -- once model_statuses is
+  // plumbed through admin -> customer, key off that and drop this guard.)
+  const subRows = rows.value.filter((r) => r.credentialType === "subscription")
+  if (subRows.length > 1) return { level: "neutral" }
   const status = sync.value.subscription_status
   if (status === "unverified") {
     return {
@@ -1089,12 +1132,29 @@ function copyAuthorizeUrl(m) {
 // accounts carry no oauth_blob (never returned by the server) - reconnect to
 // change; they render as "connected" via their label.
 function seedRows(config) {
-  return seedRowsFromConfig(config).map((r) => ({
-    ...r,
-    upstream: (r.accounts && r.accounts[0] && r.accounts[0].upstream) || "openai",
-    accounts: (r.accounts || []).map((a) => ({ ...a, oauth_blob: "" })),
-    _connect: blankConnect(),
-  }))
+  return seedRowsFromConfig(config).map((r) => {
+    const upstream = (r.accounts && r.accounts[0] && r.accounts[0].upstream) || "openai"
+    // Backfill a missing model id on a STORED subscription row.
+    //
+    // The subscription model field was removed from both editors: the id is derived
+    // in setCredType/onUpstreamChange. But neither of those fires for a row that
+    // merely LOADS from get_llm_config -- so a stored row with an empty model (legacy
+    // data, or a pool written before the id was required) would render "Model not set"
+    // with NO field to type one into, and every Save would then fail validatePool's
+    // "Every model needs a model id" with no way out. Derive it here, on the same rule
+    // the editors use, so such a row is repairable instead of permanently stuck.
+    const model = (r.credentialType === "subscription" && !(r.model || "").trim())
+      ? defaultSubscriptionModel(upstream)
+      : r.model
+    return {
+      ...r,
+      _uid: nextUid(),
+      model,
+      upstream,
+      accounts: (r.accounts || []).map((a) => ({ ...a, oauth_blob: "" })),
+      _connect: blankConnect(),
+    }
+  })
 }
 
 async function load() {
@@ -1181,6 +1241,23 @@ function buildSaveModels(sourceRows) {
   })
 }
 
+// A blank API-KEY row is a placeholder, not a choice: load() seeds one into an EMPTY
+// pool so there is something to fill in, and an abandoned "+ Add a model" can leave
+// one behind. It must not block a Save whose other rows are real -- validatePool
+// rejects the whole pool with "Every model needs a provider and a model id", which
+// names nothing the customer recognises and points at no row. Dropping it loses
+// nothing the customer chose.
+//
+// Deliberately narrow: an in-progress SUBSCRIPTION row (connect started, no account
+// yet) is NOT pruned. That row represents intent, so validation should say "connect
+// your account" rather than let it silently vanish. And if pruning would empty the
+// pool we keep every row, so validation still speaks up instead of saving nothing.
+function prunedForSave(src) {
+  const all = src || []
+  const kept = all.filter((r) => !(r.credentialType !== "subscription" && isRowEmpty(r)))
+  return kept.length ? kept : all
+}
+
 async function save() {
   err.value = ""
   let saveModels, savePreset
@@ -1193,7 +1270,8 @@ async function save() {
     // Quick saves a single-model pool (rows[0]); Custom saves the full pool.
     // Exception: onboarding's singleMode keeps seeded tail rows (editorRows only
     // renders the first) so a returning customer's existing pool isn't dropped.
-    saveModels = buildSaveModels(llmMode.value === "quick" && !singleMode.value ? rows.value.slice(0, 1) : rows.value)
+    const src = prunedForSave(rows.value)
+    saveModels = buildSaveModels(llmMode.value === "quick" && !singleMode.value ? src.slice(0, 1) : src)
     savePreset = null
   }
   // Simplified editor hides the model id, so validatePool's "Model <id> needs a
