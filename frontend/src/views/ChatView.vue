@@ -4791,7 +4791,10 @@ onUnmounted(() => {
 .jv-cards-strip::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 99px; }
 .jv-card { flex: none; width: 210px; scroll-snap-align: start; box-sizing: border-box; padding: 12px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 11px; }
 .jv-card-title { display: block; font-size: 13.5px; font-weight: 600; color: var(--text); margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.jv-card-link { color: var(--cta); text-decoration: none; }
+/* --link, not --cta — same reason as ReceiptChip's .jv-receipt-link: this <a>
+   opens the referenced ERPNext document, and --cta is near-black, which left the
+   title indistinguishable from the surrounding --text labels. */
+.jv-card-link { color: var(--link); text-decoration: none; }
 .jv-card-link:hover { text-decoration: underline; }
 .jv-card-sub { font-size: 11.5px; color: var(--text-3); margin-bottom: 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jv-card-field { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; border-top: 1px solid var(--border); font-size: 12px; }
