@@ -4,6 +4,11 @@ import { setConfig, frappeRequest, resourcesPlugin } from "frappe-ui"
 import App from "./App.vue"
 import router from "./router"
 import { initSocket } from "./socket"
+// Side-effect import, and it must stay ABOVE the mount: it registers the
+// beforeinstallprompt listener at module load. Chrome can fire that event in the
+// same tick the app mounts, so capturing it from a component's onMounted loses
+// the race on a warm refresh and the install offer silently disappears.
+import "./install"
 import "./index.css"
 
 setConfig("resourceFetcher", frappeRequest)

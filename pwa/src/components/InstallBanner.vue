@@ -1,36 +1,46 @@
 <script setup>
-import { onMounted, onUnmounted, ref } from "vue"
+import { computed, onMounted, ref } from "vue"
+import { installPrompt, isStandalone } from "../install"
 
 // "Add Jarvis to your home screen." Two different worlds:
-//  - Chrome/Android fires beforeinstallprompt, which we stash and replay on tap.
+//  - Chrome/Android fires beforeinstallprompt. That event is captured in
+//    src/install.js at module load, NOT here: it can fire in the same tick the
+//    app mounts, so a listener in onMounted loses the race and the banner never
+//    appears on a warm refresh. This component only reads the stashed event.
 //  - iOS Safari has no such event and never will; Add to Home Screen is a manual
 //    menu action, so there we can only tell the user where it is.
 const DISMISS_KEY = "jarvis.install.dismissed"
 
-const prompt = ref(null)
-const show = ref(false)
+const dismissed = ref(false)
 const isIos = ref(false)
 
-function standalone() {
-	return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true
-}
+// A browser will not install a page it does not trust. `isSecureContext` is
+// false on a plain-http LAN origin (http://192.168.x.x:8002 — how the bench is
+// reached from a phone in dev), and on such an origin Chrome never fires
+// beforeinstallprompt and navigator.serviceWorker is undefined. So the install
+// offer vanishes with no explanation, which reads as a bug in the app. Say what
+// is actually wrong instead. In production the app is only ever served over
+// HTTPS, so this branch is dead there.
+const insecure = ref(false)
 
-function onBeforeInstall(e) {
-	e.preventDefault()
-	prompt.value = e
-	show.value = true
-}
+// Show when we either hold a real prompt (Chrome), know we're on iOS, or need
+// to explain why installing isn't possible here — unless the user closed it or
+// the app is already installed.
+const show = computed(
+	() => !dismissed.value && !isStandalone() && (!!installPrompt.value || isIos.value || insecure.value),
+)
 
 async function install() {
-	if (!prompt.value) return
-	prompt.value.prompt()
-	await prompt.value.userChoice
-	prompt.value = null
-	show.value = false
+	const e = installPrompt.value
+	if (!e) return
+	e.prompt()
+	await e.userChoice
+	// The event is single-use: once prompted it cannot be replayed.
+	installPrompt.value = null
 }
 
 function dismiss() {
-	show.value = false
+	dismissed.value = true
 	// Durable: a banner the user closed must not come back on every reload.
 	try {
 		localStorage.setItem(DISMISS_KEY, "1")
@@ -40,24 +50,17 @@ function dismiss() {
 }
 
 onMounted(() => {
-	let dismissed = false
 	try {
-		dismissed = localStorage.getItem(DISMISS_KEY) === "1"
+		dismissed.value = localStorage.getItem(DISMISS_KEY) === "1"
 	} catch {
 		/* ignore */
 	}
-	if (dismissed || standalone()) return
-
-	window.addEventListener("beforeinstallprompt", onBeforeInstall)
-
-	// iOS: no event to wait for, so decide from the UA and just show the hint.
 	const ua = window.navigator.userAgent
 	if (/iPhone|iPad|iPod/.test(ua) && /Safari/.test(ua) && !/CriOS|FxiOS/.test(ua)) {
 		isIos.value = true
-		show.value = true
 	}
+	insecure.value = !window.isSecureContext
 })
-onUnmounted(() => window.removeEventListener("beforeinstallprompt", onBeforeInstall))
 </script>
 
 <template>
@@ -66,10 +69,11 @@ onUnmounted(() => window.removeEventListener("beforeinstallprompt", onBeforeInst
 			<div class="jv-mark" style="width: 34px; height: 34px; font-size: 15px">J</div>
 			<div class="jv-install-text">
 				<strong>Install Jarvis</strong>
-				<span v-if="isIos">Tap Share, then “Add to Home Screen”.</span>
+				<span v-if="insecure">Open this site over https to install it — browsers won't install an insecure page.</span>
+				<span v-else-if="isIos">Tap Share, then “Add to Home Screen”.</span>
 				<span v-else>Keep it one tap away, like an app.</span>
 			</div>
-			<button v-if="!isIos" class="jv-install-cta" @click="install">Install</button>
+			<button v-if="!isIos && !insecure" class="jv-install-cta" @click="install">Install</button>
 			<button class="jv-icon-btn" aria-label="Dismiss" @click="dismiss">
 				<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
 					<path d="M18 6 6 18M6 6l12 12" />
