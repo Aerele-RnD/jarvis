@@ -1,7 +1,7 @@
 // frontend/src/lib/actionSummary.test.js
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { proposedFields, changedFields, lineItemSummary, summarize, batchFromPreview } from "./actionSummary.js"
+import { proposedFields, changedFields, lineItemSummary, summarize, batchFromPreview, pendingCardOf, verbSentence, pendingExpiry } from "./actionSummary.js"
 
 const createAction = {
   kind: "doc", verb: "create", doctype: "Sales Order", summary: "Sales Order - Acme, 2 items, total 1,100",
@@ -114,4 +114,37 @@ test("batchFromPreview: non-batch or empty preview -> null", () => {
   assert.equal(batchFromPreview({ would: "SomeDocName" }), null)
   assert.equal(batchFromPreview({ described: true }), null)
   assert.equal(batchFromPreview(null), null)
+})
+
+test("pendingCardOf: returns the structured card for a known kind", () => {
+  const card = { kind: "update", doctype: "ToDo", diff: [{ label: "Priority", from: "Medium", to: "Low" }] }
+  assert.deepEqual(pendingCardOf({ preview: { card } }), card)
+})
+
+test("pendingCardOf: null for missing / unknown-kind / non-object cards", () => {
+  assert.equal(pendingCardOf({ preview: {} }), null)
+  assert.equal(pendingCardOf({ preview: { card: { kind: "wat" } } }), null)
+  assert.equal(pendingCardOf({ preview: { card: "nope" } }), null)
+  assert.equal(pendingCardOf({}), null)
+  assert.equal(pendingCardOf(null), null)
+})
+
+test("verbSentence: single names the record, bulk counts + pluralizes", () => {
+  assert.equal(
+    verbSentence({ kind: "verb", verb: "submit", doctype: "Sales Order", count: 1, targets: ["SO-1"] }),
+    "Will submit this Sales Order SO-1")
+  assert.equal(
+    verbSentence({ kind: "verb", verb: "cancel", doctype: "Sales Order", count: 6, targets: ["SO-1"] }),
+    "Will cancel 6 Sales Orders")
+  assert.equal(
+    verbSentence({ kind: "verb", verb: "apply", action: "Approve", doctype: "Leave Application", count: 1, targets: ["LA-1"] }),
+    'Will apply "Approve" to this Leave Application LA-1')
+})
+
+test("pendingExpiry: expired vs live vs no-stamp", () => {
+  const now = 1_000_000_000_000 // Date.now() ms
+  assert.deepEqual(pendingExpiry(now / 1000 + 120, now), { expired: false, secondsLeft: 120 })
+  assert.deepEqual(pendingExpiry(now / 1000 - 5, now), { expired: true, secondsLeft: -5 })
+  assert.deepEqual(pendingExpiry(null, now), { expired: false, secondsLeft: null })
+  assert.deepEqual(pendingExpiry(0, now), { expired: false, secondsLeft: null })
 })
