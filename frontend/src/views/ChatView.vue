@@ -3438,14 +3438,20 @@ async function send(textArg) {
 		const r = await api.sendMessage(currentId.value || "", text, undefined, attachments)
 		if (r && r.ok === false) {
 			// The server rejected the send (e.g. the single-flight guard:
-			// "a reply is already in progress"). Nothing was persisted, so drop
-			// the optimistic bubble and surface the reason — otherwise the spinner
-			// would hang forever (no run:start / run:error is coming).
+			// "a reply is already in progress", or the monthly usage cap).
+			// Nothing was persisted, so drop the optimistic bubble and surface
+			// the reason — otherwise the spinner would hang forever (no
+			// run:start / run:error is coming).
 			messages.value = messages.value.filter((x) => x.name !== tmpName)
 			if (fromMain && !input.value) input.value = text
 			sending.value = false
 			waiting.value = false
-			notify(r.reason || "Couldn't send your message.", { type: "error" })
+			notify(
+				r.reason === "usage_limit"
+					? "Monthly usage limit reached. Ask your Jarvis admin to raise your limit."
+					: r.reason || "Couldn't send your message.",
+				{ type: "error" }
+			)
 			return
 		}
 		if (isNewConv && r?.conversation_id) {

@@ -85,7 +85,7 @@
            Account editor only. Onboarding (singleMode) shows neither this nor the
            hint line above - the step's own head + method cards carry the context. -->
       <div v-else-if="!singleMode" style="font-size:13px;font-weight:600;color:var(--text-2);margin-bottom:8px;letter-spacing:.03em;text-transform:uppercase;">
-        Custom failover pool
+        Custom failover pool<span class="jv-pool-heading-suffix"> · tried in order</span>
       </div>
 
       <div v-if="!editorRows.length" style="font-size:13px;color:var(--text-3);padding:8px 0;">No models yet. Add one below.</div>
@@ -117,22 +117,29 @@
           </div>
         </div>
 
-        <!-- Row head: credential-type toggle (+ reorder/remove in Custom) -->
-        <div v-if="!singleMode" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-          <div style="display:inline-flex;border:1px solid var(--border);border-radius:7px;overflow:hidden;">
-            <button v-for="opt in credTypes" :key="opt.value" @click="setCredType(m, opt.value)" :disabled="!editable"
-                    :style="{fontSize:'12px',padding:'5px 11px',border:'none',cursor: editable ? 'pointer' : 'default',
-                             background: m.credentialType===opt.value ? 'var(--blue-bg)' : 'var(--surface)',
-                             color: m.credentialType===opt.value ? 'var(--blue)' : 'var(--text-3)',
-                             fontWeight: m.credentialType===opt.value ? '600' : '400'}">{{ opt.label }}</button>
+        <!-- Row head: failover-order badge, credential-type segmented control
+             (+ reorder/remove in Custom). -->
+        <div v-if="!singleMode" class="jv-pool-rowhead">
+          <span class="jv-pool-badge">{{ i + 1 }}</span>
+          <div class="jv-pool-segct" role="group" aria-label="Credential type">
+            <button v-for="opt in credTypes" :key="opt.value" type="button" class="jv-pool-segbtn"
+                    :class="{ on: m.credentialType===opt.value }"
+                    @click="setCredType(m, opt.value)" :disabled="!editable" :aria-pressed="m.credentialType===opt.value">
+              <svg v-if="opt.value==='api_key'" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+              <svg v-else viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              <span>{{ opt.label }}</span>
+            </button>
           </div>
           <div v-if="isMulti" style="margin-left:auto;display:flex;gap:6px;">
-            <button @click="move(i,-1)" :disabled="!editable || i===0" title="Up"
-                    :style="{border:'1px solid var(--border)',background:'var(--surface)',borderRadius:'5px',width:'26px',height:'26px',cursor:'pointer',fontSize:'11px',opacity: i===0 ? '0.35' : '1'}">▲</button>
-            <button @click="move(i,1)" :disabled="!editable || i===editorRows.length-1" title="Down"
-                    :style="{border:'1px solid var(--border)',background:'var(--surface)',borderRadius:'5px',width:'26px',height:'26px',cursor:'pointer',fontSize:'11px',opacity: i===editorRows.length-1 ? '0.35' : '1'}">▼</button>
-            <button @click="remove(i)" :disabled="!editable" title="Remove"
-                    style="border:1px solid var(--red-bd);background:var(--red-bg);color:var(--red);border-radius:5px;width:26px;height:26px;cursor:pointer;font-size:12px;">✕</button>
+            <button @click="move(i,-1)" :disabled="!editable || i===0" title="Up" class="jv-pool-iconbtn">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg>
+            </button>
+            <button @click="move(i,1)" :disabled="!editable || i===editorRows.length-1" title="Down" class="jv-pool-iconbtn">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <button @click="remove(i)" :disabled="!editable" title="Remove" class="jv-pool-iconbtn jv-pool-iconbtn--danger">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6h16z"/></svg>
+            </button>
           </div>
         </div>
 
@@ -149,21 +156,33 @@
                    :placeholder="m.hasKey ? 'key set, re-enter to change' : 'API key'" />
             <input v-model="m.baseUrl" :disabled="!editable" placeholder="Base URL (OpenAI-compatible)" />
           </div>
-          <div v-else style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-            <select v-model="m.provider" @change="onProviderChange(m)" :disabled="!editable" title="Provider"
-                    style="flex:1;min-width:120px;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;">
-              <option v-for="p in providerOptions" :key="p" :value="p">{{ p }}</option>
-            </select>
-            <input v-model="m.model" :list="'jv-dl-'+i" :disabled="!editable" placeholder="Model ID (e.g. gpt-4o)"
-                   style="flex:1.5;min-width:120px;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;" />
-            <datalist :id="'jv-dl-'+i">
-              <option v-for="s in modelSuggestionsForProvider(m.provider)" :key="s" :value="s"></option>
-            </datalist>
-            <input v-model="m.apiKey" :disabled="!editable" type="password"
-                   :placeholder="m.hasKey ? 'key set, re-enter to change' : 'API key'"
-                   style="flex:1.5;min-width:120px;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;" />
-            <input v-model="m.baseUrl" :disabled="!editable" placeholder="Base URL (OpenAI-compatible)"
-                   style="flex:1.5;min-width:120px;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;" />
+          <div v-else style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+            <div class="jv-pool-field" style="flex:1;min-width:120px;">
+              <label class="jv-pool-lab">Provider</label>
+              <select v-model="m.provider" @change="onProviderChange(m)" :disabled="!editable" title="Provider"
+                      style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;">
+                <option v-for="p in providerOptions" :key="p" :value="p">{{ p }}</option>
+              </select>
+            </div>
+            <div class="jv-pool-field" style="flex:1.5;min-width:120px;">
+              <label class="jv-pool-lab">Model</label>
+              <input v-model="m.model" :list="'jv-dl-'+i" :disabled="!editable" placeholder="Model ID (e.g. gpt-4o)"
+                     style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;" />
+              <datalist :id="'jv-dl-'+i">
+                <option v-for="s in modelSuggestionsForProvider(m.provider)" :key="s" :value="s"></option>
+              </datalist>
+            </div>
+            <div class="jv-pool-field" style="flex:1.5;min-width:120px;">
+              <label class="jv-pool-lab">API key</label>
+              <input v-model="m.apiKey" :disabled="!editable" type="password"
+                     :placeholder="m.hasKey ? 'key set, re-enter to change' : 'API key'"
+                     style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;" />
+            </div>
+            <div class="jv-pool-field" style="flex:1.5;min-width:120px;">
+              <label class="jv-pool-lab">Base URL (optional)</label>
+              <input v-model="m.baseUrl" :disabled="!editable" placeholder="Base URL (OpenAI-compatible)"
+                     style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;" />
+            </div>
           </div>
         </div>
 
@@ -184,31 +203,49 @@
             <JvCombo :model-value="m.upstream" @update:model-value="(v) => { if (v === m.upstream) return; m.upstream = v; onUpstreamChange(m) }"
                      :options="upstreamOpts" :editable="editable" placeholder="Provider" />
           </div>
-          <div v-else style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
-            <input v-model="m.model" :list="'jv-subdl-'+i" :disabled="!editable" placeholder="Model ID (e.g. gpt-5.5)"
-                   style="flex:2;min-width:120px;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;" />
-            <datalist :id="'jv-subdl-'+i">
-              <option v-for="s in (SUB_MODEL_SUGGESTIONS[m.upstream] || [])" :key="s" :value="s"></option>
-            </datalist>
-            <select v-model="m.upstream" @change="onUpstreamChange(m)" :disabled="!editable" title="Provider"
-                    style="flex:1;min-width:100px;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;">
-              <option v-for="o in upstreamOpts" :key="o.value" :value="o.value">{{ o.label }}</option>
-            </select>
-            <select v-model="m.rotation" :disabled="!editable" title="Account rotation"
-                    style="flex:1.2;min-width:110px;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;">
-              <option v-for="o in rotationOpts" :key="o.value" :value="o.value">{{ o.label }}</option>
-            </select>
+          <div v-else style="display:flex;gap:8px;align-items:flex-end;margin-bottom:8px;flex-wrap:wrap;">
+            <div class="jv-pool-field" style="flex:2;min-width:120px;">
+              <label class="jv-pool-lab">Model</label>
+              <input v-model="m.model" :list="'jv-subdl-'+i" :disabled="!editable" placeholder="Model ID (e.g. gpt-5.5)"
+                     style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;" />
+              <datalist :id="'jv-subdl-'+i">
+                <option v-for="s in (SUB_MODEL_SUGGESTIONS[m.upstream] || [])" :key="s" :value="s"></option>
+              </datalist>
+            </div>
+            <div class="jv-pool-field" style="flex:1;min-width:100px;">
+              <label class="jv-pool-lab">Provider</label>
+              <select v-model="m.upstream" @change="onUpstreamChange(m)" :disabled="!editable" title="Provider"
+                      style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;">
+                <option v-for="o in upstreamOpts" :key="o.value" :value="o.value">{{ o.label }}</option>
+              </select>
+            </div>
+            <div class="jv-pool-field" style="flex:1.2;min-width:110px;">
+              <label class="jv-pool-lab">Account rotation</label>
+              <select v-model="m.rotation" :disabled="!editable" title="Account rotation"
+                      style="width:100%;padding:9px 12px;font-size:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:inherit;box-sizing:border-box;">
+                <option v-for="o in rotationOpts" :key="o.value" :value="o.value">{{ o.label }}</option>
+              </select>
+            </div>
           </div>
 
           <!-- Connected accounts -->
-          <div v-if="m.accounts && m.accounts.length" style="display:flex;flex-direction:column;gap:5px;margin-bottom:8px;">
-            <div v-for="(a, ai) in m.accounts" :key="a.account_ref || ai" class="jv-status jv-status-ok">
-              <span class="jv-status-ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg></span>
-              <span class="jv-status-tx"><b>Connected</b> · {{ accountLabel(a) }}</span>
-              <span class="jv-status-acts">
-                <button v-if="editable && !singleMode" class="jv-status-act" @click="startConnect(m, ai)" title="Re-authorize to mint fresh tokens">Reconnect</button>
-                <button v-if="editable" class="jv-status-act" @click="removeAccount(m, ai)">Disconnect</button>
-              </span>
+          <div v-if="m.accounts && m.accounts.length" class="jv-pool-accts">
+            <div class="jv-pool-lab">Connected accounts ({{ m.accounts.length }})</div>
+            <div class="jv-pool-acctlist">
+              <div v-for="(a, ai) in m.accounts" :key="a.account_ref || ai" class="jv-pool-acctchip">
+                <span class="jv-pool-avatar">{{ (accountLabel(a) || '?').charAt(0).toUpperCase() }}</span>
+                <span class="jv-pool-accttx">{{ accountLabel(a) }}</span>
+                <span class="jv-pool-dot" aria-hidden="true"></span>
+                <span class="jv-pool-acctacts">
+                  <button v-if="editable && !singleMode" class="jv-btn jv-btn--sm jv-btn--ghost" @click="startConnect(m, ai)" title="Re-authorize to mint fresh tokens">Reconnect</button>
+                  <button v-if="editable" class="jv-btn jv-btn--sm jv-btn--ghost jv-pool-disc" @click="removeAccount(m, ai)">Disconnect</button>
+                </span>
+              </div>
+              <button v-if="editable && !singleMode && !(m._connect && m._connect.open)" @click="startConnect(m)"
+                      :disabled="m._connect && m._connect.loading && !m._connect.authorizeUrl"
+                      class="jv-pool-addrow">
+                + Add account
+              </button>
             </div>
           </div>
           <div v-else-if="!singleMode" style="font-size:13px;color:var(--text-3);margin-bottom:8px;">No accounts connected yet.</div>
@@ -302,17 +339,19 @@
           </div>
 
           <!-- Account editor's connect entry point (onboarding's spine above owns
-               startConnect there). -->
-          <button v-if="editable && !singleMode && !(m._connect && m._connect.open)" @click="startConnect(m)"
+               startConnect there). Zero-accounts only - once an account exists,
+               the equivalent trigger lives inline as the dashed "+ Add account"
+               row at the end of the chip list above. -->
+          <button v-if="editable && !singleMode && !(m._connect && m._connect.open) && !(m.accounts && m.accounts.length)"
+                  @click="startConnect(m)"
                   :disabled="m._connect && m._connect.loading && !m._connect.authorizeUrl"
-                  style="font-size:14px;font-weight:600;color:var(--surface);background:var(--blue);border:0;border-radius:8px;padding:11px 17px;cursor:pointer;">
-            {{ (m.accounts && m.accounts.length) ? '+ Connect another account' : '+ Connect account' }}
+                  class="jv-btn jv-btn--sm jv-btn--primary">
+            + Connect account
           </button>
         </div>
       </div>
 
-      <button v-if="isMulti && editable" @click="addModel"
-              style="font-size:14px;color:var(--blue);background:transparent;border:1px dashed var(--border-2);border-radius:7px;padding:9px 16px;cursor:pointer;width:100%;">
+      <button v-if="isMulti && editable" @click="addModel" class="jv-btn jv-btn--sm jv-btn--primary">
         + Add model
       </button>
     </section>
@@ -879,6 +918,78 @@ defineExpose({ save })
 </script>
 
 <style scoped>
+/* ===== Account editor (!singleMode) row redesign - "Option A: refine in
+   place". Onboarding's singleMode cards below are untouched; these jv-pool-*
+   classes are new and only ever rendered from the !singleMode branches. ===== */
+.jv-pool-heading-suffix { text-transform: none; font-weight: 400; font-size: 11px; letter-spacing: normal; color: var(--text-3); }
+.jv-pool-rowhead { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+/* 1-based failover-order badge. */
+.jv-pool-badge {
+  flex: none; width: 22px; height: 22px; border-radius: 6px;
+  background: var(--blue-bg); color: var(--blue); font-size: 11.5px; font-weight: 700;
+  display: grid; place-items: center;
+}
+/* Credential-type segmented control (replaces the old pale text-pair toggle). */
+.jv-pool-segct { display: inline-flex; border: 1px solid var(--border-2); border-radius: 8px; overflow: hidden; }
+.jv-pool-segbtn {
+  display: inline-flex; align-items: center; gap: 5px; height: 31px; padding: 0 11px;
+  border: none; border-right: 1px solid var(--border-2); background: var(--surface); color: var(--text-2);
+  font-family: inherit; font-size: 12.5px; font-weight: 500; cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.jv-pool-segbtn:last-child { border-right: none; }
+.jv-pool-segbtn svg { flex: none; }
+.jv-pool-segbtn.on { background: var(--blue); color: #fff; font-weight: 600; }
+.jv-pool-segbtn:disabled { cursor: default; opacity: .6; }
+/* Reorder / remove icon buttons (replace the ▲/▼/✕ glyph squares). */
+.jv-pool-iconbtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: 6px; padding: 0;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-2);
+  cursor: pointer; transition: background .15s, color .15s;
+}
+.jv-pool-iconbtn:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+.jv-pool-iconbtn:disabled { cursor: default; opacity: .4; }
+.jv-pool-iconbtn--danger { border-color: var(--red-bd); background: var(--red-bg); color: var(--red); }
+.jv-pool-iconbtn--danger:hover:not(:disabled) { background: var(--red-bg); color: var(--red); }
+/* Labeled field columns (Provider / Model / API key / Base URL, Model /
+   Provider / Account rotation). Flex proportions stay on this wrapper - the
+   input/select inside just fills width:100%. */
+.jv-pool-field { display: flex; flex-direction: column; min-width: 0; }
+.jv-pool-lab { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; color: var(--text-3); margin-bottom: 3px; }
+/* Connected-accounts chip list. */
+.jv-pool-accts { margin-bottom: 8px; }
+.jv-pool-accts > .jv-pool-lab { margin-bottom: 6px; }
+.jv-pool-acctlist { display: flex; flex-direction: column; gap: 6px; }
+.jv-pool-acctchip {
+  display: flex; align-items: center; gap: 8px;
+  border: 1px solid var(--border); background: var(--surface);
+  border-radius: 8px; padding: 7px 10px;
+}
+.jv-pool-avatar {
+  flex: none; width: 22px; height: 22px; border-radius: 50%;
+  background: var(--blue-bg); color: var(--blue); font-size: 10.5px; font-weight: 700;
+  display: grid; place-items: center;
+}
+.jv-pool-accttx { font-size: 12.5px; color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jv-pool-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+.jv-pool-acctacts { margin-left: auto; display: flex; gap: 6px; flex: none; }
+.jv-pool-disc { color: var(--red); }
+.jv-pool-disc:hover:not(:disabled) { color: var(--red); border-color: var(--red-bd); background: var(--red-bg); }
+/* Full-width dashed "+ Add account" row appended to a non-empty chip list. */
+.jv-pool-addrow {
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; height: 32px; border-radius: 8px;
+  border: 1px dashed var(--border-2); background: transparent; color: var(--text-2);
+  font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.jv-pool-addrow:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+.jv-pool-addrow:disabled { opacity: .5; cursor: default; }
+@media (prefers-reduced-motion: reduce) {
+  .jv-pool-segbtn, .jv-pool-iconbtn, .jv-pool-addrow { transition: none; }
+}
+
 /* Onboarding method cards (preview .method/.m-opt): sel = blue border + 3px
    ring; icon tile flips from neutral to blue tint when selected. Preview's
    --accent maps to the app's --blue (and -bg/-bd). */

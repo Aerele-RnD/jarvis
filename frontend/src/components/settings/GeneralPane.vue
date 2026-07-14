@@ -105,6 +105,14 @@ onMounted(async () => {
 			connStatus.value = await api.getLlmConnectionStatus()
 		} catch (e) { /* status stays "—" */ }
 	}
+	// Roam notify/activity-detail prefs from the server row, falling back to
+	// the localStorage cache the store already booted from on any failure
+	// (endpoint not deployed yet, network error, etc.) — never blocks or
+	// errors the pane.
+	try {
+		const res = await api.getMySettings()
+		if (res && res.ok !== false && res.data) store.syncSettingsFromServer(res.data)
+	} catch (e) { /* prefs stay on the localStorage cache */ }
 })
 
 // Confirm-before-changes → per-conversation action registered by ChatView.

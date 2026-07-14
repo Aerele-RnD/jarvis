@@ -11,7 +11,12 @@
     "user",
     "chat_device_id",
     "created_at",
-    "last_seen_at"
+    "last_seen_at",
+    "input_tokens",
+    "output_tokens",
+    "run_count",
+    "last_total_tokens",
+    "last_usage_at"
   ],
   "fields": [
     {
@@ -53,6 +58,46 @@
       "label": "Last Seen At",
       "read_only": 1,
       "description": "Updated when the hook looks up this session (future use)"
+    },
+    {
+      "fieldname": "input_tokens",
+      "fieldtype": "Int",
+      "label": "Input Tokens",
+      "read_only": 1,
+      "no_copy": 1,
+      "description": "Cumulative input tokens across this session's recorded turns (jarvis.chat.usage)."
+    },
+    {
+      "fieldname": "output_tokens",
+      "fieldtype": "Int",
+      "label": "Output Tokens",
+      "read_only": 1,
+      "no_copy": 1,
+      "description": "Cumulative output tokens across this session's recorded turns."
+    },
+    {
+      "fieldname": "run_count",
+      "fieldtype": "Int",
+      "label": "Run Count",
+      "read_only": 1,
+      "no_copy": 1,
+      "description": "Number of turns recorded against this session."
+    },
+    {
+      "fieldname": "last_total_tokens",
+      "fieldtype": "Int",
+      "label": "Last Total Tokens",
+      "read_only": 1,
+      "no_copy": 1,
+      "description": "Snapshot of the gateway's totalTokens (context size) at the last recorded turn / sync."
+    },
+    {
+      "fieldname": "last_usage_at",
+      "fieldtype": "Datetime",
+      "label": "Last Usage At",
+      "read_only": 1,
+      "no_copy": 1,
+      "description": "When usage was last recorded or synced for this session."
     }
   ],
   "permissions": [

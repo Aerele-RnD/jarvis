@@ -33,9 +33,26 @@ export const getChatUiSettings = () => call("jarvis.chat.api.get_chat_ui_setting
 export const setAutoApply = (conversation, value) =>
 	call("jarvis.chat.api.set_auto_apply", { conversation, value: value ? 1 : 0 })
 // Estimated token usage (this chat / this month / total + monthly budget).
+// Response also carries a "measured" block (real gateway-recorded counters +
+// the caller's own monthly_token_limit) once the backend records usage —
+// null/zeros until then (design doc §6, UsagePane's "Measured usage" block).
 export const getUsage = (conversation) =>
 	call("jarvis.chat.api.get_usage", { conversation: conversation || "" })
 export const isReadyForChat = () => call("jarvis.account.is_ready_for_chat")
+
+// --- Per-user chat settings + real (measured) usage tracking, incl. the
+// tenant-admin usage table (design doc §4/§6). All return the house
+// {ok, data} / {ok:false, reason} envelope — unlike getUsage above, which is
+// a flat legacy dict. ---
+const US = "jarvis.chat.user_settings_api."
+export const getMySettings = () => call(US + "get_my_settings")
+export const updateMySettings = (p) => call(US + "update_my_settings", p || {})
+// Jarvis Admin (or System Manager) only — server re-checks independently of
+// the client's window.is_jarvis_admin gate.
+export const adminListUserUsage = () => call(US + "admin_list_user_usage")
+export const adminSetUserLimit = (user, monthlyTokenLimit) =>
+	call(US + "admin_set_user_limit", { user, monthly_token_limit: monthlyTokenLimit })
+export const adminSyncUsage = () => call(US + "admin_sync_usage")
 
 // --- Mobile app onboarding: QR the phone scans to learn the site connection
 // details (no secret — just where to reach this site). ---

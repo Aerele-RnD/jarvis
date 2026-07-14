@@ -1,6 +1,6 @@
 import frappe
 
-from jarvis.permissions import has_jarvis_access
+from jarvis.permissions import has_jarvis_access, has_jarvis_admin_access
 
 no_cache = 1
 
@@ -23,6 +23,10 @@ def get_context(context):
 		"site_name": str(frappe.local.site),
 		"default_route": "/jarvis",
 		"is_system_manager": "System Manager" in frappe.get_roles(),
+		# UI gate for the tenant-admin usage pane (design section 2). True for
+		# System Managers too. Client gate is UX-only — every admin API
+		# re-checks require_jarvis_admin server-side.
+		"is_jarvis_admin": has_jarvis_admin_access(),
 		# NOTE: no `has_jarvis_access` boot flag — the guard above already
 		# redirected anyone without access, so it would always be True here.
 		# Site timezone for the SPA's dayjs config — shipping it in boot lets

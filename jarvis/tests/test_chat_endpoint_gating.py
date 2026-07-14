@@ -42,6 +42,12 @@ _GATE_DECORATOR = "require_jarvis_user"
 _GUARD_CALL_SUBSTRS = (
 	"require_jarvis_access",
 	"require_jarvis_user",
+	# Tenant-admin gate. STRICTER than require_jarvis_user: it demands the Jarvis
+	# Admin role (or System Manager / Administrator), not merely Jarvis User. The
+	# admin_* usage endpoints (user_settings_api) call it, so without this entry the
+	# sweep reported them as ungated -- a false positive on endpoints that are in
+	# fact gated harder than the sweep's own baseline.
+	"require_jarvis_admin",
 	"require_skill_reviewer",  # PART 2 TASK 12: skill-reviewer/admin gate (org-wide apply)
 	"_require_system_user",
 	"only_for",  # frappe.only_for(...) — an SM/role gate, stricter than Jarvis User

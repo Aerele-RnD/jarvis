@@ -1,0 +1,570 @@
+"""Tests for per-user settings, the Jarvis Admin gate, and real usage
+tracking (design sections 1-5, 7).
+
+Hermetic: disposable enabled System Users (one per role shape) are created in
+``setUp`` and deleted in ``tearDown``. Because ``record_turn_usage`` /
+``admin_set_user_limit`` / ``refresh_session_snapshots`` COMMIT (they must
+persist real usage), ``tearDown`` explicitly deletes every ``Jarvis User
+Settings`` + ``Jarvis Chat Session`` row owned by a fixture user — the
+FrappeTestCase transaction rollback cannot undo a commit.
+
+Gateway I/O is always mocked; no test requires a live container. Negative
+role cases explicitly strip roles from the fixture user so they hold on CI's
+fresh DB as well as the role-polluted local ``site.jarvis``.
+"""
+
+from __future__ import annotations
+
+from contextlib import contextmanager
+from unittest.mock import patch
+
+import frappe
+from frappe.tests.utils import FrappeTestCase
+
+from jarvis.chat import policy, usage, user_settings_api
+from jarvis.exceptions import OpenclawUnreachableError
+from jarvis.permissions import (
+	JARVIS_ADMIN_ROLE,
+	JARVIS_USER_ROLE,
+	ensure_jarvis_admin_role,
+	ensure_jarvis_user_role,
+	has_jarvis_admin_access,
+	require_jarvis_admin,
+)
+
+USETT = "Jarvis User Settings"
+SESSION = "Jarvis Chat Session"
+
+USER_A = "jarvis-usett-a@example.test"
+USER_B = "jarvis-usett-b@example.test"
+USER_ADMIN = "jarvis-usett-admin@example.test"
+USER_PLAIN = "jarvis-usett-plain@example.test"
+_ALL_USERS = (USER_A, USER_B, USER_ADMIN, USER_PLAIN)
+
+
+def _ensure_user(email: str, roles: tuple[str, ...] = ()) -> None:
+	if not frappe.db.exists("User", email):
+		frappe.get_doc({
+			"doctype": "User",
+			"email": email,
+			"first_name": "Jarvis",
+			"last_name": "UsageTest",
+			"enabled": 1,
+			"send_welcome_email": 0,
+			"user_type": "System User",
+		}).insert(ignore_permissions=True)
+	doc = frappe.get_doc("User", email)
+	if roles:
+		doc.add_roles(*roles)
+
+
+def _strip_admin_roles(email: str) -> None:
+	"""Guarantee the fixture user is NOT an admin, so a negative gate assertion
+	holds on the role-polluted local site too."""
+	doc = frappe.get_doc("User", email)
+	present = {r.role for r in doc.get("roles", [])}
+	drop = present & {"System Manager", JARVIS_ADMIN_ROLE}
+	if drop:
+		doc.remove_roles(*drop)
+
+
+def _make_session(session_key: str, user: str) -> None:
+	frappe.get_doc({
+		"doctype": SESSION,
+		"session_key": session_key,
+		"user": user,
+	}).insert(ignore_permissions=True)
+	frappe.db.commit()
+
+
+def _cleanup_fixture_rows() -> None:
+	for email in _ALL_USERS:
+		for name in frappe.get_all(USETT, filters={"user": email}, pluck="name"):
+			frappe.delete_doc(USETT, name, ignore_permissions=True, force=True)
+		for name in frappe.get_all(SESSION, filters={"user": email}, pluck="name"):
+			frappe.delete_doc(SESSION, name, ignore_permissions=True, force=True)
+
+
+class _UsageTestBase(FrappeTestCase):
+	def setUp(self):
+		self._orig_user = frappe.session.user
+		frappe.set_user("Administrator")
+		ensure_jarvis_user_role()
+		ensure_jarvis_admin_role()
+		_ensure_user(USER_A, (JARVIS_USER_ROLE,))
+		_ensure_user(USER_B, (JARVIS_USER_ROLE,))
+		_ensure_user(USER_ADMIN, (JARVIS_ADMIN_ROLE,))
+		_ensure_user(USER_PLAIN, (JARVIS_USER_ROLE,))
+		_strip_admin_roles(USER_A)
+		_strip_admin_roles(USER_B)
+		_strip_admin_roles(USER_PLAIN)
+		_cleanup_fixture_rows()
+		frappe.db.commit()
+
+	def tearDown(self):
+		frappe.set_user("Administrator")
+		_cleanup_fixture_rows()
+		frappe.db.commit()
+		frappe.set_user(self._orig_user)
+
+
+# --------------------------------------------------------------------------- #
+# 1. Lazy creation + owner
+# --------------------------------------------------------------------------- #
+class TestLazyCreation(_UsageTestBase):
+	def test_creates_row_with_explicit_owner(self):
+		self.assertFalse(frappe.db.exists(USETT, {"user": USER_A}))
+		doc = usage.get_or_create_user_settings(USER_A)
+		self.assertEqual(doc.user, USER_A)
+		# owner must be the settings user even though Administrator triggered it.
+		self.assertEqual(frappe.db.get_value(USETT, doc.name, "owner"), USER_A)
+		# Defaults. activity_detail defaults ON to match the SPA's default for
+		# fresh devices (upstream/main product decision — see stores/shell.js).
+		self.assertEqual(frappe.utils.cint(doc.notify_enabled), 1)
+		self.assertEqual(frappe.utils.cint(doc.activity_detail), 1)
+		self.assertEqual(frappe.utils.cint(doc.monthly_token_limit), 0)
+
+	def test_idempotent(self):
+		a = usage.get_or_create_user_settings(USER_A)
+		b = usage.get_or_create_user_settings(USER_A)
+		self.assertEqual(a.name, b.name)
+		self.assertEqual(
+			len(frappe.get_all(USETT, filters={"user": USER_A})), 1
+		)
+
+	def test_get_my_settings_lazy_creates(self):
+		frappe.set_user(USER_A)
+		out = user_settings_api.get_my_settings()
+		self.assertTrue(out["ok"])
+		self.assertEqual(out["data"]["user"], USER_A)
+		self.assertEqual(out["data"]["notify_enabled"], 1)
+		frappe.set_user("Administrator")
+		self.assertTrue(frappe.db.exists(USETT, {"user": USER_A}))
+
+
+# --------------------------------------------------------------------------- #
+# 2. Preference update ownership (A cannot write B) + permlevel via API
+# --------------------------------------------------------------------------- #
+class TestPreferenceOwnership(_UsageTestBase):
+	def test_update_touches_only_own_row(self):
+		# B starts with notify on.
+		usage.get_or_create_user_settings(USER_B)
+		frappe.db.commit()
+		frappe.set_user(USER_A)
+		out = user_settings_api.update_my_settings(notify_enabled=0, activity_detail=1)
+		self.assertTrue(out["ok"])
+		self.assertEqual(out["data"]["notify_enabled"], 0)
+		self.assertEqual(out["data"]["activity_detail"], 1)
+		frappe.set_user("Administrator")
+		# B untouched.
+		self.assertEqual(
+			frappe.utils.cint(frappe.db.get_value(USETT, {"user": USER_B}, "notify_enabled")),
+			1,
+		)
+
+	def test_if_owner_blocks_cross_user_write(self):
+		b_name = usage.get_or_create_user_settings(USER_B).name
+		a_name = usage.get_or_create_user_settings(USER_A).name
+		frappe.db.commit()
+		# A may write its own row but not B's (permlevel-0 grant is if_owner).
+		self.assertTrue(
+			frappe.has_permission(USETT, "write", doc=a_name, user=USER_A)
+		)
+		self.assertFalse(
+			frappe.has_permission(USETT, "write", doc=b_name, user=USER_A)
+		)
+
+	def test_owner_cannot_change_own_limit_via_prefs_api(self):
+		# Admin sets a limit; the owner's pref update must not disturb it
+		# (monthly_token_limit is permlevel 1 and not an update_my_settings arg).
+		user_settings_api.admin_set_user_limit(user=USER_A, monthly_token_limit=100)
+		frappe.set_user(USER_A)
+		user_settings_api.update_my_settings(notify_enabled=0)
+		out = user_settings_api.get_my_settings()
+		# Owner can READ the limit (permlevel-1 read granted to All)...
+		self.assertEqual(out["data"]["monthly_token_limit"], 100)
+		frappe.set_user("Administrator")
+		# ...and it is unchanged in the DB.
+		self.assertEqual(
+			frappe.utils.cint(frappe.db.get_value(USETT, {"user": USER_A}, "monthly_token_limit")),
+			100,
+		)
+
+
+# --------------------------------------------------------------------------- #
+# 3. Admin gating + set-limit flow
+# --------------------------------------------------------------------------- #
+class TestAdminGate(_UsageTestBase):
+	def test_admin_role_passes(self):
+		self.assertTrue(has_jarvis_admin_access(USER_ADMIN))
+		frappe.set_user(USER_ADMIN)
+		require_jarvis_admin()  # must not raise
+		out = user_settings_api.admin_list_user_usage()
+		self.assertTrue(out["ok"])
+		self.assertIsInstance(out["data"], list)
+
+	def test_plain_user_refused(self):
+		self.assertFalse(has_jarvis_admin_access(USER_PLAIN))
+		frappe.set_user(USER_PLAIN)
+		with self.assertRaises(frappe.PermissionError):
+			require_jarvis_admin()
+		with self.assertRaises(frappe.PermissionError):
+			user_settings_api.admin_list_user_usage()
+
+	def test_administrator_always_admin(self):
+		self.assertTrue(has_jarvis_admin_access("Administrator"))
+
+	def test_set_limit_creates_row(self):
+		self.assertFalse(frappe.db.exists(USETT, {"user": USER_A}))
+		out = user_settings_api.admin_set_user_limit(user=USER_A, monthly_token_limit=250)
+		self.assertTrue(out["ok"])
+		self.assertEqual(out["data"]["monthly_token_limit"], 250)
+		self.assertEqual(
+			frappe.utils.cint(frappe.db.get_value(USETT, {"user": USER_A}, "monthly_token_limit")),
+			250,
+		)
+
+	def test_set_limit_unknown_user(self):
+		out = user_settings_api.admin_set_user_limit(
+			user="nobody@example.invalid", monthly_token_limit=10
+		)
+		self.assertFalse(out["ok"])
+		self.assertEqual(out["reason"], "unknown_user")
+
+	def test_admin_list_includes_row(self):
+		user_settings_api.admin_set_user_limit(user=USER_A, monthly_token_limit=99)
+		out = user_settings_api.admin_list_user_usage()
+		users = {r["user"]: r for r in out["data"]}
+		self.assertIn(USER_A, users)
+		self.assertEqual(users[USER_A]["monthly_token_limit"], 99)
+
+
+# --------------------------------------------------------------------------- #
+# 4. record_turn_usage — accumulation math + month rollover + skips
+# --------------------------------------------------------------------------- #
+class TestRecordTurnUsage(_UsageTestBase):
+	def _row(self, **kw):
+		base = {"totalTokensFresh": True, "inputTokens": 0, "outputTokens": 0, "totalTokens": 0}
+		base.update(kw)
+		return base
+
+	def test_accumulates_across_turns(self):
+		_make_session("agent:acc", USER_A)
+		usage.record_turn_usage("agent:acc", self._row(inputTokens=10, outputTokens=5, totalTokens=100))
+		usage.record_turn_usage("agent:acc", self._row(inputTokens=8, outputTokens=12, totalTokens=140))
+		s = frappe.db.get_value(
+			USETT, {"user": USER_A},
+			["month_input_tokens", "month_output_tokens", "month_tokens",
+			 "total_tokens", "usage_month"], as_dict=True,
+		)
+		self.assertEqual(s.month_input_tokens, 18)
+		self.assertEqual(s.month_output_tokens, 17)
+		self.assertEqual(s.month_tokens, 35)
+		self.assertEqual(s.total_tokens, 35)
+		self.assertEqual(s.usage_month, usage.current_month_key())
+		sess = frappe.db.get_value(
+			SESSION, {"session_key": "agent:acc"},
+			["input_tokens", "output_tokens", "run_count", "last_total_tokens"],
+			as_dict=True,
+		)
+		self.assertEqual(sess.input_tokens, 18)
+		self.assertEqual(sess.output_tokens, 17)
+		self.assertEqual(sess.run_count, 2)
+		self.assertEqual(sess.last_total_tokens, 140)
+
+	def test_month_rollover_resets_month_buckets(self):
+		_make_session("agent:roll", USER_A)
+		usage.record_turn_usage("agent:roll", self._row(inputTokens=10, outputTokens=5, totalTokens=50))
+		# Simulate a stale month (previous accumulation was a prior month).
+		frappe.db.set_value(USETT, {"user": USER_A}, "usage_month", "2020-01", update_modified=False)
+		frappe.db.commit()
+		usage.record_turn_usage("agent:roll", self._row(inputTokens=12, outputTokens=8, totalTokens=80))
+		s = frappe.db.get_value(
+			USETT, {"user": USER_A},
+			["month_tokens", "total_tokens", "usage_month"], as_dict=True,
+		)
+		# Month buckets reset to the new delta (20); total is all-time (15+20=35).
+		self.assertEqual(s.month_tokens, 20)
+		self.assertEqual(s.total_tokens, 35)
+		self.assertEqual(s.usage_month, usage.current_month_key())
+
+	def test_skips_when_not_fresh(self):
+		_make_session("agent:stale", USER_A)
+		usage.record_turn_usage(
+			"agent:stale", self._row(totalTokensFresh=False, inputTokens=10, outputTokens=5)
+		)
+		self.assertFalse(frappe.db.exists(USETT, {"user": USER_A}))
+
+	def test_skips_null_token_fields(self):
+		_make_session("agent:null", USER_A)
+		usage.record_turn_usage(
+			"agent:null", {"totalTokensFresh": True, "inputTokens": None, "outputTokens": None}
+		)
+		self.assertFalse(frappe.db.exists(USETT, {"user": USER_A}))
+
+	def test_skips_zero_delta(self):
+		_make_session("agent:zero", USER_A)
+		usage.record_turn_usage("agent:zero", self._row(inputTokens=0, outputTokens=0))
+		self.assertFalse(frappe.db.exists(USETT, {"user": USER_A}))
+
+	def test_no_session_mapping_is_noop(self):
+		# Unknown session_key: no settings row created, no raise.
+		usage.record_turn_usage("agent:unknown", self._row(inputTokens=5, outputTokens=5))
+		self.assertFalse(frappe.db.exists(USETT, {"user": USER_A}))
+
+	def test_none_row_is_noop(self):
+		usage.record_turn_usage("agent:whatever", None)  # must not raise
+
+
+# --------------------------------------------------------------------------- #
+# 4b. fetch_fresh_session_row — bounded freshness retry (live-reproduced gap:
+#    a session's first completed run can read back stale on the first poll)
+# --------------------------------------------------------------------------- #
+class _PollingSess:
+	"""Fake gateway session whose list_sessions() returns a different rows
+	list on each call, so the poll loop can be observed call-by-call."""
+
+	def __init__(self, rows_by_call):
+		self._rows_by_call = rows_by_call
+		self.calls = 0
+
+	def list_sessions(self):
+		idx = min(self.calls, len(self._rows_by_call) - 1)
+		self.calls += 1
+		return self._rows_by_call[idx]
+
+
+class TestFetchFreshSessionRow(_UsageTestBase):
+	def test_retries_until_fresh(self):
+		stale = {"key": "agent:poll", "totalTokensFresh": False, "inputTokens": 1, "outputTokens": 1}
+		fresh = {"key": "agent:poll", "totalTokensFresh": True, "inputTokens": 5, "outputTokens": 3}
+		sess = _PollingSess([[stale], [fresh]])
+		with patch("jarvis.chat.usage.time.sleep", return_value=None) as mock_sleep:
+			row = usage.fetch_fresh_session_row(sess, "agent:poll")
+		self.assertEqual(row, fresh)
+		self.assertEqual(sess.calls, 2)
+		mock_sleep.assert_called_once()
+
+	def test_never_fresh_returns_last_row_after_attempts(self):
+		stale = {"key": "agent:neverfresh", "totalTokensFresh": False, "inputTokens": 1, "outputTokens": 1}
+		sess = _PollingSess([[stale]])
+		with patch("jarvis.chat.usage.time.sleep", return_value=None):
+			row = usage.fetch_fresh_session_row(sess, "agent:neverfresh", attempts=3)
+		self.assertEqual(row, stale)
+		self.assertEqual(sess.calls, 3)
+
+
+# --------------------------------------------------------------------------- #
+# 5. admin_sync_usage — snapshot refresh, no accumulation, unreachable
+# --------------------------------------------------------------------------- #
+class _FakeSess:
+	def __init__(self, rows):
+		self._rows = rows
+
+	def list_sessions(self):
+		return self._rows
+
+
+class TestAdminSync(_UsageTestBase):
+	def _patch_gateway(self, sess_or_exc):
+		"""Patch selfhost off + a non-empty agent_url + the pooled checkout so no
+		real WS ever opens. ``admin_sync_usage`` imports selfhost lazily via
+		``from jarvis import selfhost``, so the patch target is the source module."""
+		from jarvis import selfhost as _sh
+
+		@contextmanager
+		def _fake_checkout(url):
+			if isinstance(sess_or_exc, Exception):
+				raise sess_or_exc
+			yield sess_or_exc
+
+		orig_agent_url = frappe.db.get_single_value("Jarvis Settings", "agent_url")
+		frappe.db.set_single_value("Jarvis Settings", "agent_url", "http://gw.test")
+		self.addCleanup(
+			lambda: frappe.db.set_single_value(
+				"Jarvis Settings", "agent_url", orig_agent_url or ""
+			)
+		)
+		for p in (
+			patch.object(_sh, "is_self_hosted", return_value=False),
+			patch.object(user_settings_api.openclaw_session_pool, "checkout", _fake_checkout),
+		):
+			p.start()
+			self.addCleanup(p.stop)
+
+	def test_refreshes_snapshots_without_accumulating(self):
+		_make_session("agent:sa", USER_A)
+		_make_session("agent:sb", USER_B)
+		# sa carries the gateway's updatedAt (ms epoch) → last_usage_at must be
+		# converted from THAT stamp, not sync time; sb has none → last_usage_at
+		# stays untouched (an idle session must not look freshly active).
+		updated_ms = 1700000000000  # 2023-11-14T22:13:20Z
+		rows = [
+			{"key": "agent:sa", "totalTokens": 500, "totalTokensFresh": True,
+				"updatedAt": updated_ms},
+			{"key": "agent:sb", "totalTokens": 300, "totalTokensFresh": True},
+			{"key": "agent:unknown", "totalTokens": 999},
+		]
+		self._patch_gateway(_FakeSess(rows))
+		out = user_settings_api.admin_sync_usage()
+		self.assertTrue(out["ok"])
+		# 3 gateway rows, but only the 2 mapped to a Jarvis Chat Session count
+		# as synced (the pane renders these two counters verbatim).
+		self.assertEqual(out["data"]["synced_sessions"], 2)
+		self.assertEqual(out["data"]["users_updated"], 2)
+		self.assertIn(USER_A, out["data"]["users"])
+		self.assertIn(USER_B, out["data"]["users"])
+		# Snapshot fields refreshed.
+		self.assertEqual(
+			frappe.db.get_value(SESSION, {"session_key": "agent:sa"}, "last_total_tokens"), 500
+		)
+		self.assertEqual(
+			frappe.db.get_value(SESSION, {"session_key": "agent:sb"}, "last_total_tokens"), 300
+		)
+		# updatedAt → last_usage_at conversion (naive system-tz, like Frappe).
+		from datetime import datetime as _dt
+
+		self.assertEqual(
+			frappe.db.get_value(SESSION, {"session_key": "agent:sa"}, "last_usage_at"),
+			_dt.fromtimestamp(updated_ms / 1000),
+		)
+		self.assertIsNone(
+			frappe.db.get_value(SESSION, {"session_key": "agent:sb"}, "last_usage_at")
+		)
+		# last_synced_at stamped; counters NOT accumulated (sync never counts).
+		a = frappe.db.get_value(
+			USETT, {"user": USER_A}, ["last_synced_at", "month_tokens", "total_tokens"],
+			as_dict=True,
+		)
+		self.assertIsNotNone(a.last_synced_at)
+		self.assertEqual(a.month_tokens, 0)
+		self.assertEqual(a.total_tokens, 0)
+
+	def test_gateway_unreachable(self):
+		self._patch_gateway(OpenclawUnreachableError("down"))
+		out = user_settings_api.admin_sync_usage()
+		self.assertFalse(out["ok"])
+		self.assertEqual(out["reason"], "gateway_unreachable")
+
+	def test_self_hosted_degrades(self):
+		from jarvis import selfhost as _sh
+		with patch.object(_sh, "is_self_hosted", return_value=True):
+			out = user_settings_api.admin_sync_usage()
+		self.assertFalse(out["ok"])
+		self.assertEqual(out["reason"], "gateway_unreachable")
+
+
+# --------------------------------------------------------------------------- #
+# 6. Enforcement in validate_can_send
+# --------------------------------------------------------------------------- #
+class TestEnforcement(_UsageTestBase):
+	def test_no_row_allows(self):
+		ok, reason = policy.validate_can_send(USER_A)
+		self.assertTrue(ok)
+		self.assertIsNone(reason)
+
+	def test_over_limit_rejects_with_usage_limit(self):
+		user_settings_api.admin_set_user_limit(user=USER_A, monthly_token_limit=100)
+		frappe.db.set_value(
+			USETT, {"user": USER_A},
+			{"usage_month": usage.current_month_key(), "month_tokens": 150},
+			update_modified=False,
+		)
+		frappe.db.commit()
+		ok, reason = policy.validate_can_send(USER_A)
+		self.assertFalse(ok)
+		self.assertEqual(reason, "usage_limit")
+
+	def test_under_limit_allows(self):
+		user_settings_api.admin_set_user_limit(user=USER_A, monthly_token_limit=100)
+		frappe.db.set_value(
+			USETT, {"user": USER_A},
+			{"usage_month": usage.current_month_key(), "month_tokens": 50},
+			update_modified=False,
+		)
+		frappe.db.commit()
+		ok, reason = policy.validate_can_send(USER_A)
+		self.assertTrue(ok)
+		self.assertIsNone(reason)
+
+	def test_stale_month_allows_despite_high_count(self):
+		user_settings_api.admin_set_user_limit(user=USER_A, monthly_token_limit=100)
+		frappe.db.set_value(
+			USETT, {"user": USER_A},
+			{"usage_month": "2020-01", "month_tokens": 9999},
+			update_modified=False,
+		)
+		frappe.db.commit()
+		ok, reason = policy.validate_can_send(USER_A)
+		self.assertTrue(ok)  # rollover ⇒ this month's usage is 0
+		self.assertIsNone(reason)
+
+	def test_zero_limit_is_unlimited(self):
+		user_settings_api.admin_set_user_limit(user=USER_A, monthly_token_limit=0)
+		frappe.db.set_value(
+			USETT, {"user": USER_A},
+			{"usage_month": usage.current_month_key(), "month_tokens": 999999},
+			update_modified=False,
+		)
+		frappe.db.commit()
+		ok, reason = policy.validate_can_send(USER_A)
+		self.assertTrue(ok)
+		self.assertIsNone(reason)
+
+	def test_send_message_surfaces_usage_limit(self):
+		user_settings_api.admin_set_user_limit(user=USER_A, monthly_token_limit=100)
+		frappe.db.set_value(
+			USETT, {"user": USER_A},
+			{"usage_month": usage.current_month_key(), "month_tokens": 150},
+			update_modified=False,
+		)
+		frappe.db.commit()
+		from jarvis.chat.api import send_message
+
+		frappe.set_user(USER_A)
+		# validate_can_send fires before any conversation lookup, so the soft
+		# error returns immediately with the machine reason the SPA maps.
+		out = send_message(conversation="JCONV-does-not-matter", message="hi")
+		self.assertFalse(out["ok"])
+		self.assertEqual(out["reason"], "usage_limit")
+
+
+# --------------------------------------------------------------------------- #
+# 7. get_usage()'s "measured" block — managed zeros vs self-hosted None
+# --------------------------------------------------------------------------- #
+class TestMeasuredUsage(_UsageTestBase):
+	def test_no_row_managed_returns_zeros(self):
+		from jarvis import selfhost as _sh
+		from jarvis.chat.api import _measured_usage
+
+		with patch.object(_sh, "is_self_hosted", return_value=False):
+			m = _measured_usage(USER_A)
+		self.assertIsNotNone(m)
+		self.assertEqual(m["month_tokens"], 0)
+		self.assertEqual(m["monthly_token_limit"], 0)
+
+	def test_no_row_self_hosted_returns_none(self):
+		"""Self-hosted records nothing in v1 — the SPA hides the measured block
+		on None instead of showing a forever-zero meter."""
+		from jarvis import selfhost as _sh
+		from jarvis.chat.api import _measured_usage
+
+		with patch.object(_sh, "is_self_hosted", return_value=True):
+			self.assertIsNone(_measured_usage(USER_A))
+
+	def test_existing_row_wins_even_self_hosted(self):
+		from jarvis import selfhost as _sh
+		from jarvis.chat.api import _measured_usage
+
+		usage.get_or_create_user_settings(USER_A)
+		frappe.db.set_value(
+			USETT, {"user": USER_A},
+			{"usage_month": usage.current_month_key(), "month_tokens": 42,
+				"total_tokens": 42},
+			update_modified=False,
+		)
+		frappe.db.commit()
+		with patch.object(_sh, "is_self_hosted", return_value=True):
+			m = _measured_usage(USER_A)
+		self.assertEqual(m["month_tokens"], 42)
+		self.assertEqual(m["total_tokens"], 42)
