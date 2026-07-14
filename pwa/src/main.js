@@ -2,7 +2,7 @@ import { createApp } from "vue"
 import { setConfig, frappeRequest, resourcesPlugin } from "frappe-ui"
 
 import App from "./App.vue"
-import router from "./router"
+import router, { sessionUser } from "./router"
 import { initSocket } from "./socket"
 // Side-effect import, and it must stay ABOVE the mount: it registers the
 // beforeinstallprompt listener at module load. Chrome can fire that event in the
@@ -16,7 +16,9 @@ setConfig("resourceFetcher", frappeRequest)
 const app = createApp(App)
 app.use(resourcesPlugin)
 app.use(router)
-app.provide("$socket", initSocket())
+// A guest has no user room to join: the socket would only sit there retrying
+// behind the login screen. Consumers already treat $socket as optional.
+app.provide("$socket", sessionUser() ? initSocket() : null)
 app.mount("#app")
 
 // The worker is served from the site root (jarvis/pwa.py), NOT from

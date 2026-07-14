@@ -1,8 +1,24 @@
 <script setup>
-import { computed } from "vue"
+import { computed, ref } from "vue"
 import { useRouter } from "vue-router"
+import { call } from "frappe-ui"
 
 const router = useRouter()
+const signingOut = ref(false)
+
+// Sign out INTO the app's own login screen. Hitting /api/method/logout directly
+// (what this used to do) lands on the Desk — outside the PWA's scope, so an
+// installed app would end the session by dumping the user into a browser tab.
+async function signOut() {
+	if (signingOut.value) return
+	signingOut.value = true
+	try {
+		await call("logout")
+	} catch {
+		// The session may already be gone; either way, leave for the login screen.
+	}
+	window.location.href = "/jarvis-mobile/login"
+}
 
 // Boot data the www controller injects (jarvis/www/jarvis_mobile.py) — no
 // request needed to know who is signed in.
@@ -36,7 +52,9 @@ const initial = computed(() => (fullName.value || "?").trim().charAt(0).toUpperC
 
 		<div class="jv-actions">
 			<a class="jv-action" href="/jarvis">Open full workspace</a>
-			<a class="jv-action is-danger" href="/api/method/logout">Sign out</a>
+			<button class="jv-action is-danger" :disabled="signingOut" @click="signOut">
+				{{ signingOut ? "Signing out…" : "Sign out" }}
+			</button>
 		</div>
 	</div>
 </template>
@@ -88,16 +106,22 @@ const initial = computed(() => (fullName.value || "?").trim().charAt(0).toUpperC
 }
 .jv-action {
 	display: block;
+	width: 100%;
 	padding: 14px 12px;
 	border: 1px solid var(--border);
 	border-radius: 12px;
 	background: var(--card);
 	color: var(--ink8);
+	font: inherit;
 	font-size: 15px;
 	text-align: center;
 	text-decoration: none;
+	cursor: pointer;
 }
 .jv-action.is-danger {
 	color: var(--red);
+}
+.jv-action:disabled {
+	opacity: 0.6;
 }
 </style>
