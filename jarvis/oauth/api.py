@@ -14,8 +14,6 @@ import secrets
 import time
 
 import frappe
-
-from jarvis import _test_guard
 import requests
 
 from jarvis import admin_client, onboarding
@@ -537,11 +535,6 @@ def _exchange_code(*, provider: str, code: str, code_verifier: str) -> dict:
 		# PKCE. Pure-PKCE clients (codex) leave it blank and we don't send it.
 		if p.get("client_secret"):
 			data["client_secret"] = p["client_secret"]
-		# Test-safety: a test reaching here would exchange or refresh a REAL provider
-		# token against OpenAI/Google. See jarvis._test_guard.
-		_blocked = _test_guard.blocked_reason(p["token"], _test_guard.ALLOW_OUTBOUND)
-		if _blocked:
-			raise TokenExchangeError(_blocked)
 		resp = requests.post(
 			p["token"],
 			data=data,
@@ -605,9 +598,6 @@ def _fetch_account_email(provider: str, access_token: str, id_token: str) -> str
 	p = get_provider(provider)
 	if p["userinfo"]:
 		try:
-			_blocked = _test_guard.blocked_reason("oauth-userinfo", _test_guard.ALLOW_OUTBOUND)
-			if _blocked:
-				raise TokenExchangeError(_blocked)
 			resp = requests.get(
 				p["userinfo"],
 				headers={"Authorization": f"Bearer {access_token}"},

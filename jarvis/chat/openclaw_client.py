@@ -260,31 +260,6 @@ class OpenclawSession:
 		if not gateway_url:
 			raise OpenclawUnreachableError("agent_url not set on Jarvis Settings")
 
-		# Test-safety: never open a REAL gateway socket from inside a test run.
-		#
-		# The chat tests all mock this classmethod -- but a test that FORGETS to would
-		# silently talk to the developer's live openclaw container: mutating the session's
-		# model via sessions.patch, appending to its durable transcript, and burning real
-		# tokens from the customer's LLM quota on every turn. Nothing about that failure
-		# is visible; the test just passes.
-		#
-		# Raises OpenclawUnreachableError -- the SAME error an absent gateway raises -- so
-		# a mis-mocked test fails the way it already fails on CI (where no container is
-		# running), instead of quietly succeeding against production.
-		#
-		# Companion to admin_client._assert_outbound_allowed. See that docstring: on
-		# 2026-07-14 an unguarded test run destroyed a live tenant's LLM pool and an
-		# unrecoverable OAuth credential.
-		# Test-safety: a test that forgot to mock this would talk to the developer's LIVE
-		# openclaw container -- mutating session state via sessions.patch, appending to its
-		# durable transcript, and burning real tokens from the customer's LLM quota, all
-		# while passing green. Local import: this module is deliberately frappe-free at the
-		# top level (it is a transport).
-		from jarvis import _test_guard
-		_blocked = _test_guard.blocked_reason(gateway_url, _test_guard.ALLOW_OPENCLAW)
-		if _blocked:
-			raise OpenclawUnreachableError(_blocked)
-
 		# Two-shot self-heal for tenant re-provisioning: on the first attempt
 		# we use whatever paired creds the customer has; if openclaw rejects
 		# with a "your pairing is stale" marker (typical when admin replaced

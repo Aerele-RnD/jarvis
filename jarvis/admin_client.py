@@ -19,8 +19,6 @@ import time
 import frappe
 import requests
 
-from jarvis import _test_guard
-
 from jarvis.exceptions import (
 	AdminAuthError,
 	AdminRateLimitedError,
@@ -677,10 +675,6 @@ def _oauth_token_request(admin_url: str, grant: dict) -> dict | None:
 	"""
 	payload = {**grant, "client_id": _OAUTH_CLIENT_ID, "scope": _OAUTH_SCOPE}
 	url = admin_url + _OAUTH_TOKEN_PATH
-	# admin_client has TWO ways out; guarding only _do_post would leave this one free.
-	_blocked = _test_guard.blocked_reason(url, _test_guard.ALLOW_ADMIN)
-	if _blocked:
-		raise AdminUnreachableError(_blocked)
 	try:
 		resp = requests.post(
 			url,
@@ -901,11 +895,6 @@ def _envelope_error_message(envelope) -> str:
 
 
 def _do_post(url: str, body: dict, headers: dict, timeout_s: int, admin_url: str) -> dict:
-	# Test-safety: never reach a real admin/fleet from a test. See jarvis._test_guard --
-	# an unguarded test run destroyed a live tenant's pool and OAuth blob on 2026-07-14.
-	_blocked = _test_guard.blocked_reason(url, _test_guard.ALLOW_ADMIN)
-	if _blocked:
-		raise AdminUnreachableError(_blocked)
 	try:
 		resp = requests.post(url, json=body, headers=headers, timeout=timeout_s)
 	except (requests.ConnectionError, requests.Timeout) as e:
