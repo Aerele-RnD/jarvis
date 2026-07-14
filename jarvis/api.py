@@ -989,7 +989,7 @@ def _run_tool(tool: str, raw_args: dict | str | None,
 			preview = _pending_preview(tool, args)
 		token = pending_confirm.mint(conversation=conv, owner=owner_user,
 									 tool=tool, args=args, run_id=run_id,
-									 exec_user=exec_user)
+									 exec_user=exec_user, preview=preview)
 		# Deliver the token to the human's UI out-of-band, over the realtime
 		# channel, NEVER via the function return below - the model must never
 		# see it. Published to the OWNER (the subscribed browser), not the acting
