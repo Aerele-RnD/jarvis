@@ -178,9 +178,7 @@
 						</div>
 						<!-- assistant -->
 						<div v-else class="jv-amsg" style="display:flex;gap:12px;">
-							<div class="jv-logo" style="width:28px;height:28px;flex:none;border-radius:7px;background:var(--cta);display:flex;align-items:center;justify-content:center;margin-top:2px;">
-								<svg width="15" height="15" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
-							</div>
+							<JarvisMark :size="28" :radius="7" style="margin-top:2px;" />
 							<div style="flex:1;min-width:0;">
 								<!-- Activity: the tool calls (with input + output) that produced
 								     this answer — openclaw-style, collapsible. -->
@@ -422,9 +420,7 @@
 
 					<!-- live tool activity + thinking (Claude Code style) -->
 					<div v-if="activeTools.length || waiting" style="display:flex;gap:12px;">
-						<div class="jv-logo" style="width:28px;height:28px;flex:none;border-radius:7px;background:var(--cta);display:flex;align-items:center;justify-content:center;margin-top:2px;">
-							<svg width="15" height="15" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
-						</div>
+						<JarvisMark :size="28" :radius="7" style="margin-top:2px;" />
 						<div style="flex:1;min-width:0;padding-top:3px;">
 							<!-- the single tool running right now -->
 							<div v-if="showActivityDetail && currentTool" :key="currentTool.id" class="jv-toolrow">
@@ -451,9 +447,7 @@
 					     hiccup / compaction). The composer stays UNLOCKED and the answer
 					     lands later via the recovery path — fixes the silent limbo. -->
 					<div v-if="recovering" style="display:flex;gap:12px;">
-						<div class="jv-logo" style="width:28px;height:28px;flex:none;border-radius:7px;background:var(--cta);display:flex;align-items:center;justify-content:center;margin-top:2px;">
-							<svg width="15" height="15" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
-						</div>
+						<JarvisMark :size="28" :radius="7" style="margin-top:2px;" />
 						<div style="flex:1;min-width:0;padding-top:3px;">
 							<div role="status" aria-live="polite" style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text-3);">
 								<svg class="jv-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="2.4" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9" /></svg>
@@ -601,7 +595,7 @@
 		<!-- ============ PROACTIVE MESSAGE TOAST (Jarvis started a chat) ============ -->
 		<transition name="jv-fade">
 			<div v-if="proactiveToast" class="jv-toast" @click="openProactive">
-				<div class="jv-toast-ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg></div>
+				<JarvisMark :size="30" :radius="8" />
 				<div style="min-width:0;flex:1;">
 					<div class="jv-toast-title">{{ proactiveToast.title }}</div>
 					<div class="jv-toast-preview">{{ proactiveToast.preview }}</div>
@@ -4287,15 +4281,15 @@ onUnmounted(() => {
    pops white select menus and calendar popups. */
 .jv-root { color-scheme: light; }
 .jv-root.jv-dark { color-scheme: dark; }
-/* Refined Indigo brand mark (dark mode): the spark boxes — empty-state hero,
-   assistant avatars, proactive toast — trade the flat accent fill for an
-   indigo→violet gradient with a soft indigo glow. !important beats the
-   elements' inline background:var(--cta). */
-.jv-dark .jv-logo,
-.jv-dark .jv-toast-ic {
-	background: linear-gradient(135deg, #6e8bff, #8b5cf6) !important;
-	box-shadow: 0 2px 10px rgba(110, 139, 255, .35) !important;
-}
+/* The brand mark is now <JarvisMark> everywhere on this surface (hero, assistant
+   avatars, proactive toast), so it carries its own gradient in BOTH themes.
+   Deleted with this comment: a `.jv-dark .jv-logo, .jv-dark .jv-toast-ic` rule
+   that force-painted the gradient with !important in dark only. It existed
+   because those chips were `background: var(--cta)` — near-black in light, and
+   near-WHITE in dark, which would have put a white star on a white chip. So the
+   mark was near-black in light and gradient in dark: the same logo in two
+   colours, and a third (flat bg-blue-500) in NotifyToaster. One mark, one
+   gradient, no !important. */
 /* The send button inverts to black/white on hover (depends on its base color,
    so the white icon flips to the surface color). !important beats the inline
    background. */
@@ -4824,7 +4818,8 @@ onUnmounted(() => {
 
 /* proactive message toast */
 .jv-toast { position: absolute; right: 20px; bottom: 22px; z-index: 70; display: flex; align-items: center; gap: 11px; width: 360px; max-width: calc(100% - 40px); padding: 13px 14px; background: var(--surface); border: 1px solid var(--border-2); border-radius: 13px; box-shadow: 0 12px 32px rgba(20, 20, 30, .22); cursor: pointer; }
-.jv-toast-ic { flex: none; width: 30px; height: 30px; border-radius: 8px; background: var(--cta); display: flex; align-items: center; justify-content: center; }
+/* .jv-toast-ic removed — the toast icon is now <JarvisMark :size="30" :radius="8" />,
+   which owns its own size, radius and gradient. */
 .jv-toast-title { font-size: 13px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jv-toast-preview { font-size: 12px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jv-toast-open { flex: none; padding: 6px 12px; background: var(--cta); border: 1px solid var(--cta); border-radius: 7px; font-family: inherit; font-size: 12px; font-weight: 600; color: var(--cta-fg); cursor: pointer; }

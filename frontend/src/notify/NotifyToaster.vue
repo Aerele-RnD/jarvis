@@ -11,9 +11,7 @@
 				role="status"
 				@click="open(t)"
 			>
-				<div class="flex size-8 flex-none items-center justify-center rounded-lg bg-blue-500">
-					<svg width="15" height="15" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
-				</div>
+				<JarvisMark :size="32" :radius="8" />
 				<div class="min-w-0 flex-1">
 					<div class="truncate text-sm font-semibold text-ink-gray-8">{{ t.title }}</div>
 					<div v-if="t.body" class="truncate text-xs text-ink-gray-5">{{ t.body }}</div>
@@ -37,6 +35,7 @@
 // title + body + click-through to the event's page. Semantic tokens only, so
 // it tracks light/dark like the rest of the shell. Distinct from ChatView's
 // jv-notes (status feedback) and jv-toast (proactive card inside the chat pane).
+import JarvisMark from "@/components/JarvisMark.vue"
 import { useToasts, dismissToast } from "./globalNotifier"
 
 const toasts = useToasts()

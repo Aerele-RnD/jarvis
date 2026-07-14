@@ -55,7 +55,9 @@ const initial = computed(() => (fullName.value || "?").trim().charAt(0).toUpperC
 	display: grid;
 	place-items: center;
 	border-radius: 50%;
-	background: linear-gradient(140deg, #8b7cf7, #6a56e8);
+	/* The user's avatar, not the brand mark — but it was carrying a THIRD,
+	   independently hand-written violet gradient. One brand gradient per product. */
+	background: var(--brand-grad);
 	color: #fff;
 	font-size: 24px;
 	font-weight: 600;

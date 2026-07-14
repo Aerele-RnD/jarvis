@@ -26,7 +26,9 @@
 						<div class="m-side" v-html="sideHtml('Chat')"></div>
 						<div class="m-main">
 							<div class="m-welcome">
-								<div class="m-welcome-mk"><svg width="15" height="15" viewBox="0 0 24 24" fill="var(--surface)"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg></div>
+								<!-- fill is #fff, not var(--surface): the chip is the brand gradient in
+								     both themes, so a theme-flipping fill would put a dark star on it. -->
+								<div class="m-welcome-mk"><svg width="15" height="15" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg></div>
 								<div class="m-welcome-hi">Good morning, Priya</div>
 								<div class="m-welcome-sub">Ask about your ERP data, run a workflow, or draft something.</div>
 							</div>
@@ -306,7 +308,7 @@ button:focus-visible { outline: 2px solid var(--cta); outline-offset: 2px; }
 	padding: 9px 8px; display: flex; flex-direction: column; gap: 2px; overflow: hidden;
 }
 .m-side :deep(.m-brand) { display: flex; align-items: center; gap: 7px; padding: 2px 6px 8px; }
-.m-side :deep(.m-brand .d) { width: 18px; height: 18px; border-radius: 5px; background: linear-gradient(135deg, #6e8bff, #8b5cf6); display: grid; place-items: center; flex: none; }
+.m-side :deep(.m-brand .d) { width: 18px; height: 18px; border-radius: 5px; background: var(--brand-grad); display: grid; place-items: center; flex: none; }
 .m-side :deep(.m-brand .col) { display: flex; flex-direction: column; line-height: 1.15; min-width: 0; }
 .m-side :deep(.m-brand b) { font-size: 10.5px; }
 .m-side :deep(.m-brand small) { font-size: 8px; color: var(--text-3); }
@@ -330,7 +332,10 @@ button:focus-visible { outline: 2px solid var(--cta); outline-offset: 2px; }
 
 /* ---- welcome mock ---- */
 .m-welcome { text-align: center; padding-top: 10px; }
-.m-welcome-mk { width: 30px; height: 30px; border-radius: 8px; background: var(--text); display: grid; place-items: center; margin: 0 auto 8px; }
+/* The mock's welcome mark must show what the real welcome screen shows: the
+   brand gradient. It was `var(--text)` — near-black in light, near-white in dark
+   — so the tour advertised a mark the product doesn't have. */
+.m-welcome-mk { width: 30px; height: 30px; border-radius: 8px; background: var(--brand-grad); display: grid; place-items: center; margin: 0 auto 8px; }
 .m-welcome-hi { font-size: 12.5px; font-weight: 650; margin-bottom: 3px; }
 .m-welcome-sub { font-size: 9.5px; color: var(--text-3); }
 .m-sugg-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin: 12px auto 0; max-width: 290px; }

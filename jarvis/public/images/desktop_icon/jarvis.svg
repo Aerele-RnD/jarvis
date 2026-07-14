@@ -1,11 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- The Jarvis mark. Geometry and gradient match frontend/src/components/JarvisMark.vue
+       and pwa/src/index.css (--brand-1 #6e8bff -> --brand-2 #8b5cf6). -->
   <defs>
-    <linearGradient id="jarvis-purple" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#A78BFA"/>
-      <stop offset="50%" stop-color="#7C3AED"/>
-      <stop offset="100%" stop-color="#0F0F0F"/>
+    <linearGradient id="jarvis-brand" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6e8bff"/>
+      <stop offset="100%" stop-color="#8b5cf6"/>
     </linearGradient>
   </defs>
-  <rect width="100" height="100" rx="22" fill="url(#jarvis-purple)"/>
-  <text x="50" y="50" text-anchor="middle" dominant-baseline="central" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="56" font-weight="700" fill="#FFFFFF">J</text>
+  <rect width="100" height="100" rx="22" fill="url(#jarvis-brand)"/>
+  <g transform="translate(50 50) scale(2.4) translate(-12 -12)">
+    <path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" fill="#FFFFFF"/>
+  </g>
 </svg>
