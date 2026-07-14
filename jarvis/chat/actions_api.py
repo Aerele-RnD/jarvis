@@ -361,10 +361,25 @@ def confirm_tool(token: str, conversation: str | None = None) -> dict:
 	exec_user = record.get("exec_user") or record.get("owner") or frappe.session.user
 	# impersonate is session-safe: a bare frappe.set_user here would gut the
 	# browser's cookie session (sid + data) and log the confirming user out.
-	with impersonate(exec_user):
-		# Same envelope + audit as an inline write - dispatch_confirmed bypasses
-		# the gate so the stored call actually executes instead of parking again.
-		result = api.dispatch_confirmed(record["tool"], record["args"])
+	try:
+		with impersonate(exec_user):
+			# Same envelope + audit as an inline write - dispatch_confirmed bypasses
+			# the gate so the stored call actually executes instead of parking again.
+			result = api.dispatch_confirmed(record["tool"], record["args"])
+	except Exception:
+		# F5: an UNEXPECTED (untranslated) exception from the confirmed write would
+		# otherwise 500 with the token ALREADY consumed (GETDEL above) - no receipt,
+		# no continuation, the agent stuck at "awaiting confirmation" and the user
+		# unable to retry. _dispatch_and_wrap re-raises such exceptions with its
+		# savepoint still open, so roll back the partial write, log it, and fall
+		# through to a graceful failure envelope: the "failed" receipt + continuation
+		# below still fire, so the user sees it and the agent learns.
+		frappe.db.rollback()
+		frappe.log_error(title="confirm_tool dispatch crashed",
+						 message=frappe.get_traceback())
+		result = api._error(
+			"InternalError",
+			"the confirmed action failed unexpectedly and was not saved")
 
 	# Leave a transcript receipt (#7) so a confirmed delete/submit/email shows on
 	# reload, matching the inline model-write path's tool card. Best-effort: the

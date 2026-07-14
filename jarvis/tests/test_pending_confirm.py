@@ -167,6 +167,40 @@ class TestListForOwner(FrappeTestCase):
 	def test_empty_for_unknown_owner(self):
 		self.assertEqual(pending_confirm.list_for_owner("nobody@example.invalid"), [])
 
+	def test_clear_for_conversation_removes_only_that_conversation(self):
+		"""F6: clearing a conversation's tokens (on stop_run) deletes its own live
+		tokens and leaves other conversations - and conversation-less tokens - alone."""
+		t_x1 = self._mint(self._A, "conv-x", "cfc-1")
+		t_x2 = self._mint(self._A, "conv-x", "cfc-2")
+		t_y = self._mint(self._A, "conv-y", "cfc-3")
+		t_cl = pending_confirm.mint(
+			conversation="", owner=self._A, tool="delete_doc",
+			args={"doctype": "ToDo", "name": "z"}, run_id="")
+		n = pending_confirm.clear_for_conversation(self._A, "conv-x")
+		self.assertEqual(n, 2)
+		self.assertIsNone(pending_confirm.peek(t_x1))
+		self.assertIsNone(pending_confirm.peek(t_x2))
+		self.assertIsNotNone(pending_confirm.peek(t_y))   # other conversation kept
+		self.assertIsNotNone(pending_confirm.peek(t_cl))  # conv-less kept
+
+	def test_clear_for_conversation_run_id_scoping(self):
+		"""F6: with a run_id, a self-host token (which carries a run_id) is swept
+		only when it matches; a managed token (run_id "") is always swept."""
+		t_r1 = pending_confirm.mint(
+			conversation="conv-z", owner=self._A, tool="delete_doc",
+			args={"doctype": "ToDo", "name": "a"}, run_id="r1")
+		t_r2 = pending_confirm.mint(
+			conversation="conv-z", owner=self._A, tool="delete_doc",
+			args={"doctype": "ToDo", "name": "b"}, run_id="r2")
+		t_managed = pending_confirm.mint(
+			conversation="conv-z", owner=self._A, tool="delete_doc",
+			args={"doctype": "ToDo", "name": "c"}, run_id="")
+		n = pending_confirm.clear_for_conversation(self._A, "conv-z", run_id="r1")
+		self.assertEqual(n, 2)  # the r1 card + the run_id-less (managed) card
+		self.assertIsNone(pending_confirm.peek(t_r1))
+		self.assertIsNone(pending_confirm.peek(t_managed))
+		self.assertIsNotNone(pending_confirm.peek(t_r2))  # sibling run kept
+
 
 class TestPeek(FrappeTestCase):
 	def test_unknown_token_is_none(self):

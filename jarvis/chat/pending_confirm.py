@@ -230,3 +230,28 @@ def list_for_owner(owner: str, conversation: str | None = None) -> list[dict]:
 		except Exception:
 			pass
 	return out
+
+
+def clear_for_conversation(owner: str, conversation: str, run_id: str | None = None) -> int:
+	"""Delete all of ``owner``'s live tokens STRICTLY bound to ``conversation``
+	and return the count cleared. Conversation-less tokens ("") are left alone -
+	they carry no conversation binding and may belong to another view. Used when a
+	run is stopped so its parked confirmation cards cannot linger or resurface on
+	resync (F6). Best-effort: a token consumed concurrently just isn't counted.
+
+	``run_id``: when given AND the token itself carries a run_id (self-host), only
+	that run's cards are swept - so stopping one run does not consume a sibling
+	run's still-valid card. In managed mode the token's run_id is always "" (it is
+	never tracked there), so the filter no-ops and the whole conversation is swept,
+	which is the intended behaviour for the single-run-per-conversation case."""
+	if not owner or not conversation:
+		return 0
+	n = 0
+	for rec in list_for_owner(owner, conversation=conversation):
+		if rec.get("conversation") != conversation:
+			continue  # list_for_owner surfaces conv-less tokens under any filter
+		if run_id and rec.get("run_id") and rec.get("run_id") != run_id:
+			continue  # a sibling run's card (self-host only; managed run_id is "")
+		if consume(rec["token"], owner=owner, conversation=conversation) is not None:
+			n += 1
+	return n

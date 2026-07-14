@@ -1391,6 +1391,14 @@ def stop_run(conversation: str, run_id: str | None = None) -> dict:
 	abort RPC) - the UI stop stands alone there."""
 	require_jarvis_access()
 	conv = _get_owned_conversation(conversation)
+	# F6: a stopped run's parked cards must not linger or resurface on resync.
+	# Sweep this owner's live confirmation tokens for the conversation (best-effort).
+	try:
+		from jarvis.chat import pending_confirm
+
+		pending_confirm.clear_for_conversation(frappe.session.user, conversation, run_id)
+	except Exception:
+		frappe.log_error(title="stop_run token sweep", message=frappe.get_traceback())
 	from jarvis.chat import selfhost
 
 	if selfhost.is_self_hosted():
