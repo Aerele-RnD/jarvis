@@ -971,3 +971,31 @@ class TestConfirmCardWiring(FrappeTestCase):
 		items = list_pending_confirmations(conversation="cardwire-conv")["data"]["pending"]
 		self.assertTrue(items)
 		self.assertIsInstance(items[0]["expires_at"], int)
+
+
+class TestConfirmGracefulFailure(FrappeTestCase):
+	"""F5: an UNEXPECTED exception during a confirmed write must fail gracefully -
+	the endpoint returns {ok:false} instead of a 500 with the token burned and the
+	agent stuck at 'awaiting confirmation', and it still fires the failed
+	continuation so the agent learns the outcome."""
+
+	def tearDown(self):
+		for name in frappe.get_all(CONV, filters={"title": "confirm-gate test"}, pluck="name"):
+			frappe.delete_doc(CONV, name, force=True, ignore_permissions=True)
+		frappe.db.commit()
+
+	def test_unexpected_dispatch_exception_returns_graceful_error(self):
+		owner = frappe.session.user
+		conv = _make_conv(owner)
+		token = pending_confirm.mint(
+			conversation=conv, owner=owner, exec_user=owner, tool="delete_doc",
+			args={"doctype": "ToDo", "name": "no-such"}, run_id="")
+		# An UNTRANSLATED exception from the write (dispatch raises RuntimeError).
+		with patch("jarvis.api.dispatch", side_effect=RuntimeError("boom")), \
+				patch("jarvis.chat.api._dispatch_turn") as disp:
+			res = confirm_tool(token, conversation=conv)
+		# Graceful envelope, NOT a raised 500.
+		self.assertFalse(res["ok"])
+		self.assertIn("error", res)
+		# The agent still gets a (failed) continuation, so it isn't left hanging.
+		self.assertEqual(disp.call_count, 1)
