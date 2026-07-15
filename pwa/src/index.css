@@ -221,3 +221,9 @@ body {
 	font-weight: 700;
 	flex: none;
 }
+/* The white spark star (BrandMark.vue) scales with the tile, matching the
+   native app's 57% star-to-tile ratio. */
+.jv-mark svg {
+	width: 58%;
+	height: 58%;
+}

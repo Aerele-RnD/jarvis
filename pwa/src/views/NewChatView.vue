@@ -1,5 +1,6 @@
 <script setup>
 import { computed, defineAsyncComponent, onMounted, onUnmounted, ref } from "vue"
+import BrandMark from "../components/BrandMark.vue"
 import { useRouter } from "vue-router"
 import * as api from "../api"
 import { store } from "../store"
@@ -178,7 +179,7 @@ onUnmounted(() => attachments.value.forEach((a) => a.preview && URL.revokeObject
 	</div>
 
 	<div class="jv-hero">
-		<div class="jv-mark" style="width: 56px; height: 56px; font-size: 23px; border-radius: 16px">J</div>
+		<BrandMark :size="56" />
 		<h1 class="jv-greeting">{{ greeting }}</h1>
 	</div>
 

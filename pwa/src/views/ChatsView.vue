@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, ref } from "vue"
+import BrandMark from "../components/BrandMark.vue"
 import { useRouter } from "vue-router"
 import { store } from "../store"
 import { relativeTime } from "../lib/time"
@@ -65,7 +66,7 @@ onMounted(() => {
 		<div v-if="!store.loaded" class="jv-empty">Loading…</div>
 
 		<div v-else-if="!store.conversations.length" class="jv-empty">
-			<div class="jv-mark" style="width: 52px; height: 52px; font-size: 21px">J</div>
+			<BrandMark :size="52" />
 			<div style="font-size: 16px; font-weight: 600; color: var(--ink9)">Ask Jarvis anything</div>
 			<div style="font-size: 14px; line-height: 1.5">
 				Invoices, stock, customers, reports — in plain language. Start a chat and see.

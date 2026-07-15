@@ -3,10 +3,16 @@
 	<head>
 		<meta charset="UTF-8" />
 		<!-- viewport-fit=cover + the env(safe-area-inset-*) padding in index.css is
-		     what keeps the composer off the iPhone home indicator in standalone mode. -->
+		     what keeps the composer off the iPhone home indicator in standalone mode.
+		     interactive-widget=resizes-content: without it, Android Chrome's default
+		     (resizes-visual) leaves the on-screen keyboard OVERLAYING the layout — the
+		     100dvh shell never shrinks, so the bottom composer (and its send/stop
+		     button) sit behind the keyboard and vanish the moment you tap to type.
+		     resizes-content shrinks the layout viewport (and 100dvh) to the space
+		     above the keyboard, so the composer rides up and stays on screen. -->
 		<meta
 			name="viewport"
-			content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no"
+			content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content"
 		/>
 		<title>Jarvis</title>
 
