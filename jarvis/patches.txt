@@ -23,3 +23,4 @@ jarvis.patches.v1_0.revoke_jarvis_user_from_website_users
 jarvis.patches.v1_12_skill_scope_ladder
 jarvis.patches.v1_13_encrypt_plaintext_settings_passwords
 jarvis.patches.v1_14_remove_desk_workspaces
+jarvis.patches.v1_15_unarchive_auto_expired_conversations

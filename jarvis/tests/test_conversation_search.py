@@ -75,6 +75,12 @@ def _mk_conv(owner: str, title: str, status: str = "Active", starred: int = 0,
 			"doctype": CONV, "title": title, "status": status, "starred": starred,
 		})
 		doc.insert(ignore_permissions=True)
+	# search_conversations hides message-less drafts, so give each fixture a
+	# message to keep it searchable (a real chat always has at least one).
+	frappe.get_doc({
+		"doctype": "Jarvis Chat Message", "conversation": doc.name, "seq": 1,
+		"role": "user", "content": "hi",
+	}).insert(ignore_permissions=True)
 	frappe.db.set_value(
 		CONV, doc.name, "last_active_at",
 		now_datetime() - timedelta(days=active_days_ago), update_modified=False,
