@@ -244,16 +244,18 @@ def _apply_learned_skills_locked() -> dict:
 	# this apply's own managed rows.
 	cutover = _is_learned_cutover()
 
-	original_user = frappe.session.user
 	prev_engine = frappe.flags.jarvis_pattern_engine
 	applied_domains: list[str] = []
 	deleted_domains: list[str] = []
 	skill_by_domain: dict[str, str] = {}
 	activated = 0
 	try:
-		# Own the managed rows as Administrator (normal users cannot reach them)
-		# and lift the JLP transition guard for the Approved -> Active flips.
-		frappe.set_user(MANAGED_OWNER)
+		# Lift the JLP transition guard for the Approved -> Active flips. Every
+		# managed-row write below runs under ignore_permissions and pins its own
+		# owner - deliberately NOT via frappe.set_user(). set_user() on a live web
+		# request rewrites session.sid and wipes session.data; persisting the
+		# request's session at request-end then logs the CALLER out the moment
+		# Apply returns (every follow-up call becomes Guest -> 403 wall).
 		frappe.flags.jarvis_pattern_engine = True
 
 		existing_managed = {
@@ -277,7 +279,6 @@ def _apply_learned_skills_locked() -> dict:
 		frappe.db.commit()
 	finally:
 		frappe.flags.jarvis_pattern_engine = prev_engine
-		frappe.set_user(original_user)
 
 	# Push through the DEDICATED learned chain (deduped jarvis_learned_skills_push
 	# job; Phase-2 namespace). The worker rebuilds the payload from the managed
@@ -442,8 +443,9 @@ def build_learned_push_payload() -> list[dict]:
 
 
 def _upsert_managed_skill(spec: dict) -> str:
-	"""Create or update one managed ``learned-<domain>`` row. Owner = the current
-	session user (Administrator during apply). Returns the row name."""
+	"""Create or update one managed ``learned-<domain>`` row. New rows are pinned to
+	owner=MANAGED_OWNER (Administrator) so normal users cannot reach them. Returns
+	the row name."""
 	sname = spec["skill_name"]
 	existing = frappe.db.get_value(
 		SKILL, {"managed_by_learning": 1, "skill_name": sname}, "name"
@@ -465,7 +467,13 @@ def _upsert_managed_skill(spec: dict) -> str:
 	# them. The engine flag is set here, so the scope guard admits the write.
 	doc.scope = "Org"
 	doc.set("allowed_roles", [{"role": r} for r in spec["allowed_roles"]])
-	doc.save(ignore_permissions=True) if existing else doc.insert(ignore_permissions=True)
+	if existing:
+		doc.save(ignore_permissions=True)
+	else:
+		doc.insert(ignore_permissions=True)
+		# insert() forces owner=session.user (document.py set_user_and_timestamp);
+		# pin managed rows to MANAGED_OWNER here instead of via a session switch.
+		frappe.db.set_value(SKILL, doc.name, "owner", MANAGED_OWNER, update_modified=False)
 	return doc.name
 
 
