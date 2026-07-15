@@ -979,7 +979,10 @@ function selectPreset(entry) {
   rows.value = seedFromPreset(entry)
 }
 function seedFromPreset(entry) {
+  // Every row needs a unique _uid: remove() deletes by _uid, so preset rows that
+  // shared an undefined _uid would all vanish on removing any one of them.
   return presetToModels(entry, keysByVendor.value).map((m) => ({
+    _uid: nextUid(),
     provider: providerLabel(m.provider), model: m.model, apiKey: m.api_key || "", baseUrl: "",
     hasKey: false, credentialType: "api_key", rotation: "sticky", upstream: "openai",
     accounts: [], _connect: blankConnect(), order: m.order,

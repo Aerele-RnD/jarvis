@@ -39,8 +39,10 @@ export function confirm(opts = {}) {
       message: opts.message || "",
       confirmLabel: opts.confirmLabel || "Confirm",
       cancelLabel: opts.cancelLabel || "Cancel",
-      // General-purpose: neutral (primary) by default. Destructive call sites opt
-      // in with danger:true to get the red confirm button.
+      // General-purpose: neutral (primary) by default. Destructive call sites MUST
+      // pass danger:true to get the red confirm button — don't assume deletes
+      // default to danger (they do not here). Deliberately opt-in, unlike the old
+      // ChatView confirmDialog which defaulted danger true.
       danger: opts.danger === true,
     }
   })

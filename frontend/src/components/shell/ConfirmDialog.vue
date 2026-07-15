@@ -1,10 +1,11 @@
 <template>
   <!-- App-wide confirmation modal. Mounted ONCE in AppShell; driven entirely by
-       the shared useConfirm() state. Renders above every other surface (settings
-       dialog included, z-index 60) so a Remove/Delete inside a modal is still
-       confirmable. See composables/useConfirm.js for the promise-based API. -->
+       the shared useConfirm() state. Its own z-index is 200 so it clears the
+       settings overlay (z-index 60) — a Remove/Delete inside that modal is still
+       confirmable. Applies paletteVars + jv-dark on its root (jv- vars aren't
+       global). See composables/useConfirm.js for the promise-based API. -->
   <transition name="jv-confirm-fade">
-    <div v-if="state" class="jv-confirm-overlay" @click.self="settleConfirm(false)">
+    <div v-if="state" class="jv-confirm-overlay jv-root" :class="{ 'jv-dark': dark }" :style="paletteVars" @click.self="settleConfirm(false)">
       <div class="jv-cdialog" role="alertdialog" aria-modal="true" aria-labelledby="jv-confirm-title">
         <div id="jv-confirm-title" class="jv-cdialog-title">{{ state.title }}</div>
         <div v-if="state.message" class="jv-cdialog-msg">{{ state.message }}</div>
@@ -21,6 +22,13 @@
 <script setup>
 import { onMounted, onBeforeUnmount } from "vue"
 import { confirmState as state, settleConfirm } from "@/composables/useConfirm"
+import { useJarvisTheme } from "@/theme"
+
+// The jv- palette (--surface, --text, --red, …) is NOT global :root — every jv-
+// surface applies it to its own root via paletteVars + a jv-dark class (see
+// SettingsDialog). This dialog is a shell sibling, so it must do the same or its
+// var(--…) styling and dark backdrop resolve to nothing.
+const { effectiveDark: dark, paletteVars } = useJarvisTheme()
 
 // Escape cancels. Capture phase + stopPropagation so a global Escape handler on
 // an underlying view (e.g. ChatView closing settings) does NOT also fire when the
@@ -45,7 +53,9 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey, true))
   background: rgba(15, 15, 22, 0.34);
   display: flex; align-items: center; justify-content: center; padding: 24px;
 }
-:global(.jv-dark) .jv-confirm-overlay { background: rgba(0, 0, 0, 0.55); }
+/* jv-dark is applied to the overlay itself (not an ancestor), matching the way
+   paletteVars is scoped to this root. */
+.jv-confirm-overlay.jv-dark { background: rgba(0, 0, 0, 0.55); }
 
 .jv-cdialog {
   width: 400px; max-width: 100%; background: var(--surface);

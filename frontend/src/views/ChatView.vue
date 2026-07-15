@@ -4534,7 +4534,8 @@ onUnmounted(() => {
    so once ChatView stopped rendering the dialog they matched nothing: edits to them
    silently did nothing while the live styles came from @/assets/settings.css.
    Removed rather than left as a decoy. Style the dialog in assets/settings.css.
-   (jv-popin STAYS — .jv-skills-modal / .jv-cdialog still animate with it.) */
+   (jv-popin STAYS — .jv-skills-modal still animates with it. The confirm dialog
+   moved to components/shell/ConfirmDialog.vue with its own jv-confirm-popin.) */
 @keyframes jv-popin { from { transform: scale(0.97); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 .jv-settings-nav { width: 196px; flex: none; background: var(--surface-1); border-right: 1px solid var(--border); padding: 14px 10px; display: flex; flex-direction: column; gap: 2px; }
 .jv-settings-nav-title { font-size: 15px; font-weight: 700; color: var(--text); padding: 4px 10px 12px; }
