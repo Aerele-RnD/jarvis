@@ -86,6 +86,9 @@ class TestJarvisNoAccessPage(FrappeTestCase):
 	def setUp(self):
 		"""Create throwaway test users."""
 		self._orig_user = frappe.session.user
+		# A prior test's redirect (e.g. a Guest -> /login bounce) must not leak
+		# into a test that never triggers a redirect of its own.
+		frappe.local.flags.redirect_location = None
 		_ensure_user(USER_JARVIS, (JARVIS_ROLE,))
 		_ensure_user(USER_SM, ("System Manager",))
 		_ensure_user(USER_NONE, ())
@@ -169,12 +172,12 @@ class TestJarvisNoAccessPage(FrappeTestCase):
 		self.assertIn("admin_emails", result)
 
 	def test_no_access_unauthorized_has_user_fullname(self):
-		"""Unauthorized user context includes user_fullname."""
+		"""Unauthorized user context includes the expected user_fullname."""
 		frappe.set_user(USER_NONE)
+		expected_fullname = frappe.utils.get_fullname(USER_NONE)
 		context = frappe._dict()
 		jarvis_no_access.get_context(context)
-		# user_fullname should be set and non-empty (or at least present).
-		self.assertIsNotNone(context.user_fullname)
+		self.assertEqual(context.user_fullname, expected_fullname)
 
 	def test_no_access_unauthorized_has_admin_emails(self):
 		"""Unauthorized user context includes admin_emails."""
@@ -208,22 +211,40 @@ class TestJarvisNoAccessPage(FrappeTestCase):
 			self.assertIsInstance(item, str)
 
 	def test_admin_contacts_capped_at_limit(self):
-		"""_admin_contacts respects the limit parameter."""
-		# Default limit is 5.
-		result = jarvis_no_access._admin_contacts()
-		self.assertLessEqual(len(result), 5)
-		# Custom limit.
-		result = jarvis_no_access._admin_contacts(limit=2)
-		self.assertLessEqual(len(result), 2)
+		"""_admin_contacts respects the limit parameter, even when the number of
+		eligible System Managers exceeds it."""
+		# USER_SM alone isn't enough to force the cap to bind: three more enabled
+		# System Managers push the eligible pool to 4, past limit=2.
+		extra_emails = (
+			"jarvis-noaccess-sm2@example.test",
+			"jarvis-noaccess-sm3@example.test",
+			"jarvis-noaccess-sm4@example.test",
+		)
+		try:
+			for email in extra_emails:
+				_ensure_user(email, ("System Manager",))
+			frappe.db.commit()
+			# Default limit is 5.
+			result = jarvis_no_access._admin_contacts()
+			self.assertLessEqual(len(result), 5)
+			# Custom limit: 4 eligible System Managers exceed limit=2, so the
+			# cap must bind exactly, not just happen to be under it.
+			result = jarvis_no_access._admin_contacts(limit=2)
+			self.assertEqual(len(result), 2)
+		finally:
+			for email in extra_emails:
+				_delete_user(email)
+			frappe.db.commit()
 
 	def test_admin_contacts_only_system_manager_role(self):
 		"""_admin_contacts only includes System Manager role holders."""
-		# USER_SM has System Manager, so their email should be in the list
-		# (assuming they're enabled and the query returns them).
 		result = jarvis_no_access._admin_contacts()
-		# We can't easily assert USER_SM is in the list without knowing their email
-		# from the DB, but we can assert the function runs and returns a list.
-		self.assertIsInstance(result, list)
+		# USER_SM holds System Manager (Frappe Users autoname on email, so the
+		# email IS the fixture constant), so they must be included.
+		self.assertIn(USER_SM, result)
+		# USER_NONE holds no roles at all, so they must be excluded. This fails
+		# if the role filter were ever dropped from the underlying query.
+		self.assertNotIn(USER_NONE, result)
 
 	def test_admin_contacts_empty_on_exception(self):
 		"""_admin_contacts returns empty list if an exception occurs."""
