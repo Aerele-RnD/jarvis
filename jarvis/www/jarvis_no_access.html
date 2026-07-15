@@ -26,8 +26,12 @@
 				--jvna-text-muted: #6d6d76;
 				--jvna-pill-bg: #f1f1f3;
 				--jvna-pill-border: #e8e8ec;
-				/* Primary CTA = the SPA's inverted solid button (bg:--text, fg:--surface) */
+				/* Primary CTA = the SPA's inverted solid button (bg:--text, fg:--surface).
+				   Hover/active shift the background (design.md §3), which reads in both
+				   themes — unlike filter/opacity, which clamp on the near-white dark CTA. */
 				--jvna-cta-bg: #171717;
+				--jvna-cta-bg-hover: #2f2f2f;
+				--jvna-cta-bg-active: #454545;
 				--jvna-cta-fg: #ffffff;
 				--jvna-cta-shadow: rgba(23, 23, 23, 0.26);
 				--jvna-mark-shadow: rgba(23, 23, 23, 0.22);
@@ -48,6 +52,8 @@
 					--jvna-pill-bg: #26262d;
 					--jvna-pill-border: #3a3a45;
 					--jvna-cta-bg: #ededf2;
+					--jvna-cta-bg-hover: #dadae2;
+					--jvna-cta-bg-active: #c7c7d0;
 					--jvna-cta-fg: #16161a;
 					--jvna-cta-shadow: rgba(0, 0, 0, 0.5);
 					--jvna-mark-shadow: rgba(0, 0, 0, 0.5);
@@ -203,7 +209,7 @@
 				font-weight: 600;
 				text-decoration: none;
 				border: 1px solid transparent;
-				transition: background-color 0.15s ease, filter 0.15s ease;
+				transition: background-color 0.15s ease;
 			}
 
 			.jvna-btn-primary {
@@ -213,7 +219,11 @@
 			}
 
 			.jvna-btn-primary:hover {
-				filter: brightness(1.12);
+				background: var(--jvna-cta-bg-hover);
+			}
+
+			.jvna-btn-primary:active {
+				background: var(--jvna-cta-bg-active);
 			}
 
 			.jvna-btn-primary:focus-visible {
