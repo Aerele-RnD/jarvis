@@ -170,25 +170,19 @@
 			}
 
 			h1 {
-				margin: 0 0 10px;
+				margin: 0 0 14px;
 				font-size: clamp(22px, 5vw, 26px);
 				font-weight: 700;
 				letter-spacing: -0.01em;
 				line-height: 1.25;
 			}
 
-			.jvna-tagline {
-				margin: 0 0 16px;
-				font-size: 14.5px;
-				font-weight: 600;
-				color: var(--jvna-text-2);
-			}
-
 			.jvna-body {
 				margin: 0 0 30px;
-				font-size: 14.5px;
+				font-size: 15px;
 				line-height: 1.6;
-				color: var(--jvna-text-muted);
+				font-weight: 500;
+				color: var(--jvna-text-2);
 			}
 
 			.jvna-actions {
@@ -261,8 +255,7 @@
 			<div class="jvna-pill"><i></i>Signed in as <strong>{{ user_fullname | e }}</strong></div>
 			{% endif %}
 
-			<h1>You&rsquo;ve found Jarvis.</h1>
-			<p class="jvna-tagline">The assistant that makes ERP work feel effortless.</p>
+			<h1>You need access to Jarvis</h1>
 			<p class="jvna-body">You&rsquo;re not authorized just yet. One quick request to your admin, and Jarvis is all yours.</p>
 
 			<div class="jvna-actions">
