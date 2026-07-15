@@ -276,9 +276,14 @@
               </div>
             </div>
             <div v-if="panelRow._connect.error" class="jv-cn-err">{{ panelRow._connect.error }}</div>
-            <!-- Actions right-aligned, like every other confirm action in this pane. -->
+            <!-- Actions right-aligned, like every other confirm action in this pane.
+                 The inner Cancel is EDIT-mode only: there it calls closeConnect to
+                 collapse the steps back to the account list. In add mode the steps ARE
+                 the panel (they render directly from panel.mode==='add'), so closeConnect
+                 can't hide them - it would leave an inert "Cancel". Abandoning a fresh add
+                 is the panel's own Cancel/Close below; "Connect" stays to submit. -->
             <div class="jv-cn-acts">
-              <button @click="closeConnect(panelRow)" class="jv-btn jv-btn--ghost">Cancel</button>
+              <button v-if="panel.mode !== 'add'" @click="closeConnect(panelRow)" class="jv-btn jv-btn--ghost">Cancel</button>
               <button @click="finishConnect(panelRow)"
                       :disabled="panelRow._connect.loading || !panelRow._connect.authorizeUrl || !(panelRow._connect.pastedUrl || '').trim()"
                       class="jv-btn jv-btn--primary">
