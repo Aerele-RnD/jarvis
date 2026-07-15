@@ -24,14 +24,6 @@
 						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2" /></svg>
 						<span>Activity</span>
 					</button>
-					<button class="jv-settings-navitem" :class="{ on: section === 'macroruns' }" @click="go('macroruns')">
-						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l14 9-14 9V3z" /></svg>
-						<span>Macro runs</span>
-					</button>
-					<button class="jv-settings-navitem" :class="{ on: section === 'appearance' }" @click="go('appearance')">
-						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
-						<span>Appearance</span>
-					</button>
 					<button class="jv-settings-navitem" :class="{ on: section === 'shortcuts' }" @click="go('shortcuts')">
 						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2" /><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M6 12h.01M10 12h.01M14 12h.01M18 12h.01M7 16h10" /></svg>
 						<span>Shortcuts</span>
@@ -105,8 +97,6 @@ import "@/assets/settings.css"
 const GeneralPane = defineAsyncComponent(() => import("@/components/settings/GeneralPane.vue"))
 const UsagePane = defineAsyncComponent(() => import("@/components/settings/UsagePane.vue"))
 const ActivityPane = defineAsyncComponent(() => import("@/components/settings/ActivityPane.vue"))
-const MacroRunsPane = defineAsyncComponent(() => import("@/components/settings/MacroRunsPane.vue"))
-const AppearancePane = defineAsyncComponent(() => import("@/components/settings/AppearancePane.vue"))
 const ShortcutsPane = defineAsyncComponent(() => import("@/components/settings/ShortcutsPane.vue"))
 const PlanBillingPane = defineAsyncComponent(() => import("@/components/settings/PlanBillingPane.vue"))
 const AiModelsPane = defineAsyncComponent(() => import("@/components/settings/AiModelsPane.vue"))
@@ -114,8 +104,8 @@ const ConnectionPane = defineAsyncComponent(() => import("@/components/settings/
 const BillingMeteringPane = defineAsyncComponent(() => import("@/components/settings/BillingMeteringPane.vue"))
 const UsageAdminPane = defineAsyncComponent(() => import("@/components/settings/UsageAdminPane.vue"))
 
-// Theme MUST come from the same singleton the Appearance pane + header toggle
-// WRITE to (@/theme's useJarvisTheme) — @/composables/useTheme is a separate
+// Theme MUST come from the same singleton the header toggle WRITES to
+// (@/theme's useJarvisTheme) — @/composables/useTheme is a separate
 // module-level singleton that never reconciles same-tab, so reading it would
 // leave the dialog stuck in its page-load theme when the user toggles.
 const { effectiveDark: dark, paletteVars } = useJarvisTheme()
@@ -139,8 +129,6 @@ const PANES = {
 	general: GeneralPane,
 	usage: UsagePane,
 	activity: ActivityPane,
-	macroruns: MacroRunsPane,
-	appearance: AppearancePane,
 	shortcuts: ShortcutsPane,
 	plan: PlanBillingPane,
 	aimodels: AiModelsPane,
@@ -152,8 +140,6 @@ const LABELS = {
 	general: "General",
 	usage: "Usage",
 	activity: "Activity",
-	macroruns: "Macro runs",
-	appearance: "Appearance",
 	shortcuts: "Keyboard shortcuts",
 	plan: "Plan & billing",
 	aimodels: "AI models",
@@ -167,8 +153,6 @@ const DESCRIPTIONS = {
 	general: "Chat behavior, notifications and token usage.",
 	usage: "Message and token counts for this device.",
 	activity: "Recent tool calls in this chat.",
-	macroruns: "History of every macro run and its outcome.",
-	appearance: "Theme for this device.",
 	shortcuts: "Keyboard shortcuts available in chat.",
 	plan: "Your subscription, renewal and upgrade options.",
 	aimodels: "The AI connection that powers Jarvis.",
