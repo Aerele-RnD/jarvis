@@ -2,9 +2,8 @@
 
 Covers:
 - Boot flag: set_jarvis_boot(bootinfo) sets jarvis_has_access True/False per access.
-- No-access page gates: unauthorized (render + admin emails), authorized (redirect to
-  /jarvis), Guest (redirect to /login).
-- Admin contacts: System Users with System Manager role, excludes Administrator, capped.
+- No-access page gates: unauthorized (render), authorized (redirect to /jarvis),
+  Guest (redirect to /login).
 - Main app gates: roleless → /jarvis-no-access on both; Guest → /app on jarvis.py,
   but gets the shell on jarvis_mobile.py (PWA scope — its own login route handles Guests).
 
@@ -170,7 +169,6 @@ class TestJarvisNoAccessPage(FrappeTestCase):
 		result = jarvis_no_access.get_context(context)
 		# Should not raise; should have context keys.
 		self.assertIn("user_fullname", result)
-		self.assertIn("admin_emails", result)
 
 	def test_no_access_unauthorized_has_user_fullname(self):
 		"""Unauthorized user context includes the expected user_fullname."""
@@ -180,83 +178,7 @@ class TestJarvisNoAccessPage(FrappeTestCase):
 		jarvis_no_access.get_context(context)
 		self.assertEqual(context.user_fullname, expected_fullname)
 
-	def test_no_access_unauthorized_has_admin_emails(self):
-		"""Unauthorized user context includes admin_emails."""
-		frappe.set_user(USER_NONE)
-		context = frappe._dict()
-		jarvis_no_access.get_context(context)
-		# admin_emails should be a list.
-		self.assertIsInstance(context.admin_emails, list)
-
-	# --- (c) jarvis_no_access._admin_contacts ------------------------------- #
-
-	def test_admin_contacts_returns_list(self):
-		"""_admin_contacts returns a list."""
-		result = jarvis_no_access._admin_contacts()
-		self.assertIsInstance(result, list)
-
-	def test_admin_contacts_excludes_administrator(self):
-		"""_admin_contacts does not include the built-in Administrator account."""
-		# Ensure Administrator is a System Manager (always true).
-		result = jarvis_no_access._admin_contacts()
-		# Check that "Administrator" is not in the list (it filters by email, not name).
-		# Since admin_contacts returns emails, we check no email matches Administrator's.
-		admin_email = frappe.get_value("User", "Administrator", "email")
-		for email in result:
-			self.assertNotEqual(email, admin_email)
-
-	def test_admin_contacts_contains_only_strings(self):
-		"""_admin_contacts returns only strings (emails)."""
-		result = jarvis_no_access._admin_contacts()
-		for item in result:
-			self.assertIsInstance(item, str)
-
-	def test_admin_contacts_capped_at_limit(self):
-		"""_admin_contacts respects the limit parameter, even when the number of
-		eligible System Managers exceeds it."""
-		# USER_SM alone isn't enough to force the cap to bind: three more enabled
-		# System Managers push the eligible pool to 4, past limit=2.
-		extra_emails = (
-			"jarvis-noaccess-sm2@example.test",
-			"jarvis-noaccess-sm3@example.test",
-			"jarvis-noaccess-sm4@example.test",
-		)
-		try:
-			for email in extra_emails:
-				_ensure_user(email, ("System Manager",))
-			frappe.db.commit()
-			# Default limit is 5.
-			result = jarvis_no_access._admin_contacts()
-			self.assertLessEqual(len(result), 5)
-			# Custom limit: 4 eligible System Managers exceed limit=2, so the
-			# cap must bind exactly, not just happen to be under it.
-			result = jarvis_no_access._admin_contacts(limit=2)
-			self.assertEqual(len(result), 2)
-		finally:
-			for email in extra_emails:
-				_delete_user(email)
-			frappe.db.commit()
-
-	def test_admin_contacts_only_system_manager_role(self):
-		"""_admin_contacts only includes System Manager role holders."""
-		# High limit so the fixture can't be truncated out on a dev site that
-		# already has 5+ System Managers sorting ahead of it (the default
-		# limit's cap behaviour is covered by test_admin_contacts_capped_at_limit).
-		result = jarvis_no_access._admin_contacts(limit=1000)
-		# USER_SM holds System Manager (Frappe Users autoname on email, so the
-		# email IS the fixture constant), so they must be included.
-		self.assertIn(USER_SM, result)
-		# USER_NONE holds no roles at all, so they must be excluded. This fails
-		# if the role filter were ever dropped from the underlying query.
-		self.assertNotIn(USER_NONE, result)
-
-	def test_admin_contacts_empty_on_exception(self):
-		"""_admin_contacts returns empty list if an exception occurs."""
-		with patch("frappe.utils.user.get_users_with_role", side_effect=Exception("boom")):
-			result = jarvis_no_access._admin_contacts()
-		self.assertEqual(result, [])
-
-	# --- (d) www.jarvis gate ------------------------------------------------- #
+	# --- (c) www.jarvis gate ------------------------------------------------- #
 
 	def test_jarvis_guest_redirects_to_app(self):
 		"""Guest on /jarvis redirects to /app."""
@@ -290,7 +212,7 @@ class TestJarvisNoAccessPage(FrappeTestCase):
 		self.assertIn("boot", result)
 		self.assertIsInstance(result.boot, dict)
 
-	# --- (e) www.jarvis_mobile gate ------------------------------------------ #
+	# --- (d) www.jarvis_mobile gate ------------------------------------------ #
 
 	def test_jarvis_mobile_guest_gets_shell(self):
 		"""Guest on /jarvis-mobile gets the shell (PWA scope: the app's own

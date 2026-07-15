@@ -21,8 +21,6 @@
 				--jvna-text-muted: #62626c;
 				--jvna-pill-bg: rgba(124, 58, 237, 0.08);
 				--jvna-pill-border: rgba(124, 58, 237, 0.16);
-				--jvna-btn-secondary-bg: rgba(24, 24, 27, 0.04);
-				--jvna-btn-secondary-border: rgba(24, 24, 27, 0.12);
 				--jvna-blob-a: #a78bfa;
 				--jvna-blob-b: #7c3aed;
 				--jvna-blob-c: #6366f1;
@@ -39,8 +37,6 @@
 					--jvna-text-muted: #a2a2ad;
 					--jvna-pill-bg: rgba(167, 139, 250, 0.1);
 					--jvna-pill-border: rgba(167, 139, 250, 0.22);
-					--jvna-btn-secondary-bg: rgba(237, 237, 242, 0.06);
-					--jvna-btn-secondary-border: rgba(237, 237, 242, 0.14);
 					--jvna-blob-opacity: 0.35;
 				}
 			}
@@ -269,16 +265,6 @@
 				opacity: 0.94;
 			}
 
-			.jvna-btn-secondary {
-				color: var(--jvna-text);
-				background: var(--jvna-btn-secondary-bg);
-				border-color: var(--jvna-btn-secondary-border);
-			}
-
-			.jvna-btn-secondary:hover {
-				background: var(--jvna-pill-bg);
-			}
-
 			@media (max-width: 380px) {
 				.jvna-card {
 					padding: 36px 24px 28px;
@@ -318,13 +304,7 @@
 			<p class="jvna-body">You&rsquo;re not authorized just yet &mdash; one quick request to your admin, and Jarvis is all yours.</p>
 
 			<div class="jvna-actions">
-				{% if admin_emails %}
-				<a
-					class="jvna-btn jvna-btn-primary"
-					href="mailto:{{ admin_emails | join(',') }}?subject=Jarvis%20access%20request"
-				>Request access</a>
-				{% endif %}
-				<a class="jvna-btn jvna-btn-secondary" href="/app">Back to Desk</a>
+				<a class="jvna-btn jvna-btn-primary" href="/app">Back to Home</a>
 			</div>
 		</main>
 	</body>
