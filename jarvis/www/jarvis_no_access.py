@@ -48,11 +48,15 @@ def _admin_contacts(limit: int = 5) -> list[str]:
 	if not names:
 		return []
 
-	users = frappe.get_all(
-		"User",
-		filters={"name": ["in", names], "user_type": "System User"},
-		fields=["email"],
-		order_by="full_name asc",
-		limit=limit,
-	)
+	try:
+		users = frappe.get_all(
+			"User",
+			filters={"name": ["in", names], "user_type": "System User"},
+			fields=["email"],
+			order_by="full_name asc",
+			limit=limit,
+		)
+	except Exception:
+		# This page exists to deny gracefully — an empty CTA beats a 500.
+		return []
 	return [u.email for u in users if u.email]

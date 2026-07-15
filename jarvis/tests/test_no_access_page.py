@@ -238,7 +238,10 @@ class TestJarvisNoAccessPage(FrappeTestCase):
 
 	def test_admin_contacts_only_system_manager_role(self):
 		"""_admin_contacts only includes System Manager role holders."""
-		result = jarvis_no_access._admin_contacts()
+		# High limit so the fixture can't be truncated out on a dev site that
+		# already has 5+ System Managers sorting ahead of it (the default
+		# limit's cap behaviour is covered by test_admin_contacts_capped_at_limit).
+		result = jarvis_no_access._admin_contacts(limit=1000)
 		# USER_SM holds System Manager (Frappe Users autoname on email, so the
 		# email IS the fixture constant), so they must be included.
 		self.assertIn(USER_SM, result)

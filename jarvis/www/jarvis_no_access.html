@@ -308,7 +308,7 @@
 			</div>
 
 			{% if user_fullname %}
-			<div class="jvna-pill"><i></i>Signed in as <strong>{{ user_fullname }}</strong></div>
+			<div class="jvna-pill"><i></i>Signed in as <strong>{{ user_fullname | e }}</strong></div>
 			{% endif %}
 
 			<h1>You&rsquo;ve found Jarvis.</h1>
