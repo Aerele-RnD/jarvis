@@ -200,6 +200,13 @@ scheduler_events = {
 	"cron": {
 		"*/5 * * * *": [
 			"jarvis.chat.stale_scan.scan_and_mark_errored",
+			# Onboarding convergence safety net (review P0-2): when an LLM
+			# apply parked at "pending: admin applying config" (admin accepted
+			# it and its reconcile is converging server-side), probe
+			# get_connection once per tick and stamp llm_pool_synced_at the
+			# moment chat_readiness reads Ready. Without this, a pending apply
+			# that outlives the in-job 120s poll is a permanent dead-end.
+			"jarvis.jarvis.doctype.jarvis_settings.jarvis_settings.reconcile_pending_llm_sync",
 			# 2026-07 latency plan, Phase 1.4: was */30, which left the
 			# provider prompt cache (5-10 min retention) cold for most of
 			# each half-hour. Every 5 min + a 4-min cooldown in prewarm.py

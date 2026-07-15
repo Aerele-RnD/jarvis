@@ -27,9 +27,13 @@ from jarvis.exceptions import (
 )
 
 
-# Admin's provision_healthz_timeout_s defaults to 60s for restart operations;
-# 90s leaves 30s buffer for network round-trip + handler overhead.
-DEFAULT_TIMEOUT_S = 90
+# Outer bench->admin HTTP budget. It MUST sit strictly ABOVE the admin's own
+# admin->agent leg (now 100s) so the bench never hangs up on an apply the admin
+# is still driving and writes a spurious "failed" over creds that land seconds
+# later (the onboarding livelock, audit F1/F2). 150s = the 100s admin->agent
+# budget + headroom for the HTTPS round-trip and admin's handler/response
+# serialization. Increase both together if the admin->agent leg grows.
+DEFAULT_TIMEOUT_S = 150
 
 # OAuth password-grant config. The bench exchanges the customer's password
 # (Jarvis Settings.jarvis_admin_customer_password) for short-lived bearer
@@ -301,9 +305,15 @@ def confirm_payment(payload: dict) -> dict:
 def get_connection(*, timeout_s: int = DEFAULT_TIMEOUT_S) -> dict:
 	"""Fetch the assigned container connection (fallback / scheduled sync).
 
-	``timeout_s`` is keyword-only and defaults to DEFAULT_TIMEOUT_S=90 so existing
+	``timeout_s`` is keyword-only and defaults to DEFAULT_TIMEOUT_S so existing
 	callers are unaffected. The chat-readiness gate (jarvis.account) passes a
 	short 8s budget so a slow admin can't stall the SPA/boot path.
+
+	The response carries ``chat_readiness`` ("Provisioning" | "Configuring" |
+	"Ready") + ``chat_readiness_reason`` - the convergence signal the bench polls
+	after an "applying"/timeout apply outcome to learn the admin reconcile
+	finished the apply (F2). Pass a short ``timeout_s`` for those hot status
+	probes so a slow admin can't stretch a convergence loop past its job budget.
 	"""
 	return _post(path=_m("api.tenant.get_connection"), body={}, timeout_s=timeout_s)
 
@@ -588,10 +598,14 @@ def post_update_llm_pool(*, spec: dict, api_keys: dict, oauth_blobs: dict) -> di
 	Raises:
 		AdminAuthError, AdminUnreachableError, AdminValidationError
 	"""
+	# Rides the shared DEFAULT_TIMEOUT_S (150s) like post_update_llm_creds so
+	# both interactive apply legs sit above the admin's 100s admin->agent budget
+	# (ladder fix F1). The pool apply is the same class of restart-render op; a
+	# read-timeout here is now absorbed as an "applying"/pending outcome and
+	# reconciled via get_connection, not written as a terminal failure.
 	return _post(
 		path=_m("api.tenant.update_llm_pool"),
 		body={"spec": spec, "api_keys": api_keys, "oauth_blobs": oauth_blobs},
-		timeout_s=120,
 	)
 
 
@@ -646,10 +660,10 @@ def pair_chat_device(public_key: str, device_id: str,
 	the budget the bench asks admin to allow for its admin -> fleet-agent
 	leg. Defaults to 30s (matches admin's prior hardcoded value). Admin
 	clamps to [5, 90] on its side so an over-large value can't push the
-	overall HTTPS round-trip past the bench's outer DEFAULT_TIMEOUT_S=90.
+	overall HTTPS round-trip past the bench's outer DEFAULT_TIMEOUT_S.
 
 	The outer HTTPS round-trip timeout (bench -> admin) stays at
-	DEFAULT_TIMEOUT_S=90s; that's the absolute upper bound on this call.
+	DEFAULT_TIMEOUT_S; that's the absolute upper bound on this call.
 	"""
 	return _post(
 		path=_m("api.tenant.pair_chat_device"),

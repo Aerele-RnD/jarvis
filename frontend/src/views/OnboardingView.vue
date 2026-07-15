@@ -206,7 +206,7 @@
 								<div v-show="state.finishing">
 									<div class="jv-ob-head">
 										<h1>Setting up Jarvis</h1>
-										<p>Bringing your workspace online, taking you to chat…</p>
+										<p>{{ state.finishSubtitle || "Bringing your workspace online, taking you to chat…" }}</p>
 									</div>
 									<div class="jv-ob-setup-net">
 										<SetupNeuralNet :dark="dark" />
@@ -384,8 +384,10 @@ const state = reactive({
 	// has no container to configure).
 	provisioning: false, provisionErr: "",
 	// post-save readiness recheck (Connect + self-host both funnel through
-	// afterSaveRecheckReady/forceContinue below)
-	finishing: false, finishNote: "",
+	// afterSaveRecheckReady/forceContinue below). finishSubtitle swaps the
+	// spinner's default line for a calm "this can take a few minutes" message
+	// once the sync is confirmed still-converging server-side (F2 pending).
+	finishing: false, finishNote: "", finishSubtitle: "",
 	// self-host (renderSelfHost / renderShResults, jarvis_onboarding.js ~296-376)
 	shUrl: "", shToken: "", shStream: true, shDeep: false,
 	shTestBusy: false, shTestResult: null, shSaveBusy: false,
@@ -827,7 +829,16 @@ async function waitForSyncTerminal(maxMs = 15 * 60 * 1000, intervalMs = 3000) {
 	for (;;) {
 		try {
 			const s = await getLlmSyncStatus()
+			// "pending:" (incl. "pending: admin applying config") is NOT terminal
+			// - the admin persisted the config and a reconcile is finishing the
+			// apply. Keep following it; surface a calm reassurance rather than the
+			// red failure note. Only ok/failed (not pending) ends the loop.
 			if (s && !s.pending) return s
+			if (s && s.pending) {
+				state.finishSubtitle =
+					"Finishing setup — this can take a few minutes. We’ll keep at it; " +
+					"you can safely wait or come back."
+			}
 		} catch (e) {
 			// transient network hiccups shouldn't strand the user
 		}
@@ -852,6 +863,7 @@ async function waitForSyncTerminal(maxMs = 15 * 60 * 1000, intervalMs = 3000) {
 // field at all.
 async function afterSaveRecheckReady({ followSync = false } = {}) {
 	state.finishNote = ""
+	state.finishSubtitle = ""
 	state.finishing = true
 	if (followSync) {
 		// save_llm_pool writes "pending:" synchronously before its response,
