@@ -53,6 +53,6 @@ def _admin_contacts(limit: int = 5) -> list[str]:
 		filters={"name": ["in", names], "user_type": "System User"},
 		fields=["email"],
 		order_by="full_name asc",
-		limit_page_length=limit,
+		limit=limit,
 	)
 	return [u.email for u in users if u.email]
