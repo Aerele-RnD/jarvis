@@ -1,10 +1,11 @@
-// Global floating Jarvis widget — a bottom-right pointer that opens a compact
-// chat panel, present on every Desk page EXCEPT the full chat page (and the
-// onboarding flow, where the agent isn't ready yet).
+// Global floating Jarvis widget — a draggable, edge-snapping shortcut FAB
+// that navigates to the Jarvis chat SPA (a fresh conversation), present on
+// every Desk page EXCEPT the full chat page (and the onboarding flow, where
+// the agent isn't ready yet).
 //
-// Mounted ONCE into a <body>-level host so it survives SPA navigation: your
-// conversation + panel state persist as you move between invoices/reports.
-// Route changes only toggle the host's visibility.
+// Mounted ONCE into a <body>-level host so it survives SPA navigation: its
+// dragged position persists (via localStorage) as you move between
+// invoices/reports. Route changes only toggle the host's visibility.
 
 import { createApp } from "vue";
 import Widget from "./jarvis_chat/widget/Widget.vue";

@@ -4197,6 +4197,13 @@ onMounted(async () => {
 			// governance prompt into an unrelated thread's context.
 			_consumedNewChat = false // newChat() below satisfies a pending request too
 			await newChat()
+		} else if (route.query.new) {
+			// Desk FAB deep-link (jarvis_widget.bundle.js -> config.mjs NEW_CHAT_URL):
+			// ?new=1 means start a fresh conversation instead of restoring the last
+			// one. Strip the query so a refresh doesn't force ANOTHER new chat.
+			router.replace({ name: "Chat" })
+			_consumedNewChat = false // newChat() below satisfies a pending request too
+			await newChat()
 		} else if (_consumedNewChat) {
 			// New Chat was requested from another route while we booted —
 			// start on a fresh empty conversation instead of restoring.
