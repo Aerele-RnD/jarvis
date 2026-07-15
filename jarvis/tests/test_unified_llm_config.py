@@ -229,6 +229,22 @@ class TestProviderNormalization(FrappeTestCase):
         self.assertEqual(normalize_provider("Moonshot (Kimi)"), "moonshot")
         self.assertEqual(normalize_provider("OpenAI-Compatible"), "openai_compat")
 
+    def test_xai_and_glm_serialize_into_pool_payload(self):
+        # The actual feature: build_pool_payload emits xAI as the native "xai"
+        # provider and GLM/Z.ai as an openai_compat custom provider (base_url kept).
+        from jarvis.jarvis.pool_serialize import build_pool_payload
+        xai = _api_key_model(provider="xAI Grok", model="grok-4.5",
+                             base_url="https://api.x.ai/v1", api_key="xk", order=0)
+        glm = _api_key_model(provider="GLM / Z.ai", model="glm-4.6",
+                             base_url="https://api.z.ai/api/paas/v4", api_key="zk", order=1)
+        settings = _make_settings_with_models([xai, glm])
+        spec, _api_keys, _ = build_pool_payload(settings)
+        prov = {m["model"]: m.get("provider") for m in spec["models"]}
+        base = {m["model"]: m.get("base_url") for m in spec["models"]}
+        self.assertEqual(prov["grok-4.5"], "xai")            # native passthrough
+        self.assertEqual(prov["glm-4.6"], "openai_compat")   # GLM rides openai_compat
+        self.assertEqual(base["glm-4.6"], "https://api.z.ai/api/paas/v4")
+
 
 class TestPoolSerializeFromSettings(FrappeTestCase):
     """Task 2: Direct-call tests for build_pool_payload / validate_models / compute_proxy_active."""
