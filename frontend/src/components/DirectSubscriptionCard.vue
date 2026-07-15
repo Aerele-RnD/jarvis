@@ -80,6 +80,9 @@ import { ref, computed, onBeforeUnmount } from "vue"
 import * as api from "@/api"
 import { errMessage as _err } from "@/lib/errors"
 import { exactDate } from "@/utils/datetime"
+import { useConfirm } from "@/composables/useConfirm"
+
+const { confirm } = useConfirm()
 
 const props = defineProps({
   // Shape from getDirectSubscriptionStatus(): { connected, provider, model,
@@ -200,7 +203,12 @@ async function submitPasted() {
 }
 
 async function doDisconnect() {
-  if (!window.confirm("Disconnect the chat subscription? Jarvis chat will stop working until you reconnect.")) return
+  if (!(await confirm({
+    title: "Disconnect chat subscription?",
+    message: "Jarvis chat will stop working until you reconnect.",
+    confirmLabel: "Disconnect",
+    danger: true,
+  }))) return
   err.value = ""
   busy.value = true
   try {
