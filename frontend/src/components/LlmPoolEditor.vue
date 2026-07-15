@@ -187,19 +187,11 @@
             </div>
           </div>
 
-          <!-- Connect sits WHERE THE ACCOUNT WILL APPEAR, not beside the Provider
-               field: it is an account action, so clicking it should materialize the
-               account in the same place.
-               PRIMARY, uniform with "+ Add a model": with no account connected this is
-               the panel's required next step (the pool cannot save without one). The
-               two never coexist - Add-a-model shows only when the panel is CLOSED,
-               Connect only when it is OPEN - so two primaries never compete. -->
-          <button v-if="editable && !(panelRow._connect && panelRow._connect.open) && !(panelRow.accounts && panelRow.accounts.length)"
-                  @click="openConnectPanel(panelRow)"
-                  class="jv-btn jv-btn--primary jv-flist-addbtn">
-            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>
-            Connect account
-          </button>
+          <!-- No "Connect account" pre-step: with no account connected the two-step
+               sign-in below renders DIRECTLY (see its v-if), exactly like onboarding.
+               Making the customer click "Connect account" and THEN "Open sign-in" was a
+               redundant double-click for the same intent. Reconnect / "+ Add account"
+               still call openConnectPanel() to open these same steps for an extra slot. -->
 
           <!-- Connected accounts (markup reused verbatim from the former
                per-row layout). -->
@@ -218,29 +210,25 @@
               </div>
               <!-- Ghost, not primary: an account already exists, so adding a SECOND is
                    optional. It also sits beside Reconnect / Disconnect, which are ghosts.
-                   (Primary is reserved for the required next step -- Connect account when
-                   there is none, and Save configuration.) -->
+                   (Primary is reserved for the required next step -- the "Open sign-in"
+                   button in the steps below when there is no account, and Save
+                   configuration.) -->
               <button v-if="editable && !(panelRow._connect && panelRow._connect.open)" @click="openConnectPanel(panelRow)"
                       class="jv-btn jv-btn--sm jv-btn--ghost">
                 + Add account
               </button>
             </div>
           </div>
-          <!-- ("No accounts connected yet." removed: the Connect account button in the
-               grid above already says the account is missing; the sentence only
-               restated it.) -->
-
           <!-- OAuth connect: the SAME two-step spine onboarding renders (jv-csteps).
-               It used to be a different panel that only appeared AFTER startConnect had
-               already fired -- and startConnect opens the sign-in tab synchronously (it
-               must, to keep the click's user gesture and survive popup blockers). So the
-               customer was thrown at ChatGPT the instant they clicked "Connect account",
-               and only THEN saw a panel telling them to "Open sign-in". Backwards.
-               Now the steps appear FIRST and step 1's button is what starts OAuth, exactly
-               as in onboarding. Step 2 stays pending until step 1 mints the authorize URL:
-               a callback URL pasted before sign-in has no nonce to pair with, so
-               finishConnect would silently no-op. -->
-          <div v-if="panelRow._connect && panelRow._connect.open" class="jv-csteps">
+               Shown DIRECTLY whenever this row has no connected account -- no "Connect
+               account" pre-step -- so the panel opens straight on the sign-in, matching
+               onboarding. Once an account exists it collapses to the list above, and
+               "+ Add account" / "Reconnect" re-open it via _connect.open for an extra
+               slot. Step 1's button starts OAuth inside its own click (preserving the
+               user gesture / popup-blocker fix); step 2 stays pending until step 1 mints
+               the authorize URL, since a callback URL pasted before sign-in has no nonce
+               to pair with and finishConnect would silently no-op. -->
+          <div v-if="panelRow._connect && (panelRow._connect.open || !(panelRow.accounts && panelRow.accounts.length))" class="jv-csteps">
             <div class="jv-cstep">
               <div class="jv-cnum">1</div>
               <div class="jv-cbody">
@@ -278,8 +266,13 @@
               </div>
             </div>
             <div v-if="panelRow._connect.error" class="jv-cn-err">{{ panelRow._connect.error }}</div>
-            <!-- Actions right-aligned, like every other confirm action in this pane. -->
-            <div class="jv-cn-acts">
+            <!-- Actions right-aligned, like every other confirm action in this pane.
+                 Hidden in the pristine no-account state (the steps now render directly,
+                 so before sign-in the only action is step 1's "Open sign-in"; the panel's
+                 own Cancel/Close abandons the add). They appear once sign-in has started
+                 (Cancel = start over) or an account already exists (Cancel = back to the
+                 list, for the "+ Add account" path). -->
+            <div v-if="panelRow._connect.authorizeUrl || (panelRow.accounts && panelRow.accounts.length)" class="jv-cn-acts">
               <button @click="closeConnect(panelRow)" class="jv-btn jv-btn--ghost">Cancel</button>
               <button @click="finishConnect(panelRow)"
                       :disabled="panelRow._connect.loading || !panelRow._connect.authorizeUrl || !(panelRow._connect.pastedUrl || '').trim()"
