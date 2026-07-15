@@ -131,7 +131,7 @@
               <label class="jv-pool-lab">Provider</label>
               <JvCombo :model-value="panelRow.provider" :options="providerOptions" :editable="editable"
                        placeholder="Provider"
-                       @update:model-value="(v) => { panelRow.provider = v; onProviderChange(panelRow) }" />
+                       @update:model-value="(v) => onProviderChange(panelRow, v)" />
             </div>
             <div class="jv-pool-field">
               <label class="jv-pool-lab">Model</label>
@@ -384,7 +384,7 @@
              no jarring resize when toggling. The Account editor keeps the dense row. -->
         <div v-if="m.credentialType!=='subscription'" :class="{ 'jv-single-body': singleMode }">
           <div v-if="singleMode" class="jv-ak-grid">
-            <JvCombo :model-value="m.provider" @update:model-value="(v) => { m.provider = v; onProviderChange(m) }"
+            <JvCombo :model-value="m.provider" @update:model-value="(v) => onProviderChange(m, v)"
                      :options="providerOptions" :editable="editable" placeholder="Provider" />
             <JvCombo :model-value="m.model" @update:model-value="(v) => { m.model = v }" allow-custom
                      :options="modelSuggestionsForProvider(m.provider)" :editable="editable" placeholder="Model ID (e.g. gpt-4o)" />
@@ -942,10 +942,18 @@ function setCredType(m, type) {
     m.model = (PROVIDER_DEFAULTS[m.provider] || {}).model || ""
   }
 }
-function onProviderChange(m) {
+function onProviderChange(m, newProvider) {
+  // Only act on an ACTUAL provider switch (re-selecting the same one is a no-op).
+  const changed = newProvider !== m.provider
+  m.provider = newProvider
+  if (!changed) return
+  // Snap the model + base URL to the NEW provider's defaults, replacing any
+  // leftover from the previous provider — so picking "GLM / Z.ai" gives glm-4.6,
+  // not whatever model was there before. Providers with no default model
+  // (OpenAI-Compatible / vLLM) clear the field so the user types their own.
   const d = PROVIDER_DEFAULTS[m.provider] || {}
-  if (!(m.model || "").trim() && d.model) m.model = d.model
-  if (!(m.baseUrl || "").trim() && d.baseUrl) m.baseUrl = d.baseUrl
+  m.model = d.model || ""
+  m.baseUrl = d.baseUrl || ""
 }
 // Provider switch on a subscription row in the simplified onboarding editor:
 // re-default the (hidden) model AND drop any already-connected account, which is
