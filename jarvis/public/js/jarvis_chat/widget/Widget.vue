@@ -317,6 +317,23 @@ function wake() {
 	idleTimer?.poke();
 }
 
+// Document-level activity also counts as "not idle": today the FAB only woke
+// on FAB-local pointerenter/focus/pointerdown, so moving the mouse anywhere
+// else on the page left it faded and feeling disabled. Throttled to at most
+// one poke() per ~1s (mousemove fires far more often than that) — when
+// already faded, skip the throttle and restore instantly instead.
+let lastActivityPoke = 0;
+function onDocumentActivity() {
+	if (faded.value) {
+		wake();
+		return;
+	}
+	const now = Date.now();
+	if (now - lastActivityPoke < 1000) return;
+	lastActivityPoke = now;
+	idleTimer?.poke();
+}
+
 function onPointerDown(e) {
 	wake();
 	suppressClick = false;
@@ -601,6 +618,9 @@ onMounted(() => {
 	});
 	window.addEventListener("resize", onResize);
 	window.addEventListener("orientationchange", onResize);
+	document.addEventListener("mousemove", onDocumentActivity, { passive: true });
+	document.addEventListener("touchstart", onDocumentActivity, { passive: true });
+	document.addEventListener("keydown", onDocumentActivity, { passive: true });
 });
 
 // Docking on open and undocking (restoring the last dragged spot) on
@@ -623,6 +643,9 @@ onBeforeUnmount(() => {
 	document.removeEventListener("visibilitychange", onVisibility);
 	window.removeEventListener("resize", onResize);
 	window.removeEventListener("orientationchange", onResize);
+	document.removeEventListener("mousemove", onDocumentActivity);
+	document.removeEventListener("touchstart", onDocumentActivity);
+	document.removeEventListener("keydown", onDocumentActivity);
 	idleTimer?.dispose();
 	if (snapTimeoutHandle) {
 		window.clearTimeout(snapTimeoutHandle);
