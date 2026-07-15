@@ -14,7 +14,12 @@
    ========================================================================== */
 
 /* ===== settings panel (centered modal with a left section rail) ===== */
-.jv-settings-overlay { position: fixed; inset: 0; z-index: 60; background: rgba(0, 0, 0, 0.27); display: flex; align-items: center; justify-content: center; padding: 24px; }
+/* No z-index here on purpose: this overlay is Teleported to <body> (a later
+   sibling than #app), so DOM order alone puts it above the app. Leaving it at
+   the implicit z-index:auto lets a nested frappe-ui confirmDialog — also
+   body-portaled, but opened later, e.g. the disconnect confirm — paint on top
+   of it instead of being trapped behind an explicit stacking context. */
+.jv-settings-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.27); display: flex; align-items: center; justify-content: center; padding: 24px; }
 /* Height is ADAPTIVE (was a hard 560px): the compact AI-models pane left roughly
    half the dialog empty. `auto` sizes to the tallest column, clamped by
    min/max. NOTE the left rail is the practical floor (~12 nav items), so short

@@ -8,7 +8,7 @@ Covers the three guarantees the every-third-new-chat greeting rests on:
 - **Cadence** — ``maybe_greet`` shows the card only when the new-chat count
   is a positive multiple of three.
 - **Durability** — a permanent dismissal (and the counter) live in the
-  ``Jarvis User Preference`` DB row, so ``frappe.clear_cache`` can neither
+  ``Jarvis User Settings`` DB row, so ``frappe.clear_cache`` can neither
   resurrect a killed greeting nor reset the cadence.
 
 Runs as a dedicated System User so ``_require_system_user`` and

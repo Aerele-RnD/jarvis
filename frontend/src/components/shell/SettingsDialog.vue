@@ -195,6 +195,10 @@ function close() { store.settingsOpen = false }
 
 function onKey(e) {
 	if (e.key === "Escape" && store.settingsOpen) {
+		// A frappe-ui confirmDialog (e.g. the disconnect confirm) can be open on
+		// top of the settings dialog. Let reka-ui dismiss just that top layer
+		// instead of closing settings out from under it.
+		if (document.querySelector(".dialog-overlay")) return
 		e.stopPropagation()
 		close()
 	}
