@@ -958,3 +958,37 @@ class TestKimiDeviceFlow(_OAuthApiBase):
 		res = oauth_api.complete_pool_account_signin(nonce, "http://x/cb?code=A&state=B")
 		self.assertFalse(res["ok"])
 		self.assertEqual(res["error"]["code"], "unknown_nonce")
+
+
+class TestXaiPoolCapture(_OAuthApiBase):
+	"""Phase 2: xAI pool capture reuses the paste-back flow, producing an openclaw
+	blob the fleet oauth_blob_to_cliproxy_xai transform consumes (provider='xai',
+	id_token retained)."""
+
+	def _seed_xai(self):
+		nonce = "nx_" + ("b" * 45)
+		frappe.cache.hset(_CACHE_KEY, nonce, {
+			"provider": "xAI Grok", "model": "grok-4.3", "status": "pending",
+			"expires_at_ts": int(time.time()) + 600,
+			"verifier": "vv", "state": "test-state",
+			"redirect_uri": "http://127.0.0.1:56121/callback",
+			"pool": True, "originator_user": frappe.session.user,
+		})
+		return nonce
+
+	def test_pool_capture_builds_xai_blob_with_id_token(self):
+		nonce = self._seed_xai()
+		with patch("jarvis.oauth.api._exchange_code", return_value={
+			"access_token": "XAT", "refresh_token": "XRT",
+			"id_token": _jwt({"email": "x@y.com"}), "expires_in": 3600, "email": "x@y.com",
+		}):
+			res = oauth_api.complete_pool_account_signin(
+				nonce, "http://127.0.0.1:56121/callback?code=CODE&state=test-state")
+		self.assertTrue(res["ok"])
+		d = res["data"]
+		self.assertTrue(d["account_ref"].startswith("SUB_"))
+		blob = json.loads(d["oauth_blob"])
+		self.assertEqual(blob["provider"], "xai")   # openclaw_provider
+		self.assertEqual(blob["access"], "XAT")
+		self.assertTrue(blob["id_token"])            # xai transform REQUIRES it
+		self.assertIsNone(frappe.cache.hget(_CACHE_KEY, nonce))  # single-use
