@@ -15,6 +15,10 @@ _SNAPSHOT_PLAIN_FIELDS = (
 )
 _SNAPSHOT_PASSWORD_FIELDS = (
 	"jarvis_admin_api_key",
+	# Must be snapshotted/restored alongside the key: TestOnUpdateAdminDispatch
+	# sets it in setUp, so without restoring it here that value would leak into
+	# __Auth and become the cross-test pollution that #192 is about.
+	"jarvis_admin_api_secret",
 	"agent_token",
 	"llm_api_key",
 )
@@ -153,6 +157,15 @@ class TestOnUpdateAdminDispatch(_SettingsSnapshotTestCase):
 		self.settings = frappe.get_single("Jarvis Settings")
 		self.settings.db_set("jarvis_admin_url", "https://admin.example.com")
 		self.settings.db_set("jarvis_admin_api_key", "test-token")
+		# The authed admin path (admin_client._post_authed) requires BOTH
+		# jarvis_admin_api_key AND jarvis_admin_api_secret, or it raises
+		# "not onboarded". This setUp only ever set the key, so the restart
+		# dispatch test passed only when an earlier test happened to leave a
+		# secret in __Auth (the #192 Singles-snapshot / __Auth-pollution flake) —
+		# order-dependent, and it fails whenever test discovery order shifts.
+		# Set the secret explicitly so these tests are self-contained. (db_set on
+		# a Password field round-trips through get_password — verified.)
+		self.settings.db_set("jarvis_admin_api_secret", "test-secret")
 		self.settings.db_set("llm_provider", "Anthropic")
 		self.settings.db_set("llm_model", "claude-sonnet-4-6")
 		self.settings.db_set("llm_base_url", "https://api.anthropic.com")

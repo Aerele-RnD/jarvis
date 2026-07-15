@@ -12,15 +12,11 @@
 				"
 				aria-label="Jarvis menu"
 			>
-				<!-- the jarvis gradient mark, 28×28 rounded -->
-				<span
-					class="grid h-7 w-7 shrink-0 place-items-center rounded-[7px]"
-					style="background: linear-gradient(135deg, #6e8bff, #8b5cf6)"
-				>
-					<svg width="16" height="16" viewBox="0 0 24 24" fill="#fff">
-						<path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" />
-					</svg>
-				</span>
+				<!-- the jarvis mark, 28×28 rounded — rendered from JarvisMark rather than
+				     a hand-pasted copy of its gradient + path data. That duplication is
+				     exactly what let the chat welcome mark drift to a different colour
+				     (design.md §2.2). -->
+				<JarvisMark :size="28" :radius="7" />
 				<div
 					class="flex flex-1 flex-col overflow-hidden text-left duration-300 ease-in-out"
 					:class="isCollapsed ? 'ml-0 w-0 opacity-0' : 'ml-2 w-auto opacity-100'"
@@ -43,6 +39,7 @@
 // pattern. Dropdown: Settings (D9) · Switch to Desk · Toggle theme · Log out.
 import { computed, inject } from "vue"
 import { Dropdown, FeatherIcon } from "frappe-ui"
+import JarvisMark from "@/components/JarvisMark.vue"
 import { useShellStore } from "@/stores/shell"
 import { useJarvisTheme } from "@/theme"
 

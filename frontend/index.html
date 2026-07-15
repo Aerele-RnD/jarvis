@@ -4,6 +4,16 @@
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<title>Jarvis Chat</title>
+		<!-- Favicon. The desktop app shipped with NO icon link at all (only the
+		     /jarvis-mobile PWA had one), so the browser tab fell back to whatever
+		     the Frappe site serves. The assets already existed on disk — they were
+		     simply never referenced here. theme-color tracks the app's own surface
+		     tokens (theme.js: --surface #ffffff light / #16161a dark). -->
+		<link rel="icon" type="image/png" sizes="192x192" href="/assets/jarvis/manifest/icon-192.png" />
+		<link rel="icon" type="image/png" sizes="512x512" href="/assets/jarvis/manifest/icon-512.png" />
+		<link rel="apple-touch-icon" href="/assets/jarvis/manifest/apple-touch-180.png" />
+		<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+		<meta name="theme-color" content="#16161a" media="(prefers-color-scheme: dark)" />
 		<!-- No Google Fonts link: frappe-ui bundles InterVar locally (its CSS
 		     @font-face wins anyway), so the external stylesheet was a
 		     render-blocking duplicate. -->

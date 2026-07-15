@@ -109,9 +109,13 @@
 			<!-- ===== WELCOME ===== -->
 			<div v-else-if="showWelcome" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px;">
 				<div style="width:100%;max-width:680px;text-align:center;">
-					<div class="jv-logo" style="width:54px;height:54px;border-radius:14px;background:linear-gradient(135deg,var(--blue),#8b5cf6);display:flex;align-items:center;justify-content:center;margin:0 auto 18px;box-shadow:0 8px 22px rgba(79,70,229,.32);">
-						<svg width="28" height="28" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
-					</div>
+					<!-- The brand mark, from its single source of truth. This was a
+					     hand-pasted copy whose gradient read `var(--cta)` as its first
+					     stop; when #294 repointed --cta from indigo to near-black, this
+					     mark silently became near-black->purple while the sidebar mark
+					     (UserMenu) stayed blue->purple — two different logos on one
+					     screen. The purple glow shadow is dropped (design.md §5 #4). -->
+					<JarvisMark :size="54" :radius="14" style="margin:0 auto 18px;" />
 					<h1 class="jv-welcome-h1" style="font-size:30px;font-weight:640;letter-spacing:-.03em;margin:0 0 8px;overflow-wrap:anywhere;">{{ greeting }}, {{ firstName }}</h1>
 					<p style="font-size:14.5px;color:var(--text-2);margin:0 0 26px;line-height:1.5;">Ask about your ERP data, run a workflow, or draft something. Jarvis is connected to your <strong style="color:var(--text);font-weight:600;">ERPNext</strong> instance.</p>
 					<div class="jv-welcome-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:11px;text-align:left;">
@@ -150,7 +154,7 @@
 							<div v-if="m.content" class="jv-ububble" style="max-width:78%;min-width:0;background:var(--surface-2);border:1px solid var(--border);border-radius:14px 14px 4px 14px;padding:10px 14px;font-size:14px;line-height:1.5;color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere;">{{ m.content }}</div>
 							<div v-if="m.failed" style="display:flex;align-items:center;gap:8px;margin-top:4px;font-size:11.5px;color:var(--red);">
 								<span>Not sent</span>
-								<button @click="resendFailed(m)" style="background:none;border:none;color:var(--blue);font:inherit;cursor:pointer;padding:0;text-decoration:underline;">Retry</button>
+								<button @click="resendFailed(m)" style="background:none;border:none;color:var(--link);font:inherit;cursor:pointer;padding:0;text-decoration:underline;">Retry</button>
 							</div>
 							<!-- attached images → same clickable thumbnail + preview as generated ones -->
 							<template v-for="cv in (m.canvas || [])" :key="cv.name">
@@ -174,9 +178,7 @@
 						</div>
 						<!-- assistant -->
 						<div v-else class="jv-amsg" style="display:flex;gap:12px;">
-							<div class="jv-logo" style="width:28px;height:28px;flex:none;border-radius:7px;background:var(--blue);display:flex;align-items:center;justify-content:center;margin-top:2px;">
-								<svg width="15" height="15" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
-							</div>
+							<JarvisMark :size="28" :radius="7" style="margin-top:2px;" />
 							<div style="flex:1;min-width:0;">
 								<!-- Activity: the tool calls (with input + output) that produced
 								     this answer — openclaw-style, collapsible. -->
@@ -246,7 +248,7 @@
 									<!-- create/update → read-only summary/diff card (Task 1.3); Edit opens the full panel -->
 									<div v-else-if="isEditVerb(activeAction)" class="jv-action jv-summary">
 										<div class="jv-action-head">
-											<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+											<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--cta)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
 											<span class="jv-action-title">
 												{{ activeAction.verb === 'update' ? 'Update' : 'Create' }} {{ activeAction.doctype }}<template v-if="summaryState.model && summaryState.model.docName"> · {{ summaryState.model.docName }}</template>
 											</span>
@@ -418,14 +420,12 @@
 
 					<!-- live tool activity + thinking (Claude Code style) -->
 					<div v-if="activeTools.length || waiting" style="display:flex;gap:12px;">
-						<div class="jv-logo" style="width:28px;height:28px;flex:none;border-radius:7px;background:var(--blue);display:flex;align-items:center;justify-content:center;margin-top:2px;">
-							<svg width="15" height="15" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
-						</div>
+						<JarvisMark :size="28" :radius="7" style="margin-top:2px;" />
 						<div style="flex:1;min-width:0;padding-top:3px;">
 							<!-- the single tool running right now -->
 							<div v-if="showActivityDetail && currentTool" :key="currentTool.id" class="jv-toolrow">
-								<svg class="jv-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2.4" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9" /></svg>
-								<span>{{ toolPhrase(currentTool) }} <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:11px;color:var(--blue);">{{ currentTool.name }}</span></span>
+								<svg class="jv-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--cta)" stroke-width="2.4" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9" /></svg>
+								<span>{{ toolPhrase(currentTool) }} <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:11px;color:var(--cta);">{{ currentTool.name }}</span></span>
 							</div>
 							<!-- compact tally of tools finished this turn -->
 							<div v-if="showActivityDetail && doneCount" class="jv-toolrow jv-tooldone">
@@ -447,9 +447,7 @@
 					     hiccup / compaction). The composer stays UNLOCKED and the answer
 					     lands later via the recovery path — fixes the silent limbo. -->
 					<div v-if="recovering" style="display:flex;gap:12px;">
-						<div class="jv-logo" style="width:28px;height:28px;flex:none;border-radius:7px;background:var(--blue);display:flex;align-items:center;justify-content:center;margin-top:2px;">
-							<svg width="15" height="15" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
-						</div>
+						<JarvisMark :size="28" :radius="7" style="margin-top:2px;" />
 						<div style="flex:1;min-width:0;padding-top:3px;">
 							<div role="status" aria-live="polite" style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text-3);">
 								<svg class="jv-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="2.4" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9" /></svg>
@@ -516,7 +514,7 @@
 						<div v-if="nudge.mode !== 'edit'" class="jv-nudge-actions">
 							<template v-if="ui.stt_enabled && nudgeRec.supported">
 								<button v-if="nudge.mode === 'transcribing'" class="jv-iconbtn jv-micbtn" title="Transcribing…" disabled style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;border-radius:7px;color:var(--text-3);">
-									<svg class="jv-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2.4" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9" /></svg>
+									<svg class="jv-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--cta)" stroke-width="2.4" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9" /></svg>
 								</button>
 								<!-- labeled, unlike the composer's dictate mic 40px below — two
 								     identical icon-only mics were indistinguishable at a glance -->
@@ -542,7 +540,7 @@
 						</template>
 					</div>
 					<div class="jv-composer" @dragover.prevent @dragenter.prevent="onDragEnter" @dragleave.prevent="onDragLeave" @drop.prevent="onDrop" style="position:relative;border:1.5px solid var(--text);border-radius:13px;background:var(--surface);box-shadow:0 2px 12px rgba(0,0,0,.07);padding:5px 6px 6px 6px;transition:border-color .12s,box-shadow .12s;">
-						<div v-if="dragActive" style="position:absolute;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;background:var(--blue-bg);border:2px dashed var(--blue);border-radius:13px;color:var(--blue);font-size:13px;font-weight:600;pointer-events:none;">Drop image or file to attach</div>
+						<div v-if="dragActive" style="position:absolute;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;background:var(--cta-bg);border:2px dashed var(--cta);border-radius:13px;color:var(--cta);font-size:13px;font-weight:600;pointer-events:none;">Drop image or file to attach</div>
 						<!-- mention dropdown (@ user, / doctype·tool) -->
 						<div v-if="mention.open && mention.items.length" style="position:absolute;bottom:calc(100% + 6px);left:0;min-width:248px;max-height:248px;overflow-y:auto;background:var(--surface);border:1px solid var(--border-2);border-radius:10px;box-shadow:0 10px 28px rgba(20,20,30,.16);padding:5px;z-index:30;">
 							<button v-for="(it, i) in mention.items" :key="it.value" class="jv-menuitem" :class="{ on: i === mention.index }" @click="applyMention(it)" @mouseenter="mention.index = i">
@@ -568,7 +566,7 @@
 							<!-- dictation mic (hidden unless the backend reports STT configured) -->
 							<template v-if="ui.stt_enabled && micRec.supported">
 								<button v-if="micState === 'transcribing'" class="jv-iconbtn jv-micbtn" title="Transcribing…" disabled style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;border-radius:7px;color:var(--text-3);">
-									<svg class="jv-spin" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2.4" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9" /></svg>
+									<svg class="jv-spin" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--cta)" stroke-width="2.4" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9" /></svg>
 								</button>
 								<button v-else class="jv-iconbtn jv-micbtn" :class="{ rec: micState === 'recording' }" :title="micState === 'recording' ? 'Stop and transcribe' : 'Dictate (voice to text)'" @click="micState === 'recording' ? stopMic() : startMic()" style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;border-radius:7px;cursor:pointer;color:var(--text-3);">
 									<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><path d="M12 19v3" /></svg>
@@ -584,11 +582,11 @@
 								<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a5 5 0 0 1-7.07-7.07l9.19-9.19a3.5 3.5 0 0 1 4.95 4.95l-9.2 9.19a1.5 1.5 0 0 1-2.12-2.12l8.49-8.49" /></svg>
 							</button>
 							<span style="margin-left:auto;font-size:11px;color:var(--text-3);margin-right:4px;">{{ busy ? "Stop" : "Enter ↵" }}</span>
-							<button v-if="busy" @click="stopRun" title="Stop generating" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:var(--blue);border:none;border-radius:8px;cursor:pointer;">
-								<svg width="13" height="13" viewBox="0 0 24 24" fill="var(--blue-fg)"><rect x="6" y="6" width="12" height="12" rx="2.5" /></svg>
+							<button v-if="busy" @click="stopRun" title="Stop generating" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:var(--cta);border:none;border-radius:8px;cursor:pointer;">
+								<svg width="13" height="13" viewBox="0 0 24 24" fill="var(--cta-fg)"><rect x="6" y="6" width="12" height="12" rx="2.5" /></svg>
 							</button>
-							<button v-else class="jv-sendbtn" :class="{ ready: canSend }" @click="send()" :disabled="!canSend" :style="{ width:'32px', height:'32px', display:'flex', alignItems:'center', justifyContent:'center', background: canSend ? 'var(--blue)' : 'var(--surface-3)', border:'none', borderRadius:'8px', cursor: canSend ? 'pointer' : 'default' }">
-								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" :stroke="canSend ? 'var(--blue-fg)' : 'var(--text-3)'" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
+							<button v-else class="jv-sendbtn" :class="{ ready: canSend }" @click="send()" :disabled="!canSend" :style="{ width:'32px', height:'32px', display:'flex', alignItems:'center', justifyContent:'center', background: canSend ? 'var(--cta)' : 'var(--surface-3)', border:'none', borderRadius:'8px', cursor: canSend ? 'pointer' : 'default' }">
+								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" :stroke="canSend ? 'var(--cta-fg)' : 'var(--text-3)'" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
 							</button>
 						</div>
 					</div>
@@ -600,7 +598,7 @@
 		<!-- ============ PROACTIVE MESSAGE TOAST (Jarvis started a chat) ============ -->
 		<transition name="jv-fade">
 			<div v-if="proactiveToast" class="jv-toast" @click="openProactive">
-				<div class="jv-toast-ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg></div>
+				<JarvisMark :size="30" :radius="8" />
 				<div style="min-width:0;flex:1;">
 					<div class="jv-toast-title">{{ proactiveToast.title }}</div>
 					<div class="jv-toast-preview">{{ proactiveToast.preview }}</div>
@@ -829,6 +827,7 @@ import { formatDate, exactDate, dayLabel } from "@/utils/datetime"
 import { renderMarkdown } from "@/markdown"
 import JvChart from "@/charts/JvChart.vue"
 import ConnectPhoneDialog from "@/components/ConnectPhoneDialog.vue"
+import JarvisMark from "@/components/JarvisMark.vue"
 import DraftPreview from "@/components/doc/DraftPreview.vue"
 import ActionError from "@/components/ActionError.vue"
 import PendingCard from "@/components/PendingCard.vue"
@@ -1544,7 +1543,7 @@ const busy = computed(() => sending.value || waiting.value)
 const convStreaming = computed(() => store.streamingConvId === currentId.value)
 
 const suggestions = [
-	{ title: "Analyse data", prompt: "Which sales orders are overdue this month?", bg: "var(--blue-bg)", fg: "var(--blue)", icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18 9l-5 5-3-3-4 4"/></svg>' },
+	{ title: "Analyse data", prompt: "Which sales orders are overdue this month?", bg: "var(--cta-bg)", fg: "var(--cta)", icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18 9l-5 5-3-3-4 4"/></svg>' },
 	{ title: "Take an action", prompt: "Draft a document for me to review", bg: "var(--green-bg)", fg: "var(--green)", icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>' },
 	{ title: "Search records", prompt: "Search for a customer or contact", bg: "var(--amber-bg)", fg: "var(--amber)", icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>' },
 	{ title: "Draft content", prompt: "Write a follow-up email to a lead", bg: "rgba(139,92,246,.12)", fg: "#8b5cf6", icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>' },
@@ -4301,15 +4300,15 @@ onUnmounted(() => {
    pops white select menus and calendar popups. */
 .jv-root { color-scheme: light; }
 .jv-root.jv-dark { color-scheme: dark; }
-/* Refined Indigo brand mark (dark mode): the spark boxes — empty-state hero,
-   assistant avatars, proactive toast — trade the flat accent fill for an
-   indigo→violet gradient with a soft indigo glow. !important beats the
-   elements' inline background:var(--blue). */
-.jv-dark .jv-logo,
-.jv-dark .jv-toast-ic {
-	background: linear-gradient(135deg, #6e8bff, #8b5cf6) !important;
-	box-shadow: 0 2px 10px rgba(110, 139, 255, .35) !important;
-}
+/* The brand mark is now <JarvisMark> everywhere on this surface (hero, assistant
+   avatars, proactive toast), so it carries its own gradient in BOTH themes.
+   Deleted with this comment: a `.jv-dark .jv-logo, .jv-dark .jv-toast-ic` rule
+   that force-painted the gradient with !important in dark only. It existed
+   because those chips were `background: var(--cta)` — near-black in light, and
+   near-WHITE in dark, which would have put a white star on a white chip. So the
+   mark was near-black in light and gradient in dark: the same logo in two
+   colours, and a third (flat bg-blue-500) in NotifyToaster. One mark, one
+   gradient, no !important. */
 /* The send button inverts to black/white on hover (depends on its base color,
    so the white icon flips to the surface color). !important beats the inline
    background. */
@@ -4370,7 +4369,7 @@ onUnmounted(() => {
 .jv-sd-enter-from, .jv-sd-leave-to { opacity: 0; transform: translateX(-50%) translateY(10px); }
 /* response metrics (tools · time) */
 .jv-skillused { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
-.jv-skillused-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px 2px 7px; background: var(--blue-bg); border: 1px solid var(--blue); border-radius: 20px; font-size: 11px; font-weight: 600; color: var(--blue); }
+.jv-skillused-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px 2px 7px; background: var(--cta-bg); border: 1px solid var(--cta); border-radius: 20px; font-size: 11px; font-weight: 600; color: var(--cta); }
 .jv-meta { display: flex; align-items: center; gap: 14px; margin-top: 0; font-size: 11px; color: var(--text-3); }
 .jv-metabar { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; margin-top: 9px; }
 .jv-metabar:empty { display: none; }
@@ -4437,7 +4436,7 @@ onUnmounted(() => {
 /* visually-hidden live region for screen-reader announcements (UX #5) */
 .jv-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 /* visible keyboard focus (UX #15) */
-.jv-suggest:focus-visible, .jv-sendbtn:focus-visible, .jv-iconbtn:focus-visible, .jv-msgbtn:focus-visible, .jv-retry:focus-visible, .jv-modelpill:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.jv-suggest:focus-visible, .jv-sendbtn:focus-visible, .jv-iconbtn:focus-visible, .jv-msgbtn:focus-visible, .jv-retry:focus-visible, .jv-modelpill:focus-visible { outline: 2px solid var(--cta); outline-offset: 2px; }
 /* honor reduced-motion on the chat surface (UX #13) */
 @media (prefers-reduced-motion: reduce) {
 	.jv-spin { animation: none; }
@@ -4473,7 +4472,7 @@ onUnmounted(() => {
 .jv-canvas-pdf { height: 560px; }
 .jv-canvas-img { display: block; max-width: 100%; height: auto; margin: 0 auto; background: #fff; }
 .jv-canvas-loading { padding: 26px 14px; text-align: center; font-size: 12.5px; color: var(--text-3); }
-.jv-canvas-dl { margin-left: auto; font-size: 11px; font-weight: 600; color: var(--blue); text-decoration: none; padding: 2px 8px; border: 1px solid var(--border); border-radius: 6px; }
+.jv-canvas-dl { margin-left: auto; font-size: 11px; font-weight: 600; color: var(--cta); text-decoration: none; padding: 2px 8px; border: 1px solid var(--border); border-radius: 6px; }
 .jv-canvas-dl:hover { background: var(--surface-1); }
 .jv-canvas-file { display: flex; align-items: center; gap: 10px; padding: 16px 16px; color: var(--text-2); text-decoration: none; font-size: 13px; }
 .jv-canvas-file svg { color: var(--text-3); flex: none; }
@@ -4523,11 +4522,11 @@ onUnmounted(() => {
 /* day separators between message groups (UX #23) */
 .jv-daydivider { display: flex; align-items: center; justify-content: center; margin: 6px 0 2px; }
 .jv-daydivider span { font-size: 11px; font-weight: 550; color: var(--text-3); background: var(--surface-1); border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; }
-.jv-md :deep(.jv-md-link) { color: var(--blue); text-decoration: none; font-weight: 500; }
+.jv-md :deep(.jv-md-link) { color: var(--cta); text-decoration: none; font-weight: 500; }
 /* Auto-linked document IDs → open the record in ERPNext Desk. Dashed underline
    marks them as record links, distinct from plain markdown links. */
-.jv-md :deep(.jv-doclink) { color: var(--blue); text-decoration: none; font-weight: 550; border-bottom: 1px dashed var(--blue); cursor: pointer; transition: background .12s; }
-.jv-md :deep(.jv-doclink:hover) { border-bottom-style: solid; background: var(--blue-bg); border-radius: 3px; }
+.jv-md :deep(.jv-doclink) { color: var(--cta); text-decoration: none; font-weight: 550; border-bottom: 1px dashed var(--cta); cursor: pointer; transition: background .12s; }
+.jv-md :deep(.jv-doclink:hover) { border-bottom-style: solid; background: var(--cta-bg); border-radius: 3px; }
 .jv-md :deep(.jv-md-tablewrap) { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin: 4px 0 10px; }
 .jv-md :deep(.jv-md-table) { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 .jv-md :deep(.jv-md-table th) { padding: 8px 13px; font-weight: 550; color: var(--text-3); background: var(--surface-1); border-bottom: 1px solid var(--border); }
@@ -4572,9 +4571,9 @@ onUnmounted(() => {
 .jv-kbd-plus { color: var(--text-3); margin: 0 3px; font-size: 11px; }
 .jv-est { font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
 .jv-usage-bar { margin-top: 12px; height: 7px; border-radius: 99px; background: var(--surface-2); overflow: hidden; }
-.jv-usage-fill { height: 100%; border-radius: 99px; background: var(--blue); transition: width .25s ease; }
+.jv-usage-fill { height: 100%; border-radius: 99px; background: var(--cta); transition: width .25s ease; }
 /* custom skills */
-.jv-skill-btn { padding: 6px 12px; background: var(--blue); border: 1px solid var(--blue); border-radius: 8px; font-family: inherit; font-size: 12.5px; font-weight: 600; color: var(--blue-fg); cursor: pointer; white-space: nowrap; transition: opacity .12s; }
+.jv-skill-btn { padding: 6px 12px; background: var(--cta); border: 1px solid var(--cta); border-radius: 8px; font-family: inherit; font-size: 12.5px; font-weight: 600; color: var(--cta-fg); cursor: pointer; white-space: nowrap; transition: opacity .12s; }
 .jv-skill-btn:hover { opacity: .9; }
 .jv-skill-btn:disabled { opacity: .5; cursor: default; }
 .jv-skill-btn.ghost { background: transparent; color: var(--text-2); border-color: var(--border-2); }
@@ -4583,7 +4582,7 @@ onUnmounted(() => {
 .jv-skill-l { display: block; font-size: 11px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: .04em; margin: 0 0 4px; }
 .jv-skill-in, .jv-skill-ta { width: 100%; box-sizing: border-box; padding: 8px 10px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; font-family: inherit; font-size: 13px; color: var(--text); outline: none; }
 .jv-skill-ta { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; resize: vertical; line-height: 1.5; }
-.jv-skill-in:focus, .jv-skill-ta:focus { border-color: var(--blue); }
+.jv-skill-in:focus, .jv-skill-ta:focus { border-color: var(--cta); }
 .jv-skill-in:disabled { color: var(--text-3); }
 .jv-skill-row { display: flex; align-items: center; gap: 8px; margin: 0 -10px; padding: 11px 10px; border-bottom: 1px solid var(--border); border-radius: 10px; transition: background .12s; }
 .jv-skill-row:last-child { border-bottom: 0; }
@@ -4599,9 +4598,9 @@ onUnmounted(() => {
 .jv-btn:active { transform: scale(.97); }
 .jv-btn:disabled { opacity: .5; cursor: default; pointer-events: none; box-shadow: none; transform: none; }
 .jv-btn svg { flex: none; }
-.jv-btn--primary { background: var(--blue); border-color: var(--blue); color: var(--blue-fg); box-shadow: 0 1px 2px rgba(20, 20, 30, .12); }
+.jv-btn--primary { background: var(--cta); border-color: var(--cta); color: var(--cta-fg); box-shadow: 0 1px 2px rgba(20, 20, 30, .12); }
 .jv-btn--primary:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(20, 20, 30, .18); }
-.jv-btn--primary svg { stroke: var(--blue-fg); }
+.jv-btn--primary svg { stroke: var(--cta-fg); }
 .jv-btn--ghost { background: var(--surface); border-color: var(--border-2); color: var(--text-2); }
 .jv-btn--ghost:hover { background: var(--surface-2); border-color: var(--border); color: var(--text); transform: translateY(-1px); }
 .jv-btn--danger { background: var(--red); border-color: var(--red); color: #fff; box-shadow: 0 1px 2px rgba(220, 38, 38, .14); }
@@ -4620,25 +4619,25 @@ onUnmounted(() => {
 /* row action icons (skills/macros): color-coded semantic hovers + springy pop */
 .jv-btn--icon.jv-ib:hover { transform: translateY(-1px); }
 .jv-btn--icon.jv-ib:active { transform: scale(.88); }
-.jv-btn--icon.jv-ib-accent:hover { background: var(--blue-bg); color: var(--blue); border-color: var(--blue-bd); }
+.jv-btn--icon.jv-ib-accent:hover { background: var(--cta-bg); color: var(--cta); border-color: var(--cta-bd); }
 .jv-btn--icon.jv-ib-danger:hover { background: var(--red-bg); color: var(--red); border-color: var(--red-bd); }
 
-.jv-newpill { flex: none; display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px 6px 10px; background: var(--blue); border: 1px solid var(--blue); border-radius: 9px; font-family: inherit; font-size: 12.5px; font-weight: 600; color: var(--blue-fg); cursor: pointer; transition: opacity .12s, transform .06s; }
+.jv-newpill { flex: none; display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px 6px 10px; background: var(--cta); border: 1px solid var(--cta); border-radius: 9px; font-family: inherit; font-size: 12.5px; font-weight: 600; color: var(--cta-fg); cursor: pointer; transition: opacity .12s, transform .06s; }
 .jv-newpill:hover { opacity: .92; }
 .jv-newpill:active { transform: scale(.97); }
-.jv-newpill svg { stroke: var(--blue-fg); }
+.jv-newpill svg { stroke: var(--cta-fg); }
 .jv-skill-name { font-size: 13px; font-weight: 600; color: var(--text); font-family: ui-monospace, "SF Mono", Menlo, monospace; }
 .jv-skill-off { font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; margin-left: 6px; font-family: inherit; }
 .jv-skill-desc { font-size: 12px; color: var(--text-3); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* skill sharing: chips, dividers, read-only + share modal */
-.jv-shared-chip { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; padding: 1px 7px 1px 6px; background: var(--blue-bg); color: var(--blue); border-radius: 999px; font-size: 10px; font-weight: 600; font-family: inherit; letter-spacing: .01em; vertical-align: middle; }
-.jv-shared-chip svg { stroke: var(--blue); }
+.jv-shared-chip { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; padding: 1px 7px 1px 6px; background: var(--cta-bg); color: var(--cta); border-radius: 999px; font-size: 10px; font-weight: 600; font-family: inherit; letter-spacing: .01em; vertical-align: middle; }
+.jv-shared-chip svg { stroke: var(--cta); }
 .jv-sharedby-chip { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; padding: 1px 7px 1px 6px; background: var(--surface-2); color: var(--text-3); border: 1px solid var(--border); border-radius: 999px; font-size: 10px; font-weight: 600; font-family: inherit; vertical-align: middle; }
 .jv-share-divider { margin: 14px -10px 4px; padding: 6px 10px 4px; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--text-3); border-top: 1px solid var(--border); }
 .jv-skill-row-shared { opacity: .96; }
 .jv-share-lock { flex: none; display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 8px; background: var(--surface-2); color: var(--text-3); border: 1px solid var(--border); }
-.jv-ro-banner { display: flex; align-items: center; gap: 8px; padding: 9px 11px; margin-bottom: 13px; background: var(--blue-bg); border: 1px solid var(--blue); border-radius: 9px; font-size: 12.5px; color: var(--text-2); }
-.jv-ro-banner svg { stroke: var(--blue); flex: none; }
+.jv-ro-banner { display: flex; align-items: center; gap: 8px; padding: 9px 11px; margin-bottom: 13px; background: var(--cta-bg); border: 1px solid var(--cta); border-radius: 9px; font-size: 12.5px; color: var(--text-2); }
+.jv-ro-banner svg { stroke: var(--cta); flex: none; }
 .jv-ro-banner b { color: var(--text); font-weight: 600; }
 /* share modal */
 .jv-share-modal { height: auto; max-height: 82vh; }
@@ -4647,14 +4646,14 @@ onUnmounted(() => {
 .jv-share-chip-name { font-weight: 500; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jv-share-chip-x { flex: none; width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; border: none; background: transparent; border-radius: 50%; color: var(--text-3); cursor: pointer; padding: 0; transition: background .12s, color .12s; }
 .jv-share-chip-x:hover { background: var(--red-bg); color: var(--red); }
-.jv-share-avatar { flex: none; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--blue); color: var(--blue-fg); font-size: 10.5px; font-weight: 600; letter-spacing: .01em; box-shadow: 0 1px 2px rgba(79, 70, 229, .3); }
+.jv-share-avatar { flex: none; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--cta); color: var(--cta-fg); font-size: 10.5px; font-weight: 600; letter-spacing: .01em; box-shadow: 0 1px 2px rgba(79, 70, 229, .3); }
 .jv-share-searchwrap { display: flex; align-items: center; gap: 8px; padding: 8px 11px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 9px; margin-bottom: 10px; }
-.jv-share-searchwrap:focus-within { border-color: var(--blue); }
+.jv-share-searchwrap:focus-within { border-color: var(--cta); }
 .jv-share-search { flex: 1; border: none; outline: none; background: transparent; font-family: inherit; font-size: 13px; color: var(--text); }
 .jv-share-list { display: flex; flex-direction: column; gap: 2px; max-height: 280px; overflow-y: auto; margin: 0 -6px; }
 .jv-share-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; background: transparent; border: none; border-radius: 9px; cursor: pointer; text-align: left; transition: background .12s; }
 .jv-share-row:hover { background: var(--surface-1); }
-.jv-share-row.on { background: var(--blue-bg); }
+.jv-share-row.on { background: var(--cta-bg); }
 .jv-share-row-info { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.25; }
 .jv-share-row-name { font-size: 13px; font-weight: 550; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jv-share-row-id { font-size: 11px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -4673,23 +4672,23 @@ onUnmounted(() => {
 .jv-skills-status.ok { color: var(--green); }
 .jv-skills-status.err { color: var(--red); }
 .jv-skills-body { flex: 1; overflow-y: auto; padding: 16px 20px 20px; }
-.jv-skill-newrow { display: flex; align-items: center; gap: 8px; width: 100%; justify-content: center; padding: 10px; margin-bottom: 12px; background: var(--blue-bg); border: 1px dashed var(--blue); border-radius: 10px; font-family: inherit; font-size: 13px; font-weight: 600; color: var(--blue); cursor: pointer; }
-.jv-skill-newrow:hover { background: var(--blue); color: var(--blue-fg); }
-.jv-skill-newrow:hover svg { stroke: var(--blue-fg); }
+.jv-skill-newrow { display: flex; align-items: center; gap: 8px; width: 100%; justify-content: center; padding: 10px; margin-bottom: 12px; background: var(--cta-bg); border: 1px dashed var(--cta); border-radius: 10px; font-family: inherit; font-size: 13px; font-weight: 600; color: var(--cta); cursor: pointer; }
+.jv-skill-newrow:hover { background: var(--cta); color: var(--cta-fg); }
+.jv-skill-newrow:hover svg { stroke: var(--cta-fg); }
 .jv-skill-formfoot { display: flex; align-items: center; gap: 10px; margin-top: 15px; flex-wrap: wrap; }
 .jv-skill-foothint { font-size: 11px; color: var(--text-3); }
 .jv-skill-dot { width: 7px; height: 7px; border-radius: 99px; background: var(--text-3); flex: none; }
 .jv-skill-dot.ok { background: var(--green); }
 .jv-skill-dot.err { background: var(--red); }
-.jv-skill-dot.spin { border: 2px solid var(--border-2); border-top-color: var(--blue); background: transparent; width: 11px; height: 11px; animation: jv-spin .7s linear infinite; }
+.jv-skill-dot.spin { border: 2px solid var(--border-2); border-top-color: var(--cta); background: transparent; width: 11px; height: 11px; animation: jv-spin .7s linear infinite; }
 @keyframes jv-spin { to { transform: rotate(360deg); } }
 /* theme segmented control */
 .jv-seg { display: flex; gap: 6px; }
 .jv-seg button { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 11px 6px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 9px; font-family: inherit; font-size: 11.5px; font-weight: 550; color: var(--text-2); cursor: pointer; transition: border-color .12s, background .12s, color .12s; }
 .jv-seg button:hover { border-color: var(--border-2); }
-.jv-seg button.on { border-color: var(--blue); color: var(--text); background: var(--blue-bg); }
+.jv-seg button.on { border-color: var(--cta); color: var(--text); background: var(--cta-bg); }
 .jv-seg button svg { color: var(--text-3); }
-.jv-seg button.on svg { color: var(--blue); }
+.jv-seg button.on svg { color: var(--cta); }
 /* danger / delete */
 .jv-danger { display: flex; align-items: center; gap: 8px; width: 100%; justify-content: center; padding: 9px 12px; background: var(--red-bg); border: 1px solid var(--red-bd); border-radius: 9px; font-family: inherit; font-size: 13px; font-weight: 550; color: var(--red); cursor: pointer; }
 .jv-danger:hover:not(:disabled) { filter: brightness(0.97); }
@@ -4706,13 +4705,13 @@ onUnmounted(() => {
 .jv-runchips button { font-family: inherit; font-size: 12px; font-weight: 550; padding: 5px 11px; border-radius: 6px; color: var(--text-3); cursor: pointer; border: none; background: transparent; }
 .jv-runchips button.on { background: var(--surface-3); color: var(--text); }
 .jv-runmacrosel { margin-left: auto; font-family: inherit; font-size: 12px; color: var(--text-2); background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; cursor: pointer; outline: none; }
-.jv-runmacrosel:focus { border-color: var(--blue); }
+.jv-runmacrosel:focus { border-color: var(--cta); }
 .jv-run { display: flex; align-items: flex-start; gap: 11px; padding: 12px 2px; border-bottom: 1px solid var(--surface-2); }
 .jv-run:last-of-type { border-bottom: none; }
 .jv-run-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; margin-top: 5px; }
 .jv-run-dot.d-ok { background: var(--green); }
 .jv-run-dot.d-err { background: var(--red); }
-.jv-run-dot.d-run { background: var(--blue); box-shadow: 0 0 0 3px var(--blue-bg); }
+.jv-run-dot.d-run { background: var(--cta); box-shadow: 0 0 0 3px var(--cta-bg); }
 .jv-run-dot.d-stop { background: var(--text-3); }
 .jv-run-main { flex: 1; min-width: 0; }
 .jv-run-top { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
@@ -4720,7 +4719,7 @@ onUnmounted(() => {
 .jv-run-badge { font-size: 10.5px; font-weight: 600; padding: 2px 8px; border-radius: 99px; text-transform: capitalize; }
 .jv-run-badge.b-ok { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-bd); }
 .jv-run-badge.b-err { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-bd); }
-.jv-run-badge.b-run { background: var(--blue-bg); color: var(--blue); border: 1px solid var(--blue-bd); }
+.jv-run-badge.b-run { background: var(--cta-bg); color: var(--cta); border: 1px solid var(--cta-bd); }
 .jv-run-badge.b-stop { background: var(--surface-2); color: var(--text-3); border: 1px solid var(--border-2); }
 .jv-run-trig { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; color: var(--text-3); }
 .jv-run-meta { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--text-3); margin-top: 4px; flex-wrap: wrap; }
@@ -4747,7 +4746,7 @@ onUnmounted(() => {
 .jv-img-artifact-cap { display: flex; align-items: center; gap: 6px; padding: 7px 10px; font-family: inherit; font-size: 11.5px; line-height: 1.3; color: var(--text-3); background: var(--surface); border-top: 1px solid var(--border); }
 .jv-artifact { display: flex; align-items: center; gap: 11px; width: 100%; margin-top: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); cursor: pointer; text-align: left; font-family: inherit; transition: border-color .12s, background .12s; }
 .jv-artifact:hover { border-color: var(--border-2); background: var(--surface-1); }
-.jv-artifact-ic { flex: none; width: 34px; height: 34px; border-radius: 8px; display: flex; align-items: center; justify-content: center; background: var(--blue-bg); color: var(--blue); }
+.jv-artifact-ic { flex: none; width: 34px; height: 34px; border-radius: 8px; display: flex; align-items: center; justify-content: center; background: var(--cta-bg); color: var(--cta); }
 .jv-artifact-ic.t-pdf { background: var(--red-bg); color: var(--red); }
 .jv-artifact-ic.t-image { background: var(--green-bg); color: var(--green); }
 .jv-artifact-ic.t-html, .jv-artifact-ic.t-svg { background: var(--amber-bg); color: var(--amber); }
@@ -4763,7 +4762,7 @@ onUnmounted(() => {
 .jv-confirm-no, .jv-confirm-yes { font-family: inherit; font-size: 12.5px; font-weight: 600; padding: 6px 14px; border-radius: 7px; cursor: pointer; border: 1px solid var(--border-2); flex: none; }
 .jv-confirm-no { background: var(--surface); color: var(--text-2); }
 .jv-confirm-no:hover { background: var(--text); color: var(--surface); border-color: var(--text); }
-.jv-confirm-yes { background: var(--blue); color: var(--blue-fg); border-color: var(--blue); }
+.jv-confirm-yes { background: var(--cta); color: var(--cta-fg); border-color: var(--cta); }
 .jv-confirm-yes:hover { background: var(--text); color: var(--surface); border-color: var(--text); }
 
 /* interactive clarifying-question cards */
@@ -4771,7 +4770,7 @@ onUnmounted(() => {
 .jv-ask-q { padding-bottom: 13px; margin-bottom: 13px; border-bottom: 1px solid var(--border); }
 .jv-ask-q:last-of-type { border-bottom: 0; padding-bottom: 4px; margin-bottom: 4px; }
 .jv-ask-qt { display: flex; align-items: flex-start; gap: 8px; font-size: 13.5px; font-weight: 600; color: var(--text); margin-bottom: 9px; line-height: 1.4; }
-.jv-ask-num { flex: none; width: 19px; height: 19px; border-radius: 99px; background: var(--blue-bg); color: var(--blue); font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; margin-top: 1px; }
+.jv-ask-num { flex: none; width: 19px; height: 19px; border-radius: 99px; background: var(--cta-bg); color: var(--cta); font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; margin-top: 1px; }
 .jv-ask--form .jv-ask-num { display: none; }
 .jv-ask--form .jv-ask-q { border-bottom: 0; padding-bottom: 11px; margin-bottom: 11px; }
 .jv-ask--form .jv-ask-q:last-of-type { padding-bottom: 0; margin-bottom: 0; }
@@ -4779,18 +4778,18 @@ onUnmounted(() => {
 .jv-ask-opts { display: flex; flex-wrap: wrap; gap: 7px; }
 .jv-ask-opt { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 9px; font-family: inherit; font-size: 12.5px; font-weight: 500; color: var(--text-2); cursor: pointer; transition: border-color .12s, background .12s, color .12s; }
 .jv-ask-opt:hover { border-color: var(--border-2); color: var(--text); }
-.jv-ask-opt.on { border-color: var(--blue); background: var(--blue-bg); color: var(--text); font-weight: 600; }
-.jv-ask-tick { color: var(--blue); font-weight: 700; font-size: 11px; }
+.jv-ask-opt.on { border-color: var(--cta); background: var(--cta-bg); color: var(--text); font-weight: 600; }
+.jv-ask-tick { color: var(--cta); font-weight: 700; font-size: 11px; }
 .jv-ask-field { width: 100%; box-sizing: border-box; padding: 8px 10px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; font-family: inherit; font-size: 13px; color: var(--text); outline: none; }
-.jv-ask-field:focus { border-color: var(--blue); }
+.jv-ask-field:focus { border-color: var(--cta); }
 .jv-ask-link { position: relative; }
 .jv-ask-linkmenu { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 20; background: var(--surface); border: 1px solid var(--border-2); border-radius: 9px; box-shadow: 0 8px 24px rgba(20, 20, 30, .14); padding: 4px; max-height: 220px; overflow-y: auto; }
 .jv-ask-linkmenu button { display: block; width: 100%; text-align: left; padding: 7px 9px; background: transparent; border: none; border-radius: 6px; font-family: inherit; font-size: 12.5px; color: var(--text-2); cursor: pointer; white-space: normal; overflow-wrap: anywhere; }
 .jv-ask-linkmenu button:hover { background: var(--surface-2); color: var(--text); }
 .jv-ask-other { width: 100%; box-sizing: border-box; margin-top: 8px; padding: 7px 10px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; font-family: inherit; font-size: 12.5px; color: var(--text); outline: none; }
-.jv-ask-other:focus { border-color: var(--blue); }
+.jv-ask-other:focus { border-color: var(--cta); }
 .jv-ask-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 14px; }
-.jv-ask-submit { padding: 8px 16px; background: var(--blue); border: 1px solid var(--blue); border-radius: 8px; font-family: inherit; font-size: 13px; font-weight: 600; color: var(--blue-fg); cursor: pointer; transition: opacity .12s; }
+.jv-ask-submit { padding: 8px 16px; background: var(--cta); border: 1px solid var(--cta); border-radius: 8px; font-family: inherit; font-size: 13px; font-weight: 600; color: var(--cta-fg); cursor: pointer; transition: opacity .12s; }
 .jv-ask-submit:hover { opacity: .9; }
 .jv-ask-submit:disabled { opacity: .45; cursor: default; }
 .jv-ask-hint { font-size: 11.5px; color: var(--text-3); }
@@ -4806,7 +4805,10 @@ onUnmounted(() => {
 .jv-cards-strip::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 99px; }
 .jv-card { flex: none; width: 210px; scroll-snap-align: start; box-sizing: border-box; padding: 12px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 11px; }
 .jv-card-title { display: block; font-size: 13.5px; font-weight: 600; color: var(--text); margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.jv-card-link { color: var(--blue); text-decoration: none; }
+/* --link, not --cta — same reason as ReceiptChip's .jv-receipt-link: this <a>
+   opens the referenced ERPNext document, and --cta is near-black, which left the
+   title indistinguishable from the surrounding --text labels. */
+.jv-card-link { color: var(--link); text-decoration: none; }
 .jv-card-link:hover { text-decoration: underline; }
 .jv-card-sub { font-size: 11.5px; color: var(--text-3); margin-bottom: 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jv-card-field { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; border-top: 1px solid var(--border); font-size: 12px; }
@@ -4819,7 +4821,7 @@ onUnmounted(() => {
 .jv-note-ic { flex: none; width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; }
 .jv-note.success .jv-note-ic { background: var(--green); }
 .jv-note.error .jv-note-ic { background: var(--red); }
-.jv-note.info .jv-note-ic { background: var(--blue); color: var(--blue-fg); }
+.jv-note.info .jv-note-ic { background: var(--cta); color: var(--cta-fg); }
 .jv-note-body { min-width: 0; flex: 1; }
 .jv-note-title { font-size: 12px; font-weight: 650; color: var(--text); }
 .jv-note-msg { font-size: 13px; color: var(--text); }
@@ -4832,10 +4834,11 @@ onUnmounted(() => {
 
 /* proactive message toast */
 .jv-toast { position: absolute; right: 20px; bottom: 22px; z-index: 70; display: flex; align-items: center; gap: 11px; width: 360px; max-width: calc(100% - 40px); padding: 13px 14px; background: var(--surface); border: 1px solid var(--border-2); border-radius: 13px; box-shadow: 0 12px 32px rgba(20, 20, 30, .22); cursor: pointer; }
-.jv-toast-ic { flex: none; width: 30px; height: 30px; border-radius: 8px; background: var(--blue); display: flex; align-items: center; justify-content: center; }
+/* .jv-toast-ic removed — the toast icon is now <JarvisMark :size="30" :radius="8" />,
+   which owns its own size, radius and gradient. */
 .jv-toast-title { font-size: 13px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jv-toast-preview { font-size: 12px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.jv-toast-open { flex: none; padding: 6px 12px; background: var(--blue); border: 1px solid var(--blue); border-radius: 7px; font-family: inherit; font-size: 12px; font-weight: 600; color: var(--blue-fg); cursor: pointer; }
+.jv-toast-open { flex: none; padding: 6px 12px; background: var(--cta); border: 1px solid var(--cta); border-radius: 7px; font-family: inherit; font-size: 12px; font-weight: 600; color: var(--cta-fg); cursor: pointer; }
 .jv-toast-x { flex: none; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; border-radius: 6px; color: var(--text-3); cursor: pointer; }
 .jv-toast-x:hover { background: var(--surface-2); color: var(--text); }
 
@@ -4843,23 +4846,23 @@ onUnmounted(() => {
 /* list rows */
 .jv-macro-sub { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-3); margin-top: 2px; }
 /* progress banner */
-.jv-macrobar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border: 1px solid var(--blue); background: var(--blue-bg); border-radius: 11px; }
+.jv-macrobar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border: 1px solid var(--cta); background: var(--cta-bg); border-radius: 11px; }
 .jv-macrobar.ok { border-color: var(--green); background: var(--green-bg); }
 .jv-macrobar.err { border-color: var(--red-bd); background: var(--red-bg); }
 .jv-macrobar.stopped { border-color: var(--border-2); background: var(--surface-1); }
-.jv-macrobar-dot { width: 11px; height: 11px; flex: none; border-radius: 99px; background: var(--blue); }
-.jv-macrobar-dot.spin { border: 2px solid var(--border-2); border-top-color: var(--blue); background: transparent; animation: jv-spin .7s linear infinite; }
+.jv-macrobar-dot { width: 11px; height: 11px; flex: none; border-radius: 99px; background: var(--cta); }
+.jv-macrobar-dot.spin { border: 2px solid var(--border-2); border-top-color: var(--cta); background: transparent; animation: jv-spin .7s linear infinite; }
 .jv-macrobar-txt { flex: 1; min-width: 0; font-size: 13px; font-weight: 550; color: var(--text); }
 .jv-macrobar-stop { flex: none; padding: 6px 14px; background: var(--surface); border: 1px solid var(--border-2); border-radius: 7px; font-family: inherit; font-size: 12.5px; font-weight: 600; color: var(--text-2); cursor: pointer; }
 .jv-macrobar-stop:hover { background: var(--red); border-color: var(--red); color: #fff; }
 .jv-macrobar-chip { font-size: 13px; font-weight: 600; color: var(--text); }
 /* save-as-macro card (in a message) */
 .jv-macrocard { display: flex; align-items: center; gap: 11px; margin-top: 12px; padding: 11px 12px; border: 1px solid var(--border); background: var(--surface-1); border-radius: 11px; }
-.jv-macrocard-ic { flex: none; width: 34px; height: 34px; border-radius: 8px; display: flex; align-items: center; justify-content: center; background: var(--blue-bg); color: var(--blue); }
+.jv-macrocard-ic { flex: none; width: 34px; height: 34px; border-radius: 8px; display: flex; align-items: center; justify-content: center; background: var(--cta-bg); color: var(--cta); }
 .jv-macrocard-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .jv-macrocard-title { font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .jv-macrocard-sub { font-size: 11.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.jv-macrocard-btn { flex: none; padding: 7px 13px; background: var(--blue); border: 1px solid var(--blue); border-radius: 8px; font-family: inherit; font-size: 12.5px; font-weight: 600; color: var(--blue-fg); cursor: pointer; transition: opacity .12s; }
+.jv-macrocard-btn { flex: none; padding: 7px 13px; background: var(--cta); border: 1px solid var(--cta); border-radius: 8px; font-family: inherit; font-size: 12.5px; font-weight: 600; color: var(--cta-fg); cursor: pointer; transition: opacity .12s; }
 .jv-macrocard-btn:hover { opacity: .9; }
 .jv-macro-merged-badge { margin-left: 7px; font-size: 9.5px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; color: var(--green); background: var(--green-bg); border: 1px solid var(--green-bd); border-radius: 99px; padding: 1px 7px; }
 .jv-macro-merged-badge--pending { color: var(--amber); background: var(--amber-bg); border-color: var(--amber-bd); }
@@ -4885,18 +4888,18 @@ onUnmounted(() => {
 .jv-action-editrow > .jv-action-k { padding-top: 7px; }
 .jv-action-ctl { flex: 1; min-width: 0; position: relative; }
 .jv-action-input { width: 100%; box-sizing: border-box; font-family: inherit; font-size: 13px; line-height: 1.45; color: var(--text); background: var(--surface); border: 1px solid var(--border-2); border-radius: 7px; padding: 6px 9px; outline: none; resize: vertical; transition: border-color .12s, box-shadow .12s; }
-.jv-action-input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-bg); }
+.jv-action-input:focus { border-color: var(--cta); box-shadow: 0 0 0 3px var(--cta-bg); }
 .jv-action-sel { cursor: pointer; appearance: auto; }
 .jv-action-link { position: relative; }
 .jv-action-linkmenu { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 20; background: var(--surface); border: 1px solid var(--border-2); border-radius: 9px; box-shadow: 0 8px 24px rgba(20, 20, 30, .14); padding: 4px; max-height: 220px; overflow-y: auto; }
 .jv-action-linkmenu.up { top: auto; bottom: calc(100% + 4px); box-shadow: 0 -8px 24px rgba(20, 20, 30, .14); }
 .jv-action-linkmenu button { display: block; width: 100%; text-align: left; padding: 7px 9px; background: transparent; border: none; border-radius: 6px; font-family: inherit; font-size: 12.5px; color: var(--text-2); cursor: pointer; }
 .jv-action-linkmenu button:hover { background: var(--surface-2); color: var(--text); }
-.jv-action-editrow.changed .jv-action-input { border-color: var(--blue); }
-.jv-action-editrow.changed > .jv-action-k { color: var(--blue); font-weight: 600; }
+.jv-action-editrow.changed .jv-action-input { border-color: var(--cta); }
+.jv-action-editrow.changed > .jv-action-k { color: var(--cta); font-weight: 600; }
 .jv-action-edithint { padding: 2px 14px 8px; font-size: 11.5px; color: var(--text-3); line-height: 1.4; }
 .jv-action-foot { display: flex; align-items: center; gap: 8px; padding: 11px 14px; border-top: 1px solid var(--border); background: var(--surface-1); }
-.jv-action-primary { display: inline-flex; align-items: center; gap: 7px; font-family: inherit; font-size: 13px; font-weight: 600; padding: 8px 14px; border-radius: 8px; cursor: pointer; background: var(--blue); color: var(--blue-fg); border: 1px solid var(--blue); }
+.jv-action-primary { display: inline-flex; align-items: center; gap: 7px; font-family: inherit; font-size: 13px; font-weight: 600; padding: 8px 14px; border-radius: 8px; cursor: pointer; background: var(--cta); color: var(--cta-fg); border: 1px solid var(--cta); }
 .jv-action-primary:hover { background: var(--text); color: var(--surface); border-color: var(--text); }
 .jv-action-2nd { display: inline-flex; align-items: center; gap: 7px; font-family: inherit; font-size: 13px; font-weight: 550; padding: 8px 13px; border-radius: 8px; cursor: pointer; background: var(--surface); color: var(--text-2); border: 1px solid var(--border-2); }
 .jv-action-2nd:hover { background: var(--text); color: var(--surface); border-color: var(--text); }
@@ -4913,8 +4916,8 @@ onUnmounted(() => {
 .jv-dark .jv-modelpill:hover span { color: var(--text) !important; }
 .jv-dark .jv-sendbtn:hover:not(:disabled),
 .jv-dark .jv-confirm-yes:hover,
-.jv-dark .jv-action-primary:hover { background: var(--blue) !important; color: var(--blue-fg) !important; border-color: var(--blue) !important; filter: brightness(1.18); }
-.jv-dark .jv-sendbtn:hover:not(:disabled) svg { stroke: var(--blue-fg) !important; }
+.jv-dark .jv-action-primary:hover { background: var(--cta) !important; color: var(--cta-fg) !important; border-color: var(--cta) !important; filter: brightness(1.18); }
+.jv-dark .jv-sendbtn:hover:not(:disabled) svg { stroke: var(--cta-fg) !important; }
 .jv-action-discard { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-family: inherit; font-size: 12.5px; font-weight: 600; padding: 8px 13px; border-radius: 8px; border: 1px solid var(--red-bd); background: var(--red-bg); color: var(--red); cursor: pointer; transition: background .12s, color .12s, border-color .12s; }
 .jv-action-discard:hover { background: var(--red); color: #fff; border-color: var(--red); }
 .jv-action-discard:hover svg { stroke: #fff; }
@@ -4942,7 +4945,7 @@ onUnmounted(() => {
 .jv-email-body { padding: 12px 14px 14px; font-size: 13px; line-height: 1.6; color: var(--text); white-space: pre-wrap; word-break: break-word; border-top: 1px solid var(--surface-2); }
 
 /* --- summary-first confirmation card (Task 1.3) --- */
-.jv-summary { margin-top: 12px; border-color: var(--blue-bd); }
+.jv-summary { margin-top: 12px; border-color: var(--cta-bd); }
 .jv-summary-body { padding: 11px 14px; display: flex; flex-direction: column; gap: 10px; }
 .jv-summary-headline { font-size: 13.5px; font-weight: 600; color: var(--text); }
 .jv-summary-fields { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; }
@@ -4967,18 +4970,18 @@ onUnmounted(() => {
 .jv-draft-panel { position: relative; max-width: 92vw; display: flex; flex-direction: column; }
 /* Drag handle on the inner (left) edge; 1px rule that lights up on hover/drag. */
 .jv-draft-resizer { position: absolute; left: 0; top: 0; z-index: 3; height: 100%; width: 8px; margin-left: -4px; cursor: col-resize; }
-.jv-draft-resizer::before { content: ""; position: absolute; left: 4px; top: 0; height: 100%; width: 1px; background: var(--blue); opacity: 0; transition: opacity .15s ease; }
+.jv-draft-resizer::before { content: ""; position: absolute; left: 4px; top: 0; height: 100%; width: 1px; background: var(--cta); opacity: 0; transition: opacity .15s ease; }
 .jv-draft-resizer:hover::before, .jv-draft-resizer-active::before { opacity: 1; }
 .jv-draft-panel-resizing { user-select: none; }
 :global(body.jv-col-resizing) { cursor: col-resize; user-select: none; }
 .jv-draft-badge { font-size: 10px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; color: var(--amber); background: var(--amber-bg); border: 1px solid var(--amber-bd); border-radius: 99px; padding: 3px 9px; margin-left: 8px; }
 .jv-draft-body { flex: 1; overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 14px; }
-.jv-draft-toast { font-size: 12px; color: var(--blue); background: var(--blue-bg); border: 1px solid var(--blue-bd); border-radius: 8px; padding: 7px 11px; }
+.jv-draft-toast { font-size: 12px; color: var(--cta); background: var(--cta-bg); border: 1px solid var(--cta-bd); border-radius: 8px; padding: 7px 11px; }
 .jv-draft-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
 .jv-draft-fld label { display: block; font-size: 10.5px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); margin-bottom: 4px; }
 .jv-draft-fld .jv-req { color: var(--red); }
 .jv-draft-fld.missing .jv-action-input { border-color: var(--amber-bd); }
-.jv-draft-fld.changed .jv-action-input { border-color: var(--blue-bd); background: var(--blue-bg); }
+.jv-draft-fld.changed .jv-action-input { border-color: var(--cta-bd); background: var(--cta-bg); }
 .jv-draft-ctl { position: relative; }
 .jv-draft-table-title { font-size: 12px; font-weight: 650; color: var(--text-2); margin-bottom: 6px; }
 .jv-draft-gridwrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 9px; }
@@ -4990,7 +4993,7 @@ onUnmounted(() => {
 .jv-grid-x { width: 30px; }
 .jv-grid-del { background: none; border: none; color: var(--text-3); cursor: pointer; padding: 4px 6px; border-radius: 6px; }
 .jv-grid-del:hover { color: var(--red); background: var(--red-bg); }
-.jv-draft-addrow { align-self: flex-start; margin-top: 8px; background: none; border: none; color: var(--blue); font-weight: 600; font-size: 12.5px; cursor: pointer; padding: 4px 2px; }
+.jv-draft-addrow { align-self: flex-start; margin-top: 8px; background: none; border: none; color: var(--cta); font-weight: 600; font-size: 12.5px; cursor: pointer; padding: 4px 2px; }
 .jv-draft-totals { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 14px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-1); }
 .jv-draft-total-fld { display: flex; flex-direction: column; flex: 1 1 130px; min-width: 120px; }
 .jv-draft-total-fld label { display: block; font-size: 10.5px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); margin-bottom: 4px; }
@@ -5033,7 +5036,7 @@ onUnmounted(() => {
 .jv-artifact-loading, .jv-artifact-nopreview { margin: auto; padding: 30px; text-align: center; color: var(--text-3); font-size: 13px; display: flex; flex-direction: column; gap: 12px; align-items: center; }
 .jv-sheet-tabs { display: flex; gap: 4px; padding: 8px 10px; border-bottom: 1px solid var(--border); background: var(--surface); flex: none; overflow-x: auto; }
 .jv-sheet-tabs button { font-family: inherit; font-size: 12px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-1); color: var(--text-2); cursor: pointer; white-space: nowrap; }
-.jv-sheet-tabs button.on { background: var(--blue); color: var(--blue-fg); border-color: var(--blue); }
+.jv-sheet-tabs button.on { background: var(--cta); color: var(--cta-fg); border-color: var(--cta); }
 .jv-sheet-scroll { flex: 1; min-height: 0; overflow: auto; }
 .jv-sheet { border-collapse: collapse; font-size: 12.5px; width: max-content; min-width: 100%; }
 .jv-sheet th, .jv-sheet td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; white-space: nowrap; }

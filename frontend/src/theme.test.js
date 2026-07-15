@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { LIGHT_VARS, DARK_VARS, isDark } from "./theme.js"
 
 test("palettes expose the core vars used across views", () => {
-  for (const v of ["--surface", "--border", "--text", "--blue", "--red", "--green", "--amber"])
+  for (const v of ["--surface", "--border", "--text", "--cta", "--red", "--green", "--amber"])
     assert.ok(LIGHT_VARS[v] && DARK_VARS[v], `${v} present in both`)
 })
 test("isDark: explicit wins, system follows OS", () => {

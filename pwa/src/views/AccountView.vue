@@ -152,11 +152,15 @@ onMounted(async () => {
 .jv-avatar {
 	display: grid;
 	place-items: center;
+	/* Geometry from main's avatar redesign (52px rounded square). */
 	width: 52px;
 	height: 52px;
 	flex: none;
 	border-radius: 14px;
-	background: linear-gradient(140deg, #8b7cf7, #6a56e8);
+	/* The user's avatar, not the brand mark — but it was carrying a THIRD,
+	   independently hand-written violet gradient (#8b7cf7→#6a56e8). One brand
+	   gradient per product. */
+	background: var(--brand-grad);
 	color: #fff;
 	font-size: 20px;
 	font-weight: 600;

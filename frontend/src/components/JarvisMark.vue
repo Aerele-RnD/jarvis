@@ -24,6 +24,9 @@ defineProps({
 	display: grid;
 	place-items: center;
 	flex-shrink: 0;
-	background: linear-gradient(135deg, #6e8bff, #8b5cf6);
+	/* --brand-grad is defined on :root in main.css (theme-invariant). The literal
+	   fallback keeps the mark correct if this component is ever rendered outside
+	   the app's stylesheet (e.g. an isolated story or a test harness). */
+	background: var(--brand-grad, linear-gradient(135deg, #6e8bff, #8b5cf6));
 }
 </style>
