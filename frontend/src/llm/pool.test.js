@@ -217,3 +217,15 @@ test("apiKeyModelHealth: a model-id collision is disambiguated by provider", () 
   assert.equal(apiKeyModelHealth(_apiRow({ provider: providerLabel("openai_compat"), model: "gpt-4o" }), ms).level, "warn")
   assert.equal(apiKeyModelHealth(_apiRow({ provider: providerLabel("openai"), model: "gpt-4o" }), ms).level, "ok")
 })
+
+test("apiKeyModelHealth: a SINGLE entry under a DIFFERENT provider is not misattributed", () => {
+  // Only one model_statuses entry carries this model id, but it belongs to another
+  // provider than the row. The row was never probed under its own provider, so it must
+  // stay quiet green -- NOT inherit the other provider's 'failed'. (Model id is not a key:
+  // validate() only forbids duplicate provider/model PAIRS.)
+  const ms = [{ provider: "openai_compat", model: "gpt-4o", status: "failed" }]
+  assert.deepEqual(
+    apiKeyModelHealth(_apiRow({ provider: providerLabel("openai"), model: "gpt-4o" }), ms),
+    { level: "ok" },
+  )
+})

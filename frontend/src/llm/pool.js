@@ -138,18 +138,17 @@ export function seedRowsFromConfig(cfg) {
 
 // The fleet's last per-model probe verdict for ONE api-key row, matched out of the
 // model_statuses list (contract 1.11: [{ provider, model, status }], api-key models only).
-// Matches on model id, disambiguating a model-id collision (validate() allows the same
-// model id under two providers) by provider. Rows carry the provider LABEL while
-// model_statuses carry the id, so normalize the row's provider back to an id to compare.
-// Returns "" when the row has no verdict (a pre-1.11 fleet, or a model not yet probed).
+// The match keys on (provider, model) TOGETHER: a model id is NOT unique -- validate() only
+// forbids duplicate provider/model PAIRS, so the same id can appear under two providers, and
+// keying on the id alone would attach one provider's verdict to the other's row. Rows carry
+// the provider LABEL while model_statuses carry the id, so normalize the row's provider back
+// to an id to compare. Returns "" when the row has no matching verdict (a pre-1.11 fleet, a
+// model not yet probed, or an entry that belongs to a different provider).
 function modelVerdict(row, modelStatuses) {
   if (!row || !Array.isArray(modelStatuses)) return ""
-  const byModel = modelStatuses.filter((e) => e && e.model === row.model)
-  if (byModel.length === 0) return ""
-  if (byModel.length === 1) return byModel[0].status || ""
   const rid = providerId(row.provider)
-  const exact = byModel.find((e) => e.provider === rid)
-  return (exact && exact.status) || ""
+  const entry = modelStatuses.find((e) => e && e.model === row.model && e.provider === rid)
+  return (entry && entry.status) || ""
 }
 
 // Map an api-key pool row to its health for the failover list. Unlike a subscription
