@@ -171,6 +171,14 @@ class TestOnUpdateAdminDispatch(_SettingsSnapshotTestCase):
 		self.settings.db_set("llm_base_url", "https://api.anthropic.com")
 		self.settings.db_set("llm_api_key", "sk-original")
 		frappe.db.commit()
+		# Fresh-read the Single after the db_sets. A prior test can leave a stale
+		# Jarvis Settings doc in the singles/document cache; without this, the
+		# test body's frappe.get_doc + on_update's change-classification compare
+		# against that stale provider, misclassify a provider change as an
+		# api-key-only reload, and hit the unmocked admin path ("admin
+		# unreachable") — the order-dependent flake this class documents. Clearing
+		# the cached doc guarantees reads reflect the values just written.
+		frappe.clear_document_cache("Jarvis Settings", "Jarvis Settings")
 
 	def _save_with_new_api_key(self, new_key="sk-new"):
 		# Re-fetch + change llm_api_key, then save (triggers on_update).
