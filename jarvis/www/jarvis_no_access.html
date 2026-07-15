@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<meta name="robots" content="noindex, nofollow" />
+		<title>Jarvis · Access required</title>
+		<meta name="theme-color" content="#F7F5FC" media="(prefers-color-scheme: light)" />
+		<meta name="theme-color" content="#0F0F13" media="(prefers-color-scheme: dark)" />
+		<!-- Brand tokens (--jarvis-primary / --jarvis-gradient / faint / soft). No other
+		     external references: no fonts, no CDNs — self-contained by design. -->
+		<link rel="stylesheet" href="/assets/jarvis/css/jarvis-brand.css" />
+		<style>
+			:root {
+				color-scheme: light dark;
+				--jvna-bg-1: #f7f5fc;
+				--jvna-bg-2: #eef0fb;
+				--jvna-card: #ffffff;
+				--jvna-card-border: rgba(124, 58, 237, 0.14);
+				--jvna-text: #18181b;
+				--jvna-text-muted: #62626c;
+				--jvna-pill-bg: rgba(124, 58, 237, 0.08);
+				--jvna-pill-border: rgba(124, 58, 237, 0.16);
+				--jvna-btn-secondary-bg: rgba(24, 24, 27, 0.04);
+				--jvna-btn-secondary-border: rgba(24, 24, 27, 0.12);
+				--jvna-blob-a: #a78bfa;
+				--jvna-blob-b: #7c3aed;
+				--jvna-blob-c: #6366f1;
+				--jvna-blob-opacity: 0.5;
+			}
+
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--jvna-bg-1: #0f0f13;
+					--jvna-bg-2: #0b0b0e;
+					--jvna-card: #16161a;
+					--jvna-card-border: rgba(167, 139, 250, 0.16);
+					--jvna-text: #ededf2;
+					--jvna-text-muted: #a2a2ad;
+					--jvna-pill-bg: rgba(167, 139, 250, 0.1);
+					--jvna-pill-border: rgba(167, 139, 250, 0.22);
+					--jvna-btn-secondary-bg: rgba(237, 237, 242, 0.06);
+					--jvna-btn-secondary-border: rgba(237, 237, 242, 0.14);
+					--jvna-blob-opacity: 0.35;
+				}
+			}
+
+			* {
+				box-sizing: border-box;
+			}
+
+			html,
+			body {
+				margin: 0;
+				padding: 0;
+				height: 100%;
+			}
+
+			body {
+				min-height: 100vh;
+				overflow-x: hidden;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				padding: 24px;
+				font-family: "Inter", system-ui, -apple-system, sans-serif;
+				color: var(--jvna-text);
+				background: linear-gradient(160deg, var(--jvna-bg-1) 0%, var(--jvna-bg-2) 100%);
+				-webkit-font-smoothing: antialiased;
+			}
+
+			/* Background: soft, slowly drifting brand-colored blobs. transform-only
+			   keyframes so the animation stays on the compositor thread; heavy blur
+			   is a one-time paint cost, not a per-frame one. */
+			.jvna-blobs {
+				position: fixed;
+				inset: 0;
+				z-index: 0;
+				overflow: hidden;
+				pointer-events: none;
+			}
+
+			.jvna-blob {
+				position: absolute;
+				border-radius: 50%;
+				filter: blur(90px);
+				opacity: var(--jvna-blob-opacity);
+				will-change: transform;
+			}
+
+			.jvna-blob-1 {
+				top: -18vmax;
+				left: -14vmax;
+				width: 52vmax;
+				height: 52vmax;
+				background: radial-gradient(circle at 35% 35%, var(--jvna-blob-a), transparent 70%);
+				animation: jvna-drift-1 76s ease-in-out infinite;
+			}
+
+			.jvna-blob-2 {
+				bottom: -22vmax;
+				right: -16vmax;
+				width: 46vmax;
+				height: 46vmax;
+				background: radial-gradient(circle at 60% 60%, var(--jvna-blob-b), transparent 70%);
+				animation: jvna-drift-2 88s ease-in-out infinite;
+			}
+
+			.jvna-blob-3 {
+				top: 38%;
+				left: 48%;
+				width: 34vmax;
+				height: 34vmax;
+				background: radial-gradient(circle at 50% 50%, var(--jvna-blob-c), transparent 72%);
+				animation: jvna-drift-3 64s ease-in-out infinite;
+			}
+
+			@keyframes jvna-drift-1 {
+				0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+				50% { transform: translate3d(6vmax, 5vmax, 0) scale(1.12); }
+			}
+
+			@keyframes jvna-drift-2 {
+				0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+				50% { transform: translate3d(-7vmax, -4vmax, 0) scale(1.08); }
+			}
+
+			@keyframes jvna-drift-3 {
+				0%, 100% { transform: translate3d(-50%, -50%, 0) scale(1); }
+				50% { transform: translate3d(-46%, -54%, 0) scale(1.15); }
+			}
+
+			@media (prefers-reduced-motion: reduce) {
+				.jvna-blob {
+					animation: none;
+				}
+			}
+
+			.jvna-card {
+				position: relative;
+				z-index: 1;
+				width: 100%;
+				max-width: 440px;
+				background: var(--jvna-card);
+				border: 1px solid var(--jvna-card-border);
+				border-radius: 20px;
+				padding: 44px 40px 36px;
+				box-shadow: 0 24px 60px -20px rgba(76, 29, 149, 0.28), 0 2px 8px rgba(0, 0, 0, 0.04);
+				text-align: center;
+			}
+
+			.jvna-mark-wrap {
+				position: relative;
+				width: 64px;
+				height: 64px;
+				margin: 0 auto 22px;
+			}
+
+			.jvna-mark {
+				width: 64px;
+				height: 64px;
+				border-radius: 18px;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				background: var(--jarvis-gradient, linear-gradient(135deg, #a78bfa 0%, #7c3aed 50%, #0f0f0f 100%));
+				box-shadow: 0 10px 26px -6px rgba(124, 58, 237, 0.5);
+			}
+
+			.jvna-lock {
+				position: absolute;
+				right: -7px;
+				bottom: -7px;
+				width: 27px;
+				height: 27px;
+				border-radius: 50%;
+				background: var(--jarvis-primary, #7c3aed);
+				border: 3px solid var(--jvna-card);
+				display: flex;
+				align-items: center;
+				justify-content: center;
+			}
+
+			.jvna-pill {
+				display: inline-flex;
+				align-items: center;
+				gap: 6px;
+				font-size: 12px;
+				font-weight: 500;
+				color: var(--jvna-text-muted);
+				background: var(--jvna-pill-bg);
+				border: 1px solid var(--jvna-pill-border);
+				border-radius: 999px;
+				padding: 5px 12px 5px 10px;
+				margin-bottom: 18px;
+			}
+
+			.jvna-pill strong {
+				color: var(--jvna-text);
+				font-weight: 600;
+			}
+
+			.jvna-pill i {
+				width: 6px;
+				height: 6px;
+				border-radius: 50%;
+				background: var(--jarvis-primary, #7c3aed);
+				flex: none;
+			}
+
+			h1 {
+				margin: 0 0 10px;
+				font-size: clamp(22px, 5vw, 26px);
+				font-weight: 700;
+				letter-spacing: -0.01em;
+				line-height: 1.25;
+			}
+
+			.jvna-tagline {
+				margin: 0 0 16px;
+				font-size: 14.5px;
+				font-weight: 600;
+				background: var(--jarvis-gradient, linear-gradient(135deg, #a78bfa 0%, #7c3aed 60%));
+				-webkit-background-clip: text;
+				background-clip: text;
+				-webkit-text-fill-color: transparent;
+			}
+
+			.jvna-body {
+				margin: 0 0 30px;
+				font-size: 14.5px;
+				line-height: 1.6;
+				color: var(--jvna-text-muted);
+			}
+
+			.jvna-actions {
+				display: flex;
+				flex-direction: column;
+				gap: 10px;
+			}
+
+			.jvna-btn {
+				display: inline-flex;
+				align-items: center;
+				justify-content: center;
+				width: 100%;
+				padding: 12px 20px;
+				border-radius: 11px;
+				font-size: 14px;
+				font-weight: 600;
+				text-decoration: none;
+				border: 1px solid transparent;
+				transition: transform 0.15s ease, opacity 0.15s ease;
+			}
+
+			.jvna-btn:active {
+				transform: scale(0.98);
+			}
+
+			.jvna-btn-primary {
+				color: #ffffff;
+				background: var(--jarvis-gradient, linear-gradient(135deg, #a78bfa 0%, #7c3aed 60%));
+				box-shadow: 0 10px 22px -8px rgba(124, 58, 237, 0.55);
+			}
+
+			.jvna-btn-primary:hover {
+				opacity: 0.94;
+			}
+
+			.jvna-btn-secondary {
+				color: var(--jvna-text);
+				background: var(--jvna-btn-secondary-bg);
+				border-color: var(--jvna-btn-secondary-border);
+			}
+
+			.jvna-btn-secondary:hover {
+				background: var(--jvna-pill-bg);
+			}
+
+			@media (max-width: 380px) {
+				.jvna-card {
+					padding: 36px 24px 28px;
+					border-radius: 16px;
+				}
+			}
+		</style>
+	</head>
+	<body>
+		<div class="jvna-blobs" aria-hidden="true">
+			<div class="jvna-blob jvna-blob-1"></div>
+			<div class="jvna-blob jvna-blob-2"></div>
+			<div class="jvna-blob jvna-blob-3"></div>
+		</div>
+
+		<main class="jvna-card">
+			<div class="jvna-mark-wrap">
+				<div class="jvna-mark">
+					<svg viewBox="0 0 24 24" width="30" height="30" fill="#fff" aria-hidden="true">
+						<path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" />
+					</svg>
+				</div>
+				<div class="jvna-lock" aria-hidden="true">
+					<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+						<rect x="5" y="11" width="14" height="9" rx="2.2" />
+						<path d="M8 11V7a4 4 0 0 1 8 0v4" />
+					</svg>
+				</div>
+			</div>
+
+			{% if user_fullname %}
+			<div class="jvna-pill"><i></i>Signed in as <strong>{{ user_fullname }}</strong></div>
+			{% endif %}
+
+			<h1>You&rsquo;ve found Jarvis.</h1>
+			<p class="jvna-tagline">The assistant that makes ERP work feel effortless.</p>
+			<p class="jvna-body">You&rsquo;re not authorized just yet &mdash; one quick request to your admin, and Jarvis is all yours.</p>
+
+			<div class="jvna-actions">
+				{% if admin_emails %}
+				<a
+					class="jvna-btn jvna-btn-primary"
+					href="mailto:{{ admin_emails | join(',') }}?subject=Jarvis%20access%20request"
+				>Request access</a>
+				{% endif %}
+				<a class="jvna-btn jvna-btn-secondary" href="/app">Back to Desk</a>
+			</div>
+		</main>
+	</body>
+</html>
