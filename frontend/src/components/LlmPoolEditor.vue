@@ -46,6 +46,7 @@
 
       <div v-for="(row, i) in rows" :key="row._uid ?? i" class="jv-flist-row">
         <span class="jv-pool-badge">{{ i + 1 }}</span>
+        <ProviderLogo :provider="row.provider" :upstream="row.upstream" :size="18" />
         <span class="jv-flist-chip">{{ sourceChip(row) }}</span>
         <span class="jv-flist-model" :class="{ 'jv-flist-model--unset': !row.model }">{{ rowModelLabel(row) }}</span>
         <span v-if="row.credentialType!=='subscription' && row.hasKey" style="font-size:11px;color:var(--text-3);">key set</span>
@@ -526,6 +527,7 @@ import { errMessage as _err } from "@/lib/errors"
 import { useConfirm } from "@/composables/useConfirm"
 import JvCombo from "@/components/JvCombo.vue"
 import DirectSubscriptionCard from "@/components/DirectSubscriptionCard.vue"
+import ProviderLogo from "@/components/ProviderLogo.vue"
 
 const { confirm } = useConfirm()
 
