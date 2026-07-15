@@ -30,8 +30,11 @@
 		     bar sits as a black band above a grey screen. -->
 		<meta name="theme-color" content="#262624" media="(prefers-color-scheme: dark)" />
 
-		<link rel="icon" type="image/png" sizes="192x192" href="/assets/jarvis/manifest/icon-192.png" />
-		<link rel="apple-touch-icon" href="/assets/jarvis/manifest/apple-touch-180.png" />
+		<!-- ?v=2: the icons changed from the blue "A" to the spark under the SAME
+		     filenames, and Chrome caches favicons by URL — without a new URL the tab
+		     keeps the stale icon indefinitely. Bump this whenever the icons change. -->
+		<link rel="icon" type="image/png" sizes="192x192" href="/assets/jarvis/manifest/icon-192.png?v=2" />
+		<link rel="apple-touch-icon" href="/assets/jarvis/manifest/apple-touch-180.png?v=2" />
 	</head>
 	<body>
 		<div id="app"></div>
