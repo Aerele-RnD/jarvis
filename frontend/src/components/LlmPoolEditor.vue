@@ -1680,4 +1680,6 @@ defineExpose({ save })
   .jv-ct-card, .jv-cbtn, .jv-paste,
   .jv-pick :deep(.jvc-field), .jv-ak-grid :deep(.jvc-field) { transition: none; }
 }
+.jv-mon-retry { display: inline-flex; align-items: center; margin-left: 6px; height: 24px; border: none; background: var(--surface-2); color: var(--text); border-radius: 8px; padding: 0 10px; font-size: 12px; font-weight: 500; font-family: inherit; cursor: pointer; transition: background-color .15s ease; }
+.jv-mon-retry:hover { background: var(--surface-3); }
 </style>
