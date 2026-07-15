@@ -2,10 +2,10 @@
 	<!-- Frappe-native mini chat (matches the imported "Jarvis Chat" design),
 	     floating on every ERP Desk page with auto-context of the page. -->
 	<div class="jvw-root">
-		<div class="jvw-launch">
+		<div v-show="open" class="jvw-launch" :class="{ 'jvw-launch--left': side === 'left' }">
 			<!-- panel (plain <div>s — semantic <header>/<section> get re-parented
 			     by Frappe's toolbar) -->
-			<div v-show="open" class="jvw-panel">
+			<div class="jvw-panel">
 				<div class="jvw-head">
 					<div class="jvw-mk"><svg viewBox="0 0 24 24" width="15" height="15" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg></div>
 					<div class="jvw-head-text">
@@ -80,22 +80,38 @@
 					</div>
 				</div>
 			</div>
-
-			<button type="button" class="jvw-fab" :title="open ? 'Minimize' : hasUnread ? 'Jarvis — new reply' : 'Ask Jarvis'" @click="toggle">
-				<svg v-if="open" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
-				<template v-else>
-					<svg viewBox="0 0 24 24" width="24" height="24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
-					<span v-if="hasUnread" class="jvw-fab-dot"></span>
-				</template>
-			</button>
 		</div>
+
+		<button
+			type="button"
+			ref="fabEl"
+			class="jvw-fab"
+			:class="{ 'jvw-fab--snapping': snapping, 'jvw-fab--dragging': dragging, 'jvw-fab--faded': faded && !open && !dragging }"
+			:style="fabStyle"
+			:title="open ? 'Minimize' : hasUnread ? 'Jarvis — new reply' : 'Ask Jarvis'"
+			:aria-label="open ? 'Minimize Jarvis' : 'Ask Jarvis'"
+			@click="onFabClick"
+			@pointerdown="onPointerDown"
+			@pointermove="onPointerMove"
+			@pointerup="onPointerUp"
+			@pointercancel="onPointerCancel"
+			@pointerenter="wake"
+			@focus="wake"
+		>
+			<svg v-if="open" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+			<template v-else>
+				<svg viewBox="0 0 24 24" width="24" height="24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
+				<span v-if="hasUnread" class="jvw-fab-dot"></span>
+			</template>
+		</button>
 	</div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount, nextTick } from "vue";
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from "vue";
 import { renderMarkdown } from "../messages.js";
 import * as api from "../api.js";
+import * as fabPos from "./fab_position.mjs";
 
 const open = ref(false);
 const hasUnread = ref(false);
@@ -211,12 +227,164 @@ function scrollBottom() {
 	if (el) el.scrollTop = el.scrollHeight;
 }
 
+// ---- FAB: draggable, edge-snapping, idle-fading launcher button.
+// fab_position.mjs owns the pure geometry/drag/idle-timer math (unit tested);
+// this component only owns the DOM refs, localStorage and pointer events. ----
+const fabEl = ref(null);
+const side = ref("right");
+const yRatio = ref(1);
+const fabXY = ref({ x: 0, y: 0 });
+const dragging = ref(false);
+const snapping = ref(false);
+const faded = ref(false);
+
+let dragSession = null;
+let suppressClick = false;
+let idleTimer = null;
+let snapTimeoutHandle = null;
+
+// Access gate: desk boot sets this once for the session (see Task B).
+const hasAccess = Boolean(window.frappe?.boot?.jarvis_has_access);
+
+const fabStyle = computed(() => ({
+	transform: `translate3d(${fabXY.value.x}px, ${fabXY.value.y}px, 0)`,
+}));
+
+function readCssPx(el, prop, fallback) {
+	if (!el) return fallback;
+	const n = parseFloat(getComputedStyle(el).getPropertyValue(prop));
+	return Number.isFinite(n) ? n : fallback;
+}
+
+function getViewport() {
+	const topInset = readCssPx(document.documentElement, "--navbar-height", 48) + 8;
+	// --jvw-safe-bottom is declared on .jvw-root (env(safe-area-inset-bottom, 0px));
+	// read it off the FAB itself since it lives inside .jvw-root and inherits it.
+	const safeBottom = readCssPx(fabEl.value, "--jvw-safe-bottom", 0);
+	return {
+		vw: window.innerWidth,
+		vh: window.innerHeight,
+		topInset,
+		bottomInset: 22 + safeBottom,
+		edgeInset: fabPos.EDGE_INSET,
+		fabSize: fabPos.FAB_SIZE,
+	};
+}
+
+// Docks the FAB (ratio forced to 1, i.e. bottom of the band) while the panel
+// is open; otherwise renders the persisted side/ratio spot. animate:true
+// flips on the CSS snap transition for SNAP_MS, then clears it.
+function applyPosition({ animate = false } = {}) {
+	const vp = getViewport();
+	const ratio = open.value ? 1 : yRatio.value;
+	fabXY.value = {
+		x: fabPos.xForSide(side.value, vp),
+		y: fabPos.ratioToY(ratio, vp),
+	};
+	if (snapTimeoutHandle) {
+		window.clearTimeout(snapTimeoutHandle);
+		snapTimeoutHandle = null;
+	}
+	if (animate) {
+		snapping.value = true;
+		snapTimeoutHandle = window.setTimeout(() => {
+			snapping.value = false;
+			snapTimeoutHandle = null;
+		}, fabPos.SNAP_MS);
+	} else {
+		snapping.value = false;
+	}
+}
+
+// Setup-time init (synchronous — no flash): resolve the persisted dock spot
+// from localStorage before the first render so the FAB never jumps from a
+// default position to the saved one.
+{
+	let savedRaw = null;
+	try {
+		savedRaw = localStorage.getItem(fabPos.STORAGE_KEY);
+	} catch (e) {
+		savedRaw = null;
+	}
+	const resolved = fabPos.resolvePosition(fabPos.parseSavedPosition(savedRaw), getViewport());
+	side.value = resolved.side;
+	yRatio.value = resolved.yRatio;
+	applyPosition({ animate: false });
+}
+
+function wake() {
+	faded.value = false;
+	idleTimer?.poke();
+}
+
+function onPointerDown(e) {
+	wake();
+	suppressClick = false;
+	if (open.value || e.button !== 0) return;
+	dragSession = fabPos.dragStart(fabXY.value.x, fabXY.value.y, e.clientX, e.clientY);
+	fabEl.value?.setPointerCapture?.(e.pointerId);
+}
+
+function onPointerMove(e) {
+	if (!dragSession) return;
+	dragSession = fabPos.dragMove(dragSession, e.clientX, e.clientY, fabPos.TAP_THRESHOLD_PX);
+	dragging.value = dragSession.dragging;
+	if (!dragSession.dragging) return; // still under the tap threshold
+	const vp = getViewport();
+	const x = dragSession.startFabX + (e.clientX - dragSession.startPx);
+	const y = fabPos.clampY(dragSession.startFabY + (e.clientY - dragSession.startPy), vp);
+	fabXY.value = { x, y };
+}
+
+function onPointerUp(e) {
+	fabEl.value?.releasePointerCapture?.(e.pointerId);
+	if (!dragSession) return;
+	const vp = getViewport();
+	const result = fabPos.dragEnd(dragSession, vp);
+	dragSession = null;
+	dragging.value = false;
+	if (result.tap) return; // native click follows; onFabClick handles it
+	suppressClick = true;
+	side.value = result.side;
+	yRatio.value = result.yRatio;
+	try {
+		localStorage.setItem(
+			fabPos.STORAGE_KEY,
+			fabPos.serializePosition({ side: result.side, yRatio: result.yRatio }),
+		);
+	} catch (e) {
+		/* localStorage unavailable */
+	}
+	applyPosition({ animate: true });
+}
+
+function onPointerCancel(e) {
+	fabEl.value?.releasePointerCapture?.(e.pointerId);
+	if (!dragSession) return;
+	dragSession = null;
+	dragging.value = false;
+	applyPosition({ animate: true }); // revert to the last committed spot
+}
+
+function onFabClick() {
+	if (suppressClick) {
+		suppressClick = false;
+		return;
+	}
+	wake();
+	toggle();
+}
+
 // ---- panel controls ----
 function toggle() {
 	if (open.value) minimize();
 	else openPanel();
 }
 async function openPanel() {
+	if (!hasAccess) {
+		window.location.assign("/jarvis-no-access");
+		return;
+	}
 	api.warmSession();
 	open.value = true;
 	hasUnread.value = false;
@@ -399,6 +567,12 @@ function onRouteChange() {
 	readContext();
 }
 
+// Re-clamps the FAB into the (possibly resized) dockable band; ratio-based
+// storage means this is enough to keep it on-screen after a viewport change.
+function onResize() {
+	applyPosition({ animate: false });
+}
+
 onMounted(() => {
 	readContext();
 	if (window.frappe && frappe.router) frappe.router.on("change", onRouteChange);
@@ -410,6 +584,25 @@ onMounted(() => {
 	} catch (e) {
 		/* sessionStorage unavailable */
 	}
+
+	idleTimer = fabPos.createIdleTimer({
+		delayMs: fabPos.IDLE_FADE_MS,
+		onIdle: () => {
+			if (!open.value && !dragging.value) faded.value = true;
+		},
+	});
+	window.addEventListener("resize", onResize);
+	window.addEventListener("orientationchange", onResize);
+});
+
+// Docking on open and undocking (restoring the last dragged spot) on
+// minimize both go through applyPosition, animated so the move is visible.
+watch(open, () => {
+	wake();
+	applyPosition({ animate: true });
+});
+watch(hasUnread, () => {
+	wake();
 });
 
 onBeforeUnmount(() => {
@@ -420,6 +613,13 @@ onBeforeUnmount(() => {
 		/* not registered */
 	}
 	document.removeEventListener("visibilitychange", onVisibility);
+	window.removeEventListener("resize", onResize);
+	window.removeEventListener("orientationchange", onResize);
+	idleTimer?.dispose();
+	if (snapTimeoutHandle) {
+		window.clearTimeout(snapTimeoutHandle);
+		snapTimeoutHandle = null;
+	}
 });
 
 defineExpose({ openPanel });
@@ -443,6 +643,7 @@ defineExpose({ openPanel });
 	--red: #dc2626;
 	--red-bg: #fdf0ef;
 	--red-bd: #f5d4d1;
+	--jvw-safe-bottom: env(safe-area-inset-bottom, 0px);
 	font-family: "Inter", system-ui, -apple-system, sans-serif;
 }
 
@@ -472,13 +673,18 @@ defineExpose({ openPanel });
 
 .jvw-launch {
 	position: fixed;
-	bottom: 22px;
+	/* 22 (edge inset) + 54 (FAB) + 14 (gap) = pixel-parity with the docked FAB */
+	bottom: calc(90px + env(safe-area-inset-bottom, 0px));
 	right: 22px;
 	z-index: 1120;
 	display: flex;
 	flex-direction: column;
 	align-items: flex-end;
 	gap: 14px;
+}
+.jvw-launch--left {
+	right: auto;
+	left: 22px;
 }
 
 /* ---- panel ---- */
@@ -879,11 +1085,36 @@ defineExpose({ openPanel });
 	align-items: center;
 	justify-content: center;
 	box-shadow: 0 6px 20px rgba(23, 23, 23, 0.32);
-	position: relative;
-	transition: transform 0.15s;
+	position: fixed;
+	left: 0;
+	top: 0;
+	z-index: 1121;
+	touch-action: none;
+	will-change: transform;
+	transition: opacity 0.25s ease;
 }
 .jvw-fab:hover {
-	transform: translateY(-1px);
+	filter: brightness(1.06);
+}
+.jvw-fab:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 3px;
+}
+.jvw-fab--snapping {
+	transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s ease;
+}
+.jvw-fab--dragging {
+	transition: none;
+	cursor: grabbing;
+}
+.jvw-fab--faded {
+	opacity: 0.4;
+}
+@media (prefers-reduced-motion: reduce) {
+	.jvw-fab,
+	.jvw-fab--snapping {
+		transition: opacity 0.2s ease;
+	}
 }
 .jvw-fab-dot {
 	position: absolute;
