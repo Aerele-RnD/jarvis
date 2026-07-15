@@ -343,6 +343,7 @@ function onPointerUp(e) {
 	const result = fabPos.dragEnd(dragSession, vp);
 	dragSession = null;
 	dragging.value = false;
+	wake(); // re-arm the idle timer now that the drag (which blocked it) is over
 	if (result.tap) return; // native click follows; onFabClick handles it
 	suppressClick = true;
 	side.value = result.side;
@@ -363,6 +364,7 @@ function onPointerCancel(e) {
 	if (!dragSession) return;
 	dragSession = null;
 	dragging.value = false;
+	wake(); // re-arm the idle timer now that the drag (which blocked it) is over
 	applyPosition({ animate: true }); // revert to the last committed spot
 }
 
@@ -576,6 +578,12 @@ function onResize() {
 onMounted(() => {
 	readContext();
 	if (window.frappe && frappe.router) frappe.router.on("change", onRouteChange);
+	// Setup-time applyPosition() ran before fabEl was live, so getViewport()
+	// couldn't read the real --jvw-safe-bottom off it and fell back to 0.
+	// Now that the DOM ref exists, correct the position before any navigation
+	// (openPanel() below can redirect unauthorized users away) so notched
+	// devices don't keep the pre-mount fallback spot.
+	applyPosition({ animate: false });
 	try {
 		if (sessionStorage.getItem("jarvis-widget-open") === "1") {
 			sessionStorage.removeItem("jarvis-widget-open");
