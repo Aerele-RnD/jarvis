@@ -191,18 +191,18 @@ class JarvisSettings(Document):
         self._validate_conversation_retention()
 
     def _validate_conversation_retention(self):
-        """Retention floor. The daily sweep archives idle chats past this many
-        days, so a fumbled tiny value would mass-archive on the very next cron
-        (the batch cap only spreads that over days). 0 disables (keep forever);
-        otherwise require >= 7. Unset is left untouched - readers default it to
-        30 (Single defaults are not backfilled on migrate)."""
+        """Retention floor. The daily sweep frees idle chats' openclaw sessions
+        past this many days, so a fumbled tiny value would mass-free on the very
+        next cron (the batch cap only spreads that over days). 0 disables (keep
+        sessions forever); otherwise require >= 7. Unset is left untouched -
+        readers default it to 30 (Single defaults are not backfilled on migrate)."""
         raw = getattr(self, "conversation_retention_days", None)
         if raw in (None, ""):
             return
         days = frappe.utils.cint(raw)
         if days != 0 and days < 7:
             frappe.throw(
-                "Auto-archive idle chats after must be 0 (never) or at least 7 days.",
+                "Reclaim idle chat memory after must be 0 (never) or at least 7 days.",
                 frappe.ValidationError,
             )
 

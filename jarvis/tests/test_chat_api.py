@@ -99,9 +99,19 @@ class TestListConversations(_ChatTestCase):
 		result = list_conversations()
 		self.assertEqual(result, [])
 
+	def _add_message(self, conversation, seq=1):
+		frappe.get_doc({
+			"doctype": MSG, "conversation": conversation, "seq": seq,
+			"role": "user", "content": "hi",
+		}).insert(ignore_permissions=True)
+		frappe.db.commit()
+
 	def test_returns_active_conversations_for_current_user_only(self):
 		a = create_conversation()
 		b = create_conversation()
+		# Only conversations with at least one message appear in the list.
+		self._add_message(a)
+		self._add_message(b)
 		result = list_conversations()
 		names = {c["name"] for c in result}
 		self.assertIn(a, names)
@@ -109,27 +119,31 @@ class TestListConversations(_ChatTestCase):
 
 	def test_excludes_archived_by_default(self):
 		a = create_conversation()
+		self._add_message(a)  # non-empty, so exclusion is due to archiving
 		archive_conversation(a)
 		result = list_conversations()
 		names = {c["name"] for c in result}
 		self.assertNotIn(a, names)
 
+	def test_hides_empty_conversations(self):
+		# A "New Chat" opened and abandoned (no message) never clutters the list;
+		# it surfaces once it has a message.
+		empty = create_conversation()
+		filled = create_conversation()
+		self._add_message(filled)
+		names = {c["name"] for c in list_conversations()}
+		self.assertNotIn(empty, names)
+		self.assertIn(filled, names)
+
 	def test_includes_message_count(self):
 		a = create_conversation()
 		b = create_conversation()
-		# Add one message to `a` only
-		frappe.get_doc({
-			"doctype": MSG,
-			"conversation": a,
-			"seq": 1,
-			"role": "user",
-			"content": "hi",
-		}).insert(ignore_permissions=True)
-		frappe.db.commit()
+		# Add one message to `a` only; `b` stays empty (and thus hidden).
+		self._add_message(a)
 
 		result = {c["name"]: c for c in list_conversations()}
 		self.assertEqual(result[a]["message_count"], 1)
-		self.assertEqual(result[b]["message_count"], 0)
+		self.assertNotIn(b, result)
 
 
 class TestCreateOrFocusEmpty(_ChatTestCase):
@@ -142,8 +156,9 @@ class TestCreateOrFocusEmpty(_ChatTestCase):
 		existing = create_conversation()
 		returned = create_or_focus_empty()
 		self.assertEqual(returned, existing)
-		# Only one conversation total
-		self.assertEqual(len(list_conversations()), 1)
+		# Reuse, not a duplicate: still exactly one conversation row for the user
+		# (it is empty, so it does not show in list_conversations).
+		self.assertEqual(frappe.db.count(CONV, {"owner": TEST_USER}), 1)
 
 	def test_creates_new_when_only_non_empty_exist(self):
 		filled = create_conversation()
@@ -158,10 +173,13 @@ class TestCreateOrFocusEmpty(_ChatTestCase):
 
 		returned = create_or_focus_empty()
 		self.assertNotEqual(returned, filled)
-		# A second conversation now exists, and it's empty
+		# A second (empty) conversation row now exists in the DB...
+		self.assertTrue(frappe.db.exists(CONV, returned))
+		self.assertEqual(frappe.db.count(CONV, {"owner": TEST_USER}), 2)
+		# ...but the list shows only the non-empty one (the new empty is hidden).
 		all_names = {c["name"] for c in list_conversations()}
 		self.assertIn(filled, all_names)
-		self.assertIn(returned, all_names)
+		self.assertNotIn(returned, all_names)
 
 	def test_prefers_most_recent_empty(self):
 		older = create_conversation()
@@ -170,6 +188,41 @@ class TestCreateOrFocusEmpty(_ChatTestCase):
 		newer = create_conversation()
 		returned = create_or_focus_empty()
 		self.assertEqual(returned, newer)
+
+	def test_reuse_bumps_last_active_at(self):
+		# Focusing an old empty resets its idle clock so the empty-reaper
+		# (session_lifecycle) can't delete it out from under a freshly-opened tab.
+		old = create_conversation()
+		frappe.db.set_value(CONV, old, "last_active_at", "2020-01-01 00:00:00")
+		returned = create_or_focus_empty()
+		self.assertEqual(returned, old)
+		bumped = frappe.utils.get_datetime(frappe.db.get_value(CONV, old, "last_active_at"))
+		self.assertGreater(bumped, frappe.utils.get_datetime("2020-06-01 00:00:00"))
+
+	def test_skips_filebox_drop_when_reusing_empty(self):
+		# A failed File-Box drop is a 0-message file_box conversation. Reusing it as
+		# a "New Chat" would silently inherit the file_box confirm-card bypass, so
+		# it must be skipped in favour of a genuinely blank chat.
+		fb = create_conversation()
+		frappe.db.set_value(CONV, fb, "file_box", 1)
+		frappe.db.commit()
+		returned = create_or_focus_empty()
+		self.assertNotEqual(returned, fb)
+		self.assertEqual(frappe.db.get_value(CONV, returned, "file_box"), 0)
+
+	def test_skips_empty_with_attached_file_when_reusing(self):
+		# Belt-and-suspenders: any empty carrying an attached File is skipped so a
+		# reuse never adopts a stray upload (delete-cascade / bypass concerns).
+		withfile = create_conversation()
+		f = frappe.get_doc({
+			"doctype": "File", "file_name": "coe-attach.txt",
+			"attached_to_doctype": CONV, "attached_to_name": withfile,
+			"content": "x", "is_private": 1,
+		}).insert(ignore_permissions=True)
+		self.addCleanup(lambda: frappe.delete_doc("File", f.name, force=True, ignore_permissions=True))
+		frappe.db.commit()
+		returned = create_or_focus_empty()
+		self.assertNotEqual(returned, withfile)
 
 
 class TestGetConversation(_ChatTestCase):
@@ -230,9 +283,28 @@ class TestSendMessage(_ChatTestCase):
 		self.assertFalse(result["ok"])
 		self.assertIn("empty", result["reason"].lower())
 
-	def test_rejects_unknown_conversation(self):
-		with self.assertRaises(frappe.DoesNotExistError):
-			send_message("JCONV-99999", "hi")
+	def test_human_send_to_missing_conversation_falls_back(self):
+		# A stale/reaped conversation id from a human send lands in a fresh chat
+		# instead of dead-ending on DoesNotExistError.
+		with patch("jarvis.chat.api._ensure_session_key", return_value="agent:fake"), \
+		     patch("frappe.enqueue"):
+			result = send_message("JCONV-99999", "hi")
+		self.assertTrue(result["ok"])
+		self.assertNotEqual(result["conversation_id"], "JCONV-99999")
+		self.assertTrue(frappe.db.exists(CONV, result["conversation_id"]))
+		# The message landed in the fallback conversation.
+		self.assertTrue(frappe.db.exists(
+			MSG, {"conversation": result["conversation_id"], "role": "user"}))
+
+	def test_delegated_send_to_missing_conversation_raises(self):
+		# Delegated/system flows pass a real conversation; a genuine not-found is
+		# a real error, never silently retargeted.
+		frappe.flags.jarvis_delegated_send = True
+		try:
+			with self.assertRaises(frappe.DoesNotExistError):
+				send_message("JCONV-99999", "hi")
+		finally:
+			frappe.flags.jarvis_delegated_send = False
 
 	def test_persists_user_message_and_enqueues_worker(self):
 		with patch("jarvis.chat.api._ensure_session_key", return_value="agent:fake"):
