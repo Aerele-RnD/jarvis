@@ -187,14 +187,13 @@
             </div>
           </div>
 
-          <!-- Connect sits WHERE THE ACCOUNT WILL APPEAR, not beside the Provider
-               field: it is an account action, so clicking it should materialize the
-               account in the same place.
-               PRIMARY, uniform with "+ Add a model": with no account connected this is
-               the panel's required next step (the pool cannot save without one). The
-               two never coexist - Add-a-model shows only when the panel is CLOSED,
-               Connect only when it is OPEN - so two primaries never compete. -->
-          <button v-if="editable && !(panelRow._connect && panelRow._connect.open) && !(panelRow.accounts && panelRow.accounts.length)"
+          <!-- Connect account: EDIT-mode re-entry only. In add mode the two-step sign-in
+               renders directly (see its v-if below), so a fresh "Add a model" never shows
+               this button - clicking "Connect account" and THEN "Open sign-in" was a
+               redundant double-click for one intent. It reappears only in the EDIT panel
+               when a row's last account was disconnected (removeAccount leaves _connect
+               closed), giving a neutral re-entry point rather than auto-popping OAuth. -->
+          <button v-if="editable && panel.mode !== 'add' && !(panelRow._connect && panelRow._connect.open) && !(panelRow.accounts && panelRow.accounts.length)"
                   @click="openConnectPanel(panelRow)"
                   class="jv-btn jv-btn--primary jv-flist-addbtn">
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>
@@ -231,16 +230,15 @@
                restated it.) -->
 
           <!-- OAuth connect: the SAME two-step spine onboarding renders (jv-csteps).
-               It used to be a different panel that only appeared AFTER startConnect had
-               already fired -- and startConnect opens the sign-in tab synchronously (it
-               must, to keep the click's user gesture and survive popup blockers). So the
-               customer was thrown at ChatGPT the instant they clicked "Connect account",
-               and only THEN saw a panel telling them to "Open sign-in". Backwards.
-               Now the steps appear FIRST and step 1's button is what starts OAuth, exactly
-               as in onboarding. Step 2 stays pending until step 1 mints the authorize URL:
-               a callback URL pasted before sign-in has no nonce to pair with, so
-               finishConnect would silently no-op. -->
-          <div v-if="panelRow._connect && panelRow._connect.open" class="jv-csteps">
+               Shown DIRECTLY for a fresh "Add a model" (panel.mode==='add' with no
+               account) so there is no "Connect account" pre-step - matching onboarding.
+               In the EDIT panel it appears only once opened via "+ Add account" or
+               "Reconnect" (_connect.open), so disconnecting a row's last account drops
+               back to the neutral button above rather than auto-popping OAuth. Step 1's
+               button starts OAuth inside its own click (preserving the user gesture /
+               popup-blocker fix); step 2 stays pending until step 1 mints the authorize
+               URL, since a URL pasted before sign-in has no nonce and finishConnect no-ops. -->
+          <div v-if="panelRow._connect && (panelRow._connect.open || (panel.mode === 'add' && !(panelRow.accounts && panelRow.accounts.length)))" class="jv-csteps">
             <div class="jv-cstep">
               <div class="jv-cnum">1</div>
               <div class="jv-cbody">
@@ -784,11 +782,6 @@ function openAdd() {
   setCredType(r, "subscription")
   rows.value = [...rows.value, r]
   panel.value = { open: true, mode: "add", uid: r._uid, source: "subscription", addBackups: true }
-  // Open straight onto the two-step sign-in instead of the "Connect account" button:
-  // a fresh subscription add has no account, and making the customer click "Connect
-  // account" and THEN "Open sign-in" was a redundant double-click for one intent. The
-  // button stays as the re-entry point once the steps are dismissed (Cancel/Disconnect).
-  openConnectPanel(r)
 }
 function openEdit(i) {
   const r = rows.value[i]
@@ -840,15 +833,7 @@ function setPanelSource(src) {
   panel.value.source = src
   if (src === "preset") return
   const r = panelRow.value
-  if (!r) return
-  setCredType(r, src)
-  // Switching to the Chat-subscription tab with no account yet: reveal the sign-in
-  // steps directly (same reasoning as openAdd), rather than the "Connect account"
-  // button. A row that already has a connected account keeps its account list.
-  // Guard on !_connect.open so RE-clicking the already-active tab mid-sign-in does
-  // NOT rebuild _connect (openConnectPanel calls blankConnect(), which would wipe an
-  // in-progress nonce/authorizeUrl and orphan the OAuth popup).
-  if (src === "subscription" && !(r.accounts && r.accounts.length) && !(r._connect && r._connect.open)) openConnectPanel(r)
+  if (r) setCredType(r, src)
 }
 // Closing the panel (Cancel/Done/Close) - an add-row that was opened but
 // never filled in (no preset picked) is dropped so an abandoned "+ Add
