@@ -15,7 +15,25 @@
 
 /* ===== settings panel (centered modal with a left section rail) ===== */
 .jv-settings-overlay { position: fixed; inset: 0; z-index: 60; background: rgba(0, 0, 0, 0.27); display: flex; align-items: center; justify-content: center; padding: 24px; }
-.jv-settings { width: 900px; max-width: 100%; height: 560px; max-height: 88vh; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; display: flex; overflow: hidden; box-shadow: 0 0 1px rgba(0, 0, 0, .2), 0 24px 30px -8px rgba(0, 0, 0, .1); animation: jv-popin 0.1s ease-out; }
+/* Height is ADAPTIVE (was a hard 560px): the compact AI-models pane left roughly
+   half the dialog empty. `auto` sizes to the tallest column, clamped by
+   min/max. NOTE the left rail is the practical floor (~12 nav items), so short
+   panes settle around ~470px rather than hugging their content. min-height keeps
+   a one-item pane from collapsing; max-height keeps tall panes on screen -- they
+   scroll inside .jv-settings-body, which needs min-height:0 (below) to do so now
+   that the parent no longer has a definite height. */
+/* FIXED height on purpose. An earlier pass made this height:auto so short panes
+   could shrink — but that made the dialog jump every time you picked a different
+   nav item, which is worse than a little empty space. It is a stable frame: panes
+   fill it, and .jv-settings-body scrolls when a pane is taller.
+   Width 1080px is a CAP, not a fixed size: max-width resolves against the overlay's
+   content box (100vw - 48px), so the dialog still shrinks fluidly with the viewport
+   (measured: 1280->1058, 1024->956, 768->706). A px cap is deliberate — a settings
+   dialog stretched across a 4K monitor is unreadable.
+   min() guards a short viewport: a bare height/min-height BEATS max-height in the
+   cascade, so on a landscape phone the dialog would grow past the screen.
+   Below 720px the fixed rail can't fit — see the stacking media query at the end. */
+.jv-settings { width: 1080px; max-width: 100%; height: min(680px, 88vh); max-height: 88vh; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; display: flex; overflow: hidden; box-shadow: 0 0 1px rgba(0, 0, 0, .2), 0 24px 30px -8px rgba(0, 0, 0, .1); animation: jv-popin 0.1s ease-out; }
 @keyframes jv-popin { from { transform: scale(0.98); opacity: 0.5; } to { transform: scale(1); opacity: 1; } }
 .jv-settings-nav { width: 230px; flex: none; background: var(--surface-1); border-right: 1px solid var(--border); padding: 8px; display: flex; flex-direction: column; gap: 3px; overflow-y: auto; }
 .jv-settings-nav-title { font-size: 15px; font-weight: 600; color: var(--text); padding: 6px 8px 10px; }
@@ -25,13 +43,28 @@
 .jv-settings-navitem.on { background: var(--surface); color: var(--text); box-shadow: 0 0 1px rgba(0, 0, 0, .33), 0 1px 3px rgba(0, 0, 0, .14); }
 .jv-dark .jv-settings-navitem.on { background: var(--surface-3); box-shadow: 0 0 0 1px var(--border-2); }
 .jv-settings-navitem.on svg { color: var(--text); }
-.jv-settings-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+/* min-height:0 — REQUIRED now that .jv-settings is height:auto/max-height. A flex
+   item defaults to min-height:auto, which refuses to shrink below its content, so
+   a tall pane would blow past max-height and get clipped by the shell's
+   overflow:hidden instead of scrolling in .jv-settings-body. */
+.jv-settings-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 /* Pane-owned header (design.md §4.1): title + optional description left, ghost
    close right. The dialog renders it once; panes carry no duplicate heading. */
 .jv-settings-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 20px 24px 14px; flex: none; }
 .jv-settings-head-title { font-size: 16px; font-weight: 600; color: var(--text); line-height: 1.2; }
 .jv-settings-head-desc { font-size: 13px; line-height: 1.5; color: var(--text-3); margin-top: 4px; }
-.jv-settings-body { flex: 1; overflow-y: auto; padding: 4px 24px 28px; }
+.jv-settings-body { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 24px 28px; }
+/* Panes whose content is much shorter than the dialog. The dialog height cannot
+   shrink to fit them: the left rail (~516px of nav items) is the floor, while the
+   AI-models pane is only ~164px -- leaving ~276px of dead white space. So fill the
+   column and let the pane's action bar sink to the bottom, turning that space into
+   a footer (the same anchored-actions pattern the onboarding wizard uses).
+   margin-top:auto is inert outside a flex column, so the same editor rendered in
+   AccountView (normal flow) is unaffected, and onboarding never renders the bar at
+   all (:footerless). */
+.jv-pane-fill { display: flex; flex-direction: column; }
+.jv-pane-fill > .jv-llm-editor { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.jv-pane-fill .jv-pool-savebar { margin-top: auto; padding-top: 16px; border-top: 1px solid var(--border); }
 .jv-set-sec { font-size: 14px; font-weight: 600; color: var(--text); margin: 0 0 6px; }
 .jv-set-sub { font-size: 12px; line-height: 1.5; color: var(--text-3); font-weight: 420; }
 /* usage stat cards */
@@ -220,11 +253,29 @@
    pre-restyle file so in-flight settings PRs (#278 dialog resize) merge
    cleanly in either order; being last, these win the cascade. ===== */
 .jv-settings-overlay.jv-dark { background: rgba(0, 0, 0, 0.55); }
-/* Widened + taller dialog (11 nav items across 3 groups + denser panes no
-   longer fit the original 900x560 box) + roomier grouped rail. Uses the
-   width: min(px, vw) idiom already established by DraftPreview/ChatView's
-   .dp-panel / .jv-artifact-panel and OnboardingView's .jv-ob-orb, so it scales
-   down gracefully instead of clipping on small viewports (base rule above
-   still carries max-width: 100% / max-height: 88vh as a hard fallback). */
-.jv-settings { width: min(1120px, 92vw); height: min(82vh, 940px); }
+/* Widened dialog + roomier grouped rail. */
+/* NOTE: this block is LAST, so it wins the cascade over the .jv-settings rule at
+   the top of the file. Any width change must be made in BOTH places or it will
+   appear to do nothing. */
+.jv-settings { width: 1080px; }
 .jv-settings-nav { width: 230px; }
+
+/* ===== narrow screens =======================================================
+   The rail is `flex: none; width: 230px`, so it never shrinks: at a 390px
+   viewport it left the content column just 110px (measured). Below 720px, stack
+   the dialog — the rail becomes a horizontal, scrollable tab strip above the
+   body. Group headings are dropped because they carry no meaning in a single
+   row; the items stay in the same order, so the grouping is still implied.
+   Placed at the very end so it outranks BOTH .jv-settings blocks above. */
+@media (max-width: 720px) {
+	.jv-settings-overlay { padding: 12px; }
+	.jv-settings { width: 100%; flex-direction: column; height: 92vh; max-height: 92vh; border-radius: 14px; }
+	.jv-settings-nav {
+		width: 100%; flex: none; flex-direction: row; align-items: center; gap: 6px;
+		padding: 8px 10px; overflow-x: auto; overflow-y: hidden;
+		border-right: 0; border-bottom: 1px solid var(--border);
+	}
+	.jv-settings-nav-title, .jv-settings-group { display: none; }
+	.jv-settings-navitem { width: auto; flex: none; white-space: nowrap; }
+	.jv-settings-body { padding: 4px 16px 20px; }
+}

@@ -134,6 +134,10 @@
    "read": 1,
    "role": "Jarvis User",
    "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Jarvis Admin"
   }
  ],
  "sort_field": "modified",

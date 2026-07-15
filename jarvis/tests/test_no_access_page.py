@@ -5,7 +5,8 @@ Covers:
 - No-access page gates: unauthorized (render + admin emails), authorized (redirect to
   /jarvis), Guest (redirect to /login).
 - Admin contacts: System Users with System Manager role, excludes Administrator, capped.
-- Main app gates (jarvis.py, jarvis_mobile.py): roleless → /jarvis-no-access, Guest → /app.
+- Main app gates: roleless → /jarvis-no-access on both; Guest → /app on jarvis.py,
+  but gets the shell on jarvis_mobile.py (PWA scope — its own login route handles Guests).
 
 Hermetic: throwaway System User rows (one per role shape) are created in setUp
 and deleted in tearDown; the Jarvis User role is seeded and dropped idempotently.
@@ -291,12 +292,14 @@ class TestJarvisNoAccessPage(FrappeTestCase):
 
 	# --- (e) www.jarvis_mobile gate ------------------------------------------ #
 
-	def test_jarvis_mobile_guest_redirects_to_app(self):
-		"""Guest on /jarvis-mobile redirects to /app."""
+	def test_jarvis_mobile_guest_gets_shell(self):
+		"""Guest on /jarvis-mobile gets the shell (PWA scope: the app's own
+		login route handles them — bouncing out of /jarvis-mobile would eject
+		the installed PWA into a browser tab)."""
 		frappe.set_user("Guest")
-		with self.assertRaises(frappe.Redirect):
-			jarvis_mobile.get_context(frappe._dict())
-		self.assertEqual(frappe.local.flags.redirect_location, "/app")
+		context = frappe._dict()
+		result = jarvis_mobile.get_context(context)
+		self.assertIn("boot", result)
 
 	def test_jarvis_mobile_unauthorized_redirects_to_no_access(self):
 		"""Roleless user on /jarvis-mobile redirects to /jarvis-no-access."""

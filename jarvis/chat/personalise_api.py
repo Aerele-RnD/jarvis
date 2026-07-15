@@ -40,7 +40,10 @@ from __future__ import annotations
 import json
 
 import frappe
-from jarvis.permissions import require_jarvis_user
+from jarvis.permissions import (
+	has_jarvis_admin_access, is_skill_reviewer, require_jarvis_admin,
+	require_jarvis_user,
+)
 from frappe import _
 from frappe.utils import cint, now_datetime
 
@@ -50,17 +53,11 @@ NOTE = "Jarvis Voice Note"
 WIKI = "Jarvis Wiki Page"
 SETTINGS = "Jarvis Settings"
 
-# Admin set (DESIGN.md section 1): Personalisation Settings + question-rule
-# config. ``frappe.only_for`` special-cases Administrator BEFORE it ever
-# looks at roles (frappe/__init__.py:only_for short-circuits on
-# ``session.user == "Administrator"``), so passing this two-role tuple
-# already covers System Manager | Jarvis Admin | Administrator in one call -
-# the exact idiom ``learned_api._guard`` uses for "System Manager".
-_ADMIN_ROLES = ("System Manager", "Jarvis Admin")
-# Reviewer set, used only for the ``review`` boolean in get_skills_area_caps
-# (the reviewer-gated endpoints themselves live in learned_api.py, the
-# REVIEW agent's file this wave - not called from here).
-_REVIEWER_ROLES = ("Jarvis Skill Reviewer", "Jarvis Admin", "System Manager")
+# Admin + reviewer sets now live in jarvis.permissions (PART 4 REVISED, TASK 50 —
+# one definition, no drift). Admin = require_jarvis_admin/has_jarvis_admin_access
+# (Jarvis Admin | System Manager | Administrator); reviewer = is_skill_reviewer
+# (Jarvis Skill Reviewer | Jarvis Admin | System Manager). A Skill Reviewer must
+# NOT gain billing-admin reach, so the two tiers stay distinct.
 
 # Question status filter values a caller may ask for explicitly. "Deleted" is
 # a legal doctype value (soft-delete) but is NEVER a valid filter - every list
@@ -113,10 +110,10 @@ def _require_system_user() -> None:
 
 
 def _admin_guard() -> None:
-	"""Personalisation Settings / question-rule gate: System Manager |
-	Jarvis Admin | Administrator (see the ``_ADMIN_ROLES`` comment above for
-	why Administrator needs no separate check)."""
-	frappe.only_for(_ADMIN_ROLES)
+	"""Personalisation Settings / question-rule gate: Jarvis Admin / System
+	Manager (Administrator implicit). PART 4 REVISED, TASK 50 — delegates to the
+	one definition in jarvis.permissions."""
+	require_jarvis_admin()
 
 
 def _lk(s: str) -> str:
@@ -214,7 +211,6 @@ def get_skills_area_caps() -> dict:
 	for the integrator/F1-F4 frontend agents."""
 	_require_system_user()
 	me = frappe.session.user
-	roles = set(frappe.get_roles(me))
 
 	stt_enabled = False
 	try:
@@ -233,8 +229,8 @@ def get_skills_area_caps() -> dict:
 	return {
 		"personalise": True,
 		"wiki": True,
-		"analysis": bool(roles & set(_ADMIN_ROLES)),
-		"review": bool(roles & set(_REVIEWER_ROLES)),
+		"analysis": has_jarvis_admin_access(),
+		"review": is_skill_reviewer(),
 		"stt_enabled": stt_enabled,
 		"unanswered_count": unanswered_count,
 		"questions_total": questions_total,

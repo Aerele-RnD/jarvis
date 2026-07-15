@@ -19,7 +19,10 @@
 
 		<!-- Tints the Android status bar / desktop title bar to match the app chrome. -->
 		<meta name="theme-color" content="#F4F4F5" media="(prefers-color-scheme: light)" />
-		<meta name="theme-color" content="#0F0F0F" media="(prefers-color-scheme: dark)" />
+		<!-- The dark surface is the app's warm charcoal (tokens.ts dark.bg), not
+		     black: the browser chrome must match the app it frames, or the status
+		     bar sits as a black band above a grey screen. -->
+		<meta name="theme-color" content="#262624" media="(prefers-color-scheme: dark)" />
 
 		<link rel="icon" type="image/png" sizes="192x192" href="/assets/jarvis/manifest/icon-192.png" />
 		<link rel="apple-touch-icon" href="/assets/jarvis/manifest/apple-touch-180.png" />

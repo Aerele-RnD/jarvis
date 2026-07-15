@@ -2,8 +2,8 @@ import { reactive } from "vue"
 import * as api from "./api"
 
 // One small shared store: the conversation list is read by the chats screen and
-// written by the chat screen (a reply retitles the chat), and the drawer is
-// opened from whichever screen is on top.
+// the drawer, and written by the chat screen (a reply retitles the chat). The
+// drawer is opened from whichever screen is on top.
 export const store = reactive({
 	drawerOpen: false,
 	conversations: [],

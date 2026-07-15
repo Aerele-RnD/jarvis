@@ -29,7 +29,27 @@ def run_method(method: str, args: dict | None = None) -> dict:
     Only ``@frappe.whitelist()`` methods are callable; anything else raises
     PermissionDeniedError. An optional site-config allowlist
     (``jarvis_run_method_allowlist``: a list of fnmatch patterns) further
-    narrows what may be called - recommended in production.
+    narrows what may be called - RECOMMENDED in production.
+
+    SECURITY / operator hardening (security review PART 4 REVISED, TASK 42 —
+    FLAGGED for owner decision): the default is deliberately ``None`` =
+    unrestricted. This is a defense-in-depth gap (a prompt-injected agent running
+    as a Jarvis User could invoke ANY whitelisted method the user can reach),
+    tempered by two existing controls: run_method is one of
+    ``api._GATED_WRITES`` (ALWAYS parks for human confirmation, never
+    auto-applies) and runs under the caller's identity (each target self-checks
+    its own ``@frappe.whitelist`` gate + permissions). A hardcoded in-code default
+    was deliberately NOT shipped: run_method is the generic escape hatch for BOTH
+    the ``make_*`` mappers AND arbitrary doctype-specific whitelisted actions, so
+    a narrow default (e.g. ``["*make_*"]``) would silently break legitimate agent
+    flows across every tenant. Managed tenants SHOULD set a conservative
+    ``jarvis_run_method_allowlist`` in site_config.json scoped to their known-good
+    method set, e.g.::
+
+        "jarvis_run_method_allowlist": [
+            "erpnext.*.make_*",
+            "erpnext.accounts.*"
+        ]
 
     Returns the method's return value verbatim (often a document dict).
     """

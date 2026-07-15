@@ -50,6 +50,46 @@ export function batchFromPreview(preview) {
   }
 }
 
+// ── Pending-confirmation card (F9/F15) ──────────────────────────────────────
+// The write-safety gate attaches a render-ready ``card`` object to a parked
+// write's preview (server side: jarvis/chat/confirm_card.py) plus a wall-clock
+// ``expires_at``. These pure helpers pull the card out for the token confirmation
+// card and compute the expiry, so the SPA renders "what will change" + a real
+// expiry state instead of the raw dry-run JSON. A missing/unknown card -> null, and
+// the card falls back to the summary + raw-preview rendering.
+
+const CARD_KINDS = new Set(["create", "update", "verb", "email", "method", "batch_create"])
+
+// The structured card for a parked action ({kind, ...}), or null when the server
+// built none (an older token, or an uncovered tool shape).
+export function pendingCardOf(pa) {
+  const card = pa && pa.preview && pa.preview.card
+  if (!card || typeof card !== "object" || !CARD_KINDS.has(card.kind)) return null
+  return card
+}
+
+// One-line sentence for a verb card (submit/cancel/delete/amend/apply): "Will
+// submit this Sales Order SO-0001" / "Will cancel 6 Sales Orders".
+export function verbSentence(card) {
+  const verb = card.verb || "run"
+  const dt = card.doctype || "record"
+  const act = card.action ? ` "${card.action}" to` : ""
+  if ((card.count || 1) > 1) {
+    return `Will ${verb}${act} ${card.count} ${pluralize(dt, card.count)}`
+  }
+  const name = (card.targets && card.targets[0]) || ""
+  return `Will ${verb}${act} this ${dt}${name ? " " + name : ""}`
+}
+
+// Wall-clock expiry for a parked confirmation. ``expiresAt`` is epoch SECONDS (as
+// the server stamps it); ``nowMs`` is Date.now(). Returns {expired, secondsLeft}
+// (secondsLeft null when there is no expiry stamp — an older token).
+export function pendingExpiry(expiresAt, nowMs) {
+  if (typeof expiresAt !== "number" || !expiresAt) return { expired: false, secondsLeft: null }
+  const secondsLeft = Math.round(expiresAt - nowMs / 1000)
+  return { expired: secondsLeft <= 0, secondsLeft }
+}
+
 // ── Post-action receipt chips ───────────────────────────────────────────────
 // A gated write, once the user clicks Confirm or Discard, is replaced by a
 // DURABLE receipt chip instead of the card vanishing. These pure helpers turn

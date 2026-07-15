@@ -14,7 +14,9 @@ Enable / schedule are pure DB writes (no container restart — O6); only Apply
 """
 
 import frappe
-from jarvis.permissions import require_jarvis_user
+from jarvis.permissions import (
+	has_jarvis_admin_access, require_jarvis_admin, require_jarvis_user,
+)
 from frappe import _
 
 from jarvis._session import impersonate
@@ -64,9 +66,12 @@ def _user_allowed_for_agent(listing, user: str | None = None) -> bool:
 		allowed = [row.role for row in (listing.get("allowed_roles") or [])]
 	if not allowed:
 		return True
-	roles = set(frappe.get_roles(user))
-	if "System Manager" in roles:
+	# PART 4 REVISED, TASK 49: admin parity — a Jarvis Admin / System Manager is
+	# ALWAYS allowed, in lockstep with the widened ``allowed`` display flag so an
+	# admin never sees an agent as installable but 403s on install.
+	if has_jarvis_admin_access(user):
 		return True
+	roles = set(frappe.get_roles(user))
 	return bool(roles.intersection(allowed))
 
 
@@ -104,7 +109,9 @@ def _enriched_catalog() -> list[dict]:
 	me = frappe.session.user
 	roles_map = _allowed_roles_map()
 	my_roles = set(frappe.get_roles(me))
-	is_sm = "System Manager" in my_roles
+	# PART 4 REVISED, TASK 49(d): admin display parity — a Jarvis Admin sees every
+	# agent card as ``allowed`` (and _user_allowed_for_agent lets them install).
+	is_sm = has_jarvis_admin_access(me)
 	listings = frappe.get_all(
 		LISTING,
 		fields=[
@@ -236,7 +243,9 @@ def get_agent(agent_slug: str) -> dict:
 	``all_roles`` rides along only for System Managers (Admin-tab roles editor)."""
 	listing = frappe.get_doc(LISTING, agent_slug)  # All-role read; 404s if unknown
 	me = frappe.session.user
-	is_sm = "System Manager" in frappe.get_roles(me)
+	# PART 4 REVISED, TASK 49(d): the Admin-tab signal (all_roles rider) rides for
+	# Jarvis Admins too — the SPA derives isSM from all_roles' presence.
+	is_sm = has_jarvis_admin_access(me)
 
 	out: dict = {
 		"name": listing.name,
@@ -323,17 +332,19 @@ def get_installations() -> list[dict]:
 
 
 # --------------------------------------------------------------------------- #
-# admin surface (System Manager ONLY — every check server-side)
+# admin surface (Jarvis Admin / System Manager — every check server-side)
 # --------------------------------------------------------------------------- #
 @frappe.whitelist()
 def set_agent_roles(agent_slug: str, roles: str | list | None = None) -> dict:
-	"""Restrict an agent listing to a set of Roles. System Manager only.
+	"""Restrict an agent listing to a set of Roles. Jarvis Admin / System Manager
+	(PART 4 REVISED, TASK 45; needs the Jarvis Admin write:1 row on Jarvis Agent
+	Listing — TASK 47 — for the perm-checked save).
 
 	``roles`` is a JSON array of Role names; ``[]`` clears the restriction
 	(unrestricted). Roles are validated against the Role doctype; the
 	non-grantable Administrator/Guest/All are rejected (All would silently mean
 	unrestricted — force the explicit empty list instead)."""
-	frappe.only_for("System Manager")
+	require_jarvis_admin()
 	parsed = roles
 	if isinstance(parsed, str):
 		try:
@@ -367,9 +378,10 @@ def set_agent_roles(agent_slug: str, roles: str | list | None = None) -> dict:
 
 @frappe.whitelist()
 def set_listing_status(agent_slug: str, status: str) -> dict:
-	"""Set a listing's marketplace status. System Manager only. Only the
-	admin-meaningful statuses are settable (Draft stays registry-controlled)."""
-	frappe.only_for("System Manager")
+	"""Set a listing's marketplace status. Jarvis Admin / System Manager (PART 4
+	REVISED, TASK 45). Only the admin-meaningful statuses are settable (Draft
+	stays registry-controlled)."""
+	require_jarvis_admin()
 	if status not in _ADMIN_STATUSES:
 		frappe.throw(_("Status must be one of: {0}.").format(", ".join(_ADMIN_STATUSES)))
 	doc = frappe.get_doc(LISTING, agent_slug)
@@ -383,9 +395,11 @@ def set_listing_status(agent_slug: str, status: str) -> dict:
 @frappe.whitelist()
 def get_agent_admin_overview() -> dict:
 	"""Bench-admin overview: the selectable Roles + every listing with its
-	allowed_roles and ALL owners' installs. System Manager only — the SPA probes
-	this endpoint and hides the Admin tab when it throws PermissionError."""
-	frappe.only_for("System Manager")
+	allowed_roles and ALL owners' installs. Jarvis Admin / System Manager (PART 4
+	REVISED, TASK 45; the cross-owner install read needs the Jarvis Admin read row
+	on Jarvis Agent Installation — TASK 47). The SPA probes this endpoint and hides
+	the Admin tab when it throws PermissionError."""
+	require_jarvis_admin()
 
 	roles = [
 		r
@@ -1034,7 +1048,9 @@ def get_agents_caps() -> dict:
 
 	return {
 		"review": bool(is_skill_reviewer()),
-		"admin": "System Manager" in frappe.get_roles(frappe.session.user),
+		# PART 4 REVISED, TASK 49(d): the admin roles editor / cross-owner overview
+		# is now Jarvis Admin | System Manager (get_agent_admin_overview widened).
+		"admin": has_jarvis_admin_access(),
 	}
 
 

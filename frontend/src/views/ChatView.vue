@@ -469,20 +469,23 @@
 						</div>
 						<div class="jv-pending-body">
 							<div v-if="pendingSummaryOf(pa)" class="jv-pending-summary">{{ pendingSummaryOf(pa) }}</div>
-							<div v-if="pendingNoteOf(pa)" class="jv-pending-note">{{ pendingNoteOf(pa) }}</div>
-							<ul v-if="pendingBatchOf(pa)" class="jv-pending-batch">
-								<li v-for="(a, i) in pendingBatchOf(pa).actions" :key="'a' + i">
-									Create <b>{{ a.doctype }}</b> "{{ a.name }}"
-								</li>
-								<li v-for="(n, i) in pendingBatchOf(pa).notes" :key="'n' + i" class="jv-pending-batch-note">
-									{{ n }}
-								</li>
-							</ul>
-							<pre v-else-if="pendingPreviewOf(pa)" class="jv-pending-preview">{{ pendingPreviewOf(pa) }}</pre>
+							<div v-if="pendingExpiredOf(pa)" class="jv-pending-expired">This confirmation expired. Tell me the action again to retry it.</div>
+							<template v-else>
+								<!-- F9: the server-built "what will change" card (raw preview behind Details) -->
+								<PendingCard v-if="pendingCardOf(pa)" :card="pendingCardOf(pa)" :details="pendingDetailsOf(pa)" />
+								<template v-else>
+									<div v-if="pendingNoteOf(pa)" class="jv-pending-note">{{ pendingNoteOf(pa) }}</div>
+									<ul v-if="pendingBatchOf(pa)" class="jv-pending-batch">
+										<li v-for="(a, i) in pendingBatchOf(pa).actions" :key="'a' + i">Create <b>{{ a.doctype }}</b> "{{ a.name }}"</li>
+										<li v-for="(n, i) in pendingBatchOf(pa).notes" :key="'n' + i" class="jv-pending-batch-note">{{ n }}</li>
+									</ul>
+									<pre v-else-if="pendingPreviewOf(pa)" class="jv-pending-preview">{{ pendingPreviewOf(pa) }}</pre>
+								</template>
+							</template>
 						</div>
 						<div v-if="pa.error" style="margin:0 14px 10px"><ActionError :error="pa.error" /></div>
 						<div class="jv-action-foot">
-							<button class="jv-action-primary" :disabled="pa.busy || convStreaming" :title="convStreaming ? 'Waiting for the current reply to finish' : ''" @click="confirmPending(pa)">✓ Confirm</button>
+							<button class="jv-action-primary" :disabled="pa.busy || convStreaming || pendingExpiredOf(pa)" :title="convStreaming ? 'Waiting for the current reply to finish' : ''" @click="confirmPending(pa)"><span v-if="pa.busy">Confirming…</span><span v-else>✓ Confirm</span></button>
 							<button class="jv-action-discard" :disabled="pa.busy" @click="discardPending(pa)">Discard</button>
 						</div>
 					</div>
@@ -582,10 +585,10 @@
 							</button>
 							<span style="margin-left:auto;font-size:11px;color:var(--text-3);margin-right:4px;">{{ busy ? "Stop" : "Enter ↵" }}</span>
 							<button v-if="busy" @click="stopRun" title="Stop generating" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:var(--blue);border:none;border-radius:8px;cursor:pointer;">
-								<svg width="13" height="13" viewBox="0 0 24 24" fill="#fff"><rect x="6" y="6" width="12" height="12" rx="2.5" /></svg>
+								<svg width="13" height="13" viewBox="0 0 24 24" fill="var(--blue-fg)"><rect x="6" y="6" width="12" height="12" rx="2.5" /></svg>
 							</button>
 							<button v-else class="jv-sendbtn" :class="{ ready: canSend }" @click="send()" :disabled="!canSend" :style="{ width:'32px', height:'32px', display:'flex', alignItems:'center', justifyContent:'center', background: canSend ? 'var(--blue)' : 'var(--surface-3)', border:'none', borderRadius:'8px', cursor: canSend ? 'pointer' : 'default' }">
-								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" :stroke="canSend ? '#fff' : 'var(--text-3)'" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
+								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" :stroke="canSend ? 'var(--blue-fg)' : 'var(--text-3)'" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
 							</button>
 						</div>
 					</div>
@@ -838,11 +841,12 @@ import JvChart from "@/charts/JvChart.vue"
 import ConnectPhoneDialog from "@/components/ConnectPhoneDialog.vue"
 import DraftPreview from "@/components/doc/DraftPreview.vue"
 import ActionError from "@/components/ActionError.vue"
+import PendingCard from "@/components/PendingCard.vue"
 import ReceiptChip from "@/components/ReceiptChip.vue"
 import { useShellStore } from "@/stores/shell"
 import { useJarvisTheme } from "@/theme"
 import { displayName } from "@/lib/user"
-import { summarize, batchFromPreview } from "@/lib/actionSummary"
+import { summarize, batchFromPreview, pendingCardOf, verbSentence, pendingExpiry } from "@/lib/actionSummary"
 
 const session = inject("$session")
 const socket = inject("$socket")
@@ -2460,6 +2464,27 @@ function pendingBatchOf(pa) {
 	if (!pa || pa.tool !== "create_docs") return null
 	return batchFromPreview(pa.preview)
 }
+// The raw dry-run preview JSON, shown behind the card's Details expander (the
+// same string the pre-F9 card dumped directly).
+function pendingDetailsOf(pa) {
+	return pendingPreviewOf(pa)
+}
+// Wall-clock expiry (F15): a coarse tick flips a card to its "expired" state once
+// the 15-min token TTL lapses, so a stale card stops looking actionable. Real
+// enforcement stays server-side (confirming an expired token fails).
+const pendingNowMs = ref(Date.now())
+let _expiryTick = null
+onMounted(() => {
+	_expiryTick = setInterval(() => {
+		pendingNowMs.value = Date.now()
+	}, 15000)
+})
+onUnmounted(() => {
+	if (_expiryTick) clearInterval(_expiryTick)
+})
+function pendingExpiredOf(pa) {
+	return pendingExpiry(pa && pa.expires_at, pendingNowMs.value).expired
+}
 // Drop one card from the queue by its token (confirm-success / discard / expiry).
 function removePending(token) {
 	if (!token) return
@@ -2477,6 +2502,7 @@ function enqueuePending(card) {
 		summary: card.summary || "",
 		preview: card.preview || null,
 		run_id: card.run_id || null,
+		expires_at: card.expires_at || null,
 		busy: false,
 		error: null,
 	})
@@ -2502,7 +2528,16 @@ async function confirmPending(pa) {
 			// way the card is spent - surface a brief note and dismiss.
 			if (r.error && r.error.type === "InvalidConfirmation") {
 				removePending(token)
-				notify("That confirmation expired - ask Jarvis to try again.", { type: "error" })
+				// InvalidConfirmation is deliberately opaque (expired / used in another
+				// tab / a redis blip). Use the card's own wall-clock expiry for the right
+				// message instead of always blaming expiry (F15).
+				const expired = pendingExpiry(pa.expires_at, Date.now()).expired
+				notify(
+					expired
+						? "This confirmation expired — tell me the action again to retry it."
+						: "Couldn't confirm — it may have been handled in another tab. Refresh, or ask me to try again.",
+					{ type: "error" },
+				)
 				return
 			}
 			// The token was consumed and the tool failed; confirm_tool already
@@ -2571,6 +2606,7 @@ async function resyncPendingConfirmations(id) {
 			summary: it.summary || "",
 			preview: it.preview || null,
 			run_id: it.run_id || null,
+			expires_at: it.expires_at || null,
 		})
 	}
 }
@@ -3558,6 +3594,7 @@ function onEvent(p) {
 				summary: p.summary || "",
 				preview: p.preview || null,
 				run_id: p.run_id || null,
+				expires_at: p.expires_at || null,
 			})
 		}
 		return
@@ -4516,10 +4553,13 @@ onUnmounted(() => {
 .jv-md :deep(.jv-md-table tr:last-child td) { border-bottom: 0; }
 
 /* ===== settings panel (slide-over console) ===== */
-/* settings: centered modal (Claude-style) with a left section nav */
-.jv-settings-overlay { position: absolute; inset: 0; z-index: 60; background: rgba(15, 15, 22, 0.34); display: flex; align-items: center; justify-content: center; padding: 24px; }
-.jv-dark .jv-settings-overlay { background: rgba(0, 0, 0, 0.55); }
-.jv-settings { width: 760px; max-width: 100%; height: 560px; max-height: 88vh; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; display: flex; overflow: hidden; box-shadow: 0 24px 70px rgba(20, 20, 30, 0.28); animation: jv-popin 0.16s ease; }
+/* The settings modal's CSS lived here (.jv-settings-overlay / .jv-settings, a
+   760px shell) until the dialog was HOISTED to components/shell/SettingsDialog.vue
+   — see the template note near the top of this file. These rules are <style scoped>,
+   so once ChatView stopped rendering the dialog they matched nothing: edits to them
+   silently did nothing while the live styles came from @/assets/settings.css.
+   Removed rather than left as a decoy. Style the dialog in assets/settings.css.
+   (jv-popin STAYS — .jv-skills-modal / .jv-cdialog still animate with it.) */
 @keyframes jv-popin { from { transform: scale(0.97); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 .jv-settings-nav { width: 196px; flex: none; background: var(--surface-1); border-right: 1px solid var(--border); padding: 14px 10px; display: flex; flex-direction: column; gap: 2px; }
 .jv-settings-nav-title { font-size: 15px; font-weight: 700; color: var(--text); padding: 4px 10px 12px; }
@@ -4551,7 +4591,7 @@ onUnmounted(() => {
 .jv-usage-bar { margin-top: 12px; height: 7px; border-radius: 99px; background: var(--surface-2); overflow: hidden; }
 .jv-usage-fill { height: 100%; border-radius: 99px; background: var(--blue); transition: width .25s ease; }
 /* custom skills */
-.jv-skill-btn { padding: 6px 12px; background: var(--blue); border: 1px solid var(--blue); border-radius: 8px; font-family: inherit; font-size: 12.5px; font-weight: 600; color: #fff; cursor: pointer; white-space: nowrap; transition: opacity .12s; }
+.jv-skill-btn { padding: 6px 12px; background: var(--blue); border: 1px solid var(--blue); border-radius: 8px; font-family: inherit; font-size: 12.5px; font-weight: 600; color: var(--blue-fg); cursor: pointer; white-space: nowrap; transition: opacity .12s; }
 .jv-skill-btn:hover { opacity: .9; }
 .jv-skill-btn:disabled { opacity: .5; cursor: default; }
 .jv-skill-btn.ghost { background: transparent; color: var(--text-2); border-color: var(--border-2); }
@@ -4576,9 +4616,9 @@ onUnmounted(() => {
 .jv-btn:active { transform: scale(.97); }
 .jv-btn:disabled { opacity: .5; cursor: default; pointer-events: none; box-shadow: none; transform: none; }
 .jv-btn svg { flex: none; }
-.jv-btn--primary { background: var(--blue); border-color: var(--blue); color: #fff; box-shadow: 0 1px 2px rgba(20, 20, 30, .12); }
+.jv-btn--primary { background: var(--blue); border-color: var(--blue); color: var(--blue-fg); box-shadow: 0 1px 2px rgba(20, 20, 30, .12); }
 .jv-btn--primary:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(20, 20, 30, .18); }
-.jv-btn--primary svg { stroke: #fff; }
+.jv-btn--primary svg { stroke: var(--blue-fg); }
 .jv-btn--ghost { background: var(--surface); border-color: var(--border-2); color: var(--text-2); }
 .jv-btn--ghost:hover { background: var(--surface-2); border-color: var(--border); color: var(--text); transform: translateY(-1px); }
 .jv-btn--danger { background: var(--red); border-color: var(--red); color: #fff; box-shadow: 0 1px 2px rgba(220, 38, 38, .14); }
@@ -4600,10 +4640,10 @@ onUnmounted(() => {
 .jv-btn--icon.jv-ib-accent:hover { background: var(--blue-bg); color: var(--blue); border-color: var(--blue-bd); }
 .jv-btn--icon.jv-ib-danger:hover { background: var(--red-bg); color: var(--red); border-color: var(--red-bd); }
 
-.jv-newpill { flex: none; display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px 6px 10px; background: var(--blue); border: 1px solid var(--blue); border-radius: 9px; font-family: inherit; font-size: 12.5px; font-weight: 600; color: #fff; cursor: pointer; transition: opacity .12s, transform .06s; }
+.jv-newpill { flex: none; display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px 6px 10px; background: var(--blue); border: 1px solid var(--blue); border-radius: 9px; font-family: inherit; font-size: 12.5px; font-weight: 600; color: var(--blue-fg); cursor: pointer; transition: opacity .12s, transform .06s; }
 .jv-newpill:hover { opacity: .92; }
 .jv-newpill:active { transform: scale(.97); }
-.jv-newpill svg { stroke: #fff; }
+.jv-newpill svg { stroke: var(--blue-fg); }
 .jv-skill-name { font-size: 13px; font-weight: 600; color: var(--text); font-family: ui-monospace, "SF Mono", Menlo, monospace; }
 .jv-skill-off { font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; margin-left: 6px; font-family: inherit; }
 .jv-skill-desc { font-size: 12px; color: var(--text-3); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -4624,7 +4664,7 @@ onUnmounted(() => {
 .jv-share-chip-name { font-weight: 500; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jv-share-chip-x { flex: none; width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; border: none; background: transparent; border-radius: 50%; color: var(--text-3); cursor: pointer; padding: 0; transition: background .12s, color .12s; }
 .jv-share-chip-x:hover { background: var(--red-bg); color: var(--red); }
-.jv-share-avatar { flex: none; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--blue); color: #fff; font-size: 10.5px; font-weight: 600; letter-spacing: .01em; box-shadow: 0 1px 2px rgba(79, 70, 229, .3); }
+.jv-share-avatar { flex: none; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--blue); color: var(--blue-fg); font-size: 10.5px; font-weight: 600; letter-spacing: .01em; box-shadow: 0 1px 2px rgba(79, 70, 229, .3); }
 .jv-share-searchwrap { display: flex; align-items: center; gap: 8px; padding: 8px 11px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 9px; margin-bottom: 10px; }
 .jv-share-searchwrap:focus-within { border-color: var(--blue); }
 .jv-share-search { flex: 1; border: none; outline: none; background: transparent; font-family: inherit; font-size: 13px; color: var(--text); }
@@ -4651,8 +4691,8 @@ onUnmounted(() => {
 .jv-skills-status.err { color: var(--red); }
 .jv-skills-body { flex: 1; overflow-y: auto; padding: 16px 20px 20px; }
 .jv-skill-newrow { display: flex; align-items: center; gap: 8px; width: 100%; justify-content: center; padding: 10px; margin-bottom: 12px; background: var(--blue-bg); border: 1px dashed var(--blue); border-radius: 10px; font-family: inherit; font-size: 13px; font-weight: 600; color: var(--blue); cursor: pointer; }
-.jv-skill-newrow:hover { background: var(--blue); color: #fff; }
-.jv-skill-newrow:hover svg { stroke: #fff; }
+.jv-skill-newrow:hover { background: var(--blue); color: var(--blue-fg); }
+.jv-skill-newrow:hover svg { stroke: var(--blue-fg); }
 .jv-skill-formfoot { display: flex; align-items: center; gap: 10px; margin-top: 15px; flex-wrap: wrap; }
 .jv-skill-foothint { font-size: 11px; color: var(--text-3); }
 .jv-skill-dot { width: 7px; height: 7px; border-radius: 99px; background: var(--text-3); flex: none; }
@@ -4740,7 +4780,7 @@ onUnmounted(() => {
 .jv-confirm-no, .jv-confirm-yes { font-family: inherit; font-size: 12.5px; font-weight: 600; padding: 6px 14px; border-radius: 7px; cursor: pointer; border: 1px solid var(--border-2); flex: none; }
 .jv-confirm-no { background: var(--surface); color: var(--text-2); }
 .jv-confirm-no:hover { background: var(--text); color: var(--surface); border-color: var(--text); }
-.jv-confirm-yes { background: var(--blue); color: #fff; border-color: var(--blue); }
+.jv-confirm-yes { background: var(--blue); color: var(--blue-fg); border-color: var(--blue); }
 .jv-confirm-yes:hover { background: var(--text); color: var(--surface); border-color: var(--text); }
 
 /* interactive clarifying-question cards */
@@ -4767,7 +4807,7 @@ onUnmounted(() => {
 .jv-ask-other { width: 100%; box-sizing: border-box; margin-top: 8px; padding: 7px 10px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; font-family: inherit; font-size: 12.5px; color: var(--text); outline: none; }
 .jv-ask-other:focus { border-color: var(--blue); }
 .jv-ask-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 14px; }
-.jv-ask-submit { padding: 8px 16px; background: var(--blue); border: 1px solid var(--blue); border-radius: 8px; font-family: inherit; font-size: 13px; font-weight: 600; color: #fff; cursor: pointer; transition: opacity .12s; }
+.jv-ask-submit { padding: 8px 16px; background: var(--blue); border: 1px solid var(--blue); border-radius: 8px; font-family: inherit; font-size: 13px; font-weight: 600; color: var(--blue-fg); cursor: pointer; transition: opacity .12s; }
 .jv-ask-submit:hover { opacity: .9; }
 .jv-ask-submit:disabled { opacity: .45; cursor: default; }
 .jv-ask-hint { font-size: 11.5px; color: var(--text-3); }
@@ -4796,7 +4836,7 @@ onUnmounted(() => {
 .jv-note-ic { flex: none; width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; }
 .jv-note.success .jv-note-ic { background: var(--green); }
 .jv-note.error .jv-note-ic { background: var(--red); }
-.jv-note.info .jv-note-ic { background: var(--blue); }
+.jv-note.info .jv-note-ic { background: var(--blue); color: var(--blue-fg); }
 .jv-note-body { min-width: 0; flex: 1; }
 .jv-note-title { font-size: 12px; font-weight: 650; color: var(--text); }
 .jv-note-msg { font-size: 13px; color: var(--text); }
@@ -4816,7 +4856,7 @@ onUnmounted(() => {
 .jv-toast-ic { flex: none; width: 30px; height: 30px; border-radius: 8px; background: var(--blue); display: flex; align-items: center; justify-content: center; }
 .jv-toast-title { font-size: 13px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jv-toast-preview { font-size: 12px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.jv-toast-open { flex: none; padding: 6px 12px; background: var(--blue); border: 1px solid var(--blue); border-radius: 7px; font-family: inherit; font-size: 12px; font-weight: 600; color: #fff; cursor: pointer; }
+.jv-toast-open { flex: none; padding: 6px 12px; background: var(--blue); border: 1px solid var(--blue); border-radius: 7px; font-family: inherit; font-size: 12px; font-weight: 600; color: var(--blue-fg); cursor: pointer; }
 .jv-toast-x { flex: none; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; border-radius: 6px; color: var(--text-3); cursor: pointer; }
 .jv-toast-x:hover { background: var(--surface-2); color: var(--text); }
 
@@ -4840,7 +4880,7 @@ onUnmounted(() => {
 .jv-macrocard-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .jv-macrocard-title { font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .jv-macrocard-sub { font-size: 11.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.jv-macrocard-btn { flex: none; padding: 7px 13px; background: var(--blue); border: 1px solid var(--blue); border-radius: 8px; font-family: inherit; font-size: 12.5px; font-weight: 600; color: #fff; cursor: pointer; transition: opacity .12s; }
+.jv-macrocard-btn { flex: none; padding: 7px 13px; background: var(--blue); border: 1px solid var(--blue); border-radius: 8px; font-family: inherit; font-size: 12.5px; font-weight: 600; color: var(--blue-fg); cursor: pointer; transition: opacity .12s; }
 .jv-macrocard-btn:hover { opacity: .9; }
 .jv-macro-merged-badge { margin-left: 7px; font-size: 9.5px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; color: var(--green); background: var(--green-bg); border: 1px solid var(--green-bd); border-radius: 99px; padding: 1px 7px; }
 .jv-macro-merged-badge--pending { color: var(--amber); background: var(--amber-bg); border-color: var(--amber-bd); }
@@ -4877,7 +4917,7 @@ onUnmounted(() => {
 .jv-action-editrow.changed > .jv-action-k { color: var(--blue); font-weight: 600; }
 .jv-action-edithint { padding: 2px 14px 8px; font-size: 11.5px; color: var(--text-3); line-height: 1.4; }
 .jv-action-foot { display: flex; align-items: center; gap: 8px; padding: 11px 14px; border-top: 1px solid var(--border); background: var(--surface-1); }
-.jv-action-primary { display: inline-flex; align-items: center; gap: 7px; font-family: inherit; font-size: 13px; font-weight: 600; padding: 8px 14px; border-radius: 8px; cursor: pointer; background: var(--blue); color: #fff; border: 1px solid var(--blue); }
+.jv-action-primary { display: inline-flex; align-items: center; gap: 7px; font-family: inherit; font-size: 13px; font-weight: 600; padding: 8px 14px; border-radius: 8px; cursor: pointer; background: var(--blue); color: var(--blue-fg); border: 1px solid var(--blue); }
 .jv-action-primary:hover { background: var(--text); color: var(--surface); border-color: var(--text); }
 .jv-action-2nd { display: inline-flex; align-items: center; gap: 7px; font-family: inherit; font-size: 13px; font-weight: 550; padding: 8px 13px; border-radius: 8px; cursor: pointer; background: var(--surface); color: var(--text-2); border: 1px solid var(--border-2); }
 .jv-action-2nd:hover { background: var(--text); color: var(--surface); border-color: var(--text); }
@@ -4894,8 +4934,8 @@ onUnmounted(() => {
 .jv-dark .jv-modelpill:hover span { color: var(--text) !important; }
 .jv-dark .jv-sendbtn:hover:not(:disabled),
 .jv-dark .jv-confirm-yes:hover,
-.jv-dark .jv-action-primary:hover { background: var(--blue) !important; color: #fff !important; border-color: var(--blue) !important; filter: brightness(1.18); }
-.jv-dark .jv-sendbtn:hover:not(:disabled) svg { stroke: #fff !important; }
+.jv-dark .jv-action-primary:hover { background: var(--blue) !important; color: var(--blue-fg) !important; border-color: var(--blue) !important; filter: brightness(1.18); }
+.jv-dark .jv-sendbtn:hover:not(:disabled) svg { stroke: var(--blue-fg) !important; }
 .jv-action-discard { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-family: inherit; font-size: 12.5px; font-weight: 600; padding: 8px 13px; border-radius: 8px; border: 1px solid var(--red-bd); background: var(--red-bg); color: var(--red); cursor: pointer; transition: background .12s, color .12s, border-color .12s; }
 .jv-action-discard:hover { background: var(--red); color: #fff; border-color: var(--red); }
 .jv-action-discard:hover svg { stroke: #fff; }
@@ -4906,6 +4946,7 @@ onUnmounted(() => {
 .jv-pending-body { padding: 11px 14px; display: flex; flex-direction: column; gap: 8px; }
 .jv-pending-summary { font-size: 13.5px; line-height: 1.5; color: var(--text); }
 .jv-pending-note { font-size: 12px; line-height: 1.45; color: var(--text-3); }
+.jv-pending-expired { padding: 9px 11px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; color: var(--text-3); font-size: 12.5px; line-height: 1.45; }
 .jv-pending-preview { margin: 0; padding: 9px 11px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; line-height: 1.5; color: var(--text); white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow-y: auto; }
 .jv-pending-batch { margin: 0 14px 8px; padding-left: 18px; font-size: 12.5px; color: var(--text-2); }
 .jv-pending-batch li { margin: 2px 0; }
@@ -5013,7 +5054,7 @@ onUnmounted(() => {
 .jv-artifact-loading, .jv-artifact-nopreview { margin: auto; padding: 30px; text-align: center; color: var(--text-3); font-size: 13px; display: flex; flex-direction: column; gap: 12px; align-items: center; }
 .jv-sheet-tabs { display: flex; gap: 4px; padding: 8px 10px; border-bottom: 1px solid var(--border); background: var(--surface); flex: none; overflow-x: auto; }
 .jv-sheet-tabs button { font-family: inherit; font-size: 12px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-1); color: var(--text-2); cursor: pointer; white-space: nowrap; }
-.jv-sheet-tabs button.on { background: var(--blue); color: #fff; border-color: var(--blue); }
+.jv-sheet-tabs button.on { background: var(--blue); color: var(--blue-fg); border-color: var(--blue); }
 .jv-sheet-scroll { flex: 1; min-height: 0; overflow: auto; }
 .jv-sheet { border-collapse: collapse; font-size: 12.5px; width: max-content; min-width: 100%; }
 .jv-sheet th, .jv-sheet td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; white-space: nowrap; }

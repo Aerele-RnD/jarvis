@@ -225,8 +225,13 @@ def rotate_chat_device() -> dict:
 
 	Punch-list item from the 2026-06-16 review: chat-device Ed25519
 	private key had no rotation surface.
+
+	Gated on ``require_jarvis_admin`` (PART 4 REVISED, TASK 45): the chat DEVICE
+	keypair is tenant infrastructure, distinct from the gateway ``agent_token``
+	(which STAYS SM-only via ``api.rotate_agent_token``).
 	"""
-	frappe.only_for("System Manager")
+	from jarvis.permissions import require_jarvis_admin
+	require_jarvis_admin()
 	creds = _generate_and_pair()
 	frappe.logger().info(
 		"chat_device.rotate: new device_id=%s", creds.device_id,

@@ -6,14 +6,20 @@ no_cache = 1
 
 
 def get_context(context):
-	# Server-side gate, same as the desktop SPA (www/jarvis.py): a user without
-	# Jarvis access never gets the app shell. A Guest is sent to the Desk, which
-	# in turn bounces to login — so the PWA needs no login screen of its own. (The
-	# native app's QR pairing exists only because it lives on another origin; the
-	# PWA is served BY the site and rides the session cookie.) A signed-in but
-	# unauthorized user is sent to the branded /jarvis-no-access page instead.
-	if not has_jarvis_access():
-		frappe.local.flags.redirect_location = "/app" if frappe.session.user == "Guest" else "/jarvis-no-access"
+	# Guests DO get the shell — they land on the app's own /jarvis-mobile/login.
+	#
+	# Bouncing them to /app (what this used to do) breaks the installed app: the
+	# manifest scope is /jarvis-mobile, and a standalone PWA that navigates out of
+	# its scope is handed to the browser. So an expired session meant the app
+	# kicked you into a Chrome tab showing the Desk login — which is exactly why
+	# HRMS's shell is guest-renderable and its router owns a Login route.
+	#
+	# A signed-in user WITHOUT Jarvis access is a different case: they're already
+	# past login, so send them to the branded /jarvis-no-access page (which offers
+	# the "ask your admin" CTA and a way back to the Desk) rather than a login
+	# form or a bare bounce to /app.
+	if frappe.session.user != "Guest" and not has_jarvis_access():
+		frappe.local.flags.redirect_location = "/jarvis-no-access"
 		raise frappe.Redirect
 
 	# frappe-ui's jinjaBootData plugin emits `window["<key>"] = {{ boot[key]|tojson }}`

@@ -68,10 +68,12 @@ const convAutoApply = computed(() => !!(ctx.value && ctx.value.convAutoApply))
 const autoApplyNote = computed(() => (ctx.value && ctx.value.autoApplyNote) || "")
 
 // Real connection status (replaces the old hardcoded "Live"). getLlmConnectionStatus
-// is System-Manager-only on the server, and General is an all-user pane — so only
-// SM users get the live verdict; regular users (who can't query it and can't fix it
-// anyway) keep the benign "Connected" the surface implied before, never a 403 → "—".
-const isSM = !!window.is_system_manager
+// is admin-tier on the server (require_jarvis_admin), and General is an all-user
+// pane — so only tenant-admin (System Manager OR Jarvis Admin — PART 4 REVISED
+// TASK 49(c)) users get the live verdict; regular users (who can't query it and
+// can't fix it anyway) keep the benign "Connected" the surface implied before,
+// never a 403 → "—".
+const isSM = !!(window.is_system_manager || window.is_jarvis_admin)
 const connStatus = ref(null)
 const connected = computed(() =>
 	isSM ? !!(connStatus.value && connStatus.value.auth_present) : true,

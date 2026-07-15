@@ -516,6 +516,19 @@ def _is_bulk_call(args) -> bool:
 	return any(isinstance(args.get(k), list) and args.get(k) for k in _BULK_ARG_KEYS)
 
 
+def _bulk_len(args) -> int:
+	"""Number of targets in a bulk call - the length of the first non-empty batch
+	list (the batch keys are mutually exclusive per the tool contracts). 0 for a
+	non-bulk call. Used to bounce an over-size batch at park (F16)."""
+	if not isinstance(args, dict):
+		return 0
+	for k in _BULK_ARG_KEYS:
+		v = args.get(k)
+		if isinstance(v, list) and v:
+			return len(v)
+	return 0
+
+
 def _bulk_targets(args: dict) -> list:
 	"""Display names for a batch call: ``names[]`` directly, else the per-item
 	name / recipients / doctype from ``updates`` / ``messages`` / ``docs``."""
@@ -910,6 +923,7 @@ def _run_tool(tool: str, raw_args: dict | str | None,
 	# _pending_preview (no sandbox); single calls to these tools are unchanged.
 	if tool in _GATED_WRITES or (is_write and _is_bulk_call(args)):
 		from jarvis.chat import events, pending_confirm
+		from jarvis.tools._bulk import _MAX_BATCH
 
 		# preview=True on a gated write is a category error (issue #186, #14):
 		# the model never needs preview here - it calls the tool directly and the
@@ -922,6 +936,22 @@ def _run_tool(tool: str, raw_args: dict | str | None,
 				"InvalidArgumentError",
 				f"preview is not needed for {tool}: call it directly and the "
 				"bench will show a confirmation card")
+
+		# Batch cap at PARK (F16): a bulk call over the shared max bounces to the
+		# model now with a split-and-sequence instruction, instead of parking a
+		# card that only dies at execution. create/update/create_docs already
+		# bounce via their park-time dry-run (run_atomic_batch), but the
+		# consequential bulk writes (submit/cancel/delete/amend/workflow) take a
+		# described-intent preview with NO dry-run, so without this an over-size
+		# batch would fail only AFTER the user confirmed. One rule for all bulk.
+		if _is_bulk_call(args):
+			batch_n = _bulk_len(args)
+			if batch_n > _MAX_BATCH:
+				return _error(
+					"InvalidArgumentError",
+					f"too many records in one batch ({batch_n}); the max is "
+					f"{_MAX_BATCH}. Split into batches of {_MAX_BATCH} and confirm "
+					"each one before starting the next.")
 
 		conv, run_id = _gate_context(conversation)
 		# Two identities (issue #186, #1/#5/#6):
@@ -968,6 +998,28 @@ def _run_tool(tool: str, raw_args: dict | str | None,
 				as_dict=True) or {}
 			if flags.get("auto_apply") or flags.get("file_box"):
 				return dispatch_confirmed(tool, args)
+		# Sequential confirmation (F16): at most ONE live confirmation card per
+		# conversation. If one is already awaiting the user here, REFUSE to park a
+		# second and tell the model to stop - the continuation turn fired after the
+		# pending card is confirmed + executed is where it issues the next batch.
+		# This makes "batch 2's card appears only after batch 1 completes" a bench
+		# guarantee (not just persona discipline) and is the server-side
+		# single-flight for the confirm path. Auto-apply above is deliberately NOT
+		# gated by this (it parks no card).
+		#   STRICT conversation match: list_for_owner returns conversation-LESS
+		#   tokens under any filter (F1), so re-filter to record.conversation == conv
+		#   - an unrelated conv-less token (a rare session-resolution miss) must not
+		#   block a legitimate new card here.
+		if conv and any(
+				t.get("conversation") == conv
+				for t in pending_confirm.list_for_owner(owner_user, conversation=conv)):
+			return _error(
+				"ConfirmationPendingError",
+				"a confirmation card for a previous action is still awaiting the "
+				"user in this conversation. Only one runs at a time - do NOT retry "
+				"this call; stop and end your turn now. Once the user confirms the "
+				"pending card you'll get a follow-up turn to continue with the next "
+				"step.")
 		# Validate BEFORE parking. For a create/update (build-from-args) write,
 		# run the real call in the rollback sandbox now: a deterministic failure
 		# (missing mandatory field, bad link, no create permission) means the
@@ -987,9 +1039,21 @@ def _run_tool(tool: str, raw_args: dict | str | None,
 				return _preview_error(e)
 		else:
 			preview = _pending_preview(tool, args)
+		# Render-ready confirmation summary (F9) + wall-clock expiry (F15), attached
+		# ONCE here at park: F2 stores the preview in the token record and resync
+		# returns it verbatim, so the card + expiry ride the event, the record, and
+		# every resync identically (never rebuilt -> cannot diverge). build_card
+		# returns None for uncovered shapes; the SPA falls back to the raw preview.
+		import time
+
+		from jarvis.chat import confirm_card
+		if isinstance(preview, dict):
+			preview["card"] = confirm_card.build_card(tool, args, preview)
+		expires_at = int(time.time()) + pending_confirm._TTL_S
 		token = pending_confirm.mint(conversation=conv, owner=owner_user,
 									 tool=tool, args=args, run_id=run_id,
-									 exec_user=exec_user)
+									 exec_user=exec_user, preview=preview,
+									 expires_at=expires_at)
 		# Deliver the token to the human's UI out-of-band, over the realtime
 		# channel, NEVER via the function return below - the model must never
 		# see it. Published to the OWNER (the subscribed browser), not the acting
@@ -1006,14 +1070,20 @@ def _run_tool(tool: str, raw_args: dict | str | None,
 				"conversation": conv,
 				"run_id": run_id,
 				"summary": _describe_call(tool, args),
+				"expires_at": expires_at,
 			})
 		except Exception:
 			frappe.log_error(
 				title="action:pending publish failed",
 				message=frappe.get_traceback(),
 			)
+		# The model-facing return carries the raw preview but NOT the human ``card``
+		# (it is duplicate UX for the model's context; the model gets tool + args +
+		# would already).
+		model_preview = ({k: v for k, v in preview.items() if k != "card"}
+						 if isinstance(preview, dict) else preview)
 		return {"ok": True, "data": {
-			"status": "pending_confirmation", "preview": preview, "tool": tool,
+			"status": "pending_confirmation", "preview": model_preview, "tool": tool,
 		}}
 
 	return _dispatch_and_wrap(tool, args, is_write)

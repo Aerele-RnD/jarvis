@@ -1875,21 +1875,74 @@ class TestFT5ChatWorkerPoolAwareness(_RT3SettingsTestCase):
                             "proxy_active", 1, update_modified=False)
         frappe.db.commit()
 
-    def test_pool_mode_resolves_empty_model_for_pool_routing(self):
-        """proxy_active=1, no model_override → _resolve_model_and_provider returns ('', None)."""
-        from jarvis.chat.worker import _resolve_model_and_provider
-
+    def _pool_of_two(self):
         self._set_proxy_active([
             {"provider": "openai_compat", "model": "gpt-4o", "tier": "strong", "order": 0, "api_key": "sk-p1"},
             {"provider": "openai_compat", "model": "gpt-3.5-turbo", "tier": "cheap", "order": 1, "api_key": "sk-p2"},
         ])
 
+    def test_pool_mode_resolver_still_returns_empty_for_the_one_shot_callers(self):
+        """_resolve_model_and_provider's contract is UNCHANGED: "" means "no opinion".
+
+        Two callers depend on that and must not be disturbed by the session-pin fix --
+        the auto-title job (chat/title.py) and pattern-polish (learning/polish.py) run
+        throwaway one-shot gateway turns and pass this straight through as an INLINE
+        modelOverride, where "" correctly means "omit the field". Handing them a concrete
+        "jarvis-pool" would push an explicit override down a path they never exercised,
+        and both swallow their exceptions -- so a rejection would degrade silently into
+        crude titles and unpolished patterns.
+        """
+        from jarvis.chat.worker import _resolve_model_and_provider
+
+        self._pool_of_two()
+        for override in ("", "a-model-the-customer-deleted"):
+            conv = self._make_conv(model_override=override)
+            effective_model, provider = _resolve_model_and_provider(conv)
+            self.assertEqual(effective_model, "",
+                             f"override={override!r} must resolve to '' (no opinion); "
+                             f"got: {effective_model!r}")
+            self.assertIsNone(provider)
+
+    def test_session_model_for_pool_mode_with_no_pin_names_the_pool(self):
+        """The SESSION patch must NAME the pool, not send nothing.
+
+        handle_chat_send only issues sessions.patch when the model is truthy, and openclaw
+        remembers a session's model across turns -- so "" ("send nothing") meant a
+        conversation that had ONCE been pinned was never walked back. Selecting "Auto"
+        wrote model_override="" and flipped the pill, while openclaw went right on calling
+        the old model, forever. Clearing a pin has to be an explicit instruction, not the
+        absence of one. (jarvis#299)
+        """
+        from jarvis.chat.worker import _session_model_for, POOL_VIRTUAL_MODEL
+
+        self._pool_of_two()
         conv = self._make_conv(model_override="")
-        effective_model, provider = _resolve_model_and_provider(conv)
-        self.assertEqual(effective_model, "",
-                         f"Pool mode with no override must return '' for model; got: {effective_model!r}")
-        self.assertIsNone(provider,
-                          f"Pool mode must return None provider; got: {provider!r}")
+        model, provider = _session_model_for(conv)
+        self.assertEqual(model, POOL_VIRTUAL_MODEL)
+        self.assertTrue(bool(model),
+                        "must be truthy, or handle_chat_send skips sessions.patch "
+                        "and the stale pin sticks")
+        self.assertIsNone(provider)
+
+    def test_session_model_for_stale_pin_resets_to_the_pool(self):
+        """A pin naming a model the customer has since REMOVED from the pool resets to
+        the pool rather than leaking a dead model id through to openclaw."""
+        from jarvis.chat.worker import _session_model_for, POOL_VIRTUAL_MODEL
+
+        self._pool_of_two()
+        conv = self._make_conv(model_override="a-model-the-customer-deleted")
+        model, provider = _session_model_for(conv)
+        self.assertEqual(model, POOL_VIRTUAL_MODEL)
+        self.assertIsNone(provider)
+
+    def test_session_model_for_honours_a_valid_pin(self):
+        from jarvis.chat.worker import _session_model_for
+
+        self._pool_of_two()
+        conv = self._make_conv(model_override="gpt-3.5-turbo")
+        model, provider = _session_model_for(conv)
+        self.assertEqual(model, "gpt-3.5-turbo")
+        self.assertIsNone(provider)
 
     def test_pool_mode_validates_override_against_enabled_models(self):
         """proxy_active=1, model_override in enabled models → override returned."""
@@ -1904,20 +1957,6 @@ class TestFT5ChatWorkerPoolAwareness(_RT3SettingsTestCase):
         effective_model, _ = _resolve_model_and_provider(conv)
         self.assertEqual(effective_model, "gpt-4o",
                          f"Valid pool override must be accepted; got: {effective_model!r}")
-
-    def test_pool_mode_invalid_override_falls_back_to_pool_routing(self):
-        """proxy_active=1, model_override NOT in enabled models → falls back to '' (pool routing)."""
-        from jarvis.chat.worker import _resolve_model_and_provider
-
-        self._set_proxy_active([
-            {"provider": "openai_compat", "model": "gpt-4o", "tier": "strong", "order": 0, "api_key": "sk-p1"},
-            {"provider": "openai_compat", "model": "gpt-3.5-turbo", "tier": "cheap", "order": 1, "api_key": "sk-p2"},
-        ])
-
-        conv = self._make_conv(model_override="not-a-real-model")
-        effective_model, _ = _resolve_model_and_provider(conv)
-        self.assertEqual(effective_model, "",
-                         f"Invalid pool override must fall back to '' (pool routing); got: {effective_model!r}")
 
     def test_worker_catches_admin_validation_error(self):
         """AdminValidationError from pool sync → last_sync_status contains 'validation'."""

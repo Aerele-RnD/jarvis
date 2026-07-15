@@ -50,6 +50,8 @@ import frappe
 from frappe import _
 from frappe.utils import add_days, now_datetime, today
 
+from jarvis.permissions import JARVIS_REVIEWER_ROLES, require_jarvis_admin
+
 JLP = "Jarvis Learned Pattern"
 RUN = "Jarvis Pattern Run"
 SETTINGS = "Jarvis Settings"
@@ -217,12 +219,11 @@ def _is_self_hosted() -> bool:
 		return False
 
 
-# The two bench-side role sets seeded in jarvis/learning/roles.py
-# (_PERSONALISE_ROLES). Administrator is implicit in frappe.only_for. The
-# REVIEWER set gates the board/decide/apply/follow-up actions; the ADMIN set
-# gates the Analysis config surface. Keep in sync with roles.py + DESIGN.md §1.
-_REVIEWER_ROLES = ("Jarvis Skill Reviewer", "Jarvis Admin", "System Manager")
-_ADMIN_ROLES = ("Jarvis Admin", "System Manager")
+# The REVIEWER set gates the board/decide/apply/follow-up actions; the ADMIN
+# tier gates the Analysis config surface. Both now live in jarvis.permissions
+# (PART 4 REVISED, TASK 50 — one definition, no drift). The reviewer set stays
+# WIDER than admin (a Skill Reviewer is not a billing admin); keep them distinct.
+_REVIEWER_ROLES = JARVIS_REVIEWER_ROLES
 
 
 def _reviewer_roles() -> None:
@@ -245,10 +246,10 @@ def _guard() -> None:
 
 
 def _admin_roles() -> None:
-	"""Admin-set role check ONLY (no self-host block). The Analysis probe
+	"""Admin-tier role check ONLY (no self-host block). The Analysis probe
 	(``get_learning_status``) uses this so it stays reachable on a self-host
-	bench, exactly as it did when it was a bare ``frappe.only_for``."""
-	frappe.only_for(_ADMIN_ROLES)
+	bench. PART 4 REVISED, TASK 50 — delegates to jarvis.permissions."""
+	require_jarvis_admin()
 
 
 def _admin_guard() -> None:

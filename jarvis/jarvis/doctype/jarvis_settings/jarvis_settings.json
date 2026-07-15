@@ -451,6 +451,7 @@
   {
    "fieldname": "selfhost_tool_user",
    "fieldtype": "Link",
+   "permlevel": 1,
    "options": "User",
    "label": "Self-Host Tool User",
    "depends_on": "eval:doc.deployment_mode == 'Self-Hosted'",
@@ -480,12 +481,14 @@
   {
    "fieldname": "jarvis_admin_url",
    "fieldtype": "Data",
+   "permlevel": 1,
    "label": "Jarvis Admin URL",
    "read_only": 1,
    "description": "HTTPS URL of the Jarvis admin host. Used for signup, billing, subscription state."
   },
   {
    "fieldname": "jarvis_admin_api_key",
+   "permlevel": 1,
    "fieldtype": "Password",
    "label": "Jarvis Admin API Key",
    "read_only": 1,
@@ -493,6 +496,7 @@
   },
   {
    "fieldname": "jarvis_admin_api_secret",
+   "permlevel": 1,
    "fieldtype": "Password",
    "label": "Jarvis Admin API Secret",
    "read_only": 1,
@@ -500,6 +504,7 @@
   },
   {
    "fieldname": "jarvis_admin_customer_email",
+   "permlevel": 1,
    "fieldtype": "Data",
    "label": "Jarvis Admin Customer Email",
    "read_only": 1,
@@ -507,6 +512,7 @@
   },
   {
    "fieldname": "jarvis_admin_customer_password",
+   "permlevel": 1,
    "fieldtype": "Password",
    "label": "Jarvis Admin Customer Password",
    "read_only": 1,
@@ -521,6 +527,7 @@
   {
    "fieldname": "agent_url",
    "fieldtype": "Data",
+   "permlevel": 1,
    "label": "Agent URL",
    "read_only": 1,
    "description": "WebSocket URL for the customer's openclaw agent (e.g. ws://127.0.0.1:18789 in dev; wss://<subdomain>.<admin-host>:443 in prod)"
@@ -528,6 +535,7 @@
   {
    "fieldname": "agent_token",
    "fieldtype": "Password",
+   "permlevel": 1,
    "label": "Agent Token",
    "read_only": 1,
    "description": "Bearer token used to authenticate the secrets.reload RPC and the chat worker's WebSocket session"
@@ -562,6 +570,7 @@
   },
   {
    "fieldname": "chat_device_private_key",
+   "permlevel": 1,
    "fieldtype": "Password",
    "label": "Chat Device Private Key",
    "read_only": 1,
@@ -569,6 +578,7 @@
   },
   {
    "fieldname": "chat_device_token",
+   "permlevel": 1,
    "fieldtype": "Password",
    "label": "Chat Device Token",
    "read_only": 1,
@@ -677,6 +687,7 @@
   {
    "fieldname": "run_query_doctype_allowlist",
    "fieldtype": "Small Text",
+   "permlevel": 1,
    "label": "run_query DocType Allowlist",
    "description": "Defense-in-depth restriction for the run_query agent tool. Comma- or newline-separated list of DocType names. When non-empty, run_query refuses any query referencing a DocType not on this list - even if the calling user has read permission on it through Frappe's normal permission system. Leave empty (default) to allow any DocType the user can read. Use this to lock the agent to a known-good slice of your data (e.g. 'Sales Invoice, Customer, Item, Sales Invoice Item') so a future allowlist bypass in the SQL parser still can't reach the rest of the bench."
   },
@@ -695,6 +706,7 @@
   {
    "fieldname": "sandbox_mode",
    "fieldtype": "Check",
+   "permlevel": 1,
    "label": "Enable Sandbox Mode",
    "default": "0",
    "description": "When enabled, skip payment + allow the developer-onboarding shortcut (jarvis.onboarding.dev_onboard) on this site. Customer's responsibility: only flip this on a dev/test bench. Replaces the legacy <code>frappe.conf.developer_mode</code> check; that flag still works as a backwards-compat fallback for one release."
@@ -706,6 +718,19 @@
    "read": 1,
    "write": 1,
    "create": 1
+  },
+  {
+   "role": "System Manager",
+   "permlevel": 1,
+   "read": 1,
+   "write": 1,
+   "report": 1,
+   "export": 1
+  },
+  {
+   "role": "Jarvis Admin",
+   "read": 1,
+   "write": 1
   }
  ]
 }

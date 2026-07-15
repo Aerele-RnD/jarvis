@@ -2,16 +2,28 @@ import { createApp } from "vue"
 import { setConfig, frappeRequest, resourcesPlugin } from "frappe-ui"
 
 import App from "./App.vue"
-import router from "./router"
+import router, { sessionUser } from "./router"
 import { initSocket } from "./socket"
+// Side-effect import, and it must stay ABOVE the mount: it registers the
+// beforeinstallprompt listener at module load. Chrome can fire that event in the
+// same tick the app mounts, so capturing it from a component's onMounted loses
+// the race on a warm refresh and the install offer silently disappears.
+import "./install"
+import { applyTheme } from "./lib/theme"
 import "./index.css"
 
 setConfig("resourceFetcher", frappeRequest)
 
+// Before mount: applying the saved theme after the first paint would flash the
+// wrong palette, which on an OLED phone is very visible.
+applyTheme()
+
 const app = createApp(App)
 app.use(resourcesPlugin)
 app.use(router)
-app.provide("$socket", initSocket())
+// A guest has no user room to join: the socket would only sit there retrying
+// behind the login screen. Consumers already treat $socket as optional.
+app.provide("$socket", sessionUser() ? initSocket() : null)
 app.mount("#app")
 
 // The worker is served from the site root (jarvis/pwa.py), NOT from

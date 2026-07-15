@@ -43,13 +43,14 @@ import JarvisMark from "@/components/JarvisMark.vue"
 const router = useRouter()
 
 // The /onboarding route's beforeEnter gate is a STRICT truthy check
-// (`window.is_system_manager ? … : Chat`). Match it exactly here — a lenient
-// `!== false` would show the "Complete setup" button on the vite dev server
-// (flag undefined), but the click would bounce straight back off the route
-// guard to Chat and re-trigger the poster: a dead-end. So the button appears
-// only when it can actually reach the wizard; a non-SM (or dev) user gets the
-// "ask your administrator" copy instead.
-const isSystemManager = !!window.is_system_manager
+// (`(is_system_manager || is_jarvis_admin) ? … : Chat`). Match it exactly here —
+// a lenient `!== false` would show the "Complete setup" button on the vite dev
+// server (flags undefined), but the click would bounce straight back off the
+// route guard to Chat and re-trigger the poster: a dead-end. So the button
+// appears only when it can actually reach the wizard; a non-admin (or dev) user
+// gets the "ask your administrator" copy instead. PART 4 REVISED TASK 49(c):
+// widened to the Jarvis Admin tenant-admin tier.
+const isSystemManager = !!(window.is_system_manager || window.is_jarvis_admin)
 
 function goOnboard() {
 	router.push({ name: "Onboarding" })
