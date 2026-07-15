@@ -845,7 +845,10 @@ function setPanelSource(src) {
   // Switching to the Chat-subscription tab with no account yet: reveal the sign-in
   // steps directly (same reasoning as openAdd), rather than the "Connect account"
   // button. A row that already has a connected account keeps its account list.
-  if (src === "subscription" && !(r.accounts && r.accounts.length)) openConnectPanel(r)
+  // Guard on !_connect.open so RE-clicking the already-active tab mid-sign-in does
+  // NOT rebuild _connect (openConnectPanel calls blankConnect(), which would wipe an
+  // in-progress nonce/authorizeUrl and orphan the OAuth popup).
+  if (src === "subscription" && !(r.accounts && r.accounts.length) && !(r._connect && r._connect.open)) openConnectPanel(r)
 }
 // Closing the panel (Cancel/Done/Close) - an add-row that was opened but
 // never filled in (no preset picked) is dropped so an abandoned "+ Add
