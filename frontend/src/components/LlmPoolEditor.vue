@@ -514,6 +514,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue"
+import { confirmDialog } from "frappe-ui"
 import * as api from "@/api"
 import {
   deriveMode, reorder, presetToModels, missingVendorKeys, validatePool,
@@ -867,8 +868,18 @@ function onDirectCardChanged() {
   directPanelOpen.value = false
   emit("direct-changed")
 }
-async function removeDirect() {
-  if (!window.confirm("Disconnect the chat subscription? Jarvis chat will stop working until you reconnect.")) return
+function removeDirect() {
+  confirmDialog({
+    title: "Disconnect subscription?",
+    message: "Jarvis chat will stop working until you reconnect.",
+    onConfirm: async ({ hideDialog }) => {
+      hideDialog()
+      await _removeDirect()
+    },
+  })
+}
+
+async function _removeDirect() {
   try {
     const res = await api.disconnectSubscription()
     if (!res || res.ok === false) { err.value = (res && res.error && res.error.message) || "Disconnect failed."; return }

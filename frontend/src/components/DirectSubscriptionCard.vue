@@ -77,6 +77,7 @@
 
 <script setup>
 import { ref, computed, onBeforeUnmount } from "vue"
+import { confirmDialog } from "frappe-ui"
 import * as api from "@/api"
 import { errMessage as _err } from "@/lib/errors"
 import { exactDate } from "@/utils/datetime"
@@ -199,8 +200,18 @@ async function submitPasted() {
   } catch (e) { err.value = _err(e) } finally { busy.value = false }
 }
 
-async function doDisconnect() {
-  if (!window.confirm("Disconnect the chat subscription? Jarvis chat will stop working until you reconnect.")) return
+function doDisconnect() {
+  confirmDialog({
+    title: "Disconnect subscription?",
+    message: "Jarvis chat will stop working until you reconnect.",
+    onConfirm: async ({ hideDialog }) => {
+      hideDialog()
+      await _doDisconnect()
+    },
+  })
+}
+
+async function _doDisconnect() {
   err.value = ""
   busy.value = true
   try {
