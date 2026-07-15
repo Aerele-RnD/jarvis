@@ -40,7 +40,7 @@
       <div v-if="status.connected_at" class="jv-dsub-kv"><span>Connected</span><b>{{ connectedAtLabel }}</b></div>
       <div class="jv-dsub-actions" style="margin-top:14px;">
         <button v-if="editable" class="jv-dsub-btn jv-dsub-btn-ghost" :disabled="busy" @click="doDisconnect">Disconnect</button>
-        <button v-if="editable" class="jv-dsub-btn jv-dsub-btn-primary" @click="startSignin">Re-authorize</button>
+        <button v-if="editable" class="jv-dsub-btn jv-dsub-btn-primary" @click="startSignin()">Re-authorize</button>
       </div>
       <div v-if="err" class="jv-dsub-err">{{ err }}</div>
     </div>
