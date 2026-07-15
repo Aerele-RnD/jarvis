@@ -232,19 +232,24 @@ body {
    through the star. `color` is set at no call site, so transparent is safe.
    If you add a new call site, pass no children. */
 .jv-mark {
+	position: relative;
 	display: grid;
 	place-items: center;
 	border-radius: 12px;
+	overflow: hidden;
 	background: var(--brand-grad);
 	flex: none;
 	color: transparent; /* hides the legacy "J" text node; inline font-size can't fight this */
 }
+/* The star fills the chip (inset:0 gives it a definite box = the chip's size)
+   and the MASK is sized to 55%, centered. Percentage width/height on the
+   pseudo-element does NOT work here — the grid parent leaves its block-size
+   indefinite, so `height: 55%` collapses and the star renders squished. */
 .jv-mark::before {
 	content: "";
-	grid-area: 1 / 1; /* stack over the (now-invisible) "J" instead of beside it */
-	width: 55%;
-	height: 55%;
+	position: absolute;
+	inset: 0;
 	background: #fff;
-	-webkit-mask: var(--brand-star) center / contain no-repeat;
-	mask: var(--brand-star) center / contain no-repeat;
+	-webkit-mask: var(--brand-star) center / 55% no-repeat;
+	mask: var(--brand-star) center / 55% no-repeat;
 }
