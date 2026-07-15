@@ -1,5 +1,6 @@
 <script setup>
 import { computed, defineAsyncComponent, inject, nextTick, onMounted, onUnmounted, ref, watch } from "vue"
+import BrandMark from "../components/BrandMark.vue"
 import { useRouter } from "vue-router"
 // The desktop SPA's renderer — dependency-free, and sharing it means an agent
 // reply reads identically on both surfaces.
@@ -494,7 +495,7 @@ onUnmounted(() => {
 
 	<div ref="scroller" class="jv-scroll jv-thread">
 		<div v-if="!items.length && !live && !loading" class="jv-empty">
-			<div class="jv-mark" style="width: 52px; height: 52px; font-size: 21px">J</div>
+			<BrandMark :size="52" />
 			<div style="font-size: 16px; font-weight: 600; color: var(--ink9)">What can I do for you?</div>
 			<div style="font-size: 14px; line-height: 1.5">Try “show me this month's overdue invoices”.</div>
 		</div>
