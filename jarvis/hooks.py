@@ -291,11 +291,14 @@ require_type_annotated_api_methods = True
 # get_schema caches each DocType's schema in Redis with a short TTL. Bust that
 # cache the moment a schema-defining doc changes, so the agent never builds a
 # write off a stale field list inside the TTL window (a Custom Field added via
-# Customize Form must show up immediately, not 5 minutes later).
+# Customize Form must show up immediately, not 5 minutes later). Client Script is
+# included because get_schema's `actions` hint is scraped from the DocType's form
+# JS, which includes enabled Form Client Scripts - a newly-added button must
+# surface without waiting out the TTL.
 _CLEAR_SCHEMA_CACHE = "jarvis.tools.get_schema.clear_schema_cache"
 doc_events = {
 	dt: {"on_update": _CLEAR_SCHEMA_CACHE, "on_trash": _CLEAR_SCHEMA_CACHE}
-	for dt in ("DocType", "Custom Field", "Property Setter", "Workflow")
+	for dt in ("DocType", "Custom Field", "Property Setter", "Workflow", "Client Script")
 }
 
 # Org-scope wiki pages are mirrored as markdown into the tenant container
