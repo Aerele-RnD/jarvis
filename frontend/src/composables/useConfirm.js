@@ -13,6 +13,13 @@ import { ref } from "vue"
 // confirm() resolves true when the user confirms and false on Cancel / backdrop
 // click / Escape. This was extracted from ChatView's former inline confirmDialog
 // so there is one implementation, not several.
+//
+// WHICH CONFIRM TO USE:
+//   • This useConfirm() — on the custom jv- surfaces (chat, settings, AI models,
+//     onboarding). It renders with the jv- design tokens so it looks native there.
+//   • frappe-ui's confirmDialog({ onConfirm }) — on the frappe-ui-styled list/
+//     detail pages (macros, skills, files, wiki, agents), which are built from
+//     frappe-ui components and match its dialog. Don't cross the streams.
 
 // The live request, or null when no dialog is open. The mounted ConfirmDialog is
 // the only reader; call sites never touch it directly.
