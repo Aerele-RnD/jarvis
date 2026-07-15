@@ -279,3 +279,8 @@
 	.jv-settings-navitem { width: auto; flex: none; white-space: nowrap; }
 	.jv-settings-body { padding: 4px 16px 20px; }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .jv-fade-enter-active, .jv-fade-leave-active { transition: none; }
+  .jv-settings { animation: none; }
+}

@@ -3,12 +3,26 @@
 	     scrim, the grouped rail, the header and the active pane. Applies
 	     paletteVars + .jv-dark on the root so every jv-* class inside (and in the
 	     panes) resolves the shared palette. -->
-	<transition name="jv-fade">
-		<div v-if="store.settingsOpen" class="jv-settings-overlay jv-root" :class="{ 'jv-dark': dark }" :style="paletteVars" @click.self="close">
-			<div class="jv-settings">
-				<!-- ===== grouped left rail ===== -->
-				<div class="jv-settings-nav">
-					<div class="jv-settings-nav-title">Settings</div>
+	<!-- Teleported to <body> (not just visually, structurally): AppShell renders
+	     this component as a normal, non-teleported sibling inside #app (see
+	     Sidebar/router-view/Dialogs/SettingsDialog/JarvisCommandPalette/
+	     NotifyToaster in AppShell.vue). #app is exactly the subtree the focus
+	     trap below marks `inert` while the dialog is open — `inert` cascades to
+	     ALL descendants with no way for a nested element to opt back in, so
+	     without this Teleport the dialog would inert itself the instant it
+	     opens (unfocusable AND unclickable, Close button included). Teleporting
+	     to <body> makes the overlay a sibling of #app instead of a descendant,
+	     so `inert` on #app blocks only the real background. Purely a DOM-parent
+	     change: `.jv-settings-overlay` is `position: fixed; inset: 0` with its
+	     jv-dark class and paletteVars applied directly on itself (not inherited
+	     from an ancestor), so visual output is unaffected. -->
+	<Teleport to="body">
+		<transition name="jv-fade">
+			<div v-if="store.settingsOpen" class="jv-settings-overlay jv-root" :class="{ 'jv-dark': dark }" :style="paletteVars" @click.self="close">
+				<div class="jv-settings" role="dialog" aria-modal="true" aria-labelledby="jv-settings-title" ref="dialogEl" tabindex="-1" @keydown="_onDialogKeydown">
+					<!-- ===== grouped left rail ===== -->
+					<div class="jv-settings-nav">
+						<div class="jv-settings-nav-title">Settings</div>
 
 					<!-- WORKSPACE (all users) -->
 					<div class="jv-settings-group">Workspace</div>
@@ -61,30 +75,31 @@
 							<span>User usage</span>
 						</button>
 					</template>
-				</div>
-
-				<!-- ===== main ===== -->
-				<div class="jv-settings-main">
-					<!-- Pane-owned header (design.md §4.1): single title + description;
-					     panes render no duplicate heading of their own. -->
-					<div class="jv-settings-head">
-						<div>
-							<div class="jv-settings-head-title">{{ label }}</div>
-							<div v-if="description" class="jv-settings-head-desc">{{ description }}</div>
-						</div>
-						<button class="jv-iconbtn" @click="close" title="Close" aria-label="Close settings">
-							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
-						</button>
 					</div>
-					<component :is="pane" />
+
+					<!-- ===== main ===== -->
+					<div class="jv-settings-main">
+						<!-- Pane-owned header (design.md §4.1): single title + description;
+						     panes render no duplicate heading of their own. -->
+						<div class="jv-settings-head">
+							<div>
+								<div class="jv-settings-head-title" id="jv-settings-title">{{ label }}</div>
+								<div v-if="description" class="jv-settings-head-desc">{{ description }}</div>
+							</div>
+							<button class="jv-iconbtn" @click="close" title="Close" aria-label="Close settings">
+								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+							</button>
+						</div>
+						<component :is="pane" />
+					</div>
 				</div>
 			</div>
-		</div>
-	</transition>
+		</transition>
+	</Teleport>
 </template>
 
 <script setup>
-import { computed, defineAsyncComponent, onMounted, onBeforeUnmount } from "vue"
+import { computed, defineAsyncComponent, onMounted, onBeforeUnmount, ref, watch, nextTick } from "vue"
 import { useJarvisTheme } from "@/theme"
 import { useShellStore } from "@/stores/shell"
 import "@/assets/settings.css"
@@ -186,4 +201,39 @@ function onKey(e) {
 }
 onMounted(() => window.addEventListener("keydown", onKey))
 onBeforeUnmount(() => window.removeEventListener("keydown", onKey))
+
+// Focus trap + inert background (P0-5): the dialog is a real modal — Tab must
+// cycle only within it, and the rest of #app must be unreachable to
+// keyboard/AT while it's open.
+const dialogEl = ref(null)
+let _returnFocus = null
+
+function _focusables() {
+	if (!dialogEl.value) return []
+	return Array.from(dialogEl.value.querySelectorAll(
+		'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'
+	)).filter((el) => el.offsetParent !== null)
+}
+
+function _onDialogKeydown(e) {
+	if (e.key !== "Tab") return
+	const f = _focusables()
+	if (!f.length) return
+	const first = f[0], last = f[f.length - 1]
+	if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
+	else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
+}
+
+watch(() => store.settingsOpen, (open) => {
+	const appRoot = document.getElementById("app")
+	if (open) {
+		_returnFocus = document.activeElement
+		if (appRoot) appRoot.setAttribute("inert", "")
+		nextTick(() => { (_focusables()[0] || dialogEl.value)?.focus() })
+	} else {
+		if (appRoot) appRoot.removeAttribute("inert")
+		if (_returnFocus && _returnFocus.focus) _returnFocus.focus()
+		_returnFocus = null
+	}
+})
 </script>
