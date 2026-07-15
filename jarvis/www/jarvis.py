@@ -7,10 +7,12 @@ no_cache = 1
 
 def get_context(context):
 	# Server-side gate: the SPA route is authoritative, so a user without Jarvis
-	# access never gets the app shell. Send them to the Desk (/app), which in turn
-	# redirects Guests to login. Follows Frappe's www redirect idiom.
+	# access never gets the app shell. A Guest is sent to the Desk (/app), which
+	# in turn redirects to login — preserving the guest→login bounce. A signed-in
+	# but unauthorized user is sent to the branded /jarvis-no-access page instead.
+	# Follows Frappe's www redirect idiom.
 	if not has_jarvis_access():
-		frappe.local.flags.redirect_location = "/app"
+		frappe.local.flags.redirect_location = "/app" if frappe.session.user == "Guest" else "/jarvis-no-access"
 		raise frappe.Redirect
 
 	# frappe-ui's jinjaBootData plugin emits `window["<key>"] = {{ boot[key]|tojson }}`

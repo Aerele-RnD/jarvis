@@ -102,7 +102,7 @@ onBeforeUnmount(() => document.removeEventListener("mousedown", onDocClick))
   cursor: pointer; box-sizing: border-box;
 }
 .jvc-field:hover { border-color: var(--border-2); }
-.jvc-open { border-color: var(--blue-bd); }
+.jvc-open { border-color: var(--cta-bd); }
 .jvc-dis { cursor: default; opacity: .7; }
 .jvc-input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; color: inherit; font: inherit; padding: 0; }
 .jvc-val { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -120,5 +120,5 @@ onBeforeUnmount(() => document.removeEventListener("mousedown", onDocClick))
 }
 .jvc-hi, .jvc-opt:hover { background: var(--surface-2); }
 .jvc-on { font-weight: 600; }
-.jvc-check { width: 15px; height: 15px; color: var(--blue); flex: none; }
+.jvc-check { width: 15px; height: 15px; color: var(--cta); flex: none; }
 </style>

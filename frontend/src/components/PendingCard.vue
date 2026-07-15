@@ -76,6 +76,31 @@ const sentence = computed(() =>
 			<div v-for="(n, i) in card.notes" :key="'n' + i" class="jv-pcard-note">{{ n }}</div>
 		</template>
 
+		<!-- bulk update: one collapsible from→to preview per record -->
+		<template v-else-if="card.kind === 'bulk_update'">
+			<div class="jv-pcard-head">Update {{ card.count }} {{ card.doctype }} record<template v-if="card.count !== 1">s</template><span v-if="card.varying" class="jv-pcard-sub"> · varying changes</span></div>
+			<p class="jv-pcard-caption">Click a record to review its changes.</p>
+			<div class="jv-pcard-recs">
+				<details v-for="(r, i) in card.records" :key="i" class="jv-rec" :open="i === 0">
+					<summary>
+						<span class="jv-chev" aria-hidden="true"></span>
+						<span class="jv-rec-id">{{ r.name }}</span>
+						<span v-if="r.fields?.length" class="jv-rec-fields">{{ r.fields.join(" · ") }}</span>
+					</summary>
+					<div class="jv-rec-body">
+						<div v-for="(d, j) in r.diff" :key="j" class="jv-pcard-diffrow">
+							<span class="jv-pcard-lbl">{{ d.label }}</span>
+							<span class="jv-pcard-from">{{ d.from || "(empty)" }}</span>
+							<span class="jv-pcard-arrow">→</span>
+							<span class="jv-pcard-to">{{ d.to || "(empty)" }}</span>
+						</div>
+						<div v-if="!r.diff.length" class="jv-pcard-empty">No field changes.</div>
+					</div>
+				</details>
+			</div>
+			<div v-if="card.extra > 0" class="jv-pcard-more">+{{ card.extra }} more · full list in Details</div>
+		</template>
+
 		<details v-if="details" class="jv-pcard-details">
 			<summary>Details</summary>
 			<pre>{{ details }}</pre>
@@ -102,6 +127,27 @@ const sentence = computed(() =>
 .jv-pcard-list { margin: 4px 0 0; padding-left: 18px; }
 .jv-pcard-list li { padding: 1px 0; overflow-wrap: anywhere; }
 .jv-pcard-more { list-style: none; color: var(--text-3); }
+/* bulk update: collapsible per-record from→to list */
+.jv-pcard-sub { font-weight: 400; color: var(--text-3); }
+.jv-pcard-caption { font-size: 11.5px; color: var(--text-3); margin: 0 0 8px; }
+.jv-pcard-recs { display: flex; flex-direction: column; max-height: 320px; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.jv-rec { border-top: 1px solid var(--surface-2); }
+.jv-rec:first-child { border-top: none; }
+.jv-rec > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 9px; min-height: 38px; padding: 6px 2px; border-radius: 6px; user-select: none; -webkit-tap-highlight-color: transparent; }
+.jv-rec > summary::-webkit-details-marker { display: none; }
+.jv-rec > summary::marker { content: ""; }
+.jv-rec > summary:hover { background: var(--surface-1); }
+.jv-rec > summary:focus-visible { outline: 2px solid var(--blue, var(--text)); outline-offset: -2px; }
+.jv-chev { flex: none; width: 7px; height: 7px; border-right: 1.6px solid var(--text-3); border-bottom: 1.6px solid var(--text-3); transform: rotate(-45deg); transition: transform .15s ease; margin-left: 2px; }
+.jv-rec[open] > summary .jv-chev { transform: rotate(45deg); }
+.jv-rec-id { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; color: var(--text); font-weight: 500; flex: none; }
+.jv-rec-fields { font-size: 11.5px; color: var(--text-3); margin-left: auto; text-align: right; overflow-wrap: anywhere; }
+.jv-rec-body { padding: 2px 2px 8px 19px; }
+@media (max-width: 460px) {
+	.jv-rec-body .jv-pcard-diffrow { grid-template-columns: 1fr auto 1fr; }
+	.jv-rec-body .jv-pcard-lbl { grid-column: 1 / -1; }
+}
+@media (prefers-reduced-motion: reduce) { .jv-chev { transition: none; } }
 .jv-pcard-note { margin-top: 5px; color: var(--text-3); font-size: 12px; }
 .jv-pcard-body { margin: 6px 0 0; padding: 8px 10px; background: var(--surface-2); border-radius: 7px; white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow-y: auto; font-size: 12px; line-height: 1.5; }
 .jv-pcard-details { margin-top: 8px; }

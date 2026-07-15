@@ -146,7 +146,7 @@ onBeforeUnmount(() => {
 .dp-panel:focus { outline: none; }
 /* Drag handle on the inner (left) edge; 1px rule that lights up on hover/drag. */
 .dp-resizer { position: absolute; left: 0; top: 0; z-index: 3; height: 100%; width: 8px; margin-left: -4px; cursor: col-resize; }
-.dp-resizer::before { content: ""; position: absolute; left: 4px; top: 0; height: 100%; width: 1px; background: var(--blue); opacity: 0; transition: opacity .15s ease; }
+.dp-resizer::before { content: ""; position: absolute; left: 4px; top: 0; height: 100%; width: 1px; background: var(--cta); opacity: 0; transition: opacity .15s ease; }
 .dp-resizer:hover::before, .dp-resizer-active::before { opacity: 1; }
 .dp-panel-resizing { user-select: none; }
 :global(body.dp-resizing-body) { cursor: col-resize; user-select: none; }
@@ -154,7 +154,7 @@ onBeforeUnmount(() => {
 .dp-head svg { flex: none; }
 .dp-title { font-size: 14px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
 .dp-badge { font-size: 10px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; color: var(--amber); background: var(--amber-bg); border: 1px solid var(--amber-bd); border-radius: 99px; padding: 3px 9px; flex: none; }
-.dp-badge-upd { color: var(--blue); background: var(--blue-bg); border-color: var(--blue-bd); }
+.dp-badge-upd { color: var(--cta); background: var(--cta-bg); border-color: var(--cta-bd); }
 .dp-close { background: none; border: none; color: var(--text-3); cursor: pointer; padding: 4px; border-radius: 6px; display: flex; }
 .dp-close:hover { background: var(--surface-2); color: var(--text); }
 .dp-body { flex: 1; overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 14px; }
@@ -176,7 +176,7 @@ onBeforeUnmount(() => {
 .dp-foot { display: flex; align-items: center; gap: 8px; padding: 11px 14px; border-top: 1px solid var(--border); background: var(--surface-1); flex: none; }
 .dp-btn { padding: 8px 14px; border-radius: 8px; font-size: 13px; font-weight: 600; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
 .dp-btn:hover { background: var(--surface-2); }
-.dp-btn-primary { background: var(--blue); border-color: var(--blue); color: var(--blue-fg); }
+.dp-btn-primary { background: var(--cta); border-color: var(--cta); color: var(--cta-fg); }
 .dp-btn-primary:hover { filter: brightness(1.05); }
 .dp-btn-primary:disabled { opacity: .55; cursor: not-allowed; }
 .dp-slide-enter-active, .dp-slide-leave-active { transition: opacity .18s ease; }

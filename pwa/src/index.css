@@ -39,6 +39,16 @@
 	--inv-bg: #171717;
 	--inv-ink: #ffffff;
 	--scrim: rgba(20, 20, 22, 0.34);
+	/* Brand tokens — must match frontend/src/main.css exactly. Theme-invariant:
+	   the brand does not flip. The PWA used to draw its own mark (a letter "J" on
+	   #8b7cf7→#6a56e8) while the desktop drew a star on #6e8bff→#8b5cf6 — two
+	   different logos for one product, in a file whose own comment claimed they
+	   were "the same violet gradient". */
+	--brand-1: #6e8bff;
+	--brand-2: #8b5cf6;
+	--brand-grad: linear-gradient(135deg, var(--brand-1), var(--brand-2));
+	/* The four-point star, identical geometry to JarvisMark.vue's path. */
+	--brand-star: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z'/%3E%3C/svg%3E");
 }
 
 /* Dark, as one reusable block.
@@ -211,13 +221,41 @@ body {
 	color: var(--ink5);
 }
 
-/* Brand mark — the same violet gradient as the native app's BrandMark. */
+/* Brand mark — the SAME four-point star and the SAME gradient as the desktop
+   SPA's JarvisMark. It used to be a letter "J" on a different violet gradient.
+
+   The star is painted as a mask rather than markup so the call sites
+   (InstallBanner, AppDrawer, ChatsView, ChatView, NewChatView, LoginView) keep
+   working untouched: each puts a literal "J" inside this element, hidden by
+   `color: transparent`. Note we can't use `font-size: 0` — every call site sets
+   `font-size` INLINE, which beats a stylesheet rule, so the "J" would show
+   through the star. `color` is set at no call site, so transparent is safe.
+   If you add a new call site, pass no children. */
 .jv-mark {
+	position: relative;
 	display: grid;
 	place-items: center;
 	border-radius: 12px;
-	background: linear-gradient(140deg, #8b7cf7, #6a56e8);
-	color: #fff;
-	font-weight: 700;
+	overflow: hidden;
+	background: var(--brand-grad);
 	flex: none;
+	color: transparent; /* hides the legacy "J" text node; inline font-size can't fight this */
+}
+/* The star fills the chip (inset:0 gives it a definite box = the chip's size)
+   and the MASK is sized to 55%, centered. Percentage width/height on the
+   pseudo-element does NOT work here — the grid parent leaves its block-size
+   indefinite, so `height: 55%` collapses and the star renders squished. */
+.jv-mark::before {
+	content: "";
+	position: absolute;
+	inset: 0;
+	background: #fff;
+	-webkit-mask: var(--brand-star) center / 55% no-repeat;
+	mask: var(--brand-star) center / 55% no-repeat;
+}
+/* The white spark star (BrandMark.vue) scales with the tile, matching the
+   native app's 57% star-to-tile ratio. */
+.jv-mark svg {
+	width: 58%;
+	height: 58%;
 }

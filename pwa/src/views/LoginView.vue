@@ -1,5 +1,6 @@
 <script setup>
 import { ref } from "vue"
+import BrandMark from "../components/BrandMark.vue"
 import { call } from "frappe-ui"
 
 // The app's own sign-in, inside the PWA's scope.
@@ -10,6 +11,7 @@ import { call } from "frappe-ui"
 // the app, which is the whole point of installing it.
 const email = ref("")
 const password = ref("")
+const showPassword = ref(false)
 const busy = ref(false)
 const error = ref("")
 
@@ -51,7 +53,7 @@ async function submit() {
 <template>
 	<div class="jv-login jv-safe-bottom">
 		<div class="jv-login-head">
-			<div class="jv-mark" style="width: 56px; height: 56px; font-size: 23px">J</div>
+			<BrandMark :size="56" />
 			<h1>Jarvis</h1>
 			<p>Your AI teammate. Sign in to pick up where you left off.</p>
 		</div>
@@ -74,14 +76,32 @@ async function submit() {
 
 			<label>
 				<span>Password</span>
-				<input
-					v-model="password"
-					type="password"
-					name="password"
-					autocomplete="current-password"
-					placeholder="••••••••"
-					required
-				/>
+				<div class="jv-pw">
+					<input
+						v-model="password"
+						:type="showPassword ? 'text' : 'password'"
+						name="password"
+						autocomplete="current-password"
+						placeholder="••••••••"
+						required
+					/>
+					<button
+						type="button"
+						class="jv-pw-toggle"
+						:aria-label="showPassword ? 'Hide password' : 'Show password'"
+						:aria-pressed="showPassword"
+						@click="showPassword = !showPassword"
+					>
+						<svg v-if="showPassword" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+							<path d="M9.88 9.88a3 3 0 1 0 4.24 4.24M1 1l22 22" />
+						</svg>
+						<svg v-else viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" />
+							<circle cx="12" cy="12" r="3" />
+						</svg>
+					</button>
+				</div>
 			</label>
 
 			<div v-if="error" class="jv-login-error">{{ error }}</div>
@@ -159,6 +179,33 @@ async function submit() {
 }
 .jv-login-form input:focus {
 	border-color: var(--accent);
+}
+/* Password field with an in-field show/hide toggle. The input keeps its own
+   border/background (via .jv-login-form input); the eye button floats over its
+   right edge, and the input reserves room so the dots never slide under it. */
+.jv-pw {
+	position: relative;
+}
+.jv-pw input {
+	width: 100%;
+	padding-right: 46px;
+}
+.jv-pw-toggle {
+	position: absolute;
+	top: 0;
+	right: 0;
+	display: grid;
+	place-items: center;
+	width: 46px;
+	height: 48px;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--ink5);
+	cursor: pointer;
+}
+.jv-pw-toggle:active {
+	color: var(--ink8);
 }
 .jv-login-error {
 	padding: 11px 12px;

@@ -43,11 +43,13 @@ export default defineConfig({
 				background_color: "#F4F4F5",
 				theme_color: "#F4F4F5",
 				categories: ["business", "productivity"],
+				// ?v=2 cache-busts the install/home-screen icon after the blue-A →
+				// spark swap (same filenames); bump alongside index.html when icons change.
 				icons: [
-					{ src: "/assets/jarvis/manifest/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
-					{ src: "/assets/jarvis/manifest/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
-					{ src: "/assets/jarvis/manifest/icon-192-maskable.png", sizes: "192x192", type: "image/png", purpose: "maskable" },
-					{ src: "/assets/jarvis/manifest/icon-512-maskable.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
+					{ src: "/assets/jarvis/manifest/icon-192.png?v=2", sizes: "192x192", type: "image/png", purpose: "any" },
+					{ src: "/assets/jarvis/manifest/icon-512.png?v=2", sizes: "512x512", type: "image/png", purpose: "any" },
+					{ src: "/assets/jarvis/manifest/icon-192-maskable.png?v=2", sizes: "192x192", type: "image/png", purpose: "maskable" },
+					{ src: "/assets/jarvis/manifest/icon-512-maskable.png?v=2", sizes: "512x512", type: "image/png", purpose: "maskable" },
 				],
 			},
 			injectManifest: {

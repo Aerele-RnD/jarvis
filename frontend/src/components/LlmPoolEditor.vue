@@ -194,14 +194,13 @@
             </div>
           </div>
 
-          <!-- Connect sits WHERE THE ACCOUNT WILL APPEAR, not beside the Provider
-               field: it is an account action, so clicking it should materialize the
-               account in the same place.
-               PRIMARY, uniform with "+ Add a model": with no account connected this is
-               the panel's required next step (the pool cannot save without one). The
-               two never coexist - Add-a-model shows only when the panel is CLOSED,
-               Connect only when it is OPEN - so two primaries never compete. -->
-          <button v-if="editable && !(panelRow._connect && panelRow._connect.open) && !(panelRow.accounts && panelRow.accounts.length)"
+          <!-- Connect account: EDIT-mode re-entry only. In add mode the two-step sign-in
+               renders directly (see its v-if below), so a fresh "Add a model" never shows
+               this button - clicking "Connect account" and THEN "Open sign-in" was a
+               redundant double-click for one intent. It reappears only in the EDIT panel
+               when a row's last account was disconnected (removeAccount leaves _connect
+               closed), giving a neutral re-entry point rather than auto-popping OAuth. -->
+          <button v-if="editable && panel.mode !== 'add' && !(panelRow._connect && panelRow._connect.open) && !(panelRow.accounts && panelRow.accounts.length)"
                   @click="openConnectPanel(panelRow)"
                   class="jv-btn jv-btn--primary jv-flist-addbtn">
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>
@@ -238,16 +237,15 @@
                restated it.) -->
 
           <!-- OAuth connect: the SAME two-step spine onboarding renders (jv-csteps).
-               It used to be a different panel that only appeared AFTER startConnect had
-               already fired -- and startConnect opens the sign-in tab synchronously (it
-               must, to keep the click's user gesture and survive popup blockers). So the
-               customer was thrown at ChatGPT the instant they clicked "Connect account",
-               and only THEN saw a panel telling them to "Open sign-in". Backwards.
-               Now the steps appear FIRST and step 1's button is what starts OAuth, exactly
-               as in onboarding. Step 2 stays pending until step 1 mints the authorize URL:
-               a callback URL pasted before sign-in has no nonce to pair with, so
-               finishConnect would silently no-op. -->
-          <div v-if="panelRow._connect && panelRow._connect.open" class="jv-csteps">
+               Shown DIRECTLY for a fresh "Add a model" (panel.mode==='add' with no
+               account) so there is no "Connect account" pre-step - matching onboarding.
+               In the EDIT panel it appears only once opened via "+ Add account" or
+               "Reconnect" (_connect.open), so disconnecting a row's last account drops
+               back to the neutral button above rather than auto-popping OAuth. Step 1's
+               button starts OAuth inside its own click (preserving the user gesture /
+               popup-blocker fix); step 2 stays pending until step 1 mints the authorize
+               URL, since a URL pasted before sign-in has no nonce and finishConnect no-ops. -->
+          <div v-if="panelRow._connect && (panelRow._connect.open || (panel.mode === 'add' && !(panelRow.accounts && panelRow.accounts.length)))" class="jv-csteps">
             <div class="jv-cstep">
               <div class="jv-cnum">1</div>
               <div class="jv-cbody">
@@ -285,9 +283,14 @@
               </div>
             </div>
             <div v-if="panelRow._connect.error" class="jv-cn-err">{{ panelRow._connect.error }}</div>
-            <!-- Actions right-aligned, like every other confirm action in this pane. -->
+            <!-- Actions right-aligned, like every other confirm action in this pane.
+                 The inner Cancel is EDIT-mode only: there it calls closeConnect to
+                 collapse the steps back to the account list. In add mode the steps ARE
+                 the panel (they render directly from panel.mode==='add'), so closeConnect
+                 can't hide them - it would leave an inert "Cancel". Abandoning a fresh add
+                 is the panel's own Cancel/Close below; "Connect" stays to submit. -->
             <div class="jv-cn-acts">
-              <button @click="closeConnect(panelRow)" class="jv-btn jv-btn--ghost">Cancel</button>
+              <button v-if="panel.mode !== 'add'" @click="closeConnect(panelRow)" class="jv-btn jv-btn--ghost">Cancel</button>
               <button @click="finishConnect(panelRow)"
                       :disabled="panelRow._connect.loading || !panelRow._connect.authorizeUrl || !(panelRow._connect.pastedUrl || '').trim()"
                       class="jv-btn jv-btn--primary">
@@ -521,15 +524,17 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue"
-import { confirmDialog } from "frappe-ui"
 import * as api from "@/api"
 import {
   deriveMode, reorder, presetToModels, missingVendorKeys, validatePool,
   PROVIDER_LABELS, providerLabel, providerId, seedRowsFromConfig, defaultSubscriptionModel,
 } from "@/llm/pool"
 import { errMessage as _err } from "@/lib/errors"
+import { useConfirm } from "@/composables/useConfirm"
 import JvCombo from "@/components/JvCombo.vue"
 import DirectSubscriptionCard from "@/components/DirectSubscriptionCard.vue"
+
+const { confirm } = useConfirm()
 
 const props = defineProps({
   editable: { type: Boolean, default: true },
@@ -729,9 +734,9 @@ function presetCardStyle(entry) {
   const on = selectedPreset.value === entry.key
   return {
     padding: "14px 16px", fontSize: "14px", cursor: props.editable ? "pointer" : "default", borderRadius: "10px", textAlign: "left",
-    border: on ? "2px solid var(--blue)" : "1px solid var(--border)",
-    background: on ? "var(--blue-bg)" : "var(--surface)",
-    color: on ? "var(--blue)" : "var(--text)",
+    border: on ? "2px solid var(--cta)" : "1px solid var(--border)",
+    background: on ? "var(--cta-bg)" : "var(--surface)",
+    color: on ? "var(--cta)" : "var(--text)",
     opacity: entry.enabled === false ? "0.45" : "1",
     fontWeight: on ? "600" : "400",
   }
@@ -875,18 +880,13 @@ function onDirectCardChanged() {
   directPanelOpen.value = false
   emit("direct-changed")
 }
-function removeDirect() {
-  confirmDialog({
-    title: "Disconnect subscription?",
+async function removeDirect() {
+  if (!(await confirm({
+    title: "Disconnect chat subscription?",
     message: "Jarvis chat will stop working until you reconnect.",
-    onConfirm: async ({ hideDialog }) => {
-      hideDialog()
-      await _removeDirect()
-    },
-  })
-}
-
-async function _removeDirect() {
+    confirmLabel: "Disconnect",
+    danger: true,
+  }))) return
   try {
     const res = await api.disconnectSubscription()
     if (!res || res.ok === false) { err.value = (res && res.error && res.error.message) || "Disconnect failed."; return }
@@ -966,7 +966,22 @@ function onUpstreamChange(m) {
   m._connect = blankConnect()
 }
 function move(i, d) { rows.value = reorder(rows.value, i, i + d) }
-function remove(i) { rows.value = rows.value.filter((_, j) => j !== i) }
+async function remove(i) {
+  const r = rows.value[i]
+  if (!r) return
+  const label = rowModelLabel(r)
+  if (!(await confirm({
+    title: "Remove this model?",
+    message: label
+      ? `"${label}" will be removed from the failover list. Save configuration to apply.`
+      : "This model will be removed from the failover list. Save configuration to apply.",
+    confirmLabel: "Remove",
+    danger: true,
+  }))) return
+  // Filter by the row's stable handle, not the captured index: confirm() awaits, so
+  // an index could go stale if rows.value is re-seeded meanwhile.
+  rows.value = rows.value.filter((x) => x._uid !== r._uid)
+}
 function removeAccount(m, idx) { m.accounts = (m.accounts || []).filter((_, j) => j !== idx) }
 function addModel() { rows.value = [...rows.value, { ...newRow(), order: rows.value.length }] }
 
@@ -975,7 +990,10 @@ function selectPreset(entry) {
   rows.value = seedFromPreset(entry)
 }
 function seedFromPreset(entry) {
+  // Every row needs a unique _uid: remove() deletes by _uid, so preset rows that
+  // shared an undefined _uid would all vanish on removing any one of them.
   return presetToModels(entry, keysByVendor.value).map((m) => ({
+    _uid: nextUid(),
     provider: providerLabel(m.provider), model: m.model, apiKey: m.api_key || "", baseUrl: "",
     hasKey: false, credentialType: "api_key", rotation: "sticky", upstream: "openai",
     accounts: [], _connect: blankConnect(), order: m.order,
@@ -1354,7 +1372,7 @@ defineExpose({ save })
 /* 1-based failover-order badge. */
 .jv-pool-badge {
   flex: none; width: 22px; height: 22px; border-radius: 6px;
-  background: var(--blue-bg); color: var(--blue); font-size: 11.5px; font-weight: 700;
+  background: var(--cta-bg); color: var(--cta); font-size: 11.5px; font-weight: 700;
   display: grid; place-items: center;
 }
 /* Credential-type segmented control (replaces the old pale text-pair toggle). */
@@ -1396,7 +1414,7 @@ defineExpose({ save })
 }
 .jv-pool-avatar {
   flex: none; width: 22px; height: 22px; border-radius: 50%;
-  background: var(--blue-bg); color: var(--blue); font-size: 10.5px; font-weight: 700;
+  background: var(--cta-bg); color: var(--cta); font-size: 10.5px; font-weight: 700;
   display: grid; place-items: center;
 }
 .jv-pool-accttx { font-size: 12.5px; color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1529,7 +1547,7 @@ defineExpose({ save })
 
 /* Onboarding method cards (preview .method/.m-opt): sel = blue border + 3px
    ring; icon tile flips from neutral to blue tint when selected. Preview's
-   --accent maps to the app's --blue (and -bg/-bd). */
+   --accent maps to the app's --cta (and -bg/-bd). */
 .jv-ct { margin-bottom: 20px; }
 .jv-ct-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .jv-ct-card {
@@ -1538,14 +1556,14 @@ defineExpose({ save })
   background: var(--surface); cursor: pointer; font: inherit; color: var(--text);
   transition: border-color .15s, box-shadow .15s;
 }
-.jv-ct-card.on { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-bg); }
+.jv-ct-card.on { border-color: var(--cta); box-shadow: 0 0 0 3px var(--cta-bg); }
 .jv-ct-card:disabled { cursor: default; }
 .jv-ct-ic {
   flex: none; width: 34px; height: 34px; border-radius: 9px;
   display: grid; place-items: center;
   background: var(--surface-2); border: 1px solid var(--border); color: var(--text-2);
 }
-.jv-ct-card.on .jv-ct-ic { background: var(--blue-bg); border-color: var(--blue-bd); color: var(--blue); }
+.jv-ct-card.on .jv-ct-ic { background: var(--cta-bg); border-color: var(--cta-bd); color: var(--cta); }
 .jv-ct-ic svg { width: 17px; height: 17px; stroke-width: 1.8; }
 .jv-ct-tx { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .jv-ct-t { font-size: 13.5px; font-weight: 600; }
@@ -1595,7 +1613,7 @@ defineExpose({ save })
 .jv-cbtn:active { transform: scale(.98); }
 /* The Open sign-in control is an <a>, which the wizard's button-scoped
    focus-visible rule misses - give both spine controls their own outline. */
-.jv-cbtn:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.jv-cbtn:focus-visible { outline: 2px solid var(--cta); outline-offset: 2px; }
 .jv-cbtn:disabled { opacity: .55; cursor: default; transform: none; }
 .jv-cbtn-primary { background: var(--text); color: var(--surface); box-shadow: 0 2px 10px rgba(20, 20, 30, .16); }
 .jv-cbtn-primary:hover:not(:disabled) { color: var(--surface); transform: translateY(-1px); box-shadow: 0 8px 22px rgba(20, 20, 30, .22); }
@@ -1627,7 +1645,7 @@ defineExpose({ save })
   transition: border-color .15s, background .15s;
 }
 .jv-paste::placeholder { color: var(--text-3); }
-.jv-paste:focus { outline: none; border-style: solid; border-color: var(--blue); background: var(--surface); box-shadow: 0 0 0 3px var(--blue-bg); }
+.jv-paste:focus { outline: none; border-style: solid; border-color: var(--cta); background: var(--surface); box-shadow: 0 0 0 3px var(--cta-bg); }
 .jv-paste:disabled { opacity: .55; }
 .jv-cacts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
 /* Clean status pill - connected (ok) / failed (bad). Reused by the subscription
@@ -1664,7 +1682,7 @@ defineExpose({ save })
   background: var(--surface); color: var(--text); font-family: inherit; box-sizing: border-box;
 }
 .jv-ak-grid input::placeholder { color: var(--text-3); }
-.jv-ak-grid input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-bg); }
+.jv-ak-grid input:focus { outline: none; border-color: var(--cta); box-shadow: 0 0 0 3px var(--cta-bg); }
 .jv-ak-grid :deep(.jvc-field) {
   min-height: 42px; padding: 0 13px;
   border-color: var(--border-2); border-radius: 10px; font-size: 13.5px;

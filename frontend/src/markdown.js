@@ -129,9 +129,24 @@ export function renderMarkdown(src) {
 			const items = []
 			while (i < lines.length) {
 				const m = lines[i].match(/^(\s*)([-*]|\d+\.)\s+(.*)/)
-				if (!m) break
-				items.push({ indent: m[1].length, tag: /\d/.test(m[2]) ? "ol" : "ul", text: m[3] })
-				i++
+				if (m) {
+					items.push({ indent: m[1].length, tag: /\d/.test(m[2]) ? "ol" : "ul", text: m[3] })
+					i++
+					continue
+				}
+				// A blank line inside a list (a "loose" list, common in agent
+				// output) does NOT end it: keep the same list only if another
+				// list item follows. A real paragraph after the blank ends it,
+				// so "1. a\n\n2. b" is ONE <ol> (1, 2), not two that both show 1.
+				if (!lines[i].trim()) {
+					let j = i + 1
+					while (j < lines.length && !lines[j].trim()) j++
+					if (j < lines.length && /^(\s*)([-*]|\d+\.)\s+/.test(lines[j])) {
+						i = j
+						continue
+					}
+				}
+				break
 			}
 			out.push(renderListBlock(items))
 			continue

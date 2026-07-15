@@ -5,9 +5,9 @@ user a card. Today that card renders a raw-JSON dump of the dry-run ``would`` do
 and a one-line ``_describe_call`` target string - it names the record but not what
 the write does to it. ``build_card`` turns the tool + args + park-time preview into
 a structured, human-readable summary the SPA renders like the model-authored draft
-card (a field list for a create, a from->to diff for an update, a verb line for
-submit/cancel/delete/amend, to/subject/body for an email, method + args for
-run_method).
+card (a field list for a create, a from->to diff for an update, a per-record
+from->to diff for a bulk update, a verb line for submit/cancel/delete/amend,
+to/subject/body for an email, method + args for run_method).
 
 It is attached ONCE at park as ``preview["card"]`` (see the gate). Phase-1 F2 stores
 the park-time preview in the token record and the resync endpoint returns it
@@ -23,8 +23,8 @@ capped, and obviously-secret ``run_method`` arg keys masked. The card carries no
 material the owner would not already see in the post-confirm receipt.
 
 Returns ``None`` for tool shapes without a bespoke card (share_doc, assign_to,
-create_custom_skill, update_wiki, bulk update/email, and any token minted before
-this existed) - the SPA falls back to the summary + raw-preview rendering.
+create_custom_skill, update_wiki, bulk email, and any token minted before this
+existed) - the SPA falls back to the summary + raw-preview rendering.
 """
 
 from __future__ import annotations
@@ -61,6 +61,8 @@ def build_card(tool: str, args, preview) -> dict | None:
 			return _batch_create_card(would) if bulk_key == "docs" else _create_card(args, would)
 		if tool == "update_doc" and not bulk_key:
 			return _update_card(args, would)
+		if tool == "update_doc" and bulk_key == "updates":
+			return _bulk_update_card(args, bulk_items)
 		if tool in _VERB:
 			return _verb_card(tool, args, bulk_items)
 		if tool == "send_email":
@@ -156,6 +158,79 @@ def _update_card(args: dict, would) -> dict:
 		if len(diff) >= _MAX_ROWS:
 			break
 	return {"kind": "update", "doctype": doctype, "name": name, "diff": diff}
+
+
+def _is_secret(meta, key) -> bool:
+	"""A Password field or an obviously-secret key name - masked, never rendered
+	(mirrors _method_card's secret handling and the single-update card, where a
+	Password field's ``would`` value is already Frappe-masked before capture)."""
+	if _SECRET_KEY_RE.search(str(key)):
+		return True
+	if meta:
+		df = meta.get_field(key)
+		if df and df.fieldtype == "Password":
+			return True
+	return False
+
+
+def _bulk_update_card(args: dict, updates) -> dict | None:
+	"""Per-record from->to diff for a batch ``update_doc(updates=[{name, changes}])``.
+
+	Each rendered record's OLD values come from its current (post-rollback) doc,
+	perm-filtered so a restricted field never leaks; the NEW values are the
+	caller's requested ``changes``. No-op fields are dropped (comparing DISPLAY
+	forms, so a typed DB value equals its string request), permlevel-restricted
+	fields are skipped (the confirmed save would silently drop them - mirrors
+	_update_card's ``would`` guard), and secret / Password values are masked. Only
+	the first ``_MAX_ROWS`` records are rendered - each costs one doc read - and the
+	rest ride ``extra`` (the raw payload under Details still lists every name).
+	``varying`` flags a heterogeneous batch (the requested changes differ across
+	records). Each record also carries the changed field labels for its row."""
+	doctype = args.get("doctype")
+	meta = _meta(doctype)
+	first = updates[0].get("changes") if isinstance(updates[0], dict) else None
+	varying = any(isinstance(u, dict) and u.get("changes") != first for u in updates)
+	records = []
+	for u in updates[:_MAX_ROWS]:
+		if not isinstance(u, dict):
+			continue
+		name = u.get("name")
+		changes = u.get("changes") if isinstance(u.get("changes"), dict) else {}
+		# OLD from the current doc (the park dry-run rolled back), perm-filtered so a
+		# restricted field's old value never leaks - same guard as _update_card.
+		old, loaded = {}, False
+		try:
+			doc = frappe.get_doc(doctype, name)
+			doc.apply_fieldlevel_read_permissions()
+			old = doc.as_dict()
+			loaded = True
+		except Exception:
+			old = {}
+		diff, fields = [], []
+		for key in list(changes)[: _MAX_ROWS * 2]:  # over-scan so no-ops don't eat slots
+			# A field the user cannot read at their permlevel is delattr'd from the
+			# perm-filtered doc; the confirmed save silently skips it too, so don't
+			# show a phantom change (mirrors _update_card's ``key not in would``).
+			if loaded and key not in old:
+				continue
+			from_s, to_s = _fmt(old.get(key)), _fmt(changes.get(key))
+			if from_s == to_s:
+				continue  # no-op: display forms match (typed DB value vs its string arg)
+			if _is_secret(meta, key):
+				from_s = to_s = "[hidden]"  # never render a password / secret value
+			label = _label(meta, key)
+			fields.append(label)
+			diff.append({"label": label, "from": from_s, "to": to_s})
+			if len(diff) >= _MAX_ROWS:
+				break
+		records.append({"name": name, "fields": fields, "diff": diff})
+	if not records:
+		return None
+	return {
+		"kind": "bulk_update", "doctype": doctype, "count": len(updates),
+		"records": records, "extra": max(0, len(updates) - len(records)),
+		"varying": varying,
+	}
 
 
 def _batch_create_card(would) -> dict | None:

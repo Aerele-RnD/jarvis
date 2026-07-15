@@ -1,7 +1,7 @@
 """Copy every Jarvis User Preference row's greeting state onto the matching
 Jarvis User Settings row (one canonical per-user DocType). Idempotent and
 guarded by table existence, so it no-ops on a fresh CI DB where the old table
-was never created. Runs before v1_15 drops the old DocType."""
+was never created. Runs before v1_16 drops the old DocType."""
 
 import frappe
 from jarvis.chat.usage import get_or_create_user_settings

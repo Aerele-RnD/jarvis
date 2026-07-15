@@ -181,14 +181,17 @@ class TestGuestReachesTheAppsOwnLogin(FrappeTestCase):
 		get_context(context)
 		self.assertEqual(context.boot["frappe_user_id"], "Guest")
 
-	def test_signed_in_user_without_access_still_goes_to_the_desk(self):
-		"""They already have a session — a login form would be nonsense. The Desk
-		is where a non-Jarvis user belongs."""
+	def test_signed_in_user_without_access_goes_to_the_no_access_page(self):
+		"""They already have a session — a login form would be nonsense. The
+		branded /jarvis-no-access page is where a non-Jarvis user belongs: it
+		explains what Jarvis is, offers the "ask your admin" CTA, and links
+		back to the Desk (the pre-no-access-page behavior was a bare /app
+		bounce)."""
 		frappe.set_user("Administrator")
 		with patch("jarvis.www.jarvis_mobile.has_jarvis_access", return_value=False):
 			with self.assertRaises(frappe.Redirect):
 				get_context(frappe._dict())
-		self.assertEqual(frappe.local.flags.redirect_location, "/app")
+		self.assertEqual(frappe.local.flags.redirect_location, "/jarvis-no-access")
 
 	def test_user_with_access_gets_the_shell(self):
 		frappe.set_user("Administrator")

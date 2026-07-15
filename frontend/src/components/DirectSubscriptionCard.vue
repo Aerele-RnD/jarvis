@@ -40,7 +40,7 @@
       <div v-if="status.connected_at" class="jv-dsub-kv"><span>Connected</span><b>{{ connectedAtLabel }}</b></div>
       <div class="jv-dsub-actions" style="margin-top:14px;">
         <button v-if="editable" class="jv-dsub-btn jv-dsub-btn-ghost" :disabled="busy" @click="doDisconnect">Disconnect</button>
-        <button v-if="editable" class="jv-dsub-btn jv-dsub-btn-primary" @click="startSignin">Re-authorize</button>
+        <button v-if="editable" class="jv-dsub-btn jv-dsub-btn-primary" @click="startSignin()">Re-authorize</button>
       </div>
       <div v-if="err" class="jv-dsub-err">{{ err }}</div>
     </div>
@@ -77,10 +77,12 @@
 
 <script setup>
 import { ref, computed, onBeforeUnmount } from "vue"
-import { confirmDialog } from "frappe-ui"
 import * as api from "@/api"
 import { errMessage as _err } from "@/lib/errors"
 import { exactDate } from "@/utils/datetime"
+import { useConfirm } from "@/composables/useConfirm"
+
+const { confirm } = useConfirm()
 
 const props = defineProps({
   // Shape from getDirectSubscriptionStatus(): { connected, provider, model,
@@ -200,18 +202,13 @@ async function submitPasted() {
   } catch (e) { err.value = _err(e) } finally { busy.value = false }
 }
 
-function doDisconnect() {
-  confirmDialog({
-    title: "Disconnect subscription?",
+async function doDisconnect() {
+  if (!(await confirm({
+    title: "Disconnect chat subscription?",
     message: "Jarvis chat will stop working until you reconnect.",
-    onConfirm: async ({ hideDialog }) => {
-      hideDialog()
-      await _doDisconnect()
-    },
-  })
-}
-
-async function _doDisconnect() {
+    confirmLabel: "Disconnect",
+    danger: true,
+  }))) return
   err.value = ""
   busy.value = true
   try {

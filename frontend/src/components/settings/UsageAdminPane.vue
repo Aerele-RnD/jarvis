@@ -169,7 +169,7 @@ onMounted(loadUsers)
 .jv-usr-totalhint { font-size: 11px; color: var(--text-3); margin-top: 4px; }
 .jv-usr-limit { display: flex; align-items: center; gap: 6px; }
 .jv-usr-limitinput { width: 74px; flex: none; padding: 6px 8px; font-size: 12.5px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text); font-family: inherit; box-sizing: border-box; }
-.jv-usr-limitinput:focus { outline: none; border-color: var(--blue-bd); }
+.jv-usr-limitinput:focus { outline: none; border-color: var(--cta-bd); }
 .jv-usr-limitinput::-webkit-outer-spin-button, .jv-usr-limitinput::-webkit-inner-spin-button { margin: 0; }
 .jv-usr-last { font-size: 12px; color: var(--text-3); text-align: right; }
 </style>

@@ -157,9 +157,11 @@ const ts = computed(() => {
 	font-weight: 550;
 	overflow-wrap: anywhere;
 }
+/* --link, not --cta: this is a link to the affected document. --cta is
+   near-black, which made it indistinguishable from body text. */
 .jv-receipt-open,
 .jv-receipt-link {
-	color: var(--blue);
+	color: var(--link);
 	text-decoration: none;
 	font-size: 12px;
 }

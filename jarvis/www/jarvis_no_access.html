@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<meta name="robots" content="noindex, nofollow" />
+		<title>Jarvis · Access required</title>
+		<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+		<meta name="theme-color" content="#16161a" media="(prefers-color-scheme: dark)" />
+		<!-- The Jarvis mark uses the SPA brand gradient (JarvisMark.vue) inline; every
+		     other surface follows the SPA's neutral system (theme.js): near-black CTA,
+		     gray-on-white light / charcoal dark, no gradients or glows in chrome. Colors
+		     mirror LIGHT_VARS / DARK_VARS so this page reads as part of the app. Fully
+		     self-contained by design: no stylesheet links, no fonts, no CDNs. -->
+		<style>
+			:root {
+				color-scheme: light dark;
+				/* Surfaces / text — LIGHT_VARS in theme.js */
+				--jvna-bg-1: #ffffff;
+				--jvna-bg-2: #f7f7f8;
+				--jvna-card: #ffffff;
+				--jvna-card-border: #e8e8ec;
+				--jvna-text: #171717;
+				--jvna-text-2: #4a4a4f;
+				--jvna-text-muted: #6d6d76;
+				--jvna-pill-bg: #f1f1f3;
+				--jvna-pill-border: #e8e8ec;
+				/* Primary CTA = the SPA's inverted solid button (bg:--text, fg:--surface).
+				   Hover/active shift the background (design.md §3), which reads in both
+				   themes — unlike filter/opacity, which clamp on the near-white dark CTA. */
+				--jvna-cta-bg: #171717;
+				--jvna-cta-bg-hover: #2f2f2f;
+				--jvna-cta-bg-active: #454545;
+				--jvna-cta-fg: #ffffff;
+				--jvna-cta-shadow: rgba(23, 23, 23, 0.26);
+				/* Static ambient wash — neutral, no motion */
+				--jvna-wash: rgba(23, 23, 23, 0.05);
+			}
+
+			@media (prefers-color-scheme: dark) {
+				:root {
+					/* DARK_VARS in theme.js ("Refined Indigo" charcoal) */
+					--jvna-bg-1: #16161a;
+					--jvna-bg-2: #0f0f13;
+					--jvna-card: #1d1d22;
+					--jvna-card-border: #2c2c34;
+					--jvna-text: #ededf2;
+					--jvna-text-2: #b6b6c0;
+					--jvna-text-muted: #7e7e8a;
+					--jvna-pill-bg: #26262d;
+					--jvna-pill-border: #3a3a45;
+					--jvna-cta-bg: #ededf2;
+					--jvna-cta-bg-hover: #dadae2;
+					--jvna-cta-bg-active: #c7c7d0;
+					--jvna-cta-fg: #16161a;
+					--jvna-cta-shadow: rgba(0, 0, 0, 0.5);
+					--jvna-wash: rgba(255, 255, 255, 0.035);
+				}
+			}
+
+			* {
+				box-sizing: border-box;
+			}
+
+			html,
+			body {
+				margin: 0;
+				padding: 0;
+				height: 100%;
+			}
+
+			body {
+				min-height: 100vh;
+				overflow-x: hidden;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				padding: 24px;
+				font-family: "Inter", system-ui, -apple-system, sans-serif;
+				color: var(--jvna-text);
+				background: linear-gradient(160deg, var(--jvna-bg-1) 0%, var(--jvna-bg-2) 100%);
+				-webkit-font-smoothing: antialiased;
+			}
+
+			/* A single soft, static neutral wash behind the card — depth without motion
+			   or brand color, in keeping with the app's disciplined chrome. */
+			.jvna-wash {
+				position: fixed;
+				inset: 0;
+				z-index: 0;
+				pointer-events: none;
+				background: radial-gradient(620px circle at 50% 40%, var(--jvna-wash) 0%, transparent 70%);
+			}
+
+			.jvna-card {
+				position: relative;
+				z-index: 1;
+				width: 100%;
+				max-width: 440px;
+				background: var(--jvna-card);
+				border: 1px solid var(--jvna-card-border);
+				border-radius: 20px;
+				padding: 44px 40px 36px;
+				box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 18px 40px -20px rgba(0, 0, 0, 0.16);
+				text-align: center;
+			}
+
+			.jvna-mark-wrap {
+				position: relative;
+				width: 64px;
+				height: 64px;
+				margin: 0 auto 22px;
+			}
+
+			/* The Jarvis mark is the one sanctioned brand-asset moment (design.md §2.1).
+			   Gradient + glow mirror JarvisMark.vue exactly (the SPA's single source of
+			   truth for the brand glyph — the same mark the chat empty-state hero,
+			   assistant avatars, and onboarding gate render), so this gate can't drift
+			   from the chat interface on a brand refresh. */
+			.jvna-mark {
+				width: 64px;
+				height: 64px;
+				border-radius: 18px;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				background: linear-gradient(135deg, #6e8bff, #8b5cf6);
+				box-shadow: 0 8px 20px -6px rgba(110, 139, 255, 0.4);
+			}
+
+			.jvna-lock {
+				position: absolute;
+				right: -7px;
+				bottom: -7px;
+				width: 27px;
+				height: 27px;
+				border-radius: 50%;
+				background: #8b5cf6;
+				border: 3px solid var(--jvna-card);
+				display: flex;
+				align-items: center;
+				justify-content: center;
+			}
+
+			.jvna-pill {
+				display: inline-flex;
+				align-items: center;
+				gap: 6px;
+				font-size: 12px;
+				font-weight: 500;
+				color: var(--jvna-text-muted);
+				background: var(--jvna-pill-bg);
+				border: 1px solid var(--jvna-pill-border);
+				border-radius: 999px;
+				padding: 5px 12px 5px 10px;
+				margin-bottom: 18px;
+			}
+
+			.jvna-pill strong {
+				color: var(--jvna-text);
+				font-weight: 600;
+			}
+
+			.jvna-pill i {
+				width: 6px;
+				height: 6px;
+				border-radius: 50%;
+				background: var(--jvna-text-muted);
+				flex: none;
+			}
+
+			h1 {
+				margin: 0 0 14px;
+				font-size: clamp(22px, 5vw, 26px);
+				font-weight: 700;
+				letter-spacing: -0.01em;
+				line-height: 1.25;
+			}
+
+			.jvna-body {
+				margin: 0 0 30px;
+				font-size: 15px;
+				line-height: 1.6;
+				font-weight: 500;
+				color: var(--jvna-text-2);
+			}
+
+			.jvna-actions {
+				display: flex;
+				flex-direction: column;
+				gap: 10px;
+			}
+
+			/* Buttons shift color only — no transform/scale (design.md §1.3, §3). */
+			.jvna-btn {
+				display: inline-flex;
+				align-items: center;
+				justify-content: center;
+				width: 100%;
+				padding: 12px 20px;
+				border-radius: 11px;
+				font-size: 14px;
+				font-weight: 600;
+				text-decoration: none;
+				border: 1px solid transparent;
+				transition: background-color 0.15s ease;
+			}
+
+			.jvna-btn-primary {
+				color: var(--jvna-cta-fg);
+				background: var(--jvna-cta-bg);
+				box-shadow: 0 6px 20px -6px var(--jvna-cta-shadow);
+			}
+
+			.jvna-btn-primary:hover {
+				background: var(--jvna-cta-bg-hover);
+			}
+
+			.jvna-btn-primary:active {
+				background: var(--jvna-cta-bg-active);
+			}
+
+			.jvna-btn-primary:focus-visible {
+				outline: 2px solid var(--jvna-cta-bg);
+				outline-offset: 3px;
+			}
+
+			@media (max-width: 380px) {
+				.jvna-card {
+					padding: 36px 24px 28px;
+					border-radius: 16px;
+				}
+			}
+		</style>
+	</head>
+	<body>
+		<div class="jvna-wash" aria-hidden="true"></div>
+
+		<main class="jvna-card">
+			<div class="jvna-mark-wrap">
+				<div class="jvna-mark">
+					<svg viewBox="0 0 24 24" width="35" height="35" fill="#fff" aria-hidden="true">
+						<path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" />
+					</svg>
+				</div>
+				<div class="jvna-lock" aria-hidden="true">
+					<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+						<rect x="5" y="11" width="14" height="9" rx="2.2" />
+						<path d="M8 11V7a4 4 0 0 1 8 0v4" />
+					</svg>
+				</div>
+			</div>
+
+			{% if user_fullname %}
+			<div class="jvna-pill"><i></i>Signed in as <strong>{{ user_fullname | e }}</strong></div>
+			{% endif %}
+
+			<h1>You need access to Jarvis</h1>
+			<p class="jvna-body">You&rsquo;re not authorized just yet. One quick request to your admin, and Jarvis is all yours.</p>
+
+			<div class="jvna-actions">
+				<a class="jvna-btn jvna-btn-primary" href="/app">Back to Home</a>
+			</div>
+		</main>
+	</body>
+</html>

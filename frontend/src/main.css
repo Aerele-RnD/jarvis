@@ -1,4 +1,24 @@
 /* Global styles lifted from the imported design (Jarvis Chat.dc.html). */
+
+/* ===== Brand tokens =========================================================
+   The single source of truth for the Jarvis mark's colour.
+
+   Deliberately on :root and NOT in theme.js's paletteVars: jv-* vars only
+   resolve inside a subtree that bound paletteVars (the chat/settings/onboarding
+   roots), but the mark also renders in the frappe-ui shell — the sidebar
+   (UserMenu) and the global toaster — where those vars do not exist. :root
+   reaches both worlds.
+
+   Theme-invariant on purpose: the brand does not flip. Every other colour in
+   the app does, which is precisely how the mark drifted into three different
+   colours — chips painted `var(--cta)` went near-black in light and near-white
+   in dark, so a dark-mode-only !important rule had to force the gradient back. */
+:root {
+	--brand-1: #6e8bff;
+	--brand-2: #8b5cf6;
+	--brand-grad: linear-gradient(135deg, var(--brand-1), var(--brand-2));
+}
+
 * {
 	box-sizing: border-box;
 }

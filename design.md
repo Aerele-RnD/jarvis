@@ -108,6 +108,13 @@ badges and banners.
 > the equivalents are `bg-surface-gray-7` and `text-ink-white`. If Jarvis upgrades, only these
 > names shift; the language is identical.
 
+> **Verify token values against the *built* CSS, not `frappe-ui/tailwind/colors.js`.** The
+> `colors.js` keys (`--text-ink-gray-9`, and a `--surface-blue-2` that maps to `blue[500]`) are
+> the config's internal naming and do **not** match what ships. The emitted runtime variables
+> are `--ink-*`, `--surface-*`, `--outline-*`, and `--surface-blue-2` is the **pale** tint
+> `#E6F4FF`. If you are checking a contrast ratio or a var name, read the compiled stylesheet
+> (`jarvis/public/frontend/assets/*.css`) — reading `colors.js` will give you the wrong answer.
+
 ### 2.2 The legacy `jv-*` palette and how the stacks coexist
 
 Legacy surfaces (settings dialog, onboarding) still use `frontend/src/theme.js`
@@ -121,8 +128,8 @@ this is the mapping (use it when porting, never when writing new UI):
 | `--surface-1` / `--surface-2` / `--surface-3` | `bg-surface-gray-1` / `-2` / `-3` | wells, hovers, active |
 | `--border` / `--border-2` | `border-outline-gray-1` / `-2` | hairline / stronger |
 | `--text` / `--text-2` / `--text-3` | `text-ink-gray-9` / `-7` / `-5` | |
-| `--blue` / `--blue-bg` / `--blue-bd` | indigo accent (`bg-surface-blue-*`) | indigo (`#4f46e5` light · `#6e8bff` dark) — an accent, **not** the CTA color. This design language reads near-black CTAs from `--text` and links/info from `--link`, so `--blue` only survives on a few focus rings, the running-status dot, and a tour mock bubble. (Historically `--blue` was `#171717`; `main` repointed light `--blue` to indigo, so never treat it as the black CTA color.) |
-| `--link` | `text-ink-blue-link` | link + info text (`#1579d0` light · `#6e8bff` dark) — the sanctioned blue for links, `b-run` badges, and info states |
+| `--cta` / `--cta-fg` / `--cta-bg` / `--cta-bd` | near-black solid button (`bg-surface-gray-9` + `text-ink-white`) | **The CTA pair — and it inverts by theme:** fill `#1c1c22` light · `#ececf0` dark; `--cta-fg` is the readable foreground on that fill (`#ffffff` light · `#1c1c22` dark). **Always use them together** — `background: var(--cta); color: var(--cta-fg)`. Pairing `--cta` with a hard-coded `#fff` renders white-on-near-white in dark mode. (Formerly `--blue`, which was a misnomer: PR #294 repointed it from indigo to near-black but kept the name, so every consumer still reading it *as a blue* — links, gradient stops, icon strokes — silently turned near-black. Renamed to `--cta` so this cannot recur.) |
+| `--link` | `text-ink-blue-link` | link + info text (`#1579d0` light · `#6e8bff` dark) — **the only sanctioned blue**: links, `b-run` badges, info states. If it should look like a link, use this. Never `--cta`. |
 | `--green` / `--green-bg` / `--green-bd` | `text-ink-green-*` / `bg-surface-green-2` / `border-outline-green-*` | |
 | `--red`, `--amber` families | red / amber semantic ramps | |
 | brand purple `#8b5cf6`, gradients, glow rgba | **no equivalent — delete from chrome and controls on rewrite** | untokenized; violates §1.1–1.3 |
@@ -559,7 +566,7 @@ Each "Don't" is live in the Jarvis codebase today (settings dialog, onboarding, 
 | 8 | `<a>` styled as buttons (`jv-acct-btn-sm`), buttons styled as links (`jv-ob-link`) | Buttons are `Button`; links are `text-ink-blue-link`/underline text |
 | 9 | Custom 42px inputs, native selects/checkboxes, hand-rolled `.jv-switch` | frappe-ui `FormControl`/`Switch`; 28px inputs, gray-fill→white-on-focus |
 | 10 | Massive inline `:style` objects and inline-styled close button + `!important` hover patches | Tailwind semantic utility classes; no inline styles, no `!important` |
-| 11 | `paletteVars` inline vars + `.jv-dark` class; two theme singletons; `--blue` misnamed (indigo accent, not the CTA color — CTAs read `--text`) | `<html data-theme>` + semantic tokens; one `useJarvisTheme()` singleton |
+| 11 | `paletteVars` inline vars + `.jv-dark` class; two theme singletons | `<html data-theme>` + semantic tokens; one `useJarvisTheme()` singleton. (The `--blue` misnomer in this row is **fixed** — it is now `--cta`/`--cta-fg`; see §2.2.) |
 | 12 | 10px uppercase group headers, 8.5px `sm-tag` micro-pill | 12px `font-medium text-ink-gray-5` group labels; `Badge size="sm"` minimum 11px |
 | 13 | Hand-pasted SVG path data per nav item | `FeatherIcon`/Lucide components at `size-4` |
 | 14 | `window.confirm()` for disconnect | frappe-ui `confirmDialog` / red-solid Dialog action |
@@ -603,7 +610,12 @@ Each "Don't" is live in the Jarvis codebase today (settings dialog, onboarding, 
   reduced-motion handling — another reason not to add decorative motion that would need it.
 - Color is never the only signal: status pairs hue with a label or icon (badge text, dot +
   word), matching the badge/status-dot patterns.
-- Icon-only buttons carry a `tooltip`/`aria-label`.
+- Icon-only buttons **must carry a `label`** (frappe-ui `Button`) or an explicit `aria-label`
+  (native `<button>`). **`tooltip` is not an accessible name** — `Button.vue` binds
+  `:aria-label="label"` to the `label` prop *only*; `tooltip` merely renders a hover bubble. An
+  icon-only `<Button icon="x" tooltip="Close" />` announces as a bare, unnamed "button". If the
+  label would be visually redundant, keep `label` and hide it: frappe-ui renders no text for an
+  icon-only button, so `label` costs nothing visually and is the accessible name.
 - Contrast: body text at `ink-gray-7`+ on `surface-white`; `ink-gray-5` is the floor for
   meaningful text (labels/hints); `ink-gray-4` only for placeholders/disabled.
 

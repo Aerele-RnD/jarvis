@@ -65,6 +65,30 @@ const sentence = computed(() =>
 			<div v-for="(n, i) in card.notes" :key="'n' + i" class="jv-pc-note">{{ n }}</div>
 		</template>
 
+		<template v-else-if="card.kind === 'bulk_update'">
+			<div class="jv-pc-head">Update {{ card.count }} {{ card.doctype }} record<template v-if="card.count !== 1">s</template><span v-if="card.varying" class="jv-pc-sub"> · varying changes</span></div>
+			<p class="jv-pc-cap">Tap a record to review its changes.</p>
+			<div class="jv-pc-recs">
+				<details v-for="(r, i) in card.records" :key="i" class="jv-pc-rec" :open="i === 0">
+					<summary>
+						<span class="jv-pc-chev" aria-hidden="true"></span>
+						<span class="jv-pc-rid">{{ r.name }}</span>
+						<span v-if="r.fields?.length" class="jv-pc-rfields">{{ r.fields.join(" · ") }}</span>
+					</summary>
+					<div class="jv-pc-rbody">
+						<div v-for="(d, j) in r.diff" :key="j" class="jv-pc-diff">
+							<span class="jv-pc-lbl">{{ d.label }}</span>
+							<span class="jv-pc-from">{{ d.from || "(empty)" }}</span>
+							<span class="jv-pc-arrow">→</span>
+							<span class="jv-pc-to">{{ d.to || "(empty)" }}</span>
+						</div>
+						<div v-if="!r.diff.length" class="jv-pc-empty">No field changes.</div>
+					</div>
+				</details>
+			</div>
+			<div v-if="card.extra > 0" class="jv-pc-more">+{{ card.extra }} more · full list in Details</div>
+		</template>
+
 		<details v-if="details" class="jv-pc-details">
 			<summary>Details</summary>
 			<pre>{{ details }}</pre>
@@ -89,6 +113,26 @@ const sentence = computed(() =>
 .jv-pc-list { margin: 5px 0 0; padding-left: 18px; }
 .jv-pc-list li { padding: 1px 0; overflow-wrap: anywhere; }
 .jv-pc-more { list-style: none; color: var(--ink5); }
+/* bulk update: collapsible per-record from→to list (touch-first) */
+.jv-pc-sub { font-weight: 400; color: var(--ink5); }
+.jv-pc-cap { font-size: 12px; color: var(--ink5); margin: 0 0 8px; }
+.jv-pc-recs { display: flex; flex-direction: column; max-height: 320px; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.jv-pc-rec { border-top: 1px solid var(--border); }
+.jv-pc-rec:first-child { border-top: 0; }
+.jv-pc-rec > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 2px; user-select: none; -webkit-tap-highlight-color: transparent; }
+.jv-pc-rec > summary::-webkit-details-marker { display: none; }
+.jv-pc-rec > summary::marker { content: ""; }
+.jv-pc-rec > summary:active { background: var(--card2); }
+.jv-pc-chev { flex: none; width: 8px; height: 8px; border-right: 1.7px solid var(--ink5); border-bottom: 1.7px solid var(--ink5); transform: rotate(-45deg); transition: transform .15s ease; margin-left: 2px; }
+.jv-pc-rec[open] > summary .jv-pc-chev { transform: rotate(45deg); }
+.jv-pc-rid { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--ink9); font-weight: 500; flex: none; }
+.jv-pc-rfields { font-size: 12px; color: var(--ink5); margin-left: auto; text-align: right; overflow-wrap: anywhere; }
+.jv-pc-rbody { padding: 2px 2px 10px 20px; }
+@media (max-width: 460px) {
+	.jv-pc-rbody .jv-pc-diff { grid-template-columns: 1fr auto 1fr; }
+	.jv-pc-rbody .jv-pc-lbl { grid-column: 1 / -1; }
+}
+@media (prefers-reduced-motion: reduce) { .jv-pc-chev { transition: none; } }
 .jv-pc-note { margin-top: 6px; color: var(--ink5); font-size: 12.5px; }
 .jv-pc-body { margin: 8px 0 0; padding: 10px; border-radius: 8px; background: var(--card2); color: var(--ink7); font-size: 12.5px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow-y: auto; }
 .jv-pc-details { margin-top: 10px; }

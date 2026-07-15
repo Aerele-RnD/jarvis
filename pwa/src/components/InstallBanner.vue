@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from "vue"
 import { installPrompt, isStandalone } from "../install"
+import BrandMark from "./BrandMark.vue"
 
 // "Add Jarvis to your home screen." Two different worlds:
 //  - Chrome/Android fires beforeinstallprompt. That event is captured in
@@ -66,7 +67,7 @@ onMounted(() => {
 <template>
 	<Transition name="jv-install">
 		<div v-if="show" class="jv-install">
-			<div class="jv-mark" style="width: 34px; height: 34px; font-size: 15px">J</div>
+			<BrandMark :size="34" />
 			<div class="jv-install-text">
 				<strong>Install Jarvis</strong>
 				<span v-if="insecure">Open this site over https to install it — browsers won't install an insecure page.</span>

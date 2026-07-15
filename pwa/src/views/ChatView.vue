@@ -1,5 +1,6 @@
 <script setup>
 import { computed, defineAsyncComponent, inject, nextTick, onMounted, onUnmounted, ref, watch } from "vue"
+import BrandMark from "../components/BrandMark.vue"
 import { useRouter } from "vue-router"
 // The desktop SPA's renderer — dependency-free, and sharing it means an agent
 // reply reads identically on both surfaces.
@@ -19,7 +20,6 @@ import RecordCards from "../components/RecordCards.vue"
 import Sheet from "../components/Sheet.vue"
 import SkillChips from "../components/SkillChips.vue"
 import ThinkingIndicator from "../components/ThinkingIndicator.vue"
-import ToolsCard from "../components/ToolsCard.vue"
 // Lazy: the voice sheet pulls in the shared audio recorder, and a user who never
 // taps the mic should never pay for it.
 const VoiceSheet = defineAsyncComponent(() => import("../components/VoiceSheet.vue"))
@@ -144,21 +144,6 @@ function onActionApplied() {
 	load()
 	store.loadConversations()
 }
-
-function toolsTitle(msgs) {
-	const dur = spanBetween(msgs[0]?.creation, msgs[msgs.length - 1]?.modified || msgs[msgs.length - 1]?.creation, 1)
-	const n = msgs.length
-	const steps = `${n} step${n === 1 ? "" : "s"}`
-	return dur ? `Worked for ${dur} · ${steps}` : `Ran ${steps}`
-}
-
-const toolSteps = (msgs) =>
-	msgs.map((m) => ({
-		id: m.name,
-		title: m.content || m.tool_name || "Tool call",
-		toolName: m.tool_name,
-		status: toolStatus(m.tool_status),
-	}))
 
 // ── scrolling ───────────────────────────────────────────────────────────────
 function atBottom() {
@@ -494,7 +479,7 @@ onUnmounted(() => {
 
 	<div ref="scroller" class="jv-scroll jv-thread">
 		<div v-if="!items.length && !live && !loading" class="jv-empty">
-			<div class="jv-mark" style="width: 52px; height: 52px; font-size: 21px">J</div>
+			<BrandMark :size="52" />
 			<div style="font-size: 16px; font-weight: 600; color: var(--ink9)">What can I do for you?</div>
 			<div style="font-size: 14px; line-height: 1.5">Try “show me this month's overdue invoices”.</div>
 		</div>
@@ -513,7 +498,6 @@ onUnmounted(() => {
 			     markdown, a table and a chart, and boxing all that in a chat
 			     bubble is what made this screen look like a toy next to the app. -->
 			<div v-else class="jv-msg-agent">
-				<ToolsCard v-if="it.tools.length" :title="toolsTitle(it.tools)" :steps="toolSteps(it.tools)" />
 				<template v-if="it.msg">
 					<div v-if="it.view.html" class="jv-md" v-html="it.view.html" />
 					<div v-else-if="it.view.empty" class="jv-msg-error">
@@ -547,19 +531,12 @@ onUnmounted(() => {
 
 		<!-- the turn in flight -->
 		<template v-if="live">
-			<ToolsCard
-				v-if="live.tools.length"
-				live
-				default-open
-				:title="live.tools.find((t) => t.status === 'running')?.title || 'Working…'"
-				:steps="live.tools"
-			/>
 			<div v-if="live.text" class="jv-msg-agent">
 				<div class="jv-md" v-html="renderMarkdown(stripAgentBlocks(live.text))" />
 			</div>
 		</template>
 
-		<ThinkingIndicator v-if="sending && !(live && (live.text || live.tools.length))" />
+		<ThinkingIndicator v-if="sending && !(live && live.text)" />
 
 		<DecisionCard
 			v-for="p in pending"

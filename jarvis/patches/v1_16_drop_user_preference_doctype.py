@@ -1,4 +1,4 @@
-"""Remove the Jarvis User Preference DocType after v1_14 copied its data into
+"""Remove the Jarvis User Preference DocType after v1_15 copied its data into
 Jarvis User Settings. Guarded so it no-ops on a fresh DB where the DocType was
 never created (its folder is gone from the app).
 
