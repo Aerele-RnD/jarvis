@@ -18,7 +18,7 @@
 
 		<div v-else-if="directSubErr" class="jv-acct-err">
 			Couldn't load your AI connection.
-			<button class="jv-btn jv-btn--ghost jv-btn--sm" style="margin-left:8px;" @click="loadDirectSub">Retry</button>
+			<button type="button" class="jv-mon-retry" @click="loadDirectSub">Retry</button>
 		</div>
 
 		<template v-else>

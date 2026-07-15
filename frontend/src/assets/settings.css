@@ -212,9 +212,6 @@
 .jv-acct-link:hover { text-decoration: underline; }
 .jv-acct-link svg { flex: none; }
 .jv-acct-savednote { font-size: 12px; color: var(--text-3); font-weight: 420; }
-.jv-acct-kv { display: flex; justify-content: space-between; font-size: 13px; padding: 6px 0; gap: 12px; }
-.jv-acct-kv .jv-ok { color: var(--green); }
-.jv-acct-kv .jv-warn { color: var(--amber); }
 .jv-acct-usage-line { font-size: 13px; color: var(--text-2); }
 
 /* ===== Monitor cards (Billing & metering / Connection) ===== */
@@ -284,3 +281,11 @@
   .jv-fade-enter-active, .jv-fade-leave-active { transition: none; }
   .jv-settings { animation: none; }
 }
+
+/* Admin tag — small pill next to the "Administration" rail group heading
+   (SettingsDialog.vue), marking that group as gated to Jarvis Admin/System
+   Manager, matching the .jv-mon-tag colour recipe (blue, not the green/amber
+   status tones used elsewhere). */
+.sm-tag { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 20px;
+  font-size: 9px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  background: var(--blue-bg); border: 1px solid var(--blue-bd); color: var(--text-2); vertical-align: middle; }

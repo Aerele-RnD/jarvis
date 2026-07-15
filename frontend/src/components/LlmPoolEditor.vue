@@ -6,7 +6,10 @@
        CSS vars (--surface, --text, …); uses only tokens, no hard-coded colors.
        Consumers: AiView (manage tab) now, AccountView + onboarding later. -->
   <div class="jv-llm-editor" style="font-family:inherit;color:var(--text);">
-    <div v-if="err" style="color:var(--red);font-size:13px;margin-bottom:12px;">{{ err }}</div>
+    <div v-if="err" style="color:var(--red);font-size:13px;margin-bottom:12px;">
+      {{ err }}
+      <button type="button" class="jv-mon-retry" @click="load">Retry</button>
+    </div>
 
     <!-- ============================================================
          UNIFIED FAILOVER LIST + CONFIG SECTION (!singleMode only - the
