@@ -209,6 +209,27 @@ def _account(upstream="openai", account_ref="ACC_001", label="test@example.com",
     )
 
 
+class TestProviderNormalization(FrappeTestCase):
+    """Phase-1 API-key expansion: normalize_provider maps new provider labels."""
+
+    def test_xai_grok_normalizes_to_xai(self):
+        from jarvis.jarvis.pool_serialize import normalize_provider
+        # xAI Grok is a native Bifrost provider; its label normalizes to "xai".
+        self.assertEqual(normalize_provider("xAI Grok"), "xai")
+
+    def test_glm_zai_normalizes_to_openai_compat(self):
+        from jarvis.jarvis.pool_serialize import normalize_provider
+        # GLM / Z.ai has no native Bifrost provider, so it rides the existing
+        # openai-compatible custom-endpoint path (base_url required).
+        self.assertEqual(normalize_provider("GLM / Z.ai"), "openai_compat")
+
+    def test_existing_labels_unchanged(self):
+        from jarvis.jarvis.pool_serialize import normalize_provider
+        self.assertEqual(normalize_provider("Groq"), "groq")
+        self.assertEqual(normalize_provider("Moonshot (Kimi)"), "moonshot")
+        self.assertEqual(normalize_provider("OpenAI-Compatible"), "openai_compat")
+
+
 class TestPoolSerializeFromSettings(FrappeTestCase):
     """Task 2: Direct-call tests for build_pool_payload / validate_models / compute_proxy_active."""
 

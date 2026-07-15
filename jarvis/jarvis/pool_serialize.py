@@ -59,6 +59,12 @@ _PROVIDER_ALIASES = {
     "ollama (local)": "ollama",
     "vllm (local)": "vllm",
     "openai-compatible": "openai_compat",
+    # xAI Grok is a native Bifrost provider.
+    "xai grok": "xai",
+    # GLM / Z.ai has no native Bifrost provider, so it rides the existing
+    # openai-compatible custom-endpoint path (Bifrost custom provider +
+    # base_url). validate_models already requires a base_url for openai_compat.
+    "glm / z.ai": "openai_compat",
     # legacy id alias: the old frontend used "google" for Gemini
     "google": "gemini",
 }
