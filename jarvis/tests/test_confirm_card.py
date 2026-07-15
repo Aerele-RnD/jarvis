@@ -9,7 +9,7 @@ shapes it does not cover, so the SPA falls back to the raw preview.
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
-from jarvis.chat.confirm_card import build_card
+from jarvis.chat.confirm_card import _MAX_ROWS, build_card
 
 
 class TestCreateCard(FrappeTestCase):
@@ -122,6 +122,87 @@ class TestEmailAndMethodCards(FrappeTestCase):
 		self.assertEqual(card["args"]["doc"], "X")
 		self.assertEqual(card["args"]["api_key"], "[hidden]")
 		self.assertEqual(card["args"]["password"], "[hidden]")
+
+
+class TestBulkUpdateCard(FrappeTestCase):
+	"""A batch ``update_doc(updates=[{name, changes}, ...])`` renders a per-record
+	from->to card (kind ``bulk_update``) instead of the raw-JSON dump."""
+
+	def _todo(self, **vals):
+		vals.setdefault("description", "task")
+		doc = frappe.get_doc({"doctype": "ToDo", **vals}).insert(ignore_permissions=True)
+		self.addCleanup(lambda n=doc.name: frappe.delete_doc(
+			"ToDo", n, force=True, ignore_permissions=True))
+		return doc
+
+	def test_bulk_update_lists_per_record_from_to(self):
+		t1 = self._todo(description="d1", priority="Medium")
+		t2 = self._todo(description="d2", priority="Low")
+		args = {"doctype": "ToDo", "updates": [
+			{"name": t1.name, "changes": {"priority": "High"}},
+			{"name": t2.name, "changes": {"priority": "High"}},
+		]}
+		would = {"count": 2, "doctype": "ToDo", "updated": [t1.name, t2.name]}
+		card = build_card("update_doc", args, {"preview": True, "would": would})
+		self.assertEqual(card["kind"], "bulk_update")
+		self.assertEqual(card["doctype"], "ToDo")
+		self.assertEqual(card["count"], 2)
+		self.assertEqual(len(card["records"]), 2)
+		self.assertEqual(card["records"][0]["name"], t1.name)
+		# OLD from the current doc (Medium), NEW from the requested changes (High).
+		self.assertTrue(any(
+			d["from"] == "Medium" and d["to"] == "High"
+			for d in card["records"][0]["diff"]))
+		# each record surfaces the changed field labels for the collapsed summary
+		self.assertTrue(card["records"][0]["fields"])
+
+	def test_bulk_update_skips_noop_rows(self):
+		t1 = self._todo(priority="High")
+		args = {"doctype": "ToDo", "updates": [
+			{"name": t1.name, "changes": {"priority": "High"}},  # already High -> no-op
+		]}
+		card = build_card("update_doc", args, {"would": {}})
+		self.assertEqual(card["kind"], "bulk_update")
+		self.assertEqual(card["records"][0]["diff"], [])
+
+	def test_bulk_update_normalizes_typed_noop(self):
+		# A field set to its CURRENT value - typed in the DB (a Date), a string in
+		# the request - must not render a spurious "2026-07-20 -> 2026-07-20" row.
+		t1 = self._todo(date="2026-07-20")
+		args = {"doctype": "ToDo", "updates": [
+			{"name": t1.name, "changes": {"date": "2026-07-20"}},
+		]}
+		card = build_card("update_doc", args, {"would": {}})
+		self.assertEqual(card["records"][0]["diff"], [])
+
+	def test_bulk_update_flags_varying_changes(self):
+		t1 = self._todo()
+		t2 = self._todo()
+		args = {"doctype": "ToDo", "updates": [
+			{"name": t1.name, "changes": {"priority": "High"}},
+			{"name": t2.name, "changes": {"description": "changed"}},
+		]}
+		card = build_card("update_doc", args, {"would": {}})
+		self.assertTrue(card["varying"])
+
+	def test_bulk_update_homogeneous_not_varying(self):
+		t1 = self._todo()
+		t2 = self._todo()
+		args = {"doctype": "ToDo", "updates": [
+			{"name": t1.name, "changes": {"priority": "High"}},
+			{"name": t2.name, "changes": {"priority": "High"}},
+		]}
+		card = build_card("update_doc", args, {"would": {}})
+		self.assertFalse(card["varying"])
+
+	def test_bulk_update_caps_records_and_reports_extra(self):
+		todos = [self._todo() for _ in range(_MAX_ROWS + 2)]
+		args = {"doctype": "ToDo", "updates": [
+			{"name": t.name, "changes": {"priority": "High"}} for t in todos]}
+		card = build_card("update_doc", args, {"would": {}})
+		self.assertEqual(card["count"], _MAX_ROWS + 2)
+		self.assertEqual(len(card["records"]), _MAX_ROWS)
+		self.assertEqual(card["extra"], 2)
 
 
 class TestBatchAndFallback(FrappeTestCase):

@@ -58,7 +58,7 @@ export function batchFromPreview(preview) {
 // expiry state instead of the raw dry-run JSON. A missing/unknown card -> null, and
 // the card falls back to the summary + raw-preview rendering.
 
-const CARD_KINDS = new Set(["create", "update", "verb", "email", "method", "batch_create"])
+const CARD_KINDS = new Set(["create", "update", "bulk_update", "verb", "email", "method", "batch_create"])
 
 // The structured card for a parked action ({kind, ...}), or null when the server
 // built none (an older token, or an uncovered tool shape).
