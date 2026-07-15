@@ -90,10 +90,15 @@ def list_tools() -> list[str]:
 
 @frappe.whitelist()
 def list_conversations() -> list[dict]:
-	"""Return active conversations owned by the current user, newest first.
+	"""Return active, non-empty conversations owned by the current user, newest
+	first.
 
-	Each row includes ``message_count`` so the UI can identify empty
-	conversations (used by ``create_or_focus_empty``).
+	Empty conversations (a "New Chat" opened and abandoned with no message) are
+	hidden so a stray draft never lingers in the sidebar; it surfaces the moment
+	it gets its first message (the send path reloads this list). ``message_count``
+	is still returned for the UI, and is always >= 1 given the EXISTS filter.
+	``create_or_focus_empty`` queries the DB directly, so it still finds and
+	reuses the hidden empty row.
 	"""
 	require_jarvis_access()
 	# Chat page loaded: warm the openclaw prefix cache in the background
@@ -109,6 +114,10 @@ def list_conversations() -> list[dict]:
 		        WHERE m.conversation = c.name) AS message_count
 		FROM `tabJarvis Conversation` c
 		WHERE c.owner = %s AND c.status = 'Active'
+		  AND EXISTS (
+		    SELECT 1 FROM `tabJarvis Chat Message` m2
+		    WHERE m2.conversation = c.name
+		  )
 		ORDER BY c.starred DESC, c.last_active_at DESC
 		""",
 		(user,),
@@ -135,7 +144,12 @@ def search_conversations(search: str = "", start: int = 0, page_length: int = 20
 		pl = 20
 	pl = max(1, min(pl, 50))
 
-	conds = ["c.owner = %(me)s", "c.status = 'Active'"]
+	conds = [
+		"c.owner = %(me)s",
+		"c.status = 'Active'",
+		# Hide empty (message-less) drafts, mirroring list_conversations.
+		"EXISTS (SELECT 1 FROM `tabJarvis Chat Message` m WHERE m.conversation = c.name)",
+	]
 	params: dict = {"me": me, "start": start, "page_length": pl}
 	if search:
 		escaped = (search or "").replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
@@ -429,14 +443,26 @@ def create_or_focus_empty() -> str:
 	"""
 	require_jarvis_access()
 	user = frappe.session.user
+	# Reuse only a genuine blank chat. A File-Box drop that failed to send
+	# (filebox.drop_file) leaves a 0-message file_box conversation with the
+	# uploaded File attached - reusing THAT as a "New Chat" would silently inherit
+	# the file_box confirm-card bypass (jarvis.api.call_tool auto-applies reversible
+	# writes on file_box convs) and adopt a stray File. Exclude both, mirroring
+	# session_lifecycle._reap_empty (which now spares such rows from reaping too).
 	empty = frappe.db.sql(
 		"""
 		SELECT c.name
 		FROM `tabJarvis Conversation` c
 		WHERE c.owner = %s AND c.status = 'Active'
+		  AND c.file_box = 0
 		  AND NOT EXISTS (
 		    SELECT 1 FROM `tabJarvis Chat Message` m
 		    WHERE m.conversation = c.name
+		  )
+		  AND NOT EXISTS (
+		    SELECT 1 FROM `tabFile` f
+		    WHERE f.attached_to_doctype = 'Jarvis Conversation'
+		      AND f.attached_to_name = c.name
 		  )
 		ORDER BY c.last_active_at DESC
 		LIMIT 1
@@ -444,6 +470,10 @@ def create_or_focus_empty() -> str:
 		(user,),
 	)
 	if empty:
+		# Focusing an existing empty as the target of a New Chat is activity: bump
+		# its idle clock so the empty-reaper (session_lifecycle._reap_empty) can't
+		# delete it out from under a tab the user just opened onto it.
+		frappe.db.set_value(CONV, empty[0][0], "last_active_at", frappe.utils.now())
 		return empty[0][0]
 	# Count only genuinely-new interactive chats toward the business-greeting
 	# cadence (every third new chat surfaces the card). Hooked here rather than
@@ -759,9 +789,11 @@ def send_message(
 	string as "leave the existing value alone".
 
 	Returns {ok: True, run_id, message_id, conversation_id} on success or
-	{ok: False, reason: str} on validation failure. Raises
-	frappe.DoesNotExistError if the conversation does not exist, or
-	frappe.PermissionError if the caller is not the owner.
+	{ok: False, reason: str} on validation failure. A human (non-delegated) send
+	whose ``conversation`` no longer exists falls back to a fresh empty
+	conversation (its id is returned as ``conversation_id``); a delegated/system
+	send instead raises frappe.DoesNotExistError. frappe.PermissionError if the
+	conversation belongs to another user.
 	"""
 	# Access gate (PART 1 TASK 1). send_message is ALSO invoked under
 	# impersonate(owner) by delegated/system flows (agent_scheduler, approvals
@@ -807,7 +839,22 @@ def send_message(
 	if (not message or not message.strip()) and not atts:
 		return {"ok": False, "reason": _("message is empty")}
 
-	conv_doc = _get_owned_conversation(conversation)
+	# A human (non-delegated) send whose conversation was reaped out from under a
+	# stale tab - an empty chat deleted by session_lifecycle's empty-reap, or a
+	# chat cleared elsewhere - would otherwise dead-end on DoesNotExistError with
+	# a Retry that loops on the gone id. Fall back to a fresh empty conversation
+	# so the message still lands; the new id is returned so the client re-targets.
+	# Delegated/system flows (agent_scheduler, approvals resume, File-Box drop)
+	# pass a real conversation and must surface a genuine not-found as an error -
+	# silently retargeting them would strand the message on a chat they don't
+	# track. PermissionError (someone else's conversation) always propagates.
+	try:
+		conv_doc = _get_owned_conversation(conversation)
+	except frappe.DoesNotExistError:
+		if _delegated:
+			raise
+		conversation = create_or_focus_empty()
+		conv_doc = _get_owned_conversation(conversation)
 
 	# Single-flight guard: reject a second concurrent turn on the same
 	# conversation (extra tab / double-send / a retry racing a live turn) -
