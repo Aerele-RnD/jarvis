@@ -24,6 +24,7 @@ import frappe
 from frappe.utils import cint
 
 from jarvis.chat.voice_notes_api import _require_system_user
+from jarvis.chat.usage import get_or_create_user_settings
 
 PREF = "Jarvis User Settings"
 NOTE = "Jarvis Voice Note"
@@ -78,8 +79,6 @@ def _get_pref(user: str) -> frappe._dict | None:
 def _upsert_pref(user: str, **values: object) -> None:
 	"""Insert-or-update the user's Jarvis User Settings row (ignore_permissions:
 	backend-managed greeting state, written on the user's own behalf)."""
-	from jarvis.chat.usage import get_or_create_user_settings
-
 	get_or_create_user_settings(user)
 	frappe.db.set_value(PREF, {"user": user}, values, update_modified=True)
 
@@ -158,8 +157,6 @@ def increment_new_chat_count(user: str) -> None:
 	is deliberately NOT hooked directly: ``filebox.py`` calls it for unattended
 	File Box drops, which must never count toward the greeting cadence.
 	"""
-	from jarvis.chat.usage import get_or_create_user_settings
-
 	get_or_create_user_settings(user)
 	frappe.db.sql(
 		"UPDATE `tabJarvis User Settings` "
