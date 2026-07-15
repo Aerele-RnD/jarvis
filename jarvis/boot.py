@@ -16,6 +16,10 @@ Keys we set:
   setup wizard, used by the desk's not-onboarded banner
   (``jarvis_onboarding_banner.bundle.js``) to decide whether to nag a
   System Manager toward ``/jarvis/onboarding``.
+- ``jarvis_has_access`` - whether the current user may reach Jarvis at
+  all (``jarvis.permissions.has_jarvis_access``). Lets the desk's
+  floating Jarvis button send an unauthorized user to
+  ``/jarvis-no-access`` instead of opening the chat panel.
 """
 
 import frappe
@@ -43,3 +47,13 @@ def set_jarvis_boot(bootinfo):
 		bootinfo.jarvis_onboarded = bool((is_ready_for_chat() or {}).get("ready"))
 	except Exception:
 		bootinfo.jarvis_onboarded = True   # fail-safe: never nag on a boot error
+
+	# Drives the desk's floating Jarvis button: an unauthorized user is routed
+	# to /jarvis-no-access instead of the chat panel opening. Import kept
+	# inside the try block (like the blocks above) so tests can patch
+	# jarvis.permissions.has_jarvis_access without touching module load order.
+	try:
+		from jarvis.permissions import has_jarvis_access
+		bootinfo.jarvis_has_access = bool(has_jarvis_access())
+	except Exception:
+		bootinfo.jarvis_has_access = False  # fail-closed; the no-access page self-heals

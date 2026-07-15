@@ -14,10 +14,12 @@ def get_context(context):
 	# kicked you into a Chrome tab showing the Desk login — which is exactly why
 	# HRMS's shell is guest-renderable and its router owns a Login route.
 	#
-	# A signed-in user WITHOUT Jarvis access is a different case: they have a Desk,
-	# so send them to it rather than showing a login form they're already past.
+	# A signed-in user WITHOUT Jarvis access is a different case: they're already
+	# past login, so send them to the branded /jarvis-no-access page (which offers
+	# the "ask your admin" CTA and a way back to the Desk) rather than a login
+	# form or a bare bounce to /app.
 	if frappe.session.user != "Guest" and not has_jarvis_access():
-		frappe.local.flags.redirect_location = "/app"
+		frappe.local.flags.redirect_location = "/jarvis-no-access"
 		raise frappe.Redirect
 
 	# frappe-ui's jinjaBootData plugin emits `window["<key>"] = {{ boot[key]|tojson }}`
