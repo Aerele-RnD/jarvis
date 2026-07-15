@@ -5,39 +5,53 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<meta name="robots" content="noindex, nofollow" />
 		<title>Jarvis · Access required</title>
-		<meta name="theme-color" content="#F7F5FC" media="(prefers-color-scheme: light)" />
-		<meta name="theme-color" content="#0F0F13" media="(prefers-color-scheme: dark)" />
-		<!-- Brand tokens (--jarvis-primary / --jarvis-gradient / faint / soft). No other
-		     external references: no fonts, no CDNs — self-contained by design. -->
+		<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+		<meta name="theme-color" content="#16161a" media="(prefers-color-scheme: dark)" />
+		<!-- Brand tokens (--jarvis-primary / --jarvis-gradient) power the Jarvis mark only.
+		     Everything else follows the SPA's neutral system (theme.js): near-black CTA,
+		     gray-on-white light / charcoal dark, no gradients or glows in chrome. Colors
+		     mirror LIGHT_VARS / DARK_VARS so this page reads as part of the app. Self-
+		     contained by design: no fonts, no CDNs. -->
 		<link rel="stylesheet" href="/assets/jarvis/css/jarvis-brand.css" />
 		<style>
 			:root {
 				color-scheme: light dark;
-				--jvna-bg-1: #f7f5fc;
-				--jvna-bg-2: #eef0fb;
+				/* Surfaces / text — LIGHT_VARS in theme.js */
+				--jvna-bg-1: #ffffff;
+				--jvna-bg-2: #f7f7f8;
 				--jvna-card: #ffffff;
-				--jvna-card-border: rgba(124, 58, 237, 0.14);
-				--jvna-text: #18181b;
-				--jvna-text-muted: #62626c;
-				--jvna-pill-bg: rgba(124, 58, 237, 0.08);
-				--jvna-pill-border: rgba(124, 58, 237, 0.16);
-				--jvna-blob-a: #a78bfa;
-				--jvna-blob-b: #7c3aed;
-				--jvna-blob-c: #6366f1;
-				--jvna-blob-opacity: 0.5;
+				--jvna-card-border: #e8e8ec;
+				--jvna-text: #171717;
+				--jvna-text-2: #4a4a4f;
+				--jvna-text-muted: #6d6d76;
+				--jvna-pill-bg: #f1f1f3;
+				--jvna-pill-border: #e8e8ec;
+				/* Primary CTA = the SPA's inverted solid button (bg:--text, fg:--surface) */
+				--jvna-cta-bg: #171717;
+				--jvna-cta-fg: #ffffff;
+				--jvna-cta-shadow: rgba(23, 23, 23, 0.26);
+				--jvna-mark-shadow: rgba(23, 23, 23, 0.22);
+				/* Static ambient wash — neutral, no motion */
+				--jvna-wash: rgba(23, 23, 23, 0.05);
 			}
 
 			@media (prefers-color-scheme: dark) {
 				:root {
-					--jvna-bg-1: #0f0f13;
-					--jvna-bg-2: #0b0b0e;
-					--jvna-card: #16161a;
-					--jvna-card-border: rgba(167, 139, 250, 0.16);
+					/* DARK_VARS in theme.js ("Refined Indigo" charcoal) */
+					--jvna-bg-1: #16161a;
+					--jvna-bg-2: #0f0f13;
+					--jvna-card: #1d1d22;
+					--jvna-card-border: #2c2c34;
 					--jvna-text: #ededf2;
-					--jvna-text-muted: #a2a2ad;
-					--jvna-pill-bg: rgba(167, 139, 250, 0.1);
-					--jvna-pill-border: rgba(167, 139, 250, 0.22);
-					--jvna-blob-opacity: 0.35;
+					--jvna-text-2: #b6b6c0;
+					--jvna-text-muted: #7e7e8a;
+					--jvna-pill-bg: #26262d;
+					--jvna-pill-border: #3a3a45;
+					--jvna-cta-bg: #ededf2;
+					--jvna-cta-fg: #16161a;
+					--jvna-cta-shadow: rgba(0, 0, 0, 0.5);
+					--jvna-mark-shadow: rgba(0, 0, 0, 0.5);
+					--jvna-wash: rgba(255, 255, 255, 0.035);
 				}
 			}
 
@@ -65,71 +79,14 @@
 				-webkit-font-smoothing: antialiased;
 			}
 
-			/* Background: soft, slowly drifting brand-colored blobs. transform-only
-			   keyframes so the animation stays on the compositor thread; heavy blur
-			   is a one-time paint cost, not a per-frame one. */
-			.jvna-blobs {
+			/* A single soft, static neutral wash behind the card — depth without motion
+			   or brand color, in keeping with the app's disciplined chrome. */
+			.jvna-wash {
 				position: fixed;
 				inset: 0;
 				z-index: 0;
-				overflow: hidden;
 				pointer-events: none;
-			}
-
-			.jvna-blob {
-				position: absolute;
-				border-radius: 50%;
-				filter: blur(90px);
-				opacity: var(--jvna-blob-opacity);
-				will-change: transform;
-			}
-
-			.jvna-blob-1 {
-				top: -18vmax;
-				left: -14vmax;
-				width: 52vmax;
-				height: 52vmax;
-				background: radial-gradient(circle at 35% 35%, var(--jvna-blob-a), transparent 70%);
-				animation: jvna-drift-1 76s ease-in-out infinite;
-			}
-
-			.jvna-blob-2 {
-				bottom: -22vmax;
-				right: -16vmax;
-				width: 46vmax;
-				height: 46vmax;
-				background: radial-gradient(circle at 60% 60%, var(--jvna-blob-b), transparent 70%);
-				animation: jvna-drift-2 88s ease-in-out infinite;
-			}
-
-			.jvna-blob-3 {
-				top: 38%;
-				left: 48%;
-				width: 34vmax;
-				height: 34vmax;
-				background: radial-gradient(circle at 50% 50%, var(--jvna-blob-c), transparent 72%);
-				animation: jvna-drift-3 64s ease-in-out infinite;
-			}
-
-			@keyframes jvna-drift-1 {
-				0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
-				50% { transform: translate3d(6vmax, 5vmax, 0) scale(1.12); }
-			}
-
-			@keyframes jvna-drift-2 {
-				0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
-				50% { transform: translate3d(-7vmax, -4vmax, 0) scale(1.08); }
-			}
-
-			@keyframes jvna-drift-3 {
-				0%, 100% { transform: translate3d(-50%, -50%, 0) scale(1); }
-				50% { transform: translate3d(-46%, -54%, 0) scale(1.15); }
-			}
-
-			@media (prefers-reduced-motion: reduce) {
-				.jvna-blob {
-					animation: none;
-				}
+				background: radial-gradient(620px circle at 50% 40%, var(--jvna-wash) 0%, transparent 70%);
 			}
 
 			.jvna-card {
@@ -141,7 +98,7 @@
 				border: 1px solid var(--jvna-card-border);
 				border-radius: 20px;
 				padding: 44px 40px 36px;
-				box-shadow: 0 24px 60px -20px rgba(76, 29, 149, 0.28), 0 2px 8px rgba(0, 0, 0, 0.04);
+				box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 18px 40px -20px rgba(0, 0, 0, 0.16);
 				text-align: center;
 			}
 
@@ -152,6 +109,8 @@
 				margin: 0 auto 22px;
 			}
 
+			/* The Jarvis mark is the one sanctioned brand-asset moment (design.md §2.1) —
+			   it keeps the brand gradient; nothing else on the page does. */
 			.jvna-mark {
 				width: 64px;
 				height: 64px;
@@ -160,7 +119,7 @@
 				align-items: center;
 				justify-content: center;
 				background: var(--jarvis-gradient, linear-gradient(135deg, #a78bfa 0%, #7c3aed 50%, #0f0f0f 100%));
-				box-shadow: 0 10px 26px -6px rgba(124, 58, 237, 0.5);
+				box-shadow: 0 8px 20px -8px var(--jvna-mark-shadow);
 			}
 
 			.jvna-lock {
@@ -200,7 +159,7 @@
 				width: 6px;
 				height: 6px;
 				border-radius: 50%;
-				background: var(--jarvis-primary, #7c3aed);
+				background: var(--jvna-text-muted);
 				flex: none;
 			}
 
@@ -216,12 +175,7 @@
 				margin: 0 0 16px;
 				font-size: 14.5px;
 				font-weight: 600;
-				/* NOT var(--jarvis-gradient): the brand gradient ends in #0f0f0f,
-				   which turns clipped text invisible on the dark card. */
-				background: linear-gradient(135deg, #a78bfa 0%, #7c3aed 60%);
-				-webkit-background-clip: text;
-				background-clip: text;
-				-webkit-text-fill-color: transparent;
+				color: var(--jvna-text-2);
 			}
 
 			.jvna-body {
@@ -237,6 +191,7 @@
 				gap: 10px;
 			}
 
+			/* Buttons shift color only — no transform/scale (design.md §1.3, §3). */
 			.jvna-btn {
 				display: inline-flex;
 				align-items: center;
@@ -248,21 +203,22 @@
 				font-weight: 600;
 				text-decoration: none;
 				border: 1px solid transparent;
-				transition: transform 0.15s ease, opacity 0.15s ease;
-			}
-
-			.jvna-btn:active {
-				transform: scale(0.98);
+				transition: background-color 0.15s ease, filter 0.15s ease;
 			}
 
 			.jvna-btn-primary {
-				color: #ffffff;
-				background: var(--jarvis-gradient, linear-gradient(135deg, #a78bfa 0%, #7c3aed 60%));
-				box-shadow: 0 10px 22px -8px rgba(124, 58, 237, 0.55);
+				color: var(--jvna-cta-fg);
+				background: var(--jvna-cta-bg);
+				box-shadow: 0 6px 20px -6px var(--jvna-cta-shadow);
 			}
 
 			.jvna-btn-primary:hover {
-				opacity: 0.94;
+				filter: brightness(1.12);
+			}
+
+			.jvna-btn-primary:focus-visible {
+				outline: 2px solid var(--jvna-cta-bg);
+				outline-offset: 3px;
 			}
 
 			@media (max-width: 380px) {
@@ -274,11 +230,7 @@
 		</style>
 	</head>
 	<body>
-		<div class="jvna-blobs" aria-hidden="true">
-			<div class="jvna-blob jvna-blob-1"></div>
-			<div class="jvna-blob jvna-blob-2"></div>
-			<div class="jvna-blob jvna-blob-3"></div>
-		</div>
+		<div class="jvna-wash" aria-hidden="true"></div>
 
 		<main class="jvna-card">
 			<div class="jvna-mark-wrap">
