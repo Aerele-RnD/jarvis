@@ -630,19 +630,8 @@
 			</transition-group>
 		</div>
 
-		<!-- ============ CONFIRM DIALOG (reusable; replaces window.confirm) ============ -->
-		<transition name="jv-fade">
-			<div v-if="confirmBox" class="jv-skills-overlay" @click.self="_settleConfirm(false)">
-				<div class="jv-cdialog" role="alertdialog" aria-modal="true">
-					<div class="jv-cdialog-title">{{ confirmBox.title }}</div>
-					<div v-if="confirmBox.message" class="jv-cdialog-msg">{{ confirmBox.message }}</div>
-					<div class="jv-cdialog-foot">
-						<button class="jv-btn jv-btn--ghost" @click="_settleConfirm(false)">{{ confirmBox.cancelLabel }}</button>
-						<button class="jv-btn" :class="confirmBox.danger ? 'jv-btn--danger' : 'jv-btn--primary'" @click="_settleConfirm(true)">{{ confirmBox.confirmLabel }}</button>
-					</div>
-				</div>
-			</div>
-		</transition>
+		<!-- CONFIRM DIALOG moved to the app shell (components/shell/ConfirmDialog.vue),
+		     driven by composables/useConfirm.js — call confirm() from anywhere. -->
 
 		<!-- SETTINGS dialog hoisted to the shell (components/shell/SettingsDialog.vue) -->
 
@@ -834,6 +823,7 @@ import * as voice from "@/api/voice"
 import { useAudioRecorder } from "@/composables/useAudioRecorder"
 import { setMacroPrefill } from "@/composables/macroPrefill"
 import { takeChatPrefill } from "@/composables/chatPrefill"
+import { useConfirm } from "@/composables/useConfirm"
 // timezone-safe: naive server datetimes must go through dayjsLocal (site tz)
 import { formatDate, exactDate, dayLabel } from "@/utils/datetime"
 import { renderMarkdown } from "@/markdown"
@@ -902,12 +892,11 @@ const rootEl = ref(null)
 const showScrollDown = ref(false)
 const pinnedToBottom = ref(true)
 
-// ---- Reusable notifier + confirm dialog ------------------------------------
+// ---- Reusable notifier -----------------------------------------------------
 // notify("Deleted", { type: "success" }) drops a lightweight toast that stacks
-// bottom-right and auto-dismisses. confirmDialog({...}) shows a centered confirm
-// modal and resolves true/false — a drop-in replacement for the native
-// window.confirm() used across destructive actions (delete chat/skill/macro).
-// Both are intentionally generic so any new call site can reuse them.
+// bottom-right and auto-dismisses. (The confirm dialog it used to sit beside now
+// lives app-wide in composables/useConfirm.js + the shell's ConfirmDialog — call
+// confirm() from anywhere.)
 const notes = ref([])
 let _noteSeq = 0
 function notify(message, opts = {}) {
@@ -927,26 +916,10 @@ function announceSR(msg) {
 	srMessage.value = ""
 	nextTick(() => { srMessage.value = msg })
 }
-const confirmBox = ref(null) // { title, message, confirmLabel, cancelLabel, danger }
-let _confirmResolve = null
-function confirmDialog(opts = {}) {
-	return new Promise((resolve) => {
-		_confirmResolve = resolve
-		confirmBox.value = {
-			title: opts.title || "Are you sure?",
-			message: opts.message || "",
-			confirmLabel: opts.confirmLabel || "Confirm",
-			cancelLabel: opts.cancelLabel || "Cancel",
-			danger: opts.danger !== false, // deletes default to the red confirm button
-		}
-	})
-}
-function _settleConfirm(val) {
-	confirmBox.value = null
-	const r = _confirmResolve
-	_confirmResolve = null
-	if (r) r(val)
-}
+// Confirm dialog now lives app-wide (composables/useConfirm.js + the single
+// <ConfirmDialog> in AppShell) — this view just calls confirm(). Escape/backdrop
+// dismissal and rendering are owned by that component.
+const { confirm } = useConfirm()
 const modelMenuOpen = ref(false)
 const showConnect = ref(false)
 // (sidebar collapse machinery, per-conversation ⋯ menu and inline rename
@@ -1449,10 +1422,11 @@ const notifyEnabled = computed(() => store.notifyEnabled)
 // Danger zone: wipe every conversation + message (macros/skills untouched).
 const clearingHistory = ref(false)
 async function clearAllHistory() {
-	if (!(await confirmDialog({
+	if (!(await confirm({
 		title: "Delete ALL chat history?",
 		message: "Every conversation and message will be permanently deleted. Macros, skills and settings stay. This can't be undone.",
 		confirmLabel: "Delete everything",
+		danger: true,
 	}))) return
 	clearingHistory.value = true
 	try {
@@ -4274,12 +4248,13 @@ function onGlobalKey(e) {
 	// listener here, so bail out entirely while it's open — otherwise this chain
 	// would ALSO close an artifact panel behind it on a single Escape.
 	if (store.settingsOpen) return
+	// A confirm dialog, when open, swallows Escape itself (ConfirmDialog listens in
+	// capture phase and stops propagation), so this chain never sees Escape while
+	// one is up — no branch for it here.
 	if (e.key === "Escape" && micState.value === "recording") {
 		cancelMic()
 	} else if (e.key === "Escape" && nudge.value && nudge.value.mode === "recording") {
 		cancelNudgeMic()
-	} else if (e.key === "Escape" && confirmBox.value) {
-		_settleConfirm(false)
 	} else if (e.key === "Escape" && artifact.value) {
 		closeArtifact()
 	}
@@ -4470,7 +4445,7 @@ onUnmounted(() => {
 	.jv-tool-dot.run, .jv-mic-dot { animation: none; }
 	.jv-sendbtn.ready { animation: none; }
 	.jv-md :deep(.jv-mermaid:not([data-rendered]))::after { animation: none; }
-	.jv-settings, .jv-skills-modal, .jv-cdialog { animation: none; }
+	.jv-settings, .jv-skills-modal { animation: none; }
 }
 /* mobile layout (UX #12): the chat had fixed 40px desktop paddings + a 2-col
    welcome grid; inline styles win over class rules, so these override with
@@ -4566,7 +4541,8 @@ onUnmounted(() => {
    so once ChatView stopped rendering the dialog they matched nothing: edits to them
    silently did nothing while the live styles came from @/assets/settings.css.
    Removed rather than left as a decoy. Style the dialog in assets/settings.css.
-   (jv-popin STAYS — .jv-skills-modal / .jv-cdialog still animate with it.) */
+   (jv-popin STAYS — .jv-skills-modal still animates with it. The confirm dialog
+   moved to components/shell/ConfirmDialog.vue with its own jv-confirm-popin.) */
 @keyframes jv-popin { from { transform: scale(0.97); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 .jv-settings-nav { width: 196px; flex: none; background: var(--surface-1); border-right: 1px solid var(--border); padding: 14px 10px; display: flex; flex-direction: column; gap: 2px; }
 .jv-settings-nav-title { font-size: 15px; font-weight: 700; color: var(--text); padding: 4px 10px 12px; }
@@ -4852,11 +4828,7 @@ onUnmounted(() => {
 .jv-note-enter-active, .jv-note-leave-active { transition: opacity .18s ease, transform .18s ease; }
 .jv-note-enter-from, .jv-note-leave-to { opacity: 0; transform: translateY(-8px); }
 
-/* reusable confirm dialog (replaces window.confirm) */
-.jv-cdialog { width: 400px; max-width: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 20px; box-shadow: 0 24px 70px rgba(20, 20, 30, .28); animation: jv-popin .16s ease; }
-.jv-cdialog-title { font-size: 16px; font-weight: 650; color: var(--text); }
-.jv-cdialog-msg { margin-top: 8px; font-size: 13.5px; line-height: 1.5; color: var(--text-2); }
-.jv-cdialog-foot { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+/* confirm dialog styles moved to components/shell/ConfirmDialog.vue */
 
 /* proactive message toast */
 .jv-toast { position: absolute; right: 20px; bottom: 22px; z-index: 70; display: flex; align-items: center; gap: 11px; width: 360px; max-width: calc(100% - 40px); padding: 13px 14px; background: var(--surface); border: 1px solid var(--border-2); border-radius: 13px; box-shadow: 0 12px 32px rgba(20, 20, 30, .22); cursor: pointer; }

@@ -523,8 +523,11 @@ import {
   PROVIDER_LABELS, providerLabel, providerId, seedRowsFromConfig, defaultSubscriptionModel,
 } from "@/llm/pool"
 import { errMessage as _err } from "@/lib/errors"
+import { useConfirm } from "@/composables/useConfirm"
 import JvCombo from "@/components/JvCombo.vue"
 import DirectSubscriptionCard from "@/components/DirectSubscriptionCard.vue"
+
+const { confirm } = useConfirm()
 
 const props = defineProps({
   editable: { type: Boolean, default: true },
@@ -871,7 +874,12 @@ function onDirectCardChanged() {
   emit("direct-changed")
 }
 async function removeDirect() {
-  if (!window.confirm("Disconnect the chat subscription? Jarvis chat will stop working until you reconnect.")) return
+  if (!(await confirm({
+    title: "Disconnect chat subscription?",
+    message: "Jarvis chat will stop working until you reconnect.",
+    confirmLabel: "Disconnect",
+    danger: true,
+  }))) return
   try {
     const res = await api.disconnectSubscription()
     if (!res || res.ok === false) { err.value = (res && res.error && res.error.message) || "Disconnect failed."; return }
@@ -950,7 +958,22 @@ function onUpstreamChange(m) {
   m._connect = blankConnect()
 }
 function move(i, d) { rows.value = reorder(rows.value, i, i + d) }
-function remove(i) { rows.value = rows.value.filter((_, j) => j !== i) }
+async function remove(i) {
+  const r = rows.value[i]
+  if (!r) return
+  const label = rowModelLabel(r)
+  if (!(await confirm({
+    title: "Remove this model?",
+    message: label
+      ? `"${label}" will be removed from the failover list. Save configuration to apply.`
+      : "This model will be removed from the failover list. Save configuration to apply.",
+    confirmLabel: "Remove",
+    danger: true,
+  }))) return
+  // Filter by the row's stable handle, not the captured index: confirm() awaits, so
+  // an index could go stale if rows.value is re-seeded meanwhile.
+  rows.value = rows.value.filter((x) => x._uid !== r._uid)
+}
 function removeAccount(m, idx) { m.accounts = (m.accounts || []).filter((_, j) => j !== idx) }
 function addModel() { rows.value = [...rows.value, { ...newRow(), order: rows.value.length }] }
 
@@ -959,7 +982,10 @@ function selectPreset(entry) {
   rows.value = seedFromPreset(entry)
 }
 function seedFromPreset(entry) {
+  // Every row needs a unique _uid: remove() deletes by _uid, so preset rows that
+  // shared an undefined _uid would all vanish on removing any one of them.
   return presetToModels(entry, keysByVendor.value).map((m) => ({
+    _uid: nextUid(),
     provider: providerLabel(m.provider), model: m.model, apiKey: m.api_key || "", baseUrl: "",
     hasKey: false, credentialType: "api_key", rotation: "sticky", upstream: "openai",
     accounts: [], _connect: blankConnect(), order: m.order,
