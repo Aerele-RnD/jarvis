@@ -665,7 +665,9 @@ const UPSTREAM_OAUTH_PROVIDER = {
 // requires ("openai" / "google"). Bridge the two rather than letting "OpenAI" reach
 // the spec (the fleet validates upstream against openai|anthropic|google and 422s).
 const upstreamLabels = upstreamOpts.map((o) => o.label)
-const upstreamLabelOf = (v) => (upstreamOpts.find((o) => o.value === v) || {}).label || ""
+// Fall back to the raw value (never blank) so an unrecognized/legacy upstream
+// renders "Sign in with <value>" rather than "Sign in with " (review finding).
+const upstreamLabelOf = (v) => (upstreamOpts.find((o) => o.value === v) || {}).label || v || "your provider"
 const upstreamValueOf = (l) => (upstreamOpts.find((o) => o.label === l) || {}).value || l
 // Provider dropdown fed by the shared PROVIDER_LABELS (id⇄label). Rows store the
 // display LABEL as `provider` (matches seedRowsFromConfig + the desk page).
@@ -1234,6 +1236,10 @@ async function _placeConnectedAccount(m, d) {
     connected: true,
   }
   const ri = m._connect.reconnectIdx
+  // Device-code accounts (Kimi) carry NO email, so byEmail can't fold two
+  // captures of the same account — to REFRESH an existing device account use its
+  // per-slot Reconnect (sets reconnectIdx, replacing that slot); a generic
+  // Connect always appends (intended for pooling a genuinely different account).
   const byEmail = acct.account_email
     ? m.accounts.findIndex((a) => a.account_email && a.account_email.toLowerCase() === acct.account_email.toLowerCase())
     : -1

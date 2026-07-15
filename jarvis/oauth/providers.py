@@ -107,16 +107,18 @@ _PROVIDER_OAUTH_MAP: dict[str, dict] = {
 
 
 def is_oauth_provider(label: str) -> bool:
-	"""True when ``label`` is an OAuth/chat-subscription-capable provider.
+	"""True when ``label`` is a PASTE-BACK (authorization_code) OAuth provider —
+	exactly the providers ``begin_paste_signin`` can mint an authorize URL for.
 
-	The canonical set is the keys of ``_PROVIDER_OAUTH_MAP`` — exactly the
-	providers ``begin_paste_signin`` can mint an authorize URL for. Callers use
-	this to avoid offering a "Re-authorize" affordance for a stored
-	``llm_provider`` (e.g. a non-OAuth default like ``Anthropic`` left behind by
-	``reset_onboarding``) that ``get_provider`` would reject with
-	``UnknownProviderError``.
+	Device-code providers (Kimi) are deliberately EXCLUDED: they are in
+	``_PROVIDER_OAUTH_MAP`` but have no authorize URL, so ``build_authorize_url``
+	would KeyError on ``p["authorize"]``. Callers use this to gate the DIRECT
+	"Re-authorize" affordance for a stored ``llm_provider`` (e.g. skip it for a
+	non-OAuth default like ``Anthropic`` left behind by ``reset_onboarding``, and
+	for a device-code provider that can only be captured via the pool flow).
 	"""
-	return label in _PROVIDER_OAUTH_MAP
+	entry = _PROVIDER_OAUTH_MAP.get(label)
+	return entry is not None and entry.get("grant_type") != "device_code"
 
 
 def get_provider(label: str) -> dict:

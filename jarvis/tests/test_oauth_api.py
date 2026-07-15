@@ -943,3 +943,18 @@ class TestKimiDeviceFlow(_OAuthApiBase):
 			res = oauth_api.poll_pool_account_signin(nonce)
 		self.assertFalse(res["ok"])
 		self.assertIsNone(frappe.cache.hget(_CACHE_KEY, nonce))  # terminal -> burned
+
+	def test_begin_paste_signin_rejects_device_provider(self):
+		# Review finding [2]: the DIRECT paste-back path must not KeyError on a
+		# device-code provider (no authorize URL) — it returns a clean error.
+		res = oauth_api.begin_paste_signin("Kimi (Moonshot)", "kimi-k2.7-code")
+		self.assertFalse(res["ok"])
+		self.assertEqual(res["error"]["code"], "device_flow_required")
+
+	def test_complete_pool_rejects_device_nonce(self):
+		# Review finding [3]: a device nonce (no state/verifier) routed to
+		# complete_pool_account_signin must return unknown_nonce, not KeyError-500.
+		nonce = self._begin()["data"]["nonce"]
+		res = oauth_api.complete_pool_account_signin(nonce, "http://x/cb?code=A&state=B")
+		self.assertFalse(res["ok"])
+		self.assertEqual(res["error"]["code"], "unknown_nonce")

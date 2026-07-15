@@ -167,9 +167,17 @@ def _begin_signin(provider: str, model: str, *, pool: bool) -> dict:
 	System-Manager gate.
 	"""
 	try:
-		get_provider(provider)
+		p = get_provider(provider)
 	except UnknownProviderError as e:
 		return _err("unknown_provider", str(e))
+	if p.get("grant_type") == "device_code":
+		# Device-code providers (Kimi) have no authorize URL — build_authorize_url
+		# would KeyError on p["authorize"]. They are captured via
+		# begin_pool_account_signin -> _begin_device_signin, never the paste-back
+		# path. Fail clean rather than 500 if this is reached (e.g. a DIRECT
+		# re-authorize for a stored device-code provider).
+		return _err("device_flow_required",
+		            "This provider uses a device-code sign-in and can't be connected this way.")
 
 	# GC abandoned sign-ins BEFORE writing the new nonce. Otherwise a
 	# user who loops begin without ever completing (e.g. wizard reload
@@ -573,10 +581,12 @@ def complete_pool_account_signin(nonce: str, redirected_url: str) -> dict:
 	entry, err = _validate_signin_nonce(nonce)
 	if err:
 		return err
-	# Only nonces minted by begin_pool_account_signin may be completed here;
-	# a DIRECT paste-signin nonce must go through complete_paste_signin. Same
-	# opaque message as unknown_nonce so live nonces aren't leaked.
-	if not entry.get("pool"):
+	# Only PASTE-BACK pool nonces may be completed here; a DIRECT paste-signin
+	# nonce goes through complete_paste_signin, and a DEVICE-code pool nonce
+	# (pool+device, no state/verifier) goes through poll_pool_account_signin —
+	# routing one here would KeyError on entry["state"] in _exchange_and_build_blob.
+	# Same opaque message as unknown_nonce so live nonces aren't leaked.
+	if not entry.get("pool") or entry.get("device"):
 		return _err("unknown_nonce", "nonce not recognized")
 
 	result, err = _exchange_and_build_blob(entry, redirected_url)
