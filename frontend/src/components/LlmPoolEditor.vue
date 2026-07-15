@@ -187,14 +187,13 @@
             </div>
           </div>
 
-          <!-- Connect sits WHERE THE ACCOUNT WILL APPEAR, not beside the Provider
-               field: it is an account action, so clicking it should materialize the
-               account in the same place.
-               PRIMARY, uniform with "+ Add a model": with no account connected this is
-               the panel's required next step (the pool cannot save without one). The
-               two never coexist - Add-a-model shows only when the panel is CLOSED,
-               Connect only when it is OPEN - so two primaries never compete. -->
-          <button v-if="editable && !(panelRow._connect && panelRow._connect.open) && !(panelRow.accounts && panelRow.accounts.length)"
+          <!-- Connect account: EDIT-mode re-entry only. In add mode the two-step sign-in
+               renders directly (see its v-if below), so a fresh "Add a model" never shows
+               this button - clicking "Connect account" and THEN "Open sign-in" was a
+               redundant double-click for one intent. It reappears only in the EDIT panel
+               when a row's last account was disconnected (removeAccount leaves _connect
+               closed), giving a neutral re-entry point rather than auto-popping OAuth. -->
+          <button v-if="editable && panel.mode !== 'add' && !(panelRow._connect && panelRow._connect.open) && !(panelRow.accounts && panelRow.accounts.length)"
                   @click="openConnectPanel(panelRow)"
                   class="jv-btn jv-btn--primary jv-flist-addbtn">
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>
@@ -231,16 +230,15 @@
                restated it.) -->
 
           <!-- OAuth connect: the SAME two-step spine onboarding renders (jv-csteps).
-               It used to be a different panel that only appeared AFTER startConnect had
-               already fired -- and startConnect opens the sign-in tab synchronously (it
-               must, to keep the click's user gesture and survive popup blockers). So the
-               customer was thrown at ChatGPT the instant they clicked "Connect account",
-               and only THEN saw a panel telling them to "Open sign-in". Backwards.
-               Now the steps appear FIRST and step 1's button is what starts OAuth, exactly
-               as in onboarding. Step 2 stays pending until step 1 mints the authorize URL:
-               a callback URL pasted before sign-in has no nonce to pair with, so
-               finishConnect would silently no-op. -->
-          <div v-if="panelRow._connect && panelRow._connect.open" class="jv-csteps">
+               Shown DIRECTLY for a fresh "Add a model" (panel.mode==='add' with no
+               account) so there is no "Connect account" pre-step - matching onboarding.
+               In the EDIT panel it appears only once opened via "+ Add account" or
+               "Reconnect" (_connect.open), so disconnecting a row's last account drops
+               back to the neutral button above rather than auto-popping OAuth. Step 1's
+               button starts OAuth inside its own click (preserving the user gesture /
+               popup-blocker fix); step 2 stays pending until step 1 mints the authorize
+               URL, since a URL pasted before sign-in has no nonce and finishConnect no-ops. -->
+          <div v-if="panelRow._connect && (panelRow._connect.open || (panel.mode === 'add' && !(panelRow.accounts && panelRow.accounts.length)))" class="jv-csteps">
             <div class="jv-cstep">
               <div class="jv-cnum">1</div>
               <div class="jv-cbody">
@@ -278,9 +276,14 @@
               </div>
             </div>
             <div v-if="panelRow._connect.error" class="jv-cn-err">{{ panelRow._connect.error }}</div>
-            <!-- Actions right-aligned, like every other confirm action in this pane. -->
+            <!-- Actions right-aligned, like every other confirm action in this pane.
+                 The inner Cancel is EDIT-mode only: there it calls closeConnect to
+                 collapse the steps back to the account list. In add mode the steps ARE
+                 the panel (they render directly from panel.mode==='add'), so closeConnect
+                 can't hide them - it would leave an inert "Cancel". Abandoning a fresh add
+                 is the panel's own Cancel/Close below; "Connect" stays to submit. -->
             <div class="jv-cn-acts">
-              <button @click="closeConnect(panelRow)" class="jv-btn jv-btn--ghost">Cancel</button>
+              <button v-if="panel.mode !== 'add'" @click="closeConnect(panelRow)" class="jv-btn jv-btn--ghost">Cancel</button>
               <button @click="finishConnect(panelRow)"
                       :disabled="panelRow._connect.loading || !panelRow._connect.authorizeUrl || !(panelRow._connect.pastedUrl || '').trim()"
                       class="jv-btn jv-btn--primary">
