@@ -236,48 +236,19 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-/* Frappe-native design tokens, scoped to the widget (it lives in <body>). */
+/* Scoped tokens for the FAB (it lives in <body>). */
 .jvw-root {
-	--surface: #ffffff;
-	--surface-1: #f7f7f8;
-	--surface-2: #f1f1f3;
-	--surface-3: #ececef;
-	--border: #e8e8ec;
-	--border-2: #dfdfe4;
-	--text: #171717;
-	--text-2: #4a4a4f;
-	--text-3: #83838b;
 	--accent: #171717;
-	--green: #16a34a;
-	--green-bg: #edf8f0;
-	--red: #dc2626;
-	--red-bg: #fdf0ef;
-	--red-bd: #f5d4d1;
 	--jvw-safe-bottom: env(safe-area-inset-bottom, 0px);
 	font-family: "Inter", system-ui, -apple-system, sans-serif;
 }
 
 /* Follow the Desk theme. Frappe's theme switcher stamps data-theme="dark" on
-   <html>, which is an ancestor of this body-mounted widget, so the launcher
-   flips to the "Refined Indigo" dark palette (same values as the SPA's
-   theme.js DARK_VARS) instead of staying dark-on-dark. The accent becomes the
-   indigo brand blue so the FAB stays visible against dark surfaces. */
+   <html>, which is an ancestor of this body-mounted widget: the accent becomes
+   the indigo brand blue (the SPA's theme.js DARK_VARS accent) so the FAB stays
+   visible against dark surfaces. */
 :global([data-theme="dark"]) .jvw-root {
-	--surface: #16161a;
-	--surface-1: #1d1d22;
-	--surface-2: #26262d;
-	--surface-3: #30303a;
-	--border: #2c2c34;
-	--border-2: #3a3a45;
-	--text: #ededf2;
-	--text-2: #b6b6c0;
-	--text-3: #7e7e8a;
 	--accent: #6e8bff;
-	--green: #34d399;
-	--green-bg: #15271f;
-	--red: #f87171;
-	--red-bg: #2a1818;
-	--red-bd: #4a2a2a;
 }
 
 /* ---- launcher bubble ---- */
