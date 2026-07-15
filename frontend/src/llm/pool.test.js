@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import { deriveMode, uniqueVendors, missingVendorKeys, presetToModels, buildCustomModels, reorder, validatePool } from "./pool.js"
 import { PROVIDER_LABELS, providerLabel, providerId, seedRowsFromConfig } from "./pool.js"
 import { defaultSubscriptionModel } from "./pool.js"
+import { apiKeyModelHealth } from "./pool.js"
 
 test("defaultSubscriptionModel: per-upstream default, openai fallback", () => {
   assert.equal(defaultSubscriptionModel("openai"), "gpt-5.5")
@@ -166,4 +167,53 @@ test("seedRowsFromConfig: real get_llm_config shape - subscription model (flat r
   assert.equal(row.accounts.length, 1)
   assert.equal(row.accounts[0].connected, true)
   assert.equal(row.accounts[0].account_ref, "SUB_x")
+})
+
+// ---- apiKeyModelHealth: per-row health from the fleet's model_statuses (contract 1.11) ----
+// Before this, api-key rows were hardcoded to a green dot + presence-only "key set", so a
+// model with a dead base_url / bad key showed identically to a healthy one. These pin that a
+// per-model verdict now drives the row.
+
+const _apiRow = (over = {}) => ({ credentialType: "api_key", provider: providerLabel("openai_compat"),
+  model: "claude-sonnet-4-6", hasKey: true, ...over })
+
+test("apiKeyModelHealth: a failed model surfaces a warn state with actionable title", () => {
+  const ms = [{ provider: "openai_compat", model: "claude-sonnet-4-6", status: "failed" }]
+  const h = apiKeyModelHealth(_apiRow(), ms)
+  assert.equal(h.level, "warn")
+  assert.ok(h.label, "a failed row must carry a label, not just a bare dot")
+  assert.match(h.title, /base URL|API key|model id/i)
+})
+
+test("apiKeyModelHealth: verified is a MEANINGFUL green (ok, no label)", () => {
+  const ms = [{ provider: "openai_compat", model: "claude-sonnet-4-6", status: "verified" }]
+  assert.deepEqual(apiKeyModelHealth(_apiRow(), ms), { level: "ok" })
+})
+
+test("apiKeyModelHealth: unchecked reads as a neutral 'not verified yet'", () => {
+  const ms = [{ provider: "openai_compat", model: "claude-sonnet-4-6", status: "unchecked" }]
+  const h = apiKeyModelHealth(_apiRow(), ms)
+  assert.equal(h.level, "unchecked")
+  assert.ok(h.label)
+})
+
+test("apiKeyModelHealth: no verdict for the row -> quiet green (pre-1.11 fleet / not probed)", () => {
+  assert.deepEqual(apiKeyModelHealth(_apiRow(), []), { level: "ok" })
+  assert.deepEqual(apiKeyModelHealth(_apiRow(), undefined), { level: "ok" })
+  assert.deepEqual(
+    apiKeyModelHealth(_apiRow(), [{ provider: "x", model: "other", status: "failed" }]),
+    { level: "ok" },
+  )
+})
+
+test("apiKeyModelHealth: a model-id collision is disambiguated by provider", () => {
+  // validate() allows the same model id under two providers (only provider/model PAIRS
+  // must be unique), so the verdict must attach to the RIGHT row. Rows store the provider
+  // LABEL, model_statuses store the id -> the match must normalize.
+  const ms = [
+    { provider: "openai", model: "gpt-4o", status: "verified" },
+    { provider: "openai_compat", model: "gpt-4o", status: "failed" },
+  ]
+  assert.equal(apiKeyModelHealth(_apiRow({ provider: providerLabel("openai_compat"), model: "gpt-4o" }), ms).level, "warn")
+  assert.equal(apiKeyModelHealth(_apiRow({ provider: providerLabel("openai"), model: "gpt-4o" }), ms).level, "ok")
 })

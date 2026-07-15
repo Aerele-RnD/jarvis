@@ -84,6 +84,7 @@
   "llm_pool_synced_at",
   "last_subscription_status",
   "last_sync_warnings",
+  "last_model_statuses",
   "custom_skills_synced_at",
   "custom_skills_sync_status",
   "agent_skills_synced_at",
@@ -623,6 +624,14 @@
    "fieldtype": "Long Text",
    "hidden": 1,
    "label": "Last Sync Warnings",
+   "read_only": 1
+  },
+  {
+   "description": "JSON array of {provider, model, status} per-model verdicts from the last pool apply (status: verified | failed | unchecked; api-key models only). '[]' when none or on a pre-1.11 fleet. Backend-only - the SPA reads this via get_llm_sync_status to render each api-key row's health, not the form.",
+   "fieldname": "last_model_statuses",
+   "fieldtype": "Long Text",
+   "hidden": 1,
+   "label": "Last Model Statuses",
    "read_only": 1
   },
   {

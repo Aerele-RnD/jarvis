@@ -472,6 +472,7 @@ class TestGetLlmSyncStatus(FrappeTestCase):
 		self.assertIn("pending", out)
 		self.assertIn("subscription_status", out)
 		self.assertIn("warnings", out)
+		self.assertIn("model_statuses", out)
 
 	# -- Apply-warning propagation (subscription_status + warnings) -------
 
@@ -524,3 +525,38 @@ class TestGetLlmSyncStatus(FrappeTestCase):
 		frappe.db.commit()
 		out = onboarding.get_llm_sync_status()
 		self.assertEqual(out["warnings"], [])
+
+	# -- Per-model verdicts (model_statuses, contract 1.11) --------------
+
+	def test_returns_parsed_model_statuses(self):
+		"""The pool sync worker stores the fleet's per-model verdicts as a JSON
+		array string; get_llm_sync_status must hand back a parsed list of dicts
+		so the AI-models list can key each api-key row's health off it."""
+		s = frappe.get_single("Jarvis Settings")
+		s.db_set(
+			"last_model_statuses",
+			'[{"provider": "openai_compat", "model": "claude-sonnet-4-6", "status": "failed"}]',
+			update_modified=False,
+		)
+		frappe.db.commit()
+		out = onboarding.get_llm_sync_status()
+		self.assertEqual(
+			out["model_statuses"],
+			[{"provider": "openai_compat", "model": "claude-sonnet-4-6", "status": "failed"}],
+		)
+
+	def test_empty_model_statuses_defaults_to_empty_list(self):
+		"""No pool sync yet, or a pre-1.11 fleet - the field is empty and must
+		degrade to [] rather than raise."""
+		s = frappe.get_single("Jarvis Settings")
+		s.db_set("last_model_statuses", "", update_modified=False)
+		frappe.db.commit()
+		self.assertEqual(onboarding.get_llm_sync_status()["model_statuses"], [])
+
+	def test_corrupt_or_non_list_model_statuses_degrades_to_empty_list(self):
+		"""A malformed or non-list last_model_statuses must never 500 this poller."""
+		s = frappe.get_single("Jarvis Settings")
+		for bad in ("{not valid json", '{"model": "m", "status": "failed"}'):
+			s.db_set("last_model_statuses", bad, update_modified=False)
+			frappe.db.commit()
+			self.assertEqual(onboarding.get_llm_sync_status()["model_statuses"], [])
