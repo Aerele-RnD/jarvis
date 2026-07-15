@@ -59,4 +59,11 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey, true))
 .jv-confirm-fade-enter-active, .jv-confirm-fade-leave-active { transition: opacity .16s ease; }
 .jv-confirm-fade-enter-from, .jv-confirm-fade-leave-to { opacity: 0; }
 @keyframes jv-confirm-popin { from { transform: scale(0.98); opacity: 0.5; } to { transform: scale(1); opacity: 1; } }
+
+/* Respect OS "reduce motion" — the inline dialog this replaced was covered by
+   ChatView's reduced-motion block; keep that accessibility guarantee here. */
+@media (prefers-reduced-motion: reduce) {
+  .jv-cdialog { animation: none; }
+  .jv-confirm-fade-enter-active, .jv-confirm-fade-leave-active { transition: none; }
+}
 </style>

@@ -20,9 +20,11 @@ export const confirmState = ref(null) // { title, message, confirmLabel, cancelL
 let _resolve = null
 
 export function confirm(opts = {}) {
-  // Only one dialog can be open at a time. If a second confirm() arrives while one
-  // is live, resolve the previous as cancelled so its awaiter never hangs.
-  if (_resolve) { const prev = _resolve; _resolve = null; prev(false) }
+  // One dialog at a time. If one is already open, DON'T clobber what the user is
+  // looking at — the extra request resolves false (treated as not confirmed) and
+  // the visible dialog keeps its own awaiter. (Two concurrent confirms only happen
+  // from programmatic paths; a modal blocks the user from triggering a second.)
+  if (_resolve) return Promise.resolve(false)
   return new Promise((resolve) => {
     _resolve = resolve
     confirmState.value = {

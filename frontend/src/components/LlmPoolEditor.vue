@@ -957,7 +957,8 @@ function onUpstreamChange(m) {
 function move(i, d) { rows.value = reorder(rows.value, i, i + d) }
 async function remove(i) {
   const r = rows.value[i]
-  const label = r ? rowModelLabel(r) : ""
+  if (!r) return
+  const label = rowModelLabel(r)
   if (!(await confirm({
     title: "Remove this model?",
     message: label
@@ -966,7 +967,9 @@ async function remove(i) {
     confirmLabel: "Remove",
     danger: true,
   }))) return
-  rows.value = rows.value.filter((_, j) => j !== i)
+  // Filter by the row's stable handle, not the captured index: confirm() awaits, so
+  // an index could go stale if rows.value is re-seeded meanwhile.
+  rows.value = rows.value.filter((x) => x._uid !== r._uid)
 }
 function removeAccount(m, idx) { m.accounts = (m.accounts || []).filter((_, j) => j !== idx) }
 function addModel() { rows.value = [...rows.value, { ...newRow(), order: rows.value.length }] }
