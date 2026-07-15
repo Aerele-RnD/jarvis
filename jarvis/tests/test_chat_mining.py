@@ -258,7 +258,7 @@ class TestChatMiningMint(ChatMiningTestCase):
 		with _mock_llm(_items_json(_item("Wholesale credit term is Net 45."))):
 			self._run()
 		ctx = self._questions(USER_A)[0]["context_md"]
-		self.assertIn("recent chat conversations", ctx)
+		self.assertIn("chat conversation", ctx)
 		self.assertNotIn("% consistent", ctx)
 
 	def test_missing_question_falls_back_to_generic_template(self):
@@ -434,6 +434,43 @@ class TestChatMiningSafety(ChatMiningTestCase):
 		):
 			self._run()
 		self.assertEqual(len(self._questions(USER_A)), 1)
+
+	def test_same_statement_two_owners_never_collapse(self):
+		# Two different users state the identical fact in the same run. Owner-salted
+		# pattern_key must mint a SEPARATE question for each — never absorb B's
+		# mention into A's single JLP row.
+		self._simple_conv(USER_A, statement="Our payment term is Net 30.")
+		self._simple_conv(USER_B, statement="Our payment term is Net 30.")
+		with _mock_llm(_items_json(_item("Our standard payment term is Net 30."))):
+			self._run()
+		self.assertEqual(len(self._questions(USER_A)), 1)
+		self.assertEqual(len(self._questions(USER_B)), 1)
+		# Two distinct owner-salted JLP rows, not one shared row.
+		self.assertEqual(frappe.db.count(JLP, {"detector_id": chat_mining.DETECTOR_ID}), 2)
+
+	def test_run_row_finalized_even_when_post_processing_throws(self):
+		# A crash inside per-candidate post-processing must never leave the Pattern
+		# Run stuck "Running" (that would wedge the nightly behavioural engine).
+		self._simple_conv(USER_A)
+		with (
+			_mock_llm(_items_json(_item("Wholesale credit term is Net 45."))),
+			mock.patch("jarvis.learning.voice_facts._surface", side_effect=RuntimeError("boom")),
+		):
+			self._run()
+		runs = frappe.get_all(RUN, filters={"scan_mode": "chat"}, fields=["name", "status"])
+		self.assertTrue(runs)
+		self.assertTrue(all(r["status"] in ("Completed", "Failed") for r in runs))
+		self.assertNotIn("Running", [r["status"] for r in runs])
+
+	def test_context_md_carries_the_conversation_date(self):
+		conv = self._conversation(USER_A)
+		self._msg(conv, 1, "user", "Our credit term is Net 45.")
+		self._msg(conv, 2, "assistant", "Noted.")
+		with _mock_llm(_items_json(_item("Wholesale credit term is Net 45."))):
+			self._run()
+		ctx = self._questions(USER_A)[0]["context_md"]
+		# "Noticed in a chat conversation on YYYY-MM-DD" — a provenance trail.
+		self.assertRegex(ctx, r"on \d{4}-\d{2}-\d{2}")
 
 
 # --------------------------------------------------------------------------- #

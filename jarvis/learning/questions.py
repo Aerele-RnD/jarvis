@@ -495,10 +495,15 @@ def _pattern_context_md(pattern) -> str:
 		lines.append(statement)
 	if evidence.get("source") == "chat":
 		# Chat-mined finding: the stats template below would read as false
-		# precision ("100% consistent" for an LLM inference) — say where it
-		# actually came from instead.
+		# precision ("100% consistent" for an LLM inference) — give the user a
+		# provenance trail (when it was said) instead so they can place it before
+		# confirming.
+		last_active = str(evidence.get("last_active") or "").strip()
 		lines.append("")
-		lines.append("_Noticed in your recent chat conversations._")
+		if last_active:
+			lines.append(f"_Noticed in a chat conversation on {last_active}._")
+		else:
+			lines.append("_Noticed in your recent chat conversations._")
 		return "\n".join(lines)[:MAX_CONTEXT_LEN]
 	parts: list[str] = []
 	n = cint(pattern.get("support_n"))
