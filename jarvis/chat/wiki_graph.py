@@ -333,6 +333,8 @@ def enqueue_sync() -> None:
 
 @frappe.whitelist()
 def sync_now() -> dict:
-	"""Operator 'Sync now' from the Wiki tab (System Manager only)."""
-	frappe.only_for("System Manager")
+	"""Operator 'Sync now' from the Wiki tab (Jarvis Admin / System Manager —
+	PART 4 REVISED, TASK 45)."""
+	from jarvis.permissions import require_jarvis_admin
+	require_jarvis_admin()
 	return sync()

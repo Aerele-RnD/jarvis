@@ -39,9 +39,11 @@ import { ref, onMounted } from "vue"
 import { getDirectSubscriptionStatus } from "@/api"
 import LlmPoolEditor from "@/components/LlmPoolEditor.vue"
 
-// The rail already gates this section to System Managers; this flag additionally
-// gates the editor's edit affordances + which probes fire.
-const isSM = !!window.is_system_manager
+// The rail already gates this section to the tenant-admin tier; this flag
+// additionally gates the editor's edit affordances + which probes fire. PART 4
+// REVISED TASK 49(c): widened to System Manager OR Jarvis Admin (the LLM-config
+// endpoints are all require_jarvis_admin now).
+const isSM = !!(window.is_system_manager || window.is_jarvis_admin)
 
 // ---- AI models: brief save acknowledgement (editor persists itself) --------
 const savedNote = ref("")

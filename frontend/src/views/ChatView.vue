@@ -467,20 +467,23 @@
 						</div>
 						<div class="jv-pending-body">
 							<div v-if="pendingSummaryOf(pa)" class="jv-pending-summary">{{ pendingSummaryOf(pa) }}</div>
-							<div v-if="pendingNoteOf(pa)" class="jv-pending-note">{{ pendingNoteOf(pa) }}</div>
-							<ul v-if="pendingBatchOf(pa)" class="jv-pending-batch">
-								<li v-for="(a, i) in pendingBatchOf(pa).actions" :key="'a' + i">
-									Create <b>{{ a.doctype }}</b> "{{ a.name }}"
-								</li>
-								<li v-for="(n, i) in pendingBatchOf(pa).notes" :key="'n' + i" class="jv-pending-batch-note">
-									{{ n }}
-								</li>
-							</ul>
-							<pre v-else-if="pendingPreviewOf(pa)" class="jv-pending-preview">{{ pendingPreviewOf(pa) }}</pre>
+							<div v-if="pendingExpiredOf(pa)" class="jv-pending-expired">This confirmation expired. Tell me the action again to retry it.</div>
+							<template v-else>
+								<!-- F9: the server-built "what will change" card (raw preview behind Details) -->
+								<PendingCard v-if="pendingCardOf(pa)" :card="pendingCardOf(pa)" :details="pendingDetailsOf(pa)" />
+								<template v-else>
+									<div v-if="pendingNoteOf(pa)" class="jv-pending-note">{{ pendingNoteOf(pa) }}</div>
+									<ul v-if="pendingBatchOf(pa)" class="jv-pending-batch">
+										<li v-for="(a, i) in pendingBatchOf(pa).actions" :key="'a' + i">Create <b>{{ a.doctype }}</b> "{{ a.name }}"</li>
+										<li v-for="(n, i) in pendingBatchOf(pa).notes" :key="'n' + i" class="jv-pending-batch-note">{{ n }}</li>
+									</ul>
+									<pre v-else-if="pendingPreviewOf(pa)" class="jv-pending-preview">{{ pendingPreviewOf(pa) }}</pre>
+								</template>
+							</template>
 						</div>
 						<div v-if="pa.error" style="margin:0 14px 10px"><ActionError :error="pa.error" /></div>
 						<div class="jv-action-foot">
-							<button class="jv-action-primary" :disabled="pa.busy || convStreaming" :title="convStreaming ? 'Waiting for the current reply to finish' : ''" @click="confirmPending(pa)">✓ Confirm</button>
+							<button class="jv-action-primary" :disabled="pa.busy || convStreaming || pendingExpiredOf(pa)" :title="convStreaming ? 'Waiting for the current reply to finish' : ''" @click="confirmPending(pa)"><span v-if="pa.busy">Confirming…</span><span v-else>✓ Confirm</span></button>
 							<button class="jv-action-discard" :disabled="pa.busy" @click="discardPending(pa)">Discard</button>
 						</div>
 					</div>
@@ -837,11 +840,12 @@ import ConnectPhoneDialog from "@/components/ConnectPhoneDialog.vue"
 import JarvisMark from "@/components/JarvisMark.vue"
 import DraftPreview from "@/components/doc/DraftPreview.vue"
 import ActionError from "@/components/ActionError.vue"
+import PendingCard from "@/components/PendingCard.vue"
 import ReceiptChip from "@/components/ReceiptChip.vue"
 import { useShellStore } from "@/stores/shell"
 import { useJarvisTheme } from "@/theme"
 import { displayName } from "@/lib/user"
-import { summarize, batchFromPreview } from "@/lib/actionSummary"
+import { summarize, batchFromPreview, pendingCardOf, verbSentence, pendingExpiry } from "@/lib/actionSummary"
 
 const session = inject("$session")
 const socket = inject("$socket")
@@ -2459,6 +2463,27 @@ function pendingBatchOf(pa) {
 	if (!pa || pa.tool !== "create_docs") return null
 	return batchFromPreview(pa.preview)
 }
+// The raw dry-run preview JSON, shown behind the card's Details expander (the
+// same string the pre-F9 card dumped directly).
+function pendingDetailsOf(pa) {
+	return pendingPreviewOf(pa)
+}
+// Wall-clock expiry (F15): a coarse tick flips a card to its "expired" state once
+// the 15-min token TTL lapses, so a stale card stops looking actionable. Real
+// enforcement stays server-side (confirming an expired token fails).
+const pendingNowMs = ref(Date.now())
+let _expiryTick = null
+onMounted(() => {
+	_expiryTick = setInterval(() => {
+		pendingNowMs.value = Date.now()
+	}, 15000)
+})
+onUnmounted(() => {
+	if (_expiryTick) clearInterval(_expiryTick)
+})
+function pendingExpiredOf(pa) {
+	return pendingExpiry(pa && pa.expires_at, pendingNowMs.value).expired
+}
 // Drop one card from the queue by its token (confirm-success / discard / expiry).
 function removePending(token) {
 	if (!token) return
@@ -2476,6 +2501,7 @@ function enqueuePending(card) {
 		summary: card.summary || "",
 		preview: card.preview || null,
 		run_id: card.run_id || null,
+		expires_at: card.expires_at || null,
 		busy: false,
 		error: null,
 	})
@@ -2501,7 +2527,16 @@ async function confirmPending(pa) {
 			// way the card is spent - surface a brief note and dismiss.
 			if (r.error && r.error.type === "InvalidConfirmation") {
 				removePending(token)
-				notify("That confirmation expired - ask Jarvis to try again.", { type: "error" })
+				// InvalidConfirmation is deliberately opaque (expired / used in another
+				// tab / a redis blip). Use the card's own wall-clock expiry for the right
+				// message instead of always blaming expiry (F15).
+				const expired = pendingExpiry(pa.expires_at, Date.now()).expired
+				notify(
+					expired
+						? "This confirmation expired — tell me the action again to retry it."
+						: "Couldn't confirm — it may have been handled in another tab. Refresh, or ask me to try again.",
+					{ type: "error" },
+				)
 				return
 			}
 			// The token was consumed and the tool failed; confirm_tool already
@@ -2570,6 +2605,7 @@ async function resyncPendingConfirmations(id) {
 			summary: it.summary || "",
 			preview: it.preview || null,
 			run_id: it.run_id || null,
+			expires_at: it.expires_at || null,
 		})
 	}
 }
@@ -3557,6 +3593,7 @@ function onEvent(p) {
 				summary: p.summary || "",
 				preview: p.preview || null,
 				run_id: p.run_id || null,
+				expires_at: p.expires_at || null,
 			})
 		}
 		return
@@ -4912,6 +4949,7 @@ onUnmounted(() => {
 .jv-pending-body { padding: 11px 14px; display: flex; flex-direction: column; gap: 8px; }
 .jv-pending-summary { font-size: 13.5px; line-height: 1.5; color: var(--text); }
 .jv-pending-note { font-size: 12px; line-height: 1.45; color: var(--text-3); }
+.jv-pending-expired { padding: 9px 11px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; color: var(--text-3); font-size: 12.5px; line-height: 1.45; }
 .jv-pending-preview { margin: 0; padding: 9px 11px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; line-height: 1.5; color: var(--text); white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow-y: auto; }
 .jv-pending-batch { margin: 0 14px 8px; padding-left: 18px; font-size: 12.5px; color: var(--text-2); }
 .jv-pending-batch li { margin: 2px 0; }

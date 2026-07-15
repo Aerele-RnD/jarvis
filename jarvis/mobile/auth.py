@@ -41,6 +41,18 @@ def get_mobile_token() -> dict:
 	if not user or user == "Guest":
 		raise frappe.AuthenticationError
 
+	# PART 4 REVISED, TASK 41: a Website/portal user has no legitimate use for the
+	# Jarvis mobile app's token endpoint (PART 1 TASK 6: portal users are a
+	# lower-trust population, and Frappe's own generate_keys is SM-gated). This
+	# stays session-user-only + idempotent, but refuses a non-Desk user
+	# self-minting a durable credential here.
+	from jarvis.permissions import is_system_user
+	if not is_system_user(user):
+		frappe.throw(
+			"The Jarvis mobile token is available to Jarvis app (Desk) users only.",
+			frappe.PermissionError,
+		)
+
 	doc = frappe.get_doc("User", user)
 	existing_secret = doc.get_password("api_secret", raise_exception=False) if doc.api_key else None
 

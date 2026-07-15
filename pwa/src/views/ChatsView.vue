@@ -36,7 +36,6 @@ const subtitle = (c) => {
 
 onMounted(() => {
 	if (!store.loaded) store.loadConversations()
-	store.loadPendingCount()
 })
 </script>
 
@@ -46,7 +45,6 @@ onMounted(() => {
 			<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
 				<path d="M3 6h18M3 12h18M3 18h18" />
 			</svg>
-			<span v-if="store.pendingApprovals" class="jv-badge" />
 		</button>
 		<div class="jv-title">Chats</div>
 		<button class="jv-icon-btn" aria-label="New chat" @click="newChat">
@@ -104,21 +102,6 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.jv-icon-btn {
-	position: relative;
-}
-/* A parked write is waiting somewhere behind the drawer — say so on the button
-   that opens it, or the user has no way to know. */
-.jv-badge {
-	position: absolute;
-	top: 7px;
-	right: 7px;
-	width: 8px;
-	height: 8px;
-	border-radius: 999px;
-	background: var(--amber-dot);
-	border: 2px solid var(--menu-bar);
-}
 
 .jv-searchbar {
 	display: flex;

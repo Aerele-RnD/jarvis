@@ -40,6 +40,7 @@ from frappe.utils import set_request
 from frappe.website.path_resolver import resolve_path
 
 from jarvis.pwa import SW_ROUTE, SW_SCOPE, ServiceWorkerRenderer, _sw_path
+from jarvis.www.jarvis_mobile import get_context
 
 # Stands in for the built worker. Content is irrelevant to the renderer — it
 # serves bytes — so this only has to be recognisable in an assertion.
@@ -156,3 +157,43 @@ class TestPrecacheUrlsAreAbsolute(FrappeTestCase):
 		sw = frappe.read_file(_sw_path())
 		self.assertIn('"/assets/jarvis/pwa/offline.html"', sw)
 		self.assertNotIn('"offline.html"', sw)
+
+
+class TestGuestReachesTheAppsOwnLogin(FrappeTestCase):
+	"""The shell must render for a Guest.
+
+	Not cosmetic: the manifest scope is /jarvis-mobile, and a standalone PWA that
+	navigates OUTSIDE its scope is handed off to the browser. Redirecting a guest
+	to the Desk's /login therefore ejected the user from the installed app into a
+	Chrome tab. Guests get the shell; the router shows the app's own Login route.
+	"""
+
+	def setUp(self):
+		self._user = frappe.session.user
+
+	def tearDown(self):
+		frappe.set_user(self._user)
+
+	def test_guest_gets_the_shell_not_a_redirect(self):
+		frappe.set_user("Guest")
+		context = frappe._dict()
+		# A redirect out of scope is the bug; get_context must simply return.
+		get_context(context)
+		self.assertEqual(context.boot["frappe_user_id"], "Guest")
+
+	def test_signed_in_user_without_access_still_goes_to_the_desk(self):
+		"""They already have a session — a login form would be nonsense. The Desk
+		is where a non-Jarvis user belongs."""
+		frappe.set_user("Administrator")
+		with patch("jarvis.www.jarvis_mobile.has_jarvis_access", return_value=False):
+			with self.assertRaises(frappe.Redirect):
+				get_context(frappe._dict())
+		self.assertEqual(frappe.local.flags.redirect_location, "/app")
+
+	def test_user_with_access_gets_the_shell(self):
+		frappe.set_user("Administrator")
+		with patch("jarvis.www.jarvis_mobile.has_jarvis_access", return_value=True):
+			context = frappe._dict()
+			get_context(context)
+		self.assertEqual(context.boot["frappe_user_id"], "Administrator")
+		self.assertEqual(context.boot["default_route"], "/jarvis-mobile")

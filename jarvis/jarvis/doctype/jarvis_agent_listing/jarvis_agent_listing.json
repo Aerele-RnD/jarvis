@@ -148,6 +148,11 @@
    "role": "Jarvis User"
   },
   {
+   "read": 1,
+   "role": "Jarvis Admin",
+   "write": 1
+  },
+  {
    "permlevel": 1,
    "read": 1,
    "role": "System Manager",

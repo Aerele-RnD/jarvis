@@ -6,8 +6,9 @@ import { useRouter } from "vue-router"
 import { renderMarkdown } from "@shared/markdown.js"
 import * as api from "../api"
 import { store } from "../store"
-import { parseCards, parseCharts, parseSkillsUsed, stripAgentBlocks, toolStatus } from "../lib/blocks"
+import { parseAction, parseCards, parseCharts, parseSkillsUsed, stripAgentBlocks, toolStatus } from "../lib/blocks"
 import { spanBetween } from "../lib/time"
+import ActionCard from "../components/ActionCard.vue"
 import ChartCard from "../components/ChartCard.vue"
 import Composer from "../components/Composer.vue"
 import DecisionCard from "../components/DecisionCard.vue"
@@ -60,6 +61,10 @@ const autoApply = ref(false)
 
 const scroller = ref(null)
 const composer = ref(null)
+// An action card is a live offer, not history: only the newest assistant turn
+// may still be applied. Scrolling back to last week's proposal and tapping
+// Create would write a record the user has long since moved on from.
+const dismissedActions = ref(new Set())
 
 const sending = computed(() => !!live.value || sendBusy.value)
 const title = computed(
@@ -81,13 +86,15 @@ const view = (m) => {
 		html,
 		cards,
 		charts,
+		action: parseAction(content),
 		skills: parseSkillsUsed(content),
 		took: spanBetween(m.creation, m.modified),
 		// A turn can end with nothing to show: the runtime aborts a stalled model
 		// call and writes an empty assistant row. With no prose, no cards, no
 		// canvas and no error text, the thread would render a blank gap and the
 		// user would be left wondering whether anything happened at all.
-		empty: !html && !cards && !charts.length && !m.error && !(m.canvas || []).length,
+		empty:
+			!html && !cards && !charts.length && !parseAction(content) && !m.error && !(m.canvas || []).length,
 	}
 }
 
@@ -126,6 +133,17 @@ const items = computed(() => {
 	}
 	return out
 })
+
+const lastAssistantKey = computed(() => {
+	const assistants = items.value.filter((i) => i.type === "assistant" && i.msg)
+	return assistants.length ? assistants[assistants.length - 1].key : ""
+})
+
+// The write leaves a receipt in the conversation, so reload rather than guess.
+function onActionApplied() {
+	load()
+	store.loadConversations()
+}
 
 function toolsTitle(msgs) {
 	const dur = spanBetween(msgs[0]?.creation, msgs[msgs.length - 1]?.modified || msgs[msgs.length - 1]?.creation, 1)
@@ -209,11 +227,13 @@ async function send() {
 	await scrollToBottom(true)
 
 	try {
-		const res = await api.sendMessage(
-			convId.value,
-			text,
-			ready.map((a) => ({ file_url: a.file_url, file_name: a.name })),
-		)
+		// No model/effort override here: an existing chat keeps whatever it was
+		// started with (the backend falls back to the workspace default). The
+		// device's preference applies when a chat is CREATED, on the new-chat
+		// screen — same rule as the native app.
+		const res = await api.sendMessage(convId.value, text, {
+			attachments: ready.map((a) => ({ file_url: a.file_url, file_name: a.name })),
+		})
 		if (res?.ok === false) {
 			sendBusy.value = false
 			errorBanner.value = res.reason || "Couldn't send that message."
@@ -397,6 +417,7 @@ function onEvent(p) {
 				preview: p.preview ?? null,
 				conversation: conv,
 				run_id: p.run_id,
+				expires_at: p.expires_at ?? null,
 			})
 			scrollToBottom()
 			break
@@ -498,6 +519,13 @@ onUnmounted(() => {
 					<div v-else-if="it.view.empty" class="jv-msg-error">
 						Jarvis didn't return a reply for this turn. Try asking again.
 					</div>
+					<ActionCard
+						v-if="it.view.action && it.key === lastAssistantKey && !dismissedActions.has(it.key)"
+						:action="it.view.action"
+						:conversation="convId"
+						@applied="onActionApplied"
+						@dismissed="dismissedActions.add(it.key)"
+					/>
 					<RecordCards v-if="it.view.cards" :data="it.view.cards" />
 					<ChartCard v-for="(c, ci) in it.view.charts" :key="ci" :spec="c" />
 					<SkillChips :names="it.view.skills" />
