@@ -250,11 +250,32 @@
                popup-blocker fix); step 2 stays pending until step 1 mints the authorize
                URL, since a URL pasted before sign-in has no nonce and finishConnect no-ops. -->
           <div v-if="panelRow._connect && (panelRow._connect.open || (panel.mode === 'add' && !(panelRow.accounts && panelRow.accounts.length)))" class="jv-csteps">
+            <!-- DEVICE-CODE (Kimi): show the code + verification link, poll for approval. -->
+            <template v-if="panelRow._connect.deviceFlow">
+              <div class="jv-cstep">
+                <div class="jv-cnum">1</div>
+                <div class="jv-cbody">
+                  <div class="jv-ctit">Sign in with {{ upstreamLabelOf(panelRow.upstream) }}</div>
+                  <div class="jv-cdesc">Open the verification page, enter the code, and approve access. This panel updates automatically.</div>
+                  <div class="jv-crow" style="margin-top:8px">
+                    <a v-if="panelRow._connect.verificationUri" :href="panelRow._connect.verificationUri" target="_blank" rel="noopener noreferrer" class="jv-cbtn jv-cbtn-primary">Open verification page ↗</a>
+                  </div>
+                  <div v-if="panelRow._connect.userCode" class="jv-cdesc" style="margin-top:10px">Code: <code style="font-size:17px;letter-spacing:2px;font-weight:700">{{ panelRow._connect.userCode }}</code></div>
+                  <div v-if="panelRow._connect.polling" class="jv-cdesc" style="margin-top:8px">Waiting for approval…</div>
+                </div>
+              </div>
+              <div v-if="panelRow._connect.error" class="jv-cn-err">{{ panelRow._connect.error }}</div>
+              <div class="jv-cn-acts">
+                <button @click="closeConnect(panelRow)" class="jv-btn jv-btn--ghost">Cancel</button>
+              </div>
+            </template>
+            <!-- PASTE-BACK (OpenAI/Google/xAI): open sign-in, paste the callback URL. -->
+            <template v-else>
             <div class="jv-cstep">
               <div class="jv-cnum">1</div>
               <div class="jv-cbody">
                 <div class="jv-chead">
-                  <div class="jv-ctit">Sign in with {{ panelRow.upstream === 'google' ? 'Google' : 'OpenAI' }}</div>
+                  <div class="jv-ctit">Sign in with {{ upstreamLabelOf(panelRow.upstream) }}</div>
                   <div class="jv-crow">
                     <template v-if="panelRow._connect.authorizeUrl">
                       <a :href="panelRow._connect.authorizeUrl" target="_blank" rel="noopener noreferrer" class="jv-cbtn jv-cbtn-primary">Open sign-in ↗</a>
@@ -267,7 +288,7 @@
                     </button>
                   </div>
                 </div>
-                <div class="jv-cdesc">Opens {{ panelRow.upstream === 'google' ? 'Google' : 'OpenAI' }} in a new tab. Approve access, then come back here.</div>
+                <div class="jv-cdesc">Opens {{ upstreamLabelOf(panelRow.upstream) }} in a new tab. Approve access, then come back here.</div>
               </div>
             </div>
             <div class="jv-cstep" :class="{ 'jv-pending': !panelRow._connect.authorizeUrl }">
@@ -301,6 +322,7 @@
                 {{ panelRow._connect.loading ? 'Connecting…' : 'Connect' }}
               </button>
             </div>
+            </template>
           </div>
 
         </div>
@@ -457,11 +479,31 @@
           <template v-if="singleMode && !(m.accounts && m.accounts.length)">
             <div class="jv-cdivider"></div>
             <div class="jv-csteps">
+              <!-- DEVICE-CODE (Kimi): show the code + verification link, poll for approval. -->
+              <template v-if="m._connect && m._connect.deviceFlow">
+                <div class="jv-cstep">
+                  <div class="jv-cnum">1</div>
+                  <div class="jv-cbody">
+                    <div class="jv-ctit">Sign in with {{ upstreamLabelOf(m.upstream) }}</div>
+                    <div class="jv-cdesc">Open the verification page, enter the code, and approve access. This panel updates automatically.</div>
+                    <div class="jv-crow" style="margin-top:8px">
+                      <a v-if="m._connect.verificationUri" :href="m._connect.verificationUri" target="_blank" rel="noopener noreferrer" class="jv-cbtn jv-cbtn-primary">Open verification page ↗</a>
+                    </div>
+                    <div v-if="m._connect.userCode" class="jv-cdesc" style="margin-top:10px">Code: <code style="font-size:17px;letter-spacing:2px;font-weight:700">{{ m._connect.userCode }}</code></div>
+                    <div v-if="m._connect.polling" class="jv-cdesc" style="margin-top:8px">Waiting for approval…</div>
+                    <div class="jv-cacts" style="margin-top:10px">
+                      <button type="button" class="jv-cbtn jv-cbtn-ghost" @click="closeConnect(m)">Cancel</button>
+                    </div>
+                  </div>
+                </div>
+              </template>
+              <!-- PASTE-BACK (OpenAI/Google/xAI): open sign-in, paste the callback URL. -->
+              <template v-else>
               <div class="jv-cstep">
                 <div class="jv-cnum">1</div>
                 <div class="jv-cbody">
                   <div class="jv-chead">
-                    <div class="jv-ctit">Sign in with {{ m.upstream === 'google' ? 'Google' : 'OpenAI' }}</div>
+                    <div class="jv-ctit">Sign in with {{ upstreamLabelOf(m.upstream) }}</div>
                     <div class="jv-crow">
                       <template v-if="m._connect && m._connect.authorizeUrl">
                         <a :href="m._connect.authorizeUrl" target="_blank" rel="noopener noreferrer" class="jv-cbtn jv-cbtn-primary">Open sign-in ↗</a>
@@ -473,7 +515,7 @@
                       </button>
                     </div>
                   </div>
-                  <div class="jv-cdesc">Opens {{ m.upstream === 'google' ? 'Google' : 'OpenAI' }} in a new tab. Approve access, then come back here.</div>
+                  <div class="jv-cdesc">Opens {{ upstreamLabelOf(m.upstream) }} in a new tab. Approve access, then come back here.</div>
                 </div>
               </div>
               <div class="jv-cstep" :class="{ 'jv-pending': !(m._connect && m._connect.authorizeUrl) }">
@@ -501,6 +543,7 @@
                   </div>
                 </div>
               </div>
+              </template>
             </div>
             <div v-if="m._connect && m._connect.error" class="jv-cn-err">{{ m._connect.error }}</div>
           </template>
@@ -609,7 +652,15 @@ const credTypes = [
 const upstreamOpts = [
   { value: "openai", label: "OpenAI" },
   { value: "google", label: "Google Gemini" },
+  { value: "xai", label: "xAI Grok" },
+  { value: "kimi", label: "Kimi (Moonshot)" },
 ]
+// upstream value -> the OAuth provider label the backend _PROVIDER_OAUTH_MAP is
+// keyed by (begin_pool_account_signin needs the label, not the upstream value).
+// MUST match jarvis/oauth/providers.py _PROVIDER_OAUTH_MAP keys.
+const UPSTREAM_OAUTH_PROVIDER = {
+  openai: "OpenAI", google: "Google Gemini", xai: "xAI Grok", kimi: "Kimi (Moonshot)",
+}
 // JvCombo speaks display LABELS; a row stores `upstream` as the VALUE the pool spec
 // requires ("openai" / "google"). Bridge the two rather than letting "OpenAI" reach
 // the spec (the fleet validates upstream against openai|anthropic|google and 422s).
@@ -742,7 +793,7 @@ const dirty = computed(() =>
 )
 
 // ---- helpers -------------------------------------------------------------
-function blankConnect() { return { open: false, loading: false, error: "", copied: false, nonce: "", authorizeUrl: "", pastedUrl: "", reconnectIdx: null } }
+function blankConnect() { return { open: false, loading: false, error: "", copied: false, nonce: "", authorizeUrl: "", pastedUrl: "", reconnectIdx: null, deviceFlow: false, userCode: "", verificationUri: "", polling: false } }
 function presetCardStyle(entry) {
   const on = selectedPreset.value === entry.key
   return {
@@ -1114,7 +1165,7 @@ async function startConnect(m, reconnectIdx = null) {
   let win = null
   try { win = window.open("about:blank", "_blank"); if (win) win.opener = null } catch (e) { win = null }
   try {
-    const provider = m.upstream === "google" ? "Google Gemini" : "OpenAI"
+    const provider = UPSTREAM_OAUTH_PROVIDER[m.upstream] || "OpenAI"
     const res = await api.beginPoolAccountSignin(provider, m.model.trim())
     // Backend returns an envelope: {ok:true, data:{nonce, authorize_url, …}} or
     // {ok:false, error:{code, message}}. Unwrap data; surface errors instead of
@@ -1127,10 +1178,72 @@ async function startConnect(m, reconnectIdx = null) {
     }
     const d = res.data || {}
     m._connect.nonce = d.nonce
-    m._connect.authorizeUrl = d.authorize_url
     m._connect.loading = false
-    if (win && d.authorize_url) win.location.href = d.authorize_url
+    if (d.device_flow) {
+      // Device-code (Kimi): no authorize URL, no paste. Show the user_code +
+      // verification link, open the verification page, and poll for approval.
+      m._connect.deviceFlow = true
+      m._connect.userCode = d.user_code || ""
+      m._connect.verificationUri = d.verification_uri || d.verification_uri_complete || ""
+      const openUrl = d.verification_uri_complete || d.verification_uri
+      if (win && openUrl) win.location.href = openUrl
+      else if (win) win.close()
+      _pollDeviceConnect(m, Math.max(2, Number(d.interval) || 5))
+    } else {
+      m._connect.authorizeUrl = d.authorize_url
+      if (win && d.authorize_url) win.location.href = d.authorize_url
+      else if (win) win.close()
+    }
   } catch (e) { m._connect.loading = false; m._connect.error = _err(e); if (win) win.close() }
+}
+// Poll a device-code (Kimi) sign-in until the user approves, then place the
+// account (same contract as finishConnect's success path). Bails if the panel
+// is closed/reset or a new sign-in rebinds the nonce.
+async function _pollDeviceConnect(m, intervalSecs) {
+  const nonce = m._connect && m._connect.nonce
+  if (!nonce) return
+  m._connect.polling = true
+  const tick = async () => {
+    if (!m._connect || !m._connect.deviceFlow || m._connect.nonce !== nonce) return
+    let res
+    try { res = await api.pollPoolAccountSignin(nonce) }
+    catch (e) { if (m._connect && m._connect.nonce === nonce) { m._connect.error = _err(e); m._connect.polling = false } return }
+    if (!m._connect || m._connect.nonce !== nonce) return
+    if (!res || res.ok === false) {
+      m._connect.error = (res && res.error && res.error.message) || "Sign-in failed. Start again."
+      m._connect.polling = false
+      return
+    }
+    const d = res.data || {}
+    if (d.status === "pending") { setTimeout(tick, intervalSecs * 1000); return }
+    m._connect.polling = false
+    await _placeConnectedAccount(m, d)
+  }
+  setTimeout(tick, intervalSecs * 1000)
+}
+// Shared account placement for both the paste-back (finishConnect) and
+// device-code (_pollDeviceConnect) success paths.
+async function _placeConnectedAccount(m, d) {
+  if (!Array.isArray(m.accounts)) m.accounts = []
+  const acct = {
+    upstream: m.upstream || "openai",
+    account_ref: d.account_ref,
+    label: d.label || d.account_email || d.account_ref,
+    account_email: d.account_email || "",
+    oauth_blob: d.oauth_blob || "",
+    connected: true,
+  }
+  const ri = m._connect.reconnectIdx
+  const byEmail = acct.account_email
+    ? m.accounts.findIndex((a) => a.account_email && a.account_email.toLowerCase() === acct.account_email.toLowerCase())
+    : -1
+  if (ri != null && ri >= 0 && ri < m.accounts.length) {
+    m.accounts.splice(ri, 1, acct)
+    if (byEmail >= 0 && byEmail !== ri) m.accounts.splice(byEmail, 1)
+  } else if (byEmail >= 0) m.accounts.splice(byEmail, 1, acct)
+  else m.accounts.push(acct)
+  m._connect = blankConnect()
+  if (!props.footerless) await save()
 }
 async function finishConnect(m) {
   if (!m._connect || !m._connect.nonce) return
@@ -1144,38 +1257,13 @@ async function finishConnect(m) {
       m._connect.error = (res && res.error && res.error.message) || "Couldn't connect the account. Check the pasted URL and try again."
       return
     }
-    const d = res.data || {}
-    if (!Array.isArray(m.accounts)) m.accounts = []
-    const acct = {
-      upstream: m.upstream || "openai",
-      account_ref: d.account_ref,
-      label: d.label || d.account_email || d.account_ref,
-      account_email: d.account_email || "",
-      oauth_blob: d.oauth_blob || "",
-      connected: true,
-    }
     // Place the (re)connected account. The backend mints a fresh account_ref on
     // every sign-in, so it can't be a dedupe key: a per-account Reconnect refreshes
     // that exact slot (reconnectIdx); otherwise fold onto an existing account with
-    // the same email; otherwise append a new one.
-    const ri = m._connect.reconnectIdx
-    const byEmail = acct.account_email
-      ? m.accounts.findIndex((a) => a.account_email && a.account_email.toLowerCase() === acct.account_email.toLowerCase())
-      : -1
-    if (ri != null && ri >= 0 && ri < m.accounts.length) {
-      m.accounts.splice(ri, 1, acct)
-      // Reconnecting one slot but signing in as an account already held by a
-      // DIFFERENT slot would leave two identical accounts - drop the duplicate.
-      if (byEmail >= 0 && byEmail !== ri) m.accounts.splice(byEmail, 1)
-    } else if (byEmail >= 0) m.accounts.splice(byEmail, 1, acct)
-    else m.accounts.push(acct)
-    m._connect = blankConnect()
-    // The just-minted OAuth blob lives only in memory until the pool is saved, so
-    // navigating off the page would orphan this account. In the account editor,
-    // persist immediately; if the pool isn't valid yet, save() surfaces the reason
-    // and the "Unsaved changes" notice stays up so nothing is silently lost. Skip
-    // in the footerless onboarding editor - there the host's CTA drives save.
-    if (!props.footerless) await save()
+    // the same email; otherwise append a new one. The just-minted OAuth blob lives
+    // only in memory until the pool is saved, so _placeConnectedAccount persists
+    // immediately (unless footerless onboarding, where the host CTA drives save).
+    await _placeConnectedAccount(m, res.data || {})
   } catch (e) { m._connect.loading = false; m._connect.error = _err(e) }
 }
 function closeConnect(m) { m._connect = blankConnect() }

@@ -35,9 +35,16 @@ SUBSCRIPTION_MODELS: dict[str, list[str]] = {
 		"gemini-2.5-flash",
 		"gemini-3.1-flash",
 	],
+	# Model ids MUST exist in cli-proxy-api's embedded catalogue for the pinned
+	# image (v7.2.35). NB: "grok-4.5" is NOT in that catalogue (use grok-4.3 /
+	# grok-build-0.1); "kimi-k2.7-code" IS present.
+	"xAI Grok": ["grok-4.3", "grok-build-0.1"],
+	"Kimi (Moonshot)": ["kimi-k2.7-code", "kimi-k2.6"],
 }
 
 DEFAULT_MODEL: dict[str, str] = {
 	"OpenAI": "gpt-5.5",
 	"Google Gemini": "gemini-2.5-pro",
+	"xAI Grok": "grok-4.3",
+	"Kimi (Moonshot)": "kimi-k2.7-code",
 }

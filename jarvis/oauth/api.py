@@ -21,7 +21,7 @@ from jarvis.exceptions import JarvisError
 from jarvis.permissions import require_jarvis_admin
 from jarvis.oauth.providers import (
 	UnknownProviderError, build_authorize_url, extract_account_id, get_provider,
-	is_oauth_provider,
+	is_oauth_provider, provider_redirect_uri,
 )
 
 
@@ -179,16 +179,23 @@ def _begin_signin(provider: str, model: str, *, pool: bool) -> dict:
 	nonce = secrets.token_hex(24)
 	verifier, challenge = _generate_pkce()
 	state = secrets.token_urlsafe(16)
+	# xAI's authorize endpoint requires a fresh nonce alongside state; other
+	# providers ignore it (build_authorize_url only emits it when requires_nonce).
+	oidc_nonce = secrets.token_urlsafe(16)
+	# Per-provider redirect_uri (xAI pins cli-proxy-api's exact loopback
+	# callback). Cached so _exchange_code re-sends the SAME value.
+	redirect_uri = provider_redirect_uri(provider, _REDIRECT_URI)
 
 	authorize_url = build_authorize_url(
 		provider=provider,
-		redirect_uri=_REDIRECT_URI,
+		redirect_uri=redirect_uri,
 		code_challenge=challenge,
 		state=state,
 		# Pool accounts feed cli-proxy-api, which needs the codex-scope
 		# token audience; the direct flow keeps the connectors scope for
 		# openclaw's own codex path. See providers.py pool_scope.
 		pool=pool,
+		oidc_nonce=oidc_nonce,
 	)
 
 	entry = {
@@ -198,6 +205,7 @@ def _begin_signin(provider: str, model: str, *, pool: bool) -> dict:
 		"expires_at_ts": int(time.time()) + _NONCE_TTL_SECS,
 		"verifier": verifier,
 		"state": state,
+		"redirect_uri": redirect_uri,
 		"originator_user": frappe.session.user,
 	}
 	if pool:
@@ -225,19 +233,96 @@ def begin_paste_signin(provider: str, model: str) -> dict:
 	return _begin_signin(provider, model, pool=False)
 
 
+def _begin_device_signin(provider: str, model: str) -> dict:
+	"""Device-code (RFC 8628) capture start for a device-flow provider (Kimi).
+
+	Requests a device_code + user_code from the provider's
+	device_authorization endpoint, caches the device_code bound to the user
+	(tagged pool+device), and returns the user_code + verification_uri for the
+	frontend to display. There is NO authorize URL / redirect / paste — the user
+	approves out-of-band and the frontend polls ``poll_pool_account_signin``.
+	"""
+	p = get_provider(provider)
+	_gc_expired_nonces()
+	device_id = secrets.token_hex(16)
+	headers = dict(p.get("device_headers") or {})
+	headers["X-Msh-Device-Id"] = device_id
+	try:
+		resp = requests.post(
+			p["device_authorization"],
+			data={"client_id": p["client_id"]},
+			headers=headers,
+			timeout=_HTTP_TIMEOUT,
+		)
+	except requests.RequestException as e:
+		frappe.log_error(title="oauth device authorization: network error",
+		                 message=f"provider={provider!r} error={e!r}")
+		return _err("network_error", "Couldn't reach the sign-in provider. Try again in a minute.")
+	if not resp.ok:
+		frappe.log_error(title="oauth device authorization: provider rejected",
+		                 message=f"provider={provider!r} status={resp.status_code} detail={resp.text!r}")
+		return _err("device_start_failed", "Couldn't start sign-in with the provider. Try again.")
+	try:
+		body = resp.json()
+	except ValueError:
+		return _err("device_start_failed", "The provider returned an unexpected response.")
+
+	device_code = body.get("device_code")
+	user_code = body.get("user_code")
+	verification_uri = body.get("verification_uri") or body.get("verification_url")
+	if not device_code or not user_code:
+		return _err("device_start_failed", "The provider returned an incomplete device response.")
+	interval = int(body.get("interval") or p.get("poll_interval_s") or 5)
+	# Device flow's own expiry (typically <=15 min) but never past our nonce TTL.
+	expires_in = min(int(body.get("expires_in") or _NONCE_TTL_SECS), _NONCE_TTL_SECS)
+
+	nonce = secrets.token_hex(24)
+	entry = {
+		"provider": provider,
+		"model": _coerce_subscription_model(provider, model),
+		"status": "pending",
+		"expires_at_ts": int(time.time()) + expires_in,
+		"device_code": device_code,
+		"device_id": device_id,
+		"interval": interval,
+		"pool": True,
+		"device": True,
+		"originator_user": frappe.session.user,
+	}
+	frappe.cache.hset(_CACHE_KEY, nonce, entry)
+	return _ok({
+		"nonce": nonce,
+		"device_flow": True,
+		"user_code": user_code,
+		"verification_uri": verification_uri,
+		"verification_uri_complete": body.get("verification_uri_complete") or verification_uri,
+		"interval": interval,
+		"expires_in": expires_in,
+	})
+
+
 @frappe.whitelist()
 def begin_pool_account_signin(provider: str, model: str) -> dict:
-	"""POOL variant of ``begin_paste_signin``: mint a nonce + PKCE pair for
-	capturing ONE more account into a pool "subscription" model.
+	"""POOL variant of ``begin_paste_signin``: start capturing ONE more account
+	into a pool "subscription" model.
 
-	Same nonce/PKCE/state machinery and same System-Manager + per-user
-	binding as the DIRECT flow; the only difference is the cached entry is
-	tagged ``pool`` so ``complete_pool_account_signin`` can distinguish it.
-	Unlike the DIRECT flow this captures a blob and hands it back to the
-	caller (see ``complete_pool_account_signin``) instead of writing creds
-	to Jarvis Settings / pushing to the container.
+	Routes on the provider's grant type: paste-back providers (OpenAI, Google,
+	xAI) mint a nonce + PKCE pair via the shared ``_begin_signin`` machinery;
+	device-code providers (Kimi) go through ``_begin_device_signin`` (no
+	authorize URL — the frontend shows a code + link and polls
+	``poll_pool_account_signin``). Either way the cached entry is tagged ``pool``
+	and this endpoint captures a blob for the caller to stash, rather than
+	writing creds to Jarvis Settings / pushing to the container.
+
+	Gated on System Manager + per-user nonce binding.
 	"""
 	require_jarvis_admin()
+	try:
+		p = get_provider(provider)
+	except UnknownProviderError as e:
+		return _err("unknown_provider", str(e))
+	if p.get("grant_type") == "device_code":
+		return _begin_device_signin(provider, model)
 	return _begin_signin(provider, model, pool=True)
 
 
@@ -341,6 +426,7 @@ def _exchange_and_build_blob(entry: dict, redirected_url: str):
 			provider=provider,
 			code=parsed["code"],
 			code_verifier=entry["verifier"],
+			redirect_uri=entry.get("redirect_uri") or _REDIRECT_URI,
 		)
 	except TokenExchangeError as e:
 		# Nonce NOT cleared; customer can paste again if they fix the URL.
@@ -514,7 +600,103 @@ def complete_pool_account_signin(nonce: str, redirected_url: str) -> dict:
 	})
 
 
-def _exchange_code(*, provider: str, code: str, code_verifier: str) -> dict:
+@frappe.whitelist()
+def poll_pool_account_signin(nonce: str) -> dict:
+	"""Poll a device-code (Kimi) pool sign-in started by
+	``begin_pool_account_signin``.
+
+	Returns ``{status:"pending"}`` while the user hasn't approved yet, or the
+	same capture-only ``{account_ref, label, oauth_blob, account_email}`` shape
+	as ``complete_pool_account_signin`` on success. The frontend calls this on
+	the device flow's ``interval`` until it stops returning "pending".
+
+	Gated on System Manager + per-user nonce binding; the nonce must have been
+	minted by ``begin_pool_account_signin`` for a device-flow provider.
+	"""
+	require_jarvis_admin()
+	entry, err = _validate_signin_nonce(nonce)
+	if err:
+		return err
+	if not (entry.get("pool") and entry.get("device")):
+		# Same opaque message as unknown_nonce so live nonces aren't leaked.
+		return _err("unknown_nonce", "nonce not recognized")
+
+	p = get_provider(entry["provider"])
+	headers = dict(p.get("device_headers") or {})
+	headers["X-Msh-Device-Id"] = entry.get("device_id", "")
+	try:
+		resp = requests.post(
+			p["token"],
+			data={
+				"grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+				"device_code": entry["device_code"],
+				"client_id": p["client_id"],
+			},
+			headers=headers,
+			timeout=_HTTP_TIMEOUT,
+		)
+	except requests.RequestException as e:
+		frappe.log_error(title="oauth device poll: network error",
+		                 message=f"provider={entry['provider']!r} error={e!r}")
+		return _err("network_error", "Couldn't reach the sign-in provider. Try again in a minute.")
+
+	body: dict = {}
+	try:
+		parsed = resp.json()
+		if isinstance(parsed, dict):
+			body = parsed
+	except ValueError:
+		pass
+
+	if not resp.ok:
+		err_code = body.get("error") if isinstance(body.get("error"), str) else ""
+		# Not-yet-approved: keep the nonce alive and keep polling.
+		if err_code in ("authorization_pending", "slow_down"):
+			return _ok({"status": "pending"})
+		# Terminal failure (expired_token / access_denied / ...): burn the nonce.
+		frappe.cache.hdel(_CACHE_KEY, nonce)
+		frappe.log_error(title="oauth device poll: provider rejected",
+		                 message=(f"provider={entry['provider']!r} status={resp.status_code} "
+		                          f"err={err_code!r} detail={resp.text!r}"))
+		msg = ("Sign-in expired; start again." if err_code == "expired_token"
+		       else "Sign-in was declined or failed. Start again.")
+		return _err("device_" + (err_code or "failed"), msg)
+
+	access_token = body.get("access_token")
+	if not access_token:
+		# 200 with no token yet — treat as still pending.
+		return _ok({"status": "pending"})
+
+	# Success. Build the device-flow openclaw blob; the fleet-agent's
+	# oauth_blob_to_cliproxy_kimi transform consumes access/refresh/expires/
+	# token_type/scope/device_id (Kimi is device-code: NO id_token, NO email).
+	now_ms = int(time.time() * 1000)
+	expires_ms = now_ms + int(body.get("expires_in", 3600)) * 1000
+	blob = {
+		"type": "oauth",
+		"provider": p["openclaw_provider"],
+		"access": access_token,
+		"refresh": body.get("refresh_token") or "",
+		"expires": expires_ms,
+		"token_type": body.get("token_type") or "Bearer",
+		"scope": body.get("scope") or "",
+		"device_id": entry.get("device_id", ""),
+	}
+	account_ref = "SUB_" + secrets.token_hex(8)
+	frappe.cache.hdel(_CACHE_KEY, nonce)
+	# Kimi returns no account email, so synthesize a stable non-secret label.
+	label = f"Kimi {account_ref[-4:]}"
+	return _ok({
+		"status": "ok",
+		"account_ref": account_ref,
+		"label": label,
+		"oauth_blob": json.dumps(blob),
+		"account_email": "",
+	})
+
+
+def _exchange_code(*, provider: str, code: str, code_verifier: str,
+                   redirect_uri: str = "") -> dict:
 	"""POST to provider's token endpoint, return parsed JSON.
 
 	On error, raises TokenExchangeError with an opaque code + user-safe
@@ -530,7 +712,7 @@ def _exchange_code(*, provider: str, code: str, code_verifier: str) -> dict:
 			"code": code,
 			"code_verifier": code_verifier,
 			"client_id": p["client_id"],
-			"redirect_uri": _REDIRECT_URI,
+			"redirect_uri": redirect_uri or _REDIRECT_URI,
 		}
 		# Confidential clients (gemini-cli) require client_secret alongside
 		# PKCE. Pure-PKCE clients (codex) leave it blank and we don't send it.

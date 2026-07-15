@@ -74,6 +74,35 @@ _PROVIDER_OAUTH_MAP: dict[str, dict] = {
 			"prompt":      "consent",
 		},
 	},
+	# xAI Grok — SAME authorization_code + PKCE paste-back flow as codex. The
+	# only deltas: a distinct loopback redirect_uri (xAI's server validates it
+	# as an exact string, so mirror cli-proxy-api's default) and a fresh per-
+	# request `nonce` param on the authorize URL (requires_nonce). Public/PKCE
+	# client, so client_secret stays empty. Pooled accounts feed cli-proxy-api's
+	# `xai` channel; there is no distinct pool_scope (one scope constant).
+	"xAI Grok": {
+		"authorize":   "https://auth.x.ai/oauth2/authorize",
+		"token":       "https://auth.x.ai/oauth2/token",
+		"userinfo":    "https://auth.x.ai/oauth2/userinfo",
+		"scope":       "openid profile email offline_access grok-cli:access api:access",
+		"openclaw_provider": "xai",
+		"redirect_uri": "http://127.0.0.1:56121/callback",
+		"requires_nonce": True,
+		"extra_authorize_params": {"plan": "generic", "referrer": "cli-proxy-api"},
+	},
+	# Kimi (Moonshot) — DEVICE-CODE flow (RFC 8628), NOT paste-back: there is no
+	# authorize URL / redirect / code to paste. begin_pool_account_signin routes
+	# grant_type=="device_code" providers to _begin_device_signin; the frontend
+	# shows user_code + verification_uri and polls poll_pool_account_signin.
+	# Public device client (no secret, no PKCE). Custom X-Msh-* headers required.
+	"Kimi (Moonshot)": {
+		"grant_type":    "device_code",
+		"device_authorization": "https://auth.kimi.com/api/oauth/device_authorization",
+		"token":         "https://auth.kimi.com/api/oauth/token",
+		"openclaw_provider": "kimi",
+		"device_headers": {"X-Msh-Platform": "cli-proxy-api", "X-Msh-Version": "1.0.0"},
+		"poll_interval_s": 5,
+	},
 }
 
 
@@ -141,12 +170,17 @@ def extract_account_id(provider: str, access_token: str) -> str:
 
 def build_authorize_url(*, provider: str, redirect_uri: str,
                          code_challenge: str, state: str,
-                         pool: bool = False) -> str:
+                         pool: bool = False, oidc_nonce: str = "") -> str:
 	"""Construct the /oauth/authorize URL with all required parameters.
 
 	``pool=True`` selects the provider's ``pool_scope`` when it defines one
 	(subscription-pool accounts consumed by cli-proxy-api need a different
 	token audience than the direct openclaw flow - see the OpenAI entry).
+
+	``oidc_nonce`` is added to the authorize params only for providers that set
+	``requires_nonce`` (xAI's authorize endpoint 400s without a fresh nonce, the
+	same way ``state`` is minted per request). Ignored for providers that don't.
+	``redirect_uri`` is the effective per-provider redirect the caller resolved.
 	"""
 	p = get_provider(provider)
 	params = {
@@ -158,5 +192,15 @@ def build_authorize_url(*, provider: str, redirect_uri: str,
 		"code_challenge_method": "S256",
 		"state": state,
 	}
+	if p.get("requires_nonce") and oidc_nonce:
+		params["nonce"] = oidc_nonce
 	params.update(p["extra_authorize_params"])
 	return f"{p['authorize']}?{urlencode(params)}"
+
+
+def provider_redirect_uri(provider: str, default: str) -> str:
+	"""The effective OAuth redirect_uri for ``provider``: its own value when it
+	pins one (xAI mirrors cli-proxy-api's exact loopback callback), else the
+	shared default. build_authorize_url and the token exchange MUST use the same
+	value, so this is resolved once in _begin_signin and cached on the nonce."""
+	return _PROVIDER_OAUTH_MAP.get(provider, {}).get("redirect_uri") or default
