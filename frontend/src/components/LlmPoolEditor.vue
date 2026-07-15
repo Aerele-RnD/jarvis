@@ -132,7 +132,10 @@
               <label class="jv-pool-lab">Provider</label>
               <JvCombo :model-value="panelRow.provider" :options="providerOptions" :editable="editable"
                        placeholder="Provider"
-                       @update:model-value="(v) => onProviderChange(panelRow, v)" />
+                       @update:model-value="(v) => onProviderChange(panelRow, v)">
+                <template #option="{ option }"><span style="display:inline-flex;align-items:center;gap:8px"><ProviderLogo :provider="option.value" :size="16" />{{ option.label }}</span></template>
+                <template #selected="{ label, placeholder }"><span style="display:inline-flex;align-items:center;gap:8px"><ProviderLogo v-if="label" :provider="label" :size="16" />{{ label || placeholder }}</span></template>
+              </JvCombo>
             </div>
             <div class="jv-pool-field">
               <label class="jv-pool-lab">Model</label>
@@ -386,7 +389,10 @@
         <div v-if="m.credentialType!=='subscription'" :class="{ 'jv-single-body': singleMode }">
           <div v-if="singleMode" class="jv-ak-grid">
             <JvCombo :model-value="m.provider" @update:model-value="(v) => onProviderChange(m, v)"
-                     :options="providerOptions" :editable="editable" placeholder="Provider" />
+                     :options="providerOptions" :editable="editable" placeholder="Provider">
+              <template #option="{ option }"><span style="display:inline-flex;align-items:center;gap:8px"><ProviderLogo :provider="option.value" :size="16" />{{ option.label }}</span></template>
+              <template #selected="{ label, placeholder }"><span style="display:inline-flex;align-items:center;gap:8px"><ProviderLogo v-if="label" :provider="label" :size="16" />{{ label || placeholder }}</span></template>
+            </JvCombo>
             <JvCombo :model-value="m.model" @update:model-value="(v) => { m.model = v }" allow-custom
                      :options="modelSuggestionsForProvider(m.provider)" :editable="editable" placeholder="Model ID (e.g. gpt-4o)" />
             <input v-model="m.apiKey" :disabled="!editable" type="password"
