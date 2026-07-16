@@ -31,8 +31,9 @@
 						Findings are written <b>directly</b> to your Org wiki without a review step.
 					</li>
 					<li>
-						Useful functions may be added as org-wide skills anyone can invoke (you can
-						disable or delete them later from Skills).
+						Useful functions may be added as org-wide skills - created <b>disabled</b> for
+						your review; enable them from Skills after checking their instructions (you or
+						a System Manager can manage them there).
 					</li>
 					<li>
 						Only analyze apps whose code you trust - source code, including comments,
@@ -50,7 +51,6 @@
 					@click="emit('confirm')"
 				/>
 				<Button
-					variant="ghost"
 					label="Cancel"
 					:disabled="loading"
 					@click="emit('update:modelValue', false)"
