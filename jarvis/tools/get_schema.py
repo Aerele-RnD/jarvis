@@ -1,6 +1,7 @@
 import frappe
 
 from jarvis.exceptions import InvalidArgumentError, PermissionDeniedError
+from jarvis.tools._doc_actions import get_doc_actions
 
 TABLE_FIELDTYPES = {"Table", "Table MultiSelect"}
 _SCHEMA_TTL = 300  # seconds; schema is user-independent + changes rarely
@@ -58,8 +59,19 @@ def _build_schema(doctype: str, verbose: bool) -> dict:
 		"naming_rule": getattr(meta, "naming_rule", None),
 		"title_field": meta.title_field,
 		"workflow": _workflow_for(doctype),
+		"actions": _safe_actions(doctype),
 		"fields": fields,
 	}
+
+
+def _safe_actions(doctype: str) -> list:
+	"""Discovery hint: whitelisted server methods this DocType's form exposes as
+	buttons (callable via run_method). Extraction is best-effort and must never
+	break get_schema, so degrade to [] on any error."""
+	try:
+		return get_doc_actions(doctype)
+	except Exception:
+		return []
 
 
 def _as_bool(value) -> bool:
@@ -92,6 +104,9 @@ def clear_schema_cache(doc, method=None) -> None:
 		dt = getattr(doc, "doc_type", None)
 	elif dtype == "Workflow":
 		dt = getattr(doc, "document_type", None)
+	elif dtype == "Client Script":
+		# actions hints are scraped from form JS, which includes Form Client Scripts
+		dt = getattr(doc, "dt", None)
 	if dt:
 		clear_cache_for(dt)
 
@@ -102,9 +117,15 @@ def get_schema(doctype: str, verbose: bool = False, refresh: bool = False) -> di
 
 	Top level: ``doctype``, ``is_submittable`` (docstatus lifecycle applies),
 	``autoname`` / ``naming_rule`` (how name is assigned), ``title_field``,
-	``workflow`` ({name, state_field, states} or None), and ``fields``.
+	``workflow`` ({name, state_field, states} or None), ``actions``, and ``fields``.
 	Every field record carries ``fieldname``, ``fieldtype``, ``label``,
 	``options`` (Link target / Select enum / child DocType), and ``reqd``.
+
+		``actions`` is a discovery hint: the whitelisted server methods this
+		DocType's form exposes as custom buttons (e.g. ``make_sales_invoice`` on a
+		Sales Order), each ``{"method", "label", "args"}``, callable via
+		``run_method``. Best-effort and possibly incomplete - absence does not
+		mean a method is uncallable.
 
 	By default Table / Table MultiSelect fields surface as ordinary records
 	(child DocType named via ``options``) WITHOUT recursive ``child_fields`` -
