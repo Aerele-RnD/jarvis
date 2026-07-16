@@ -102,16 +102,23 @@ class TestSaveLlmPool(_RT3SettingsTestCase):
         self.assertTrue(s.last_sync_status.startswith("ok"), f"expected ok, got {s.last_sync_status!r}")
 
     def test_pool_sync_gives_up_after_bounded_retries(self):
-        """Persistent unreachable → terminal 'failed', but only after the bounded
-        retry budget (no infinite loop)."""
+        """Persistent unreachable → the bounded retry budget runs (no infinite
+        loop), then F2 convergence takes over: an unreachable/timeout is NOT a
+        lost apply (admin persists desired-first and reconciles it), so the
+        outcome is PENDING, not a terminal 'failed'. A get_connection probe that
+        is not yet Ready leaves the pending marker for the */5 safety net."""
         from jarvis.jarvis.doctype.jarvis_settings.jarvis_settings import _POOL_SYNC_RETRIES
         with patch("jarvis.admin_client.post_update_llm_pool",
                    side_effect=admin_client.AdminUnreachableError("down")) as m, \
-             patch("jarvis.admin_client.post_update_llm_creds"):
+             patch("jarvis.admin_client.post_update_llm_creds"), \
+             patch("jarvis.admin_client.get_connection",
+                   return_value={"chat_readiness": "Configuring"}):
             onboarding.save_llm_pool(frappe.as_json(self._two_models()), preset=None, routing_mode="failover")
         self.assertEqual(m.call_count, _POOL_SYNC_RETRIES)
         s = frappe.get_single("Jarvis Settings")
-        self.assertIn("admin unreachable", s.last_sync_status)
+        self.assertTrue(
+            (s.last_sync_status or "").startswith("pending: admin applying"),
+            f"unreachable must converge to pending, not failed; got {s.last_sync_status!r}")
 
     def test_preset_validated_against_catalog(self):
         models = [{"provider": "openai", "model": "gpt-5.5", "api_key": "sk-x", "base_url": "", "tier": "strong", "order": 0}]

@@ -122,3 +122,60 @@ class TestAccountGatesFailClosed(FrappeTestCase):
 				account.preview_upgrade("plan-pro")
 		get_summary.assert_not_called()
 		prev.assert_not_called()
+
+
+class TestAdminChatGate(FrappeTestCase):
+	"""jarvis.account._admin_chat_gate — the final managed ready-gate for
+	is_ready_for_chat. Fail-open, v1-tolerant, positive verdict cached ~30s.
+	admin_client.get_connection is mocked."""
+
+	def setUp(self):
+		frappe.cache().delete_value(account._CHAT_GATE_CACHE_KEY)
+
+	def tearDown(self):
+		frappe.cache().delete_value(account._CHAT_GATE_CACHE_KEY)
+
+	def test_blocks_when_admin_not_ready(self):
+		with patch.object(admin_client, "get_connection",
+						  return_value={"chat_readiness": "Provisioning"}) as gc:
+			self.assertEqual(
+				account._admin_chat_gate(),
+				{"ready": False, "reason": "container_provisioning"},
+			)
+		# Uses the short 8s budget so a slow admin can't stall the SPA/boot path.
+		gc.assert_called_once_with(timeout_s=8)
+
+	def test_allows_when_admin_ready(self):
+		with patch.object(admin_client, "get_connection",
+						  return_value={"chat_readiness": "Ready"}):
+			self.assertEqual(account._admin_chat_gate(), {"ready": True, "reason": None})
+
+	def test_v1_tolerant_when_key_absent(self):
+		# v1 admin (or a v2 not surfacing chat_readiness) → no opinion → allow.
+		with patch.object(admin_client, "get_connection",
+						  return_value={"agent_url": "ws://x", "tenant_status": "running"}):
+			self.assertEqual(account._admin_chat_gate(), {"ready": True, "reason": None})
+
+	def test_fails_open_on_admin_error(self):
+		from jarvis.exceptions import AdminUnreachableError
+		with patch.object(admin_client, "get_connection",
+						  side_effect=AdminUnreachableError("admin is unreachable")):
+			self.assertEqual(account._admin_chat_gate(), {"ready": True, "reason": None})
+		# Fail-open verdict must NOT be negative-cached: a recovered admin is
+		# re-probed on the next call rather than being blocked for the TTL.
+		self.assertIsNone(frappe.cache().get_value(account._CHAT_GATE_CACHE_KEY))
+
+	def test_positive_verdict_is_cached(self):
+		with patch.object(admin_client, "get_connection",
+						  return_value={"chat_readiness": "Ready"}) as gc:
+			account._admin_chat_gate()
+			account._admin_chat_gate()
+		# Second call served from the ~30s positive cache → one admin round-trip.
+		gc.assert_called_once()
+
+	def test_not_ready_verdict_is_not_cached(self):
+		# A transient block must clear on the next call, not stick for the TTL.
+		with patch.object(admin_client, "get_connection",
+						  return_value={"chat_readiness": "Provisioning"}):
+			account._admin_chat_gate()
+		self.assertIsNone(frappe.cache().get_value(account._CHAT_GATE_CACHE_KEY))

@@ -138,7 +138,9 @@ class TestHeaders(FrappeTestCase):
 			"installed_apps": frappe.get_installed_apps(),
 		})
 		self.assertTrue(captured["url"].startswith("https://admin.example.com/api/method/"))
-		self.assertIn("jarvis_admin.api.tenant.update_llm_creds", captured["url"])
+		# Build the expected path from the namespace resolver so this passes
+		# under the v2 default (jarvis_admin_v2.*) and any config override.
+		self.assertIn(admin_client._m("api.tenant.update_llm_creds"), captured["url"])
 
 	def test_raises_when_credentials_missing(self):
 		from jarvis.exceptions import AdminAuthError
@@ -555,7 +557,7 @@ class TestOnboardingClient(FrappeTestCase):
 		with patch("requests.post", side_effect=_fake_post):
 			out = admin_client.renew()
 		self.assertEqual(out["razorpay_order_id"], "order_R")
-		self.assertIn("jarvis_admin.api.tenant.renew", captured["url"])
+		self.assertIn(admin_client._m("api.tenant.renew"), captured["url"])
 		self.assertEqual(captured["headers"]["Authorization"], "token renew-key:renew-secret")
 
 	def test_guest_call_omits_authorization_header(self):
@@ -968,3 +970,52 @@ class TestAdminUrlResolution(FrappeTestCase):
 		s.jarvis_admin_url = ""
 		with patch.dict(frappe.local.conf, {"jarvis_admin_url": ""}):
 			self.assertEqual(admin_client._admin_url(s), _DEFAULT_ADMIN_URL_FALLBACK)
+
+
+class TestAdminAppNamespace(FrappeTestCase):
+	"""The admin control-plane app namespace is resolved FRESH per call from
+	site config ``jarvis_admin_app`` and defaults to ``jarvis_admin_v2`` (the
+	v2 switch). ``_m`` builds every admin /api/method path under it; the
+	Frappe-native OAuth token endpoint stays un-namespaced."""
+
+	def test_default_namespace_is_v2(self):
+		# No override configured -> the SWITCH-TO-V2 default.
+		with patch.dict(frappe.local.conf, {"jarvis_admin_app": ""}):
+			self.assertEqual(admin_client._admin_app(), "jarvis_admin_v2")
+			self.assertEqual(
+				admin_client._m("api.tenant.renew"),
+				"/api/method/jarvis_admin_v2.api.tenant.renew",
+			)
+
+	def test_config_override_repoints_to_v1(self):
+		# A bench pinned back to v1 via site config.
+		with patch.dict(frappe.local.conf, {"jarvis_admin_app": "jarvis_admin"}):
+			self.assertEqual(admin_client._admin_app(), "jarvis_admin")
+			self.assertEqual(
+				admin_client._m("billing.signup.get_plans"),
+				"/api/method/jarvis_admin.billing.signup.get_plans",
+			)
+
+	def test_blank_override_falls_back_to_default(self):
+		# A whitespace-only override is treated as unset.
+		with patch.dict(frappe.local.conf, {"jarvis_admin_app": "   "}):
+			self.assertEqual(admin_client._admin_app(), "jarvis_admin_v2")
+
+	def test_override_read_fresh_per_call(self):
+		# A config value flipped after import is honored without a restart.
+		with patch.dict(frappe.local.conf, {"jarvis_admin_app": "jarvis_admin"}):
+			first = admin_client._m("api.tenant.get_connection")
+		with patch.dict(frappe.local.conf, {"jarvis_admin_app": "jarvis_admin_v2"}):
+			second = admin_client._m("api.tenant.get_connection")
+		self.assertIn("/jarvis_admin.api.tenant.get_connection", first)
+		self.assertIn("/jarvis_admin_v2.api.tenant.get_connection", second)
+
+	def test_oauth_token_path_is_not_namespaced(self):
+		# The OAuth token mint hits Frappe's native endpoint, never the admin app
+		# namespace — it must not gain a jarvis_admin* prefix under either config.
+		self.assertEqual(
+			admin_client._OAUTH_TOKEN_PATH,
+			"/api/method/frappe.integrations.oauth2.get_token",
+		)
+		with patch.dict(frappe.local.conf, {"jarvis_admin_app": "jarvis_admin_v2"}):
+			self.assertNotIn("jarvis_admin", admin_client._OAUTH_TOKEN_PATH)

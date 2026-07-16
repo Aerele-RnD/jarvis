@@ -19,6 +19,45 @@ from jarvis.onboarding import _surface
 from jarvis.permissions import require_jarvis_admin
 
 
+# R2-H4 client-side chat-readiness gate. The positive verdict is cached briefly
+# so a boot / SPA-load storm doesn't pay an admin round-trip on every hit.
+_CHAT_GATE_CACHE_KEY = "jarvis:chat_readiness_gate"
+_CHAT_GATE_CACHE_TTL_S = 30
+
+
+def _admin_chat_gate() -> dict:
+	"""Last managed ready-gate: ask admin whether the customer's container is
+	actually provisioned enough to serve chat. Fail-open and v1-tolerant.
+
+	Called only AFTER the local signup + LLM-credential checks have passed, at
+	the managed ready-exits of ``is_ready_for_chat`` — it is the final gate.
+
+	Returns ``{"ready": True, "reason": None}`` UNLESS the admin is reachable AND
+	reports a ``chat_readiness`` that is PRESENT and != ``"Ready"``, in which case
+	``{"ready": False, "reason": "container_provisioning"}``.
+
+	- v1-tolerance: an ABSENT ``chat_readiness`` key (v1 admin, or a v2 that
+	  doesn't surface it) means the control plane has no opinion → allow.
+	- Resilience: ANY ``get_connection`` failure (unreachable / auth / timeout)
+	  → allow. A control-plane hiccup must never bounce an already-provisioned
+	  customer out of chat. We do NOT negative-cache, so a transient block or
+	  error clears on the very next load rather than sticking for the TTL.
+	"""
+	cache = frappe.cache()
+	if cache.get_value(_CHAT_GATE_CACHE_KEY):
+		return {"ready": True, "reason": None}
+	try:
+		conn = admin_client.get_connection(timeout_s=8) or {}
+	except Exception:
+		# Fail open on ANY admin error; deliberately no negative cache.
+		return {"ready": True, "reason": None}
+	if "chat_readiness" in conn and conn["chat_readiness"] != "Ready":
+		return {"ready": False, "reason": "container_provisioning"}
+	# Reachable + (Ready, or v1-absent) → allow and cache the positive verdict.
+	cache.set_value(_CHAT_GATE_CACHE_KEY, 1, expires_in_sec=_CHAT_GATE_CACHE_TTL_S)
+	return {"ready": True, "reason": None}
+
+
 @frappe.whitelist()
 def is_onboarded() -> dict:
 	"""True iff Jarvis Settings holds an admin api_key. The wizard's
@@ -57,6 +96,10 @@ def is_ready_for_chat() -> dict:
 	- ``"llm_pool_provisioning"`` - a pool is configured (proxy_active) but
 	  no sync has ever applied it to the container (first sync pending or
 	  failed).
+	- ``"container_provisioning"`` - all local checks passed, but admin reports
+	  the container isn't chat-ready yet (chat_readiness != "Ready"). Set only by
+	  the final ``_admin_chat_gate`` at the managed ready-exits; fail-open and
+	  v1-tolerant (see ``_admin_chat_gate``).
 	- ``None`` when ``ready`` is True.
 	"""
 	from jarvis import selfhost
@@ -94,7 +137,7 @@ def is_ready_for_chat() -> dict:
 	# pool.
 	if getattr(settings, "proxy_active", 0):
 		if getattr(settings, "llm_pool_synced_at", None):
-			return {"ready": True, "reason": None}
+			return _admin_chat_gate()
 		return {"ready": False, "reason": "llm_pool_provisioning"}
 
 	auth_mode = (getattr(settings, "llm_auth_mode", "") or "api_key").strip()
@@ -117,7 +160,7 @@ def is_ready_for_chat() -> dict:
 		# Unknown auth_mode - treat as misconfigured; the wizard owns it.
 		return {"ready": False, "reason": "llm_credentials"}
 
-	return {"ready": True, "reason": None}
+	return _admin_chat_gate()
 
 
 @frappe.whitelist()
