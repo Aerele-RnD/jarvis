@@ -146,8 +146,12 @@ def materialize_questions_daily() -> dict:
 			JLP,
 			filters={"status": "Proposed"},
 			fields=[
-				"name", "detector_id", "pattern_statement", "evidence",
-				"support_n", "confidence_pct",
+				"name",
+				"detector_id",
+				"pattern_statement",
+				"evidence",
+				"support_n",
+				"confidence_pct",
 			],
 			order_by="creation desc",
 			limit_page_length=_DAILY_SCAN_CANDIDATES,
@@ -194,7 +198,7 @@ def _materialize_for_pattern(pattern) -> list[str]:
 	if not users:
 		return []
 	cap = _daily_cap()
-	q_text = _question_text(pattern.get("pattern_statement"))
+	q_text = _question_for_pattern(pattern)
 	ctx = _pattern_context_md(pattern)
 	created: list[str] = []
 	for user in users:
@@ -205,8 +209,11 @@ def _materialize_for_pattern(pattern) -> list[str]:
 		if cap <= 0 or _learning_questions_today(user) >= cap:
 			continue  # overflow: left for a later run (no loss)
 		name = _insert_question(
-			user=user, question=q_text, context_md=ctx,
-			origin=origin, source_pattern=pattern.name,
+			user=user,
+			question=q_text,
+			context_md=ctx,
+			origin=origin,
+			source_pattern=pattern.name,
 		)
 		if name:
 			created.append(user)
@@ -230,10 +237,7 @@ def _pattern_targets(pattern) -> tuple[list[str], str]:
 		if detector_id == "voice-context" or chat_provenance
 		else "Behavioural Learning"
 	)
-	users = [
-		u for u in (evidence.get("users") or [])
-		if u and u not in _EXCLUDE_USERS
-	]
+	users = [u for u in (evidence.get("users") or []) if u and u not in _EXCLUDE_USERS]
 	if users:
 		return sorted(set(users)), origin
 	return _admin_bank_users(), origin
@@ -305,9 +309,11 @@ def materialize_rule_questions(rule_name: str | None = None) -> dict:
 				if frappe.db.exists(QUESTION, {"source_config": rule.name, "user": user}):
 					continue  # dedupe + Deleted-suppression
 				name = _insert_question(
-					user=user, question=q_text,
+					user=user,
+					question=q_text,
 					context_md=(rule.context_md or ""),
-					origin=ORG_ORIGIN, source_config=rule.name,
+					origin=ORG_ORIGIN,
+					source_config=rule.name,
 				)
 				if name:
 					stats["created"] += 1
@@ -354,7 +360,7 @@ def _rule_in_scope_users(rule) -> list[str]:
 	"""In-scope users for a rule, mirroring the Jarvis Wiki Page scope model:
 	Org = every enabled desk user (Jarvis User or System Manager), Role = holders
 	of target_role, User = target_user only."""
-	scope = (rule.scope or "Org")
+	scope = rule.scope or "Org"
 	if scope == "User":
 		u = rule.target_user
 		if u and u not in _EXCLUDE_USERS and _is_enabled_user(u):
@@ -449,6 +455,26 @@ def _publish_question_event(user: str) -> None:
 		pass
 
 
+def _question_for_pattern(pattern) -> str:
+	"""Question text for a learned-pattern row. A miner may author its own
+	phrasing in ``evidence.question`` (the chat-transcript miner does) — that
+	text is LLM output, so an instruction-shaped or empty override is discarded
+	in favour of the generic template."""
+	evidence = _evidence_dict(pattern.get("evidence"))
+	override = evidence.get("question")
+	if isinstance(override, str):
+		q = " ".join(override.split())
+		if q:
+			try:
+				from jarvis.learning.sanitizer import scan_instruction_injection
+
+				if not scan_instruction_injection(q):
+					return q[:MAX_QUESTION_LEN]
+			except Exception:
+				pass
+	return _question_text(pattern.get("pattern_statement"))
+
+
 def _question_text(statement: str) -> str:
 	"""A generic-tone question carrying the finding's gist (never names a
 	reviewer; the full detail lands in context_md)."""
@@ -467,6 +493,18 @@ def _pattern_context_md(pattern) -> str:
 	lines: list[str] = []
 	if statement:
 		lines.append(statement)
+	if evidence.get("source") == "chat":
+		# Chat-mined finding: the stats template below would read as false
+		# precision ("100% consistent" for an LLM inference) — give the user a
+		# provenance trail (when it was said) instead so they can place it before
+		# confirming.
+		last_active = str(evidence.get("last_active") or "").strip()
+		lines.append("")
+		if last_active:
+			lines.append(f"_Noticed in a chat conversation on {last_active}._")
+		else:
+			lines.append("_Noticed in your recent chat conversations._")
+		return "\n".join(lines)[:MAX_CONTEXT_LEN]
 	parts: list[str] = []
 	n = cint(pattern.get("support_n"))
 	if n:
