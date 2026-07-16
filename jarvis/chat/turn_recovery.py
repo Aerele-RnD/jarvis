@@ -151,6 +151,15 @@ def _advance_macro(conversation_id: str, *, errored: bool) -> None:
 			title="turn_recovery: macro advance hook failed",
 			message=frappe.get_traceback(),
 		)
+	try:
+		from jarvis.learning import app_analysis
+
+		app_analysis.on_turn_end(conversation_id, errored=errored)
+	except Exception:
+		frappe.log_error(
+			title="turn_recovery: app-learning turn hook failed",
+			message=frappe.get_traceback(),
+		)
 
 
 def _finalize(row: dict, text: str) -> None:

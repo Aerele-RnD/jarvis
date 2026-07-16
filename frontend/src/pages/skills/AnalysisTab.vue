@@ -226,6 +226,14 @@
 					</div>
 				</section>
 
+				<!-- ══════════════ Learn from custom apps (M2) ══════════════ -->
+				<!-- Below the Behavioural-learning settings card, same gate: this
+				     whole tab only mounts for admin/SM viewers (SkillsPage's
+				     caps.analysis probe - the gate the settings card above rides),
+				     and every app-learning endpoint re-checks manage rights
+				     server-side. Full-width row: it hosts the runs list. -->
+				<AppLearningCard ref="appLearningCard" class="lg:col-span-2" />
+
 				<!-- ══════════════ Personalisation questions pointer ══════════════ -->
 				<!-- Discoverability for the gear-gated Settings dialog (DESIGN.md §6
 				     ADOPTED: "gear on Personalise (admin-only) AND a link card on
@@ -280,6 +288,7 @@ import {
 } from "frappe-ui"
 import { useRouter } from "vue-router"
 import LayoutHeader from "@/components/LayoutHeader.vue"
+import AppLearningCard from "@/components/learning/AppLearningCard.vue"
 import { timeAgo, exactDate } from "@/utils/datetime"
 import {
 	runPatternAnalysisNow,
@@ -390,9 +399,13 @@ async function loadSettings() {
 	}
 }
 
+const appLearningCard = ref(null)
+
 function reloadAll() {
 	loadStatus()
 	loadSettings()
+	// the header Refresh also refreshes the app-learning overview + run list
+	if (appLearningCard.value) appLearningCard.value.reload()
 }
 
 function goReview() {
