@@ -91,13 +91,34 @@ def get_creation_context(
     fields = _field_map(meta)
     mandatory = [f["fieldname"] for f in fields if f["mandatory"]]
 
+    # Derived record? The agent already tells us the source - it passes
+    # {"sales_order": "SAL-ORD-2026-00002"} as a hint - so if the ERP has a
+    # mapper from that doc to this doctype, hand back ITS answer instead of
+    # lookalikes to infer from. Authoritative beats similar, so this REPLACES
+    # the similar/example blocks rather than adding to them (a mapped invoice
+    # and five lookalike invoices in one payload is the worst of both).
+    mapped, mapped_from, mapped_note = _mapped_from_context(doctype, context)
+
+    similar: list = []
+    example = None
+    facets: dict = {}
+    if mapped is not None:
+        match_note = (
+            f"Mapped by the ERP from {mapped_from['source_doctype']} "
+            f"{mapped_from['source_name']}. These values are authoritative - "
+            "similar records are omitted because you do not need to infer."
+        )
+        return _result(
+            doctype, fields, mandatory, similar, example, match_note, facets,
+            mapped=mapped, mapped_from=mapped_from, mapped_note=mapped_note,
+        )
+
     filters, matched = _resolve_context_filters(meta, context)
     value_fields = [
         f["fieldname"] for f in fields if f["fieldtype"] in _VALUE_FIELDTYPES
     ][:_MAX_VALUE_FIELDS]
     similar, match_note = _similar_records(doctype, filters, value_fields, limit)
 
-    example = None
     if similar:
         # One FULL example (incl. child rows) so the agent can learn the row
         # shape when mapping a document. get_list already proved row-level
@@ -109,11 +130,23 @@ def get_creation_context(
             doc.apply_fieldlevel_read_permissions()
             example = doc.as_dict(no_default_fields=True)
 
-    facets = {}
     if not matched and frappe.has_permission(doctype, ptype="read"):
         facets = _facets(doctype, meta)
 
-    return {
+    return _result(
+        doctype, fields, mandatory, similar, example, match_note, facets,
+        mapped_note=mapped_note,
+    )
+
+
+def _result(
+    doctype, fields, mandatory, similar, example, match_note, facets,
+    *, mapped=None, mapped_from=None, mapped_note=None,
+) -> dict:
+    """Assemble the response. ``mapped`` (when present) is the ERP's own mapper
+    output and carries a different instruction from the similar-records case:
+    copy it, don't re-derive it."""
+    out = {
         "doctype": doctype,
         "fields": fields,
         "mandatory": mandatory,
@@ -129,6 +162,71 @@ def get_creation_context(
             "about mandatory fields you cannot determine."
         ),
     }
+    if mapped is not None:
+        out["mapped"] = mapped
+        out["mapped_from"] = mapped_from
+        out["note"] = (
+            "`mapped` is this document built by the ERP's OWN mapper from "
+            f"{mapped_from['source_doctype']} {mapped_from['source_name']} - not "
+            "a guess, and not persisted. Draft from these values: they carry the "
+            "source row links (e.g. `so_detail`) that keep the source's billed / "
+            "delivered status correct, and taxes and rates as the ERP computes "
+            "them. Change only what the user asked to change; do not re-derive "
+            "the rest. Still set any `mandatory` field it left empty."
+        )
+    if mapped_note:
+        # The ERP declined to map (draft source, nothing left to bill, ...).
+        # Surfaced, not swallowed: it usually says exactly what to fix.
+        out["mapped_note"] = mapped_note
+    return out
+
+
+def _doctype_for_key(key: str) -> str | None:
+    """``"sales_order"`` -> ``"Sales Order"`` when that DocType exists, else None.
+
+    Deliberately keyed off the CONTEXT KEY, not the target's meta: the link that
+    matters usually is not a header field on the target at all (a Sales Invoice
+    carries `sales_order` per ITEM row, not on the header), so resolving through
+    ``_resolve_context_filters`` would never find it."""
+    if not key or not isinstance(key, str):
+        return None
+    guess = key.replace("_", " ").title()
+    return guess if frappe.db.exists("DocType", guess) else None
+
+
+def _mapped_from_context(target_doctype: str, context: dict) -> tuple:
+    """``(mapped_values, mapped_from, note)`` when a context hint names a source
+    document the ERP can map into ``target_doctype``.
+
+    The agent already passes the source - the production transcript shows
+    ``{"customer": ..., "sales_order": "SAL-ORD-2026-00002", "company": ...}`` -
+    it just was not being read as one. Non-source hints cost nothing: "Customer"
+    and "Company" are real DocTypes but have no mapper to a Sales Invoice, so
+    they resolve to None (cached) and fall through.
+    """
+    from jarvis.tools._source_mapper import mapped_values, resolve_mapper
+
+    first_note = None
+    for key, value in (context or {}).items():
+        if not value or not isinstance(value, str):
+            continue
+        source_doctype = _doctype_for_key(key)
+        if not source_doctype or source_doctype == target_doctype:
+            continue
+        if not resolve_mapper(source_doctype, target_doctype):
+            continue
+        if not frappe.db.exists(source_doctype, value):
+            continue
+        values, note = mapped_values(source_doctype, value, target_doctype)
+        if values:
+            return values, {
+                "source_doctype": source_doctype,
+                "source_name": value,
+            }, None
+        # Keep the first refusal ("Sales Order is not submitted") but keep
+        # looking: another hint may still map.
+        first_note = first_note or note
+    return None, None, first_note
 
 
 def _field_map(meta) -> list[dict]:

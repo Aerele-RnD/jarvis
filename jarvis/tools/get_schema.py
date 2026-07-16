@@ -151,10 +151,15 @@ def _as_bool(value) -> bool:
 
 
 def clear_cache_for(doctype: str) -> None:
-	"""Drop both cached schema variants (slim + verbose) for a DocType."""
+	"""Drop both cached schema variants (slim + verbose) for a DocType, plus its
+	resolved mapper map - that is scraped from the same form JS as ``actions``,
+	so a Client Script edit invalidates both."""
+	from jarvis.tools._source_mapper import mapper_cache_key
+
 	cache = frappe.cache()
 	cache.delete_value(f"jarvis_schema:{doctype}:0")
 	cache.delete_value(f"jarvis_schema:{doctype}:1")
+	cache.delete_value(mapper_cache_key(doctype))
 
 
 def clear_schema_cache(doc, method=None) -> None:
