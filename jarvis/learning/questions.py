@@ -357,9 +357,10 @@ def on_rule_update(doc, method: str | None = None) -> None:
 
 
 def _rule_in_scope_users(rule) -> list[str]:
-	"""In-scope users for a rule, mirroring the Jarvis Wiki Page scope model:
-	Org = every enabled desk user (Jarvis User or System Manager), Role = holders
-	of target_role, User = target_user only."""
+	"""In-scope users for a rule: Org = every enabled desk person who can use
+	Jarvis (Jarvis User, Jarvis Admin, or System Manager), Role = holders of
+	target_role, User = target_user only. Administrator/Guest are always excluded
+	(service identities, filtered by ``_users_with_role``)."""
 	scope = rule.scope or "Org"
 	if scope == "User":
 		u = rule.target_user
@@ -370,8 +371,15 @@ def _rule_in_scope_users(rule) -> list[str]:
 		if not rule.target_role:
 			return []
 		return _users_with_role(rule.target_role)
-	# Org: enabled desk users with Jarvis User or System Manager.
-	users = set(_users_with_role("Jarvis User")) | set(_users_with_role("System Manager"))
+	# Org: every enabled person with Jarvis access. Jarvis Admin is included so an
+	# admin who authors an org-wide question is also asked it (they are part of the
+	# org too) — otherwise a Jarvis-Admin-only account never receives its own org
+	# questions. Administrator/Guest stay excluded via _users_with_role.
+	users = (
+		set(_users_with_role("Jarvis User"))
+		| set(_users_with_role("Jarvis Admin"))
+		| set(_users_with_role("System Manager"))
+	)
 	return sorted(users)
 
 

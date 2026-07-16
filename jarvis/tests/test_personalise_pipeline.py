@@ -340,6 +340,19 @@ class TestRuleQuestionMaterialization(_PipelineFixture):
 			self.assertEqual(rows[0]["origin"], "From your organisation")
 			self.assertEqual(rows[0]["question"], rule.question)
 
+	def test_org_scope_includes_jarvis_admin(self):
+		# An admin who authors an org-wide question is part of the org and must be
+		# asked it too — a Jarvis-Admin-only account was previously left out.
+		rule = self._rule()
+		with mock.patch.object(
+			questions,
+			"_users_with_role",
+			side_effect=lambda role: {"Jarvis Admin": [ADMIN_USER]}.get(role, []),
+		):
+			out = questions.materialize_rule_questions(rule.name)
+		self.assertEqual(out["created"], 1)
+		self.assertEqual(len(self._user_questions(ADMIN_USER, source_config=rule.name)), 1)
+
 	def test_role_scope_only_targets_role_holders(self):
 		rule = self._rule(scope="Role", target_role=TEST_ROLE)
 		with mock.patch.object(
