@@ -307,7 +307,7 @@
 <script setup>
 import { reactive, ref, computed, onMounted, watch } from "vue"
 import { call } from "frappe-ui"
-import { useTheme } from "@/composables/useTheme"
+import { useJarvisTheme } from "@/theme"
 import LlmPoolEditor from "@/components/LlmPoolEditor.vue"
 import JvCombo from "@/components/JvCombo.vue"
 import JarvisMark from "@/components/JarvisMark.vue"
@@ -323,7 +323,7 @@ import {
 } from "@/api"
 import { errMessage as errMsg } from "@/lib/errors"
 
-const { effectiveDark: dark, paletteVars } = useTheme()
+const { effectiveDark: dark, paletteVars } = useJarvisTheme()
 
 // Self-host connect (save_self_hosted / test_connection) stays System-Manager-
 // ONLY (owner trust-boundary decision). Managed onboarding is widened to the
