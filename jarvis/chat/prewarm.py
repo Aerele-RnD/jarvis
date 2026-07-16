@@ -32,8 +32,42 @@ _WARM_COOLDOWN_S = 4 * 60
 _WARM_INPROGRESS_S = 90
 
 
+# The previous warm's session key, remembered so the NEXT warm can reclaim it
+# (see _reclaim_previous). TTL is far longer than the cooldown: losing this
+# pointer leaks one session, so err on the side of remembering. The orphan sweep
+# (session_lifecycle) is the backstop for whatever this misses.
+_WARM_LAST_TTL_S = 24 * 60 * 60
+
+
 def _warm_cooldown_key() -> str:
 	return f"jarvis:chat:prefix_warm:{frappe.local.site}"
+
+
+def _warm_last_key() -> str:
+	return f"jarvis:chat:prefix_warm:last:{frappe.local.site}"
+
+
+def _reclaim_previous(sess, prev, current: str) -> None:
+	"""Delete the throwaway session the PREVIOUS warm created.
+
+	A warm cannot delete its own: fire_agent is fire-and-forget, so the turn that
+	warms the prefix is still running when it returns, and waiting for it would
+	block a short-queue worker for no benefit. Instead each warm reclaims its
+	predecessor, which the cooldown guarantees has had at least _WARM_COOLDOWN_S
+	to finish. Steady state is one live prewarm session rather than one per warm -
+	at a 4-minute cooldown the old create-and-forget leaked up to ~350 sessions a
+	day against an orphan sweep capped at 25.
+
+	Best-effort: on failure (or a lost cache pointer) the session is left for the
+	orphan sweep, which reaps jarvis-prewarm-* on a short grace."""
+	if not prev or not isinstance(prev, str) or prev == current:
+		return
+	try:
+		sess.delete_session(prev)
+	except Exception:
+		frappe.logger("jarvis.chat.prewarm").debug(
+			"previous warm session delete failed", exc_info=True,
+		)
 
 
 def _gateway_ws_url(settings) -> str:
@@ -94,6 +128,14 @@ def warm_prefix() -> bool:
 				throwaway, "/think off warmup", uuid.uuid4().hex,
 				model=model or None, provider=provider,
 			)
+			# Remember the new throwaway BEFORE reclaiming the old one: a failure
+			# between the two then leaks only the PREVIOUS session (the orphan
+			# sweep still collects it) instead of losing the pointer to the one we
+			# just created, which would leak one every warm, forever.
+			last_key = _warm_last_key()
+			prev = cache.get_value(last_key)
+			cache.set_value(last_key, throwaway, expires_in_sec=_WARM_LAST_TTL_S)
+			_reclaim_previous(sess, prev, throwaway)
 		finally:
 			sess.close()
 		# Latency telemetry (plan Phase 0): connect+create+fire duration.

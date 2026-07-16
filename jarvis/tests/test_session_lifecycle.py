@@ -1,7 +1,7 @@
 """Tests for jarvis.chat.session_lifecycle (idle-session reclaim + empty-chat
 + orphan sweeps).
 
-The daily cron (1) frees the openclaw session of conversations idle past the
+The hourly cron (1) frees the openclaw session of conversations idle past the
 configurable retention window (Jarvis Settings.conversation_retention_days) -
 leaving the conversation Active and visible, only reclaiming its working memory;
 (2) hard-deletes Active, non-starred, zero-message chats idle past
@@ -29,6 +29,9 @@ RETENTION_FIELD = "conversation_retention_days"
 
 NOW_MS = int(time.time() * 1000)
 OLD_MS = NOW_MS - (session_lifecycle.ORPHAN_GRACE_HOURS + 2) * 3600 * 1000
+# Past the throwaway grace but comfortably INSIDE the long orphan grace, so a
+# test using it proves which of the two windows applied.
+THROWAWAY_OLD_MS = NOW_MS - (session_lifecycle.THROWAWAY_GRACE_HOURS + 1) * 3600 * 1000
 
 
 def _fake_sess(entries=None):
@@ -403,21 +406,97 @@ class TestSessionLifecycle(FrappeTestCase):
 		self.assertEqual(summary["orphans_reaped"], 0)
 		sess.delete_session.assert_not_called()
 
-	def test_batch_cap_bounds_total_work(self):
+	def test_throwaway_labels_reaped_on_the_short_grace(self):
+		"""A known throwaway label is reaped well inside ORPHAN_GRACE_HOURS. It
+		can never be a conversation whose session_key has not committed yet -
+		those are always labelled jarvis-chat-* - so the long grace bought
+		nothing here and only let the pile grow."""
+		sess = _fake_sess(entries=[
+			{"key": "test-lc-orph:dashboard:pw", "label": "jarvis-prewarm-abc123",
+			 "hasActiveRun": False, "updatedAt": THROWAWAY_OLD_MS},
+			{"key": "test-lc-orph:dashboard:ti", "label": "jarvis-title-def456",
+			 "hasActiveRun": False, "updatedAt": THROWAWAY_OLD_MS},
+			{"key": "test-lc-orph:dashboard:po", "label": "jarvis-polish-ghi789",
+			 "hasActiveRun": False, "updatedAt": THROWAWAY_OLD_MS},
+		])
+		summary = self._run(sess)
+		self.assertEqual(summary["orphans_reaped"], 3)
+		for k in ("pw", "ti", "po"):
+			sess.delete_session.assert_any_call(f"test-lc-orph:dashboard:{k}")
+
+	def test_throwaway_inside_the_short_grace_skipped(self):
+		sess = _fake_sess(entries=[{
+			"key": "test-lc-orph:dashboard:fresh", "label": "jarvis-prewarm-abc123",
+			"hasActiveRun": False, "updatedAt": NOW_MS,
+		}])
+		summary = self._run(sess)
+		self.assertEqual(summary["orphans_reaped"], 0)
+		sess.delete_session.assert_not_called()
+
+	def test_non_throwaway_label_keeps_the_long_grace(self):
+		"""The short grace is opt-in by label prefix. A real chat session (or an
+		unlabelled one) at the same age still gets the conservative 24h - THAT is
+		the row whose session_key may simply not have committed yet."""
+		sess = _fake_sess(entries=[
+			{"key": "test-lc-orph:dashboard:chat",
+			 "label": "jarvis-chat-a@b.c-1700000000000",
+			 "hasActiveRun": False, "updatedAt": THROWAWAY_OLD_MS},
+			{"key": "test-lc-orph:dashboard:nolabel",
+			 "hasActiveRun": False, "updatedAt": THROWAWAY_OLD_MS},
+		])
+		summary = self._run(sess)
+		self.assertEqual(summary["orphans_reaped"], 0)
+		sess.delete_session.assert_not_called()
+
+	def test_batch_cap_bounds_retention_work(self):
 		for i in range(3):
 			self._conv(session_key=f"test-lc-batch-{i}", idle_days=40, has_message=True)
+		sess = _fake_sess()
+		with patch.object(session_lifecycle, "BATCH_MAX", 2):
+			summary = self._run(sess)
+		# Only 2 of the 3 idle sessions fit in the retention budget.
+		self.assertEqual(summary["sessions_freed"], 2)
+		self.assertEqual(summary["empty_reaped"], 0)
+
+	def test_orphan_budget_is_independent_of_retention_backlog(self):
+		"""Regression: orphans used to run on parts 1+2's LEFTOVER budget, so a
+		backlog of idle conversations starved the only sweep collecting throwaway
+		sessions - the one population here that grows without bound."""
+		for i in range(3):
+			self._conv(session_key=f"test-lc-starve-{i}", idle_days=40, has_message=True)
 		entries = [{
-			"key": f"test-lc-orph:dashboard:b{i}",
-			"hasActiveRun": False, "updatedAt": OLD_MS,
+			"key": f"test-lc-orph:dashboard:s{i}", "label": f"jarvis-prewarm-{i}",
+			"hasActiveRun": False, "updatedAt": THROWAWAY_OLD_MS,
 		} for i in range(3)]
 		sess = _fake_sess(entries=entries)
-		with patch.object(session_lifecycle, "BATCH_MAX", 4):
+		# A retention budget fully consumed by part 1 leaves nothing over...
+		with patch.object(session_lifecycle, "BATCH_MAX", 3):
 			summary = self._run(sess)
-		# 3 session frees + only 1 orphan fit in the budget of 4.
 		self.assertEqual(summary["sessions_freed"], 3)
-		self.assertEqual(summary["empty_reaped"], 0)
+		self.assertEqual(summary["orphans_reaped"], 3)  # ...and orphans run anyway.
+
+	def test_orphan_batch_cap_bounds_orphan_work(self):
+		entries = [{
+			"key": f"test-lc-orph:dashboard:c{i}", "label": f"jarvis-prewarm-{i}",
+			"hasActiveRun": False, "updatedAt": THROWAWAY_OLD_MS,
+		} for i in range(5)]
+		sess = _fake_sess(entries=entries)
+		with patch.object(session_lifecycle, "ORPHAN_BATCH_MAX", 2):
+			summary = self._run(sess)
+		self.assertEqual(summary["orphans_reaped"], 2)
+		self.assertEqual(sess.delete_session.call_count, 2)
+
+	def test_orphans_reaped_even_when_retention_disabled(self):
+		frappe.db.set_single_value(SETTINGS, RETENTION_FIELD, 0)
+		frappe.clear_document_cache(SETTINGS, SETTINGS)
+		frappe.db.commit()
+		sess = _fake_sess(entries=[{
+			"key": "test-lc-orph:dashboard:off", "label": "jarvis-prewarm-abc123",
+			"hasActiveRun": False, "updatedAt": THROWAWAY_OLD_MS,
+		}])
+		summary = self._run(sess)
+		self.assertEqual(summary["sessions_freed"], 0)
 		self.assertEqual(summary["orphans_reaped"], 1)
-		self.assertEqual(sess.delete_session.call_count, 4)
 
 	# ---- gating ------------------------------------------------------
 

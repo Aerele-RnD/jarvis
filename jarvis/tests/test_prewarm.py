@@ -38,6 +38,9 @@ class TestWarmPrefix(FrappeTestCase):
     def tearDown(self):
         from jarvis.chat import prewarm
         frappe.cache().delete_value(prewarm._warm_cooldown_key())
+        # Leaving this set would make the NEXT test's first warm reclaim a
+        # session this one invented.
+        frappe.cache().delete_value(prewarm._warm_last_key())
 
     def test_warm_prefix_throwaway_session_no_rows_best_effort(self):
         from jarvis.chat import prewarm
@@ -59,6 +62,56 @@ class TestWarmPrefix(FrappeTestCase):
         self.assertIn("/think off", msg)
         fake_sess.close.assert_called_once()
         self.assertEqual(frappe.db.count("Jarvis Chat Message"), before)
+
+    def test_warm_prefix_reclaims_previous_throwaway(self):
+        """Each warm deletes its PREDECESSOR's session. fire_agent is
+        fire-and-forget, so a warm cannot delete its own without blocking a
+        worker until the turn lands; the cooldown guarantees the predecessor has
+        long since finished. Steady state: one live prewarm session, not one per
+        warm (which at a 4-minute cooldown leaked up to ~350/day)."""
+        from jarvis.chat import prewarm
+
+        frappe.cache().delete_value(prewarm._warm_cooldown_key())
+        frappe.cache().delete_value(prewarm._warm_last_key())
+        fake_sess = MagicMock()
+        fake_sess.create_session.side_effect = ["sk_first", "sk_second"]
+
+        with patch("jarvis.chat.prewarm.OpenclawSession") as OC, \
+             patch("jarvis.chat.prewarm.selfhost.is_self_hosted", return_value=False), \
+             patch("jarvis.chat.prewarm.frappe.get_single", return_value=self._settings_stub()):
+            OC.connect.return_value = fake_sess
+            self.assertTrue(prewarm.warm_prefix())
+            # Nothing to reclaim on the very first warm of a bench.
+            fake_sess.delete_session.assert_not_called()
+            frappe.cache().delete_value(prewarm._warm_cooldown_key())  # lapse the cooldown
+            self.assertTrue(prewarm.warm_prefix())
+
+        # The second warm reclaimed the first's session — and only that one.
+        fake_sess.delete_session.assert_called_once_with("sk_first")
+        self.assertEqual(frappe.cache().get_value(prewarm._warm_last_key()), "sk_second")
+
+    def test_warm_prefix_survives_previous_delete_failure(self):
+        """A failed reclaim must never fail the warm — the orphan sweep is the
+        backstop — and must still leave the NEW key tracked, or the next warm
+        would reclaim nothing and the leak would quietly resume."""
+        from jarvis.chat import prewarm
+
+        frappe.cache().delete_value(prewarm._warm_cooldown_key())
+        frappe.cache().delete_value(prewarm._warm_last_key())
+        fake_sess = MagicMock()
+        fake_sess.create_session.side_effect = ["sk_first", "sk_second"]
+        fake_sess.delete_session.side_effect = RuntimeError("gateway blip")
+
+        with patch("jarvis.chat.prewarm.OpenclawSession") as OC, \
+             patch("jarvis.chat.prewarm.selfhost.is_self_hosted", return_value=False), \
+             patch("jarvis.chat.prewarm.frappe.get_single", return_value=self._settings_stub()):
+            OC.connect.return_value = fake_sess
+            self.assertTrue(prewarm.warm_prefix())
+            frappe.cache().delete_value(prewarm._warm_cooldown_key())
+            self.assertTrue(prewarm.warm_prefix())
+
+        self.assertEqual(fake_sess.fire_agent.call_count, 2)
+        self.assertEqual(frappe.cache().get_value(prewarm._warm_last_key()), "sk_second")
 
     def test_warm_prefix_debounced_second_call_is_noop(self):
         from jarvis.chat import prewarm
@@ -159,6 +212,9 @@ class TestKeepWarm(FrappeTestCase):
     def tearDown(self):
         from jarvis.chat import prewarm
         frappe.cache().delete_value(prewarm._warm_cooldown_key())
+        # Leaving this set would make the NEXT test's first warm reclaim a
+        # session this one invented.
+        frappe.cache().delete_value(prewarm._warm_last_key())
 
     def test_keep_warm_warms_when_recent_activity(self):
         from jarvis.chat import prewarm
@@ -183,6 +239,9 @@ class TestEnqueueWarmIfDue(FrappeTestCase):
     def tearDown(self):
         from jarvis.chat import prewarm
         frappe.cache().delete_value(prewarm._warm_cooldown_key())
+        # Leaving this set would make the NEXT test's first warm reclaim a
+        # session this one invented.
+        frappe.cache().delete_value(prewarm._warm_last_key())
 
     def test_enqueues_warm_when_not_on_cooldown(self):
         from jarvis.chat import prewarm
@@ -217,6 +276,9 @@ class TestListConversationsWarms(FrappeTestCase):
     def tearDown(self):
         from jarvis.chat import prewarm
         frappe.cache().delete_value(prewarm._warm_cooldown_key())
+        # Leaving this set would make the NEXT test's first warm reclaim a
+        # session this one invented.
+        frappe.cache().delete_value(prewarm._warm_last_key())
 
     def test_list_conversations_triggers_warm_on_load(self):
         from jarvis.chat import api

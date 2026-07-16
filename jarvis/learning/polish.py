@@ -257,11 +257,26 @@ def _run_gateway_turn(prompt: str) -> str:
 	try:
 		with openclaw_session_pool.checkout(gateway_url) as sess:
 			skey = sess.create_session(label=label)
-			for ev in sess.stream_agent_turn(
-				skey, prompt, f"polish:{skey}", model=model, provider=provider,
-			):
-				if ev.get("kind") == "assistant" and ev.get("text"):
-					text = ev["text"]
+			try:
+				for ev in sess.stream_agent_turn(
+					skey, prompt, f"polish:{skey}", model=model, provider=provider,
+				):
+					if ev.get("kind") == "assistant" and ev.get("text"):
+						text = ev["text"]
+			finally:
+				# Delete the throwaway on the SAME pooled connection, turn
+				# succeeded or not: otherwise every polish turn leaks a session
+				# that only the budget-capped orphan sweep could reclaim. The turn
+				# is fully consumed by here, so nothing is in flight.
+				#
+				# Swallow a delete failure - `text` is already captured, and the
+				# orphan sweep collects jarvis-polish-* as a backstop.
+				try:
+					sess.delete_session(skey)
+				except Exception:
+					frappe.logger("jarvis.learning.polish").debug(
+						"throwaway polish session delete failed", exc_info=True,
+					)
 	except Exception:
 		frappe.log_error(
 			title="pattern polish: gateway turn failed",

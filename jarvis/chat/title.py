@@ -138,11 +138,29 @@ def _generate_via_gateway(gateway_url, source_text, *, model, provider) -> str:
 	try:
 		with openclaw_session_pool.checkout(gateway_url) as sess:
 			skey = sess.create_session(label=label)
-			for ev in sess.stream_agent_turn(
-				skey, prompt, f"title:{skey}", model=model, provider=provider,
-			):
-				if ev.get("kind") == "assistant" and ev.get("text"):
-					text = ev["text"]
+			try:
+				for ev in sess.stream_agent_turn(
+					skey, prompt, f"title:{skey}", model=model, provider=provider,
+				):
+					if ev.get("kind") == "assistant" and ev.get("text"):
+						text = ev["text"]
+			finally:
+				# Delete the throwaway on the SAME pooled connection, turn
+				# succeeded or not. Without this every auto-titled chat leaks a
+				# session that only the budget-capped orphan sweep could reclaim,
+				# and that sweep could never keep up. The turn is fully consumed
+				# by here (stream_agent_turn ran to exhaustion or raised), so
+				# nothing is in flight.
+				#
+				# Swallow a delete failure: `text` is already captured, and losing
+				# the title over failed cleanup would be the worse bug - the
+				# orphan sweep still collects jarvis-title-* as a backstop.
+				try:
+					sess.delete_session(skey)
+				except Exception:
+					frappe.logger("jarvis.chat.title").debug(
+						"throwaway title session delete failed", exc_info=True,
+					)
 	except Exception:
 		frappe.log_error(
 			title="auto-title: gateway generation failed",

@@ -7,9 +7,13 @@ first turn. Without a sweep, state accumulates forever:
   session (and its growing working context) sits on the container.
 - Empty conversations: opening "New Chat" and closing the tab leaves a
   0-message row cluttering history.
-- Orphaned throwaway sessions: every auto-title generation and every prefix
-  prewarm creates a single-use session, and deleted conversations leave their
-  sessions behind. The dev tenant had 81 session state files after one month.
+- Orphaned throwaway sessions: deleted conversations leave their sessions behind,
+  and so do the three throwaway kinds (auto-title, pattern polish, prefix
+  prewarm) whenever their own cleanup is missed. All three DO now delete their
+  own - title and polish in a finally, prewarm by reclaiming its predecessor on
+  the next warm - so this sweep is their backstop, not their only collector. It
+  used to be the only one, and could not keep up: a 4-minute warm cooldown alone
+  minted up to ~350 sessions/day against a sweep capped at 25/day.
 
 The bench is the durable owner of chat history (Jarvis Chat Message rows); the
 openclaw session is a cache of working context, not the record. Deleting one is
@@ -18,7 +22,7 @@ deleteTranscript=true default), canvas/media artifacts were pulled to ERP Files
 at turn end, and the next message lazily creates a fresh session through the
 existing ``_ensure_session_key`` path - same UX, empty working context.
 
-The daily ``rotate_dormant_sessions`` cron:
+The hourly ``rotate_dormant_sessions`` cron:
 
 1. FREE IDLE SESSIONS: conversations idle past the configured retention window
    (Jarvis Settings.conversation_retention_days; 0 disables) that still hold a
@@ -36,15 +40,19 @@ The daily ``rotate_dormant_sessions`` cron:
    (empty chats are also hidden from the sidebar list; this reaps the row so it
    doesn't linger in the DB forever).
 3. ORPHANS: gateway sessions in the chat namespace that no conversation
-   references (title/prewarm throwaways, deleted conversations) and that have
-   been inactive past ``ORPHAN_GRACE_HOURS`` -> delete, plus any stale lookup
-   rows. Runs regardless of the retention setting - these are not user chats.
+   references (throwaways, deleted conversations) and that have been inactive
+   past their grace -> delete, plus any stale lookup rows. The grace is
+   per-session (``_grace_ms``): a short ``THROWAWAY_GRACE_HOURS`` for the known
+   throwaway labels, the conservative ``ORPHAN_GRACE_HOURS`` for everything
+   else. Runs regardless of the retention setting - these are not user chats -
+   and on its own ``ORPHAN_BATCH_MAX`` budget.
 
-Parts 1 + 2 are the retention sweep and honour ``conversation_retention_days``
-(0 => keep everything, do nothing). Part 3 is pure gateway hygiene and always
-runs. Everything is best-effort on a dedicated connection (never the pool - a
-sweep must not contend with live turns), batch-capped so a backlog drains over
-days instead of stampeding a gateway, and managed-mode only.
+Parts 1 + 2 are the retention sweep, honour ``conversation_retention_days``
+(0 => keep everything, do nothing), and share ``BATCH_MAX``. Part 3 is pure
+gateway hygiene, always runs, and has its own budget so parts 1 + 2 cannot
+starve it. Everything is best-effort on a dedicated connection (never the pool -
+a sweep must not contend with live turns), batch-capped so a backlog drains over
+a few runs instead of stampeding a gateway, and managed-mode only.
 """
 from __future__ import annotations
 
@@ -102,17 +110,37 @@ def _retention_days() -> int:
 # created session_key has not committed yet.
 ORPHAN_GRACE_HOURS = 24
 
-# Per-run cap across ALL parts, so a month of backlog drains over a few
-# days instead of hammering the gateway in one cron tick.
+# Per-run cap for the retention sweeps (parts 1 + 2), so a month of backlog
+# drains over a few runs instead of hammering the gateway in one cron tick.
 BATCH_MAX = 25
+
+# Orphans (part 3) get their OWN, larger per-run cap instead of parts 1+2's
+# leftovers. They are the only unbounded population in this sweep - every prefix
+# warm, auto-title and pattern polish mints one - and unlike parts 1+2 they touch
+# no user data, so a bigger batch is cheap. Sharing one 25-slot budget let a
+# backlog of idle conversations starve the sweep that actually needed the slots.
+ORPHAN_BATCH_MAX = 200
 
 # Only sessions in the chat namespace are ever considered for the orphan
 # sweep; the agent's main session is additionally refused server-side.
 _CHAT_NAMESPACE_MARKER = ":dashboard:"
 
+# Labels of every throwaway session kind the bench mints: prewarm.warm_prefix,
+# title._generate_via_gateway, and learning.polish._run_gateway_turn. All three
+# now delete their own sessions, so these only turn up here when that cleanup was
+# missed (a crash, a lost cache pointer, a gateway blip) - never as live state.
+#
+# A short grace is SAFE for these specifically because the labels are namespaced:
+# a real conversation session is always "jarvis-chat-<user>-<ms>" (api.py
+# _ensure_session_key), so a throwaway label can never be a conversation whose
+# freshly-minted session_key has not committed yet. That race is exactly what
+# ORPHAN_GRACE_HOURS protects, and it still gets the full 24h.
+_THROWAWAY_LABEL_PREFIXES = ("jarvis-prewarm-", "jarvis-title-", "jarvis-polish-")
+THROWAWAY_GRACE_HOURS = 1
+
 
 def rotate_dormant_sessions() -> dict:
-	"""Daily cron: free idle conversations' openclaw sessions, reap abandoned
+	"""Hourly cron: free idle conversations' openclaw sessions, reap abandoned
 	empty chats, and reap orphaned throwaway sessions. Returns a summary dict
 	(also logged) so a manual ``bench execute`` run shows what happened. (Name
 	kept for the scheduler entry in hooks.py.)"""
@@ -146,9 +174,11 @@ def rotate_dormant_sessions() -> dict:
 		if days > 0:
 			budget = _free_idle_sessions(sess, budget, summary, days)
 			if budget > 0:
-				budget = _reap_empty(sess, budget, summary)
-		if budget > 0:
-			_reap_orphans(sess, budget, summary)
+				_reap_empty(sess, budget, summary)
+		# Part 3 runs on its own budget (see ORPHAN_BATCH_MAX), so a backlog in
+		# parts 1+2 can no longer starve it, and it runs even when retention is
+		# disabled - orphaned throwaways are gateway hygiene, not user chats.
+		_reap_orphans(sess, ORPHAN_BATCH_MAX, summary)
 	finally:
 		try:
 			sess.close()
@@ -230,7 +260,8 @@ def _reap_empty(sess, budget: int, summary: dict) -> int:
 	non-starred conversation with ZERO messages, idle past ``EMPTY_GRACE_DAYS``.
 	Such a row has no messages / approvals / runs / voice notes hanging off it,
 	so ``delete_doc(force)`` is a clean removal. A stray session is freed first,
-	defensively. Returns leftover budget for the orphan sweep.
+	defensively. Returns the leftover retention budget (part 3 no longer runs on
+	it - it has its own ORPHAN_BATCH_MAX).
 
 	Two exclusions guard against destroying real data via ``delete_doc``'s
 	cascade to attached Files (frappe ``remove_all`` on delete):
@@ -300,10 +331,23 @@ def _reap_empty(sess, budget: int, summary: dict) -> int:
 	return budget
 
 
+def _grace_ms(entry: dict) -> int:
+	"""How long this session must have been idle before it can be reaped.
+
+	Known throwaway labels get THROWAWAY_GRACE_HOURS; everything else keeps the
+	conservative ORPHAN_GRACE_HOURS. See _THROWAWAY_LABEL_PREFIXES for why the
+	split is safe. An absent or non-string label falls through to the long
+	grace."""
+	label = entry.get("label") or ""
+	if isinstance(label, str) and label.startswith(_THROWAWAY_LABEL_PREFIXES):
+		return THROWAWAY_GRACE_HOURS * 3600 * 1000
+	return ORPHAN_GRACE_HOURS * 3600 * 1000
+
+
 def _reap_orphans(sess, budget: int, summary: dict) -> None:
 	"""Part 3: chat-namespace gateway sessions no conversation references
-	(title/prewarm throwaways, deleted conversations), inactive past the
-	grace window and with no active run."""
+	(title/prewarm/polish throwaways, deleted conversations), inactive past their
+	grace window (per-session, see _grace_ms) and with no active run."""
 	try:
 		entries = sess.list_sessions()
 	except Exception:
@@ -319,7 +363,6 @@ def _reap_orphans(sess, budget: int, summary: dict) -> None:
 			"WHERE session_key IS NOT NULL AND session_key != ''"
 		)
 	}
-	grace_ms = ORPHAN_GRACE_HOURS * 3600 * 1000
 	now_ms = int(time.time() * 1000)
 	for entry in entries:
 		if budget <= 0:
@@ -331,7 +374,7 @@ def _reap_orphans(sess, budget: int, summary: dict) -> None:
 			summary["skipped"] += 1
 			continue
 		updated = entry.get("updatedAt")
-		if not isinstance(updated, (int, float)) or (now_ms - updated) < grace_ms:
+		if not isinstance(updated, (int, float)) or (now_ms - updated) < _grace_ms(entry):
 			# No usable activity timestamp -> conservative skip; a fresh
 			# throwaway or a just-created conversation session survives.
 			summary["skipped"] += 1

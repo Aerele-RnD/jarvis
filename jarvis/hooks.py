@@ -236,6 +236,17 @@ scheduler_events = {
 		],
 	},
 	"hourly": [
+		# Session lifecycle: free dormant conversations' openclaw sessions, reap
+		# abandoned empty chats, and reap orphaned throwaway sessions
+		# (title/prewarm/polish, deleted conversations). Batch-capped; bench
+		# history untouched.
+		#
+		# Hourly, not daily: this sweep is the backstop for the throwaway session
+		# kinds, and one pass a day capped at 25 could never keep up with a bench
+		# minting them every few minutes. Parts 1 + 2 keep their own multi-day
+		# grace windows and are cheap no-ops when nothing is due, so the extra
+		# ticks cost one gateway connect.
+		"jarvis.chat.session_lifecycle.rotate_dormant_sessions",
 		# Sprint-3 (2026-06-16 review): bench has no way to know if the
 		# container's OAuth profile silently went away (refresh-token
 		# failure, operator clear, re-provision without re-push). Hourly
@@ -255,10 +266,6 @@ scheduler_events = {
 		"jarvis.chat.turn_recovery.recovery_rate_watch",
 	],
 	"daily": [
-		# Session lifecycle Phase 1: rotate dormant conversations' openclaw
-		# sessions and reap orphaned throwaway sessions (title/prewarm,
-		# deleted conversations). Batch-capped; bench history untouched.
-		"jarvis.chat.session_lifecycle.rotate_dormant_sessions",
 		"jarvis.onboarding.sync_connection",
 		# C2 (2026-06-16 review): nudge operators when the bench's
 		# agent_token is approaching or past its configured max age.
