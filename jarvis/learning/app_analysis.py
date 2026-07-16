@@ -129,15 +129,25 @@ def _approx_size(src_dir: str) -> tuple[int, int]:
 	``APPROX_FILE_BAIL`` files so a huge tree can't stall the settings card."""
 	count = 0
 	total = 0
+	src_real = os.path.realpath(src_dir)
 	for root, dirs, files in os.walk(src_dir):
 		rel_root = os.path.relpath(root, src_dir)
-		dirs[:] = [d for d in dirs if not _is_excluded_dir(rel_root, d)]
+		dirs[:] = [
+			d for d in dirs
+			if not _is_excluded_dir(rel_root, d)
+			and not os.path.islink(os.path.join(root, d))
+		]
 		for fname in files:
 			if os.path.splitext(fname)[1].lower() not in EXT_ALLOWLIST:
 				continue
+			full = os.path.join(root, fname)
+			# Mirror the snapshot's symlink-containment guard so the probe count
+			# matches what will actually be zipped.
+			if os.path.islink(full) or not _is_contained(full, src_real):
+				continue
 			count += 1
 			try:
-				total += os.path.getsize(os.path.join(root, fname))
+				total += os.path.getsize(full)
 			except OSError:
 				pass
 			if count >= APPROX_FILE_BAIL:
@@ -145,14 +155,37 @@ def _approx_size(src_dir: str) -> tuple[int, int]:
 	return count, total // 1024
 
 
+_SIZE_PROBE_TTL_S = 120
+
+
+def _approx_size_cached(app: str, src: str) -> tuple[int, int]:
+	"""``_approx_size`` behind a short per-app cache. The probe walks the whole
+	app tree; the Analysis tab (which also hosts the pre-existing behavioural-
+	learning settings) loads this for EVERY custom app on every open, so an
+	uncached walk would tax that shared surface for admins who never use
+	app-learning. Size barely changes between loads, so a 2-minute cache is safe;
+	last_run is fetched fresh (cheap + needs freshness)."""
+	cache = frappe.cache()
+	key = f"jarvis:app_learning:size:{app}"
+	cached = cache.get_value(key)
+	if isinstance(cached, (list, tuple)) and len(cached) == 2:
+		return int(cached[0]), int(cached[1])
+	val = _approx_size(src)
+	try:
+		cache.set_value(key, list(val), expires_in_sec=_SIZE_PROBE_TTL_S)
+	except Exception:
+		pass
+	return val
+
+
 def list_custom_apps_data() -> list[dict]:
 	"""Rows for the API's ``list_custom_apps``: every installed non-core app
-	with a cheap size probe and its most recent learning run, if any."""
+	with a cheap (cached) size probe and its most recent learning run, if any."""
 	out: list[dict] = []
 	for app in _installed_custom_apps():
 		src = _app_source_dir(app)
 		path_ok = os.path.isdir(src)
-		approx_files, approx_kb = _approx_size(src) if path_ok else (0, 0)
+		approx_files, approx_kb = _approx_size_cached(app, src) if path_ok else (0, 0)
 		last = frappe.get_all(
 			RUN,
 			filters={"app": app},
@@ -357,41 +390,88 @@ def _is_excluded_dir(rel_root: str, dirname: str) -> bool:
 
 
 def _priority(rel_path: str) -> int:
-	"""Manifest / subset priority: hooks.py, doctype schemas, doctype
-	controllers, api-ish python, other python, js/ts/vue, md, rest."""
+	"""Manifest / subset priority (lower = analysed first / kept under the cap):
+	hooks.py, doctype schemas, doctype controllers, report scripts, api-ish
+	python, workflow/fixture JSON, other python, js/ts/vue, md, rest.
+
+	Report scripts (``/report/<name>/*.py``) and fixture-style JSON
+	(``fixtures/*.json``, plus Workflow / Property Setter / Custom Field / Print
+	Format exports which often carry the real business logic in fixture-heavy
+	apps) are lifted ABOVE js/vue/md so they aren't the first things dropped when
+	a large app hits the file cap."""
 	p = rel_path.replace(os.sep, "/")
+	pp = f"/{p}"
 	base = os.path.basename(p)
 	if base == "hooks.py":
 		return 0
-	in_doctype = "/doctype/" in f"/{p}"
+	in_doctype = "/doctype/" in pp
 	if in_doctype and p.endswith(".json"):
 		return 1
 	if in_doctype and p.endswith(".py") and base != "__init__.py":
 		return 2
-	if p.endswith(".py") and "api" in base:
+	if "/report/" in pp and p.endswith(".py") and base != "__init__.py":
 		return 3
-	if p.endswith(".py"):
+	if p.endswith(".py") and "api" in base:
 		return 4
-	if p.endswith((".js", ".ts", ".vue")):
+	# fixture-ish JSON: /fixtures/ exports, or workflow/print-format/custom-field
+	# folders that store business config as JSON.
+	if p.endswith(".json") and (
+		"/fixtures/" in pp
+		or "/workflow/" in pp
+		or "/print_format/" in pp
+		or "/custom/" in pp
+	):
 		return 5
-	if p.endswith(".md"):
+	if p.endswith(".py"):
 		return 6
-	return 7
+	if p.endswith((".js", ".ts", ".vue")):
+		return 7
+	if p.endswith(".md"):
+		return 8
+	return 9
+
+
+def _is_contained(full: str, root_real: str) -> bool:
+	"""True iff ``full`` resolves to a path INSIDE ``root_real`` (already a
+	realpath). Defends against symlinks in the app source that would otherwise
+	make ``open()``/``zipfile.write`` follow the link and ship the TARGET's
+	content — e.g. a ``config.json -> ../../sites/common_site_config.json`` link
+	exfiltrating site secrets to the external LLM. os.walk itself does not
+	descend symlinked dirs (followlinks=False), but a symlinked FILE is still
+	opened by name, so every file is realpath-checked here."""
+	try:
+		real = os.path.realpath(full)
+	except OSError:
+		return False
+	return real == root_real or real.startswith(root_real + os.sep)
 
 
 def _collect_files(src_dir: str) -> tuple[list[str], dict]:
 	"""Snapshot-eligible relative paths (sorted for determinism) + coverage
 	notes. Applies the extension allowlist, dir excludes, the per-file size
-	cap (skip + note) and the total file cap (prioritized subset + note)."""
+	cap (skip + note), a symlink-containment guard (skip + note) and the total
+	file cap (prioritized subset + note)."""
 	rels: list[str] = []
 	skipped_large = 0
+	skipped_symlink = 0
+	src_real = os.path.realpath(src_dir)
 	for root, dirs, files in os.walk(src_dir):
 		rel_root = os.path.relpath(root, src_dir)
-		dirs[:] = sorted(d for d in dirs if not _is_excluded_dir(rel_root, d))
+		# Drop excluded AND symlinked directories (never descend a link out of
+		# the tree — os.walk keeps followlinks off, but excluding here also keeps
+		# such dirs out of the size probe / listing).
+		dirs[:] = sorted(
+			d for d in dirs
+			if not _is_excluded_dir(rel_root, d)
+			and not os.path.islink(os.path.join(root, d))
+		)
 		for fname in sorted(files):
 			if os.path.splitext(fname)[1].lower() not in EXT_ALLOWLIST:
 				continue
 			full = os.path.join(root, fname)
+			if os.path.islink(full) or not _is_contained(full, src_real):
+				skipped_symlink += 1
+				continue
 			try:
 				size = os.path.getsize(full)
 			except OSError:
@@ -406,7 +486,11 @@ def _collect_files(src_dir: str) -> tuple[list[str], dict]:
 		rels.sort(key=lambda r: (_priority(r), r))
 		dropped = len(rels) - FILE_CAP
 		rels = rels[:FILE_CAP]
-	notes = {"skipped_large_files": skipped_large, "dropped_files": dropped}
+	notes = {
+		"skipped_large_files": skipped_large,
+		"skipped_symlinks": skipped_symlink,
+		"dropped_files": dropped,
+	}
 	return rels, notes
 
 
@@ -564,7 +648,28 @@ def _batch_prompt(app: str, k: int, total: int, files: list[tuple[str, str]]) ->
 	return "\n\n".join(parts)
 
 
-def _final_prompt(app: str, total: int, dropped_batches: int) -> str:
+def _coverage_caveats(dropped_batches: int, zip_notes: dict) -> list[str]:
+	"""Human-readable coverage gaps so the LLM can disclose partial analysis in
+	the overview page. Covers ALL three truncation kinds (previously only the
+	batch cap was surfaced): dropped batches, files skipped for the total-file
+	cap, and files skipped for being over the per-file size cap. Symlinked files
+	are excluded for security (they can escape the app tree) — noted separately."""
+	caveats: list[str] = []
+	if dropped_batches:
+		caveats.append(f"{dropped_batches} lowest-priority source batch(es) dropped for size")
+	dropped_files = cint((zip_notes or {}).get("dropped_files"))
+	if dropped_files:
+		caveats.append(f"{dropped_files} lowest-priority file(s) dropped (total-file cap)")
+	skipped_large = cint((zip_notes or {}).get("skipped_large_files"))
+	if skipped_large:
+		caveats.append(f"{skipped_large} file(s) skipped for exceeding the per-file size cap")
+	skipped_symlinks = cint((zip_notes or {}).get("skipped_symlinks"))
+	if skipped_symlinks:
+		caveats.append(f"{skipped_symlinks} symlinked file(s) skipped (not analysed for safety)")
+	return caveats
+
+
+def _final_prompt(app: str, total: int, dropped_batches: int, zip_notes: dict | None = None) -> str:
 	from jarvis.chat.wiki import PAGE_TYPES
 
 	parts = [
@@ -579,12 +684,18 @@ def _final_prompt(app: str, total: int, dropped_batches: int) -> str:
 			"processes, important doctypes, integrations) and propose only "
 			"genuinely useful skills."
 		),
+		(
+			"Scope note: this analysis reads the app's SOURCE TREE only. "
+			"Customizations that live only in the database (Workspaces, "
+			"Dashboards, Print Format Builder formats, Notifications not exported "
+			"as fixtures) are not visible here - do not claim the app has none."
+		),
 	]
-	if dropped_batches:
+	caveats = _coverage_caveats(dropped_batches, zip_notes or {})
+	if caveats:
 		parts.append(
-			f"Coverage note: {dropped_batches} lowest-priority source batch(es) "
-			"were dropped for size, so this analysis is partial - say so in the "
-			"overview page."
+			"Coverage note: this analysis is PARTIAL - " + "; ".join(caveats)
+			+ ". Say so explicitly in the overview page."
 		)
 	parts.append(
 		"Reply with EXACTLY ONE fenced block of this form:\n"
@@ -615,12 +726,31 @@ def start_run(run_name: str) -> None:
 	_set_run(run_name, {"status": "Zipping", "started_at": now_datetime()})
 	try:
 		snap = _snapshot_zip(run_name, run.app)
+	except Exception as e:
+		frappe.log_error(
+			title=f"jarvis app learning: snapshot failed ({run.app})",
+			message=frappe.get_traceback(),
+		)
+		_fail_run(run_name, f"snapshot failed: {e}")
+		_enqueue_tick()
+		return
+
+	# Persist zip_path IMMEDIATELY after a successful snapshot, before the plan /
+	# conversation steps — so if any of those raise, the run is Failed WITH its
+	# zip_path recorded and _cleanup_zips can always reclaim the file. (Without
+	# this, a zip written here but never stamped on the row orphans on disk.)
+	_set_run(run_name, {
+		"zip_path": snap["zip_path"],
+		"zip_size": snap["zip_size"],
+		"file_count": snap["file_count"],
+	})
+	try:
 		batches, dropped_batches = _plan_batches(_manifest_from_zip(snap["zip_path"]))
 		if not batches:
 			raise ValueError(f"no analyzable source content in apps/{run.app}")
 	except Exception as e:
 		frappe.log_error(
-			title=f"jarvis app learning: snapshot failed ({run.app})",
+			title=f"jarvis app learning: plan failed ({run.app})",
 			message=frappe.get_traceback(),
 		)
 		_fail_run(run_name, f"snapshot failed: {e}")
@@ -688,16 +818,22 @@ def _send_batch_turn(run, k: int) -> None:
 	prompt = _batch_prompt(run.app, k, cint(run.batches_total) or len(batches), batches[k - 1])
 	from jarvis.chat import api
 
-	api._enqueue_turn(run.conversation, prompt)
+	# interactive=False: analysis turns run at BACKGROUND priority so an
+	# up-to-40-turn run never jumps ahead of a real user's chat on the shared
+	# queue (the owner's "must not affect day-to-day operations" requirement).
+	api._enqueue_turn(run.conversation, prompt, interactive=False)
 
 
 def _send_final_turn(run) -> None:
 	notes = _load_notes(run)
 	dropped = cint((notes.get("plan") or {}).get("dropped_batches"))
-	prompt = _final_prompt(run.app, cint(run.batches_total), dropped)
+	prompt = _final_prompt(run.app, cint(run.batches_total), dropped, notes.get("zip") or {})
 	from jarvis.chat import api
 
-	api._enqueue_turn(run.conversation, prompt)
+	# interactive=False: analysis turns run at BACKGROUND priority so an
+	# up-to-40-turn run never jumps ahead of a real user's chat on the shared
+	# queue (the owner's "must not affect day-to-day operations" requirement).
+	api._enqueue_turn(run.conversation, prompt, interactive=False)
 
 
 # --------------------------------------------------------------------------- #
@@ -738,6 +874,25 @@ def on_turn_end(conversation_id: str, *, errored: bool) -> None:
 		_advance_run(run, errored=errored)
 
 
+def _publish_progress(run, done: int, total: int) -> None:
+	"""Best-effort live progress frame so the settings card's active-run strip
+	advances batch-by-batch (the frontend refetches the overview on it). A
+	missed frame is cosmetic — never let it break the chain."""
+	try:
+		from jarvis.chat.events import publish_to_user
+
+		publish_to_user(run.requested_by, {
+			"kind": "app_learning:update",
+			"run": run.name,
+			"app": run.app,
+			"status": "Analyzing",
+			"batches_done": int(done),
+			"batches_total": int(total),
+		})
+	except Exception:
+		pass
+
+
 def _advance_run(run, *, errored: bool) -> None:
 	done = cint(run.batches_done)
 	total = cint(run.batches_total)
@@ -775,6 +930,7 @@ def _advance_run(run, *, errored: bool) -> None:
 	_set_run(run.name, {"batches_done": k, "notes": json.dumps(notes)})
 	run.batches_done = k
 	run.notes = json.dumps(notes)
+	_publish_progress(run, k, total)
 	try:
 		if k < total:
 			_send_batch_turn(run, k + 1)
@@ -870,10 +1026,23 @@ def _recover_stale_runs() -> bool:
 			last = _last_turn_activity(r.conversation) or r.started_at or r.modified
 			if last and get_datetime(last) >= get_datetime(cutoff):
 				continue
-			run = frappe.get_doc(RUN, r.name)
-			done, total = cint(run.batches_done), cint(run.batches_total)
-			current_key = "final" if done >= total else str(done + 1)
-			_retry_or_fail(run, current_key, "no turn activity for 45+ minutes")
+			# Take the SAME per-run lock on_turn_end uses, so a stale-recovery
+			# retry can never race a late-arriving turn-end event into a
+			# double-advance. Non-blocking: if a turn-end is mid-flight, skip
+			# this tick — it's making progress, so it isn't stale.
+			from jarvis._redis_lock import redis_lock
+
+			with redis_lock(
+				f"jarvis_app_learning_run:{r.name}", timeout_s=60, blocking_timeout_s=0.0
+			) as acquired:
+				if not acquired:
+					continue
+				run = frappe.get_doc(RUN, r.name)
+				if run.status != "Analyzing":
+					continue
+				done, total = cint(run.batches_done), cint(run.batches_total)
+				current_key = "final" if done >= total else str(done + 1)
+				_retry_or_fail(run, current_key, "no turn activity for 45+ minutes")
 		elif r.status == "Zipping":
 			ref = r.started_at or r.modified
 			if ref and get_datetime(ref) < get_datetime(cutoff):
@@ -1002,14 +1171,14 @@ def _ingest_wiki_pages(doc, payload: dict) -> tuple[int, int]:
 
 	notes = _load_notes(doc)
 	dropped = cint((notes.get("plan") or {}).get("dropped_batches"))
-	if dropped:
-		# The analysis was partial (batch cap) — say so on the final page.
+	caveats = _coverage_caveats(dropped, notes.get("zip") or {})
+	if caveats:
+		# The analysis was partial (batch / file / size caps) — stamp the full
+		# disclosure on the final page so the wiki itself is honest about scope,
+		# not just the LLM prompt.
 		last = updates[-1]
 		key = "append_md" if "append_md" in last else "body_md"
-		marker = (
-			f"\n\n_Partial coverage: {dropped} lowest-priority source batch(es) "
-			"of this app were not analyzed (size cap)._"
-		)
+		marker = "\n\n_Partial coverage: " + "; ".join(caveats) + "._"
 		last[key] = (last[key] + marker)[:WIKI_BODY_CLIP]
 
 	applied = 0
@@ -1048,19 +1217,26 @@ def _sanitize_skill_slug(name, app: str) -> str:
 
 def _ingest_skills(doc, payload: dict) -> tuple[int, int, int]:
 	"""Create up to ``MAX_SKILLS`` Org-scope custom skills as the requesting
-	admin. When the org custom-skill push is already at its 25-slot cap the
-	skill is created disabled (deferred) so it never silently evicts a pushed
-	one. Returns ``(created, deferred, failed)``."""
+	admin, ALWAYS DISABLED — quarantined for admin review.
+
+	A skill's ``instructions`` become live agent instructions for every user the
+	moment the skill is enabled and pushed, and here those instructions are
+	derived by an LLM reading UNTRUSTED third-party app source (comments,
+	docstrings, strings can carry prompt-injection the read-time fence only
+	dampens). So the pipeline never auto-enables: each proposed skill is created
+	``enabled=0`` and the admin reviews its instructions in the Skills area and
+	enables it explicitly (one click, then it pushes org-wide). ``deferred`` is
+	kept in the return for the UI but is always 0 now — every created skill is a
+	pending-review skill. Returns ``(created_pending, deferred, failed)``."""
 	raw = payload.get("skills")
 	if not isinstance(raw, list):
 		return 0, 0, 0
-	from jarvis.chat.custom_skills import MAX_SKILLS_PER_PUSH, build_push_payload
 	from jarvis.chat.custom_skills_api import _create_custom_skill_impl
 	from jarvis.jarvis.doctype.jarvis_custom_skill.jarvis_custom_skill import (
 		MAX_DESC_LEN, MAX_INSTR_LEN,
 	)
 
-	created = deferred = failed = 0
+	created = failed = 0
 	for item in raw[:MAX_SKILLS]:
 		if not isinstance(item, dict):
 			continue
@@ -1074,9 +1250,6 @@ def _ingest_skills(doc, payload: dict) -> tuple[int, int, int]:
 			continue
 		user_invocable = 1 if item.get("user_invocable") else 0
 		try:
-			# Would this push exceed the org cap? Re-evaluated per skill: each
-			# enabled create changes the next count.
-			enabled = 0 if len(build_push_payload()) >= MAX_SKILLS_PER_PUSH else 1
 			original_user = frappe.session.user
 			try:
 				frappe.set_user(doc.requested_by)
@@ -1085,20 +1258,17 @@ def _ingest_skills(doc, payload: dict) -> tuple[int, int, int]:
 					description,
 					instructions,
 					user_invocable,
-					enabled,
+					0,  # DISABLED — pending admin review before it goes org-wide
 					scope="Org",
 					ignore_permissions=True,
 				)
 			finally:
 				frappe.set_user(original_user)
-			if enabled:
-				created += 1
-			else:
-				deferred += 1
+			created += 1
 		except Exception:
 			failed += 1
 			frappe.log_error(
 				title=f"jarvis app learning: skill create failed ({doc.app}/{slug})",
 				message=frappe.get_traceback(),
 			)
-	return created, deferred, failed
+	return created, 0, failed

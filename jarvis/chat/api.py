@@ -1665,13 +1665,17 @@ def _enqueue_turn(
 	model_override: str | None = None,
 	thinking_override: str | None = None,
 	hidden: bool = False,
+	interactive: bool = True,
 ) -> dict:
 	"""Persist a user message + dispatch an agent turn for ``prompt`` (no
 	attachments / no auto-context). The macro engine (``jarvis.chat.macros``) uses
 	this to run one step exactly the way ``send_message`` runs a typed message —
 	same seq/session_key/dispatch path. ``hidden`` marks the row as an internal
 	system message the chat UI never renders (get_conversation filters it out).
-	Returns ``{run_id, message_id}``."""
+	``interactive=False`` dispatches the turn at BACKGROUND priority (it never
+	jumps ahead of a human's queued turn) — used by unattended, long-running
+	producers like app-learning that could otherwise monopolize the chat queue
+	for a run's duration. Returns ``{run_id, message_id}``."""
 	conv_doc = frappe.get_doc(CONV, conversation)
 	if model_override:
 		conv_doc.model_override = model_override
@@ -1709,7 +1713,7 @@ def _enqueue_turn(
 		"conversation_id": conversation,
 		"message_id": msg_doc.name,
 		"run_id": run_id,
-	})
+	}, interactive=interactive)
 	return {"run_id": run_id, "message_id": msg_doc.name}
 
 
