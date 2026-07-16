@@ -162,6 +162,7 @@ onMounted(loadUsers)
 .jv-usr-row { display: grid; grid-template-columns: 1.5fr 1.8fr 1.3fr 0.9fr; gap: 14px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--border); }
 .jv-usr-row:last-child { border-bottom: 0; }
 .jv-usr-headrow { padding-top: 0; padding-bottom: 8px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); }
+.jv-usr-id { display: flex; flex-direction: column; gap: 2px; }
 .jv-usr-name { font-size: 13.5px; font-weight: 600; color: var(--text); }
 .jv-usr-email { font-size: 11.5px; color: var(--text-3); margin-top: 1px; }
 .jv-usr-meter .jv-usage-bar { margin-top: 0; }

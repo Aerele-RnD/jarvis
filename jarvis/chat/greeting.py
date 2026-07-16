@@ -12,7 +12,7 @@ conversation is created and no Redis state is used.
 - otherwise show when the new-chat count is a positive multiple of 3.
 
 Durability (the one hard rule): the new-chat counter and the permanent
-"Don't ask again" flag both live in the ``Jarvis User Preference`` DocType (a
+"Don't ask again" flag both live in the ``Jarvis User Settings`` DocType (a
 real DB row), so ``bench clear-cache`` / Redis eviction can never resurrect a
 greeting the user killed nor reset the cadence. The cadence itself is the
 deferral: "Maybe later" pins the current count to
@@ -24,8 +24,9 @@ import frappe
 from frappe.utils import cint
 
 from jarvis.chat.voice_notes_api import _require_system_user
+from jarvis.chat.usage import get_or_create_user_settings
 
-PREF = "Jarvis User Preference"
+PREF = "Jarvis User Settings"
 NOTE = "Jarvis Voice Note"
 _SETTINGS = "Jarvis Settings"
 
@@ -63,7 +64,7 @@ def _get_pref(user: str) -> frappe._dict | None:
 	return (
 		frappe.db.get_value(
 			PREF,
-			user,
+			{"user": user},
 			[
 				"business_greeting_state",
 				"business_greeting_chat_count",
@@ -76,13 +77,10 @@ def _get_pref(user: str) -> frappe._dict | None:
 
 
 def _upsert_pref(user: str, **values: object) -> None:
-	"""Insert-or-update the single per-user preference row (ignore_permissions:
-	the row is System-Manager gated but written on the user's own behalf)."""
-	if frappe.db.exists(PREF, user):
-		frappe.db.set_value(PREF, user, values, update_modified=True)
-	else:
-		doc = frappe.get_doc({"doctype": PREF, "user": user, **values})
-		doc.insert(ignore_permissions=True)
+	"""Insert-or-update the user's Jarvis User Settings row (ignore_permissions:
+	backend-managed greeting state, written on the user's own behalf)."""
+	get_or_create_user_settings(user)
+	frappe.db.set_value(PREF, {"user": user}, values, update_modified=True)
 
 
 @frappe.whitelist()
@@ -159,14 +157,10 @@ def increment_new_chat_count(user: str) -> None:
 	is deliberately NOT hooked directly: ``filebox.py`` calls it for unattended
 	File Box drops, which must never count toward the greeting cadence.
 	"""
-	if frappe.db.exists(PREF, user):
-		frappe.db.sql(
-			"UPDATE `tabJarvis User Preference` "
-			"SET business_greeting_chat_count = business_greeting_chat_count + 1 "
-			"WHERE name = %s",
-			(user,),
-		)
-	else:
-		frappe.get_doc(
-			{"doctype": PREF, "user": user, "business_greeting_chat_count": 1}
-		).insert(ignore_permissions=True)
+	get_or_create_user_settings(user)
+	frappe.db.sql(
+		"UPDATE `tabJarvis User Settings` "
+		"SET business_greeting_chat_count = business_greeting_chat_count + 1 "
+		"WHERE user = %s",
+		(user,),
+	)

@@ -15,6 +15,7 @@
 
 /* ===== settings panel (centered modal with a left section rail) ===== */
 .jv-settings-overlay { position: fixed; inset: 0; z-index: 60; background: rgba(0, 0, 0, 0.27); display: flex; align-items: center; justify-content: center; padding: 24px; }
+/* z-index 60: the shell ConfirmDialog uses 200 to sit above this. */
 /* Height is ADAPTIVE (was a hard 560px): the compact AI-models pane left roughly
    half the dialog empty. `auto` sizes to the tallest column, clamped by
    min/max. NOTE the left rail is the practical floor (~12 nav items), so short
@@ -212,9 +213,6 @@
 .jv-acct-link:hover { text-decoration: underline; }
 .jv-acct-link svg { flex: none; }
 .jv-acct-savednote { font-size: 12px; color: var(--text-3); font-weight: 420; }
-.jv-acct-kv { display: flex; justify-content: space-between; font-size: 13px; padding: 6px 0; gap: 12px; }
-.jv-acct-kv .jv-ok { color: var(--green); }
-.jv-acct-kv .jv-warn { color: var(--amber); }
 .jv-acct-usage-line { font-size: 13px; color: var(--text-2); }
 
 /* ===== Monitor cards (Billing & metering / Connection) ===== */
@@ -279,3 +277,16 @@
 	.jv-settings-navitem { width: auto; flex: none; white-space: nowrap; }
 	.jv-settings-body { padding: 4px 16px 20px; }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .jv-fade-enter-active, .jv-fade-leave-active { transition: none; }
+  .jv-settings { animation: none; }
+}
+
+/* Admin tag — small pill next to the "Administration" rail group heading
+   (SettingsDialog.vue), marking that group as gated to Jarvis Admin/System
+   Manager, matching the .jv-mon-tag colour recipe (blue, not the green/amber
+   status tones used elsewhere). */
+.sm-tag { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 20px;
+  font-size: 9px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  background: var(--blue-bg); border: 1px solid var(--blue-bd); color: var(--text-2); vertical-align: middle; }

@@ -29,6 +29,9 @@ def get_context(context):
 		# System Managers too. Client gate is UX-only — every admin API
 		# re-checks require_jarvis_admin server-side.
 		"is_jarvis_admin": has_jarvis_admin_access(),
+		# Native Frappe per-user theme (Light/Dark/Automatic); the SPA maps it to
+		# light/dark/system so theme roams across devices without a Jarvis field.
+		"jarvis_desk_theme": frappe.db.get_value("User", frappe.session.user, "desk_theme") or "Automatic",
 		# NOTE: no `has_jarvis_access` boot flag — the guard above already
 		# redirected anyone without access, so it would always be True here.
 		# Site timezone for the SPA's dayjs config — shipping it in boot lets

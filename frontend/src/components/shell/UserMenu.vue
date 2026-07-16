@@ -36,7 +36,7 @@
 
 <script setup>
 // Sidebar header (DESIGN-V3 §3.2.1): brand + session user, HD's UserMenu
-// pattern. Dropdown: Settings (D9) · Switch to Desk · Toggle theme · Log out.
+// pattern. Dropdown: Settings (D9) · Switch to Desk · Change theme · Log out.
 import { computed, inject } from "vue"
 import { Dropdown, FeatherIcon } from "frappe-ui"
 import JarvisMark from "@/components/JarvisMark.vue"
@@ -73,7 +73,7 @@ const menuOptions = computed(() => [
 				},
 			},
 			{
-				label: "Toggle theme",
+				label: "Change theme",
 				icon: effectiveDark.value ? "sun" : "moon",
 				onClick: () => toggleTheme(),
 			},

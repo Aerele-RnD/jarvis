@@ -5,7 +5,10 @@
 		     cards and the manage-billing link) ===== -->
 		<section class="jv-acct-card">
 			<div v-if="accountLoading" class="jv-acct-muted">Loading…</div>
-			<div v-else-if="accountErr" class="jv-acct-err">{{ accountErr }}</div>
+			<div v-else-if="accountErr" class="jv-acct-err">
+				{{ accountErr }}
+				<button type="button" class="jv-mon-retry" @click="loadAccount">Retry</button>
+			</div>
 			<template v-else>
 				<div v-if="!account.plan || !account.plan.plan_name" class="jv-acct-muted">No active plan yet.</div>
 				<template v-else>

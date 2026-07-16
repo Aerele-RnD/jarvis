@@ -184,3 +184,21 @@ def admin_sync_usage() -> dict:
 			"users": summary,
 		},
 	}
+
+
+# SPA theme choice maps to Frappe's native User.desk_theme so it roams per-user.
+_THEME_TO_DESK = {"light": "Light", "dark": "Dark", "system": "Automatic"}
+
+
+@frappe.whitelist()
+def set_user_theme(theme: str) -> dict:
+	"""Persist the caller's theme choice on their own User.desk_theme
+	(Light/Dark/Automatic). ``theme`` is the SPA vocabulary light|dark|system."""
+	require_jarvis_access()
+	desk = _THEME_TO_DESK.get((theme or "").strip().lower())
+	if not desk:
+		return {"ok": False, "reason": "invalid_theme"}
+	frappe.db.set_value(
+		"User", frappe.session.user, "desk_theme", desk, update_modified=False
+	)
+	return {"ok": True, "data": {"theme": theme, "desk_theme": desk}}

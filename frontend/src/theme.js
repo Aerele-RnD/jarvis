@@ -1,6 +1,6 @@
 // Shared Jarvis theme: the palette CSS variables + a composable that tracks
-// the per-device theme choice (localStorage "jarvis-theme": light | dark |
-// system) and the OS color scheme.
+// the per-user theme choice (Frappe User.desk_theme, seeded from
+// window.jarvis_desk_theme) and the OS color scheme.
 //
 // v3 (DESIGN-V3 §2.5 / D34): state is a MODULE-SCOPE singleton so the shell
 // (UserMenu toggle), ChatView (header toggle + settings Appearance tab) and
@@ -45,8 +45,11 @@ export function isDark(pref, prefersDark) {
 }
 
 // ---- module-scope singleton state ------------------------------------------
+const _DESK_TO_PREF = { Light: "light", Dark: "dark", Automatic: "system" }
 let _stored = "system"
-try { _stored = localStorage.getItem("jarvis-theme") || "system" } catch (e) { /* private mode */ }
+try {
+	_stored = _DESK_TO_PREF[window.jarvis_desk_theme] || "system"
+} catch (e) { /* boot missing → system */ }
 const theme = ref(_stored)
 const prefersDark = ref(false)
 
@@ -76,11 +79,19 @@ function _start() {
 
 function setTheme(t) {
 	theme.value = t
-	try { localStorage.setItem("jarvis-theme", t) } catch (e) { /* keep in-memory */ }
 	applyTheme()
+	// Anti-FOUC cache: frontend/index.html reads this synchronously, before Vue
+	// mounts, to paint the right theme on first frame. desk_theme (below) stays
+	// the cross-device source of truth; this is just the local, pre-mount copy.
+	try { localStorage.setItem("jarvis-theme", t) } catch (e) { /* private mode */ }
+	// Persist to Frappe's native per-user desk_theme (fire-and-forget; the
+	// in-memory value already drives the UI, so a failed write just isn't saved).
+	import("@/api").then(({ setUserTheme }) => setUserTheme(t)).catch(() => {})
 }
-// Quick toggle: flip light/dark (drops out of 'system').
-function toggleTheme() { setTheme(effectiveDark.value ? "light" : "dark") }
+// Cycle light → dark → system → light so "follow system" stays reachable
+// (the Appearance pane that offered it was removed).
+const _THEME_CYCLE = { light: "dark", dark: "system", system: "light" }
+function toggleTheme() { setTheme(_THEME_CYCLE[theme.value] || "dark") }
 
 export function useJarvisTheme() {
 	_start()

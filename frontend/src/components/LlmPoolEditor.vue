@@ -6,7 +6,10 @@
        CSS vars (--surface, --text, …); uses only tokens, no hard-coded colors.
        Consumers: AiView (manage tab) now, AccountView + onboarding later. -->
   <div class="jv-llm-editor" style="font-family:inherit;color:var(--text);">
-    <div v-if="err" style="color:var(--red);font-size:13px;margin-bottom:12px;">{{ err }}</div>
+    <div v-if="err" style="color:var(--red);font-size:13px;margin-bottom:12px;">
+      {{ err }}
+      <button type="button" class="jv-mon-retry" @click="load">Retry</button>
+    </div>
 
     <!-- ============================================================
          UNIFIED FAILOVER LIST + CONFIG SECTION (!singleMode only - the
@@ -153,7 +156,11 @@
                its full single-vendor failover chain on close, sharing the
                same key. Add-mode only. -->
           <label v-if="panel.mode==='add'" style="display:flex;align-items:center;gap:8px;margin-top:11px;font-size:13px;color:var(--text-2);cursor:pointer;">
-            <input type="checkbox" v-model="panel.addBackups" :disabled="!editable" />
+            <button type="button" class="jv-switch" :class="{ on: panel.addBackups }" :disabled="!editable"
+                    role="switch" :aria-checked="String(panel.addBackups)"
+                    @click="panel.addBackups = !panel.addBackups">
+              <span class="jv-switch-knob"></span>
+            </button>
             Add backup models automatically (recommended)
           </label>
         </div>
@@ -890,11 +897,12 @@ async function removeDirect() {
 
 // What the list row shows in the model cell.
 // This used to be `row.model || row.provider || '—'`, which was wrong for a
-// SUBSCRIPTION row: newRow() seeds `provider` with providerOptions[0] ("Anthropic")
-// because that field belongs to the api-key shape, and it is never cleared when the
-// row is switched to a subscription. So a row whose chip correctly read
-// "Subscription · OpenAI" displayed the model "Anthropic" -- a provider name, in the
-// model column, for the wrong provider. Never fall back to `provider` here.
+// SUBSCRIPTION row: `provider` belongs to the api-key shape and is never cleared
+// when the row is switched to a subscription, so whatever api-key provider was
+// last picked (or none - newRow() now seeds `provider: ""`, not a default like
+// "Anthropic") leaks through. A row whose chip correctly read "Subscription ·
+// OpenAI" could display a stray provider name in the model column instead of
+// its own model. Never fall back to `provider` here.
 function rowModelLabel(row) {
   if (row.model) return row.model
   if (row.credentialType === "subscription") return "Model not set"
@@ -909,7 +917,7 @@ function nextUid() { return ++_uidSeq }
 function newRow() {
   return {
     _uid: nextUid(),
-    provider: providerOptions[0] || "Anthropic", model: "", apiKey: "", baseUrl: "", hasKey: false,
+    provider: "", model: "", apiKey: "", baseUrl: "", hasKey: false,
     credentialType: "api_key", rotation: "sticky", upstream: "openai",
     accounts: [], _connect: blankConnect(), order: 0,
   }
@@ -1690,4 +1698,6 @@ defineExpose({ save })
   .jv-ct-card, .jv-cbtn, .jv-paste,
   .jv-pick :deep(.jvc-field), .jv-ak-grid :deep(.jvc-field) { transition: none; }
 }
+.jv-mon-retry { display: inline-flex; align-items: center; margin-left: 6px; height: 24px; border: none; background: var(--surface-2); color: var(--text); border-radius: 8px; padding: 0 10px; font-size: 12px; font-weight: 500; font-family: inherit; cursor: pointer; transition: background-color .15s ease; }
+.jv-mon-retry:hover { background: var(--surface-3); }
 </style>
