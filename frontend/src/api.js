@@ -202,6 +202,11 @@ export const beginPoolAccountSignin = (provider, model) =>
 // complete is capture-only → { account_ref, label, oauth_blob, account_email }
 export const completePoolAccountSignin = (nonce, redirectedUrl) =>
 	call("jarvis.oauth.api.complete_pool_account_signin", { nonce, redirected_url: redirectedUrl })
+// Device-code (Kimi) capture: begin returns { device_flow:true, user_code,
+// verification_uri, interval }; poll on `interval` → { status:"pending" } until
+// the user approves, then the same capture-only { account_ref, label, oauth_blob }.
+export const pollPoolAccountSignin = (nonce) =>
+	call("jarvis.oauth.api.poll_pool_account_signin", { nonce })
 
 // --- DIRECT single chat-subscription (legacy flat-field path) ---------------
 // Existing customers who onboarded a single chat subscription keep their creds

@@ -88,6 +88,16 @@ OAUTH_CLIENT_IDS = {
 		# Operators set the env var if our embedded default goes stale.
 		"681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com",
 	),
+	# xAI Grok — public/PKCE client id used by cli-proxy-api's --xai-login.
+	"xAI Grok": _env_or_default(
+		"JARVIS_XAI_OAUTH_CLIENT_ID",
+		"b1a00492-073a-47ea-816f-4c329264a828",
+	),
+	# Kimi (Moonshot) — public device-flow client id used by --kimi-login.
+	"Kimi (Moonshot)": _env_or_default(
+		"JARVIS_KIMI_OAUTH_CLIENT_ID",
+		"17e5f671-d194-4dfb-9706-5516cb48c098",
+	),
 }
 
 
@@ -120,6 +130,9 @@ def get_oauth_client_id(provider: str) -> str:
 OAUTH_CLIENT_SECRETS = {
 	"OpenAI": _env_or_default("JARVIS_OPENAI_CODEX_OAUTH_CLIENT_SECRET", ""),
 	"Google Gemini": _env_or_default("JARVIS_GEMINI_CLI_OAUTH_CLIENT_SECRET", ""),
+	# xAI (PKCE) + Kimi (device-flow) are public clients — no secret.
+	"xAI Grok": _env_or_default("JARVIS_XAI_OAUTH_CLIENT_SECRET", ""),
+	"Kimi (Moonshot)": _env_or_default("JARVIS_KIMI_OAUTH_CLIENT_SECRET", ""),
 }
 
 

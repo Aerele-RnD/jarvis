@@ -239,13 +239,15 @@ def validate_models(settings) -> list:
                     errors.append(
                         f"{label} account[{j}] ({acc_ref}): upstream='anthropic' is not permitted (ToS)"
                     )
-                # Only openai/google subscription upstreams are supported. The old
-                # child-doctype Select(reqd) structurally enforced this; the JSON
-                # migration dropped the guard, so a typo'd upstream would route to a
+                # Only these subscription upstreams are supported (the pinned
+                # cli-proxy-api image ships codex/antigravity/xai/kimi channels;
+                # anthropic is ToS-banned above). The old child-doctype
+                # Select(reqd) structurally enforced this; the JSON migration
+                # dropped the guard, so a typo'd upstream would route to a
                 # nonexistent provider. Re-enforce here. #200 review #6.
-                elif upstream and upstream not in ("openai", "google"):
+                elif upstream and upstream not in ("openai", "google", "xai", "kimi"):
                     errors.append(
-                        f"{label} account[{j}] ({acc_ref}): unsupported upstream '{upstream}' (must be openai or google)"
+                        f"{label} account[{j}] ({acc_ref}): unsupported upstream '{upstream}' (must be openai, google, xai, or kimi)"
                     )
 
                 upstreams.add(upstream)

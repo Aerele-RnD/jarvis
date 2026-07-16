@@ -869,3 +869,126 @@ class TestGetDirectSubscriptionStatus(_OAuthApiBase):
 		settings.db_set("llm_auth_mode", "api_key", update_modified=False)
 		out = oauth_api.get_direct_subscription_status()
 		self.assertFalse(out["is_direct_subscription"])
+
+
+class _MockResp:
+	"""Minimal requests.Response stand-in for the device-flow HTTP mocks."""
+	def __init__(self, status, body, text=""):
+		self.status_code = status
+		self.ok = 200 <= status < 300
+		self._body = body
+		self.text = text or (json.dumps(body) if body is not None else "")
+	def json(self):
+		if self._body is None:
+			raise ValueError("no json")
+		return self._body
+
+
+class TestKimiDeviceFlow(_OAuthApiBase):
+	"""Phase 2: Kimi (Moonshot) device-code pool capture (begin + poll)."""
+
+	_DEV = {"device_code": "DC", "user_code": "ABCD-EFGH",
+	        "verification_uri": "https://www.kimi.com/device", "interval": 5, "expires_in": 900}
+
+	def _begin(self):
+		with patch("jarvis.oauth.api.requests.post", return_value=_MockResp(200, dict(self._DEV))):
+			return oauth_api.begin_pool_account_signin("Kimi (Moonshot)", "kimi-k2.7-code")
+
+	def test_begin_returns_device_flow_and_caches_device_code(self):
+		res = self._begin()
+		self.assertTrue(res["ok"])
+		d = res["data"]
+		self.assertTrue(d["device_flow"])
+		self.assertEqual(d["user_code"], "ABCD-EFGH")
+		self.assertTrue(d["nonce"])
+		# device_code is cached server-side, NOT returned to the browser
+		self.assertNotIn("device_code", d)
+		entry = frappe.cache.hget(_CACHE_KEY, d["nonce"])
+		self.assertEqual(entry["device_code"], "DC")
+		self.assertTrue(entry.get("pool") and entry.get("device"))
+
+	def test_poll_pending_keeps_nonce_alive(self):
+		nonce = self._begin()["data"]["nonce"]
+		with patch("jarvis.oauth.api.requests.post",
+		           return_value=_MockResp(400, {"error": "authorization_pending"})):
+			res = oauth_api.poll_pool_account_signin(nonce)
+		self.assertTrue(res["ok"])
+		self.assertEqual(res["data"]["status"], "pending")
+		self.assertIsNotNone(frappe.cache.hget(_CACHE_KEY, nonce))  # keep polling
+
+	def test_poll_success_returns_kimi_device_blob(self):
+		nonce = self._begin()["data"]["nonce"]
+		token = {"access_token": "KAT", "refresh_token": "KRT", "token_type": "Bearer",
+		         "scope": "kimi:coding", "expires_in": 3600}
+		with patch("jarvis.oauth.api.requests.post", return_value=_MockResp(200, token)):
+			res = oauth_api.poll_pool_account_signin(nonce)
+		self.assertTrue(res["ok"])
+		d = res["data"]
+		self.assertEqual(d["status"], "ok")
+		self.assertTrue(d["account_ref"].startswith("SUB_"))
+		blob = json.loads(d["oauth_blob"])
+		# openclaw blob shape the fleet oauth_blob_to_cliproxy_kimi transform consumes
+		self.assertEqual(blob["provider"], "kimi")
+		self.assertEqual(blob["access"], "KAT")
+		self.assertEqual(blob["refresh"], "KRT")
+		self.assertEqual(blob["scope"], "kimi:coding")
+		self.assertTrue(blob["device_id"])           # minted at begin
+		self.assertNotIn("id_token", blob)           # device flow has none
+		self.assertIsNone(frappe.cache.hget(_CACHE_KEY, nonce))  # nonce consumed
+
+	def test_poll_expired_burns_nonce(self):
+		nonce = self._begin()["data"]["nonce"]
+		with patch("jarvis.oauth.api.requests.post",
+		           return_value=_MockResp(400, {"error": "expired_token"})):
+			res = oauth_api.poll_pool_account_signin(nonce)
+		self.assertFalse(res["ok"])
+		self.assertIsNone(frappe.cache.hget(_CACHE_KEY, nonce))  # terminal -> burned
+
+	def test_begin_paste_signin_rejects_device_provider(self):
+		# Review finding [2]: the DIRECT paste-back path must not KeyError on a
+		# device-code provider (no authorize URL) — it returns a clean error.
+		res = oauth_api.begin_paste_signin("Kimi (Moonshot)", "kimi-k2.7-code")
+		self.assertFalse(res["ok"])
+		self.assertEqual(res["error"]["code"], "device_flow_required")
+
+	def test_complete_pool_rejects_device_nonce(self):
+		# Review finding [3]: a device nonce (no state/verifier) routed to
+		# complete_pool_account_signin must return unknown_nonce, not KeyError-500.
+		nonce = self._begin()["data"]["nonce"]
+		res = oauth_api.complete_pool_account_signin(nonce, "http://x/cb?code=A&state=B")
+		self.assertFalse(res["ok"])
+		self.assertEqual(res["error"]["code"], "unknown_nonce")
+
+
+class TestXaiPoolCapture(_OAuthApiBase):
+	"""Phase 2: xAI pool capture reuses the paste-back flow, producing an openclaw
+	blob the fleet oauth_blob_to_cliproxy_xai transform consumes (provider='xai',
+	id_token retained)."""
+
+	def _seed_xai(self):
+		nonce = "nx_" + ("b" * 45)
+		frappe.cache.hset(_CACHE_KEY, nonce, {
+			"provider": "xAI Grok", "model": "grok-4.3", "status": "pending",
+			"expires_at_ts": int(time.time()) + 600,
+			"verifier": "vv", "state": "test-state",
+			"redirect_uri": "http://127.0.0.1:56121/callback",
+			"pool": True, "originator_user": frappe.session.user,
+		})
+		return nonce
+
+	def test_pool_capture_builds_xai_blob_with_id_token(self):
+		nonce = self._seed_xai()
+		with patch("jarvis.oauth.api._exchange_code", return_value={
+			"access_token": "XAT", "refresh_token": "XRT",
+			"id_token": _jwt({"email": "x@y.com"}), "expires_in": 3600, "email": "x@y.com",
+		}):
+			res = oauth_api.complete_pool_account_signin(
+				nonce, "http://127.0.0.1:56121/callback?code=CODE&state=test-state")
+		self.assertTrue(res["ok"])
+		d = res["data"]
+		self.assertTrue(d["account_ref"].startswith("SUB_"))
+		blob = json.loads(d["oauth_blob"])
+		self.assertEqual(blob["provider"], "xai")   # openclaw_provider
+		self.assertEqual(blob["access"], "XAT")
+		self.assertTrue(blob["id_token"])            # xai transform REQUIRES it
+		self.assertIsNone(frappe.cache.hget(_CACHE_KEY, nonce))  # single-use
