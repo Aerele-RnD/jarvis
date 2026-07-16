@@ -217,6 +217,19 @@ class TestSummaryRows(FrappeTestCase):
 		afl.assert_not_called()
 
 	def test_submittable_doctype_gets_a_synthetic_docstatus_row(self):
-		# docstatus is not a DocField, so pick_fields cannot select it.
+		# docstatus is not a DocField, so pick_fields cannot select it and
+		# summary_rows appends it. ToDo is not submittable, so flip the meta flag:
+		# the branch reads meta.is_submittable and doc.docstatus, and this exercises
+		# both. (Asserting only "no crash" on a non-submittable doctype would ship
+		# this branch with zero coverage.)
+		self.todo.db_set("docstatus", 1)
+		meta = frappe.get_meta("ToDo")
+		with patch.object(meta, "is_submittable", 1):
+			out = summary_rows("ToDo", self.todo.name)
+		row = next((r for r in out["rows"] if r["label"] == "Docstatus"), None)
+		self.assertIsNotNone(row)
+		self.assertEqual(row["value"], "Submitted")
+
+	def test_non_submittable_doctype_has_no_docstatus_row(self):
 		out = summary_rows("ToDo", self.todo.name)
-		self.assertIsNotNone(out)  # ToDo is not submittable; just assert no crash
+		self.assertNotIn("Docstatus", {r["label"] for r in out["rows"]})
