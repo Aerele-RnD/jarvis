@@ -191,18 +191,18 @@ class JarvisSettings(Document):
         self._validate_conversation_retention()
 
     def _validate_conversation_retention(self):
-        """Retention floor. The daily sweep archives idle chats past this many
-        days, so a fumbled tiny value would mass-archive on the very next cron
-        (the batch cap only spreads that over days). 0 disables (keep forever);
-        otherwise require >= 7. Unset is left untouched - readers default it to
-        30 (Single defaults are not backfilled on migrate)."""
+        """Retention floor. The daily sweep frees idle chats' openclaw sessions
+        past this many days, so a fumbled tiny value would mass-free on the very
+        next cron (the batch cap only spreads that over days). 0 disables (keep
+        sessions forever); otherwise require >= 7. Unset is left untouched -
+        readers default it to 30 (Single defaults are not backfilled on migrate)."""
         raw = getattr(self, "conversation_retention_days", None)
         if raw in (None, ""):
             return
         days = frappe.utils.cint(raw)
         if days != 0 and days < 7:
             frappe.throw(
-                "Auto-archive idle chats after must be 0 (never) or at least 7 days.",
+                "Reclaim idle chat memory after must be 0 (never) or at least 7 days.",
                 frappe.ValidationError,
             )
 
@@ -839,7 +839,11 @@ def _cleared_subscription_status_fields() -> dict:
     last real apply is still the truth (the pre-enqueue redundant-sync skip,
     or the run-time "no longer proxy-valid" skip - neither one touched the
     container, so whatever it's currently running is unchanged)."""
-    return {"last_subscription_status": "", "last_sync_warnings": "[]"}
+    return {
+        "last_subscription_status": "",
+        "last_sync_warnings": "[]",
+        "last_model_statuses": "[]",
+    }
 
 
 def _post_pool_with_retry(spec, api_keys, oauth_blobs):
@@ -1008,6 +1012,12 @@ def _enqueued_sync_via_admin_pool(retry_left: int = ADMIN_SYNC_LOCK_RETRIES) -> 
             if not result.get("unchanged"):
                 _synced["last_subscription_status"] = str(result.get("subscription_status") or "")
                 _synced["last_sync_warnings"] = _frappe.as_json(result.get("warnings") or [])
+                # Per-model verdicts (contract 1.11: [{provider, model, status}], api-key
+                # models only) ride the SAME PUT response. The AI-models list keys each
+                # api-key row's health off this; without persisting it a dead model shows
+                # the same green "key set" as a healthy one. Same no-op reasoning as the two
+                # fields above: a "unchanged" apply ran no probe, so leave the prior verdicts.
+                _synced["last_model_statuses"] = _frappe.as_json(result.get("model_statuses") or [])
             settings.db_set(_synced)
             # last_sync_status MUST keep starting with the literal "ok" -
             # _pool_sync_is_redundant() gates its dedup skip on

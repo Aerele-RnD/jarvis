@@ -195,6 +195,25 @@
 								<Switch v-model="settings.personalise_enabled" size="md" />
 							</div>
 
+							<div class="flex items-start justify-between gap-3 rounded-lg border p-4">
+								<div>
+									<div class="text-base font-medium text-ink-gray-9">
+										Learn from chats
+									</div>
+									<div class="mt-0.5 text-sm text-ink-gray-6">
+										Once a day, Jarvis reviews recent chats and drafts questions so people can
+										confirm what it should remember. Answers become wiki notes and skills.
+									</div>
+									<div
+										v-if="settings.chat_mining_last_run_status"
+										class="mt-1.5 text-xs text-ink-gray-5"
+									>
+										Last run{{ chatMiningLastRunAgo }}: {{ settings.chat_mining_last_run_status }}
+									</div>
+								</div>
+								<Switch v-model="settings.chat_question_mining_enabled" size="md" />
+							</div>
+
 							<FormControl
 								type="number"
 								label="Max learning / chat-pattern questions per person per day"
@@ -276,6 +295,7 @@ import {
 	getPersonalisationSettings,
 	setPersonalisationSettings,
 } from "@/api/personalise"
+import { timeAgo } from "@/utils/datetime"
 
 const props = defineProps({
 	open: { type: Boolean, default: false },
@@ -467,9 +487,16 @@ function confirmDeleteRule(rule) {
 const settings = reactive({
 	daily_question_cap: 5,
 	personalise_enabled: true,
+	chat_question_mining_enabled: true,
+	chat_mining_last_run_at: null,
+	chat_mining_last_run_status: "",
 })
 const settingsLoading = ref(false)
 const savingSettings = ref(false)
+
+const chatMiningLastRunAgo = computed(() =>
+	settings.chat_mining_last_run_at ? ` ${timeAgo(settings.chat_mining_last_run_at)}` : "",
+)
 
 async function loadSettings() {
 	settingsLoading.value = true
@@ -477,6 +504,9 @@ async function loadSettings() {
 		const s = await getPersonalisationSettings()
 		settings.daily_question_cap = intOr(s.daily_question_cap, 5)
 		settings.personalise_enabled = !!s.personalise_enabled
+		settings.chat_question_mining_enabled = !!s.chat_question_mining_enabled
+		settings.chat_mining_last_run_at = s.chat_mining_last_run_at || null
+		settings.chat_mining_last_run_status = s.chat_mining_last_run_status || ""
 	} catch (e) {
 		toast.error(errMsg(e))
 	} finally {
@@ -490,9 +520,13 @@ async function saveSettings() {
 		const res = await setPersonalisationSettings({
 			daily_question_cap: Number(settings.daily_question_cap) || 0,
 			personalise_enabled: settings.personalise_enabled ? 1 : 0,
+			chat_question_mining_enabled: settings.chat_question_mining_enabled ? 1 : 0,
 		})
 		settings.daily_question_cap = intOr(res.daily_question_cap, settings.daily_question_cap)
 		settings.personalise_enabled = !!res.personalise_enabled
+		settings.chat_question_mining_enabled = !!res.chat_question_mining_enabled
+		settings.chat_mining_last_run_at = res.chat_mining_last_run_at || null
+		settings.chat_mining_last_run_status = res.chat_mining_last_run_status || ""
 		toast.success("Settings saved")
 	} catch (e) {
 		toast.error(errMsg(e))

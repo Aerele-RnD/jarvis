@@ -8,7 +8,7 @@ Covers the three guarantees the every-third-new-chat greeting rests on:
 - **Cadence** — ``maybe_greet`` shows the card only when the new-chat count
   is a positive multiple of three.
 - **Durability** — a permanent dismissal (and the counter) live in the
-  ``Jarvis User Preference`` DB row, so ``frappe.clear_cache`` can neither
+  ``Jarvis User Settings`` DB row, so ``frappe.clear_cache`` can neither
   resurrect a killed greeting nor reset the cadence.
 
 Runs as a dedicated System User so ``_require_system_user`` and
@@ -25,7 +25,7 @@ from jarvis.chat.greeting import dismiss_greeting, maybe_greet
 
 CONV = "Jarvis Conversation"
 MSG = "Jarvis Chat Message"
-PREF = "Jarvis User Preference"
+PREF = "Jarvis User Settings"
 NOTE = "Jarvis Voice Note"
 SETTINGS = "Jarvis Settings"
 TEST_USER = "jarvis-greeting-test@example.com"
@@ -96,15 +96,12 @@ class _GreetingTestCase(FrappeTestCase):
 		frappe.set_user(self._orig_user)
 
 	def _set_count(self, count: int) -> None:
-		"""Ensure a preference row exists for the fixture user and pin its
+		"""Ensure a settings row exists for the fixture user and pin its
 		new-chat counter to `count`."""
-		if not frappe.db.exists(PREF, TEST_USER):
-			frappe.get_doc({
-				"doctype": PREF,
-				"user": TEST_USER,
-				"business_greeting_chat_count": 0,
-			}).insert(ignore_permissions=True)
-		frappe.db.set_value(PREF, TEST_USER, "business_greeting_chat_count", count)
+		from jarvis.chat.usage import get_or_create_user_settings
+
+		get_or_create_user_settings(TEST_USER)
+		frappe.db.set_value(PREF, {"user": TEST_USER}, "business_greeting_chat_count", count)
 
 	def _count(self) -> int:
 		return frappe.utils.cint(

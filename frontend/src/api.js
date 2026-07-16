@@ -47,6 +47,7 @@ export const isReadyForChat = () => call("jarvis.account.is_ready_for_chat")
 const US = "jarvis.chat.user_settings_api."
 export const getMySettings = () => call(US + "get_my_settings")
 export const updateMySettings = (p) => call(US + "update_my_settings", p || {})
+export const setUserTheme = (theme) => call(US + "set_user_theme", { theme })
 // Jarvis Admin (or System Manager) only — server re-checks independently of
 // the client's window.is_jarvis_admin gate.
 export const adminListUserUsage = () => call(US + "admin_list_user_usage")

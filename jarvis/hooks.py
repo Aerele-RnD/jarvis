@@ -192,8 +192,8 @@ after_migrate = [
 	# Voice & Wiki: seed the Settings Check defaults (row-existence probe;
 	# an unset Check reads 0 on v16, so defaults must be materialized).
 	"jarvis.learning.voice_facts.after_migrate",
-	# Wiki v2: seed the Knowledge Wiki User/Manager roles (idempotent;
-	# best-effort). Migrate follows a fresh install, so this covers both.
+	# Wiki v2: seed the Knowledge Wiki Manager role (idempotent; best-effort).
+	# Migrate follows a fresh install, so this covers both.
 	"jarvis.learning.roles.after_migrate",
 ]
 
@@ -261,6 +261,11 @@ scheduler_events = {
 		# fans admin-authored question rules out to in-scope users (uncapped).
 		"jarvis.learning.questions.materialize_questions_daily",
 		"jarvis.learning.questions.materialize_rule_questions",
+		# Daily chat-transcript question mining: mine recent conversations into
+		# learned-pattern candidates whose Personalise questions confirm the
+		# finding; answers ride the existing note -> wiki/skill pipeline
+		# (self-gating; see jarvis/learning/chat_mining.py).
+		"jarvis.learning.chat_mining.process_daily",
 		# Daily push of the User/Role/Org wiki-utilization graph to admin (the
 		# DB-only scope/role tiers; admin overlays telemetry activity). Not on
 		# every wiki save — too chatty for an analytics view.
@@ -291,11 +296,14 @@ require_type_annotated_api_methods = True
 # get_schema caches each DocType's schema in Redis with a short TTL. Bust that
 # cache the moment a schema-defining doc changes, so the agent never builds a
 # write off a stale field list inside the TTL window (a Custom Field added via
-# Customize Form must show up immediately, not 5 minutes later).
+# Customize Form must show up immediately, not 5 minutes later). Client Script is
+# included because get_schema's `actions` hint is scraped from the DocType's form
+# JS, which includes enabled Form Client Scripts - a newly-added button must
+# surface without waiting out the TTL.
 _CLEAR_SCHEMA_CACHE = "jarvis.tools.get_schema.clear_schema_cache"
 doc_events = {
 	dt: {"on_update": _CLEAR_SCHEMA_CACHE, "on_trash": _CLEAR_SCHEMA_CACHE}
-	for dt in ("DocType", "Custom Field", "Property Setter", "Workflow")
+	for dt in ("DocType", "Custom Field", "Property Setter", "Workflow", "Client Script")
 }
 
 # Org-scope wiki pages are mirrored as markdown into the tenant container

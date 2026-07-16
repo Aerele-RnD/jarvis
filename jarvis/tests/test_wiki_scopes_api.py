@@ -17,12 +17,13 @@ from frappe.utils import add_to_date, now_datetime
 from jarvis.chat import wiki
 from jarvis.exceptions import PermissionDeniedError
 from jarvis.tools.read_wiki import read_wiki
+from jarvis.permissions import JARVIS_USER_ROLE
 from jarvis.tools.update_wiki import update_wiki
 
 WIKI_DT = "Jarvis Wiki Page"
 SETTINGS = "Jarvis Settings"
 
-KW_USER_ROLE = "Knowledge Wiki User"
+# "Knowledge Wiki User" was retired; personal-page editing rides Jarvis User.
 KW_MANAGER_ROLE = "Knowledge Wiki Manager"
 TEST_ROLE = "Wkscope Test Role"
 OTHER_ROLE = "Wkscope Other Role"
@@ -85,13 +86,23 @@ class _WikiScopeFixture(FrappeTestCase):
 		frappe.set_user("Administrator")
 		# KW roles are normally seeded by after_migrate; ensure idempotently
 		# so this module doesn't depend on hook ordering.
-		for role in (KW_USER_ROLE, KW_MANAGER_ROLE, TEST_ROLE, OTHER_ROLE):
+		for role in (KW_MANAGER_ROLE, TEST_ROLE, OTHER_ROLE):
 			_ensure_role(role)
 		_ensure_user(PLAIN_USER, "Wkscope Plain", ["Desk User"])
-		_ensure_user(KW_USER, "Wkscope KWU", ["Desk User", KW_USER_ROLE])
+		# KW_USER now stands for a plain Jarvis User (own-page editor).
+		_ensure_user(KW_USER, "Wkscope KWU", ["Desk User", JARVIS_USER_ROLE])
 		_ensure_user(
 			KW_MANAGER, "Wkscope KWM", ["Desk User", KW_MANAGER_ROLE, TEST_ROLE]
 		)
+		# PLAIN_USER stands for a user WITHOUT Jarvis app access. Fixtures persist
+		# and the one-time grant patch may have granted "Jarvis User", so strip it
+		# to exercise the no-access cases (creates nothing; personal writes
+		# refused).
+		frappe.db.delete("Has Role", {
+			"parenttype": "User", "parent": PLAIN_USER,
+			"role": ["in", (JARVIS_USER_ROLE, KW_MANAGER_ROLE)],
+		})
+		frappe.clear_cache(user=PLAIN_USER)
 		frappe.db.commit()
 
 	@classmethod
@@ -563,14 +574,16 @@ class TestUpdateWikiScope(_WikiScopeFixture):
 		self.assertIn("First.", body)
 		self.assertIn("Second.", body)
 
-	def test_user_scope_requires_kw_role(self):
+	def test_user_scope_requires_jarvis_user(self):
+		# PLAIN_USER holds only Desk User (no Jarvis User), so personal-page
+		# creation is refused now that own-page editing rides Jarvis User.
 		frappe.set_user(PLAIN_USER)
 		out = update_wiki(
 			slug="wkscope-personal", title="Wkscope Personal",
 			page_type="People", scope="User", replace_body_md="x",
 		)
 		self.assertFalse(out["ok"])
-		self.assertIn("Knowledge Wiki", out["reason"])
+		self.assertIn("Jarvis User", out["reason"])
 		self.assertFalse(
 			frappe.db.exists(WIKI_DT, {"slug": ["like", "wkscope-personal%"]})
 		)

@@ -54,6 +54,10 @@
   "personalise_section",
   "personalise_daily_question_cap",
   "personalise_enabled",
+  "chat_question_mining_enabled",
+  "chat_mining_watermark",
+  "chat_mining_last_run_at",
+  "chat_mining_last_run_status",
   "chat_history_section",
   "conversation_retention_days",
   "system_tab",
@@ -84,6 +88,7 @@
   "llm_pool_synced_at",
   "last_subscription_status",
   "last_sync_warnings",
+  "last_model_statuses",
   "custom_skills_synced_at",
   "custom_skills_sync_status",
   "agent_skills_synced_at",
@@ -404,6 +409,32 @@
    "description": "Master toggle for the Personalise tab: question materialization, free-capture notes, and question-rule sweeps. Readers treat an unset value as ON (Single defaults are not backfilled on migrate; seeded by jarvis.learning.roles.after_migrate)."
   },
   {
+   "fieldname": "chat_question_mining_enabled",
+   "fieldtype": "Check",
+   "label": "Mine Chats Into Questions",
+   "default": "1",
+   "description": "Daily sweep that mines recent chat transcripts into Personalise questions (answers then flow to the wiki and learned skills through the normal note pipeline). Also gated by Enable Personalisation and the per-user Daily Question Cap. Readers treat an unset value as ON (Single defaults are not backfilled on migrate; seeded by jarvis.learning.roles.after_migrate)."
+  },
+  {
+   "fieldname": "chat_mining_watermark",
+   "fieldtype": "Datetime",
+   "label": "Chat Mining Watermark",
+   "read_only": 1,
+   "description": "High-water mark: chat messages up to this timestamp have been mined (or deliberately skipped). Advanced by the daily miner; clear it to re-mine the last 7 days."
+  },
+  {
+   "fieldname": "chat_mining_last_run_at",
+   "fieldtype": "Datetime",
+   "label": "Chat Mining Last Run At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "chat_mining_last_run_status",
+   "fieldtype": "Long Text",
+   "label": "Chat Mining Last Run Status",
+   "read_only": 1
+  },
+  {
    "fieldname": "chat_history_section",
    "fieldtype": "Section Break",
    "label": "Chat History"
@@ -411,9 +442,9 @@
   {
    "fieldname": "conversation_retention_days",
    "fieldtype": "Int",
-   "label": "Auto-archive idle chats after (days)",
+   "label": "Reclaim idle chat memory after (days)",
    "default": "30",
-   "description": "A chat you have not opened for this many days is automatically archived (hidden from your list) and its agent working-memory freed. Starred chats are never touched. Minimum 7; set to 0 to keep chats forever. Default 30. Archived chats are retained (not destroyed) and recoverable by support; a separate purge permanently deletes them later. Readers treat an unset value as 30 (Single defaults are not backfilled on migrate)."
+   "description": "A chat you have not opened for this many days keeps its full history but has its agent working-memory (its openclaw session) reclaimed to free container resources. The chat stays in your list and resumes automatically on your next message, starting without the old working context. Chats with history are never deleted. Minimum 7; set to 0 to keep sessions forever (also disables cleanup of abandoned empty chats). Default 30. Readers treat an unset value as 30 (Single defaults are not backfilled on migrate)."
   },
   {
    "fieldname": "system_tab",
@@ -623,6 +654,14 @@
    "fieldtype": "Long Text",
    "hidden": 1,
    "label": "Last Sync Warnings",
+   "read_only": 1
+  },
+  {
+   "description": "JSON array of {provider, model, status} per-model verdicts from the last pool apply (status: verified | failed | unchecked; api-key models only). '[]' when none or on a pre-1.11 fleet. Backend-only - the SPA reads this via get_llm_sync_status to render each api-key row's health, not the form.",
+   "fieldname": "last_model_statuses",
+   "fieldtype": "Long Text",
+   "hidden": 1,
+   "label": "Last Model Statuses",
    "read_only": 1
   },
   {

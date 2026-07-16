@@ -139,3 +139,45 @@ export function seedRowsFromConfig(cfg) {
       credentialType: "api_key", rotation: "sticky", accounts: [], order: i }
   })
 }
+
+// The fleet's last per-model probe verdict for ONE api-key row, matched out of the
+// model_statuses list (contract 1.11: [{ provider, model, status }], api-key models only).
+// The match keys on (provider, model) TOGETHER: a model id is NOT unique -- validate() only
+// forbids duplicate provider/model PAIRS, so the same id can appear under two providers, and
+// keying on the id alone would attach one provider's verdict to the other's row. Rows carry
+// the provider LABEL while model_statuses carry the id, so normalize the row's provider back
+// to an id to compare. Returns "" when the row has no matching verdict (a pre-1.11 fleet, a
+// model not yet probed, or an entry that belongs to a different provider).
+function modelVerdict(row, modelStatuses) {
+  if (!row || !Array.isArray(modelStatuses)) return ""
+  const rid = providerId(row.provider)
+  const entry = modelStatuses.find((e) => e && e.model === row.model && e.provider === rid)
+  return (entry && entry.status) || ""
+}
+
+// Map an api-key pool row to its health for the failover list. Unlike a subscription
+// (probed pool-wide), an api-key model is probed in isolation, so its row shows its OWN
+// verdict instead of the presence-only "key set" that used to make a dead model look
+// identical to a healthy one.
+//   failed    -> warn      : rejected (bad key/model id) OR an unreachable base_url
+//   unchecked -> unchecked : could not confirm; re-checked on the next apply
+//   verified / "" / unknown -> ok (quiet green; "" = pre-1.11 fleet or a not-yet-probed row)
+export function apiKeyModelHealth(row, modelStatuses) {
+  const status = modelVerdict(row, modelStatuses)
+  if (status === "failed") {
+    return {
+      level: "warn",
+      label: "Not working",
+      title: "This model failed a test request — check its API key, model id, and base URL. "
+        + "It's skipped during failover until it passes.",
+    }
+  }
+  if (status === "unchecked") {
+    return {
+      level: "unchecked",
+      label: "Not verified yet",
+      title: "We couldn't confirm this model — it will be re-checked on the next apply.",
+    }
+  }
+  return { level: "ok" }
+}
