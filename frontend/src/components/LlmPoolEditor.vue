@@ -445,7 +445,10 @@
                  are provider-specific), so reselecting the CURRENT provider must
                  be a no-op rather than wiping a finished OAuth connect. -->
             <JvCombo :model-value="m.upstream" @update:model-value="(v) => { if (v === m.upstream) return; m.upstream = v; onUpstreamChange(m) }"
-                     :options="upstreamOpts" :editable="editable" placeholder="Provider" />
+                     :options="upstreamOpts" :editable="editable" placeholder="Provider">
+              <template #option="{ option }"><span style="display:inline-flex;align-items:center;gap:8px"><ProviderLogo :upstream="option.value" :size="16" />{{ option.label }}</span></template>
+              <template #selected="{ label, placeholder }"><span style="display:inline-flex;align-items:center;gap:8px"><ProviderLogo v-if="m.upstream" :upstream="m.upstream" :size="16" />{{ label || placeholder }}</span></template>
+            </JvCombo>
           </div>
 
           <!-- Connected accounts -->
