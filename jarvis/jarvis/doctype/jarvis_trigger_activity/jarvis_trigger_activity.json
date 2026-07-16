@@ -1,0 +1,108 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "hash",
+ "creation": "2026-07-16 09:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "trigger",
+  "trigger_label",
+  "target_doctype",
+  "target_docname",
+  "doc_event",
+  "action_type",
+  "status",
+  "summary",
+  "detail",
+  "duration_ms",
+  "event_user"
+ ],
+ "fields": [
+  {
+   "fieldname": "trigger",
+   "fieldtype": "Data",
+   "label": "Trigger",
+   "search_index": 1,
+   "description": "Jarvis Trigger row-name SNAPSHOT (Data, deliberately NOT a Link): trigger deletion must never block on LinkExistsError and the log must outlive the trigger."
+  },
+  {
+   "fieldname": "trigger_label",
+   "fieldtype": "Data",
+   "label": "Trigger Label",
+   "description": "Denormalized trigger_name at fire time."
+  },
+  {
+   "fieldname": "target_doctype",
+   "fieldtype": "Data",
+   "label": "Target DocType",
+   "search_index": 1
+  },
+  {
+   "fieldname": "target_docname",
+   "fieldtype": "Data",
+   "label": "Target Document"
+  },
+  {
+   "fieldname": "doc_event",
+   "fieldtype": "Data",
+   "label": "Doc Event"
+  },
+  {
+   "fieldname": "action_type",
+   "fieldtype": "Data",
+   "label": "Action Type"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Success\nFailed\nBlocked\nSkipped",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "summary",
+   "fieldtype": "Small Text",
+   "label": "Summary",
+   "description": "Human-readable outcome (<= 200 chars)."
+  },
+  {
+   "fieldname": "detail",
+   "fieldtype": "Long Text",
+   "label": "Detail",
+   "description": "LLM output / traceback / skip reason."
+  },
+  {
+   "fieldname": "duration_ms",
+   "fieldtype": "Int",
+   "label": "Duration (ms)"
+  },
+  {
+   "fieldname": "event_user",
+   "fieldtype": "Data",
+   "label": "Event User",
+   "description": "frappe.session.user at fire time."
+  }
+ ],
+ "in_create": 1,
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-07-16 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Jarvis",
+ "name": "Jarvis Trigger Activity",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "delete": 1,
+   "read": 1,
+   "role": "System Manager"
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}
