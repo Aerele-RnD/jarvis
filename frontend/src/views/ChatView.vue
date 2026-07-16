@@ -3304,9 +3304,11 @@ async function newChat() {
 	resetRunState()
 	currentId.value = conv?.name || conv
 	messages.value = []
-	// Leaving a /c/:id URL on an old conversation would make its sidebar row
-	// unclickable (same-route push is a no-op) — reset to the chat home.
-	if (route.params.id) router.replace({ name: "Chat" })
+	// Reflect the new chat's own id in the URL (/c/:id) so it's refresh-persistent
+	// and shareable, instead of dropping to the id-less home. currentId already
+	// equals this id, so the route watcher no-ops (no redundant load), and it
+	// replaces any /c/:old-id so the previous conversation isn't stranded.
+	if (currentId.value) router.replace("/c/" + currentId.value)
 	await store.loadConversations()
 	// A genuinely-new chat may have just moved the server-side counter onto a
 	// multiple of three - re-probe, but never await it (must never block chat).
@@ -3424,7 +3426,6 @@ async function send(textArg) {
 	// itself and returns conversation_id — two fewer round-trips before the
 	// first message even leaves the browser. The sidebar refresh happens
 	// after the send resolves, off the critical path.
-	const isNewConv = !currentId.value
 	sending.value = true
 	waiting.value = true
 	stoppedRunId.value = null
@@ -3444,7 +3445,11 @@ async function send(textArg) {
 	await nextTick()
 	scrollBottom()
 	try {
-		const r = await api.sendMessage(currentId.value || "", text, undefined, attachments)
+		// The conversation we're sending FROM. The user may switch to another chat
+		// while this POST is in flight, so all post-send reconciliation gates on
+		// "still on the chat we sent from" — never yank them back to this one.
+		const sentFrom = currentId.value || ""
+		const r = await api.sendMessage(sentFrom, text, undefined, attachments)
 		if (r && r.ok === false) {
 			// The server rejected the send (e.g. the single-flight guard:
 			// "a reply is already in progress", or the monthly usage cap).
@@ -3463,10 +3468,21 @@ async function send(textArg) {
 			)
 			return
 		}
-		if (isNewConv && r?.conversation_id) {
-			// Adopt the server-created conversation so realtime events route to
-			// this thread, then refresh the sidebar without blocking anything.
-			currentId.value = r.conversation_id
+		if (r?.conversation_id && (currentId.value || "") === sentFrom) {
+			// Still on the chat we sent from — safe to reconcile it. Adopt the
+			// server's id when it differs (a brand-new chat that just got its id, or
+			// a stale/reaped conversation send_message fell back to a fresh one for),
+			// and keep the URL on it so a refresh doesn't restore a dead /c/:id
+			// (route.params.id outranks localStorage on boot).
+			if (r.conversation_id !== currentId.value) {
+				currentId.value = r.conversation_id
+				if (route.params.id !== r.conversation_id) router.replace("/c/" + r.conversation_id)
+			}
+			// Empties are hidden from the sidebar; surface the row now it has a message.
+			if (!store.conversations.some((c) => c.name === currentId.value)) store.loadConversations()
+		} else if (r?.conversation_id) {
+			// The user switched conversations mid-send: don't yank them back — just
+			// refresh the sidebar so the chat we sent into (now non-empty) surfaces.
 			store.loadConversations()
 		}
 	} catch (e) {
@@ -3506,13 +3522,6 @@ function onEvent(p) {
 	if (p.kind === "conversation:new" && p.conversation_id) {
 		store.applyRemoteNew()
 		proactiveToast.value = { id: p.conversation_id, title: p.title || "Message from Jarvis", preview: p.preview || "" }
-		return
-	}
-	// The retention sweep archived an idle conversation (session_lifecycle). Drop
-	// it from the sidebar; handled before the current-conversation guard so an open
-	// tab updates even if the user has since switched chats.
-	if (p.kind === "conversation:expired" && p.conversation_id) {
-		store.applyRemoteExpired(p.conversation_id)
 		return
 	}
 	// Macro-run events use `conversation` (not conversation_id) and are handled
@@ -4089,7 +4098,10 @@ function onResync() {
 	if (now - _lastResync < 2000) return // connect + visibility often co-fire
 	_lastResync = now
 	store.loadConversations()
-	loadConversation(currentId.value)
+	// Swallow a load failure for a conversation deleted mid-session: the
+	// store.conversations watcher above handles resetting a vanished persisted
+	// chat; here we just avoid an unhandled rejection on the dead id.
+	loadConversation(currentId.value).catch(() => {})
 }
 function onVisibility() {
 	if (document.visibilityState === "visible") onResync()
@@ -4125,6 +4137,12 @@ watch(
 	() => store.conversations,
 	(list) => {
 		if (booting.value || !currentId.value) return
+		// A fresh/unsent chat is intentionally hidden from the list — "hidden" is
+		// not "deleted", so don't reset it out from under the user. This covers an
+		// empty draft (no messages) AND the first send in flight (only optimistic
+		// `tmp-` rows exist, no persisted row in the list yet). Only fall back when
+		// a conversation that HAS persisted content vanished (archived/reaped).
+		if (sending.value || messages.value.every((m) => String(m.name).startsWith("tmp-"))) return
 		if (!list.some((c) => c.name === currentId.value)) {
 			currentId.value = null
 			messages.value = []
@@ -4193,7 +4211,19 @@ onMounted(async () => {
 			const first = route.params.id || (_storedValid ? _stored : null) || store.conversations[0]?.name
 			if (first) {
 				currentId.value = first
-				await loadConversation(first)
+				try {
+					await loadConversation(first)
+				} catch (e) {
+					// The URL/stored conversation is gone (a reaped empty, a cleared or
+					// externally-deleted chat) — don't let the unhandled rejection abort
+					// the rest of boot. Drop cleanly to the welcome state and forget the
+					// dead id. newChat() now mints /c/:id URLs whose empty targets are
+					// hard-deleted after EMPTY_GRACE_DAYS, so a stale bookmark is routine.
+					currentId.value = null
+					messages.value = []
+					try { localStorage.removeItem("jarvis-last-conv") } catch (_e) {}
+					if (route.params.id) router.replace({ name: "Chat" })
+				}
 			}
 		}
 	} finally {

@@ -1,48 +1,50 @@
-"""Session lifecycle Phase 1: dormant-session rotation + orphan sweep.
+"""Session lifecycle: idle-session reclaim + empty-chat + orphan sweeps.
 
-Every Jarvis Conversation maps to one openclaw session, created lazily on
-the first turn and - before this module - never rotated or deleted. Two
-kinds of gateway state accumulate forever:
+Every Jarvis Conversation maps to one openclaw session, created lazily on the
+first turn. Without a sweep, state accumulates forever:
 
-- Dormant conversation sessions: the user stopped chatting weeks ago but
-  the session (and its growing working context) sits on the container.
-- Orphaned throwaway sessions: every auto-title generation and every
-  prefix prewarm creates a single-use session, and deleted conversations
-  leave their sessions behind. The dev tenant had 81 session state files
-  after one month.
+- Dormant conversation sessions: the user stopped chatting weeks ago but the
+  session (and its growing working context) sits on the container.
+- Empty conversations: opening "New Chat" and closing the tab leaves a
+  0-message row cluttering history.
+- Orphaned throwaway sessions: every auto-title generation and every prefix
+  prewarm creates a single-use session, and deleted conversations leave their
+  sessions behind. The dev tenant had 81 session state files after one month.
 
-The bench is the durable owner of chat history (Jarvis Chat Message
-rows); the openclaw session is a cache of working context, not the
-record. Deleting one is safe: the gateway archives the transcript first
-(sessions.delete deleteTranscript=true default), canvas/media artifacts
-were pulled to ERP Files at turn end, and the next message in a rotated
-conversation lazily creates a fresh session through the existing
-``_ensure_session_key`` path - same UX, empty working context.
+The bench is the durable owner of chat history (Jarvis Chat Message rows); the
+openclaw session is a cache of working context, not the record. Deleting one is
+safe: the gateway archives the transcript first (sessions.delete
+deleteTranscript=true default), canvas/media artifacts were pulled to ERP Files
+at turn end, and the next message lazily creates a fresh session through the
+existing ``_ensure_session_key`` path - same UX, empty working context.
 
 The daily ``rotate_dormant_sessions`` cron:
 
-1. EXPIRE: conversations idle past the configured retention window
-   (Jarvis Settings.conversation_retention_days; 0 disables) and not
-   starred, with no in-flight rows -> free the openclaw session (delete
-   gateway session, clear ``conv.session_key``, drop ``Jarvis Chat
-   Session`` lookup rows) and, for still-``Active`` chats, archive them:
-   set ``status = Archived`` + ``auto_expired`` + ``expired_at`` and push
-   a ``conversation:expired`` realtime event so an open tab drops the row.
-   A reversible soft-delete - a separate follow-on purge permanently
-   deletes archived chats later. (Reason we don't hard-delete here: a
-   Jarvis Conversation is referenced by five doctypes + File blobs, so a
-   safe delete needs a full dependency cascade we keep out of the cron.)
-   Already user-archived chats that still hold a session are session-freed
-   only (no status change, no event) so their working context is reclaimed
-   too. Starred chats are fully exempt - kept, session and all.
-2. ORPHANS: gateway sessions in the chat namespace that no conversation
-   references (title/prewarm throwaways, deleted conversations) and that
-   have been inactive past ``ORPHAN_GRACE_HOURS`` -> delete, plus any
-   stale lookup rows.
+1. FREE IDLE SESSIONS: conversations idle past the configured retention window
+   (Jarvis Settings.conversation_retention_days; 0 disables) that still hold a
+   live openclaw session, with no in-flight rows -> free the session (delete the
+   gateway session, clear ``conv.session_key``, drop ``Jarvis Chat Session``
+   lookup rows). The conversation is LEFT ACTIVE AND VISIBLE - only the
+   container-side working memory is reclaimed. Returning to the chat lazily
+   mints a fresh session (full history, empty working context). Starred chats
+   are freed too: starring pins a chat in the list, it does not hold a session
+   hostage for a month of idleness.
+2. REAP EMPTY CHATS: Active, non-starred conversations with ZERO messages, idle
+   past ``EMPTY_GRACE_DAYS`` with nothing in-flight -> hard-delete the row. A
+   0-message chat has no messages / approvals / runs / files to cascade, so the
+   delete is trivial. This clears the "opened New Chat, closed the tab" ghost
+   (empty chats are also hidden from the sidebar list; this reaps the row so it
+   doesn't linger in the DB forever).
+3. ORPHANS: gateway sessions in the chat namespace that no conversation
+   references (title/prewarm throwaways, deleted conversations) and that have
+   been inactive past ``ORPHAN_GRACE_HOURS`` -> delete, plus any stale lookup
+   rows. Runs regardless of the retention setting - these are not user chats.
 
-Everything is best-effort on a dedicated connection (never the pool - a
-sweep must not contend with live turns), batch-capped so a backlog
-drains over days instead of stampeding a gateway, and managed-mode only.
+Parts 1 + 2 are the retention sweep and honour ``conversation_retention_days``
+(0 => keep everything, do nothing). Part 3 is pure gateway hygiene and always
+runs. Everything is best-effort on a dedicated connection (never the pool - a
+sweep must not contend with live turns), batch-capped so a backlog drains over
+days instead of stampeding a gateway, and managed-mode only.
 """
 from __future__ import annotations
 
@@ -57,15 +59,22 @@ CONV = "Jarvis Conversation"
 MSG = "Jarvis Chat Message"
 CHAT_SESSION = "Jarvis Chat Session"
 
-# Retention: a conversation idle this long is archived (hidden) and its
-# openclaw session freed. Configurable per-tenant via
-# Jarvis Settings.conversation_retention_days; these are the fallbacks a
-# reader applies. DEFAULT is used when the Single field is unset (Single
-# defaults are NOT backfilled on migrate, so None must read as 30, not 0 -
-# 0 means "keep forever"). MIN is a defensive floor mirroring the settings
-# validator, so a value that slipped in below it can't mass-archive.
+# Retention: a conversation idle this long has its openclaw session freed (its
+# working memory reclaimed). The conversation itself stays Active and visible.
+# Configurable per-tenant via Jarvis Settings.conversation_retention_days; these
+# are the fallbacks a reader applies. DEFAULT is used when the Single field is
+# unset (Single defaults are NOT backfilled on migrate, so None must read as 30,
+# not 0 - 0 means "keep forever / never free"). MIN is a defensive floor
+# mirroring the settings validator, so a value that slipped in below it can't
+# mass-free on the very next cron.
 DEFAULT_RETENTION_DAYS = 30
 MIN_RETENTION_DAYS = 7
+
+# An Active conversation with ZERO messages that has been idle this long is
+# hard-deleted (the abandoned "New Chat" ghost). Comfortably longer than any
+# realistic gap between opening a new chat and typing into it, so a chat the
+# user is about to use is never reaped out from under an open tab.
+EMPTY_GRACE_DAYS = 7
 
 
 def _retention_days() -> int:
@@ -93,7 +102,7 @@ def _retention_days() -> int:
 # created session_key has not committed yet.
 ORPHAN_GRACE_HOURS = 24
 
-# Per-run cap across BOTH parts, so a month of backlog drains over a few
+# Per-run cap across ALL parts, so a month of backlog drains over a few
 # days instead of hammering the gateway in one cron tick.
 BATCH_MAX = 25
 
@@ -103,10 +112,10 @@ _CHAT_NAMESPACE_MARKER = ":dashboard:"
 
 
 def rotate_dormant_sessions() -> dict:
-	"""Daily cron: archive conversations past the idle-retention window (freeing
-	their openclaw session) and reap orphaned throwaway sessions. Returns a
-	summary dict (also logged) so a manual ``bench execute`` run shows what
-	happened. (Name kept for the scheduler entry in hooks.py.)"""
+	"""Daily cron: free idle conversations' openclaw sessions, reap abandoned
+	empty chats, and reap orphaned throwaway sessions. Returns a summary dict
+	(also logged) so a manual ``bench execute`` run shows what happened. (Name
+	kept for the scheduler entry in hooks.py.)"""
 	from jarvis import selfhost
 
 	if selfhost.is_self_hosted():
@@ -120,7 +129,7 @@ def rotate_dormant_sessions() -> dict:
 
 	from jarvis.chat.openclaw_client import OpenclawSession
 
-	summary = {"archived": 0, "sessions_freed": 0, "orphans_reaped": 0, "skipped": 0, "errors": 0}
+	summary = {"sessions_freed": 0, "empty_reaped": 0, "orphans_reaped": 0, "skipped": 0, "errors": 0}
 	budget = BATCH_MAX
 	try:
 		sess = OpenclawSession.connect(gateway_url)
@@ -131,7 +140,13 @@ def rotate_dormant_sessions() -> dict:
 		)
 		return {"skipped": "connect failed"}
 	try:
-		budget = _expire_dormant(sess, budget, summary)
+		# Parts 1 + 2 are the retention sweep (0 = disabled, keep everything).
+		# Part 3 (orphans) is gateway hygiene and runs regardless.
+		days = _retention_days()
+		if days > 0:
+			budget = _free_idle_sessions(sess, budget, summary, days)
+			if budget > 0:
+				budget = _reap_empty(sess, budget, summary)
 		if budget > 0:
 			_reap_orphans(sess, budget, summary)
 	finally:
@@ -143,25 +158,20 @@ def rotate_dormant_sessions() -> dict:
 	return summary
 
 
-def _expire_dormant(sess, budget: int, summary: dict) -> int:
-	"""Part 1: conversations idle past the retention window. Frees the openclaw
-	session and archives still-``Active`` chats (marking ``auto_expired`` +
-	``expired_at`` and pushing a ``conversation:expired`` event); already
-	user-archived chats that still hold a session are session-freed only.
-	Starred chats are exempt entirely. Returns leftover budget for the orphan
-	sweep. Retention disabled (0) is a no-op that keeps the whole budget."""
-	days = _retention_days()
-	if days <= 0:
-		return budget  # retention disabled - keep chats forever
+def _free_idle_sessions(sess, budget: int, summary: dict, days: int) -> int:
+	"""Part 1: conversations idle past the retention window that still hold an
+	openclaw session -> free the session (delete gateway session, null
+	``session_key``, drop the lookup rows). The conversation is left Active and
+	visible; only the container-side working memory is reclaimed. Starred and
+	status are irrelevant here - any idle chat with a live session qualifies.
+	Returns leftover budget for the remaining sweeps."""
 	cutoff = frappe.utils.add_to_date(frappe.utils.now_datetime(), days=-days)
 	rows = frappe.db.sql(
 		"""
-		SELECT c.name, c.owner, c.session_key, c.status
+		SELECT c.name, c.session_key
 		FROM `tabJarvis Conversation` c
-		WHERE c.starred = 0
+		WHERE c.session_key IS NOT NULL AND c.session_key != ''
 		  AND c.last_active_at IS NOT NULL AND c.last_active_at < %(cutoff)s
-		  AND (c.status = 'Active'
-		       OR (c.session_key IS NOT NULL AND c.session_key != ''))
 		  AND NOT EXISTS (
 			SELECT 1 FROM `tabJarvis Chat Message` m
 			WHERE m.conversation = c.name
@@ -173,7 +183,6 @@ def _expire_dormant(sess, budget: int, summary: dict) -> int:
 		{"cutoff": cutoff, "limit": budget},
 		as_dict=True,
 	)
-	now = frappe.utils.now_datetime()
 	for row in rows:
 		if budget <= 0:
 			break  # defensive; the SQL LIMIT already bounds rows to budget
@@ -183,40 +192,25 @@ def _expire_dormant(sess, budget: int, summary: dict) -> int:
 		# the local commit must not strand the sweep - the idempotent not-found
 		# handling in _delete_gateway_session lets the next run finish cleanup.
 		try:
-			has_session = bool(row.session_key)
 			# Free the openclaw session FIRST; only detach the bench side once
 			# the gateway side is gone, else a crash would strand a live session
 			# under a nulled key. A gateway-delete failure leaves the row intact
-			# for next run (do NOT archive it - archiving would hide it from the
-			# only sweep that re-selects it, stranding the session forever).
-			if has_session and not _delete_gateway_session(sess, row.session_key, summary):
-				# NOTE (follow-up): a row whose gateway delete PERMANENTLY fails is
-				# the oldest, so ORDER BY last_active_at ASC re-selects it at the
-				# front every run, consuming a batch slot; >= BATCH_MAX such corpses
-				# would starve healthy archiving. Inherited from the rotate sweep - a
-				# last_expire_error_at cooldown column is the planned guard.
+			# for the next run.
+			# KNOWN LIMITATION: a row whose gateway delete PERMANENTLY fails is the
+			# oldest, so ORDER BY last_active_at ASC re-selects it at the front every
+			# run, consuming a batch slot; >= BATCH_MAX such corpses would starve the
+			# empty-reap and orphan sweeps that run on the leftover budget. Planned
+			# guard: a last_free_error_at cooldown column. (Inherited from the prior
+			# rotate sweep.)
+			if not _delete_gateway_session(sess, row.session_key, summary):
 				continue
-			# Only Active chats transition to Archived; an already user-archived
-			# chat is session-freed only (its status/marker stay the user's).
-			archived = row.status == "Active"
-			updates = {}
-			if has_session:
-				# NULL, not "": session_key is UNIQUE and two "" rows collide.
-				updates["session_key"] = None
-			if archived:
-				updates.update({"status": "Archived", "auto_expired": 1, "expired_at": now})
-			# Conversation update before the lookup-row delete so a per-row
-			# failure at the primary (conversation) write skips cleanly with no
-			# partial detach (mirrors the original rotate ordering).
-			if updates:
-				frappe.db.set_value(CONV, row.name, updates)
-			if has_session:
-				frappe.db.delete(CHAT_SESSION, {"session_key": row.session_key})
-				summary["sessions_freed"] += 1
+			# NULL, not "": session_key is UNIQUE and two "" rows collide. The
+			# conversation write lands before the lookup-row delete so a per-row
+			# failure at the primary write skips cleanly with no partial detach.
+			frappe.db.set_value(CONV, row.name, {"session_key": None})
+			frappe.db.delete(CHAT_SESSION, {"session_key": row.session_key})
 			frappe.db.commit()
-			if archived:
-				summary["archived"] += 1
-				_notify_expired(row.name, row.owner)
+			summary["sessions_freed"] += 1
 		except Exception:
 			# Discard any partial write from this row (e.g. the conversation
 			# update landed but the lookup-row delete then failed) so it can't
@@ -224,26 +218,90 @@ def _expire_dormant(sess, budget: int, summary: dict) -> int:
 			# the next run finish cleanly. Rollback before log_error.
 			frappe.db.rollback()
 			frappe.log_error(
-				title="session_lifecycle: expire row failed",
+				title="session_lifecycle: free-session row failed",
 				message=f"conversation={row.name}\n{frappe.get_traceback()}",
 			)
 			summary["errors"] += 1
 	return budget
 
 
-def _notify_expired(conversation: str, owner: str) -> None:
-	"""Best-effort realtime nudge so an open tab drops the archived row instead
-	of showing a ghost that 404s on click. Never fatal to the sweep."""
-	try:
-		from jarvis.chat.events import publish_to_user
+def _reap_empty(sess, budget: int, summary: dict) -> int:
+	"""Part 2: hard-delete the abandoned "New Chat" ghost - an Active,
+	non-starred conversation with ZERO messages, idle past ``EMPTY_GRACE_DAYS``.
+	Such a row has no messages / approvals / runs / voice notes hanging off it,
+	so ``delete_doc(force)`` is a clean removal. A stray session is freed first,
+	defensively. Returns leftover budget for the orphan sweep.
 
-		publish_to_user(owner, {"kind": "conversation:expired", "conversation_id": conversation})
-	except Exception:
-		pass
+	Two exclusions guard against destroying real data via ``delete_doc``'s
+	cascade to attached Files (frappe ``remove_all`` on delete):
+	- ``file_box = 0``: a File-Box drop (``filebox.drop_file``) creates the
+	  conversation, attaches the uploaded File, and only THEN sends; a drop that
+	  fails (usage cap, paused sub) leaves a 0-message file_box conversation the
+	  user is meant to retry - reaping it would delete their uploaded file.
+	- no attached File of any kind, as belt-and-suspenders for the same cascade.
+	"""
+	cutoff = frappe.utils.add_to_date(frappe.utils.now_datetime(), days=-EMPTY_GRACE_DAYS)
+	rows = frappe.db.sql(
+		"""
+		SELECT c.name, c.session_key
+		FROM `tabJarvis Conversation` c
+		WHERE c.status = 'Active'
+		  AND c.starred = 0
+		  AND c.file_box = 0
+		  AND c.last_active_at IS NOT NULL AND c.last_active_at < %(cutoff)s
+		  AND NOT EXISTS (
+			SELECT 1 FROM `tabJarvis Chat Message` m WHERE m.conversation = c.name
+		  )
+		  AND NOT EXISTS (
+			SELECT 1 FROM `tabFile` f
+			WHERE f.attached_to_doctype = 'Jarvis Conversation'
+			  AND f.attached_to_name = c.name
+		  )
+		ORDER BY c.last_active_at ASC
+		LIMIT %(limit)s
+		""",
+		{"cutoff": cutoff, "limit": budget},
+		as_dict=True,
+	)
+	for row in rows:
+		if budget <= 0:
+			break
+		budget -= 1
+		try:
+			# Re-check emptiness before the destructive delete: a user returning to
+			# a just-past-grace empty could have inserted their first message
+			# (committed by send_message) between the SELECT and here; deleting then
+			# would orphan that fresh message and kill the live turn. commit() first
+			# so this read opens a FRESH snapshot - under MariaDB's default
+			# REPEATABLE READ a read inside the batch-SELECT's transaction would
+			# still see the row as message-less. Nothing is pending to commit here
+			# (the prior row committed or rolled back at the end of its iteration).
+			frappe.db.commit()
+			if frappe.db.exists(MSG, {"conversation": row.name}):
+				continue
+			# A 0-message chat almost never holds a session (session_key is set
+			# on the first turn), but free one defensively so a hard delete never
+			# strands gateway state. A gateway-delete failure leaves the row for
+			# the next run rather than orphaning the session.
+			if row.session_key:
+				if not _delete_gateway_session(sess, row.session_key, summary):
+					continue
+				frappe.db.delete(CHAT_SESSION, {"session_key": row.session_key})
+			frappe.delete_doc(CONV, row.name, force=True, ignore_permissions=True)
+			frappe.db.commit()
+			summary["empty_reaped"] += 1
+		except Exception:
+			frappe.db.rollback()
+			frappe.log_error(
+				title="session_lifecycle: empty reap failed",
+				message=f"conversation={row.name}\n{frappe.get_traceback()}",
+			)
+			summary["errors"] += 1
+	return budget
 
 
 def _reap_orphans(sess, budget: int, summary: dict) -> None:
-	"""Part 2: chat-namespace gateway sessions no conversation references
+	"""Part 3: chat-namespace gateway sessions no conversation references
 	(title/prewarm throwaways, deleted conversations), inactive past the
 	grace window and with no active run."""
 	try:

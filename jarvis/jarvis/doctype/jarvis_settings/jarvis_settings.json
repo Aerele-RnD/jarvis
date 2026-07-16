@@ -411,9 +411,9 @@
   {
    "fieldname": "conversation_retention_days",
    "fieldtype": "Int",
-   "label": "Auto-archive idle chats after (days)",
+   "label": "Reclaim idle chat memory after (days)",
    "default": "30",
-   "description": "A chat you have not opened for this many days is automatically archived (hidden from your list) and its agent working-memory freed. Starred chats are never touched. Minimum 7; set to 0 to keep chats forever. Default 30. Archived chats are retained (not destroyed) and recoverable by support; a separate purge permanently deletes them later. Readers treat an unset value as 30 (Single defaults are not backfilled on migrate)."
+   "description": "A chat you have not opened for this many days keeps its full history but has its agent working-memory (its openclaw session) reclaimed to free container resources. The chat stays in your list and resumes automatically on your next message, starting without the old working context. Chats with history are never deleted. Minimum 7; set to 0 to keep sessions forever (also disables cleanup of abandoned empty chats). Default 30. Readers treat an unset value as 30 (Single defaults are not backfilled on migrate)."
   },
   {
    "fieldname": "system_tab",
