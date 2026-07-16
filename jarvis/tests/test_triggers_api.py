@@ -222,8 +222,10 @@ class TestTriggerList(_TriggersApiTestCase):
 		page = list_triggers_page(start=-5, page_length=500)["data"]
 		self.assertEqual(page["start"], 0)
 		self.assertEqual(page["page_length"], 100)
+		# falsy page_length falls back to the shared _clamp_page default (20),
+		# matching the Macros list semantics.
 		page = list_triggers_page(page_length=0)["data"]
-		self.assertEqual(page["page_length"], 1)
+		self.assertEqual(page["page_length"], 20)
 
 
 class TestConditionTester(_TriggersApiTestCase):

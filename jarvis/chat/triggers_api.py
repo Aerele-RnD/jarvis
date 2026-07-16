@@ -332,6 +332,11 @@ def delete_triggers_bulk(names: str) -> dict:
 	skipped: list[dict] = []
 	for n in items:
 		try:
+			# frappe.delete_doc defaults ignore_missing=True (silent no-op), so
+			# a missing row must be detected explicitly to be reported.
+			if not frappe.db.exists(TRIGGER, n):
+				skipped.append({"name": n, "reason": "not found"})
+				continue
 			frappe.delete_doc(TRIGGER, n)
 			deleted += 1
 		except frappe.DoesNotExistError:
