@@ -261,6 +261,11 @@ scheduler_events = {
 		# fans admin-authored question rules out to in-scope users (uncapped).
 		"jarvis.learning.questions.materialize_questions_daily",
 		"jarvis.learning.questions.materialize_rule_questions",
+		# Daily chat-transcript question mining: mine recent conversations into
+		# learned-pattern candidates whose Personalise questions confirm the
+		# finding; answers ride the existing note -> wiki/skill pipeline
+		# (self-gating; see jarvis/learning/chat_mining.py).
+		"jarvis.learning.chat_mining.process_daily",
 		# Daily push of the User/Role/Org wiki-utilization graph to admin (the
 		# DB-only scope/role tiers; admin overlays telemetry activity). Not on
 		# every wiki save — too chatty for an analytics view.

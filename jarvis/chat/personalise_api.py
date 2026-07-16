@@ -41,7 +41,9 @@ import json
 
 import frappe
 from jarvis.permissions import (
-	has_jarvis_admin_access, is_skill_reviewer, require_jarvis_admin,
+	has_jarvis_admin_access,
+	is_skill_reviewer,
+	require_jarvis_admin,
 	require_jarvis_user,
 )
 from frappe import _
@@ -79,11 +81,39 @@ _MAX_WIKI_PAGES = 5
 # PDF/vision path is deliberately NOT reused here.
 _ATTACHMENT_EXTRACT_MAX_BYTES = 200 * 1024
 _ATTACHMENT_BINARY_EXT = {
-	"pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
-	"png", "jpg", "jpeg", "gif", "bmp", "webp", "tiff", "svg", "ico",
-	"zip", "tar", "gz", "rar", "7z",
-	"mp3", "mp4", "wav", "webm", "ogg", "m4a", "mov", "avi",
-	"exe", "bin", "dll", "so",
+	"pdf",
+	"doc",
+	"docx",
+	"xls",
+	"xlsx",
+	"ppt",
+	"pptx",
+	"png",
+	"jpg",
+	"jpeg",
+	"gif",
+	"bmp",
+	"webp",
+	"tiff",
+	"svg",
+	"ico",
+	"zip",
+	"tar",
+	"gz",
+	"rar",
+	"7z",
+	"mp3",
+	"mp4",
+	"wav",
+	"webm",
+	"ogg",
+	"m4a",
+	"mov",
+	"avi",
+	"exe",
+	"bin",
+	"dll",
+	"so",
 }
 
 
@@ -282,8 +312,15 @@ def list_questions_page(
 		QUESTION,
 		filters=filters,
 		fields=[
-			"name", "question", "origin", "status", "context_md",
-			"creation as created", "answered_at", "source_pattern", "answer_note",
+			"name",
+			"question",
+			"origin",
+			"status",
+			"context_md",
+			"creation as created",
+			"answered_at",
+			"source_pattern",
+			"answer_note",
 		],
 		order_by=order_by,
 		limit_start=start,
@@ -318,8 +355,16 @@ def get_question(name: str) -> dict:
 		QUESTION,
 		name,
 		[
-			"name", "question", "origin", "status", "context_md",
-			"creation", "answered_at", "source_pattern", "answer_note", "user",
+			"name",
+			"question",
+			"origin",
+			"status",
+			"context_md",
+			"creation",
+			"answered_at",
+			"source_pattern",
+			"answer_note",
+			"user",
 		],
 		as_dict=True,
 	)
@@ -362,8 +407,12 @@ def answer_question(
 		frappe.throw(_("This question was deleted."))
 
 	note = _create_note(
-		text=text, url=url, attachment=attachment, duration_s=duration_s,
-		source="Personalise", question=name,
+		text=text,
+		url=url,
+		attachment=attachment,
+		duration_s=duration_s,
+		source="Personalise",
+		question=name,
 	)
 
 	frappe.db.set_value(
@@ -398,7 +447,9 @@ def ignore_question(name: str) -> dict:
 	if row.status == "Deleted":
 		frappe.throw(_("This question was deleted."))
 	frappe.db.set_value(
-		QUESTION, name, {"status": "Ignored", "ignored_at": now_datetime()},
+		QUESTION,
+		name,
+		{"status": "Ignored", "ignored_at": now_datetime()},
 		update_modified=False,
 	)
 	frappe.db.commit()
@@ -501,9 +552,7 @@ def _fetch_link_text(url: str) -> str:
 
 		return link_fetch.fetch_and_extract(url) or ""
 	except Exception:
-		frappe.log_error(
-			title="personalise: link fetch failed", message=frappe.get_traceback()
-		)
+		frappe.log_error(title="personalise: link fetch failed", message=frappe.get_traceback())
 		return ""
 
 
@@ -614,9 +663,7 @@ def save_note(
 	_require_system_user()
 	if source not in _NOTE_SOURCES:
 		frappe.throw(_("Invalid source."))
-	note = _create_note(
-		text=text, url=url, attachment=attachment, duration_s=duration_s, source=source
-	)
+	note = _create_note(text=text, url=url, attachment=attachment, duration_s=duration_s, source=source)
 	return {"ok": True, "note": note.name}
 
 
@@ -661,8 +708,15 @@ def list_notes_page(
 		NOTE,
 		filters=filters,
 		fields=[
-			"name", "kind", "status", "source", "creation", "transcript",
-			"url", "duration_s", "question",
+			"name",
+			"kind",
+			"status",
+			"source",
+			"creation",
+			"transcript",
+			"url",
+			"duration_s",
+			"question",
 		],
 		order_by=order_by,
 		limit_start=start,
@@ -693,9 +747,22 @@ def get_note(name: str) -> dict:
 		NOTE,
 		name,
 		[
-			"name", "kind", "transcript", "extracted_text", "url", "attachment",
-			"duration_s", "context_type", "conversation", "question", "source",
-			"status", "creation", "processed_at", "processed_note", "owner",
+			"name",
+			"kind",
+			"transcript",
+			"extracted_text",
+			"url",
+			"attachment",
+			"duration_s",
+			"context_type",
+			"conversation",
+			"question",
+			"source",
+			"status",
+			"creation",
+			"processed_at",
+			"processed_note",
+			"owner",
 		],
 		as_dict=True,
 	)
@@ -741,11 +808,16 @@ def delete_note(name: str) -> dict:
 # --------------------------------------------------------------------------- #
 @frappe.whitelist()
 def get_personalisation_settings() -> dict:
-	"""Admin-only read of the two Personalisation Single fields."""
+	"""Admin-only read of the Personalisation Single fields, plus the read-only
+	chat-mining run status so an operator can see the daily sweep is alive."""
 	_admin_guard()
 	return {
 		"daily_question_cap": _single_int("personalise_daily_question_cap", 5),
 		"personalise_enabled": _single_bool("personalise_enabled", True),
+		"chat_question_mining_enabled": _single_bool("chat_question_mining_enabled", True),
+		"chat_mining_last_run_at": frappe.db.get_single_value(SETTINGS, "chat_mining_last_run_at") or None,
+		"chat_mining_last_run_status": frappe.db.get_single_value(SETTINGS, "chat_mining_last_run_status")
+		or "",
 	}
 
 
@@ -761,7 +833,7 @@ def set_personalisation_settings(payload: str | dict | None = None) -> dict:
 	if not isinstance(payload, dict) or not payload:
 		frappe.throw(_("Provide a settings object to write."))
 
-	known = ("daily_question_cap", "personalise_enabled")
+	known = ("daily_question_cap", "personalise_enabled", "chat_question_mining_enabled")
 	unknown = [k for k in payload if k not in known]
 	if unknown:
 		frappe.throw(_("Unknown settings field(s): {0}.").format(", ".join(unknown)))
@@ -777,6 +849,8 @@ def set_personalisation_settings(payload: str | dict | None = None) -> dict:
 		values["personalise_daily_question_cap"] = cap
 	if "personalise_enabled" in payload:
 		values["personalise_enabled"] = 1 if cint(payload["personalise_enabled"]) else 0
+	if "chat_question_mining_enabled" in payload:
+		values["chat_question_mining_enabled"] = 1 if cint(payload["chat_question_mining_enabled"]) else 0
 
 	frappe.db.set_single_value(SETTINGS, values, update_modified=False)
 	frappe.db.commit()
@@ -817,8 +891,13 @@ def list_question_rules() -> list[dict]:
 	return frappe.get_all(
 		RULE,
 		fields=[
-			"name", "question", "context_md", "scope",
-			"target_role", "target_user", "active",
+			"name",
+			"question",
+			"context_md",
+			"scope",
+			"target_role",
+			"target_user",
+			"active",
 		],
 		order_by="creation desc",
 	)

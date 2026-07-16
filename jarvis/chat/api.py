@@ -1446,7 +1446,7 @@ def stop_run(conversation: str, run_id: str | None = None) -> dict:
 		pending_confirm.clear_for_conversation(frappe.session.user, conversation, run_id)
 	except Exception:
 		frappe.log_error(title="stop_run token sweep", message=frappe.get_traceback())
-	from jarvis.chat import selfhost
+	from jarvis import selfhost
 
 	if selfhost.is_self_hosted():
 		return {"ok": False, "reason": _("stop isn't available on this connection yet")}

@@ -175,6 +175,7 @@ _PERSONALISE_SETTINGS = "Jarvis Settings"
 _PERSONALISE_SETTINGS_DEFAULTS = {
 	"personalise_daily_question_cap": 5,
 	"personalise_enabled": 1,
+	"chat_question_mining_enabled": 1,
 }
 
 
