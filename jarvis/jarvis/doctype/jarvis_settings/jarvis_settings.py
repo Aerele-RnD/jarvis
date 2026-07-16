@@ -20,12 +20,15 @@ _CONTAINER_OWNED_MODES = {"oauth", "subscription"}
 #
 #   RQ envelope > worst-case work it wraps, AND lock TTL >= RQ envelope.
 #
-# Worst-case pool work: <=60s redis-lock wait + up to 3 POST attempts x 120s
-# admin HTTP budget (post_update_llm_pool) + 2x5s retry sleeps ~= 430s.
-# Worst-case single-model work: <=60s lock wait + 90s admin HTTP budget +
-# the post-restart skills resyncs. 600s clears both with headroom, so the
-# rq SIGALRM (JobTimeoutException) only fires on something genuinely
-# wedged - not on a routine cold provision (JARVIS-2026-07-08, fault c).
+# Worst-case pool work: <=60s redis-lock wait + up to 2 POST attempts x 150s
+# admin HTTP budget (post_update_llm_pool, now on DEFAULT_TIMEOUT_S) + 1x5s
+# retry sleep + a bounded in-job convergence poll (_POOL_CONVERGE_DEADLINE_S,
+# ~120s) that absorbs an "applying"/timeout apply outcome. That is
+# ~60 + 305 + 120 = 485s. Worst-case single-model work: <=60s lock wait + 150s
+# admin HTTP budget + the post-restart skills resyncs. 600s clears both with
+# headroom, so the rq SIGALRM (JobTimeoutException) only fires on something
+# genuinely wedged - not on a routine cold provision (JARVIS-2026-07-08,
+# fault c).
 #
 # The lock TTL must be >= the RQ envelope: the TTL bounds how long a
 # CRASHED holder can block others, but a healthy holder may legitimately
@@ -43,15 +46,106 @@ ADMIN_SYNC_LOCK_TIMEOUT_S = ADMIN_SYNC_RQ_TIMEOUT_S
 # primary 60s + 4 retries x 150s = 660s > 600s TTL. Each retry runs in its
 # own fresh RQ envelope, and per-attempt lock wait + POST-ONLY work must
 # fit that envelope. POST-only worst case (lock wait excluded - the wait
-# is the other term of the sum): pool = 3x120s attempts + 2x5s sleeps
-# = 370s; single-model = 90s + skills resyncs. So 150s + 370s = 520s
-# <= 600s. These are the SAME figures the budget test in
-# test_unified_llm_config.TestOnboardingAuditFixes asserts - tune the
+# is the other term of the sum): pool = 2x150s attempts + 1x5s sleep +
+# ~120s convergence poll = 425s; single-model = 150s + skills resyncs. So
+# 150s + 425s = 575s <= 600s. These are the SAME figures the budget test
+# in test_unified_llm_config.TestOnboardingAuditFixes asserts - tune the
 # waits and the test together, and against the POOL figure (the larger
 # of the two paths).
 ADMIN_SYNC_PRIMARY_LOCK_WAIT_S = 60.0
 ADMIN_SYNC_RETRY_LOCK_WAIT_S = 150.0
 ADMIN_SYNC_LOCK_RETRIES = 4
+
+
+# ---------------------------------------------------------------------------
+# Convergence (audit F2): "applying" is NOT failure.
+# ---------------------------------------------------------------------------
+# The admin now persists the customer's desired LLM config, COMMITS it, and only
+# THEN drives the agent apply. On a read-timeout it returns an accepted
+# ("applying") outcome instead of a 502 and a */5 admin reconcile cron finishes
+# the apply server-side. Historically the bench stamped a terminal "failed:" the
+# moment the inline POST didn't come back "ok", so a late-succeeding apply left
+# the bench pinned at llm_pool_provisioning FOREVER while the container was
+# actually fine - THE onboarding livelock.
+#
+# Now: an "applying"/timeout outcome is recorded as PENDING (not failed) and the
+# bench CONVERGES from its own end - it polls admin get_connection, whose
+# chat_readiness flips to "Ready" once the apply lands (admin gates Ready on
+# applied_version >= desired_version, so it never reports Ready from mere
+# intent). Convergence stamps the durable success markers; until it converges the
+# status stays "pending: ..." and the UI shows a calm "finishing setup" state.
+_PENDING_APPLYING_STATUS = "pending: admin applying config"
+
+# In-job fast-path convergence poll. Bounded well under the RQ envelope (see the
+# budget note above); anything not converged inside it is finished by the
+# scheduled safety net (reconcile_pending_llm_sync, every 5 min). Probes use a
+# short HTTP timeout so one slow admin read can't stretch the loop past budget.
+_POOL_CONVERGE_DEADLINE_S = 120.0
+_POOL_CONVERGE_INTERVAL_S = 20.0
+_POOL_CONVERGE_PROBE_TIMEOUT_S = 15
+
+
+def _is_applying_result(result) -> bool:
+    """True iff an admin apply response is an ACCEPTED-but-still-converging
+    outcome (C5) rather than a confirmed apply. The creds/pool fleet layer
+    reports this as ``status == "applying"`` (or ``result == "applying"``); a
+    genuine apply is ``status == "applied"`` / ``result == "ok"`` / absent (older
+    contract). Absent keys => treat as a confirmed apply so a fleet still on the
+    pre-C5 contract keeps its old "ok" semantics."""
+    if not isinstance(result, dict):
+        return False
+    return result.get("status") == "applying" or result.get("result") == "applying"
+
+
+def _admin_chat_readiness(*, timeout_s: int = _POOL_CONVERGE_PROBE_TIMEOUT_S):
+    """Probe admin get_connection for (chat_readiness, reason). Returns
+    (state, reason); (None, "<err>") on any failure. Never raises - a convergence
+    probe must not blow up the sync job or the scheduled reconcile."""
+    from jarvis import admin_client
+    try:
+        data = admin_client.get_connection(timeout_s=timeout_s) or {}
+    except Exception as e:  # noqa: BLE001 - convergence probe is best-effort
+        return None, str(e)
+    return (data.get("chat_readiness") or ""), (data.get("chat_readiness_reason") or "")
+
+
+def _stamp_converged_ok(settings, *, is_pool: bool) -> None:
+    """Record a converged apply as a terminal success. last_sync_status keeps the
+    literal "ok" prefix (the _pool_sync_is_redundant dedup gate + the onboarding
+    poller both key off it); the durable llm_pool_synced_at marker is stamped
+    ONLY for pool tenants - it is is_ready_for_chat's evidence-of-successful-apply
+    gate and must never be set from mere intent or an "applying" 200."""
+    import frappe as _frappe
+    now = _frappe.utils.now()
+    fields = {
+        "last_sync_at": now,
+        "last_sync_status": "ok (converged via admin reconcile)",
+    }
+    if is_pool:
+        fields["llm_pool_synced_at"] = now
+    settings.db_set(fields, update_modified=False)
+    _commit_terminal_sync_status()
+
+
+def _converge_via_admin(settings, *, is_pool: bool,
+                        deadline_s: float = _POOL_CONVERGE_DEADLINE_S,
+                        interval_s: float = _POOL_CONVERGE_INTERVAL_S) -> bool:
+    """Poll admin get_connection until chat_readiness == "Ready" (bounded by
+    deadline_s). On Ready: stamp the terminal success markers and return True. On
+    deadline: return False so the caller records the pending state for the
+    scheduled safety net to finish. Under frappe.flags.in_test the loop probes
+    exactly once (no sleep) so tests observe a single deterministic outcome."""
+    import time as _time
+    import frappe as _frappe
+    deadline = _time.monotonic() + deadline_s
+    while True:
+        state, _reason = _admin_chat_readiness()
+        if state == "Ready":
+            _stamp_converged_ok(settings, is_pool=is_pool)
+            return True
+        if _frappe.flags.in_test or _time.monotonic() + interval_s >= deadline:
+            return False
+        _time.sleep(interval_s)
 
 
 def _commit_terminal_sync_status() -> None:
@@ -636,6 +730,22 @@ class JarvisSettings(Document):
                     auth_mode=self.llm_auth_mode or "api_key",
                 ) or {}
                 resolved_action = result.get("action", "restart")
+            # C5/F2: a "restart" (post_update_llm_creds) may come back accepted-
+            # but-still-converging. The admin committed the desired creds and a
+            # reconcile finishes the apply; treat "applying" as PENDING, converge
+            # via get_connection (is_pool=False - the single-model gate keys off
+            # the flat llm_* creds set at save, not llm_pool_synced_at), and only
+            # record pending when it hasn't landed yet. "reload" (hot secret
+            # rotation) has no applying semantics, so it skips this.
+            if action == "restart" and _is_applying_result(result):
+                if not _converge_via_admin(self, is_pool=False):
+                    self.db_set(
+                        "last_sync_status", _PENDING_APPLYING_STATUS,
+                        update_modified=False,
+                    )
+                    _commit_terminal_sync_status()
+                terminal_written = True
+                return
             self.db_set({
                 "last_sync_at": frappe.utils.now(),
                 "last_sync_status": f"ok ({resolved_action} via admin)",
@@ -668,16 +778,35 @@ class JarvisSettings(Document):
                 message=frappe.get_traceback(),
             )
         except admin_client.AdminUnreachableError as e:
-            self.db_set({
-                "last_sync_at": frappe.utils.now(),
-                "last_sync_status": f"failed: admin unreachable: {e}",
-            })
-            _commit_terminal_sync_status()
-            terminal_written = True
-            frappe.log_error(
-                title="Jarvis: admin unreachable",
-                message=frappe.get_traceback(),
-            )
+            # F2: for a "restart" (creds re-render), an unreachable/timeout is an
+            # apply the admin persisted desired-first and will reconcile - not a
+            # lost change. Converge via get_connection and record PENDING (not
+            # failed) when it hasn't landed yet, mirroring the pool path. "reload"
+            # (hot secret rotation) is a fast, non-desired-first op with no
+            # reconcile, so an unreachable there stays terminal-failed as before.
+            if action == "restart":
+                if not _converge_via_admin(self, is_pool=False):
+                    self.db_set(
+                        "last_sync_status", _PENDING_APPLYING_STATUS,
+                        update_modified=False,
+                    )
+                    _commit_terminal_sync_status()
+                    frappe.logger().warning(
+                        "jarvis_settings: creds sync admin-unreachable; recorded "
+                        "pending for reconcile (%s)", e,
+                    )
+                terminal_written = True
+            else:
+                self.db_set({
+                    "last_sync_at": frappe.utils.now(),
+                    "last_sync_status": f"failed: admin unreachable: {e}",
+                })
+                _commit_terminal_sync_status()
+                terminal_written = True
+                frappe.log_error(
+                    title="Jarvis: admin unreachable",
+                    message=frappe.get_traceback(),
+                )
         except admin_client.AdminRateLimitedError as e:
             retry = e.retry_after_seconds or 0
             retry_str = f"retry_after={retry}s" if retry > 0 else "retry shortly"
@@ -818,16 +947,44 @@ class JarvisSettings(Document):
         if self.flags.get("llm_api_key_changed"):
             return "reload"
 
+        # F5: a re-save of IDENTICAL creds after a sync that DEMONSTRABLY did not
+        # succeed is the customer's natural retry lever - it MUST re-run the full
+        # render+restart apply, not no-op. Before this, an unchanged re-save
+        # classified as None (nothing changed) even when the previous apply
+        # failed/timed out, so the broken container was never re-applied and
+        # onboarding could never recover by saving again. Mirror
+        # _pool_sync_is_redundant's ok-gate, but only when there is a REAL prior
+        # verdict to act on: a non-empty last_sync_status that is not "ok"
+        # (failed:/pending:/skipped:). An EMPTY status is "never attempted" (the
+        # first-ever save is handled by the old is None branch above; an unrelated
+        # field save on a baseline pre-config must stay a genuine no-op), so it is
+        # deliberately NOT forced. Only fires when there is real config to apply.
+        last_status = (self.get("last_sync_status") or "")
+        if last_status and not last_status.startswith("ok"):
+            configured = any(
+                getattr(self, f, None)
+                for f in ("llm_provider", "llm_model", "llm_base_url")
+            ) or bool(getattr(self, "llm_api_key", None))
+            if configured:
+                return "restart"
+
         return None
 
 
 # Auto-retry transient pool-provisioning failures. The fleet-agent can 500
 # ("admin unreachable: … agent_error: Internal Server Error") on a first cold
 # provision that succeeds moments later (e.g. a sidecar not yet healthy within
-# the health-poll window). A bounded retry self-heals the hiccup so it never
+# the health-poll window). A bounded retry self-heals the FAST hiccup so it never
 # strands the customer at the Connect-AI step. Only AdminUnreachableError (the
 # 502/agent_error/connection class) is retried; auth/validation are terminal.
-_POOL_SYNC_RETRIES = 3
+#
+# 2 (was 3): a genuine read-TIMEOUT surfaces as the same AdminUnreachableError,
+# so retrying it 3x150s would storm the budget - and it no longer needs to, since
+# an unreachable outcome now drains through the convergence poll (which absorbs a
+# still-applying apply) rather than a blind re-POST. Two attempts keep the cheap
+# fast-500 self-heal; the convergence loop + the */5 reconcile own everything
+# slower. Keep this in lockstep with the budget arithmetic on ADMIN_SYNC_*.
+_POOL_SYNC_RETRIES = 2
 _POOL_SYNC_RETRY_DELAY_S = 5
 
 
@@ -972,6 +1129,23 @@ def _enqueued_sync_via_admin_pool(retry_left: int = ADMIN_SYNC_LOCK_RETRIES) -> 
         terminal_written = False
         try:
             result = _post_pool_with_retry(spec, api_keys, oauth_blobs) or {}
+            # C5/F2: an accepted-but-still-converging apply ("applying") is NOT a
+            # confirmed apply. The admin committed the desired pool and a reconcile
+            # will finish it; the bench must NOT stamp llm_pool_synced_at off this
+            # 200 (that field is evidence of a SUCCESSFUL apply and gates chat
+            # readiness). Poll get_connection for chat_readiness == "Ready" (the
+            # cheap in-job fast path); if it lands, _stamp_converged_ok sets the
+            # markers, otherwise record the pending state and let the */5 reconcile
+            # finish it. Either way this is terminal for THIS job (no failed write).
+            if _is_applying_result(result):
+                if not _converge_via_admin(settings, is_pool=True):
+                    settings.db_set(
+                        "last_sync_status", _PENDING_APPLYING_STATUS,
+                        update_modified=False,
+                    )
+                    _commit_terminal_sync_status()
+                terminal_written = True
+                return
             resolved_action = result.get("action", "pool_update")
             _synced = {
                 "last_sync_at": _frappe.utils.now(),
@@ -1030,17 +1204,25 @@ def _enqueued_sync_via_admin_pool(retry_left: int = ADMIN_SYNC_LOCK_RETRIES) -> 
                 message=_frappe.get_traceback(),
             )
         except admin_client.AdminUnreachableError as e:
-            settings.db_set({
-                "last_sync_at": _frappe.utils.now(),
-                "last_sync_status": f"failed: admin unreachable: {e}",
-                **_cleared_subscription_status_fields(),
-            })
-            _commit_terminal_sync_status()
+            # F2: an unreachable/timeout is NOT a lost apply. The admin persists
+            # desired-first (committed) and reconciles a late-landing apply, so
+            # writing a terminal "failed:" here is exactly the livelock that
+            # blocked onboarding - the container often applied the pool moments
+            # after the bench hung up. Converge instead: poll get_connection for
+            # chat_readiness == "Ready" (stamps the success markers on a hit);
+            # otherwise record PENDING (not failed) and let the */5 reconcile
+            # finish it. Only genuine auth/validation/rate-limit stay terminal.
+            if not _converge_via_admin(settings, is_pool=True):
+                settings.db_set(
+                    "last_sync_status", _PENDING_APPLYING_STATUS,
+                    update_modified=False,
+                )
+                _commit_terminal_sync_status()
+                _frappe.logger().warning(
+                    "jarvis_settings: pool sync admin-unreachable; recorded "
+                    "pending for reconcile (%s)", e,
+                )
             terminal_written = True
-            _frappe.log_error(
-                title="Jarvis: admin unreachable (pool sync)",
-                message=_frappe.get_traceback(),
-            )
         except admin_client.AdminRateLimitedError as e:
             retry = e.retry_after_seconds or 0
             retry_str = f"retry_after={retry}s" if retry > 0 else "retry shortly"
@@ -1150,3 +1332,65 @@ def _enqueued_sync_via_admin(action: str, retry_left: int = ADMIN_SYNC_LOCK_RETR
             return
         settings = frappe.get_single("Jarvis Settings")
         settings._sync_via_admin(action)
+
+
+def reconcile_pending_llm_sync() -> None:
+    """Scheduled safety net (*/5, hooks.py): finish a sync the in-band job left
+    PENDING because the admin apply was still converging (F2).
+
+    Mirrors the admin-side */5 reconcile from the bench end so the two systems
+    converge from either direction. It is deliberately minimal and defensive:
+
+    - No-op unless the tenant is in a state the admin reconcile might have
+      resolved since the bench last looked: either the explicit
+      ``pending: admin applying config`` marker, OR a pool whose FIRST apply is
+      still unproven (proxy_active + no llm_pool_synced_at) sitting at a
+      pending/failed status (the onboarding livelock class).
+    - Probes admin get_connection EXACTLY ONCE (chat_readiness); stamps the
+      terminal success markers only on "Ready" (admin gates Ready on
+      applied_version >= desired_version, so it never reports Ready from intent).
+    - Never flips a status to a new "failed:" and never touches a healthy /
+      already-"ok" tenant. Swallows every error - a scheduled task must not
+      raise. Self-host and un-onboarded sites short-circuit.
+    """
+    try:
+        from jarvis import selfhost
+        if selfhost.is_self_hosted():
+            return
+
+        settings = frappe.get_single("Jarvis Settings")
+        # Un-onboarded: no admin credentials -> get_connection would just raise.
+        admin_api_key = (settings.get_password(
+            "jarvis_admin_api_key", raise_exception=False) or "").strip()
+        customer_pw = (settings.get_password(
+            "jarvis_admin_customer_password", raise_exception=False) or "").strip()
+        if not admin_api_key and not customer_pw:
+            return
+
+        status = (settings.get("last_sync_status") or "")
+        proxy_active = bool(settings.get("proxy_active"))
+        pool_synced = bool(settings.get("llm_pool_synced_at"))
+
+        is_applying_pending = status.startswith(_PENDING_APPLYING_STATUS)
+        # A pool whose first apply never stamped the marker may have been
+        # converged by the admin reconcile cron since the bench last wrote its
+        # (pending/failed) status - re-probe so the customer isn't stranded at
+        # llm_pool_provisioning while the container is actually serving the pool.
+        is_unproven_pool = (
+            proxy_active and not pool_synced
+            and (status.startswith("pending:") or status.startswith("failed:"))
+        )
+        if not (is_applying_pending or is_unproven_pool):
+            return
+
+        state, _reason = _admin_chat_readiness()
+        if state == "Ready":
+            # Stamp llm_pool_synced_at only for pool tenants (is_pool=proxy_active):
+            # for a single-model tenant the flat creds set at save time is already
+            # the readiness gate, so it just clears the pending status to "ok".
+            _stamp_converged_ok(settings, is_pool=proxy_active)
+    except Exception:
+        frappe.log_error(
+            title="Jarvis: reconcile_pending_llm_sync failed",
+            message=frappe.get_traceback(),
+        )

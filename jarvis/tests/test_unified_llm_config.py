@@ -2437,9 +2437,11 @@ class TestOnboardingAuditFixes(_RT3SettingsTestCase):
         self.assertGreater(cumulative_wait, ADMIN_SYNC_LOCK_TIMEOUT_S,
                            "retry-chain cumulative lock wait must outlive a dead holder's TTL")
         # And the per-attempt wait must not eat the work budget: wait + POST
-        # work (~370s: 3x120 + sleeps, lock wait excluded) must fit the envelope.
-        self.assertLessEqual(ADMIN_SYNC_RETRY_LOCK_WAIT_S + 380, ADMIN_SYNC_RQ_TIMEOUT_S,
-                             "retry lock wait + worst-case POST work must fit the RQ envelope")
+        # work (~425s: 2x150 pool attempts + 5s sleep + ~120s in-job convergence
+        # poll, lock wait excluded) must fit the envelope. Tuning _POOL_SYNC_RETRIES,
+        # the pool HTTP timeout, or _POOL_CONVERGE_DEADLINE_S moves this figure.
+        self.assertLessEqual(ADMIN_SYNC_RETRY_LOCK_WAIT_S + 425, ADMIN_SYNC_RQ_TIMEOUT_S,
+                             "retry lock wait + worst-case POST+convergence work must fit the RQ envelope")
 
         settings = frappe.get_single("Jarvis Settings")
         captured = []
@@ -2557,10 +2559,17 @@ class TestOnboardingAuditFixes(_RT3SettingsTestCase):
         self.assertEqual(settings.last_sync_warnings, "[]")
 
     def test_failed_pool_sync_clears_stale_subscription_status_and_warnings(self):
-        """A FAILED sync must clear both fields even when a PRIOR successful
-        apply had set them - a stale 'verified' status must not linger next
-        to a 'failed:' status the poller reads as broken."""
-        from jarvis.exceptions import AdminUnreachableError
+        """A genuinely-terminal FAILED sync (auth/validation) must clear both
+        fields even when a PRIOR successful apply had set them - a stale
+        'verified' status must not linger next to a 'failed:' status the poller
+        reads as broken.
+
+        NB (F2): an AdminUnreachableError/timeout is NO LONGER a terminal failure
+        - it converges to 'pending' and is reconciled, so this test now uses a
+        genuine terminal error (AdminAuthError) to exercise the failed-clearing
+        path. The unreachable->pending path is covered by
+        test_pool_sync_unreachable_records_pending_not_failed."""
+        from jarvis.exceptions import AdminAuthError
 
         self._seed_pool()
         with patch("jarvis.admin_client.post_update_llm_pool",
@@ -2572,7 +2581,7 @@ class TestOnboardingAuditFixes(_RT3SettingsTestCase):
         self.assertEqual(settings.last_subscription_status, "verified")
 
         with patch("jarvis.admin_client.post_update_llm_pool",
-                   side_effect=AdminUnreachableError("boom")):
+                   side_effect=AdminAuthError("bad token")):
             _enqueued_sync_via_admin_pool()
 
         settings = frappe.get_single("Jarvis Settings")
@@ -2610,6 +2619,220 @@ class TestOnboardingAuditFixes(_RT3SettingsTestCase):
         settings = frappe.get_single("Jarvis Settings")
         self.assertEqual(settings.last_subscription_status, status_before)
         self.assertEqual(settings.last_sync_warnings, warnings_before)
+
+
+class TestConvergenceReconcile(_RT3SettingsTestCase):
+    """Audit F2 (livelock) + C5 (applying-is-not-failure) + F5 (retry
+    classification) + F1 (timeout ladder).
+
+    An admin apply that is accepted-but-still-converging ("applying") or times
+    out is recorded as PENDING (never terminal "failed"), and the bench converges
+    to the durable success markers by polling admin get_connection's
+    chat_readiness. Critically: llm_pool_synced_at (is_ready_for_chat's
+    evidence-of-successful-apply gate) is stamped ONLY on a confirmed apply or a
+    convergence "Ready" - never off an "applying" 200.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self._clear_models()
+        _reset_settings()
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("preset", "", update_modified=False)
+        settings.db_set("proxy_active", 0, update_modified=False)
+        settings.db_set("proxy_recommended", 0, update_modified=False)
+        settings.db_set("llm_pool_synced_at", None, update_modified=False)
+        settings.db_set("last_sync_status", "", update_modified=False)
+        frappe.db.commit()
+
+    def _seed_pool(self):
+        settings = frappe.get_single("Jarvis Settings")
+        _add_model_row(settings, provider="openai_compat", model="gpt-4o",
+                       tier="strong", order=0, api_key="sk-conv-1",
+                       base_url="https://api.openai.com")
+        _add_model_row(settings, provider="openai_compat", model="gpt-3.5-turbo",
+                       tier="cheap", order=1, api_key="sk-conv-2",
+                       base_url="https://api.openai.com")
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   return_value={"action": "pool_update"}):
+            settings.save()
+        # A clean baseline for the applying/timeout assertions below.
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("llm_pool_synced_at", None, update_modified=False)
+        frappe.db.commit()
+
+    def _seed_admin_creds(self):
+        """Write an admin api_key into __Auth so reconcile_pending_llm_sync does
+        not short-circuit on "un-onboarded". Deliberately does NOT commit: the
+        __Auth row must stay inside the test transaction so FrappeTestCase's
+        rollback cleans it up (a committed password write escapes rollback and
+        pollutes the shared singleton for every later test - e.g. is_onboarded).
+        Call it AFTER the plain-field commit so no later commit flushes it."""
+        from frappe.utils.password import set_encrypted_password
+        set_encrypted_password("Jarvis Settings", "Jarvis Settings",
+                               "test-admin-key", "jarvis_admin_api_key")
+
+    # -- C5/P1-7: "applying" is pending, and must NOT stamp the marker --------
+
+    def test_applying_result_records_pending_not_failed_and_no_marker(self):
+        self._seed_pool()
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   return_value={"action": "pool_update", "status": "applying"}), \
+             patch("jarvis.admin_client.get_connection",
+                   return_value={"chat_readiness": "Configuring"}):
+            _enqueued_sync_via_admin_pool()
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertTrue(
+            (settings.last_sync_status or "").startswith("pending: admin applying"),
+            f"an 'applying' apply must be pending, not failed; got {settings.last_sync_status!r}")
+        self.assertFalse(
+            settings.llm_pool_synced_at,
+            "llm_pool_synced_at must NOT be stamped off an 'applying' 200 - it is "
+            "evidence of a SUCCESSFUL apply and gates chat readiness")
+
+    def test_applying_then_ready_converges_and_stamps_marker(self):
+        self._seed_pool()
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   return_value={"action": "pool_update", "status": "applying"}), \
+             patch("jarvis.admin_client.get_connection",
+                   return_value={"chat_readiness": "Ready"}):
+            _enqueued_sync_via_admin_pool()
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertTrue((settings.last_sync_status or "").startswith("ok"),
+                        f"a converged apply must read ok; got {settings.last_sync_status!r}")
+        self.assertTrue(settings.llm_pool_synced_at,
+                        "convergence to chat_readiness Ready must stamp llm_pool_synced_at")
+
+    # -- F2: timeout/unreachable is pending+converge, never a lost apply -----
+
+    def test_unreachable_then_ready_converges_and_stamps_marker(self):
+        from jarvis.exceptions import AdminUnreachableError
+        self._seed_pool()
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   side_effect=AdminUnreachableError("read timeout")), \
+             patch("jarvis.admin_client.get_connection",
+                   return_value={"chat_readiness": "Ready"}):
+            _enqueued_sync_via_admin_pool()
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertTrue((settings.last_sync_status or "").startswith("ok"))
+        self.assertTrue(settings.llm_pool_synced_at,
+                        "an unreachable apply that the container actually landed must "
+                        "converge to ok+marker, not livelock at failed")
+
+    def test_unreachable_not_ready_records_pending_not_failed(self):
+        from jarvis.exceptions import AdminUnreachableError
+        self._seed_pool()
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   side_effect=AdminUnreachableError("read timeout")), \
+             patch("jarvis.admin_client.get_connection",
+                   return_value={"chat_readiness": "Configuring"}):
+            _enqueued_sync_via_admin_pool()
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertTrue(
+            (settings.last_sync_status or "").startswith("pending: admin applying"),
+            f"unreachable must record pending for the reconcile, not failed; "
+            f"got {settings.last_sync_status!r}")
+        self.assertFalse(settings.llm_pool_synced_at)
+
+    # -- Scheduled safety net (reconcile_pending_llm_sync) -------------------
+
+    def test_reconcile_stamps_marker_when_admin_reports_ready(self):
+        from jarvis.jarvis.doctype.jarvis_settings.jarvis_settings import (
+            reconcile_pending_llm_sync,
+        )
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("proxy_active", 1, update_modified=False)
+        settings.db_set("llm_pool_synced_at", None, update_modified=False)
+        settings.db_set("last_sync_status", "pending: admin applying config",
+                        update_modified=False)
+        frappe.db.commit()
+        self._seed_admin_creds()  # after the commit; stays in the rolled-back txn
+        with patch("jarvis.admin_client.get_connection",
+                   return_value={"chat_readiness": "Ready"}):
+            reconcile_pending_llm_sync()
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertTrue(settings.llm_pool_synced_at,
+                        "the */5 reconcile must stamp the marker once admin reports Ready")
+        self.assertTrue((settings.last_sync_status or "").startswith("ok"))
+
+    def test_reconcile_noop_when_not_ready(self):
+        from jarvis.jarvis.doctype.jarvis_settings.jarvis_settings import (
+            reconcile_pending_llm_sync,
+        )
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("proxy_active", 1, update_modified=False)
+        settings.db_set("llm_pool_synced_at", None, update_modified=False)
+        settings.db_set("last_sync_status", "pending: admin applying config",
+                        update_modified=False)
+        frappe.db.commit()
+        self._seed_admin_creds()  # after the commit; stays in the rolled-back txn
+        with patch("jarvis.admin_client.get_connection",
+                   return_value={"chat_readiness": "Configuring"}):
+            reconcile_pending_llm_sync()
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertFalse(settings.llm_pool_synced_at)
+        self.assertTrue((settings.last_sync_status or "").startswith("pending:"))
+
+    def test_reconcile_noop_on_healthy_tenant(self):
+        """Inert on a healthy fleet: an 'ok' tenant is never probed or re-stamped."""
+        from jarvis.jarvis.doctype.jarvis_settings.jarvis_settings import (
+            reconcile_pending_llm_sync,
+        )
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("proxy_active", 1, update_modified=False)
+        settings.db_set("llm_pool_synced_at", frappe.utils.now(), update_modified=False)
+        settings.db_set("last_sync_status", "ok (pool_update via admin)",
+                        update_modified=False)
+        frappe.db.commit()
+        self._seed_admin_creds()  # after the commit; stays in the rolled-back txn
+        with patch("jarvis.admin_client.get_connection") as m:
+            reconcile_pending_llm_sync()
+        m.assert_not_called()
+
+    # -- F5: a re-save after a NON-ok sync forces a full restart apply -------
+
+    def test_classify_forces_restart_when_last_sync_not_ok(self):
+        s = frappe.get_single("Jarvis Settings")
+        s.llm_provider = "OpenAI"
+        s.llm_model = "gpt-4o"
+        s.llm_base_url = ""
+        s.flags.force_admin_sync = False
+        s.flags.llm_auth_mode_changed = False
+        s.flags.llm_api_key_changed = False
+        before = frappe._dict(llm_provider="OpenAI", llm_model="gpt-4o", llm_base_url="")
+
+        s.last_sync_status = "failed: admin unreachable: x"
+        with patch.object(type(s), "get_doc_before_save", return_value=before):
+            self.assertEqual(
+                s._classify_llm_change(), "restart",
+                "a re-save of identical creds after a FAILED sync must re-run the "
+                "full apply (F5), not no-op")
+
+        # Mirror image: an unchanged save after an OK sync stays a no-op.
+        s.last_sync_status = "ok (restart via admin)"
+        with patch.object(type(s), "get_doc_before_save", return_value=before):
+            self.assertIsNone(
+                s._classify_llm_change(),
+                "an unchanged re-save after an OK sync must remain a no-op")
+
+    # -- F1: the timeout ladder + both apply legs ride DEFAULT_TIMEOUT_S -----
+
+    def test_default_timeout_is_150_and_apply_legs_use_it(self):
+        from jarvis import admin_client
+        self.assertEqual(admin_client.DEFAULT_TIMEOUT_S, 150,
+                         "bench->admin budget must sit above the 100s admin->agent leg")
+        captured = []
+
+        def _cap(path, body, *, timeout_s=admin_client.DEFAULT_TIMEOUT_S):
+            captured.append(timeout_s)
+            return {}
+
+        with patch("jarvis.admin_client._post", side_effect=_cap):
+            admin_client.post_update_llm_pool(spec={}, api_keys={}, oauth_blobs={})
+            admin_client.post_update_llm_creds(
+                provider="p", model="m", base_url="", api_key="k")
+        self.assertEqual(captured, [150, 150],
+                         "both interactive apply legs must ride DEFAULT_TIMEOUT_S=150")
 
 
 # ---------------------------------------------------------------------------
