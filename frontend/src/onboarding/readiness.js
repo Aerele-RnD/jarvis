@@ -41,7 +41,14 @@ export async function isWorkspaceReady() {
 // the poster routes back to setup. Unlike llm_credentials this cannot fire
 // on an established workspace: once a pool applies ONCE the marker is
 // permanent.
-const NOT_ONBOARDED_REASONS = new Set(["signup", "selfhost_connection", "llm_pool_provisioning"])
+// "llm_provisioning" is the DIRECT (single-model) analogue (round-4 review
+// R4-P0-6): a direct config whose first apply admin never confirmed
+// (llm_direct_synced_at never stamped). Same permanence guarantee — once a
+// direct config confirms once, the marker is permanent — so it belongs here
+// too, never on the degraded-banner path.
+const NOT_ONBOARDED_REASONS = new Set([
+	"signup", "selfhost_connection", "llm_pool_provisioning", "llm_provisioning",
+])
 
 // True only when the workspace has NOT completed onboarding at all — the single
 // case the full-screen gate poster is for. A ready workspace, a fail-open
