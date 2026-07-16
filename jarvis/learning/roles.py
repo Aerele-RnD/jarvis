@@ -142,10 +142,11 @@ def _make_key(key: str) -> str:
 # Wiki v2 role seeding (hooks.after_migrate)
 # --------------------------------------------------------------------------- #
 # The wiki curator role (write matrix in jarvis/chat/wiki_permissions.py).
-# "Knowledge Wiki User" was RETIRED (patch v1_16): personal User-scope editing
-# now rides the "Jarvis User" platform role (seeded below). Seeded on
-# after_migrate because this app has no after_install channel and migrate
-# follows a fresh install anyway (same reasoning as the voice_facts seeding).
+# "Knowledge Wiki User" was retired — no longer seeded here; personal
+# User-scope editing now rides the "Jarvis User" platform role (seeded below).
+# Seeded on after_migrate because this app has no after_install channel and
+# migrate follows a fresh install anyway (same reasoning as the voice_facts
+# seeding).
 _WIKI_ROLES = ("Knowledge Wiki Manager",)
 
 # --------------------------------------------------------------------------- #

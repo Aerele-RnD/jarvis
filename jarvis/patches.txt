@@ -24,4 +24,3 @@ jarvis.patches.v1_12_skill_scope_ladder
 jarvis.patches.v1_13_encrypt_plaintext_settings_passwords
 jarvis.patches.v1_14_remove_desk_workspaces
 jarvis.patches.v1_15_unarchive_auto_expired_conversations
-jarvis.patches.v1_16_retire_knowledge_wiki_user

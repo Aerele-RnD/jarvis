@@ -34,11 +34,12 @@ from jarvis.permissions import JARVIS_ADMIN_ROLE, JARVIS_USER_ROLE
 
 WIKI = "Jarvis Wiki Page"
 
-# The dedicated wiki curator role. "Knowledge Wiki User" was RETIRED (patch
-# v1_16): personal (User-scope) editing now rides the platform "Jarvis User"
-# role every app user holds. "Jarvis Admin" INHERITS the curator role (see
-# _is_wiki_manager), so tenant admins curate by default while the Manager role
-# can still be granted on its own to a non-admin (separation of duties).
+# The dedicated wiki curator role. "Knowledge Wiki User" was retired — it is no
+# longer seeded, and personal (User-scope) editing now rides the platform
+# "Jarvis User" role every app user holds. "Jarvis Admin" INHERITS the curator
+# role (see _is_wiki_manager), so tenant admins curate by default while the
+# Manager role can still be granted on its own to a non-admin (separation of
+# duties).
 WIKI_MANAGER_ROLE = "Knowledge Wiki Manager"
 
 # Never offered as a Role-scope audience (mirrors agents_api's selectable
