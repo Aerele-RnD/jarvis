@@ -62,6 +62,13 @@ LLM_EVENTS = frozenset({
 	"on_update_after_submit",
 })
 
+# Only these events are meant to BLOCK a save when a Script action throws. On
+# every other (post-)event a raised ``frappe.ValidationError`` — including the
+# incidental subclasses like DoesNotExistError/MandatoryError that a buggy
+# script can raise — is treated as fail-open, so a latent script bug can never
+# roll back a user's committed-intent save.
+BLOCKABLE_EVENTS = frozenset({"validate", "before_submit"})
+
 # UI labels for the event picker (served by triggers_api.get_triggers_caps).
 EVENT_LABELS = {
 	"validate": "Before Save (blockable)",
@@ -96,13 +103,24 @@ _SUMMARY_CHAR_CAP = 200
 _DETAIL_CHAR_CAP = 20000
 
 
+# The safe ``frappe.utils`` namespace exposed to conditions is a stateless bag
+# of function refs (SAFE_DATA_UTILS); build it once per process rather than
+# reconstructing the full safe-globals on every condition eval (~126 us saved
+# per firing on a hot doctype).
+_SAFE_UTILS = None
+
+
 def eval_context(doc) -> dict:
 	"""Condition-eval locals — exactly frappe's ``webhook.get_context`` shape
 	({"doc": doc, "utils": <safe utils>}), so trigger conditions have webhook
-	semantics. Imported lazily: the hot path never needs safe_exec."""
-	from frappe.utils.safe_exec import get_safe_globals
+	semantics. Imported lazily (the no-trigger hot path never needs safe_exec)
+	and the utils namespace is process-cached."""
+	global _SAFE_UTILS
+	if _SAFE_UTILS is None:
+		from frappe.utils.safe_exec import get_safe_globals
 
-	return {"doc": doc, "utils": get_safe_globals().get("frappe").get("utils")}
+		_SAFE_UTILS = get_safe_globals().get("frappe").get("utils")
+	return {"doc": doc, "utils": _SAFE_UTILS}
 
 
 # --------------------------------------------------------------------------- #
@@ -125,6 +143,11 @@ def _build_triggers_map() -> dict:
 	return out
 
 
+# A short TTL backstops the map so a bust that races a concurrent rebuild
+# (see clear_cache) can never leave a stale map cached indefinitely.
+_CACHE_TTL_S = 300
+
+
 def _triggers_map() -> dict:
 	"""The cached registry ({} when there are no triggers). get_value keeps a
 	per-request local copy, so repeated dispatches in one request cost a dict
@@ -142,13 +165,29 @@ def _triggers_map() -> dict:
 			cached = _build_triggers_map()
 		except Exception:
 			return {}
-		frappe.cache().set_value(_CACHE_KEY, cached)
+		frappe.cache().set_value(_CACHE_KEY, cached, expires_in_sec=_CACHE_TTL_S)
 	return cached
 
 
-def clear_cache() -> None:
-	"""Bust the registry (trigger created/changed/deleted)."""
+def _delete_cache_key() -> None:
 	frappe.cache().delete_value(_CACHE_KEY)
+
+
+def clear_cache() -> None:
+	"""Bust the registry (trigger created/changed/deleted).
+
+	Deletes now AND again on commit. A change lands via ``db_set`` +
+	``clear_cache`` before the enclosing transaction commits, so a concurrent
+	request in that window could rebuild the map from the still-OLD committed
+	row and re-cache it. The after-commit delete forces the next rebuild to
+	read the new committed state; the TTL on ``set_value`` is the final
+	backstop. (after_commit is best-effort — outside a request/txn, e.g. a
+	console call, the immediate delete alone suffices.)"""
+	_delete_cache_key()
+	try:
+		frappe.db.after_commit.add(_delete_cache_key)
+	except Exception:
+		pass
 
 
 # --------------------------------------------------------------------------- #
@@ -190,8 +229,8 @@ def dispatch(doc, method: str | None = None) -> None:
 				if not frappe.safe_eval(condition, eval_locals=eval_context(doc)):
 					continue
 			except Exception as e:
-				_insert_activity(
-					**_base_fields(row, doc, method),
+				_record_activity(
+					_base_fields(row, doc, method),
 					status="Failed",
 					summary=f"condition error: {e}",
 					detail=frappe.get_traceback(),
@@ -220,11 +259,16 @@ def _base_fields(row: dict, doc, method: str) -> dict:
 def _run_script_action(row: dict, doc, method: str, depth: int) -> None:
 	"""Run the managed Server Script synchronously, inside the transaction.
 
-	frappe.ValidationError => the trigger BLOCKS the save: the Blocked
-	activity is written via frappe.enqueue (the Redis push is not
-	transactional, so it survives the rollback the re-raise causes) and the
-	error re-raises to the caller. Any other exception is fail-open: Failed
-	activity + Error Log, the user's save goes through."""
+	On a BLOCKABLE event (validate/before_submit) a ``frappe.ValidationError``
+	BLOCKS the save: the Blocked activity is enqueued IMMEDIATELY (the Redis
+	push is not transactional, so it survives the rollback the re-raise causes)
+	and the error re-raises to the caller with an identifying ``[Automation: …]``
+	prefix. On any other event, or for any non-ValidationError exception, the
+	action is FAIL-OPEN — a Failed activity is recorded and the user's save
+	proceeds. Success/Failed activity is recorded via ``_record_activity``,
+	which defers the DB insert + realtime publish to after the save COMMITS
+	(``enqueue_after_commit``), keeping the user's save transaction lean and
+	never publishing a firing that later rolls back."""
 	flags = frappe.local.flags
 	base = _base_fields(row, doc, method)
 	# Pre-guard the managed script itself: a missing row must FAIL OPEN, but
@@ -232,8 +276,8 @@ def _run_script_action(row: dict, doc, method: str, depth: int) -> None:
 	# get_doc would land in the Blocked branch and block every matching save.
 	script_name = row.get("server_script")
 	if not script_name or not frappe.db.exists("Server Script", script_name):
-		_insert_activity(
-			**base,
+		_record_activity(
+			base,
 			status="Failed",
 			summary="managed server script missing (save not blocked)",
 			detail=f"Server Script {script_name!r} not found for this trigger.",
@@ -245,19 +289,37 @@ def _run_script_action(row: dict, doc, method: str, depth: int) -> None:
 		script = frappe.get_doc("Server Script", script_name)
 		script.execute_doc(doc)
 	except frappe.ValidationError as e:
-		frappe.enqueue(
-			"jarvis.triggers.engine.write_blocked_activity",
-			queue="default",
-			**base,
-			status="Blocked",
-			summary=str(e) or "blocked by trigger script",
+		duration_ms = int((time.monotonic() - t0) * 1000)
+		if method in BLOCKABLE_EVENTS:
+			# Intentional block. Enqueue Blocked IMMEDIATELY (survives the
+			# rollback the re-raise triggers), then re-raise with an
+			# identifying prefix so the blocked user knows which automation
+			# stopped them (and an admin can find it).
+			frappe.enqueue(
+				"jarvis.triggers.engine.write_activity",
+				queue="default",
+				**base,
+				status="Blocked",
+				summary=str(e) or "blocked by trigger",
+				detail=frappe.get_traceback(),
+				duration_ms=duration_ms,
+			)
+			label = row.get("trigger_name") or "Trigger"
+			if e.args and isinstance(e.args[0], str) and not e.args[0].startswith("[Automation:"):
+				e.args = (f"[Automation: {label}] {e.args[0]}",) + e.args[1:]
+			raise
+		# Non-blockable event: a ValidationError here (often an incidental
+		# subclass from a script bug) must NOT roll back the user's save.
+		_record_activity(
+			base,
+			status="Failed",
+			summary="script error (save not blocked)",
 			detail=frappe.get_traceback(),
-			duration_ms=int((time.monotonic() - t0) * 1000),
+			duration_ms=duration_ms,
 		)
-		raise
 	except Exception:
-		_insert_activity(
-			**base,
+		_record_activity(
+			base,
 			status="Failed",
 			summary="script error (save not blocked)",
 			detail=frappe.get_traceback(),
@@ -268,8 +330,8 @@ def _run_script_action(row: dict, doc, method: str, depth: int) -> None:
 			message=frappe.get_traceback(),
 		)
 	else:
-		_insert_activity(
-			**base,
+		_record_activity(
+			base,
 			status="Success",
 			summary="script ran",
 			duration_ms=int((time.monotonic() - t0) * 1000),
@@ -304,7 +366,31 @@ def _drop_llm_queue() -> None:
 		del frappe.local._jarvis_trigger_llm_queue
 
 
+def _llm_cap_reached(row: dict) -> bool:
+	"""Cheap peek at today's per-trigger LLM counter so an over-cap trigger on
+	a high-churn doctype stops paying the snapshot + enqueue cost on every save
+	(the authoritative incr + the single Skipped marker still live in the job).
+	Returns True only once the counter is STRICTLY over cap — i.e. after the
+	job has already logged the cap+1 Skipped marker — so we never suppress that
+	one marker. Never raises."""
+	try:
+		from jarvis.triggers.llm_action import _DEFAULT_DAILY_CAP, _cap_key
+
+		cap = cint(row.get("llm_daily_cap")) or _DEFAULT_DAILY_CAP
+		# The counter is a raw redis INCR value (llm_action uses cache.incr),
+		# NOT a pickled set_value — read it with the raw GET, not get_value
+		# (which pickle.loads and would raise on the plain integer).
+		cache = frappe.cache()
+		raw = cache.get(cache.make_key(_cap_key(row.get("name"))))
+		used = int(raw) if raw is not None else 0
+		return used > cap
+	except Exception:
+		return False
+
+
 def _queue_llm_action(row: dict, doc, method: str) -> None:
+	if _llm_cap_reached(row):
+		return
 	if getattr(frappe.local, "_jarvis_trigger_llm_queue", None) is None:
 		frappe.local._jarvis_trigger_llm_queue = []
 		frappe.db.after_commit.add(_flush_llm_queue)
@@ -395,7 +481,11 @@ def _insert_activity(**fields) -> None:
 			publish_to_user(owner, {
 				"kind": "trigger:activity",
 				"trigger": fields.get("trigger") or "",
+				"trigger_label": fields.get("trigger_label") or "",
 				"status": fields.get("status") or "",
+				# action_type lets the client notifier decide what to surface
+				# (LLM "Success" findings warn; Script "Success" is quiet noise).
+				"action_type": fields.get("action_type") or "",
 			})
 	except Exception:
 		try:
@@ -407,23 +497,64 @@ def _insert_activity(**fields) -> None:
 			pass
 
 
-def write_blocked_activity(
+def _record_activity(base: dict, *, status: str, summary: str = "",
+					  detail: str = "", duration_ms: int = 0) -> None:
+	"""Record a Success/Failed activity WITHOUT touching the user's save
+	transaction: the insert + realtime publish are deferred to a background job
+	that runs only after the save COMMITS (``enqueue_after_commit``). This keeps
+	the hot save path free of the ~3 ms activity insert and never publishes a
+	firing that later rolls back. Best-effort: enqueue failures must never break
+	the dispatch (or the save it rides on).
+
+	Blocked activities do NOT use this path — they must survive the rollback the
+	block causes, so they enqueue immediately (see _run_script_action)."""
+	if frappe.flags.in_test:
+		# Synchronous inline insert in tests: keeps the run deterministic and
+		# preserves the test transaction (no enqueue worker, no commit).
+		try:
+			_insert_activity(**base, status=status, summary=summary,
+							  detail=detail, duration_ms=duration_ms)
+		except Exception:
+			pass
+		return
+	try:
+		frappe.enqueue(
+			"jarvis.triggers.engine.write_activity",
+			queue="default",
+			enqueue_after_commit=True,
+			**base,
+			status=status,
+			summary=summary,
+			detail=detail,
+			duration_ms=duration_ms,
+		)
+	except Exception:
+		# Last resort: log inline rather than lose the record entirely. Still
+		# guarded so a logging failure can't break the save.
+		try:
+			_insert_activity(**base, status=status, summary=summary,
+							  detail=detail, duration_ms=duration_ms)
+		except Exception:
+			pass
+
+
+def write_activity(
 	trigger: str = "",
 	trigger_label: str = "",
 	target_doctype: str = "",
 	target_docname: str = "",
 	doc_event: str = "",
 	action_type: str = "",
-	status: str = "Blocked",
+	status: str = "",
 	summary: str = "",
 	detail: str = "",
 	duration_ms: int = 0,
 	event_user: str = "",
 	trigger_owner: str = "",
 ) -> None:
-	"""Background-job target for Blocked activities. The blocking re-raise
-	rolls the user's transaction back, so this row is written in its OWN job
-	(the enqueue's Redis push already happened and survives the rollback)."""
+	"""Background-job target for all activity writes (the enqueue_after_commit
+	Success/Failed path AND the immediate Blocked path). Inserts the row + the
+	realtime publish, then commits — it owns its own transaction."""
 	_insert_activity(
 		trigger=trigger,
 		trigger_label=trigger_label,

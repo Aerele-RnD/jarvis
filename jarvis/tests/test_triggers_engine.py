@@ -35,6 +35,7 @@ class _TriggerTestCase(FrappeTestCase):
 	def setUp(self):
 		self._triggers: list[str] = []
 		self._todos: list[str] = []
+		self._server_scripts: list[str] = []
 		self._clear_llm_queue()
 		frappe.flags._jarvis_trigger_depth = 0
 		engine.clear_cache()
@@ -49,6 +50,9 @@ class _TriggerTestCase(FrappeTestCase):
 		for name in self._todos:
 			if frappe.db.exists("ToDo", name):
 				frappe.delete_doc("ToDo", name, ignore_permissions=True, force=True)
+		for name in getattr(self, "_server_scripts", []):
+			if frappe.db.exists("Server Script", name):
+				frappe.delete_doc("Server Script", name, ignore_permissions=True, force=True)
 		engine.clear_cache()
 		frappe.db.commit()
 
@@ -125,6 +129,55 @@ class TestTriggerValidation(_TriggerTestCase):
 		for dt in ("Jarvis Trigger", "Server Script", "Error Log", "Jarvis Chat Message"):
 			with self.assertRaises(frappe.ValidationError):
 				self._draft(target_doctype=dt).insert(ignore_permissions=True)
+
+	def test_core_plumbing_doctypes_are_denylisted(self):
+		# A blockable/LLM trigger on these would fire on every upload / login /
+		# notification and could wedge a core daily workflow (review P1).
+		for dt in ("File", "User", "Notification Log", "Email Queue", "Version"):
+			with self.assertRaises(frappe.ValidationError):
+				self._draft(target_doctype=dt).insert(ignore_permissions=True)
+
+	def test_numeric_threshold_condition_on_blank_doc_is_accepted(self):
+		# Review P0: `doc.grand_total > 100000` errors (None > int) when eval'd
+		# against a blank doc, but is a valid, savable condition — a real fired
+		# document has the value. Use a numeric ToDo field with no default.
+		# assigned_by is a Link with no default -> None on a blank ToDo, so the
+		# comparison raises TypeError at validation (None > str), exactly like a
+		# numeric threshold on an empty currency field.
+		trig = self._make_llm_trigger(condition='doc.assigned_by > "zzz"')
+		self.assertTrue(frappe.db.exists(TRIGGER, trig.name))
+
+	def test_condition_with_unknown_field_is_still_rejected(self):
+		# AttributeError (a typo'd fieldname) must NOT be swallowed by the
+		# TypeError tolerance — only None-comparison TypeErrors are accepted.
+		with self.assertRaises(frappe.ValidationError):
+			self._draft(condition="doc.no_such_field_zzz == 1").insert(ignore_permissions=True)
+
+	def test_condition_using_frappe_is_rejected(self):
+		# NameError: only doc + utils exist in the sandbox.
+		with self.assertRaises(frappe.ValidationError):
+			self._draft(condition='frappe.db.get_value("X","y","z")').insert(ignore_permissions=True)
+
+	def test_foreign_server_script_link_is_stripped(self):
+		# Review P0 (security): a client-supplied server_script pointing at an
+		# arbitrary Server Script must be rejected, never acted on.
+		import frappe as _f
+		victim = _f.get_doc({
+			"doctype": "Server Script", "name": f"qa-victim-{_f.generate_hash(length=6)}",
+			"script_type": "DocType Event", "reference_doctype": "ToDo",
+			"doctype_event": "After Save", "script": "x = 1", "disabled": 1,
+		})
+		victim.flags.ignore_validate = True
+		victim.insert(ignore_permissions=True)
+		self._server_scripts = getattr(self, "_server_scripts", [])
+		self._server_scripts.append(victim.name)
+		# LLM trigger (would delete server_script on sync) with a foreign link
+		draft = self._draft(server_script=victim.name)
+		draft.insert(ignore_permissions=True)
+		self._triggers.append(draft.name)
+		# the foreign link was stripped and the victim survives untouched
+		self.assertNotEqual(draft.server_script, victim.name)
+		self.assertTrue(frappe.db.exists("Server Script", victim.name))
 
 	def test_single_doctype_is_rejected(self):
 		with self.assertRaises(frappe.ValidationError):
@@ -292,7 +345,7 @@ class TestDispatch(_TriggerTestCase):
 				todo.insert(ignore_permissions=True)
 		blocked = [
 			c for c in enq.call_args_list
-			if c.args and c.args[0] == "jarvis.triggers.engine.write_blocked_activity"
+			if c.args and c.args[0] == "jarvis.triggers.engine.write_activity"
 		]
 		self.assertEqual(len(blocked), 1)
 		self.assertEqual(blocked[0].kwargs.get("status"), "Blocked")
@@ -307,6 +360,33 @@ class TestDispatch(_TriggerTestCase):
 		rows = self._activities(trig.name)
 		self.assertEqual(len(rows), 1)
 		self.assertEqual(rows[0].status, "Failed")
+
+	def test_script_throw_on_nonblockable_event_fails_open(self):
+		# Review P2: a ValidationError raised on a POST event (on_update) must
+		# NOT block/rollback the user's save — only validate/before_submit block.
+		todo = self._make_todo()
+		trig = self._make_script_trigger(
+			body='frappe.throw("would block")', event="on_update"
+		)
+		with patch(EXEC_FLAG, return_value=True):
+			engine.dispatch(todo, "on_update")  # must not raise
+		rows = self._activities(trig.name)
+		self.assertEqual(len(rows), 1)
+		self.assertEqual(rows[0].status, "Failed")
+
+	def test_blocked_message_is_prefixed_with_trigger_name(self):
+		# Review P2: the blocked user should be told which automation stopped them.
+		trig = self._make_script_trigger(
+			body='frappe.throw("no discounts")', event="validate"
+		)
+		todo = frappe.get_doc({"doctype": "ToDo", "description": "blocked"})
+		with patch(EXEC_FLAG, return_value=True), patch("frappe.enqueue"):
+			try:
+				todo.insert(ignore_permissions=True)
+				self.fail("expected the save to be blocked")
+			except frappe.ValidationError as e:
+				self.assertIn("[Automation:", str(e))
+				self.assertIn("no discounts", str(e))
 
 	def test_llm_after_commit_enqueue_dedupes_to_last_snapshot(self):
 		trig = self._make_llm_trigger()

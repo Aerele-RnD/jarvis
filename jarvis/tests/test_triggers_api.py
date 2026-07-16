@@ -165,6 +165,27 @@ class TestCrudGating(_TriggersApiTestCase):
 		self.assertRaises(frappe.PermissionError, delete_triggers_bulk, frappe.as_json([name]))
 		self.assertTrue(frappe.db.exists(TRIGGER, name))
 
+	def test_plain_user_get_trigger_redacts_logic_fields(self):
+		# Review P2 (security): condition/script_body/llm_instruction carry the
+		# trigger's internal logic; a plain Jarvis User (org-wide READ) must not
+		# see them.
+		name = self._create_as_admin(
+			action_type="Script", script_body="frappe.throw('secret rule')",
+			condition='doc.status == "Open"', doc_event="validate",
+		)
+		frappe.set_user(ADMIN_USER)
+		admin_view = get_trigger(name)["data"]
+		self.assertEqual(admin_view["script_body"], "frappe.throw('secret rule')")
+		self.assertTrue(admin_view["can_manage"])
+		frappe.set_user(PLAIN_USER)
+		user_view = get_trigger(name)["data"]
+		self.assertIsNone(user_view["script_body"])
+		self.assertIsNone(user_view["condition"])
+		self.assertIsNone(user_view["llm_instruction"])
+		self.assertFalse(user_view["can_manage"])
+		# non-logic metadata is still visible
+		self.assertEqual(user_view["target_doctype"], "ToDo")
+
 	def test_payload_field_whitelist(self):
 		frappe.set_user(ADMIN_USER)
 		payload = self._llm_payload()

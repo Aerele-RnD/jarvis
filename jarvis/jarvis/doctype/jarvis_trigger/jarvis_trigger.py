@@ -37,19 +37,57 @@ DEFAULT_LLM_DAILY_CAP = 100
 
 MANAGED_SCRIPT_PREFIX = "jarvis-trigger-"
 
-# Doctypes a trigger may never target: self-referential loops (the trigger
-# doctypes themselves), the managed-artifact doctype (Server Script), the
-# log doctypes triggers themselves write (feedback storms), and the chat
-# doctypes (every message would fire user automations).
-DENYLISTED_DOCTYPES = frozenset({
+# Doctypes a trigger may never target. Blocking or LLM-taxing these would hit
+# framework plumbing that writes constantly during NORMAL usage (uploads,
+# logins, notifications, the email pipeline), so a single admin mistake — a
+# `validate` throw on File, say — would break a core daily workflow for every
+# user. The set is: our own trigger/log/chat doctypes (self-loops + feedback
+# storms), the managed-artifact doctype (Server Script), and a curated list of
+# high-churn / auth-path core doctypes. frappe's own ``log_types`` are folded
+# in at module load so the list tracks the framework (Version, Access Log,
+# View Log, Activity Log, Notification Log, Email Queue, DocShare, … ).
+_JARVIS_DENY = {
 	"Jarvis Trigger",
 	"Jarvis Trigger Activity",
 	"Server Script",
-	"Error Log",
 	"Webhook Request Log",
 	"Jarvis Conversation",
 	"Jarvis Chat Message",
-})
+}
+# High-churn / auth-path core doctypes not necessarily in log_types. File fires
+# on every attachment; the User/session/notification/email doctypes fire on the
+# login and notification paths that every request depends on.
+_CORE_PLUMBING_DENY = {
+	"File",
+	"User",
+	"Sessions",
+	"Deleted Document",
+	"Route History",
+	"Notification Log",
+	"Notification Settings",
+	"Email Queue",
+	"Email Queue Recipient",
+	"Comment",
+	"Communication",
+	"Prepared Report",
+	"Scheduled Job Log",
+	"Webhook Request Log",
+}
+
+
+def _denylisted_doctypes() -> frozenset:
+	"""Our deny set + a curated core set + frappe's canonical ``log_types``.
+	Resolved lazily so the framework list is authoritative and version-tracked."""
+	try:
+		from frappe.model import log_types
+	except Exception:
+		log_types = ()
+	return frozenset(_JARVIS_DENY | _CORE_PLUMBING_DENY | set(log_types))
+
+
+# Materialized once at import for the common membership test; the helper above
+# stays available for tests that want to assert the composition.
+DENYLISTED_DOCTYPES = _denylisted_doctypes()
 
 
 class JarvisTrigger(Document):
@@ -62,6 +100,30 @@ class JarvisTrigger(Document):
 			self._validate_script()
 		else:
 			self._validate_llm()
+		self._guard_server_script_link()
+
+	def _managed_script_name(self) -> str | None:
+		"""The managed Server Script's name for this trigger. ``self.name`` is
+		assigned by ``set_new_name`` before ``validate`` on insert, so it is
+		available here for both insert and update."""
+		return f"{MANAGED_SCRIPT_PREFIX}{self.name}" if self.name else None
+
+	def _guard_server_script_link(self):
+		"""``server_script`` is controller-owned: it must only ever name THIS
+		trigger's managed, always-disabled Server Script.
+
+		``read_only`` on the field is a UI-only flag — a raw REST PUT,
+		``frappe.client.set_value``, or the chat ``create_doc`` tool can still
+		set it server-side. Left unchecked, ``_sync_server_script`` would
+		``save(ignore_permissions=True)`` over — and ``_delete_server_script``
+		would ``delete_doc(ignore_permissions=True)`` — an ARBITRARY Server
+		Script the author named, escalating a Jarvis Admin (who lacks Script
+		Manager) into overwrite/delete of any script on the site, including
+		permission-query scripts. Reject any foreign value: force it to the
+		managed name (or clear it; the sync recreates it)."""
+		managed = self._managed_script_name()
+		if self.server_script and self.server_script != managed:
+			self.server_script = None
 
 	def on_update(self):
 		self._sync_server_script()
@@ -134,6 +196,16 @@ class JarvisTrigger(Document):
 		temp_doc = frappe.new_doc(self.target_doctype)
 		try:
 			frappe.safe_eval(self.condition, eval_locals=eval_context(temp_doc))
+		except TypeError:
+			# The condition COMPILES but a comparison errored on the blank doc —
+			# almost always a numeric/currency field that is None on an empty
+			# doc, e.g. ``doc.grand_total > 100000`` (None > int -> TypeError).
+			# A real fired document always has the field populated, so this is
+			# NOT an authoring error; accept it. (A genuinely broken condition
+			# still fails open to a Failed activity at fire time.) SyntaxError,
+			# NameError (e.g. using ``frappe``), and AttributeError (a typo'd
+			# fieldname) fall through to the throw below and are still rejected.
+			pass
 		except Exception as e:
 			frappe.throw(_("Invalid Condition: {0}").format(str(e)))
 
@@ -182,9 +254,13 @@ class JarvisTrigger(Document):
 		if self.action_type != "Script":
 			self._delete_server_script()
 			return
+		# Only ever act on THIS trigger's managed script name (belt-and-braces
+		# with _guard_server_script_link: the sync must never touch a foreign
+		# Server Script even if the link were somehow repointed).
+		managed = self._managed_script_name()
 		existing = (
-			self.server_script
-			if self.server_script and frappe.db.exists("Server Script", self.server_script)
+			managed
+			if managed and frappe.db.exists("Server Script", managed)
 			else None
 		)
 		ss = frappe.get_doc("Server Script", existing) if existing else frappe.new_doc("Server Script")
@@ -214,13 +290,18 @@ class JarvisTrigger(Document):
 	def _delete_server_script(self, clear_link: bool = True):
 		"""Delete the managed Server Script (ignore permissions/missing). The
 		trigger's own Link is cleared FIRST so delete_doc's link check cannot
-		block; on_trash skips the clear (the row is going away anyway)."""
-		name = self.server_script or f"{MANAGED_SCRIPT_PREFIX}{self.name}"
+		block; on_trash skips the clear (the row is going away anyway).
+
+		Only ever deletes THIS trigger's managed name — never whatever the
+		``server_script`` Link happens to hold (defense against a repointed
+		link, in concert with _guard_server_script_link)."""
+		name = self._managed_script_name()
 		if clear_link and self.server_script:
 			self.db_set("server_script", None, update_modified=False)
-		frappe.delete_doc(
-			"Server Script", name, ignore_permissions=True, ignore_missing=True, force=True
-		)
+		if name:
+			frappe.delete_doc(
+				"Server Script", name, ignore_permissions=True, ignore_missing=True, force=True
+			)
 
 	# ------------------------------------------------------------------ #
 	# cache + realtime

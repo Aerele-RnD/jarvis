@@ -215,33 +215,47 @@ def list_triggers_page(
 	}
 
 
-def _trigger_detail(doc) -> dict:
-	return {
+def _trigger_detail(doc, *, can_manage: bool = True) -> dict:
+	"""Full trigger detail. ``condition``/``script_body``/``llm_instruction``
+	are the trigger's LOGIC and can embed internal business rules (or a value an
+	admin surfaces via a script); core keeps Server Script bodies manager-only,
+	so for non-managers (plain Jarvis Users, who get org-wide READ) these three
+	fields are redacted to a marker. Managers see everything."""
+	detail = {
 		"name": doc.name,
 		"trigger_name": doc.trigger_name,
 		"enabled": cint(doc.enabled),
 		"target_doctype": doc.target_doctype,
 		"doc_event": doc.doc_event,
-		"condition": doc.condition or "",
 		"action_type": doc.action_type,
-		"script_body": doc.script_body or "",
 		"server_script": doc.server_script or "",
-		"llm_instruction": doc.llm_instruction or "",
 		"llm_daily_cap": cint(doc.llm_daily_cap),
 		"description": doc.description or "",
 		"source_conversation": doc.source_conversation or "",
 		"owner": doc.owner,
 		"modified": str(doc.modified),
+		"can_manage": bool(can_manage),
 	}
+	if can_manage:
+		detail["condition"] = doc.condition or ""
+		detail["script_body"] = doc.script_body or ""
+		detail["llm_instruction"] = doc.llm_instruction or ""
+	else:
+		redacted = None  # the SPA renders "—" / a locked note for non-managers
+		detail["condition"] = redacted
+		detail["script_body"] = redacted
+		detail["llm_instruction"] = redacted
+	return detail
 
 
 @frappe.whitelist()
 @require_jarvis_user
 def get_trigger(name: str) -> dict:
-	"""Full detail of one trigger (read is org-wide for jarvis users)."""
+	"""Full detail of one trigger (read is org-wide for jarvis users; the
+	logic fields are redacted for non-managers — see _trigger_detail)."""
 	doc = frappe.get_doc(TRIGGER, name)
 	doc.check_permission("read")
-	return {"ok": True, "data": _trigger_detail(doc)}
+	return {"ok": True, "data": _trigger_detail(doc, can_manage=_can_manage())}
 
 
 # --------------------------------------------------------------------------- #
@@ -384,12 +398,40 @@ def test_trigger_condition(target_doctype: str, condition: str = "", docname: st
 
 	try:
 		result = frappe.safe_eval(condition, eval_locals=eval_context(doc))
+	except TypeError as e:
+		# On a BLANK doc (no docname) a TypeError is almost always a numeric
+		# field that is None on an empty doc (doc.grand_total > 100000) — the
+		# condition is fine and will save; a real fired doc has the value. Mirror
+		# the controller's blank-doc tolerance. On a REAL doc it is a genuine
+		# evaluation error, so report it.
+		if not docname:
+			return {"ok": True, "data": {"valid": True, "note": (
+				"Looks good. (Can't fully test on an empty document because a "
+				"field is blank; it will evaluate against real documents.)"
+			)}}
+		return {"ok": True, "data": {"valid": False, "error": _friendly_condition_error(e, target_doctype)}}
 	except Exception as e:
-		return {"ok": True, "data": {"valid": False, "error": str(e)}}
+		return {"ok": True, "data": {"valid": False, "error": _friendly_condition_error(e, target_doctype)}}
 	data = {"valid": True}
 	if docname:
 		data["would_fire"] = bool(result)
 	return {"ok": True, "data": data}
+
+
+def _friendly_condition_error(e: Exception, target_doctype: str) -> str:
+	"""Rewrite raw Python exceptions into a one-line, business-readable hint
+	(the raw str carries CPython artifacts like ``<unknown>`` a user can't act
+	on)."""
+	if isinstance(e, SyntaxError):
+		return _("The condition has a syntax error — check quotes, brackets and operators.")
+	if isinstance(e, NameError):
+		return _(
+			"Only 'doc' and 'utils' can be used in a condition "
+			"(e.g. doc.status == \"Open\", utils.nowdate()). {0}"
+		).format(str(e))
+	if isinstance(e, AttributeError):
+		return _("That field does not exist on {0}: {1}").format(target_doctype, str(e))
+	return _("The condition could not be evaluated: {0}").format(str(e))
 
 
 # --------------------------------------------------------------------------- #
@@ -460,6 +502,40 @@ def _can_read_target(row) -> bool:
 		return False
 
 
+def _clear_perm_message_noise() -> None:
+	"""Drop any messages ``frappe.has_permission`` pushed onto the message log
+	during the visibility scan (one "User X does not have doctype access …" per
+	denied doctype/row), so they never leak back to the client in
+	``_server_messages``. Best-effort."""
+	try:
+		frappe.local.message_log = []
+	except Exception:
+		pass
+
+
+def _readable_target_doctypes(where: str, params: dict) -> list:
+	"""The distinct target doctypes in the filtered activity that the caller
+	has ANY doctype-level read on. Lets the non-admin scan exclude, in SQL,
+	whole doctypes the user can't read at all (the common case — a trigger on a
+	doctype they have no role for) instead of paying a per-row permission check
+	for each of those rows. target_doctype is indexed, and the distinct set is
+	tiny, so this is cheap."""
+	dts = frappe.db.sql(
+		f"SELECT DISTINCT target_doctype FROM `tabJarvis Trigger Activity` WHERE {where}",
+		params,
+	)
+	out = []
+	for (dt,) in dts:
+		if not dt:
+			continue
+		try:
+			if frappe.has_permission(dt, "read"):
+				out.append(dt)
+		except Exception:
+			continue
+	return out
+
+
 @frappe.whitelist()
 @require_jarvis_user
 def list_activity_page(
@@ -505,8 +581,26 @@ def list_activity_page(
 			},
 		}
 
-	# Non-admin: permission-scan. `needed` includes one overflow row so a
-	# full page can still report has_more without another scan.
+	# Non-admin: first exclude — in SQL — every target doctype the user has no
+	# read on at all (the bulk of a burst is usually one such doctype), so the
+	# per-row record-level scan only runs over plausibly-visible rows. If NOTHING
+	# is readable, return an empty page immediately (no scan, no ~1s spin).
+	readable_dts = _readable_target_doctypes(where, params)
+	if not readable_dts:
+		_clear_perm_message_noise()  # drop the has_permission "no access" noise
+		return {
+			"ok": True,
+			"data": {
+				"rows": [], "total": 0, "has_more": False,
+				"start": start, "page_length": pl, "approximate": True,
+			},
+		}
+	dt_ph = ", ".join([f"%(rdt{i})s" for i in range(len(readable_dts))])
+	scan_where = f"({where}) AND target_doctype IN ({dt_ph})"
+	scan_params = {**params, **{f"rdt{i}": dt for i, dt in enumerate(readable_dts)}}
+
+	# `needed` includes one overflow row so a full page can still report
+	# has_more without another scan.
 	needed = start + pl + 1
 	chunk = pl * 5
 	visible: list = []
@@ -516,9 +610,9 @@ def list_activity_page(
 	while True:
 		batch = frappe.db.sql(
 			f"""SELECT {_ACTIVITY_FIELDS_SQL} FROM `tabJarvis Trigger Activity`
-			WHERE {where} ORDER BY {order}
+			WHERE {scan_where} ORDER BY {order}
 			LIMIT %(chunk)s OFFSET %(offset)s""",
-			{**params, "chunk": chunk, "offset": offset}, as_dict=True,
+			{**scan_params, "chunk": chunk, "offset": offset}, as_dict=True,
 		)
 		if not batch:
 			exhausted = True
@@ -536,6 +630,9 @@ def list_activity_page(
 			break
 		offset += chunk
 
+	# has_permission pushes "no access" lines into the message log on every
+	# denied row; clear them so they never ride back in _server_messages.
+	_clear_perm_message_noise()
 	hit_cap = scanned >= _ACTIVITY_SCAN_CAP and not exhausted
 	rows = visible[start:start + pl]
 	for r in rows:
