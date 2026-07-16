@@ -192,8 +192,8 @@ after_migrate = [
 	# Voice & Wiki: seed the Settings Check defaults (row-existence probe;
 	# an unset Check reads 0 on v16, so defaults must be materialized).
 	"jarvis.learning.voice_facts.after_migrate",
-	# Wiki v2: seed the Knowledge Wiki User/Manager roles (idempotent;
-	# best-effort). Migrate follows a fresh install, so this covers both.
+	# Wiki v2: seed the Knowledge Wiki Manager role (idempotent; best-effort).
+	# Migrate follows a fresh install, so this covers both.
 	"jarvis.learning.roles.after_migrate",
 ]
 

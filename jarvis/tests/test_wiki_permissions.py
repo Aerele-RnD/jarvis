@@ -3,11 +3,12 @@ the ``jarvis.chat.wiki_permissions`` matrix helpers and SQL fragments, the
 controller's scope normalization / slug audience-suffixing / SM-only
 scope-change guard, and the ``jarvis.learning.roles`` seeder.
 
-Matrix under test (design D1):
+Matrix under test (design D1; wiki v2 role consolidation):
   * System Manager: full read/write on every scope.
-  * Plain desk user: reads Org only; creates nothing (human channel).
-  * Knowledge Wiki User: + own User-scope pages (create/edit own).
+  * Plain user (no Jarvis role): reads Org only; creates nothing.
+  * Jarvis User: + own User-scope pages (Knowledge Wiki User retired).
   * Knowledge Wiki Manager: + Role-scope pages for roles they hold.
+  * Jarvis Admin: inherits Knowledge Wiki Manager (curates roles they hold).
 """
 
 from __future__ import annotations
@@ -19,12 +20,16 @@ from frappe.tests.utils import FrappeTestCase
 
 from jarvis.chat import wiki_permissions
 from jarvis.learning import roles as learning_roles
+from jarvis.permissions import JARVIS_ADMIN_ROLE, JARVIS_USER_ROLE
 
 WIKI = "Jarvis Wiki Page"
 
 USER_PLAIN = "wiki-perm-plain@example.com"
+# USER_KW now stands for a plain Jarvis User (Knowledge Wiki User was retired);
+# the email is kept so the audience-suffixed slug assertions stay stable.
 USER_KW = "wiki-perm-kwuser@example.com"
 USER_KW_MGR = "wiki-perm-kwmgr@example.com"
+USER_ADMIN = "wiki-perm-admin@example.com"
 USER_SM = "wiki-perm-sm@example.com"
 
 TEST_ROLE = "Wiki Perm Test Role"
@@ -113,9 +118,22 @@ class WikiPermTestCase(FrappeTestCase):
 		_ensure_role(TEST_ROLE)
 		_ensure_role(OTHER_ROLE)
 		_ensure_user(USER_PLAIN)
-		_ensure_user(USER_KW, roles=(wiki_permissions.WIKI_USER_ROLE,))
+		# Plain Jarvis User: own-page editing rides this platform role now.
+		_ensure_user(USER_KW, roles=(JARVIS_USER_ROLE,))
 		_ensure_user(USER_KW_MGR, roles=(wiki_permissions.WIKI_MANAGER_ROLE, TEST_ROLE))
+		# Jarvis Admin holding TEST_ROLE: inherits Manager, scoped to held roles.
+		_ensure_user(USER_ADMIN, roles=(JARVIS_ADMIN_ROLE, TEST_ROLE))
 		_ensure_user(USER_SM, roles=("System Manager",))
+		# USER_PLAIN stands for a user WITHOUT Jarvis app access. Fixtures persist
+		# across runs and the one-time grant patch may have granted "Jarvis User",
+		# so strip every Jarvis/curator role to exercise the no-access case
+		# (reads Org, writes nothing).
+		frappe.db.delete("Has Role", {
+			"parenttype": "User", "parent": USER_PLAIN,
+			"role": ["in", (JARVIS_USER_ROLE, JARVIS_ADMIN_ROLE, wiki_permissions.WIKI_MANAGER_ROLE)],
+		})
+		frappe.clear_cache(user=USER_PLAIN)
+		frappe.db.commit()
 
 	def setUp(self):
 		super().setUp()
@@ -147,14 +165,13 @@ class WikiPermTestCase(FrappeTestCase):
 # --------------------------------------------------------------------------- #
 class TestScopeModel(WikiPermTestCase):
 	def test_wiki_roles_seeded_idempotently(self):
-		from jarvis.permissions import JARVIS_ADMIN_ROLE, JARVIS_USER_ROLE
-
 		learning_roles.after_migrate()
 		learning_roles.after_migrate()
-		# after_migrate seeds the wiki roles AND the app-access / tenant-admin
-		# roles (jarvis.permissions), all idempotent + desk-access.
+		# after_migrate seeds the wiki curator role AND the app-access /
+		# tenant-admin roles (jarvis.permissions), all idempotent + desk-access.
+		# "Knowledge Wiki User" is retired and no longer seeded.
 		for role in (
-			wiki_permissions.WIKI_USER_ROLE, wiki_permissions.WIKI_MANAGER_ROLE,
+			wiki_permissions.WIKI_MANAGER_ROLE,
 			JARVIS_USER_ROLE, JARVIS_ADMIN_ROLE,
 		):
 			self.assertTrue(frappe.db.exists("Role", role))
@@ -348,26 +365,34 @@ class TestVisibility(WikiPermTestCase):
 class TestWriteMatrix(WikiPermTestCase):
 	def test_org_pages_are_sm_only(self):
 		self.assertTrue(wiki_permissions.can_edit_page(self.org_page, USER_SM))
-		for user in (USER_PLAIN, USER_KW, USER_KW_MGR):
+		# Jarvis Admin inherits Manager, NOT SM — Org stays SM-only.
+		for user in (USER_PLAIN, USER_KW, USER_KW_MGR, USER_ADMIN):
 			self.assertFalse(wiki_permissions.can_edit_page(self.org_page, user), user)
 
 	def test_role_pages_need_manager_holding_the_role(self):
 		self.assertTrue(wiki_permissions.can_edit_page(self.role_page, USER_KW_MGR))
-		# manager without the target role
+		# Jarvis Admin inherits Manager, scoped to the roles it actually holds.
+		self.assertTrue(wiki_permissions.can_edit_page(self.role_page, USER_ADMIN))
+		# manager/admin without the target role
 		self.assertFalse(wiki_permissions.can_edit_page(self.other_role_page, USER_KW_MGR))
-		# role holder without the manager role
+		self.assertFalse(wiki_permissions.can_edit_page(self.other_role_page, USER_ADMIN))
+		# role/plain user without the manager or admin role
 		self.assertFalse(wiki_permissions.can_edit_page(self.role_page, USER_KW))
 		self.assertFalse(wiki_permissions.can_edit_page(self.role_page, USER_PLAIN))
 		self.assertTrue(wiki_permissions.can_edit_page(self.other_role_page, USER_SM))
 
-	def test_user_pages_need_target_user_with_kw_role(self):
+	def test_user_pages_editable_by_target_jarvis_user(self):
+		# my_page.target_user == USER_KW (a plain Jarvis User): own-page editing
+		# now rides Jarvis User (Knowledge Wiki User retired).
 		self.assertTrue(wiki_permissions.can_edit_page(self.my_page, USER_KW))
 		self.assertTrue(wiki_permissions.can_edit_page(self.their_page, USER_KW_MGR))
 		# not the target, even with a manager role
 		self.assertFalse(wiki_permissions.can_edit_page(self.my_page, USER_KW_MGR))
 		self.assertTrue(wiki_permissions.can_edit_page(self.my_page, USER_SM))
 
-	def test_target_user_without_kw_role_cannot_edit(self):
+	def test_target_user_without_jarvis_user_cannot_edit(self):
+		# USER_PLAIN holds no Jarvis role: reads their own page (target
+		# visibility) but cannot write it — own-page editing needs Jarvis User.
 		page = _make_page(
 			f"people--{SLUG_MARK}-plain", "People", scope="User", target_user=USER_PLAIN
 		)
@@ -376,7 +401,7 @@ class TestWriteMatrix(WikiPermTestCase):
 
 	def test_archive_mirrors_edit(self):
 		for page in (self.org_page, self.role_page, self.my_page):
-			for user in (USER_PLAIN, USER_KW, USER_KW_MGR, USER_SM):
+			for user in (USER_PLAIN, USER_KW, USER_KW_MGR, USER_ADMIN, USER_SM):
 				self.assertEqual(
 					wiki_permissions.can_archive_page(page, user),
 					wiki_permissions.can_edit_page(page, user),
@@ -388,15 +413,21 @@ class TestWriteMatrix(WikiPermTestCase):
 			wiki_permissions.creatable_scopes(USER_SM), ["Org", "Role", "User"]
 		)
 		self.assertEqual(wiki_permissions.creatable_scopes(USER_KW_MGR), ["Role", "User"])
+		# Jarvis Admin inherits Manager -> Role + User.
+		self.assertEqual(wiki_permissions.creatable_scopes(USER_ADMIN), ["Role", "User"])
+		# Plain Jarvis User -> own (User) pages only.
 		self.assertEqual(wiki_permissions.creatable_scopes(USER_KW), ["User"])
 		self.assertEqual(wiki_permissions.creatable_scopes(USER_PLAIN), [])
 
 	def test_manageable_roles(self):
 		# framework/blanket roles are never targetable: "Desk User" is
-		# effectively everyone with a login (an org-wide side door)
+		# effectively everyone with a login (an org-wide side door), and the
+		# platform "Jarvis User"/"Jarvis Admin" roles are excluded for the same
+		# reason.
 		blocked_roles = (
 			"Administrator", "Guest", "All",
 			"Desk User", "System Manager", "Website Manager",
+			JARVIS_USER_ROLE, JARVIS_ADMIN_ROLE,
 		)
 		sm_roles = wiki_permissions.manageable_roles(USER_SM)
 		self.assertIn(TEST_ROLE, sm_roles)
@@ -409,6 +440,14 @@ class TestWriteMatrix(WikiPermTestCase):
 		self.assertNotIn(OTHER_ROLE, mgr_roles)
 		for blocked in blocked_roles:
 			self.assertNotIn(blocked, mgr_roles)
+
+		# Jarvis Admin inherits Manager: targets roles it holds (TEST_ROLE), and
+		# never the blanket platform roles it also holds.
+		admin_roles = wiki_permissions.manageable_roles(USER_ADMIN)
+		self.assertIn(TEST_ROLE, admin_roles)
+		self.assertNotIn(OTHER_ROLE, admin_roles)
+		for blocked in blocked_roles:
+			self.assertNotIn(blocked, admin_roles)
 
 		self.assertEqual(wiki_permissions.manageable_roles(USER_KW), [])
 		self.assertEqual(wiki_permissions.manageable_roles(USER_PLAIN), [])
