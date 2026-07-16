@@ -245,6 +245,59 @@ class TestSnapshotZip(_AppLearningTestCase):
 		with self.assertRaises(FileNotFoundError):
 			app_analysis._snapshot_zip("test-missing-run", "fakeapp")
 
+	def test_symlink_escape_is_not_followed(self):
+		# Review P1 (security): a symlink whose target is OUTSIDE the app tree
+		# (e.g. site secrets) must never be zipped/shipped to the LLM.
+		outside = os.path.join(self.tmp, "secret.py")
+		with open(outside, "w") as fh:
+			fh.write("ENCRYPTION_KEY = 'hunter2'\n")
+		self._write({"hooks.py": "app_title = 'Fake'\n"})
+		# an in-app symlink pointing at the out-of-tree secret, with an
+		# allow-listed extension
+		link = os.path.join(self.app_dir, "config.py")
+		os.symlink(outside, link)
+		snap = app_analysis._snapshot_zip("test-symlink-run", "fakeapp")
+		self._zips.append(snap["zip_path"])
+		import zipfile
+
+		with zipfile.ZipFile(snap["zip_path"]) as zf:
+			members = set(zf.namelist())
+			blob = b"".join(zf.read(n) for n in members)
+		self.assertNotIn("config.py", members)
+		self.assertNotIn(b"hunter2", blob)
+		self.assertEqual(snap["notes"]["skipped_symlinks"], 1)
+
+	def test_symlinked_directory_is_not_descended(self):
+		outside_dir = os.path.join(self.tmp, "outside")
+		os.makedirs(outside_dir)
+		with open(os.path.join(outside_dir, "leak.py"), "w") as fh:
+			fh.write("SECRET = 'zzz'\n")
+		self._write({"hooks.py": "h\n"})
+		os.symlink(outside_dir, os.path.join(self.app_dir, "linkdir"))
+		snap = app_analysis._snapshot_zip("test-symlinkdir-run", "fakeapp")
+		self._zips.append(snap["zip_path"])
+		import zipfile
+
+		with zipfile.ZipFile(snap["zip_path"]) as zf:
+			blob = b"".join(zf.read(n) for n in zf.namelist())
+		self.assertNotIn(b"zzz", blob)
+
+	def test_report_and_fixture_json_outrank_js_and_md(self):
+		# Review P2: report scripts + fixture/workflow JSON carry business logic
+		# and must sit above js/vue/md in the priority order.
+		self.assertLess(
+			app_analysis._priority("m/report/sales/sales.py"),
+			app_analysis._priority("public/js/app.js"),
+		)
+		self.assertLess(
+			app_analysis._priority("m/fixtures/workflow.json"),
+			app_analysis._priority("README.md"),
+		)
+		self.assertLess(
+			app_analysis._priority("m/workflow/approval/approval.json"),
+			app_analysis._priority("public/app.vue"),
+		)
+
 
 # --------------------------------------------------------------------------- #
 # batch planning
@@ -499,34 +552,39 @@ class TestIngest(_AppLearningTestCase):
 		self.assertEqual(len(rows), 1)
 		self.assertEqual(rows[0].owner, ADMIN_USER)
 		self.assertEqual(rows[0].scope, "Org")
-		self.assertEqual(rows[0].enabled, 1)
+		# Quarantined: created DISABLED, pending admin review before it goes
+		# org-wide (untrusted app source drives the instructions).
+		self.assertEqual(rows[0].enabled, 0)
 		self.assertEqual(rows[0].user_invocable, 1)
 
-	def test_skill_deferred_when_org_push_at_cap(self):
+	def test_skills_always_created_disabled_pending_review(self):
+		# Quarantine (review P1): ingested Org skills are ALWAYS created disabled
+		# — the org push being under its 25-slot cap does NOT auto-enable them,
+		# because their instructions are derived from untrusted app source.
 		payload = {
 			"wiki_pages": [],
 			"skills": [{
-				"skill_name": "fakeapp-deferred",
+				"skill_name": "fakeapp-quarantined",
 				"description": "d",
 				"instructions": "i",
 				"user_invocable": False,
 			}],
 			"summary": "s",
 		}
-		self._skills.append("fakeapp-deferred")
+		self._skills.append("fakeapp-quarantined")
 		run = self._ingesting_run(payload)
-		fake_full = [{"slug": f"custom-s{i}"} for i in range(25)]
+		# push is WELL under the cap — old code would have enabled it.
 		with mock.patch("jarvis.chat.wiki.apply_extracted_page_updates", return_value=(0, 0)), \
-			mock.patch("jarvis.chat.custom_skills.build_push_payload", return_value=fake_full), \
+			mock.patch("jarvis.chat.custom_skills.build_push_payload", return_value=[]), \
 			mock.patch("jarvis.chat.events.publish_to_user"), \
 			mock.patch.object(app_analysis, "_enqueue_tick"):
 			app_analysis.ingest(run.name)
 		run.reload()
 		self.assertEqual(run.status, "Completed")
-		self.assertEqual(run.skills_created, 0)
-		self.assertEqual(run.skills_deferred, 1)
+		self.assertEqual(run.skills_created, 1)
+		self.assertEqual(run.skills_deferred, 0)
 		rows = frappe.get_all(
-			SKILL, filters={"skill_name": "fakeapp-deferred"}, fields=["enabled"]
+			SKILL, filters={"skill_name": "fakeapp-quarantined"}, fields=["enabled"]
 		)
 		self.assertEqual(len(rows), 1)
 		self.assertEqual(rows[0].enabled, 0)
@@ -589,6 +647,35 @@ class TestIngest(_AppLearningTestCase):
 # --------------------------------------------------------------------------- #
 # scheduling: one active run bench-wide + stale recovery + cleanup
 # --------------------------------------------------------------------------- #
+class TestStartRun(_AppLearningTestCase):
+	def test_batch_turns_dispatch_at_background_priority(self):
+		# Review P1 (day-to-day): analysis turns must not jump ahead of a real
+		# user's chat — they dispatch at background priority (interactive=False).
+		self._write({"hooks.py": "h\n", "mod/api.py": "import frappe\n"})
+		run = self._mk_run()
+		with mock.patch("jarvis.chat.api._enqueue_turn") as enq:
+			app_analysis.start_run(run.name)
+		run.reload()
+		self._convs.append(run.conversation)
+		self._zips.append(run.zip_path)
+		self.assertEqual(enq.call_args.kwargs.get("interactive"), False)
+
+	def test_zip_path_persisted_before_plan_so_a_plan_failure_leaves_no_orphan(self):
+		# Review P2: if planning fails after a successful snapshot, the run must
+		# be Failed WITH its zip_path recorded so _cleanup_zips can reclaim it.
+		self._write({"hooks.py": "h\n"})
+		run = self._mk_run()
+		with mock.patch.object(
+			app_analysis, "_manifest_from_zip", side_effect=RuntimeError("boom")
+		):
+			app_analysis.start_run(run.name)
+		run.reload()
+		self.assertEqual(run.status, "Failed")
+		self.assertTrue(run.zip_path)  # recorded despite the failure
+		self.assertTrue(os.path.isfile(run.zip_path))
+		self._zips.append(run.zip_path)
+
+
 class TestScheduling(_AppLearningTestCase):
 	def test_single_active_run_serializes_the_queue(self):
 		active = self._mk_run(status="Analyzing", conversation="conv-serial-x")
