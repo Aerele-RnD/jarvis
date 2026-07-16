@@ -12,9 +12,9 @@ Human write matrix (SPA create/save/archive; Desk edits are role-perm
 limited to System Manager anyway):
 
   * Org: System Manager only.
-  * Role: Knowledge Wiki Manager holding that role, or SM (any role).
-  * User: the target user themselves when they hold Knowledge Wiki
-    User/Manager, or SM.
+  * Role: Knowledge Wiki Manager (or Jarvis Admin, which inherits it) holding
+    that role, or SM (any role).
+  * User: the target user themselves, as any Jarvis User, or SM.
 
 The LLM channel (``update_wiki`` tool + ingest) deliberately bypasses this
 matrix for Org pages — any desk user feeds the org wiki through the
@@ -30,15 +30,23 @@ from __future__ import annotations
 
 import frappe
 
+from jarvis.permissions import JARVIS_ADMIN_ROLE, JARVIS_USER_ROLE
+
 WIKI = "Jarvis Wiki Page"
 
-WIKI_USER_ROLE = "Knowledge Wiki User"
+# The dedicated wiki curator role. "Knowledge Wiki User" was RETIRED (patch
+# v1_16): personal (User-scope) editing now rides the platform "Jarvis User"
+# role every app user holds. "Jarvis Admin" INHERITS the curator role (see
+# _is_wiki_manager), so tenant admins curate by default while the Manager role
+# can still be granted on its own to a non-admin (separation of duties).
 WIKI_MANAGER_ROLE = "Knowledge Wiki Manager"
 
 # Never offered as a Role-scope audience (mirrors agents_api's selectable
 # set). Framework/blanket roles are excluded too: "Desk User" (and kin) is
-# effectively everyone with a login, so targeting it would let a KW Manager
+# effectively everyone with a login, so targeting it would let a curator
 # publish org-wide through a side door the write matrix reserves for SMs.
+# "Jarvis User"/"Jarvis Admin" are excluded for the same reason (the former is
+# every app user, the latter the blanket admin tier — like System Manager).
 _NON_TARGETABLE_ROLES = (
 	"Administrator",
 	"Guest",
@@ -46,6 +54,8 @@ _NON_TARGETABLE_ROLES = (
 	"Desk User",
 	"System Manager",
 	"Website Manager",
+	JARVIS_USER_ROLE,
+	JARVIS_ADMIN_ROLE,
 )
 
 # ptypes that reveal page content; everything read-shaped maps to visibility.
@@ -56,6 +66,21 @@ def _is_sm(user: str) -> bool:
 	# Administrator's get_roles returns every Role, so the explicit check is
 	# just a shortcut; both spellings of "full access" land here.
 	return user == "Administrator" or "System Manager" in frappe.get_roles(user)
+
+
+def _is_wiki_manager(roles) -> bool:
+	"""Curator rights (Role-scope pages): the dedicated ``Knowledge Wiki
+	Manager`` role, OR ``Jarvis Admin`` which inherits it — admins curate by
+	default, but the Manager role can still be granted on its own to a non-admin
+	(keeps the admin identity separable from the content-editing duty)."""
+	return WIKI_MANAGER_ROLE in roles or JARVIS_ADMIN_ROLE in roles
+
+
+def _is_wiki_user(roles) -> bool:
+	"""Own (User-scope) page editing: any Jarvis app user. ``Knowledge Wiki
+	User`` was retired and folded into ``Jarvis User``; managers/admins hold the
+	app role too, so they qualify as well."""
+	return JARVIS_USER_ROLE in roles or _is_wiki_manager(roles)
 
 
 def _get(page, field: str):
@@ -91,14 +116,12 @@ def can_edit_page(page, user: str | None = None) -> bool:
 	if scope == "Role":
 		target_role = _get(page, "target_role")
 		return (
-			WIKI_MANAGER_ROLE in roles
+			_is_wiki_manager(roles)
 			and bool(target_role)
 			and target_role in roles
 		)
 	if scope == "User":
-		return (_get(page, "target_user") or "") == user and bool(
-			roles & {WIKI_USER_ROLE, WIKI_MANAGER_ROLE}
-		)
+		return (_get(page, "target_user") or "") == user and _is_wiki_user(roles)
 	# Org pages: System Manager only.
 	return False
 
@@ -116,16 +139,17 @@ def creatable_scopes(user: str | None = None) -> list[str]:
 		return ["Org", "Role", "User"]
 	roles = set(frappe.get_roles(user))
 	out: list[str] = []
-	if WIKI_MANAGER_ROLE in roles:
+	if _is_wiki_manager(roles):
 		out.append("Role")
-	if roles & {WIKI_USER_ROLE, WIKI_MANAGER_ROLE}:
+	if _is_wiki_user(roles):
 		out.append("User")
 	return out
 
 
 def manageable_roles(user: str | None = None) -> list[str]:
-	"""Roles the user may target for Role-scope pages: a Knowledge Wiki
-	Manager targets roles they hold; SM targets any enabled desk role."""
+	"""Roles the user may target for Role-scope pages: a curator (Knowledge Wiki
+	Manager, or Jarvis Admin which inherits it) targets roles they hold; SM
+	targets any enabled desk role."""
 	user = user or frappe.session.user
 	if _is_sm(user):
 		return [
@@ -138,9 +162,10 @@ def manageable_roles(user: str | None = None) -> list[str]:
 			)
 			if r not in _NON_TARGETABLE_ROLES
 		]
-	if WIKI_MANAGER_ROLE not in frappe.get_roles(user):
+	roles = set(frappe.get_roles(user))
+	if not _is_wiki_manager(roles):
 		return []
-	return sorted(set(frappe.get_roles(user)) - set(_NON_TARGETABLE_ROLES))
+	return sorted(roles - set(_NON_TARGETABLE_ROLES))
 
 
 def visible_scope_condition(user: str | None = None) -> str:

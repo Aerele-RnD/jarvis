@@ -12,9 +12,10 @@ Scopes (wiki v2): optional ``scope`` — "Org" (default) or "User".
   org pages through this confirm-gated tool (the human write matrix only
   governs the SPA/desk channel), so writes go ``ignore_permissions=True``
   behind the explicit checks here + the controller sanitizer.
-- User scope requires the Knowledge Wiki User/Manager (or System Manager)
-  role and always targets the CALLER's personal namespace: ``target_user``
-  is forced to the session user and the controller suffixes the slug
+- User scope requires app access (any ``Jarvis User``; the old Knowledge Wiki
+  User role was retired) and always targets the CALLER's personal namespace:
+  ``target_user`` is forced to the session user and the controller suffixes
+  the slug
   (``<slug>--u-…``), so follow-up calls with the original base slug resolve
   back to the same personal page.
 - Updating an existing Role/User page (by exact slug) follows the human
@@ -26,12 +27,17 @@ import frappe
 from jarvis.chat import wiki_permissions
 from jarvis.chat.wiki import PAGE_TYPES, append_source
 from jarvis.exceptions import InvalidArgumentError, PermissionDeniedError
+from jarvis.permissions import JARVIS_ADMIN_ROLE, JARVIS_USER_ROLE
 
 WIKI = "Jarvis Wiki Page"
 
 _SCOPES = ("Org", "User")
+# User-scope writes now ride the platform "Jarvis User" role (Knowledge Wiki
+# User retired); Manager/Admin/SM hold or supersede it. Mirrors
+# wiki_permissions._is_wiki_user.
 _USER_SCOPE_ROLES = frozenset({
-	"Knowledge Wiki User", "Knowledge Wiki Manager", "System Manager",
+	JARVIS_USER_ROLE, JARVIS_ADMIN_ROLE,
+	wiki_permissions.WIKI_MANAGER_ROLE, "System Manager",
 })
 
 
@@ -80,8 +86,7 @@ def update_wiki(
 	"""Create or update the wiki page ``slug``. ``append_md`` appends a
 	section to the existing body (preferred); ``replace_body_md`` rewrites it.
 	``scope="User"`` writes the caller's personal page instead of the org
-	wiki (Knowledge Wiki role required). Returns a compact summary of the
-	saved page."""
+	wiki (any Jarvis User). Returns a compact summary of the saved page."""
 	_require_system_user()
 	user = frappe.session.user
 
@@ -108,8 +113,8 @@ def update_wiki(
 		return {
 			"ok": False,
 			"reason": (
-				"personal (User-scope) wiki pages require the Knowledge Wiki "
-				"User or Knowledge Wiki Manager role"
+				"personal (User-scope) wiki pages require Jarvis app access "
+				"(the Jarvis User role)"
 			),
 		}
 
