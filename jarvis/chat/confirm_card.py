@@ -184,9 +184,10 @@ def _update_card(args: dict, would) -> dict:
 		df = meta.get_field(key) if meta else None
 		if same_value(from_val, to_val, df):
 			continue  # the save would not change the stored value
-		diff.append({
-			"label": _label(meta, key), "from": fmt(from_val, df, doc),
-			"to": fmt(to_val, df)})
+		from_s, to_s = fmt(from_val, df, doc), fmt(to_val, df)
+		if is_secret(meta, key):
+			from_s = to_s = "[hidden]"  # never render a password / secret value
+		diff.append({"label": _label(meta, key), "from": from_s, "to": to_s})
 		if len(diff) >= _MAX_ROWS:
 			break
 	title = ""

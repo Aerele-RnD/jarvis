@@ -98,10 +98,11 @@ def fmt(value, df=None, doc=None, limit: int = _MAX_VAL) -> str:
 
 
 def _cast_date(value):
-	# getdate(None) and getdate("") return TODAY (frappe/utils/data.py:125-126), so
-	# a bare getdate would make "set the due date to today" on an unset field compare
-	# equal to itself and VANISH from the card. Empties must stay empty.
-	if value in (None, ""):
+	# getdate() returns TODAY for ANY falsy input (frappe/utils/data.py:125-126), so a
+	# bare getdate would make "set the due date to today" on an unset field compare
+	# equal to itself and VANISH from the card. `not value` rather than `in (None, "")`
+	# so 0/False take the same branch instead of silently becoming today.
+	if not value:
 		return None
 	return getdate(value)
 
@@ -109,7 +110,7 @@ def _cast_date(value):
 def _cast_datetime(value):
 	# get_datetime(None) returns now() (data.py:164-165) - two calls microseconds
 	# apart are unequal, so None vs None would render a phantom "(empty) -> (empty)".
-	if value in (None, ""):
+	if not value:
 		return None
 	out = get_datetime(value)
 	if out is None:

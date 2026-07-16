@@ -41,7 +41,7 @@ function tableNote(t) {
 			<dl v-if="card.rows.length" class="jv-pcard-fields">
 				<template v-for="(r, i) in card.rows" :key="i"><dt>{{ r.label }}</dt><dd>{{ r.value }}</dd></template>
 			</dl>
-			<div v-else class="jv-pcard-empty">No fields set.</div>
+			<div v-else-if="!(card.tables || []).length" class="jv-pcard-empty">No fields set.</div>
 			<!-- proposed child tables: "5 rows" would hide an invoice's line items -->
 			<div v-for="(t, ti) in (card.tables || [])" :key="'t' + ti" class="jv-pcard-table">
 				<div class="jv-pcard-table-head">{{ t.label }} · {{ t.count }} row<template v-if="t.count !== 1">s</template></div>

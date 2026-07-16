@@ -239,6 +239,19 @@ from unittest.mock import patch
 
 
 class TestPhase1Rewire(FrappeTestCase):
+	def test_update_card_masks_a_secret_named_field(self):
+		# The single-update card had no is_secret call while the BULK card masked by
+		# key name - so a Data field named api_token rendered plaintext on one card
+		# and [hidden] on the other for the identical change.
+		todo = frappe.get_doc({"doctype": "ToDo", "description": "x"}).insert(
+			ignore_permissions=True)
+		card = build_card(
+			"update_doc",
+			{"doctype": "ToDo", "name": todo.name, "changes": {"api_token": "sk-live-999"}},
+			{"would": {"api_token": "sk-live-999"}})
+		self.assertNotIn("sk-live-999", str(card))
+		self.assertTrue(all(d["to"] == "[hidden]" for d in card["diff"]))
+
 	def test_update_card_renders_a_real_change(self):
 		# Baseline shape check. NOT a no-op test - a text change passes against the
 		# old raw comparison too. The cast-compare logic is covered at the unit level

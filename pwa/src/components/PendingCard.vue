@@ -37,7 +37,7 @@ function tableNote(t) {
 		<template v-if="card.kind === 'create'">
 			<div class="jv-pc-head">Create {{ card.doctype }}<template v-if="card.name"> · {{ card.name }}</template></div>
 			<div v-for="(r, i) in card.rows" :key="i" class="jv-pc-kv"><span>{{ r.label }}</span><b>{{ r.value }}</b></div>
-			<div v-if="!card.rows.length" class="jv-pc-empty">No fields set.</div>
+			<div v-if="!card.rows.length && !(card.tables || []).length" class="jv-pc-empty">No fields set.</div>
 			<div v-for="(t, ti) in (card.tables || [])" :key="'t' + ti" class="jv-pc-table">
 				<div class="jv-pc-table-head">{{ t.label }} · {{ t.count }} row<template v-if="t.count !== 1">s</template></div>
 				<div class="jv-pc-table-scroll">
