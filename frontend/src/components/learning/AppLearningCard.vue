@@ -5,8 +5,8 @@
 			<div class="text-base font-semibold text-ink-gray-9">Learn from custom apps</div>
 			<div class="mt-0.5 text-sm text-ink-gray-6">
 				Teach Jarvis the workflows your custom apps implement. One-time, token-intensive
-				analysis; findings are written straight to the Org wiki and can become org-wide
-				skills.
+				analysis; findings are written straight to the Org wiki and can be proposed as
+				org-wide skills for your review.
 			</div>
 
 			<!-- first load -->
@@ -409,10 +409,29 @@ function refreshAll() {
 defineExpose({ reload: refreshAll })
 
 // ── realtime (app_learning:update / app_learning:done → refetch both) ────────
-function onEvent(p) {
-	if (!p || (p.kind !== "app_learning:update" && p.kind !== "app_learning:done")) return
+// Both refetches are non-jarring: loadOverview only shows the spinner before
+// first paint (loading && !loaded), and refresh() is the silent keep-window
+// refetch - so an :update frame just advances the progress strip + the
+// Progress column in place. `update` frames (one per batch advance) are
+// trailing-debounced so a burst schedules a single refetch; `done` flushes
+// immediately (terminal state should land right away).
+let updateTimer = null
+function refreshFromEvent() {
 	loadOverview()
 	runsList.value && runsList.value.refresh() // silent window refetch
+}
+function onEvent(p) {
+	if (!p || (p.kind !== "app_learning:update" && p.kind !== "app_learning:done")) return
+	clearTimeout(updateTimer)
+	updateTimer = null
+	if (p.kind === "app_learning:done") {
+		refreshFromEvent()
+		return
+	}
+	updateTimer = setTimeout(() => {
+		updateTimer = null
+		refreshFromEvent()
+	}, 300)
 }
 
 onMounted(() => {
@@ -420,6 +439,7 @@ onMounted(() => {
 	socket && socket.on && socket.on("jarvis:event", onEvent)
 })
 onBeforeUnmount(() => {
+	clearTimeout(updateTimer)
 	socket && socket.off && socket.off("jarvis:event", onEvent)
 })
 </script>

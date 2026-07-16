@@ -30,11 +30,7 @@
 			:selectable="false"
 			:on-row-click="openRow"
 			storage-key="app-learning-runs"
-			:empty-state="{
-				icon: 'package',
-				title: 'No analysis runs yet',
-				description: 'Runs appear here once you analyze a custom app.',
-			}"
+			:empty-state="emptyState"
 			@update:filters="setFilters"
 			@update:sort="(s) => setSort(s.field, s.dir)"
 			@update:page-length="(v) => (pageLength = v)"
@@ -271,6 +267,26 @@ const {
 	defaultSort: DEFAULT_SORT,
 	storageKey: "app-learning-runs",
 })
+
+// zero rows reads differently under an active search/filter (the AgentsList /
+// ReviewTab decided-log empty-state pattern): "no matches" vs the true blank
+// slate. All active criteria live in `filters` - the search quick filter rides
+// it too (key "search"), and setFilters strips empty values, so any key
+// present means something is narrowing the list.
+const filtersActive = computed(() => Object.keys(filters).length > 0)
+const emptyState = computed(() =>
+	filtersActive.value
+		? {
+				icon: "search",
+				title: "No runs match",
+				description: "Try clearing the search or filters.",
+			}
+		: {
+				icon: "package",
+				title: "No analysis runs yet",
+				description: "Runs appear here once you analyze a custom app.",
+			}
+)
 
 // reload = hard reset to page 1 (after user actions); refresh = silent
 // refetch of the loaded window (realtime frames) - both driven by the card.
