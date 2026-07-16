@@ -217,7 +217,7 @@
             <div class="jv-pool-lab">Connected accounts ({{ panelRow.accounts.length }})</div>
             <div class="jv-pool-acctlist">
               <div v-for="(a, ai) in panelRow.accounts" :key="a.account_ref || ai" class="jv-pool-acctchip">
-                <span class="jv-pool-avatar">{{ (accountLabel(a) || '?').charAt(0).toUpperCase() }}</span>
+                <ProviderLogo :upstream="panelRow.upstream" :size="18" />
                 <span class="jv-pool-accttx">{{ accountLabel(a) }}</span>
                 <span class="jv-pool-dot" :class="'jv-pool-dot--' + accountHealth(panelRow).level" aria-hidden="true"></span>
                 <span v-if="accountHealth(panelRow).label" class="jv-pool-acct-health" :class="'jv-pool-acct-health--' + accountHealth(panelRow).level" :title="accountHealth(panelRow).title">{{ accountHealth(panelRow).label }}</span>
@@ -445,7 +445,10 @@
                  are provider-specific), so reselecting the CURRENT provider must
                  be a no-op rather than wiping a finished OAuth connect. -->
             <JvCombo :model-value="m.upstream" @update:model-value="(v) => { if (v === m.upstream) return; m.upstream = v; onUpstreamChange(m) }"
-                     :options="upstreamOpts" :editable="editable" placeholder="Provider" />
+                     :options="upstreamOpts" :editable="editable" placeholder="Provider">
+              <template #option="{ option }"><span style="display:inline-flex;align-items:center;gap:8px"><ProviderLogo :upstream="option.value" :size="16" />{{ option.label }}</span></template>
+              <template #selected="{ label, placeholder }"><span style="display:inline-flex;align-items:center;gap:8px"><ProviderLogo v-if="m.upstream" :upstream="m.upstream" :size="16" />{{ label || placeholder }}</span></template>
+            </JvCombo>
           </div>
 
           <!-- Connected accounts -->
@@ -453,7 +456,7 @@
             <div class="jv-pool-lab">Connected accounts ({{ m.accounts.length }})</div>
             <div class="jv-pool-acctlist">
               <div v-for="(a, ai) in m.accounts" :key="a.account_ref || ai" class="jv-pool-acctchip">
-                <span class="jv-pool-avatar">{{ (accountLabel(a) || '?').charAt(0).toUpperCase() }}</span>
+                <ProviderLogo :upstream="m.upstream" :size="18" />
                 <span class="jv-pool-accttx">{{ accountLabel(a) }}</span>
                 <span class="jv-pool-dot" :class="'jv-pool-dot--' + accountHealth(m).level" aria-hidden="true"></span>
                 <span v-if="accountHealth(m).label" class="jv-pool-acct-health" :class="'jv-pool-acct-health--' + accountHealth(m).level" :title="accountHealth(m).title">{{ accountHealth(m).label }}</span>
