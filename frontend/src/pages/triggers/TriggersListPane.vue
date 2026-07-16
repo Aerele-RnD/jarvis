@@ -60,14 +60,22 @@
 			/>
 		</template>
 
+		<!-- custom #cell slots bypass ListRowItem's Tooltip wrapper, so each
+		     truncating cell carries a native title to keep the full value
+		     recoverable on hover -->
 		<template #cell-trigger_name="{ row }">
-			<div class="truncate text-base font-medium text-ink-gray-8">
+			<div
+				class="truncate text-base font-medium text-ink-gray-8"
+				:title="row.trigger_name || row.name"
+			>
 				{{ row.trigger_name || row.name }}
 			</div>
 		</template>
 
 		<template #cell-doc_event="{ row }">
-			<div class="truncate text-base text-ink-gray-7">{{ eventLabel(row.doc_event) }}</div>
+			<div class="truncate text-base text-ink-gray-7" :title="eventLabel(row.doc_event)">
+				{{ eventLabel(row.doc_event) }}
+			</div>
 		</template>
 
 		<template #cell-action_type="{ row }">
@@ -148,14 +156,16 @@ const ACTION_OPTIONS = [
 
 // Column budget: the list shares the tab with a 380px chat pane, so at a
 // 1440px viewport it only gets ~800px — fixed tracks are kept lean so the
-// minmax(0, Nfr) Name/DocType tracks keep real reading room. "Updated" is
-// deliberately not a default column (modified stays the default sort;
-// last_activity_at is the operationally useful timestamp here).
+// minmax(0, Nfr) Name/DocType tracks keep real reading room. Event gets
+// 10.5rem: the longest label ("Before Save (blockable)") must show its
+// qualifier, not clip at "(block…". "Updated" is deliberately not a default
+// column (modified stays the default sort; last_activity_at is the
+// operationally useful timestamp here).
 const columns = [
 	{ label: "On", key: "enabled", width: "3.5rem" },
 	{ label: "Name", key: "trigger_name", width: 2 },
 	{ label: "DocType", key: "target_doctype", width: 1 },
-	{ label: "Event", key: "doc_event", width: "7rem" },
+	{ label: "Event", key: "doc_event", width: "10.5rem" },
 	{ label: "Action", key: "action_type", width: "4.5rem" },
 	{ label: "24h", key: "activity_24h", width: "3rem", align: "center" },
 	{ label: "Last activity", key: "last_activity_at", width: "7.5rem" },

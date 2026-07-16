@@ -43,15 +43,24 @@
 				/>
 			</template>
 
+			<!-- custom #cell slots bypass ListRowItem's Tooltip wrapper, so each
+			     truncating cell carries a native title to keep the full value
+			     recoverable on hover -->
 			<template #cell-trigger_label="{ row }">
-				<div class="truncate text-base font-medium text-ink-gray-8">
+				<div
+					class="truncate text-base font-medium text-ink-gray-8"
+					:title="row.trigger_label || row.trigger"
+				>
 					{{ row.trigger_label || row.trigger }}
 				</div>
 			</template>
 
 			<template #cell-target="{ row }">
 				<div class="flex w-full min-w-0 items-center gap-1">
-					<span class="truncate text-base text-ink-gray-7">
+					<span
+						class="truncate text-base text-ink-gray-7"
+						:title="row.target_doctype + ' · ' + row.target_docname"
+					>
 						{{ row.target_doctype }} · {{ row.target_docname }}
 					</span>
 					<a
@@ -69,7 +78,9 @@
 			</template>
 
 			<template #cell-doc_event="{ row }">
-				<div class="truncate text-base text-ink-gray-7">{{ eventLabel(row.doc_event) }}</div>
+				<div class="truncate text-base text-ink-gray-7" :title="eventLabel(row.doc_event)">
+					{{ eventLabel(row.doc_event) }}
+				</div>
 			</template>
 
 			<template #cell-action_type="{ row }">
@@ -84,7 +95,9 @@
 			</template>
 
 			<template #cell-summary="{ row }">
-				<div class="truncate text-base text-ink-gray-7">{{ row.summary || "-" }}</div>
+				<div class="truncate text-base text-ink-gray-7" :title="row.summary || undefined">
+					{{ row.summary || "-" }}
+				</div>
 			</template>
 
 			<template #cell-creation="{ row }">
@@ -138,11 +151,13 @@ const ACTION_OPTIONS = [
 	{ label: "LLM", value: "LLM" },
 ]
 
+// Event gets 10.5rem so the longest label ("Before Save (blockable)") shows
+// its qualifier instead of clipping.
 const columns = [
 	{ label: "Status", key: "status", width: "6rem" },
 	{ label: "Trigger", key: "trigger_label", width: 2 },
 	{ label: "Target", key: "target", width: 2 },
-	{ label: "Event", key: "doc_event", width: "7rem" },
+	{ label: "Event", key: "doc_event", width: "10.5rem" },
 	{ label: "Action", key: "action_type", width: "5rem" },
 	{ label: "Summary", key: "summary", width: 2 },
 	{ label: "When", key: "creation", width: "7rem" },
@@ -254,13 +269,23 @@ watch(
 )
 
 // ── realtime: new activity rows land silently on an unfiltered page 1 ────────
+// Coalesced: a bulk save fires one trigger:activity frame per doc — the first
+// frame arms a 1.5s timer and the rest of the burst is absorbed into that one
+// list+stats refresh. The page-1/unfiltered guard is evaluated when the timer
+// fires (not when the frame lands), and stats only refetch for admins — the
+// only viewers whose stat strip renders.
 const unfilteredFirstPage = computed(
 	() => !Object.keys(filters).length && rows.value.length <= pageLength.value
 )
+let rtTimer = null
 function onEvent(p) {
 	if (!p || p.kind !== "trigger:activity") return
-	if (unfilteredFirstPage.value) refreshKeep()
-	loadStats()
+	if (rtTimer) return
+	rtTimer = setTimeout(() => {
+		rtTimer = null
+		if (unfilteredFirstPage.value) refreshKeep()
+		if (props.caps.can_manage) loadStats()
+	}, 1500)
 }
 
 onMounted(() => {
@@ -268,5 +293,6 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
 	socket && socket.off && socket.off("jarvis:event", onEvent)
+	clearTimeout(rtTimer)
 })
 </script>

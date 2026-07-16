@@ -1,5 +1,22 @@
 <template>
+	<!-- /triggers/new for a non-admin: the same friendly no-access state the
+	     Triggers tab shell uses, instead of a dead fully-disabled form. Gated
+	     on capsLoaded so admins never see it flash while the probe resolves. -->
+	<div
+		v-if="newDenied"
+		class="flex h-full flex-col items-center justify-center gap-3 px-8 text-center"
+	>
+		<FeatherIcon name="zap" class="size-7.5 text-ink-gray-5" />
+		<div class="flex flex-col items-center gap-1">
+			<span class="text-lg font-medium text-ink-gray-8">No access to create triggers</span>
+			<span class="text-p-base text-ink-gray-6">
+				Creating triggers requires the Jarvis Admin role.
+			</span>
+		</div>
+	</div>
+
 	<DocPage
+		v-else
 		:breadcrumbs="breadcrumbs"
 		:title="pageTitle"
 		:status-badge="statusBadge"
@@ -25,14 +42,19 @@
 			<!-- 1. Trigger -->
 			<DocSection label="Trigger">
 				<div class="space-y-4">
-					<FormControl
-						type="text"
-						label="Name"
-						placeholder="e.g. Big invoice warning"
-						:modelValue="form.trigger_name"
-						:disabled="readOnly || saving"
-						@update:modelValue="(v) => (form.trigger_name = v)"
-					/>
+					<div>
+						<FormControl
+							type="text"
+							label="Name"
+							required
+							placeholder="e.g. Big invoice warning"
+							:modelValue="form.trigger_name"
+							:disabled="readOnly || saving"
+							:aria-invalid="fieldErrors.trigger_name ? 'true' : undefined"
+							@update:modelValue="(v) => (form.trigger_name = v)"
+						/>
+						<ErrorMessage :message="fieldErrors.trigger_name" class="mt-2" />
+					</div>
 					<FormControl
 						type="textarea"
 						label="Description"
@@ -49,7 +71,13 @@
 						:disabled="readOnly || saving"
 					/>
 					<div>
-						<label class="mb-1.5 block text-xs text-ink-gray-5">DocType</label>
+						<!-- hand-rolled label (Autocomplete has no label prop): mirror
+						     FormLabel's required recipe - red asterisk + sr-only text -->
+						<label class="mb-1.5 block text-xs text-ink-gray-5">
+							DocType
+							<span class="select-none text-ink-red-3" aria-hidden="true">*</span>
+							<span class="sr-only">(required)</span>
+						</label>
 						<!-- Autocomplete (0.1.278) has no disabled prop - read-only /
 						     mid-save states swap in a disabled FormControl instead -->
 						<Autocomplete
@@ -66,20 +94,26 @@
 							:modelValue="form.target_doctype"
 							:disabled="true"
 						/>
+						<ErrorMessage :message="fieldErrors.target_doctype" class="mt-2" />
 					</div>
-					<FormControl
-						type="select"
-						label="Event"
-						:options="docEventOptions"
-						:modelValue="form.doc_event"
-						:disabled="readOnly || saving"
-						:description="
-							form.action_type === 'LLM'
-								? 'LLM actions support a reduced set of events.'
-								: ''
-						"
-						@update:modelValue="(v) => (form.doc_event = v)"
-					/>
+					<div>
+						<FormControl
+							type="select"
+							label="Event"
+							required
+							:options="docEventOptions"
+							:modelValue="form.doc_event"
+							:disabled="readOnly || saving"
+							:aria-invalid="fieldErrors.doc_event ? 'true' : undefined"
+							:description="
+								form.action_type === 'LLM'
+									? 'LLM actions support a reduced set of events.'
+									: ''
+							"
+							@update:modelValue="(v) => (form.doc_event = v)"
+						/>
+						<ErrorMessage :message="fieldErrors.doc_event" class="mt-2" />
+					</div>
 				</div>
 			</DocSection>
 
@@ -90,7 +124,7 @@
 						type="textarea"
 						:rows="4"
 						class="font-mono"
-						placeholder='doc.grand_total > 100000 and doc.status == "Paid"'
+						placeholder='(doc.grand_total or 0) > 100000 and doc.status == "Paid"'
 						:modelValue="form.condition"
 						:disabled="readOnly || saving"
 						@update:modelValue="(v) => (form.condition = v)"
@@ -98,7 +132,7 @@
 					<div class="text-p-sm text-ink-gray-5">
 						Optional webhook-style Python expression over <span class="font-mono">doc</span> -
 						the trigger fires only when it's true. Examples:
-						<span class="font-mono">doc.grand_total &gt; 100000</span> ·
+						<span class="font-mono">(doc.grand_total or 0) &gt; 100000</span> ·
 						<span class="font-mono">doc.status == "Overdue"</span>. Leave empty to fire on
 						every event.
 					</div>
@@ -290,6 +324,7 @@ import {
 	Button,
 	Dialog,
 	Dropdown,
+	ErrorMessage,
 	FeatherIcon,
 	FormControl,
 	Switch,
@@ -327,6 +362,11 @@ const caps = ref({
 	llm_events: [],
 })
 const readOnly = computed(() => !caps.value.can_manage)
+// /triggers/new is pointless read-only: once the probe settles, a non-admin
+// gets the shell's no-access state instead of a fully-disabled form. Gating
+// on capsLoaded keeps it from flashing at admins while the probe is in flight.
+const capsLoaded = ref(false)
+const newDenied = computed(() => props.isNew && capsLoaded.value && !caps.value.can_manage)
 
 // ── state ─────────────────────────────────────────────────────────────────────
 const loading = ref(false)
@@ -348,6 +388,19 @@ const form = reactive({
 // Saved-state copy for the dirty compare - a ref, per MacroDetail's lesson
 // (the computed must track it while the initial load is in flight).
 const snapshot = ref(null)
+
+// Inline required-field errors (design.md: ErrorMessage under the field, no
+// error prop on FormControl). Set all at once by save(); each clears itself
+// the moment its field gets a value.
+const fieldErrors = reactive({ trigger_name: "", target_doctype: "", doc_event: "" })
+watch(
+	() => [form.trigger_name, form.target_doctype, form.doc_event],
+	() => {
+		if (String(form.trigger_name || "").trim()) fieldErrors.trigger_name = ""
+		if (form.target_doctype) fieldErrors.target_doctype = ""
+		if (form.doc_event) fieldErrors.doc_event = ""
+	}
+)
 
 const dirty = computed(() => {
 	const snap = snapshot.value
@@ -502,6 +555,8 @@ onMounted(async () => {
 		if (fresh) caps.value = { ...caps.value, ...fresh }
 	} catch (e) {
 		// keep read-only defaults; a save attempt would fail server-side anyway
+	} finally {
+		capsLoaded.value = true
 	}
 	// seed the DocType picker so the dropdown opens populated
 	loadDoctypes("")
@@ -510,16 +565,22 @@ onMounted(async () => {
 // ── save (changed/known fields only) ─────────────────────────────────────────
 async function save() {
 	if (saving.value || !dirty.value || scriptSaveBlocked.value) return
-	if (!String(form.trigger_name || "").trim()) {
-		toast.error("Give the trigger a name.")
-		return
-	}
-	if (!form.target_doctype) {
-		toast.error("Pick a DocType.")
-		return
-	}
-	if (!form.doc_event) {
-		toast.error("Pick an event.")
+	// validate every required field AT ONCE: an inline ErrorMessage lands under
+	// each empty field, plus one combined toast (never one-toast-per-attempt)
+	fieldErrors.trigger_name = String(form.trigger_name || "").trim()
+		? ""
+		: "Give the trigger a name."
+	fieldErrors.target_doctype = form.target_doctype ? "" : "Pick a DocType."
+	fieldErrors.doc_event = form.doc_event ? "" : "Pick an event."
+	const missing = [
+		fieldErrors.trigger_name && "Name",
+		fieldErrors.target_doctype && "DocType",
+		fieldErrors.doc_event && "Event",
+	].filter(Boolean)
+	if (missing.length) {
+		toast.error(
+			`Fill in the required field${missing.length === 1 ? "" : "s"}: ${missing.join(", ")}.`
+		)
 		return
 	}
 	saving.value = true

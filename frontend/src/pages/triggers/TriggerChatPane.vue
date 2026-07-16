@@ -18,12 +18,13 @@
 			</div>
 		</div>
 
-		<!-- non-admin expectation note (the agent refuses server-side anyway) -->
+		<!-- non-admin note: the composer below is disabled for this reason (the
+		     agent would refuse server-side anyway - don't burn the round trip) -->
 		<div v-if="!caps.can_manage" class="shrink-0 px-4 pt-3">
 			<div class="flex items-start gap-2 rounded-md p-2 ring-1 ring-outline-gray-modals">
 				<FeatherIcon name="info" class="mt-0.5 size-4 shrink-0 text-ink-gray-5" />
 				<span class="text-xs text-ink-gray-7">
-					Creating triggers requires the Jarvis Admin role.
+					Creating triggers requires the Jarvis Admin role, so this chat is disabled.
 				</span>
 			</div>
 		</div>
@@ -98,7 +99,12 @@
 				:key="pa.token"
 				class="flex flex-col gap-2 rounded-md p-3 ring-1 ring-outline-gray-modals"
 			>
-				<span class="text-sm text-ink-gray-8">{{ pa.summary || "Confirm this action" }}</span>
+				<!-- human headline (+ detail line from the dry-run preview), never
+				     the raw "create_doc doctype=…" tool string -->
+				<div class="flex min-w-0 flex-col gap-0.5">
+					<span class="text-sm font-medium text-ink-gray-8">{{ cardTitle(pa) }}</span>
+					<span v-if="cardMeta(pa)" class="text-xs text-ink-gray-6">{{ cardMeta(pa) }}</span>
+				</div>
 				<div class="flex items-center gap-2">
 					<Button variant="solid" label="Approve" :loading="pa.busy" @click="approve(pa)" />
 					<Button variant="ghost" label="Dismiss" :disabled="pa.busy" @click="dismiss(pa)" />
@@ -106,26 +112,35 @@
 			</div>
 		</div>
 
-		<!-- composer: autosizing textarea + voice + send -->
+		<!-- composer: autosizing textarea + voice + send. Fully disabled for
+		     non-admins (the note above explains why): the agent refuses the
+		     request server-side anyway, so submitting would only burn a slow
+		     LLM round trip. -->
 		<div class="shrink-0 border-t px-4 py-3">
 			<div ref="box" @keydown="onKeydown" @input="autoGrow">
 				<FormControl
 					type="textarea"
 					:rows="2"
-					placeholder="Describe the trigger…"
+					:placeholder="
+						caps.can_manage ? 'Describe the trigger…' : 'Requires the Jarvis Admin role'
+					"
 					:modelValue="draft"
-					:disabled="sending"
+					:disabled="sending || !caps.can_manage"
 					@update:modelValue="(v) => (draft = v)"
 				/>
 			</div>
 			<div class="mt-2 flex items-center justify-between gap-2">
 				<div class="flex items-center gap-1.5">
-					<VoiceRecorder v-if="caps.stt_enabled" compact @transcript="onTranscript" />
+					<VoiceRecorder
+						v-if="caps.stt_enabled && caps.can_manage"
+						compact
+						@transcript="onTranscript"
+					/>
 				</div>
 				<Button
 					variant="solid"
 					label="Send"
-					:disabled="!draft.trim()"
+					:disabled="!draft.trim() || !caps.can_manage"
 					:loading="sending"
 					@click="send"
 				/>
@@ -162,8 +177,9 @@ import { session } from "@/data/session"
 import { sendTriggerChat, getTriggerConversation } from "@/api/triggers"
 import { listPendingConfirmations, confirmTool, dismissTool } from "@/api"
 
-// get_triggers_caps payload (can_manage gates the note, stt_enabled the mic)
-defineProps({
+// get_triggers_caps payload (can_manage gates the note + composer,
+// stt_enabled the mic)
+const props = defineProps({
 	caps: { type: Object, default: () => ({}) },
 })
 
@@ -283,6 +299,68 @@ function removeCard(token) {
 	pendingCards.value = pendingCards.value.filter((c) => c.token !== token)
 }
 
+// ── pending-card copy ─────────────────────────────────────────────────────────
+// A card only carries what list_pending_confirmations returns (token, tool,
+// preview, summary, conversation, run_id). Rich path: a sandboxed dry-run
+// preview (preview.would = the doc exactly as it would save) names the
+// trigger and its shape. Fallback: clean the _describe_call line
+// ("create_doc doctype=Jarvis Trigger" → "Create a Jarvis Trigger") so the
+// raw tool string never shows.
+const CARD_VERBS = {
+	create_doc: "Create",
+	update_doc: "Update",
+	delete_doc: "Delete",
+	submit_doc: "Submit",
+	cancel_doc: "Cancel",
+}
+function eventLabel(value) {
+	const hit = (props.caps.events || []).find((e) => e.value === value)
+	return (hit && hit.label) || value || ""
+}
+function previewDoc(pa) {
+	const w = pa && pa.preview && pa.preview.would
+	return w && typeof w === "object" && !Array.isArray(w) ? w : null
+}
+// _describe_call joins "key=value" pairs with spaces and values may hold
+// spaces ("Jarvis Trigger") - a value runs until the next key or the end.
+// Anchored on a word boundary so "name=" never matches inside "docname=".
+function summaryArg(s, key) {
+	const m = new RegExp("(?:^|\\s)" + key + "=(.*?)(?=\\s+[a-z_]+=|$)").exec(s || "")
+	return m ? m[1].trim() : ""
+}
+function cardTitle(pa) {
+	const verb = CARD_VERBS[pa.tool]
+	const doc = previewDoc(pa)
+	if (doc && doc.doctype === "Jarvis Trigger") {
+		return `${verb || "Save"} trigger: ${doc.trigger_name || doc.name || "(unnamed)"}`
+	}
+	if (doc && doc.doctype && verb) {
+		const name = verb === "Create" ? "" : doc.name || ""
+		return `${verb} ${doc.doctype}${name ? " · " + name : ""}`
+	}
+	const raw = pa.summary || (pa.preview && pa.preview.summary) || ""
+	const m = /^(create|update|delete|submit|cancel)_doc\b/.exec(raw)
+	if (m) {
+		const v = CARD_VERBS[m[1] + "_doc"]
+		const dt = summaryArg(raw, "doctype")
+		const nm = summaryArg(raw, "name") || summaryArg(raw, "docname")
+		if (dt === "Jarvis Trigger") return `${v} a Jarvis Trigger${nm ? ": " + nm : ""}`
+		if (dt) return `${v} ${dt}${nm ? " · " + nm : ""}`
+	}
+	return raw || "Confirm this action"
+}
+function cardMeta(pa) {
+	const doc = previewDoc(pa)
+	if (!doc || doc.doctype !== "Jarvis Trigger") return ""
+	return [
+		doc.target_doctype,
+		eventLabel(doc.doc_event),
+		doc.action_type ? `${doc.action_type} action` : "",
+	]
+		.filter(Boolean)
+		.join(" · ")
+}
+
 async function approve(pa) {
 	pa.busy = true
 	try {
@@ -342,6 +420,9 @@ function onTranscript(text) {
 }
 
 async function send() {
+	// non-admins can't reach here through the UI (composer disabled), but the
+	// Enter handler still routes through send() - guard it too
+	if (!props.caps.can_manage) return
 	const text = draft.value.trim()
 	if (!text || sending.value) return
 	sending.value = true
