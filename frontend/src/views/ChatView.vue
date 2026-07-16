@@ -581,6 +581,10 @@
 							<button class="jv-iconbtn" title="Attach file" @click="pickFiles" style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;border-radius:7px;cursor:pointer;color:var(--text-3);">
 								<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a5 5 0 0 1-7.07-7.07l9.19-9.19a3.5 3.5 0 0 1 4.95 4.95l-9.2 9.19a1.5 1.5 0 0 1-2.12-2.12l8.49-8.49" /></svg>
 							</button>
+							<button v-if="ui.wiki_enabled" class="jv-iconbtn" :title="groundNextTurn ? 'Wiki grounding armed — your next message will be answered from the wiki (click to turn off)' : 'Ground your next message on the org wiki'" @click="groundNextTurn = !groundNextTurn" :aria-pressed="String(groundNextTurn)" :style="{ height:'30px', display:'flex', alignItems:'center', gap:'4px', padding: groundNextTurn ? '0 8px' : '0', width: groundNextTurn ? 'auto' : '30px', justifyContent:'center', background:'transparent', border: groundNextTurn ? '1px solid var(--cta)' : 'none', borderRadius:'7px', cursor:'pointer', color: groundNextTurn ? 'var(--cta)' : 'var(--text-3)', fontSize:'12px', fontWeight:'500' }">
+								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" /></svg>
+								<span v-if="groundNextTurn">Wiki</span>
+							</button>
 							<span style="margin-left:auto;font-size:11px;color:var(--text-3);margin-right:4px;">{{ busy ? "Stop" : "Enter ↵" }}</span>
 							<button v-if="busy" @click="stopRun" title="Stop generating" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:var(--cta);border:none;border-radius:8px;cursor:pointer;">
 								<svg width="13" height="13" viewBox="0 0 24 24" fill="var(--cta-fg)"><rect x="6" y="6" width="12" height="12" rx="2.5" /></svg>
@@ -921,6 +925,10 @@ function announceSR(msg) {
 const { confirm } = useConfirm()
 const modelMenuOpen = ref(false)
 const showConnect = ref(false)
+// One-shot "ground on wiki": when armed, the NEXT message carries a
+// context.ground_wiki flag so the backend injects relevant wiki page bodies
+// into that turn. Cleared after each send (see send()).
+const groundNextTurn = ref(false)
 // (sidebar collapse machinery, per-conversation ⋯ menu and inline rename
 // moved to the app shell — stores/shell.js + components/shell/*, §3.7)
 const modelOverride = ref("")
@@ -3449,7 +3457,11 @@ async function send(textArg) {
 		// while this POST is in flight, so all post-send reconciliation gates on
 		// "still on the chat we sent from" — never yank them back to this one.
 		const sentFrom = currentId.value || ""
-		const r = await api.sendMessage(sentFrom, text, undefined, attachments)
+		// One-shot wiki grounding: consume the armed flag for THIS send only.
+		const groundWiki = groundNextTurn.value
+		groundNextTurn.value = false
+		const sendCtx = groundWiki ? { ground_wiki: 1 } : undefined
+		const r = await api.sendMessage(sentFrom, text, undefined, attachments, sendCtx)
 		if (r && r.ok === false) {
 			// The server rejected the send (e.g. the single-flight guard:
 			// "a reply is already in progress", or the monthly usage cap).
