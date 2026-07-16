@@ -3023,6 +3023,9 @@ function onKey(e) {
 }
 
 async function loadConversation(id) {
+	// One-shot wiki grounding is per-turn: never carry an armed pill into a
+	// different conversation (matches how modelOverride/auto-apply reload here).
+	groundNextTurn.value = false
 	if (!id) {
 		messages.value = []
 		modelOverride.value = ""
@@ -3457,9 +3460,9 @@ async function send(textArg) {
 		// while this POST is in flight, so all post-send reconciliation gates on
 		// "still on the chat we sent from" — never yank them back to this one.
 		const sentFrom = currentId.value || ""
-		// One-shot wiki grounding: consume the armed flag for THIS send only.
+		// One-shot wiki grounding: pass the armed flag but only CONSUME it on a
+		// successful send, so a rejected send (and its Retry) keeps grounding armed.
 		const groundWiki = groundNextTurn.value
-		groundNextTurn.value = false
 		const sendCtx = groundWiki ? { ground_wiki: 1 } : undefined
 		const r = await api.sendMessage(sentFrom, text, undefined, attachments, sendCtx)
 		if (r && r.ok === false) {
@@ -3480,6 +3483,8 @@ async function send(textArg) {
 			)
 			return
 		}
+		// Send accepted — the one-shot grounding is now consumed.
+		if (groundWiki) groundNextTurn.value = false
 		if (r?.conversation_id && (currentId.value || "") === sentFrom) {
 			// Still on the chat we sent from — safe to reconcile it. Adopt the
 			// server's id when it differs (a brand-new chat that just got its id, or

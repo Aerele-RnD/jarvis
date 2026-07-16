@@ -1172,12 +1172,14 @@ def get_chat_ui_settings() -> dict:
 
 
 def _wiki_enabled_flag() -> bool:
-	"""Whether the wiki feature is on (gates the composer's 'ground on wiki'
-	pill). Best-effort — a bootstrap must never fail on this."""
+	"""Gates the composer's 'ground on wiki' pill: shown only when the wiki
+	feature is on AND the org actually has at least one Active page (so the pill
+	can never be a guaranteed-silent no-op on an empty wiki). Best-effort — a
+	bootstrap must never fail on this."""
 	try:
-		from jarvis.chat.wiki import wiki_enabled
+		from jarvis.chat.wiki import _has_active_pages, wiki_enabled
 
-		return bool(wiki_enabled())
+		return bool(wiki_enabled() and _has_active_pages())
 	except Exception:
 		return False
 

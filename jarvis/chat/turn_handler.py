@@ -594,6 +594,16 @@ def handle_chat_send(payload: dict) -> None:
 			ground_block = forced_wiki_block(conversation_id, context, user_message) or ""
 		except Exception:
 			ground_block = ""
+		if not ground_block:
+			# The user explicitly asked to ground this turn on the wiki but nothing
+			# matched (or the wiki is empty) — tell the agent so it answers honestly
+			# instead of silently falling back to its own knowledge as if it had
+			# consulted the wiki.
+			ground_block = (
+				"\n\n(You were asked to ground this answer on the org wiki, but no "
+				"matching wiki page was found. Say that no relevant wiki page exists "
+				"rather than implying the answer came from the wiki.)"
+			)
 	user_message = (
 		# conv:<id> lets the agent link rows it creates (e.g. Jarvis Approval)
 		# back to this conversation so deciding can resume the chat.
