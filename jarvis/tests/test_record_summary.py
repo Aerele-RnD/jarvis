@@ -230,6 +230,17 @@ class TestSummaryRows(FrappeTestCase):
 		self.assertIsNotNone(row)
 		self.assertEqual(row["value"], "Submitted")
 
+	def test_docstatus_row_does_not_exceed_the_row_cap(self):
+		# The synthetic row is appended AFTER the capped loop breaks, so without a
+		# reserved slot a submittable doctype returns _MAX_ROWS + 1 rows and the
+		# documented cap is a lie.
+		from jarvis.chat._record_summary import _MAX_ROWS
+		meta = frappe.get_meta("ToDo")
+		with patch.object(meta, "is_submittable", 1):
+			out = summary_rows("ToDo", self.todo.name)
+		self.assertLessEqual(len(out["rows"]), _MAX_ROWS)
+		self.assertEqual(out["rows"][-1]["label"], "Docstatus")
+
 	def test_non_submittable_doctype_has_no_docstatus_row(self):
 		out = summary_rows("ToDo", self.todo.name)
 		self.assertNotIn("Docstatus", {r["label"] for r in out["rows"]})

@@ -265,7 +265,11 @@ def summary_rows(doctype: str, name: str) -> dict | None:
 			break
 
 	if getattr(meta, "is_submittable", 0):
-		# docstatus is not a DocField, so pick_fields cannot select it.
+		# docstatus is not a DocField, so pick_fields cannot select it. It is appended
+		# AFTER the capped loop, so reserve its slot rather than exceed _MAX_ROWS -
+		# "bounded, no unbounded axis" is an invariant, and a cap the code quietly
+		# overshoots by one is a cap nobody can trust.
+		rows = rows[: _MAX_ROWS - 1]
 		rows.append({
 			"label": "Docstatus",
 			"value": _DOCSTATUS_LABEL.get(cint(doc.get("docstatus")), "?"),
