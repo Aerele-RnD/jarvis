@@ -205,3 +205,76 @@ def pick_fields(meta) -> list[str]:
 
 	ordered = [f for f in out if not is_long(f)] + [f for f in out if is_long(f)]
 	return ordered[:_MAX_FLOOR]
+
+
+_DOCSTATUS_LABEL = {0: "Draft", 1: "Submitted", 2: "Cancelled"}
+
+
+def summary_rows(doctype: str, name: str) -> dict | None:
+	"""``{"title", "rows"}`` for a STORED record, or None when it is missing or the
+	caller cannot read it.
+
+	The caller renders a NAME-ONLY row on None. ``title`` is returned only from this
+	function's successful, permission-checked path - never source a card header from
+	a separate db.get_value(title_field): that read is unchecked and the title field
+	is typically the party name, i.e. the data being protected.
+	"""
+	try:
+		# Fresh DB load, NOT get_cached_doc: a cache could serve sandbox-mutated
+		# state from the park-time dry-run.
+		doc = frappe.get_doc(doctype, name)
+	except frappe.DoesNotExistError:
+		# frappe.throw leaves an entry in message_log that would leak into the turn.
+		frappe.clear_messages()
+		return None
+	except Exception:
+		frappe.clear_messages()
+		return None
+
+	# get_doc checks NO permission unless the check_permission kwarg is passed
+	# (document.py:141-145 -> :336-349, defaults to None). has_permission returns a
+	# bool; the kwarg throws, and a card must degrade rather than raise.
+	try:
+		if not doc.has_permission("read"):
+			return None
+	except Exception:
+		return None
+
+	try:
+		doc.apply_fieldlevel_read_permissions()
+	except Exception:
+		return None
+
+	meta = doc.meta
+	rows = []
+	for fieldname in pick_fields(meta):
+		# A permlevel-restricted field is delattr'd by the filter above
+		# (document.py:1264) and is dropped by the confirmed save too - never show a
+		# phantom value.
+		if not hasattr(doc, fieldname):
+			continue
+		value = doc.get(fieldname)
+		if value is None or (not isinstance(value, list) and cstr(value).strip() == ""):
+			continue
+		df = meta.get_field(fieldname)
+		label = df.label if df and df.label else fieldname
+		shown = "[hidden]" if is_secret(meta, fieldname) else fmt(value, df, doc)
+		rows.append({"label": label, "value": shown})
+		if len(rows) >= _MAX_ROWS:
+			break
+
+	if getattr(meta, "is_submittable", 0):
+		# docstatus is not a DocField, so pick_fields cannot select it.
+		rows.append({
+			"label": "Docstatus",
+			"value": _DOCSTATUS_LABEL.get(cint(doc.get("docstatus")), "?"),
+		})
+
+	title = ""
+	try:
+		title_field = meta.get_title_field()
+		if title_field and title_field != "name" and hasattr(doc, title_field):
+			title = fmt(doc.get(title_field), meta.get_field(title_field), doc)
+	except Exception:
+		title = ""
+	return {"title": title, "rows": rows}

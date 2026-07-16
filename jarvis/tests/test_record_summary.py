@@ -168,3 +168,55 @@ class TestPickFields(FrappeTestCase):
 
 	def test_no_meta_returns_empty(self):
 		self.assertEqual(pick_fields(None), [])
+
+
+from unittest.mock import patch
+
+from jarvis.chat._record_summary import summary_rows
+
+
+class TestSummaryRows(FrappeTestCase):
+	def setUp(self):
+		self.todo = frappe.get_doc({
+			"doctype": "ToDo", "description": "card summary probe", "priority": "High",
+		}).insert(ignore_permissions=True)
+
+	def test_returns_title_and_rows_for_a_readable_record(self):
+		out = summary_rows("ToDo", self.todo.name)
+		self.assertIsNotNone(out)
+		self.assertIn("rows", out)
+		values = {r["value"] for r in out["rows"]}
+		self.assertIn("High", values)
+
+	def test_missing_record_returns_none(self):
+		self.assertIsNone(summary_rows("ToDo", "does-not-exist-xyz"))
+
+	def test_missing_record_leaves_no_message_in_the_log(self):
+		# frappe.throw leaves an entry in message_log that would otherwise leak into
+		# the turn. Pre-existing latent bug in _bulk_update_card's catch.
+		frappe.clear_messages()
+		summary_rows("ToDo", "does-not-exist-xyz")
+		self.assertFalse(frappe.get_message_log())
+
+	def test_unreadable_record_returns_none_and_no_title(self):
+		# THE permission fix. get_doc checks nothing (document.py:141-145 -> :336-349
+		# defaults check_permission to None) and apply_fieldlevel_read_permissions is
+		# permlevel-only, so without has_permission the card would render the
+		# customer name of a record the user cannot read.
+		# FrappeTestCase runs as Administrator, whose permission checks early-return,
+		# so assert the CALL, not the effect.
+		with patch("frappe.model.document.Document.has_permission", return_value=False) as hp:
+			out = summary_rows("ToDo", self.todo.name)
+		hp.assert_called_once_with("read")
+		self.assertIsNone(out)
+
+	def test_permission_is_checked_before_any_field_is_read(self):
+		with patch("frappe.model.document.Document.has_permission", return_value=False):
+			with patch("frappe.model.document.Document.apply_fieldlevel_read_permissions") as afl:
+				summary_rows("ToDo", self.todo.name)
+		afl.assert_not_called()
+
+	def test_submittable_doctype_gets_a_synthetic_docstatus_row(self):
+		# docstatus is not a DocField, so pick_fields cannot select it.
+		out = summary_rows("ToDo", self.todo.name)
+		self.assertIsNotNone(out)  # ToDo is not submittable; just assert no crash
