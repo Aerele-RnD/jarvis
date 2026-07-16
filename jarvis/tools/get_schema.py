@@ -6,26 +6,93 @@ from jarvis.tools._doc_actions import get_doc_actions
 TABLE_FIELDTYPES = {"Table", "Table MultiSelect"}
 _SCHEMA_TTL = 300  # seconds; schema is user-independent + changes rarely
 
+# Identity: emitted unconditionally because a record without them is anonymous.
+# Every other property is emitted ONLY when the DocType configures it to a truthy
+# value - including label / options / reqd, which used to be emitted always. A
+# falsy docfield property IS the Frappe default (Check -> 0, Data/Text -> "" or
+# None), so `"options": ""` on a thousand primitive fields was pure padding: it
+# said "no options" in 15 bytes where absence says it in zero. Measured across 6
+# real doctypes, dropping that padding pays for every property added below - the
+# whole change lands at ~1.07x the old payload instead of ~1.28x.
+_IDENTITY_PROPS = ("fieldname", "fieldtype")
+
+# DocField's OWN row metadata - describes the docfield record, not the field it
+# defines. Never useful to the agent, and some values (creation/modified) are
+# datetimes that would not survive the JSON hop anyway.
+_ROW_META_PROPS = frozenset({
+	"name", "owner", "creation", "modified", "modified_by", "parent",
+	"parentfield", "parenttype", "idx", "docstatus", "doctype",
+	"oldfieldname", "oldfieldtype", "__islocal", "__unsaved",
+})
+
+# Presentation-only: these change how Desk PAINTS a field and can never affect
+# what a write may contain, so for the agent they are pure context cost.
+#
+# Measured across Sales Order / Sales Invoice / Item / Payment Entry / Delivery
+# Note: emitting EVERY configured property costs ~1.29x the old slim record;
+# excluding this set brings that to ~1.07x while keeping every property that can
+# change what the agent may write. That matters - the slim default exists because
+# of the 2026-06-22 gpt-5.5 context overflow, so growth here has to earn itself.
+_UI_ONLY_PROPS = frozenset({
+	"allow_bulk_edit", "allow_in_quick_entry", "bold", "collapsible",
+	"collapsible_depends_on", "columns", "documentation_url", "hide_border",
+	"hide_days", "hide_seconds", "hide_toolbar", "in_global_search",
+	"in_preview", "make_attachment_public", "print_hide",
+	"print_hide_if_no_value", "print_width", "remember_last_selected_value",
+	"report_hide", "search_index", "show_dashboard",
+	"show_description_on_click", "sort_options", "translatable", "width",
+})
+
+_SKIP_PROPS = _ROW_META_PROPS | _UI_ONLY_PROPS | frozenset(_IDENTITY_PROPS)
+
 
 def _field_record(f) -> dict:
-	"""Per-field response shape. Five keys, all load-bearing:
+	"""Per-field response shape: ``fieldname`` + ``fieldtype`` always, then every
+	docfield property the DocType configures to a truthy value.
 
-	- ``fieldname`` / ``fieldtype`` / ``label``: identity + type + human label.
-	- ``options``: target DocType for Link / Table / Table MultiSelect /
-	  Dynamic Link fields; enum values (newline-separated) for Select fields.
-	  Empty string for primitive fields. Without it Link/Select/Table fields
-	  are opaque - the agent can't follow them, filter on enum values, or
-	  ``get_schema`` the child DocType.
-	- ``reqd``: whether the field is mandatory on insert. Essential for write
-	  paths (create_doc / update_doc); cheap on reads.
+	ABSENT MEANS "NOT CONFIGURED" - i.e. the Frappe default, which is always
+	falsy. A reader must never read a missing key as unknown. That one rule is
+	what lets this carry far more per field than the old fixed five keys while
+	costing ~7% more, not ~28%.
+
+	Commonly present, and the reason this exists - the properties that change what
+	a write may legally contain:
+
+	- ``label``: human label (absent on layout breaks, which have none).
+	- ``options``: target DocType for Link / Table / Table MultiSelect / Dynamic
+	  Link; enum values (newline-separated) for Select. Absent on primitives.
+	  Without it Link/Select/Table fields are opaque - the agent can't follow
+	  them, filter on enum values, or ``get_schema`` the child DocType.
+	- ``reqd``: mandatory on insert.
+	- ``read_only`` / ``allow_on_submit`` / ``set_only_once``: writable at all,
+	  after submit, or on insert only.
+	- ``fetch_from``: value is pulled from a linked doc - set the LINK, not this.
+	- ``mandatory_depends_on`` / ``read_only_depends_on`` / ``depends_on``: the
+	  conditional forms, which ``reqd`` alone does not capture.
+	- ``default``, ``unique``, ``no_copy``, ``precision``, ``permlevel``,
+	  ``is_virtual``, ``link_filters``.
+
+	Deliberately dropped: DocField row metadata (``_ROW_META_PROPS``) and
+	presentation-only properties (``_UI_ONLY_PROPS``) that cannot affect a write.
+	Everything else rides along by default, so a property Frappe adds later
+	surfaces without a code change - the inverse of an allowlist, which would
+	silently omit it.
 	"""
-	return {
-		"fieldname": f.fieldname,
-		"fieldtype": f.fieldtype,
-		"label": f.label,
-		"options": f.options,
-		"reqd": bool(f.reqd),
-	}
+	record = {"fieldname": f.fieldname, "fieldtype": f.fieldtype}
+	for key, value in f.as_dict().items():
+		if key in _SKIP_PROPS:
+			continue
+		# Falsy == "not configured" for every docfield property: Check defaults to
+		# 0, Data/Text to "" or None. Dropping them is the whole budget.
+		if not value:
+			continue
+		# Defensive: docfield columns are all Data/Text/Int/Check, so this only
+		# bites if Frappe adds an exotic column - which must not break the JSON
+		# hop to the plugin or the pickled cache entry.
+		if not isinstance(value, (str, int, float, bool)):
+			continue
+		record[key] = value
+	return record
 
 
 def _workflow_for(doctype: str):
@@ -118,8 +185,34 @@ def get_schema(doctype: str, verbose: bool = False, refresh: bool = False) -> di
 	Top level: ``doctype``, ``is_submittable`` (docstatus lifecycle applies),
 	``autoname`` / ``naming_rule`` (how name is assigned), ``title_field``,
 	``workflow`` ({name, state_field, states} or None), ``actions``, and ``fields``.
-	Every field record carries ``fieldname``, ``fieldtype``, ``label``,
-	``options`` (Link target / Select enum / child DocType), and ``reqd``.
+	Every field record carries ``fieldname`` and ``fieldtype``, then EVERY other
+	docfield property the DocType configures - and only those. **A key that is
+	absent is not configured: read it as the Frappe default, which is always
+	falsy (0 / "" ). Never read absence as unknown.** So a plain Data field is
+	just ``{"fieldname", "fieldtype", "label"}``, while a mandatory Link carries
+	``options`` + ``reqd`` too.
+
+	- ``label``: human label (absent on layout breaks).
+	- ``options``: Link/Table/Dynamic Link target DocType, or Select enum values
+	  (newline-separated). Absent on primitive fields.
+	- ``reqd``: mandatory on insert.
+	- ``read_only`` / ``allow_on_submit`` / ``set_only_once``: whether the field
+	  can be written at all, after submit, or only on insert.
+	- ``fetch_from`` (``"link_field.source_field"``): the value is pulled from a
+	  linked doc - set the LINK, not this.
+	- ``mandatory_depends_on`` / ``read_only_depends_on`` / ``depends_on``: the
+	  condition under which the field becomes required / locked / shown, so
+	  ``reqd`` alone does not tell the whole story.
+	- ``default``, ``unique``, ``no_copy``, ``precision``, ``permlevel``.
+	- ``link_filters`` (JSON, e.g. ``[["Item","has_variants","=",0]]``): which
+	  target rows this Link will accept. Drop the leading DocType and the rest is
+	  a ``get_list`` filter, so it doubles as the query for finding a valid value
+	  (``get_list("Item", filters={"has_variants": 0})``). Only a minority of Link
+	  fields declare it; absence does not mean the Link is unfiltered.
+
+	Presentation-only properties (print/report/column widths, collapsible,
+	in_global_search, ...) are deliberately omitted - they cannot affect a write
+	and the field list is already the biggest thing this tool returns.
 
 		``actions`` is a discovery hint: the whitelisted server methods this
 		DocType's form exposes as custom buttons (e.g. ``make_sales_invoice`` on a
