@@ -278,3 +278,26 @@ def summary_rows(doctype: str, name: str) -> dict | None:
 	except Exception:
 		title = ""
 	return {"title": title, "rows": rows}
+
+
+def values_rows(meta, values: dict, limit: int = _MAX_VAL) -> dict:
+	"""``{"rows", "extra"}`` for PROPOSED content (a create's values, an email body).
+
+	Renders EVERY key, in caller order, capped with an explicit remainder. Never
+	filtered to the floor: a proposed field outside the floor is one the save will
+	write, so hiding it would let a human approve a value they never saw. Caller
+	order is preserved so the card stays comparable against the request.
+
+	No perm filter is possible or needed - the values are the caller's own args.
+	"""
+	if not isinstance(values, dict):
+		return {"rows": [], "extra": 0}
+	rows = []
+	keys = list(values)
+	for fieldname in keys[:_MAX_ROWS]:
+		df = meta.get_field(fieldname) if meta else None
+		label = df.label if df and df.label else fieldname
+		value = values.get(fieldname)
+		shown = "[hidden]" if is_secret(meta, fieldname) else fmt(value, df, None, limit)
+		rows.append({"label": label, "value": shown})
+	return {"rows": rows, "extra": max(0, len(keys) - len(rows))}

@@ -233,3 +233,40 @@ class TestSummaryRows(FrappeTestCase):
 	def test_non_submittable_doctype_has_no_docstatus_row(self):
 		out = summary_rows("ToDo", self.todo.name)
 		self.assertNotIn("Docstatus", {r["label"] for r in out["rows"]})
+
+
+from jarvis.chat._record_summary import _MAX_ROWS as _MR
+from jarvis.chat._record_summary import values_rows
+
+
+class TestValuesRows(FrappeTestCase):
+	def test_renders_every_proposed_key_not_just_floor_fields(self):
+		# Design decision 3: proposed content is shown WHOLE. A field outside the
+		# meta floor is one the save will write - hiding it would let you approve a
+		# value you never saw.
+		meta = frappe.get_meta("ToDo")
+		out = values_rows(meta, {"description": "x", "color": "#fff"})
+		labels = {r["label"] for r in out["rows"]}
+		self.assertEqual(len(out["rows"]), 2)
+		self.assertTrue(any("olor" in la for la in labels))
+
+	def test_preserves_caller_order(self):
+		meta = frappe.get_meta("ToDo")
+		out = values_rows(meta, {"priority": "High", "description": "x"})
+		self.assertEqual(out["rows"][0]["value"], "High")
+
+	def test_caps_and_reports_the_remainder(self):
+		values = {f"f{i}": f"v{i}" for i in range(_MR + 5)}
+		out = values_rows(None, values)
+		self.assertEqual(len(out["rows"]), _MR)
+		self.assertEqual(out["extra"], 5)
+
+	def test_masks_secrets(self):
+		out = values_rows(None, {"api_key": "sk-live-123"})
+		self.assertEqual(out["rows"][0]["value"], "[hidden]")
+		self.assertNotIn("sk-live-123", str(out))
+
+	def test_no_meta_falls_back_to_fieldnames(self):
+		out = values_rows(None, {"whatever": "v"})
+		self.assertEqual(out["rows"][0]["label"], "whatever")
+		self.assertEqual(out["extra"], 0)
