@@ -43,6 +43,7 @@ from jarvis.chat._record_summary import (
 	fmt,
 	is_secret,
 	same_value,
+	summary_rows,
 	table_rows,
 )
 
@@ -299,6 +300,23 @@ def _target_name(item):
 	return item
 
 
+def _verb_records(doctype, names) -> list[dict]:
+	"""A summary per target, capped. ``summary_rows`` returns None for a record that
+	is MISSING or that the caller cannot READ - both degrade to name-only, and they
+	must stay indistinguishable so the card is not an existence oracle. The title
+	only ever comes from summary_rows' permission-checked path.
+	"""
+	out = []
+	for name in names[:_MAX_ROWS]:
+		summary = summary_rows(doctype, name) if doctype and name else None
+		out.append({
+			"name": name,
+			"title": summary["title"] if summary else "",
+			"rows": summary["rows"] if summary else [],
+		})
+	return out
+
+
 def _verb_card(tool: str, args: dict, bulk_items) -> dict:
 	verb = _VERB[tool]
 	doctype = args.get("doctype")
@@ -309,10 +327,13 @@ def _verb_card(tool: str, args: dict, bulk_items) -> dict:
 			"kind": "verb", "verb": verb, "action": action, "doctype": doctype,
 			"count": len(bulk_items), "targets": targets,
 			"extra": max(0, len(bulk_items) - len(targets)),
+			"records": _verb_records(doctype, targets),
 		}
+	targets = [args["name"]] if args.get("name") else []
 	return {
 		"kind": "verb", "verb": verb, "action": action, "doctype": doctype,
-		"count": 1, "targets": [args["name"]] if args.get("name") else [], "extra": 0,
+		"count": 1, "targets": targets, "extra": 0,
+		"records": _verb_records(doctype, targets),
 	}
 
 

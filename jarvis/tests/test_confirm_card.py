@@ -331,3 +331,65 @@ class TestPhase1Rewire(FrappeTestCase):
 					   "items": [{"item_code": "I-1", "qty": 2}]}})
 		self.assertTrue(card.get("tables"))
 		self.assertEqual(card["tables"][0]["count"], 1)
+
+
+class TestVerbCardRecords(FrappeTestCase):
+	def setUp(self):
+		self.todo = frappe.get_doc({
+			"doctype": "ToDo", "description": "verb card probe", "priority": "High",
+		}).insert(ignore_permissions=True)
+		self.addCleanup(frappe.db.rollback)  # match the sibling classes' convention
+
+	def test_single_delete_carries_a_record_summary(self):
+		# THE motivating case: "Will delete this ToDo <name>" told you the ID and
+		# nothing about the record.
+		card = build_card("delete_doc", {"doctype": "ToDo", "name": self.todo.name}, {})
+		self.assertEqual(card["kind"], "verb")
+		self.assertEqual(len(card["records"]), 1)
+		self.assertEqual(card["records"][0]["name"], self.todo.name)
+		self.assertIn("verb card probe", card["records"][0]["title"])
+		self.assertIn("High", {r["value"] for r in card["records"][0]["rows"]})
+
+	def test_targets_and_count_are_unchanged(self):
+		# Additive only: three existing tests assert these, and a client running the
+		# previous bundle still reads `targets`.
+		card = build_card("delete_doc", {"doctype": "ToDo", "name": self.todo.name}, {})
+		self.assertEqual(card["targets"], [self.todo.name])
+		self.assertEqual(card["count"], 1)
+
+	def test_bulk_verb_carries_a_record_per_target(self):
+		other = frappe.get_doc({"doctype": "ToDo", "description": "second"}).insert(
+			ignore_permissions=True)
+		card = build_card(
+			"cancel_doc", {"doctype": "ToDo", "names": [self.todo.name, other.name]}, {})
+		self.assertEqual(card["count"], 2)
+		self.assertEqual([r["name"] for r in card["records"]], [self.todo.name, other.name])
+
+	def test_unreadable_target_degrades_to_name_only(self):
+		# summary_rows returns None for missing OR unreadable; the card must leak
+		# neither the title (typically the party name) nor any field.
+		with patch("frappe.model.document.Document.has_permission", return_value=False):
+			card = build_card("delete_doc", {"doctype": "ToDo", "name": self.todo.name}, {})
+		self.assertEqual(card["records"][0]["name"], self.todo.name)
+		self.assertEqual(card["records"][0]["title"], "")
+		self.assertEqual(card["records"][0]["rows"], [])
+		self.assertNotIn("verb card probe", str(card))
+
+	def test_missing_target_renders_identically_to_unreadable(self):
+		# No existence oracle: the two must be indistinguishable on the card.
+		card = build_card("delete_doc", {"doctype": "ToDo", "name": "no-such-todo"}, {})
+		self.assertEqual(card["records"][0], {"name": "no-such-todo", "title": "", "rows": []})
+
+	def test_records_are_capped_at_MAX_ROWS(self):
+		names = [f"fake-{i}" for i in range(_MAX_ROWS + 5)]
+		card = build_card("delete_doc", {"doctype": "ToDo", "names": names}, {})
+		self.assertEqual(len(card["records"]), _MAX_ROWS)
+		self.assertEqual(card["count"], _MAX_ROWS + 5)
+		self.assertEqual(card["extra"], 5)
+
+	def test_workflow_action_still_carries_action_and_gains_records(self):
+		card = build_card(
+			"apply_workflow_action",
+			{"doctype": "ToDo", "name": self.todo.name, "action": "Approve"}, {})
+		self.assertEqual(card["action"], "Approve")
+		self.assertEqual(card["records"][0]["name"], self.todo.name)
