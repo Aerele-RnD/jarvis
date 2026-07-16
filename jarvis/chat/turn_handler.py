@@ -569,6 +569,29 @@ def handle_chat_send(payload: dict) -> None:
 			for e in drained_notes
 		)
 		notes_clause = f"; notes: {safe_notes}"
+	# On-demand "ground on wiki" (the composer's one-shot control): when the user
+	# armed it, inject the clipped bodies of the most relevant wiki pages as a
+	# labelled block AFTER the [Context:] bracket (not inside it — bodies are
+	# multi-line), so the agent answers grounded in the org's own knowledge this
+	# turn. Best-effort → "" so a grounding failure never breaks the turn.
+	ground_block = ""
+	if isinstance(context, dict) and context.get("ground_wiki"):
+		try:
+			from jarvis.chat.wiki import forced_wiki_block
+
+			ground_block = forced_wiki_block(conversation_id, context, user_message) or ""
+		except Exception:
+			ground_block = ""
+		if not ground_block:
+			# The user explicitly asked to ground this turn on the wiki but nothing
+			# matched (or the wiki is empty) — tell the agent so it answers honestly
+			# instead of silently falling back to its own knowledge as if it had
+			# consulted the wiki.
+			ground_block = (
+				"\n\n(You were asked to ground this answer on the org wiki, but no "
+				"matching wiki page was found. Say that no relevant wiki page exists "
+				"rather than implying the answer came from the wiki.)"
+			)
 	user_message = (
 		# conv:<id> lets the agent link rows it creates (e.g. Jarvis Approval)
 		# back to this conversation so deciding can resume the chat.
@@ -584,6 +607,7 @@ def handle_chat_send(payload: dict) -> None:
 		f"[Context: today is {today}{locale_clause}; chat user: {chat_user}"
 		f"; conv: {conversation_id}{auto_apply}{skill_clause}{learned_clause}"
 		f"{wiki_notes_clause}{personal_clause}{notes_clause}]"
+		f"{ground_block}"
 		f"\n\n{user_message or ''}"
 	)
 

@@ -143,7 +143,9 @@ export async function sendMessage(conversation, message, modelOverride, attachme
 	const args = { conversation: conversation || "", message }
 	if (modelOverride) args.model_override = modelOverride
 	if (attachments && attachments.length) args.attachments = JSON.stringify(attachments)
-	if (context && context.doctype) args.context = JSON.stringify(context)
+	// Forward context for a viewing-context doc/report OR the one-shot
+	// "ground on wiki" flag (which can arrive without a doc).
+	if (context && (context.doctype || context.ground_wiki)) args.context = JSON.stringify(context)
 	return call("jarvis.chat.api.send_message", args)
 }
 

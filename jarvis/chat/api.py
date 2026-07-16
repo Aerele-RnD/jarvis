@@ -967,7 +967,11 @@ def send_message(
 	if context:
 		try:
 			ctx = frappe.parse_json(context)
-			if isinstance(ctx, dict) and (ctx.get("doctype") or ctx.get("report_name")):
+			# ``ground_wiki`` is the composer's one-shot "ground this turn on the
+			# wiki" flag; it can arrive with no viewing-context doc, so forward the
+			# context payload when EITHER a doc/report ref OR ground_wiki is set.
+			ground_wiki = 1 if (isinstance(ctx, dict) and frappe.utils.cint(ctx.get("ground_wiki"))) else 0
+			if isinstance(ctx, dict) and (ctx.get("doctype") or ctx.get("report_name") or ground_wiki):
 				enqueue_kwargs["context"] = {
 					"doctype": ctx.get("doctype") or "",
 					"name": ctx.get("name") or "",
@@ -977,6 +981,8 @@ def send_message(
 					# the prompt-side helper caps the rendered string
 					# length so a huge dict can't blow the context.
 					"filters": ctx.get("filters") if isinstance(ctx.get("filters"), dict) else None,
+					# One-shot wiki grounding (allow-listed, boolean only).
+					"ground_wiki": ground_wiki,
 				}
 				# Persist the viewing-context doc ref on the user message row
 				# so post-turn entity extraction (jarvis.chat.entities) sees
@@ -1121,9 +1127,25 @@ def get_chat_ui_settings() -> dict:
 		# Mic button gating: stt_config() is None when voice features / STT
 		# are off or no key resolves (admin path is Redis-cached, never raises).
 		"stt_enabled": bool(stt_config()),
+		# Composer "ground on wiki" pill gating: shown only when the wiki feature
+		# is on AND the org has at least one Active page (best-effort).
+		"wiki_enabled": _wiki_enabled_flag(),
 		# auto-apply is per-conversation now (issue #186); the frontend reads
 		# ``auto_apply`` from the conversation payload, not this global endpoint.
 	}
+
+
+def _wiki_enabled_flag() -> bool:
+	"""Gates the composer's 'ground on wiki' pill: shown only when the wiki
+	feature is on AND the org actually has at least one Active page (so the pill
+	can never be a guaranteed-silent no-op on an empty wiki). Best-effort — a
+	bootstrap must never fail on this."""
+	try:
+		from jarvis.chat.wiki import _has_active_pages, wiki_enabled
+
+		return bool(wiki_enabled() and _has_active_pages())
+	except Exception:
+		return False
 
 
 @frappe.whitelist()

@@ -165,6 +165,23 @@ def _enqueue() -> None:
 	)
 
 
+def enqueue_process_now() -> dict:
+	"""Admin 'Generate now' path (the role gate lives in
+	``jarvis.chat.personalise_api.generate_chat_questions_now``): run the same
+	miner immediately over the recent backlog. Refuses while a sweep is already
+	queued or running. Mirrors ``voice_facts.enqueue_process_now``."""
+	from frappe.utils.background_jobs import is_job_enqueued
+
+	try:
+		already = bool(is_job_enqueued(JOB_ID))
+	except Exception:
+		already = False
+	if already:
+		return {"ok": False, "reason": "chat mining is already queued or running"}
+	_enqueue()
+	return {"ok": True}
+
+
 # --------------------------------------------------------------------------- #
 # worker
 # --------------------------------------------------------------------------- #

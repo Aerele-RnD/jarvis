@@ -210,6 +210,16 @@
 									>
 										Last run{{ chatMiningLastRunAgo }}: {{ settings.chat_mining_last_run_status }}
 									</div>
+									<Button
+										class="mt-2"
+										variant="subtle"
+										size="sm"
+										iconLeft="refresh-cw"
+										label="Generate now"
+										:loading="generatingNow"
+										:disabled="!settings.chat_question_mining_enabled"
+										@click="generateNow"
+									/>
 								</div>
 								<Switch v-model="settings.chat_question_mining_enabled" size="md" />
 							</div>
@@ -294,6 +304,7 @@ import {
 	deleteQuestionRule,
 	getPersonalisationSettings,
 	setPersonalisationSettings,
+	generateChatQuestionsNow,
 } from "@/api/personalise"
 import { timeAgo } from "@/utils/datetime"
 
@@ -493,6 +504,7 @@ const settings = reactive({
 })
 const settingsLoading = ref(false)
 const savingSettings = ref(false)
+const generatingNow = ref(false)
 
 const chatMiningLastRunAgo = computed(() =>
 	settings.chat_mining_last_run_at ? ` ${timeAgo(settings.chat_mining_last_run_at)}` : "",
@@ -533,6 +545,45 @@ async function saveSettings() {
 	} finally {
 		savingSettings.value = false
 	}
+}
+
+async function generateNow() {
+	generatingNow.value = true
+	try {
+		const res = await generateChatQuestionsNow()
+		if (res && res.ok) {
+			toast.success("Mining recent chats — new questions will appear shortly.")
+			// The job runs in the background (queue 'long'); poll the last-run
+			// status a few times so the line under the button reflects the result
+			// ("… N questions" or "no new chat activity") without reopening the dialog.
+			pollMiningStatus()
+		} else {
+			toast.info((res && res.reason) || "Already running.")
+		}
+	} catch (e) {
+		toast.error(errMsg(e))
+	} finally {
+		generatingNow.value = false
+	}
+}
+
+function pollMiningStatus() {
+	let tries = 0
+	const before = settings.chat_mining_last_run_at
+	const tick = async () => {
+		tries += 1
+		try {
+			const s = await getPersonalisationSettings()
+			settings.chat_mining_last_run_at = s.chat_mining_last_run_at || null
+			settings.chat_mining_last_run_status = s.chat_mining_last_run_status || ""
+			// Stop once the run stamped a newer timestamp, or after ~30s.
+			if (settings.chat_mining_last_run_at !== before || tries >= 6) return
+		} catch (e) {
+			/* best-effort */
+		}
+		setTimeout(tick, 5000)
+	}
+	setTimeout(tick, 4000)
 }
 
 // ── init: (re)load everything fresh every time the dialog opens ─────────────

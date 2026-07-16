@@ -857,6 +857,22 @@ def set_personalisation_settings(payload: str | dict | None = None) -> dict:
 	return get_personalisation_settings()
 
 
+@frappe.whitelist()
+def generate_chat_questions_now() -> dict:
+	"""Admin-only: run the chat-transcript question miner immediately over the
+	recent backlog (the manual counterpart to the daily sweep). Refuses when
+	Personalisation or chat mining is turned off, or when a sweep is already
+	queued/running. Returns ``{"ok": bool, "reason"?: str}``."""
+	_admin_guard()
+	if not _single_bool("personalise_enabled", True):
+		return {"ok": False, "reason": "Turn on Personalisation first."}
+	if not _single_bool("chat_question_mining_enabled", True):
+		return {"ok": False, "reason": "Turn on 'Learn from chats' first."}
+	from jarvis.learning import chat_mining
+
+	return chat_mining.enqueue_process_now()
+
+
 # --------------------------------------------------------------------------- #
 # Question Rules (admin set) - materialization itself is
 # jarvis.learning.questions's job (PIPELINE agent); this is CRUD only.
