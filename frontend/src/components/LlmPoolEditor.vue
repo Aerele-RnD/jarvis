@@ -528,6 +528,7 @@ import * as api from "@/api"
 import {
   deriveMode, reorder, presetToModels, missingVendorKeys, validatePool,
   PROVIDER_LABELS, providerLabel, providerId, seedRowsFromConfig, defaultSubscriptionModel,
+  apiKeyModelHealth,
 } from "@/llm/pool"
 import { errMessage as _err } from "@/lib/errors"
 import { useConfirm } from "@/composables/useConfirm"
@@ -566,7 +567,7 @@ const selectedPreset = ref("")
 const keysByVendor = ref({})
 const err = ref("")
 const saving = ref(false)
-const sync = ref({ last_sync_status: "", pending: false, subscription_status: "", warnings: [] })
+const sync = ref({ last_sync_status: "", pending: false, subscription_status: "", warnings: [], model_statuses: [] })
 const savedSnapshot = ref("__init__")  // savable pool as of last load/save; drives the unsaved-changes notice
 let pollTimer = null
 
@@ -1010,24 +1011,28 @@ function accountLabel(a) {
 function firstWarningMessage() {
   return (sync.value.warnings && sync.value.warnings[0] && sync.value.warnings[0].message) || ""
 }
-// Option A "honest model health": the connected-account dot + label for a model
-// row. Subscriptions reflect the fleet's last subscription-probe result;
-// api-key rows stay a quiet green (a saved key is validated at save time, not
-// probed live). Onboarding (singleMode) never shows this - always neutral.
+// Honest model health: the connected-account dot + label for a model row.
+// Subscriptions reflect the fleet's last (pool-wide) subscription-probe result;
+// api-key rows reflect their own per-model verdict from the last apply
+// (contract 1.11 model_statuses). Onboarding (singleMode) never shows this - always neutral.
 function accountHealth(m) {
   if (singleMode.value) return { level: "neutral" }
-  if (!m || m.credentialType !== "subscription") return { level: "ok" }
+  if (!m) return { level: "ok" }
   // Config changed but not yet (re)applied - the last probe result no longer
   // describes what's about to be saved, so don't assert a stale health.
   if (dirty.value || sync.value.pending) return { level: "neutral" }
+  // api-key rows carry a PER-MODEL verdict (contract 1.11 model_statuses), probed in
+  // isolation, so each shows its own health instead of the presence-only "key set" that
+  // once made a dead model look identical to a healthy one.
+  if (m.credentialType !== "subscription") {
+    return apiKeyModelHealth(m, sync.value.model_statuses)
+  }
   // sync.subscription_status is POOL-WIDE, not per-row: the fleet probes the pool's
   // subscription credential and returns ONE verdict. Painting it on every subscription
   // row is only honest when there is exactly one -- with two, a single "unverified"
   // would flag the healthy row too, and a "verified" would vouch for a row that was
   // never probed. Attribute it only when it can only mean this row; otherwise stay
   // neutral rather than assert something we did not measure.
-  // (The fleet gained per-model verdicts in contract 1.11 -- once model_statuses is
-  // plumbed through admin -> customer, key off that and drop this guard.)
   const subRows = rows.value.filter((r) => r.credentialType === "subscription")
   if (subRows.length > 1) return { level: "neutral" }
   const status = sync.value.subscription_status

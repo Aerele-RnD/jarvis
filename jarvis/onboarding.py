@@ -596,25 +596,36 @@ def get_llm_sync_status() -> dict:
 	    ``""`` if the pool sync worker never wrote one - e.g. no pool sync
 	    has run yet, or the fleet is on a pre-warnings contract), and
 	    ``warnings`` - a list of ``{"code": str, "message": str}`` dicts
-	    from the last pool apply (empty list when none). A corrupt/empty
-	    stored ``last_sync_warnings`` value degrades to ``[]`` rather than
-	    ever 500ing this poller.
+	    from the last pool apply (empty list when none), and
+	    ``model_statuses`` - a list of ``{"provider", "model", "status"}``
+	    per-model verdicts (``status`` one of ``verified``/``failed``/
+	    ``unchecked``; api-key models only) the AI-models list keys each
+	    api-key row's health off. A corrupt/empty stored value for either
+	    list degrades to ``[]`` rather than ever 500ing this poller.
 	"""
 	s = frappe.get_single("Jarvis Settings")
 	status = s.get("last_sync_status") or ""
-	raw_warnings = s.get("last_sync_warnings") or "[]"
-	try:
-		warnings = json.loads(raw_warnings)
-		if not isinstance(warnings, list):
-			warnings = []
-	except (ValueError, TypeError):
-		warnings = []
+
+	def _json_list(raw):
+		"""Stored JSON text -> list, degrading a corrupt/empty value to [] rather than
+		ever 500ing this poller."""
+		try:
+			val = json.loads(raw or "[]")
+			return val if isinstance(val, list) else []
+		except (ValueError, TypeError):
+			return []
+
 	return {
 		"last_sync_at": str(s.get("last_sync_at") or ""),
 		"last_sync_status": status,
 		"pending": status.startswith("pending:"),
 		"subscription_status": s.get("last_subscription_status") or "",
-		"warnings": warnings,
+		"warnings": _json_list(s.get("last_sync_warnings")),
+		# Per-model verdicts from the last pool apply: [{provider, model, status}] where
+		# status is verified | failed | unchecked (api-key models only; subscriptions use
+		# subscription_status above). [] when no pool sync has run or the fleet predates
+		# contract 1.11. The AI-models list keys each api-key row's health off this.
+		"model_statuses": _json_list(s.get("last_model_statuses")),
 	}
 
 
