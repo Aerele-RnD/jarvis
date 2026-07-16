@@ -168,20 +168,22 @@ class TestCrudGating(_TriggersApiTestCase):
 	def test_plain_user_get_trigger_redacts_logic_fields(self):
 		# Review P2 (security): condition/script_body/llm_instruction carry the
 		# trigger's internal logic; a plain Jarvis User (org-wide READ) must not
-		# see them.
+		# see them. Uses an LLM trigger so the test never depends on
+		# server_script_enabled (off on the CI test site).
 		name = self._create_as_admin(
-			action_type="Script", script_body="frappe.throw('secret rule')",
-			condition='doc.status == "Open"', doc_event="validate",
+			condition='doc.status == "Open"',
+			llm_instruction="Secret reviewer brief: flag anything unusual.",
 		)
 		frappe.set_user(ADMIN_USER)
 		admin_view = get_trigger(name)["data"]
-		self.assertEqual(admin_view["script_body"], "frappe.throw('secret rule')")
+		self.assertEqual(admin_view["condition"], 'doc.status == "Open"')
+		self.assertEqual(admin_view["llm_instruction"], "Secret reviewer brief: flag anything unusual.")
 		self.assertTrue(admin_view["can_manage"])
 		frappe.set_user(PLAIN_USER)
 		user_view = get_trigger(name)["data"]
-		self.assertIsNone(user_view["script_body"])
 		self.assertIsNone(user_view["condition"])
 		self.assertIsNone(user_view["llm_instruction"])
+		self.assertIsNone(user_view["script_body"])
 		self.assertFalse(user_view["can_manage"])
 		# non-logic metadata is still visible
 		self.assertEqual(user_view["target_doctype"], "ToDo")
