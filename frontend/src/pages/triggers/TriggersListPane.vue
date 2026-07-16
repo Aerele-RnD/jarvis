@@ -97,13 +97,6 @@
 			<span v-else class="text-base text-ink-gray-4">-</span>
 		</template>
 
-		<template #cell-modified="{ row }">
-			<Tooltip v-if="row.modified" :text="exactDate(row.modified)">
-				<div class="truncate text-base">{{ timeAgo(row.modified) }}</div>
-			</Tooltip>
-			<span v-else class="text-base text-ink-gray-4">-</span>
-		</template>
-
 		<template #select-actions="{ selections, unselectAll }">
 			<Dropdown
 				v-if="caps.can_manage"
@@ -153,26 +146,30 @@ const ACTION_OPTIONS = [
 	{ label: "LLM", value: "LLM" },
 ]
 
+// Column budget: the list shares the tab with a 380px chat pane, so at a
+// 1440px viewport it only gets ~800px — fixed tracks are kept lean so the
+// minmax(0, Nfr) Name/DocType tracks keep real reading room. "Updated" is
+// deliberately not a default column (modified stays the default sort;
+// last_activity_at is the operationally useful timestamp here).
 const columns = [
-	{ label: "On", key: "enabled", width: "4rem" },
+	{ label: "On", key: "enabled", width: "3.5rem" },
 	{ label: "Name", key: "trigger_name", width: 2 },
 	{ label: "DocType", key: "target_doctype", width: 1 },
-	{ label: "Event", key: "doc_event", width: "8rem" },
-	{ label: "Action", key: "action_type", width: "5rem" },
-	{ label: "24h", key: "activity_24h", width: "4rem", align: "center" },
-	{ label: "Last activity", key: "last_activity_at", width: "8rem" },
-	{ label: "Updated", key: "modified", width: "8rem" },
+	{ label: "Event", key: "doc_event", width: "7rem" },
+	{ label: "Action", key: "action_type", width: "4.5rem" },
+	{ label: "24h", key: "activity_24h", width: "3rem", align: "center" },
+	{ label: "Last activity", key: "last_activity_at", width: "7.5rem" },
 ]
 
 // search rides the quick-filter strip (MacrosList/SkillsList pattern): it lives
 // in the filters object for a controlled input; fetchFn moves it onto the
-// envelope's `search` param. target_doctype rides here too as a text filter
-// (FilterButton only builds select/daterange rows).
+// envelope's `search` param. No separate DocType input: server-side search
+// already matches target_doctype, and the strip shares an ~800px pane with
+// the chat rail (each quick filter reserves min-w-36).
 const quickFilters = computed(() => [
 	{ key: "search", label: "Search triggers", type: "text" },
 	{ key: "enabled", label: "Status", type: "select", options: ENABLED_OPTIONS },
 	{ key: "action_type", label: "Action", type: "select", options: ACTION_OPTIONS },
-	{ key: "target_doctype", label: "DocType (exact)", type: "text" },
 ])
 const filterDefs = computed(() => [
 	{ key: "enabled", label: "Status", type: "select", options: ENABLED_OPTIONS },

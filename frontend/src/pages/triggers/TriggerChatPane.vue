@@ -89,6 +89,23 @@
 			</div>
 		</div>
 
+		<!-- parked ERP-write confirmations (create/update Jarvis Trigger…):
+		     rendered in-pane so a chat-driven creation never dead-ends into
+		     the full chat view just to click Approve -->
+		<div v-if="pendingCards.length" class="flex shrink-0 flex-col gap-2 border-t px-4 py-3">
+			<div
+				v-for="pa in pendingCards"
+				:key="pa.token"
+				class="flex flex-col gap-2 rounded-md p-3 ring-1 ring-outline-gray-modals"
+			>
+				<span class="text-sm text-ink-gray-8">{{ pa.summary || "Confirm this action" }}</span>
+				<div class="flex items-center gap-2">
+					<Button variant="solid" label="Approve" :loading="pa.busy" @click="approve(pa)" />
+					<Button variant="ghost" label="Dismiss" :disabled="pa.busy" @click="dismiss(pa)" />
+				</div>
+			</div>
+		</div>
+
 		<!-- composer: autosizing textarea + voice + send -->
 		<div class="shrink-0 border-t px-4 py-3">
 			<div ref="box" @keydown="onKeydown" @input="autoGrow">
@@ -143,6 +160,7 @@ import VoiceRecorder from "@/components/VoiceRecorder.vue"
 import { renderMarkdown } from "@/markdown"
 import { session } from "@/data/session"
 import { sendTriggerChat, getTriggerConversation } from "@/api/triggers"
+import { listPendingConfirmations, confirmTool, dismissTool } from "@/api"
 
 // get_triggers_caps payload (can_manage gates the note, stt_enabled the mic)
 defineProps({
@@ -236,7 +254,63 @@ async function loadTranscript({ initial = false } = {}) {
 let refetchTimer = null
 function scheduleRefetch() {
 	clearTimeout(refetchTimer)
-	refetchTimer = setTimeout(() => loadTranscript(), 300)
+	refetchTimer = setTimeout(() => {
+		loadTranscript()
+		refreshPending()
+	}, 300)
+}
+
+// ── parked confirmations (gated ERP writes park for human approval) ──────────
+const pendingCards = ref([])
+
+async function refreshPending() {
+	if (!conversation.value) {
+		pendingCards.value = []
+		return
+	}
+	try {
+		const env = await listPendingConfirmations(conversation.value)
+		const items = (env && env.data && env.data.pending) || []
+		// keep in-flight busy flags across refreshes
+		const busy = new Set(pendingCards.value.filter((c) => c.busy).map((c) => c.token))
+		pendingCards.value = items.map((it) => ({ ...it, busy: busy.has(it.token) }))
+	} catch {
+		// transient - the next frame retries
+	}
+}
+
+function removeCard(token) {
+	pendingCards.value = pendingCards.value.filter((c) => c.token !== token)
+}
+
+async function approve(pa) {
+	pa.busy = true
+	try {
+		const r = await confirmTool(pa.token, conversation.value)
+		if (r && r.ok === false) {
+			toast.error("Couldn't confirm — it may have expired. Ask again in the chat.")
+		}
+	} catch (e) {
+		toast.error(errMsg(e))
+	} finally {
+		removeCard(pa.token)
+		// the parked run resumes server-side after a confirm: refresh both the
+		// transcript (receipt chip) and the triggers list (a row may now exist)
+		scheduleRefetch()
+		emit("activity")
+	}
+}
+
+async function dismiss(pa) {
+	pa.busy = true
+	try {
+		await dismissTool(pa.token, conversation.value)
+	} catch (e) {
+		toast.error(errMsg(e))
+	} finally {
+		removeCard(pa.token)
+		scheduleRefetch()
+	}
 }
 
 // ── run state + composer ──────────────────────────────────────────────────────
@@ -305,6 +379,7 @@ function newChat() {
 	loadReq++ // drop any in-flight transcript load
 	conversation.value = ""
 	messages.value = []
+	pendingCards.value = []
 	runActive.value = false
 	draft.value = ""
 	nextTick(autoGrow)
@@ -318,7 +393,9 @@ function onEvent(p) {
 		emit("activity")
 		return
 	}
-	if (!conversation.value || p.conversation_id !== conversation.value) return
+	// turn frames carry conversation_id; action:pending frames carry conversation
+	const frameConv = p.conversation_id || p.conversation
+	if (!conversation.value || frameConv !== conversation.value) return
 	// any frame for OUR conversation refreshes the transcript (debounced)
 	scheduleRefetch()
 	switch (p.kind) {
@@ -344,6 +421,7 @@ function startNoSocketLadder() {
 	ladderTimers = [3000, 8000, 15000, 30000, 60000].map((ms, i, arr) =>
 		setTimeout(async () => {
 			await loadTranscript()
+			await refreshPending()
 			const last = bubbles.value[bubbles.value.length - 1]
 			const settled = last && last.role === "assistant" && !last.streaming
 			if (settled || i === arr.length - 1) {
@@ -355,7 +433,10 @@ function startNoSocketLadder() {
 }
 
 onMounted(() => {
-	if (conversation.value) loadTranscript({ initial: true })
+	if (conversation.value) {
+		loadTranscript({ initial: true })
+		refreshPending()
+	}
 	socket && socket.on && socket.on("jarvis:event", onEvent)
 })
 onBeforeUnmount(() => {
