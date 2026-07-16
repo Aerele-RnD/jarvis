@@ -1,0 +1,366 @@
+<template>
+	<div class="flex h-full flex-col overflow-hidden bg-surface-white">
+		<!-- header: title + New chat / Open in chat -->
+		<div class="flex shrink-0 items-start justify-between gap-2 border-b px-4 py-3">
+			<div class="flex min-w-0 flex-col gap-0.5">
+				<span class="text-base font-semibold text-ink-gray-9">Create with chat</span>
+				<span class="text-p-sm text-ink-gray-6">Describe the automation; voice works too</span>
+			</div>
+			<div class="flex shrink-0 items-center gap-1">
+				<Button
+					v-if="conversation"
+					variant="ghost"
+					label="Open in chat"
+					iconLeft="message-circle"
+					@click="router.push('/c/' + conversation)"
+				/>
+				<Button variant="ghost" label="New chat" iconLeft="plus" @click="newChat" />
+			</div>
+		</div>
+
+		<!-- non-admin expectation note (the agent refuses server-side anyway) -->
+		<div v-if="!caps.can_manage" class="shrink-0 px-4 pt-3">
+			<div class="flex items-start gap-2 rounded-md p-2 ring-1 ring-outline-gray-modals">
+				<FeatherIcon name="info" class="mt-0.5 size-4 shrink-0 text-ink-gray-5" />
+				<span class="text-xs text-ink-gray-7">
+					Creating triggers requires the Jarvis Admin role.
+				</span>
+			</div>
+		</div>
+
+		<!-- transcript -->
+		<div ref="scroller" class="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+			<div v-if="loadingTranscript && !bubbles.length" class="flex justify-center py-8">
+				<LoadingIndicator class="size-5 text-ink-gray-5" />
+			</div>
+
+			<!-- empty state: nudge toward the natural-language flow -->
+			<div
+				v-else-if="!bubbles.length && !runActive"
+				class="flex h-full flex-col items-center justify-center gap-3 px-2 text-center"
+			>
+				<FeatherIcon name="zap" class="size-7.5 text-ink-gray-5" />
+				<div class="flex flex-col items-center gap-1">
+					<span class="text-base font-medium text-ink-gray-8">Describe an automation</span>
+					<span class="text-p-sm text-ink-gray-6">
+						e.g. "Warn me when a Sales Invoice over 1 lakh is submitted"
+					</span>
+				</div>
+			</div>
+
+			<div v-else class="flex flex-col gap-3">
+				<template v-for="m in bubbles" :key="m.name">
+					<!-- user: right-aligned surface-gray bubble -->
+					<div v-if="m.role === 'user'" class="flex justify-end">
+						<div
+							class="max-w-[85%] whitespace-pre-wrap rounded-lg bg-surface-gray-2 px-3 py-2 text-base text-ink-gray-8"
+						>
+							{{ m.content }}
+						</div>
+					</div>
+					<!-- assistant error: inline red note (ChatView semantics, compact) -->
+					<div v-else-if="m.error" class="flex">
+						<div class="max-w-[95%] text-sm text-ink-red-4">
+							{{ m.content || "That didn't go through. Try again." }}
+						</div>
+					</div>
+					<!-- assistant: markdown, same renderer + prose classes as the
+					     Approvals/Agents surfaces (renderMarkdown escapes HTML first) -->
+					<div v-else class="flex">
+						<div
+							class="prose prose-sm min-w-0 max-w-none text-ink-gray-8"
+							v-html="renderBubble(m.content)"
+						/>
+					</div>
+				</template>
+
+				<!-- thinking indicator: subtle three-dot pulse while a run is active -->
+				<div v-if="runActive" role="status" aria-live="polite" class="flex items-center gap-2 pt-1">
+					<span class="flex gap-1" aria-hidden="true">
+						<span
+							v-for="i in 3"
+							:key="i"
+							class="size-1.5 rounded-full bg-surface-gray-5 motion-safe:animate-pulse"
+							:style="{ animationDelay: (i - 1) * 0.18 + 's' }"
+						/>
+					</span>
+					<span class="text-xs text-ink-gray-5">Thinking…</span>
+				</div>
+			</div>
+		</div>
+
+		<!-- composer: autosizing textarea + voice + send -->
+		<div class="shrink-0 border-t px-4 py-3">
+			<div ref="box" @keydown="onKeydown" @input="autoGrow">
+				<FormControl
+					type="textarea"
+					:rows="2"
+					placeholder="Describe the trigger…"
+					:modelValue="draft"
+					:disabled="sending"
+					@update:modelValue="(v) => (draft = v)"
+				/>
+			</div>
+			<div class="mt-2 flex items-center justify-between gap-2">
+				<div class="flex items-center gap-1.5">
+					<VoiceRecorder v-if="caps.stt_enabled" compact @transcript="onTranscript" />
+				</div>
+				<Button
+					variant="solid"
+					label="Send"
+					:disabled="!draft.trim()"
+					:loading="sending"
+					@click="send"
+				/>
+			</div>
+		</div>
+	</div>
+</template>
+
+<script setup>
+// TriggerChatPane - the embedded assistant chat on the Triggers tab (left
+// pane). State machine:
+//   conversation id  → useStorage("jarvis-triggers-conv-<user>") - persisted
+//                      per user; "" means no conversation yet.
+//   first send       → send_message(conversation:"", context {"page":"triggers"})
+//                      creates/focuses one server-side; the returned
+//                      conversation_id is stored.
+//   mount w/ stored  → load its transcript; a 404 (deleted chat) silently
+//                      clears storage and starts fresh.
+//   realtime         → "jarvis:event" frames for OUR conversation schedule a
+//                      debounced (300ms) get_conversation refetch; run:start
+//                      raises run-active, run:end / run:error clear it.
+//                      run:end and "trigger:changed" also tell the parent to
+//                      refresh the triggers list (a trigger may have been
+//                      created/edited by the agent).
+//   no socket        → (?nosocket / headless QA) a bounded refetch ladder after
+//                      each send stands in for the realtime frames.
+import { ref, computed, nextTick, inject, onMounted, onBeforeUnmount } from "vue"
+import { useRouter } from "vue-router"
+import { useStorage } from "@vueuse/core"
+import { Button, FeatherIcon, FormControl, LoadingIndicator, toast } from "frappe-ui"
+import VoiceRecorder from "@/components/VoiceRecorder.vue"
+import { renderMarkdown } from "@/markdown"
+import { session } from "@/data/session"
+import { sendTriggerChat, getTriggerConversation } from "@/api/triggers"
+
+// get_triggers_caps payload (can_manage gates the note, stt_enabled the mic)
+defineProps({
+	caps: { type: Object, default: () => ({}) },
+})
+
+const emit = defineEmits(["activity"]) // parent refreshes the triggers list
+
+const router = useRouter()
+const socket = inject("$socket", null)
+
+function errMsg(e) {
+	return (e && ((e.messages && e.messages[0]) || e.message)) || "Something went wrong."
+}
+
+// ── conversation persistence (per user, ChatComposer's namespacing idiom) ────
+const conversation = useStorage(`jarvis-triggers-conv-${session.user || "anon"}`, "")
+
+// ── transcript ────────────────────────────────────────────────────────────────
+const messages = ref([])
+const loadingTranscript = ref(false)
+const scroller = ref(null)
+
+// user/assistant rows with visible content only (tool rows and internal
+// chatter stay out of this compact pane)
+const bubbles = computed(() =>
+	messages.value.filter(
+		(m) => (m.role === "user" || m.role === "assistant") && String(m.content || "").trim()
+	)
+)
+
+// ChatView's stripBlocks, minimal subset: internal fenced blocks (actions,
+// confirms, cards…) never render as raw fences in the pane.
+function stripBlocks(text) {
+	return (text || "")
+		.replace(/```jarvis-action[ \t]*\n[\s\S]*?```/g, "")
+		.replace(/```confirm[ \t]*\n[\s\S]*?```/g, "")
+		.replace(/```jarvis-ask[ \t]*\n[\s\S]*?```/g, "")
+		.replace(/```jarvis-cards[ \t]*\n[\s\S]*?```/g, "")
+		.replace(/```jarvis-skill[ \t]*\n[\s\S]*?```/g, "")
+		.replace(/```jarvis-macro[ \t]*\n[\s\S]*?```/g, "")
+		.replace(/```jarvis-chart[ \t]*\n[\s\S]*?```/g, "")
+		.replace(/\n{3,}/g, "\n\n")
+		.trim()
+}
+function renderBubble(text) {
+	return renderMarkdown(stripBlocks(text))
+}
+
+function scrollBottom() {
+	const el = scroller.value
+	if (el) el.scrollTop = el.scrollHeight
+}
+
+function isGone(e) {
+	return !!(
+		e &&
+		(e.status === 404 ||
+			e.exc_type === "DoesNotExistError" ||
+			e.status === 403 ||
+			e.exc_type === "PermissionError")
+	)
+}
+
+// monotonic request id - stale refetches dropped (useListPage idiom)
+let loadReq = 0
+async function loadTranscript({ initial = false } = {}) {
+	const id = ++loadReq
+	if (!conversation.value) return
+	if (initial) loadingTranscript.value = true
+	try {
+		const d = (await getTriggerConversation(conversation.value)) || {}
+		if (id !== loadReq) return
+		messages.value = d.messages || []
+		nextTick(scrollBottom)
+	} catch (e) {
+		if (id !== loadReq) return
+		if (isGone(e)) {
+			// the stored conversation was deleted (or reassigned) - start fresh
+			conversation.value = ""
+			messages.value = []
+			runActive.value = false
+		}
+		// transient errors keep the last-good transcript; the next frame retries
+	} finally {
+		if (id === loadReq) loadingTranscript.value = false
+	}
+}
+
+// debounced refetch driven by realtime frames
+let refetchTimer = null
+function scheduleRefetch() {
+	clearTimeout(refetchTimer)
+	refetchTimer = setTimeout(() => loadTranscript(), 300)
+}
+
+// ── run state + composer ──────────────────────────────────────────────────────
+const runActive = ref(false)
+const sending = ref(false)
+const draft = ref("")
+const box = ref(null)
+
+function autoGrow() {
+	const ta = box.value && box.value.querySelector("textarea")
+	if (!ta) return
+	ta.style.height = "auto"
+	ta.style.height = Math.min(ta.scrollHeight, 180) + "px"
+}
+
+function onKeydown(e) {
+	// Enter sends, Shift+Enter keeps the newline
+	if (e.key === "Enter" && !e.shiftKey) {
+		e.preventDefault()
+		send()
+	}
+}
+
+function onTranscript(text) {
+	// dictation appends to any typed draft (ChatComposer precedent)
+	const cur = draft.value
+	draft.value = cur.trim() ? cur.replace(/\s+$/, "") + " " + text : text
+	nextTick(autoGrow)
+}
+
+async function send() {
+	const text = draft.value.trim()
+	if (!text || sending.value) return
+	sending.value = true
+	draft.value = ""
+	nextTick(autoGrow)
+	// optimistic user bubble - reconciled by the next transcript refetch
+	const tmpName = `tmp-${Date.now()}`
+	messages.value = [...messages.value, { name: tmpName, role: "user", content: text }]
+	nextTick(scrollBottom)
+	try {
+		const r = (await sendTriggerChat(conversation.value, text)) || {}
+		if (r.ok === false) {
+			// rejected (single-flight guard / usage cap) - nothing persisted
+			messages.value = messages.value.filter((m) => m.name !== tmpName)
+			if (!draft.value) draft.value = text
+			toast.error(r.reason || "Couldn't send your message.")
+			return
+		}
+		if (r.conversation_id && r.conversation_id !== conversation.value) {
+			conversation.value = r.conversation_id
+		}
+		runActive.value = true
+		nextTick(scrollBottom)
+		if (!socket) startNoSocketLadder()
+	} catch (e) {
+		messages.value = messages.value.filter((m) => m.name !== tmpName)
+		if (!draft.value) draft.value = text
+		toast.error(errMsg(e))
+	} finally {
+		sending.value = false
+	}
+}
+
+function newChat() {
+	loadReq++ // drop any in-flight transcript load
+	conversation.value = ""
+	messages.value = []
+	runActive.value = false
+	draft.value = ""
+	nextTick(autoGrow)
+}
+
+// ── realtime ──────────────────────────────────────────────────────────────────
+function onEvent(p) {
+	if (!p || !p.kind) return
+	// a trigger changed anywhere (agent-created, another admin) → refresh list
+	if (p.kind === "trigger:changed") {
+		emit("activity")
+		return
+	}
+	if (!conversation.value || p.conversation_id !== conversation.value) return
+	// any frame for OUR conversation refreshes the transcript (debounced)
+	scheduleRefetch()
+	switch (p.kind) {
+		case "run:start":
+			runActive.value = true
+			break
+		case "run:end":
+			runActive.value = false
+			// the run may have created/edited a trigger - refresh the list
+			emit("activity")
+			break
+		case "run:error":
+			runActive.value = false
+			break
+	}
+}
+
+// no-socket fallback (?nosocket / headless QA): a bounded refetch ladder after
+// each send; run-active clears when the reply settles (or at the ladder's end).
+let ladderTimers = []
+function startNoSocketLadder() {
+	ladderTimers.forEach(clearTimeout)
+	ladderTimers = [3000, 8000, 15000, 30000, 60000].map((ms, i, arr) =>
+		setTimeout(async () => {
+			await loadTranscript()
+			const last = bubbles.value[bubbles.value.length - 1]
+			const settled = last && last.role === "assistant" && !last.streaming
+			if (settled || i === arr.length - 1) {
+				runActive.value = false
+				emit("activity")
+			}
+		}, ms)
+	)
+}
+
+onMounted(() => {
+	if (conversation.value) loadTranscript({ initial: true })
+	socket && socket.on && socket.on("jarvis:event", onEvent)
+})
+onBeforeUnmount(() => {
+	socket && socket.off && socket.off("jarvis:event", onEvent)
+	clearTimeout(refetchTimer)
+	ladderTimers.forEach(clearTimeout)
+})
+</script>
