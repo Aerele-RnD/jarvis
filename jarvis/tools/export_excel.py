@@ -6,6 +6,13 @@ here; we build the workbook with ``frappe.utils.xlsxutils.make_xlsx`` — the
 same engine Frappe's own report export uses — and save the bytes as a private
 File. The chat surface then renders a download card from the returned
 ``file_url``.
+
+Two shapes:
+  * single sheet — pass ``rows`` (+ optional ``title`` / ``columns``);
+  * multi-tab workbook — pass ``sheets`` = a list of
+    ``{"title", "rows", "columns"?}``; ``title`` then names the file. This is
+    the only way to hand the user a real multi-tab workbook as a download —
+    building one by hand via ``exec`` leaves the file stranded in the container.
 """
 import frappe
 
@@ -15,20 +22,66 @@ _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 def export_excel(
-	rows: list,
+	rows: list | None = None,
 	title: str | None = None,
 	columns: list | None = None,
+	sheets: list | None = None,
 ) -> dict:
-	"""Build an .xlsx from ``rows`` and return
-	``{file_url, filename, mime_type, size_bytes, name}``.
+	"""Build an .xlsx and return ``{file_url, filename, title, mime_type,
+	size_bytes, name}``.
 
-	``rows`` is either a list of dicts (columns = first row's keys, or the
-	given ``columns``) or a list of lists (first row is the header unless
-	``columns`` is given). ``title`` names the sheet + file.
+	Single sheet: ``rows`` is a list of dicts (columns = first row's keys, or
+	the given ``columns``) or a list of lists (first row is the header unless
+	``columns`` is given); ``title`` names the sheet + file.
+
+	Multi-tab: pass ``sheets`` = ``[{"title": str, "rows": [...], "columns":
+	[...]?}, ...]`` — one tab per entry (empty tabs are skipped). ``title``
+	names the workbook file. When ``sheets`` is given, ``rows`` is ignored.
 	"""
-	# Nothing to export → tell the caller plainly instead of handing back an
-	# empty (or header-only) workbook the user then has to open to discover is
-	# blank. The agent relays this message to the user.
+	if sheets is not None:
+		if not isinstance(sheets, list) or not sheets:
+			raise InvalidArgumentError("sheets must be a non-empty list of {title, rows}.")
+		sheet_data: list[tuple[str, list]] = []
+		used: set[str] = set()
+		for i, spec in enumerate(sheets):
+			if not isinstance(spec, dict):
+				raise InvalidArgumentError(
+					"each sheet must be an object with 'rows' (+ optional 'title', 'columns').")
+			try:
+				data = _normalize(spec.get("rows"), spec.get("columns"))
+			except NoDataError:
+				continue  # skip an empty tab, keep the rest of the workbook
+			sheet_data.append((_unique_sheet_name(spec.get("title") or f"Sheet{i + 1}", used), data))
+		# Every tab was empty → nothing to hand back (same rule as single-sheet).
+		if not sheet_data:
+			raise NoDataError("No data to prepare for Excel.")
+	else:
+		sheet_data = [((title or "Sheet1")[:31], _normalize(rows, columns))]
+
+	content = _workbook_bytes(sheet_data)
+
+	from frappe.utils.file_manager import save_file
+
+	safe = (title or "export").replace(" ", "-").replace("/", "-")[:60] or "export"
+	fdoc = save_file(f"{safe}.xlsx", content, None, None, is_private=1)
+	return {
+		"file_url": fdoc.file_url,
+		"filename": fdoc.file_name,
+		"title": title or "Export",  # clean title for the chat artifact card
+		"mime_type": _XLSX_MIME,
+		"size_bytes": int(fdoc.file_size or len(content)),
+		"name": fdoc.name,
+	}
+
+
+def _normalize(rows, columns) -> list:
+	"""``rows`` (list of dicts or list of lists) → ``[header] + body`` 2D list.
+
+	Raises ``NoDataError`` for an empty / contentless set (no columns, no data
+	rows, or every cell blank) and ``InvalidArgumentError`` for a malformed one
+	— the same guards the single-sheet path has always applied, now shared by
+	every tab so one blank tab can't ship a user a workbook that opens empty.
+	"""
 	if not isinstance(rows, list) or not rows:
 		raise NoDataError("No data to prepare for Excel.")
 
@@ -46,32 +99,42 @@ def export_excel(
 	else:
 		raise InvalidArgumentError("rows must be a list of dicts or a list of lists")
 
-	# Reject a contentless workbook — no columns, no data rows, or every cell
-	# blank — instead of handing back a blank .xlsx the user opens to find empty.
-	# (The earlier guard only caught zero rows, so `[{}]` / all-None rows and
-	# header-only lists still generated a file.)
 	if not header or not any(_nonempty(c) for r in body for c in r):
 		raise NoDataError("No data to prepare for Excel.")
-	data = [header] + body
+	return [header] + body
 
-	from frappe.utils.xlsxutils import make_xlsx
 
-	sheet = (title or "Sheet1")[:31]  # Excel caps sheet names at 31 chars
-	xlsx = make_xlsx(data, sheet)  # io.BytesIO
-	content = xlsx.getvalue()
+def _workbook_bytes(sheet_data: list[tuple[str, list]]) -> bytes:
+	"""One workbook, a sheet per (name, data). Mirrors ``make_xlsx``'s own
+	workbook options so dates format identically, then reuses ``make_xlsx``
+	(which appends a bold-header worksheet) for each tab."""
+	from io import BytesIO
 
-	from frappe.utils.file_manager import save_file
+	import xlsxwriter
+	from frappe.utils.xlsxutils import XLSXStyleBuilder, make_xlsx
 
-	safe = (title or "export").replace(" ", "-").replace("/", "-")[:60] or "export"
-	fdoc = save_file(f"{safe}.xlsx", content, None, None, is_private=1)
-	return {
-		"file_url": fdoc.file_url,
-		"filename": fdoc.file_name,
-		"title": title or "Export",  # clean title for the chat artifact card
-		"mime_type": _XLSX_MIME,
-		"size_bytes": int(fdoc.file_size or len(content)),
-		"name": fdoc.name,
-	}
+	out = BytesIO()
+	wb = xlsxwriter.Workbook(out, {
+		"constant_memory": True,
+		"default_date_format": XLSXStyleBuilder.get_datetime_format(),
+	})
+	for name, data in sheet_data:
+		make_xlsx(data, name, wb=wb)  # adds a worksheet to `wb`, returns None
+	wb.close()
+	return out.getvalue()
+
+
+def _unique_sheet_name(raw, used: set[str]) -> str:
+	"""Excel sheet names are ≤31 chars and must be unique; de-dupe collisions
+	(after truncation) so a workbook with two 'Summary' tabs doesn't blow up."""
+	base = (str(raw) or "Sheet")[:31]
+	name, n = base, 2
+	while name.lower() in used:
+		suffix = f"-{n}"
+		name = base[:31 - len(suffix)] + suffix
+		n += 1
+	used.add(name.lower())
+	return name
 
 
 def _cell(v):
