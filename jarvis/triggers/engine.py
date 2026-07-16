@@ -128,10 +128,20 @@ def _build_triggers_map() -> dict:
 def _triggers_map() -> dict:
 	"""The cached registry ({} when there are no triggers). get_value keeps a
 	per-request local copy, so repeated dispatches in one request cost a dict
-	lookup, not a Redis round-trip."""
+	lookup, not a Redis round-trip.
+
+	FAIL SAFE when the Jarvis Trigger doctype itself is unreachable (app code
+	deployed but the site not yet migrated, or a DB restored to a pre-triggers
+	state): the wildcard hook runs on EVERY doc event — login included — so a
+	raise here would take down every request on the site. Triggers simply stay
+	inert until migrate runs; the empty map is NOT cached in Redis so recovery
+	is immediate after migration."""
 	cached = frappe.cache().get_value(_CACHE_KEY)
 	if cached is None:
-		cached = _build_triggers_map()
+		try:
+			cached = _build_triggers_map()
+		except Exception:
+			return {}
 		frappe.cache().set_value(_CACHE_KEY, cached)
 	return cached
 
