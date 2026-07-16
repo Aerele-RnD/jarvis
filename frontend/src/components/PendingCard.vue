@@ -17,6 +17,20 @@ const props = defineProps({
 
 const sentence = computed(() =>
 	props.card.kind === "verb" ? verbSentence(props.card) : "")
+
+// The remainder line for a proposed child table. A helper rather than chained
+// <template>s: with only extra_columns set, an inline chain renders a dangling
+// " · ". unknown_columns MUST surface - the server counts keys it dropped rather
+// than rendering them (they are not real child fields, so the save discards
+// them), and a count nobody sees makes a silent drop silent again.
+function tableNote(t) {
+	const parts = []
+	if (t.extra > 0) parts.push(`+${t.extra} more rows`)
+	if (t.extra_columns > 0) parts.push(`+${t.extra_columns} more columns`)
+	if (t.unknown_columns > 0)
+		parts.push(`${t.unknown_columns} unrecognized field${t.unknown_columns === 1 ? "" : "s"} ignored`)
+	return parts.join(" · ")
+}
 </script>
 
 <template>
@@ -28,11 +42,28 @@ const sentence = computed(() =>
 				<template v-for="(r, i) in card.rows" :key="i"><dt>{{ r.label }}</dt><dd>{{ r.value }}</dd></template>
 			</dl>
 			<div v-else class="jv-pcard-empty">No fields set.</div>
+			<!-- proposed child tables: "5 rows" would hide an invoice's line items -->
+			<div v-for="(t, ti) in (card.tables || [])" :key="'t' + ti" class="jv-pcard-table">
+				<div class="jv-pcard-table-head">{{ t.label }} · {{ t.count }} row<template v-if="t.count !== 1">s</template></div>
+				<div class="jv-pcard-table-scroll">
+					<table>
+						<thead>
+							<tr><th v-for="(c, ci) in t.columns" :key="'c' + ci">{{ c }}</th></tr>
+						</thead>
+						<tbody>
+							<tr v-for="(r, ri) in t.rows" :key="'r' + ri">
+								<td v-for="(cell, di) in r.cells" :key="'d' + di">{{ cell }}</td>
+							</tr>
+						</tbody>
+					</table>
+				</div>
+				<div v-if="tableNote(t)" class="jv-pcard-more">{{ tableNote(t) }}</div>
+			</div>
 		</template>
 
 		<!-- update: from -> to diff -->
 		<template v-else-if="card.kind === 'update'">
-			<div class="jv-pcard-head">Update {{ card.doctype }}<template v-if="card.name"> · {{ card.name }}</template></div>
+			<div class="jv-pcard-head">Update {{ card.doctype }}<template v-if="card.name"> · {{ card.name }}</template><template v-if="card.title"> · {{ card.title }}</template></div>
 			<div v-for="(d, i) in card.diff" :key="i" class="jv-pcard-diffrow">
 				<span class="jv-pcard-lbl">{{ d.label }}</span>
 				<span class="jv-pcard-from">{{ d.from || "(empty)" }}</span>
@@ -85,6 +116,7 @@ const sentence = computed(() =>
 					<summary>
 						<span class="jv-chev" aria-hidden="true"></span>
 						<span class="jv-rec-id">{{ r.name }}</span>
+						<span v-if="r.title" class="jv-rec-title">{{ r.title }}</span>
 						<span v-if="r.fields?.length" class="jv-rec-fields">{{ r.fields.join(" · ") }}</span>
 					</summary>
 					<div class="jv-rec-body">
@@ -127,6 +159,17 @@ const sentence = computed(() =>
 .jv-pcard-list { margin: 4px 0 0; padding-left: 18px; }
 .jv-pcard-list li { padding: 1px 0; overflow-wrap: anywhere; }
 .jv-pcard-more { list-style: none; color: var(--text-3); }
+/* create: a proposed child table, scrolling inside its own box so the card never
+   scrolls the page sideways */
+.jv-pcard-table { margin-top: 10px; }
+.jv-pcard-table-head { font-size: 11.5px; color: var(--text-3); margin-bottom: 4px; }
+.jv-pcard-table-scroll { overflow-x: auto; max-height: 240px; overflow-y: auto; }
+.jv-pcard-table table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.jv-pcard-table th, .jv-pcard-table td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--surface-2); white-space: nowrap; }
+.jv-pcard-table th { color: var(--text-3); font-weight: 500; }
+.jv-pcard-table td { font-variant-numeric: tabular-nums; }
+/* scoped: .jv-pcard-more is shared with the verb/batch_create <li>s */
+.jv-pcard-table .jv-pcard-more { font-size: 11.5px; margin-top: 4px; }
 /* bulk update: collapsible per-record from→to list */
 .jv-pcard-sub { font-weight: 400; color: var(--text-3); }
 .jv-pcard-caption { font-size: 11.5px; color: var(--text-3); margin: 0 0 8px; }
@@ -141,6 +184,7 @@ const sentence = computed(() =>
 .jv-chev { flex: none; width: 7px; height: 7px; border-right: 1.6px solid var(--text-3); border-bottom: 1.6px solid var(--text-3); transform: rotate(-45deg); transition: transform .15s ease; margin-left: 2px; }
 .jv-rec[open] > summary .jv-chev { transform: rotate(45deg); }
 .jv-rec-id { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; color: var(--text); font-weight: 500; flex: none; }
+.jv-rec-title { font-size: 11.5px; color: var(--text); overflow-wrap: anywhere; }
 .jv-rec-fields { font-size: 11.5px; color: var(--text-3); margin-left: auto; text-align: right; overflow-wrap: anywhere; }
 .jv-rec-body { padding: 2px 2px 8px 19px; }
 @media (max-width: 460px) {

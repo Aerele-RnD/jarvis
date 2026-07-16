@@ -16,6 +16,20 @@ const props = defineProps({
 
 const sentence = computed(() =>
 	props.card.kind === "verb" ? verbSentence(props.card) : "")
+
+// The remainder line for a proposed child table. Duplicated from the desktop card
+// rather than shared: the two TEMPLATES are deliberately separate (different class
+// and token vocabularies), and only @shared lib logic crosses. unknown_columns MUST
+// surface - the server counts keys it dropped rather than rendering them, and a
+// count nobody sees makes a silent drop silent again.
+function tableNote(t) {
+	const parts = []
+	if (t.extra > 0) parts.push(`+${t.extra} more rows`)
+	if (t.extra_columns > 0) parts.push(`+${t.extra_columns} more columns`)
+	if (t.unknown_columns > 0)
+		parts.push(`${t.unknown_columns} unrecognized field${t.unknown_columns === 1 ? "" : "s"} ignored`)
+	return parts.join(" · ")
+}
 </script>
 
 <template>
@@ -24,10 +38,26 @@ const sentence = computed(() =>
 			<div class="jv-pc-head">Create {{ card.doctype }}<template v-if="card.name"> · {{ card.name }}</template></div>
 			<div v-for="(r, i) in card.rows" :key="i" class="jv-pc-kv"><span>{{ r.label }}</span><b>{{ r.value }}</b></div>
 			<div v-if="!card.rows.length" class="jv-pc-empty">No fields set.</div>
+			<div v-for="(t, ti) in (card.tables || [])" :key="'t' + ti" class="jv-pc-table">
+				<div class="jv-pc-table-head">{{ t.label }} · {{ t.count }} row<template v-if="t.count !== 1">s</template></div>
+				<div class="jv-pc-table-scroll">
+					<table>
+						<thead>
+							<tr><th v-for="(c, ci) in t.columns" :key="'c' + ci">{{ c }}</th></tr>
+						</thead>
+						<tbody>
+							<tr v-for="(r, ri) in t.rows" :key="'r' + ri">
+								<td v-for="(cell, di) in r.cells" :key="'d' + di">{{ cell }}</td>
+							</tr>
+						</tbody>
+					</table>
+				</div>
+				<div v-if="tableNote(t)" class="jv-pc-more">{{ tableNote(t) }}</div>
+			</div>
 		</template>
 
 		<template v-else-if="card.kind === 'update'">
-			<div class="jv-pc-head">Update {{ card.doctype }}<template v-if="card.name"> · {{ card.name }}</template></div>
+			<div class="jv-pc-head">Update {{ card.doctype }}<template v-if="card.name"> · {{ card.name }}</template><template v-if="card.title"> · {{ card.title }}</template></div>
 			<div v-for="(d, i) in card.diff" :key="i" class="jv-pc-diff">
 				<span class="jv-pc-lbl">{{ d.label }}</span>
 				<span class="jv-pc-from">{{ d.from || "(empty)" }}</span>
@@ -73,6 +103,7 @@ const sentence = computed(() =>
 					<summary>
 						<span class="jv-pc-chev" aria-hidden="true"></span>
 						<span class="jv-pc-rid">{{ r.name }}</span>
+						<span v-if="r.title" class="jv-pc-rtitle">{{ r.title }}</span>
 						<span v-if="r.fields?.length" class="jv-pc-rfields">{{ r.fields.join(" · ") }}</span>
 					</summary>
 					<div class="jv-pc-rbody">
@@ -113,6 +144,17 @@ const sentence = computed(() =>
 .jv-pc-list { margin: 5px 0 0; padding-left: 18px; }
 .jv-pc-list li { padding: 1px 0; overflow-wrap: anywhere; }
 .jv-pc-more { list-style: none; color: var(--ink5); }
+/* create: a proposed child table, scrolling inside its own box so the card never
+   scrolls the page sideways */
+.jv-pc-table { margin-top: 10px; }
+.jv-pc-table-head { font-size: 12px; color: var(--ink5); margin-bottom: 4px; }
+.jv-pc-table-scroll { overflow-x: auto; max-height: 240px; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+.jv-pc-table table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.jv-pc-table th, .jv-pc-table td { text-align: left; padding: 4px 8px; white-space: nowrap; }
+.jv-pc-table th { color: var(--ink5); font-weight: 500; }
+.jv-pc-table td { color: var(--ink8); font-variant-numeric: tabular-nums; }
+/* scoped: .jv-pc-more is shared with the verb/batch_create <li>s */
+.jv-pc-table .jv-pc-more { font-size: 12px; margin-top: 4px; }
 /* bulk update: collapsible per-record from→to list (touch-first) */
 .jv-pc-sub { font-weight: 400; color: var(--ink5); }
 .jv-pc-cap { font-size: 12px; color: var(--ink5); margin: 0 0 8px; }
@@ -126,6 +168,7 @@ const sentence = computed(() =>
 .jv-pc-chev { flex: none; width: 8px; height: 8px; border-right: 1.7px solid var(--ink5); border-bottom: 1.7px solid var(--ink5); transform: rotate(-45deg); transition: transform .15s ease; margin-left: 2px; }
 .jv-pc-rec[open] > summary .jv-pc-chev { transform: rotate(45deg); }
 .jv-pc-rid { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--ink9); font-weight: 500; flex: none; }
+.jv-pc-rtitle { font-size: 12px; color: var(--ink7); overflow-wrap: anywhere; }
 .jv-pc-rfields { font-size: 12px; color: var(--ink5); margin-left: auto; text-align: right; overflow-wrap: anywhere; }
 .jv-pc-rbody { padding: 2px 2px 10px 20px; }
 @media (max-width: 460px) {
