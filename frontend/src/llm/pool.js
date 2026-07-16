@@ -93,6 +93,8 @@ export const PROVIDER_LABELS = [
   { id: "together", label: "Together AI" },
   { id: "deepseek", label: "DeepSeek" },
   { id: "moonshot", label: "Moonshot (Kimi)" },
+  { id: "xai", label: "xAI Grok" },
+  { id: "zai", label: "GLM / Z.ai" },
   { id: "openrouter", label: "OpenRouter" },
   { id: "ollama", label: "Ollama (local)" },
   { id: "vllm", label: "vLLM (local)" },
@@ -102,7 +104,9 @@ const _LABEL_BY_ID = Object.fromEntries(PROVIDER_LABELS.map(p => [p.id, p.label]
 const _ID_BY_LABEL = Object.fromEntries(PROVIDER_LABELS.map(p => [p.label, p.id]))
 // Custom-endpoint providers whose whole identity IS the base_url (no default
 // endpoint) - validatePool requires one for these (mirrors validate_models).
-const NEEDS_BASE_URL = new Set(["openai_compat", "vllm"])
+// "zai" (GLM / Z.ai) has no native Bifrost provider, so it needs its Z.ai
+// base_url (standard api.z.ai/api/paas/v4 or the coding-plan .../coding/paas/v4).
+const NEEDS_BASE_URL = new Set(["openai_compat", "vllm", "zai"])
 export function providerLabel(id) { return _LABEL_BY_ID[id] || id || "" }
 export function providerId(label) { return _ID_BY_LABEL[label] || label || "" }
 

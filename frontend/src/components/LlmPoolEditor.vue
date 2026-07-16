@@ -49,6 +49,7 @@
 
       <div v-for="(row, i) in rows" :key="row._uid ?? i" class="jv-flist-row">
         <span class="jv-pool-badge">{{ i + 1 }}</span>
+        <ProviderLogo :provider="row.provider" :upstream="row.upstream" :size="18" />
         <span class="jv-flist-chip">{{ sourceChip(row) }}</span>
         <span class="jv-flist-model" :class="{ 'jv-flist-model--unset': !row.model }">{{ rowModelLabel(row) }}</span>
         <span v-if="row.credentialType!=='subscription' && row.hasKey" style="font-size:11px;color:var(--text-3);">key set</span>
@@ -134,7 +135,10 @@
               <label class="jv-pool-lab">Provider</label>
               <JvCombo :model-value="panelRow.provider" :options="providerOptions" :editable="editable"
                        placeholder="Provider"
-                       @update:model-value="(v) => { panelRow.provider = v; onProviderChange(panelRow) }" />
+                       @update:model-value="(v) => onProviderChange(panelRow, v)">
+                <template #option="{ option }"><span style="display:inline-flex;align-items:center;gap:8px"><ProviderLogo :provider="option.value" :size="16" />{{ option.label }}</span></template>
+                <template #selected="{ label, placeholder }"><span style="display:inline-flex;align-items:center;gap:8px"><ProviderLogo v-if="label" :provider="label" :size="16" />{{ label || placeholder }}</span></template>
+              </JvCombo>
             </div>
             <div class="jv-pool-field">
               <label class="jv-pool-lab">Model</label>
@@ -391,8 +395,11 @@
              no jarring resize when toggling. The Account editor keeps the dense row. -->
         <div v-if="m.credentialType!=='subscription'" :class="{ 'jv-single-body': singleMode }">
           <div v-if="singleMode" class="jv-ak-grid">
-            <JvCombo :model-value="m.provider" @update:model-value="(v) => { m.provider = v; onProviderChange(m) }"
-                     :options="providerOptions" :editable="editable" placeholder="Provider" />
+            <JvCombo :model-value="m.provider" @update:model-value="(v) => onProviderChange(m, v)"
+                     :options="providerOptions" :editable="editable" placeholder="Provider">
+              <template #option="{ option }"><span style="display:inline-flex;align-items:center;gap:8px"><ProviderLogo :provider="option.value" :size="16" />{{ option.label }}</span></template>
+              <template #selected="{ label, placeholder }"><span style="display:inline-flex;align-items:center;gap:8px"><ProviderLogo v-if="label" :provider="label" :size="16" />{{ label || placeholder }}</span></template>
+            </JvCombo>
             <JvCombo :model-value="m.model" @update:model-value="(v) => { m.model = v }" allow-custom
                      :options="modelSuggestionsForProvider(m.provider)" :editable="editable" placeholder="Model ID (e.g. gpt-4o)" />
             <input v-model="m.apiKey" :disabled="!editable" type="password"
@@ -534,6 +541,7 @@ import { errMessage as _err } from "@/lib/errors"
 import { useConfirm } from "@/composables/useConfirm"
 import JvCombo from "@/components/JvCombo.vue"
 import DirectSubscriptionCard from "@/components/DirectSubscriptionCard.vue"
+import ProviderLogo from "@/components/ProviderLogo.vue"
 
 const { confirm } = useConfirm()
 
@@ -618,10 +626,12 @@ const STATIC_MODEL_SUGGESTIONS = {
   "OpenAI": ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-4o"],
   "Google Gemini": ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-3.1-flash"],
   "Mistral": ["mistral-large-latest", "mistral-medium-latest", "mistral-small-latest"],
-  "Groq": ["llama-3.3-70b-versatile"],
+  "Groq": ["llama-3.3-70b-versatile", "openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.1-8b-instant"],
   "Together AI": ["meta-llama/Llama-3.3-70B-Instruct-Turbo"],
   "DeepSeek": ["deepseek-chat"],
   "Moonshot (Kimi)": ["kimi-k2.6"],
+  "xAI Grok": ["grok-4.5", "grok-4.3", "grok-build-0.1"],
+  "GLM / Z.ai": ["glm-4.6", "glm-4.7"],
   "OpenRouter": ["anthropic/claude-sonnet-4-6", "openai/gpt-5.5"],
   "Ollama (local)": ["qwen2.5:3b", "qwen2.5:0.5b", "llama3"],
   "OpenAI-Compatible": ["claude-sonnet-4-6", "gpt-4o", "qwen2.5:3b", "llama3"],
@@ -635,6 +645,8 @@ const PROVIDER_DEFAULTS = {
   "Together AI": { model: "meta-llama/Llama-3.3-70B-Instruct-Turbo", baseUrl: "https://api.together.xyz/v1" },
   "DeepSeek": { model: "deepseek-chat", baseUrl: "https://api.deepseek.com" },
   "Moonshot (Kimi)": { model: "kimi-k2.6", baseUrl: "https://api.moonshot.ai/v1" },
+  "xAI Grok": { model: "grok-4.5", baseUrl: "https://api.x.ai/v1" },
+  "GLM / Z.ai": { model: "glm-4.6", baseUrl: "https://api.z.ai/api/paas/v4" },
   "OpenRouter": { model: "anthropic/claude-sonnet-4-6", baseUrl: "https://openrouter.ai/api/v1" },
   "Ollama (local)": { model: "llama3", baseUrl: "http://host.docker.internal:11434/v1" },
   "vLLM (local)": { model: "", baseUrl: "" },
@@ -947,10 +959,18 @@ function setCredType(m, type) {
     m.model = (PROVIDER_DEFAULTS[m.provider] || {}).model || ""
   }
 }
-function onProviderChange(m) {
+function onProviderChange(m, newProvider) {
+  // Only act on an ACTUAL provider switch (re-selecting the same one is a no-op).
+  const changed = newProvider !== m.provider
+  m.provider = newProvider
+  if (!changed) return
+  // Snap the model + base URL to the NEW provider's defaults, replacing any
+  // leftover from the previous provider — so picking "GLM / Z.ai" gives glm-4.6,
+  // not whatever model was there before. Providers with no default model
+  // (OpenAI-Compatible / vLLM) clear the field so the user types their own.
   const d = PROVIDER_DEFAULTS[m.provider] || {}
-  if (!(m.model || "").trim() && d.model) m.model = d.model
-  if (!(m.baseUrl || "").trim() && d.baseUrl) m.baseUrl = d.baseUrl
+  m.model = d.model || ""
+  m.baseUrl = d.baseUrl || ""
 }
 // Provider switch on a subscription row in the simplified onboarding editor:
 // re-default the (hidden) model AND drop any already-connected account, which is

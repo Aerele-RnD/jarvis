@@ -21,6 +21,8 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		"Together AI":        { model: "meta-llama/Llama-3.3-70B-Instruct-Turbo", baseUrl: "https://api.together.xyz/v1" },
 		"DeepSeek":           { model: "deepseek-chat",                     baseUrl: "https://api.deepseek.com" },
 		"Moonshot (Kimi)":    { model: "kimi-k2.6",                         baseUrl: "https://api.moonshot.ai/v1" },
+		"xAI Grok":           { model: "grok-4.5",                          baseUrl: "https://api.x.ai/v1" },
+		"GLM / Z.ai":         { model: "glm-4.6",                           baseUrl: "https://api.z.ai/api/paas/v4" },
 		"OpenRouter":         { model: "anthropic/claude-sonnet-4-6",       baseUrl: "https://openrouter.ai/api/v1" },
 		"Ollama (local)":     { model: "llama3",                            baseUrl: "http://host.docker.internal:11434/v1" },
 		"vLLM (local)":       { model: "",                                  baseUrl: "" },
@@ -34,6 +36,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	const PROVIDER_LABEL_BY_ID = {
 		anthropic: "Anthropic", openai: "OpenAI", google: "Google Gemini", mistral: "Mistral",
 		groq: "Groq", together: "Together AI", deepseek: "DeepSeek", moonshot: "Moonshot (Kimi)",
+		xai: "xAI Grok", zai: "GLM / Z.ai",
 		openrouter: "OpenRouter", ollama: "Ollama (local)", vllm: "vLLM (local)", openai_compat: "OpenAI-Compatible",
 	};
 	function providerLabel(v) {
@@ -55,10 +58,12 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		"OpenAI":            ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-4o"],
 		"Google Gemini":     ["gemini-2.5-pro", "gemini-3.5-flash", "gemini-3.1-flash-lite"],
 		"Mistral":           ["mistral-large-latest", "mistral-medium-latest", "mistral-small-latest"],
-		"Groq":              ["llama-3.3-70b-versatile"],
+		"Groq":              ["llama-3.3-70b-versatile", "openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.1-8b-instant"],
 		"Together AI":       ["meta-llama/Llama-3.3-70B-Instruct-Turbo"],
 		"DeepSeek":          ["deepseek-chat"],
 		"Moonshot (Kimi)":   ["kimi-k2.6"],
+		"xAI Grok":          ["grok-4.5", "grok-4.3", "grok-build-0.1"],
+		"GLM / Z.ai":        ["glm-4.6", "glm-4.7"],
 		"OpenRouter":        ["anthropic/claude-sonnet-4-6", "openai/gpt-5.5"],
 		"Ollama (local)":    ["qwen2.5:3b", "qwen2.5:0.5b", "llama3"],
 		"OpenAI-Compatible": ["claude-sonnet-4-6", "gpt-4o", "qwen2.5:3b", "llama3"],

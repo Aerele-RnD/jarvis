@@ -13,14 +13,14 @@
              :autocomplete="autocomplete" :aria-required="ariaRequired ? 'true' : undefined"
              @input="onInput" @focus="open = true"
              @keydown.down.prevent.stop="move(1)" @keydown.up.prevent.stop="move(-1)" @keydown.enter.prevent.stop="onEnter" @keydown.esc.stop="open = false" />
-      <span v-else class="jvc-val" :class="{ 'jvc-ph': !displayLabel }">{{ displayLabel || placeholder }}</span>
+      <span v-else class="jvc-val" :class="{ 'jvc-ph': !displayLabel }"><slot name="selected" :label="displayLabel" :placeholder="placeholder">{{ displayLabel || placeholder }}</slot></span>
       <svg class="jvc-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
     </div>
     <ul v-if="open && editable && filtered.length" class="jvc-menu" role="listbox">
       <li v-for="(o, idx) in filtered" :key="o.value" role="option" :aria-selected="o.value === modelValue"
           class="jvc-opt" :class="{ 'jvc-on': o.value === modelValue, 'jvc-hi': idx === hi }"
           @mousedown.prevent="choose(o)" @mousemove="hi = idx">
-        <span class="jvc-opt-l">{{ o.label }}</span>
+        <span class="jvc-opt-l"><slot name="option" :option="o">{{ o.label }}</slot></span>
         <svg v-if="o.value === modelValue" class="jvc-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
       </li>
     </ul>

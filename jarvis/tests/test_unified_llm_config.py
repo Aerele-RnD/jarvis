@@ -209,6 +209,43 @@ def _account(upstream="openai", account_ref="ACC_001", label="test@example.com",
     )
 
 
+class TestProviderNormalization(FrappeTestCase):
+    """Phase-1 API-key expansion: normalize_provider maps new provider labels."""
+
+    def test_xai_grok_normalizes_to_xai(self):
+        from jarvis.jarvis.pool_serialize import normalize_provider
+        # xAI Grok is a native Bifrost provider; its label normalizes to "xai".
+        self.assertEqual(normalize_provider("xAI Grok"), "xai")
+
+    def test_glm_zai_normalizes_to_openai_compat(self):
+        from jarvis.jarvis.pool_serialize import normalize_provider
+        # GLM / Z.ai has no native Bifrost provider, so it rides the existing
+        # openai-compatible custom-endpoint path (base_url required).
+        self.assertEqual(normalize_provider("GLM / Z.ai"), "openai_compat")
+
+    def test_existing_labels_unchanged(self):
+        from jarvis.jarvis.pool_serialize import normalize_provider
+        self.assertEqual(normalize_provider("Groq"), "groq")
+        self.assertEqual(normalize_provider("Moonshot (Kimi)"), "moonshot")
+        self.assertEqual(normalize_provider("OpenAI-Compatible"), "openai_compat")
+
+    def test_xai_and_glm_serialize_into_pool_payload(self):
+        # The actual feature: build_pool_payload emits xAI as the native "xai"
+        # provider and GLM/Z.ai as an openai_compat custom provider (base_url kept).
+        from jarvis.jarvis.pool_serialize import build_pool_payload
+        xai = _api_key_model(provider="xAI Grok", model="grok-4.5",
+                             base_url="https://api.x.ai/v1", api_key="xk", order=0)
+        glm = _api_key_model(provider="GLM / Z.ai", model="glm-4.6",
+                             base_url="https://api.z.ai/api/paas/v4", api_key="zk", order=1)
+        settings = _make_settings_with_models([xai, glm])
+        spec, _api_keys, _ = build_pool_payload(settings)
+        prov = {m["model"]: m.get("provider") for m in spec["models"]}
+        base = {m["model"]: m.get("base_url") for m in spec["models"]}
+        self.assertEqual(prov["grok-4.5"], "xai")            # native passthrough
+        self.assertEqual(prov["glm-4.6"], "openai_compat")   # GLM rides openai_compat
+        self.assertEqual(base["glm-4.6"], "https://api.z.ai/api/paas/v4")
+
+
 class TestPoolSerializeFromSettings(FrappeTestCase):
     """Task 2: Direct-call tests for build_pool_payload / validate_models / compute_proxy_active."""
 
