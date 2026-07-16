@@ -59,3 +59,77 @@ class TestFmt(FrappeTestCase):
 		# except branch deleted.
 		df = _df(fieldtype="Currency", fieldname="amount", options="bad_link_field")
 		self.assertEqual(fmt(5, df, doc=object()), "5")
+
+
+from jarvis.chat._record_summary import same_value
+
+
+class TestSameValue(FrappeTestCase):
+	def test_typed_float_equals_string_request(self):
+		# The phantom-diff case display comparison was introduced to fix: the DB
+		# holds a typed 100.0, the model sends "100". The save changes nothing.
+		df = _df(fieldtype="Currency", fieldname="rate")
+		self.assertTrue(same_value(100.0, "100", df))
+
+	def test_rounding_collision_is_NOT_a_no_op(self):
+		# THE regression this rule exists for. fmt_money at precision 2 renders both
+		# as "100.00"; a display compare would drop the row and the card would omit
+		# a change the confirm writes.
+		df = _df(fieldtype="Currency", fieldname="rate")
+		self.assertFalse(same_value(100.005, "100.001", df))
+
+	def test_float_precision_collision_is_NOT_a_no_op(self):
+		df = _df(fieldtype="Float", fieldname="exchange_rate")
+		self.assertFalse(same_value(83.1234, "83.1236", df))
+
+	def test_check_string_zero_is_a_no_op(self):
+		df = _df(fieldtype="Check", fieldname="disabled")
+		self.assertTrue(same_value(0, "0", df))
+		self.assertFalse(same_value(0, "1", df))
+
+	def test_none_equals_empty_string(self):
+		self.assertTrue(same_value(None, ""))
+
+	def test_uncastable_value_counts_as_changed(self):
+		# Never hide a row because we could not compare it. Garbage bounces pre-card
+		# via _DRY_RUN_ON_PARK anyway (api.py:1033-1039); this is a safety net.
+		df = _df(fieldtype="Currency", fieldname="rate")
+		self.assertFalse(same_value(100.0, object(), df))
+
+	def test_dates_compare_across_types(self):
+		# A typed date from the DB vs the model's string. Comparing two identical
+		# STRINGS here would pass even with Date missing from _CAST entirely.
+		import datetime
+		df = _df(fieldtype="Date", fieldname="due_date")
+		self.assertTrue(same_value(datetime.date(2026, 7, 17), "2026-07-17", df))
+		self.assertFalse(same_value(datetime.date(2026, 7, 17), "2026-07-18", df))
+
+	def test_setting_a_date_to_today_on_an_empty_field_is_NOT_a_no_op(self):
+		# getdate(None) returns TODAY (frappe/utils/data.py:125-126). A bare getdate
+		# cast would compare today to today and silently drop "due today" - a routine
+		# request - from a gated card.
+		from frappe.utils import nowdate
+		df = _df(fieldtype="Date", fieldname="due_date")
+		self.assertFalse(same_value(None, nowdate(), df))
+		self.assertFalse(same_value(nowdate(), None, df))
+
+	def test_empty_dates_are_equal_to_each_other(self):
+		df = _df(fieldtype="Date", fieldname="due_date")
+		self.assertTrue(same_value(None, "", df))
+		self.assertTrue(same_value(None, None, df))
+
+	def test_empty_datetimes_do_not_produce_a_phantom_change(self):
+		# get_datetime(None) returns now() (data.py:164-165); two calls microseconds
+		# apart would render "(empty) -> (empty)" as a change.
+		df = _df(fieldtype="Datetime", fieldname="starts_on")
+		self.assertTrue(same_value(None, None, df))
+
+	def test_invalid_datetime_strings_are_not_equal(self):
+		# get_datetime returns None for garbage rather than raising, so two different
+		# invalid strings would otherwise compare equal (None == None).
+		df = _df(fieldtype="Datetime", fieldname="starts_on")
+		self.assertFalse(same_value("not-a-date", "also-not-a-date", df))
+
+	def test_no_df_falls_back_to_string_compare(self):
+		self.assertTrue(same_value("abc", "abc"))
+		self.assertFalse(same_value("abc", "abd"))

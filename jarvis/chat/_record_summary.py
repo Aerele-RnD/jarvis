@@ -95,3 +95,59 @@ def fmt(value, df=None, doc=None, limit: int = _MAX_VAL) -> str:
 			# in get_field_precision (meta.py:936).
 			out = "" if value is None else cstr(value)
 	return out if len(out) <= limit else out[: limit - 1] + "…"
+
+
+def _cast_date(value):
+	# getdate(None) and getdate("") return TODAY (frappe/utils/data.py:125-126), so
+	# a bare getdate would make "set the due date to today" on an unset field compare
+	# equal to itself and VANISH from the card. Empties must stay empty.
+	if value in (None, ""):
+		return None
+	return getdate(value)
+
+
+def _cast_datetime(value):
+	# get_datetime(None) returns now() (data.py:164-165) - two calls microseconds
+	# apart are unequal, so None vs None would render a phantom "(empty) -> (empty)".
+	if value in (None, ""):
+		return None
+	out = get_datetime(value)
+	if out is None:
+		# get_datetime returns None for an INVALID string rather than raising, so two
+		# different pieces of garbage would compare equal. Force the changed branch.
+		raise ValueError(f"not a datetime: {value!r}")
+	return out
+
+
+# Cast a value the way the SAVE would, per fieldtype. Deliberately NOT the display
+# form: fmt_money at precision 2 renders 100.005 and 100.001 identically, so a
+# display compare drops a REAL change from a gated card. flt takes no precision
+# here - rounding is exactly what caused that bug.
+_CAST = {
+	"Currency": flt,
+	"Float": flt,
+	"Percent": flt,
+	"Int": cint,
+	"Long Int": cint,
+	"Check": cint,
+	"Date": _cast_date,
+	"Datetime": _cast_datetime,
+}
+
+
+def same_value(a, b, df=None) -> bool:
+	"""True when saving ``b`` over a stored ``a`` would not change the stored value.
+
+	Answers the question the no-op guard actually exists for, rather than "do these
+	two render the same". Comparing DISPLAY forms hides real changes; comparing raw
+	values shows phantom ones (the DB holds a typed 100.0, the model sends "100").
+	Casting both sides the way the save does gets both right.
+
+	An uncastable value counts as CHANGED - never hide a row because we could not
+	compare it.
+	"""
+	cast = _CAST.get(_fieldtype(df), cstr)
+	try:
+		return cast(a) == cast(b)
+	except Exception:
+		return False
