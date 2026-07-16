@@ -54,6 +54,10 @@ _TOOL_NAMES: tuple[str, ...] = (
     # can act on, instead of a wall of JSON.
     "download_pdf",
     "export_excel",
+    # Composed report/summary (not a single record) → downloadable PDF / HTML /
+    # PNG. download_pdf prints an existing record; this renders agent-composed
+    # content so a "give me a PDF of this report" ask produces a real download.
+    "export_document",
     "read_file",
     "get_file_pages",
     "attach_to_doc",
