@@ -170,6 +170,22 @@ class TestOnUpdateAdminDispatch(_SettingsSnapshotTestCase):
 		self.settings.db_set("llm_model", "claude-sonnet-4-6")
 		self.settings.db_set("llm_base_url", "https://api.anthropic.com")
 		self.settings.db_set("llm_api_key", "sk-original")
+		# Force DIRECT (single-model) dispatch. on_update routes into the POOL path
+		# whenever the models child table has ANY row (compute_proxy_active), and an
+		# earlier test class (e.g. test_unified_llm_config) can leave a COMMITTED
+		# Jarvis LLM Pool Model row that Frappe's per-class rollback cannot undo. With
+		# a leftover row, this test's provider-change save routes to the unmocked
+		# post_update_llm_pool → "admin unreachable" instead of the restart path it
+		# mocks — the real, order-dependent cause of this flake (the clear_document_cache
+		# below is inert for it: the classifier's before-save read is an uncached
+		# get_doc). Same fix already shipped for the same bug in
+		# test_settings_on_update._reset_settings (commit 6fc9b74).
+		frappe.db.delete(
+			"Jarvis LLM Pool Model",
+			{"parenttype": "Jarvis Settings", "parent": "Jarvis Settings"},
+		)
+		self.settings.db_set("preset", "")
+		self.settings.db_set("proxy_active", 0, update_modified=False)
 		frappe.db.commit()
 		# Finish the isolation hardening #300 started: the restart-vs-reload
 		# classifier (_classify_llm_change) compares the new provider/model/
