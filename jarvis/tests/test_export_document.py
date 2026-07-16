@@ -21,6 +21,29 @@ def _saved(mock):
     return mock.call_args.args[0], mock.call_args.args[1]
 
 
+def _pdf_backend_ok() -> bool:
+    """Frappe's HTML→PDF backend (wkhtmltopdf) may be absent in a minimal env;
+    the pdf/png tests skip rather than fail when it can't render."""
+    try:
+        from frappe.utils.pdf import get_pdf
+
+        return bool(get_pdf("<p>x</p>"))
+    except Exception:
+        return False
+
+
+def _png_backend_ok() -> bool:
+    if not _pdf_backend_ok():
+        return False
+    try:
+        import PIL  # noqa: F401
+        import pypdfium2  # noqa: F401
+
+        return True
+    except Exception:
+        return False
+
+
 class TestExportDocumentGuards(FrappeTestCase):
     def test_rejects_empty_content(self):
         with self.assertRaises(NoDataError):
@@ -43,6 +66,8 @@ class TestExportDocumentFormats(FrappeTestCase):
         return m
 
     def test_pdf(self):
+        if not _pdf_backend_ok():
+            self.skipTest("no HTML→PDF backend (wkhtmltopdf) in this environment")
         m = self._mock()
         out = export_document(_MD, format="pdf", title="My Report")
         fname, payload = _saved(m)
@@ -63,6 +88,8 @@ class TestExportDocumentFormats(FrappeTestCase):
         self.assertIn("Revenue", text)
 
     def test_png(self):
+        if not _png_backend_ok():
+            self.skipTest("no PDF→PNG rendering stack (wkhtmltopdf / pypdfium2 / PIL)")
         m = self._mock()
         out = export_document(_MD, format="png", title="My Report")
         fname, payload = _saved(m)
@@ -79,6 +106,8 @@ class TestExportDocumentFormats(FrappeTestCase):
         self.assertIn("kept verbatim", text)
 
     def test_default_format_is_pdf(self):
+        if not _pdf_backend_ok():
+            self.skipTest("no HTML→PDF backend (wkhtmltopdf) in this environment")
         m = self._mock()
         out = export_document(_MD, title="d")
         self.assertEqual(out["mime_type"], "application/pdf")
