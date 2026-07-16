@@ -17,10 +17,17 @@ the stored preview and re-load the doc on each reconnect).
 
 Safety: values come from the ALREADY perm-filtered ``would`` (create/update tools
 call ``apply_fieldlevel_read_permissions`` before returning), and the update
-``from`` values are read from a freshly-fetched, perm-filtered current doc - so a
-restricted field's value never lands in the card. Long values are truncated, rows
-capped, and obviously-secret ``run_method`` arg keys masked. The card carries no
-material the owner would not already see in the post-confirm receipt.
+``from`` values are read from a freshly-fetched doc that is permission-CHECKED
+(``has_permission("read")``) and then perm-filtered - ``frappe.get_doc`` checks no
+permission on its own unless passed a ``check_permission`` kwarg (which defaults to
+None), and the fieldlevel filter is permlevel-only, so the explicit check is what
+keeps an unreadable record's old values off the card. Long values are truncated,
+rows capped, and obviously-secret ``run_method`` arg keys masked. The card carries
+no material the owner would not already see in the post-confirm receipt.
+
+Field selection, doc reads, value formatting and no-op detection all live in
+``jarvis.chat._record_summary``; this module owns card SHAPE only. The dependency
+runs one way (confirm_card -> _record_summary) and must stay that way.
 
 Returns ``None`` for tool shapes without a bespoke card (share_doc, assign_to,
 create_custom_skill, update_wiki, bulk email, and any token minted before this
@@ -29,14 +36,18 @@ existed) - the SPA falls back to the summary + raw-preview rendering.
 
 from __future__ import annotations
 
-import re
-
 import frappe
 
-_MAX_VAL = 200  # truncate a single displayed value to this many chars
+from jarvis.chat._record_summary import (
+	_MAX_TABLES,
+	fmt,
+	is_secret,
+	same_value,
+	table_rows,
+)
+
 _MAX_ROWS = 20  # cap fields / diff rows / batch bullets / targets shown
 _BULK_KEYS = ("names", "updates", "docs", "messages")
-_SECRET_KEY_RE = re.compile(r"password|secret|token|api[_-]?key", re.IGNORECASE)
 
 # tool -> present-tense verb for the "will <verb> this <doctype> <name>" card.
 _VERB = {
@@ -99,34 +110,45 @@ def _label(meta, fieldname: str) -> str:
 	return fieldname
 
 
-def _fmt(value) -> str:
-	"""A scalar as a short display string; a child-table list -> "N rows"."""
-	if isinstance(value, list):
-		return f"{len(value)} row{'' if len(value) == 1 else 's'}"
-	if isinstance(value, dict):
-		return "..."
-	s = "" if value is None else str(value)
-	return s if len(s) <= _MAX_VAL else s[: _MAX_VAL - 1] + "…"
-
-
 def _create_card(args: dict, would) -> dict:
 	doctype = args.get("doctype")
 	values = args.get("values") if isinstance(args.get("values"), dict) else {}
 	meta = _meta(doctype)
+	# Child tables FIRST: a list value rendered as a table must not also render as a
+	# bare "Items · 1 row" text row below. The ``would`` guard is the same perm check
+	# the scalar rows use - a permlevel-dropped table would otherwise show as a write
+	# that will not happen.
+	tables, table_keys = [], set()
+	for key in list(values):
+		if len(tables) >= _MAX_TABLES:
+			break
+		value = values.get(key)
+		if not isinstance(value, list) or not value:
+			continue
+		if isinstance(would, dict) and key not in would:
+			continue  # perm-dropped from the resolved doc: the save will not write it
+		t = table_rows(meta, key, value)
+		if t:
+			tables.append(t)
+			table_keys.add(key)
 	rows = []
 	for key in list(values)[: _MAX_ROWS * 2]:
 		# Perm guard: only show a field that survived the resolved doc's
 		# field-level read-permission filter.
 		if isinstance(would, dict) and key not in would:
 			continue
+		if key in table_keys:
+			continue  # rendered as a table below, not as a bare "N rows"
 		val = would.get(key) if isinstance(would, dict) else values.get(key)
 		if val is None or (not isinstance(val, list) and str(val).strip() == ""):
 			continue
-		rows.append({"label": _label(meta, key), "value": _fmt(val)})
+		df = meta.get_field(key) if meta else None
+		rows.append({"label": _label(meta, key), "value": fmt(val, df)})
 		if len(rows) >= _MAX_ROWS:
 			break
 	name = would.get("name") if isinstance(would, dict) else None
-	return {"kind": "create", "doctype": doctype, "name": name, "rows": rows}
+	return {"kind": "create", "doctype": doctype, "name": name, "rows": rows,
+			"tables": tables}
 
 
 def _update_card(args: dict, would) -> dict:
@@ -135,51 +157,59 @@ def _update_card(args: dict, would) -> dict:
 	changes = args.get("changes") if isinstance(args.get("changes"), dict) else {}
 	meta = _meta(doctype)
 	# OLD values from the current doc (the park dry-run rolled back, so the DB is
-	# back to the pre-update state), perm-filtered so a restricted field's old
-	# value never leaks. NEW values from ``would`` (already perm-filtered +
-	# normalized by the tool).
+	# back to the pre-update state), permission-CHECKED then perm-filtered so
+	# neither an unreadable record's nor a restricted field's old value ever leaks.
+	# NEW values from ``would`` (already perm-filtered + normalized by the tool).
 	old = {}
+	doc = None  # must be bound: fmt(..., doc=doc) below needs it for currency/link titles
 	try:
 		doc = frappe.get_doc(doctype, name)
+		# get_doc checks NO permission unless passed a check_permission kwarg
+		# (document.py:141-145 -> :336-349), which defaults to None; and the
+		# fieldlevel filter below is permlevel-only. Without this, a user who cannot
+		# read the record sees its old values on the card.
+		if not doc.has_permission("read"):
+			raise frappe.PermissionError
 		doc.apply_fieldlevel_read_permissions()
 		old = doc.as_dict()
 	except Exception:
-		old = {}
+		frappe.clear_messages()  # get_doc's throw leaves an entry that leaks into the turn
+		old, doc = {}, None
 	diff = []
 	for key in list(changes)[: _MAX_ROWS * 2]:
 		if isinstance(would, dict) and key not in would:
 			continue  # not perm-visible in the resolved doc
 		to_val = would.get(key) if isinstance(would, dict) else changes.get(key)
 		from_val = old.get(key)
-		if from_val == to_val:
-			continue  # normalized to a no-op
+		df = meta.get_field(key) if meta else None
+		if same_value(from_val, to_val, df):
+			continue  # the save would not change the stored value
 		diff.append({
-			"label": _label(meta, key), "from": _fmt(from_val), "to": _fmt(to_val)})
+			"label": _label(meta, key), "from": fmt(from_val, df, doc),
+			"to": fmt(to_val, df)})
 		if len(diff) >= _MAX_ROWS:
 			break
-	return {"kind": "update", "doctype": doctype, "name": name, "diff": diff}
-
-
-def _is_secret(meta, key) -> bool:
-	"""A Password field or an obviously-secret key name - masked, never rendered
-	(mirrors _method_card's secret handling and the single-update card, where a
-	Password field's ``would`` value is already Frappe-masked before capture)."""
-	if _SECRET_KEY_RE.search(str(key)):
-		return True
-	if meta:
-		df = meta.get_field(key)
-		if df and df.fieldtype == "Password":
-			return True
-	return False
+	title = ""
+	if doc is not None and meta:
+		try:
+			tf = meta.get_title_field()
+			if tf and tf != "name" and hasattr(doc, tf):
+				title = fmt(doc.get(tf), meta.get_field(tf), doc)
+		except Exception:
+			title = ""
+	return {"kind": "update", "doctype": doctype, "name": name, "title": title,
+			"diff": diff}
 
 
 def _bulk_update_card(args: dict, updates) -> dict | None:
 	"""Per-record from->to diff for a batch ``update_doc(updates=[{name, changes}])``.
 
 	Each rendered record's OLD values come from its current (post-rollback) doc,
-	perm-filtered so a restricted field never leaks; the NEW values are the
-	caller's requested ``changes``. No-op fields are dropped (comparing DISPLAY
-	forms, so a typed DB value equals its string request), permlevel-restricted
+	permission-CHECKED then perm-filtered so a restricted field never leaks; the
+	NEW values are the caller's requested ``changes``. No-op fields are dropped
+	(comparing the values the SAVE would store, never their display forms - see
+	``same_value``: fmt_money renders 100.005 and 100.001 identically, so a display
+	compare would drop a real change from the card), permlevel-restricted
 	fields are skipped (the confirmed save would silently drop them - mirrors
 	_update_card's ``would`` guard), and secret / Password values are masked. Only
 	the first ``_MAX_ROWS`` records are rendered - each costs one doc read - and the
@@ -201,10 +231,15 @@ def _bulk_update_card(args: dict, updates) -> dict | None:
 		old, loaded = {}, False
 		try:
 			doc = frappe.get_doc(doctype, name)
+			# get_doc checks NO permission (document.py:141-145 -> :336-349 defaults
+			# check_permission to None) and the fieldlevel filter is permlevel-only.
+			if not doc.has_permission("read"):
+				raise frappe.PermissionError
 			doc.apply_fieldlevel_read_permissions()
 			old = doc.as_dict()
 			loaded = True
 		except Exception:
+			frappe.clear_messages()
 			old = {}
 		diff, fields = [], []
 		for key in list(changes)[: _MAX_ROWS * 2]:  # over-scan so no-ops don't eat slots
@@ -213,17 +248,26 @@ def _bulk_update_card(args: dict, updates) -> dict | None:
 			# show a phantom change (mirrors _update_card's ``key not in would``).
 			if loaded and key not in old:
 				continue
-			from_s, to_s = _fmt(old.get(key)), _fmt(changes.get(key))
-			if from_s == to_s:
-				continue  # no-op: display forms match (typed DB value vs its string arg)
-			if _is_secret(meta, key):
+			cdf = meta.get_field(key) if meta else None
+			if same_value(old.get(key), changes.get(key), cdf):
+				continue  # the save would not change the stored value
+			from_s, to_s = fmt(old.get(key), cdf, doc if loaded else None), fmt(changes.get(key), cdf)
+			if is_secret(meta, key):
 				from_s = to_s = "[hidden]"  # never render a password / secret value
 			label = _label(meta, key)
 			fields.append(label)
 			diff.append({"label": label, "from": from_s, "to": to_s})
 			if len(diff) >= _MAX_ROWS:
 				break
-		records.append({"name": name, "fields": fields, "diff": diff})
+		row_title = ""
+		if loaded and meta:
+			try:
+				tf = meta.get_title_field()
+				if tf and tf != "name" and hasattr(doc, tf):
+					row_title = fmt(doc.get(tf), meta.get_field(tf), doc)
+			except Exception:
+				row_title = ""
+		records.append({"name": name, "title": row_title, "fields": fields, "diff": diff})
 	if not records:
 		return None
 	return {
@@ -278,8 +322,8 @@ def _email_card(args: dict) -> dict | None:
 	if isinstance(to, list):
 		to = ", ".join(str(x) for x in to)
 	return {
-		"kind": "email", "to": _fmt(to), "subject": _fmt(args.get("subject") or ""),
-		"body": _fmt(args.get("content") or args.get("message") or ""),
+		"kind": "email", "to": fmt(to), "subject": fmt(args.get("subject") or ""),
+		"body": fmt(args.get("content") or args.get("message") or ""),
 	}
 
 
@@ -287,5 +331,6 @@ def _method_card(args: dict) -> dict:
 	inner = args.get("args") if isinstance(args.get("args"), dict) else {}
 	shown = {}
 	for k, v in list(inner.items())[:_MAX_ROWS]:
-		shown[str(k)] = "[hidden]" if _SECRET_KEY_RE.search(str(k)) else _fmt(v)
-	return {"kind": "method", "method": _fmt(args.get("method") or ""), "args": shown}
+		# No meta for a run_method arg bag, so this is the key-name check only.
+		shown[str(k)] = "[hidden]" if is_secret(None, k) else fmt(v)
+	return {"kind": "method", "method": fmt(args.get("method") or ""), "args": shown}

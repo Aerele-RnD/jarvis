@@ -233,3 +233,88 @@ class TestBatchAndFallback(FrappeTestCase):
 		shown = card["rows"][0]["value"]
 		self.assertLessEqual(len(shown), 200)
 		self.assertTrue(shown.endswith("…"))
+
+
+from unittest.mock import patch
+
+
+class TestPhase1Rewire(FrappeTestCase):
+	def test_update_card_renders_a_real_change(self):
+		# Baseline shape check. NOT a no-op test - a text change passes against the
+		# old raw comparison too. The cast-compare logic is covered at the unit level
+		# in test_record_summary (TestSameValue) and at card level by the existing
+		# test_bulk_update_normalizes_typed_noop.
+		todo = frappe.get_doc({"doctype": "ToDo", "description": "x"}).insert(
+			ignore_permissions=True)
+		card = build_card(
+			"update_doc",
+			{"doctype": "ToDo", "name": todo.name, "changes": {"description": "y"}},
+			{"would": {"description": "y"}})
+		self.assertEqual(card["kind"], "update")
+		self.assertTrue(any(d["to"] == "y" for d in card["diff"]))
+
+	def test_update_card_drops_an_unchanged_field(self):
+		todo = frappe.get_doc({"doctype": "ToDo", "description": "x"}).insert(
+			ignore_permissions=True)
+		card = build_card(
+			"update_doc",
+			{"doctype": "ToDo", "name": todo.name, "changes": {"description": "x"}},
+			{"would": {"description": "x"}})
+		self.assertEqual(card["diff"], [])
+
+	def test_update_card_carries_the_record_title(self):
+		# ToDo's title_field is `description`.
+		todo = frappe.get_doc({"doctype": "ToDo", "description": "probe title"}).insert(
+			ignore_permissions=True)
+		card = build_card(
+			"update_doc",
+			{"doctype": "ToDo", "name": todo.name, "changes": {"priority": "High"}},
+			{"would": {"priority": "High"}})
+		self.assertIn("probe title", card["title"])
+
+	def test_update_card_checks_read_permission(self):
+		# _update_card:143 has the same unchecked get_doc as _bulk_update_card - the
+		# spec and both review rounds named only the bulk one. Without this, a user
+		# who cannot read the record sees its old values on a single-update card.
+		todo = frappe.get_doc({"doctype": "ToDo", "description": "secret"}).insert(
+			ignore_permissions=True)
+		with patch("frappe.model.document.Document.has_permission", return_value=False):
+			card = build_card(
+				"update_doc",
+				{"doctype": "ToDo", "name": todo.name, "changes": {"description": "y"}},
+				{"would": {"description": "y"}})
+		# The old value must not appear: the read failed, so `from` is empty.
+		self.assertNotIn("secret", str(card))
+		self.assertEqual(card["title"], "")
+
+	def test_bulk_update_card_checks_read_permission_on_each_doc(self):
+		# The pre-existing hole: get_doc checks nothing, and
+		# apply_fieldlevel_read_permissions is permlevel-only, so a user who cannot
+		# read a record could see its OLD values on an update card.
+		#
+		# The degrade is deliberate: the record still lists the caller's own proposed
+		# changes (which they authored, so they are not a leak) with an EMPTY `from`,
+		# and no title. Asserting "no diff rows" would be wrong - it contradicts the
+		# implementation, which cannot skip rows it never loaded.
+		todo = frappe.get_doc({"doctype": "ToDo", "description": "secret-old"}).insert(
+			ignore_permissions=True)
+		with patch("frappe.model.document.Document.has_permission", return_value=False):
+			card = build_card(
+				"update_doc",
+				{"doctype": "ToDo", "updates": [{"name": todo.name, "changes": {"description": "y"}}]},
+				{})
+		self.assertNotIn("secret-old", str(card))  # the old value must not leak
+		self.assertTrue(all(d["from"] == "" for r in card["records"] for d in r["diff"]))
+		self.assertEqual(card["records"][0]["title"], "")
+
+	def test_create_card_renders_child_tables(self):
+		card = build_card(
+			"create_doc",
+			{"doctype": "Sales Invoice", "values": {
+				"customer": "X",
+				"items": [{"item_code": "I-1", "qty": 2}],
+			}},
+			{"would": {"name": "SI-1", "customer": "X",
+					   "items": [{"item_code": "I-1", "qty": 2}]}})
+		self.assertTrue(card.get("tables"))
+		self.assertEqual(card["tables"][0]["count"], 1)
