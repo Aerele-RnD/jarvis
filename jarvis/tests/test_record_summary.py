@@ -133,3 +133,38 @@ class TestSameValue(FrappeTestCase):
 	def test_no_df_falls_back_to_string_compare(self):
 		self.assertTrue(same_value("abc", "abc"))
 		self.assertFalse(same_value("abc", "abd"))
+
+
+from jarvis.chat._record_summary import _MAX_FLOOR, pick_fields
+
+
+class TestPickFields(FrappeTestCase):
+	def test_floor_includes_title_and_list_view_fields(self):
+		fields = pick_fields(frappe.get_meta("ToDo"))
+		self.assertIn("description", fields)
+		self.assertNotIn("name", fields)  # name is the row header, not a row
+
+	def test_floor_is_capped_and_deduped(self):
+		fields = pick_fields(frappe.get_meta("User"))
+		self.assertLessEqual(len(fields), _MAX_FLOOR)
+		self.assertEqual(len(fields), len(set(fields)))
+
+	def test_floor_excludes_child_tables(self):
+		meta = frappe.get_meta("User")
+		for f in pick_fields(meta):
+			self.assertNotIn(meta.get_field(f).fieldtype, ("Table", "Table MultiSelect"))
+
+	def test_long_text_fieldtypes_sort_last(self):
+		# data_fieldtypes includes Text Editor / Markdown Editor / Code, so a 10k
+		# body field can be in_list_view and would otherwise take a floor slot from
+		# the customer and the total.
+		meta = frappe.get_meta("ToDo")
+		fields = pick_fields(meta)
+		types = [meta.get_field(f).fieldtype for f in fields]
+		long_idx = [i for i, t in enumerate(types) if t in ("Text Editor", "Markdown Editor", "Code")]
+		short_idx = [i for i, t in enumerate(types) if t not in ("Text Editor", "Markdown Editor", "Code")]
+		if long_idx and short_idx:
+			self.assertGreater(min(long_idx), max(short_idx))
+
+	def test_no_meta_returns_empty(self):
+		self.assertEqual(pick_fields(None), [])

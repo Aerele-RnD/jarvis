@@ -151,3 +151,57 @@ def same_value(a, b, df=None) -> bool:
 		return cast(a) == cast(b)
 	except Exception:
 		return False
+
+
+def pick_fields(meta) -> list[str]:
+	"""The meta floor: which fields identify a STORED record at a glance.
+
+	Selection only - never used for proposed content, which renders whole (a
+	proposed field outside the floor is one the save will write, so hiding it would
+	let you approve a value you never saw).
+
+	Order: title, list-view columns, mandatory fields, status, grand_total/total.
+	Frappe's own link_preview (frappe/desk/link_preview.py) falls back to ``reqd``
+	when no preview fields are set - a record's required fields are its essence -
+	and that is the idea borrowed here. ``docstatus`` is not a DocField, so it is
+	not selectable; summary_rows renders it as a synthetic row instead.
+	"""
+	if not meta:
+		return []
+	out: list[str] = []
+	seen: set[str] = set()
+
+	def add(fieldname):
+		if not fieldname or fieldname == "name" or fieldname in seen:
+			return
+		df = meta.get_field(fieldname)
+		if df is None or df.fieldtype in _TABLE_FIELDTYPES:
+			return
+		seen.add(fieldname)
+		out.append(fieldname)
+
+	try:
+		add(meta.get_title_field())
+	except Exception:
+		pass
+	try:
+		for fieldname in meta.get_list_fields() or []:
+			add(fieldname)
+	except Exception:
+		pass
+	for df in meta.fields or []:
+		if df.reqd:
+			add(df.fieldname)
+	if getattr(meta, "is_submittable", 0):
+		add("status")
+	for fieldname in ("grand_total", "total"):
+		if meta.has_field(fieldname):
+			add(fieldname)
+			break
+
+	def is_long(fieldname):
+		df = meta.get_field(fieldname)
+		return bool(df) and df.fieldtype in _HTML_FIELDTYPES
+
+	ordered = [f for f in out if not is_long(f)] + [f for f in out if is_long(f)]
+	return ordered[:_MAX_FLOOR]
