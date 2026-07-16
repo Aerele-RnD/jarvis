@@ -67,12 +67,36 @@ function tableNote(t) {
 			<div v-if="!card.diff.length" class="jv-pc-empty">No field changes.</div>
 		</template>
 
+		<!-- ORDER IS LOAD-BEARING: records div -> targets <ul v-else-if> -> +N more.
+		     v-else-if chains to the immediately preceding sibling carrying a v-if, so
+		     putting the +N more div between them would chain the <ul> to IT - and with
+		     extra === 0 (always, via the F16 batch cap) every bulk card would render
+		     its targets twice, once as records and once as the old list. -->
 		<template v-else-if="card.kind === 'verb'">
 			<div class="jv-pc-verb">{{ sentence }}</div>
-			<ul v-if="card.count > 1 && card.targets.length" class="jv-pc-list">
+			<div v-if="(card.records || []).length" class="jv-pc-recs">
+				<template v-for="(r, i) in card.records" :key="'vr' + i">
+					<details v-if="r.rows.length" class="jv-pc-rec" :open="i === 0">
+						<summary>
+							<span class="jv-pc-chev" aria-hidden="true"></span>
+							<span class="jv-pc-rid">{{ r.name }}</span>
+							<span v-if="r.title" class="jv-pc-rtitle">{{ r.title }}</span>
+						</summary>
+						<div class="jv-pc-rbody">
+							<div v-for="(f, j) in r.rows" :key="'vf' + j" class="jv-pc-kv"><span>{{ f.label }}</span><b>{{ f.value }}</b></div>
+						</div>
+					</details>
+					<div v-else class="jv-pc-rec jv-pc-rec-bare">
+						<span class="jv-pc-rid">{{ r.name }}</span>
+						<span v-if="r.title" class="jv-pc-rtitle">{{ r.title }}</span>
+					</div>
+				</template>
+			</div>
+			<ul v-else-if="card.count > 1 && card.targets.length" class="jv-pc-list">
 				<li v-for="(t, i) in card.targets" :key="i">{{ t }}</li>
 				<li v-if="card.extra > 0" class="jv-pc-more">+{{ card.extra }} more</li>
 			</ul>
+			<div v-if="(card.records || []).length && card.extra > 0" class="jv-pc-more">+{{ card.extra }} more</div>
 		</template>
 
 		<template v-else-if="card.kind === 'email'">
@@ -167,6 +191,9 @@ function tableNote(t) {
 .jv-pc-rec > summary:active { background: var(--card2); }
 .jv-pc-chev { flex: none; width: 8px; height: 8px; border-right: 1.7px solid var(--ink5); border-bottom: 1.7px solid var(--ink5); transform: rotate(-45deg); transition: transform .15s ease; margin-left: 2px; }
 .jv-pc-rec[open] > summary .jv-pc-chev { transform: rotate(45deg); }
+/* verb: a name-only record (missing or unreadable) gets no expander, so it needs
+   the <summary> row's touch metrics by hand to line up with its expandable siblings. */
+.jv-pc-rec-bare { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 2px 8px 20px; }
 .jv-pc-rid { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--ink9); font-weight: 500; flex: none; }
 .jv-pc-rtitle { font-size: 12px; color: var(--ink7); overflow-wrap: anywhere; }
 .jv-pc-rfields { font-size: 12px; color: var(--ink5); margin-left: auto; text-align: right; overflow-wrap: anywhere; }
