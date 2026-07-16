@@ -12,7 +12,7 @@ from unittest.mock import patch
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
-from jarvis.exceptions import NoDataError
+from jarvis.exceptions import InvalidArgumentError, NoDataError
 from jarvis.tools.export_excel import export_excel
 
 
@@ -59,3 +59,72 @@ class TestExportExcelNoData(FrappeTestCase):
             )
             out = export_excel([["Name", "Qty"], ["Widget", 5]])
         self.assertEqual(out["file_url"], "/private/files/ll.xlsx")
+
+
+def _saved_bytes(mock):
+    """The content bytes export_excel handed save_file (2nd positional arg)."""
+    return mock.call_args.args[1]
+
+
+def _load(content):
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    return load_workbook(BytesIO(content))
+
+
+class TestExportExcelMultiSheet(FrappeTestCase):
+    def _mock_save(self):
+        m = patch("frappe.utils.file_manager.save_file").start()
+        self.addCleanup(patch.stopall)
+        m.return_value = frappe._dict(
+            file_url="/private/files/wb.xlsx", file_name="wb.xlsx", file_size=99, name="F-WB"
+        )
+        return m
+
+    def test_builds_named_tabs_in_order(self):
+        m = self._mock_save()
+        out = export_excel(
+            title="MIS",
+            sheets=[
+                {"title": "Financials", "rows": [{"metric": "Revenue", "value": 100}]},
+                {"title": "Customers", "rows": [["Name", "Due"], ["Acme", 50]]},
+            ],
+        )
+        self.assertEqual(out["file_url"], "/private/files/wb.xlsx")
+        wb = _load(_saved_bytes(m))
+        self.assertEqual(wb.sheetnames, ["Financials", "Customers"])
+        self.assertEqual(wb["Financials"]["A1"].value, "metric")   # header from dict keys
+        self.assertEqual(wb["Financials"]["A2"].value, "Revenue")
+        self.assertEqual(wb["Customers"]["B2"].value, 50)           # list-of-lists body
+
+    def test_empty_tabs_are_skipped_but_the_rest_ship(self):
+        m = self._mock_save()
+        export_excel(
+            title="w",
+            sheets=[
+                {"title": "HR", "rows": []},                 # empty → skipped
+                {"title": "Ops", "rows": [{"a": 1}]},        # kept
+                {"title": "Blank", "rows": [{"a": None}]},   # all-blank → skipped
+            ],
+        )
+        self.assertEqual(_load(_saved_bytes(m)).sheetnames, ["Ops"])
+
+    def test_all_empty_raises_no_data(self):
+        with self.assertRaises(NoDataError):
+            export_excel(sheets=[{"title": "A", "rows": []}, {"title": "B", "rows": [{}]}])
+
+    def test_empty_sheets_list_is_invalid(self):
+        with self.assertRaises(InvalidArgumentError):
+            export_excel(sheets=[])
+
+    def test_duplicate_titles_get_unique_sheet_names(self):
+        m = self._mock_save()
+        export_excel(
+            sheets=[
+                {"title": "Summary", "rows": [{"a": 1}]},
+                {"title": "Summary", "rows": [{"a": 2}]},
+            ],
+        )
+        self.assertEqual(_load(_saved_bytes(m)).sheetnames, ["Summary", "Summary-2"])
