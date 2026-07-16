@@ -301,3 +301,71 @@ def values_rows(meta, values: dict, limit: int = _MAX_VAL) -> dict:
 		shown = "[hidden]" if is_secret(meta, fieldname) else fmt(value, df, None, limit)
 		rows.append({"label": label, "value": shown})
 	return {"rows": rows, "extra": max(0, len(keys) - len(rows))}
+
+
+def table_rows(meta, fieldname: str, rows: list) -> dict | None:
+	"""A PROPOSED child table as a real table, or None when there is nothing to show.
+
+	Columns are the child doctype's ``in_list_view`` order UNION every key the caller
+	actually set. in_list_view alone would re-break "proposed content renders whole"
+	inside this primitive: Sales Invoice Item's list columns are item/qty/rate/amount,
+	so a batch also setting income_account on every row would write it invisibly.
+
+	A key that is not a real child field is DROPPED by the save (it fails
+	valid_columns), so it is counted in ``unknown_columns`` rather than rendered as
+	a value that will persist.
+
+	STORED child tables keep "N rows" (fmt's list branch) - a delete card does not
+	need line items to identify the order.
+	"""
+	if not meta or not isinstance(rows, list) or not rows:
+		return None
+	df = meta.get_field(fieldname)
+	if df is None or df.fieldtype not in _TABLE_FIELDTYPES or not df.options:
+		return None
+	try:
+		child = frappe.get_meta(df.options)
+	except Exception:
+		return None
+
+	proposed: list[str] = []
+	unknown: set[str] = set()  # a SET: an unknown key never enters `proposed`, so a
+	# counter would re-increment once per row (20 rows -> unknown_columns=20).
+	for row in rows:
+		if not isinstance(row, dict):
+			continue
+		for key in row:
+			if key in proposed or key in unknown:
+				continue
+			if child.get_field(key) is None:
+				unknown.add(key)
+				continue
+			proposed.append(key)
+
+	listed = [d.fieldname for d in child.fields if d.in_list_view and d.fieldname in proposed]
+	columns = listed + [f for f in proposed if f not in listed]
+	shown_cols = columns[:_MAX_COLS]  # NOT _MAX_ROWS - 20 columns is an unusable table
+
+	out_rows = []
+	for row in rows[:_MAX_ROWS]:
+		if not isinstance(row, dict):
+			continue
+		cells = []
+		for key in shown_cols:
+			cdf = child.get_field(key)
+			value = row.get(key)
+			cells.append("[hidden]" if is_secret(child, key) else fmt(value, cdf))
+		out_rows.append({"cells": cells})
+
+	return {
+		"label": df.label or fieldname,
+		"count": len(rows),
+		# ``columns`` is labels (what the card renders); ``fieldnames`` is the
+		# parallel machine-readable list - tests assert on it, and phases 3-4 use it.
+		"columns": [(child.get_field(c).label or c) for c in shown_cols],
+		"fieldnames": shown_cols,
+		"rows": out_rows,
+		"extra": max(0, len(rows) - len(out_rows)),
+		"extra_columns": max(0, len(columns) - len(shown_cols)),
+		"unknown_columns": len(unknown),
+	}

@@ -270,3 +270,62 @@ class TestValuesRows(FrappeTestCase):
 		out = values_rows(None, {"whatever": "v"})
 		self.assertEqual(out["rows"][0]["label"], "whatever")
 		self.assertEqual(out["extra"], 0)
+
+
+from jarvis.chat._record_summary import table_rows
+
+
+class TestTableRows(FrappeTestCase):
+	def test_columns_union_includes_caller_set_keys_outside_list_view(self):
+		# THE rule. Sales Invoice Item's list-view columns are item/qty/rate/amount;
+		# a batch that also sets income_account on every row must not write it
+		# invisibly. ``columns`` holds LABELS for rendering; ``fieldnames`` is the
+		# machine-readable list, so assert against that.
+		meta = frappe.get_meta("Sales Invoice")
+		rows = [{"item_code": "ITEM-1", "qty": 2, "income_account": "Sales - X"}]
+		out = table_rows(meta, "items", rows)
+		self.assertIn("income_account", out["fieldnames"])
+
+	def test_renders_cells_for_each_row(self):
+		meta = frappe.get_meta("Sales Invoice")
+		rows = [{"item_code": "ITEM-1", "qty": 2}, {"item_code": "ITEM-2", "qty": 3}]
+		out = table_rows(meta, "items", rows)
+		self.assertEqual(out["count"], 2)
+		self.assertEqual(len(out["rows"]), 2)
+
+	def test_caps_rows_and_reports_the_remainder(self):
+		meta = frappe.get_meta("Sales Invoice")
+		rows = [{"item_code": f"I-{i}"} for i in range(_MR + 3)]
+		out = table_rows(meta, "items", rows)
+		self.assertEqual(len(out["rows"]), _MR)
+		self.assertEqual(out["extra"], 3)
+
+	def test_a_key_that_is_not_a_child_field_is_counted_not_rendered(self):
+		# The save drops it (fails valid_columns); rendering it as a written value
+		# would violate the effective-values invariant.
+		meta = frappe.get_meta("Sales Invoice")
+		out = table_rows(meta, "items", [{"item_code": "I-1", "not_a_real_field": "x"}])
+		self.assertNotIn("not_a_real_field", out["fieldnames"])
+		self.assertEqual(out["unknown_columns"], 1)
+
+	def test_unknown_key_is_counted_once_not_once_per_row(self):
+		# An unknown key never enters `proposed`, so a plain counter re-increments on
+		# every row: 3 rows -> unknown_columns=3 for ONE bad field.
+		meta = frappe.get_meta("Sales Invoice")
+		rows = [{"item_code": f"I-{i}", "not_a_real_field": "x"} for i in range(3)]
+		out = table_rows(meta, "items", rows)
+		self.assertEqual(out["unknown_columns"], 1)
+
+	def test_columns_are_capped_at_MAX_COLS_not_MAX_ROWS(self):
+		meta = frappe.get_meta("Sales Invoice")
+		child = frappe.get_meta(meta.get_field("items").options)
+		many = {d.fieldname: "v" for d in child.fields[:15] if d.fieldtype not in ("Section Break", "Column Break")}
+		out = table_rows(meta, "items", [many])
+		self.assertLessEqual(len(out["fieldnames"]), 8)
+		self.assertGreater(out["extra_columns"], 0)
+
+	def test_unknown_table_field_returns_none(self):
+		self.assertIsNone(table_rows(frappe.get_meta("ToDo"), "nope", [{"a": 1}]))
+
+	def test_empty_rows_returns_none(self):
+		self.assertIsNone(table_rows(frappe.get_meta("Sales Invoice"), "items", []))
