@@ -2,7 +2,7 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 
 from jarvis.exceptions import InvalidArgumentError, PermissionDeniedError
-from jarvis.tools.get_schema import get_schema
+from jarvis.tools.get_schema import _field_record, get_schema
 
 
 class TestGetSchema(FrappeTestCase):
@@ -13,18 +13,15 @@ class TestGetSchema(FrappeTestCase):
         fieldnames = {f["fieldname"] for f in result["fields"]}
         self.assertIn("customer_name", fieldnames)
 
-    def test_default_returns_five_keys_per_field(self):
-        """The default per-field shape carries fieldname / fieldtype /
-        label / options / reqd. options and reqd are load-bearing:
-        Link/Select/Table targets and write-path requireds. The
-        previous 3-key slim default was too aggressive and got walked
-        back."""
+    def test_identity_keys_always_present_on_every_field(self):
+        """fieldname + fieldtype are unconditional; a record without them is
+        anonymous. Everything else - label, options, reqd included - appears only
+        when configured, because falsy IS the Frappe default and absence says so
+        for free. This used to assert an exact 5-key set."""
         result = get_schema(doctype="Customer")
-        f = result["fields"][0]
-        self.assertEqual(
-            set(f.keys()),
-            {"fieldname", "fieldtype", "label", "options", "reqd"},
-        )
+        for f in result["fields"]:
+            self.assertIn("fieldname", f)
+            self.assertIn("fieldtype", f)
 
     def test_default_includes_options_on_link_field(self):
         """A Link field's options carries its target DocType. Without
@@ -45,18 +42,25 @@ class TestGetSchema(FrappeTestCase):
         self.assertEqual(items_field["options"], "Sales Invoice Item")
         self.assertNotIn("child_fields", items_field)
 
-    def test_default_includes_reqd(self):
-        """reqd is a single bool per field - cheap, but essential for
-        the agent to know which fields must be set on create_doc."""
+    def test_default_includes_reqd_on_mandatory_fields_only(self):
+        """reqd is essential for the agent to know what create_doc must set - but
+        it rides the omit-when-falsy rule like everything else, so it marks the
+        mandatory fields and is simply absent on the rest."""
         result = get_schema(doctype="Customer")
-        # customer_name is mandatory on Customer (the doc's autoname);
-        # at least one field on every standard DocType has reqd=True.
-        reqds = [f["reqd"] for f in result["fields"]]
-        self.assertIn(True, reqds, "expected at least one reqd=True field")
+        # At least one field on every standard DocType is mandatory.
+        self.assertTrue(
+            any(f.get("reqd") for f in result["fields"]),
+            "expected at least one reqd field",
+        )
+        # ...and a field that is not mandatory says so by omission, not reqd=False.
+        optional = [f for f in result["fields"] if not f.get("reqd")]
+        self.assertTrue(optional, "expected some optional fields")
+        self.assertNotIn("reqd", optional[0])
 
     def test_verbose_expands_child_table_schemas(self):
-        """verbose=True is the opt-in for inlined child schemas. Same
-        per-field shape (5 keys) inside the expansion."""
+        """verbose=True is the opt-in for inlined child schemas. Child records
+        use the same shape as parents: the core keys always, plus whatever the
+        child DocType configures."""
         result = get_schema(doctype="Sales Invoice", verbose=True)
         items_field = next(f for f in result["fields"] if f["fieldname"] == "items")
         self.assertEqual(items_field["fieldtype"], "Table")
@@ -65,12 +69,9 @@ class TestGetSchema(FrappeTestCase):
         child_fieldnames = {cf["fieldname"] for cf in items_field["child_fields"]}
         self.assertIn("item_code", child_fieldnames)
         self.assertIn("qty", child_fieldnames)
-        # Child records use the same 5-key shape.
-        first_child = items_field["child_fields"][0]
-        self.assertEqual(
-            set(first_child.keys()),
-            {"fieldname", "fieldtype", "label", "options", "reqd"},
-        )
+        for cf in items_field["child_fields"]:
+            self.assertIn("fieldname", cf)
+            self.assertIn("fieldtype", cf)
 
     def test_verbose_non_table_fields_have_no_child_fields_key(self):
         result = get_schema(doctype="Customer", verbose=True)
@@ -102,3 +103,115 @@ class TestGetSchema(FrappeTestCase):
                 get_schema(doctype="Customer")
         finally:
             frappe.set_user("Administrator")
+
+
+class _StubField:
+    """Stands in for a meta DocField: _field_record only needs the five core
+    attributes plus as_dict(). A stub (not a real doctype) keeps these assertions
+    from drifting when ERPNext reshuffles its own field properties."""
+
+    def __init__(self, **props):
+        self._props = props
+        for k, v in props.items():
+            setattr(self, k, v)
+
+    def as_dict(self):
+        return dict(self._props)
+
+
+class TestFieldRecordConfiguredProps(FrappeTestCase):
+    """Per-field records carry the configured docfield properties, and only
+    those: absent == not configured (the Frappe default, always falsy)."""
+
+    def _rec(self, **props):
+        base = {"fieldname": "f1", "fieldtype": "Data", "label": "F1",
+                "options": "", "reqd": 0}
+        base.update(props)
+        return _field_record(_StubField(**base))
+
+    def test_configured_props_surface(self):
+        rec = self._rec(
+            read_only=1,
+            fetch_from="customer.customer_name",
+            allow_on_submit=1,
+            mandatory_depends_on="eval:doc.docstatus==1",
+            default="Draft",
+            link_filters='[["Item","has_variants","=",0]]',
+        )
+        self.assertEqual(rec["read_only"], 1)
+        self.assertEqual(rec["fetch_from"], "customer.customer_name")
+        self.assertEqual(rec["allow_on_submit"], 1)
+        self.assertEqual(rec["mandatory_depends_on"], "eval:doc.docstatus==1")
+        self.assertEqual(rec["default"], "Draft")
+        self.assertEqual(rec["link_filters"], '[["Item","has_variants","=",0]]')
+
+    def test_unconfigured_props_are_omitted_not_falsy(self):
+        """The whole point of the omit rule: an ordinary field costs almost
+        nothing, which is what pays for the properties added above."""
+        rec = self._rec(read_only=0, fetch_from="", allow_on_submit=None, default="")
+        self.assertEqual(set(rec.keys()), {"fieldname", "fieldtype", "label"})
+
+    def test_falsy_label_options_reqd_are_omitted_too(self):
+        """These three used to be emitted unconditionally. Emitting `options: ""`
+        on every primitive field said "no options" in 15 bytes where absence says
+        it in zero - across ~1000 fields that padding cost more than every
+        property this change adds."""
+        rec = self._rec(options="", reqd=0, label="")
+        self.assertEqual(set(rec.keys()), {"fieldname", "fieldtype"})
+
+    def test_configured_label_options_reqd_survive(self):
+        rec = self._rec(label="Customer", options="Customer", reqd=1, fieldtype="Link")
+        self.assertEqual(rec["label"], "Customer")
+        self.assertEqual(rec["options"], "Customer")
+        self.assertEqual(rec["reqd"], 1)
+
+    def test_presentation_only_props_never_surface(self):
+        """These can't affect a write; measured at ~17% of an all-props payload."""
+        rec = self._rec(print_hide=1, width="200px", collapsible=1, bold=1,
+                        in_global_search=1, translatable=1, report_hide=1,
+                        columns=2, search_index=1, show_dashboard=1)
+        for k in ("print_hide", "width", "collapsible", "bold", "in_global_search",
+                  "translatable", "report_hide", "columns", "search_index",
+                  "show_dashboard"):
+            self.assertNotIn(k, rec)
+
+    def test_docfield_row_metadata_never_surfaces(self):
+        """as_dict() carries the DocField ROW's own fields; they describe the
+        docfield record, not the field it defines - and creation/modified are
+        datetimes that would not survive the JSON hop."""
+        import datetime
+
+        rec = self._rec(name="abc123", parent="Sales Order", idx=7, docstatus=0,
+                        owner="Administrator", creation=datetime.datetime.now(),
+                        parentfield="fields", parenttype="DocType")
+        for k in ("name", "parent", "idx", "owner", "creation", "parentfield",
+                  "parenttype", "docstatus"):
+            self.assertNotIn(k, rec)
+
+    def test_non_primitive_values_are_dropped(self):
+        """Defensive: everything emitted must survive the JSON hop to the plugin
+        and the pickled cache entry."""
+        rec = self._rec(some_future_column={"a": 1}, another=[1, 2])
+        self.assertNotIn("some_future_column", rec)
+        self.assertNotIn("another", rec)
+
+
+class TestConfiguredPropsOnRealDoctype(FrappeTestCase):
+    def test_real_schema_omits_presentation_props_and_row_metadata(self):
+        result = get_schema(doctype="Customer", refresh=True)
+        banned = {"print_hide", "width", "collapsible", "bold", "in_global_search",
+                  "search_index", "translatable", "report_hide", "print_width",
+                  "name", "parent", "idx", "owner", "creation", "modified",
+                  "parentfield", "parenttype", "docstatus"}
+        for f in result["fields"]:
+            leaked = banned & set(f.keys())
+            self.assertFalse(leaked, f"{f['fieldname']} leaked {leaked}")
+
+    def test_real_schema_surfaces_a_read_only_field(self):
+        """Sanity that the mechanism fires against real meta, not just stubs.
+        Customer always has at least one read-only field."""
+        result = get_schema(doctype="Customer", refresh=True)
+        self.assertTrue(
+            any(f.get("read_only") for f in result["fields"]),
+            "expected at least one read_only field on Customer",
+        )
