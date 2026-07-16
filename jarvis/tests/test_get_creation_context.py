@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
@@ -128,3 +130,77 @@ class TestGetCreationContext(FrappeTestCase):
                 get_creation_context("User")
         finally:
             frappe.set_user("Administrator")
+
+
+class TestCreationContextMappedSource(FrappeTestCase):
+    """A derived record (invoice from an order) gets the ERP's own mapper output
+    instead of lookalikes to infer from.
+
+    The agent ALREADY hands us the source - the production transcript shows
+    `{"customer": ..., "sales_order": "SAL-ORD-2026-00002", ...}` - it just was
+    not being read as one. Uses Note (clean Title Case, so the context key
+    "note" resolves) with a patched mapper: a real submitted Sales Order needs a
+    full ERPNext company this site does not have.
+    """
+
+    def setUp(self):
+        self.src = frappe.get_doc({
+            "doctype": "Note", "title": f"ctx-src-{frappe.generate_hash(length=8)}",
+        }).insert(ignore_permissions=True)
+        frappe.db.commit()
+
+    def tearDown(self):
+        frappe.db.delete("Note", {"name": self.src.name})
+        frappe.db.commit()
+
+    def _ctx(self, mapped, note=None):
+        return patch(
+            "jarvis.tools._source_mapper.resolve_mapper", return_value="fake.method"
+        ), patch(
+            "jarvis.tools._source_mapper.mapped_values", return_value=(mapped, note)
+        )
+
+    def test_mapped_source_returns_mapper_output_and_omits_similar(self):
+        """Authoritative beats similar: a mapped doc AND five lookalikes in one
+        payload would be the worst of both - cost without benefit."""
+        p1, p2 = self._ctx({"description": "from the mapper", "items": [{"x": 1}]})
+        with p1, p2:
+            out = get_creation_context("ToDo", {"note": self.src.name})
+        self.assertEqual(out["mapped"]["description"], "from the mapper")
+        self.assertEqual(out["mapped_from"]["source_doctype"], "Note")
+        self.assertEqual(out["mapped_from"]["source_name"], self.src.name)
+        self.assertEqual(out["similar"], [])
+        self.assertIsNone(out["example"])
+        self.assertIn("authoritative", out["match_note"])
+        # The instruction must flip: copy these values, don't re-derive them.
+        self.assertIn("mapper", out["note"])
+
+    def test_mapper_refusal_is_surfaced_and_similar_still_returned(self):
+        """"Sales Order is not submitted" says exactly what to fix - but the
+        agent must still get its normal context so the turn can continue."""
+        p1, p2 = self._ctx(None, note="could not map: Sales Order is not submitted")
+        with p1, p2:
+            out = get_creation_context("ToDo", {"note": self.src.name})
+        self.assertNotIn("mapped", out)
+        self.assertIn("not submitted", out["mapped_note"])
+
+    def test_no_mapper_leaves_the_normal_path_untouched(self):
+        with patch(
+            "jarvis.tools._source_mapper.resolve_mapper", return_value=None
+        ):
+            out = get_creation_context("ToDo", {"note": self.src.name})
+        self.assertNotIn("mapped", out)
+        self.assertNotIn("mapped_note", out)
+        self.assertIn("similar", out)
+
+    def test_context_key_that_is_not_a_doctype_is_ignored(self):
+        out = get_creation_context("ToDo", {"priority": "High"})
+        self.assertNotIn("mapped", out)
+
+    def test_nonexistent_source_doc_is_ignored(self):
+        with patch(
+            "jarvis.tools._source_mapper.resolve_mapper", return_value="fake.method"
+        ), patch("jarvis.tools._source_mapper.mapped_values") as mv:
+            out = get_creation_context("ToDo", {"note": "no-such-note-xyz"})
+        self.assertNotIn("mapped", out)
+        mv.assert_not_called()  # never run a mapper for a doc that isn't there
