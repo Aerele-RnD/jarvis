@@ -95,6 +95,10 @@ export const getPersonalisationSettings = () => call(PA + "get_personalisation_s
 export const setPersonalisationSettings = (payload = {}) =>
 	call(PA + "set_personalisation_settings", { payload: JSON.stringify(payload || {}) })
 
+// Admin-only: run the chat-transcript question miner immediately over the recent
+// backlog. Returns {ok, reason?}.
+export const generateChatQuestionsNow = () => call(PA + "generate_chat_questions_now")
+
 // ── question rules (admin set) ───────────────────────────────────────────────
 // Admin-only: desk Role names selectable as a rule's target_role (Role scope) -
 // enabled desk roles minus Administrator/Guest/All, sorted. Purpose-built for

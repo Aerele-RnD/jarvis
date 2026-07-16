@@ -495,3 +495,48 @@ class TestChatMiningAnswerFlow(ChatMiningTestCase):
 		self.assertEqual(note.source, "Personalise")
 		self.assertEqual(note.question, q["name"])
 		self.assertEqual(frappe.db.get_value(QUESTION, q["name"], "status"), "Answered")
+
+
+# --------------------------------------------------------------------------- #
+# "Generate now" — the admin manual trigger
+# --------------------------------------------------------------------------- #
+class TestGenerateNow(ChatMiningTestCase):
+	def test_enqueues_when_enabled_and_idle(self):
+		from jarvis.chat import personalise_api
+
+		with (
+			mock.patch.object(chat_mining, "_enqueue") as enq,
+			mock.patch("frappe.utils.background_jobs.is_job_enqueued", return_value=False),
+		):
+			res = personalise_api.generate_chat_questions_now()
+		self.assertTrue(res["ok"])
+		enq.assert_called_once()
+
+	def test_refuses_when_already_running(self):
+		from jarvis.chat import personalise_api
+
+		with (
+			mock.patch.object(chat_mining, "_enqueue") as enq,
+			mock.patch("frappe.utils.background_jobs.is_job_enqueued", return_value=True),
+		):
+			res = personalise_api.generate_chat_questions_now()
+		self.assertFalse(res["ok"])
+		enq.assert_not_called()
+
+	def test_refuses_when_mining_disabled(self):
+		from jarvis.chat import personalise_api
+
+		self._set(chat_question_mining_enabled=0)
+		with mock.patch.object(chat_mining, "_enqueue") as enq:
+			res = personalise_api.generate_chat_questions_now()
+		self.assertFalse(res["ok"])
+		enq.assert_not_called()
+
+	def test_refuses_when_personalise_disabled(self):
+		from jarvis.chat import personalise_api
+
+		self._set(personalise_enabled=0)
+		with mock.patch.object(chat_mining, "_enqueue") as enq:
+			res = personalise_api.generate_chat_questions_now()
+		self.assertFalse(res["ok"])
+		enq.assert_not_called()
