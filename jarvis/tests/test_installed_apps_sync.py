@@ -74,6 +74,18 @@ class TestInstalledAppsSync(FrappeTestCase):
         # premature stamp would silence the gap forever on a failed send.
         self.assertEqual(ias._synced_apps(), stale)
 
+    def test_unreadable_pool_flag_defers(self):
+        """Neither leg is safe to guess when proxy_active can't be read -
+        defer (stale snapshot retries next migrate) instead of risking the
+        single-model render on a pool tenant."""
+        stale = sorted(frappe.get_installed_apps())[:-1]
+        _set_snapshot(stale)
+        with patch.object(ias, "_pool_active", return_value=None), \
+                patch("frappe.enqueue") as enq:
+            ias.after_migrate()
+        enq.assert_not_called()
+        self.assertEqual(ias._synced_apps(), stale)
+
     def test_pool_tenant_takes_pool_leg(self):
         """proxy_active tenants MUST resync through the pool path - the
         single-model restart would re-render openclaw.json in direct mode

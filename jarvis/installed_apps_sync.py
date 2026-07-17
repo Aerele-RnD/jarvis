@@ -50,7 +50,15 @@ def after_migrate() -> None:
 			return
 		if current == synced:
 			return
-		_enqueue_resync(synced, current, pool=_pool_active())
+		pool = _pool_active()
+		if pool is None:
+			# Can't tell which leg is safe - defer rather than guess (the
+			# single-model leg on a pool tenant would break Bifrost routing).
+			# The snapshot stays stale, so the next migrate retries.
+			frappe.logger("jarvis.installed_apps").warning(
+				"proxy_active unreadable; deferring installed-apps resync")
+			return
+		_enqueue_resync(synced, current, pool=pool)
 	except Exception:
 		frappe.log_error(
 			title="installed-apps resync check failed",
@@ -100,16 +108,16 @@ def _admin_configured() -> bool:
 		return False
 
 
-def _pool_active() -> bool:
+def _pool_active() -> bool | None:
 	"""True when the tenant runs the LLM pool (proxy) config. The resync MUST
 	take the pool leg then: the single-model restart would re-render
 	openclaw.json in direct mode and knock the container off Bifrost pool
-	routing. Unreadable reads as False - the single-model leg is the one that
-	always exists."""
+	routing. None when unreadable - the caller defers instead of guessing a
+	leg (defense in depth; a wrong single-model guess IS the routing bug)."""
 	try:
 		return bool(cint(frappe.db.get_single_value(SETTINGS, "proxy_active")))
 	except Exception:
-		return False
+		return None
 
 
 def _enqueue_resync(synced: list[str], current: list[str], pool: bool) -> None:
