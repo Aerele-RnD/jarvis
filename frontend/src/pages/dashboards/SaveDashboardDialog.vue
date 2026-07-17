@@ -141,7 +141,14 @@ watch(
 		form.dashboard_title = (e && e.dashboard_title) || ""
 		form.description = (e && e.description) || ""
 		const scopes = props.caps.creatable_scopes || ["User"]
-		form.scope = e && e.scope && scopes.includes(e.scope) ? e.scope : scopes[0] || "User"
+		// private-first: even an admin (whose creatable_scopes lead with Org)
+		// must opt INTO sharing, never share by default
+		form.scope =
+			e && e.scope && scopes.includes(e.scope)
+				? e.scope
+				: scopes.includes("User")
+					? "User"
+					: scopes[0] || "User"
 		form.target_role = (e && e.target_role) || ""
 	}
 )
