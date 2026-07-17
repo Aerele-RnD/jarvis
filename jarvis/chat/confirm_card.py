@@ -45,6 +45,7 @@ from jarvis.chat._record_summary import (
 	same_value,
 	summary_rows,
 	table_rows,
+	values_rows,
 )
 
 _MAX_ROWS = 20  # cap fields / diff rows / batch bullets / targets shown
@@ -69,8 +70,10 @@ def build_card(tool: str, args, preview) -> dict | None:
 	would = preview.get("would") if isinstance(preview, dict) else None
 	try:
 		bulk_key, bulk_items = _bulk(args)
-		if tool == "create_doc":
-			return _batch_create_card(would) if bulk_key == "docs" else _create_card(args, would)
+		if tool in ("create_doc", "create_docs"):
+			if bulk_key == "docs" or tool == "create_docs":
+				return _batch_create_card(args, would)
+			return _create_card(args, would)
 		if tool == "update_doc" and not bulk_key:
 			return _update_card(args, would)
 		if tool == "update_doc" and bulk_key == "updates":
@@ -279,18 +282,65 @@ def _bulk_update_card(args: dict, updates) -> dict | None:
 	}
 
 
-def _batch_create_card(would) -> dict | None:
+def _batch_create_card(args: dict, would) -> dict | None:
+	"""Per-record proposed content for a batch create.
+
+	Values come from ``args.docs[i].values``, NOT from ``would``: the sandbox inserted
+	those rows and rolled them back, so ``would.created[i]["name"]`` points at nothing
+	and cannot be read. For a create the args are also the MORE truthful source -
+	Frappe skips the child-table permlevel reset on new records
+	(document.py:1326-1328), so a permlevel-restricted child field the caller set IS
+	written, while ``would`` is read-filtered and would under-report it.
+
+	``notes`` is NOT rendered: it is a tool argument the MODEL writes
+	(create_doc.py:87 -> :134), and on the card it reads as system truth. The card is
+	the human's independent check on the agent; the agent can say what it likes in
+	chat, where the claim is attributed to it.
+	"""
 	if not isinstance(would, dict) or not isinstance(would.get("created"), list):
 		return None
 	created = would["created"]
+	docs = args.get("docs") if isinstance(args.get("docs"), list) else []
 	rows = [
 		{"doctype": d.get("doctype"), "name": d.get("name")}
 		for d in created[:_MAX_ROWS] if isinstance(d, dict)
 	]
-	notes = [str(n) for n in (would.get("notes") or []) if str(n or "").strip()]
+	records = []
+	# zip, never filter-then-index: filtering non-dicts out of `created` first would
+	# pair docs[i] with the WRONG created entry from the first bad row onwards.
+	for made, req in list(zip(created, docs))[:_MAX_ROWS]:
+		if not isinstance(made, dict) or not isinstance(req, dict):
+			continue
+		doctype = req.get("doctype") or made.get("doctype")
+		values = req.get("values") if isinstance(req.get("values"), dict) else {}
+		meta = _meta(doctype)  # PER ITEM: a batch can mix doctypes
+		# Tables FIRST, then EVERYTHING not rendered as a table goes through
+		# values_rows - including lists table_rows REJECTED (unknown doctype -> meta
+		# is None -> table_rows returns None; a list on a non-Table field) and the
+		# _MAX_TABLES overflow, which the spec promises degrades to "N rows". Those
+		# fall to fmt's list branch. A proposed key must NEVER vanish: splitting on
+		# isinstance(v, list) up front drops every list table_rows rejects, so a
+		# human approves a create without seeing its line items - the exact defect
+		# this redesign exists to kill. Mirrors _create_card's table_keys pattern
+		# (confirm_card.py:121-141), which already solved this.
+		tables, table_keys = [], set()
+		for key, value in values.items():
+			if len(tables) >= _MAX_TABLES:
+				break
+			if not isinstance(value, list) or not value:
+				continue
+			t = table_rows(meta, key, value)
+			if t:
+				tables.append(t)
+				table_keys.add(key)
+		body = values_rows(meta, {k: v for k, v in values.items() if k not in table_keys})
+		records.append({
+			"doctype": doctype, "name": made.get("name"),
+			"rows": body["rows"], "extra": body["extra"], "tables": tables,
+		})
 	return {
 		"kind": "batch_create", "count": len(created), "rows": rows,
-		"extra": max(0, len(created) - len(rows)), "notes": notes[:_MAX_ROWS],
+		"extra": max(0, len(created) - len(rows)), "records": records,
 	}
 
 

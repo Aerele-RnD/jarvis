@@ -215,7 +215,6 @@ class TestBatchAndFallback(FrappeTestCase):
 		self.assertEqual(card["kind"], "batch_create")
 		self.assertEqual(card["count"], 2)
 		self.assertEqual([r["name"] for r in card["rows"]], ["T-1", "T-2"])
-		self.assertEqual(card["notes"], ["reused Supplier X"])
 
 	def test_uncovered_tool_returns_none(self):
 		self.assertIsNone(build_card("share_doc", {"doctype": "ToDo", "name": "T-1"}, {}))
@@ -393,3 +392,132 @@ class TestVerbCardRecords(FrappeTestCase):
 			{"doctype": "ToDo", "name": self.todo.name, "action": "Approve"}, {})
 		self.assertEqual(card["action"], "Approve")
 		self.assertEqual(card["records"][0]["name"], self.todo.name)
+
+
+class TestBatchCreateContent(FrappeTestCase):
+	def _args(self, docs, notes=None):
+		out = {"docs": docs}
+		if notes is not None:
+			out["notes"] = notes
+		return out
+
+	def test_each_record_carries_its_proposed_values(self):
+		# The card listed {doctype, name} and threw the values away - even though
+		# they were sitting in args.docs[i].values.
+		args = self._args([
+			{"doctype": "ToDo", "values": {"description": "first", "priority": "High"}},
+			{"doctype": "ToDo", "values": {"description": "second", "priority": "Low"}},
+		])
+		would = {"created": [
+			{"doctype": "ToDo", "name": "T-1"}, {"doctype": "ToDo", "name": "T-2"}]}
+		card = build_card("create_doc", args, {"would": would})
+		self.assertEqual(card["kind"], "batch_create")
+		self.assertEqual(len(card["records"]), 2)
+		self.assertEqual(card["records"][0]["name"], "T-1")
+		self.assertIn("first", {r["value"] for r in card["records"][0]["rows"]})
+		self.assertIn("Low", {r["value"] for r in card["records"][1]["rows"]})
+
+	def test_model_authored_notes_are_NOT_on_the_card(self):
+		# THE trust-boundary fix. `notes` is a tool arg the model writes; on the card
+		# it reads as system truth. A prompt-injected agent could caption its own
+		# confirmation.
+		args = self._args(
+			[{"doctype": "ToDo", "values": {"description": "x"}}],
+			notes=["these already exist - confirming changes nothing"])
+		would = {"created": [{"doctype": "ToDo", "name": "T-1"}],
+				 "notes": ["these already exist - confirming changes nothing"]}
+		card = build_card("create_doc", args, {"would": would})
+		self.assertNotIn("notes", card)
+		self.assertNotIn("confirming changes nothing", str(card))
+
+	def test_mixed_doctype_batch_uses_per_item_meta(self):
+		# A batch can mix doctypes; one meta for the card would mislabel every field
+		# of every other doctype.
+		args = self._args([
+			{"doctype": "ToDo", "values": {"description": "a todo"}},
+			{"doctype": "Note", "values": {"title": "a note"}},
+		])
+		would = {"created": [
+			{"doctype": "ToDo", "name": "T-1"}, {"doctype": "Note", "name": "N-1"}]}
+		card = build_card("create_doc", args, {"would": would})
+		self.assertEqual(card["records"][0]["doctype"], "ToDo")
+		self.assertEqual(card["records"][1]["doctype"], "Note")
+		# Assert the LABEL, not the value: values render identically under the wrong
+		# meta (values_rows falls back to fieldnames), so a value assertion stays
+		# green even with the meta hoisted out of the loop. Note.title's label is
+		# "Title"; under a hoisted ToDo meta it would render as the raw "title".
+		self.assertIn({"label": "Title", "value": "a note"}, card["records"][1]["rows"])
+
+	def test_a_non_dict_in_created_does_not_desync_the_pairing(self):
+		# Filter-then-index would pair args.docs[1] with created[2].
+		args = self._args([
+			{"doctype": "ToDo", "values": {"description": "first"}},
+			{"doctype": "ToDo", "values": {"description": "second"}},
+		])
+		would = {"created": ["garbage", {"doctype": "ToDo", "name": "T-2"}]}
+		card = build_card("create_doc", args, {"would": would})
+		# Whatever we render, "second" must never be labelled T-2's sibling wrongly:
+		# the surviving pair is args.docs[1] <-> created[1].
+		named = [r for r in card["records"] if r["name"] == "T-2"]
+		self.assertEqual(len(named), 1)
+		self.assertIn("second", {r["value"] for r in named[0]["rows"]})
+
+	def test_a_list_table_rows_rejects_still_renders_as_N_rows(self):
+		# An unknown doctype means _meta -> None -> table_rows returns None. Without
+		# the table_keys pattern the child rows vanish ENTIRELY and a human approves
+		# a create never seeing its line items.
+		args = self._args([{"doctype": "NoSuchDoctype9", "values": {
+			"customer": "X", "items": [{"item_code": "I-1"}, {"item_code": "I-2"}]}}])
+		would = {"created": [{"doctype": "NoSuchDoctype9", "name": "N-1"}]}
+		card = build_card("create_doc", args, {"would": would})
+		self.assertIn("2 rows", {r["value"] for r in card["records"][0]["rows"]})
+
+	def test_tables_past_MAX_TABLES_degrade_to_N_rows(self):
+		# The spec's caps section promises the overflow degrades to "N rows", not
+		# that it disappears.
+		from jarvis.chat._record_summary import _MAX_TABLES
+		values = {"customer": "X"}
+		for i in range(_MAX_TABLES + 1):
+			values[f"table_{i}"] = [{"a": 1}]
+		args = self._args([{"doctype": "ToDo", "values": values}])
+		would = {"created": [{"doctype": "ToDo", "name": "T-1"}]}
+		card = build_card("create_doc", args, {"would": would})
+		rendered = len(card["records"][0]["tables"])
+		self.assertLessEqual(rendered, _MAX_TABLES)
+		# every table key not rendered as a table still appears as a row
+		self.assertEqual(
+			len([r for r in card["records"][0]["rows"] if r["value"].endswith("row")]),
+			(_MAX_TABLES + 1) - rendered)
+
+	def test_child_tables_render_per_record(self):
+		args = self._args([{"doctype": "Sales Invoice", "values": {
+			"customer": "X", "items": [{"item_code": "I-1", "qty": 2}]}}])
+		would = {"created": [{"doctype": "Sales Invoice", "name": "SI-1"}]}
+		card = build_card("create_doc", args, {"would": would})
+		self.assertTrue(card["records"][0]["tables"])
+		self.assertEqual(card["records"][0]["tables"][0]["count"], 1)
+
+	def test_secret_values_are_masked(self):
+		args = self._args([{"doctype": "ToDo", "values": {
+			"description": "x", "api_token": "sk-live-1"}}])
+		would = {"created": [{"doctype": "ToDo", "name": "T-1"}]}
+		card = build_card("create_doc", args, {"would": would})
+		self.assertNotIn("sk-live-1", str(card))
+
+	def test_create_docs_shim_gets_the_same_card(self):
+		# The deprecated shim delegates to create_doc's batch path; build_card
+		# dispatched on tool == "create_doc" only, so an old plugin still advertising
+		# jarvis__create_docs fell back to the raw rendering.
+		args = self._args([{"doctype": "ToDo", "values": {"description": "x"}}])
+		would = {"created": [{"doctype": "ToDo", "name": "T-1"}]}
+		card = build_card("create_docs", args, {"would": would})
+		self.assertEqual(card["kind"], "batch_create")
+
+	def test_old_bundle_keys_are_kept(self):
+		# `rows` ({doctype,name}) and `count`/`extra` are what a client running the
+		# previous bundle reads. Additive only.
+		args = self._args([{"doctype": "ToDo", "values": {"description": "x"}}])
+		would = {"created": [{"doctype": "ToDo", "name": "T-1"}]}
+		card = build_card("create_doc", args, {"would": would})
+		self.assertEqual(card["rows"], [{"doctype": "ToDo", "name": "T-1"}])
+		self.assertEqual(card["count"], 1)
