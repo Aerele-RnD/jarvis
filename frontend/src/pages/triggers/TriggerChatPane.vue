@@ -40,7 +40,7 @@
 				v-else-if="!bubbles.length && !runActive"
 				class="flex h-full flex-col items-center justify-center gap-3 px-2 text-center"
 			>
-				<FeatherIcon name="zap" class="size-7.5 text-ink-gray-5" />
+				<FeatherIcon name="git-branch" class="size-7.5 text-ink-gray-5" />
 				<div class="flex flex-col items-center gap-1">
 					<span class="text-base font-medium text-ink-gray-8">Describe an automation</span>
 					<span class="text-p-sm text-ink-gray-6">

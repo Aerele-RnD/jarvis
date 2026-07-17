@@ -4,7 +4,7 @@
 		     (SkillsPage probe precedent - transient failures retry, never block) -->
 		<template v-if="accessDenied">
 			<div class="flex flex-1 flex-col items-center justify-center gap-3 px-8 text-center">
-				<FeatherIcon name="zap" class="size-7.5 text-ink-gray-5" />
+				<FeatherIcon name="git-branch" class="size-7.5 text-ink-gray-5" />
 				<div class="flex flex-col items-center gap-1">
 					<span class="text-lg font-medium text-ink-gray-8">No access to Triggers</span>
 					<span class="text-p-base text-ink-gray-6">
