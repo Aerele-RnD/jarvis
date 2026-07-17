@@ -666,3 +666,67 @@ class TestShareAndAssignCards(FrappeTestCase):
 				"doctype": "ToDo", "name": self.todo.name, "user": "x@y.test"}, {})
 		self.assertEqual(card["records"][0]["title"], "")
 		self.assertNotIn("share probe", str(card))
+
+
+class TestSkillAndWikiCards(FrappeTestCase):
+	def test_skill_renders_the_instructions_body(self):
+		# The card was the literal string "create_custom_skill". You approved
+		# persistent agent instructions - the prompt-injection persistence vector -
+		# seeing nothing at all.
+		card = build_card("create_custom_skill", {
+			"skill_name": "Weekly report", "description": "d",
+			"instructions": "Always include the pipeline table." * 50}, {})
+		self.assertEqual(card["kind"], "skill")
+		self.assertEqual(card["skill_name"], "Weekly report")
+		self.assertIn("Always include the pipeline table.", card["instructions"])
+
+	def test_skill_instructions_use_the_long_form_budget(self):
+		from jarvis.chat._record_summary import _MAX_BODY
+		card = build_card("create_custom_skill", {
+			"skill_name": "s", "description": "d", "instructions": "x" * 20000}, {})
+		self.assertGreater(len(card["instructions"]), 200)  # not the scalar cap
+		self.assertLessEqual(len(card["instructions"]), _MAX_BODY)
+
+	def test_skill_scope_shows_the_effective_value_not_the_request(self):
+		# create_custom_skill.py:44-57 computes `requested` then hardcodes
+		# "scope": "User". Echoing args.scope would claim a bench-wide skill while
+		# creating a private one.
+		card = build_card("create_custom_skill", {
+			"skill_name": "s", "description": "d", "instructions": "i",
+			"scope": "Org"}, {})
+		self.assertEqual(card["scope"], "User (private)")
+
+	def test_wiki_flags_a_full_replace(self):
+		card = build_card("update_wiki", {
+			"slug": "pricing", "replace_body_md": "brand new body"}, {})
+		self.assertEqual(card["kind"], "wiki")
+		self.assertEqual(card["slug"], "pricing")
+		self.assertEqual(card["mode"], "replace")
+		self.assertIn("brand new body", card["body"])
+
+	def test_wiki_append_is_not_a_replace(self):
+		card = build_card("update_wiki", {"slug": "pricing", "append_md": "one more line"}, {})
+		self.assertEqual(card["mode"], "append")
+		self.assertIn("one more line", card["body"])
+
+	def test_wiki_empty_replace_is_flagged_as_a_replace_not_meta(self):
+		# update_wiki.py:146 is `is not None`, so replace_body_md="" WIPES the page.
+		# Truthiness would classify the erase as an innocuous metadata edit.
+		card = build_card("update_wiki", {"slug": "pricing", "replace_body_md": ""}, {})
+		self.assertEqual(card["mode"], "replace")
+
+	def test_wiki_renders_the_summary_it_persists(self):
+		# summary is stored (update_wiki.py:141-142); a summary-only call would
+		# otherwise be an empty "meta" card over text that gets written.
+		card = build_card("update_wiki", {"slug": "pricing", "summary": "what changed"}, {})
+		self.assertIn("what changed", card["summary"])
+
+
+class TestDescribeCall(FrappeTestCase):
+	def test_describe_call_surfaces_user_skill_and_slug(self):
+		from jarvis.api import _describe_call
+		self.assertIn("x@y.test", _describe_call(
+			"share_doc", {"doctype": "ToDo", "name": "T-1", "user": "x@y.test"}))
+		self.assertIn("Weekly report", _describe_call(
+			"create_custom_skill", {"skill_name": "Weekly report"}))
+		self.assertIn("pricing", _describe_call("update_wiki", {"slug": "pricing"}))

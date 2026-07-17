@@ -29,9 +29,15 @@ Field selection, doc reads, value formatting and no-op detection all live in
 ``jarvis.chat._record_summary``; this module owns card SHAPE only. The dependency
 runs one way (confirm_card -> _record_summary) and must stay that way.
 
-Returns ``None`` for tool shapes without a bespoke card (share_doc, assign_to,
-create_custom_skill, update_wiki, bulk email, and any token minted before this
-existed) - the SPA falls back to the summary + raw-preview rendering.
+Every GATED write now has a card: phase 4 added the last five kinds (bulk_email,
+share, assign, skill, wiki), so share_doc, assign_to, create_custom_skill,
+update_wiki and a bulk mail-merge no longer fall back to a bare tool name.
+``None`` is still returned for a shape without a bespoke card and for any token
+minted before this existed - the SPA then falls back to the summary + raw-preview
+rendering. Each new kind ALSO needs an entry in the frontends' ``CARD_KINDS``
+whitelist (``frontend/src/lib/actionSummary.js``): ``pendingCardOf`` returns null
+for a kind not in that set, so a kind added here alone renders as if it never
+shipped.
 """
 
 from __future__ import annotations
@@ -42,6 +48,7 @@ from jarvis.chat._record_summary import (
 	_MAX_BODY,
 	_MAX_BULK_BODY,
 	_MAX_TABLES,
+	_MAX_VAL,
 	fmt,
 	is_secret,
 	same_value,
@@ -96,6 +103,10 @@ def build_card(tool: str, args, preview) -> dict | None:
 				# raw instead.
 				return _bulk_email_card(bulk_items) if bulk_key == "messages" else None
 			return _email_card(args)
+		if tool == "create_custom_skill":
+			return _skill_card(args)
+		if tool == "update_wiki":
+			return _wiki_card(args)
 		if tool == "run_method":
 			return _method_card(args)
 	except Exception:
@@ -513,6 +524,67 @@ def _bulk_email_card(messages: list) -> dict | None:
 	return {
 		"kind": "bulk_email", "count": len(messages), "messages": shown,
 		"extra": max(0, len(messages) - len(shown)),
+	}
+
+
+def _skill_card(args: dict) -> dict:
+	"""Persistent agent instructions - the card was the bare tool name.
+
+	``scope`` is the EFFECTIVE value: create_custom_skill computes a `requested`
+	scope and then hardcodes "scope": "User" (create_custom_skill.py:44-57), so
+	echoing args.scope would claim a bench-wide skill while creating a private one.
+	The instructions body gets _MAX_BODY, not the 200-char scalar cap: approving
+	text you structurally cannot read is theatre.
+	"""
+	ui = args.get("user_invocable")
+	if isinstance(ui, str):
+		ui = ui.strip().lower() in ("1", "true", "yes", "on")
+	return {
+		"kind": "skill",
+		"skill_name": fmt(args.get("skill_name") or ""),
+		"scope": "User (private)",  # the tool caps it regardless of the request
+		"user_invocable": bool(1 if ui is None else ui),
+		"description": fmt(args.get("description") or "", limit=_MAX_VAL),
+		"instructions": fmt(args.get("instructions") or "", limit=_MAX_BODY),
+	}
+
+
+def _wiki_card(args: dict) -> dict:
+	"""``replace_body_md`` is a FULL REWRITE and says so; ``append_md`` adds a
+	section. The tool rejects both together (update_wiki.py:3-4), so mode is
+	unambiguous. A diff against the current body is the better card - deferred, it
+	needs the current body loaded (spec open question 3).
+	"""
+	replace = args.get("replace_body_md")
+	append = args.get("append_md")
+	# `is not None`, NOT truthiness: update_wiki.py:146 is
+	# `elif replace_body_md is not None: doc.body_md = str(replace_body_md)` - so
+	# replace_body_md="" ERASES THE WHOLE PAGE. The both-args guard (:96) is also
+	# truthiness, so "" sails through it too. Classifying that as mode="meta" with an
+	# empty body would render the most destructive call this tool accepts as the most
+	# innocuous card in the set.
+	if replace is not None:
+		mode = "replace"
+	elif append and str(append).strip():
+		mode = "append"  # the tool no-ops a blank append (update_wiki.py:143)
+	else:
+		mode = "meta"
+	ref = ""
+	if args.get("ref_doctype") and args.get("ref_name"):
+		ref = f"{args['ref_doctype']} {args['ref_name']}"
+	return {
+		"kind": "wiki",
+		"slug": fmt((args.get("slug") or "").strip().lower()),  # the tool strips/lowers (:93)
+		"title": fmt((args.get("title") or "")[:140]),  # the tool truncates to 140 (:134)
+		"scope": fmt((args.get("scope") or "Org").capitalize()),  # the tool capitalizes (:104)
+		"page_type": fmt(args.get("page_type") or ""),
+		"ref": fmt(ref),
+		# `summary` is PERSISTED (update_wiki.py:141-142, :164) - a call setting only
+		# summary would otherwise render as an empty "meta" card and the human would
+		# approve stored text they never saw.
+		"summary": fmt(args.get("summary") or "", limit=_MAX_VAL),
+		"mode": mode,
+		"body": fmt(replace if replace is not None else (append or ""), limit=_MAX_BODY),
 	}
 
 
