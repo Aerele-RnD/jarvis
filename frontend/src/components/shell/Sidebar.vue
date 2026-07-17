@@ -224,7 +224,7 @@ const navLinks = [
 	},
 	{
 		label: "Triggers",
-		icon: "zap",
+		icon: "git-branch",
 		to: { name: "TriggersPage" },
 		isActive: () => route.path.startsWith("/triggers"),
 	},
