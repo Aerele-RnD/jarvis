@@ -147,18 +147,28 @@ export function seedRowsFromConfig(cfg) {
 }
 
 // The fleet's last per-model probe verdict for ONE api-key row, matched out of the
-// model_statuses list (contract 1.11: [{ provider, model, status }], api-key models only).
-// The match keys on (provider, model) TOGETHER: a model id is NOT unique -- validate() only
-// forbids duplicate provider/model PAIRS, so the same id can appear under two providers, and
-// keying on the id alone would attach one provider's verdict to the other's row. Rows carry
-// the provider LABEL while model_statuses carry the id, so normalize the row's provider back
-// to an id to compare. Returns "" when the row has no matching verdict (a pre-1.11 fleet, a
-// model not yet probed, or an entry that belongs to a different provider).
-function modelVerdict(row, modelStatuses) {
-  if (!row || !Array.isArray(modelStatuses)) return ""
+// model_statuses list (contract 1.11: [{ provider, model, status[, detail] }], api-key
+// models only). The match keys on (provider, model) TOGETHER: a model id is NOT unique --
+// validate() only forbids duplicate provider/model PAIRS, so the same id can appear under
+// two providers, and keying on the id alone would attach one provider's verdict to the
+// other's row. Rows carry the provider LABEL while model_statuses carry the id, so
+// normalize the row's provider back to an id to compare. Returns null when the row has no
+// matching verdict (a pre-1.11 fleet, a model not yet probed, or an entry that belongs to a
+// different provider).
+function modelVerdictEntry(row, modelStatuses) {
+  if (!row || !Array.isArray(modelStatuses)) return null
   const rid = providerId(row.provider)
-  const entry = modelStatuses.find((e) => e && e.model === row.model && e.provider === rid)
-  return (entry && entry.status) || ""
+  return modelStatuses.find((e) => e && e.model === row.model && e.provider === rid) || null
+}
+
+// Sensible truncation for a provider error string of unknown length dropped into a fixed-
+// width row/tooltip. The inline chip LABEL sits in a `white-space:nowrap` flex row next to
+// several other elements, so it stays short; the tooltip TITLE has more room (still capped -
+// the backend already caps at 400 chars, but a defensive cap here means this helper is safe
+// even if that ever changes).
+function truncate(s, max) {
+  const t = (s || "").trim()
+  return t.length > max ? t.slice(0, max - 1).trimEnd() + "…" : t
 }
 
 // Map an api-key pool row to its health for the failover list. Unlike a subscription
@@ -168,21 +178,32 @@ function modelVerdict(row, modelStatuses) {
 //   failed    -> warn      : rejected (bad key/model id) OR an unreachable base_url
 //   unchecked -> unchecked : could not confirm; re-checked on the next apply
 //   verified / "" / unknown -> ok (quiet green; "" = pre-1.11 fleet or a not-yet-probed row)
+//
+// `detail` (a parallel fleet-agent PR, feat/probe-error-detail) carries the PROVIDER'S OWN
+// error message on a failed row (e.g. "Insufficient balance or no resource package. Please
+// recharge." from a real GLM/Z.ai zero-balance case) instead of the generic "Not working" -
+// the whole point being a customer can tell a bad key from an unpaid account. Consumed
+// DEFENSIVELY: an older fleet-agent that doesn't send it yet falls back to today's text, so
+// this must work unchanged against a fleet that predates the field.
 export function apiKeyModelHealth(row, modelStatuses) {
-  const status = modelVerdict(row, modelStatuses)
+  const entry = modelVerdictEntry(row, modelStatuses)
+  const status = (entry && entry.status) || ""
+  const detail = (entry && typeof entry.detail === "string" && entry.detail.trim()) || ""
   if (status === "failed") {
     return {
       level: "warn",
-      label: "Not working",
-      title: "This model failed a test request — check its API key, model id, and base URL. "
-        + "It's skipped during failover until it passes.",
+      label: detail ? `Not working: ${truncate(detail, 46)}` : "Not working",
+      title: detail
+        ? `This model failed a test request: ${truncate(detail, 220)}`
+        : "This model failed a test request - check its API key, model id, and base URL. "
+          + "It's skipped during failover until it passes.",
     }
   }
   if (status === "unchecked") {
     return {
       level: "unchecked",
       label: "Not verified yet",
-      title: "We couldn't confirm this model — it will be re-checked on the next apply.",
+      title: "We couldn't confirm this model - it will be re-checked on the next apply.",
     }
   }
   return { level: "ok" }

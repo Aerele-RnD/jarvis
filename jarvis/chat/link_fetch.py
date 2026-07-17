@@ -69,6 +69,7 @@ string. Pure exception-vs-string-return split, no silent partial results.
 from __future__ import annotations
 
 import ipaddress
+import json
 import re
 import socket
 from urllib.parse import urljoin, urlparse
@@ -249,15 +250,27 @@ def _host_header(hostname: str, port: int, scheme: str) -> str:
 	return hostname if port == default else f"{hostname}:{port}"
 
 
-def _open_pinned(parsed, ip: str, timeout: int):
-	"""Open a GET pinned to the already-vetted ``ip`` - the DNS-rebind defense
-	the module docstring describes. The socket connects straight to ``ip`` via
-	a fresh single-use ``urllib3`` pool whose host IS the IP, so no second
-	resolution of ``parsed.hostname`` can ever divert the connection. TLS still
-	verifies against the ORIGINAL hostname (SNI ``server_hostname`` + cert
-	``assert_hostname``) and the ``Host:`` header carries it too, so virtual
-	hosts and certificate checks keep working. Returns ``(response, pool)``;
-	the caller owns closing both."""
+def _open_pinned(
+	parsed,
+	ip: str,
+	timeout: int,
+	*,
+	method: str = "GET",
+	body: bytes | None = None,
+	extra_headers: dict | None = None,
+):
+	"""Open a request pinned to the already-vetted ``ip`` - the DNS-rebind
+	defense the module docstring describes. The socket connects straight to
+	``ip`` via a fresh single-use ``urllib3`` pool whose host IS the IP, so no
+	second resolution of ``parsed.hostname`` can ever divert the connection.
+	TLS still verifies against the ORIGINAL hostname (SNI ``server_hostname``
+	+ cert ``assert_hostname``) and the ``Host:`` header carries it too, so
+	virtual hosts and certificate checks keep working. Returns
+	``(response, pool)``; the caller owns closing both.
+
+	``method``/``body``/``extra_headers`` default to a bare GET (every
+	original caller here, ``fetch_and_extract``) - ``request_pinned`` below
+	is the only caller that overrides them, for a JSON POST probe."""
 	hostname = parsed.hostname
 	scheme = parsed.scheme
 	port = parsed.port or (443 if scheme == "https" else 80)
@@ -265,6 +278,7 @@ def _open_pinned(parsed, ip: str, timeout: int):
 	if parsed.query:
 		target += "?" + parsed.query
 	headers = {"User-Agent": _USER_AGENT, "Host": _host_header(hostname, port, scheme)}
+	headers.update(extra_headers or {})
 	pool_timeout = urllib3.Timeout(connect=timeout, read=timeout)
 	if scheme == "https":
 		pool = urllib3.HTTPSConnectionPool(
@@ -288,8 +302,9 @@ def _open_pinned(parsed, ip: str, timeout: int):
 			retries=False,
 		)
 	resp = pool.urlopen(
-		"GET",
+		method,
 		target,
+		body=body,
 		headers=headers,
 		redirect=False,
 		preload_content=False,
@@ -353,3 +368,67 @@ def fetch_and_extract(
 
 		text = _neutralize(_extract_text(body, content_type))
 		return text[:MAX_EXTRACTED_LEN]
+
+
+# --------------------------------------------------------------------------- #
+# generic pinned request (non-GET, non-text/html callers)
+# --------------------------------------------------------------------------- #
+def request_pinned(
+	url: str,
+	*,
+	method: str = "GET",
+	headers: dict | None = None,
+	json_body: dict | None = None,
+	timeout: int = TIMEOUT_S_DEFAULT,
+	max_bytes: int = MAX_BYTES_DEFAULT,
+) -> tuple[int, dict, bytes]:
+	"""SSRF-guarded HTTP request for a caller that needs something other than
+	``fetch_and_extract``'s GET + ``text/*``-only shape - e.g.
+	``jarvis.llm_key_probe``'s provider API-key test, which POSTs a JSON body
+	to a CUSTOMER-SUPPLIED ``base_url`` (an OpenAI-Compatible / GLM-Z.ai /
+	self-hosted vLLM endpoint) and needs the provider's raw error body back,
+	not extracted page text.
+
+	Reuses this module's guard exactly (see the module docstring): scheme
+	allowlist + every resolved address checked via ``_validate_url``, then the
+	connection is PINNED to that one vetted address so a DNS record that
+	changes between the check and the connect can't divert the socket - the
+	same TOCTOU defense ``fetch_and_extract`` relies on. Unlike
+	``fetch_and_extract`` this does NOT follow redirects (a 3xx from a JSON
+	API is returned to the caller as-is - chasing HTML-style redirect chains
+	is not this entry point's job) and does NOT restrict the response
+	content-type (JSON APIs reply ``application/json``, not ``text/*``).
+
+	Returns ``(status_code, headers, body_bytes)`` - the body is READ AND
+	CAPPED at ``max_bytes`` (via ``_read_capped``, same as the fetch path) but
+	otherwise handed back raw; the caller owns parsing/scrubbing it.
+
+	Raises :class:`LinkFetchError` for a blocked scheme/host (SSRF) or any
+	network failure. The raised message never includes ``headers`` or
+	``json_body`` - callers routinely pass a secret (e.g. an
+	``Authorization`` header), and that secret must never end up in an
+	exception string a caller might log.
+	"""
+	current = (url or "").strip()
+	if not current:
+		raise LinkFetchError("No URL given.")
+
+	parsed, ip = _validate_url(current)
+
+	body: bytes | None = None
+	hdrs = dict(headers or {})
+	if json_body is not None:
+		body = json.dumps(json_body).encode("utf-8")
+		hdrs.setdefault("Content-Type", "application/json")
+
+	try:
+		resp, pool = _open_pinned(parsed, ip, timeout, method=method, body=body, extra_headers=hdrs)
+	except (urllib3.exceptions.HTTPError, OSError) as exc:
+		raise LinkFetchError(f"Request failed: {exc}") from exc
+
+	try:
+		data = _read_capped(resp, max_bytes)
+		return resp.status, dict(resp.headers), data
+	finally:
+		resp.close()
+		pool.close()

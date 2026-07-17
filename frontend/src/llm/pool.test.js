@@ -229,3 +229,55 @@ test("apiKeyModelHealth: a SINGLE entry under a DIFFERENT provider is not misatt
     { level: "ok" },
   )
 })
+
+// ---- apiKeyModelHealth: consuming the OPTIONAL `detail` field (a parallel fleet-agent PR,
+// feat/probe-error-detail) DEFENSIVELY - must render the real reason when present, and fall
+// back to today's generic text unchanged when it's absent (an older fleet-agent). This is
+// the GLM/Z.ai insufficient-balance case: "Not working" alone couldn't distinguish a bad key
+// from an unpaid account; the provider's own message can. ----
+
+test("apiKeyModelHealth: detail present -> surfaced in both label and title", () => {
+  const ms = [{ provider: "openai_compat", model: "glm-4.6", status: "failed",
+    detail: "Insufficient balance or no resource package. Please recharge." }]
+  const h = apiKeyModelHealth(_apiRow({ model: "glm-4.6" }), ms)
+  assert.equal(h.level, "warn")
+  assert.match(h.label, /Insufficient balance/)
+  assert.match(h.title, /Insufficient balance/)
+  assert.match(h.title, /Please recharge/)
+})
+
+test("apiKeyModelHealth: detail ABSENT falls back to today's generic text (older fleet-agent)", () => {
+  // No `detail` key at all on the entry - the exact shape a pre-feat/probe-error-detail
+  // fleet-agent sends. Must behave identically to before this feature existed.
+  const ms = [{ provider: "openai_compat", model: "claude-sonnet-4-6", status: "failed" }]
+  const h = apiKeyModelHealth(_apiRow(), ms)
+  assert.equal(h.level, "warn")
+  assert.equal(h.label, "Not working")
+  assert.match(h.title, /base URL|API key|model id/i)
+})
+
+test("apiKeyModelHealth: blank/whitespace-only detail also falls back to the generic text", () => {
+  const ms = [{ provider: "openai_compat", model: "claude-sonnet-4-6", status: "failed", detail: "   " }]
+  const h = apiKeyModelHealth(_apiRow(), ms)
+  assert.equal(h.label, "Not working")
+})
+
+test("apiKeyModelHealth: a non-string detail (defensive) is ignored, not rendered", () => {
+  const ms = [{ provider: "openai_compat", model: "claude-sonnet-4-6", status: "failed", detail: 12345 }]
+  const h = apiKeyModelHealth(_apiRow(), ms)
+  assert.equal(h.label, "Not working")
+})
+
+test("apiKeyModelHealth: detail on a non-failed status is never rendered (verified stays quiet green)", () => {
+  const ms = [{ provider: "openai_compat", model: "claude-sonnet-4-6", status: "verified",
+    detail: "should never surface" }]
+  assert.deepEqual(apiKeyModelHealth(_apiRow(), ms), { level: "ok" })
+})
+
+test("apiKeyModelHealth: a long detail is truncated in the label but stays fuller in the title", () => {
+  const long = "x".repeat(500)
+  const ms = [{ provider: "openai_compat", model: "claude-sonnet-4-6", status: "failed", detail: long }]
+  const h = apiKeyModelHealth(_apiRow(), ms)
+  assert.ok(h.label.length < 80, `label should be short, got ${h.label.length} chars`)
+  assert.ok(h.title.length < 260, `title should still be capped, got ${h.title.length} chars`)
+})

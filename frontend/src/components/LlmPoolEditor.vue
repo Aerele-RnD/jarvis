@@ -156,6 +156,32 @@
               <input v-model="panelRow.baseUrl" :disabled="!editable" placeholder="Base URL (OpenAI-compatible)" class="jv-cfg-inp" />
             </div>
           </div>
+
+          <!-- Pre-save "Test": a live, side-effect-free 1-token request straight from this
+               bench to the provider using whatever is typed above - never saved, never
+               touches the fleet/container (jarvis.llm_key_probe.test_llm_api_key). Motivated
+               by a real GLM/Z.ai case: a valid key on a zero-balance account saved cleanly and
+               only failed AFTER save with a bare "Not working" - this lets the customer catch
+               that (and see the provider's OWN error) before they ever click Save. -->
+          <div style="display:flex;align-items:center;gap:10px;margin-top:11px;flex-wrap:wrap;">
+            <button type="button" class="jv-btn jv-btn--sm jv-btn--ghost"
+                    :disabled="!editable || panel.testing || !!testBlockedReason(panelRow)"
+                    :title="testBlockedReason(panelRow) || testButtonHint(panelRow)"
+                    @click="testApiKeyRow(panelRow)">
+              {{ panel.testing ? 'Testing…' : 'Test' }}
+            </button>
+            <span v-if="testBlockedReason(panelRow)" class="jv-pool-opt" style="font-size:11.5px;">{{ testBlockedReason(panelRow) }}</span>
+            <span v-else-if="isLocalProviderRow(panelRow)" class="jv-pool-opt" style="font-size:11.5px;">Local endpoint - only verifiable from inside your Jarvis container</span>
+          </div>
+          <div v-if="panel.testResult" class="jv-status" :class="panel.testResult.ok ? 'jv-status-ok' : 'jv-status-bad'" style="margin-top:10px;">
+            <span class="jv-status-ic">
+              <svg v-if="panel.testResult.ok" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+              <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+            </span>
+            <span class="jv-status-tx"><b>{{ panel.testResult.ok ? 'Key works.' : 'Test failed.' }}</b> {{ panel.testResult.message }}</span>
+          </div>
+          <div v-if="panel.testResult && panel.testResult.caveat" style="font-size:11px;color:var(--text-3);margin-top:5px;">{{ panel.testResult.caveat }}</div>
+
           <!-- Resilient-by-default (API KEYS ONLY): expands this provider into
                its full single-vendor failover chain on close, sharing the
                same key. Add-mode only. -->
@@ -842,11 +868,22 @@ function sourceChip(row) {
 // remove mutate `rows` while the panel is open, and an index would silently repoint
 // it at a neighbour mid-OAuth. _uid is a client-only handle -- buildSaveModels maps
 // explicit fields, so it never reaches the payload.
-const panel = ref({ open: false, mode: "add", uid: null, source: "subscription", addBackups: true })
+// testing/testResult drive the API-key "Test" button (below): per-PANEL, not
+// per-row, since only one panel is ever open at a time - testResult is cleared
+// whenever the panel's row identity changes OR its own provider/model/apiKey/
+// baseUrl fields are edited (a stale green check must not survive an edit).
+const panel = ref({ open: false, mode: "add", uid: null, source: "subscription", addBackups: true, testing: false, testResult: null })
 const panelRow = computed(() => rows.value.find((r) => r._uid === panel.value.uid) || null)
 // A removed panel row leaves panelRow null; close rather than render a headless panel.
 watch(panelRow, (r) => { if (panel.value.open && !r) panel.value = closedPanel() })
-function closedPanel() { return { open: false, mode: "add", uid: null, source: "subscription", addBackups: true } }
+// Invalidate a stale Test verdict the instant any field it depends on changes -
+// otherwise editing the key after a failed test would leave the old red result
+// on screen, implying it still applies to what's now typed in.
+watch(
+  () => panelRow.value && [panelRow.value.provider, panelRow.value.model, panelRow.value.apiKey, panelRow.value.baseUrl].join(" "),
+  () => { panel.value.testResult = null },
+)
+function closedPanel() { return { open: false, mode: "add", uid: null, source: "subscription", addBackups: true, testing: false, testResult: null } }
 function isRowEmpty(r) {
   if (!r) return true
   if (r.credentialType === "subscription") return !((r.accounts || []).length)
@@ -865,13 +902,74 @@ function openAdd() {
   // last row's type; that would be unpredictable.)
   setCredType(r, "subscription")
   rows.value = [...rows.value, r]
-  panel.value = { open: true, mode: "add", uid: r._uid, source: "subscription", addBackups: true }
+  panel.value = { open: true, mode: "add", uid: r._uid, source: "subscription", addBackups: true, testing: false, testResult: null }
 }
 function openEdit(i) {
   const r = rows.value[i]
   if (!r) return
-  panel.value = { open: true, mode: "edit", uid: r._uid, source: r.credentialType === "subscription" ? "subscription" : "api_key", addBackups: true }
+  panel.value = { open: true, mode: "edit", uid: r._uid, source: r.credentialType === "subscription" ? "subscription" : "api_key", addBackups: true, testing: false, testResult: null }
 }
+
+// ---- pre-save "Test" (API-key rows only) ---------------------------------
+// Provider ids whose usual endpoint only makes sense reached from INSIDE the
+// tenant's bifrost container (localhost / a customer LAN), never from this
+// browser's bench - MUST match jarvis.llm_key_probe.LOCAL_PROVIDER_IDS. The
+// button still runs (a customer CAN point "vllm"/"ollama" at a real public
+// URL), this only softens the promise with an upfront disclaimer instead of
+// silently implying a guarantee the bench can't make.
+const LOCAL_PROVIDER_IDS = new Set(["ollama", "vllm"])
+function isLocalProviderRow(row) {
+  return !!(row && LOCAL_PROVIDER_IDS.has(providerId(row.provider)))
+}
+// Why the Test button is disabled right now, or "" when it's enabled. hasKey +
+// a blank apiKey means an already-saved key that hasn't been re-typed - the
+// probe only ever sees what's in the panel (it never reads the stored,
+// encrypted secret), so it has nothing to send yet.
+function testBlockedReason(row) {
+  if (!row) return "Nothing to test"
+  if (!(row.model || "").trim()) return "Enter a model id to test"
+  if (!(row.apiKey || "").trim()) return row.hasKey ? "Re-enter the key to test it" : "Enter an API key to test"
+  return ""
+}
+function testButtonHint(row) {
+  if (isLocalProviderRow(row)) {
+    return "Sends a minimal live request from the bench. Local/private endpoints (ollama, "
+      + "vllm) can only be fully verified from inside your Jarvis container - a pass here "
+      + "doesn't guarantee the container can reach it too."
+  }
+  return "Sends a minimal live request to this provider using what's typed above. Nothing is saved."
+}
+// Live, side-effect-free probe (jarvis.llm_key_probe.test_llm_api_key) of whatever is
+// currently typed into the panel - never persists, never touches the fleet/container, and
+// is NOT a substitute for (must never call) the mutating /llm-pool apply. Motivated by a
+// real GLM/Z.ai case: a valid key on a zero-balance account saved cleanly and only failed
+// AFTER save with a bare "Not working" chip - this surfaces the provider's OWN error
+// (e.g. "Insufficient balance or no resource package. Please recharge.") before Save.
+async function testApiKeyRow(row) {
+  if (!row || panel.value.testing || testBlockedReason(row)) return
+  panel.value.testing = true
+  panel.value.testResult = null
+  try {
+    const res = await api.testLlmApiKey({
+      provider: row.provider || "",
+      model: row.model || "",
+      api_key: row.apiKey || "",
+      base_url: row.baseUrl || "",
+    })
+    const checks = Array.isArray(res && res.checks) ? res.checks : []
+    const last = checks[checks.length - 1]
+    panel.value.testResult = {
+      ok: !!(res && res.ok),
+      message: (last && last.detail) || (res && res.ok ? "The provider accepted the request." : "The test failed."),
+      caveat: (res && res.caveat) || "",
+    }
+  } catch (e) {
+    panel.value.testResult = { ok: false, message: _err(e), caveat: "" }
+  } finally {
+    panel.value.testing = false
+  }
+}
+
 // Resilient-by-default (API KEYS ONLY - no subscription presets exist and
 // multi-model-per-account is unconfirmed for cliproxy, so subscriptions never
 // auto-add backups). Finds the catalog's single-vendor preset for this
@@ -1547,7 +1645,11 @@ defineExpose({ save })
 .jv-pool-dot--ok, .jv-pool-dot--neutral { background: var(--green); }
 .jv-pool-dot--warn { background: var(--amber); }
 .jv-pool-dot--unchecked { background: var(--text-3); }
-.jv-pool-acct-health { flex: none; font-size: 12px; font-weight: 600; white-space: nowrap; }
+/* flex: none + a cap, not 0 1 auto: the label can now carry a provider's own error detail
+   (apiKeyModelHealth's `detail`, e.g. a GLM/Z.ai balance message) instead of always being one
+   of two fixed short strings - pool.js already truncates the text itself, this is just a
+   layout safety net so a row can never overflow. */
+.jv-pool-acct-health { flex: none; max-width: 220px; overflow: hidden; text-overflow: ellipsis; font-size: 12px; font-weight: 600; white-space: nowrap; }
 .jv-pool-acct-health--warn { color: var(--amber); }
 .jv-pool-acct-health--unchecked { color: var(--text-3); }
 .jv-pool-acctacts { margin-left: auto; display: flex; gap: 6px; flex: none; }
