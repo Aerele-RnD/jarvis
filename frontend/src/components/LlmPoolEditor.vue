@@ -294,16 +294,15 @@
             <div class="jv-cstep" :class="{ 'jv-pending': !panelRow._connect.authorizeUrl }">
               <div class="jv-cnum">2</div>
               <div class="jv-cbody">
-                <div class="jv-ctit">Paste the callback URL</div>
+                <div class="jv-ctit">{{ pasteTitle(panelRow.upstream) }}</div>
                 <div class="jv-callout">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
-                  <p>After you approve, the browser shows a <b>&ldquo;This site can&rsquo;t be reached&rdquo;</b> page. That&rsquo;s expected: copy the <b>full URL from the address bar</b> (<kbd>⌘/Ctrl</kbd>+<kbd>L</kbd>, then <kbd>⌘/Ctrl</kbd>+<kbd>C</kbd>) and paste it below.</p>
+                  <p v-if="isCodeOnlyPaste(panelRow.upstream)">After you approve, {{ upstreamLabelOf(panelRow.upstream) }} shows you an <b>authorization code</b>. Copy that code and paste it below.</p>
+                  <p v-else>After you approve, the browser shows a <b>&ldquo;This site can&rsquo;t be reached&rdquo;</b> page. That&rsquo;s expected: copy the <b>full URL from the address bar</b> (<kbd>⌘/Ctrl</kbd>+<kbd>L</kbd>, then <kbd>⌘/Ctrl</kbd>+<kbd>C</kbd>) and paste it below.</p>
                 </div>
                 <input v-model="panelRow._connect.pastedUrl" class="jv-paste"
                        :disabled="!editable || !panelRow._connect.authorizeUrl"
-                       :placeholder="panelRow._connect.authorizeUrl
-                         ? 'http://localhost:1455/auth/callback?code=…'
-                         : 'Complete step 1 first, then paste the URL here'"
+                       :placeholder="pastePlaceholder(panelRow.upstream, panelRow._connect.authorizeUrl)"
                        @keydown.enter="finishConnect(panelRow)" />
               </div>
             </div>
@@ -524,19 +523,18 @@
               <div class="jv-cstep" :class="{ 'jv-pending': !(m._connect && m._connect.authorizeUrl) }">
                 <div class="jv-cnum">2</div>
                 <div class="jv-cbody">
-                  <div class="jv-ctit">Paste the callback URL</div>
+                  <div class="jv-ctit">{{ pasteTitle(m.upstream) }}</div>
                   <div class="jv-callout">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
-                    <p>After you approve, the browser shows a <b>&ldquo;This site can&rsquo;t be reached&rdquo;</b> page. That&rsquo;s expected: copy the <b>full URL from the address bar</b> (<kbd>⌘/Ctrl</kbd>+<kbd>L</kbd>, then <kbd>⌘/Ctrl</kbd>+<kbd>C</kbd>) and paste it below.</p>
+                    <p v-if="isCodeOnlyPaste(m.upstream)">After you approve, {{ upstreamLabelOf(m.upstream) }} shows you an <b>authorization code</b>. Copy that code and paste it below.</p>
+                    <p v-else>After you approve, the browser shows a <b>&ldquo;This site can&rsquo;t be reached&rdquo;</b> page. That&rsquo;s expected: copy the <b>full URL from the address bar</b> (<kbd>⌘/Ctrl</kbd>+<kbd>L</kbd>, then <kbd>⌘/Ctrl</kbd>+<kbd>C</kbd>) and paste it below.</p>
                   </div>
                   <!-- Disabled until step 1 minted an authorize URL: a URL pasted
                        before sign-in has no nonce to pair with (finishConnect
                        would no-op), a silent dead-end. -->
                   <input v-model="m._connect.pastedUrl" class="jv-paste"
                          :disabled="!editable || !(m._connect && m._connect.authorizeUrl)"
-                         :placeholder="m._connect && m._connect.authorizeUrl
-                           ? 'http://localhost:1455/auth/callback?code=…'
-                           : 'Complete step 1 first, then paste the URL here'"
+                         :placeholder="pastePlaceholder(m.upstream, m._connect && m._connect.authorizeUrl)"
                          @keydown.enter="finishConnect(m)" />
                   <div v-if="m._connect && m._connect.authorizeUrl" class="jv-cacts">
                     <button type="button" class="jv-cbtn jv-cbtn-ghost" @click="closeConnect(m)">Cancel</button>
@@ -581,7 +579,7 @@ import * as api from "@/api"
 import {
   deriveMode, reorder, presetToModels, missingVendorKeys, validatePool,
   PROVIDER_LABELS, providerLabel, providerId, seedRowsFromConfig, defaultSubscriptionModel,
-  apiKeyModelHealth,
+  apiKeyModelHealth, isCodeOnlyPaste,
 } from "@/llm/pool"
 import { errMessage as _err } from "@/lib/errors"
 import { useConfirm } from "@/composables/useConfirm"
@@ -672,6 +670,17 @@ const upstreamLabels = upstreamOpts.map((o) => o.label)
 // renders "Sign in with <value>" rather than "Sign in with " (review finding).
 const upstreamLabelOf = (v) => (upstreamOpts.find((o) => o.value === v) || {}).label || v || "your provider"
 const upstreamValueOf = (l) => (upstreamOpts.find((o) => o.label === l) || {}).value || l
+// Upstreams whose approval screen hands back a BARE authorization code instead
+// of redirecting to a callback URL the customer can copy from the address bar.
+// isCodeOnlyPaste (xAI) is imported from @/llm/pool so the pool editor and the
+// direct subscription card share one answer rather than each keeping a copy.
+const pasteTitle = (u) => (isCodeOnlyPaste(u) ? "Paste the code" : "Paste the callback URL")
+const pastePlaceholder = (u, ready) => {
+  if (!ready) return isCodeOnlyPaste(u) ? "Complete step 1 first, then paste the code here"
+                                        : "Complete step 1 first, then paste the URL here"
+  return isCodeOnlyPaste(u) ? "Paste the code shown after you approve"
+                            : "http://localhost:1455/auth/callback?code=…"
+}
 // Provider dropdown fed by the shared PROVIDER_LABELS (id⇄label). Rows store the
 // display LABEL as `provider` (matches seedRowsFromConfig + the desk page).
 const providerOptions = PROVIDER_LABELS.map((p) => p.label)
@@ -1256,14 +1265,22 @@ async function _placeConnectedAccount(m, d) {
 }
 async function finishConnect(m) {
   if (!m._connect || !m._connect.nonce) return
-  if (!(m._connect.pastedUrl || "").trim()) { m._connect.error = "Paste the URL you were redirected to."; return }
+  if (!(m._connect.pastedUrl || "").trim()) {
+    m._connect.error = isCodeOnlyPaste(m.upstream)
+      ? "Paste the code you were shown."
+      : "Paste the URL you were redirected to."
+    return
+  }
   m._connect.loading = true; m._connect.error = ""
   try {
     const res = await api.completePoolAccountSignin(m._connect.nonce, m._connect.pastedUrl.trim())
     // Same {ok, data} envelope as begin - unwrap + surface errors.
     if (!res || res.ok === false) {
       m._connect.loading = false
-      m._connect.error = (res && res.error && res.error.message) || "Couldn't connect the account. Check the pasted URL and try again."
+      m._connect.error = (res && res.error && res.error.message)
+        || (isCodeOnlyPaste(m.upstream)
+            ? "Couldn't connect the account. Check the pasted code and try again."
+            : "Couldn't connect the account. Check the pasted URL and try again.")
       return
     }
     // Place the (re)connected account. The backend mints a fresh account_ref on

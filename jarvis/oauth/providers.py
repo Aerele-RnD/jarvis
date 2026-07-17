@@ -88,6 +88,18 @@ _PROVIDER_OAUTH_MAP: dict[str, dict] = {
 		"openclaw_provider": "xai",
 		"redirect_uri": "http://127.0.0.1:56121/callback",
 		"requires_nonce": True,
+		# xAI's approval screen hands the customer a BARE authorization code to
+		# copy rather than bouncing them to a callback URL they can lift from the
+		# address bar. cli-proxy-api hits the same wall: its xai prompt reads
+		# "Paste the xAI callback Token", where the claude channel's reads "Paste
+		# the Claude callback URL". A bare code carries no `state`, so
+		# _exchange_and_build_blob skips the state compare for this provider.
+		# That is safe HERE AND ONLY HERE: the token exchange always sends this
+		# nonce's PKCE `code_verifier` (S256), so a code minted for anyone else's
+		# authorize request cannot be redeemed against it - PKCE already supplies
+		# the request binding that state would. Do NOT set this on a provider
+		# that returns a real callback URL.
+		"code_only_paste": True,
 		"extra_authorize_params": {"plan": "generic", "referrer": "cli-proxy-api"},
 	},
 	# Kimi (Moonshot) — DEVICE-CODE flow (RFC 8628), NOT paste-back: there is no
@@ -119,6 +131,17 @@ def is_oauth_provider(label: str) -> bool:
 	"""
 	entry = _PROVIDER_OAUTH_MAP.get(label)
 	return entry is not None and entry.get("grant_type") != "device_code"
+
+
+def accepts_bare_code(label: str) -> bool:
+	"""True when ``label``'s approval screen hands back a BARE authorization code
+	instead of a callback URL, so the paste box must take the code on its own.
+
+	Only xAI sets ``code_only_paste``. See the comment on that key for why
+	skipping the ``state`` compare is sound for a bare code (PKCE binds it) and
+	why no URL-returning provider may opt in.
+	"""
+	return bool(_PROVIDER_OAUTH_MAP.get(label, {}).get("code_only_paste"))
 
 
 def get_provider(label: str) -> dict:
