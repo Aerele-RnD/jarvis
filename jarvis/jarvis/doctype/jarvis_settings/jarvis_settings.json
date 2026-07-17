@@ -86,6 +86,7 @@
   "last_sync_at",
   "last_sync_status",
   "llm_pool_synced_at",
+  "llm_direct_synced_at",
   "last_subscription_status",
   "last_sync_warnings",
   "last_model_statuses",
@@ -640,6 +641,13 @@
    "fieldname": "llm_pool_synced_at",
    "fieldtype": "Datetime",
    "label": "LLM Pool Synced At",
+   "read_only": 1
+  },
+  {
+   "description": "Set when a DIRECT (single-model) LLM config was last CONFIRMED-applied to the container via admin (status=applied). Distinguishes a working direct tenant from one whose first apply is still pending/failed - is_ready_for_chat gates a first direct activation on it so chat never opens on an unconfirmed container (round-4 review R4-P0-6 / P1-10).",
+   "fieldname": "llm_direct_synced_at",
+   "fieldtype": "Datetime",
+   "label": "LLM Direct Synced At",
    "read_only": 1
   },
   {

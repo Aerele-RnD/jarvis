@@ -1189,12 +1189,12 @@ class TestRT5OnboardingWritesModelsRow(_RT3SettingsTestCase):
     # ------------------------------------------------------------------
 
     def test_api_key_onboarding_leaves_is_ready_for_chat_passing(self):
-        """is_ready_for_chat must return ready=True after a successful
-        api_key onboarding via save_llm_creds."""
+        """is_ready_for_chat must return ready=True after a successful (confirmed,
+        status=applied) api_key onboarding via save_llm_creds."""
         from unittest.mock import patch
 
         with patch("jarvis.admin_client.post_update_llm_creds",
-                   return_value={"action": "restart"}):
+                   return_value={"action": "restart", "status": "applied"}):
             from jarvis import onboarding
             onboarding.save_llm_creds(
                 provider="openai_compat",
@@ -1210,6 +1210,87 @@ class TestRT5OnboardingWritesModelsRow(_RT3SettingsTestCase):
                         f"is_ready_for_chat must return ready=True after api_key onboarding; got: {result}")
         self.assertIsNone(result.get("reason"),
                           f"reason must be None when ready; got: {result.get('reason')!r}")
+
+    def test_api_key_first_apply_still_applying_is_not_ready(self):
+        """Round-4 review R4-P0-6 / P1-10: a FIRST direct apply that admin returns
+        as status="applying" (busy lock / timeout / CAS refusal) must NOT open
+        chat — local key/provider/model presence alone is config intent, not proof
+        the container received the creds. Gated on the durable llm_direct_synced_at
+        marker, which is stamped only on a confirmed status=applied."""
+        from unittest.mock import patch
+
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("llm_direct_synced_at", None, update_modified=False)
+        frappe.db.commit()
+        # get_connection must be pinned not-Ready: the applying path now runs the
+        # in-job convergence probe, and an unmocked call could reach a live admin.
+        with patch("jarvis.admin_client.post_update_llm_creds",
+                   return_value={"action": "restart", "status": "applying"}), \
+             patch("jarvis.admin_client.get_connection",
+                   return_value={"chat_readiness": "Configuring"}):
+            from jarvis import onboarding
+            onboarding.save_llm_creds(
+                provider="openai_compat", model="gpt-4o",
+                api_key="sk-never-confirmed", base_url="https://api.openai.com",
+                auth_mode="api_key",
+            )
+        from jarvis.account import is_ready_for_chat
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertIsNone(settings.llm_direct_synced_at,
+                          "an 'applying' first apply is not confirmed")
+        result = is_ready_for_chat()
+        self.assertFalse(result.get("ready"),
+                         f"a never-confirmed direct tenant must not be chat-ready; got: {result}")
+        self.assertEqual(result.get("reason"), "llm_provisioning")
+
+    def test_api_key_first_apply_applying_then_ready_converges_and_stamps_marker(self):
+        """The direct analogue of the pool convergence test: an 'applying' first
+        direct apply whose in-job probe finds admin already Ready must stamp
+        llm_direct_synced_at (via _stamp_converged_ok) and open chat — without
+        this a converged-via-reconcile direct tenant would be stranded at
+        llm_provisioning forever (an 'ok' status stops every later reconcile)."""
+        from unittest.mock import patch
+
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("llm_direct_synced_at", None, update_modified=False)
+        frappe.db.commit()
+        with patch("jarvis.admin_client.post_update_llm_creds",
+                   return_value={"action": "restart", "status": "applying"}), \
+             patch("jarvis.admin_client.get_connection",
+                   return_value={"chat_readiness": "Ready"}):
+            from jarvis import onboarding
+            onboarding.save_llm_creds(
+                provider="openai_compat", model="gpt-4o",
+                api_key="sk-converges", base_url="https://api.openai.com",
+                auth_mode="api_key",
+            )
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertTrue(settings.llm_direct_synced_at,
+                        "convergence to chat_readiness Ready must stamp llm_direct_synced_at")
+        self.assertTrue((settings.last_sync_status or "").startswith("ok"),
+                        f"a converged apply must read ok; got {settings.last_sync_status!r}")
+        from jarvis.account import is_ready_for_chat
+        self.assertTrue(is_ready_for_chat().get("ready"),
+                        "a converged first direct apply must open chat")
+
+    def test_established_direct_tenant_stays_ready_through_resave_pending(self):
+        """An already-confirmed direct tenant (marker set) keeps chatting on its
+        previous key while a re-save is transiently 'applying'."""
+        from jarvis.account import is_ready_for_chat
+        settings = frappe.get_single("Jarvis Settings")
+        from jarvis.jarvis.doctype.jarvis_settings.jarvis_settings import (
+            _PENDING_APPLYING_STATUS,
+        )
+        settings.db_set({
+            "llm_auth_mode": "api_key", "llm_provider": "openai_compat",
+            "llm_model": "gpt-4o", "proxy_active": 0,
+            "llm_direct_synced_at": frappe.utils.now(),
+            "last_sync_status": _PENDING_APPLYING_STATUS,
+        }, update_modified=False)
+        settings.db_set("llm_api_key", "sk-established")
+        frappe.db.commit()
+        self.assertTrue(is_ready_for_chat().get("ready"),
+                        "an established direct tenant must stay ready during a pending re-save")
 
     # ------------------------------------------------------------------
     # (e) OAuth mode leaves the models table untouched
@@ -2269,6 +2350,67 @@ class TestOnboardingAuditFixes(_RT3SettingsTestCase):
         self.assertTrue((settings.last_sync_status or "").startswith("ok"),
                         f"expected ok status, got: {settings.last_sync_status!r}")
 
+    def test_pending_applying_flips_to_ok_when_admin_reports_ready(self):
+        """Round-4 review R4-P0-6: a pending-applying sync converges once admin's
+        read-only serving verdict (get_connection -> chat_readiness) reports Ready.
+        The poller flips the durable marker + status to ok, and stays pending while
+        admin is not Ready."""
+        from jarvis.jarvis.doctype.jarvis_settings.jarvis_settings import (
+            _PENDING_APPLYING_STATUS,
+        )
+        from jarvis.onboarding import get_llm_sync_status
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set({
+            "proxy_active": 1, "llm_pool_synced_at": None,
+            "last_sync_status": _PENDING_APPLYING_STATUS,
+        }, update_modified=False)
+        frappe.db.commit()
+        # Admin not yet Ready -> stays pending, no marker.
+        with patch("jarvis.admin_client.get_connection",
+                   return_value={"chat_readiness": "Configuring"}):
+            out = get_llm_sync_status()
+        self.assertTrue(out["last_sync_status"].startswith("pending"))
+        self.assertIsNone(frappe.get_single("Jarvis Settings").llm_pool_synced_at)
+        # Admin now Ready -> flip to ok + stamp the durable marker.
+        with patch("jarvis.admin_client.get_connection",
+                   return_value={"chat_readiness": "Ready"}):
+            out = get_llm_sync_status()
+        self.assertTrue(out["last_sync_status"].startswith("ok"),
+                        f"expected ok after admin Ready, got: {out['last_sync_status']!r}")
+        self.assertTrue(frappe.get_single("Jarvis Settings").llm_pool_synced_at)
+
+    def test_pending_applying_stays_pending_when_admin_unreachable(self):
+        from jarvis.jarvis.doctype.jarvis_settings.jarvis_settings import (
+            _PENDING_APPLYING_STATUS,
+        )
+        from jarvis.onboarding import get_llm_sync_status
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set({
+            "proxy_active": 1, "llm_pool_synced_at": None,
+            "last_sync_status": _PENDING_APPLYING_STATUS,
+        }, update_modified=False)
+        frappe.db.commit()
+        with patch("jarvis.admin_client.get_connection",
+                   side_effect=RuntimeError("admin down")):
+            out = get_llm_sync_status()
+        self.assertTrue(out["last_sync_status"].startswith("pending"),
+                        "an admin error must leave the status pending, never crash the poller")
+
+    def test_pool_sync_blocked_is_failed_no_stamp(self):
+        """status="blocked" (subscription pool with no OAuth blobs) is terminal
+        failed — never a first-success."""
+        self._seed_pool()
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set("llm_pool_synced_at", None, update_modified=False)
+        frappe.db.commit()
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   return_value={"action": "pool", "status": "blocked"}):
+            _enqueued_sync_via_admin_pool()
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertIsNone(settings.llm_pool_synced_at)
+        self.assertTrue((settings.last_sync_status or "").startswith("failed"),
+                        f"expected failed, got: {settings.last_sync_status!r}")
+
     # -- is_ready_for_chat gate ------------------------------------------
 
     def _set_pool_gate_state(self, *, synced_at, status):
@@ -2383,6 +2525,51 @@ class TestOnboardingAuditFixes(_RT3SettingsTestCase):
         settings = frappe.get_single("Jarvis Settings")
         self.assertFalse(settings.llm_pool_synced_at,
                          "direct tenants must not be stamped")
+
+    def test_direct_backfill_grandfathers_serving_direct_tenants(self):
+        """Round-4 review R4-P0-6: a pre-marker DIRECT api-key tenant with local
+        creds that has EVER synced is grandfathered (llm_direct_synced_at
+        backfilled from last_sync_at) so the new gate doesn't bounce it to
+        onboarding mid-upgrade; a never-synced one is not stamped."""
+        from jarvis.patches.v2_00_backfill_llm_direct_synced_at import execute
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set({
+            "proxy_active": 0, "llm_auth_mode": "api_key",
+            "llm_provider": "openai_compat", "llm_model": "gpt-4o",
+            "llm_direct_synced_at": None, "last_sync_at": frappe.utils.now(),
+        }, update_modified=False)
+        settings.db_set("llm_api_key", "sk-grandfathered")
+        frappe.db.commit()
+        execute()
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertTrue(settings.llm_direct_synced_at,
+                        "a serving pre-marker direct tenant must be grandfathered")
+
+    def test_direct_backfill_skips_never_synced(self):
+        from jarvis.patches.v2_00_backfill_llm_direct_synced_at import execute
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set({
+            "proxy_active": 0, "llm_auth_mode": "api_key",
+            "llm_provider": "openai_compat", "llm_model": "gpt-4o",
+            "llm_direct_synced_at": None, "last_sync_at": None,
+        }, update_modified=False)
+        settings.db_set("llm_api_key", "sk-never-synced")
+        frappe.db.commit()
+        execute()
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertFalse(settings.llm_direct_synced_at,
+                         "a never-synced direct tenant must not be grandfathered")
+
+    def test_direct_backfill_skips_pool_tenants(self):
+        from jarvis.patches.v2_00_backfill_llm_direct_synced_at import execute
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set({"proxy_active": 1, "llm_direct_synced_at": None},
+                        update_modified=False)
+        frappe.db.commit()
+        execute()
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertFalse(settings.llm_direct_synced_at,
+                         "pool tenants gate on llm_pool_synced_at, not this marker")
 
     def test_pool_sync_ok_status_survives_rollback(self):
         """The OK terminal write (status + marker) must be committed too: an
@@ -2809,6 +2996,31 @@ class TestConvergenceReconcile(_RT3SettingsTestCase):
         settings = frappe.get_single("Jarvis Settings")
         self.assertFalse(settings.llm_pool_synced_at)
         self.assertTrue((settings.last_sync_status or "").startswith("pending:"))
+
+    def test_reconcile_stamps_direct_marker_for_unproven_direct_tenant(self):
+        """Round-4 R4-P0-6 direct analogue of the unproven-pool re-probe: a
+        single-model tenant whose FIRST apply never stamped llm_direct_synced_at
+        (stuck at pending/failed) is re-probed, and admin Ready stamps the direct
+        marker so is_ready_for_chat stops reporting llm_provisioning."""
+        from jarvis.jarvis.doctype.jarvis_settings.jarvis_settings import (
+            reconcile_pending_llm_sync,
+        )
+        settings = frappe.get_single("Jarvis Settings")
+        settings.db_set({
+            "proxy_active": 0, "llm_auth_mode": "api_key",
+            "llm_provider": "openai_compat", "llm_model": "gpt-4o",
+            "llm_direct_synced_at": None,
+            "last_sync_status": "failed: admin briefly unreachable",
+        }, update_modified=False)
+        frappe.db.commit()
+        self._seed_admin_creds()  # after the commit; stays in the rolled-back txn
+        with patch("jarvis.admin_client.get_connection",
+                   return_value={"chat_readiness": "Ready"}):
+            reconcile_pending_llm_sync()
+        settings = frappe.get_single("Jarvis Settings")
+        self.assertTrue(settings.llm_direct_synced_at,
+                        "the */5 reconcile must stamp the DIRECT marker once admin reports Ready")
+        self.assertTrue((settings.last_sync_status or "").startswith("ok"))
 
     def test_reconcile_noop_on_healthy_tenant(self):
         """Inert on a healthy fleet: an 'ok' tenant is never probed or re-stamped."""
