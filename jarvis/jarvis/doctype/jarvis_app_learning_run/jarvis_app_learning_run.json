@@ -1,0 +1,161 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "hash",
+ "creation": "2026-07-16 09:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "app",
+  "status",
+  "scheduled_at",
+  "started_at",
+  "finished_at",
+  "conversation",
+  "zip_path",
+  "zip_size",
+  "file_count",
+  "batches_total",
+  "batches_done",
+  "pages_written",
+  "skills_created",
+  "skills_deferred",
+  "error",
+  "requested_by",
+  "consent_at",
+  "notes"
+ ],
+ "fields": [
+  {
+   "fieldname": "app",
+   "fieldtype": "Data",
+   "label": "App",
+   "reqd": 1,
+   "in_list_view": 1,
+   "search_index": 1,
+   "description": "Installed custom app name (frappe.get_installed_apps minus the excluded core set)."
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Queued\nZipping\nAnalyzing\nIngesting\nCompleted\nFailed\nCancelled",
+   "default": "Queued",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "scheduled_at",
+   "fieldtype": "Datetime",
+   "label": "Scheduled At"
+  },
+  {
+   "fieldname": "started_at",
+   "fieldtype": "Datetime",
+   "label": "Started At"
+  },
+  {
+   "fieldname": "finished_at",
+   "fieldtype": "Datetime",
+   "label": "Finished At"
+  },
+  {
+   "fieldname": "conversation",
+   "fieldtype": "Data",
+   "label": "Conversation",
+   "search_index": 1,
+   "description": "Jarvis Conversation row-name the analysis turns run in (Data, not Link: the run log must outlive a deleted conversation). The turn-end hook looks the run up by this column."
+  },
+  {
+   "fieldname": "zip_path",
+   "fieldtype": "Data",
+   "label": "Zip Path",
+   "description": "Absolute path of the private source snapshot zip (site private files, app_learning/ subfolder). Cleared when the zip is deleted."
+  },
+  {
+   "fieldname": "zip_size",
+   "fieldtype": "Int",
+   "label": "Zip Size (bytes)"
+  },
+  {
+   "fieldname": "file_count",
+   "fieldtype": "Int",
+   "label": "File Count"
+  },
+  {
+   "fieldname": "batches_total",
+   "fieldtype": "Int",
+   "label": "Batches Total"
+  },
+  {
+   "fieldname": "batches_done",
+   "fieldtype": "Int",
+   "label": "Batches Done"
+  },
+  {
+   "fieldname": "pages_written",
+   "fieldtype": "Int",
+   "label": "Wiki Pages Written"
+  },
+  {
+   "fieldname": "skills_created",
+   "fieldtype": "Int",
+   "label": "Skills Created"
+  },
+  {
+   "fieldname": "skills_deferred",
+   "fieldtype": "Int",
+   "label": "Skills Deferred",
+   "description": "Skills created disabled because the org custom-skill push was already at its 25-slot cap."
+  },
+  {
+   "fieldname": "error",
+   "fieldtype": "Small Text",
+   "label": "Error"
+  },
+  {
+   "fieldname": "requested_by",
+   "fieldtype": "Data",
+   "label": "Requested By",
+   "description": "The admin who scheduled the run; owns the analysis conversation and the ingested wiki/skill provenance."
+  },
+  {
+   "fieldname": "consent_at",
+   "fieldtype": "Datetime",
+   "label": "Consent At",
+   "description": "When the scheduling admin confirmed the token cost + direct wiki/skill writes."
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Long Text",
+   "label": "Notes",
+   "description": "Accumulated JSON: per-batch analysis notes, retry counters, zip/plan coverage notes, ingest summary."
+  }
+ ],
+ "in_create": 1,
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-07-16 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Jarvis",
+ "name": "Jarvis App Learning Run",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "delete": 1,
+   "read": 1,
+   "role": "System Manager"
+  },
+  {
+   "delete": 1,
+   "read": 1,
+   "role": "Jarvis Admin"
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}
