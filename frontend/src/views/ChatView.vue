@@ -287,19 +287,29 @@
 												</div>
 											</div>
 										</div>
-										<div v-else-if="summaryState.error" class="jv-summary-body jv-summary-loading">{{ summaryState.error }}</div>
+										<!-- A draft we could not build is a FAILURE, not a pending state: style
+										     it as one (it shared jv-summary-loading with "Preparing summary..."
+										     and read as a placeholder), and drop the footer entirely - three
+										     disabled buttons on a dead card are worse than no buttons, because
+										     they look like something you should be able to press. -->
+										<div v-else-if="summaryState.error" role="alert" class="jv-summary-body jv-summary-err">
+											<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><path d="M12 9v4M12 17h.01" /></svg>
+											<span>{{ summaryState.error }}</span>
+										</div>
 										<div v-else class="jv-summary-body jv-summary-loading">Preparing summary...</div>
 
 										<div v-if="summaryState.model && summaryState.model.error" style="margin:0 14px 10px"><ActionError :error="summaryState.model.error" /></div>
 
-										<div class="jv-action-foot">
-											<button class="jv-action-primary" :disabled="!summaryState.model || (summaryState.model && summaryState.model.applying) || convStreaming" :title="convStreaming ? 'Waiting for the current reply to finish' : ''" @click="confirmSummary">
-												{{ summaryState.model && summaryState.model.applying ? 'Saving...' : (activeAction.verb === 'update' ? 'Confirm update' : 'Confirm create') }}
-											</button>
-											<button class="jv-action-2nd" :disabled="!summaryState.model" @click="previewSummary">Preview</button>
-											<button class="jv-action-2nd" :disabled="!summaryState.model" @click="openDraftPanel({ verb: activeAction.verb || 'create', ...activeAction })">Edit</button>
-										</div>
-										<div class="jv-summary-hint">Want a change? just tell me, e.g. "make Widget A qty 12".</div>
+										<template v-if="!summaryState.error">
+											<div class="jv-action-foot">
+												<button class="jv-action-primary" :disabled="!summaryState.model || (summaryState.model && summaryState.model.applying) || convStreaming" :title="convStreaming ? 'Waiting for the current reply to finish' : ''" @click="confirmSummary">
+													{{ summaryState.model && summaryState.model.applying ? 'Saving...' : (activeAction.verb === 'update' ? 'Confirm update' : 'Confirm create') }}
+												</button>
+												<button class="jv-action-2nd" :disabled="!summaryState.model" @click="previewSummary">Preview</button>
+												<button class="jv-action-2nd" :disabled="!summaryState.model" @click="openDraftPanel({ verb: activeAction.verb || 'create', ...activeAction })">Edit</button>
+											</div>
+											<div class="jv-summary-hint">Want a change? just tell me, e.g. "make Widget A qty 12".</div>
+										</template>
 									</div>
 									<!-- submit/cancel/delete/amend are gated writes (issue #186): the real
 									     confirmation is the action:pending card rendered below the thread,
@@ -5029,6 +5039,10 @@ onUnmounted(() => {
 .jv-summary-arrow { color: var(--text-3); }
 .jv-summary-to { color: var(--green); font-weight: 600; }
 .jv-summary-nochange, .jv-summary-loading { font-size: 12.5px; color: var(--text-3); }
+/* A draft that could not be built. Deliberately NOT jv-summary-loading's muted
+   grey: this is a dead end, not a pending state, and it read as a placeholder. */
+.jv-summary-err { display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; color: var(--red); line-height: 1.45; }
+.jv-summary-err svg { flex: none; margin-top: 1px; }
 .jv-summary-table { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .jv-summary-table-h { padding: 7px 10px; background: var(--surface-2); font-size: 12px; font-weight: 650; color: var(--text-2); border-bottom: 1px solid var(--border); }
 .jv-summary-gridwrap { overflow-x: auto; }
