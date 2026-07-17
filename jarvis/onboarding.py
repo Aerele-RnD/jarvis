@@ -606,6 +606,20 @@ def get_llm_sync_status() -> dict:
 	s = frappe.get_single("Jarvis Settings")
 	status = s.get("last_sync_status") or ""
 
+	# Round-4 review R4-P0-6: an apply that admin returned as status="applying"
+	# (busy lock / read-timeout / CAS refusal) left last_sync_status at the
+	# pending-applying marker and did NOT stamp the durable synced marker. The
+	# in-job convergence poll and the */5 reconcile_pending_llm_sync safety net
+	# converge it eventually, but this poller runs every few seconds during
+	# onboarding — so while (and ONLY while) we are pending-applying, consult
+	# admin's read-only serving receipt (get_connection -> chat_readiness) and,
+	# if it now reports Ready, flip the marker + status to "ok". Best-effort: any
+	# admin error leaves us pending (the next poll retries). This is the "admit
+	# chat from an admin serving receipt, not HTTP success" the review asks for,
+	# done lazily from the poller the UI already runs.
+	if status.startswith(_pending_applying_status()):
+		status = _reconcile_pending_applying(s) or status
+
 	def _json_list(raw):
 		"""Stored JSON text -> list, degrading a corrupt/empty value to [] rather than
 		ever 500ing this poller."""
@@ -627,6 +641,42 @@ def get_llm_sync_status() -> dict:
 		# contract 1.11. The AI-models list keys each api-key row's health off this.
 		"model_statuses": _json_list(s.get("last_model_statuses")),
 	}
+
+
+def _pending_applying_status() -> str:
+	"""The jarvis_settings pending-applying marker, imported lazily so this
+	module keeps zero import-time coupling to the (heavy) doctype module."""
+	from jarvis.jarvis.doctype.jarvis_settings.jarvis_settings import (
+		_PENDING_APPLYING_STATUS,
+	)
+	return _PENDING_APPLYING_STATUS
+
+
+def _reconcile_pending_applying(settings) -> str | None:
+	"""Lazy customer-side reconcile for a pending-applying sync (round-4 R4-P0-6).
+
+	Consult admin's read-only serving verdict for the active generation. When admin
+	reports the container Ready, the apply has CONVERGED — stamp the durable synced
+	marker (llm_pool_synced_at for a pool, llm_direct_synced_at for direct, via the
+	shared _stamp_converged_ok) and flip the status to "ok" so is_ready_for_chat
+	opens chat and the poller stops calling admin. Returns the new status string on
+	a flip, else None (stay pending).
+
+	Best-effort: any admin error / non-Ready verdict leaves the pending status
+	untouched; the next poll retries. Never raises out of the poller."""
+	from jarvis.jarvis.doctype.jarvis_settings.jarvis_settings import (
+		_admin_chat_readiness,
+		_stamp_converged_ok,
+	)
+	state, _reason = _admin_chat_readiness()
+	if state != "Ready":
+		return None
+	_stamp_converged_ok(settings, is_pool=bool(settings.get("proxy_active")))
+	# _stamp_converged_ok's commit gate only fires in a worker/migrate context;
+	# this runs in a web request, where a GET would otherwise roll the terminal
+	# write back at request end.
+	frappe.db.commit()
+	return settings.get("last_sync_status")
 
 
 @frappe.whitelist()

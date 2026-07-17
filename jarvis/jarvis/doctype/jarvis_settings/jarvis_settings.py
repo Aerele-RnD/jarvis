@@ -112,9 +112,14 @@ def _admin_chat_readiness(*, timeout_s: int = _POOL_CONVERGE_PROBE_TIMEOUT_S):
 def _stamp_converged_ok(settings, *, is_pool: bool) -> None:
     """Record a converged apply as a terminal success. last_sync_status keeps the
     literal "ok" prefix (the _pool_sync_is_redundant dedup gate + the onboarding
-    poller both key off it); the durable llm_pool_synced_at marker is stamped
-    ONLY for pool tenants - it is is_ready_for_chat's evidence-of-successful-apply
-    gate and must never be set from mere intent or an "applying" 200."""
+    poller both key off it); the durable evidence-of-successful-apply marker
+    (llm_pool_synced_at for a pool tenant, llm_direct_synced_at for a single-model
+    tenant — round-4 R4-P0-6) is is_ready_for_chat's first-activation gate and
+    must never be set from mere intent or an "applying" 200. A converged apply is
+    exactly the confirmation it wants: admin gates chat_readiness "Ready" on
+    applied_version >= desired_version. Without the direct marker here, a first
+    direct apply that converged via reconcile would flip "ok" yet strand the
+    tenant at llm_provisioning forever (an "ok" status stops every reconcile)."""
     import frappe as _frappe
     now = _frappe.utils.now()
     fields = {
@@ -123,6 +128,8 @@ def _stamp_converged_ok(settings, *, is_pool: bool) -> None:
     }
     if is_pool:
         fields["llm_pool_synced_at"] = now
+    else:
+        fields["llm_direct_synced_at"] = now
     settings.db_set(fields, update_modified=False)
     _commit_terminal_sync_status()
 
@@ -734,14 +741,19 @@ class JarvisSettings(Document):
                 from jarvis.installed_apps_sync import record_synced_snapshot
                 record_synced_snapshot()
                 resolved_action = result.get("action", "restart")
-            # C5/F2: a "restart" (post_update_llm_creds) may come back accepted-
-            # but-still-converging. The admin committed the desired creds and a
-            # reconcile finishes the apply; treat "applying" as PENDING, converge
-            # via get_connection (is_pool=False - the single-model gate keys off
-            # the flat llm_* creds set at save, not llm_pool_synced_at), and only
-            # record pending when it hasn't landed yet. "reload" (hot secret
-            # rotation) has no applying semantics, so it skips this.
-            if action == "restart" and _is_applying_result(result):
+            # C5/F2 + round-4 R4-P0-6 — CONVERGENCE, not HTTP success: a sync may
+            # come back accepted-but-still-converging. Admin deliberately returns
+            # 200 with status="applying" on a busy apply lock / fleet read-timeout /
+            # applied-version CAS refusal — the container is NOT yet on the new
+            # creds. Treat anything but a demonstrable "applied" as PENDING:
+            # converge via get_connection (is_pool=False — stamps the direct
+            # llm_direct_synced_at marker on Ready), else record pending for the
+            # */5 reconcile / onboarding poller to finish. This gates BOTH actions:
+            # since round-4 the admin's rotate path also returns status="applying"
+            # when a newer generation raced the rotation, so "reload" is no longer
+            # applying-free. A missing status defaults to "applied" (an admin too
+            # old to thread it predates this contract).
+            if _is_applying_result(result) or (result.get("status") or "applied") != "applied":
                 if not _converge_via_admin(self, is_pool=False):
                     self.db_set(
                         "last_sync_status", _PENDING_APPLYING_STATUS,
@@ -753,6 +765,11 @@ class JarvisSettings(Document):
             self.db_set({
                 "last_sync_at": frappe.utils.now(),
                 "last_sync_status": f"ok ({resolved_action} via admin)",
+                # Durable "a direct config has been CONFIRMED-applied at least once"
+                # marker — stamped ONLY on status=applied (R4-P0-6 / P1-10). A first
+                # direct activation is gated on this so local key/provider/model
+                # presence alone can no longer open chat on an unconfirmed apply.
+                "llm_direct_synced_at": frappe.utils.now(),
             })
             # Commit EVERY terminal status (ok and each failed branch), not
             # just the finally-backstop: the rq SIGALRM can fire at any
@@ -1143,15 +1160,29 @@ def _enqueued_sync_via_admin_pool(retry_left: int = ADMIN_SYNC_LOCK_RETRIES) -> 
         terminal_written = False
         try:
             result = _post_pool_with_retry(spec, api_keys, oauth_blobs) or {}
-            # C5/F2: an accepted-but-still-converging apply ("applying") is NOT a
-            # confirmed apply. The admin committed the desired pool and a reconcile
-            # will finish it; the bench must NOT stamp llm_pool_synced_at off this
-            # 200 (that field is evidence of a SUCCESSFUL apply and gates chat
-            # readiness). Poll get_connection for chat_readiness == "Ready" (the
-            # cheap in-job fast path); if it lands, _stamp_converged_ok sets the
-            # markers, otherwise record the pending state and let the */5 reconcile
-            # finish it. Either way this is terminal for THIS job (no failed write).
-            if _is_applying_result(result):
+            # CONVERGENCE STATUS, not HTTP success (C5/F2 + round-4 R4-P0-6).
+            # Admin deliberately returns HTTP 200 with status="applying" when the
+            # apply lock was busy, the fleet read timed out, or the applied-version
+            # CAS refused — the container is NOT yet on the new pool — and status=
+            # "blocked" when a subscription pool has no persisted OAuth blobs.
+            # Stamping the durable "ever applied" marker (llm_pool_synced_at) on
+            # those made is_ready_for_chat open chat on a container still running
+            # the stub. "blocked" is terminal-failed: only the customer
+            # re-authenticating fixes it, so no reconcile poll can converge it.
+            # Anything else short of a demonstrable "applied" converges via
+            # get_connection (the cheap in-job fast path — on Ready
+            # _stamp_converged_ok sets the markers) or records the pending state
+            # for the */5 reconcile to finish. A missing status (an admin too old
+            # to thread it) defaults to "applied" — its own contract predates this.
+            status = (result.get("status") or "applied")
+            if status == "blocked":
+                settings.db_set("last_sync_status",
+                                "failed: subscription needs re-authentication (blocked)",
+                                update_modified=False)
+                _commit_terminal_sync_status()
+                terminal_written = True  # preserve this status past the finally backstop
+                return
+            if _is_applying_result(result) or status != "applied":
                 if not _converge_via_admin(settings, is_pool=True):
                     settings.db_set(
                         "last_sync_status", _PENDING_APPLYING_STATUS,
@@ -1165,11 +1196,10 @@ def _enqueued_sync_via_admin_pool(retry_left: int = ADMIN_SYNC_LOCK_RETRIES) -> 
                 "last_sync_at": _frappe.utils.now(),
                 "last_sync_status": f"ok ({resolved_action} via admin)",
                 # Durable "this pool has been APPLIED to the container at
-                # least once" marker. is_ready_for_chat gates pool tenants
-                # on it: proxy_active alone is config INTENT (committed
-                # synchronously at save, before this job runs) and must not
-                # be read as provisioning success - a fresh tenant whose
-                # first sync is still pending/failed has no working pool.
+                # least once" marker — stamped ONLY on a confirmed status=applied
+                # (R4-P0-6). is_ready_for_chat gates pool tenants on it: proxy_active
+                # alone is config INTENT (committed synchronously at save, before
+                # this job runs) and must not be read as provisioning success.
                 "llm_pool_synced_at": _frappe.utils.now(),
             }
             # A NO-OP apply (contract 1.10's ``unchanged: true``) changed nothing and,
@@ -1390,24 +1420,32 @@ def reconcile_pending_llm_sync() -> None:
         status = (settings.get("last_sync_status") or "")
         proxy_active = bool(settings.get("proxy_active"))
         pool_synced = bool(settings.get("llm_pool_synced_at"))
+        direct_synced = bool(settings.get("llm_direct_synced_at"))
 
         is_applying_pending = status.startswith(_PENDING_APPLYING_STATUS)
-        # A pool whose first apply never stamped the marker may have been
-        # converged by the admin reconcile cron since the bench last wrote its
-        # (pending/failed) status - re-probe so the customer isn't stranded at
-        # llm_pool_provisioning while the container is actually serving the pool.
-        is_unproven_pool = (
-            proxy_active and not pool_synced
-            and (status.startswith("pending:") or status.startswith("failed:"))
+        # A tenant whose FIRST apply never stamped its evidence marker may have
+        # been converged by the admin reconcile cron since the bench last wrote
+        # its (pending/failed) status - re-probe so the customer isn't stranded
+        # at llm_pool_provisioning / llm_provisioning while the container is
+        # actually serving the config. Direct analogue added in round-4
+        # (R4-P0-6): is_ready_for_chat now gates a first single-model activation
+        # on llm_direct_synced_at, so an unproven direct tenant is the same
+        # stranding class as an unproven pool.
+        is_stuck = status.startswith("pending:") or status.startswith("failed:")
+        is_unproven_pool = proxy_active and not pool_synced and is_stuck
+        is_unproven_direct = (
+            not proxy_active and not direct_synced and is_stuck
+            and (settings.get("llm_auth_mode") or "api_key") == "api_key"
+            and bool((settings.get("llm_provider") or "").strip())
         )
-        if not (is_applying_pending or is_unproven_pool):
+        if not (is_applying_pending or is_unproven_pool or is_unproven_direct):
             return
 
         state, _reason = _admin_chat_readiness()
         if state == "Ready":
-            # Stamp llm_pool_synced_at only for pool tenants (is_pool=proxy_active):
-            # for a single-model tenant the flat creds set at save time is already
-            # the readiness gate, so it just clears the pending status to "ok".
+            # Stamps the evidence marker for whichever mode is active:
+            # llm_pool_synced_at for pool tenants, llm_direct_synced_at for
+            # single-model tenants (is_ready_for_chat's first-activation gates).
             _stamp_converged_ok(settings, is_pool=proxy_active)
     except Exception:
         frappe.log_error(

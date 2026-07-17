@@ -239,6 +239,13 @@ scheduler_events = {
 		"*/2 * * * *": [
 			"jarvis.chat.turn_recovery.recover_pending_turns",
 		],
+		"*/10 * * * *": [
+			# Learn-from-custom-apps tick: starts due Queued runs (one active
+			# run bench-wide), recovers stale ones and cleans up old snapshot
+			# zips. Self-gating + never raises; the real work runs on queue
+			# "long" (see jarvis/learning/app_analysis.py).
+			"jarvis.learning.app_analysis.tick",
+		],
 		"*/15 * * * *": [
 			# Behavioural pattern learning tick. Hooks cron is app-static
 			# (per-site rows are reset on migrate), so the window is
@@ -364,6 +371,34 @@ doc_events["Jarvis Personalise Question Rule"] = {
 }
 
 # ---------------------------------------------------------------------------
+# Jarvis Triggers (user-defined doc-event automations)
+# ---------------------------------------------------------------------------
+# One wildcard dispatcher for the eight supported events. Hot-path cost when a
+# doctype has no triggers: one cached-map read + a dict lookup, no DB (see
+# jarvis.triggers.engine.dispatch). Merged into any existing "*" entry so
+# other wildcard handlers are preserved.
+_TRIGGER_DISPATCH = "jarvis.triggers.engine.dispatch"
+_star_doc_events = doc_events.setdefault("*", {})
+for _trigger_event in (
+	"validate", "before_submit", "after_insert", "on_update",
+	"on_submit", "on_cancel", "on_trash", "on_update_after_submit",
+):
+	_existing_handlers = _star_doc_events.get(_trigger_event)
+	if _existing_handlers is None:
+		_star_doc_events[_trigger_event] = [_TRIGGER_DISPATCH]
+	elif isinstance(_existing_handlers, str):
+		_star_doc_events[_trigger_event] = [_existing_handlers, _TRIGGER_DISPATCH]
+	else:
+		_existing_handlers.append(_TRIGGER_DISPATCH)
+
+# Jarvis Trigger Activity is an append-only log; frappe's standard Log
+# Settings clearing reaps rows older than 90 days (the controller's
+# clear_old_logs mirrors core's WebhookRequestLog).
+default_log_clearing_doctypes = {
+	"Jarvis Trigger Activity": 90,
+}
+
+# ---------------------------------------------------------------------------
 # Wiki page scoping (wiki v2)
 # ---------------------------------------------------------------------------
 # Org/Role/User visibility for Jarvis Wiki Page, enforced at the ORM: list
@@ -470,5 +505,21 @@ permission_query_conditions.update({
 })
 has_permission.update({
 	"Jarvis User Settings": "jarvis.chat.user_settings_permissions.has_user_settings_permission",
+})
+
+# ---------------------------------------------------------------------------
+# Jarvis Trigger scoping
+# ---------------------------------------------------------------------------
+# Read is org-wide for jarvis users (the doctype rows grant Jarvis User read;
+# no row scoping), but write/create/delete are denied at the ORM for everyone
+# below System Manager / Jarvis Admin. Jarvis Trigger Activity deliberately
+# has NO hooks: its doctype perms are SM-only and
+# jarvis.chat.triggers_api.list_activity_page serves visibility-filtered rows
+# (read access on the target doc) to everyone else.
+permission_query_conditions.update({
+	"Jarvis Trigger": "jarvis.chat.trigger_permissions.trigger_query_conditions",
+})
+has_permission.update({
+	"Jarvis Trigger": "jarvis.chat.trigger_permissions.has_trigger_permission",
 })
 

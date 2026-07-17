@@ -392,6 +392,14 @@ def _advance_macro(conversation_id: str, *, errored: bool) -> None:
 		frappe.log_error(
 			title="jarvis macro advance hook failed", message=frappe.get_traceback()
 		)
+	try:
+		from jarvis.learning import app_analysis
+
+		app_analysis.on_turn_end(conversation_id, errored=errored)
+	except Exception:
+		frappe.log_error(
+			title="jarvis app-learning turn hook failed", message=frappe.get_traceback()
+		)
 
 
 def handle_chat_send(payload: dict) -> None:
@@ -1164,6 +1172,15 @@ def _prepend_doc_context(user_message: str, context) -> str:
 	"""
 	if not isinstance(context, dict):
 		return user_message
+	if context.get("page") == "triggers":
+		return (
+			"[Context: The user is on the Jarvis Triggers page. They want to create or "
+			"manage event triggers (doctype + doc event + optional condition + a Script "
+			"or LLM action). Read and follow the jarvis-triggers skill before acting. "
+			"Manage triggers by creating/updating 'Jarvis Trigger' documents with the "
+			"standard doc tools.]"
+			f"\n\n{user_message}"
+		)
 	report_name = (context.get("report_name") or "").strip()
 	if report_name:
 		filters = context.get("filters") if isinstance(context.get("filters"), dict) else {}

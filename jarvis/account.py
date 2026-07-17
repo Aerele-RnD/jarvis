@@ -150,6 +150,18 @@ def is_ready_for_chat() -> dict:
 		model = (getattr(settings, "llm_model", "") or "").strip()
 		if not (llm_key and provider and model):
 			return {"ready": False, "reason": "llm_credentials"}
+		# Local key/provider/model presence is config INTENT (committed at save,
+		# before the async admin apply runs) — it does NOT prove the container ever
+		# received the creds. Gate on evidence of a CONFIRMED apply instead
+		# (round-4 review R4-P0-6 / P1-10): llm_direct_synced_at is stamped only on
+		# admin status="applied". A direct tenant that has EVER confirmed stays
+		# ready through a later re-save's transient "applying" (the container keeps
+		# serving its previous key); a FRESH tenant whose first apply is still
+		# pending/failed is NOT ready — opening chat there guarantees failing turns
+		# while onboarding still shows "applying". Legacy direct tenants are
+		# backfilled by patch v2_00_backfill_llm_direct_synced_at.
+		if not getattr(settings, "llm_direct_synced_at", None):
+			return {"ready": False, "reason": "llm_provisioning"}
 	elif auth_mode in ("subscription", "oauth"):
 		# Both modes use the same local signal: llm_oauth_connected_at is
 		# set (read-only) when the oauth grant completes and the admin

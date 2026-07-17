@@ -959,7 +959,8 @@ def send_message(
 		enqueue_kwargs["attachments"] = atts
 	# Floating-widget auto-context: {doctype, name, label} of the doc the user
 	# is viewing, OR {report_name, filters} when the user is on a
-	# query-report route. Only forwarded when present, for the same
+	# query-report route, OR {page: "triggers"} when the user is on the
+	# Triggers page. Only forwarded when present, for the same
 	# not-yet-reloaded worker safety as attachments above. The narrowing
 	# here is deliberate (allow-list, not passthrough) so a compromised /
 	# stale frontend can't smuggle arbitrary keys into the worker payload;
@@ -969,9 +970,13 @@ def send_message(
 			ctx = frappe.parse_json(context)
 			# ``ground_wiki`` is the composer's one-shot "ground this turn on the
 			# wiki" flag; it can arrive with no viewing-context doc, so forward the
-			# context payload when EITHER a doc/report ref OR ground_wiki is set.
+			# context payload when EITHER a doc/report ref OR ground_wiki OR the
+			# Triggers-page marker is set.
 			ground_wiki = 1 if (isinstance(ctx, dict) and frappe.utils.cint(ctx.get("ground_wiki"))) else 0
-			if isinstance(ctx, dict) and (ctx.get("doctype") or ctx.get("report_name") or ground_wiki):
+			if isinstance(ctx, dict) and (
+				ctx.get("doctype") or ctx.get("report_name") or ground_wiki
+				or ctx.get("page") == "triggers"
+			):
 				enqueue_kwargs["context"] = {
 					"doctype": ctx.get("doctype") or "",
 					"name": ctx.get("name") or "",
@@ -984,6 +989,10 @@ def send_message(
 					# One-shot wiki grounding (allow-listed, boolean only).
 					"ground_wiki": ground_wiki,
 				}
+				# `page` is a literal allow-list of one value (not a
+				# passthrough) — the prompt-side only consumes "triggers".
+				if ctx.get("page") == "triggers":
+					enqueue_kwargs["context"]["page"] = "triggers"
 				# Persist the viewing-context doc ref on the user message row
 				# so post-turn entity extraction (jarvis.chat.entities) sees
 				# what the user was looking at, not just what tools touched.
@@ -1656,13 +1665,17 @@ def _enqueue_turn(
 	model_override: str | None = None,
 	thinking_override: str | None = None,
 	hidden: bool = False,
+	interactive: bool = True,
 ) -> dict:
 	"""Persist a user message + dispatch an agent turn for ``prompt`` (no
 	attachments / no auto-context). The macro engine (``jarvis.chat.macros``) uses
 	this to run one step exactly the way ``send_message`` runs a typed message —
 	same seq/session_key/dispatch path. ``hidden`` marks the row as an internal
 	system message the chat UI never renders (get_conversation filters it out).
-	Returns ``{run_id, message_id}``."""
+	``interactive=False`` dispatches the turn at BACKGROUND priority (it never
+	jumps ahead of a human's queued turn) — used by unattended, long-running
+	producers like app-learning that could otherwise monopolize the chat queue
+	for a run's duration. Returns ``{run_id, message_id}``."""
 	conv_doc = frappe.get_doc(CONV, conversation)
 	if model_override:
 		conv_doc.model_override = model_override
@@ -1700,7 +1713,7 @@ def _enqueue_turn(
 		"conversation_id": conversation,
 		"message_id": msg_doc.name,
 		"run_id": run_id,
-	})
+	}, interactive=interactive)
 	return {"run_id": run_id, "message_id": msg_doc.name}
 
 
