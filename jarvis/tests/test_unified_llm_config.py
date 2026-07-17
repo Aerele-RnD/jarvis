@@ -217,11 +217,20 @@ class TestProviderNormalization(FrappeTestCase):
         # xAI Grok is a native Bifrost provider; its label normalizes to "xai".
         self.assertEqual(normalize_provider("xAI Grok"), "xai")
 
-    def test_glm_zai_normalizes_to_openai_compat(self):
+    def test_glm_zai_normalizes_to_zai(self):
         from jarvis.jarvis.pool_serialize import normalize_provider
-        # GLM / Z.ai has no native Bifrost provider, so it rides the existing
-        # openai-compatible custom-endpoint path (base_url required).
-        self.assertEqual(normalize_provider("GLM / Z.ai"), "openai_compat")
+        # GLM / Z.ai is a first-class STORED provider id, same as every other
+        # alias: a dropdown label round-trips to its OWN canonical id, not a
+        # different provider's. (It has no native Bifrost provider, so it
+        # rides the openai-compatible custom-endpoint transport - but that
+        # collapse happens only at wire-serialization time, in
+        # build_pool_payload; see test_xai_and_glm_serialize_into_pool_payload
+        # below.) Regression test for the bug where storage-time collapsing
+        # onto "openai_compat" made a saved GLM row permanently render as
+        # "OpenAI-Compatible" everywhere the pool was displayed.
+        self.assertEqual(normalize_provider("GLM / Z.ai"), "zai")
+        # Passthrough: a row already stored as "zai" re-normalizes to itself.
+        self.assertEqual(normalize_provider("zai"), "zai")
 
     def test_existing_labels_unchanged(self):
         from jarvis.jarvis.pool_serialize import normalize_provider
@@ -231,7 +240,13 @@ class TestProviderNormalization(FrappeTestCase):
 
     def test_xai_and_glm_serialize_into_pool_payload(self):
         # The actual feature: build_pool_payload emits xAI as the native "xai"
-        # provider and GLM/Z.ai as an openai_compat custom provider (base_url kept).
+        # provider and GLM/Z.ai as an openai_compat custom provider (base_url
+        # kept). This is the wire-payload guarantee: it must stay exactly
+        # "openai_compat" even though normalize_provider now returns "zai" for
+        # GLM/Z.ai - the collapse moved into build_pool_payload's
+        # _wire_provider(), not away entirely. A GLM row's stored provider
+        # ("GLM / Z.ai" label, or the persisted "zai" id) must both serialize
+        # identically here so the Bifrost payload never changes shape.
         from jarvis.jarvis.pool_serialize import build_pool_payload
         xai = _api_key_model(provider="xAI Grok", model="grok-4.5",
                              base_url="https://api.x.ai/v1", api_key="xk", order=0)
@@ -244,6 +259,36 @@ class TestProviderNormalization(FrappeTestCase):
         self.assertEqual(prov["grok-4.5"], "xai")            # native passthrough
         self.assertEqual(prov["glm-4.6"], "openai_compat")   # GLM rides openai_compat
         self.assertEqual(base["glm-4.6"], "https://api.z.ai/api/paas/v4")
+
+    def test_glm_zai_already_stored_as_id_serializes_same_as_label(self):
+        # A row already persisted with the new first-class "zai" id (the
+        # normal post-fix state) must serialize onto the wire IDENTICALLY to
+        # one that still carries the raw "GLM / Z.ai" label - build_pool_payload
+        # re-normalizes before collapsing, so storage shape never leaks into
+        # the Bifrost payload.
+        from jarvis.jarvis.pool_serialize import build_pool_payload
+        glm = _api_key_model(provider="zai", model="glm-4.6",
+                             base_url="https://api.z.ai/api/paas/v4", api_key="zk", order=0)
+        settings = _make_settings_with_models([glm])
+        spec, _api_keys, _ = build_pool_payload(settings)
+        self.assertEqual(spec["models"][0]["provider"], "openai_compat")
+        self.assertEqual(spec["models"][0]["base_url"], "https://api.z.ai/api/paas/v4")
+
+    def test_validate_models_requires_base_url_for_zai(self):
+        # Defense in depth: the same base_url requirement that already gated
+        # openai_compat/vllm must cover zai now that it is a distinct stored
+        # id, or a GLM row could be saved with no endpoint and every turn on
+        # it would fail. (The frontend already blocks this client-side; this
+        # is the server-side backstop the frontend validator mirrors.)
+        from jarvis.jarvis.pool_serialize import validate_models
+        glm_no_url = _api_key_model(provider="zai", model="glm-4.6",
+                                    base_url="", api_key="zk", order=0)
+        settings = _make_settings_with_models([glm_no_url])
+        errors = validate_models(settings)
+        self.assertTrue(
+            any("requires a base_url" in e for e in errors),
+            f"expected a base_url error for a zai row with no base_url, got: {errors}",
+        )
 
 
 class TestPoolSerializeFromSettings(FrappeTestCase):

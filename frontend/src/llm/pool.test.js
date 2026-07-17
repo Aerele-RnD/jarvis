@@ -114,6 +114,14 @@ test("providerLabel/providerId: gemini id ⇄ Google Gemini label (matches catal
   assert.equal(providerLabel("gemini"), "Google Gemini")
   assert.equal(providerId("Google Gemini"), "gemini")
 })
+test("providerLabel/providerId: zai id ⇄ GLM / Z.ai label (first-class provider, distinct from openai_compat)", () => {
+  // Regression lock: "zai" must render as its own label, never fall back to
+  // "OpenAI-Compatible" - that fallback only happens for an id absent from
+  // PROVIDER_LABELS, and zai has been a first-class entry since #319.
+  assert.equal(providerLabel("zai"), "GLM / Z.ai")
+  assert.equal(providerId("GLM / Z.ai"), "zai")
+  assert.notEqual(providerLabel("zai"), providerLabel("openai_compat"))
+})
 test("PROVIDER_LABELS: includes the vendors + compat, each {id,label}", () => {
   const ids = PROVIDER_LABELS.map(p => p.id)
   assert.ok(ids.includes("openai"))
@@ -130,6 +138,21 @@ test("seedRowsFromConfig: api-key model → api_key row with label provider + ha
   assert.equal(row.baseUrl, "http://h:9000/openai")
   assert.equal(row.apiKey, "")      // keys never returned to client
   assert.equal(row.hasKey, true)    // but we know one is set → placeholder
+})
+test("seedRowsFromConfig: GLM/Z.ai model stored as first-class 'zai' renders its own label, not OpenAI-Compatible", () => {
+  // End-to-end regression lock for the storage-collapsing bug: a row that
+  // survives jarvis.onboarding.save_llm_pool -> get_llm_config as provider
+  // "zai" (the post-fix stored shape) must seed an editor row labeled
+  // "GLM / Z.ai" - not "OpenAI-Compatible", which is what a collapsed
+  // "openai_compat" row would render as.
+  const cfg = { models: [{ provider: "zai", model: "glm-4.6", credential_type: "api_key",
+    has_key: true, base_url: "https://api.z.ai/api/paas/v4", order: 0 }] }
+  const [row] = seedRowsFromConfig(cfg)
+  assert.equal(row.credentialType, "api_key")
+  assert.equal(row.provider, "GLM / Z.ai")
+  assert.equal(row.model, "glm-4.6")
+  assert.equal(row.baseUrl, "https://api.z.ai/api/paas/v4")
+  assert.equal(row.hasKey, true)
 })
 test("seedRowsFromConfig: subscription model → subscription row with connected accounts", () => {
   const cfg = { models: [{ model: "gpt-5.5", order: 1, subscription: { rotation: "sticky",

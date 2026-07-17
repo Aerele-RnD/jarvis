@@ -61,10 +61,17 @@ _PROVIDER_ALIASES = {
     "openai-compatible": "openai_compat",
     # xAI Grok is a native Bifrost provider.
     "xai grok": "xai",
-    # GLM / Z.ai has no native Bifrost provider, so it rides the existing
-    # openai-compatible custom-endpoint path (Bifrost custom provider +
-    # base_url). validate_models already requires a base_url for openai_compat.
-    "glm / z.ai": "openai_compat",
+    # GLM / Z.ai is a first-class stored provider id ("zai"), same as every
+    # other alias here: a dropdown label normalizes to ITS OWN canonical id,
+    # not a different provider's. It has no native Bifrost provider, so it
+    # rides the openai-compatible custom-endpoint path (base_url required,
+    # see validate_models) - but that collapse happens ONLY at wire time, in
+    # build_pool_payload's _WIRE_PROVIDER_OVERRIDES below. Collapsing here
+    # (at storage time) used to permanently overwrite the stored provider
+    # with "openai_compat", so a saved GLM row round-tripped back into the
+    # UI as "OpenAI-Compatible" - base_url was the only surviving evidence
+    # it was ever GLM. Fixed 2026-07-17.
+    "glm / z.ai": "zai",
     # legacy id alias: the old frontend used "google" for Gemini
     "google": "gemini",
 }
@@ -75,11 +82,38 @@ def normalize_provider(value: str) -> str:
 
     Case-insensitive on the lookup; unknown values pass through lowercased
     (Bifrost provider ids are lowercase). Blank stays blank.
+
+    This is the STORAGE-time normalization: it must be a true round-trip for
+    every provider (label in -> its own id out -> same id back in unchanged),
+    so a saved pool always reflects what the customer actually picked. Any
+    collapsing of one provider's identity onto another's wire transport (e.g.
+    "zai" riding the openai-compatible Bifrost transport) belongs in
+    build_pool_payload's _wire_provider(), not here.
     """
     v = (value or "").strip()
     if not v:
         return ""
     return _PROVIDER_ALIASES.get(v.lower(), v.lower())
+
+
+# ---------------------------------------------------------------------------
+# Wire-time-only provider collapsing (build_pool_payload). Distinct from
+# normalize_provider(): a provider id can be first-class in STORAGE (so the
+# UI shows its real name) while still riding a different provider's transport
+# on the Bifrost wire payload (because Bifrost has no native support for it).
+# "zai" (GLM / Z.ai) is the only entry today - it rides the openai-compatible
+# custom-endpoint transport (base_url carries the real Z.ai endpoint).
+# ---------------------------------------------------------------------------
+_WIRE_PROVIDER_OVERRIDES = {
+    "zai": "openai_compat",
+}
+
+
+def _wire_provider(canonical_id: str) -> str:
+    """Map a STORED canonical provider id to the id emitted on the Bifrost wire
+    payload. Passthrough for every provider except the wire-only overrides above.
+    """
+    return _WIRE_PROVIDER_OVERRIDES.get(canonical_id, canonical_id)
 
 
 def _model_accounts(m) -> list:
@@ -203,13 +237,17 @@ def validate_models(settings) -> list:
             if not key_val:
                 errors.append(f"{label}: api_key is blank on an enabled model (would produce a dangling key_ref)")
 
-            # Custom-endpoint providers (OpenAI-Compatible shim / local vLLM) are
-            # defined by their base_url; without it build_pool_payload emits a
-            # provider with no endpoint and every turn on that model fails. The
-            # provider is already normalized to its canonical id at this point.
+            # Custom-endpoint providers (OpenAI-Compatible shim / local vLLM /
+            # GLM / Z.ai) are defined by their base_url; without it
+            # build_pool_payload emits a provider with no endpoint and every
+            # turn on that model fails. The provider is already normalized to
+            # its canonical id at this point. "zai" needs this exactly like
+            # "openai_compat" because it rides the same wire transport
+            # (see pool_serialize._wire_provider) - the requirement follows
+            # the transport, not the stored identity.
             prov = (m.provider if hasattr(m, "provider") else m.get("provider", "")) or ""
             base_url = (m.base_url if hasattr(m, "base_url") else m.get("base_url", "")) or ""
-            if prov in ("openai_compat", "vllm") and not base_url.strip():
+            if prov in ("openai_compat", "vllm", "zai") and not base_url.strip():
                 errors.append(
                     f"{label}: provider '{prov}' requires a base_url (its custom endpoint)"
                 )
@@ -389,7 +427,12 @@ def build_pool_payload(settings):
                 entry["base_url"] = base_url
             provider = normalize_provider(provider)
             if provider:
-                entry["provider"] = provider
+                # Wire-only collapse (e.g. "zai" -> "openai_compat"): the
+                # stored/displayed identity stays "zai"; only the Bifrost
+                # payload's provider id changes, so this MUST run last, right
+                # before the entry is written - never earlier, and never at
+                # storage time (see normalize_provider's docstring).
+                entry["provider"] = _wire_provider(provider)
 
         models.append(entry)
 
