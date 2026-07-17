@@ -174,6 +174,11 @@ export const saveLlmPool = (models, preset = null, routingMode = "failover") =>
 		preset: preset || "",
 		routing_mode: routingMode,
 	})
+// Pre-save "Test" probe for ONE api-key model row (never persists, never
+// touches the fleet/container - see jarvis/llm_key_probe.py). args:
+// {provider, model, api_key, base_url}. Returns
+// {ok, checks:[{check,ok,detail}], provider, local_endpoint, caveat}.
+export const testLlmApiKey = (args) => call("jarvis.llm_key_probe.test_llm_api_key", args)
 
 // --- Onboarding wizard (managed signup + self-hosted connect) ---
 // Arg names mirror the real backend signatures (jarvis/onboarding.py,

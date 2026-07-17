@@ -457,3 +457,82 @@ class TestExtractionAndNeutralization(LinkFetchGuardTestCase):
 			):
 			text = link_fetch.fetch_and_extract("http://public.example.com/plain.txt")
 		self.assertEqual(text, "line one\nline two")
+
+
+# --------------------------------------------------------------------------- #
+# request_pinned - the generic (non-GET, non-text/html) pinned request added
+# for jarvis.llm_key_probe's provider API-key test. Reuses the SAME guard +
+# _open_pinned pinning seam as fetch_and_extract above (only the response
+# shaping differs: raw status/headers/body instead of extracted text), so
+# these tests focus on what's NEW - method/body/headers reaching the pinned
+# open, JSON content-type not being enforced, and redirects/network errors
+# surfacing as LinkFetchError rather than being chased or leaking a raw
+# exception with headers/body in it.
+# --------------------------------------------------------------------------- #
+class TestRequestPinned(LinkFetchGuardTestCase):
+	def test_blocked_host_raises_before_any_open(self):
+		with mock.patch("socket.getaddrinfo", return_value=_addrinfo(PRIVATE_IP)), \
+			mock.patch("jarvis.chat.link_fetch._open_pinned") as m_open:
+			with self.assertRaises(link_fetch.LinkFetchError):
+				link_fetch.request_pinned("http://internal.example.com/v1/chat/completions",
+				                            method="POST", json_body={"a": 1})
+			m_open.assert_not_called()
+
+	def test_post_json_body_and_headers_reach_the_pinned_open(self):
+		resp = _FakeResponse(status=200, headers={}, chunks=_chunk_list(b'{"ok":true}'))
+		with mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)), \
+			mock.patch(
+				"jarvis.chat.link_fetch._open_pinned", return_value=_open_result(resp)
+			) as m_open:
+			status, _headers, body = link_fetch.request_pinned(
+				"https://public.example.com/chat/completions",
+				method="POST",
+				headers={"Authorization": "Bearer sk-test"},
+				json_body={"model": "x", "messages": []},
+			)
+		self.assertEqual(status, 200)
+		self.assertEqual(body, b'{"ok":true}')
+		kwargs = m_open.call_args.kwargs
+		self.assertEqual(kwargs["method"], "POST")
+		self.assertEqual(kwargs["extra_headers"]["Authorization"], "Bearer sk-test")
+		self.assertIn(b'"model"', kwargs["body"])
+
+	def test_non_json_content_type_response_is_not_rejected(self):
+		# fetch_and_extract refuses a non-text/* content-type; request_pinned must NOT -
+		# a provider API replies application/json, not text/*.
+		resp = _FakeResponse(status=400, headers={"Content-Type": "application/json"},
+		                      chunks=_chunk_list(b'{"error":{"message":"bad key"}}'))
+		with mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)), \
+			mock.patch(
+				"jarvis.chat.link_fetch._open_pinned", return_value=_open_result(resp)
+			):
+			status, _headers, body = link_fetch.request_pinned(
+				"https://public.example.com/chat/completions", method="POST", json_body={})
+		self.assertEqual(status, 400)
+		self.assertIn(b"bad key", body)
+
+	def test_network_error_becomes_link_fetch_error_without_leaking_headers(self):
+		with mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)), \
+			mock.patch(
+				"jarvis.chat.link_fetch._open_pinned",
+				side_effect=OSError("connection refused"),
+			):
+			with self.assertRaises(link_fetch.LinkFetchError) as cm:
+				link_fetch.request_pinned(
+					"https://public.example.com/chat/completions",
+					method="POST",
+					headers={"Authorization": "Bearer sk-should-not-leak"},
+					json_body={},
+				)
+		self.assertNotIn("sk-should-not-leak", str(cm.exception))
+
+	def test_oversize_response_is_rejected_not_silently_truncated(self):
+		big = b'{"pad":"' + (b"x" * (link_fetch.MAX_BYTES_DEFAULT + 10)) + b'"}'
+		resp = _FakeResponse(status=200, headers={}, chunks=_chunk_list(big))
+		with mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)), \
+			mock.patch(
+				"jarvis.chat.link_fetch._open_pinned", return_value=_open_result(resp)
+			):
+			with self.assertRaises(link_fetch.LinkFetchError):
+				link_fetch.request_pinned(
+					"https://public.example.com/chat/completions", method="POST", json_body={})

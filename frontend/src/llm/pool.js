@@ -188,6 +188,16 @@ function modelVerdictEntry(row, modelStatuses) {
   return modelStatuses.find((e) => e && e.model === row.model && e.provider === rid) || null
 }
 
+// Sensible truncation for a provider error string of unknown length dropped into a fixed-
+// width row/tooltip. The inline chip LABEL sits in a `white-space:nowrap` flex row next to
+// several other elements, so it stays short; the tooltip TITLE has more room (still capped -
+// the backend already caps at 400 chars, but a defensive cap here means this helper is safe
+// even if that ever changes).
+function truncate(s, max) {
+  const t = (s || "").trim()
+  return t.length > max ? t.slice(0, max - 1).trimEnd() + "…" : t
+}
+
 // z.ai's exact "wrong endpoint" trap: a GLM Coding Plan key authenticates fine against
 // the pay-as-you-go endpoint (api.z.ai/api/paas/v4) but that endpoint reports the key's
 // coding-plan balance as zero, so the probe fails with z.ai's real error text - code 1113,
@@ -214,9 +224,22 @@ function isZaiWrongEndpoint(row, entry) {
 //       specific hint instead of the generic message (see isZaiWrongEndpoint above)
 //   unchecked -> unchecked : could not confirm; re-checked on the next apply
 //   verified / "" / unknown -> ok (quiet green; "" = pre-1.11 fleet or a not-yet-probed row)
+//
+// `detail` (fleet-agent contract 1.12) carries the PROVIDER'S OWN error message on a failed
+// row (e.g. "Insufficient balance or no resource package. Please recharge." from a real
+// GLM/Z.ai zero-balance case) instead of the generic "Not working" - the whole point being a
+// customer can tell a bad key from an unpaid account. Consumed DEFENSIVELY: an older
+// fleet-agent that doesn't send it yet falls back to today's text, so this must work
+// unchanged against a fleet that predates the field.
+//
+// Order matters: the z.ai wrong-endpoint hint is checked FIRST because it is the specific
+// diagnosis of one particular `detail` string, and reporting the raw "insufficient balance"
+// text there would actively mislead (the key has balance; it's pointed at the wrong
+// endpoint). Every other `detail` falls through to the generic rendering below.
 export function apiKeyModelHealth(row, modelStatuses) {
   const entry = modelVerdictEntry(row, modelStatuses)
   const status = (entry && entry.status) || ""
+  const detail = (entry && typeof entry.detail === "string" && entry.detail.trim()) || ""
   if (status === "failed") {
     if (isZaiWrongEndpoint(row, entry)) {
       return {
@@ -229,9 +252,11 @@ export function apiKeyModelHealth(row, modelStatuses) {
     }
     return {
       level: "warn",
-      label: "Not working",
-      title: "This model failed a test request - check its API key, model id, and base URL. "
-        + "It's skipped during failover until it passes.",
+      label: detail ? `Not working: ${truncate(detail, 46)}` : "Not working",
+      title: detail
+        ? `This model failed a test request: ${truncate(detail, 220)}`
+        : "This model failed a test request - check its API key, model id, and base URL. "
+          + "It's skipped during failover until it passes.",
     }
   }
   if (status === "unchecked") {
