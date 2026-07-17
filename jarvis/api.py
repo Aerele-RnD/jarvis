@@ -1045,8 +1045,9 @@ def _run_tool(tool: str, raw_args: dict | str | None,
 		# returns it verbatim, so the card + expiry ride the event, the record, and
 		# every resync identically (never rebuilt -> cannot diverge). build_card
 		# returns None for uncovered shapes; the SPA falls back to the raw preview.
-		import time
-
+		# NOTE: time is imported at module level - a function-local import here
+		# would make `time` local to ALL of _run_tool and break the read path's
+		# perf_counter above it (UnboundLocalError; caught by CI 2026-07-17).
 		from jarvis.chat import confirm_card
 		if isinstance(preview, dict):
 			preview["card"] = confirm_card.build_card(tool, args, preview)
