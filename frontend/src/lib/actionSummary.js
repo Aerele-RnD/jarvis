@@ -188,12 +188,16 @@ export function receiptView(tool, args, result, outcome) {
         : argCount(args)
 
   // Target links (create keeps each row's own doctype; email targets have no doc).
+  // A DELETED record gets no link: the row is gone, so the shortcut would open a
+  // 404. Only when it actually ran, though - a discarded or failed delete left the
+  // record alive, and that one is worth opening.
+  const isGoneDelete = tool === "delete_doc" && outcome === "confirmed"
   let targets
   if (Array.isArray(data.created)) {
     targets = data.created
       .filter((d) => d && d.name)
       .map((d) => ({ name: d.name, url: docUrl(d.doctype || doctype, d.name) }))
-  } else if (isEmail) {
+  } else if (isEmail || isGoneDelete) {
     targets = names.map((n) => ({ name: n, url: "" }))
   } else {
     targets = names.map((n) => ({ name: n, url: docUrl(doctype, n) }))
