@@ -63,6 +63,19 @@
 			</div>
 		</nav>
 
+		<!-- 3b. overflow destinations (Dashboards, …) — opens the MoreMenu palette.
+		     Deliberately NOT a navLinks entry: that loop binds :to/:is-active and
+		     this row is an action, not a route. -->
+		<nav class="flex flex-col">
+			<SidebarLink
+				label="More"
+				icon="more-horizontal"
+				class="mx-2 my-[1.5px]"
+				:is-collapsed="collapsed"
+				:on-click="() => (store.moreMenuOpen = true)"
+			/>
+		</nav>
+
 		<!-- 4. recent chats (hidden entirely when collapsed, D6) -->
 		<template v-if="!collapsed">
 			<div class="px-4 pb-2.5 pt-[11px] text-sm text-ink-gray-5">Recent chats</div>
