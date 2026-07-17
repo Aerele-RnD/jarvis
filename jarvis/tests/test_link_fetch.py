@@ -203,7 +203,16 @@ class TestConnectionPinning(LinkFetchGuardTestCase):
 		self.assertEqual(kwargs["host"], PUBLIC_IP)
 		# TLS still verifies against, and SNI still targets, the ORIGINAL name.
 		self.assertEqual(kwargs["assert_hostname"], "public.example.com")
-		self.assertEqual(kwargs["conn_kw"], {"server_hostname": "public.example.com"})
+		# server_hostname goes as a PLAIN kwarg - urllib3 v2 collects a pool's
+		# surplus kwargs into conn_kw itself and splats them onto the connection.
+		# This used to assert `kwargs["conn_kw"] == {...}`, i.e. it asserted the
+		# double-wrapped form that made every real https fetch raise TypeError:
+		# because this test mocks the pool CLASS, the broken kwarg was never fed
+		# to the real urllib3, so the assertion locked the bug in as the expected
+		# contract. TestPinnedPoolConstruction below constructs a real pool and
+		# connection precisely so a mock can never hide that again.
+		self.assertEqual(kwargs["server_hostname"], "public.example.com")
+		self.assertNotIn("conn_kw", kwargs)
 		self.assertEqual(kwargs["cert_reqs"], "CERT_REQUIRED")
 
 		# The Host header carries the original hostname, not the pinned IP.
