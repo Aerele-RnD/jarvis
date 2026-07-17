@@ -6,12 +6,6 @@ was never created. Runs before v1_17 drops the old DocType."""
 import frappe
 from jarvis.chat.usage import get_or_create_user_settings
 
-_GREETING_FIELDS = (
-	"business_greeting_state",
-	"business_greeting_chat_count",
-	"business_greeting_hidden_at_count",
-)
-
 
 def execute():
 	if not frappe.db.table_exists("Jarvis User Preference"):

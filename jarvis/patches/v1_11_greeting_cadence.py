@@ -22,6 +22,12 @@ import frappe
 
 
 def execute() -> None:
+	# v1_17 drops `tabJarvis User Preference` (merged into Jarvis User Settings).
+	# This already-applied patch never re-runs on real sites, but guard so a
+	# `bench migrate --skip-failing` that reaches here after the drop no-ops
+	# instead of erroring on the missing table.
+	if not frappe.db.table_exists("Jarvis User Preference"):
+		return
 	frappe.db.sql(
 		"UPDATE `tabJarvis User Preference` "
 		"SET business_greeting_state = '' "

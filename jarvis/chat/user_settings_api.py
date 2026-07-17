@@ -195,7 +195,7 @@ def set_user_theme(theme: str) -> dict:
 	"""Persist the caller's theme choice on their own User.desk_theme
 	(Light/Dark/Automatic). ``theme`` is the SPA vocabulary light|dark|system."""
 	require_jarvis_access()
-	desk = _THEME_TO_DESK.get((theme or "").strip().lower())
+	desk = _THEME_TO_DESK.get(str(theme or "").strip().lower())
 	if not desk:
 		return {"ok": False, "reason": "invalid_theme"}
 	frappe.db.set_value(
