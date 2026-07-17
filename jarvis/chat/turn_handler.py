@@ -1190,6 +1190,15 @@ def _prepend_doc_context(user_message: str, context) -> str:
 			)
 		else:
 			mode_line = ""
+		# When revising a saved dashboard, name it so the agent reads the current
+		# document before changing it (instead of building blind).
+		edit_line = ""
+		if (context.get("doctype") or "") == "Jarvis Dashboard" and context.get("name"):
+			edit_line = (
+				f" They are revising the saved dashboard {context['name']} — call "
+				f"jarvis__get_doc on Jarvis Dashboard {context['name']} to read its "
+				"current html and sources, then produce the full revised document."
+			)
 		return (
 			"[Context: The user is on the Jarvis Dashboards builder page. They want to "
 			"create or iterate on a dashboard/report. Read and follow the "
@@ -1208,7 +1217,7 @@ def _prepend_doc_context(user_message: str, context) -> str:
 			"--jd-* CSS variables (--jd-bg/-surface/-ink/-heading/-muted/-line/"
 			"-accent/-font) and the window.JARVIS_THEME.palette chart colors instead "
 			"of hardcoding design; only deviate when the user explicitly asks about "
-			f"the look.{mode_line}]"
+			f"the look.{mode_line}{edit_line}]"
 			f"\n\n{user_message}"
 		)
 	if context.get("page") == "triggers":

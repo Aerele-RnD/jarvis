@@ -35,6 +35,19 @@
 			<TabBar class="shrink-0" :tabs="TABS" :model-value="activeTab" @update:model-value="setTab" />
 
 			<!-- ============ Builder tab: canvas over chat, drag-split ============ -->
+			<!-- self-hosted benches have no gateway canvas route, so chat can't
+			     produce a rendered dashboard - say so instead of an eternal empty
+			     canvas (caps.canvas_available from get_dashboards_caps). -->
+			<div
+				v-if="activeTab === 'builder' && caps.canvas_available === false"
+				class="flex items-start gap-2 border-b bg-surface-amber-1 px-4 py-2"
+			>
+				<FeatherIcon name="alert-triangle" class="mt-0.5 size-4 shrink-0 text-ink-amber-3" />
+				<span class="text-sm text-ink-gray-7">
+					Live canvas rendering isn't available on this deployment, so chat can't draw a
+					dashboard here. You can still open and view saved dashboards.
+				</span>
+			</div>
 			<div v-if="activeTab === 'builder'" ref="builderEl" class="flex min-h-0 flex-1 flex-col">
 				<!-- canvas pane (the surface's one solid action lives here) -->
 				<div
@@ -44,9 +57,11 @@
 					<div class="flex shrink-0 items-center justify-between gap-2 border-b px-4 py-2">
 						<div class="flex min-w-0 items-center gap-2">
 							<span class="text-base font-semibold text-ink-gray-9">Canvas</span>
+							<!-- informational (which dashboard is loaded), not a dirty
+							     warning - so gray, not orange (§1.2 hue = meaning) -->
 							<Badge
 								v-if="editingDetail"
-								theme="orange"
+								theme="gray"
 								variant="subtle"
 								:label="`Editing ${editingDetail.dashboard_title || editingDetail.name}`"
 							/>
@@ -61,7 +76,12 @@
 							</router-link>
 							<!-- named render theme - the dashboard's look, not the app's -->
 							<Dropdown :options="themeOptions">
-								<Button variant="ghost" :label="themeLabel(builderTheme)" iconLeft="droplet" />
+								<Button
+								variant="ghost"
+								:label="themeLabel(builderTheme)"
+								iconLeft="droplet"
+								iconRight="chevron-down"
+							/>
 							</Dropdown>
 							<Button
 								variant="solid"
@@ -107,6 +127,7 @@
 					class="shrink-0 border-t"
 					:style="{ height: chatPct + '%' }"
 					:caps="caps"
+					:editing-name="editingDetail ? editingDetail.name : ''"
 					@canvas="onCanvas"
 					@reset="resetBuilder"
 				/>
@@ -216,10 +237,11 @@ const themeOptions = THEME_OPTIONS.map((t) => ({
 	onClick: () => (builderTheme.value = t.key),
 }))
 
-// Same per-user key DashboardChatPane persists its conversation under (vueuse
-// syncs same-document instances) - read for the save payload's
-// source_conversation and cleared by "New dashboard" before the pane mounts.
+// Same per-user keys DashboardChatPane persists under (vueuse syncs same-
+// document instances) — the page seeds/clears them around edit/new so the chat
+// pane resumes the right thread and data mode instead of a stale sticky one.
 const chatConv = useStorage(`jarvis-dash-conv-${session.user || "anon"}`, "")
+const dashDataMode = useStorage(`jarvis-dash-datamode-${session.user || "anon"}`, "auto")
 
 // Chat drew/updated an artifact: pick the LAST html item and pull its
 // render-ready content onto the canvas.
@@ -252,6 +274,7 @@ function onSaved(detail) {
 // + setTab separately would race on route.query).
 function newDashboard() {
 	chatConv.value = "" // pane isn't mounted on the Saved tab; clear before it is
+	dashDataMode.value = "auto"
 	builderHtml.value = ""
 	editingDetail.value = null
 	savedName.value = ""
@@ -263,6 +286,8 @@ function newDashboard() {
 
 // Also fired by the chat pane's own "New chat" (emit("reset")).
 function resetBuilder() {
+	chatConv.value = ""
+	dashDataMode.value = "auto"
 	builderHtml.value = ""
 	editingDetail.value = null
 	savedName.value = ""
@@ -272,6 +297,9 @@ function resetBuilder() {
 }
 
 // ?edit=<name> deep-link: seed the canvas + save dialog from a saved dashboard.
+// Also resume the conversation that built it (so the agent has memory of the
+// document) and seed the data-mode from its derived type, so an edit session
+// never silently drifts onto/converts the wrong dashboard.
 async function loadEdit(name) {
 	try {
 		const d = await getDashboard(name)
@@ -280,6 +308,10 @@ async function loadEdit(name) {
 			editingDetail.value = d
 			savedName.value = d.name
 			builderTheme.value = themeKey(d.theme)
+			// resume the build thread, or a fresh one — never the stale sticky
+			// conversation left over from editing a different dashboard.
+			chatConv.value = d.source_conversation || ""
+			dashDataMode.value = d.dashboard_type === "Connected" ? "live" : "static"
 		}
 	} catch (e) {
 		toast.error(errMsg(e))

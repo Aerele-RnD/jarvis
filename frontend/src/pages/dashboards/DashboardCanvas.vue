@@ -1,17 +1,23 @@
 <template>
 	<div class="relative flex h-full min-h-0 w-full flex-col">
-		<!-- §3.8 empty state (builder only - the view page gates on its own load) -->
+		<!-- §3.8 empty state - builder: "ask in chat"; view: "this is empty" -->
 		<div
 			v-if="!html"
 			class="flex flex-1 flex-col items-center justify-center gap-3 px-8 text-center"
 		>
-			<template v-if="mode === 'builder'">
-				<FeatherIcon name="bar-chart-2" class="size-7.5 text-ink-gray-5" />
-				<div class="flex flex-col items-center gap-1">
-					<span class="text-lg font-medium text-ink-gray-8">Nothing on the canvas yet</span>
-					<span class="text-p-base text-ink-gray-6">Ask for a dashboard in the chat below.</span>
-				</div>
-			</template>
+			<FeatherIcon name="bar-chart-2" class="size-7.5 text-ink-gray-5" />
+			<div class="flex flex-col items-center gap-1">
+				<span class="text-lg font-medium text-ink-gray-8">
+					{{ mode === "builder" ? "Nothing on the canvas yet" : "This dashboard is empty" }}
+				</span>
+				<span class="text-p-base text-ink-gray-6">
+					{{
+						mode === "builder"
+							? "Ask for a dashboard in the chat below."
+							: "It has no saved content to show."
+					}}
+				</span>
+			</div>
 		</div>
 
 		<!-- §3.8 error + retry (srcdoc assembly / echarts chunk load failed) -->

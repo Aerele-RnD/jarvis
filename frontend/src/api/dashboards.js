@@ -81,20 +81,24 @@ export const callDashboardTool = (tool, args = {}) => {
 // conversation is allowed - the backend creates/focuses one and returns its id
 // as `conversation_id`. -> {ok, run_id, message_id, conversation_id} or
 // {ok: false, reason} (NOT the {ok, data} envelope - passed through as-is).
-// dataMode: "static" | "live" | "" — the builder's explicit data toggle;
-// empty = let the agent decide from the ask (the backend forwards only the
-// two literal values).
-export const sendDashboardChat = (conversation, message, dataMode = "") =>
-	call("jarvis.chat.api.send_message", {
+// dataMode: "static" | "live" | anything else = Auto (backend forwards only the
+// two literal values). editingName: when revising a saved dashboard, its name —
+// forwarded as {doctype, name} so the agent gets a [Viewing:] line and reads the
+// current html/sources before changing them.
+export const sendDashboardChat = (conversation, message, dataMode = "", editingName = "") => {
+	const context = { page: "dashboards" }
+	if (dataMode === "static" || dataMode === "live") context.data_mode = dataMode
+	if (editingName) {
+		context.doctype = "Jarvis Dashboard"
+		context.name = editingName
+	}
+	return call("jarvis.chat.api.send_message", {
 		conversation: conversation || "",
 		message,
-		context: JSON.stringify(
-			dataMode === "static" || dataMode === "live"
-				? { page: "dashboards", data_mode: dataMode }
-				: { page: "dashboards" },
-		),
+		context: JSON.stringify(context),
 		background: 0,
 	})
+}
 
 // -> {conversation: {name, title, ...}, messages: [{name, seq, role, content,
 //     streaming, error, ...}]} - raises DoesNotExistError for a deleted chat.

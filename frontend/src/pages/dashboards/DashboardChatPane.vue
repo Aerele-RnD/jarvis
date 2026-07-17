@@ -118,15 +118,15 @@
 					<VoiceRecorder v-if="caps.stt_enabled" compact @transcript="onTranscript" />
 					<!-- explicit data-mode: Auto lets the agent decide; Static bakes the
 					     numbers in (one-time report); Live declares view-time sources.
-					     Option-chip idiom (TriggerDetail's segmented switch). -->
-					<span class="ml-1 text-xs text-ink-gray-5">Data</span>
-					<Button
-						v-for="m in DATA_MODES"
-						:key="m.value"
-						:label="m.label"
-						:variant="dataMode === m.value ? 'solid' : 'subtle'"
-						:disabled="sending"
-						@click="dataMode = m.value"
+					     TabButtons = real radio-group semantics + the raised-chip look,
+					     so the active option isn't a second solid next to Send. -->
+					<span class="ml-1 text-xs text-ink-gray-5" title="How this dashboard gets its data">
+						Data
+					</span>
+					<TabButtons
+						:buttons="DATA_MODES"
+						:model-value="dataMode"
+						@update:model-value="(v) => (dataMode = v || 'auto')"
 					/>
 				</div>
 				<Button
@@ -162,7 +162,7 @@
 import { ref, computed, nextTick, inject, onMounted, onBeforeUnmount } from "vue"
 import { useRouter } from "vue-router"
 import { useStorage } from "@vueuse/core"
-import { Button, FeatherIcon, FormControl, LoadingIndicator, toast } from "frappe-ui"
+import { Button, FeatherIcon, FormControl, LoadingIndicator, TabButtons, toast } from "frappe-ui"
 import VoiceRecorder from "@/components/VoiceRecorder.vue"
 import { renderMarkdown } from "@/markdown"
 import { session } from "@/data/session"
@@ -173,6 +173,9 @@ import { listPendingConfirmations, confirmTool, dismissTool } from "@/api"
 // dialog; stt_enabled - when the backend sends it - gates the mic)
 const props = defineProps({
 	caps: { type: Object, default: () => ({}) },
+	// when revising a saved dashboard, its name — forwarded in the send context
+	// so the agent knows which dashboard it is iterating on ("" = a new one).
+	editingName: { type: String, default: "" },
 })
 
 // canvas: {message_id, items} for a canvas frame on our conversation;
@@ -385,15 +388,17 @@ const sending = ref(false)
 const draft = ref("")
 const box = ref(null)
 
-// Explicit data-mode toggle (goal requirement): "" = Auto (agent decides),
+// Explicit data-mode toggle (goal requirement): "auto" = agent decides,
 // "static" = baked one-time report, "live" = declared view-time sources.
-// Persisted per user so the choice survives page hops.
+// Persisted per user so the choice survives page hops. ("auto" rather than ""
+// so reka-ui's RadioGroup has a real value to select.) The API wrapper only
+// forwards static/live; auto sends no data_mode.
 const DATA_MODES = [
-	{ label: "Auto", value: "" },
+	{ label: "Auto", value: "auto" },
 	{ label: "Static", value: "static" },
 	{ label: "Live", value: "live" },
 ]
-const dataMode = useStorage(`jarvis-dash-datamode-${session.user || "anon"}`, "")
+const dataMode = useStorage(`jarvis-dash-datamode-${session.user || "anon"}`, "auto")
 
 function autoGrow() {
 	const ta = box.value && box.value.querySelector("textarea")
@@ -428,7 +433,8 @@ async function send() {
 	messages.value = [...messages.value, { name: tmpName, role: "user", content: text }]
 	nextTick(scrollBottom)
 	try {
-		const r = (await sendDashboardChat(conversation.value, text, dataMode.value)) || {}
+		const r =
+			(await sendDashboardChat(conversation.value, text, dataMode.value, props.editingName)) || {}
 		if (r.ok === false) {
 			// rejected (single-flight guard / usage cap) - nothing persisted
 			messages.value = messages.value.filter((m) => m.name !== tmpName)

@@ -18,11 +18,7 @@
 		:default-sort="DEFAULT_SORT"
 		:get-row-route="getRowRoute"
 		storage-key="dashboards"
-		:empty-state="{
-			icon: 'bar-chart-2',
-			title: 'No dashboards yet',
-			description: 'Build one with chat in the Builder tab, then save it here.',
-		}"
+		:empty-state="emptyState"
 		@update:filters="setFilters"
 		@update:sort="(s) => setSort(s.field, s.dir)"
 		@update:page-length="(v) => (pageLength = v)"
@@ -69,6 +65,7 @@
 // SavedDashboardsTab - the "Saved" tab body on /dashboards#saved: the standard
 // envelope list (MacrosList wiring minus the TabBar/header - the host page
 // owns those). Rows route to the read-only DashboardView page.
+import { computed } from "vue"
 import { Badge, Tooltip } from "frappe-ui"
 import ListPage from "@/components/list/ListPage.vue"
 import { useListPage } from "@/composables/useListPage"
@@ -136,6 +133,25 @@ const {
 	defaultSort: DEFAULT_SORT,
 	storageKey: "dashboards",
 })
+
+// §3.8: when a search/filter is active but matches nothing, the empty state
+// must point at the filters, not read "you have nothing saved".
+const hasActiveFilter = computed(() =>
+	Boolean((filters.search || "").trim() || filters.scope || filters.dashboard_type),
+)
+const emptyState = computed(() =>
+	hasActiveFilter.value
+		? {
+				icon: "search",
+				title: "No matching dashboards",
+				description: "Change your search terms or filters.",
+			}
+		: {
+				icon: "bar-chart-2",
+				title: "No dashboards yet",
+				description: "Build one with chat in the Builder tab, then save it here.",
+			},
+)
 
 function getRowRoute(row) {
 	return { name: "DashboardView", params: { id: row.name } }

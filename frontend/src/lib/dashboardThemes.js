@@ -30,7 +30,10 @@ th,td{padding:8px 12px;border-bottom:1px solid var(--jd-line);}
 section.slide{background:var(--jd-bg);}
 `
 
-const SANS = `InterVariable,Inter,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif`
+// System stack only: the sandbox's CSP is `font-src data:` with no network, so
+// a webfont (Inter) can't load inside the canvas - claiming it would silently
+// fall back anyway. The system sans matches design.md's own fallback chain.
+const SANS = `-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif`
 
 export const THEMES = {
 	jarvis: {

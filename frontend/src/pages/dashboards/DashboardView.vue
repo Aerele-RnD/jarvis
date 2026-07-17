@@ -17,7 +17,12 @@
 					</Dropdown>
 					<!-- render theme: editors persist the pick, viewers restyle locally -->
 					<Dropdown :options="themeOptions">
-						<Button variant="ghost" :label="themeLabel(viewTheme)" iconLeft="droplet" />
+						<Button
+							variant="ghost"
+							:label="themeLabel(viewTheme)"
+							iconLeft="droplet"
+							iconRight="chevron-down"
+						/>
 					</Dropdown>
 					<Button label="Discuss in chat" iconLeft="message-circle" @click="discussInChat" />
 					<Button
@@ -118,6 +123,10 @@
 			:editing="detail"
 			@saved="onShared"
 		/>
+
+		<!-- Hand-rolled so the destructive action is a RED solid button (§3.2);
+		     frappe-ui's confirmDialog helper hardcodes a gray "Confirm". -->
+		<Dialog v-model="deleteOpen" :options="deleteDialogOptions" />
 	</div>
 </template>
 
@@ -135,11 +144,11 @@ import {
 	Badge,
 	Breadcrumbs,
 	Button,
+	Dialog,
 	Dropdown,
 	ErrorMessage,
 	FeatherIcon,
 	LoadingIndicator,
-	confirmDialog,
 	toast,
 } from "frappe-ui"
 import LayoutHeader from "@/components/LayoutHeader.vue"
@@ -243,23 +252,34 @@ async function doExport(format) {
 	}
 }
 
+const deleteOpen = ref(false)
 function confirmDelete() {
+	deleteOpen.value = true
+}
+const deleteDialogOptions = computed(() => {
 	const title = (detail.value && detail.value.dashboard_title) || props.id
-	confirmDialog({
+	return {
 		title: "Delete dashboard?",
 		message: `Delete “${title}”? This can't be undone.`,
-		onConfirm: async ({ hideDialog }) => {
-			try {
-				await deleteDashboard(props.id)
-				hideDialog()
-				toast.success("Dashboard deleted")
-				goBack()
-			} catch (e) {
-				toast.error(errMsg(e))
-			}
-		},
-	})
-}
+		actions: [
+			{
+				label: "Delete dashboard",
+				variant: "solid",
+				theme: "red",
+				onClick: async ({ close }) => {
+					try {
+						await deleteDashboard(props.id)
+						close()
+						toast.success("Dashboard deleted")
+						goBack()
+					} catch (e) {
+						toast.error(errMsg(e))
+					}
+				},
+			},
+		],
+	}
+})
 
 function onShared(fresh) {
 	if (fresh && fresh.name) detail.value = fresh
