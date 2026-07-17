@@ -166,6 +166,25 @@ class TestSaveLlmPool(_RT3SettingsTestCase):
         self.assertEqual(cfg["models"][0]["provider"], "zai")
         self.assertEqual(cfg["models"][0]["base_url"], "https://api.z.ai/api/paas/v4")
 
+    def test_glm_coding_plan_round_trips_as_its_own_distinct_provider(self):
+        """Same round-trip guarantee as the standard GLM row, for the Coding
+        Plan variant added after live discovery that a Coding Plan key
+        reports "insufficient balance" on the pay-as-you-go endpoint. Must
+        store/read back as "zai_coding" - never collapsed onto "zai" (the
+        two are separate z.ai products with separate balances)."""
+        models = [{"provider": "GLM / Z.ai (Coding Plan)", "model": "glm-4.6", "api_key": "zck",
+                   "base_url": "https://api.z.ai/api/coding/paas/v4", "tier": "strong", "order": 0}]
+        with patch("jarvis.admin_client.post_update_llm_creds", return_value={"action": "restart"}), \
+             patch("jarvis.admin_client.post_update_llm_pool") as pool:
+            onboarding.save_llm_pool(frappe.as_json(models))
+        pool.assert_not_called()
+        s = frappe.get_single("Jarvis Settings")
+        self.assertEqual(s.models[0].provider, "zai_coding")
+        self.assertEqual(s.models[0].base_url, "https://api.z.ai/api/coding/paas/v4")
+        cfg = onboarding.get_llm_config()
+        self.assertEqual(cfg["models"][0]["provider"], "zai_coding")
+        self.assertEqual(cfg["models"][0]["base_url"], "https://api.z.ai/api/coding/paas/v4")
+
 
 class TestGetLlmConfig(_RT3SettingsTestCase):
     def setUp(self):
@@ -194,7 +213,8 @@ class TestBackfillGlmZaiProviderIdPatch(_RT3SettingsTestCase):
     """v2_01_backfill_glm_zai_provider_id: existing rows that were collapsed
     into provider="openai_compat" by the old storage-time normalize_provider
     bug (see pool_serialize._PROVIDER_ALIASES) must be flipped back to the
-    first-class "zai" id when their base_url is a Z.ai host. A genuine
+    first-class "zai" (pay-as-you-go) or "zai_coding" (Coding Plan) id
+    depending on which Z.ai endpoint their base_url actually names. A genuine
     openai_compat row (any other custom endpoint) must be left untouched."""
 
     def setUp(self):
@@ -239,14 +259,18 @@ class TestBackfillGlmZaiProviderIdPatch(_RT3SettingsTestCase):
         self._run_patch()
         self.assertEqual(frappe.db.get_value("Jarvis LLM Pool Model", name, "provider"), "zai")
 
-    def test_collapsed_glm_coding_plan_endpoint_is_also_flipped(self):
-        """The coding-plan Z.ai endpoint (same host, different path) must match too."""
+    def test_collapsed_glm_coding_plan_endpoint_is_flipped_to_zai_coding(self):
+        """The coding-plan Z.ai endpoint (same host, different path) is a DIFFERENT
+        product from pay-as-you-go and must backfill to its own "zai_coding" id,
+        not "zai" - the two have separate balances and a coding-plan key rejected
+        on the pay-as-you-go endpoint is exactly the trap this distinction exists
+        to avoid re-creating during backfill."""
         name = self._insert_model_row(
             provider="openai_compat", base_url="https://api.z.ai/api/coding/paas/v4",
             model="glm-4.6",
         )
         self._run_patch()
-        self.assertEqual(frappe.db.get_value("Jarvis LLM Pool Model", name, "provider"), "zai")
+        self.assertEqual(frappe.db.get_value("Jarvis LLM Pool Model", name, "provider"), "zai_coding")
 
     def test_genuine_openai_compat_row_is_left_untouched(self):
         """A real OpenAI-Compatible shim (not Z.ai) must NOT be reclassified."""
@@ -264,6 +288,14 @@ class TestBackfillGlmZaiProviderIdPatch(_RT3SettingsTestCase):
         )
         self._run_patch()
         self.assertEqual(frappe.db.get_value("Jarvis LLM Pool Model", name, "provider"), "zai")
+
+    def test_already_zai_coding_row_is_a_no_op(self):
+        """Same idempotency guarantee for the coding-plan id."""
+        name = self._insert_model_row(
+            provider="zai_coding", base_url="https://api.z.ai/api/coding/paas/v4", model="glm-4.6",
+        )
+        self._run_patch()
+        self.assertEqual(frappe.db.get_value("Jarvis LLM Pool Model", name, "provider"), "zai_coding")
 
     def test_non_openai_compat_provider_is_untouched(self):
         """Only rows currently stored as openai_compat are candidates; an

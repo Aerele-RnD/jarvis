@@ -72,6 +72,16 @@ _PROVIDER_ALIASES = {
     # UI as "OpenAI-Compatible" - base_url was the only surviving evidence
     # it was ever GLM. Fixed 2026-07-17.
     "glm / z.ai": "zai",
+    # GLM Coding Plan is a SEPARATE z.ai product from pay-as-you-go "zai" above
+    # - different balance, different endpoint (api.z.ai/api/coding/paas/v4).
+    # A coding-plan key authenticates fine against the pay-as-you-go endpoint
+    # but reports "insufficient balance" (z.ai error code 1113) there, which
+    # reads as a dead key/account when it is really just the wrong endpoint.
+    # Distinct stored id so the two never collide and each keeps its own
+    # base_url; both collapse to the same openai-compatible wire transport
+    # (see _WIRE_PROVIDER_OVERRIDES below) since Bifrost has no native
+    # provider for either.
+    "glm / z.ai (coding plan)": "zai_coding",
     # legacy id alias: the old frontend used "google" for Gemini
     "google": "gemini",
 }
@@ -101,11 +111,13 @@ def normalize_provider(value: str) -> str:
 # normalize_provider(): a provider id can be first-class in STORAGE (so the
 # UI shows its real name) while still riding a different provider's transport
 # on the Bifrost wire payload (because Bifrost has no native support for it).
-# "zai" (GLM / Z.ai) is the only entry today - it rides the openai-compatible
-# custom-endpoint transport (base_url carries the real Z.ai endpoint).
+# "zai" and "zai_coding" (both GLM / Z.ai variants) are the entries today -
+# both ride the openai-compatible custom-endpoint transport (base_url carries
+# the real Z.ai endpoint - the standard or coding-plan one respectively).
 # ---------------------------------------------------------------------------
 _WIRE_PROVIDER_OVERRIDES = {
     "zai": "openai_compat",
+    "zai_coding": "openai_compat",
 }
 
 
@@ -238,16 +250,16 @@ def validate_models(settings) -> list:
                 errors.append(f"{label}: api_key is blank on an enabled model (would produce a dangling key_ref)")
 
             # Custom-endpoint providers (OpenAI-Compatible shim / local vLLM /
-            # GLM / Z.ai) are defined by their base_url; without it
-            # build_pool_payload emits a provider with no endpoint and every
-            # turn on that model fails. The provider is already normalized to
-            # its canonical id at this point. "zai" needs this exactly like
-            # "openai_compat" because it rides the same wire transport
-            # (see pool_serialize._wire_provider) - the requirement follows
-            # the transport, not the stored identity.
+            # GLM / Z.ai / GLM Coding Plan) are defined by their base_url;
+            # without it build_pool_payload emits a provider with no endpoint
+            # and every turn on that model fails. The provider is already
+            # normalized to its canonical id at this point. "zai" and
+            # "zai_coding" both need this exactly like "openai_compat" because
+            # both ride the same wire transport (see pool_serialize._wire_provider)
+            # - the requirement follows the transport, not the stored identity.
             prov = (m.provider if hasattr(m, "provider") else m.get("provider", "")) or ""
             base_url = (m.base_url if hasattr(m, "base_url") else m.get("base_url", "")) or ""
-            if prov in ("openai_compat", "vllm", "zai") and not base_url.strip():
+            if prov in ("openai_compat", "vllm", "zai", "zai_coding") and not base_url.strip():
                 errors.append(
                     f"{label}: provider '{prov}' requires a base_url (its custom endpoint)"
                 )

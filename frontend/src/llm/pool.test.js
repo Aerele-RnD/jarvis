@@ -252,3 +252,82 @@ test("apiKeyModelHealth: a SINGLE entry under a DIFFERENT provider is not misatt
     { level: "ok" },
   )
 })
+
+// ---- GLM Coding Plan ("zai_coding"): a distinct provider from pay-as-you-go "zai" ----
+// Live discovery: a Coding Plan key authenticates fine but reports "insufficient balance"
+// (z.ai error code 1113) on the pay-as-you-go endpoint (api.z.ai/api/paas/v4) even though
+// it's perfectly valid on the coding-plan endpoint (api.z.ai/api/coding/paas/v4). This
+// section covers the new provider option and the targeted diagnostic hint for that trap.
+
+test("providerLabel/providerId: zai_coding id ⇄ 'GLM / Z.ai (Coding Plan)' label, distinct from zai", () => {
+  assert.equal(providerLabel("zai_coding"), "GLM / Z.ai (Coding Plan)")
+  assert.equal(providerId("GLM / Z.ai (Coding Plan)"), "zai_coding")
+  assert.notEqual(providerLabel("zai_coding"), providerLabel("zai"))
+})
+
+test("PROVIDER_LABELS: zai_coding is a first-class entry", () => {
+  const ids = PROVIDER_LABELS.map(p => p.id)
+  assert.ok(ids.includes("zai_coding"))
+})
+
+test("validatePool: GLM / Z.ai (Coding Plan) requires a base_url, same as GLM / Z.ai", () => {
+  assert.equal(validatePool([{ provider: "GLM / Z.ai (Coding Plan)", model: "glm-4.6", api_key: "k" }], null).ok, false)
+  assert.equal(validatePool([{ provider: "GLM / Z.ai (Coding Plan)", model: "glm-4.6", api_key: "k",
+    base_url: "https://api.z.ai/api/coding/paas/v4" }], null).ok, true)
+})
+
+test("seedRowsFromConfig: a row stored as 'zai_coding' renders its own distinct label", () => {
+  const cfg = { models: [{ provider: "zai_coding", model: "glm-4.6", credential_type: "api_key",
+    has_key: true, base_url: "https://api.z.ai/api/coding/paas/v4", order: 0 }] }
+  const [row] = seedRowsFromConfig(cfg)
+  assert.equal(row.provider, "GLM / Z.ai (Coding Plan)")
+  assert.equal(row.baseUrl, "https://api.z.ai/api/coding/paas/v4")
+})
+
+const _zaiRow = (over = {}) => ({ credentialType: "api_key", provider: providerLabel("zai"),
+  model: "glm-4.6", hasKey: true, ...over })
+
+test("apiKeyModelHealth: a 'zai' row failing with z.ai's insufficient-balance (1113) detail gets the coding-plan hint", () => {
+  const ms = [{ provider: "zai", model: "glm-4.6", status: "failed",
+    detail: '{"error":{"code":"1113","message":"Insufficient balance or no resource package. Please recharge."}}' }]
+  const h = apiKeyModelHealth(_zaiRow(), ms)
+  assert.equal(h.level, "warn")
+  assert.match(h.label, /endpoint/i)
+  assert.match(h.title, /coding plan/i)
+  assert.match(h.title, /api\.z\.ai\/api\/coding\/paas\/v4/)
+})
+
+test("apiKeyModelHealth: the hint also matches on the plain 'insufficient balance' phrase (no code substring)", () => {
+  const ms = [{ provider: "zai", model: "glm-4.6", status: "failed", detail: "Insufficient balance. Please recharge." }]
+  assert.match(apiKeyModelHealth(_zaiRow(), ms).title, /coding plan/i)
+})
+
+test("apiKeyModelHealth: a 'zai' failure with a DIFFERENT detail falls through to the generic message", () => {
+  const ms = [{ provider: "zai", model: "glm-4.6", status: "failed", detail: "invalid api key" }]
+  const h = apiKeyModelHealth(_zaiRow(), ms)
+  assert.equal(h.level, "warn")
+  assert.equal(h.label, "Not working")
+})
+
+test("apiKeyModelHealth: a 'zai' failure with NO detail (pre-1.12 fleet) falls through defensively, never throws", () => {
+  const ms = [{ provider: "zai", model: "glm-4.6", status: "failed" }]
+  const h = apiKeyModelHealth(_zaiRow(), ms)
+  assert.equal(h.level, "warn")
+  assert.equal(h.label, "Not working")
+})
+
+test("apiKeyModelHealth: the same 1113 detail on a 'zai_coding' row does NOT trigger the hint (already the right endpoint)", () => {
+  const ms = [{ provider: "zai_coding", model: "glm-4.6", status: "failed",
+    detail: "Insufficient balance or no resource package. Please recharge." }]
+  const h = apiKeyModelHealth(_zaiRow({ provider: providerLabel("zai_coding") }), ms)
+  assert.equal(h.level, "warn")
+  assert.equal(h.label, "Not working")
+})
+
+test("apiKeyModelHealth: the same 1113 detail on an UNRELATED provider does NOT trigger the hint", () => {
+  const ms = [{ provider: "openai_compat", model: "gpt-4o", status: "failed",
+    detail: "Insufficient balance or no resource package. Please recharge." }]
+  const h = apiKeyModelHealth(_apiRow({ provider: providerLabel("openai_compat"), model: "gpt-4o" }), ms)
+  assert.equal(h.level, "warn")
+  assert.equal(h.label, "Not working")
+})

@@ -290,6 +290,72 @@ class TestProviderNormalization(FrappeTestCase):
             f"expected a base_url error for a zai row with no base_url, got: {errors}",
         )
 
+    # ------------------------------------------------------------------ #
+    # GLM Coding Plan ("zai_coding"): a SEPARATE z.ai product from
+    # pay-as-you-go "zai" above, added after live discovery that a Coding
+    # Plan key authenticates fine but reports "insufficient balance" (z.ai
+    # error 1113) on the pay-as-you-go endpoint - a different balance, a
+    # different endpoint, so a distinct stored id (never collapsed onto
+    # "zai"). Both ride the same openai-compatible wire transport.
+    # ------------------------------------------------------------------ #
+
+    def test_glm_coding_plan_normalizes_to_zai_coding(self):
+        from jarvis.jarvis.pool_serialize import normalize_provider
+        self.assertEqual(normalize_provider("GLM / Z.ai (Coding Plan)"), "zai_coding")
+        # Passthrough, same as every other canonical id.
+        self.assertEqual(normalize_provider("zai_coding"), "zai_coding")
+        # The two GLM ids are DISTINCT - never collapse into each other at
+        # the storage layer (only their wire transport happens to coincide).
+        self.assertNotEqual(
+            normalize_provider("GLM / Z.ai (Coding Plan)"), normalize_provider("GLM / Z.ai"),
+        )
+
+    def test_glm_coding_plan_serializes_to_openai_compat_with_its_own_base_url(self):
+        # Same wire-collapse guarantee as the standard GLM row, but the
+        # coding-plan row must keep ITS OWN base_url (the coding endpoint),
+        # not the pay-as-you-go one - the whole point of the two ids existing
+        # separately is that they point at different URLs.
+        from jarvis.jarvis.pool_serialize import build_pool_payload
+        glm_coding = _api_key_model(provider="GLM / Z.ai (Coding Plan)", model="glm-4.6",
+                                    base_url="https://api.z.ai/api/coding/paas/v4", api_key="zk", order=0)
+        settings = _make_settings_with_models([glm_coding])
+        spec, _api_keys, _ = build_pool_payload(settings)
+        self.assertEqual(spec["models"][0]["provider"], "openai_compat")
+        self.assertEqual(spec["models"][0]["base_url"], "https://api.z.ai/api/coding/paas/v4")
+
+    def test_standard_zai_wire_payload_unaffected_by_the_coding_plan_sibling(self):
+        # Regression lock: adding "zai_coding" must NOT change one byte of the
+        # standard "zai" row's wire output. Same assertions as
+        # test_xai_and_glm_serialize_into_pool_payload, re-run in a pool that
+        # ALSO contains a coding-plan row, to catch any cross-talk between the
+        # two _WIRE_PROVIDER_OVERRIDES entries.
+        from jarvis.jarvis.pool_serialize import build_pool_payload
+        glm = _api_key_model(provider="GLM / Z.ai", model="glm-4.6",
+                             base_url="https://api.z.ai/api/paas/v4", api_key="zk", order=0)
+        glm_coding = _api_key_model(provider="GLM / Z.ai (Coding Plan)", model="glm-4.6-coding",
+                                    base_url="https://api.z.ai/api/coding/paas/v4", api_key="zck", order=1)
+        settings = _make_settings_with_models([glm, glm_coding])
+        spec, api_keys, _ = build_pool_payload(settings)
+        prov = {m["model"]: m.get("provider") for m in spec["models"]}
+        base = {m["model"]: m.get("base_url") for m in spec["models"]}
+        self.assertEqual(prov["glm-4.6"], "openai_compat")
+        self.assertEqual(base["glm-4.6"], "https://api.z.ai/api/paas/v4")
+        self.assertEqual(prov["glm-4.6-coding"], "openai_compat")
+        self.assertEqual(base["glm-4.6-coding"], "https://api.z.ai/api/coding/paas/v4")
+        # Each row keeps its own api_key under its own key_ref - no collision.
+        self.assertEqual(len(api_keys), 2)
+
+    def test_validate_models_requires_base_url_for_zai_coding(self):
+        from jarvis.jarvis.pool_serialize import validate_models
+        glm_coding_no_url = _api_key_model(provider="zai_coding", model="glm-4.6",
+                                           base_url="", api_key="zk", order=0)
+        settings = _make_settings_with_models([glm_coding_no_url])
+        errors = validate_models(settings)
+        self.assertTrue(
+            any("requires a base_url" in e for e in errors),
+            f"expected a base_url error for a zai_coding row with no base_url, got: {errors}",
+        )
+
 
 class TestPoolSerializeFromSettings(FrappeTestCase):
     """Task 2: Direct-call tests for build_pool_payload / validate_models / compute_proxy_active."""

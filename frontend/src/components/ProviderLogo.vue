@@ -37,7 +37,7 @@ const MARKS = {
 // subscription upstream -> logo key (kimi = Moonshot)
 const UPSTREAM_TO_KEY = { openai: "openai", google: "gemini", xai: "xai", kimi: "moonshot" }
 // neutral monograms for providers with no clean official mark
-const MONO = { zai: "GLM", together: "TAI", vllm: "vLM", openai_compat: "{ }" }
+const MONO = { zai: "GLM", zai_coding: "GLM", together: "TAI", vllm: "vLM", openai_compat: "{ }" }
 
 const key = computed(() =>
   props.upstream ? (UPSTREAM_TO_KEY[props.upstream] || props.upstream) : providerId(props.provider),
