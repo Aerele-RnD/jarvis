@@ -659,7 +659,7 @@
 					<div class="jv-artifact-body">
 						<iframe v-if="artifact.kind === 'pdf'" :src="artifact.url" class="jv-artifact-frame" title="PDF preview"></iframe>
 						<img v-else-if="artifact.kind === 'image'" :src="artifact.url" class="jv-artifact-img" :alt="artifact.cv.title" />
-						<iframe v-else-if="artifact.kind === 'html' || artifact.kind === 'svg'" :srcdoc="artifact.content" sandbox="allow-scripts allow-popups" class="jv-artifact-frame" title="Artifact preview"></iframe>
+						<iframe v-else-if="artifact.kind === 'html' || artifact.kind === 'svg'" :srcdoc="artifact.content" sandbox="allow-scripts" class="jv-artifact-frame" title="Artifact preview"></iframe>
 						<template v-else-if="artifact.kind === 'table'">
 							<div v-if="artifact.sheets.length > 1" class="jv-sheet-tabs">
 								<button v-for="(sh, si) in artifact.sheets" :key="si" :class="{ on: si === artifact.sheetIdx }" @click="setSheet(si)">{{ sh.name }}</button>

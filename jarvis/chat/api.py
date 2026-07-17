@@ -374,7 +374,10 @@ def _search_dashboards(search: str, limit: int) -> list[dict]:
 		rows = frappe.get_list(
 			"Jarvis Dashboard",
 			fields=["name", "dashboard_title", "dashboard_type", "modified"],
-			limit_page_length=0,
+			order_by="modified desc",
+			# Bounded scan: the palette fires this per keystroke. Fuzzy-rank the
+			# most-recent few hundred rather than every dashboard ever created.
+			limit_page_length=500,
 		)
 	except frappe.PermissionError:
 		return []

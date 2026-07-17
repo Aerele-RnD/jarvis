@@ -246,24 +246,46 @@ function escInline(js) {
 	return String(js || "").replace(/<\/script/gi, "<\\/script")
 }
 
-// Ensure data-theme="dark|light" on an existing <html ...> tag (replace an
-// existing attribute, else append one).
-function setThemeAttr(src, theme) {
-	return src.replace(/<html([^>]*)>/i, (m, attrs) => {
-		if (/data-theme\s*=/i.test(attrs)) {
-			return (
-				"<html" +
-				attrs.replace(/data-theme\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/i, `data-theme="${theme}"`) +
-				">"
-			)
-		}
-		return `<html${attrs} data-theme="${theme}">`
-	})
+// Split author HTML into (headInner, bodyInner). We NEVER re-emit the author's
+// own <html>/<head>/<body> tags or anything before them — see buildSrcdoc for
+// why (CSP-ordering: markup before <head> would execute pre-CSP). Anything
+// outside the first <head> and the <body> (e.g. a <script> placed before
+// <head>) is intentionally DROPPED, not run.
+function splitAuthorHtml(src) {
+	const headM = /<head[^>]*>([\s\S]*?)<\/head>/i.exec(src)
+	const bodyM = /<body[^>]*>([\s\S]*?)<\/body>/i.exec(src)
+	if (bodyM) {
+		return { headInner: headM ? headM[1] : "", bodyInner: bodyM[1] }
+	}
+	if (headM) {
+		// <head> but no <body>: body is everything after </head>, minus a
+		// trailing </html>.
+		const after = src
+			.slice(headM.index + headM[0].length)
+			.replace(/<\/html>\s*$/i, "")
+		return { headInner: headM[1], bodyInner: after }
+	}
+	// fragment (no head/body): strip a leading doctype + any stray html tags,
+	// everything is body content.
+	const body = src
+		.replace(/^\s*<!doctype[^>]*>\s*/i, "")
+		.replace(/<\/?html[^>]*>/gi, "")
+	return { headInner: "", bodyInner: body }
 }
 
-// buildSrcdoc(html, {dark, echartsSource}) → the full srcdoc string.
+// buildSrcdoc(html, {dark, echartsSource, theme}) → the full srcdoc string.
 // Sync + pure: the caller dynamic-imports echarts.min.js?raw only when the
 // html references echarts, so the 1MB source never rides the main chunk.
+//
+// SECURITY — CSP must be the FIRST thing the parser sees. We ALWAYS emit our
+// own <!DOCTYPE html><html><head>CSP+scripts+…</head><body>author</body>
+// shell and only ever place author content INSIDE <head>/<body>, extracted
+// via splitAuthorHtml. We never reuse the author's <html>/<head>/<body> tags.
+// (Injecting CSP *inside* an author's existing <head> is unsafe: a <script>
+// placed before that <head> — e.g. `<html><script>evil</script><head>…` —
+// executes during "before head" parsing, BEFORE the CSP meta, and could open
+// a socket that survives connect-src 'none' and exfiltrate another viewer's
+// bridged data. Wrapping guarantees nothing author-supplied precedes the CSP.)
 export function buildSrcdoc(
 	html,
 	{ dark = false, echartsSource = "", theme: themeSpec = null } = {},
@@ -275,7 +297,6 @@ export function buildSrcdoc(
 	// light/dark - independent of the app shell's mode. Without a theme the
 	// legacy dark flag drives data-theme only.
 	const theme = themeSpec ? (themeSpec.dark ? "dark" : "light") : dark ? "dark" : "light"
-	const src = String(html || "")
 	const themeBlock = themeSpec
 		? `<style id="jarvis-theme">${themeSpec.css}</style>` +
 			`<script>window.JARVIS_THEME=${escInline(
@@ -293,30 +314,26 @@ export function buildSrcdoc(
 		(echartsSource ? `<script>${escInline(echartsSource)}<\/script>` : "") +
 		`<script>${escInline(RUNTIME_JS)}<\/script>`
 
-	// (a) full document with a <head>: inject right after the opening head tag
-	if (/<head[^>]*>/i.test(src)) {
-		return setThemeAttr(
-			src.replace(/<head[^>]*>/i, (m) => m + CSP_META + scripts),
-			theme,
-		)
-	}
-	// (b) <html> but no <head>: insert one right after the html tag
-	if (/<html[^>]*>/i.test(src)) {
-		return setThemeAttr(
-			src.replace(/<html[^>]*>/i, (m) => m + "<head>" + CSP_META + scripts + "</head>"),
-			theme,
-		)
-	}
-	// (c) fragment: strip a leading doctype and wrap the full skeleton
-	const body = src.replace(/^\s*<!doctype[^>]*>\s*/i, "")
+	const { headInner, bodyInner } = splitAuthorHtml(String(html || ""))
 	return (
 		`<!DOCTYPE html><html data-theme="${theme}"><head>` +
 		CSP_META +
 		'<meta charset="utf-8">' +
 		scripts +
+		stripHostClient(headInner) +
 		"</head><body>" +
-		body +
+		stripHostClient(bodyInner) +
 		"</body></html>"
+	)
+}
+
+// Dashboards saved before the gateway host-client strip landed carry a dead
+// openclaw live-reload script (a WebSocket to /__openclaw__/ws). It can't work
+// inside the sandbox (connect-src 'none' blocks it) and just logs a CSP
+// violation on every view — drop any <script> that references the host socket.
+function stripHostClient(html) {
+	return String(html || "").replace(/<script\b[\s\S]*?<\/script>/gi, (m) =>
+		m.includes("__openclaw__/ws") ? "" : m,
 	)
 }
 

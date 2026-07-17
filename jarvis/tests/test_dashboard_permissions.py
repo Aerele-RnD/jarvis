@@ -297,3 +297,22 @@ class TestControllerScopeGate(_DashboardPermTestCase):
 		doc.save()
 		self.assertFalse(doc.target_user)
 		self.assertFalse(doc.target_role)
+
+	def test_user_scope_pins_target_user_to_owner_ignoring_client_value(self):
+		"""A direct REST/Desk write cannot push a User-scoped dashboard into an
+		arbitrary victim's list — target_user is always forced to the owner."""
+		frappe.set_user(PLAIN_A)
+		doc = frappe.get_doc({
+			"doctype": DASHBOARD,
+			"dashboard_title": f"pin-{frappe.generate_hash(length=8)}",
+			"scope": "User",
+			# attacker-supplied victim — must be ignored
+			"target_user": PLAIN_B,
+			"html": "<h1>x</h1>",
+		}).insert()
+		self._dashboards.append(doc.name)
+		self.assertEqual(doc.target_user, PLAIN_A)  # pinned to owner, not PLAIN_B
+		# and it is NOT visible to the intended victim
+		from jarvis.chat.dashboard_permissions import can_read_dashboard
+
+		self.assertFalse(can_read_dashboard(doc, PLAIN_B))

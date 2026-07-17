@@ -82,3 +82,14 @@ class TestHostClientStripping(FrappeTestCase):
 		self.assertIn("renderChart()", out)
 		self.assertNotIn("__openclaw__/ws", out)
 		self.assertNotIn("WebSocket", out)
+
+
+class TestCanvasPathTraversal(FrappeTestCase):
+	def test_dotdot_traversal_rejected(self):
+		self.assertEqual(detect_canvas_names("see canvas/../../etc/passwd.html now"), [])
+
+	def test_dotdot_mid_path_rejected(self):
+		self.assertEqual(detect_canvas_names("canvas/charts/../../secret.html"), [])
+
+	def test_legit_subdir_still_ok(self):
+		self.assertEqual(detect_canvas_names("canvas/charts/sales.html"), ["charts/sales.html"])

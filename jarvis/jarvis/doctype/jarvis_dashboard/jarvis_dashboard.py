@@ -81,7 +81,11 @@ class JarvisDashboard(Document):
 			frappe.throw(_("Scope must be one of Org, Role or User."))
 		if self.scope == "User":
 			self.target_role = None
-			self.target_user = self.target_user or self.owner or frappe.session.user
+			# Pin to the owner — NEVER honor a client-supplied target_user. The SPA
+			# never sends it, but a direct REST/Desk write could otherwise set
+			# target_user to an arbitrary victim, pushing this dashboard into that
+			# user's visible list (visible_scope_condition matches target_user).
+			self.target_user = self.owner or frappe.session.user
 		elif self.scope == "Role":
 			self.target_user = None
 			if not self.target_role:

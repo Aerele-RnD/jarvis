@@ -399,6 +399,34 @@ class TestSaveDashboard(_DashboardsApiTestCase):
 			}),
 		)
 
+	def test_get_list_bad_order_by_throws(self):
+		"""order_by is passed straight to frappe.get_list; a non fieldname-token
+		value (injection attempt) must be rejected at save."""
+		frappe.set_user(PLAIN_A)
+		self.assertRaises(
+			frappe.ValidationError,
+			save_dashboard,
+			frappe.as_json({
+				"dashboard_title": "x", "html": "<p>x</p>",
+				"sources": [{
+					"source_name": "s", "tool": "get_list",
+					"spec": {"doctype": "ToDo", "order_by": "(select 1)"},
+				}],
+			}),
+		)
+
+	def test_get_list_good_order_by_saves(self):
+		frappe.set_user(PLAIN_A)
+		data = self._save({
+			"dashboard_title": f"ob-{frappe.generate_hash(length=8)}",
+			"html": "<p>x</p>",
+			"sources": [{
+				"source_name": "s", "tool": "get_list",
+				"spec": {"doctype": "ToDo", "order_by": "modified desc"},
+			}],
+		})
+		self.assertEqual(data["sources"][0]["source_name"], "s")
+
 	def test_run_report_prepared_report_rejected(self):
 		frappe.set_user(PLAIN_A)
 		self.assertRaises(

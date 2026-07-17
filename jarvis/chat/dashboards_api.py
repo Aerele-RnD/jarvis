@@ -73,6 +73,18 @@ _DASHBOARD_SORTABLE = {
 _GET_LIST_SPEC_KEYS = {"doctype", "fields", "filters", "order_by", "limit", "parent_doctype"}
 _RUN_REPORT_SPEC_KEYS = {"report_name", "filters"}
 
+# A get_list order_by: one or more `fieldname [asc|desc]` tokens, comma-joined.
+# fieldname allows an optional `child_table.field` / backtick-free dotted path.
+_ORDER_BY_RE = re.compile(
+	r"^\s*[a-zA-Z_][\w.]*(?:\s+(?:asc|desc))?"
+	r"(?:\s*,\s*[a-zA-Z_][\w.]*(?:\s+(?:asc|desc))?)*\s*$",
+	re.IGNORECASE,
+)
+
+# Per-request wall-clock ceiling (seconds) for the dashboard data runner, so a
+# heavy report/query can't pin a web worker. MariaDB max_statement_time.
+_SOURCE_STMT_TIMEOUT_S = 20
+
 
 # --------------------------------------------------------------------------- #
 # shared helpers
@@ -99,6 +111,17 @@ def _clear_perm_message_noise() -> None:
 
 def _error_envelope(code: str, message: str) -> dict:
 	return {"ok": False, "error": {"code": code, "message": message}}
+
+
+def _set_stmt_timeout(seconds: int) -> None:
+	"""Best-effort per-request statement timeout so a heavy dashboard source
+	can't pin a web worker. MariaDB's max_statement_time is a session variable
+	in seconds; a no-op on other backends or if the SET fails."""
+	try:
+		if frappe.db.db_type == "mariadb":
+			frappe.db.sql("SET SESSION max_statement_time = %s", (seconds,))
+	except Exception:
+		pass
 
 
 def _dashboard_detail(doc) -> dict:
@@ -464,6 +487,18 @@ def _validate_get_list_spec(label: str, spec: dict) -> None:
 			frappe.throw(
 				_("Source '{0}': limit must be an integer between 1 and 1000.").format(label)
 			)
+	# order_by is handed straight to frappe.get_list; validate it ourselves
+	# (whitelisted `fieldname [asc|desc]` tokens) rather than trusting the ORM
+	# to sanitize an order-by expression.
+	if "order_by" in spec:
+		ob = spec["order_by"]
+		if not isinstance(ob, str) or not _ORDER_BY_RE.match(ob.strip()):
+			frappe.throw(
+				_(
+					"Source '{0}': order_by must be 'fieldname' or "
+					"'fieldname asc|desc' (optionally comma-separated)."
+				).format(label)
+			)
 
 
 def _validate_run_report_spec(label: str, spec: dict) -> None:
@@ -534,6 +569,9 @@ def run_dashboard_source(dashboard: str, source_name: str) -> dict:
 	tool = row.tool
 	columns = None
 	t0 = time.monotonic()
+	# Bound the runner's wall-clock so a heavy report/query can't pin a web
+	# worker (MariaDB only; best-effort). Scoped to this whitelisted request.
+	_set_stmt_timeout(_SOURCE_STMT_TIMEOUT_S)
 	try:
 		if tool == "query":
 			from jarvis.tools.query import query as _query
@@ -563,7 +601,10 @@ def run_dashboard_source(dashboard: str, source_name: str) -> dict:
 					),
 				)
 			columns = res.get("columns") or []
-			rows = res["result"]
+			# run_report has no inherent row cap (query/get_list are ≤1000 by the
+			# tools); cap here so a huge report never materializes the full result
+			# set into the browser payload. The post-loop slice still applies.
+			rows = res["result"][: DASHBOARD_MAX_ROWS + 1]
 		else:
 			return _error_envelope(
 				"InvalidArgumentError", _("Unsupported tool: {0}").format(tool)

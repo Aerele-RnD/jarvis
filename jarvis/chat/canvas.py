@@ -93,7 +93,13 @@ def detect_canvas_names(text: str) -> list[str]:
 		return []
 	seen: dict[str, None] = {}
 	for m in _CANVAS_REF.finditer(text):
-		seen.setdefault(m.group(1), None)
+		name = m.group(1)
+		# Reject path traversal: `_PATH` permits `..` segments, so a reply of
+		# `canvas/../../etc/passwd.html` would otherwise be fetched from the
+		# gateway with the bearer token. Only in-tree canvas paths are allowed.
+		if ".." in name.split("/"):
+			continue
+		seen.setdefault(name, None)
 	for m in _EMBED_REF.finditer(text):
 		seen.setdefault(_embed_ref_name(m.group(1)), None)
 	return list(seen)[:_MAX_CANVAS_PER_TURN]
