@@ -550,6 +550,14 @@ def handle_chat_send(payload: dict) -> None:
 		wiki_notes_clause = wiki_clause(conversation_id, context) or ""
 	except Exception:
 		wiki_notes_clause = ""
+	# Site-customizations hint: counts-only, cached per site. Same
+	# best-effort + lazy-import contract as the clauses above.
+	try:
+		from jarvis.chat.customizations_clause import customizations_clause
+
+		custom_site_clause = customizations_clause() or ""
+	except Exception:
+		custom_site_clause = ""
 	# Deferred agent-correction notes (e.g. a discarded action the agent's
 	# in-container memory still believes is pending): fold them into the TRUSTED
 	# [Context: ...] line so the correction reaches the agent on THIS turn without
@@ -603,10 +611,12 @@ def handle_chat_send(payload: dict) -> None:
 		# conflict)" — so a user's personal skills never silently outrank org/role
 		# guidance inside their own turn. Do NOT move personal_clause ahead of
 		# learned_clause/wiki_notes_clause. Explicit /slug invocation
-		# (skill_clause) stays intentional and is not demoted.
+		# (skill_clause) stays intentional and is not demoted. The
+		# customizations clause is org-level too, so it sits with the org
+		# clauses - before personal, which stays last.
 		f"[Context: today is {today}{locale_clause}; chat user: {chat_user}"
 		f"; conv: {conversation_id}{auto_apply}{skill_clause}{learned_clause}"
-		f"{wiki_notes_clause}{personal_clause}{notes_clause}]"
+		f"{wiki_notes_clause}{custom_site_clause}{personal_clause}{notes_clause}]"
 		f"{ground_block}"
 		f"\n\n{user_message or ''}"
 	)
@@ -1061,6 +1071,14 @@ def handle_chat_send(payload: dict) -> None:
 		stream_stats["first_delta_ms"], stream_stats["pre_reply_tool_calls"],
 		int((time.monotonic() - t_handle0) * 1000),
 	)
+	# Turn telemetry (customization discovery). Best-effort.
+	try:
+		from jarvis import telemetry
+
+		telemetry.emit_turn(
+			conversation_id, run_id, int((time.monotonic() - t_handle0) * 1000))
+	except Exception:
+		pass
 
 	# Auto-title (managed mode): the first substantive turn of a still-unnamed
 	# conversation gets a concise, LLM-summarised title, not the raw first

@@ -5,6 +5,14 @@ from jarvis.tools._doc_actions import get_doc_actions
 
 TABLE_FIELDTYPES = {"Table", "Table MultiSelect"}
 _SCHEMA_TTL = 300  # seconds; schema is user-independent + changes rarely
+# v2: doctype-level `custom` + per-field `is_custom` (customization discovery).
+_SCHEMA_CACHE_VERSION = 2
+
+
+def _cache_key(doctype: str, verbose) -> str:
+	"""The one spelling of the key. Bump _SCHEMA_CACHE_VERSION on any cached
+	shape change; old keys age out at the TTL."""
+	return f"jarvis_schema:v{_SCHEMA_CACHE_VERSION}:{doctype}:{int(bool(verbose))}"
 
 # Identity: emitted unconditionally because a record without them is anonymous.
 # Every other property is emitted ONLY when the DocType configures it to a truthy
@@ -18,11 +26,13 @@ _IDENTITY_PROPS = ("fieldname", "fieldtype")
 
 # DocField's OWN row metadata - describes the docfield record, not the field it
 # defines. Never useful to the agent, and some values (creation/modified) are
-# datetimes that would not survive the JSON hop anyway.
+# datetimes that would not survive the JSON hop anyway. is_custom_field is
+# meta-merge provenance, re-emitted as `is_custom` explicitly in _field_record.
 _ROW_META_PROPS = frozenset({
 	"name", "owner", "creation", "modified", "modified_by", "parent",
 	"parentfield", "parenttype", "idx", "docstatus", "doctype",
 	"oldfieldname", "oldfieldtype", "__islocal", "__unsaved",
+	"is_custom_field",
 })
 
 # Presentation-only: these change how Desk PAINTS a field and can never affect
@@ -92,6 +102,9 @@ def _field_record(f) -> dict:
 		if not isinstance(value, (str, int, float, bool)):
 			continue
 		record[key] = value
+	# Custom Field provenance, emitted only when true (absent = standard).
+	if getattr(f, "is_custom_field", False):
+		record["is_custom"] = True
 	return record
 
 
@@ -110,6 +123,18 @@ def _workflow_for(doctype: str):
 	}
 
 
+def _is_custom_doctype(meta) -> bool:
+	"""custom=1 OR module of a non-core app; failure reads standard."""
+	if getattr(meta, "custom", 0):
+		return True
+	try:
+		from jarvis.site_profile.apps import is_custom_doctype_module
+
+		return is_custom_doctype_module(getattr(meta, "module", None))
+	except Exception:
+		return False
+
+
 def _build_schema(doctype: str, verbose: bool) -> dict:
 	meta = frappe.get_meta(doctype)
 	fields = []
@@ -121,6 +146,7 @@ def _build_schema(doctype: str, verbose: bool) -> dict:
 		fields.append(record)
 	return {
 		"doctype": doctype,
+		"custom": _is_custom_doctype(meta),
 		"is_submittable": bool(meta.is_submittable),
 		"autoname": meta.autoname,
 		"naming_rule": getattr(meta, "naming_rule", None),
@@ -157,8 +183,8 @@ def clear_cache_for(doctype: str) -> None:
 	from jarvis.tools._source_mapper import mapper_cache_key
 
 	cache = frappe.cache()
-	cache.delete_value(f"jarvis_schema:{doctype}:0")
-	cache.delete_value(f"jarvis_schema:{doctype}:1")
+	cache.delete_value(_cache_key(doctype, 0))
+	cache.delete_value(_cache_key(doctype, 1))
 	cache.delete_value(mapper_cache_key(doctype))
 
 
@@ -187,8 +213,9 @@ def get_schema(doctype: str, verbose: bool = False, refresh: bool = False) -> di
 	"""Return live meta for a DocType: identity + the write-relevant
 	doctype-level flags + the field list.
 
-	Top level: ``doctype``, ``is_submittable`` (docstatus lifecycle applies),
-	``autoname`` / ``naming_rule`` (how name is assigned), ``title_field``,
+	Top level: ``doctype``, ``custom`` (UI-authored or shipped by a non-core
+	app), ``is_submittable`` (docstatus lifecycle applies), ``autoname`` /
+	``naming_rule`` (how name is assigned), ``title_field``,
 	``workflow`` ({name, state_field, states} or None), ``actions``, and ``fields``.
 	Every field record carries ``fieldname`` and ``fieldtype``, then EVERY other
 	docfield property the DocType configures - and only those. **A key that is
@@ -209,6 +236,7 @@ def get_schema(doctype: str, verbose: bool = False, refresh: bool = False) -> di
 	  condition under which the field becomes required / locked / shown, so
 	  ``reqd`` alone does not tell the whole story.
 	- ``default``, ``unique``, ``no_copy``, ``precision``, ``permlevel``.
+	- ``is_custom``: present (true) on fields added via Custom Field.
 	- ``link_filters`` (JSON, e.g. ``[["Item","has_variants","=",0]]``): which
 	  target rows this Link will accept. Drop the leading DocType and the rest is
 	  a ``get_list`` filter, so it doubles as the query for finding a valid value
@@ -258,7 +286,7 @@ def get_schema(doctype: str, verbose: bool = False, refresh: bool = False) -> di
 		raise PermissionDeniedError(f"no read permission on {doctype}")
 
 	cache = frappe.cache()
-	key = f"jarvis_schema:{doctype}:{int(verbose)}"
+	key = _cache_key(doctype, verbose)
 	if refresh:
 		clear_cache_for(doctype)  # bust BOTH variants, not just the current one
 	else:
