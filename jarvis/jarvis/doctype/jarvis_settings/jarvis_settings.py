@@ -1227,10 +1227,14 @@ def _enqueued_sync_via_admin_pool(retry_left: int = ADMIN_SYNC_LOCK_RETRIES) -> 
                 _synced["last_subscription_status"] = str(result.get("subscription_status") or "")
                 _synced["last_sync_warnings"] = _frappe.as_json(result.get("warnings") or [])
                 # Per-model verdicts (contract 1.11: [{provider, model, status}], api-key
-                # models only) ride the SAME PUT response. The AI-models list keys each
-                # api-key row's health off this; without persisting it a dead model shows
-                # the same green "key set" as a healthy one. Same no-op reasoning as the two
-                # fields above: a "unchanged" apply ran no probe, so leave the prior verdicts.
+                # models only; contract 1.12 adds an optional "detail" string with the
+                # provider's raw error text, absent on an older fleet) ride the SAME PUT
+                # response. The AI-models list keys each api-key row's health off this;
+                # without persisting it a dead model shows the same green "key set" as a
+                # healthy one. Stored/forwarded verbatim (no field whitelisting), so a new
+                # optional key like "detail" needs no change here to reach the client. Same
+                # no-op reasoning as the two fields above: a "unchanged" apply ran no probe,
+                # so leave the prior verdicts.
                 _synced["last_model_statuses"] = _frappe.as_json(result.get("model_statuses") or [])
             settings.db_set(_synced)
             # last_sync_status MUST keep starting with the literal "ok" -

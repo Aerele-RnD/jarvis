@@ -697,6 +697,7 @@ const STATIC_MODEL_SUGGESTIONS = {
   "Moonshot (Kimi)": ["kimi-k2.6"],
   "xAI Grok": ["grok-4.5", "grok-4.3", "grok-build-0.1"],
   "GLM / Z.ai": ["glm-4.6", "glm-4.7"],
+  "GLM / Z.ai (Coding Plan)": ["glm-4.6", "glm-4.7"],
   "OpenRouter": ["anthropic/claude-sonnet-4-6", "openai/gpt-5.5"],
   "Ollama (local)": ["qwen2.5:3b", "qwen2.5:0.5b", "llama3"],
   "OpenAI-Compatible": ["claude-sonnet-4-6", "gpt-4o", "qwen2.5:3b", "llama3"],
@@ -712,6 +713,11 @@ const PROVIDER_DEFAULTS = {
   "Moonshot (Kimi)": { model: "kimi-k2.6", baseUrl: "https://api.moonshot.ai/v1" },
   "xAI Grok": { model: "grok-4.5", baseUrl: "https://api.x.ai/v1" },
   "GLM / Z.ai": { model: "glm-4.6", baseUrl: "https://api.z.ai/api/paas/v4" },
+  // GLM Coding Plan is a separate z.ai subscription from pay-as-you-go "GLM / Z.ai"
+  // above - a coding-plan key 402s with "insufficient balance" on the pay-as-you-go
+  // base URL even though it's perfectly valid on this one (see apiKeyModelHealth's
+  // targeted hint in pool.js for the exact trap this option exists to avoid).
+  "GLM / Z.ai (Coding Plan)": { model: "glm-4.6", baseUrl: "https://api.z.ai/api/coding/paas/v4" },
   "OpenRouter": { model: "anthropic/claude-sonnet-4-6", baseUrl: "https://openrouter.ai/api/v1" },
   "Ollama (local)": { model: "llama3", baseUrl: "http://host.docker.internal:11434/v1" },
   "vLLM (local)": { model: "", baseUrl: "" },
