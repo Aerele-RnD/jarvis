@@ -94,13 +94,19 @@ def build_card(tool: str, args, preview) -> dict | None:
 		if tool == "assign_to":
 			return _assign_card(args, bulk_items if bulk_key == "names" else None)
 		if tool == "send_email":
-			if "messages" in args:
+			if args.get("messages") is not None:
+				# Key off `is not None`, exactly as the tool does (send_email.py:54):
+				# an explicit `messages: null` takes the SINGLE-email path and sends,
+				# so `"messages" in args` here would drop that card to raw fallback
+				# for a call that really does send one email.
+				#
 				# _bulk treats an EMPTY list as non-bulk (confirm_card.py:94), so a
 				# bare `messages=[]` would otherwise reach _email_card and render a
 				# plausible empty single-email card - while the tool raises "messages
 				# must be a non-empty list" at confirm (send_email.py:107-109). A card
 				# that describes a call that cannot run is a lying card; fall back to
-				# raw instead.
+				# raw instead. (`[]` is not None -> this branch -> bulk_key is None ->
+				# None.)
 				return _bulk_email_card(bulk_items) if bulk_key == "messages" else None
 			return _email_card(args)
 		if tool == "create_custom_skill":
@@ -557,18 +563,28 @@ def _wiki_card(args: dict) -> dict:
 	"""
 	replace = args.get("replace_body_md")
 	append = args.get("append_md")
-	# `is not None`, NOT truthiness: update_wiki.py:146 is
-	# `elif replace_body_md is not None: doc.body_md = str(replace_body_md)` - so
-	# replace_body_md="" ERASES THE WHOLE PAGE. The both-args guard (:96) is also
-	# truthiness, so "" sails through it too. Classifying that as mode="meta" with an
-	# empty body would render the most destructive call this tool accepts as the most
-	# innocuous card in the set.
-	if replace is not None:
+	# MIRROR THE TOOL'S PRECEDENCE EXACTLY. update_wiki.py:143-146 is
+	#   if append_md and str(append_md).strip(): ...append...
+	#   elif replace_body_md is not None: doc.body_md = str(replace_body_md)
+	# and the new-page path (:165) is str(replace_body_md or append_md or "") -
+	# APPEND WINS whenever it is non-blank, including over replace_body_md="", which
+	# is falsy and so sails through the both-args guard (:96, also truthiness).
+	# Checking replace first inverts this: update_wiki(replace_body_md="",
+	# append_md="<injected>") would render an EMPTY ERASE card while the tool APPENDS
+	# the payload - a phantom action and a hidden real one in the same shape.
+	#
+	# `is not None` on replace is still right for the lone case: replace_body_md=""
+	# sets body_md = str("") - a full ERASE - and must not be mistaken for a metadata
+	# edit.
+	if append and str(append).strip():
+		mode = "append"
+		body_src = append
+	elif replace is not None:
 		mode = "replace"
-	elif append and str(append).strip():
-		mode = "append"  # the tool no-ops a blank append (update_wiki.py:143)
+		body_src = replace
 	else:
-		mode = "meta"
+		mode = "meta"  # the tool no-ops a blank append (update_wiki.py:143)
+		body_src = ""
 	ref = ""
 	if args.get("ref_doctype") and args.get("ref_name"):
 		ref = f"{args['ref_doctype']} {args['ref_name']}"
@@ -584,7 +600,7 @@ def _wiki_card(args: dict) -> dict:
 		# approve stored text they never saw.
 		"summary": fmt(args.get("summary") or "", limit=_MAX_VAL),
 		"mode": mode,
-		"body": fmt(replace if replace is not None else (append or ""), limit=_MAX_BODY),
+		"body": fmt(body_src, limit=_MAX_BODY),  # the body the TOOL will write
 	}
 
 

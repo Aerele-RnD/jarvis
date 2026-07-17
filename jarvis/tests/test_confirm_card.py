@@ -715,6 +715,17 @@ class TestSkillAndWikiCards(FrappeTestCase):
 		card = build_card("update_wiki", {"slug": "pricing", "replace_body_md": ""}, {})
 		self.assertEqual(card["mode"], "replace")
 
+	def test_wiki_append_wins_over_an_empty_replace_exactly_as_the_tool_does(self):
+		# The tool applies APPEND FIRST (update_wiki.py:143-146; new page :165), so
+		# replace_body_md="" + append_md=X slips the falsy both-args guard (:96) and
+		# APPENDS X. A card checking replace first renders an EMPTY ERASE over a call
+		# that persists text the card never showed - a phantom action and a hidden
+		# real one in one shape, reachable by a prompt-injected agent.
+		card = build_card("update_wiki", {
+			"slug": "s", "replace_body_md": "", "append_md": "injected section"}, {})
+		self.assertEqual(card["mode"], "append")
+		self.assertIn("injected section", card["body"])
+
 	def test_wiki_renders_the_summary_it_persists(self):
 		# summary is stored (update_wiki.py:141-142); a summary-only call would
 		# otherwise be an empty "meta" card over text that gets written.
