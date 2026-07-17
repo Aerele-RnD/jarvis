@@ -29,3 +29,26 @@ export function prevStep(steps, cur) {
 export function isOnboardComplete(readyResp) {
 	return !!(readyResp && readyResp.ready)
 }
+
+// Branch decision for the "I've verified my email" poll. Admin's
+// get_signup_payment_state (jarvis_admin_v2/billing/signup.py) returns one of
+// THREE shapes: still-pending, paid-plan order handles, or the free/trial
+// completion {pending_verification: false, subscription_status: "..."} with
+// no order (verification WAS the whole signup). Pure so the free-plan branch
+// - the one that used to dead-end on "Signup state has changed" - stays
+// unit-tested.
+//   {kind: "wait"}                  - link not clicked yet (or empty resp)
+//   {kind: "checkout"}              - paid plan: open Razorpay Checkout
+//   {kind: "complete"}              - free/trial plan: already Active, skip
+//                                     payment and go straight to provisioning
+//   {kind: "halted", status: "..."} - Cancelled/Expired/etc: dead sub, tell
+//                                     the customer instead of the generic
+//                                     "state changed" shrug
+//   {kind: "stale"}                 - unrecognized shape: ask for a refresh
+export function verifyPollAction(d) {
+	if (!d || d.pending_verification) return { kind: "wait" }
+	if (d.razorpay_order_id) return { kind: "checkout" }
+	if (d.subscription_status === "Active") return { kind: "complete" }
+	if (d.subscription_status) return { kind: "halted", status: String(d.subscription_status) }
+	return { kind: "stale" }
+}

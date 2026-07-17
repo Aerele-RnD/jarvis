@@ -131,7 +131,7 @@
 								<div class="jv-ob-body">
 									<div class="jv-ob-head">
 										<h1>Setting up your workspace</h1>
-										<p v-if="state.provisioning">Payment received. We're provisioning your Jarvis workspace. This usually takes under a minute…</p>
+										<p v-if="state.provisioning">{{ isFreePlan ? "You're signed up." : "Payment received." }} We're provisioning your Jarvis workspace. This usually takes under a minute…</p>
 									</div>
 									<div v-if="state.provisioning" class="jv-ob-spinner" aria-hidden="true"></div>
 									<Banner v-if="state.provisionErr" type="error" :message="state.provisionErr" role="alert" />
@@ -146,7 +146,7 @@
 										<h1>Check your email</h1>
 										<p>We sent a confirmation link to <b>{{ state.email || "your email" }}</b>.
 											Click the link to verify your address, then come back here and click the button below
-											to continue to payment.</p>
+											{{ isFreePlan ? "to finish setting up your workspace." : "to continue to payment." }}</p>
 									</div>
 									<p class="jv-ob-hint">The link expires in 24 hours. Check your spam folder if it doesn't arrive.</p>
 									<Banner v-if="state.payErr" type="error" :message="state.payErr" />
@@ -160,7 +160,7 @@
 							<template v-else-if="state.successData">
 								<div class="jv-ob-body">
 									<div class="jv-ob-head">
-										<h1>Payment complete</h1>
+										<h1>{{ isFreePlan ? "You're signed up" : "Payment complete" }}</h1>
 										<p>You're all set. Continue to connect your AI.</p>
 									</div>
 								</div>
@@ -314,7 +314,7 @@ import JarvisMark from "@/components/JarvisMark.vue"
 import Banner from "@/components/Banner.vue"
 import TourIntro from "@/onboarding/TourIntro.vue"
 import SetupNeuralNet from "@/onboarding/SetupNeuralNet.vue"
-import { STEPS_MANAGED, STEPS_SELFHOST, nextStep, prevStep } from "@/onboarding/steps"
+import { STEPS_MANAGED, STEPS_SELFHOST, nextStep, prevStep, verifyPollAction } from "@/onboarding/steps"
 import { inr, planAmount, planSuffix } from "@/account/format"
 import {
 	checkSignupPaymentState, isReadyForChat, getLlmSyncStatus,
@@ -707,25 +707,38 @@ async function runStartPay() {
 	}
 }
 
-// Mirrors desk's "I've verified my email" click handler (renderVerifyEmail,
-// jarvis_onboarding.js ~1612): re-poll check_signup_payment_state and branch
-// on the same two fields desk checks, in the same order.
+// "I've verified my email" click handler: re-poll check_signup_payment_state
+// and branch via verifyPollAction (steps.js - pure + unit-tested). Paid plans
+// continue to Razorpay Checkout; free/trial plans are already Active after
+// the email click (verification IS the whole signup), so they skip payment
+// and go straight to the provisioning gate - the poll response also carried
+// customer_password, which the bench endpoint already persisted.
 async function onVerifyCheck() {
 	state.payErr = ""
 	state.payBusy = true
 	try {
 		const d = await checkSignupPaymentState()
-		if (d && d.pending_verification) {
-			state.payBusy = false
-			state.payErr = "We haven't received your verification yet. Click the link in your email, then try again."
-			return
-		}
-		if (d && d.razorpay_order_id) {
+		const action = verifyPollAction(d)
+		if (action.kind === "checkout") {
 			await openCheckout(d)
 			return
 		}
+		if (action.kind === "complete") {
+			// No connection handles in this response - proceedAfterPay polls
+			// sync_connection until the container is assigned + running.
+			state.successData = d || {}
+			state.payBusy = false
+			await proceedAfterPay()
+			return
+		}
 		state.payBusy = false
-		state.payErr = "Signup state has changed. Refresh this page to continue."
+		if (action.kind === "wait") {
+			state.payErr = "We haven't received your verification yet. Click the link in your email, then try again."
+		} else if (action.kind === "halted") {
+			state.payErr = `This signup is ${action.status.toLowerCase()} and can't continue. Start a new signup or contact support.`
+		} else {
+			state.payErr = "Signup state has changed. Refresh this page to continue."
+		}
 	} catch (e) {
 		state.payBusy = false
 		state.payErr = errMsg(e)
