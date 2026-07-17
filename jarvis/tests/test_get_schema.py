@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
@@ -215,3 +217,81 @@ class TestConfiguredPropsOnRealDoctype(FrappeTestCase):
             any(f.get("read_only") for f in result["fields"]),
             "expected at least one read_only field on Customer",
         )
+
+
+class TestGetSchemaCustomFlags(FrappeTestCase):
+    """The v2 flags: per-field `is_custom` (Custom Field provenance, emitted
+    only when true) and doctype-level `custom` (custom=1 OR module of a
+    non-core app)."""
+
+    CF_FIELD = "custdisc_probe"
+    CUSTOM_DT = "CustDisc Probe DT"
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        frappe.set_user("Administrator")
+        from frappe.custom.doctype.custom_field.custom_field import create_custom_field
+
+        if not frappe.db.exists("Custom Field", {"dt": "ToDo", "fieldname": cls.CF_FIELD}):
+            create_custom_field(
+                "ToDo",
+                {"fieldname": cls.CF_FIELD, "label": "CustDisc Probe", "fieldtype": "Data"},
+            )
+        if not frappe.db.exists("DocType", cls.CUSTOM_DT):
+            frappe.get_doc({
+                "doctype": "DocType",
+                "name": cls.CUSTOM_DT,
+                "module": "Custom",
+                "custom": 1,
+                "fields": [{"fieldname": "title", "fieldtype": "Data", "label": "Title"}],
+                "permissions": [{"role": "System Manager", "read": 1, "write": 1, "create": 1}],
+            }).insert(ignore_permissions=True)
+
+    @classmethod
+    def tearDownClass(cls):
+        frappe.set_user("Administrator")
+        cf = frappe.db.get_value("Custom Field", {"dt": "ToDo", "fieldname": cls.CF_FIELD})
+        if cf:
+            frappe.delete_doc("Custom Field", cf, force=True, ignore_permissions=True)
+        if frappe.db.exists("DocType", cls.CUSTOM_DT):
+            frappe.delete_doc("DocType", cls.CUSTOM_DT, force=True, ignore_permissions=True)
+        frappe.clear_cache(doctype="ToDo")
+        super().tearDownClass()
+
+    def test_custom_field_carries_is_custom(self):
+        result = get_schema(doctype="ToDo", refresh=True)
+        probe = next(f for f in result["fields"] if f["fieldname"] == self.CF_FIELD)
+        self.assertIs(probe.get("is_custom"), True)
+
+    def test_standard_field_omits_is_custom(self):
+        """Absent means standard - never is_custom: False."""
+        result = get_schema(doctype="ToDo", refresh=True)
+        standard = next(f for f in result["fields"] if f["fieldname"] == "description")
+        self.assertNotIn("is_custom", standard)
+
+    def test_custom1_doctype_flagged(self):
+        result = get_schema(doctype=self.CUSTOM_DT, refresh=True)
+        self.assertTrue(result["custom"])
+
+    def test_core_doctype_not_custom(self):
+        result = get_schema(doctype="Sales Invoice", refresh=True)
+        self.assertFalse(result["custom"])
+
+    def test_custom_app_module_marks_shipped_doctype_custom(self):
+        """An app-shipped doctype has custom=0; classification must catch it
+        via its module -> custom-app mapping (the two-union rule)."""
+        with patch(
+            "jarvis.site_profile.apps.is_custom_doctype_module", return_value=True
+        ):
+            result = get_schema(doctype="ToDo", refresh=True)
+        self.assertTrue(result["custom"])
+
+    def test_classification_failure_reads_standard(self):
+        """Invariant 5: a broken site_profile must never break get_schema."""
+        with patch(
+            "jarvis.site_profile.apps.is_custom_doctype_module",
+            side_effect=RuntimeError("boom"),
+        ):
+            result = get_schema(doctype="ToDo", refresh=True)
+        self.assertFalse(result["custom"])

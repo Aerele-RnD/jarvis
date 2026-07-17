@@ -100,6 +100,8 @@
   "agent_tools_section",
   "run_query_doctype_allowlist",
   "auto_apply_changes",
+  "core_apps_override",
+  "enable_customizations_clause",
   "developer_section",
   "sandbox_mode"
  ],
@@ -736,6 +738,19 @@
    "label": "Auto-apply changes (skip confirmation)",
    "default": "0",
    "description": "DEPRECATED (issue #186): auto-apply is now per-conversation and admin-gated (Jarvis Conversation.auto_apply). This site-wide Single field is no longer read or written; left in place to avoid a destructive schema change."
+  },
+  {
+   "fieldname": "core_apps_override",
+   "fieldtype": "Small Text",
+   "label": "Additional Core Apps",
+   "description": "Customization discovery treats every installed app outside the known core stack (frappe, erpnext, hrms, payments, webshop, insights, wiki, jarvis) as the customer's own. Comma- or newline-separated app names listed here EXTEND that core set, so their doctypes stop being reported as customizations. Leave empty (default) on most sites."
+  },
+  {
+   "fieldname": "enable_customizations_clause",
+   "fieldtype": "Check",
+   "label": "Enable Customizations Context Clause",
+   "default": "1",
+   "description": "Adds a one-line, counts-only summary of this site's customizations (custom apps, doctype/field/workflow counts) to every chat turn's context, pointing the agent at jarvis__describe_customizations. Readers treat an unset value as ON."
   },
   {
    "fieldname": "developer_section",
