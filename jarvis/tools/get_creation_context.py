@@ -156,10 +156,14 @@ def _result(
         "facets": facets,
         "note": (
             "Reference only - decide each field yourself from these examples "
-            "and the user's input; never copy blindly. Set every `mandatory` "
-            "field that is not already `auto` before create_doc; skip "
-            "`auto`/`readonly` fields (Frappe fills those). Ask the user only "
-            "about mandatory fields you cannot determine."
+            "and the user's input; never copy blindly. Skip `auto`/`readonly` "
+            "fields (Frappe computes those). A field with a `default` is NOT "
+            "auto - Frappe applies the default silently, so decide it "
+            "yourself: leave it out to accept the default, set it when the "
+            "default is wrong for this record; a symbolic default (`Today`, "
+            "`:Company`) is resolved by Frappe - never copy the token as a "
+            "value. Set every remaining `mandatory` field before create_doc. "
+            "Ask the user only about mandatory fields you cannot determine."
         ),
     }
     if mapped is not None:
@@ -240,9 +244,15 @@ def _field_map(meta) -> list[dict]:
             "fieldtype": df.fieldtype,
             "options": df.options,
             "mandatory": bool(df.reqd),
-            "auto": bool(df.fetch_from) or (df.default not in (None, "")),
+            # `auto` means Frappe COMPUTES this (fetch_from) - skipping it is safe.
+            # A field with a DEFAULT is different: Frappe GUESSES it, and the guess is
+            # a decision the human never sees unless it reaches the draft. Surface the
+            # default value and let the model decide, rather than hiding both.
+            "auto": bool(df.fetch_from),
             "readonly": bool(df.read_only),
         }
+        if df.default not in (None, ""):
+            rec["default"] = df.default
         cond = getattr(df, "mandatory_depends_on", None)
         if cond:
             rec["mandatory_if"] = cond
