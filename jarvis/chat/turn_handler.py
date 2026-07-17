@@ -1173,13 +1173,39 @@ def _prepend_doc_context(user_message: str, context) -> str:
 	if not isinstance(context, dict):
 		return user_message
 	if context.get("page") == "dashboards":
+		# The builder's explicit data-mode toggle overrides wording-based
+		# inference; absent = the agent decides from the ask.
+		mode = context.get("data_mode")
+		if mode == "static":
+			mode_line = (
+				" The user explicitly chose a STATIC one-time report: fetch the data "
+				"now, bake the numbers into the HTML with an as-of time, and do NOT "
+				"declare a jarvis-sources block."
+			)
+		elif mode == "live":
+			mode_line = (
+				" The user explicitly chose a LIVE data-connected dashboard: declare "
+				"every query in the jarvis-sources block and fetch at view time via "
+				"window.jarvis.data() - never bake the numbers in."
+			)
+		else:
+			mode_line = ""
 		return (
 			"[Context: The user is on the Jarvis Dashboards builder page. They want to "
 			"create or iterate on a dashboard/report. Read and follow the "
-			"jarvis-dashboards skill before acting: produce ONE complete self-contained "
-			"HTML document as a canvas artifact per iteration; declare data sources in "
-			"the jarvis-sources JSON block; use window.jarvis.data() for view-time "
-			"data; no external resources.]"
+			"jarvis-dashboards skill before acting. Non-negotiable contract: produce "
+			"ONE complete self-contained HTML document per iteration and publish it as "
+			"a hosted canvas embed; no external resources. Live data sources MUST be "
+			"declared inside the HTML exactly as "
+			'<script type="application/json" id="jarvis-sources">{"sources":[{'
+			'"source_name":"<snake_case>","tool":"query|get_list|run_report",'
+			'"spec":{...}}]}</script> where spec is the SAME argument object the '
+			"matching jarvis__ tool takes (test it with that tool first); widgets "
+			'fetch with window.jarvis.data("<source_name>"). Style with the injected '
+			"--jd-* CSS variables (--jd-bg/-surface/-ink/-heading/-muted/-line/"
+			"-accent/-font) and the window.JARVIS_THEME.palette chart colors instead "
+			"of hardcoding design; only deviate when the user explicitly asks about "
+			f"the look.{mode_line}]"
 			f"\n\n{user_message}"
 		)
 	if context.get("page") == "triggers":

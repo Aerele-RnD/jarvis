@@ -257,10 +257,32 @@ function setThemeAttr(src, theme) {
 // buildSrcdoc(html, {dark, echartsSource}) → the full srcdoc string.
 // Sync + pure: the caller dynamic-imports echarts.min.js?raw only when the
 // html references echarts, so the 1MB source never rides the main chunk.
-export function buildSrcdoc(html, { dark = false, echartsSource = "" } = {}) {
-	const theme = dark ? "dark" : "light"
+export function buildSrcdoc(
+	html,
+	{ dark = false, echartsSource = "", theme: themeSpec = null } = {},
+) {
+	// A named dashboard theme (from lib/dashboardThemes) owns the canvas look
+	// when provided: its CSS variables + base rules are injected BEFORE the
+	// dashboard's own styles (so those win conflicts), a JARVIS_THEME global
+	// exposes the chart palette, and data-theme follows the theme's own
+	// light/dark - independent of the app shell's mode. Without a theme the
+	// legacy dark flag drives data-theme only.
+	const theme = themeSpec ? (themeSpec.dark ? "dark" : "light") : dark ? "dark" : "light"
 	const src = String(html || "")
+	const themeBlock = themeSpec
+		? `<style id="jarvis-theme">${themeSpec.css}</style>` +
+			`<script>window.JARVIS_THEME=${escInline(
+				JSON.stringify({
+					name: themeSpec.key,
+					label: themeSpec.label,
+					dark: !!themeSpec.dark,
+					accent: themeSpec.accent,
+					palette: themeSpec.palette,
+				}),
+			)}<\/script>`
+		: ""
 	const scripts =
+		themeBlock +
 		(echartsSource ? `<script>${escInline(echartsSource)}<\/script>` : "") +
 		`<script>${escInline(RUNTIME_JS)}<\/script>`
 

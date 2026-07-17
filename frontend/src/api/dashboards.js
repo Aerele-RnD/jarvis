@@ -81,11 +81,18 @@ export const callDashboardTool = (tool, args = {}) => {
 // conversation is allowed - the backend creates/focuses one and returns its id
 // as `conversation_id`. -> {ok, run_id, message_id, conversation_id} or
 // {ok: false, reason} (NOT the {ok, data} envelope - passed through as-is).
-export const sendDashboardChat = (conversation, message) =>
+// dataMode: "static" | "live" | "" — the builder's explicit data toggle;
+// empty = let the agent decide from the ask (the backend forwards only the
+// two literal values).
+export const sendDashboardChat = (conversation, message, dataMode = "") =>
 	call("jarvis.chat.api.send_message", {
 		conversation: conversation || "",
 		message,
-		context: JSON.stringify({ page: "dashboards" }),
+		context: JSON.stringify(
+			dataMode === "static" || dataMode === "live"
+				? { page: "dashboards", data_mode: dataMode }
+				: { page: "dashboards" },
+		),
 		background: 0,
 	})
 

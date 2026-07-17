@@ -39,12 +39,14 @@ MAX_SOURCES = 12
 MAX_SPEC_CHARS = 32_000
 
 _SCOPES = ("Org", "Role", "User")
+_THEMES = ("Jarvis", "Insight", "Claude", "Graphite")
 _SOURCE_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 
 
 class JarvisDashboard(Document):
 	def validate(self):
 		self._validate_title()
+		self._validate_theme()
 		self._validate_scope()
 		self._validate_caps()
 		self._validate_sources()
@@ -61,6 +63,11 @@ class JarvisDashboard(Document):
 			frappe.throw(_("Dashboard title is required."))
 		if len(self.dashboard_title) > MAX_TITLE_LEN:
 			frappe.throw(_("Dashboard title must be at most {0} characters.").format(MAX_TITLE_LEN))
+
+	def _validate_theme(self):
+		self.theme = (self.theme or "").strip() or "Jarvis"
+		if self.theme not in _THEMES:
+			frappe.throw(_("Theme must be one of {0}.").format(", ".join(_THEMES)))
 
 	def _validate_scope(self):
 		"""Scope normalization + the SCOPE-WIDENING GATE.

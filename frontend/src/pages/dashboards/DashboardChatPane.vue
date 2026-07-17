@@ -116,6 +116,18 @@
 			<div class="mt-2 flex items-center justify-between gap-2">
 				<div class="flex items-center gap-1.5">
 					<VoiceRecorder v-if="caps.stt_enabled" compact @transcript="onTranscript" />
+					<!-- explicit data-mode: Auto lets the agent decide; Static bakes the
+					     numbers in (one-time report); Live declares view-time sources.
+					     Option-chip idiom (TriggerDetail's segmented switch). -->
+					<span class="ml-1 text-xs text-ink-gray-5">Data</span>
+					<Button
+						v-for="m in DATA_MODES"
+						:key="m.value"
+						:label="m.label"
+						:variant="dataMode === m.value ? 'solid' : 'subtle'"
+						:disabled="sending"
+						@click="dataMode = m.value"
+					/>
 				</div>
 				<Button
 					variant="solid"
@@ -373,6 +385,16 @@ const sending = ref(false)
 const draft = ref("")
 const box = ref(null)
 
+// Explicit data-mode toggle (goal requirement): "" = Auto (agent decides),
+// "static" = baked one-time report, "live" = declared view-time sources.
+// Persisted per user so the choice survives page hops.
+const DATA_MODES = [
+	{ label: "Auto", value: "" },
+	{ label: "Static", value: "static" },
+	{ label: "Live", value: "live" },
+]
+const dataMode = useStorage(`jarvis-dash-datamode-${session.user || "anon"}`, "")
+
 function autoGrow() {
 	const ta = box.value && box.value.querySelector("textarea")
 	if (!ta) return
@@ -406,7 +428,7 @@ async function send() {
 	messages.value = [...messages.value, { name: tmpName, role: "user", content: text }]
 	nextTick(scrollBottom)
 	try {
-		const r = (await sendDashboardChat(conversation.value, text)) || {}
+		const r = (await sendDashboardChat(conversation.value, text, dataMode.value)) || {}
 		if (r.ok === false) {
 			// rejected (single-flight guard / usage cap) - nothing persisted
 			messages.value = messages.value.filter((m) => m.name !== tmpName)

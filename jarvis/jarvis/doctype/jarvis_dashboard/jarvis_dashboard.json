@@ -9,6 +9,7 @@
   "dashboard_title",
   "description",
   "dashboard_type",
+  "theme",
   "scope",
   "target_role",
   "target_user",
@@ -39,6 +40,14 @@
    "default": "Static",
    "in_standard_filter": 1,
    "description": "Derived server-side: Connected when the dashboard declares data sources (live data at view time), Static otherwise. Never set directly."
+  },
+  {
+   "fieldname": "theme",
+   "fieldtype": "Select",
+   "label": "Theme",
+   "options": "Jarvis\nInsight\nClaude\nGraphite",
+   "default": "Jarvis",
+   "description": "Named render theme injected by the canvas shell as CSS variables. Jarvis = the app's own design language (default), Insight = Frappe-Insights-style light, Claude = warm ivory, Graphite = dark."
   },
   {
    "fieldname": "scope",

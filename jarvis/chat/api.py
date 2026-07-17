@@ -1032,6 +1032,12 @@ def send_message(
 				# and "dashboards".
 				if ctx.get("page") in ("triggers", "dashboards"):
 					enqueue_kwargs["context"]["page"] = ctx["page"]
+					# Dashboards builder's explicit data-mode toggle: the user
+					# declared whether they want a baked one-time report or a
+					# live data-connected one. Two literal values; absent =
+					# let the agent decide from the ask.
+					if ctx["page"] == "dashboards" and ctx.get("data_mode") in ("static", "live"):
+						enqueue_kwargs["context"]["data_mode"] = ctx["data_mode"]
 				# Persist the viewing-context doc ref on the user message row
 				# so post-turn entity extraction (jarvis.chat.entities) sees
 				# what the user was looking at, not just what tools touched.

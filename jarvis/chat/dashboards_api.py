@@ -57,7 +57,7 @@ _SOURCES_BLOCK_RE = re.compile(
 # is server-owned; unknown keys throw.
 _ALLOWED_PAYLOAD_FIELDS = {
 	"name", "dashboard_title", "description", "html", "scope", "target_role",
-	"sources", "source_conversation",
+	"sources", "source_conversation", "theme",
 }
 
 _SCOPES = {"Org", "Role", "User"}
@@ -109,6 +109,7 @@ def _dashboard_detail(doc) -> dict:
 		"dashboard_title": doc.dashboard_title,
 		"description": doc.description or "",
 		"dashboard_type": doc.dashboard_type,
+		"theme": doc.theme or "Jarvis",
 		"scope": doc.scope,
 		"target_role": doc.target_role or "",
 		"target_user": doc.target_user or "",

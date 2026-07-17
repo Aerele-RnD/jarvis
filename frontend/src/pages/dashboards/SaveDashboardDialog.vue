@@ -82,6 +82,7 @@
 import { reactive, ref, computed, watch } from "vue"
 import { Badge, Button, Dialog, ErrorMessage, FormControl } from "frappe-ui"
 import { saveDashboard } from "@/api/dashboards"
+import { themeLabel } from "@/lib/dashboardThemes"
 
 const props = defineProps({
 	modelValue: { type: Boolean, default: false },
@@ -93,6 +94,8 @@ const props = defineProps({
 	editing: { type: Object, default: null },
 	conversation: { type: String, default: "" }, // source_conversation for new saves
 	shareOnly: { type: Boolean, default: false },
+	// active render theme key (lib/dashboardThemes); persisted with the save
+	theme: { type: String, default: "" },
 })
 
 const emit = defineEmits(["update:modelValue", "saved"])
@@ -166,6 +169,8 @@ async function save() {
 		scope: form.scope,
 		sources: props.sources,
 		source_conversation: (e && e.source_conversation) || props.conversation || "",
+		// share-only re-sends the stored theme; the builder persists the picker's
+		theme: props.shareOnly ? (e && e.theme) || "Jarvis" : themeLabel(props.theme),
 	}
 	if (e && e.name) payload.name = e.name
 	if (form.scope === "Role") payload.target_role = form.target_role

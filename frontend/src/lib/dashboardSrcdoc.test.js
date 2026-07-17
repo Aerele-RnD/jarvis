@@ -132,3 +132,24 @@ test("RUNTIME_JS: contains the same dialect normalization", () => {
   assert.ok(RUNTIME_JS.includes("jarvis__"))
   assert.ok(RUNTIME_JS.includes("s.args"))
 })
+
+test("buildSrcdoc: named theme injects vars + JARVIS_THEME and owns data-theme", async () => {
+  const { THEMES } = await import("./dashboardThemes.js")
+  const out = buildSrcdoc("<html><head></head><body><p>x</p></body></html>", {
+    theme: THEMES.jarvis,
+  })
+  assert.ok(out.includes('<style id="jarvis-theme">'))
+  assert.ok(out.includes("--jd-bg:"))
+  assert.ok(out.includes("window.JARVIS_THEME="))
+  assert.ok(out.includes('"name":"jarvis"'))
+  assert.ok(/<html[^>]*data-theme="light"/.test(out))
+  // theme style must precede the runtime so vars exist before user scripts
+  assert.ok(out.indexOf('id="jarvis-theme"') < out.indexOf("window.jarvis ="))
+  // a dark theme drives data-theme
+  const dark = buildSrcdoc("<p>x</p>", { theme: THEMES.graphite })
+  assert.ok(dark.includes('data-theme="dark"'))
+  // no theme → legacy dark flag behavior unchanged
+  const legacy = buildSrcdoc("<p>x</p>", { dark: true })
+  assert.ok(legacy.includes('data-theme="dark"'))
+  assert.ok(!legacy.includes("jarvis-theme"))
+})

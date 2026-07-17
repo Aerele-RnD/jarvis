@@ -54,27 +54,29 @@
 // the SERVER-stored spec is authoritative and the frame's spec is ignored).
 // The srcdoc is assembled by lib/dashboardSrcdoc (CSP + bridge runtime); the
 // echarts source only loads (dynamic ?raw import, its own chunk) when the
-// html actually references echarts. Theme flips are relayed live over
-// postMessage instead of rebuilding the document.
+// html actually references echarts. The named dashboard theme (--jd-* vars)
+// owns the canvas look; switching it rebuilds the document.
 import { ref, watch, onMounted, onBeforeUnmount } from "vue"
 import { Button, ErrorMessage, FeatherIcon, LoadingIndicator } from "frappe-ui"
 import { buildSrcdoc, parseSourcesBlock } from "@/lib/dashboardSrcdoc"
+import { THEMES, DEFAULT_THEME, themeKey } from "@/lib/dashboardThemes"
 import { loadCaptureLib, downloadPng, downloadPdf } from "@/lib/dashboardExport"
 import { runDashboardSource, callDashboardTool } from "@/api/dashboards"
-import { useJarvisTheme } from "@/theme"
 
 const props = defineProps({
 	mode: { type: String, default: "builder" }, // "builder" | "view"
 	html: { type: String, default: "" },
 	dashboard: { type: Object, default: null }, // view mode: {name} at minimum
 	caps: { type: Object, default: () => ({}) },
+	// Named render theme (lib/dashboardThemes key or DocType label). The canvas
+	// look belongs to the dashboard, not the app shell - app dark mode does not
+	// restyle it, the picker does.
+	theme: { type: String, default: DEFAULT_THEME },
 })
 
 // sources: the parsed #jarvis-sources list (save-dialog preview + payload);
 // state: "empty" | "loading" | "ready" | "error" for hosts that care.
 const emit = defineEmits(["sources", "state"])
-
-const { effectiveDark } = useJarvisTheme()
 
 const frame = ref(null)
 const doc = ref("")
@@ -112,7 +114,10 @@ async function rebuild() {
 			const mod = await import("../../../node_modules/echarts/dist/echarts.min.js?raw")
 			echartsSource = (mod && mod.default) || ""
 		}
-		doc.value = buildSrcdoc(props.html, { dark: !!effectiveDark.value, echartsSource })
+		doc.value = buildSrcdoc(props.html, {
+			echartsSource,
+			theme: THEMES[themeKey(props.theme)],
+		})
 		// Safety valve: if the frame never posts ready (user script threw before
 		// our runtime's DOMContentLoaded, etc.) don't spin forever.
 		clearTimeout(readyTimer)
@@ -135,8 +140,12 @@ watch(
 	{ immediate: true },
 )
 
-// Live theme relay - the runtime flips data-theme + fires jarvis:theme inside.
-watch(effectiveDark, (dark) => postToFrame({ type: "theme", dark: !!dark }))
+// Theme switches rebuild the document (charts re-init against the new
+// palette) - a full reload is simpler and more reliable than live restyling.
+watch(
+	() => props.theme,
+	() => rebuild(),
+)
 
 // ── data bridge ──────────────────────────────────────────────────────────────
 // run_report results resolve inside the iframe as {columns, rows}; query/

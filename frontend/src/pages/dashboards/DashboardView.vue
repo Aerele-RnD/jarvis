@@ -15,6 +15,10 @@
 						<!-- label → aria-label on icon-only buttons (frappe-ui) -->
 						<Button icon="more-horizontal" variant="ghost" label="Dashboard actions" />
 					</Dropdown>
+					<!-- render theme: editors persist the pick, viewers restyle locally -->
+					<Dropdown :options="themeOptions">
+						<Button variant="ghost" :label="themeLabel(viewTheme)" iconLeft="droplet" />
+					</Dropdown>
 					<Button label="Discuss in chat" iconLeft="message-circle" @click="discussInChat" />
 					<Button
 						v-if="detail.can_edit"
@@ -100,6 +104,7 @@
 					:html="detail.html"
 					:dashboard="{ name: detail.name }"
 					:caps="caps"
+					:theme="viewTheme"
 				/>
 			</div>
 		</div>
@@ -139,7 +144,8 @@ import {
 } from "frappe-ui"
 import LayoutHeader from "@/components/LayoutHeader.vue"
 import { setChatPrefill } from "@/composables/chatPrefill"
-import { getDashboard, getDashboardsCaps, deleteDashboard } from "@/api/dashboards"
+import { getDashboard, getDashboardsCaps, deleteDashboard, saveDashboard } from "@/api/dashboards"
+import { DEFAULT_THEME, THEME_OPTIONS, themeKey, themeLabel } from "@/lib/dashboardThemes"
 import DashboardCanvas from "./DashboardCanvas.vue"
 import SaveDashboardDialog from "./SaveDashboardDialog.vue"
 
@@ -162,6 +168,24 @@ const canvas = ref(null)
 const exporting = ref(false)
 const shareOpen = ref(false)
 
+// Render theme: seeded from the saved dashboard; picking restyles immediately
+// and (for editors) persists quietly — viewers just restyle their own view.
+const viewTheme = ref(DEFAULT_THEME)
+const themeOptions = THEME_OPTIONS.map((t) => ({
+	label: t.label,
+	onClick: () => pickTheme(t.key),
+}))
+async function pickTheme(key) {
+	viewTheme.value = key
+	if (!(detail.value && detail.value.can_edit)) return
+	try {
+		await saveDashboard({ name: detail.value.name, theme: themeLabel(key) })
+		detail.value.theme = themeLabel(key)
+	} catch (e) {
+		toast.error(errMsg(e))
+	}
+}
+
 // caps feed the share dialog's scope options; best-effort (share stays hidden
 // until they land - view/export need nothing from them).
 const caps = ref({ creatable_scopes: [], manageable_roles: [] })
@@ -174,6 +198,7 @@ async function load() {
 	try {
 		detail.value = (await getDashboard(props.id)) || null
 		if (!detail.value) notFound.value = true
+		else viewTheme.value = themeKey(detail.value.theme)
 	} catch (e) {
 		if (e && (e.status === 403 || e.exc_type === "PermissionError")) blocked.value = true
 		else if (e && (e.status === 404 || e.exc_type === "DoesNotExistError")) notFound.value = true

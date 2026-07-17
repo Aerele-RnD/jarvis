@@ -59,6 +59,10 @@
 							>
 								View dashboard
 							</router-link>
+							<!-- named render theme - the dashboard's look, not the app's -->
+							<Dropdown :options="themeOptions">
+								<Button variant="ghost" :label="themeLabel(builderTheme)" iconLeft="droplet" />
+							</Dropdown>
 							<Button
 								variant="solid"
 								label="Save dashboard"
@@ -72,6 +76,7 @@
 						mode="builder"
 						:html="builderHtml"
 						:caps="caps"
+						:theme="builderTheme"
 						@sources="(s) => (detectedSources = s)"
 					/>
 				</div>
@@ -117,6 +122,7 @@
 				:sources="detectedSources"
 				:editing="editingDetail"
 				:conversation="chatConv"
+				:theme="builderTheme"
 				@saved="onSaved"
 			/>
 		</template>
@@ -137,12 +143,13 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import { useStorage } from "@vueuse/core"
-import { Badge, Breadcrumbs, Button, FeatherIcon, toast } from "frappe-ui"
+import { Badge, Breadcrumbs, Button, Dropdown, FeatherIcon, toast } from "frappe-ui"
 import LayoutHeader from "@/components/LayoutHeader.vue"
 import TabBar from "@/components/list/TabBar.vue"
 import { session } from "@/data/session"
 import { getCanvas } from "@/api"
 import { getDashboardsCaps, getDashboard } from "@/api/dashboards"
+import { DEFAULT_THEME, THEME_OPTIONS, themeKey, themeLabel } from "@/lib/dashboardThemes"
 import DashboardCanvas from "./DashboardCanvas.vue"
 import DashboardChatPane from "./DashboardChatPane.vue"
 import SavedDashboardsTab from "./SavedDashboardsTab.vue"
@@ -201,6 +208,13 @@ const savedName = ref("") // last save's name → the "View dashboard" link
 const detectedSources = ref([]) // parsed #jarvis-sources (DashboardCanvas emit)
 const saveOpen = ref(false)
 const chatPane = ref(null)
+// Named render theme; "Jarvis" (the app's design language) unless picked or
+// seeded from the edited dashboard.
+const builderTheme = ref(DEFAULT_THEME)
+const themeOptions = THEME_OPTIONS.map((t) => ({
+	label: t.label,
+	onClick: () => (builderTheme.value = t.key),
+}))
 
 // Same per-user key DashboardChatPane persists its conversation under (vueuse
 // syncs same-document instances) - read for the save payload's
@@ -242,6 +256,7 @@ function newDashboard() {
 	editingDetail.value = null
 	savedName.value = ""
 	detectedSources.value = []
+	builderTheme.value = DEFAULT_THEME
 	activeTab.value = "builder"
 	router.push({ hash: "", query: {} })
 }
@@ -252,6 +267,7 @@ function resetBuilder() {
 	editingDetail.value = null
 	savedName.value = ""
 	detectedSources.value = []
+	builderTheme.value = DEFAULT_THEME
 	if (route.query.edit) router.replace({ query: {}, hash: route.hash })
 }
 
@@ -263,6 +279,7 @@ async function loadEdit(name) {
 			builderHtml.value = d.html || ""
 			editingDetail.value = d
 			savedName.value = d.name
+			builderTheme.value = themeKey(d.theme)
 		}
 	} catch (e) {
 		toast.error(errMsg(e))

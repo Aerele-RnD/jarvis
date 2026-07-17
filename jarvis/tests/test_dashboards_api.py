@@ -638,3 +638,40 @@ class TestWorkspaceSearchAndContext(_DashboardsApiTestCase):
 			)
 			self.assertTrue(r2["ok"])
 			self.assertNotIn("context", disp.call_args[0][0])
+			# Explicit data-mode toggle: the two literal values forward; junk
+			# does not.
+			r3 = send_message(
+				conv.name, "make it live",
+				context=frappe.as_json({"page": "dashboards", "data_mode": "live"}),
+			)
+			self.assertTrue(r3["ok"])
+			self.assertEqual(disp.call_args[0][0]["context"]["data_mode"], "live")
+			r4 = send_message(
+				conv.name, "make it weird",
+				context=frappe.as_json({"page": "dashboards", "data_mode": "weird"}),
+			)
+			self.assertTrue(r4["ok"])
+			self.assertNotIn("data_mode", disp.call_args[0][0]["context"])
+
+	def test_theme_roundtrip_and_validation(self):
+		frappe.set_user(PLAIN_A)
+		data = self._save({
+			"dashboard_title": f"theme-{frappe.generate_hash(length=8)}",
+			"html": "<p>x</p>",
+			"theme": "Claude",
+		})
+		self.assertEqual(data["theme"], "Claude")
+		# omitted -> the Jarvis design-language default
+		data2 = self._save({
+			"dashboard_title": f"theme-{frappe.generate_hash(length=8)}",
+			"html": "<p>x</p>",
+		})
+		self.assertEqual(data2["theme"], "Jarvis")
+		# invalid value throws
+		self.assertRaises(
+			frappe.ValidationError,
+			save_dashboard,
+			frappe.as_json({
+				"dashboard_title": "x", "html": "<p>x</p>", "theme": "Neon",
+			}),
+		)
