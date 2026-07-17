@@ -131,7 +131,7 @@
 								<div class="jv-ob-body">
 									<div class="jv-ob-head">
 										<h1>Setting up your workspace</h1>
-										<p v-if="state.provisioning">{{ isFreePlan ? "You're signed up." : "Payment received." }} We're provisioning your Jarvis workspace. This usually takes under a minute…</p>
+										<p v-if="state.provisioning">{{ isFreePlan ? "You're signed up." : (isTrialPlan ? "Auto-pay authorized — nothing charged until your trial ends." : "Payment received.") }} We're provisioning your Jarvis workspace. This usually takes under a minute…</p>
 									</div>
 									<div v-if="state.provisioning" class="jv-ob-spinner" aria-hidden="true"></div>
 									<Banner v-if="state.provisionErr" type="error" :message="state.provisionErr" role="alert" />
@@ -160,7 +160,7 @@
 							<template v-else-if="state.successData">
 								<div class="jv-ob-body">
 									<div class="jv-ob-head">
-										<h1>{{ isFreePlan ? "You're signed up" : "Payment complete" }}</h1>
+										<h1>{{ isFreePlan ? "You're signed up" : (isTrialPlan ? "Free trial started" : "Payment complete") }}</h1>
 										<p>You're all set. Continue to connect your AI.</p>
 									</div>
 								</div>
@@ -809,7 +809,9 @@ async function openCheckout(d) {
 		modal: {
 			ondismiss: () => {
 				state.payBusy = false
-				state.payErr = "Payment cancelled. Click Pay to try again."
+				state.payErr = isTrialPlan.value
+					? "Authorization cancelled. Click Start free trial to try again."
+					: "Payment cancelled. Click Pay to try again."
 			},
 		},
 	}
