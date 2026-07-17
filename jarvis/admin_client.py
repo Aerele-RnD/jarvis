@@ -603,9 +603,16 @@ def post_update_llm_pool(*, spec: dict, api_keys: dict, oauth_blobs: dict) -> di
 	# (ladder fix F1). The pool apply is the same class of restart-render op; a
 	# read-timeout here is now absorbed as an "applying"/pending outcome and
 	# reconciled via get_connection, not written as a terminal failure.
+	#
+	# installed_apps: the pool-safe leg of the migrate-time resync (mirrors
+	# post_update_llm_creds). A new admin persists it before the fleet forward
+	# and echoes installed_apps_persisted; an old admin ignores the extra field.
 	return _post(
 		path=_m("api.tenant.update_llm_pool"),
-		body={"spec": spec, "api_keys": api_keys, "oauth_blobs": oauth_blobs},
+		body={
+			"spec": spec, "api_keys": api_keys, "oauth_blobs": oauth_blobs,
+			"installed_apps": frappe.get_installed_apps(),
+		},
 	)
 
 

@@ -210,6 +210,9 @@ after_migrate = [
 	"jarvis.learning.roles.after_migrate",
 	# Customizations clause: installed apps only change via migrate.
 	"jarvis.chat.customizations_clause.after_migrate",
+	# Re-send installed_apps to admin when the app set changed (the fleet
+	# gates skills/tool-denies off the admin-persisted list).
+	"jarvis.installed_apps_sync.after_migrate",
 ]
 
 # Scheduled Tasks
