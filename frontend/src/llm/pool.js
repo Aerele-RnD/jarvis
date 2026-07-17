@@ -108,6 +108,21 @@ export const PROVIDER_LABELS = [
 ]
 const _LABEL_BY_ID = Object.fromEntries(PROVIDER_LABELS.map(p => [p.id, p.label]))
 const _ID_BY_LABEL = Object.fromEntries(PROVIDER_LABELS.map(p => [p.label, p.id]))
+
+// Providers whose approval screen hands back a BARE authorization code instead
+// of redirecting to a callback URL the customer can copy from the address bar.
+// Keyed by BOTH the pool `upstream` value ("xai") and the OAuth provider label
+// ("xAI Grok"), so the pool editor and the direct paste-back card can share one
+// answer instead of each keeping a copy.
+//
+// MUST match the providers carrying `code_only_paste` in
+// jarvis/oauth/providers.py - that flag is what actually makes the backend take
+// a bare code; this only steers the paste copy. Telling an xAI customer to
+// "copy the full URL from the address bar" sends them hunting for an address
+// bar that never holds a code.
+const _CODE_ONLY_PASTE = new Set(["xai", "xAI Grok"])
+export const isCodeOnlyPaste = (upstreamOrLabel) => _CODE_ONLY_PASTE.has(upstreamOrLabel)
+
 // Custom-endpoint providers whose whole identity IS the base_url (no default
 // endpoint) - validatePool requires one for these (mirrors validate_models).
 // "zai" (GLM / Z.ai) has no native Bifrost provider, so it needs its Z.ai

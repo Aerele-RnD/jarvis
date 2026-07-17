@@ -137,6 +137,16 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	// renders the loading placeholder. Punch-list "_SUBSCRIPTION_MODELS
 	// duplicated 4-5 times" from the 2026-06-16 cross-repo review.
 	let subscriptionModels = {};
+
+	// Providers whose approval screen hands back a BARE authorization code
+	// rather than redirecting to a callback URL. xAI Grok reaches this page:
+	// provOptions is built from subscriptionModels above, which carries every
+	// key of jarvis/_subscription_models.py including "xAI Grok". Telling that
+	// customer to copy the address bar sends them hunting for a URL that never
+	// appears. MUST match `code_only_paste` in jarvis/oauth/providers.py (that
+	// flag is what makes the backend accept a bare code; this only steers copy).
+	const CODE_ONLY_PASTE_PROVIDERS = ["xAI Grok"];
+	const isCodeOnlyPaste = (p) => CODE_ONLY_PASTE_PROVIDERS.indexOf(p) !== -1;
 	let defaultModels = {};
 	// Preset failover ladders (jarvis.onboarding.get_preset_catalog). Fetched in
 	// loadInitial alongside the pool config so the Preset tab is populated before
@@ -549,9 +559,11 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 					<code class="ja-url-text" id="ja-sub-url-text" title="${esc(ui.subAuthorizeUrl)}">${esc(ui.subAuthorizeUrl)}</code>
 					<button type="button" class="ja-btn ja-btn-ghost ja-btn-small" id="ja-sub-copy-url" title="Copy URL">Copy</button>
 				</div>
-				<p class="ja-sub"><strong>Step 2</strong> - After clicking Authorize, your browser will show a page saying <em>"This site can't be reached."</em> <strong>That's expected.</strong> Copy the URL from your browser's address bar (it'll start with <code>http://localhost:1455/auth/callback?code=…</code>) and paste it here:</p>
+				${isCodeOnlyPaste(ui.subProvider)
+					? `<p class="ja-sub"><strong>Step 2</strong> - After clicking Authorize, ${esc(ui.subProvider)} shows you an <strong>authorization code</strong>. Copy that code and paste it here:</p>`
+					: `<p class="ja-sub"><strong>Step 2</strong> - After clicking Authorize, your browser will show a page saying <em>"This site can't be reached."</em> <strong>That's expected.</strong> Copy the URL from your browser's address bar (it'll start with <code>http://localhost:1455/auth/callback?code=…</code>) and paste it here:</p>`}
 				<div class="ja-field">
-					<textarea class="ja-input" id="ja-sub-pasted-url" rows="3" placeholder="Paste the URL from the error page here"></textarea>
+					<textarea class="ja-input" id="ja-sub-pasted-url" rows="3" placeholder="${isCodeOnlyPaste(ui.subProvider) ? 'Paste the code shown after you approve' : 'Paste the URL from the error page here'}"></textarea>
 				</div>
 				<div class="ja-actions">
 					<button class="ja-btn ja-btn-ghost" id="ja-sub-cancel">Cancel</button>
@@ -816,7 +828,9 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		$err.text("");
 		const pasted = ($body.find("#ja-sub-pasted-url").val() || "").trim();
 		if (!pasted) {
-			$err.text("Paste the URL from your browser's address bar first.");
+			$err.text(isCodeOnlyPaste(ui.subProvider)
+				? "Paste the code you were shown first."
+				: "Paste the URL from your browser's address bar first.");
 			return;
 		}
 		setBusy("#ja-sub-submit", true);

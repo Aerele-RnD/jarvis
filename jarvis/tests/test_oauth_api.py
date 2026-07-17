@@ -317,12 +317,41 @@ class TestCompletePasteSigninParsing(_OAuthApiBase):
 		self.assertEqual(out["error"]["code"], "state_mismatch")
 
 	def test_xai_bare_state_fragment_is_not_a_code(self):
-		# "state=..." holds an "=", so it parses as a query with no `code` and
-		# must not be mistaken for a bare code.
+		# "state=..." parses to a recognised OAuth param with no `code`, so it is
+		# a code-less callback (missing_code), never a code to redeem.
 		nonce = self._seed(provider="xAI Grok")
 		out = oauth_api.complete_paste_signin(
 			nonce=nonce,
 			redirected_url="state=test-state",
+		)
+		self.assertEqual(out["error"]["code"], "missing_code")
+
+	def test_xai_accepts_base64_padded_code(self):
+		# A code carrying "=" as base64/JWT padding is still a bare code. Keying
+		# "is this a query?" off the "=" character alone would reject exactly the
+		# shape this path exists to accept, so the check keys off whether the
+		# paste parses to real OAuth params instead.
+		nonce = self._seed(provider="xAI Grok")
+		with patch("jarvis.oauth.api._exchange_code", return_value={
+			"access_token": "AT", "refresh_token": "RT", "expires_in": 3600,
+			"id_token": "", "email": "x@y.com",
+		}) as ex, patch("jarvis.oauth.api.admin_client.post_push_oauth_blob"), \
+		     patch("jarvis.oauth.api.onboarding.save_llm_creds",
+		           return_value={"last_sync_status": "ok"}):
+			out = oauth_api.complete_paste_signin(
+				nonce=nonce,
+				redirected_url="QUJDMTIzZGVmNDU2Zw==",
+			)
+		self.assertTrue(out["ok"], msg=str(out))
+		self.assertEqual(ex.call_args.kwargs["code"], "QUJDMTIzZGVmNDU2Zw==")
+
+	def test_xai_error_bounce_is_not_redeemed_as_a_code(self):
+		# An ?error= callback must not be mistaken for a bare code and shipped to
+		# the token endpoint.
+		nonce = self._seed(provider="xAI Grok")
+		out = oauth_api.complete_paste_signin(
+			nonce=nonce,
+			redirected_url="http://127.0.0.1:56121/callback?error=access_denied",
 		)
 		self.assertEqual(out["error"]["code"], "missing_code")
 

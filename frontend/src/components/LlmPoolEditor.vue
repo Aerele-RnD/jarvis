@@ -579,7 +579,7 @@ import * as api from "@/api"
 import {
   deriveMode, reorder, presetToModels, missingVendorKeys, validatePool,
   PROVIDER_LABELS, providerLabel, providerId, seedRowsFromConfig, defaultSubscriptionModel,
-  apiKeyModelHealth,
+  apiKeyModelHealth, isCodeOnlyPaste,
 } from "@/llm/pool"
 import { errMessage as _err } from "@/lib/errors"
 import { useConfirm } from "@/composables/useConfirm"
@@ -672,12 +672,8 @@ const upstreamLabelOf = (v) => (upstreamOpts.find((o) => o.value === v) || {}).l
 const upstreamValueOf = (l) => (upstreamOpts.find((o) => o.label === l) || {}).value || l
 // Upstreams whose approval screen hands back a BARE authorization code instead
 // of redirecting to a callback URL the customer can copy from the address bar.
-// MUST match the providers carrying `code_only_paste` in jarvis/oauth/providers.py
-// (the backend is what actually accepts a bare code; this only steers the copy).
-// Telling an xAI customer to "copy the full URL from the address bar" sends them
-// looking for an address bar that never holds a code.
-const CODE_ONLY_PASTE = { xai: true }
-const isCodeOnlyPaste = (u) => !!CODE_ONLY_PASTE[u]
+// isCodeOnlyPaste (xAI) is imported from @/llm/pool so the pool editor and the
+// direct subscription card share one answer rather than each keeping a copy.
 const pasteTitle = (u) => (isCodeOnlyPaste(u) ? "Paste the code" : "Paste the callback URL")
 const pastePlaceholder = (u, ready) => {
   if (!ready) return isCodeOnlyPaste(u) ? "Complete step 1 first, then paste the code here"

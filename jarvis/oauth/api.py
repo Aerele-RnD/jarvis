@@ -338,17 +338,26 @@ def begin_pool_account_signin(provider: str, model: str) -> dict:
 from urllib.parse import urlparse, parse_qs
 
 
-# A bare authorization code: no query syntax ("=" / "&"), no URL syntax
-# ("://", leading "/" or "?"), no whitespace, and printable ASCII only. Anything
-# holding "=" is treated as a query string instead, so a customer who pastes
-# only "state=..." still lands on missing_code rather than having the fragment
-# mistaken for a code. The length floor rejects stray keystrokes; the ceiling
-# keeps a pasted essay out of the token request.
+# A bare authorization code: no URL syntax ("://", leading "/" or "?"), no
+# pair separator ("&"), no whitespace, printable ASCII only. The length floor
+# rejects stray keystrokes; the ceiling keeps a pasted essay out of the token
+# request.
+#
+# "=" is deliberately NOT disqualifying. A base64/JWT-shaped code can carry "="
+# as padding, and excluding it would re-break the very case this exists to
+# handle. Query pastes are ruled out by _OAUTH_QUERY_KEYS below instead, which
+# keys off what the string actually *parses to* rather than one character.
 _BARE_CODE_RE = re.compile(r"\A[\x21-\x7e]{8,512}\Z")
+
+# Params that mark a paste as an OAuth query/callback rather than a bare code.
+# If one of these parsed out but `code` did not, the customer pasted a real
+# (but code-less) callback, so this is a missing_code, not a code to redeem.
+_OAUTH_QUERY_KEYS = ("state", "error", "error_description", "error_uri",
+                     "session_state", "iss", "scope")
 
 
 def _looks_like_bare_code(raw: str) -> bool:
-	if "://" in raw or raw.startswith(("/", "?")) or "=" in raw or "&" in raw:
+	if "://" in raw or raw.startswith(("/", "?")) or "&" in raw:
 		return False
 	return bool(_BARE_CODE_RE.match(raw))
 
@@ -386,8 +395,15 @@ def _parse_redirected_url(raw: str, *, allow_bare_code: bool = False) -> dict:
 	if code:
 		return {"code": code, "state": (q.get("state") or [None])[0], "bare": False}
 
-	# No `code=` anywhere. For a code-only provider the paste may be the code
-	# itself; for everyone else this stays a missing_code.
+	# No `code=`. If the paste still parsed to recognisable OAuth params, it was
+	# a genuine callback that simply lacks a code (e.g. "state=..." on its own,
+	# or an ?error= bounce) - that is a missing_code, never a code to redeem.
+	if any(k in q for k in _OAUTH_QUERY_KEYS):
+		return {"code": None, "state": None, "bare": False}
+
+	# Otherwise, for a code-only provider the paste may be the code itself. A
+	# base64-padded code parses to junk like {"AbC123": ["="]}, which matches no
+	# OAuth key, so it correctly falls through to here.
 	if allow_bare_code and _looks_like_bare_code(raw):
 		return {"code": raw, "state": None, "bare": True}
 	return {"code": None, "state": None, "bare": False}
