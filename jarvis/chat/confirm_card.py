@@ -39,6 +39,8 @@ from __future__ import annotations
 import frappe
 
 from jarvis.chat._record_summary import (
+	_MAX_BODY,
+	_MAX_BULK_BODY,
 	_MAX_TABLES,
 	fmt,
 	is_secret,
@@ -81,6 +83,14 @@ def build_card(tool: str, args, preview) -> dict | None:
 		if tool in _VERB:
 			return _verb_card(tool, args, bulk_items)
 		if tool == "send_email":
+			if "messages" in args:
+				# _bulk treats an EMPTY list as non-bulk (confirm_card.py:94), so a
+				# bare `messages=[]` would otherwise reach _email_card and render a
+				# plausible empty single-email card - while the tool raises "messages
+				# must be a non-empty list" at confirm (send_email.py:107-109). A card
+				# that describes a call that cannot run is a lying card; fall back to
+				# raw instead.
+				return _bulk_email_card(bulk_items) if bulk_key == "messages" else None
 			return _email_card(args)
 		if tool == "run_method":
 			return _method_card(args)
@@ -387,15 +397,52 @@ def _verb_card(tool: str, args: dict, bulk_items) -> dict:
 	}
 
 
+def _recips(value) -> str:
+	if isinstance(value, list):
+		return ", ".join(str(x) for x in value)
+	return "" if value is None else str(value)
+
+
 def _email_card(args: dict) -> dict | None:
-	if isinstance(args.get("messages"), list):
-		return None  # bulk mail-merge: the summary's count is clearer than one body
 	to = args.get("recipients") or args.get("to") or ""
-	if isinstance(to, list):
-		to = ", ".join(str(x) for x in to)
 	return {
-		"kind": "email", "to": fmt(to), "subject": fmt(args.get("subject") or ""),
-		"body": fmt(args.get("content") or args.get("message") or ""),
+		"kind": "email", "to": fmt(_recips(to)),
+		"subject": fmt(args.get("subject") or ""),
+		"cc": fmt(_recips(args.get("cc") or "")),
+		"bcc": fmt(_recips(args.get("bcc") or "")),
+		"print_format": fmt(args.get("print_format") or ""),
+		"body": fmt(args.get("content") or args.get("message") or "", limit=_MAX_BODY),
+	}
+
+
+def _bulk_email_card(messages: list) -> dict | None:
+	"""A mail-merge: every message has its OWN recipient, subject and body
+	(send_email.py:19-24). The old card returned None on the reasoning that "the
+	count is clearer than one body" - true for ONE message to many people, which is
+	the SINGLE call's ``recipients`` list, not this shape. send_email is _DESTRUCTIVE
+	and always parks; showing the least of any gated tool for the one thing that
+	cannot be recalled was the worst gap in the system.
+	"""
+	shown = []
+	for m in messages[:_MAX_ROWS]:
+		if not isinstance(m, dict):
+			continue
+		shown.append({
+			"name": fmt(m.get("name") or ""),
+			"recipients": fmt(_recips(m.get("recipients") or "")),
+			# The batch honours per-message cc/bcc (send_email.py:119). Without these
+			# a merge that bcc's a third party on every message renders identical to
+			# one that does not - hidden recipients on the one irreversible tool.
+			"cc": fmt(_recips(m.get("cc") or "")),
+			"bcc": fmt(_recips(m.get("bcc") or "")),
+			"subject": fmt(m.get("subject") or ""),
+			"body": fmt(m.get("content") or "", limit=_MAX_BULK_BODY),
+		})
+	if not shown:
+		return None
+	return {
+		"kind": "bulk_email", "count": len(messages), "messages": shown,
+		"extra": max(0, len(messages) - len(shown)),
 	}
 
 

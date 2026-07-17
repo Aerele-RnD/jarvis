@@ -108,10 +108,6 @@ class TestEmailAndMethodCards(FrappeTestCase):
 		self.assertEqual(card["subject"], "Hi")
 		self.assertEqual(card["body"], "the body")
 
-	def test_bulk_email_falls_back(self):
-		card = build_card("send_email", {"messages": [{"recipients": "a@x.test"}]}, {})
-		self.assertIsNone(card)
-
 	def test_method_masks_secret_arg_keys(self):
 		card = build_card(
 			"run_method",
@@ -521,3 +517,56 @@ class TestBatchCreateContent(FrappeTestCase):
 		card = build_card("create_doc", args, {"would": would})
 		self.assertEqual(card["rows"], [{"doctype": "ToDo", "name": "T-1"}])
 		self.assertEqual(card["count"], 1)
+
+
+class TestBulkEmailCard(FrappeTestCase):
+	def _msgs(self, n=2):
+		return [
+			{"doctype": "Sales Invoice", "name": f"SI-{i}",
+			 "recipients": f"c{i}@x.test", "subject": f"Invoice SI-{i}",
+			 "content": f"Dear customer {i}, your invoice is attached."}
+			for i in range(n)
+		]
+
+	def test_bulk_email_renders_a_card_not_none(self):
+		# It returned None: you confirmed 20 irreversible emails seeing only
+		# "send_email count=20 targets=[SI-0001, ...]" - document names, no
+		# recipients, no subject, no body.
+		card = build_card("send_email", {"messages": self._msgs(2)}, {})
+		self.assertIsNotNone(card)
+		self.assertEqual(card["kind"], "bulk_email")
+		self.assertEqual(card["count"], 2)
+
+	def test_each_message_shows_recipient_subject_and_body(self):
+		card = build_card("send_email", {"messages": self._msgs(2)}, {})
+		m = card["messages"][0]
+		self.assertEqual(m["recipients"], "c0@x.test")
+		self.assertEqual(m["subject"], "Invoice SI-0")
+		self.assertIn("Dear customer 0", m["body"])
+
+	def test_recipient_list_is_joined(self):
+		card = build_card("send_email", {"messages": [
+			{"recipients": ["a@x.test", "b@x.test"], "subject": "s", "content": "c"}]}, {})
+		self.assertEqual(card["messages"][0]["recipients"], "a@x.test, b@x.test")
+
+	def test_bodies_use_the_bulk_body_budget(self):
+		from jarvis.chat._record_summary import _MAX_BULK_BODY
+		card = build_card("send_email", {"messages": [
+			{"recipients": "a@x.test", "subject": "s", "content": "x" * 5000}]}, {})
+		self.assertLessEqual(len(card["messages"][0]["body"]), _MAX_BULK_BODY)
+
+	def test_messages_are_capped_with_a_remainder(self):
+		card = build_card("send_email", {"messages": self._msgs(_MAX_ROWS + 3)}, {})
+		self.assertEqual(len(card["messages"]), _MAX_ROWS)
+		self.assertEqual(card["count"], _MAX_ROWS + 3)
+		self.assertEqual(card["extra"], 3)
+
+	def test_single_email_shows_cc_bcc_and_print_format(self):
+		# None of these rendered before - you could not see who was copied.
+		card = build_card("send_email", {
+			"recipients": "a@x.test", "subject": "Hi", "content": "body",
+			"cc": ["c@x.test"], "bcc": "b@x.test", "print_format": "Standard"}, {})
+		self.assertEqual(card["kind"], "email")
+		self.assertEqual(card["cc"], "c@x.test")
+		self.assertEqual(card["bcc"], "b@x.test")
+		self.assertEqual(card["print_format"], "Standard")
