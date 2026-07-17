@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 
 import frappe
+from frappe.utils import cint
 
 SETTINGS = "Jarvis Settings"
 FIELD = "installed_apps_synced"
@@ -49,7 +50,7 @@ def after_migrate() -> None:
 			return
 		if current == synced:
 			return
-		_enqueue_resync(synced, current)
+		_enqueue_resync(synced, current, pool=_pool_active())
 	except Exception:
 		frappe.log_error(
 			title="installed-apps resync check failed",
@@ -99,28 +100,53 @@ def _admin_configured() -> bool:
 		return False
 
 
-def _enqueue_resync(synced: list[str], current: list[str]) -> None:
-	"""Ride the existing creds-restart machinery verbatim: same job id as a
-	real restart so close-together triggers coalesce, same lock, same
-	convergence handling. The worker re-reads Settings and sends the LIVE
-	installed_apps, so admin lands the fresh list even if more changes."""
+def _pool_active() -> bool:
+	"""True when the tenant runs the LLM pool (proxy) config. The resync MUST
+	take the pool leg then: the single-model restart would re-render
+	openclaw.json in direct mode and knock the container off Bifrost pool
+	routing. Unreadable reads as False - the single-model leg is the one that
+	always exists."""
+	try:
+		return bool(cint(frappe.db.get_single_value(SETTINGS, "proxy_active")))
+	except Exception:
+		return False
+
+
+def _enqueue_resync(synced: list[str], current: list[str], pool: bool) -> None:
+	"""Ride the existing sync machinery verbatim - the POOL leg for
+	proxy_active tenants (payload carries installed_apps; admin persists +
+	pool-renders, preserving Bifrost routing), the single-model creds-restart
+	leg otherwise. Same job ids as the real ops so close-together triggers
+	coalesce; the workers re-read Settings at run time, so admin lands the
+	LIVE list even if it changes again before the job runs."""
 	from jarvis.jarvis.doctype.jarvis_settings.jarvis_settings import (
 		ADMIN_SYNC_RQ_TIMEOUT_S,
 	)
 
 	frappe.logger("jarvis.installed_apps").info(
-		"installed_apps changed %s -> %s; enqueueing creds resync",
-		synced, current,
+		"installed_apps changed %s -> %s; enqueueing %s resync",
+		synced, current, "pool" if pool else "creds-restart",
 	)
 	run_inline = bool(frappe.flags.in_test or frappe.flags.run_admin_sync_inline)
-	frappe.enqueue(
-		"jarvis.jarvis.doctype.jarvis_settings.jarvis_settings"
-		"._enqueued_sync_via_admin",
-		queue="long",
-		timeout=ADMIN_SYNC_RQ_TIMEOUT_S,
-		enqueue_after_commit=not run_inline,
-		now=run_inline,
-		job_id="jarvis_settings_sync:restart",
-		deduplicate=True,
-		action="restart",
-	)
+	common = {
+		"queue": "long",
+		"timeout": ADMIN_SYNC_RQ_TIMEOUT_S,
+		"enqueue_after_commit": not run_inline,
+		"now": run_inline,
+		"deduplicate": True,
+	}
+	if pool:
+		frappe.enqueue(
+			"jarvis.jarvis.doctype.jarvis_settings.jarvis_settings"
+			"._enqueued_sync_via_admin_pool",
+			job_id="jarvis_settings_sync:pool",
+			**common,
+		)
+	else:
+		frappe.enqueue(
+			"jarvis.jarvis.doctype.jarvis_settings.jarvis_settings"
+			"._enqueued_sync_via_admin",
+			job_id="jarvis_settings_sync:restart",
+			action="restart",
+			**common,
+		)

@@ -28,10 +28,12 @@ class TestInstalledAppsSync(FrappeTestCase):
     def setUp(self):
         frappe.set_user("Administrator")
         _clear_snapshot()
-        # Deterministic environment: managed bench, admin configured.
+        # Deterministic environment: managed bench, admin configured,
+        # single-model mode (pool tests override _pool_active locally).
         self._patches = [
             patch("jarvis.selfhost.is_self_hosted", return_value=False),
             patch.object(ias, "_admin_configured", return_value=True),
+            patch.object(ias, "_pool_active", return_value=False),
         ]
         for p in self._patches:
             p.start()
@@ -67,9 +69,44 @@ class TestInstalledAppsSync(FrappeTestCase):
         self.assertEqual(kwargs["job_id"], "jarvis_settings_sync:restart")
         self.assertTrue(kwargs["deduplicate"])
         self.assertIn("_enqueued_sync_via_admin", enq.call_args.args[0])
+        self.assertNotIn("_pool", enq.call_args.args[0])
         # Snapshot must stay STALE until the sync actually succeeds - a
         # premature stamp would silence the gap forever on a failed send.
         self.assertEqual(ias._synced_apps(), stale)
+
+    def test_pool_tenant_takes_pool_leg(self):
+        """proxy_active tenants MUST resync through the pool path - the
+        single-model restart would re-render openclaw.json in direct mode
+        and knock the container off Bifrost pool routing."""
+        stale = sorted(frappe.get_installed_apps())[:-1]
+        _set_snapshot(stale)
+        with patch.object(ias, "_pool_active", return_value=True), \
+                patch("frappe.enqueue") as enq:
+            ias.after_migrate()
+        enq.assert_called_once()
+        self.assertIn("_enqueued_sync_via_admin_pool", enq.call_args.args[0])
+        kwargs = enq.call_args.kwargs
+        self.assertEqual(kwargs["job_id"], "jarvis_settings_sync:pool")
+        self.assertNotIn("action", kwargs)
+        self.assertEqual(ias._synced_apps(), stale)  # stale until success
+
+    def test_pool_push_stamps_snapshot_only_on_admin_marker(self):
+        """The pool payload carries installed_apps, but only a NEW admin
+        persists it (echoing installed_apps_persisted). Stamping against an
+        old admin would silence the resync while the signal is still stale."""
+        from jarvis.jarvis.doctype.jarvis_settings import jarvis_settings as js
+
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   return_value={"result": "ok", "installed_apps_persisted": True}), \
+             patch("jarvis.installed_apps_sync.record_synced_snapshot") as stamp:
+            js._post_pool_with_retry({}, {}, {})
+        stamp.assert_called_once()
+
+        with patch("jarvis.admin_client.post_update_llm_pool",
+                   return_value={"result": "ok"}), \
+             patch("jarvis.installed_apps_sync.record_synced_snapshot") as stamp:
+            js._post_pool_with_retry({}, {}, {})
+        stamp.assert_not_called()
 
     def test_self_hosted_skips(self):
         _set_snapshot(["frappe"])  # would otherwise trigger

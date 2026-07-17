@@ -1022,9 +1022,18 @@ def _post_pool_with_retry(spec, api_keys, oauth_blobs):
     last = None
     for attempt in range(_POOL_SYNC_RETRIES):
         try:
-            return admin_client.post_update_llm_pool(
+            result = admin_client.post_update_llm_pool(
                 spec=spec, api_keys=api_keys, oauth_blobs=oauth_blobs,
             )
+            # The pool payload carries installed_apps. Stamp the resync
+            # snapshot ONLY when the admin echoes that it persisted the list
+            # (installed_apps_persisted) - an older admin ignores the field,
+            # and stamping against it would silence the migrate-time resync
+            # while the gating signal is still stale.
+            if isinstance(result, dict) and result.get("installed_apps_persisted"):
+                from jarvis.installed_apps_sync import record_synced_snapshot
+                record_synced_snapshot()
+            return result
         except admin_client.AdminUnreachableError as e:
             last = e
             _frappe.logger().warning(
