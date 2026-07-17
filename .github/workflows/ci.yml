@@ -19,12 +19,12 @@ on:
   workflow_dispatch:
   pull_request:
   push:
-    branches: [main]
+    branches: [develop]
 
 concurrency:
   group: ci-${{ github.ref }}
-  # Never auto-cancel a main run (cancelled reads as neutral, not failed → hides regressions).
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  # Never auto-cancel a develop run (cancelled reads as neutral, not failed → hides regressions).
+  cancel-in-progress: ${{ github.ref != 'refs/heads/develop' }}
 
 permissions:
   contents: read
