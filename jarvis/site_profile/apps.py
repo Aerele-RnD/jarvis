@@ -78,6 +78,24 @@ def custom_module_names() -> set[str]:
 		return set()
 
 
+def known_module_names() -> set[str]:
+	"""Module Def names belonging to KNOWN (core) apps - the reverse mapping:
+	a Custom Field row stamped with one of these modules is app-shipped fixture
+	schema, not the customer's customization, even when its
+	is_system_generated flag predates that column. Empty on failure (then only
+	the is_system_generated filter applies - fail toward over-reporting)."""
+	try:
+		return set(
+			frappe.get_all(
+				"Module Def",
+				filters={"app_name": ("in", sorted(known_apps()))},
+				pluck="name",
+			)
+		)
+	except Exception:
+		return set()
+
+
 def is_custom_doctype_module(module: str | None) -> bool:
 	"""True iff ``module`` belongs to a custom app. Never raises."""
 	if not module:

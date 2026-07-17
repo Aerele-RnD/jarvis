@@ -108,8 +108,8 @@ def _compose(apps: list[str], shown: int, counts_part: str) -> str:
 
 def _counts(modules: set[str]) -> tuple[int, int, int]:
 	"""(custom doctypes, core doctypes carrying custom fields, active
-	workflows) - the same two-union + is_system_generated rules as
-	site_profile/collect.py, reduced to counts."""
+	workflows) - the same two-union + is_system_generated + known-module
+	rules as site_profile/collect.py, reduced to counts."""
 	names = set(frappe.get_all("DocType", filters={"custom": 1}, pluck="name"))
 	if modules:
 		names |= set(
@@ -117,12 +117,16 @@ def _counts(modules: set[str]) -> tuple[int, int, int]:
 				"DocType", filters={"module": ("in", list(modules))}, pluck="name"
 			)
 		)
+	known_modules = sp_apps.known_module_names()
 	cf_doctypes = {
-		dt
-		for dt in frappe.get_all(
-			"Custom Field", filters={"is_system_generated": 0}, pluck="dt"
+		r["dt"]
+		for r in frappe.get_all(
+			"Custom Field",
+			filters={"is_system_generated": 0},
+			fields=["dt", "module"],
 		)
-		if dt and dt not in names
+		if r.get("dt") and r["dt"] not in names
+		and not (r.get("module") and r["module"] in known_modules)
 	}
 	n_workflows = frappe.db.count("Workflow", {"is_active": 1})
 	return len(names), len(cf_doctypes), cint(n_workflows)

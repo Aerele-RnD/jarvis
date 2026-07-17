@@ -99,3 +99,9 @@ class TestSiteProfileApps(FrappeTestCase):
         ):
             self.assertEqual(sp_apps.custom_module_names(), set())
             self.assertFalse(sp_apps.is_custom_doctype_module(FAKE_MODULE))
+
+    def test_known_module_names_maps_core_apps(self):
+        """The reverse mapping: core-app modules in, custom-app modules out."""
+        known = sp_apps.known_module_names()
+        self.assertIn("Accounts", known)  # erpnext module, always on this bench
+        self.assertNotIn(FAKE_MODULE, known)

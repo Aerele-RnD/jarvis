@@ -76,7 +76,13 @@ def _module_map(custom_apps: list[str]) -> dict[str, str]:
 def _custom_doctypes(modules: dict[str, str]) -> list[dict]:
 	"""Two unions: UI-authored (custom=1) plus doctypes whose module belongs to
 	a custom app - app-shipped doctypes have custom=0, so the naive custom=1
-	filter misses exactly the case that matters most."""
+	filter misses exactly the case that matters most.
+
+	Known blind spot (documented, not fixed): a FORKED core app (still named
+	e.g. "erpnext") shipping custom=0 doctypes under its own modules is
+	invisible to both unions - the flag is off and the module maps to a known
+	app. The supported pattern is shipping customizations in a separate app;
+	fork-embedded schema surfaces only through live get_schema/get_list."""
 	fields = ["name", "module", "istable", "issingle", "is_submittable"]
 	seen: dict[str, dict] = {}
 	filter_sets = [{"custom": 1}]
@@ -97,12 +103,15 @@ def _core_customizations(custom_dt_names: set[str]) -> list[dict]:
 	"""Custom Fields + Property Setters per CORE doctype. Excludes
 	is_system_generated rows (app-shipped fixture fields - e.g. a compliance
 	app's fields on Customer - are the app's own schema, not this customer's
-	customization) and rows on custom doctypes (their fields are just their
-	schema - get_schema territory)."""
+	customization), rows whose ``module`` maps to a known app (fixture exports
+	that predate or skip the is_system_generated flag - same lineage rule as
+	doctype discovery, in reverse), and rows on custom doctypes (their fields
+	are just their schema - get_schema territory)."""
+	known_modules = sp_apps.known_module_names()
 	cf_rows = frappe.get_all(
 		"Custom Field",
 		filters={"is_system_generated": 0},
-		fields=["dt", "fieldname", "reqd", "in_list_view", "hidden", "fieldtype"],
+		fields=["dt", "fieldname", "reqd", "in_list_view", "hidden", "fieldtype", "module"],
 		order_by="dt asc, idx asc",
 		limit_page_length=0,
 	)
@@ -110,6 +119,8 @@ def _core_customizations(custom_dt_names: set[str]) -> list[dict]:
 	for row in cf_rows:
 		dt = row.get("dt")
 		if not dt or dt in custom_dt_names:
+			continue
+		if row.get("module") and row["module"] in known_modules:
 			continue
 		entry = by_dt.setdefault(
 			dt, {"doctype": dt, "custom_field_count": 0, "notable_fields": [],

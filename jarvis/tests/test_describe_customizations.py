@@ -298,6 +298,41 @@ class TestDescribeCustomizations(_CustDiscFixtures):
         self.assertIsNotNone(todo)
         self.assertIn(CF_TODO, todo["notable_fields"])
 
+    def test_known_module_fixture_fields_excluded(self):
+        """A Custom Field stamped with a KNOWN app's module is app-shipped
+        fixture schema even when is_system_generated=0 (older exports predate
+        the flag) - it must not count as a customization, in the collector or
+        in the clause's counts."""
+        from frappe.custom.doctype.custom_field.custom_field import create_custom_field
+        from jarvis.chat.customizations_clause import _counts
+
+        fieldname = "custdisc_s2_fixture_probe"
+        stale = frappe.db.get_value("Custom Field", {"dt": "Note", "fieldname": fieldname})
+        if stale:
+            frappe.delete_doc("Custom Field", stale, force=True, ignore_permissions=True)
+        create_custom_field(
+            "Note",
+            {"fieldname": fieldname, "label": "Fixture Probe", "fieldtype": "Data",
+             "module": "Desk"},  # frappe's module -> known-app lineage
+            is_system_generated=False,
+        )
+        try:
+            data = collect_profile()
+            cf_dts = {
+                e["doctype"]
+                for e in data["core_customizations"]
+                if e["custom_field_count"]  # PS-only entries aren't CF-counted
+            }
+            self.assertNotIn("Note", cf_dts)
+            from jarvis.site_profile import apps as sp_apps
+            _, n_cf_doctypes, _ = _counts(sp_apps.custom_module_names())
+            self.assertEqual(n_cf_doctypes, len(cf_dts))  # clause == collector
+        finally:
+            name = frappe.db.get_value(
+                "Custom Field", {"dt": "Note", "fieldname": fieldname})
+            if name:
+                frappe.delete_doc("Custom Field", name, force=True, ignore_permissions=True)
+
 
 class TestToolTelemetry(_CustDiscFixtures):
     """The stage-4 emitter: correct JSON shape, fast no-op for untracked
