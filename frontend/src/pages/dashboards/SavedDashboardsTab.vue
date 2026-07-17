@@ -81,11 +81,11 @@ const SCOPE_OPTIONS = [
 	{ label: "Shared with a role", value: "Role" },
 	{ label: "Private", value: "User" },
 ]
-// dashboard_type is derived server-side from the html shape.
+// dashboard_type is derived server-side: sources present -> Connected.
 const TYPE_OPTIONS = [
 	{ label: "All", value: "" },
-	{ label: "Dashboard", value: "Dashboard" },
-	{ label: "Slides", value: "Slides" },
+	{ label: "Static", value: "Static" },
+	{ label: "Connected", value: "Connected" },
 ]
 
 const columns = [

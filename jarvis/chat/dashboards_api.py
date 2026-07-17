@@ -136,6 +136,13 @@ def get_dashboards_caps() -> dict:
 	chats have no gateway canvas route)."""
 	from jarvis import selfhost
 
+	stt_enabled = False
+	try:
+		from jarvis.chat import voice
+
+		stt_enabled = bool(voice.stt_config())
+	except Exception:
+		stt_enabled = False
 	return {
 		"ok": True,
 		"data": {
@@ -145,6 +152,7 @@ def get_dashboards_caps() -> dict:
 			"max_html_chars": _MAX_HTML_CHARS,
 			"max_rows": DASHBOARD_MAX_ROWS,
 			"canvas_available": not selfhost.is_self_hosted(),
+			"stt_enabled": stt_enabled,
 		},
 	}
 
