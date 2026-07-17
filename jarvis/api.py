@@ -1,9 +1,10 @@
 import json
+import time
 
 import frappe
 from frappe.utils import strip_html
 
-from jarvis import audit
+from jarvis import audit, telemetry
 from jarvis._http import validate_bearer as _validate_bearer  # noqa: F401 (kept for callers in mcp.py)
 from jarvis._plugin_auth import PluginAuthError, validate_plugin_request
 from jarvis._session import impersonate
@@ -1044,8 +1045,8 @@ def _run_tool(tool: str, raw_args: dict | str | None,
 		# returns it verbatim, so the card + expiry ride the event, the record, and
 		# every resync identically (never rebuilt -> cannot diverge). build_card
 		# returns None for uncovered shapes; the SPA falls back to the raw preview.
-		import time
-
+		# time comes from the module import - a local import here would shadow
+		# it for ALL of _run_tool and break the read path's perf_counter.
 		from jarvis.chat import confirm_card
 		if isinstance(preview, dict):
 			preview["card"] = confirm_card.build_card(tool, args, preview)
@@ -1086,7 +1087,14 @@ def _run_tool(tool: str, raw_args: dict | str | None,
 			"status": "pending_confirmation", "preview": model_preview, "tool": tool,
 		}}
 
-	return _dispatch_and_wrap(tool, args, is_write)
+	# Read-path telemetry; fast no-op for untracked tools, never raises.
+	t0 = time.perf_counter()
+	result = _dispatch_and_wrap(tool, args, is_write)
+	telemetry.record_tool(
+		tool=tool, args=args, conversation=conversation,
+		duration_ms=int((time.perf_counter() - t0) * 1000), result=result,
+	)
+	return result
 
 
 # _error lives in jarvis/_responses.py - single source of truth for the

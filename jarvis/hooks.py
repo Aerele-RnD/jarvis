@@ -208,6 +208,8 @@ after_migrate = [
 	# Wiki v2: seed the Knowledge Wiki Manager role (idempotent; best-effort).
 	# Migrate follows a fresh install, so this covers both.
 	"jarvis.learning.roles.after_migrate",
+	# Customizations clause: installed apps only change via migrate.
+	"jarvis.chat.customizations_clause.after_migrate",
 	# Re-send installed_apps to admin when the app set changed (the fleet
 	# gates skills/tool-denies off the admin-persisted list).
 	"jarvis.installed_apps_sync.after_migrate",
@@ -331,8 +333,14 @@ require_type_annotated_api_methods = True
 # JS, which includes enabled Form Client Scripts - a newly-added button must
 # surface without waiting out the TTL.
 _CLEAR_SCHEMA_CACHE = "jarvis.tools.get_schema.clear_schema_cache"
+# The customizations clause counts the same schema doctypes, so it rides
+# the same events (Frappe runs every handler in a list value).
+_CLEAR_CUSTOMIZATIONS_CLAUSE = "jarvis.chat.customizations_clause.clear_clause_cache"
 doc_events = {
-	dt: {"on_update": _CLEAR_SCHEMA_CACHE, "on_trash": _CLEAR_SCHEMA_CACHE}
+	dt: {
+		"on_update": [_CLEAR_SCHEMA_CACHE, _CLEAR_CUSTOMIZATIONS_CLAUSE],
+		"on_trash": [_CLEAR_SCHEMA_CACHE, _CLEAR_CUSTOMIZATIONS_CLAUSE],
+	}
 	for dt in ("DocType", "Custom Field", "Property Setter", "Workflow", "Client Script")
 }
 
