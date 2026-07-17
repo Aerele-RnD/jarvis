@@ -3,10 +3,11 @@
 The collector is permission-free; THIS layer drops every item attributable to
 a doctype the caller cannot read - custom doctypes, custom-field groups,
 workflows, reports, print formats, script buckets alike. The data shape holds
-no precomputed totals: render derives every count from list lengths AFTER this
-filter, so "counts recomputed post-fence" holds by construction (a clerk's
-index says 12 custom doctypes, never "12 of 31" - a pre-filter count would
-leak existence).
+no precomputed CROSS-DOCTYPE totals: render derives every section count from
+list lengths AFTER this filter, so "counts recomputed post-fence" holds by
+construction (a clerk's index says 12 custom doctypes, never "12 of 31" - a
+pre-filter count would leak existence). The per-doctype counts inside an item
+(custom_field_count etc.) describe a doctype the user can already read.
 
 App and module names pass unfenced: existence at app granularity is the
 accepted coarse leak, matching the [Context:] clause.
