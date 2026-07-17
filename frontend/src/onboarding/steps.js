@@ -47,7 +47,9 @@ export function isOnboardComplete(readyResp) {
 //   {kind: "stale"}                 - unrecognized shape: ask for a refresh
 export function verifyPollAction(d) {
 	if (!d || d.pending_verification) return { kind: "wait" }
-	if (d.razorpay_order_id) return { kind: "checkout" }
+	// checkout covers both Checkout modes: one-shot order (razorpay_order_id)
+	// and autopay-trial mandate auth (razorpay_subscription_id).
+	if (d.razorpay_order_id || d.razorpay_subscription_id) return { kind: "checkout" }
 	if (d.subscription_status === "Active") return { kind: "complete" }
 	if (d.subscription_status) return { kind: "halted", status: String(d.subscription_status) }
 	return { kind: "stale" }
