@@ -140,7 +140,14 @@ def clear_clause_cache(doc=None, method=None) -> None:
 	"""doc_event handler (hooks.py, same events as clear_schema_cache) +
 	manual invalidation hook. Never raises."""
 	try:
-		frappe.cache().delete_value(_CLAUSE_CACHE_KEY)
+		cache = frappe.cache()
+		cache.delete_value(_CLAUSE_CACHE_KEY)
+		# The telemetry custom-doctype set derives from the same schema
+		# events, so it invalidates here too (lazy import: telemetry is
+		# optional to this module's core job).
+		from jarvis.telemetry import DOCTYPE_SET_CACHE_KEY
+
+		cache.delete_value(DOCTYPE_SET_CACHE_KEY)
 	except Exception:
 		pass
 

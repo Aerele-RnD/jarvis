@@ -38,7 +38,11 @@ def _make_doctype(name: str, module: str, permissions: list[dict]) -> None:
     }).insert(ignore_permissions=True)
 
 
-class TestDescribeCustomizations(FrappeTestCase):
+class _CustDiscFixtures(FrappeTestCase):
+    """Shared fixture base: both test classes below need the doctype/module
+    fixtures, and unittest runs each class's setUpClass/tearDownClass
+    independently - fixtures created in one class are gone before the next."""
+
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -120,6 +124,8 @@ class TestDescribeCustomizations(FrappeTestCase):
         frappe.clear_cache(doctype="Note")
         super().tearDownClass()
 
+
+class TestDescribeCustomizations(_CustDiscFixtures):
     def setUp(self):
         frappe.set_user("Administrator")
 
@@ -291,3 +297,83 @@ class TestDescribeCustomizations(FrappeTestCase):
             (e for e in data["core_customizations"] if e["doctype"] == "ToDo"), None)
         self.assertIsNotNone(todo)
         self.assertIn(CF_TODO, todo["notable_fields"])
+
+
+class TestToolTelemetry(_CustDiscFixtures):
+    """The stage-4 emitter: correct JSON shape, fast no-op for untracked
+    tools, custom-target flagging, turn-flag lifecycle, and the never-raise
+    contract (a telemetry bug must never break a tool call)."""
+
+    def setUp(self):
+        frappe.set_user("Administrator")
+        from jarvis import telemetry
+        frappe.cache().delete_value(telemetry.DOCTYPE_SET_CACHE_KEY)
+
+    def _emitted(self, telemetry, patcher_target="jarvis.telemetry._emit"):
+        return patch(patcher_target)
+
+    def test_describe_customizations_always_emits(self):
+        from jarvis import telemetry
+        with patch("jarvis.telemetry._emit") as emit:
+            telemetry.record_tool(
+                tool="describe_customizations", args={}, conversation="c1",
+                duration_ms=12, result={"ok": True, "data": {"markdown": "x"}})
+        emit.assert_called_once()
+        entry = emit.call_args.args[0]
+        self.assertEqual(entry["kind"], "tool")
+        self.assertEqual(entry["tool"], "describe_customizations")
+        self.assertEqual(entry["conversation"], "c1")
+        self.assertFalse(entry["custom_target"])
+        self.assertGreater(entry["result_chars"], 0)
+        self.assertNotIn("Administrator", str(entry))  # user is hashed
+
+    def test_untracked_tool_is_noop(self):
+        from jarvis import telemetry
+        with patch("jarvis.telemetry._emit") as emit:
+            telemetry.record_tool(
+                tool="get_doc", args={"doctype": "ToDo"}, conversation="c1",
+                duration_ms=1, result={})
+        emit.assert_not_called()
+
+    def test_custom_target_flags_and_marks_turn(self):
+        from jarvis import telemetry
+        with patch("jarvis.telemetry.custom_doctype_set",
+                   return_value=frozenset({DT_OPEN})), \
+             patch("jarvis.telemetry._emit") as emit:
+            telemetry.record_tool(
+                tool="get_schema", args={"doctype": DT_OPEN}, conversation="c-t",
+                duration_ms=3, result={})
+            telemetry.record_tool(
+                tool="get_schema", args={"doctype": "Sales Invoice"},
+                conversation="c-t", duration_ms=3, result={})
+        emit.assert_called_once()  # only the custom target emitted
+        self.assertTrue(emit.call_args.args[0]["custom_target"])
+        # The turn flag was set for the conversation, and emit_turn consumes it.
+        with patch("jarvis.telemetry._emit") as emit_turn:
+            telemetry.emit_turn("c-t", "r1", 500)
+            telemetry.emit_turn("c-t", "r2", 500)
+        first, second = [c.args[0] for c in emit_turn.call_args_list]
+        self.assertTrue(first["touched_custom"])
+        self.assertFalse(second["touched_custom"])  # read-and-clear
+
+    def test_emitter_failure_never_raises(self):
+        from jarvis import telemetry
+        with patch("jarvis.telemetry._emit", side_effect=RuntimeError("boom")):
+            telemetry.record_tool(
+                tool="describe_customizations", args={}, conversation=None,
+                duration_ms=1, result={})
+            telemetry.emit_turn("c-x", "r1", 1)  # must not raise either
+
+    def test_doctype_set_uses_two_unions_and_caches(self):
+        from jarvis import telemetry
+        with patch(_APPS_SEAM, return_value=_FAKE_INSTALLED):
+            names = telemetry.custom_doctype_set()
+        self.assertIn(DT_OPEN, names)
+        self.assertIn(DT_SHIPPED, names)  # custom=0, found via module union
+        self.assertIsNotNone(
+            frappe.cache().get_value(telemetry.DOCTYPE_SET_CACHE_KEY))
+        # clear_clause_cache invalidates this set too (same schema events).
+        from jarvis.chat.customizations_clause import clear_clause_cache
+        clear_clause_cache()
+        self.assertIsNone(
+            frappe.cache().get_value(telemetry.DOCTYPE_SET_CACHE_KEY))

@@ -22,6 +22,20 @@ except ImportError:  # pragma: no cover - fallback when `jarvis` (frappe app) wo
 	apply_scope_match = _module.apply_scope_match
 	render_profile_md = _module.render_profile_md
 
+try:
+	from jarvis.site_profile.analyze import compute, parse_lines, percentile
+except ImportError:  # pragma: no cover - fallback when `jarvis` (frappe app) won't import
+	import importlib.util
+	import pathlib
+
+	_analyze_path = pathlib.Path(__file__).resolve().parents[1] / "site_profile" / "analyze.py"
+	_analyze_spec = importlib.util.spec_from_file_location("jarvis_site_profile_analyze", _analyze_path)
+	_analyze_module = importlib.util.module_from_spec(_analyze_spec)
+	_analyze_spec.loader.exec_module(_analyze_module)
+	compute = _analyze_module.compute
+	parse_lines = _analyze_module.parse_lines
+	percentile = _analyze_module.percentile
+
 
 def _mk(
 	n_doctypes,
@@ -290,6 +304,98 @@ class TestSiteProfileRender(unittest.TestCase):
 		doc = render_profile_md(data)
 		self.assertIn("### Other customizations - 1 doctypes", doc)
 		self.assertIn("- Ledger Tweak", doc)
+
+
+class TestAnalyzeTelemetry(unittest.TestCase):
+	def test_parse_lines_raw_prefixed_garbage_and_kindless_are_handled_in_order(self):
+		lines = [
+			'{"kind": "tool", "tool": "get_schema", "conversation": "c1"}',
+			'2026-07-17 09:00:00 INFO jarvis.tool_telemetry {"kind": "tool", "tool": "describe_customizations", "conversation": "c1"}',
+			"not json at all, no brace",
+			'{"no_kind_field": true}',
+			'{"kind": "turn", "conversation": "c1", "touched_custom": false}',
+		]
+		records = parse_lines(lines)
+		self.assertEqual(len(records), 3)
+		self.assertEqual(records[0]["tool"], "get_schema")
+		self.assertEqual(records[1]["tool"], "describe_customizations")
+		self.assertEqual(records[2]["kind"], "turn")
+
+	def test_activation_conv_a_activated_conv_b_not_conv_c_excluded(self):
+		records = [
+			# Conv A: describe_customizations arrives before the first custom_target line.
+			{"kind": "tool", "conversation": "A", "tool": "describe_customizations", "custom_target": False},
+			{"kind": "tool", "conversation": "A", "tool": "get_schema", "custom_target": True},
+			# Conv B: custom_target line with no describe_customizations call at all.
+			{"kind": "tool", "conversation": "B", "tool": "get_schema", "custom_target": True},
+			# Conv C: never touches a custom doctype - excluded from the denominator.
+			{"kind": "tool", "conversation": "C", "tool": "describe_customizations", "custom_target": False},
+			{"kind": "tool", "conversation": "C", "tool": "get_schema", "custom_target": False},
+		]
+		result = compute(records)
+		self.assertEqual(result["conversations_touching_custom"], 2)
+		self.assertEqual(result["activation_rate"], 0.5)
+
+	def test_activation_describe_after_custom_target_does_not_count(self):
+		records = [
+			{"kind": "tool", "conversation": "B", "tool": "get_schema", "custom_target": True},
+			{"kind": "tool", "conversation": "B", "tool": "describe_customizations", "custom_target": False},
+		]
+		result = compute(records)
+		self.assertEqual(result["conversations_touching_custom"], 1)
+		self.assertEqual(result["activation_rate"], 0.0)
+
+	def test_activation_rate_none_when_no_conversation_touches_custom(self):
+		records = [
+			{"kind": "tool", "conversation": "C", "tool": "describe_customizations", "custom_target": False},
+			{"kind": "tool", "conversation": "C", "tool": "get_schema", "custom_target": False},
+		]
+		result = compute(records)
+		self.assertEqual(result["conversations_touching_custom"], 0)
+		self.assertIsNone(result["activation_rate"])
+
+	def test_percentile_nearest_rank_spot_checks_and_empty(self):
+		values = list(range(1, 11))
+		self.assertEqual(percentile(values, 50), 5)
+		self.assertEqual(percentile(values, 95), 10)
+		self.assertIsNone(percentile([], 50))
+
+	def test_turn_segmentation_counts_and_duration_percentiles(self):
+		records = [
+			{"kind": "turn", "conversation": "A", "touched_custom": True, "duration_ms": 100},
+			{"kind": "turn", "conversation": "A", "touched_custom": True, "duration_ms": 200},
+			{"kind": "turn", "conversation": "B", "touched_custom": False, "duration_ms": 10},
+			{"kind": "turn", "conversation": "B", "touched_custom": False, "duration_ms": 20},
+			{"kind": "turn", "conversation": "B", "touched_custom": False, "duration_ms": 30},
+		]
+		result = compute(records)
+		self.assertEqual(result["turns"], {"custom": 2, "non_custom": 3})
+		self.assertEqual(
+			result["turn_duration_ms"]["custom"],
+			{"p50": percentile([100, 200], 50), "p95": percentile([100, 200], 95)},
+		)
+		self.assertEqual(
+			result["turn_duration_ms"]["non_custom"],
+			{"p50": percentile([10, 20, 30], 50), "p95": percentile([10, 20, 30], 95)},
+		)
+
+	def test_compute_empty_records_returns_full_shape_no_keyerror(self):
+		result = compute([])
+		self.assertEqual(
+			result,
+			{
+				"conversations_touching_custom": 0,
+				"activation_rate": None,
+				"tool_calls": 0,
+				"tool_duration_ms": {"p50": None, "p95": None},
+				"tool_result_chars": {"p50": None, "p95": None},
+				"turns": {"custom": 0, "non_custom": 0},
+				"turn_duration_ms": {
+					"custom": {"p50": None, "p95": None},
+					"non_custom": {"p50": None, "p95": None},
+				},
+			},
+		)
 
 
 if __name__ == "__main__":

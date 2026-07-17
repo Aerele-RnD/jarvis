@@ -1072,6 +1072,16 @@ def handle_chat_send(payload: dict) -> None:
 		stream_stats["first_delta_ms"], stream_stats["pre_reply_tool_calls"],
 		int((time.monotonic() - t_handle0) * 1000),
 	)
+	# Customization-discovery telemetry (stage 4): one JSON line per turn so
+	# analyze.py can segment latency by whether the turn touched a custom
+	# doctype. Best-effort - never affects the completed turn.
+	try:
+		from jarvis import telemetry
+
+		telemetry.emit_turn(
+			conversation_id, run_id, int((time.monotonic() - t_handle0) * 1000))
+	except Exception:
+		pass
 
 	# Auto-title (managed mode): the first substantive turn of a still-unnamed
 	# conversation gets a concise, LLM-summarised title, not the raw first
