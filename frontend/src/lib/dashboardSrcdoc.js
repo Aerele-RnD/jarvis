@@ -65,6 +65,13 @@ export const RUNTIME_JS = `(function () {
 				if (spec == null && s.args && typeof s.args === "object") {
 					spec = s.args.spec && typeof s.args.spec === "object" ? s.args.spec : s.args;
 				}
+				// double-wrap drift ({"spec":{"spec":{...}}}): unwrap lone spec keys
+				while (
+					spec && typeof spec === "object" && !Array.isArray(spec) &&
+					Object.keys(spec).length === 1 && spec.spec && typeof spec.spec === "object"
+				) {
+					spec = spec.spec;
+				}
 				sources[name] = { tool: tool, spec: spec };
 			}
 		} catch (e) {
@@ -337,6 +344,17 @@ export function parseSourcesBlock(html) {
 				let spec = s.spec
 				if (spec == null && s.args && typeof s.args === "object") {
 					spec = s.args.spec && typeof s.args.spec === "object" ? s.args.spec : s.args
+				}
+				// double-wrap drift ({"spec":{"spec":{...}}}): unwrap lone spec keys
+				while (
+					spec &&
+					typeof spec === "object" &&
+					!Array.isArray(spec) &&
+					Object.keys(spec).length === 1 &&
+					spec.spec &&
+					typeof spec.spec === "object"
+				) {
+					spec = spec.spec
 				}
 				return { source_name, tool, spec }
 			})

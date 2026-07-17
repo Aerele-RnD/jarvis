@@ -304,6 +304,13 @@ def _normalize_source_rows(sources) -> list[dict]:
 			args = s.get("args")
 			if isinstance(args, dict):
 				spec = args.get("spec") if isinstance(args.get("spec"), dict) else args
+		# double-wrap drift ({"spec": {"spec": {...}}}): unwrap lone spec keys
+		while (
+			isinstance(spec, dict)
+			and len(spec) == 1
+			and isinstance(spec.get("spec"), dict)
+		):
+			spec = spec["spec"]
 		if isinstance(spec, (dict, list)):
 			spec = frappe.as_json(spec)
 		rows.append({

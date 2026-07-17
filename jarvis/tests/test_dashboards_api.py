@@ -653,6 +653,20 @@ class TestWorkspaceSearchAndContext(_DashboardsApiTestCase):
 			self.assertTrue(r4["ok"])
 			self.assertNotIn("data_mode", disp.call_args[0][0]["context"])
 
+	def test_save_unwraps_double_nested_spec(self):
+		"""The LLM sometimes wraps the tool's kwargs shape into spec
+		({"spec": {"spec": {...}}}); save folds it to the bare argument value."""
+		frappe.set_user(PLAIN_A)
+		data = self._save({
+			"dashboard_title": f"nest-{frappe.generate_hash(length=8)}",
+			"html": "<p>x</p>",
+			"sources": [{
+				"source_name": "todos", "tool": "get_list",
+				"spec": {"spec": dict(_GET_LIST_SPEC)},
+			}],
+		})
+		self.assertEqual(frappe.parse_json(data["sources"][0]["spec"]), _GET_LIST_SPEC)
+
 	def test_theme_roundtrip_and_validation(self):
 		frappe.set_user(PLAIN_A)
 		data = self._save({

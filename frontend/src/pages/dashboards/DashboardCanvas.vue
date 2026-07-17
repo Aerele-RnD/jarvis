@@ -161,10 +161,13 @@ function dataPayload(data) {
 async function handleData(d) {
 	let reply
 	try {
+		// call_tool dispatches kwargs: query takes its DSL object under the
+		// `spec` kwarg; get_list/run_report take the object AS their kwargs.
+		const args = d.tool === "query" ? { spec: d.spec } : d.spec
 		const env =
 			props.mode === "view"
 				? await runDashboardSource(props.dashboard && props.dashboard.name, d.name)
-				: await callDashboardTool(d.tool, d.spec)
+				: await callDashboardTool(d.tool, args)
 		if (env && env.ok) {
 			reply = { ok: true, rows: dataPayload(env.data) }
 		} else {

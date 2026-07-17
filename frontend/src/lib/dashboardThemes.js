@@ -93,7 +93,7 @@ export const THEMES = {
 	},
 }
 
-export const DEFAULT_THEME = "insight"
+export const DEFAULT_THEME = "jarvis"
 
 export const THEME_OPTIONS = Object.values(THEMES).map((t) => ({
 	key: t.key,

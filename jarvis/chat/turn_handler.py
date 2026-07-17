@@ -1199,8 +1199,11 @@ def _prepend_doc_context(user_message: str, context) -> str:
 			"declared inside the HTML exactly as "
 			'<script type="application/json" id="jarvis-sources">{"sources":[{'
 			'"source_name":"<snake_case>","tool":"query|get_list|run_report",'
-			'"spec":{...}}]}</script> where spec is the SAME argument object the '
-			"matching jarvis__ tool takes (test it with that tool first); widgets "
+			'"spec":{...}}]}</script> where spec is the bare argument value - for '
+			'query the {"from":...} DSL object itself, for run_report '
+			'{"report_name":...,"filters":{...}}, for get_list {"doctype":...} - '
+			'never nested inside another "spec" or "args" key (test it with the '
+			"matching jarvis__ tool first); widgets "
 			'fetch with window.jarvis.data("<source_name>"). Style with the injected '
 			"--jd-* CSS variables (--jd-bg/-surface/-ink/-heading/-muted/-line/"
 			"-accent/-font) and the window.JARVIS_THEME.palette chart colors instead "

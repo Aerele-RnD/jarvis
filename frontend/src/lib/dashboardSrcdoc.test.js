@@ -153,3 +153,12 @@ test("buildSrcdoc: named theme injects vars + JARVIS_THEME and owns data-theme",
   assert.ok(legacy.includes('data-theme="dark"'))
   assert.ok(!legacy.includes("jarvis-theme"))
 })
+
+test("parseSourcesBlock: unwraps double-nested spec ({spec:{spec:{...}}})", () => {
+  const html =
+    '<script type="application/json" id="jarvis-sources">' +
+    '{"sources":[{"source_name":"m","tool":"query","spec":{"spec":{"from":"Sales Invoice"}}}]}' +
+    "</script>"
+  const sources = parseSourcesBlock(html)
+  assert.deepEqual(sources[0].spec, { from: "Sales Invoice" })
+})
