@@ -23,6 +23,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		"Moonshot (Kimi)":    { model: "kimi-k2.6",                         baseUrl: "https://api.moonshot.ai/v1" },
 		"xAI Grok":           { model: "grok-4.5",                          baseUrl: "https://api.x.ai/v1" },
 		"GLM / Z.ai":         { model: "glm-4.6",                           baseUrl: "https://api.z.ai/api/paas/v4" },
+		"GLM / Z.ai (Coding Plan)": { model: "glm-4.6",                     baseUrl: "https://api.z.ai/api/coding/paas/v4" },
 		"OpenRouter":         { model: "anthropic/claude-sonnet-4-6",       baseUrl: "https://openrouter.ai/api/v1" },
 		"Ollama (local)":     { model: "llama3",                            baseUrl: "http://host.docker.internal:11434/v1" },
 		"vLLM (local)":       { model: "",                                  baseUrl: "" },
@@ -36,7 +37,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	const PROVIDER_LABEL_BY_ID = {
 		anthropic: "Anthropic", openai: "OpenAI", google: "Google Gemini", mistral: "Mistral",
 		groq: "Groq", together: "Together AI", deepseek: "DeepSeek", moonshot: "Moonshot (Kimi)",
-		xai: "xAI Grok", zai: "GLM / Z.ai",
+		xai: "xAI Grok", zai: "GLM / Z.ai", zai_coding: "GLM / Z.ai (Coding Plan)",
 		openrouter: "OpenRouter", ollama: "Ollama (local)", vllm: "vLLM (local)", openai_compat: "OpenAI-Compatible",
 	};
 	function providerLabel(v) {
@@ -64,6 +65,7 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		"Moonshot (Kimi)":   ["kimi-k2.6"],
 		"xAI Grok":          ["grok-4.5", "grok-4.3", "grok-build-0.1"],
 		"GLM / Z.ai":        ["glm-4.6", "glm-4.7"],
+		"GLM / Z.ai (Coding Plan)": ["glm-4.6", "glm-4.7"],
 		"OpenRouter":        ["anthropic/claude-sonnet-4-6", "openai/gpt-5.5"],
 		"Ollama (local)":    ["qwen2.5:3b", "qwen2.5:0.5b", "llama3"],
 		"OpenAI-Compatible": ["claude-sonnet-4-6", "gpt-4o", "qwen2.5:3b", "llama3"],
@@ -137,6 +139,16 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 	// renders the loading placeholder. Punch-list "_SUBSCRIPTION_MODELS
 	// duplicated 4-5 times" from the 2026-06-16 cross-repo review.
 	let subscriptionModels = {};
+
+	// Providers whose approval screen hands back a BARE authorization code
+	// rather than redirecting to a callback URL. xAI Grok reaches this page:
+	// provOptions is built from subscriptionModels above, which carries every
+	// key of jarvis/_subscription_models.py including "xAI Grok". Telling that
+	// customer to copy the address bar sends them hunting for a URL that never
+	// appears. MUST match `code_only_paste` in jarvis/oauth/providers.py (that
+	// flag is what makes the backend accept a bare code; this only steers copy).
+	const CODE_ONLY_PASTE_PROVIDERS = ["xAI Grok"];
+	const isCodeOnlyPaste = (p) => CODE_ONLY_PASTE_PROVIDERS.indexOf(p) !== -1;
 	let defaultModels = {};
 	// Preset failover ladders (jarvis.onboarding.get_preset_catalog). Fetched in
 	// loadInitial alongside the pool config so the Preset tab is populated before
@@ -549,9 +561,11 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 					<code class="ja-url-text" id="ja-sub-url-text" title="${esc(ui.subAuthorizeUrl)}">${esc(ui.subAuthorizeUrl)}</code>
 					<button type="button" class="ja-btn ja-btn-ghost ja-btn-small" id="ja-sub-copy-url" title="Copy URL">Copy</button>
 				</div>
-				<p class="ja-sub"><strong>Step 2</strong> - After clicking Authorize, your browser will show a page saying <em>"This site can't be reached."</em> <strong>That's expected.</strong> Copy the URL from your browser's address bar (it'll start with <code>http://localhost:1455/auth/callback?code=…</code>) and paste it here:</p>
+				${isCodeOnlyPaste(ui.subProvider)
+					? `<p class="ja-sub"><strong>Step 2</strong> - After clicking Authorize, ${esc(ui.subProvider)} shows you an <strong>authorization code</strong>. Copy that code and paste it here:</p>`
+					: `<p class="ja-sub"><strong>Step 2</strong> - After clicking Authorize, your browser will show a page saying <em>"This site can't be reached."</em> <strong>That's expected.</strong> Copy the URL from your browser's address bar (it'll start with <code>http://localhost:1455/auth/callback?code=…</code>) and paste it here:</p>`}
 				<div class="ja-field">
-					<textarea class="ja-input" id="ja-sub-pasted-url" rows="3" placeholder="Paste the URL from the error page here"></textarea>
+					<textarea class="ja-input" id="ja-sub-pasted-url" rows="3" placeholder="${isCodeOnlyPaste(ui.subProvider) ? 'Paste the code shown after you approve' : 'Paste the URL from the error page here'}"></textarea>
 				</div>
 				<div class="ja-actions">
 					<button class="ja-btn ja-btn-ghost" id="ja-sub-cancel">Cancel</button>
@@ -816,7 +830,9 @@ frappe.pages["jarvis-account"].on_page_load = function (wrapper) {
 		$err.text("");
 		const pasted = ($body.find("#ja-sub-pasted-url").val() || "").trim();
 		if (!pasted) {
-			$err.text("Paste the URL from your browser's address bar first.");
+			$err.text(isCodeOnlyPaste(ui.subProvider)
+				? "Paste the code you were shown first."
+				: "Paste the URL from your browser's address bar first.");
 			return;
 		}
 		setBusy("#ja-sub-submit", true);

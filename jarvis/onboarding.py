@@ -600,8 +600,14 @@ def get_llm_sync_status() -> dict:
 	    ``model_statuses`` - a list of ``{"provider", "model", "status"}``
 	    per-model verdicts (``status`` one of ``verified``/``failed``/
 	    ``unchecked``; api-key models only) the AI-models list keys each
-	    api-key row's health off. A corrupt/empty stored value for either
-	    list degrades to ``[]`` rather than ever 500ing this poller.
+	    api-key row's health off. Contract 1.12 adds an optional ``"detail"``
+	    string per entry carrying the provider's raw error text (e.g. a z.ai
+	    "insufficient balance" 1113 error) - absent on a fleet that predates
+	    1.12, and passed through here verbatim with no whitelisting (this
+	    function stores/returns whatever admin sent, so a new optional key
+	    needs no server-side change to reach the client). A corrupt/empty
+	    stored value for either list degrades to ``[]`` rather than ever
+	    500ing this poller.
 	"""
 	s = frappe.get_single("Jarvis Settings")
 	status = s.get("last_sync_status") or ""

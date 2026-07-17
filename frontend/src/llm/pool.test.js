@@ -114,6 +114,14 @@ test("providerLabel/providerId: gemini id ⇄ Google Gemini label (matches catal
   assert.equal(providerLabel("gemini"), "Google Gemini")
   assert.equal(providerId("Google Gemini"), "gemini")
 })
+test("providerLabel/providerId: zai id ⇄ GLM / Z.ai label (first-class provider, distinct from openai_compat)", () => {
+  // Regression lock: "zai" must render as its own label, never fall back to
+  // "OpenAI-Compatible" - that fallback only happens for an id absent from
+  // PROVIDER_LABELS, and zai has been a first-class entry since #319.
+  assert.equal(providerLabel("zai"), "GLM / Z.ai")
+  assert.equal(providerId("GLM / Z.ai"), "zai")
+  assert.notEqual(providerLabel("zai"), providerLabel("openai_compat"))
+})
 test("PROVIDER_LABELS: includes the vendors + compat, each {id,label}", () => {
   const ids = PROVIDER_LABELS.map(p => p.id)
   assert.ok(ids.includes("openai"))
@@ -130,6 +138,21 @@ test("seedRowsFromConfig: api-key model → api_key row with label provider + ha
   assert.equal(row.baseUrl, "http://h:9000/openai")
   assert.equal(row.apiKey, "")      // keys never returned to client
   assert.equal(row.hasKey, true)    // but we know one is set → placeholder
+})
+test("seedRowsFromConfig: GLM/Z.ai model stored as first-class 'zai' renders its own label, not OpenAI-Compatible", () => {
+  // End-to-end regression lock for the storage-collapsing bug: a row that
+  // survives jarvis.onboarding.save_llm_pool -> get_llm_config as provider
+  // "zai" (the post-fix stored shape) must seed an editor row labeled
+  // "GLM / Z.ai" - not "OpenAI-Compatible", which is what a collapsed
+  // "openai_compat" row would render as.
+  const cfg = { models: [{ provider: "zai", model: "glm-4.6", credential_type: "api_key",
+    has_key: true, base_url: "https://api.z.ai/api/paas/v4", order: 0 }] }
+  const [row] = seedRowsFromConfig(cfg)
+  assert.equal(row.credentialType, "api_key")
+  assert.equal(row.provider, "GLM / Z.ai")
+  assert.equal(row.model, "glm-4.6")
+  assert.equal(row.baseUrl, "https://api.z.ai/api/paas/v4")
+  assert.equal(row.hasKey, true)
 })
 test("seedRowsFromConfig: subscription model → subscription row with connected accounts", () => {
   const cfg = { models: [{ model: "gpt-5.5", order: 1, subscription: { rotation: "sticky",
@@ -230,11 +253,11 @@ test("apiKeyModelHealth: a SINGLE entry under a DIFFERENT provider is not misatt
   )
 })
 
-// ---- apiKeyModelHealth: consuming the OPTIONAL `detail` field (a parallel fleet-agent PR,
-// feat/probe-error-detail) DEFENSIVELY - must render the real reason when present, and fall
-// back to today's generic text unchanged when it's absent (an older fleet-agent). This is
-// the GLM/Z.ai insufficient-balance case: "Not working" alone couldn't distinguish a bad key
-// from an unpaid account; the provider's own message can. ----
+// ---- apiKeyModelHealth: consuming the OPTIONAL `detail` field (fleet-agent contract 1.12)
+// DEFENSIVELY - must render the real reason when present, and fall back to today's generic
+// text unchanged when it's absent (an older fleet-agent). This is the GLM/Z.ai
+// insufficient-balance case: "Not working" alone couldn't distinguish a bad key from an
+// unpaid account; the provider's own message can. ----
 
 test("apiKeyModelHealth: detail present -> surfaced in both label and title", () => {
   const ms = [{ provider: "openai_compat", model: "glm-4.6", status: "failed",
@@ -247,8 +270,8 @@ test("apiKeyModelHealth: detail present -> surfaced in both label and title", ()
 })
 
 test("apiKeyModelHealth: detail ABSENT falls back to today's generic text (older fleet-agent)", () => {
-  // No `detail` key at all on the entry - the exact shape a pre-feat/probe-error-detail
-  // fleet-agent sends. Must behave identically to before this feature existed.
+  // No `detail` key at all on the entry - the exact shape a pre-1.12 fleet-agent sends.
+  // Must behave identically to before this feature existed.
   const ms = [{ provider: "openai_compat", model: "claude-sonnet-4-6", status: "failed" }]
   const h = apiKeyModelHealth(_apiRow(), ms)
   assert.equal(h.level, "warn")
@@ -280,4 +303,94 @@ test("apiKeyModelHealth: a long detail is truncated in the label but stays fulle
   const h = apiKeyModelHealth(_apiRow(), ms)
   assert.ok(h.label.length < 80, `label should be short, got ${h.label.length} chars`)
   assert.ok(h.title.length < 260, `title should still be capped, got ${h.title.length} chars`)
+})
+// ---- GLM Coding Plan ("zai_coding"): a distinct provider from pay-as-you-go "zai" ----
+// Live discovery: a Coding Plan key authenticates fine but reports "insufficient balance"
+// (z.ai error code 1113) on the pay-as-you-go endpoint (api.z.ai/api/paas/v4) even though
+// it's perfectly valid on the coding-plan endpoint (api.z.ai/api/coding/paas/v4). This
+// section covers the new provider option and the targeted diagnostic hint for that trap.
+
+test("providerLabel/providerId: zai_coding id ⇄ 'GLM / Z.ai (Coding Plan)' label, distinct from zai", () => {
+  assert.equal(providerLabel("zai_coding"), "GLM / Z.ai (Coding Plan)")
+  assert.equal(providerId("GLM / Z.ai (Coding Plan)"), "zai_coding")
+  assert.notEqual(providerLabel("zai_coding"), providerLabel("zai"))
+})
+
+test("PROVIDER_LABELS: zai_coding is a first-class entry", () => {
+  const ids = PROVIDER_LABELS.map(p => p.id)
+  assert.ok(ids.includes("zai_coding"))
+})
+
+test("validatePool: GLM / Z.ai (Coding Plan) requires a base_url, same as GLM / Z.ai", () => {
+  assert.equal(validatePool([{ provider: "GLM / Z.ai (Coding Plan)", model: "glm-4.6", api_key: "k" }], null).ok, false)
+  assert.equal(validatePool([{ provider: "GLM / Z.ai (Coding Plan)", model: "glm-4.6", api_key: "k",
+    base_url: "https://api.z.ai/api/coding/paas/v4" }], null).ok, true)
+})
+
+test("seedRowsFromConfig: a row stored as 'zai_coding' renders its own distinct label", () => {
+  const cfg = { models: [{ provider: "zai_coding", model: "glm-4.6", credential_type: "api_key",
+    has_key: true, base_url: "https://api.z.ai/api/coding/paas/v4", order: 0 }] }
+  const [row] = seedRowsFromConfig(cfg)
+  assert.equal(row.provider, "GLM / Z.ai (Coding Plan)")
+  assert.equal(row.baseUrl, "https://api.z.ai/api/coding/paas/v4")
+})
+
+const _zaiRow = (over = {}) => ({ credentialType: "api_key", provider: providerLabel("zai"),
+  model: "glm-4.6", hasKey: true, ...over })
+
+test("apiKeyModelHealth: a 'zai' row failing with z.ai's insufficient-balance (1113) detail gets the coding-plan hint", () => {
+  const ms = [{ provider: "zai", model: "glm-4.6", status: "failed",
+    detail: '{"error":{"code":"1113","message":"Insufficient balance or no resource package. Please recharge."}}' }]
+  const h = apiKeyModelHealth(_zaiRow(), ms)
+  assert.equal(h.level, "warn")
+  assert.match(h.label, /endpoint/i)
+  assert.match(h.title, /coding plan/i)
+  assert.match(h.title, /api\.z\.ai\/api\/coding\/paas\/v4/)
+})
+
+test("apiKeyModelHealth: the hint also matches on the plain 'insufficient balance' phrase (no code substring)", () => {
+  const ms = [{ provider: "zai", model: "glm-4.6", status: "failed", detail: "Insufficient balance. Please recharge." }]
+  assert.match(apiKeyModelHealth(_zaiRow(), ms).title, /coding plan/i)
+})
+
+test("apiKeyModelHealth: a 'zai' failure with a DIFFERENT detail falls through to the generic message", () => {
+  const ms = [{ provider: "zai", model: "glm-4.6", status: "failed", detail: "invalid api key" }]
+  const h = apiKeyModelHealth(_zaiRow(), ms)
+  assert.equal(h.level, "warn")
+  // Not the coding-plan hint - this detail isn't the 1113 trap. It falls through to the
+  // generic branch, which (contract 1.12) renders the provider's own reason.
+  assert.doesNotMatch(h.label, /endpoint/i)
+  assert.doesNotMatch(h.title, /coding plan/i)
+  assert.match(h.label, /invalid api key/)
+})
+
+test("apiKeyModelHealth: a 'zai' failure with NO detail (pre-1.12 fleet) falls through defensively, never throws", () => {
+  const ms = [{ provider: "zai", model: "glm-4.6", status: "failed" }]
+  const h = apiKeyModelHealth(_zaiRow(), ms)
+  assert.equal(h.level, "warn")
+  assert.equal(h.label, "Not working")
+})
+
+test("apiKeyModelHealth: the same 1113 detail on a 'zai_coding' row does NOT trigger the hint (already the right endpoint)", () => {
+  const ms = [{ provider: "zai_coding", model: "glm-4.6", status: "failed",
+    detail: "Insufficient balance or no resource package. Please recharge." }]
+  const h = apiKeyModelHealth(_zaiRow({ provider: providerLabel("zai_coding") }), ms)
+  assert.equal(h.level, "warn")
+  // A coding-plan row is already on the right endpoint, so the same 1113 text is a REAL
+  // balance problem: report it verbatim, never redirect the customer to an endpoint they
+  // are already using.
+  assert.doesNotMatch(h.label, /endpoint/i)
+  assert.doesNotMatch(h.title, /coding plan/i)
+  assert.match(h.label, /Insufficient balance/)
+})
+
+test("apiKeyModelHealth: the same 1113 detail on an UNRELATED provider does NOT trigger the hint", () => {
+  const ms = [{ provider: "openai_compat", model: "gpt-4o", status: "failed",
+    detail: "Insufficient balance or no resource package. Please recharge." }]
+  const h = apiKeyModelHealth(_apiRow({ provider: providerLabel("openai_compat"), model: "gpt-4o" }), ms)
+  assert.equal(h.level, "warn")
+  // z.ai-specific advice must never leak onto another provider's row, even on identical text.
+  assert.doesNotMatch(h.label, /endpoint/i)
+  assert.doesNotMatch(h.title, /coding plan/i)
+  assert.match(h.label, /Insufficient balance/)
 })

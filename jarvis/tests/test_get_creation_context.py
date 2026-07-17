@@ -132,6 +132,61 @@ class TestGetCreationContext(FrappeTestCase):
             frappe.set_user("Administrator")
 
 
+class TestCreationContextAutoAndDefaults(FrappeTestCase):
+    """`auto` must mean "Frappe COMPUTES this" (fetch_from), not "Frappe has a
+    guess for it" (default).
+
+    Conflating them made every defaulted field invisible: the agent was told to
+    skip `auto` fields, so three ToDos were created due today and the human was
+    never shown the date. A default is a decision - surface it and let the model
+    decide.
+    """
+
+    def _field(self, ctx, fieldname):
+        for f in ctx["fields"]:
+            if f["fieldname"] == fieldname:
+                return f
+        self.fail(f"{fieldname} is missing from the field map")
+
+    def test_fetch_from_field_is_auto_and_carries_no_default(self):
+        """ToDo.assigned_by_full_name is `fetch_from: assigned_by.full_name` -
+        Frappe computes it, so skipping it is genuinely safe."""
+        f = self._field(get_creation_context("ToDo"), "assigned_by_full_name")
+        self.assertTrue(f["auto"])
+        self.assertNotIn("default", f)
+
+    def test_defaulted_field_is_not_auto_and_surfaces_its_default(self):
+        """ToDo.date defaults to Today. Frappe GUESSES it, so the model must see
+        both that it is not auto and what the guess is."""
+        f = self._field(get_creation_context("ToDo"), "date")
+        self.assertFalse(f["auto"])
+        self.assertEqual(f["default"], "Today")
+
+    def test_reqd_field_is_still_mandatory(self):
+        """`mandatory` is computed from df.reqd independently of `auto`, so
+        splitting `auto` cannot move it."""
+        f = self._field(get_creation_context("ToDo"), "description")
+        self.assertTrue(f["mandatory"])
+
+    def test_reqd_with_default_is_mandatory_and_not_auto(self):
+        """Sales Order.transaction_date is reqd AND defaults to Today - the
+        double-bind the note's ordering exists to resolve."""
+        f = self._field(get_creation_context("Sales Order"), "transaction_date")
+        self.assertTrue(f["mandatory"])
+        self.assertFalse(f["auto"])
+        self.assertEqual(f["default"], "Today")
+
+    def test_note_carries_the_default_and_symbolic_default_clauses(self):
+        note = get_creation_context("ToDo")["note"]
+        # a default is decided, not skipped
+        self.assertIn("decide it yourself", note)
+        # `Today` / `:Company` are tokens Frappe resolves, never values to copy
+        self.assertIn("never copy the token as a value", note)
+        # the mandatory command is scoped to what the default rule left over,
+        # so a reqd+default field is not commanded and permitted at once
+        self.assertIn("remaining", note)
+
+
 class TestCreationContextMappedSource(FrappeTestCase):
     """A derived record (invoice from an order) gets the ERP's own mapper output
     instead of lookalikes to infer from.

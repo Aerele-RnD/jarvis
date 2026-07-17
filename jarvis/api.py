@@ -630,7 +630,8 @@ def _describe_call(tool: str, args: dict) -> str:
 		return " ".join(str(p) for p in parts)
 	parts = [tool]
 	for key in ("doctype", "name", "docname", "target_doctype", "target_name",
-				"method", "action", "recipients", "to", "subject"):
+				"method", "action", "recipients", "to", "subject",
+				"user", "skill_name", "slug", "title", "scope"):
 		val = a.get(key)
 		if val:
 			parts.append(f"{key}={val}")

@@ -11,7 +11,7 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 
 from jarvis.chat import openclaw_session_pool
-from jarvis.chat.api import create_conversation, send_message
+from jarvis.chat.api import create_conversation, get_conversation, send_message
 from jarvis.chat.worker import run_agent_turn
 from jarvis.tests.test_chat_api import (
 	TEST_USER,
@@ -1129,3 +1129,112 @@ class TestRelayOverflowParks(FrappeTestCase):
 		self.assertIn('"context overflow" in err_text.lower()', branch)
 		self.assertIn("_mark_recovering(assistant_msg.name)", branch)
 		self.assertIn('"kind": "run:recovering"', branch)
+
+
+class TestRunAgentTurnAborted(FrappeTestCase):
+	"""The user hit Stop: stop_run -> openclaw chat.abort -> the relay terminal
+	arrives as relay:error with state="aborted".
+
+	A stop is a STATE of the turn, not prose: `content` stays exactly what the
+	agent streamed and `stopped` records the stop. The case that matters is a
+	stop MID-SENTENCE - the partial text must survive byte-for-byte AND be
+	flagged, because a truncated answer carrying no marker reads as a complete
+	one, which is the chat asserting a wrong answer.
+	"""
+
+	def setUp(self):
+		openclaw_session_pool._POOL.clear()
+		_ensure_test_user()
+		self._orig_user = frappe.session.user
+		frappe.set_user(TEST_USER)
+		_cleanup_user_conversations()
+		self.conv, self.user_msg = _make_conversation_with_user_message()
+
+	def tearDown(self):
+		_cleanup_user_conversations()
+		frappe.set_user(self._orig_user)
+
+	def _run(self, relay_events):
+		"""Drive one turn through the relay path; return the publish mock."""
+		fake_sess = MagicMock()
+		fake_sess.chat_send.side_effect = lambda sk, msg, idem, **kw: {
+			"runId": idem, "status": "started",
+		}
+		fake_sess.relay_turn_events.return_value = _fake_event_stream(relay_events)
+		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess):
+			with patch("jarvis.chat.worker.publish_to_user") as pub:
+				run_agent_turn(self.conv, self.user_msg, run_id="r1")
+		return pub
+
+	def _assistant_row(self, fields):
+		return frappe.db.get_value(
+			MSG, {"conversation": self.conv, "role": "assistant"}, fields,
+			as_dict=isinstance(fields, list),
+		)
+
+	def test_abort_with_partial_content_keeps_it_verbatim_and_flags_stopped(self):
+		# THE regression this branch exists for: a mid-sentence stop. The text
+		# must survive untouched (no marker smuggled into it) and the row must
+		# carry the flag the SPA draws its marker from.
+		self._run([
+			{"kind": "assistant", "text": "The invoice total is", "delta": "The invoice total is"},
+			{"kind": "relay:error", "state": "aborted", "error": "aborted"},
+		])
+		row = self._assistant_row(["content", "stopped", "streaming"])
+		self.assertEqual(row["content"], "The invoice total is")
+		self.assertEqual(row["stopped"], 1)
+		self.assertEqual(row["streaming"], 0)
+
+	def test_abort_with_no_content_flags_stopped_and_leaves_content_empty(self):
+		# Stopped before anything streamed: content stays empty and the marker
+		# is the flag alone - no "_Stopped._" prose anywhere.
+		self._run([{"kind": "relay:error", "state": "aborted", "error": "aborted"}])
+		row = self._assistant_row(["content", "stopped", "streaming"])
+		self.assertFalse((row["content"] or "").strip())
+		self.assertNotIn("_Stopped._", row["content"] or "")
+		self.assertEqual(row["stopped"], 1)
+		self.assertEqual(row["streaming"], 0)
+
+	def test_abort_never_writes_stopped_prose_into_content(self):
+		# Guards the whole class of fix-by-magic-string: the sentinel must not
+		# come back through either writer.
+		self._run([
+			{"kind": "assistant", "text": "half an ans", "delta": "half an ans"},
+			{"kind": "relay:error", "state": "aborted", "error": "aborted"},
+		])
+		self.assertNotIn("_Stopped._", self._assistant_row("content") or "")
+
+	def test_abort_publishes_run_end_carrying_stopped(self):
+		# The three run:end consumers (desktop notifier, PWA notify-on-done,
+		# PWA bell feed) each announce a completion for a reply the user
+		# killed; they can only suppress it if the payload says so.
+		pub = self._run([{"kind": "relay:error", "state": "aborted", "error": "aborted"}])
+		ends = [c.args[1] for c in pub.call_args_list if c.args[1]["kind"] == "run:end"]
+		self.assertEqual(len(ends), 1)
+		self.assertTrue(ends[0]["stopped"])
+		# A deliberate stop is not a failure - it must never surface as one.
+		self.assertNotIn("run:error", [c.args[1]["kind"] for c in pub.call_args_list])
+
+	def test_get_conversation_returns_stopped(self):
+		# get_conversation's field list is explicit: omit "stopped" and the
+		# flag never reaches the SPA, so the marker vanishes on reload.
+		self._run([
+			{"kind": "assistant", "text": "cut off here", "delta": "cut off here"},
+			{"kind": "relay:error", "state": "aborted", "error": "aborted"},
+		])
+		msgs = get_conversation(self.conv)["messages"]
+		row = next(m for m in msgs if m["role"] == "assistant")
+		self.assertIn("stopped", row)
+		self.assertEqual(row["stopped"], 1)
+		self.assertEqual(row["content"], "cut off here")
+
+	def test_completed_turn_is_not_stopped(self):
+		# The flag records that an abort LANDED - a normal turn never sets it.
+		self._run([
+			{"kind": "assistant", "text": "all done", "delta": "all done"},
+			{"kind": "relay:final", "text": "all done"},
+		])
+		row = self._assistant_row(["content", "stopped", "streaming"])
+		self.assertEqual(row["stopped"], 0)
+		self.assertEqual(row["content"], "all done")
+		self.assertEqual(row["streaming"], 0)

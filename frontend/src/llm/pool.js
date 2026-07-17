@@ -101,6 +101,16 @@ export const PROVIDER_LABELS = [
   { id: "moonshot", label: "Moonshot (Kimi)" },
   { id: "xai", label: "xAI Grok" },
   { id: "zai", label: "GLM / Z.ai" },
+  // z.ai sells two distinct products on two distinct endpoints: pay-as-you-go
+  // API credits (plain "zai", above) and a separate "GLM Coding Plan"
+  // subscription that reports "insufficient balance" (code 1113) on the
+  // pay-as-you-go endpoint even with a perfectly valid key - the two do not
+  // share a balance. A dedicated provider id (rather than a toggle inside the
+  // "zai" option) means the existing PROVIDER_DEFAULTS/NEEDS_BASE_URL/dropdown
+  // machinery just works with no new UI - the same shape every other provider
+  // already uses. See apiKeyModelHealth() below for the targeted hint when a
+  // "zai" row hits this exact trap.
+  { id: "zai_coding", label: "GLM / Z.ai (Coding Plan)" },
   { id: "openrouter", label: "OpenRouter" },
   { id: "ollama", label: "Ollama (local)" },
   { id: "vllm", label: "vLLM (local)" },
@@ -108,11 +118,27 @@ export const PROVIDER_LABELS = [
 ]
 const _LABEL_BY_ID = Object.fromEntries(PROVIDER_LABELS.map(p => [p.id, p.label]))
 const _ID_BY_LABEL = Object.fromEntries(PROVIDER_LABELS.map(p => [p.label, p.id]))
+
+// Providers whose approval screen hands back a BARE authorization code instead
+// of redirecting to a callback URL the customer can copy from the address bar.
+// Keyed by BOTH the pool `upstream` value ("xai") and the OAuth provider label
+// ("xAI Grok"), so the pool editor and the direct paste-back card can share one
+// answer instead of each keeping a copy.
+//
+// MUST match the providers carrying `code_only_paste` in
+// jarvis/oauth/providers.py - that flag is what actually makes the backend take
+// a bare code; this only steers the paste copy. Telling an xAI customer to
+// "copy the full URL from the address bar" sends them hunting for an address
+// bar that never holds a code.
+const _CODE_ONLY_PASTE = new Set(["xai", "xAI Grok"])
+export const isCodeOnlyPaste = (upstreamOrLabel) => _CODE_ONLY_PASTE.has(upstreamOrLabel)
+
 // Custom-endpoint providers whose whole identity IS the base_url (no default
 // endpoint) - validatePool requires one for these (mirrors validate_models).
-// "zai" (GLM / Z.ai) has no native Bifrost provider, so it needs its Z.ai
-// base_url (standard api.z.ai/api/paas/v4 or the coding-plan .../coding/paas/v4).
-const NEEDS_BASE_URL = new Set(["openai_compat", "vllm", "zai"])
+// "zai" (GLM / Z.ai, pay-as-you-go) and "zai_coding" (GLM Coding Plan) both
+// have no native Bifrost provider, so each needs its own Z.ai base_url
+// (standard api.z.ai/api/paas/v4 vs coding-plan api.z.ai/api/coding/paas/v4).
+const NEEDS_BASE_URL = new Set(["openai_compat", "vllm", "zai", "zai_coding"])
 export function providerLabel(id) { return _LABEL_BY_ID[id] || id || "" }
 export function providerId(label) { return _ID_BY_LABEL[label] || label || "" }
 
@@ -147,14 +173,15 @@ export function seedRowsFromConfig(cfg) {
 }
 
 // The fleet's last per-model probe verdict for ONE api-key row, matched out of the
-// model_statuses list (contract 1.11: [{ provider, model, status[, detail] }], api-key
-// models only). The match keys on (provider, model) TOGETHER: a model id is NOT unique --
-// validate() only forbids duplicate provider/model PAIRS, so the same id can appear under
-// two providers, and keying on the id alone would attach one provider's verdict to the
-// other's row. Rows carry the provider LABEL while model_statuses carry the id, so
-// normalize the row's provider back to an id to compare. Returns null when the row has no
-// matching verdict (a pre-1.11 fleet, a model not yet probed, or an entry that belongs to a
-// different provider).
+// model_statuses list (contract 1.11: [{ provider, model, status }], api-key models only;
+// contract 1.12 adds an optional `detail` string carrying the provider's raw error text -
+// absent on an older fleet). The match keys on (provider, model) TOGETHER: a model id is NOT
+// unique -- validate() only forbids duplicate provider/model PAIRS, so the same id can appear
+// under two providers, and keying on the id alone would attach one provider's verdict to the
+// other's row. Rows carry the provider LABEL while model_statuses carry the id, so normalize
+// the row's provider back to an id to compare. Returns null when the row has no matching
+// verdict (a pre-1.11 fleet, a model not yet probed, or an entry that belongs to a different
+// provider) - callers must not assume a match.
 function modelVerdictEntry(row, modelStatuses) {
   if (!row || !Array.isArray(modelStatuses)) return null
   const rid = providerId(row.provider)
@@ -171,25 +198,58 @@ function truncate(s, max) {
   return t.length > max ? t.slice(0, max - 1).trimEnd() + "…" : t
 }
 
+// z.ai's exact "wrong endpoint" trap: a GLM Coding Plan key authenticates fine against
+// the pay-as-you-go endpoint (api.z.ai/api/paas/v4) but that endpoint reports the key's
+// coding-plan balance as zero, so the probe fails with z.ai's real error text - code 1113,
+// "Insufficient balance or no resource package. Please recharge." - even though the key
+// itself is perfectly valid on the coding-plan endpoint. Only meaningful on a "zai" (the
+// pay-as-you-go option) row: a "zai_coding" row already points at the right endpoint, so
+// the same error there is a real balance problem, not a wrong-endpoint one. Matching is
+// defensive by construction - it only ever fires when `detail` is present (contract 1.12);
+// an older fleet that never sends `detail` simply never matches and falls through to the
+// generic "Not working" message below.
+const _ZAI_INSUFFICIENT_BALANCE_RE = /\b1113\b|insufficient balance/i
+function isZaiWrongEndpoint(row, entry) {
+  if (!entry || !entry.detail) return false
+  if (providerId(row && row.provider) !== "zai") return false
+  return _ZAI_INSUFFICIENT_BALANCE_RE.test(entry.detail)
+}
+
 // Map an api-key pool row to its health for the failover list. Unlike a subscription
 // (probed pool-wide), an api-key model is probed in isolation, so its row shows its OWN
 // verdict instead of the presence-only "key set" that used to make a dead model look
 // identical to a healthy one.
 //   failed    -> warn      : rejected (bad key/model id) OR an unreachable base_url
+//     - a "zai" row whose failure detail is z.ai's insufficient-balance/1113 error gets a
+//       specific hint instead of the generic message (see isZaiWrongEndpoint above)
 //   unchecked -> unchecked : could not confirm; re-checked on the next apply
 //   verified / "" / unknown -> ok (quiet green; "" = pre-1.11 fleet or a not-yet-probed row)
 //
-// `detail` (a parallel fleet-agent PR, feat/probe-error-detail) carries the PROVIDER'S OWN
-// error message on a failed row (e.g. "Insufficient balance or no resource package. Please
-// recharge." from a real GLM/Z.ai zero-balance case) instead of the generic "Not working" -
-// the whole point being a customer can tell a bad key from an unpaid account. Consumed
-// DEFENSIVELY: an older fleet-agent that doesn't send it yet falls back to today's text, so
-// this must work unchanged against a fleet that predates the field.
+// `detail` (fleet-agent contract 1.12) carries the PROVIDER'S OWN error message on a failed
+// row (e.g. "Insufficient balance or no resource package. Please recharge." from a real
+// GLM/Z.ai zero-balance case) instead of the generic "Not working" - the whole point being a
+// customer can tell a bad key from an unpaid account. Consumed DEFENSIVELY: an older
+// fleet-agent that doesn't send it yet falls back to today's text, so this must work
+// unchanged against a fleet that predates the field.
+//
+// Order matters: the z.ai wrong-endpoint hint is checked FIRST because it is the specific
+// diagnosis of one particular `detail` string, and reporting the raw "insufficient balance"
+// text there would actively mislead (the key has balance; it's pointed at the wrong
+// endpoint). Every other `detail` falls through to the generic rendering below.
 export function apiKeyModelHealth(row, modelStatuses) {
   const entry = modelVerdictEntry(row, modelStatuses)
   const status = (entry && entry.status) || ""
   const detail = (entry && typeof entry.detail === "string" && entry.detail.trim()) || ""
   if (status === "failed") {
+    if (isZaiWrongEndpoint(row, entry)) {
+      return {
+        level: "warn",
+        label: "Wrong Z.ai endpoint",
+        title: "Z.ai reported insufficient balance on the pay-as-you-go endpoint. If this is a "
+          + "GLM Coding Plan key, switch this model's provider to \"GLM / Z.ai (Coding Plan)\" "
+          + "(base URL https://api.z.ai/api/coding/paas/v4) instead.",
+      }
+    }
     return {
       level: "warn",
       label: detail ? `Not working: ${truncate(detail, 46)}` : "Not working",

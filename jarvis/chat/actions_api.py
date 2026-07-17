@@ -173,6 +173,13 @@ def _append_receipt(conversation: str, verb: str, doctype: str, name: str,
 		"tool_args": frappe.as_json(args),
 		"tool_result": frappe.as_json({"ok": True, "data": {"doctype": doctype, "name": name}}),
 		"tool_status": "completed",
+		# This row DID come from a confirmation card - the human pressed Confirm on
+		# the draft - so mark it and let the SPA render the same receipt chip (with
+		# its open-in-Desk shortcut) that the gated path gets. Without this it fell
+		# into the Activity accordion, so a confirmed DELETE offered a shortcut to a
+		# record that no longer exists while a confirmed CREATE offered none to a
+		# record that does.
+		"action_outcome": "confirmed",
 	}).insert(ignore_permissions=True)
 	frappe.get_doc({
 		"doctype": MSG, "conversation": conversation, "seq": _next_seq(conversation),

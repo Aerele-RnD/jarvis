@@ -19,8 +19,9 @@
         <code class="jv-dsub-url" :title="authorizeUrl">{{ authorizeUrl }}</code>
         <button type="button" class="jv-dsub-btn jv-dsub-btn-ghost" @click="copyUrl">{{ copied ? 'Copied' : 'Copy' }}</button>
       </div>
-      <p class="jv-dsub-step" style="margin-top:14px;"><b>2.</b> After you click Authorize, your browser shows a “This site can’t be reached” page. <b>That’s expected.</b> Copy the URL from the address bar (starts with <code>http://localhost:1455/auth/callback?code=…</code>) and paste it here:</p>
-      <textarea v-model="pastedUrl" rows="3" class="jv-dsub-input" placeholder="Paste the URL from the error page here"></textarea>
+      <p v-if="codeOnly" class="jv-dsub-step" style="margin-top:14px;"><b>2.</b> After you click Authorize, {{ status.provider || pickProvider }} shows you an <b>authorization code</b>. Copy that code and paste it here:</p>
+      <p v-else class="jv-dsub-step" style="margin-top:14px;"><b>2.</b> After you click Authorize, your browser shows a “This site can’t be reached” page. <b>That’s expected.</b> Copy the URL from the address bar (starts with <code>http://localhost:1455/auth/callback?code=…</code>) and paste it here:</p>
+      <textarea v-model="pastedUrl" rows="3" class="jv-dsub-input" :placeholder="codeOnly ? 'Paste the code shown after you approve' : 'Paste the URL from the error page here'"></textarea>
       <div class="jv-dsub-actions" style="margin-top:10px;">
         <button class="jv-dsub-btn jv-dsub-btn-ghost" @click="cancelFlow">Cancel</button>
         <button class="jv-dsub-btn jv-dsub-btn-primary" :disabled="busy" @click="submitPasted">{{ busy ? 'Connecting…' : 'Submit' }}</button>
@@ -79,6 +80,7 @@
 import { ref, computed, onBeforeUnmount } from "vue"
 import * as api from "@/api"
 import { errMessage as _err } from "@/lib/errors"
+import { isCodeOnlyPaste } from "@/llm/pool"
 import { exactDate } from "@/utils/datetime"
 import { useConfirm } from "@/composables/useConfirm"
 
@@ -106,6 +108,11 @@ function _defaultProvider() {
   return byModel ? byModel.provider : "OpenAI"
 }
 const pickProvider = ref(_defaultProvider())
+// The Re-authorize path reuses `status.provider` regardless of SUB_PROVIDERS
+// (which only gates NEW connections), so a tenant already stored as "xAI Grok"
+// can reach this flow. xAI shows a bare code, not a callback URL, so the step-2
+// copy has to follow. Shared with LlmPoolEditor via @/llm/pool.
+const codeOnly = computed(() => isCodeOnlyPaste(status.value.provider || pickProvider.value))
 const pickModels = computed(() =>
   (SUB_PROVIDERS.find((p) => p.provider === pickProvider.value) || SUB_PROVIDERS[0]).models,
 )
@@ -186,7 +193,12 @@ async function startSignin(providerOverride, modelOverride) {
 async function submitPasted() {
   err.value = ""
   const pasted = (pastedUrl.value || "").trim()
-  if (!pasted) { err.value = "Paste the URL from your browser's address bar first."; return }
+  if (!pasted) {
+    err.value = codeOnly.value
+      ? "Paste the code you were shown first."
+      : "Paste the URL from your browser's address bar first."
+    return
+  }
   busy.value = true
   try {
     const res = await api.completePasteSignin(nonce.value, pasted)

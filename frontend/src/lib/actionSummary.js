@@ -36,17 +36,23 @@ export function summarize(model, action = {}) {
 }
 
 // A create_docs batch parks one card. Its dry-run preview carries the created
-// records ({doctype, name}) and the model's reuse notes. Turn that into the flat
-// action lines the pending card renders as bullets. Pure; returns null when the
-// preview is not a batch (a single-doc dry-run, or a described-intent card).
+// records ({doctype, name}). Turn that into the flat action lines the pending card
+// renders as bullets. Pure; returns null when the preview is not a batch (a
+// single-doc dry-run, or a described-intent card).
+//
+// ``would.notes`` is deliberately NOT returned. It is a tool argument the MODEL
+// writes (jarvis/tools/create_doc.py), and this is the rendering that runs when the
+// server built no card - including when build_card FAILS. Rendered here as
+// unattributed bullets it reads as system truth, letting a prompt-injected or simply
+// confused agent caption its own confirmation ("these already exist - confirming
+// changes nothing") above a write that inserts 20 rows. The card is the human's
+// INDEPENDENT check on the agent; escaped rendering stops XSS, not lying. The agent
+// can still say what it likes in chat, where the claim is attributed to it.
 export function batchFromPreview(preview) {
   const would = preview && preview.would
   if (!would || typeof would !== "object" || !Array.isArray(would.created)) return null
   return {
     actions: would.created.map((d) => ({ doctype: d.doctype, name: d.name })),
-    notes: Array.isArray(would.notes)
-      ? would.notes.filter((n) => String(n ?? "").trim() !== "")
-      : [],
   }
 }
 
@@ -58,7 +64,8 @@ export function batchFromPreview(preview) {
 // expiry state instead of the raw dry-run JSON. A missing/unknown card -> null, and
 // the card falls back to the summary + raw-preview rendering.
 
-const CARD_KINDS = new Set(["create", "update", "bulk_update", "verb", "email", "method", "batch_create"])
+const CARD_KINDS = new Set(["create", "update", "bulk_update", "verb", "email", "method",
+  "batch_create", "bulk_email", "share", "assign", "skill", "wiki"])
 
 // The structured card for a parked action ({kind, ...}), or null when the server
 // built none (an older token, or an uncovered tool shape).
@@ -181,12 +188,16 @@ export function receiptView(tool, args, result, outcome) {
         : argCount(args)
 
   // Target links (create keeps each row's own doctype; email targets have no doc).
+  // A DELETED record gets no link: the row is gone, so the shortcut would open a
+  // 404. Only when it actually ran, though - a discarded or failed delete left the
+  // record alive, and that one is worth opening.
+  const isGoneDelete = tool === "delete_doc" && outcome === "confirmed"
   let targets
   if (Array.isArray(data.created)) {
     targets = data.created
       .filter((d) => d && d.name)
       .map((d) => ({ name: d.name, url: docUrl(d.doctype || doctype, d.name) }))
-  } else if (isEmail) {
+  } else if (isEmail || isGoneDelete) {
     targets = names.map((n) => ({ name: n, url: "" }))
   } else {
     targets = names.map((n) => ({ name: n, url: docUrl(doctype, n) }))
