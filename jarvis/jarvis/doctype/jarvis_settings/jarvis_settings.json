@@ -86,6 +86,7 @@
   "last_sync_at",
   "last_sync_status",
   "llm_pool_synced_at",
+  "installed_apps_synced",
   "last_subscription_status",
   "last_sync_warnings",
   "last_model_statuses",
@@ -639,6 +640,13 @@
    "fieldtype": "Datetime",
    "label": "LLM Pool Synced At",
    "read_only": 1
+  },
+  {
+   "fieldname": "installed_apps_synced",
+   "fieldtype": "Small Text",
+   "label": "Installed Apps Synced",
+   "read_only": 1,
+   "description": "JSON snapshot of the app list last sent to admin (post_update_llm_creds carries installed_apps). after_migrate compares the live list against this and re-syncs on change so skill gating never runs off a stale app set. Managed by jarvis.installed_apps_sync - do not edit."
   },
   {
    "description": "fleet-agent's subscription_status from the last pool apply: verified | unverified | unchecked | not_applicable. Empty when the fleet didn't report one (older contract) or the last sync failed. Backend-only - the SPA reads this via get_llm_sync_status, not the form.",

@@ -729,6 +729,12 @@ class JarvisSettings(Document):
                     api_key=secret,
                     auth_mode=self.llm_auth_mode or "api_key",
                 ) or {}
+                # The payload above carried frappe.get_installed_apps() and
+                # admin persists it desired-first, so stamp the synced
+                # snapshot now - even if the fleet apply below is still
+                # converging (see jarvis.installed_apps_sync).
+                from jarvis.installed_apps_sync import record_synced_snapshot
+                record_synced_snapshot()
                 resolved_action = result.get("action", "restart")
             # C5/F2: a "restart" (post_update_llm_creds) may come back accepted-
             # but-still-converging. The admin committed the desired creds and a
