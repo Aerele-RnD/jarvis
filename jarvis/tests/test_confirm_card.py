@@ -213,8 +213,14 @@ class TestBatchAndFallback(FrappeTestCase):
 		self.assertEqual([r["name"] for r in card["rows"]], ["T-1", "T-2"])
 
 	def test_uncovered_tool_returns_none(self):
-		self.assertIsNone(build_card("share_doc", {"doctype": "ToDo", "name": "T-1"}, {}))
-		self.assertIsNone(build_card("assign_to", {"doctype": "ToDo", "name": "T-1"}, {}))
+		# Phase 4 gave every GATED write a card, so share_doc/assign_to - this test's
+		# old examples - render real cards now. The invariant it exists for is the
+		# dispatch FALLTHROUGH, not those two tools: a shape build_card does not cover
+		# returns None and the SPA falls back to the summary + raw preview. Re-pointed
+		# at tools that have no card rather than deleted, so the fallback stays tested
+		# no matter how many shapes later phases cover.
+		self.assertIsNone(build_card("get_doc", {"doctype": "ToDo", "name": "T-1"}, {}))
+		self.assertIsNone(build_card("no_such_tool", {"doctype": "ToDo", "name": "T-1"}, {}))
 
 	def test_never_raises_on_bad_input(self):
 		self.assertIsNone(build_card("update_doc", None, None))
@@ -570,3 +576,93 @@ class TestBulkEmailCard(FrappeTestCase):
 		self.assertEqual(card["cc"], "c@x.test")
 		self.assertEqual(card["bcc"], "b@x.test")
 		self.assertEqual(card["print_format"], "Standard")
+
+
+class TestShareAndAssignCards(FrappeTestCase):
+	def setUp(self):
+		self.todo = frappe.get_doc({"doctype": "ToDo", "description": "share probe"}).insert(
+			ignore_permissions=True)
+
+	def test_share_shows_grantee_and_flags(self):
+		card = build_card("share_doc", {
+			"doctype": "ToDo", "name": self.todo.name, "user": "x@y.test",
+			"read": True, "write": True}, {})
+		self.assertEqual(card["kind"], "share")
+		self.assertEqual(card["grantee"], "x@y.test")
+		on = {f["label"] for f in card["flags"] if f["on"]}
+		self.assertEqual(on, {"Read", "Write"})
+
+	def test_share_everyone_is_distinguishable_from_one_user(self):
+		# read-for-one and everyone+write+share rendered IDENTICALLY before.
+		card = build_card("share_doc", {
+			"doctype": "ToDo", "name": self.todo.name, "everyone": True,
+			"read": True, "write": True, "share": True}, {})
+		self.assertTrue(card["everyone"])
+		self.assertEqual(card["grantee"], "Everyone")
+
+	def test_share_flags_use_the_tools_own_coercion(self):
+		# share_doc does int(bool(flag)) - and bool("false") is True, so the string
+		# "false" GRANTS write. The card must agree with the grant, not the request.
+		# NOTE `read` is absent here, so it defaults ON - assert the full set, not
+		# just assertIn, or the test hides the default.
+		card = build_card("share_doc", {
+			"doctype": "ToDo", "name": self.todo.name, "user": "x@y.test",
+			"write": "false"}, {})
+		on = {f["label"] for f in card["flags"] if f["on"]}
+		self.assertEqual(on, {"Read", "Write"})
+
+	def test_share_read_defaults_ON_when_absent(self):
+		# THE trap. share_doc.py:38 defaults read=True, so a call that never mentions
+		# `read` still grants it. A card built from args.get("read") renders "Write
+		# only" over a read+write grant - the card lying, on the tool that gates
+		# BECAUSE of grant escalation.
+		card = build_card("share_doc", {
+			"doctype": "ToDo", "name": self.todo.name, "user": "x@y.test",
+			"write": True}, {})
+		on = {f["label"] for f in card["flags"] if f["on"]}
+		self.assertEqual(on, {"Read", "Write"})
+
+	def test_assign_explicit_null_notify_is_not_the_default(self):
+		# Absent -> tool's default True -> mail sent. Explicit None -> int(bool(None))
+		# -> 0 -> no mail (assign_to.py:84). .get() truthiness cannot tell them apart.
+		card = build_card("assign_to", {
+			"doctype": "ToDo", "name": self.todo.name, "user": "x@y.test",
+			"notify": None}, {})
+		self.assertFalse(card["notify"])
+
+	def test_share_carries_the_target_summary(self):
+		card = build_card("share_doc", {
+			"doctype": "ToDo", "name": self.todo.name, "user": "x@y.test"}, {})
+		self.assertIn("share probe", card["records"][0]["title"])
+
+	def test_assign_shows_assignee_and_the_emailed_description(self):
+		card = build_card("assign_to", {
+			"doctype": "ToDo", "name": self.todo.name, "user": "x@y.test",
+			"description": "please review by friday", "priority": "High"}, {})
+		self.assertEqual(card["kind"], "assign")
+		self.assertEqual(card["assignee"], "x@y.test")
+		self.assertIn("please review by friday", card["description"])
+		self.assertEqual(card["priority"], "High")
+
+	def test_assign_notify_defaults_to_the_effective_value(self):
+		# assign_to's signature defaults notify=True; the card must show what the
+		# tool will DO, not "unset".
+		card = build_card("assign_to", {
+			"doctype": "ToDo", "name": self.todo.name, "user": "x@y.test"}, {})
+		self.assertTrue(card["notify"])
+
+	def test_bulk_share_lists_every_target(self):
+		other = frappe.get_doc({"doctype": "ToDo", "description": "second"}).insert(
+			ignore_permissions=True)
+		card = build_card("share_doc", {
+			"doctype": "ToDo", "names": [self.todo.name, other.name],
+			"user": "x@y.test", "read": True}, {})
+		self.assertEqual(card["count"], 2)
+		self.assertEqual(len(card["records"]), 2)
+
+	def test_unreadable_share_target_degrades_to_name_only(self):
+		with patch("frappe.model.document.Document.has_permission", return_value=False):
+			card = build_card("share_doc", {
+				"doctype": "ToDo", "name": self.todo.name, "user": "x@y.test"}, {})
+		self.assertEqual(card["records"][0]["title"], "")
+		self.assertNotIn("share probe", str(card))

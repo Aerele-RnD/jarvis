@@ -82,6 +82,10 @@ def build_card(tool: str, args, preview) -> dict | None:
 			return _bulk_update_card(args, bulk_items)
 		if tool in _VERB:
 			return _verb_card(tool, args, bulk_items)
+		if tool == "share_doc":
+			return _share_card(args, bulk_items if bulk_key == "names" else None)
+		if tool == "assign_to":
+			return _assign_card(args, bulk_items if bulk_key == "names" else None)
 		if tool == "send_email":
 			if "messages" in args:
 				# _bulk treats an EMPTY list as non-bulk (confirm_card.py:94), so a
@@ -394,6 +398,72 @@ def _verb_card(tool: str, args: dict, bulk_items) -> dict:
 		"kind": "verb", "verb": verb, "action": action, "doctype": doctype,
 		"count": 1, "targets": targets, "extra": 0,
 		"records": _verb_records(doctype, targets),
+	}
+
+
+# (key, label, the TOOL'S SIGNATURE DEFAULT). read defaults True (share_doc.py:38);
+# everything else False. The default is half the effective value.
+_SHARE_FLAGS = (("read", "Read", True), ("write", "Write", False),
+				("submit", "Submit", False), ("share", "Share", False))
+
+
+def _flag_on(args: dict, key: str, default: bool) -> bool:
+	"""The value the TOOL will act on, not the value the model typed.
+
+	``bool(args[key])`` when the key is PRESENT - mirroring share_doc's
+	``int(bool(...))`` (share_doc.py:92-94), where bool("false") is True, so the
+	string "false" GRANTS. The signature default when the key is ABSENT - share_doc
+	defaults read=True (share_doc.py:38), so a call that never mentions `read` still
+	grants it. Presence, not ``.get()``: absent and explicit-null take different
+	branches in the tool.
+	"""
+	return bool(args[key]) if key in args else default
+
+
+def _share_card(args: dict, bulk_items) -> dict:
+	"""Grantee + permission flags + target summaries.
+
+	Before this, share_doc's card was "share_doc doctype=X name=Y": read-for-one-user
+	and everyone+write+share rendered IDENTICALLY - and those grants are the exact
+	reason share_doc was pulled into the gate.
+	"""
+	doctype = args.get("doctype")
+	everyone = _flag_on(args, "everyone", False)
+	targets = [t for t in (bulk_items or [args.get("name")]) if t][:_MAX_ROWS]
+	total = len(bulk_items) if bulk_items else 1
+	return {
+		"kind": "share", "doctype": doctype,
+		"grantee": "Everyone" if everyone else fmt(args.get("user") or ""),
+		"everyone": everyone,
+		"flags": [{"label": label, "on": _flag_on(args, key, default)}
+				  for key, label, default in _SHARE_FLAGS],
+		"notify": _flag_on(args, "notify", False),
+		"count": total,
+		"records": _verb_records(doctype, targets),
+		"extra": max(0, total - len(targets)),
+	}
+
+
+def _assign_card(args: dict, bulk_items) -> dict:
+	"""Assignee + the description that gets EMAILED to them + target summaries.
+
+	``notify`` defaults True (assign_to.py:40) so an absent arg still sends mail -
+	but an EXPLICIT notify=None reaches int(bool(None)) -> 0 and sends none
+	(assign_to.py:84). _flag_on distinguishes them; ``.get()`` truthiness would not.
+	"""
+	doctype = args.get("doctype")
+	targets = [t for t in (bulk_items or [args.get("name")]) if t][:_MAX_ROWS]
+	total = len(bulk_items) if bulk_items else 1
+	return {
+		"kind": "assign", "doctype": doctype,
+		"assignee": fmt(args.get("user") or ""),
+		"description": fmt(args.get("description") or "", limit=_MAX_BODY),
+		"priority": fmt(args.get("priority") or ""),
+		"date": fmt(args.get("date") or ""),
+		"notify": _flag_on(args, "notify", True),
+		"count": total,
+		"records": _verb_records(doctype, targets),
+		"extra": max(0, total - len(targets)),
 	}
 
 
