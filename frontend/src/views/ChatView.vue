@@ -297,7 +297,7 @@
 												{{ summaryState.model && summaryState.model.applying ? 'Saving...' : (activeAction.verb === 'update' ? 'Confirm update' : 'Confirm create') }}
 											</button>
 											<button class="jv-action-2nd" :disabled="!summaryState.model" @click="previewSummary">Preview</button>
-											<button class="jv-action-2nd" @click="openDraftPanel({ verb: activeAction.verb || 'create', ...activeAction })">Edit</button>
+											<button class="jv-action-2nd" :disabled="!summaryState.model" @click="openDraftPanel({ verb: activeAction.verb || 'create', ...activeAction })">Edit</button>
 										</div>
 										<div class="jv-summary-hint">Want a change? just tell me, e.g. "make Widget A qty 12".</div>
 									</div>
@@ -2126,6 +2126,27 @@ function _panelField(metaField, value) {
 async function buildDraftModel(a) {
 	if (!a || a.kind !== "doc" || !a.doctype) return
 	const verb = a.verb === "update" ? "update" : "create"
+	// An action block we cannot render must FAIL, not render empty - a blank card
+	// reads as "Jarvis did not try" rather than "Jarvis emitted a shape I cannot
+	// draw". `docs` is a create_doc batch payload, not an action key (AGENTS.md:122
+	// documents fields+tables for ONE record) - throw on it for EITHER verb: a
+	// {"verb":"update","docs":[...]} fusion otherwise builds an empty diff, renders
+	// "No field changes." with Confirm ENABLED, and sends update_doc(dt, "", {}).
+	// A hybrid carrying BOTH fields and docs throws too: rendering the fields and
+	// dropping the docs is a half-card the user confirms believing it is the set.
+	if (Array.isArray(a.docs)) {
+		const err = new Error(
+			"This draft carries a `docs` batch, which is a create_doc payload rather than a card. Ask me to apply them as a batch.")
+		err.jvUserMessage = err.message
+		throw err
+	}
+	// Create-only: a fieldless UPDATE block legitimately renders "No field changes.",
+	// and a tables-only create is legal, so neither may throw.
+	if (verb === "create" && !(a.fields || []).length && !(a.tables || []).length) {
+		const err = new Error("This draft has no fields to show.")
+		err.jvUserMessage = err.message
+		throw err
+	}
 	let meta
 	try { meta = await _formMeta(a.doctype) } catch (e) { return } // no meta → no panel (old card still shows)
 	let base = { values: {}, tables: {} }
@@ -2191,7 +2212,11 @@ async function buildDraftModel(a) {
 
 // Open the editable panel for an action, via the shared buildDraftModel.
 async function openDraftPanel(a) {
-	const model = await buildDraftModel(a)
+	let model
+	// Deliberate: swallow to the SAME dead-end the old `if (!model) return` gave, so
+	// a guard throw cannot escape a @click handler. The summary card already shows
+	// the error. Do not "fix" this into a rethrow.
+	try { model = await buildDraftModel(a) } catch (e) { return }
 	if (!model) return
 	draftPanel.value = model
 }
@@ -2276,7 +2301,8 @@ async function ensureActionSummary(a) {
 	try {
 		model = await buildDraftModel({ verb: a.verb || "create", ...a })
 	} catch (e) {
-		if (summaryState.value.key === key) summaryState.value = { key, model: null, view: null, error: "Could not load this draft. Tell me to try again." }
+		const msg = (e && e.jvUserMessage) || "Could not load this draft. Tell me to try again."
+		if (summaryState.value.key === key) summaryState.value = { key, model: null, view: null, error: msg }
 		return
 	}
 	if (!model) {
