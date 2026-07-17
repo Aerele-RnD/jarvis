@@ -124,11 +124,41 @@ function tableNote(t) {
 		<!-- batch create -->
 		<template v-else-if="card.kind === 'batch_create'">
 			<div class="jv-pcard-head">Create {{ card.count }} record<template v-if="card.count !== 1">s</template></div>
-			<ul class="jv-pcard-list">
+			<div v-if="(card.records || []).length" class="jv-pcard-recs">
+				<details v-for="(r, i) in card.records" :key="'br' + i" class="jv-rec" :open="i === 0">
+					<summary>
+						<span class="jv-chev" aria-hidden="true"></span>
+						<span class="jv-rec-id">{{ r.doctype }} <b>{{ r.name }}</b></span>
+					</summary>
+					<div class="jv-rec-body">
+						<dl v-if="r.rows.length" class="jv-pcard-fields">
+							<template v-for="(f, j) in r.rows" :key="'bf' + j"><dt>{{ f.label }}</dt><dd>{{ f.value }}</dd></template>
+						</dl>
+						<div v-if="r.extra > 0" class="jv-pcard-more">+{{ r.extra }} more fields</div>
+						<div v-for="(t, ti) in (r.tables || [])" :key="'bt' + ti" class="jv-pcard-table">
+							<div class="jv-pcard-table-head">{{ t.label }} · {{ t.count }} row<template v-if="t.count !== 1">s</template></div>
+							<div class="jv-pcard-table-scroll">
+								<table>
+									<thead>
+										<tr><th v-for="(c, ci) in t.columns" :key="'bc' + ci">{{ c }}</th></tr>
+									</thead>
+									<tbody>
+										<tr v-for="(row, ri) in t.rows" :key="'brw' + ri">
+											<td v-for="(cell, di) in row.cells" :key="'bd' + di">{{ cell }}</td>
+										</tr>
+									</tbody>
+								</table>
+							</div>
+							<div v-if="tableNote(t)" class="jv-pcard-more">{{ tableNote(t) }}</div>
+						</div>
+					</div>
+				</details>
+			</div>
+			<ul v-else class="jv-pcard-list">
 				<li v-for="(r, i) in card.rows" :key="i">{{ r.doctype }} <b>{{ r.name }}</b></li>
 				<li v-if="card.extra > 0" class="jv-pcard-more">+{{ card.extra }} more</li>
 			</ul>
-			<div v-for="(n, i) in card.notes" :key="'n' + i" class="jv-pcard-note">{{ n }}</div>
+			<div v-if="(card.records || []).length && card.extra > 0" class="jv-pcard-more">+{{ card.extra }} more</div>
 		</template>
 
 		<!-- bulk update: one collapsible from→to preview per record -->
@@ -219,7 +249,6 @@ function tableNote(t) {
 	.jv-rec-body .jv-pcard-lbl { grid-column: 1 / -1; }
 }
 @media (prefers-reduced-motion: reduce) { .jv-chev { transition: none; } }
-.jv-pcard-note { margin-top: 5px; color: var(--text-3); font-size: 12px; }
 .jv-pcard-body { margin: 6px 0 0; padding: 8px 10px; background: var(--surface-2); border-radius: 7px; white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow-y: auto; font-size: 12px; line-height: 1.5; }
 .jv-pcard-details { margin-top: 8px; }
 .jv-pcard-details summary { cursor: pointer; color: var(--text-3); font-size: 11.5px; user-select: none; }

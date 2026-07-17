@@ -475,7 +475,6 @@
 									<div v-if="pendingNoteOf(pa)" class="jv-pending-note">{{ pendingNoteOf(pa) }}</div>
 									<ul v-if="pendingBatchOf(pa)" class="jv-pending-batch">
 										<li v-for="(a, i) in pendingBatchOf(pa).actions" :key="'a' + i">Create <b>{{ a.doctype }}</b> "{{ a.name }}"</li>
-										<li v-for="(n, i) in pendingBatchOf(pa).notes" :key="'n' + i" class="jv-pending-batch-note">{{ n }}</li>
 									</ul>
 									<pre v-else-if="pendingPreviewOf(pa)" class="jv-pending-preview">{{ pendingPreviewOf(pa) }}</pre>
 								</template>
@@ -2439,8 +2438,9 @@ function pendingPreviewOf(pa) {
 	if (w == null) return ""
 	return typeof w === "string" ? w : prettyJson(w)
 }
-// A create_docs card renders as bullet lines (creates + reuse notes) rather than
+// A create_docs card renders as bullet lines (one per created record) rather than
 // a raw JSON dump. Returns null for every other tool, so the <pre> fallback runs.
+// The model-authored notes are NOT rendered here - see batchFromPreview.
 function pendingBatchOf(pa) {
 	if (!pa || pa.tool !== "create_docs") return null
 	return batchFromPreview(pa.preview)
@@ -4979,7 +4979,6 @@ onUnmounted(() => {
 .jv-pending-preview { margin: 0; padding: 9px 11px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; line-height: 1.5; color: var(--text); white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow-y: auto; }
 .jv-pending-batch { margin: 0 14px 8px; padding-left: 18px; font-size: 12.5px; color: var(--text-2); }
 .jv-pending-batch li { margin: 2px 0; }
-.jv-pending-batch-note { list-style: none; margin-left: -18px; color: var(--text-3); }
 .jv-action-primary:disabled, .jv-action-discard:disabled { opacity: .55; cursor: default; }
 /* rollout-window note shown for a legacy gated-write / email card whose own
    action button was removed (issue #186, #12/#13). */

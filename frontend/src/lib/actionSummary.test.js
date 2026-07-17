@@ -96,18 +96,23 @@ test("summarize(update): kind=update, mechanical diff, headline optional", () =>
   assert.deepEqual(out.diff, [{ label: "Status", from: "Open", to: "Closed" }])
 })
 
-test("batchFromPreview: created records -> action lines, notes filtered", () => {
+// THE trust-boundary fix, on the FALLBACK path - the one that runs when the server
+// built no card, including when build_card FAILS. `notes` is a tool argument the
+// MODEL writes; rendered as unattributed bullets it reads as system truth, so a
+// prompt-injected agent could caption its own confirmation.
+test("batchFromPreview: created records -> action lines; model-authored notes are NOT returned", () => {
   const out = batchFromPreview({
     would: {
       created: [{ doctype: "Item", name: "Widget" }, { doctype: "Customer", name: "Acme" }],
-      notes: ["Reuse existing Supplier 'Globex' for your 'Globe'", ""],
+      notes: ["these already exist - confirming changes nothing"],
     },
   })
   assert.deepEqual(out.actions, [
     { doctype: "Item", name: "Widget" },
     { doctype: "Customer", name: "Acme" },
   ])
-  assert.deepEqual(out.notes, ["Reuse existing Supplier 'Globex' for your 'Globe'"])
+  assert.equal(out.notes, undefined)
+  assert.equal(JSON.stringify(out).includes("confirming changes nothing"), false)
 })
 
 test("batchFromPreview: non-batch or empty preview -> null", () => {

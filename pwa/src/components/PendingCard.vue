@@ -112,11 +112,39 @@ function tableNote(t) {
 
 		<template v-else-if="card.kind === 'batch_create'">
 			<div class="jv-pc-head">Create {{ card.count }} record<template v-if="card.count !== 1">s</template></div>
-			<ul class="jv-pc-list">
+			<div v-if="(card.records || []).length" class="jv-pc-recs">
+				<details v-for="(r, i) in card.records" :key="'br' + i" class="jv-pc-rec" :open="i === 0">
+					<summary>
+						<span class="jv-pc-chev" aria-hidden="true"></span>
+						<span class="jv-pc-rid">{{ r.doctype }} <b>{{ r.name }}</b></span>
+					</summary>
+					<div class="jv-pc-rbody">
+						<div v-for="(f, j) in r.rows" :key="'bf' + j" class="jv-pc-kv"><span>{{ f.label }}</span><b>{{ f.value }}</b></div>
+						<div v-if="r.extra > 0" class="jv-pc-more">+{{ r.extra }} more fields</div>
+						<div v-for="(t, ti) in (r.tables || [])" :key="'bt' + ti" class="jv-pc-table">
+							<div class="jv-pc-table-head">{{ t.label }} · {{ t.count }} row<template v-if="t.count !== 1">s</template></div>
+							<div class="jv-pc-table-scroll">
+								<table>
+									<thead>
+										<tr><th v-for="(c, ci) in t.columns" :key="'bc' + ci">{{ c }}</th></tr>
+									</thead>
+									<tbody>
+										<tr v-for="(row, ri) in t.rows" :key="'brw' + ri">
+											<td v-for="(cell, di) in row.cells" :key="'bd' + di">{{ cell }}</td>
+										</tr>
+									</tbody>
+								</table>
+							</div>
+							<div v-if="tableNote(t)" class="jv-pc-more">{{ tableNote(t) }}</div>
+						</div>
+					</div>
+				</details>
+			</div>
+			<ul v-else class="jv-pc-list">
 				<li v-for="(r, i) in card.rows" :key="i">{{ r.doctype }} <b>{{ r.name }}</b></li>
 				<li v-if="card.extra > 0" class="jv-pc-more">+{{ card.extra }} more</li>
 			</ul>
-			<div v-for="(n, i) in card.notes" :key="'n' + i" class="jv-pc-note">{{ n }}</div>
+			<div v-if="(card.records || []).length && card.extra > 0" class="jv-pc-more">+{{ card.extra }} more</div>
 		</template>
 
 		<template v-else-if="card.kind === 'bulk_update'">
@@ -203,7 +231,6 @@ function tableNote(t) {
 	.jv-pc-rbody .jv-pc-lbl { grid-column: 1 / -1; }
 }
 @media (prefers-reduced-motion: reduce) { .jv-pc-chev { transition: none; } }
-.jv-pc-note { margin-top: 6px; color: var(--ink5); font-size: 12.5px; }
 .jv-pc-body { margin: 8px 0 0; padding: 10px; border-radius: 8px; background: var(--card2); color: var(--ink7); font-size: 12.5px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow-y: auto; }
 .jv-pc-details { margin-top: 10px; }
 .jv-pc-details summary { cursor: pointer; color: var(--ink5); font-size: 12px; }
