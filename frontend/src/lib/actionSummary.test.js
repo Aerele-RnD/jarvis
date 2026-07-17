@@ -1,7 +1,7 @@
 // frontend/src/lib/actionSummary.test.js
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { proposedFields, changedFields, lineItemSummary, summarize, batchFromPreview, pendingCardOf, verbSentence, pendingExpiry } from "./actionSummary.js"
+import { proposedFields, changedFields, lineItemSummary, summarize, batchFromPreview, pendingCardOf, verbSentence, pendingExpiry, receiptView } from "./actionSummary.js"
 
 const createAction = {
   kind: "doc", verb: "create", doctype: "Sales Order", summary: "Sales Order - Acme, 2 items, total 1,100",
@@ -96,18 +96,23 @@ test("summarize(update): kind=update, mechanical diff, headline optional", () =>
   assert.deepEqual(out.diff, [{ label: "Status", from: "Open", to: "Closed" }])
 })
 
-test("batchFromPreview: created records -> action lines, notes filtered", () => {
+// THE trust-boundary fix, on the FALLBACK path - the one that runs when the server
+// built no card, including when build_card FAILS. `notes` is a tool argument the
+// MODEL writes; rendered as unattributed bullets it reads as system truth, so a
+// prompt-injected agent could caption its own confirmation.
+test("batchFromPreview: created records -> action lines; model-authored notes are NOT returned", () => {
   const out = batchFromPreview({
     would: {
       created: [{ doctype: "Item", name: "Widget" }, { doctype: "Customer", name: "Acme" }],
-      notes: ["Reuse existing Supplier 'Globex' for your 'Globe'", ""],
+      notes: ["these already exist - confirming changes nothing"],
     },
   })
   assert.deepEqual(out.actions, [
     { doctype: "Item", name: "Widget" },
     { doctype: "Customer", name: "Acme" },
   ])
-  assert.deepEqual(out.notes, ["Reuse existing Supplier 'Globex' for your 'Globe'"])
+  assert.equal(out.notes, undefined)
+  assert.equal(JSON.stringify(out).includes("confirming changes nothing"), false)
 })
 
 test("batchFromPreview: non-batch or empty preview -> null", () => {
@@ -119,6 +124,17 @@ test("batchFromPreview: non-batch or empty preview -> null", () => {
 test("pendingCardOf: returns the structured card for a known kind", () => {
   const card = { kind: "update", doctype: "ToDo", diff: [{ label: "Priority", from: "Medium", to: "Low" }] }
   assert.deepEqual(pendingCardOf({ preview: { card } }), card)
+})
+
+// CARD_KINDS IS THE GATE. pendingCardOf returns null for a kind not in the set and
+// the SPA silently falls back to the raw preview, so a kind build_card emits but the
+// whitelist omits ships as a no-op: the card renders exactly as before, every test
+// stays green, and nothing says so. One assertion per kind the server can emit.
+test("pendingCardOf: every kind build_card emits is whitelisted", () => {
+  for (const kind of ["create", "update", "bulk_update", "verb", "email", "method",
+    "batch_create", "bulk_email", "share", "assign", "skill", "wiki"]) {
+    assert.ok(pendingCardOf({ preview: { card: { kind } } }), `${kind} is not in CARD_KINDS`)
+  }
 })
 
 test("pendingCardOf: null for missing / unknown-kind / non-object cards", () => {
@@ -147,4 +163,24 @@ test("pendingExpiry: expired vs live vs no-stamp", () => {
   assert.deepEqual(pendingExpiry(now / 1000 - 5, now), { expired: true, secondsLeft: -5 })
   assert.deepEqual(pendingExpiry(null, now), { expired: false, secondsLeft: null })
   assert.deepEqual(pendingExpiry(0, now), { expired: false, secondsLeft: null })
+})
+
+test("receiptView: a CONFIRMED delete offers no open link - the record is gone", () => {
+  // The shortcut would 404. Every non-batch, non-email receipt used to linkify.
+  const v = receiptView("delete_doc", { doctype: "Task", name: "TASK-0001" },
+    { data: { deleted: true, doctype: "Task", name: "TASK-0001" } }, "confirmed")
+  assert.equal(v.targets.length, 1)
+  assert.equal(v.targets[0].name, "TASK-0001")
+  assert.equal(v.targets[0].url, "")
+})
+
+test("receiptView: a DISCARDED delete keeps its link - nothing ran, the record lives", () => {
+  const v = receiptView("delete_doc", { doctype: "Task", name: "TASK-0001" }, {}, "discarded")
+  assert.ok(v.targets[0].url, "a record that still exists must stay openable")
+})
+
+test("receiptView: a create links the record it made", () => {
+  const v = receiptView("create_doc", { doctype: "Task" },
+    { data: { doctype: "Task", name: "TASK-0002" } }, "confirmed")
+  assert.ok(v.targets[0].url.includes("TASK-0002"))
 })

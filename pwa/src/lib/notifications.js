@@ -74,7 +74,10 @@ export function recordEvent(e) {
 	const conv = e.conversation_id || e.conversation
 	const at = Date.now()
 
-	if (e.kind === "run:end" && conv) {
+	// A stopped run is not a finished task. This feed is durable (localStorage +
+	// unread badge), so without the guard the user finds an unread "Task
+	// finished" hours after they killed the reply themselves.
+	if (e.kind === "run:end" && !e.stopped && conv) {
 		push({
 			id: `end:${e.run_id || e.message_id}`,
 			kind: "task-finished",

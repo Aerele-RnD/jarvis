@@ -506,8 +506,8 @@ def get_conversation(conversation: str) -> dict:
 		filters={"conversation": conversation, "hidden": 0},
 		fields=[
 			"name", "seq", "role", "content", "streaming", "error", "recovering",
-			"tool_name", "tool_args", "tool_result", "tool_status", "action_outcome",
-			"canvas", "creation", "modified",
+			"stopped", "tool_name", "tool_args", "tool_result", "tool_status",
+			"action_outcome", "canvas", "creation", "modified",
 		],
 		order_by="seq asc",
 	)

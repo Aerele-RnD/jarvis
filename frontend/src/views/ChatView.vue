@@ -223,6 +223,12 @@
 									</div>
 								</div>
 								<div v-else class="jv-md" style="font-size:14px;line-height:1.6;color:var(--text);" v-html="render(m.content)"></div>
+								<!-- The user stopped this reply. A SIBLING of the body, not part of
+								     it: gated only on `stopped`, so it shows for a partial stop
+								     (content present) and an empty one alike, and the renderer can
+								     never mangle it. Muted, never an error tone - a deliberate stop
+								     is not a failure. -->
+								<div v-if="m.stopped" class="jv-stopped">You stopped this reply.</div>
 								<!-- rich action card the agent emits (doc confirm / email draft) -->
 								<template v-if="actionFor === m.name && activeAction">
 									<!-- email draft -->
@@ -287,19 +293,29 @@
 												</div>
 											</div>
 										</div>
-										<div v-else-if="summaryState.error" class="jv-summary-body jv-summary-loading">{{ summaryState.error }}</div>
+										<!-- A draft we could not build is a FAILURE, not a pending state: style
+										     it as one (it shared jv-summary-loading with "Preparing summary..."
+										     and read as a placeholder), and drop the footer entirely - three
+										     disabled buttons on a dead card are worse than no buttons, because
+										     they look like something you should be able to press. -->
+										<div v-else-if="summaryState.error" role="alert" class="jv-summary-body jv-summary-err">
+											<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><path d="M12 9v4M12 17h.01" /></svg>
+											<span>{{ summaryState.error }}</span>
+										</div>
 										<div v-else class="jv-summary-body jv-summary-loading">Preparing summary...</div>
 
 										<div v-if="summaryState.model && summaryState.model.error" style="margin:0 14px 10px"><ActionError :error="summaryState.model.error" /></div>
 
-										<div class="jv-action-foot">
-											<button class="jv-action-primary" :disabled="!summaryState.model || (summaryState.model && summaryState.model.applying) || convStreaming" :title="convStreaming ? 'Waiting for the current reply to finish' : ''" @click="confirmSummary">
-												{{ summaryState.model && summaryState.model.applying ? 'Saving...' : (activeAction.verb === 'update' ? 'Confirm update' : 'Confirm create') }}
-											</button>
-											<button class="jv-action-2nd" :disabled="!summaryState.model" @click="previewSummary">Preview</button>
-											<button class="jv-action-2nd" @click="openDraftPanel({ verb: activeAction.verb || 'create', ...activeAction })">Edit</button>
-										</div>
-										<div class="jv-summary-hint">Want a change? just tell me, e.g. "make Widget A qty 12".</div>
+										<template v-if="!summaryState.error">
+											<div class="jv-action-foot">
+												<button class="jv-action-primary" :disabled="!summaryState.model || (summaryState.model && summaryState.model.applying) || convStreaming" :title="convStreaming ? 'Waiting for the current reply to finish' : ''" @click="confirmSummary">
+													{{ summaryState.model && summaryState.model.applying ? 'Saving...' : (activeAction.verb === 'update' ? 'Confirm update' : 'Confirm create') }}
+												</button>
+												<button class="jv-action-2nd" :disabled="!summaryState.model" @click="previewSummary">Preview</button>
+												<button class="jv-action-2nd" :disabled="!summaryState.model" @click="openDraftPanel({ verb: activeAction.verb || 'create', ...activeAction })">Edit</button>
+											</div>
+											<div class="jv-summary-hint">Want a change? just tell me, e.g. "make Widget A qty 12".</div>
+										</template>
 									</div>
 									<!-- submit/cancel/delete/amend are gated writes (issue #186): the real
 									     confirmation is the action:pending card rendered below the thread,
@@ -475,7 +491,6 @@
 									<div v-if="pendingNoteOf(pa)" class="jv-pending-note">{{ pendingNoteOf(pa) }}</div>
 									<ul v-if="pendingBatchOf(pa)" class="jv-pending-batch">
 										<li v-for="(a, i) in pendingBatchOf(pa).actions" :key="'a' + i">Create <b>{{ a.doctype }}</b> "{{ a.name }}"</li>
-										<li v-for="(n, i) in pendingBatchOf(pa).notes" :key="'n' + i" class="jv-pending-batch-note">{{ n }}</li>
 									</ul>
 									<pre v-else-if="pendingPreviewOf(pa)" class="jv-pending-preview">{{ pendingPreviewOf(pa) }}</pre>
 								</template>
@@ -2127,6 +2142,27 @@ function _panelField(metaField, value) {
 async function buildDraftModel(a) {
 	if (!a || a.kind !== "doc" || !a.doctype) return
 	const verb = a.verb === "update" ? "update" : "create"
+	// An action block we cannot render must FAIL, not render empty - a blank card
+	// reads as "Jarvis did not try" rather than "Jarvis emitted a shape I cannot
+	// draw". `docs` is a create_doc batch payload, not an action key (AGENTS.md:122
+	// documents fields+tables for ONE record) - throw on it for EITHER verb: a
+	// {"verb":"update","docs":[...]} fusion otherwise builds an empty diff, renders
+	// "No field changes." with Confirm ENABLED, and sends update_doc(dt, "", {}).
+	// A hybrid carrying BOTH fields and docs throws too: rendering the fields and
+	// dropping the docs is a half-card the user confirms believing it is the set.
+	if (Array.isArray(a.docs)) {
+		const err = new Error(
+			"This draft carries a `docs` batch, which is a create_doc payload rather than a card. Ask me to apply them as a batch.")
+		err.jvUserMessage = err.message
+		throw err
+	}
+	// Create-only: a fieldless UPDATE block legitimately renders "No field changes.",
+	// and a tables-only create is legal, so neither may throw.
+	if (verb === "create" && !(a.fields || []).length && !(a.tables || []).length) {
+		const err = new Error("This draft has no fields to show.")
+		err.jvUserMessage = err.message
+		throw err
+	}
 	let meta
 	try { meta = await _formMeta(a.doctype) } catch (e) { return } // no meta → no panel (old card still shows)
 	let base = { values: {}, tables: {} }
@@ -2192,7 +2228,11 @@ async function buildDraftModel(a) {
 
 // Open the editable panel for an action, via the shared buildDraftModel.
 async function openDraftPanel(a) {
-	const model = await buildDraftModel(a)
+	let model
+	// Deliberate: swallow to the SAME dead-end the old `if (!model) return` gave, so
+	// a guard throw cannot escape a @click handler. The summary card already shows
+	// the error. Do not "fix" this into a rethrow.
+	try { model = await buildDraftModel(a) } catch (e) { return }
 	if (!model) return
 	draftPanel.value = model
 }
@@ -2277,7 +2317,8 @@ async function ensureActionSummary(a) {
 	try {
 		model = await buildDraftModel({ verb: a.verb || "create", ...a })
 	} catch (e) {
-		if (summaryState.value.key === key) summaryState.value = { key, model: null, view: null, error: "Could not load this draft. Tell me to try again." }
+		const msg = (e && e.jvUserMessage) || "Could not load this draft. Tell me to try again."
+		if (summaryState.value.key === key) summaryState.value = { key, model: null, view: null, error: msg }
 		return
 	}
 	if (!model) {
@@ -2439,8 +2480,9 @@ function pendingPreviewOf(pa) {
 	if (w == null) return ""
 	return typeof w === "string" ? w : prettyJson(w)
 }
-// A create_docs card renders as bullet lines (creates + reuse notes) rather than
+// A create_docs card renders as bullet lines (one per created record) rather than
 // a raw JSON dump. Returns null for every other tool, so the <pre> fallback runs.
+// The model-authored notes are NOT rendered here - see batchFromPreview.
 function pendingBatchOf(pa) {
 	if (!pa || pa.tool !== "create_docs") return null
 	return batchFromPreview(pa.preview)
@@ -3758,7 +3800,11 @@ function stopRun() {
 	if (m) {
 		m.streaming = false
 		if (m.name) stoppedMsgIds.value.add(m.name)
-		if (!m.content) m.content = "_Stopped._"
+		// A stop is a state of the turn, not prose: leave whatever streamed
+		// alone and flag the row. The marker renders from `stopped`, so a
+		// mid-sentence stop no longer reads as a complete answer. The server
+		// sets the same flag, so the marker survives a reload.
+		m.stopped = true
 	}
 	waiting.value = false
 	sending.value = false
@@ -4569,6 +4615,10 @@ onUnmounted(() => {
 /* day separators between message groups (UX #23) */
 .jv-daydivider { display: flex; align-items: center; justify-content: center; margin: 6px 0 2px; }
 .jv-daydivider span { font-size: 11px; font-weight: 550; color: var(--text-3); background: var(--surface-1); border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; }
+/* "You stopped this reply." - a muted rule under the body, in the same
+   vocabulary as .jv-msgtime. Deliberately NOT --red: the user chose to stop,
+   and dressing their own click as a failure is a lie about what happened. */
+.jv-stopped { margin-top: 8px; padding-top: 7px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--text-3); }
 .jv-md :deep(.jv-md-link) { color: var(--cta); text-decoration: none; font-weight: 500; }
 /* Auto-linked document IDs → open the record in ERPNext Desk. Dashed underline
    marks them as record links, distinct from plain markdown links. */
@@ -4979,7 +5029,6 @@ onUnmounted(() => {
 .jv-pending-preview { margin: 0; padding: 9px 11px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; line-height: 1.5; color: var(--text); white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow-y: auto; }
 .jv-pending-batch { margin: 0 14px 8px; padding-left: 18px; font-size: 12.5px; color: var(--text-2); }
 .jv-pending-batch li { margin: 2px 0; }
-.jv-pending-batch-note { list-style: none; margin-left: -18px; color: var(--text-3); }
 .jv-action-primary:disabled, .jv-action-discard:disabled { opacity: .55; cursor: default; }
 /* rollout-window note shown for a legacy gated-write / email card whose own
    action button was removed (issue #186, #12/#13). */
@@ -5004,6 +5053,10 @@ onUnmounted(() => {
 .jv-summary-arrow { color: var(--text-3); }
 .jv-summary-to { color: var(--green); font-weight: 600; }
 .jv-summary-nochange, .jv-summary-loading { font-size: 12.5px; color: var(--text-3); }
+/* A draft that could not be built. Deliberately NOT jv-summary-loading's muted
+   grey: this is a dead end, not a pending state, and it read as a placeholder. */
+.jv-summary-err { display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; color: var(--red); line-height: 1.45; }
+.jv-summary-err svg { flex: none; margin-top: 1px; }
 .jv-summary-table { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .jv-summary-table-h { padding: 7px 10px; background: var(--surface-2); font-size: 12px; font-weight: 650; color: var(--text-2); border-bottom: 1px solid var(--border); }
 .jv-summary-gridwrap { overflow-x: auto; }

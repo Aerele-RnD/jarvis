@@ -17,6 +17,7 @@
     "recovery_started_at",
     "openclaw_seq_watermark",
     "was_recovered",
+    "stopped",
     "tool_name",
     "tool_args",
     "tool_result",
@@ -100,6 +101,14 @@
       "read_only": 1,
       "hidden": 1,
       "description": "Set when this turn was finalized or errored by snapshot recovery rather than its live worker - the never-error machinery's fingerprint."
+    },
+    {
+      "fieldname": "stopped",
+      "fieldtype": "Check",
+      "label": "Stopped",
+      "default": 0,
+      "read_only": 1,
+      "description": "User hit Stop and the abort landed; content is whatever streamed first (may be empty)."
     },
     {
       "fieldname": "tool_name",

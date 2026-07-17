@@ -29,6 +29,17 @@ const heading = computed(
 	() => props.action.title || `${verb.value === "create" ? "Create" : "Update"} ${props.action.doctype || "record"}`,
 )
 
+// No `tables` escape here, unlike the desktop: this card neither renders nor
+// applies child tables, so a block with no `fields` has nothing to show.
+const invalid = computed(() => {
+	if (!isWrite.value) return ""
+	if (Array.isArray(props.action.docs))
+		return "This draft carries a `docs` batch, which is a create_doc payload rather than a card. Ask Jarvis to apply them as a batch."
+	if (verb.value === "create" && !(props.action.fields || []).length)
+		return "This draft has no fields to show."
+	return ""
+})
+
 async function apply() {
 	if (state.value === "busy") return
 	state.value = "busy"
@@ -138,7 +149,7 @@ async function copyBody() {
 			</div>
 		</div>
 
-		<div v-if="error" class="jv-action-err">{{ error }}</div>
+		<div v-if="invalid || error" class="jv-action-err">{{ invalid || error }}</div>
 
 		<div v-if="state === 'done'" class="jv-action-done">
 			<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
@@ -149,7 +160,7 @@ async function copyBody() {
 
 		<div v-else class="jv-action-foot">
 			<button class="jv-btn is-ghost" :disabled="state === 'busy'" @click="emit('dismissed')">Cancel</button>
-			<button class="jv-btn is-primary" :disabled="state === 'busy'" @click="apply">
+			<button class="jv-btn is-primary" :disabled="state === 'busy' || !!invalid" @click="apply">
 				<span v-if="state === 'busy'" class="jv-spinner" />
 				<span v-else>{{ verb === "create" ? "Create" : "Save" }}</span>
 			</button>
