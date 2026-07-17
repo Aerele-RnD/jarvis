@@ -1,12 +1,8 @@
-"""Live, permission-fenced index of THIS site's customizations.
+"""Live, permission-fenced index of the site's customizations.
 
-Pipeline: collect_profile() -> fence_for_user(session user) ->
-apply_scope_match -> render_profile_md. NO caching in v1 - the collector is a
-handful of aggregates over small metadata tables (milliseconds). If profiling
-ever demands one: cache the RAW collect output per-site and fence per-user
-AFTER the cache read; NEVER cache fenced or rendered output site-wide - that
-would hand every user the widest view (the role-blind leak this tool's design
-exists to avoid).
+collect -> fence(session user) -> scope/match -> render. No caching; if ever
+needed, cache RAW collect output and fence AFTER the read - never cache
+fenced/rendered output site-wide (hands every user the widest view).
 """
 
 from __future__ import annotations
@@ -36,17 +32,12 @@ def describe_customizations(scope=None, match=None) -> dict:
 	skills, or when the [Context:] line mentions custom apps. Then call
 	``get_schema`` for field-level detail.
 
-	- ``scope``: optional subset of {apps, doctypes, custom_fields, workflows,
-	  reports, print_formats, scripts} - list or comma-separated string.
-	  Default = the full index.
-	- ``match``: optional case-insensitive substring over customization names.
+	- ``scope``: subset of {apps, doctypes, custom_fields, workflows, reports,
+	  print_formats, scripts} (list or comma string). Default = full index.
+	- ``match``: case-insensitive substring over names.
 
-	Result: {markdown} - an INDEX, not a schema dump: names, counts and
-	workflow states only, budget-capped, ending with the retrieval recipe.
-	Permission-fenced per calling user: doctypes the caller cannot read are
-	absent and never counted, so two users may legitimately see different
-	indexes. Metadata only - no row data, Select options, or field
-	descriptions ever appear.
+	Result: {markdown}. Fenced per calling user - unreadable doctypes are
+	absent and never counted. Metadata only, never row data.
 	"""
 	scopes = _parse_scope(scope)
 	needle = _parse_match(match)

@@ -1,10 +1,6 @@
-"""Analyze jarvis.tool_telemetry log lines to answer one question: does the
-customizations clause (describe_customizations) actually get called before an
-agent touches a custom doctype?
-
-This module is PURE (no frappe import at module top level) so parse_lines/
-compute/percentile are unit-testable without a site; frappe is only imported
-inside run(), the bench-execute entry point.
+"""Analyze jarvis.tool_telemetry lines: was describe_customizations called
+before the agent touched a custom doctype? PURE at module level (frappe only
+inside run()).
 
 Escalation gate: if after ~2 weeks of live traffic the activation rate stays
 below ~70% with the customizations clause enabled, revisit Option A (a slim

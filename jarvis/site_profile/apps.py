@@ -1,10 +1,7 @@
 """App-level custom/core classification for customization discovery.
 
-Single source of truth for "custom" at app granularity: get_schema's doctype
-flag, collect.py's two-union doctype discovery, and the [Context:] clause all
-ride these helpers so they can never disagree. Every function fails toward
-"nothing custom" - misreporting a core app as custom would flood the index;
-the reverse merely omits a hint.
+Single source of truth shared by get_schema, collect.py and the [Context:]
+clause. Every function fails toward "nothing custom".
 """
 
 from __future__ import annotations
@@ -13,10 +10,8 @@ import re
 
 import frappe
 
-# The core stack the persona skill families already teach (india_compliance
-# included - it ships the india-compliance family). Anything else installed on
-# the site is treated as the customer's own app. Operators can extend this per
-# site via Jarvis Settings ``core_apps_override``.
+# The core stack the persona skill families teach; anything else installed is
+# the customer's own. Extendable per site via core_apps_override.
 _KNOWN_APPS = frozenset({
 	"frappe",
 	"erpnext",
@@ -33,8 +28,7 @@ _SETTINGS = "Jarvis Settings"
 
 
 def known_apps() -> frozenset[str]:
-	"""``_KNOWN_APPS`` plus operator additions from ``core_apps_override``
-	(comma/newline separated). Any read failure falls back to the constant."""
+	"""_KNOWN_APPS plus core_apps_override entries; the constant on failure."""
 	try:
 		settings = frappe.get_cached_doc(_SETTINGS)
 		raw = (settings.get("core_apps_override") or "").strip()
@@ -47,15 +41,13 @@ def known_apps() -> frozenset[str]:
 
 
 def _installed_apps() -> list[str]:
-	"""Seam over frappe.get_installed_apps. Tests patch THIS, never the frappe
-	function - the framework itself resolves hooks through get_installed_apps,
-	so a global mock breaks every dict-filter query (AppNotInstalledError)."""
+	"""Test seam - patching frappe.get_installed_apps globally breaks the
+	framework's own hook resolution."""
 	return frappe.get_installed_apps()
 
 
 def custom_apps() -> list[str]:
-	"""Installed apps outside the known core stack, in install order.
-	Empty on a vanilla site and on any failure."""
+	"""Installed apps outside the core stack; empty on failure."""
 	try:
 		installed = _installed_apps()
 	except Exception:
@@ -65,8 +57,7 @@ def custom_apps() -> list[str]:
 
 
 def custom_module_names() -> set[str]:
-	"""Module Def names belonging to custom apps - the module->app mapping that
-	classifies app-shipped (custom=0) doctypes. Empty when no custom apps."""
+	"""Modules of custom apps (classifies app-shipped custom=0 doctypes)."""
 	apps = custom_apps()
 	if not apps:
 		return set()
@@ -79,11 +70,9 @@ def custom_module_names() -> set[str]:
 
 
 def known_module_names() -> set[str]:
-	"""Module Def names belonging to KNOWN (core) apps - the reverse mapping:
-	a Custom Field row stamped with one of these modules is app-shipped fixture
-	schema, not the customer's customization, even when its
-	is_system_generated flag predates that column. Empty on failure (then only
-	the is_system_generated filter applies - fail toward over-reporting)."""
+	"""Modules of KNOWN apps: a Custom Field stamped with one is app-shipped
+	fixture schema even when is_system_generated predates it. Empty on
+	failure - fail toward over-reporting."""
 	try:
 		return set(
 			frappe.get_all(

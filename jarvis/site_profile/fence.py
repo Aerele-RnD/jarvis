@@ -1,16 +1,9 @@
 """Per-user permission fence over collect_profile() output.
 
-The collector is permission-free; THIS layer drops every item attributable to
-a doctype the caller cannot read - custom doctypes, custom-field groups,
-workflows, reports, print formats, script buckets alike. The data shape holds
-no precomputed CROSS-DOCTYPE totals: render derives every section count from
-list lengths AFTER this filter, so "counts recomputed post-fence" holds by
-construction (a clerk's index says 12 custom doctypes, never "12 of 31" - a
-pre-filter count would leak existence). The per-doctype counts inside an item
-(custom_field_count etc.) describe a doctype the user can already read.
-
-App and module names pass unfenced: existence at app granularity is the
-accepted coarse leak, matching the [Context:] clause.
+Drops every item attributable to a doctype the caller cannot read. The shape
+holds no precomputed cross-doctype totals - render counts the fenced lists,
+so a clerk's index says 12 custom doctypes, never "12 of 31". App/module
+names pass unfenced (the accepted coarse leak, matching the clause).
 """
 
 from __future__ import annotations
@@ -19,15 +12,13 @@ import frappe
 
 
 def fence_for_user(data: dict, user: str | None = None) -> dict:
-	"""Filter ``data`` (collect_profile shape) to what ``user`` may read.
-	Returns a NEW dict, same shape, all keys present. Fails closed per item:
-	a has_permission error hides that doctype rather than exposing it."""
+	"""Filter ``data`` to what ``user`` may read. New dict, same shape.
+	Fails closed per item: a has_permission error hides the doctype."""
 	user = user or frappe.session.user
 	verdicts: dict[str, bool] = {}
 
 	def can_read(doctype: str | None) -> bool:
-		# Unkeyed entries (a report with no ref_doctype, the "" script bucket)
-		# name no doctype, so there is nothing to leak - they pass.
+		# Unkeyed entries name no doctype - nothing to leak.
 		if not doctype:
 			return True
 		if doctype not in verdicts:

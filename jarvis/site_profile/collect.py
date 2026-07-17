@@ -1,18 +1,8 @@
-"""Read-only collection of THIS site's customization metadata.
+"""Read-only, permission-FREE collection of the site's customization
+metadata (fence.py holds ALL permission logic). Set-based queries only: no
+get_meta loops, no roles_for_doctype (O(roles) per doctype).
 
-Feeds describe_customizations, which fences the result per user. This module
-is deliberately permission-FREE (frappe.get_all ignores permissions) so a
-future generator can reuse it with an anonymizer instead of the fence - the
-permission logic lives in fence.py and nowhere else.
-
-Set-based queries only: no get_meta loops, no roles_for_doctype/get_all_perms
-(O(roles) per doctype - a 400-doctype tenant would pay minutes). Everything
-here is a handful of get_all calls over small metadata tables; grouping is
-plain Python.
-
-Output contract (fence.py filters items, render.py derives every count from
-list lengths - there are NO precomputed totals to recompute; keys always
-present):
+Output contract (no precomputed totals; keys always present):
 
 	{
 	  "apps": ["fleet_mgmt"],                # custom app names, install order
@@ -39,8 +29,7 @@ from frappe.utils import cint
 
 from jarvis.site_profile import apps as sp_apps
 
-# Cap the notable-fieldname list per core doctype: enough to orient the agent,
-# never a field dump (get_schema is the field dump).
+# Orientation only - get_schema is the field dump.
 _MAX_NOTABLE_FIELDS = 5
 
 
@@ -74,15 +63,9 @@ def _module_map(custom_apps: list[str]) -> dict[str, str]:
 
 
 def _custom_doctypes(modules: dict[str, str]) -> list[dict]:
-	"""Two unions: UI-authored (custom=1) plus doctypes whose module belongs to
-	a custom app - app-shipped doctypes have custom=0, so the naive custom=1
-	filter misses exactly the case that matters most.
-
-	Known blind spot (documented, not fixed): a FORKED core app (still named
-	e.g. "erpnext") shipping custom=0 doctypes under its own modules is
-	invisible to both unions - the flag is off and the module maps to a known
-	app. The supported pattern is shipping customizations in a separate app;
-	fork-embedded schema surfaces only through live get_schema/get_list."""
+	"""Two unions: custom=1 plus module->custom-app (app-shipped doctypes have
+	custom=0). Known blind spot: a forked CORE app shipping custom=0 doctypes
+	is invisible to both - such schema surfaces only via live get_schema."""
 	fields = ["name", "module", "istable", "issingle", "is_submittable"]
 	seen: dict[str, dict] = {}
 	filter_sets = [{"custom": 1}]
@@ -101,12 +84,8 @@ def _custom_doctypes(modules: dict[str, str]) -> list[dict]:
 
 def _core_customizations(custom_dt_names: set[str]) -> list[dict]:
 	"""Custom Fields + Property Setters per CORE doctype. Excludes
-	is_system_generated rows (app-shipped fixture fields - e.g. a compliance
-	app's fields on Customer - are the app's own schema, not this customer's
-	customization), rows whose ``module`` maps to a known app (fixture exports
-	that predate or skip the is_system_generated flag - same lineage rule as
-	doctype discovery, in reverse), and rows on custom doctypes (their fields
-	are just their schema - get_schema territory)."""
+	is_system_generated rows and known-app-module rows (both app-shipped
+	schema) and rows on custom doctypes (their own schema)."""
 	known_modules = sp_apps.known_module_names()
 	cf_rows = frappe.get_all(
 		"Custom Field",
@@ -180,9 +159,7 @@ def _workflows() -> list[dict]:
 
 
 def _custom_reports(modules: dict[str, str]) -> list[dict]:
-	"""Operator-created reports (is_standard='No') plus reports SHIPPED by a
-	custom app (is_standard='Yes' but module belongs to it) - same two-union
-	reasoning as doctypes."""
+	"""Operator-created (is_standard='No') plus custom-app-shipped reports."""
 	seen: dict[str, dict] = {}
 	filter_sets = [{"is_standard": "No", "disabled": 0}]
 	if modules:
@@ -219,9 +196,8 @@ def _print_formats(modules: dict[str, str]) -> list[dict]:
 
 
 def _scripts_summary(custom_dt_names: set[str]) -> dict:
-	"""Existence counts only - script names/bodies never enter the index.
-	The empty-string bucket collects scripts not tied to a doctype (API
-	scripts, scheduler events); it carries nothing to fence."""
+	"""Existence counts only - names/bodies never enter the index. The ""
+	bucket holds scripts with no reference doctype."""
 	server = Counter()
 	for row in frappe.get_all(
 		"Server Script",

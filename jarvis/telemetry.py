@@ -1,21 +1,12 @@
-"""Read-path tool + turn telemetry for customization discovery (stage 4).
-
-Structured JSON lines to a dedicated logger, mirroring jarvis/audit.py's
-never-raise contract (audit covers WRITE tools; this covers the discovery
-read path). Two line kinds:
+"""Customization-discovery telemetry: JSON lines to a dedicated logger
+(never-raise, like jarvis/audit.py). Two kinds:
 
   {"kind": "tool", ts, site, user_hash, conversation, tool, duration_ms,
    result_chars, custom_target}
-  {"kind": "turn", ts, site, conversation, run_id, duration_ms,
-   touched_custom}
+  {"kind": "turn", ts, site, conversation, run_id, duration_ms, touched_custom}
 
-Emitted for (a) every describe_customizations call and (b) any
-get_schema/query/get_list call whose target doctype is one of the site's
-custom doctypes (``custom_target: true`` - these also flag the turn). Plus
-one line per completed chat turn. jarvis/site_profile/analyze.py reads these
-to compute the activation rate: did the agent consult the index before its
-first custom-entity touch? Telemetry must never break a tool call or a turn:
-every public function swallows everything.
+analyze.py computes the activation rate from these. Every public function
+swallows everything - telemetry must never break a tool call or turn.
 """
 
 from __future__ import annotations
@@ -29,9 +20,7 @@ _LOGGER = "jarvis.tool_telemetry"
 _TRACKED_TARGET_TOOLS = frozenset({"get_schema", "query", "get_list"})
 _TRACKED_TOOL = "describe_customizations"
 
-# Custom-doctype name set (both unions), cached per site; invalidated by the
-# same schema doc_events as the customizations clause (clear_clause_cache
-# deletes this key too) with the TTL as backstop.
+# Cached custom-doctype names; invalidated with the clause cache.
 DOCTYPE_SET_CACHE_KEY = "jarvis:telemetry_custom_doctypes"
 _DOCTYPE_SET_TTL_S = 300
 
@@ -40,8 +29,7 @@ _TURN_FLAG_TTL_S = 3600
 
 def record_tool(tool: str, args, conversation: str | None,
 		duration_ms: int, result) -> None:
-	"""One line per relevant tool call, from api._run_tool. Fast no-op for
-	every untracked tool; never raises."""
+	"""One line per relevant tool call; fast no-op otherwise. Never raises."""
 	try:
 		custom_target = False
 		if tool == _TRACKED_TOOL:
@@ -72,9 +60,8 @@ def record_tool(tool: str, args, conversation: str | None,
 
 def emit_turn(conversation: str | None, run_id: str | None,
 		duration_ms: int) -> None:
-	"""One line per completed chat turn (turn_handler's finalize point),
-	carrying whether any tool call in it touched a custom doctype. Reads AND
-	clears the per-turn flag; never raises."""
+	"""One line per completed turn; reads and clears the per-turn custom
+	flag. Never raises."""
 	try:
 		if not conversation:
 			return
@@ -92,9 +79,8 @@ def emit_turn(conversation: str | None, run_id: str | None,
 
 
 def custom_doctype_set() -> frozenset:
-	"""Names of the site's custom doctypes (custom=1 UNION module->custom
-	app), cached. Empty set on any failure - telemetry then under-reports
-	rather than erroring."""
+	"""Cached custom-doctype names (both unions). Empty on failure -
+	under-report rather than error."""
 	try:
 		cache = frappe.cache()
 		cached = cache.get_value(DOCTYPE_SET_CACHE_KEY)

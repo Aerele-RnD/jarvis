@@ -1,16 +1,7 @@
-"""Render a site's customization inventory into a budgeted markdown index.
-
-The caller (site_profile/collect.py, not this module) walks the DB and hands
-us a plain dict of custom apps/doctypes/customizations/workflows/reports/
-print-formats/scripts. This module is PURE (no frappe import, no DB) so the
-shed ladder and truncation math are unit-testable without a site.
-
-The rendered doc is an INDEX for the agent, not a schema dump - it tells the
-agent WHAT exists so it knows to call jarvis__get_schema before touching it.
-Because the doc rides in every turn's context, the ``## How to go deeper``
-recipe section is reserved first: it is never collapsed or dropped, and every
-other section sheds detail through six tiers before the floor tier's
-"+N more modules" line gives an unconditional size guarantee.
+"""Budgeted markdown index over collect_profile() output. PURE (no frappe)
+so the shed ladder and truncation math are unit-testable. The recipe section
+is reserved first and never sheds; everything else collapses through six
+tiers, with a "+N more modules" floor as the size guarantee.
 """
 
 DEFAULT_BUDGET = 18000
@@ -37,10 +28,8 @@ _RECIPE = (
 
 
 def apply_scope_match(data: dict, scopes: set[str] | None, match: str | None) -> dict:
-	"""Filter ``data`` (same shape, a NEW dict) down to the requested ``scopes``
-	and/or a case-insensitive substring ``match``. ``scopes=None`` keeps every
-	section; otherwise unselected sections become empty. ``modules`` is kept
-	whenever "apps" or "doctypes" is selected (doctype grouping needs it)."""
+	"""Filter to the requested scopes and/or substring match (new dict, same
+	shape). scopes=None keeps everything; modules survives with apps/doctypes."""
 	out = {
 		"apps": list(data.get("apps") or []),
 		"modules": dict(data.get("modules") or {}),
@@ -103,13 +92,8 @@ def apply_scope_match(data: dict, scopes: set[str] | None, match: str | None) ->
 
 
 def render_profile_md(data: dict, budget: int = DEFAULT_BUDGET, empty_message: str = EMPTY_MESSAGE) -> str:
-	"""Render ``data`` into markdown that never exceeds ``budget`` bytes.
-
-	Tries tiers 0 (full detail) through 6 (module rollups only), first fit
-	wins. If tier 6 still doesn't fit, the module rollup list itself is
-	truncated with a "+N more modules" line - an unconditional size guarantee
-	that never cuts mid-line.
-	"""
+	"""Render within ``budget``: tiers 0..6, first fit wins, then the module
+	list itself truncates ("+N more modules"). Never cuts mid-line."""
 	if _is_empty(data):
 		return empty_message
 	for tier in range(7):

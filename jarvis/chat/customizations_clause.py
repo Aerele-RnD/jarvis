@@ -1,18 +1,9 @@
 """Per-site customizations hint for the trusted ``[Context: ...]`` line.
 
-Counts + app names ONLY - never doctype names. The clause is shown to every
-user on the site (a context line is not user-fenced the way a tool result
-is), so it may leak existence only at app/count granularity; names stay
-behind the permission-fenced ``jarvis__describe_customizations`` tool this
-clause points at.
-
-Cached per site (flat key, short TTL as backstop) and invalidated by the
-same doc_events that bust the schema cache - the clause deliberately counts
-ONLY sources those events cover (custom doctypes, custom fields, workflows,
-plus the installed-app list, which changes only via migrate and is refreshed
-by after_migrate). Reports/print formats/scripts are counted by the TOOL but
-not by this clause: their doc_events aren't wired, and a stale count in a
-trusted system line is worse than a narrower clause.
+Counts + app names ONLY - the clause is shown site-wide (not user-fenced);
+doctype names stay behind the fenced tool. Cached per site; invalidated by
+the same doc_events as the schema cache, so it counts ONLY sources those
+events cover (reports/print formats/scripts stay tool-only).
 """
 
 from __future__ import annotations
@@ -31,9 +22,8 @@ _DIRECTIVE = "call jarvis__describe_customizations before assuming standard fiel
 
 
 def clause_enabled() -> bool:
-	"""Operator toggle; NULL=ON. Same tabSingles probe as wiki_enabled - both
-	a loaded Document and get_single_value coerce an unset Check to 0, which
-	would break the default-on contract."""
+	"""Operator toggle; NULL=ON via tabSingles probe (get_single_value coerces
+	an unset Check to 0)."""
 	rows = frappe.db.sql(
 		"select value from `tabSingles` where doctype=%s and field=%s",
 		(SETTINGS, "enable_customizations_clause"),
@@ -44,9 +34,8 @@ def clause_enabled() -> bool:
 
 
 def customizations_clause() -> str:
-	"""The clause (leading ``"; "``), ``""`` on a vanilla site, when the
-	toggle is off, or when ANYTHING fails - never raises. Hot path: one
-	tabSingles probe + one redis read; the build runs only on a cache miss."""
+	"""The clause (leading "; "), or "" - vanilla site, toggle off, or any
+	failure. Never raises."""
 	try:
 		if not clause_enabled():
 			return ""
@@ -80,9 +69,8 @@ def _build_clause() -> str:
 		counts.append(f"{n_workflows} workflows")
 	counts_part = ", ".join(counts)
 
-	# Shrink ladder for the app list: full -> 2 shown -> 1 shown -> count
-	# only. First variant within budget wins; the last is guaranteed tiny, so
-	# the cap holds without ever slicing the directive mid-word.
+	# App-list shrink ladder; the count-only floor keeps the cap without
+	# slicing the directive.
 	for shown in (len(apps), 2, 1, 0):
 		clause = _compose(apps, shown, counts_part)
 		if len(clause) <= _CLAUSE_MAX_CHARS:
@@ -107,9 +95,8 @@ def _compose(apps: list[str], shown: int, counts_part: str) -> str:
 
 
 def _counts(modules: set[str]) -> tuple[int, int, int]:
-	"""(custom doctypes, core doctypes carrying custom fields, active
-	workflows) - the same two-union + is_system_generated + known-module
-	rules as site_profile/collect.py, reduced to counts."""
+	"""collect.py's two-union + is_system_generated + known-module rules,
+	reduced to counts."""
 	names = set(frappe.get_all("DocType", filters={"custom": 1}, pluck="name"))
 	if modules:
 		names |= set(
@@ -133,22 +120,17 @@ def _counts(modules: set[str]) -> tuple[int, int, int]:
 
 
 def _fold(name: str) -> str:
-	"""Neutralize an org-authored string entering the trusted bracket: app
-	names are code slugs, but the fold is cheap insurance (no backticks, no
-	bracket close, no clause forgery)."""
+	"""Disarm an org-authored string entering the trusted bracket."""
 	text = " ".join(str(name or "").split())
 	return text.replace("`", "'").replace("]", ")").replace(";", ",")
 
 
 def clear_clause_cache(doc=None, method=None) -> None:
-	"""doc_event handler (hooks.py, same events as clear_schema_cache) +
-	manual invalidation hook. Never raises."""
+	"""doc_event handler (same events as clear_schema_cache). Never raises."""
 	try:
 		cache = frappe.cache()
 		cache.delete_value(_CLAUSE_CACHE_KEY)
-		# The telemetry custom-doctype set derives from the same schema
-		# events, so it invalidates here too (lazy import: telemetry is
-		# optional to this module's core job).
+		# The telemetry doctype set derives from the same schema events.
 		from jarvis.telemetry import DOCTYPE_SET_CACHE_KEY
 
 		cache.delete_value(DOCTYPE_SET_CACHE_KEY)
@@ -157,8 +139,8 @@ def clear_clause_cache(doc=None, method=None) -> None:
 
 
 def after_migrate() -> None:
-	"""Recompute after migrate (the installed-app list only changes here).
-	Best-effort: never blocks a migrate."""
+	"""Recompute after migrate (installed apps only change here). Never
+	blocks a migrate."""
 	try:
 		clear_clause_cache()
 		customizations_clause()

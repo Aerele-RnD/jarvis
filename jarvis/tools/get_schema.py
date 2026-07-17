@@ -10,9 +10,8 @@ _SCHEMA_CACHE_VERSION = 2
 
 
 def _cache_key(doctype: str, verbose) -> str:
-	"""The ONE place the schema cache key is spelled. Bump
-	``_SCHEMA_CACHE_VERSION`` whenever the cached payload shape changes so a
-	stale pre-change entry can never be served; old keys age out at the TTL."""
+	"""The one spelling of the key. Bump _SCHEMA_CACHE_VERSION on any cached
+	shape change; old keys age out at the TTL."""
 	return f"jarvis_schema:v{_SCHEMA_CACHE_VERSION}:{doctype}:{int(bool(verbose))}"
 
 # Identity: emitted unconditionally because a record without them is anonymous.
@@ -103,9 +102,7 @@ def _field_record(f) -> dict:
 		if not isinstance(value, (str, int, float, bool)):
 			continue
 		record[key] = value
-	# Meta merges Custom Fields into the list (Meta.add_custom_fields stamps
-	# is_custom_field=1); surface that provenance under the same
-	# absent-means-not-configured contract - emitted only when true.
+	# Custom Field provenance, emitted only when true (absent = standard).
 	if getattr(f, "is_custom_field", False):
 		record["is_custom"] = True
 	return record
@@ -127,8 +124,7 @@ def _workflow_for(doctype: str):
 
 
 def _is_custom_doctype(meta) -> bool:
-	"""UI-authored (custom=1) or shipped by a customer app (module -> non-core
-	app). Classification failure reads as standard - never breaks get_schema."""
+	"""custom=1 OR module of a non-core app; failure reads standard."""
 	if getattr(meta, "custom", 0):
 		return True
 	try:

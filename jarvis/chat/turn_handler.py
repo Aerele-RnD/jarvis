@@ -550,9 +550,8 @@ def handle_chat_send(payload: dict) -> None:
 		wiki_notes_clause = wiki_clause(conversation_id, context) or ""
 	except Exception:
 		wiki_notes_clause = ""
-	# Site-customizations hint (customization discovery): counts-only, cached
-	# per site, points the agent at jarvis__describe_customizations before it
-	# assumes standard schema. Same best-effort + lazy-import contract.
+	# Site-customizations hint: counts-only, cached per site. Same
+	# best-effort + lazy-import contract as the clauses above.
 	try:
 		from jarvis.chat.customizations_clause import customizations_clause
 
@@ -1072,9 +1071,7 @@ def handle_chat_send(payload: dict) -> None:
 		stream_stats["first_delta_ms"], stream_stats["pre_reply_tool_calls"],
 		int((time.monotonic() - t_handle0) * 1000),
 	)
-	# Customization-discovery telemetry (stage 4): one JSON line per turn so
-	# analyze.py can segment latency by whether the turn touched a custom
-	# doctype. Best-effort - never affects the completed turn.
+	# Turn telemetry (customization discovery). Best-effort.
 	try:
 		from jarvis import telemetry
 

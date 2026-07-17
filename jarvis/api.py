@@ -1045,9 +1045,8 @@ def _run_tool(tool: str, raw_args: dict | str | None,
 		# returns it verbatim, so the card + expiry ride the event, the record, and
 		# every resync identically (never rebuilt -> cannot diverge). build_card
 		# returns None for uncovered shapes; the SPA falls back to the raw preview.
-		# NOTE: time is imported at module level - a function-local import here
-		# would make `time` local to ALL of _run_tool and break the read path's
-		# perf_counter above it (UnboundLocalError; caught by CI 2026-07-17).
+		# time comes from the module import - a local import here would shadow
+		# it for ALL of _run_tool and break the read path's perf_counter.
 		from jarvis.chat import confirm_card
 		if isinstance(preview, dict):
 			preview["card"] = confirm_card.build_card(tool, args, preview)
@@ -1088,8 +1087,7 @@ def _run_tool(tool: str, raw_args: dict | str | None,
 			"status": "pending_confirmation", "preview": model_preview, "tool": tool,
 		}}
 
-	# Customization-discovery telemetry (read path; audit covers writes):
-	# record_tool is a fast no-op for untracked tools and never raises.
+	# Read-path telemetry; fast no-op for untracked tools, never raises.
 	t0 = time.perf_counter()
 	result = _dispatch_and_wrap(tool, args, is_write)
 	telemetry.record_tool(
