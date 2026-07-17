@@ -13,13 +13,15 @@ import re
 
 import frappe
 
-# The core stack the persona skill families already teach. Anything else
-# installed on the site is treated as the customer's own app. Operators can
-# extend this per site via Jarvis Settings ``core_apps_override``.
+# The core stack the persona skill families already teach (india_compliance
+# included - it ships the india-compliance family). Anything else installed on
+# the site is treated as the customer's own app. Operators can extend this per
+# site via Jarvis Settings ``core_apps_override``.
 _KNOWN_APPS = frozenset({
 	"frappe",
 	"erpnext",
 	"hrms",
+	"india_compliance",
 	"payments",
 	"webshop",
 	"insights",

@@ -743,7 +743,7 @@
    "fieldname": "core_apps_override",
    "fieldtype": "Small Text",
    "label": "Additional Core Apps",
-   "description": "Customization discovery treats every installed app outside the known core stack (frappe, erpnext, hrms, payments, webshop, insights, wiki, jarvis) as the customer's own. Comma- or newline-separated app names listed here EXTEND that core set, so their doctypes stop being reported as customizations. Leave empty (default) on most sites."
+   "description": "Customization discovery treats every installed app outside the known core stack (frappe, erpnext, hrms, india_compliance, payments, webshop, insights, wiki, jarvis) as the customer's own. Comma- or newline-separated app names listed here EXTEND that core set, so their doctypes stop being reported as customizations. Leave empty (default) on most sites."
   },
   {
    "fieldname": "enable_customizations_clause",

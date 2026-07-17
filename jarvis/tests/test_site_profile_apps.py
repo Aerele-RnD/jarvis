@@ -60,6 +60,16 @@ class TestSiteProfileApps(FrappeTestCase):
         ):
             self.assertEqual(sp_apps.custom_apps(), [])
 
+    def test_india_compliance_is_core(self):
+        """Persona-taught apps are core: a GST site must not report
+        india_compliance's doctypes as customizations (explicit product
+        decision, 2026-07-17)."""
+        with patch(
+            "jarvis.site_profile.apps._installed_apps",
+            return_value=["frappe", "erpnext", "india_compliance", "jarvis"],
+        ):
+            self.assertEqual(sp_apps.custom_apps(), [])
+
     def test_override_extends_known_set(self):
         """An operator listing an app in core_apps_override stops it being
         reported as a customization."""
