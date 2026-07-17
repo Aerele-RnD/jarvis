@@ -930,11 +930,21 @@ def handle_chat_send(payload: dict) -> None:
 					})
 					return
 				if terminal.get("state") == "aborted":
-					# The user hit Stop. Keep whatever streamed verbatim and record the
-					# stop as a FLAG - `content` is what the agent said, and a partial
-					# answer with no marker reads as a complete one. The SPA renders
-					# the marker from `stopped`, so a mid-sentence stop is finally
-					# distinguishable from a short reply.
+					# User hit Stop -> stop_run -> openclaw chat.abort. Finalize as a
+					# clean stop: keep whatever streamed, no error. Publish run:end so
+					# OTHER tabs (which never muted this run) also unlock - the
+					# stopping tab mutes it via stoppedRunId. (Ordered after the
+					# overflow check - the two terminal states are mutually exclusive,
+					# and the overflow branch stays first FOR ITS TEST: reordering
+					# these breaks TestRelayOverflowParks, which reads this file as
+					# text and asserts on a window after the relay:error line.)
+					#
+					# The stop is recorded as a FLAG, not as prose in `content`:
+					# `content` is what the agent said, and a partial answer with no
+					# marker reads as a complete one. The SPA renders the marker from
+					# `stopped`, so a mid-sentence stop is finally distinguishable
+					# from a short reply. `stopped` means the abort LANDED - the
+					# several paths where stop_run never reaches here leave it 0.
 					frappe.db.set_value(MSG, assistant_msg.name, "stopped", 1)
 					frappe.db.set_value(MSG, assistant_msg.name, "streaming", 0)
 					frappe.db.commit()
