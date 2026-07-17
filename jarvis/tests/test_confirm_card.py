@@ -477,19 +477,28 @@ class TestBatchCreateContent(FrappeTestCase):
 	def test_tables_past_MAX_TABLES_degrade_to_N_rows(self):
 		# The spec's caps section promises the overflow degrades to "N rows", not
 		# that it disappears.
+		#
+		# Uses REAL Table fields on a real doctype. An earlier version passed fake
+		# field names to ToDo: table_rows returned None for every one, so zero tables
+		# ever rendered, `rendered <= _MAX_TABLES` passed as 0 <= 3, and the
+		# _MAX_TABLES break was never reached - the test named a cap it did not
+		# exercise.
 		from jarvis.chat._record_summary import _MAX_TABLES
+		real_tables = ["items", "taxes", "pricing_rules", "packed_items"]
+		self.assertGreater(len(real_tables), _MAX_TABLES)  # or this proves nothing
 		values = {"customer": "X"}
-		for i in range(_MAX_TABLES + 1):
-			values[f"table_{i}"] = [{"a": 1}]
-		args = self._args([{"doctype": "ToDo", "values": values}])
-		would = {"created": [{"doctype": "ToDo", "name": "T-1"}]}
+		for fieldname in real_tables:
+			values[fieldname] = [{"idx": 1}]
+		args = self._args([{"doctype": "Sales Invoice", "values": values}])
+		would = {"created": [{"doctype": "Sales Invoice", "name": "SI-1"}]}
 		card = build_card("create_doc", args, {"would": would})
 		rendered = len(card["records"][0]["tables"])
-		self.assertLessEqual(rendered, _MAX_TABLES)
-		# every table key not rendered as a table still appears as a row
-		self.assertEqual(
-			len([r for r in card["records"][0]["rows"] if r["value"].endswith("row")]),
-			(_MAX_TABLES + 1) - rendered)
+		# the cap actually bit: fewer rendered than were proposed
+		self.assertEqual(rendered, _MAX_TABLES)
+		self.assertLess(rendered, len(real_tables))
+		# and every table key past the cap still shows up as an "N rows" row
+		degraded = [r for r in card["records"][0]["rows"] if r["value"].endswith("row")]
+		self.assertEqual(len(degraded), len(real_tables) - _MAX_TABLES)
 
 	def test_child_tables_render_per_record(self):
 		args = self._args([{"doctype": "Sales Invoice", "values": {
