@@ -68,6 +68,20 @@ def _embed_ref_name(ref: str) -> str:
 	return f"documents/{ref}/index.html"
 
 
+# The canvas host appends its own client script to hosted documents (a
+# live-reload WebSocket + user-action channel on /__openclaw__/ws). Inside
+# the Jarvis sandbox that channel cannot exist — the iframe CSP blocks all
+# egress — so the script is dead weight that logs a CSP violation on every
+# render. Drop any script block that references the host socket.
+_SCRIPT_BLOCK = re.compile(r"<script\b.*?</script>", re.IGNORECASE | re.DOTALL)
+
+
+def _strip_host_client(text: str) -> str:
+	return _SCRIPT_BLOCK.sub(
+		lambda m: "" if "__openclaw__/ws" in m.group(0) else m.group(0), text
+	)
+
+
 def detect_canvas_names(text: str) -> list[str]:
 	"""Return canvas artifact paths referenced in ``text``, de-duplicated, in order.
 
@@ -190,6 +204,11 @@ def persist_canvases(
 		if not fetched:
 			continue
 		body, typ = fetched
+		if typ == "html" and name.startswith("documents/"):
+			try:
+				body = _strip_host_client(body.decode("utf-8")).encode("utf-8")
+			except Exception:
+				pass
 		try:
 			file_url = _save_file(assistant_msg_name, name, body)
 		except Exception:

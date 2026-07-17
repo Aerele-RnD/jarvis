@@ -72,25 +72,43 @@ export const RUNTIME_JS = `(function () {
 		}
 	}
 
+	// Dashboard widget scripts run inline DURING document parsing - often
+	// before the #jarvis-sources block (or the rest of the DOM) exists. Defer
+	// every lookup until the document is fully parsed, then re-parse lazily,
+	// so widget/block ordering never matters.
+	function whenParsed(fn) {
+		if (document.readyState === "loading") {
+			document.addEventListener("DOMContentLoaded", fn);
+		} else {
+			fn();
+		}
+	}
+
 	window.jarvis = {
 		data: function (name) {
 			return new Promise(function (resolve, reject) {
-				var src = sources[name];
-				if (!src) {
-					var known = Object.keys(sources).join(", ") || "none declared";
-					var e = new Error('Unknown source "' + name + '" (declared: ' + known + ")");
-					e.code = "NotFound";
-					return reject(e);
-				}
-				var id = "d" + ++seq;
-				var timer = setTimeout(function () {
-					delete pending[id];
-					var e = new Error("Timed out loading data");
-					e.code = "Timeout";
-					reject(e);
-				}, 30000);
-				pending[id] = { resolve: resolve, reject: reject, timer: timer };
-				post({ type: "data", id: id, name: name, tool: src.tool, spec: src.spec });
+				whenParsed(function () {
+					var src = sources[name];
+					if (!src) {
+						parseSources();
+						src = sources[name];
+					}
+					if (!src) {
+						var known = Object.keys(sources).join(", ") || "none declared";
+						var e = new Error('Unknown source "' + name + '" (declared: ' + known + ")");
+						e.code = "NotFound";
+						return reject(e);
+					}
+					var id = "d" + ++seq;
+					var timer = setTimeout(function () {
+						delete pending[id];
+						var e = new Error("Timed out loading data");
+						e.code = "Timeout";
+						reject(e);
+					}, 30000);
+					pending[id] = { resolve: resolve, reject: reject, timer: timer };
+					post({ type: "data", id: id, name: name, tool: src.tool, spec: src.spec });
+				});
 			});
 		},
 		ready: function () {

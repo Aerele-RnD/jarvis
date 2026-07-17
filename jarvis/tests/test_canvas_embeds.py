@@ -67,3 +67,18 @@ class TestCanvasEmbedStripping(FrappeTestCase):
 		text = "Chart at canvas/charts/foo.html for you"
 		out = strip_canvas_refs(text, ["charts/foo.html"])
 		self.assertNotIn("canvas/", out)
+
+
+class TestHostClientStripping(FrappeTestCase):
+	def test_host_socket_script_removed_others_kept(self):
+		from jarvis.chat.canvas import _strip_host_client
+
+		html = (
+			"<html><body><script>renderChart()</script>"
+			'<script>\nconst ws = new WebSocket("ws://" + location.host + "/__openclaw__/ws");\n</script>'
+			"</body></html>"
+		)
+		out = _strip_host_client(html)
+		self.assertIn("renderChart()", out)
+		self.assertNotIn("__openclaw__/ws", out)
+		self.assertNotIn("WebSocket", out)
