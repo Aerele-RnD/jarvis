@@ -277,8 +277,19 @@ def _open_pinned(
 	target = parsed.path or "/"
 	if parsed.query:
 		target += "?" + parsed.query
-	headers = {"User-Agent": _USER_AGENT, "Host": _host_header(hostname, port, scheme)}
-	headers.update(extra_headers or {})
+	# extra_headers first, THEN the computed Host/User-Agent - never the other way
+	# round. Host in particular is part of the DNS-rebind defense's bookkeeping
+	# (it must always name the ORIGINAL hostname the address was vetted for, not
+	# whatever a caller's headers dict happens to carry); request_pinned's caller
+	# passes its own headers through here as extra_headers, and nothing stops a
+	# future caller from including a "Host" key, so this order stays defensive
+	# even though today's only extra_headers callers never set one. (The actual
+	# TCP/TLS destination is pinned independently via host=ip / assert_hostname
+	# below, so this was never an SSRF bypass - just correctness hardening for a
+	# general-purpose entry point.)
+	headers = dict(extra_headers or {})
+	headers["User-Agent"] = _USER_AGENT
+	headers["Host"] = _host_header(hostname, port, scheme)
 	pool_timeout = urllib3.Timeout(connect=timeout, read=timeout)
 	if scheme == "https":
 		pool = urllib3.HTTPSConnectionPool(

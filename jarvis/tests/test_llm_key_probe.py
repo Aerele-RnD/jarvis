@@ -136,6 +136,21 @@ class TestProbeApiKey(FrappeTestCase):
 		rp.assert_not_called()
 		self.assertFalse(result["ok"])
 
+	def test_a_message_extraction_crash_never_escapes_probe_api_key(self):
+		"""_extract_provider_message is best-effort against a body from whatever
+		the customer-supplied base_url points to - probe_api_key's documented
+		"NEVER raises" contract must hold even if that helper itself blows up
+		on a pathological response (code-review finding: only ValueError/
+		TypeError were caught inside the helper; anything else used to
+		propagate all the way out as an unhandled 500)."""
+		with (
+			mock.patch.object(link_fetch, "request_pinned", return_value=(400, {}, b"whatever")),
+			mock.patch.object(llm_key_probe, "_extract_provider_message", side_effect=RecursionError("boom")),
+		):
+			result = llm_key_probe.probe_api_key("OpenAI", "gpt-4o", "sk-x", "https://api.openai.com/v1")
+		self.assertFalse(result["ok"])
+		self.assertIn("HTTP 400", result["checks"][-1]["detail"])
+
 	def test_200_response_is_ok(self):
 		with mock.patch.object(
 			link_fetch,

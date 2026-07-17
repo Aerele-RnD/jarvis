@@ -241,7 +241,17 @@ def probe_api_key(provider: str, model: str, api_key: str, base_url: str = "") -
 		)
 		return _done(True)
 
-	message = _scrub(_extract_provider_message(body), api_key)
+	# `body` came back from whatever the customer-supplied base_url points to - a
+	# hostile or merely malformed response must never turn "the test failed" into
+	# an unhandled 500 (breaking probe_api_key's documented "NEVER raises"
+	# contract). _extract_provider_message already guards the failure modes it
+	# knows about (bad JSON, undecodable bytes); this catches anything else
+	# (e.g. a pathological structure blowing the interpreter's recursion limit)
+	# so a bad response body degrades to a generic message instead of a crash.
+	try:
+		message = _scrub(_extract_provider_message(body), api_key)
+	except Exception:
+		message = ""
 	checks.append(
 		_check(
 			"probe_request",

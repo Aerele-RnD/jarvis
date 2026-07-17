@@ -872,18 +872,28 @@ function sourceChip(row) {
 // per-row, since only one panel is ever open at a time - testResult is cleared
 // whenever the panel's row identity changes OR its own provider/model/apiKey/
 // baseUrl fields are edited (a stale green check must not survive an edit).
-const panel = ref({ open: false, mode: "add", uid: null, source: "subscription", addBackups: true, testing: false, testResult: null })
+// testGen additionally guards testApiKeyRow's in-flight request against a stale
+// response landing after an edit (see that function's doc comment).
+const panel = ref({ open: false, mode: "add", uid: null, source: "subscription", addBackups: true, testing: false, testResult: null, testGen: 0 })
 const panelRow = computed(() => rows.value.find((r) => r._uid === panel.value.uid) || null)
 // A removed panel row leaves panelRow null; close rather than render a headless panel.
 watch(panelRow, (r) => { if (panel.value.open && !r) panel.value = closedPanel() })
 // Invalidate a stale Test verdict the instant any field it depends on changes -
 // otherwise editing the key after a failed test would leave the old red result
-// on screen, implying it still applies to what's now typed in.
+// on screen, implying it still applies to what's now typed in. Array-of-getters
+// form (not a joined string key: two different field combos could join to the
+// same string, e.g. provider="a",model="b c" vs provider="a b",model="c") -
+// same idiom AgentsList.vue already uses for a multi-source watch. Bumping
+// testGen here (not just nulling testResult) also ABANDONS an in-flight Test:
+// its response, when it lands, will see the generation mismatch and skip
+// writing testResult/testing (testApiKeyRow's `stale()` guard) - so `testing`
+// must be reset to false HERE too, or the button would stay stuck on
+// "Testing…" until that now-irrelevant response arrives (if it ever does).
 watch(
-  () => panelRow.value && [panelRow.value.provider, panelRow.value.model, panelRow.value.apiKey, panelRow.value.baseUrl].join(" "),
-  () => { panel.value.testResult = null },
+  [() => panelRow.value?.provider, () => panelRow.value?.model, () => panelRow.value?.apiKey, () => panelRow.value?.baseUrl],
+  () => { panel.value.testResult = null; panel.value.testGen++; panel.value.testing = false },
 )
-function closedPanel() { return { open: false, mode: "add", uid: null, source: "subscription", addBackups: true, testing: false, testResult: null } }
+function closedPanel() { return { open: false, mode: "add", uid: null, source: "subscription", addBackups: true, testing: false, testResult: null, testGen: 0 } }
 function isRowEmpty(r) {
   if (!r) return true
   if (r.credentialType === "subscription") return !((r.accounts || []).length)
@@ -902,12 +912,12 @@ function openAdd() {
   // last row's type; that would be unpredictable.)
   setCredType(r, "subscription")
   rows.value = [...rows.value, r]
-  panel.value = { open: true, mode: "add", uid: r._uid, source: "subscription", addBackups: true, testing: false, testResult: null }
+  panel.value = { open: true, mode: "add", uid: r._uid, source: "subscription", addBackups: true, testing: false, testResult: null, testGen: 0 }
 }
 function openEdit(i) {
   const r = rows.value[i]
   if (!r) return
-  panel.value = { open: true, mode: "edit", uid: r._uid, source: r.credentialType === "subscription" ? "subscription" : "api_key", addBackups: true, testing: false, testResult: null }
+  panel.value = { open: true, mode: "edit", uid: r._uid, source: r.credentialType === "subscription" ? "subscription" : "api_key", addBackups: true, testing: false, testResult: null, testGen: 0 }
 }
 
 // ---- pre-save "Test" (API-key rows only) ---------------------------------
@@ -927,6 +937,7 @@ function isLocalProviderRow(row) {
 // encrypted secret), so it has nothing to send yet.
 function testBlockedReason(row) {
   if (!row) return "Nothing to test"
+  if (!(row.provider || "").trim()) return "Choose a provider to test"
   if (!(row.model || "").trim()) return "Enter a model id to test"
   if (!(row.apiKey || "").trim()) return row.hasKey ? "Re-enter the key to test it" : "Enter an API key to test"
   return ""
@@ -939,34 +950,62 @@ function testButtonHint(row) {
   }
   return "Sends a minimal live request to this provider using what's typed above. Nothing is saved."
 }
+// Effective base_url to send: the row's own value, falling back to the provider's
+// known default. A row a customer saved on a STANDARD provider (OpenAI/Anthropic/...)
+// legitimately stores no base_url at all (build_pool_payload only emits one when
+// present; validatePool doesn't require one outside NEEDS_BASE_URL) - onProviderChange
+// only fills it in when the provider is freshly PICKED, not when Edit re-opens an
+// already-saved row. Without this fallback, Test on any such existing row always
+// failed with "Enter a base URL before testing." even though Save would succeed.
+function effectiveTestBaseUrl(row) {
+  const own = (row && row.baseUrl || "").trim()
+  if (own) return own
+  return (PROVIDER_DEFAULTS[row && row.provider] || {}).baseUrl || ""
+}
 // Live, side-effect-free probe (jarvis.llm_key_probe.test_llm_api_key) of whatever is
 // currently typed into the panel - never persists, never touches the fleet/container, and
 // is NOT a substitute for (must never call) the mutating /llm-pool apply. Motivated by a
 // real GLM/Z.ai case: a valid key on a zero-balance account saved cleanly and only failed
 // AFTER save with a bare "Not working" chip - this surfaces the provider's OWN error
 // (e.g. "Insufficient balance or no resource package. Please recharge.") before Save.
+//
+// Race guard: `panel` is a ref whose `.value` is WHOLESALE REPLACED (not mutated) by
+// openAdd/openEdit/closePanel, and this function awaits a network round-trip in between
+// reading and writing it - so a slow response for row A landing after the customer closed
+// A's panel and opened B's must never overwrite B's testing/testResult (the same class of
+// bug the OAuth-connect flow elsewhere in this file guards against with its nonce check).
+// `myPanel` pins the EXACT panel object this call started on (object identity, not just a
+// uid - a closed-then-reopened panel on the same row is a different object); `testGen` is
+// bumped both here and by the field-edit watch() below, so an in-flight response is also
+// discarded if the customer edits the row while waiting (otherwise the watch's clear could
+// be immediately undone by a stale response landing after it).
 async function testApiKeyRow(row) {
   if (!row || panel.value.testing || testBlockedReason(row)) return
-  panel.value.testing = true
-  panel.value.testResult = null
+  const myPanel = panel.value
+  const myGen = ++myPanel.testGen
+  const stale = () => panel.value !== myPanel || myPanel.testGen !== myGen
+  myPanel.testing = true
+  myPanel.testResult = null
   try {
     const res = await api.testLlmApiKey({
       provider: row.provider || "",
       model: row.model || "",
       api_key: row.apiKey || "",
-      base_url: row.baseUrl || "",
+      base_url: effectiveTestBaseUrl(row),
     })
+    if (stale()) return
     const checks = Array.isArray(res && res.checks) ? res.checks : []
     const last = checks[checks.length - 1]
-    panel.value.testResult = {
+    myPanel.testResult = {
       ok: !!(res && res.ok),
       message: (last && last.detail) || (res && res.ok ? "The provider accepted the request." : "The test failed."),
       caveat: (res && res.caveat) || "",
     }
   } catch (e) {
-    panel.value.testResult = { ok: false, message: _err(e), caveat: "" }
+    if (stale()) return
+    myPanel.testResult = { ok: false, message: _err(e), caveat: "" }
   } finally {
-    panel.value.testing = false
+    if (!stale()) myPanel.testing = false
   }
 }
 
