@@ -131,7 +131,7 @@
 								<div class="jv-ob-body">
 									<div class="jv-ob-head">
 										<h1>Setting up your workspace</h1>
-										<p v-if="state.provisioning">{{ isFreePlan ? "You're signed up." : "Payment received." }} We're provisioning your Jarvis workspace. This usually takes under a minute…</p>
+										<p v-if="state.provisioning">{{ isFreePlan ? "You're signed up." : (isTrialPlan ? "Auto-pay authorized — nothing charged until your trial ends." : "Payment received.") }} We're provisioning your Jarvis workspace. This usually takes under a minute…</p>
 									</div>
 									<div v-if="state.provisioning" class="jv-ob-spinner" aria-hidden="true"></div>
 									<Banner v-if="state.provisionErr" type="error" :message="state.provisionErr" role="alert" />
@@ -160,7 +160,7 @@
 							<template v-else-if="state.successData">
 								<div class="jv-ob-body">
 									<div class="jv-ob-head">
-										<h1>{{ isFreePlan ? "You're signed up" : "Payment complete" }}</h1>
+										<h1>{{ isFreePlan ? "You're signed up" : (isTrialPlan ? "Free trial started" : "Payment complete") }}</h1>
 										<p>You're all set. Continue to connect your AI.</p>
 									</div>
 								</div>
@@ -172,7 +172,7 @@
 								<div class="jv-ob-body">
 									<div class="jv-ob-head">
 										<h1>Review &amp; pay</h1>
-										<p>{{ isFreePlan ? "Confirm the details below." : "Confirm the details below. You'll complete payment securely via Razorpay." }}</p>
+										<p>{{ isFreePlan ? "Confirm the details below." : (isTrialPlan ? "Confirm the details below. You'll authorize auto-pay securely via Razorpay — nothing is charged until your trial ends." : "Confirm the details below. You'll complete payment securely via Razorpay.") }}</p>
 									</div>
 									<div class="jv-ob-rev">
 										<div class="jv-ob-rev-row"><span>Plan</span><b>{{ planRowLabel }}</b></div>
@@ -408,10 +408,19 @@ const frameSub = computed(() => FRAME_SUBS[state.step] || "Set up your workspace
 // lock note, "Free" in the total row.
 const isFreePlan = computed(() => (Number(selectedPlan.value.price_inr) || 0) <= 0)
 
-// Pay CTA copy: dev signup in sandbox; "Pay ₹X →" for a paid plan; plain
-// sign-up for a free one.
+// Auto-pay trial: a PAID plan with a trial window (admin: Jarvis Plan
+// trial_days on is_free=0). Checkout collects the autopay mandate now; the
+// first charge fires when the trial ends. Distinct from a FREE plan with
+// trial_days (finite free trial - no payment instrument at all).
+const trialDays = computed(() => Number(selectedPlan.value.trial_days) || 0)
+const isTrialPlan = computed(() => !isFreePlan.value && trialDays.value > 0)
+
+// Pay CTA copy: dev signup in sandbox; "Start free trial" for an autopay
+// trial (nothing due today); "Pay ₹X" for a plain paid plan; plain sign-up
+// for a free one.
 const payCta = computed(() => {
 	if (state.devActive) return "Dev signup & connect"
+	if (isTrialPlan.value) return "Start free trial"
 	return isFreePlan.value ? "Sign up" : `Pay ${inr(selectedPlan.value.price_inr)}`
 })
 
@@ -422,7 +431,10 @@ const planRowLabel = computed(() => {
 	if (!p.plan_name) return ""
 	return p.billing_cycle ? `${p.plan_name} · ${p.billing_cycle}` : p.plan_name
 })
-const dueTodayLabel = computed(() => planAmount(selectedPlan.value.price_inr))
+const dueTodayLabel = computed(() => {
+	if (isTrialPlan.value) return `₹0 · then ${inr(selectedPlan.value.price_inr)}${planSuffix(selectedPlan.value.price_inr, selectedPlan.value.billing_cycle) || ""} after ${trialDays.value} days`
+	return planAmount(selectedPlan.value.price_inr)
+})
 
 function goNext() {
 	state.step = nextStep(steps.value, state.step)
@@ -534,8 +546,14 @@ function planFeatures(p) {
 // off the shared suffix helper so the cycle rule can't drift.
 function planCycleLabel(p) {
 	const suffix = planSuffix(p && p.price_inr, p && p.billing_cycle)
-	if (!suffix) return "For trying Jarvis"
-	return suffix === "/yr" ? "Billed annually" : "Billed monthly"
+	const trial = Number(p && p.trial_days) || 0
+	if (!suffix) {
+		// Free plan: finite free trial (lapses after N days) vs free forever.
+		return trial > 0 ? `${trial}-day free trial` : "For trying Jarvis"
+	}
+	const billed = suffix === "/yr" ? "Billed annually" : "Billed monthly"
+	// Paid plan with a trial window: auto-pay starts when the trial ends.
+	return trial > 0 ? `${trial}-day free trial, then ${billed.toLowerCase()}` : billed
 }
 function onPlanContinue() {
 	if (!state.planName) return
@@ -757,16 +775,24 @@ async function openCheckout(d) {
 		return
 	}
 	state.payBusy = false
-	const rz = new window.Razorpay({
+	// Two Checkout modes sharing one options object: a one-shot order
+	// (order_id) or an autopay-trial mandate authorization (subscription_id -
+	// Razorpay collects the recurring-payment consent; the first charge fires
+	// at the trial's end, server-side). The success payload mirrors the mode:
+	// order checkouts return razorpay_order_id, subscription checkouts return
+	// razorpay_subscription_id; finishPayment forwards whichever is present.
+	const rzOpts = {
 		key: d.razorpay_key_id,
-		order_id: d.razorpay_order_id,
 		name: "Jarvis",
-		description: "Jarvis subscription",
+		description: d.razorpay_subscription_id
+			? "Jarvis subscription (auto-pay after trial)"
+			: "Jarvis subscription",
 		handler: (res) => {
 			state.payBusy = true
 			finishPayment({
 				razorpay_payment_id: res.razorpay_payment_id,
 				razorpay_order_id: res.razorpay_order_id,
+				razorpay_subscription_id: res.razorpay_subscription_id,
 				razorpay_signature: res.razorpay_signature,
 			}).then((rr) => {
 				state.successData = rr
@@ -783,10 +809,15 @@ async function openCheckout(d) {
 		modal: {
 			ondismiss: () => {
 				state.payBusy = false
-				state.payErr = "Payment cancelled. Click Pay to try again."
+				state.payErr = isTrialPlan.value
+					? "Authorization cancelled. Click Start free trial to try again."
+					: "Payment cancelled. Click Pay to try again."
 			},
 		},
-	})
+	}
+	if (d.razorpay_subscription_id) rzOpts.subscription_id = d.razorpay_subscription_id
+	else rzOpts.order_id = d.razorpay_order_id
+	const rz = new window.Razorpay(rzOpts)
 	rz.open()
 }
 

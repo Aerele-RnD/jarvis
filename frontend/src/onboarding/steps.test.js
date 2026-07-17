@@ -48,6 +48,15 @@ test("verifyPollAction: paid plan goes to checkout", () => {
 	assert.deepEqual(verifyPollAction(d), { kind: "checkout" })
 })
 
+test("verifyPollAction: autopay-trial (subscription) plan goes to checkout", () => {
+	// Admin's poll shape for a paid plan with trial_days: a Razorpay
+	// SUBSCRIPTION id (mandate-auth Checkout), no order id.
+	const d = { pending_verification: false, razorpay_subscription_id: "sub_x",
+		razorpay_key_id: "rzp_test", amount_inr: 999, trial_days: 14,
+		customer_password: "pw" }
+	assert.deepEqual(verifyPollAction(d), { kind: "checkout" })
+})
+
 test("verifyPollAction: free plan already Active completes without payment", () => {
 	const d = { pending_verification: false, subscription_status: "Active",
 		customer_password: "pw" }
