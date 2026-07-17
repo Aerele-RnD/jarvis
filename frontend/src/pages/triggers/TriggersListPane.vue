@@ -18,7 +18,7 @@
 		:get-row-route="getRowRoute"
 		storage-key="triggers"
 		:empty-state="{
-			icon: 'zap',
+			icon: 'git-branch',
 			title: 'No triggers yet',
 			description:
 				'Ask in the chat on the left — e.g. \'Warn me when a Sales Invoice over 1 lakh is submitted\'',
