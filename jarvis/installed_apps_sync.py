@@ -1,26 +1,11 @@
-"""Keep the control plane's Jarvis Tenant.installed_apps in step with the bench.
+"""Keep admin's Jarvis Tenant.installed_apps (the fleet's skill/tool gating
+signal) in step with the bench: app changes end with a migrate, so
+after_migrate diffs the live list against the last-synced snapshot and rides
+the existing admin sync on change.
 
-installed_apps reaches admin ONLY inside post_update_llm_creds (fired from an
-LLM-settings save). Installing or removing an app never fired that, so the
-fleet kept gating persona skill families and shortcut-tool denies off a stale
-app list until the next unrelated creds save - a tenant that added hrms got
-no hrms-* skills AND kept the hrms shortcut tools denied. Every app change
-ends with bench migrate, so after_migrate compares the live list against the
-last-synced snapshot and enqueues the existing creds-restart sync (whose
-payload carries the fresh list; admin re-renders openclaw.json and restarts
-the container) when they differ.
-
-The snapshot (Jarvis Settings.installed_apps_synced) is written only after
-post_update_llm_creds RETURNS (admin persists installed_apps desired-first) -
-a failed send leaves it stale so the next migrate retries. Safe direction:
-a stale snapshot costs one redundant resync; a premature one would silence
-the gap forever.
-
-An EMPTY snapshot (first migrate after this feature deploys) seeds the
-baseline WITHOUT a sync: onboarding already sent the then-current list, and
-seeding quietly avoids a fleet-wide restart wave on the deploy migrate. A
-tenant that was ALREADY stale pre-feature converges on its next app change
-or creds save.
+The snapshot is stamped only after a send the admin persisted - stale costs
+one redundant resync; premature would silence the gap forever. An empty
+snapshot seeds the baseline WITHOUT a sync (no restart wave on deploy).
 """
 
 from __future__ import annotations
@@ -35,14 +20,14 @@ FIELD = "installed_apps_synced"
 
 
 def after_migrate() -> None:
-	"""Best-effort resync check; never blocks a migrate."""
+	"""Best-effort; never blocks a migrate."""
 	try:
 		from jarvis import selfhost
 
 		if selfhost.is_self_hosted():
-			return  # no control plane; skill gating is a managed-fleet feature
+			return
 		if not _admin_configured():
-			return  # pre-onboarding bench - nothing to sync against yet
+			return
 		current = _current_apps()
 		synced = _synced_apps()
 		if synced is None:
@@ -52,9 +37,7 @@ def after_migrate() -> None:
 			return
 		pool = _pool_active()
 		if pool is None:
-			# Can't tell which leg is safe - defer rather than guess (the
-			# single-model leg on a pool tenant would break Bifrost routing).
-			# The snapshot stays stale, so the next migrate retries.
+			# Neither leg is safe to guess; stale snapshot retries next migrate.
 			frappe.logger("jarvis.installed_apps").warning(
 				"proxy_active unreadable; deferring installed-apps resync")
 			return
@@ -67,8 +50,7 @@ def after_migrate() -> None:
 
 
 def record_synced_snapshot() -> None:
-	"""Stamp the live app list as synced. Called from _sync_via_admin right
-	after a post_update_llm_creds that carried it. Never raises."""
+	"""Stamp the live app list as synced. Never raises."""
 	try:
 		frappe.db.set_single_value(
 			SETTINGS, FIELD, json.dumps(_current_apps()), update_modified=False
@@ -82,8 +64,7 @@ def _current_apps() -> list[str]:
 
 
 def _synced_apps() -> list[str] | None:
-	"""The last-synced snapshot, or None when never recorded / unreadable
-	(unreadable reads as never-recorded: the seed path rewrites it)."""
+	"""Last-synced snapshot; None when never recorded or unreadable."""
 	raw = frappe.db.get_single_value(SETTINGS, FIELD)
 	if not raw:
 		return None
@@ -97,8 +78,7 @@ def _synced_apps() -> list[str] | None:
 
 
 def _admin_configured() -> bool:
-	"""True when the bench points at a control plane (jarvis_admin_url set -
-	site config outranks the Settings field, matching admin_client)."""
+	"""jarvis_admin_url set (site config outranks the Settings field)."""
 	try:
 		if (frappe.conf.get("jarvis_admin_url") or "").strip():
 			return True
@@ -109,11 +89,9 @@ def _admin_configured() -> bool:
 
 
 def _pool_active() -> bool | None:
-	"""True when the tenant runs the LLM pool (proxy) config. The resync MUST
-	take the pool leg then: the single-model restart would re-render
-	openclaw.json in direct mode and knock the container off Bifrost pool
-	routing. None when unreadable - the caller defers instead of guessing a
-	leg (defense in depth; a wrong single-model guess IS the routing bug)."""
+	"""Pool (proxy) tenant? The resync MUST take the pool leg then - the
+	single-model render knocks the container off Bifrost routing. None when
+	unreadable; the caller defers rather than guesses."""
 	try:
 		return bool(cint(frappe.db.get_single_value(SETTINGS, "proxy_active")))
 	except Exception:
@@ -121,12 +99,8 @@ def _pool_active() -> bool | None:
 
 
 def _enqueue_resync(synced: list[str], current: list[str], pool: bool) -> None:
-	"""Ride the existing sync machinery verbatim - the POOL leg for
-	proxy_active tenants (payload carries installed_apps; admin persists +
-	pool-renders, preserving Bifrost routing), the single-model creds-restart
-	leg otherwise. Same job ids as the real ops so close-together triggers
-	coalesce; the workers re-read Settings at run time, so admin lands the
-	LIVE list even if it changes again before the job runs."""
+	"""Enqueue the pool or single-model sync (same job ids as the real ops so
+	triggers coalesce; workers re-read Settings at run time)."""
 	from jarvis.jarvis.doctype.jarvis_settings.jarvis_settings import (
 		ADMIN_SYNC_RQ_TIMEOUT_S,
 	)

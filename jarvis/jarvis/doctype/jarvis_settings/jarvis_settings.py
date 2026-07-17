@@ -729,10 +729,8 @@ class JarvisSettings(Document):
                     api_key=secret,
                     auth_mode=self.llm_auth_mode or "api_key",
                 ) or {}
-                # The payload above carried frappe.get_installed_apps() and
-                # admin persists it desired-first, so stamp the synced
-                # snapshot now - even if the fleet apply below is still
-                # converging (see jarvis.installed_apps_sync).
+                # The payload carried installed_apps; admin persisted it
+                # desired-first, so stamp even if the apply is converging.
                 from jarvis.installed_apps_sync import record_synced_snapshot
                 record_synced_snapshot()
                 resolved_action = result.get("action", "restart")
@@ -1025,11 +1023,8 @@ def _post_pool_with_retry(spec, api_keys, oauth_blobs):
             result = admin_client.post_update_llm_pool(
                 spec=spec, api_keys=api_keys, oauth_blobs=oauth_blobs,
             )
-            # The pool payload carries installed_apps. Stamp the resync
-            # snapshot ONLY when the admin echoes that it persisted the list
-            # (installed_apps_persisted) - an older admin ignores the field,
-            # and stamping against it would silence the migrate-time resync
-            # while the gating signal is still stale.
+            # Stamp ONLY when admin echoes installed_apps_persisted - an
+            # older admin ignored the field and the signal is still stale.
             if isinstance(result, dict) and result.get("installed_apps_persisted"):
                 from jarvis.installed_apps_sync import record_synced_snapshot
                 record_synced_snapshot()

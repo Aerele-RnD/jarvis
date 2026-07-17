@@ -208,9 +208,8 @@ after_migrate = [
 	# Wiki v2: seed the Knowledge Wiki Manager role (idempotent; best-effort).
 	# Migrate follows a fresh install, so this covers both.
 	"jarvis.learning.roles.after_migrate",
-	# Re-send installed_apps to admin when the app set changed (app installs/
-	# removals end with a migrate; the fleet gates skills/tool-denies off the
-	# admin-persisted list, which otherwise staled until the next creds save).
+	# Re-send installed_apps to admin when the app set changed (the fleet
+	# gates skills/tool-denies off the admin-persisted list).
 	"jarvis.installed_apps_sync.after_migrate",
 ]
 
