@@ -17,6 +17,7 @@
 // means no conversation is on screen.
 import { ref } from "vue"
 import { useShellStore } from "@/stores/shell"
+import { session } from "@/data/session"
 
 // ---- toast state (rendered by NotifyToaster.vue) -----------------------------
 const MAX_TOASTS = 3
@@ -82,6 +83,20 @@ export function attachGlobalNotifier({ socket, router }) {
 
 	const onScreenConv = () =>
 		router.currentRoute.value.meta.chat ? store.currentConvId : null
+	// The Triggers pane renders its own conversation inline, but /triggers has
+	// meta.chat falsy so onScreenConv() can't see it. The pane persists its
+	// conversation id per user (useStorage writes the raw string); read that
+	// same key so its turns don't dot/toast while the pane is on screen. Only
+	// the Triggers tab mounts the pane — not #activity, not the detail pages.
+	const triggersPaneConv = () => {
+		const r = router.currentRoute.value
+		if (r.name !== "TriggersPage" || String(r.hash || "").startsWith("#activity")) return null
+		try {
+			return localStorage.getItem(`jarvis-triggers-conv-${session.user || "anon"}`) || null
+		} catch (e) {
+			return null
+		}
+	}
 	const convTitle = (id) =>
 		(id && store.conversations.find((c) => c.name === id)?.title) || ""
 	const go = (path) => {
@@ -104,6 +119,11 @@ export function attachGlobalNotifier({ socket, router }) {
 		}
 	}
 
+	// trigger:activity bursts (a bulk save fires one frame per doc) coalesce to
+	// one signal per trigger+status within this window.
+	const trigSignalAt = new Map()
+	const TRIG_SIGNAL_WINDOW_MS = 5000
+
 	// hidden → browser notification; visible-but-elsewhere → toast;
 	// visible on the conversation → nothing.
 	function signal({ conv, title, body, tag, open, toastAnywhere = false }) {
@@ -121,7 +141,12 @@ export function attachGlobalNotifier({ socket, router }) {
 			case "run:error": {
 				const conv = p.conversation_id
 				if (!conv) return
-				if (conv !== onScreenConv()) {
+				// The Triggers pane renders this conversation's turns inline — treat
+				// it like the on-screen chat: no unread dot, no "Reply ready" toast.
+				// A hidden tab still browser-notifies below, same as a hidden chat.
+				const onTriggersPane = conv === triggersPaneConv()
+				if (onTriggersPane && !document.hidden) return
+				if (!onTriggersPane && conv !== onScreenConv()) {
 					// the sidebar unread dot — the in-app "multiple chats" signal
 					store.markUnread(conv)
 					// keep the row's title/order honest (debounced reload)
@@ -160,6 +185,50 @@ export function attachGlobalNotifier({ socket, router }) {
 					tag: "jarvis-" + (p.conversation_id || "approvals"),
 					open: () => go("/approvals"),
 				})
+				return
+			}
+			case "trigger:activity": {
+				// A trigger run the user would want to hear about: Failed / Blocked
+				// always; Success only for LLM actions (the "warn me when…" case —
+				// Script successes and Skipped rows are routine noise). action_type
+				// may be absent on older frames: then only Failed/Blocked signal.
+				const status = p.status
+				const wanted =
+					status === "Failed" ||
+					status === "Blocked" ||
+					(status === "Success" && p.action_type === "LLM")
+				if (!wanted) return
+				// coalesce a burst into one signal per trigger+status
+				const key = (p.trigger || "") + "|" + status
+				const now = Date.now()
+				if (now - (trigSignalAt.get(key) || 0) < TRIG_SIGNAL_WINDOW_MS) return
+				trigSignalAt.set(key, now)
+				const label = p.trigger_label || p.trigger || ""
+				const what = label ? `Trigger "${label}"` : "A trigger"
+				const title =
+					status === "Failed"
+						? "Trigger failed"
+						: status === "Blocked"
+							? "Trigger blocked a save"
+							: "Trigger fired"
+				const body =
+					status === "Failed"
+						? `${what} hit an error — open the activity log for details.`
+						: status === "Blocked"
+							? `${what} blocked a document from saving.`
+							: `${what} ran — see the activity log for what it found.`
+				const open = () => go("/triggers#activity")
+				// like conversation:new, hand-rolled: signal() would swallow a
+				// conv-less toast on non-chat routes (null === onScreenConv()).
+				// The Activity tab itself live-refreshes — no toast on top of it.
+				const r = router.currentRoute.value
+				const onActivityTab =
+					r.name === "TriggersPage" && String(r.hash || "").startsWith("#activity")
+				if (document.hidden) {
+					browserNotify({ title, body, tag: "jarvis-trigger-activity", onclick: open })
+				} else if (!onActivityTab) {
+					pushToast({ title, body, onClick: open })
+				}
 				return
 			}
 			case "conversation:new": {

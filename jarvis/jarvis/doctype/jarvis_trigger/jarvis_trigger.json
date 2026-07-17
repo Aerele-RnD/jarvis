@@ -1,0 +1,163 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "hash",
+ "creation": "2026-07-16 09:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "trigger_name",
+  "enabled",
+  "target_doctype",
+  "doc_event",
+  "description",
+  "condition_section",
+  "condition",
+  "action_section",
+  "action_type",
+  "script_body",
+  "server_script",
+  "llm_instruction",
+  "llm_daily_cap",
+  "source_conversation"
+ ],
+ "fields": [
+  {
+   "fieldname": "trigger_name",
+   "fieldtype": "Data",
+   "label": "Trigger Name",
+   "reqd": 1,
+   "in_list_view": 1,
+   "description": "Short name shown in the Triggers list, e.g. 'Flag big discounts'."
+  },
+  {
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled",
+   "default": "1",
+   "in_list_view": 1,
+   "description": "When off, the trigger never fires (it stays out of the dispatch map)."
+  },
+  {
+   "fieldname": "target_doctype",
+   "fieldtype": "Link",
+   "options": "DocType",
+   "label": "DocType",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "The DocType whose events fire this trigger."
+  },
+  {
+   "fieldname": "doc_event",
+   "fieldtype": "Select",
+   "label": "Doc Event",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "options": "validate\nbefore_submit\nafter_insert\non_update\non_submit\non_cancel\non_trash\non_update_after_submit",
+   "description": "Frappe document event. validate/before_submit run INSIDE the save and can block it (Script actions only)."
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description",
+   "description": "Optional one-line summary of what this trigger does."
+  },
+  {
+   "fieldname": "condition_section",
+   "fieldtype": "Section Break",
+   "label": "Condition"
+  },
+  {
+   "fieldname": "condition",
+   "fieldtype": "Code",
+   "label": "Condition",
+   "description": "Optional. Same semantics as Frappe Webhook conditions, e.g. doc.status == \"Open\". Evaluated with {\"doc\": doc, \"utils\": <safe utils>} exactly like webhook.get_context; the trigger fires only when it is truthy."
+  },
+  {
+   "fieldname": "action_section",
+   "fieldtype": "Section Break",
+   "label": "Action"
+  },
+  {
+   "fieldname": "action_type",
+   "fieldtype": "Select",
+   "label": "Action Type",
+   "reqd": 1,
+   "in_standard_filter": 1,
+   "options": "Script\nLLM",
+   "description": "Script = deterministic sandboxed Python (runs inside the transaction, can block saves). LLM = background LLM evaluation after commit (never blocks)."
+  },
+  {
+   "fieldname": "script_body",
+   "fieldtype": "Code",
+   "options": "Python",
+   "label": "Script",
+   "depends_on": "eval:doc.action_type=='Script'",
+   "description": "Sandboxed (RestrictedPython) script; same execution context as a DocType Event Server Script ('doc' is available). frappe.throw() blocks the save."
+  },
+  {
+   "fieldname": "server_script",
+   "fieldtype": "Link",
+   "options": "Server Script",
+   "label": "Managed Server Script",
+   "read_only": 1,
+   "description": "Managed by the trigger controller: the materialized (always-disabled) Server Script the engine dispatches. Never edit directly."
+  },
+  {
+   "fieldname": "llm_instruction",
+   "fieldtype": "Text",
+   "label": "LLM Instruction",
+   "depends_on": "eval:doc.action_type=='LLM'",
+   "description": "What the LLM should check on each fired event; the document snapshot is appended as fenced untrusted data."
+  },
+  {
+   "fieldname": "llm_daily_cap",
+   "fieldtype": "Int",
+   "label": "LLM Daily Cap",
+   "default": "100",
+   "depends_on": "eval:doc.action_type=='LLM'",
+   "description": "Max LLM evaluations per day for this trigger. 0 or empty = default 100; hard ceiling 2000."
+  },
+  {
+   "fieldname": "source_conversation",
+   "fieldtype": "Data",
+   "label": "Source Conversation",
+   "hidden": 1,
+   "description": "Provenance: the Jarvis conversation id when this trigger was created via chat."
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-07-16 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Jarvis",
+ "name": "Jarvis Trigger",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "role": "Jarvis Admin",
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Jarvis User"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

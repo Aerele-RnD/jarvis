@@ -223,6 +223,12 @@ const navLinks = [
 		isActive: () => route.path.startsWith("/macros"),
 	},
 	{
+		label: "Triggers",
+		icon: "zap",
+		to: { name: "TriggersPage" },
+		isActive: () => route.path.startsWith("/triggers"),
+	},
+	{
 		label: "File Box",
 		icon: "inbox",
 		to: { name: "FilesList" },
