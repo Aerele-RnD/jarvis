@@ -364,6 +364,41 @@ def _search_pages(search: str, limit: int) -> list[dict]:
 	return out
 
 
+def _search_dashboards(search: str, limit: int) -> list[dict]:
+	"""Jarvis Dashboards, fuzzy-matched (subsequence) over their titles.
+	``frappe.get_list`` applies the Jarvis Dashboard query-conditions hook, so
+	the caller only ever sees dashboards their scope allows. Items carry a
+	``spa_route`` (the Jarvis SPA's own /dashboards page), NOT a desk
+	``route`` — there is no desk view for these."""
+	try:
+		rows = frappe.get_list(
+			"Jarvis Dashboard",
+			fields=["name", "dashboard_title", "dashboard_type", "modified"],
+			limit_page_length=0,
+		)
+	except frappe.PermissionError:
+		return []
+	scored = []
+	for r in rows:
+		s = _fuzzy_score(search, r.get("dashboard_title") or "")
+		if s > 0:
+			scored.append((s, r))
+	scored.sort(key=lambda x: x[0], reverse=True)
+	out: list[dict] = []
+	for _s, r in scored[:limit]:
+		nm = r.get("name")
+		out.append(
+			{
+				"name": f"dashboard::{nm}",
+				"label": r.get("dashboard_title") or nm,
+				"icon": "bar-chart-2",
+				"suffix": "Dashboard",
+				"spa_route": f"/dashboards/{quote(str(nm))}",
+			}
+		)
+	return out
+
+
 def _search_records(search: str, limit: int) -> list[dict]:
 	"""Actual document matches via Frappe global search — full-text over
 	``__global_search``. ``frappe.utils.global_search.search`` is already scoped
@@ -403,15 +438,17 @@ def search_workspace(search: str = "", limit: int = 6) -> dict:
 	"""Full desk search over the caller's Frappe desk for the ⌘K palette,
 	delegated entirely to Frappe's own search (no bespoke matcher):
 
-	  * Lists   — matching doctypes,   via ``frappe.desk.search.search_widget``
-	  * Reports — matching reports,    via ``frappe.desk.search.search_widget``
-	  * Pages   — matching desk pages, via ``frappe.desk.search.search_widget``
-	  * Records — matching documents,  via ``frappe.utils.global_search.search``
+	  * Lists      — matching doctypes,   via ``frappe.desk.search.search_widget``
+	  * Reports    — matching reports,    via ``frappe.desk.search.search_widget``
+	  * Pages      — matching desk pages, via ``frappe.desk.search.search_widget``
+	  * Dashboards — matching Jarvis Dashboards (scope-visible), fuzzy title match
+	  * Records    — matching documents,  via ``frappe.utils.global_search.search``
 
-	Each item carries a ready ``/app/...`` desk route. Permission scoping is
-	Frappe's own (see the helpers). Empty search yields no groups; the palette
-	owns chats/nav.
-	Envelope: ``{groups: [{key, title, items: [{name,label,icon,suffix,route}]}]}``.
+	Each item carries a ready ``/app/...`` desk route — except Dashboards,
+	which carry an SPA-internal ``spa_route`` (no desk view exists for them).
+	Permission scoping is Frappe's own (see the helpers). Empty search yields
+	no groups; the palette owns chats/nav.
+	Envelope: ``{groups: [{key, title, items: [{name,label,icon,suffix,route|spa_route}]}]}``.
 	"""
 	search = (search or "").strip()
 	if not search:
@@ -426,6 +463,7 @@ def search_workspace(search: str = "", limit: int = 6) -> dict:
 		("lists", "Lists", _search_lists(search, limit)),
 		("reports", "Reports", _search_reports(search, limit)),
 		("pages", "Pages", _search_pages(search, limit)),
+		("dashboards", "Dashboards", _search_dashboards(search, limit)),
 		("records", "Records", _search_records(search, limit)),
 	):
 		if items:
@@ -959,9 +997,9 @@ def send_message(
 		enqueue_kwargs["attachments"] = atts
 	# Floating-widget auto-context: {doctype, name, label} of the doc the user
 	# is viewing, OR {report_name, filters} when the user is on a
-	# query-report route, OR {page: "triggers"} when the user is on the
-	# Triggers page. Only forwarded when present, for the same
-	# not-yet-reloaded worker safety as attachments above. The narrowing
+	# query-report route, OR {page: "triggers"|"dashboards"} when the user is
+	# on the Triggers / Dashboards page. Only forwarded when present, for the
+	# same not-yet-reloaded worker safety as attachments above. The narrowing
 	# here is deliberate (allow-list, not passthrough) so a compromised /
 	# stale frontend can't smuggle arbitrary keys into the worker payload;
 	# every key the prompt-side actually consumes must be listed here.
@@ -970,12 +1008,12 @@ def send_message(
 			ctx = frappe.parse_json(context)
 			# ``ground_wiki`` is the composer's one-shot "ground this turn on the
 			# wiki" flag; it can arrive with no viewing-context doc, so forward the
-			# context payload when EITHER a doc/report ref OR ground_wiki OR the
-			# Triggers-page marker is set.
+			# context payload when EITHER a doc/report ref OR ground_wiki OR a
+			# page marker is set.
 			ground_wiki = 1 if (isinstance(ctx, dict) and frappe.utils.cint(ctx.get("ground_wiki"))) else 0
 			if isinstance(ctx, dict) and (
 				ctx.get("doctype") or ctx.get("report_name") or ground_wiki
-				or ctx.get("page") == "triggers"
+				or ctx.get("page") in ("triggers", "dashboards")
 			):
 				enqueue_kwargs["context"] = {
 					"doctype": ctx.get("doctype") or "",
@@ -989,10 +1027,11 @@ def send_message(
 					# One-shot wiki grounding (allow-listed, boolean only).
 					"ground_wiki": ground_wiki,
 				}
-				# `page` is a literal allow-list of one value (not a
-				# passthrough) — the prompt-side only consumes "triggers".
-				if ctx.get("page") == "triggers":
-					enqueue_kwargs["context"]["page"] = "triggers"
+				# `page` is a literal allow-list of two values (not a
+				# passthrough) — the prompt-side only consumes "triggers"
+				# and "dashboards".
+				if ctx.get("page") in ("triggers", "dashboards"):
+					enqueue_kwargs["context"]["page"] = ctx["page"]
 				# Persist the viewing-context doc ref on the user message row
 				# so post-turn entity extraction (jarvis.chat.entities) sees
 				# what the user was looking at, not just what tools touched.

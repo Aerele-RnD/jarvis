@@ -1172,6 +1172,16 @@ def _prepend_doc_context(user_message: str, context) -> str:
 	"""
 	if not isinstance(context, dict):
 		return user_message
+	if context.get("page") == "dashboards":
+		return (
+			"[Context: The user is on the Jarvis Dashboards builder page. They want to "
+			"create or iterate on a dashboard/report. Read and follow the "
+			"jarvis-dashboards skill before acting: produce ONE complete self-contained "
+			"HTML document as a canvas artifact per iteration; declare data sources in "
+			"the jarvis-sources JSON block; use window.jarvis.data() for view-time "
+			"data; no external resources.]"
+			f"\n\n{user_message}"
+		)
 	if context.get("page") == "triggers":
 		return (
 			"[Context: The user is on the Jarvis Triggers page. They want to create or "
