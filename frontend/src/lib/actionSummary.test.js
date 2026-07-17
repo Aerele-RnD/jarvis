@@ -126,6 +126,17 @@ test("pendingCardOf: returns the structured card for a known kind", () => {
   assert.deepEqual(pendingCardOf({ preview: { card } }), card)
 })
 
+// CARD_KINDS IS THE GATE. pendingCardOf returns null for a kind not in the set and
+// the SPA silently falls back to the raw preview, so a kind build_card emits but the
+// whitelist omits ships as a no-op: the card renders exactly as before, every test
+// stays green, and nothing says so. One assertion per kind the server can emit.
+test("pendingCardOf: every kind build_card emits is whitelisted", () => {
+  for (const kind of ["create", "update", "bulk_update", "verb", "email", "method",
+    "batch_create", "bulk_email", "share", "assign", "skill", "wiki"]) {
+    assert.ok(pendingCardOf({ preview: { card: { kind } } }), `${kind} is not in CARD_KINDS`)
+  }
+})
+
 test("pendingCardOf: null for missing / unknown-kind / non-object cards", () => {
   assert.equal(pendingCardOf({ preview: {} }), null)
   assert.equal(pendingCardOf({ preview: { card: { kind: "wat" } } }), null)

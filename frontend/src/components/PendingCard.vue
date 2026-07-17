@@ -1,10 +1,15 @@
 <script setup>
 // Renders the server-built "what will change" summary (F9) for a parked gated
 // write's confirmation card - replacing the raw-JSON dump. The structured card
-// comes from jarvis/chat/confirm_card.py (kind = create | update | verb | email |
-// method | batch_create) and is already perm-filtered + size-capped server-side.
-// All values render through escaped interpolation (no v-html); the raw dry-run
-// preview stays available behind a collapsed Details expander.
+// comes from jarvis/chat/confirm_card.py (kind = create | update | bulk_update |
+// verb | email | bulk_email | share | assign | skill | wiki | method |
+// batch_create) and is already perm-filtered + size-capped server-side. All values
+// render through escaped interpolation (no v-html); the raw dry-run preview stays
+// available behind a collapsed Details expander.
+//
+// A kind rendered here ALSO needs an entry in CARD_KINDS (@/lib/actionSummary):
+// pendingCardOf returns null for a kind not in that set and the SPA falls back to
+// the raw preview, so a branch added here alone is dead code.
 import { computed } from "vue"
 
 import { verbSentence } from "@/lib/actionSummary"
@@ -106,11 +111,139 @@ function tableNote(t) {
 			<div v-if="(card.records || []).length && card.extra > 0" class="jv-pcard-more">+{{ card.extra }} more</div>
 		</template>
 
-		<!-- email -->
+		<!-- email: cc/bcc/print format are v-if'd so an empty one adds no row. Without
+		     them "you could not see who was copied" stayed true no matter what the
+		     server sent. The body is a _MAX_BODY budget now, so it rides an expander -
+		     open by default: this is the one tool that cannot be recalled. -->
 		<template v-else-if="card.kind === 'email'">
 			<div class="jv-pcard-kv"><span>To</span><b>{{ card.to }}</b></div>
+			<div v-if="card.cc" class="jv-pcard-kv"><span>Cc</span><b>{{ card.cc }}</b></div>
+			<div v-if="card.bcc" class="jv-pcard-kv"><span>Bcc</span><b>{{ card.bcc }}</b></div>
 			<div class="jv-pcard-kv"><span>Subject</span><b>{{ card.subject }}</b></div>
-			<pre v-if="card.body" class="jv-pcard-body">{{ card.body }}</pre>
+			<div v-if="card.print_format" class="jv-pcard-kv"><span>Print format</span><b>{{ card.print_format }}</b></div>
+			<details v-if="card.body" class="jv-pcard-expand" open>
+				<summary>Message</summary>
+				<pre class="jv-pcard-body">{{ card.body }}</pre>
+			</details>
+		</template>
+
+		<!-- bulk email: a mail-merge. Every message has its OWN recipient, subject and
+		     body, so each gets its own expander - a count cannot stand in for 20
+		     distinct irreversible emails. -->
+		<template v-else-if="card.kind === 'bulk_email'">
+			<div class="jv-pcard-head">Send {{ card.count }} email<template v-if="card.count !== 1">s</template></div>
+			<p class="jv-pcard-caption">Each message has its own recipient and body. Click one to read it.</p>
+			<div class="jv-pcard-recs">
+				<details v-for="(m, i) in card.messages" :key="'me' + i" class="jv-rec" :open="i === 0">
+					<summary>
+						<span class="jv-chev" aria-hidden="true"></span>
+						<span class="jv-rec-id">{{ m.recipients }}</span>
+						<span v-if="m.subject" class="jv-rec-title">{{ m.subject }}</span>
+					</summary>
+					<div class="jv-rec-body">
+						<div v-if="m.name" class="jv-pcard-kv"><span>About</span><b>{{ m.name }}</b></div>
+						<div v-if="m.cc" class="jv-pcard-kv"><span>Cc</span><b>{{ m.cc }}</b></div>
+						<div v-if="m.bcc" class="jv-pcard-kv"><span>Bcc</span><b>{{ m.bcc }}</b></div>
+						<pre v-if="m.body" class="jv-pcard-body">{{ m.body }}</pre>
+					</div>
+				</details>
+			</div>
+			<div v-if="card.extra > 0" class="jv-pcard-more">+{{ card.extra }} more · full list in Details</div>
+		</template>
+
+		<!-- share: grantee + the permission flags. "Read for one person" and
+		     "everyone + write + share" rendered identically before, and those grants are
+		     the exact reason share_doc gates. Flags are filtered IN THE EXPRESSION:
+		     v-for + v-if on one element is invalid in Vue 3 (v-if wins and cannot see
+		     the loop variable), which only warns at compile and throws at render. -->
+		<template v-else-if="card.kind === 'share'">
+			<div class="jv-pcard-head">Share {{ card.doctype }}<template v-if="card.count > 1"> · {{ card.count }} records</template></div>
+			<div class="jv-pcard-kv"><span>Shared with</span><b>{{ card.grantee }}</b></div>
+			<div class="jv-pcard-kv">
+				<span>Grants</span>
+				<b>
+					<span v-for="f in card.flags.filter((x) => x.on)" :key="f.label" class="jv-chip">{{ f.label }}</span>
+					<span v-if="!card.flags.some((x) => x.on)" class="jv-pcard-empty">None</span>
+				</b>
+			</div>
+			<div class="jv-pcard-kv"><span>Notify by email</span><b>{{ card.notify ? "Yes" : "No" }}</b></div>
+			<div v-if="(card.records || []).length" class="jv-pcard-recs">
+				<template v-for="(r, i) in card.records" :key="'sr' + i">
+					<details v-if="r.rows.length" class="jv-rec" :open="i === 0">
+						<summary>
+							<span class="jv-chev" aria-hidden="true"></span>
+							<span class="jv-rec-id">{{ r.name }}</span>
+							<span v-if="r.title" class="jv-rec-title">{{ r.title }}</span>
+						</summary>
+						<dl class="jv-pcard-fields">
+							<template v-for="(f, j) in r.rows" :key="'sf' + j"><dt>{{ f.label }}</dt><dd>{{ f.value }}</dd></template>
+						</dl>
+					</details>
+					<div v-else class="jv-rec jv-rec-bare">
+						<span class="jv-rec-id">{{ r.name }}</span>
+						<span v-if="r.title" class="jv-rec-title">{{ r.title }}</span>
+					</div>
+				</template>
+			</div>
+			<div v-if="card.extra > 0" class="jv-pcard-more">+{{ card.extra }} more</div>
+		</template>
+
+		<!-- assign: the assignee and the description that gets EMAILED to them -->
+		<template v-else-if="card.kind === 'assign'">
+			<div class="jv-pcard-head">Assign {{ card.doctype }}<template v-if="card.count > 1"> · {{ card.count }} records</template></div>
+			<div class="jv-pcard-kv"><span>Assign to</span><b>{{ card.assignee }}</b></div>
+			<div v-if="card.priority" class="jv-pcard-kv"><span>Priority</span><b>{{ card.priority }}</b></div>
+			<div v-if="card.date" class="jv-pcard-kv"><span>Due date</span><b>{{ card.date }}</b></div>
+			<div class="jv-pcard-kv"><span>Notify by email</span><b>{{ card.notify ? "Yes" : "No" }}</b></div>
+			<pre v-if="card.description" class="jv-pcard-body">{{ card.description }}</pre>
+			<div v-if="(card.records || []).length" class="jv-pcard-recs">
+				<template v-for="(r, i) in card.records" :key="'ar' + i">
+					<details v-if="r.rows.length" class="jv-rec" :open="i === 0">
+						<summary>
+							<span class="jv-chev" aria-hidden="true"></span>
+							<span class="jv-rec-id">{{ r.name }}</span>
+							<span v-if="r.title" class="jv-rec-title">{{ r.title }}</span>
+						</summary>
+						<dl class="jv-pcard-fields">
+							<template v-for="(f, j) in r.rows" :key="'af' + j"><dt>{{ f.label }}</dt><dd>{{ f.value }}</dd></template>
+						</dl>
+					</details>
+					<div v-else class="jv-rec jv-rec-bare">
+						<span class="jv-rec-id">{{ r.name }}</span>
+						<span v-if="r.title" class="jv-rec-title">{{ r.title }}</span>
+					</div>
+				</template>
+			</div>
+			<div v-if="card.extra > 0" class="jv-pcard-more">+{{ card.extra }} more</div>
+		</template>
+
+		<!-- skill: PERSISTENT AGENT INSTRUCTIONS. The card was the literal string
+		     "create_custom_skill". Scope is the tool's EFFECTIVE value, not the request. -->
+		<template v-else-if="card.kind === 'skill'">
+			<div class="jv-pcard-head">Create skill<template v-if="card.skill_name"> · {{ card.skill_name }}</template></div>
+			<div class="jv-pcard-kv"><span>Scope</span><b>{{ card.scope }}</b></div>
+			<div class="jv-pcard-kv"><span>User invocable</span><b>{{ card.user_invocable ? "Yes" : "No" }}</b></div>
+			<div v-if="card.description" class="jv-pcard-kv"><span>Description</span><b>{{ card.description }}</b></div>
+			<details v-if="card.instructions" class="jv-pcard-expand" open>
+				<summary>Instructions · shape every future session</summary>
+				<pre class="jv-pcard-body">{{ card.instructions }}</pre>
+			</details>
+		</template>
+
+		<!-- wiki: replace_body_md is a full rewrite and says so -->
+		<template v-else-if="card.kind === 'wiki'">
+			<div class="jv-pcard-head">Update wiki<template v-if="card.slug"> · {{ card.slug }}</template></div>
+			<div v-if="card.title" class="jv-pcard-kv"><span>Title</span><b>{{ card.title }}</b></div>
+			<div v-if="card.scope" class="jv-pcard-kv"><span>Scope</span><b>{{ card.scope }}</b></div>
+			<div v-if="card.page_type" class="jv-pcard-kv"><span>Page type</span><b>{{ card.page_type }}</b></div>
+			<div v-if="card.ref" class="jv-pcard-kv"><span>About</span><b>{{ card.ref }}</b></div>
+			<div v-if="card.summary" class="jv-pcard-kv"><span>Summary</span><b>{{ card.summary }}</b></div>
+			<div v-if="card.mode === 'replace'" class="jv-pcard-warn">Replaces the entire page body</div>
+			<div v-else-if="card.mode === 'append'" class="jv-pcard-caption">Appends a section; nothing already recorded is removed.</div>
+			<details v-if="card.body" class="jv-pcard-expand" :open="card.mode === 'replace'">
+				<summary>{{ card.mode === "replace" ? "New body" : "Added section" }}</summary>
+				<pre class="jv-pcard-body">{{ card.body }}</pre>
+			</details>
 		</template>
 
 		<!-- run_method -->
@@ -250,6 +383,15 @@ function tableNote(t) {
 }
 @media (prefers-reduced-motion: reduce) { .jv-chev { transition: none; } }
 .jv-pcard-body { margin: 6px 0 0; padding: 8px 10px; background: var(--surface-2); border-radius: 7px; white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow-y: auto; font-size: 12px; line-height: 1.5; }
+/* share: one chip per GRANTED permission (filtered server-side value, not the request) */
+.jv-chip { display: inline-block; margin-left: 4px; padding: 1px 7px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); font-size: 11px; font-weight: 500; color: var(--text); }
+/* wiki: a full-body replace is a rewrite, not an edit - it must not read as routine */
+.jv-pcard-warn { margin-top: 6px; padding: 5px 9px; border-radius: 6px; background: var(--surface-2); border-left: 2px solid var(--red, var(--text-3)); color: var(--text); font-weight: 500; }
+/* long-form bodies (skill instructions, wiki body, one email) - an 8k body must not
+   dominate the card, so it collapses; the expander itself stays visible */
+.jv-pcard-expand { margin-top: 8px; }
+.jv-pcard-expand summary { cursor: pointer; color: var(--text-3); font-size: 11.5px; user-select: none; }
+.jv-pcard-expand .jv-pcard-body { max-height: 260px; }
 .jv-pcard-details { margin-top: 8px; }
 .jv-pcard-details summary { cursor: pointer; color: var(--text-3); font-size: 11.5px; user-select: none; }
 .jv-pcard-details pre { margin: 6px 0 0; padding: 9px 11px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow-y: auto; }
