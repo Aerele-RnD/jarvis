@@ -392,6 +392,14 @@ def _advance_macro(conversation_id: str, *, errored: bool) -> None:
 		frappe.log_error(
 			title="jarvis macro advance hook failed", message=frappe.get_traceback()
 		)
+	try:
+		from jarvis.learning import app_analysis
+
+		app_analysis.on_turn_end(conversation_id, errored=errored)
+	except Exception:
+		frappe.log_error(
+			title="jarvis app-learning turn hook failed", message=frappe.get_traceback()
+		)
 
 
 def handle_chat_send(payload: dict) -> None:

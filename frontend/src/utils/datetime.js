@@ -5,7 +5,7 @@
 // setConfig("systemTimezone") (fed from get_chat_ui_settings.time_zone in
 // AppShell) and converts to the browser zone; without the config it falls
 // back to plain dayjs() - today's behavior.
-import { dayjsLocal } from "frappe-ui"
+import { dayjsLocal, dayjs, getConfig } from "frappe-ui"
 
 export function timeAgo(d) {
 	return d ? dayjsLocal(String(d)).fromNow() : ""
@@ -17,6 +17,23 @@ export function exactDate(d) {
 
 export function formatDate(d, fmt) {
 	return d ? dayjsLocal(String(d)).format(fmt || "MMM D, YYYY") : ""
+}
+
+// The send-side mirror of dayjsLocal: a browser-local datetime (an
+// <input type="datetime-local"> value, "YYYY-MM-DDTHH:mm") → the naive
+// site-timezone "YYYY-MM-DD HH:mm:ss" string Frappe endpoints expect.
+// frappe-ui 0.1.278 defines dayjsSystem but does NOT export it from its
+// index, so the two-hop tz conversion is replicated here with the exported
+// `dayjs` (tz plugin already extended) + `getConfig`. Without the
+// systemTimezone config it degrades to a plain reformat - today's dayjsLocal
+// fallback behavior.
+export function toSiteDatetime(d) {
+	if (!d) return ""
+	const s = String(d).replace("T", " ")
+	const site = getConfig("systemTimezone")
+	if (!site) return dayjs(s).format("YYYY-MM-DD HH:mm:ss")
+	const local = getConfig("localTimezone") || Intl.DateTimeFormat().resolvedOptions().timeZone
+	return dayjs.tz(s, local).tz(site).format("YYYY-MM-DD HH:mm:ss")
 }
 
 // Day-bucket label for chat day separators, timezone-safe like the rest of this

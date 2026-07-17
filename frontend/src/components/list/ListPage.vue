@@ -1,6 +1,11 @@
 <template>
 	<div class="flex h-full flex-col overflow-hidden">
-		<LayoutHeader>
+		<!-- showHeader=false: embedded mode (e.g. the app-learning runs list
+		     inside AnalysisTab) - the host page already owns the single
+		     LayoutHeader teleport to #app-header (SkillsPage's "exactly one at
+		     a time" rule), so a second one here would stack a duplicate
+		     header strip into the shell. -->
+		<LayoutHeader v-if="showHeader">
 			<template #left-header>
 				<Breadcrumbs :items="breadcrumbs" />
 			</template>
@@ -187,6 +192,7 @@ import ColumnsButton from "@/components/list/ColumnsButton.vue"
 
 const props = defineProps({
 	breadcrumbs: { type: Array, default: () => [] }, // [{label, route?}]
+	showHeader: { type: Boolean, default: true }, // false = embedded (host owns the LayoutHeader)
 	columns: { type: Array, default: () => [] }, // frappe-ui ListView columns
 	rows: { type: Array, default: () => [] },
 	rowKey: { type: String, default: "name" },

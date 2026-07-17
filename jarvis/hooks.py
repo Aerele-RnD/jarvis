@@ -236,6 +236,13 @@ scheduler_events = {
 		"*/2 * * * *": [
 			"jarvis.chat.turn_recovery.recover_pending_turns",
 		],
+		"*/10 * * * *": [
+			# Learn-from-custom-apps tick: starts due Queued runs (one active
+			# run bench-wide), recovers stale ones and cleans up old snapshot
+			# zips. Self-gating + never raises; the real work runs on queue
+			# "long" (see jarvis/learning/app_analysis.py).
+			"jarvis.learning.app_analysis.tick",
+		],
 		"*/15 * * * *": [
 			# Behavioural pattern learning tick. Hooks cron is app-static
 			# (per-site rows are reset on migrate), so the window is
