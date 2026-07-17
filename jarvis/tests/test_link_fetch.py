@@ -536,3 +536,37 @@ class TestRequestPinned(LinkFetchGuardTestCase):
 			with self.assertRaises(link_fetch.LinkFetchError):
 				link_fetch.request_pinned(
 					"https://public.example.com/chat/completions", method="POST", json_body={})
+
+
+class TestPinnedPoolConstruction(LinkFetchGuardTestCase):
+	"""The one seam every other test in this file stubs.
+
+	``_open_pinned`` is mocked wholesale everywhere else, which is exactly why a
+	real-world break in the pool construction (a literal ``conn_kw=`` kwarg that
+	urllib3 v2 collects one level too deep) passed CI while every https fetch
+	raised TypeError against the live library. These tests build the pool for
+	real and construct a connection off it - no network, no mock of the thing
+	under test.
+	"""
+
+	def test_https_pool_can_actually_construct_a_connection(self):
+		pool = link_fetch._build_pool("https", "93.184.216.34", 443, "example.com", 5)
+		# _new_conn() instantiates HTTPSConnection with **pool.conn_kw but does
+		# NOT open a socket - this is the call that used to raise
+		# "TypeError: HTTPSConnection.__init__() got an unexpected keyword
+		# argument 'conn_kw'".
+		conn = pool._new_conn()
+		self.assertEqual(conn.host, "93.184.216.34")
+		self.assertEqual(pool.conn_kw.get("server_hostname"), "example.com")
+		self.assertNotIn("conn_kw", pool.conn_kw)
+
+	def test_https_pool_pins_socket_to_ip_but_verifies_the_hostname(self):
+		pool = link_fetch._build_pool("https", "93.184.216.34", 443, "example.com", 5)
+		self.assertEqual(pool.host, "93.184.216.34")       # socket -> vetted IP
+		self.assertEqual(pool.assert_hostname, "example.com")  # cert -> real host
+		self.assertEqual(pool.conn_kw.get("server_hostname"), "example.com")  # SNI
+
+	def test_http_pool_can_also_construct_a_connection(self):
+		pool = link_fetch._build_pool("http", "93.184.216.34", 80, "example.com", 5)
+		conn = pool._new_conn()
+		self.assertEqual(conn.host, "93.184.216.34")
