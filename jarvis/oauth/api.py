@@ -10,6 +10,7 @@ Plus disconnect() to reverse the connection.
 import base64
 import hashlib
 import json
+import re
 import secrets
 import time
 
@@ -20,8 +21,8 @@ from jarvis import admin_client, onboarding
 from jarvis.exceptions import JarvisError
 from jarvis.permissions import require_jarvis_admin
 from jarvis.oauth.providers import (
-	UnknownProviderError, build_authorize_url, extract_account_id, get_provider,
-	is_oauth_provider, provider_redirect_uri,
+	UnknownProviderError, accepts_bare_code, build_authorize_url, extract_account_id,
+	get_provider, is_oauth_provider, provider_redirect_uri,
 )
 
 
@@ -337,19 +338,41 @@ def begin_pool_account_signin(provider: str, model: str) -> dict:
 from urllib.parse import urlparse, parse_qs
 
 
-def _parse_redirected_url(raw: str) -> dict:
-	"""Defensively parse the URL the customer pasted.
+# A bare authorization code: no query syntax ("=" / "&"), no URL syntax
+# ("://", leading "/" or "?"), no whitespace, and printable ASCII only. Anything
+# holding "=" is treated as a query string instead, so a customer who pastes
+# only "state=..." still lands on missing_code rather than having the fragment
+# mistaken for a code. The length floor rejects stray keystrokes; the ceiling
+# keeps a pasted essay out of the token request.
+_BARE_CODE_RE = re.compile(r"\A[\x21-\x7e]{8,512}\Z")
+
+
+def _looks_like_bare_code(raw: str) -> bool:
+	if "://" in raw or raw.startswith(("/", "?")) or "=" in raw or "&" in raw:
+		return False
+	return bool(_BARE_CODE_RE.match(raw))
+
+
+def _parse_redirected_url(raw: str, *, allow_bare_code: bool = False) -> dict:
+	"""Defensively parse whatever the customer pasted back.
 
 	Accepts:
 	  - http://localhost:1455/auth/callback?code=A&state=B
 	  - ?code=A&state=B
 	  - code=A&state=B
+	  - A                     (bare code; only when allow_bare_code)
 
-	Returns: {"code": str|None, "state": str|None}
+	``allow_bare_code`` is set from the provider's ``code_only_paste`` flag —
+	xAI shows a bare code instead of redirecting to a callback URL. A bare code
+	has no ``state``, so ``bare`` is returned True to tell the caller the state
+	compare has nothing to compare against (PKCE binds the code instead; see
+	providers.py's ``code_only_paste`` comment).
+
+	Returns: {"code": str|None, "state": str|None, "bare": bool}
 	"""
 	raw = (raw or "").strip()
 	if not raw:
-		return {"code": None, "state": None}
+		return {"code": None, "state": None, "bare": False}
 
 	if "://" in raw or raw.startswith("/"):
 		query = urlparse(raw).query
@@ -359,10 +382,15 @@ def _parse_redirected_url(raw: str) -> dict:
 		query = raw
 
 	q = parse_qs(query)
-	return {
-		"code": (q.get("code") or [None])[0],
-		"state": (q.get("state") or [None])[0],
-	}
+	code = (q.get("code") or [None])[0]
+	if code:
+		return {"code": code, "state": (q.get("state") or [None])[0], "bare": False}
+
+	# No `code=` anywhere. For a code-only provider the paste may be the code
+	# itself; for everyone else this stays a missing_code.
+	if allow_bare_code and _looks_like_bare_code(raw):
+		return {"code": raw, "state": None, "bare": True}
+	return {"code": None, "state": None, "bare": False}
 
 
 def _validate_signin_nonce(nonce: str):
@@ -407,21 +435,34 @@ def _exchange_and_build_blob(entry: dict, redirected_url: str):
 	save creds, or touch Jarvis Settings — those side effects belong to the
 	DIRECT caller only.
 	"""
-	parsed = _parse_redirected_url(redirected_url)
+	provider = entry["provider"]
+	bare_ok = accepts_bare_code(provider)
+	parsed = _parse_redirected_url(redirected_url, allow_bare_code=bare_ok)
 	if not parsed["code"]:
-		return None, _err("missing_code", "no `code` parameter found in the pasted URL")
+		return None, _err("missing_code",
+		            "couldn't find an authorization code in what you pasted; paste the code "
+		            "itself or the full callback URL"
+		            if bare_ok else
+		            "no `code` parameter found in the pasted URL")
 	# Constant-time compare on the state parameter. The state value is the
 	# OAuth CSRF nonce - if an attacker can observe how long the
 	# comparison takes, plain ``!=`` short-circuits on the first
 	# differing byte and leaks a prefix-recovery oracle. secrets.compare_digest
 	# runs in constant time over the longer of the two inputs.
 	# Punch-list "state comparison non-constant-time" from the 2026-06-16 review.
-	if not secrets.compare_digest(parsed["state"] or "", entry["state"] or ""):
+	#
+	# Skipped only for a BARE code from a code_only_paste provider (xAI), which
+	# has no state to echo back. The exchange below still sends this nonce's
+	# `code_verifier`, so PKCE keeps the code bound to this very authorize
+	# request. A pasted URL is still state-checked even for those providers:
+	# if a `code=` param came through, a `state=` one should have too.
+	if not parsed["bare"] and not secrets.compare_digest(
+		parsed["state"] or "", entry["state"] or ""
+	):
 		return None, _err("state_mismatch",
 		            "the `state` parameter doesn't match; "
 		            "regenerate the sign-in URL and try again")
 
-	provider = entry["provider"]
 	# Re-coerce belt-and-suspenders: nonces live up to 10 min, so
 	# _SUBSCRIPTION_MODELS could in principle be tightened mid-flight
 	# (e.g. a codex model deprecated). begin_paste_signin already coerced
