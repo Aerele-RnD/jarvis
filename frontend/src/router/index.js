@@ -122,7 +122,12 @@ const router = createRouter({
 // the desk and SPA onboarding pages and bricked fresh sites. Instead, AppShell
 // blocks the app with a rendered, no-sidebar poster when not ready — a render,
 // not a navigation, so it cannot loop.
+// The most recent navigation target, recorded here (where `to` is always
+// populated) so router.onError can reload straight to the intended path even
+// when its own `to` argument is absent (see the stale-chunk recovery below).
+let _pendingTarget = null
 router.beforeEach(async (to) => {
+	_pendingTarget = to && to.fullPath
 	const ready = await isWorkspaceReady()
 	if (ready && to.name === "Onboarding") {
 		return { name: "Chat" }
@@ -149,5 +154,72 @@ function applyLegacyHash() {
 }
 router.isReady().then(applyLegacyHash)
 window.addEventListener("hashchange", applyLegacyHash)
+
+// ── Recover from a stale SPA tab after a deploy ──────────────────────────────
+// Routes are lazy-loaded (`() => import(...)`), and every build content-hashes
+// its chunks. After a redeploy, a tab that loaded the OLD index still asks for
+// the OLD chunk filenames — which no longer exist — so navigating to a not-yet-
+// loaded route (Macros, File Box, …) rejects with "Failed to fetch dynamically
+// imported module" and the navigation silently aborts (the user is stranded on
+// whatever page was already in memory). The fix: on a chunk-load error, do ONE
+// full-page load of the intended path so the browser pulls the fresh index +
+// chunks. A short-lived sessionStorage stamp prevents a reload loop when the
+// chunk is genuinely missing (a real 404, not just a stale tab).
+const _RELOAD_STAMP = "jarvis:stale-chunk-reload-at"
+const _RELOAD_WINDOW_MS = 15000
+
+function _isChunkLoadError(err) {
+	const msg = String((err && (err.message || err)) || "")
+	return (
+		/dynamically imported module/i.test(msg) ||
+		/Importing a module script failed/i.test(msg) ||
+		/error loading dynamically imported module/i.test(msg) ||
+		/ChunkLoadError/i.test(msg) ||
+		/Loading (CSS )?chunk .* failed/i.test(msg) ||
+		/Failed to fetch dynamically imported module/i.test(msg)
+	)
+}
+
+function _recoverFromStaleChunk(targetFullPath) {
+	let last = 0
+	try {
+		last = Number(sessionStorage.getItem(_RELOAD_STAMP)) || 0
+	} catch {
+		last = 0
+	}
+	// Already reloaded very recently for this — the chunk is genuinely gone, not
+	// just stale. Stop, and let the error surface instead of looping.
+	if (last && Date.now() - last < _RELOAD_WINDOW_MS) return false
+	try {
+		sessionStorage.setItem(_RELOAD_STAMP, String(Date.now()))
+	} catch {
+		// sessionStorage unavailable (private mode) — reload once anyway.
+	}
+	const path = targetFullPath || (window.location.pathname + window.location.search + window.location.hash)
+	// router base is "/jarvis"; to.fullPath is base-relative (e.g. "/macros").
+	const url = path.startsWith("/jarvis") ? path : "/jarvis" + (path.startsWith("/") ? path : "/" + path)
+	window.location.assign(url)
+	return true
+}
+
+router.onError((error, to) => {
+	if (_isChunkLoadError(error)) {
+		// Prefer the router's own `to`, but fall back to the target recorded in
+		// beforeEach (onError's `to` is empty in some failure paths).
+		_recoverFromStaleChunk((to && to.fullPath) || _pendingTarget)
+	}
+})
+
+// Vite's own signal when a preloaded module fails to fetch — fires before the
+// import promise rejects, so it's the earliest chance to recover. Both handlers
+// share the sessionStorage guard, so at most one reload happens.
+window.addEventListener("vite:preloadError", (event) => {
+	if (_isChunkLoadError(event && event.payload)) {
+		event.preventDefault()
+		// Reload straight to the route being navigated to (recorded in
+		// beforeEach), not the page currently in memory.
+		_recoverFromStaleChunk(_pendingTarget)
+	}
+})
 
 export default router
