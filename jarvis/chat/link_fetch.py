@@ -250,6 +250,39 @@ def _host_header(hostname: str, port: int, scheme: str) -> str:
 	return hostname if port == default else f"{hostname}:{port}"
 
 
+def _build_pool(scheme: str, ip: str, port: int, hostname: str, timeout: int):
+	"""The pinned single-use urllib3 pool: the socket goes to ``ip``, while TLS
+	still verifies against the ORIGINAL ``hostname`` (SNI + cert check).
+
+	Split out of ``_open_pinned`` so the pool can be built - and its connection
+	actually constructed - in a test without a network round trip. It could not
+	be, when this was inline, and that is precisely how the bug below survived:
+	every test in test_link_fetch.py stubs ``_open_pinned`` wholesale, so the
+	real pool construction was never once executed in CI.
+
+	``server_hostname`` is a CONNECTION kwarg, not a pool one. urllib3 v2 pools
+	collect their surplus **kwargs into ``self.conn_kw`` and splat that onto the
+	connection, so it must be passed as a PLAIN kwarg here. Passing a literal
+	``conn_kw={"server_hostname": ...}`` (as this did until now) gets collected
+	one level too deep - ``conn_kw={"conn_kw": {...}}`` - and every https fetch
+	dies with ``TypeError: HTTPSConnection.__init__() got an unexpected keyword
+	argument 'conn_kw'``. That TypeError is neither HTTPError nor OSError, so
+	``fetch_and_extract``'s except clause does not catch it either."""
+	pool_timeout = urllib3.Timeout(connect=timeout, read=timeout)
+	if scheme != "https":
+		return urllib3.HTTPConnectionPool(host=ip, port=port, timeout=pool_timeout, retries=False)
+	return urllib3.HTTPSConnectionPool(
+		host=ip,
+		port=port,
+		assert_hostname=hostname,
+		cert_reqs="CERT_REQUIRED",
+		ca_certs=certifi.where(),
+		timeout=pool_timeout,
+		retries=False,
+		server_hostname=hostname,
+	)
+
+
 def _open_pinned(
 	parsed,
 	ip: str,
@@ -290,28 +323,7 @@ def _open_pinned(
 	headers = dict(extra_headers or {})
 	headers["User-Agent"] = _USER_AGENT
 	headers["Host"] = _host_header(hostname, port, scheme)
-	pool_timeout = urllib3.Timeout(connect=timeout, read=timeout)
-	if scheme == "https":
-		pool = urllib3.HTTPSConnectionPool(
-			host=ip,
-			port=port,
-			assert_hostname=hostname,
-			cert_reqs="CERT_REQUIRED",
-			ca_certs=certifi.where(),
-			timeout=pool_timeout,
-			retries=False,
-			# ``server_hostname`` is a CONNECTION kwarg (not a pool one) in
-			# urllib3 v2, so it rides in via ``conn_kw`` - this is what aims SNI
-			# at the real hostname while the socket goes to the pinned IP.
-			conn_kw={"server_hostname": hostname},
-		)
-	else:
-		pool = urllib3.HTTPConnectionPool(
-			host=ip,
-			port=port,
-			timeout=pool_timeout,
-			retries=False,
-		)
+	pool = _build_pool(scheme, ip, port, hostname, timeout)
 	resp = pool.urlopen(
 		method,
 		target,
