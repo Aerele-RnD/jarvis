@@ -128,6 +128,9 @@ export function attachGlobalNotifier({ socket, router }) {
 					store.applyRemoteNew()
 				}
 				const title = convTitle(conv) || "Jarvis"
+				// A stop is the user's own click, seconds ago - the dot is useful, a
+				// notification saying "Reply ready" for the reply they just killed is not.
+				if (p.stopped) return
 				const body =
 					p.kind === "run:error"
 						? `Jarvis hit an error in ${convTitle(conv) || "your chat"}`

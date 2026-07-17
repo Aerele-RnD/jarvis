@@ -223,6 +223,12 @@
 									</div>
 								</div>
 								<div v-else class="jv-md" style="font-size:14px;line-height:1.6;color:var(--text);" v-html="render(m.content)"></div>
+								<!-- The user stopped this reply. A SIBLING of the body, not part of
+								     it: gated only on `stopped`, so it shows for a partial stop
+								     (content present) and an empty one alike, and the renderer can
+								     never mangle it. Muted, never an error tone - a deliberate stop
+								     is not a failure. -->
+								<div v-if="m.stopped" class="jv-stopped">You stopped this reply.</div>
 								<!-- rich action card the agent emits (doc confirm / email draft) -->
 								<template v-if="actionFor === m.name && activeAction">
 									<!-- email draft -->
@@ -3794,7 +3800,11 @@ function stopRun() {
 	if (m) {
 		m.streaming = false
 		if (m.name) stoppedMsgIds.value.add(m.name)
-		if (!m.content) m.content = "_Stopped._"
+		// A stop is a state of the turn, not prose: leave whatever streamed
+		// alone and flag the row. The marker renders from `stopped`, so a
+		// mid-sentence stop no longer reads as a complete answer. The server
+		// sets the same flag, so the marker survives a reload.
+		m.stopped = true
 	}
 	waiting.value = false
 	sending.value = false
@@ -4605,6 +4615,10 @@ onUnmounted(() => {
 /* day separators between message groups (UX #23) */
 .jv-daydivider { display: flex; align-items: center; justify-content: center; margin: 6px 0 2px; }
 .jv-daydivider span { font-size: 11px; font-weight: 550; color: var(--text-3); background: var(--surface-1); border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; }
+/* "You stopped this reply." - a muted rule under the body, in the same
+   vocabulary as .jv-msgtime. Deliberately NOT --red: the user chose to stop,
+   and dressing their own click as a failure is a lie about what happened. */
+.jv-stopped { margin-top: 8px; padding-top: 7px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--text-3); }
 .jv-md :deep(.jv-md-link) { color: var(--cta); text-decoration: none; font-weight: 500; }
 /* Auto-linked document IDs → open the record in ERPNext Desk. Dashed underline
    marks them as record links, distinct from plain markdown links. */

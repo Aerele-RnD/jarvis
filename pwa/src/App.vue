@@ -43,7 +43,7 @@ function onEvent(p) {
 		store.applyRename(p.conversation_id, p.title)
 	} else if (p.kind === "conversation:new") {
 		store.loadConversations()
-	} else if (p.kind === "run:end" && prefs.notifyDone) {
+	} else if (p.kind === "run:end" && !p.stopped && prefs.notifyDone) {
 		const title = store.conversations.find((c) => c.name === conv)?.title || "Jarvis"
 		notify("Jarvis finished", title, conv)
 	} else if (p.kind === "action:pending" && prefs.notifyDecision) {

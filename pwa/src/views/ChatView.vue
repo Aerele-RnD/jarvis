@@ -93,8 +93,13 @@ const view = (m) => {
 		// call and writes an empty assistant row. With no prose, no cards, no
 		// canvas and no error text, the thread would render a blank gap and the
 		// user would be left wondering whether anything happened at all.
-		empty:
-			!html && !cards && !charts.length && !parseAction(content) && !m.error && !(m.canvas || []).length,
+		// A stop is not a failure: excluded here so a stopped-before-stream turn
+		// (content == "") never lands in the "Jarvis didn't return a reply" error
+		// branch, telling the user it failed when they are the one who stopped it.
+		// The marker itself renders from a SIBLING gated on `stopped`, outside
+		// this chain - the exclusion alone would leave a blank gap.
+		empty: !html && !cards && !charts.length && !parseAction(content) && !m.error
+			&& !(m.canvas || []).length && !m.stopped,
 	}
 }
 
@@ -503,6 +508,12 @@ onUnmounted(() => {
 					<div v-else-if="it.view.empty" class="jv-msg-error">
 						Jarvis didn't return a reply for this turn. Try asking again.
 					</div>
+					<!-- SIBLING of the chain above, not a v-else-if in it: a partial stop
+					     has non-empty html, so chaining this would let the first branch
+					     win and the marker would never render - the exact defect it
+					     exists to fix. Gated only on `stopped`, it shows for both the
+					     partial and the empty stop. -->
+					<div v-if="it.msg.stopped" class="jv-stopped">You stopped this reply.</div>
 					<ActionCard
 						v-if="it.view.action && it.key === lastAssistantKey && !dismissedActions.has(it.key)"
 						:action="it.view.action"
@@ -684,6 +695,16 @@ onUnmounted(() => {
 	font-size: 12px;
 	line-height: 1.4;
 	color: var(--red);
+}
+/* The stop marker is muted (--ink5), never the error tone above it: the user
+   pressed Stop on purpose, so this states what happened, it doesn't warn. */
+.jv-stopped {
+	margin-top: 8px;
+	padding-top: 7px;
+	border-top: 1px solid var(--border);
+	font-size: 11.5px;
+	line-height: 1.4;
+	color: var(--ink5);
 }
 .jv-took {
 	display: flex;
