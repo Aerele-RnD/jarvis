@@ -22,6 +22,9 @@ from jarvis.exceptions import InvalidArgumentError, ToolNotFoundError
 
 _TOOL_NAMES: tuple[str, ...] = (
     "get_schema",
+    # Live, permission-fenced index of the site's customizations (custom
+    # apps/doctypes, custom fields on core doctypes, workflows, reports).
+    "describe_customizations",
     "get_doc",
     "get_list",
     # Creation context assembler: field map (mandatory/auto/readonly) + the
