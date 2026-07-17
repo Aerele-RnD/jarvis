@@ -106,3 +106,29 @@ test("parseSourcesBlock: reads the #jarvis-sources block; tolerates absence + ba
     [],
   )
 })
+
+test("parseSourcesBlock: normalizes the LLM tool-call dialect (id / jarvis__ prefix / args.spec)", () => {
+  const html =
+    '<script type="application/json" id="jarvis-sources">' +
+    '{"sources":[' +
+    '{"id":"monthly_sales","tool":"jarvis__query","refresh":"view","args":{"spec":{"from":"Sales Invoice"}}},' +
+    '{"name":"top5","tool":"jarvis__run_report","args":{"report_name":"Foo","filters":{"a":1}}}' +
+    "]}</script>"
+  const sources = parseSourcesBlock(html)
+  assert.equal(sources.length, 2)
+  assert.deepEqual(sources[0], {
+    source_name: "monthly_sales",
+    tool: "query",
+    spec: { from: "Sales Invoice" },
+  })
+  assert.deepEqual(sources[1], {
+    source_name: "top5",
+    tool: "run_report",
+    spec: { report_name: "Foo", filters: { a: 1 } },
+  })
+})
+
+test("RUNTIME_JS: contains the same dialect normalization", () => {
+  assert.ok(RUNTIME_JS.includes("jarvis__"))
+  assert.ok(RUNTIME_JS.includes("s.args"))
+})

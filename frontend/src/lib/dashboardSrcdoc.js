@@ -53,8 +53,19 @@ export const RUNTIME_JS = `(function () {
 			var parsed = JSON.parse(el.textContent || "{}");
 			var list = (parsed && parsed.sources) || [];
 			for (var i = 0; i < list.length; i++) {
+				// LLM-authored blocks drift toward the tool-call surface; fold the
+				// common dialects into the canonical {source_name, tool, spec} shape
+				// (the backend save parser normalizes identically).
 				var s = list[i];
-				if (s && s.source_name) sources[s.source_name] = { tool: s.tool, spec: s.spec };
+				if (!s) continue;
+				var name = s.source_name || s.id || s.name;
+				if (!name) continue;
+				var tool = String(s.tool || "").replace(/^jarvis__/, "");
+				var spec = s.spec;
+				if (spec == null && s.args && typeof s.args === "object") {
+					spec = s.args.spec && typeof s.args.spec === "object" ? s.args.spec : s.args;
+				}
+				sources[name] = { tool: tool, spec: spec };
 			}
 		} catch (e) {
 			/* malformed block: jarvis.data() rejects per-name with NotFound */
@@ -66,7 +77,8 @@ export const RUNTIME_JS = `(function () {
 			return new Promise(function (resolve, reject) {
 				var src = sources[name];
 				if (!src) {
-					var e = new Error('Unknown source "' + name + '"');
+					var known = Object.keys(sources).join(", ") || "none declared";
+					var e = new Error('Unknown source "' + name + '" (declared: ' + known + ")");
 					e.code = "NotFound";
 					return reject(e);
 				}
@@ -264,7 +276,9 @@ export function buildSrcdoc(html, { dark = false, echartsSource = "" } = {}) {
 // Parent-side parse of the SAME #jarvis-sources block the runtime reads -
 // feeds the save dialog's detected-sources preview and the save payload.
 // String-based (no DOM) so it is testable and works on the raw html prop.
-// → [{source_name, tool, spec}]
+// Normalizes the same LLM dialects as the runtime (id/name for source_name,
+// jarvis__ tool prefix, args/args.spec for spec) so preview, save and render
+// always agree. → [{source_name, tool, spec}]
 export function parseSourcesBlock(html) {
 	const m =
 		/<script[^>]*\bid\s*=\s*["']jarvis-sources["'][^>]*>([\s\S]*?)<\/script>/i.exec(
@@ -274,7 +288,19 @@ export function parseSourcesBlock(html) {
 	try {
 		const parsed = JSON.parse(m[1])
 		const list = (parsed && parsed.sources) || []
-		return list.filter((s) => s && s.source_name)
+		return list
+			.map((s) => {
+				if (!s) return null
+				const source_name = s.source_name || s.id || s.name
+				if (!source_name) return null
+				const tool = String(s.tool || "").replace(/^jarvis__/, "")
+				let spec = s.spec
+				if (spec == null && s.args && typeof s.args === "object") {
+					spec = s.args.spec && typeof s.args.spec === "object" ? s.args.spec : s.args
+				}
+				return { source_name, tool, spec }
+			})
+			.filter(Boolean)
 	} catch (e) {
 		return []
 	}

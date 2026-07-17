@@ -304,6 +304,26 @@ class TestSaveDashboard(_DashboardsApiTestCase):
 		self.assertEqual([s["source_name"] for s in data["sources"]], ["todos"])
 		self.assertEqual(frappe.parse_json(data["sources"][0]["spec"]), _GET_LIST_SPEC)
 
+	def test_save_normalizes_llm_source_dialect(self):
+		"""LLM-authored blocks drift toward the tool-call surface: ``id`` for
+		source_name, a ``jarvis__`` tool prefix, ``args``/``args.spec`` for
+		spec. Save folds them into the canonical child-row shape."""
+		frappe.set_user(PLAIN_A)
+		html = (
+			'<script type="application/json" id="jarvis-sources">'
+			'{"sources": [{"id": "todos", "tool": "jarvis__get_list", "refresh": "view", '
+			'"args": {"spec": {"doctype": "ToDo", "fields": ["name", "description"], "limit": 10}}}]}'
+			"</script>"
+		)
+		data = self._save({
+			"dashboard_title": f"dialect-{frappe.generate_hash(length=8)}",
+			"html": html,
+		})
+		self.assertEqual(data["dashboard_type"], "Connected")
+		self.assertEqual([s["source_name"] for s in data["sources"]], ["todos"])
+		self.assertEqual(data["sources"][0]["tool"], "get_list")
+		self.assertEqual(frappe.parse_json(data["sources"][0]["spec"]), _GET_LIST_SPEC)
+
 	def test_unknown_payload_key_throws(self):
 		frappe.set_user(PLAIN_A)
 		self.assertRaises(

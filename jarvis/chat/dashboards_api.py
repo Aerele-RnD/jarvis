@@ -281,19 +281,33 @@ def _normalize_source_rows(sources) -> list[dict]:
 	dicts. ``spec`` may arrive as a JSON object (the natural authoring shape in
 	the html block) or a pre-serialized string; the child field stores a
 	string. Shape errors throw; content validation happens in the controller
-	via ``_validate_source_row``."""
+	via ``_validate_source_row``.
+
+	LLM-authored blocks drift toward the tool-call surface, so the common
+	dialects are folded into the canonical shape rather than rejected:
+	``id``/``name`` for ``source_name``, a ``jarvis__`` tool prefix, and
+	``args``/``args.spec`` for ``spec`` (the runtime bridge normalizes the
+	same way, so stored rows and rendered widgets always agree)."""
 	if not isinstance(sources, list):
 		frappe.throw(_("sources must be a list."))
 	rows: list[dict] = []
 	for i, s in enumerate(sources):
 		if not isinstance(s, dict):
 			frappe.throw(_("sources[{0}] must be an object.").format(i))
+		name = s.get("source_name") or s.get("id") or s.get("name")
+		tool = s.get("tool")
+		if isinstance(tool, str) and tool.startswith("jarvis__"):
+			tool = tool[len("jarvis__"):]
 		spec = s.get("spec")
+		if spec is None:
+			args = s.get("args")
+			if isinstance(args, dict):
+				spec = args.get("spec") if isinstance(args.get("spec"), dict) else args
 		if isinstance(spec, (dict, list)):
 			spec = frappe.as_json(spec)
 		rows.append({
-			"source_name": s.get("source_name"),
-			"tool": s.get("tool"),
+			"source_name": name,
+			"tool": tool,
 			"spec": spec if isinstance(spec, str) else "",
 		})
 	return rows
