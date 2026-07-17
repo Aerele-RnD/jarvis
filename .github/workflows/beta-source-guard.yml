@@ -1,0 +1,39 @@
+name: Beta source guard
+
+# beta accepts promotions from develop and nothing else. There is no native
+# ruleset rule for "restrict the source branch of a PR", so this job exists to be
+# a REQUIRED STATUS CHECK on beta: the ruleset requires it, and it fails any PR
+# whose head is not develop.
+#
+# Only ever require this on the BETA ruleset. It is filtered to
+# `pull_request: branches: [beta]`, so on a PR into develop it never runs - and a
+# required check that never reports leaves a PR stuck pending forever. (Same trap
+# as requiring `build` from ci-base-image.yml, which is paths-filtered and only
+# runs when the Dockerfile changes.)
+
+on:
+  pull_request:
+    branches: [beta]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: beta-source-guard-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-branch:
+    name: source-branch
+    runs-on: ubuntu-latest
+    steps:
+      - name: Only develop may promote to beta
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          if [ "$HEAD_REF" != "develop" ]; then
+            echo "::error::beta only accepts PRs from develop. This PR is from '$HEAD_REF'."
+            echo "Merge the work into develop first, then open develop -> beta."
+            exit 1
+          fi
+          echo "source branch is develop - ok"
