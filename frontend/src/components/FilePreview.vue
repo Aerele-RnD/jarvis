@@ -37,7 +37,7 @@
 				<iframe
 					v-else-if="view.kind === 'html' || view.kind === 'svg'"
 					:srcdoc="view.content"
-					sandbox="allow-scripts"
+					sandbox="allow-scripts allow-popups"
 					class="h-[70vh] w-full bg-surface-white"
 					title="File preview"
 				/>

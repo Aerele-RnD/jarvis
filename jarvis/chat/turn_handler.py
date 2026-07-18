@@ -1172,54 +1172,6 @@ def _prepend_doc_context(user_message: str, context) -> str:
 	"""
 	if not isinstance(context, dict):
 		return user_message
-	if context.get("page") == "dashboards":
-		# The builder's explicit data-mode toggle overrides wording-based
-		# inference; absent = the agent decides from the ask.
-		mode = context.get("data_mode")
-		if mode == "static":
-			mode_line = (
-				" The user explicitly chose a STATIC one-time report: fetch the data "
-				"now, bake the numbers into the HTML with an as-of time, and do NOT "
-				"declare a jarvis-sources block."
-			)
-		elif mode == "live":
-			mode_line = (
-				" The user explicitly chose a LIVE data-connected dashboard: declare "
-				"every query in the jarvis-sources block and fetch at view time via "
-				"window.jarvis.data() - never bake the numbers in."
-			)
-		else:
-			mode_line = ""
-		# When revising a saved dashboard, name it so the agent reads the current
-		# document before changing it (instead of building blind).
-		edit_line = ""
-		if (context.get("doctype") or "") == "Jarvis Dashboard" and context.get("name"):
-			edit_line = (
-				f" They are revising the saved dashboard {context['name']} — call "
-				f"jarvis__get_doc on Jarvis Dashboard {context['name']} to read its "
-				"current html and sources, then produce the full revised document."
-			)
-		return (
-			"[Context: The user is on the Jarvis Dashboards builder page. They want to "
-			"create or iterate on a dashboard/report. Read and follow the "
-			"jarvis-dashboards skill before acting. Non-negotiable contract: produce "
-			"ONE complete self-contained HTML document per iteration and publish it as "
-			"a hosted canvas embed; no external resources. Live data sources MUST be "
-			"declared inside the HTML exactly as "
-			'<script type="application/json" id="jarvis-sources">{"sources":[{'
-			'"source_name":"<snake_case>","tool":"query|get_list|run_report",'
-			'"spec":{...}}]}</script> where spec is the bare argument value - for '
-			'query the {"from":...} DSL object itself, for run_report '
-			'{"report_name":...,"filters":{...}}, for get_list {"doctype":...} - '
-			'never nested inside another "spec" or "args" key (test it with the '
-			"matching jarvis__ tool first); widgets "
-			'fetch with window.jarvis.data("<source_name>"). Style with the injected '
-			"--jd-* CSS variables (--jd-bg/-surface/-ink/-heading/-muted/-line/"
-			"-accent/-font) and the window.JARVIS_THEME.palette chart colors instead "
-			"of hardcoding design; only deviate when the user explicitly asks about "
-			f"the look.{mode_line}{edit_line}]"
-			f"\n\n{user_message}"
-		)
 	if context.get("page") == "triggers":
 		return (
 			"[Context: The user is on the Jarvis Triggers page. They want to create or "

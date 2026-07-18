@@ -523,19 +523,3 @@ has_permission.update({
 	"Jarvis Trigger": "jarvis.chat.trigger_permissions.has_trigger_permission",
 })
 
-# ---------------------------------------------------------------------------
-# Jarvis Dashboard scoping
-# ---------------------------------------------------------------------------
-# The doctype rows grant Jarvis User r/w/c/d broadly; these hooks scope reads
-# to the dashboard's audience (Org / Role / User / owner — blank scope is
-# PRIVATE) and deny writes/deletes to everyone but the owner and the admin
-# tier. The create-time scope-widening gate (plain users may not create
-# Org/Role dashboards) lives in the DocType controller — "create" reaches the
-# hook without a doc.
-permission_query_conditions.update({
-	"Jarvis Dashboard": "jarvis.chat.dashboard_permissions.dashboard_query_conditions",
-})
-has_permission.update({
-	"Jarvis Dashboard": "jarvis.chat.dashboard_permissions.has_dashboard_permission",
-})
-

@@ -52,56 +52,18 @@ _CANVAS_LINK = re.compile(
 )
 _CANVAS_BARE = re.compile(rf"\S*?canvas/{_PATH}\.(?:{_EXTS})(?![\w])", re.IGNORECASE)
 
-# openclaw 2026.6+ "hosted embed" markers. The runtime's own system prompt
-# teaches the model to publish rich HTML as a hosted canvas document and
-# reference it with ``[embed ref="<id>" title="..." /]`` (or an explicit
-# ``[embed url="/__openclaw__/canvas/..." /]``). The gateway serves ref
-# documents at ``canvas/documents/<id>/index.html``, so refs fold into the
-# same fetch/persist path as plain canvas file references.
-_EMBED_MARKER = re.compile(r"\[embed\s[^\]]*\]", re.IGNORECASE)
-_EMBED_REF = re.compile(
-	r"\[embed\s[^\]]*?\bref=[\"']([\w.\-]+)[\"'][^\]]*\]", re.IGNORECASE
-)
-
-
-def _embed_ref_name(ref: str) -> str:
-	return f"documents/{ref}/index.html"
-
-
-# The canvas host appends its own client script to hosted documents (a
-# live-reload WebSocket + user-action channel on /__openclaw__/ws). Inside
-# the Jarvis sandbox that channel cannot exist — the iframe CSP blocks all
-# egress — so the script is dead weight that logs a CSP violation on every
-# render. Drop any script block that references the host socket.
-_SCRIPT_BLOCK = re.compile(r"<script\b.*?</script>", re.IGNORECASE | re.DOTALL)
-
-
-def _strip_host_client(text: str) -> str:
-	return _SCRIPT_BLOCK.sub(
-		lambda m: "" if "__openclaw__/ws" in m.group(0) else m.group(0), text
-	)
-
 
 def detect_canvas_names(text: str) -> list[str]:
 	"""Return canvas artifact paths referenced in ``text``, de-duplicated, in order.
 
 	Paths keep their subdir (e.g. ``charts/sales.html``) so the gateway fetch
-	hits the right URL. Hosted-embed refs are mapped to their gateway document
-	path (``documents/<id>/index.html``).
+	hits the right URL.
 	"""
 	if not text:
 		return []
 	seen: dict[str, None] = {}
 	for m in _CANVAS_REF.finditer(text):
-		name = m.group(1)
-		# Reject path traversal: `_PATH` permits `..` segments, so a reply of
-		# `canvas/../../etc/passwd.html` would otherwise be fetched from the
-		# gateway with the bearer token. Only in-tree canvas paths are allowed.
-		if ".." in name.split("/"):
-			continue
-		seen.setdefault(name, None)
-	for m in _EMBED_REF.finditer(text):
-		seen.setdefault(_embed_ref_name(m.group(1)), None)
+		seen.setdefault(m.group(1), None)
 	return list(seen)[:_MAX_CANVAS_PER_TURN]
 
 
@@ -170,21 +132,7 @@ def strip_canvas_refs(content: str, names: list[str]) -> str:
 	the user sees clean text + the rendered artifact, not a broken file link."""
 	if not content or not names:
 		return content
-
-	# Hosted-embed markers first (before the bare-path strip mangles a
-	# url= form into marker residue): drop any [embed ...] whose ref or
-	# embedded canvas url resolved to a persisted artifact.
-	def _drop_embed(m: re.Match) -> str:
-		marker = m.group(0)
-		ref = _EMBED_REF.match(marker)
-		if ref and _embed_ref_name(ref.group(1)) in names:
-			return ""
-		if any(n in marker for n in names):
-			return ""
-		return marker
-
-	out = _EMBED_MARKER.sub(_drop_embed, content)
-	out = _CANVAS_LINK.sub("", out)
+	out = _CANVAS_LINK.sub("", content)
 	out = _CANVAS_BARE.sub("", out)
 	out = re.sub(r"[ \t]+([.,;:])", r"\1", out)
 	out = re.sub(r"\n{3,}", "\n\n", out)
@@ -210,11 +158,6 @@ def persist_canvases(
 		if not fetched:
 			continue
 		body, typ = fetched
-		if typ == "html" and name.startswith("documents/"):
-			try:
-				body = _strip_host_client(body.decode("utf-8")).encode("utf-8")
-			except Exception:
-				pass
 		try:
 			file_url = _save_file(assistant_msg_name, name, body)
 		except Exception:

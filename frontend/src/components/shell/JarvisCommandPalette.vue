@@ -208,8 +208,6 @@ function select(item) {
 	if (!item || item.disabled) return
 	open.value = false
 	if (item.action) item.action()
-	// SPA-native results (search_workspace "dashboards" group) navigate in-app.
-	else if (item.spa_route) router.push(item.spa_route)
 	// Frappe desk records/reports open in a new tab so the chat isn't lost.
 	else if (item.route) window.open(item.route, "_blank", "noopener")
 	else router.push("/c/" + item.name)
