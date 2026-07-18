@@ -659,7 +659,7 @@
 					<div class="jv-artifact-body">
 						<iframe v-if="artifact.kind === 'pdf'" :src="artifact.url" class="jv-artifact-frame" title="PDF preview"></iframe>
 						<img v-else-if="artifact.kind === 'image'" :src="artifact.url" class="jv-artifact-img" :alt="artifact.cv.title" />
-						<iframe v-else-if="artifact.kind === 'html' || artifact.kind === 'svg'" :srcdoc="artifact.content" sandbox="allow-scripts allow-popups" class="jv-artifact-frame" title="Artifact preview"></iframe>
+						<iframe v-else-if="artifact.kind === 'html' || artifact.kind === 'svg'" :srcdoc="artifact.content" sandbox="allow-scripts" class="jv-artifact-frame" title="Artifact preview"></iframe>
 						<template v-else-if="artifact.kind === 'table'">
 							<div v-if="artifact.sheets.length > 1" class="jv-sheet-tabs">
 								<button v-for="(sh, si) in artifact.sheets" :key="si" :class="{ on: si === artifact.sheetIdx }" @click="setSheet(si)">{{ sh.name }}</button>
@@ -3410,6 +3410,9 @@ function resendFailed(m) {
 	send(txt)
 }
 
+// One-shot viewing context from a "Discuss in chat" hand-off (chatPrefill's
+// optional `context`, e.g. a dashboard): consumed by the first send below.
+let _prefillSendContext = null
 async function send(textArg) {
 	// Don't race an in-flight dictation: sending now would drop the spoken
 	// words (the transcript would land after the message left the composer).
@@ -3463,7 +3466,8 @@ async function send(textArg) {
 		// One-shot wiki grounding: pass the armed flag but only CONSUME it on a
 		// successful send, so a rejected send (and its Retry) keeps grounding armed.
 		const groundWiki = groundNextTurn.value
-		const sendCtx = groundWiki ? { ground_wiki: 1 } : undefined
+		const sendCtx = groundWiki ? { ground_wiki: 1 } : _prefillSendContext || undefined
+		_prefillSendContext = null // one-shot: only the prefill's first send carries it
 		const r = await api.sendMessage(sentFrom, text, undefined, attachments, sendCtx)
 		if (r && r.ok === false) {
 			// The server rejected the send (e.g. the single-flight guard:
@@ -4262,6 +4266,7 @@ onMounted(async () => {
 	// path).
 	if (applyPrefill) {
 		input.value = prefill.text
+		_prefillSendContext = prefill.context || null // rides send()'s context arg
 		await nextTick()
 		autoGrow()
 		if (prefill.autoSend) await send()

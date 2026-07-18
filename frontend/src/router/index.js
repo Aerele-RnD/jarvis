@@ -76,6 +76,20 @@ const routes = [
 		component: () => import("@/pages/triggers/TriggerDetail.vue"),
 		props: true,
 	},
+	// Dashboards: /dashboards is the hash-tabbed builder/saved shell (no hash or
+	// "#builder" = Builder, "#saved" = Saved); /dashboards/:id renders a saved
+	// dashboard read-only.
+	{
+		path: "/dashboards",
+		name: "DashboardsPage",
+		component: () => import("@/pages/dashboards/DashboardsPage.vue"),
+	},
+	{
+		path: "/dashboards/:id",
+		name: "DashboardView",
+		component: () => import("@/pages/dashboards/DashboardView.vue"),
+		props: true,
+	},
 	{ path: "/files", name: "FilesList", component: () => import("@/pages/files/FilesList.vue") },
 	// §15.2: both approval routes render the two-pane board (the :id row is
 	// selected in place); names kept so nav highlighting + router.push targets

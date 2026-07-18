@@ -42,16 +42,17 @@
 </template>
 
 <script setup>
-// ⌘K palette (DESIGN-V3 §3.5), rebuilt on plain frappe-ui Dialog. The stock
-// CommandPalette in 0.1.278 nests a bare <template> element at its root, which
-// Vue renders as an inert native <template> - its whole Dialog subtree never
-// mounts (no [role=dialog], no errors), so ⌘K and the sidebar Search rows did
-// nothing. Same anatomy as the stock component: search input + grouped list,
-// ↑/↓/Enter keyboard navigation, Esc closes (Dialog's own handling). Opens via
-// store.paletteOpen (sidebar "Search Chat" + tail row) and the Ctrl/⌘+K
-// binding in AppShell's useShortcuts (replaces the stock component's
-// self-owned key, §14 DA-06). Empty query = nav items + 10 recent chats;
-// typing = filtered nav + server title search (D40, 300ms debounce).
+// Sidebar "More" palette — a clone-and-trim of JarvisCommandPalette.vue for
+// the overflow destinations (Dashboards today). Same Dialog anatomy, same
+// keyboard nav, same PaletteItem rows; bound to store.moreMenuOpen. Empty
+// query lists the static destinations; typing filters them and also runs the
+// server search_workspace, keeping ONLY its "dashboards" group (whose items
+// carry spa_route, not a desk route).
+//
+// NOTE (dedupe-later): this is the second palette sharing the input +
+// flatItems/activeIndex/scrollIntoView machinery with JarvisCommandPalette.
+// When a third palette appears, extract a shared usePaletteNav composable
+// rather than cloning a third time.
 import { ref, computed, watch, nextTick } from "vue"
 import { useRouter } from "vue-router"
 import { Dialog, FeatherIcon } from "frappe-ui"
@@ -63,15 +64,14 @@ const store = useShellStore()
 const router = useRouter()
 
 const open = computed({
-	get: () => store.paletteOpen,
-	set: (v) => (store.paletteOpen = v),
+	get: () => store.moreMenuOpen,
+	set: (v) => (store.moreMenuOpen = v),
 })
 
 const inputEl = ref(null)
 const listEl = ref(null)
 const searchQuery = ref("")
-const results = ref([])
-const frappeGroups = ref([])
+const serverGroups = ref([])
 const searching = ref(false)
 const activeIndex = ref(0)
 
@@ -88,80 +88,51 @@ watch(searchQuery, (q) => {
 	const query = (q || "").trim()
 	if (!query) {
 		searching.value = false
-		results.value = []
-		frappeGroups.value = []
+		serverGroups.value = []
 		return
 	}
 	searching.value = true
 	_debounce = setTimeout(async () => {
 		const seq = ++_seq
 		try {
-			// Conversation titles + the Frappe desk (records/reports) in parallel.
-			const [conv, ws] = await Promise.all([
-				apiShell.searchConversations({ search: query, page_length: 20 }),
-				apiShell.searchWorkspace({ search: query, limit: 6 }),
-			])
+			const ws = await apiShell.searchWorkspace({ search: query, limit: 6 })
 			if (seq !== _seq) return // stale response
-			results.value = (conv && conv.rows) || []
-			frappeGroups.value = (ws && ws.groups) || []
+			// Only the SPA-native dashboards group belongs in this palette.
+			serverGroups.value = ((ws && ws.groups) || []).filter((g) => g.key === "dashboards")
 		} catch (e) {
-			if (seq === _seq) {
-				results.value = []
-				frappeGroups.value = []
-			}
+			if (seq === _seq) serverGroups.value = []
 		} finally {
 			if (seq === _seq) searching.value = false
 		}
 	}, 300)
 })
 
-const navItems = computed(() => [
+const destinations = computed(() => [
 	{
-		name: "nav-new-chat",
-		label: "New Chat",
-		icon: "plus",
-		action: () => store.requestNewChat(router),
+		name: "dest-dashboards",
+		label: "Dashboards",
+		icon: "bar-chart-2",
+		action: () => router.push("/dashboards"),
 	},
-	{ name: "nav-chat", label: "Chat", icon: "message-circle", action: () => router.push({ name: "Chat" }) },
-	{ name: "nav-skills", label: "Skills", icon: "zap", action: () => router.push({ name: "SkillsList" }) },
-	{ name: "nav-macros", label: "Macros", icon: "layers", action: () => router.push({ name: "MacrosList" }) },
-	{ name: "nav-files", label: "File Box", icon: "inbox", action: () => router.push({ name: "FilesList" }) },
-	{
-		name: "nav-approvals",
-		label: "Approval Board",
-		icon: "check-square",
-		action: () => router.push({ name: "ApprovalsList" }),
-	},
-	{ name: "nav-agents", label: "Agents", icon: "cpu", action: () => router.push({ name: "AgentsList" }) },
 ])
-
-function chatItem(c) {
-	return {
-		name: c.name,
-		label: c.title || "New chat",
-		icon: "message-circle",
-		last_active_at: c.last_active_at,
-	}
-}
 
 const groups = computed(() => {
 	const q = (searchQuery.value || "").trim().toLowerCase()
 	if (!q) {
-		const out = [{ title: "Jump to", items: navItems.value }]
-		const recents = store.conversations.slice(0, 10).map(chatItem)
-		if (recents.length) out.push({ title: "Recent chats", items: recents })
-		return out
+		return [{ title: "Destinations", items: destinations.value }]
 	}
 	const out = []
-	const nav = navItems.value.filter((it) => it.label.toLowerCase().includes(q))
-	if (nav.length) out.push({ title: "Jump to", items: nav })
-	const chats = searching.value
-		? [{ name: "-loading", label: "Searching…", icon: "loader", disabled: true }]
-		: results.value.map(chatItem)
-	if (chats.length) out.push({ title: "Chats", items: chats })
-	// Frappe desk results (Lists / Records / Reports) after the chats.
-	for (const g of frappeGroups.value) {
-		if (g.items && g.items.length) out.push({ title: g.title, items: g.items })
+	const dest = destinations.value.filter((it) => it.label.toLowerCase().includes(q))
+	if (dest.length) out.push({ title: "Destinations", items: dest })
+	if (searching.value) {
+		out.push({
+			title: "Dashboards",
+			items: [{ name: "-loading", label: "Searching…", icon: "loader", disabled: true }],
+		})
+	} else {
+		for (const g of serverGroups.value) {
+			if (g.items && g.items.length) out.push({ title: g.title, items: g.items })
+		}
 	}
 	return out
 })
@@ -171,8 +142,7 @@ const flatItems = computed(() => groups.value.flatMap((g) => g.items).filter((it
 const activeItem = computed(() => flatItems.value[activeIndex.value] || null)
 const empty = computed(() => !!searchQuery.value.trim() && !searching.value && !flatItems.value.length)
 
-// Any result change (typing, search landing, conversations refresh) resets
-// the cursor to the top row.
+// Any result change (typing, search landing) resets the cursor to the top row.
 watch(groups, () => {
 	activeIndex.value = 0
 })
@@ -208,11 +178,8 @@ function select(item) {
 	if (!item || item.disabled) return
 	open.value = false
 	if (item.action) item.action()
-	// SPA-native results (search_workspace "dashboards" group) navigate in-app.
+	// Server dashboard rows carry spa_route ("/dashboards/<name>") and no route.
 	else if (item.spa_route) router.push(item.spa_route)
-	// Frappe desk records/reports open in a new tab so the chat isn't lost.
-	else if (item.route) window.open(item.route, "_blank", "noopener")
-	else router.push("/c/" + item.name)
 }
 
 // after-leave (Dialog's overlay finished its exit) - wipe for the next open.
@@ -220,8 +187,7 @@ function reset() {
 	clearTimeout(_debounce)
 	_seq++ // invalidate any in-flight search
 	searchQuery.value = ""
-	results.value = []
-	frappeGroups.value = []
+	serverGroups.value = []
 	searching.value = false
 	activeIndex.value = 0
 }

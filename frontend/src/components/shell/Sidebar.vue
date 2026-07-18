@@ -63,6 +63,22 @@
 			</div>
 		</nav>
 
+		<!-- 3b. overflow destinations (Dashboards, …) — opens the MoreMenu palette.
+		     Deliberately NOT a navLinks entry: that loop binds :to and this row is
+		     an action. But it DOES light up when the user is on one of its
+		     destinations, so a first-class page reached via More still reads as a
+		     section (not a transient action). -->
+		<nav class="flex flex-col">
+			<SidebarLink
+				label="More"
+				icon="more-horizontal"
+				class="mx-2 my-[1.5px]"
+				:is-collapsed="collapsed"
+				:is-active="onMoreDestination"
+				:on-click="() => (store.moreMenuOpen = true)"
+			/>
+		</nav>
+
 		<!-- 4. recent chats (hidden entirely when collapsed, D6) -->
 		<template v-if="!collapsed">
 			<div class="px-4 pb-2.5 pt-[11px] text-sm text-ink-gray-5">Recent chats</div>
@@ -164,6 +180,10 @@ const route = useRoute()
 const router = useRouter()
 
 const collapsed = computed(() => store.sidebarCollapsed)
+
+// The "More" overflow row lights up on any of its destinations (currently the
+// Dashboards page + detail). Extend the prefix list as destinations are added.
+const onMoreDestination = computed(() => route.path.startsWith("/dashboards"))
 function toggleCollapse() {
 	store.sidebarCollapsed = !store.sidebarCollapsed
 }
