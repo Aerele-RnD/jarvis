@@ -11,6 +11,7 @@
   "description",
   "category",
   "nature",
+  "delivery",
   "version",
   "publisher",
   "status",
@@ -58,6 +59,15 @@
    "label": "Nature",
    "options": "Auditor\nOperator",
    "in_standard_filter": 1
+  },
+  {
+   "default": "legacy",
+   "fieldname": "delivery",
+   "fieldtype": "Select",
+   "label": "Delivery",
+   "options": "legacy\ndelegate",
+   "in_standard_filter": 1,
+   "description": "How the agent's SKILL body reaches the container. 'legacy': the body is stored in skill_bundle on this row and pushed from the bench (old path). 'delegate': the body NEVER enters the customer DB — the bench emits only an enablement signal and admin looks the body up from the bundle store (A2). Set by the catalog sync from registry.delivery; empty/absent registry = legacy."
   },
   {
    "fieldname": "version",

@@ -346,15 +346,61 @@ class TestAgentsMarketplace(unittest.TestCase):
 		count2 = frappe.db.count(LISTING)
 		self.assertEqual(count1, count2)  # no dup rows on re-sync
 		self.assertEqual(r2["created"], 0)  # nothing created the second time
-		# 7 domains in the registry; 4 Published with a non-empty skill bundle.
+		# 7 agents in the registry, all Published.
 		self.assertEqual(count2, 7)
 		published = frappe.get_all(LISTING, filters={"status": "Published"}, pluck="name")
 		# All 7 registry agents are Published as of marketplace v2 (the 3 former
 		# Coming-Soon agents shipped: ar-collections, bank-recon, analytical-review).
 		self.assertEqual(len(published), 7)
 		for slug in published:
-			bundle = frappe.parse_json(frappe.db.get_value(LISTING, slug, "skill_bundle")) or []
-			self.assertTrue(bundle and bundle[0].get("body", "").strip(), f"{slug} bundle body empty")
+			row = frappe.db.get_value(LISTING, slug, ["delivery", "skill_bundle"], as_dict=True)
+			bundle = frappe.parse_json(row.skill_bundle) or []
+			has_body = any((b or {}).get("body", "").strip() for b in bundle)
+			if row.delivery == "delegate":
+				# Phase 0A / A2: a delegate agent's SKILL body must NEVER be stored
+				# in the customer DB — it lives only in the admin bundle store.
+				self.assertFalse(has_body, f"{slug} (delegate) leaked a skill body into the DB")
+			else:
+				# Legacy agents keep the bundled body for the bench to push.
+				self.assertTrue(has_body, f"{slug} (legacy) bundle body empty")
+
+	# ------------------------------------------------------------------ #
+	# (d2) Phase 0A — delegate agent stub + body-free enablement signal
+	# ------------------------------------------------------------------ #
+	def test_delegate_agent_ships_stub_and_enablement_signal(self):
+		"""A2 / Phase 0A: a delegate agent's SKILL body NEVER enters the customer
+		DB, and its push-payload entry is a body-free ENABLEMENT SIGNAL that the
+		admin relay (Phase 2C) routes by ``delivery == 'delegate'`` — carrying
+		tools_allow / timeout_s / nature / model looked up from the bundled
+		registry, no proprietary body."""
+		DELEGATE = "close-auditor"
+		# The Listing stub carries the metadata but NOT the body.
+		row = frappe.db.get_value(LISTING, DELEGATE, ["delivery", "skill_bundle"], as_dict=True)
+		self.assertEqual(row.delivery, "delegate")
+		bundle = frappe.parse_json(row.skill_bundle) or []
+		self.assertFalse(
+			any((b or {}).get("body", "").strip() for b in bundle),
+			"delegate agent leaked a SKILL body into the customer DB",
+		)
+
+		# Install + enable for an owner who can read what it scans (A12), so the
+		# enablement signal is emitted rather than skipped. Accounts User grants
+		# read on GL Entry / Account / Company.
+		if frappe.db.exists("Role", "Accounts User"):
+			_give_role(self.owner, "Accounts User")
+		inst = _install_as(self.owner, DELEGATE)
+		frappe.db.set_value(INSTALLATION, inst, "enabled", 1)
+		frappe.db.commit()
+
+		payload = agent_catalog.build_agent_push_payload(owner=self.owner)
+		sig = next(p for p in payload if p["slug"] == f"agent-{DELEGATE}")
+		self.assertEqual(sig["delivery"], "delegate")
+		self.assertNotIn("body", sig)  # body-free — the whole point
+		self.assertEqual(sig["nature"], "auditor")
+		self.assertEqual(sig["timeout_s"], 2400)
+		self.assertIn("model", sig)  # present (may be None) so 2C can default it
+		self.assertIn("exec", sig["tools_allow"])
+		self.assertIn("jarvis__get_balance_on", sig["tools_allow"])
 
 	# ------------------------------------------------------------------ #
 	# (e) RBAC — role-gated install / run (server-side enforcement)
