@@ -23,7 +23,9 @@
   "scope_json",
   "wm_row_count",
   "wm_gl_max_modified",
-  "permission_profile"
+  "permission_profile",
+  "integrity_digest",
+  "canvas_ref"
  ],
  "fields": [
   {
@@ -147,6 +149,20 @@
    "label": "Permission Profile",
    "read_only": 1,
    "description": "A summary + sha256 of the run-as user's roles + user-permission keys at launch (A12). Lets a drift between mapping-time and run-time perms be detected."
+  },
+  {
+   "fieldname": "integrity_digest",
+   "fieldtype": "Data",
+   "label": "Integrity Digest",
+   "read_only": 1,
+   "description": "The evaluator's sha256 over its canonicalized findings (A1), passed through record_agent_run. Two runs on unchanged data must produce the same digest — the reproducibility proof stored alongside the run."
+  },
+  {
+   "fieldname": "canvas_ref",
+   "fieldtype": "Small Text",
+   "label": "Canvas Ref",
+   "read_only": 1,
+   "description": "The delegate's saved canvas/dashboard reference reported at writeback. Phase 4's save_dashboard resolves this into the Run.dashboard link."
   }
  ],
  "index_web_pages_for_search": 0,

@@ -114,6 +114,13 @@ _TOOL_NAMES: tuple[str, ...] = (
     # eyeball get_list output. See jarvis/agents/rule_packs/.
     "compute_materiality",
     "run_scrutiny",
+    # Phase-3 delegate writeback: the auditor/operator delegate passes its
+    # deterministic evaluator output here VERBATIM. It resolves the Jarvis Agent
+    # Run from the caller's session_key, validates every finding (token/doctype/
+    # ref/amount/severity) as the run-as user, persists them (token in rule_id,
+    # company stamped), coverage-scoped auto-resolves (A16), rechecks the GL
+    # consistency watermark (A17), and finalizes the Run. See A2/A16/A17.
+    "record_agent_run",
     # Skill + wiki self-service (voice & wiki feature): search/read/save the
     # customer's saved skills and org-wiki pages mid-turn. The write pair
     # (create_custom_skill, update_wiki) is confirmation-gated in api.py.

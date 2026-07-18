@@ -134,10 +134,8 @@ def _launch_audit(inst, trigger: str) -> dict:
 	"""Create the audit conversation + a ``running`` Jarvis Agent Run + enqueue
 	the triggering turn. MUST run as the installation owner (the scheduler
 	set_user's it; run_agent_now is already the owner). Returns
-	``{run, conversation}``. Identity/budget guards + next_run_at advancement are
-	the caller's job."""
-	from jarvis.chat import api
-
+	``{run, conversation, session_key}``. Identity/budget guards + next_run_at
+	advancement are the caller's job."""
 	listing = frappe.get_doc(LISTING, inst.agent)
 	owner = inst.owner
 	# Phase 1 identity: the run's ERP-read identity. The caller (scheduler /
@@ -206,17 +204,61 @@ def _launch_audit(inst, trigger: str) -> dict:
 		detail=f"trigger: {trigger}",
 	)
 
-	# O3: dispatch as an unattended background turn (interactive=False) so it
-	# never jumps ahead of a human's queued question. delegated_send() marks
-	# this as a trusted server re-entry so send_message's Jarvis-access gate
-	# (and the now role-gated Message create perm) accept it even when the
-	# impersonated owner does not hold the Jarvis User role.
+	# Dispatch — branch on delivery (Phase 0A coexistence). A DELEGATE agent runs
+	# server-side via admin -> fleet -> the tenant's gateway; a LEGACY agent keeps
+	# the unchanged bench chat pipeline (jarvis__run_scrutiny). Both share every
+	# identity/scope guard above.
+	if (listing.delivery or "legacy").strip().lower() == "delegate":
+		# Phase 2C delegate dispatch: the fleet dispatches the turn DETACHED on the
+		# cron lane (A11 — never queues customer chat) and returns 202; the Run
+		# stays "running" until the Phase-3 record_agent_run writeback (or a status
+		# poll) marks it done — the dispatch does NOT block on the run finishing.
+		from jarvis import admin_client
+		from jarvis.chat.agent_catalog import registry_timeout_s
+
+		try:
+			admin_client.post_agent_run(
+				run_id=run.name,
+				agent_id=f"agent-{slug}",
+				session_key=session_key,
+				message=_audit_prompt(listing, inst, trigger, scope),
+				timeout_s=registry_timeout_s(slug),
+			)
+		except Exception:
+			# The dispatch call itself failed. Mark THIS Run failed (mirror
+			# _record_failed's writeback onto the already-created "running" row so
+			# it is never orphaned), then re-raise so the caller's retry/notify path
+			# runs (scheduler: no next_run_at advance -> retry next hour;
+			# run_agent_now: surfaces the error to the UI).
+			frappe.db.set_value(
+				RUN, run.name,
+				{
+					"status": "failed",
+					"finished_at": frappe.utils.now(),
+					"error": "agent-run dispatch failed; see Error Log",
+				},
+				update_modified=False,
+			)
+			frappe.db.commit()
+			frappe.log_error(
+				title=f"jarvis agent-run dispatch failed: {run.name}",
+				message=frappe.get_traceback(),
+			)
+			raise
+		return {"run": run.name, "conversation": conv.name, "session_key": session_key}
+
+	# Legacy dispatch (UNCHANGED). O3: dispatch as an unattended background turn so
+	# it never jumps ahead of a human's queued question. delegated_send() marks this
+	# as a trusted server re-entry so send_message's Jarvis-access gate (and the
+	# role-gated Message create perm) accept it even when the impersonated owner
+	# does not hold the Jarvis User role.
+	from jarvis.chat import api
 	from jarvis.permissions import delegated_send
 
 	with delegated_send():
 		result = api.send_message(
 			conversation=conv.name,
-			message=_audit_prompt(listing, inst, trigger, scope),
+			message=_legacy_audit_prompt(listing, inst, trigger, scope),
 			background=1,
 		)
 	if not result.get("ok"):
@@ -322,7 +364,12 @@ def _permission_profile(user: str) -> str:
 	return json.dumps({"hash": digest, **summary})
 
 
-def _audit_prompt(listing, inst, trigger: str, scope: dict | None = None) -> str:
+def _legacy_audit_prompt(listing, inst, trigger: str, scope: dict | None = None) -> str:
+	"""The LEGACY (non-delegate) run message — UNCHANGED coexistence path (Phase
+	0A). A legacy agent's SKILL body lives on the bench and runs through the chat
+	pipeline, calling ``jarvis__run_scrutiny``; this prompt is safe to be explicit
+	about that because the legacy pack is NOT the private-store IP. Delegate agents
+	take ``_audit_prompt`` instead."""
 	cfg = ""
 	try:
 		parsed = frappe.parse_json(inst.config) if inst.config else None
@@ -331,10 +378,9 @@ def _audit_prompt(listing, inst, trigger: str, scope: dict | None = None) -> str
 	except Exception:
 		cfg = ""
 	slug = listing.agent_slug
-	# A6: inject the EXPLICIT resolved scope verbatim so the container bundle
-	# never infers "the current period" (a UTC container clock vs an IST site
-	# picks the wrong FY for ~5.5h/day). Phase 2C rewrites the run_scrutiny
-	# reference below into a generic, non-leaky prompt.
+	# A6: inject the EXPLICIT resolved scope verbatim so the run never infers "the
+	# current period" (a UTC container clock vs an IST site picks the wrong FY for
+	# ~5.5h/day).
 	scope_block = ""
 	if scope:
 		scope_block = (
@@ -353,6 +399,41 @@ def _audit_prompt(listing, inst, trigger: str, scope: dict | None = None) -> str
 		f"installation=\"{inst.name}\" to it so your findings are recorded — then report the "
 		f"severity-tagged findings summary it returns. Read-only — never write."
 		f"{scope_block}{cfg}"
+	)
+
+
+def _audit_prompt(listing, inst, trigger: str, scope: dict | None = None) -> str:
+	"""The GENERIC, non-leaky run message handed to the delegate (A2/A6).
+
+	It names NO rule, tool, threshold, materiality step, or domain — the delegate's
+	bundled SKILL.md (sourced admin-side from the PRIVATE bundle store, never the
+	bench) carries the actual "how". The bench injects only:
+	  * a pointer to the engagement config on the installation (the delegate reads
+	    it there via its own permission-bounded tools — the config is not dumped
+	    into context), and
+	  * the EXPLICIT resolved SCOPE verbatim (A6), so the bundle NEVER infers "the
+	    current period" (a UTC container clock vs an IST site picks the wrong FY for
+	    ~5.5h/day, catastrophic at Mar-31/Apr-1). Prior-FY selection stays versioned
+	    bench code, injected — never LLM prose.
+	Kept short: the delegate resolves the run/installation linkage for its Phase-3
+	writeback from the session_key the bench minted, not from this text."""
+	scope_block = ""
+	if scope:
+		scope_block = (
+			"\n\nEXPLICIT SCOPE (use these EXACT values; never infer the period): "
+			f"company=\"{scope.get('company')}\", "
+			f"fiscal_year=\"{scope.get('fiscal_year')}\", "
+			f"from_date=\"{scope.get('from_date')}\", "
+			f"to_date=\"{scope.get('to_date')}\", "
+			f"prior_fy_start=\"{scope.get('prior_fy_start')}\", "
+			f"prior_fy_end=\"{scope.get('prior_fy_end')}\"."
+		)
+	return (
+		f"[Automated {trigger} run] Run your bundled playbook for this trigger now over "
+		f"the scope below. Your engagement configuration is on your installation "
+		f"({inst.name}); read it there. Follow your skill exactly and do only what it "
+		f"authorises."
+		f"{scope_block}"
 	)
 
 

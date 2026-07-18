@@ -179,6 +179,105 @@ class TestAgentsMarketplace(unittest.TestCase):
 		self.assertNotEqual(conv_owner, "Administrator")
 
 	# ------------------------------------------------------------------ #
+	# (a2) Phase 2C — delegate dispatch routes through admin, not chat
+	# ------------------------------------------------------------------ #
+	def test_delegate_dispatch_calls_post_agent_run_not_send_message(self):
+		inst_name = _install_as(self.owner, "close-auditor")  # delivery=delegate
+		frappe.db.set_value(INSTALLATION, inst_name, "enabled", 1)
+		frappe.db.commit()
+		inst = frappe.get_doc(INSTALLATION, inst_name)
+
+		import jarvis.admin_client as admin_client
+		import jarvis.chat.api as chat_api
+
+		captured = {}
+
+		def _cap(**kw):
+			captured.update(kw)
+			return {"run_id": kw.get("run_id"), "status": "queued"}
+
+		def _no_send(**kw):
+			raise AssertionError("send_message must NOT be called for a delegate")
+
+		orig_run, orig_send = admin_client.post_agent_run, chat_api.send_message
+		admin_client.post_agent_run = _cap
+		chat_api.send_message = _no_send
+		original_user = frappe.session.user
+		try:
+			frappe.set_user(self.owner)
+			result = agent_scheduler._launch_audit(inst, trigger="scheduled")
+		finally:
+			frappe.set_user(original_user)
+			admin_client.post_agent_run = orig_run
+			chat_api.send_message = orig_send
+
+		run = result["run"]
+		self.assertEqual(captured.get("run_id"), run)
+		self.assertEqual(captured.get("agent_id"), "agent-close-auditor")
+		self.assertEqual(captured.get("session_key"), result["session_key"])
+		self.assertTrue(captured.get("session_key").startswith("agent:agent-close-auditor:"))
+		# timeout_s sourced from the bundled registry (close-auditor = 2400).
+		self.assertEqual(captured.get("timeout_s"), 2400)
+		# Async: the Run stays "running" post-dispatch (Phase 3 writeback marks done).
+		self.assertEqual(frappe.db.get_value(RUN, run, "status"), "running")
+		# The generic prompt is NON-LEAKY (no rule/tool/threshold names).
+		msg = captured.get("message") or ""
+		for leak in ("run_scrutiny", "materiality", "compute_", "scrutiny", "threshold"):
+			self.assertNotIn(leak, msg)
+		self.assertIn(inst_name, msg)  # installation pointer for the config
+
+	def test_delegate_dispatch_failure_marks_run_failed_and_reraises(self):
+		inst_name = _install_as(self.owner, "close-auditor")
+		frappe.db.set_value(INSTALLATION, inst_name, "enabled", 1)
+		frappe.db.commit()
+		inst = frappe.get_doc(INSTALLATION, inst_name)
+
+		import jarvis.admin_client as admin_client
+
+		def _boom(**kw):
+			raise RuntimeError("admin unreachable")
+
+		orig_run = admin_client.post_agent_run
+		admin_client.post_agent_run = _boom
+		original_user = frappe.session.user
+		try:
+			frappe.set_user(self.owner)
+			with self.assertRaises(RuntimeError):
+				agent_scheduler._launch_audit(inst, trigger="scheduled")
+		finally:
+			frappe.set_user(original_user)
+			admin_client.post_agent_run = orig_run
+
+		# The already-created Run is marked failed (never orphaned as "running").
+		runs = frappe.get_all(
+			RUN, filters={"installation": inst_name}, fields=["name", "status", "error"]
+		)
+		self.assertTrue(runs)
+		self.assertTrue(all(r.status == "failed" for r in runs))
+		self.assertTrue(any("dispatch failed" in (r.error or "") for r in runs))
+
+	def test_generic_and_legacy_prompts(self):
+		delegate = frappe.get_doc(LISTING, "close-auditor")
+		legacy = frappe.get_doc(LISTING, "audit-auditor")
+		inst_name = _install_as(self.owner, "close-auditor")
+		inst = frappe.get_doc(INSTALLATION, inst_name)
+		scope = {
+			"company": "Test Co", "fiscal_year": "2026-2027",
+			"from_date": "2026-04-01", "to_date": "2027-03-31",
+			"prior_fy_start": "2025-04-01", "prior_fy_end": "2026-03-31",
+		}
+		gen = agent_scheduler._audit_prompt(delegate, inst, "scheduled", scope)
+		for leak in ("run_scrutiny", "materiality", "compute_", "scrutiny", "threshold"):
+			self.assertNotIn(leak, gen)
+		self.assertIn("EXPLICIT SCOPE", gen)
+		self.assertIn("2026-04-01", gen)  # scope injected verbatim (A6)
+		self.assertIn(inst_name, gen)     # installation pointer
+
+		# Legacy prompt is UNCHANGED — still explicit about jarvis__run_scrutiny.
+		leg = agent_scheduler._legacy_audit_prompt(legacy, inst, "scheduled", scope)
+		self.assertIn("jarvis__run_scrutiny", leg)
+
+	# ------------------------------------------------------------------ #
 	# (b) mutation authZ (S3)
 	# ------------------------------------------------------------------ #
 	def test_non_owner_cannot_set_enabled_another_owners_install(self):

@@ -121,6 +121,11 @@ def sync_agent_listings() -> dict:
 			# checkable at install/validate without leaking rule shape. For
 			# delegate agents this comes from the bundle-store manifest.
 			"doctypes_required": frappe.as_json(a.get("doctypes_required") or []),
+			# A2/A16: the delegate auditor's OPAQUE rule-token set, id-only. The
+			# bench needs it to validate a finding's rule in record_agent_run
+			# without ever holding a rule body/threshold. Empty for operators /
+			# legacy agents. Mirrors the bundle store's rules.ids.json.
+			"rule_tokens": frappe.as_json(a.get("rule_tokens") or []),
 			"min_apps": frappe.as_json(a.get("min_apps") or []),
 			# rule_pack is a LEGACY-only pointer (the bundled scrutiny-pack id
 			# evaluated by run_scrutiny). Delegate agents carry their logic in the
@@ -265,6 +270,28 @@ def build_agent_push_payload(owner: str | None = None) -> list[dict]:
 				}
 			)
 	return payload
+
+
+def registry_timeout_s(agent_slug: str, default: int = 600) -> int:
+	"""The delegate's per-run wall-clock budget (seconds) from the BUNDLED
+	registry.
+
+	Delegate audits run 20-40 min, so the run verb needs the agent's declared
+	budget, not the chat default. The ``Jarvis Agent Listing`` doctype carries no
+	``timeout_s`` field, so the scheduler's dispatch tail sources it here — the
+	same bundled metadata ``build_agent_push_payload`` echoes into the enablement
+	signal (never the customer DB). Clamped to the fleet-agent's accepted range
+	[60, 5400]; falls back to ``default`` for a legacy agent / missing / bad
+	value."""
+	slug = (agent_slug or "").strip()
+	for a in _load_registry().get("agents") or []:
+		if (a.get("agent_slug") or "").strip() == slug:
+			try:
+				n = int(a.get("timeout_s") or 0)
+			except (TypeError, ValueError):
+				n = 0
+			return n if 60 <= n <= 5400 else default
+	return default
 
 
 def after_migrate() -> None:

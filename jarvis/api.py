@@ -196,31 +196,39 @@ def _dispatch_from_session(
 	"""
 	# impersonate is session-safe: a bare frappe.set_user in this HTTP path
 	# would gut the caller's cookie session sid + data and log them out.
-	with impersonate(user):
-		# Parse args up front so persist_and_publish gets the same
-		# dict shape the tool ran against (or the empty dict on a
-		# malformed-args rejection).
-		try:
-			parsed_args = _parse_args(args)
-		except InvalidArgumentError as e:
-			result = _error("InvalidArgumentError", str(e))
+	from jarvis.tools import _agent_run_ctx
+	# Expose the caller's session_key to the tool for this dispatch (the LLM
+	# never authors it — it is the delegate's opaque bearer, delivered over the
+	# HTTPS header). record_agent_run resolves its Jarvis Agent Run from it.
+	_agent_run_ctx.set_session_key(session_key)
+	try:
+		with impersonate(user):
+			# Parse args up front so persist_and_publish gets the same
+			# dict shape the tool ran against (or the empty dict on a
+			# malformed-args rejection).
+			try:
+				parsed_args = _parse_args(args)
+			except InvalidArgumentError as e:
+				result = _error("InvalidArgumentError", str(e))
+				_persist_and_publish_tool_call(
+					session_key=session_key, tool=tool, args={}, result=result,
+				)
+				return result
+			# Pass the already-parsed dict back through _run_tool. _run_tool's
+			# _parse_args call is idempotent on dicts (no JSON parse path,
+			# legacy-marker strip is also idempotent), so no double-work.
+			# Resolve the conversation for this session up front so the
+			# confirmation gate can bind a parked write to it (managed mode); the
+			# gate also falls back to the active-turn marker for run_id.
+			conv = frappe.db.get_value(
+				"Jarvis Conversation", {"session_key": session_key}, "name")
+			result = _run_tool(tool, parsed_args, conversation=conv)
 			_persist_and_publish_tool_call(
-				session_key=session_key, tool=tool, args={}, result=result,
+				session_key=session_key, tool=tool, args=parsed_args, result=result,
 			)
 			return result
-		# Pass the already-parsed dict back through _run_tool. _run_tool's
-		# _parse_args call is idempotent on dicts (no JSON parse path,
-		# legacy-marker strip is also idempotent), so no double-work.
-		# Resolve the conversation for this session up front so the
-		# confirmation gate can bind a parked write to it (managed mode); the
-		# gate also falls back to the active-turn marker for run_id.
-		conv = frappe.db.get_value(
-			"Jarvis Conversation", {"session_key": session_key}, "name")
-		result = _run_tool(tool, parsed_args, conversation=conv)
-		_persist_and_publish_tool_call(
-			session_key=session_key, tool=tool, args=parsed_args, result=result,
-		)
-		return result
+	finally:
+		_agent_run_ctx.clear_session_key()
 
 
 def _persist_and_publish_tool_call(
@@ -450,8 +458,12 @@ _WRITE_TOOLS = frozenset({
 	# optional persistence path inserts Jarvis Agent Run/Finding rows, and
 	# download_pdf/export_excel both insert a File doc (download_pdf also
 	# attaches it) - real DB writes that need an audit trail, not a
-	# confirmation card (audit-findings.md F24/F25).
-	"run_scrutiny", "download_pdf", "export_excel",
+	# confirmation card (audit-findings.md F24/F25). record_agent_run is the
+	# delegate's Phase-3 findings writeback: it inserts Jarvis Agent Run/Finding
+	# rows deterministically (validated, coverage-scoped) from a detached agent
+	# turn where nobody can click a confirm card, so it is audited but NEVER
+	# gated - the human review happens on the Findings board, not a card.
+	"run_scrutiny", "download_pdf", "export_excel", "record_agent_run",
 })
 _PREVIEWABLE = frozenset({
 	"create_doc", "create_docs", "update_doc", "submit_doc", "cancel_doc",

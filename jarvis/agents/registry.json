@@ -116,6 +116,7 @@
         "jarvis__run_report",
         "jarvis__get_doc",
         "jarvis__get_balance_on",
+        "jarvis__record_agent_run",
         "exec",
         "canvas",
         "message"
@@ -124,6 +125,12 @@
         "GL Entry",
         "Account",
         "Company"
+      ],
+      "rule_tokens": [
+        "ca-cl-7f31",
+        "ca-cl-2b9d",
+        "ca-cl-a4e6",
+        "ca-cl-c058"
       ],
       "timeout_s": 2400,
       "min_apps": [
@@ -222,6 +229,7 @@
         "jarvis__run_report",
         "jarvis__create_doc",
         "jarvis__update_doc",
+        "jarvis__record_agent_run",
         "canvas",
         "message"
       ],
@@ -234,6 +242,7 @@
         "Account",
         "Jarvis Approval Request"
       ],
+      "rule_tokens": [],
       "timeout_s": 1200,
       "min_apps": [
         "erpnext"
