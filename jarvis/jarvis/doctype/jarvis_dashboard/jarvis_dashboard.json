@@ -1,0 +1,137 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "hash",
+ "creation": "2026-07-17 09:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "dashboard_title",
+  "description",
+  "dashboard_type",
+  "theme",
+  "scope",
+  "target_role",
+  "target_user",
+  "html",
+  "sources",
+  "source_conversation"
+ ],
+ "fields": [
+  {
+   "fieldname": "dashboard_title",
+   "fieldtype": "Data",
+   "label": "Dashboard Title",
+   "reqd": 1,
+   "in_list_view": 1,
+   "description": "Short name shown in the Dashboards list, e.g. 'Monthly Sales Overview'."
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description",
+   "description": "Optional one-line summary of what this dashboard shows."
+  },
+  {
+   "fieldname": "dashboard_type",
+   "fieldtype": "Select",
+   "label": "Dashboard Type",
+   "options": "Static\nConnected",
+   "default": "Static",
+   "in_standard_filter": 1,
+   "description": "Derived server-side: Connected when the dashboard declares data sources (live data at view time), Static otherwise. Never set directly."
+  },
+  {
+   "fieldname": "theme",
+   "fieldtype": "Select",
+   "label": "Theme",
+   "options": "Jarvis\nInsight\nClaude\nGraphite",
+   "default": "Jarvis",
+   "description": "Named render theme injected by the canvas shell as CSS variables. Jarvis = the app's own design language (default), Insight = Frappe-Insights-style light, Claude = warm ivory, Graphite = dark."
+  },
+  {
+   "fieldname": "scope",
+   "fieldtype": "Select",
+   "label": "Scope",
+   "options": "Org\nRole\nUser",
+   "reqd": 1,
+   "default": "User",
+   "in_standard_filter": 1,
+   "description": "Who can see this dashboard: everyone (Org), holders of a role (Role), or one user (User). Org/Role require the Jarvis Admin tier."
+  },
+  {
+   "fieldname": "target_role",
+   "fieldtype": "Link",
+   "options": "Role",
+   "label": "Target Role",
+   "depends_on": "eval:doc.scope=='Role'",
+   "mandatory_depends_on": "eval:doc.scope=='Role'",
+   "description": "Role whose holders can see this dashboard (Role scope only)."
+  },
+  {
+   "fieldname": "target_user",
+   "fieldtype": "Link",
+   "options": "User",
+   "label": "Target User",
+   "depends_on": "eval:doc.scope=='User'",
+   "description": "The single user this dashboard belongs to (User scope; defaults to the owner)."
+  },
+  {
+   "fieldname": "html",
+   "fieldtype": "Code",
+   "options": "HTML",
+   "label": "HTML",
+   "description": "The full self-contained HTML document the dashboard renders (no external resources; data via window.jarvis.data())."
+  },
+  {
+   "fieldname": "sources",
+   "fieldtype": "Table",
+   "options": "Jarvis Dashboard Source",
+   "label": "Data Sources",
+   "description": "Declared data sources served live at view time as the viewing user."
+  },
+  {
+   "fieldname": "source_conversation",
+   "fieldtype": "Data",
+   "label": "Source Conversation",
+   "hidden": 1,
+   "description": "Provenance: the Jarvis conversation id when this dashboard was created via chat."
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-07-17 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Jarvis",
+ "name": "Jarvis Dashboard",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "role": "Jarvis Admin",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "role": "Jarvis User",
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "dashboard_title",
+ "track_changes": 1
+}
