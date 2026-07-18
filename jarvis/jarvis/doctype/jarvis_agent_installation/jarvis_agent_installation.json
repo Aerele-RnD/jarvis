@@ -8,6 +8,8 @@
  "field_order": [
   "agent",
   "enabled",
+  "run_as_user",
+  "scoped_visibility",
   "installed_version",
   "installed_at",
   "config",
@@ -36,6 +38,23 @@
    "label": "Enabled",
    "in_list_view": 1,
    "description": "When on, the installed bundle is pushed to the container on the next Apply and the agent's scheduled audits fire. Toggling this is a pure DB write (no container restart)."
+  },
+  {
+   "fieldname": "run_as_user",
+   "fieldtype": "Link",
+   "label": "Run As User",
+   "options": "User",
+   "reqd": 1,
+   "in_list_view": 1,
+   "description": "The Frappe user this agent's runs execute AS: every jarvis__* ERP read is permission-bounded to this user (company scope, role perms), decoupled from the row owner. A non-admin installer may only map the agent to run as themselves; any cross-user mapping needs Jarvis Admin, and binding to a System Manager needs a System Manager. Defaults to the installer."
+  },
+  {
+   "default": "0",
+   "fieldname": "scoped_visibility",
+   "fieldtype": "Check",
+   "label": "Scoped Visibility",
+   "read_only": 1,
+   "description": "Set when the run-as user carries a User Permission on a GL-linked dimension (Account, Cost Center, Project, Fiscal Year, Finance Book, party) other than Company: aggregates this user sees are record-scoped, not the full company GL. Coverage-gated auto-resolve must never fire on a scoped run (A12/A16)."
   },
   {
    "fieldname": "installed_version",

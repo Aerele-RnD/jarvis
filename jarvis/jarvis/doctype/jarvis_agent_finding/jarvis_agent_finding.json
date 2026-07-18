@@ -17,6 +17,7 @@
   "disclaimer",
   "ref_doctype",
   "ref_name",
+  "company",
   "amount",
   "fingerprint",
   "state",
@@ -89,6 +90,14 @@
    "fieldname": "ref_name",
    "fieldtype": "Data",
    "label": "Reference Name"
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company",
+   "in_standard_filter": 1,
+   "description": "The company scope this finding was detected under (A16). Stamped at insert so a Company-B run never auto-resolves a Company-A finding; empty legacy rows are exempt until re-seen."
   },
   {
    "fieldname": "amount",

@@ -16,7 +16,14 @@
   "findings_count",
   "blocker_count",
   "error",
-  "coverage_note"
+  "coverage_note",
+  "session_key",
+  "dashboard",
+  "coverage_json",
+  "scope_json",
+  "wm_row_count",
+  "wm_gl_max_modified",
+  "permission_profile"
  ],
  "fields": [
   {
@@ -90,6 +97,56 @@
    "fieldtype": "Small Text",
    "label": "Coverage Note",
    "description": "Why a scan is partial/incomplete (turn envelope hit, materiality unconfigured, etc.). Never let a partial scan read as a clean all-clear."
+  },
+  {
+   "fieldname": "session_key",
+   "fieldtype": "Data",
+   "label": "Session Key",
+   "read_only": 1,
+   "description": "The opaque per-run Jarvis Chat Session key minted for this run (e.g. agent:<slug>:<run>). Resolves the run-as user for the delegate's jarvis__* calls. Bearer-sensitive; torn down after the run (Phase 4)."
+  },
+  {
+   "fieldname": "dashboard",
+   "fieldtype": "Link",
+   "label": "Dashboard",
+   "options": "Jarvis Dashboard",
+   "description": "The saved Jarvis Dashboard this run produced (programmatic Run->Dashboard, Phase 4)."
+  },
+  {
+   "fieldname": "coverage_json",
+   "fieldtype": "Small Text",
+   "label": "Coverage JSON",
+   "read_only": 1,
+   "description": "Per-rule coverage manifest {token: evaluated|not_evaluable(reason)|truncated} written back by the evaluator (A16). Gates coverage-scoped auto-resolve."
+  },
+  {
+   "fieldname": "scope_json",
+   "fieldtype": "Small Text",
+   "label": "Scope JSON",
+   "read_only": 1,
+   "description": "The explicit resolved scope {company, fiscal_year, from_date, to_date, prior_fy_start, prior_fy_end} stamped at launch (A6). Injected verbatim into the run message so the container never infers dates."
+  },
+  {
+   "default": "0",
+   "fieldname": "wm_row_count",
+   "fieldtype": "Int",
+   "label": "Watermark GL Row Count",
+   "read_only": 1,
+   "description": "A17 consistency watermark: count of GL Entry rows for the scope company with posting_date <= to_date, as of launch. Recomputed at writeback; a mismatch marks the run partial (GL changed mid-scan)."
+  },
+  {
+   "fieldname": "wm_gl_max_modified",
+   "fieldtype": "Datetime",
+   "label": "Watermark GL Max Modified",
+   "read_only": 1,
+   "description": "A17 consistency watermark: max(GL Entry.modified) for the scope, as of launch."
+  },
+  {
+   "fieldname": "permission_profile",
+   "fieldtype": "Small Text",
+   "label": "Permission Profile",
+   "read_only": 1,
+   "description": "A summary + sha256 of the run-as user's roles + user-permission keys at launch (A12). Lets a drift between mapping-time and run-time perms be detected."
   }
  ],
  "index_web_pages_for_search": 0,

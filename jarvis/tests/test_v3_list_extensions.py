@@ -372,6 +372,7 @@ class TestGetAgent(unittest.TestCase):
 		with _as(USER_A):
 			inst = frappe.get_doc({
 				"doctype": INSTALLATION, "agent": self.slug, "enabled": 0,
+				"run_as_user": frappe.session.user,  # self-map (reqd since Phase 1 identity)
 				"installed_version": frappe.db.get_value(LISTING, self.slug, "version"),
 				"installed_at": frappe.utils.now(),
 			})

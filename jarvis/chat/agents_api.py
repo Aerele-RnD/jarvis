@@ -504,12 +504,17 @@ def install_agent(agent_slug: str) -> dict:
 		"doctype": INSTALLATION,
 		"agent": listing.name,
 		"enabled": 0,
+		# Phase 1 identity: the agent runs AS this user (every jarvis__* read is
+		# permission-bounded to them). Defaults to the installer — a self-map,
+		# which the controller's escalation guard always permits. An admin may
+		# retarget it later via set_run_as_user.
+		"run_as_user": me,
 		"installed_version": listing.version,
 		"installed_at": frappe.utils.now(),
 		"schedule_enabled": int(sched.get("schedule_enabled") or 0),
 		"schedule_frequency": freq,
 	})
-	doc.insert()  # owner = me; validate() runs the cap/uniqueness checks
+	doc.insert()  # owner = me; validate() runs the cap/uniqueness/run-as checks
 	# No _mark_catalog_dirty(): installs start enabled=0, so the container's
 	# ENABLED set is unchanged — only enable/disable (and uninstalling an
 	# ENABLED install) make an Apply pending.
@@ -614,6 +619,41 @@ def set_config(installation: str, config: str) -> dict:
 
 
 @frappe.whitelist()
+def set_run_as_user(installation: str, user: str) -> dict:
+	"""Map an installed agent's RUN-AS identity — the user every ``jarvis__*``
+	ERP read is permission-bounded to (Phase 1 identity). Owner-gated (S3:
+	``check_permission("write")``) for WHO may touch the row; the ESCALATION guard
+	(who may map WHICH user) lives in the controller ``validate()`` so it holds on
+	Desk/test writes too — a non-admin may only map to themselves, any cross-user
+	mapping needs Jarvis Admin, and binding to a System Manager needs a System
+	Manager. Mirrors ``set_config``: check_permission, set, then save so
+	validate() enforces the guard. Pure DB write (no restart)."""
+	doc = frappe.get_doc(INSTALLATION, installation)
+	doc.check_permission("write")  # S3 owner-gate
+	doc.run_as_user = user
+	doc.save()  # validate() runs the A4 escalation + A12 permission guard
+	log_activity(
+		agent=doc.agent,
+		agent_title=frappe.db.get_value(LISTING, doc.agent, "title"),
+		installation=doc.name,
+		action="run_as_changed",
+		# The mapped user is the material fact; it is not sensitive (an owner can
+		# already see their own install), and cross-user mappings are auditable.
+		detail=f"run as {doc.run_as_user}"
+		+ (" (scoped visibility)" if doc.scoped_visibility else ""),
+	)
+	frappe.db.commit()
+	return {
+		"ok": True,
+		"data": {
+			"name": doc.name,
+			"run_as_user": doc.run_as_user,
+			"scoped_visibility": int(doc.scoped_visibility or 0),
+		},
+	}
+
+
+@frappe.whitelist()
 def uninstall_agent(installation: str) -> dict:
 	"""Delete an installation (owner-gated) plus its run + finding history —
 	bottom-up, mirroring ``macros_api.delete_macro``: findings link runs (via
@@ -659,23 +699,25 @@ def uninstall_agent(installation: str) -> dict:
 def run_agent_now(installation: str) -> dict:
 	"""Manual trigger: enqueue an audit turn NOW via the SAME code path the
 	scheduler uses (``agent_scheduler._launch_audit``), executed UNDER THE
-	INSTALLATION OWNER's identity — never the triggering user's.
+	INSTALLATION's RUN-AS USER identity — never the triggering user's.
 
 	``check_permission`` gates WHO may trigger (owner, or a System Manager);
 	but the audit's ``jarvis__*`` tool calls must always be scoped to the
-	installation OWNER's permissions, so a System Manager triggering another
-	owner's audit cannot run ERP reads with elevated rights. This mirrors the
-	scheduler's S1 identity hinge on the manual path."""
+	installation's ``run_as_user`` permissions, so a System Manager triggering
+	another owner's audit cannot run ERP reads with elevated rights. This mirrors
+	the scheduler's S1 identity hinge on the manual path. Run/finding ROW
+	ownership stays the human owner (``_launch_audit``); only the ERP-read
+	identity is the run-as user."""
 	doc = frappe.get_doc(INSTALLATION, installation)
 	doc.check_permission("write")  # S3: who may trigger
-	# RBAC: the audit executes AS the installation OWNER, so it is the OWNER's
-	# roles that must permit the agent (covers both a self-run by a user who
-	# lost the role, and an SM triggering an install whose owner lost it — the
-	# manual analogue of the scheduler's role skip). SM-owned installs pass via
-	# the System Manager bypass inside the helper.
-	if not _user_allowed_for_agent(doc.agent, doc.owner):
+	run_as = doc.run_as_user or doc.owner
+	# RBAC: the audit executes AS the RUN-AS user, so it is THAT identity's roles
+	# that must permit the agent (gotcha #8 — the executing identity is gated, not
+	# the triggerer). Defaults to owner for installs from before run_as_user. SM
+	# run-as users pass via the System Manager bypass inside the helper.
+	if not _user_allowed_for_agent(doc.agent, run_as):
 		frappe.throw(
-			_("The installation owner's roles do not permit running this agent."),
+			_("The run-as user's roles do not permit running this agent."),
 			frappe.PermissionError,
 		)
 	if not doc.enabled:
@@ -687,20 +729,23 @@ def run_agent_now(installation: str) -> dict:
 	from jarvis.chat.agent_scheduler import _launch_audit, _valid_owner
 
 	# Fail-closed identity guard: refuse to run an audit AS Administrator / Guest /
-	# a disabled user ON SOMEONE ELSE'S behalf (the escalation a System Manager could
-	# otherwise cause, and the unattended risk the scheduler faces). An owner running
-	# their OWN install manually is attended + same-identity, so it is allowed — this
-	# is how a single-admin dev / self-host box runs audits at all.
-	if not _valid_owner(doc.owner) and doc.owner != frappe.session.user:
-		frappe.throw(_("Cannot run this audit as the installation's owner (identity guard)."))
+	# a disabled RUN-AS user ON SOMEONE ELSE'S behalf (the escalation a System
+	# Manager could otherwise cause, and the unattended risk the scheduler faces).
+	# A user running their OWN self-mapped install manually is attended +
+	# same-identity, so it is allowed — this is how a single-admin dev / self-host
+	# box runs audits at all.
+	if not _valid_owner(run_as) and run_as != frappe.session.user:
+		frappe.throw(_("Cannot run this audit as its run-as user (identity guard)."))
 
 	original_user = frappe.session.user
 	# impersonate is session-safe (a bare frappe.set_user in this HTTP path
 	# would gut the caller's cookie session and log them out) and no-ops when
-	# the owner IS the caller (self-owned manual run).
-	with impersonate(doc.owner if doc.owner != original_user else None):
-		if doc.owner != original_user:
-			doc = frappe.get_doc(INSTALLATION, installation)  # re-fetch under owner
+	# the run-as user IS the caller (self-mapped manual run). get_doc does NOT
+	# enforce read perms, so the re-fetch under the run-as user is safe even when
+	# run_as is not the (if_owner) row owner.
+	with impersonate(run_as if run_as != original_user else None):
+		if run_as != original_user:
+			doc = frappe.get_doc(INSTALLATION, installation)  # re-fetch under run_as
 		result = _launch_audit(doc, trigger="manual")
 	return {"ok": True, "data": result}
 

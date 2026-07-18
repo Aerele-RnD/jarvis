@@ -173,6 +173,7 @@ class TestDocmetaApi(unittest.TestCase):
 		with _as(USER_A):
 			inst = frappe.get_doc({
 				"doctype": INSTALLATION, "agent": slug, "enabled": 0,
+				"run_as_user": frappe.session.user,  # self-map (reqd since Phase 1 identity)
 				"installed_version": frappe.db.get_value(LISTING, slug, "version"),
 				"installed_at": frappe.utils.now(),
 			})

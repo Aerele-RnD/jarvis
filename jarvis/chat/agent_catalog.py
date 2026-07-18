@@ -99,6 +99,11 @@ def sync_agent_listings() -> dict:
 			"publisher": a.get("publisher") or reg.get("publisher") or "",
 			"status": a.get("status") or "Draft",
 			"tools_required": frappe.as_json(a.get("tools_required") or []),
+			# A12: DocTypes the run-as user must hold read on for the agent's
+			# aggregates to be numerically correct — a sibling of tools_required,
+			# checkable at install/validate without leaking rule shape. Empty until
+			# the Phase-3 bundle manifest declares the authoritative per-rule set.
+			"doctypes_required": frappe.as_json(a.get("doctypes_required") or []),
 			"min_apps": frappe.as_json(a.get("min_apps") or []),
 			"rule_pack": a.get("rule_pack") or "",
 			"skill_bundle": frappe.as_json(_load_bundle(slug, a.get("skill_bundle"))),
