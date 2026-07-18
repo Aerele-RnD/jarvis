@@ -279,6 +279,10 @@ scheduler_events = {
 		# as its owner, never Administrator); budget-capped; advances only on a
 		# successful enqueue. See jarvis/chat/agent_scheduler.py.
 		"jarvis.chat.agent_scheduler.run_due_agent_audits",
+		# A8 backstop: fail agent runs stuck `running` past the max duration and
+		# tear down their orphaned per-run session bearers (a crashed delegate
+		# would otherwise leave a live session credential forever).
+		"jarvis.chat.agent_scheduler.reap_stale_agent_runs",
 		# Recovery-completeness batch: spike alarm if the 24h recovered-turn
 		# rate is high enough to suggest a sick gateway (deduped to roughly
 		# once a day inside the function).

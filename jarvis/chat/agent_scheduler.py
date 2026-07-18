@@ -27,6 +27,8 @@ review:
 trigger takes the EXACT same code path as the scheduler.
 """
 
+from datetime import timedelta
+
 import frappe
 from frappe.utils import now_datetime
 
@@ -41,6 +43,12 @@ CONV = "Jarvis Conversation"
 # O1: a simple constant monthly cap on SCHEDULED scans per owner (interactive /
 # manual runs are not counted). Keep it simple for v1 but present.
 MAX_SCHEDULED_RUNS_PER_OWNER_PER_MONTH = 60
+
+# A8/A15 reaper: a run genuinely stuck ``running`` past this is dead — the fleet
+# run worker fails a run on exec/RPC death (A15) and record_agent_run finalizes a
+# live one, so this is a pure BACKSTOP. Sits well above the max bundle
+# ``timeout_s`` (manifest ceiling 5400s) so it can only ever catch orphans.
+STALE_RUN_AFTER_SECONDS = 3 * 3600
 
 
 # --------------------------------------------------------------------------- #
@@ -125,6 +133,57 @@ def run_due_agent_audits() -> None:
 		finally:
 			if frappe.session.user != original_user:
 				frappe.set_user(original_user)
+
+
+# --------------------------------------------------------------------------- #
+# A8 stale-run reaper (backstop) — hooks cron
+# --------------------------------------------------------------------------- #
+def reap_stale_agent_runs() -> int:
+	"""Fail agent runs stuck ``running`` past ``STALE_RUN_AFTER_SECONDS`` and tear
+	down their orphaned per-run session rows (A8). Backstop only: a healthy run
+	finalizes via ``record_agent_run`` and a dead delegate fails itself via the
+	fleet worker (A15); this catches the crash that killed both. Returns the count
+	reaped. Runs as Administrator (scheduler); best-effort, never raises out."""
+	from jarvis.chat import agent_runs
+
+	cutoff = now_datetime() - timedelta(seconds=STALE_RUN_AFTER_SECONDS)
+	stuck = frappe.get_all(
+		RUN,
+		filters={"status": "running", "started_at": ["<", cutoff]},
+		fields=["name", "session_key", "owner", "agent", "installation"],
+	)
+	reaped = 0
+	for r in stuck:
+		try:
+			frappe.db.set_value(
+				RUN, r.name,
+				{
+					"status": "failed",
+					"finished_at": frappe.utils.now(),
+					"error": "run exceeded max duration; reaped by the stale-run sweep (A8 backstop)",
+				},
+				update_modified=False,
+			)
+			# A8: the session bearer must not outlive the (now-failed) run.
+			agent_runs.teardown_run_session(r.session_key)
+			log_activity(
+				agent=r.agent,
+				agent_title=frappe.db.get_value(LISTING, r.agent, "title"),
+				installation=r.installation,
+				action="run_failed",
+				run=r.name,
+				detail="reaped: run exceeded max duration",
+				owner=r.owner,
+			)
+			reaped += 1
+		except Exception:
+			frappe.log_error(
+				title=f"jarvis agent: stale-run reap failed: {r.name}",
+				message=frappe.get_traceback(),
+			)
+	if reaped:
+		frappe.db.commit()
+	return reaped
 
 
 # --------------------------------------------------------------------------- #
@@ -239,6 +298,10 @@ def _launch_audit(inst, trigger: str) -> dict:
 				},
 				update_modified=False,
 			)
+			# A8: a run that never dispatched must not leave its session bearer.
+			from jarvis.chat import agent_runs
+
+			agent_runs.teardown_run_session(session_key)
 			frappe.db.commit()
 			frappe.log_error(
 				title=f"jarvis agent-run dispatch failed: {run.name}",

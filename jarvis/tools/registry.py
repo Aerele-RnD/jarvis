@@ -121,6 +121,12 @@ _TOOL_NAMES: tuple[str, ...] = (
     # company stamped), coverage-scoped auto-resolves (A16), rechecks the GL
     # consistency watermark (A17), and finalizes the Run. See A2/A16/A17.
     "record_agent_run",
+    # Phase-4 delegate → saved dashboard: the delegate authors a self-contained,
+    # A2-safe findings dashboard HTML and persists it here as a Jarvis Dashboard
+    # (User-scoped to the run's owner), linked on Run.dashboard. Resolves the run
+    # from the caller's session_key like record_agent_run; renders in the CSP
+    # sandbox. See Phase 4 / A2.
+    "save_agent_dashboard",
     # Skill + wiki self-service (voice & wiki feature): search/read/save the
     # customer's saved skills and org-wiki pages mid-turn. The write pair
     # (create_custom_skill, update_wiki) is confirmation-gated in api.py.

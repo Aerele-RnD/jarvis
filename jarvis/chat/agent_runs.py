@@ -25,6 +25,189 @@ RUN = "Jarvis Agent Run"
 FINDING = "Jarvis Agent Finding"
 INSTALLATION = "Jarvis Agent Installation"
 LISTING = "Jarvis Agent Listing"
+DASHBOARD = "Jarvis Dashboard"
+SESSION = "Jarvis Chat Session"
+
+
+# --------------------------------------------------------------------------- #
+# Phase 4 — saved dashboard delivery + A8 session teardown
+# --------------------------------------------------------------------------- #
+_SEV_LABEL = {"blocker": "Blockers", "warning": "Warnings", "note": "Notes"}
+
+
+def teardown_run_session(session_key: str | None) -> None:
+    """A8 (zero-trace): delete the per-run ``Jarvis Chat Session`` row once the
+    run is finalized (completed/partial/failed) or reaped.
+
+    The session row is a BEARER CREDENTIAL — ``session_key`` + a valid device id
+    resolves the run-as user (``api.py`` → impersonate) — so it must not linger
+    past the run. The ``session_key`` string stays stamped on the Run for audit
+    (harmless without the row); only the resolvable row is destroyed. Best-effort:
+    never breaks finalization.
+
+    TODO(A8 fleet piece): the CONTAINER-side session transcript (its jsonl —
+    which embeds MB-scale chunked payloads — and its ``sessions.json`` entry) is
+    fleet-owned. It is pruned via the fleet-agent's ``session_hygiene`` (gateway
+    RPC when the container is live, else deferred) on the next Apply / uninstall
+    or a dedicated prune verb. Do NOT prune the container side from the bench.
+    """
+    key = (session_key or "").strip()
+    if not key:
+        return
+    try:
+        frappe.db.delete(SESSION, {"session_key": key})
+    except Exception:
+        frappe.log_error(
+            title="jarvis agent: run-session teardown failed",
+            message=frappe.get_traceback(),
+        )
+
+
+def _default_dashboard_title(run_doc, listing_title: str) -> str:
+    """"<agent title> — <period>" (A2-safe: agent name + fiscal period only)."""
+    import json as _json
+
+    period = ""
+    try:
+        scope = _json.loads(run_doc.get("scope_json") or "{}")
+        period = str(scope.get("fiscal_year") or scope.get("to_date") or "").strip()
+    except Exception:
+        period = ""
+    if not period:
+        period = frappe.utils.today()
+    base = (listing_title or "Agent").strip()
+    return f"{base} — {period}"[:140]
+
+
+def _esc(value) -> str:
+    from frappe.utils import escape_html
+
+    return escape_html(str(value if value is not None else ""))
+
+
+def _fallback_dashboard_html(title: str, findings: list, counts: dict, coverage_note: str) -> str:
+    """A minimal, self-contained, A2-safe findings summary — the server-generated
+    FLOOR used only when the delegate produced findings but authored no dashboard
+    (so a completed/partial run always yields ONE saved dashboard). It renders the
+    already-persisted, already-lossy finding fields (authored ``note`` + ref +
+    amount + severity) — NEVER the opaque token, and never any rule id/threshold.
+    Inline styles only (CSP sandbox). The Jarvis theme injects the surrounding CSS
+    variables; sane fallbacks keep it legible standalone."""
+    total = sum(counts.get(s, 0) for s in ("blocker", "warning", "note"))
+    cards = "".join(
+        f'<div style="flex:1;min-width:120px;padding:14px 16px;border:1px solid var(--jarvis-border,#e5e7eb);'
+        f'border-radius:10px;background:var(--jarvis-surface,#fff)">'
+        f'<div style="font-size:26px;font-weight:700;color:var(--jarvis-text,#111827)">{counts.get(sev, 0)}</div>'
+        f'<div style="font-size:12px;text-transform:uppercase;letter-spacing:.04em;'
+        f'color:var(--jarvis-muted,#6b7280)">{_SEV_LABEL[sev]}</div></div>'
+        for sev in ("blocker", "warning", "note")
+    )
+    rows = ""
+    order = {"blocker": 0, "warning": 1, "note": 2}
+    for f in sorted(findings or [], key=lambda x: (order.get(x.get("severity"), 3), str(x.get("ref_name")))):
+        sev = f.get("severity") or "note"
+        amt = f.get("amount") or 0
+        try:
+            amt = f"{float(amt):,.2f}"
+        except (TypeError, ValueError):
+            amt = _esc(amt)
+        rows += (
+            f'<tr style="border-top:1px solid var(--jarvis-border,#e5e7eb)">'
+            f'<td style="padding:8px 10px;white-space:nowrap;text-transform:capitalize">{_esc(sev)}</td>'
+            f'<td style="padding:8px 10px">{_esc(f.get("note"))}</td>'
+            f'<td style="padding:8px 10px;white-space:nowrap;color:var(--jarvis-muted,#6b7280)">'
+            f'{_esc(f.get("ref_doctype"))} · {_esc(f.get("ref_name"))}</td>'
+            f'<td style="padding:8px 10px;text-align:right;white-space:nowrap">{amt}</td></tr>'
+        )
+    if not rows:
+        rows = (
+            '<tr><td colspan="4" style="padding:14px 10px;color:var(--jarvis-muted,#6b7280)">'
+            "No exceptions were found for this run.</td></tr>"
+        )
+    banner = ""
+    if coverage_note:
+        banner = (
+            f'<div style="margin:0 0 16px;padding:10px 14px;border-radius:8px;'
+            f'background:var(--jarvis-warn-bg,#fef3c7);color:var(--jarvis-warn-text,#92400e);'
+            f'font-size:13px">Partial run — {_esc(coverage_note)}</div>'
+        )
+    return (
+        f"<!doctype html><html><head><meta charset=\"utf-8\">"
+        f"<title>{_esc(title)}</title></head>"
+        f'<body style="margin:0;font-family:var(--jarvis-font,system-ui,-apple-system,Segoe UI,Roboto,sans-serif);'
+        f'color:var(--jarvis-text,#111827);background:var(--jarvis-bg,#f9fafb);padding:24px">'
+        f'<h1 style="font-size:20px;margin:0 0 4px">{_esc(title)}</h1>'
+        f'<p style="margin:0 0 18px;color:var(--jarvis-muted,#6b7280);font-size:13px">'
+        f"{total} finding(s) this run.</p>"
+        f"{banner}"
+        f'<div style="display:flex;gap:12px;margin:0 0 20px;flex-wrap:wrap">{cards}</div>'
+        f'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:14px">'
+        f'<thead><tr style="text-align:left;color:var(--jarvis-muted,#6b7280);font-size:12px;'
+        f'text-transform:uppercase;letter-spacing:.04em">'
+        f'<th style="padding:8px 10px">Severity</th><th style="padding:8px 10px">Finding</th>'
+        f'<th style="padding:8px 10px">Reference</th>'
+        f'<th style="padding:8px 10px;text-align:right">Amount</th></tr></thead>'
+        f"<tbody>{rows}</tbody></table></div></body></html>"
+    )
+
+
+def persist_agent_dashboard(run_doc, inst, html: str, *, title=None, description=None,
+                            set_on_run: bool = True) -> str:
+    """Create ONE ``Jarvis Dashboard`` from a self-contained HTML document and
+    (by default) link it on the Run.
+
+    Written server-side with ignore_permissions and re-homed to the human
+    ``inst.owner`` — the SAME identity convention as the Run/Finding rows (owner =
+    the installer, so it appears in THEIR Dashboards list next to the run), not
+    the (possibly service-account) run_as_user. User-scoped, Static (no live
+    sources → no query specs that could leak rule shape; the summary is
+    self-contained). The controller enforces the html/title caps + CSP contract.
+    Returns the new dashboard name."""
+    owner = inst.owner
+    listing_title = frappe.db.get_value(LISTING, run_doc.agent, "title") or run_doc.agent
+    dash_title = (title or "").strip()[:140] or _default_dashboard_title(run_doc, listing_title)
+
+    doc = frappe.get_doc({
+        "doctype": DASHBOARD,
+        "dashboard_title": dash_title,
+        "description": (description or "").strip()[:255] or None,
+        "html": html,
+        "scope": "User",
+        "theme": "Jarvis",
+        "source_conversation": run_doc.get("conversation") or "",
+    })
+    # Pre-set owner so the controller pins target_user to the human owner (its
+    # _validate_scope reads self.owner, set before insert). ignore_permissions —
+    # trusted server infrastructure, exactly like the Finding rows above.
+    doc.owner = owner
+    doc.flags.ignore_permissions = True
+    doc.insert(ignore_permissions=True)
+    if set_on_run:
+        frappe.db.set_value(RUN, run_doc.name, "dashboard", doc.name, update_modified=False)
+    return doc.name
+
+
+def _notify_owner_dashboard(owner: str, run_name: str, dashboard_name: str, agent_title: str,
+                            status: str, findings_count: int, blocker_count: int) -> None:
+    """Best-effort bell notification to the human owner that a run finished + a
+    dashboard is ready to open. Never raises."""
+    if not owner or owner in ("Administrator", "Guest"):
+        return
+    try:
+        verb = {"completed": "completed", "partial": "completed (partial)"}.get(status, "finished")
+        frappe.get_doc({
+            "doctype": "Notification Log",
+            "for_user": owner,
+            "type": "Alert",
+            "subject": f"{agent_title or 'Agent'} run {verb}: {findings_count} finding(s), "
+                       f"{blocker_count} blocker(s)",
+            "email_content": "Your agent finished a run. Open its findings dashboard from the "
+                             "run, or the Dashboards page.",
+            "document_type": DASHBOARD,
+            "document_name": dashboard_name,
+        }).insert(ignore_permissions=True)
+    except Exception:
+        pass
 
 
 def _fingerprint(rule_id, ref_doctype, ref_name) -> str:
@@ -180,6 +363,11 @@ def record_scrutiny_run(
 		owner=owner,
 	)
 
+	# A8 (zero-trace): tear down the per-run session bearer at finalization. A
+	# legacy run mints a per-run session in _launch_audit too (unused by the chat
+	# pipeline it dispatches through), so it must not linger either.
+	teardown_run_session(run_doc.get("session_key"))
+
 	# Stamp the installation on completion, WHATEVER the trigger: this is the
 	# single point where a run flips to completed/partial, so manual Run-Now
 	# runs get a real ``last_run_at`` too (the scheduler's ``_advance`` only
@@ -261,6 +449,7 @@ def record_delegate_run(
 	dropped: list | None = None,
 	canvas_ref: str | None = None,
 	integrity_digest: str | None = None,
+	dashboard: str | None = None,
 ):
 	"""Persist a delegate's evaluator findings onto its running Run (A16/A17).
 
@@ -412,17 +601,47 @@ def record_delegate_run(
 		run_values["canvas_ref"] = str(canvas_ref)[:255]
 	frappe.db.set_value(RUN, run_doc.name, run_values, update_modified=False)
 
-	# Activity trail (best-effort, owner-scoped, Link-free).
+	# --- Phase 4: exactly ONE saved Jarvis Dashboard per run ------------------
+	# Precedence: (1) a dashboard the delegate already authored via
+	# jarvis__save_agent_dashboard this turn (Run.dashboard already set — richer,
+	# model-authored HTML wins); (2) an explicit ``dashboard`` name reported at
+	# writeback; (3) a server-generated A2-safe FLOOR built from the persisted
+	# findings, so a findings-only run (no canvas) STILL yields an openable
+	# dashboard. Best-effort: a dashboard hiccup must never fail the writeback.
+	agent_title = frappe.db.get_value(LISTING, agent, "title")
+	dashboard_name = frappe.db.get_value(RUN, run_doc.name, "dashboard")
+	if not dashboard_name and dashboard and frappe.db.exists(DASHBOARD, dashboard):
+		frappe.db.set_value(RUN, run_doc.name, "dashboard", dashboard, update_modified=False)
+		dashboard_name = dashboard
+	if not dashboard_name:
+		try:
+			title = _default_dashboard_title(run_doc, agent_title)
+			html = _fallback_dashboard_html(title, list(by_fp.values()), counts, coverage_note)
+			dashboard_name = persist_agent_dashboard(run_doc, inst, html, title=title)
+		except Exception:
+			frappe.log_error(
+				title="jarvis agent: fallback dashboard build failed",
+				message=frappe.get_traceback(),
+			)
+
+	# Activity trail (best-effort, owner-scoped, Link-free) + owner notification.
 	log_activity(
 		agent=agent,
-		agent_title=frappe.db.get_value(LISTING, agent, "title"),
+		agent_title=agent_title,
 		installation=inst.name,
 		action={"completed": "run_completed", "partial": "run_partial"}.get(status, "run_failed"),
 		run=run_doc.name,
 		detail=f"{len(seen_fps)} findings, {counts.get('blocker', 0)} blockers"
-		+ (f"; {coverage_note}" if coverage_note else ""),
+		+ (f"; {coverage_note}" if coverage_note else "")
+		+ (f"; dashboard {dashboard_name}" if dashboard_name else ""),
 		owner=owner,
 	)
+	if dashboard_name:
+		_notify_owner_dashboard(owner, run_doc.name, dashboard_name, agent_title, status,
+								len(seen_fps), counts.get("blocker", 0))
+
+	# A8 (zero-trace): the per-run session bearer must not outlive the run.
+	teardown_run_session(run_doc.get("session_key"))
 
 	# Stamp the installation completion (mirrors record_scrutiny_run): last_run_at
 	# whatever the trigger; next_run_at only for a scheduled install.

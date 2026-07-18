@@ -124,6 +124,7 @@ def record_agent_run(
 	truncated: bool = False,
 	canvas_ref: str | None = None,
 	integrity_digest: str | None = None,
+	dashboard: str | None = None,
 ) -> dict:
 	"""Land a delegate's evaluator output on its running Jarvis Agent Run.
 
@@ -138,8 +139,13 @@ def record_agent_run(
 	    skipped entirely and the run is partial (A16).
 	  canvas_ref: the delegate's saved canvas/dashboard ref (stored for Phase 4).
 	  integrity_digest: the evaluator's sha256 over canonicalized findings.
+	  dashboard: the ``Jarvis Dashboard`` name the delegate got back from
+	    ``jarvis__save_agent_dashboard`` — linked on the Run. When omitted (and the
+	    delegate authored none), a minimal A2-safe dashboard is built server-side
+	    from the persisted findings so every run yields one openable dashboard.
 
-	Returns ``{run, status, findings_count, blocker_count, dropped, coverage_note}``.
+	Returns ``{run, status, findings_count, blocker_count, dropped, coverage_note,
+	dashboard}``.
 	"""
 	from jarvis.chat import agent_runs
 	from jarvis.tools._agent_run_ctx import get_session_key
@@ -200,6 +206,7 @@ def record_agent_run(
 		dropped=dropped,
 		canvas_ref=canvas_ref,
 		integrity_digest=integrity_digest,
+		dashboard=(str(dashboard).strip() or None) if dashboard else None,
 	)
 
 	return {
@@ -209,4 +216,5 @@ def record_agent_run(
 		"blocker_count": run_doc.blocker_count,
 		"dropped": dropped,
 		"coverage_note": run_doc.coverage_note or "",
+		"dashboard": run_doc.get("dashboard") or None,
 	}
