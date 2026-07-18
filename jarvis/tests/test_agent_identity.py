@@ -294,7 +294,9 @@ class TestAgentIdentity(unittest.TestCase):
 			chat_api.send_message = orig
 
 		run, sk = result["run"], result["session_key"]
-		self.assertTrue(sk.startswith(f"agent:{AGENT}:"))
+		# session key id-component is the DELEGATE id `agent-<slug>` (matches the
+		# fleet delegate id + the gateway agentId), not the bare slug.
+		self.assertTrue(sk.startswith(f"agent:agent-{AGENT}:"))
 		self.assertEqual(frappe.db.get_value(RUN, run, "session_key"), sk)
 
 		# The minted session binds the run-as user + snapshots the device id.

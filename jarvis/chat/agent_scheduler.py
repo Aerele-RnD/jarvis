@@ -178,7 +178,15 @@ def _launch_audit(inst, trigger: str) -> dict:
 	# itself is stubbed until Phase 2; the session + scope + watermark are the
 	# Phase-1 deliverable.
 	slug = listing.agent_slug
-	session_key = f"agent:{slug}:{run.name}"
+	# openclaw session keys are `agent:<agent-id>:<key>` and the gateway resolves
+	# the session under that agent-id. The delegate agent id is `agent-<slug>`
+	# (fleet-agent compose.agent_delegates), so the id component MUST be the full
+	# delegate id, not the bare slug — otherwise the gateway `agent` RPC's
+	# agentId (`agent-<slug>`) and the session key's embedded id (`<slug>`)
+	# disagree. The bench never parses this shape (it matches the Jarvis Chat
+	# Session row verbatim), so aligning it is free on the bench side and correct
+	# on the openclaw side.
+	session_key = f"agent:agent-{slug}:{run.name}"
 	_mint_run_session(session_key, run_as_user)
 	frappe.db.set_value(RUN, run.name, "session_key", session_key, update_modified=False)
 
