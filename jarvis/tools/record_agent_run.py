@@ -39,9 +39,9 @@ INSTALLATION = "Jarvis Agent Installation"
 _SEVERITIES = {"blocker", "warning", "note"}
 # Aggregate-dimension ref doctypes verified by EXISTENCE only, not a read-perm
 # gate: ERPNext's Auditor role legitimately holds GL read but only `select` (not
-# `read`) on Company, and Account is the same aggregate grain — mirrors
-# run_scrutiny's company gate. Every OTHER ref doctype must be readable by the
-# run-as user or the row is dropped (a mistranscribed / out-of-scope ref).
+# `read`) on Company, and Account is the same aggregate grain. Every OTHER ref
+# doctype must be readable by the run-as user or the row is dropped (a
+# mistranscribed / out-of-scope ref).
 _PERM_EXEMPT_REFS = frozenset({"Company", "Account"})
 
 

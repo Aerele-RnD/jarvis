@@ -34,7 +34,7 @@
    "unique": 1,
    "in_list_view": 1,
    "in_standard_filter": 1,
-   "description": "Stable registry key (e.g. audit-auditor). Used as the doc name (naming_rule By fieldname) so a re-sync is idempotent."
+   "description": "Stable registry key (e.g. close-auditor). Used as the doc name (naming_rule By fieldname) so a re-sync is idempotent."
   },
   {
    "fieldname": "title",
@@ -117,7 +117,7 @@
    "fieldname": "rule_pack",
    "fieldtype": "Data",
    "label": "Rule Pack",
-   "description": "Bundled rule-pack id evaluated by run_scrutiny (e.g. scrutiny-pack)."
+   "description": "Legacy rule-pack identifier. Unused by delegate agents (their evaluation logic lives in the private admin bundle store)."
   },
   {
    "fieldname": "skill_bundle",

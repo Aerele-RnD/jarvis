@@ -29,7 +29,7 @@ INSTALLATION = "Jarvis Agent Installation"
 RUN = "Jarvis Agent Run"
 FINDING = "Jarvis Agent Finding"
 SESSION = "Jarvis Chat Session"
-AGENT = "audit-auditor"
+AGENT = "close-auditor"
 
 TEST_COMPANY = "Jarvis Ident Test Co"
 
@@ -127,6 +127,15 @@ class TestAgentIdentity(unittest.TestCase):
 		cls.sm = _ensure_user("aid-sm@example.com", extra_roles=("System Manager",))
 		cls.mapped = _ensure_plain_user("aid-mapped@example.com")
 		cls.users = (cls.owner, cls.peer, cls.jadmin, cls.scoped, cls.sm, cls.mapped)
+		# close-auditor declares doctypes_required (GL Entry / Account / Company);
+		# the install/run-as A12-gate needs the run-as user to hold those reads.
+		# Accounts User grants them without conferring Jarvis roles, so it does not
+		# disturb the identity/escalation semantics these tests exercise.
+		if frappe.db.exists("Role", "Accounts User"):
+			for u in cls.users:
+				frappe.get_doc("User", u).add_roles("Accounts User")
+				frappe.clear_cache(user=u)
+			frappe.db.commit()
 
 	def setUp(self):
 		frappe.set_user("Administrator")
@@ -168,6 +177,9 @@ class TestAgentIdentity(unittest.TestCase):
 
 		# Legacy row whose owner is now disabled -> must be skipped, not crash.
 		disabled = _ensure_user("aid-disabled@example.com")
+		if frappe.db.exists("Role", "Accounts User"):
+			frappe.get_doc("User", disabled).add_roles("Accounts User")  # A12 GL read
+			frappe.clear_cache(user=disabled)
 		bad = _install_as(disabled)
 		frappe.db.set_value(INSTALLATION, bad, "run_as_user", "", update_modified=False)
 		frappe.db.set_value("User", disabled, "enabled", 0, update_modified=False)
@@ -279,19 +291,16 @@ class TestAgentIdentity(unittest.TestCase):
 		frappe.db.commit()
 		inst = frappe.get_doc(INSTALLATION, inst_name)
 
-		import jarvis.chat.api as chat_api
+		import jarvis.admin_client as admin_client
 
-		orig = chat_api.send_message
-		chat_api.send_message = lambda **kw: {
-			"ok": True, "run_id": "x", "message_id": "m",
-			"conversation_id": kw.get("conversation"),
-		}
+		orig = admin_client.post_agent_run
+		admin_client.post_agent_run = lambda **kw: {"run_id": kw.get("run_id"), "status": "queued"}
 		frappe.set_user(self.owner)
 		try:
 			result = agent_scheduler._launch_audit(inst, trigger="manual")
 		finally:
 			frappe.set_user("Administrator")
-			chat_api.send_message = orig
+			admin_client.post_agent_run = orig
 
 		run, sk = result["run"], result["session_key"]
 		# session key id-component is the DELEGATE id `agent-<slug>` (matches the
@@ -327,25 +336,22 @@ class TestAgentIdentity(unittest.TestCase):
 		frappe.db.set_value(INSTALLATION, inst_name, "enabled", 1, update_modified=False)
 		frappe.db.commit()
 
-		import jarvis.chat.api as chat_api
+		import jarvis.admin_client as admin_client
 
 		captured = {}
 
 		def _cap(**kw):
 			captured["user"] = frappe.session.user
-			return {
-				"ok": True, "run_id": "x", "message_id": "m",
-				"conversation_id": kw.get("conversation"),
-			}
+			return {"run_id": kw.get("run_id"), "status": "queued"}
 
-		orig = chat_api.send_message
-		chat_api.send_message = _cap
+		orig = admin_client.post_agent_run
+		admin_client.post_agent_run = _cap
 		frappe.set_user(self.owner)  # the human owner triggers their own install
 		try:
 			result = agents_api.run_agent_now(inst_name)
 		finally:
 			frappe.set_user("Administrator")
-			chat_api.send_message = orig
+			admin_client.post_agent_run = orig
 
 		# The ERP-read identity during the turn is the MAPPED user, not the owner.
 		self.assertEqual(captured.get("user"), self.mapped)

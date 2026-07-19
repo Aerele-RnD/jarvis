@@ -255,16 +255,11 @@ function errMsg(e) {
 	return (e && ((e.messages && e.messages[0]) || e.message)) || "Something went wrong."
 }
 
-// Display metadata mirroring jarvis/agents/registry.json domains (round-2
-// parity; unknown slugs fall back to a prettified slug).
+// Display metadata mirroring jarvis/agents/registry.json domains (unknown slugs
+// fall back to a prettified slug).
 const DOMAINS = [
-	{ slug: "audit", title: "Audit & Ledger Scrutiny" },
-	{ slug: "compliance", title: "Statutory Compliance" },
 	{ slug: "close", title: "Close & Reporting" },
-	{ slug: "ap", title: "Accounts Payable" },
-	{ slug: "ar", title: "AR & Collections" },
 	{ slug: "bank-recon", title: "Bank & Reconciliation" },
-	{ slug: "analytical-review", title: "Analytical Review" },
 ]
 
 // ── hash-synced tabs (AgentDetail pattern; no hash = Featured) ───────────────

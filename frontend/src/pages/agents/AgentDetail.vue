@@ -398,13 +398,8 @@ function errMsg(e) {
 
 // display metadata (mirrors AgentsList / registry.json domains)
 const DOMAINS = [
-	{ slug: "audit", title: "Audit & Ledger Scrutiny" },
-	{ slug: "compliance", title: "Statutory Compliance" },
 	{ slug: "close", title: "Close & Reporting" },
-	{ slug: "ap", title: "Accounts Payable" },
-	{ slug: "ar", title: "AR & Collections" },
 	{ slug: "bank-recon", title: "Bank & Reconciliation" },
-	{ slug: "analytical-review", title: "Analytical Review" },
 ]
 const FREQUENCY_OPTIONS = [
 	{ label: "Daily", value: "daily" },

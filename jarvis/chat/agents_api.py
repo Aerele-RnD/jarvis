@@ -601,10 +601,10 @@ def set_schedule(
 
 @frappe.whitelist()
 def set_config(installation: str, config: str) -> dict:
-	"""Persist an installed auditor's engagement / materiality config JSON — a
-	pure DB write (O6: no restart; consumed by compute_materiality / run_scrutiny
-	on the next audit). Owner-gated (S3). Validates the payload is a JSON object
-	(keys: benchmark_value, percentage, engagement_risk_level, rounding_step, …)."""
+	"""Persist an installed agent's engagement config JSON — a pure DB write
+	(O6: no restart; the delegate reads it on its installation on the next run).
+	Owner-gated (S3). Validates the payload is a JSON object (keys: benchmark_value,
+	percentage, engagement_risk_level, rounding_step, company, …)."""
 	doc = frappe.get_doc(INSTALLATION, installation)
 	doc.check_permission("write")  # S3 owner-gate
 	try:
@@ -620,7 +620,7 @@ def set_config(installation: str, config: str) -> dict:
 		agent_title=frappe.db.get_value(LISTING, doc.agent, "title"),
 		installation=doc.name,
 		action="config_changed",
-		# Key names only — engagement/materiality VALUES stay out of the feed.
+		# Key names only — engagement config VALUES stay out of the feed.
 		detail=", ".join(sorted(parsed)) or None,
 	)
 	frappe.db.commit()
@@ -870,7 +870,7 @@ def list_findings(
 	headers stay honest at scale.
 
 	``run`` means "the findings that run OBSERVED", not "rows whose ``run`` field
-	is that run": ``record_scrutiny_run`` dedupes re-detections into the EXISTING
+	is that run": ``record_delegate_run`` dedupes re-detections into the EXISTING
 	Finding row (bumping ``last_seen_run``), so filtering on the ``run`` column
 	alone returns rows only for the FIRST run that discovered each finding while
 	the newer Run's ``findings_count`` still counts them. Dedupe only ever bumps

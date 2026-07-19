@@ -443,7 +443,7 @@ class CrossCompanyPermTestCase(FrappeTestCase):
         frappe.db.commit()
         # Company/Item/Customer/User Permission are NOT committed - unlike
         # roles/users, a leftover Company row changes production inference
-        # elsewhere (e.g. run_scrutiny._resolve_scope's "single Company on
+        # elsewhere (e.g. the agent scope resolver's "single Company on
         # the site" fallback), so these must vanish via FrappeTestCase's
         # automatic per-class rollback rather than persist across test
         # modules. They're still visible within this class's own

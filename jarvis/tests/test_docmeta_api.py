@@ -165,9 +165,14 @@ class TestDocmetaApi(unittest.TestCase):
 		# Agent installation owned by USER_A (direct insert: validate() only
 		# enforces uniqueness + cap, and this avoids role-restriction state).
 		agent_catalog.sync_agent_listings()
-		slug = "audit-auditor"
+		slug = "close-auditor"
 		if not frappe.db.exists(LISTING, slug):
 			slug = frappe.get_all(LISTING, filters={"status": "Published"}, pluck="name", limit=1)[0]
+		# close-auditor requires GL Entry / Account / Company read (install A12-gate);
+		# grant it so the self-mapped install validates.
+		if frappe.db.exists("Role", "Accounts User"):
+			frappe.get_doc("User", USER_A).add_roles("Accounts User")
+			frappe.clear_cache(user=USER_A)
 		for n in frappe.get_all(INSTALLATION, filters={"owner": USER_A}, pluck="name"):
 			frappe.delete_doc(INSTALLATION, n, force=True, ignore_permissions=True)
 		with _as(USER_A):

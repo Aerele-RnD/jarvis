@@ -98,7 +98,7 @@
    "fieldname": "coverage_note",
    "fieldtype": "Small Text",
    "label": "Coverage Note",
-   "description": "Why a scan is partial/incomplete (turn envelope hit, materiality unconfigured, etc.). Never let a partial scan read as a clean all-clear."
+   "description": "Why a scan is partial/incomplete (turn envelope hit, engagement inputs unconfigured, etc.). Never let a partial scan read as a clean all-clear."
   },
   {
    "fieldname": "session_key",

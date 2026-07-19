@@ -9,10 +9,9 @@ Mar-31 / Apr-1 boundary). ``_launch_audit`` stamps the result on the Run
 (``scope_json``) and injects it verbatim into the run message; prior-FY
 selection stays versioned bench code, never LLM prose.
 
-This mirrors the period/company resolution in ``jarvis/tools/run_scrutiny.py``
-(``_resolve_scope`` + ``_prior_fiscal_year``, kept until Phase 3) but is
-DELIBERATELY generic: it carries no rule shape, only ordinary accounting
-dimensions, so it survives the Phase-3 rule-engine evacuation unchanged.
+It is DELIBERATELY generic: it carries no rule shape, only ordinary accounting
+dimensions (company / fiscal year / period boundaries), so the delegate bundles
+resolve their run scope from bench-injected, versioned values — never LLM prose.
 
 The helper runs under the caller's identity (the run-as user in
 ``_launch_audit``), so ``frappe.defaults`` / erpnext's fiscal-year lookup are
@@ -106,7 +105,7 @@ def _prior_fiscal_year(from_date) -> dict | None:
     """The enabled Fiscal Year with the greatest ``year_end_date`` strictly
     before ``from_date`` (the period immediately preceding the scope). Returns
     ``{name, py_start, py_end}`` or ``None`` when no such FY exists. Generic
-    accounting logic replicated from ``run_scrutiny._prior_fiscal_year``."""
+    prior-period accounting logic."""
     rows = frappe.db.sql(
         """select name, year_start_date, year_end_date from `tabFiscal Year`
            where year_end_date < %(from_date)s and disabled = 0

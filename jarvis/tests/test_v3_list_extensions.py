@@ -357,11 +357,17 @@ class TestGetAgent(unittest.TestCase):
 		_ensure_user(USER_A)
 		_ensure_user(USER_B)
 		agent_catalog.sync_agent_listings()
-		cls.slug = "audit-auditor"
+		cls.slug = "close-auditor"
 		if not frappe.db.exists(LISTING, cls.slug):
 			cls.slug = frappe.get_all(
 				LISTING, filters={"status": "Published"}, pluck="name", limit=1
 			)[0]
+		# close-auditor requires GL Entry / Account / Company read (install A12-gate);
+		# grant it to the installers so the self-mapped installs validate.
+		if frappe.db.exists("Role", "Accounts User"):
+			for u in (USER_A, USER_B):
+				frappe.get_doc("User", u).add_roles("Accounts User")
+				frappe.clear_cache(user=u)
 
 	def setUp(self):
 		frappe.set_user("Administrator")

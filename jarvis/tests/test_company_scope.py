@@ -1,6 +1,6 @@
 """Unit tests for ``jarvis.tools._company_scope`` - the Company User
 Permission scoping helper shared by ``get_customer_outstanding``,
-``get_balance_on``, ``get_party_dashboard_info``, and ``run_scrutiny``.
+``get_balance_on``, and ``get_party_dashboard_info``.
 
 Exercises real ``get_user_permissions`` decisions (not a mocked one)
 against a real ``User Permission`` row, so the fix (scope by Company User

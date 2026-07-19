@@ -72,7 +72,7 @@
    "fieldname": "config",
    "fieldtype": "Long Text",
    "label": "Config (JSON)",
-   "description": "Engagement / materiality inputs for this install (benchmark, percentage, engagement_risk_level, company, ...). Consumed by compute_materiality / run_scrutiny."
+   "description": "Engagement inputs for this install (benchmark, percentage, engagement_risk_level, company, ...). The delegate reads it on its installation on the next run."
   },
   {
    "fieldname": "sync_status",

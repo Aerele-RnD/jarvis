@@ -1,99 +1,20 @@
 {
   "schema_version": "1.0",
   "publisher": "Aerele",
-  "generated_note": "Catalog manifest read by the Jarvis bench to populate `Jarvis Agent Listing`. This is a BUNDLED deploy artifact synced at migrate time — NEVER fetched by a container at runtime (security posture: bundles are reviewed code, not runtime-pulled).",
+  "generated_note": "Catalog manifest read by the Jarvis bench to populate `Jarvis Agent Listing`. This is a BUNDLED deploy artifact synced at migrate time — NEVER fetched by a container at runtime (security posture: bundles are reviewed code, not runtime-pulled). All shipped agents are delivery=delegate: the bench holds only a body-free stub + id-only rule tokens; the proprietary playbook and evaluator live in the private admin bundle store, never the customer DB.",
   "domains": [
-    {
-      "slug": "audit",
-      "title": "Audit & Ledger Scrutiny",
-      "blurb": "Reproducible ledger scrutiny with materiality-parameterised rules."
-    },
-    {
-      "slug": "compliance",
-      "title": "Statutory Compliance",
-      "blurb": "India GST/TDS/Income-Tax checks. Statutory thresholds are dated & law-review gated."
-    },
     {
       "slug": "close",
       "title": "Close & Reporting",
-      "blurb": "Period-end: trial-balance integrity, materiality, misstatement aggregation."
-    },
-    {
-      "slug": "ap",
-      "title": "Accounts Payable",
-      "blurb": "Payables & expense: draft inbound documents through to the Approval Board."
-    },
-    {
-      "slug": "ar",
-      "title": "AR & Collections",
-      "blurb": "Order-to-cash and collections."
+      "blurb": "Period-end: trial-balance integrity and misstatement aggregation."
     },
     {
       "slug": "bank-recon",
       "title": "Bank & Reconciliation",
       "blurb": "Bank & cash reconciliation."
-    },
-    {
-      "slug": "analytical-review",
-      "title": "Analytical Review",
-      "blurb": "Schedule III ratios and year-over-year variance review."
     }
   ],
   "agents": [
-    {
-      "agent_slug": "audit-auditor",
-      "title": "Ledger Scrutiny Auditor",
-      "domain": "audit",
-      "nature": "auditor",
-      "version": "1.0.0",
-      "status": "Published",
-      "description": "Read-only, reproducible ledger scrutiny. Computes engagement materiality, then evaluates deterministic rules (dormant ledgers, wrong-side balances, high-value cash transactions, vouchers large vs their ledger, year-over-year sign flips) against the general ledger and returns a severity-tagged, persisted findings list. Never writes.",
-      "tools_required": [
-        "jarvis__compute_materiality",
-        "jarvis__run_scrutiny",
-        "jarvis__get_list",
-        "jarvis__run_report"
-      ],
-      "min_apps": [
-        "erpnext"
-      ],
-      "rule_pack": "scrutiny-pack",
-      "skill_bundle": [
-        "skills/agent-audit-auditor/SKILL.md"
-      ],
-      "default_schedule": {
-        "schedule_enabled": 0,
-        "schedule_frequency": "Weekly"
-      },
-      "validated_for_fy": "2026-2027"
-    },
-    {
-      "agent_slug": "compliance-auditor",
-      "title": "Statutory Compliance Auditor",
-      "domain": "compliance",
-      "nature": "auditor",
-      "version": "1.0.0",
-      "status": "Published",
-      "description": "Read-only India statutory checks driven by DATED, cited threshold rules: s.40A(3) cash expense/creditor limits, s.269ST large cash receipts, s.43B statutory dues, MSME 45-day ageing. Every statutory finding carries its section, effective date, and a 'verify current law' disclaimer. Statutory rules ship inactive pending legal review. Never writes.",
-      "tools_required": [
-        "jarvis__compute_materiality",
-        "jarvis__run_scrutiny",
-        "jarvis__get_list",
-        "jarvis__run_report"
-      ],
-      "min_apps": [
-        "erpnext"
-      ],
-      "rule_pack": "scrutiny-pack",
-      "skill_bundle": [
-        "skills/agent-compliance-auditor/SKILL.md"
-      ],
-      "default_schedule": {
-        "schedule_enabled": 0,
-        "schedule_frequency": "Monthly"
-      },
-      "validated_for_fy": "2026-2027"
-    },
     {
       "agent_slug": "close-auditor",
       "title": "Close & Reporting Auditor",
@@ -143,69 +64,6 @@
       "validated_for_fy": "2026-2027"
     },
     {
-      "agent_slug": "ap-operator",
-      "title": "AP & Expense Operator",
-      "domain": "ap",
-      "nature": "operator",
-      "version": "1.0.0",
-      "status": "Published",
-      "description": "Drafts inbound payables and expense documents through to the Approval Board — never past it. Extends the proven inbound-document data-entry pattern: classify, extract verbatim, resolve masters, reconcile, create the Draft, queue approvals for real ambiguities. Every submit/destructive action always parks for a human.",
-      "tools_required": [
-        "jarvis__get_schema",
-        "jarvis__get_list",
-        "jarvis__get_doc",
-        "jarvis__create_doc",
-        "jarvis__update_doc",
-        "jarvis__query"
-      ],
-      "min_apps": [
-        "erpnext"
-      ],
-      "rule_pack": null,
-      "skill_bundle": [
-        "skills/agent-ap-operator/SKILL.md"
-      ],
-      "default_schedule": {
-        "schedule_enabled": 0,
-        "schedule_frequency": "Weekly"
-      },
-      "validated_for_fy": null
-    },
-    {
-      "agent_slug": "ar-collections-operator",
-      "title": "AR & Collections Operator",
-      "domain": "ar",
-      "nature": "operator",
-      "version": "1.0.0",
-      "status": "Published",
-      "description": "Order-to-cash collections through the Approval Board — never past it. Pulls the AR ageing, ranks overdue customers, drafts firm dated-fact dunning emails (every outbound email parks for human approval; batches carry one bundled board decision), logs follow-ups, assigns collection tasks, and records receipts as Draft Payment Entries only against real evidence. Never submits, never reconciles, never writes off.",
-      "tools_required": [
-        "jarvis__run_report",
-        "jarvis__get_report_filters",
-        "jarvis__get_customer_outstanding",
-        "jarvis__get_party_dashboard_info",
-        "jarvis__get_list",
-        "jarvis__get_doc",
-        "jarvis__create_doc",
-        "jarvis__update_doc",
-        "jarvis__send_email",
-        "jarvis__add_comment",
-        "jarvis__assign_to"
-      ],
-      "min_apps": [
-        "erpnext"
-      ],
-      "rule_pack": null,
-      "skill_bundle": [
-        "skills/agent-ar-collections-operator/SKILL.md"
-      ],
-      "default_schedule": {
-        "schedule_enabled": 0,
-        "schedule_frequency": "Weekly"
-      },
-      "validated_for_fy": null
-    },
-    {
       "agent_slug": "bank-recon-operator",
       "title": "Bank & Reconciliation Operator",
       "domain": "bank-recon",
@@ -252,34 +110,6 @@
         "schedule_frequency": "Weekly"
       },
       "validated_for_fy": null
-    },
-    {
-      "agent_slug": "analytical-review-auditor",
-      "title": "Analytical Review Auditor",
-      "domain": "analytical-review",
-      "nature": "auditor",
-      "version": "1.0.0",
-      "status": "Published",
-      "description": "Read-only year-over-year analytical review of the P&L. Computes engagement materiality, then evaluates deterministic analytics (expense-to-revenue ratio variance FPA-EXPENSE-VARIANCE-YOY, P&L year-over-year swings FPA-PL-YOY-SWING) and reports the findings verbatim with severities. When YoY analytics cannot run (no prior-year books, no materiality) it reports exactly that instead of improvising variances. Never writes.",
-      "tools_required": [
-        "jarvis__compute_materiality",
-        "jarvis__run_scrutiny",
-        "jarvis__get_doc",
-        "jarvis__run_report",
-        "jarvis__get_report_filters"
-      ],
-      "min_apps": [
-        "erpnext"
-      ],
-      "rule_pack": "scrutiny-pack",
-      "skill_bundle": [
-        "skills/agent-analytical-review-auditor/SKILL.md"
-      ],
-      "default_schedule": {
-        "schedule_enabled": 0,
-        "schedule_frequency": "Monthly"
-      },
-      "validated_for_fy": "2026-2027"
     }
   ]
 }

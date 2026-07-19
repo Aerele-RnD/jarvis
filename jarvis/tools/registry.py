@@ -104,16 +104,10 @@ _TOOL_NAMES: tuple[str, ...] = (
     "follow_document",
     "unfollow_document",
     # Tier 4 analytics + visualization: dataset stats + dashboard/chart
-    # creation (clean-room reimplementations of capability gaps).
+    # creation (independent reimplementations of capability gaps).
     "summarize_dataset",
     "create_dashboard_chart",
     "create_dashboard",
-    # Agents marketplace: deterministic audit core. compute_materiality is
-    # pure SA-320 arithmetic; run_scrutiny evaluates a frozen rules-as-data
-    # pack against the GL (read-only, reproducible) so auditor agents don't
-    # eyeball get_list output. See jarvis/agents/rule_packs/.
-    "compute_materiality",
-    "run_scrutiny",
     # Phase-3 delegate writeback: the auditor/operator delegate passes its
     # deterministic evaluator output here VERBATIM. It resolves the Jarvis Agent
     # Run from the caller's session_key, validates every finding (token/doctype/

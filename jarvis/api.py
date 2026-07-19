@@ -454,8 +454,7 @@ _WRITE_TOOLS = frozenset({
 	"follow_document", "unfollow_document", "attach_to_doc",
 	"create_dashboard_chart", "create_dashboard",
 	"create_custom_skill", "update_wiki",
-	# Audited but NOT gated (see _GATED_WRITES comment below): run_scrutiny's
-	# optional persistence path inserts Jarvis Agent Run/Finding rows, and
+	# Audited but NOT gated (see _GATED_WRITES comment below):
 	# download_pdf/export_excel both insert a File doc (download_pdf also
 	# attaches it) - real DB writes that need an audit trail, not a
 	# confirmation card (audit-findings.md F24/F25). record_agent_run is the
@@ -463,7 +462,7 @@ _WRITE_TOOLS = frozenset({
 	# rows deterministically (validated, coverage-scoped) from a detached agent
 	# turn where nobody can click a confirm card, so it is audited but NEVER
 	# gated - the human review happens on the Findings board, not a card.
-	"run_scrutiny", "download_pdf", "export_excel", "record_agent_run",
+	"download_pdf", "export_excel", "record_agent_run",
 })
 _PREVIEWABLE = frozenset({
 	"create_doc", "create_docs", "update_doc", "submit_doc", "cancel_doc",
