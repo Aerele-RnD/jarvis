@@ -13,9 +13,12 @@ review:
   row, so binding it to Administrator would bypass every DocType permission,
   silently, unattended. A fail-closed guard REFUSES to bind a scheduled audit
   to Administrator / Guest / a disabled user.
-* **O1:** a per-owner monthly scheduled-scan budget (skip + record ``failed``
-  when over budget), so scheduled scans can't drain the customer's own
-  subscription.
+* **O1/A14:** a monthly agent-run budget keyed PER INSTALLATION (with a per-tenant
+  aggregate ceiling), read from ``Jarvis Settings.agent_run_budget_monthly``, that
+  counts manual + scheduled runs together and EXCLUDES failed rows (skip + record
+  ``failed`` + notify the owner when over budget), so scans can't drain the
+  customer's own subscription. Keyed on the installation, not the owner, because
+  ``run_as_user`` decouples the executing identity from the owner.
 * **O3:** the turn is dispatched ``background=1`` (unattended), so it never
   jumps ahead of a human's queued question.
 * **O4:** ``next_run_at`` advances ONLY after a successful enqueue; on failure a
@@ -40,9 +43,13 @@ LISTING = "Jarvis Agent Listing"
 RUN = "Jarvis Agent Run"
 CONV = "Jarvis Conversation"
 
-# O1: a simple constant monthly cap on SCHEDULED scans per owner (interactive /
-# manual runs are not counted). Keep it simple for v1 but present.
-MAX_SCHEDULED_RUNS_PER_OWNER_PER_MONTH = 60
+# A14: the per-INSTALLATION monthly run budget (manual + scheduled combined; failed
+# runs excluded). Read from Jarvis Settings.agent_run_budget_monthly at run time; a
+# floor of 31 (a full daily schedule) is enforced so a misconfigured 0 can never
+# wedge every scheduled agent for a whole month. Default leaves headroom for a daily
+# schedule PLUS ad-hoc manual runs.
+DEFAULT_AGENT_RUN_BUDGET_MONTHLY = 62
+MIN_AGENT_RUN_BUDGET_MONTHLY = 31
 
 # A8/A15 reaper: a run genuinely stuck ``running`` past this is dead — the fleet
 # run worker fails a run on exec/RPC death (A15) and record_agent_run finalizes a
@@ -105,9 +112,13 @@ def run_due_agent_audits() -> None:
 			_advance(row, now)
 			continue
 
-		# O1 cost cap (per human owner — the subscription is theirs).
-		if _scheduled_runs_this_month(row.owner) >= MAX_SCHEDULED_RUNS_PER_OWNER_PER_MONTH:
-			_record_failed(row, "scheduled scan budget exceeded")
+		# A14 cost cap — per installation + per-tenant aggregate (the subscription is
+		# the tenant's). Manual + scheduled counted together; failed rows excluded, so
+		# the _record_failed row we write below can never self-perpetuate the cap.
+		over, why = _over_run_budget(row.name)
+		if over:
+			_record_failed(row, why)
+			_notify_owner(row.owner, row, reason=why)
 			_advance(row, now)
 			continue
 
@@ -509,11 +520,58 @@ def _valid_owner(owner: str) -> bool:
 	return bool(frappe.db.get_value("User", owner, "enabled"))
 
 
-def _scheduled_runs_this_month(owner: str) -> int:
-	month_start = frappe.utils.get_first_day(frappe.utils.today())
-	return frappe.db.count(
-		RUN, {"owner": owner, "trigger": "scheduled", "creation": [">=", month_start]}
+def _agent_run_budget_monthly() -> int:
+	"""A14: the per-INSTALLATION monthly run budget from Jarvis Settings, floored at
+	MIN_AGENT_RUN_BUDGET_MONTHLY (a full daily schedule) so a misconfigured 0/blank
+	never wedges every scheduled agent for a month. Read at run time (not a constant)
+	so a bench admin can raise it without a code change."""
+	try:
+		v = frappe.utils.cint(
+			frappe.db.get_single_value("Jarvis Settings", "agent_run_budget_monthly")
+		)
+	except Exception:
+		v = 0
+	return v if v >= MIN_AGENT_RUN_BUDGET_MONTHLY else DEFAULT_AGENT_RUN_BUDGET_MONTHLY
+
+
+def _expected_monthly_runs(frequency: str) -> int:
+	"""Upper-bound runs/month a schedule frequency generates (daily ~31, weekly 5,
+	monthly 1). Used at install/validate to warn when a schedule can't fit its
+	budget."""
+	return {"daily": 31, "weekly": 5, "monthly": 1}.get(
+		(frequency or "").strip().lower(), 31
 	)
+
+
+def _runs_this_month(*, installation: str | None = None) -> int:
+	"""This month's NON-FAILED agent runs — for ONE installation (the per-install
+	budget) or the whole tenant (the aggregate ceiling). Failed rows are EXCLUDED
+	(A14): every skip path writes a ``failed`` row, so counting them would make the
+	cap self-perpetuating once hit. Manual + scheduled are counted together."""
+	month_start = frappe.utils.get_first_day(frappe.utils.today())
+	filters = {"creation": [">=", month_start], "status": ["!=", "failed"]}
+	if installation:
+		filters["installation"] = installation
+	return frappe.db.count(RUN, filters)
+
+
+def _over_run_budget(installation: str) -> tuple[bool, str]:
+	"""A14 gate for BOTH the scheduler and the manual run_agent_now path. Returns
+	``(over, reason)`` when THIS installation's next run would breach either:
+	  * the per-installation monthly budget, OR
+	  * the per-tenant aggregate ceiling (budget × enabled installs) — a backstop so
+	    N installs can't multiply the drain even if per-install accounting is bypassed
+	    by a burst.
+	Keyed on the installation + tenant, NEVER the owner (run_as_user decouples the
+	executing identity from the owner, so a per-owner count both mis- and
+	under-counts)."""
+	budget = _agent_run_budget_monthly()
+	if _runs_this_month(installation=installation) >= budget:
+		return True, "monthly run budget exceeded for this agent"
+	enabled = frappe.db.count(INSTALLATION, {"enabled": 1}) or 1
+	if _runs_this_month() >= budget * enabled:
+		return True, "tenant-wide monthly agent run budget exceeded"
+	return False, ""
 
 
 def _advance(row, now) -> None:
@@ -564,19 +622,35 @@ def _record_failed(row, reason: str) -> None:
 	frappe.db.commit()
 
 
-def _notify_owner(owner: str, row) -> None:
-	"""Best-effort owner notification on enqueue failure (never raises)."""
+def _notify_owner(owner: str, row, reason: str | None = None) -> None:
+	"""Best-effort owner notification on enqueue failure OR budget exhaustion (A14),
+	never raises. A budget message says the cap is hit + resets next month (it will
+	NOT simply retry next hour), so the owner is not left waiting on a run that can't
+	start until the budget rolls over or an admin raises it."""
 	if not _valid_owner(owner):
 		return
+	is_budget = bool(reason) and "budget" in reason.lower()
 	try:
 		frappe.get_doc({
 			"doctype": "Notification Log",
 			"for_user": owner,
 			"type": "Alert",
-			"subject": f"Scheduled audit could not start: {row.agent}",
+			"subject": (
+				f"Agent run budget reached: {row.agent}"
+				if is_budget
+				else f"Scheduled audit could not start: {row.agent}"
+			),
 			"email_content": (
-				"A scheduled agent audit could not be started. It will retry on the "
-				"next hourly run."
+				(
+					f"A scheduled agent run was skipped — {reason}. Runs resume next "
+					"month, or ask an admin to raise the monthly agent-run budget in "
+					"Jarvis Settings."
+				)
+				if is_budget
+				else (
+					"A scheduled agent audit could not be started. It will retry on the "
+					"next hourly run."
+				)
 			),
 		}).insert(ignore_permissions=True)
 		frappe.db.commit()

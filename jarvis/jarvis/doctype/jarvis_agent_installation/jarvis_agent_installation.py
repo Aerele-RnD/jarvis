@@ -44,6 +44,63 @@ class JarvisAgentInstallation(Document):
 		self._validate_unique_per_owner()
 		self._validate_owner_cap()
 		self._validate_run_as_user()
+		self._validate_schedule_budget()
+
+	def on_update(self):
+		self._audit_cross_user_run_as()
+
+	def _validate_schedule_budget(self):
+		"""A14: warn (do not hard-block) when an enabled schedule's expected monthly
+		runs exceed the per-installation run budget — the run would be starved
+		mid-month, so surface it at configuration time rather than as a silent
+		month-long outage. A msgprint (not a throw) keeps daily/weekly saves working
+		while flagging a budget that a bench admin set too low."""
+		if not self.get("schedule_enabled"):
+			return
+		from jarvis.chat.agent_scheduler import (
+			_agent_run_budget_monthly, _expected_monthly_runs,
+		)
+
+		expected = _expected_monthly_runs(self.get("schedule_frequency"))
+		budget = _agent_run_budget_monthly()
+		if expected > budget:
+			frappe.msgprint(
+				_(
+					"This {0} schedule expects up to {1} runs/month but the agent run "
+					"budget is {2}; later runs this month will be skipped until the "
+					"budget is raised in Jarvis Settings."
+				).format(self.get("schedule_frequency") or "daily", expected, budget),
+				indicator="orange",
+				alert=True,
+			)
+
+	def _audit_cross_user_run_as(self):
+		"""FIX 10 / A4: audit EVERY cross-user run_as mapping, on ANY write surface —
+		Desk form, data import, bulk edit, direct ``doc.save()``, not just the SPA
+		``set_run_as_user`` endpoint. The escalation GUARD is in validate() (holds
+		everywhere); this makes the AUDIT hold everywhere too, so the exact authority
+		residual A4 requires to be traceable can never occur untraced. Fires only when
+		run_as_user CHANGES to someone OTHER than the setter (a self-map is not an
+		escalation); the Link-free Data activity row survives the uninstall cascade."""
+		target = (self.run_as_user or "").strip()
+		setter = frappe.session.user
+		if not target or target == setter:
+			return
+		before = self.get_doc_before_save()
+		old = ((before.run_as_user or "").strip()) if before else ""
+		if old == target:
+			return  # unchanged mapping — an incidental save, already audited when set
+		from jarvis.chat.agent_activity import log_activity
+
+		log_activity(
+			agent=self.agent,
+			agent_title=frappe.db.get_value(LISTING, self.agent, "title"),
+			installation=self.name,
+			action="run_as_changed",
+			detail=f"run as {target} (set by {setter})"
+			+ (" (scoped visibility)" if self.get("scoped_visibility") else ""),
+			owner=self.owner,
+		)
 
 	def _validate_unique_per_owner(self):
 		# One install of a given agent per owner. Frappe has no composite-unique

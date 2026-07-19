@@ -198,6 +198,7 @@ class TestCloseAuditorParity(unittest.TestCase):
 		the delegate would spill to the evaluator."""
 		return [dict(r) for r in frappe.db.sql(
 			"""select a.name account, a.root_type, a.account_type, a.account_name,
+					  a.is_group,
 					  coalesce(sum(g.debit),0) debit, coalesce(sum(g.credit),0) credit
 			   from `tabAccount` a
 			   join `tabGL Entry` g on g.account=a.name and g.is_cancelled=0
@@ -477,3 +478,156 @@ class TestCloseAuditorParity(unittest.TestCase):
 		with self.assertRaises(InvalidArgumentError):
 			self._call_record("agent:agent-close-auditor:no-such-run",
 							  findings=[], coverage={}, scope=self._scope())
+
+	# ------------------------------------------------------------------ #
+	# (5) FIX 2 — A17 drift must SUPPRESS A16 auto-resolve (ordering)
+	# ------------------------------------------------------------------ #
+	def test_watermark_drift_blocks_autoresolve_of_omitted_finding(self):
+		result = self._container_result()
+		sk1 = "agent:agent-close-auditor:drift-seed"
+		self._mk_run(sk1)
+		self._call_record(sk1, findings=result["findings"], coverage=result["coverage"],
+						  scope=self._scope(), truncated=False)
+		self.assertEqual(
+			len(frappe.get_all(FINDING, filters={"owner": self.owner, "state": "open"})), 3)
+
+		# Run 2 OMITS the revenue finding (fully evaluated -> would auto-resolve) AND
+		# a backdated JV lands after the watermark was stamped. FIX 2: drift now gates
+		# A16, so the omitted finding must STAY OPEN and the run is partial.
+		remaining = [f for f in result["findings"] if f["token"] != "ca-cl-a4e6"]
+		sk2 = "agent:agent-close-auditor:drift-run"
+		self._mk_run(sk2, stamp_watermark=True)
+		frappe.set_user("Administrator")
+		self._gl(self.cash, 0, 10, "PJV-DRIFT2")
+		frappe.db.commit()
+		try:
+			out = self._call_record(sk2, findings=remaining, coverage=result["coverage"],
+									scope=self._scope(), truncated=False)
+			self.assertEqual(out["status"], "partial")
+			self.assertEqual(
+				{r.state for r in frappe.get_all(
+					FINDING, filters={"owner": self.owner, "rule_id": "ca-cl-a4e6"},
+					fields=["state"])},
+				{"open"},
+				"drift must suppress auto-resolve of the omitted finding (FIX 2)")
+			self.assertEqual(
+				len(frappe.get_all(FINDING, filters={"owner": self.owner, "state": "open"})), 3)
+		finally:
+			frappe.db.sql("delete from `tabGL Entry` where company=%s and voucher_no=%s",
+						  (COMPANY, "PJV-DRIFT2"))
+			frappe.db.commit()
+
+	# ------------------------------------------------------------------ #
+	# (6) FIX 1 — scoped-visibility must SKIP A16 auto-resolve (A12)
+	# ------------------------------------------------------------------ #
+	def test_scoped_visibility_blocks_autoresolve(self):
+		import json as _json
+		result = self._container_result()
+		sk1 = "agent:agent-close-auditor:scoped-seed"
+		self._mk_run(sk1)
+		self._call_record(sk1, findings=result["findings"], coverage=result["coverage"],
+						  scope=self._scope(), truncated=False)
+		self.assertEqual(
+			len(frappe.get_all(FINDING, filters={"owner": self.owner, "state": "open"})), 3)
+
+		# Run 2 omits revenue (would auto-resolve) but its stamped permission_profile
+		# shows the run-as user record-sliced on a GL dimension (Cost Center). FIX 1
+		# derives that FRESH from the profile and skips auto-resolve entirely.
+		remaining = [f for f in result["findings"] if f["token"] != "ca-cl-a4e6"]
+		sk2 = "agent:agent-close-auditor:scoped-run"
+		run2 = self._mk_run(sk2)
+		frappe.db.set_value(
+			RUN, run2, "permission_profile",
+			_json.dumps({"hash": "x", "roles": [],
+						 "user_permissions": {"Cost Center": ["Main - CC"]}}),
+			update_modified=False)
+		frappe.db.commit()
+		out = self._call_record(sk2, findings=remaining, coverage=result["coverage"],
+								scope=self._scope(), truncated=False)
+		self.assertEqual(out["status"], "partial")
+		self.assertIn("scoped visibility", (out["coverage_note"] or "").lower())
+		self.assertEqual(
+			{r.state for r in frappe.get_all(
+				FINDING, filters={"owner": self.owner, "rule_id": "ca-cl-a4e6"},
+				fields=["state"])},
+			{"open"},
+			"a scoped run must not auto-resolve the omitted finding (FIX 1)")
+		self.assertEqual(
+			len(frappe.get_all(FINDING, filters={"owner": self.owner, "state": "open"})), 3)
+
+	# ------------------------------------------------------------------ #
+	# (7) FIX 6 — under-fetch (zero rows_consumed) must SKIP A16
+	# ------------------------------------------------------------------ #
+	def test_rowcount_shortfall_blocks_autoresolve(self):
+		result = self._container_result()
+		sk1 = "agent:agent-close-auditor:short-seed"
+		self._mk_run(sk1)
+		self._call_record(sk1, findings=result["findings"], coverage=result["coverage"],
+						  scope=self._scope(), truncated=False,
+						  rows_consumed=result["rows_consumed"])
+		self.assertEqual(
+			len(frappe.get_all(FINDING, filters={"owner": self.owner, "state": "open"})), 3)
+
+		# Run 2: an EMPTY fetch (rows_consumed=0) reporting zero findings, full
+		# coverage, not truncated. The watermark (4 GL rows) proves the ledger is
+		# non-empty -> material under-read -> partial + auto-resolve skipped (FIX 6).
+		sk2 = "agent:agent-close-auditor:short-run"
+		self._mk_run(sk2, stamp_watermark=True)
+		out = self._call_record(sk2, findings=[], coverage=result["coverage"],
+								scope=self._scope(), truncated=False, rows_consumed=0)
+		self.assertEqual(out["status"], "partial")
+		self.assertIn("under-read", (out["coverage_note"] or "").lower())
+		self.assertEqual(
+			len(frappe.get_all(FINDING, filters={"owner": self.owner, "state": "open"})), 3,
+			"an under-read run must not auto-resolve prior findings (FIX 6)")
+
+	# ------------------------------------------------------------------ #
+	# (8) FIX 7 — group/parent + id-only loan rows match the legacy oracle
+	# ------------------------------------------------------------------ #
+	def test_group_and_id_only_rows_match_legacy(self):
+		baseline = self._container_result()
+		poisoned = self._rollups() + [
+			# a group/parent carrying an aggregated debit — must be DROPPED (is_group),
+			# never summed into the TB nor fired as a loan (else TB out by 999999).
+			{"account": f"Loans Group - {ABBR}", "root_type": "Liability",
+			 "account_type": "Payable", "account_name": "Loans", "is_group": 1,
+			 "debit": 999999.0, "credit": 0.0},
+			# an id-only loan keyword: the account NAME is not loan-like, only its id
+			# contains 'loan' — must NOT fire the loan rule (legacy matches name only).
+			{"account": f"loan-legacy-code - {ABBR}", "root_type": "Liability",
+			 "account_type": "Payable", "account_name": "Sundry Creditors", "is_group": 0,
+			 "debit": 0.0, "credit": 0.0},
+		]
+		injected = self._container_result(rollups=poisoned)
+		self.assertEqual(baseline["integrity_digest"], injected["integrity_digest"])
+		self.assertEqual(
+			self._canon_container(baseline["findings"]),
+			self._canon_container(injected["findings"]))
+		# The parity gate still holds against the legacy oracle with the noise rows.
+		self.assertEqual(
+			self._canon_legacy(self._legacy_findings()),
+			self._canon_container(injected["findings"]))
+
+	# ------------------------------------------------------------------ #
+	# (9) FIX 5 — misconfigured materiality: container not_evaluable, legacy raises
+	# ------------------------------------------------------------------ #
+	def test_misconfigured_materiality_not_evaluable_while_legacy_raises(self):
+		from jarvis.exceptions import InvalidArgumentError
+		from jarvis.tools.compute_materiality import compute_materiality
+
+		bad = {"tolerance_dp": 1, "materiality": {
+			"benchmark_value": -1, "percentage": 0, "engagement_risk_level": "HIGH RISK"}}
+		res = self.ev.evaluate(self._scope(), bad, self._rollups())
+		# The two wrong-side rules are not_evaluable with the misconfig reason (never a
+		# silently-wrong floor).
+		for token in ("ca-cl-a4e6", "ca-cl-c058"):
+			self.assertIn("not_evaluable(materiality misconfigured", res["coverage"][token])
+		# The always-on structural TB check still ran (and fires — fixture TB out 1000).
+		self.assertEqual(res["coverage"]["ca-cl-7f31"], "evaluated")
+		self.assertTrue(any(f["token"] == "ca-cl-7f31" for f in res["findings"]))
+		self.assertFalse(
+			any(f["token"] in ("ca-cl-a4e6", "ca-cl-c058") for f in res["findings"]))
+		# Legacy compute_materiality REJECTS the same inputs outright.
+		with self.assertRaises(InvalidArgumentError):
+			compute_materiality(benchmark_value=-1, percentage=0,
+								engagement_risk_level="HIGH RISK")

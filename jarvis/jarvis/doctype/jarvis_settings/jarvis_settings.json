@@ -97,6 +97,7 @@
   "agent_skills_sync_status",
   "agent_catalog_dirty",
   "agent_catalog_version",
+  "agent_run_budget_monthly",
   "learned_skills_synced_at",
   "learned_skills_sync_status",
   "agent_tools_section",
@@ -723,6 +724,13 @@
    "hidden": 1,
    "label": "Agent Catalog Version",
    "read_only": 1
+  },
+  {
+   "default": "62",
+   "description": "A14: monthly run budget PER installed agent (manual + scheduled runs counted together; failed runs excluded). A per-tenant aggregate ceiling (budget x enabled installs) also applies. Floored at 31 (a full daily schedule) when set below it, so a low value can never wedge every scheduled agent for a month. Raise it to allow more frequent or more numerous agent runs before scans are skipped.",
+   "fieldname": "agent_run_budget_monthly",
+   "fieldtype": "Int",
+   "label": "Agent Run Budget (monthly, per installation)"
   },
   {
    "fieldname": "learned_skills_synced_at",

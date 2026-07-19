@@ -438,6 +438,66 @@ def _watermark_drift(run_doc, scope: dict) -> bool:
 	return False
 
 
+def _scoped_visibility(run_doc, inst) -> bool:
+	"""FIX 1 / A12: is this run's run-as identity record-sliced on a GL dimension?
+
+	A User Permission on a GL dimension (Cost Center / Project / Account / party …)
+	makes every aggregate the run-as user reads a SLICE — a numerically WRONG total,
+	not merely a narrower one — so a scoped run must NEVER auto-resolve findings it
+	could not see (closing an unseen blocker on a partial view is a silent
+	regression). Derived FRESH from the Run's stamped ``permission_profile`` (the
+	run-as user's user_permissions snapshotted AT LAUNCH — the authoritative signal),
+	so a User Permission added AFTER install is caught even though the installation's
+	``scoped_visibility`` flag (stamped only at map/backfill time) has gone stale.
+	Falls back to that stamped flag when the profile is absent (a legacy run, or one
+	whose profile computation failed)."""
+	import json as _json
+
+	from jarvis.jarvis.doctype.jarvis_agent_installation.jarvis_agent_installation import (
+		_GL_SCOPED_DIMENSIONS,
+	)
+
+	profile = run_doc.get("permission_profile")
+	if profile:
+		try:
+			ups = (_json.loads(profile) or {}).get("user_permissions") or {}
+			# A GL-dimension key present AND carrying at least one value = a live slice.
+			if any(ups.get(dt) for dt in _GL_SCOPED_DIMENSIONS):
+				return True
+		except Exception:
+			pass
+	return bool(inst.get("scoped_visibility"))
+
+
+def _rowcount_shortfall(run_doc, rows_consumed) -> bool:
+	"""FIX 6: did the evaluator actually READ the ledger? The watermark stamped at
+	launch (``wm_row_count`` — count of in-scope GL entries) proves whether the
+	ledger is non-empty. If the evaluator reports it consumed ZERO rollup rows while
+	the watermark shows rows exist, its fetch under-read: a green, zero-finding run
+	that would otherwise auto-resolve real blockers it never observed. Force partial
+	+ skip auto-resolve.
+
+	Only the ZERO-read is gated. A per-account rollup count is NOT magnitude-
+	comparable to the GL-entry watermark (cancelled + pre-period entries legitimately
+	differ), so a non-zero count is deliberately not asserted equal — that would be a
+	false-positive machine. ``rows_consumed=None`` (a delegate/evaluator that does not
+	yet report it) means "cannot reconcile", never a false shortfall."""
+	stamped = run_doc.get("wm_row_count")
+	if stamped is None:
+		return False
+	try:
+		if int(stamped) <= 0:
+			return False  # empty (or unknown) ledger — nothing to under-read
+	except (TypeError, ValueError):
+		return False
+	if rows_consumed is None:
+		return False
+	try:
+		return int(rows_consumed) <= 0
+	except (TypeError, ValueError):
+		return False
+
+
 def record_delegate_run(
 	run,
 	installation,
@@ -450,6 +510,7 @@ def record_delegate_run(
 	canvas_ref: str | None = None,
 	integrity_digest: str | None = None,
 	dashboard: str | None = None,
+	rows_consumed: int | None = None,
 ):
 	"""Persist a delegate's evaluator findings onto its running Run (A16/A17).
 
@@ -526,13 +587,35 @@ def record_delegate_run(
 		fd.insert()
 		_reassign_owner(FINDING, fd.name, owner)
 
+	# --- A17 watermark recheck (FIX 2: HOISTED before the A16 gate) ------------
+	# Computed BEFORE the auto-resolve loop so it can gate it: a run that observed an
+	# INCONSISTENT GL snapshot (a backdated JV landing between two chunk fetches) must
+	# not close prior findings on that drifted view — the same "never close on an
+	# inconsistent snapshot" principle already applied to ``truncated``. Depends only
+	# on run_doc + scope, so the hoist is side-effect-free.
+	wm_drift = _watermark_drift(run_doc, scope)
+
+	# --- A12 scoped-visibility recheck (FIX 1) --------------------------------
+	# A record-sliced run-as identity computes numerically WRONG aggregates, so a
+	# scoped run must never auto-resolve findings it could not see. Derived FRESH
+	# from the run's stamped permission_profile (not the install's stale flag).
+	scoped = _scoped_visibility(run_doc, inst)
+
+	# --- ledger under-read reconciliation (FIX 6) -----------------------------
+	# The watermark proves the ledger is non-empty; a zero-read means the evaluator
+	# fetched nothing — a green "zero findings" run that would otherwise auto-resolve
+	# real blockers. Gate it.
+	row_shortfall = _rowcount_shortfall(run_doc, rows_consumed)
+
 	# --- A16 coverage-scoped auto-resolve --------------------------------------
-	# HARD RULE: a truncated run auto-resolves NOTHING (its findings list is
-	# incomplete; closing an unseen blocker would be a silent regression). Only
-	# findings whose token was FULLY EVALUATED this run AND that belong to THIS
-	# run's company scope are eligible; empty-company legacy rows are exempt.
+	# HARD RULE: a run that is truncated, drift-inconsistent (A17), scope-sliced (A12)
+	# or under-read auto-resolves NOTHING — its findings list is not a trustworthy
+	# full view of the books, and closing an unseen blocker would be a silent
+	# regression. Only findings whose token was FULLY EVALUATED this run AND that
+	# belong to THIS run's company scope are eligible; empty-company legacy rows are
+	# exempt.
 	evaluated_tokens, coverage_notes = _coverage_summary(coverage)
-	if not truncated and evaluated_tokens:
+	if not truncated and not wm_drift and not scoped and not row_shortfall and evaluated_tokens:
 		candidates = frappe.get_all(
 			FINDING,
 			filters={
@@ -553,15 +636,15 @@ def record_delegate_run(
 				continue
 			frappe.db.set_value(FINDING, c.name, "state", "resolved", update_modified=False)
 
-	# --- A17 watermark recheck -------------------------------------------------
-	wm_drift = _watermark_drift(run_doc, scope)
-
 	# --- status + coverage note ------------------------------------------------
 	dropped_notes = [
 		f"rejected {d.get('ref_doctype','?')}/{d.get('ref_name','?')} ({d.get('reason','invalid')})"
 		for d in dropped
 	]
-	partial = bool(truncated) or wm_drift or bool(dropped) or bool(coverage_notes)
+	partial = (
+		bool(truncated) or wm_drift or scoped or row_shortfall
+		or bool(dropped) or bool(coverage_notes)
+	)
 	status = "partial" if partial else "completed"
 
 	note_parts = []
@@ -569,6 +652,10 @@ def record_delegate_run(
 		note_parts.append("scan truncated; findings incomplete")
 	if wm_drift:
 		note_parts.append("GL changed during scan — re-run advised")
+	if scoped:
+		note_parts.append("scoped visibility — findings not auto-resolved")
+	if row_shortfall:
+		note_parts.append("ledger under-read vs watermark — re-run advised")
 	if coverage_notes:
 		note_parts.append("not evaluable: " + "; ".join(coverage_notes))
 	if dropped_notes:
@@ -576,14 +663,22 @@ def record_delegate_run(
 	coverage_note = " | ".join(note_parts)
 
 	# Full, machine-readable coverage manifest for the Findings board / Phase 4:
-	# the per-rule coverage + not_evaluable + dropped refs + watermark verdict.
+	# the per-rule coverage + not_evaluable + dropped refs + every auto-resolve-gate
+	# verdict (drift / scoped / under-read) so the board can explain WHY a run held
+	# findings open. When scoped, the fully-evaluated tokens are surfaced as
+	# not-evaluable-scoped (their container verdicts ran on a sliced view).
 	coverage_blob = _json.dumps({
 		"coverage": coverage,
 		"not_evaluable": coverage_notes,
+		"not_evaluable_scoped": sorted(evaluated_tokens) if scoped else [],
 		"dropped": dropped,
 		"watermark_drift": wm_drift,
+		"scoped_visibility": scoped,
+		"row_shortfall": row_shortfall,
+		"rows_consumed": rows_consumed,
+		"wm_row_count": run_doc.get("wm_row_count"),
 		"truncated": bool(truncated),
-	}, sort_keys=True)
+	}, sort_keys=True, default=str)
 
 	run_values = {
 		"status": status,

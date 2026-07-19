@@ -125,6 +125,7 @@ def record_agent_run(
 	canvas_ref: str | None = None,
 	integrity_digest: str | None = None,
 	dashboard: str | None = None,
+	rows_consumed=None,
 ) -> dict:
 	"""Land a delegate's evaluator output on its running Jarvis Agent Run.
 
@@ -143,6 +144,11 @@ def record_agent_run(
 	    ``jarvis__save_agent_dashboard`` — linked on the Run. When omitted (and the
 	    delegate authored none), a minimal A2-safe dashboard is built server-side
 	    from the persisted findings so every run yields one openable dashboard.
+	  rows_consumed: the count of rollup rows the evaluator actually read (its
+	    ``rows_consumed`` output). The bench reconciles it against the GL watermark it
+	    stamped at launch — a ZERO-read on a proven-non-empty ledger forces the run
+	    partial and skips A16 auto-resolve (an under-fetch must never read as a clean,
+	    finding-closing run). Omit it and reconciliation is simply skipped.
 
 	Returns ``{run, status, findings_count, blocker_count, dropped, coverage_note,
 	dashboard}``.
@@ -194,6 +200,16 @@ def record_agent_run(
 	scope = _as_dict(scope)
 	truncated = bool(truncated)
 
+	# A model-supplied rows_consumed is only ever used to DETECT an under-fetch (it
+	# can force a run partial, never mask one — a bogus value cannot upgrade a run to
+	# completed), so coercing a bad value to None (skip reconciliation) is safe.
+	rows_consumed_val = None
+	if rows_consumed is not None:
+		try:
+			rows_consumed_val = int(rows_consumed)
+		except (TypeError, ValueError):
+			rows_consumed_val = None
+
 	valid, dropped = _validate_findings(raw_findings, token_set, allowed_refs)
 
 	run_doc = agent_runs.record_delegate_run(
@@ -207,6 +223,7 @@ def record_agent_run(
 		canvas_ref=canvas_ref,
 		integrity_digest=integrity_digest,
 		dashboard=(str(dashboard).strip() or None) if dashboard else None,
+		rows_consumed=rows_consumed_val,
 	)
 
 	return {

@@ -482,6 +482,15 @@ def install_agent(agent_slug: str) -> dict:
 	server-side (System Manager always allowed)."""
 	listing = frappe.get_doc(LISTING, agent_slug)  # All-role read
 	me = frappe.session.user
+	# FIX 11: an agent runs AS a named user (run_as_user defaults to the installer),
+	# and the identity guard fail-closes on Administrator/Guest. Catch that here with
+	# an actionable message instead of letting doc.insert() surface the raw validation
+	# throw ("Run-as user must be an existing, enabled, non-system user").
+	if me in ("Administrator", "Guest"):
+		frappe.throw(
+			_("Log in as a named user, or map a run-as user — agents cannot run as "
+			  "Administrator.")
+		)
 	if not _user_allowed_for_agent(listing, me):
 		frappe.throw(
 			_("Your roles do not permit installing this agent."), frappe.PermissionError
@@ -631,17 +640,11 @@ def set_run_as_user(installation: str, user: str) -> dict:
 	doc = frappe.get_doc(INSTALLATION, installation)
 	doc.check_permission("write")  # S3 owner-gate
 	doc.run_as_user = user
-	doc.save()  # validate() runs the A4 escalation + A12 permission guard
-	log_activity(
-		agent=doc.agent,
-		agent_title=frappe.db.get_value(LISTING, doc.agent, "title"),
-		installation=doc.name,
-		action="run_as_changed",
-		# The mapped user is the material fact; it is not sensitive (an owner can
-		# already see their own install), and cross-user mappings are auditable.
-		detail=f"run as {doc.run_as_user}"
-		+ (" (scoped visibility)" if doc.scoped_visibility else ""),
-	)
+	# validate() runs the A4 escalation + A12 permission guard; on_update() writes the
+	# cross-user-mapping audit row (FIX 10 — the audit now lives in the controller so
+	# it fires on EVERY write surface, Desk / import / bulk / direct save, not just
+	# this SPA endpoint; a self-map is correctly not audited).
+	doc.save()
 	frappe.db.commit()
 	return {
 		"ok": True,
@@ -726,7 +729,18 @@ def run_agent_now(installation: str) -> dict:
 		frappe.throw(
 			_("Only auditor agents run on demand; operators draft through the Approval Board.")
 		)
-	from jarvis.chat.agent_scheduler import _launch_audit, _valid_owner
+	from jarvis.chat.agent_scheduler import _launch_audit, _over_run_budget, _valid_owner
+
+	# A14: the manual path shares the SAME per-installation + per-tenant monthly
+	# budget as the scheduler (counting manual + scheduled runs together), so a
+	# manual "Run now" loop cannot drain the subscription the scheduler is capped
+	# against. Checked before dispatch; a plain COUNT, identity-agnostic.
+	over, why = _over_run_budget(installation)
+	if over:
+		frappe.throw(
+			_("Monthly agent-run budget reached ({0}). Runs resume next month, or an "
+			  "admin can raise the budget in Jarvis Settings.").format(why)
+		)
 
 	# Fail-closed identity guard: refuse to run an audit AS Administrator / Guest /
 	# a disabled RUN-AS user ON SOMEONE ELSE'S behalf (the escalation a System

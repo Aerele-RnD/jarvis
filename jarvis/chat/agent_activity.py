@@ -32,11 +32,15 @@ def log_activity(*, agent, agent_title, installation, action, detail=None, run=N
 			"run": run or "",
 			"detail": detail or "",
 		})
-		if owner:
-			# insert() only fills owner when unset, so this sticks.
-			doc.owner = owner
 		doc.flags.ignore_permissions = True
 		doc.insert(ignore_permissions=True)
+		# insert() stamps owner = session.user (the scheduler runs as Administrator,
+		# an admin acting on someone else's install is a System Manager), so an
+		# explicit owner is pinned AFTER insert — mirroring _reassign_owner on the
+		# Run/Finding rows — else the owner-scoped (if_owner) feed would misattribute
+		# every scheduler / cross-user row to Administrator.
+		if owner and owner != doc.owner:
+			frappe.db.set_value(ACTIVITY, doc.name, "owner", owner, update_modified=False)
 	except Exception:
 		try:
 			frappe.log_error(
