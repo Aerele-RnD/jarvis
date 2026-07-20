@@ -14,6 +14,8 @@ from jarvis.chat import usage, usage_push
 USETT = "Jarvis User Settings"
 MODEL_USAGE = "Jarvis User Model Usage"
 USER_A = "jarvis-push-a@example.test"
+USER_B = "jarvis-push-b@example.test"
+_ALL_USERS = (USER_A, USER_B)
 
 
 def _ensure_user(email):
@@ -26,10 +28,11 @@ def _ensure_user(email):
 
 
 def _cleanup():
-	for n in frappe.get_all(MODEL_USAGE, filters={"parent": USER_A}, pluck="name"):
-		frappe.delete_doc(MODEL_USAGE, n, ignore_permissions=True, force=True)
-	for n in frappe.get_all(USETT, filters={"user": USER_A}, pluck="name"):
-		frappe.delete_doc(USETT, n, ignore_permissions=True, force=True)
+	for user in _ALL_USERS:
+		for n in frappe.get_all(MODEL_USAGE, filters={"parent": user}, pluck="name"):
+			frappe.delete_doc(MODEL_USAGE, n, ignore_permissions=True, force=True)
+		for n in frappe.get_all(USETT, filters={"user": user}, pluck="name"):
+			frappe.delete_doc(USETT, n, ignore_permissions=True, force=True)
 
 
 class _Base(FrappeTestCase):
@@ -37,6 +40,7 @@ class _Base(FrappeTestCase):
 		self._orig = frappe.session.user
 		frappe.set_user("Administrator")
 		_ensure_user(USER_A)
+		_ensure_user(USER_B)
 		_cleanup()
 		frappe.db.commit()
 
@@ -46,18 +50,26 @@ class _Base(FrappeTestCase):
 		frappe.db.commit()
 		frappe.set_user(self._orig)
 
-	def _seed(self):
-		usage.get_or_create_user_settings(USER_A)
+	def _seed_user(self, user, *, month_in, month_out, models):
+		"""Seed ``user``'s aggregate + per-model rows. ``models`` is
+		``{model: (in_tokens, out_tokens, limit)}``."""
+		usage.get_or_create_user_settings(user)
 		month = usage.current_month_key()
 		frappe.db.set_value(
-			USETT, {"user": USER_A},
-			{"usage_month": month, "month_input_tokens": 30,
-			 "month_output_tokens": 20, "month_tokens": 50}, update_modified=False)
-		usage.set_model_limit(USER_A, "gpt-4o", 0)
-		frappe.db.set_value(
-			MODEL_USAGE, {"parent": USER_A, "model": "gpt-4o", "month_key": month},
-			{"month_input_tokens": 18, "month_output_tokens": 12}, update_modified=False)
+			USETT, {"user": user},
+			{"usage_month": month, "month_input_tokens": month_in,
+			 "month_output_tokens": month_out, "month_tokens": month_in + month_out},
+			update_modified=False)
+		for model, (in_tok, out_tok, limit) in models.items():
+			usage.set_model_limit(user, model, limit)
+			frappe.db.set_value(
+				MODEL_USAGE, {"parent": user, "model": model, "month_key": month},
+				{"month_input_tokens": in_tok, "month_output_tokens": out_tok},
+				update_modified=False)
 		frappe.db.commit()
+
+	def _seed(self):
+		self._seed_user(USER_A, month_in=30, month_out=20, models={"gpt-4o": (18, 12, 0)})
 
 	def _restore_model_usage_unique_index(self):
 		# add_unique no-ops if the constraint is already present, so this is
@@ -143,6 +155,53 @@ class TestBuildRollup(_Base):
 		rollup, _truncated = usage_push._build_rollup()
 		u = {x["email"]: x for x in rollup["users"]}[USER_A]
 		self.assertEqual(u["per_model"], {"gpt-4o": {"in": 25, "out": 15}})
+
+	def test_build_rollup_per_model_correct_for_multiple_users(self):
+		# _build_rollup batches per-model rows across ALL users in one query
+		# (parent IN (...)) and buckets them in Python. This must bucket
+		# strictly by parent - a bucketing bug (e.g. keying only by model)
+		# would leak one user's tokens into another's per_model entry. A and
+		# B share "gpt-4o" (different token counts) and each also has a
+		# model the other doesn't, so any cross-user leak or drop shows up.
+		self._seed_user(
+			USER_A, month_in=48, month_out=32,
+			models={"gpt-4o": (18, 12, 0), "claude-sonnet": (10, 10, 0)},
+		)
+		self._seed_user(
+			USER_B, month_in=140, month_out=60,
+			models={"gpt-4o": (100, 50, 0), "gpt-4o-mini": (40, 10, 0)},
+		)
+		real_sql = frappe.db.sql
+		model_usage_queries = []
+
+		def counting_sql(query, *args, **kwargs):
+			if "tabJarvis User Model Usage" in str(query):
+				model_usage_queries.append(query)
+			return real_sql(query, *args, **kwargs)
+
+		with patch.object(frappe.db, "sql", counting_sql):
+			rollup, truncated = usage_push._build_rollup()
+		# ONE query for all users' per-model rows, not one per user (N+1).
+		self.assertEqual(
+			len(model_usage_queries), 1,
+			f"expected 1 batched per-model query, got {len(model_usage_queries)}",
+		)
+		self.assertFalse(truncated)
+		by_email = {x["email"]: x for x in rollup["users"]}
+		a = by_email[USER_A]
+		self.assertEqual(a["tokens_in"], 48)
+		self.assertEqual(a["tokens_out"], 32)
+		self.assertEqual(
+			a["per_model"],
+			{"gpt-4o": {"in": 18, "out": 12}, "claude-sonnet": {"in": 10, "out": 10}},
+		)
+		b = by_email[USER_B]
+		self.assertEqual(b["tokens_in"], 140)
+		self.assertEqual(b["tokens_out"], 60)
+		self.assertEqual(
+			b["per_model"],
+			{"gpt-4o": {"in": 100, "out": 50}, "gpt-4o-mini": {"in": 40, "out": 10}},
+		)
 
 
 class TestPushJob(_Base):
