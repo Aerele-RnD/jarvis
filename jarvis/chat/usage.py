@@ -291,6 +291,64 @@ def _insert_model_row(
 	)
 
 
+def _atomic_insert_or_merge_model_usage(
+	user: str, model: str, month: str, in_tokens: int, out_tokens: int, limit: int, now
+) -> bool:
+	"""Insert a fresh (parent, model, month) child row, or - if a racing writer
+	already created one since our caller's existence check (two turns on
+	DIFFERENT conversations can both miss ``_current_model_row_name``'s SELECT
+	for the same model's first use in a month, since the single-flight guard
+	in ``jarvis.chat.api`` is only per-conversation) - merge this call's delta
+	into theirs instead of creating a duplicate row.
+
+	Atomic: backed by the unique index on (parent, parentfield, model,
+	month_key) added by ``jarvis.patches.v2_02_unique_model_usage_row``, via
+	``INSERT ... ON DUPLICATE KEY UPDATE``, so a racing writer's delta can
+	never be lost OR duplicated. ``limit`` is only applied on the winning
+	INSERT - the loser's write must not clobber a cap the winner (or an
+	admin, via ``set_model_limit``) may have set concurrently.
+
+	Returns True iff THIS call's row was the one that got inserted (vs.
+	merging into an existing row) - the caller uses this to gate the
+	once-per-month stale-row cleanup so it only runs on the actual insert."""
+	frappe.db.sql(
+		"""
+		INSERT INTO `tabJarvis User Model Usage`
+			(name, creation, modified, modified_by, owner, docstatus, idx,
+			 parent, parentfield, parenttype,
+			 model, month_key, month_input_tokens, month_output_tokens, monthly_token_limit)
+		VALUES
+			(%(name)s, %(now)s, %(now)s, %(admin)s, %(admin)s, 0, %(idx)s,
+			 %(user)s, %(pfield)s, %(ptype)s,
+			 %(model)s, %(month)s, %(in)s, %(out)s, %(limit)s)
+		ON DUPLICATE KEY UPDATE
+			month_input_tokens = month_input_tokens + VALUES(month_input_tokens),
+			month_output_tokens = month_output_tokens + VALUES(month_output_tokens),
+			modified = VALUES(modified)
+		""",
+		{
+			"name": frappe.generate_hash(length=10),
+			"now": now,
+			"admin": "Administrator",
+			"idx": _next_child_idx(user),
+			"user": user,
+			"pfield": MODEL_USAGE_FIELD,
+			"ptype": USER_SETTINGS,
+			"model": model,
+			"month": month,
+			"in": int(in_tokens),
+			"out": int(out_tokens),
+			"limit": int(limit),
+		},
+	)
+	# Read rowcount BEFORE commit (commit can reset the cursor) - MariaDB
+	# reports 1 for a plain INSERT and 2 when ON DUPLICATE KEY UPDATE fired.
+	# Mirrors the rowcount idiom in jarvis.chat.turn_recovery._conditional_clear
+	# and jarvis_admin_v2.fleet.pool's pool-claim race guard.
+	cursor = getattr(frappe.db, "_cursor", None)
+	return bool(cursor and cursor.rowcount == 1)
+
+
 def _upsert_model_usage(user: str, model: str, month: str, in_tokens: int, out_tokens: int, now) -> None:
 	"""Upsert the (user, model, current-month) child row with this turn's delta.
 
@@ -303,6 +361,9 @@ def _upsert_model_usage(user: str, model: str, month: str, in_tokens: int, out_t
 	so an admin-set cap is never silently dropped."""
 	name = _current_model_row_name(user, model, month)
 	if name:
+		# A single UPDATE on a row known to exist is race-safe on its own -
+		# MySQL serializes concurrent UPDATEs to the same row - so the fast,
+		# common-case path skips the atomic insert-or-merge machinery below.
 		frappe.db.sql(
 			"""UPDATE `tabJarvis User Model Usage`
 			   SET month_input_tokens = month_input_tokens + %(in)s,
@@ -312,30 +373,32 @@ def _upsert_model_usage(user: str, model: str, month: str, in_tokens: int, out_t
 			{"in": int(in_tokens), "out": int(out_tokens), "now": now, "name": name},
 		)
 	else:
+		# Race-prone: two turns in DIFFERENT conversations can both reach here
+		# for the same model's first use in a month (see
+		# _atomic_insert_or_merge_model_usage's docstring). The unique index
+		# makes the loser's write merge instead of duplicating.
 		limit = _prior_model_limit(user, model, month)
-		_insert_model_row(
-			user,
-			model,
-			month,
-			in_tokens=in_tokens,
-			out_tokens=out_tokens,
-			limit=limit,
-			now=now,
+		inserted = _atomic_insert_or_merge_model_usage(
+			user, model, month, in_tokens, out_tokens, limit, now
 		)
-		# This model's stale-month rows (cap already carried forward) go now.
-		frappe.db.sql(
-			"""DELETE FROM `tabJarvis User Model Usage`
-			   WHERE parent = %(user)s AND parenttype = %(ptype)s
-				 AND parentfield = %(pfield)s AND model = %(model)s
-				 AND month_key != %(month)s""",
-			{
-				"user": user,
-				"ptype": USER_SETTINGS,
-				"pfield": MODEL_USAGE_FIELD,
-				"model": model,
-				"month": month,
-			},
-		)
+		if inserted:
+			# This model's stale-month rows (cap already carried forward) go now.
+			frappe.db.sql(
+				"""DELETE FROM `tabJarvis User Model Usage`
+				   WHERE parent = %(user)s AND parenttype = %(ptype)s
+					 AND parentfield = %(pfield)s AND model = %(model)s
+					 AND month_key != %(month)s""",
+				{
+					"user": user,
+					"ptype": USER_SETTINGS,
+					"pfield": MODEL_USAGE_FIELD,
+					"model": model,
+					"month": month,
+				},
+			)
+		# else: a racing writer already inserted the current-month row for
+		# this model and our delta merged into it above; that writer's own
+		# call already ran (or will run) the stale-row cleanup.
 	# Opportunistic: drop stale usage-only rows (no cap) for all this user's models.
 	frappe.db.sql(
 		"""DELETE FROM `tabJarvis User Model Usage`

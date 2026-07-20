@@ -58,6 +58,61 @@ class _Base(FrappeTestCase):
 		)
 		frappe.db.commit()
 
+	def _restore_model_usage_unique_index(self):
+		# add_unique no-ops if the constraint is already present, so this is
+		# safe to register unconditionally in addCleanup.
+		frappe.db.add_unique(
+			MODEL_USAGE,
+			["parent", "parentfield", "model", "month_key"],
+			constraint_name="parent_field_model_month",
+		)
+		frappe.db.commit()
+
+	def _force_second_dupe_row(self, model, in_tokens, out_tokens, limit=0):
+		"""Insert a SECOND child row for the same (parent, model, month) key,
+		simulating a duplicate that predates the fix (or any other data
+		anomaly) that jarvis.patches.v2_02_unique_model_usage_row's unique
+		index would otherwise now prevent. _over_model_limit must SUM across
+		it rather than read one arbitrary row.
+
+		The unique index is dropped for the duration of the test (MariaDB
+		enforces it even with unique_checks=0 - that session variable is
+		only a bulk-load hint, not a real bypass) and restored via
+		addCleanup, which runs AFTER tearDown's _cleanup() has deleted the
+		fixture's rows - so the restore never fights the duplicate it's
+		cleaning up after."""
+		now = frappe.utils.now_datetime()
+		month = usage.current_month_key()
+		frappe.db.sql(
+			"ALTER TABLE `tabJarvis User Model Usage` DROP INDEX `parent_field_model_month`"
+		)
+		self.addCleanup(self._restore_model_usage_unique_index)
+		frappe.db.sql(
+			"""
+			INSERT INTO `tabJarvis User Model Usage`
+				(name, creation, modified, modified_by, owner, docstatus, idx,
+				 parent, parentfield, parenttype,
+				 model, month_key, month_input_tokens, month_output_tokens, monthly_token_limit)
+			VALUES
+				(%(name)s, %(now)s, %(now)s, 'Administrator', 'Administrator', 0, 999,
+				 %(user)s, %(pfield)s, %(ptype)s,
+				 %(model)s, %(month)s, %(in)s, %(out)s, %(limit)s)
+			""",
+			{
+				"name": frappe.generate_hash(length=10),
+				"now": now,
+				"user": USER_A,
+				"pfield": "user_model_usage",
+				"ptype": "Jarvis User Settings",
+				"model": model,
+				"month": month,
+				"in": in_tokens,
+				"out": out_tokens,
+				"limit": limit,
+			},
+		)
+		frappe.db.commit()
+
 
 class TestPerModelGate(_Base):
 	def test_blocks_when_pinned_model_over_limit(self):
@@ -102,7 +157,9 @@ class TestPerModelGate(_Base):
 
 	def test_fail_open_on_db_error(self):
 		self._set_model_usage("gpt-4o", 999, 0, 100)   # would block if it ran
-		with patch("frappe.db.get_value", side_effect=RuntimeError("boom")):
+		# _over_model_limit reads via frappe.db.sql (a SUM/MAX aggregate, not
+		# get_value - see its docstring), so that's the call site to break.
+		with patch("frappe.db.sql", side_effect=RuntimeError("boom")):
 			ok, _reason = policy.validate_can_send(USER_A, model="gpt-4o")
 		# _over_model_limit swallowed the error and allowed the send (G2).
 		self.assertTrue(ok)
@@ -111,3 +168,13 @@ class TestPerModelGate(_Base):
 		usage.get_or_create_user_settings(USER_A)
 		ok, _reason = policy.validate_can_send(USER_A, model="never-used")
 		self.assertTrue(ok)
+
+	def test_over_model_limit_sums_duplicate_rows(self):
+		# Two child rows for the SAME (user, model, month) - the exact shape a
+		# pre-fix race left behind. Neither row alone reaches the cap; only
+		# their SUM does, so a get_value-on-one-row read would wrongly allow.
+		self._set_model_usage("gpt-4o", 30, 20, 100)  # 50 used so far
+		self._force_second_dupe_row("gpt-4o", 30, 20)  # +50 = 100 combined
+		ok, reason = policy.validate_can_send(USER_A, model="gpt-4o")
+		self.assertFalse(ok)
+		self.assertEqual(reason, "usage_limit")

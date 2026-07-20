@@ -54,19 +54,34 @@ def _build_rollup(cap: int = _MAX_USERS) -> tuple[dict, bool]:
 	users = []
 	for s in rows:
 		per_model: dict[str, dict] = {}
-		for r in frappe.get_all(
-			MODEL_USAGE,
-			filters={
-				"parent": s.user, "parenttype": USER_SETTINGS,
-				"parentfield": MODEL_USAGE_FIELD, "month_key": month,
+		# GROUP BY model + SUM rather than one dict-assignment per row: a
+		# write-side race in usage._upsert_model_usage (closed by an atomic
+		# upsert + unique index, but pre-existing duplicates or any future
+		# anomaly must still be tolerated here) could otherwise leave two
+		# child rows for the same (user, model, month), and a plain
+		# per_model[r.model] = {...} last-row-wins assignment would silently
+		# drop one row's tokens from the pushed total.
+		for r in frappe.db.sql(
+			"""
+			SELECT model,
+				   SUM(month_input_tokens) AS in_,
+				   SUM(month_output_tokens) AS out_
+			FROM `tabJarvis User Model Usage`
+			WHERE parent = %(user)s AND parenttype = %(ptype)s
+			  AND parentfield = %(pfield)s AND month_key = %(month)s
+			GROUP BY model
+			""",
+			{
+				"user": s.user, "ptype": USER_SETTINGS,
+				"pfield": MODEL_USAGE_FIELD, "month": month,
 			},
-			fields=["model", "month_input_tokens", "month_output_tokens"],
+			as_dict=True,
 		):
 			if not r.model:
 				continue
 			per_model[r.model] = {
-				"in": int(r.month_input_tokens or 0),
-				"out": int(r.month_output_tokens or 0),
+				"in": int(r.in_ or 0),
+				"out": int(r.out_ or 0),
 			}
 		users.append({
 			"email": s.user,

@@ -37,7 +37,15 @@ def _over_model_limit(user: str, model: str) -> bool:
 	"""True iff ``user`` has a positive per-model cap for ``model`` this month and
 	this month's per-model usage has reached it. Rollover-aware: the lookup is
 	scoped to the current month_key, so a stale row reads as no cap. Fails open on
-	any error — an accounting lookup bug must never block a legitimate send (G2)."""
+	any error — an accounting lookup bug must never block a legitimate send (G2).
+
+	SUMs across all matching rows rather than reading one via
+	``frappe.db.get_value`` — a write-side race in
+	``jarvis.chat.usage._upsert_model_usage`` (closed by an atomic upsert +
+	unique index, but pre-existing duplicates or any future anomaly must
+	still be tolerated here) could otherwise leave two child rows for the
+	same (user, model, month); reading one arbitrary row could silently
+	under-count usage and let a per-model cap be exceeded."""
 	try:
 		if not model:
 			return False
@@ -47,22 +55,33 @@ def _over_model_limit(user: str, model: str) -> bool:
 			current_month_key,
 		)
 
-		row = frappe.db.get_value(
-			MODEL_USAGE,
+		row = frappe.db.sql(
+			"""
+			SELECT MAX(monthly_token_limit) AS limit_,
+				   SUM(month_input_tokens) AS in_,
+				   SUM(month_output_tokens) AS out_
+			FROM `tabJarvis User Model Usage`
+			WHERE parent = %(user)s AND parenttype = %(ptype)s
+			  AND parentfield = %(pfield)s AND model = %(model)s
+			  AND month_key = %(month)s
+			""",
 			{
-				"parent": user, "parenttype": "Jarvis User Settings",
-				"parentfield": MODEL_USAGE_FIELD, "model": model,
-				"month_key": current_month_key(),
+				"user": user,
+				"ptype": "Jarvis User Settings",
+				"pfield": MODEL_USAGE_FIELD,
+				"model": model,
+				"month": current_month_key(),
 			},
-			["monthly_token_limit", "month_input_tokens", "month_output_tokens"],
 			as_dict=True,
 		)
-		if not row:
+		# MAX()/SUM() over zero matching rows returns one row of NULLs, not an
+		# empty result set — a NULL limit means "no row" (no cap).
+		if not row or row[0].limit_ is None:
 			return False
-		limit = int(row.monthly_token_limit or 0)
+		limit = int(row[0].limit_ or 0)
 		if limit <= 0:
 			return False
-		used = int(row.month_input_tokens or 0) + int(row.month_output_tokens or 0)
+		used = int(row[0].in_ or 0) + int(row[0].out_ or 0)
 		return used >= limit
 	except Exception:
 		# The logging call itself touches the DB (Error Log controller

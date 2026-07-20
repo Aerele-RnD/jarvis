@@ -181,3 +181,32 @@ class TestPerModelAttribution(_Base):
 		_make_session("agent:pm4", USER_A)
 		usage.record_turn_usage("agent:pm4", self._row(model="", inputTokens=4, outputTokens=4))
 		self.assertEqual(frappe.get_all(MODEL_USAGE, filters={"parent": USER_A}), [])
+
+
+class TestConcurrentFirstInsertRace(_Base):
+	"""Two turns in DIFFERENT conversations can race on a model's FIRST use in
+	a month (turn_handler's single-flight guard in chat/api.py is only
+	per-conversation), both missing the SELECT-then-INSERT existence check and
+	both attempting to insert. A single-process test can't reproduce the raw
+	thread interleaving, but it CAN call the atomic insert-or-merge primitive
+	twice in a row exactly as two racing callers would each call it once,
+	after both observed no existing row — this is the same code path either
+	way, and is what the unique index (parent, parentfield, model, month_key)
+	added by jarvis.patches.v2_02_unique_model_usage_row is for."""
+
+	def test_atomic_insert_does_not_duplicate_row_on_racing_first_insert(self):
+		usage.get_or_create_user_settings(USER_A)
+		now = frappe.utils.now_datetime()
+		month = usage.current_month_key()
+		first = usage._atomic_insert_or_merge_model_usage(USER_A, "gpt-4o", month, 10, 5, 0, now)
+		second = usage._atomic_insert_or_merge_model_usage(USER_A, "gpt-4o", month, 8, 12, 0, now)
+		self.assertTrue(first)
+		self.assertFalse(second)
+		rows = frappe.get_all(
+			MODEL_USAGE,
+			filters={"parent": USER_A, "model": "gpt-4o", "month_key": month},
+			fields=["month_input_tokens", "month_output_tokens"],
+		)
+		self.assertEqual(len(rows), 1)
+		self.assertEqual(rows[0].month_input_tokens, 18)
+		self.assertEqual(rows[0].month_output_tokens, 17)
