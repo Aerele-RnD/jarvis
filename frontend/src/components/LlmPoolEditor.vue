@@ -206,7 +206,7 @@
 			<button
 				v-if="editable && !panel.open"
 				@click="openAdd"
-				class="jv-btn jv-btn--primary jv-flist-addbtn"
+				class="jv-btn jv-btn--primary jv-flist-addbtn jv-flist-addbtn--end"
 			>
 				<svg
 					viewBox="0 0 24 24"
@@ -716,26 +716,14 @@
 											Sign in with {{ upstreamLabelOf(panelRow.upstream) }}
 										</div>
 										<div class="jv-crow">
-											<template v-if="panelRow._connect.authorizeUrl">
-												<a
-													:href="panelRow._connect.authorizeUrl"
-													target="_blank"
-													rel="noopener noreferrer"
-													class="jv-cbtn jv-cbtn-primary"
-													>Open sign-in ↗</a
-												>
-												<button
-													type="button"
-													class="jv-cbtn jv-cbtn-ghost"
-													@click="copyAuthorizeUrl(panelRow)"
-												>
-													{{
-														panelRow._connect.copied
-															? "Copied ✓"
-															: "Copy link"
-													}}
-												</button>
-											</template>
+											<a
+												v-if="panelRow._connect.authorizeUrl"
+												:href="panelRow._connect.authorizeUrl"
+												target="_blank"
+												rel="noopener noreferrer"
+												class="jv-cbtn jv-cbtn-primary"
+												>Open sign-in ↗</a
+											>
 											<button
 												v-else
 												type="button"
@@ -752,6 +740,23 @@
 													panelRow._connect.loading
 														? "Starting sign-in…"
 														: "Open sign-in ↗"
+												}}
+											</button>
+											<!-- Always offered, never gated behind "Open sign-in": signing in on
+                           another device needs the URL WITHOUT opening a tab here. -->
+											<button
+												type="button"
+												class="jv-cbtn jv-cbtn-ghost"
+												:disabled="
+													panelRow._connect.loading ||
+													(!editable && !panelRow._connect.authorizeUrl)
+												"
+												@click="copySigninLink(panelRow)"
+											>
+												{{
+													panelRow._connect.copied
+														? "Copied ✓"
+														: "Copy link"
 												}}
 											</button>
 										</div>
@@ -1340,28 +1345,14 @@
 												Sign in with {{ upstreamLabelOf(m.upstream) }}
 											</div>
 											<div class="jv-crow">
-												<template
+												<a
 													v-if="m._connect && m._connect.authorizeUrl"
+													:href="m._connect.authorizeUrl"
+													target="_blank"
+													rel="noopener noreferrer"
+													class="jv-cbtn jv-cbtn-primary"
+													>Open sign-in ↗</a
 												>
-													<a
-														:href="m._connect.authorizeUrl"
-														target="_blank"
-														rel="noopener noreferrer"
-														class="jv-cbtn jv-cbtn-primary"
-														>Open sign-in ↗</a
-													>
-													<button
-														type="button"
-														class="jv-cbtn jv-cbtn-ghost"
-														@click="copyAuthorizeUrl(m)"
-													>
-														{{
-															m._connect.copied
-																? "Copied ✓"
-																: "Copy link"
-														}}
-													</button>
-												</template>
 												<button
 													v-else
 													type="button"
@@ -1376,6 +1367,27 @@
 														m._connect && m._connect.loading
 															? "Starting sign-in…"
 															: "Open sign-in ↗"
+													}}
+												</button>
+												<!-- Always offered, never gated behind "Open sign-in": signing in on
+												     another device needs the URL WITHOUT opening a tab here. -->
+												<button
+													type="button"
+													class="jv-cbtn jv-cbtn-ghost"
+													:disabled="
+														(m._connect && m._connect.loading) ||
+														(!editable &&
+															!(
+																m._connect &&
+																m._connect.authorizeUrl
+															))
+													"
+													@click="copySigninLink(m)"
+												>
+													{{
+														m._connect && m._connect.copied
+															? "Copied ✓"
+															: "Copy link"
 													}}
 												</button>
 											</div>
@@ -2454,7 +2466,7 @@ function openConnectPanel(m, reconnectIdx = null) {
 	m._connect = { ...blankConnect(), open: true, reconnectIdx, pastedUrl: carried };
 }
 
-async function startConnect(m, reconnectIdx = null) {
+async function startConnect(m, reconnectIdx = null, opts = {}) {
 	if (!m._connect) m._connect = blankConnect();
 	// Simplified editor hides the model field - make sure a subscription row always
 	// carries a model id so the connect flow never dead-ends on an unfillable field.
@@ -2484,12 +2496,16 @@ async function startConnect(m, reconnectIdx = null) {
 	// second click (the first only fetched the URL). We navigate this blank tab
 	// once the authorize URL resolves; if it was blocked (win === null) the visible
 	// "Open sign-in ↗" link is still there for the user to click manually.
+	// opts.openTab === false is the "Copy link" path: it only needs the URL, so
+	// suppress the tab rather than spawning one the user did not ask for.
 	let win = null;
-	try {
-		win = window.open("about:blank", "_blank");
-		if (win) win.opener = null;
-	} catch (e) {
-		win = null;
+	if (opts.openTab !== false) {
+		try {
+			win = window.open("about:blank", "_blank");
+			if (win) win.opener = null;
+		} catch (e) {
+			win = null;
+		}
 	}
 	try {
 		const provider = UPSTREAM_OAUTH_PROVIDER[m.upstream] || "OpenAI";
@@ -2636,19 +2652,55 @@ async function finishConnect(m) {
 function closeConnect(m) {
 	m._connect = blankConnect();
 }
-function copyAuthorizeUrl(m) {
-	const url = m._connect && m._connect.authorizeUrl;
+function copyConnectUrl(m, url) {
 	if (!url) return;
+	// Capture the connect object we are flashing. Reconnect (and closeConnect)
+	// REPLACE m._connect wholesale, so a timer that re-reads m._connect can clear
+	// the "Copied ✓" of a LATER, unrelated copy that started inside our 1400ms.
+	const c = m._connect;
 	copyTextWithFallback(url)
 		.then(() => {
-			m._connect.copied = true;
+			c.copied = true;
 			setTimeout(() => {
-				if (m._connect) m._connect.copied = false;
+				if (m._connect === c) c.copied = false;
 			}, 1400);
 		})
 		.catch(() => {
-			m._connect.error = "Could not copy. Select the URL above and copy manually.";
+			c.error = "Could not copy. Select the URL above and copy manually.";
 		});
+}
+function copyAuthorizeUrl(m) {
+	copyConnectUrl(m, m._connect && m._connect.authorizeUrl);
+}
+// "Copy link" is offered from the START of the sign-in step, not only after
+// "Open sign-in" has already fetched a URL. Signing in on a PHONE (or any second
+// device) is the whole point of copying, and forcing a tab open on this machine
+// first was a pointless detour. When no authorize URL exists yet we fetch one on
+// demand with the tab suppressed, then copy it.
+async function copySigninLink(m) {
+	if (m._connect && m._connect.authorizeUrl) {
+		copyAuthorizeUrl(m);
+		return;
+	}
+	const reconnectIdx = (m._connect && m._connect.reconnectIdx) ?? null;
+	await startConnect(m, reconnectIdx, { openTab: false });
+	if (!m._connect) return;
+	if (m._connect.authorizeUrl) {
+		copyAuthorizeUrl(m);
+		return;
+	}
+	// Device-code upstreams (Kimi) resolve a VERIFICATION PAGE instead of an
+	// authorize URL, and the panel flips to the code step underneath this click.
+	// That page is exactly the link worth carrying to a second device, so copy it
+	// rather than leaving the click silently doing nothing.
+	if (m._connect.deviceFlow) {
+		if (m._connect.verificationUri) copyConnectUrl(m, m._connect.verificationUri);
+		return;
+	}
+	// No URL and startConnect surfaced no error: say so rather than dead-clicking.
+	if (!m._connect.error) {
+		m._connect.error = "Couldn't get a sign-in link. Try Open sign-in instead.";
+	}
 }
 
 // ---- load / save ---------------------------------------------------------
@@ -3351,6 +3403,17 @@ defineExpose({ save });
 .jv-flist-addbtn {
 	margin-top: 10px;
 	gap: 6px;
+}
+/* "Add a model" trails the failover LIST, so it sits at the list's right edge --
+   the same edge Save configuration occupies, which is where the eye already is
+   after reading the rows. Scoped to a modifier because .jv-flist-addbtn is shared
+   with the panel's "Connect account", which stays left-aligned under its field.
+   display/width are needed because the parent <section> is a plain block: an
+   inline-flex .jv-btn ignores margin-left:auto until it is block-level. */
+.jv-flist-addbtn--end {
+	display: flex;
+	width: fit-content;
+	margin-left: auto;
 }
 .jv-flist-addbtn svg {
 	color: var(--text-3);
