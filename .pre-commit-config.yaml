@@ -10,6 +10,11 @@ repos:
       - id: trailing-whitespace
         files: "jarvis.*"
         exclude: ".*json$|.*txt$|.*csv|.*md|.*svg"
+      # Work lands on develop through a PR, never a direct commit. Branch
+      # protection is a paid feature on private repos, so this is the local
+      # equivalent - it holds on every machine that runs `pre-commit install`.
+      - id: no-commit-to-branch
+        args: ["--branch", "develop", "--branch", "beta"]
       - id: check-merge-conflict
       - id: check-ast
       - id: check-json
