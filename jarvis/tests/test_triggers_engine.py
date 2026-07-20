@@ -382,7 +382,7 @@ class TestDispatch(_TriggerTestCase):
 
 	def test_blocked_message_is_prefixed_with_trigger_name(self):
 		# Review P2: the blocked user should be told which automation stopped them.
-		trig = self._make_script_trigger(body='frappe.throw("no discounts")', event="validate")
+		self._make_script_trigger(body='frappe.throw("no discounts")', event="validate")
 		todo = frappe.get_doc({"doctype": "ToDo", "description": "blocked"})
 		with patch(EXEC_FLAG, return_value=True), patch("frappe.enqueue"):
 			try:

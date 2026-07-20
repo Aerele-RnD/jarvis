@@ -8,6 +8,7 @@ arithmetic (fractions.Fraction over math.comb) and hardcoded the same way.
 """
 
 import datetime
+from itertools import pairwise
 
 from frappe.tests.utils import FrappeTestCase
 
@@ -394,7 +395,7 @@ class TestFisherExact(FrappeTestCase):
 
 	def test_monotone_decreasing_in_k(self):
 		ps = [fisher_exact_greater(k, 20, 60, 200) for k in range(0, 21)]
-		for weaker, stronger in zip(ps, ps[1:]):
+		for weaker, stronger in pairwise(ps):
 			self.assertGreaterEqual(weaker, stronger)
 
 	def test_zero_margin_K_is_one(self):

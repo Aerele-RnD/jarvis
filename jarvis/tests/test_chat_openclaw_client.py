@@ -455,8 +455,6 @@ class TestSelfHealOnStalePairing(FrappeTestCase):
 		"""Return two scripted WS instances: first one rejects connect with
 		`first_reject_marker` in the error message (or the full `first_error`
 		dict when given); second one accepts."""
-		first_sent: list = []
-		second_sent: list = []
 
 		# Sprint-3 (2026-06-16 review): openclaw's rejection payload puts
 		# the marker in error.code, not error.message. The classifier on

@@ -432,7 +432,7 @@ def _accounts_alpha() -> None:
 		["Cash"] * 30 + ["Bank Draft"] * 2,  # Pay
 	)
 	idx = 0
-	for ptype, modes in zip(("Receive", "Pay"), plan):
+	for ptype, modes in zip(("Receive", "Pay"), plan, strict=True):
 		for mode in modes:
 			name = f"{PREFIX}PE-A-{idx:04d}"
 			_insert(

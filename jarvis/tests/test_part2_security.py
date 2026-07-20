@@ -262,8 +262,8 @@ class TestRoleRestrictedPushExclusion(Part2Base):
 	role-blind container push."""
 
 	def test_role_restricted_org_skill_excluded_from_push(self):
-		plain = _mk_skill(REVIEWER, f"{PFX}-pushplain", scope="Org")
-		restricted = _mk_skill(REVIEWER, f"{PFX}-pushrestricted", scope="Org", allowed_roles=["Sales User"])
+		_mk_skill(REVIEWER, f"{PFX}-pushplain", scope="Org")
+		_mk_skill(REVIEWER, f"{PFX}-pushrestricted", scope="Org", allowed_roles=["Sales User"])
 		slugs = {p["slug"] for p in build_push_payload()}
 		self.assertIn(prefixed_slug(f"{PFX}-pushplain"), slugs)
 		self.assertNotIn(prefixed_slug(f"{PFX}-pushrestricted"), slugs)

@@ -441,7 +441,7 @@ def decide(name: str, decision: str, approve: int = 1) -> dict:
 	new_status = "Approved" if int(approve) else "Rejected"
 	# Conditional flip closes the double-decide race: only ONE concurrent
 	# caller wins the Pending -> decided transition.
-	changed = frappe.db.sql(
+	frappe.db.sql(
 		"""update `tabJarvis Approval Request`
 		set status=%s, decision=%s, decided_by=%s, decided_at=%s
 		where name=%s and status='Pending'""",
