@@ -36,6 +36,7 @@ def _get_owned_conversation(conversation: str):
 		raise frappe.PermissionError("not your conversation")
 	return doc
 
+
 # Image attachments are stored as canvas items on the user message so the SPA
 # renders them inline as clickable thumbnails (same preview path as generated
 # images) instead of a bare "📎 name" marker.
@@ -45,6 +46,7 @@ _IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg")
 def _att_is_image(att: dict) -> bool:
 	name = (att.get("file_name") or att.get("file_url") or "").lower()
 	return name.endswith(_IMAGE_EXTS)
+
 
 # Wall-clock budget for the RQ worker that runs one agent turn.
 #
@@ -85,6 +87,7 @@ def list_tools() -> list[str]:
 	registry instead of a hardcoded SPA list that drifts."""
 	require_jarvis_access()
 	from jarvis.tools.registry import list_tools as _registry_list_tools
+
 	return _registry_list_tools()
 
 
@@ -105,6 +108,7 @@ def list_conversations() -> list[dict]:
 	# (best-effort, debounced) so the first turn of a new chat skips the cold
 	# provider prefill. Never blocks or fails this read.
 	from jarvis.chat import prewarm
+
 	prewarm.enqueue_warm_if_due()
 	user = frappe.session.user
 	rows = frappe.db.sql(
@@ -157,9 +161,7 @@ def search_conversations(search: str = "", start: int = 0, page_length: int = 20
 		conds.append("c.title LIKE %(q)s")
 	where = " AND ".join(conds)
 
-	total = frappe.db.sql(
-		f"SELECT COUNT(*) FROM `tabJarvis Conversation` c WHERE {where}", params
-	)[0][0]
+	total = frappe.db.sql(f"SELECT COUNT(*) FROM `tabJarvis Conversation` c WHERE {where}", params)[0][0]
 	rows = frappe.db.sql(
 		f"""SELECT c.name, c.title, c.starred, c.last_active_at
 		FROM `tabJarvis Conversation` c
@@ -237,7 +239,7 @@ def _fuzzy_score(pattern: str, text: str) -> float:
 			score += 12.0  # start of a word
 		if found == prev + 1:
 			score += 8.0  # consecutive with the previous match
-		score -= (found - ti)  # gap penalty
+		score -= found - ti  # gap penalty
 		prev = found
 		ti = found + 1
 	score -= len(t) * 0.05  # mild preference for shorter targets
@@ -335,9 +337,7 @@ def _search_pages(search: str, limit: int) -> list[dict]:
 	"""Desk Pages, fuzzy-matched (subsequence) over title + name, scoped to the
 	caller's Page read perm via ``frappe.get_list``. Routed to ``/app/<page>``."""
 	try:
-		rows = frappe.get_list(
-			"Page", fields=["name", "title"], limit_page_length=0
-		)
+		rows = frappe.get_list("Page", fields=["name", "title"], limit_page_length=0)
 	except frappe.PermissionError:
 		return []
 	scored = []
@@ -546,9 +546,22 @@ def get_conversation(conversation: str) -> dict:
 		MSG,
 		filters={"conversation": conversation, "hidden": 0},
 		fields=[
-			"name", "seq", "role", "content", "streaming", "error", "recovering",
-			"stopped", "tool_name", "tool_args", "tool_result", "tool_status",
-			"action_outcome", "canvas", "creation", "modified",
+			"name",
+			"seq",
+			"role",
+			"content",
+			"streaming",
+			"error",
+			"recovering",
+			"stopped",
+			"tool_name",
+			"tool_args",
+			"tool_result",
+			"tool_status",
+			"action_outcome",
+			"canvas",
+			"creation",
+			"modified",
 		],
 		order_by="seq asc",
 	)
@@ -604,8 +617,10 @@ def get_canvas(message: str, name: str | None = None, dark: int = 0) -> dict:
 	fdoc = frappe.get_doc("File", {"file_url": item.get("file_url")})
 	raw = fdoc.get_content()
 	out = {
-		"name": item.get("name"), "title": item.get("title"),
-		"type": typ, "file_url": item.get("file_url"),
+		"name": item.get("name"),
+		"title": item.get("title"),
+		"type": typ,
+		"file_url": item.get("file_url"),
 	}
 	if typ in ("html", "svg"):
 		# Rendered inline in a sandboxed iframe srcdoc.
@@ -615,8 +630,7 @@ def get_canvas(message: str, name: str | None = None, dark: int = 0) -> dict:
 			body = (
 				'<!doctype html><meta charset="utf-8">'
 				f"<style>html,body{{margin:0;height:100%;background:{bg};color:{fg}}}"
-				"svg{display:block;max-width:100%;height:auto;margin:0 auto}</style>"
-				+ body
+				"svg{display:block;max-width:100%;height:auto;margin:0 auto}</style>" + body
 			)
 		elif int(dark or 0) and "<style" not in body and "background" not in body[:600]:
 			# Agent-authored HTML with no styling of its own: give it the app's
@@ -638,11 +652,18 @@ def _artifact_mime(item: dict) -> str:
 	ext = (item.get("name") or "").rsplit(".", 1)[-1].lower()
 	return {
 		"pdf": "application/pdf",
-		"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
-		"gif": "image/gif", "webp": "image/webp", "svg": "image/svg+xml",
+		"png": "image/png",
+		"jpg": "image/jpeg",
+		"jpeg": "image/jpeg",
+		"gif": "image/gif",
+		"webp": "image/webp",
+		"svg": "image/svg+xml",
 		"xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-		"xls": "application/vnd.ms-excel", "csv": "text/csv",
-		"json": "application/json", "txt": "text/plain", "md": "text/markdown",
+		"xls": "application/vnd.ms-excel",
+		"csv": "text/csv",
+		"json": "application/json",
+		"txt": "text/plain",
+		"md": "text/markdown",
 	}.get(ext, "application/octet-stream")
 
 
@@ -677,11 +698,13 @@ def preview_file(file_url: str) -> dict:
 def create_conversation() -> str:
 	"""Create an empty conversation owned by the current user; return its name."""
 	require_jarvis_access()
-	doc = frappe.get_doc({
-		"doctype": CONV,
-		"title": "New chat",
-		"status": "Active",
-	})
+	doc = frappe.get_doc(
+		{
+			"doctype": CONV,
+			"title": "New chat",
+			"status": "Active",
+		}
+	)
 	doc.insert()
 	frappe.db.commit()
 	return doc.name
@@ -797,9 +820,13 @@ def _conversation_busy(conversation: str) -> bool:
 
 @frappe.whitelist()
 def send_message(
-	conversation: str | None = None, message: str = "", model_override: str | None = None,
-	attachments: str | None = None, context: str | None = None,
-	thinking_override: str | None = None, background: int = 0,
+	conversation: str | None = None,
+	message: str = "",
+	model_override: str | None = None,
+	attachments: str | None = None,
+	context: str | None = None,
+	thinking_override: str | None = None,
+	background: int = 0,
 ) -> dict:
 	"""Validate, persist the user message, enqueue the worker.
 
@@ -911,9 +938,10 @@ def send_message(
 		settings = frappe.get_single("Jarvis Settings")
 		allowed = _SUBSCRIPTION_MODELS.get(settings.llm_provider, [])
 		if model_override not in allowed:
-			return {"ok": False, "reason":
-			        f"model {model_override!r} is not valid for "
-			        f"{settings.llm_provider!r}"}
+			return {
+				"ok": False,
+				"reason": f"model {model_override!r} is not valid for {settings.llm_provider!r}",
+			}
 		conv_doc.model_override = model_override
 
 	if thinking_override is not None:
@@ -934,27 +962,31 @@ def send_message(
 		display_content = (display_content + "\n\n" if display_content else "") + "📎 " + names
 	canvas_json = None
 	if image_atts:
-		canvas_json = frappe.as_json([
-			{
-				"name": frappe.generate_hash(length=10),
-				"type": "image",
-				"file_url": a["file_url"],
-				"title": a.get("file_name") or "image",
-			}
-			for a in image_atts
-		])
+		canvas_json = frappe.as_json(
+			[
+				{
+					"name": frappe.generate_hash(length=10),
+					"type": "image",
+					"file_url": a["file_url"],
+					"title": a.get("file_name") or "image",
+				}
+				for a in image_atts
+			]
+		)
 
 	# Persist the user message with next seq value
 	seq = _next_seq(conversation)
-	msg_doc = frappe.get_doc({
-		"doctype": MSG,
-		"conversation": conversation,
-		"seq": seq,
-		"role": "user",
-		"content": display_content,
-		"streaming": 0,
-		"canvas": canvas_json,
-	})
+	msg_doc = frappe.get_doc(
+		{
+			"doctype": MSG,
+			"conversation": conversation,
+			"seq": seq,
+			"role": "user",
+			"content": display_content,
+			"streaming": 0,
+			"canvas": canvas_json,
+		}
+	)
 	# Delegated re-entry (scheduler/approval-resume/agent-run/File-Box): the
 	# impersonated owner may lack the now role-gated Message create perm, but
 	# ownership of THIS conversation is already asserted (_get_owned_conversation
@@ -1015,7 +1047,9 @@ def send_message(
 			# page marker is set.
 			ground_wiki = 1 if (isinstance(ctx, dict) and frappe.utils.cint(ctx.get("ground_wiki"))) else 0
 			if isinstance(ctx, dict) and (
-				ctx.get("doctype") or ctx.get("report_name") or ground_wiki
+				ctx.get("doctype")
+				or ctx.get("report_name")
+				or ground_wiki
 				or ctx.get("page") in ("triggers", "dashboards")
 			):
 				enqueue_kwargs["context"] = {
@@ -1046,10 +1080,15 @@ def send_message(
 				# what the user was looking at, not just what tools touched.
 				# Best-effort (inside this try): a ref must never fail a send.
 				if ctx.get("doctype") and ctx.get("name"):
-					frappe.db.set_value(MSG, msg_doc.name, {
-						"ref_doctype": str(ctx["doctype"])[:140],
-						"ref_name": str(ctx["name"])[:140],
-					}, update_modified=False)
+					frappe.db.set_value(
+						MSG,
+						msg_doc.name,
+						{
+							"ref_doctype": str(ctx["doctype"])[:140],
+							"ref_name": str(ctx["name"])[:140],
+						},
+						update_modified=False,
+					)
 		except Exception:
 			pass
 	# Dispatch the turn (see _dispatch_turn for the Node-RQ vs Python-pubsub
@@ -1064,11 +1103,15 @@ def send_message(
 
 	_get_latency_logger().info(
 		"send_message run_id=%s first_turn=%d total_ms=%d",
-		run_id, first_turn, int((time.monotonic() - t0) * 1000),
+		run_id,
+		first_turn,
+		int((time.monotonic() - t0) * 1000),
 	)
 
 	return {
-		"ok": True, "run_id": run_id, "message_id": msg_doc.name,
+		"ok": True,
+		"run_id": run_id,
+		"message_id": msg_doc.name,
 		"conversation_id": conversation,
 	}
 
@@ -1122,11 +1165,7 @@ def get_chat_ui_settings() -> dict:
 			try:
 				blob = m.get_password("subscription_accounts", raise_exception=False)
 				accounts = json.loads(blob or "[]")
-				seen = {
-					(a.get("upstream") or "").strip()
-					for a in accounts
-					if isinstance(a, dict)
-				}
+				seen = {(a.get("upstream") or "").strip() for a in accounts if isinstance(a, dict)}
 				ups = sorted(seen - {""})
 			except Exception:
 				ups = []
@@ -1273,8 +1312,13 @@ def _measured_usage(user: str) -> dict | None:
 		"Jarvis User Settings",
 		{"user": user},
 		[
-			"usage_month", "month_input_tokens", "month_output_tokens",
-			"month_tokens", "total_tokens", "monthly_token_limit", "last_usage_at",
+			"usage_month",
+			"month_input_tokens",
+			"month_output_tokens",
+			"month_tokens",
+			"total_tokens",
+			"monthly_token_limit",
+			"last_usage_at",
 		],
 		as_dict=True,
 	)
@@ -1283,15 +1327,17 @@ def _measured_usage(user: str) -> dict | None:
 
 		return None if selfhost.is_self_hosted() else measured
 	stale = row.usage_month != _usage_month_key()
-	measured.update({
-		"month_tokens": 0 if stale else int(row.month_tokens or 0),
-		"month_input_tokens": 0 if stale else int(row.month_input_tokens or 0),
-		"month_output_tokens": 0 if stale else int(row.month_output_tokens or 0),
-		"total_tokens": int(row.total_tokens or 0),
-		"monthly_token_limit": int(row.monthly_token_limit or 0),
-		"usage_month": row.usage_month,
-		"last_usage_at": row.last_usage_at,
-	})
+	measured.update(
+		{
+			"month_tokens": 0 if stale else int(row.month_tokens or 0),
+			"month_input_tokens": 0 if stale else int(row.month_input_tokens or 0),
+			"month_output_tokens": 0 if stale else int(row.month_output_tokens or 0),
+			"total_tokens": int(row.total_tokens or 0),
+			"monthly_token_limit": int(row.monthly_token_limit or 0),
+			"usage_month": row.usage_month,
+			"last_usage_at": row.last_usage_at,
+		}
+	)
 	return measured
 
 
@@ -1361,10 +1407,13 @@ def set_conversation_model(conversation: str, model: str | None = None) -> dict:
 	require_jarvis_access()
 	owner = frappe.db.get_value(CONV, conversation, "owner")
 	if owner is None:
-		return {"ok": False, "error": {
-			"code": "unknown_conversation",
-			"message": f"conversation {conversation!r} not found",
-		}}
+		return {
+			"ok": False,
+			"error": {
+				"code": "unknown_conversation",
+				"message": f"conversation {conversation!r} not found",
+			},
+		}
 	if owner != frappe.session.user:
 		raise frappe.PermissionError("not your conversation")
 
@@ -1384,18 +1433,19 @@ def set_conversation_model(conversation: str, model: str | None = None) -> dict:
 	# picker could not set a model at all.
 	allowed = set(_SUBSCRIPTION_MODELS.get(settings.llm_provider, []))
 	allowed |= {
-		(m.model or "").strip()
-		for m in (settings.models or [])
-		if m.enabled and (m.model or "").strip()
+		(m.model or "").strip() for m in (settings.models or []) if m.enabled and (m.model or "").strip()
 	}
 	if model not in allowed:
-		return {"ok": False, "error": {
-			"code": "unknown_model",
-			"message": (
-				f"{model!r} is not a recognized model for {settings.llm_provider!r}. "
-				f"Allowed: {sorted(allowed)!r}"
-			),
-		}}
+		return {
+			"ok": False,
+			"error": {
+				"code": "unknown_model",
+				"message": (
+					f"{model!r} is not a recognized model for {settings.llm_provider!r}. "
+					f"Allowed: {sorted(allowed)!r}"
+				),
+			},
+		}
 
 	frappe.db.set_value(CONV, conversation, "model_override", model, update_modified=False)
 	frappe.db.commit()
@@ -1430,18 +1480,24 @@ def set_conversation_thinking(conversation: str, thinking: str | None = None) ->
 	require_jarvis_access()
 	owner = frappe.db.get_value(CONV, conversation, "owner")
 	if owner is None:
-		return {"ok": False, "error": {
-			"code": "unknown_conversation",
-			"message": f"conversation {conversation!r} not found",
-		}}
+		return {
+			"ok": False,
+			"error": {
+				"code": "unknown_conversation",
+				"message": f"conversation {conversation!r} not found",
+			},
+		}
 	if owner != frappe.session.user:
 		raise frappe.PermissionError("not your conversation")
 	level = (thinking or "").strip().lower()
 	if level not in _ALLOWED_THINKING:
-		return {"ok": False, "error": {
-			"code": "unknown_thinking",
-			"message": f"{thinking!r} is not a valid thinking level. Allowed: low, medium, high",
-		}}
+		return {
+			"ok": False,
+			"error": {
+				"code": "unknown_thinking",
+				"message": f"{thinking!r} is not a valid thinking level. Allowed: low, medium, high",
+			},
+		}
 	frappe.db.set_value(CONV, conversation, "thinking_override", level, update_modified=False)
 	frappe.db.commit()
 	return {"ok": True, "data": {"effective_thinking": level or "medium"}}
@@ -1488,9 +1544,7 @@ def retry_message(message: str) -> dict:
 	user_msg_id = prev_user[0][0]
 
 	# Bump the conversation's last_active_at so the sidebar surfaces it.
-	frappe.db.set_value(
-		CONV, doc.conversation, "last_active_at", frappe.utils.now()
-	)
+	frappe.db.set_value(CONV, doc.conversation, "last_active_at", frappe.utils.now())
 
 	run_id = uuid.uuid4().hex[:12]
 	# Route through the SHARED dispatcher (after-commit publish on Path B,
@@ -1532,9 +1586,7 @@ def stop_run(conversation: str, run_id: str | None = None) -> dict:
 	if not conv.session_key:
 		return {"ok": True}  # nothing running yet
 	settings = frappe.get_cached_doc("Jarvis Settings")
-	gateway_url = (
-		(settings.agent_url or "").replace("http://", "ws://").replace("https://", "wss://")
-	)
+	gateway_url = (settings.agent_url or "").replace("http://", "ws://").replace("https://", "wss://")
 	from jarvis.chat import openclaw_session_pool
 
 	try:
@@ -1612,8 +1664,10 @@ def _turn_queue() -> str:
 
 
 def _redispatch_orphan(
-	conversation_id: str, message_id: str,
-	attachments=None, context=None,
+	conversation_id: str,
+	message_id: str,
+	attachments=None,
+	context=None,
 ) -> None:
 	"""Re-dispatch a turn whose original RQ job never ran (orphan sweep in
 	stale_scan). Fresh run_id; the 10s probe re-routes to a live queue.
@@ -1667,9 +1721,7 @@ def _dispatch_turn(enqueue_kwargs: dict, interactive: bool = True) -> None:
 			# the conversation and user-message rows are visible -
 			# LinkValidationError on the placeholder insert. Mirrors enqueue-
 			# after-commit semantics; caught by the Stage A live smoke.
-			frappe.db.after_commit.add(
-				lambda: dispatch.publish_chat_send(enqueue_kwargs)
-			)
+			frappe.db.after_commit.add(lambda: dispatch.publish_chat_send(enqueue_kwargs))
 			return
 		frappe.log_error(
 			title="chat: Path B subscriber missing - dispatched via RQ",
@@ -1736,19 +1788,22 @@ def _enqueue_turn(
 	# (turn_handler.handle_chat_send), so the human's Apply/Confirm POST never
 	# pays - or fails on - a WS handshake here.
 	from jarvis import selfhost
+
 	if not hidden and not selfhost.is_self_hosted() and not conv_doc.session_key:
 		conv_doc.session_key = _ensure_session_key(conv_doc.owner)
 
 	seq = _next_seq(conversation)
-	msg_doc = frappe.get_doc({
-		"doctype": MSG,
-		"conversation": conversation,
-		"seq": seq,
-		"role": "user",
-		"content": prompt,
-		"streaming": 0,
-		"hidden": 1 if hidden else 0,
-	})
+	msg_doc = frappe.get_doc(
+		{
+			"doctype": MSG,
+			"conversation": conversation,
+			"seq": seq,
+			"role": "user",
+			"content": prompt,
+			"streaming": 0,
+			"hidden": 1 if hidden else 0,
+		}
+	)
 	msg_doc.flags.ignore_permissions = True
 	msg_doc.insert()
 	conv_doc.last_active_at = frappe.utils.now()
@@ -1757,11 +1812,14 @@ def _enqueue_turn(
 	frappe.db.commit()
 
 	run_id = uuid.uuid4().hex[:12]
-	_dispatch_turn({
-		"conversation_id": conversation,
-		"message_id": msg_doc.name,
-		"run_id": run_id,
-	}, interactive=interactive)
+	_dispatch_turn(
+		{
+			"conversation_id": conversation,
+			"message_id": msg_doc.name,
+			"run_id": run_id,
+		},
+		interactive=interactive,
+	)
 	return {"run_id": run_id, "message_id": msg_doc.name}
 
 
@@ -1822,9 +1880,7 @@ def enqueue_continuation(conversation: str, receipt: str, *, failed: bool = Fals
 
 	safe = _safe_label_name(receipt)
 	scaffold = _CONTINUATION_PROMPT_FAILED if failed else _CONTINUATION_PROMPT
-	return _enqueue_turn(
-		conversation, scaffold.format(receipt=safe), hidden=True
-	)
+	return _enqueue_turn(conversation, scaffold.format(receipt=safe), hidden=True)
 
 
 def _ensure_session_key(user: str, sess: OpenclawSession | None = None) -> str:
@@ -1845,16 +1901,16 @@ def _ensure_session_key(user: str, sess: OpenclawSession | None = None) -> str:
 		session_key = sess.create_session(label=f"jarvis-chat-{user}-{int(time.time() * 1000)}")
 	else:
 		settings_check = frappe.get_single("Jarvis Settings")
-		gateway_url = (settings_check.agent_url or "").replace(
-			"http://", "ws://").replace("https://", "wss://")
+		gateway_url = (
+			(settings_check.agent_url or "").replace("http://", "ws://").replace("https://", "wss://")
+		)
 		gateway_token = settings_check.get_password("agent_token")
 		if not gateway_url or not gateway_token:
 			frappe.throw(_("openclaw is not configured"))
 
 		one_shot = OpenclawSession.connect(gateway_url)
 		try:
-			session_key = one_shot.create_session(
-				label=f"jarvis-chat-{user}-{int(time.time() * 1000)}")
+			session_key = one_shot.create_session(label=f"jarvis-chat-{user}-{int(time.time() * 1000)}")
 		finally:
 			one_shot.close()
 
@@ -1870,12 +1926,14 @@ def _ensure_session_key(user: str, sess: OpenclawSession | None = None) -> str:
 	current_device_id = (settings.chat_device_id or "").strip()
 
 	# Insert the Chat Session row (plugin's sessionKey → user lookup table)
-	frappe.get_doc({
-		"doctype": "Jarvis Chat Session",
-		"session_key": session_key,
-		"user": user,
-		"chat_device_id": current_device_id,
-	}).insert(ignore_permissions=True)
+	frappe.get_doc(
+		{
+			"doctype": "Jarvis Chat Session",
+			"session_key": session_key,
+			"user": user,
+			"chat_device_id": current_device_id,
+		}
+	).insert(ignore_permissions=True)
 	frappe.db.commit()
 
 	return session_key
@@ -1884,9 +1942,21 @@ def _ensure_session_key(user: str, sess: OpenclawSession | None = None) -> str:
 # Layout / non-editable fieldtypes the action-edit form should never render an
 # input for (mirrors the set the desk form skips).
 _NON_EDIT_FIELDTYPES = {
-	"Section Break", "Column Break", "Tab Break", "Fold", "Heading",
-	"HTML", "Button", "Image", "Table", "Table MultiSelect", "Attach",
-	"Attach Image", "Signature", "Geolocation", "Barcode",
+	"Section Break",
+	"Column Break",
+	"Tab Break",
+	"Fold",
+	"Heading",
+	"HTML",
+	"Button",
+	"Image",
+	"Table",
+	"Table MultiSelect",
+	"Attach",
+	"Attach Image",
+	"Signature",
+	"Geolocation",
+	"Barcode",
 }
 
 
@@ -1910,11 +1980,13 @@ def get_doctype_fields(doctype: str) -> dict:
 	for df in meta.fields:
 		if df.fieldtype in _NON_EDIT_FIELDTYPES or not df.fieldname:
 			continue
-		fields.append({
-			"fieldname": df.fieldname,
-			"label": df.label or df.fieldname,
-			"fieldtype": df.fieldtype,
-			"options": df.options or "",
-			"reqd": int(df.reqd or 0),
-		})
+		fields.append(
+			{
+				"fieldname": df.fieldname,
+				"label": df.label or df.fieldname,
+				"fieldtype": df.fieldtype,
+				"options": df.options or "",
+				"reqd": int(df.reqd or 0),
+			}
+		)
 	return {"ok": True, "doctype": doctype, "fields": fields}

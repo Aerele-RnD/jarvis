@@ -31,6 +31,31 @@ permissions:
   packages: read   # to pull the base image from GHCR
 
 jobs:
+  # Runs the same .pre-commit-config.yaml the local hook runs, so the checks hold
+  # even for a clone where nobody ran `pre-commit install`. Deliberately NOT in
+  # the tests container: this needs only python + node, and it should report in
+  # under a minute rather than waiting on a bench.
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: pre-commit/action@v3.0.1
+        env:
+          # no-commit-to-branch is a LOCAL guard: it inspects the checked-out
+          # branch name. On `push: branches: [develop]` the checkout IS develop,
+          # so leaving it on would fail this job on every merge. It has no
+          # meaning server-side anyway - the PR requirement is what enforces it.
+          SKIP: no-commit-to-branch
+        with:
+          extra_args: --all-files --show-diff-on-failure
+
   tests:
     runs-on: ubuntu-latest
     timeout-minutes: 25

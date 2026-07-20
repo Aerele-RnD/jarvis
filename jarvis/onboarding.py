@@ -8,7 +8,9 @@ import frappe
 
 from jarvis import admin_client
 from jarvis.exceptions import (
-	AdminAuthError, AdminRateLimitedError, AdminUnreachableError,
+	AdminAuthError,
+	AdminRateLimitedError,
+	AdminUnreachableError,
 	AdminValidationError,
 )
 from jarvis.permissions import grant_onboarding_admin, require_jarvis_admin
@@ -27,10 +29,9 @@ def _require_admin_url() -> None:
 	the fail-fast case. (1) wins when both are set (site config is the
 	deployment's source of truth; a stale doctype value must not mask it).
 	"""
-	configured = (
-		(frappe.db.get_single_value("Jarvis Settings", "jarvis_admin_url") or "").strip()
-		or (frappe.conf.get("jarvis_admin_url") or "").strip()
-	)
+	configured = (frappe.db.get_single_value("Jarvis Settings", "jarvis_admin_url") or "").strip() or (
+		frappe.conf.get("jarvis_admin_url") or ""
+	).strip()
 	if not configured:
 		raise frappe.ValidationError(
 			"No Jarvis Admin URL configured. Set Jarvis Settings -> Jarvis "
@@ -88,13 +89,9 @@ def _surface(fn, *args, **kwargs):
 	except AdminValidationError as e:
 		frappe.throw(str(e))
 	except AdminAuthError as e:
-		frappe.throw(
-			f"admin authentication failed; check the bench's admin credentials. ({e})"
-		)
+		frappe.throw(f"admin authentication failed; check the bench's admin credentials. ({e})")
 	except AdminUnreachableError as e:
-		frappe.throw(
-			f"admin is unreachable right now; try again in a moment. ({e})"
-		)
+		frappe.throw(f"admin is unreachable right now; try again in a moment. ({e})")
 	except AdminRateLimitedError as e:
 		retry = e.retry_after_seconds or 0
 		retry_str = f"retry in {retry}s" if retry > 0 else "retry shortly"
@@ -201,7 +198,9 @@ def save_llm_pool(models: str | list, preset: str | None = None, routing_mode: s
 			raise frappe.ValidationError(f"unknown preset '{preset}'")
 
 	from jarvis.jarvis.pool_serialize import (
-		normalize_provider, _get_password, _model_accounts,
+		_get_password,
+		_model_accounts,
+		normalize_provider,
 	)
 
 	s = frappe.get_single("Jarvis Settings")
@@ -215,7 +214,7 @@ def save_llm_pool(models: str | list, preset: str | None = None, routing_mode: s
 	# account_ref (server-stable) respectively.
 	prior_api_keys = {}
 	prior_blobs = {}
-	for pm in (s.get("models") or []):
+	for pm in s.get("models") or []:
 		if (pm.credential_type or "api_key") == "api_key":
 			pk = _get_password(pm, "api_key")
 			if pk:
@@ -254,7 +253,7 @@ def save_llm_pool(models: str | list, preset: str | None = None, routing_mode: s
 			# normal save() -> _save_passwords path (identical to `api_key`), so
 			# oauth_blobs never sit in plaintext in the DB column.
 			merged_accounts = []
-			for a in ((sub or {}).get("accounts") or []):
+			for a in (sub or {}).get("accounts") or []:
 				a = dict(a)
 				if not (a.get("oauth_blob") or "").strip():
 					ref = a.get("account_ref") or ""
@@ -280,8 +279,12 @@ def save_llm_pool(models: str | list, preset: str | None = None, routing_mode: s
 	s.save(ignore_permissions=True)
 	frappe.db.commit()
 
-	row = frappe.db.get_value("Jarvis Settings", "Jarvis Settings",
-	                          ["last_sync_at", "last_sync_status"], as_dict=True) or {}
+	row = (
+		frappe.db.get_value(
+			"Jarvis Settings", "Jarvis Settings", ["last_sync_at", "last_sync_status"], as_dict=True
+		)
+		or {}
+	)
 	return {
 		"last_sync_at": str(row.get("last_sync_at") or ""),
 		"last_sync_status": row.get("last_sync_status") or "",
@@ -324,12 +327,14 @@ def start_signup(email: str, company: str, plan: str) -> dict:
 	# empty fields individually. customer_password is present only on the
 	# flag-off path (verify-on defers it to the poll).
 	if data.get("api_key") or data.get("api_secret") or data.get("customer"):
-		write_connection({
-			"api_key": data.get("api_key", ""),
-			"api_secret": data.get("api_secret", ""),
-			"customer": data.get("customer", ""),
-			"customer_password": data.get("customer_password", ""),
-		})
+		write_connection(
+			{
+				"api_key": data.get("api_key", ""),
+				"api_secret": data.get("api_secret", ""),
+				"customer": data.get("customer", ""),
+				"customer_password": data.get("customer_password", ""),
+			}
+		)
 	# PART 4 REVISED, TASK 48: the onboarding user becomes a Jarvis Admin. Grant
 	# here (after the admin signup call + connection write succeed) as the EARLY
 	# durable stamp that survives the multi-session email-verify flow. Idempotent
@@ -359,9 +364,7 @@ def get_account_defaults() -> dict:
 	company, companies = "", []
 	try:
 		company = (
-			frappe.defaults.get_user_default("Company")
-			or frappe.defaults.get_global_default("company")
-			or ""
+			frappe.defaults.get_user_default("Company") or frappe.defaults.get_global_default("company") or ""
 		)
 		companies = [c.name for c in frappe.get_all("Company", fields=["name"], limit=20)]
 		if not company and len(companies) == 1:
@@ -429,9 +432,14 @@ def renew() -> dict:
 
 
 @frappe.whitelist()
-def save_llm_creds(provider: str, model: str, api_key: str = "",
-                   base_url: str = "", auth_mode: str = "api_key",
-                   force: bool = False) -> dict:
+def save_llm_creds(
+	provider: str,
+	model: str,
+	api_key: str = "",
+	base_url: str = "",
+	auth_mode: str = "api_key",
+	force: bool = False,
+) -> dict:
 	"""Save LLM provider/model/auth mode + (api_key when applicable) and let
 	on_update re-render openclaw.json. Returns the on_update outcome
 	(last_sync_status) so the page can tell the customer whether their
@@ -476,16 +484,19 @@ def save_llm_creds(provider: str, model: str, api_key: str = "",
 		# _validate_auth_mode_requirements passes before on_update runs (the
 		# validator checks the in-memory value first, then falls back to DB).
 		s.set("models", [])
-		s.append("models", {
-			"provider": provider,
-			"model": model,
-			"base_url": (base_url or "").strip(),
-			"credential_type": "api_key",
-			"api_key": api_key,
-			"tier": "strong",
-			"order": 0,
-			"enabled": 1,
-		})
+		s.append(
+			"models",
+			{
+				"provider": provider,
+				"model": model,
+				"base_url": (base_url or "").strip(),
+				"credential_type": "api_key",
+				"api_key": api_key,
+				"tier": "strong",
+				"order": 0,
+				"enabled": 1,
+			},
+		)
 		# Satisfy _validate_auth_mode_requirements (reads in-memory before DB).
 		s.llm_api_key = api_key
 	else:
@@ -521,10 +532,15 @@ def save_llm_creds(provider: str, model: str, api_key: str = "",
 	# need rather than reloading the entire Singles doc (the previous
 	# shape was ``frappe.get_single(...)`` then ``.get(...)`` on
 	# every field - pointless re-fetch from the 2026-06-16 review).
-	row = frappe.db.get_value(
-		"Jarvis Settings", "Jarvis Settings",
-		["last_sync_at", "last_sync_status"], as_dict=True,
-	) or {}
+	row = (
+		frappe.db.get_value(
+			"Jarvis Settings",
+			"Jarvis Settings",
+			["last_sync_at", "last_sync_status"],
+			as_dict=True,
+		)
+		or {}
+	)
 	return {
 		"last_sync_at": str(row.get("last_sync_at") or ""),
 		"last_sync_status": row.get("last_sync_status") or "",
@@ -539,9 +555,10 @@ def get_llm_config() -> dict:
 	System-Manager-only (spec 7)."""
 	require_jarvis_admin()
 	from jarvis.jarvis.pool_serialize import _model_accounts
+
 	s = frappe.get_single("Jarvis Settings")
 	models = []
-	for m in (s.get("models") or []):
+	for m in s.get("models") or []:
 		cred_type = m.credential_type or "api_key"
 		entry = {
 			"provider": m.provider or "",
@@ -655,6 +672,7 @@ def _pending_applying_status() -> str:
 	from jarvis.jarvis.doctype.jarvis_settings.jarvis_settings import (
 		_PENDING_APPLYING_STATUS,
 	)
+
 	return _PENDING_APPLYING_STATUS
 
 
@@ -674,6 +692,7 @@ def _reconcile_pending_applying(settings) -> str | None:
 		_admin_chat_readiness,
 		_stamp_converged_ok,
 	)
+
 	state, _reason = _admin_chat_readiness()
 	if state != "Ready":
 		return None
@@ -709,6 +728,7 @@ def dev_onboard(email: str, company: str, plan: str) -> dict:
 	# escape hatch (SM + sandbox_mode). Only the grant below matches the paid path.
 	frappe.only_for("System Manager")
 	from jarvis.dev import is_sandbox_mode
+
 	if not is_sandbox_mode():
 		frappe.local.response.http_status_code = 403
 		frappe.throw(

@@ -9,6 +9,7 @@ reaches the user. Here we render the content with Frappe's own engines
 (``md_to_html`` + ``get_pdf``) and save a private File the chat renders as a
 download card.
 """
+
 import frappe
 
 from jarvis.exceptions import InvalidArgumentError, NoDataError

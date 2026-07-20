@@ -30,20 +30,15 @@ Spec shape::
         "from": "Sales Invoice",
         "alias": "si",
         "joins": [
-            {"type": "left", "doctype": "Sales Invoice Item",
-             "alias": "sii", "on": {"sii.parent": "si.name"}}
+            {"type": "left", "doctype": "Sales Invoice Item", "alias": "sii", "on": {"sii.parent": "si.name"}}
         ],
-        "select": [
-            "si.customer",
-            {"agg": "sum", "field": "sii.qty", "as": "total_qty"}
-        ],
+        "select": ["si.customer", {"agg": "sum", "field": "sii.qty", "as": "total_qty"}],
         "where": [
             {"field": "si.status", "op": "=", "value": "Submitted"},
-            {"field": "si.posting_date", "op": ">=", "value": "2026-06-01"}
+            {"field": "si.posting_date", "op": ">=", "value": "2026-06-01"},
         ],
         "group_by": ["si.customer"],
-        "having": [{"agg": "sum", "field": "sii.qty", "op": ">",
-                    "value": 100}],
+        "having": [{"agg": "sum", "field": "sii.qty", "op": ">", "value": 100}],
         "order_by": [{"field": "total_qty", "dir": "desc"}],
         "limit": 100,
     }
@@ -107,18 +102,26 @@ _MAX_SUBSPEC_DEPTH = 2
 # Operators allowed in ``where`` / ``having`` clauses. The dispatch
 # table below maps each to a callable that produces a pypika Criterion.
 _OPERATORS = {
-	"=", "!=",
-	"<", "<=", ">", ">=",
-	"in", "not in",
-	"like", "not like",
-	"is null", "is not null",
+	"=",
+	"!=",
+	"<",
+	"<=",
+	">",
+	">=",
+	"in",
+	"not in",
+	"like",
+	"not like",
+	"is null",
+	"is not null",
 	"between",
 	# v0.2 additions: set-existence subqueries. The ``value`` for these
 	# operators is a stripped sub-spec (from + alias + joins + where)
 	# rather than a literal. Closes the "membership against complex
 	# inner predicates" use case that LEFT JOIN + IS NULL gets unwieldy
 	# at.
-	"exists", "not exists",
+	"exists",
+	"not exists",
 }
 
 # Aggregate functions allowed in ``select`` and ``having``. Each maps
@@ -207,13 +210,9 @@ def query(spec: dict, confirm_large: bool = False) -> dict:
 			from jarvis.tools.get_list import _child_table_parents
 
 			parents = _child_table_parents(dt)
-			if any(
-				frappe.has_permission(dt, ptype="read", parent_doctype=p) for p in parents
-			):
+			if any(frappe.has_permission(dt, ptype="read", parent_doctype=p) for p in parents):
 				continue
-		raise PermissionDeniedError(
-			f"no read permission on referenced DocType: {dt}"
-		)
+		raise PermissionDeniedError(f"no read permission on referenced DocType: {dt}")
 
 	# Step 4: per-site DocType allowlist (defense-in-depth).
 	allowlist = _load_doctype_allowlist()
@@ -291,9 +290,7 @@ def query(spec: dict, confirm_large: bool = False) -> dict:
 	if offset_raw is not None:
 		offset = int(offset_raw)
 		if offset < 0 or offset > MAX_OFFSET:
-			raise InvalidArgumentError(
-				f"offset must be between 0 and {MAX_OFFSET}"
-			)
+			raise InvalidArgumentError(f"offset must be between 0 and {MAX_OFFSET}")
 		if offset > 0:
 			q = q.offset(offset)
 
@@ -311,6 +308,7 @@ def query(spec: dict, confirm_large: bool = False) -> dict:
 	# ``get_permission_conditions()`` touches we'll discover via test
 	# failures and add here.
 	from frappe.database.query import Engine
+
 	engine = Engine()
 	engine.user = frappe.session.user
 	engine.ignore_user_permissions = False
@@ -401,20 +399,14 @@ def _validate_spec_shape(spec: dict) -> None:
 				raise InvalidArgumentError(f"spec.joins[{i}] must be a dict")
 			for k in ("doctype", "alias", "on"):
 				if k not in j:
-					raise InvalidArgumentError(
-						f"spec.joins[{i}] missing required field: {k}"
-					)
+					raise InvalidArgumentError(f"spec.joins[{i}] missing required field: {k}")
 			if j["alias"] in seen_aliases:
 				raise InvalidArgumentError(
-					f"spec.joins[{i}] alias {j['alias']!r} collides with "
-					f"another table in this query"
+					f"spec.joins[{i}] alias {j['alias']!r} collides with another table in this query"
 				)
 			seen_aliases.add(j["alias"])
 			if j.get("type", "inner") not in _JOIN_METHODS:
-				raise InvalidArgumentError(
-					f"spec.joins[{i}].type must be one of: "
-					f"{sorted(_JOIN_METHODS)}"
-				)
+				raise InvalidArgumentError(f"spec.joins[{i}].type must be one of: {sorted(_JOIN_METHODS)}")
 
 	for clause in ("where", "having"):
 		if clause not in spec:
@@ -423,13 +415,10 @@ def _validate_spec_shape(spec: dict) -> None:
 			raise InvalidArgumentError(f"spec.{clause} must be a list")
 		for i, p in enumerate(spec[clause]):
 			if not isinstance(p, dict) or "op" not in p:
-				raise InvalidArgumentError(
-					f"spec.{clause}[{i}] must be a dict with 'op'"
-				)
+				raise InvalidArgumentError(f"spec.{clause}[{i}] must be a dict with 'op'")
 			if p["op"] not in _OPERATORS:
 				raise InvalidArgumentError(
-					f"spec.{clause}[{i}].op {p['op']!r} not allowed; "
-					f"must be one of {sorted(_OPERATORS)}"
+					f"spec.{clause}[{i}].op {p['op']!r} not allowed; must be one of {sorted(_OPERATORS)}"
 				)
 
 
@@ -536,8 +525,7 @@ def _validate_identifier(value: Any, kind: str) -> None:
 	the value reaches pypika's identifier quoting."""
 	if not isinstance(value, str) or not _IDENTIFIER_RE.match(value):
 		raise InvalidArgumentError(
-			f"invalid {kind}: only letters, digits, and underscores are "
-			f"allowed (got {value!r})"
+			f"invalid {kind}: only letters, digits, and underscores are allowed (got {value!r})"
 		)
 
 
@@ -609,9 +597,7 @@ def _validate_column(dt: str, field: str, base_doctype: str | None = None) -> No
 	except Exception:
 		raise InvalidArgumentError(f"unknown DocType: {dt!r}")
 	if field not in valid_columns and field not in _OPTIONAL_FIELDS:
-		raise InvalidArgumentError(
-			f"unknown column {field!r} on DocType {dt!r}"
-		)
+		raise InvalidArgumentError(f"unknown column {field!r} on DocType {dt!r}")
 	# Field-level (permlevel) read ACL — mirror get_list's
 	# apply_fieldlevel_read_permissions. ``ignore_virtual=True`` matches
 	# db_query (a virtual field carries no real column, so it never reaches
@@ -637,8 +623,7 @@ def _validate_column(dt: str, field: str, base_doctype: str | None = None) -> No
 	# OPTIONAL_FIELDS`` allowance) even when absent from the permitted set.
 	if field not in permitted and field not in _OPTIONAL_FIELDS:
 		raise PermissionDeniedError(
-			f"no read permission on field {field!r} of DocType {dt!r} "
-			f"(restricted by permission level)"
+			f"no read permission on field {field!r} of DocType {dt!r} (restricted by permission level)"
 		)
 
 
@@ -679,9 +664,7 @@ def _resolve_field(field_ref: str, alias_map: dict, allow_alias: bool = False):
 	# ``table[""]`` which generates invalid SQL with an empty column
 	# reference.
 	if not isinstance(field_ref, str) or not field_ref.strip():
-		raise InvalidArgumentError(
-			f"field reference must be a non-empty string, got {field_ref!r}"
-		)
+		raise InvalidArgumentError(f"field reference must be a non-empty string, got {field_ref!r}")
 	if "." not in field_ref:
 		if allow_alias:
 			# ORDER BY / GROUP BY may reference a SELECT output alias
@@ -690,6 +673,7 @@ def _resolve_field(field_ref: str, alias_map: dict, allow_alias: bool = False):
 			# existence isn't knowable for an output alias.
 			_validate_identifier(field_ref, "field")
 			from pypika import Field
+
 			return Field(field_ref)
 		# A bare reference like "name" is ambiguous in a join; require
 		# the alias prefix for clarity.
@@ -712,13 +696,11 @@ def _resolve_field(field_ref: str, alias_map: dict, allow_alias: bool = False):
 	# would look up an empty alias - both generate invalid SQL.
 	if not alias or not field:
 		raise InvalidArgumentError(
-			f"field reference {field_ref!r} must be of the form "
-			f"'alias.field' with both halves non-empty"
+			f"field reference {field_ref!r} must be of the form 'alias.field' with both halves non-empty"
 		)
 	if alias not in alias_map:
 		raise InvalidArgumentError(
-			f"field reference {field_ref!r} uses unknown alias {alias!r}; "
-			f"known aliases: {sorted(alias_map)}"
+			f"field reference {field_ref!r} uses unknown alias {alias!r}; known aliases: {sorted(alias_map)}"
 		)
 	dt, table = alias_map[alias]
 	# SEC-003: validate the column identifier + existence against the
@@ -751,11 +733,7 @@ def _build_on_criterion(on_spec: dict, alias_map: dict) -> Criterion:
 		lhs = _resolve_field(lhs_ref, alias_map)
 		# Treat as column-equality if rhs looks like alias.field with a
 		# known alias. Otherwise it's a literal value.
-		if (
-			isinstance(rhs_ref, str)
-			and "." in rhs_ref
-			and rhs_ref.split(".", 1)[0] in alias_map
-		):
+		if isinstance(rhs_ref, str) and "." in rhs_ref and rhs_ref.split(".", 1)[0] in alias_map:
 			rhs = _resolve_field(rhs_ref, alias_map)
 		else:
 			rhs = rhs_ref
@@ -792,9 +770,7 @@ def _build_select(select_spec: list, alias_map: dict) -> list:
 			if "expr" in item and "agg" not in item:
 				# Plain expression projection: {"expr": ..., "as": ...}
 				if "as" not in item:
-					raise InvalidArgumentError(
-						"select expression entries must carry an 'as' alias"
-					)
+					raise InvalidArgumentError("select expression entries must carry an 'as' alias")
 				_expr.validate_expr(item["expr"])
 				built = _expr.build_expr(
 					item["expr"],
@@ -808,9 +784,7 @@ def _build_select(select_spec: list, alias_map: dict) -> list:
 					expr = expr.as_(item["as"])
 				out.append(expr)
 		else:
-			raise InvalidArgumentError(
-				f"select entry must be a string or dict; got {type(item).__name__}"
-			)
+			raise InvalidArgumentError(f"select entry must be a string or dict; got {type(item).__name__}")
 	return out
 
 
@@ -828,8 +802,7 @@ def _build_aggregate(spec: dict, alias_map: dict):
 	agg_name = spec.get("agg")
 	if agg_name not in _AGGREGATES:
 		raise InvalidArgumentError(
-			f"aggregate {agg_name!r} not allowed; "
-			f"must be one of {sorted(_AGGREGATES)}"
+			f"aggregate {agg_name!r} not allowed; must be one of {sorted(_AGGREGATES)}"
 		)
 	field_ref = spec.get("field")
 	# v0.3: aggregates can wrap an expression instead of a bare field.
@@ -837,9 +810,7 @@ def _build_aggregate(spec: dict, alias_map: dict):
 	# Mutually exclusive with ``field``.
 	agg_expr = spec.get("expr")
 	if agg_expr is not None and field_ref is not None:
-		raise InvalidArgumentError(
-			f"aggregate {agg_name!r} cannot have both 'field' and 'expr'"
-		)
+		raise InvalidArgumentError(f"aggregate {agg_name!r} cannot have both 'field' and 'expr'")
 	if agg_name == "count" and field_ref == "*":
 		# COUNT(*) and COUNT(DISTINCT *) - the latter is pointless but
 		# pypika accepts it; we don't gate semantics, only shapes.
@@ -855,10 +826,7 @@ def _build_aggregate(spec: dict, alias_map: dict):
 		)
 		expr = _AGGREGATES[agg_name](inner)
 	else:
-		raise InvalidArgumentError(
-			f"aggregate {agg_name!r} missing 'field' or 'expr' "
-			f"(use '*' for COUNT(*))"
-		)
+		raise InvalidArgumentError(f"aggregate {agg_name!r} missing 'field' or 'expr' (use '*' for COUNT(*))")
 	if spec.get("distinct"):
 		# Toggle DISTINCT on the inner column. pypika's
 		# AggregateFunction.distinct() is the canonical entry point.
@@ -898,11 +866,12 @@ def _build_predicate(p: dict, alias_map: dict, depth: int = 1) -> Criterion:
 	if op in ("exists", "not exists"):
 		sub_spec = p.get("value")
 		if not isinstance(sub_spec, dict):
-			raise InvalidArgumentError(
-				f"{op!r} requires a sub-spec dict as 'value'"
-			)
+			raise InvalidArgumentError(f"{op!r} requires a sub-spec dict as 'value'")
 		return _build_exists_criterion(
-			sub_spec, alias_map, depth, negate=(op == "not exists"),
+			sub_spec,
+			alias_map,
+			depth,
+			negate=(op == "not exists"),
 		)
 
 	# Resolve the left side: bare field, aggregate, or v0.3 expression.
@@ -919,9 +888,7 @@ def _build_predicate(p: dict, alias_map: dict, depth: int = 1) -> Criterion:
 	else:
 		field_ref = p.get("field")
 		if not field_ref:
-			raise InvalidArgumentError(
-				f"predicate missing 'field', 'agg', or 'expr'"
-			)
+			raise InvalidArgumentError("predicate missing 'field', 'agg', or 'expr'")
 		lhs = _resolve_field(field_ref, alias_map)
 
 	# Apply the operator. Each branch produces a Criterion.
@@ -940,16 +907,12 @@ def _build_predicate(p: dict, alias_map: dict, depth: int = 1) -> Criterion:
 	if op == "in":
 		values = p.get("value")
 		if not isinstance(values, list):
-			raise InvalidArgumentError(
-				f"'in' operator requires a list value; got {type(values).__name__}"
-			)
+			raise InvalidArgumentError(f"'in' operator requires a list value; got {type(values).__name__}")
 		return lhs.isin(values)
 	if op == "not in":
 		values = p.get("value")
 		if not isinstance(values, list):
-			raise InvalidArgumentError(
-				f"'not in' operator requires a list value"
-			)
+			raise InvalidArgumentError("'not in' operator requires a list value")
 		return lhs.notin(values)
 	if op == "like":
 		return lhs.like(p["value"])
@@ -962,9 +925,7 @@ def _build_predicate(p: dict, alias_map: dict, depth: int = 1) -> Criterion:
 	if op == "between":
 		values = p.get("value")
 		if not isinstance(values, list) or len(values) != 2:
-			raise InvalidArgumentError(
-				f"'between' operator requires a 2-element list value"
-			)
+			raise InvalidArgumentError("'between' operator requires a 2-element list value")
 		return lhs[slice(*values)]
 	# Unreachable - _validate_spec_shape already restricts op to _OPERATORS.
 	raise InvalidArgumentError(f"unsupported operator: {op}")
@@ -980,12 +941,17 @@ def _build_predicate(p: dict, alias_map: dict, depth: int = 1) -> Criterion:
 # so the agent gets a clear error rather than building a spec the
 # qb side silently ignores.
 _SUBSPEC_DISALLOWED_FIELDS = (
-	"select", "group_by", "having", "order_by", "limit", "offset", "distinct",
+	"select",
+	"group_by",
+	"having",
+	"order_by",
+	"limit",
+	"offset",
+	"distinct",
 )
 
 
-def _build_exists_criterion(sub_spec: dict, outer_alias_map: dict,
-                              depth: int, *, negate: bool) -> Criterion:
+def _build_exists_criterion(sub_spec: dict, outer_alias_map: dict, depth: int, *, negate: bool) -> Criterion:
 	"""Build an EXISTS or NOT EXISTS criterion from a stripped sub-spec.
 
 	The sub-spec carries only ``from``, ``alias``, ``joins``, ``where``.
@@ -1013,9 +979,7 @@ def _build_exists_criterion(sub_spec: dict, outer_alias_map: dict,
 	if not isinstance(sub_spec, dict):
 		raise InvalidArgumentError("EXISTS sub-spec must be a dict")
 	if "from" not in sub_spec or not isinstance(sub_spec["from"], str):
-		raise InvalidArgumentError(
-			"EXISTS sub-spec.from must be a DocType name (string)"
-		)
+		raise InvalidArgumentError("EXISTS sub-spec.from must be a DocType name (string)")
 	for forbidden in _SUBSPEC_DISALLOWED_FIELDS:
 		if forbidden in sub_spec:
 			raise InvalidArgumentError(
@@ -1048,18 +1012,13 @@ def _build_exists_criterion(sub_spec: dict, outer_alias_map: dict,
 	for j in sub_spec.get("joins") or []:
 		if j.get("type", "inner") not in _JOIN_METHODS:
 			raise InvalidArgumentError(
-				f"EXISTS sub-spec.joins[*].type must be one of: "
-				f"{sorted(_JOIN_METHODS)}"
+				f"EXISTS sub-spec.joins[*].type must be one of: {sorted(_JOIN_METHODS)}"
 			)
 		for k in ("doctype", "alias", "on"):
 			if k not in j:
-				raise InvalidArgumentError(
-					f"EXISTS sub-spec.joins[*] missing required field: {k}"
-				)
+				raise InvalidArgumentError(f"EXISTS sub-spec.joins[*] missing required field: {k}")
 		if j["alias"] in sub_alias_map:
-			raise InvalidArgumentError(
-				f"EXISTS sub-spec alias {j['alias']!r} collides"
-			)
+			raise InvalidArgumentError(f"EXISTS sub-spec alias {j['alias']!r} collides")
 		# SEC-003: validate the sub-spec join's table-name + alias sinks.
 		_validate_doctype(j["doctype"])
 		_validate_identifier(j["alias"], "alias")
@@ -1082,8 +1041,7 @@ def _build_exists_criterion(sub_spec: dict, outer_alias_map: dict,
 			resolved = w
 		else:
 			resolved = _resolve_correlated_refs(w, sub_alias_map)
-		sub_q = sub_q.where(_build_predicate(resolved, sub_alias_map,
-		                                       depth=depth + 1))
+		sub_q = sub_q.where(_build_predicate(resolved, sub_alias_map, depth=depth + 1))
 
 	# Record-level permission weave for the sub-query. Without this
 	# the EXISTS / NOT EXISTS form becomes a side-channel: a caller
@@ -1097,6 +1055,7 @@ def _build_exists_criterion(sub_spec: dict, outer_alias_map: dict,
 	# already perm-gated at the outer level (and weaving them again
 	# here would double-filter).
 	from frappe.database.query import Engine
+
 	sub_engine = Engine()
 	sub_engine.user = frappe.session.user
 	sub_engine.ignore_user_permissions = False
@@ -1104,9 +1063,7 @@ def _build_exists_criterion(sub_spec: dict, outer_alias_map: dict,
 	sub_engine.query = sub_q
 	# Only the sub-spec's own tables, not the outer-scoped aliases.
 	sub_local_aliases = {
-		a: (dt, table)
-		for a, (dt, table) in sub_alias_map.items()
-		if a not in outer_alias_map
+		a: (dt, table) for a, (dt, table) in sub_alias_map.items() if a not in outer_alias_map
 	}
 	sub_engine.tables = [table for (_, table) in sub_local_aliases.values()]
 	# Same reason as the outer engine: permission_query_conditions hooks
@@ -1140,6 +1097,7 @@ def _build_exists_criterion(sub_spec: dict, outer_alias_map: dict,
 	try:
 		# Newer pypika (>=0.49) exposes ExistsCriterion via terms.
 		from pypika.terms import ExistsCriterion
+
 		crit = ExistsCriterion(sub_q)
 	except ImportError:
 		# Fallback: some versions expose ``.exists()`` on QueryBuilder.
@@ -1188,8 +1146,7 @@ def _resolve_correlated_refs(predicate: dict, alias_map: dict) -> dict:
 		new_value = []
 		for v in value:
 			if isinstance(v, dict) and "$field" in v:
-				new_value.append(_resolve_field(v["$field"], alias_map,
-				                                  allow_alias=False))
+				new_value.append(_resolve_field(v["$field"], alias_map, allow_alias=False))
 			else:
 				# Reject unresolved $field markers buried inside nested
 				# structures - those would otherwise reach pypika as raw

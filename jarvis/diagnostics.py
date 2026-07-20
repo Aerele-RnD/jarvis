@@ -33,10 +33,12 @@ def ping_admin() -> dict:
 	System Manager / Administrator)."""
 	require_jarvis_admin()
 	from jarvis import admin_client
+
 	settings = frappe.get_single("Jarvis Settings")
 	if not (settings.get_password("jarvis_admin_api_key", raise_exception=False) or "").strip():
 		return {
-			"ok": False, "kind": "config",
+			"ok": False,
+			"kind": "config",
 			"error": "jarvis_admin_api_key is not set; complete onboarding first.",
 		}
 	try:
@@ -60,6 +62,7 @@ def ping_openclaw() -> dict:
 	require_jarvis_admin()
 	from jarvis import openclaw_ws
 	from jarvis.exceptions import OpenclawUnreachableError
+
 	settings = frappe.get_single("Jarvis Settings")
 	url = (settings.agent_url or "").strip()
 	token = settings.get_password("agent_token", raise_exception=False) or ""
@@ -145,9 +148,7 @@ def chat_recovery_stats() -> dict:
 
 	win_24h = _window(24)
 	win_7d = _window(24 * 7)
-	recovered_rate_24h = (
-		(win_24h["recovered"] / win_24h["total"]) if win_24h["total"] else 0
-	)
+	recovered_rate_24h = (win_24h["recovered"] / win_24h["total"]) if win_24h["total"] else 0
 	return {
 		"24h": win_24h,
 		"7d": win_7d,
@@ -175,8 +176,7 @@ def reset_agent_pairing() -> dict:
 	from jarvis.exceptions import OpenclawUnreachableError
 
 	settings = frappe.get_single("Jarvis Settings")
-	gateway_url = (settings.agent_url or "").strip().replace(
-		"http://", "ws://").replace("https://", "wss://")
+	gateway_url = (settings.agent_url or "").strip().replace("http://", "ws://").replace("https://", "wss://")
 	if not gateway_url:
 		return {"ok": False, "kind": "config", "error": "agent_url is not set."}
 

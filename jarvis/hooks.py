@@ -58,6 +58,7 @@ def __getattr__(name: str):
 		return get_default_admin_url()
 	raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
+
 # ---------------------------------------------------------------------------
 # OAuth client IDs - one per supported chat-subscription provider
 # ---------------------------------------------------------------------------
@@ -74,6 +75,7 @@ def __getattr__(name: str):
 # adapter for Claude Pro/Max subscriptions.
 def _env_or_default(name: str, default: str) -> str:
 	import os
+
 	return (os.environ.get(name, "") or "").strip() or default
 
 
@@ -148,14 +150,21 @@ def get_oauth_client_secret(provider: str) -> str:
 		# Imported lazily so the node_modules walk only runs when a
 		# Google OAuth call asks for it.
 		from jarvis.oauth.gemini_cli_secret import extract_gemini_cli_secret
+
 		return extract_gemini_cli_secret()
 	return ""
+
 
 # Includes in <head>
 # ------------------
 # Brand styling for the Desk shell (loaded on every desk page).
 app_include_css = ["/assets/jarvis/css/jarvis-brand.css"]
-app_include_js = ["jarvis_immersive.bundle.js", "jarvis_widget.bundle.js", "jarvis_onboarding_llm.bundle.js", "jarvis_onboarding_banner.bundle.js"]
+app_include_js = [
+	"jarvis_immersive.bundle.js",
+	"jarvis_widget.bundle.js",
+	"jarvis_onboarding_llm.bundle.js",
+	"jarvis_onboarding_banner.bundle.js",
+]
 
 # Separate frappe-ui Vue SPA (apps/jarvis/frontend) served at /jarvis. The
 # catch-all routes every /jarvis/* deep link to the www/jarvis page so the
@@ -380,8 +389,14 @@ doc_events["Jarvis Personalise Question Rule"] = {
 _TRIGGER_DISPATCH = "jarvis.triggers.engine.dispatch"
 _star_doc_events = doc_events.setdefault("*", {})
 for _trigger_event in (
-	"validate", "before_submit", "after_insert", "on_update",
-	"on_submit", "on_cancel", "on_trash", "on_update_after_submit",
+	"validate",
+	"before_submit",
+	"after_insert",
+	"on_update",
+	"on_submit",
+	"on_cancel",
+	"on_trash",
+	"on_update_after_submit",
 ):
 	_existing_handlers = _star_doc_events.get(_trigger_event)
 	if _existing_handlers is None:
@@ -422,18 +437,22 @@ has_permission = {
 # Approval). Matrix + SQL fragments live in jarvis/chat/chat_permissions.py.
 # The doctype permission rows carry role "Jarvis User" (not "All"), so the role
 # is genuinely load-bearing: revoking it denies all four via REST.
-permission_query_conditions.update({
-	"Jarvis Conversation": "jarvis.chat.chat_permissions.conversation_query_conditions",
-	"Jarvis Chat Message": "jarvis.chat.chat_permissions.message_query_conditions",
-	"Jarvis Approval Request": "jarvis.chat.chat_permissions.approval_query_conditions",
-	"Jarvis Voice Note": "jarvis.chat.chat_permissions.voice_note_query_conditions",
-})
-has_permission.update({
-	"Jarvis Conversation": "jarvis.chat.chat_permissions.has_conversation_permission",
-	"Jarvis Chat Message": "jarvis.chat.chat_permissions.has_message_permission",
-	"Jarvis Approval Request": "jarvis.chat.chat_permissions.has_approval_permission",
-	"Jarvis Voice Note": "jarvis.chat.chat_permissions.has_voice_note_permission",
-})
+permission_query_conditions.update(
+	{
+		"Jarvis Conversation": "jarvis.chat.chat_permissions.conversation_query_conditions",
+		"Jarvis Chat Message": "jarvis.chat.chat_permissions.message_query_conditions",
+		"Jarvis Approval Request": "jarvis.chat.chat_permissions.approval_query_conditions",
+		"Jarvis Voice Note": "jarvis.chat.chat_permissions.voice_note_query_conditions",
+	}
+)
+has_permission.update(
+	{
+		"Jarvis Conversation": "jarvis.chat.chat_permissions.has_conversation_permission",
+		"Jarvis Chat Message": "jarvis.chat.chat_permissions.has_message_permission",
+		"Jarvis Approval Request": "jarvis.chat.chat_permissions.has_approval_permission",
+		"Jarvis Voice Note": "jarvis.chat.chat_permissions.has_voice_note_permission",
+	}
+)
 
 # ---------------------------------------------------------------------------
 # Skills / Personalise scoping (security review PART 2)
@@ -445,14 +464,18 @@ has_permission.update({
 # user_can_use_skill rule).
 # TASK 17: Jarvis Personalise Question scoped on the `user` field (not `owner`)
 # so generic REST matches the API's user-based scoping and survives drift.
-permission_query_conditions.update({
-	"Jarvis Custom Skill": "jarvis.chat.skill_permissions.skill_query_conditions",
-	"Jarvis Personalise Question": "jarvis.chat.personalise_permissions.personalise_question_query_conditions",
-})
-has_permission.update({
-	"Jarvis Custom Skill": "jarvis.chat.skill_permissions.has_skill_permission",
-	"Jarvis Personalise Question": "jarvis.chat.personalise_permissions.has_personalise_question_permission",
-})
+permission_query_conditions.update(
+	{
+		"Jarvis Custom Skill": "jarvis.chat.skill_permissions.skill_query_conditions",
+		"Jarvis Personalise Question": "jarvis.chat.personalise_permissions.personalise_question_query_conditions",
+	}
+)
+has_permission.update(
+	{
+		"Jarvis Custom Skill": "jarvis.chat.skill_permissions.has_skill_permission",
+		"Jarvis Personalise Question": "jarvis.chat.personalise_permissions.has_personalise_question_permission",
+	}
+)
 
 # ---------------------------------------------------------------------------
 # File Box / Macros / Agents scoping (security review PART 3)
@@ -469,23 +492,27 @@ has_permission.update({
 # TASK 29: the four owner/installer-scoped agent doctypes (Installation, Run,
 # Finding, Activity). The Listing catalog stays All-readable (no owner hook); its
 # skill_bundle IP is permlevel-guarded (TASK 33) instead.
-permission_query_conditions.update({
-	"File": "jarvis.chat.file_permissions.file_query_conditions",
-	"Jarvis Macro": "jarvis.chat.macro_permissions.macro_query_conditions",
-	"Jarvis Macro Run": "jarvis.chat.macro_permissions.macro_run_query_conditions",
-	"Jarvis Agent Installation": "jarvis.chat.agent_permissions.installation_query_conditions",
-	"Jarvis Agent Run": "jarvis.chat.agent_permissions.run_query_conditions",
-	"Jarvis Agent Finding": "jarvis.chat.agent_permissions.finding_query_conditions",
-	"Jarvis Agent Activity": "jarvis.chat.agent_permissions.activity_query_conditions",
-})
-has_permission.update({
-	"Jarvis Macro": "jarvis.chat.macro_permissions.has_macro_permission",
-	"Jarvis Macro Run": "jarvis.chat.macro_permissions.has_macro_run_permission",
-	"Jarvis Agent Installation": "jarvis.chat.agent_permissions.has_installation_permission",
-	"Jarvis Agent Run": "jarvis.chat.agent_permissions.has_run_permission",
-	"Jarvis Agent Finding": "jarvis.chat.agent_permissions.has_finding_permission",
-	"Jarvis Agent Activity": "jarvis.chat.agent_permissions.has_activity_permission",
-})
+permission_query_conditions.update(
+	{
+		"File": "jarvis.chat.file_permissions.file_query_conditions",
+		"Jarvis Macro": "jarvis.chat.macro_permissions.macro_query_conditions",
+		"Jarvis Macro Run": "jarvis.chat.macro_permissions.macro_run_query_conditions",
+		"Jarvis Agent Installation": "jarvis.chat.agent_permissions.installation_query_conditions",
+		"Jarvis Agent Run": "jarvis.chat.agent_permissions.run_query_conditions",
+		"Jarvis Agent Finding": "jarvis.chat.agent_permissions.finding_query_conditions",
+		"Jarvis Agent Activity": "jarvis.chat.agent_permissions.activity_query_conditions",
+	}
+)
+has_permission.update(
+	{
+		"Jarvis Macro": "jarvis.chat.macro_permissions.has_macro_permission",
+		"Jarvis Macro Run": "jarvis.chat.macro_permissions.has_macro_run_permission",
+		"Jarvis Agent Installation": "jarvis.chat.agent_permissions.has_installation_permission",
+		"Jarvis Agent Run": "jarvis.chat.agent_permissions.has_run_permission",
+		"Jarvis Agent Finding": "jarvis.chat.agent_permissions.has_finding_permission",
+		"Jarvis Agent Activity": "jarvis.chat.agent_permissions.has_activity_permission",
+	}
+)
 
 # ---------------------------------------------------------------------------
 # Per-user settings / usage scoping (security review PART 4 REVISED, TASK 52)
@@ -500,12 +527,16 @@ has_permission.update({
 # frappe.get_all, which hardcodes ignore_permissions=True and therefore sees all
 # rows regardless of this hook — the admin bypass here matters for the
 # permission-checked frappe.get_list / generic-REST surface, not for that fn.)
-permission_query_conditions.update({
-	"Jarvis User Settings": "jarvis.chat.user_settings_permissions.user_settings_query_conditions",
-})
-has_permission.update({
-	"Jarvis User Settings": "jarvis.chat.user_settings_permissions.has_user_settings_permission",
-})
+permission_query_conditions.update(
+	{
+		"Jarvis User Settings": "jarvis.chat.user_settings_permissions.user_settings_query_conditions",
+	}
+)
+has_permission.update(
+	{
+		"Jarvis User Settings": "jarvis.chat.user_settings_permissions.has_user_settings_permission",
+	}
+)
 
 # ---------------------------------------------------------------------------
 # Jarvis Trigger scoping
@@ -516,12 +547,16 @@ has_permission.update({
 # has NO hooks: its doctype perms are SM-only and
 # jarvis.chat.triggers_api.list_activity_page serves visibility-filtered rows
 # (read access on the target doc) to everyone else.
-permission_query_conditions.update({
-	"Jarvis Trigger": "jarvis.chat.trigger_permissions.trigger_query_conditions",
-})
-has_permission.update({
-	"Jarvis Trigger": "jarvis.chat.trigger_permissions.has_trigger_permission",
-})
+permission_query_conditions.update(
+	{
+		"Jarvis Trigger": "jarvis.chat.trigger_permissions.trigger_query_conditions",
+	}
+)
+has_permission.update(
+	{
+		"Jarvis Trigger": "jarvis.chat.trigger_permissions.has_trigger_permission",
+	}
+)
 
 # ---------------------------------------------------------------------------
 # Jarvis Dashboard scoping
@@ -532,10 +567,13 @@ has_permission.update({
 # tier. The create-time scope-widening gate (plain users may not create
 # Org/Role dashboards) lives in the DocType controller — "create" reaches the
 # hook without a doc.
-permission_query_conditions.update({
-	"Jarvis Dashboard": "jarvis.chat.dashboard_permissions.dashboard_query_conditions",
-})
-has_permission.update({
-	"Jarvis Dashboard": "jarvis.chat.dashboard_permissions.has_dashboard_permission",
-})
-
+permission_query_conditions.update(
+	{
+		"Jarvis Dashboard": "jarvis.chat.dashboard_permissions.dashboard_query_conditions",
+	}
+)
+has_permission.update(
+	{
+		"Jarvis Dashboard": "jarvis.chat.dashboard_permissions.has_dashboard_permission",
+	}
+)

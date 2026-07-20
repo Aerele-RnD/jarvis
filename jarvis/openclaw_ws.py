@@ -11,6 +11,7 @@ without going through admin. In local-dev the same code paths apply -
 the WS happens to terminate on a local container, but the bench's role
 is the same.
 """
+
 import json
 import time
 import uuid
@@ -19,7 +20,6 @@ import websocket
 from websocket import create_connection
 
 from jarvis.exceptions import OpenclawUnreachableError
-
 
 PING_TIMEOUT_SECONDS = 10
 
@@ -38,24 +38,28 @@ def ping(gateway_url: str, gateway_token: str) -> None:
 	deadline = time.monotonic() + PING_TIMEOUT_SECONDS
 	try:
 		connect_id = str(uuid.uuid4())
-		ws.send(json.dumps({
-			"type": "req",
-			"id": connect_id,
-			"method": "connect",
-			"params": {
-				"minProtocol": 3,
-				"maxProtocol": 4,
-				"role": "operator",
-				"client": {
-					"id": "gateway-client",
-					"version": "0.1.0",
-					"platform": "linux",
-					"mode": "backend",
-				},
-				"scopes": ["operator.admin"],
-				"auth": {"token": gateway_token},
-			},
-		}))
+		ws.send(
+			json.dumps(
+				{
+					"type": "req",
+					"id": connect_id,
+					"method": "connect",
+					"params": {
+						"minProtocol": 3,
+						"maxProtocol": 4,
+						"role": "operator",
+						"client": {
+							"id": "gateway-client",
+							"version": "0.1.0",
+							"platform": "linux",
+							"mode": "backend",
+						},
+						"scopes": ["operator.admin"],
+						"auth": {"token": gateway_token},
+					},
+				}
+			)
+		)
 		connect_res = _await_response(ws, connect_id, deadline)
 		if not connect_res.get("ok"):
 			err = connect_res.get("error") or {}

@@ -12,7 +12,9 @@ def get_context(context):
 	# but unauthorized user is sent to the branded /jarvis-no-access page instead.
 	# Follows Frappe's www redirect idiom.
 	if not has_jarvis_access():
-		frappe.local.flags.redirect_location = "/app" if frappe.session.user == "Guest" else "/jarvis-no-access"
+		frappe.local.flags.redirect_location = (
+			"/app" if frappe.session.user == "Guest" else "/jarvis-no-access"
+		)
 		raise frappe.Redirect
 
 	# frappe-ui's jinjaBootData plugin emits `window["<key>"] = {{ boot[key]|tojson }}`

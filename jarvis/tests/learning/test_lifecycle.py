@@ -57,9 +57,9 @@ def _candidate(pattern_key=KEY, **over):
 class TestLifecycle(FrappeTestCase):
 	def setUp(self):
 		super().setUp()
-		self.run = frappe.get_doc(
-			{"doctype": RUN, "trigger": "manual", "status": "Running"}
-		).insert(ignore_permissions=True)
+		self.run = frappe.get_doc({"doctype": RUN, "trigger": "manual", "status": "Running"}).insert(
+			ignore_permissions=True
+		)
 		frappe.local._jarvis_overlap_index = None
 
 	def tearDown(self):
@@ -101,7 +101,9 @@ class TestLifecycle(FrappeTestCase):
 		lifecycle.upsert_candidate(_candidate(), self.run)
 		name = self._row().name
 		frappe.db.set_value(
-			JLP, name, {"draft_edited": 1, "skill_draft": "- SM edited rule."},
+			JLP,
+			name,
+			{"draft_edited": 1, "skill_draft": "- SM edited rule."},
 			update_modified=False,
 		)
 		lifecycle.upsert_candidate(_candidate(skill_draft="- fresh detector text."), self.run)
@@ -114,7 +116,9 @@ class TestLifecycle(FrappeTestCase):
 		lifecycle.upsert_candidate(_candidate(), self.run)
 		name = self._row().name
 		frappe.db.set_value(
-			JLP, name, {"draft_polished": 1, "skill_draft": "- polished wording."},
+			JLP,
+			name,
+			{"draft_polished": 1, "skill_draft": "- polished wording."},
 			update_modified=False,
 		)
 		out = lifecycle.upsert_candidate(
@@ -133,7 +137,9 @@ class TestLifecycle(FrappeTestCase):
 		lifecycle.upsert_candidate(_candidate(), self.run)
 		name = self._row().name
 		frappe.db.set_value(
-			JLP, name, {"draft_polished": 1, "skill_draft": "- polished wording."},
+			JLP,
+			name,
+			{"draft_polished": 1, "skill_draft": "- polished wording."},
 			update_modified=False,
 		)
 		lifecycle.upsert_candidate(
@@ -153,7 +159,9 @@ class TestLifecycle(FrappeTestCase):
 		lifecycle.upsert_candidate(_candidate(strength_band="High"), self.run)
 		name = self._row().name
 		frappe.db.set_value(
-			JLP, name, {"flag_band_cap": "Low", "strength_band": "Low"},
+			JLP,
+			name,
+			{"flag_band_cap": "Low", "strength_band": "Low"},
 			update_modified=False,
 		)
 		lifecycle.upsert_candidate(_candidate(strength_band="High"), self.run)
@@ -177,9 +185,7 @@ class TestLifecycle(FrappeTestCase):
 	def test_rejected_reappears_on_band_rise(self):
 		lifecycle.upsert_candidate(_candidate(), self.run)
 		self._reject(strength_band="Medium", support_n=40, review_note="not now")
-		out = lifecycle.upsert_candidate(
-			_candidate(strength_band="High", wilson_low=0.95), self.run
-		)
+		out = lifecycle.upsert_candidate(_candidate(strength_band="High", wilson_low=0.95), self.run)
 		self.assertEqual(out, "created")
 		row = self._row()
 		self.assertEqual(row.status, "Proposed")
@@ -189,9 +195,7 @@ class TestLifecycle(FrappeTestCase):
 	def test_rejected_reappears_on_support_growth(self):
 		lifecycle.upsert_candidate(_candidate(), self.run)
 		self._reject(strength_band="Medium", support_n=40)
-		out = lifecycle.upsert_candidate(
-			_candidate(strength_band="Medium", support_n=70), self.run
-		)
+		out = lifecycle.upsert_candidate(_candidate(strength_band="Medium", support_n=70), self.run)
 		self.assertEqual(out, "created")
 		self.assertEqual(self._row().status, "Proposed")
 
@@ -212,7 +216,9 @@ class TestLifecycle(FrappeTestCase):
 		name = self._row().name
 		past = str(add_to_date(now_datetime(), days=-1).date())
 		frappe.db.set_value(
-			JLP, name, {"status": "Snoozed", "snoozed_until": past, "surfaced": 1},
+			JLP,
+			name,
+			{"status": "Snoozed", "snoozed_until": past, "surfaced": 1},
 			update_modified=False,
 		)
 		res = lifecycle.snooze_expiry()
@@ -244,14 +250,16 @@ class TestLifecycle(FrappeTestCase):
 	def test_overlap_warning_set_against_enabled_custom_skill(self):
 		# Low-level insert bypasses the per-owner cap (this dev site is near it).
 		d = frappe.new_doc(SKILL)
-		d.update({
-			"skill_name": OVERLAP_SKILL,
-			"description": "Supplier ThreadCo supplies only non-stock items handling",
-			"instructions": "Body about supplier non-stock items handling.",
-			"enabled": 1,
-			"user_invocable": 0,
-			"managed_by_learning": 0,
-		})
+		d.update(
+			{
+				"skill_name": OVERLAP_SKILL,
+				"description": "Supplier ThreadCo supplies only non-stock items handling",
+				"instructions": "Body about supplier non-stock items handling.",
+				"enabled": 1,
+				"user_invocable": 0,
+				"managed_by_learning": 0,
+			}
+		)
 		d.owner = "Administrator"
 		d.name = "lc-overlap-row"
 		d.flags.name_set = True
@@ -278,19 +286,24 @@ class TestRevalidateActive(FrappeTestCase):
 		# Notification Log.for_user is a Link, so the recipient must exist
 		# (get_users_with_role is mocked; roles are irrelevant here).
 		if not frappe.db.exists("User", cls.SM):
-			u = frappe.get_doc({
-				"doctype": "User", "email": cls.SM,
-				"first_name": "lc-drift-sm", "send_welcome_email": 0, "enabled": 1,
-			})
+			u = frappe.get_doc(
+				{
+					"doctype": "User",
+					"email": cls.SM,
+					"first_name": "lc-drift-sm",
+					"send_welcome_email": 0,
+					"enabled": 1,
+				}
+			)
 			u.flags.ignore_permissions = True
 			u.insert()
 			frappe.db.commit()
 
 	def setUp(self):
 		super().setUp()
-		self.run = frappe.get_doc(
-			{"doctype": RUN, "trigger": "manual", "status": "Running"}
-		).insert(ignore_permissions=True)
+		self.run = frappe.get_doc({"doctype": RUN, "trigger": "manual", "status": "Running"}).insert(
+			ignore_permissions=True
+		)
 		frappe.local._jarvis_overlap_index = None
 
 	def tearDown(self):
@@ -316,9 +329,7 @@ class TestRevalidateActive(FrappeTestCase):
 		return name
 
 	def _reval(self, result):
-		with mock.patch(
-			"jarvis.learning.executor.run_detector", return_value=result
-		) as rd:
+		with mock.patch("jarvis.learning.executor.run_detector", return_value=result) as rd:
 			out = lifecycle.revalidate_active(self.run, patterndb=object())
 		return out, rd
 
@@ -326,8 +337,13 @@ class TestRevalidateActive(FrappeTestCase):
 	def test_matched_candidate_refreshes_stats_in_place(self):
 		self._live(status="Active")
 		fresh = _candidate(
-			support_n=60, n_rows=61, exception_n=1,
-			confidence_pct=97.0, wilson_low=0.91, gap=0.4, strength_band="High",
+			support_n=60,
+			n_rows=61,
+			exception_n=1,
+			confidence_pct=97.0,
+			wilson_low=0.91,
+			gap=0.4,
+			strength_band="High",
 		)
 		out, _rd = self._reval(DetectorResult([fresh], None))
 		row = self._row()
@@ -343,7 +359,9 @@ class TestRevalidateActive(FrappeTestCase):
 	def test_drift_never_touches_an_edited_draft(self):
 		name = self._live(status="Approved")
 		frappe.db.set_value(
-			JLP, name, {"draft_edited": 1, "skill_draft": "- SM edited rule."},
+			JLP,
+			name,
+			{"draft_edited": 1, "skill_draft": "- SM edited rule."},
 			update_modified=False,
 		)
 		fresh = _candidate(support_n=80, skill_draft="- fresh detector text.")
@@ -357,9 +375,7 @@ class TestRevalidateActive(FrappeTestCase):
 	def test_confidence_drop_marks_stale_and_notifies(self):
 		self._live(status="Active")
 		fresh = _candidate(confidence_pct=71.0, wilson_low=0.55, strength_band="Low")
-		with mock.patch(
-			"frappe.utils.user.get_users_with_role", return_value=[self.SM]
-		):
+		with mock.patch("frappe.utils.user.get_users_with_role", return_value=[self.SM]):
 			out, _rd = self._reval(DetectorResult([fresh], None))
 		row = self._row()
 		self.assertEqual(row.status, "Stale")
@@ -368,9 +384,7 @@ class TestRevalidateActive(FrappeTestCase):
 		self.assertAlmostEqual(row.confidence_pct, 71.0, places=1)  # fresh truth kept
 		self.assertTrue(row.last_validated_at)
 		self.assertEqual(out["staled"], 1)
-		subjects = frappe.get_all(
-			"Notification Log", filters={"for_user": self.SM}, pluck="subject"
-		)
+		subjects = frappe.get_all("Notification Log", filters={"for_user": self.SM}, pluck="subject")
 		self.assertTrue(any("stale" in (s or "").lower() for s in subjects))
 
 	def test_undetectable_marks_stale(self):
@@ -395,9 +409,7 @@ class TestRevalidateActive(FrappeTestCase):
 		# 0.80 drift floor (detection gates on confidence + precision, not on
 		# wilson >= 0.80). Re-detecting it with the SAME numbers is not drift:
 		# it must never be staled on a floor stricter than admission.
-		self._live(
-			status="Active", confidence_pct=90.0, wilson_low=0.74, strength_band="Low"
-		)
+		self._live(status="Active", confidence_pct=90.0, wilson_low=0.74, strength_band="Low")
 		fresh = _candidate(confidence_pct=90.0, wilson_low=0.74, strength_band="Low")
 		out, _rd = self._reval(DetectorResult([fresh], None))
 		row = self._row()
@@ -411,9 +423,7 @@ class TestRevalidateActive(FrappeTestCase):
 		# name the actual trigger - never the bogus "dropped 95% -> 95%".
 		self._live(status="Active")  # stored wilson_low 0.85
 		fresh = _candidate(confidence_pct=95.0, wilson_low=0.70, strength_band="Low")
-		with mock.patch(
-			"frappe.utils.user.get_users_with_role", return_value=[self.SM]
-		):
+		with mock.patch("frappe.utils.user.get_users_with_role", return_value=[self.SM]):
 			out, _rd = self._reval(DetectorResult([fresh], None))
 		row = self._row()
 		self.assertEqual(row.status, "Stale")
@@ -426,12 +436,12 @@ class TestRevalidateActive(FrappeTestCase):
 		# clamps to flag_band_cap so a demotion survives re-validation.
 		name = self._live(status="Active")
 		frappe.db.set_value(
-			JLP, name, {"flag_band_cap": "Low", "strength_band": "Low"},
+			JLP,
+			name,
+			{"flag_band_cap": "Low", "strength_band": "Low"},
 			update_modified=False,
 		)
-		fresh = _candidate(
-			support_n=60, confidence_pct=97.0, wilson_low=0.91, strength_band="High"
-		)
+		fresh = _candidate(support_n=60, confidence_pct=97.0, wilson_low=0.91, strength_band="High")
 		out, _rd = self._reval(DetectorResult([fresh], None))
 		row = self._row()
 		self.assertEqual(row.status, "Active")
@@ -470,9 +480,9 @@ class TestRevalidateActiveMined(FrappeTestCase):
 
 	def setUp(self):
 		super().setUp()
-		self.run = frappe.get_doc(
-			{"doctype": RUN, "trigger": "manual", "status": "Running"}
-		).insert(ignore_permissions=True)
+		self.run = frappe.get_doc({"doctype": RUN, "trigger": "manual", "status": "Running"}).insert(
+			ignore_permissions=True
+		)
 		frappe.local._jarvis_overlap_index = None
 
 	def tearDown(self):
@@ -505,11 +515,12 @@ class TestRevalidateActiveMined(FrappeTestCase):
 
 	def _reval_mined(self, mined):
 		"""Run the mined path and prove the checker is never re-run."""
-		with mock.patch(
-			"jarvis.learning.executor.run_detector",
-			side_effect=AssertionError("mined path must not run the checker"),
-		), mock.patch(
-			"frappe.utils.user.get_users_with_role", return_value=[]
+		with (
+			mock.patch(
+				"jarvis.learning.executor.run_detector",
+				side_effect=AssertionError("mined path must not run the checker"),
+			),
+			mock.patch("frappe.utils.user.get_users_with_role", return_value=[]),
 		):
 			return lifecycle.revalidate_active(self.run, mined=mined)
 
@@ -566,7 +577,8 @@ class TestRevalidateActiveMined(FrappeTestCase):
 		# behaviour, so the pattern goes Stale with the divergence reason.
 		self._live(status="Active")
 		fresh = _candidate(
-			confidence_pct=95.0, wilson_low=0.85,
+			confidence_pct=95.0,
+			wilson_low=0.85,
 			evidence={
 				"antecedent": "ThreadCo",
 				"recency": "behavior changed around 2026-04-01",
@@ -584,11 +596,10 @@ class TestRevalidateActiveMined(FrappeTestCase):
 		# the recent behaviour, so the same divergence must not loop the row
 		# back to Stale every night.
 		name = self._live(status="Active")
-		frappe.db.set_value(
-			JLP, name, {"reviewed_at": now_datetime()}, update_modified=False
-		)
+		frappe.db.set_value(JLP, name, {"reviewed_at": now_datetime()}, update_modified=False)
 		fresh = _candidate(
-			confidence_pct=95.0, wilson_low=0.85,
+			confidence_pct=95.0,
+			wilson_low=0.85,
 			evidence={
 				"antecedent": "ThreadCo",
 				"recency": "behavior changed around 2026-04-01",
@@ -620,11 +631,15 @@ class TestRevalidateActiveMined(FrappeTestCase):
 			rows = []
 			for i in range(count):
 				day = frappe.utils.add_days(start, i)
-				rows.append({
-					"unit_id": f"{supplier}-{tag}-{i}", "antecedent": supplier,
-					"consequent": consequent, "day": day,
-					"created": f"{day} 10:00:00",
-				})
+				rows.append(
+					{
+						"unit_id": f"{supplier}-{tag}-{i}",
+						"antecedent": supplier,
+						"consequent": consequent,
+						"day": day,
+						"created": f"{day} 10:00:00",
+					}
+				)
 			return rows
 
 		rows = batch("SupGrand", "OldGST", "2025-01-01", 150, "old")
@@ -677,14 +692,10 @@ class TestSurfacingSortKey(FrappeTestCase):
 	def test_within_class_band_then_support(self):
 		high = {"effective_sensitivity": "B", "strength_band": "High", "support_n": 10}
 		med = {"effective_sensitivity": "B", "strength_band": "Medium", "support_n": 999}
-		self.assertEqual(
-			sorted([med, high], key=lifecycle.surfacing_sort_key), [high, med]
-		)
+		self.assertEqual(sorted([med, high], key=lifecycle.surfacing_sort_key), [high, med])
 		a_small = {"effective_sensitivity": "A", "strength_band": "High", "support_n": 5}
 		a_big = {"effective_sensitivity": "A", "strength_band": "High", "support_n": 50}
-		self.assertEqual(
-			sorted([a_small, a_big], key=lifecycle.surfacing_sort_key), [a_big, a_small]
-		)
+		self.assertEqual(sorted([a_small, a_big], key=lifecycle.surfacing_sort_key), [a_big, a_small])
 
 	def test_c_class_also_counts_as_party(self):
 		c = {"effective_sensitivity": "C", "strength_band": "Low", "support_n": 1}

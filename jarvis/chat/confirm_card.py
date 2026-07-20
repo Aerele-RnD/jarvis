@@ -182,8 +182,7 @@ def _create_card(args: dict, would) -> dict:
 		if len(rows) >= _MAX_ROWS:
 			break
 	name = would.get("name") if isinstance(would, dict) else None
-	return {"kind": "create", "doctype": doctype, "name": name, "rows": rows,
-			"tables": tables}
+	return {"kind": "create", "doctype": doctype, "name": name, "rows": rows, "tables": tables}
 
 
 def _update_card(args: dict, would) -> dict:
@@ -233,8 +232,7 @@ def _update_card(args: dict, would) -> dict:
 				title = fmt(doc.get(tf), meta.get_field(tf), doc)
 		except Exception:
 			title = ""
-	return {"kind": "update", "doctype": doctype, "name": name, "title": title,
-			"diff": diff}
+	return {"kind": "update", "doctype": doctype, "name": name, "title": title, "diff": diff}
 
 
 def _bulk_update_card(args: dict, updates) -> dict | None:
@@ -307,8 +305,11 @@ def _bulk_update_card(args: dict, updates) -> dict | None:
 	if not records:
 		return None
 	return {
-		"kind": "bulk_update", "doctype": doctype, "count": len(updates),
-		"records": records, "extra": max(0, len(updates) - len(records)),
+		"kind": "bulk_update",
+		"doctype": doctype,
+		"count": len(updates),
+		"records": records,
+		"extra": max(0, len(updates) - len(records)),
 		"varying": varying,
 	}
 
@@ -334,7 +335,8 @@ def _batch_create_card(args: dict, would) -> dict | None:
 	docs = args.get("docs") if isinstance(args.get("docs"), list) else []
 	rows = [
 		{"doctype": d.get("doctype"), "name": d.get("name")}
-		for d in created[:_MAX_ROWS] if isinstance(d, dict)
+		for d in created[:_MAX_ROWS]
+		if isinstance(d, dict)
 	]
 	records = []
 	# zip, never filter-then-index: filtering non-dicts out of `created` first would
@@ -365,13 +367,21 @@ def _batch_create_card(args: dict, would) -> dict | None:
 				tables.append(t)
 				table_keys.add(key)
 		body = values_rows(meta, {k: v for k, v in values.items() if k not in table_keys})
-		records.append({
-			"doctype": doctype, "name": made.get("name"),
-			"rows": body["rows"], "extra": body["extra"], "tables": tables,
-		})
+		records.append(
+			{
+				"doctype": doctype,
+				"name": made.get("name"),
+				"rows": body["rows"],
+				"extra": body["extra"],
+				"tables": tables,
+			}
+		)
 	return {
-		"kind": "batch_create", "count": len(created), "rows": rows,
-		"extra": max(0, len(created) - len(rows)), "records": records,
+		"kind": "batch_create",
+		"count": len(created),
+		"rows": rows,
+		"extra": max(0, len(created) - len(rows)),
+		"records": records,
 	}
 
 
@@ -390,11 +400,13 @@ def _verb_records(doctype, names) -> list[dict]:
 	out = []
 	for name in names[:_MAX_ROWS]:
 		summary = summary_rows(doctype, name) if doctype and name else None
-		out.append({
-			"name": name,
-			"title": summary["title"] if summary else "",
-			"rows": summary["rows"] if summary else [],
-		})
+		out.append(
+			{
+				"name": name,
+				"title": summary["title"] if summary else "",
+				"rows": summary["rows"] if summary else [],
+			}
+		)
 	return out
 
 
@@ -405,23 +417,36 @@ def _verb_card(tool: str, args: dict, bulk_items) -> dict:
 	if bulk_items:
 		targets = [t for t in (_target_name(x) for x in bulk_items[:_MAX_ROWS]) if t]
 		return {
-			"kind": "verb", "verb": verb, "action": action, "doctype": doctype,
-			"count": len(bulk_items), "targets": targets,
+			"kind": "verb",
+			"verb": verb,
+			"action": action,
+			"doctype": doctype,
+			"count": len(bulk_items),
+			"targets": targets,
 			"extra": max(0, len(bulk_items) - len(targets)),
 			"records": _verb_records(doctype, targets),
 		}
 	targets = [args["name"]] if args.get("name") else []
 	return {
-		"kind": "verb", "verb": verb, "action": action, "doctype": doctype,
-		"count": 1, "targets": targets, "extra": 0,
+		"kind": "verb",
+		"verb": verb,
+		"action": action,
+		"doctype": doctype,
+		"count": 1,
+		"targets": targets,
+		"extra": 0,
 		"records": _verb_records(doctype, targets),
 	}
 
 
 # (key, label, the TOOL'S SIGNATURE DEFAULT). read defaults True (share_doc.py:38);
 # everything else False. The default is half the effective value.
-_SHARE_FLAGS = (("read", "Read", True), ("write", "Write", False),
-				("submit", "Submit", False), ("share", "Share", False))
+_SHARE_FLAGS = (
+	("read", "Read", True),
+	("write", "Write", False),
+	("submit", "Submit", False),
+	("share", "Share", False),
+)
 
 
 def _flag_on(args: dict, key: str, default: bool) -> bool:
@@ -449,11 +474,13 @@ def _share_card(args: dict, bulk_items) -> dict:
 	targets = [t for t in (bulk_items or [args.get("name")]) if t][:_MAX_ROWS]
 	total = len(bulk_items) if bulk_items else 1
 	return {
-		"kind": "share", "doctype": doctype,
+		"kind": "share",
+		"doctype": doctype,
 		"grantee": "Everyone" if everyone else fmt(args.get("user") or ""),
 		"everyone": everyone,
-		"flags": [{"label": label, "on": _flag_on(args, key, default)}
-				  for key, label, default in _SHARE_FLAGS],
+		"flags": [
+			{"label": label, "on": _flag_on(args, key, default)} for key, label, default in _SHARE_FLAGS
+		],
 		"notify": _flag_on(args, "notify", False),
 		"count": total,
 		"records": _verb_records(doctype, targets),
@@ -472,7 +499,8 @@ def _assign_card(args: dict, bulk_items) -> dict:
 	targets = [t for t in (bulk_items or [args.get("name")]) if t][:_MAX_ROWS]
 	total = len(bulk_items) if bulk_items else 1
 	return {
-		"kind": "assign", "doctype": doctype,
+		"kind": "assign",
+		"doctype": doctype,
 		"assignee": fmt(args.get("user") or ""),
 		"description": fmt(args.get("description") or "", limit=_MAX_BODY),
 		"priority": fmt(args.get("priority") or ""),
@@ -493,7 +521,8 @@ def _recips(value) -> str:
 def _email_card(args: dict) -> dict | None:
 	to = args.get("recipients") or args.get("to") or ""
 	return {
-		"kind": "email", "to": fmt(_recips(to)),
+		"kind": "email",
+		"to": fmt(_recips(to)),
 		"subject": fmt(args.get("subject") or ""),
 		"cc": fmt(_recips(args.get("cc") or "")),
 		"bcc": fmt(_recips(args.get("bcc") or "")),
@@ -514,21 +543,25 @@ def _bulk_email_card(messages: list) -> dict | None:
 	for m in messages[:_MAX_ROWS]:
 		if not isinstance(m, dict):
 			continue
-		shown.append({
-			"name": fmt(m.get("name") or ""),
-			"recipients": fmt(_recips(m.get("recipients") or "")),
-			# The batch honours per-message cc/bcc (send_email.py:119). Without these
-			# a merge that bcc's a third party on every message renders identical to
-			# one that does not - hidden recipients on the one irreversible tool.
-			"cc": fmt(_recips(m.get("cc") or "")),
-			"bcc": fmt(_recips(m.get("bcc") or "")),
-			"subject": fmt(m.get("subject") or ""),
-			"body": fmt(m.get("content") or "", limit=_MAX_BULK_BODY),
-		})
+		shown.append(
+			{
+				"name": fmt(m.get("name") or ""),
+				"recipients": fmt(_recips(m.get("recipients") or "")),
+				# The batch honours per-message cc/bcc (send_email.py:119). Without these
+				# a merge that bcc's a third party on every message renders identical to
+				# one that does not - hidden recipients on the one irreversible tool.
+				"cc": fmt(_recips(m.get("cc") or "")),
+				"bcc": fmt(_recips(m.get("bcc") or "")),
+				"subject": fmt(m.get("subject") or ""),
+				"body": fmt(m.get("content") or "", limit=_MAX_BULK_BODY),
+			}
+		)
 	if not shown:
 		return None
 	return {
-		"kind": "bulk_email", "count": len(messages), "messages": shown,
+		"kind": "bulk_email",
+		"count": len(messages),
+		"messages": shown,
 		"extra": max(0, len(messages) - len(shown)),
 	}
 

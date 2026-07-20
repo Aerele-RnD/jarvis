@@ -41,10 +41,17 @@ _SECRET_KEY_RE = re.compile(r"password|secret|token|api[_-]?key", re.IGNORECASE)
 # Text Editor -> a ql-snow div). Both frontends render through ESCAPED
 # interpolation, so these would show literal tags. HTML Editor / Code fall through
 # format_value raw, so bypassing them too is equivalent and simpler.
-_HTML_FIELDTYPES = frozenset({
-	"Text", "Small Text", "Long Text", "Markdown Editor", "Text Editor",
-	"HTML Editor", "Code",
-})
+_HTML_FIELDTYPES = frozenset(
+	{
+		"Text",
+		"Small Text",
+		"Long Text",
+		"Markdown Editor",
+		"Text Editor",
+		"HTML Editor",
+		"Code",
+	}
+)
 _TABLE_FIELDTYPES = frozenset({"Table", "Table MultiSelect"})
 
 
@@ -270,10 +277,12 @@ def summary_rows(doctype: str, name: str) -> dict | None:
 		# "bounded, no unbounded axis" is an invariant, and a cap the code quietly
 		# overshoots by one is a cap nobody can trust.
 		rows = rows[: _MAX_ROWS - 1]
-		rows.append({
-			"label": "Docstatus",
-			"value": _DOCSTATUS_LABEL.get(cint(doc.get("docstatus")), "?"),
-		})
+		rows.append(
+			{
+				"label": "Docstatus",
+				"value": _DOCSTATUS_LABEL.get(cint(doc.get("docstatus")), "?"),
+			}
+		)
 
 	title = ""
 	try:

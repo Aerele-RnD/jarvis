@@ -65,7 +65,12 @@
 				</template>
 
 				<!-- thinking indicator: subtle three-dot pulse while a run is active -->
-				<div v-if="runActive" role="status" aria-live="polite" class="flex items-center gap-2 pt-1">
+				<div
+					v-if="runActive"
+					role="status"
+					aria-live="polite"
+					class="flex items-center gap-2 pt-1"
+				>
 					<span class="flex gap-1" aria-hidden="true">
 						<span
 							v-for="i in 3"
@@ -92,11 +97,23 @@
 				     the raw "create_doc doctype=…" tool string -->
 				<div class="flex min-w-0 flex-col gap-0.5">
 					<span class="text-sm font-medium text-ink-gray-8">{{ cardTitle(pa) }}</span>
-					<span v-if="cardMeta(pa)" class="text-xs text-ink-gray-6">{{ cardMeta(pa) }}</span>
+					<span v-if="cardMeta(pa)" class="text-xs text-ink-gray-6">{{
+						cardMeta(pa)
+					}}</span>
 				</div>
 				<div class="flex items-center gap-2">
-					<Button variant="solid" label="Approve" :loading="pa.busy" @click="approve(pa)" />
-					<Button variant="ghost" label="Dismiss" :disabled="pa.busy" @click="dismiss(pa)" />
+					<Button
+						variant="solid"
+						label="Approve"
+						:loading="pa.busy"
+						@click="approve(pa)"
+					/>
+					<Button
+						variant="ghost"
+						label="Dismiss"
+						:disabled="pa.busy"
+						@click="dismiss(pa)"
+					/>
 				</div>
 			</div>
 		</div>
@@ -120,7 +137,10 @@
 					     numbers in (one-time report); Live declares view-time sources.
 					     TabButtons = real radio-group semantics + the raised-chip look,
 					     so the active option isn't a second solid next to Send. -->
-					<span class="ml-1 text-xs text-ink-gray-5" title="How this dashboard gets its data">
+					<span
+						class="ml-1 text-xs text-ink-gray-5"
+						title="How this dashboard gets its data"
+					>
 						Data
 					</span>
 					<TabButtons
@@ -159,15 +179,15 @@
 //                      the html artifact onto the canvas pane.
 //   no socket        → (?nosocket / headless QA) a bounded refetch ladder after
 //                      each send stands in for the realtime frames.
-import { ref, computed, nextTick, inject, onMounted, onBeforeUnmount } from "vue"
-import { useRouter } from "vue-router"
-import { useStorage } from "@vueuse/core"
-import { Button, FeatherIcon, FormControl, LoadingIndicator, TabButtons, toast } from "frappe-ui"
-import VoiceRecorder from "@/components/VoiceRecorder.vue"
-import { renderMarkdown } from "@/markdown"
-import { session } from "@/data/session"
-import { sendDashboardChat, getDashboardConversation } from "@/api/dashboards"
-import { listPendingConfirmations, confirmTool, dismissTool } from "@/api"
+import { ref, computed, nextTick, inject, onMounted, onBeforeUnmount } from "vue";
+import { useRouter } from "vue-router";
+import { useStorage } from "@vueuse/core";
+import { Button, FeatherIcon, FormControl, LoadingIndicator, TabButtons, toast } from "frappe-ui";
+import VoiceRecorder from "@/components/VoiceRecorder.vue";
+import { renderMarkdown } from "@/markdown";
+import { session } from "@/data/session";
+import { sendDashboardChat, getDashboardConversation } from "@/api/dashboards";
+import { listPendingConfirmations, confirmTool, dismissTool } from "@/api";
 
 // get_dashboards_caps payload (creatable_scopes/manageable_roles feed the save
 // dialog; stt_enabled - when the backend sends it - gates the mic)
@@ -176,26 +196,26 @@ const props = defineProps({
 	// when revising a saved dashboard, its name — forwarded in the send context
 	// so the agent knows which dashboard it is iterating on ("" = a new one).
 	editingName: { type: String, default: "" },
-})
+});
 
 // canvas: {message_id, items} for a canvas frame on our conversation;
 // activity: a run ended (the page may refresh lists); reset: New chat clicked.
-const emit = defineEmits(["canvas", "activity", "reset"])
+const emit = defineEmits(["canvas", "activity", "reset"]);
 
-const router = useRouter()
-const socket = inject("$socket", null)
+const router = useRouter();
+const socket = inject("$socket", null);
 
 function errMsg(e) {
-	return (e && ((e.messages && e.messages[0]) || e.message)) || "Something went wrong."
+	return (e && ((e.messages && e.messages[0]) || e.message)) || "Something went wrong.";
 }
 
 // ── conversation persistence (per user, ChatComposer's namespacing idiom) ────
-const conversation = useStorage(`jarvis-dash-conv-${session.user || "anon"}`, "")
+const conversation = useStorage(`jarvis-dash-conv-${session.user || "anon"}`, "");
 
 // ── transcript ────────────────────────────────────────────────────────────────
-const messages = ref([])
-const loadingTranscript = ref(false)
-const scroller = ref(null)
+const messages = ref([]);
+const loadingTranscript = ref(false);
+const scroller = ref(null);
 
 // user/assistant rows with visible content only (tool rows and internal
 // chatter stay out of this compact pane)
@@ -203,7 +223,7 @@ const bubbles = computed(() =>
 	messages.value.filter(
 		(m) => (m.role === "user" || m.role === "assistant") && String(m.content || "").trim()
 	)
-)
+);
 
 // ChatView's stripBlocks, minimal subset: internal fenced blocks (actions,
 // confirms, cards…) never render as raw fences in the pane.
@@ -217,15 +237,15 @@ function stripBlocks(text) {
 		.replace(/```jarvis-macro[ \t]*\n[\s\S]*?```/g, "")
 		.replace(/```jarvis-chart[ \t]*\n[\s\S]*?```/g, "")
 		.replace(/\n{3,}/g, "\n\n")
-		.trim()
+		.trim();
 }
 function renderBubble(text) {
-	return renderMarkdown(stripBlocks(text))
+	return renderMarkdown(stripBlocks(text));
 }
 
 function scrollBottom() {
-	const el = scroller.value
-	if (el) el.scrollTop = el.scrollHeight
+	const el = scroller.value;
+	if (el) el.scrollTop = el.scrollHeight;
 }
 
 function isGone(e) {
@@ -235,65 +255,65 @@ function isGone(e) {
 			e.exc_type === "DoesNotExistError" ||
 			e.status === 403 ||
 			e.exc_type === "PermissionError")
-	)
+	);
 }
 
 // monotonic request id - stale refetches dropped (useListPage idiom)
-let loadReq = 0
+let loadReq = 0;
 async function loadTranscript({ initial = false } = {}) {
-	const id = ++loadReq
-	if (!conversation.value) return
-	if (initial) loadingTranscript.value = true
+	const id = ++loadReq;
+	if (!conversation.value) return;
+	if (initial) loadingTranscript.value = true;
 	try {
-		const d = (await getDashboardConversation(conversation.value)) || {}
-		if (id !== loadReq) return
-		messages.value = d.messages || []
-		nextTick(scrollBottom)
+		const d = (await getDashboardConversation(conversation.value)) || {};
+		if (id !== loadReq) return;
+		messages.value = d.messages || [];
+		nextTick(scrollBottom);
 	} catch (e) {
-		if (id !== loadReq) return
+		if (id !== loadReq) return;
 		if (isGone(e)) {
 			// the stored conversation was deleted (or reassigned) - start fresh
-			conversation.value = ""
-			messages.value = []
-			runActive.value = false
+			conversation.value = "";
+			messages.value = [];
+			runActive.value = false;
 		}
 		// transient errors keep the last-good transcript; the next frame retries
 	} finally {
-		if (id === loadReq) loadingTranscript.value = false
+		if (id === loadReq) loadingTranscript.value = false;
 	}
 }
 
 // debounced refetch driven by realtime frames
-let refetchTimer = null
+let refetchTimer = null;
 function scheduleRefetch() {
-	clearTimeout(refetchTimer)
+	clearTimeout(refetchTimer);
 	refetchTimer = setTimeout(() => {
-		loadTranscript()
-		refreshPending()
-	}, 300)
+		loadTranscript();
+		refreshPending();
+	}, 300);
 }
 
 // ── parked confirmations (gated ERP writes park for human approval) ──────────
-const pendingCards = ref([])
+const pendingCards = ref([]);
 
 async function refreshPending() {
 	if (!conversation.value) {
-		pendingCards.value = []
-		return
+		pendingCards.value = [];
+		return;
 	}
 	try {
-		const env = await listPendingConfirmations(conversation.value)
-		const items = (env && env.data && env.data.pending) || []
+		const env = await listPendingConfirmations(conversation.value);
+		const items = (env && env.data && env.data.pending) || [];
 		// keep in-flight busy flags across refreshes
-		const busy = new Set(pendingCards.value.filter((c) => c.busy).map((c) => c.token))
-		pendingCards.value = items.map((it) => ({ ...it, busy: busy.has(it.token) }))
+		const busy = new Set(pendingCards.value.filter((c) => c.busy).map((c) => c.token));
+		pendingCards.value = items.map((it) => ({ ...it, busy: busy.has(it.token) }));
 	} catch {
 		// transient - the next frame retries
 	}
 }
 
 function removeCard(token) {
-	pendingCards.value = pendingCards.value.filter((c) => c.token !== token)
+	pendingCards.value = pendingCards.value.filter((c) => c.token !== token);
 }
 
 // ── pending-card copy ─────────────────────────────────────────────────────────
@@ -308,85 +328,85 @@ const CARD_VERBS = {
 	delete_doc: "Delete",
 	submit_doc: "Submit",
 	cancel_doc: "Cancel",
-}
-const SCOPE_LABELS = { User: "Private", Role: "Shared with a role", Org: "Everyone" }
+};
+const SCOPE_LABELS = { User: "Private", Role: "Shared with a role", Org: "Everyone" };
 function previewDoc(pa) {
-	const w = pa && pa.preview && pa.preview.would
-	return w && typeof w === "object" && !Array.isArray(w) ? w : null
+	const w = pa && pa.preview && pa.preview.would;
+	return w && typeof w === "object" && !Array.isArray(w) ? w : null;
 }
 // _describe_call joins "key=value" pairs with spaces and values may hold
 // spaces ("Jarvis Dashboard") - a value runs until the next key or the end.
 // Anchored on a word boundary so "name=" never matches inside "docname=".
 function summaryArg(s, key) {
-	const m = new RegExp("(?:^|\\s)" + key + "=(.*?)(?=\\s+[a-z_]+=|$)").exec(s || "")
-	return m ? m[1].trim() : ""
+	const m = new RegExp("(?:^|\\s)" + key + "=(.*?)(?=\\s+[a-z_]+=|$)").exec(s || "");
+	return m ? m[1].trim() : "";
 }
 function cardTitle(pa) {
-	const verb = CARD_VERBS[pa.tool]
-	const doc = previewDoc(pa)
+	const verb = CARD_VERBS[pa.tool];
+	const doc = previewDoc(pa);
 	if (doc && doc.doctype === "Jarvis Dashboard") {
-		return `${verb || "Save"} dashboard: ${doc.dashboard_title || doc.name || "(unnamed)"}`
+		return `${verb || "Save"} dashboard: ${doc.dashboard_title || doc.name || "(unnamed)"}`;
 	}
 	if (doc && doc.doctype && verb) {
-		const name = verb === "Create" ? "" : doc.name || ""
-		return `${verb} ${doc.doctype}${name ? " · " + name : ""}`
+		const name = verb === "Create" ? "" : doc.name || "";
+		return `${verb} ${doc.doctype}${name ? " · " + name : ""}`;
 	}
-	const raw = pa.summary || (pa.preview && pa.preview.summary) || ""
-	const m = /^(create|update|delete|submit|cancel)_doc\b/.exec(raw)
+	const raw = pa.summary || (pa.preview && pa.preview.summary) || "";
+	const m = /^(create|update|delete|submit|cancel)_doc\b/.exec(raw);
 	if (m) {
-		const v = CARD_VERBS[m[1] + "_doc"]
-		const dt = summaryArg(raw, "doctype")
-		const nm = summaryArg(raw, "name") || summaryArg(raw, "docname")
-		if (dt === "Jarvis Dashboard") return `${v} a dashboard${nm ? ": " + nm : ""}`
-		if (dt) return `${v} ${dt}${nm ? " · " + nm : ""}`
+		const v = CARD_VERBS[m[1] + "_doc"];
+		const dt = summaryArg(raw, "doctype");
+		const nm = summaryArg(raw, "name") || summaryArg(raw, "docname");
+		if (dt === "Jarvis Dashboard") return `${v} a dashboard${nm ? ": " + nm : ""}`;
+		if (dt) return `${v} ${dt}${nm ? " · " + nm : ""}`;
 	}
-	return raw || "Confirm this action"
+	return raw || "Confirm this action";
 }
 function cardMeta(pa) {
-	const doc = previewDoc(pa)
-	if (!doc || doc.doctype !== "Jarvis Dashboard") return ""
+	const doc = previewDoc(pa);
+	if (!doc || doc.doctype !== "Jarvis Dashboard") return "";
 	const scope =
 		doc.scope === "Role" && doc.target_role
 			? `Shared with ${doc.target_role}`
-			: SCOPE_LABELS[doc.scope] || ""
-	return [doc.dashboard_type, scope].filter(Boolean).join(" · ")
+			: SCOPE_LABELS[doc.scope] || "";
+	return [doc.dashboard_type, scope].filter(Boolean).join(" · ");
 }
 
 async function approve(pa) {
-	pa.busy = true
+	pa.busy = true;
 	try {
-		const r = await confirmTool(pa.token, conversation.value)
+		const r = await confirmTool(pa.token, conversation.value);
 		if (r && r.ok === false) {
-			toast.error("Couldn't confirm — it may have expired. Ask again in the chat.")
+			toast.error("Couldn't confirm — it may have expired. Ask again in the chat.");
 		}
 	} catch (e) {
-		toast.error(errMsg(e))
+		toast.error(errMsg(e));
 	} finally {
-		removeCard(pa.token)
+		removeCard(pa.token);
 		// the parked run resumes server-side after a confirm: refresh both the
 		// transcript (receipt chip) and anything list-shaped upstream
-		scheduleRefetch()
-		emit("activity")
+		scheduleRefetch();
+		emit("activity");
 	}
 }
 
 async function dismiss(pa) {
-	pa.busy = true
+	pa.busy = true;
 	try {
-		await dismissTool(pa.token, conversation.value)
+		await dismissTool(pa.token, conversation.value);
 	} catch (e) {
-		toast.error(errMsg(e))
+		toast.error(errMsg(e));
 	} finally {
-		removeCard(pa.token)
-		scheduleRefetch()
+		removeCard(pa.token);
+		scheduleRefetch();
 	}
 }
 
 // ── run state + composer ──────────────────────────────────────────────────────
-const runActive = ref(false)
-const sending = ref(false)
-const draft = ref("")
-const box = ref(null)
+const runActive = ref(false);
+const sending = ref(false);
+const draft = ref("");
+const box = ref(null);
 
 // Explicit data-mode toggle (goal requirement): "auto" = agent decides,
 // "static" = baked one-time report, "live" = declared view-time sources.
@@ -397,136 +417,141 @@ const DATA_MODES = [
 	{ label: "Auto", value: "auto" },
 	{ label: "Static", value: "static" },
 	{ label: "Live", value: "live" },
-]
-const dataMode = useStorage(`jarvis-dash-datamode-${session.user || "anon"}`, "auto")
+];
+const dataMode = useStorage(`jarvis-dash-datamode-${session.user || "anon"}`, "auto");
 
 function autoGrow() {
-	const ta = box.value && box.value.querySelector("textarea")
-	if (!ta) return
-	ta.style.height = "auto"
-	ta.style.height = Math.min(ta.scrollHeight, 180) + "px"
+	const ta = box.value && box.value.querySelector("textarea");
+	if (!ta) return;
+	ta.style.height = "auto";
+	ta.style.height = Math.min(ta.scrollHeight, 180) + "px";
 }
 
 function onKeydown(e) {
 	// Enter sends, Shift+Enter keeps the newline
 	if (e.key === "Enter" && !e.shiftKey) {
-		e.preventDefault()
-		send()
+		e.preventDefault();
+		send();
 	}
 }
 
 function onTranscript(text) {
 	// dictation appends to any typed draft (ChatComposer precedent)
-	const cur = draft.value
-	draft.value = cur.trim() ? cur.replace(/\s+$/, "") + " " + text : text
-	nextTick(autoGrow)
+	const cur = draft.value;
+	draft.value = cur.trim() ? cur.replace(/\s+$/, "") + " " + text : text;
+	nextTick(autoGrow);
 }
 
 async function send() {
-	const text = draft.value.trim()
-	if (!text || sending.value) return
-	sending.value = true
-	draft.value = ""
-	nextTick(autoGrow)
+	const text = draft.value.trim();
+	if (!text || sending.value) return;
+	sending.value = true;
+	draft.value = "";
+	nextTick(autoGrow);
 	// optimistic user bubble - reconciled by the next transcript refetch
-	const tmpName = `tmp-${Date.now()}`
-	messages.value = [...messages.value, { name: tmpName, role: "user", content: text }]
-	nextTick(scrollBottom)
+	const tmpName = `tmp-${Date.now()}`;
+	messages.value = [...messages.value, { name: tmpName, role: "user", content: text }];
+	nextTick(scrollBottom);
 	try {
 		const r =
-			(await sendDashboardChat(conversation.value, text, dataMode.value, props.editingName)) || {}
+			(await sendDashboardChat(
+				conversation.value,
+				text,
+				dataMode.value,
+				props.editingName
+			)) || {};
 		if (r.ok === false) {
 			// rejected (single-flight guard / usage cap) - nothing persisted
-			messages.value = messages.value.filter((m) => m.name !== tmpName)
-			if (!draft.value) draft.value = text
-			toast.error(r.reason || "Couldn't send your message.")
-			return
+			messages.value = messages.value.filter((m) => m.name !== tmpName);
+			if (!draft.value) draft.value = text;
+			toast.error(r.reason || "Couldn't send your message.");
+			return;
 		}
 		if (r.conversation_id && r.conversation_id !== conversation.value) {
-			conversation.value = r.conversation_id
+			conversation.value = r.conversation_id;
 		}
-		runActive.value = true
-		nextTick(scrollBottom)
-		if (!socket) startNoSocketLadder()
+		runActive.value = true;
+		nextTick(scrollBottom);
+		if (!socket) startNoSocketLadder();
 	} catch (e) {
-		messages.value = messages.value.filter((m) => m.name !== tmpName)
-		if (!draft.value) draft.value = text
-		toast.error(errMsg(e))
+		messages.value = messages.value.filter((m) => m.name !== tmpName);
+		if (!draft.value) draft.value = text;
+		toast.error(errMsg(e));
 	} finally {
-		sending.value = false
+		sending.value = false;
 	}
 }
 
 function newChat() {
-	loadReq++ // drop any in-flight transcript load
-	conversation.value = ""
-	messages.value = []
-	pendingCards.value = []
-	runActive.value = false
-	draft.value = ""
-	nextTick(autoGrow)
+	loadReq++; // drop any in-flight transcript load
+	conversation.value = "";
+	messages.value = [];
+	pendingCards.value = [];
+	runActive.value = false;
+	draft.value = "";
+	nextTick(autoGrow);
 	// the page clears its builder seed (canvas html, editing state) with us
-	emit("reset")
+	emit("reset");
 }
-defineExpose({ newChat })
+defineExpose({ newChat });
 
 // ── realtime ──────────────────────────────────────────────────────────────────
 function onEvent(p) {
-	if (!p || !p.kind) return
+	if (!p || !p.kind) return;
 	// turn frames carry conversation_id; action:pending frames carry conversation
-	const frameConv = p.conversation_id || p.conversation
-	if (!conversation.value || frameConv !== conversation.value) return
+	const frameConv = p.conversation_id || p.conversation;
+	if (!conversation.value || frameConv !== conversation.value) return;
 	// the agent drew/updated an artifact this turn - the page pulls the html
 	// item onto the canvas pane
 	if (p.kind === "canvas") {
-		emit("canvas", { message_id: p.message_id, items: p.items })
-		return
+		emit("canvas", { message_id: p.message_id, items: p.items });
+		return;
 	}
 	// any frame for OUR conversation refreshes the transcript (debounced)
-	scheduleRefetch()
+	scheduleRefetch();
 	switch (p.kind) {
 		case "run:start":
-			runActive.value = true
-			break
+			runActive.value = true;
+			break;
 		case "run:end":
-			runActive.value = false
-			emit("activity")
-			break
+			runActive.value = false;
+			emit("activity");
+			break;
 		case "run:error":
-			runActive.value = false
-			break
+			runActive.value = false;
+			break;
 	}
 }
 
 // no-socket fallback (?nosocket / headless QA): a bounded refetch ladder after
 // each send; run-active clears when the reply settles (or at the ladder's end).
-let ladderTimers = []
+let ladderTimers = [];
 function startNoSocketLadder() {
-	ladderTimers.forEach(clearTimeout)
+	ladderTimers.forEach(clearTimeout);
 	ladderTimers = [3000, 8000, 15000, 30000, 60000].map((ms, i, arr) =>
 		setTimeout(async () => {
-			await loadTranscript()
-			await refreshPending()
-			const last = bubbles.value[bubbles.value.length - 1]
-			const settled = last && last.role === "assistant" && !last.streaming
+			await loadTranscript();
+			await refreshPending();
+			const last = bubbles.value[bubbles.value.length - 1];
+			const settled = last && last.role === "assistant" && !last.streaming;
 			if (settled || i === arr.length - 1) {
-				runActive.value = false
-				emit("activity")
+				runActive.value = false;
+				emit("activity");
 			}
 		}, ms)
-	)
+	);
 }
 
 onMounted(() => {
 	if (conversation.value) {
-		loadTranscript({ initial: true })
-		refreshPending()
+		loadTranscript({ initial: true });
+		refreshPending();
 	}
-	socket && socket.on && socket.on("jarvis:event", onEvent)
-})
+	socket && socket.on && socket.on("jarvis:event", onEvent);
+});
 onBeforeUnmount(() => {
-	socket && socket.off && socket.off("jarvis:event", onEvent)
-	clearTimeout(refetchTimer)
-	ladderTimers.forEach(clearTimeout)
-})
+	socket && socket.off && socket.off("jarvis:event", onEvent);
+	clearTimeout(refetchTimer);
+	ladderTimers.forEach(clearTimeout);
+});
 </script>

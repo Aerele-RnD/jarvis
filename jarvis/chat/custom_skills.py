@@ -45,9 +45,7 @@ def _yaml_quote(s: str) -> str:
 	return f'"{escaped}"'
 
 
-def render_skill_md(
-	skill_name: str, description: str, user_invocable: bool, instructions: str
-) -> str:
+def render_skill_md(skill_name: str, description: str, user_invocable: bool, instructions: str) -> str:
 	"""Build the full SKILL.md text (YAML frontmatter + markdown body).
 
 	Frontmatter matches the shared persona skills (name / description /

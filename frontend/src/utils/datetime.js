@@ -5,18 +5,18 @@
 // setConfig("systemTimezone") (fed from get_chat_ui_settings.time_zone in
 // AppShell) and converts to the browser zone; without the config it falls
 // back to plain dayjs() - today's behavior.
-import { dayjsLocal, dayjs, getConfig } from "frappe-ui"
+import { dayjsLocal, dayjs, getConfig } from "frappe-ui";
 
 export function timeAgo(d) {
-	return d ? dayjsLocal(String(d)).fromNow() : ""
+	return d ? dayjsLocal(String(d)).fromNow() : "";
 }
 
 export function exactDate(d) {
-	return d ? dayjsLocal(String(d)).format("ddd, MMM D, YYYY h:mm A") : ""
+	return d ? dayjsLocal(String(d)).format("ddd, MMM D, YYYY h:mm A") : "";
 }
 
 export function formatDate(d, fmt) {
-	return d ? dayjsLocal(String(d)).format(fmt || "MMM D, YYYY") : ""
+	return d ? dayjsLocal(String(d)).format(fmt || "MMM D, YYYY") : "";
 }
 
 // The send-side mirror of dayjsLocal: a browser-local datetime (an
@@ -28,12 +28,12 @@ export function formatDate(d, fmt) {
 // systemTimezone config it degrades to a plain reformat - today's dayjsLocal
 // fallback behavior.
 export function toSiteDatetime(d) {
-	if (!d) return ""
-	const s = String(d).replace("T", " ")
-	const site = getConfig("systemTimezone")
-	if (!site) return dayjs(s).format("YYYY-MM-DD HH:mm:ss")
-	const local = getConfig("localTimezone") || Intl.DateTimeFormat().resolvedOptions().timeZone
-	return dayjs.tz(s, local).tz(site).format("YYYY-MM-DD HH:mm:ss")
+	if (!d) return "";
+	const s = String(d).replace("T", " ");
+	const site = getConfig("systemTimezone");
+	if (!site) return dayjs(s).format("YYYY-MM-DD HH:mm:ss");
+	const local = getConfig("localTimezone") || Intl.DateTimeFormat().resolvedOptions().timeZone;
+	return dayjs.tz(s, local).tz(site).format("YYYY-MM-DD HH:mm:ss");
 }
 
 // Day-bucket label for chat day separators, timezone-safe like the rest of this
@@ -41,12 +41,12 @@ export function toSiteDatetime(d) {
 // ms number (optimistic rows). "Today" / "Yesterday" / weekday within a week /
 // "D MMMM" beyond.
 export function dayLabel(d) {
-	if (d == null || d === "") return ""
-	const dj = dayjsLocal(d)
-	if (!dj || typeof dj.isValid !== "function" || !dj.isValid()) return ""
-	const diff = dayjsLocal().startOf("day").diff(dj.startOf("day"), "day")
-	if (diff === 0) return "Today"
-	if (diff === 1) return "Yesterday"
-	if (diff > 1 && diff < 7) return dj.format("dddd")
-	return dj.format("D MMMM")
+	if (d == null || d === "") return "";
+	const dj = dayjsLocal(d);
+	if (!dj || typeof dj.isValid !== "function" || !dj.isValid()) return "";
+	const diff = dayjsLocal().startOf("day").diff(dj.startOf("day"), "day");
+	if (diff === 0) return "Today";
+	if (diff === 1) return "Yesterday";
+	if (diff > 1 && diff < 7) return dj.format("dddd");
+	return dj.format("D MMMM");
 }

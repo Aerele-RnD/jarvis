@@ -10,7 +10,7 @@
 	     so that space reads as a footer, matching the onboarding wizard. -->
 	<div class="jv-settings-body jv-pane-fill">
 		<!-- brief save acknowledgement (the editors persist themselves) -->
-		<div v-if="savedNote" style="display:flex;justify-content:flex-end;margin-bottom:8px;">
+		<div v-if="savedNote" style="display: flex; justify-content: flex-end; margin-bottom: 8px">
 			<span class="jv-acct-savednote">{{ savedNote }}</span>
 		</div>
 
@@ -29,25 +29,30 @@
 			     synthesizes a read-oriented row for it (Reconnect embeds
 			     DirectSubscriptionCard inline; Remove disconnects) without ever
 			     round-tripping it through save_llm_pool. -->
-			<LlmPoolEditor :editable="isSM" :directStatus="directSub" @saved="onSaved" @direct-changed="onDirectChanged" />
+			<LlmPoolEditor
+				:editable="isSM"
+				:directStatus="directSub"
+				@saved="onSaved"
+				@direct-changed="onDirectChanged"
+			/>
 		</template>
 	</div>
 </template>
 
 <script setup>
-import { ref, onMounted } from "vue"
-import { getDirectSubscriptionStatus } from "@/api"
-import LlmPoolEditor from "@/components/LlmPoolEditor.vue"
+import { ref, onMounted } from "vue";
+import { getDirectSubscriptionStatus } from "@/api";
+import LlmPoolEditor from "@/components/LlmPoolEditor.vue";
 
 // The rail already gates this section to the tenant-admin tier; this flag
 // additionally gates the editor's edit affordances + which probes fire. PART 4
 // REVISED TASK 49(c): widened to System Manager OR Jarvis Admin (the LLM-config
 // endpoints are all require_jarvis_admin now).
-const isSM = !!(window.is_system_manager || window.is_jarvis_admin)
+const isSM = !!(window.is_system_manager || window.is_jarvis_admin);
 
 // ---- AI models: brief save acknowledgement (editor persists itself) --------
-const savedNote = ref("")
-let savedTimer = null
+const savedNote = ref("");
+let savedTimer = null;
 
 // ---- Direct chat-subscription (flat-field OAuth path) ----------------------
 // LlmPoolEditor's rows.value reads only models[]; a customer who onboarded a
@@ -57,29 +62,34 @@ let savedTimer = null
 // and hand the result down as :directStatus - LlmPoolEditor synthesizes a
 // row for it (embedding DirectSubscriptionCard inline) when
 // is_direct_subscription is true.
-const directSub = ref({ is_direct_subscription: false })
-const directSubLoading = ref(true)
-const directSubErr = ref("")
+const directSub = ref({ is_direct_subscription: false });
+const directSubLoading = ref(true);
+const directSubErr = ref("");
 
 async function loadDirectSub() {
-	if (!isSM) { directSubLoading.value = false; return }
-	directSubLoading.value = true
-	directSubErr.value = ""
+	if (!isSM) {
+		directSubLoading.value = false;
+		return;
+	}
+	directSubLoading.value = true;
+	directSubErr.value = "";
 	try {
 		// Race a client timeout so a hung probe can't strand the section on
 		// "Loading…" forever (the pool editor renders behind it).
-		const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("timed out")), 12000))
-		directSub.value = (await Promise.race([
-			getDirectSubscriptionStatus(),
-			timeout,
-		])) || { is_direct_subscription: false }
+		const timeout = new Promise((_, rej) =>
+			setTimeout(() => rej(new Error("timed out")), 12000)
+		);
+		directSub.value = (await Promise.race([getDirectSubscriptionStatus(), timeout])) || {
+			is_direct_subscription: false,
+		};
 	} catch (e) {
 		// Don't silently drop a real direct-subscription tenant onto the empty
 		// pool editor — surface a retryable error instead of a dead end.
-		directSub.value = { is_direct_subscription: false }
-		directSubErr.value = (e && (e.message || e._server_messages)) || "Couldn't load your AI connection."
+		directSub.value = { is_direct_subscription: false };
+		directSubErr.value =
+			(e && (e.message || e._server_messages)) || "Couldn't load your AI connection.";
 	} finally {
-		directSubLoading.value = false
+		directSubLoading.value = false;
 	}
 }
 
@@ -87,7 +97,7 @@ async function loadDirectSub() {
 // (reauthorized/disconnected) — re-probe status so the synthesized row
 // reflects the new state.
 async function onDirectChanged() {
-	await loadDirectSub()
+	await loadDirectSub();
 }
 
 // After a pool save: flash the note and re-probe direct status (a save can't
@@ -95,11 +105,13 @@ async function onDirectChanged() {
 // synthesized direct row through save_llm_pool - but re-probing stays cheap
 // insurance against drift).
 async function onSaved(sync) {
-	savedNote.value = sync && sync.pending ? "Saved — syncing…" : "Saved"
-	clearTimeout(savedTimer)
-	savedTimer = setTimeout(() => { savedNote.value = "" }, 4000)
-	await loadDirectSub()
+	savedNote.value = sync && sync.pending ? "Saved — syncing…" : "Saved";
+	clearTimeout(savedTimer);
+	savedTimer = setTimeout(() => {
+		savedNote.value = "";
+	}, 4000);
+	await loadDirectSub();
 }
 
-onMounted(loadDirectSub)
+onMounted(loadDirectSub);
 </script>

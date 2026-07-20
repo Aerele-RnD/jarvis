@@ -7,6 +7,7 @@ Two whitelisted endpoints:
 
 Plus disconnect() to reverse the connection.
 """
+
 import base64
 import hashlib
 import json
@@ -19,11 +20,16 @@ import requests
 
 from jarvis import admin_client, onboarding
 from jarvis.exceptions import JarvisError
-from jarvis.permissions import require_jarvis_admin
 from jarvis.oauth.providers import (
-	UnknownProviderError, accepts_bare_code, build_authorize_url, extract_account_id,
-	get_provider, is_oauth_provider, provider_redirect_uri,
+	UnknownProviderError,
+	accepts_bare_code,
+	build_authorize_url,
+	extract_account_id,
+	get_provider,
+	is_oauth_provider,
+	provider_redirect_uri,
 )
+from jarvis.permissions import require_jarvis_admin
 
 
 class TokenExchangeError(JarvisError):
@@ -53,13 +59,11 @@ _TOKEN_EXCHANGE_OPAQUE_CODES = {
 	),
 	"invalid_client": (
 		"auth_failed",
-		"The provider rejected this sign-in. If this keeps happening, "
-		"contact support.",
+		"The provider rejected this sign-in. If this keeps happening, contact support.",
 	),
 	"invalid_request": (
 		"auth_failed",
-		"The provider rejected this sign-in. If this keeps happening, "
-		"contact support.",
+		"The provider rejected this sign-in. If this keeps happening, contact support.",
 	),
 }
 
@@ -111,9 +115,7 @@ from jarvis._responses import ok as _ok
 def _generate_pkce() -> tuple[str, str]:
 	"""Return (verifier, challenge) per RFC 7636."""
 	verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b"=").decode()
-	challenge = base64.urlsafe_b64encode(
-		hashlib.sha256(verifier.encode()).digest()
-	).rstrip(b"=").decode()
+	challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
 	return verifier, challenge
 
 
@@ -177,8 +179,10 @@ def _begin_signin(provider: str, model: str, *, pool: bool) -> dict:
 		# begin_pool_account_signin -> _begin_device_signin, never the paste-back
 		# path. Fail clean rather than 500 if this is reached (e.g. a DIRECT
 		# re-authorize for a stored device-code provider).
-		return _err("device_flow_required",
-		            "This provider uses a device-code sign-in and can't be connected this way.")
+		return _err(
+			"device_flow_required",
+			"This provider uses a device-code sign-in and can't be connected this way.",
+		)
 
 	# GC abandoned sign-ins BEFORE writing the new nonce. Otherwise a
 	# user who loops begin without ever completing (e.g. wizard reload
@@ -221,11 +225,13 @@ def _begin_signin(provider: str, model: str, *, pool: bool) -> dict:
 		entry["pool"] = True
 	frappe.cache.hset(_CACHE_KEY, nonce, entry)
 
-	return _ok({
-		"nonce": nonce,
-		"authorize_url": authorize_url,
-		"expires_in": _NONCE_TTL_SECS,
-	})
+	return _ok(
+		{
+			"nonce": nonce,
+			"authorize_url": authorize_url,
+			"expires_in": _NONCE_TTL_SECS,
+		}
+	)
 
 
 @frappe.whitelist()
@@ -264,12 +270,15 @@ def _begin_device_signin(provider: str, model: str) -> dict:
 			timeout=_HTTP_TIMEOUT,
 		)
 	except requests.RequestException as e:
-		frappe.log_error(title="oauth device authorization: network error",
-		                 message=f"provider={provider!r} error={e!r}")
+		frappe.log_error(
+			title="oauth device authorization: network error", message=f"provider={provider!r} error={e!r}"
+		)
 		return _err("network_error", "Couldn't reach the sign-in provider. Try again in a minute.")
 	if not resp.ok:
-		frappe.log_error(title="oauth device authorization: provider rejected",
-		                 message=f"provider={provider!r} status={resp.status_code} detail={resp.text!r}")
+		frappe.log_error(
+			title="oauth device authorization: provider rejected",
+			message=f"provider={provider!r} status={resp.status_code} detail={resp.text!r}",
+		)
 		return _err("device_start_failed", "Couldn't start sign-in with the provider. Try again.")
 	try:
 		body = resp.json()
@@ -299,15 +308,17 @@ def _begin_device_signin(provider: str, model: str) -> dict:
 		"originator_user": frappe.session.user,
 	}
 	frappe.cache.hset(_CACHE_KEY, nonce, entry)
-	return _ok({
-		"nonce": nonce,
-		"device_flow": True,
-		"user_code": user_code,
-		"verification_uri": verification_uri,
-		"verification_uri_complete": body.get("verification_uri_complete") or verification_uri,
-		"interval": interval,
-		"expires_in": expires_in,
-	})
+	return _ok(
+		{
+			"nonce": nonce,
+			"device_flow": True,
+			"user_code": user_code,
+			"verification_uri": verification_uri,
+			"verification_uri_complete": body.get("verification_uri_complete") or verification_uri,
+			"interval": interval,
+			"expires_in": expires_in,
+		}
+	)
 
 
 @frappe.whitelist()
@@ -335,8 +346,7 @@ def begin_pool_account_signin(provider: str, model: str) -> dict:
 	return _begin_signin(provider, model, pool=True)
 
 
-from urllib.parse import urlparse, parse_qs
-
+from urllib.parse import parse_qs, urlparse
 
 # A bare authorization code: no URL syntax ("://", leading "/" or "?"), no
 # pair separator ("&"), no whitespace, printable ASCII only. The length floor
@@ -352,8 +362,7 @@ _BARE_CODE_RE = re.compile(r"\A[\x21-\x7e]{8,512}\Z")
 # Params that mark a paste as an OAuth query/callback rather than a bare code.
 # If one of these parsed out but `code` did not, the customer pasted a real
 # (but code-less) callback, so this is a missing_code, not a code to redeem.
-_OAUTH_QUERY_KEYS = ("state", "error", "error_description", "error_uri",
-                     "session_state", "iss", "scope")
+_OAUTH_QUERY_KEYS = ("state", "error", "error_description", "error_uri", "session_state", "iss", "scope")
 
 
 def _looks_like_bare_code(raw: str) -> bool:
@@ -455,11 +464,13 @@ def _exchange_and_build_blob(entry: dict, redirected_url: str):
 	bare_ok = accepts_bare_code(provider)
 	parsed = _parse_redirected_url(redirected_url, allow_bare_code=bare_ok)
 	if not parsed["code"]:
-		return None, _err("missing_code",
-		            "couldn't find an authorization code in what you pasted; paste the code "
-		            "itself or the full callback URL"
-		            if bare_ok else
-		            "no `code` parameter found in the pasted URL")
+		return None, _err(
+			"missing_code",
+			"couldn't find an authorization code in what you pasted; paste the code "
+			"itself or the full callback URL"
+			if bare_ok
+			else "no `code` parameter found in the pasted URL",
+		)
 	# Constant-time compare on the state parameter. The state value is the
 	# OAuth CSRF nonce - if an attacker can observe how long the
 	# comparison takes, plain ``!=`` short-circuits on the first
@@ -472,12 +483,10 @@ def _exchange_and_build_blob(entry: dict, redirected_url: str):
 	# `code_verifier`, so PKCE keeps the code bound to this very authorize
 	# request. A pasted URL is still state-checked even for those providers:
 	# if a `code=` param came through, a `state=` one should have too.
-	if not parsed["bare"] and not secrets.compare_digest(
-		parsed["state"] or "", entry["state"] or ""
-	):
-		return None, _err("state_mismatch",
-		            "the `state` parameter doesn't match; "
-		            "regenerate the sign-in URL and try again")
+	if not parsed["bare"] and not secrets.compare_digest(parsed["state"] or "", entry["state"] or ""):
+		return None, _err(
+			"state_mismatch", "the `state` parameter doesn't match; regenerate the sign-in URL and try again"
+		)
 
 	# Re-coerce belt-and-suspenders: nonces live up to 10 min, so
 	# _SUBSCRIPTION_MODELS could in principle be tightened mid-flight
@@ -505,10 +514,7 @@ def _exchange_and_build_blob(entry: dict, redirected_url: str):
 	if not access_token:
 		return None, _err("token_exchange_failed", "provider returned no access_token")
 
-	email = (
-		tokens.get("email")
-		or _fetch_account_email(provider, access_token, tokens.get("id_token") or "")
-	)
+	email = tokens.get("email") or _fetch_account_email(provider, access_token, tokens.get("id_token") or "")
 
 	p = get_provider(provider)
 	now_ms = int(time.time() * 1000)
@@ -579,13 +585,14 @@ def complete_paste_signin(nonce: str, redirected_url: str) -> dict:
 			f"aren't valid. Refresh the page (re-login if prompted) and try "
 			f"again. ({e})",
 		)
-	except (admin_client.AdminUnreachableError,
-	        admin_client.AdminValidationError,
-	        admin_client.AdminRateLimitedError) as e:
+	except (
+		admin_client.AdminUnreachableError,
+		admin_client.AdminValidationError,
+		admin_client.AdminRateLimitedError,
+	) as e:
 		return _err(
 			"push_failed",
-			f"Couldn't apply the sign-in to your agent right now — try again in "
-			f"a moment. ({e})",
+			f"Couldn't apply the sign-in to your agent right now — try again in a moment. ({e})",
 		)
 	# force=True is mandatory here. The OAuth blob lives in the container's
 	# auth-profiles.json (out-of-band from Jarvis Settings), so on_update's
@@ -595,22 +602,25 @@ def complete_paste_signin(nonce: str, redirected_url: str) -> dict:
 	# as the same ProviderAuthError the re-auth was meant to fix. Verified
 	# live 2026-06-11.
 	sync_result = onboarding.save_llm_creds(
-		provider=provider, model=model,
-		api_key="", base_url="", auth_mode="oauth",
+		provider=provider,
+		model=model,
+		api_key="",
+		base_url="",
+		auth_mode="oauth",
 		force=True,
 	)
 
 	settings = frappe.get_single("Jarvis Settings")
 	settings.db_set("llm_oauth_account_email", email, update_modified=False)
-	settings.db_set("llm_oauth_connected_at",
-	                frappe.utils.now_datetime(),
-	                update_modified=False)
+	settings.db_set("llm_oauth_connected_at", frappe.utils.now_datetime(), update_modified=False)
 
 	frappe.cache.hdel(_CACHE_KEY, nonce)
-	return _ok({
-		"account_email": email,
-		"last_sync_status": (sync_result or {}).get("last_sync_status", ""),
-	})
+	return _ok(
+		{
+			"account_email": email,
+			"last_sync_status": (sync_result or {}).get("last_sync_status", ""),
+		}
+	)
 
 
 @frappe.whitelist()
@@ -659,12 +669,14 @@ def complete_pool_account_signin(nonce: str, redirected_url: str) -> dict:
 	# Capture-only: clear the nonce (single-use, like complete_paste_signin)
 	# and hand the blob back. No push, no save_llm_creds, no Settings write.
 	frappe.cache.hdel(_CACHE_KEY, nonce)
-	return _ok({
-		"account_ref": account_ref,
-		"label": email,
-		"oauth_blob": json.dumps(result["blob"]),
-		"account_email": email,
-	})
+	return _ok(
+		{
+			"account_ref": account_ref,
+			"label": email,
+			"oauth_blob": json.dumps(result["blob"]),
+			"account_email": email,
+		}
+	)
 
 
 @frappe.whitelist()
@@ -703,8 +715,9 @@ def poll_pool_account_signin(nonce: str) -> dict:
 			timeout=_HTTP_TIMEOUT,
 		)
 	except requests.RequestException as e:
-		frappe.log_error(title="oauth device poll: network error",
-		                 message=f"provider={entry['provider']!r} error={e!r}")
+		frappe.log_error(
+			title="oauth device poll: network error", message=f"provider={entry['provider']!r} error={e!r}"
+		)
 		return _err("network_error", "Couldn't reach the sign-in provider. Try again in a minute.")
 
 	body: dict = {}
@@ -722,11 +735,18 @@ def poll_pool_account_signin(nonce: str) -> dict:
 			return _ok({"status": "pending"})
 		# Terminal failure (expired_token / access_denied / ...): burn the nonce.
 		frappe.cache.hdel(_CACHE_KEY, nonce)
-		frappe.log_error(title="oauth device poll: provider rejected",
-		                 message=(f"provider={entry['provider']!r} status={resp.status_code} "
-		                          f"err={err_code!r} detail={resp.text!r}"))
-		msg = ("Sign-in expired; start again." if err_code == "expired_token"
-		       else "Sign-in was declined or failed. Start again.")
+		frappe.log_error(
+			title="oauth device poll: provider rejected",
+			message=(
+				f"provider={entry['provider']!r} status={resp.status_code} "
+				f"err={err_code!r} detail={resp.text!r}"
+			),
+		)
+		msg = (
+			"Sign-in expired; start again."
+			if err_code == "expired_token"
+			else "Sign-in was declined or failed. Start again."
+		)
 		return _err("device_" + (err_code or "failed"), msg)
 
 	access_token = body.get("access_token")
@@ -753,17 +773,18 @@ def poll_pool_account_signin(nonce: str) -> dict:
 	frappe.cache.hdel(_CACHE_KEY, nonce)
 	# Kimi returns no account email, so synthesize a stable non-secret label.
 	label = f"Kimi {account_ref[-4:]}"
-	return _ok({
-		"status": "ok",
-		"account_ref": account_ref,
-		"label": label,
-		"oauth_blob": json.dumps(blob),
-		"account_email": "",
-	})
+	return _ok(
+		{
+			"status": "ok",
+			"account_ref": account_ref,
+			"label": label,
+			"oauth_blob": json.dumps(blob),
+			"account_email": "",
+		}
+	)
 
 
-def _exchange_code(*, provider: str, code: str, code_verifier: str,
-                   redirect_uri: str = "") -> dict:
+def _exchange_code(*, provider: str, code: str, code_verifier: str, redirect_uri: str = "") -> dict:
 	"""POST to provider's token endpoint, return parsed JSON.
 
 	On error, raises TokenExchangeError with an opaque code + user-safe
@@ -827,13 +848,12 @@ def _exchange_code(*, provider: str, code: str, code_verifier: str,
 		frappe.log_error(
 			title="oauth token exchange: provider rejected",
 			message=(
-				f"provider={provider!r} status={resp.status_code} "
-				f"raw_error={raw_error!r} detail={detail!r}"
+				f"provider={provider!r} status={resp.status_code} raw_error={raw_error!r} detail={detail!r}"
 			),
 		)
 		opaque_code, opaque_msg = _TOKEN_EXCHANGE_OPAQUE_CODES.get(
-			raw_error, ("token_exchange_failed",
-						"Sign-in failed at the provider. Start a fresh sign-in."),
+			raw_error,
+			("token_exchange_failed", "Sign-in failed at the provider. Start a fresh sign-in."),
 		)
 		raise TokenExchangeError(opaque_msg, code=opaque_code)
 
@@ -864,6 +884,7 @@ def _fetch_account_email(provider: str, access_token: str, id_token: str) -> str
 		return ""
 	try:
 		import json as _json
+
 		_, payload, _ = id_token.split(".", 2)
 		padding = "=" * (-len(payload) % 4)
 		decoded = base64.urlsafe_b64decode(payload + padding)
@@ -888,9 +909,11 @@ def disconnect() -> dict:
 	require_jarvis_admin()
 	try:
 		admin_client.post_subscription_disconnect()
-	except (admin_client.AdminUnreachableError,
-	        admin_client.AdminAuthError,
-	        admin_client.AdminValidationError) as e:
+	except (
+		admin_client.AdminUnreachableError,
+		admin_client.AdminAuthError,
+		admin_client.AdminValidationError,
+	) as e:
 		return _err("disconnect_failed", str(e))
 	settings = frappe.get_single("Jarvis Settings")
 	settings.db_set("llm_auth_mode", "api_key", update_modified=False)
@@ -915,8 +938,9 @@ def disconnect() -> dict:
 _DIRECT_SUBSCRIPTION_MODES = {"oauth", "subscription"}
 
 
-def _is_direct_subscription(auth_mode: str, has_models: bool,
-                            proxy_active: bool, provider_is_oauth: bool) -> bool:
+def _is_direct_subscription(
+	auth_mode: str, has_models: bool, proxy_active: bool, provider_is_oauth: bool
+) -> bool:
 	"""True when the tenant is on the legacy DIRECT chat-subscription path.
 
 	These tenants keep their LLM config in the flat ``llm_*`` / ``llm_oauth_*``
@@ -975,7 +999,10 @@ def get_direct_subscription_status() -> dict:
 	has_models = bool(settings.get("models"))
 	connected_at = settings.get("llm_oauth_connected_at")
 	is_direct = _is_direct_subscription(
-		auth_mode, has_models, proxy_active, is_oauth_provider(provider),
+		auth_mode,
+		has_models,
+		proxy_active,
+		is_oauth_provider(provider),
 	)
 	# A single chat subscription stored as a proxy pool-of-one. A single
 	# subscription does NOT need cliproxy (the direct/codex auth-profiles.json

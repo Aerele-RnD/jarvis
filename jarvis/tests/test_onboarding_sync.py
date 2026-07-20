@@ -33,9 +33,13 @@ def _set_token(value, secret="secret"):
 # operator's actual onboarded state - Frappe Singles aren't transactionally
 # rolled back between tests.
 _SNAPSHOTTED_FIELDS = (
-	"jarvis_admin_url", "jarvis_admin_api_key", "jarvis_admin_api_secret",
-	"jarvis_admin_customer_email", "jarvis_admin_customer_password",
-	"agent_url", "agent_token",
+	"jarvis_admin_url",
+	"jarvis_admin_api_key",
+	"jarvis_admin_api_secret",
+	"jarvis_admin_customer_email",
+	"jarvis_admin_customer_password",
+	"agent_url",
+	"agent_token",
 )
 
 
@@ -44,7 +48,11 @@ def _snapshot_settings() -> dict:
 	snap = {}
 	for f in _SNAPSHOTTED_FIELDS:
 		# Password fields → get_password; plain → attribute. Both safe.
-		v = s.get_password(f, raise_exception=False) if f.endswith(("_key", "_secret", "_token", "_password")) else s.get(f)
+		v = (
+			s.get_password(f, raise_exception=False)
+			if f.endswith(("_key", "_secret", "_token", "_password"))
+			else s.get(f)
+		)
 		snap[f] = v or ""
 	return snap
 
@@ -74,37 +82,58 @@ class TestSyncConnection(FrappeTestCase):
 
 	def test_sync_writes_connection_when_assigned(self):
 		_set_token("tok")
-		with patch("jarvis.onboarding.admin_client.get_connection",
-				   return_value={"agent_url": "ws://localhost:19000", "agent_token": "k", "tenant_status": "running"}):
+		with patch(
+			"jarvis.onboarding.admin_client.get_connection",
+			return_value={
+				"agent_url": "ws://localhost:19000",
+				"agent_token": "k",
+				"tenant_status": "running",
+			},
+		):
 			out = onboarding.sync_connection()
 		self.assertTrue(out["synced"])
 		self.assertEqual(frappe.get_single("Jarvis Settings").agent_url, "ws://localhost:19000")
 
 	def test_sync_noop_when_pending(self):
 		_set_token("tok")
-		with patch("jarvis.onboarding.admin_client.get_connection",
-				   return_value={"agent_url": "", "tenant_status": "pending"}):
+		with patch(
+			"jarvis.onboarding.admin_client.get_connection",
+			return_value={"agent_url": "", "tenant_status": "pending"},
+		):
 			out = onboarding.sync_connection()
 		self.assertFalse(out["synced"])
 
 	def test_sync_skips_when_not_onboarded(self):
 		import frappe.model.document
-		with patch.object(frappe.model.document.Document, "get_password", return_value=""), \
-			 patch("jarvis.onboarding.admin_client.get_connection",
-				   side_effect=AssertionError("admin must not be called when not onboarded")):
+
+		with (
+			patch.object(frappe.model.document.Document, "get_password", return_value=""),
+			patch(
+				"jarvis.onboarding.admin_client.get_connection",
+				side_effect=AssertionError("admin must not be called when not onboarded"),
+			),
+		):
 			out = onboarding.sync_connection()
 		self.assertFalse(out["synced"])
 		self.assertEqual(out["reason"], "not onboarded")
 
 	def test_dev_onboard_writes_native_credentials_and_connection(self):
 		_set_token("")
-		frappe.db.set_value("Jarvis Settings", "Jarvis Settings",
-							"jarvis_admin_url", "http://admin.example.com")
+		frappe.db.set_value(
+			"Jarvis Settings", "Jarvis Settings", "jarvis_admin_url", "http://admin.example.com"
+		)
 		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "sandbox_mode", 1)
 		frappe.db.commit()
-		with patch("jarvis.onboarding.admin_client.dev_signup",
-				   return_value={"customer": "C1", "api_key": "k2", "api_secret": "s2",
-								 "agent_url": "ws://localhost:19002", "agent_token": "tok"}):
+		with patch(
+			"jarvis.onboarding.admin_client.dev_signup",
+			return_value={
+				"customer": "C1",
+				"api_key": "k2",
+				"api_secret": "s2",
+				"agent_url": "ws://localhost:19002",
+				"agent_token": "tok",
+			},
+		):
 			onboarding.dev_onboard("e@x.com", "Co", "Annual Plan")
 		s = frappe.get_single("Jarvis Settings")
 		self.assertEqual(s.get_password("jarvis_admin_api_key"), "k2")
@@ -122,8 +151,10 @@ class TestSyncConnection(FrappeTestCase):
 		_set_token("")
 		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "jarvis_admin_url", "")
 		frappe.db.commit()
-		with patch.dict(frappe.local.conf, {"jarvis_admin_url": ""}), \
-			 patch("jarvis.onboarding.admin_client.dev_signup") as mock_signup:
+		with (
+			patch.dict(frappe.local.conf, {"jarvis_admin_url": ""}),
+			patch("jarvis.onboarding.admin_client.dev_signup") as mock_signup,
+		):
 			with self.assertRaises(frappe.ValidationError):
 				onboarding.dev_onboard("e2@x.com", "Co", "Annual Plan")
 			mock_signup.assert_not_called()
@@ -136,10 +167,13 @@ class TestSyncConnection(FrappeTestCase):
 		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "jarvis_admin_url", "")
 		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "sandbox_mode", 1)
 		frappe.db.commit()
-		with patch.dict(frappe.local.conf, {"jarvis_admin_url": "http://conf-admin.local"}), \
-			 patch("jarvis.onboarding.admin_client.dev_signup",
-				   return_value={"api_key": "k", "api_secret": "s",
-								 "agent_url": "ws://h:1", "agent_token": "t"}) as mock_signup:
+		with (
+			patch.dict(frappe.local.conf, {"jarvis_admin_url": "http://conf-admin.local"}),
+			patch(
+				"jarvis.onboarding.admin_client.dev_signup",
+				return_value={"api_key": "k", "api_secret": "s", "agent_url": "ws://h:1", "agent_token": "t"},
+			) as mock_signup,
+		):
 			onboarding.dev_onboard("e5@x.com", "Co", "Annual Plan")
 			mock_signup.assert_called_once()
 
@@ -147,13 +181,16 @@ class TestSyncConnection(FrappeTestCase):
 		"""Pre-set jarvis_admin_url stays untouched - dev_onboard never
 		writes to the field anymore."""
 		_set_token("")
-		frappe.db.set_value("Jarvis Settings", "Jarvis Settings",
-							"jarvis_admin_url", "http://other-admin.local")
+		frappe.db.set_value(
+			"Jarvis Settings", "Jarvis Settings", "jarvis_admin_url", "http://other-admin.local"
+		)
 		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "sandbox_mode", 1)
 		frappe.db.commit()
 		try:
-			with patch("jarvis.onboarding.admin_client.dev_signup",
-					   return_value={"api_key": "k", "api_secret": "s", "agent_url": "ws://h:1", "agent_token": "t"}):
+			with patch(
+				"jarvis.onboarding.admin_client.dev_signup",
+				return_value={"api_key": "k", "api_secret": "s", "agent_url": "ws://h:1", "agent_token": "t"},
+			):
 				onboarding.dev_onboard("e3@x.com", "Co", "Annual Plan")
 			s = frappe.get_single("Jarvis Settings")
 			self.assertEqual(s.jarvis_admin_url, "http://other-admin.local")
@@ -167,8 +204,10 @@ class TestSyncConnection(FrappeTestCase):
 		_set_token("")
 		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "jarvis_admin_url", "")
 		frappe.db.commit()
-		with patch.dict(frappe.local.conf, {"jarvis_admin_url": ""}), \
-			 patch("jarvis.onboarding.admin_client.signup") as mock_signup:
+		with (
+			patch.dict(frappe.local.conf, {"jarvis_admin_url": ""}),
+			patch("jarvis.onboarding.admin_client.signup") as mock_signup,
+		):
 			with self.assertRaises(frappe.ValidationError):
 				onboarding.start_signup("e4@x.com", "Co", "Annual Plan")
 			mock_signup.assert_not_called()
@@ -178,24 +217,30 @@ class TestSyncConnection(FrappeTestCase):
 		https:// frappe_site_url - a plaintext http bench fails fast with an
 		actionable error, before any admin call."""
 		_set_token("")
-		frappe.db.set_value("Jarvis Settings", "Jarvis Settings",
-							"jarvis_admin_url", "https://admin.example.com")
+		frappe.db.set_value(
+			"Jarvis Settings", "Jarvis Settings", "jarvis_admin_url", "https://admin.example.com"
+		)
 		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "sandbox_mode", 0)
 		frappe.db.commit()
-		with patch("frappe.utils.get_url", return_value="http://erp.example.com"), \
-			 patch("jarvis.onboarding.admin_client.signup") as mock_signup:
+		with (
+			patch("frappe.utils.get_url", return_value="http://erp.example.com"),
+			patch("jarvis.onboarding.admin_client.signup") as mock_signup,
+		):
 			with self.assertRaises(frappe.ValidationError):
 				onboarding.start_signup("e6@x.com", "Co", "Annual Plan")
 			mock_signup.assert_not_called()
 
 	def test_start_signup_allows_https_site_url_in_production(self):
 		_set_token("")
-		frappe.db.set_value("Jarvis Settings", "Jarvis Settings",
-							"jarvis_admin_url", "https://admin.example.com")
+		frappe.db.set_value(
+			"Jarvis Settings", "Jarvis Settings", "jarvis_admin_url", "https://admin.example.com"
+		)
 		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "sandbox_mode", 0)
 		frappe.db.commit()
-		with patch("frappe.utils.get_url", return_value="https://erp.example.com"), \
-			 patch("jarvis.onboarding.admin_client.signup", return_value={}) as mock_signup:
+		with (
+			patch("frappe.utils.get_url", return_value="https://erp.example.com"),
+			patch("jarvis.onboarding.admin_client.signup", return_value={}) as mock_signup,
+		):
 			onboarding.start_signup("e7@x.com", "Co", "Annual Plan")
 			mock_signup.assert_called_once()
 
@@ -203,12 +248,15 @@ class TestSyncConnection(FrappeTestCase):
 		"""Sandbox Mode (Jarvis Settings -> Developer) opts a dev/LAN bench
 		out of the https requirement."""
 		_set_token("")
-		frappe.db.set_value("Jarvis Settings", "Jarvis Settings",
-							"jarvis_admin_url", "https://admin.example.com")
+		frappe.db.set_value(
+			"Jarvis Settings", "Jarvis Settings", "jarvis_admin_url", "https://admin.example.com"
+		)
 		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "sandbox_mode", 1)
 		frappe.db.commit()
-		with patch("frappe.utils.get_url", return_value="http://erp.local:8002"), \
-			 patch("jarvis.onboarding.admin_client.signup", return_value={}) as mock_signup:
+		with (
+			patch("frappe.utils.get_url", return_value="http://erp.local:8002"),
+			patch("jarvis.onboarding.admin_client.signup", return_value={}) as mock_signup,
+		):
 			onboarding.start_signup("e8@x.com", "Co", "Annual Plan")
 			mock_signup.assert_called_once()
 
@@ -227,11 +275,14 @@ class TestSyncConnection(FrappeTestCase):
 		always via admin; admin call mocked here, may AdminAuthError if no
 		api_key on settings - both paths set last_sync_status)."""
 		_set_token("")
-		with patch("jarvis.admin_client.post_update_llm_creds",
-				   return_value={"action": "restart", "result": "ok"}):
+		with patch(
+			"jarvis.admin_client.post_update_llm_creds", return_value={"action": "restart", "result": "ok"}
+		):
 			out = onboarding.save_llm_creds(
-				provider="Anthropic", model="claude-sonnet-4-6",
-				api_key="sk-test", base_url="https://api.anthropic.com",
+				provider="Anthropic",
+				model="claude-sonnet-4-6",
+				api_key="sk-test",
+				base_url="https://api.anthropic.com",
 			)
 		s = frappe.get_single("Jarvis Settings")
 		self.assertEqual(s.llm_provider, "Anthropic")
@@ -252,11 +303,15 @@ class TestSyncConnection(FrappeTestCase):
 		"""REV-1: auth_mode=oauth doesn't require api_key - credentials live in
 		the container's auth-profiles.json (pushed separately)."""
 		_set_token("")
-		with patch("jarvis.admin_client.post_update_llm_creds",
-				   return_value={"action": "restart", "result": "ok"}):
+		with patch(
+			"jarvis.admin_client.post_update_llm_creds", return_value={"action": "restart", "result": "ok"}
+		):
 			out = onboarding.save_llm_creds(
-				provider="OpenAI", model="gpt-4o",
-				api_key="", base_url="", auth_mode="oauth",
+				provider="OpenAI",
+				model="gpt-4o",
+				api_key="",
+				base_url="",
+				auth_mode="oauth",
 			)
 		s = frappe.get_single("Jarvis Settings")
 		self.assertEqual(s.llm_auth_mode, "oauth")
@@ -266,8 +321,7 @@ class TestSyncConnection(FrappeTestCase):
 
 	def test_save_llm_creds_rejects_unknown_auth_mode(self):
 		with self.assertRaises(frappe.ValidationError):
-			onboarding.save_llm_creds(provider="OpenAI", model="gpt-4o",
-			                          api_key="", auth_mode="token")
+			onboarding.save_llm_creds(provider="OpenAI", model="gpt-4o", api_key="", auth_mode="token")
 
 
 class TestSignupEmailVerification(FrappeTestCase):
@@ -287,17 +341,17 @@ class TestSignupEmailVerification(FrappeTestCase):
 		# guard at start_signup; tests don't actually hit it because
 		# admin_client.signup is mocked.
 		frappe.db.set_value(
-			"Jarvis Settings", "Jarvis Settings",
-			"jarvis_admin_url", "https://admin.example.com",
+			"Jarvis Settings",
+			"Jarvis Settings",
+			"jarvis_admin_url",
+			"https://admin.example.com",
 		)
 		frappe.db.commit()
 		# The https pre-flight guard (production signup requires an https
 		# site URL) would trip on the test bench's plain-http URL; stub
 		# get_url so these tests stay focused on response persistence. The
 		# guard has its own coverage in TestOnboardingSync.
-		self._get_url_patch = patch(
-			"frappe.utils.get_url", return_value="https://erp.example.com"
-		)
+		self._get_url_patch = patch("frappe.utils.get_url", return_value="https://erp.example.com")
 		self._get_url_patch.start()
 
 	def tearDown(self):
@@ -310,16 +364,20 @@ class TestSignupEmailVerification(FrappeTestCase):
 		# authenticate during the verification window. Without this, the
 		# wizard would call check_signup_payment_state with no creds and
 		# admin would 401.
-		with patch("jarvis.onboarding.admin_client.signup",
-		           return_value={
-		               "ok": True,
-		               "api_key": "verify-key",
-		               "api_secret": "verify-secret",
-		               "customer": "alice@example.com",
-		               "pending_verification": True,
-		           }):
+		with patch(
+			"jarvis.onboarding.admin_client.signup",
+			return_value={
+				"ok": True,
+				"api_key": "verify-key",
+				"api_secret": "verify-secret",
+				"customer": "alice@example.com",
+				"pending_verification": True,
+			},
+		):
 			out = onboarding.start_signup(
-				"verify-test@example.com", "Acme", "Annual Plan",
+				"verify-test@example.com",
+				"Acme",
+				"Annual Plan",
 			)
 		self.assertTrue(out["pending_verification"])
 		s = frappe.get_single("Jarvis Settings")
@@ -335,28 +393,30 @@ class TestSignupEmailVerification(FrappeTestCase):
 		# password is deliberately absent on the verify-on response (admin
 		# defers it to the verified poll).
 		self.assertEqual(s.get("jarvis_admin_customer_email"), "alice@example.com")
-		self.assertFalse(
-			s.get_password("jarvis_admin_customer_password", raise_exception=False) or ""
-		)
+		self.assertFalse(s.get_password("jarvis_admin_customer_password", raise_exception=False) or "")
 
 	def test_start_signup_legacy_response_still_persists_key_secret(self):
 		# Regression pin: the flag-off (legacy) response shape must keep
 		# persisting api_key + api_secret on the bench - all subsequent
 		# admin calls (finish_payment, get_connection, sync_connection,
 		# rotate-secret, push_oauth_blob) authenticate via these.
-		with patch("jarvis.onboarding.admin_client.signup",
-		           return_value={
-		               "ok": True,
-		               "api_key": "legacy-key",
-		               "api_secret": "legacy-secret",
-		               "customer": "bob@example.com",
-		               "customer_password": "bob-pw",
-		               "razorpay_key_id": "rzp_test_X",
-		               "razorpay_order_id": "order_LEGACY",
-		               "amount_inr": 12000,
-		           }):
+		with patch(
+			"jarvis.onboarding.admin_client.signup",
+			return_value={
+				"ok": True,
+				"api_key": "legacy-key",
+				"api_secret": "legacy-secret",
+				"customer": "bob@example.com",
+				"customer_password": "bob-pw",
+				"razorpay_key_id": "rzp_test_X",
+				"razorpay_order_id": "order_LEGACY",
+				"amount_inr": 12000,
+			},
+		):
 			out = onboarding.start_signup(
-				"legacy-test@example.com", "Bob Inc", "Annual Plan",
+				"legacy-test@example.com",
+				"Bob Inc",
+				"Annual Plan",
 			)
 		self.assertEqual(out["razorpay_order_id"], "order_LEGACY")
 		s = frappe.get_single("Jarvis Settings")
@@ -376,21 +436,25 @@ class TestSignupEmailVerification(FrappeTestCase):
 		# Customer hasn't clicked the link yet - admin returns
 		# pending_verification: True. Wizard keeps showing the "check
 		# your email" screen.
-		with patch("jarvis.onboarding.admin_client.get_signup_payment_state",
-		           return_value={"pending_verification": True}):
+		with patch(
+			"jarvis.onboarding.admin_client.get_signup_payment_state",
+			return_value={"pending_verification": True},
+		):
 			out = onboarding.check_signup_payment_state()
 		self.assertTrue(out["pending_verification"])
 
 	def test_check_signup_payment_state_returns_razorpay_payload(self):
 		# Customer clicked the link - admin returns the deferred order
 		# details. Wizard transitions to Razorpay Checkout.
-		with patch("jarvis.onboarding.admin_client.get_signup_payment_state",
-		           return_value={
-		               "pending_verification": False,
-		               "razorpay_order_id": "order_VERIFIED",
-		               "razorpay_key_id": "rzp_test_X",
-		               "amount_inr": 12000,
-		           }):
+		with patch(
+			"jarvis.onboarding.admin_client.get_signup_payment_state",
+			return_value={
+				"pending_verification": False,
+				"razorpay_order_id": "order_VERIFIED",
+				"razorpay_key_id": "rzp_test_X",
+				"amount_inr": 12000,
+			},
+		):
 			out = onboarding.check_signup_payment_state()
 		self.assertFalse(out["pending_verification"])
 		self.assertEqual(out["razorpay_order_id"], "order_VERIFIED")
@@ -398,14 +462,16 @@ class TestSignupEmailVerification(FrappeTestCase):
 	def test_check_signup_payment_state_persists_customer_password(self):
 		# On the verified poll admin delivers the OAuth password once. The
 		# bench must persist it so later admin calls use bearer auth.
-		with patch("jarvis.onboarding.admin_client.get_signup_payment_state",
-		           return_value={
-		               "pending_verification": False,
-		               "razorpay_order_id": "order_VERIFIED",
-		               "razorpay_key_id": "rzp_test_X",
-		               "amount_inr": 12000,
-		               "customer_password": "verified-pw",
-		           }):
+		with patch(
+			"jarvis.onboarding.admin_client.get_signup_payment_state",
+			return_value={
+				"pending_verification": False,
+				"razorpay_order_id": "order_VERIFIED",
+				"razorpay_key_id": "rzp_test_X",
+				"amount_inr": 12000,
+				"customer_password": "verified-pw",
+			},
+		):
 			out = onboarding.check_signup_payment_state()
 		self.assertFalse(out["pending_verification"])
 		s = frappe.get_single("Jarvis Settings")
@@ -418,12 +484,18 @@ class TestSignupEmailVerification(FrappeTestCase):
 		# Same pre-flight guard as start_signup - misconfigured bench
 		# shouldn't silently route to DEFAULT_ADMIN_URL.
 		frappe.db.set_value(
-			"Jarvis Settings", "Jarvis Settings", "jarvis_admin_url", "",
+			"Jarvis Settings",
+			"Jarvis Settings",
+			"jarvis_admin_url",
+			"",
 		)
 		frappe.db.commit()
-		with patch.dict(frappe.local.conf, {"jarvis_admin_url": ""}), patch(
-			"jarvis.onboarding.admin_client.get_signup_payment_state",
-		) as mock_call:
+		with (
+			patch.dict(frappe.local.conf, {"jarvis_admin_url": ""}),
+			patch(
+				"jarvis.onboarding.admin_client.get_signup_payment_state",
+			) as mock_call,
+		):
 			with self.assertRaises(frappe.ValidationError):
 				onboarding.check_signup_payment_state()
 			mock_call.assert_not_called()
@@ -442,8 +514,7 @@ class TestGetLlmSyncStatus(FrappeTestCase):
 
 	def test_returns_pending_true_when_status_starts_with_pending(self):
 		s = frappe.get_single("Jarvis Settings")
-		s.db_set("last_sync_status", "pending: provisioning container",
-		         update_modified=False)
+		s.db_set("last_sync_status", "pending: provisioning container", update_modified=False)
 		frappe.db.commit()
 		out = onboarding.get_llm_sync_status()
 		self.assertEqual(out["last_sync_status"], "pending: provisioning container")
@@ -451,16 +522,14 @@ class TestGetLlmSyncStatus(FrappeTestCase):
 
 	def test_returns_pending_false_for_ok_status(self):
 		s = frappe.get_single("Jarvis Settings")
-		s.db_set("last_sync_status", "ok (restart via admin)",
-		         update_modified=False)
+		s.db_set("last_sync_status", "ok (restart via admin)", update_modified=False)
 		frappe.db.commit()
 		out = onboarding.get_llm_sync_status()
 		self.assertFalse(out["pending"])
 
 	def test_returns_pending_false_for_failed_status(self):
 		s = frappe.get_single("Jarvis Settings")
-		s.db_set("last_sync_status", "failed: admin unreachable: boom",
-		         update_modified=False)
+		s.db_set("last_sync_status", "failed: admin unreachable: boom", update_modified=False)
 		frappe.db.commit()
 		out = onboarding.get_llm_sync_status()
 		self.assertFalse(out["pending"])
@@ -520,8 +589,7 @@ class TestGetLlmSyncStatus(FrappeTestCase):
 		"""Valid JSON that isn't a list (e.g. a stray object) must also
 		degrade to [] - the SPA always expects a list of {code, message}."""
 		s = frappe.get_single("Jarvis Settings")
-		s.db_set("last_sync_warnings", '{"code": "x", "message": "y"}',
-		         update_modified=False)
+		s.db_set("last_sync_warnings", '{"code": "x", "message": "y"}', update_modified=False)
 		frappe.db.commit()
 		out = onboarding.get_llm_sync_status()
 		self.assertEqual(out["warnings"], [])

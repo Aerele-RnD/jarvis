@@ -68,8 +68,7 @@ def require_skill_reviewer(user: str | None = None) -> None:
 	implicit). Whitelisted endpoints call this to gate org-wide skill effects."""
 	if not is_skill_reviewer(user):
 		frappe.throw(
-			"This action needs a Jarvis Skill Reviewer, Jarvis Admin or System "
-			"Manager role.",
+			"This action needs a Jarvis Skill Reviewer, Jarvis Admin or System Manager role.",
 			frappe.PermissionError,
 		)
 
@@ -79,12 +78,14 @@ def ensure_jarvis_user_role() -> None:
 	after_migrate seed and the one-time grant patch so the role definition lives
 	in exactly one place."""
 	if not frappe.db.exists("Role", JARVIS_USER_ROLE):
-		frappe.get_doc({
-			"doctype": "Role",
-			"role_name": JARVIS_USER_ROLE,
-			"desk_access": 1,
-			"is_custom": 1,
-		}).insert(ignore_permissions=True)
+		frappe.get_doc(
+			{
+				"doctype": "Role",
+				"role_name": JARVIS_USER_ROLE,
+				"desk_access": 1,
+				"is_custom": 1,
+			}
+		).insert(ignore_permissions=True)
 
 
 def has_jarvis_access(user: str | None = None) -> bool:
@@ -139,12 +140,14 @@ def ensure_jarvis_admin_role() -> None:
 	Definition lives here (single source of truth); the after_migrate seed
 	calls this so the role exists on every migrated site."""
 	if not frappe.db.exists("Role", JARVIS_ADMIN_ROLE):
-		frappe.get_doc({
-			"doctype": "Role",
-			"role_name": JARVIS_ADMIN_ROLE,
-			"desk_access": 1,
-			"is_custom": 1,
-		}).insert(ignore_permissions=True)
+		frappe.get_doc(
+			{
+				"doctype": "Role",
+				"role_name": JARVIS_ADMIN_ROLE,
+				"desk_access": 1,
+				"is_custom": 1,
+			}
+		).insert(ignore_permissions=True)
 
 
 def has_jarvis_admin_access(user: str | None = None) -> bool:
@@ -166,8 +169,7 @@ def require_jarvis_admin(user: str | None = None) -> None:
 	as :func:`require_jarvis_access`)."""
 	if not has_jarvis_admin_access(user):
 		frappe.throw(
-			"You need the Jarvis Admin role to manage Jarvis users. "
-			"Ask an administrator for access.",
+			"You need the Jarvis Admin role to manage Jarvis users. Ask an administrator for access.",
 			frappe.PermissionError,
 		)
 
@@ -190,13 +192,16 @@ def grant_onboarding_admin(user: str | None = None) -> None:
 	user = user or frappe.session.user
 	if not user or user in ("Administrator", "Guest"):
 		return
-	if not frappe.db.exists(
-		"Has Role", {"parenttype": "User", "parent": user, "role": JARVIS_ADMIN_ROLE}
-	):
-		frappe.get_doc({
-			"doctype": "Has Role", "parenttype": "User",
-			"parentfield": "roles", "parent": user, "role": JARVIS_ADMIN_ROLE,
-		}).insert(ignore_permissions=True)
+	if not frappe.db.exists("Has Role", {"parenttype": "User", "parent": user, "role": JARVIS_ADMIN_ROLE}):
+		frappe.get_doc(
+			{
+				"doctype": "Has Role",
+				"parenttype": "User",
+				"parentfield": "roles",
+				"parent": user,
+				"role": JARVIS_ADMIN_ROLE,
+			}
+		).insert(ignore_permissions=True)
 
 
 def require_jarvis_user(fn):

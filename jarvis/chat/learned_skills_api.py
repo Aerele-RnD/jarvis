@@ -41,6 +41,7 @@ Entry points:
 from __future__ import annotations
 
 import frappe
+
 from jarvis.permissions import require_jarvis_user
 
 _SETTINGS = "Jarvis Settings"
@@ -163,15 +164,11 @@ def _enqueued_push_learned_skills(chain_custom_reconcile: bool = False) -> None:
 		except admin_client.AdminAuthError as e:
 			_fail(f"failed: auth: {e}")
 			terminal_written = True
-			frappe.log_error(
-				title="Jarvis: learned-skills admin auth failed", message=frappe.get_traceback()
-			)
+			frappe.log_error(title="Jarvis: learned-skills admin auth failed", message=frappe.get_traceback())
 		except admin_client.AdminUnreachableError as e:
 			_fail(f"failed: admin unreachable: {e}")
 			terminal_written = True
-			frappe.log_error(
-				title="Jarvis: learned-skills admin unreachable", message=frappe.get_traceback()
-			)
+			frappe.log_error(title="Jarvis: learned-skills admin unreachable", message=frappe.get_traceback())
 		except admin_client.AdminRateLimitedError as e:
 			retry = getattr(e, "retry_after_seconds", 0) or 0
 			retry_str = f"retry_after={retry}s" if retry > 0 else "retry shortly"
@@ -183,9 +180,7 @@ def _enqueued_push_learned_skills(chain_custom_reconcile: bool = False) -> None:
 		except Exception:
 			_fail("failed: unexpected error; see Error Log")
 			terminal_written = True
-			frappe.log_error(
-				title="Jarvis: learned-skills push failed", message=frappe.get_traceback()
-			)
+			frappe.log_error(title="Jarvis: learned-skills push failed", message=frappe.get_traceback())
 		finally:
 			if not terminal_written:
 				try:

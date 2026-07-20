@@ -13,6 +13,7 @@ and never reaches here), so a still-streaming turn is never flipped.
 Genuinely unrecoverable rows (self-hosted bench, or a row whose conversation /
 session_key is gone) are errored after the short threshold.
 """
+
 from __future__ import annotations
 
 from datetime import timedelta
@@ -61,20 +62,28 @@ def scan_and_mark_errored() -> int:
 		recoverable = (not self_hosted) and bool((r.get("session_key") or "").strip())
 		if recoverable:
 			if creation and creation < managed_cutoff:
-				frappe.db.set_value(MSG, r["name"], {
-					"recovering": 1, "recovery_started_at": now,
-				})
+				frappe.db.set_value(
+					MSG,
+					r["name"],
+					{
+						"recovering": 1,
+						"recovery_started_at": now,
+					},
+				)
 			continue
 		# Self-hosted / orphaned / no session: genuinely unrecoverable.
 		if creation and creation < error_cutoff:
 			frappe.db.set_value(MSG, r["name"], {"streaming": 0, "error": _ABANDONED})
 			if r.get("owner"):
-				publish_to_user(r["owner"], {
-					"kind": "run:error",
-					"conversation_id": r["conversation"],
-					"message_id": r["name"],
-					"error": _ABANDONED,
-				})
+				publish_to_user(
+					r["owner"],
+					{
+						"kind": "run:error",
+						"conversation_id": r["conversation"],
+						"message_id": r["name"],
+						"error": _ABANDONED,
+					},
+				)
 			errored += 1
 	frappe.db.commit()
 	return errored
@@ -160,32 +169,40 @@ def _sweep_orphan_turns(now) -> int:
 				pass
 		# Lost (no job / canceled / dead-queue). Heal once, then surface.
 		if not int(r["was_recovered"] or 0):
-			frappe.db.set_value(MSG, r["name"], "was_recovered", 1,
-				update_modified=False)
+			frappe.db.set_value(MSG, r["name"], "was_recovered", 1, update_modified=False)
 			from jarvis.chat.api import _redispatch_orphan
+
 			_redispatch_orphan(
-				r["conversation"], r["name"],
-				attachments=orig_attachments, context=orig_context,
+				r["conversation"],
+				r["name"],
+				attachments=orig_attachments,
+				context=orig_context,
 			)
 			continue
 		# Second strike: give the user the normal error + retry surface.
 		from jarvis.chat.api import _next_seq
-		err = frappe.get_doc({
-			"doctype": MSG,
-			"conversation": r["conversation"],
-			"seq": _next_seq(r["conversation"]),
-			"role": "assistant",
-			"content": "",
-			"streaming": 0,
-			"error": _ORPHAN_ERR,
-		})
+
+		err = frappe.get_doc(
+			{
+				"doctype": MSG,
+				"conversation": r["conversation"],
+				"seq": _next_seq(r["conversation"]),
+				"role": "assistant",
+				"content": "",
+				"streaming": 0,
+				"error": _ORPHAN_ERR,
+			}
+		)
 		err.insert(ignore_permissions=True)
 		if r.get("owner"):
-			publish_to_user(r["owner"], {
-				"kind": "run:error",
-				"conversation_id": r["conversation"],
-				"message_id": err.name,
-				"error": _ORPHAN_ERR,
-			})
+			publish_to_user(
+				r["owner"],
+				{
+					"kind": "run:error",
+					"conversation_id": r["conversation"],
+					"message_id": err.name,
+					"error": _ORPHAN_ERR,
+				},
+			)
 		errored += 1
 	return errored

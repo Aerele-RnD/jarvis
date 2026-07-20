@@ -10,6 +10,7 @@ with the chat.send clientRunId == run_id; completion comes ONLY from the
 run-scoped "chat" event (state final|aborted|error). agent lifecycle
 frames are dropped.
 """
+
 from frappe.tests.utils import FrappeTestCase
 
 from jarvis.chat.openclaw_client import OpenclawSession
@@ -17,9 +18,15 @@ from jarvis.exceptions import OpenclawUnreachableError
 
 
 def _agent_frame(run_id, stream, data):
-	return {"type": "event", "event": "agent", "payload": {
-		"runId": run_id, "stream": stream, "data": data,
-	}}
+	return {
+		"type": "event",
+		"event": "agent",
+		"payload": {
+			"runId": run_id,
+			"stream": stream,
+			"data": data,
+		},
+	}
 
 
 def _chat_frame(run_id, session_key, state, **extra):
@@ -43,55 +50,83 @@ class TestRelayTurnEvents(FrappeTestCase):
 		return sess
 
 	def test_assistant_and_tool_frames_then_final_joined_text(self):
-		sess = self._sess([
-			_agent_frame("r1", "assistant", {"text": "Hi there", "delta": "there"}),
-			_agent_frame("r1", "item", {
-				"kind": "tool", "phase": "start", "name": "read_file",
-				"toolCallId": "tc1",
-			}),
-			_chat_frame("r1", "sk", "final", message={
-				"content": [{"type": "text", "text": "Hi there"}],
-			}),
-		])
+		sess = self._sess(
+			[
+				_agent_frame("r1", "assistant", {"text": "Hi there", "delta": "there"}),
+				_agent_frame(
+					"r1",
+					"item",
+					{
+						"kind": "tool",
+						"phase": "start",
+						"name": "read_file",
+						"toolCallId": "tc1",
+					},
+				),
+				_chat_frame(
+					"r1",
+					"sk",
+					"final",
+					message={
+						"content": [{"type": "text", "text": "Hi there"}],
+					},
+				),
+			]
+		)
 		out = list(sess.relay_turn_events("sk", "r1"))
 		self.assertEqual(out[0], {"kind": "assistant", "text": "Hi there", "delta": "there"})
-		self.assertEqual(out[1], {
-			"kind": "tool", "phase": "start", "tool_name": "read_file", "tool_call_id": "tc1",
-		})
+		self.assertEqual(
+			out[1],
+			{
+				"kind": "tool",
+				"phase": "start",
+				"tool_name": "read_file",
+				"tool_call_id": "tc1",
+			},
+		)
 		self.assertEqual(out[2], {"kind": "relay:final", "text": "Hi there"})
 		self.assertEqual(len(out), 3)
 
 	def test_discards_frames_for_other_run_or_session_and_non_event_frames(self):
-		sess = self._sess([
-			_agent_frame("other-run", "assistant", {"text": "nope", "delta": "nope"}),
-			{"type": "res", "id": "x", "ok": True},  # non-event frame
-			None,  # soft-timeout / non-JSON noise
-			_chat_frame("r1", "other-session", "final"),  # wrong sessionKey
-			_chat_frame("other-run", "sk", "final"),  # wrong runId
-			_agent_frame("r1", "assistant", {"text": "ok", "delta": "ok"}),
-			_chat_frame("r1", "sk", "final"),
-		])
+		sess = self._sess(
+			[
+				_agent_frame("other-run", "assistant", {"text": "nope", "delta": "nope"}),
+				{"type": "res", "id": "x", "ok": True},  # non-event frame
+				None,  # soft-timeout / non-JSON noise
+				_chat_frame("r1", "other-session", "final"),  # wrong sessionKey
+				_chat_frame("other-run", "sk", "final"),  # wrong runId
+				_agent_frame("r1", "assistant", {"text": "ok", "delta": "ok"}),
+				_chat_frame("r1", "sk", "final"),
+			]
+		)
 		out = list(sess.relay_turn_events("sk", "r1"))
-		self.assertEqual(out, [
-			{"kind": "assistant", "text": "ok", "delta": "ok"},
-			{"kind": "relay:final", "text": None},
-		])
+		self.assertEqual(
+			out,
+			[
+				{"kind": "assistant", "text": "ok", "delta": "ok"},
+				{"kind": "relay:final", "text": None},
+			],
+		)
 
 	def test_agent_lifecycle_frames_never_yielded(self):
-		sess = self._sess([
-			_agent_frame("r1", "lifecycle", {"phase": "start"}),
-			_agent_frame("r1", "lifecycle", {"phase": "end"}),
-			_chat_frame("r1", "sk", "final"),
-		])
+		sess = self._sess(
+			[
+				_agent_frame("r1", "lifecycle", {"phase": "start"}),
+				_agent_frame("r1", "lifecycle", {"phase": "end"}),
+				_chat_frame("r1", "sk", "final"),
+			]
+		)
 		out = list(sess.relay_turn_events("sk", "r1"))
 		self.assertEqual(out, [{"kind": "relay:final", "text": None}])
 
 	def test_chat_delta_state_ignored(self):
-		sess = self._sess([
-			_chat_frame("r1", "sk", "delta", message={"content": "partial"}),
-			_chat_frame("r1", "sk", "delta", message={"content": "partial partial"}),
-			_chat_frame("r1", "sk", "final", message={"content": "done"}),
-		])
+		sess = self._sess(
+			[
+				_chat_frame("r1", "sk", "delta", message={"content": "partial"}),
+				_chat_frame("r1", "sk", "delta", message={"content": "partial partial"}),
+				_chat_frame("r1", "sk", "final", message={"content": "done"}),
+			]
+		)
 		out = list(sess.relay_turn_events("sk", "r1"))
 		self.assertEqual(out, [{"kind": "relay:final", "text": "done"}])
 
@@ -106,20 +141,28 @@ class TestRelayTurnEvents(FrappeTestCase):
 		self.assertEqual(out, [{"kind": "relay:final", "text": "plain text"}])
 
 	def test_chat_error_state_yields_relay_error_with_message(self):
-		sess = self._sess([
-			_chat_frame("r1", "sk", "error", errorMessage="provider timed out"),
-		])
+		sess = self._sess(
+			[
+				_chat_frame("r1", "sk", "error", errorMessage="provider timed out"),
+			]
+		)
 		out = list(sess.relay_turn_events("sk", "r1"))
-		self.assertEqual(out, [
-			{"kind": "relay:error", "state": "error", "error": "provider timed out"},
-		])
+		self.assertEqual(
+			out,
+			[
+				{"kind": "relay:error", "state": "error", "error": "provider timed out"},
+			],
+		)
 
 	def test_chat_aborted_state_falls_back_to_state_string(self):
 		sess = self._sess([_chat_frame("r1", "sk", "aborted")])
 		out = list(sess.relay_turn_events("sk", "r1"))
-		self.assertEqual(out, [
-			{"kind": "relay:error", "state": "aborted", "error": "aborted"},
-		])
+		self.assertEqual(
+			out,
+			[
+				{"kind": "relay:error", "state": "aborted", "error": "aborted"},
+			],
+		)
 
 	def test_transport_drop_yields_interrupted_transport_and_does_not_raise(self):
 		sess = self._sess([OpenclawUnreachableError("ws closed mid-stream")])
@@ -141,6 +184,7 @@ class TestRelayTurnEvents(FrappeTestCase):
 
 		def stalling_recv(_timeout):
 			import time
+
 			time.sleep(0.05)
 			return None
 

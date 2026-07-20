@@ -23,7 +23,7 @@ class _FakeRequest:
 		return self._body
 
 
-import contextlib  # noqa: E402
+import contextlib
 
 
 @contextlib.contextmanager
@@ -37,8 +37,10 @@ def _patch_request(req, *, request_ip: str = "127.0.0.1"):
 			yield
 		finally:
 			if prior_ip is None:
-				try: del frappe.local.request_ip
-				except AttributeError: pass
+				try:
+					del frappe.local.request_ip
+				except AttributeError:
+					pass
 			else:
 				frappe.local.request_ip = prior_ip
 
@@ -74,18 +76,22 @@ class TestCallToolWithSessionHeader(FrappeTestCase):
 	def setUp(self):
 		self.session_key = "agent:test:abc-123"
 		_cleanup_for_session(self.session_key)
-		conv = frappe.get_doc({
-			"doctype": CONV,
-			"title": "T",
-			"session_key": self.session_key,
-			"status": "Active",
-		})
+		conv = frappe.get_doc(
+			{
+				"doctype": CONV,
+				"title": "T",
+				"session_key": self.session_key,
+				"status": "Active",
+			}
+		)
 		conv.insert(ignore_permissions=True)
-		frappe.get_doc({
-			"doctype": SESS,
-			"session_key": self.session_key,
-			"user": "Administrator",
-		}).insert(ignore_permissions=True)
+		frappe.get_doc(
+			{
+				"doctype": SESS,
+				"session_key": self.session_key,
+				"user": "Administrator",
+			}
+		).insert(ignore_permissions=True)
 		frappe.db.commit()
 		self.conv_name = conv.name
 
@@ -93,10 +99,12 @@ class TestCallToolWithSessionHeader(FrappeTestCase):
 		_cleanup_for_session(self.session_key)
 
 	def test_session_header_persists_tool_message(self):
-		req = _FakeRequest({
-			"X-Jarvis-Token": PLUGIN_TOKEN,
-			"X-Jarvis-Session": self.session_key,
-		})
+		req = _FakeRequest(
+			{
+				"X-Jarvis-Token": PLUGIN_TOKEN,
+				"X-Jarvis-Session": self.session_key,
+			}
+		)
 		with _patch_request(req):
 			with patch("jarvis.api.publish_realtime_tool_result"):
 				result = call_tool("get_schema", args={"doctype": "Customer"})
@@ -112,10 +120,12 @@ class TestCallToolWithSessionHeader(FrappeTestCase):
 		self.assertEqual(tools[0]["tool_status"], "completed")
 
 	def test_session_header_publishes_realtime_tool_result(self):
-		req = _FakeRequest({
-			"X-Jarvis-Token": PLUGIN_TOKEN,
-			"X-Jarvis-Session": self.session_key,
-		})
+		req = _FakeRequest(
+			{
+				"X-Jarvis-Token": PLUGIN_TOKEN,
+				"X-Jarvis-Session": self.session_key,
+			}
+		)
 		with _patch_request(req):
 			with patch("jarvis.api.publish_realtime_tool_result") as pub:
 				call_tool("get_schema", args={"doctype": "Customer"})
@@ -137,10 +147,12 @@ class TestCallToolWithSessionHeader(FrappeTestCase):
 	def test_unknown_session_now_rejected(self):
 		"""Without a Chat Session row we have no user to dispatch as - fail
 		fast rather than silently fall back to a different identity."""
-		req = _FakeRequest({
-			"X-Jarvis-Token": PLUGIN_TOKEN,
-			"X-Jarvis-Session": "agent:nonexistent",
-		})
+		req = _FakeRequest(
+			{
+				"X-Jarvis-Token": PLUGIN_TOKEN,
+				"X-Jarvis-Session": "agent:nonexistent",
+			}
+		)
 		with _patch_request(req):
 			result = call_tool("get_schema", args={"doctype": "Customer"})
 		self.assertFalse(result["ok"])

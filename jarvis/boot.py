@@ -29,6 +29,7 @@ def set_jarvis_boot(bootinfo):
 	"""Run once per session at page load. Adds jarvis-specific keys to the
 	bootinfo blob so JS can branch on them without an extra round trip."""
 	from jarvis.dev import is_sandbox_mode
+
 	try:
 		bootinfo.jarvis_sandbox_mode = bool(is_sandbox_mode())
 	except Exception:
@@ -44,9 +45,10 @@ def set_jarvis_boot(bootinfo):
 	# the nag before setup is actually finished.
 	try:
 		from jarvis.account import is_ready_for_chat
+
 		bootinfo.jarvis_onboarded = bool((is_ready_for_chat() or {}).get("ready"))
 	except Exception:
-		bootinfo.jarvis_onboarded = True   # fail-safe: never nag on a boot error
+		bootinfo.jarvis_onboarded = True  # fail-safe: never nag on a boot error
 
 	# Drives the desk's floating Jarvis button: an unauthorized user is routed
 	# to /jarvis-no-access instead of the chat panel opening. Import kept
@@ -54,6 +56,7 @@ def set_jarvis_boot(bootinfo):
 	# jarvis.permissions.has_jarvis_access without touching module load order.
 	try:
 		from jarvis.permissions import has_jarvis_access
+
 		bootinfo.jarvis_has_access = bool(has_jarvis_access())
 	except Exception:
 		bootinfo.jarvis_has_access = False  # fail-closed; the no-access page self-heals

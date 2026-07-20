@@ -56,7 +56,9 @@ class TestThinkingDirectiveLeading(FrappeTestCase):
 		conv = create_conversation()
 		with patch("frappe.enqueue"):
 			result = send_message(
-				conv, "what is the status?", thinking_override="high",
+				conv,
+				"what is the status?",
+				thinking_override="high",
 			)
 		# send_message no longer creates the openclaw session on the web
 		# request (2026-07 latency plan, Phase 1.1 — the worker creates it on
@@ -83,18 +85,23 @@ class TestThinkingDirectiveLeading(FrappeTestCase):
 		"""
 		fake_sess = MagicMock()
 		fake_sess.chat_send.side_effect = lambda sk, msg, idem, **kw: {"runId": idem, "status": "started"}
-		fake_sess.relay_turn_events.return_value = iter([
-			{"kind": "lifecycle", "phase": "start"},
-			{"kind": "lifecycle", "phase": "end"},
-			{"kind": "relay:final", "text": None},
-		])
+		fake_sess.relay_turn_events.return_value = iter(
+			[
+				{"kind": "lifecycle", "phase": "start"},
+				{"kind": "lifecycle", "phase": "end"},
+				{"kind": "relay:final", "text": None},
+			]
+		)
 		with patch(
 			"jarvis.chat.openclaw_session_pool.OpenclawSession.connect",
 			return_value=fake_sess,
 		):
 			with patch("jarvis.chat.worker.publish_to_user"):
 				run_agent_turn(
-					self.conv, self.user_msg, run_id="r1", context=context,
+					self.conv,
+					self.user_msg,
+					run_id="r1",
+					context=context,
 				)
 		first_call = fake_sess.chat_send.call_args_list[0]
 		pos = first_call.args

@@ -80,15 +80,17 @@ def record_scrutiny_run(
 
 	# The run row (create fresh, or reuse the scheduler-created running one).
 	if run is None:
-		run_doc = frappe.get_doc({
-			"doctype": RUN,
-			"agent": agent,
-			"installation": inst.name,
-			"trigger": trigger,
-			"conversation": conversation,
-			"status": "running",
-			"started_at": frappe.utils.now(),
-		})
+		run_doc = frappe.get_doc(
+			{
+				"doctype": RUN,
+				"agent": agent,
+				"installation": inst.name,
+				"trigger": trigger,
+				"conversation": conversation,
+				"status": "running",
+				"started_at": frappe.utils.now(),
+			}
+		)
 		run_doc.flags.ignore_permissions = True
 		run_doc.insert()
 		_reassign_owner(RUN, run_doc.name, owner)
@@ -122,25 +124,27 @@ def record_scrutiny_run(
 			frappe.db.set_value(FINDING, existing, "last_seen_run", run_doc.name, update_modified=False)
 			continue
 
-		fd = frappe.get_doc({
-			"doctype": FINDING,
-			"run": run_doc.name,
-			"agent": agent,
-			"rule_id": f.get("rule_id"),
-			"severity": sev,
-			"title": (f.get("statement") or f.get("detail") or f.get("rule_id") or "")[:140],
-			"detail_md": f.get("detail") or "",
-			"section": f.get("section") or "",
-			"effective_date": _safe_date(f.get("effective_date")),
-			"ref_doctype": f.get("ref_doctype") or "",
-			"ref_name": f.get("ref_name") or "",
-			"amount": f.get("amount") or 0,
-			"disclaimer": f.get("disclaimer") or "",
-			"fingerprint": fp,
-			"state": "open",
-			"first_seen_run": run_doc.name,
-			"last_seen_run": run_doc.name,
-		})
+		fd = frappe.get_doc(
+			{
+				"doctype": FINDING,
+				"run": run_doc.name,
+				"agent": agent,
+				"rule_id": f.get("rule_id"),
+				"severity": sev,
+				"title": (f.get("statement") or f.get("detail") or f.get("rule_id") or "")[:140],
+				"detail_md": f.get("detail") or "",
+				"section": f.get("section") or "",
+				"effective_date": _safe_date(f.get("effective_date")),
+				"ref_doctype": f.get("ref_doctype") or "",
+				"ref_name": f.get("ref_name") or "",
+				"amount": f.get("amount") or 0,
+				"disclaimer": f.get("disclaimer") or "",
+				"fingerprint": fp,
+				"state": "open",
+				"first_seen_run": run_doc.name,
+				"last_seen_run": run_doc.name,
+			}
+		)
 		fd.flags.ignore_permissions = True
 		fd.insert()
 		_reassign_owner(FINDING, fd.name, owner)
@@ -157,13 +161,18 @@ def record_scrutiny_run(
 	coverage = result.get("coverage_note") or ""
 	if truncated and not coverage:
 		coverage = "Scan hit the turn envelope; findings list is incomplete."
-	frappe.db.set_value(RUN, run_doc.name, {
-		"status": status,
-		"findings_count": len(seen_fps),  # distinct persisted findings (fingerprint-deduped)
-		"blocker_count": counts.get("blocker", 0),
-		"finished_at": frappe.utils.now(),
-		"coverage_note": coverage[:140],
-	}, update_modified=False)
+	frappe.db.set_value(
+		RUN,
+		run_doc.name,
+		{
+			"status": status,
+			"findings_count": len(seen_fps),  # distinct persisted findings (fingerprint-deduped)
+			"blocker_count": counts.get("blocker", 0),
+			"finished_at": frappe.utils.now(),
+			"coverage_note": coverage[:140],
+		},
+		update_modified=False,
+	)
 
 	# Activity trail (best-effort, Link-free — survives the uninstall cascade).
 	# The explicit ``owner`` pins the feed row to the installation owner (today

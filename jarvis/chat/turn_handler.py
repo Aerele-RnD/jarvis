@@ -67,7 +67,10 @@ _ASSISTANT_BATCH_INTERVAL_MS = 250
 
 
 def persist_rich_outputs(
-	assistant_msg_name: str, conversation_id: str, user: str, run_id: str,
+	assistant_msg_name: str,
+	conversation_id: str,
+	user: str,
+	run_id: str,
 	turn_start_ms: int,
 ) -> None:
 	"""Best-effort canvas + generated-image persistence and publish for one
@@ -92,16 +95,22 @@ def persist_rich_outputs(
 		final_content = frappe.db.get_value(MSG, assistant_msg_name, "content") or ""
 		canvas_token = settings.get_password("agent_token", raise_exception=False) or ""
 		canvas_items = canvas_mod.persist_canvases(
-			assistant_msg_name, final_content, settings.agent_url or "", canvas_token,
+			assistant_msg_name,
+			final_content,
+			settings.agent_url or "",
+			canvas_token,
 		)
 		if canvas_items:
-			_publish_to_user(user, {
-				"kind": "canvas",
-				"conversation_id": conversation_id,
-				"message_id": assistant_msg_name,
-				"run_id": run_id,
-				"items": canvas_items,
-			})
+			_publish_to_user(
+				user,
+				{
+					"kind": "canvas",
+					"conversation_id": conversation_id,
+					"message_id": assistant_msg_name,
+					"run_id": run_id,
+					"items": canvas_items,
+				},
+			)
 	except Exception:
 		frappe.log_error(
 			title="chat worker: canvas persist failed",
@@ -119,16 +128,21 @@ def persist_rich_outputs(
 			from jarvis.chat import generated_media as gen_media
 
 			gen_items = gen_media.persist_generated_images(
-				assistant_msg_name, conversation_id, turn_start_ms,
+				assistant_msg_name,
+				conversation_id,
+				turn_start_ms,
 			)
 			if gen_items:
-				_publish_to_user(user, {
-					"kind": "canvas",
-					"conversation_id": conversation_id,
-					"message_id": assistant_msg_name,
-					"run_id": run_id,
-					"items": gen_items,
-				})
+				_publish_to_user(
+					user,
+					{
+						"kind": "canvas",
+						"conversation_id": conversation_id,
+						"message_id": assistant_msg_name,
+						"run_id": run_id,
+						"items": gen_items,
+					},
+				)
 	except Exception:
 		frappe.log_error(
 			title="chat worker: generated-image persist failed",
@@ -209,6 +223,7 @@ class _AssistantContentBatcher:
 		self._last_flush_ms = self._now_ms()
 		return True
 
+
 # Provider label → openclaw provider id sent in the chat WS frame.
 #
 # Openclaw has two dispatch paths chosen at request time
@@ -269,14 +284,15 @@ def _resolve_model_and_provider(conv) -> tuple[str, str | None]:
 		# Pool mode: Bifrost routes. Use override if it matches an enabled model name.
 		enabled_names = {
 			(m.model if hasattr(m, "model") else m.get("model", ""))
-			for m in (settings.models or []) if m.enabled
+			for m in (settings.models or [])
+			if m.enabled
 		}
 		override = (conv.model_override or "").strip()
 		if override and override in enabled_names:
 			return override, None  # Validated override accepted
 		return "", None  # Let Bifrost/pool route
 
-	effective_model = (conv.model_override or settings.llm_model or "")
+	effective_model = conv.model_override or settings.llm_model or ""
 	provider = (
 		_PROVIDER_LABEL_TO_OPENCLAW_ID.get(settings.llm_provider)
 		if settings.llm_auth_mode == "oauth"
@@ -389,17 +405,13 @@ def _advance_macro(conversation_id: str, *, errored: bool) -> None:
 
 		macros.advance_after_turn(conversation_id, errored=errored)
 	except Exception:
-		frappe.log_error(
-			title="jarvis macro advance hook failed", message=frappe.get_traceback()
-		)
+		frappe.log_error(title="jarvis macro advance hook failed", message=frappe.get_traceback())
 	try:
 		from jarvis.learning import app_analysis
 
 		app_analysis.on_turn_end(conversation_id, errored=errored)
 	except Exception:
-		frappe.log_error(
-			title="jarvis app-learning turn hook failed", message=frappe.get_traceback()
-		)
+		frappe.log_error(title="jarvis app-learning turn hook failed", message=frappe.get_traceback())
 
 
 def handle_chat_send(payload: dict) -> None:
@@ -453,16 +465,15 @@ def handle_chat_send(payload: dict) -> None:
 	_lat = _get_latency_logger()
 	t_handle0 = time.monotonic()
 	enqueued_at_ms = payload.get("enqueued_at_ms")
-	queue_wait_ms = (
-		max(0, int(time.time() * 1000) - int(enqueued_at_ms))
-		if enqueued_at_ms else -1
-	)
+	queue_wait_ms = max(0, int(time.time() * 1000) - int(enqueued_at_ms)) if enqueued_at_ms else -1
 	# Stream-phase stats filled in by _consume: ms to the first event of any
 	# kind, ms to the first assistant delta (= first visible token), and how
 	# many tool events fired before that first delta (measures the persona's
 	# read-SOUL/TOOLS/STYLE-before-answering tax; see the latency plan).
 	stream_stats = {
-		"t0": None, "first_event_ms": -1, "first_delta_ms": -1,
+		"t0": None,
+		"first_event_ms": -1,
+		"first_delta_ms": -1,
 		"pre_reply_tool_calls": 0,
 	}
 	checkout_ms = -1
@@ -491,12 +502,15 @@ def handle_chat_send(payload: dict) -> None:
 	# stable name to attach realtime events to.
 	assistant_msg = _create_assistant_placeholder(conv)
 
-	_publish_to_user(user, {
-		"kind": "run:start",
-		"conversation_id": conversation_id,
-		"message_id": assistant_msg.name,
-		"run_id": run_id,
-	})
+	_publish_to_user(
+		user,
+		{
+			"kind": "run:start",
+			"conversation_id": conversation_id,
+			"message_id": assistant_msg.name,
+			"run_id": run_id,
+		},
+	)
 
 	settings = frappe.get_single("Jarvis Settings")
 	# Fetch content + sender of THIS user message in one round-trip.
@@ -508,10 +522,7 @@ def handle_chat_send(payload: dict) -> None:
 	# the bracket and the tool-call's frappe.session.user stay in lock-
 	# step. Today these are equal for single-owner conversations; the
 	# distinction matters the moment we ship shared conversations.
-	msg_row = (
-		frappe.db.get_value(MSG, message_id, ["content", "owner"], as_dict=True)
-		or {}
-	)
+	msg_row = frappe.db.get_value(MSG, message_id, ["content", "owner"], as_dict=True) or {}
 	user_message = msg_row.get("content")
 	chat_user = msg_row.get("owner") or user
 	# Prepend today's date AND the chat user's Frappe id as a context line so
@@ -581,8 +592,7 @@ def handle_chat_send(payload: dict) -> None:
 	notes_clause = ""
 	if drained_notes:
 		safe_notes = "; ".join(
-			_safe_label_name(e["text"]).replace("[", "(").replace("]", ")")
-			for e in drained_notes
+			_safe_label_name(e["text"]).replace("[", "(").replace("]", ")") for e in drained_notes
 		)
 		notes_clause = f"; notes: {safe_notes}"
 	# On-demand "ground on wiki" (the composer's one-shot control): when the user
@@ -736,6 +746,7 @@ def handle_chat_send(payload: dict) -> None:
 			# bearer token (full operator scope, no device pairing). agent_url
 			# holds the http(s) base; the user's openclaw uses its own LLM.
 			from jarvis.chat import openclaw_http_client
+
 			base_url = (settings.agent_url or "").strip()
 			token = settings.get_password("agent_token", raise_exception=False) or ""
 			# Register this turn so the plugin's call_tool callback (which only
@@ -752,9 +763,15 @@ def handle_chat_send(payload: dict) -> None:
 			# same as before this refactor.
 			sh_message = _thinking_prefix(conv.thinking_override) + user_message
 			try:
-				_consume(openclaw_http_client.stream_agent_turn(
-					base_url, token, sh_message, model="openclaw", stream=stream_pref,
-				))
+				_consume(
+					openclaw_http_client.stream_agent_turn(
+						base_url,
+						token,
+						sh_message,
+						model="openclaw",
+						stream=stream_pref,
+					)
+				)
 				# Delivered (the stream ran to completion) - drop exactly the notes
 				# we folded in (by id), so the correction is delivered once, not
 				# re-nagged, without clobbering a discard appended mid-turn or one a
@@ -776,22 +793,23 @@ def handle_chat_send(payload: dict) -> None:
 			# means the next attempt will reconnect; we don't auto-
 			# retry inside this turn because tokens may have already
 			# streamed to the UI by the time the failure surfaces.
-			gateway_url = (settings.agent_url or "").replace(
-				"http://", "ws://"
-			).replace("https://", "wss://")
+			gateway_url = (settings.agent_url or "").replace("http://", "ws://").replace("https://", "wss://")
 			effective_model, oauth_provider_id = _session_model_for(conv)
 			if not conv.session_key:
 				# First turn of this conversation pays session-create and is the
 				# most cold-start-prone (a dormant container takes ~10-25s to
 				# wake). Tell the user we're waking the assistant so the connect
 				# window reads as progress rather than a dead spinner.
-				_publish_to_user(user, {
-					"kind": "run:status",
-					"conversation_id": conversation_id,
-					"message_id": assistant_msg.name,
-					"run_id": run_id,
-					"status": "waking",
-				})
+				_publish_to_user(
+					user,
+					{
+						"kind": "run:status",
+						"conversation_id": conversation_id,
+						"message_id": assistant_msg.name,
+						"run_id": run_id,
+						"status": "waking",
+					},
+				)
 			try:
 				t_checkout = time.monotonic()
 				with openclaw_session_pool.checkout(gateway_url) as sess:
@@ -811,15 +829,12 @@ def handle_chat_send(payload: dict) -> None:
 
 						t_sess = time.monotonic()
 						conv.session_key = _ensure_session_key(chat_user, sess=sess)
-						frappe.db.set_value(
-							CONV, conversation_id, "session_key", conv.session_key
-						)
+						frappe.db.set_value(CONV, conversation_id, "session_key", conv.session_key)
 						frappe.db.commit()
 						session_create_ms = int((time.monotonic() - t_sess) * 1000)
 					if effective_model:
 						model_ref = (
-							f"{oauth_provider_id}/{effective_model}"
-							if oauth_provider_id else effective_model
+							f"{oauth_provider_id}/{effective_model}" if oauth_provider_id else effective_model
 						)
 						try:
 							sess.set_session_model(conv.session_key, model_ref)
@@ -843,7 +858,10 @@ def handle_chat_send(payload: dict) -> None:
 						)
 						if watermark:
 							frappe.db.set_value(
-								MSG, assistant_msg.name, "openclaw_seq_watermark", watermark,
+								MSG,
+								assistant_msg.name,
+								"openclaw_seq_watermark",
+								watermark,
 								update_modified=False,
 							)
 							frappe.db.commit()
@@ -852,9 +870,7 @@ def handle_chat_send(payload: dict) -> None:
 							title="chat: seq watermark capture failed",
 							message=frappe.get_traceback(),
 						)
-					managed_attachments = (
-						_to_managed_attachments(vision_parts) if vision_parts else None
-					)
+					managed_attachments = _to_managed_attachments(vision_parts) if vision_parts else None
 					# openclaw preprocesses attachments BEFORE acking chat.send
 					# (each PDF page is rasterized + resized inside the RPC:
 					# measured 22s for a 4-page invoice). The default 10s ack
@@ -862,12 +878,17 @@ def handle_chat_send(payload: dict) -> None:
 					# "chat.send timed out" while the gateway completed the
 					# turn anyway. Scale the ack window with the payload.
 					ack_timeout = 10.0 + (30.0 * len(managed_attachments) if managed_attachments else 0.0)
-					ack = sess.chat_send(
-						conv.session_key, user_message, run_id,
-						thinking=(conv.thinking_override or "").strip() or None,
-						attachments=managed_attachments,
-						timeout_s=min(ack_timeout, 180.0),
-					) or {}
+					ack = (
+						sess.chat_send(
+							conv.session_key,
+							user_message,
+							run_id,
+							thinking=(conv.thinking_override or "").strip() or None,
+							attachments=managed_attachments,
+							timeout_s=min(ack_timeout, 180.0),
+						)
+						or {}
+					)
 					# chat.send delivered our message (incl. any drained notes) -
 					# drop exactly the notes we folded in (by id), so the correction
 					# is delivered once, not re-nagged, without clobbering a discard
@@ -887,9 +908,12 @@ def handle_chat_send(payload: dict) -> None:
 						# never holds the lock other turns are waiting on.
 						terminal = {"kind": "relay:interrupted", "reason": "completed-replay"}
 					else:
-						terminal = _consume_relay(sess.relay_turn_events(
-							conv.session_key, ack.get("runId") or run_id,
-						))
+						terminal = _consume_relay(
+							sess.relay_turn_events(
+								conv.session_key,
+								ack.get("runId") or run_id,
+							)
+						)
 					# Real usage accounting (design section 3): a genuinely
 					# completed run leaves fresh last-run token counts on the
 					# gateway's sessions.list row. Read them NOW, while `sess` is
@@ -939,13 +963,16 @@ def handle_chat_send(payload: dict) -> None:
 				# overflow either way.
 				if "context overflow" in err_text.lower():
 					_mark_recovering(assistant_msg.name)
-					_publish_to_user(user, {
-						"kind": "run:recovering",
-						"conversation_id": conversation_id,
-						"message_id": assistant_msg.name,
-						"run_id": run_id,
-						"reason": "compacting",
-					})
+					_publish_to_user(
+						user,
+						{
+							"kind": "run:recovering",
+							"conversation_id": conversation_id,
+							"message_id": assistant_msg.name,
+							"run_id": run_id,
+							"reason": "compacting",
+						},
+					)
 					return
 				if terminal.get("state") == "aborted":
 					# User hit Stop -> stop_run -> openclaw chat.abort. Finalize as a
@@ -966,13 +993,16 @@ def handle_chat_send(payload: dict) -> None:
 					frappe.db.set_value(MSG, assistant_msg.name, "stopped", 1)
 					frappe.db.set_value(MSG, assistant_msg.name, "streaming", 0)
 					frappe.db.commit()
-					_publish_to_user(user, {
-						"kind": "run:end",
-						"conversation_id": conversation_id,
-						"message_id": assistant_msg.name,
-						"run_id": run_id,
-						"stopped": True,
-					})
+					_publish_to_user(
+						user,
+						{
+							"kind": "run:end",
+							"conversation_id": conversation_id,
+							"message_id": assistant_msg.name,
+							"run_id": run_id,
+							"stopped": True,
+						},
+					)
 					_advance_macro(conversation_id, errored=True)
 					return
 				_publish_run_error(err_text)
@@ -987,13 +1017,16 @@ def handle_chat_send(payload: dict) -> None:
 				# unlocks the composer, instead of a silent, locked spinner
 				# that can sit for up to the recovery ceiling.
 				_mark_recovering(assistant_msg.name)
-				_publish_to_user(user, {
-					"kind": "run:recovering",
-					"conversation_id": conversation_id,
-					"message_id": assistant_msg.name,
-					"run_id": run_id,
-					"reason": terminal.get("reason") or "interrupted",
-				})
+				_publish_to_user(
+					user,
+					{
+						"kind": "run:recovering",
+						"conversation_id": conversation_id,
+						"message_id": assistant_msg.name,
+						"run_id": run_id,
+						"reason": terminal.get("reason") or "interrupted",
+					},
+				)
 				_try_recover_now(conversation_id)
 				return
 			# relay:final - authoritative text beats the batcher tail.
@@ -1017,13 +1050,9 @@ def handle_chat_send(payload: dict) -> None:
 		try:
 			from jarvis.chat import chat_asks
 
-			_final = frappe.db.get_value(
-				MSG, assistant_msg.name, ["content", "error"], as_dict=True
-			) or {}
+			_final = frappe.db.get_value(MSG, assistant_msg.name, ["content", "error"], as_dict=True) or {}
 			if not _final.get("error"):
-				chat_asks.materialize_from_turn(
-					conversation_id, _final.get("content") or ""
-				)
+				chat_asks.materialize_from_turn(conversation_id, _final.get("content") or "")
 		except Exception:
 			frappe.log_error(
 				title="chat asks: materialize_from_turn failed",
@@ -1043,16 +1072,19 @@ def handle_chat_send(payload: dict) -> None:
 				assistant_msg.name,
 				f"unexpected worker error: {type(e).__name__}",
 			)
-			_publish_to_user(user, {
-				"kind": "run:error",
-				"conversation_id": conversation_id,
-				"message_id": assistant_msg.name,
-				"run_id": run_id,
-				# Don't leak full str(e) - the operator-safe identifier is
-				# the exception class; the full traceback is in Error Log.
-				"code": "internal",
-				"error": f"{type(e).__name__}",
-			})
+			_publish_to_user(
+				user,
+				{
+					"kind": "run:error",
+					"conversation_id": conversation_id,
+					"message_id": assistant_msg.name,
+					"run_id": run_id,
+					# Don't leak full str(e) - the operator-safe identifier is
+					# the exception class; the full traceback is in Error Log.
+					"code": "internal",
+					"error": f"{type(e).__name__}",
+				},
+			)
 		except Exception:
 			# If even the error-marking path fails, swallow - we're
 			# already in an error path and re-raising would mask the
@@ -1068,12 +1100,15 @@ def handle_chat_send(payload: dict) -> None:
 		conversation_id,
 		errored=bool(frappe.db.get_value(MSG, assistant_msg.name, "error")),
 	)
-	_publish_to_user(user, {
-		"kind": "run:end",
-		"conversation_id": conversation_id,
-		"message_id": assistant_msg.name,
-		"run_id": run_id,
-	})
+	_publish_to_user(
+		user,
+		{
+			"kind": "run:end",
+			"conversation_id": conversation_id,
+			"message_id": assistant_msg.name,
+			"run_id": run_id,
+		},
+	)
 
 	# Latency telemetry summary (plan Phase 0). first_delta_ms is the number
 	# users feel: worker start → first visible token. pre_reply_tool_calls
@@ -1082,17 +1117,21 @@ def handle_chat_send(payload: dict) -> None:
 		"turn run_id=%s first_turn=%d queue_wait_ms=%d checkout_ms=%d "
 		"session_create_ms=%d first_event_ms=%d first_delta_ms=%d "
 		"pre_reply_tool_calls=%d turn_total_ms=%d",
-		run_id, 1 if session_create_ms else 0, queue_wait_ms, checkout_ms,
-		session_create_ms, stream_stats["first_event_ms"],
-		stream_stats["first_delta_ms"], stream_stats["pre_reply_tool_calls"],
+		run_id,
+		1 if session_create_ms else 0,
+		queue_wait_ms,
+		checkout_ms,
+		session_create_ms,
+		stream_stats["first_event_ms"],
+		stream_stats["first_delta_ms"],
+		stream_stats["pre_reply_tool_calls"],
 		int((time.monotonic() - t_handle0) * 1000),
 	)
 	# Turn telemetry (customization discovery). Best-effort.
 	try:
 		from jarvis import telemetry
 
-		telemetry.emit_turn(
-			conversation_id, run_id, int((time.monotonic() - t_handle0) * 1000))
+		telemetry.emit_turn(conversation_id, run_id, int((time.monotonic() - t_handle0) * 1000))
 	except Exception:
 		pass
 
@@ -1105,6 +1144,7 @@ def handle_chat_send(payload: dict) -> None:
 	# still lands via the same "conversation:renamed" event.
 	# Best-effort: a title failure must never affect the completed turn.
 	from jarvis import selfhost
+
 	if not selfhost.is_self_hosted():
 		try:
 			from jarvis.chat import title as title_mod
@@ -1152,11 +1192,7 @@ def _format_report_filters(filters: dict) -> str:
 	itself is a huge nested structure) can't blow the prompt budget.
 	Returns "" (empty string) when there are no meaningful filter values,
 	so the caller can concatenate it directly."""
-	pairs = [
-		f"{k}={v!r}"
-		for k, v in filters.items()
-		if v not in (None, "", [], {})
-	]
+	pairs = [f"{k}={v!r}" for k, v in filters.items() if v not in (None, "", [], {})]
 	if not pairs:
 		return ""
 	body = ", ".join(pairs)
@@ -1452,7 +1488,9 @@ def _prepare_attachments(user_message: str, attachments, vision_ok: bool):
 			parts, total = vision.pdf_parts(raw, name)
 			if parts:
 				vision_parts.extend(parts)
-				shown = f"all {total} pages" if total <= len(parts) else f"first {len(parts)} of {total} pages"
+				shown = (
+					f"all {total} pages" if total <= len(parts) else f"first {len(parts)} of {total} pages"
+				)
 				blocks.append(f"[Attached PDF `{name}` - {shown} sent as images.]")
 			else:
 				blocks.append(f"[Attached PDF `{name}` could not be rendered.]")
@@ -1474,9 +1512,7 @@ def _prepare_attachments(user_message: str, attachments, vision_ok: bool):
 				continue
 			if len(text) > _MAX_INLINE_CHARS:
 				text = text[:_MAX_INLINE_CHARS] + "\n…[truncated]"
-			blocks.append(
-				f"Attached file `{name}`:\n" + _fence_untrusted(text, f"attached file: {name}")
-			)
+			blocks.append(f"Attached file `{name}`:\n" + _fence_untrusted(text, f"attached file: {name}"))
 	if blocks:
 		user_message = user_message + "\n\n" + "\n\n".join(blocks)
 	return user_message, vision_parts
@@ -1486,14 +1522,16 @@ def _create_assistant_placeholder(conv) -> "frappe.model.document.Document":
 	from jarvis.chat.api import _next_seq
 
 	seq = _next_seq(conv.name)
-	msg = frappe.get_doc({
-		"doctype": MSG,
-		"conversation": conv.name,
-		"seq": seq,
-		"role": "assistant",
-		"content": "",
-		"streaming": 1,
-	})
+	msg = frappe.get_doc(
+		{
+			"doctype": MSG,
+			"conversation": conv.name,
+			"seq": seq,
+			"role": "assistant",
+			"content": "",
+			"streaming": 1,
+		}
+	)
 	msg.insert(ignore_permissions=True)
 	frappe.db.commit()
 	return msg
@@ -1513,16 +1551,32 @@ def _classify_error(err_text: str, exc=None) -> str:
 		return "recovery-expired"
 	if "timed out" in low or "timeout" in low or "deadline" in low:
 		return "timeout"
-	if any(k in low for k in ("quota", "rate limit", "rate-limit", "cooldown", "overloaded", "insufficient", "credit", "billing")):
+	if any(
+		k in low
+		for k in (
+			"quota",
+			"rate limit",
+			"rate-limit",
+			"cooldown",
+			"overloaded",
+			"insufficient",
+			"credit",
+			"billing",
+		)
+	):
 		return "provider"
 	return "internal"
 
 
 def _mark_errored(assistant_msg_name: str, error: str) -> None:
-	frappe.db.set_value(MSG, assistant_msg_name, {
-		"streaming": 0,
-		"error": error,
-	})
+	frappe.db.set_value(
+		MSG,
+		assistant_msg_name,
+		{
+			"streaming": 0,
+			"error": error,
+		},
+	)
 	frappe.db.commit()
 
 
@@ -1530,10 +1584,14 @@ def _mark_recovering(assistant_msg_name: str) -> None:
 	"""Park a managed turn for snapshot recovery instead of erroring: openclaw
 	is still running/finished and turn_recovery will finalize it from the
 	gateway snapshot. streaming stays 1 (spinner up); no error, no run:error."""
-	frappe.db.set_value(MSG, assistant_msg_name, {
-		"recovering": 1,
-		"recovery_started_at": frappe.utils.now_datetime(),
-	})
+	frappe.db.set_value(
+		MSG,
+		assistant_msg_name,
+		{
+			"recovering": 1,
+			"recovery_started_at": frappe.utils.now_datetime(),
+		},
+	)
 	frappe.db.commit()
 
 
@@ -1542,6 +1600,7 @@ def _try_recover_now(conversation_id: str) -> None:
 	*/2 turn_recovery cron remains the backstop."""
 	try:
 		from jarvis.chat import turn_recovery
+
 		turn_recovery.recover_now(conversation_id)
 	except Exception:
 		frappe.log_error(
@@ -1631,23 +1690,29 @@ def _handle_event_inner(
 			# recovery cron's ceiling turns it into an error then.
 			if "context overflow" in err_text.lower():
 				_mark_recovering(assistant_msg_name)
-				_publish_to_user(user, {
-					"kind": "run:recovering",
+				_publish_to_user(
+					user,
+					{
+						"kind": "run:recovering",
+						"conversation_id": conversation_id,
+						"message_id": assistant_msg_name,
+						"run_id": run_id,
+						"reason": "compacting",
+					},
+				)
+				return
+			_mark_errored(assistant_msg_name, err_text)
+			_publish_to_user(
+				user,
+				{
+					"kind": "run:error",
 					"conversation_id": conversation_id,
 					"message_id": assistant_msg_name,
 					"run_id": run_id,
-					"reason": "compacting",
-				})
-				return
-			_mark_errored(assistant_msg_name, err_text)
-			_publish_to_user(user, {
-				"kind": "run:error",
-				"conversation_id": conversation_id,
-				"message_id": assistant_msg_name,
-				"run_id": run_id,
-				"code": _classify_error(err_text),
-				"error": event.get("error"),
-			})
+					"code": _classify_error(err_text),
+					"error": event.get("error"),
+				},
+			)
 		# lifecycle start is a no-op (we already published run:start)
 		return
 
@@ -1658,13 +1723,16 @@ def _handle_event_inner(
 		# UI animates without delay; the DB write coalesces.
 		batcher.delta(text)
 		batcher.flush_if_due()
-		_publish_to_user(user, {
-			"kind": "assistant:delta",
-			"conversation_id": conversation_id,
-			"message_id": assistant_msg_name,
-			"text": text,
-			"run_id": run_id,
-		})
+		_publish_to_user(
+			user,
+			{
+				"kind": "assistant:delta",
+				"conversation_id": conversation_id,
+				"message_id": assistant_msg_name,
+				"text": text,
+				"run_id": run_id,
+			},
+		)
 		return
 
 	if kind == "tool":
@@ -1687,44 +1755,53 @@ def _handle_event_inner(
 		if phase == "start":
 			if not is_jarvis:
 				from jarvis.chat.api import _next_seq
+
 				seq = _next_seq(conversation_id)
-				doc = frappe.get_doc({
-					"doctype": MSG,
-					"conversation": conversation_id,
-					"seq": seq,
-					"role": "tool",
-					"content": f"calling {tool_name}…",
-					"tool_name": tool_name,
-					"tool_status": "running",
-					"streaming": 1,
-				})
+				doc = frappe.get_doc(
+					{
+						"doctype": MSG,
+						"conversation": conversation_id,
+						"seq": seq,
+						"role": "tool",
+						"content": f"calling {tool_name}…",
+						"tool_name": tool_name,
+						"tool_status": "running",
+						"streaming": 1,
+					}
+				)
 				doc.insert(ignore_permissions=True)
 				frappe.db.commit()
 				tool_msg_by_call_id[tool_call_id] = doc.name
-			_publish_to_user(user, {
-				"kind": "tool:start",
-				"conversation_id": conversation_id,
-				"message_id": tool_msg_by_call_id.get(tool_call_id),
-				"tool_name": tool_name,
-				# openclaw's own human summary ("get_list Sales Invoice") -
-				# drives the live status line; absent for runtimes that don't
-				# emit item titles.
-				"tool_title": event.get("tool_title"),
-				"tool_call_id": tool_call_id,
-				"run_id": run_id,
-			})
+			_publish_to_user(
+				user,
+				{
+					"kind": "tool:start",
+					"conversation_id": conversation_id,
+					"message_id": tool_msg_by_call_id.get(tool_call_id),
+					"tool_name": tool_name,
+					# openclaw's own human summary ("get_list Sales Invoice") -
+					# drives the live status line; absent for runtimes that don't
+					# emit item titles.
+					"tool_title": event.get("tool_title"),
+					"tool_call_id": tool_call_id,
+					"run_id": run_id,
+				},
+			)
 		elif phase == "end":
 			if is_jarvis:
 				# No worker-side row for jarvis tools; just close the live card.
-				_publish_to_user(user, {
-					"kind": "tool:end",
-					"conversation_id": conversation_id,
-					"message_id": None,
-					"tool_name": tool_name,
-					"tool_call_id": tool_call_id,
-					"status": event.get("status"),
-					"run_id": run_id,
-				})
+				_publish_to_user(
+					user,
+					{
+						"kind": "tool:end",
+						"conversation_id": conversation_id,
+						"message_id": None,
+						"tool_name": tool_name,
+						"tool_call_id": tool_call_id,
+						"status": event.get("status"),
+						"run_id": run_id,
+					},
+				)
 				return
 			name = tool_msg_by_call_id.get(tool_call_id)
 			if not name:
@@ -1746,17 +1823,24 @@ def _handle_event_inner(
 					),
 				)
 				return
-			frappe.db.set_value(MSG, name, {
-				"tool_status": event.get("status") or "completed",
-				"streaming": 0,
-			})
+			frappe.db.set_value(
+				MSG,
+				name,
+				{
+					"tool_status": event.get("status") or "completed",
+					"streaming": 0,
+				},
+			)
 			frappe.db.commit()
-			_publish_to_user(user, {
-				"kind": "tool:end",
-				"conversation_id": conversation_id,
-				"message_id": name,
-				"tool_name": tool_name,
-				"tool_call_id": tool_call_id,
-				"status": event.get("status"),
-				"run_id": run_id,
-			})
+			_publish_to_user(
+				user,
+				{
+					"kind": "tool:end",
+					"conversation_id": conversation_id,
+					"message_id": name,
+					"tool_name": tool_name,
+					"tool_call_id": tool_call_id,
+					"status": event.get("status"),
+					"run_id": run_id,
+				},
+			)

@@ -59,9 +59,7 @@ def get_my_settings() -> dict:
 
 
 @frappe.whitelist()
-def update_my_settings(
-	notify_enabled: int | None = None, activity_detail: int | None = None
-) -> dict:
+def update_my_settings(notify_enabled: int | None = None, activity_detail: int | None = None) -> dict:
 	"""Update the caller's own chat preferences only. The usage limit and
 	counters (permlevel 1 / read-only) are never writable here."""
 	require_jarvis_access()
@@ -84,9 +82,15 @@ def admin_list_user_usage() -> dict:
 	rows = frappe.get_all(
 		USER_SETTINGS,
 		fields=[
-			"user", "monthly_token_limit", "usage_month",
-			"month_tokens", "month_input_tokens", "month_output_tokens",
-			"total_tokens", "last_usage_at", "last_synced_at",
+			"user",
+			"monthly_token_limit",
+			"usage_month",
+			"month_tokens",
+			"month_input_tokens",
+			"month_output_tokens",
+			"total_tokens",
+			"last_usage_at",
+			"last_synced_at",
 		],
 	)
 	# One batched query for both "is this user enabled" and full_name, instead
@@ -105,18 +109,20 @@ def admin_list_user_usage() -> dict:
 	for r in rows:
 		if r.user not in user_map:
 			continue
-		out.append({
-			"user": r.user,
-			"full_name": user_map[r.user] or r.user,
-			"monthly_token_limit": cint(r.monthly_token_limit),
-			"usage_month": r.usage_month,
-			"month_tokens": _month_tokens_effective(r.usage_month, r.month_tokens),
-			"month_input_tokens": _month_tokens_effective(r.usage_month, r.month_input_tokens),
-			"month_output_tokens": _month_tokens_effective(r.usage_month, r.month_output_tokens),
-			"total_tokens": cint(r.total_tokens),
-			"last_usage_at": r.last_usage_at,
-			"last_synced_at": r.last_synced_at,
-		})
+		out.append(
+			{
+				"user": r.user,
+				"full_name": user_map[r.user] or r.user,
+				"monthly_token_limit": cint(r.monthly_token_limit),
+				"usage_month": r.usage_month,
+				"month_tokens": _month_tokens_effective(r.usage_month, r.month_tokens),
+				"month_input_tokens": _month_tokens_effective(r.usage_month, r.month_input_tokens),
+				"month_output_tokens": _month_tokens_effective(r.usage_month, r.month_output_tokens),
+				"total_tokens": cint(r.total_tokens),
+				"last_usage_at": r.last_usage_at,
+				"last_synced_at": r.last_synced_at,
+			}
+		)
 	return {"ok": True, "data": out}
 
 
@@ -131,7 +137,10 @@ def admin_set_user_limit(user: str, monthly_token_limit: int = 0) -> dict:
 	doc = usage.get_or_create_user_settings(user)
 	# monthly_token_limit is permlevel 1; write it directly (admin-gated above).
 	frappe.db.set_value(
-		USER_SETTINGS, doc.name, "monthly_token_limit", limit,
+		USER_SETTINGS,
+		doc.name,
+		"monthly_token_limit",
+		limit,
 		update_modified=False,
 	)
 	frappe.db.commit()
@@ -154,9 +163,7 @@ def admin_sync_usage() -> dict:
 		return {"ok": False, "reason": "gateway_unreachable"}
 
 	settings = frappe.get_single("Jarvis Settings")
-	gateway_url = (settings.agent_url or "").replace(
-		"http://", "ws://"
-	).replace("https://", "wss://")
+	gateway_url = (settings.agent_url or "").replace("http://", "ws://").replace("https://", "wss://")
 	if not gateway_url:
 		return {"ok": False, "reason": "gateway_unreachable"}
 
@@ -198,7 +205,5 @@ def set_user_theme(theme: str) -> dict:
 	desk = _THEME_TO_DESK.get(str(theme or "").strip().lower())
 	if not desk:
 		return {"ok": False, "reason": "invalid_theme"}
-	frappe.db.set_value(
-		"User", frappe.session.user, "desk_theme", desk, update_modified=False
-	)
+	frappe.db.set_value("User", frappe.session.user, "desk_theme", desk, update_modified=False)
 	return {"ok": True, "data": {"theme": theme, "desk_theme": desk}}

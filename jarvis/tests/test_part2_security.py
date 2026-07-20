@@ -56,10 +56,16 @@ def _engine_flag():
 
 def _ensure_user(email: str, roles: list[str]) -> str:
 	if not frappe.db.exists("User", email):
-		u = frappe.get_doc({
-			"doctype": "User", "email": email, "first_name": PFX,
-			"send_welcome_email": 0, "enabled": 1, "user_type": "System User",
-		})
+		u = frappe.get_doc(
+			{
+				"doctype": "User",
+				"email": email,
+				"first_name": PFX,
+				"send_welcome_email": 0,
+				"enabled": 1,
+				"user_type": "System User",
+			}
+		)
 		u.flags.ignore_permissions = True
 		u.insert(ignore_permissions=True)
 	if frappe.db.get_value("User", email, "user_type") != "System User":
@@ -92,19 +98,26 @@ def _sweep():
 	frappe.db.commit()
 
 
-def _mk_skill(owner, skill_name, *, scope="User", allowed_roles=None,
-			  target_role=None, shared_with=None, enabled=1):
+def _mk_skill(
+	owner, skill_name, *, scope="User", allowed_roles=None, target_role=None, shared_with=None, enabled=1
+):
 	"""Mint a skill owned by ``owner`` at any scope (engine flag bypasses the
 	creation guard — that guard is proven separately)."""
 	with _as(owner), _engine_flag():
-		doc = frappe.get_doc({
-			"doctype": SKILL, "skill_name": skill_name,
-			"description": f"{skill_name} desc", "instructions": "body",
-			"scope": scope, "enabled": enabled, "user_invocable": 1,
-			"target_role": target_role,
-			"shared_with": [{"user": u} for u in (shared_with or [])],
-			"allowed_roles": [{"role": r} for r in (allowed_roles or [])],
-		})
+		doc = frappe.get_doc(
+			{
+				"doctype": SKILL,
+				"skill_name": skill_name,
+				"description": f"{skill_name} desc",
+				"instructions": "body",
+				"scope": scope,
+				"enabled": enabled,
+				"user_invocable": 1,
+				"target_role": target_role,
+				"shared_with": [{"user": u} for u in (shared_with or [])],
+				"allowed_roles": [{"role": r} for r in (allowed_roles or [])],
+			}
+		)
 		doc.insert(ignore_permissions=True)
 	return doc
 
@@ -131,19 +144,28 @@ class TestScopeCreationGuard(Part2Base):
 
 	def test_default_scope_is_user(self):
 		with _as(USER_A):
-			doc = frappe.get_doc({
-				"doctype": SKILL, "skill_name": f"{PFX}-default",
-				"description": "d", "instructions": "i",
-			})
+			doc = frappe.get_doc(
+				{
+					"doctype": SKILL,
+					"skill_name": f"{PFX}-default",
+					"description": "d",
+					"instructions": "i",
+				}
+			)
 			doc.insert()
 		self.assertEqual(frappe.db.get_value(SKILL, doc.name, "scope"), "User")
 
 	def test_non_reviewer_cannot_create_org_skill(self):
 		with _as(USER_A):
-			doc = frappe.get_doc({
-				"doctype": SKILL, "skill_name": f"{PFX}-orgcreate",
-				"description": "d", "instructions": "i", "scope": "Org",
-			})
+			doc = frappe.get_doc(
+				{
+					"doctype": SKILL,
+					"skill_name": f"{PFX}-orgcreate",
+					"description": "d",
+					"instructions": "i",
+					"scope": "Org",
+				}
+			)
 			with self.assertRaises(frappe.PermissionError):
 				doc.insert()
 
@@ -159,10 +181,15 @@ class TestScopeCreationGuard(Part2Base):
 
 	def test_reviewer_can_create_org_skill(self):
 		with _as(REVIEWER):
-			doc = frappe.get_doc({
-				"doctype": SKILL, "skill_name": f"{PFX}-revorg",
-				"description": "d", "instructions": "i", "scope": "Org",
-			})
+			doc = frappe.get_doc(
+				{
+					"doctype": SKILL,
+					"skill_name": f"{PFX}-revorg",
+					"description": "d",
+					"instructions": "i",
+					"scope": "Org",
+				}
+			)
 			doc.insert()
 		self.assertEqual(frappe.db.get_value(SKILL, doc.name, "scope"), "Org")
 
@@ -170,8 +197,7 @@ class TestScopeCreationGuard(Part2Base):
 		from jarvis.tools.create_custom_skill import create_custom_skill
 
 		with _as(USER_A):
-			out = create_custom_skill(
-				f"{PFX}-toolorg", "desc", "instr", scope="Org")
+			out = create_custom_skill(f"{PFX}-toolorg", "desc", "instr", scope="Org")
 		self.assertEqual(out["scope"], "User")
 		self.assertEqual(frappe.db.get_value(SKILL, out["name"], "scope"), "User")
 
@@ -206,20 +232,21 @@ class TestSkillOrmHook(Part2Base):
 		org = _mk_skill(USER_B, f"{PFX}-org", scope="Org")
 		role = _mk_skill(USER_B, f"{PFX}-role", scope="Role", target_role="Sales User")
 		other_private = _mk_skill(USER_B, f"{PFX}-bpriv", scope="User")
-		other_role_nomatch = _mk_skill(
-			USER_B, f"{PFX}-rolex", scope="Role", target_role="Stock User")
+		other_role_nomatch = _mk_skill(USER_B, f"{PFX}-rolex", scope="Role", target_role="Stock User")
 		shared = _mk_skill(USER_B, f"{PFX}-shared", scope="User", shared_with=[USER_A])
 
 		with _as(USER_A):
-			names = set(frappe.get_list(
-				SKILL, filters={"skill_name": ["like", f"{PFX}-%"]},
-				pluck="name", limit_page_length=0))
-		self.assertIn(own.name, names)          # own
-		self.assertIn(org.name, names)          # org = everyone
-		self.assertIn(role.name, names)         # role-match (USER_A is Sales User)
-		self.assertIn(shared.name, names)       # shared with me
-		self.assertNotIn(other_private.name, names)      # another user's private
-		self.assertNotIn(other_role_nomatch.name, names) # role I don't hold
+			names = set(
+				frappe.get_list(
+					SKILL, filters={"skill_name": ["like", f"{PFX}-%"]}, pluck="name", limit_page_length=0
+				)
+			)
+		self.assertIn(own.name, names)  # own
+		self.assertIn(org.name, names)  # org = everyone
+		self.assertIn(role.name, names)  # role-match (USER_A is Sales User)
+		self.assertIn(shared.name, names)  # shared with me
+		self.assertNotIn(other_private.name, names)  # another user's private
+		self.assertNotIn(other_role_nomatch.name, names)  # role I don't hold
 
 	def test_has_permission_denies_foreign_private_read(self):
 		bpriv = _mk_skill(USER_B, f"{PFX}-bpriv2", scope="User")
@@ -236,9 +263,7 @@ class TestRoleRestrictedPushExclusion(Part2Base):
 
 	def test_role_restricted_org_skill_excluded_from_push(self):
 		plain = _mk_skill(REVIEWER, f"{PFX}-pushplain", scope="Org")
-		restricted = _mk_skill(
-			REVIEWER, f"{PFX}-pushrestricted", scope="Org",
-			allowed_roles=["Sales User"])
+		restricted = _mk_skill(REVIEWER, f"{PFX}-pushrestricted", scope="Org", allowed_roles=["Sales User"])
 		slugs = {p["slug"] for p in build_push_payload()}
 		self.assertIn(prefixed_slug(f"{PFX}-pushplain"), slugs)
 		self.assertNotIn(prefixed_slug(f"{PFX}-pushrestricted"), slugs)
@@ -257,9 +282,7 @@ class TestApplyGate(Part2Base):
 	def test_reviewer_apply_passes_gate(self):
 		from jarvis.chat import custom_skills_api
 
-		with patch.object(
-			custom_skills_api, "_apply_custom_skills_impl", return_value={"ok": True}
-		) as impl:
+		with patch.object(custom_skills_api, "_apply_custom_skills_impl", return_value={"ok": True}) as impl:
 			with _as(REVIEWER):
 				out = custom_skills_api.apply_custom_skills()
 		self.assertTrue(out["ok"])
@@ -332,25 +355,36 @@ class TestWikiPromotionRequestLeak(Part2Base):
 
 	def _mk_private_page(self, owner, slug, body):
 		with _as(owner):
-			doc = frappe.get_doc({
-				"doctype": WIKI, "slug": slug, "title": slug,
-				"page_type": "Process", "scope": "User", "target_user": owner,
-				"body_md": body, "status": "Active",
-			})
+			doc = frappe.get_doc(
+				{
+					"doctype": WIKI,
+					"slug": slug,
+					"title": slug,
+					"page_type": "Process",
+					"scope": "User",
+					"target_user": owner,
+					"body_md": body,
+					"status": "Active",
+				}
+			)
 			doc.insert(ignore_permissions=True)
 		return doc
 
 	def _promo(self, page):
-		return frappe.get_doc({
-			"doctype": WIKI_PROMO, "page": page,
-			"from_scope": "User", "to_scope": "Org", "status": "Pending",
-		})
+		return frappe.get_doc(
+			{
+				"doctype": WIKI_PROMO,
+				"page": page,
+				"from_scope": "User",
+				"to_scope": "Org",
+				"status": "Pending",
+			}
+		)
 
 	def test_foreign_private_page_snapshot_blocked_via_rest(self):
 		# Generic-REST insert (no ignore_permissions): the dropped `All: create`
 		# grant denies it outright.
-		victim_page = self._mk_private_page(
-			USER_B, f"{PFX}-secret", "TOP SECRET personal note")
+		victim_page = self._mk_private_page(USER_B, f"{PFX}-secret", "TOP SECRET personal note")
 		with _as(USER_A):
 			with self.assertRaises(frappe.PermissionError):
 				self._promo(victim_page.name).insert()
@@ -358,8 +392,7 @@ class TestWikiPromotionRequestLeak(Part2Base):
 	def test_foreign_private_page_snapshot_blocked_even_under_ignore_perms(self):
 		# Defense in depth: even a create-perm-bypassing server path is blocked by
 		# the before_insert read guard, so the victim's body is never snapshotted.
-		victim_page = self._mk_private_page(
-			USER_B, f"{PFX}-secret2", "TOP SECRET personal note")
+		victim_page = self._mk_private_page(USER_B, f"{PFX}-secret2", "TOP SECRET personal note")
 		with _as(USER_A):
 			with self.assertRaises(frappe.PermissionError):
 				self._promo(victim_page.name).insert(ignore_permissions=True)
@@ -379,11 +412,15 @@ class TestPersonaliseQuestionHook(Part2Base):
 	`user` field, surviving owner/user drift."""
 
 	def _mk_question(self, user, owner=None):
-		doc = frappe.get_doc({
-			"doctype": QUESTION, "user": user,
-			"question": f"{PFX} question for {user}", "origin": "From your organisation",
-			"status": "Unanswered",
-		})
+		doc = frappe.get_doc(
+			{
+				"doctype": QUESTION,
+				"user": user,
+				"question": f"{PFX} question for {user}",
+				"origin": "From your organisation",
+				"status": "Unanswered",
+			}
+		)
 		doc.insert(ignore_permissions=True)
 		if owner and owner != doc.owner:
 			frappe.db.set_value(QUESTION, doc.name, "owner", owner, update_modified=False)
@@ -396,9 +433,11 @@ class TestPersonaliseQuestionHook(Part2Base):
 		# leak to A (the hook keys on `user`).
 		drift = self._mk_question(USER_B, owner=USER_A)
 		with _as(USER_A):
-			names = set(frappe.get_list(
-				QUESTION, filters={"question": ["like", f"{PFX}%"]},
-				pluck="name", limit_page_length=0))
+			names = set(
+				frappe.get_list(
+					QUESTION, filters={"question": ["like", f"{PFX}%"]}, pluck="name", limit_page_length=0
+				)
+			)
 		self.assertIn(mine.name, names)
 		self.assertNotIn(theirs.name, names)
 		self.assertNotIn(drift.name, names)
@@ -410,15 +449,22 @@ class TestPersonaliseOriginProvenance(Part2Base):
 
 	def _mk_pattern(self, key, personalise_origin):
 		with _engine_flag():
-			doc = frappe.get_doc({
-				"doctype": "Jarvis Learned Pattern", "pattern_key": key,
-				"detector_id": "voice_facts", "domain": "selling",
-				"pattern_statement": f"{PFX} rule statement",
-				"skill_draft": "- do the thing", "status": "Proposed",
-				"strength_band": "High", "sensitivity": "A",
-				"effective_sensitivity": "A", "surfaced": 1,
-				"personalise_origin": 1 if personalise_origin else 0,
-			})
+			doc = frappe.get_doc(
+				{
+					"doctype": "Jarvis Learned Pattern",
+					"pattern_key": key,
+					"detector_id": "voice_facts",
+					"domain": "selling",
+					"pattern_statement": f"{PFX} rule statement",
+					"skill_draft": "- do the thing",
+					"status": "Proposed",
+					"strength_band": "High",
+					"sensitivity": "A",
+					"effective_sensitivity": "A",
+					"surfaced": 1,
+					"personalise_origin": 1 if personalise_origin else 0,
+				}
+			)
 			doc.insert(ignore_permissions=True)
 		return doc
 
@@ -427,8 +473,7 @@ class TestPersonaliseOriginProvenance(Part2Base):
 
 		p = self._mk_pattern(f"{PFX}-po-key", personalise_origin=True)
 		with _as(REVIEWER):
-			res = learned_api.list_learned_patterns_page(
-				status="Proposed", search=f"{PFX}")
+			res = learned_api.list_learned_patterns_page(status="Proposed", search=f"{PFX}")
 		row = next(r for r in res["rows"] if r["name"] == p.name)
 		self.assertEqual(row["personalise_origin"], 1)
 		self.assertTrue(row["scrub_warning"])

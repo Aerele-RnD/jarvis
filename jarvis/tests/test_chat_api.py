@@ -35,15 +35,17 @@ def _ensure_test_user(user: str = TEST_USER) -> None:
 	"""Create the fixture user if missing; idempotent."""
 	if frappe.db.exists("User", user):
 		return
-	doc = frappe.get_doc({
-		"doctype": "User",
-		"email": user,
-		"first_name": "Jarvis",
-		"last_name": "Test",
-		"enabled": 1,
-		"send_welcome_email": 0,
-		"user_type": "System User",
-	})
+	doc = frappe.get_doc(
+		{
+			"doctype": "User",
+			"email": user,
+			"first_name": "Jarvis",
+			"last_name": "Test",
+			"enabled": 1,
+			"send_welcome_email": 0,
+			"user_type": "System User",
+		}
+	)
 	doc.insert(ignore_permissions=True)
 	# Grant System Manager so the test user can dispatch every tool path.
 	doc.add_roles("System Manager")
@@ -100,10 +102,15 @@ class TestListConversations(_ChatTestCase):
 		self.assertEqual(result, [])
 
 	def _add_message(self, conversation, seq=1):
-		frappe.get_doc({
-			"doctype": MSG, "conversation": conversation, "seq": seq,
-			"role": "user", "content": "hi",
-		}).insert(ignore_permissions=True)
+		frappe.get_doc(
+			{
+				"doctype": MSG,
+				"conversation": conversation,
+				"seq": seq,
+				"role": "user",
+				"content": "hi",
+			}
+		).insert(ignore_permissions=True)
 		frappe.db.commit()
 
 	def test_returns_active_conversations_for_current_user_only(self):
@@ -162,13 +169,15 @@ class TestCreateOrFocusEmpty(_ChatTestCase):
 
 	def test_creates_new_when_only_non_empty_exist(self):
 		filled = create_conversation()
-		frappe.get_doc({
-			"doctype": MSG,
-			"conversation": filled,
-			"seq": 1,
-			"role": "user",
-			"content": "hi",
-		}).insert(ignore_permissions=True)
+		frappe.get_doc(
+			{
+				"doctype": MSG,
+				"conversation": filled,
+				"seq": 1,
+				"role": "user",
+				"content": "hi",
+			}
+		).insert(ignore_permissions=True)
 		frappe.db.commit()
 
 		returned = create_or_focus_empty()
@@ -214,11 +223,16 @@ class TestCreateOrFocusEmpty(_ChatTestCase):
 		# Belt-and-suspenders: any empty carrying an attached File is skipped so a
 		# reuse never adopts a stray upload (delete-cascade / bypass concerns).
 		withfile = create_conversation()
-		f = frappe.get_doc({
-			"doctype": "File", "file_name": "coe-attach.txt",
-			"attached_to_doctype": CONV, "attached_to_name": withfile,
-			"content": "x", "is_private": 1,
-		}).insert(ignore_permissions=True)
+		f = frappe.get_doc(
+			{
+				"doctype": "File",
+				"file_name": "coe-attach.txt",
+				"attached_to_doctype": CONV,
+				"attached_to_name": withfile,
+				"content": "x",
+				"is_private": 1,
+			}
+		).insert(ignore_permissions=True)
 		self.addCleanup(lambda: frappe.delete_doc("File", f.name, force=True, ignore_permissions=True))
 		frappe.db.commit()
 		returned = create_or_focus_empty()
@@ -236,13 +250,15 @@ class TestGetConversation(_ChatTestCase):
 		name = create_conversation()
 		# Manually insert messages out of seq order
 		for seq, role, content in [(2, "assistant", "B"), (1, "user", "A")]:
-			doc = frappe.get_doc({
-				"doctype": MSG,
-				"conversation": name,
-				"seq": seq,
-				"role": role,
-				"content": content,
-			})
+			doc = frappe.get_doc(
+				{
+					"doctype": MSG,
+					"conversation": name,
+					"seq": seq,
+					"role": role,
+					"content": content,
+				}
+			)
 			doc.insert(ignore_permissions=True)
 		frappe.db.commit()
 		result = get_conversation(name)
@@ -286,15 +302,13 @@ class TestSendMessage(_ChatTestCase):
 	def test_human_send_to_missing_conversation_falls_back(self):
 		# A stale/reaped conversation id from a human send lands in a fresh chat
 		# instead of dead-ending on DoesNotExistError.
-		with patch("jarvis.chat.api._ensure_session_key", return_value="agent:fake"), \
-		     patch("frappe.enqueue"):
+		with patch("jarvis.chat.api._ensure_session_key", return_value="agent:fake"), patch("frappe.enqueue"):
 			result = send_message("JCONV-99999", "hi")
 		self.assertTrue(result["ok"])
 		self.assertNotEqual(result["conversation_id"], "JCONV-99999")
 		self.assertTrue(frappe.db.exists(CONV, result["conversation_id"]))
 		# The message landed in the fallback conversation.
-		self.assertTrue(frappe.db.exists(
-			MSG, {"conversation": result["conversation_id"], "role": "user"}))
+		self.assertTrue(frappe.db.exists(MSG, {"conversation": result["conversation_id"], "role": "user"}))
 
 	def test_delegated_send_to_missing_conversation_raises(self):
 		# Delegated/system flows pass a real conversation; a genuine not-found is
@@ -337,8 +351,11 @@ class TestSendMessage(_ChatTestCase):
 			with patch("frappe.enqueue") as enqueue:
 				send_message(self.conv, "hi")
 		_, kwargs = enqueue.call_args
-		self.assertEqual(kwargs["timeout"], _AGENT_TURN_WORKER_TIMEOUT,
-			"RQ worker budget must cover pair+connect+turn worst case")
+		self.assertEqual(
+			kwargs["timeout"],
+			_AGENT_TURN_WORKER_TIMEOUT,
+			"RQ worker budget must cover pair+connect+turn worst case",
+		)
 
 	def test_seq_increments_across_calls(self):
 		with patch("jarvis.chat.api._ensure_session_key", return_value="agent:fake"):
@@ -366,15 +383,11 @@ class TestSendMessage(_ChatTestCase):
 		self.assertEqual(doc.title, "New chat")
 
 	def test_bumps_last_active_at(self):
-		before = frappe.utils.get_datetime(frappe.get_value(
-			CONV, self.conv, "last_active_at"
-		))
+		before = frappe.utils.get_datetime(frappe.get_value(CONV, self.conv, "last_active_at"))
 		with patch("jarvis.chat.api._ensure_session_key", return_value="agent:fake"):
 			with patch("frappe.enqueue"):
 				send_message(self.conv, "hi")
-		after = frappe.utils.get_datetime(frappe.get_value(
-			CONV, self.conv, "last_active_at"
-		))
+		after = frappe.utils.get_datetime(frappe.get_value(CONV, self.conv, "last_active_at"))
 		self.assertGreaterEqual(after, before)
 
 
@@ -383,7 +396,9 @@ class TestRetryMessage(_ChatTestCase):
 	errored assistant message.
 	"""
 
-	def _make_turn(self, conv: str, user_text: str = "list 3 customers", with_error: bool = False) -> tuple[str, str]:
+	def _make_turn(
+		self, conv: str, user_text: str = "list 3 customers", with_error: bool = False
+	) -> tuple[str, str]:
 		"""Seed a conversation with a user message + assistant message at the
 		next two seq values. Returns (user_message_name, assistant_message_name).
 		"""
@@ -391,14 +406,22 @@ class TestRetryMessage(_ChatTestCase):
 			"SELECT COALESCE(MAX(seq), 0) FROM `tabJarvis Chat Message` WHERE conversation = %s",
 			(conv,),
 		)[0][0]
-		user_doc = frappe.get_doc({
-			"doctype": MSG, "conversation": conv, "seq": base_seq + 1,
-			"role": "user", "content": user_text,
-		})
+		user_doc = frappe.get_doc(
+			{
+				"doctype": MSG,
+				"conversation": conv,
+				"seq": base_seq + 1,
+				"role": "user",
+				"content": user_text,
+			}
+		)
 		user_doc.insert()
 		asst_payload = {
-			"doctype": MSG, "conversation": conv, "seq": base_seq + 2,
-			"role": "assistant", "content": "",
+			"doctype": MSG,
+			"conversation": conv,
+			"seq": base_seq + 2,
+			"role": "assistant",
+			"content": "",
 		}
 		if with_error:
 			asst_payload["error"] = "rate limit"
@@ -455,10 +478,16 @@ class TestRetryMessage(_ChatTestCase):
 
 	def test_rejects_if_no_preceding_user_message(self):
 		"""An orphan errored assistant (somehow inserted without a user) - refuse."""
-		asst_doc = frappe.get_doc({
-			"doctype": MSG, "conversation": self.conv, "seq": 1,
-			"role": "assistant", "content": "", "error": "boom",
-		})
+		asst_doc = frappe.get_doc(
+			{
+				"doctype": MSG,
+				"conversation": self.conv,
+				"seq": 1,
+				"role": "assistant",
+				"content": "",
+				"error": "boom",
+			}
+		)
 		asst_doc.insert()
 		frappe.db.commit()
 		result = retry_message(asst_doc.name)
@@ -476,10 +505,16 @@ class TestRetryMessage(_ChatTestCase):
 			"SELECT MAX(seq) FROM `tabJarvis Chat Message` WHERE conversation = %s",
 			(self.conv,),
 		)[0][0]
-		errored = frappe.get_doc({
-			"doctype": MSG, "conversation": self.conv, "seq": seq_max + 1,
-			"role": "assistant", "content": "", "error": "rate limit",
-		})
+		errored = frappe.get_doc(
+			{
+				"doctype": MSG,
+				"conversation": self.conv,
+				"seq": seq_max + 1,
+				"role": "assistant",
+				"content": "",
+				"error": "rate limit",
+			}
+		)
 		errored.insert()
 		frappe.db.commit()
 
@@ -490,14 +525,10 @@ class TestRetryMessage(_ChatTestCase):
 
 	def test_bumps_conversation_last_active_at(self):
 		_u, asst_id = self._make_turn(self.conv, with_error=True)
-		before = frappe.utils.get_datetime(frappe.get_value(
-			CONV, self.conv, "last_active_at"
-		))
+		before = frappe.utils.get_datetime(frappe.get_value(CONV, self.conv, "last_active_at"))
 		with patch("frappe.enqueue"):
 			retry_message(asst_id)
-		after = frappe.utils.get_datetime(frappe.get_value(
-			CONV, self.conv, "last_active_at"
-		))
+		after = frappe.utils.get_datetime(frappe.get_value(CONV, self.conv, "last_active_at"))
 		self.assertGreaterEqual(after, before)
 
 
@@ -605,12 +636,17 @@ class TestSendMessageWithModelOverride(_ChatTestCase):
 		"""When model_override is passed, conv.model_override is set
 		before frappe.enqueue is called (so the worker sees the right value)."""
 		from jarvis.chat.api import send_message
+
 		written = {}
+
 		def capture(*a, **kw):
 			# Snapshot the DB value at the moment enqueue is called
 			written["override"] = frappe.db.get_value(CONV, self.conv, "model_override")
-		with patch("jarvis.chat.api._ensure_session_key", return_value="agent:fake"), \
-		     patch("frappe.enqueue", side_effect=capture):
+
+		with (
+			patch("jarvis.chat.api._ensure_session_key", return_value="agent:fake"),
+			patch("frappe.enqueue", side_effect=capture),
+		):
 			result = send_message(self.conv, "hi", model_override="gpt-5.4-mini")
 		self.assertTrue(result["ok"])
 		self.assertEqual(written["override"], "gpt-5.4-mini")
@@ -618,6 +654,7 @@ class TestSendMessageWithModelOverride(_ChatTestCase):
 	def test_unknown_override_rejected(self):
 		"""Invalid model name yields ok:false with no DB write or enqueue."""
 		from jarvis.chat.api import send_message
+
 		with patch("frappe.enqueue") as enqueue:
 			result = send_message(self.conv, "hi", model_override="gpt-4o")
 		self.assertFalse(result["ok"])
@@ -630,10 +667,10 @@ class TestSendMessageWithModelOverride(_ChatTestCase):
 		"""Calling send_message without model_override doesn't touch
 		conv.model_override (so per-conversation settings persist)."""
 		from jarvis.chat.api import send_message
+
 		# Pre-set an override
 		frappe.db.set_value(CONV, self.conv, "model_override", "gpt-5.4")
-		with patch("jarvis.chat.api._ensure_session_key", return_value="agent:fake"), \
-		     patch("frappe.enqueue"):
+		with patch("jarvis.chat.api._ensure_session_key", return_value="agent:fake"), patch("frappe.enqueue"):
 			send_message(self.conv, "hi")
 		self.assertEqual(
 			frappe.db.get_value(CONV, self.conv, "model_override"),
@@ -653,11 +690,16 @@ class TestSendMessageThinkingOverride(_ChatTestCase):
 	def test_valid_thinking_override_persists_before_enqueue(self):
 		"""thinking_override='low' is written to conv before frappe.enqueue fires."""
 		from jarvis.chat.api import send_message
+
 		written = {}
+
 		def capture(*a, **kw):
 			written["thinking"] = frappe.db.get_value(CONV, self.conv, "thinking_override")
-		with patch("jarvis.chat.api._ensure_session_key", return_value="agent:fake"), \
-		     patch("frappe.enqueue", side_effect=capture):
+
+		with (
+			patch("jarvis.chat.api._ensure_session_key", return_value="agent:fake"),
+			patch("frappe.enqueue", side_effect=capture),
+		):
 			result = send_message(self.conv, "hi", thinking_override="low")
 		self.assertTrue(result["ok"])
 		self.assertEqual(written["thinking"], "low")
@@ -666,9 +708,9 @@ class TestSendMessageThinkingOverride(_ChatTestCase):
 		"""An empty string clears thinking_override (unlike model_override which
 		ignores empty strings)."""
 		from jarvis.chat.api import send_message
+
 		frappe.db.set_value(CONV, self.conv, "thinking_override", "high")
-		with patch("jarvis.chat.api._ensure_session_key", return_value="agent:fake"), \
-		     patch("frappe.enqueue"):
+		with patch("jarvis.chat.api._ensure_session_key", return_value="agent:fake"), patch("frappe.enqueue"):
 			result = send_message(self.conv, "hi", thinking_override="")
 		self.assertTrue(result["ok"])
 		self.assertEqual(frappe.db.get_value(CONV, self.conv, "thinking_override"), "")
@@ -676,9 +718,9 @@ class TestSendMessageThinkingOverride(_ChatTestCase):
 	def test_none_keeps_existing_thinking_override(self):
 		"""None for thinking_override does not touch conv.thinking_override."""
 		from jarvis.chat.api import send_message
+
 		frappe.db.set_value(CONV, self.conv, "thinking_override", "medium")
-		with patch("jarvis.chat.api._ensure_session_key", return_value="agent:fake"), \
-		     patch("frappe.enqueue"):
+		with patch("jarvis.chat.api._ensure_session_key", return_value="agent:fake"), patch("frappe.enqueue"):
 			result = send_message(self.conv, "hi")
 		self.assertTrue(result["ok"])
 		self.assertEqual(
@@ -689,6 +731,7 @@ class TestSendMessageThinkingOverride(_ChatTestCase):
 	def test_invalid_thinking_override_rejected(self):
 		"""Invalid thinking level yields ok:false with no DB write or enqueue."""
 		from jarvis.chat.api import send_message
+
 		with patch("frappe.enqueue") as enqueue:
 			result = send_message(self.conv, "hi", thinking_override="ultra")
 		self.assertFalse(result["ok"])
@@ -740,10 +783,12 @@ class TestChatUiSettings(FrappeTestCase):
 		# times" - the catalogue + per-provider defaults are now
 		# served from the single Python source so jarvis_onboarding.js
 		# and jarvis_account.js can drop their hand-maintained copies.
-		from jarvis.chat.api import get_chat_ui_settings
 		from jarvis._subscription_models import (
-			DEFAULT_MODEL, SUBSCRIPTION_MODELS,
+			DEFAULT_MODEL,
+			SUBSCRIPTION_MODELS,
 		)
+		from jarvis.chat.api import get_chat_ui_settings
+
 		s = get_chat_ui_settings()
 		self.assertEqual(s["subscription_models"], SUBSCRIPTION_MODELS)
 		self.assertEqual(s["default_models"], DEFAULT_MODEL)
@@ -759,8 +804,7 @@ class TestWarmSessionEndpoint(FrappeTestCase):
 		return immediately - proves FIX D (non-blocking web worker)."""
 		from jarvis.chat import api
 
-		with patch("frappe.enqueue") as enqueue, \
-		     patch("jarvis.chat.prewarm.warm_prefix") as wp:
+		with patch("frappe.enqueue") as enqueue, patch("jarvis.chat.prewarm.warm_prefix") as wp:
 			out = api.warm_session()
 
 		# Must have enqueued the prewarm job with the right method + queue.
@@ -795,15 +839,26 @@ class TestConversationOwnershipEnforcement(_ChatTestCase):
 		self.conv = create_conversation()
 		# Seed one user turn + one errored assistant turn so the message-id
 		# endpoints (get_canvas, retry_message) have targets.
-		user_msg = frappe.get_doc({
-			"doctype": MSG, "conversation": self.conv, "seq": 1,
-			"role": "user", "content": "what is our payroll?",
-		})
+		user_msg = frappe.get_doc(
+			{
+				"doctype": MSG,
+				"conversation": self.conv,
+				"seq": 1,
+				"role": "user",
+				"content": "what is our payroll?",
+			}
+		)
 		user_msg.insert(ignore_permissions=True)
-		asst_msg = frappe.get_doc({
-			"doctype": MSG, "conversation": self.conv, "seq": 2,
-			"role": "assistant", "content": "", "error": "rate limit",
-		})
+		asst_msg = frappe.get_doc(
+			{
+				"doctype": MSG,
+				"conversation": self.conv,
+				"seq": 2,
+				"role": "assistant",
+				"content": "",
+				"error": "rate limit",
+			}
+		)
 		asst_msg.insert(ignore_permissions=True)
 		frappe.db.commit()
 		self.user_msg = user_msg.name
@@ -851,9 +906,7 @@ class TestConversationOwnershipEnforcement(_ChatTestCase):
 				send_message(self.conv, "hijack this thread")
 		dispatch.assert_not_called()
 		# No message row was injected into the victim's conversation.
-		self.assertEqual(
-			len(frappe.get_all(MSG, filters={"conversation": self.conv})), 2
-		)
+		self.assertEqual(len(frappe.get_all(MSG, filters={"conversation": self.conv})), 2)
 
 	def test_non_owner_cannot_retry_message(self):
 		self._as_intruder()

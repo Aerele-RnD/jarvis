@@ -1,86 +1,125 @@
 // Shared pure pool logic. Consumed by the Vue app (direct import) AND the desk
 // onboarding page (via jarvis_onboarding_llm.bundle.js -> window). No framework imports.
 export function deriveMode(models, preset) {
-  const list = Array.isArray(models) ? models : []
-  // A chat-subscription model needs the cliproxy sidecar, which only the proxy
-  // path provisions - so even a single subscription is "proxy". (#200 review #1)
-  const hasSubscription = list.some(
-    (m) => m && (m.subscription || m.credentialType === "subscription" || m.credential_type === "subscription"),
-  )
-  if (hasSubscription) return "proxy"
-  return (list.length <= 1 && !preset) ? "direct" : "proxy"
+	const list = Array.isArray(models) ? models : [];
+	// A chat-subscription model needs the cliproxy sidecar, which only the proxy
+	// path provisions - so even a single subscription is "proxy". (#200 review #1)
+	const hasSubscription = list.some(
+		(m) =>
+			m &&
+			(m.subscription ||
+				m.credentialType === "subscription" ||
+				m.credential_type === "subscription")
+	);
+	if (hasSubscription) return "proxy";
+	return list.length <= 1 && !preset ? "direct" : "proxy";
 }
 export function uniqueVendors(entry) {
-  if (entry && Array.isArray(entry.vendors) && entry.vendors.length) return entry.vendors.slice()
-  const seen = new Set(), out = []
-  for (const m of (entry?.models || [])) if (!seen.has(m.provider)) { seen.add(m.provider); out.push(m.provider) }
-  return out
+	if (entry && Array.isArray(entry.vendors) && entry.vendors.length)
+		return entry.vendors.slice();
+	const seen = new Set(),
+		out = [];
+	for (const m of entry?.models || [])
+		if (!seen.has(m.provider)) {
+			seen.add(m.provider);
+			out.push(m.provider);
+		}
+	return out;
 }
 export function missingVendorKeys(entry, keysByVendor) {
-  return uniqueVendors(entry).filter(v => !((keysByVendor?.[v]) || "").trim())
+	return uniqueVendors(entry).filter((v) => !(keysByVendor?.[v] || "").trim());
 }
 export function presetToModels(entry, keysByVendor) {
-  return (entry?.models || []).slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-    .map((m, i) => ({ provider: m.provider, model: m.model, api_key: (keysByVendor?.[m.provider] || "").trim(), order: i }))
+	return (entry?.models || [])
+		.slice()
+		.sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+		.map((m, i) => ({
+			provider: m.provider,
+			model: m.model,
+			api_key: (keysByVendor?.[m.provider] || "").trim(),
+			order: i,
+		}));
 }
 export function buildCustomModels(rows) {
-  return (rows || []).filter(r => r && (r.provider || "").trim() && (r.model || "").trim())
-    .map((r, i) => {
-      const m = { provider: r.provider.trim(), model: r.model.trim(), api_key: (r.apiKey || "").trim(), order: i }
-      if (r.hasKey) m.has_key = true
-      const b = (r.baseUrl || "").trim()
-      if (b) m.base_url = b
-      return m
-    })
+	return (rows || [])
+		.filter((r) => r && (r.provider || "").trim() && (r.model || "").trim())
+		.map((r, i) => {
+			const m = {
+				provider: r.provider.trim(),
+				model: r.model.trim(),
+				api_key: (r.apiKey || "").trim(),
+				order: i,
+			};
+			if (r.hasKey) m.has_key = true;
+			const b = (r.baseUrl || "").trim();
+			if (b) m.base_url = b;
+			return m;
+		});
 }
 export function reorder(list, from, to) {
-  const a = list.slice(); const [x] = a.splice(from, 1); a.splice(to, 0, x); return a
+	const a = list.slice();
+	const [x] = a.splice(from, 1);
+	a.splice(to, 0, x);
+	return a;
 }
 // Suggested chat-subscription model ids per upstream (index 0 = the default the
 // onboarding editor uses when it hides the model field). Single source of truth,
 // shared with LlmPoolEditor's datalist so the default + suggestions can't drift.
 export const SUB_MODEL_SUGGESTIONS = {
-  openai: ["gpt-5.5", "gpt-5.4"],
-  google: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-3.1-flash"],
-  // Model ids must exist in cli-proxy-api's v7.2.35 catalogue (grok-4.5 is NOT).
-  xai: ["grok-4.3", "grok-build-0.1"],
-  kimi: ["kimi-k2.7-code", "kimi-k2.6"],
-}
+	openai: ["gpt-5.5", "gpt-5.4"],
+	google: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-3.1-flash"],
+	// Model ids must exist in cli-proxy-api's v7.2.35 catalogue (grok-4.5 is NOT).
+	xai: ["grok-4.3", "grok-build-0.1"],
+	kimi: ["kimi-k2.7-code", "kimi-k2.6"],
+};
 // Default chat-subscription model for an upstream (SUB_MODEL_SUGGESTIONS[0], with
 // an openai fallback for unmapped upstreams). Onboarding hides the model field
 // (provider is enough), so the row still needs a model id for validatePool + save.
 // Pure + exported for unit tests.
 export function defaultSubscriptionModel(upstream) {
-  return (SUB_MODEL_SUGGESTIONS[upstream] || SUB_MODEL_SUGGESTIONS.openai)[0]
+	return (SUB_MODEL_SUGGESTIONS[upstream] || SUB_MODEL_SUGGESTIONS.openai)[0];
 }
 export function validatePool(models, preset) {
-  if (!Array.isArray(models) || models.length === 0) return { ok: false, error: "Add at least one model." }
-  for (const m of models) {
-    // Chat-subscription model: needs a model id + at least one connected account
-    // (an account with a non-empty oauth_blob). No provider / api_key required.
-    if (m.subscription) {
-      if (!(m.model || "").trim()) return { ok: false, error: "Every model needs a model id." }
-      const accounts = Array.isArray(m.subscription.accounts) ? m.subscription.accounts : []
-      // Connected = a freshly-captured blob this session OR a previously-connected
-      // account (has an account_ref; its stored blob is merged back on save, so the
-      // user need not re-connect to edit an existing pool).
-      const connected = accounts.some(a => a && ((a.oauth_blob || "").trim() || (a.account_ref || "").trim()))
-      if (!connected) return { ok: false, error: `Model ${m.model} needs at least one connected account.` }
-      continue
-    }
-    // API-key model.
-    if (!(m.provider || "").trim() || !(m.model || "").trim()) return { ok: false, error: "Every model needs a provider and a model id." }
-    // Custom-endpoint providers ARE their base_url - an OpenAI-Compatible shim
-    // (e.g. a Claude-CLI gateway) or a local vLLM with no base_url would push a
-    // provider that routes nowhere, and both validators used to let it through.
-    const pid = _ID_BY_LABEL[m.provider] || (m.provider || "").trim().toLowerCase()
-    if (NEEDS_BASE_URL.has(pid) && !(m.base_url || "").trim()) {
-      return { ok: false, error: `Model ${m.model}: ${m.provider} needs a Base URL (its custom endpoint).` }
-    }
-    // A freshly-entered key OR a previously-saved key (has_key; merged back on save).
-    if (!(m.api_key || "").trim() && !m.has_key) return { ok: false, error: `Model ${m.model} needs an API key.` }
-  }
-  return { ok: true, error: "" }
+	if (!Array.isArray(models) || models.length === 0)
+		return { ok: false, error: "Add at least one model." };
+	for (const m of models) {
+		// Chat-subscription model: needs a model id + at least one connected account
+		// (an account with a non-empty oauth_blob). No provider / api_key required.
+		if (m.subscription) {
+			if (!(m.model || "").trim())
+				return { ok: false, error: "Every model needs a model id." };
+			const accounts = Array.isArray(m.subscription.accounts) ? m.subscription.accounts : [];
+			// Connected = a freshly-captured blob this session OR a previously-connected
+			// account (has an account_ref; its stored blob is merged back on save, so the
+			// user need not re-connect to edit an existing pool).
+			const connected = accounts.some(
+				(a) => a && ((a.oauth_blob || "").trim() || (a.account_ref || "").trim())
+			);
+			if (!connected)
+				return {
+					ok: false,
+					error: `Model ${m.model} needs at least one connected account.`,
+				};
+			continue;
+		}
+		// API-key model.
+		if (!(m.provider || "").trim() || !(m.model || "").trim())
+			return { ok: false, error: "Every model needs a provider and a model id." };
+		// Custom-endpoint providers ARE their base_url - an OpenAI-Compatible shim
+		// (e.g. a Claude-CLI gateway) or a local vLLM with no base_url would push a
+		// provider that routes nowhere, and both validators used to let it through.
+		const pid = _ID_BY_LABEL[m.provider] || (m.provider || "").trim().toLowerCase();
+		if (NEEDS_BASE_URL.has(pid) && !(m.base_url || "").trim()) {
+			return {
+				ok: false,
+				error: `Model ${m.model}: ${m.provider} needs a Base URL (its custom endpoint).`,
+			};
+		}
+		// A freshly-entered key OR a previously-saved key (has_key; merged back on save).
+		if (!(m.api_key || "").trim() && !m.has_key)
+			return { ok: false, error: `Model ${m.model} needs an API key.` };
+	}
+	return { ok: true, error: "" };
 }
 
 // ---- provider id <-> label ------------------------------------------------
@@ -91,33 +130,33 @@ export function validatePool(models, preset) {
 // *label* ("OpenAI-Compatible") directly - providerLabel() maps id -> label
 // and passes an already-a-label (or unknown) value through unchanged.
 export const PROVIDER_LABELS = [
-  { id: "anthropic", label: "Anthropic" },
-  { id: "openai", label: "OpenAI" },
-  { id: "gemini", label: "Google Gemini" },
-  { id: "mistral", label: "Mistral" },
-  { id: "groq", label: "Groq" },
-  { id: "together", label: "Together AI" },
-  { id: "deepseek", label: "DeepSeek" },
-  { id: "moonshot", label: "Moonshot (Kimi)" },
-  { id: "xai", label: "xAI Grok" },
-  { id: "zai", label: "GLM / Z.ai" },
-  // z.ai sells two distinct products on two distinct endpoints: pay-as-you-go
-  // API credits (plain "zai", above) and a separate "GLM Coding Plan"
-  // subscription that reports "insufficient balance" (code 1113) on the
-  // pay-as-you-go endpoint even with a perfectly valid key - the two do not
-  // share a balance. A dedicated provider id (rather than a toggle inside the
-  // "zai" option) means the existing PROVIDER_DEFAULTS/NEEDS_BASE_URL/dropdown
-  // machinery just works with no new UI - the same shape every other provider
-  // already uses. See apiKeyModelHealth() below for the targeted hint when a
-  // "zai" row hits this exact trap.
-  { id: "zai_coding", label: "GLM / Z.ai (Coding Plan)" },
-  { id: "openrouter", label: "OpenRouter" },
-  { id: "ollama", label: "Ollama (local)" },
-  { id: "vllm", label: "vLLM (local)" },
-  { id: "openai_compat", label: "OpenAI-Compatible" },
-]
-const _LABEL_BY_ID = Object.fromEntries(PROVIDER_LABELS.map(p => [p.id, p.label]))
-const _ID_BY_LABEL = Object.fromEntries(PROVIDER_LABELS.map(p => [p.label, p.id]))
+	{ id: "anthropic", label: "Anthropic" },
+	{ id: "openai", label: "OpenAI" },
+	{ id: "gemini", label: "Google Gemini" },
+	{ id: "mistral", label: "Mistral" },
+	{ id: "groq", label: "Groq" },
+	{ id: "together", label: "Together AI" },
+	{ id: "deepseek", label: "DeepSeek" },
+	{ id: "moonshot", label: "Moonshot (Kimi)" },
+	{ id: "xai", label: "xAI Grok" },
+	{ id: "zai", label: "GLM / Z.ai" },
+	// z.ai sells two distinct products on two distinct endpoints: pay-as-you-go
+	// API credits (plain "zai", above) and a separate "GLM Coding Plan"
+	// subscription that reports "insufficient balance" (code 1113) on the
+	// pay-as-you-go endpoint even with a perfectly valid key - the two do not
+	// share a balance. A dedicated provider id (rather than a toggle inside the
+	// "zai" option) means the existing PROVIDER_DEFAULTS/NEEDS_BASE_URL/dropdown
+	// machinery just works with no new UI - the same shape every other provider
+	// already uses. See apiKeyModelHealth() below for the targeted hint when a
+	// "zai" row hits this exact trap.
+	{ id: "zai_coding", label: "GLM / Z.ai (Coding Plan)" },
+	{ id: "openrouter", label: "OpenRouter" },
+	{ id: "ollama", label: "Ollama (local)" },
+	{ id: "vllm", label: "vLLM (local)" },
+	{ id: "openai_compat", label: "OpenAI-Compatible" },
+];
+const _LABEL_BY_ID = Object.fromEntries(PROVIDER_LABELS.map((p) => [p.id, p.label]));
+const _ID_BY_LABEL = Object.fromEntries(PROVIDER_LABELS.map((p) => [p.label, p.id]));
 
 // Providers whose approval screen hands back a BARE authorization code instead
 // of redirecting to a callback URL the customer can copy from the address bar.
@@ -130,17 +169,21 @@ const _ID_BY_LABEL = Object.fromEntries(PROVIDER_LABELS.map(p => [p.label, p.id]
 // a bare code; this only steers the paste copy. Telling an xAI customer to
 // "copy the full URL from the address bar" sends them hunting for an address
 // bar that never holds a code.
-const _CODE_ONLY_PASTE = new Set(["xai", "xAI Grok"])
-export const isCodeOnlyPaste = (upstreamOrLabel) => _CODE_ONLY_PASTE.has(upstreamOrLabel)
+const _CODE_ONLY_PASTE = new Set(["xai", "xAI Grok"]);
+export const isCodeOnlyPaste = (upstreamOrLabel) => _CODE_ONLY_PASTE.has(upstreamOrLabel);
 
 // Custom-endpoint providers whose whole identity IS the base_url (no default
 // endpoint) - validatePool requires one for these (mirrors validate_models).
 // "zai" (GLM / Z.ai, pay-as-you-go) and "zai_coding" (GLM Coding Plan) both
 // have no native Bifrost provider, so each needs its own Z.ai base_url
 // (standard api.z.ai/api/paas/v4 vs coding-plan api.z.ai/api/coding/paas/v4).
-const NEEDS_BASE_URL = new Set(["openai_compat", "vllm", "zai", "zai_coding"])
-export function providerLabel(id) { return _LABEL_BY_ID[id] || id || "" }
-export function providerId(label) { return _ID_BY_LABEL[label] || label || "" }
+const NEEDS_BASE_URL = new Set(["openai_compat", "vllm", "zai", "zai_coding"]);
+export function providerLabel(id) {
+	return _LABEL_BY_ID[id] || id || "";
+}
+export function providerId(label) {
+	return _ID_BY_LABEL[label] || label || "";
+}
 
 // ---- config -> editor rows -------------------------------------------------
 // Ports jarvis_account.js's seedLlmSetupFromConfig() into a pure function that
@@ -153,23 +196,46 @@ export function providerId(label) { return _ID_BY_LABEL[label] || label || "" }
 // payload, subscription/api_key from the plain object shape) so this stays a
 // faithful mirror of the desk regardless of which shape a caller passes.
 export function seedRowsFromConfig(cfg) {
-  const models = (cfg && Array.isArray(cfg.models)) ? cfg.models : []
-  return models.slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0)).map((m, i) => {
-    const sub = m.subscription || null
-    const isSubscription = m.credential_type === "subscription" || !!sub
-    if (isSubscription) {
-      const rotation = (sub && sub.rotation) || m.rotation || "sticky"
-      const rawAccounts = (sub && sub.accounts) || m.accounts || []
-      const accounts = rawAccounts.map(a => ({
-        upstream: a.upstream, account_ref: a.account_ref, label: a.label, connected: true,
-      }))
-      return { provider: "", model: m.model || "", apiKey: "", hasKey: !!m.has_key, baseUrl: "",
-        credentialType: "subscription", rotation, accounts, order: i }
-    }
-    return { provider: providerLabel(m.provider), model: m.model || "",
-      apiKey: "", hasKey: !!(m.has_key || m.api_key), baseUrl: m.base_url || "",
-      credentialType: "api_key", rotation: "sticky", accounts: [], order: i }
-  })
+	const models = cfg && Array.isArray(cfg.models) ? cfg.models : [];
+	return models
+		.slice()
+		.sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+		.map((m, i) => {
+			const sub = m.subscription || null;
+			const isSubscription = m.credential_type === "subscription" || !!sub;
+			if (isSubscription) {
+				const rotation = (sub && sub.rotation) || m.rotation || "sticky";
+				const rawAccounts = (sub && sub.accounts) || m.accounts || [];
+				const accounts = rawAccounts.map((a) => ({
+					upstream: a.upstream,
+					account_ref: a.account_ref,
+					label: a.label,
+					connected: true,
+				}));
+				return {
+					provider: "",
+					model: m.model || "",
+					apiKey: "",
+					hasKey: !!m.has_key,
+					baseUrl: "",
+					credentialType: "subscription",
+					rotation,
+					accounts,
+					order: i,
+				};
+			}
+			return {
+				provider: providerLabel(m.provider),
+				model: m.model || "",
+				apiKey: "",
+				hasKey: !!(m.has_key || m.api_key),
+				baseUrl: m.base_url || "",
+				credentialType: "api_key",
+				rotation: "sticky",
+				accounts: [],
+				order: i,
+			};
+		});
 }
 
 // The fleet's last per-model probe verdict for ONE api-key row, matched out of the
@@ -183,9 +249,9 @@ export function seedRowsFromConfig(cfg) {
 // verdict (a pre-1.11 fleet, a model not yet probed, or an entry that belongs to a different
 // provider) - callers must not assume a match.
 function modelVerdictEntry(row, modelStatuses) {
-  if (!row || !Array.isArray(modelStatuses)) return null
-  const rid = providerId(row.provider)
-  return modelStatuses.find((e) => e && e.model === row.model && e.provider === rid) || null
+	if (!row || !Array.isArray(modelStatuses)) return null;
+	const rid = providerId(row.provider);
+	return modelStatuses.find((e) => e && e.model === row.model && e.provider === rid) || null;
 }
 
 // Sensible truncation for a provider error string of unknown length dropped into a fixed-
@@ -194,8 +260,8 @@ function modelVerdictEntry(row, modelStatuses) {
 // the backend already caps at 400 chars, but a defensive cap here means this helper is safe
 // even if that ever changes).
 function truncate(s, max) {
-  const t = (s || "").trim()
-  return t.length > max ? t.slice(0, max - 1).trimEnd() + "…" : t
+	const t = (s || "").trim();
+	return t.length > max ? t.slice(0, max - 1).trimEnd() + "…" : t;
 }
 
 // z.ai's exact "wrong endpoint" trap: a GLM Coding Plan key authenticates fine against
@@ -208,11 +274,11 @@ function truncate(s, max) {
 // defensive by construction - it only ever fires when `detail` is present (contract 1.12);
 // an older fleet that never sends `detail` simply never matches and falls through to the
 // generic "Not working" message below.
-const _ZAI_INSUFFICIENT_BALANCE_RE = /\b1113\b|insufficient balance/i
+const _ZAI_INSUFFICIENT_BALANCE_RE = /\b1113\b|insufficient balance/i;
 function isZaiWrongEndpoint(row, entry) {
-  if (!entry || !entry.detail) return false
-  if (providerId(row && row.provider) !== "zai") return false
-  return _ZAI_INSUFFICIENT_BALANCE_RE.test(entry.detail)
+	if (!entry || !entry.detail) return false;
+	if (providerId(row && row.provider) !== "zai") return false;
+	return _ZAI_INSUFFICIENT_BALANCE_RE.test(entry.detail);
 }
 
 // Map an api-key pool row to its health for the failover list. Unlike a subscription
@@ -237,34 +303,35 @@ function isZaiWrongEndpoint(row, entry) {
 // text there would actively mislead (the key has balance; it's pointed at the wrong
 // endpoint). Every other `detail` falls through to the generic rendering below.
 export function apiKeyModelHealth(row, modelStatuses) {
-  const entry = modelVerdictEntry(row, modelStatuses)
-  const status = (entry && entry.status) || ""
-  const detail = (entry && typeof entry.detail === "string" && entry.detail.trim()) || ""
-  if (status === "failed") {
-    if (isZaiWrongEndpoint(row, entry)) {
-      return {
-        level: "warn",
-        label: "Wrong Z.ai endpoint",
-        title: "Z.ai reported insufficient balance on the pay-as-you-go endpoint. If this is a "
-          + "GLM Coding Plan key, switch this model's provider to \"GLM / Z.ai (Coding Plan)\" "
-          + "(base URL https://api.z.ai/api/coding/paas/v4) instead.",
-      }
-    }
-    return {
-      level: "warn",
-      label: detail ? `Not working: ${truncate(detail, 46)}` : "Not working",
-      title: detail
-        ? `This model failed a test request: ${truncate(detail, 220)}`
-        : "This model failed a test request - check its API key, model id, and base URL. "
-          + "It's skipped during failover until it passes.",
-    }
-  }
-  if (status === "unchecked") {
-    return {
-      level: "unchecked",
-      label: "Not verified yet",
-      title: "We couldn't confirm this model - it will be re-checked on the next apply.",
-    }
-  }
-  return { level: "ok" }
+	const entry = modelVerdictEntry(row, modelStatuses);
+	const status = (entry && entry.status) || "";
+	const detail = (entry && typeof entry.detail === "string" && entry.detail.trim()) || "";
+	if (status === "failed") {
+		if (isZaiWrongEndpoint(row, entry)) {
+			return {
+				level: "warn",
+				label: "Wrong Z.ai endpoint",
+				title:
+					"Z.ai reported insufficient balance on the pay-as-you-go endpoint. If this is a " +
+					'GLM Coding Plan key, switch this model\'s provider to "GLM / Z.ai (Coding Plan)" ' +
+					"(base URL https://api.z.ai/api/coding/paas/v4) instead.",
+			};
+		}
+		return {
+			level: "warn",
+			label: detail ? `Not working: ${truncate(detail, 46)}` : "Not working",
+			title: detail
+				? `This model failed a test request: ${truncate(detail, 220)}`
+				: "This model failed a test request - check its API key, model id, and base URL. " +
+				  "It's skipped during failover until it passes.",
+		};
+	}
+	if (status === "unchecked") {
+		return {
+			level: "unchecked",
+			label: "Not verified yet",
+			title: "We couldn't confirm this model - it will be re-checked on the next apply.",
+		};
+	}
+	return { level: "ok" };
 }

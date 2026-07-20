@@ -45,19 +45,19 @@ def get_or_create_user_settings(user: str):
 	if existing:
 		return frappe.get_doc(USER_SETTINGS, existing)
 	try:
-		doc = frappe.get_doc({
-			"doctype": USER_SETTINGS,
-			"user": user,
-			"owner": user,
-		})
+		doc = frappe.get_doc(
+			{
+				"doctype": USER_SETTINGS,
+				"user": user,
+				"owner": user,
+			}
+		)
 		doc.insert(ignore_permissions=True)
 		# Frappe stamps ``owner`` from the session user at insert; force it back
 		# to the settings owner so ``if_owner`` holds after an admin-triggered
 		# create. update_modified=False keeps the audit stamp meaningful.
 		if frappe.db.get_value(USER_SETTINGS, doc.name, "owner") != user:
-			frappe.db.set_value(
-				USER_SETTINGS, doc.name, "owner", user, update_modified=False
-			)
+			frappe.db.set_value(USER_SETTINGS, doc.name, "owner", user, update_modified=False)
 		return frappe.get_doc(USER_SETTINGS, doc.name)
 	except frappe.DuplicateEntryError:
 		# A racing turn/request created the row between our exists() and insert;
@@ -66,9 +66,7 @@ def get_or_create_user_settings(user: str):
 		return frappe.get_doc(USER_SETTINGS, {"user": user})
 
 
-def fetch_fresh_session_row(
-	sess, session_key: str, attempts: int = 3, delay_s: float = 1.5
-) -> dict | None:
+def fetch_fresh_session_row(sess, session_key: str, attempts: int = 3, delay_s: float = 1.5) -> dict | None:
 	"""Poll the gateway's ``sessions.list`` (via the already-checked-out ``sess``)
 	for a FRESH row for ``session_key``, retrying up to ``attempts`` times.
 
@@ -89,8 +87,10 @@ def fetch_fresh_session_row(
 	for attempt in range(attempts):
 		rows = sess.list_sessions()
 		row = next((r for r in rows if r.get("key") == session_key), None)
-		if row and row.get("totalTokensFresh") and (
-			row.get("inputTokens") is not None or row.get("outputTokens") is not None
+		if (
+			row
+			and row.get("totalTokensFresh")
+			and (row.get("inputTokens") is not None or row.get("outputTokens") is not None)
 		):
 			return row
 		if attempt < attempts - 1:
@@ -216,9 +216,7 @@ def refresh_session_snapshots(rows: list[dict]) -> dict:
 			session_key = row.get("key")
 			if not session_key:
 				continue
-			user = frappe.db.get_value(
-				CHAT_SESSION, {"session_key": session_key}, "user"
-			)
+			user = frappe.db.get_value(CHAT_SESSION, {"session_key": session_key}, "user")
 			if not user:
 				continue
 			context_tokens = int(row.get("totalTokens") or 0)
@@ -244,9 +242,7 @@ def refresh_session_snapshots(rows: list[dict]) -> dict:
 					{"ctx": context_tokens, "session_key": session_key},
 				)
 			touched_users.add(user)
-			bucket = summary.setdefault(
-				user, {"sessions": 0, "last_total_tokens": 0}
-			)
+			bucket = summary.setdefault(user, {"sessions": 0, "last_total_tokens": 0})
 			bucket["sessions"] += 1
 			bucket["last_total_tokens"] += context_tokens
 		except Exception:

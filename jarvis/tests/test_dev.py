@@ -3,23 +3,26 @@
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
-from jarvis.dev import is_dev_mode_active, is_sandbox_mode, reset_onboarding, _RESET_CLEAR_FIELDS
-
+from jarvis.dev import _RESET_CLEAR_FIELDS, is_dev_mode_active, is_sandbox_mode, reset_onboarding
 
 SETTINGS = "Jarvis Settings"
 
 
 _PASSWORD_FIELDS = {
-	"jarvis_admin_api_key", "jarvis_admin_api_secret", "agent_token",
-	"chat_device_private_key", "chat_device_token", "llm_api_key",
+	"jarvis_admin_api_key",
+	"jarvis_admin_api_secret",
+	"agent_token",
+	"chat_device_private_key",
+	"chat_device_token",
+	"llm_api_key",
 }
 
 
 def _read(s, field):
 	"""Read a Jarvis Settings field, password-safe."""
 	if field in _PASSWORD_FIELDS:
-		return (s.get_password(field, raise_exception=False) or "")
-	return (s.get(field) or "")
+		return s.get_password(field, raise_exception=False) or ""
+	return s.get(field) or ""
 
 
 def _snapshot():
@@ -48,6 +51,7 @@ def _seed_onboarded_state():
 
 class _GuardSwap:
 	"""Force sandbox_mode on for the duration of a test."""
+
 	def __enter__(self):
 		s = frappe.get_single("Jarvis Settings")
 		self._prior = s.get("sandbox_mode") or 0

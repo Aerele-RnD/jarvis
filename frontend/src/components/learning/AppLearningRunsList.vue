@@ -159,30 +159,30 @@
 // socket + overview; it drives this list through the exposed reload()/
 // refresh() and listens for `changed` (a cancel here also moves overview
 // state - active-run strip, per-app chips).
-import { computed, reactive, ref } from "vue"
-import { useRouter } from "vue-router"
-import { Badge, Button, Dialog, Tooltip, confirmDialog, dayjsLocal, toast } from "frappe-ui"
-import ListPage from "@/components/list/ListPage.vue"
-import { useListPage } from "@/composables/useListPage"
-import { timeAgo, exactDate } from "@/utils/datetime"
-import { cancelAppLearningRun, listAppLearningRunsPage } from "@/api/appLearning"
+import { computed, reactive, ref } from "vue";
+import { useRouter } from "vue-router";
+import { Badge, Button, Dialog, Tooltip, confirmDialog, dayjsLocal, toast } from "frappe-ui";
+import ListPage from "@/components/list/ListPage.vue";
+import { useListPage } from "@/composables/useListPage";
+import { timeAgo, exactDate } from "@/utils/datetime";
+import { cancelAppLearningRun, listAppLearningRunsPage } from "@/api/appLearning";
 
 const props = defineProps({
 	// [{label, value}] of installed apps (from the overview) for the App filter
 	appOptions: { type: Array, default: () => [] },
-})
-const emit = defineEmits(["changed"])
+});
+const emit = defineEmits(["changed"]);
 
-const router = useRouter()
+const router = useRouter();
 
 function errMsg(e) {
-	return (e && ((e.messages && e.messages[0]) || e.message)) || "Something went wrong."
+	return (e && ((e.messages && e.messages[0]) || e.message)) || "Something went wrong.";
 }
 
 // ── list config ──────────────────────────────────────────────────────────────
 // cancel_app_learning_run accepts these three only - an Ingesting run is
 // already writing findings and must finish or fail
-const CANCELLABLE = ["Queued", "Zipping", "Analyzing"]
+const CANCELLABLE = ["Queued", "Zipping", "Analyzing"];
 // design.md §3.6 status→theme map: terminal per spec (Completed green /
 // Failed red / Cancelled gray); Queued pending-orange, in-flight states blue.
 const STATUS_THEME = {
@@ -193,7 +193,7 @@ const STATUS_THEME = {
 	Completed: "green",
 	Failed: "red",
 	Cancelled: "gray",
-}
+};
 const STATUS_OPTIONS = [
 	{ label: "All statuses", value: "" },
 	{ label: "Queued", value: "Queued" },
@@ -203,7 +203,7 @@ const STATUS_OPTIONS = [
 	{ label: "Completed", value: "Completed" },
 	{ label: "Failed", value: "Failed" },
 	{ label: "Cancelled", value: "Cancelled" },
-]
+];
 
 const columns = [
 	{ label: "Status", key: "status", width: "7rem" },
@@ -215,14 +215,14 @@ const columns = [
 	{ label: "Finished", key: "finished_at", width: "7rem" },
 	{ label: "Duration", key: "duration", width: "6rem" },
 	{ label: "", key: "_actions", width: "8rem", align: "right" },
-]
+];
 
 // search rides the quick strip (the ActivityTab manner - the fetchFn below
 // lifts it out of the filters object into the envelope's `search` arg).
 const quickFilters = computed(() => [
 	{ key: "search", label: "Search runs", type: "text" },
 	{ key: "status", label: "Status", type: "select", options: STATUS_OPTIONS },
-])
+]);
 // FilterButton builds select/daterange rows only (DESIGN-V3 §5.3 D14), so the
 // spec's "app (text)" lands as an equals-select over the bench's installed
 // apps - exact matching either way, and free text still works via search.
@@ -234,7 +234,7 @@ const filterDefs = computed(() => [
 		options: [{ label: "All apps", value: "" }, ...props.appOptions],
 	},
 	{ key: "status", label: "Status", type: "select", options: STATUS_OPTIONS },
-])
+]);
 
 // backend sortable whitelist: creation · app · status · finished_at
 const sortOptions = [
@@ -242,8 +242,8 @@ const sortOptions = [
 	{ label: "App", value: "app" },
 	{ label: "Status", value: "status" },
 	{ label: "Finished", value: "finished_at" },
-]
-const DEFAULT_SORT = { field: "creation", dir: "desc" }
+];
+const DEFAULT_SORT = { field: "creation", dir: "desc" };
 
 const {
 	rows,
@@ -261,102 +261,104 @@ const {
 	refreshKeep,
 } = useListPage({
 	fetchFn: (p) => {
-		const { search: q, ...rest } = p.filters || {}
-		return listAppLearningRunsPage({ ...p, search: q || p.search || "", filters: rest })
+		const { search: q, ...rest } = p.filters || {};
+		return listAppLearningRunsPage({ ...p, search: q || p.search || "", filters: rest });
 	},
 	defaultSort: DEFAULT_SORT,
 	storageKey: "app-learning-runs",
-})
+});
 
 // zero rows reads differently under an active search/filter (the AgentsList /
 // ReviewTab decided-log empty-state pattern): "no matches" vs the true blank
 // slate. All active criteria live in `filters` - the search quick filter rides
 // it too (key "search"), and setFilters strips empty values, so any key
 // present means something is narrowing the list.
-const filtersActive = computed(() => Object.keys(filters).length > 0)
+const filtersActive = computed(() => Object.keys(filters).length > 0);
 const emptyState = computed(() =>
 	filtersActive.value
 		? {
 				icon: "search",
 				title: "No runs match",
 				description: "Try clearing the search or filters.",
-			}
+		  }
 		: {
 				icon: "package",
 				title: "No analysis runs yet",
 				description: "Runs appear here once you analyze a custom app.",
-			}
-)
+		  }
+);
 
 // reload = hard reset to page 1 (after user actions); refresh = silent
 // refetch of the loaded window (realtime frames) - both driven by the card.
-defineExpose({ reload: resetLoad, refresh: refreshKeep })
+defineExpose({ reload: resetLoad, refresh: refreshKeep });
 
 // ── row actions ──────────────────────────────────────────────────────────────
-const cancelling = ref("")
+const cancelling = ref("");
 
 function cancelRun(row) {
 	confirmDialog({
 		title: "Cancel this analysis run?",
-		message: `Stops the ${row.status === "Queued" ? "queued" : "active"} analysis run for ${row.app}. You can schedule it again later from the checklist above.`,
+		message: `Stops the ${row.status === "Queued" ? "queued" : "active"} analysis run for ${
+			row.app
+		}. You can schedule it again later from the checklist above.`,
 		onConfirm: async ({ hideDialog }) => {
-			cancelling.value = row.name
+			cancelling.value = row.name;
 			try {
-				await cancelAppLearningRun(row.name)
-				hideDialog()
-				toast.success("Run cancelled")
-				resetLoad()
-				emit("changed")
+				await cancelAppLearningRun(row.name);
+				hideDialog();
+				toast.success("Run cancelled");
+				resetLoad();
+				emit("changed");
 			} catch (e) {
-				toast.error(errMsg(e))
+				toast.error(errMsg(e));
 			} finally {
-				cancelling.value = ""
+				cancelling.value = "";
 			}
 		},
-	})
+	});
 }
 
 function openRow(row) {
-	if (row.conversation) router.push("/c/" + row.conversation)
+	if (row.conversation) router.push("/c/" + row.conversation);
 }
 
-const errorDialog = reactive({ show: false, app: "", text: "" })
+const errorDialog = reactive({ show: false, app: "", text: "" });
 function showError(row) {
-	errorDialog.app = row.app || ""
-	errorDialog.text = row.error || ""
-	errorDialog.show = true
+	errorDialog.app = row.app || "";
+	errorDialog.text = row.error || "";
+	errorDialog.show = true;
 }
 function errorPreview(row) {
-	const t = String(row.error || "")
-	return t.length > 160 ? t.slice(0, 160) + "…" : t
+	const t = String(row.error || "");
+	return t.length > 160 ? t.slice(0, 160) + "…" : t;
 }
 
 // ── formatters ───────────────────────────────────────────────────────────────
 // finished - started, humanized (the macros RunsTab recipe). Both stamps are
 // naive site-tz strings, so the tz-safe dayjsLocal diff cancels the offset.
 function durationLabel(row) {
-	if (!row.started_at || !row.finished_at) return "-"
-	const sec = dayjsDiffSeconds(row.started_at, row.finished_at)
-	if (sec == null || sec < 0) return "-"
-	if (sec < 60) return `${sec}s`
-	const m = Math.floor(sec / 60)
-	const s = sec % 60
-	if (m < 60) return s ? `${m}m ${s}s` : `${m}m`
-	const h = Math.floor(m / 60)
-	return `${h}h ${m % 60}m`
+	if (!row.started_at || !row.finished_at) return "-";
+	const sec = dayjsDiffSeconds(row.started_at, row.finished_at);
+	if (sec == null || sec < 0) return "-";
+	if (sec < 60) return `${sec}s`;
+	const m = Math.floor(sec / 60);
+	const s = sec % 60;
+	if (m < 60) return s ? `${m}m ${s}s` : `${m}m`;
+	const h = Math.floor(m / 60);
+	return `${h}h ${m % 60}m`;
 }
 function dayjsDiffSeconds(a, b) {
-	const start = dayjsLocalSafe(a)
-	const end = dayjsLocalSafe(b)
-	if (!start || !end) return null
-	return end.diff(start, "second")
+	const start = dayjsLocalSafe(a);
+	const end = dayjsLocalSafe(b);
+	if (!start || !end) return null;
+	return end.diff(start, "second");
 }
 function dayjsLocalSafe(d) {
 	try {
-		const dj = dayjsLocal(String(d))
-		return dj && typeof dj.isValid === "function" && dj.isValid() ? dj : null
+		const dj = dayjsLocal(String(d));
+		return dj && typeof dj.isValid === "function" && dj.isValid() ? dj : null;
 	} catch (e) {
-		return null
+		return null;
 	}
 }
 </script>

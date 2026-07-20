@@ -48,9 +48,7 @@ def _clear_personal_clause_cache(owner: str | None) -> None:
 	try:
 		from jarvis.chat.custom_skills import personal_skills_cache_key
 
-		frappe.cache().delete_value(
-			personal_skills_cache_key(owner or frappe.session.user)
-		)
+		frappe.cache().delete_value(personal_skills_cache_key(owner or frappe.session.user))
 	except Exception:
 		pass
 
@@ -106,9 +104,7 @@ def user_can_use_skill(skill, user: str | None = None, user_roles: list[str] | N
 	if scope == "User":
 		# Private: owner/shared/SM already handled above.
 		return False
-	allowed = set(
-		_child_values(skill, "allowed_roles", "role", "Jarvis Custom Skill Allowed Role")
-	)
+	allowed = set(_child_values(skill, "allowed_roles", "role", "Jarvis Custom Skill Allowed Role"))
 	if scope == "Role":
 		target_role = (skill.get("target_role") or "").strip()
 		if target_role and target_role in roles:
@@ -213,8 +209,10 @@ class JarvisCustomSkill(Document):
 			return
 		if self.scope in ("Role", "Org") and not self._scope_change_authorized():
 			frappe.throw(
-				_("New skills are private (User scope); promoting to Role or Org "
-				  "needs a reviewer's approval."),
+				_(
+					"New skills are private (User scope); promoting to Role or Org "
+					"needs a reviewer's approval."
+				),
 				frappe.PermissionError,
 			)
 
@@ -227,9 +225,7 @@ class JarvisCustomSkill(Document):
 		writes save with ignore_permissions=True."""
 		if self.is_new():
 			return
-		prev = frappe.db.get_value(
-			self.doctype, self.name, ["scope", "target_role"], as_dict=True
-		)
+		prev = frappe.db.get_value(self.doctype, self.name, ["scope", "target_role"], as_dict=True)
 		if not prev:
 			return
 		prev_scope = (prev.scope or "").strip() or "Org"
@@ -246,8 +242,10 @@ class JarvisCustomSkill(Document):
 		if is_owner and rank.get(self.scope, 2) < rank.get(prev_scope, 2):
 			return
 		frappe.throw(
-			_("Only a reviewer can widen the scope or change the audience of an "
-			  "existing skill. Request a promotion instead."),
+			_(
+				"Only a reviewer can widen the scope or change the audience of an "
+				"existing skill. Request a promotion instead."
+			),
 			frappe.PermissionError,
 		)
 
@@ -257,9 +255,7 @@ class JarvisCustomSkill(Document):
 			frappe.throw(_("Skill name is required."))
 		if self.skill_name.startswith(RESERVED_PREFIX):
 			frappe.throw(
-				_("Skill name must not start with '{0}' (added automatically).").format(
-					RESERVED_PREFIX
-				)
+				_("Skill name must not start with '{0}' (added automatically).").format(RESERVED_PREFIX)
 			)
 		# ``learned-`` is engine-only: the compiler authors ``learned-<domain>``
 		# rows as Administrator under the engine flag; block every other author so
@@ -269,16 +265,11 @@ class JarvisCustomSkill(Document):
 		):
 			frappe.throw(
 				_(
-					"Skill name must not start with '{0}' (reserved for skills the "
-					"learning engine manages)."
+					"Skill name must not start with '{0}' (reserved for skills the learning engine manages)."
 				).format(LEARNED_PREFIX)
 			)
 		if not (MIN_SLUG_LEN <= len(self.skill_name) <= MAX_SLUG_LEN):
-			frappe.throw(
-				_("Skill name must be {0}-{1} characters.").format(
-					MIN_SLUG_LEN, MAX_SLUG_LEN
-				)
-			)
+			frappe.throw(_("Skill name must be {0}-{1} characters.").format(MIN_SLUG_LEN, MAX_SLUG_LEN))
 		if not SLUG_RE.fullmatch(self.skill_name):
 			frappe.throw(
 				_(
@@ -297,9 +288,7 @@ class JarvisCustomSkill(Document):
 		if len(self.description) > MAX_DESC_LEN:
 			frappe.throw(_("Description must be at most {0} characters.").format(MAX_DESC_LEN))
 		if len(self.instructions) > MAX_INSTR_LEN:
-			frappe.throw(
-				_("Instructions must be at most {0} characters.").format(MAX_INSTR_LEN)
-			)
+			frappe.throw(_("Instructions must be at most {0} characters.").format(MAX_INSTR_LEN))
 
 	def _validate_unique_per_owner(self):
 		# Frappe's field-level ``unique`` is global, not per-owner; enforce
@@ -323,9 +312,7 @@ class JarvisCustomSkill(Document):
 		owner = self.owner or frappe.session.user
 		count = frappe.db.count("Jarvis Custom Skill", {"owner": owner})
 		if count >= MAX_SKILLS_PER_OWNER:
-			frappe.throw(
-				_("You can have at most {0} custom skills.").format(MAX_SKILLS_PER_OWNER)
-			)
+			frappe.throw(_("You can have at most {0} custom skills.").format(MAX_SKILLS_PER_OWNER))
 
 	def _guard_managed_flag(self):
 		"""``managed_by_learning`` is engine-owned (plan section 6.6 security).

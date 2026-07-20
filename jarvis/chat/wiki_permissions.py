@@ -116,11 +116,7 @@ def can_edit_page(page, user: str | None = None) -> bool:
 	roles = set(frappe.get_roles(user))
 	if scope == "Role":
 		target_role = _get(page, "target_role")
-		return (
-			_is_wiki_manager(roles)
-			and bool(target_role)
-			and target_role in roles
-		)
+		return _is_wiki_manager(roles) and bool(target_role) and target_role in roles
 	if scope == "User":
 		return (_get(page, "target_user") or "") == user and _is_wiki_user(roles)
 	# Org pages: System Manager only.
@@ -182,12 +178,8 @@ def visible_scope_condition(user: str | None = None) -> str:
 	roles = [r for r in frappe.get_roles(user) if r]
 	if roles:
 		role_list = ", ".join(frappe.db.escape(r) for r in roles)
-		clauses.append(
-			f"({table}.`scope` = 'Role' and {table}.`target_role` in ({role_list}))"
-		)
-	clauses.append(
-		f"({table}.`scope` = 'User' and {table}.`target_user` = {frappe.db.escape(user)})"
-	)
+		clauses.append(f"({table}.`scope` = 'Role' and {table}.`target_role` in ({role_list}))")
+	clauses.append(f"({table}.`scope` = 'User' and {table}.`target_user` = {frappe.db.escape(user)})")
 	return "(" + " or ".join(clauses) + ")"
 
 

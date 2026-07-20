@@ -1,7 +1,7 @@
 <script setup>
-import { computed, onMounted, ref } from "vue"
-import { installPrompt, isStandalone } from "../install"
-import BrandMark from "./BrandMark.vue"
+import { computed, onMounted, ref } from "vue";
+import { installPrompt, isStandalone } from "../install";
+import BrandMark from "./BrandMark.vue";
 
 // "Add Jarvis to your home screen." Two different worlds:
 //  - Chrome/Android fires beforeinstallprompt. That event is captured in
@@ -10,10 +10,10 @@ import BrandMark from "./BrandMark.vue"
 //    appears on a warm refresh. This component only reads the stashed event.
 //  - iOS Safari has no such event and never will; Add to Home Screen is a manual
 //    menu action, so there we can only tell the user where it is.
-const DISMISS_KEY = "jarvis.install.dismissed"
+const DISMISS_KEY = "jarvis.install.dismissed";
 
-const dismissed = ref(false)
-const isIos = ref(false)
+const dismissed = ref(false);
+const isIos = ref(false);
 
 // A browser will not install a page it does not trust. `isSecureContext` is
 // false on a plain-http LAN origin (http://192.168.x.x:8002 — how the bench is
@@ -22,29 +22,32 @@ const isIos = ref(false)
 // offer vanishes with no explanation, which reads as a bug in the app. Say what
 // is actually wrong instead. In production the app is only ever served over
 // HTTPS, so this branch is dead there.
-const insecure = ref(false)
+const insecure = ref(false);
 
 // Show when we either hold a real prompt (Chrome), know we're on iOS, or need
 // to explain why installing isn't possible here — unless the user closed it or
 // the app is already installed.
 const show = computed(
-	() => !dismissed.value && !isStandalone() && (!!installPrompt.value || isIos.value || insecure.value),
-)
+	() =>
+		!dismissed.value &&
+		!isStandalone() &&
+		(!!installPrompt.value || isIos.value || insecure.value)
+);
 
 async function install() {
-	const e = installPrompt.value
-	if (!e) return
-	e.prompt()
-	await e.userChoice
+	const e = installPrompt.value;
+	if (!e) return;
+	e.prompt();
+	await e.userChoice;
 	// The event is single-use: once prompted it cannot be replayed.
-	installPrompt.value = null
+	installPrompt.value = null;
 }
 
 function dismiss() {
-	dismissed.value = true
+	dismissed.value = true;
 	// Durable: a banner the user closed must not come back on every reload.
 	try {
-		localStorage.setItem(DISMISS_KEY, "1")
+		localStorage.setItem(DISMISS_KEY, "1");
 	} catch {
 		/* private mode — a session-only dismissal is still better than none */
 	}
@@ -52,16 +55,16 @@ function dismiss() {
 
 onMounted(() => {
 	try {
-		dismissed.value = localStorage.getItem(DISMISS_KEY) === "1"
+		dismissed.value = localStorage.getItem(DISMISS_KEY) === "1";
 	} catch {
 		/* ignore */
 	}
-	const ua = window.navigator.userAgent
+	const ua = window.navigator.userAgent;
 	if (/iPhone|iPad|iPod/.test(ua) && /Safari/.test(ua) && !/CriOS|FxiOS/.test(ua)) {
-		isIos.value = true
+		isIos.value = true;
 	}
-	insecure.value = !window.isSecureContext
-})
+	insecure.value = !window.isSecureContext;
+});
 </script>
 
 <template>
@@ -70,13 +73,26 @@ onMounted(() => {
 			<BrandMark :size="34" />
 			<div class="jv-install-text">
 				<strong>Install Jarvis</strong>
-				<span v-if="insecure">Open this site over https to install it — browsers won't install an insecure page.</span>
+				<span v-if="insecure"
+					>Open this site over https to install it — browsers won't install an insecure
+					page.</span
+				>
 				<span v-else-if="isIos">Tap Share, then “Add to Home Screen”.</span>
 				<span v-else>Keep it one tap away, like an app.</span>
 			</div>
-			<button v-if="!isIos && !insecure" class="jv-install-cta" @click="install">Install</button>
+			<button v-if="!isIos && !insecure" class="jv-install-cta" @click="install">
+				Install
+			</button>
 			<button class="jv-icon-btn" aria-label="Dismiss" @click="dismiss">
-				<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+				<svg
+					viewBox="0 0 24 24"
+					width="18"
+					height="18"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+					stroke-linecap="round"
+				>
 					<path d="M18 6 6 18M6 6l12 12" />
 				</svg>
 			</button>

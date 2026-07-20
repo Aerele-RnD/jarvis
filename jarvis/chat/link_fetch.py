@@ -150,9 +150,7 @@ def _validate_host(hostname: str) -> list[str]:
 	for info in infos:
 		addr = info[4][0]
 		if _is_blocked_ip(addr):
-			raise LinkFetchError(
-				f"Host {hostname} resolves to a disallowed address ({addr})."
-			)
+			raise LinkFetchError(f"Host {hostname} resolves to a disallowed address ({addr}).")
 		addrs.append(addr)
 	return addrs
 
@@ -380,9 +378,7 @@ def fetch_and_extract(
 
 			content_type = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
 			if not content_type.startswith("text/"):
-				raise LinkFetchError(
-					f"Unsupported content-type: {content_type or 'unknown'}."
-				)
+				raise LinkFetchError(f"Unsupported content-type: {content_type or 'unknown'}.")
 
 			body = _read_capped(resp, max_bytes)
 		finally:
