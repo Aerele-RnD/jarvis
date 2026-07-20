@@ -25,6 +25,18 @@ from datetime import datetime
 
 import frappe
 
+# The pool-mode "Auto" sentinel model id. turn_handler._session_model_for
+# patches an unpinned pool conversation's openclaw SESSION to this value
+# (jarvis#299), so the gateway's sessions.list row reports it as `model` for
+# that turn - see record_turn_usage's docstring below for what that means for
+# attribution. Imported (not hardcoded) so this module and turn_handler can't
+# drift on what the sentinel is; re-exported here as a module-level constant
+# so callers that only care about "is this the pool auto-routed bucket" don't
+# need to import turn_handler themselves. turn_handler does NOT import this
+# module at module level (only lazily, inside handle_chat_send), so this
+# import doesn't introduce a cycle.
+from jarvis.chat.turn_handler import POOL_VIRTUAL_MODEL
+
 USER_SETTINGS = "Jarvis User Settings"
 CHAT_SESSION = "Jarvis Chat Session"
 MODEL_USAGE = "Jarvis User Model Usage"
@@ -190,8 +202,15 @@ def record_turn_usage(session_key: str, row: dict | None) -> None:
 			params,
 		)
 		# Per-model attribution (fleet spec §7): the gateway sessions row
-		# carries the actually-used model (accurate even on pool "Auto", where
-		# Bifrost picks server-side). Missing/blank model → aggregate only.
+		# carries whatever model the SESSION was patched to for this turn
+		# (turn_handler._session_model_for). For a pinned model that's the
+		# real model. For an unpinned pool "Auto" conversation it is instead
+		# POOL_VIRTUAL_MODEL - Bifrost picks the actual per-request model
+		# server-side, and that choice never comes back to the bench, so
+		# every Auto turn is attributed to the sentinel, not the real model.
+		# That's an intentionally honest bucket ("pool auto-routed"), not a
+		# bug: pool tenants get true per-model data from Bifrost logs on the
+		# admin side. Missing/blank model → aggregate only, no per-model row.
 		model = (row.get("model") or "").strip()
 		if model:
 			_upsert_model_usage(user, model, month, input_tokens, output_tokens, now)

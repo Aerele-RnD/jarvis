@@ -15,7 +15,7 @@
 				<div class="jv-set-sec" style="margin-top:20px;">By model · this month</div>
 				<div v-for="m in perModel" :key="m.model" class="jv-model-row">
 					<div class="jv-model-head">
-						<span class="jv-model-name">{{ m.model }}</span>
+						<span class="jv-model-name">{{ modelDisplayLabel(m.model) }}</span>
 						<span class="jv-model-tok">{{ fmtTokens(m.month_tokens) }}<span class="jv-model-io"> · {{ fmtTokens(m.month_input_tokens) }} in / {{ fmtTokens(m.month_output_tokens) }} out</span></span>
 					</div>
 					<template v-if="m.monthly_token_limit > 0">
@@ -51,6 +51,7 @@
 import { ref, computed, onMounted, watch } from "vue"
 import { useShellStore } from "@/stores/shell"
 import { timeAgo } from "@/utils/datetime"
+import { modelDisplayLabel } from "@/utils/usageModel"
 import * as api from "@/api"
 
 const shell = useShellStore()

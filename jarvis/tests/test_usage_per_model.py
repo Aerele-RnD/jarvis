@@ -183,6 +183,51 @@ class TestPerModelAttribution(_Base):
 		self.assertEqual(frappe.get_all(MODEL_USAGE, filters={"parent": USER_A}), [])
 
 
+class TestPoolAutoAttribution(_Base):
+	"""Auto-mode (pool, unpinned) turns get their openclaw SESSION patched to
+	turn_handler.POOL_VIRTUAL_MODEL ("jarvis-pool") - see
+	turn_handler._session_model_for - so the gateway's sessions.list row
+	reports that sentinel as `model` for the turn, not the real per-request
+	model Bifrost picked server-side (that data isn't available bench-side;
+	pool tenants get true per-model data from Bifrost logs admin-side).
+	record_turn_usage records the turn under that same sentinel - the
+	honest bucket for "pool auto-routed" - and usage.py must reference the
+	shared constant rather than an implicit magic string, so the two
+	modules can't drift apart on what the sentinel is."""
+
+	def test_auto_turn_records_under_shared_pool_sentinel_constant(self):
+		from jarvis.chat.turn_handler import POOL_VIRTUAL_MODEL
+
+		self.assertEqual(usage.POOL_VIRTUAL_MODEL, POOL_VIRTUAL_MODEL)
+
+		_make_session("agent:pmauto", USER_A)
+		usage.record_turn_usage(
+			"agent:pmauto",
+			{
+				"totalTokensFresh": True,
+				"inputTokens": 10,
+				"outputTokens": 5,
+				"totalTokens": 15,
+				"model": POOL_VIRTUAL_MODEL,
+			},
+		)
+		row = frappe.db.get_value(
+			MODEL_USAGE,
+			{
+				"parent": USER_A,
+				"parenttype": USETT,
+				"parentfield": "user_model_usage",
+				"model": POOL_VIRTUAL_MODEL,
+				"month_key": usage.current_month_key(),
+			},
+			["month_input_tokens", "month_output_tokens"],
+			as_dict=True,
+		)
+		self.assertIsNotNone(row)
+		self.assertEqual(row.month_input_tokens, 10)
+		self.assertEqual(row.month_output_tokens, 5)
+
+
 class TestConcurrentFirstInsertRace(_Base):
 	"""Two turns in DIFFERENT conversations can race on a model's FIRST use in
 	a month (turn_handler's single-flight guard in chat/api.py is only

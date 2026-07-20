@@ -67,7 +67,7 @@
 
 				<div v-if="expanded[u.user]" class="jv-model-block">
 					<div v-for="m in (u.per_model || [])" :key="m.model" class="jv-model-erow">
-						<div class="jv-model-ename">{{ m.model }}</div>
+						<div class="jv-model-ename">{{ modelDisplayLabel(m.model) }}</div>
 						<div class="jv-model-emeter">
 							<template v-if="m.monthly_token_limit > 0">
 								<div class="jv-usage-bar"><div class="jv-usage-fill" :style="{ width: modelPct(m) + '%' }"></div></div>
@@ -101,6 +101,7 @@
 import { ref, reactive, onMounted } from "vue"
 import { toast } from "frappe-ui"
 import { timeAgo } from "@/utils/datetime"
+import { modelDisplayLabel } from "@/utils/usageModel"
 import * as api from "@/api"
 
 function errMsg(e) {
@@ -188,7 +189,7 @@ async function saveModelLimit(u, m) {
 		const d = (res && res.data) || {}
 		m.monthly_token_limit = d.monthly_token_limit != null ? d.monthly_token_limit : val
 		m._limitDraft = m.monthly_token_limit
-		toast.success(`Limit updated for ${m.model}`)
+		toast.success(`Limit updated for ${modelDisplayLabel(m.model)}`)
 	} catch (e) {
 		toast.error(errMsg(e))
 	} finally {
