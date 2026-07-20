@@ -27,6 +27,8 @@ import frappe
 
 USER_SETTINGS = "Jarvis User Settings"
 CHAT_SESSION = "Jarvis Chat Session"
+MODEL_USAGE = "Jarvis User Model Usage"
+MODEL_USAGE_FIELD = "user_model_usage"
 
 
 def current_month_key() -> str:
@@ -187,12 +189,181 @@ def record_turn_usage(session_key: str, row: dict | None) -> None:
 			""",
 			params,
 		)
+		# Per-model attribution (fleet spec §7): the gateway sessions row
+		# carries the actually-used model (accurate even on pool "Auto", where
+		# Bifrost picks server-side). Missing/blank model → aggregate only.
+		model = (row.get("model") or "").strip()
+		if model:
+			_upsert_model_usage(user, model, month, input_tokens, output_tokens, now)
 		frappe.db.commit()
 	except Exception:
 		frappe.log_error(
 			title="jarvis usage: record_turn_usage failed",
 			message=frappe.get_traceback(),
 		)
+
+
+def _next_child_idx(user: str) -> int:
+	"""Next 1-based idx for a new child row under ``user``'s settings. Child idx
+	is ordering-only; correctness doesn't depend on it, but keep it monotone."""
+	rows = frappe.db.sql(
+		"""SELECT COALESCE(MAX(idx), 0) + 1
+		   FROM `tabJarvis User Model Usage`
+		   WHERE parent = %(user)s AND parenttype = %(ptype)s""",
+		{"user": user, "ptype": USER_SETTINGS},
+	)
+	return int(rows[0][0]) if rows and rows[0] else 1
+
+
+def _current_model_row_name(user: str, model: str, month: str) -> str | None:
+	return frappe.db.get_value(
+		MODEL_USAGE,
+		{
+			"parent": user,
+			"parenttype": USER_SETTINGS,
+			"parentfield": MODEL_USAGE_FIELD,
+			"model": model,
+			"month_key": month,
+		},
+		"name",
+	)
+
+
+def _prior_model_limit(user: str, model: str, month: str) -> int:
+	"""Newest prior-month per-model cap for (user, model), so a configured cap
+	survives the month rollover instead of resetting to 0. 0 when none exists."""
+	rows = frappe.get_all(
+		MODEL_USAGE,
+		filters={
+			"parent": user,
+			"parenttype": USER_SETTINGS,
+			"parentfield": MODEL_USAGE_FIELD,
+			"model": model,
+			"month_key": ["!=", month],
+		},
+		fields=["monthly_token_limit"],
+		order_by="month_key desc",
+		limit=1,
+	)
+	return int(rows[0].monthly_token_limit or 0) if rows else 0
+
+
+def _insert_model_row(
+	user: str,
+	model: str,
+	month: str,
+	*,
+	in_tokens: int,
+	out_tokens: int,
+	limit: int,
+	now,
+) -> None:
+	"""Insert a fresh child row via raw SQL (the atomic idiom this module uses).
+	Direct child-doc ORM insert is not used — Frappe routes child writes through
+	the parent; a raw INSERT with an explicit hash name is the reliable path.
+	``owner``/``modified_by`` are not permission-load-bearing for a child row
+	(parent-row scoping governs child access), so ``Administrator`` is fine."""
+	frappe.db.sql(
+		"""
+		INSERT INTO `tabJarvis User Model Usage`
+			(name, creation, modified, modified_by, owner, docstatus, idx,
+			 parent, parentfield, parenttype,
+			 model, month_key, month_input_tokens, month_output_tokens, monthly_token_limit)
+		VALUES
+			(%(name)s, %(now)s, %(now)s, %(admin)s, %(admin)s, 0, %(idx)s,
+			 %(user)s, %(pfield)s, %(ptype)s,
+			 %(model)s, %(month)s, %(in)s, %(out)s, %(limit)s)
+		""",
+		{
+			"name": frappe.generate_hash(length=10),
+			"now": now,
+			"admin": "Administrator",
+			"idx": _next_child_idx(user),
+			"user": user,
+			"pfield": MODEL_USAGE_FIELD,
+			"ptype": USER_SETTINGS,
+			"model": model,
+			"month": month,
+			"in": int(in_tokens),
+			"out": int(out_tokens),
+			"limit": int(limit),
+		},
+	)
+
+
+def _upsert_model_usage(user: str, model: str, month: str, in_tokens: int, out_tokens: int, now) -> None:
+	"""Upsert the (user, model, current-month) child row with this turn's delta.
+
+	Month-to-date only on the bench (admin owns history, fleet spec §3): on
+	rollover we drop this model's stale rows and start a fresh current-month row,
+	inheriting any configured cap so a per-model limit is never lost. We also
+	opportunistically drop the user's OTHER stale rows that carry no cap (pure
+	usage history the admin already persisted); stale rows that DO carry a cap
+	linger until their own model records a turn (which carries the cap forward),
+	so an admin-set cap is never silently dropped."""
+	name = _current_model_row_name(user, model, month)
+	if name:
+		frappe.db.sql(
+			"""UPDATE `tabJarvis User Model Usage`
+			   SET month_input_tokens = month_input_tokens + %(in)s,
+				   month_output_tokens = month_output_tokens + %(out)s,
+				   modified = %(now)s
+			   WHERE name = %(name)s""",
+			{"in": int(in_tokens), "out": int(out_tokens), "now": now, "name": name},
+		)
+	else:
+		limit = _prior_model_limit(user, model, month)
+		_insert_model_row(
+			user,
+			model,
+			month,
+			in_tokens=in_tokens,
+			out_tokens=out_tokens,
+			limit=limit,
+			now=now,
+		)
+		# This model's stale-month rows (cap already carried forward) go now.
+		frappe.db.sql(
+			"""DELETE FROM `tabJarvis User Model Usage`
+			   WHERE parent = %(user)s AND parenttype = %(ptype)s
+				 AND parentfield = %(pfield)s AND model = %(model)s
+				 AND month_key != %(month)s""",
+			{
+				"user": user,
+				"ptype": USER_SETTINGS,
+				"pfield": MODEL_USAGE_FIELD,
+				"model": model,
+				"month": month,
+			},
+		)
+	# Opportunistic: drop stale usage-only rows (no cap) for all this user's models.
+	frappe.db.sql(
+		"""DELETE FROM `tabJarvis User Model Usage`
+		   WHERE parent = %(user)s AND parenttype = %(ptype)s
+			 AND parentfield = %(pfield)s AND month_key != %(month)s
+			 AND COALESCE(monthly_token_limit, 0) = 0""",
+		{"user": user, "ptype": USER_SETTINGS, "pfield": MODEL_USAGE_FIELD, "month": month},
+	)
+
+
+def set_model_limit(user: str, model: str, limit: int, now=None) -> None:
+	"""Upsert the per-model cap on the current-month child row, creating the row
+	(zero usage) when the model has no usage yet this month. Admin-gated by the
+	caller (jarvis.chat.user_settings_api.admin_set_user_model_limit)."""
+	now = now or frappe.utils.now_datetime()
+	month = current_month_key()
+	limit = max(0, int(limit or 0))
+	name = _current_model_row_name(user, model, month)
+	if name:
+		frappe.db.sql(
+			"""UPDATE `tabJarvis User Model Usage`
+			   SET monthly_token_limit = %(limit)s, modified = %(now)s
+			   WHERE name = %(name)s""",
+			{"limit": limit, "now": now, "name": name},
+		)
+	else:
+		_insert_model_row(user, model, month, in_tokens=0, out_tokens=0, limit=limit, now=now)
+	frappe.db.commit()
 
 
 def refresh_session_snapshots(rows: list[dict]) -> dict:

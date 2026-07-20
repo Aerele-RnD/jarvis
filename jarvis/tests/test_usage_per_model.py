@@ -89,3 +89,95 @@ class TestChildDoctypeSchema(_Base):
 		self.assertEqual(f.fieldtype, "Table")
 		self.assertEqual(f.options, MODEL_USAGE)
 		self.assertEqual(int(f.permlevel or 0), 1)
+
+
+class TestPerModelAttribution(_Base):
+	def _row(self, **kw):
+		base = {
+			"totalTokensFresh": True,
+			"inputTokens": 0,
+			"outputTokens": 0,
+			"totalTokens": 0,
+			"model": "gpt-4o",
+		}
+		base.update(kw)
+		return base
+
+	def _child(self, model):
+		return frappe.db.get_value(
+			MODEL_USAGE,
+			{
+				"parent": USER_A,
+				"parenttype": USETT,
+				"parentfield": "user_model_usage",
+				"model": model,
+				"month_key": usage.current_month_key(),
+			},
+			["month_input_tokens", "month_output_tokens", "monthly_token_limit"],
+			as_dict=True,
+		)
+
+	def test_upserts_and_accumulates_per_model(self):
+		_make_session("agent:pm1", USER_A)
+		usage.record_turn_usage("agent:pm1", self._row(model="gpt-4o", inputTokens=10, outputTokens=5))
+		usage.record_turn_usage("agent:pm1", self._row(model="gpt-4o", inputTokens=8, outputTokens=12))
+		usage.record_turn_usage("agent:pm1", self._row(model="claude-sonnet", inputTokens=3, outputTokens=4))
+		g = self._child("gpt-4o")
+		self.assertEqual(g.month_input_tokens, 18)
+		self.assertEqual(g.month_output_tokens, 17)
+		c = self._child("claude-sonnet")
+		self.assertEqual(c.month_input_tokens, 3)
+		self.assertEqual(c.month_output_tokens, 4)
+
+	def test_missing_model_field_tolerated_no_child_row(self):
+		_make_session("agent:pm2", USER_A)
+		# No "model" key: aggregate still records; no child row is created; no raise.
+		usage.record_turn_usage("agent:pm2", {"totalTokensFresh": True, "inputTokens": 5, "outputTokens": 5})
+		self.assertEqual(frappe.utils.cint(frappe.db.get_value(USETT, {"user": USER_A}, "month_tokens")), 10)
+		self.assertEqual(frappe.get_all(MODEL_USAGE, filters={"parent": USER_A}), [])
+
+	def test_month_rollover_prunes_stale_usage_and_carries_cap(self):
+		_make_session("agent:pm3", USER_A)
+		usage.record_turn_usage("agent:pm3", self._row(model="gpt-4o", inputTokens=10, outputTokens=5))
+		# Give gpt-4o a cap and mark its row + the parent as a prior month.
+		usage.set_model_limit(USER_A, "gpt-4o", 1000)
+		frappe.db.set_value(
+			MODEL_USAGE,
+			{"parent": USER_A, "model": "gpt-4o", "month_key": usage.current_month_key()},
+			"month_key",
+			"2020-01",
+			update_modified=False,
+		)
+		# A zero-cap stale row that must be pruned on the next record.
+		usage.record_turn_usage("agent:pm3", self._row(model="oldmodel", inputTokens=1, outputTokens=1))
+		frappe.db.set_value(
+			MODEL_USAGE,
+			{"parent": USER_A, "model": "oldmodel", "month_key": usage.current_month_key()},
+			"month_key",
+			"2020-01",
+			update_modified=False,
+		)
+		frappe.db.commit()
+		# New turn on gpt-4o this month: fresh current-month row, cap carried, delta reset.
+		usage.record_turn_usage("agent:pm3", self._row(model="gpt-4o", inputTokens=7, outputTokens=3))
+		g = self._child("gpt-4o")
+		self.assertEqual(g.month_input_tokens, 7)  # reset to new delta
+		self.assertEqual(g.month_output_tokens, 3)
+		self.assertEqual(g.monthly_token_limit, 1000)  # cap survived rollover
+		# Stale zero-cap row pruned; no stale gpt-4o row remains.
+		self.assertEqual(frappe.get_all(MODEL_USAGE, filters={"parent": USER_A, "month_key": "2020-01"}), [])
+
+	def test_set_model_limit_creates_row_without_usage(self):
+		usage.get_or_create_user_settings(USER_A)
+		usage.set_model_limit(USER_A, "gpt-4o", 500)
+		g = self._child("gpt-4o")
+		self.assertIsNotNone(g)
+		self.assertEqual(g.monthly_token_limit, 500)
+		self.assertEqual(g.month_input_tokens, 0)
+
+	def test_never_raises_on_bad_model_write(self):
+		# A malformed model value must not break the turn (G1). Empty string is
+		# treated as "no model" and simply records the aggregate only.
+		_make_session("agent:pm4", USER_A)
+		usage.record_turn_usage("agent:pm4", self._row(model="", inputTokens=4, outputTokens=4))
+		self.assertEqual(frappe.get_all(MODEL_USAGE, filters={"parent": USER_A}), [])
