@@ -51,18 +51,18 @@ def _build_rollup(cap: int = _MAX_USERS) -> tuple[dict, bool]:
 	)
 	truncated = len(rows) > cap
 	rows = rows[:cap]
-	per_model_by_user = _per_model_totals(
-		[s.user for s in rows], month
-	)
+	per_model_by_user = _per_model_totals([s.user for s in rows], month)
 	users = []
 	for s in rows:
-		users.append({
-			"email": s.user,
-			"tokens_in": int(s.month_input_tokens or 0),
-			"tokens_out": int(s.month_output_tokens or 0),
-			"total_tokens": int(s.month_tokens or 0),
-			"per_model": per_model_by_user.get(s.user, {}),
-		})
+		users.append(
+			{
+				"email": s.user,
+				"tokens_in": int(s.month_input_tokens or 0),
+				"tokens_out": int(s.month_output_tokens or 0),
+				"total_tokens": int(s.month_tokens or 0),
+				"per_model": per_model_by_user.get(s.user, {}),
+			}
+		)
 	return {"month_key": month, "users": users}, truncated
 
 
@@ -93,8 +93,10 @@ def _per_model_totals(users: list[str], month: str) -> dict[str, dict[str, dict]
 		GROUP BY parent, model
 		""",
 		{
-			"users": tuple(users), "ptype": USER_SETTINGS,
-			"pfield": MODEL_USAGE_FIELD, "month": month,
+			"users": tuple(users),
+			"ptype": USER_SETTINGS,
+			"pfield": MODEL_USAGE_FIELD,
+			"month": month,
 		},
 		as_dict=True,
 	):
@@ -118,8 +120,7 @@ def push_usage_rollup() -> None:
 			return
 		rollup, truncated = _build_rollup()
 		if truncated:
-			frappe.logger("jarvis.usage_push").warning(
-				"usage rollup truncated at %s users", _MAX_USERS)
+			frappe.logger("jarvis.usage_push").warning("usage rollup truncated at %s users", _MAX_USERS)
 		if not rollup["users"]:
 			return
 		from jarvis import admin_client

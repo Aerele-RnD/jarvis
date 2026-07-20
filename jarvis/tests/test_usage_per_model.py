@@ -250,9 +250,11 @@ class TestPerModelWriteFailureIsolation(_Base):
 			commit_calls.append(True)
 			return real_commit(*args, **kwargs)
 
-		with patch.object(usage, "_upsert_model_usage", side_effect=RuntimeError("boom")), \
-			patch.object(frappe.db, "commit", counting_commit), \
-			patch("frappe.log_error") as mock_log_error:
+		with (
+			patch.object(usage, "_upsert_model_usage", side_effect=RuntimeError("boom")),
+			patch.object(frappe.db, "commit", counting_commit),
+			patch("frappe.log_error") as mock_log_error,
+		):
 			usage.record_turn_usage(
 				"agent:pmfail",
 				{
@@ -270,11 +272,14 @@ class TestPerModelWriteFailureIsolation(_Base):
 		# title - that title only fires when the whole function bailed early
 		# (pre-fix behavior, which skips the commit).
 		self.assertTrue(mock_log_error.called)
-		titles = [c.kwargs.get("title") or (c.args[0] if c.args else None) for c in mock_log_error.call_args_list]
+		titles = [
+			c.kwargs.get("title") or (c.args[0] if c.args else None) for c in mock_log_error.call_args_list
+		]
 		self.assertNotIn("jarvis usage: record_turn_usage failed", titles)
 
 		s = frappe.db.get_value(
-			USETT, {"user": USER_A},
+			USETT,
+			{"user": USER_A},
 			["month_input_tokens", "month_output_tokens", "month_tokens", "total_tokens"],
 			as_dict=True,
 		)
@@ -283,7 +288,8 @@ class TestPerModelWriteFailureIsolation(_Base):
 		self.assertEqual(s.month_tokens, 15)
 		self.assertEqual(s.total_tokens, 15)
 		sess = frappe.db.get_value(
-			SESSION, {"session_key": "agent:pmfail"},
+			SESSION,
+			{"session_key": "agent:pmfail"},
 			["input_tokens", "output_tokens", "run_count"],
 			as_dict=True,
 		)

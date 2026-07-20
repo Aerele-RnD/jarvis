@@ -59,8 +59,10 @@ def _per_model_rows_by_user(users: list[str]) -> dict[str, list[dict]]:
 	rows = frappe.get_all(
 		usage.MODEL_USAGE,
 		filters={
-			"parent": ["in", users], "parenttype": USER_SETTINGS,
-			"parentfield": usage.MODEL_USAGE_FIELD, "month_key": usage.current_month_key(),
+			"parent": ["in", users],
+			"parenttype": USER_SETTINGS,
+			"parentfield": usage.MODEL_USAGE_FIELD,
+			"month_key": usage.current_month_key(),
 		},
 		fields=["parent", "model", "month_input_tokens", "month_output_tokens", "monthly_token_limit"],
 		order_by="month_input_tokens desc",
@@ -77,8 +79,10 @@ def _per_model_rows(user: str) -> list[dict]:
 	rows = frappe.get_all(
 		usage.MODEL_USAGE,
 		filters={
-			"parent": user, "parenttype": USER_SETTINGS,
-			"parentfield": usage.MODEL_USAGE_FIELD, "month_key": usage.current_month_key(),
+			"parent": user,
+			"parenttype": USER_SETTINGS,
+			"parentfield": usage.MODEL_USAGE_FIELD,
+			"month_key": usage.current_month_key(),
 		},
 		fields=["model", "month_input_tokens", "month_output_tokens", "monthly_token_limit"],
 		order_by="month_input_tokens desc",
@@ -169,19 +173,21 @@ def admin_list_user_usage() -> dict:
 	for r in rows:
 		if r.user not in user_map:
 			continue
-		out.append({
-			"user": r.user,
-			"full_name": user_map[r.user] or r.user,
-			"monthly_token_limit": cint(r.monthly_token_limit),
-			"usage_month": r.usage_month,
-			"month_tokens": _month_tokens_effective(r.usage_month, r.month_tokens),
-			"month_input_tokens": _month_tokens_effective(r.usage_month, r.month_input_tokens),
-			"month_output_tokens": _month_tokens_effective(r.usage_month, r.month_output_tokens),
-			"total_tokens": cint(r.total_tokens),
-			"last_usage_at": r.last_usage_at,
-			"last_synced_at": r.last_synced_at,
-			"per_model": per_model_by_user.get(r.user, []),
-		})
+		out.append(
+			{
+				"user": r.user,
+				"full_name": user_map[r.user] or r.user,
+				"monthly_token_limit": cint(r.monthly_token_limit),
+				"usage_month": r.usage_month,
+				"month_tokens": _month_tokens_effective(r.usage_month, r.month_tokens),
+				"month_input_tokens": _month_tokens_effective(r.usage_month, r.month_input_tokens),
+				"month_output_tokens": _month_tokens_effective(r.usage_month, r.month_output_tokens),
+				"total_tokens": cint(r.total_tokens),
+				"last_usage_at": r.last_usage_at,
+				"last_synced_at": r.last_synced_at,
+				"per_model": per_model_by_user.get(r.user, []),
+			}
+		)
 	return {"ok": True, "data": out}
 
 
@@ -207,9 +213,7 @@ def admin_set_user_limit(user: str, monthly_token_limit: int = 0) -> dict:
 
 
 @frappe.whitelist()
-def admin_set_user_model_limit(
-	user: str, model: str, monthly_token_limit: int = 0
-) -> dict:
+def admin_set_user_model_limit(user: str, model: str, monthly_token_limit: int = 0) -> dict:
 	"""Set a user's PER-MODEL monthly token cap (0 = unlimited), creating the
 	settings row + current-month child row if absent. Mirrors admin_set_user_limit.
 	Admins only (server re-checks; the SPA gate is UX)."""

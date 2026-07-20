@@ -577,11 +577,16 @@ class TestMeasuredUsage(_UsageTestBase):
 		from jarvis.chat.api import _measured_usage
 
 		usage.get_or_create_user_settings(USER_A)
-		sentinel = [{"model": "sentinel-model", "month_input_tokens": 1,
-			"month_output_tokens": 2, "month_tokens": 3, "monthly_token_limit": 4}]
-		with patch.object(
-			user_settings_api, "_per_model_rows", return_value=sentinel
-		) as mock_rows:
+		sentinel = [
+			{
+				"model": "sentinel-model",
+				"month_input_tokens": 1,
+				"month_output_tokens": 2,
+				"month_tokens": 3,
+				"monthly_token_limit": 4,
+			}
+		]
+		with patch.object(user_settings_api, "_per_model_rows", return_value=sentinel) as mock_rows:
 			m = _measured_usage(USER_A)
 		mock_rows.assert_called_once_with(USER_A)
 		self.assertEqual(m["per_model"], sentinel)

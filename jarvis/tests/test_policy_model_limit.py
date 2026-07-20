@@ -19,11 +19,17 @@ USER_A = "jarvis-polmodel-a@example.test"
 
 def _ensure_user(email: str) -> None:
 	if not frappe.db.exists("User", email):
-		frappe.get_doc({
-			"doctype": "User", "email": email, "first_name": "Jarvis",
-			"last_name": "PolModelTest", "enabled": 1, "send_welcome_email": 0,
-			"user_type": "System User",
-		}).insert(ignore_permissions=True)
+		frappe.get_doc(
+			{
+				"doctype": "User",
+				"email": email,
+				"first_name": "Jarvis",
+				"last_name": "PolModelTest",
+				"enabled": 1,
+				"send_welcome_email": 0,
+				"user_type": "System User",
+			}
+		).insert(ignore_permissions=True)
 
 
 def _cleanup() -> None:
@@ -83,9 +89,7 @@ class _Base(FrappeTestCase):
 		cleaning up after."""
 		now = frappe.utils.now_datetime()
 		month = usage.current_month_key()
-		frappe.db.sql(
-			"ALTER TABLE `tabJarvis User Model Usage` DROP INDEX `parent_field_model_month`"
-		)
+		frappe.db.sql("ALTER TABLE `tabJarvis User Model Usage` DROP INDEX `parent_field_model_month`")
 		self.addCleanup(self._restore_model_usage_unique_index)
 		frappe.db.sql(
 			"""
@@ -116,13 +120,13 @@ class _Base(FrappeTestCase):
 
 class TestPerModelGate(_Base):
 	def test_blocks_when_pinned_model_over_limit(self):
-		self._set_model_usage("gpt-4o", 60, 50, 100)   # used 110 >= 100
+		self._set_model_usage("gpt-4o", 60, 50, 100)  # used 110 >= 100
 		ok, reason = policy.validate_can_send(USER_A, model="gpt-4o")
 		self.assertFalse(ok)
 		self.assertEqual(reason, "usage_limit")
 
 	def test_allows_when_pinned_model_under_limit(self):
-		self._set_model_usage("gpt-4o", 20, 20, 100)   # used 40 < 100
+		self._set_model_usage("gpt-4o", 20, 20, 100)  # used 40 < 100
 		ok, reason = policy.validate_can_send(USER_A, model="gpt-4o")
 		self.assertTrue(ok)
 		self.assertIsNone(reason)
@@ -146,7 +150,8 @@ class TestPerModelGate(_Base):
 		# per-model row for the passed model.
 		user_settings_api.admin_set_user_limit(user=USER_A, monthly_token_limit=100)
 		frappe.db.set_value(
-			USETT, {"user": USER_A},
+			USETT,
+			{"user": USER_A},
 			{"usage_month": usage.current_month_key(), "month_tokens": 150},
 			update_modified=False,
 		)
@@ -156,7 +161,7 @@ class TestPerModelGate(_Base):
 		self.assertEqual(reason, "usage_limit")
 
 	def test_fail_open_on_db_error(self):
-		self._set_model_usage("gpt-4o", 999, 0, 100)   # would block if it ran
+		self._set_model_usage("gpt-4o", 999, 0, 100)  # would block if it ran
 		# _over_model_limit reads via frappe.db.sql (a SUM/MAX aggregate, not
 		# get_value - see its docstring), so that's the call site to break.
 		with patch("frappe.db.sql", side_effect=RuntimeError("boom")):

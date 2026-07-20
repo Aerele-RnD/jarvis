@@ -52,10 +52,14 @@ export const setUserTheme = (theme) => call(US + "set_user_theme", { theme });
 // the client's window.is_jarvis_admin gate.
 export const adminListUserUsage = () => call(US + "admin_list_user_usage");
 export const adminSetUserLimit = (user, monthlyTokenLimit) =>
-	call(US + "admin_set_user_limit", { user, monthly_token_limit: monthlyTokenLimit })
+	call(US + "admin_set_user_limit", { user, monthly_token_limit: monthlyTokenLimit });
 export const adminSetUserModelLimit = (user, model, monthlyTokenLimit) =>
-	call(US + "admin_set_user_model_limit", { user, model, monthly_token_limit: monthlyTokenLimit })
-export const adminSyncUsage = () => call(US + "admin_sync_usage")
+	call(US + "admin_set_user_model_limit", {
+		user,
+		model,
+		monthly_token_limit: monthlyTokenLimit,
+	});
+export const adminSyncUsage = () => call(US + "admin_sync_usage");
 
 // --- Mobile app onboarding: QR the phone scans to learn the site connection
 // details (no secret — just where to reach this site). ---

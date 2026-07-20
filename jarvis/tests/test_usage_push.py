@@ -20,11 +20,17 @@ _ALL_USERS = (USER_A, USER_B)
 
 def _ensure_user(email):
 	if not frappe.db.exists("User", email):
-		frappe.get_doc({
-			"doctype": "User", "email": email, "first_name": "Jarvis",
-			"last_name": "PushTest", "enabled": 1, "send_welcome_email": 0,
-			"user_type": "System User",
-		}).insert(ignore_permissions=True)
+		frappe.get_doc(
+			{
+				"doctype": "User",
+				"email": email,
+				"first_name": "Jarvis",
+				"last_name": "PushTest",
+				"enabled": 1,
+				"send_welcome_email": 0,
+				"user_type": "System User",
+			}
+		).insert(ignore_permissions=True)
 
 
 def _cleanup():
@@ -56,16 +62,24 @@ class _Base(FrappeTestCase):
 		usage.get_or_create_user_settings(user)
 		month = usage.current_month_key()
 		frappe.db.set_value(
-			USETT, {"user": user},
-			{"usage_month": month, "month_input_tokens": month_in,
-			 "month_output_tokens": month_out, "month_tokens": month_in + month_out},
-			update_modified=False)
+			USETT,
+			{"user": user},
+			{
+				"usage_month": month,
+				"month_input_tokens": month_in,
+				"month_output_tokens": month_out,
+				"month_tokens": month_in + month_out,
+			},
+			update_modified=False,
+		)
 		for model, (in_tok, out_tok, limit) in models.items():
 			usage.set_model_limit(user, model, limit)
 			frappe.db.set_value(
-				MODEL_USAGE, {"parent": user, "model": model, "month_key": month},
+				MODEL_USAGE,
+				{"parent": user, "model": model, "month_key": month},
 				{"month_input_tokens": in_tok, "month_output_tokens": out_tok},
-				update_modified=False)
+				update_modified=False,
+			)
 		frappe.db.commit()
 
 	def _seed(self):
@@ -96,9 +110,7 @@ class _Base(FrappeTestCase):
 		cleaning up after."""
 		now = frappe.utils.now_datetime()
 		month = usage.current_month_key()
-		frappe.db.sql(
-			"ALTER TABLE `tabJarvis User Model Usage` DROP INDEX `parent_field_model_month`"
-		)
+		frappe.db.sql("ALTER TABLE `tabJarvis User Model Usage` DROP INDEX `parent_field_model_month`")
 		self.addCleanup(self._restore_model_usage_unique_index)
 		frappe.db.sql(
 			"""
@@ -164,11 +176,15 @@ class TestBuildRollup(_Base):
 		# B share "gpt-4o" (different token counts) and each also has a
 		# model the other doesn't, so any cross-user leak or drop shows up.
 		self._seed_user(
-			USER_A, month_in=48, month_out=32,
+			USER_A,
+			month_in=48,
+			month_out=32,
 			models={"gpt-4o": (18, 12, 0), "claude-sonnet": (10, 10, 0)},
 		)
 		self._seed_user(
-			USER_B, month_in=140, month_out=60,
+			USER_B,
+			month_in=140,
+			month_out=60,
 			models={"gpt-4o": (100, 50, 0), "gpt-4o-mini": (40, 10, 0)},
 		)
 		real_sql = frappe.db.sql
@@ -183,7 +199,8 @@ class TestBuildRollup(_Base):
 			rollup, truncated = usage_push._build_rollup()
 		# ONE query for all users' per-model rows, not one per user (N+1).
 		self.assertEqual(
-			len(model_usage_queries), 1,
+			len(model_usage_queries),
+			1,
 			f"expected 1 batched per-model query, got {len(model_usage_queries)}",
 		)
 		self.assertFalse(truncated)
@@ -207,9 +224,11 @@ class TestBuildRollup(_Base):
 class TestPushJob(_Base):
 	def test_pushes_when_configured(self):
 		self._seed()
-		with patch("jarvis.selfhost.is_self_hosted", return_value=False), \
-			 patch.object(usage_push, "_admin_configured", return_value=True), \
-			 patch("jarvis.admin_client.push_usage_rollup", return_value={"ok": True}) as push:
+		with (
+			patch("jarvis.selfhost.is_self_hosted", return_value=False),
+			patch.object(usage_push, "_admin_configured", return_value=True),
+			patch("jarvis.admin_client.push_usage_rollup", return_value={"ok": True}) as push,
+		):
 			usage_push.push_usage_rollup()
 		push.assert_called_once()
 		sent = push.call_args.args[0]
@@ -218,37 +237,45 @@ class TestPushJob(_Base):
 
 	def test_self_hosted_skips(self):
 		self._seed()
-		with patch("jarvis.selfhost.is_self_hosted", return_value=True), \
-			 patch("jarvis.admin_client.push_usage_rollup") as push:
+		with (
+			patch("jarvis.selfhost.is_self_hosted", return_value=True),
+			patch("jarvis.admin_client.push_usage_rollup") as push,
+		):
 			usage_push.push_usage_rollup()
 		push.assert_not_called()
 
 	def test_unconfigured_skips(self):
 		self._seed()
-		with patch("jarvis.selfhost.is_self_hosted", return_value=False), \
-			 patch.object(usage_push, "_admin_configured", return_value=False), \
-			 patch("jarvis.admin_client.push_usage_rollup") as push:
+		with (
+			patch("jarvis.selfhost.is_self_hosted", return_value=False),
+			patch.object(usage_push, "_admin_configured", return_value=False),
+			patch("jarvis.admin_client.push_usage_rollup") as push,
+		):
 			usage_push.push_usage_rollup()
 		push.assert_not_called()
 
 	def test_failure_is_swallowed(self):
 		self._seed()
 		from jarvis.exceptions import AdminUnreachableError
-		with patch("jarvis.selfhost.is_self_hosted", return_value=False), \
-			 patch.object(usage_push, "_admin_configured", return_value=True), \
-			 patch("jarvis.admin_client.push_usage_rollup",
-				   side_effect=AdminUnreachableError("down")), \
-			 patch("frappe.log_error") as logged:
-			usage_push.push_usage_rollup()   # must NOT raise
+
+		with (
+			patch("jarvis.selfhost.is_self_hosted", return_value=False),
+			patch.object(usage_push, "_admin_configured", return_value=True),
+			patch("jarvis.admin_client.push_usage_rollup", side_effect=AdminUnreachableError("down")),
+			patch("frappe.log_error") as logged,
+		):
+			usage_push.push_usage_rollup()  # must NOT raise
 		self.assertTrue(logged.called)
 
 	def test_not_onboarded_is_quiet_skip(self):
 		self._seed()
 		from jarvis.exceptions import AdminAuthError
-		with patch("jarvis.selfhost.is_self_hosted", return_value=False), \
-			 patch.object(usage_push, "_admin_configured", return_value=True), \
-			 patch("jarvis.admin_client.push_usage_rollup",
-				   side_effect=AdminAuthError("not onboarded")), \
-			 patch("frappe.log_error") as logged:
-			usage_push.push_usage_rollup()   # must NOT raise, and not log_error
+
+		with (
+			patch("jarvis.selfhost.is_self_hosted", return_value=False),
+			patch.object(usage_push, "_admin_configured", return_value=True),
+			patch("jarvis.admin_client.push_usage_rollup", side_effect=AdminAuthError("not onboarded")),
+			patch("frappe.log_error") as logged,
+		):
+			usage_push.push_usage_rollup()  # must NOT raise, and not log_error
 		self.assertFalse(logged.called)

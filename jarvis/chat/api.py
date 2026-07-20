@@ -1345,15 +1345,17 @@ def _measured_usage(user: str) -> dict | None:
 
 		return None if selfhost.is_self_hosted() else measured
 	stale = row.usage_month != _usage_month_key()
-	measured.update({
-		"month_tokens": 0 if stale else int(row.month_tokens or 0),
-		"month_input_tokens": 0 if stale else int(row.month_input_tokens or 0),
-		"month_output_tokens": 0 if stale else int(row.month_output_tokens or 0),
-		"total_tokens": int(row.total_tokens or 0),
-		"monthly_token_limit": int(row.monthly_token_limit or 0),
-		"usage_month": row.usage_month,
-		"last_usage_at": row.last_usage_at,
-	})
+	measured.update(
+		{
+			"month_tokens": 0 if stale else int(row.month_tokens or 0),
+			"month_input_tokens": 0 if stale else int(row.month_input_tokens or 0),
+			"month_output_tokens": 0 if stale else int(row.month_output_tokens or 0),
+			"total_tokens": int(row.total_tokens or 0),
+			"monthly_token_limit": int(row.monthly_token_limit or 0),
+			"usage_month": row.usage_month,
+			"last_usage_at": row.last_usage_at,
+		}
+	)
 	# Reuse user_settings_api's per-model query + row-shaping rather than
 	# reimplementing it here (the two had drifted into duplicate copies of
 	# the same logic).

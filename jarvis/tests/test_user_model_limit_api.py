@@ -26,11 +26,17 @@ _ALL = (USER_A, USER_ADMIN, USER_PLAIN)
 
 def _ensure_user(email, roles=()):
 	if not frappe.db.exists("User", email):
-		frappe.get_doc({
-			"doctype": "User", "email": email, "first_name": "Jarvis",
-			"last_name": "UmlApi", "enabled": 1, "send_welcome_email": 0,
-			"user_type": "System User",
-		}).insert(ignore_permissions=True)
+		frappe.get_doc(
+			{
+				"doctype": "User",
+				"email": email,
+				"first_name": "Jarvis",
+				"last_name": "UmlApi",
+				"enabled": 1,
+				"send_welcome_email": 0,
+				"user_type": "System User",
+			}
+		).insert(ignore_permissions=True)
 	if roles:
 		frappe.get_doc("User", email).add_roles(*roles)
 
@@ -74,7 +80,8 @@ class _Base(FrappeTestCase):
 class TestAdminSetModelLimit(_Base):
 	def test_creates_row_and_sets_cap(self):
 		out = user_settings_api.admin_set_user_model_limit(
-			user=USER_A, model="gpt-4o", monthly_token_limit=500)
+			user=USER_A, model="gpt-4o", monthly_token_limit=500
+		)
 		self.assertTrue(out["ok"])
 		self.assertEqual(out["data"]["model"], "gpt-4o")
 		self.assertEqual(out["data"]["monthly_token_limit"], 500)
@@ -82,27 +89,27 @@ class TestAdminSetModelLimit(_Base):
 			frappe.db.get_value(
 				MODEL_USAGE,
 				{"parent": USER_A, "model": "gpt-4o", "month_key": usage.current_month_key()},
-				"monthly_token_limit"),
+				"monthly_token_limit",
+			),
 			500,
 		)
 
 	def test_unknown_user_refused(self):
 		out = user_settings_api.admin_set_user_model_limit(
-			user="nobody@example.invalid", model="gpt-4o", monthly_token_limit=1)
+			user="nobody@example.invalid", model="gpt-4o", monthly_token_limit=1
+		)
 		self.assertFalse(out["ok"])
 		self.assertEqual(out["reason"], "unknown_user")
 
 	def test_blank_model_refused(self):
-		out = user_settings_api.admin_set_user_model_limit(
-			user=USER_A, model="  ", monthly_token_limit=1)
+		out = user_settings_api.admin_set_user_model_limit(user=USER_A, model="  ", monthly_token_limit=1)
 		self.assertFalse(out["ok"])
 		self.assertEqual(out["reason"], "invalid_model")
 
 	def test_plain_user_refused(self):
 		frappe.set_user(USER_PLAIN)
 		with self.assertRaises(frappe.PermissionError):
-			user_settings_api.admin_set_user_model_limit(
-				user=USER_A, model="gpt-4o", monthly_token_limit=1)
+			user_settings_api.admin_set_user_model_limit(user=USER_A, model="gpt-4o", monthly_token_limit=1)
 
 	def test_admin_list_includes_per_model(self):
 		_make = usage.get_or_create_user_settings(USER_A)
@@ -110,7 +117,9 @@ class TestAdminSetModelLimit(_Base):
 		frappe.db.set_value(
 			MODEL_USAGE,
 			{"parent": USER_A, "model": "gpt-4o", "month_key": usage.current_month_key()},
-			{"month_input_tokens": 30, "month_output_tokens": 10}, update_modified=False)
+			{"month_input_tokens": 30, "month_output_tokens": 10},
+			update_modified=False,
+		)
 		frappe.db.commit()
 		out = user_settings_api.admin_list_user_usage()
 		row = {r["user"]: r for r in out["data"]}[USER_A]
@@ -174,23 +183,30 @@ class TestAdminListPerModelBatched(FrappeTestCase):
 		# BATCH_USER_3 has no per-model rows at all.
 		month = usage.current_month_key()
 		frappe.db.set_value(
-			MODEL_USAGE, {"parent": BATCH_USER_1, "model": "gpt-4o", "month_key": month},
-			{"month_input_tokens": 30, "month_output_tokens": 10}, update_modified=False)
+			MODEL_USAGE,
+			{"parent": BATCH_USER_1, "model": "gpt-4o", "month_key": month},
+			{"month_input_tokens": 30, "month_output_tokens": 10},
+			update_modified=False,
+		)
 		frappe.db.set_value(
-			MODEL_USAGE, {"parent": BATCH_USER_1, "model": "claude-sonnet", "month_key": month},
-			{"month_input_tokens": 5, "month_output_tokens": 5}, update_modified=False)
+			MODEL_USAGE,
+			{"parent": BATCH_USER_1, "model": "claude-sonnet", "month_key": month},
+			{"month_input_tokens": 5, "month_output_tokens": 5},
+			update_modified=False,
+		)
 		frappe.db.set_value(
-			MODEL_USAGE, {"parent": BATCH_USER_2, "model": "gpt-4o", "month_key": month},
-			{"month_input_tokens": 100, "month_output_tokens": 50}, update_modified=False)
+			MODEL_USAGE,
+			{"parent": BATCH_USER_2, "model": "gpt-4o", "month_key": month},
+			{"month_input_tokens": 100, "month_output_tokens": 50},
+			update_modified=False,
+		)
 		frappe.db.commit()
 
 	def test_admin_list_per_model_matches_per_user_reference_without_per_user_calls(self):
 		self._seed()
 		# Reference: what the OLD per-user path would have produced, computed
 		# independently of the code under test.
-		expected = {
-			email: user_settings_api._per_model_rows(email) for email in _BATCH_USERS
-		}
+		expected = {email: user_settings_api._per_model_rows(email) for email in _BATCH_USERS}
 		with patch.object(
 			user_settings_api, "_per_model_rows", wraps=user_settings_api._per_model_rows
 		) as spy:

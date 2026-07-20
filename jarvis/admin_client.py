@@ -683,8 +683,7 @@ def push_usage_rollup(rollup: dict) -> dict:
 	return _post(path=_m("api.tenant.ingest_usage_rollup"), body={"rollup": rollup})
 
 
-def pair_chat_device(public_key: str, device_id: str,
-                     *, request_timeout_s: int = 30) -> dict:
+def pair_chat_device(public_key: str, device_id: str, *, request_timeout_s: int = 30) -> dict:
 	"""POST customer's chat device pubkey to admin; admin asks the fleet-agent
 	to write a PairedDevice record into the customer's openclaw container and
 	returns the issued bearer device-token. Customer keeps the private key.

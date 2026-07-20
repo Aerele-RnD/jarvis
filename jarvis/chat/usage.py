@@ -411,9 +411,7 @@ def _upsert_model_usage(user: str, model: str, month: str, in_tokens: int, out_t
 		# _atomic_insert_or_merge_model_usage's docstring). The unique index
 		# makes the loser's write merge instead of duplicating.
 		limit = _prior_model_limit(user, model, month)
-		inserted = _atomic_insert_or_merge_model_usage(
-			user, model, month, in_tokens, out_tokens, limit, now
-		)
+		inserted = _atomic_insert_or_merge_model_usage(user, model, month, in_tokens, out_tokens, limit, now)
 		if inserted:
 			# This model's stale-month rows (cap already carried forward) go now.
 			frappe.db.sql(
