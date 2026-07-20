@@ -58,15 +58,13 @@ MSG = "Jarvis Chat Message"
 __all__ = [
 	"CONV",
 	"MSG",
-	"handle_chat_send",
-	"publish_to_user",
-	"run_agent_turn",
+	"POOL_VIRTUAL_MODEL",
 	"_ASSISTANT_BATCH_INTERVAL_MS",
 	"_ASSISTANT_BATCH_SIZE",
-	"_AssistantContentBatcher",
 	"_IMAGE_EXT",
 	"_MAX_INLINE_CHARS",
 	"_PROVIDER_LABEL_TO_OPENCLAW_ID",
+	"_AssistantContentBatcher",
 	"_create_assistant_placeholder",
 	"_handle_event",
 	"_handle_event_inner",
@@ -77,7 +75,9 @@ __all__ = [
 	"_session_model_for",
 	"_to_managed_attachments",
 	"_vision_enabled",
-	"POOL_VIRTUAL_MODEL",
+	"handle_chat_send",
+	"publish_to_user",
+	"run_agent_turn",
 ]
 
 

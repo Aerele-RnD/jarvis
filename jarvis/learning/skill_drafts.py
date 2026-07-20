@@ -177,7 +177,7 @@ def _safe_format(template: str, variables: dict) -> str:
 	placeholder instead) and stringifies values. Deterministic; no eval."""
 
 	class _Default(dict):
-		def __missing__(self, key):  # noqa: D401 - str.format_map hook
+		def __missing__(self, key):
 			return "{" + key + "}"
 
 	safe_vars = {k: ("" if v is None else str(v)) for k, v in (variables or {}).items()}

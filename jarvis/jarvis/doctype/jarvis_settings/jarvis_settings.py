@@ -105,7 +105,7 @@ def _admin_chat_readiness(*, timeout_s: int = _POOL_CONVERGE_PROBE_TIMEOUT_S):
 
 	try:
 		data = admin_client.get_connection(timeout_s=timeout_s) or {}
-	except Exception as e:  # noqa: BLE001 - convergence probe is best-effort
+	except Exception as e:
 		return None, str(e)
 	return (data.get("chat_readiness") or ""), (data.get("chat_readiness_reason") or "")
 

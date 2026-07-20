@@ -142,7 +142,7 @@ def _scrub_secrets(text: str) -> str:
 # deployment-level constants; re-exported here so existing
 # ``from jarvis.admin_client import DEFAULT_ADMIN_URL`` callers keep working.
 # Override per-customer via ``Jarvis Settings.jarvis_admin_url``.
-from jarvis.hooks import DEFAULT_ADMIN_URL  # noqa: E402  - used by _admin_url() below
+from jarvis.hooks import DEFAULT_ADMIN_URL
 
 
 def _admin_url(settings) -> str:

@@ -105,7 +105,9 @@ export function attachGlobalNotifier({ socket, router }) {
 	const go = (path) => {
 		try {
 			window.focus();
-		} catch (e) {}
+		} catch (e) {
+			// Some browsers refuse programmatic focus. Routing still works.
+		}
 		router.push(path);
 	};
 

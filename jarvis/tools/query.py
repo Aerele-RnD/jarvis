@@ -888,7 +888,7 @@ def _build_predicate(p: dict, alias_map: dict, depth: int = 1) -> Criterion:
 	else:
 		field_ref = p.get("field")
 		if not field_ref:
-			raise InvalidArgumentError(f"predicate missing 'field', 'agg', or 'expr'")
+			raise InvalidArgumentError("predicate missing 'field', 'agg', or 'expr'")
 		lhs = _resolve_field(field_ref, alias_map)
 
 	# Apply the operator. Each branch produces a Criterion.
@@ -912,7 +912,7 @@ def _build_predicate(p: dict, alias_map: dict, depth: int = 1) -> Criterion:
 	if op == "not in":
 		values = p.get("value")
 		if not isinstance(values, list):
-			raise InvalidArgumentError(f"'not in' operator requires a list value")
+			raise InvalidArgumentError("'not in' operator requires a list value")
 		return lhs.notin(values)
 	if op == "like":
 		return lhs.like(p["value"])
@@ -925,7 +925,7 @@ def _build_predicate(p: dict, alias_map: dict, depth: int = 1) -> Criterion:
 	if op == "between":
 		values = p.get("value")
 		if not isinstance(values, list) or len(values) != 2:
-			raise InvalidArgumentError(f"'between' operator requires a 2-element list value")
+			raise InvalidArgumentError("'between' operator requires a 2-element list value")
 		return lhs[slice(*values)]
 	# Unreachable - _validate_spec_shape already restricts op to _OPERATORS.
 	raise InvalidArgumentError(f"unsupported operator: {op}")

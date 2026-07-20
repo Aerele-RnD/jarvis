@@ -7,7 +7,7 @@ fenced/rendered output site-wide (hands every user the widest view).
 
 from __future__ import annotations
 
-import frappe  # noqa: F401 - session user default rides frappe via fence
+import frappe
 
 from jarvis.exceptions import InvalidArgumentError
 from jarvis.site_profile.collect import collect_profile

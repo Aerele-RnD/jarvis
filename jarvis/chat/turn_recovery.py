@@ -22,7 +22,7 @@ Design notes (from the 2026-06-30 review):
 from __future__ import annotations
 
 import contextlib
-from typing import Iterator
+from collections.abc import Iterator
 
 import frappe
 

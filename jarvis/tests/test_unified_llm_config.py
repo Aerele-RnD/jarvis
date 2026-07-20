@@ -2645,7 +2645,7 @@ class TestFT4bValidateModelsNeverRaises(_RT3SettingsTestCase):
 # pool readiness. (Faults (a)/(c) of the incident + the split-brain gate.)
 # ---------------------------------------------------------------------------
 
-from unittest.mock import patch  # noqa: E402
+from unittest.mock import patch
 
 
 class TestOnboardingAuditFixes(_RT3SettingsTestCase):

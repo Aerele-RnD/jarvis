@@ -23,7 +23,7 @@ class _FakeRequest:
 		return self._body
 
 
-import contextlib  # noqa: E402
+import contextlib
 
 
 @contextlib.contextmanager

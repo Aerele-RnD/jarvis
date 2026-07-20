@@ -5,7 +5,7 @@ import frappe
 from frappe.utils import strip_html
 
 from jarvis import audit, telemetry
-from jarvis._http import validate_bearer as _validate_bearer  # noqa: F401 (kept for callers in mcp.py)
+from jarvis._http import validate_bearer as _validate_bearer
 from jarvis._plugin_auth import PluginAuthError, validate_plugin_request
 from jarvis._session import impersonate
 from jarvis.exceptions import InvalidArgumentError, JarvisError
@@ -1211,7 +1211,7 @@ def _run_tool(tool: str, raw_args: dict | str | None, *, conversation: str | Non
 # success envelope (returned inline at lines like
 # ``{"ok": True, "data": data}``) is the matching ``ok()`` there if a
 # caller wants it explicitly.
-from jarvis._responses import err as _error  # noqa: E402
+from jarvis._responses import err as _error
 
 
 def _get_header(name: str) -> str:

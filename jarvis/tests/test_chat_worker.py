@@ -1185,9 +1185,17 @@ class TestRelayOverflowParks(FrappeTestCase):
 	customer plan's context-window size."""
 
 	def test_relay_error_overflow_branch_parks(self):
+		# Bounded by the NEXT branch rather than a fixed character count. The
+		# invariant is ordering - the overflow branch is handled before the
+		# aborted one - and a magic window measures that only by accident: the
+		# assertions here sat at offsets 754/799/886 of a 900-char window, so
+		# reformatting the file pushed the last one (24 chars) past the edge and
+		# turned this red for a change that altered no behaviour at all.
 		src = open(frappe.get_app_path("jarvis", "chat", "turn_handler.py")).read()
 		i = src.index('terminal["kind"] == "relay:error"')
-		branch = src[i : i + 900]
+		j = src.index('terminal.get("state") == "aborted"', i)
+		self.assertLess(i, j, "the overflow branch must come before the aborted branch")
+		branch = src[i:j]
 		self.assertIn('"context overflow" in err_text.lower()', branch)
 		self.assertIn("_mark_recovering(assistant_msg.name)", branch)
 		self.assertIn('"kind": "run:recovering"', branch)

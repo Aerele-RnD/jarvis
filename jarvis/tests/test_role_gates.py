@@ -19,7 +19,7 @@ import time
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
-from jarvis import oauth as _oauth_pkg  # noqa: F401
+from jarvis import oauth as _oauth_pkg
 from jarvis.oauth.api import _CACHE_KEY
 
 # (module path, callable name, kwargs).

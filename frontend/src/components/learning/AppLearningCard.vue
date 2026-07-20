@@ -168,9 +168,7 @@
 					class="mt-4 flex items-center gap-2 rounded-lg border bg-surface-gray-1 px-3 py-2 text-sm text-ink-gray-7"
 				>
 					<FeatherIcon name="clock" class="size-4 shrink-0 text-ink-gray-5" />
-					{{ overview.queued }} analysis run{{
-						overview.queued === 1 ? "" : "s"
-					}}
+					{{ overview.queued }} analysis run{{ overview.queued === 1 ? "" : "s" }}
 					queued.
 				</div>
 			</template>

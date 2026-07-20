@@ -4467,12 +4467,10 @@ function cardsOf(m) {
 						doctype: String(c.doctype || "").trim(),
 						name: String(c.name || "").trim(),
 						fields: Array.isArray(c.fields)
-							? c.fields
-									.slice(0, 12)
-									.map((f) => ({
-										label: String(f.label || ""),
-										value: String(f.value != null ? f.value : ""),
-									}))
+							? c.fields.slice(0, 12).map((f) => ({
+									label: String(f.label || ""),
+									value: String(f.value != null ? f.value : ""),
+							  }))
 							: [],
 					}))
 					.filter((c) => c.title || c.fields.length);

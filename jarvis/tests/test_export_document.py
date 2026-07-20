@@ -37,8 +37,8 @@ def _png_backend_ok() -> bool:
 	if not _pdf_backend_ok():
 		return False
 	try:
-		import PIL  # noqa: F401
-		import pypdfium2  # noqa: F401
+		import PIL
+		import pypdfium2
 
 		return True
 	except Exception:

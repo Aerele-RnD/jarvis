@@ -76,7 +76,10 @@ function setActivityDetail(v, { persist = true } = {}) {
 	activityDetail.value = !!v;
 	try {
 		localStorage.setItem("jarvis-activity-detail", v ? "1" : "0");
-	} catch (e) {}
+	} catch (e) {
+		// localStorage throws in private mode and when the quota is full.
+		// The preference is a nicety; losing it must never break the toggle.
+	}
 	if (persist) {
 		// Fire-and-forget: never blocks the toggle UI; failure surfaces as a
 		// toast (same as renameConversation/toggleStar below) but the local
@@ -97,7 +100,10 @@ async function toggleNotify() {
 		notifyEnabled.value = false;
 		try {
 			localStorage.setItem("jarvis-notify", "0");
-		} catch (e) {}
+		} catch (e) {
+			// localStorage throws in private mode and when the quota is full.
+			// The preference is a nicety; losing it must never break the toggle.
+		}
 		api.updateMySettings({ notify_enabled: 0 }).catch((e) => toast.error(errMsg(e)));
 		return;
 	}
@@ -113,7 +119,10 @@ async function toggleNotify() {
 		notifyEnabled.value = true;
 		try {
 			localStorage.setItem("jarvis-notify", "1");
-		} catch (e) {}
+		} catch (e) {
+			// localStorage throws in private mode and when the quota is full.
+			// The preference is a nicety; losing it must never break the toggle.
+		}
 		api.updateMySettings({ notify_enabled: 1 }).catch((e) => toast.error(errMsg(e)));
 	}
 }
@@ -132,7 +141,10 @@ function syncSettingsFromServer(data) {
 		notifyEnabled.value = !!data.notify_enabled && allowed;
 		try {
 			localStorage.setItem("jarvis-notify", notifyEnabled.value ? "1" : "0");
-		} catch (e) {}
+		} catch (e) {
+			// localStorage throws in private mode and when the quota is full.
+			// The preference is a nicety; losing it must never break the toggle.
+		}
 	}
 }
 

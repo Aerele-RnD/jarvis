@@ -24,7 +24,11 @@ export function analyze(data) {
 		if (e.source === e.target || full.hasEdge(e.source, e.target)) continue;
 		try {
 			full.addEdge(e.source, e.target, { weight: e.weight || 1 });
-		} catch (_) {}
+		} catch (_) {
+			// graphology throws on a duplicate edge, and the centrality measures
+			// throw on degenerate graphs. Both are normal for real wiki data - skip
+			// the offending item rather than failing the whole analysis.
+		}
 	}
 	let comm = {};
 	try {
@@ -47,7 +51,11 @@ export function analyze(data) {
 		) {
 			try {
 				pg.addEdge(e.source, e.target);
-			} catch (_) {}
+			} catch (_) {
+				// graphology throws on a duplicate edge, and the centrality measures
+				// throw on degenerate graphs. Both are normal for real wiki data - skip
+				// the offending item rather than failing the whole analysis.
+			}
 		}
 		(adj[e.source] = adj[e.source] || new Set()).add(e.target);
 		(adj[e.target] = adj[e.target] || new Set()).add(e.source);
@@ -55,11 +63,19 @@ export function analyze(data) {
 	let hb = { hubs: {}, authorities: {} };
 	try {
 		if (pg.size > 0) hb = hits(pg);
-	} catch (_) {}
+	} catch (_) {
+		// graphology throws on a duplicate edge, and the centrality measures
+		// throw on degenerate graphs. Both are normal for real wiki data - skip
+		// the offending item rather than failing the whole analysis.
+	}
 	let bt = {};
 	try {
 		if (pg.size > 0) bt = betweenness(pg);
-	} catch (_) {}
+	} catch (_) {
+		// graphology throws on a duplicate edge, and the centrality measures
+		// throw on degenerate graphs. Both are normal for real wiki data - skip
+		// the offending item rather than failing the whole analysis.
+	}
 
 	const metrics = {};
 	for (const n of nodes) {

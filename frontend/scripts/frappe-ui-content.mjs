@@ -190,13 +190,16 @@ export function frappeUIContentGlobs() {
       .filter(Boolean);
 
     /** Resolve an export name of the "frappe-ui" barrel to its defining file. */
-    function resolveName(name) {
+    // const, not a declaration: a function declaration inside a block is
+    // no-inner-declarations. Both call sites are below this line, so nothing
+    // relied on hoisting.
+    const resolveName = (name) => {
       const file = named.has(name)
         ? resolveModule(named.get(name), FUI_SRC)
         : wildcardFiles.find((f) => moduleExports(f, name)) || null;
       if (!file) throw new Error(`cannot resolve frappe-ui export "${name}"`);
       return file;
-    }
+    };
 
     // 1. Seed files: the defining module of every used export. (index.ts
     //    itself is only the name-resolution table — seeding it would pull

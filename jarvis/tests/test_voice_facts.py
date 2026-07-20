@@ -109,7 +109,7 @@ def _mock_voice(result):
 	return value, or an Exception / list side_effect."""
 	kwargs = {"side_effect": result} if isinstance(result, (Exception, list)) else {"return_value": result}
 	try:
-		import jarvis.chat.voice  # noqa: F401
+		import jarvis.chat.voice
 
 		have_real = True
 	except Exception:
@@ -137,7 +137,7 @@ def _mock_wiki():
 	with ``apply`` (apply_extracted_page_updates) and ``ingest``
 	(enqueue_ingest_note) mocks."""
 	try:
-		import jarvis.chat.wiki  # noqa: F401
+		import jarvis.chat.wiki
 
 		have_real = True
 	except Exception:
