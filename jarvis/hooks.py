@@ -321,6 +321,10 @@ scheduler_events = {
 		# Daily append of org-wide graph totals to Jarvis Wiki Graph History (one
 		# row/day) — the measured Knowledge-Evolution series for the Evolution tab.
 		"jarvis.chat.wiki_graph.record_history_snapshot",
+		# Architecture A (fleet usage spec §3/§5): best-effort daily push of the
+		# bench's month-to-date per-user + per-model usage rollup to admin. Self-
+		# gating (skips self-hosted / unconfigured / not-onboarded); never raises.
+		"jarvis.chat.usage_push.push_usage_rollup",
 	],
 	"weekly": [
 		# Wiki v2 health check: deterministic lint over Active pages
