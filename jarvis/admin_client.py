@@ -657,6 +657,14 @@ def get_llm_usage() -> dict:
 	return _post(path=_m("api.tenant.get_llm_usage"), body={})
 
 
+def push_usage_rollup(rollup: dict) -> dict:
+	"""Push the bench's month-to-date per-user + per-model usage rollup to admin
+	(Architecture A, fleet usage spec §3). Idempotent snapshot; admin upserts on
+	(tenant, user, month). Called best-effort from the usage_push daily cron.
+	Raises AdminAuthError / AdminUnreachableError / AdminValidationError."""
+	return _post(path=_m("api.tenant.ingest_usage_rollup"), body={"rollup": rollup})
+
+
 def pair_chat_device(public_key: str, device_id: str,
                      *, request_timeout_s: int = 30) -> dict:
 	"""POST customer's chat device pubkey to admin; admin asks the fleet-agent
