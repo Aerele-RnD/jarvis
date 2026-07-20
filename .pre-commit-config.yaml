@@ -1,4 +1,8 @@
-exclude: 'node_modules|.git'
+# `^\.git/`, not a bare `.git`: unanchored, the `.` is a regex wildcard and
+# `.git` matches the first four characters of `.github/...`, which silently
+# excluded every workflow file - so check-yaml was never validating the CI
+# config it most needs to validate.
+exclude: 'node_modules|^\.git/'
 default_stages: [pre-commit]
 fail_fast: false
 
