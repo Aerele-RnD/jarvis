@@ -1,8 +1,11 @@
-# This field is a REGEX, not a glob. Anchor every alternative and escape dots:
-# a bare `.git` here is `<any-char>git`, which matches the first four characters
-# of `.github/...` and silently excluded every workflow file - so check-yaml was
-# never validating the CI config, the one file where a YAML typo just makes
-# things stop running. Verify a change with:
+# This field is a REGEX, not a glob, and it must be ANCHORED. `.git` here once
+# silently excluded every workflow file - so check-yaml never validated the CI
+# config, the one file where a YAML typo just makes things stop running.
+#
+# ESCAPING THE DOT DOES NOT FIX IT. `\.git` is still unanchored and `.github/`
+# literally begins with `.git`, so it matches too - a second repo hit exactly
+# that variant while rolling this config out. Only `^\.git/` is safe.
+# Verify a change with:
 #   python3 -c "import re; print(bool(re.compile(PATTERN).search('.github/workflows/ci.yml')))"
 #
 # `.git/` itself needs no entry at all: pre-commit is only ever handed TRACKED
