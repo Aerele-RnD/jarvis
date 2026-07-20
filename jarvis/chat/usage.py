@@ -211,9 +211,25 @@ def record_turn_usage(session_key: str, row: dict | None) -> None:
 		# That's an intentionally honest bucket ("pool auto-routed"), not a
 		# bug: pool tenants get true per-model data from Bifrost logs on the
 		# admin side. Missing/blank model → aggregate only, no per-model row.
+		#
+		# Isolated in its OWN try/except: this call sits between the
+		# aggregate UPDATEs above and the commit below. If it raises and is
+		# left to the outer except, the function returns without committing
+		# - losing the aggregate deltas that already executed in this same
+		# transaction, which is worse than a missing per-model row. A bare
+		# rollback here would be equally wrong (it would deterministically
+		# discard the aggregate delta), so this just logs and continues,
+		# letting the aggregate updates reach the commit below regardless of
+		# what happened here.
 		model = (row.get("model") or "").strip()
 		if model:
-			_upsert_model_usage(user, model, month, input_tokens, output_tokens, now)
+			try:
+				_upsert_model_usage(user, model, month, input_tokens, output_tokens, now)
+			except Exception:
+				frappe.log_error(
+					title="jarvis usage: per-model write failed",
+					message=frappe.get_traceback(),
+				)
 		frappe.db.commit()
 	except Exception:
 		frappe.log_error(

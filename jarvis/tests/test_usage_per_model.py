@@ -8,6 +8,8 @@ user is deleted in tearDown (a transaction rollback cannot undo a commit).
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
@@ -226,6 +228,70 @@ class TestPoolAutoAttribution(_Base):
 		self.assertIsNotNone(row)
 		self.assertEqual(row.month_input_tokens, 10)
 		self.assertEqual(row.month_output_tokens, 5)
+
+
+class TestPerModelWriteFailureIsolation(_Base):
+	"""_upsert_model_usage runs between the aggregate UPDATEs and
+	record_turn_usage's own commit. If it raises, the CURRENT (buggy) code
+	falls straight into the function's outer except and returns WITHOUT
+	committing - the aggregate deltas that already executed only exist in
+	the uncommitted transaction, at the mercy of whatever runs next. The fix
+	must isolate the per-model call so record_turn_usage's own
+	frappe.db.commit() is still reached (and the outer except's log_error,
+	titled "record_turn_usage failed", must NOT fire - that title firing
+	would mean the commit was skipped again)."""
+
+	def test_aggregate_still_committed_when_per_model_write_raises(self):
+		_make_session("agent:pmfail", USER_A)
+		real_commit = frappe.db.commit
+		commit_calls = []
+
+		def counting_commit(*args, **kwargs):
+			commit_calls.append(True)
+			return real_commit(*args, **kwargs)
+
+		with patch.object(usage, "_upsert_model_usage", side_effect=RuntimeError("boom")), \
+			patch.object(frappe.db, "commit", counting_commit), \
+			patch("frappe.log_error") as mock_log_error:
+			usage.record_turn_usage(
+				"agent:pmfail",
+				{
+					"totalTokensFresh": True,
+					"inputTokens": 10,
+					"outputTokens": 5,
+					"totalTokens": 15,
+					"model": "gpt-4o",
+				},
+			)  # must not raise
+
+		# The function's own commit was reached despite the per-model failure.
+		self.assertEqual(len(commit_calls), 1)
+		# The per-model failure was logged, but NOT under the outer handler's
+		# title - that title only fires when the whole function bailed early
+		# (pre-fix behavior, which skips the commit).
+		self.assertTrue(mock_log_error.called)
+		titles = [c.kwargs.get("title") or (c.args[0] if c.args else None) for c in mock_log_error.call_args_list]
+		self.assertNotIn("jarvis usage: record_turn_usage failed", titles)
+
+		s = frappe.db.get_value(
+			USETT, {"user": USER_A},
+			["month_input_tokens", "month_output_tokens", "month_tokens", "total_tokens"],
+			as_dict=True,
+		)
+		self.assertEqual(s.month_input_tokens, 10)
+		self.assertEqual(s.month_output_tokens, 5)
+		self.assertEqual(s.month_tokens, 15)
+		self.assertEqual(s.total_tokens, 15)
+		sess = frappe.db.get_value(
+			SESSION, {"session_key": "agent:pmfail"},
+			["input_tokens", "output_tokens", "run_count"],
+			as_dict=True,
+		)
+		self.assertEqual(sess.input_tokens, 10)
+		self.assertEqual(sess.output_tokens, 5)
+		self.assertEqual(sess.run_count, 1)
+		# No per-model row: the write raised and was swallowed before insert/merge.
+		self.assertEqual(frappe.get_all(MODEL_USAGE, filters={"parent": USER_A}), [])
 
 
 class TestConcurrentFirstInsertRace(_Base):
