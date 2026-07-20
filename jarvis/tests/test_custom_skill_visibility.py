@@ -48,10 +48,15 @@ def _ensure_non_sm(email: str) -> str:
 	author holds it — the point of these tests is that even a role-holding author
 	cannot forge the managed flag / learned slug."""
 	if not frappe.db.exists("User", email):
-		u = frappe.get_doc({
-			"doctype": "User", "email": email,
-			"first_name": "jcs-sec", "send_welcome_email": 0, "enabled": 1,
-		})
+		u = frappe.get_doc(
+			{
+				"doctype": "User",
+				"email": email,
+				"first_name": "jcs-sec",
+				"send_welcome_email": 0,
+				"enabled": 1,
+			}
+		)
 		u.flags.ignore_permissions = True
 		u.insert(ignore_permissions=True)
 	udoc = frappe.get_doc("User", email)
@@ -136,13 +141,15 @@ class TestManagedFlagSecurity(FrappeTestCase):
 
 	def _new(self, **kw):
 		doc = frappe.new_doc("Jarvis Custom Skill")
-		doc.update({
-			"skill_name": kw.pop("skill_name", "jcs-sec-skill"),
-			"description": "security fixture",
-			"instructions": "body",
-			"enabled": 1,
-			"user_invocable": 0,
-		})
+		doc.update(
+			{
+				"skill_name": kw.pop("skill_name", "jcs-sec-skill"),
+				"description": "security fixture",
+				"instructions": "body",
+				"enabled": 1,
+				"user_invocable": 0,
+			}
+		)
 		doc.update(kw)
 		return doc
 

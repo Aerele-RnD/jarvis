@@ -7,7 +7,11 @@
 			type="button"
 			ref="fabEl"
 			class="jvw-fab"
-			:class="{ 'jvw-fab--snapping': snapping, 'jvw-fab--dragging': dragging, 'jvw-fab--faded': faded && !dragging }"
+			:class="{
+				'jvw-fab--snapping': snapping,
+				'jvw-fab--dragging': dragging,
+				'jvw-fab--faded': faded && !dragging,
+			}"
 			:style="fabStyle"
 			title="Ask Jarvis"
 			aria-label="Ask Jarvis"
@@ -19,7 +23,9 @@
 			@pointerenter="wake"
 			@focus="wake"
 		>
-			<svg viewBox="0 0 24 24" width="24" height="24" fill="#fff"><path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" /></svg>
+			<svg viewBox="0 0 24 24" width="24" height="24" fill="#fff">
+				<path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" />
+			</svg>
 		</button>
 	</div>
 </template>
@@ -168,7 +174,7 @@ function onPointerUp(e) {
 	try {
 		localStorage.setItem(
 			fabPos.STORAGE_KEY,
-			fabPos.serializePosition({ side: result.side, yRatio: result.yRatio }),
+			fabPos.serializePosition({ side: result.side, yRatio: result.yRatio })
 		);
 	} catch (e) {
 		/* localStorage unavailable */

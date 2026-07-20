@@ -42,6 +42,4 @@ class JarvisAgentInstallation(Document):
 		owner = self.owner or frappe.session.user
 		count = frappe.db.count("Jarvis Agent Installation", {"owner": owner})
 		if count >= MAX_INSTALLS_PER_OWNER:
-			frappe.throw(
-				_("You can have at most {0} installed agents.").format(MAX_INSTALLS_PER_OWNER)
-			)
+			frappe.throw(_("You can have at most {0} installed agents.").format(MAX_INSTALLS_PER_OWNER))

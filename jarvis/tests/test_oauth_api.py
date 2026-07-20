@@ -1,6 +1,7 @@
 """REV-3 OAuth API tests. Bench owns the full OAuth flow (PKCE gen +
 token exchange + blob push). Customer's laptop just hosts a browser
 session that pastes the redirected URL back."""
+
 import base64
 import json
 import time
@@ -18,6 +19,7 @@ def _jwt(payload: dict) -> str:
 	trust root for token-derived claims."""
 	payload_b64 = base64.urlsafe_b64encode(json.dumps(payload).encode()).rstrip(b"=").decode()
 	return f"header.{payload_b64}.signature"
+
 
 _CACHE_KEY = "jarvis.oauth.codex_signin"
 
@@ -59,30 +61,38 @@ class TestGcExpiredNonces(_OAuthApiBase):
 
 	def test_begin_evicts_expired_peer_nonces(self):
 		# Seed a peer's pending nonce that's already past its TTL.
-		frappe.cache.hset(_CACHE_KEY, "expired_peer", {
-			"status": "pending",
-			"originator_user": "peer@example.com",
-			"expires_at_ts": int(time.time()) - 60,
-			"state": "old-state",
-			"verifier": "old-verifier",
-			"provider": "OpenAI",
-			"model": "gpt-5.5",
-		})
+		frappe.cache.hset(
+			_CACHE_KEY,
+			"expired_peer",
+			{
+				"status": "pending",
+				"originator_user": "peer@example.com",
+				"expires_at_ts": int(time.time()) - 60,
+				"state": "old-state",
+				"verifier": "old-verifier",
+				"provider": "OpenAI",
+				"model": "gpt-5.5",
+			},
+		)
 		oauth_api.begin_paste_signin("OpenAI", "gpt-5.5")
 		# Sweep dropped the expired entry.
 		self.assertIsNone(frappe.cache.hget(_CACHE_KEY, "expired_peer"))
 
 	def test_begin_keeps_unexpired_peer_nonces(self):
 		# Peer's nonce hasn't expired yet - sweep must not touch it.
-		frappe.cache.hset(_CACHE_KEY, "live_peer", {
-			"status": "pending",
-			"originator_user": "peer@example.com",
-			"expires_at_ts": int(time.time()) + 600,
-			"state": "live-state",
-			"verifier": "live-verifier",
-			"provider": "OpenAI",
-			"model": "gpt-5.5",
-		})
+		frappe.cache.hset(
+			_CACHE_KEY,
+			"live_peer",
+			{
+				"status": "pending",
+				"originator_user": "peer@example.com",
+				"expires_at_ts": int(time.time()) + 600,
+				"state": "live-state",
+				"verifier": "live-verifier",
+				"provider": "OpenAI",
+				"model": "gpt-5.5",
+			},
+		)
 		oauth_api.begin_paste_signin("OpenAI", "gpt-5.5")
 		survived = frappe.cache.hget(_CACHE_KEY, "live_peer")
 		self.assertIsNotNone(survived)
@@ -145,7 +155,9 @@ class TestBeginPasteSignin(_OAuthApiBase):
 		for model in ("gpt-5.5", "gpt-5.4", "gpt-5.4-mini"):
 			out = oauth_api.begin_paste_signin("OpenAI", model)
 			entry = frappe.cache.hget(_CACHE_KEY, out["data"]["nonce"])
-			self.assertEqual(entry["model"], model, f"valid codex model {model!r} should pass through unchanged")
+			self.assertEqual(
+				entry["model"], model, f"valid codex model {model!r} should pass through unchanged"
+			)
 
 	def test_gemini_standard_api_model_coerced_to_cli_default(self):
 		"""Same hazard on the Gemini side: a gemini-pro / gemini-1.0-pro from
@@ -154,6 +166,7 @@ class TestBeginPasteSignin(_OAuthApiBase):
 		DEFAULT_MODEL rather than a literal so a catalogue refresh (e.g. the
 		2.0→2.5 bump) doesn't strand this test."""
 		from jarvis._subscription_models import DEFAULT_MODEL
+
 		out = oauth_api.begin_paste_signin("Google Gemini", "gemini-pro")
 		entry = frappe.cache.hget(_CACHE_KEY, out["data"]["nonce"])
 		self.assertEqual(entry["model"], DEFAULT_MODEL["Google Gemini"])
@@ -247,12 +260,20 @@ class TestCompletePasteSigninParsing(_OAuthApiBase):
 
 	def test_accepts_query_string_only(self):
 		nonce = self._seed()
-		with patch("jarvis.oauth.api._exchange_code", return_value={
-			"access_token": "AT", "refresh_token": "RT", "expires_in": 3600,
-			"id_token": "", "email": "x@y.com",
-		}), patch("jarvis.oauth.api.admin_client.post_push_oauth_blob"), \
-		     patch("jarvis.oauth.api.onboarding.save_llm_creds",
-		           return_value={"last_sync_status": "ok"}):
+		with (
+			patch(
+				"jarvis.oauth.api._exchange_code",
+				return_value={
+					"access_token": "AT",
+					"refresh_token": "RT",
+					"expires_in": 3600,
+					"id_token": "",
+					"email": "x@y.com",
+				},
+			),
+			patch("jarvis.oauth.api.admin_client.post_push_oauth_blob"),
+			patch("jarvis.oauth.api.onboarding.save_llm_creds", return_value={"last_sync_status": "ok"}),
+		):
 			out = oauth_api.complete_paste_signin(
 				nonce=nonce,
 				redirected_url="?code=ABC&state=test-state",
@@ -261,12 +282,20 @@ class TestCompletePasteSigninParsing(_OAuthApiBase):
 
 	def test_accepts_bare_querystring_no_prefix(self):
 		nonce = self._seed()
-		with patch("jarvis.oauth.api._exchange_code", return_value={
-			"access_token": "AT", "refresh_token": "RT", "expires_in": 3600,
-			"id_token": "", "email": "x@y.com",
-		}), patch("jarvis.oauth.api.admin_client.post_push_oauth_blob"), \
-		     patch("jarvis.oauth.api.onboarding.save_llm_creds",
-		           return_value={"last_sync_status": "ok"}):
+		with (
+			patch(
+				"jarvis.oauth.api._exchange_code",
+				return_value={
+					"access_token": "AT",
+					"refresh_token": "RT",
+					"expires_in": 3600,
+					"id_token": "",
+					"email": "x@y.com",
+				},
+			),
+			patch("jarvis.oauth.api.admin_client.post_push_oauth_blob"),
+			patch("jarvis.oauth.api.onboarding.save_llm_creds", return_value={"last_sync_status": "ok"}),
+		):
 			out = oauth_api.complete_paste_signin(
 				nonce=nonce,
 				redirected_url="code=ABC&state=test-state",
@@ -280,12 +309,20 @@ class TestCompletePasteSigninParsing(_OAuthApiBase):
 
 	def test_xai_accepts_bare_code(self):
 		nonce = self._seed(provider="xAI Grok")
-		with patch("jarvis.oauth.api._exchange_code", return_value={
-			"access_token": "AT", "refresh_token": "RT", "expires_in": 3600,
-			"id_token": "", "email": "x@y.com",
-		}) as ex, patch("jarvis.oauth.api.admin_client.post_push_oauth_blob"), \
-		     patch("jarvis.oauth.api.onboarding.save_llm_creds",
-		           return_value={"last_sync_status": "ok"}):
+		with (
+			patch(
+				"jarvis.oauth.api._exchange_code",
+				return_value={
+					"access_token": "AT",
+					"refresh_token": "RT",
+					"expires_in": 3600,
+					"id_token": "",
+					"email": "x@y.com",
+				},
+			) as ex,
+			patch("jarvis.oauth.api.admin_client.post_push_oauth_blob"),
+			patch("jarvis.oauth.api.onboarding.save_llm_creds", return_value={"last_sync_status": "ok"}),
+		):
 			out = oauth_api.complete_paste_signin(
 				nonce=nonce,
 				redirected_url="xai-code-ABC123def456",
@@ -332,12 +369,20 @@ class TestCompletePasteSigninParsing(_OAuthApiBase):
 		# shape this path exists to accept, so the check keys off whether the
 		# paste parses to real OAuth params instead.
 		nonce = self._seed(provider="xAI Grok")
-		with patch("jarvis.oauth.api._exchange_code", return_value={
-			"access_token": "AT", "refresh_token": "RT", "expires_in": 3600,
-			"id_token": "", "email": "x@y.com",
-		}) as ex, patch("jarvis.oauth.api.admin_client.post_push_oauth_blob"), \
-		     patch("jarvis.oauth.api.onboarding.save_llm_creds",
-		           return_value={"last_sync_status": "ok"}):
+		with (
+			patch(
+				"jarvis.oauth.api._exchange_code",
+				return_value={
+					"access_token": "AT",
+					"refresh_token": "RT",
+					"expires_in": 3600,
+					"id_token": "",
+					"email": "x@y.com",
+				},
+			) as ex,
+			patch("jarvis.oauth.api.admin_client.post_push_oauth_blob"),
+			patch("jarvis.oauth.api.onboarding.save_llm_creds", return_value={"last_sync_status": "ok"}),
+		):
 			out = oauth_api.complete_paste_signin(
 				nonce=nonce,
 				redirected_url="QUJDMTIzZGVmNDU2Zw==",
@@ -359,33 +404,43 @@ class TestCompletePasteSigninParsing(_OAuthApiBase):
 class TestCompletePasteSigninFlow(_OAuthApiBase):
 	def _seed(self, provider="OpenAI", model="gpt-5.5"):
 		nonce = "k_" + ("d" * 46)
-		frappe.cache.hset(_CACHE_KEY, nonce, {
-			"provider": provider, "model": model,
-			"status": "pending",
-			"expires_at_ts": int(time.time()) + 600,
-			"verifier": "test-verifier",
-			"state": "test-state",
-			"authorize_url": "https://auth.openai.com/oauth/authorize?...",
-			# Per-user binding (Sprint-1 #9 fix).
-			"originator_user": frappe.session.user,
-		})
+		frappe.cache.hset(
+			_CACHE_KEY,
+			nonce,
+			{
+				"provider": provider,
+				"model": model,
+				"status": "pending",
+				"expires_at_ts": int(time.time()) + 600,
+				"verifier": "test-verifier",
+				"state": "test-state",
+				"authorize_url": "https://auth.openai.com/oauth/authorize?...",
+				# Per-user binding (Sprint-1 #9 fix).
+				"originator_user": frappe.session.user,
+			},
+		)
 		return nonce
 
 	@patch("jarvis.oauth.api.onboarding.save_llm_creds")
 	@patch("jarvis.oauth.api.admin_client.post_push_oauth_blob")
 	@patch("jarvis.oauth.api._exchange_code")
 	def test_happy_path_pushes_blob_and_saves_creds(
-		self, mock_exchange, mock_push, mock_save,
+		self,
+		mock_exchange,
+		mock_push,
+		mock_save,
 	):
 		# Realistic JWT shape: openclaw's codex auth resolver pulls accountId
 		# from the access token's `https://api.openai.com/auth.chatgpt_account_id`
 		# claim; without that field the OAuth profile is treated as unusable
 		# and chat surfaces "No API key found for provider openai".
-		access_jwt = _jwt({
-			"https://api.openai.com/auth": {
-				"chatgpt_account_id": "9151840e-6317-4e8c-a575-8ea33beda869",
-			},
-		})
+		access_jwt = _jwt(
+			{
+				"https://api.openai.com/auth": {
+					"chatgpt_account_id": "9151840e-6317-4e8c-a575-8ea33beda869",
+				},
+			}
+		)
 		mock_exchange.return_value = {
 			"access_token": access_jwt,
 			"refresh_token": "RT-456",
@@ -436,9 +491,11 @@ class TestCompletePasteSigninFlow(_OAuthApiBase):
 		# Jarvis Settings.on_update's diff classifier sees no change
 		# and skips the re-render + restart, so openclaw keeps serving
 		# the previous (broken) auth state. Verified live 2026-06-11.
-		self.assertTrue(sk.get("force"),
+		self.assertTrue(
+			sk.get("force"),
 			"complete_paste_signin must pass force=True so a no-diff "
-			"save still re-renders openclaw.json + restarts the container")
+			"save still re-renders openclaw.json + restarts the container",
+		)
 
 		settings = frappe.get_single("Jarvis Settings")
 		self.assertEqual(settings.llm_oauth_account_email, "manager@acme.com")
@@ -450,7 +507,10 @@ class TestCompletePasteSigninFlow(_OAuthApiBase):
 	@patch("jarvis.oauth.api.admin_client.post_push_oauth_blob")
 	@patch("jarvis.oauth.api._exchange_code")
 	def test_stale_nonce_model_recoerced_at_complete_time(
-		self, mock_exchange, mock_push, mock_save,
+		self,
+		mock_exchange,
+		mock_push,
+		mock_save,
 	):
 		"""Belt-and-suspenders: if a nonce somehow holds a non-codex model
 		(e.g. _SUBSCRIPTION_MODELS tightened mid-flight, or a manually
@@ -458,14 +518,19 @@ class TestCompletePasteSigninFlow(_OAuthApiBase):
 		writing to the blob and save_llm_creds. Otherwise the customer's
 		container ends up rendering openclaw.json with the bad model and
 		every chat turn fails."""
-		jwt = _jwt({
-			"https://api.openai.com/auth": {
-				"chatgpt_account_id": "acct-test",
-			},
-		})
+		jwt = _jwt(
+			{
+				"https://api.openai.com/auth": {
+					"chatgpt_account_id": "acct-test",
+				},
+			}
+		)
 		mock_exchange.return_value = {
-			"access_token": jwt, "refresh_token": "RT", "expires_in": 3600,
-			"id_token": "", "email": "manager@acme.com",
+			"access_token": jwt,
+			"refresh_token": "RT",
+			"expires_in": 3600,
+			"id_token": "",
+			"email": "manager@acme.com",
 		}
 		mock_save.return_value = {"last_sync_status": "ok"}
 		nonce = self._seed(model="gpt-4o")  # bypasses begin_paste_signin's coercion
@@ -475,22 +540,24 @@ class TestCompletePasteSigninFlow(_OAuthApiBase):
 			redirected_url="?code=ABC&state=test-state",
 		)
 
-		self.assertEqual(mock_save.call_args.kwargs["model"], "gpt-5.5",
-			"complete_paste_signin must re-coerce a stale-cached non-codex model")
+		self.assertEqual(
+			mock_save.call_args.kwargs["model"],
+			"gpt-5.5",
+			"complete_paste_signin must re-coerce a stale-cached non-codex model",
+		)
 		# Blob doesn't carry the model field today, but the push provider id
 		# remains tied to OAuth flow, not to the model.
 		self.assertEqual(mock_push.call_args.args[0], "openai")
 
-	@patch("jarvis.oauth.api._exchange_code",
-	       side_effect=Exception("provider 400"))
+	@patch("jarvis.oauth.api._exchange_code", side_effect=Exception("provider 400"))
 	def test_token_exchange_failure_returns_error(self, _):
 		"""Generic exception path - actual TokenExchangeError covered by
 		the inner _exchange_code function's own tests. Here we just check
 		that the endpoint surfaces the failure cleanly."""
 		from jarvis.oauth import api as oa
+
 		nonce = self._seed()
-		with patch("jarvis.oauth.api._exchange_code",
-		           side_effect=oa.TokenExchangeError("provider 400")):
+		with patch("jarvis.oauth.api._exchange_code", side_effect=oa.TokenExchangeError("provider 400")):
 			out = oauth_api.complete_paste_signin(
 				nonce=nonce,
 				redirected_url="?code=ABC&state=test-state",
@@ -509,8 +576,7 @@ class TestDisconnect(_OAuthApiBase):
 		settings = frappe.get_single("Jarvis Settings")
 		settings.db_set("llm_auth_mode", "oauth", update_modified=False)
 		settings.db_set("llm_oauth_account_email", "x@y.com", update_modified=False)
-		settings.db_set("llm_oauth_connected_at",
-		                frappe.utils.now_datetime(), update_modified=False)
+		settings.db_set("llm_oauth_connected_at", frappe.utils.now_datetime(), update_modified=False)
 		frappe.db.commit()
 
 		out = oauth_api.disconnect()
@@ -532,23 +598,29 @@ class TestDisconnect(_OAuthApiBase):
 		# user B clicks Disconnect, user A's nonce vanishes mid-flow.
 		# Disconnect must leave the (per-user-bound, short-TTL) nonce
 		# cache untouched.
-		frappe.cache.hset(_CACHE_KEY, "peer_pending_nonce", {
-			"status": "pending",
-			"originator_user": "peer@example.com",
-			"expires_at_ts": int(time.time()) + 600,
-			"state": "peer-state",
-			"verifier": "peer-verifier",
-			"provider": "OpenAI",
-			"model": "gpt-5.5",
-		})
+		frappe.cache.hset(
+			_CACHE_KEY,
+			"peer_pending_nonce",
+			{
+				"status": "pending",
+				"originator_user": "peer@example.com",
+				"expires_at_ts": int(time.time()) + 600,
+				"state": "peer-state",
+				"verifier": "peer-verifier",
+				"provider": "OpenAI",
+				"model": "gpt-5.5",
+			},
+		)
 		out = oauth_api.disconnect()
 		self.assertTrue(out["ok"])
 		survived = frappe.cache.hget(_CACHE_KEY, "peer_pending_nonce")
 		self.assertIsNotNone(survived)
 		self.assertEqual(survived["originator_user"], "peer@example.com")
 
-	@patch("jarvis.oauth.api.admin_client.post_subscription_disconnect",
-	       side_effect=_admin_module.AdminUnreachableError("net"))
+	@patch(
+		"jarvis.oauth.api.admin_client.post_subscription_disconnect",
+		side_effect=_admin_module.AdminUnreachableError("net"),
+	)
 	def test_disconnect_admin_failure(self, _):
 		out = oauth_api.disconnect()
 		self.assertFalse(out["ok"])
@@ -578,9 +650,11 @@ class TestExchangeCodeErrorParsing(_OAuthApiBase):
 
 	def _exchange(self, json_body):
 		resp = _FakeResp(ok=False, status=400, json_body=json_body)
-		with patch("jarvis.oauth.api.get_provider", return_value=self._PROV), \
-		     patch("jarvis.oauth.api.requests.post", return_value=resp), \
-		     patch("jarvis.oauth.api.frappe.log_error"):
+		with (
+			patch("jarvis.oauth.api.get_provider", return_value=self._PROV),
+			patch("jarvis.oauth.api.requests.post", return_value=resp),
+			patch("jarvis.oauth.api.frappe.log_error"),
+		):
 			with self.assertRaises(oauth_api.TokenExchangeError) as ctx:
 				oauth_api._exchange_code(provider="openai", code="ac_x", code_verifier="v")
 		return ctx.exception
@@ -600,9 +674,11 @@ class TestExchangeCodeErrorParsing(_OAuthApiBase):
 
 	def test_non_json_error_body_falls_back(self):
 		resp = _FakeResp(ok=False, status=500, json_body=None, text="<html>502</html>")
-		with patch("jarvis.oauth.api.get_provider", return_value=self._PROV), \
-		     patch("jarvis.oauth.api.requests.post", return_value=resp), \
-		     patch("jarvis.oauth.api.frappe.log_error"):
+		with (
+			patch("jarvis.oauth.api.get_provider", return_value=self._PROV),
+			patch("jarvis.oauth.api.requests.post", return_value=resp),
+			patch("jarvis.oauth.api.frappe.log_error"),
+		):
 			with self.assertRaises(oauth_api.TokenExchangeError) as ctx:
 				oauth_api._exchange_code(provider="openai", code="ac_x", code_verifier="v")
 		self.assertEqual(ctx.exception.code, "token_exchange_failed")
@@ -620,23 +696,30 @@ class TestCompletePasteSigninStripsIdToken(_OAuthApiBase):
 
 	def _seed(self, provider="OpenAI", model="gpt-5.5"):
 		nonce = "i_" + ("d" * 46)
-		frappe.cache.hset(_CACHE_KEY, nonce, {
-			"provider": provider, "model": model,
-			"status": "pending",
-			"expires_at_ts": int(time.time()) + 600,
-			"verifier": "test-verifier",
-			"state": "test-state",
-			"originator_user": frappe.session.user,
-		})
+		frappe.cache.hset(
+			_CACHE_KEY,
+			nonce,
+			{
+				"provider": provider,
+				"model": model,
+				"status": "pending",
+				"expires_at_ts": int(time.time()) + 600,
+				"verifier": "test-verifier",
+				"state": "test-state",
+				"originator_user": frappe.session.user,
+			},
+		)
 		return nonce
 
 	@patch("jarvis.oauth.api.onboarding.save_llm_creds")
 	@patch("jarvis.oauth.api.admin_client.post_push_oauth_blob")
 	@patch("jarvis.oauth.api._exchange_code")
 	def test_pushed_blob_strips_id_token(self, mock_exchange, mock_push, mock_save):
-		access_jwt = _jwt({
-			"https://api.openai.com/auth": {"chatgpt_account_id": "acct-idt"},
-		})
+		access_jwt = _jwt(
+			{
+				"https://api.openai.com/auth": {"chatgpt_account_id": "acct-idt"},
+			}
+		)
 		mock_exchange.return_value = {
 			"access_token": access_jwt,
 			"refresh_token": "RT",
@@ -708,7 +791,8 @@ class TestCompletePoolAccountSignin(_OAuthApiBase):
 	def _seed(self, provider="OpenAI", model="gpt-5.5", pool=True):
 		nonce = "p_" + ("e" * 46)
 		entry = {
-			"provider": provider, "model": model,
+			"provider": provider,
+			"model": model,
 			"status": "pending",
 			"expires_at_ts": int(time.time()) + 600,
 			"verifier": "test-verifier",
@@ -724,11 +808,16 @@ class TestCompletePoolAccountSignin(_OAuthApiBase):
 	@patch("jarvis.oauth.api.admin_client.post_push_oauth_blob")
 	@patch("jarvis.oauth.api._exchange_code")
 	def test_captures_blob_and_leaves_direct_path_untouched(
-		self, mock_exchange, mock_push, mock_save,
+		self,
+		mock_exchange,
+		mock_push,
+		mock_save,
 	):
-		access_jwt = _jwt({
-			"https://api.openai.com/auth": {"chatgpt_account_id": "acct-pool"},
-		})
+		access_jwt = _jwt(
+			{
+				"https://api.openai.com/auth": {"chatgpt_account_id": "acct-pool"},
+			}
+		)
 		mock_exchange.return_value = {
 			"access_token": access_jwt,
 			"refresh_token": "RT-pool",
@@ -738,8 +827,7 @@ class TestCompletePoolAccountSignin(_OAuthApiBase):
 		}
 		# Pin a sentinel so we can prove Jarvis Settings is untouched.
 		settings = frappe.get_single("Jarvis Settings")
-		settings.db_set("llm_oauth_account_email", "SENTINEL@unchanged",
-		                update_modified=False)
+		settings.db_set("llm_oauth_account_email", "SENTINEL@unchanged", update_modified=False)
 		frappe.db.commit()
 
 		nonce = self._seed()
@@ -815,18 +903,22 @@ class TestCompletePoolAccountSignin(_OAuthApiBase):
 		refs = set()
 		for _ in range(5):
 			nonce = self._seed()
-			with patch("jarvis.oauth.api._exchange_code", return_value={
-				"access_token": "AT", "refresh_token": "RT", "expires_in": 3600,
-				"id_token": "ID.T", "email": "a@b.com",
-			}):
+			with patch(
+				"jarvis.oauth.api._exchange_code",
+				return_value={
+					"access_token": "AT",
+					"refresh_token": "RT",
+					"expires_in": 3600,
+					"id_token": "ID.T",
+					"email": "a@b.com",
+				},
+			):
 				out = oauth_api.complete_pool_account_signin(
 					nonce=nonce,
 					redirected_url="?code=ABC&state=test-state",
 				)
 			refs.add(out["data"]["account_ref"])
 		self.assertEqual(len(refs), 5)
-
-
 
 
 class TestPoolSigninScope(_OAuthApiBase):
@@ -955,11 +1047,13 @@ class TestGetDirectSubscriptionStatus(_OAuthApiBase):
 
 class _MockResp:
 	"""Minimal requests.Response stand-in for the device-flow HTTP mocks."""
+
 	def __init__(self, status, body, text=""):
 		self.status_code = status
 		self.ok = 200 <= status < 300
 		self._body = body
 		self.text = text or (json.dumps(body) if body is not None else "")
+
 	def json(self):
 		if self._body is None:
 			raise ValueError("no json")
@@ -969,8 +1063,13 @@ class _MockResp:
 class TestKimiDeviceFlow(_OAuthApiBase):
 	"""Phase 2: Kimi (Moonshot) device-code pool capture (begin + poll)."""
 
-	_DEV = {"device_code": "DC", "user_code": "ABCD-EFGH",
-	        "verification_uri": "https://www.kimi.com/device", "interval": 5, "expires_in": 900}
+	_DEV = {
+		"device_code": "DC",
+		"user_code": "ABCD-EFGH",
+		"verification_uri": "https://www.kimi.com/device",
+		"interval": 5,
+		"expires_in": 900,
+	}
 
 	def _begin(self):
 		with patch("jarvis.oauth.api.requests.post", return_value=_MockResp(200, dict(self._DEV))):
@@ -991,8 +1090,9 @@ class TestKimiDeviceFlow(_OAuthApiBase):
 
 	def test_poll_pending_keeps_nonce_alive(self):
 		nonce = self._begin()["data"]["nonce"]
-		with patch("jarvis.oauth.api.requests.post",
-		           return_value=_MockResp(400, {"error": "authorization_pending"})):
+		with patch(
+			"jarvis.oauth.api.requests.post", return_value=_MockResp(400, {"error": "authorization_pending"})
+		):
 			res = oauth_api.poll_pool_account_signin(nonce)
 		self.assertTrue(res["ok"])
 		self.assertEqual(res["data"]["status"], "pending")
@@ -1000,8 +1100,13 @@ class TestKimiDeviceFlow(_OAuthApiBase):
 
 	def test_poll_success_returns_kimi_device_blob(self):
 		nonce = self._begin()["data"]["nonce"]
-		token = {"access_token": "KAT", "refresh_token": "KRT", "token_type": "Bearer",
-		         "scope": "kimi:coding", "expires_in": 3600}
+		token = {
+			"access_token": "KAT",
+			"refresh_token": "KRT",
+			"token_type": "Bearer",
+			"scope": "kimi:coding",
+			"expires_in": 3600,
+		}
 		with patch("jarvis.oauth.api.requests.post", return_value=_MockResp(200, token)):
 			res = oauth_api.poll_pool_account_signin(nonce)
 		self.assertTrue(res["ok"])
@@ -1014,14 +1119,13 @@ class TestKimiDeviceFlow(_OAuthApiBase):
 		self.assertEqual(blob["access"], "KAT")
 		self.assertEqual(blob["refresh"], "KRT")
 		self.assertEqual(blob["scope"], "kimi:coding")
-		self.assertTrue(blob["device_id"])           # minted at begin
-		self.assertNotIn("id_token", blob)           # device flow has none
+		self.assertTrue(blob["device_id"])  # minted at begin
+		self.assertNotIn("id_token", blob)  # device flow has none
 		self.assertIsNone(frappe.cache.hget(_CACHE_KEY, nonce))  # nonce consumed
 
 	def test_poll_expired_burns_nonce(self):
 		nonce = self._begin()["data"]["nonce"]
-		with patch("jarvis.oauth.api.requests.post",
-		           return_value=_MockResp(400, {"error": "expired_token"})):
+		with patch("jarvis.oauth.api.requests.post", return_value=_MockResp(400, {"error": "expired_token"})):
 			res = oauth_api.poll_pool_account_signin(nonce)
 		self.assertFalse(res["ok"])
 		self.assertIsNone(frappe.cache.hget(_CACHE_KEY, nonce))  # terminal -> burned
@@ -1049,28 +1153,43 @@ class TestXaiPoolCapture(_OAuthApiBase):
 
 	def _seed_xai(self):
 		nonce = "nx_" + ("b" * 45)
-		frappe.cache.hset(_CACHE_KEY, nonce, {
-			"provider": "xAI Grok", "model": "grok-4.3", "status": "pending",
-			"expires_at_ts": int(time.time()) + 600,
-			"verifier": "vv", "state": "test-state",
-			"redirect_uri": "http://127.0.0.1:56121/callback",
-			"pool": True, "originator_user": frappe.session.user,
-		})
+		frappe.cache.hset(
+			_CACHE_KEY,
+			nonce,
+			{
+				"provider": "xAI Grok",
+				"model": "grok-4.3",
+				"status": "pending",
+				"expires_at_ts": int(time.time()) + 600,
+				"verifier": "vv",
+				"state": "test-state",
+				"redirect_uri": "http://127.0.0.1:56121/callback",
+				"pool": True,
+				"originator_user": frappe.session.user,
+			},
+		)
 		return nonce
 
 	def test_pool_capture_builds_xai_blob_with_id_token(self):
 		nonce = self._seed_xai()
-		with patch("jarvis.oauth.api._exchange_code", return_value={
-			"access_token": "XAT", "refresh_token": "XRT",
-			"id_token": _jwt({"email": "x@y.com"}), "expires_in": 3600, "email": "x@y.com",
-		}):
+		with patch(
+			"jarvis.oauth.api._exchange_code",
+			return_value={
+				"access_token": "XAT",
+				"refresh_token": "XRT",
+				"id_token": _jwt({"email": "x@y.com"}),
+				"expires_in": 3600,
+				"email": "x@y.com",
+			},
+		):
 			res = oauth_api.complete_pool_account_signin(
-				nonce, "http://127.0.0.1:56121/callback?code=CODE&state=test-state")
+				nonce, "http://127.0.0.1:56121/callback?code=CODE&state=test-state"
+			)
 		self.assertTrue(res["ok"])
 		d = res["data"]
 		self.assertTrue(d["account_ref"].startswith("SUB_"))
 		blob = json.loads(d["oauth_blob"])
-		self.assertEqual(blob["provider"], "xai")   # openclaw_provider
+		self.assertEqual(blob["provider"], "xai")  # openclaw_provider
 		self.assertEqual(blob["access"], "XAT")
-		self.assertTrue(blob["id_token"])            # xai transform REQUIRES it
+		self.assertTrue(blob["id_token"])  # xai transform REQUIRES it
 		self.assertIsNone(frappe.cache.hget(_CACHE_KEY, nonce))  # single-use

@@ -33,7 +33,11 @@
 							v-for="row in rows"
 							:key="row.name"
 							class="flex w-full items-start gap-3 px-4 py-3 text-left"
-							:class="row.name === selectedId ? 'bg-surface-selected shadow-sm' : 'hover:bg-surface-gray-2'"
+							:class="
+								row.name === selectedId
+									? 'bg-surface-selected shadow-sm'
+									: 'hover:bg-surface-gray-2'
+							"
 							@click="selectRun(row)"
 						>
 							<div class="min-w-0 flex-1">
@@ -48,16 +52,26 @@
 									</span>
 								</div>
 								<div class="mt-1 truncate text-sm text-ink-gray-5">
-									{{ row.findings_count || 0 }} finding{{ (row.findings_count || 0) === 1 ? "" : "s" }}
+									{{ row.findings_count || 0 }} finding{{
+										(row.findings_count || 0) === 1 ? "" : "s"
+									}}
 									<span v-if="row.blocker_count" class="text-ink-red-4">
-										· {{ row.blocker_count }} blocker{{ row.blocker_count === 1 ? "" : "s" }}
+										· {{ row.blocker_count }} blocker{{
+											row.blocker_count === 1 ? "" : "s"
+										}}
 									</span>
 								</div>
 							</div>
 							<!-- partial scans carry an extra indicator so truncated coverage
 							     never blends in with clean completed runs -->
-							<Tooltip v-if="row.status === 'partial'" text="Partial scan - coverage gaps">
-								<FeatherIcon name="alert-triangle" class="mt-1 size-3.5 shrink-0 text-ink-amber-3" />
+							<Tooltip
+								v-if="row.status === 'partial'"
+								text="Partial scan - coverage gaps"
+							>
+								<FeatherIcon
+									name="alert-triangle"
+									class="mt-1 size-3.5 shrink-0 text-ink-amber-3"
+								/>
 							</Tooltip>
 							<Badge
 								class="mt-0.5 shrink-0"
@@ -68,7 +82,13 @@
 						</button>
 					</div>
 					<div class="flex items-center justify-between gap-2 border-t px-4 py-2">
-						<Button v-if="hasMore" variant="ghost" label="Load More" :loading="loading" @click="loadMore()" />
+						<Button
+							v-if="hasMore"
+							variant="ghost"
+							label="Load More"
+							:loading="loading"
+							@click="loadMore()"
+						/>
 						<div v-else />
 						<div class="text-sm text-ink-gray-5">{{ rows.length }} of {{ total }}</div>
 					</div>
@@ -89,8 +109,12 @@
 				>
 					<FeatherIcon name="activity" class="size-7.5 text-ink-gray-5" />
 					<div class="flex flex-col items-center gap-1">
-						<span class="text-lg font-medium text-ink-gray-8">{{ emptyState.title }}</span>
-						<span class="text-p-base text-ink-gray-6">{{ emptyState.description }}</span>
+						<span class="text-lg font-medium text-ink-gray-8">{{
+							emptyState.title
+						}}</span>
+						<span class="text-p-base text-ink-gray-6">{{
+							emptyState.description
+						}}</span>
 					</div>
 				</div>
 			</div>
@@ -123,65 +147,70 @@
 // FindingsPanel for the selected run. The parent's Run Now calls
 // reload({selectNewest: true}) through the exposed handle so the freshly
 // queued run is surfaced and selected even if a facet would hide it.
-import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue"
-import {
-	Badge,
-	Button,
-	FeatherIcon,
-	FormControl,
-	LoadingIndicator,
-	Tooltip,
-} from "frappe-ui"
-import FindingsPanel from "@/pages/agents/FindingsPanel.vue"
-import { useListPage } from "@/composables/useListPage"
-import { timeAgo, exactDate } from "@/utils/datetime"
-import * as apiAgents from "@/api/agents"
+import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue";
+import { Badge, Button, FeatherIcon, FormControl, LoadingIndicator, Tooltip } from "frappe-ui";
+import FindingsPanel from "@/pages/agents/FindingsPanel.vue";
+import { useListPage } from "@/composables/useListPage";
+import { timeAgo, exactDate } from "@/utils/datetime";
+import * as apiAgents from "@/api/agents";
 
 const props = defineProps({
 	agentName: { type: String, required: true }, // listing docname (list_runs_page filter)
-})
+});
 
-const STATUS_THEME = { running: "blue", completed: "green", partial: "orange", failed: "red" }
+const STATUS_THEME = { running: "blue", completed: "green", partial: "orange", failed: "red" };
 const STATUS_OPTIONS = [
 	{ label: "All statuses", value: "" },
 	{ label: "Running", value: "running" },
 	{ label: "Completed", value: "completed" },
 	{ label: "Partial", value: "partial" },
 	{ label: "Failed", value: "failed" },
-]
+];
 
 // ── rail data: useListPage + adapter onto listRunsPage's tab-less shape ──────
-const { rows, total, hasMore, loading, error, search, filters, setFilter, setFilters, resetLoad, loadMore, refreshKeep } =
-	useListPage({
-		fetchFn: (p) =>
-			apiAgents.listRunsPage({
-				agent: props.agentName,
-				status: (p.filters && p.filters.status) || "",
-				search: p.search || "",
-				sort: "recent",
-				start: p.start,
-				page_length: p.page_length,
-			}),
-		defaultSort: { field: "started_at", dir: "desc" },
-		storageKey: "agent-runs",
-	})
+const {
+	rows,
+	total,
+	hasMore,
+	loading,
+	error,
+	search,
+	filters,
+	setFilter,
+	setFilters,
+	resetLoad,
+	loadMore,
+	refreshKeep,
+} = useListPage({
+	fetchFn: (p) =>
+		apiAgents.listRunsPage({
+			agent: props.agentName,
+			status: (p.filters && p.filters.status) || "",
+			search: p.search || "",
+			sort: "recent",
+			start: p.start,
+			page_length: p.page_length,
+		}),
+	defaultSort: { field: "started_at", dir: "desc" },
+	storageKey: "agent-runs",
+});
 
 const emptyState = computed(() => {
 	if (search.value.trim() || filters.status) {
-		return { title: "No matching runs", description: "Try a different status or search." }
+		return { title: "No matching runs", description: "Try a different status or search." };
 	}
 	return {
 		title: "No runs yet",
 		description: "Use Run Now or a schedule - every run lands here with its findings.",
-	}
-})
+	};
+});
 
 // ── selection (local - runs live under the agent's hash tab, no :id route) ──
-const selectedRun = ref(null)
-const selectedId = computed(() => (selectedRun.value && selectedRun.value.name) || "")
+const selectedRun = ref(null);
+const selectedId = computed(() => (selectedRun.value && selectedRun.value.name) || "");
 
 function selectRun(row) {
-	selectedRun.value = row
+	selectedRun.value = row;
 }
 
 // auto-select the first row; on refresh, re-pin the selection to the fresh row
@@ -191,40 +220,40 @@ function selectRun(row) {
 // the rail.
 watch(rows, (r) => {
 	if (selectedRun.value) {
-		const again = r.find((x) => x.name === selectedRun.value.name)
-		selectedRun.value = again || r[0] || null
+		const again = r.find((x) => x.name === selectedRun.value.name);
+		selectedRun.value = again || r[0] || null;
 	} else if (r.length) {
-		selectRun(r[0])
+		selectRun(r[0]);
 	}
-})
+});
 
 // slug switch without an unmount → hard reset (stale rows belong to the old agent)
 watch(
 	() => props.agentName,
 	() => {
-		selectedRun.value = null
-		resetLoad()
+		selectedRun.value = null;
+		resetLoad();
 	}
-)
+);
 
 // Run Now lands here: refresh and select the newest run. Facets that would
 // hide a just-queued (running) run are cleared first so the jump always lands.
 async function reload(opts = {}) {
-	const selectNewest = !!(opts && opts.selectNewest)
+	const selectNewest = !!(opts && opts.selectNewest);
 	if (selectNewest && (filters.status || search.value.trim())) {
-		search.value = ""
-		await setFilters({})
+		search.value = "";
+		await setFilters({});
 	} else {
-		await resetLoad()
+		await resetLoad();
 	}
-	if (selectNewest && rows.value.length) selectRun(rows.value[0])
+	if (selectNewest && rows.value.length) selectRun(rows.value[0]);
 }
-defineExpose({ reload })
+defineExpose({ reload });
 
 // freshness: refetch the loaded window on tab-visible (running → completed)
 function onVisibility() {
-	if (document.visibilityState === "visible") refreshKeep()
+	if (document.visibilityState === "visible") refreshKeep();
 }
-onMounted(() => document.addEventListener("visibilitychange", onVisibility))
-onBeforeUnmount(() => document.removeEventListener("visibilitychange", onVisibility))
+onMounted(() => document.addEventListener("visibilitychange", onVisibility));
+onBeforeUnmount(() => document.removeEventListener("visibilitychange", onVisibility));
 </script>

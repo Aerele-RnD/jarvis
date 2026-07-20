@@ -62,11 +62,16 @@
 									<span class="truncate text-base font-medium text-ink-gray-8">
 										{{ app.title || app.app }}
 									</span>
-									<span v-if="app.installed_version" class="text-sm text-ink-gray-5">
+									<span
+										v-if="app.installed_version"
+										class="text-sm text-ink-gray-5"
+									>
 										v{{ app.installed_version }}
 									</span>
 								</div>
-								<div class="mt-0.5 text-sm text-ink-gray-5">{{ sizeLine(app) }}</div>
+								<div class="mt-0.5 text-sm text-ink-gray-5">
+									{{ sizeLine(app) }}
+								</div>
 							</div>
 							<!-- non-terminal run → status chip (checkbox disabled above);
 							     otherwise the last run's terminal status, if any -->
@@ -78,7 +83,11 @@
 							/>
 							<Tooltip
 								v-else-if="app.last_run"
-								:text="app.last_run.finished_at ? exactDate(app.last_run.finished_at) : ''"
+								:text="
+									app.last_run.finished_at
+										? exactDate(app.last_run.finished_at)
+										: ''
+								"
 							>
 								<Badge
 									variant="subtle"
@@ -159,7 +168,10 @@
 					class="mt-4 flex items-center gap-2 rounded-lg border bg-surface-gray-1 px-3 py-2 text-sm text-ink-gray-7"
 				>
 					<FeatherIcon name="clock" class="size-4 shrink-0 text-ink-gray-5" />
-					{{ overview.queued }} analysis run{{ overview.queued === 1 ? "" : "s" }} queued.
+					{{ overview.queued }} analysis run{{
+						overview.queued === 1 ? "" : "s"
+					}}
+					queued.
 				</div>
 			</template>
 		</section>
@@ -194,7 +206,7 @@
 // admin/SM-gated by placement: AnalysisTab only mounts for caps.analysis
 // viewers (SkillsPage), the same gate the Behavioural-learning settings card
 // above rides; every endpoint re-checks manage rights server-side.
-import { computed, inject, onBeforeUnmount, onMounted, reactive, ref } from "vue"
+import { computed, inject, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import {
 	Badge,
 	Button,
@@ -206,16 +218,20 @@ import {
 	Tooltip,
 	confirmDialog,
 	toast,
-} from "frappe-ui"
-import { exactDate, toSiteDatetime } from "@/utils/datetime"
-import { cancelAppLearningRun, getAppLearningOverview, scheduleAppLearning } from "@/api/appLearning"
-import AppLearningConsentDialog from "./AppLearningConsentDialog.vue"
-import AppLearningRunsList from "./AppLearningRunsList.vue"
+} from "frappe-ui";
+import { exactDate, toSiteDatetime } from "@/utils/datetime";
+import {
+	cancelAppLearningRun,
+	getAppLearningOverview,
+	scheduleAppLearning,
+} from "@/api/appLearning";
+import AppLearningConsentDialog from "./AppLearningConsentDialog.vue";
+import AppLearningRunsList from "./AppLearningRunsList.vue";
 
-const socket = inject("$socket", null)
+const socket = inject("$socket", null);
 
 function errMsg(e) {
-	return (e && ((e.messages && e.messages[0]) || e.message)) || "Something went wrong."
+	return (e && ((e.messages && e.messages[0]) || e.message)) || "Something went wrong.";
 }
 
 // design.md §3.6 map, matched with the runs list: terminal Completed green /
@@ -228,43 +244,43 @@ const STATUS_THEME = {
 	Completed: "green",
 	Failed: "red",
 	Cancelled: "gray",
-}
-const TERMINAL = ["Completed", "Failed", "Cancelled"]
+};
+const TERMINAL = ["Completed", "Failed", "Cancelled"];
 const SCHEDULE_MODES = [
 	{ label: "Run now", value: "now" },
 	{ label: "Schedule once", value: "once" },
-]
+];
 
 // ── overview state ───────────────────────────────────────────────────────────
-const overview = reactive({ active_run: null, queued: 0, apps: [] })
-const loading = ref(false)
-const loaded = ref(false)
-const loadError = ref("")
+const overview = reactive({ active_run: null, queued: 0, apps: [] });
+const loading = ref(false);
+const loaded = ref(false);
+const loadError = ref("");
 
-const selected = reactive(new Set())
+const selected = reactive(new Set());
 
 async function loadOverview() {
-	loading.value = true
+	loading.value = true;
 	try {
-		const d = (await getAppLearningOverview()) || {}
-		overview.active_run = d.active_run || null
-		overview.queued = d.queued || 0
-		overview.apps = d.apps || []
+		const d = (await getAppLearningOverview()) || {};
+		overview.active_run = d.active_run || null;
+		overview.queued = d.queued || 0;
+		overview.apps = d.apps || [];
 		// prune selections that stopped being schedulable (source vanished /
 		// a run started for that app meanwhile)
 		for (const name of Array.from(selected)) {
-			const app = overview.apps.find((a) => a.app === name)
-			if (!app || !app.path_ok || runningStatus(app)) selected.delete(name)
+			const app = overview.apps.find((a) => a.app === name);
+			if (!app || !app.path_ok || runningStatus(app)) selected.delete(name);
 		}
-		loadError.value = ""
-		loaded.value = true
+		loadError.value = "";
+		loaded.value = true;
 	} catch (e) {
 		// pre-first-paint failures render the inline ErrorMessage + Retry;
 		// later refresh failures keep the last-good card and toast instead
-		loadError.value = errMsg(e)
-		if (loaded.value) toast.error(loadError.value)
+		loadError.value = errMsg(e);
+		if (loaded.value) toast.error(loadError.value);
 	} finally {
-		loading.value = false
+		loading.value = false;
 	}
 }
 
@@ -273,140 +289,138 @@ async function loadOverview() {
 // wins; otherwise a last_run still in flight (Queued/Zipping/...).
 function runningStatus(app) {
 	if (overview.active_run && overview.active_run.app === app.app) {
-		return overview.active_run.status || "Analyzing"
+		return overview.active_run.status || "Analyzing";
 	}
-	const lr = app.last_run
-	if (lr && lr.status && !TERMINAL.includes(lr.status)) return lr.status
-	return ""
+	const lr = app.last_run;
+	if (lr && lr.status && !TERMINAL.includes(lr.status)) return lr.status;
+	return "";
 }
 function rowDisabled(app) {
-	return !app.path_ok || !!runningStatus(app) || scheduling.value
+	return !app.path_ok || !!runningStatus(app) || scheduling.value;
 }
 function toggle(app) {
-	if (rowDisabled(app)) return
-	if (selected.has(app.app)) selected.delete(app.app)
-	else selected.add(app.app)
+	if (rowDisabled(app)) return;
+	if (selected.has(app.app)) selected.delete(app.app);
+	else selected.add(app.app);
 }
 function sizeLine(app) {
-	const parts = []
-	if (app.approx_files != null) parts.push(`~${app.approx_files} files`)
-	if (app.approx_kb != null) parts.push(fmtKb(app.approx_kb))
-	return parts.join(" · ") || "Size unknown"
+	const parts = [];
+	if (app.approx_files != null) parts.push(`~${app.approx_files} files`);
+	if (app.approx_kb != null) parts.push(fmtKb(app.approx_kb));
+	return parts.join(" · ") || "Size unknown";
 }
 function fmtKb(kb) {
-	const n = Number(kb) || 0
-	if (n < 1024) return `${Math.round(n)} KB`
-	return `${(n / 1024).toFixed(1)} MB`
+	const n = Number(kb) || 0;
+	if (n < 1024) return `${Math.round(n)} KB`;
+	return `${(n / 1024).toFixed(1)} MB`;
 }
 
 // ── schedule state ───────────────────────────────────────────────────────────
-const scheduleMode = ref("now")
-const whenLocal = ref("") // <input type="datetime-local"> value, browser-local
-const scheduling = ref(false)
+const scheduleMode = ref("now");
+const whenLocal = ref(""); // <input type="datetime-local"> value, browser-local
+const scheduling = ref(false);
 
 // mirrors the server's validation: future only, capped 30 days out
 const whenError = computed(() => {
-	if (scheduleMode.value !== "once" || !whenLocal.value) return ""
-	const t = new Date(whenLocal.value)
-	if (t <= new Date()) return "Pick a time in the future."
+	if (scheduleMode.value !== "once" || !whenLocal.value) return "";
+	const t = new Date(whenLocal.value);
+	if (t <= new Date()) return "Pick a time in the future.";
 	if (t > new Date(Date.now() + 30 * 24 * 60 * 60 * 1000))
-		return "Schedule within the next 30 days."
-	return ""
-})
+		return "Schedule within the next 30 days.";
+	return "";
+});
 const canAnalyze = computed(
 	() =>
 		selected.size > 0 &&
 		!scheduling.value &&
 		(scheduleMode.value === "now" || (!!whenLocal.value && !whenError.value))
-)
+);
 const analyzeLabel = computed(
 	() => `Analyze ${selected.size} app${selected.size === 1 ? "" : "s"}`
-)
+);
 
 // ── consent → schedule ───────────────────────────────────────────────────────
-const consent = reactive({ show: false, apps: [], when: "" })
+const consent = reactive({ show: false, apps: [], when: "" });
 
 function openConsent() {
-	if (!canAnalyze.value) return
+	if (!canAnalyze.value) return;
 	// freeze the selection + converted site-tz timestamp at open time so what
 	// the dialog shows is exactly what confirm sends
 	consent.apps = overview.apps
 		.filter((a) => selected.has(a.app))
-		.map((a) => ({ app: a.app, title: a.title || a.app }))
-	consent.when = scheduleMode.value === "once" ? toSiteDatetime(whenLocal.value) : ""
-	consent.show = true
+		.map((a) => ({ app: a.app, title: a.title || a.app }));
+	consent.when = scheduleMode.value === "once" ? toSiteDatetime(whenLocal.value) : "";
+	consent.show = true;
 }
 
 async function confirmSchedule() {
-	scheduling.value = true
+	scheduling.value = true;
 	try {
 		await scheduleAppLearning(
 			consent.apps.map((a) => a.app),
 			consent.when
-		)
-		consent.show = false
-		toast.success(consent.when ? "Analysis scheduled" : "Analysis started")
-		selected.clear()
-		whenLocal.value = ""
-		loadOverview()
-		runsList.value && runsList.value.reload()
+		);
+		consent.show = false;
+		toast.success(consent.when ? "Analysis scheduled" : "Analysis started");
+		selected.clear();
+		whenLocal.value = "";
+		loadOverview();
+		runsList.value && runsList.value.reload();
 	} catch (e) {
 		// keep the dialog open - the viewer can retry or cancel
-		toast.error(errMsg(e))
+		toast.error(errMsg(e));
 	} finally {
-		scheduling.value = false
+		scheduling.value = false;
 	}
 }
 
 // ── active run strip ─────────────────────────────────────────────────────────
-const cancelling = ref(false)
+const cancelling = ref(false);
 
 const activeLine = computed(() => {
-	const r = overview.active_run
-	if (!r) return ""
-	if (r.status === "Queued") return `Queued: ${r.app}`
-	if (r.status === "Zipping") return `Zipping ${r.app}`
-	if (r.status === "Ingesting") return `Ingesting findings from ${r.app}`
-	const batches = r.batches_total
-		? ` - batch ${r.batches_done || 0} of ${r.batches_total}`
-		: ""
-	return `Analyzing ${r.app}${batches}`
-})
+	const r = overview.active_run;
+	if (!r) return "";
+	if (r.status === "Queued") return `Queued: ${r.app}`;
+	if (r.status === "Zipping") return `Zipping ${r.app}`;
+	if (r.status === "Ingesting") return `Ingesting findings from ${r.app}`;
+	const batches = r.batches_total ? ` - batch ${r.batches_done || 0} of ${r.batches_total}` : "";
+	return `Analyzing ${r.app}${batches}`;
+});
 
 function cancelActive() {
-	const r = overview.active_run
-	if (!r) return
+	const r = overview.active_run;
+	if (!r) return;
 	confirmDialog({
 		title: "Cancel this analysis?",
 		message: `Stops the active analysis run for ${r.app}. You can schedule it again later.`,
 		onConfirm: async ({ hideDialog }) => {
-			cancelling.value = true
+			cancelling.value = true;
 			try {
-				await cancelAppLearningRun(r.name)
-				hideDialog()
-				toast.success("Run cancelled")
-				refreshAll()
+				await cancelAppLearningRun(r.name);
+				hideDialog();
+				toast.success("Run cancelled");
+				refreshAll();
 			} catch (e) {
-				toast.error(errMsg(e))
+				toast.error(errMsg(e));
 			} finally {
-				cancelling.value = false
+				cancelling.value = false;
 			}
 		},
-	})
+	});
 }
 
 // ── runs list wiring ─────────────────────────────────────────────────────────
-const runsList = ref(null)
+const runsList = ref(null);
 const appFilterOptions = computed(() =>
 	overview.apps.map((a) => ({ label: a.title || a.app, value: a.app }))
-)
+);
 
 function refreshAll() {
-	loadOverview()
-	runsList.value && runsList.value.reload()
+	loadOverview();
+	runsList.value && runsList.value.reload();
 }
 // AnalysisTab's header Refresh reaches in through this
-defineExpose({ reload: refreshAll })
+defineExpose({ reload: refreshAll });
 
 // ── realtime (app_learning:update / app_learning:done → refetch both) ────────
 // Both refetches are non-jarring: loadOverview only shows the spinner before
@@ -415,31 +429,31 @@ defineExpose({ reload: refreshAll })
 // Progress column in place. `update` frames (one per batch advance) are
 // trailing-debounced so a burst schedules a single refetch; `done` flushes
 // immediately (terminal state should land right away).
-let updateTimer = null
+let updateTimer = null;
 function refreshFromEvent() {
-	loadOverview()
-	runsList.value && runsList.value.refresh() // silent window refetch
+	loadOverview();
+	runsList.value && runsList.value.refresh(); // silent window refetch
 }
 function onEvent(p) {
-	if (!p || (p.kind !== "app_learning:update" && p.kind !== "app_learning:done")) return
-	clearTimeout(updateTimer)
-	updateTimer = null
+	if (!p || (p.kind !== "app_learning:update" && p.kind !== "app_learning:done")) return;
+	clearTimeout(updateTimer);
+	updateTimer = null;
 	if (p.kind === "app_learning:done") {
-		refreshFromEvent()
-		return
+		refreshFromEvent();
+		return;
 	}
 	updateTimer = setTimeout(() => {
-		updateTimer = null
-		refreshFromEvent()
-	}, 300)
+		updateTimer = null;
+		refreshFromEvent();
+	}, 300);
 }
 
 onMounted(() => {
-	loadOverview()
-	socket && socket.on && socket.on("jarvis:event", onEvent)
-})
+	loadOverview();
+	socket && socket.on && socket.on("jarvis:event", onEvent);
+});
 onBeforeUnmount(() => {
-	clearTimeout(updateTimer)
-	socket && socket.off && socket.off("jarvis:event", onEvent)
-})
+	clearTimeout(updateTimer);
+	socket && socket.off && socket.off("jarvis:event", onEvent);
+});
 </script>

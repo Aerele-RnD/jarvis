@@ -53,12 +53,42 @@ _MAX_NOTE_LEN = 500
 
 # Overlap check: ignore short/common words so a warning means real shared wording.
 _OVERLAP_MIN_SHARED = 3
-_STOPWORDS = frozenset({
-	"this", "that", "with", "from", "into", "your", "will", "when", "then",
-	"they", "them", "have", "which", "usually", "default", "defaults", "skill",
-	"skills", "learned", "these", "those", "about", "over", "under", "each",
-	"document", "documents", "always", "never", "should", "there", "their",
-})
+_STOPWORDS = frozenset(
+	{
+		"this",
+		"that",
+		"with",
+		"from",
+		"into",
+		"your",
+		"will",
+		"when",
+		"then",
+		"they",
+		"them",
+		"have",
+		"which",
+		"usually",
+		"default",
+		"defaults",
+		"skill",
+		"skills",
+		"learned",
+		"these",
+		"those",
+		"about",
+		"over",
+		"under",
+		"each",
+		"document",
+		"documents",
+		"always",
+		"never",
+		"should",
+		"there",
+		"their",
+	}
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -170,9 +200,10 @@ def _insert_new(candidate: dict, run, eng, *, status: str = "Proposed", note: st
 
 def _handle_rejected(existing: str, candidate: dict, run, eng) -> str:
 	"""Durable suppression, reversible on strengthening (plan section 6.5)."""
-	prev = frappe.db.get_value(
-		JLP, existing, ["strength_band", "support_n", "review_note"], as_dict=True
-	) or frappe._dict()
+	prev = (
+		frappe.db.get_value(JLP, existing, ["strength_band", "support_n", "review_note"], as_dict=True)
+		or frappe._dict()
+	)
 	new_rank = _BAND_RANK.get(candidate.get("strength_band"), 3)
 	old_rank = _BAND_RANK.get(prev.strength_band, 3)
 	band_rose = new_rank < old_rank
@@ -213,9 +244,7 @@ def _handle_rejected(existing: str, candidate: dict, run, eng) -> str:
 def snooze_expiry() -> dict:
 	"""Snoozed rows whose ``snoozed_until`` has passed return to Proposed and
 	re-enter surfacing. Null ``snoozed_until`` is excluded by the filter."""
-	names = frappe.get_all(
-		JLP, filters={"status": "Snoozed", "snoozed_until": ["<=", today()]}, pluck="name"
-	)
+	names = frappe.get_all(JLP, filters={"status": "Snoozed", "snoozed_until": ["<=", today()]}, pluck="name")
 	moved = 0
 	for name in names:
 		try:
@@ -246,9 +275,7 @@ def retention() -> dict:
 	archived = 0
 	for status, ttl in (("Rejected", REJECTED_TTL_DAYS), ("Superseded", SUPERSEDED_TTL_DAYS)):
 		cutoff = str(get_datetime(add_to_date(now, days=-ttl)))
-		names = frappe.get_all(
-			JLP, filters={"status": status, "modified": ["<", cutoff]}, pluck="name"
-		)
+		names = frappe.get_all(JLP, filters={"status": status, "modified": ["<", cutoff]}, pluck="name")
 		for name in names:
 			try:
 				doc = frappe.get_doc(JLP, name)
@@ -330,9 +357,17 @@ def revalidate_active(run=None, patterndb=None, mined=None) -> dict:
 		JLP,
 		filters={"status": ["in", ["Approved", "Active"]]},
 		fields=[
-			"name", "status", "detector_id", "company", "pattern_key",
-			"confidence_pct", "wilson_low", "draft_edited", "evidence",
-			"flag_band_cap", "reviewed_at",
+			"name",
+			"status",
+			"detector_id",
+			"company",
+			"pattern_key",
+			"confidence_pct",
+			"wilson_low",
+			"draft_edited",
+			"evidence",
+			"flag_band_cap",
+			"reviewed_at",
 		],
 	)
 	out = {"revalidated": 0, "staled": 0, "version_skipped": 0, "unchecked": 0, "cap_deferred": 0}
@@ -501,10 +536,7 @@ def _stale_reason(spec, row, cand: dict, window_months) -> str | None:
 	if confidence < c_min:
 		old_pct = round(float(row.get("confidence_pct") or 0))
 		new_pct = round(float(cand.get("confidence_pct") or 0))
-		return (
-			f"confidence dropped {old_pct}% -> {new_pct}% "
-			f"(window {window_months} months)"
-		)
+		return f"confidence dropped {old_pct}% -> {new_pct}% (window {window_months} months)"
 	if wilson < min(STALE_WILSON_FLOOR, old_wilson):
 		return (
 			f"wilson lower bound dropped {round(old_wilson, 2)} -> {round(wilson, 2)} "
@@ -597,9 +629,7 @@ def _stored_checker_version(row):
 def _annotate_revalidation(name: str, note: str, now) -> None:
 	ev = _evidence_dict(frappe.db.get_value(JLP, name, "evidence"))
 	ev["revalidation"] = {"note": note, "at": str(now)}
-	frappe.db.set_value(
-		JLP, name, {"evidence": frappe.as_json(ev)}, update_modified=False
-	)
+	frappe.db.set_value(JLP, name, {"evidence": frappe.as_json(ev)}, update_modified=False)
 
 
 def _evidence_dict(raw) -> dict:
@@ -647,13 +677,15 @@ def notify_system_managers(subject: str, message: str) -> None:
 		if not user or user in ("Administrator", "Guest"):
 			continue
 		try:
-			frappe.get_doc({
-				"doctype": "Notification Log",
-				"for_user": user,
-				"type": "Alert",
-				"subject": subject,
-				"email_content": message,
-			}).insert(ignore_permissions=True)
+			frappe.get_doc(
+				{
+					"doctype": "Notification Log",
+					"for_user": user,
+					"type": "Alert",
+					"subject": subject,
+					"email_content": message,
+				}
+			).insert(ignore_permissions=True)
 		except Exception:
 			pass
 	try:
@@ -670,11 +702,7 @@ def _revalidation_window_closed(run) -> bool:
 	try:
 		from jarvis.learning.orchestrator import should_pause_for_window
 
-		return bool(
-			should_pause_for_window(
-				run.window_start_used, run.window_end_used, now_datetime()
-			)
-		)
+		return bool(should_pause_for_window(run.window_start_used, run.window_end_used, now_datetime()))
 	except Exception:
 		return False
 
@@ -698,10 +726,7 @@ def compute_overlap_warning(pattern_statement, skill_draft) -> str | None:
 		if score >= _OVERLAP_MIN_SHARED and score > best_score:
 			best_name, best_score = sname, score
 	if best_name:
-		return (
-			f"May overlap with your custom skill '{best_name}' (shared wording); "
-			"review before applying."
-		)
+		return f"May overlap with your custom skill '{best_name}' (shared wording); review before applying."
 	return None
 
 
@@ -738,7 +763,4 @@ def _skill_token_index():
 
 
 def _tokens(text: str) -> set:
-	return {
-		w for w in re.findall(r"[a-z0-9]{4,}", (text or "").lower())
-		if w not in _STOPWORDS
-	}
+	return {w for w in re.findall(r"[a-z0-9]{4,}", (text or "").lower()) if w not in _STOPWORDS}

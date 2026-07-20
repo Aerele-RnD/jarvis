@@ -15,7 +15,12 @@
 		</template>
 
 		<template v-else>
-			<TabBar class="shrink-0" :tabs="TABS" :model-value="activeTab" @update:model-value="setTab" />
+			<TabBar
+				class="shrink-0"
+				:tabs="TABS"
+				:model-value="activeTab"
+				@update:model-value="setTab"
+			/>
 
 			<!-- ============ Triggers tab: chat pane | triggers list ============ -->
 			<div v-if="activeTab === 'triggers'" class="flex min-h-0 flex-1">
@@ -49,22 +54,22 @@
 // the SkillsPage rule: a genuine 403 shows the no-access state; a transient
 // 500/network blip retries once and otherwise proceeds with default caps
 // (read-only rendering) rather than blocking an authorized user.
-import { ref, computed, watch, onMounted } from "vue"
-import { useRoute, useRouter } from "vue-router"
-import { FeatherIcon } from "frappe-ui"
-import TabBar from "@/components/list/TabBar.vue"
-import TriggerChatPane from "./TriggerChatPane.vue"
-import TriggersListPane from "./TriggersListPane.vue"
-import ActivityTab from "./ActivityTab.vue"
-import { getTriggersCaps } from "@/api/triggers"
+import { ref, computed, watch, onMounted } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { FeatherIcon } from "frappe-ui";
+import TabBar from "@/components/list/TabBar.vue";
+import TriggerChatPane from "./TriggerChatPane.vue";
+import TriggersListPane from "./TriggersListPane.vue";
+import ActivityTab from "./ActivityTab.vue";
+import { getTriggersCaps } from "@/api/triggers";
 
-const route = useRoute()
-const router = useRouter()
+const route = useRoute();
+const router = useRouter();
 
 const TABS = [
 	{ label: "Triggers", value: "triggers" },
 	{ label: "Activity", value: "activity" },
-]
+];
 
 // caps flow down reactively - admin affordances (New/bulk/enable toggles)
 // appear once the probe lands; the default keeps everything read-only.
@@ -74,72 +79,72 @@ const caps = ref({
 	stt_enabled: false,
 	events: [],
 	llm_events: [],
-})
-const accessDenied = ref(false)
+});
+const accessDenied = ref(false);
 
 // "View all" from a trigger's Recent activity deep-links with ?trigger=<id>
 // so the Activity tab opens pre-filtered to that trigger.
 const initialActivityTrigger = computed(() =>
 	typeof route.query.trigger === "string" ? route.query.trigger : ""
-)
+);
 
 // ── hash-synced tabs (SkillsPage precedent; no gating - both tabs are public) ─
-const activeTab = ref("triggers")
+const activeTab = ref("triggers");
 function applyHash() {
 	// tolerate suffixed forms like "#activity?x=1"
-	const h = (route.hash || "").replace(/^#/, "").split("?")[0]
-	activeTab.value = h === "activity" ? "activity" : "triggers"
+	const h = (route.hash || "").replace(/^#/, "").split("?")[0];
+	activeTab.value = h === "activity" ? "activity" : "triggers";
 }
 function setTab(v) {
-	if (v === activeTab.value) return
-	activeTab.value = v
+	if (v === activeTab.value) return;
+	activeTab.value = v;
 	// leaving Activity also drops a stale ?trigger= deep-link filter
-	const query = v === "activity" ? route.query : {}
-	router.push({ hash: v === "triggers" ? "" : `#${v}`, query })
+	const query = v === "activity" ? route.query : {};
+	router.push({ hash: v === "triggers" ? "" : `#${v}`, query });
 }
-applyHash()
+applyHash();
 // back/forward restores the tab (guard to this route so other pages' hashes
 // are ignored - the SkillsPage rule)
 watch(
 	() => route.hash,
 	() => {
-		if (route.name === "TriggersPage") applyHash()
+		if (route.name === "TriggersPage") applyHash();
 	}
-)
+);
 
 // ── the chat-pane → list refresh wire ────────────────────────────────────────
-const listPane = ref(null)
+const listPane = ref(null);
 function refreshList() {
-	listPane.value && listPane.value.refresh && listPane.value.refresh()
+	listPane.value && listPane.value.refresh && listPane.value.refresh();
 }
 
 // ── caps probe (403 vs transient, SkillsPage pattern) ────────────────────────
 function isPermissionError(e) {
-	return !!(e && (e.status === 403 || e.exc_type === "PermissionError"))
+	return !!(e && (e.status === 403 || e.exc_type === "PermissionError"));
 }
 
 onMounted(async () => {
-	let fresh = null
+	let fresh = null;
 	try {
-		fresh = await getTriggersCaps()
+		fresh = await getTriggersCaps();
 	} catch (e) {
 		if (isPermissionError(e)) {
-			accessDenied.value = true
-			return
+			accessDenied.value = true;
+			return;
 		}
 		// transient (500/network) - retry once before giving up
-		await new Promise((r) => setTimeout(r, 1000))
+		await new Promise((r) => setTimeout(r, 1000));
 		try {
-			fresh = await getTriggersCaps()
+			fresh = await getTriggersCaps();
 		} catch (e2) {
 			if (isPermissionError(e2)) {
-				accessDenied.value = true
-				return
+				accessDenied.value = true;
+				return;
 			}
 			// still transient - keep the read-only defaults instead of blocking
-			console.warn("get_triggers_caps failed twice; keeping read-only caps", e2)
+			console.warn("get_triggers_caps failed twice; keeping read-only caps", e2);
 		}
 	}
-	if (fresh) caps.value = { ...caps.value, ...fresh }
-})
+	if (fresh) caps.value = { ...caps.value, ...fresh };
+});
 </script>

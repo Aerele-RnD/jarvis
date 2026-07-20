@@ -8,30 +8,30 @@
 //     applyRemoteNew (DA-04) — called from ChatView's socket handlers and the
 //     AppShell-level global notifier (notify/globalNotifier.js).
 //   - unreadConvs: the global notifier marks, ChatView clears on open.
-import { reactive, ref, computed } from "vue"
-import { useStorage } from "@vueuse/core"
-import { toast } from "frappe-ui"
-import * as api from "@/api"
+import { reactive, ref, computed } from "vue";
+import { useStorage } from "@vueuse/core";
+import { toast } from "frappe-ui";
+import * as api from "@/api";
 
 function errMsg(e) {
-	return (e && ((e.messages && e.messages[0]) || e.message)) || "Something went wrong."
+	return (e && ((e.messages && e.messages[0]) || e.message)) || "Something went wrong.";
 }
 
 // ---- state ------------------------------------------------------------------
-const conversations = ref([]) // [{name,title,last_active_at,starred,message_count}]
-const conversationsLoading = ref(false)
-const currentConvId = ref(null) // written by ChatView only
-const streamingConvId = ref(null) // written by ChatView only
+const conversations = ref([]); // [{name,title,last_active_at,starred,message_count}]
+const conversationsLoading = ref(false);
+const currentConvId = ref(null); // written by ChatView only
+const streamingConvId = ref(null); // written by ChatView only
 // Conversations with a finished (or errored) reply the user hasn't opened yet —
 // the sidebar's unread dot (distinct from the streaming dot). Replaced
 // wholesale on every write so Set mutations stay reactive.
-const unreadConvs = ref(new Set())
-const approvalsCount = ref(0)
-const settingsOpen = ref(false) // the shell SettingsDialog binds to this
-const settingsSection = ref("general") // active pane key in the settings dialog
-const pendingNewChat = ref(false) // consumed + cleared by ChatView
-const paletteOpen = ref(false)
-const moreMenuOpen = ref(false) // the sidebar "More" destinations palette (MoreMenu.vue)
+const unreadConvs = ref(new Set());
+const approvalsCount = ref(0);
+const settingsOpen = ref(false); // the shell SettingsDialog binds to this
+const settingsSection = ref("general"); // active pane key in the settings dialog
+const pendingNewChat = ref(false); // consumed + cleared by ChatView
+const paletteOpen = ref(false);
+const moreMenuOpen = ref(false); // the sidebar "More" destinations palette (MoreMenu.vue)
 
 // Chat-scoped context published by ChatView WHILE MOUNTED (null otherwise), so
 // the shell-level settings panes can read the current conversation's live stats
@@ -40,16 +40,20 @@ const moreMenuOpen = ref(false) // the sidebar "More" destinations palette (More
 //       sessionToolCalls,avgTokensPerMsg,convCount,starredCount,toolCount,
 //       recentActivity },
 //     convAutoApply, autoApplyNote, modelLabel, ui }
-const chatContext = ref(null)
-function setChatContext(v) { chatContext.value = v }
+const chatContext = ref(null);
+function setChatContext(v) {
+	chatContext.value = v;
+}
 
 // Actions with chat side-effects, registered by ChatView while mounted so panes
 // can invoke them when present (and disable/hint when absent). ChatView
 // registers { toggleAutoApply, clearAllHistory }.
-const settingsActions = reactive({})
-function registerSettingsActions(obj) { Object.assign(settingsActions, obj || {}) }
+const settingsActions = reactive({});
+function registerSettingsActions(obj) {
+	Object.assign(settingsActions, obj || {});
+}
 function clearSettingsActions() {
-	for (const k of Object.keys(settingsActions)) delete settingsActions[k]
+	for (const k of Object.keys(settingsActions)) delete settingsActions[k];
 }
 
 // Device-local behaviour prefs. These were owned by ChatView, but the
@@ -64,42 +68,53 @@ function clearSettingsActions() {
 // trust signal, so hide it only when the user has explicitly turned it off
 // ("0"). The server-side default matches (Jarvis User Settings.activity_detail
 // defaults to 1) so the first get_my_settings sync can't flip a fresh device.
-const _storedActivityDetail = localStorage.getItem("jarvis-activity-detail")
-const activityDetail = ref(_storedActivityDetail === null ? true : _storedActivityDetail === "1")
+const _storedActivityDetail = localStorage.getItem("jarvis-activity-detail");
+const activityDetail = ref(_storedActivityDetail === null ? true : _storedActivityDetail === "1");
 // `persist:false` is used only by syncSettingsFromServer, to apply a value
 // that already came FROM the server without immediately POSTing it back.
 function setActivityDetail(v, { persist = true } = {}) {
-	activityDetail.value = !!v
-	try { localStorage.setItem("jarvis-activity-detail", v ? "1" : "0") } catch (e) {}
+	activityDetail.value = !!v;
+	try {
+		localStorage.setItem("jarvis-activity-detail", v ? "1" : "0");
+	} catch (e) {}
 	if (persist) {
 		// Fire-and-forget: never blocks the toggle UI; failure surfaces as a
 		// toast (same as renameConversation/toggleStar below) but the local
 		// (localStorage-cached) value already stuck, so the UI stays correct.
-		api.updateMySettings({ activity_detail: activityDetail.value ? 1 : 0 })
-			.catch((e) => toast.error(errMsg(e)))
+		api.updateMySettings({ activity_detail: activityDetail.value ? 1 : 0 }).catch((e) =>
+			toast.error(errMsg(e))
+		);
 	}
 }
 const notifyEnabled = ref(
 	typeof Notification !== "undefined" &&
-	localStorage.getItem("jarvis-notify") === "1" &&
-	Notification.permission === "granted",
-)
+		localStorage.getItem("jarvis-notify") === "1" &&
+		Notification.permission === "granted"
+);
 async function toggleNotify() {
-	if (typeof Notification === "undefined") return
+	if (typeof Notification === "undefined") return;
 	if (notifyEnabled.value) {
-		notifyEnabled.value = false
-		try { localStorage.setItem("jarvis-notify", "0") } catch (e) {}
-		api.updateMySettings({ notify_enabled: 0 }).catch((e) => toast.error(errMsg(e)))
-		return
+		notifyEnabled.value = false;
+		try {
+			localStorage.setItem("jarvis-notify", "0");
+		} catch (e) {}
+		api.updateMySettings({ notify_enabled: 0 }).catch((e) => toast.error(errMsg(e)));
+		return;
 	}
-	let perm = Notification.permission
+	let perm = Notification.permission;
 	if (perm !== "granted") {
-		try { perm = await Notification.requestPermission() } catch (e) { perm = "denied" }
+		try {
+			perm = await Notification.requestPermission();
+		} catch (e) {
+			perm = "denied";
+		}
 	}
 	if (perm === "granted") {
-		notifyEnabled.value = true
-		try { localStorage.setItem("jarvis-notify", "1") } catch (e) {}
-		api.updateMySettings({ notify_enabled: 1 }).catch((e) => toast.error(errMsg(e)))
+		notifyEnabled.value = true;
+		try {
+			localStorage.setItem("jarvis-notify", "1");
+		} catch (e) {}
+		api.updateMySettings({ notify_enabled: 1 }).catch((e) => toast.error(errMsg(e)));
 	}
 }
 // Called by GeneralPane's onMounted (get_my_settings) once the server row is
@@ -108,121 +123,125 @@ async function toggleNotify() {
 // is account-level intent, but a device that never granted Notification
 // permission still can't fire one, so local state must reflect that.
 function syncSettingsFromServer(data) {
-	if (!data) return
-	if (data.activity_detail !== undefined) setActivityDetail(!!data.activity_detail, { persist: false })
+	if (!data) return;
+	if (data.activity_detail !== undefined)
+		setActivityDetail(!!data.activity_detail, { persist: false });
 	if (data.notify_enabled !== undefined) {
-		const allowed = typeof Notification !== "undefined" && Notification.permission === "granted"
-		notifyEnabled.value = !!data.notify_enabled && allowed
-		try { localStorage.setItem("jarvis-notify", notifyEnabled.value ? "1" : "0") } catch (e) {}
+		const allowed =
+			typeof Notification !== "undefined" && Notification.permission === "granted";
+		notifyEnabled.value = !!data.notify_enabled && allowed;
+		try {
+			localStorage.setItem("jarvis-notify", notifyEnabled.value ? "1" : "0");
+		} catch (e) {}
 	}
 }
 
 // Sidebar collapse: persisted preference (same localStorage key/values as
 // today — existing prefs survive, D5) + a non-persisted narrow-screen
 // override (auto-collapse at ≤820px; manual toggles there are temporary, D8).
-const sidebarPref = useStorage("jarvis-sidebar", "open") // 'open' | 'collapsed'
-const _narrow = ref(false)
-const _narrowOverride = ref(null) // null | 'open' | 'collapsed' (narrow-only, not persisted)
+const sidebarPref = useStorage("jarvis-sidebar", "open"); // 'open' | 'collapsed'
+const _narrow = ref(false);
+const _narrowOverride = ref(null); // null | 'open' | 'collapsed' (narrow-only, not persisted)
 if (typeof window !== "undefined") {
-	const mq = window.matchMedia("(max-width: 820px)")
-	_narrow.value = mq.matches
+	const mq = window.matchMedia("(max-width: 820px)");
+	_narrow.value = mq.matches;
 	mq.addEventListener("change", (e) => {
-		_narrow.value = e.matches
-		_narrowOverride.value = null // crossing the breakpoint resets to width-driven default
-	})
+		_narrow.value = e.matches;
+		_narrowOverride.value = null; // crossing the breakpoint resets to width-driven default
+	});
 }
 const sidebarCollapsed = computed({
 	get() {
 		if (_narrow.value) {
-			return _narrowOverride.value ? _narrowOverride.value === "collapsed" : true
+			return _narrowOverride.value ? _narrowOverride.value === "collapsed" : true;
 		}
-		return sidebarPref.value === "collapsed"
+		return sidebarPref.value === "collapsed";
 	},
 	set(v) {
-		if (_narrow.value) _narrowOverride.value = v ? "collapsed" : "open"
-		else sidebarPref.value = v ? "collapsed" : "open"
+		if (_narrow.value) _narrowOverride.value = v ? "collapsed" : "open";
+		else sidebarPref.value = v ? "collapsed" : "open";
 	},
-})
+});
 
 // Sidebar width when expanded: persisted per device, drag-resizable via the
 // handle in Sidebar.vue. Clamped to [MIN, MAX]; the collapsed rail (48px) is
 // fixed and unaffected. Reads clamp too, so a stale/hand-edited value can't
 // wedge the rail off-screen.
-const SIDEBAR_MIN_W = 180
-const SIDEBAR_MAX_W = 460
-const _sidebarWidth = useStorage("jarvis-sidebar-width", 220)
+const SIDEBAR_MIN_W = 180;
+const SIDEBAR_MAX_W = 460;
+const _sidebarWidth = useStorage("jarvis-sidebar-width", 220);
 const clampSidebarWidth = (n) =>
-	Math.min(SIDEBAR_MAX_W, Math.max(SIDEBAR_MIN_W, Math.round(Number(n) || 220)))
+	Math.min(SIDEBAR_MAX_W, Math.max(SIDEBAR_MIN_W, Math.round(Number(n) || 220)));
 const sidebarWidth = computed({
 	get() {
-		return clampSidebarWidth(_sidebarWidth.value)
+		return clampSidebarWidth(_sidebarWidth.value);
 	},
 	set(v) {
-		_sidebarWidth.value = clampSidebarWidth(v)
+		_sidebarWidth.value = clampSidebarWidth(v);
 	},
-})
+});
 
 // ---- actions (all errors → toast; never throw to callers) -------------------
-let _convsInflight = null
+let _convsInflight = null;
 async function loadConversations() {
-	if (_convsInflight) return _convsInflight
-	conversationsLoading.value = true
+	if (_convsInflight) return _convsInflight;
+	conversationsLoading.value = true;
 	_convsInflight = (async () => {
 		try {
-			conversations.value = (await api.listConversations()) || []
-			refreshApprovalsCount() // poll-on-activity parity (D12)
+			conversations.value = (await api.listConversations()) || [];
+			refreshApprovalsCount(); // poll-on-activity parity (D12)
 		} catch (e) {
-			toast.error(errMsg(e))
+			toast.error(errMsg(e));
 		} finally {
-			conversationsLoading.value = false
-			_convsInflight = null
+			conversationsLoading.value = false;
+			_convsInflight = null;
 		}
-	})()
-	return _convsInflight
+	})();
+	return _convsInflight;
 }
 
 // AppShell fires this from four triggers (mount · route change · visibility ·
 // 60s interval) that often co-fire; the in-flight de-dupe coalesces them into
 // one request, and a hidden tab skips entirely (the visibility trigger
 // refreshes on return).
-let _approvalsInflight = null
+let _approvalsInflight = null;
 function refreshApprovalsCount() {
-	if (typeof document !== "undefined" && document.hidden) return Promise.resolve()
-	if (_approvalsInflight) return _approvalsInflight
+	if (typeof document !== "undefined" && document.hidden) return Promise.resolve();
+	if (_approvalsInflight) return _approvalsInflight;
 	_approvalsInflight = (async () => {
 		try {
-			approvalsCount.value = (await api.approvalsPendingCount()) || 0
+			approvalsCount.value = (await api.approvalsPendingCount()) || 0;
 		} catch (e) {
 			/* badge is best-effort */
 		} finally {
-			_approvalsInflight = null
+			_approvalsInflight = null;
 		}
-	})()
-	return _approvalsInflight
+	})();
+	return _approvalsInflight;
 }
 
 async function renameConversation(name, title) {
-	const conv = conversations.value.find((c) => c.name === name)
-	const prev = conv ? conv.title : ""
-	if (conv) conv.title = title // optimistic
+	const conv = conversations.value.find((c) => c.name === name);
+	const prev = conv ? conv.title : "";
+	if (conv) conv.title = title; // optimistic
 	try {
-		await api.renameConversation(name, title)
+		await api.renameConversation(name, title);
 	} catch (e) {
-		if (conv) conv.title = prev
-		toast.error(errMsg(e))
+		if (conv) conv.title = prev;
+		toast.error(errMsg(e));
 	}
 }
 
 async function toggleStar(name) {
-	const conv = conversations.value.find((c) => c.name === name)
-	if (!conv) return
-	const next = conv.starred ? 0 : 1
-	conv.starred = next // optimistic — regroups instantly
+	const conv = conversations.value.find((c) => c.name === name);
+	if (!conv) return;
+	const next = conv.starred ? 0 : 1;
+	conv.starred = next; // optimistic — regroups instantly
 	try {
-		await api.setStar(name, next)
+		await api.setStar(name, next);
 	} catch (e) {
-		conv.starred = next ? 0 : 1
-		toast.error(errMsg(e))
+		conv.starred = next ? 0 : 1;
+		toast.error(errMsg(e));
 	}
 }
 
@@ -230,19 +249,19 @@ async function toggleStar(name) {
 // confirmDialog). ChatView reacts to the removal via its store watcher.
 async function archiveConversation(name) {
 	try {
-		await api.archiveConversation(name)
-		conversations.value = conversations.value.filter((c) => c.name !== name)
-		toast.success("Chat deleted")
+		await api.archiveConversation(name);
+		conversations.value = conversations.value.filter((c) => c.name !== name);
+		toast.success("Chat deleted");
 	} catch (e) {
-		toast.error(errMsg(e))
+		toast.error(errMsg(e));
 	}
 }
 
 // D10 — New Chat from any route: one mechanism for on-chat and cross-route.
 function requestNewChat(router) {
-	pendingNewChat.value = true
-	const name = router.currentRoute.value.name
-	if (name !== "Chat" && name !== "Conversation") router.push({ name: "Chat" })
+	pendingNewChat.value = true;
+	const name = router.currentRoute.value.name;
+	if (name !== "Chat" && name !== "Conversation") router.push({ name: "Chat" });
 }
 
 // D9 — the settings dialog lives at the shell now (SettingsDialog.vue), so it
@@ -250,37 +269,37 @@ function requestNewChat(router) {
 // pane; a non-string arg (e.g. a legacy `router` caller not yet updated) falls
 // back to "general" so old call-sites keep opening the dialog harmlessly.
 function openSettings(section) {
-	settingsOpen.value = true
-	settingsSection.value = typeof section === "string" && section ? section : "general"
+	settingsOpen.value = true;
+	settingsSection.value = typeof section === "string" && section ? section : "general";
 }
 
 // ---- socket contract (§14 DA-04) — called by ChatView's handlers only ------
 function applyRemoteRename(name, title) {
-	const conv = conversations.value.find((c) => c.name === name)
-	if (conv && title) conv.title = title
+	const conv = conversations.value.find((c) => c.name === name);
+	if (conv && title) conv.title = title;
 }
 
-let _remoteNewTimer = null
+let _remoteNewTimer = null;
 function applyRemoteNew() {
-	if (_remoteNewTimer) return
+	if (_remoteNewTimer) return;
 	_remoteNewTimer = setTimeout(() => {
-		_remoteNewTimer = null
-		loadConversations()
-	}, 500)
+		_remoteNewTimer = null;
+		loadConversations();
+	}, 500);
 }
 
 // ---- unread signal (NOTIFY-APPROVALS Part 1) --------------------------------
 // The global notifier marks a conversation unread when its run ends off-screen;
 // ChatView clears it the moment that conversation is opened.
 function markUnread(id) {
-	if (!id || unreadConvs.value.has(id)) return
-	unreadConvs.value = new Set(unreadConvs.value).add(id)
+	if (!id || unreadConvs.value.has(id)) return;
+	unreadConvs.value = new Set(unreadConvs.value).add(id);
 }
 function clearUnread(id) {
-	if (!id || !unreadConvs.value.has(id)) return
-	const next = new Set(unreadConvs.value)
-	next.delete(id)
-	unreadConvs.value = next
+	if (!id || !unreadConvs.value.has(id)) return;
+	const next = new Set(unreadConvs.value);
+	next.delete(id);
+	unreadConvs.value = next;
 }
 
 // reactive() unwraps the refs/computeds, so consumers read and write plain
@@ -325,8 +344,8 @@ const store = reactive({
 	applyRemoteNew,
 	markUnread,
 	clearUnread,
-})
+});
 
 export function useShellStore() {
-	return store
+	return store;
 }

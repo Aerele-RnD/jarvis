@@ -6,6 +6,7 @@ state machine parsing the jarvis-macro-merge block, and the apply that
 collapses the steps (skills union, first non-empty overrides), all
 owner-gated.
 """
+
 from __future__ import annotations
 
 from unittest.mock import patch
@@ -29,12 +30,14 @@ MERGE_BLOCK = (
 
 
 def _mk_macro(steps):
-	doc = frappe.get_doc({
-		"doctype": "Jarvis Macro",
-		"macro_name": f"merge-test-{frappe.generate_hash(length=6)}",
-		"enabled": 1,
-		"steps": steps,
-	})
+	doc = frappe.get_doc(
+		{
+			"doctype": "Jarvis Macro",
+			"macro_name": f"merge-test-{frappe.generate_hash(length=6)}",
+			"enabled": 1,
+			"steps": steps,
+		}
+	)
 	doc.flags.ignore_permissions = True
 	doc.insert()
 	return doc
@@ -45,26 +48,38 @@ def _mk_conv(assistant=None, streaming=0, error=""):
 	conv.flags.ignore_permissions = True
 	conv.insert()
 	if assistant is not None:
-		frappe.get_doc({
-			"doctype": "Jarvis Chat Message", "conversation": conv.name, "seq": 2,
-			"role": "assistant", "content": assistant, "streaming": streaming,
-			"error": error,
-		}).insert(ignore_permissions=True)
+		frappe.get_doc(
+			{
+				"doctype": "Jarvis Chat Message",
+				"conversation": conv.name,
+				"seq": 2,
+				"role": "assistant",
+				"content": assistant,
+				"streaming": streaming,
+				"error": error,
+			}
+		).insert(ignore_permissions=True)
 	return conv.name
 
 
 class TestSummarizeMacro(FrappeTestCase):
 	def test_enqueues_one_turn_with_steps_and_skill(self):
-		m = _mk_macro([
-			{"label": "a", "prompt": "Sales analytics for last quarter"},
-			{"label": "b", "prompt": "Find the highest outstanding customer"},
-		])
-		self.addCleanup(lambda: frappe.delete_doc("Jarvis Macro", m.name, force=True, ignore_permissions=True))
+		m = _mk_macro(
+			[
+				{"label": "a", "prompt": "Sales analytics for last quarter"},
+				{"label": "b", "prompt": "Find the highest outstanding customer"},
+			]
+		)
+		self.addCleanup(
+			lambda: frappe.delete_doc("Jarvis Macro", m.name, force=True, ignore_permissions=True)
+		)
 		with patch("jarvis.chat.api._enqueue_turn") as enq:
 			r = summarize_macro(m.name)
 		self.assertTrue(r["ok"])
 		conv = r["conversation"]
-		self.addCleanup(lambda: frappe.delete_doc("Jarvis Conversation", conv, force=True, ignore_permissions=True))
+		self.addCleanup(
+			lambda: frappe.delete_doc("Jarvis Conversation", conv, force=True, ignore_permissions=True)
+		)
 		# one turn, into the returned conversation, steps JSON + skill invocation in the prompt
 		enq.assert_called_once()
 		args, kwargs = enq.call_args
@@ -79,17 +94,21 @@ class TestSummarizeMacro(FrappeTestCase):
 
 	def test_rejects_single_step_macro(self):
 		m = _mk_macro([{"label": "only", "prompt": "one thing"}])
-		self.addCleanup(lambda: frappe.delete_doc("Jarvis Macro", m.name, force=True, ignore_permissions=True))
+		self.addCleanup(
+			lambda: frappe.delete_doc("Jarvis Macro", m.name, force=True, ignore_permissions=True)
+		)
 		with self.assertRaises(frappe.ValidationError):
 			summarize_macro(m.name)
 
 
 class TestGetMacroMerge(FrappeTestCase):
 	def _cleanup_conv(self, conv):
-		self.addCleanup(lambda: (
-			frappe.db.delete("Jarvis Chat Message", {"conversation": conv}),
-			frappe.delete_doc("Jarvis Conversation", conv, force=True, ignore_permissions=True),
-		))
+		self.addCleanup(
+			lambda: (
+				frappe.db.delete("Jarvis Chat Message", {"conversation": conv}),
+				frappe.delete_doc("Jarvis Conversation", conv, force=True, ignore_permissions=True),
+			)
+		)
 
 	def test_pending_when_no_reply(self):
 		conv = _mk_conv(assistant=None)
@@ -137,12 +156,16 @@ class TestApplyMacroMerge(FrappeTestCase):
 	def test_stores_summary_and_keeps_steps(self):
 		# The sequence stays as the editable source; the summary rides alongside
 		# and (see TestMergedRun) is what run_macro executes.
-		m = _mk_macro([
-			{"label": "a", "prompt": "p1"},
-			{"label": "b", "prompt": "p2"},
-			{"label": "c", "prompt": "p3"},
-		])
-		self.addCleanup(lambda: frappe.delete_doc("Jarvis Macro", m.name, force=True, ignore_permissions=True))
+		m = _mk_macro(
+			[
+				{"label": "a", "prompt": "p1"},
+				{"label": "b", "prompt": "p2"},
+				{"label": "c", "prompt": "p3"},
+			]
+		)
+		self.addCleanup(
+			lambda: frappe.delete_doc("Jarvis Macro", m.name, force=True, ignore_permissions=True)
+		)
 		r = apply_macro_merge(m.name, "Do p1, and from those results p2, then p3.")
 		self.assertEqual(r["step_count"], 3)  # steps untouched
 		doc = frappe.get_doc("Jarvis Macro", m.name)
@@ -152,29 +175,38 @@ class TestApplyMacroMerge(FrappeTestCase):
 
 	def test_empty_prompt_refused(self):
 		m = _mk_macro([{"prompt": "p1"}, {"prompt": "p2"}])
-		self.addCleanup(lambda: frappe.delete_doc("Jarvis Macro", m.name, force=True, ignore_permissions=True))
+		self.addCleanup(
+			lambda: frappe.delete_doc("Jarvis Macro", m.name, force=True, ignore_permissions=True)
+		)
 		with self.assertRaises(frappe.ValidationError):
 			apply_macro_merge(m.name, "   ")
 
 	def test_clear_macro_merge(self):
 		m = _mk_macro([{"prompt": "p1"}, {"prompt": "p2"}])
-		self.addCleanup(lambda: frappe.delete_doc("Jarvis Macro", m.name, force=True, ignore_permissions=True))
+		self.addCleanup(
+			lambda: frappe.delete_doc("Jarvis Macro", m.name, force=True, ignore_permissions=True)
+		)
 		apply_macro_merge(m.name, "the summary")
 		from jarvis.chat.macros_api import clear_macro_merge
+
 		clear_macro_merge(m.name)
 		self.assertEqual(frappe.db.get_value("Jarvis Macro", m.name, "merged_prompt") or "", "")
 
 	def test_update_steps_clears_stale_summary(self):
 		from jarvis.chat.macros_api import get_macro, update_macro
+
 		m = _mk_macro([{"prompt": "p1"}, {"prompt": "p2"}])
-		self.addCleanup(lambda: frappe.delete_doc("Jarvis Macro", m.name, force=True, ignore_permissions=True))
+		self.addCleanup(
+			lambda: frappe.delete_doc("Jarvis Macro", m.name, force=True, ignore_permissions=True)
+		)
 		apply_macro_merge(m.name, "the summary")
 		# steps replaced without a merged_prompt in the same call → summary is stale → cleared
 		update_macro(m.name, steps=frappe.as_json([{"prompt": "p1 changed"}, {"prompt": "p2"}]))
 		self.assertEqual(get_macro(m.name)["merged_prompt"], "")
 		# but sending merged_prompt alongside keeps/sets it
-		update_macro(m.name, steps=frappe.as_json([{"prompt": "p1"}, {"prompt": "p2"}]),
-					 merged_prompt="edited summary")
+		update_macro(
+			m.name, steps=frappe.as_json([{"prompt": "p1"}, {"prompt": "p2"}]), merged_prompt="edited summary"
+		)
 		self.assertEqual(get_macro(m.name)["merged_prompt"], "edited summary")
 
 
@@ -184,16 +216,25 @@ class TestMergeApplyHook(FrappeTestCase):
 
 	def _pending_macro_with_reply(self, reply_content, errored=False):
 		m = _mk_macro([{"prompt": "p1"}, {"prompt": "p2"}])
-		self.addCleanup(lambda: frappe.delete_doc("Jarvis Macro", m.name, force=True, ignore_permissions=True))
+		self.addCleanup(
+			lambda: frappe.delete_doc("Jarvis Macro", m.name, force=True, ignore_permissions=True)
+		)
 		conv = _mk_conv(assistant=reply_content)
-		frappe.db.set_value("Jarvis Macro", m.name, {
-			"merge_status": "pending", "merge_conversation": conv,
-		}, update_modified=False)
+		frappe.db.set_value(
+			"Jarvis Macro",
+			m.name,
+			{
+				"merge_status": "pending",
+				"merge_conversation": conv,
+			},
+			update_modified=False,
+		)
 		frappe.db.commit()
 		return m, conv
 
 	def test_ready_reply_applies_summary_and_cleans_up(self):
 		from jarvis.chat import macros
+
 		m, conv = self._pending_macro_with_reply(MERGE_BLOCK)
 		macros.advance_after_turn(conv, errored=False)
 		doc = frappe.get_doc("Jarvis Macro", m.name)
@@ -204,6 +245,7 @@ class TestMergeApplyHook(FrappeTestCase):
 
 	def test_errored_turn_marks_failed_and_steps_still_run(self):
 		from jarvis.chat import macros
+
 		m, conv = self._pending_macro_with_reply("irrelevant")
 		macros.advance_after_turn(conv, errored=True)
 		doc = frappe.get_doc("Jarvis Macro", m.name)
@@ -213,19 +255,25 @@ class TestMergeApplyHook(FrappeTestCase):
 
 	def test_unmergeable_reply_marks_failed(self):
 		from jarvis.chat import macros
-		block = ('ok\n\n```jarvis-macro-merge\n{"mergeable": false, "reason": "checkpoint", '
-				 '"merged_prompt": "", "dependencies": []}\n```')
+
+		block = (
+			'ok\n\n```jarvis-macro-merge\n{"mergeable": false, "reason": "checkpoint", '
+			'"merged_prompt": "", "dependencies": []}\n```'
+		)
 		m, conv = self._pending_macro_with_reply(block)
 		macros.advance_after_turn(conv, errored=False)
 		self.assertEqual(frappe.db.get_value("Jarvis Macro", m.name, "merge_status"), "failed")
 
 	def test_run_blocked_while_pending(self):
 		from jarvis.chat import macros
+
 		m, conv = self._pending_macro_with_reply(MERGE_BLOCK)
-		self.addCleanup(lambda: (
-			frappe.db.delete("Jarvis Chat Message", {"conversation": conv}),
-			frappe.delete_doc("Jarvis Conversation", conv, force=True, ignore_permissions=True),
-		))
+		self.addCleanup(
+			lambda: (
+				frappe.db.delete("Jarvis Chat Message", {"conversation": conv}),
+				frappe.delete_doc("Jarvis Conversation", conv, force=True, ignore_permissions=True),
+			)
+		)
 		with self.assertRaises(frappe.ValidationError):
 			macros.run_macro(m.name)
 
@@ -233,18 +281,23 @@ class TestMergeApplyHook(FrappeTestCase):
 class TestMergedRun(FrappeTestCase):
 	def test_run_macro_uses_summary_as_single_turn(self):
 		from jarvis.chat import macros
+
 		m = _mk_macro([{"prompt": "p1"}, {"prompt": "p2"}, {"prompt": "p3"}])
-		self.addCleanup(lambda: frappe.delete_doc("Jarvis Macro", m.name, force=True, ignore_permissions=True))
+		self.addCleanup(
+			lambda: frappe.delete_doc("Jarvis Macro", m.name, force=True, ignore_permissions=True)
+		)
 		apply_macro_merge(m.name, "One prompt to rule them all.")
 		with patch("jarvis.chat.api._enqueue_turn") as enq:
 			r = macros.run_macro(m.name)
 		run_name = r["data"]["macro_run"]
 		conv = r["data"]["conversation"]
-		self.addCleanup(lambda: (
-			frappe.delete_doc("Jarvis Macro Run", run_name, force=True, ignore_permissions=True),
-			frappe.db.delete("Jarvis Chat Message", {"conversation": conv}),
-			frappe.delete_doc("Jarvis Conversation", conv, force=True, ignore_permissions=True),
-		))
+		self.addCleanup(
+			lambda: (
+				frappe.delete_doc("Jarvis Macro Run", run_name, force=True, ignore_permissions=True),
+				frappe.db.delete("Jarvis Chat Message", {"conversation": conv}),
+				frappe.delete_doc("Jarvis Conversation", conv, force=True, ignore_permissions=True),
+			)
+		)
 		enq.assert_called_once()  # ONE turn, not three
 		self.assertTrue(enq.call_args[0][1].startswith("One prompt to rule them all."))
 		run = frappe.get_doc("Jarvis Macro Run", run_name)
@@ -253,17 +306,22 @@ class TestMergedRun(FrappeTestCase):
 
 	def test_run_macro_without_summary_chains_steps(self):
 		from jarvis.chat import macros
+
 		m = _mk_macro([{"prompt": "p1"}, {"prompt": "p2"}])
-		self.addCleanup(lambda: frappe.delete_doc("Jarvis Macro", m.name, force=True, ignore_permissions=True))
+		self.addCleanup(
+			lambda: frappe.delete_doc("Jarvis Macro", m.name, force=True, ignore_permissions=True)
+		)
 		with patch("jarvis.chat.api._enqueue_turn") as enq:
 			r = macros.run_macro(m.name)
 		run_name = r["data"]["macro_run"]
 		conv = r["data"]["conversation"]
-		self.addCleanup(lambda: (
-			frappe.delete_doc("Jarvis Macro Run", run_name, force=True, ignore_permissions=True),
-			frappe.db.delete("Jarvis Chat Message", {"conversation": conv}),
-			frappe.delete_doc("Jarvis Conversation", conv, force=True, ignore_permissions=True),
-		))
+		self.addCleanup(
+			lambda: (
+				frappe.delete_doc("Jarvis Macro Run", run_name, force=True, ignore_permissions=True),
+				frappe.db.delete("Jarvis Chat Message", {"conversation": conv}),
+				frappe.delete_doc("Jarvis Conversation", conv, force=True, ignore_permissions=True),
+			)
+		)
 		enq.assert_called_once()  # step 1 enqueued; the chain advances per turn
 		self.assertTrue(enq.call_args[0][1].startswith("p1"))
 		self.assertEqual(frappe.get_doc("Jarvis Macro Run", run_name).total_steps, 2)

@@ -17,6 +17,7 @@ Two shapes:
 - **Batch:** ``add_comment(doctype, names=[...], content=...)`` -> the same
   note on every record in ONE atomic savepoint.
 """
+
 from __future__ import annotations
 
 import frappe
@@ -28,55 +29,55 @@ from jarvis.tools._bulk import run_atomic_batch
 
 @desk_action()
 def add_comment(
-    doctype: str,
-    name: str | None = None,
-    content: str | None = None,
-    names: list | None = None,
+	doctype: str,
+	name: str | None = None,
+	content: str | None = None,
+	names: list | None = None,
 ) -> dict:
-    """Add a Comment with ``content`` to one doc - or to every doc in ``names``.
+	"""Add a Comment with ``content`` to one doc - or to every doc in ``names``.
 
-    Single: returns ``{comment_name, doctype, name, content}``.
-    Batch: returns ``{doctype, commented:[name,...], count}``.
-    """
-    if content is None or content == "":
-        raise InvalidArgumentError("content is required")
+	Single: returns ``{comment_name, doctype, name, content}``.
+	Batch: returns ``{doctype, commented:[name,...], count}``.
+	"""
+	if content is None or content == "":
+		raise InvalidArgumentError("content is required")
 
-    if names is not None:
-        return _add_comment_batch(doctype, names, content)
+	if names is not None:
+		return _add_comment_batch(doctype, names, content)
 
-    comment_name = _add_comment_one(doctype, name, content)
-    return {"comment_name": comment_name, "doctype": doctype, "name": name, "content": content}
+	comment_name = _add_comment_one(doctype, name, content)
+	return {"comment_name": comment_name, "doctype": doctype, "name": name, "content": content}
 
 
 def _add_comment_one(doctype: str, name: str, content: str) -> str | None:
-    """Read-permission check + add the comment, for ONE record."""
-    frappe.has_permission(doctype, "read", doc=name, throw=True)
+	"""Read-permission check + add the comment, for ONE record."""
+	frappe.has_permission(doctype, "read", doc=name, throw=True)
 
-    from frappe.desk.form.utils import add_comment as _ac
+	from frappe.desk.form.utils import add_comment as _ac
 
-    session_user = frappe.session.user
-    user_full_name = frappe.db.get_value("User", session_user, "full_name") or session_user
-    comment = _ac(
-        reference_doctype=doctype,
-        reference_name=name,
-        content=content,
-        comment_email=session_user,
-        comment_by=user_full_name,
-    )
-    return comment.name if comment else None
+	session_user = frappe.session.user
+	user_full_name = frappe.db.get_value("User", session_user, "full_name") or session_user
+	comment = _ac(
+		reference_doctype=doctype,
+		reference_name=name,
+		content=content,
+		comment_email=session_user,
+		comment_by=user_full_name,
+	)
+	return comment.name if comment else None
 
 
 def _add_comment_batch(doctype: str, names: list, content: str) -> dict:
-    if not doctype:
-        raise InvalidArgumentError("doctype is required")
-    if not isinstance(names, list) or not names:
-        raise InvalidArgumentError("names must be a non-empty list of document names")
+	if not doctype:
+		raise InvalidArgumentError("doctype is required")
+	if not isinstance(names, list) or not names:
+		raise InvalidArgumentError("names must be a non-empty list of document names")
 
-    def _do(name: str) -> str:
-        if not frappe.db.exists(doctype, name):
-            raise InvalidArgumentError(f"unknown {doctype}: {name}")
-        _add_comment_one(doctype, name, content)  # per-record read-permission check
-        return name
+	def _do(name: str) -> str:
+		if not frappe.db.exists(doctype, name):
+			raise InvalidArgumentError(f"unknown {doctype}: {name}")
+		_add_comment_one(doctype, name, content)  # per-record read-permission check
+		return name
 
-    commented = run_atomic_batch(names, _do, label=lambda n: n)
-    return {"doctype": doctype, "commented": commented, "count": len(commented)}
+	commented = run_atomic_batch(names, _do, label=lambda n: n)
+	return {"doctype": doctype, "commented": commented, "count": len(commented)}

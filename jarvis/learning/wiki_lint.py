@@ -70,8 +70,14 @@ def _load_pages() -> list:
 		WIKI,
 		filters={"status": "Active"},
 		fields=[
-			"name", "title", "summary", "body_md", "contradiction_flag",
-			"last_confirmed_at", "modified", "scope",
+			"name",
+			"title",
+			"summary",
+			"body_md",
+			"contradiction_flag",
+			"last_confirmed_at",
+			"modified",
+			"scope",
 		],
 		order_by="name asc",
 		limit_page_length=0,
@@ -83,10 +89,7 @@ def _load_pages() -> list:
 # deterministic checks
 # --------------------------------------------------------------------------- #
 def _contradiction_suspects(pages: list) -> list:
-	return [
-		p for p in pages
-		if cint(p.contradiction_flag) or _CONTRADICTION_MARKER in (p.body_md or "")
-	]
+	return [p for p in pages if cint(p.contradiction_flag) or _CONTRADICTION_MARKER in (p.body_md or "")]
 
 
 def _stale_pages(pages: list) -> list:
@@ -161,9 +164,7 @@ def _llm_confirm(contradictions: list, dupe_groups: list[list]) -> dict | None:
 			]
 		)
 	except Exception:
-		frappe.log_error(
-			title="wiki lint: confirm call failed", message=frappe.get_traceback()
-		)
+		frappe.log_error(title="wiki lint: confirm call failed", message=frappe.get_traceback())
 		return None
 	items = _parse_json_array(raw)
 	if items is None:
@@ -201,10 +202,7 @@ def _confirm_prompt(suspects: list[tuple[str, dict]]) -> str:
 			f"summary: {summary}\n"
 			f"body (tail):\n{body_tail}"
 		)
-	return (
-		"Review these suspect wiki pages and confirm or reject each suspicion.\n\n"
-		+ "\n\n".join(parts)
-	)
+	return "Review these suspect wiki pages and confirm or reject each suspicion.\n\n" + "\n\n".join(parts)
 
 
 def _parse_json_array(raw) -> list | None:
@@ -249,9 +247,7 @@ def run_lint() -> dict:
 	if confirmed:
 		for slug in confirmed["contradictions"]:
 			if not cint(frappe.db.get_value(WIKI, slug, "contradiction_flag")):
-				frappe.db.set_value(
-					WIKI, slug, "contradiction_flag", 1, update_modified=False
-				)
+				frappe.db.set_value(WIKI, slug, "contradiction_flag", 1, update_modified=False)
 			flagged += 1
 
 	counts = {
@@ -290,18 +286,14 @@ def scheduled_lint() -> None:
 			return
 		run_lint()
 	except Exception:
-		frappe.log_error(
-			title="wiki lint: scheduled run failed", message=frappe.get_traceback()
-		)
+		frappe.log_error(title="wiki lint: scheduled run failed", message=frappe.get_traceback())
 
 
 def _top_issues(contradictions, stale, orphans, dupe_groups) -> list[str]:
 	issues: list[str] = []
 	issues += [f"contradiction: {p.name}" for p in contradictions]
 	issues += [f"stale: {p.name}" for p in stale]
-	issues += [
-		"duplicate titles: " + ", ".join(p.name for p in g) for g in dupe_groups
-	]
+	issues += ["duplicate titles: " + ", ".join(p.name for p in g) for g in dupe_groups]
 	issues += [f"orphan: {p.name}" for p in orphans]
 	return issues[:_MAX_TOP_ISSUES]
 
@@ -315,13 +307,19 @@ def _summary_text(counts: dict, confirmed: dict | None, flagged: int) -> str:
 
 	problems = []
 	if counts["contradictions"]:
-		problems.append(n(counts["contradictions"], "page with conflicting facts", "pages with conflicting facts"))
+		problems.append(
+			n(counts["contradictions"], "page with conflicting facts", "pages with conflicting facts")
+		)
 	if counts["stale"]:
-		problems.append(n(counts["stale"], "page not confirmed in 90+ days", "pages not confirmed in 90+ days"))
+		problems.append(
+			n(counts["stale"], "page not confirmed in 90+ days", "pages not confirmed in 90+ days")
+		)
 	if counts["orphans"]:
 		problems.append(n(counts["orphans"], "page no other page links to", "pages no other page links to"))
 	if counts["duplicate_title_groups"]:
-		problems.append(n(counts["duplicate_title_groups"], "possible duplicate title", "possible duplicate titles"))
+		problems.append(
+			n(counts["duplicate_title_groups"], "possible duplicate title", "possible duplicate titles")
+		)
 	text = (
 		f"Checked {n(counts['pages'], 'page')}: "
 		+ ("; ".join(problems) if problems else "no problems found")
@@ -339,15 +337,13 @@ def _stamp_settings(summary: str) -> None:
 	"""Best-effort RO-field stamp (the voice_facts idiom: a background write
 	must never trip the Settings on_update sync)."""
 	try:
+		frappe.db.set_single_value(SETTINGS, "wiki_lint_last_run_at", now_datetime(), update_modified=False)
 		frappe.db.set_single_value(
-			SETTINGS, "wiki_lint_last_run_at", now_datetime(), update_modified=False
-		)
-		frappe.db.set_single_value(
-			SETTINGS, "wiki_lint_summary", (summary or "")[:_MAX_SUMMARY_CHARS],
+			SETTINGS,
+			"wiki_lint_summary",
+			(summary or "")[:_MAX_SUMMARY_CHARS],
 			update_modified=False,
 		)
 		frappe.db.commit()
 	except Exception:
-		frappe.log_error(
-			title="wiki lint: settings stamp failed", message=frappe.get_traceback()
-		)
+		frappe.log_error(title="wiki lint: settings stamp failed", message=frappe.get_traceback())

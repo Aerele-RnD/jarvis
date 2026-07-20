@@ -9,8 +9,9 @@ commit). Execution itself lives in ``jarvis.chat.macros``.
 import re
 
 import frappe
-from jarvis.permissions import require_jarvis_user
 from frappe import _
+
+from jarvis.permissions import require_jarvis_user
 
 MACRO = "Jarvis Macro"
 RUN = "Jarvis Macro Run"
@@ -33,13 +34,15 @@ def _parse_steps(steps) -> list[dict]:
 		prompt = (s.get("prompt") or "").strip()
 		if not prompt:
 			continue
-		rows.append({
-			"label": (s.get("label") or "").strip(),
-			"prompt": prompt,
-			"model_override": (s.get("model_override") or "").strip(),
-			"thinking_override": (s.get("thinking_override") or "").strip(),
-			"skills": frappe.as_json(_clean_step_skills(s.get("skills"))),
-		})
+		rows.append(
+			{
+				"label": (s.get("label") or "").strip(),
+				"prompt": prompt,
+				"model_override": (s.get("model_override") or "").strip(),
+				"thinking_override": (s.get("thinking_override") or "").strip(),
+				"skills": frappe.as_json(_clean_step_skills(s.get("skills"))),
+			}
+		)
 	return rows
 
 
@@ -88,9 +91,19 @@ def list_macros() -> list[dict]:
 		MACRO,
 		filters={"owner": frappe.session.user},
 		fields=[
-			"name", "macro_name", "description", "enabled", "stop_on_error",
-			"schedule_enabled", "schedule_frequency", "schedule_time",
-			"next_run_at", "last_run_at", "modified", "merged_prompt", "merge_status",
+			"name",
+			"macro_name",
+			"description",
+			"enabled",
+			"stop_on_error",
+			"schedule_enabled",
+			"schedule_frequency",
+			"schedule_time",
+			"next_run_at",
+			"last_run_at",
+			"modified",
+			"merged_prompt",
+			"merge_status",
 		],
 		order_by="macro_name asc",
 	)
@@ -104,8 +117,10 @@ def list_macros() -> list[dict]:
 # ADDITIVE: list_macros (above) STAYS for the Settings → Macro-runs dropdown.
 # --------------------------------------------------------------------------- #
 _MACROS_SORTABLE = {
-	"macro_name": "macro_name", "modified": "modified",
-	"last_run_at": "last_run_at", "next_run_at": "next_run_at",
+	"macro_name": "macro_name",
+	"modified": "modified",
+	"last_run_at": "last_run_at",
+	"next_run_at": "next_run_at",
 }
 _MACROS_FILTERS = {"enabled", "schedule_enabled", "schedule_frequency"}
 _FREQUENCIES = {"daily", "weekly", "monthly"}
@@ -207,9 +222,7 @@ def list_macros_page(
 	where = " AND ".join(conds)
 	order = _order_by(sort_field, sort_dir, _MACROS_SORTABLE, "macro_name", "asc")
 
-	total = frappe.db.sql(
-		f"SELECT COUNT(*) FROM `tabJarvis Macro` WHERE {where}", params
-	)[0][0]
+	total = frappe.db.sql(f"SELECT COUNT(*) FROM `tabJarvis Macro` WHERE {where}", params)[0][0]
 	rows = frappe.db.sql(
 		f"""SELECT name, macro_name, description, enabled, stop_on_error,
 		schedule_enabled, schedule_frequency, schedule_time, next_run_at,
@@ -219,7 +232,8 @@ def list_macros_page(
 		WHERE {where}
 		ORDER BY {order}
 		LIMIT %(page_length)s OFFSET %(start)s""",
-		params, as_dict=True,
+		params,
+		as_dict=True,
 	)
 
 	names = [r.name for r in rows]
@@ -228,7 +242,8 @@ def list_macros_page(
 		for x in frappe.db.sql(
 			"""SELECT parent, COUNT(*) n FROM `tabJarvis Macro Step`
 			WHERE parent IN %(names)s GROUP BY parent""",
-			{"names": tuple(names)}, as_dict=True,
+			{"names": tuple(names)},
+			as_dict=True,
 		):
 			step_counts[x.parent] = x.n
 	for r in rows:
@@ -300,17 +315,19 @@ def create_macro(
 ) -> dict:
 	"""Create a macro. Validation (name/steps/caps) runs in the doctype validate().
 	Per-step tagged skills arrive INSIDE each step dict (``steps[].skills``)."""
-	doc = frappe.get_doc({
-		"doctype": MACRO,
-		"macro_name": macro_name,
-		"description": description or "",
-		"enabled": int(enabled or 0),
-		"stop_on_error": int(stop_on_error or 0),
-		"schedule_enabled": int(schedule_enabled or 0),
-		"schedule_frequency": schedule_frequency or "daily",
-		"schedule_time": schedule_time or None,
-		"steps": _parse_steps(steps),
-	})
+	doc = frappe.get_doc(
+		{
+			"doctype": MACRO,
+			"macro_name": macro_name,
+			"description": description or "",
+			"enabled": int(enabled or 0),
+			"stop_on_error": int(stop_on_error or 0),
+			"schedule_enabled": int(schedule_enabled or 0),
+			"schedule_frequency": schedule_frequency or "daily",
+			"schedule_time": schedule_time or None,
+			"steps": _parse_steps(steps),
+		}
+	)
 	doc.insert()
 	frappe.db.commit()
 	return {"ok": True, "data": {"name": doc.name, "macro_name": doc.macro_name}}
@@ -407,9 +424,7 @@ def delete_macros_bulk(names: str | list | None = None) -> dict:
 			skipped.append({"name": n, "reason": "not permitted"})
 		except Exception:
 			# Never leak internal exception text to the client — log server-side.
-			frappe.log_error(
-				title="Jarvis: bulk macro delete failed", message=frappe.get_traceback()
-			)
+			frappe.log_error(title="Jarvis: bulk macro delete failed", message=frappe.get_traceback())
 			skipped.append({"name": n, "reason": "error"})
 	frappe.db.commit()
 	return {"deleted": deleted, "skipped": skipped}
@@ -481,9 +496,7 @@ def list_macro_runs(status: str = "", macro: str = "", limit: int | str = 30, st
 		conditions.append("r.macro = %(macro)s")
 		params["macro"] = macro
 	where = " AND ".join(conditions)
-	total = frappe.db.sql(
-		f"SELECT COUNT(*) FROM `tabJarvis Macro Run` r WHERE {where}", params
-	)[0][0]
+	total = frappe.db.sql(f"SELECT COUNT(*) FROM `tabJarvis Macro Run` r WHERE {where}", params)[0][0]
 	rows = frappe.db.sql(
 		f"""
 		SELECT r.name, r.macro, COALESCE(m.macro_name, r.macro) AS macro_name,
@@ -513,8 +526,7 @@ def macro_run_stats() -> dict:
 	excluded from the rate (but still counted in ``total``)."""
 	owner = {"owner": frappe.session.user}
 	rows = frappe.db.sql(
-		"SELECT status, COUNT(*) AS n FROM `tabJarvis Macro Run` "
-		"WHERE owner = %(owner)s GROUP BY status",
+		"SELECT status, COUNT(*) AS n FROM `tabJarvis Macro Run` WHERE owner = %(owner)s GROUP BY status",
 		owner,
 		as_dict=True,
 	)
@@ -522,9 +534,9 @@ def macro_run_stats() -> dict:
 	completed = by.get("completed", 0)
 	failed = by.get("failed", 0)
 	finished = completed + failed
-	last = frappe.db.sql(
-		"SELECT MAX(creation) FROM `tabJarvis Macro Run` WHERE owner = %(owner)s", owner
-	)[0][0]
+	last = frappe.db.sql("SELECT MAX(creation) FROM `tabJarvis Macro Run` WHERE owner = %(owner)s", owner)[0][
+		0
+	]
 	return {
 		"total": sum(by.values()),
 		"completed": completed,
@@ -578,31 +590,34 @@ def summarize_macro(name: str) -> dict:
 	steps = doc.steps or []
 	if len(steps) < 2:
 		frappe.throw(_("Nothing to merge — the macro has fewer than 2 steps."))
-	conv = frappe.get_doc({
-		"doctype": "Jarvis Conversation",
-		"title": f"Merge: {doc.macro_name}"[:140],
-		"status": "Active",  # enqueue against Active; hidden right after
-	})
+	conv = frappe.get_doc(
+		{
+			"doctype": "Jarvis Conversation",
+			"title": f"Merge: {doc.macro_name}"[:140],
+			"status": "Active",  # enqueue against Active; hidden right after
+		}
+	)
 	conv.flags.ignore_permissions = True
 	conv.insert()
-	payload = [
-		{"n": i + 1, "label": s.label or "", "prompt": s.prompt or ""}
-		for i, s in enumerate(steps)
-	]
+	payload = [{"n": i + 1, "label": s.label or "", "prompt": s.prompt or ""} for i, s in enumerate(steps)]
 	from jarvis.chat import api as chat_api
 
 	prompt = _MERGE_INSTRUCTION + frappe.as_json(payload) + "\n\nApply these skills: /macro-merge"
 	chat_api._enqueue_turn(conv.name, prompt)
 	# Hide from the sidebar (list_conversations skips Archived).
-	frappe.db.set_value("Jarvis Conversation", conv.name, "status", "Archived",
-						update_modified=False)
+	frappe.db.set_value("Jarvis Conversation", conv.name, "status", "Archived", update_modified=False)
 	# Mark the macro "summarizing": run_macro refuses while pending, and the
 	# worker's advance hook applies the summary when this turn finishes — so
 	# the flow completes even if the browser tab is gone.
-	frappe.db.set_value(MACRO, name, {
-		"merge_status": "pending",
-		"merge_conversation": conv.name,
-	}, update_modified=False)
+	frappe.db.set_value(
+		MACRO,
+		name,
+		{
+			"merge_status": "pending",
+			"merge_conversation": conv.name,
+		},
+		update_modified=False,
+	)
 	frappe.db.commit()
 	return {"ok": True, "conversation": conv.name}
 
@@ -616,7 +631,8 @@ def get_macro_merge(conversation: str) -> dict:
 		MSG,
 		filters={"conversation": conversation, "role": "assistant"},
 		fields=["content", "streaming", "error"],
-		order_by="seq desc", limit=1,
+		order_by="seq desc",
+		limit=1,
 	)
 	m = rows[0] if rows else None
 	if m and (m.error or "").strip():
@@ -632,12 +648,15 @@ def get_macro_merge(conversation: str) -> dict:
 		merge = None
 	if not isinstance(merge, dict):
 		return {"status": "error", "error": "unparsable merge block"}
-	return {"status": "ready", "merge": {
-		"mergeable": bool(merge.get("mergeable")),
-		"reason": str(merge.get("reason") or ""),
-		"merged_prompt": str(merge.get("merged_prompt") or ""),
-		"dependencies": merge.get("dependencies") if isinstance(merge.get("dependencies"), list) else [],
-	}}
+	return {
+		"status": "ready",
+		"merge": {
+			"mergeable": bool(merge.get("mergeable")),
+			"reason": str(merge.get("reason") or ""),
+			"merged_prompt": str(merge.get("merged_prompt") or ""),
+			"dependencies": merge.get("dependencies") if isinstance(merge.get("dependencies"), list) else [],
+		},
+	}
 
 
 @frappe.whitelist()

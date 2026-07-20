@@ -36,7 +36,12 @@
 			</div>
 			<div class="-ml-2 h-[70%] border-l" />
 			<div class="flex items-center gap-2">
-				<Button :tooltip="'Refresh'" icon="refresh-cw" :loading="loading" @click="$emit('refresh')" />
+				<Button
+					:tooltip="'Refresh'"
+					icon="refresh-cw"
+					:loading="loading"
+					@click="$emit('refresh')"
+				/>
 				<FilterButton
 					:filter-defs="filterDefs"
 					:filters="filters"
@@ -84,7 +89,11 @@
 		>
 			<template #default>
 				<ListHeader class="sm:mx-5 mx-3">
-					<ListHeaderItem v-for="column in visibleColumns" :key="column.key" :item="column" />
+					<ListHeaderItem
+						v-for="column in visibleColumns"
+						:key="column.key"
+						:item="column"
+					/>
 				</ListHeader>
 				<ListRows class="mx-3 sm:mx-5" />
 				<ListSelectBanner v-if="selectable">
@@ -112,7 +121,9 @@
 			>
 				<FeatherIcon name="alert-circle" class="size-7.5 text-ink-red-4" />
 				<div class="flex flex-col items-center gap-1">
-					<span class="text-lg font-medium text-ink-gray-8">Couldn't load this list</span>
+					<span class="text-lg font-medium text-ink-gray-8"
+						>Couldn't load this list</span
+					>
 					<span class="text-center text-p-base text-ink-red-4">{{ error }}</span>
 				</div>
 			</div>
@@ -124,12 +135,18 @@
 				class="absolute left-1/2 flex w-4/12 -translate-x-1/2 flex-col items-center gap-3"
 				:style="{ top: '35%' }"
 			>
-				<FeatherIcon :name="(emptyState && emptyState.icon) || 'file-text'" class="size-7.5 text-ink-gray-5" />
+				<FeatherIcon
+					:name="(emptyState && emptyState.icon) || 'file-text'"
+					class="size-7.5 text-ink-gray-5"
+				/>
 				<div class="flex flex-col items-center gap-1">
 					<span class="text-lg font-medium text-ink-gray-8">
 						{{ (emptyState && emptyState.title) || "No records found" }}
 					</span>
-					<span v-if="emptyState && emptyState.description" class="text-center text-p-base text-ink-gray-6">
+					<span
+						v-if="emptyState && emptyState.description"
+						class="text-center text-p-base text-ink-gray-6"
+					>
 						{{ emptyState.description }}
 					</span>
 				</div>
@@ -171,7 +188,7 @@
 // ListPage - the standard list frame (DESIGN-V3 §5.2 + §14 F2/DA-08):
 // LayoutHeader breadcrumbs → toolbar (quick filters · Refresh/Filter/Sort/Columns)
 // → banner slot → frappe-ui ListView composition → ListFooter load-more.
-import { ref, computed, onBeforeUnmount } from "vue"
+import { ref, computed, onBeforeUnmount } from "vue";
 import {
 	ListView,
 	ListHeader,
@@ -184,11 +201,11 @@ import {
 	Button,
 	FormControl,
 	FeatherIcon,
-} from "frappe-ui"
-import LayoutHeader from "@/components/LayoutHeader.vue"
-import FilterButton from "@/components/list/FilterButton.vue"
-import SortButton from "@/components/list/SortButton.vue"
-import ColumnsButton from "@/components/list/ColumnsButton.vue"
+} from "frappe-ui";
+import LayoutHeader from "@/components/LayoutHeader.vue";
+import FilterButton from "@/components/list/FilterButton.vue";
+import SortButton from "@/components/list/SortButton.vue";
+import ColumnsButton from "@/components/list/ColumnsButton.vue";
 
 const props = defineProps({
 	breadcrumbs: { type: Array, default: () => [] }, // [{label, route?}]
@@ -212,7 +229,7 @@ const props = defineProps({
 	onRowClick: { type: Function, default: null },
 	emptyState: { type: Object, default: () => ({}) }, // {title, description, icon?}
 	storageKey: { type: String, default: "" }, // §14 F2 - column show/hide persistence
-})
+});
 
 const emit = defineEmits([
 	"update:filters",
@@ -221,11 +238,11 @@ const emit = defineEmits([
 	"loadMore",
 	"refresh",
 	"update:selections",
-])
+]);
 
 // §14 F2 - ColumnsButton owns useStorage('jarvis-cols-'+storageKey) and pushes
 // the hidden-key list up; ListPage filters the visible columns from it.
-const hiddenKeys = ref([])
+const hiddenKeys = ref([]);
 // Numeric widths compile to bare `Nfr` grid tracks whose implicit minimum is
 // min-content, so one sentence-length cell stretches the whole list into
 // horizontal scroll and `truncate` never bites. minmax(0, Nfr) restores real
@@ -233,28 +250,26 @@ const hiddenKeys = ref([])
 const visibleColumns = computed(() =>
 	(props.columns || [])
 		.filter((c) => !hiddenKeys.value.includes(c.key))
-		.map((c) =>
-			typeof c.width === "number" ? { ...c, width: `minmax(0, ${c.width}fr)` } : c
-		)
-)
+		.map((c) => (typeof c.width === "number" ? { ...c, width: `minmax(0, ${c.width}fr)` } : c))
+);
 
 // ── quick filters (toolbar-left strip; selects apply immediately, text 500ms) ──
 function quickValue(qf) {
-	const v = props.filters ? props.filters[qf.key] : undefined
-	return v == null ? "" : v
+	const v = props.filters ? props.filters[qf.key] : undefined;
+	return v == null ? "" : v;
 }
 function applyQuick(qf, value) {
-	const next = { ...(props.filters || {}) }
-	if (value === "" || value == null) delete next[qf.key]
-	else next[qf.key] = value
-	emit("update:filters", next)
+	const next = { ...(props.filters || {}) };
+	if (value === "" || value == null) delete next[qf.key];
+	else next[qf.key] = value;
+	emit("update:filters", next);
 }
-const textTimers = {}
+const textTimers = {};
 function onQuickText(qf, value) {
-	clearTimeout(textTimers[qf.key])
-	textTimers[qf.key] = setTimeout(() => applyQuick(qf, value), 500)
+	clearTimeout(textTimers[qf.key]);
+	textTimers[qf.key] = setTimeout(() => applyQuick(qf, value), 500);
 }
 onBeforeUnmount(() => {
-	for (const key of Object.keys(textTimers)) clearTimeout(textTimers[key])
-})
+	for (const key of Object.keys(textTimers)) clearTimeout(textTimers[key]);
+});
 </script>

@@ -27,8 +27,7 @@ _DOCTYPE_SET_TTL_S = 300
 _TURN_FLAG_TTL_S = 3600
 
 
-def record_tool(tool: str, args, conversation: str | None,
-		duration_ms: int, result) -> None:
+def record_tool(tool: str, args, conversation: str | None, duration_ms: int, result) -> None:
 	"""One line per relevant tool call; fast no-op otherwise. Never raises."""
 	try:
 		custom_target = False
@@ -43,37 +42,40 @@ def record_tool(tool: str, args, conversation: str | None,
 				_mark_turn_custom(conversation)
 		else:
 			return
-		_emit({
-			"kind": "tool",
-			"ts": frappe.utils.now(),
-			"site": getattr(frappe.local, "site", None),
-			"user_hash": _user_hash(frappe.session.user),
-			"conversation": conversation,
-			"tool": tool,
-			"duration_ms": int(duration_ms),
-			"result_chars": _result_chars(result),
-			"custom_target": custom_target,
-		})
+		_emit(
+			{
+				"kind": "tool",
+				"ts": frappe.utils.now(),
+				"site": getattr(frappe.local, "site", None),
+				"user_hash": _user_hash(frappe.session.user),
+				"conversation": conversation,
+				"tool": tool,
+				"duration_ms": int(duration_ms),
+				"result_chars": _result_chars(result),
+				"custom_target": custom_target,
+			}
+		)
 	except Exception:
 		pass
 
 
-def emit_turn(conversation: str | None, run_id: str | None,
-		duration_ms: int) -> None:
+def emit_turn(conversation: str | None, run_id: str | None, duration_ms: int) -> None:
 	"""One line per completed turn; reads and clears the per-turn custom
 	flag. Never raises."""
 	try:
 		if not conversation:
 			return
-		_emit({
-			"kind": "turn",
-			"ts": frappe.utils.now(),
-			"site": getattr(frappe.local, "site", None),
-			"conversation": conversation,
-			"run_id": run_id,
-			"duration_ms": int(duration_ms),
-			"touched_custom": _read_and_clear_turn_flag(conversation),
-		})
+		_emit(
+			{
+				"kind": "turn",
+				"ts": frappe.utils.now(),
+				"site": getattr(frappe.local, "site", None),
+				"conversation": conversation,
+				"run_id": run_id,
+				"duration_ms": int(duration_ms),
+				"touched_custom": _read_and_clear_turn_flag(conversation),
+			}
+		)
 	except Exception:
 		pass
 
@@ -91,10 +93,8 @@ def custom_doctype_set() -> frozenset:
 		names = set(frappe.get_all("DocType", filters={"custom": 1}, pluck="name"))
 		modules = sp_apps.custom_module_names()
 		if modules:
-			names |= set(frappe.get_all(
-				"DocType", filters={"module": ("in", list(modules))}, pluck="name"))
-		cache.set_value(
-			DOCTYPE_SET_CACHE_KEY, sorted(names), expires_in_sec=_DOCTYPE_SET_TTL_S)
+			names |= set(frappe.get_all("DocType", filters={"module": ("in", list(modules))}, pluck="name"))
+		cache.set_value(DOCTYPE_SET_CACHE_KEY, sorted(names), expires_in_sec=_DOCTYPE_SET_TTL_S)
 		return frozenset(names)
 	except Exception:
 		return frozenset()
@@ -106,8 +106,7 @@ def _turn_flag_key(conversation: str) -> str:
 
 def _mark_turn_custom(conversation: str) -> None:
 	try:
-		frappe.cache().set_value(
-			_turn_flag_key(conversation), 1, expires_in_sec=_TURN_FLAG_TTL_S)
+		frappe.cache().set_value(_turn_flag_key(conversation), 1, expires_in_sec=_TURN_FLAG_TTL_S)
 	except Exception:
 		pass
 

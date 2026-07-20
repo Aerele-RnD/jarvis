@@ -63,13 +63,15 @@ class TestRunAgentTurnHappyPath(FrappeTestCase):
 	def test_streams_assistant_deltas_to_db_and_realtime(self):
 		fake_sess = MagicMock()
 		fake_sess.chat_send.side_effect = lambda sk, msg, idem, **kw: {"runId": idem, "status": "started"}
-		fake_sess.relay_turn_events.return_value = _fake_event_stream([
-			{"kind": "lifecycle", "phase": "start"},
-			{"kind": "assistant", "text": "Hello", "delta": "Hello"},
-			{"kind": "assistant", "text": "Hello world", "delta": " world"},
-			{"kind": "lifecycle", "phase": "end"},
-			{"kind": "relay:final", "text": None},
-		])
+		fake_sess.relay_turn_events.return_value = _fake_event_stream(
+			[
+				{"kind": "lifecycle", "phase": "start"},
+				{"kind": "assistant", "text": "Hello", "delta": "Hello"},
+				{"kind": "assistant", "text": "Hello world", "delta": " world"},
+				{"kind": "lifecycle", "phase": "end"},
+				{"kind": "relay:final", "text": None},
+			]
+		)
 		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess):
 			with patch("jarvis.chat.worker.publish_to_user") as pub:
 				run_agent_turn(self.conv, self.user_msg, run_id="r1")
@@ -115,16 +117,22 @@ class TestRunAgentTurnToolCall(FrappeTestCase):
 		# inserts a tool-message row.
 		fake_sess = MagicMock()
 		fake_sess.chat_send.side_effect = lambda sk, msg, idem, **kw: {"runId": idem, "status": "started"}
-		fake_sess.relay_turn_events.return_value = _fake_event_stream([
-			{"kind": "lifecycle", "phase": "start"},
-			{"kind": "tool", "phase": "start", "tool_name": "browser_click",
-			 "tool_call_id": "tc-1"},
-			{"kind": "tool", "phase": "end", "tool_name": "browser_click",
-			 "tool_call_id": "tc-1", "status": "completed"},
-			{"kind": "assistant", "text": "Done", "delta": "Done"},
-			{"kind": "lifecycle", "phase": "end"},
-			{"kind": "relay:final", "text": None},
-		])
+		fake_sess.relay_turn_events.return_value = _fake_event_stream(
+			[
+				{"kind": "lifecycle", "phase": "start"},
+				{"kind": "tool", "phase": "start", "tool_name": "browser_click", "tool_call_id": "tc-1"},
+				{
+					"kind": "tool",
+					"phase": "end",
+					"tool_name": "browser_click",
+					"tool_call_id": "tc-1",
+					"status": "completed",
+				},
+				{"kind": "assistant", "text": "Done", "delta": "Done"},
+				{"kind": "lifecycle", "phase": "end"},
+				{"kind": "relay:final", "text": None},
+			]
+		)
 		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess):
 			with patch("jarvis.chat.worker.publish_to_user"):
 				run_agent_turn(self.conv, self.user_msg, run_id="r1")
@@ -154,6 +162,7 @@ class TestRunAgentTurnErrorPaths(FrappeTestCase):
 
 	def test_connect_failure_publishes_run_error_and_marks_message_errored(self):
 		from jarvis.exceptions import OpenclawUnreachableError
+
 		with patch(
 			"jarvis.chat.openclaw_session_pool.OpenclawSession.connect",
 			side_effect=OpenclawUnreachableError("connect refused"),
@@ -181,11 +190,13 @@ class TestRunAgentTurnErrorPaths(FrappeTestCase):
 		# lifecycle frames), but _handle_event_inner's lifecycle-error branch
 		# is still live for self-hosted, so this pins that shared dispatch
 		# still marks the row errored regardless of which branch drove it.
-		fake_sess.relay_turn_events.return_value = _fake_event_stream([
-			{"kind": "lifecycle", "phase": "start"},
-			{"kind": "lifecycle", "phase": "error", "error": "model overloaded"},
-			{"kind": "relay:final", "text": None},
-		])
+		fake_sess.relay_turn_events.return_value = _fake_event_stream(
+			[
+				{"kind": "lifecycle", "phase": "start"},
+				{"kind": "lifecycle", "phase": "error", "error": "model overloaded"},
+				{"kind": "relay:final", "text": None},
+			]
+		)
 		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess):
 			with patch("jarvis.chat.worker.publish_to_user"):
 				run_agent_turn(self.conv, self.user_msg, run_id="r1")
@@ -210,14 +221,18 @@ class TestRunAgentTurnErrorPaths(FrappeTestCase):
 		# Simulate a non-Openclaw exception escaping from chat_send
 		# (e.g. an SSL handshake mid-stream, or a tool-handler bug).
 		import ssl
+
 		fake_sess.chat_send.side_effect = ssl.SSLError("handshake failed")
 
 		published_kinds: list = []
+
 		def _capture(user, payload):
 			published_kinds.append(payload.get("kind"))
 
-		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess), \
-		     patch("jarvis.chat.worker.publish_to_user", side_effect=_capture):
+		with (
+			patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess),
+			patch("jarvis.chat.worker.publish_to_user", side_effect=_capture),
+		):
 			with self.assertRaises(ssl.SSLError):
 				run_agent_turn(self.conv, self.user_msg, run_id="r1")
 
@@ -248,9 +263,7 @@ class TestRunAgentTurnAugmentsMessage(FrappeTestCase):
 		self._orig_user = frappe.session.user
 		frappe.set_user(TEST_USER)
 		_cleanup_user_conversations()
-		self.conv, self.user_msg = _make_conversation_with_user_message(
-			"how many invoices last quarter?"
-		)
+		self.conv, self.user_msg = _make_conversation_with_user_message("how many invoices last quarter?")
 
 	def tearDown(self):
 		_cleanup_user_conversations()
@@ -259,11 +272,13 @@ class TestRunAgentTurnAugmentsMessage(FrappeTestCase):
 	def test_prepends_today_context_to_user_message(self):
 		fake_sess = MagicMock()
 		fake_sess.chat_send.side_effect = lambda sk, msg, idem, **kw: {"runId": idem, "status": "started"}
-		fake_sess.relay_turn_events.return_value = _fake_event_stream([
-			{"kind": "lifecycle", "phase": "start"},
-			{"kind": "lifecycle", "phase": "end"},
-			{"kind": "relay:final", "text": None},
-		])
+		fake_sess.relay_turn_events.return_value = _fake_event_stream(
+			[
+				{"kind": "lifecycle", "phase": "start"},
+				{"kind": "lifecycle", "phase": "end"},
+				{"kind": "relay:final", "text": None},
+			]
+		)
 		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess):
 			with patch("jarvis.chat.worker.publish_to_user"):
 				run_agent_turn(self.conv, self.user_msg, run_id="r1")
@@ -273,10 +288,7 @@ class TestRunAgentTurnAugmentsMessage(FrappeTestCase):
 		_, kwargs = fake_sess.chat_send.call_args
 		# args may be either positional or keyword - handle both
 		positional = fake_sess.chat_send.call_args.args
-		message_sent = (
-			positional[1] if len(positional) >= 2
-			else kwargs.get("message")
-		)
+		message_sent = positional[1] if len(positional) >= 2 else kwargs.get("message")
 		self.assertIsNotNone(message_sent)
 		self.assertIn("[Context: today is ", message_sent)
 		# Chat user (conv.owner) is in the same bracket so the agent can
@@ -331,9 +343,11 @@ class TestRunAgentTurnModelResolution(FrappeTestCase):
 	def _run_and_capture(self):
 		fake_sess = MagicMock()
 		fake_sess.chat_send.side_effect = lambda sk, msg, idem, **kw: {"runId": idem, "status": "started"}
-		fake_sess.relay_turn_events.return_value = _fake_event_stream([
-			{"kind": "relay:final", "text": None},
-		])
+		fake_sess.relay_turn_events.return_value = _fake_event_stream(
+			[
+				{"kind": "relay:final", "text": None},
+			]
+		)
 		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess):
 			with patch("jarvis.chat.worker.publish_to_user"):
 				run_agent_turn(self.conv, self.user_msg, run_id="r1")
@@ -407,9 +421,11 @@ class TestRunAgentTurnApiKeyModeOmitsProvider(FrappeTestCase):
 	def test_provider_omitted_in_api_key_mode(self):
 		fake_sess = MagicMock()
 		fake_sess.chat_send.side_effect = lambda sk, msg, idem, **kw: {"runId": idem, "status": "started"}
-		fake_sess.relay_turn_events.return_value = _fake_event_stream([
-			{"kind": "relay:final", "text": None},
-		])
+		fake_sess.relay_turn_events.return_value = _fake_event_stream(
+			[
+				{"kind": "relay:final", "text": None},
+			]
+		)
 		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess):
 			with patch("jarvis.chat.worker.publish_to_user"):
 				run_agent_turn(self.conv, self.user_msg, run_id="r1")
@@ -451,25 +467,24 @@ class TestAssistantContentBatching(FrappeTestCase):
 		# assistant:delta even though the DB write coalesces.
 		fake_sess = MagicMock()
 		fake_sess.chat_send.side_effect = lambda sk, msg, idem, **kw: {"runId": idem, "status": "started"}
-		fake_sess.relay_turn_events.return_value = _fake_event_stream([
-			{"kind": "lifecycle", "phase": "start"},
-			{"kind": "assistant", "text": "H", "delta": "H"},
-			{"kind": "assistant", "text": "He", "delta": "e"},
-			{"kind": "assistant", "text": "Hel", "delta": "l"},
-			{"kind": "assistant", "text": "Hell", "delta": "l"},
-			{"kind": "assistant", "text": "Hello", "delta": "o"},
-			{"kind": "lifecycle", "phase": "end"},
-			{"kind": "relay:final", "text": None},
-		])
+		fake_sess.relay_turn_events.return_value = _fake_event_stream(
+			[
+				{"kind": "lifecycle", "phase": "start"},
+				{"kind": "assistant", "text": "H", "delta": "H"},
+				{"kind": "assistant", "text": "He", "delta": "e"},
+				{"kind": "assistant", "text": "Hel", "delta": "l"},
+				{"kind": "assistant", "text": "Hell", "delta": "l"},
+				{"kind": "assistant", "text": "Hello", "delta": "o"},
+				{"kind": "lifecycle", "phase": "end"},
+				{"kind": "relay:final", "text": None},
+			]
+		)
 		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess):
 			with patch("jarvis.chat.worker.publish_to_user") as pub:
 				run_agent_turn(self.conv, self.user_msg, run_id="r1")
 		# Five assistant:delta publishes (one per token), even though
 		# only 1-2 DB commits would have fired under batching.
-		delta_calls = [
-			c for c in pub.call_args_list
-			if c.args[1].get("kind") == "assistant:delta"
-		]
+		delta_calls = [c for c in pub.call_args_list if c.args[1].get("kind") == "assistant:delta"]
 		self.assertEqual(len(delta_calls), 5)
 		# Final on-disk content is the full cumulative text - the
 		# end-of-stream batcher.flush() persists whatever was buffered.
@@ -541,20 +556,26 @@ class TestAssistantContentBatching(FrappeTestCase):
 		# content immediately after the tool event would have fired.
 		fake_sess = MagicMock()
 		fake_sess.chat_send.side_effect = lambda sk, msg, idem, **kw: {"runId": idem, "status": "started"}
-		fake_sess.relay_turn_events.return_value = _fake_event_stream([
-			{"kind": "lifecycle", "phase": "start"},
-			{"kind": "assistant", "text": "Looking it up", "delta": "Looking it up"},
-			# Tool event fires before the 10-event size threshold;
-			# without the pre-tool flush the assistant row would be
-			# empty until the next assistant delta.
-			{"kind": "tool", "phase": "start", "tool_name": "jarvis__get_list",
-			 "tool_call_id": "tc-1"},
-			{"kind": "tool", "phase": "end", "tool_name": "jarvis__get_list",
-			 "tool_call_id": "tc-1", "status": "completed"},
-			{"kind": "assistant", "text": "Done!", "delta": " Done!"},
-			{"kind": "lifecycle", "phase": "end"},
-			{"kind": "relay:final", "text": None},
-		])
+		fake_sess.relay_turn_events.return_value = _fake_event_stream(
+			[
+				{"kind": "lifecycle", "phase": "start"},
+				{"kind": "assistant", "text": "Looking it up", "delta": "Looking it up"},
+				# Tool event fires before the 10-event size threshold;
+				# without the pre-tool flush the assistant row would be
+				# empty until the next assistant delta.
+				{"kind": "tool", "phase": "start", "tool_name": "jarvis__get_list", "tool_call_id": "tc-1"},
+				{
+					"kind": "tool",
+					"phase": "end",
+					"tool_name": "jarvis__get_list",
+					"tool_call_id": "tc-1",
+					"status": "completed",
+				},
+				{"kind": "assistant", "text": "Done!", "delta": " Done!"},
+				{"kind": "lifecycle", "phase": "end"},
+				{"kind": "relay:final", "text": None},
+			]
+		)
 		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess):
 			with patch("jarvis.chat.worker.publish_to_user"):
 				run_agent_turn(self.conv, self.user_msg, run_id="r1")
@@ -578,19 +599,20 @@ class TestAssistantContentBatching(FrappeTestCase):
 		# frappe.log_error, then the next event runs.
 		fake_sess = MagicMock()
 		fake_sess.chat_send.side_effect = lambda sk, msg, idem, **kw: {"runId": idem, "status": "started"}
-		fake_sess.relay_turn_events.return_value = _fake_event_stream([
-			{"kind": "lifecycle", "phase": "start"},
-			# A 'tool' end event with no matching start is the cleanest
-			# trigger for an internal log, but we want to assert the
-			# _handle_event try/except path - so inject a guaranteed
-			# raise inside frappe.get_doc to break the tool-start
-			# write path.
-			{"kind": "tool", "phase": "start", "tool_name": "broken",
-			 "tool_call_id": "tc-x"},
-			{"kind": "assistant", "text": "Recovered", "delta": "Recovered"},
-			{"kind": "lifecycle", "phase": "end"},
-			{"kind": "relay:final", "text": None},
-		])
+		fake_sess.relay_turn_events.return_value = _fake_event_stream(
+			[
+				{"kind": "lifecycle", "phase": "start"},
+				# A 'tool' end event with no matching start is the cleanest
+				# trigger for an internal log, but we want to assert the
+				# _handle_event try/except path - so inject a guaranteed
+				# raise inside frappe.get_doc to break the tool-start
+				# write path.
+				{"kind": "tool", "phase": "start", "tool_name": "broken", "tool_call_id": "tc-x"},
+				{"kind": "assistant", "text": "Recovered", "delta": "Recovered"},
+				{"kind": "lifecycle", "phase": "end"},
+				{"kind": "relay:final", "text": None},
+			]
+		)
 		# Force the tool-start insert to fail; the assistant event
 		# after it must still land.
 		_orig_get_doc = frappe.get_doc
@@ -633,14 +655,20 @@ class TestAssistantContentBatcherUnit(FrappeTestCase):
 		_cleanup_user_conversations()
 		self.conv, self.user_msg = _make_conversation_with_user_message()
 		# Find the assistant placeholder row created by the conversation.
-		self.assistant_name = frappe.get_doc({
-			"doctype": MSG,
-			"conversation": self.conv,
-			"seq": 99,
-			"role": "assistant",
-			"content": "",
-			"streaming": 1,
-		}).insert(ignore_permissions=True).name
+		self.assistant_name = (
+			frappe.get_doc(
+				{
+					"doctype": MSG,
+					"conversation": self.conv,
+					"seq": 99,
+					"role": "assistant",
+					"content": "",
+					"streaming": 1,
+				}
+			)
+			.insert(ignore_permissions=True)
+			.name
+		)
 		frappe.db.commit()
 
 	def tearDown(self):
@@ -649,6 +677,7 @@ class TestAssistantContentBatcherUnit(FrappeTestCase):
 
 	def test_flush_persists_pending_text(self):
 		from jarvis.chat.worker import _AssistantContentBatcher
+
 		b = _AssistantContentBatcher(self.assistant_name)
 		b.delta("hello")
 		self.assertTrue(b.flush())
@@ -664,6 +693,7 @@ class TestAssistantContentBatcherUnit(FrappeTestCase):
 			_ASSISTANT_BATCH_SIZE,
 			_AssistantContentBatcher,
 		)
+
 		b = _AssistantContentBatcher(self.assistant_name)
 		# Below the size threshold: no flush (the time threshold is 250ms
 		# which this test runs well under).
@@ -717,18 +747,22 @@ class TestWorkerCreatesSessionOnFirstTurn(FrappeTestCase):
 			# starts (chat_send, the RPC that hands off to openclaw): the
 			# sessionKey→user row must already be committed.
 			row_exists_at_stream_start["row"] = frappe.db.get_value(
-				"Jarvis Chat Session", {"session_key": session_key},
-				["user", "session_key"], as_dict=True,
+				"Jarvis Chat Session",
+				{"session_key": session_key},
+				["user", "session_key"],
+				as_dict=True,
 			)
 			return {"runId": "r1", "status": "started"}
 
 		fake_sess.chat_send.side_effect = _send
-		fake_sess.relay_turn_events.return_value = _fake_event_stream([
-			{"kind": "lifecycle", "phase": "start"},
-			{"kind": "assistant", "text": "Hi", "delta": "Hi"},
-			{"kind": "lifecycle", "phase": "end"},
-			{"kind": "relay:final", "text": None},
-		])
+		fake_sess.relay_turn_events.return_value = _fake_event_stream(
+			[
+				{"kind": "lifecycle", "phase": "start"},
+				{"kind": "assistant", "text": "Hi", "delta": "Hi"},
+				{"kind": "lifecycle", "phase": "end"},
+				{"kind": "relay:final", "text": None},
+			]
+		)
 		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess):
 			with patch("jarvis.chat.worker.publish_to_user"):
 				run_agent_turn(self.conv, self.user_msg, run_id="r1")
@@ -742,7 +776,8 @@ class TestWorkerCreatesSessionOnFirstTurn(FrappeTestCase):
 		self.assertEqual(row["user"], TEST_USER)
 		# And the conversation now carries the session key.
 		self.assertEqual(
-			frappe.db.get_value(CONV, self.conv, "session_key"), "agent:new",
+			frappe.db.get_value(CONV, self.conv, "session_key"),
+			"agent:new",
 		)
 
 
@@ -783,15 +818,19 @@ class TestRunAgentTurnRelayTerminals(FrappeTestCase):
 		# A single field name returns the raw value; a list returns a dict -
 		# mirrors frappe.db.get_value's own as_dict semantics.
 		return frappe.db.get_value(
-			MSG, {"conversation": self.conv, "role": "assistant"}, fields,
+			MSG,
+			{"conversation": self.conv, "role": "assistant"},
+			fields,
 			as_dict=isinstance(fields, list),
 		)
 
 	def test_interrupted_terminal_parks_for_recovery_without_run_error(self):
-		fake_sess = self._fake_sess([
-			{"kind": "assistant", "text": "partial", "delta": "partial"},
-			{"kind": "relay:interrupted", "reason": "deadline"},
-		])
+		fake_sess = self._fake_sess(
+			[
+				{"kind": "assistant", "text": "partial", "delta": "partial"},
+				{"kind": "relay:interrupted", "reason": "deadline"},
+			]
+		)
 		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess):
 			with patch("jarvis.chat.turn_recovery.recover_now") as recover_now:
 				with patch("jarvis.chat.worker.publish_to_user") as pub:
@@ -811,10 +850,12 @@ class TestRunAgentTurnRelayTerminals(FrappeTestCase):
 		self.assertNotIn("run:end", kinds)
 
 	def test_relay_error_terminal_marks_errored_and_publishes_run_error(self):
-		fake_sess = self._fake_sess([
-			{"kind": "assistant", "text": "oops", "delta": "oops"},
-			{"kind": "relay:error", "state": "error", "error": "provider quota exceeded"},
-		])
+		fake_sess = self._fake_sess(
+			[
+				{"kind": "assistant", "text": "oops", "delta": "oops"},
+				{"kind": "relay:error", "state": "error", "error": "provider quota exceeded"},
+			]
+		)
 		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess):
 			with patch("jarvis.chat.worker.publish_to_user") as pub:
 				run_agent_turn(self.conv, self.user_msg, run_id="r1")
@@ -862,10 +903,12 @@ class TestRunAgentTurnRelayTerminals(FrappeTestCase):
 		# relay:final's text is authoritative over whatever the batcher
 		# last wrote (openclaw's durable transcript beats our in-flight
 		# delta tail).
-		fake_sess = self._fake_sess([
-			{"kind": "assistant", "text": "draft", "delta": "draft"},
-			{"kind": "relay:final", "text": "authoritative final text"},
-		])
+		fake_sess = self._fake_sess(
+			[
+				{"kind": "assistant", "text": "draft", "delta": "draft"},
+				{"kind": "relay:final", "text": "authoritative final text"},
+			]
+		)
 		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess):
 			with patch("jarvis.chat.worker.publish_to_user"):
 				run_agent_turn(self.conv, self.user_msg, run_id="r1")
@@ -888,10 +931,7 @@ class TestRunAgentTurnRelayTerminals(FrappeTestCase):
 			with patch("jarvis.chat.worker.publish_to_user"):
 				run_agent_turn(self.conv, self.user_msg, run_id="r1")
 
-		call_names = [
-			c[0] for c in fake_sess.mock_calls
-			if c[0] in ("get_session_messages", "chat_send")
-		]
+		call_names = [c[0] for c in fake_sess.mock_calls if c[0] in ("get_session_messages", "chat_send")]
 		self.assertEqual(call_names, ["get_session_messages", "chat_send"])
 
 		row = self._assistant_row("openclaw_seq_watermark")
@@ -922,14 +962,20 @@ class TestRunAgentTurnRelayStreamTelemetry(FrappeTestCase):
 	def test_relay_turn_populates_stream_stats_for_latency_log(self):
 		fake_sess = MagicMock()
 		fake_sess.chat_send.side_effect = lambda sk, msg, idem, **kw: {"runId": idem, "status": "started"}
-		fake_sess.relay_turn_events.return_value = _fake_event_stream([
-			{"kind": "tool", "phase": "start", "tool_name": "browser_click",
-			 "tool_call_id": "tc-1"},
-			{"kind": "tool", "phase": "end", "tool_name": "browser_click",
-			 "tool_call_id": "tc-1", "status": "completed"},
-			{"kind": "assistant", "text": "Hi", "delta": "Hi"},
-			{"kind": "relay:final", "text": None},
-		])
+		fake_sess.relay_turn_events.return_value = _fake_event_stream(
+			[
+				{"kind": "tool", "phase": "start", "tool_name": "browser_click", "tool_call_id": "tc-1"},
+				{
+					"kind": "tool",
+					"phase": "end",
+					"tool_name": "browser_click",
+					"tool_call_id": "tc-1",
+					"status": "completed",
+				},
+				{"kind": "assistant", "text": "Hi", "delta": "Hi"},
+				{"kind": "relay:final", "text": None},
+			]
+		)
 		fake_logger = MagicMock()
 		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess):
 			with patch("jarvis.chat.worker.publish_to_user"):
@@ -972,9 +1018,11 @@ class TestRunAgentTurnThinkingDirective(FrappeTestCase):
 	def test_managed_message_unprefixed_thinking_sent_as_chat_send_param(self):
 		fake_sess = MagicMock()
 		fake_sess.chat_send.side_effect = lambda sk, msg, idem, **kw: {"runId": idem, "status": "started"}
-		fake_sess.relay_turn_events.return_value = _fake_event_stream([
-			{"kind": "relay:final", "text": None},
-		])
+		fake_sess.relay_turn_events.return_value = _fake_event_stream(
+			[
+				{"kind": "relay:final", "text": None},
+			]
+		)
 		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess):
 			with patch("jarvis.chat.worker.publish_to_user"):
 				run_agent_turn(self.conv, self.user_msg, run_id="r1")
@@ -987,9 +1035,11 @@ class TestRunAgentTurnThinkingDirective(FrappeTestCase):
 	def test_self_hosted_message_still_prefixed(self):
 		with patch("jarvis.selfhost.is_self_hosted", return_value=True):
 			with patch("jarvis.chat.openclaw_http_client.stream_agent_turn") as stream_mock:
-				stream_mock.return_value = _fake_event_stream([
-					{"kind": "lifecycle", "phase": "end"},
-				])
+				stream_mock.return_value = _fake_event_stream(
+					[
+						{"kind": "lifecycle", "phase": "end"},
+					]
+				)
 				with patch("jarvis.chat.worker.publish_to_user"):
 					run_agent_turn(self.conv, self.user_msg, run_id="r1")
 
@@ -1021,12 +1071,14 @@ class TestRichOutputsRouting(FrappeTestCase):
 	def test_clean_exit_calls_persist_rich_outputs_with_int_turn_start_ms(self):
 		fake_sess = MagicMock()
 		fake_sess.chat_send.side_effect = lambda sk, msg, idem, **kw: {"runId": idem, "status": "started"}
-		fake_sess.relay_turn_events.return_value = _fake_event_stream([
-			{"kind": "lifecycle", "phase": "start"},
-			{"kind": "assistant", "text": "Hello", "delta": "Hello"},
-			{"kind": "lifecycle", "phase": "end"},
-			{"kind": "relay:final", "text": None},
-		])
+		fake_sess.relay_turn_events.return_value = _fake_event_stream(
+			[
+				{"kind": "lifecycle", "phase": "start"},
+				{"kind": "assistant", "text": "Hello", "delta": "Hello"},
+				{"kind": "lifecycle", "phase": "end"},
+				{"kind": "relay:final", "text": None},
+			]
+		)
 		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess):
 			with patch("jarvis.chat.worker.publish_to_user"):
 				with patch("jarvis.chat.turn_handler.persist_rich_outputs") as rich:
@@ -1035,7 +1087,9 @@ class TestRichOutputsRouting(FrappeTestCase):
 		rich.assert_called_once()
 		args = rich.call_args.args
 		assistant_name = frappe.db.get_value(
-			MSG, {"conversation": self.conv, "role": "assistant"}, "name",
+			MSG,
+			{"conversation": self.conv, "role": "assistant"},
+			"name",
 		)
 		self.assertEqual(args[0], assistant_name)
 		self.assertEqual(args[1], self.conv)
@@ -1048,19 +1102,23 @@ class TestRichOutputsRouting(FrappeTestCase):
 		# finishes via the live worker's clean exit must NOT carry it.
 		fake_sess = MagicMock()
 		fake_sess.chat_send.side_effect = lambda sk, msg, idem, **kw: {"runId": idem, "status": "started"}
-		fake_sess.relay_turn_events.return_value = _fake_event_stream([
-			{"kind": "lifecycle", "phase": "start"},
-			{"kind": "assistant", "text": "Hello", "delta": "Hello"},
-			{"kind": "lifecycle", "phase": "end"},
-			{"kind": "relay:final", "text": None},
-		])
+		fake_sess.relay_turn_events.return_value = _fake_event_stream(
+			[
+				{"kind": "lifecycle", "phase": "start"},
+				{"kind": "assistant", "text": "Hello", "delta": "Hello"},
+				{"kind": "lifecycle", "phase": "end"},
+				{"kind": "relay:final", "text": None},
+			]
+		)
 		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess):
 			with patch("jarvis.chat.worker.publish_to_user"):
 				run_agent_turn(self.conv, self.user_msg, run_id="r1")
 
 		row = frappe.db.get_value(
-			MSG, {"conversation": self.conv, "role": "assistant"},
-			["streaming", "was_recovered"], as_dict=True,
+			MSG,
+			{"conversation": self.conv, "role": "assistant"},
+			["streaming", "was_recovered"],
+			as_dict=True,
 		)
 		self.assertEqual(row["streaming"], 0)  # the turn did finish cleanly
 		self.assertEqual(row["was_recovered"], 0)
@@ -1073,14 +1131,20 @@ class TestOverflowParksForRecovery(FrappeTestCase):
 
 	def _run_event(self, error_text):
 		from jarvis.chat import turn_handler
+
 		calls = {}
-		with patch.object(turn_handler, "_mark_recovering") as rec, \
-			patch.object(turn_handler, "_mark_errored") as err, \
-			patch.object(turn_handler, "_publish_to_user") as pub:
+		with (
+			patch.object(turn_handler, "_mark_recovering") as rec,
+			patch.object(turn_handler, "_mark_errored") as err,
+			patch.object(turn_handler, "_publish_to_user") as pub,
+		):
 			turn_handler._handle_event_inner(
 				{"kind": "lifecycle", "phase": "error", "error": error_text},
-				conversation_id="c1", assistant_msg_name="m1",
-				tool_msg_by_call_id={}, user="u@x", run_id="r1",
+				conversation_id="c1",
+				assistant_msg_name="m1",
+				tool_msg_by_call_id={},
+				user="u@x",
+				run_id="r1",
 				batcher=MagicMock(),
 			)
 		calls["recovering"] = rec.called
@@ -1109,9 +1173,7 @@ class TestChatSendAttachmentTimeout(FrappeTestCase):
 	attachment count (and stay default without attachments)."""
 
 	def test_ack_timeout_scales_with_attachments(self):
-		src = open(
-			frappe.get_app_path("jarvis", "chat", "turn_handler.py")
-		).read()
+		src = open(frappe.get_app_path("jarvis", "chat", "turn_handler.py")).read()
 		self.assertIn("ack_timeout = 10.0 + (30.0 * len(managed_attachments)", src)
 		self.assertIn("timeout_s=min(ack_timeout, 180.0)", src)
 
@@ -1125,7 +1187,7 @@ class TestRelayOverflowParks(FrappeTestCase):
 	def test_relay_error_overflow_branch_parks(self):
 		src = open(frappe.get_app_path("jarvis", "chat", "turn_handler.py")).read()
 		i = src.index('terminal["kind"] == "relay:error"')
-		branch = src[i:i + 900]
+		branch = src[i : i + 900]
 		self.assertIn('"context overflow" in err_text.lower()', branch)
 		self.assertIn("_mark_recovering(assistant_msg.name)", branch)
 		self.assertIn('"kind": "run:recovering"', branch)
@@ -1158,7 +1220,8 @@ class TestRunAgentTurnAborted(FrappeTestCase):
 		"""Drive one turn through the relay path; return the publish mock."""
 		fake_sess = MagicMock()
 		fake_sess.chat_send.side_effect = lambda sk, msg, idem, **kw: {
-			"runId": idem, "status": "started",
+			"runId": idem,
+			"status": "started",
 		}
 		fake_sess.relay_turn_events.return_value = _fake_event_stream(relay_events)
 		with patch("jarvis.chat.openclaw_session_pool.OpenclawSession.connect", return_value=fake_sess):
@@ -1168,7 +1231,9 @@ class TestRunAgentTurnAborted(FrappeTestCase):
 
 	def _assistant_row(self, fields):
 		return frappe.db.get_value(
-			MSG, {"conversation": self.conv, "role": "assistant"}, fields,
+			MSG,
+			{"conversation": self.conv, "role": "assistant"},
+			fields,
 			as_dict=isinstance(fields, list),
 		)
 
@@ -1176,10 +1241,12 @@ class TestRunAgentTurnAborted(FrappeTestCase):
 		# THE regression this branch exists for: a mid-sentence stop. The text
 		# must survive untouched (no marker smuggled into it) and the row must
 		# carry the flag the SPA draws its marker from.
-		self._run([
-			{"kind": "assistant", "text": "The invoice total is", "delta": "The invoice total is"},
-			{"kind": "relay:error", "state": "aborted", "error": "aborted"},
-		])
+		self._run(
+			[
+				{"kind": "assistant", "text": "The invoice total is", "delta": "The invoice total is"},
+				{"kind": "relay:error", "state": "aborted", "error": "aborted"},
+			]
+		)
 		row = self._assistant_row(["content", "stopped", "streaming"])
 		self.assertEqual(row["content"], "The invoice total is")
 		self.assertEqual(row["stopped"], 1)
@@ -1198,10 +1265,12 @@ class TestRunAgentTurnAborted(FrappeTestCase):
 	def test_abort_never_writes_stopped_prose_into_content(self):
 		# Guards the whole class of fix-by-magic-string: the sentinel must not
 		# come back through either writer.
-		self._run([
-			{"kind": "assistant", "text": "half an ans", "delta": "half an ans"},
-			{"kind": "relay:error", "state": "aborted", "error": "aborted"},
-		])
+		self._run(
+			[
+				{"kind": "assistant", "text": "half an ans", "delta": "half an ans"},
+				{"kind": "relay:error", "state": "aborted", "error": "aborted"},
+			]
+		)
 		self.assertNotIn("_Stopped._", self._assistant_row("content") or "")
 
 	def test_abort_publishes_run_end_carrying_stopped(self):
@@ -1218,10 +1287,12 @@ class TestRunAgentTurnAborted(FrappeTestCase):
 	def test_get_conversation_returns_stopped(self):
 		# get_conversation's field list is explicit: omit "stopped" and the
 		# flag never reaches the SPA, so the marker vanishes on reload.
-		self._run([
-			{"kind": "assistant", "text": "cut off here", "delta": "cut off here"},
-			{"kind": "relay:error", "state": "aborted", "error": "aborted"},
-		])
+		self._run(
+			[
+				{"kind": "assistant", "text": "cut off here", "delta": "cut off here"},
+				{"kind": "relay:error", "state": "aborted", "error": "aborted"},
+			]
+		)
 		msgs = get_conversation(self.conv)["messages"]
 		row = next(m for m in msgs if m["role"] == "assistant")
 		self.assertIn("stopped", row)
@@ -1230,10 +1301,12 @@ class TestRunAgentTurnAborted(FrappeTestCase):
 
 	def test_completed_turn_is_not_stopped(self):
 		# The flag records that an abort LANDED - a normal turn never sets it.
-		self._run([
-			{"kind": "assistant", "text": "all done", "delta": "all done"},
-			{"kind": "relay:final", "text": "all done"},
-		])
+		self._run(
+			[
+				{"kind": "assistant", "text": "all done", "delta": "all done"},
+				{"kind": "relay:final", "text": "all done"},
+			]
+		)
 		row = self._assistant_row(["content", "stopped", "streaming"])
 		self.assertEqual(row["stopped"], 0)
 		self.assertEqual(row["content"], "all done")

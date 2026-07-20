@@ -153,9 +153,7 @@ class TestUpdateVoiceNote(VoiceNotesCrudTestCase):
 			name = self._note(USER_A, f"{parked} history", status=parked)
 			with _as(USER_A), self.assertRaises(frappe.ValidationError):
 				voice_notes_api.update_voice_note(name, "rewritten history")
-			self.assertEqual(
-				frappe.db.get_value(NOTE, name, "transcript"), f"{parked} history"
-			)
+			self.assertEqual(frappe.db.get_value(NOTE, name, "transcript"), f"{parked} history")
 
 	def test_update_unknown_note(self):
 		with _as(USER_A), self.assertRaises(frappe.ValidationError):

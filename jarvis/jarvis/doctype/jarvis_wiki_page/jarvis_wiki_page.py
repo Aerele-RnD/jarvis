@@ -95,9 +95,7 @@ class JarvisWikiPage(Document):
 		funnel — every writer (ingest, update_wiki tool, SPA save) lands here."""
 		if self.summary:
 			s = _CONTROL_RE.sub("", str(self.summary))
-			self.summary = (
-				SANITIZED_PLACEHOLDER if scan_instruction_injection(s) else s
-			)
+			self.summary = SANITIZED_PLACEHOLDER if scan_instruction_injection(s) else s
 		if self.body_md:
 			body = _CONTROL_RE.sub("", str(self.body_md))
 			for pattern, repl in _BODY_NEUTRALIZE:
@@ -189,9 +187,7 @@ class JarvisWikiPage(Document):
 		if not self.slug:
 			frappe.throw(_("Slug is required."))
 		if len(self.slug) > MAX_SLUG_LEN:
-			frappe.throw(
-				_("Slug must be at most {0} characters.").format(MAX_SLUG_LEN)
-			)
+			frappe.throw(_("Slug must be at most {0} characters.").format(MAX_SLUG_LEN))
 		if not SLUG_RE.match(self.slug):
 			frappe.throw(
 				_(
@@ -203,10 +199,6 @@ class JarvisWikiPage(Document):
 	def _validate_lengths(self):
 		self.title = (self.title or "").strip()
 		if self.summary and len(self.summary) > MAX_SUMMARY_LEN:
-			frappe.throw(
-				_("Summary must be at most {0} characters.").format(MAX_SUMMARY_LEN)
-			)
+			frappe.throw(_("Summary must be at most {0} characters.").format(MAX_SUMMARY_LEN))
 		if self.body_md and len(self.body_md) > MAX_BODY_LEN:
-			frappe.throw(
-				_("Body must be at most {0} characters.").format(MAX_BODY_LEN)
-			)
+			frappe.throw(_("Body must be at most {0} characters.").format(MAX_BODY_LEN))

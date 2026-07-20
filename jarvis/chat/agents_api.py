@@ -14,9 +14,6 @@ Enable / schedule are pure DB writes (no container restart — O6); only Apply
 """
 
 import frappe
-from jarvis.permissions import (
-	has_jarvis_admin_access, require_jarvis_admin, require_jarvis_user,
-)
 from frappe import _
 
 from jarvis._session import impersonate
@@ -24,6 +21,11 @@ from jarvis.chat.agent_activity import log_activity
 from jarvis.chat.agent_catalog import build_agent_push_payload
 from jarvis.chat.filebox import _clamp_page, _lk
 from jarvis.chat.macro_scheduler import compute_next_run
+from jarvis.permissions import (
+	has_jarvis_admin_access,
+	require_jarvis_admin,
+	require_jarvis_user,
+)
 
 LISTING = "Jarvis Agent Listing"
 INSTALLATION = "Jarvis Agent Installation"
@@ -115,9 +117,20 @@ def _enriched_catalog() -> list[dict]:
 	listings = frappe.get_all(
 		LISTING,
 		fields=[
-			"name", "agent_slug", "title", "description", "category", "nature",
-			"version", "publisher", "status", "rule_pack", "default_schedule",
-			"validated_for_fy", "tools_required", "modified",
+			"name",
+			"agent_slug",
+			"title",
+			"description",
+			"category",
+			"nature",
+			"version",
+			"publisher",
+			"status",
+			"rule_pack",
+			"default_schedule",
+			"validated_for_fy",
+			"tools_required",
+			"modified",
 		],
 		order_by="status asc, title asc",
 	)
@@ -127,9 +140,16 @@ def _enriched_catalog() -> list[dict]:
 			INSTALLATION,
 			filters={"owner": me},
 			fields=[
-				"name", "agent", "enabled", "installed_version", "sync_status",
-				"schedule_enabled", "schedule_frequency", "schedule_time",
-				"next_run_at", "last_run_at",
+				"name",
+				"agent",
+				"enabled",
+				"installed_version",
+				"sync_status",
+				"schedule_enabled",
+				"schedule_frequency",
+				"schedule_time",
+				"next_run_at",
+				"last_run_at",
 			],
 		)
 	}
@@ -158,9 +178,7 @@ def _enriched_catalog() -> list[dict]:
 		)
 		allowed_roles = roles_map.get(lst.name, [])
 		lst["allowed_roles"] = allowed_roles
-		lst["allowed"] = (
-			1 if (is_sm or not allowed_roles or my_roles.intersection(allowed_roles)) else 0
-		)
+		lst["allowed"] = 1 if (is_sm or not allowed_roles or my_roles.intersection(allowed_roles)) else 0
 		lst["install_count"] = install_counts.get(lst.name, 0)
 		out.append(lst)
 	return out
@@ -211,8 +229,7 @@ def list_agents_page(
 			r
 			for r in rows
 			if any(
-				q in str(r.get(k) or "").lower()
-				for k in ("title", "description", "category", "agent_slug")
+				q in str(r.get(k) or "").lower() for k in ("title", "description", "category", "agent_slug")
 			)
 		]
 
@@ -276,9 +293,18 @@ def get_agent(agent_slug: str) -> dict:
 		INSTALLATION,
 		filters={"owner": me, "agent": listing.name},
 		fields=[
-			"name", "enabled", "installed_version", "installed_at", "config",
-			"sync_status", "synced_at", "schedule_enabled", "schedule_frequency",
-			"schedule_time", "next_run_at", "last_run_at",
+			"name",
+			"enabled",
+			"installed_version",
+			"installed_at",
+			"config",
+			"sync_status",
+			"synced_at",
+			"schedule_enabled",
+			"schedule_frequency",
+			"schedule_time",
+			"next_run_at",
+			"last_run_at",
 		],
 		limit=1,
 	)
@@ -314,16 +340,27 @@ def get_installations() -> list[dict]:
 		INSTALLATION,
 		filters={"owner": me},
 		fields=[
-			"name", "agent", "enabled", "installed_version", "installed_at",
-			"config", "sync_status", "synced_at", "schedule_enabled",
-			"schedule_frequency", "schedule_time", "next_run_at", "last_run_at",
+			"name",
+			"agent",
+			"enabled",
+			"installed_version",
+			"installed_at",
+			"config",
+			"sync_status",
+			"synced_at",
+			"schedule_enabled",
+			"schedule_frequency",
+			"schedule_time",
+			"next_run_at",
+			"last_run_at",
 		],
 		order_by="modified desc",
 	)
 	for r in rows:
-		meta = frappe.db.get_value(
-			LISTING, r.agent, ["title", "nature", "status", "version"], as_dict=True
-		) or {}
+		meta = (
+			frappe.db.get_value(LISTING, r.agent, ["title", "nature", "status", "version"], as_dict=True)
+			or {}
+		)
 		r["title"] = meta.get("title")
 		r["nature"] = meta.get("nature")
 		r["listing_status"] = meta.get("status")
@@ -417,27 +454,42 @@ def get_agent_admin_overview() -> dict:
 	for i in frappe.get_all(
 		INSTALLATION,
 		fields=[
-			"name", "agent", "owner", "enabled", "schedule_enabled",
-			"schedule_frequency", "next_run_at", "last_run_at", "sync_status",
+			"name",
+			"agent",
+			"owner",
+			"enabled",
+			"schedule_enabled",
+			"schedule_frequency",
+			"next_run_at",
+			"last_run_at",
+			"sync_status",
 		],
 		order_by="owner asc, creation asc",
 	):
-		installs_by_agent.setdefault(i.agent, []).append({
-			"installation": i.name,
-			"owner": i.owner,
-			"enabled": int(i.enabled or 0),
-			"schedule_enabled": int(i.schedule_enabled or 0),
-			"schedule_frequency": i.schedule_frequency,
-			"next_run_at": str(i.next_run_at) if i.next_run_at else None,
-			"last_run_at": str(i.last_run_at) if i.last_run_at else None,
-			"sync_status": i.sync_status,
-		})
+		installs_by_agent.setdefault(i.agent, []).append(
+			{
+				"installation": i.name,
+				"owner": i.owner,
+				"enabled": int(i.enabled or 0),
+				"schedule_enabled": int(i.schedule_enabled or 0),
+				"schedule_frequency": i.schedule_frequency,
+				"next_run_at": str(i.next_run_at) if i.next_run_at else None,
+				"last_run_at": str(i.last_run_at) if i.last_run_at else None,
+				"sync_status": i.sync_status,
+			}
+		)
 
 	listings = frappe.get_all(
 		LISTING,
 		fields=[
-			"name", "agent_slug", "title", "nature", "category", "status",
-			"version", "validated_for_fy",
+			"name",
+			"agent_slug",
+			"title",
+			"nature",
+			"category",
+			"status",
+			"version",
+			"validated_for_fy",
 		],
 		order_by="status asc, title asc",
 	)
@@ -468,9 +520,7 @@ def _mark_catalog_dirty() -> None:
 			frappe.utils.cint(frappe.db.get_single_value(_SETTINGS, "agent_catalog_version")) + 1,
 		)
 	except Exception:
-		frappe.log_error(
-			title="Jarvis: agent catalog dirty flag failed", message=frappe.get_traceback()
-		)
+		frappe.log_error(title="Jarvis: agent catalog dirty flag failed", message=frappe.get_traceback())
 
 
 @frappe.whitelist()
@@ -483,9 +533,7 @@ def install_agent(agent_slug: str) -> dict:
 	listing = frappe.get_doc(LISTING, agent_slug)  # All-role read
 	me = frappe.session.user
 	if not _user_allowed_for_agent(listing, me):
-		frappe.throw(
-			_("Your roles do not permit installing this agent."), frappe.PermissionError
-		)
+		frappe.throw(_("Your roles do not permit installing this agent."), frappe.PermissionError)
 	if listing.status != "Published":
 		frappe.throw(_("This agent is not available to install."))
 	if frappe.db.exists(INSTALLATION, {"owner": me, "agent": listing.name}):
@@ -500,15 +548,17 @@ def install_agent(agent_slug: str) -> dict:
 	if freq not in _FREQUENCIES:
 		freq = "daily"
 
-	doc = frappe.get_doc({
-		"doctype": INSTALLATION,
-		"agent": listing.name,
-		"enabled": 0,
-		"installed_version": listing.version,
-		"installed_at": frappe.utils.now(),
-		"schedule_enabled": int(sched.get("schedule_enabled") or 0),
-		"schedule_frequency": freq,
-	})
+	doc = frappe.get_doc(
+		{
+			"doctype": INSTALLATION,
+			"agent": listing.name,
+			"enabled": 0,
+			"installed_version": listing.version,
+			"installed_at": frappe.utils.now(),
+			"schedule_enabled": int(sched.get("schedule_enabled") or 0),
+			"schedule_frequency": freq,
+		}
+	)
 	doc.insert()  # owner = me; validate() runs the cap/uniqueness checks
 	# No _mark_catalog_dirty(): installs start enabled=0, so the container's
 	# ENABLED set is unchanged — only enable/disable (and uninstalling an
@@ -641,9 +691,7 @@ def uninstall_agent(installation: str) -> dict:
 	)
 	if run_names:
 		for field in ("run", "first_seen_run", "last_seen_run"):
-			finding_names.update(
-				frappe.get_all(FINDING, filters={field: ["in", run_names]}, pluck="name")
-			)
+			finding_names.update(frappe.get_all(FINDING, filters={field: ["in", run_names]}, pluck="name"))
 	for name in finding_names:
 		frappe.delete_doc(FINDING, name, ignore_permissions=True, force=True)
 	for name in run_names:
@@ -681,9 +729,7 @@ def run_agent_now(installation: str) -> dict:
 	if not doc.enabled:
 		frappe.throw(_("Enable the agent before running it."))
 	if frappe.db.get_value(LISTING, doc.agent, "nature") != "Auditor":
-		frappe.throw(
-			_("Only auditor agents run on demand; operators draft through the Approval Board.")
-		)
+		frappe.throw(_("Only auditor agents run on demand; operators draft through the Approval Board."))
 	from jarvis.chat.agent_scheduler import _launch_audit, _valid_owner
 
 	# Fail-closed identity guard: refuse to run an audit AS Administrator / Guest /
@@ -715,9 +761,7 @@ def _count(doctype: str, filters: dict, or_filters: list | None = None) -> int:
 	``fields``, so the search path plucks names — bounded because it is already
 	owner-scoped AND search-narrowed."""
 	if or_filters:
-		return len(
-			frappe.get_all(doctype, filters=filters, or_filters=or_filters, pluck="name")
-		)
+		return len(frappe.get_all(doctype, filters=filters, or_filters=or_filters, pluck="name"))
 	return frappe.db.count(doctype, filters=filters)
 
 
@@ -733,9 +777,18 @@ def list_runs(agent: str | None = None, limit: int = 50) -> list[dict]:
 		RUN,
 		filters=filters,
 		fields=[
-			"name", "agent", "installation", "trigger", "status", "started_at",
-			"finished_at", "conversation", "findings_count", "blocker_count",
-			"error", "coverage_note",
+			"name",
+			"agent",
+			"installation",
+			"trigger",
+			"status",
+			"started_at",
+			"finished_at",
+			"conversation",
+			"findings_count",
+			"blocker_count",
+			"error",
+			"coverage_note",
 		],
 		order_by="creation desc",
 		limit=int(limit or 50),
@@ -778,9 +831,18 @@ def list_runs_page(
 		filters=filters,
 		or_filters=or_filters,
 		fields=[
-			"name", "agent", "installation", "trigger", "status", "started_at",
-			"finished_at", "conversation", "findings_count", "blocker_count",
-			"error", "coverage_note",
+			"name",
+			"agent",
+			"installation",
+			"trigger",
+			"status",
+			"started_at",
+			"finished_at",
+			"conversation",
+			"findings_count",
+			"blocker_count",
+			"error",
+			"coverage_note",
 		],
 		order_by="started_at desc, creation desc",
 		limit_start=start,
@@ -874,9 +936,23 @@ def list_findings(
 		FINDING,
 		filters=filters,
 		fields=[
-			"name", "run", "agent", "rule_id", "severity", "title", "detail_md",
-			"section", "effective_date", "disclaimer", "ref_doctype", "ref_name",
-			"amount", "state", "first_seen_run", "last_seen_run", "modified",
+			"name",
+			"run",
+			"agent",
+			"rule_id",
+			"severity",
+			"title",
+			"detail_md",
+			"section",
+			"effective_date",
+			"disclaimer",
+			"ref_doctype",
+			"ref_name",
+			"amount",
+			"state",
+			"first_seen_run",
+			"last_seen_run",
+			"modified",
 		],
 		order_by="modified desc",
 		limit_start=start,
@@ -946,8 +1022,14 @@ def list_agent_activity_page(
 		filters=filters,
 		or_filters=or_filters,
 		fields=[
-			"name", "agent", "agent_title", "installation", "action", "run",
-			"detail", "creation",
+			"name",
+			"agent",
+			"agent_title",
+			"installation",
+			"action",
+			"run",
+			"detail",
+			"creation",
 		],
 		order_by="creation desc",
 		limit_start=start,
@@ -978,17 +1060,18 @@ def take_finding_to_chat(finding: str) -> dict:
 	from jarvis.chat.api import send_message
 
 	title = (doc.title or doc.rule_id or "finding").strip()
-	conv = frappe.get_doc({
-		"doctype": "Jarvis Conversation",
-		"title": f"Finding: {title}"[:140],
-		"status": "Active",
-	})
+	conv = frappe.get_doc(
+		{
+			"doctype": "Jarvis Conversation",
+			"title": f"Finding: {title}"[:140],
+			"status": "Active",
+		}
+	)
 	conv.insert()  # owned by the current user; respects perms
 	frappe.db.commit()
 
 	parts = [
-		f"I want to act on audit finding {doc.name} "
-		f"(rule {doc.rule_id}, severity: {doc.severity}).",
+		f"I want to act on audit finding {doc.name} (rule {doc.rule_id}, severity: {doc.severity}).",
 		f"Finding: {title}",
 	]
 	if doc.ref_doctype and doc.ref_name:
@@ -1129,9 +1212,7 @@ def _enqueued_push_agent_skills() -> None:
 			# (``_mark_catalog_dirty``), and we then refuse to clear the dirty
 			# flag below — the change missed this payload; a later Apply
 			# reconciles it.
-			version = frappe.utils.cint(
-				frappe.db.get_single_value(_SETTINGS, "agent_catalog_version")
-			)
+			version = frappe.utils.cint(frappe.db.get_single_value(_SETTINGS, "agent_catalog_version"))
 			payload = build_agent_push_payload()
 			admin_client.post_push_agent_skills(agent_skills=payload)
 			values = {
@@ -1141,10 +1222,7 @@ def _enqueued_push_agent_skills() -> None:
 			# The container now matches the DB — clear the dirty flag ONLY on a
 			# successful push whose payload saw every mutation (version
 			# unchanged); failures and mid-push mutations leave it set.
-			if (
-				frappe.utils.cint(frappe.db.get_single_value(_SETTINGS, "agent_catalog_version"))
-				== version
-			):
+			if frappe.utils.cint(frappe.db.get_single_value(_SETTINGS, "agent_catalog_version")) == version:
 				values["agent_catalog_dirty"] = 0
 			frappe.db.set_value(_SETTINGS, _SETTINGS, values)
 			terminal_written = True

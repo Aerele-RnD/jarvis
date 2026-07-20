@@ -12,7 +12,6 @@ the admin button wipes admin-side records; this clears the customer bench.
 import frappe
 from frappe.utils.password import remove_encrypted_password
 
-
 SETTINGS = "Jarvis Settings"
 
 # Password fieldtype stores the real value in __Auth, not the doctype row.
@@ -20,9 +19,11 @@ SETTINGS = "Jarvis Settings"
 # prior secret, so get_password() keeps returning it. We explicitly drop
 # the __Auth row for these fields.
 _PASSWORD_FIELDS = {
-	"jarvis_admin_api_key", "jarvis_admin_api_secret",
+	"jarvis_admin_api_key",
+	"jarvis_admin_api_secret",
 	"agent_token",
-	"chat_device_private_key", "chat_device_token",
+	"chat_device_private_key",
+	"chat_device_token",
 	"llm_api_key",
 }
 
@@ -55,10 +56,7 @@ def _dev_guard():
 	red dialog."""
 	if not is_sandbox_mode():
 		frappe.local.response.http_status_code = 403
-		frappe.throw(
-			"Sandbox mode is not enabled. Set Jarvis Settings -> "
-			"Enable Sandbox Mode."
-		)
+		frappe.throw("Sandbox mode is not enabled. Set Jarvis Settings -> Enable Sandbox Mode.")
 	if "System Manager" not in frappe.get_roles():
 		frappe.local.response.http_status_code = 403
 		frappe.throw("System Manager role required")
@@ -81,16 +79,23 @@ def is_dev_mode_active() -> dict:
 # without re-listing field names.
 _RESET_CLEAR_FIELDS = (
 	# Admin connection
-	"jarvis_admin_api_key", "jarvis_admin_api_secret",
+	"jarvis_admin_api_key",
+	"jarvis_admin_api_secret",
 	# Agent / container
-	"agent_url", "agent_token",
+	"agent_url",
+	"agent_token",
 	# Chat device pairing
-	"chat_device_id", "chat_device_public_key",
-	"chat_device_private_key", "chat_device_token",
+	"chat_device_id",
+	"chat_device_public_key",
+	"chat_device_private_key",
+	"chat_device_token",
 	# Last sync trace
-	"last_sync_at", "last_sync_status",
+	"last_sync_at",
+	"last_sync_status",
 	# LLM credentials (caller asked for a clean slate)
-	"llm_model", "llm_api_key", "llm_base_url",
+	"llm_model",
+	"llm_api_key",
+	"llm_base_url",
 )
 
 
@@ -125,6 +130,7 @@ def reset_onboarding() -> dict:
 	if (s.get("agent_url") or "").strip():
 		try:
 			from jarvis import admin_client
+
 			admin_client.post_subscription_disconnect()
 		except Exception:
 			frappe.logger().info(
@@ -150,19 +156,30 @@ def reset_onboarding() -> dict:
 	# Clear the models[] pool via a direct child-row delete rather than
 	# s.set("models", []) + save(), so Jarvis Settings.on_update
 	# (validate_models / admin pool-sync) does NOT fire during the reset.
-	frappe.db.delete("Jarvis LLM Pool Model", {
-		"parent": SETTINGS,
-		"parenttype": SETTINGS,
-		"parentfield": "models",
-	})
+	frappe.db.delete(
+		"Jarvis LLM Pool Model",
+		{
+			"parent": SETTINGS,
+			"parenttype": SETTINGS,
+			"parentfield": "models",
+		},
+	)
 
 	# Select field - must hold a valid option; reset to default.
 	s.db_set("llm_provider", "Anthropic")
 	frappe.db.commit()
 	_extra_cleared = [
-		"llm_auth_mode", "llm_oauth_account_email", "llm_oauth_connected_at",
-		"preset", "proxy_active", "proxy_recommended", "models",
+		"llm_auth_mode",
+		"llm_oauth_account_email",
+		"llm_oauth_connected_at",
+		"preset",
+		"proxy_active",
+		"proxy_recommended",
+		"models",
 	]
-	return {"ok": True, "data": {
-		"cleared_fields": list(_RESET_CLEAR_FIELDS) + _extra_cleared + ["llm_provider"],
-	}}
+	return {
+		"ok": True,
+		"data": {
+			"cleared_fields": list(_RESET_CLEAR_FIELDS) + _extra_cleared + ["llm_provider"],
+		},
+	}

@@ -102,10 +102,12 @@ def _grants_orgwide_read(perms, doctype: str) -> bool:
 	does not qualify (plan section 4.1)."""
 	for p in perms:
 		# get_all_perms rows are frappe._dict of DocPerm / Custom DocPerm fields.
-		if (p.get("parent") == doctype
-				and cint(p.get("permlevel")) == 0
-				and cint(p.get("read"))
-				and not cint(p.get("if_owner"))):
+		if (
+			p.get("parent") == doctype
+			and cint(p.get("permlevel")) == 0
+			and cint(p.get("read"))
+			and not cint(p.get("if_owner"))
+		):
 			return True
 	return False
 
@@ -199,10 +201,14 @@ def after_migrate() -> None:
 		for role_name in _WIKI_ROLES + _PERSONALISE_ROLES:
 			if frappe.db.exists("Role", role_name):
 				continue
-			frappe.get_doc({
-				"doctype": "Role", "role_name": role_name,
-				"desk_access": 1, "is_custom": 0,
-			}).insert(ignore_permissions=True)
+			frappe.get_doc(
+				{
+					"doctype": "Role",
+					"role_name": role_name,
+					"desk_access": 1,
+					"is_custom": 0,
+				}
+			).insert(ignore_permissions=True)
 			created = True
 		# The app-access role — definition lives in jarvis/permissions.py (single
 		# source of truth), seeded here so it exists before the grant patch runs.
@@ -217,9 +223,7 @@ def after_migrate() -> None:
 		if created:
 			frappe.db.commit()
 	except Exception:
-		frappe.log_error(
-			title="jarvis wiki roles seed failed", message=frappe.get_traceback()
-		)
+		frappe.log_error(title="jarvis wiki roles seed failed", message=frappe.get_traceback())
 
 
 def _seed_personalise_settings_defaults() -> bool:
@@ -234,9 +238,7 @@ def _seed_personalise_settings_defaults() -> bool:
 			(_PERSONALISE_SETTINGS, tuple(_PERSONALISE_SETTINGS_DEFAULTS)),
 		)
 	}
-	updates = {
-		f: v for f, v in _PERSONALISE_SETTINGS_DEFAULTS.items() if f not in existing
-	}
+	updates = {f: v for f, v in _PERSONALISE_SETTINGS_DEFAULTS.items() if f not in existing}
 	if not updates:
 		return False
 	frappe.db.set_single_value(_PERSONALISE_SETTINGS, updates, update_modified=False)

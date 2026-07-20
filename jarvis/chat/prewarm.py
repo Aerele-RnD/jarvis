@@ -6,6 +6,7 @@ prefix-keyed and container-wide, so one cheap throwaway agent turn warms it
 for every subsequent new chat in the same container. We never touch the
 user's real session or write chat rows. Always best-effort; never raises.
 """
+
 import uuid
 
 import frappe
@@ -66,14 +67,14 @@ def _reclaim_previous(sess, prev, current: str) -> None:
 		sess.delete_session(prev)
 	except Exception:
 		frappe.logger("jarvis.chat.prewarm").debug(
-			"previous warm session delete failed", exc_info=True,
+			"previous warm session delete failed",
+			exc_info=True,
 		)
 
 
 def _gateway_ws_url(settings) -> str:
 	"""Convert Jarvis Settings.agent_url http(s):// -> ws(s)://."""
-	return (settings.agent_url or "").replace(
-		"http://", "ws://").replace("https://", "wss://")
+	return (settings.agent_url or "").replace("http://", "ws://").replace("https://", "wss://")
 
 
 def _resolve_default_model_and_provider(settings) -> tuple[str, str | None]:
@@ -84,6 +85,7 @@ def _resolve_default_model_and_provider(settings) -> tuple[str, str | None]:
 	oauth mode. Reuses turn_handler's provider map as the single source of
 	truth so the warm-up cannot drift to a different provider's cache."""
 	from jarvis.chat.turn_handler import _PROVIDER_LABEL_TO_OPENCLAW_ID
+
 	model = settings.llm_model or ""
 	provider = (
 		_PROVIDER_LABEL_TO_OPENCLAW_ID.get(settings.llm_provider)
@@ -120,13 +122,17 @@ def warm_prefix() -> bool:
 		cache.set_value(key, "1", expires_in_sec=_WARM_INPROGRESS_S)
 		model, provider = _resolve_default_model_and_provider(settings)
 		import time
+
 		t0 = time.monotonic()
 		sess = OpenclawSession.connect(gateway_url)
 		try:
 			throwaway = sess.create_session(label=f"jarvis-prewarm-{uuid.uuid4().hex[:8]}")
 			sess.fire_agent(
-				throwaway, "/think off warmup", uuid.uuid4().hex,
-				model=model or None, provider=provider,
+				throwaway,
+				"/think off warmup",
+				uuid.uuid4().hex,
+				model=model or None,
+				provider=provider,
 			)
 			# Remember the new throwaway BEFORE reclaiming the old one: a failure
 			# between the two then leaks only the PREVIOUS session (the orphan
@@ -145,7 +151,8 @@ def warm_prefix() -> bool:
 		from jarvis.chat.latency import get_logger as _get_latency_logger
 
 		_get_latency_logger().info(
-			"warm_prefix fire_ms=%d", int((time.monotonic() - t0) * 1000),
+			"warm_prefix fire_ms=%d",
+			int((time.monotonic() - t0) * 1000),
 		)
 		# Warm succeeded: arm the full cooldown so the next cron tick skips.
 		cache.set_value(key, "1", expires_in_sec=_WARM_COOLDOWN_S)

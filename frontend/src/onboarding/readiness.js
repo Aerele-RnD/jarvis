@@ -1,5 +1,5 @@
-import { isReadyForChat } from "@/api.js"
-import { isOnboardComplete } from "@/onboarding/steps.js"
+import { isReadyForChat } from "@/api.js";
+import { isOnboardComplete } from "@/onboarding/steps.js";
 
 // Shared, memoized readiness verdict. Two callers need it per page load: the
 // router's first-navigation guard (bounce an already-onboarded user off a stale
@@ -9,21 +9,21 @@ import { isOnboardComplete } from "@/onboarding/steps.js"
 //
 // No cache-reset helper is needed: OnboardingView hard-reloads to /jarvis/ on
 // completion, which re-mounts the SPA and drops this module-level cache.
-let readyPromise = null
+let readyPromise = null;
 
 // Fail-open: if the backend check THROWS, treat the workspace as ready so a
 // flaky/500 check never strands a real user. (Note this only covers thrown
 // errors — a returned {ready:false} is a real verdict, handled below.)
 export function checkReady() {
 	if (!readyPromise) {
-		readyPromise = isReadyForChat().catch(() => ({ ready: true }))
+		readyPromise = isReadyForChat().catch(() => ({ ready: true }));
 	}
-	return readyPromise
+	return readyPromise;
 }
 
 // Resolves true once the workspace is chat-ready. Used by the router guard.
 export async function isWorkspaceReady() {
-	return isOnboardComplete(await checkReady())
+	return isOnboardComplete(await checkReady());
 }
 
 // Reasons (from account.py:is_ready_for_chat) that mean "this workspace has
@@ -47,14 +47,17 @@ export async function isWorkspaceReady() {
 // direct config confirms once, the marker is permanent — so it belongs here
 // too, never on the degraded-banner path.
 const NOT_ONBOARDED_REASONS = new Set([
-	"signup", "selfhost_connection", "llm_pool_provisioning", "llm_provisioning",
-])
+	"signup",
+	"selfhost_connection",
+	"llm_pool_provisioning",
+	"llm_provisioning",
+]);
 
 // True only when the workspace has NOT completed onboarding at all — the single
 // case the full-screen gate poster is for. A ready workspace, a fail-open
 // (thrown) result, or a merely-degraded one (llm_credentials) all return false.
 export async function needsOnboarding() {
-	const resp = await checkReady()
-	if (isOnboardComplete(resp)) return false
-	return NOT_ONBOARDED_REASONS.has(resp && resp.reason)
+	const resp = await checkReady();
+	if (isOnboardComplete(resp)) return false;
+	return NOT_ONBOARDED_REASONS.has(resp && resp.reason);
 }

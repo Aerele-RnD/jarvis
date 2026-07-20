@@ -15,7 +15,10 @@
 			<template v-else>
 				<!-- Chrome-less routes (onboarding) drop the sidebar entirely — a
 				     not-yet-onboarded customer has no app to navigate. -->
-				<div v-if="!route.meta.chromeless" class="h-full shrink-0 border-r bg-surface-gray-1">
+				<div
+					v-if="!route.meta.chromeless"
+					class="h-full shrink-0 border-r bg-surface-gray-1"
+				>
 					<Sidebar />
 				</div>
 				<div class="flex flex-1 flex-col h-full overflow-auto bg-surface-white">
@@ -47,29 +50,29 @@
 // gate (D11), the approvals-badge poll (D12), the global notifier (attention
 // signals for background conversations/routes, NOTIFY-APPROVALS Part 1) and
 // the global shortcuts.
-import { computed, onMounted, onBeforeUnmount, ref, inject } from "vue"
-import { useRoute, useRouter } from "vue-router"
-import { FrappeUIProvider, Dialogs, setConfig } from "frappe-ui"
-import * as api from "@/api"
-import { useShellStore } from "@/stores/shell"
-import { useShortcuts } from "@/composables/useShortcuts"
-import { attachGlobalNotifier } from "@/notify/globalNotifier"
-import NotifyToaster from "@/notify/NotifyToaster.vue"
-import { needsOnboarding } from "@/onboarding/readiness.js"
-import Sidebar from "./Sidebar.vue"
-import JarvisCommandPalette from "./JarvisCommandPalette.vue"
-import MoreMenu from "./MoreMenu.vue"
-import SettingsDialog from "./SettingsDialog.vue"
-import ConfirmDialog from "./ConfirmDialog.vue"
-import OnboardingGate from "./OnboardingGate.vue"
+import { computed, onMounted, onBeforeUnmount, ref, inject } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { FrappeUIProvider, Dialogs, setConfig } from "frappe-ui";
+import * as api from "@/api";
+import { useShellStore } from "@/stores/shell";
+import { useShortcuts } from "@/composables/useShortcuts";
+import { attachGlobalNotifier } from "@/notify/globalNotifier";
+import NotifyToaster from "@/notify/NotifyToaster.vue";
+import { needsOnboarding } from "@/onboarding/readiness.js";
+import Sidebar from "./Sidebar.vue";
+import JarvisCommandPalette from "./JarvisCommandPalette.vue";
+import MoreMenu from "./MoreMenu.vue";
+import SettingsDialog from "./SettingsDialog.vue";
+import ConfirmDialog from "./ConfirmDialog.vue";
+import OnboardingGate from "./OnboardingGate.vue";
 
-const route = useRoute()
-const router = useRouter()
-const store = useShellStore()
+const route = useRoute();
+const router = useRouter();
+const store = useShellStore();
 // The same shared socket ChatView injects (main.js provides it app-wide;
 // null under ?nosocket) — the global notifier listens on it for the whole
 // session, independent of which route is mounted.
-const socket = inject("$socket")
+const socket = inject("$socket");
 
 // Onboarding gate state. `gatedOnboarding` starts null (unresolved). We render
 // NOTHING but a neutral surface until BOTH the verdict has resolved AND a route
@@ -83,13 +86,13 @@ const socket = inject("$socket")
 // Only a workspace that has NEVER onboarded is gated (needsOnboarding) — a
 // merely-degraded but already-onboarded workspace (e.g. expired LLM creds) is
 // NOT ejected from its chat/data and keeps /account reachable to recover.
-const gatedOnboarding = ref(null)
+const gatedOnboarding = ref(null);
 needsOnboarding().then((v) => {
-	gatedOnboarding.value = v
-})
-const shellReady = computed(() => gatedOnboarding.value !== null && !!route.name)
+	gatedOnboarding.value = v;
+});
+const shellReady = computed(() => gatedOnboarding.value !== null && !!route.name);
 // The wizard route is exempt so the poster's button can navigate into it.
-const showGate = computed(() => gatedOnboarding.value === true && route.name !== "Onboarding")
+const showGate = computed(() => gatedOnboarding.value === true && route.name !== "Onboarding");
 
 // Boot gate: hold the routed page (NOT the shell chrome) until systemTimezone
 // is configured — timeAgo strings render once, so a late setConfig would leave
@@ -97,10 +100,10 @@ const showGate = computed(() => gatedOnboarding.value === true && route.name !==
 // window.time_zone via jinjaBootData (www/jarvis.py), so this is synchronous;
 // the awaited getChatUiSettings read in onMounted is only the dev-server /
 // missing-key fallback.
-const booted = ref(false)
+const booted = ref(false);
 if (typeof window !== "undefined" && window.time_zone) {
-	setConfig("systemTimezone", window.time_zone)
-	booted.value = true
+	setConfig("systemTimezone", window.time_zone);
+	booted.value = true;
 }
 
 // Global shortcuts (§3.1). ⌘K moved here from the stock CommandPalette —
@@ -110,47 +113,47 @@ useShortcuts([
 	{ key: "o", ctrl: true, shift: true, handler: () => store.requestNewChat(router) },
 	{ key: "b", ctrl: true, handler: () => (store.sidebarCollapsed = !store.sidebarCollapsed) },
 	{ key: "k", meta: true, handler: () => (store.paletteOpen = !store.paletteOpen) },
-])
+]);
 
 // Badge upkeep (D12): mount · route change · visibility (2s debounce) · 60s
 // interval while the tab is visible.
-let _interval = null
+let _interval = null;
 function startInterval() {
-	if (_interval) return
-	_interval = setInterval(() => store.refreshApprovalsCount(), 60000)
+	if (_interval) return;
+	_interval = setInterval(() => store.refreshApprovalsCount(), 60000);
 }
 function stopInterval() {
 	if (_interval) {
-		clearInterval(_interval)
-		_interval = null
+		clearInterval(_interval);
+		_interval = null;
 	}
 }
-let _visTimer = null
+let _visTimer = null;
 function onVisibility() {
 	if (document.visibilityState === "visible") {
-		startInterval()
-		clearTimeout(_visTimer)
-		_visTimer = setTimeout(() => store.refreshApprovalsCount(), 2000)
+		startInterval();
+		clearTimeout(_visTimer);
+		_visTimer = setTimeout(() => store.refreshApprovalsCount(), 2000);
 	} else {
-		stopInterval()
+		stopInterval();
 	}
 }
-const removeAfterEach = router.afterEach(() => store.refreshApprovalsCount())
+const removeAfterEach = router.afterEach(() => store.refreshApprovalsCount());
 
 // Global notifier: one app-scoped jarvis:event listener (attached below,
 // detached on unmount) that turns background run:end / run:error /
 // action:pending / approval:new / conversation:new into browser notifications
 // (hidden tab), toasts (visible but elsewhere) and sidebar unread dots.
-let _detachNotifier = null
+let _detachNotifier = null;
 
 onMounted(async () => {
-	document.addEventListener("visibilitychange", onVisibility)
-	if (document.visibilityState === "visible") startInterval()
-	_detachNotifier = attachGlobalNotifier({ socket, router })
+	document.addEventListener("visibilitychange", onVisibility);
+	if (document.visibilityState === "visible") startInterval();
+	_detachNotifier = attachGlobalNotifier({ socket, router });
 
 	// Sidebar fills without ChatView needing to be mounted (§3.1).
-	store.loadConversations()
-	store.refreshApprovalsCount()
+	store.loadConversations();
+	store.refreshApprovalsCount();
 
 	// Fallback only (vite dev server serves index.html without the jinja boot
 	// injection, and older cached shells may miss the key): fetch the timezone
@@ -158,12 +161,12 @@ onMounted(async () => {
 	// never runs — booted flipped synchronously in setup above.
 	if (!booted.value) {
 		try {
-			const res = await api.getChatUiSettings()
-			if (res?.time_zone) setConfig("systemTimezone", res.time_zone)
+			const res = await api.getChatUiSettings();
+			if (res?.time_zone) setConfig("systemTimezone", res.time_zone);
 		} catch {
 			// fall through — dayjsLocal degrades to browser-local parsing
 		}
-		booted.value = true
+		booted.value = true;
 	}
 
 	// NOTE: no onboarding force-REDIRECT here — that path (the old D11 gate)
@@ -175,13 +178,13 @@ onMounted(async () => {
 	// `showGate` in setup + the template). A render can't navigate, so it can't
 	// loop. The router beforeEach still bounces a fully-onboarded user off a
 	// stale /onboarding link.
-})
+});
 
 onBeforeUnmount(() => {
-	document.removeEventListener("visibilitychange", onVisibility)
-	clearTimeout(_visTimer)
-	stopInterval()
-	removeAfterEach()
-	if (_detachNotifier) _detachNotifier()
-})
+	document.removeEventListener("visibilitychange", onVisibility);
+	clearTimeout(_visTimer);
+	stopInterval();
+	removeAfterEach();
+	if (_detachNotifier) _detachNotifier();
+});
 </script>

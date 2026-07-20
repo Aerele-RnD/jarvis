@@ -35,10 +35,14 @@ _SCOPES = ("Org", "User")
 # User-scope writes now ride the platform "Jarvis User" role (Knowledge Wiki
 # User retired); Manager/Admin/SM hold or supersede it. Mirrors
 # wiki_permissions._is_wiki_user.
-_USER_SCOPE_ROLES = frozenset({
-	JARVIS_USER_ROLE, JARVIS_ADMIN_ROLE,
-	wiki_permissions.WIKI_MANAGER_ROLE, "System Manager",
-})
+_USER_SCOPE_ROLES = frozenset(
+	{
+		JARVIS_USER_ROLE,
+		JARVIS_ADMIN_ROLE,
+		wiki_permissions.WIKI_MANAGER_ROLE,
+		"System Manager",
+	}
+)
 
 
 def _require_system_user() -> None:
@@ -58,9 +62,7 @@ def _find_existing(slug: str, scope: str, user: str) -> str | None:
 	(``<slug>--u-…``) is probed so follow-up calls with the original base
 	slug keep landing on the same page. Slug grammar has no LIKE
 	metacharacters, so the pattern is literal."""
-	row = frappe.db.get_value(
-		WIKI, {"slug": slug}, ["name", "scope", "target_user"], as_dict=True
-	)
+	row = frappe.db.get_value(WIKI, {"slug": slug}, ["name", "scope", "target_user"], as_dict=True)
 	if scope != "User":
 		return row.name if row else None
 	if row and (row.scope or "Org") == "User" and row.target_user == user:
@@ -94,28 +96,17 @@ def update_wiki(
 	if not slug:
 		raise InvalidArgumentError("slug is required")
 	if append_md and replace_body_md:
-		raise InvalidArgumentError(
-			"pass either append_md or replace_body_md, not both"
-		)
+		raise InvalidArgumentError("pass either append_md or replace_body_md, not both")
 	if page_type and page_type not in PAGE_TYPES:
-		raise InvalidArgumentError(
-			f"page_type must be one of: {', '.join(PAGE_TYPES)}"
-		)
+		raise InvalidArgumentError(f"page_type must be one of: {', '.join(PAGE_TYPES)}")
 	scope = (str(scope).strip() if scope else "") or "Org"
 	scope = scope.capitalize()
 	if scope not in _SCOPES:
 		raise InvalidArgumentError('scope must be "Org" or "User"')
-	if (
-		scope == "User"
-		and user != "Administrator"
-		and not (_USER_SCOPE_ROLES & set(frappe.get_roles(user)))
-	):
+	if scope == "User" and user != "Administrator" and not (_USER_SCOPE_ROLES & set(frappe.get_roles(user))):
 		return {
 			"ok": False,
-			"reason": (
-				"personal (User-scope) wiki pages require Jarvis app access "
-				"(the Jarvis User role)"
-			),
+			"reason": ("personal (User-scope) wiki pages require Jarvis app access (the Jarvis User role)"),
 		}
 
 	name = _find_existing(slug, scope, user)
@@ -125,9 +116,7 @@ def update_wiki(
 		# maintain them through this confirm-gated tool (the explicit checks
 		# here + ignore_permissions replace the old doctype-perm probe, since
 		# write moved off Desk User). Role/User pages follow the human matrix.
-		if (doc.get("scope") or "Org") != "Org" and not wiki_permissions.can_edit_page(
-			doc, user
-		):
+		if (doc.get("scope") or "Org") != "Org" and not wiki_permissions.can_edit_page(doc, user):
 			raise PermissionDeniedError(f"no write permission on {WIKI} {name}")
 		created = False
 		if title and str(title).strip():
@@ -150,24 +139,24 @@ def update_wiki(
 		doc.save(ignore_permissions=True)
 	else:
 		if not (title and str(title).strip()) or not page_type:
-			raise InvalidArgumentError(
-				"creating a new wiki page requires title and page_type"
-			)
+			raise InvalidArgumentError("creating a new wiki page requires title and page_type")
 		created = True
-		doc = frappe.get_doc({
-			"doctype": WIKI,
-			"slug": slug,
-			"title": str(title).strip()[:140],
-			"page_type": page_type,
-			"ref_doctype": (str(ref_doctype).strip() if ref_doctype else None),
-			"ref_name": (str(ref_name).strip() if ref_name else None),
-			"summary": (" ".join(str(summary).split()) or None) if summary is not None else None,
-			"body_md": str(replace_body_md or append_md or "").strip(),
-			"status": "Active",
-			"scope": scope,
-			"target_user": user if scope == "User" else None,
-			"last_confirmed_at": frappe.utils.now_datetime(),
-		})
+		doc = frappe.get_doc(
+			{
+				"doctype": WIKI,
+				"slug": slug,
+				"title": str(title).strip()[:140],
+				"page_type": page_type,
+				"ref_doctype": (str(ref_doctype).strip() if ref_doctype else None),
+				"ref_name": (str(ref_name).strip() if ref_name else None),
+				"summary": (" ".join(str(summary).split()) or None) if summary is not None else None,
+				"body_md": str(replace_body_md or append_md or "").strip(),
+				"status": "Active",
+				"scope": scope,
+				"target_user": user if scope == "User" else None,
+				"last_confirmed_at": frappe.utils.now_datetime(),
+			}
+		)
 		append_source(doc, "tool", None, user)
 		doc.insert(ignore_permissions=True)
 

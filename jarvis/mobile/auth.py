@@ -47,6 +47,7 @@ def get_mobile_token() -> dict:
 	# stays session-user-only + idempotent, but refuses a non-Desk user
 	# self-minting a durable credential here.
 	from jarvis.permissions import is_system_user
+
 	if not is_system_user(user):
 		frappe.throw(
 			"The Jarvis mobile token is available to Jarvis app (Desk) users only.",

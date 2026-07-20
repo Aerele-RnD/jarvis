@@ -107,11 +107,7 @@ def _enforcing_permissions():
 def _mock_voice(result):
 	"""Patch ``jarvis.chat.voice.openrouter_complete``. ``result``: a str
 	return value, or an Exception / list side_effect."""
-	kwargs = (
-		{"side_effect": result}
-		if isinstance(result, (Exception, list))
-		else {"return_value": result}
-	)
+	kwargs = {"side_effect": result} if isinstance(result, (Exception, list)) else {"return_value": result}
 	try:
 		import jarvis.chat.voice  # noqa: F401
 
@@ -162,9 +158,7 @@ def _mock_wiki():
 			mock.patch.dict(sys.modules, {"jarvis.chat.wiki": stub}),
 			mock.patch.object(chat_pkg, "wiki", stub, create=True),
 		):
-			yield frappe._dict(
-				apply=stub.apply_extracted_page_updates, ingest=stub.enqueue_ingest_note
-			)
+			yield frappe._dict(apply=stub.apply_extracted_page_updates, ingest=stub.enqueue_ingest_note)
 
 
 def _fact_json(*items) -> str:
@@ -327,8 +321,9 @@ class TestVoiceFactsSweep(VoiceFactsTestCase):
 	def test_no_party_fact_gets_sensitivity_a(self):
 		statement = "Quotations are usually valid for fifteen days."
 		self._note(USER_A, "Our quotes are valid fifteen days.")
-		with _mock_wiki(), _mock_voice(
-			_fact_json(_rule_item(statement=statement, domain="selling", names_party=False))
+		with (
+			_mock_wiki(),
+			_mock_voice(_fact_json(_rule_item(statement=statement, domain="selling", names_party=False))),
 		):
 			voice_facts._process_all()
 		name = frappe.db.exists(JLP, {"pattern_key": voice_facts._pattern_key(statement)})
@@ -340,13 +335,12 @@ class TestVoiceFactsSweep(VoiceFactsTestCase):
 	def test_context_fact_routes_to_wiki_not_jlp(self):
 		statement = "Acme Traders prefers morning deliveries."
 		note = self._note(USER_A, "Acme likes their deliveries in the morning.")
-		with _mock_wiki() as w, _mock_voice(
-			_fact_json(_rule_item(statement=statement, domain="selling", kind="context"))
+		with (
+			_mock_wiki() as w,
+			_mock_voice(_fact_json(_rule_item(statement=statement, domain="selling", kind="context"))),
 		):
 			voice_facts._process_all()
-		self.assertFalse(
-			frappe.db.exists(JLP, {"pattern_key": voice_facts._pattern_key(statement)})
-		)
+		self.assertFalse(frappe.db.exists(JLP, {"pattern_key": voice_facts._pattern_key(statement)}))
 		self.assertEqual(w.apply.call_count, 1)
 		updates, source, user = w.apply.call_args.args
 		self.assertEqual(source, "voice")
@@ -370,18 +364,14 @@ class TestVoiceFactsSweep(VoiceFactsTestCase):
 			voice_facts._process_all()
 		rows = frappe.get_all(JLP, filters={"detector_id": voice_facts.DETECTOR_ID}, pluck="name")
 		self.assertEqual(len(rows), 1)
-		self.assertTrue(
-			frappe.db.exists(JLP, {"pattern_key": voice_facts._pattern_key(good)})
-		)
+		self.assertTrue(frappe.db.exists(JLP, {"pattern_key": voice_facts._pattern_key(good)}))
 
 	def test_failed_extraction_leaves_notes_new(self):
 		note = self._note(USER_A, "Something the model never saw.")
 		with _mock_wiki(), _mock_voice(frappe.ValidationError("openrouter down")):
 			voice_facts._process_all()
 		self.assertEqual(frappe.db.get_value(NOTE, note.name, "status"), "New")
-		self.assertTrue(
-			str(self._stamped()["voice_notes_last_process_status"]).startswith("partial")
-		)
+		self.assertTrue(str(self._stamped()["voice_notes_last_process_status"]).startswith("partial"))
 
 	def test_unparseable_output_leaves_notes_new(self):
 		note = self._note(USER_A, "More audio.")
@@ -454,22 +444,16 @@ class TestProcessDailyGates(VoiceFactsTestCase):
 			(SETTINGS, field),
 		)
 		try:
-			frappe.db.sql(
-				"delete from tabSingles where doctype=%s and field=%s", (SETTINGS, field)
-			)
+			frappe.db.sql("delete from tabSingles where doctype=%s and field=%s", (SETTINGS, field))
 			self.assertTrue(voice_facts._flag_on(field))
 			frappe.db.set_single_value(SETTINGS, field, 0, update_modified=False)
 			self.assertFalse(voice_facts._flag_on(field))
 			frappe.db.set_single_value(SETTINGS, field, 1, update_modified=False)
 			self.assertTrue(voice_facts._flag_on(field))
 		finally:
-			frappe.db.sql(
-				"delete from tabSingles where doctype=%s and field=%s", (SETTINGS, field)
-			)
+			frappe.db.sql("delete from tabSingles where doctype=%s and field=%s", (SETTINGS, field))
 			if rows:
-				frappe.db.set_single_value(
-					SETTINGS, field, cint(rows[0][0]), update_modified=False
-				)
+				frappe.db.set_single_value(SETTINGS, field, cint(rows[0][0]), update_modified=False)
 
 
 # --------------------------------------------------------------------------- #

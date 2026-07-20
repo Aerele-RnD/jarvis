@@ -12,9 +12,9 @@ from frappe.model.document import Document
 
 
 class JarvisChatSession(Document):
-    # Minimal controller - all validation is handled by field constraints.
-    # session_key is unique+mandatory; user is a mandatory Link to User.
+	# Minimal controller - all validation is handled by field constraints.
+	# session_key is unique+mandatory; user is a mandatory Link to User.
 
-    def before_insert(self):
-        if not self.created_at:
-            self.created_at = frappe.utils.now()
+	def before_insert(self):
+		if not self.created_at:
+			self.created_at = frappe.utils.now()

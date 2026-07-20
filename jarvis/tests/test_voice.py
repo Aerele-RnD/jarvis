@@ -120,43 +120,36 @@ class TestSttConfig(FrappeTestCase):
 			self.assertIsNone(voice.stt_config())
 
 	def test_voice_features_off_disables(self):
-		frappe.db.set_single_value(
-			"Jarvis Settings", "voice_features_enabled", 0, update_modified=False
-		)
+		frappe.db.set_single_value("Jarvis Settings", "voice_features_enabled", 0, update_modified=False)
 		try:
 			with _conf(jarvis_stt_openrouter_api_key=TEST_KEY):
 				self.assertIsNone(voice.stt_config())
 		finally:
-			frappe.db.set_single_value(
-				"Jarvis Settings", "voice_features_enabled", 1, update_modified=False
-			)
+			frappe.db.set_single_value("Jarvis Settings", "voice_features_enabled", 1, update_modified=False)
 
 	def test_voice_features_absent_row_defaults_on(self):
 		"""NULL=ON: a genuinely-absent tabSingles row reads enabled; an
 		explicit 0 reads off (row-existence probe, not get_single_value)."""
 		rows = frappe.db.sql(
-			"select value from tabSingles where doctype='Jarvis Settings' "
-			"and field='voice_features_enabled'"
+			"select value from tabSingles where doctype='Jarvis Settings' and field='voice_features_enabled'"
 		)
 		try:
 			frappe.db.sql(
-				"delete from tabSingles where doctype='Jarvis Settings' "
-				"and field='voice_features_enabled'"
+				"delete from tabSingles where doctype='Jarvis Settings' and field='voice_features_enabled'"
 			)
 			self.assertTrue(voice._voice_features_enabled())
-			frappe.db.set_single_value(
-				"Jarvis Settings", "voice_features_enabled", 0, update_modified=False
-			)
+			frappe.db.set_single_value("Jarvis Settings", "voice_features_enabled", 0, update_modified=False)
 			self.assertFalse(voice._voice_features_enabled())
 		finally:
 			frappe.db.sql(
-				"delete from tabSingles where doctype='Jarvis Settings' "
-				"and field='voice_features_enabled'"
+				"delete from tabSingles where doctype='Jarvis Settings' and field='voice_features_enabled'"
 			)
 			if rows:
 				frappe.db.set_single_value(
-					"Jarvis Settings", "voice_features_enabled",
-					cint(rows[0][0]), update_modified=False,
+					"Jarvis Settings",
+					"voice_features_enabled",
+					cint(rows[0][0]),
+					update_modified=False,
 				)
 
 	def test_chat_ui_settings_carries_stt_enabled(self):
@@ -193,13 +186,15 @@ class TestTranscribeAudio(FrappeTestCase):
 	def setUpClass(cls):
 		super().setUpClass()
 		if not frappe.db.exists("User", WEBSITE_USER):
-			frappe.get_doc({
-				"doctype": "User",
-				"email": WEBSITE_USER,
-				"first_name": "Voice Portal",
-				"user_type": "Website User",
-				"send_welcome_email": 0,
-			}).insert(ignore_permissions=True)
+			frappe.get_doc(
+				{
+					"doctype": "User",
+					"email": WEBSITE_USER,
+					"first_name": "Voice Portal",
+					"user_type": "Website User",
+					"send_welcome_email": 0,
+				}
+			).insert(ignore_permissions=True)
 			frappe.db.commit()
 
 	@classmethod
@@ -271,16 +266,12 @@ class TestTranscribeAudio(FrappeTestCase):
 		parts = payload["messages"][1]["content"]
 		self.assertEqual(parts[1]["type"], "input_audio")
 		self.assertEqual(parts[1]["input_audio"]["format"], "webm")
-		self.assertEqual(
-			parts[1]["input_audio"]["data"], base64.b64encode(data).decode("ascii")
-		)
+		self.assertEqual(parts[1]["input_audio"]["data"], base64.b64encode(data).decode("ascii"))
 
 	def test_injection_guard_prompts_in_payload(self):
 		with _conf(jarvis_stt_openrouter_api_key=TEST_KEY):
 			with _audio_request():
-				with patch(
-					"jarvis.chat.voice.requests.post", return_value=_ok_response()
-				) as mock_post:
+				with patch("jarvis.chat.voice.requests.post", return_value=_ok_response()) as mock_post:
 					voice.transcribe_audio()
 		messages = mock_post.call_args.kwargs["json"]["messages"]
 		self.assertEqual(messages[0]["role"], "system")
@@ -299,9 +290,7 @@ class TestTranscribeAudio(FrappeTestCase):
 		for content_type, expected in (("audio/wav", "wav"), ("audio/mpeg", "mp3")):
 			with _conf(jarvis_stt_openrouter_api_key=TEST_KEY):
 				with _audio_request(content_type=content_type):
-					with patch(
-						"jarvis.chat.voice.requests.post", return_value=_ok_response()
-					) as mock_post:
+					with patch("jarvis.chat.voice.requests.post", return_value=_ok_response()) as mock_post:
 						voice.transcribe_audio()
 			part = mock_post.call_args.kwargs["json"]["messages"][1]["content"][1]
 			self.assertEqual(part["input_audio"]["format"], expected)

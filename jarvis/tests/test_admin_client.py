@@ -21,8 +21,9 @@ from jarvis.admin_client import (
 )
 
 
-def _settings_for_admin(admin_url="https://admin.example.com",
-						api_key="customer-key-123", api_secret="customer-secret-456"):
+def _settings_for_admin(
+	admin_url="https://admin.example.com", api_key="customer-key-123", api_secret="customer-secret-456"
+):
 	"""Configure Jarvis Settings for the admin path. Uses db_set to bypass
 	read_only on the fields."""
 	settings = frappe.get_single("Jarvis Settings")
@@ -32,9 +33,13 @@ def _settings_for_admin(admin_url="https://admin.example.com",
 	frappe.db.commit()
 
 
-def _settings_for_oauth(admin_url="https://admin.example.com",
-						email="cust@example.com", password="pw-secret",
-						api_key="", api_secret=""):
+def _settings_for_oauth(
+	admin_url="https://admin.example.com",
+	email="cust@example.com",
+	password="pw-secret",
+	api_key="",
+	api_secret="",
+):
 	"""Configure Jarvis Settings for the OAuth bearer path. By default no
 	api_key/secret so the bearer path is exercised in isolation; pass them to
 	test the 401 -> legacy fallback."""
@@ -50,12 +55,12 @@ def _settings_for_oauth(admin_url="https://admin.example.com",
 
 def _settings_clear_admin():
 	from frappe.utils.password import remove_encrypted_password
+
 	settings = frappe.get_single("Jarvis Settings")
 	settings.db_set("jarvis_admin_url", "")
 	settings.db_set("jarvis_admin_customer_email", "")
 	# Password fields need __Auth cleared too, not just the column.
-	for f in ("jarvis_admin_api_key", "jarvis_admin_api_secret",
-			  "jarvis_admin_customer_password"):
+	for f in ("jarvis_admin_api_key", "jarvis_admin_api_secret", "jarvis_admin_customer_password"):
 		remove_encrypted_password("Jarvis Settings", "Jarvis Settings", f)
 		settings.db_set(f, "")
 	frappe.db.commit()
@@ -82,20 +87,28 @@ class TestHappyPath(FrappeTestCase):
 		_settings_clear_admin()
 
 	def test_reload_returns_unwrapped_data(self):
-		mock_post = MagicMock(return_value=_mock_response(
-			200, json_body={"message": {"ok": True, "data": {"action": "reload", "result": "ok"}}},
-		))
+		mock_post = MagicMock(
+			return_value=_mock_response(
+				200,
+				json_body={"message": {"ok": True, "data": {"action": "reload", "result": "ok"}}},
+			)
+		)
 		with patch("requests.post", mock_post):
 			result = post_update_llm_creds(
-				provider="Anthropic", model="claude-sonnet-4-6",
-				base_url="https://api.anthropic.com", api_key="sk-new",
+				provider="Anthropic",
+				model="claude-sonnet-4-6",
+				base_url="https://api.anthropic.com",
+				api_key="sk-new",
 			)
 		self.assertEqual(result, {"action": "reload", "result": "ok"})
 
 	def test_restart_returns_unwrapped_data(self):
-		mock_post = MagicMock(return_value=_mock_response(
-			200, json_body={"message": {"ok": True, "data": {"action": "restart", "result": "ok"}}},
-		))
+		mock_post = MagicMock(
+			return_value=_mock_response(
+				200,
+				json_body={"message": {"ok": True, "data": {"action": "restart", "result": "ok"}}},
+			)
+		)
 		with patch("requests.post", mock_post):
 			result = post_update_llm_creds("OpenAI", "gpt-4o", "https://api.openai.com", "sk-new")
 		self.assertEqual(result["action"], "restart")
@@ -103,8 +116,7 @@ class TestHappyPath(FrappeTestCase):
 
 class TestHeaders(FrappeTestCase):
 	def setUp(self):
-		_settings_for_admin(admin_url="https://admin.example.com",
-							api_key="hdr-key", api_secret="hdr-secret")
+		_settings_for_admin(admin_url="https://admin.example.com", api_key="hdr-key", api_secret="hdr-secret")
 
 	def tearDown(self):
 		_settings_clear_admin()
@@ -121,22 +133,30 @@ class TestHeaders(FrappeTestCase):
 
 		# Blank the bench's site-config jarvis_admin_url so the doctype-field
 		# URL is the one exercised here (site config otherwise outranks it).
-		with patch.dict(frappe.local.conf, {"jarvis_admin_url": ""}), \
-			 patch("requests.post", side_effect=_fake_post):
+		with (
+			patch.dict(frappe.local.conf, {"jarvis_admin_url": ""}),
+			patch("requests.post", side_effect=_fake_post),
+		):
 			post_update_llm_creds("p", "m", "b", "k")
 
 		self.assertEqual(captured["headers"]["Authorization"], "token hdr-key:hdr-secret")
 		self.assertNotIn("X-Jarvis-Site", captured["headers"])
 		self.assertEqual(captured["headers"]["Content-Type"], "application/json")
 		self.assertEqual(captured["timeout"], DEFAULT_TIMEOUT_S)
-		self.assertEqual(captured["json"], {
-			"provider": "p", "model": "m", "base_url": "b", "api_key": "k",
-			"auth_mode": "api_key",
-			# Gating: the client sends the tenant's installed apps so the admin
-			# can scope per-tenant skills/tools. Assert against the same source
-			# the client reads, so this stays correct as apps change.
-			"installed_apps": frappe.get_installed_apps(),
-		})
+		self.assertEqual(
+			captured["json"],
+			{
+				"provider": "p",
+				"model": "m",
+				"base_url": "b",
+				"api_key": "k",
+				"auth_mode": "api_key",
+				# Gating: the client sends the tenant's installed apps so the admin
+				# can scope per-tenant skills/tools. Assert against the same source
+				# the client reads, so this stays correct as apps change.
+				"installed_apps": frappe.get_installed_apps(),
+			},
+		)
 		self.assertTrue(captured["url"].startswith("https://admin.example.com/api/method/"))
 		# Build the expected path from the namespace resolver so this passes
 		# under the v2 default (jarvis_admin_v2.*) and any config override.
@@ -144,6 +164,7 @@ class TestHeaders(FrappeTestCase):
 
 	def test_raises_when_credentials_missing(self):
 		from jarvis.exceptions import AdminAuthError
+
 		_settings_clear_admin()
 		with self.assertRaises(AdminAuthError):
 			post_update_llm_creds("p", "m", "b", "k")
@@ -164,18 +185,22 @@ class TestHeaders(FrappeTestCase):
 		# Mimic the production load: attribute is the masked placeholder.
 		fake_settings.jarvis_admin_api_key = "*****"
 		fake_settings.jarvis_admin_url = "https://admin.example.com"
+
 		# get_password returns the decrypted real value.
 		def _get_password(field, raise_exception=False):
-			return {"jarvis_admin_api_key": "real-key-xyz",
-					"jarvis_admin_api_secret": "real-secret-abc"}.get(field, "")
+			return {"jarvis_admin_api_key": "real-key-xyz", "jarvis_admin_api_secret": "real-secret-abc"}.get(
+				field, ""
+			)
+
 		fake_settings.get_password.side_effect = _get_password
 
-		with patch("frappe.get_single", return_value=fake_settings), \
-			 patch("requests.post", side_effect=_fake_post):
+		with (
+			patch("frappe.get_single", return_value=fake_settings),
+			patch("requests.post", side_effect=_fake_post),
+		):
 			post_update_llm_creds("p", "m", "b", "k")
 
-		self.assertEqual(captured["headers"]["Authorization"],
-						 "token real-key-xyz:real-secret-abc")
+		self.assertEqual(captured["headers"]["Authorization"], "token real-key-xyz:real-secret-abc")
 		self.assertNotIn("*", captured["headers"]["Authorization"])
 
 
@@ -205,34 +230,52 @@ class TestAdminErrorResponses(FrappeTestCase):
 		_settings_clear_admin()
 
 	def test_401_raises_auth_error(self):
-		mock_post = MagicMock(return_value=_mock_response(
-			401, json_body={"message": {"ok": False, "error": {"code": "AuthenticationError", "message": "bad token"}}},
-		))
+		mock_post = MagicMock(
+			return_value=_mock_response(
+				401,
+				json_body={
+					"message": {"ok": False, "error": {"code": "AuthenticationError", "message": "bad token"}}
+				},
+			)
+		)
 		with patch("requests.post", mock_post):
 			with self.assertRaises(AdminAuthError) as cm:
 				post_update_llm_creds("p", "m", "b", "k")
 		self.assertIn("bad token", str(cm.exception))
 
 	def test_403_raises_auth_error(self):
-		mock_post = MagicMock(return_value=_mock_response(
-			403, json_body={"message": {"ok": False, "error": {"code": "AuthenticationError", "message": "suspended"}}},
-		))
+		mock_post = MagicMock(
+			return_value=_mock_response(
+				403,
+				json_body={
+					"message": {"ok": False, "error": {"code": "AuthenticationError", "message": "suspended"}}
+				},
+			)
+		)
 		with patch("requests.post", mock_post):
 			with self.assertRaises(AdminAuthError):
 				post_update_llm_creds("p", "m", "b", "k")
 
 	def test_500_raises_unreachable(self):
-		mock_post = MagicMock(return_value=_mock_response(
-			500, json_body={"message": {"ok": False, "error": {"code": "ServerError", "message": "boom"}}},
-		))
+		mock_post = MagicMock(
+			return_value=_mock_response(
+				500,
+				json_body={"message": {"ok": False, "error": {"code": "ServerError", "message": "boom"}}},
+			)
+		)
 		with patch("requests.post", mock_post):
 			with self.assertRaises(AdminUnreachableError):
 				post_update_llm_creds("p", "m", "b", "k")
 
 	def test_200_with_ok_false_raises_unreachable(self):
-		mock_post = MagicMock(return_value=_mock_response(
-			200, json_body={"message": {"ok": False, "error": {"code": "NoRunningTenant", "message": "no tenant"}}},
-		))
+		mock_post = MagicMock(
+			return_value=_mock_response(
+				200,
+				json_body={
+					"message": {"ok": False, "error": {"code": "NoRunningTenant", "message": "no tenant"}}
+				},
+			)
+		)
 		with patch("requests.post", mock_post):
 			with self.assertRaises(AdminUnreachableError) as cm:
 				post_update_llm_creds("p", "m", "b", "k")
@@ -247,11 +290,17 @@ class TestAdminErrorResponses(FrappeTestCase):
 		"""InvalidArgument / InvalidToken / InvalidBlob etc. on tenant.py
 		now show up on the bench as AdminValidationError - operator-actionable
 		clean text, not "admin is unreachable; try again."""
-		mock_post = MagicMock(return_value=_mock_response(
-			400, json_body={"message": {
-				"ok": False, "error": {"code": "InvalidToken", "message": "token too short"},
-			}},
-		))
+		mock_post = MagicMock(
+			return_value=_mock_response(
+				400,
+				json_body={
+					"message": {
+						"ok": False,
+						"error": {"code": "InvalidToken", "message": "token too short"},
+					}
+				},
+			)
+		)
 		with patch("requests.post", mock_post):
 			with self.assertRaises(AdminValidationError) as cm:
 				post_update_llm_creds("p", "m", "b", "k")
@@ -261,11 +310,17 @@ class TestAdminErrorResponses(FrappeTestCase):
 		"""NoRunningTenant (409) is a business-rule error, not a network
 		failure - now routes to AdminValidationError so _surface() shows
 		the actual reason."""
-		mock_post = MagicMock(return_value=_mock_response(
-			409, json_body={"message": {
-				"ok": False, "error": {"code": "NoRunningTenant", "message": "no running tenant"},
-			}},
-		))
+		mock_post = MagicMock(
+			return_value=_mock_response(
+				409,
+				json_body={
+					"message": {
+						"ok": False,
+						"error": {"code": "NoRunningTenant", "message": "no running tenant"},
+					}
+				},
+			)
+		)
 		with patch("requests.post", mock_post):
 			with self.assertRaises(AdminValidationError) as cm:
 				post_update_llm_creds("p", "m", "b", "k")
@@ -273,11 +328,17 @@ class TestAdminErrorResponses(FrappeTestCase):
 
 	def test_5xx_envelope_still_raises_unreachable(self):
 		"""5xx is genuinely server-side; the unreachable class is correct."""
-		mock_post = MagicMock(return_value=_mock_response(
-			503, json_body={"message": {
-				"ok": False, "error": {"code": "ServiceUnavailable", "message": "down"},
-			}},
-		))
+		mock_post = MagicMock(
+			return_value=_mock_response(
+				503,
+				json_body={
+					"message": {
+						"ok": False,
+						"error": {"code": "ServiceUnavailable", "message": "down"},
+					}
+				},
+			)
+		)
 		with patch("requests.post", mock_post):
 			with self.assertRaises(AdminUnreachableError):
 				post_update_llm_creds("p", "m", "b", "k")
@@ -287,20 +348,21 @@ class TestAdminErrorResponses(FrappeTestCase):
 		(e.g. dev_force_signup → _reject_duplicate_email), the response body has
 		Frappe's exc_type/_server_messages envelope, not the {ok, error} shape.
 		We extract the user-facing message and raise AdminValidationError."""
-		mock_post = MagicMock(return_value=_mock_response(
-			417,
-			json_body={
-				"exception": "frappe.exceptions.ValidationError: An active account already exists for venkat@aerele.in",
-				"exc_type": "ValidationError",
-				"_server_messages": '["{\\"message\\": \\"An active account already exists for venkat@aerele.in\\", \\"indicator\\": \\"red\\"}"]',
-				"exc": "[\"Traceback (most recent call last):\\n...\"]",
-			},
-		))
+		mock_post = MagicMock(
+			return_value=_mock_response(
+				417,
+				json_body={
+					"exception": "frappe.exceptions.ValidationError: An active account already exists for venkat@aerele.in",
+					"exc_type": "ValidationError",
+					"_server_messages": '["{\\"message\\": \\"An active account already exists for venkat@aerele.in\\", \\"indicator\\": \\"red\\"}"]',
+					"exc": '["Traceback (most recent call last):\\n..."]',
+				},
+			)
+		)
 		with patch("requests.post", mock_post):
 			with self.assertRaises(AdminValidationError) as cm:
 				post_update_llm_creds("p", "m", "b", "k")
-		self.assertEqual(str(cm.exception),
-						 "An active account already exists for venkat@aerele.in")
+		self.assertEqual(str(cm.exception), "An active account already exists for venkat@aerele.in")
 		# No traceback dump should leak into the message.
 		self.assertNotIn("Traceback", str(cm.exception))
 		self.assertNotIn("frappe.exceptions.", str(cm.exception))
@@ -308,26 +370,30 @@ class TestAdminErrorResponses(FrappeTestCase):
 	def test_frappe_validation_error_falls_back_to_exception_string(self):
 		"""If _server_messages is missing/empty, parse the message from the
 		`exception` field by stripping the class prefix."""
-		mock_post = MagicMock(return_value=_mock_response(
-			417,
-			json_body={
-				"exception": "frappe.exceptions.DuplicateEntryError: Customer C-001 already exists",
-				"exc_type": "DuplicateEntryError",
-			},
-		))
+		mock_post = MagicMock(
+			return_value=_mock_response(
+				417,
+				json_body={
+					"exception": "frappe.exceptions.DuplicateEntryError: Customer C-001 already exists",
+					"exc_type": "DuplicateEntryError",
+				},
+			)
+		)
 		with patch("requests.post", mock_post):
 			with self.assertRaises(AdminValidationError) as cm:
 				post_update_llm_creds("p", "m", "b", "k")
 		self.assertEqual(str(cm.exception), "Customer C-001 already exists")
 
 	def test_frappe_permission_error_routes_to_auth_error(self):
-		mock_post = MagicMock(return_value=_mock_response(
-			403,
-			json_body={
-				"exception": "frappe.exceptions.PermissionError: customer status: Suspended",
-				"exc_type": "PermissionError",
-			},
-		))
+		mock_post = MagicMock(
+			return_value=_mock_response(
+				403,
+				json_body={
+					"exception": "frappe.exceptions.PermissionError: customer status: Suspended",
+					"exc_type": "PermissionError",
+				},
+			)
+		)
 		with patch("requests.post", mock_post):
 			with self.assertRaises(AdminAuthError) as cm:
 				post_update_llm_creds("p", "m", "b", "k")
@@ -354,15 +420,17 @@ class TestSecretScrubbingAtBoundary(FrappeTestCase):
 		_settings_clear_admin()
 
 	def test_api_key_value_redacted_from_validation_error(self):
-		mock_post = MagicMock(return_value=_mock_response(
-			500,
-			json_body={
-				"exc_type": "ValidationError",
-				"_server_messages": (
-					'["{\\"message\\": \\"upstream rejected: api_key=sk-AbCdEf1234567890abcdef is invalid\\"}"]'
-				),
-			},
-		))
+		mock_post = MagicMock(
+			return_value=_mock_response(
+				500,
+				json_body={
+					"exc_type": "ValidationError",
+					"_server_messages": (
+						'["{\\"message\\": \\"upstream rejected: api_key=sk-AbCdEf1234567890abcdef is invalid\\"}"]'
+					),
+				},
+			)
+		)
 		with patch("requests.post", mock_post):
 			with self.assertRaises(AdminValidationError) as cm:
 				post_update_llm_creds("p", "m", "b", "k")
@@ -376,18 +444,20 @@ class TestSecretScrubbingAtBoundary(FrappeTestCase):
 	def test_authorization_header_redacted_from_4xx_envelope(self):
 		# 4xx + structured envelope path (the most common cross-boundary
 		# shape for admin handler validation failures).
-		mock_post = MagicMock(return_value=_mock_response(
-			417,
-			json_body={
-				"message": {
-					"ok": False,
-					"error": {
-						"code": "BadAuth",
-						"message": "echoed Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload-stuff.sig-stuff",
+		mock_post = MagicMock(
+			return_value=_mock_response(
+				417,
+				json_body={
+					"message": {
+						"ok": False,
+						"error": {
+							"code": "BadAuth",
+							"message": "echoed Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload-stuff.sig-stuff",
+						},
 					},
 				},
-			},
-		))
+			)
+		)
 		with patch("requests.post", mock_post):
 			with self.assertRaises(AdminValidationError) as cm:
 				post_update_llm_creds("p", "m", "b", "k")
@@ -400,13 +470,15 @@ class TestSecretScrubbingAtBoundary(FrappeTestCase):
 		# Python exceptions; the bench routes by exc_type allowlist into
 		# AdminUnreachableError (unknown class). The scrub applies before
 		# the exception class name is stripped.
-		mock_post = MagicMock(return_value=_mock_response(
-			500,
-			json_body={
-				"exc_type": "ValueError",
-				"exception": "ValueError: id_token rejected: eyJ0eXAiOiJKV1QifQ.abcde123.signature456",
-			},
-		))
+		mock_post = MagicMock(
+			return_value=_mock_response(
+				500,
+				json_body={
+					"exc_type": "ValueError",
+					"exception": "ValueError: id_token rejected: eyJ0eXAiOiJKV1QifQ.abcde123.signature456",
+				},
+			)
+		)
 		with patch("requests.post", mock_post):
 			with self.assertRaises(admin_client.AdminUnreachableError) as cm:
 				post_update_llm_creds("p", "m", "b", "k")
@@ -418,13 +490,15 @@ class TestSecretScrubbingAtBoundary(FrappeTestCase):
 		# A 10KB traceback embedded in _server_messages must not blow up
 		# the Data field that last_sync_status writes to.
 		giant = "x" * 5000
-		mock_post = MagicMock(return_value=_mock_response(
-			500,
-			json_body={
-				"exc_type": "ValidationError",
-				"_server_messages": f'["{{\\"message\\": \\"{giant}\\"}}"]',
-			},
-		))
+		mock_post = MagicMock(
+			return_value=_mock_response(
+				500,
+				json_body={
+					"exc_type": "ValidationError",
+					"_server_messages": f'["{{\\"message\\": \\"{giant}\\"}}"]',
+				},
+			)
+		)
 		with patch("requests.post", mock_post):
 			with self.assertRaises(AdminValidationError) as cm:
 				post_update_llm_creds("p", "m", "b", "k")
@@ -434,15 +508,20 @@ class TestSecretScrubbingAtBoundary(FrappeTestCase):
 	def test_clean_message_passes_through_unchanged(self):
 		# Negative case: a message with no token-shaped substring stays
 		# byte-identical (modulo the truncate cap).
-		mock_post = MagicMock(return_value=_mock_response(
-			417,
-			json_body={
-				"message": {
-					"ok": False,
-					"error": {"code": "no_subscription", "message": "no active subscription on this account"},
+		mock_post = MagicMock(
+			return_value=_mock_response(
+				417,
+				json_body={
+					"message": {
+						"ok": False,
+						"error": {
+							"code": "no_subscription",
+							"message": "no active subscription on this account",
+						},
+					},
 				},
-			},
-		))
+			)
+		)
 		with patch("requests.post", mock_post):
 			with self.assertRaises(AdminValidationError) as cm:
 				post_update_llm_creds("p", "m", "b", "k")
@@ -457,9 +536,13 @@ class TestNonJsonResponse(FrappeTestCase):
 		_settings_clear_admin()
 
 	def test_html_error_page_raises_unreachable(self):
-		mock_post = MagicMock(return_value=_mock_response(
-			500, json_body=None, text="<html>Internal Server Error</html>",
-		))
+		mock_post = MagicMock(
+			return_value=_mock_response(
+				500,
+				json_body=None,
+				text="<html>Internal Server Error</html>",
+			)
+		)
 		with patch("requests.post", mock_post):
 			with self.assertRaises(AdminUnreachableError) as cm:
 				post_update_llm_creds("p", "m", "b", "k")
@@ -473,6 +556,7 @@ class TestMissingConfig(FrappeTestCase):
 	def test_no_credentials_raises_auth_error(self):
 		"""api_key + api_secret are required; missing either raises early."""
 		from jarvis.exceptions import AdminAuthError
+
 		settings = frappe.get_single("Jarvis Settings")
 		settings.db_set("jarvis_admin_url", "https://admin.example.com")
 		settings.db_set("jarvis_admin_api_key", "")
@@ -486,6 +570,7 @@ class TestMissingConfig(FrappeTestCase):
 
 	def test_no_secret_raises_auth_error(self):
 		from jarvis.exceptions import AdminAuthError
+
 		settings = frappe.get_single("Jarvis Settings")
 		settings.db_set("jarvis_admin_url", "https://admin.example.com")
 		settings.db_set("jarvis_admin_api_key", "some-key")
@@ -509,8 +594,15 @@ class TestOnboardingClient(FrappeTestCase):
 		def _fake_post(url, json=None, headers=None, timeout=None):
 			captured["url"] = url
 			captured["json"] = json
-			return _mock_response(200, json_body={"message": {"ok": True, "data": {
-				"api_key": "k", "api_secret": "s", "razorpay_key_id": "rzp"}}})
+			return _mock_response(
+				200,
+				json_body={
+					"message": {
+						"ok": True,
+						"data": {"api_key": "k", "api_secret": "s", "razorpay_key_id": "rzp"},
+					}
+				},
+			)
 
 		with patch("requests.post", side_effect=_fake_post):
 			out = admin_client.signup("e@x.com", "Co", "Annual Plan")
@@ -522,23 +614,49 @@ class TestOnboardingClient(FrappeTestCase):
 
 	def test_get_plans_returns_list(self):
 		_settings_for_admin()
-		with patch("requests.post", return_value=_mock_response(
-				200, json_body={"message": {"ok": True, "data": [{"name": "p1", "plan_name": "P1"}]}})):
+		with patch(
+			"requests.post",
+			return_value=_mock_response(
+				200, json_body={"message": {"ok": True, "data": [{"name": "p1", "plan_name": "P1"}]}}
+			),
+		):
 			out = admin_client.get_plans()
 		self.assertEqual(out[0]["name"], "p1")
 
 	def test_get_connection_unwraps_data(self):
 		_settings_for_admin()
-		with patch("requests.post", return_value=_mock_response(
-				200, json_body={"message": {"ok": True, "data": {"agent_url": "ws://localhost:19000", "tenant_status": "running"}}})):
+		with patch(
+			"requests.post",
+			return_value=_mock_response(
+				200,
+				json_body={
+					"message": {
+						"ok": True,
+						"data": {"agent_url": "ws://localhost:19000", "tenant_status": "running"},
+					}
+				},
+			),
+		):
 			out = admin_client.get_connection()
 		self.assertEqual(out["agent_url"], "ws://localhost:19000")
 
 	def test_dev_signup_returns_flat_dict(self):
 		_settings_for_admin()
-		with patch("requests.post", return_value=_mock_response(
-				200, json_body={"message": {"customer": "C1", "api_key": "k", "api_secret": "s",
-				"agent_url": "ws://localhost:19000", "agent_token": "k"}})):
+		with patch(
+			"requests.post",
+			return_value=_mock_response(
+				200,
+				json_body={
+					"message": {
+						"customer": "C1",
+						"api_key": "k",
+						"api_secret": "s",
+						"agent_url": "ws://localhost:19000",
+						"agent_token": "k",
+					}
+				},
+			),
+		):
 			out = admin_client.dev_signup("e@x.com", "Co", "Annual Plan")
 		self.assertEqual(out["api_key"], "k")
 		self.assertEqual(out["api_secret"], "s")
@@ -551,8 +669,19 @@ class TestOnboardingClient(FrappeTestCase):
 		def _fake_post(url, json=None, headers=None, timeout=None):
 			captured["url"] = url
 			captured["headers"] = headers
-			return _mock_response(200, json_body={"message": {"ok": True, "data": {
-				"razorpay_order_id": "order_R", "razorpay_key_id": "rzp", "amount_inr": 1500}}})
+			return _mock_response(
+				200,
+				json_body={
+					"message": {
+						"ok": True,
+						"data": {
+							"razorpay_order_id": "order_R",
+							"razorpay_key_id": "rzp",
+							"amount_inr": 1500,
+						},
+					}
+				},
+			)
 
 		with patch("requests.post", side_effect=_fake_post):
 			out = admin_client.renew()
@@ -578,10 +707,14 @@ class TestOnboardingClient(FrappeTestCase):
 		# Admin* error — which must still degrade to the bundled catalog rather
 		# than 500 the onboarding preset step. #200 review #9.
 		import requests
+
 		from jarvis._preset_catalog import BUNDLED_PRESET_CATALOG
+
 		frappe.cache().delete_value(admin_client._PRESET_CATALOG_CACHE_KEY)
-		with patch("jarvis.admin_client._post_guest",
-				   side_effect=requests.exceptions.MissingSchema("no scheme in URL")):
+		with patch(
+			"jarvis.admin_client._post_guest",
+			side_effect=requests.exceptions.MissingSchema("no scheme in URL"),
+		):
 			out = admin_client.get_preset_catalog()
 		self.assertEqual(out, BUNDLED_PRESET_CATALOG)
 
@@ -613,8 +746,11 @@ class TestPostUpdateLlmCredsAuthMode(FrappeTestCase):
 
 		with patch("requests.post", side_effect=_fake_post):
 			post_update_llm_creds(
-				provider="OpenAI", model="", base_url="",
-				api_key="AT-1", auth_mode="subscription",
+				provider="OpenAI",
+				model="",
+				base_url="",
+				api_key="AT-1",
+				auth_mode="subscription",
 			)
 		self.assertEqual(captured["body"]["auth_mode"], "subscription")
 		self.assertEqual(captured["body"]["api_key"], "AT-1")
@@ -643,14 +779,22 @@ class TestPostRotateLlmSecret(FrappeTestCase):
 
 	def test_429_raises_AdminRateLimitedError(self):
 		from jarvis.exceptions import AdminRateLimitedError
-		mock_post = MagicMock(return_value=_mock_response(
-			429,
-			json_body={"message": {"ok": False, "error": {
-				"code": "RateLimitExceeded",
-				"message": "rotation rate limit hit",
-				"retry_after_seconds": 1200,
-			}}},
-		))
+
+		mock_post = MagicMock(
+			return_value=_mock_response(
+				429,
+				json_body={
+					"message": {
+						"ok": False,
+						"error": {
+							"code": "RateLimitExceeded",
+							"message": "rotation rate limit hit",
+							"retry_after_seconds": 1200,
+						},
+					}
+				},
+			)
+		)
 		with patch("requests.post", mock_post):
 			with self.assertRaises(AdminRateLimitedError) as ctx:
 				admin_client.post_rotate_llm_secret(secret="AT-x")
@@ -666,8 +810,13 @@ class TestPostPushOauthBlob(FrappeTestCase):
 
 	def test_happy_path_posts_blob(self):
 		captured = {}
-		blob = {"type": "oauth", "provider": "openai-codex",
-				"access": "AT-fresh", "refresh": "RT-fresh", "expires": 1735689600}
+		blob = {
+			"type": "oauth",
+			"provider": "openai-codex",
+			"access": "AT-fresh",
+			"refresh": "RT-fresh",
+			"expires": 1735689600,
+		}
 
 		def _fake_post(url, json=None, timeout=None, **_kw):
 			captured["url"] = url
@@ -685,9 +834,12 @@ class TestPostPushOauthBlob(FrappeTestCase):
 		# locked at 180s; raise this and admin's bound together if either
 		# bumps. Doctor + restart + healthz easily fits inside 150s on a
 		# healthy host.
-		self.assertGreaterEqual(captured["timeout"], 180,
+		self.assertGreaterEqual(
+			captured["timeout"],
+			180,
 			"post_push_oauth_blob timeout must accommodate fleet-agent's "
-			"doctor + restart + healthz chain (~120s typical, 150s cap)")
+			"doctor + restart + healthz chain (~120s typical, 150s cap)",
+		)
 
 
 class TestPostSubscriptionDisconnect(FrappeTestCase):
@@ -728,9 +880,15 @@ class TestPairChatDevice(FrappeTestCase):
 
 		def _fake_post(url, json=None, headers=None, timeout=None):
 			captured["body"] = json
-			return _mock_response(200, json_body={"message": {
-				"ok": True, "data": {"device_token": "tok"},
-			}})
+			return _mock_response(
+				200,
+				json_body={
+					"message": {
+						"ok": True,
+						"data": {"device_token": "tok"},
+					}
+				},
+			)
 
 		with patch("requests.post", side_effect=_fake_post):
 			admin_client.pair_chat_device(public_key="pk", device_id="did")
@@ -743,13 +901,21 @@ class TestPairChatDevice(FrappeTestCase):
 
 		def _fake_post(url, json=None, headers=None, timeout=None):
 			captured["body"] = json
-			return _mock_response(200, json_body={"message": {
-				"ok": True, "data": {"device_token": "tok"},
-			}})
+			return _mock_response(
+				200,
+				json_body={
+					"message": {
+						"ok": True,
+						"data": {"device_token": "tok"},
+					}
+				},
+			)
 
 		with patch("requests.post", side_effect=_fake_post):
 			admin_client.pair_chat_device(
-				public_key="pk", device_id="did", request_timeout_s=75,
+				public_key="pk",
+				device_id="did",
+				request_timeout_s=75,
 			)
 		self.assertEqual(captured["body"]["request_timeout_s"], 75)
 
@@ -766,6 +932,7 @@ class TestOAuthBearer(FrappeTestCase):
 		vs the real API call by URL. ``api_capture`` records the API call's
 		headers; ``token_response``/``api_response`` are _mock_response objects
 		(or callables returning one, for stateful tests)."""
+
 		# A _mock_response is itself a MagicMock (callable); only treat a real
 		# function as a stateful factory, never a mock response object.
 		def _resolve(r, arg):
@@ -781,17 +948,22 @@ class TestOAuthBearer(FrappeTestCase):
 			api_capture["json"] = json
 			r = _resolve(api_response, headers)
 			return r or _mock_response(200, json_body={"message": {"ok": True, "data": {"x": 1}}})
+
 		return _fake_post
 
 	def test_prefers_bearer_and_omits_client_secret(self):
 		_settings_for_oauth()
 		cap = {}
-		token_resp = _mock_response(200, json_body={
-			"access_token": "ACCESS-1", "refresh_token": "REFRESH-1",
-			"token_type": "Bearer", "expires_in": 900,
-		})
-		with patch("requests.post", side_effect=self._route(
-				token_response=token_resp, api_capture=cap)):
+		token_resp = _mock_response(
+			200,
+			json_body={
+				"access_token": "ACCESS-1",
+				"refresh_token": "REFRESH-1",
+				"token_type": "Bearer",
+				"expires_in": 900,
+			},
+		)
+		with patch("requests.post", side_effect=self._route(token_response=token_resp, api_capture=cap)):
 			admin_client.get_connection()
 		# Token requested via password grant, public-client (no client_secret).
 		grant = cap["token_calls"][0]
@@ -806,12 +978,16 @@ class TestOAuthBearer(FrappeTestCase):
 	def test_caches_access_token_across_calls(self):
 		_settings_for_oauth()
 		cap = {}
-		token_resp = _mock_response(200, json_body={
-			"access_token": "ACCESS-1", "refresh_token": "REFRESH-1",
-			"token_type": "Bearer", "expires_in": 900,
-		})
-		with patch("requests.post", side_effect=self._route(
-				token_response=token_resp, api_capture=cap)):
+		token_resp = _mock_response(
+			200,
+			json_body={
+				"access_token": "ACCESS-1",
+				"refresh_token": "REFRESH-1",
+				"token_type": "Bearer",
+				"expires_in": 900,
+			},
+		)
+		with patch("requests.post", side_effect=self._route(token_response=token_resp, api_capture=cap)):
 			admin_client.get_connection()
 			admin_client.get_connection()
 		# Two API calls, but the token endpoint was hit only once (cached).
@@ -829,18 +1005,25 @@ class TestOAuthBearer(FrappeTestCase):
 		_settings_for_oauth()
 		# Seed AFTER _settings_for_oauth (it clears the cache): a stale access
 		# token (expires_at in the past) plus a still-valid refresh token.
-		frappe.cache().set_value(admin_client._OAUTH_CACHE_KEY, {
-			"access_token": "STALE-ACCESS",
-			"refresh_token": "REFRESH-1",
-			"access_expires_at": 0,
-		})
+		frappe.cache().set_value(
+			admin_client._OAUTH_CACHE_KEY,
+			{
+				"access_token": "STALE-ACCESS",
+				"refresh_token": "REFRESH-1",
+				"access_expires_at": 0,
+			},
+		)
 		cap = {}
-		token_resp = _mock_response(200, json_body={
-			"access_token": "ACCESS-2", "refresh_token": "REFRESH-2",
-			"token_type": "Bearer", "expires_in": 900,
-		})
-		with patch("requests.post", side_effect=self._route(
-				token_response=token_resp, api_capture=cap)):
+		token_resp = _mock_response(
+			200,
+			json_body={
+				"access_token": "ACCESS-2",
+				"refresh_token": "REFRESH-2",
+				"token_type": "Bearer",
+				"expires_in": 900,
+			},
+		)
+		with patch("requests.post", side_effect=self._route(token_response=token_resp, api_capture=cap)):
 			admin_client.get_connection()
 		# Exactly one token call, and it was the refresh grant - never password.
 		self.assertEqual(len(cap["token_calls"]), 1)
@@ -859,9 +1042,11 @@ class TestOAuthBearer(FrappeTestCase):
 		# No customer_password -> legacy api_key:api_secret path.
 		_settings_for_admin(api_key="legacy-key", api_secret="legacy-secret")
 		cap = {}
+
 		def _fake_post(url, data=None, json=None, headers=None, timeout=None):
 			cap["headers"] = headers
 			return _mock_response(200, json_body={"message": {"ok": True, "data": {"x": 1}}})
+
 		with patch("requests.post", side_effect=_fake_post):
 			admin_client.get_connection()
 		self.assertEqual(cap["headers"]["Authorization"], "token legacy-key:legacy-secret")
@@ -872,17 +1057,30 @@ class TestOAuthBearer(FrappeTestCase):
 		# the call falls back to the legacy header and succeeds.
 		_settings_for_oauth(api_key="legacy-key", api_secret="legacy-secret")
 		cap = {}
-		token_resp = _mock_response(200, json_body={
-			"access_token": "ACCESS-1", "token_type": "Bearer", "expires_in": 900,
-		})
+		token_resp = _mock_response(
+			200,
+			json_body={
+				"access_token": "ACCESS-1",
+				"token_type": "Bearer",
+				"expires_in": 900,
+			},
+		)
+
 		def _api_response(headers):
 			auth = headers["Authorization"]
 			if auth.startswith("Bearer "):
-				return _mock_response(401, json_body={"message": {
-					"ok": False, "error": {"code": "AuthError", "message": "bad token"}}})
+				return _mock_response(
+					401,
+					json_body={
+						"message": {"ok": False, "error": {"code": "AuthError", "message": "bad token"}}
+					},
+				)
 			return _mock_response(200, json_body={"message": {"ok": True, "data": {"ok": 1}}})
-		with patch("requests.post", side_effect=self._route(
-				token_response=token_resp, api_capture=cap, api_response=_api_response)):
+
+		with patch(
+			"requests.post",
+			side_effect=self._route(token_response=token_resp, api_capture=cap, api_response=_api_response),
+		):
 			result = admin_client.get_connection()
 		self.assertEqual(result, {"ok": 1})
 		# Two bearer attempts (initial + re-mint) then the legacy header.
@@ -902,14 +1100,27 @@ class TestOAuthBearer(FrappeTestCase):
 		# principal, so the fallback would 403 again anyway.
 		_settings_for_oauth(api_key="legacy-key", api_secret="legacy-secret")
 		cap = {}
-		token_resp = _mock_response(200, json_body={
-			"access_token": "ACCESS-1", "token_type": "Bearer", "expires_in": 900,
-		})
+		token_resp = _mock_response(
+			200,
+			json_body={
+				"access_token": "ACCESS-1",
+				"token_type": "Bearer",
+				"expires_in": 900,
+			},
+		)
+
 		def _api_response(headers):
-			return _mock_response(403, json_body={"message": {
-				"ok": False, "error": {"code": "Forbidden", "message": "not allowed"}}})
-		with patch("requests.post", side_effect=self._route(
-				token_response=token_resp, api_capture=cap, api_response=_api_response)):
+			return _mock_response(
+				403,
+				json_body={
+					"message": {"ok": False, "error": {"code": "Forbidden", "message": "not allowed"}}
+				},
+			)
+
+		with patch(
+			"requests.post",
+			side_effect=self._route(token_response=token_resp, api_capture=cap, api_response=_api_response),
+		):
 			with self.assertRaises(AdminAuthError) as ctx:
 				admin_client.get_connection()
 		# The real 403 is surfaced (status tagged), not retried away.
@@ -928,8 +1139,7 @@ class TestOAuthBearer(FrappeTestCase):
 		admin_client._cache_oauth_token({"access_token": "A", "expires_in": 0})
 		self.assertIsNone(frappe.cache().get_value(admin_client._OAUTH_CACHE_KEY))
 		admin_client._cache_oauth_token({"access_token": "B", "expires_in": 900})
-		self.assertEqual(
-			frappe.cache().get_value(admin_client._OAUTH_CACHE_KEY)["access_token"], "B")
+		self.assertEqual(frappe.cache().get_value(admin_client._OAUTH_CACHE_KEY)["access_token"], "B")
 		frappe.cache().delete_value(admin_client._OAUTH_CACHE_KEY)
 
 
@@ -966,6 +1176,7 @@ class TestAdminUrlResolution(FrappeTestCase):
 
 	def test_falls_back_to_hardcoded_when_field_and_config_blank(self):
 		from jarvis.hooks import _DEFAULT_ADMIN_URL_FALLBACK
+
 		s = MagicMock()
 		s.jarvis_admin_url = ""
 		with patch.dict(frappe.local.conf, {"jarvis_admin_url": ""}):

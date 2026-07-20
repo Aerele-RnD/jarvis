@@ -69,11 +69,13 @@ class TestCallToolPluginAuth(FrappeTestCase):
 		# Seed a Jarvis Chat Session row so the user-resolution lookup has
 		# something to find. Use a sentinel key so we can clean up cleanly.
 		_cleanup_session(cls.SESSION_KEY)
-		frappe.get_doc({
-			"doctype": "Jarvis Chat Session",
-			"session_key": cls.SESSION_KEY,
-			"user": "Administrator",
-		}).insert(ignore_permissions=True)
+		frappe.get_doc(
+			{
+				"doctype": "Jarvis Chat Session",
+				"session_key": cls.SESSION_KEY,
+				"user": "Administrator",
+			}
+		).insert(ignore_permissions=True)
 		frappe.db.commit()
 
 	@classmethod
@@ -84,16 +86,16 @@ class TestCallToolPluginAuth(FrappeTestCase):
 		frappe.db.commit()
 		super().tearDownClass()
 
-	def _with_headers(self, headers: dict[str, str], *, body: bytes = b"",
-	                  request_ip: str = "127.0.0.1"):
+	def _with_headers(self, headers: dict[str, str], *, body: bytes = b"", request_ip: str = "127.0.0.1"):
 		"""Context manager: fakes ``frappe.request`` AND
 		``frappe.local.request_ip``. Defaults to loopback so the
 		C2 IP-allowlist check passes; tests targeting the IP path
 		pass a different ``request_ip``.
 		"""
 		import contextlib
-		req_patch = patch.object(frappe, "request", _FakeRequest(headers, body=body),
-		                          create=True)
+
+		req_patch = patch.object(frappe, "request", _FakeRequest(headers, body=body), create=True)
+
 		# request_ip patch: frappe.local is a thread-local; just set the
 		# attribute and restore on exit.
 		@contextlib.contextmanager
@@ -104,8 +106,10 @@ class TestCallToolPluginAuth(FrappeTestCase):
 				yield
 			finally:
 				if prior is None:
-					try: del frappe.local.request_ip
-					except AttributeError: pass
+					try:
+						del frappe.local.request_ip
+					except AttributeError:
+						pass
 				else:
 					frappe.local.request_ip = prior
 
@@ -113,6 +117,7 @@ class TestCallToolPluginAuth(FrappeTestCase):
 		def _combined():
 			with req_patch, _ip_ctx():
 				yield
+
 		return _combined()
 
 	def test_valid_token_and_session_dispatches_as_session_user(self):
@@ -123,10 +128,12 @@ class TestCallToolPluginAuth(FrappeTestCase):
 			seen_user["user"] = frappe.session.user
 			return {"doctype": args["doctype"], "fields": []}
 
-		with self._with_headers({
-			"X-Jarvis-Token": "plugin-auth-test-token",
-			"X-Jarvis-Session": self.SESSION_KEY,
-		}):
+		with self._with_headers(
+			{
+				"X-Jarvis-Token": "plugin-auth-test-token",
+				"X-Jarvis-Session": self.SESSION_KEY,
+			}
+		):
 			with patch("jarvis.api.dispatch", side_effect=spy_dispatch):
 				with patch("jarvis.api._persist_and_publish_tool_call"):
 					result = call_tool(tool="get_schema", args={"doctype": "Customer"})
@@ -135,10 +142,12 @@ class TestCallToolPluginAuth(FrappeTestCase):
 		self.assertEqual(seen_user["user"], "Administrator")
 
 	def test_invalid_token_returns_401(self):
-		with self._with_headers({
-			"X-Jarvis-Token": "wrong-token",
-			"X-Jarvis-Session": self.SESSION_KEY,
-		}):
+		with self._with_headers(
+			{
+				"X-Jarvis-Token": "wrong-token",
+				"X-Jarvis-Session": self.SESSION_KEY,
+			}
+		):
 			result = call_tool(tool="get_schema", args={"doctype": "Customer"})
 		self.assertEqual(result["ok"], False)
 		self.assertEqual(result["error"]["code"], "AuthenticationError")
@@ -152,10 +161,12 @@ class TestCallToolPluginAuth(FrappeTestCase):
 		self.assertIn("X-Jarvis-Session", result["error"]["message"])
 
 	def test_token_with_unknown_session_returns_400(self):
-		with self._with_headers({
-			"X-Jarvis-Token": "plugin-auth-test-token",
-			"X-Jarvis-Session": "agent:nonexistent:xyz",
-		}):
+		with self._with_headers(
+			{
+				"X-Jarvis-Token": "plugin-auth-test-token",
+				"X-Jarvis-Session": "agent:nonexistent:xyz",
+			}
+		):
 			result = call_tool(tool="get_schema", args={"doctype": "Customer"})
 		self.assertEqual(result["ok"], False)
 		self.assertEqual(result["error"]["code"], "InvalidArgumentError")
@@ -164,10 +175,12 @@ class TestCallToolPluginAuth(FrappeTestCase):
 	def test_session_user_restored_after_dispatch(self):
 		"""set_user is wrapped in try/finally - the calling user is preserved."""
 		original = frappe.session.user
-		with self._with_headers({
-			"X-Jarvis-Token": "plugin-auth-test-token",
-			"X-Jarvis-Session": self.SESSION_KEY,
-		}):
+		with self._with_headers(
+			{
+				"X-Jarvis-Token": "plugin-auth-test-token",
+				"X-Jarvis-Session": self.SESSION_KEY,
+			}
+		):
 			with patch("jarvis.api._persist_and_publish_tool_call"):
 				call_tool(tool="get_schema", args={"doctype": "Customer"})
 		self.assertEqual(frappe.session.user, original)
@@ -203,8 +216,7 @@ class TestCallToolPluginAuth(FrappeTestCase):
 
 		return (
 			patch("jarvis.api.frappe.db.get_value", side_effect=_fake_get_value),
-			patch("jarvis.api.frappe.db.get_single_value",
-			      side_effect=_fake_get_single_value),
+			patch("jarvis.api.frappe.db.get_single_value", side_effect=_fake_get_single_value),
 		)
 
 	def test_session_bound_to_old_device_rejected_after_repair(self):
@@ -217,10 +229,12 @@ class TestCallToolPluginAuth(FrappeTestCase):
 			row_device="old-device-id-from-before-repair",
 			current_device="current-device-id-after-repair",
 		)
-		with self._with_headers({
-			"X-Jarvis-Token": "plugin-auth-test-token",
-			"X-Jarvis-Session": "agent:test:any-session",
-		}):
+		with self._with_headers(
+			{
+				"X-Jarvis-Token": "plugin-auth-test-token",
+				"X-Jarvis-Session": "agent:test:any-session",
+			}
+		):
 			with gv, gsv:
 				with patch("frappe.db.exists", return_value=True):
 					result = call_tool(tool="get_schema", args={"doctype": "Customer"})
@@ -237,17 +251,17 @@ class TestCallToolPluginAuth(FrappeTestCase):
 			row_device="matching-device-id",
 			current_device="matching-device-id",
 		)
-		with self._with_headers({
-			"X-Jarvis-Token": "plugin-auth-test-token",
-			"X-Jarvis-Session": "agent:test:any-session",
-		}):
+		with self._with_headers(
+			{
+				"X-Jarvis-Token": "plugin-auth-test-token",
+				"X-Jarvis-Session": "agent:test:any-session",
+			}
+		):
 			with gv, gsv:
 				with patch("frappe.db.exists", return_value=True):
-					with patch("jarvis.api.dispatch",
-					           return_value={"doctype": "Customer", "fields": []}):
+					with patch("jarvis.api.dispatch", return_value={"doctype": "Customer", "fields": []}):
 						with patch("jarvis.api._persist_and_publish_tool_call"):
-							result = call_tool(tool="get_schema",
-							                    args={"doctype": "Customer"})
+							result = call_tool(tool="get_schema", args={"doctype": "Customer"})
 		self.assertTrue(result["ok"], msg=result)
 
 	def test_pre_migration_row_without_device_id_passes(self):
@@ -258,17 +272,17 @@ class TestCallToolPluginAuth(FrappeTestCase):
 			row_device="",  # empty = pre-migration session
 			current_device="current-device-id",
 		)
-		with self._with_headers({
-			"X-Jarvis-Token": "plugin-auth-test-token",
-			"X-Jarvis-Session": "agent:test:any-session",
-		}):
+		with self._with_headers(
+			{
+				"X-Jarvis-Token": "plugin-auth-test-token",
+				"X-Jarvis-Session": "agent:test:any-session",
+			}
+		):
 			with gv, gsv:
 				with patch("frappe.db.exists", return_value=True):
-					with patch("jarvis.api.dispatch",
-					           return_value={"doctype": "Customer", "fields": []}):
+					with patch("jarvis.api.dispatch", return_value={"doctype": "Customer", "fields": []}):
 						with patch("jarvis.api._persist_and_publish_tool_call"):
-							result = call_tool(tool="get_schema",
-							                    args={"doctype": "Customer"})
+							result = call_tool(tool="get_schema", args={"doctype": "Customer"})
 		self.assertTrue(result["ok"], msg=result)
 
 
@@ -279,14 +293,13 @@ def _cleanup_session(session_key: str) -> None:
 		pluck="name",
 	)
 	for name in names:
-		frappe.delete_doc(
-			"Jarvis Chat Session", name, ignore_permissions=True, force=True
-		)
+		frappe.delete_doc("Jarvis Chat Session", name, ignore_permissions=True, force=True)
 	frappe.db.commit()
 
 
 # Sprint-1 / 2026-06-16 C2: layered plugin-auth defenses.
 # See jarvis/_plugin_auth.py for the design.
+
 
 class _PluginAuthTestBase(FrappeTestCase):
 	"""Shared scaffolding: seed agent_token + a known Jarvis Chat Session
@@ -302,11 +315,13 @@ class _PluginAuthTestBase(FrappeTestCase):
 		cls._orig_token = settings.get_password("agent_token", raise_exception=False) or ""
 		settings.db_set("agent_token", cls.TOKEN)
 		_cleanup_session(cls.SESSION_KEY)
-		frappe.get_doc({
-			"doctype": "Jarvis Chat Session",
-			"session_key": cls.SESSION_KEY,
-			"user": "Administrator",
-		}).insert(ignore_permissions=True)
+		frappe.get_doc(
+			{
+				"doctype": "Jarvis Chat Session",
+				"session_key": cls.SESSION_KEY,
+				"user": "Administrator",
+			}
+		).insert(ignore_permissions=True)
 		frappe.db.commit()
 
 	@classmethod
@@ -319,8 +334,9 @@ class _PluginAuthTestBase(FrappeTestCase):
 
 	def _with_headers(self, headers, *, body=b"", request_ip="127.0.0.1"):
 		import contextlib
-		req_patch = patch.object(frappe, "request", _FakeRequest(headers, body=body),
-		                          create=True)
+
+		req_patch = patch.object(frappe, "request", _FakeRequest(headers, body=body), create=True)
+
 		@contextlib.contextmanager
 		def _ip_ctx():
 			prior = getattr(frappe.local, "request_ip", None)
@@ -329,14 +345,18 @@ class _PluginAuthTestBase(FrappeTestCase):
 				yield
 			finally:
 				if prior is None:
-					try: del frappe.local.request_ip
-					except AttributeError: pass
+					try:
+						del frappe.local.request_ip
+					except AttributeError:
+						pass
 				else:
 					frappe.local.request_ip = prior
+
 		@contextlib.contextmanager
 		def _combined():
 			with req_patch, _ip_ctx():
 				yield
+
 		return _combined()
 
 	def _call(self, *, request_ip="127.0.0.1", extra_headers=None, body=b""):
@@ -388,20 +408,25 @@ class TestC2HmacSignature(_PluginAuthTestBase):
 	"""Phase-2 HMAC: replay-proof signed requests. Plugin still sends
 	bearer for backwards compat; the signature is additive."""
 
-	def _signed_headers(self, *, body: bytes, ts: int = None,
-	                    nonce: str = "deadbeefdeadbeefdeadbeef",
-	                    bad_sig: bool = False):
+	def _signed_headers(
+		self, *, body: bytes, ts: int = None, nonce: str = "deadbeefdeadbeefdeadbeef", bad_sig: bool = False
+	):
 		import hashlib
 		import hmac as _hmac
 		import time
+
 		if ts is None:
 			ts = int(time.time())
 		body_hash = hashlib.sha256(body).hexdigest()
-		canonical = "|".join([
-			self.SESSION_KEY, body_hash, nonce, str(ts),
-		]).encode("utf-8")
-		sig = _hmac.new(self.TOKEN.encode("utf-8"), canonical,
-		                hashlib.sha256).hexdigest()
+		canonical = "|".join(
+			[
+				self.SESSION_KEY,
+				body_hash,
+				nonce,
+				str(ts),
+			]
+		).encode("utf-8")
+		sig = _hmac.new(self.TOKEN.encode("utf-8"), canonical, hashlib.sha256).hexdigest()
 		if bad_sig:
 			# Flip a hex char so the sig fails validation but stays
 			# the right length / character set.
@@ -450,18 +475,16 @@ class TestC2HmacSignature(_PluginAuthTestBase):
 		"""A captured-and-replayed request from 10 minutes ago must
 		fail the timestamp skew window."""
 		import time
-		body = b'{}'
-		extra = self._signed_headers(body=body,
-		                              ts=int(time.time()) - 600,
-		                              nonce="oldtsnonce12345678")
+
+		body = b"{}"
+		extra = self._signed_headers(body=body, ts=int(time.time()) - 600, nonce="oldtsnonce12345678")
 		result = self._call(extra_headers=extra, body=body)
 		self.assertFalse(result["ok"])
 		self.assertEqual(result["error"]["code"], "AuthenticationError")
 
 	def test_bad_signature_rejected(self):
 		body = b'{"tool":"get_schema","args":{"doctype":"Customer"}}'
-		extra = self._signed_headers(body=body, bad_sig=True,
-		                              nonce="badsignonce123456789")
+		extra = self._signed_headers(body=body, bad_sig=True, nonce="badsignonce123456789")
 		result = self._call(extra_headers=extra, body=body)
 		self.assertFalse(result["ok"])
 		self.assertEqual(result["error"]["code"], "AuthenticationError")
@@ -470,8 +493,7 @@ class TestC2HmacSignature(_PluginAuthTestBase):
 		"""Same nonce used twice within the 120s TTL must fail the
 		second time even if everything else is valid."""
 		body = b'{"tool":"get_schema","args":{"doctype":"Customer"}}'
-		extra = self._signed_headers(body=body,
-		                              nonce="replaynonce1234567890")
+		extra = self._signed_headers(body=body, nonce="replaynonce1234567890")
 		# First call: accepted (and the nonce is consumed).
 		result = self._call(extra_headers=extra, body=body)
 		self.assertTrue(result["ok"], msg=result)
@@ -501,6 +523,7 @@ class TestRotateAgentTokenEndpoint(FrappeTestCase):
 		# drop that row so a stale rotated token can't shadow the restored
 		# value via get_password's __Auth fallback in later suites.
 		from frappe.utils.password import remove_encrypted_password
+
 		remove_encrypted_password("Jarvis Settings", "Jarvis Settings", "agent_token")
 		settings = frappe.get_single("Jarvis Settings")
 		settings.db_set("agent_token", cls._original_token)
@@ -519,14 +542,18 @@ class TestRotateAgentTokenEndpoint(FrappeTestCase):
 
 	def _call_rotate(self):
 		from jarvis.api import rotate_agent_token
+
 		return rotate_agent_token()
 
 	def test_happy_path_persists_new_token_after_admin_success(self):
 		from jarvis import admin_client
+
 		seen = {}
+
 		def _spy(*, new_token):
 			seen["pushed"] = new_token
 			return {"action": "recreate", "result": "ok"}
+
 		with patch.object(admin_client, "post_rotate_agent_token", side_effect=_spy):
 			res = self._call_rotate()
 		self.assertTrue(res["ok"], msg=res)
@@ -545,8 +572,12 @@ class TestRotateAgentTokenEndpoint(FrappeTestCase):
 		token UNTOUCHED. fleet-agent rolled the container back per
 		PR-3A, so both sides stay in lockstep on the OLD token."""
 		from jarvis import admin_client
-		with patch.object(admin_client, "post_rotate_agent_token",
-		                  side_effect=admin_client.AdminUnreachableError("network down")):
+
+		with patch.object(
+			admin_client,
+			"post_rotate_agent_token",
+			side_effect=admin_client.AdminUnreachableError("network down"),
+		):
 			res = self._call_rotate()
 		self.assertFalse(res["ok"])
 		self.assertEqual(res["error"]["code"], "AdminUnreachableError")
@@ -560,10 +591,15 @@ class TestRotateAgentTokenEndpoint(FrappeTestCase):
 
 	def test_rate_limited_returns_429_with_retry_after(self):
 		from jarvis import admin_client
-		with patch.object(admin_client, "post_rotate_agent_token",
-		                  side_effect=admin_client.AdminRateLimitedError(
-		                      "rate limit hit", retry_after_seconds=120,
-		                  )):
+
+		with patch.object(
+			admin_client,
+			"post_rotate_agent_token",
+			side_effect=admin_client.AdminRateLimitedError(
+				"rate limit hit",
+				retry_after_seconds=120,
+			),
+		):
 			res = self._call_rotate()
 		self.assertFalse(res["ok"])
 		self.assertEqual(res["error"]["code"], "RateLimitExceeded")
@@ -575,10 +611,14 @@ class TestRotateAgentTokenEndpoint(FrappeTestCase):
 		# Make a fresh user with no roles beyond default.
 		user_email = "rat-test-no-role@example.com"
 		if not frappe.db.exists("User", user_email):
-			frappe.get_doc({
-				"doctype": "User", "email": user_email, "first_name": "T",
-				"send_welcome_email": 0,
-			}).insert(ignore_permissions=True)
+			frappe.get_doc(
+				{
+					"doctype": "User",
+					"email": user_email,
+					"first_name": "T",
+					"send_welcome_email": 0,
+				}
+			).insert(ignore_permissions=True)
 			frappe.db.commit()
 		try:
 			frappe.set_user(user_email)
@@ -611,9 +651,7 @@ class TestC2AgentTokenExpiry(_PluginAuthTestBase):
 		if age_days is None:
 			fake.agent_token_issued_at = None
 		else:
-			fake.agent_token_issued_at = (
-				_dt.datetime.now() - _dt.timedelta(days=age_days)
-			)
+			fake.agent_token_issued_at = _dt.datetime.now() - _dt.timedelta(days=age_days)
 		fake.get_password.return_value = self.TOKEN
 		return patch("jarvis._plugin_auth.frappe.get_single", return_value=fake)
 

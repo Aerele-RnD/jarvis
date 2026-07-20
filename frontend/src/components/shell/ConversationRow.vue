@@ -16,7 +16,11 @@
 			@blur="commitRename"
 		/>
 		<template v-else>
-			<FeatherIcon v-if="conv.starred" name="star" class="mr-1.5 size-3 shrink-0 text-ink-gray-5" />
+			<FeatherIcon
+				v-if="conv.starred"
+				name="star"
+				class="mr-1.5 size-3 shrink-0 text-ink-gray-5"
+			/>
 			<span class="flex-1 truncate">{{ conv.title || "New chat" }}</span>
 			<span
 				v-if="store.streamingConvId === conv.name"
@@ -48,48 +52,48 @@
 <script setup>
 // Recent-chats row (DESIGN-V3 §3.4): hover ⋯ menu (Star/Rename/Delete),
 // inline rename, streaming + unread dots; click navigates to /c/:id.
-import { ref, computed, nextTick } from "vue"
-import { useRoute, useRouter } from "vue-router"
-import { Button, Dropdown, FeatherIcon, confirmDialog } from "frappe-ui"
-import { useShellStore } from "@/stores/shell"
+import { ref, computed, nextTick } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { Button, Dropdown, FeatherIcon, confirmDialog } from "frappe-ui";
+import { useShellStore } from "@/stores/shell";
 
 const props = defineProps({
 	conv: { type: Object, required: true }, // {name, title, starred, last_active_at}
-})
+});
 
-const store = useShellStore()
-const route = useRoute()
-const router = useRouter()
+const store = useShellStore();
+const route = useRoute();
+const router = useRouter();
 
-const active = computed(() => store.currentConvId === props.conv.name && !!route.meta.chat)
+const active = computed(() => store.currentConvId === props.conv.name && !!route.meta.chat);
 
 function open() {
-	if (renaming.value) return
-	router.push("/c/" + props.conv.name)
+	if (renaming.value) return;
+	router.push("/c/" + props.conv.name);
 }
 
 // ---- inline rename ----------------------------------------------------------
-const renaming = ref(false)
-const renameText = ref("")
-const renameEl = ref(null)
+const renaming = ref(false);
+const renameText = ref("");
+const renameEl = ref(null);
 
 function startRename() {
-	renaming.value = true
-	renameText.value = props.conv.title || ""
+	renaming.value = true;
+	renameText.value = props.conv.title || "";
 	nextTick(() => {
-		renameEl.value?.focus()
-		renameEl.value?.select()
-	})
+		renameEl.value?.focus();
+		renameEl.value?.select();
+	});
 }
 function cancelRename() {
-	renaming.value = false
+	renaming.value = false;
 }
 function commitRename() {
-	if (!renaming.value) return
-	renaming.value = false // clear first - Enter also fires blur
-	const t = renameText.value.trim()
-	if (!t || t === (props.conv.title || "")) return
-	store.renameConversation(props.conv.name, t)
+	if (!renaming.value) return;
+	renaming.value = false; // clear first - Enter also fires blur
+	const t = renameText.value.trim();
+	if (!t || t === (props.conv.title || "")) return;
+	store.renameConversation(props.conv.name, t);
 }
 
 // ---- ⋯ menu -----------------------------------------------------------------
@@ -101,11 +105,14 @@ const menuOptions = computed(() => [
 	},
 	{ label: "Rename", icon: "edit-3", onClick: startRename },
 	{ label: "Delete", icon: "trash-2", theme: "red", onClick: confirmDelete },
-])
+]);
 
 // ConfirmDialog renders `message` with v-html - escape the user-authored title.
 function esc(s) {
-	return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]))
+	return String(s).replace(
+		/[&<>"']/g,
+		(c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
+	);
 }
 
 function confirmDelete() {
@@ -113,9 +120,9 @@ function confirmDelete() {
 		title: "Delete chat?",
 		message: `Delete "${esc(props.conv.title || "this chat")}"? This can't be undone.`,
 		onConfirm: ({ hideDialog }) => {
-			store.archiveConversation(props.conv.name)
-			hideDialog()
+			store.archiveConversation(props.conv.name);
+			hideDialog();
 		},
-	})
+	});
 }
 </script>

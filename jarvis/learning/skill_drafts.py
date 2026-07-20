@@ -71,8 +71,8 @@ SKILL_TEMPLATES: dict[str, dict[str, str]] = {
 		"statement": 'Item group "{item_group}" usually ships from warehouse "{warehouse}".',
 	},
 	"stock-entry-route": {
-		"rule": '{purpose} stock entries usually run the route {route}.',
-		"statement": '{purpose} stock entries usually move stock {route}.',
+		"rule": "{purpose} stock entries usually run the route {route}.",
+		"statement": "{purpose} stock entries usually move stock {route}.",
 	},
 	"mode-of-payment": {
 		"rule": '{payment_type} entries usually use mode of payment "{mode}".',

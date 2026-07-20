@@ -11,7 +11,10 @@
 			</p>
 
 			<div class="mt-4 flex flex-col items-center">
-				<div v-if="loading" class="flex h-52 w-52 items-center justify-center text-sm text-ink-gray-5">
+				<div
+					v-if="loading"
+					class="flex h-52 w-52 items-center justify-center text-sm text-ink-gray-5"
+				>
 					Generating code…
 				</div>
 				<div
@@ -40,7 +43,12 @@
 		</template>
 
 		<template #actions>
-			<Button label="Done" variant="solid" class="w-full" @click="emit('update:modelValue', false)" />
+			<Button
+				label="Done"
+				variant="solid"
+				class="w-full"
+				@click="emit('update:modelValue', false)"
+			/>
 		</template>
 	</Dialog>
 </template>
@@ -50,38 +58,38 @@
 // (site URL, real site name, dev socket port) for the mobile app to scan during
 // onboarding. Contains NO credential; the phone signs in with email+password
 // after scanning. Backend: jarvis.mobile.auth.get_pairing_qr.
-import { ref, computed, watch } from "vue"
-import { Dialog, Button, FeatherIcon } from "frappe-ui"
-import * as api from "@/api"
+import { ref, computed, watch } from "vue";
+import { Dialog, Button, FeatherIcon } from "frappe-ui";
+import * as api from "@/api";
 
 const props = defineProps({
 	modelValue: { type: Boolean, default: false },
-})
-const emit = defineEmits(["update:modelValue"])
+});
+const emit = defineEmits(["update:modelValue"]);
 
-const loading = ref(false)
-const error = ref("")
-const svg = ref("")
-const payload = ref({ name: "", site: "" })
+const loading = ref(false);
+const error = ref("");
+const svg = ref("");
+const payload = ref({ name: "", site: "" });
 
-const qrSrc = computed(() => (svg.value ? `data:image/svg+xml;base64,${svg.value}` : ""))
+const qrSrc = computed(() => (svg.value ? `data:image/svg+xml;base64,${svg.value}` : ""));
 
 function errMsg(e) {
-	return (e && ((e.messages && e.messages[0]) || e.message)) || "Could not generate the code."
+	return (e && ((e.messages && e.messages[0]) || e.message)) || "Could not generate the code.";
 }
 
 async function load() {
-	loading.value = true
-	error.value = ""
+	loading.value = true;
+	error.value = "";
 	try {
-		const res = await api.getPairingQr()
-		svg.value = res?.svg || ""
-		payload.value = res?.payload || { name: "", site: "" }
-		if (!svg.value) error.value = "Could not generate the code."
+		const res = await api.getPairingQr();
+		svg.value = res?.svg || "";
+		payload.value = res?.payload || { name: "", site: "" };
+		if (!svg.value) error.value = "Could not generate the code.";
 	} catch (e) {
-		error.value = errMsg(e)
+		error.value = errMsg(e);
 	} finally {
-		loading.value = false
+		loading.value = false;
 	}
 }
 
@@ -89,7 +97,7 @@ async function load() {
 watch(
 	() => props.modelValue,
 	(open) => {
-		if (open) load()
+		if (open) load();
 	}
-)
+);
 </script>

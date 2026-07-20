@@ -44,15 +44,17 @@ _ALL_USERS = (USER_A, USER_B, USER_ADMIN, USER_PLAIN)
 
 def _ensure_user(email: str, roles: tuple[str, ...] = ()) -> None:
 	if not frappe.db.exists("User", email):
-		frappe.get_doc({
-			"doctype": "User",
-			"email": email,
-			"first_name": "Jarvis",
-			"last_name": "UsageTest",
-			"enabled": 1,
-			"send_welcome_email": 0,
-			"user_type": "System User",
-		}).insert(ignore_permissions=True)
+		frappe.get_doc(
+			{
+				"doctype": "User",
+				"email": email,
+				"first_name": "Jarvis",
+				"last_name": "UsageTest",
+				"enabled": 1,
+				"send_welcome_email": 0,
+				"user_type": "System User",
+			}
+		).insert(ignore_permissions=True)
 	doc = frappe.get_doc("User", email)
 	if roles:
 		doc.add_roles(*roles)
@@ -69,11 +71,13 @@ def _strip_admin_roles(email: str) -> None:
 
 
 def _make_session(session_key: str, user: str) -> None:
-	frappe.get_doc({
-		"doctype": SESSION,
-		"session_key": session_key,
-		"user": user,
-	}).insert(ignore_permissions=True)
+	frappe.get_doc(
+		{
+			"doctype": SESSION,
+			"session_key": session_key,
+			"user": user,
+		}
+	).insert(ignore_permissions=True)
 	frappe.db.commit()
 
 
@@ -128,9 +132,7 @@ class TestLazyCreation(_UsageTestBase):
 		a = usage.get_or_create_user_settings(USER_A)
 		b = usage.get_or_create_user_settings(USER_A)
 		self.assertEqual(a.name, b.name)
-		self.assertEqual(
-			len(frappe.get_all(USETT, filters={"user": USER_A})), 1
-		)
+		self.assertEqual(len(frappe.get_all(USETT, filters={"user": USER_A})), 1)
 
 	def test_get_my_settings_lazy_creates(self):
 		frappe.set_user(USER_A)
@@ -167,12 +169,8 @@ class TestPreferenceOwnership(_UsageTestBase):
 		a_name = usage.get_or_create_user_settings(USER_A).name
 		frappe.db.commit()
 		# A may write its own row but not B's (permlevel-0 grant is if_owner).
-		self.assertTrue(
-			frappe.has_permission(USETT, "write", doc=a_name, user=USER_A)
-		)
-		self.assertFalse(
-			frappe.has_permission(USETT, "write", doc=b_name, user=USER_A)
-		)
+		self.assertTrue(frappe.has_permission(USETT, "write", doc=a_name, user=USER_A))
+		self.assertFalse(frappe.has_permission(USETT, "write", doc=b_name, user=USER_A))
 
 	def test_owner_cannot_change_own_limit_via_prefs_api(self):
 		# Admin sets a limit; the owner's pref update must not disturb it
@@ -225,9 +223,7 @@ class TestAdminGate(_UsageTestBase):
 		)
 
 	def test_set_limit_unknown_user(self):
-		out = user_settings_api.admin_set_user_limit(
-			user="nobody@example.invalid", monthly_token_limit=10
-		)
+		out = user_settings_api.admin_set_user_limit(user="nobody@example.invalid", monthly_token_limit=10)
 		self.assertFalse(out["ok"])
 		self.assertEqual(out["reason"], "unknown_user")
 
@@ -253,9 +249,10 @@ class TestRecordTurnUsage(_UsageTestBase):
 		usage.record_turn_usage("agent:acc", self._row(inputTokens=10, outputTokens=5, totalTokens=100))
 		usage.record_turn_usage("agent:acc", self._row(inputTokens=8, outputTokens=12, totalTokens=140))
 		s = frappe.db.get_value(
-			USETT, {"user": USER_A},
-			["month_input_tokens", "month_output_tokens", "month_tokens",
-			 "total_tokens", "usage_month"], as_dict=True,
+			USETT,
+			{"user": USER_A},
+			["month_input_tokens", "month_output_tokens", "month_tokens", "total_tokens", "usage_month"],
+			as_dict=True,
 		)
 		self.assertEqual(s.month_input_tokens, 18)
 		self.assertEqual(s.month_output_tokens, 17)
@@ -263,7 +260,8 @@ class TestRecordTurnUsage(_UsageTestBase):
 		self.assertEqual(s.total_tokens, 35)
 		self.assertEqual(s.usage_month, usage.current_month_key())
 		sess = frappe.db.get_value(
-			SESSION, {"session_key": "agent:acc"},
+			SESSION,
+			{"session_key": "agent:acc"},
 			["input_tokens", "output_tokens", "run_count", "last_total_tokens"],
 			as_dict=True,
 		)
@@ -280,8 +278,10 @@ class TestRecordTurnUsage(_UsageTestBase):
 		frappe.db.commit()
 		usage.record_turn_usage("agent:roll", self._row(inputTokens=12, outputTokens=8, totalTokens=80))
 		s = frappe.db.get_value(
-			USETT, {"user": USER_A},
-			["month_tokens", "total_tokens", "usage_month"], as_dict=True,
+			USETT,
+			{"user": USER_A},
+			["month_tokens", "total_tokens", "usage_month"],
+			as_dict=True,
 		)
 		# Month buckets reset to the new delta (20); total is all-time (15+20=35).
 		self.assertEqual(s.month_tokens, 20)
@@ -381,9 +381,7 @@ class TestAdminSync(_UsageTestBase):
 		orig_agent_url = frappe.db.get_single_value("Jarvis Settings", "agent_url")
 		frappe.db.set_single_value("Jarvis Settings", "agent_url", "http://gw.test")
 		self.addCleanup(
-			lambda: frappe.db.set_single_value(
-				"Jarvis Settings", "agent_url", orig_agent_url or ""
-			)
+			lambda: frappe.db.set_single_value("Jarvis Settings", "agent_url", orig_agent_url or "")
 		)
 		for p in (
 			patch.object(_sh, "is_self_hosted", return_value=False),
@@ -400,8 +398,7 @@ class TestAdminSync(_UsageTestBase):
 		# stays untouched (an idle session must not look freshly active).
 		updated_ms = 1700000000000  # 2023-11-14T22:13:20Z
 		rows = [
-			{"key": "agent:sa", "totalTokens": 500, "totalTokensFresh": True,
-				"updatedAt": updated_ms},
+			{"key": "agent:sa", "totalTokens": 500, "totalTokensFresh": True, "updatedAt": updated_ms},
 			{"key": "agent:sb", "totalTokens": 300, "totalTokensFresh": True},
 			{"key": "agent:unknown", "totalTokens": 999},
 		]
@@ -415,12 +412,8 @@ class TestAdminSync(_UsageTestBase):
 		self.assertIn(USER_A, out["data"]["users"])
 		self.assertIn(USER_B, out["data"]["users"])
 		# Snapshot fields refreshed.
-		self.assertEqual(
-			frappe.db.get_value(SESSION, {"session_key": "agent:sa"}, "last_total_tokens"), 500
-		)
-		self.assertEqual(
-			frappe.db.get_value(SESSION, {"session_key": "agent:sb"}, "last_total_tokens"), 300
-		)
+		self.assertEqual(frappe.db.get_value(SESSION, {"session_key": "agent:sa"}, "last_total_tokens"), 500)
+		self.assertEqual(frappe.db.get_value(SESSION, {"session_key": "agent:sb"}, "last_total_tokens"), 300)
 		# updatedAt → last_usage_at conversion (naive system-tz, like Frappe).
 		from datetime import datetime as _dt
 
@@ -428,12 +421,12 @@ class TestAdminSync(_UsageTestBase):
 			frappe.db.get_value(SESSION, {"session_key": "agent:sa"}, "last_usage_at"),
 			_dt.fromtimestamp(updated_ms / 1000),
 		)
-		self.assertIsNone(
-			frappe.db.get_value(SESSION, {"session_key": "agent:sb"}, "last_usage_at")
-		)
+		self.assertIsNone(frappe.db.get_value(SESSION, {"session_key": "agent:sb"}, "last_usage_at"))
 		# last_synced_at stamped; counters NOT accumulated (sync never counts).
 		a = frappe.db.get_value(
-			USETT, {"user": USER_A}, ["last_synced_at", "month_tokens", "total_tokens"],
+			USETT,
+			{"user": USER_A},
+			["last_synced_at", "month_tokens", "total_tokens"],
 			as_dict=True,
 		)
 		self.assertIsNotNone(a.last_synced_at)
@@ -448,6 +441,7 @@ class TestAdminSync(_UsageTestBase):
 
 	def test_self_hosted_degrades(self):
 		from jarvis import selfhost as _sh
+
 		with patch.object(_sh, "is_self_hosted", return_value=True):
 			out = user_settings_api.admin_sync_usage()
 		self.assertFalse(out["ok"])
@@ -466,7 +460,8 @@ class TestEnforcement(_UsageTestBase):
 	def test_over_limit_rejects_with_usage_limit(self):
 		user_settings_api.admin_set_user_limit(user=USER_A, monthly_token_limit=100)
 		frappe.db.set_value(
-			USETT, {"user": USER_A},
+			USETT,
+			{"user": USER_A},
 			{"usage_month": usage.current_month_key(), "month_tokens": 150},
 			update_modified=False,
 		)
@@ -478,7 +473,8 @@ class TestEnforcement(_UsageTestBase):
 	def test_under_limit_allows(self):
 		user_settings_api.admin_set_user_limit(user=USER_A, monthly_token_limit=100)
 		frappe.db.set_value(
-			USETT, {"user": USER_A},
+			USETT,
+			{"user": USER_A},
 			{"usage_month": usage.current_month_key(), "month_tokens": 50},
 			update_modified=False,
 		)
@@ -490,7 +486,8 @@ class TestEnforcement(_UsageTestBase):
 	def test_stale_month_allows_despite_high_count(self):
 		user_settings_api.admin_set_user_limit(user=USER_A, monthly_token_limit=100)
 		frappe.db.set_value(
-			USETT, {"user": USER_A},
+			USETT,
+			{"user": USER_A},
 			{"usage_month": "2020-01", "month_tokens": 9999},
 			update_modified=False,
 		)
@@ -502,7 +499,8 @@ class TestEnforcement(_UsageTestBase):
 	def test_zero_limit_is_unlimited(self):
 		user_settings_api.admin_set_user_limit(user=USER_A, monthly_token_limit=0)
 		frappe.db.set_value(
-			USETT, {"user": USER_A},
+			USETT,
+			{"user": USER_A},
 			{"usage_month": usage.current_month_key(), "month_tokens": 999999},
 			update_modified=False,
 		)
@@ -514,7 +512,8 @@ class TestEnforcement(_UsageTestBase):
 	def test_send_message_surfaces_usage_limit(self):
 		user_settings_api.admin_set_user_limit(user=USER_A, monthly_token_limit=100)
 		frappe.db.set_value(
-			USETT, {"user": USER_A},
+			USETT,
+			{"user": USER_A},
 			{"usage_month": usage.current_month_key(), "month_tokens": 150},
 			update_modified=False,
 		)
@@ -558,9 +557,9 @@ class TestMeasuredUsage(_UsageTestBase):
 
 		usage.get_or_create_user_settings(USER_A)
 		frappe.db.set_value(
-			USETT, {"user": USER_A},
-			{"usage_month": usage.current_month_key(), "month_tokens": 42,
-				"total_tokens": 42},
+			USETT,
+			{"user": USER_A},
+			{"usage_month": usage.current_month_key(), "month_tokens": 42, "total_tokens": 42},
 			update_modified=False,
 		)
 		frappe.db.commit()

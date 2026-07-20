@@ -49,7 +49,7 @@ WORKER_TIMEOUT_S = 1500
 WINDOW_SAFETY_MARGIN_MIN = 5
 
 # Stale thresholds for the recovery watch.
-STALE_RUN_MINUTES = 20   # Running with no heartbeat this long -> Failed
+STALE_RUN_MINUTES = 20  # Running with no heartbeat this long -> Failed
 QUEUE_STALE_MINUTES = 20  # Queued with no worker this long -> Failed (no worker time)
 
 _OPEN_STATUSES = ("Queued", "Running", "Paused")
@@ -144,7 +144,11 @@ def run_now(requested_by: str) -> dict:
 		from jarvis.selfhost import is_self_hosted
 
 		if is_self_hosted():
-			return {"ok": False, "run": None, "reason": "pattern learning is not available on self-hosted benches"}
+			return {
+				"ok": False,
+				"run": None,
+				"reason": "pattern learning is not available on self-hosted benches",
+			}
 	except Exception:
 		pass
 	if not _feature_enabled():
@@ -160,15 +164,17 @@ def run_now(requested_by: str) -> dict:
 
 	window_start = _settings_value("pattern_window_start")
 	window_end = _settings_value("pattern_window_end")
-	run = frappe.get_doc({
-		"doctype": RUN,
-		"status": "Queued",
-		"trigger": "manual",
-		"requested_by": requested_by,
-		"window_start_used": window_start,
-		"window_end_used": window_end,
-		"scan_mode": "full",
-	})
+	run = frappe.get_doc(
+		{
+			"doctype": RUN,
+			"status": "Queued",
+			"trigger": "manual",
+			"requested_by": requested_by,
+			"window_start_used": window_start,
+			"window_end_used": window_end,
+			"scan_mode": "full",
+		}
+	)
 	run.flags.ignore_permissions = True
 	run.insert()
 
@@ -189,14 +195,16 @@ def run_now(requested_by: str) -> dict:
 # run creation / resume
 # --------------------------------------------------------------------------- #
 def _create_and_enqueue_run(now, window_start, window_end) -> str:
-	run = frappe.get_doc({
-		"doctype": RUN,
-		"status": "Queued",
-		"trigger": "scheduled",
-		"window_start_used": window_start,
-		"window_end_used": window_end,
-		"scan_mode": "full",
-	})
+	run = frappe.get_doc(
+		{
+			"doctype": RUN,
+			"status": "Queued",
+			"trigger": "scheduled",
+			"window_start_used": window_start,
+			"window_end_used": window_end,
+			"scan_mode": "full",
+		}
+	)
 	run.flags.ignore_permissions = True
 	run.insert()
 
@@ -327,7 +335,9 @@ def in_window(window_start, window_end, now) -> bool:
 	return now_s >= start_s or now_s < end_s
 
 
-def should_pause_for_window(window_start, window_end, now, margin_min: int = WINDOW_SAFETY_MARGIN_MIN) -> bool:
+def should_pause_for_window(
+	window_start, window_end, now, margin_min: int = WINDOW_SAFETY_MARGIN_MIN
+) -> bool:
 	"""Engine per-unit check: stop when out of window OR within ``margin_min``
 	of window end, so a unit's writes never straddle the boundary."""
 	if not in_window(window_start, window_end, now):
