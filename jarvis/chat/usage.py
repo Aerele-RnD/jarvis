@@ -283,6 +283,32 @@ def _prior_model_limit(user: str, model: str, month: str) -> int:
 	return int(rows[0].monthly_token_limit or 0) if rows else 0
 
 
+def _model_row_insert_params(
+	user: str, model: str, month: str, in_tokens: int, out_tokens: int, limit: int, now
+) -> dict:
+	"""Shared param dict for a fresh (parent, model, month) child-row INSERT.
+	Used by both ``_insert_model_row`` (plain INSERT, ``set_model_limit``'s
+	no-existing-row path) and ``_atomic_insert_or_merge_model_usage`` (INSERT
+	... ON DUPLICATE KEY UPDATE, the turn-accounting race path) so the two
+	SQL statements can't drift on column list or value shape. ``owner``/
+	``modified_by`` are not permission-load-bearing for a child row
+	(parent-row scoping governs child access), so ``Administrator`` is fine."""
+	return {
+		"name": frappe.generate_hash(length=10),
+		"now": now,
+		"admin": "Administrator",
+		"idx": _next_child_idx(user),
+		"user": user,
+		"pfield": MODEL_USAGE_FIELD,
+		"ptype": USER_SETTINGS,
+		"model": model,
+		"month": month,
+		"in": int(in_tokens),
+		"out": int(out_tokens),
+		"limit": int(limit),
+	}
+
+
 def _insert_model_row(
 	user: str,
 	model: str,
@@ -295,9 +321,7 @@ def _insert_model_row(
 ) -> None:
 	"""Insert a fresh child row via raw SQL (the atomic idiom this module uses).
 	Direct child-doc ORM insert is not used — Frappe routes child writes through
-	the parent; a raw INSERT with an explicit hash name is the reliable path.
-	``owner``/``modified_by`` are not permission-load-bearing for a child row
-	(parent-row scoping governs child access), so ``Administrator`` is fine."""
+	the parent; a raw INSERT with an explicit hash name is the reliable path."""
 	frappe.db.sql(
 		"""
 		INSERT INTO `tabJarvis User Model Usage`
@@ -309,20 +333,7 @@ def _insert_model_row(
 			 %(user)s, %(pfield)s, %(ptype)s,
 			 %(model)s, %(month)s, %(in)s, %(out)s, %(limit)s)
 		""",
-		{
-			"name": frappe.generate_hash(length=10),
-			"now": now,
-			"admin": "Administrator",
-			"idx": _next_child_idx(user),
-			"user": user,
-			"pfield": MODEL_USAGE_FIELD,
-			"ptype": USER_SETTINGS,
-			"model": model,
-			"month": month,
-			"in": int(in_tokens),
-			"out": int(out_tokens),
-			"limit": int(limit),
-		},
+		_model_row_insert_params(user, model, month, in_tokens, out_tokens, limit, now),
 	)
 
 
@@ -361,20 +372,7 @@ def _atomic_insert_or_merge_model_usage(
 			month_output_tokens = month_output_tokens + VALUES(month_output_tokens),
 			modified = VALUES(modified)
 		""",
-		{
-			"name": frappe.generate_hash(length=10),
-			"now": now,
-			"admin": "Administrator",
-			"idx": _next_child_idx(user),
-			"user": user,
-			"pfield": MODEL_USAGE_FIELD,
-			"ptype": USER_SETTINGS,
-			"model": model,
-			"month": month,
-			"in": int(in_tokens),
-			"out": int(out_tokens),
-			"limit": int(limit),
-		},
+		_model_row_insert_params(user, model, month, in_tokens, out_tokens, limit, now),
 	)
 	# Read rowcount BEFORE commit (commit can reset the cursor) - MariaDB
 	# reports 1 for a plain INSERT and 2 when ON DUPLICATE KEY UPDATE fired.

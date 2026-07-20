@@ -10,6 +10,7 @@ from urllib.parse import quote
 
 import frappe
 
+from jarvis.chat import user_settings_api
 from jarvis.chat.usage import current_month_key as _usage_month_key
 from jarvis.permissions import (
 	has_jarvis_access,
@@ -1309,24 +1310,10 @@ def _measured_usage(user: str) -> dict | None:
 		"usage_month": row.usage_month,
 		"last_usage_at": row.last_usage_at,
 	})
-	measured["per_model"] = [
-		{
-			"model": r.model,
-			"month_input_tokens": int(r.month_input_tokens or 0),
-			"month_output_tokens": int(r.month_output_tokens or 0),
-			"month_tokens": int(r.month_input_tokens or 0) + int(r.month_output_tokens or 0),
-			"monthly_token_limit": int(r.monthly_token_limit or 0),
-		}
-		for r in frappe.get_all(
-			"Jarvis User Model Usage",
-			filters={
-				"parent": user, "parenttype": "Jarvis User Settings",
-				"parentfield": "user_model_usage", "month_key": _usage_month_key(),
-			},
-			fields=["model", "month_input_tokens", "month_output_tokens", "monthly_token_limit"],
-			order_by="month_input_tokens desc",
-		)
-	]
+	# Reuse user_settings_api's per-model query + row-shaping rather than
+	# reimplementing it here (the two had drifted into duplicate copies of
+	# the same logic).
+	measured["per_model"] = user_settings_api._per_model_rows(user)
 	return measured
 
 
