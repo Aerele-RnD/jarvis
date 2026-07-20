@@ -32,6 +32,45 @@ def _month_tokens_effective(usage_month: str | None, month_tokens) -> int:
 	return int(month_tokens or 0)
 
 
+def _per_model_row_dict(r) -> dict:
+	"""Shared row-shaping for a single ``Jarvis User Model Usage`` record (used
+	by both the single-user and batched-admin paths, so the two never drift on
+	the payload shape)."""
+	mi = int(r.month_input_tokens or 0)
+	mo = int(r.month_output_tokens or 0)
+	return {
+		"model": r.model,
+		"month_input_tokens": mi,
+		"month_output_tokens": mo,
+		"month_tokens": mi + mo,
+		"monthly_token_limit": int(r.monthly_token_limit or 0),
+	}
+
+
+def _per_model_rows_by_user(users: list[str]) -> dict[str, list[dict]]:
+	"""Current-month per-model usage + caps for every user in ``users``, in ONE
+	query (``parent IN (...)``), bucketed in Python — the admin listing's
+	batched counterpart to ``_per_model_rows`` (which stays single-query-per-
+	user for the single-user settings/measured-usage paths). Empty dict when
+	``users`` is empty; a user with no rows simply gets an empty list, same as
+	``_per_model_rows`` would return for them."""
+	if not users:
+		return {}
+	rows = frappe.get_all(
+		usage.MODEL_USAGE,
+		filters={
+			"parent": ["in", users], "parenttype": USER_SETTINGS,
+			"parentfield": usage.MODEL_USAGE_FIELD, "month_key": usage.current_month_key(),
+		},
+		fields=["parent", "model", "month_input_tokens", "month_output_tokens", "monthly_token_limit"],
+		order_by="month_input_tokens desc",
+	)
+	out: dict[str, list[dict]] = {u: [] for u in users}
+	for r in rows:
+		out.setdefault(r.parent, []).append(_per_model_row_dict(r))
+	return out
+
+
 def _per_model_rows(user: str) -> list[dict]:
 	"""Current-month per-model usage + caps for ``user`` (fleet spec §7). Empty
 	list when no rows. Ordered by usage descending for a stable UI."""
@@ -44,18 +83,7 @@ def _per_model_rows(user: str) -> list[dict]:
 		fields=["model", "month_input_tokens", "month_output_tokens", "monthly_token_limit"],
 		order_by="month_input_tokens desc",
 	)
-	out = []
-	for r in rows:
-		mi = int(r.month_input_tokens or 0)
-		mo = int(r.month_output_tokens or 0)
-		out.append({
-			"model": r.model,
-			"month_input_tokens": mi,
-			"month_output_tokens": mo,
-			"month_tokens": mi + mo,
-			"monthly_token_limit": int(r.monthly_token_limit or 0),
-		})
-	return out
+	return [_per_model_row_dict(r) for r in rows]
 
 
 def _settings_payload(doc) -> dict:
@@ -128,6 +156,11 @@ def admin_list_user_usage() -> dict:
 			fields=["name", "full_name"],
 		)
 	}
+	# One batched query for every listed user's current-month per-model rows,
+	# bucketed in Python, instead of one _per_model_rows(user) call per row
+	# (N+1). The single-user path (get_my_settings / _measured_usage) keeps
+	# using _per_model_rows directly - it's already a single query there.
+	per_model_by_user = _per_model_rows_by_user([r.user for r in rows])
 	out = []
 	for r in rows:
 		if r.user not in user_map:
@@ -143,7 +176,7 @@ def admin_list_user_usage() -> dict:
 			"total_tokens": cint(r.total_tokens),
 			"last_usage_at": r.last_usage_at,
 			"last_synced_at": r.last_synced_at,
-			"per_model": _per_model_rows(r.user),
+			"per_model": per_model_by_user.get(r.user, []),
 		})
 	return {"ok": True, "data": out}
 
