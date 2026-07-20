@@ -262,3 +262,42 @@ def start_upgrade(target_plan: str) -> dict:
 	"""
 	require_jarvis_admin()
 	return _surface(admin_client.start_upgrade, target_plan)
+
+
+@frappe.whitelist()
+def cancel_plan_at_period_end() -> dict:
+	"""Schedule a period-end cancellation of the site's BILLING plan.
+
+	Named plan, not subscription: in this app "subscription" means the LLM
+	provider subscription (disconnect_subscription / DirectSubscriptionCard),
+	and confusing the two would be expensive.
+
+	Gated on System Manager for the same reason as start_upgrade: it changes
+	the billing state of the site's admin account. The gate runs BEFORE the
+	admin round-trip so an unauthorized caller never spends a network call.
+	"""
+	require_jarvis_admin()
+	out = _surface(admin_client.cancel_plan_at_period_end)
+	_bust_chat_gate()
+	return out
+
+
+@frappe.whitelist()
+def resume_plan() -> dict:
+	"""Undo a scheduled cancellation (System Manager, as above)."""
+	require_jarvis_admin()
+	out = _surface(admin_client.resume_plan)
+	_bust_chat_gate()
+	return out
+
+
+def _bust_chat_gate() -> None:
+	"""Drop the 30s chat-readiness cache after a billing state change.
+
+	Belt-and-braces: cancelling does not itself change readiness (entitlement
+	runs to period end), but the pane re-reads immediately afterwards and a
+	stale positive verdict would be confusing. Costs one Redis DEL."""
+	try:
+		frappe.cache().delete_value(_CHAT_GATE_CACHE_KEY)
+	except Exception:
+		pass

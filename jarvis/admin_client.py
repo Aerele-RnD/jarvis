@@ -729,6 +729,24 @@ def start_upgrade(target_plan: str) -> dict:
 	)
 
 
+def cancel_plan_at_period_end() -> dict:
+	"""Schedule a period-end cancellation of the BILLING plan.
+
+	Not the LLM provider subscription - that is post_subscription_disconnect.
+	Service runs until current_period_end; resume_plan undoes it until then.
+	Returns {cancel_at_period_end, cancelled_at, access_ends_on,
+	days_remaining, has_mandate}."""
+	return _post(path=_m("api.account.cancel_plan_at_period_end"), body={})
+
+
+def resume_plan() -> dict:
+	"""Undo a scheduled cancellation while the paid period still has time.
+	Returns the same shape plus ``requires_reauthorization`` - true when the
+	sub had an autopay mandate, which cancelling released and which cannot be
+	re-armed without a fresh payment authorization."""
+	return _post(path=_m("api.account.resume_plan"), body={})
+
+
 def _oauth_token_request(admin_url: str, grant: dict) -> dict | None:
 	"""POST a form-encoded grant to admin's OAuth token endpoint. Returns the
 	token dict ({access_token, refresh_token, expires_in, ...}) on success, or
