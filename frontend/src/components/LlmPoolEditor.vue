@@ -747,7 +747,10 @@
 											<button
 												type="button"
 												class="jv-cbtn jv-cbtn-ghost"
-												:disabled="!editable || panelRow._connect.loading"
+												:disabled="
+													panelRow._connect.loading ||
+													(!editable && !panelRow._connect.authorizeUrl)
+												"
 												@click="copySigninLink(panelRow)"
 											>
 												{{
@@ -1372,8 +1375,12 @@
 													type="button"
 													class="jv-cbtn jv-cbtn-ghost"
 													:disabled="
-														!editable ||
-														(m._connect && m._connect.loading)
+														(m._connect && m._connect.loading) ||
+														(!editable &&
+															!(
+																m._connect &&
+																m._connect.authorizeUrl
+															))
 													"
 													@click="copySigninLink(m)"
 												>
@@ -2645,19 +2652,25 @@ async function finishConnect(m) {
 function closeConnect(m) {
 	m._connect = blankConnect();
 }
-function copyAuthorizeUrl(m) {
-	const url = m._connect && m._connect.authorizeUrl;
+function copyConnectUrl(m, url) {
 	if (!url) return;
+	// Capture the connect object we are flashing. Reconnect (and closeConnect)
+	// REPLACE m._connect wholesale, so a timer that re-reads m._connect can clear
+	// the "Copied ✓" of a LATER, unrelated copy that started inside our 1400ms.
+	const c = m._connect;
 	copyTextWithFallback(url)
 		.then(() => {
-			m._connect.copied = true;
+			c.copied = true;
 			setTimeout(() => {
-				if (m._connect) m._connect.copied = false;
+				if (m._connect === c) c.copied = false;
 			}, 1400);
 		})
 		.catch(() => {
-			m._connect.error = "Could not copy. Select the URL above and copy manually.";
+			c.error = "Could not copy. Select the URL above and copy manually.";
 		});
+}
+function copyAuthorizeUrl(m) {
+	copyConnectUrl(m, m._connect && m._connect.authorizeUrl);
 }
 // "Copy link" is offered from the START of the sign-in step, not only after
 // "Open sign-in" has already fetched a URL. Signing in on a PHONE (or any second
@@ -2671,10 +2684,23 @@ async function copySigninLink(m) {
 	}
 	const reconnectIdx = (m._connect && m._connect.reconnectIdx) ?? null;
 	await startConnect(m, reconnectIdx, { openTab: false });
-	// Device-code upstreams (Kimi) resolve no authorize URL -- the panel switches to
-	// the verification-code step instead, so there is nothing to copy. startConnect
-	// has already surfaced any error into _connect.error.
-	if (m._connect && m._connect.authorizeUrl) copyAuthorizeUrl(m);
+	if (!m._connect) return;
+	if (m._connect.authorizeUrl) {
+		copyAuthorizeUrl(m);
+		return;
+	}
+	// Device-code upstreams (Kimi) resolve a VERIFICATION PAGE instead of an
+	// authorize URL, and the panel flips to the code step underneath this click.
+	// That page is exactly the link worth carrying to a second device, so copy it
+	// rather than leaving the click silently doing nothing.
+	if (m._connect.deviceFlow) {
+		if (m._connect.verificationUri) copyConnectUrl(m, m._connect.verificationUri);
+		return;
+	}
+	// No URL and startConnect surfaced no error: say so rather than dead-clicking.
+	if (!m._connect.error) {
+		m._connect.error = "Couldn't get a sign-in link. Try Open sign-in instead.";
+	}
 }
 
 // ---- load / save ---------------------------------------------------------
