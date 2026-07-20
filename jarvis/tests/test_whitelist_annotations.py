@@ -76,11 +76,9 @@ class TestWhitelistAnnotations(FrappeTestCase):
 						continue
 					if param.annotation is inspect.Parameter.empty:
 						offenders.append(f"{key}({pname})")
-		self.assertTrue(found_any, "sweep found no whitelisted functions - "
-						"module walk or detection broke")
+		self.assertTrue(found_any, "sweep found no whitelisted functions - module walk or detection broke")
 		self.assertFalse(
 			offenders,
 			"un-annotated @frappe.whitelist parameters (500 under Frappe's "
-			"require_type_annotated_api_methods, which hooks.py enables): "
-			+ ", ".join(sorted(offenders)),
+			"require_type_annotated_api_methods, which hooks.py enables): " + ", ".join(sorted(offenders)),
 		)

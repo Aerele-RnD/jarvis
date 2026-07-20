@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from "vue"
+import { computed } from "vue";
 
 // The Jarvis logo tile — identical to the native app's mark
 // (jarvis_mobile/src/components/BrandMark.tsx): a violet rounded square with a
@@ -9,13 +9,13 @@ import { computed } from "vue"
 // 0 0 24 24); size/radius follow the same ratios (radius 25%, star 57%).
 const props = defineProps({
 	size: { type: Number, default: 40 },
-})
+});
 
 const style = computed(() => ({
 	width: `${props.size}px`,
 	height: `${props.size}px`,
 	borderRadius: `${Math.round(props.size * 0.25)}px`,
-}))
+}));
 </script>
 
 <template>

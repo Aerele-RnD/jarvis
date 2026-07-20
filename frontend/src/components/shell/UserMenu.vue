@@ -7,8 +7,8 @@
 					isCollapsed
 						? 'w-auto px-0'
 						: open
-							? 'w-full px-2 bg-surface-white shadow-sm'
-							: 'w-full px-2 hover:bg-surface-gray-3'
+						? 'w-full px-2 bg-surface-white shadow-sm'
+						: 'w-full px-2 hover:bg-surface-gray-3'
 				"
 				aria-label="Jarvis menu"
 			>
@@ -21,7 +21,9 @@
 					class="flex flex-1 flex-col overflow-hidden text-left duration-300 ease-in-out"
 					:class="isCollapsed ? 'ml-0 w-0 opacity-0' : 'ml-2 w-auto opacity-100'"
 				>
-					<div class="truncate text-base font-medium leading-none text-ink-gray-9">Jarvis</div>
+					<div class="truncate text-base font-medium leading-none text-ink-gray-9">
+						Jarvis
+					</div>
 					<div class="mt-1 truncate text-sm text-ink-gray-7">{{ fullName }}</div>
 				</div>
 				<FeatherIcon
@@ -37,27 +39,27 @@
 <script setup>
 // Sidebar header (DESIGN-V3 §3.2.1): brand + session user, HD's UserMenu
 // pattern. Dropdown: Settings (D9) · Switch to Desk · Change theme · Log out.
-import { computed, inject } from "vue"
-import { Dropdown, FeatherIcon } from "frappe-ui"
-import JarvisMark from "@/components/JarvisMark.vue"
-import { useShellStore } from "@/stores/shell"
-import { useJarvisTheme } from "@/theme"
+import { computed, inject } from "vue";
+import { Dropdown, FeatherIcon } from "frappe-ui";
+import JarvisMark from "@/components/JarvisMark.vue";
+import { useShellStore } from "@/stores/shell";
+import { useJarvisTheme } from "@/theme";
 
 defineProps({
 	isCollapsed: { type: Boolean, default: false },
-})
+});
 
-const store = useShellStore()
-const session = inject("$session")
-const { effectiveDark, toggleTheme } = useJarvisTheme()
+const store = useShellStore();
+const session = inject("$session");
+const { effectiveDark, toggleTheme } = useJarvisTheme();
 
 function cookie(name) {
 	// URLSearchParams already percent-decodes; decoding AGAIN throws URIError
 	// when the display name contains a literal '%' (stored as %25 → '%'),
 	// blanking the whole shell — same bug main fixed in lib/user.js (0d19e7c).
-	return new URLSearchParams(document.cookie.split("; ").join("&")).get(name)
+	return new URLSearchParams(document.cookie.split("; ").join("&")).get(name);
 }
-const fullName = cookie("full_name") || session.user || "User"
+const fullName = cookie("full_name") || session.user || "User";
 
 const menuOptions = computed(() => [
 	{
@@ -69,7 +71,7 @@ const menuOptions = computed(() => [
 				label: "Switch to Desk",
 				icon: "grid",
 				onClick: () => {
-					window.location.href = "/app"
+					window.location.href = "/app";
 				},
 			},
 			{
@@ -82,7 +84,9 @@ const menuOptions = computed(() => [
 	{
 		group: "Danger",
 		hideLabel: true,
-		items: [{ label: "Log out", icon: "log-out", theme: "red", onClick: () => session.logout() }],
+		items: [
+			{ label: "Log out", icon: "log-out", theme: "red", onClick: () => session.logout() },
+		],
 	},
-])
+]);
 </script>

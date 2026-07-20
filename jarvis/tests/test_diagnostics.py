@@ -18,9 +18,7 @@ class TestPingAdmin(FrappeTestCase):
 		frappe.db.commit()
 
 	def test_no_key_returns_config_error(self):
-		with patch.object(
-			frappe.get_single("Jarvis Settings").__class__, "get_password", return_value=""
-		):
+		with patch.object(frappe.get_single("Jarvis Settings").__class__, "get_password", return_value=""):
 			out = diagnostics.ping_admin()
 		self.assertFalse(out["ok"])
 		self.assertEqual(out["kind"], "config")
@@ -28,8 +26,10 @@ class TestPingAdmin(FrappeTestCase):
 	def test_happy_path(self):
 		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "jarvis_admin_api_key", "test-token")
 		frappe.db.commit()
-		with patch("jarvis.admin_client.get_connection",
-				   return_value={"status": "active", "agent_url": "ws://localhost:19200"}):
+		with patch(
+			"jarvis.admin_client.get_connection",
+			return_value={"status": "active", "agent_url": "ws://localhost:19200"},
+		):
 			out = diagnostics.ping_admin()
 		self.assertTrue(out["ok"])
 		self.assertEqual(out["kind"], "ok")
@@ -44,6 +44,7 @@ class TestPingAdmin(FrappeTestCase):
 
 	def test_auth_failure_returns_kind_auth(self):
 		from jarvis.exceptions import AdminAuthError
+
 		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "jarvis_admin_api_key", "bad-token")
 		frappe.db.commit()
 		with patch("jarvis.admin_client.get_connection", side_effect=AdminAuthError("admin returned 401")):
@@ -54,10 +55,12 @@ class TestPingAdmin(FrappeTestCase):
 
 	def test_unreachable_returns_kind_unreachable(self):
 		from jarvis.exceptions import AdminUnreachableError
+
 		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "jarvis_admin_api_key", "tok")
 		frappe.db.commit()
-		with patch("jarvis.admin_client.get_connection",
-				   side_effect=AdminUnreachableError("connection refused")):
+		with patch(
+			"jarvis.admin_client.get_connection", side_effect=AdminUnreachableError("connection refused")
+		):
 			out = diagnostics.ping_admin()
 		self.assertFalse(out["ok"])
 		self.assertEqual(out["kind"], "unreachable")
@@ -88,9 +91,7 @@ class TestPingOpenclaw(FrappeTestCase):
 		# the "operator hasn't onboarded yet" state.
 		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "agent_url", "ws://h:1")
 		frappe.db.commit()
-		with patch.object(
-			frappe.get_single("Jarvis Settings").__class__, "get_password", return_value=""
-		):
+		with patch.object(frappe.get_single("Jarvis Settings").__class__, "get_password", return_value=""):
 			out = diagnostics.ping_openclaw()
 		self.assertFalse(out["ok"])
 		self.assertEqual(out["kind"], "config")
@@ -110,6 +111,7 @@ class TestPingOpenclaw(FrappeTestCase):
 
 	def test_unreachable(self):
 		from jarvis.exceptions import OpenclawUnreachableError
+
 		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "agent_url", "ws://h:1")
 		frappe.db.set_value("Jarvis Settings", "Jarvis Settings", "agent_token", "t")
 		frappe.db.commit()
@@ -141,9 +143,12 @@ class TestChatRecoveryStats(FrappeTestCase):
 	CONV = "Jarvis Conversation"
 
 	def setUp(self):
-		self.conv = frappe.get_doc({
-			"doctype": self.CONV, "title": "diag-stats",
-		}).insert(ignore_permissions=True)
+		self.conv = frappe.get_doc(
+			{
+				"doctype": self.CONV,
+				"title": "diag-stats",
+			}
+		).insert(ignore_permissions=True)
 		frappe.db.commit()
 
 	def tearDown(self):
@@ -152,12 +157,19 @@ class TestChatRecoveryStats(FrappeTestCase):
 		frappe.db.commit()
 
 	def _add(self, *, was_recovered=0, streaming=0, recovering=0, error=""):
-		frappe.get_doc({
-			"doctype": self.MSG, "conversation": self.conv.name, "seq": 1,
-			"role": "assistant", "content": "x",
-			"streaming": streaming, "recovering": recovering,
-			"was_recovered": was_recovered, "error": error,
-		}).insert(ignore_permissions=True)
+		frappe.get_doc(
+			{
+				"doctype": self.MSG,
+				"conversation": self.conv.name,
+				"seq": 1,
+				"role": "assistant",
+				"content": "x",
+				"streaming": streaming,
+				"recovering": recovering,
+				"was_recovered": was_recovered,
+				"error": error,
+			}
+		).insert(ignore_permissions=True)
 
 	def test_shape_and_zero_rate_with_no_turns(self):
 		out = diagnostics.chat_recovery_stats()
@@ -172,7 +184,8 @@ class TestChatRecoveryStats(FrappeTestCase):
 		self._add(was_recovered=0)
 		self._add(was_recovered=1)
 		self._add(
-			was_recovered=1, error="Run did not finish within the recovery window.",
+			was_recovered=1,
+			error="Run did not finish within the recovery window.",
 		)
 		self._add(streaming=1, recovering=1)
 		frappe.db.commit()
@@ -185,7 +198,8 @@ class TestChatRecoveryStats(FrappeTestCase):
 			before["24h"]["currently_recovering"] + 1,
 		)
 		self.assertEqual(
-			after["24h"]["ceiling_errored"], before["24h"]["ceiling_errored"] + 1,
+			after["24h"]["ceiling_errored"],
+			before["24h"]["ceiling_errored"] + 1,
 		)
 		# 7d window includes the same new rows.
 		self.assertEqual(after["7d"]["total"], before["7d"]["total"] + 4)

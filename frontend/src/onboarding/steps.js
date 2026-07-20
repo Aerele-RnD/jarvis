@@ -6,20 +6,20 @@
 // Managed flow (2026-07 redesign): intro tour → Plan → Details → Pay → Connect.
 // The old "mode" chooser + "account" step are gone; self-host is reached via a
 // quiet link on the Plan step and keeps its single "selfhost" step.
-export const STEPS_MANAGED = ["intro", "plan", "details", "pay", "connect"]
-export const STEPS_SELFHOST = ["plan", "selfhost"]
+export const STEPS_MANAGED = ["intro", "plan", "details", "pay", "connect"];
+export const STEPS_SELFHOST = ["plan", "selfhost"];
 
 export function stepIndex(steps, cur) {
-	const i = steps.indexOf(cur)
-	return i < 0 ? 0 : i
+	const i = steps.indexOf(cur);
+	return i < 0 ? 0 : i;
 }
 
 export function nextStep(steps, cur) {
-	return steps[Math.min(stepIndex(steps, cur) + 1, steps.length - 1)]
+	return steps[Math.min(stepIndex(steps, cur) + 1, steps.length - 1)];
 }
 
 export function prevStep(steps, cur) {
-	return steps[Math.max(stepIndex(steps, cur) - 1, 0)]
+	return steps[Math.max(stepIndex(steps, cur) - 1, 0)];
 }
 
 // jarvis.account.is_ready_for_chat (jarvis/account.py) returns
@@ -27,7 +27,7 @@ export function prevStep(steps, cur) {
 // "llm_credentials" / "selfhost_connection" when not ready, null when ready.
 // Onboarding is "complete" (chat-ready) exactly when `ready` is true.
 export function isOnboardComplete(readyResp) {
-	return !!(readyResp && readyResp.ready)
+	return !!(readyResp && readyResp.ready);
 }
 
 // Branch decision for the "I've verified my email" poll. Admin's
@@ -46,11 +46,11 @@ export function isOnboardComplete(readyResp) {
 //                                     "state changed" shrug
 //   {kind: "stale"}                 - unrecognized shape: ask for a refresh
 export function verifyPollAction(d) {
-	if (!d || d.pending_verification) return { kind: "wait" }
+	if (!d || d.pending_verification) return { kind: "wait" };
 	// checkout covers both Checkout modes: one-shot order (razorpay_order_id)
 	// and autopay-trial mandate auth (razorpay_subscription_id).
-	if (d.razorpay_order_id || d.razorpay_subscription_id) return { kind: "checkout" }
-	if (d.subscription_status === "Active") return { kind: "complete" }
-	if (d.subscription_status) return { kind: "halted", status: String(d.subscription_status) }
-	return { kind: "stale" }
+	if (d.razorpay_order_id || d.razorpay_subscription_id) return { kind: "checkout" };
+	if (d.subscription_status === "Active") return { kind: "complete" };
+	if (d.subscription_status) return { kind: "halted", status: String(d.subscription_status) };
+	return { kind: "stale" };
 }

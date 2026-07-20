@@ -40,9 +40,7 @@
 			class="mt-4 flex items-start gap-2 rounded-lg border border-outline-amber-2 bg-surface-amber-1 px-3 py-2 text-sm text-ink-amber-3"
 		>
 			<FeatherIcon name="alert-triangle" class="mt-0.5 size-4 shrink-0" />
-			<span>
-				Partial scan - {{ coverageNote }}. Treat gaps as unreviewed, not clean.
-			</span>
+			<span> Partial scan - {{ coverageNote }}. Treat gaps as unreviewed, not clean. </span>
 		</div>
 
 		<!-- failed run: surface the error; no findings snapshot was recorded -->
@@ -148,7 +146,9 @@
 							class="prose prose-sm max-w-none"
 							v-html="renderMarkdown(f.detail_md)"
 						/>
-						<div v-else class="text-sm text-ink-gray-5">No further detail recorded.</div>
+						<div v-else class="text-sm text-ink-gray-5">
+							No further detail recorded.
+						</div>
 
 						<div
 							v-if="f.ref_doctype && f.ref_name"
@@ -162,7 +162,10 @@
 								class="flex min-w-0 items-center gap-1 text-ink-gray-8 hover:underline"
 							>
 								<span class="truncate">{{ f.ref_doctype }} {{ f.ref_name }}</span>
-								<FeatherIcon name="external-link" class="size-3.5 shrink-0 text-ink-gray-5" />
+								<FeatherIcon
+									name="external-link"
+									class="size-3.5 shrink-0 text-ink-gray-5"
+								/>
 							</a>
 						</div>
 
@@ -221,8 +224,8 @@
 // Discuss in chat (take_finding_to_chat → /c/:id), Open document, and the
 // open/acknowledged/resolved state select → setFindingState (optimistic).
 // No remediation text is ever fabricated - only what the run persisted.
-import { ref, computed, watch } from "vue"
-import { useRouter } from "vue-router"
+import { ref, computed, watch } from "vue";
+import { useRouter } from "vue-router";
 import {
 	Badge,
 	Button,
@@ -231,151 +234,152 @@ import {
 	LoadingIndicator,
 	Tooltip,
 	toast,
-} from "frappe-ui"
-import { timeAgo, exactDate, formatDate } from "@/utils/datetime"
-import { renderMarkdown } from "@/markdown"
-import * as api from "@/api"
-import { takeFindingToChat } from "@/api/agents"
+} from "frappe-ui";
+import { timeAgo, exactDate, formatDate } from "@/utils/datetime";
+import { renderMarkdown } from "@/markdown";
+import * as api from "@/api";
+import { takeFindingToChat } from "@/api/agents";
 
 const props = defineProps({
 	// full row from list_runs_page: {name, status, trigger, started_at,
 	// finished_at, conversation, findings_count, blocker_count, error,
 	// coverage_note, ...}
 	run: { type: Object, required: true },
-})
+});
 
-const router = useRouter()
+const router = useRouter();
 
 function errMsg(e) {
-	return (e && ((e.messages && e.messages[0]) || e.message)) || "Something went wrong."
+	return (e && ((e.messages && e.messages[0]) || e.message)) || "Something went wrong.";
 }
 
-const STATUS_THEME = { running: "blue", completed: "green", partial: "orange", failed: "red" }
-const SEVERITY_THEME = { blocker: "red", warning: "orange", note: "gray" }
-const SEVERITY_ORDER = ["blocker", "warning", "note"]
-const SEVERITY_LABEL = { blocker: "Blockers", warning: "Warnings", note: "Notes" }
-const RECURRENCE_THEME = { new: "blue", recurring: "gray", resolved: "green" }
-const RECURRENCE_LABEL = { new: "New", recurring: "Recurring", resolved: "Resolved" }
+const STATUS_THEME = { running: "blue", completed: "green", partial: "orange", failed: "red" };
+const SEVERITY_THEME = { blocker: "red", warning: "orange", note: "gray" };
+const SEVERITY_ORDER = ["blocker", "warning", "note"];
+const SEVERITY_LABEL = { blocker: "Blockers", warning: "Warnings", note: "Notes" };
+const RECURRENCE_THEME = { new: "blue", recurring: "gray", resolved: "green" };
+const RECURRENCE_LABEL = { new: "New", recurring: "Recurring", resolved: "Resolved" };
 const STATE_CHIPS = [
 	{ label: "All", value: "" },
 	{ label: "Open", value: "open" },
 	{ label: "Acknowledged", value: "acknowledged" },
 	{ label: "Resolved", value: "resolved" },
-]
+];
 const STATE_OPTIONS = [
 	{ label: "Open", value: "open" },
 	{ label: "Acknowledged", value: "acknowledged" },
 	{ label: "Resolved", value: "resolved" },
-]
+];
 
-const PAGE_LENGTH = 100
+const PAGE_LENGTH = 100;
 
-const rows = ref([])
-const total = ref(0)
-const hasMore = ref(false)
+const rows = ref([]);
+const total = ref(0);
+const hasMore = ref(false);
 // true per-severity counts from the list_findings envelope ({blocker,
 // warning, note}); null until an envelope-shaped response arrives
-const severityCounts = ref(null)
-const loading = ref(false)
-const loadError = ref("")
-const stateFilter = ref("")
-const busy = ref("")
-const chatBusy = ref("")
-const expanded = ref(new Set())
+const severityCounts = ref(null);
+const loading = ref(false);
+const loadError = ref("");
+const stateFilter = ref("");
+const busy = ref("");
+const chatBusy = ref("");
+const expanded = ref(new Set());
 
 const runLabel = computed(() =>
 	props.run && props.run.started_at ? timeAgo(props.run.started_at) : props.run.name
-)
+);
 // a failed run shows ONLY the red failed banner - never the amber partial one
 const coverageWarning = computed(
 	() =>
 		props.run.status === "partial" ||
 		(!!props.run.coverage_note && props.run.status !== "failed")
-)
+);
 const coverageNote = computed(() => {
-	const note = String(props.run.coverage_note || "").trim()
+	const note = String(props.run.coverage_note || "").trim();
 	// the sentence supplies its own terminal punctuation
-	return note.replace(/[.\s]+$/, "") || "some records were not reviewed"
-})
+	return note.replace(/[.\s]+$/, "") || "some records were not reviewed";
+});
 const emptyText = computed(() => {
-	if (props.run.status === "running") return "Run in progress - findings appear when it completes."
-	if (props.run.status === "failed") return "This run recorded no findings."
-	return `No ${stateFilter.value ? stateFilter.value + " " : ""}findings for this run.`
-})
+	if (props.run.status === "running")
+		return "Run in progress - findings appear when it completes.";
+	if (props.run.status === "failed") return "This run recorded no findings.";
+	return `No ${stateFilter.value ? stateFilter.value + " " : ""}findings for this run.`;
+});
 
 // blocker → warning → note, unknown severities folded into note
 const groups = computed(() => {
-	const by = {}
+	const by = {};
 	for (const r of rows.value) {
-		const sev = SEVERITY_ORDER.includes(r.severity) ? r.severity : "note"
-		;(by[sev] = by[sev] || []).push(r)
+		const sev = SEVERITY_ORDER.includes(r.severity) ? r.severity : "note";
+		(by[sev] = by[sev] || []).push(r);
 	}
 	return SEVERITY_ORDER.filter((s) => by[s] && by[s].length).map((s) => ({
 		severity: s,
 		rows: by[s],
-	}))
-})
+	}));
+});
 
 // header count = the TRUE server-side count for the severity (envelope
 // severity_counts); the loaded slice length is only the legacy fallback
 function groupCount(group) {
-	const c = severityCounts.value && severityCounts.value[group.severity]
-	return c != null ? c : group.rows.length
+	const c = severityCounts.value && severityCounts.value[group.severity];
+	return c != null ? c : group.rows.length;
 }
 
 // title-case badge label (Blocker/Warning/Note) to match the group headers
-const SEVERITY_BADGE = { blocker: "Blocker", warning: "Warning", note: "Note" }
+const SEVERITY_BADGE = { blocker: "Blocker", warning: "Warning", note: "Note" };
 function severityBadgeLabel(sev) {
-	if (SEVERITY_BADGE[sev]) return SEVERITY_BADGE[sev]
-	const s = String(sev || "note")
-	return s.charAt(0).toUpperCase() + s.slice(1)
+	if (SEVERITY_BADGE[sev]) return SEVERITY_BADGE[sev];
+	const s = String(sev || "note");
+	return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 // monotonic request id - rapid rail clicks must not land stale findings
-let reqId = 0
+let reqId = 0;
 async function load({ append = false } = {}) {
-	if (!props.run || !props.run.name) return
-	const id = ++reqId
-	loading.value = true
+	if (!props.run || !props.run.name) return;
+	const id = ++reqId;
+	loading.value = true;
 	try {
 		const res = await api.listAgentFindings({
 			run: props.run.name,
 			state: stateFilter.value || undefined,
 			start: append ? rows.value.length : 0,
 			page_length: PAGE_LENGTH,
-		})
-		if (id !== reqId) return
+		});
+		if (id !== reqId) return;
 		// envelope {rows, total, has_more, start, page_length, severity_counts};
 		// defensively fall back to the legacy bare-array shape
-		const isEnvelope = !!(res && !Array.isArray(res) && Array.isArray(res.rows))
-		const page = (isEnvelope ? res.rows : res) || []
+		const isEnvelope = !!(res && !Array.isArray(res) && Array.isArray(res.rows));
+		const page = (isEnvelope ? res.rows : res) || [];
 		if (append) {
-			const seen = new Set(rows.value.map((r) => r.name))
-			rows.value = [...rows.value, ...page.filter((r) => !seen.has(r.name))]
+			const seen = new Set(rows.value.map((r) => r.name));
+			rows.value = [...rows.value, ...page.filter((r) => !seen.has(r.name))];
 		} else {
-			rows.value = page
+			rows.value = page;
 		}
 		if (isEnvelope) {
-			total.value = res.total != null ? res.total : rows.value.length
-			hasMore.value = !!res.has_more
-			severityCounts.value = res.severity_counts || null
+			total.value = res.total != null ? res.total : rows.value.length;
+			hasMore.value = !!res.has_more;
+			severityCounts.value = res.severity_counts || null;
 		} else {
-			total.value = rows.value.length
-			hasMore.value = false
-			severityCounts.value = null
+			total.value = rows.value.length;
+			hasMore.value = false;
+			severityCounts.value = null;
 		}
-		loadError.value = ""
+		loadError.value = "";
 	} catch (e) {
 		if (id === reqId) {
-			loadError.value = errMsg(e)
-			toast.error(loadError.value)
+			loadError.value = errMsg(e);
+			toast.error(loadError.value);
 		}
 	} finally {
-		if (id === reqId) loading.value = false
+		if (id === reqId) loading.value = false;
 	}
 }
 function loadMore() {
-	if (!loading.value && hasMore.value) load({ append: true })
+	if (!loading.value && hasMore.value) load({ append: true });
 }
 
 // reload on run switch AND on status flip (a re-pinned running run that just
@@ -386,108 +390,110 @@ watch(
 	[() => props.run && props.run.name, () => props.run && props.run.status],
 	([name], [prevName] = []) => {
 		if (name !== prevName) {
-			rows.value = []
-			total.value = 0
-			hasMore.value = false
-			severityCounts.value = null
-			loadError.value = ""
-			expanded.value = new Set()
+			rows.value = [];
+			total.value = 0;
+			hasMore.value = false;
+			severityCounts.value = null;
+			loadError.value = "";
+			expanded.value = new Set();
 			if (stateFilter.value) {
-				stateFilter.value = "" // its watcher runs the (re)load
-				return
+				stateFilter.value = ""; // its watcher runs the (re)load
+				return;
 			}
 		}
-		load()
+		load();
 	},
 	{ immediate: true }
-)
-watch(stateFilter, () => load())
+);
+watch(stateFilter, () => load());
 
 function isExpanded(name) {
-	return expanded.value.has(name)
+	return expanded.value.has(name);
 }
 function toggleExpand(name) {
-	const next = new Set(expanded.value)
-	if (next.has(name)) next.delete(name)
-	else next.add(name)
-	expanded.value = next
+	const next = new Set(expanded.value);
+	if (next.has(name)) next.delete(name);
+	else next.add(name);
+	expanded.value = next;
 }
 
 // ── triage: state select → setFindingState (optimistic, revert on error) ────
 async function moveFinding(f, state) {
-	if (!state || state === f.state || busy.value) return
-	const prev = f.state
-	f.state = state // optimistic
-	busy.value = f.name
+	if (!state || state === f.state || busy.value) return;
+	const prev = f.state;
+	f.state = state; // optimistic
+	busy.value = f.name;
 	try {
-		await api.setFindingState(f.name, state)
-		toast.success(`Finding ${state}`)
+		await api.setFindingState(f.name, state);
+		toast.success(`Finding ${state}`);
 		// reconcile with the active state-filter chip: a finding moved OUT of
 		// the filtered state leaves the visible list (and its counts) at once -
 		// acknowledging while viewing "Open" must not leave a stale row
 		if (stateFilter.value && state !== stateFilter.value) {
-			rows.value = rows.value.filter((r) => r.name !== f.name)
-			total.value = Math.max(0, total.value - 1)
-			const sev = SEVERITY_ORDER.includes(f.severity) ? f.severity : "note"
+			rows.value = rows.value.filter((r) => r.name !== f.name);
+			total.value = Math.max(0, total.value - 1);
+			const sev = SEVERITY_ORDER.includes(f.severity) ? f.severity : "note";
 			if (severityCounts.value && severityCounts.value[sev] != null) {
 				severityCounts.value = {
 					...severityCounts.value,
 					[sev]: Math.max(0, severityCounts.value[sev] - 1),
-				}
+				};
 			}
 			if (expanded.value.has(f.name)) {
-				const next = new Set(expanded.value)
-				next.delete(f.name)
-				expanded.value = next
+				const next = new Set(expanded.value);
+				next.delete(f.name);
+				expanded.value = next;
 			}
 		}
 	} catch (e) {
-		f.state = prev
-		toast.error(errMsg(e))
+		f.state = prev;
+		toast.error(errMsg(e));
 	} finally {
-		busy.value = ""
+		busy.value = "";
 	}
 }
 
 // ── actions: take-to-chat + open-doc (decision: NO fabricated remediation) ──
 async function discussInChat(f) {
-	if (chatBusy.value) return
-	chatBusy.value = f.name
+	if (chatBusy.value) return;
+	chatBusy.value = f.name;
 	try {
-		const res = (await takeFindingToChat(f.name)) || {}
+		const res = (await takeFindingToChat(f.name)) || {};
 		if (!res.conversation) {
-			throw new Error(res.reason || "Could not open a conversation for this finding.")
+			throw new Error(res.reason || "Could not open a conversation for this finding.");
 		}
-		router.push("/c/" + res.conversation)
+		router.push("/c/" + res.conversation);
 	} catch (e) {
-		toast.error(errMsg(e))
+		toast.error(errMsg(e));
 	} finally {
-		chatBusy.value = ""
+		chatBusy.value = "";
 	}
 }
 function openDocument(f) {
-	if (f.ref_doctype && f.ref_name) window.open(refUrl(f), "_blank")
+	if (f.ref_doctype && f.ref_name) window.open(refUrl(f), "_blank");
 }
 
 function refUrl(row) {
-	const dt = String(row.ref_doctype || "").toLowerCase().replace(/ /g, "-")
-	return `/app/${dt}/${encodeURIComponent(row.ref_name)}`
+	const dt = String(row.ref_doctype || "")
+		.toLowerCase()
+		.replace(/ /g, "-");
+	return `/app/${dt}/${encodeURIComponent(row.ref_name)}`;
 }
 // "Statutory basis: {section} (effective {date}). {disclaimer}" - only the
 // pieces the run recorded
 function caveatText(f) {
-	const bits = []
+	const bits = [];
 	if (f.section) {
-		const eff = f.effective_date ? ` (effective ${formatDate(f.effective_date)})` : ""
-		bits.push(`Statutory basis: ${f.section}${eff}.`)
+		const eff = f.effective_date ? ` (effective ${formatDate(f.effective_date)})` : "";
+		bits.push(`Statutory basis: ${f.section}${eff}.`);
 	} else if (f.effective_date) {
-		bits.push(`Effective ${formatDate(f.effective_date)}.`)
+		bits.push(`Effective ${formatDate(f.effective_date)}.`);
 	}
-	if (f.disclaimer) bits.push(String(f.disclaimer))
-	return bits.join(" ")
+	if (f.disclaimer) bits.push(String(f.disclaimer));
+	return bits.join(" ");
 }
 function fmtAmount(v) {
-	const n = Number(v)
-	return isNaN(n) ? String(v) : n.toLocaleString(undefined, { maximumFractionDigits: 2 })
+	const n = Number(v);
+	return isNaN(n) ? String(v) : n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 </script>

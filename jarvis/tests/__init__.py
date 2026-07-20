@@ -43,6 +43,7 @@ quietly changed test outcomes across the suite.
 
 Escape hatch: ``JARVIS_ALLOW_REAL_NETWORK_IN_TESTS=1`` for a deliberate e2e run.
 """
+
 import os
 
 _ALLOW_ENV = "JARVIS_ALLOW_REAL_NETWORK_IN_TESTS"
@@ -56,8 +57,7 @@ _MSG = (
 	"OAuth credentials, with no undo. That is not hypothetical; it happened.\n"
 	"\n"
 	"Mock the transport your code uses (requests.post / websocket.create_connection / "
-	"urlopen). If you genuinely mean to hit the network, run with "
-	+ _ALLOW_ENV + "=1."
+	"urlopen). If you genuinely mean to hit the network, run with " + _ALLOW_ENV + "=1."
 )
 
 
@@ -94,9 +94,7 @@ def _install_network_block() -> None:
 		from urllib3.connectionpool import HTTPConnectionPool
 
 		def _blocked_urlopen(self, method, url, *a, **kw):
-			raise ConnectionRefusedError(
-				_MSG.format(target=f"{self.host}:{self.port}{url}")
-			)
+			raise ConnectionRefusedError(_MSG.format(target=f"{self.host}:{self.port}{url}"))
 
 		HTTPConnectionPool.urlopen = _blocked_urlopen
 	except Exception:  # pragma: no cover

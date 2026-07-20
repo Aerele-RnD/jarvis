@@ -16,8 +16,12 @@ def _h(prefix):
 class TestCreateDashboardChart(FrappeTestCase):
 	def test_count_time_series(self):
 		res = create_dashboard_chart(
-			chart_name=_h("JT Count"), document_type="ToDo", chart_type="Count",
-			based_on="creation", time_interval="Monthly", timespan="Last Year",
+			chart_name=_h("JT Count"),
+			document_type="ToDo",
+			chart_type="Count",
+			based_on="creation",
+			time_interval="Monthly",
+			timespan="Last Year",
 		)
 		self.assertTrue(res["name"])
 		self.assertEqual(res["chart_type"], "Count")
@@ -26,8 +30,11 @@ class TestCreateDashboardChart(FrappeTestCase):
 
 	def test_group_by(self):
 		res = create_dashboard_chart(
-			chart_name=_h("JT GroupBy"), document_type="ToDo", chart_type="Group By",
-			group_by_based_on="status", group_by_type="Count",
+			chart_name=_h("JT GroupBy"),
+			document_type="ToDo",
+			chart_type="Group By",
+			group_by_based_on="status",
+			group_by_type="Count",
 		)
 		self.assertTrue(res["name"])
 
@@ -42,7 +49,10 @@ class TestCreateDashboardChart(FrappeTestCase):
 	def test_sum_needs_value_field(self):
 		with self.assertRaises(InvalidArgumentError):
 			create_dashboard_chart(
-				chart_name="x", document_type="ToDo", chart_type="Sum", based_on="creation",
+				chart_name="x",
+				document_type="ToDo",
+				chart_type="Sum",
+				based_on="creation",
 			)
 
 	def test_duplicate_chart_name_returns_clean_error(self):
@@ -52,8 +62,7 @@ class TestCreateDashboardChart(FrappeTestCase):
 		from jarvis.api import _run_tool
 
 		name = _h("JT Dup")
-		args = {"chart_name": name, "document_type": "ToDo", "chart_type": "Count",
-				"based_on": "creation"}
+		args = {"chart_name": name, "document_type": "ToDo", "chart_type": "Count", "based_on": "creation"}
 		create_dashboard_chart(**args)
 		res = _run_tool("create_dashboard_chart", dict(args))
 		self.assertFalse(res["ok"])
@@ -63,15 +72,15 @@ class TestCreateDashboardChart(FrappeTestCase):
 class TestCreateDashboard(FrappeTestCase):
 	def test_dashboard_links_a_chart(self):
 		ch = create_dashboard_chart(
-			chart_name=_h("JT Dash Chart"), document_type="ToDo", chart_type="Count",
+			chart_name=_h("JT Dash Chart"),
+			document_type="ToDo",
+			chart_type="Count",
 			based_on="creation",
 		)
 		dash = create_dashboard(dashboard_name=_h("JT Dash"), charts=[ch["name"]])
 		self.assertTrue(dash["name"])
 		self.assertIn("dashboard", dash["url"])
-		linked = frappe.get_all(
-			"Dashboard Chart Link", filters={"parent": dash["name"]}, pluck="chart"
-		)
+		linked = frappe.get_all("Dashboard Chart Link", filters={"parent": dash["name"]}, pluck="chart")
 		self.assertIn(ch["name"], linked)
 
 	def test_empty_charts_rejected(self):

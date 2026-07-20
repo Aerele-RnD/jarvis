@@ -9,9 +9,9 @@ the deterministic turn-context injection for a role-matched user.
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
-from jarvis.tests.learning import factory
-from jarvis.learning import orchestrator, engine, compiler
 from jarvis.chat import learned_api
+from jarvis.learning import compiler, engine, orchestrator
+from jarvis.tests.learning import factory
 
 
 class TestPatternLearningE2E(FrappeTestCase):
@@ -23,16 +23,12 @@ class TestPatternLearningE2E(FrappeTestCase):
 		# park them so managed-skill inserts / apply can run, restore in teardown.
 		# Production managed sites have Administrator owning ~0 skills, so no parking
 		# is needed there (test-environment isolation only).
-		cls._parked = frappe.get_all(
-			"Jarvis Custom Skill", filters={"enabled": 1}, pluck="name"
-		)
+		cls._parked = frappe.get_all("Jarvis Custom Skill", filters={"enabled": 1}, pluck="name")
 		for n in cls._parked:
 			frappe.db.set_value("Jarvis Custom Skill", n, "enabled", 0, update_modified=False)
 		factory.wipe()
 		factory.build(commit=True)
-		frappe.get_single("Jarvis Settings").db_set(
-			"pattern_learning_enabled", 1, update_modified=False
-		)
+		frappe.get_single("Jarvis Settings").db_set("pattern_learning_enabled", 1, update_modified=False)
 		# clear any prior proposals for a deterministic count
 		frappe.flags.jarvis_pattern_engine = True
 		for n in frappe.get_all("Jarvis Learned Pattern", pluck="name"):
@@ -70,9 +66,11 @@ class TestPatternLearningE2E(FrappeTestCase):
 		)
 		self.assertGreater(len(props), 0, "engine must produce at least one proposal")
 		self._props = props
-		print(f"[E2E] proposals={len(props)} "
-		      f"A={sum(p.effective_sensitivity=='A' for p in props)} "
-		      f"B={sum(p.effective_sensitivity=='B' for p in props)}")
+		print(
+			f"[E2E] proposals={len(props)} "
+			f"A={sum(p.effective_sensitivity == 'A' for p in props)} "
+			f"B={sum(p.effective_sensitivity == 'B' for p in props)}"
+		)
 
 		# 3. API envelope shape
 		env = learned_api.list_learned_patterns_page()
@@ -100,10 +98,7 @@ class TestPatternLearningE2E(FrappeTestCase):
 
 		# 6. compile: only A-class content reaches the pushed body
 		bodies = compiler.compile_domain_skills()
-		compiled = {
-			d: (b.get("body") if isinstance(b, dict) else b) or ""
-			for d, b in bodies.items()
-		}
+		compiled = {d: (b.get("body") if isinstance(b, dict) else b) or "" for d, b in bodies.items()}
 		self.assertTrue(any(compiled.values()), "at least one A-class domain must compile a body")
 		joined = "\n".join(compiled.values())
 		# no stats jargon and no em-dashes in pushed bodies (plan 6.3)
@@ -119,18 +114,23 @@ class TestPatternLearningE2E(FrappeTestCase):
 		frappe.set_user("Administrator")
 		slug = "learned-selling"
 		if frappe.db.exists("Jarvis Custom Skill", {"skill_name": slug}):
-			frappe.delete_doc("Jarvis Custom Skill", frappe.db.get_value(
-				"Jarvis Custom Skill", {"skill_name": slug}, "name"), force=True)
-		doc = frappe.get_doc({
-			"doctype": "Jarvis Custom Skill",
-			"skill_name": slug,
-			"description": "Learned selling habits for this org.",
-			"instructions": "# Learned selling habits\n- test rule",
-			"enabled": 1,
-			"user_invocable": 0,
-			"managed_by_learning": 1,
-			"allowed_roles": [{"role": "Sales User"}],
-		})
+			frappe.delete_doc(
+				"Jarvis Custom Skill",
+				frappe.db.get_value("Jarvis Custom Skill", {"skill_name": slug}, "name"),
+				force=True,
+			)
+		doc = frappe.get_doc(
+			{
+				"doctype": "Jarvis Custom Skill",
+				"skill_name": slug,
+				"description": "Learned selling habits for this org.",
+				"instructions": "# Learned selling habits\n- test rule",
+				"enabled": 1,
+				"user_invocable": 0,
+				"managed_by_learning": 1,
+				"allowed_roles": [{"role": "Sales User"}],
+			}
+		)
 		doc.flags.ignore_permissions = True
 		# This dev bench's Administrator owns ~121 skills (over the per-owner cap);
 		# skip the cap validation for this managed fixture. Production Administrator
@@ -159,19 +159,22 @@ class TestPatternLearningE2E(FrappeTestCase):
 
 def _user_with_role(role):
 	"""Return an existing enabled user holding `role`, or Administrator as a fallback."""
-	users = frappe.get_all(
-		"Has Role", filters={"role": role, "parenttype": "User"}, pluck="parent", limit=5
-	)
+	users = frappe.get_all("Has Role", filters={"role": role, "parenttype": "User"}, pluck="parent", limit=5)
 	for u in users:
 		if u not in ("Administrator", "Guest") and frappe.db.get_value("User", u, "enabled"):
 			return u
 	# create a throwaway user for the role
 	email = f"e2e-{role.lower().replace(' ', '-')}@example.com"
 	if not frappe.db.exists("User", email):
-		u = frappe.get_doc({
-			"doctype": "User", "email": email, "first_name": "E2E",
-			"roles": [{"role": role}], "enabled": 1,
-		})
+		u = frappe.get_doc(
+			{
+				"doctype": "User",
+				"email": email,
+				"first_name": "E2E",
+				"roles": [{"role": role}],
+				"enabled": 1,
+			}
+		)
 		u.flags.ignore_permissions = True
 		u.insert()
 		frappe.db.commit()

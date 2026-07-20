@@ -11,6 +11,7 @@ OpenclawSession.connect (a dedicated connection, never the pool), so tests patch
 ``connect`` with a fake session exposing list_sessions/delete_session/close.
 Conversations and messages are real rows on the test site.
 """
+
 from __future__ import annotations
 
 import time
@@ -72,8 +73,17 @@ class TestSessionLifecycle(FrappeTestCase):
 		frappe.clear_document_cache(SETTINGS, SETTINGS)
 		frappe.db.commit()
 
-	def _conv(self, *, session_key=None, idle_days, streaming=False,
-	          starred=0, status="Active", has_message=False, file_box=0):
+	def _conv(
+		self,
+		*,
+		session_key=None,
+		idle_days,
+		streaming=False,
+		starred=0,
+		status="Active",
+		has_message=False,
+		file_box=0,
+	):
 		"""Insert a real conversation fixture.
 
 		``has_message`` gives it a normal completed message (so it is NOT an
@@ -81,39 +91,61 @@ class TestSessionLifecycle(FrappeTestCase):
 		gives it an in-flight message; ``file_box`` marks it a File-Box drop; the
 		default is a truly empty 0-message chat.
 		"""
-		doc = frappe.get_doc({
-			"doctype": CONV, "title": f"lc-{session_key or idle_days}",
-			"starred": starred, "status": status, "file_box": file_box,
-		}).insert(ignore_permissions=True)
+		doc = frappe.get_doc(
+			{
+				"doctype": CONV,
+				"title": f"lc-{session_key or idle_days}",
+				"starred": starred,
+				"status": status,
+				"file_box": file_box,
+			}
+		).insert(ignore_permissions=True)
 		self._made.append(doc.name)
-		fields = {"last_active_at": frappe.utils.add_to_date(
-			frappe.utils.now_datetime(), days=-idle_days)}
+		fields = {"last_active_at": frappe.utils.add_to_date(frappe.utils.now_datetime(), days=-idle_days)}
 		if session_key:
 			fields["session_key"] = session_key
 		frappe.db.set_value(CONV, doc.name, fields)
 		if streaming:
-			frappe.get_doc({
-				"doctype": MSG, "conversation": doc.name, "seq": 1,
-				"role": "assistant", "content": "", "streaming": 1,
-			}).insert(ignore_permissions=True)
+			frappe.get_doc(
+				{
+					"doctype": MSG,
+					"conversation": doc.name,
+					"seq": 1,
+					"role": "assistant",
+					"content": "",
+					"streaming": 1,
+				}
+			).insert(ignore_permissions=True)
 		elif has_message:
-			frappe.get_doc({
-				"doctype": MSG, "conversation": doc.name, "seq": 1,
-				"role": "user", "content": "hi",
-			}).insert(ignore_permissions=True)
+			frappe.get_doc(
+				{
+					"doctype": MSG,
+					"conversation": doc.name,
+					"seq": 1,
+					"role": "user",
+					"content": "hi",
+				}
+			).insert(ignore_permissions=True)
 		if session_key:
-			frappe.get_doc({
-				"doctype": CHAT_SESSION, "session_key": session_key,
-				"user": "Administrator", "chat_device_id": "d1",
-			}).insert(ignore_permissions=True)
+			frappe.get_doc(
+				{
+					"doctype": CHAT_SESSION,
+					"session_key": session_key,
+					"user": "Administrator",
+					"chat_device_id": "d1",
+				}
+			).insert(ignore_permissions=True)
 		frappe.db.commit()
 		return doc.name
 
 	def _run(self, sess):
-		with patch(
-			"jarvis.chat.openclaw_client.OpenclawSession.connect",
-			return_value=sess,
-		), patch("jarvis.selfhost.is_self_hosted", return_value=False):
+		with (
+			patch(
+				"jarvis.chat.openclaw_client.OpenclawSession.connect",
+				return_value=sess,
+			),
+			patch("jarvis.selfhost.is_self_hosted", return_value=False),
+		):
 			return session_lifecycle.rotate_dormant_sessions()
 
 	def _get(self, name, field):
@@ -231,8 +263,7 @@ class TestSessionLifecycle(FrappeTestCase):
 		bench pointers finally clear instead of retry-failing forever."""
 		name = self._conv(session_key="test-lc-gone", idle_days=40, has_message=True)
 		sess = _fake_sess()
-		sess.delete_session.side_effect = RuntimeError(
-			"gateway error: session not found: test-lc-gone")
+		sess.delete_session.side_effect = RuntimeError("gateway error: session not found: test-lc-gone")
 		summary = self._run(sess)
 		self.assertEqual(summary["sessions_freed"], 1)
 		self.assertEqual(summary["errors"], 0)
@@ -251,8 +282,7 @@ class TestSessionLifecycle(FrappeTestCase):
 				raise RuntimeError("simulated deadlock")
 			return real_set_value(dt, name, *args, **kwargs)
 
-		with patch("frappe.db.set_value", side_effect=flaky_set_value), \
-		     patch("frappe.log_error") as log_err:
+		with patch("frappe.db.set_value", side_effect=flaky_set_value), patch("frappe.log_error") as log_err:
 			summary = self._run(sess)
 		self.assertEqual(summary["sessions_freed"], 1)
 		self.assertEqual(summary["errors"], 1)
@@ -272,8 +302,7 @@ class TestSessionLifecycle(FrappeTestCase):
 				raise RuntimeError("lookup delete boom")
 			return real_delete(doctype, *a, **k)
 
-		with patch("frappe.db.delete", side_effect=flaky_delete), \
-		     patch("frappe.log_error"):
+		with patch("frappe.db.delete", side_effect=flaky_delete), patch("frappe.log_error"):
 			summary = self._run(sess)
 		self.assertEqual(summary["errors"], 1)
 		self.assertEqual(summary["sessions_freed"], 0)
@@ -313,7 +342,7 @@ class TestSessionLifecycle(FrappeTestCase):
 		name = self._conv(session_key="test-lc-stray", idle_days=10)  # < 30, > 7
 		sess = _fake_sess()
 		summary = self._run(sess)
-		self.assertEqual(summary["sessions_freed"], 0)   # 10 days < 30-day session window
+		self.assertEqual(summary["sessions_freed"], 0)  # 10 days < 30-day session window
 		self.assertEqual(summary["empty_reaped"], 1)
 		sess.delete_session.assert_any_call("test-lc-stray")
 		self.assertFalse(frappe.db.exists(CONV, name))
@@ -339,11 +368,16 @@ class TestSessionLifecycle(FrappeTestCase):
 		# Belt-and-suspenders for delete_doc's cascade to attached Files: any chat
 		# with an attached File is spared regardless of the file_box flag.
 		name = self._conv(idle_days=10)
-		f = frappe.get_doc({
-			"doctype": "File", "file_name": "lc-attach.txt",
-			"attached_to_doctype": CONV, "attached_to_name": name,
-			"content": "x", "is_private": 1,
-		}).insert(ignore_permissions=True)
+		f = frappe.get_doc(
+			{
+				"doctype": "File",
+				"file_name": "lc-attach.txt",
+				"attached_to_doctype": CONV,
+				"attached_to_name": name,
+				"content": "x",
+				"is_private": 1,
+			}
+		).insert(ignore_permissions=True)
 		self.addCleanup(lambda: frappe.delete_doc("File", f.name, force=True, ignore_permissions=True))
 		frappe.db.commit()
 		summary = self._run(_fake_sess())
@@ -370,38 +404,47 @@ class TestSessionLifecycle(FrappeTestCase):
 	# ---- orphan sweep -----------------------------------------------
 
 	def test_orphan_throwaway_reaped(self):
-		sess = _fake_sess(entries=[{
-			"key": "test-lc-orph:dashboard:o1",
-			"hasActiveRun": False, "updatedAt": OLD_MS,
-		}])
+		sess = _fake_sess(
+			entries=[
+				{
+					"key": "test-lc-orph:dashboard:o1",
+					"hasActiveRun": False,
+					"updatedAt": OLD_MS,
+				}
+			]
+		)
 		summary = self._run(sess)
 		self.assertEqual(summary["orphans_reaped"], 1)
 		sess.delete_session.assert_any_call("test-lc-orph:dashboard:o1")
 
 	def test_referenced_session_never_reaped(self):
 		self._conv(session_key="test-lc-ref:dashboard:live-1", idle_days=2, has_message=True)
-		sess = _fake_sess(entries=[{
-			"key": "test-lc-ref:dashboard:live-1",
-			"hasActiveRun": False, "updatedAt": OLD_MS,
-		}])
+		sess = _fake_sess(
+			entries=[
+				{
+					"key": "test-lc-ref:dashboard:live-1",
+					"hasActiveRun": False,
+					"updatedAt": OLD_MS,
+				}
+			]
+		)
 		summary = self._run(sess)
 		self.assertEqual(summary["orphans_reaped"], 0)
 		sess.delete_session.assert_not_called()
 
 	def test_recent_or_active_or_foreign_orphans_skipped(self):
-		sess = _fake_sess(entries=[
-			# Inside grace: may be an in-flight title/prewarm throwaway.
-			{"key": "test-lc-orph:dashboard:young", "hasActiveRun": False,
-			 "updatedAt": NOW_MS},
-			# Active run: never touch.
-			{"key": "test-lc-orph:dashboard:running", "hasActiveRun": True,
-			 "updatedAt": OLD_MS},
-			# No usable timestamp: conservative skip.
-			{"key": "test-lc-orph:dashboard:nots", "hasActiveRun": False},
-			# Outside the chat namespace: not ours to manage.
-			{"key": "agent:main:main", "hasActiveRun": False,
-			 "updatedAt": OLD_MS},
-		])
+		sess = _fake_sess(
+			entries=[
+				# Inside grace: may be an in-flight title/prewarm throwaway.
+				{"key": "test-lc-orph:dashboard:young", "hasActiveRun": False, "updatedAt": NOW_MS},
+				# Active run: never touch.
+				{"key": "test-lc-orph:dashboard:running", "hasActiveRun": True, "updatedAt": OLD_MS},
+				# No usable timestamp: conservative skip.
+				{"key": "test-lc-orph:dashboard:nots", "hasActiveRun": False},
+				# Outside the chat namespace: not ours to manage.
+				{"key": "agent:main:main", "hasActiveRun": False, "updatedAt": OLD_MS},
+			]
+		)
 		summary = self._run(sess)
 		self.assertEqual(summary["orphans_reaped"], 0)
 		sess.delete_session.assert_not_called()
@@ -411,24 +454,44 @@ class TestSessionLifecycle(FrappeTestCase):
 		can never be a conversation whose session_key has not committed yet -
 		those are always labelled jarvis-chat-* - so the long grace bought
 		nothing here and only let the pile grow."""
-		sess = _fake_sess(entries=[
-			{"key": "test-lc-orph:dashboard:pw", "label": "jarvis-prewarm-abc123",
-			 "hasActiveRun": False, "updatedAt": THROWAWAY_OLD_MS},
-			{"key": "test-lc-orph:dashboard:ti", "label": "jarvis-title-def456",
-			 "hasActiveRun": False, "updatedAt": THROWAWAY_OLD_MS},
-			{"key": "test-lc-orph:dashboard:po", "label": "jarvis-polish-ghi789",
-			 "hasActiveRun": False, "updatedAt": THROWAWAY_OLD_MS},
-		])
+		sess = _fake_sess(
+			entries=[
+				{
+					"key": "test-lc-orph:dashboard:pw",
+					"label": "jarvis-prewarm-abc123",
+					"hasActiveRun": False,
+					"updatedAt": THROWAWAY_OLD_MS,
+				},
+				{
+					"key": "test-lc-orph:dashboard:ti",
+					"label": "jarvis-title-def456",
+					"hasActiveRun": False,
+					"updatedAt": THROWAWAY_OLD_MS,
+				},
+				{
+					"key": "test-lc-orph:dashboard:po",
+					"label": "jarvis-polish-ghi789",
+					"hasActiveRun": False,
+					"updatedAt": THROWAWAY_OLD_MS,
+				},
+			]
+		)
 		summary = self._run(sess)
 		self.assertEqual(summary["orphans_reaped"], 3)
 		for k in ("pw", "ti", "po"):
 			sess.delete_session.assert_any_call(f"test-lc-orph:dashboard:{k}")
 
 	def test_throwaway_inside_the_short_grace_skipped(self):
-		sess = _fake_sess(entries=[{
-			"key": "test-lc-orph:dashboard:fresh", "label": "jarvis-prewarm-abc123",
-			"hasActiveRun": False, "updatedAt": NOW_MS,
-		}])
+		sess = _fake_sess(
+			entries=[
+				{
+					"key": "test-lc-orph:dashboard:fresh",
+					"label": "jarvis-prewarm-abc123",
+					"hasActiveRun": False,
+					"updatedAt": NOW_MS,
+				}
+			]
+		)
 		summary = self._run(sess)
 		self.assertEqual(summary["orphans_reaped"], 0)
 		sess.delete_session.assert_not_called()
@@ -437,13 +500,21 @@ class TestSessionLifecycle(FrappeTestCase):
 		"""The short grace is opt-in by label prefix. A real chat session (or an
 		unlabelled one) at the same age still gets the conservative 24h - THAT is
 		the row whose session_key may simply not have committed yet."""
-		sess = _fake_sess(entries=[
-			{"key": "test-lc-orph:dashboard:chat",
-			 "label": "jarvis-chat-a@b.c-1700000000000",
-			 "hasActiveRun": False, "updatedAt": THROWAWAY_OLD_MS},
-			{"key": "test-lc-orph:dashboard:nolabel",
-			 "hasActiveRun": False, "updatedAt": THROWAWAY_OLD_MS},
-		])
+		sess = _fake_sess(
+			entries=[
+				{
+					"key": "test-lc-orph:dashboard:chat",
+					"label": "jarvis-chat-a@b.c-1700000000000",
+					"hasActiveRun": False,
+					"updatedAt": THROWAWAY_OLD_MS,
+				},
+				{
+					"key": "test-lc-orph:dashboard:nolabel",
+					"hasActiveRun": False,
+					"updatedAt": THROWAWAY_OLD_MS,
+				},
+			]
+		)
 		summary = self._run(sess)
 		self.assertEqual(summary["orphans_reaped"], 0)
 		sess.delete_session.assert_not_called()
@@ -464,10 +535,15 @@ class TestSessionLifecycle(FrappeTestCase):
 		sessions - the one population here that grows without bound."""
 		for i in range(3):
 			self._conv(session_key=f"test-lc-starve-{i}", idle_days=40, has_message=True)
-		entries = [{
-			"key": f"test-lc-orph:dashboard:s{i}", "label": f"jarvis-prewarm-{i}",
-			"hasActiveRun": False, "updatedAt": THROWAWAY_OLD_MS,
-		} for i in range(3)]
+		entries = [
+			{
+				"key": f"test-lc-orph:dashboard:s{i}",
+				"label": f"jarvis-prewarm-{i}",
+				"hasActiveRun": False,
+				"updatedAt": THROWAWAY_OLD_MS,
+			}
+			for i in range(3)
+		]
 		sess = _fake_sess(entries=entries)
 		# A retention budget fully consumed by part 1 leaves nothing over...
 		with patch.object(session_lifecycle, "BATCH_MAX", 3):
@@ -476,10 +552,15 @@ class TestSessionLifecycle(FrappeTestCase):
 		self.assertEqual(summary["orphans_reaped"], 3)  # ...and orphans run anyway.
 
 	def test_orphan_batch_cap_bounds_orphan_work(self):
-		entries = [{
-			"key": f"test-lc-orph:dashboard:c{i}", "label": f"jarvis-prewarm-{i}",
-			"hasActiveRun": False, "updatedAt": THROWAWAY_OLD_MS,
-		} for i in range(5)]
+		entries = [
+			{
+				"key": f"test-lc-orph:dashboard:c{i}",
+				"label": f"jarvis-prewarm-{i}",
+				"hasActiveRun": False,
+				"updatedAt": THROWAWAY_OLD_MS,
+			}
+			for i in range(5)
+		]
 		sess = _fake_sess(entries=entries)
 		with patch.object(session_lifecycle, "ORPHAN_BATCH_MAX", 2):
 			summary = self._run(sess)
@@ -490,10 +571,16 @@ class TestSessionLifecycle(FrappeTestCase):
 		frappe.db.set_single_value(SETTINGS, RETENTION_FIELD, 0)
 		frappe.clear_document_cache(SETTINGS, SETTINGS)
 		frappe.db.commit()
-		sess = _fake_sess(entries=[{
-			"key": "test-lc-orph:dashboard:off", "label": "jarvis-prewarm-abc123",
-			"hasActiveRun": False, "updatedAt": THROWAWAY_OLD_MS,
-		}])
+		sess = _fake_sess(
+			entries=[
+				{
+					"key": "test-lc-orph:dashboard:off",
+					"label": "jarvis-prewarm-abc123",
+					"hasActiveRun": False,
+					"updatedAt": THROWAWAY_OLD_MS,
+				}
+			]
+		)
 		summary = self._run(sess)
 		self.assertEqual(summary["sessions_freed"], 0)
 		self.assertEqual(summary["orphans_reaped"], 1)
@@ -501,21 +588,26 @@ class TestSessionLifecycle(FrappeTestCase):
 	# ---- gating ------------------------------------------------------
 
 	def test_self_hosted_early_return(self):
-		with patch("jarvis.selfhost.is_self_hosted", return_value=True), \
-		     patch(
-			"jarvis.chat.openclaw_client.OpenclawSession.connect",
-		) as connect:
+		with (
+			patch("jarvis.selfhost.is_self_hosted", return_value=True),
+			patch(
+				"jarvis.chat.openclaw_client.OpenclawSession.connect",
+			) as connect,
+		):
 			summary = session_lifecycle.rotate_dormant_sessions()
 		self.assertEqual(summary, {"skipped": "self-hosted"})
 		connect.assert_not_called()
 
 	def test_connect_failure_is_a_clean_skip(self):
 		self._conv(session_key="test-lc-x", idle_days=40, has_message=True)
-		with patch(
-			"jarvis.chat.openclaw_client.OpenclawSession.connect",
-			side_effect=RuntimeError("refused"),
-		), patch("jarvis.selfhost.is_self_hosted", return_value=False), \
-		     patch("frappe.log_error"):
+		with (
+			patch(
+				"jarvis.chat.openclaw_client.OpenclawSession.connect",
+				side_effect=RuntimeError("refused"),
+			),
+			patch("jarvis.selfhost.is_self_hosted", return_value=False),
+			patch("frappe.log_error"),
+		):
 			summary = session_lifecycle.rotate_dormant_sessions()
 		self.assertEqual(summary, {"skipped": "connect failed"})
 

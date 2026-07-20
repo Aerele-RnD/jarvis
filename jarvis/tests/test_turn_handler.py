@@ -16,8 +16,7 @@ from unittest.mock import MagicMock, patch
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
-from jarvis.chat import openclaw_session_pool
-from jarvis.chat import turn_handler, worker
+from jarvis.chat import openclaw_session_pool, turn_handler, worker
 from jarvis.tests.test_chat_api import (
 	TEST_USER,
 	_cleanup_user_conversations,
@@ -52,22 +51,26 @@ class TestHandleChatSendAcceptsPayloadDict(FrappeTestCase):
 	def test_payload_dict_drives_a_full_turn(self):
 		fake_sess = MagicMock()
 		fake_sess.chat_send.side_effect = lambda sk, msg, idem, **kw: {"runId": idem, "status": "started"}
-		fake_sess.relay_turn_events.return_value = _fake_event_stream([
-			{"kind": "lifecycle", "phase": "start"},
-			{"kind": "assistant", "text": "ok", "delta": "ok"},
-			{"kind": "lifecycle", "phase": "end"},
-			{"kind": "relay:final", "text": None},
-		])
+		fake_sess.relay_turn_events.return_value = _fake_event_stream(
+			[
+				{"kind": "lifecycle", "phase": "start"},
+				{"kind": "assistant", "text": "ok", "delta": "ok"},
+				{"kind": "lifecycle", "phase": "end"},
+				{"kind": "relay:final", "text": None},
+			]
+		)
 		with patch(
 			"jarvis.chat.openclaw_session_pool.OpenclawSession.connect",
 			return_value=fake_sess,
 		):
 			with patch("jarvis.chat.worker.publish_to_user") as pub:
-				turn_handler.handle_chat_send({
-					"conversation_id": self.conv,
-					"message_id": self.user_msg,
-					"run_id": "r-payload",
-				})
+				turn_handler.handle_chat_send(
+					{
+						"conversation_id": self.conv,
+						"message_id": self.user_msg,
+						"run_id": "r-payload",
+					}
+				)
 
 		# The assistant placeholder was created, content was persisted,
 		# streaming flipped off. (Behavioural depth lives in
@@ -93,20 +96,24 @@ class TestHandleChatSendAcceptsPayloadDict(FrappeTestCase):
 		must treat them as None and not blow up on missing keys."""
 		fake_sess = MagicMock()
 		fake_sess.chat_send.side_effect = lambda sk, msg, idem, **kw: {"runId": idem, "status": "started"}
-		fake_sess.relay_turn_events.return_value = _fake_event_stream([
-			{"kind": "lifecycle", "phase": "end"},
-			{"kind": "relay:final", "text": None},
-		])
+		fake_sess.relay_turn_events.return_value = _fake_event_stream(
+			[
+				{"kind": "lifecycle", "phase": "end"},
+				{"kind": "relay:final", "text": None},
+			]
+		)
 		with patch(
 			"jarvis.chat.openclaw_session_pool.OpenclawSession.connect",
 			return_value=fake_sess,
 		):
 			with patch("jarvis.chat.worker.publish_to_user"):
-				turn_handler.handle_chat_send({
-					"conversation_id": self.conv,
-					"message_id": self.user_msg,
-					"run_id": "r-optional",
-				})
+				turn_handler.handle_chat_send(
+					{
+						"conversation_id": self.conv,
+						"message_id": self.user_msg,
+						"run_id": "r-optional",
+					}
+				)
 		# Reached this line without KeyError: the payload contract for
 		# the optional fields holds.
 		self.assertTrue(True)
@@ -164,18 +171,24 @@ class TestOrgLocaleClause(unittest.TestCase):
 		# deterministic on sites that carry a real Fiscal Year; pass ``fiscal``
 		# (a dict) to opt into a mocked FY, default raises -> no fy clause.
 		fy_kwargs = {"return_value": fiscal} if fiscal is not None else {"side_effect": RuntimeError("no fy")}
-		with patch("frappe.defaults.get_global_default", return_value=company), \
-			patch("frappe.get_cached_value", side_effect=lambda dt, name, field: cached.get(field, "")), \
-			patch("frappe.db.get_single_value", side_effect=lambda dt, field: singles.get(field, "")), \
-			patch("frappe.db.get_default", return_value=default), \
-			patch("erpnext.accounts.utils.get_fiscal_year", **fy_kwargs):
+		with (
+			patch("frappe.defaults.get_global_default", return_value=company),
+			patch("frappe.get_cached_value", side_effect=lambda dt, name, field: cached.get(field, "")),
+			patch("frappe.db.get_single_value", side_effect=lambda dt, field: singles.get(field, "")),
+			patch("frappe.db.get_default", return_value=default),
+			patch("erpnext.accounts.utils.get_fiscal_year", **fy_kwargs),
+		):
 			return turn_handler._org_locale_clause()
 
 	def test_full_company_locale(self):
 		clause = self._run(
 			company="Acme Ltd",
 			cached={"country": "India", "default_currency": "INR"},
-			singles={"date_format": "dd-mm-yyyy", "number_format": "#,##,###.##", "time_zone": "Asia/Kolkata"},
+			singles={
+				"date_format": "dd-mm-yyyy",
+				"number_format": "#,##,###.##",
+				"time_zone": "Asia/Kolkata",
+			},
 		)
 		self.assertTrue(clause.startswith("; "))
 		self.assertIn("org: Acme Ltd (India, INR)", clause)

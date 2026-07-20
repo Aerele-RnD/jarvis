@@ -26,7 +26,6 @@ from jarvis.exceptions import (
 	AdminValidationError,
 )
 
-
 # Outer bench->admin HTTP budget. It MUST sit strictly ABOVE the admin's own
 # admin->agent leg (now 100s) so the bench never hangs up on an apply the admin
 # is still driving and writes a spurious "failed" over creds that land seconds
@@ -72,6 +71,7 @@ def _m(dotted: str) -> str:
 	"""Build an admin /api/method path under the configured admin-app namespace.
 	e.g. _m("api.tenant.renew") -> "/api/method/jarvis_admin_v2.api.tenant.renew"."""
 	return f"/api/method/{_admin_app()}.{dotted}"
+
 
 # Cap on the cross-boundary message length. Long messages (e.g. a Frappe
 # 500 with a 10KB traceback that happens to embed a token mid-frame) get
@@ -124,21 +124,25 @@ def _scrub_secrets(text: str) -> str:
 		return text
 	out = text
 	for pat in _SECRET_PATTERNS:
-		out = pat.sub(lambda m: (
-			# Keyword + "=[REDACTED]" for the labeled-credential pattern;
-			# bare "[REDACTED]" for the prefix / JWT patterns (whole match
-			# IS the secret).
-			f"{m.group(1)}=[REDACTED]" if m.lastindex else "[REDACTED]"
-		), out)
+		out = pat.sub(
+			lambda m: (
+				# Keyword + "=[REDACTED]" for the labeled-credential pattern;
+				# bare "[REDACTED]" for the prefix / JWT patterns (whole match
+				# IS the secret).
+				f"{m.group(1)}=[REDACTED]" if m.lastindex else "[REDACTED]"
+			),
+			out,
+		)
 	if len(out) > _MAX_MESSAGE_CHARS:
 		out = out[:_MAX_MESSAGE_CHARS] + "...[truncated]"
 	return out
+
 
 # DEFAULT_ADMIN_URL lives in hooks.py as a single source of truth for
 # deployment-level constants; re-exported here so existing
 # ``from jarvis.admin_client import DEFAULT_ADMIN_URL`` callers keep working.
 # Override per-customer via ``Jarvis Settings.jarvis_admin_url``.
-from jarvis.hooks import DEFAULT_ADMIN_URL  # noqa: E402  - used by _admin_url() below
+from jarvis.hooks import DEFAULT_ADMIN_URL
 
 
 def _admin_url(settings) -> str:
@@ -152,6 +156,7 @@ def _admin_url(settings) -> str:
 	# value added after worker start is honored without a restart (the
 	# module-level DEFAULT_ADMIN_URL import binds once and would miss it).
 	from jarvis.hooks import get_default_admin_url
+
 	conf_url = (frappe.conf.get("jarvis_admin_url") or "").strip().rstrip("/")
 	if conf_url:
 		return conf_url
@@ -170,8 +175,12 @@ def signup(email: str, company_name: str, plan: str, coupon: str | None = None) 
 	(no razorpay_order_id - the order is deferred until the customer clicks
 	the magic link and the bench polls ``get_signup_payment_state``).
 	"""
-	body = {"email": email, "company_name": company_name, "plan": plan,
-			"frappe_site_url": frappe.utils.get_url()}
+	body = {
+		"email": email,
+		"company_name": company_name,
+		"plan": plan,
+		"frappe_site_url": frappe.utils.get_url(),
+	}
 	if coupon:
 		body["coupon"] = coupon
 	return _post_guest(path=_m("billing.signup.signup"), body=body)
@@ -202,8 +211,12 @@ def dev_signup(email: str, company_name: str, plan: str) -> dict:
 	"""Razorpay-free dev signup. Returns admin's flat dict incl. api_key + api_secret + connection."""
 	return _post_guest(
 		path=_m("billing.signup.dev_force_signup"),
-		body={"email": email, "company_name": company_name, "plan": plan,
-			  "frappe_site_url": frappe.utils.get_url()},
+		body={
+			"email": email,
+			"company_name": company_name,
+			"plan": plan,
+			"frappe_site_url": frappe.utils.get_url(),
+		},
 	)
 
 
@@ -224,6 +237,7 @@ def get_preset_catalog() -> list:
 	and fall back to the last cached copy then the bundled default so onboarding
 	never hard-fails (spec L7). Never raises."""
 	from jarvis._preset_catalog import BUNDLED_PRESET_CATALOG
+
 	cache = frappe.cache()
 	cached = cache.get_value(_PRESET_CATALOG_CACHE_KEY)
 	if cached:
@@ -279,14 +293,10 @@ def get_stt_config() -> dict | None:
 		# slow admin must degrade to "not configured", not block the SPA.
 		cfg = _post(path=_m("api.tenant.get_stt_config"), body={}, timeout_s=5)
 	except Exception:
-		cache.set_value(
-			_STT_CONFIG_CACHE_KEY, _STT_CONFIG_MISS, expires_in_sec=_STT_CONFIG_MISS_TTL_S
-		)
+		cache.set_value(_STT_CONFIG_CACHE_KEY, _STT_CONFIG_MISS, expires_in_sec=_STT_CONFIG_MISS_TTL_S)
 		return None
 	if not isinstance(cfg, dict):
-		cache.set_value(
-			_STT_CONFIG_CACHE_KEY, _STT_CONFIG_MISS, expires_in_sec=_STT_CONFIG_MISS_TTL_S
-		)
+		cache.set_value(_STT_CONFIG_CACHE_KEY, _STT_CONFIG_MISS, expires_in_sec=_STT_CONFIG_MISS_TTL_S)
 		return None
 	out = {
 		"enabled": bool(cfg.get("enabled")),
@@ -325,7 +335,10 @@ def renew() -> dict:
 
 
 def post_update_llm_creds(
-	provider: str, model: str, base_url: str, api_key: str,
+	provider: str,
+	model: str,
+	base_url: str,
+	api_key: str,
 	auth_mode: str = "api_key",
 ) -> dict:
 	"""POST customer's new LLM creds to admin's /tenant/update-llm-creds.
@@ -339,8 +352,10 @@ def post_update_llm_creds(
 	return _post(
 		path=_m("api.tenant.update_llm_creds"),
 		body={
-			"provider": provider, "model": model,
-			"base_url": base_url, "api_key": api_key,
+			"provider": provider,
+			"model": model,
+			"base_url": base_url,
+			"api_key": api_key,
 			"auth_mode": auth_mode,
 			"installed_apps": frappe.get_installed_apps(),
 		},
@@ -497,8 +512,9 @@ def post_push_learned_skills(learned_skills: list[dict]) -> dict:
 	)
 
 
-def push_wiki_files(files: list[dict], delete: list | None = None,
-					known_paths: list | None = None) -> dict | None:
+def push_wiki_files(
+	files: list[dict], delete: list | None = None, known_paths: list | None = None
+) -> dict | None:
 	"""POST one batch of rendered org-wiki mirror files to admin → fleet →
 	container workspace ``wiki/`` (wiki v2 mirror; see jarvis.chat.wiki_mirror).
 
@@ -610,7 +626,9 @@ def post_update_llm_pool(*, spec: dict, api_keys: dict, oauth_blobs: dict) -> di
 	return _post(
 		path=_m("api.tenant.update_llm_pool"),
 		body={
-			"spec": spec, "api_keys": api_keys, "oauth_blobs": oauth_blobs,
+			"spec": spec,
+			"api_keys": api_keys,
+			"oauth_blobs": oauth_blobs,
 			"installed_apps": frappe.get_installed_apps(),
 		},
 	)
@@ -760,10 +778,7 @@ def _oauth_token_request(admin_url: str, grant: dict) -> dict | None:
 		err = token.get("error") if isinstance(token, dict) else None
 		frappe.log_error(
 			title="admin_client: oauth token request rejected",
-			message=(
-				f"grant={grant.get('grant_type')!r} "
-				f"status={resp.status_code} error={err!r}"
-			),
+			message=(f"grant={grant.get('grant_type')!r} status={resp.status_code} error={err!r}"),
 		)
 		return None
 	return token
@@ -787,8 +802,7 @@ def _cache_oauth_token(token: dict) -> None:
 	)
 
 
-def _admin_access_token(settings, admin_url: str, *,
-						force_refresh: bool = False) -> str | None:
+def _admin_access_token(settings, admin_url: str, *, force_refresh: bool = False) -> str | None:
 	"""Return a valid OAuth bearer access token for admin, or None when the
 	bench has no OAuth credentials stored (pre-OAuth customer -> caller falls
 	back to api_key:api_secret).
@@ -799,9 +813,7 @@ def _admin_access_token(settings, admin_url: str, *,
 	"""
 	username = (settings.jarvis_admin_customer_email or "").strip()
 	# Password field -> get_password decrypts the real value out of __Auth.
-	password = (settings.get_password(
-		"jarvis_admin_customer_password", raise_exception=False
-	) or "").strip()
+	password = (settings.get_password("jarvis_admin_customer_password", raise_exception=False) or "").strip()
 	if not username or not password:
 		return None
 
@@ -814,21 +826,29 @@ def _admin_access_token(settings, admin_url: str, *,
 	token = None
 	refresh = cached.get("refresh_token")
 	if refresh:
-		token = _oauth_token_request(admin_url, {
-			"grant_type": "refresh_token", "refresh_token": refresh,
-		})
+		token = _oauth_token_request(
+			admin_url,
+			{
+				"grant_type": "refresh_token",
+				"refresh_token": refresh,
+			},
+		)
 	if not token:
-		token = _oauth_token_request(admin_url, {
-			"grant_type": "password", "username": username, "password": password,
-		})
+		token = _oauth_token_request(
+			admin_url,
+			{
+				"grant_type": "password",
+				"username": username,
+				"password": password,
+			},
+		)
 	if not token:
 		return None
 	_cache_oauth_token(token)
 	return token["access_token"]
 
 
-def _post(path: str, body: dict, *,
-		  timeout_s: int = DEFAULT_TIMEOUT_S) -> dict:
+def _post(path: str, body: dict, *, timeout_s: int = DEFAULT_TIMEOUT_S) -> dict:
 	"""Authenticated POST. Prefers a short-lived OAuth bearer token (password
 	grant, cached in Redis) and falls back to the legacy native
 	api_key:api_secret for customers onboarded before OAuth. Raises
@@ -879,16 +899,10 @@ def _post(path: str, body: dict, *,
 	# Legacy native api_key:api_secret (pre-OAuth customers / OAuth fallback).
 	# Both are Password fields - attribute access returns the masked "*****"
 	# placeholder; get_password decrypts the real value out of __Auth.
-	api_key = (settings.get_password(
-		"jarvis_admin_api_key", raise_exception=False
-	) or "").strip()
-	api_secret = (settings.get_password(
-		"jarvis_admin_api_secret", raise_exception=False
-	) or "").strip()
+	api_key = (settings.get_password("jarvis_admin_api_key", raise_exception=False) or "").strip()
+	api_secret = (settings.get_password("jarvis_admin_api_secret", raise_exception=False) or "").strip()
 	if not api_key or not api_secret:
-		raise AdminAuthError(
-			"not onboarded (Jarvis Settings: no OAuth password and no api_key/secret)"
-		)
+		raise AdminAuthError("not onboarded (Jarvis Settings: no OAuth password and no api_key/secret)")
 	headers = {
 		"Authorization": f"token {api_key}:{api_secret}",
 		"Content-Type": "application/json",
@@ -896,8 +910,7 @@ def _post(path: str, body: dict, *,
 	return _do_post(admin_url + path, body, headers, timeout_s, admin_url)
 
 
-def _post_guest(path: str, body: dict, *,
-				timeout_s: int = DEFAULT_TIMEOUT_S) -> dict:
+def _post_guest(path: str, body: dict, *, timeout_s: int = DEFAULT_TIMEOUT_S) -> dict:
 	"""Unauthenticated POST (signup, get_plans). No Authorization header.
 	Fetches the admin URL override from Settings internally so callers
 	don't have to."""
@@ -921,6 +934,7 @@ def _extract_frappe_message(payload: dict) -> str:
 	upstream passthrough" from the 2026-06-16 cross-repo review.
 	"""
 	import json as _json
+
 	raw = (payload.get("_server_messages") or "").strip()
 	if raw:
 		try:
@@ -975,21 +989,19 @@ def _do_post(url: str, body: dict, headers: dict, timeout_s: int, admin_url: str
 			title="admin_client: non-JSON response",
 			message=f"url={url!r} status={resp.status_code} body={resp.text[:1000]!r}",
 		)
-		raise AdminUnreachableError(
-			f"admin returned non-JSON response (status {resp.status_code})"
-		)
+		raise AdminUnreachableError(f"admin returned non-JSON response (status {resp.status_code})")
 
 	envelope = payload.get("message", payload) if isinstance(payload, dict) else payload
 
 	# Pre-extract the clean message + exc_type if Frappe wrapped a raised
 	# exception. The status-based branches below prefer this clean text
 	# over the raw envelope when available.
-	exc_type = (
-		payload.get("exc_type", "") if isinstance(payload, dict) else ""
+	exc_type = payload.get("exc_type", "") if isinstance(payload, dict) else ""
+	clean = (
+		_extract_frappe_message(payload)
+		if (isinstance(payload, dict) and (exc_type or payload.get("_server_messages")))
+		else ""
 	)
-	clean = _extract_frappe_message(payload) if (
-		isinstance(payload, dict) and (exc_type or payload.get("_server_messages"))
-	) else ""
 
 	def _envelope_message() -> str:
 		# _envelope_error_message already scrubs; clean is already scrubbed
@@ -1034,9 +1046,7 @@ def _do_post(url: str, body: dict, headers: dict, timeout_s: int, admin_url: str
 			title=f"admin_client: unrecognised exc_type={exc_type!r}",
 			message=f"url={url!r} clean={clean!r}",
 		)
-		raise AdminUnreachableError(
-			clean or f"admin returned an unrecognised error: {exc_type}"
-		)
+		raise AdminUnreachableError(clean or f"admin returned an unrecognised error: {exc_type}")
 	# Sprint-3 PR-8 (2026-06-16 review): a 4xx response with the
 	# structured envelope ({"ok": false, "error": {...}}) is a
 	# user-input / business-rule error, NOT an "admin is unreachable"
@@ -1062,9 +1072,7 @@ def _do_post(url: str, body: dict, headers: dict, timeout_s: int, admin_url: str
 			msg = f"admin returned {resp.status_code}"
 		if 400 <= resp.status_code < 500:
 			raise AdminValidationError(msg)
-		raise AdminUnreachableError(
-			f"admin returned a {resp.status_code} error: {msg}"
-		)
+		raise AdminUnreachableError(f"admin returned a {resp.status_code} error: {msg}")
 	if isinstance(envelope, dict) and not envelope.get("ok", True):
 		err = envelope.get("error", {}) or {}
 		code = err.get("code") or "?"

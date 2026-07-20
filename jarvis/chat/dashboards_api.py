@@ -56,8 +56,15 @@ _SOURCES_BLOCK_RE = re.compile(
 # — server-derived for User scope, dashboard_type — always derived, timestamps)
 # is server-owned; unknown keys throw.
 _ALLOWED_PAYLOAD_FIELDS = {
-	"name", "dashboard_title", "description", "html", "scope", "target_role",
-	"sources", "source_conversation", "theme",
+	"name",
+	"dashboard_title",
+	"description",
+	"html",
+	"scope",
+	"target_role",
+	"sources",
+	"source_conversation",
+	"theme",
 }
 
 _SCOPES = {"Org", "Role", "User"}
@@ -65,8 +72,11 @@ _TYPES = {"Static", "Connected"}
 
 _DASHBOARD_FILTERS = {"scope", "dashboard_type", "owner"}
 _DASHBOARD_SORTABLE = {
-	"modified": "modified", "dashboard_title": "dashboard_title",
-	"dashboard_type": "dashboard_type", "scope": "scope", "owner": "owner",
+	"modified": "modified",
+	"dashboard_title": "dashboard_title",
+	"dashboard_type": "dashboard_type",
+	"scope": "scope",
+	"owner": "owner",
 }
 
 # Per-tool spec key allow-lists (unknown keys throw at save time).
@@ -138,8 +148,7 @@ def _dashboard_detail(doc) -> dict:
 		"target_user": doc.target_user or "",
 		"html": doc.html or "",
 		"sources": [
-			{"source_name": s.source_name, "tool": s.tool, "spec": s.spec or ""}
-			for s in (doc.sources or [])
+			{"source_name": s.source_name, "tool": s.tool, "spec": s.spec or ""} for s in (doc.sources or [])
 		],
 		"source_conversation": doc.source_conversation or "",
 		"owner": doc.owner,
@@ -226,9 +235,7 @@ def list_dashboards_page(
 	where = " AND ".join(conds)
 	order = _order_by(sort_field, sort_dir, _DASHBOARD_SORTABLE, "modified")
 
-	total = frappe.db.sql(
-		f"SELECT COUNT(*) FROM `tabJarvis Dashboard` WHERE {where}", params
-	)[0][0]
+	total = frappe.db.sql(f"SELECT COUNT(*) FROM `tabJarvis Dashboard` WHERE {where}", params)[0][0]
 	rows = frappe.db.sql(
 		f"""SELECT name, dashboard_title, description, dashboard_type, scope,
 		target_role, target_user, owner, modified
@@ -236,7 +243,8 @@ def list_dashboards_page(
 		WHERE {where}
 		ORDER BY {order}
 		LIMIT %(page_length)s OFFSET %(start)s""",
-		params, as_dict=True,
+		params,
+		as_dict=True,
 	)
 	for r in rows:
 		r["modified"] = str(r["modified"])
@@ -294,9 +302,7 @@ def _parse_sources_block(html: str) -> list:
 	except Exception:
 		parsed = None
 	if not isinstance(parsed, dict) or not isinstance(parsed.get("sources"), list):
-		frappe.throw(
-			_('The jarvis-sources block must be JSON of the shape {"sources": [...]}.')
-		)
+		frappe.throw(_('The jarvis-sources block must be JSON of the shape {"sources": [...]}.'))
 	return parsed["sources"]
 
 
@@ -321,26 +327,24 @@ def _normalize_source_rows(sources) -> list[dict]:
 		name = s.get("source_name") or s.get("id") or s.get("name")
 		tool = s.get("tool")
 		if isinstance(tool, str) and tool.startswith("jarvis__"):
-			tool = tool[len("jarvis__"):]
+			tool = tool[len("jarvis__") :]
 		spec = s.get("spec")
 		if spec is None:
 			args = s.get("args")
 			if isinstance(args, dict):
 				spec = args.get("spec") if isinstance(args.get("spec"), dict) else args
 		# double-wrap drift ({"spec": {"spec": {...}}}): unwrap lone spec keys
-		while (
-			isinstance(spec, dict)
-			and len(spec) == 1
-			and isinstance(spec.get("spec"), dict)
-		):
+		while isinstance(spec, dict) and len(spec) == 1 and isinstance(spec.get("spec"), dict):
 			spec = spec["spec"]
 		if isinstance(spec, (dict, list)):
 			spec = frappe.as_json(spec)
-		rows.append({
-			"source_name": name,
-			"tool": tool,
-			"spec": spec if isinstance(spec, str) else "",
-		})
+		rows.append(
+			{
+				"source_name": name,
+				"tool": tool,
+				"spec": spec if isinstance(spec, str) else "",
+			}
+		)
 	return rows
 
 
@@ -414,17 +418,11 @@ def _validate_source_row(row: dict) -> None:
 	tool = (row.get("tool") or "").strip()
 	if tool not in _ALLOWED_TOOLS:
 		frappe.throw(
-			_("Source '{0}': unknown tool '{1}' (allowed: query, run_report, get_list).").format(
-				label, tool
-			)
+			_("Source '{0}': unknown tool '{1}' (allowed: query, run_report, get_list).").format(label, tool)
 		)
 	raw = row.get("spec")
 	if isinstance(raw, str) and len(raw) > _MAX_SPEC_CHARS:
-		frappe.throw(
-			_("Source '{0}': spec must be at most {1} characters.").format(
-				label, _MAX_SPEC_CHARS
-			)
-		)
+		frappe.throw(_("Source '{0}': spec must be at most {1} characters.").format(label, _MAX_SPEC_CHARS))
 	try:
 		spec = frappe.parse_json(raw)
 	except Exception:
@@ -456,18 +454,14 @@ def _validate_query_spec(label: str, spec: dict) -> None:
 	if "limit" in spec:
 		limit = spec["limit"]
 		if isinstance(limit, bool) or not isinstance(limit, int) or not (1 <= limit <= 1000):
-			frappe.throw(
-				_("Source '{0}': limit must be an integer between 1 and 1000.").format(label)
-			)
+			frappe.throw(_("Source '{0}': limit must be an integer between 1 and 1000.").format(label))
 
 
 def _validate_get_list_spec(label: str, spec: dict) -> None:
 	unknown = set(spec) - _GET_LIST_SPEC_KEYS
 	if unknown:
 		frappe.throw(
-			_("Source '{0}': unknown get_list spec key(s): {1}").format(
-				label, ", ".join(sorted(unknown))
-			)
+			_("Source '{0}': unknown get_list spec key(s): {1}").format(label, ", ".join(sorted(unknown)))
 		)
 	doctype = spec.get("doctype")
 	if not isinstance(doctype, str) or not doctype.strip():
@@ -475,8 +469,7 @@ def _validate_get_list_spec(label: str, spec: dict) -> None:
 	if not frappe.db.exists("DocType", doctype):
 		frappe.throw(_("Source '{0}': unknown DocType: {1}").format(label, doctype))
 	if "fields" in spec and not (
-		isinstance(spec["fields"], list)
-		and all(isinstance(x, str) for x in spec["fields"])
+		isinstance(spec["fields"], list) and all(isinstance(x, str) for x in spec["fields"])
 	):
 		frappe.throw(_("Source '{0}': fields must be a list of strings.").format(label))
 	if "filters" in spec and not isinstance(spec["filters"], (dict, list)):
@@ -484,9 +477,7 @@ def _validate_get_list_spec(label: str, spec: dict) -> None:
 	if "limit" in spec:
 		limit = spec["limit"]
 		if isinstance(limit, bool) or not isinstance(limit, int) or not (1 <= limit <= 1000):
-			frappe.throw(
-				_("Source '{0}': limit must be an integer between 1 and 1000.").format(label)
-			)
+			frappe.throw(_("Source '{0}': limit must be an integer between 1 and 1000.").format(label))
 	# order_by is handed straight to frappe.get_list; validate it ourselves
 	# (whitelisted `fieldname [asc|desc]` tokens) rather than trusting the ORM
 	# to sanitize an order-by expression.
@@ -505,9 +496,7 @@ def _validate_run_report_spec(label: str, spec: dict) -> None:
 	unknown = set(spec) - _RUN_REPORT_SPEC_KEYS
 	if unknown:
 		frappe.throw(
-			_("Source '{0}': unknown run_report spec key(s): {1}").format(
-				label, ", ".join(sorted(unknown))
-			)
+			_("Source '{0}': unknown run_report spec key(s): {1}").format(label, ", ".join(sorted(unknown)))
 		)
 	report_name = spec.get("report_name")
 	if not isinstance(report_name, str) or not report_name.strip():
@@ -545,13 +534,9 @@ def run_dashboard_source(dashboard: str, source_name: str) -> dict:
 		doc.check_permission("read")
 	except frappe.PermissionError:
 		_clear_perm_message_noise()
-		return _error_envelope(
-			"PermissionError", _("You do not have access to this dashboard.")
-		)
+		return _error_envelope("PermissionError", _("You do not have access to this dashboard."))
 
-	row = next(
-		(s for s in (doc.sources or []) if s.source_name == source_name), None
-	)
+	row = next((s for s in (doc.sources or []) if s.source_name == source_name), None)
 	if row is None:
 		return _error_envelope(
 			"InvalidArgumentError",
@@ -562,9 +547,7 @@ def run_dashboard_source(dashboard: str, source_name: str) -> dict:
 	except Exception:
 		spec = None
 	if not isinstance(spec, dict):
-		return _error_envelope(
-			"InvalidArgumentError", _("The saved spec for this source is not valid JSON.")
-		)
+		return _error_envelope("InvalidArgumentError", _("The saved spec for this source is not valid JSON."))
 
 	tool = row.tool
 	columns = None
@@ -606,9 +589,7 @@ def run_dashboard_source(dashboard: str, source_name: str) -> dict:
 			# set into the browser payload. The post-loop slice still applies.
 			rows = res["result"][: DASHBOARD_MAX_ROWS + 1]
 		else:
-			return _error_envelope(
-				"InvalidArgumentError", _("Unsupported tool: {0}").format(tool)
-			)
+			return _error_envelope("InvalidArgumentError", _("Unsupported tool: {0}").format(tool))
 	except (PermissionDeniedError, frappe.PermissionError) as e:
 		# has_permission pushes "no access" lines into the message log on the
 		# denied path; clear them so they never ride back in _server_messages.
@@ -621,9 +602,7 @@ def run_dashboard_source(dashboard: str, source_name: str) -> dict:
 			title="Jarvis: dashboard source run failed",
 			message=frappe.get_traceback(),
 		)
-		return _error_envelope(
-			"InternalError", _("The data source could not be run. The error was logged.")
-		)
+		return _error_envelope("InternalError", _("The data source could not be run. The error was logged."))
 
 	truncated = False
 	if len(rows) > DASHBOARD_MAX_ROWS:

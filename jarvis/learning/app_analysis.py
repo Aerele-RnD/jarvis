@@ -63,13 +63,34 @@ ACTIVE = ("Zipping", "Analyzing", "Ingesting")
 TERMINAL = ("Completed", "Failed", "Cancelled")
 
 # --- snapshot caps -----------------------------------------------------------
-EXT_ALLOWLIST = frozenset({
-	".py", ".js", ".ts", ".vue", ".json", ".md", ".txt", ".html", ".css",
-	".toml", ".cfg", ".yml", ".yaml",
-})
-_EXCLUDE_DIR_NAMES = frozenset({
-	".git", "node_modules", "dist", "build", "__pycache__", ".venv", "env",
-})
+EXT_ALLOWLIST = frozenset(
+	{
+		".py",
+		".js",
+		".ts",
+		".vue",
+		".json",
+		".md",
+		".txt",
+		".html",
+		".css",
+		".toml",
+		".cfg",
+		".yml",
+		".yaml",
+	}
+)
+_EXCLUDE_DIR_NAMES = frozenset(
+	{
+		".git",
+		"node_modules",
+		"dist",
+		"build",
+		"__pycache__",
+		".venv",
+		"env",
+	}
+)
 _EXCLUDE_DIR_PATHS = frozenset({"public/frontend", "public/dist"})
 PER_FILE_CAP_BYTES = 200 * 1024
 FILE_CAP = 3000
@@ -133,9 +154,7 @@ def _approx_size(src_dir: str) -> tuple[int, int]:
 	for root, dirs, files in os.walk(src_dir):
 		rel_root = os.path.relpath(root, src_dir)
 		dirs[:] = [
-			d for d in dirs
-			if not _is_excluded_dir(rel_root, d)
-			and not os.path.islink(os.path.join(root, d))
+			d for d in dirs if not _is_excluded_dir(rel_root, d) and not os.path.islink(os.path.join(root, d))
 		]
 		for fname in files:
 			if os.path.splitext(fname)[1].lower() not in EXT_ALLOWLIST:
@@ -193,18 +212,21 @@ def list_custom_apps_data() -> list[dict]:
 			order_by="creation desc",
 			limit=1,
 		)
-		out.append({
-			"app": app,
-			"title": _app_title(app),
-			"installed_version": _app_version(app),
-			"path_ok": path_ok,
-			"approx_files": approx_files,
-			"approx_kb": approx_kb,
-			"last_run": (
-				{"status": last[0].status, "finished_at": str(last[0].finished_at or "")}
-				if last else None
-			),
-		})
+		out.append(
+			{
+				"app": app,
+				"title": _app_title(app),
+				"installed_version": _app_version(app),
+				"path_ok": path_ok,
+				"approx_files": approx_files,
+				"approx_kb": approx_kb,
+				"last_run": (
+					{"status": last[0].status, "finished_at": str(last[0].finished_at or "")}
+					if last
+					else None
+				),
+			}
+		)
 	return out
 
 
@@ -222,11 +244,14 @@ def _set_run(run_name: str, fields: dict) -> None:
 
 
 def _fail_run(run_name: str, msg: str) -> None:
-	_set_run(run_name, {
-		"status": "Failed",
-		"finished_at": now_datetime(),
-		"error": (msg or "")[:500],
-	})
+	_set_run(
+		run_name,
+		{
+			"status": "Failed",
+			"finished_at": now_datetime(),
+			"error": (msg or "")[:500],
+		},
+	)
 
 
 def mark_cancelled(run_name: str) -> None:
@@ -261,14 +286,12 @@ def _active_conversations() -> set[str]:
 	if isinstance(cached, list):
 		return set(cached)
 	convs = [
-		c for c in frappe.get_all(
-			RUN, filters={"status": ["in", list(NON_TERMINAL)]}, pluck="conversation"
-		) if c
+		c
+		for c in frappe.get_all(RUN, filters={"status": ["in", list(NON_TERMINAL)]}, pluck="conversation")
+		if c
 	]
 	try:
-		frappe.cache().set_value(
-			_ACTIVE_CONV_CACHE_KEY, convs, expires_in_sec=_ACTIVE_CONV_CACHE_TTL_S
-		)
+		frappe.cache().set_value(_ACTIVE_CONV_CACHE_KEY, convs, expires_in_sec=_ACTIVE_CONV_CACHE_TTL_S)
 	except Exception:
 		pass
 	return set(convs)
@@ -349,8 +372,14 @@ def _active_runs() -> list:
 		RUN,
 		filters={"status": ["in", list(ACTIVE)]},
 		fields=[
-			"name", "app", "status", "conversation", "started_at", "modified",
-			"batches_done", "batches_total",
+			"name",
+			"app",
+			"status",
+			"conversation",
+			"started_at",
+			"modified",
+			"batches_done",
+			"batches_total",
 		],
 		order_by="creation asc",
 	)
@@ -416,10 +445,7 @@ def _priority(rel_path: str) -> int:
 	# fixture-ish JSON: /fixtures/ exports, or workflow/print-format/custom-field
 	# folders that store business config as JSON.
 	if p.endswith(".json") and (
-		"/fixtures/" in pp
-		or "/workflow/" in pp
-		or "/print_format/" in pp
-		or "/custom/" in pp
+		"/fixtures/" in pp or "/workflow/" in pp or "/print_format/" in pp or "/custom/" in pp
 	):
 		return 5
 	if p.endswith(".py"):
@@ -461,9 +487,7 @@ def _collect_files(src_dir: str) -> tuple[list[str], dict]:
 		# the tree — os.walk keeps followlinks off, but excluding here also keeps
 		# such dirs out of the size probe / listing).
 		dirs[:] = sorted(
-			d for d in dirs
-			if not _is_excluded_dir(rel_root, d)
-			and not os.path.islink(os.path.join(root, d))
+			d for d in dirs if not _is_excluded_dir(rel_root, d) and not os.path.islink(os.path.join(root, d))
 		)
 		for fname in sorted(files):
 			if os.path.splitext(fname)[1].lower() not in EXT_ALLOWLIST:
@@ -533,9 +557,7 @@ def _delete_zip_file(zip_path: str) -> None:
 	"""Best-effort delete, constrained to the app_learning subfolder so a
 	corrupt row can never aim the delete anywhere else."""
 	try:
-		expected_dir = os.path.realpath(
-			frappe.get_site_path("private", "files", "app_learning")
-		)
+		expected_dir = os.path.realpath(frappe.get_site_path("private", "files", "app_learning"))
 		real = os.path.realpath(zip_path or "")
 		if real.startswith(expected_dir + os.sep) and os.path.isfile(real):
 			os.remove(real)
@@ -593,7 +615,7 @@ def _plan_batches(manifest: list[tuple[str, str]]) -> tuple[list[list[tuple[str,
 			continue
 		n = (len(content) + BATCH_CHAR_BUDGET - 1) // BATCH_CHAR_BUDGET
 		for i in range(n):
-			chunk = content[i * BATCH_CHAR_BUDGET:(i + 1) * BATCH_CHAR_BUDGET]
+			chunk = content[i * BATCH_CHAR_BUDGET : (i + 1) * BATCH_CHAR_BUDGET]
 			units.append((f"{path} (part {i + 1}/{n})", chunk))
 
 	batches: list[list[tuple[str, str]]] = []
@@ -642,9 +664,7 @@ def _batch_prompt(app: str, k: int, total: int, files: list[tuple[str, str]]) ->
 	]
 	for path, content in files:
 		label = " ".join(str(path).split())
-		parts.append(
-			f"File: {label}\n" + _fence_untrusted(content, f"{app} source file: {label}")
-		)
+		parts.append(f"File: {label}\n" + _fence_untrusted(content, f"{app} source file: {label}"))
 	return "\n\n".join(parts)
 
 
@@ -694,7 +714,8 @@ def _final_prompt(app: str, total: int, dropped_batches: int, zip_notes: dict | 
 	caveats = _coverage_caveats(dropped_batches, zip_notes or {})
 	if caveats:
 		parts.append(
-			"Coverage note: this analysis is PARTIAL - " + "; ".join(caveats)
+			"Coverage note: this analysis is PARTIAL - "
+			+ "; ".join(caveats)
 			+ ". Say so explicitly in the overview page."
 		)
 	parts.append(
@@ -706,7 +727,7 @@ def _final_prompt(app: str, total: int, dropped_batches: int, zip_notes: dict | 
 		'"summary": "..."}\n'
 		"```\n"
 		f"At most {MAX_WIKI_PAGES} wiki_pages and {MAX_SKILLS} skills. page_type "
-		f"must be one of: {', '.join(PAGE_TYPES)}. mode is \"create\" for a new "
+		f'must be one of: {", ".join(PAGE_TYPES)}. mode is "create" for a new '
 		'page or "append" to add to an existing one.'
 	)
 	return "\n\n".join(parts)
@@ -739,11 +760,14 @@ def start_run(run_name: str) -> None:
 	# conversation steps — so if any of those raise, the run is Failed WITH its
 	# zip_path recorded and _cleanup_zips can always reclaim the file. (Without
 	# this, a zip written here but never stamped on the row orphans on disk.)
-	_set_run(run_name, {
-		"zip_path": snap["zip_path"],
-		"zip_size": snap["zip_size"],
-		"file_count": snap["file_count"],
-	})
+	_set_run(
+		run_name,
+		{
+			"zip_path": snap["zip_path"],
+			"zip_size": snap["zip_size"],
+			"file_count": snap["file_count"],
+		},
+	)
 	try:
 		batches, dropped_batches = _plan_batches(_manifest_from_zip(snap["zip_path"]))
 		if not batches:
@@ -761,23 +785,24 @@ def start_run(run_name: str) -> None:
 		owner = run.requested_by or frappe.session.user
 		# Fresh conversation titled after the app, seeded with an intro so the
 		# transcript reads as a self-contained run (the macros.run_macro shape).
-		conv = frappe.get_doc({
-			"doctype": CONV,
-			"title": f"App learning: {run.app}"[:140],
-			"status": "Active",
-		})
+		conv = frappe.get_doc(
+			{
+				"doctype": CONV,
+				"title": f"App learning: {run.app}"[:140],
+				"status": "Active",
+			}
+		)
 		conv.flags.ignore_permissions = True
 		conv.insert()
-		intro = frappe.get_doc({
-			"doctype": MSG,
-			"conversation": conv.name,
-			"seq": 1,
-			"role": "assistant",
-			"content": (
-				f"▶ Learning from app **{run.app}** — "
-				f"{len(batches)} source batch(es)."
-			),
-		})
+		intro = frappe.get_doc(
+			{
+				"doctype": MSG,
+				"conversation": conv.name,
+				"seq": 1,
+				"role": "assistant",
+				"content": (f"▶ Learning from app **{run.app}** — {len(batches)} source batch(es)."),
+			}
+		)
 		intro.flags.ignore_permissions = True
 		intro.insert()
 		if owner != frappe.session.user:
@@ -788,16 +813,19 @@ def start_run(run_name: str) -> None:
 		notes = _load_notes(run)
 		notes["zip"] = snap["notes"]
 		notes["plan"] = {"batches": len(batches), "dropped_batches": dropped_batches}
-		_set_run(run_name, {
-			"status": "Analyzing",
-			"conversation": conv.name,
-			"zip_path": snap["zip_path"],
-			"zip_size": snap["zip_size"],
-			"file_count": snap["file_count"],
-			"batches_total": len(batches),
-			"batches_done": 0,
-			"notes": json.dumps(notes),
-		})
+		_set_run(
+			run_name,
+			{
+				"status": "Analyzing",
+				"conversation": conv.name,
+				"zip_path": snap["zip_path"],
+				"zip_size": snap["zip_size"],
+				"file_count": snap["file_count"],
+				"batches_total": len(batches),
+				"batches_done": 0,
+				"notes": json.dumps(notes),
+			},
+		)
 		run.reload()
 		_send_batch_turn(run, 1)
 	except Exception as e:
@@ -881,14 +909,17 @@ def _publish_progress(run, done: int, total: int) -> None:
 	try:
 		from jarvis.chat.events import publish_to_user
 
-		publish_to_user(run.requested_by, {
-			"kind": "app_learning:update",
-			"run": run.name,
-			"app": run.app,
-			"status": "Analyzing",
-			"batches_done": int(done),
-			"batches_total": int(total),
-		})
+		publish_to_user(
+			run.requested_by,
+			{
+				"kind": "app_learning:update",
+				"run": run.name,
+				"app": run.app,
+				"status": "Analyzing",
+				"batches_done": int(done),
+				"batches_total": int(total),
+			},
+		)
 	except Exception:
 		pass
 
@@ -908,9 +939,7 @@ def _advance_run(run, *, errored: bool) -> None:
 		return
 
 	if current_key == "final":
-		if not isinstance(parsed.get("wiki_pages"), list) and not isinstance(
-			parsed.get("skills"), list
-		):
+		if not isinstance(parsed.get("wiki_pages"), list) and not isinstance(parsed.get("skills"), list):
 			_retry_or_fail(run, current_key, "final reply missing wiki_pages/skills")
 			return
 		notes = _load_notes(run)
@@ -923,7 +952,8 @@ def _advance_run(run, *, errored: bool) -> None:
 	raw_notes = parsed.get("notes")
 	batch_notes = (
 		[str(x)[:MAX_NOTE_CHARS] for x in raw_notes if isinstance(x, str)][:MAX_NOTES_PER_BATCH]
-		if isinstance(raw_notes, list) else []
+		if isinstance(raw_notes, list)
+		else []
 	)
 	notes = _load_notes(run)
 	notes.setdefault("batches", {})[str(k)] = batch_notes
@@ -1100,23 +1130,29 @@ def ingest(run: str) -> None:
 			"skills_failed": skills_failed,
 		}
 		_delete_zip_file(doc.zip_path)
-		_set_run(run, {
-			"status": "Completed",
-			"finished_at": now_datetime(),
-			"zip_path": "",
-			"pages_written": pages_written,
-			"skills_created": skills_created,
-			"skills_deferred": skills_deferred,
-			"notes": json.dumps(notes),
-		})
+		_set_run(
+			run,
+			{
+				"status": "Completed",
+				"finished_at": now_datetime(),
+				"zip_path": "",
+				"pages_written": pages_written,
+				"skills_created": skills_created,
+				"skills_deferred": skills_deferred,
+				"notes": json.dumps(notes),
+			},
+		)
 		try:
 			from jarvis.chat.events import publish_to_user
 
-			publish_to_user(doc.requested_by, {
-				"kind": "app_learning:done",
-				"run": run,
-				"app": doc.app,
-			})
+			publish_to_user(
+				doc.requested_by,
+				{
+					"kind": "app_learning:done",
+					"run": run,
+					"app": doc.app,
+				},
+			)
 		except Exception:
 			pass  # the run completed; a missed toast must not fail it
 	except Exception:
@@ -1139,7 +1175,9 @@ def _ingest_wiki_pages(doc, payload: dict) -> tuple[int, int]:
 	``mode: append`` items map to that function's ``append_md`` shape) and
 	apply in chunks of its per-call cap. Returns ``(applied, failed)``."""
 	from jarvis.chat.wiki import (
-		MAX_PAGES_PER_NOTE, PAGE_TYPES, apply_extracted_page_updates,
+		MAX_PAGES_PER_NOTE,
+		PAGE_TYPES,
+		apply_extracted_page_updates,
 	)
 
 	raw = payload.get("wiki_pages")
@@ -1185,7 +1223,7 @@ def _ingest_wiki_pages(doc, payload: dict) -> tuple[int, int]:
 	failed = 0
 	for i in range(0, len(updates), MAX_PAGES_PER_NOTE):
 		a, f = apply_extracted_page_updates(
-			updates[i:i + MAX_PAGES_PER_NOTE],
+			updates[i : i + MAX_PAGES_PER_NOTE],
 			source=f"app-learning:{doc.app}",
 			user=doc.requested_by,
 			ref=doc.name,
@@ -1201,13 +1239,16 @@ def _sanitize_skill_slug(name, app: str) -> str:
 	never masquerade as a compiled/learned skill), app-prefixed when too
 	short, clipped to the doctype cap."""
 	from jarvis.jarvis.doctype.jarvis_custom_skill.jarvis_custom_skill import (
-		LEARNED_PREFIX, MAX_SLUG_LEN, MIN_SLUG_LEN, RESERVED_PREFIX,
+		LEARNED_PREFIX,
+		MAX_SLUG_LEN,
+		MIN_SLUG_LEN,
+		RESERVED_PREFIX,
 	)
 
 	s = _slugify(name)
 	for prefix in (RESERVED_PREFIX, LEARNED_PREFIX):
 		while s.startswith(prefix):
-			s = s[len(prefix):]
+			s = s[len(prefix) :]
 	if not s:
 		return ""
 	if len(s) < MIN_SLUG_LEN:
@@ -1233,7 +1274,8 @@ def _ingest_skills(doc, payload: dict) -> tuple[int, int, int]:
 		return 0, 0, 0
 	from jarvis.chat.custom_skills_api import _create_custom_skill_impl
 	from jarvis.jarvis.doctype.jarvis_custom_skill.jarvis_custom_skill import (
-		MAX_DESC_LEN, MAX_INSTR_LEN,
+		MAX_DESC_LEN,
+		MAX_INSTR_LEN,
 	)
 
 	created = failed = 0

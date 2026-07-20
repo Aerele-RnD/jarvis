@@ -239,8 +239,10 @@ class TestPersistSurvivors(FrappeTestCase):
 				raise ValueError("boom")
 			return "created"
 
-		with mock.patch.object(engine, "_persist_candidate", side_effect=persist), \
-			mock.patch("frappe.log_error") as log_error:
+		with (
+			mock.patch.object(engine, "_persist_candidate", side_effect=persist),
+			mock.patch("frappe.log_error") as log_error,
+		):
 			res = engine._persist_survivors(cands, None, "det-a")
 
 		self.assertEqual(res["created"], 2)
@@ -275,8 +277,12 @@ class TestDriftStash(FrappeTestCase):
 		spec = {"id": "det-stash", "doctype": "Sales Invoice"}
 		with mock.patch("jarvis.learning.executor.run_detector", return_value=result):
 			return engine._read_and_persist(
-				spec, company, None,
-				fdr_buffer=DetectorFamilyBuffer(), mined=mined, watch=watch,
+				spec,
+				company,
+				None,
+				fdr_buffer=DetectorFamilyBuffer(),
+				mined=mined,
+				watch=watch,
 			)
 
 	def test_stashes_watched_keys_only(self):
@@ -288,7 +294,8 @@ class TestDriftStash(FrappeTestCase):
 		watch = {("det-stash", "CoA"): {"k-watched"}}
 		unit = self._detect(
 			DetectorResult([watched, other], None, rows_scanned=2, raw_candidate_count=2),
-			mined, watch,
+			mined,
+			watch,
 		)
 		entry = mined[("det-stash", "CoA")]
 		self.assertEqual(set(entry["by_key"]), {"k-watched"})
@@ -304,7 +311,8 @@ class TestDriftStash(FrappeTestCase):
 		mined: dict = {}
 		unit = self._detect(
 			DetectorResult([cand], None, rows_scanned=1, raw_candidate_count=7),
-			mined, {},
+			mined,
+			{},
 		)
 		self.assertTrue(mined[("det-stash", "CoA")]["cap_truncated"])
 		self.assertEqual(unit["candidates"], 1)
@@ -341,8 +349,13 @@ class TestWriteFence(FrappeTestCase):
 	"""fix 8: engine persistence may target only the §5.4 allowlist."""
 
 	def test_allowlisted_doctypes_pass(self):
-		for dt in ("Jarvis Pattern Run", "Jarvis Pattern Detector State",
-				   "Jarvis Learned Pattern", "Jarvis Learned Pattern Role", "Jarvis Pattern Snapshot"):
+		for dt in (
+			"Jarvis Pattern Run",
+			"Jarvis Pattern Detector State",
+			"Jarvis Learned Pattern",
+			"Jarvis Learned Pattern Role",
+			"Jarvis Pattern Snapshot",
+		):
 			engine._fenced_write(dt)  # must not raise
 
 	def test_non_allowlisted_doctype_raises(self):
@@ -397,12 +410,14 @@ class TestTickCreatesRunInWindow(FrappeTestCase):
 			}.get(field)
 
 		before = frappe.db.count("Jarvis Pattern Run")
-		with mock.patch("jarvis.selfhost.is_self_hosted", return_value=False), \
-			mock.patch.object(orchestrator, "_feature_enabled", return_value=True), \
-			mock.patch.object(orchestrator, "_is_onboarded", return_value=True), \
-			mock.patch.object(orchestrator, "_settings_value", side_effect=sv), \
-			mock.patch("frappe.db.set_value"), \
-			mock.patch("frappe.enqueue") as enq:
+		with (
+			mock.patch("jarvis.selfhost.is_self_hosted", return_value=False),
+			mock.patch.object(orchestrator, "_feature_enabled", return_value=True),
+			mock.patch.object(orchestrator, "_is_onboarded", return_value=True),
+			mock.patch.object(orchestrator, "_settings_value", side_effect=sv),
+			mock.patch("frappe.db.set_value"),
+			mock.patch("frappe.enqueue") as enq,
+		):
 			orchestrator.tick()
 
 		enq.assert_called_once()
@@ -425,11 +440,13 @@ class TestTickCreatesRunInWindow(FrappeTestCase):
 				"pattern_next_run_at": None,
 			}.get(field)
 
-		with mock.patch("jarvis.selfhost.is_self_hosted", return_value=False), \
-			mock.patch.object(orchestrator, "_feature_enabled", return_value=True), \
-			mock.patch.object(orchestrator, "_is_onboarded", return_value=True), \
-			mock.patch.object(orchestrator, "_settings_value", side_effect=sv), \
-			mock.patch("frappe.enqueue") as enq:
+		with (
+			mock.patch("jarvis.selfhost.is_self_hosted", return_value=False),
+			mock.patch.object(orchestrator, "_feature_enabled", return_value=True),
+			mock.patch.object(orchestrator, "_is_onboarded", return_value=True),
+			mock.patch.object(orchestrator, "_settings_value", side_effect=sv),
+			mock.patch("frappe.enqueue") as enq,
+		):
 			orchestrator.tick()
 
 		enq.assert_not_called()
@@ -442,8 +459,10 @@ class TestRunNowGuards(FrappeTestCase):
 		self.assertFalse(res["ok"])
 
 	def test_refuses_when_disabled(self):
-		with mock.patch("jarvis.selfhost.is_self_hosted", return_value=False), \
-			mock.patch.object(orchestrator, "_feature_enabled", return_value=False):
+		with (
+			mock.patch("jarvis.selfhost.is_self_hosted", return_value=False),
+			mock.patch.object(orchestrator, "_feature_enabled", return_value=False),
+		):
 			res = orchestrator.run_now("Administrator")
 		self.assertFalse(res["ok"])
 
@@ -456,10 +475,24 @@ class TestEngineWriteFenceIntegration(FrappeTestCase):
 	# Read-only during a run: the doctypes detectors READ (and a couple of masters
 	# an org-wide detector reads). None may gain or lose a row.
 	READ_TABLES = (
-		"Sales Invoice", "Sales Invoice Item", "Purchase Order", "Purchase Order Item",
-		"Purchase Invoice", "Payment Entry", "Quotation", "Stock Entry", "Stock Entry Detail",
-		"Timesheet", "Project", "Item", "Item Price", "Company", "Address", "DocType",
-		"Property Setter", "Jarvis Custom Skill",
+		"Sales Invoice",
+		"Sales Invoice Item",
+		"Purchase Order",
+		"Purchase Order Item",
+		"Purchase Invoice",
+		"Payment Entry",
+		"Quotation",
+		"Stock Entry",
+		"Stock Entry Detail",
+		"Timesheet",
+		"Project",
+		"Item",
+		"Item Price",
+		"Company",
+		"Address",
+		"DocType",
+		"Property Setter",
+		"Jarvis Custom Skill",
 	)
 
 	@classmethod
@@ -471,9 +504,7 @@ class TestEngineWriteFenceIntegration(FrappeTestCase):
 		cls.factory = factory
 		factory.wipe()
 		factory.build(commit=True)
-		frappe.get_single("Jarvis Settings").db_set(
-			"pattern_learning_enabled", 1, update_modified=False
-		)
+		frappe.get_single("Jarvis Settings").db_set("pattern_learning_enabled", 1, update_modified=False)
 		# Only clean up rows WE create; leave any pre-existing patterns untouched.
 		cls._pre_jlp = set(frappe.get_all(engine.JLP, pluck="name"))
 		frappe.db.commit()
@@ -491,10 +522,16 @@ class TestEngineWriteFenceIntegration(FrappeTestCase):
 	def test_full_run_mutates_only_allowlisted_tables(self):
 		before = {dt: frappe.db.count(dt) for dt in self.READ_TABLES}
 
-		run = frappe.get_doc({
-			"doctype": engine.RUN, "status": "Queued", "trigger": "manual",
-			"window_start_used": "00:00:00", "window_end_used": "23:59:59", "scan_mode": "full",
-		})
+		run = frappe.get_doc(
+			{
+				"doctype": engine.RUN,
+				"status": "Queued",
+				"trigger": "manual",
+				"window_start_used": "00:00:00",
+				"window_end_used": "23:59:59",
+				"scan_mode": "full",
+			}
+		)
 		run.flags.ignore_permissions = True
 		run.insert()
 		frappe.db.commit()
@@ -503,7 +540,8 @@ class TestEngineWriteFenceIntegration(FrappeTestCase):
 		# Force the seeded mini-org companies through the (otherwise dormant) skip so
 		# company-scoped detectors actually run and persist.
 		with mock.patch.object(
-			engine, "skip_dormant_companies",
+			engine,
+			"skip_dormant_companies",
 			side_effect=lambda comps, **k: [c for c in comps if str(c).startswith(factory_prefix())],
 		):
 			engine.run_pattern_analysis(run.name)

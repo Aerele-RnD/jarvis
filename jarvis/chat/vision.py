@@ -15,15 +15,16 @@ Caps (all enforced before anything leaves the bench):
   set once process-wide at import;
 - PDF pages: capped so a huge doc can't explode token cost.
 """
+
 from __future__ import annotations
 
 import base64
 import io
 
 _MAX_IMAGE_BYTES = 2 * 1024 * 1024
-_MAX_IMAGE_PIXELS = 3_750_000   # render/resize TARGET for the model (Anthropic ~3.75MP)
-_MAX_DIM = 1568                 # longest side after resize (Anthropic's optimal); 1568^2 = 2.46MP
-_BOMB_MAX_PIXELS = 64_000_000   # decompression-bomb ceiling: reject absurd decodes, allow real photos
+_MAX_IMAGE_PIXELS = 3_750_000  # render/resize TARGET for the model (Anthropic ~3.75MP)
+_MAX_DIM = 1568  # longest side after resize (Anthropic's optimal); 1568^2 = 2.46MP
+_BOMB_MAX_PIXELS = 64_000_000  # decompression-bomb ceiling: reject absurd decodes, allow real photos
 _MAX_PDF_PAGES = 20
 _RASTER_SCALE = 200 / 72  # ~200 DPI
 _JPEG_QUALITIES = (85, 70, 55, 40)

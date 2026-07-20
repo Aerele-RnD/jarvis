@@ -91,9 +91,10 @@ class LinkFetchGuardTestCase(FrappeTestCase):
 # --------------------------------------------------------------------------- #
 class TestSchemeGuard(LinkFetchGuardTestCase):
 	def test_non_http_scheme_rejected_without_any_network_call(self):
-		with mock.patch("socket.getaddrinfo") as m_dns, mock.patch(
-			"jarvis.chat.link_fetch._open_pinned"
-		) as m_open:
+		with (
+			mock.patch("socket.getaddrinfo") as m_dns,
+			mock.patch("jarvis.chat.link_fetch._open_pinned") as m_open,
+		):
 			with self.assertRaises(link_fetch.LinkFetchError):
 				link_fetch.fetch_and_extract("ftp://example.com/file")
 			m_dns.assert_not_called()
@@ -117,8 +118,10 @@ class TestSchemeGuard(LinkFetchGuardTestCase):
 # --------------------------------------------------------------------------- #
 class TestDnsGuard(LinkFetchGuardTestCase):
 	def test_private_ip_rejected(self):
-		with mock.patch("socket.getaddrinfo", return_value=_addrinfo(PRIVATE_IP)), \
-			mock.patch("jarvis.chat.link_fetch._open_pinned") as m_open:
+		with (
+			mock.patch("socket.getaddrinfo", return_value=_addrinfo(PRIVATE_IP)),
+			mock.patch("jarvis.chat.link_fetch._open_pinned") as m_open,
+		):
 			with self.assertRaises(link_fetch.LinkFetchError):
 				link_fetch.fetch_and_extract("http://internal.example.com/secret")
 			# The guard must reject BEFORE any connection is opened.
@@ -160,10 +163,10 @@ class TestDnsGuard(LinkFetchGuardTestCase):
 			headers={"Content-Type": "text/plain"},
 			chunks=_chunk_list(body),
 		)
-		with mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)), \
-			mock.patch(
-				"jarvis.chat.link_fetch._open_pinned", return_value=_open_result(resp)
-			) as m_open:
+		with (
+			mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)),
+			mock.patch("jarvis.chat.link_fetch._open_pinned", return_value=_open_result(resp)) as m_open,
+		):
 			text = link_fetch.fetch_and_extract("http://public.example.com/x")
 		self.assertEqual(text, "hello world")
 		m_open.assert_called_once()
@@ -189,11 +192,13 @@ class TestConnectionPinning(LinkFetchGuardTestCase):
 		resp = _FakeResponse(200, {"Content-Type": "text/plain"}, _chunk_list(body))
 		fake_pool = mock.MagicMock()
 		fake_pool.urlopen.return_value = resp
-		with mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)), \
+		with (
+			mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)),
 			mock.patch(
 				"jarvis.chat.link_fetch.urllib3.HTTPSConnectionPool",
 				return_value=fake_pool,
-			) as m_pool:
+			) as m_pool,
+		):
 			text = link_fetch.fetch_and_extract("https://public.example.com/policy")
 		self.assertEqual(text, "pinned ok")
 
@@ -225,11 +230,13 @@ class TestConnectionPinning(LinkFetchGuardTestCase):
 		resp = _FakeResponse(200, {"Content-Type": "text/plain"}, _chunk_list(b"hi"))
 		fake_pool = mock.MagicMock()
 		fake_pool.urlopen.return_value = resp
-		with mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)), \
+		with (
+			mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)),
 			mock.patch(
 				"jarvis.chat.link_fetch.urllib3.HTTPConnectionPool",
 				return_value=fake_pool,
-			) as m_pool:
+			) as m_pool,
+		):
 			text = link_fetch.fetch_and_extract("http://public.example.com/x")
 		self.assertEqual(text, "hi")
 		self.assertEqual(m_pool.call_args.kwargs["host"], PUBLIC_IP)
@@ -244,20 +251,18 @@ class TestConnectionPinning(LinkFetchGuardTestCase):
 				return _addrinfo(PUBLIC_IP_2)
 			return _addrinfo(PUBLIC_IP)
 
-		redirect_resp = _FakeResponse(
-			302, {"Location": "https://public2.example.com/final"}
-		)
-		final_resp = _FakeResponse(
-			200, {"Content-Type": "text/plain"}, _chunk_list(b"done")
-		)
+		redirect_resp = _FakeResponse(302, {"Location": "https://public2.example.com/final"})
+		final_resp = _FakeResponse(200, {"Content-Type": "text/plain"}, _chunk_list(b"done"))
 		pool1, pool2 = mock.MagicMock(), mock.MagicMock()
 		pool1.urlopen.return_value = redirect_resp
 		pool2.urlopen.return_value = final_resp
-		with mock.patch("socket.getaddrinfo", side_effect=fake_getaddrinfo), \
+		with (
+			mock.patch("socket.getaddrinfo", side_effect=fake_getaddrinfo),
 			mock.patch(
 				"jarvis.chat.link_fetch.urllib3.HTTPSConnectionPool",
 				side_effect=[pool1, pool2],
-			) as m_pool:
+			) as m_pool,
+		):
 			text = link_fetch.fetch_and_extract("https://public.example.com/go")
 		self.assertEqual(text, "done")
 		hosts = [c.kwargs["host"] for c in m_pool.call_args_list]
@@ -278,14 +283,14 @@ class TestRedirectGuard(LinkFetchGuardTestCase):
 				return _addrinfo(PRIVATE_IP)
 			return _addrinfo(PUBLIC_IP)
 
-		redirect_resp = _FakeResponse(
-			status=302, headers={"Location": "http://internal.example.com/secret"}
-		)
-		with mock.patch("socket.getaddrinfo", side_effect=fake_getaddrinfo), \
+		redirect_resp = _FakeResponse(status=302, headers={"Location": "http://internal.example.com/secret"})
+		with (
+			mock.patch("socket.getaddrinfo", side_effect=fake_getaddrinfo),
 			mock.patch(
 				"jarvis.chat.link_fetch._open_pinned",
 				return_value=_open_result(redirect_resp),
-			) as m_open:
+			) as m_open,
+		):
 			with self.assertRaises(link_fetch.LinkFetchError):
 				link_fetch.fetch_and_extract("http://public.example.com/go")
 			# Only the first hop's connection should ever be opened - the SSRF
@@ -294,20 +299,20 @@ class TestRedirectGuard(LinkFetchGuardTestCase):
 			m_open.assert_called_once()
 
 	def test_redirect_followed_to_final_public_destination(self):
-		redirect_resp = _FakeResponse(
-			status=301, headers={"Location": "http://public2.example.com/final"}
-		)
+		redirect_resp = _FakeResponse(status=301, headers={"Location": "http://public2.example.com/final"})
 		final_body = b"final content"
 		final_resp = _FakeResponse(
 			status=200,
 			headers={"Content-Type": "text/plain"},
 			chunks=_chunk_list(final_body),
 		)
-		with mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)), \
+		with (
+			mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)),
 			mock.patch(
 				"jarvis.chat.link_fetch._open_pinned",
 				side_effect=[_open_result(redirect_resp), _open_result(final_resp)],
-			) as m_open:
+			) as m_open,
+		):
 			text = link_fetch.fetch_and_extract("http://public1.example.com/start")
 		self.assertEqual(text, "final content")
 		self.assertEqual(m_open.call_count, 2)
@@ -320,18 +325,22 @@ class TestRedirectGuard(LinkFetchGuardTestCase):
 			)
 
 		results = [_open_result(make_redirect(i)) for i in range(1, 6)]
-		with mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)), \
-			mock.patch("jarvis.chat.link_fetch._open_pinned", side_effect=results):
+		with (
+			mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)),
+			mock.patch("jarvis.chat.link_fetch._open_pinned", side_effect=results),
+		):
 			with self.assertRaises(link_fetch.LinkFetchError):
 				link_fetch.fetch_and_extract("http://hop0.example.com/start")
 
 	def test_redirect_with_no_location_header_rejected(self):
 		bad_redirect = _FakeResponse(status=302, headers={})
-		with mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)), \
+		with (
+			mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)),
 			mock.patch(
 				"jarvis.chat.link_fetch._open_pinned",
 				return_value=_open_result(bad_redirect),
-			):
+			),
+		):
 			with self.assertRaises(link_fetch.LinkFetchError):
 				link_fetch.fetch_and_extract("http://public.example.com/x")
 
@@ -347,10 +356,10 @@ class TestSizeCapGuard(LinkFetchGuardTestCase):
 			headers={"Content-Type": "text/plain"},
 			chunks=_chunk_list(body, size=10),
 		)
-		with mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)), \
-			mock.patch(
-				"jarvis.chat.link_fetch._open_pinned", return_value=_open_result(resp)
-			):
+		with (
+			mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)),
+			mock.patch("jarvis.chat.link_fetch._open_pinned", return_value=_open_result(resp)),
+		):
 			with self.assertRaises(link_fetch.LinkFetchError):
 				link_fetch.fetch_and_extract("http://public.example.com/big", max_bytes=50)
 
@@ -361,10 +370,10 @@ class TestSizeCapGuard(LinkFetchGuardTestCase):
 			headers={"Content-Type": "text/plain"},
 			chunks=_chunk_list(body, size=10),
 		)
-		with mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)), \
-			mock.patch(
-				"jarvis.chat.link_fetch._open_pinned", return_value=_open_result(resp)
-			):
+		with (
+			mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)),
+			mock.patch("jarvis.chat.link_fetch._open_pinned", return_value=_open_result(resp)),
+		):
 			text = link_fetch.fetch_and_extract("http://public.example.com/ok", max_bytes=50)
 		self.assertEqual(text, "y" * 40)
 
@@ -379,19 +388,19 @@ class TestContentTypeGuard(LinkFetchGuardTestCase):
 			headers={"Content-Type": "image/png"},
 			chunks=[b"\x89PNG..."],
 		)
-		with mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)), \
-			mock.patch(
-				"jarvis.chat.link_fetch._open_pinned", return_value=_open_result(resp)
-			):
+		with (
+			mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)),
+			mock.patch("jarvis.chat.link_fetch._open_pinned", return_value=_open_result(resp)),
+		):
 			with self.assertRaises(link_fetch.LinkFetchError):
 				link_fetch.fetch_and_extract("http://public.example.com/img.png")
 
 	def test_non_2xx_status_rejected(self):
 		resp = _FakeResponse(status=404, headers={"Content-Type": "text/html"})
-		with mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)), \
-			mock.patch(
-				"jarvis.chat.link_fetch._open_pinned", return_value=_open_result(resp)
-			):
+		with (
+			mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)),
+			mock.patch("jarvis.chat.link_fetch._open_pinned", return_value=_open_result(resp)),
+		):
 			with self.assertRaises(link_fetch.LinkFetchError):
 				link_fetch.fetch_and_extract("http://public.example.com/missing")
 
@@ -407,10 +416,10 @@ class TestExtractionAndNeutralization(LinkFetchGuardTestCase):
 			headers={"Content-Type": "text/html; charset=utf-8"},
 			chunks=_chunk_list(body),
 		)
-		with mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)), \
-			mock.patch(
-				"jarvis.chat.link_fetch._open_pinned", return_value=_open_result(resp)
-			):
+		with (
+			mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)),
+			mock.patch("jarvis.chat.link_fetch._open_pinned", return_value=_open_result(resp)),
+		):
 			return link_fetch.fetch_and_extract("http://public.example.com/page")
 
 	def test_html_tags_stripped_to_plain_text(self):
@@ -460,10 +469,10 @@ class TestExtractionAndNeutralization(LinkFetchGuardTestCase):
 			headers={"Content-Type": "text/plain"},
 			chunks=_chunk_list(resp_body),
 		)
-		with mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)), \
-			mock.patch(
-				"jarvis.chat.link_fetch._open_pinned", return_value=_open_result(resp)
-			):
+		with (
+			mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)),
+			mock.patch("jarvis.chat.link_fetch._open_pinned", return_value=_open_result(resp)),
+		):
 			text = link_fetch.fetch_and_extract("http://public.example.com/plain.txt")
 		self.assertEqual(text, "line one\nline two")
 
@@ -480,19 +489,22 @@ class TestExtractionAndNeutralization(LinkFetchGuardTestCase):
 # --------------------------------------------------------------------------- #
 class TestRequestPinned(LinkFetchGuardTestCase):
 	def test_blocked_host_raises_before_any_open(self):
-		with mock.patch("socket.getaddrinfo", return_value=_addrinfo(PRIVATE_IP)), \
-			mock.patch("jarvis.chat.link_fetch._open_pinned") as m_open:
+		with (
+			mock.patch("socket.getaddrinfo", return_value=_addrinfo(PRIVATE_IP)),
+			mock.patch("jarvis.chat.link_fetch._open_pinned") as m_open,
+		):
 			with self.assertRaises(link_fetch.LinkFetchError):
-				link_fetch.request_pinned("http://internal.example.com/v1/chat/completions",
-				                            method="POST", json_body={"a": 1})
+				link_fetch.request_pinned(
+					"http://internal.example.com/v1/chat/completions", method="POST", json_body={"a": 1}
+				)
 			m_open.assert_not_called()
 
 	def test_post_json_body_and_headers_reach_the_pinned_open(self):
 		resp = _FakeResponse(status=200, headers={}, chunks=_chunk_list(b'{"ok":true}'))
-		with mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)), \
-			mock.patch(
-				"jarvis.chat.link_fetch._open_pinned", return_value=_open_result(resp)
-			) as m_open:
+		with (
+			mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)),
+			mock.patch("jarvis.chat.link_fetch._open_pinned", return_value=_open_result(resp)) as m_open,
+		):
 			status, _headers, body = link_fetch.request_pinned(
 				"https://public.example.com/chat/completions",
 				method="POST",
@@ -509,23 +521,29 @@ class TestRequestPinned(LinkFetchGuardTestCase):
 	def test_non_json_content_type_response_is_not_rejected(self):
 		# fetch_and_extract refuses a non-text/* content-type; request_pinned must NOT -
 		# a provider API replies application/json, not text/*.
-		resp = _FakeResponse(status=400, headers={"Content-Type": "application/json"},
-		                      chunks=_chunk_list(b'{"error":{"message":"bad key"}}'))
-		with mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)), \
-			mock.patch(
-				"jarvis.chat.link_fetch._open_pinned", return_value=_open_result(resp)
-			):
+		resp = _FakeResponse(
+			status=400,
+			headers={"Content-Type": "application/json"},
+			chunks=_chunk_list(b'{"error":{"message":"bad key"}}'),
+		)
+		with (
+			mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)),
+			mock.patch("jarvis.chat.link_fetch._open_pinned", return_value=_open_result(resp)),
+		):
 			status, _headers, body = link_fetch.request_pinned(
-				"https://public.example.com/chat/completions", method="POST", json_body={})
+				"https://public.example.com/chat/completions", method="POST", json_body={}
+			)
 		self.assertEqual(status, 400)
 		self.assertIn(b"bad key", body)
 
 	def test_network_error_becomes_link_fetch_error_without_leaking_headers(self):
-		with mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)), \
+		with (
+			mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)),
 			mock.patch(
 				"jarvis.chat.link_fetch._open_pinned",
 				side_effect=OSError("connection refused"),
-			):
+			),
+		):
 			with self.assertRaises(link_fetch.LinkFetchError) as cm:
 				link_fetch.request_pinned(
 					"https://public.example.com/chat/completions",
@@ -538,13 +556,14 @@ class TestRequestPinned(LinkFetchGuardTestCase):
 	def test_oversize_response_is_rejected_not_silently_truncated(self):
 		big = b'{"pad":"' + (b"x" * (link_fetch.MAX_BYTES_DEFAULT + 10)) + b'"}'
 		resp = _FakeResponse(status=200, headers={}, chunks=_chunk_list(big))
-		with mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)), \
-			mock.patch(
-				"jarvis.chat.link_fetch._open_pinned", return_value=_open_result(resp)
-			):
+		with (
+			mock.patch("socket.getaddrinfo", return_value=_addrinfo(PUBLIC_IP)),
+			mock.patch("jarvis.chat.link_fetch._open_pinned", return_value=_open_result(resp)),
+		):
 			with self.assertRaises(link_fetch.LinkFetchError):
 				link_fetch.request_pinned(
-					"https://public.example.com/chat/completions", method="POST", json_body={})
+					"https://public.example.com/chat/completions", method="POST", json_body={}
+				)
 
 
 class TestPinnedPoolConstruction(LinkFetchGuardTestCase):
@@ -571,7 +590,7 @@ class TestPinnedPoolConstruction(LinkFetchGuardTestCase):
 
 	def test_https_pool_pins_socket_to_ip_but_verifies_the_hostname(self):
 		pool = link_fetch._build_pool("https", "93.184.216.34", 443, "example.com", 5)
-		self.assertEqual(pool.host, "93.184.216.34")       # socket -> vetted IP
+		self.assertEqual(pool.host, "93.184.216.34")  # socket -> vetted IP
 		self.assertEqual(pool.assert_hostname, "example.com")  # cert -> real host
 		self.assertEqual(pool.conn_kw.get("server_hostname"), "example.com")  # SNI
 

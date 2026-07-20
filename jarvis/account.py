@@ -18,7 +18,6 @@ from jarvis import admin_client
 from jarvis.onboarding import _surface
 from jarvis.permissions import require_jarvis_admin
 
-
 # R2-H4 client-side chat-readiness gate. The positive verdict is cached briefly
 # so a boot / SPA-load storm doesn't pay an admin round-trip on every hit.
 _CHAT_GATE_CACHE_KEY = "jarvis:chat_readiness_gate"
@@ -68,9 +67,13 @@ def is_onboarded() -> dict:
 	account page handles that state via tenant_status: pending.
 	"""
 	settings = frappe.get_single("Jarvis Settings")
-	api_key = (settings.get_password(
-		"jarvis_admin_api_key", raise_exception=False,
-	) or "").strip()
+	api_key = (
+		settings.get_password(
+			"jarvis_admin_api_key",
+			raise_exception=False,
+		)
+		or ""
+	).strip()
 	return {"onboarded": bool(api_key)}
 
 
@@ -103,6 +106,7 @@ def is_ready_for_chat() -> dict:
 	- ``None`` when ``ready`` is True.
 	"""
 	from jarvis import selfhost
+
 	if selfhost.is_self_hosted():
 		# Self-hosted: ready iff a validated openclaw connection is stored.
 		# No admin signup / managed LLM creds involved.
@@ -113,9 +117,13 @@ def is_ready_for_chat() -> dict:
 
 	settings = frappe.get_single("Jarvis Settings")
 
-	admin_api_key = (settings.get_password(
-		"jarvis_admin_api_key", raise_exception=False,
-	) or "").strip()
+	admin_api_key = (
+		settings.get_password(
+			"jarvis_admin_api_key",
+			raise_exception=False,
+		)
+		or ""
+	).strip()
 	if not admin_api_key:
 		return {"ready": False, "reason": "signup"}
 
@@ -143,9 +151,13 @@ def is_ready_for_chat() -> dict:
 	auth_mode = (getattr(settings, "llm_auth_mode", "") or "api_key").strip()
 
 	if auth_mode == "api_key":
-		llm_key = (settings.get_password(
-			"llm_api_key", raise_exception=False,
-		) or "").strip()
+		llm_key = (
+			settings.get_password(
+				"llm_api_key",
+				raise_exception=False,
+			)
+			or ""
+		).strip()
 		provider = (getattr(settings, "llm_provider", "") or "").strip()
 		model = (getattr(settings, "llm_model", "") or "").strip()
 		if not (llm_key and provider and model):
@@ -183,9 +195,15 @@ def get_llm_usage() -> dict:
 	require_jarvis_admin()
 	settings = frappe.get_single("Jarvis Settings")
 	if not getattr(settings, "proxy_active", 0):
-		return {"applicable": False, "period": None, "tokens_in": 0, "tokens_out": 0,
-				"cost_usd": 0.0, "per_model": [],
-				"used_vs_limit": {"used_usd": 0.0, "limit_usd": None}}
+		return {
+			"applicable": False,
+			"period": None,
+			"tokens_in": 0,
+			"tokens_out": 0,
+			"cost_usd": 0.0,
+			"per_model": [],
+			"used_vs_limit": {"used_usd": 0.0, "limit_usd": None},
+		}
 	data = _surface(admin_client.get_llm_usage) or {}
 	data["applicable"] = True
 	return data

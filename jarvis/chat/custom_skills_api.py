@@ -13,10 +13,10 @@ and flip the status to a terminal ``ok ...`` / ``failed: ...`` the SPA polls.
 """
 
 import frappe
-from jarvis.permissions import require_jarvis_user
 from frappe import _
 
 from jarvis.chat.custom_skills import build_push_payload
+from jarvis.permissions import require_jarvis_user
 
 SKILL = "Jarvis Custom Skill"
 _SETTINGS = "Jarvis Settings"
@@ -45,18 +45,14 @@ def _require_skill_owner(doc, action: str = "modify") -> None:
 		return
 	if "System Manager" in frappe.get_roles(me):
 		return
-	frappe.throw(
-		_("You can only {0} your own skills.").format(action), frappe.PermissionError
-	)
+	frappe.throw(_("You can only {0} your own skills.").format(action), frappe.PermissionError)
 
 
 def _skill_names_shared_with(user: str) -> list[str]:
 	"""Skill row-names shared with ``user`` (child-table lookup, perm-free)."""
 	return [
 		r.parent
-		for r in frappe.get_all(
-			SHARE, filters={"user": user, "parenttype": SKILL}, fields=["parent"]
-		)
+		for r in frappe.get_all(SHARE, filters={"user": user, "parenttype": SKILL}, fields=["parent"])
 	]
 
 
@@ -83,7 +79,8 @@ def list_custom_skills() -> list[dict]:
 		for x in frappe.db.sql(
 			"""SELECT parent, COUNT(*) n FROM `tabJarvis Custom Skill Share`
 			WHERE parent IN %(names)s GROUP BY parent""",
-			{"names": tuple(own_names)}, as_dict=True,
+			{"names": tuple(own_names)},
+			as_dict=True,
 		):
 			share_counts[x.parent] = x.n
 	for s in own:
@@ -100,14 +97,18 @@ def list_custom_skills() -> list[dict]:
 			order_by="skill_name asc",
 		)
 		# One query for the owners' display names (was a per-row lookup).
-		full_names = {
-			u.name: u.full_name
-			for u in frappe.get_all(
-				"User",
-				filters={"name": ["in", list({r.owner for r in rows})]},
-				fields=["name", "full_name"],
-			)
-		} if rows else {}
+		full_names = (
+			{
+				u.name: u.full_name
+				for u in frappe.get_all(
+					"User",
+					filters={"name": ["in", list({r.owner for r in rows})]},
+					fields=["name", "full_name"],
+				)
+			}
+			if rows
+			else {}
+		)
 		for s in rows:
 			s["mine"] = 0
 			owner = s.pop("owner")
@@ -243,9 +244,7 @@ def list_custom_skills_page(
 	where = " AND ".join(conds)
 	order = _order_by(sort_field, sort_dir, _SKILLS_SORTABLE, "skill_name", "asc")
 
-	total = frappe.db.sql(
-		f"SELECT COUNT(*) FROM `tabJarvis Custom Skill` WHERE {where}", params
-	)[0][0]
+	total = frappe.db.sql(f"SELECT COUNT(*) FROM `tabJarvis Custom Skill` WHERE {where}", params)[0][0]
 	rows = frappe.db.sql(
 		f"""SELECT name, skill_name, description, user_invocable, enabled, modified, owner,
 			ifnull(scope, 'Org') AS scope
@@ -253,7 +252,8 @@ def list_custom_skills_page(
 		WHERE {where}
 		ORDER BY {order}
 		LIMIT %(page_length)s OFFSET %(start)s""",
-		params, as_dict=True,
+		params,
+		as_dict=True,
 	)
 
 	# One grouped child query for share counts over THIS page's own rows.
@@ -263,7 +263,8 @@ def list_custom_skills_page(
 		for x in frappe.db.sql(
 			"""SELECT parent, COUNT(*) n FROM `tabJarvis Custom Skill Share`
 			WHERE parent IN %(names)s GROUP BY parent""",
-			{"names": tuple(my_names)}, as_dict=True,
+			{"names": tuple(my_names)},
+			as_dict=True,
 		):
 			share_counts[x.parent] = x.n
 	for r in rows:
@@ -317,9 +318,7 @@ def create_custom_skill(
 	enabled: int = 1,
 ) -> dict:
 	"""Create a skill. Validation (slug/caps) runs in the doctype's validate()."""
-	return _create_custom_skill_impl(
-		skill_name, description, instructions, user_invocable, enabled
-	)
+	return _create_custom_skill_impl(skill_name, description, instructions, user_invocable, enabled)
 
 
 def _create_custom_skill_impl(
@@ -427,9 +426,7 @@ def delete_custom_skills_bulk(names: str | list | None = None) -> dict:
 			skipped.append({"name": n, "reason": "not permitted"})
 		except Exception:
 			# Never leak internal exception text to the client — log server-side.
-			frappe.log_error(
-				title="Jarvis: bulk skill delete failed", message=frappe.get_traceback()
-			)
+			frappe.log_error(title="Jarvis: bulk skill delete failed", message=frappe.get_traceback())
 			skipped.append({"name": n, "reason": "error"})
 	frappe.db.commit()
 	# Only a reviewer's delete reconciles the shared catalog (TASK 12): a plain
@@ -470,11 +467,7 @@ def get_skill_shares(name: str) -> dict:
 	doc = frappe.get_doc(SKILL, name)
 	if doc.owner != frappe.session.user:
 		frappe.throw(_("Only the owner can manage sharing."), frappe.PermissionError)
-	return {
-		"users": [
-			{"name": r.user, "full_name": _full_name(r.user)} for r in (doc.shared_with or [])
-		]
-	}
+	return {"users": [{"name": r.user, "full_name": _full_name(r.user)} for r in (doc.shared_with or [])]}
 
 
 @frappe.whitelist()
@@ -515,6 +508,7 @@ def _notify_skill_reviewers(request_name: str | None = None) -> None:
 	Never breaks the request on failure."""
 	try:
 		from frappe.utils.user import get_users_with_role
+
 		from jarvis.chat.events import publish_to_user
 		from jarvis.permissions import JARVIS_REVIEWER_ROLES
 
@@ -536,9 +530,7 @@ def _notify_skill_reviewers(request_name: str | None = None) -> None:
 
 @frappe.whitelist()
 @require_jarvis_user
-def request_skill_promotion(
-	name: str, to_scope: str, target_role: str = "", note: str = ""
-) -> dict:
+def request_skill_promotion(name: str, to_scope: str, target_role: str = "", note: str = "") -> dict:
 	"""Ask a reviewer to widen one of the caller's OWN skills up the scope ladder
 	(User->Role->Org). Files a Pending ``Jarvis Skill Promotion Request`` and
 	pings the reviewer set — the skill itself is untouched; promotion is a
@@ -563,16 +555,18 @@ def request_skill_promotion(
 	if to_scope == "Role" and not target_role:
 		frappe.throw(_("Promoting to Role scope needs a target role."))
 
-	req = frappe.get_doc({
-		"doctype": PROMO,
-		"skill": doc.name,
-		"skill_name": doc.skill_name,
-		"from_scope": from_scope,
-		"to_scope": to_scope,
-		"target_role": target_role if to_scope == "Role" else None,
-		"note": (note or "").strip()[:140] or None,
-		"status": "Pending",
-	})
+	req = frappe.get_doc(
+		{
+			"doctype": PROMO,
+			"skill": doc.name,
+			"skill_name": doc.skill_name,
+			"from_scope": from_scope,
+			"to_scope": to_scope,
+			"target_role": target_role if to_scope == "Role" else None,
+			"note": (note or "").strip()[:140] or None,
+			"status": "Pending",
+		}
+	)
 	req.insert(ignore_permissions=True)
 	frappe.db.commit()
 	_notify_skill_reviewers(req.name)
@@ -660,9 +654,7 @@ def list_skill_promotion_requests(
 		conds.append("(skill_name LIKE %(q)s OR note LIKE %(q)s)")
 	where = " AND ".join(conds) or "1=1"
 
-	total = frappe.db.sql(
-		f"SELECT COUNT(*) FROM `tab{PROMO}` WHERE {where}", params
-	)[0][0]
+	total = frappe.db.sql(f"SELECT COUNT(*) FROM `tab{PROMO}` WHERE {where}", params)[0][0]
 	rows = frappe.db.sql(
 		f"""SELECT name, skill, skill_name, from_scope, to_scope, target_role,
 			note, status, owner, creation, reviewer, decided_at, decision_note
@@ -670,16 +662,15 @@ def list_skill_promotion_requests(
 		WHERE {where}
 		ORDER BY creation DESC, name ASC
 		LIMIT %(page_length)s OFFSET %(start)s""",
-		params, as_dict=True,
+		params,
+		as_dict=True,
 	)
 
 	owner_names = list({r["owner"] for r in rows if r.get("owner")})
 	fullnames = {
 		u.name: u.full_name
 		for u in (
-			frappe.get_all(
-				"User", filters={"name": ["in", owner_names]}, fields=["name", "full_name"]
-			)
+			frappe.get_all("User", filters={"name": ["in", owner_names]}, fields=["name", "full_name"])
 			if owner_names
 			else []
 		)
@@ -767,9 +758,7 @@ def _apply_custom_skills_impl() -> dict:
 	re-checking the reviewer gate (the bulk-delete path only invokes it for a
 	reviewer)."""
 	skills = build_push_payload(strict=True)
-	frappe.db.set_single_value(
-		_SETTINGS, "custom_skills_sync_status", "pending: applying skills"
-	)
+	frappe.db.set_single_value(_SETTINGS, "custom_skills_sync_status", "pending: applying skills")
 	frappe.db.commit()
 	run_inline = bool(frappe.flags.in_test or frappe.flags.run_admin_sync_inline)
 	frappe.enqueue(
@@ -842,9 +831,7 @@ def _enqueued_push_custom_skills() -> None:
 			# silent dead job. Mirrors _enqueued_push_learned_skills.
 			_fail("failed: unexpected error; see Error Log")
 			terminal_written = True
-			frappe.log_error(
-				title="Jarvis: custom-skills push failed", message=frappe.get_traceback()
-			)
+			frappe.log_error(title="Jarvis: custom-skills push failed", message=frappe.get_traceback())
 		finally:
 			if not terminal_written:
 				try:

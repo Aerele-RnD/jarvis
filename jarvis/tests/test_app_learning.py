@@ -39,15 +39,17 @@ _BIG = app_analysis.PER_FILE_CAP_BYTES + 1
 
 def _ensure_admin(email: str) -> None:
 	if not frappe.db.exists("User", email):
-		frappe.get_doc({
-			"doctype": "User",
-			"email": email,
-			"first_name": "AppLearn",
-			"last_name": "Admin",
-			"enabled": 1,
-			"send_welcome_email": 0,
-			"user_type": "System User",
-		}).insert(ignore_permissions=True)
+		frappe.get_doc(
+			{
+				"doctype": "User",
+				"email": email,
+				"first_name": "AppLearn",
+				"last_name": "Admin",
+				"enabled": 1,
+				"send_welcome_email": 0,
+				"user_type": "System User",
+			}
+		).insert(ignore_permissions=True)
 	frappe.get_doc("User", email).add_roles("System Manager")
 	frappe.db.commit()
 
@@ -71,12 +73,8 @@ class _AppLearningTestCase(FrappeTestCase):
 		self.app_dir = os.path.join(self.tmp, "fakeapp")
 		os.makedirs(self.app_dir)
 		self._patches = [
-			mock.patch.object(
-				app_analysis, "_app_source_dir", side_effect=lambda app: self.app_dir
-			),
-			mock.patch.object(
-				app_analysis, "_installed_custom_apps", return_value=["fakeapp"]
-			),
+			mock.patch.object(app_analysis, "_app_source_dir", side_effect=lambda app: self.app_dir),
+			mock.patch.object(app_analysis, "_installed_custom_apps", return_value=["fakeapp"]),
 		]
 		for p in self._patches:
 			p.start()
@@ -112,13 +110,15 @@ class _AppLearningTestCase(FrappeTestCase):
 				fh.write(content)
 
 	def _mk_run(self, **fields) -> "frappe.model.document.Document":
-		doc = frappe.get_doc({
-			"doctype": RUN,
-			"app": "fakeapp",
-			"status": "Queued",
-			"requested_by": ADMIN_USER,
-			**fields,
-		})
+		doc = frappe.get_doc(
+			{
+				"doctype": RUN,
+				"app": "fakeapp",
+				"status": "Queued",
+				"requested_by": ADMIN_USER,
+				**fields,
+			}
+		)
 		doc.insert(ignore_permissions=True)
 		frappe.db.commit()
 		app_analysis._bust_active_conversations()
@@ -136,15 +136,17 @@ class _AppLearningTestCase(FrappeTestCase):
 
 	def _reply(self, conversation: str, content: str, streaming: int = 0, error: str | None = None) -> None:
 		seq = frappe.db.count(MSG, {"conversation": conversation}) + 1
-		doc = frappe.get_doc({
-			"doctype": MSG,
-			"conversation": conversation,
-			"seq": seq,
-			"role": "assistant",
-			"content": content,
-			"streaming": streaming,
-			"error": error,
-		})
+		doc = frappe.get_doc(
+			{
+				"doctype": MSG,
+				"conversation": conversation,
+				"seq": seq,
+				"role": "assistant",
+				"content": content,
+				"streaming": streaming,
+				"error": error,
+			}
+		)
 		doc.flags.ignore_permissions = True
 		doc.insert(ignore_permissions=True)
 		frappe.db.commit()
@@ -152,10 +154,12 @@ class _AppLearningTestCase(FrappeTestCase):
 	def _analyzing_run(self):
 		"""A real started run: 2 files -> 2 batches, zip on disk, conversation
 		created, batch-1 turn captured (and discarded)."""
-		self._write({
-			"hooks.py": "app_title = 'Fake'\n" + ("# pad\n" * 3000),
-			"mod/api.py": "import frappe\n" + ("# pad\n" * 3000),
-		})
+		self._write(
+			{
+				"hooks.py": "app_title = 'Fake'\n" + ("# pad\n" * 3000),
+				"mod/api.py": "import frappe\n" + ("# pad\n" * 3000),
+			}
+		)
 		run = self._mk_run()
 		with mock.patch("jarvis.chat.api._enqueue_turn") as enq:
 			app_analysis.start_run(run.name)
@@ -175,34 +179,39 @@ class _AppLearningTestCase(FrappeTestCase):
 # --------------------------------------------------------------------------- #
 class TestSnapshotZip(_AppLearningTestCase):
 	def test_allowlist_excludes_and_per_file_cap(self):
-		self._write({
-			"hooks.py": "app_title = 'Fake'\n",
-			"fakeapp/doctype/widget/widget.json": '{"doctype": "DocType"}',
-			"fakeapp/doctype/widget/widget.py": "class Widget:\n\tpass\n",
-			"api.py": "import frappe\n",
-			"public/js/app.js": "console.log(1)\n",
-			"README.md": "# fake\n",
-			"logo.png": "not-source",
-			"node_modules/pkg/index.js": "excluded",
-			".git/config": "[core]",
-			"public/frontend/main.vue": "<template/>",
-			"__pycache__/x.py": "excluded",
-			"big.py": "#" * _BIG,
-		})
+		self._write(
+			{
+				"hooks.py": "app_title = 'Fake'\n",
+				"fakeapp/doctype/widget/widget.json": '{"doctype": "DocType"}',
+				"fakeapp/doctype/widget/widget.py": "class Widget:\n\tpass\n",
+				"api.py": "import frappe\n",
+				"public/js/app.js": "console.log(1)\n",
+				"README.md": "# fake\n",
+				"logo.png": "not-source",
+				"node_modules/pkg/index.js": "excluded",
+				".git/config": "[core]",
+				"public/frontend/main.vue": "<template/>",
+				"__pycache__/x.py": "excluded",
+				"big.py": "#" * _BIG,
+			}
+		)
 		snap = app_analysis._snapshot_zip("test-snap-run", "fakeapp")
 		self._zips.append(snap["zip_path"])
 		import zipfile
 
 		with zipfile.ZipFile(snap["zip_path"]) as zf:
 			members = set(zf.namelist())
-		self.assertEqual(members, {
-			"hooks.py",
-			"fakeapp/doctype/widget/widget.json",
-			"fakeapp/doctype/widget/widget.py",
-			"api.py",
-			"public/js/app.js",
-			"README.md",
-		})
+		self.assertEqual(
+			members,
+			{
+				"hooks.py",
+				"fakeapp/doctype/widget/widget.json",
+				"fakeapp/doctype/widget/widget.py",
+				"api.py",
+				"public/js/app.js",
+				"README.md",
+			},
+		)
 		self.assertEqual(snap["file_count"], 6)
 		self.assertEqual(snap["notes"]["skipped_large_files"], 1)
 		self.assertEqual(snap["notes"]["dropped_files"], 0)
@@ -211,13 +220,15 @@ class TestSnapshotZip(_AppLearningTestCase):
 		self.assertTrue(os.path.isfile(os.path.join(self.app_dir, "big.py")))
 
 	def test_file_cap_keeps_prioritized_subset(self):
-		self._write({
-			"hooks.py": "h\n",
-			"m/doctype/x/x.json": "{}",
-			"m/doctype/x/x.py": "pass\n",
-			"misc.py": "pass\n",
-			"README.md": "# r\n",
-		})
+		self._write(
+			{
+				"hooks.py": "h\n",
+				"m/doctype/x/x.json": "{}",
+				"m/doctype/x/x.py": "pass\n",
+				"misc.py": "pass\n",
+				"README.md": "# r\n",
+			}
+		)
 		with mock.patch.object(app_analysis, "FILE_CAP", 3):
 			snap = app_analysis._snapshot_zip("test-cap-run", "fakeapp")
 		self._zips.append(snap["zip_path"])
@@ -235,9 +246,7 @@ class TestSnapshotZip(_AppLearningTestCase):
 			with self.assertRaises(ValueError) as ctx:
 				app_analysis._snapshot_zip("test-zipcap-run", "fakeapp")
 		self.assertIn("cap", str(ctx.exception))
-		expected = frappe.get_site_path(
-			"private", "files", "app_learning", "test-zipcap-run.zip"
-		)
+		expected = frappe.get_site_path("private", "files", "app_learning", "test-zipcap-run.zip")
 		self.assertFalse(os.path.exists(expected))
 
 	def test_missing_source_dir_raises(self):
@@ -304,27 +313,32 @@ class TestSnapshotZip(_AppLearningTestCase):
 # --------------------------------------------------------------------------- #
 class TestBatchPlanning(_AppLearningTestCase):
 	def test_manifest_order_hooks_first(self):
-		self._write({
-			"hooks.py": "h\n",
-			"fakeapp/doctype/widget/widget.json": "{}",
-			"fakeapp/doctype/widget/widget.py": "pass\n",
-			"api.py": "pass\n",
-			"util.py": "pass\n",
-			"public/js/app.js": "1\n",
-			"README.md": "# r\n",
-		})
+		self._write(
+			{
+				"hooks.py": "h\n",
+				"fakeapp/doctype/widget/widget.json": "{}",
+				"fakeapp/doctype/widget/widget.py": "pass\n",
+				"api.py": "pass\n",
+				"util.py": "pass\n",
+				"public/js/app.js": "1\n",
+				"README.md": "# r\n",
+			}
+		)
 		snap = app_analysis._snapshot_zip("test-order-run", "fakeapp")
 		self._zips.append(snap["zip_path"])
 		manifest = app_analysis._manifest_from_zip(snap["zip_path"])
-		self.assertEqual([p for p, _c in manifest], [
-			"hooks.py",
-			"fakeapp/doctype/widget/widget.json",
-			"fakeapp/doctype/widget/widget.py",
-			"api.py",
-			"util.py",
-			"public/js/app.js",
-			"README.md",
-		])
+		self.assertEqual(
+			[p for p, _c in manifest],
+			[
+				"hooks.py",
+				"fakeapp/doctype/widget/widget.json",
+				"fakeapp/doctype/widget/widget.py",
+				"api.py",
+				"util.py",
+				"public/js/app.js",
+				"README.md",
+			],
+		)
 
 	def test_batches_respect_budget_and_split_oversized_files(self):
 		budget = app_analysis.BATCH_CHAR_BUDGET
@@ -405,8 +419,10 @@ class TestTurnEndStateMachine(_AppLearningTestCase):
 		enq.assert_called_once()
 		self.assertIn("batch 1/2", enq.call_args[0][1])
 
-		with mock.patch("jarvis.chat.api._enqueue_turn") as enq, \
-			mock.patch.object(app_analysis, "_enqueue_tick") as tick:
+		with (
+			mock.patch("jarvis.chat.api._enqueue_turn") as enq,
+			mock.patch.object(app_analysis, "_enqueue_tick") as tick,
+		):
 			self._reply(conv, "still ```jarvis-app-analysis\nnot json\n``` broken")
 			app_analysis.on_turn_end(conv, errored=False)
 		run.reload()
@@ -423,8 +439,7 @@ class TestTurnEndStateMachine(_AppLearningTestCase):
 		run.reload()
 		self.assertEqual(run.status, "Analyzing")
 		enq.assert_called_once()
-		with mock.patch("jarvis.chat.api._enqueue_turn"), \
-			mock.patch.object(app_analysis, "_enqueue_tick"):
+		with mock.patch("jarvis.chat.api._enqueue_turn"), mock.patch.object(app_analysis, "_enqueue_tick"):
 			app_analysis.on_turn_end(conv, errored=True)
 		run.reload()
 		self.assertEqual(run.status, "Failed")
@@ -487,12 +502,14 @@ class TestIngest(_AppLearningTestCase):
 					"mode": "append",
 				},
 			],
-			"skills": [{
-				"skill_name": "Fakeapp Helper!",
-				"description": "Answer fakeapp questions.",
-				"instructions": "Use the fakeapp wiki pages.",
-				"user_invocable": True,
-			}],
+			"skills": [
+				{
+					"skill_name": "Fakeapp Helper!",
+					"description": "Answer fakeapp questions.",
+					"instructions": "Use the fakeapp wiki pages.",
+					"user_invocable": True,
+				}
+			],
 			"summary": "learned",
 		}
 		self._skills.append("fakeapp-helper")
@@ -514,10 +531,12 @@ class TestIngest(_AppLearningTestCase):
 			self.assertIsNone(default_scope)  # default Org behavior
 			return len(updates), 0
 
-		with mock.patch("jarvis.chat.wiki.apply_extracted_page_updates", side_effect=_apply), \
-			mock.patch("jarvis.chat.custom_skills.build_push_payload", return_value=[]), \
-			mock.patch("jarvis.chat.events.publish_to_user") as pub, \
-			mock.patch.object(app_analysis, "_enqueue_tick") as tick:
+		with (
+			mock.patch("jarvis.chat.wiki.apply_extracted_page_updates", side_effect=_apply),
+			mock.patch("jarvis.chat.custom_skills.build_push_payload", return_value=[]),
+			mock.patch("jarvis.chat.events.publish_to_user") as pub,
+			mock.patch.object(app_analysis, "_enqueue_tick") as tick,
+		):
 			app_analysis.ingest(run.name)
 
 		run.reload()
@@ -563,64 +582,75 @@ class TestIngest(_AppLearningTestCase):
 		# because their instructions are derived from untrusted app source.
 		payload = {
 			"wiki_pages": [],
-			"skills": [{
-				"skill_name": "fakeapp-quarantined",
-				"description": "d",
-				"instructions": "i",
-				"user_invocable": False,
-			}],
+			"skills": [
+				{
+					"skill_name": "fakeapp-quarantined",
+					"description": "d",
+					"instructions": "i",
+					"user_invocable": False,
+				}
+			],
 			"summary": "s",
 		}
 		self._skills.append("fakeapp-quarantined")
 		run = self._ingesting_run(payload)
 		# push is WELL under the cap — old code would have enabled it.
-		with mock.patch("jarvis.chat.wiki.apply_extracted_page_updates", return_value=(0, 0)), \
-			mock.patch("jarvis.chat.custom_skills.build_push_payload", return_value=[]), \
-			mock.patch("jarvis.chat.events.publish_to_user"), \
-			mock.patch.object(app_analysis, "_enqueue_tick"):
+		with (
+			mock.patch("jarvis.chat.wiki.apply_extracted_page_updates", return_value=(0, 0)),
+			mock.patch("jarvis.chat.custom_skills.build_push_payload", return_value=[]),
+			mock.patch("jarvis.chat.events.publish_to_user"),
+			mock.patch.object(app_analysis, "_enqueue_tick"),
+		):
 			app_analysis.ingest(run.name)
 		run.reload()
 		self.assertEqual(run.status, "Completed")
 		self.assertEqual(run.skills_created, 1)
 		self.assertEqual(run.skills_deferred, 0)
-		rows = frappe.get_all(
-			SKILL, filters={"skill_name": "fakeapp-quarantined"}, fields=["enabled"]
-		)
+		rows = frappe.get_all(SKILL, filters={"skill_name": "fakeapp-quarantined"}, fields=["enabled"])
 		self.assertEqual(len(rows), 1)
 		self.assertEqual(rows[0].enabled, 0)
 
 	def test_partial_coverage_marker_appended_when_batches_dropped(self):
 		payload = {
-			"wiki_pages": [{
-				"title": "Fakeapp overview",
-				"page_type": "Process",
-				"body_md": "body",
-				"mode": "create",
-			}],
+			"wiki_pages": [
+				{
+					"title": "Fakeapp overview",
+					"page_type": "Process",
+					"body_md": "body",
+					"mode": "create",
+				}
+			],
 			"skills": [],
 			"summary": "s",
 		}
-		run = self._ingesting_run(
-			payload, notes=json.dumps({"plan": {"batches": 40, "dropped_batches": 3}})
-		)
+		run = self._ingesting_run(payload, notes=json.dumps({"plan": {"batches": 40, "dropped_batches": 3}}))
 		captured: list[dict] = []
-		with mock.patch(
-			"jarvis.chat.wiki.apply_extracted_page_updates",
-			side_effect=lambda updates, **kw: (captured.extend(updates), (len(updates), 0))[1],
-		), mock.patch("jarvis.chat.events.publish_to_user"), \
-			mock.patch.object(app_analysis, "_enqueue_tick"):
+		with (
+			mock.patch(
+				"jarvis.chat.wiki.apply_extracted_page_updates",
+				side_effect=lambda updates, **kw: (captured.extend(updates), (len(updates), 0))[1],
+			),
+			mock.patch("jarvis.chat.events.publish_to_user"),
+			mock.patch.object(app_analysis, "_enqueue_tick"),
+		):
 			app_analysis.ingest(run.name)
 		self.assertEqual(len(captured), 1)
 		self.assertIn("Partial coverage: 3", captured[0]["body_md"])
 
 	def test_ingest_error_marks_run_failed(self):
-		payload = {"wiki_pages": [{"title": "T", "page_type": "Process", "body_md": "b"}],
-			"skills": [], "summary": "s"}
+		payload = {
+			"wiki_pages": [{"title": "T", "page_type": "Process", "body_md": "b"}],
+			"skills": [],
+			"summary": "s",
+		}
 		run = self._ingesting_run(payload)
-		with mock.patch(
-			"jarvis.chat.wiki.apply_extracted_page_updates",
-			side_effect=RuntimeError("boom"),
-		), mock.patch.object(app_analysis, "_enqueue_tick") as tick:
+		with (
+			mock.patch(
+				"jarvis.chat.wiki.apply_extracted_page_updates",
+				side_effect=RuntimeError("boom"),
+			),
+			mock.patch.object(app_analysis, "_enqueue_tick") as tick,
+		):
 			app_analysis.ingest(run.name)
 		run.reload()
 		self.assertEqual(run.status, "Failed")
@@ -665,9 +695,7 @@ class TestStartRun(_AppLearningTestCase):
 		# be Failed WITH its zip_path recorded so _cleanup_zips can reclaim it.
 		self._write({"hooks.py": "h\n"})
 		run = self._mk_run()
-		with mock.patch.object(
-			app_analysis, "_manifest_from_zip", side_effect=RuntimeError("boom")
-		):
+		with mock.patch.object(app_analysis, "_manifest_from_zip", side_effect=RuntimeError("boom")):
 			app_analysis.start_run(run.name)
 		run.reload()
 		self.assertEqual(run.status, "Failed")
@@ -700,9 +728,7 @@ class TestScheduling(_AppLearningTestCase):
 		run = self._analyzing_run()
 		# Wipe the turn activity + backdate the start so the run reads stale.
 		frappe.db.delete(MSG, {"conversation": run.conversation})
-		frappe.db.set_value(
-			RUN, run.name, "started_at", add_to_date(now_datetime(), minutes=-90)
-		)
+		frappe.db.set_value(RUN, run.name, "started_at", add_to_date(now_datetime(), minutes=-90))
 		frappe.db.commit()
 
 		with mock.patch("jarvis.chat.api._enqueue_turn") as enq:
@@ -712,8 +738,10 @@ class TestScheduling(_AppLearningTestCase):
 		self.assertEqual(json.loads(run.notes)["retries"]["1"], 1)
 		enq.assert_called_once()
 
-		with mock.patch("jarvis.chat.api._enqueue_turn"), \
-			mock.patch.object(app_analysis, "_enqueue_tick") as tick:
+		with (
+			mock.patch("jarvis.chat.api._enqueue_turn"),
+			mock.patch.object(app_analysis, "_enqueue_tick") as tick,
+		):
 			self.assertTrue(app_analysis._recover_stale_runs())
 		run.reload()
 		self.assertEqual(run.status, "Failed")
@@ -737,12 +765,11 @@ class TestScheduling(_AppLearningTestCase):
 				fh.write(b"z")
 			self._zips.append(p)
 		old = self._mk_run(
-			status="Completed", zip_path=old_zip,
+			status="Completed",
+			zip_path=old_zip,
 			finished_at=add_days(now_datetime(), -8),
 		)
-		new = self._mk_run(
-			status="Failed", zip_path=new_zip, finished_at=now_datetime()
-		)
+		new = self._mk_run(status="Failed", zip_path=new_zip, finished_at=now_datetime())
 		app_analysis._cleanup_zips()
 		self.assertFalse(os.path.exists(old_zip))
 		self.assertTrue(os.path.exists(new_zip))
@@ -752,11 +779,9 @@ class TestScheduling(_AppLearningTestCase):
 		self.assertEqual(new.zip_path, new_zip)
 
 	def test_tick_never_raises(self):
-		with mock.patch.object(
-			app_analysis, "_cleanup_zips", side_effect=RuntimeError("boom")
-		), mock.patch.object(
-			app_analysis, "_recover_stale_runs", side_effect=RuntimeError("boom")
-		), mock.patch.object(
-			app_analysis, "_due_queued_runs", side_effect=RuntimeError("boom")
+		with (
+			mock.patch.object(app_analysis, "_cleanup_zips", side_effect=RuntimeError("boom")),
+			mock.patch.object(app_analysis, "_recover_stale_runs", side_effect=RuntimeError("boom")),
+			mock.patch.object(app_analysis, "_due_queued_runs", side_effect=RuntimeError("boom")),
 		):
 			app_analysis.tick()  # must swallow everything

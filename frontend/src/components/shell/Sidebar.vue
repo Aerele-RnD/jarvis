@@ -84,7 +84,9 @@
 			<div class="px-4 pb-2.5 pt-[11px] text-sm text-ink-gray-5">Recent chats</div>
 			<div class="min-h-0 flex-1 overflow-y-auto pb-2">
 				<template v-if="starred.length">
-					<div class="px-4 pb-1 text-2xs font-medium uppercase tracking-wide text-ink-gray-4">
+					<div
+						class="px-4 pb-1 text-2xs font-medium uppercase tracking-wide text-ink-gray-4"
+					>
 						Starred
 					</div>
 					<ConversationRow v-for="c in starred" :key="c.name" :conv="c" />
@@ -120,11 +122,7 @@
 
 		<!-- 5. footer: collapse toggle -->
 		<div class="m-2 flex flex-col gap-1">
-			<SidebarLink
-				label="Collapse"
-				:is-collapsed="collapsed"
-				:on-click="toggleCollapse"
-			>
+			<SidebarLink label="Collapse" :is-collapsed="collapsed" :on-click="toggleCollapse">
 				<template #icon>
 					<FeatherIcon
 						name="chevrons-left"
@@ -150,7 +148,9 @@
 			<!-- full-height hairline: appears on hover / while dragging -->
 			<span
 				class="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 transition-colors"
-				:class="resizing ? 'bg-surface-gray-4' : 'bg-transparent group-hover:bg-surface-gray-4'"
+				:class="
+					resizing ? 'bg-surface-gray-4' : 'bg-transparent group-hover:bg-surface-gray-4'
+				"
 			/>
 			<!-- grip pill: always faintly visible so the edge reads as adjustable,
 			     solid on hover / while dragging -->
@@ -167,61 +167,61 @@
 // user menu · New Chat/Search · nav links (Approvals badge, D12) · recent
 // chats (starred pinned, capped 50, D6/D7) · collapse toggle (persisted via
 // the store; ≤820px auto-collapse, D8).
-import { computed, ref, onBeforeUnmount } from "vue"
-import { useRoute, useRouter } from "vue-router"
-import { Badge, FeatherIcon, KeyboardShortcut } from "frappe-ui"
-import { useShellStore } from "@/stores/shell"
-import UserMenu from "./UserMenu.vue"
-import SidebarLink from "./SidebarLink.vue"
-import ConversationRow from "./ConversationRow.vue"
+import { computed, ref, onBeforeUnmount } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { Badge, FeatherIcon, KeyboardShortcut } from "frappe-ui";
+import { useShellStore } from "@/stores/shell";
+import UserMenu from "./UserMenu.vue";
+import SidebarLink from "./SidebarLink.vue";
+import ConversationRow from "./ConversationRow.vue";
 
-const store = useShellStore()
-const route = useRoute()
-const router = useRouter()
+const store = useShellStore();
+const route = useRoute();
+const router = useRouter();
 
-const collapsed = computed(() => store.sidebarCollapsed)
+const collapsed = computed(() => store.sidebarCollapsed);
 
 // The "More" overflow row lights up on any of its destinations (currently the
 // Dashboards page + detail). Extend the prefix list as destinations are added.
-const onMoreDestination = computed(() => route.path.startsWith("/dashboards"))
+const onMoreDestination = computed(() => route.path.startsWith("/dashboards"));
 function toggleCollapse() {
-	store.sidebarCollapsed = !store.sidebarCollapsed
+	store.sidebarCollapsed = !store.sidebarCollapsed;
 }
 
 // ── drag-to-resize (expanded width, persisted in the store, D5-adjacent) ──────
 // The store getter/setter clamps to [SIDEBAR_MIN_W, SIDEBAR_MAX_W], so we can
 // feed it raw deltas. `resizing` suppresses the width transition mid-drag so the
 // edge tracks the cursor 1:1 instead of lagging behind the 300ms ease.
-const sidebarWidth = computed(() => store.sidebarWidth)
-const resizing = ref(false)
-let startX = 0
-let startW = 0
+const sidebarWidth = computed(() => store.sidebarWidth);
+const resizing = ref(false);
+let startX = 0;
+let startW = 0;
 
 function startResize(e) {
-	if (e.button !== 0 || collapsed.value) return
-	resizing.value = true
-	startX = e.clientX
-	startW = store.sidebarWidth
-	window.addEventListener("mousemove", onResize)
-	window.addEventListener("mouseup", stopResize)
-	document.body.style.userSelect = "none"
-	document.body.style.cursor = "col-resize"
+	if (e.button !== 0 || collapsed.value) return;
+	resizing.value = true;
+	startX = e.clientX;
+	startW = store.sidebarWidth;
+	window.addEventListener("mousemove", onResize);
+	window.addEventListener("mouseup", stopResize);
+	document.body.style.userSelect = "none";
+	document.body.style.cursor = "col-resize";
 }
 function onResize(e) {
-	store.sidebarWidth = startW + (e.clientX - startX)
+	store.sidebarWidth = startW + (e.clientX - startX);
 }
 function stopResize() {
-	if (!resizing.value) return
-	resizing.value = false
-	window.removeEventListener("mousemove", onResize)
-	window.removeEventListener("mouseup", stopResize)
-	document.body.style.userSelect = ""
-	document.body.style.cursor = ""
+	if (!resizing.value) return;
+	resizing.value = false;
+	window.removeEventListener("mousemove", onResize);
+	window.removeEventListener("mouseup", stopResize);
+	document.body.style.userSelect = "";
+	document.body.style.cursor = "";
 }
 function resetWidth() {
-	store.sidebarWidth = 220
+	store.sidebarWidth = 220;
 }
-onBeforeUnmount(stopResize)
+onBeforeUnmount(stopResize);
 
 const navLinks = [
 	{
@@ -267,13 +267,11 @@ const navLinks = [
 		to: { name: "AgentsList" },
 		isActive: () => route.path.startsWith("/agents"),
 	},
-]
+];
 
 // Starred pinned on top; starred + recent capped at 50 rows total (D6).
-const starred = computed(() => store.conversations.filter((c) => c.starred).slice(0, 50))
+const starred = computed(() => store.conversations.filter((c) => c.starred).slice(0, 50));
 const recent = computed(() =>
-	store.conversations
-		.filter((c) => !c.starred)
-		.slice(0, Math.max(0, 50 - starred.value.length)),
-)
+	store.conversations.filter((c) => !c.starred).slice(0, Math.max(0, 50 - starred.value.length))
+);
 </script>

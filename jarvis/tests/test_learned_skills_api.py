@@ -25,18 +25,25 @@ SETTINGS = "Jarvis Settings"
 
 class TestLearnedSkillsCutoverChain(unittest.TestCase):
 	def setUp(self):
-		self._sync = frappe.db.get_value(
-			SETTINGS, SETTINGS,
-			[
-				"learned_skills_synced_at", "learned_skills_sync_status",
-				"custom_skills_synced_at", "custom_skills_sync_status",
-			],
-			as_dict=True,
-		) or frappe._dict()
+		self._sync = (
+			frappe.db.get_value(
+				SETTINGS,
+				SETTINGS,
+				[
+					"learned_skills_synced_at",
+					"learned_skills_sync_status",
+					"custom_skills_synced_at",
+					"custom_skills_sync_status",
+				],
+				as_dict=True,
+			)
+			or frappe._dict()
+		)
 
 	def tearDown(self):
 		frappe.db.set_value(
-			SETTINGS, SETTINGS,
+			SETTINGS,
+			SETTINGS,
 			{
 				"learned_skills_synced_at": self._sync.get("learned_skills_synced_at"),
 				"learned_skills_sync_status": self._sync.get("learned_skills_sync_status"),
@@ -69,9 +76,10 @@ class TestLearnedSkillsCutoverChain(unittest.TestCase):
 	# worker: chain fires ONLY on a confirmed-ok push
 	# ------------------------------------------------------------------ #
 	def test_worker_success_chains_graceful_custom_worker(self):
-		with mock.patch(
-			"jarvis.admin_client.post_push_learned_skills", return_value={}
-		), mock.patch("frappe.enqueue") as enq:
+		with (
+			mock.patch("jarvis.admin_client.post_push_learned_skills", return_value={}),
+			mock.patch("frappe.enqueue") as enq,
+		):
 			learned_skills_api._enqueued_push_learned_skills(chain_custom_reconcile=True)
 		self.assertTrue(self._learned_status().startswith("ok (applied"))
 		# the custom pair is stamped pending BEFORE the reconcile is enqueued
@@ -91,10 +99,13 @@ class TestLearnedSkillsCutoverChain(unittest.TestCase):
 		from jarvis.exceptions import AdminUnreachableError
 
 		before = self._custom_status()
-		with mock.patch(
-			"jarvis.admin_client.post_push_learned_skills",
-			side_effect=AdminUnreachableError("boom"),
-		), mock.patch("frappe.enqueue") as enq:
+		with (
+			mock.patch(
+				"jarvis.admin_client.post_push_learned_skills",
+				side_effect=AdminUnreachableError("boom"),
+			),
+			mock.patch("frappe.enqueue") as enq,
+		):
 			learned_skills_api._enqueued_push_learned_skills(chain_custom_reconcile=True)
 		self.assertTrue(self._learned_status().startswith("failed: admin unreachable"))
 		# never stamped pending, never enqueued: the old dirs stay live.
@@ -103,9 +114,10 @@ class TestLearnedSkillsCutoverChain(unittest.TestCase):
 
 	def test_worker_default_does_not_chain(self):
 		before = self._custom_status()
-		with mock.patch(
-			"jarvis.admin_client.post_push_learned_skills", return_value={}
-		), mock.patch("frappe.enqueue") as enq:
+		with (
+			mock.patch("jarvis.admin_client.post_push_learned_skills", return_value={}),
+			mock.patch("frappe.enqueue") as enq,
+		):
 			learned_skills_api._enqueued_push_learned_skills()
 		self.assertTrue(self._learned_status().startswith("ok (applied"))
 		self.assertEqual(self._custom_status(), before)

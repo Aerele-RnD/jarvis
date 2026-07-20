@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from "vue"
+import { computed, ref } from "vue";
 
 // Attachments + dictation + send/stop. Split out of ChatView so the thread
 // screen stays about the thread.
@@ -9,51 +9,53 @@ const props = defineProps({
 	attachments: { type: Array, default: () => [] },
 	micEnabled: { type: Boolean, default: false },
 	placeholder: { type: String, default: "Message Jarvis…" },
-})
-const emit = defineEmits(["update:modelValue", "send", "stop", "attach", "remove", "mic"])
+});
+const emit = defineEmits(["update:modelValue", "send", "stop", "attach", "remove", "mic"]);
 
-const inputEl = ref(null)
-const fileEl = ref(null)
+const inputEl = ref(null);
+const fileEl = ref(null);
 
-const uploading = computed(() => props.attachments.some((a) => a.uploading))
+const uploading = computed(() => props.attachments.some((a) => a.uploading));
 // An attachment still uploading is not sendable: the worker would get a
 // file_url that doesn't exist yet.
 const canSend = computed(
-	() => !uploading.value && (props.modelValue.trim().length > 0 || props.attachments.some((a) => a.file_url)),
-)
+	() =>
+		!uploading.value &&
+		(props.modelValue.trim().length > 0 || props.attachments.some((a) => a.file_url))
+);
 
 function onInput(e) {
-	emit("update:modelValue", e.target.value)
-	autoGrow()
+	emit("update:modelValue", e.target.value);
+	autoGrow();
 }
 
 function autoGrow() {
-	const el = inputEl.value
-	if (!el) return
-	el.style.height = "auto"
-	el.style.height = `${Math.min(el.scrollHeight, 120)}px`
+	const el = inputEl.value;
+	if (!el) return;
+	el.style.height = "auto";
+	el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
 }
 
 // Enter sends on a physical keyboard; on a phone the on-screen Return key should
 // insert a newline, so only intercept when there is no soft keyboard.
 function onKeydown(e) {
 	if (e.key === "Enter" && !e.shiftKey && !/Mobi|Android/i.test(navigator.userAgent)) {
-		e.preventDefault()
-		if (canSend.value) emit("send")
+		e.preventDefault();
+		if (canSend.value) emit("send");
 	}
 }
 
 function pick(e) {
-	const files = [...(e.target.files || [])]
-	if (files.length) emit("attach", files)
+	const files = [...(e.target.files || [])];
+	if (files.length) emit("attach", files);
 	// Reset so picking the same file twice in a row still fires a change event.
-	e.target.value = ""
+	e.target.value = "";
 }
 
 function reset() {
-	autoGrow()
+	autoGrow();
 }
-defineExpose({ reset })
+defineExpose({ reset });
 </script>
 
 <template>
@@ -62,15 +64,36 @@ defineExpose({ reset })
 			<div v-for="a in props.attachments" :key="a.key" class="jv-att">
 				<img v-if="a.preview" class="jv-att-img" :src="a.preview" :alt="a.name" />
 				<div v-else class="jv-att-file">
-					<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+					<svg
+						viewBox="0 0 24 24"
+						width="16"
+						height="16"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.8"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					>
 						<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
 						<path d="M14 2v6h6" />
 					</svg>
 					<span class="jv-att-name">{{ a.name }}</span>
 				</div>
 				<div v-if="a.uploading" class="jv-att-busy"><span class="jv-spinner" /></div>
-				<button class="jv-att-x" aria-label="Remove attachment" @click="emit('remove', a.key)">
-					<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round">
+				<button
+					class="jv-att-x"
+					aria-label="Remove attachment"
+					@click="emit('remove', a.key)"
+				>
+					<svg
+						viewBox="0 0 24 24"
+						width="11"
+						height="11"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2.6"
+						stroke-linecap="round"
+					>
 						<path d="M18 6 6 18M6 6l12 12" />
 					</svg>
 				</button>
@@ -79,9 +102,25 @@ defineExpose({ reset })
 
 		<div class="jv-composer-row">
 			<input ref="fileEl" type="file" multiple hidden @change="pick" />
-			<button class="jv-icon-btn" aria-label="Attach a file" :disabled="props.sending" @click="fileEl.click()">
-				<svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-					<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+			<button
+				class="jv-icon-btn"
+				aria-label="Attach a file"
+				:disabled="props.sending"
+				@click="fileEl.click()"
+			>
+				<svg
+					viewBox="0 0 24 24"
+					width="21"
+					height="21"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="1.8"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+				>
+					<path
+						d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"
+					/>
 				</svg>
 			</button>
 
@@ -94,19 +133,55 @@ defineExpose({ reset })
 					@input="onInput"
 					@keydown="onKeydown"
 				/>
-				<button v-if="props.micEnabled" class="jv-mic" aria-label="Dictate" @click="emit('mic')">
-					<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+				<button
+					v-if="props.micEnabled"
+					class="jv-mic"
+					aria-label="Dictate"
+					@click="emit('mic')"
+				>
+					<svg
+						viewBox="0 0 24 24"
+						width="18"
+						height="18"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.8"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					>
 						<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" />
 						<path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3" />
 					</svg>
 				</button>
 			</div>
 
-			<button v-if="props.sending" class="jv-send is-stop" aria-label="Stop" @click="emit('stop')">
-				<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
+			<button
+				v-if="props.sending"
+				class="jv-send is-stop"
+				aria-label="Stop"
+				@click="emit('stop')"
+			>
+				<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+					<rect x="6" y="6" width="12" height="12" rx="2" />
+				</svg>
 			</button>
-			<button v-else class="jv-send" aria-label="Send" :disabled="!canSend" @click="emit('send')">
-				<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+			<button
+				v-else
+				class="jv-send"
+				aria-label="Send"
+				:disabled="!canSend"
+				@click="emit('send')"
+			>
+				<svg
+					viewBox="0 0 24 24"
+					width="19"
+					height="19"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2.1"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+				>
 					<path d="M12 19V5M5 12l7-7 7 7" />
 				</svg>
 			</button>

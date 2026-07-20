@@ -10,6 +10,7 @@ into chat. Supports the common shapes:
 Runs under the calling user: ``doc.insert()`` enforces create permission on
 Dashboard Chart, and we check read permission on the charted doctype.
 """
+
 import frappe
 
 from jarvis.exceptions import InvalidArgumentError, PermissionDeniedError

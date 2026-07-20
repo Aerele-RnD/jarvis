@@ -19,9 +19,8 @@ import time
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
-from jarvis import oauth as _oauth_pkg  # noqa: F401
+from jarvis import oauth as _oauth_pkg
 from jarvis.oauth.api import _CACHE_KEY
-
 
 # (module path, callable name, kwargs).
 GATED_ENDPOINTS = [
@@ -44,14 +43,20 @@ GATED_ENDPOINTS = [
 	("jarvis.account", "get_llm_usage", {}),
 	("jarvis.account", "get_llm_connection_status", {}),
 	("jarvis.oauth.api", "begin_paste_signin", {"provider": "OpenAI", "model": "gpt-5.5"}),
-	("jarvis.oauth.api", "complete_paste_signin",
-		{"nonce": "x" * 48, "redirected_url": "http://localhost:1455/auth/callback?code=A&state=B"}),
+	(
+		"jarvis.oauth.api",
+		"complete_paste_signin",
+		{"nonce": "x" * 48, "redirected_url": "http://localhost:1455/auth/callback?code=A&state=B"},
+	),
 	# Pool OAuth-flow endpoints — start/complete a subscription-account capture.
 	# Must refuse a non-System-Manager caller (they return account credentials).
 	# #200 review #10: previously uncovered, so a dropped only_for would slip through.
 	("jarvis.oauth.api", "begin_pool_account_signin", {"provider": "OpenAI", "model": "gpt-5.5"}),
-	("jarvis.oauth.api", "complete_pool_account_signin",
-		{"nonce": "x" * 48, "redirected_url": "http://localhost:1455/auth/callback?code=A&state=B"}),
+	(
+		"jarvis.oauth.api",
+		"complete_pool_account_signin",
+		{"nonce": "x" * 48, "redirected_url": "http://localhost:1455/auth/callback?code=A&state=B"},
+	),
 	("jarvis.oauth.api", "disconnect", {}),
 	# Tenant-admin usage endpoints (design section 4) — gated by
 	# require_jarvis_admin. A non-admin caller must be refused; admin_set_user_limit
@@ -88,10 +93,7 @@ class TestRoleGates(FrappeTestCase):
 				try:
 					fn(**kwargs)
 				except frappe.PermissionError as e:
-					self.fail(
-						f"{module_path}.{name} raised PermissionError "
-						f"for Administrator: {e}"
-					)
+					self.fail(f"{module_path}.{name} raised PermissionError for Administrator: {e}")
 				except Exception:
 					pass
 		finally:
@@ -126,15 +128,19 @@ class TestOAuthNoncePerUserBinding(FrappeTestCase):
 		# we write the cache entry directly with the contract shape.
 		self.nonce = "nuser_" + ("x" * 42)
 		self.originator = "originator@example.com"
-		frappe.cache.hset(_CACHE_KEY, self.nonce, {
-			"provider": "OpenAI",
-			"model": "gpt-5.5",
-			"status": "pending",
-			"expires_at_ts": int(time.time()) + 600,
-			"verifier": "v",
-			"state": "s",
-			"originator_user": self.originator,
-		})
+		frappe.cache.hset(
+			_CACHE_KEY,
+			self.nonce,
+			{
+				"provider": "OpenAI",
+				"model": "gpt-5.5",
+				"status": "pending",
+				"expires_at_ts": int(time.time()) + 600,
+				"verifier": "v",
+				"state": "s",
+				"originator_user": self.originator,
+			},
+		)
 		self.addCleanup(lambda: frappe.cache.hdel(_CACHE_KEY, self.nonce))
 
 	def test_different_user_gets_unknown_nonce(self):
@@ -178,20 +184,32 @@ class TestOAuthErrorSanitization(FrappeTestCase):
 			def json(self):
 				return {"error": "invalid_grant", "error_description": "code is expired"}
 
-		with self.assertRaises(oauth_api.TokenExchangeError) as ctx, \
-			 frappe.utils.patches.patch("jarvis.oauth.api.requests.post",
-										return_value=_FakeResp()) \
-			 if hasattr(frappe.utils, "patches") else _NoopCtx():
+		with (
+			self.assertRaises(oauth_api.TokenExchangeError) as ctx,
+			frappe.utils.patches.patch("jarvis.oauth.api.requests.post", return_value=_FakeResp())
+			if hasattr(frappe.utils, "patches")
+			else _NoopCtx(),
+		):
 			# Fall through to the standard unittest.mock if the patches
 			# helper isn't available.
 			from unittest.mock import patch
-			with patch("jarvis.oauth.api.requests.post", return_value=_FakeResp()), \
-				 patch("jarvis.oauth.api.get_provider", return_value={
-					"client_id": "cid", "token": "https://example/token",
-					"client_secret": None,
-				 }), patch("jarvis.oauth.api.frappe.log_error"):
+
+			with (
+				patch("jarvis.oauth.api.requests.post", return_value=_FakeResp()),
+				patch(
+					"jarvis.oauth.api.get_provider",
+					return_value={
+						"client_id": "cid",
+						"token": "https://example/token",
+						"client_secret": None,
+					},
+				),
+				patch("jarvis.oauth.api.frappe.log_error"),
+			):
 				oauth_api._exchange_code(
-					provider="OpenAI", code="ABC", code_verifier="V",
+					provider="OpenAI",
+					code="ABC",
+					code_verifier="V",
 				)
 
 		err = ctx.exception
@@ -207,6 +225,7 @@ class TestOAuthErrorSanitization(FrappeTestCase):
 		is needed at all. Map to a generic 'auth_failed' bucket.
 		"""
 		from unittest.mock import patch
+
 		from jarvis.oauth import api as oauth_api
 
 		class _FakeResp:
@@ -217,14 +236,23 @@ class TestOAuthErrorSanitization(FrappeTestCase):
 			def json(self):
 				return {"error": "invalid_client", "error_description": "client_secret required"}
 
-		with patch("jarvis.oauth.api.requests.post", return_value=_FakeResp()), \
-			 patch("jarvis.oauth.api.get_provider", return_value={
-				"client_id": "cid", "token": "https://example/token",
-				"client_secret": None,
-			 }), patch("jarvis.oauth.api.frappe.log_error"):
+		with (
+			patch("jarvis.oauth.api.requests.post", return_value=_FakeResp()),
+			patch(
+				"jarvis.oauth.api.get_provider",
+				return_value={
+					"client_id": "cid",
+					"token": "https://example/token",
+					"client_secret": None,
+				},
+			),
+			patch("jarvis.oauth.api.frappe.log_error"),
+		):
 			with self.assertRaises(oauth_api.TokenExchangeError) as ctx:
 				oauth_api._exchange_code(
-					provider="OpenAI", code="ABC", code_verifier="V",
+					provider="OpenAI",
+					code="ABC",
+					code_verifier="V",
 				)
 
 		err = ctx.exception
@@ -234,18 +262,28 @@ class TestOAuthErrorSanitization(FrappeTestCase):
 
 	def test_network_error_maps_to_opaque_code(self):
 		from unittest.mock import patch
+
 		import requests
+
 		from jarvis.oauth import api as oauth_api
 
-		with patch("jarvis.oauth.api.requests.post",
-					side_effect=requests.ConnectionError("DNS failed")), \
-			 patch("jarvis.oauth.api.get_provider", return_value={
-				"client_id": "cid", "token": "https://example/token",
-				"client_secret": None,
-			 }), patch("jarvis.oauth.api.frappe.log_error"):
+		with (
+			patch("jarvis.oauth.api.requests.post", side_effect=requests.ConnectionError("DNS failed")),
+			patch(
+				"jarvis.oauth.api.get_provider",
+				return_value={
+					"client_id": "cid",
+					"token": "https://example/token",
+					"client_secret": None,
+				},
+			),
+			patch("jarvis.oauth.api.frappe.log_error"),
+		):
 			with self.assertRaises(oauth_api.TokenExchangeError) as ctx:
 				oauth_api._exchange_code(
-					provider="OpenAI", code="ABC", code_verifier="V",
+					provider="OpenAI",
+					code="ABC",
+					code_verifier="V",
 				)
 
 		err = ctx.exception

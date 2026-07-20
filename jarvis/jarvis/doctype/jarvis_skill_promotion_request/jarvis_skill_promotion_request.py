@@ -32,9 +32,7 @@ class JarvisSkillPromotionRequest(Document):
 		# ORM hook resolves User-scope skills to their owner, so this subsumes an
 		# explicit owner check. Administrator bypasses has_permission natively.
 		if self.skill and not frappe.has_permission(SKILL, "read", self.skill):
-			frappe.throw(
-				_("You do not have access to this skill."), frappe.PermissionError
-			)
+			frappe.throw(_("You do not have access to this skill."), frappe.PermissionError)
 		if self.skill and not self.skill_name:
 			self.skill_name = frappe.db.get_value(SKILL, self.skill, "skill_name") or ""
 
@@ -49,13 +47,9 @@ class JarvisSkillPromotionRequest(Document):
 	def _validate_scopes(self):
 		self.from_scope = (self.from_scope or "").strip()
 		if self.from_scope and self.from_scope not in FROM_SCOPES:
-			frappe.throw(
-				_("From Scope must be one of {0}.").format(", ".join(FROM_SCOPES))
-			)
+			frappe.throw(_("From Scope must be one of {0}.").format(", ".join(FROM_SCOPES)))
 		self.to_scope = (self.to_scope or "").strip()
 		if self.to_scope not in TO_SCOPES:
-			frappe.throw(
-				_("To Scope must be one of {0}.").format(", ".join(TO_SCOPES))
-			)
+			frappe.throw(_("To Scope must be one of {0}.").format(", ".join(TO_SCOPES)))
 		if self.to_scope == "Role" and not self.target_role:
 			frappe.throw(_("Promoting to Role scope needs a Target Role."))

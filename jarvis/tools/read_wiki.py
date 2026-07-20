@@ -86,9 +86,7 @@ def _search(query: str, limit: int) -> list[dict]:
 	# wiki_permissions) doesn't fit get_all's filters, and post-filtering
 	# would silently shrink the LIMIT.
 	where = "status = 'Active'"
-	vis = (
-		wiki_permissions.visible_scope_condition(frappe.session.user) or ""
-	).strip()
+	vis = (wiki_permissions.visible_scope_condition(frappe.session.user) or "").strip()
 	if vis:
 		where += f" and ({vis})"
 	rows = frappe.db.sql(

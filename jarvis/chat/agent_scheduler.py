@@ -139,15 +139,17 @@ def _launch_audit(inst, trigger: str) -> dict:
 	conv.flags.ignore_permissions = True
 	conv.insert()
 
-	run = frappe.get_doc({
-		"doctype": RUN,
-		"agent": inst.agent,
-		"installation": inst.name,
-		"trigger": trigger,
-		"status": "running",
-		"conversation": conv.name,
-		"started_at": frappe.utils.now(),
-	})
+	run = frappe.get_doc(
+		{
+			"doctype": RUN,
+			"agent": inst.agent,
+			"installation": inst.name,
+			"trigger": trigger,
+			"status": "running",
+			"conversation": conv.name,
+			"started_at": frappe.utils.now(),
+		}
+	)
 	run.flags.ignore_permissions = True
 	run.insert()
 
@@ -199,8 +201,8 @@ def _audit_prompt(listing, inst, trigger: str) -> str:
 	return (
 		f"[Automated {trigger} audit] Run the {listing.title} ({slug}) now for the current period. "
 		f"Follow your agent-{slug} skill exactly: compute engagement materiality, then call "
-		f"jarvis__run_scrutiny for domain \"{listing.category}\" — and pass "
-		f"installation=\"{inst.name}\" to it so your findings are recorded — then report the "
+		f'jarvis__run_scrutiny for domain "{listing.category}" — and pass '
+		f'installation="{inst.name}" to it so your findings are recorded — then report the '
 		f"severity-tagged findings summary it returns. Read-only — never write.{cfg}"
 	)
 
@@ -216,9 +218,7 @@ def _valid_owner(owner: str) -> bool:
 
 def _scheduled_runs_this_month(owner: str) -> int:
 	month_start = frappe.utils.get_first_day(frappe.utils.today())
-	return frappe.db.count(
-		RUN, {"owner": owner, "trigger": "scheduled", "creation": [">=", month_start]}
-	)
+	return frappe.db.count(RUN, {"owner": owner, "trigger": "scheduled", "creation": [">=", month_start]})
 
 
 def _advance(row, now) -> None:
@@ -240,16 +240,18 @@ def _advance(row, now) -> None:
 def _record_failed(row, reason: str) -> None:
 	"""Write a ``failed`` Jarvis Agent Run row (owned by the installation owner)
 	so the customer sees WHY a scheduled slot did not run."""
-	run = frappe.get_doc({
-		"doctype": RUN,
-		"agent": row.agent,
-		"installation": row.name,
-		"trigger": "scheduled",
-		"status": "failed",
-		"started_at": frappe.utils.now(),
-		"finished_at": frappe.utils.now(),
-		"error": (reason or "")[:140],
-	})
+	run = frappe.get_doc(
+		{
+			"doctype": RUN,
+			"agent": row.agent,
+			"installation": row.name,
+			"trigger": "scheduled",
+			"status": "failed",
+			"started_at": frappe.utils.now(),
+			"finished_at": frappe.utils.now(),
+			"error": (reason or "")[:140],
+		}
+	)
 	run.flags.ignore_permissions = True
 	run.insert()
 	if row.owner and row.owner != frappe.session.user:
@@ -274,16 +276,17 @@ def _notify_owner(owner: str, row) -> None:
 	if not _valid_owner(owner):
 		return
 	try:
-		frappe.get_doc({
-			"doctype": "Notification Log",
-			"for_user": owner,
-			"type": "Alert",
-			"subject": f"Scheduled audit could not start: {row.agent}",
-			"email_content": (
-				"A scheduled agent audit could not be started. It will retry on the "
-				"next hourly run."
-			),
-		}).insert(ignore_permissions=True)
+		frappe.get_doc(
+			{
+				"doctype": "Notification Log",
+				"for_user": owner,
+				"type": "Alert",
+				"subject": f"Scheduled audit could not start: {row.agent}",
+				"email_content": (
+					"A scheduled agent audit could not be started. It will retry on the next hourly run."
+				),
+			}
+		).insert(ignore_permissions=True)
 		frappe.db.commit()
 	except Exception:
 		pass

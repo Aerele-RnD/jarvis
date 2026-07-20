@@ -248,9 +248,7 @@ def update_voice_note(name: str, transcript: str) -> dict:
 	# stale snapshot would silently revert a just-Processed note to New and
 	# wipe its processed bookkeeping. FOR UPDATE serializes the sweep's UPDATE
 	# behind this transaction; the status check below is then authoritative.
-	row = frappe.db.get_value(
-		NOTE, name, ["owner", "status"], as_dict=True, for_update=True
-	)
+	row = frappe.db.get_value(NOTE, name, ["owner", "status"], as_dict=True, for_update=True)
 	if not row:
 		frappe.throw(_("Voice note not found."))
 	if row.owner != frappe.session.user:

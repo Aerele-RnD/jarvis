@@ -31,9 +31,17 @@ ACTIVITY = "Jarvis Trigger Activity"
 # Fields a create/update payload may set. Everything else (owner, the managed
 # server_script link, timestamps) is server-owned; unknown keys throw.
 _ALLOWED_PAYLOAD_FIELDS = {
-	"trigger_name", "enabled", "target_doctype", "doc_event", "condition",
-	"action_type", "script_body", "llm_instruction", "llm_daily_cap",
-	"description", "source_conversation",
+	"trigger_name",
+	"enabled",
+	"target_doctype",
+	"doc_event",
+	"condition",
+	"action_type",
+	"script_body",
+	"llm_instruction",
+	"llm_daily_cap",
+	"description",
+	"source_conversation",
 }
 
 _ACTION_TYPES = {"Script", "LLM"}
@@ -41,17 +49,27 @@ _ACTIVITY_STATUSES = {"Success", "Failed", "Blocked", "Skipped"}
 
 _TRIGGER_FILTERS = {"enabled", "action_type", "target_doctype", "doc_event"}
 _TRIGGER_SORTABLE = {
-	"modified": "modified", "trigger_name": "trigger_name",
-	"target_doctype": "target_doctype", "doc_event": "doc_event",
-	"action_type": "action_type", "enabled": "enabled",
+	"modified": "modified",
+	"trigger_name": "trigger_name",
+	"target_doctype": "target_doctype",
+	"doc_event": "doc_event",
+	"action_type": "action_type",
+	"enabled": "enabled",
 }
 
 _ACTIVITY_FILTERS = {
-	"trigger", "status", "action_type", "target_doctype", "doc_event",
-	"from_date", "to_date",
+	"trigger",
+	"status",
+	"action_type",
+	"target_doctype",
+	"doc_event",
+	"from_date",
+	"to_date",
 }
 _ACTIVITY_SORTABLE = {
-	"creation": "creation", "status": "status", "target_doctype": "target_doctype",
+	"creation": "creation",
+	"status": "status",
+	"target_doctype": "target_doctype",
 }
 
 # Non-admin activity visibility scan bounds (see list_activity_page): fetch in
@@ -172,9 +190,7 @@ def list_triggers_page(
 	where = " AND ".join(conds)
 	order = _order_by(sort_field, sort_dir, _TRIGGER_SORTABLE, "modified")
 
-	total = frappe.db.sql(
-		f"SELECT COUNT(*) FROM `tabJarvis Trigger` WHERE {where}", params
-	)[0][0]
+	total = frappe.db.sql(f"SELECT COUNT(*) FROM `tabJarvis Trigger` WHERE {where}", params)[0][0]
 	rows = frappe.db.sql(
 		f"""SELECT name, trigger_name, enabled, target_doctype, doc_event,
 		action_type, description, modified, owner
@@ -182,7 +198,8 @@ def list_triggers_page(
 		WHERE {where}
 		ORDER BY {order}
 		LIMIT %(page_length)s OFFSET %(start)s""",
-		params, as_dict=True,
+		params,
+		as_dict=True,
 	)
 
 	names = [r.name for r in rows]
@@ -194,7 +211,8 @@ def list_triggers_page(
 			SUM(CASE WHEN creation >= %(since)s THEN 1 ELSE 0 END) AS activity_24h
 			FROM `tabJarvis Trigger Activity`
 			WHERE `trigger` IN %(names)s GROUP BY `trigger`""",
-			{"names": tuple(names), "since": since}, as_dict=True,
+			{"names": tuple(names), "since": since},
+			as_dict=True,
 		):
 			stats[x["trigger"]] = x
 	for r in rows:
@@ -356,9 +374,7 @@ def delete_triggers_bulk(names: str) -> dict:
 		except frappe.DoesNotExistError:
 			skipped.append({"name": n, "reason": "not found"})
 		except Exception:
-			frappe.log_error(
-				title="Jarvis: bulk trigger delete failed", message=frappe.get_traceback()
-			)
+			frappe.log_error(title="Jarvis: bulk trigger delete failed", message=frappe.get_traceback())
 			skipped.append({"name": n, "reason": "error"})
 	frappe.db.commit()
 	return {"ok": True, "data": {"deleted": deleted, "skipped": skipped}}
@@ -405,10 +421,16 @@ def test_trigger_condition(target_doctype: str, condition: str = "", docname: st
 		# the controller's blank-doc tolerance. On a REAL doc it is a genuine
 		# evaluation error, so report it.
 		if not docname:
-			return {"ok": True, "data": {"valid": True, "note": (
-				"Looks good. (Can't fully test on an empty document because a "
-				"field is blank; it will evaluate against real documents.)"
-			)}}
+			return {
+				"ok": True,
+				"data": {
+					"valid": True,
+					"note": (
+						"Looks good. (Can't fully test on an empty document because a "
+						"field is blank; it will evaluate against real documents.)"
+					),
+				},
+			}
 		return {"ok": True, "data": {"valid": False, "error": _friendly_condition_error(e, target_doctype)}}
 	except Exception as e:
 		return {"ok": True, "data": {"valid": False, "error": _friendly_condition_error(e, target_doctype)}}
@@ -427,7 +449,7 @@ def _friendly_condition_error(e: Exception, target_doctype: str) -> str:
 	if isinstance(e, NameError):
 		return _(
 			"Only 'doc' and 'utils' can be used in a condition "
-			"(e.g. doc.status == \"Open\", utils.nowdate()). {0}"
+			'(e.g. doc.status == "Open", utils.nowdate()). {0}'
 		).format(str(e))
 	if isinstance(e, AttributeError):
 		return _("That field does not exist on {0}: {1}").format(target_doctype, str(e))
@@ -454,9 +476,7 @@ def _activity_where(search: str, f: dict) -> tuple[str, dict]:
 	params: dict = {}
 	if search:
 		params["q"] = f"%{_lk(search)}%"
-		conds.append(
-			"(trigger_label LIKE %(q)s OR target_docname LIKE %(q)s OR summary LIKE %(q)s)"
-		)
+		conds.append("(trigger_label LIKE %(q)s OR target_docname LIKE %(q)s OR summary LIKE %(q)s)")
 	if "trigger" in f:
 		params["trigger"] = str(f["trigger"])
 		conds.append("`trigger` = %(trigger)s")
@@ -558,14 +578,15 @@ def list_activity_page(
 	order = _order_by(sort_field, sort_dir, _ACTIVITY_SORTABLE, "creation")
 
 	if _can_manage():
-		total = frappe.db.sql(
-			f"SELECT COUNT(*) FROM `tabJarvis Trigger Activity` WHERE {where}", params
-		)[0][0]
+		total = frappe.db.sql(f"SELECT COUNT(*) FROM `tabJarvis Trigger Activity` WHERE {where}", params)[0][
+			0
+		]
 		rows = frappe.db.sql(
 			f"""SELECT {_ACTIVITY_FIELDS_SQL} FROM `tabJarvis Trigger Activity`
 			WHERE {where} ORDER BY {order}
 			LIMIT %(page_length)s OFFSET %(start)s""",
-			{**params, "page_length": pl, "start": start}, as_dict=True,
+			{**params, "page_length": pl, "start": start},
+			as_dict=True,
 		)
 		for r in rows:
 			r["creation"] = str(r["creation"])
@@ -591,8 +612,12 @@ def list_activity_page(
 		return {
 			"ok": True,
 			"data": {
-				"rows": [], "total": 0, "has_more": False,
-				"start": start, "page_length": pl, "approximate": True,
+				"rows": [],
+				"total": 0,
+				"has_more": False,
+				"start": start,
+				"page_length": pl,
+				"approximate": True,
 			},
 		}
 	dt_ph = ", ".join([f"%(rdt{i})s" for i in range(len(readable_dts))])
@@ -612,7 +637,8 @@ def list_activity_page(
 			f"""SELECT {_ACTIVITY_FIELDS_SQL} FROM `tabJarvis Trigger Activity`
 			WHERE {scan_where} ORDER BY {order}
 			LIMIT %(chunk)s OFFSET %(offset)s""",
-			{**scan_params, "chunk": chunk, "offset": offset}, as_dict=True,
+			{**scan_params, "chunk": chunk, "offset": offset},
+			as_dict=True,
 		)
 		if not batch:
 			exhausted = True
@@ -634,7 +660,7 @@ def list_activity_page(
 	# denied row; clear them so they never ride back in _server_messages.
 	_clear_perm_message_noise()
 	hit_cap = scanned >= _ACTIVITY_SCAN_CAP and not exhausted
-	rows = visible[start:start + pl]
+	rows = visible[start : start + pl]
 	for r in rows:
 		r["creation"] = str(r["creation"])
 	return {
@@ -661,7 +687,8 @@ def activity_stats() -> dict:
 	rows = frappe.db.sql(
 		"""SELECT status, COUNT(*) AS n FROM `tabJarvis Trigger Activity`
 		WHERE creation >= %(since)s GROUP BY status""",
-		{"since": since}, as_dict=True,
+		{"since": since},
+		as_dict=True,
 	)
 	by = {r.status: cint(r.n) for r in rows}
 	return {

@@ -51,15 +51,17 @@ _HTML_WITH_BLOCK = (
 def _ensure_user(email: str, roles: list[str]) -> None:
 	"""Create the fixture user if missing; idempotent."""
 	if not frappe.db.exists("User", email):
-		frappe.get_doc({
-			"doctype": "User",
-			"email": email,
-			"first_name": "DashApi",
-			"last_name": "Test",
-			"enabled": 1,
-			"send_welcome_email": 0,
-			"user_type": "System User",
-		}).insert(ignore_permissions=True)
+		frappe.get_doc(
+			{
+				"doctype": "User",
+				"email": email,
+				"first_name": "DashApi",
+				"last_name": "Test",
+				"enabled": 1,
+				"send_welcome_email": 0,
+				"user_type": "System User",
+			}
+		).insert(ignore_permissions=True)
 	doc = frappe.get_doc("User", email)
 	doc.add_roles(*roles)
 	frappe.db.commit()
@@ -67,12 +69,14 @@ def _ensure_user(email: str, roles: list[str]) -> None:
 
 def _ensure_custom_role() -> None:
 	if not frappe.db.exists("Role", CUSTOM_ROLE):
-		frappe.get_doc({
-			"doctype": "Role",
-			"role_name": CUSTOM_ROLE,
-			"desk_access": 1,
-			"is_custom": 1,
-		}).insert(ignore_permissions=True)
+		frappe.get_doc(
+			{
+				"doctype": "Role",
+				"role_name": CUSTOM_ROLE,
+				"desk_access": 1,
+				"is_custom": 1,
+			}
+		).insert(ignore_permissions=True)
 
 
 def _ensure_report(name: str, prepared: int) -> None:
@@ -80,16 +84,18 @@ def _ensure_report(name: str, prepared: int) -> None:
 	``prepared``). Idempotent; left in place across tests like the roles."""
 	if frappe.db.exists("Report", name):
 		return
-	frappe.get_doc({
-		"doctype": "Report",
-		"report_name": name,
-		"ref_doctype": "ToDo",
-		"report_type": "Query Report",
-		"is_standard": "No",
-		"query": "select name, description from `tabToDo` order by creation desc limit 5",
-		"prepared_report": prepared,
-		"disabled": 0,
-	}).insert(ignore_permissions=True)
+	frappe.get_doc(
+		{
+			"doctype": "Report",
+			"report_name": name,
+			"ref_doctype": "ToDo",
+			"report_type": "Query Report",
+			"is_standard": "No",
+			"query": "select name, description from `tabToDo` order by creation desc limit 5",
+			"prepared_report": prepared,
+			"disabled": 0,
+		}
+	).insert(ignore_permissions=True)
 
 
 class _DashboardsApiTestCase(FrappeTestCase):
@@ -119,9 +125,7 @@ class _DashboardsApiTestCase(FrappeTestCase):
 		for name in self._convs:
 			frappe.db.delete("Jarvis Chat Message", {"conversation": name})
 			if frappe.db.exists("Jarvis Conversation", name):
-				frappe.delete_doc(
-					"Jarvis Conversation", name, ignore_permissions=True, force=True
-				)
+				frappe.delete_doc("Jarvis Conversation", name, ignore_permissions=True, force=True)
 		frappe.db.commit()
 
 	def _save(self, payload: dict) -> dict:
@@ -131,24 +135,32 @@ class _DashboardsApiTestCase(FrappeTestCase):
 
 	def _mk_static(self, user: str, title: str | None = None, **extra) -> dict:
 		frappe.set_user(user)
-		return self._save({
-			"dashboard_title": title or f"dash-{frappe.generate_hash(length=8)}",
-			"html": "<h1>hello</h1>",
-			**extra,
-		})
+		return self._save(
+			{
+				"dashboard_title": title or f"dash-{frappe.generate_hash(length=8)}",
+				"html": "<h1>hello</h1>",
+				**extra,
+			}
+		)
 
 	def _mk_connected(self, user: str, sources: list, title: str | None = None) -> dict:
 		frappe.set_user(user)
-		return self._save({
-			"dashboard_title": title or f"dash-{frappe.generate_hash(length=8)}",
-			"html": "<h1>data</h1>",
-			"sources": sources,
-		})
+		return self._save(
+			{
+				"dashboard_title": title or f"dash-{frappe.generate_hash(length=8)}",
+				"html": "<h1>data</h1>",
+				"sources": sources,
+			}
+		)
 
 	def _mk_todo(self, user: str, description: str = "dash test todo") -> str:
-		todo = frappe.get_doc({
-			"doctype": "ToDo", "description": description, "allocated_to": user,
-		}).insert(ignore_permissions=True)
+		todo = frappe.get_doc(
+			{
+				"doctype": "ToDo",
+				"description": description,
+				"allocated_to": user,
+			}
+		).insert(ignore_permissions=True)
 		self._todos.append(todo.name)
 		frappe.db.commit()
 		return todo.name
@@ -210,12 +222,10 @@ class TestDashboardList(_DashboardsApiTestCase):
 			filters=frappe.as_json({"scope": "User", "owner": PLAIN_A}),
 		)["data"]
 		self.assertEqual([r["dashboard_title"] for r in page["rows"]], [f"{prefix} mine"])
-		page = list_dashboards_page(
-			search=prefix, filters=frappe.as_json({"dashboard_type": "Connected"})
-		)["data"]
-		self.assertEqual(
-			[r["dashboard_title"] for r in page["rows"]], [f"{prefix} connected"]
-		)
+		page = list_dashboards_page(search=prefix, filters=frappe.as_json({"dashboard_type": "Connected"}))[
+			"data"
+		]
+		self.assertEqual([r["dashboard_title"] for r in page["rows"]], [f"{prefix} connected"])
 		self.assertRaises(
 			frappe.ValidationError,
 			list_dashboards_page,
@@ -232,9 +242,7 @@ class TestDashboardList(_DashboardsApiTestCase):
 
 	def test_unknown_sort_field_throws(self):
 		frappe.set_user(PLAIN_A)
-		self.assertRaises(
-			frappe.ValidationError, list_dashboards_page, sort_field="html"
-		)
+		self.assertRaises(frappe.ValidationError, list_dashboards_page, sort_field="html")
 
 	def test_list_visibility_excludes_others_private(self):
 		prefix = f"vis-{frappe.generate_hash(length=6)}"
@@ -296,10 +304,12 @@ class TestSaveDashboard(_DashboardsApiTestCase):
 
 	def test_save_parses_jarvis_sources_block_from_html(self):
 		frappe.set_user(PLAIN_A)
-		data = self._save({
-			"dashboard_title": f"block-{frappe.generate_hash(length=8)}",
-			"html": _HTML_WITH_BLOCK,
-		})
+		data = self._save(
+			{
+				"dashboard_title": f"block-{frappe.generate_hash(length=8)}",
+				"html": _HTML_WITH_BLOCK,
+			}
+		)
 		self.assertEqual(data["dashboard_type"], "Connected")
 		self.assertEqual([s["source_name"] for s in data["sources"]], ["todos"])
 		self.assertEqual(frappe.parse_json(data["sources"][0]["spec"]), _GET_LIST_SPEC)
@@ -315,10 +325,12 @@ class TestSaveDashboard(_DashboardsApiTestCase):
 			'"args": {"spec": {"doctype": "ToDo", "fields": ["name", "description"], "limit": 10}}}]}'
 			"</script>"
 		)
-		data = self._save({
-			"dashboard_title": f"dialect-{frappe.generate_hash(length=8)}",
-			"html": html,
-		})
+		data = self._save(
+			{
+				"dashboard_title": f"dialect-{frappe.generate_hash(length=8)}",
+				"html": html,
+			}
+		)
 		self.assertEqual(data["dashboard_type"], "Connected")
 		self.assertEqual([s["source_name"] for s in data["sources"]], ["todos"])
 		self.assertEqual(data["sources"][0]["tool"], "get_list")
@@ -337,10 +349,13 @@ class TestSaveDashboard(_DashboardsApiTestCase):
 		self.assertRaises(
 			frappe.ValidationError,
 			save_dashboard,
-			frappe.as_json({
-				"dashboard_title": "x", "html": "<p>x</p>",
-				"sources": [{"source_name": "s", "tool": "run_sql", "spec": {}}],
-			}),
+			frappe.as_json(
+				{
+					"dashboard_title": "x",
+					"html": "<p>x</p>",
+					"sources": [{"source_name": "s", "tool": "run_sql", "spec": {}}],
+				}
+			),
 		)
 
 	def test_non_json_spec_throws(self):
@@ -348,10 +363,13 @@ class TestSaveDashboard(_DashboardsApiTestCase):
 		self.assertRaises(
 			frappe.ValidationError,
 			save_dashboard,
-			frappe.as_json({
-				"dashboard_title": "x", "html": "<p>x</p>",
-				"sources": [{"source_name": "s", "tool": "get_list", "spec": "{not json"}],
-			}),
+			frappe.as_json(
+				{
+					"dashboard_title": "x",
+					"html": "<p>x</p>",
+					"sources": [{"source_name": "s", "tool": "get_list", "spec": "{not json"}],
+				}
+			),
 		)
 
 	def test_bad_query_spec_invalid_op_throws(self):
@@ -359,16 +377,22 @@ class TestSaveDashboard(_DashboardsApiTestCase):
 		self.assertRaises(
 			frappe.ValidationError,
 			save_dashboard,
-			frappe.as_json({
-				"dashboard_title": "x", "html": "<p>x</p>",
-				"sources": [{
-					"source_name": "s", "tool": "query",
-					"spec": {
-						"from": "ToDo",
-						"where": [{"field": "status", "op": "regexp", "value": "x"}],
-					},
-				}],
-			}),
+			frappe.as_json(
+				{
+					"dashboard_title": "x",
+					"html": "<p>x</p>",
+					"sources": [
+						{
+							"source_name": "s",
+							"tool": "query",
+							"spec": {
+								"from": "ToDo",
+								"where": [{"field": "status", "op": "regexp", "value": "x"}],
+							},
+						}
+					],
+				}
+			),
 		)
 
 	def test_get_list_unknown_doctype_throws(self):
@@ -376,13 +400,19 @@ class TestSaveDashboard(_DashboardsApiTestCase):
 		self.assertRaises(
 			frappe.ValidationError,
 			save_dashboard,
-			frappe.as_json({
-				"dashboard_title": "x", "html": "<p>x</p>",
-				"sources": [{
-					"source_name": "s", "tool": "get_list",
-					"spec": {"doctype": "No Such Doctype Zzz"},
-				}],
-			}),
+			frappe.as_json(
+				{
+					"dashboard_title": "x",
+					"html": "<p>x</p>",
+					"sources": [
+						{
+							"source_name": "s",
+							"tool": "get_list",
+							"spec": {"doctype": "No Such Doctype Zzz"},
+						}
+					],
+				}
+			),
 		)
 
 	def test_run_report_unknown_report_throws(self):
@@ -390,13 +420,19 @@ class TestSaveDashboard(_DashboardsApiTestCase):
 		self.assertRaises(
 			frappe.ValidationError,
 			save_dashboard,
-			frappe.as_json({
-				"dashboard_title": "x", "html": "<p>x</p>",
-				"sources": [{
-					"source_name": "s", "tool": "run_report",
-					"spec": {"report_name": "No Such Report Zzz"},
-				}],
-			}),
+			frappe.as_json(
+				{
+					"dashboard_title": "x",
+					"html": "<p>x</p>",
+					"sources": [
+						{
+							"source_name": "s",
+							"tool": "run_report",
+							"spec": {"report_name": "No Such Report Zzz"},
+						}
+					],
+				}
+			),
 		)
 
 	def test_get_list_bad_order_by_throws(self):
@@ -406,25 +442,36 @@ class TestSaveDashboard(_DashboardsApiTestCase):
 		self.assertRaises(
 			frappe.ValidationError,
 			save_dashboard,
-			frappe.as_json({
-				"dashboard_title": "x", "html": "<p>x</p>",
-				"sources": [{
-					"source_name": "s", "tool": "get_list",
-					"spec": {"doctype": "ToDo", "order_by": "(select 1)"},
-				}],
-			}),
+			frappe.as_json(
+				{
+					"dashboard_title": "x",
+					"html": "<p>x</p>",
+					"sources": [
+						{
+							"source_name": "s",
+							"tool": "get_list",
+							"spec": {"doctype": "ToDo", "order_by": "(select 1)"},
+						}
+					],
+				}
+			),
 		)
 
 	def test_get_list_good_order_by_saves(self):
 		frappe.set_user(PLAIN_A)
-		data = self._save({
-			"dashboard_title": f"ob-{frappe.generate_hash(length=8)}",
-			"html": "<p>x</p>",
-			"sources": [{
-				"source_name": "s", "tool": "get_list",
-				"spec": {"doctype": "ToDo", "order_by": "modified desc"},
-			}],
-		})
+		data = self._save(
+			{
+				"dashboard_title": f"ob-{frappe.generate_hash(length=8)}",
+				"html": "<p>x</p>",
+				"sources": [
+					{
+						"source_name": "s",
+						"tool": "get_list",
+						"spec": {"doctype": "ToDo", "order_by": "modified desc"},
+					}
+				],
+			}
+		)
 		self.assertEqual(data["sources"][0]["source_name"], "s")
 
 	def test_run_report_prepared_report_rejected(self):
@@ -432,13 +479,19 @@ class TestSaveDashboard(_DashboardsApiTestCase):
 		self.assertRaises(
 			frappe.ValidationError,
 			save_dashboard,
-			frappe.as_json({
-				"dashboard_title": "x", "html": "<p>x</p>",
-				"sources": [{
-					"source_name": "s", "tool": "run_report",
-					"spec": {"report_name": PREPARED_REPORT_NAME},
-				}],
-			}),
+			frappe.as_json(
+				{
+					"dashboard_title": "x",
+					"html": "<p>x</p>",
+					"sources": [
+						{
+							"source_name": "s",
+							"tool": "run_report",
+							"spec": {"report_name": PREPARED_REPORT_NAME},
+						}
+					],
+				}
+			),
 		)
 
 	def test_spec_over_32k_throws(self):
@@ -446,24 +499,22 @@ class TestSaveDashboard(_DashboardsApiTestCase):
 		self.assertRaises(
 			frappe.ValidationError,
 			save_dashboard,
-			frappe.as_json({
-				"dashboard_title": "x", "html": "<p>x</p>",
-				"sources": [{"source_name": "s", "tool": "get_list", "spec": "x" * 33_000}],
-			}),
+			frappe.as_json(
+				{
+					"dashboard_title": "x",
+					"html": "<p>x</p>",
+					"sources": [{"source_name": "s", "tool": "get_list", "spec": "x" * 33_000}],
+				}
+			),
 		)
 
 	def test_more_than_12_sources_throws(self):
 		frappe.set_user(PLAIN_A)
-		sources = [
-			{"source_name": f"s{i}", "tool": "get_list", "spec": _GET_LIST_SPEC}
-			for i in range(13)
-		]
+		sources = [{"source_name": f"s{i}", "tool": "get_list", "spec": _GET_LIST_SPEC} for i in range(13)]
 		self.assertRaises(
 			frappe.ValidationError,
 			save_dashboard,
-			frappe.as_json(
-				{"dashboard_title": "x", "html": "<p>x</p>", "sources": sources}
-			),
+			frappe.as_json({"dashboard_title": "x", "html": "<p>x</p>", "sources": sources}),
 		)
 
 	def test_duplicate_source_name_throws(self):
@@ -475,9 +526,7 @@ class TestSaveDashboard(_DashboardsApiTestCase):
 		self.assertRaises(
 			frappe.ValidationError,
 			save_dashboard,
-			frappe.as_json(
-				{"dashboard_title": "x", "html": "<p>x</p>", "sources": sources}
-			),
+			frappe.as_json({"dashboard_title": "x", "html": "<p>x</p>", "sources": sources}),
 		)
 
 	def test_update_by_non_owner_denied(self):
@@ -492,9 +541,7 @@ class TestSaveDashboard(_DashboardsApiTestCase):
 	def test_owner_update_mutates_html(self):
 		created = self._mk_static(PLAIN_A)
 		frappe.set_user(PLAIN_A)
-		updated = save_dashboard(
-			frappe.as_json({"name": created["name"], "html": "<h1>v2</h1>"})
-		)["data"]
+		updated = save_dashboard(frappe.as_json({"name": created["name"], "html": "<h1>v2</h1>"}))["data"]
 		self.assertEqual(updated["html"], "<h1>v2</h1>")
 		self.assertEqual(updated["name"], created["name"])
 
@@ -555,10 +602,13 @@ class TestRunDashboardSource(_DashboardsApiTestCase):
 		# doctype exists) but the RUN, as the viewing user, must deny cleanly.
 		created = self._mk_connected(
 			PLAIN_A,
-			[{
-				"source_name": "scripts", "tool": "get_list",
-				"spec": {"doctype": "Server Script", "limit": 5},
-			}],
+			[
+				{
+					"source_name": "scripts",
+					"tool": "get_list",
+					"spec": {"doctype": "Server Script", "limit": 5},
+				}
+			],
 		)
 		frappe.set_user(PLAIN_A)
 		frappe.clear_messages()
@@ -570,14 +620,19 @@ class TestRunDashboardSource(_DashboardsApiTestCase):
 	def test_run_report_happy_path_normalized(self):
 		self._mk_todo("Administrator")
 		frappe.set_user("Administrator")
-		created = self._save({
-			"dashboard_title": f"rep-{frappe.generate_hash(length=8)}",
-			"html": "<h1>report</h1>",
-			"sources": [{
-				"source_name": "rep", "tool": "run_report",
-				"spec": {"report_name": REPORT_NAME},
-			}],
-		})
+		created = self._save(
+			{
+				"dashboard_title": f"rep-{frappe.generate_hash(length=8)}",
+				"html": "<h1>report</h1>",
+				"sources": [
+					{
+						"source_name": "rep",
+						"tool": "run_report",
+						"spec": {"report_name": REPORT_NAME},
+					}
+				],
+			}
+		)
 		r = run_dashboard_source(created["name"], "rep")
 		self.assertTrue(r["ok"])
 		data = r["data"]
@@ -592,14 +647,19 @@ class TestRunDashboardSource(_DashboardsApiTestCase):
 		self._mk_todo("Administrator", "truncate one")
 		self._mk_todo("Administrator", "truncate two")
 		frappe.set_user("Administrator")
-		created = self._save({
-			"dashboard_title": f"cap-{frappe.generate_hash(length=8)}",
-			"html": "<h1>cap</h1>",
-			"sources": [{
-				"source_name": "todos", "tool": "get_list",
-				"spec": {"doctype": "ToDo", "fields": ["name"], "limit": 100},
-			}],
-		})
+		created = self._save(
+			{
+				"dashboard_title": f"cap-{frappe.generate_hash(length=8)}",
+				"html": "<h1>cap</h1>",
+				"sources": [
+					{
+						"source_name": "todos",
+						"tool": "get_list",
+						"spec": {"doctype": "ToDo", "fields": ["name"], "limit": 100},
+					}
+				],
+			}
+		)
 		with patch("jarvis.chat.dashboards_api.DASHBOARD_MAX_ROWS", 1):
 			r = run_dashboard_source(created["name"], "todos")
 		self.assertTrue(r["ok"])
@@ -615,10 +675,13 @@ class TestRunDashboardSource(_DashboardsApiTestCase):
 		self._mk_todo("Administrator")
 		created = self._mk_connected(
 			"Administrator",
-			[{
-				"source_name": "q", "tool": "query",
-				"spec": {"from": "ToDo", "select": ["name"], "limit": 5},
-			}],
+			[
+				{
+					"source_name": "q",
+					"tool": "query",
+					"spec": {"from": "ToDo", "select": ["name"], "limit": 5},
+				}
+			],
 		)
 		r = run_dashboard_source(created["name"], "q")
 		self.assertTrue(r["ok"])
@@ -646,14 +709,20 @@ class TestWorkspaceSearchAndContext(_DashboardsApiTestCase):
 
 	def test_send_message_context_dashboards_allowlist(self):
 		frappe.set_user(PLAIN_A)
-		conv = frappe.get_doc({
-			"doctype": "Jarvis Conversation", "title": "dash ctx test",
-		}).insert(ignore_permissions=True)
+		conv = frappe.get_doc(
+			{
+				"doctype": "Jarvis Conversation",
+				"title": "dash ctx test",
+			}
+		).insert(ignore_permissions=True)
 		self._convs.append(conv.name)
-		with patch("jarvis.chat.api.validate_can_send", return_value=(True, "")), \
-		     patch("jarvis.chat.api._dispatch_turn") as disp:
+		with (
+			patch("jarvis.chat.api.validate_can_send", return_value=(True, "")),
+			patch("jarvis.chat.api._dispatch_turn") as disp,
+		):
 			r = send_message(
-				conv.name, "build me a dashboard",
+				conv.name,
+				"build me a dashboard",
 				context=frappe.as_json({"page": "dashboards"}),
 			)
 			self.assertTrue(r["ok"])
@@ -661,7 +730,8 @@ class TestWorkspaceSearchAndContext(_DashboardsApiTestCase):
 			self.assertEqual(kwargs["context"]["page"], "dashboards")
 			# A page value outside the allow-list forwards NO context at all.
 			r2 = send_message(
-				conv.name, "hello again",
+				conv.name,
+				"hello again",
 				context=frappe.as_json({"page": "evil"}),
 			)
 			self.assertTrue(r2["ok"])
@@ -669,13 +739,15 @@ class TestWorkspaceSearchAndContext(_DashboardsApiTestCase):
 			# Explicit data-mode toggle: the two literal values forward; junk
 			# does not.
 			r3 = send_message(
-				conv.name, "make it live",
+				conv.name,
+				"make it live",
 				context=frappe.as_json({"page": "dashboards", "data_mode": "live"}),
 			)
 			self.assertTrue(r3["ok"])
 			self.assertEqual(disp.call_args[0][0]["context"]["data_mode"], "live")
 			r4 = send_message(
-				conv.name, "make it weird",
+				conv.name,
+				"make it weird",
 				context=frappe.as_json({"page": "dashboards", "data_mode": "weird"}),
 			)
 			self.assertTrue(r4["ok"])
@@ -685,35 +757,48 @@ class TestWorkspaceSearchAndContext(_DashboardsApiTestCase):
 		"""The LLM sometimes wraps the tool's kwargs shape into spec
 		({"spec": {"spec": {...}}}); save folds it to the bare argument value."""
 		frappe.set_user(PLAIN_A)
-		data = self._save({
-			"dashboard_title": f"nest-{frappe.generate_hash(length=8)}",
-			"html": "<p>x</p>",
-			"sources": [{
-				"source_name": "todos", "tool": "get_list",
-				"spec": {"spec": dict(_GET_LIST_SPEC)},
-			}],
-		})
+		data = self._save(
+			{
+				"dashboard_title": f"nest-{frappe.generate_hash(length=8)}",
+				"html": "<p>x</p>",
+				"sources": [
+					{
+						"source_name": "todos",
+						"tool": "get_list",
+						"spec": {"spec": dict(_GET_LIST_SPEC)},
+					}
+				],
+			}
+		)
 		self.assertEqual(frappe.parse_json(data["sources"][0]["spec"]), _GET_LIST_SPEC)
 
 	def test_theme_roundtrip_and_validation(self):
 		frappe.set_user(PLAIN_A)
-		data = self._save({
-			"dashboard_title": f"theme-{frappe.generate_hash(length=8)}",
-			"html": "<p>x</p>",
-			"theme": "Claude",
-		})
+		data = self._save(
+			{
+				"dashboard_title": f"theme-{frappe.generate_hash(length=8)}",
+				"html": "<p>x</p>",
+				"theme": "Claude",
+			}
+		)
 		self.assertEqual(data["theme"], "Claude")
 		# omitted -> the Jarvis design-language default
-		data2 = self._save({
-			"dashboard_title": f"theme-{frappe.generate_hash(length=8)}",
-			"html": "<p>x</p>",
-		})
+		data2 = self._save(
+			{
+				"dashboard_title": f"theme-{frappe.generate_hash(length=8)}",
+				"html": "<p>x</p>",
+			}
+		)
 		self.assertEqual(data2["theme"], "Jarvis")
 		# invalid value throws
 		self.assertRaises(
 			frappe.ValidationError,
 			save_dashboard,
-			frappe.as_json({
-				"dashboard_title": "x", "html": "<p>x</p>", "theme": "Neon",
-			}),
+			frappe.as_json(
+				{
+					"dashboard_title": "x",
+					"html": "<p>x</p>",
+					"theme": "Neon",
+				}
+			),
 		)

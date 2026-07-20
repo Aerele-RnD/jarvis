@@ -33,22 +33,21 @@ class WikiMirrorTestCase(FrappeTestCase):
 	def setUp(self):
 		super().setUp()
 		frappe.set_user("Administrator")
-		self._lint_at_before = frappe.db.get_single_value(
-			SETTINGS, "wiki_lint_last_run_at"
-		)
+		self._lint_at_before = frappe.db.get_single_value(SETTINGS, "wiki_lint_last_run_at")
 
 	def tearDown(self):
 		frappe.set_user("Administrator")
 		frappe.db.delete(WIKI, {"slug": ["like", f"{SLUG_PREFIX}%"]})
 		frappe.db.set_single_value(
-			SETTINGS, "wiki_lint_last_run_at", self._lint_at_before,
+			SETTINGS,
+			"wiki_lint_last_run_at",
+			self._lint_at_before,
 			update_modified=False,
 		)
 		frappe.db.commit()
 		super().tearDown()
 
-	def _page(self, slug, page_type="Customer", body="Body.", summary="",
-			  scope=None, status="Active"):
+	def _page(self, slug, page_type="Customer", body="Body.", summary="", scope=None, status="Active"):
 		doc = frappe.get_doc(
 			{
 				"doctype": WIKI,
@@ -71,9 +70,7 @@ class WikiMirrorTestCase(FrappeTestCase):
 		is push_wiki_files' return for every call (None = offline)."""
 		with (
 			mock.patch("jarvis.selfhost.is_self_hosted", return_value=False),
-			mock.patch(
-				"jarvis.admin_client.push_wiki_files", return_value=result
-			) as push,
+			mock.patch("jarvis.admin_client.push_wiki_files", return_value=result) as push,
 		):
 			yield push
 
@@ -186,7 +183,9 @@ class TestRenders(WikiMirrorTestCase):
 			update_modified=False,
 		)
 		frappe.db.set_single_value(
-			SETTINGS, "wiki_lint_last_run_at", "2026-07-04 12:00:00",
+			SETTINGS,
+			"wiki_lint_last_run_at",
+			"2026-07-04 12:00:00",
 			update_modified=False,
 		)
 
@@ -316,10 +315,7 @@ class TestSync(WikiMirrorTestCase):
 		self.assertGreaterEqual(push.call_count, 2)
 		self.assertEqual(out["calls"], push.call_count)
 		for call in push.call_args_list:
-			payload = sum(
-				len(f["content_b64"]) + len(f["path"]) + 64
-				for f in call.kwargs["files"]
-			)
+			payload = sum(len(f["content_b64"]) + len(f["path"]) + 64 for f in call.kwargs["files"])
 			self.assertLessEqual(payload, wiki_mirror.MAX_CALL_PAYLOAD_BYTES)
 		paths = self._pushed_paths(push)
 		for i in range(12):
@@ -376,9 +372,7 @@ class TestTriggers(WikiMirrorTestCase):
 		enq.assert_called_once_with(full=True)
 
 	def test_doc_event_swallows_enqueue_errors(self):
-		with mock.patch.object(
-			wiki_mirror, "enqueue_sync", side_effect=Exception("redis down")
-		):
+		with mock.patch.object(wiki_mirror, "enqueue_sync", side_effect=Exception("redis down")):
 			# must not raise into the save path
 			wiki_mirror.on_wiki_page_change(frappe._dict(scope="Org"), "on_update")
 

@@ -51,9 +51,17 @@ def args_hash(tool: str, args: dict) -> str:
 	return hashlib.sha256(f"{tool}:{canonical}".encode()).hexdigest()
 
 
-def mint(*, conversation: str, owner: str, tool: str, args: dict, run_id: str,
-		 exec_user: str | None = None, preview: dict | None = None,
-		 expires_at: int | None = None) -> str:
+def mint(
+	*,
+	conversation: str,
+	owner: str,
+	tool: str,
+	args: dict,
+	run_id: str,
+	exec_user: str | None = None,
+	preview: dict | None = None,
+	expires_at: int | None = None,
+) -> str:
 	"""Store a pending call and return a fresh single-use token
 	(secrets.token_urlsafe(24)). The stored record carries conversation,
 	owner, tool, args (the full dict - this is the authoritative payload

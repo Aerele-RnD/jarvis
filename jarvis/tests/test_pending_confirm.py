@@ -48,10 +48,18 @@ class TestArgsHash(FrappeTestCase):
 class TestMint(FrappeTestCase):
 	def test_two_mints_are_distinct_tokens(self):
 		t1 = pending_confirm.mint(
-			conversation=CONV, owner=OWNER, tool=TOOL, args=ARGS, run_id=RUN_ID,
+			conversation=CONV,
+			owner=OWNER,
+			tool=TOOL,
+			args=ARGS,
+			run_id=RUN_ID,
 		)
 		t2 = pending_confirm.mint(
-			conversation=CONV, owner=OWNER, tool=TOOL, args=ARGS, run_id=RUN_ID,
+			conversation=CONV,
+			owner=OWNER,
+			tool=TOOL,
+			args=ARGS,
+			run_id=RUN_ID,
 		)
 		self.assertNotEqual(t1, t2)
 		# Both are independently live.
@@ -62,7 +70,11 @@ class TestMint(FrappeTestCase):
 class TestExecUser(FrappeTestCase):
 	def test_exec_user_stored_and_returned(self):
 		token = pending_confirm.mint(
-			conversation=CONV, owner=OWNER, tool=TOOL, args=ARGS, run_id=RUN_ID,
+			conversation=CONV,
+			owner=OWNER,
+			tool=TOOL,
+			args=ARGS,
+			run_id=RUN_ID,
 			exec_user="tool-user@example.invalid",
 		)
 		record = pending_confirm.peek(token)
@@ -76,7 +88,11 @@ class TestExecUser(FrappeTestCase):
 		# Managed mode / back-compat: omitting exec_user binds execution to the
 		# owner (no behavior change from the pre-exec_user record shape).
 		token = pending_confirm.mint(
-			conversation=CONV, owner=OWNER, tool=TOOL, args=ARGS, run_id=RUN_ID,
+			conversation=CONV,
+			owner=OWNER,
+			tool=TOOL,
+			args=ARGS,
+			run_id=RUN_ID,
 		)
 		self.assertEqual(pending_confirm.peek(token)["exec_user"], OWNER)
 
@@ -87,7 +103,11 @@ class TestPreview(FrappeTestCase):
 		(instead of re-running the side-effecting dry-run)."""
 		preview = {"preview": True, "would": {"doctype": "Task", "subject": "hi"}}
 		token = pending_confirm.mint(
-			conversation=CONV, owner=OWNER, tool=TOOL, args=ARGS, run_id=RUN_ID,
+			conversation=CONV,
+			owner=OWNER,
+			tool=TOOL,
+			args=ARGS,
+			run_id=RUN_ID,
 			preview=preview,
 		)
 		self.assertEqual(pending_confirm.peek(token)["preview"], preview)
@@ -99,7 +119,11 @@ class TestPreview(FrappeTestCase):
 
 	def test_preview_defaults_to_none(self):
 		token = pending_confirm.mint(
-			conversation=CONV, owner=OWNER, tool=TOOL, args=ARGS, run_id=RUN_ID,
+			conversation=CONV,
+			owner=OWNER,
+			tool=TOOL,
+			args=ARGS,
+			run_id=RUN_ID,
 		)
 		self.assertIsNone(pending_confirm.peek(token).get("preview"))
 
@@ -117,8 +141,12 @@ class TestListForOwner(FrappeTestCase):
 
 	def _mint(self, owner, conversation, desc):
 		return pending_confirm.mint(
-			conversation=conversation, owner=owner, tool="create_doc",
-			args={"doctype": "ToDo", "values": {"description": desc}}, run_id="")
+			conversation=conversation,
+			owner=owner,
+			tool="create_doc",
+			args={"doctype": "ToDo", "values": {"description": desc}},
+			run_id="",
+		)
 
 	def test_returns_only_callers_live_tokens(self):
 		t1 = self._mint(self._A, "conv-a1", "la-1")
@@ -145,8 +173,7 @@ class TestListForOwner(FrappeTestCase):
 		reload for its TTL. A bound record is still filtered out."""
 		t_unbound = self._mint(self._A, "", "cl-unbound")
 		self._mint(self._A, "conv-other", "cl-bound")
-		got = {r["token"] for r in pending_confirm.list_for_owner(
-			self._A, conversation="conv-current")}
+		got = {r["token"] for r in pending_confirm.list_for_owner(self._A, conversation="conv-current")}
 		self.assertIn(t_unbound, got)  # surfaces despite the filter
 		# The bound record for a different conversation is still excluded.
 		self.assertEqual(len(got), 1)
@@ -174,27 +201,43 @@ class TestListForOwner(FrappeTestCase):
 		t_x2 = self._mint(self._A, "conv-x", "cfc-2")
 		t_y = self._mint(self._A, "conv-y", "cfc-3")
 		t_cl = pending_confirm.mint(
-			conversation="", owner=self._A, tool="delete_doc",
-			args={"doctype": "ToDo", "name": "z"}, run_id="")
+			conversation="",
+			owner=self._A,
+			tool="delete_doc",
+			args={"doctype": "ToDo", "name": "z"},
+			run_id="",
+		)
 		n = pending_confirm.clear_for_conversation(self._A, "conv-x")
 		self.assertEqual(n, 2)
 		self.assertIsNone(pending_confirm.peek(t_x1))
 		self.assertIsNone(pending_confirm.peek(t_x2))
-		self.assertIsNotNone(pending_confirm.peek(t_y))   # other conversation kept
+		self.assertIsNotNone(pending_confirm.peek(t_y))  # other conversation kept
 		self.assertIsNotNone(pending_confirm.peek(t_cl))  # conv-less kept
 
 	def test_clear_for_conversation_run_id_scoping(self):
 		"""F6: with a run_id, a self-host token (which carries a run_id) is swept
 		only when it matches; a managed token (run_id "") is always swept."""
 		t_r1 = pending_confirm.mint(
-			conversation="conv-z", owner=self._A, tool="delete_doc",
-			args={"doctype": "ToDo", "name": "a"}, run_id="r1")
+			conversation="conv-z",
+			owner=self._A,
+			tool="delete_doc",
+			args={"doctype": "ToDo", "name": "a"},
+			run_id="r1",
+		)
 		t_r2 = pending_confirm.mint(
-			conversation="conv-z", owner=self._A, tool="delete_doc",
-			args={"doctype": "ToDo", "name": "b"}, run_id="r2")
+			conversation="conv-z",
+			owner=self._A,
+			tool="delete_doc",
+			args={"doctype": "ToDo", "name": "b"},
+			run_id="r2",
+		)
 		t_managed = pending_confirm.mint(
-			conversation="conv-z", owner=self._A, tool="delete_doc",
-			args={"doctype": "ToDo", "name": "c"}, run_id="")
+			conversation="conv-z",
+			owner=self._A,
+			tool="delete_doc",
+			args={"doctype": "ToDo", "name": "c"},
+			run_id="",
+		)
 		n = pending_confirm.clear_for_conversation(self._A, "conv-z", run_id="r1")
 		self.assertEqual(n, 2)  # the r1 card + the run_id-less (managed) card
 		self.assertIsNone(pending_confirm.peek(t_r1))
@@ -208,7 +251,11 @@ class TestPeek(FrappeTestCase):
 
 	def test_live_token_returns_full_record(self):
 		token = pending_confirm.mint(
-			conversation=CONV, owner=OWNER, tool=TOOL, args=ARGS, run_id=RUN_ID,
+			conversation=CONV,
+			owner=OWNER,
+			tool=TOOL,
+			args=ARGS,
+			run_id=RUN_ID,
 		)
 		record = pending_confirm.peek(token)
 		self.assertIsNotNone(record)
@@ -224,7 +271,11 @@ class TestPeek(FrappeTestCase):
 		practical in a test): mint, then drop the underlying cache key, then
 		peek must report it gone same as a token that never existed."""
 		token = pending_confirm.mint(
-			conversation=CONV, owner=OWNER, tool=TOOL, args=ARGS, run_id=RUN_ID,
+			conversation=CONV,
+			owner=OWNER,
+			tool=TOOL,
+			args=ARGS,
+			run_id=RUN_ID,
 		)
 		frappe.cache().delete_value(pending_confirm._PREFIX + token)
 		self.assertIsNone(pending_confirm.peek(token))
@@ -233,7 +284,11 @@ class TestPeek(FrappeTestCase):
 class TestConsume(FrappeTestCase):
 	def _mint(self):
 		return pending_confirm.mint(
-			conversation=CONV, owner=OWNER, tool=TOOL, args=ARGS, run_id=RUN_ID,
+			conversation=CONV,
+			owner=OWNER,
+			tool=TOOL,
+			args=ARGS,
+			run_id=RUN_ID,
 		)
 
 	def test_happy_path_returns_record_and_is_single_use(self):
@@ -258,9 +313,7 @@ class TestConsume(FrappeTestCase):
 
 	def test_wrong_conversation_returns_none_and_does_not_burn_token(self):
 		token = self._mint()
-		self.assertIsNone(
-			pending_confirm.consume(token, owner=OWNER, conversation="conv-other")
-		)
+		self.assertIsNone(pending_confirm.consume(token, owner=OWNER, conversation="conv-other"))
 		record = pending_confirm.consume(token, owner=OWNER, conversation=CONV)
 		self.assertIsNotNone(record)
 
@@ -271,29 +324,22 @@ class TestConsume(FrappeTestCase):
 		for the managed session_key-miss / self-host ambiguous-concurrency case
 		where the card was delivered but every Confirm click failed the
 		conversation check and showed a misleading 'expired' toast."""
-		token = pending_confirm.mint(
-			conversation="", owner=OWNER, tool=TOOL, args=ARGS, run_id=RUN_ID)
+		token = pending_confirm.mint(conversation="", owner=OWNER, tool=TOOL, args=ARGS, run_id=RUN_ID)
 		record = pending_confirm.consume(token, owner=OWNER, conversation="conv-current")
 		self.assertIsNotNone(record)
 		self.assertEqual(record["tool"], TOOL)
 
 	def test_empty_stored_conversation_still_enforces_owner(self):
 		"""F1: owner is still the real boundary for a conversation-less token."""
-		token = pending_confirm.mint(
-			conversation="", owner=OWNER, tool=TOOL, args=ARGS, run_id=RUN_ID)
+		token = pending_confirm.mint(conversation="", owner=OWNER, tool=TOOL, args=ARGS, run_id=RUN_ID)
 		self.assertIsNone(
-			pending_confirm.consume(
-				token, owner="intruder@example.invalid", conversation="conv-current")
+			pending_confirm.consume(token, owner="intruder@example.invalid", conversation="conv-current")
 		)
 		# Not burned - the real owner can still consume it.
-		self.assertIsNotNone(
-			pending_confirm.consume(token, owner=OWNER, conversation="conv-current")
-		)
+		self.assertIsNotNone(pending_confirm.consume(token, owner=OWNER, conversation="conv-current"))
 
 	def test_unknown_token_returns_none(self):
-		self.assertIsNone(
-			pending_confirm.consume("does-not-exist", owner=OWNER, conversation=CONV)
-		)
+		self.assertIsNone(pending_confirm.consume("does-not-exist", owner=OWNER, conversation=CONV))
 
 	def test_expired_token_returns_none(self):
 		token = self._mint()

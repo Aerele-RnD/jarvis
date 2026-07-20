@@ -6,7 +6,12 @@
 		class="jv-mark"
 		:style="{ width: `${size}px`, height: `${size}px`, borderRadius: `${radius}px` }"
 	>
-		<svg :width="Math.round(size * 0.55)" :height="Math.round(size * 0.55)" viewBox="0 0 24 24" fill="#fff">
+		<svg
+			:width="Math.round(size * 0.55)"
+			:height="Math.round(size * 0.55)"
+			viewBox="0 0 24 24"
+			fill="#fff"
+		>
 			<path d="M12 2.5 L14 10 L21.5 12 L14 14 L12 21.5 L10 14 L2.5 12 L10 10 Z" />
 		</svg>
 	</span>
@@ -16,7 +21,7 @@
 defineProps({
 	size: { type: Number, default: 56 },
 	radius: { type: Number, default: 14 },
-})
+});
 </script>
 
 <style scoped>

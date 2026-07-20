@@ -7,6 +7,7 @@ requests.post -- breaking dozens of pre-existing tests that mock the transport i
 to exercise the function under test. The block belongs at the TRANSPORT, the exact layer
 a mock replaces. See jarvis/tests/__init__.py.
 """
+
 import unittest
 from unittest.mock import patch
 
@@ -19,8 +20,11 @@ class TestRealNetworkIsBlocked(FrappeTestCase):
 
 	def test_a_real_http_call_is_blocked(self):
 		with self.assertRaises(requests.ConnectionError) as ctx:
-			requests.post("http://jarvis.admin:8002/api/method/push_pool",
-						  json={"models": ["FIXTURE gpt-4o"]}, timeout=2)
+			requests.post(
+				"http://jarvis.admin:8002/api/method/push_pool",
+				json={"models": ["FIXTURE gpt-4o"]},
+				timeout=2,
+			)
 		self.assertIn("BLOCKED", str(ctx.exception))
 
 	def test_the_destructive_path_specifically_is_blocked(self):
@@ -33,7 +37,10 @@ class TestRealNetworkIsBlocked(FrappeTestCase):
 		# already does when admin is down. Local now behaves as CI always has.
 		with self.assertRaises(AdminUnreachableError):
 			admin_client._do_post(
-				"http://jarvis.admin:8002/api/method/x", {}, {}, 5,
+				"http://jarvis.admin:8002/api/method/x",
+				{},
+				{},
+				5,
 				"http://jarvis.admin:8002",
 			)
 
